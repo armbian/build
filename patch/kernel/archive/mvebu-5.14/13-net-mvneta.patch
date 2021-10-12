@@ -1,0 +1,5567 @@
+From b823238b0d4a57a7d1ba73fe52cf668a5a47749e Mon Sep 17 00:00:00 2001
+From: "Russell King (Oracle)" <rmk+kernel@armlinux.org.uk>
+Date: Fri, 17 Sep 2021 10:40:04 +0100
+Subject: net: phylink: don't call netif_carrier_off() with NULL netdev
+
+Dan Carpenter points out that we have a code path that permits a NULL
+netdev pointer to be passed to netif_carrier_off(), which will cause
+a kernel oops. In any case, we need to set pl->old_link_state to false
+to have the desired effect when there is no netdev present.
+
+Fixes: f97493657c63 ("net: phylink: add suspend/resume support")
+Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 42e5a681183f..3f24deea367d 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -1332,7 +1332,10 @@ void phylink_suspend(struct phylink *pl, bool mac_wol)
+ 		 * but one would hope all packets have been sent. This
+ 		 * also means phylink_resolve() will do nothing.
+ 		 */
+-		netif_carrier_off(pl->netdev);
++		if (pl->netdev)
++			netif_carrier_off(pl->netdev);
++		else
++			pl->old_link_state = false;
+ 
+ 		/* We do not call mac_link_down() here as we want the
+ 		 * link to remain up to receive the WoL packets.
+-- 
+cgit v1.2.3
+
+
+From 7e7049505ce1354295c5d543e06dfb417e997583 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Fri, 29 Nov 2019 21:41:56 +0000
+Subject: net: phy: marvell10g: add downshift tunable support
+
+Add support for the downshift tunable for the Marvell 88x3310 PHY.
+Downshift is only usable with firmware 0.3.5.0 and later.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell10g.c | 101 ++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 100 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/phy/marvell10g.c b/drivers/net/phy/marvell10g.c
+index 53a433442803..e1ccb2acae84 100644
+--- a/drivers/net/phy/marvell10g.c
++++ b/drivers/net/phy/marvell10g.c
+@@ -22,6 +22,7 @@
+  * If both the fiber and copper ports are connected, the first to gain
+  * link takes priority and the other port is completely locked out.
+  */
++#include <linux/bitfield.h>
+ #include <linux/ctype.h>
+ #include <linux/delay.h>
+ #include <linux/hwmon.h>
+@@ -32,6 +33,8 @@
+ #define MV_PHY_ALASKA_NBT_QUIRK_MASK	0xfffffffe
+ #define MV_PHY_ALASKA_NBT_QUIRK_REV	(MARVELL_PHY_ID_88X3310 | 0xa)
+ 
++#define MV_VERSION(a,b,c,d) ((a) << 24 | (b) << 16 | (c) << 8 | (d))
++
+ enum {
+ 	MV_PMA_FW_VER0		= 0xc011,
+ 	MV_PMA_FW_VER1		= 0xc012,
+@@ -61,6 +64,15 @@ enum {
+ 	MV_PCS_CSCR1_MDIX_MDIX	= 0x0020,
+ 	MV_PCS_CSCR1_MDIX_AUTO	= 0x0060,
+ 
++	MV_PCS_DSC1		= 0x8003,
++	MV_PCS_DSC1_ENABLE	= BIT(9),
++	MV_PCS_DSC1_10GBT	= 0x01c0,
++	MV_PCS_DSC1_1GBR	= 0x0038,
++	MV_PCS_DSC1_100BTX	= 0x0007,
++	MV_PCS_DSC2		= 0x8004,
++	MV_PCS_DSC2_2P5G	= 0xf000,
++	MV_PCS_DSC2_5G		= 0x0f00,
++
+ 	MV_PCS_CSSR1		= 0x8008,
+ 	MV_PCS_CSSR1_SPD1_MASK	= 0xc000,
+ 	MV_PCS_CSSR1_SPD1_SPD2	= 0xc000,
+@@ -114,6 +126,7 @@ enum {
+ };
+ 
+ struct mv3310_chip {
++	bool (*has_downshift)(struct phy_device *phydev);
+ 	void (*init_supported_interfaces)(unsigned long *mask);
+ 	int (*get_mactype)(struct phy_device *phydev);
+ 	int (*init_interface)(struct phy_device *phydev, int mactype);
+@@ -127,6 +140,7 @@ struct mv3310_priv {
+ 	DECLARE_BITMAP(supported_interfaces, PHY_INTERFACE_MODE_MAX);
+ 
+ 	u32 firmware_ver;
++	bool has_downshift;
+ 	bool rate_match;
+ 	phy_interface_t const_interface;
+ 
+@@ -319,6 +333,65 @@ static int mv3310_reset(struct phy_device *phydev, u32 unit)
+ 					 5000, 100000, true);
+ }
+ 
++static int mv3310_get_downshift(struct phy_device *phydev, u8 *ds)
++{
++	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
++	int val;
++
++	if (!priv->has_downshift)
++		return -EOPNOTSUPP;
++
++	val = phy_read_mmd(phydev, MDIO_MMD_PCS, MV_PCS_DSC1);
++	if (val < 0)
++		return val;
++
++	if (val & MV_PCS_DSC1_ENABLE)
++		/* assume that all fields are the same */
++		*ds = 1 + FIELD_GET(MV_PCS_DSC1_10GBT, (u16)val);
++	else
++		*ds = DOWNSHIFT_DEV_DISABLE;
++
++	return 0;
++}
++
++static int mv3310_set_downshift(struct phy_device *phydev, u8 ds)
++{
++	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
++	u16 val;
++	int err;
++
++	if (!priv->has_downshift)
++		return -EOPNOTSUPP;
++
++	if (ds == DOWNSHIFT_DEV_DISABLE)
++		return phy_clear_bits_mmd(phydev, MDIO_MMD_PCS, MV_PCS_DSC1,
++					  MV_PCS_DSC1_ENABLE);
++
++	/* FIXME: The default is disabled, so should we disable? */
++	if (ds == DOWNSHIFT_DEV_DEFAULT_COUNT)
++		ds = 2;
++
++	if (ds > 8)
++		return -E2BIG;
++
++	ds -= 1;
++	val = FIELD_PREP(MV_PCS_DSC2_2P5G, ds);
++	val |= FIELD_PREP(MV_PCS_DSC2_5G, ds);
++	err = phy_modify_mmd(phydev, MDIO_MMD_PCS, MV_PCS_DSC2,
++			     MV_PCS_DSC2_2P5G | MV_PCS_DSC2_5G, val);
++	if (err < 0)
++		return err;
++
++	val = MV_PCS_DSC1_ENABLE;
++	val |= FIELD_PREP(MV_PCS_DSC1_10GBT, ds);
++	val |= FIELD_PREP(MV_PCS_DSC1_1GBR, ds);
++	val |= FIELD_PREP(MV_PCS_DSC1_100BTX, ds);
++
++	return phy_modify_mmd(phydev, MDIO_MMD_PCS, MV_PCS_DSC1,
++			      MV_PCS_DSC1_ENABLE | MV_PCS_DSC1_10GBT |
++			      MV_PCS_DSC1_1GBR | MV_PCS_DSC1_100BTX, val);
++}
++
+ static int mv3310_get_edpd(struct phy_device *phydev, u16 *edpd)
+ {
+ 	int val;
+@@ -437,6 +510,9 @@ static int mv3310_probe(struct phy_device *phydev)
+ 		    priv->firmware_ver >> 24, (priv->firmware_ver >> 16) & 255,
+ 		    (priv->firmware_ver >> 8) & 255, priv->firmware_ver & 255);
+ 
++	if (chip->has_downshift)
++		priv->has_downshift = chip->has_downshift(phydev);
++
+ 	/* Powering down the port when not in use saves about 600mW */
+ 	ret = mv3310_power_down(phydev);
+ 	if (ret)
+@@ -605,7 +681,16 @@ static int mv3310_config_init(struct phy_device *phydev)
+ 	}
+ 
+ 	/* Enable EDPD mode - saving 600mW */
+-	return mv3310_set_edpd(phydev, ETHTOOL_PHY_EDPD_DFLT_TX_MSECS);
++	err = mv3310_set_edpd(phydev, ETHTOOL_PHY_EDPD_DFLT_TX_MSECS);
++	if (err)
++		return err;
++
++	/* Allow downshift */
++	err = mv3310_set_downshift(phydev, DOWNSHIFT_DEV_DEFAULT_COUNT);
++	if (err && err != -EOPNOTSUPP)
++		return err;
++
++	return 0;
+ }
+ 
+ static int mv3310_get_features(struct phy_device *phydev)
+@@ -875,6 +960,8 @@ static int mv3310_get_tunable(struct phy_device *phydev,
+ 			      struct ethtool_tunable *tuna, void *data)
+ {
+ 	switch (tuna->id) {
++	case ETHTOOL_PHY_DOWNSHIFT:
++		return mv3310_get_downshift(phydev, data);
+ 	case ETHTOOL_PHY_EDPD:
+ 		return mv3310_get_edpd(phydev, data);
+ 	default:
+@@ -886,6 +973,8 @@ static int mv3310_set_tunable(struct phy_device *phydev,
+ 			      struct ethtool_tunable *tuna, const void *data)
+ {
+ 	switch (tuna->id) {
++	case ETHTOOL_PHY_DOWNSHIFT:
++		return mv3310_set_downshift(phydev, *(u8 *)data);
+ 	case ETHTOOL_PHY_EDPD:
+ 		return mv3310_set_edpd(phydev, *(u16 *)data);
+ 	default:
+@@ -893,6 +982,14 @@ static int mv3310_set_tunable(struct phy_device *phydev,
+ 	}
+ }
+ 
++static bool mv3310_has_downshift(struct phy_device *phydev)
++{
++	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
++
++	/* Fails to downshift with firmware older than v0.3.5.0 */
++	return priv->firmware_ver >= MV_VERSION(0,3,5,0);
++}
++
+ static void mv3310_init_supported_interfaces(unsigned long *mask)
+ {
+ 	__set_bit(PHY_INTERFACE_MODE_SGMII, mask);
+@@ -932,6 +1029,7 @@ static void mv2111_init_supported_interfaces(unsigned long *mask)
+ }
+ 
+ static const struct mv3310_chip mv3310_type = {
++	.has_downshift = mv3310_has_downshift,
+ 	.init_supported_interfaces = mv3310_init_supported_interfaces,
+ 	.get_mactype = mv3310_get_mactype,
+ 	.init_interface = mv3310_init_interface,
+@@ -942,6 +1040,7 @@ static const struct mv3310_chip mv3310_type = {
+ };
+ 
+ static const struct mv3310_chip mv3340_type = {
++	.has_downshift = mv3310_has_downshift,
+ 	.init_supported_interfaces = mv3340_init_supported_interfaces,
+ 	.get_mactype = mv3310_get_mactype,
+ 	.init_interface = mv3340_init_interface,
+-- 
+cgit v1.2.3
+
+
+From cb91cf67515d694cdbb3253f3a96121d40efe774 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Thu, 30 Jan 2020 22:42:38 +0000
+Subject: net: dpaa2-mac: add support for more ethtool 10G link modes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Phylink documentation says:
+  Note that the PHY may be able to transform from one connection
+  technology to another, so, eg, don't clear 1000BaseX just
+  because the MAC is unable to BaseX mode. This is more about
+  clearing unsupported speeds and duplex settings. The port modes
+  should not be cleared; phylink_set_port_modes() will help with this.
+
+So add the missing 10G modes.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+Acked-by: Marek Behún <kabel@kernel.org>
+Acked-by: Ioana Ciornei <ioana.ciornei@nxp.com>
+---
+ drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c b/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c
+index ae6d382d8735..a882f7e6639a 100644
+--- a/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c
++++ b/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c
+@@ -140,6 +140,12 @@ static void dpaa2_mac_validate(struct phylink_config *config,
+ 	case PHY_INTERFACE_MODE_10GBASER:
+ 	case PHY_INTERFACE_MODE_USXGMII:
+ 		phylink_set(mask, 10000baseT_Full);
++		phylink_set(mask, 10000baseKR_Full);
++		phylink_set(mask, 10000baseCR_Full);
++		phylink_set(mask, 10000baseSR_Full);
++		phylink_set(mask, 10000baseLR_Full);
++		phylink_set(mask, 10000baseLRM_Full);
++		phylink_set(mask, 10000baseER_Full);
+ 		if (state->interface == PHY_INTERFACE_MODE_10GBASER)
+ 			break;
+ 		phylink_set(mask, 5000baseT_Full);
+-- 
+cgit v1.2.3
+
+
+From 382d7f7a824efb3db405f94c55769122622b887f Mon Sep 17 00:00:00 2001
+From: "Russell King (Oracle)" <rmk+kernel@armlinux.org.uk>
+Date: Tue, 20 Jul 2021 15:15:40 +0100
+Subject: net: phylink: add phylink_set_10g_modes() helper
+
+Add a helper for setting 10Gigabit modes, so we have one central
+place that sets all appropriate 10G modes for a driver.
+
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 11 +++++++++++
+ include/linux/phylink.h   |  1 +
+ 2 files changed, 12 insertions(+)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 3f24deea367d..3bf8865e9e82 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -132,6 +132,17 @@ void phylink_set_port_modes(unsigned long *mask)
+ }
+ EXPORT_SYMBOL_GPL(phylink_set_port_modes);
+ 
++void phylink_set_10g_modes(unsigned long *mask)
++{
++	phylink_set(mask, 10000baseT_Full);
++	phylink_set(mask, 10000baseCR_Full);
++	phylink_set(mask, 10000baseSR_Full);
++	phylink_set(mask, 10000baseLR_Full);
++	phylink_set(mask, 10000baseLRM_Full);
++	phylink_set(mask, 10000baseER_Full);
++}
++EXPORT_SYMBOL_GPL(phylink_set_10g_modes);
++
+ static int phylink_is_empty_linkmode(const unsigned long *linkmode)
+ {
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(tmp) = { 0, };
+diff --git a/include/linux/phylink.h b/include/linux/phylink.h
+index 237291196ce2..f7b5ed06a815 100644
+--- a/include/linux/phylink.h
++++ b/include/linux/phylink.h
+@@ -484,6 +484,7 @@ int phylink_speed_up(struct phylink *pl);
+ #define phylink_test(bm, mode)	__phylink_do_bit(test_bit, bm, mode)
+ 
+ void phylink_set_port_modes(unsigned long *bits);
++void phylink_set_10g_modes(unsigned long *mask);
+ void phylink_helper_basex_speed(struct phylink_link_state *state);
+ 
+ void phylink_mii_c22_pcs_get_state(struct mdio_device *pcs,
+-- 
+cgit v1.2.3
+
+
+From 4cad7d702c5de9f47243e9cd9975df86fc39f607 Mon Sep 17 00:00:00 2001
+From: "Russell King (Oracle)" <rmk+kernel@armlinux.org.uk>
+Date: Tue, 20 Jul 2021 15:20:28 +0100
+Subject: net: ethernet: use phylink_set_10g_modes()
+
+Update three drivers to use the new phylink_set_10g_modes() helper:
+Cadence macb, Freescale DPAA2 and Marvell PP2.
+
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/cadence/macb_main.c         | 7 +------
+ drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c | 7 +------
+ drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c  | 7 +------
+ 3 files changed, 3 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/net/ethernet/cadence/macb_main.c b/drivers/net/ethernet/cadence/macb_main.c
+index 7d2fe13a52f8..15b55ade29bc 100644
+--- a/drivers/net/ethernet/cadence/macb_main.c
++++ b/drivers/net/ethernet/cadence/macb_main.c
+@@ -547,13 +547,8 @@ static void macb_validate(struct phylink_config *config,
+ 	if (bp->caps & MACB_CAPS_GIGABIT_MODE_AVAILABLE &&
+ 	    (state->interface == PHY_INTERFACE_MODE_NA ||
+ 	     state->interface == PHY_INTERFACE_MODE_10GBASER)) {
+-		phylink_set(mask, 10000baseCR_Full);
+-		phylink_set(mask, 10000baseER_Full);
++		phylink_set_10g_modes(mask);
+ 		phylink_set(mask, 10000baseKR_Full);
+-		phylink_set(mask, 10000baseLR_Full);
+-		phylink_set(mask, 10000baseLRM_Full);
+-		phylink_set(mask, 10000baseSR_Full);
+-		phylink_set(mask, 10000baseT_Full);
+ 		if (state->interface != PHY_INTERFACE_MODE_NA)
+ 			goto out;
+ 	}
+diff --git a/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c b/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c
+index a882f7e6639a..3faf45c22c19 100644
+--- a/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c
++++ b/drivers/net/ethernet/freescale/dpaa2/dpaa2-mac.c
+@@ -139,13 +139,8 @@ static void dpaa2_mac_validate(struct phylink_config *config,
+ 	case PHY_INTERFACE_MODE_NA:
+ 	case PHY_INTERFACE_MODE_10GBASER:
+ 	case PHY_INTERFACE_MODE_USXGMII:
+-		phylink_set(mask, 10000baseT_Full);
++		phylink_set_10g_modes(mask);
+ 		phylink_set(mask, 10000baseKR_Full);
+-		phylink_set(mask, 10000baseCR_Full);
+-		phylink_set(mask, 10000baseSR_Full);
+-		phylink_set(mask, 10000baseLR_Full);
+-		phylink_set(mask, 10000baseLRM_Full);
+-		phylink_set(mask, 10000baseER_Full);
+ 		if (state->interface == PHY_INTERFACE_MODE_10GBASER)
+ 			break;
+ 		phylink_set(mask, 5000baseT_Full);
+diff --git a/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c b/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c
+index 3229bafa2a2c..76753db2be48 100644
+--- a/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c
++++ b/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c
+@@ -6286,12 +6286,7 @@ static void mvpp2_phylink_validate(struct phylink_config *config,
+ 	case PHY_INTERFACE_MODE_XAUI:
+ 	case PHY_INTERFACE_MODE_NA:
+ 		if (mvpp2_port_supports_xlg(port)) {
+-			phylink_set(mask, 10000baseT_Full);
+-			phylink_set(mask, 10000baseCR_Full);
+-			phylink_set(mask, 10000baseSR_Full);
+-			phylink_set(mask, 10000baseLR_Full);
+-			phylink_set(mask, 10000baseLRM_Full);
+-			phylink_set(mask, 10000baseER_Full);
++			phylink_set_10g_modes(mask);
+ 			phylink_set(mask, 10000baseKR_Full);
+ 		}
+ 		if (state->interface != PHY_INTERFACE_MODE_NA)
+-- 
+cgit v1.2.3
+
+
+From 3ab4988c8312433944800964545fdaa63bd5ba90 Mon Sep 17 00:00:00 2001
+From: Robert Hancock <robert.hancock@calian.com>
+Date: Wed, 30 Jun 2021 11:49:27 -0600
+Subject: net: phylink: Support disabling autonegotiation for PCS
+
+The auto-negotiation state in the PCS as set by
+phylink_mii_c22_pcs_config was previously always enabled when the
+driver is configured for in-band autonegotiation, even if
+autonegotiation was disabled on the interface with ethtool. Update the
+code to set the BMCR_ANENABLE bit based on the interface's
+autonegotiation enabled state.
+
+Update phylink_mii_c22_pcs_get_state to not check
+autonegotiation-related fields when autonegotiation is disabled.
+
+Update phylink_mac_pcs_get_state to initialize the state based on the
+interface's configured speed, duplex and pause parameters rather than
+to unknown when autonegotiation is disabled, before calling the
+driver's pcs_get_state functions, as they are not likely to provide
+meaningful data for these fields when autonegotiation is disabled. In
+this case the driver is really just filling in the link state field.
+
+Note that in cases where there is a downstream PHY connected, such as
+with SGMII and a copper PHY, the configuration set by ethtool is
+handled by phy_ethtool_ksettings_set and not propagated to the PCS.
+This is correct since SGMII or 1000Base-X autonegotiation with the PCS
+should normally still be used even if the copper side has disabled it.
+
+Signed-off-by: Robert Hancock <robert.hancock@calian.com>
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 3bf8865e9e82..1f3f5ca2e5cf 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -551,9 +551,15 @@ static void phylink_mac_pcs_get_state(struct phylink *pl,
+ 	linkmode_zero(state->lp_advertising);
+ 	state->interface = pl->link_config.interface;
+ 	state->an_enabled = pl->link_config.an_enabled;
+-	state->speed = SPEED_UNKNOWN;
+-	state->duplex = DUPLEX_UNKNOWN;
+-	state->pause = MLO_PAUSE_NONE;
++	if  (state->an_enabled) {
++		state->speed = SPEED_UNKNOWN;
++		state->duplex = DUPLEX_UNKNOWN;
++		state->pause = MLO_PAUSE_NONE;
++	} else {
++		state->speed =  pl->link_config.speed;
++		state->duplex = pl->link_config.duplex;
++		state->pause = pl->link_config.pause;
++	}
+ 	state->an_complete = 0;
+ 	state->link = 1;
+ 
+@@ -2518,7 +2524,10 @@ void phylink_mii_c22_pcs_get_state(struct mdio_device *pcs,
+ 
+ 	state->link = !!(bmsr & BMSR_LSTATUS);
+ 	state->an_complete = !!(bmsr & BMSR_ANEGCOMPLETE);
+-	if (!state->link)
++	/* If there is no link or autonegotiation is disabled, the LP advertisement
++	 * data is not meaningful, so don't go any further.
++	 */
++	if (!state->link || !state->an_enabled)
+ 		return;
+ 
+ 	switch (state->interface) {
+@@ -2641,7 +2650,9 @@ int phylink_mii_c22_pcs_config(struct mdio_device *pcs, unsigned int mode,
+ 	changed = ret > 0;
+ 
+ 	/* Ensure ISOLATE bit is disabled */
+-	bmcr = mode == MLO_AN_INBAND ? BMCR_ANENABLE : 0;
++	bmcr = (mode == MLO_AN_INBAND &&
++		linkmode_test_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, advertising)) ?
++		       BMCR_ANENABLE : 0;
+ 	ret = mdiobus_modify(pcs->bus, pcs->addr, MII_BMCR,
+ 			     BMCR_ANENABLE | BMCR_ISOLATE, bmcr);
+ 	if (ret < 0)
+-- 
+cgit v1.2.3
+
+
+From 1a6300b528fb4507da11af3173e40dcae0d53e76 Mon Sep 17 00:00:00 2001
+From: "Russell King (Oracle)" <rmk+kernel@armlinux.org.uk>
+Date: Tue, 8 Jun 2021 15:53:31 +0100
+Subject: net: phylink: add phy change pause mode debug
+
+Augment the phy link debug prints with the pause state.
+
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 1f3f5ca2e5cf..876c1a461d6b 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -960,10 +960,11 @@ static void phylink_phy_change(struct phy_device *phydev, bool up)
+ 
+ 	phylink_run_resolve(pl);
+ 
+-	phylink_dbg(pl, "phy link %s %s/%s/%s\n", up ? "up" : "down",
++	phylink_dbg(pl, "phy link %s %s/%s/%s/%s\n", up ? "up" : "down",
+ 		    phy_modes(phydev->interface),
+ 		    phy_speed_to_str(phydev->speed),
+-		    phy_duplex_to_str(phydev->duplex));
++		    phy_duplex_to_str(phydev->duplex),
++		    phylink_pause_to_str(pl->phy_state.pause));
+ }
+ 
+ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy,
+-- 
+cgit v1.2.3
+
+
+From 2b5d092a5727f4d0931b3c3823e5013f74024180 Mon Sep 17 00:00:00 2001
+From: "Russell King (Oracle)" <rmk+kernel@armlinux.org.uk>
+Date: Tue, 8 Jun 2021 15:57:30 +0100
+Subject: net: phylink: cleanup ksettings_set
+
+We only need to fiddle about with the supported mask after we have
+validated the user's requested parameters. Simplify and streamline the
+code by moving the linkmode copy and update of the autoneg bit after
+validating the user's request.
+
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 16 +++++++++-------
+ 1 file changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 876c1a461d6b..b5b9342b49d7 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -1560,15 +1560,11 @@ int phylink_ethtool_ksettings_set(struct phylink *pl,
+ 		return phy_ethtool_ksettings_set(pl->phydev, kset);
+ 	}
+ 
+-	linkmode_copy(support, pl->supported);
+ 	config = pl->link_config;
+-	config.an_enabled = kset->base.autoneg == AUTONEG_ENABLE;
+ 
+-	/* Mask out unsupported advertisements, and force the autoneg bit */
++	/* Mask out unsupported advertisements */
+ 	linkmode_and(config.advertising, kset->link_modes.advertising,
+-		     support);
+-	linkmode_mod_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, config.advertising,
+-			 config.an_enabled);
++		     pl->supported);
+ 
+ 	/* FIXME: should we reject autoneg if phy/mac does not support it? */
+ 	switch (kset->base.autoneg) {
+@@ -1577,7 +1573,7 @@ int phylink_ethtool_ksettings_set(struct phylink *pl,
+ 		 * duplex.
+ 		 */
+ 		s = phy_lookup_setting(kset->base.speed, kset->base.duplex,
+-				       support, false);
++				       pl->supported, false);
+ 		if (!s)
+ 			return -EINVAL;
+ 
+@@ -1618,6 +1614,12 @@ int phylink_ethtool_ksettings_set(struct phylink *pl,
+ 	/* We have ruled out the case with a PHY attached, and the
+ 	 * fixed-link cases.  All that is left are in-band links.
+ 	 */
++	config.an_enabled = kset->base.autoneg == AUTONEG_ENABLE;
++	linkmode_mod_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, config.advertising,
++			 config.an_enabled);
++
++	/* Validate without changing the current supported mask. */
++	linkmode_copy(support, pl->supported);
+ 	if (phylink_validate(pl, support, &config))
+ 		return -EINVAL;
+ 
+-- 
+cgit v1.2.3
+
+
+From f1d717845dc84420883e9853a588a5bd60ba93b2 Mon Sep 17 00:00:00 2001
+From: "Russell King (Oracle)" <rmk+kernel@armlinux.org.uk>
+Date: Tue, 8 Jun 2021 14:43:54 +0100
+Subject: net: phy: add phy_interface_t bitmap support
+
+Add support for a bitmap for phy interface modes, which includes:
+- a macro to declare the interface bitmap
+- an inline helper to zero the interface bitmap
+- an inline helper to detect an empty interface bitmap
+- an inline helper to do a bitwise AND operation on two interface
+  bitmaps
+
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+---
+ include/linux/phy.h | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/include/linux/phy.h b/include/linux/phy.h
+index 3b80dc3ed68b..1472657a8136 100644
+--- a/include/linux/phy.h
++++ b/include/linux/phy.h
+@@ -155,6 +155,26 @@ typedef enum {
+ 	PHY_INTERFACE_MODE_MAX,
+ } phy_interface_t;
+ 
++/* PHY interface mode bitmap handling */
++#define DECLARE_PHY_INTERFACE_MASK(name) \
++	DECLARE_BITMAP(name, PHY_INTERFACE_MODE_MAX)
++
++static inline void phy_interface_zero(unsigned long *intf)
++{
++	bitmap_zero(intf, PHY_INTERFACE_MODE_MAX);
++}
++
++static inline bool phy_interface_empty(const unsigned long *intf)
++{
++	return bitmap_empty(intf, PHY_INTERFACE_MODE_MAX);
++}
++
++static inline void phy_interface_and(unsigned long *dst, const unsigned long *a,
++				     const unsigned long *b)
++{
++	bitmap_and(dst, a, b, PHY_INTERFACE_MODE_MAX);
++}
++
+ /*
+  * phy_supported_speeds - return all speeds currently supported by a PHY device
+  */
+-- 
+cgit v1.2.3
+
+
+From 7072ef48e86ddb063bf8f509a89c54090d84c1b3 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 3 Mar 2020 11:57:39 +0000
+Subject: net: sfp: augment SFP parsing with phy_interface_t bitmap
+
+We currently parse the SFP EEPROM to a bitmap of ethtool link modes,
+and then attempt to convert the link modes to a PHY interface mode.
+While this works at present, there are cases where this is sub-optimal.
+For example, where a module can operate with several different PHY
+interface modes.
+
+To start addressing this, arrange for the SFP EEPROM parsing to also
+provide a bitmap of the possible PHY interface modes.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell-88x2222.c |  3 +-
+ drivers/net/phy/marvell10g.c      |  3 +-
+ drivers/net/phy/phylink.c         |  4 ++-
+ drivers/net/phy/sfp-bus.c         | 76 +++++++++++++++++++++++++++++----------
+ include/linux/sfp.h               |  5 +--
+ 5 files changed, 67 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/net/phy/marvell-88x2222.c b/drivers/net/phy/marvell-88x2222.c
+index d8b31d4d2a73..ae285e4225d6 100644
+--- a/drivers/net/phy/marvell-88x2222.c
++++ b/drivers/net/phy/marvell-88x2222.c
+@@ -478,6 +478,7 @@ static int mv2222_config_init(struct phy_device *phydev)
+ 
+ static int mv2222_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
+ {
++	DECLARE_PHY_INTERFACE_MASK(interfaces);
+ 	struct phy_device *phydev = upstream;
+ 	phy_interface_t sfp_interface;
+ 	struct mv2222_data *priv;
+@@ -489,7 +490,7 @@ static int mv2222_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
+ 	priv = (struct mv2222_data *)phydev->priv;
+ 	dev = &phydev->mdio.dev;
+ 
+-	sfp_parse_support(phydev->sfp_bus, id, sfp_supported);
++	sfp_parse_support(phydev->sfp_bus, id, sfp_supported, interfaces);
+ 	sfp_interface = sfp_select_interface(phydev->sfp_bus, sfp_supported);
+ 
+ 	dev_info(dev, "%s SFP module inserted\n", phy_modes(sfp_interface));
+diff --git a/drivers/net/phy/marvell10g.c b/drivers/net/phy/marvell10g.c
+index e1ccb2acae84..eff980b94c95 100644
+--- a/drivers/net/phy/marvell10g.c
++++ b/drivers/net/phy/marvell10g.c
+@@ -449,9 +449,10 @@ static int mv3310_sfp_insert(void *upstream, const struct sfp_eeprom_id *id)
+ {
+ 	struct phy_device *phydev = upstream;
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(support) = { 0, };
++	DECLARE_PHY_INTERFACE_MASK(interfaces);
+ 	phy_interface_t iface;
+ 
+-	sfp_parse_support(phydev->sfp_bus, id, support);
++	sfp_parse_support(phydev->sfp_bus, id, support, interfaces);
+ 	iface = sfp_select_interface(phydev->sfp_bus, support);
+ 
+ 	if (iface != PHY_INTERFACE_MODE_10GBASER) {
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index b5b9342b49d7..a0a21cf530f4 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -77,6 +77,7 @@ struct phylink {
+ 
+ 	struct sfp_bus *sfp_bus;
+ 	bool sfp_may_have_phy;
++	DECLARE_PHY_INTERFACE_MASK(sfp_interfaces);
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(sfp_support);
+ 	u8 sfp_port;
+ };
+@@ -2242,7 +2243,8 @@ static int phylink_sfp_module_insert(void *upstream,
+ 	ASSERT_RTNL();
+ 
+ 	linkmode_zero(support);
+-	sfp_parse_support(pl->sfp_bus, id, support);
++	phy_interface_zero(pl->sfp_interfaces);
++	sfp_parse_support(pl->sfp_bus, id, support, pl->sfp_interfaces);
+ 	pl->sfp_port = sfp_parse_port(pl->sfp_bus, id, support);
+ 
+ 	/* If this module may have a PHY connecting later, defer until later */
+diff --git a/drivers/net/phy/sfp-bus.c b/drivers/net/phy/sfp-bus.c
+index 7362f8c3271c..21b5f8badfeb 100644
+--- a/drivers/net/phy/sfp-bus.c
++++ b/drivers/net/phy/sfp-bus.c
+@@ -13,7 +13,8 @@
+ struct sfp_quirk {
+ 	const char *vendor;
+ 	const char *part;
+-	void (*modes)(const struct sfp_eeprom_id *id, unsigned long *modes);
++	void (*modes)(const struct sfp_eeprom_id *id, unsigned long *modes,
++		      unsigned long *interfaces);
+ };
+ 
+ /**
+@@ -39,13 +40,15 @@ struct sfp_bus {
+ };
+ 
+ static void sfp_quirk_2500basex(const struct sfp_eeprom_id *id,
+-				unsigned long *modes)
++				unsigned long *modes, unsigned long *interfaces)
+ {
+ 	phylink_set(modes, 2500baseX_Full);
++	__set_bit(PHY_INTERFACE_MODE_2500BASEX, interfaces);
+ }
+ 
+ static void sfp_quirk_ubnt_uf_instant(const struct sfp_eeprom_id *id,
+-				      unsigned long *modes)
++				      unsigned long *modes,
++				      unsigned long *interfaces)
+ {
+ 	/* Ubiquiti U-Fiber Instant module claims that support all transceiver
+ 	 * types including 10G Ethernet which is not truth. So clear all claimed
+@@ -226,12 +229,14 @@ EXPORT_SYMBOL_GPL(sfp_may_have_phy);
+  * @bus: a pointer to the &struct sfp_bus structure for the sfp module
+  * @id: a pointer to the module's &struct sfp_eeprom_id
+  * @support: pointer to an array of unsigned long for the ethtool support mask
++ * @interfaces: pointer to an array of unsigned long for phy interface modes
++ *		mask
+  *
+  * Parse the EEPROM identification information and derive the supported
+  * ethtool link modes for the module.
+  */
+ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+-		       unsigned long *support)
++		       unsigned long *support, unsigned long *interfaces)
+ {
+ 	unsigned int br_min, br_nom, br_max;
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(modes) = { 0, };
+@@ -258,27 +263,41 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+ 	}
+ 
+ 	/* Set ethtool support from the compliance fields. */
+-	if (id->base.e10g_base_sr)
++	if (id->base.e10g_base_sr) {
+ 		phylink_set(modes, 10000baseSR_Full);
+-	if (id->base.e10g_base_lr)
++		__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
++	}
++	if (id->base.e10g_base_lr) {
+ 		phylink_set(modes, 10000baseLR_Full);
+-	if (id->base.e10g_base_lrm)
++		__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
++	}
++	if (id->base.e10g_base_lrm) {
+ 		phylink_set(modes, 10000baseLRM_Full);
+-	if (id->base.e10g_base_er)
++		__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
++	}
++	if (id->base.e10g_base_er) {
+ 		phylink_set(modes, 10000baseER_Full);
++		__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
++	}
+ 	if (id->base.e1000_base_sx ||
+ 	    id->base.e1000_base_lx ||
+-	    id->base.e1000_base_cx)
++	    id->base.e1000_base_cx) {
+ 		phylink_set(modes, 1000baseX_Full);
++		__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
++	}
+ 	if (id->base.e1000_base_t) {
+ 		phylink_set(modes, 1000baseT_Half);
+ 		phylink_set(modes, 1000baseT_Full);
++		__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
++		__set_bit(PHY_INTERFACE_MODE_SGMII, interfaces);
+ 	}
+ 
+ 	/* 1000Base-PX or 1000Base-BX10 */
+ 	if ((id->base.e_base_px || id->base.e_base_bx10) &&
+-	    br_min <= 1300 && br_max >= 1200)
++	    br_min <= 1300 && br_max >= 1200) {
+ 		phylink_set(modes, 1000baseX_Full);
++		__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
++	}
+ 
+ 	/* 100Base-FX, 100Base-LX, 100Base-PX, 100Base-BX10 */
+ 	if (id->base.e100_base_fx || id->base.e100_base_lx)
+@@ -291,21 +310,30 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+ 	 */
+ 	if ((id->base.sfp_ct_passive || id->base.sfp_ct_active) && br_nom) {
+ 		/* This may look odd, but some manufacturers use 12000MBd */
+-		if (br_min <= 12000 && br_max >= 10300)
++		if (br_min <= 12000 && br_max >= 10300) {
+ 			phylink_set(modes, 10000baseCR_Full);
+-		if (br_min <= 3200 && br_max >= 3100)
++			__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
++		}
++		if (br_min <= 3200 && br_max >= 3100) {
+ 			phylink_set(modes, 2500baseX_Full);
+-		if (br_min <= 1300 && br_max >= 1200)
++			__set_bit(PHY_INTERFACE_MODE_2500BASEX, interfaces);
++		}
++		if (br_min <= 1300 && br_max >= 1200) {
+ 			phylink_set(modes, 1000baseX_Full);
++			__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
++		}
+ 	}
+ 	if (id->base.sfp_ct_passive) {
+-		if (id->base.passive.sff8431_app_e)
++		if (id->base.passive.sff8431_app_e) {
+ 			phylink_set(modes, 10000baseCR_Full);
++			__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
++		}
+ 	}
+ 	if (id->base.sfp_ct_active) {
+ 		if (id->base.active.sff8431_app_e ||
+ 		    id->base.active.sff8431_lim) {
+ 			phylink_set(modes, 10000baseCR_Full);
++			__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
+ 		}
+ 	}
+ 
+@@ -330,12 +358,14 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+ 	case SFF8024_ECC_10GBASE_T_SFI:
+ 	case SFF8024_ECC_10GBASE_T_SR:
+ 		phylink_set(modes, 10000baseT_Full);
++		__set_bit(PHY_INTERFACE_MODE_10GBASER, interfaces);
+ 		break;
+ 	case SFF8024_ECC_5GBASE_T:
+ 		phylink_set(modes, 5000baseT_Full);
+ 		break;
+ 	case SFF8024_ECC_2_5GBASE_T:
+ 		phylink_set(modes, 2500baseT_Full);
++		__set_bit(PHY_INTERFACE_MODE_2500BASEX, interfaces);
+ 		break;
+ 	default:
+ 		dev_warn(bus->sfp_dev,
+@@ -348,10 +378,14 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+ 	if (id->base.fc_speed_100 ||
+ 	    id->base.fc_speed_200 ||
+ 	    id->base.fc_speed_400) {
+-		if (id->base.br_nominal >= 31)
++		if (id->base.br_nominal >= 31) {
+ 			phylink_set(modes, 2500baseX_Full);
+-		if (id->base.br_nominal >= 12)
++			__set_bit(PHY_INTERFACE_MODE_2500BASEX, interfaces);
++		}
++		if (id->base.br_nominal >= 12) {
+ 			phylink_set(modes, 1000baseX_Full);
++			__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
++		}
+ 	}
+ 
+ 	/* If we haven't discovered any modes that this module supports, try
+@@ -364,14 +398,18 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+ 	 * 2500BASE-X, so we allow some slack here.
+ 	 */
+ 	if (bitmap_empty(modes, __ETHTOOL_LINK_MODE_MASK_NBITS) && br_nom) {
+-		if (br_min <= 1300 && br_max >= 1200)
++		if (br_min <= 1300 && br_max >= 1200) {
+ 			phylink_set(modes, 1000baseX_Full);
+-		if (br_min <= 3200 && br_max >= 2500)
++			__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
++		}
++		if (br_min <= 3200 && br_max >= 2500) {
+ 			phylink_set(modes, 2500baseX_Full);
++			__set_bit(PHY_INTERFACE_MODE_2500BASEX, interfaces);
++		}
+ 	}
+ 
+ 	if (bus->sfp_quirk)
+-		bus->sfp_quirk->modes(id, modes);
++		bus->sfp_quirk->modes(id, modes, interfaces);
+ 
+ 	bitmap_or(support, support, modes, __ETHTOOL_LINK_MODE_MASK_NBITS);
+ 
+diff --git a/include/linux/sfp.h b/include/linux/sfp.h
+index 302094b855fb..d1f343853b6c 100644
+--- a/include/linux/sfp.h
++++ b/include/linux/sfp.h
+@@ -535,7 +535,7 @@ int sfp_parse_port(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+ 		   unsigned long *support);
+ bool sfp_may_have_phy(struct sfp_bus *bus, const struct sfp_eeprom_id *id);
+ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
+-		       unsigned long *support);
++		       unsigned long *support, unsigned long *interfaces);
+ phy_interface_t sfp_select_interface(struct sfp_bus *bus,
+ 				     unsigned long *link_modes);
+ 
+@@ -568,7 +568,8 @@ static inline bool sfp_may_have_phy(struct sfp_bus *bus,
+ 
+ static inline void sfp_parse_support(struct sfp_bus *bus,
+ 				     const struct sfp_eeprom_id *id,
+-				     unsigned long *support)
++				     unsigned long *support,
++				     unsigned long *interfaces)
+ {
+ }
+ 
+-- 
+cgit v1.2.3
+
+
+From 03a6c744372a8682f913dff44a874c2c2d01cfd6 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 3 Mar 2020 12:12:43 +0000
+Subject: net: phylink: add mac PHY interface bitmap
+
+Add a PHY interface bitmap for the MAC driver to specify which PHY
+interfaces are supported to phylink.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ include/linux/phylink.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/include/linux/phylink.h b/include/linux/phylink.h
+index f7b5ed06a815..bc4b866cd99b 100644
+--- a/include/linux/phylink.h
++++ b/include/linux/phylink.h
+@@ -76,6 +76,7 @@ struct phylink_config {
+ 	bool ovr_an_inband;
+ 	void (*get_fixed_state)(struct phylink_config *config,
+ 				struct phylink_link_state *state);
++	DECLARE_PHY_INTERFACE_MASK(supported_interfaces);
+ };
+ 
+ /**
+-- 
+cgit v1.2.3
+
+
+From b1f7bec7a2c8b3bd05258fd2f8fd739d36f758d2 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 3 Mar 2020 12:12:43 +0000
+Subject: net: phylink: use phy interface mode bitmaps for optical modules
+
+Where a MAC provides the PHY interface mode capabilities, use the PHY
+interface mode bitmaps to select the operating interface mode for
+optical SFP modules, rather than using the linkmode bitmaps.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 56 +++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 49 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index a0a21cf530f4..c721ef6dda2e 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -2152,6 +2152,41 @@ static void phylink_sfp_detach(void *upstream, struct sfp_bus *bus)
+ 	pl->netdev->sfp_bus = NULL;
+ }
+ 
++static const phy_interface_t phylink_sfp_interface_preference[] = {
++	PHY_INTERFACE_MODE_USXGMII,
++	PHY_INTERFACE_MODE_10GBASER,
++	PHY_INTERFACE_MODE_10GKR,
++	PHY_INTERFACE_MODE_2500BASEX,
++	PHY_INTERFACE_MODE_SGMII,
++	PHY_INTERFACE_MODE_1000BASEX,
++};
++
++static phy_interface_t phylink_select_interface(struct phylink *pl,
++						const unsigned long *intf,
++						const char *intf_name)
++{
++	DECLARE_PHY_INTERFACE_MASK(u);
++	phy_interface_t interface;
++	size_t i;
++
++	phy_interface_and(u, intf, pl->config->supported_interfaces);
++
++	interface = PHY_INTERFACE_MODE_NA;
++	for (i = 0; i < ARRAY_SIZE(phylink_sfp_interface_preference); i++)
++		if (test_bit(phylink_sfp_interface_preference[i], u)) {
++			interface = phylink_sfp_interface_preference[i];
++			break;
++		}
++
++	phylink_info(pl, "interfaces=[mac=%*pbl %s=%*pbl] selected %d (%s)\n",
++		     (int)PHY_INTERFACE_MODE_MAX,
++		     pl->config->supported_interfaces,
++		     intf_name, (int)PHY_INTERFACE_MODE_MAX, intf,
++		     interface, phy_modes(interface));
++
++	return interface;
++}
++
+ static int phylink_sfp_config(struct phylink *pl, u8 mode,
+ 			      const unsigned long *supported,
+ 			      const unsigned long *advertising)
+@@ -2234,25 +2269,33 @@ static int phylink_sfp_config(struct phylink *pl, u8 mode,
+ 	return ret;
+ }
+ 
++static int phylink_sfp_config_nophy(struct phylink *pl)
++{
++	if (!phy_interface_empty(pl->config->supported_interfaces))
++		phylink_select_interface(pl, pl->sfp_interfaces, "sfp");
++
++	return phylink_sfp_config(pl, MLO_AN_INBAND,
++				  pl->sfp_support, pl->sfp_support);
++}
++
+ static int phylink_sfp_module_insert(void *upstream,
+ 				     const struct sfp_eeprom_id *id)
+ {
+ 	struct phylink *pl = upstream;
+-	unsigned long *support = pl->sfp_support;
+ 
+ 	ASSERT_RTNL();
+ 
+-	linkmode_zero(support);
++	linkmode_zero(pl->sfp_support);
+ 	phy_interface_zero(pl->sfp_interfaces);
+-	sfp_parse_support(pl->sfp_bus, id, support, pl->sfp_interfaces);
+-	pl->sfp_port = sfp_parse_port(pl->sfp_bus, id, support);
++	sfp_parse_support(pl->sfp_bus, id, pl->sfp_support, pl->sfp_interfaces);
++	pl->sfp_port = sfp_parse_port(pl->sfp_bus, id, pl->sfp_support);
+ 
+ 	/* If this module may have a PHY connecting later, defer until later */
+ 	pl->sfp_may_have_phy = sfp_may_have_phy(pl->sfp_bus, id);
+ 	if (pl->sfp_may_have_phy)
+ 		return 0;
+ 
+-	return phylink_sfp_config(pl, MLO_AN_INBAND, support, support);
++	return phylink_sfp_config_nophy(pl);
+ }
+ 
+ static int phylink_sfp_module_start(void *upstream)
+@@ -2271,8 +2314,7 @@ static int phylink_sfp_module_start(void *upstream)
+ 	if (!pl->sfp_may_have_phy)
+ 		return 0;
+ 
+-	return phylink_sfp_config(pl, MLO_AN_INBAND,
+-				  pl->sfp_support, pl->sfp_support);
++	return phylink_sfp_config_nophy(pl);
+ }
+ 
+ static void phylink_sfp_module_stop(void *upstream)
+-- 
+cgit v1.2.3
+
+
+From 696b4e39df4792ab9638c87972167fdf8376bdda Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 3 Mar 2020 12:15:38 +0000
+Subject: net: mvneta: fill in phy interface mode bitmap
+
+Fill in the phy interface mode bitmap for the Marvell mvneta driver, so
+phylink can know which interfaces are supported by the MAC.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/mvneta.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index de32e5b49053..697207b88444 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -5172,6 +5172,22 @@ static int mvneta_probe(struct platform_device *pdev)
+ 
+ 	pp->phylink_config.dev = &dev->dev;
+ 	pp->phylink_config.type = PHYLINK_NETDEV;
++	__set_bit(PHY_INTERFACE_MODE_SGMII,
++		  pp->phylink_config.supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII,
++		  pp->phylink_config.supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII_ID,
++		  pp->phylink_config.supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII_RXID,
++		  pp->phylink_config.supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII_TXID,
++		  pp->phylink_config.supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_QSGMII,
++		  pp->phylink_config.supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_1000BASEX,
++		  pp->phylink_config.supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_2500BASEX,
++		  pp->phylink_config.supported_interfaces);
+ 
+ 	phylink = phylink_create(&pp->phylink_config, pdev->dev.fwnode,
+ 				 phy_mode, &mvneta_phylink_ops);
+-- 
+cgit v1.2.3
+
+
+From b096813a94db41df365a1b9a20e4de7176b185ff Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 3 Mar 2020 12:15:38 +0000
+Subject: net: mvpp2: fill in phy interface mode bitmap
+
+Fill in the phy interface mode bitmap for the Marvell mvpp2 driver, so
+phylink can know which interfaces are supported by the MAC.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c b/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c
+index 76753db2be48..dd7e2c17a5be 100644
+--- a/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c
++++ b/drivers/net/ethernet/marvell/mvpp2/mvpp2_main.c
+@@ -6923,6 +6923,29 @@ static int mvpp2_port_probe(struct platform_device *pdev,
+ 		port->phylink_config.dev = &dev->dev;
+ 		port->phylink_config.type = PHYLINK_NETDEV;
+ 
++		if (mvpp2_port_supports_xlg(port)) {
++			__set_bit(PHY_INTERFACE_MODE_10GBASER,
++				  port->phylink_config.supported_interfaces);
++			__set_bit(PHY_INTERFACE_MODE_XAUI,
++				  port->phylink_config.supported_interfaces);
++		}
++		if (mvpp2_port_supports_rgmii(port)) {
++			__set_bit(PHY_INTERFACE_MODE_RGMII,
++				  port->phylink_config.supported_interfaces);
++			__set_bit(PHY_INTERFACE_MODE_RGMII_ID,
++				  port->phylink_config.supported_interfaces);
++			__set_bit(PHY_INTERFACE_MODE_RGMII_TXID,
++				  port->phylink_config.supported_interfaces);
++			__set_bit(PHY_INTERFACE_MODE_RGMII_RXID,
++				  port->phylink_config.supported_interfaces);
++		}
++		__set_bit(PHY_INTERFACE_MODE_SGMII,
++			  port->phylink_config.supported_interfaces);
++		__set_bit(PHY_INTERFACE_MODE_1000BASEX,
++			  port->phylink_config.supported_interfaces);
++		__set_bit(PHY_INTERFACE_MODE_2500BASEX,
++			  port->phylink_config.supported_interfaces);
++
+ 		phylink = phylink_create(&port->phylink_config, port_fwnode,
+ 					 phy_mode, &mvpp2_phylink_ops);
+ 		if (IS_ERR(phylink)) {
+-- 
+cgit v1.2.3
+
+
+From e77daa70521c36402efe3f87951852358182bc08 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marek=20Beh=C3=BAn?= <kabel@kernel.org>
+Date: Tue, 20 Oct 2020 19:09:11 +0200
+Subject: net: dsa: fill phylink's config supported_interfaces member
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add a new DSA switch operation, phylink_get_interfaces, which should
+fill in which PHY_INTERFACE_MODE_* are supported by given port.
+
+Use this before phylink_create to fill phylink's config
+supported_interfaces member.
+
+This allows for phylink to determine which PHY_INTERFACE_MODE to use
+with SFP modules.
+
+Signed-off-by: Marek Behún <kabel@kernel.org>
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ include/net/dsa.h | 2 ++
+ net/dsa/slave.c   | 4 ++++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/include/net/dsa.h b/include/net/dsa.h
+index 33f40c1ec379..07b29d4b4336 100644
+--- a/include/net/dsa.h
++++ b/include/net/dsa.h
+@@ -592,6 +592,8 @@ struct dsa_switch_ops {
+ 	/*
+ 	 * PHYLINK integration
+ 	 */
++	void	(*phylink_get_interfaces)(struct dsa_switch *ds, int port,
++					  unsigned long *supported_interfaces);
+ 	void	(*phylink_validate)(struct dsa_switch *ds, int port,
+ 				    unsigned long *supported,
+ 				    struct phylink_link_state *state);
+diff --git a/net/dsa/slave.c b/net/dsa/slave.c
+index 23be8e01026b..64005bfecd23 100644
+--- a/net/dsa/slave.c
++++ b/net/dsa/slave.c
+@@ -1773,6 +1773,10 @@ static int dsa_slave_phy_setup(struct net_device *slave_dev)
+ 		dp->pl_config.poll_fixed_state = true;
+ 	}
+ 
++	if (ds->ops->phylink_get_interfaces)
++		ds->ops->phylink_get_interfaces(ds, dp->index,
++			dp->pl_config.supported_interfaces);
++
+ 	dp->pl = phylink_create(&dp->pl_config, of_fwnode_handle(port_dn), mode,
+ 				&dsa_port_phylink_mac_ops);
+ 	if (IS_ERR(dp->pl)) {
+-- 
+cgit v1.2.3
+
+
+From 58339cd013b7e37739c54d06b2e9f226d99d2f50 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marek=20Beh=C3=BAn?= <kabel@kernel.org>
+Date: Tue, 20 Oct 2020 19:09:12 +0200
+Subject: net: dsa: mv88e6xxx: implement .phylink_get_interfaces operation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Implement the .phylink_get_interfaces method for mv88e6xxx driver.
+
+We are currently only interested in SGMII, 1000base-x and 2500base-x
+modes (for the SFP code). USXGMII and 10gbase-r can be added later for
+Amethyst. XAUI and RXAUI are irrelevant for SFP (but maybe not for
+QSFP?).
+
+Signed-off-by: Marek Behún <kabel@kernel.org>
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/dsa/mv88e6xxx/chip.c | 57 ++++++++++++++++++++++++++++++++++++++++
+ drivers/net/dsa/mv88e6xxx/chip.h |  2 ++
+ 2 files changed, 59 insertions(+)
+
+diff --git a/drivers/net/dsa/mv88e6xxx/chip.c b/drivers/net/dsa/mv88e6xxx/chip.c
+index 272b0535d946..c088915f1feb 100644
+--- a/drivers/net/dsa/mv88e6xxx/chip.c
++++ b/drivers/net/dsa/mv88e6xxx/chip.c
+@@ -683,6 +683,50 @@ static void mv88e6xxx_validate(struct dsa_switch *ds, int port,
+ 	phylink_helper_basex_speed(state);
+ }
+ 
++static void mv88e6352_phylink_get_interfaces(struct mv88e6xxx_chip *chip,
++					     int port,
++					     unsigned long *supported)
++{
++	if (mv88e6xxx_serdes_get_lane(chip, port)) {
++		/* FIXME: does code for 6352 family support changing between
++		 * SGMII and 1000base-x?
++		 */
++		__set_bit(PHY_INTERFACE_MODE_SGMII, supported);
++		__set_bit(PHY_INTERFACE_MODE_1000BASEX, supported);
++	}
++}
++
++static void mv88e6341_phylink_get_interfaces(struct mv88e6xxx_chip *chip,
++					     int port,
++					     unsigned long *supported)
++{
++	if (port == 5) {
++		__set_bit(PHY_INTERFACE_MODE_SGMII, supported);
++		__set_bit(PHY_INTERFACE_MODE_1000BASEX, supported);
++		__set_bit(PHY_INTERFACE_MODE_2500BASEX, supported);
++	}
++}
++
++static void mv88e6390_phylink_get_interfaces(struct mv88e6xxx_chip *chip,
++					     int port,
++					     unsigned long *supported)
++{
++	if (port == 9 || port == 10) {
++		__set_bit(PHY_INTERFACE_MODE_SGMII, supported);
++		__set_bit(PHY_INTERFACE_MODE_1000BASEX, supported);
++		__set_bit(PHY_INTERFACE_MODE_2500BASEX, supported);
++	}
++}
++
++static void mv88e6xxx_get_interfaces(struct dsa_switch *ds, int port,
++				     unsigned long *supported)
++{
++	struct mv88e6xxx_chip *chip = ds->priv;
++
++	if (chip->info->ops->phylink_get_interfaces)
++		chip->info->ops->phylink_get_interfaces(chip, port, supported);
++}
++
+ static void mv88e6xxx_mac_config(struct dsa_switch *ds, int port,
+ 				 unsigned int mode,
+ 				 const struct phylink_link_state *state)
+@@ -3628,6 +3672,7 @@ static const struct mv88e6xxx_ops mv88e6141_ops = {
+ 	.serdes_get_stats = mv88e6390_serdes_get_stats,
+ 	.serdes_get_regs_len = mv88e6390_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6390_serdes_get_regs,
++	.phylink_get_interfaces = mv88e6341_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6341_phylink_validate,
+ };
+ 
+@@ -3803,6 +3848,7 @@ static const struct mv88e6xxx_ops mv88e6172_ops = {
+ 	.serdes_get_regs_len = mv88e6352_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6352_serdes_get_regs,
+ 	.gpio_ops = &mv88e6352_gpio_ops,
++	.phylink_get_interfaces = mv88e6352_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6352_phylink_validate,
+ };
+ 
+@@ -3903,6 +3949,7 @@ static const struct mv88e6xxx_ops mv88e6176_ops = {
+ 	.serdes_get_regs_len = mv88e6352_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6352_serdes_get_regs,
+ 	.gpio_ops = &mv88e6352_gpio_ops,
++	.phylink_get_interfaces = mv88e6352_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6352_phylink_validate,
+ };
+ 
+@@ -4004,6 +4051,7 @@ static const struct mv88e6xxx_ops mv88e6190_ops = {
+ 	.serdes_get_regs_len = mv88e6390_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6390_serdes_get_regs,
+ 	.gpio_ops = &mv88e6352_gpio_ops,
++	.phylink_get_interfaces = mv88e6390_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6390_phylink_validate,
+ };
+ 
+@@ -4065,6 +4113,7 @@ static const struct mv88e6xxx_ops mv88e6190x_ops = {
+ 	.serdes_get_regs_len = mv88e6390_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6390_serdes_get_regs,
+ 	.gpio_ops = &mv88e6352_gpio_ops,
++	.phylink_get_interfaces = mv88e6390_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6390x_phylink_validate,
+ };
+ 
+@@ -4125,6 +4174,7 @@ static const struct mv88e6xxx_ops mv88e6191_ops = {
+ 	.serdes_get_regs = mv88e6390_serdes_get_regs,
+ 	.avb_ops = &mv88e6390_avb_ops,
+ 	.ptp_ops = &mv88e6352_ptp_ops,
++	.phylink_get_interfaces = mv88e6390_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6390_phylink_validate,
+ };
+ 
+@@ -4185,6 +4235,7 @@ static const struct mv88e6xxx_ops mv88e6240_ops = {
+ 	.gpio_ops = &mv88e6352_gpio_ops,
+ 	.avb_ops = &mv88e6352_avb_ops,
+ 	.ptp_ops = &mv88e6352_ptp_ops,
++	.phylink_get_interfaces = mv88e6352_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6352_phylink_validate,
+ };
+ 
+@@ -4287,6 +4338,7 @@ static const struct mv88e6xxx_ops mv88e6290_ops = {
+ 	.gpio_ops = &mv88e6352_gpio_ops,
+ 	.avb_ops = &mv88e6390_avb_ops,
+ 	.ptp_ops = &mv88e6352_ptp_ops,
++	.phylink_get_interfaces = mv88e6390_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6390_phylink_validate,
+ };
+ 
+@@ -4439,6 +4491,7 @@ static const struct mv88e6xxx_ops mv88e6341_ops = {
+ 	.serdes_get_stats = mv88e6390_serdes_get_stats,
+ 	.serdes_get_regs_len = mv88e6390_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6390_serdes_get_regs,
++	.phylink_get_interfaces = mv88e6341_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6341_phylink_validate,
+ };
+ 
+@@ -4588,6 +4641,7 @@ static const struct mv88e6xxx_ops mv88e6352_ops = {
+ 	.serdes_get_stats = mv88e6352_serdes_get_stats,
+ 	.serdes_get_regs_len = mv88e6352_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6352_serdes_get_regs,
++	.phylink_get_interfaces = mv88e6352_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6352_phylink_validate,
+ };
+ 
+@@ -4653,6 +4707,7 @@ static const struct mv88e6xxx_ops mv88e6390_ops = {
+ 	.serdes_get_stats = mv88e6390_serdes_get_stats,
+ 	.serdes_get_regs_len = mv88e6390_serdes_get_regs_len,
+ 	.serdes_get_regs = mv88e6390_serdes_get_regs,
++	.phylink_get_interfaces = mv88e6390_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6390_phylink_validate,
+ };
+ 
+@@ -4717,6 +4772,7 @@ static const struct mv88e6xxx_ops mv88e6390x_ops = {
+ 	.gpio_ops = &mv88e6352_gpio_ops,
+ 	.avb_ops = &mv88e6390_avb_ops,
+ 	.ptp_ops = &mv88e6352_ptp_ops,
++	.phylink_get_interfaces = mv88e6390_phylink_get_interfaces,
+ 	.phylink_validate = mv88e6390x_phylink_validate,
+ };
+ 
+@@ -6072,6 +6128,7 @@ static const struct dsa_switch_ops mv88e6xxx_switch_ops = {
+ 	.change_tag_protocol	= mv88e6xxx_change_tag_protocol,
+ 	.setup			= mv88e6xxx_setup,
+ 	.teardown		= mv88e6xxx_teardown,
++	.phylink_get_interfaces	= mv88e6xxx_get_interfaces,
+ 	.port_setup		= mv88e6xxx_port_setup,
+ 	.port_teardown		= mv88e6xxx_port_teardown,
+ 	.phylink_validate	= mv88e6xxx_validate,
+diff --git a/drivers/net/dsa/mv88e6xxx/chip.h b/drivers/net/dsa/mv88e6xxx/chip.h
+index 675b1f3e43b7..601c995cf4c7 100644
+--- a/drivers/net/dsa/mv88e6xxx/chip.h
++++ b/drivers/net/dsa/mv88e6xxx/chip.h
+@@ -599,6 +599,8 @@ struct mv88e6xxx_ops {
+ 	const struct mv88e6xxx_ptp_ops *ptp_ops;
+ 
+ 	/* Phylink */
++	void (*phylink_get_interfaces)(struct mv88e6xxx_chip *chip, int port,
++				       unsigned long *supported);
+ 	void (*phylink_validate)(struct mv88e6xxx_chip *chip, int port,
+ 				 unsigned long *mask,
+ 				 struct phylink_link_state *state);
+-- 
+cgit v1.2.3
+
+
+From b020661fc4a29c39f0051cd22493e26cc1541b17 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Fri, 13 Mar 2020 10:48:32 +0000
+Subject: net: mtk_eth_soc: use resolved link config for PCS PHY
+
+The SGMII PCS PHY needs to be updated with the link configuration in
+the mac_link_up() call rather than in mac_config().  However,
+mtk_sgmii_setup_mode_force() programs the SGMII block during
+mac_config() when using 802.3z interface modes with the link
+configuration.
+
+Split that functionality from mtk_sgmii_setup_mode_force(), moving it
+to a new mtk_sgmii_link_up() function, and call it from mac_link_up().
+
+This does not look correct to me: 802.3z modes operate at a fixed
+speed.  The contents of mtk_sgmii_link_up() look more appropriate for
+SGMII mode, but the original code definitely did not call
+mtk_sgmii_setup_mode_force() for SGMII mode but only 802.3z mode.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 11 ++++++++-
+ drivers/net/ethernet/mediatek/mtk_eth_soc.h |  3 ++-
+ drivers/net/ethernet/mediatek/mtk_sgmii.c   | 37 ++++++++++++++++++++---------
+ 3 files changed, 38 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index 64adfd24e134..82e4e9de3846 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -337,7 +337,7 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
+ 		/* Setup SGMIISYS with the determined property */
+ 		if (state->interface != PHY_INTERFACE_MODE_SGMII)
+ 			err = mtk_sgmii_setup_mode_force(eth->sgmii, sid,
+-							 state);
++							 state->interface);
+ 		else if (phylink_autoneg_inband(mode))
+ 			err = mtk_sgmii_setup_mode_an(eth->sgmii, sid);
+ 
+@@ -434,6 +434,15 @@ static void mtk_mac_link_up(struct phylink_config *config,
+ 					   phylink_config);
+ 	u32 mcr = mtk_r32(mac->hw, MTK_MAC_MCR(mac->id));
+ 
++	if (phy_interface_mode_is_8023z(interface)) {
++		struct mtk_eth *eth = mac->hw;
++
++		/* Decide how GMAC and SGMIISYS be mapped */
++		int sid = (MTK_HAS_CAPS(eth->soc->caps, MTK_SHARED_SGMII)) ?
++			   0 : mac->id;
++		mtk_sgmii_link_up(eth->sgmii, sid, speed, duplex);
++	}
++
+ 	mcr &= ~(MAC_MCR_SPEED_100 | MAC_MCR_SPEED_1000 |
+ 		 MAC_MCR_FORCE_DPX | MAC_MCR_FORCE_TX_FC |
+ 		 MAC_MCR_FORCE_RX_FC);
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+index 5ef70dd8b49c..c4771c29312a 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -1004,7 +1004,8 @@ int mtk_sgmii_init(struct mtk_sgmii *ss, struct device_node *np,
+ 		   u32 ana_rgc3);
+ int mtk_sgmii_setup_mode_an(struct mtk_sgmii *ss, int id);
+ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id,
+-			       const struct phylink_link_state *state);
++			       phy_interface_t interface);
++void mtk_sgmii_link_up(struct mtk_sgmii *ss, int id, int speed, int duplex);
+ void mtk_sgmii_restart_an(struct mtk_eth *eth, int mac_id);
+ 
+ int mtk_gmac_sgmii_path_setup(struct mtk_eth *eth, int mac_id);
+diff --git a/drivers/net/ethernet/mediatek/mtk_sgmii.c b/drivers/net/ethernet/mediatek/mtk_sgmii.c
+index 32d83421226a..372c85c830b5 100644
+--- a/drivers/net/ethernet/mediatek/mtk_sgmii.c
++++ b/drivers/net/ethernet/mediatek/mtk_sgmii.c
+@@ -60,7 +60,7 @@ int mtk_sgmii_setup_mode_an(struct mtk_sgmii *ss, int id)
+ }
+ 
+ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id,
+-			       const struct phylink_link_state *state)
++			       phy_interface_t interface)
+ {
+ 	unsigned int val;
+ 
+@@ -69,7 +69,7 @@ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id,
+ 
+ 	regmap_read(ss->regmap[id], ss->ana_rgc3, &val);
+ 	val &= ~RG_PHY_SPEED_MASK;
+-	if (state->interface == PHY_INTERFACE_MODE_2500BASEX)
++	if (interface == PHY_INTERFACE_MODE_2500BASEX)
+ 		val |= RG_PHY_SPEED_3_125G;
+ 	regmap_write(ss->regmap[id], ss->ana_rgc3, val);
+ 
+@@ -78,11 +78,33 @@ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id,
+ 	val &= ~SGMII_AN_ENABLE;
+ 	regmap_write(ss->regmap[id], SGMSYS_PCS_CONTROL_1, val);
+ 
++	if (interface == PHY_INTERFACE_MODE_1000BASEX ||
++	    interface == PHY_INTERFACE_MODE_2500BASEX) {
++		/* SGMII force mode setting */
++		regmap_read(ss->regmap[id], SGMSYS_SGMII_MODE, &val);
++		val &= ~SGMII_IF_MODE_MASK;
++		val |= SGMII_SPEED_1000;
++		val |= SGMII_DUPLEX_FULL;
++		regmap_write(ss->regmap[id], SGMSYS_SGMII_MODE, val);
++	}
++
++	/* Release PHYA power down state */
++	regmap_read(ss->regmap[id], SGMSYS_QPHY_PWR_STATE_CTRL, &val);
++	val &= ~SGMII_PHYA_PWD;
++	regmap_write(ss->regmap[id], SGMSYS_QPHY_PWR_STATE_CTRL, val);
++
++	return 0;
++}
++
++void mtk_sgmii_link_up(struct mtk_sgmii *ss, int id, int speed, int duplex)
++{
++	unsigned int val;
++
+ 	/* SGMII force mode setting */
+ 	regmap_read(ss->regmap[id], SGMSYS_SGMII_MODE, &val);
+ 	val &= ~SGMII_IF_MODE_MASK;
+ 
+-	switch (state->speed) {
++	switch (speed) {
+ 	case SPEED_10:
+ 		val |= SGMII_SPEED_10;
+ 		break;
+@@ -95,17 +117,10 @@ int mtk_sgmii_setup_mode_force(struct mtk_sgmii *ss, int id,
+ 		break;
+ 	}
+ 
+-	if (state->duplex == DUPLEX_FULL)
++	if (duplex == DUPLEX_FULL)
+ 		val |= SGMII_DUPLEX_FULL;
+ 
+ 	regmap_write(ss->regmap[id], SGMSYS_SGMII_MODE, val);
+-
+-	/* Release PHYA power down state */
+-	regmap_read(ss->regmap[id], SGMSYS_QPHY_PWR_STATE_CTRL, &val);
+-	val &= ~SGMII_PHYA_PWD;
+-	regmap_write(ss->regmap[id], SGMSYS_QPHY_PWR_STATE_CTRL, val);
+-
+-	return 0;
+ }
+ 
+ void mtk_sgmii_restart_an(struct mtk_eth *eth, int mac_id)
+-- 
+cgit v1.2.3
+
+
+From 8312e4eac6092eea69fba34906b972ec1c6927c9 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Sun, 21 Jun 2020 14:30:20 +0100
+Subject: net: phy: at803x: simplify custom phy id matching
+
+The at803x driver contains a function, at803x_match_phy_id(), which
+tests whether the PHY ID matches the value passed, comparing phy_id
+with phydev->phy_id and testing all bits that have a "one" in the
+mask, phydev->drv->phy_id_mask.
+
+This is the same test that is used to match the driver, with phy_id
+replaced with the driver specified ID, phydev->drv->phy_id.
+
+Hence, we already know the value of the bits being tested if we look
+at phydev->drv->phy_id directly, and we do not require a complicated
+test to check them.  Test directly against phydev->drv->phy_id instead.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/at803x.c | 18 ++++++------------
+ 1 file changed, 6 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/net/phy/at803x.c b/drivers/net/phy/at803x.c
+index 5d62b85a4024..bdac087058b2 100644
+--- a/drivers/net/phy/at803x.c
++++ b/drivers/net/phy/at803x.c
+@@ -532,12 +532,6 @@ static int at8031_register_regulators(struct phy_device *phydev)
+ 	return 0;
+ }
+ 
+-static bool at803x_match_phy_id(struct phy_device *phydev, u32 phy_id)
+-{
+-	return (phydev->phy_id & phydev->drv->phy_id_mask)
+-		== (phy_id & phydev->drv->phy_id_mask);
+-}
+-
+ static int at803x_parse_dt(struct phy_device *phydev)
+ {
+ 	struct device_node *node = phydev->mdio.dev.of_node;
+@@ -602,8 +596,8 @@ static int at803x_parse_dt(struct phy_device *phydev)
+ 		 *   to the AR8030 so there might be a good chance it works on
+ 		 *   the AR8030 too.
+ 		 */
+-		if (at803x_match_phy_id(phydev, ATH8030_PHY_ID) ||
+-		    at803x_match_phy_id(phydev, ATH8035_PHY_ID)) {
++		if (phydev->drv->phy_id == ATH8030_PHY_ID ||
++		    phydev->drv->phy_id == ATH8035_PHY_ID) {
+ 			priv->clk_25m_reg &= AT8035_CLK_OUT_MASK;
+ 			priv->clk_25m_mask &= AT8035_CLK_OUT_MASK;
+ 		}
+@@ -631,7 +625,7 @@ static int at803x_parse_dt(struct phy_device *phydev)
+ 	/* Only supported on AR8031/AR8033, the AR8030/AR8035 use strapping
+ 	 * options.
+ 	 */
+-	if (at803x_match_phy_id(phydev, ATH8031_PHY_ID)) {
++	if (phydev->drv->phy_id == ATH8031_PHY_ID) {
+ 		if (of_property_read_bool(node, "qca,keep-pll-enabled"))
+ 			priv->flags |= AT803X_KEEP_PLL_ENABLED;
+ 
+@@ -676,7 +670,7 @@ static int at803x_probe(struct phy_device *phydev)
+ 	 * Switch to the copper page, as otherwise we read
+ 	 * the PHY capabilities from the fiber side.
+ 	 */
+-	if (at803x_match_phy_id(phydev, ATH8031_PHY_ID)) {
++	if (phydev->drv->phy_id == ATH8031_PHY_ID) {
+ 		phy_lock_mdio_bus(phydev);
+ 		ret = at803x_write_page(phydev, AT803X_PAGE_COPPER);
+ 		phy_unlock_mdio_bus(phydev);
+@@ -709,7 +703,7 @@ static int at803x_get_features(struct phy_device *phydev)
+ 	if (err)
+ 		return err;
+ 
+-	if (!at803x_match_phy_id(phydev, ATH8031_PHY_ID))
++	if (phydev->drv->phy_id != ATH8031_PHY_ID)
+ 		return 0;
+ 
+ 	/* AR8031/AR8033 have different status registers
+@@ -820,7 +814,7 @@ static int at803x_config_init(struct phy_device *phydev)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	if (at803x_match_phy_id(phydev, ATH8031_PHY_ID)) {
++	if (phydev->drv->phy_id == ATH8031_PHY_ID) {
+ 		ret = at8031_pll_config(phydev);
+ 		if (ret < 0)
+ 			return ret;
+-- 
+cgit v1.2.3
+
+
+From 62e364e44a89c28faf0bb8a5500d830b43cec9ae Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Fri, 29 Nov 2019 00:31:03 +0000
+Subject: net: phy: add helpers for comparing phy IDs
+
+There are several places which open code comparing PHY IDs. Provide a
+couple of helpers to assist with this, using a slightly simpler test
+than the original:
+
+- phy_id_compare() compares two arbitary PHY IDs and a mask of the
+  significant bits in the ID.
+- phydev_id_compare() compares the bound phydev with the specified
+  PHY ID, using the bound driver's mask.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phy_device.c | 16 +++++++---------
+ drivers/net/phy/phylink.c    |  4 ++--
+ include/linux/phy.h          | 28 ++++++++++++++++++++++++++++
+ 3 files changed, 37 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/phy/phy_device.c b/drivers/net/phy/phy_device.c
+index 5d5f9a9ee768..67593cf47bf0 100644
+--- a/drivers/net/phy/phy_device.c
++++ b/drivers/net/phy/phy_device.c
+@@ -388,8 +388,7 @@ int phy_unregister_fixup(const char *bus_id, u32 phy_uid, u32 phy_uid_mask)
+ 		fixup = list_entry(pos, struct phy_fixup, list);
+ 
+ 		if ((!strcmp(fixup->bus_id, bus_id)) &&
+-		    ((fixup->phy_uid & phy_uid_mask) ==
+-		     (phy_uid & phy_uid_mask))) {
++		    phy_id_compare(fixup->phy_uid, phy_uid, phy_uid_mask)) {
+ 			list_del(&fixup->list);
+ 			kfree(fixup);
+ 			ret = 0;
+@@ -425,8 +424,8 @@ static int phy_needs_fixup(struct phy_device *phydev, struct phy_fixup *fixup)
+ 		if (strcmp(fixup->bus_id, PHY_ANY_ID) != 0)
+ 			return 0;
+ 
+-	if ((fixup->phy_uid & fixup->phy_uid_mask) !=
+-	    (phydev->phy_id & fixup->phy_uid_mask))
++	if (!phy_id_compare(phydev->phy_id, fixup->phy_uid,
++			    fixup->phy_uid_mask))
+ 		if (fixup->phy_uid != PHY_ANY_UID)
+ 			return 0;
+ 
+@@ -473,15 +472,14 @@ static int phy_bus_match(struct device *dev, struct device_driver *drv)
+ 			if (phydev->c45_ids.device_ids[i] == 0xffffffff)
+ 				continue;
+ 
+-			if ((phydrv->phy_id & phydrv->phy_id_mask) ==
+-			    (phydev->c45_ids.device_ids[i] &
+-			     phydrv->phy_id_mask))
++			if (phy_id_compare(phydev->c45_ids.device_ids[i],
++					   phydrv->phy_id, phydrv->phy_id_mask))
+ 				return 1;
+ 		}
+ 		return 0;
+ 	} else {
+-		return (phydrv->phy_id & phydrv->phy_id_mask) ==
+-			(phydev->phy_id & phydrv->phy_id_mask);
++		return phy_id_compare(phydev->phy_id, phydrv->phy_id,
++				      phydrv->phy_id_mask);
+ 	}
+ }
+ 
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index c721ef6dda2e..1454e8d199de 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -2350,8 +2350,8 @@ static void phylink_sfp_link_up(void *upstream)
+  */
+ static bool phylink_phy_no_inband(struct phy_device *phy)
+ {
+-	return phy->is_c45 &&
+-		(phy->c45_ids.device_ids[1] & 0xfffffff0) == 0xae025150;
++	return phy->is_c45 && phy_id_compare(phy->c45_ids.device_ids[1],
++					     0xae025150, 0xfffffff0);
+ }
+ 
+ static int phylink_sfp_connect_phy(void *upstream, struct phy_device *phy)
+diff --git a/include/linux/phy.h b/include/linux/phy.h
+index 1472657a8136..a9d22716b16b 100644
+--- a/include/linux/phy.h
++++ b/include/linux/phy.h
+@@ -928,6 +928,34 @@ struct phy_driver {
+ #define PHY_ID_MATCH_MODEL(id) .phy_id = (id), .phy_id_mask = GENMASK(31, 4)
+ #define PHY_ID_MATCH_VENDOR(id) .phy_id = (id), .phy_id_mask = GENMASK(31, 10)
+ 
++/**
++ * phy_id_compare - compare @id1 with @id2 taking account of @mask
++ * @id1: first PHY ID
++ * @id2: second PHY ID
++ * @mask: the PHY ID mask, set bits are significant in matching
++ *
++ * Return true if the bits from @id1 and @id2 specified by @mask match.
++ * This uses an equivalent test to (@id & @mask) == (@phy_id & @mask).
++ */
++static inline bool phy_id_compare(u32 id1, u32 id2, u32 mask)
++{
++	return !((id1 ^ id2) & mask);
++}
++
++/**
++ * phydev_id_compare - compare @id with the PHY's Clause 22 ID
++ * @phydev: the PHY device
++ * @id: the PHY ID to be matched
++ *
++ * Compare the @phydev clause 22 ID with the provided @id and return true or
++ * false depending whether it matches, using the bound driver mask. The
++ * @phydev must be bound to a driver.
++ */
++static inline bool phydev_id_compare(struct phy_device *phydev, u32 id)
++{
++	return phy_id_compare(id, phydev->phy_id, phydev->drv->phy_id_mask);
++}
++
+ /* A Structure for boards to register fixups with the PHY Lib */
+ struct phy_fixup {
+ 	struct list_head list;
+-- 
+cgit v1.2.3
+
+
+From 85cb27e836df0c37ca6e5fab7b20ab1106478956 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 17 Dec 2019 15:21:50 +0000
+Subject: dt-bindings: net: add dt bindings for marvell10g driver
+
+Add a DT bindings document for the Marvell 10G driver, which will
+augment the generic ethernet PHY binding by having LED mode
+configuration.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ .../devicetree/bindings/net/marvell,10g.yaml       | 35 ++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/net/marvell,10g.yaml
+
+diff --git a/Documentation/devicetree/bindings/net/marvell,10g.yaml b/Documentation/devicetree/bindings/net/marvell,10g.yaml
+new file mode 100644
+index 000000000000..93d2c8d7e759
+--- /dev/null
++++ b/Documentation/devicetree/bindings/net/marvell,10g.yaml
+@@ -0,0 +1,35 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/net/marvell,10g.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Marvell Alaska X family Ethernet PHYs
++
++maintainers:
++  - Russell King <rmk+kernel@armlinux.org.uk>
++
++allOf:
++  - $ref: ethernet-phy.yaml#
++
++properties:
++  marvell,led-mode:
++    description: |
++      An array of one to four 16-bit integers to write to the PHY LED
++      configuration registers.
++    allOf:
++      - $ref: /schemas/types.yaml#/definitions/uint16-array
++      - minItems: 1
++        maxItems: 4
++
++examples:
++  - |
++    mdio {
++        #address-cells = <1>;
++        #size-cells = <0>;
++        ethernet-phy@0 {
++            reg = <0>;
++            compatible = "ethernet-phy-ieee802.3-c45";
++            marvell,led-mode = /bits/ 16 <0x0129 0x095d 0x0855>;
++        };
++    };
+-- 
+cgit v1.2.3
+
+
+From 9b8ec077ca9d8bbb83c7e4c19f631596433f3cdf Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Sun, 1 Dec 2019 15:33:39 +0000
+Subject: net: phy: marvell10g: add support for configuring LEDs
+
+Add support for configuring the LEDs. Macchiatobin has an oddity in
+that the left LED goes out when the cable is connected, and flashes
+when there's link activity. This is because the reset default for
+the LED outputs assume that the LED is connected to supply, not to
+ground. Add support for configuring the LED modes and polarities.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell10g.c | 62 +++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 55 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/phy/marvell10g.c b/drivers/net/phy/marvell10g.c
+index eff980b94c95..9eece4f5fb4a 100644
+--- a/drivers/net/phy/marvell10g.c
++++ b/drivers/net/phy/marvell10g.c
+@@ -27,6 +27,7 @@
+ #include <linux/delay.h>
+ #include <linux/hwmon.h>
+ #include <linux/marvell_phy.h>
++#include <linux/of.h>
+ #include <linux/phy.h>
+ #include <linux/sfp.h>
+ 
+@@ -146,6 +147,8 @@ struct mv3310_priv {
+ 
+ 	struct device *hwmon_dev;
+ 	char *hwmon_name;
++	u8 num_leds;
++	u16 led_mode[4];
+ };
+ 
+ static const struct mv3310_chip *to_mv3310_chip(struct phy_device *phydev)
+@@ -468,6 +471,43 @@ static const struct sfp_upstream_ops mv3310_sfp_ops = {
+ 	.module_insert = mv3310_sfp_insert,
+ };
+ 
++static int mv3310_leds_write(struct phy_device *phydev)
++{
++	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
++	int i, ret;
++
++	for (i = 0; i < priv->num_leds; i++) {
++		ret = phy_write_mmd(phydev, MDIO_MMD_VEND2, 0xf020 + i,
++				    priv->led_mode[i]);
++		if (ret < 0)
++			return ret;
++	}
++
++	return 0;
++}
++
++static int mv3310_fw_config(struct phy_device *phydev)
++{
++	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
++	struct device_node *node;
++	int ret;
++
++	node = phydev->mdio.dev.of_node;
++	if (!node)
++		return 0;
++
++	ret = of_property_read_variable_u16_array(node, "marvell,led-mode",
++				priv->led_mode, 1, ARRAY_SIZE(priv->led_mode));
++	if (ret == -EINVAL)
++		ret = 0;
++	if (ret < 0)
++		return ret;
++
++	priv->num_leds = ret;
++
++	return 0;
++}
++
+ static int mv3310_probe(struct phy_device *phydev)
+ {
+ 	const struct mv3310_chip *chip = to_mv3310_chip(phydev);
+@@ -479,6 +519,20 @@ static int mv3310_probe(struct phy_device *phydev)
+ 	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
+ 		return -ENODEV;
+ 
++	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	dev_set_drvdata(&phydev->mdio.dev, priv);
++
++	ret = mv3310_fw_config(phydev);
++	if (ret < 0)
++		return ret;
++
++	ret = mv3310_leds_write(phydev);
++	if (ret < 0)
++		return ret;
++
+ 	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_BOOT);
+ 	if (ret < 0)
+ 		return ret;
+@@ -489,12 +543,6 @@ static int mv3310_probe(struct phy_device *phydev)
+ 		return -ENODEV;
+ 	}
+ 
+-	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
+-	if (!priv)
+-		return -ENOMEM;
+-
+-	dev_set_drvdata(&phydev->mdio.dev, priv);
+-
+ 	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER0);
+ 	if (ret < 0)
+ 		return ret;
+@@ -691,7 +739,7 @@ static int mv3310_config_init(struct phy_device *phydev)
+ 	if (err && err != -EOPNOTSUPP)
+ 		return err;
+ 
+-	return 0;
++	return mv3310_leds_write(phydev);
+ }
+ 
+ static int mv3310_get_features(struct phy_device *phydev)
+-- 
+cgit v1.2.3
+
+
+From 6e562bcf785d136cf57cdb996c591a058ca58fd9 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Sun, 1 Dec 2019 15:35:08 +0000
+Subject: arm64: dts: configure Macchiatobin 10G PHY LED modes
+
+Configure the Macchiatobin 10G PHY LED modes to correct their polarity.
+We keep the existing LED behaviours, but switch their polarity to
+reflect how they are connected. Tweak the LED modes as well to be:
+
+left:  off          = no link
+       solid green  = RJ45 link up (not SFP+ cage)
+       flash green  = traffic
+right: off          = no link
+       solid green  = 10G
+       solid yellow = 1G
+       flash green  = 100M
+       flash yellow = 10M
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ arch/arm64/boot/dts/marvell/armada-8040-mcbin.dts | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/marvell/armada-8040-mcbin.dts b/arch/arm64/boot/dts/marvell/armada-8040-mcbin.dts
+index 1766cf58101b..68c27f22ff57 100644
+--- a/arch/arm64/boot/dts/marvell/armada-8040-mcbin.dts
++++ b/arch/arm64/boot/dts/marvell/armada-8040-mcbin.dts
+@@ -21,12 +21,14 @@
+ 		compatible = "ethernet-phy-ieee802.3-c45";
+ 		reg = <0>;
+ 		sfp = <&sfp_eth0>;
++		marvell,led-mode = /bits/ 16 <0x0129 0x095d 0x0855>;
+ 	};
+ 
+ 	phy8: ethernet-phy@8 {
+ 		compatible = "ethernet-phy-ieee802.3-c45";
+ 		reg = <8>;
+ 		sfp = <&sfp_eth1>;
++		marvell,led-mode = /bits/ 16 <0x0129 0x095d 0x0855>;
+ 	};
+ };
+ 
+-- 
+cgit v1.2.3
+
+
+From d9598632d7bbea77eeaa2854f2410e332b1a2845 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Fri, 3 Jan 2020 23:13:28 +0000
+Subject: net: phy: add resolved pause support
+
+Allow phylib drivers to pass the hardware-resolved pause state to MAC
+drivers, rather than using the software-based pause resolution code.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phy_device.c | 6 ++++++
+ include/linux/phy.h          | 9 +++++++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/drivers/net/phy/phy_device.c b/drivers/net/phy/phy_device.c
+index 67593cf47bf0..7317539a78da 100644
+--- a/drivers/net/phy/phy_device.c
++++ b/drivers/net/phy/phy_device.c
+@@ -2785,6 +2785,12 @@ void phy_get_pause(struct phy_device *phydev, bool *tx_pause, bool *rx_pause)
+ 		return;
+ 	}
+ 
++	if (phydev->resolved_pause_valid) {
++		*tx_pause = phydev->resolved_tx_pause;
++		*rx_pause = phydev->resolved_rx_pause;
++		return;
++	}
++
+ 	return linkmode_resolve_pause(phydev->advertising,
+ 				      phydev->lp_advertising,
+ 				      tx_pause, rx_pause);
+diff --git a/include/linux/phy.h b/include/linux/phy.h
+index a9d22716b16b..8e5306ce68a1 100644
+--- a/include/linux/phy.h
++++ b/include/linux/phy.h
+@@ -630,6 +630,15 @@ struct phy_device {
+ 	u8 master_slave_set;
+ 	u8 master_slave_state;
+ 
++	/*
++	 * private to phylib: the resolved pause state - only valid if
++	 * resolved_pause_valid is true. only phy drivers and phylib
++	 * should touch this.
++	 */
++	bool resolved_pause_valid;
++	bool resolved_tx_pause;
++	bool resolved_rx_pause;
++
+ 	/* Union of PHY and Attached devices' supported link modes */
+ 	/* See ethtool.h for more info */
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
+-- 
+cgit v1.2.3
+
+
+From f1526441e47d215ab14b594efd60a7f547b93a79 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Sat, 4 Jan 2020 00:41:35 +0000
+Subject: net: phy: marvell*: add support for hw resolved pause modes
+
+Support reporting the hardware resolved pause enablement states via
+phylib, overriding our software implementation.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell.c    | 45 ++++++++++++++++++++++++++++++++++++++------
+ drivers/net/phy/marvell10g.c |  6 ++++++
+ 2 files changed, 45 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
+index 3de93c9f2744..4509b5b3ff91 100644
+--- a/drivers/net/phy/marvell.c
++++ b/drivers/net/phy/marvell.c
+@@ -169,6 +169,10 @@
+ #define MII_M1011_PHY_STATUS_FULLDUPLEX	0x2000
+ #define MII_M1011_PHY_STATUS_RESOLVED	0x0800
+ #define MII_M1011_PHY_STATUS_LINK	0x0400
++#define MII_M1111_PHY_STATUS_TX_PAUSE	0x0008
++#define MII_M1111_PHY_STATUS_RX_PAUSE	0x0004
++#define MII_88E151X_PHY_STATUS_TX_PAUSE	0x0200
++#define MII_88E151X_PHY_STATUS_RX_PAUSE	0x0100
+ 
+ #define MII_88E3016_PHY_SPEC_CTRL	0x10
+ #define MII_88E3016_DISABLE_SCRAMBLER	0x0200
+@@ -294,6 +298,8 @@ struct marvell_priv {
+ 	u32 last;
+ 	u32 step;
+ 	s8 pair;
++	u16 tx_pause_mask;
++	u16 rx_pause_mask;
+ };
+ 
+ static int marvell_read_page(struct phy_device *phydev)
+@@ -1509,6 +1515,7 @@ static void fiber_lpa_mod_linkmode_lpa_t(unsigned long *advertising, u32 lpa)
+ static int marvell_read_status_page_an(struct phy_device *phydev,
+ 				       int fiber, int status)
+ {
++	struct marvell_priv *priv = phydev->priv;
+ 	int lpa;
+ 	int err;
+ 
+@@ -1564,6 +1571,11 @@ static int marvell_read_status_page_an(struct phy_device *phydev,
+ 		}
+ 	}
+ 
++	phydev->resolved_tx_pause = !!(status & priv->tx_pause_mask);
++	phydev->resolved_rx_pause = !!(status & priv->rx_pause_mask);
++	phydev->resolved_pause_valid = !fiber && priv->tx_pause_mask &&
++				       priv->rx_pause_mask;
++
+ 	return 0;
+ }
+ 
+@@ -1607,6 +1619,7 @@ static int marvell_read_status_page(struct phy_device *phydev, int page)
+ 	phydev->speed = SPEED_UNKNOWN;
+ 	phydev->duplex = DUPLEX_UNKNOWN;
+ 	phydev->port = fiber ? PORT_FIBRE : PORT_TP;
++	phydev->resolved_pause_valid = false;
+ 
+ 	if (phydev->autoneg == AUTONEG_ENABLE)
+ 		err = marvell_read_status_page_an(phydev, fiber, status);
+@@ -2688,7 +2701,8 @@ static int marvell_hwmon_probe(struct phy_device *phydev)
+ }
+ #endif
+ 
+-static int marvell_probe(struct phy_device *phydev)
++static int marvell_probe_pause(struct phy_device *phydev, u16 tx_pause_mask,
++			       u16 rx_pause_mask)
+ {
+ 	struct marvell_priv *priv;
+ 
+@@ -2696,11 +2710,30 @@ static int marvell_probe(struct phy_device *phydev)
+ 	if (!priv)
+ 		return -ENOMEM;
+ 
++	priv->tx_pause_mask = tx_pause_mask;
++	priv->rx_pause_mask = rx_pause_mask;
+ 	phydev->priv = priv;
+ 
+ 	return marvell_hwmon_probe(phydev);
+ }
+ 
++static int marvell_probe(struct phy_device *phydev)
++{
++	return marvell_probe_pause(phydev, 0, 0);
++}
++
++static int m88e1111_probe(struct phy_device *phydev)
++{
++	return marvell_probe_pause(phydev, MII_M1111_PHY_STATUS_TX_PAUSE,
++				   MII_M1111_PHY_STATUS_RX_PAUSE);
++}
++
++static int m88e1510_probe(struct phy_device *phydev)
++{
++	return marvell_probe_pause(phydev, MII_88E151X_PHY_STATUS_TX_PAUSE,
++				   MII_88E151X_PHY_STATUS_RX_PAUSE);
++}
++
+ static struct phy_driver marvell_drivers[] = {
+ 	{
+ 		.phy_id = MARVELL_PHY_ID_88E1101,
+@@ -2745,7 +2778,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.phy_id_mask = MARVELL_PHY_ID_MASK,
+ 		.name = "Marvell 88E1111",
+ 		/* PHY_GBIT_FEATURES */
+-		.probe = marvell_probe,
++		.probe = m88e1111_probe,
+ 		.config_init = m88e1111gbe_config_init,
+ 		.config_aneg = m88e1111_config_aneg,
+ 		.read_status = marvell_read_status,
+@@ -2927,7 +2960,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.driver_data = DEF_MARVELL_HWMON_OPS(m88e1510_hwmon_ops),
+ 		.features = PHY_GBIT_FIBRE_FEATURES,
+ 		.flags = PHY_POLL_CABLE_TEST,
+-		.probe = marvell_probe,
++		.probe = m88e1510_probe,
+ 		.config_init = m88e1510_config_init,
+ 		.config_aneg = m88e1510_config_aneg,
+ 		.read_status = marvell_read_status,
+@@ -2956,7 +2989,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.driver_data = DEF_MARVELL_HWMON_OPS(m88e1510_hwmon_ops),
+ 		/* PHY_GBIT_FEATURES */
+ 		.flags = PHY_POLL_CABLE_TEST,
+-		.probe = marvell_probe,
++		.probe = m88e1510_probe,
+ 		.config_init = marvell_1011gbe_config_init,
+ 		.config_aneg = m88e1510_config_aneg,
+ 		.read_status = marvell_read_status,
+@@ -2980,7 +3013,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.phy_id_mask = MARVELL_PHY_ID_MASK,
+ 		.name = "Marvell 88E1545",
+ 		.driver_data = DEF_MARVELL_HWMON_OPS(m88e1510_hwmon_ops),
+-		.probe = marvell_probe,
++		.probe = m88e1510_probe,
+ 		/* PHY_GBIT_FEATURES */
+ 		.flags = PHY_POLL_CABLE_TEST,
+ 		.config_init = marvell_1011gbe_config_init,
+@@ -3027,7 +3060,7 @@ static struct phy_driver marvell_drivers[] = {
+ 		.driver_data = DEF_MARVELL_HWMON_OPS(m88e1510_hwmon_ops),
+ 		/* PHY_GBIT_FEATURES */
+ 		.flags = PHY_POLL_CABLE_TEST,
+-		.probe = marvell_probe,
++		.probe = m88e1510_probe,
+ 		.config_init = marvell_1011gbe_config_init,
+ 		.config_aneg = m88e6390_config_aneg,
+ 		.read_status = marvell_read_status,
+diff --git a/drivers/net/phy/marvell10g.c b/drivers/net/phy/marvell10g.c
+index 9eece4f5fb4a..6fd63044daf5 100644
+--- a/drivers/net/phy/marvell10g.c
++++ b/drivers/net/phy/marvell10g.c
+@@ -82,6 +82,8 @@ enum {
+ 	MV_PCS_CSSR1_SPD1_10	= 0x0000,
+ 	MV_PCS_CSSR1_DUPLEX_FULL= BIT(13),
+ 	MV_PCS_CSSR1_RESOLVED	= BIT(11),
++	MV_PCS_CSSR1_TX_PAUSE	= BIT(9),
++	MV_PCS_CSSR1_RX_PAUSE	= BIT(8),
+ 	MV_PCS_CSSR1_MDIX	= BIT(6),
+ 	MV_PCS_CSSR1_SPD2_MASK	= 0x000c,
+ 	MV_PCS_CSSR1_SPD2_5000	= 0x0008,
+@@ -957,6 +959,10 @@ static int mv3310_read_status_copper(struct phy_device *phydev)
+ 	phydev->mdix = cssr1 & MV_PCS_CSSR1_MDIX ?
+ 		       ETH_TP_MDI_X : ETH_TP_MDI;
+ 
++	phydev->resolved_tx_pause = !!(cssr1 & MV_PCS_CSSR1_TX_PAUSE);
++	phydev->resolved_rx_pause = !!(cssr1 & MV_PCS_CSSR1_RX_PAUSE);
++	phydev->resolved_pause_valid = true;
++
+ 	if (val & MDIO_AN_STAT1_COMPLETE) {
+ 		val = genphy_c45_read_lpa(phydev);
+ 		if (val < 0)
+-- 
+cgit v1.2.3
+
+
+From b6fcbbc99c55ca450563af6d24826d1aaca0fddf Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 26 Aug 2019 12:19:35 +0100
+Subject: net: phy: provide phy driver start/stop hooks
+
+Provide phy driver start/stop hooks so that the PHY driver knows when
+the network driver is starting or stopping.  This will be used for the
+Marvell 10G driver so that we can sanely refuse to start if the PHYs
+firmware is not present, and also so that we can sanely support SFPs
+behind the PHY.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phy.c | 5 +++++
+ include/linux/phy.h   | 3 +++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/drivers/net/phy/phy.c b/drivers/net/phy/phy.c
+index 8eeb26d8aeb7..abf58a152fc3 100644
+--- a/drivers/net/phy/phy.c
++++ b/drivers/net/phy/phy.c
+@@ -1024,6 +1024,8 @@ void phy_stop(struct phy_device *phydev)
+ 		sfp_upstream_stop(phydev->sfp_bus);
+ 
+ 	phydev->state = PHY_HALTED;
++	if (phydev->drv->stop)
++		phydev->drv->stop(phydev);
+ 
+ 	mutex_unlock(&phydev->lock);
+ 
+@@ -1057,6 +1059,9 @@ void phy_start(struct phy_device *phydev)
+ 		goto out;
+ 	}
+ 
++	if (phydev->drv->start && phydev->drv->start(phydev))
++		goto out;
++
+ 	if (phydev->sfp_bus)
+ 		sfp_upstream_start(phydev->sfp_bus);
+ 
+diff --git a/include/linux/phy.h b/include/linux/phy.h
+index 8e5306ce68a1..92e174a35fde 100644
+--- a/include/linux/phy.h
++++ b/include/linux/phy.h
+@@ -788,6 +788,9 @@ struct phy_driver {
+ 	/** @resume: Resume the hardware, restoring state if needed */
+ 	int (*resume)(struct phy_device *phydev);
+ 
++	int (*start)(struct phy_device *phydev);
++	void (*stop)(struct phy_device *phydev);
++
+ 	/**
+ 	 * @config_aneg: Configures the advertisement and resets
+ 	 * autonegotiation if phydev->autoneg is on,
+-- 
+cgit v1.2.3
+
+
+From f896f17eb7d719e4420d0f9f79a9c091b04e7b46 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Wed, 5 Jun 2019 11:44:55 +0100
+Subject: net: phy: marvell10g: allow PHY to probe without firmware
+
+Allow the PHY to probe when there is no firmware, but do not allow the
+link to come up by forcing the PHY state to PHY_HALTED in a similar way
+to phy_error().
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell10g.c | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/phy/marvell10g.c b/drivers/net/phy/marvell10g.c
+index 6fd63044daf5..57ba639c7a2f 100644
+--- a/drivers/net/phy/marvell10g.c
++++ b/drivers/net/phy/marvell10g.c
+@@ -146,6 +146,7 @@ struct mv3310_priv {
+ 	bool has_downshift;
+ 	bool rate_match;
+ 	phy_interface_t const_interface;
++	bool firmware_failed;
+ 
+ 	struct device *hwmon_dev;
+ 	char *hwmon_name;
+@@ -542,7 +543,7 @@ static int mv3310_probe(struct phy_device *phydev)
+ 	if (ret & MV_PMA_BOOT_FATAL) {
+ 		dev_warn(&phydev->mdio.dev,
+ 			 "PHY failed to boot firmware, status=%04x\n", ret);
+-		return -ENODEV;
++		priv->firmware_failed = true;
+ 	}
+ 
+ 	ret = phy_read_mmd(phydev, MDIO_MMD_PMAPMD, MV_PMA_FW_VER0);
+@@ -599,6 +600,19 @@ static int mv3310_resume(struct phy_device *phydev)
+ 	return mv3310_hwmon_config(phydev, true);
+ }
+ 
++static int mv3310_start(struct phy_device *phydev)
++{
++	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
++
++	if (priv->firmware_failed) {
++		dev_warn(&phydev->mdio.dev,
++			 "PHY firmware failure: PHY not starting");
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
+ /* Some PHYs in the Alaska family such as the 88X3310 and the 88E2010
+  * don't set bit 14 in PMA Extended Abilities (1.11), although they do
+  * support 2.5GBASET and 5GBASET. For these models, we can still read their
+@@ -1205,6 +1219,7 @@ static struct phy_driver mv3310_drivers[] = {
+ 		.probe		= mv3310_probe,
+ 		.suspend	= mv3310_suspend,
+ 		.resume		= mv3310_resume,
++		.start		= mv3310_start,
+ 		.config_aneg	= mv3310_config_aneg,
+ 		.aneg_done	= mv3310_aneg_done,
+ 		.read_status	= mv3310_read_status,
+@@ -1240,6 +1255,7 @@ static struct phy_driver mv3310_drivers[] = {
+ 		.probe		= mv3310_probe,
+ 		.suspend	= mv3310_suspend,
+ 		.resume		= mv3310_resume,
++		.start		= mv3310_start,
+ 		.config_init	= mv3310_config_init,
+ 		.config_aneg	= mv3310_config_aneg,
+ 		.aneg_done	= mv3310_aneg_done,
+-- 
+cgit v1.2.3
+
+
+From a8ba15f31356f0044f264d677d7f2a56b8599f8e Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 5 Nov 2019 10:34:39 +0000
+Subject: net: phy: make phy_error() report which PHY has failed
+
+phy_error() is called from phy_interrupt() or phy_state_machine(), and
+uses WARN_ON() to print a backtrace. The backtrace is not useful when
+reporting a PHY error.
+
+However, a system may contain multiple ethernet PHYs, and phy_error()
+gives no clue which one caused the problem.
+
+Replace WARN_ON() with a call to phydev_err() so that we can see which
+PHY had an error, and also inform the user that we are halting the PHY.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phy.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/phy/phy.c b/drivers/net/phy/phy.c
+index abf58a152fc3..db42a330f099 100644
+--- a/drivers/net/phy/phy.c
++++ b/drivers/net/phy/phy.c
+@@ -912,7 +912,7 @@ void phy_stop_machine(struct phy_device *phydev)
+  */
+ void phy_error(struct phy_device *phydev)
+ {
+-	WARN_ON(1);
++	phydev_err(phydev, "Error detected, halting PHY\n");
+ 
+ 	mutex_lock(&phydev->lock);
+ 	phydev->state = PHY_HALTED;
+-- 
+cgit v1.2.3
+
+
+From 135897c1f6ce9b35bb564036f6741313976ddd8f Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Fri, 18 Oct 2019 10:37:44 +0100
+Subject: net: sfp: add support for cooled SFP+ transceivers
+
+Cooled SFP+ transceivers need a longer initialisation (startup) time.
+Select the initialisation time depending on the cooled option bit.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/sfp.c | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/phy/sfp.c b/drivers/net/phy/sfp.c
+index 34e90216bd2c..21aefefd19a1 100644
+--- a/drivers/net/phy/sfp.c
++++ b/drivers/net/phy/sfp.c
+@@ -168,6 +168,7 @@ static const enum gpiod_flags gpio_flags[] = {
+ #define T_WAIT			msecs_to_jiffies(50)
+ #define T_START_UP		msecs_to_jiffies(300)
+ #define T_START_UP_BAD_GPON	msecs_to_jiffies(60000)
++#define T_START_UP_COOLED	msecs_to_jiffies(90000)
+ 
+ /* t_reset is the time required to assert the TX_DISABLE signal to reset
+  * an indicated TX_FAULT.
+@@ -1925,6 +1926,8 @@ static int sfp_sm_mod_probe(struct sfp *sfp, bool report)
+ 	if (!memcmp(id.base.vendor_name, "ALCATELLUCENT   ", 16) &&
+ 	    !memcmp(id.base.vendor_pn, "3FE46541AA      ", 16))
+ 		sfp->module_t_start_up = T_START_UP_BAD_GPON;
++	else if (id.ext.options & cpu_to_be16(SFP_OPTIONS_COOLED_XCVR))
++		sfp->module_t_start_up = T_START_UP_COOLED;
+ 	else
+ 		sfp->module_t_start_up = T_START_UP;
+ 
+@@ -2131,10 +2134,10 @@ static void sfp_sm_main(struct sfp *sfp, unsigned int event)
+ 			break;
+ 
+ 		if (sfp->state & SFP_F_TX_FAULT) {
+-			/* Wait up to t_init (SFF-8472) or t_start_up (SFF-8431)
+-			 * from the TX_DISABLE deassertion for the module to
+-			 * initialise, which is indicated by TX_FAULT
+-			 * deasserting.
++			/* Wait up to t_init (SFF-8472), t_start_up (SFF-8431),
++			 * or t_start_up_cooled (SFF-8431) from the TX_DISABLE
++			 * deassertion for the module to initialise, which is
++			 * indicated by TX_FAULT deasserting.
+ 			 */
+ 			timeout = sfp->module_t_start_up;
+ 			if (timeout > T_WAIT)
+@@ -2153,8 +2156,8 @@ static void sfp_sm_main(struct sfp *sfp, unsigned int event)
+ 
+ 	case SFP_S_INIT:
+ 		if (event == SFP_E_TIMEOUT && sfp->state & SFP_F_TX_FAULT) {
+-			/* TX_FAULT is still asserted after t_init
+-			 * or t_start_up, so assume there is a fault.
++			/* TX_FAULT is still asserted after t_init, t_start_up
++			 * or t_start_up_cooled, so assume there is a fault.
+ 			 */
+ 			sfp_sm_fault(sfp, SFP_S_INIT_TX_FAULT,
+ 				     sfp->sm_fault_retries == N_FAULT_INIT);
+-- 
+cgit v1.2.3
+
+
+From 1fa01bc40869fae288b98ed21ec4cf25e9d70e87 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Fri, 14 Apr 2017 20:17:13 +0100
+Subject: net: sfp: add sfp+ compatible                  [*not for mainline*]
+
+Add a compatible for SFP+ cages.  SFP+ cages are backwards compatible,
+but the ethernet device behind them may not support the slower speeds
+of SFP modules.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/sfp.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/net/phy/sfp.c b/drivers/net/phy/sfp.c
+index 21aefefd19a1..f2484197cbbd 100644
+--- a/drivers/net/phy/sfp.c
++++ b/drivers/net/phy/sfp.c
+@@ -304,6 +304,7 @@ static const struct sff_data sfp_data = {
+ static const struct of_device_id sfp_of_match[] = {
+ 	{ .compatible = "sff,sff", .data = &sff_data, },
+ 	{ .compatible = "sff,sfp", .data = &sfp_data, },
++	{ .compatible = "sff,sfp+", .data = &sfp_data, },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(of, sfp_of_match);
+-- 
+cgit v1.2.3
+
+
+From 74505eaba6278e9e554e9d7fd42e7bd720477b35 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@arm.linux.org.uk>
+Date: Sun, 13 Sep 2015 01:06:31 +0100
+Subject: net: sfp: display SFP module information       [*not for mainline*]
+
+Display SFP module information verbosely, splitting the generic parts
+into a separate file.
+
+Signed-off-by: Russell King <rmk+kernel@arm.linux.org.uk>
+---
+ drivers/net/phy/Makefile |   2 +-
+ drivers/net/phy/sff.c    | 114 ++++++++++++++++++++++++
+ drivers/net/phy/sff.h    |  16 ++++
+ drivers/net/phy/sfp.c    | 228 ++++++++++++++++++++++++++++++++++++++++++++---
+ 4 files changed, 349 insertions(+), 11 deletions(-)
+ create mode 100644 drivers/net/phy/sff.c
+ create mode 100644 drivers/net/phy/sff.h
+
+diff --git a/drivers/net/phy/Makefile b/drivers/net/phy/Makefile
+index 172bb193ae6a..93428ab6d5f3 100644
+--- a/drivers/net/phy/Makefile
++++ b/drivers/net/phy/Makefile
+@@ -26,7 +26,7 @@ obj-$(CONFIG_PHYLIB)		+= libphy.o
+ 
+ obj-$(CONFIG_NETWORK_PHY_TIMESTAMPING) += mii_timestamper.o
+ 
+-obj-$(CONFIG_SFP)		+= sfp.o
++obj-$(CONFIG_SFP)		+= sff.o sfp.o
+ sfp-obj-$(CONFIG_SFP)		+= sfp-bus.o
+ obj-y				+= $(sfp-obj-y) $(sfp-obj-m)
+ 
+diff --git a/drivers/net/phy/sff.c b/drivers/net/phy/sff.c
+new file mode 100644
+index 000000000000..a2eb56118dd4
+--- /dev/null
++++ b/drivers/net/phy/sff.c
+@@ -0,0 +1,114 @@
++#include <linux/kernel.h>
++#include <linux/sfp.h>
++#include "sff.h"
++
++const char *sff_link_len(char *buf, size_t size, unsigned int length,
++			 unsigned int multiplier)
++{
++	if (length == 0)
++		return "unsupported/unspecified";
++
++	if (length == 255) {
++		*buf++ = '>';
++		size -= 1;
++		length -= 1;
++	}
++
++	length *= multiplier;
++
++	if (length >= 1000)
++		snprintf(buf, size, "%u.%0*ukm",
++			length / 1000,
++			multiplier > 100 ? 1 :
++			multiplier > 10 ? 2 : 3,
++			length % 1000);
++	else
++		snprintf(buf, size, "%um", length);
++
++	return buf;
++}
++EXPORT_SYMBOL_GPL(sff_link_len);
++
++const char *sff_bitfield(char *buf, size_t size,
++			 const struct sff_bitfield *bits, unsigned int val)
++{
++	char *p = buf;
++	int n;
++
++	*p = '\0';
++	while (bits->mask) {
++		if ((val & bits->mask) == bits->val) {
++			n = snprintf(p, size, "%s%s",
++				     buf != p ? ", " : "",
++				     bits->str);
++			if (n == size)
++				break;
++			p += n;
++			size -= n;
++		}
++		bits++;
++	}
++
++	return buf;
++}
++EXPORT_SYMBOL_GPL(sff_bitfield);
++
++const char *sff_connector(unsigned int connector)
++{
++	switch (connector) {
++	case SFF8024_CONNECTOR_UNSPEC:
++		return "unknown/unspecified";
++	case SFF8024_CONNECTOR_SC:
++		return "SC";
++	case SFF8024_CONNECTOR_FIBERJACK:
++		return "Fiberjack";
++	case SFF8024_CONNECTOR_LC:
++		return "LC";
++	case SFF8024_CONNECTOR_MT_RJ:
++		return "MT-RJ";
++	case SFF8024_CONNECTOR_MU:
++		return "MU";
++	case SFF8024_CONNECTOR_SG:
++		return "SG";
++	case SFF8024_CONNECTOR_OPTICAL_PIGTAIL:
++		return "Optical pigtail";
++	case SFF8024_CONNECTOR_MPO_1X12:
++		return "MPO 1X12";
++	case SFF8024_CONNECTOR_MPO_2X16:
++		return "MPO 2X16";
++	case SFF8024_CONNECTOR_HSSDC_II:
++		return "HSSDC II";
++	case SFF8024_CONNECTOR_COPPER_PIGTAIL:
++		return "Copper pigtail";
++	case SFF8024_CONNECTOR_RJ45:
++		return "RJ45";
++	case SFF8024_CONNECTOR_MXC_2X16:
++		return "MXC 2X16";
++	default:
++		return "unknown";
++	}
++}
++EXPORT_SYMBOL_GPL(sff_connector);
++
++const char *sff_encoding(unsigned int encoding)
++{
++	switch (encoding) {
++	case SFF8024_ENCODING_UNSPEC:
++		return "unspecified";
++	case SFF8024_ENCODING_8472_64B66B:
++		return "64b66b";
++	case SFF8024_ENCODING_8B10B:
++		return "8b10b";
++	case SFF8024_ENCODING_4B5B:
++		return "4b5b";
++	case SFF8024_ENCODING_NRZ:
++		return "NRZ";
++	case SFF8024_ENCODING_8472_MANCHESTER:
++		return "MANCHESTER";
++	default:
++		return "unknown";
++	}
++}
++EXPORT_SYMBOL_GPL(sff_encoding);
++
++MODULE_LICENSE("GPL");
+diff --git a/drivers/net/phy/sff.h b/drivers/net/phy/sff.h
+new file mode 100644
+index 000000000000..cd7bb7c7ae4a
+--- /dev/null
++++ b/drivers/net/phy/sff.h
+@@ -0,0 +1,16 @@
++#ifndef SFF_H
++#define SFF_H
++
++struct sff_bitfield {
++	unsigned int mask;
++	unsigned int val;
++	const char *str;
++};
++
++const char *sff_link_len(char *buf, size_t size, unsigned int length,
++			 unsigned int multiplier);
++const char *sff_bitfield(char *buf, size_t size,
++			 const struct sff_bitfield *bits, unsigned int val);
++const char *sff_connector(unsigned int connector);
++const char *sff_encoding(unsigned int encoding);
++#endif
+diff --git a/drivers/net/phy/sfp.c b/drivers/net/phy/sfp.c
+index f2484197cbbd..4637e3769ab2 100644
+--- a/drivers/net/phy/sfp.c
++++ b/drivers/net/phy/sfp.c
+@@ -18,6 +18,7 @@
+ #include <linux/slab.h>
+ #include <linux/workqueue.h>
+ 
++#include "sff.h"
+ #include "sfp.h"
+ #include "swphy.h"
+ 
+@@ -1398,6 +1399,114 @@ static void sfp_hwmon_exit(struct sfp *sfp)
+ }
+ #endif
+ 
++static const struct sff_bitfield sfp_options[] = {
++	{
++		.mask = SFP_OPTIONS_HIGH_POWER_LEVEL,
++		.val = SFP_OPTIONS_HIGH_POWER_LEVEL,
++		.str = "hpl",
++	}, {
++		.mask = SFP_OPTIONS_PAGING_A2,
++		.val = SFP_OPTIONS_PAGING_A2,
++		.str = "paginga2",
++	}, {
++		.mask = SFP_OPTIONS_RETIMER,
++		.val = SFP_OPTIONS_RETIMER,
++		.str = "retimer",
++	}, {
++		.mask = SFP_OPTIONS_COOLED_XCVR,
++		.val = SFP_OPTIONS_COOLED_XCVR,
++		.str = "cooled",
++	}, {
++		.mask = SFP_OPTIONS_POWER_DECL,
++		.val = SFP_OPTIONS_POWER_DECL,
++		.str = "powerdecl",
++	}, {
++		.mask = SFP_OPTIONS_RX_LINEAR_OUT,
++		.val = SFP_OPTIONS_RX_LINEAR_OUT,
++		.str = "rxlinear",
++	}, {
++		.mask = SFP_OPTIONS_RX_DECISION_THRESH,
++		.val = SFP_OPTIONS_RX_DECISION_THRESH,
++		.str = "rxthresh",
++	}, {
++		.mask = SFP_OPTIONS_TUNABLE_TX,
++		.val = SFP_OPTIONS_TUNABLE_TX,
++		.str = "tunabletx",
++	}, {
++		.mask = SFP_OPTIONS_RATE_SELECT,
++		.val = SFP_OPTIONS_RATE_SELECT,
++		.str = "ratesel",
++	}, {
++		.mask = SFP_OPTIONS_TX_DISABLE,
++		.val = SFP_OPTIONS_TX_DISABLE,
++		.str = "txdisable",
++	}, {
++		.mask = SFP_OPTIONS_TX_FAULT,
++		.val = SFP_OPTIONS_TX_FAULT,
++		.str = "txfault",
++	}, {
++		.mask = SFP_OPTIONS_LOS_INVERTED,
++		.val = SFP_OPTIONS_LOS_INVERTED,
++		.str = "los-",
++	}, {
++		.mask = SFP_OPTIONS_LOS_NORMAL,
++		.val = SFP_OPTIONS_LOS_NORMAL,
++		.str = "los+",
++	}, { }
++};
++
++static const struct sff_bitfield diagmon[] = {
++	{
++		.mask = SFP_DIAGMON_DDM,
++		.val = SFP_DIAGMON_DDM,
++		.str = "ddm",
++	}, {
++		.mask = SFP_DIAGMON_INT_CAL,
++		.val = SFP_DIAGMON_INT_CAL,
++		.str = "intcal",
++	}, {
++		.mask = SFP_DIAGMON_EXT_CAL,
++		.val = SFP_DIAGMON_EXT_CAL,
++		.str = "extcal",
++	}, {
++		.mask = SFP_DIAGMON_RXPWR_AVG,
++		.val = SFP_DIAGMON_RXPWR_AVG,
++		.str = "rxpwravg",
++	}, { }
++};
++
++static const struct sff_bitfield sfp_enhopts[] = {
++	{
++		.mask = SFP_ENHOPTS_ALARMWARN,
++		.val = SFP_ENHOPTS_ALARMWARN,
++		.str = "alarmwarn",
++	}, {
++		.mask = SFP_ENHOPTS_SOFT_TX_DISABLE,
++		.val = SFP_ENHOPTS_SOFT_TX_DISABLE,
++		.str = "soft_tx_dis",
++	}, {
++		.mask = SFP_ENHOPTS_SOFT_TX_FAULT,
++		.val = SFP_ENHOPTS_SOFT_TX_FAULT,
++		.str = "soft_tx_fault",
++	}, {
++		.mask = SFP_ENHOPTS_SOFT_RX_LOS,
++		.val = SFP_ENHOPTS_SOFT_RX_LOS,
++		.str = "soft_rx_los",
++	}, {
++		.mask = SFP_ENHOPTS_SOFT_RATE_SELECT,
++		.val = SFP_ENHOPTS_SOFT_RATE_SELECT,
++		.str = "soft_rs",
++	}, {
++		.mask = SFP_ENHOPTS_APP_SELECT_SFF8079,
++		.val = SFP_ENHOPTS_APP_SELECT_SFF8079,
++		.str = "app_sel",
++	}, {
++		.mask = SFP_ENHOPTS_SOFT_RATE_SFF8431,
++		.val = SFP_ENHOPTS_SOFT_RATE_SFF8431,
++		.str = "soft_r8431",
++	}, { }
++};
++
+ /* Helpers */
+ static void sfp_module_tx_disable(struct sfp *sfp)
+ {
+@@ -1781,6 +1890,110 @@ static int sfp_cotsworks_fixup_check(struct sfp *sfp, struct sfp_eeprom_id *id)
+ 	return 0;
+ }
+ 
++static void sfp_print_module_info(struct sfp *sfp, const struct sfp_eeprom_id *id, bool cotsworks)
++{
++	unsigned int br_nom, br_min, br_max;
++	char date[9];
++	char options[80];
++
++	/* Cotsworks also gets the date code wrong. */
++	date[0] = id->ext.datecode[4 - 2 * cotsworks];
++	date[1] = id->ext.datecode[5 - 2 * cotsworks];
++	date[2] = '-';
++	date[3] = id->ext.datecode[2 + 2 * cotsworks];
++	date[4] = id->ext.datecode[3 + 2 * cotsworks];
++	date[5] = '-';
++	date[6] = id->ext.datecode[0];
++	date[7] = id->ext.datecode[1];
++	date[8] = '\0';
++
++	if (id->base.br_nominal == 0) {
++		br_min = br_nom = br_max = 0;
++	} else if (id->base.br_nominal == 255) {
++		br_nom = 250 * id->ext.br_max;
++		br_max = br_nom + br_nom * id->ext.br_min / 100;
++		br_min = br_nom - br_nom * id->ext.br_min / 100;
++	} else {
++		br_nom = id->base.br_nominal * 100;
++		br_min = br_nom - id->base.br_nominal * id->ext.br_min;
++		br_max = br_nom + id->base.br_nominal * id->ext.br_max;
++	}
++
++	dev_info(sfp->dev, "module %.*s %.*s rev %.*s sn %.*s dc %s\n",
++		 (int)sizeof(id->base.vendor_name), id->base.vendor_name,
++		 (int)sizeof(id->base.vendor_pn), id->base.vendor_pn,
++		 (int)sizeof(id->base.vendor_rev), id->base.vendor_rev,
++		 (int)sizeof(id->ext.vendor_sn), id->ext.vendor_sn, date);
++	dev_info(sfp->dev, "  %s connector, encoding %s, bitrate %u.%03u (%u.%03u-%u.%03u) Gbps\n",
++		 sff_connector(id->base.connector),
++		 sff_encoding(id->base.encoding),
++		 br_nom / 1000, br_nom % 1000,
++		 br_min / 1000, br_min % 1000, br_max / 1000, br_max % 1000);
++	dev_info(sfp->dev, "  1000BaseSX%c 1000BaseLX%c 1000BaseCX%c 1000BaseT%c 100BaseLX%c 100BaseFX%c BaseBX10%c BasePX%c\n",
++		 id->base.e1000_base_sx ? '+' : '-',
++		 id->base.e1000_base_lx ? '+' : '-',
++		 id->base.e1000_base_cx ? '+' : '-',
++		 id->base.e1000_base_t ? '+' : '-',
++		 id->base.e100_base_lx ? '+' : '-',
++		 id->base.e100_base_fx ? '+' : '-',
++		 id->base.e_base_bx10 ? '+' : '-',
++		 id->base.e_base_px ? '+' : '-');
++	dev_info(sfp->dev, "  10GBaseSR%c 10GBaseLR%c 10GBaseLRM%c 10GBaseER%c\n",
++		 id->base.e10g_base_sr ? '+' : '-',
++		 id->base.e10g_base_lr ? '+' : '-',
++		 id->base.e10g_base_lrm ? '+' : '-',
++		 id->base.e10g_base_er ? '+' : '-');
++
++	if (!id->base.sfp_ct_passive && !id->base.sfp_ct_active &&
++	    !id->base.e1000_base_t) {
++		char len_9um[16], len_om[16];
++
++		dev_info(sfp->dev, "  Wavelength %unm, fiber lengths:\n",
++			 be16_to_cpup(&id->base.optical_wavelength));
++
++		if (id->base.link_len[0] == 255)
++			strcpy(len_9um, ">254km");
++		else if (id->base.link_len[1] && id->base.link_len[1] != 255)
++			sprintf(len_9um, "%um",
++				id->base.link_len[1] * 100);
++		else if (id->base.link_len[0])
++			sprintf(len_9um, "%ukm", id->base.link_len[0]);
++		else if (id->base.link_len[1] == 255)
++			strcpy(len_9um, ">25.4km");
++		else
++			strcpy(len_9um, "unsupported");
++
++		dev_info(sfp->dev, "    9µm SM    : %s\n", len_9um);
++		dev_info(sfp->dev, " 62.5µm MM OM1: %s\n",
++			 sff_link_len(len_om, sizeof(len_om),
++				      id->base.link_len[3], 10));
++		dev_info(sfp->dev, "   50µm MM OM2: %s\n",
++			 sff_link_len(len_om, sizeof(len_om),
++				      id->base.link_len[2], 10));
++		dev_info(sfp->dev, "   50µm MM OM3: %s\n",
++			 sff_link_len(len_om, sizeof(len_om),
++				      id->base.link_len[5], 10));
++		dev_info(sfp->dev, "   50µm MM OM4: %s\n",
++			 sff_link_len(len_om, sizeof(len_om),
++				      id->base.link_len[4], 10));
++	} else {
++		char len[16];
++		dev_info(sfp->dev, "  Copper length: %s\n",
++			 sff_link_len(len, sizeof(len),
++				      id->base.link_len[4], 1));
++	}
++
++	dev_info(sfp->dev, "  Options: %s\n",
++		 sff_bitfield(options, sizeof(options), sfp_options,
++			      be16_to_cpu(id->ext.options)));
++	dev_info(sfp->dev, "  Diagnostics: %s\n",
++		 sff_bitfield(options, sizeof(options), diagmon,
++			      id->ext.diagmon));
++	dev_info(sfp->dev, "  EnhOpts: %s\n",
++		 sff_bitfield(options, sizeof(options), sfp_enhopts,
++			      id->ext.enhopts));
++}
++
+ static int sfp_sm_mod_probe(struct sfp *sfp, bool report)
+ {
+ 	/* SFP module inserted - read I2C data */
+@@ -1835,9 +2048,9 @@ static int sfp_sm_mod_probe(struct sfp *sfp, bool report)
+ 		}
+ 	}
+ 
+-	/* Cotsworks do not seem to update the checksums when they
+-	 * do the final programming with the final module part number,
+-	 * serial number and date code.
++	/* Cotsworks do not seem to update the checksums when they update the
++	 * module part number, serial number and date code. They also format
++	 * the date code incorrectly.
+ 	 */
+ 	cotsworks = !memcmp(id.base.vendor_name, "COTSWORKS       ", 16);
+ 	cotsworks_sfbg = !memcmp(id.base.vendor_pn, "SFBG", 4);
+@@ -1897,14 +2110,9 @@ static int sfp_sm_mod_probe(struct sfp *sfp, bool report)
+ 		}
+ 	}
+ 
+-	sfp->id = id;
++	sfp_print_module_info(sfp, &id, cotsworks);
+ 
+-	dev_info(sfp->dev, "module %.*s %.*s rev %.*s sn %.*s dc %.*s\n",
+-		 (int)sizeof(id.base.vendor_name), id.base.vendor_name,
+-		 (int)sizeof(id.base.vendor_pn), id.base.vendor_pn,
+-		 (int)sizeof(id.base.vendor_rev), id.base.vendor_rev,
+-		 (int)sizeof(id.ext.vendor_sn), id.ext.vendor_sn,
+-		 (int)sizeof(id.ext.datecode), id.ext.datecode);
++	sfp->id = id;
+ 
+ 	/* Check whether we support this module */
+ 	if (!sfp->type->module_supported(&id)) {
+-- 
+cgit v1.2.3
+
+
+From e16986770e91289be92da37245e9a4bf668f24bd Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Sun, 16 Aug 2020 09:32:18 +0100
+Subject: net: phy: pass supported PHY interface types to phylib
+
+Pass the supported PHY interface types to phylib so that PHY drivers
+can select an appropriate host configuration mode for their interface
+according to the host capabilities.
+
+This is only done for SFP modules presently.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 18 ++++++++++++++++++
+ include/linux/phy.h       |  3 +++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 1454e8d199de..7479040ce98a 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -2152,6 +2152,8 @@ static void phylink_sfp_detach(void *upstream, struct sfp_bus *bus)
+ 	pl->netdev->sfp_bus = NULL;
+ }
+ 
++static DECLARE_PHY_INTERFACE_MASK(phylink_sfp_interfaces);
++
+ static const phy_interface_t phylink_sfp_interface_preference[] = {
+ 	PHY_INTERFACE_MODE_USXGMII,
+ 	PHY_INTERFACE_MODE_10GBASER,
+@@ -2375,6 +2377,10 @@ static int phylink_sfp_connect_phy(void *upstream, struct phy_device *phy)
+ 	else
+ 		mode = MLO_AN_INBAND;
+ 
++	/* Set the PHY's host supported interfaces */
++	phy_interface_and(phy->host_interfaces, phylink_sfp_interfaces,
++			  pl->config->supported_interfaces);
++
+ 	/* Do the initial configuration */
+ 	ret = phylink_sfp_config(pl, mode, phy->supported, phy->advertising);
+ 	if (ret < 0)
+@@ -2763,4 +2769,16 @@ void phylink_mii_c45_pcs_get_state(struct mdio_device *pcs,
+ }
+ EXPORT_SYMBOL_GPL(phylink_mii_c45_pcs_get_state);
+ 
++static int __init phylink_init(void)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(phylink_sfp_interface_preference); i++)
++		set_bit(phylink_sfp_interface_preference[i],
++			phylink_sfp_interfaces);
++
++	return 0;
++}
++module_init(phylink_init);
++
+ MODULE_LICENSE("GPL v2");
+diff --git a/include/linux/phy.h b/include/linux/phy.h
+index 92e174a35fde..ef3d16e91ae1 100644
+--- a/include/linux/phy.h
++++ b/include/linux/phy.h
+@@ -647,6 +647,9 @@ struct phy_device {
+ 	/* used with phy_speed_down */
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(adv_old);
+ 
++	/* supported PHY interface types */
++	DECLARE_PHY_INTERFACE_MASK(host_interfaces);
++
+ 	/* Energy efficient ethernet modes which should be prohibited */
+ 	u32 eee_broken_modes;
+ 
+-- 
+cgit v1.2.3
+
+
+From 5f39ed83ac1970d7c644cd7d31dba77315b30d38 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Sun, 16 Aug 2020 09:32:18 +0100
+Subject: net: phy: marvell10g: select host interface configuration
+
+Select the host interface configuration according to the capabilities
+of the host; this allows the kernel to support SFP modules using the
+88x3310.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell10g.c | 52 +++++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 47 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/net/phy/marvell10g.c b/drivers/net/phy/marvell10g.c
+index 57ba639c7a2f..e476cd33ee30 100644
+--- a/drivers/net/phy/marvell10g.c
++++ b/drivers/net/phy/marvell10g.c
+@@ -718,15 +718,41 @@ static int mv3340_init_interface(struct phy_device *phydev, int mactype)
+ 	return err;
+ }
+ 
++static int mv3310_select_mode(struct phy_device *phydev,
++			      unsigned long *host_interfaces)
++{
++	int mac_type = -1;
++
++	if (test_bit(PHY_INTERFACE_MODE_USXGMII, host_interfaces))
++		mac_type = 7;
++	else if (test_bit(PHY_INTERFACE_MODE_SGMII, host_interfaces) &&
++		 test_bit(PHY_INTERFACE_MODE_10GBASER, host_interfaces))
++		mac_type = 4;
++	else if (test_bit(PHY_INTERFACE_MODE_SGMII, host_interfaces) &&
++		 test_bit(PHY_INTERFACE_MODE_RXAUI, host_interfaces))
++		mac_type = 0;
++	else if (test_bit(PHY_INTERFACE_MODE_10GBASER, host_interfaces))
++		mac_type = 6;
++	else if (test_bit(PHY_INTERFACE_MODE_RXAUI, host_interfaces))
++		mac_type = 2;
++	else if (test_bit(PHY_INTERFACE_MODE_SGMII, host_interfaces))
++		mac_type = 4;
++
++	return mac_type;
++}
++
+ static int mv3310_config_init(struct phy_device *phydev)
+ {
+ 	struct mv3310_priv *priv = dev_get_drvdata(&phydev->mdio.dev);
+ 	const struct mv3310_chip *chip = to_mv3310_chip(phydev);
+-	int err, mactype;
++	int ret, err, mactype = -1;
+ 
+ 	/* Check that the PHY interface type is compatible */
+-	if (!test_bit(phydev->interface, priv->supported_interfaces))
++	if (!phy_interface_empty(phydev->host_interfaces)) {
++		mactype = mv3310_select_mode(phydev, phydev->host_interfaces);
++	} else if (!test_bit(phydev->interface, priv->supported_interfaces)) {
+ 		return -ENODEV;
++	}
+ 
+ 	phydev->mdix_ctrl = ETH_TP_MDI_AUTO;
+ 
+@@ -735,9 +761,25 @@ static int mv3310_config_init(struct phy_device *phydev)
+ 	if (err)
+ 		return err;
+ 
+-	mactype = chip->get_mactype(phydev);
+-	if (mactype < 0)
+-		return mactype;
++	if (mactype == -1) {
++		mactype = chip->get_mactype(phydev);
++		if (mactype < 0)
++			return mactype;
++	} else {
++		/* FIXME For 88x2210 */
++		ret = phy_modify_mmd_changed(phydev, MDIO_MMD_VEND2,
++					     MV_V2_PORT_CTRL,
++					     MV_V2_33X0_PORT_CTRL_MACTYPE_MASK,
++					     mactype);
++		if (ret > 0)
++			ret = phy_modify_mmd(phydev, MDIO_MMD_VEND2,
++					     MV_V2_PORT_CTRL,
++					     MV_V2_33X0_PORT_CTRL_SWRST,
++					     MV_V2_33X0_PORT_CTRL_SWRST);
++
++		if (ret < 0)
++			return ret;
++	}
+ 
+ 	err = chip->init_interface(phydev, mactype);
+ 	if (err) {
+-- 
+cgit v1.2.3
+
+
+From 896c0894fd55f5c8f4953e9968329418fb073e12 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 23 Dec 2019 23:24:17 +0000
+Subject: net: phy: add supported_interfaces to phylib
+
+Add a supported_interfaces member to phylib so we know which
+interfaces a PHY supports. Currently, set any unconverted driver
+to indicate all interfaces are supported.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ include/linux/phy.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/include/linux/phy.h b/include/linux/phy.h
+index ef3d16e91ae1..66c062a8e69d 100644
+--- a/include/linux/phy.h
++++ b/include/linux/phy.h
+@@ -649,6 +649,7 @@ struct phy_device {
+ 
+ 	/* supported PHY interface types */
+ 	DECLARE_PHY_INTERFACE_MASK(host_interfaces);
++	DECLARE_PHY_INTERFACE_MASK(supported_interfaces);
+ 
+ 	/* Energy efficient ethernet modes which should be prohibited */
+ 	u32 eee_broken_modes;
+-- 
+cgit v1.2.3
+
+
+From 7ed98071c97472d39b9dd0c3b995098948262050 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 23 Dec 2019 23:25:35 +0000
+Subject: net: phy: add supported_interfaces to bcm84881
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/bcm84881.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/net/phy/bcm84881.c b/drivers/net/phy/bcm84881.c
+index 9717a1626f3f..cba3ffc0708f 100644
+--- a/drivers/net/phy/bcm84881.c
++++ b/drivers/net/phy/bcm84881.c
+@@ -51,6 +51,10 @@ static int bcm84881_probe(struct phy_device *phydev)
+ 	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
+ 		return -ENODEV;
+ 
++	__set_bit(PHY_INTERFACE_MODE_SGMII, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_2500BASEX, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_10GBASER, phydev->supported_interfaces);
++
+ 	return 0;
+ }
+ 
+-- 
+cgit v1.2.3
+
+
+From 387177f36f60556f41939fd43552f1c0189c9e96 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 23 Dec 2019 23:25:49 +0000
+Subject: net: phy: add supported_interfaces to marvell PHYs
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/net/phy/marvell.c b/drivers/net/phy/marvell.c
+index 4509b5b3ff91..568f6f48463f 100644
+--- a/drivers/net/phy/marvell.c
++++ b/drivers/net/phy/marvell.c
+@@ -2706,6 +2706,15 @@ static int marvell_probe_pause(struct phy_device *phydev, u16 tx_pause_mask,
+ {
+ 	struct marvell_priv *priv;
+ 
++	__set_bit(PHY_INTERFACE_MODE_GMII, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_SGMII, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_TBI, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII_ID, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII_RXID, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RGMII_TXID, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_RTBI, phydev->supported_interfaces);
++
+ 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+ 		return -ENOMEM;
+-- 
+cgit v1.2.3
+
+
+From c2c3b299a410ad0c21b9eb2a7c3d50d1210354b0 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 23 Dec 2019 23:26:04 +0000
+Subject: net: phy: add supported_interfaces to marvell10g PHYs
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/marvell10g.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/net/phy/marvell10g.c b/drivers/net/phy/marvell10g.c
+index e476cd33ee30..f88f7fcfcc48 100644
+--- a/drivers/net/phy/marvell10g.c
++++ b/drivers/net/phy/marvell10g.c
+@@ -522,6 +522,10 @@ static int mv3310_probe(struct phy_device *phydev)
+ 	    (phydev->c45_ids.devices_in_package & mmd_mask) != mmd_mask)
+ 		return -ENODEV;
+ 
++	__set_bit(PHY_INTERFACE_MODE_SGMII, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_2500BASEX, phydev->supported_interfaces);
++	__set_bit(PHY_INTERFACE_MODE_10GBASER, phydev->supported_interfaces);
++
+ 	priv = devm_kzalloc(&phydev->mdio.dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+ 		return -ENOMEM;
+-- 
+cgit v1.2.3
+
+
+From 230e9094761227dbf3ea50f49f2182b39ee25e2e Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Tue, 3 Mar 2020 12:12:43 +0000
+Subject: net: phylink: use phy interface mode bitmaps
+
+Use the phy interface mode bitmaps for SFP modules and PHYs to select
+the operating interface for SFPs and PHYs with SFPs.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/phy/phylink.c | 57 ++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 46 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/phy/phylink.c b/drivers/net/phy/phylink.c
+index 7479040ce98a..a2859dd7bde0 100644
+--- a/drivers/net/phy/phylink.c
++++ b/drivers/net/phy/phylink.c
+@@ -2381,19 +2381,54 @@ static int phylink_sfp_connect_phy(void *upstream, struct phy_device *phy)
+ 	phy_interface_and(phy->host_interfaces, phylink_sfp_interfaces,
+ 			  pl->config->supported_interfaces);
+ 
+-	/* Do the initial configuration */
+-	ret = phylink_sfp_config(pl, mode, phy->supported, phy->advertising);
+-	if (ret < 0)
+-		return ret;
++	if (!phy_interface_empty(phy->supported_interfaces) &&
++	    !phy_interface_empty(pl->config->supported_interfaces)) {
++		interface = phylink_select_interface(pl,
++						     phy->supported_interfaces,
++						     "phy");
++		if (interface == PHY_INTERFACE_MODE_NA) {
++			phylink_err(pl,
++				    "selection of interface for PHY failed\n");
++			return -EINVAL;
++		}
+ 
+-	interface = pl->link_config.interface;
+-	ret = phylink_attach_phy(pl, phy, interface);
+-	if (ret < 0)
+-		return ret;
++		if (pl->cur_link_an_mode != mode ||
++		    pl->link_config.interface != interface) {
++			pl->link_config.interface = interface;
++			pl->cur_link_an_mode = mode;
+ 
+-	ret = phylink_bringup_phy(pl, phy, interface);
+-	if (ret)
+-		phy_detach(phy);
++			phylink_info(pl, "switched to %s/%s link mode\n",
++				     phylink_an_mode_str(mode),
++				     phy_modes(interface));
++		}
++
++		ret = phylink_attach_phy(pl, phy, interface);
++		if (ret < 0)
++			return ret;
++
++		ret = phylink_bringup_phy(pl, phy, interface);
++		if (ret)
++			phy_detach(phy);
++
++		if (!test_bit(PHYLINK_DISABLE_STOPPED,
++			      &pl->phylink_disable_state))
++			phylink_mac_initial_config(pl, false);
++	} else {
++		/* Do the initial configuration */
++		ret = phylink_sfp_config(pl, mode, phy->supported,
++					phy->advertising);
++		if (ret < 0)
++			return ret;
++
++		interface = pl->link_config.interface;
++		ret = phylink_attach_phy(pl, phy, interface);
++		if (ret < 0)
++			return ret;
++
++		ret = phylink_bringup_phy(pl, phy, interface);
++		if (ret)
++			phy_detach(phy);
++	}
+ 
+ 	return ret;
+ }
+-- 
+cgit v1.2.3
+
+
+From 8e691e5bcf4ad1b789fbe84afe15b213469587b7 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 22 Jun 2020 01:05:59 +0100
+Subject: net: dsa/bcm_sf2: fix pause mode validation
+
+The implementation appears not to support pause modes on anything
+but RGMII, RGMII_TXID, MII and REVMII interface modes.  Let phylink
+know that detail.
+
+(This may not be correct; particularly see the FIXMEs in this patch.)
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/dsa/bcm_sf2.c | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/dsa/bcm_sf2.c b/drivers/net/dsa/bcm_sf2.c
+index 3b018fcf4412..08a723729fce 100644
+--- a/drivers/net/dsa/bcm_sf2.c
++++ b/drivers/net/dsa/bcm_sf2.c
+@@ -677,6 +677,7 @@ static void bcm_sf2_sw_validate(struct dsa_switch *ds, int port,
+ 	struct bcm_sf2_priv *priv = bcm_sf2_to_priv(ds);
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+ 
++	/* FIXME: Are RGMII_RXID and RGMII_ID actually supported? */
+ 	if (!phy_interface_mode_is_rgmii(state->interface) &&
+ 	    state->interface != PHY_INTERFACE_MODE_MII &&
+ 	    state->interface != PHY_INTERFACE_MODE_REVMII &&
+@@ -694,8 +695,13 @@ static void bcm_sf2_sw_validate(struct dsa_switch *ds, int port,
+ 	/* Allow all the expected bits */
+ 	phylink_set(mask, Autoneg);
+ 	phylink_set_port_modes(mask);
+-	phylink_set(mask, Pause);
+-	phylink_set(mask, Asym_Pause);
++	if (state->interface == PHY_INTERFACE_MODE_RGMII ||
++	    state->interface == PHY_INTERFACE_MODE_RGMII_TXID ||
++	    state->interface == PHY_INTERFACE_MODE_MII ||
++	    state->interface == PHY_INTERFACE_MODE_REVMII) {
++		phylink_set(mask, Pause);
++		phylink_set(mask, Asym_Pause);
++	}
+ 
+ 	/* With the exclusion of MII and Reverse MII, we support Gigabit,
+ 	 * including Half duplex
+@@ -730,6 +736,7 @@ static void bcm_sf2_sw_mac_config(struct dsa_switch *ds, int port,
+ 		return;
+ 
+ 	switch (state->interface) {
++	/* FIXME: Are RGMII_RXID and RGMII_ID actually supported? */
+ 	case PHY_INTERFACE_MODE_RGMII:
+ 		id_mode_dis = 1;
+ 		fallthrough;
+@@ -830,6 +837,7 @@ static void bcm_sf2_sw_mac_link_up(struct dsa_switch *ds, int port,
+ 		else
+ 			offset = CORE_STS_OVERRIDE_GMIIP2_PORT(port);
+ 
++		/* FIXME: Are RGMII_RXID and RGMII_ID actually supported? */
+ 		if (interface == PHY_INTERFACE_MODE_RGMII ||
+ 		    interface == PHY_INTERFACE_MODE_RGMII_TXID ||
+ 		    interface == PHY_INTERFACE_MODE_MII ||
+-- 
+cgit v1.2.3
+
+
+From e591f03bc0d6e177cbe48893d3983dc7e64af892 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 29 Jun 2020 23:16:21 +0100
+Subject: phy: armada-38x: further augmentation of setup
+
+Further augmentation of the comphy setup.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ arch/arm/boot/dts/armada-38x.dtsi          |   5 +-
+ drivers/phy/marvell/phy-armada38x-comphy.c | 147 +++++++++++++++++++++++++----
+ 2 files changed, 132 insertions(+), 20 deletions(-)
+
+diff --git a/arch/arm/boot/dts/armada-38x.dtsi b/arch/arm/boot/dts/armada-38x.dtsi
+index 9b1a24cc5e91..404943b5cdac 100644
+--- a/arch/arm/boot/dts/armada-38x.dtsi
++++ b/arch/arm/boot/dts/armada-38x.dtsi
+@@ -342,8 +342,9 @@
+ 
+ 			comphy: phy@18300 {
+ 				compatible = "marvell,armada-380-comphy";
+-				reg-names = "comphy", "conf";
+-				reg = <0x18300 0x100>, <0x18460 4>;
++				reg-names = "comphy", "pipe", "conf";
++				reg = <0x18300 0x100>, <0xa0000 0x3000>,
++					<0x18460 4>;
+ 				#address-cells = <1>;
+ 				#size-cells = <0>;
+ 
+diff --git a/drivers/phy/marvell/phy-armada38x-comphy.c b/drivers/phy/marvell/phy-armada38x-comphy.c
+index 0fe408964334..0e86f484269c 100644
+--- a/drivers/phy/marvell/phy-armada38x-comphy.c
++++ b/drivers/phy/marvell/phy-armada38x-comphy.c
+@@ -15,32 +15,49 @@
+ #define MAX_A38X_COMPHY	6
+ #define MAX_A38X_PORTS	3
+ 
++/* Common PHY registers */
++#define COMPHY_REG_SIZE		0x28
+ #define COMPHY_CFG1		0x00
++#define  COMPHY_CFG1_RX_INIT		BIT(30)
+ #define  COMPHY_CFG1_GEN_TX(x)		((x) << 26)
+ #define  COMPHY_CFG1_GEN_TX_MSK		COMPHY_CFG1_GEN_TX(15)
+ #define  COMPHY_CFG1_GEN_RX(x)		((x) << 22)
+ #define  COMPHY_CFG1_GEN_RX_MSK		COMPHY_CFG1_GEN_RX(15)
++#define  COMPHY_CFG1_POWER_UP_TX	BIT(18)
++#define  COMPHY_CFG1_POWER_UP_RX	BIT(17)
++#define  COMPHY_CFG1_POWER_UP_PLL	BIT(16)
+ #define  GEN_SGMII_1_25GBPS		6
+ #define  GEN_SGMII_3_125GBPS		8
+ 
+ #define COMPHY_STAT1		0x18
+ #define  COMPHY_STAT1_PLL_RDY_TX	BIT(3)
+ #define  COMPHY_STAT1_PLL_RDY_RX	BIT(2)
++#define  COMPHY_STAT1_RX_INIT_DONE	BIT(0)
+ 
+ #define COMPHY_SELECTOR		0xfc
+ 
++/* Common PHY and Pipe Registers */
++#define PIPE_REG_SIZE		0x800
++#define PIPE_POWER_CTRL		0x148
++#define  PIPE_POWER_CTRL_SFT_RST_NO_REG	BIT(10)
++/* u-boot sets bit 0 during comphy initialisation, but it is undocumented */
++#define  PIPE_POWER_CTRL_BIT0		BIT(0)
++
+ struct a38x_comphy;
+ 
+ struct a38x_comphy_lane {
+ 	void __iomem *base;
++	void __iomem *pipe;
+ 	struct a38x_comphy *priv;
+ 	unsigned int n;
+ 
+ 	int port;
++	u8 gen;
+ };
+ 
+ struct a38x_comphy {
+ 	void __iomem *base;
++	void __iomem *pipe;
+ 	void __iomem *conf;
+ 	struct device *dev;
+ 	struct a38x_comphy_lane lane[MAX_A38X_COMPHY];
+@@ -88,6 +105,7 @@ static void a38x_comphy_set_speed(struct a38x_comphy_lane *lane,
+ 		            COMPHY_CFG1_GEN_RX(gen_rx));
+ }
+ 
++/* Poll every 1ms for 150ms for a status */
+ static int a38x_comphy_poll(struct a38x_comphy_lane *lane,
+ 			    unsigned int offset, u32 mask, u32 value)
+ {
+@@ -105,6 +123,97 @@ static int a38x_comphy_poll(struct a38x_comphy_lane *lane,
+ 	return ret;
+ }
+ 
++static int a38x_comphy_power_up(struct a38x_comphy_lane *lane)
++{
++	/* Power up TX, RX and PLL */
++	a38x_comphy_set_reg(lane, COMPHY_CFG1, 0,
++			    COMPHY_CFG1_POWER_UP_TX | COMPHY_CFG1_POWER_UP_RX |
++			    COMPHY_CFG1_POWER_UP_PLL);
++
++	/* Wait for power up */
++	return a38x_comphy_poll(lane, COMPHY_STAT1,
++				COMPHY_STAT1_PLL_RDY_TX |
++				COMPHY_STAT1_PLL_RDY_RX,
++				COMPHY_STAT1_PLL_RDY_TX |
++				COMPHY_STAT1_PLL_RDY_RX);
++}
++
++static int a38x_comphy_rx_init(struct a38x_comphy_lane *lane)
++{
++	int ret;
++
++	/* Perform RX init */
++	a38x_comphy_set_reg(lane, COMPHY_CFG1, 0, COMPHY_CFG1_RX_INIT);
++
++	/* Wait for RX init done */
++	ret = a38x_comphy_poll(lane, COMPHY_STAT1, COMPHY_STAT1_RX_INIT_DONE,
++			       COMPHY_STAT1_RX_INIT_DONE);
++
++	/* Clear RX init */
++	a38x_comphy_set_reg(lane, COMPHY_CFG1, COMPHY_CFG1_RX_INIT, 0);
++
++	return ret;
++}
++
++static int a38x_comphy_power_off(struct phy *phy)
++{
++	struct a38x_comphy_lane *lane = phy_get_drvdata(phy);
++
++	a38x_set_conf(lane, false);
++
++	/* Soft reset */
++	if (lane->pipe) {
++		u32 rst = PIPE_POWER_CTRL_SFT_RST_NO_REG | PIPE_POWER_CTRL_BIT0;
++		u32 val;
++
++		val = readl_relaxed(lane->pipe + PIPE_POWER_CTRL);
++		writel(val | rst, lane->pipe + PIPE_POWER_CTRL);
++	}
++
++	a38x_comphy_set_reg(lane, COMPHY_CFG1,
++			    COMPHY_CFG1_POWER_UP_TX | COMPHY_CFG1_POWER_UP_RX |
++			    COMPHY_CFG1_POWER_UP_PLL, 0);
++
++	return 0;
++}
++
++static int a38x_comphy_power_on(struct phy *phy)
++{
++	struct a38x_comphy_lane *lane = phy_get_drvdata(phy);
++	int ret;
++
++	/* Program the GEN settings */
++	a38x_comphy_set_speed(lane, lane->gen, lane->gen);
++
++	/* Soft reset */
++	if (lane->pipe) {
++		u32 rst = PIPE_POWER_CTRL_SFT_RST_NO_REG | PIPE_POWER_CTRL_BIT0;
++		u32 val;
++
++		val = readl_relaxed(lane->pipe + PIPE_POWER_CTRL);
++		writel(val | rst, lane->pipe + PIPE_POWER_CTRL);
++		writel(val & ~rst, lane->pipe + PIPE_POWER_CTRL);
++	}
++
++	/* Power up TX, RX and PLL and wait */
++	ret = a38x_comphy_power_up(lane);
++	if (ret)
++		goto fail;
++
++	/* Perform RX init */
++	ret = a38x_comphy_rx_init(lane);
++	if (ret)
++		goto fail;
++
++	a38x_set_conf(lane, true);
++
++	return 0;
++
++fail:
++	a38x_comphy_power_off(phy);
++	return ret;
++}
++
+ /*
+  * We only support changing the speed for comphys configured for GBE.
+  * Since that is all we do, we only poll for PLL ready status.
+@@ -113,7 +222,6 @@ static int a38x_comphy_set_mode(struct phy *phy, enum phy_mode mode, int sub)
+ {
+ 	struct a38x_comphy_lane *lane = phy_get_drvdata(phy);
+ 	unsigned int gen;
+-	int ret;
+ 
+ 	if (mode != PHY_MODE_ETHERNET)
+ 		return -EINVAL;
+@@ -132,23 +240,14 @@ static int a38x_comphy_set_mode(struct phy *phy, enum phy_mode mode, int sub)
+ 		return -EINVAL;
+ 	}
+ 
+-	a38x_set_conf(lane, false);
+-
+-	a38x_comphy_set_speed(lane, gen, gen);
+-
+-	ret = a38x_comphy_poll(lane, COMPHY_STAT1,
+-			       COMPHY_STAT1_PLL_RDY_TX |
+-			       COMPHY_STAT1_PLL_RDY_RX,
+-			       COMPHY_STAT1_PLL_RDY_TX |
+-			       COMPHY_STAT1_PLL_RDY_RX);
+-
+-	if (ret == 0)
+-		a38x_set_conf(lane, true);
++	lane->gen = gen;
+ 
+-	return ret;
++	return 0;
+ }
+ 
+ static const struct phy_ops a38x_comphy_ops = {
++	.power_on	= a38x_comphy_power_on,
++	.power_off	= a38x_comphy_power_off,
+ 	.set_mode	= a38x_comphy_set_mode,
+ 	.owner		= THIS_MODULE,
+ };
+@@ -193,6 +292,7 @@ static int a38x_comphy_probe(struct platform_device *pdev)
+ 	struct a38x_comphy *priv;
+ 	struct resource *res;
+ 	void __iomem *base;
++	void __iomem *pipe = NULL;
+ 
+ 	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+ 	if (!priv)
+@@ -202,8 +302,16 @@ static int a38x_comphy_probe(struct platform_device *pdev)
+ 	if (IS_ERR(base))
+ 		return PTR_ERR(base);
+ 
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pipe");
++	if (res) {
++		pipe = devm_ioremap_resource(&pdev->dev, res);
++		if (IS_ERR(base))
++			return PTR_ERR(base);
++	}
++
+ 	priv->dev = &pdev->dev;
+ 	priv->base = base;
++	priv->pipe = pipe;
+ 
+ 	/* Optional */
+ 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "conf");
+@@ -230,16 +338,19 @@ static int a38x_comphy_probe(struct platform_device *pdev)
+ 			continue;
+ 		}
+ 
++		priv->lane[val].base = base + COMPHY_REG_SIZE * val;
++		if (pipe)
++			priv->lane[val].pipe = pipe + PIPE_REG_SIZE * val;
++		priv->lane[val].priv = priv;
++		priv->lane[val].n = val;
++		priv->lane[val].port = -1;
++
+ 		phy = devm_phy_create(&pdev->dev, child, &a38x_comphy_ops);
+ 		if (IS_ERR(phy)) {
+ 			of_node_put(child);
+ 			return PTR_ERR(phy);
+ 		}
+ 
+-		priv->lane[val].base = base + 0x28 * val;
+-		priv->lane[val].priv = priv;
+-		priv->lane[val].n = val;
+-		priv->lane[val].port = -1;
+ 		phy_set_drvdata(phy, &priv->lane[val]);
+ 	}
+ 
+-- 
+cgit v1.2.3
+
+
+From cb633af31a0858f6e801f92a67d3929a2f1989e0 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Wed, 8 Jul 2020 11:37:25 +0100
+Subject: net: mvneta: program 1ms autonegotiation clock divisor
+
+Program the 1ms autonegotiation clock divisor according to the clocking
+rate of neta - without this, the 1ms clock ticks at about 660us on
+Armada 38x configured for 250MHz. Bring this into correct specification.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/mvneta.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index 697207b88444..c9a95c10392d 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -3962,7 +3962,7 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	} else if (state->interface == PHY_INTERFACE_MODE_SGMII) {
+ 		/* SGMII mode receives the state from the PHY */
+ 		new_ctrl2 |= MVNETA_GMAC2_INBAND_AN_ENABLE;
+-		new_clk |= MVNETA_GMAC_1MS_CLOCK_ENABLE;
++		new_clk = MVNETA_GMAC_1MS_CLOCK_ENABLE;
+ 		new_an = (new_an & ~(MVNETA_GMAC_FORCE_LINK_DOWN |
+ 				     MVNETA_GMAC_FORCE_LINK_PASS |
+ 				     MVNETA_GMAC_CONFIG_MII_SPEED |
+@@ -3974,7 +3974,7 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	} else {
+ 		/* 802.3z negotiation - only 1000base-X */
+ 		new_ctrl0 |= MVNETA_GMAC0_PORT_1000BASE_X;
+-		new_clk |= MVNETA_GMAC_1MS_CLOCK_ENABLE;
++		new_clk = MVNETA_GMAC_1MS_CLOCK_ENABLE;
+ 		new_an = (new_an & ~(MVNETA_GMAC_FORCE_LINK_DOWN |
+ 				     MVNETA_GMAC_FORCE_LINK_PASS |
+ 				     MVNETA_GMAC_CONFIG_MII_SPEED)) |
+@@ -3987,6 +3987,10 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 			new_an |= MVNETA_GMAC_AN_FLOW_CTRL_EN;
+ 	}
+ 
++	/* Set the 1ms clock divisor */
++	if (new_clk == MVNETA_GMAC_1MS_CLOCK_ENABLE)
++		new_clk |= clk_get_rate(pp->clk) / 1000;
++
+ 	/* Armada 370 documentation says we can only change the port mode
+ 	 * and in-band enable when the link is down, so force it down
+ 	 * while making these changes. We also do this for GMAC_CTRL2
+-- 
+cgit v1.2.3
+
+
+From 76bebe694b25b49f7f1369efbafdb77456f2c4d8 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Sun, 28 Jun 2020 13:03:47 +0100
+Subject: net: mvneta: convert to use mac_prepare()/mac_finish()
+
+Convert mvneta to use the mac_prepare() and mac_finish() methods in
+preparation to converting mvneta to split-PCS support.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/mvneta.c | 78 ++++++++++++++++++++++++-----------
+ 1 file changed, 53 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index c9a95c10392d..7a1aca759ff2 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -3919,6 +3919,32 @@ static void mvneta_mac_an_restart(struct phylink_config *config)
+ 		    gmac_an & ~MVNETA_GMAC_INBAND_RESTART_AN);
+ }
+ 
++static int mvneta_mac_prepare(struct phylink_config *config, unsigned int mode,
++			      phy_interface_t interface)
++{
++	struct net_device *ndev = to_net_dev(config->dev);
++	struct mvneta_port *pp = netdev_priv(ndev);
++	u32 val;
++
++	if (pp->phy_interface != interface ||
++	    phylink_autoneg_inband(mode)) {
++		/* Force the link down when changing the interface or if in
++		 * in-band mode. According to Armada 370 documentation, we
++		 * can only change the port mode and in-band enable when the
++		 * link is down.
++		 */
++		val = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
++		val &= ~MVNETA_GMAC_FORCE_LINK_PASS;
++		val |= MVNETA_GMAC_FORCE_LINK_DOWN;
++		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, val);
++	}
++
++	if (pp->phy_interface != interface)
++		WARN_ON(phy_power_off(pp->comphy));
++
++	return 0;
++}
++
+ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 			      const struct phylink_link_state *state)
+ {
+@@ -3963,9 +3989,7 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 		/* SGMII mode receives the state from the PHY */
+ 		new_ctrl2 |= MVNETA_GMAC2_INBAND_AN_ENABLE;
+ 		new_clk = MVNETA_GMAC_1MS_CLOCK_ENABLE;
+-		new_an = (new_an & ~(MVNETA_GMAC_FORCE_LINK_DOWN |
+-				     MVNETA_GMAC_FORCE_LINK_PASS |
+-				     MVNETA_GMAC_CONFIG_MII_SPEED |
++		new_an = (new_an & ~(MVNETA_GMAC_CONFIG_MII_SPEED |
+ 				     MVNETA_GMAC_CONFIG_GMII_SPEED |
+ 				     MVNETA_GMAC_CONFIG_FULL_DUPLEX)) |
+ 			 MVNETA_GMAC_INBAND_AN_ENABLE |
+@@ -3975,9 +3999,7 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 		/* 802.3z negotiation - only 1000base-X */
+ 		new_ctrl0 |= MVNETA_GMAC0_PORT_1000BASE_X;
+ 		new_clk = MVNETA_GMAC_1MS_CLOCK_ENABLE;
+-		new_an = (new_an & ~(MVNETA_GMAC_FORCE_LINK_DOWN |
+-				     MVNETA_GMAC_FORCE_LINK_PASS |
+-				     MVNETA_GMAC_CONFIG_MII_SPEED)) |
++		new_an = (new_an & ~MVNETA_GMAC_CONFIG_MII_SPEED) |
+ 			 MVNETA_GMAC_INBAND_AN_ENABLE |
+ 			 MVNETA_GMAC_CONFIG_GMII_SPEED |
+ 			 /* The MAC only supports FD mode */
+@@ -3991,31 +4013,12 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	if (new_clk == MVNETA_GMAC_1MS_CLOCK_ENABLE)
+ 		new_clk |= clk_get_rate(pp->clk) / 1000;
+ 
+-	/* Armada 370 documentation says we can only change the port mode
+-	 * and in-band enable when the link is down, so force it down
+-	 * while making these changes. We also do this for GMAC_CTRL2
+-	 */
+-	if ((new_ctrl0 ^ gmac_ctrl0) & MVNETA_GMAC0_PORT_1000BASE_X ||
+-	    (new_ctrl2 ^ gmac_ctrl2) & MVNETA_GMAC2_INBAND_AN_ENABLE ||
+-	    (new_an  ^ gmac_an) & MVNETA_GMAC_INBAND_AN_ENABLE) {
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG,
+-			    (gmac_an & ~MVNETA_GMAC_FORCE_LINK_PASS) |
+-			    MVNETA_GMAC_FORCE_LINK_DOWN);
+-	}
+-
+-
+ 	/* When at 2.5G, the link partner can send frames with shortened
+ 	 * preambles.
+ 	 */
+ 	if (state->interface == PHY_INTERFACE_MODE_2500BASEX)
+ 		new_ctrl4 |= MVNETA_GMAC4_SHORT_PREAMBLE_ENABLE;
+ 
+-	if (pp->phy_interface != state->interface) {
+-		if (pp->comphy)
+-			WARN_ON(phy_power_off(pp->comphy));
+-		WARN_ON(mvneta_config_interface(pp, state->interface));
+-	}
+-
+ 	if (new_ctrl0 != gmac_ctrl0)
+ 		mvreg_write(pp, MVNETA_GMAC_CTRL_0, new_ctrl0);
+ 	if (new_ctrl2 != gmac_ctrl2)
+@@ -4034,6 +4037,29 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	}
+ }
+ 
++static int mvneta_mac_finish(struct phylink_config *config, unsigned int mode,
++			     phy_interface_t interface)
++{
++	struct net_device *ndev = to_net_dev(config->dev);
++	struct mvneta_port *pp = netdev_priv(ndev);
++	u32 val;
++
++	if (pp->phy_interface != interface)
++		/* Enable the Serdes PHY */
++		WARN_ON(mvneta_config_interface(pp, interface));
++
++	/* Allow the link to come up if in in-band mode, otherwise the
++	 * link is forced via mac_link_down()/mac_link_up()
++	 */
++	if (phylink_autoneg_inband(mode)) {
++		val = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
++		val &= ~MVNETA_GMAC_FORCE_LINK_DOWN;
++		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, val);
++	}
++
++	return 0;
++}
++
+ static void mvneta_set_eee(struct mvneta_port *pp, bool enable)
+ {
+ 	u32 lpi_ctl1;
+@@ -4123,7 +4149,9 @@ static const struct phylink_mac_ops mvneta_phylink_ops = {
+ 	.validate = mvneta_validate,
+ 	.mac_pcs_get_state = mvneta_mac_pcs_get_state,
+ 	.mac_an_restart = mvneta_mac_an_restart,
++	.mac_prepare = mvneta_mac_prepare,
+ 	.mac_config = mvneta_mac_config,
++	.mac_finish = mvneta_mac_finish,
+ 	.mac_link_down = mvneta_mac_link_down,
+ 	.mac_link_up = mvneta_mac_link_up,
+ };
+-- 
+cgit v1.2.3
+
+
+From d987a2494717ac88fbdc6695fd6c669ac70206b7 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Wed, 8 Jul 2020 11:44:36 +0100
+Subject: net: mvneta: move 1ms clock control into mac_prepare/mac_finish
+
+Move the 1ms clock control out of mac_config() into mac_prepare() and
+mac_finish(), which simplifies the mac_config() code.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/mvneta.c | 27 ++++++++++++++++-----------
+ 1 file changed, 16 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index 7a1aca759ff2..341fbec93bdb 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -3942,6 +3942,14 @@ static int mvneta_mac_prepare(struct phylink_config *config, unsigned int mode,
+ 	if (pp->phy_interface != interface)
+ 		WARN_ON(phy_power_off(pp->comphy));
+ 
++	/* Enable the 1ms clock */
++	if (phylink_autoneg_inband(mode)) {
++		unsigned long rate = clk_get_rate(pp->clk);
++
++		mvreg_write(pp, MVNETA_GMAC_CLOCK_DIVIDER,
++			    MVNETA_GMAC_1MS_CLOCK_ENABLE | (rate / 1000));
++	}
++
+ 	return 0;
+ }
+ 
+@@ -3953,14 +3961,12 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	u32 new_ctrl0, gmac_ctrl0 = mvreg_read(pp, MVNETA_GMAC_CTRL_0);
+ 	u32 new_ctrl2, gmac_ctrl2 = mvreg_read(pp, MVNETA_GMAC_CTRL_2);
+ 	u32 new_ctrl4, gmac_ctrl4 = mvreg_read(pp, MVNETA_GMAC_CTRL_4);
+-	u32 new_clk, gmac_clk = mvreg_read(pp, MVNETA_GMAC_CLOCK_DIVIDER);
+ 	u32 new_an, gmac_an = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+ 
+ 	new_ctrl0 = gmac_ctrl0 & ~MVNETA_GMAC0_PORT_1000BASE_X;
+ 	new_ctrl2 = gmac_ctrl2 & ~(MVNETA_GMAC2_INBAND_AN_ENABLE |
+ 				   MVNETA_GMAC2_PORT_RESET);
+ 	new_ctrl4 = gmac_ctrl4 & ~(MVNETA_GMAC4_SHORT_PREAMBLE_ENABLE);
+-	new_clk = gmac_clk & ~MVNETA_GMAC_1MS_CLOCK_ENABLE;
+ 	new_an = gmac_an & ~(MVNETA_GMAC_INBAND_AN_ENABLE |
+ 			     MVNETA_GMAC_INBAND_RESTART_AN |
+ 			     MVNETA_GMAC_AN_SPEED_EN |
+@@ -3988,7 +3994,6 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	} else if (state->interface == PHY_INTERFACE_MODE_SGMII) {
+ 		/* SGMII mode receives the state from the PHY */
+ 		new_ctrl2 |= MVNETA_GMAC2_INBAND_AN_ENABLE;
+-		new_clk = MVNETA_GMAC_1MS_CLOCK_ENABLE;
+ 		new_an = (new_an & ~(MVNETA_GMAC_CONFIG_MII_SPEED |
+ 				     MVNETA_GMAC_CONFIG_GMII_SPEED |
+ 				     MVNETA_GMAC_CONFIG_FULL_DUPLEX)) |
+@@ -3998,7 +4003,6 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	} else {
+ 		/* 802.3z negotiation - only 1000base-X */
+ 		new_ctrl0 |= MVNETA_GMAC0_PORT_1000BASE_X;
+-		new_clk = MVNETA_GMAC_1MS_CLOCK_ENABLE;
+ 		new_an = (new_an & ~MVNETA_GMAC_CONFIG_MII_SPEED) |
+ 			 MVNETA_GMAC_INBAND_AN_ENABLE |
+ 			 MVNETA_GMAC_CONFIG_GMII_SPEED |
+@@ -4009,10 +4013,6 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 			new_an |= MVNETA_GMAC_AN_FLOW_CTRL_EN;
+ 	}
+ 
+-	/* Set the 1ms clock divisor */
+-	if (new_clk == MVNETA_GMAC_1MS_CLOCK_ENABLE)
+-		new_clk |= clk_get_rate(pp->clk) / 1000;
+-
+ 	/* When at 2.5G, the link partner can send frames with shortened
+ 	 * preambles.
+ 	 */
+@@ -4025,8 +4025,6 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 		mvreg_write(pp, MVNETA_GMAC_CTRL_2, new_ctrl2);
+ 	if (new_ctrl4 != gmac_ctrl4)
+ 		mvreg_write(pp, MVNETA_GMAC_CTRL_4, new_ctrl4);
+-	if (new_clk != gmac_clk)
+-		mvreg_write(pp, MVNETA_GMAC_CLOCK_DIVIDER, new_clk);
+ 	if (new_an != gmac_an)
+ 		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, new_an);
+ 
+@@ -4042,7 +4040,14 @@ static int mvneta_mac_finish(struct phylink_config *config, unsigned int mode,
+ {
+ 	struct net_device *ndev = to_net_dev(config->dev);
+ 	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 val;
++	u32 val, clk;
++
++	/* Disable 1ms clock if not in in-band mode */
++	if (!phylink_autoneg_inband(mode)) {
++		clk = mvreg_read(pp, MVNETA_GMAC_CLOCK_DIVIDER);
++		clk &= ~MVNETA_GMAC_1MS_CLOCK_ENABLE;
++		mvreg_write(pp, MVNETA_GMAC_CLOCK_DIVIDER, clk);
++	}
+ 
+ 	if (pp->phy_interface != interface)
+ 		/* Enable the Serdes PHY */
+-- 
+cgit v1.2.3
+
+
+From c8eb55edd9e8b00863f2dd8cafb7937b0b3dea02 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Mon, 22 Jun 2020 17:21:43 +0100
+Subject: net: mvneta: convert to phylink pcs operations
+
+An initial stab at converting mvneta to PCS operations.  There's a few
+FIXMEs to be solved.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/mvneta.c | 178 +++++++++++++++++++++-------------
+ 1 file changed, 109 insertions(+), 69 deletions(-)
+
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index 341fbec93bdb..c9bad557f8f9 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -499,6 +499,7 @@ struct mvneta_port {
+ 	unsigned int tx_csum_limit;
+ 	struct phylink *phylink;
+ 	struct phylink_config phylink_config;
++	struct phylink_pcs phylink_pcs;
+ 	struct phy *comphy;
+ 
+ 	struct mvneta_bm *bm_priv;
+@@ -3824,6 +3825,111 @@ static int mvneta_set_mac_addr(struct net_device *dev, void *addr)
+ 	return 0;
+ }
+ 
++static struct mvneta_port *mvneta_pcs_to_port(struct phylink_pcs *pcs)
++{
++	return container_of(pcs, struct mvneta_port, phylink_pcs);
++}
++
++static void mvneta_pcs_get_state(struct phylink_pcs *pcs,
++				 struct phylink_link_state *state)
++{
++	struct mvneta_port *pp = mvneta_pcs_to_port(pcs);
++	u32 gmac_stat;
++
++	gmac_stat = mvreg_read(pp, MVNETA_GMAC_STATUS);
++
++	if (gmac_stat & MVNETA_GMAC_SPEED_1000)
++		state->speed =
++			state->interface == PHY_INTERFACE_MODE_2500BASEX ?
++			SPEED_2500 : SPEED_1000;
++	else if (gmac_stat & MVNETA_GMAC_SPEED_100)
++		state->speed = SPEED_100;
++	else
++		state->speed = SPEED_10;
++
++	state->an_complete = !!(gmac_stat & MVNETA_GMAC_AN_COMPLETE);
++	state->link = !!(gmac_stat & MVNETA_GMAC_LINK_UP);
++	state->duplex = !!(gmac_stat & MVNETA_GMAC_FULL_DUPLEX);
++
++	if (gmac_stat & MVNETA_GMAC_RX_FLOW_CTRL_ENABLE)
++		state->pause |= MLO_PAUSE_RX;
++	if (gmac_stat & MVNETA_GMAC_TX_FLOW_CTRL_ENABLE)
++		state->pause |= MLO_PAUSE_TX;
++}
++
++static int mvneta_pcs_config(struct phylink_pcs *pcs,
++			     unsigned int mode, phy_interface_t interface,
++			     const unsigned long *advertising,
++			     bool permit_pause_to_mac)
++{
++	struct mvneta_port *pp = mvneta_pcs_to_port(pcs);
++	u32 mask, val, an, old_an, changed;
++
++	mask = MVNETA_GMAC_INBAND_AN_ENABLE |
++	       MVNETA_GMAC_INBAND_RESTART_AN |
++	       MVNETA_GMAC_AN_SPEED_EN |
++	       MVNETA_GMAC_AN_FLOW_CTRL_EN |
++	       MVNETA_GMAC_AN_DUPLEX_EN;
++
++	if (phylink_autoneg_inband(mode)) {
++		mask |= MVNETA_GMAC_CONFIG_MII_SPEED |
++			MVNETA_GMAC_CONFIG_GMII_SPEED |
++			MVNETA_GMAC_CONFIG_FULL_DUPLEX;
++		val = MVNETA_GMAC_INBAND_AN_ENABLE;
++
++		if (state->interface == PHY_INTERFACE_MODE_SGMII) {
++			/* SGMII mode receives the speed and duplex from PHY */
++			val |= MVNETA_GMAC_AN_SPEED_EN |
++			       MVNETA_GMAC_AN_DUPLEX_EN;
++		} else {
++			/* 802.3z mode has fixed speed and duplex */
++			val |= MVNETA_GMAC_CONFIG_GMII_SPEED |
++			       MVNETA_GMAC_CONFIG_FULL_DUPLEX;
++
++			/* The FLOW_CTRL_EN bit selects either the hardware
++			 * automatically or the CONFIG_FLOW_CTRL manually
++			 * controls the GMAC pause mode.
++			 */
++			if (permit_pause_to_mac)
++				val |= MVNETA_GMAC_AN_FLOW_CTRL_EN;
++
++			/* Update the advertisement bits */
++			mask |= MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL;
++			if (phylink_test(advertising, Pause))
++				val |= MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL;
++		}
++	} else {
++		/* Phy or fixed speed - disable in-band AN modes */
++		val = 0;
++	}
++
++	old_an = an = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
++	an = (an & ~mask) | val;
++	changed = old_an ^ an;
++	if (changed)
++		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, an);
++
++	/* We are only interested in the advertisement bits changing */
++	return !!(changed & MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL);
++}
++
++static void mvneta_pcs_an_restart(struct phylink_pcs *pcs)
++{
++	struct mvneta_port *pp = mvneta_pcs_to_port(pcs);
++	u32 gmac_an = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
++
++	mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG,
++		    gmac_an | MVNETA_GMAC_INBAND_RESTART_AN);
++	mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG,
++		    gmac_an & ~MVNETA_GMAC_INBAND_RESTART_AN);
++}
++
++static const struct phylink_pcs_ops mvneta_phylink_pcs_ops = {
++	.pcs_get_state = mvneta_pcs_get_state,
++	.pcs_config = mvneta_pcs_config,
++	.pcs_an_restart = mvneta_pcs_an_restart,
++};
++
+ static void mvneta_validate(struct phylink_config *config,
+ 			    unsigned long *supported,
+ 			    struct phylink_link_state *state)
+@@ -3878,47 +3984,6 @@ static void mvneta_validate(struct phylink_config *config,
+ 	phylink_helper_basex_speed(state);
+ }
+ 
+-static void mvneta_mac_pcs_get_state(struct phylink_config *config,
+-				     struct phylink_link_state *state)
+-{
+-	struct net_device *ndev = to_net_dev(config->dev);
+-	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 gmac_stat;
+-
+-	gmac_stat = mvreg_read(pp, MVNETA_GMAC_STATUS);
+-
+-	if (gmac_stat & MVNETA_GMAC_SPEED_1000)
+-		state->speed =
+-			state->interface == PHY_INTERFACE_MODE_2500BASEX ?
+-			SPEED_2500 : SPEED_1000;
+-	else if (gmac_stat & MVNETA_GMAC_SPEED_100)
+-		state->speed = SPEED_100;
+-	else
+-		state->speed = SPEED_10;
+-
+-	state->an_complete = !!(gmac_stat & MVNETA_GMAC_AN_COMPLETE);
+-	state->link = !!(gmac_stat & MVNETA_GMAC_LINK_UP);
+-	state->duplex = !!(gmac_stat & MVNETA_GMAC_FULL_DUPLEX);
+-
+-	state->pause = 0;
+-	if (gmac_stat & MVNETA_GMAC_RX_FLOW_CTRL_ENABLE)
+-		state->pause |= MLO_PAUSE_RX;
+-	if (gmac_stat & MVNETA_GMAC_TX_FLOW_CTRL_ENABLE)
+-		state->pause |= MLO_PAUSE_TX;
+-}
+-
+-static void mvneta_mac_an_restart(struct phylink_config *config)
+-{
+-	struct net_device *ndev = to_net_dev(config->dev);
+-	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 gmac_an = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+-
+-	mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG,
+-		    gmac_an | MVNETA_GMAC_INBAND_RESTART_AN);
+-	mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG,
+-		    gmac_an & ~MVNETA_GMAC_INBAND_RESTART_AN);
+-}
+-
+ static int mvneta_mac_prepare(struct phylink_config *config, unsigned int mode,
+ 			      phy_interface_t interface)
+ {
+@@ -3961,18 +4026,11 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	u32 new_ctrl0, gmac_ctrl0 = mvreg_read(pp, MVNETA_GMAC_CTRL_0);
+ 	u32 new_ctrl2, gmac_ctrl2 = mvreg_read(pp, MVNETA_GMAC_CTRL_2);
+ 	u32 new_ctrl4, gmac_ctrl4 = mvreg_read(pp, MVNETA_GMAC_CTRL_4);
+-	u32 new_an, gmac_an = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+ 
+ 	new_ctrl0 = gmac_ctrl0 & ~MVNETA_GMAC0_PORT_1000BASE_X;
+ 	new_ctrl2 = gmac_ctrl2 & ~(MVNETA_GMAC2_INBAND_AN_ENABLE |
+ 				   MVNETA_GMAC2_PORT_RESET);
+ 	new_ctrl4 = gmac_ctrl4 & ~(MVNETA_GMAC4_SHORT_PREAMBLE_ENABLE);
+-	new_an = gmac_an & ~(MVNETA_GMAC_INBAND_AN_ENABLE |
+-			     MVNETA_GMAC_INBAND_RESTART_AN |
+-			     MVNETA_GMAC_AN_SPEED_EN |
+-			     MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL |
+-			     MVNETA_GMAC_AN_FLOW_CTRL_EN |
+-			     MVNETA_GMAC_AN_DUPLEX_EN);
+ 
+ 	/* Even though it might look weird, when we're configured in
+ 	 * SGMII or QSGMII mode, the RGMII bit needs to be set.
+@@ -3984,9 +4042,6 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	    phy_interface_mode_is_8023z(state->interface))
+ 		new_ctrl2 |= MVNETA_GMAC2_PCS_ENABLE;
+ 
+-	if (phylink_test(state->advertising, Pause))
+-		new_an |= MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL;
+-
+ 	if (!phylink_autoneg_inband(mode)) {
+ 		/* Phy or fixed speed - nothing to do, leave the
+ 		 * configured speed, duplex and flow control as-is.
+@@ -3994,23 +4049,9 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 	} else if (state->interface == PHY_INTERFACE_MODE_SGMII) {
+ 		/* SGMII mode receives the state from the PHY */
+ 		new_ctrl2 |= MVNETA_GMAC2_INBAND_AN_ENABLE;
+-		new_an = (new_an & ~(MVNETA_GMAC_CONFIG_MII_SPEED |
+-				     MVNETA_GMAC_CONFIG_GMII_SPEED |
+-				     MVNETA_GMAC_CONFIG_FULL_DUPLEX)) |
+-			 MVNETA_GMAC_INBAND_AN_ENABLE |
+-			 MVNETA_GMAC_AN_SPEED_EN |
+-			 MVNETA_GMAC_AN_DUPLEX_EN;
+ 	} else {
+ 		/* 802.3z negotiation - only 1000base-X */
+ 		new_ctrl0 |= MVNETA_GMAC0_PORT_1000BASE_X;
+-		new_an = (new_an & ~MVNETA_GMAC_CONFIG_MII_SPEED) |
+-			 MVNETA_GMAC_INBAND_AN_ENABLE |
+-			 MVNETA_GMAC_CONFIG_GMII_SPEED |
+-			 /* The MAC only supports FD mode */
+-			 MVNETA_GMAC_CONFIG_FULL_DUPLEX;
+-
+-		if (state->pause & MLO_PAUSE_AN && state->an_enabled)
+-			new_an |= MVNETA_GMAC_AN_FLOW_CTRL_EN;
+ 	}
+ 
+ 	/* When at 2.5G, the link partner can send frames with shortened
+@@ -4025,8 +4066,6 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ 		mvreg_write(pp, MVNETA_GMAC_CTRL_2, new_ctrl2);
+ 	if (new_ctrl4 != gmac_ctrl4)
+ 		mvreg_write(pp, MVNETA_GMAC_CTRL_4, new_ctrl4);
+-	if (new_an != gmac_an)
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, new_an);
+ 
+ 	if (gmac_ctrl2 & MVNETA_GMAC2_PORT_RESET) {
+ 		while ((mvreg_read(pp, MVNETA_GMAC_CTRL_2) &
+@@ -4152,8 +4191,6 @@ static void mvneta_mac_link_up(struct phylink_config *config,
+ 
+ static const struct phylink_mac_ops mvneta_phylink_ops = {
+ 	.validate = mvneta_validate,
+-	.mac_pcs_get_state = mvneta_mac_pcs_get_state,
+-	.mac_an_restart = mvneta_mac_an_restart,
+ 	.mac_prepare = mvneta_mac_prepare,
+ 	.mac_config = mvneta_mac_config,
+ 	.mac_finish = mvneta_mac_finish,
+@@ -5233,6 +5270,9 @@ static int mvneta_probe(struct platform_device *pdev)
+ 		goto err_free_irq;
+ 	}
+ 
++	pp->phylink_pcs.ops = &mvneta_phylink_pcs_ops;
++	phylink_set_pcs(phylink, &pp->phylink_pcs);
++
+ 	dev->tx_queue_len = MVNETA_MAX_TXD;
+ 	dev->watchdog_timeo = 5 * HZ;
+ 	dev->netdev_ops = &mvneta_netdev_ops;
+-- 
+cgit v1.2.3
+
+
+From 72c827679c96ef310428ee26600366ae50896022 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Thu, 22 Dec 2016 16:03:15 +0000
+Subject: net: mvneta: split out GMAC
+
+Split out the code handling the GMAC from the rest of the driver.  This
+block appears to be shared amongst several revisions of the IP.
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/Kconfig  |   4 +
+ drivers/net/ethernet/marvell/Makefile |   1 +
+ drivers/net/ethernet/marvell/mvgmac.c | 356 ++++++++++++++++++++++++++++++++++
+ drivers/net/ethernet/marvell/mvgmac.h |  43 ++++
+ drivers/net/ethernet/marvell/mvneta.c | 305 ++++-------------------------
+ 5 files changed, 438 insertions(+), 271 deletions(-)
+ create mode 100644 drivers/net/ethernet/marvell/mvgmac.c
+ create mode 100644 drivers/net/ethernet/marvell/mvgmac.h
+
+diff --git a/drivers/net/ethernet/marvell/Kconfig b/drivers/net/ethernet/marvell/Kconfig
+index fe0989c0fc25..e9149e6fab10 100644
+--- a/drivers/net/ethernet/marvell/Kconfig
++++ b/drivers/net/ethernet/marvell/Kconfig
+@@ -59,6 +59,7 @@ config MVNETA_BM_ENABLE
+ config MVNETA
+ 	tristate "Marvell Armada 370/38x/XP/37xx network interface support"
+ 	depends on ARCH_MVEBU || COMPILE_TEST
++	select MVGMAC
+ 	select MVMDIO
+ 	select PHYLINK
+ 	select PAGE_POOL
+@@ -71,6 +72,9 @@ config MVNETA
+ 	  driver, which should be used for the older Marvell SoCs
+ 	  (Dove, Orion, Discovery, Kirkwood).
+ 
++config MVGMAC
++	tristate
++
+ config MVNETA_BM
+ 	tristate
+ 	depends on !64BIT
+diff --git a/drivers/net/ethernet/marvell/Makefile b/drivers/net/ethernet/marvell/Makefile
+index 9f88fe822555..b1442ff46abf 100644
+--- a/drivers/net/ethernet/marvell/Makefile
++++ b/drivers/net/ethernet/marvell/Makefile
+@@ -7,6 +7,7 @@ obj-$(CONFIG_MVMDIO) += mvmdio.o
+ obj-$(CONFIG_MV643XX_ETH) += mv643xx_eth.o
+ obj-$(CONFIG_MVNETA_BM) += mvneta_bm.o
+ obj-$(CONFIG_MVNETA) += mvneta.o
++obj-$(CONFIG_MVGMAC) += mvgmac.o
+ obj-$(CONFIG_MVPP2) += mvpp2/
+ obj-$(CONFIG_PXA168_ETH) += pxa168_eth.o
+ obj-$(CONFIG_SKGE) += skge.o
+diff --git a/drivers/net/ethernet/marvell/mvgmac.c b/drivers/net/ethernet/marvell/mvgmac.c
+new file mode 100644
+index 000000000000..6c0b7c5c0b24
+--- /dev/null
++++ b/drivers/net/ethernet/marvell/mvgmac.c
+@@ -0,0 +1,356 @@
++/*
++ * GMAC driver for Marvell network interfaces on Armada SoCs.
++ *
++ * Copyright (C) 2012 Marvell
++ *
++ * Rami Rosen <rosenr@marvell.com>
++ * Thomas Petazzoni <thomas.petazzoni@free-electrons.com>
++ *
++ * Split from mvneta and mvpp2 by Russell King.
++ *
++ * This file is licensed under the terms of the GNU General Public
++ * License version 2. This program is licensed "as is" without any
++ * warranty of any kind, whether express or implied.
++ */
++#include <linux/export.h>
++#include <linux/io.h>
++#include <linux/phylink.h>
++
++#include "mvgmac.h"
++
++enum {
++	GMAC_CTRL0_REG		= 0x00,
++	GMAC_CTRL0_PORT_ENABLE		= BIT(0),
++	GMAC_CTRL0_PORT_1000BASE_X	= BIT(1),
++	GMAC_CTRL0_MAX_RX_SIZE_SHIFT	= 2,
++	GMAC_CTRL0_MAX_RX_SIZE_MASK	= 0x1fff << GMAC_CTRL0_MAX_RX_SIZE_SHIFT,
++	GMAC_CTRL0_MIB_CNTR_ENABLE	= BIT(15),
++
++	GMAC_CTRL2_REG		= 0x08,
++	GMAC_CTRL2_INBAND_AN_SGMII	= BIT(0),
++	GMAC_CTRL2_PCS_ENABLE		= BIT(3),
++	GMAC_CTRL2_PORT_RGMII		= BIT(4),
++	GMAC_CTRL2_PORT_RESET		= BIT(6),
++
++	GMAC_ANEG_REG		= 0x0c,
++	GMAC_ANEG_FORCE_LINK_DOWN	= BIT(0),
++	GMAC_ANEG_FORCE_LINK_PASS	= BIT(1),
++	GMAC_ANEG_INBAND_AN_ENABLE	= BIT(2),
++	GMAC_ANEG_AN_BYPASS_ENABLE	= BIT(3),
++	GMAC_ANEG_INBAND_RESTART_AN	= BIT(4),
++	GMAC_ANEG_MII_SPEED		= BIT(5),
++	GMAC_ANEG_GMII_SPEED		= BIT(6),
++	GMAC_ANEG_AN_SPEED_ENABLE	= BIT(7),
++	GMAC_ANEG_CONFIG_FLOW_CTRL	= BIT(8),
++	GMAC_ANEG_ADVERT_SYM_FLOW_CTRL	= BIT(9),
++	GMAC_ANEG_AN_FLOW_CTRL_ENABLE	= BIT(11),
++	GMAC_ANEG_FULL_DUPLEX		= BIT(12),
++	GMAC_ANEG_AN_DUPLEX_ENABLE	= BIT(13),
++
++	GMAC_STATUS_REG		= 0x10,
++	MVGMAC_LINK_UP			= BIT(0),
++	MVGMAC_SPEED_1000		= BIT(1),
++	MVGMAC_SPEED_100		= BIT(2),
++	MVGMAC_FULL_DUPLEX		= BIT(3),
++	MVGMAC_RX_FLOW_CTRL_ENABLE	= BIT(4),
++	MVGMAC_TX_FLOW_CTRL_ENABLE	= BIT(5),
++	MVGMAC_RX_FLOW_CTRL_ACTIVE	= BIT(6),
++	MVGMAC_TX_FLOW_CTRL_ACTIVE	= BIT(7),
++	MVGMAC_AN_COMPLETE		= BIT(11),
++	MVGMAC_SYNC_OK			= BIT(14),
++
++	GMAC_CTRL4_REG		= 0x90,
++	GMAC_CTRL4_SHORT_PREAMBLE_ENABLE = BIT(1),
++
++	GMAC_LPI_CTRL0_REG	= 0xc0,
++	GMAC_LPI_CTRL0_TS		= 0xff << 8,
++	GMAC_LPI_CTRL1_REG	= 0xc4,
++	GMAC_LPI_CTRL1_REQ_EN		= BIT(0),
++	GMAC_LPI_CTRL2_REG	= 0xc8,
++	GMAC_LPI_STATUS_REG	= 0xcc,
++	GMAC_LPI_CNTR_REG	= 0xd0,
++};
++
++#define insert(var, mask, val) ({					\
++	u32 __mask = mask;						\
++	((var) & ~(__mask)) | (((val) << __ffs(__mask)) & (__mask));	\
++})
++
++/* Change maximum receive size of the port. */
++void mvgmac_set_max_rx_size(struct mvgmac *gmac, size_t max_rx_size)
++{
++	int size = (max_rx_size - MARVELL_HEADER_SIZE) / 2;
++	u32 val;
++
++	val = readl_relaxed(gmac->base + GMAC_CTRL0_REG);
++	val = insert(val, GMAC_CTRL0_MAX_RX_SIZE_MASK, size);
++	writel_relaxed(val, gmac->base + GMAC_CTRL0_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_set_max_rx_size);
++
++/* Enable the port by setting the port enable bit of the MAC control register */
++void mvgmac_enable(struct mvgmac *gmac)
++{
++	u32 val;
++
++	val = readl_relaxed(gmac->base + GMAC_CTRL0_REG);
++	val |= GMAC_CTRL0_PORT_ENABLE;
++	val |= GMAC_CTRL0_MIB_CNTR_ENABLE;
++	writel_relaxed(val, gmac->base + GMAC_CTRL0_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_enable);
++
++/* Disable the port */
++void mvgmac_disable(struct mvgmac *gmac)
++{
++	u32 val;
++
++	val = readl_relaxed(gmac->base + GMAC_CTRL0_REG);
++	val &= ~GMAC_CTRL0_PORT_ENABLE;
++	writel_relaxed(val, gmac->base + GMAC_CTRL0_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_disable);
++
++void mvgmac_link_unforce(struct mvgmac *gmac)
++{
++	u32 val;
++
++	val = readl_relaxed(gmac->base + GMAC_ANEG_REG);
++	val &= ~(GMAC_ANEG_FORCE_LINK_PASS | GMAC_ANEG_FORCE_LINK_DOWN);
++	writel_relaxed(val, gmac->base + GMAC_ANEG_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_link_unforce);
++
++void mvgmac_link_force_down(struct mvgmac *gmac)
++{
++	u32 val;
++
++	val = readl_relaxed(gmac->base + GMAC_ANEG_REG);
++	val &= ~GMAC_ANEG_FORCE_LINK_PASS;
++	val |= GMAC_ANEG_FORCE_LINK_DOWN;
++	writel_relaxed(val, gmac->base + GMAC_ANEG_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_link_force_down);
++
++void mvgmac_link_down(struct mvgmac *gmac, int mode)
++{
++	if (!phylink_autoneg_inband(mode))
++		mvgmac_link_force_down(gmac);
++}
++EXPORT_SYMBOL_GPL(mvgmac_link_down);
++
++void mvgmac_link_up(struct mvgmac *gmac, int mode, int speed, int duplex,
++		    bool tx_pause, bool rx_pause)
++{
++	u32 val;
++
++	val = readl_relaxed(gmac->base + GMAC_ANEG_REG);
++	val &= ~GMAC_ANEG_CONFIG_FLOW_CTRL;
++
++	if (!phylink_autoneg_inband(mode)) {
++		val &= ~(GMAC_ANEG_FORCE_LINK_DOWN |
++			 GMAC_ANEG_MII_SPEED |
++			 GMAC_ANEG_GMII_SPEED |
++			 GMAC_ANEG_FULL_DUPLEX);
++		val |= GMAC_ANEG_FORCE_LINK_PASS;
++
++		if (speed == SPEED_1000 || speed == SPEED_2500)
++			val |= GMAC_ANEG_GMII_SPEED;
++		else if (speed == SPEED_100)
++			val |= GMAC_ANEG_MII_SPEED;
++
++		if (duplex == DUPLEX_FULL)
++			val |= GMAC_ANEG_FULL_DUPLEX;
++	}
++
++	if (tx_pause || rx_pause)
++		val |= GMAC_ANEG_CONFIG_FLOW_CTRL;
++
++	writel_relaxed(val, gmac->base + GMAC_ANEG_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_link_up);
++
++bool mvgmac_link_is_up(struct mvgmac *gmac)
++{
++	u32 gmac_stat = readl_relaxed(gmac->base + GMAC_STATUS_REG);
++
++	return !!(gmac_stat & MVGMAC_LINK_UP);
++}
++EXPORT_SYMBOL_GPL(mvgmac_link_is_up);
++
++void mvgmac_pcs_get_state(struct mvgmac *gmac, struct phylink_link_state *state)
++{
++	u32 gmac_stat = readl_relaxed(gmac->base + GMAC_STATUS_REG);
++
++	if (gmac_stat & MVGMAC_SPEED_1000)
++		state->speed =
++			state->interface == PHY_INTERFACE_MODE_2500BASEX ?
++			SPEED_2500 : SPEED_1000;
++	else if (gmac_stat & MVGMAC_SPEED_100)
++		state->speed = SPEED_100;
++	else
++		state->speed = SPEED_10;
++
++	state->an_complete = !!(gmac_stat & MVGMAC_AN_COMPLETE);
++	state->link = !!(gmac_stat & MVGMAC_LINK_UP);
++	state->duplex = !!(gmac_stat & MVGMAC_FULL_DUPLEX);
++
++	if (gmac_stat & MVGMAC_RX_FLOW_CTRL_ENABLE)
++		state->pause |= MLO_PAUSE_RX;
++	if (gmac_stat & MVGMAC_TX_FLOW_CTRL_ENABLE)
++		state->pause |= MLO_PAUSE_TX;
++}
++EXPORT_SYMBOL_GPL(mvgmac_pcs_get_state);
++
++void mvgmac_pcs_an_restart(struct mvgmac *gmac)
++{
++	u32 gmac_an = readl_relaxed(gmac->base + GMAC_ANEG_REG);
++
++	writel_relaxed(gmac_an | GMAC_ANEG_INBAND_RESTART_AN,
++		       gmac->base + GMAC_ANEG_REG);
++	writel_relaxed(gmac_an & ~GMAC_ANEG_INBAND_RESTART_AN,
++		       gmac->base + GMAC_ANEG_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_pcs_an_restart);
++
++int mvgmac_pcs_config(struct mvgmac *gmac, unsigned int mode,
++		      phy_interface_t interface,
++		      const unsigned long *advertising,
++		      bool permit_pause_to_mac)
++{
++	u32 mask, val, an, old_an, changed;
++
++	mask = GMAC_ANEG_INBAND_AN_ENABLE |
++	       GMAC_ANEG_INBAND_RESTART_AN |
++	       GMAC_ANEG_AN_SPEED_ENABLE |
++	       GMAC_ANEG_AN_FLOW_CTRL_ENABLE |
++	       GMAC_ANEG_AN_DUPLEX_ENABLE;
++
++	if (phylink_autoneg_inband(mode)) {
++		mask |= GMAC_ANEG_MII_SPEED |
++			GMAC_ANEG_GMII_SPEED |
++			GMAC_ANEG_FULL_DUPLEX;
++		val = GMAC_ANEG_INBAND_AN_ENABLE;
++
++		if (interface == PHY_INTERFACE_MODE_SGMII) {
++			/* SGMII mode receives the speed and duplex from PHY */
++			val |= GMAC_ANEG_AN_SPEED_ENABLE |
++			       GMAC_ANEG_AN_DUPLEX_ENABLE;
++		} else {
++			/* 802.3z mode has fixed speed and duplex */
++			val |= GMAC_ANEG_GMII_SPEED |
++			       GMAC_ANEG_FULL_DUPLEX;
++
++			/* The FLOW_CTRL_ENABLE bit selects either the hardware
++			 * automatically or the GMAC_ANEG_FLOW_CTRL manually
++			 * controls the GMAC pause mode.
++			 */
++			if (permit_pause_to_mac)
++				val |= GMAC_ANEG_AN_FLOW_CTRL_ENABLE;
++
++			/* Update the advertisement bits */
++			mask |= GMAC_ANEG_ADVERT_SYM_FLOW_CTRL;
++			if (phylink_test(advertising, Pause))
++				val |= GMAC_ANEG_ADVERT_SYM_FLOW_CTRL;
++		}
++	} else {
++		/* Phy or fixed speed - disable in-band AN modes */
++		val = 0;
++	}
++
++	old_an = an = readl_relaxed(gmac->base + GMAC_ANEG_REG);
++	an = (an & ~mask) | val;
++	changed = old_an ^ an;
++	if (changed)
++		writel_relaxed(an, gmac->base + GMAC_ANEG_REG);
++
++	/* We are only interested in the advertisement bits changing */
++	return !!(changed & GMAC_ANEG_ADVERT_SYM_FLOW_CTRL);
++}
++EXPORT_SYMBOL_GPL(mvgmac_pcs_config);
++
++void mvgmac_config_mac(struct mvgmac *gmac, unsigned int mode,
++		       const struct phylink_link_state *state)
++{
++	u32 new_ctrl0, gmac_ctrl0 = readl_relaxed(gmac->base + GMAC_CTRL0_REG);
++	u32 new_ctrl2, gmac_ctrl2 = readl_relaxed(gmac->base + GMAC_CTRL2_REG);
++	u32 new_ctrl4, gmac_ctrl4 = readl_relaxed(gmac->base + GMAC_CTRL4_REG);
++
++	new_ctrl0 = gmac_ctrl0 & ~GMAC_CTRL0_PORT_1000BASE_X;
++	new_ctrl2 = gmac_ctrl2 & ~(GMAC_CTRL2_INBAND_AN_SGMII |
++				   GMAC_CTRL2_PORT_RESET);
++	new_ctrl4 = gmac_ctrl4 & ~GMAC_CTRL4_SHORT_PREAMBLE_ENABLE;
++
++	/* Even though it might look weird, when we're configured in
++	 * SGMII or QSGMII mode, the RGMII bit needs to be set.
++	 */
++	new_ctrl2 |= GMAC_CTRL2_PORT_RGMII;
++
++	if (state->interface == PHY_INTERFACE_MODE_QSGMII ||
++	    state->interface == PHY_INTERFACE_MODE_SGMII ||
++	    phy_interface_mode_is_8023z(state->interface))
++		new_ctrl2 |= GMAC_CTRL2_PCS_ENABLE;
++
++	if (!phylink_autoneg_inband(mode)) {
++		/* Phy or fixed speed - nothing to do, leave the
++		 * configured speed, duplex and flow control as-is.
++		 */
++	} else if (state->interface == PHY_INTERFACE_MODE_SGMII) {
++		/* SGMII mode receives the state from the PHY */
++		new_ctrl2 |= GMAC_CTRL2_INBAND_AN_SGMII;
++	} else {
++		/* 802.3z negotiation - 1000BaseX */
++		new_ctrl0 |= GMAC_CTRL0_PORT_1000BASE_X;
++	}
++
++	/* When at 2.5G, the link partner can send frames with shortened
++	 * preambles.
++	 */
++	if (state->interface == PHY_INTERFACE_MODE_2500BASEX)
++		new_ctrl4 |= GMAC_CTRL4_SHORT_PREAMBLE_ENABLE;
++
++	if (new_ctrl0 != gmac_ctrl0)
++		writel_relaxed(new_ctrl0, gmac->base + GMAC_CTRL0_REG);
++	if (new_ctrl2 != gmac_ctrl2)
++		writel_relaxed(new_ctrl2, gmac->base + GMAC_CTRL2_REG);
++	if (new_ctrl4 != gmac_ctrl4)
++		writel_relaxed(new_ctrl4, gmac->base + GMAC_CTRL4_REG);
++
++	if (gmac_ctrl2 & GMAC_CTRL2_PORT_RESET) {
++		while ((readl_relaxed(gmac->base + GMAC_CTRL2_REG) &
++			GMAC_CTRL2_PORT_RESET) != 0)
++			continue;
++	}
++}
++EXPORT_SYMBOL_GPL(mvgmac_config_mac);
++
++int mvgmac_set_lpi_ts(struct mvgmac *gmac, unsigned int ts)
++{
++	u32 val;
++
++	if (!(readl_relaxed(gmac->base + GMAC_STATUS_REG) & MVGMAC_SPEED_1000))
++		ts = DIV_ROUND_UP(ts, 10);
++
++	if (ts > 255)
++		ts = 255;
++
++	val = readl_relaxed(gmac->base + GMAC_LPI_CTRL0_REG);
++	val = insert(val, GMAC_LPI_CTRL0_TS, ts);
++	writel_relaxed(val, gmac->base + GMAC_LPI_CTRL0_REG);
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mvgmac_set_lpi_ts);
++
++void mvgmac_set_eee(struct mvgmac *gmac, bool enable)
++{
++	u32 val;
++
++	val = readl_relaxed(gmac->base + GMAC_LPI_CTRL1_REG);
++	val = insert(val, GMAC_LPI_CTRL1_REQ_EN, enable);
++	writel_relaxed(val, gmac->base + GMAC_LPI_CTRL1_REG);
++}
++EXPORT_SYMBOL_GPL(mvgmac_set_eee);
++
++MODULE_DESCRIPTION("Marvell GMAC driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/net/ethernet/marvell/mvgmac.h b/drivers/net/ethernet/marvell/mvgmac.h
+new file mode 100644
+index 000000000000..ceccc6777237
+--- /dev/null
++++ b/drivers/net/ethernet/marvell/mvgmac.h
+@@ -0,0 +1,43 @@
++#ifndef MVGMAC_H
++#define MVGMAC_H
++
++#include <linux/phy.h>
++
++struct phylink_link_state;
++
++/* The two bytes Marvell header. Either contains a special value used by
++ * Marvell switches when a specific hardware mode is enabled (not supported
++ * by this driver) or is filled automatically by zeroes on the RX side.
++ * Those two bytes being at the front of the Ethernet header, they allow
++ * to have the IP header aligned on a 4 bytes boundary automatically: the
++ * hardware skips those two bytes on its own.
++ */
++#define MARVELL_HEADER_SIZE 2
++
++struct mvgmac {
++	void __iomem *base;
++};
++
++void mvgmac_set_max_rx_size(struct mvgmac *gmac, size_t max_rx_size);
++void mvgmac_enable(struct mvgmac *gmac);
++void mvgmac_disable(struct mvgmac *gmac);
++void mvgmac_link_unforce(struct mvgmac *gmac);
++void mvgmac_link_force_down(struct mvgmac *gmac);
++void mvgmac_link_down(struct mvgmac *gmac, int mode);
++void mvgmac_link_up(struct mvgmac *gmac, int mode, int speed, int duplex,
++		    bool tx_pause, bool rx_pause);
++bool mvgmac_link_is_up(struct mvgmac *gmac);
++void mvgmac_pcs_get_state(struct mvgmac *gmac,
++			  struct phylink_link_state *state);
++void mvgmac_pcs_an_restart(struct mvgmac *gmac);
++int mvgmac_pcs_config(struct mvgmac *gmac, unsigned int mode,
++		      phy_interface_t interface,
++		      const unsigned long *advertising,
++		      bool permit_pause_to_mac);
++void mvgmac_config_mac(struct mvgmac *gmac, unsigned int mode,
++		       const struct phylink_link_state *state);
++
++int mvgmac_set_lpi_ts(struct mvgmac *gmac, unsigned int ts);
++void mvgmac_set_eee(struct mvgmac *gmac, bool enable);
++
++#endif
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index c9bad557f8f9..750915bb2b28 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -34,6 +34,7 @@
+ #include <linux/skbuff.h>
+ #include <net/hwbm.h>
+ #include "mvneta_bm.h"
++#include "mvgmac.h"
+ #include <net/ip.h>
+ #include <net/ipv6.h>
+ #include <net/tso.h>
+@@ -193,43 +194,7 @@
+ #define      MVNETA_RXQ_ENABLE_MASK              0x000000ff
+ #define MVETH_TXQ_TOKEN_COUNT_REG(q)             (0x2700 + ((q) << 4))
+ #define MVETH_TXQ_TOKEN_CFG_REG(q)               (0x2704 + ((q) << 4))
+-#define MVNETA_GMAC_CTRL_0                       0x2c00
+-#define      MVNETA_GMAC_MAX_RX_SIZE_SHIFT       2
+-#define      MVNETA_GMAC_MAX_RX_SIZE_MASK        0x7ffc
+-#define      MVNETA_GMAC0_PORT_1000BASE_X        BIT(1)
+-#define      MVNETA_GMAC0_PORT_ENABLE            BIT(0)
+-#define MVNETA_GMAC_CTRL_2                       0x2c08
+-#define      MVNETA_GMAC2_INBAND_AN_ENABLE       BIT(0)
+-#define      MVNETA_GMAC2_PCS_ENABLE             BIT(3)
+-#define      MVNETA_GMAC2_PORT_RGMII             BIT(4)
+-#define      MVNETA_GMAC2_PORT_RESET             BIT(6)
+-#define MVNETA_GMAC_STATUS                       0x2c10
+-#define      MVNETA_GMAC_LINK_UP                 BIT(0)
+-#define      MVNETA_GMAC_SPEED_1000              BIT(1)
+-#define      MVNETA_GMAC_SPEED_100               BIT(2)
+-#define      MVNETA_GMAC_FULL_DUPLEX             BIT(3)
+-#define      MVNETA_GMAC_RX_FLOW_CTRL_ENABLE     BIT(4)
+-#define      MVNETA_GMAC_TX_FLOW_CTRL_ENABLE     BIT(5)
+-#define      MVNETA_GMAC_RX_FLOW_CTRL_ACTIVE     BIT(6)
+-#define      MVNETA_GMAC_TX_FLOW_CTRL_ACTIVE     BIT(7)
+-#define      MVNETA_GMAC_AN_COMPLETE             BIT(11)
+-#define      MVNETA_GMAC_SYNC_OK                 BIT(14)
+-#define MVNETA_GMAC_AUTONEG_CONFIG               0x2c0c
+-#define      MVNETA_GMAC_FORCE_LINK_DOWN         BIT(0)
+-#define      MVNETA_GMAC_FORCE_LINK_PASS         BIT(1)
+-#define      MVNETA_GMAC_INBAND_AN_ENABLE        BIT(2)
+-#define      MVNETA_GMAC_AN_BYPASS_ENABLE        BIT(3)
+-#define      MVNETA_GMAC_INBAND_RESTART_AN       BIT(4)
+-#define      MVNETA_GMAC_CONFIG_MII_SPEED        BIT(5)
+-#define      MVNETA_GMAC_CONFIG_GMII_SPEED       BIT(6)
+-#define      MVNETA_GMAC_AN_SPEED_EN             BIT(7)
+-#define      MVNETA_GMAC_CONFIG_FLOW_CTRL        BIT(8)
+-#define      MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL    BIT(9)
+-#define      MVNETA_GMAC_AN_FLOW_CTRL_EN         BIT(11)
+-#define      MVNETA_GMAC_CONFIG_FULL_DUPLEX      BIT(12)
+-#define      MVNETA_GMAC_AN_DUPLEX_EN            BIT(13)
+-#define MVNETA_GMAC_CTRL_4                       0x2c90
+-#define      MVNETA_GMAC4_SHORT_PREAMBLE_ENABLE  BIT(1)
++#define MVNETA_GMAC_BASE                         0x2c00
+ #define MVNETA_MIB_COUNTERS_BASE                 0x3000
+ #define      MVNETA_MIB_LATE_COLLISION           0x7c
+ #define MVNETA_DA_FILT_SPEC_MCAST                0x3400
+@@ -253,12 +218,6 @@
+ #define MVNETA_TXQ_TOKEN_SIZE_REG(q)             (0x3e40 + ((q) << 2))
+ #define      MVNETA_TXQ_TOKEN_SIZE_MAX           0x7fffffff
+ 
+-#define MVNETA_LPI_CTRL_0                        0x2cc0
+-#define MVNETA_LPI_CTRL_1                        0x2cc4
+-#define      MVNETA_LPI_REQUEST_ENABLE           BIT(0)
+-#define MVNETA_LPI_CTRL_2                        0x2cc8
+-#define MVNETA_LPI_STATUS                        0x2ccc
+-
+ #define MVNETA_CAUSE_TXQ_SENT_DESC_ALL_MASK	 0xff
+ 
+ /* Descriptor ring Macros */
+@@ -280,7 +239,7 @@
+  * boundary automatically: the hardware skips those two bytes on its
+  * own.
+  */
+-#define MVNETA_MH_SIZE			2
++#define MVNETA_MH_SIZE			MARVELL_HEADER_SIZE
+ 
+ #define MVNETA_VLAN_TAG_LEN             4
+ 
+@@ -502,6 +461,7 @@ struct mvneta_port {
+ 	struct phylink_pcs phylink_pcs;
+ 	struct phy *comphy;
+ 
++	struct mvgmac gmac;
+ 	struct mvneta_bm *bm_priv;
+ 	struct mvneta_bm_pool *pool_long;
+ 	struct mvneta_bm_pool *pool_short;
+@@ -510,6 +470,7 @@ struct mvneta_port {
+ 	bool eee_enabled;
+ 	bool eee_active;
+ 	bool tx_lpi_enabled;
++	u32 tx_lpi_timer;
+ 
+ 	u64 ethtool_stats[ARRAY_SIZE(mvneta_statistics)];
+ 
+@@ -892,19 +853,6 @@ mvneta_rxq_next_desc_get(struct mvneta_rx_queue *rxq)
+ 	return rxq->descs + rx_desc;
+ }
+ 
+-/* Change maximum receive size of the port. */
+-static void mvneta_max_rx_size_set(struct mvneta_port *pp, int max_rx_size)
+-{
+-	u32 val;
+-
+-	val =  mvreg_read(pp, MVNETA_GMAC_CTRL_0);
+-	val &= ~MVNETA_GMAC_MAX_RX_SIZE_MASK;
+-	val |= ((max_rx_size - MVNETA_MH_SIZE) / 2) <<
+-		MVNETA_GMAC_MAX_RX_SIZE_SHIFT;
+-	mvreg_write(pp, MVNETA_GMAC_CTRL_0, val);
+-}
+-
+-
+ /* Set rx queue offset */
+ static void mvneta_rxq_offset_set(struct mvneta_port *pp,
+ 				  struct mvneta_rx_queue *rxq,
+@@ -1312,23 +1260,13 @@ static void mvneta_port_down(struct mvneta_port *pp)
+ /* Enable the port by setting the port enable bit of the MAC control register */
+ static void mvneta_port_enable(struct mvneta_port *pp)
+ {
+-	u32 val;
+-
+-	/* Enable port */
+-	val = mvreg_read(pp, MVNETA_GMAC_CTRL_0);
+-	val |= MVNETA_GMAC0_PORT_ENABLE;
+-	mvreg_write(pp, MVNETA_GMAC_CTRL_0, val);
++	mvgmac_enable(&pp->gmac);
+ }
+ 
+ /* Disable the port and wait for about 200 usec before retuning */
+ static void mvneta_port_disable(struct mvneta_port *pp)
+ {
+-	u32 val;
+-
+-	/* Reset the Enable bit in the Serial Control Register */
+-	val = mvreg_read(pp, MVNETA_GMAC_CTRL_0);
+-	val &= ~MVNETA_GMAC0_PORT_ENABLE;
+-	mvreg_write(pp, MVNETA_GMAC_CTRL_0, val);
++	mvgmac_disable(&pp->gmac);
+ 
+ 	udelay(200);
+ }
+@@ -3129,9 +3067,9 @@ static irqreturn_t mvneta_percpu_isr(int irq, void *dev_id)
+ 
+ static void mvneta_link_change(struct mvneta_port *pp)
+ {
+-	u32 gmac_stat = mvreg_read(pp, MVNETA_GMAC_STATUS);
++	bool link_is_up = mvgmac_link_is_up(&pp->gmac);
+ 
+-	phylink_mac_change(pp->phylink, !!(gmac_stat & MVNETA_GMAC_LINK_UP));
++	phylink_mac_change(pp->phylink, link_is_up);
+ }
+ 
+ /* NAPI handler
+@@ -3623,7 +3561,7 @@ static void mvneta_start_dev(struct mvneta_port *pp)
+ 
+ 	WARN_ON(mvneta_config_interface(pp, pp->phy_interface));
+ 
+-	mvneta_max_rx_size_set(pp, pp->pkt_size);
++	mvgmac_set_max_rx_size(&pp->gmac, pp->pkt_size);
+ 	mvneta_txq_max_tx_size_set(pp, pp->pkt_size);
+ 
+ 	/* start the Rx/Tx activity */
+@@ -3834,27 +3772,8 @@ static void mvneta_pcs_get_state(struct phylink_pcs *pcs,
+ 				 struct phylink_link_state *state)
+ {
+ 	struct mvneta_port *pp = mvneta_pcs_to_port(pcs);
+-	u32 gmac_stat;
+-
+-	gmac_stat = mvreg_read(pp, MVNETA_GMAC_STATUS);
+ 
+-	if (gmac_stat & MVNETA_GMAC_SPEED_1000)
+-		state->speed =
+-			state->interface == PHY_INTERFACE_MODE_2500BASEX ?
+-			SPEED_2500 : SPEED_1000;
+-	else if (gmac_stat & MVNETA_GMAC_SPEED_100)
+-		state->speed = SPEED_100;
+-	else
+-		state->speed = SPEED_10;
+-
+-	state->an_complete = !!(gmac_stat & MVNETA_GMAC_AN_COMPLETE);
+-	state->link = !!(gmac_stat & MVNETA_GMAC_LINK_UP);
+-	state->duplex = !!(gmac_stat & MVNETA_GMAC_FULL_DUPLEX);
+-
+-	if (gmac_stat & MVNETA_GMAC_RX_FLOW_CTRL_ENABLE)
+-		state->pause |= MLO_PAUSE_RX;
+-	if (gmac_stat & MVNETA_GMAC_TX_FLOW_CTRL_ENABLE)
+-		state->pause |= MLO_PAUSE_TX;
++	mvgmac_pcs_get_state(&pp->gmac, state);
+ }
+ 
+ static int mvneta_pcs_config(struct phylink_pcs *pcs,
+@@ -3863,65 +3782,19 @@ static int mvneta_pcs_config(struct phylink_pcs *pcs,
+ 			     bool permit_pause_to_mac)
+ {
+ 	struct mvneta_port *pp = mvneta_pcs_to_port(pcs);
+-	u32 mask, val, an, old_an, changed;
+ 
+-	mask = MVNETA_GMAC_INBAND_AN_ENABLE |
+-	       MVNETA_GMAC_INBAND_RESTART_AN |
+-	       MVNETA_GMAC_AN_SPEED_EN |
+-	       MVNETA_GMAC_AN_FLOW_CTRL_EN |
+-	       MVNETA_GMAC_AN_DUPLEX_EN;
++	/* We should never see Asym_Pause set */
++	WARN_ON(phylink_test(advertising, Asym_Pause));
+ 
+-	if (phylink_autoneg_inband(mode)) {
+-		mask |= MVNETA_GMAC_CONFIG_MII_SPEED |
+-			MVNETA_GMAC_CONFIG_GMII_SPEED |
+-			MVNETA_GMAC_CONFIG_FULL_DUPLEX;
+-		val = MVNETA_GMAC_INBAND_AN_ENABLE;
+-
+-		if (state->interface == PHY_INTERFACE_MODE_SGMII) {
+-			/* SGMII mode receives the speed and duplex from PHY */
+-			val |= MVNETA_GMAC_AN_SPEED_EN |
+-			       MVNETA_GMAC_AN_DUPLEX_EN;
+-		} else {
+-			/* 802.3z mode has fixed speed and duplex */
+-			val |= MVNETA_GMAC_CONFIG_GMII_SPEED |
+-			       MVNETA_GMAC_CONFIG_FULL_DUPLEX;
+-
+-			/* The FLOW_CTRL_EN bit selects either the hardware
+-			 * automatically or the CONFIG_FLOW_CTRL manually
+-			 * controls the GMAC pause mode.
+-			 */
+-			if (permit_pause_to_mac)
+-				val |= MVNETA_GMAC_AN_FLOW_CTRL_EN;
+-
+-			/* Update the advertisement bits */
+-			mask |= MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL;
+-			if (phylink_test(advertising, Pause))
+-				val |= MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL;
+-		}
+-	} else {
+-		/* Phy or fixed speed - disable in-band AN modes */
+-		val = 0;
+-	}
+-
+-	old_an = an = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+-	an = (an & ~mask) | val;
+-	changed = old_an ^ an;
+-	if (changed)
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, an);
+-
+-	/* We are only interested in the advertisement bits changing */
+-	return !!(changed & MVNETA_GMAC_ADVERT_SYM_FLOW_CTRL);
++	return mvgmac_pcs_config(&pp->gmac, mode, interface, advertising,
++				 permit_pause_to_mac);
+ }
+ 
+ static void mvneta_pcs_an_restart(struct phylink_pcs *pcs)
+ {
+ 	struct mvneta_port *pp = mvneta_pcs_to_port(pcs);
+-	u32 gmac_an = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+ 
+-	mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG,
+-		    gmac_an | MVNETA_GMAC_INBAND_RESTART_AN);
+-	mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG,
+-		    gmac_an & ~MVNETA_GMAC_INBAND_RESTART_AN);
++	mvgmac_pcs_an_restart(&pp->gmac);
+ }
+ 
+ static const struct phylink_pcs_ops mvneta_phylink_pcs_ops = {
+@@ -3989,7 +3862,6 @@ static int mvneta_mac_prepare(struct phylink_config *config, unsigned int mode,
+ {
+ 	struct net_device *ndev = to_net_dev(config->dev);
+ 	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 val;
+ 
+ 	if (pp->phy_interface != interface ||
+ 	    phylink_autoneg_inband(mode)) {
+@@ -3998,10 +3870,7 @@ static int mvneta_mac_prepare(struct phylink_config *config, unsigned int mode,
+ 		 * can only change the port mode and in-band enable when the
+ 		 * link is down.
+ 		 */
+-		val = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+-		val &= ~MVNETA_GMAC_FORCE_LINK_PASS;
+-		val |= MVNETA_GMAC_FORCE_LINK_DOWN;
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, val);
++		mvgmac_link_force_down(&pp->gmac);
+ 	}
+ 
+ 	if (pp->phy_interface != interface)
+@@ -4023,55 +3892,8 @@ static void mvneta_mac_config(struct phylink_config *config, unsigned int mode,
+ {
+ 	struct net_device *ndev = to_net_dev(config->dev);
+ 	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 new_ctrl0, gmac_ctrl0 = mvreg_read(pp, MVNETA_GMAC_CTRL_0);
+-	u32 new_ctrl2, gmac_ctrl2 = mvreg_read(pp, MVNETA_GMAC_CTRL_2);
+-	u32 new_ctrl4, gmac_ctrl4 = mvreg_read(pp, MVNETA_GMAC_CTRL_4);
+-
+-	new_ctrl0 = gmac_ctrl0 & ~MVNETA_GMAC0_PORT_1000BASE_X;
+-	new_ctrl2 = gmac_ctrl2 & ~(MVNETA_GMAC2_INBAND_AN_ENABLE |
+-				   MVNETA_GMAC2_PORT_RESET);
+-	new_ctrl4 = gmac_ctrl4 & ~(MVNETA_GMAC4_SHORT_PREAMBLE_ENABLE);
+-
+-	/* Even though it might look weird, when we're configured in
+-	 * SGMII or QSGMII mode, the RGMII bit needs to be set.
+-	 */
+-	new_ctrl2 |= MVNETA_GMAC2_PORT_RGMII;
+-
+-	if (state->interface == PHY_INTERFACE_MODE_QSGMII ||
+-	    state->interface == PHY_INTERFACE_MODE_SGMII ||
+-	    phy_interface_mode_is_8023z(state->interface))
+-		new_ctrl2 |= MVNETA_GMAC2_PCS_ENABLE;
+ 
+-	if (!phylink_autoneg_inband(mode)) {
+-		/* Phy or fixed speed - nothing to do, leave the
+-		 * configured speed, duplex and flow control as-is.
+-		 */
+-	} else if (state->interface == PHY_INTERFACE_MODE_SGMII) {
+-		/* SGMII mode receives the state from the PHY */
+-		new_ctrl2 |= MVNETA_GMAC2_INBAND_AN_ENABLE;
+-	} else {
+-		/* 802.3z negotiation - only 1000base-X */
+-		new_ctrl0 |= MVNETA_GMAC0_PORT_1000BASE_X;
+-	}
+-
+-	/* When at 2.5G, the link partner can send frames with shortened
+-	 * preambles.
+-	 */
+-	if (state->interface == PHY_INTERFACE_MODE_2500BASEX)
+-		new_ctrl4 |= MVNETA_GMAC4_SHORT_PREAMBLE_ENABLE;
+-
+-	if (new_ctrl0 != gmac_ctrl0)
+-		mvreg_write(pp, MVNETA_GMAC_CTRL_0, new_ctrl0);
+-	if (new_ctrl2 != gmac_ctrl2)
+-		mvreg_write(pp, MVNETA_GMAC_CTRL_2, new_ctrl2);
+-	if (new_ctrl4 != gmac_ctrl4)
+-		mvreg_write(pp, MVNETA_GMAC_CTRL_4, new_ctrl4);
+-
+-	if (gmac_ctrl2 & MVNETA_GMAC2_PORT_RESET) {
+-		while ((mvreg_read(pp, MVNETA_GMAC_CTRL_2) &
+-			MVNETA_GMAC2_PORT_RESET) != 0)
+-			continue;
+-	}
++	mvgmac_config_mac(&pp->gmac, mode, state);
+ }
+ 
+ static int mvneta_mac_finish(struct phylink_config *config, unsigned int mode,
+@@ -4079,7 +3901,7 @@ static int mvneta_mac_finish(struct phylink_config *config, unsigned int mode,
+ {
+ 	struct net_device *ndev = to_net_dev(config->dev);
+ 	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 val, clk;
++	u32 clk;
+ 
+ 	/* Disable 1ms clock if not in in-band mode */
+ 	if (!phylink_autoneg_inband(mode)) {
+@@ -4095,45 +3917,23 @@ static int mvneta_mac_finish(struct phylink_config *config, unsigned int mode,
+ 	/* Allow the link to come up if in in-band mode, otherwise the
+ 	 * link is forced via mac_link_down()/mac_link_up()
+ 	 */
+-	if (phylink_autoneg_inband(mode)) {
+-		val = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+-		val &= ~MVNETA_GMAC_FORCE_LINK_DOWN;
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, val);
+-	}
++	if (phylink_autoneg_inband(mode))
++		mvgmac_link_unforce(&pp->gmac);
+ 
+ 	return 0;
+ }
+ 
+-static void mvneta_set_eee(struct mvneta_port *pp, bool enable)
+-{
+-	u32 lpi_ctl1;
+-
+-	lpi_ctl1 = mvreg_read(pp, MVNETA_LPI_CTRL_1);
+-	if (enable)
+-		lpi_ctl1 |= MVNETA_LPI_REQUEST_ENABLE;
+-	else
+-		lpi_ctl1 &= ~MVNETA_LPI_REQUEST_ENABLE;
+-	mvreg_write(pp, MVNETA_LPI_CTRL_1, lpi_ctl1);
+-}
+-
+ static void mvneta_mac_link_down(struct phylink_config *config,
+ 				 unsigned int mode, phy_interface_t interface)
+ {
+ 	struct net_device *ndev = to_net_dev(config->dev);
+ 	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 val;
+ 
+ 	mvneta_port_down(pp);
+-
+-	if (!phylink_autoneg_inband(mode)) {
+-		val = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+-		val &= ~MVNETA_GMAC_FORCE_LINK_PASS;
+-		val |= MVNETA_GMAC_FORCE_LINK_DOWN;
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, val);
+-	}
++	mvgmac_link_down(&pp->gmac, mode);
+ 
+ 	pp->eee_active = false;
+-	mvneta_set_eee(pp, false);
++	mvgmac_set_eee(&pp->gmac, false);
+ }
+ 
+ static void mvneta_mac_link_up(struct phylink_config *config,
+@@ -4144,48 +3944,14 @@ static void mvneta_mac_link_up(struct phylink_config *config,
+ {
+ 	struct net_device *ndev = to_net_dev(config->dev);
+ 	struct mvneta_port *pp = netdev_priv(ndev);
+-	u32 val;
+-
+-	if (!phylink_autoneg_inband(mode)) {
+-		val = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+-		val &= ~(MVNETA_GMAC_FORCE_LINK_DOWN |
+-			 MVNETA_GMAC_CONFIG_MII_SPEED |
+-			 MVNETA_GMAC_CONFIG_GMII_SPEED |
+-			 MVNETA_GMAC_CONFIG_FLOW_CTRL |
+-			 MVNETA_GMAC_CONFIG_FULL_DUPLEX);
+-		val |= MVNETA_GMAC_FORCE_LINK_PASS;
+-
+-		if (speed == SPEED_1000 || speed == SPEED_2500)
+-			val |= MVNETA_GMAC_CONFIG_GMII_SPEED;
+-		else if (speed == SPEED_100)
+-			val |= MVNETA_GMAC_CONFIG_MII_SPEED;
+-
+-		if (duplex == DUPLEX_FULL)
+-			val |= MVNETA_GMAC_CONFIG_FULL_DUPLEX;
+-
+-		if (tx_pause || rx_pause)
+-			val |= MVNETA_GMAC_CONFIG_FLOW_CTRL;
+-
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, val);
+-	} else {
+-		/* When inband doesn't cover flow control or flow control is
+-		 * disabled, we need to manually configure it. This bit will
+-		 * only have effect if MVNETA_GMAC_AN_FLOW_CTRL_EN is unset.
+-		 */
+-		val = mvreg_read(pp, MVNETA_GMAC_AUTONEG_CONFIG);
+-		val &= ~MVNETA_GMAC_CONFIG_FLOW_CTRL;
+-
+-		if (tx_pause || rx_pause)
+-			val |= MVNETA_GMAC_CONFIG_FLOW_CTRL;
+-
+-		mvreg_write(pp, MVNETA_GMAC_AUTONEG_CONFIG, val);
+-	}
+ 
++	mvgmac_link_up(&pp->gmac, mode, speed, duplex, tx_pause, rx_pause);
+ 	mvneta_port_up(pp);
+ 
+ 	if (phy && pp->eee_enabled) {
+ 		pp->eee_active = phy_init_eee(phy, 0) >= 0;
+-		mvneta_set_eee(pp, pp->eee_active && pp->tx_lpi_enabled);
++		mvgmac_set_lpi_ts(&pp->gmac, pp->tx_lpi_timer);
++		mvgmac_set_eee(&pp->gmac, pp->eee_active && pp->tx_lpi_enabled);
+ 	}
+ }
+ 
+@@ -4957,14 +4723,11 @@ static int mvneta_ethtool_get_eee(struct net_device *dev,
+ 				  struct ethtool_eee *eee)
+ {
+ 	struct mvneta_port *pp = netdev_priv(dev);
+-	u32 lpi_ctl0;
+-
+-	lpi_ctl0 = mvreg_read(pp, MVNETA_LPI_CTRL_0);
+ 
+ 	eee->eee_enabled = pp->eee_enabled;
+ 	eee->eee_active = pp->eee_active;
+ 	eee->tx_lpi_enabled = pp->tx_lpi_enabled;
+-	eee->tx_lpi_timer = (lpi_ctl0) >> 8; // * scale;
++	eee->tx_lpi_timer = pp->tx_lpi_timer;
+ 
+ 	return phylink_ethtool_get_eee(pp->phylink, eee);
+ }
+@@ -4973,7 +4736,6 @@ static int mvneta_ethtool_set_eee(struct net_device *dev,
+ 				  struct ethtool_eee *eee)
+ {
+ 	struct mvneta_port *pp = netdev_priv(dev);
+-	u32 lpi_ctl0;
+ 
+ 	/* The Armada 37x documents do not give limits for this other than
+ 	 * it being an 8-bit register.
+@@ -4981,15 +4743,13 @@ static int mvneta_ethtool_set_eee(struct net_device *dev,
+ 	if (eee->tx_lpi_enabled && eee->tx_lpi_timer > 255)
+ 		return -EINVAL;
+ 
+-	lpi_ctl0 = mvreg_read(pp, MVNETA_LPI_CTRL_0);
+-	lpi_ctl0 &= ~(0xff << 8);
+-	lpi_ctl0 |= eee->tx_lpi_timer << 8;
+-	mvreg_write(pp, MVNETA_LPI_CTRL_0, lpi_ctl0);
+-
+ 	pp->eee_enabled = eee->eee_enabled;
+ 	pp->tx_lpi_enabled = eee->tx_lpi_enabled;
++	pp->tx_lpi_timer = eee->tx_lpi_timer;
+ 
+-	mvneta_set_eee(pp, eee->tx_lpi_enabled && eee->eee_enabled);
++	mvgmac_set_eee(&pp->gmac, false);
++	mvgmac_set_lpi_ts(&pp->gmac, eee->tx_lpi_timer);
++	mvgmac_set_eee(&pp->gmac, pp->eee_active && pp->tx_lpi_enabled);
+ 
+ 	return phylink_ethtool_set_eee(pp->phylink, eee);
+ }
+@@ -5311,6 +5071,9 @@ static int mvneta_probe(struct platform_device *pdev)
+ 		goto err_clk;
+ 	}
+ 
++	pp->gmac.base = pp->base + MVNETA_GMAC_BASE;
++	pp->tx_lpi_timer = 16;
++
+ 	/* Alloc per-cpu port structure */
+ 	pp->ports = alloc_percpu(struct mvneta_pcpu_port);
+ 	if (!pp->ports) {
+-- 
+cgit v1.2.3
+
+
+From d4888ddce77f3cc2717dcf0f69e07514313b3ac3 Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@armlinux.org.uk>
+Date: Fri, 23 Dec 2016 01:09:44 +0000
+Subject: net: mvgmac: support different hw versions
+
+Signed-off-by: Russell King <rmk+kernel@armlinux.org.uk>
+---
+ drivers/net/ethernet/marvell/mvgmac.c | 108 ++++++++++++++++++++++++++++++----
+ drivers/net/ethernet/marvell/mvgmac.h |   9 +++
+ drivers/net/ethernet/marvell/mvneta.c |   1 +
+ 3 files changed, 108 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/ethernet/marvell/mvgmac.c b/drivers/net/ethernet/marvell/mvgmac.c
+index 6c0b7c5c0b24..e776d4e85d3f 100644
+--- a/drivers/net/ethernet/marvell/mvgmac.c
++++ b/drivers/net/ethernet/marvell/mvgmac.c
+@@ -19,6 +19,8 @@
+ #include "mvgmac.h"
+ 
+ enum {
++	/* N = Neta, 21 = PPV2.1, 22 = PPV2.2 */
++	/* N: 0-14	21: 0,2-15	22: 0-14 */
+ 	GMAC_CTRL0_REG		= 0x00,
+ 	GMAC_CTRL0_PORT_ENABLE		= BIT(0),
+ 	GMAC_CTRL0_PORT_1000BASE_X	= BIT(1),
+@@ -26,12 +28,21 @@ enum {
+ 	GMAC_CTRL0_MAX_RX_SIZE_MASK	= 0x1fff << GMAC_CTRL0_MAX_RX_SIZE_SHIFT,
+ 	GMAC_CTRL0_MIB_CNTR_ENABLE	= BIT(15),
+ 
++	/* N:		21: 1,5,6	22:	*/
++	GMAC_CTRL1_REG		= 0x04,
++	GMAC_CTRL1_PERIODIC_XON_ENABLE	= BIT(1),
++	GMAC_CTRL1_GMII_LB_ENABLE	= BIT(5),
++	GMAC_CTRL1_PCS_LB_ENABLE	= BIT(6),
++
++	/* ALL: 0,3,4,6 */
+ 	GMAC_CTRL2_REG		= 0x08,
+ 	GMAC_CTRL2_INBAND_AN_SGMII	= BIT(0),
+ 	GMAC_CTRL2_PCS_ENABLE		= BIT(3),
+ 	GMAC_CTRL2_PORT_RGMII		= BIT(4),
+ 	GMAC_CTRL2_PORT_RESET		= BIT(6),
+ 
++	/* N:0-9,11-13	21:0,1,5-7,9,12,13	22:0-7,9-15 */
++	/* 22 bit 2 - EN_PCS_AN */
+ 	GMAC_ANEG_REG		= 0x0c,
+ 	GMAC_ANEG_FORCE_LINK_DOWN	= BIT(0),
+ 	GMAC_ANEG_FORCE_LINK_PASS	= BIT(1),
+@@ -43,9 +54,12 @@ enum {
+ 	GMAC_ANEG_AN_SPEED_ENABLE	= BIT(7),
+ 	GMAC_ANEG_CONFIG_FLOW_CTRL	= BIT(8),
+ 	GMAC_ANEG_ADVERT_SYM_FLOW_CTRL	= BIT(9),
++	GMAC_ANEG_ADVERT_ASYM_FLOW_CTRL	= BIT(10),
+ 	GMAC_ANEG_AN_FLOW_CTRL_ENABLE	= BIT(11),
+ 	GMAC_ANEG_FULL_DUPLEX		= BIT(12),
+ 	GMAC_ANEG_AN_DUPLEX_ENABLE	= BIT(13),
++				/* pp22: bit 14 - phy mode */
++				/* pp22: bit 15 - choose sample tx config */
+ 
+ 	GMAC_STATUS_REG		= 0x10,
+ 	MVGMAC_LINK_UP			= BIT(0),
+@@ -59,8 +73,21 @@ enum {
+ 	MVGMAC_AN_COMPLETE		= BIT(11),
+ 	MVGMAC_SYNC_OK			= BIT(14),
+ 
++	/* N:		21:6-13		22: */
++	GMAC_FIFO_CFG1_REG	= 0x1c,
++	GMAC_FIFO_CFG1_TX_MIN_TH_SHIFT	= 6,
++	GMAC_FIFO_CFG1_TX_MIN_TH_MASK	= 0x7f <<
++						GMAC_FIFO_CFG1_TX_MIN_TH_SHIFT,
++
++	/* N:1		21:		22:0,3-7 */
+ 	GMAC_CTRL4_REG		= 0x90,
++	GMAC_CTRL4_EXT_PIN_GMII_SEL	= BIT(0),
+ 	GMAC_CTRL4_SHORT_PREAMBLE_ENABLE = BIT(1),
++	GMAC_CTRL4_FC_RX_ENABLE		= BIT(3),
++	GMAC_CTRL4_FC_TX_ENABLE		= BIT(4),
++	GMAC_CTRL4_DP_CLK_SEL		= BIT(5),
++	GMAC_CTRL4_SYNC_BYPASS		= BIT(6),
++	GMAC_CTRL4_QSGMII_BYPASS	= BIT(7),
+ 
+ 	GMAC_LPI_CTRL0_REG	= 0xc0,
+ 	GMAC_LPI_CTRL0_TS		= 0xff << 8,
+@@ -111,6 +138,47 @@ void mvgmac_disable(struct mvgmac *gmac)
+ }
+ EXPORT_SYMBOL_GPL(mvgmac_disable);
+ 
++int mvgmac_configure(struct mvgmac *gmac, phy_interface_t phy_mode)
++{
++	bool ext_pin_gmii;
++	u32 val;
++
++	switch (phy_mode) {
++	case PHY_INTERFACE_MODE_QSGMII:
++	case PHY_INTERFACE_MODE_SGMII:
++		ext_pin_gmii = false;
++		break;
++
++	case PHY_INTERFACE_MODE_RGMII:
++	case PHY_INTERFACE_MODE_RGMII_ID:
++	case PHY_INTERFACE_MODE_RGMII_RXID:
++	case PHY_INTERFACE_MODE_RGMII_TXID:
++		ext_pin_gmii = true;
++		break;
++
++	default:
++		return -EINVAL;
++	}
++
++	if (gmac->version == MVGMAC_PP21) {
++		/* Min. TX threshold must be less than minimum packet length */
++		val = readl_relaxed(gmac->base + GMAC_FIFO_CFG1_REG);
++		val = insert(val, GMAC_FIFO_CFG1_TX_MIN_TH_MASK, 64 - 4 - 2);
++		writel_relaxed(val, gmac->base + GMAC_FIFO_CFG1_REG);
++	} else if (gmac->version == MVGMAC_PP22) {
++		val = readl_relaxed(gmac->base + GMAC_CTRL4_REG);
++		val &= ~GMAC_CTRL4_DP_CLK_SEL;
++		val |= GMAC_CTRL4_SYNC_BYPASS;
++		val = insert(val, GMAC_CTRL4_QSGMII_BYPASS,
++			     phy_mode != PHY_INTERFACE_MODE_QSGMII);
++		val = insert(val, GMAC_CTRL4_EXT_PIN_GMII_SEL, ext_pin_gmii);
++		writel_relaxed(val, gmac->base + GMAC_CTRL4_REG);
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(mvgmac_configure);
++
+ void mvgmac_link_unforce(struct mvgmac *gmac)
+ {
+ 	u32 val;
+@@ -142,7 +210,7 @@ EXPORT_SYMBOL_GPL(mvgmac_link_down);
+ void mvgmac_link_up(struct mvgmac *gmac, int mode, int speed, int duplex,
+ 		    bool tx_pause, bool rx_pause)
+ {
+-	u32 val;
++	u32 val, ctrl4;
+ 
+ 	val = readl_relaxed(gmac->base + GMAC_ANEG_REG);
+ 	val &= ~GMAC_ANEG_CONFIG_FLOW_CTRL;
+@@ -163,8 +231,19 @@ void mvgmac_link_up(struct mvgmac *gmac, int mode, int speed, int duplex,
+ 			val |= GMAC_ANEG_FULL_DUPLEX;
+ 	}
+ 
+-	if (tx_pause || rx_pause)
+-		val |= GMAC_ANEG_CONFIG_FLOW_CTRL;
++	switch (gmac->version) {
++	case MVGMAC_NETA:
++		val = insert(val, GMAC_ANEG_CONFIG_FLOW_CTRL,
++			     tx_pause || rx_pause);
++		break;
++
++	case MVGMAC_PP22:
++		ctrl4 = readl_relaxed(gmac->base + GMAC_CTRL4_REG);
++		ctrl4 = insert(ctrl4, GMAC_CTRL4_FC_TX_ENABLE, tx_pause);
++		ctrl4 = insert(ctrl4, GMAC_CTRL4_FC_RX_ENABLE, rx_pause);
++		writel_relaxed(ctrl4, gmac->base + GMAC_CTRL4_REG);
++		break;
++	}
+ 
+ 	writel_relaxed(val, gmac->base + GMAC_ANEG_REG);
+ }
+@@ -252,6 +331,11 @@ int mvgmac_pcs_config(struct mvgmac *gmac, unsigned int mode,
+ 			mask |= GMAC_ANEG_ADVERT_SYM_FLOW_CTRL;
+ 			if (phylink_test(advertising, Pause))
+ 				val |= GMAC_ANEG_ADVERT_SYM_FLOW_CTRL;
++			if (gmac->version == MVGMAC_PP22) {
++				mask |= GMAC_ANEG_ADVERT_ASYM_FLOW_CTRL;
++				if (phylink_test(advertising, Asym_Pause))
++					val |= GMAC_ANEG_ADVERT_ASYM_FLOW_CTRL;
++			}
+ 		}
+ 	} else {
+ 		/* Phy or fixed speed - disable in-band AN modes */
+@@ -265,7 +349,8 @@ int mvgmac_pcs_config(struct mvgmac *gmac, unsigned int mode,
+ 		writel_relaxed(an, gmac->base + GMAC_ANEG_REG);
+ 
+ 	/* We are only interested in the advertisement bits changing */
+-	return !!(changed & GMAC_ANEG_ADVERT_SYM_FLOW_CTRL);
++	return !!(changed & (GMAC_ANEG_ADVERT_SYM_FLOW_CTRL |
++			     GMAC_ANEG_ADVERT_ASYM_FLOW_CTRL));
+ }
+ EXPORT_SYMBOL_GPL(mvgmac_pcs_config);
+ 
+@@ -279,7 +364,7 @@ void mvgmac_config_mac(struct mvgmac *gmac, unsigned int mode,
+ 	new_ctrl0 = gmac_ctrl0 & ~GMAC_CTRL0_PORT_1000BASE_X;
+ 	new_ctrl2 = gmac_ctrl2 & ~(GMAC_CTRL2_INBAND_AN_SGMII |
+ 				   GMAC_CTRL2_PORT_RESET);
+-	new_ctrl4 = gmac_ctrl4 & ~GMAC_CTRL4_SHORT_PREAMBLE_ENABLE;
++	new_ctrl4 = gmac_ctrl4;
+ 
+ 	/* Even though it might look weird, when we're configured in
+ 	 * SGMII or QSGMII mode, the RGMII bit needs to be set.
+@@ -303,11 +388,14 @@ void mvgmac_config_mac(struct mvgmac *gmac, unsigned int mode,
+ 		new_ctrl0 |= GMAC_CTRL0_PORT_1000BASE_X;
+ 	}
+ 
+-	/* When at 2.5G, the link partner can send frames with shortened
+-	 * preambles.
+-	 */
+-	if (state->interface == PHY_INTERFACE_MODE_2500BASEX)
+-		new_ctrl4 |= GMAC_CTRL4_SHORT_PREAMBLE_ENABLE;
++	if (gmac->version == MVGMAC_NETA) {
++		/* When at 2.5G, the link partner can send frames with
++		 * shortened preambles.
++		 */
++		new_ctrl4 &= ~GMAC_CTRL4_SHORT_PREAMBLE_ENABLE;
++		if (state->interface == PHY_INTERFACE_MODE_2500BASEX)
++			new_ctrl4 |= GMAC_CTRL4_SHORT_PREAMBLE_ENABLE;
++	}
+ 
+ 	if (new_ctrl0 != gmac_ctrl0)
+ 		writel_relaxed(new_ctrl0, gmac->base + GMAC_CTRL0_REG);
+diff --git a/drivers/net/ethernet/marvell/mvgmac.h b/drivers/net/ethernet/marvell/mvgmac.h
+index ceccc6777237..f4111fba7258 100644
+--- a/drivers/net/ethernet/marvell/mvgmac.h
++++ b/drivers/net/ethernet/marvell/mvgmac.h
+@@ -14,13 +14,22 @@ struct phylink_link_state;
+  */
+ #define MARVELL_HEADER_SIZE 2
+ 
++enum {
++	/* GMAC version */
++	MVGMAC_NETA,
++	MVGMAC_PP21,
++	MVGMAC_PP22,
++};
++
+ struct mvgmac {
+ 	void __iomem *base;
++	unsigned int version;
+ };
+ 
+ void mvgmac_set_max_rx_size(struct mvgmac *gmac, size_t max_rx_size);
+ void mvgmac_enable(struct mvgmac *gmac);
+ void mvgmac_disable(struct mvgmac *gmac);
++int mvgmac_configure(struct mvgmac *gmac, phy_interface_t phy_mode);
+ void mvgmac_link_unforce(struct mvgmac *gmac);
+ void mvgmac_link_force_down(struct mvgmac *gmac);
+ void mvgmac_link_down(struct mvgmac *gmac, int mode);
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index 750915bb2b28..968005a27553 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -5072,6 +5072,7 @@ static int mvneta_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	pp->gmac.base = pp->base + MVNETA_GMAC_BASE;
++	pp->gmac.version = MVGMAC_NETA;
+ 	pp->tx_lpi_timer = 16;
+ 
+ 	/* Alloc per-cpu port structure */
+-- 
+cgit v1.2.3
+
+
+From 9092b4d7a5b31489cabf279759771ad85e450a2d Mon Sep 17 00:00:00 2001
+From: "Russell King (Oracle)" <rmk+kernel@armlinux.org.uk>
+Date: Thu, 1 Jul 2021 17:10:11 +0100
+Subject: net: mvneta: deny disabling autoneg for 802.3z modes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The documentation for Armada 38x says:
+
+  Bit 2 Field InBandAnEn In-band Auto-Negotiation enable. ...
+  When <PortType> = 1 (1000BASE-X) this field must be set to 1.
+
+We presently ignore whether userspace requests autonegotiation or not
+through the ethtool ksettings interface. However, we have some network
+interfaces that wish to do this. To offer a consistent API across
+network interfaces, deny the ability to disable autonegotiation on
+mvneta hardware when in 1000BASE-X and 2500BASE-X.
+
+This means the only way to switch between 2500BASE-X and 1000BASE-X
+on SFPs that support this will be:
+
+ # ethtool -s ethX advertise 0x20000002000 # 1000BASE-X Pause
+ # ethtool -s ethX advertise 0xa000        # 2500BASE-X Pause
+
+Signed-off-by: Russell King (Oracle) <rmk+kernel@armlinux.org.uk>
+Acked-by: Marek Behún <kabel@kernel.org>
+---
+ drivers/net/ethernet/marvell/mvneta.c | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/ethernet/marvell/mvneta.c b/drivers/net/ethernet/marvell/mvneta.c
+index 968005a27553..0703c2e796a6 100644
+--- a/drivers/net/ethernet/marvell/mvneta.c
++++ b/drivers/net/ethernet/marvell/mvneta.c
+@@ -3811,12 +3811,20 @@ static void mvneta_validate(struct phylink_config *config,
+ 	struct mvneta_port *pp = netdev_priv(ndev);
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+ 
+-	/* We only support QSGMII, SGMII, 802.3z and RGMII modes */
+-	if (state->interface != PHY_INTERFACE_MODE_NA &&
+-	    state->interface != PHY_INTERFACE_MODE_QSGMII &&
+-	    state->interface != PHY_INTERFACE_MODE_SGMII &&
+-	    !phy_interface_mode_is_8023z(state->interface) &&
+-	    !phy_interface_mode_is_rgmii(state->interface)) {
++	/* We only support QSGMII, SGMII, 802.3z and RGMII modes.
++	 * When in 802.3z mode, we must have AN enabled:
++	 * "Bit 2 Field InBandAnEn In-band Auto-Negotiation enable. ...
++	 * When <PortType> = 1 (1000BASE-X) this field must be set to 1."
++	 */
++	if (phy_interface_mode_is_8023z(state->interface)) {
++		if (!phylink_test(state->advertising, Autoneg)) {
++			bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
++			return;
++		}
++	} else if (state->interface != PHY_INTERFACE_MODE_NA &&
++		   state->interface != PHY_INTERFACE_MODE_QSGMII &&
++		   state->interface != PHY_INTERFACE_MODE_SGMII &&
++		   !phy_interface_mode_is_rgmii(state->interface)) {
+ 		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+ 		return;
+ 	}
+-- 
+cgit v1.2.3
+
