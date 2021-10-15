@@ -37,8 +37,8 @@ debootstrap_ng()
 
 	# stage: verify tmpfs configuration and mount
 	# CLI needs ~1.5GiB, desktop - ~3.5GiB
-	# calculate and set tmpfs mount to use 2/3 of available RAM+SWAP
-	local phymem=$(( (($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 2 / 3 )) # MiB
+	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
+	local phymem=$(( (($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10 )) # MiB
 	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi # MiB
 	if [[ $FORCE_USE_RAMDISK == no ]]; then	local use_tmpfs=no
 	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
