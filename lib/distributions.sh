@@ -603,8 +603,6 @@ install_distribution_specific()
 			[[ $(grep -L "VERSION_ID=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION_ID="11"' >> "${SDCARD}"/etc/os-release
 			[[ $(grep -L "VERSION=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION="11 (bullseye)"' >> "${SDCARD}"/etc/os-release
 
-			# Bullseye changed the security repo layout, see https://www.debian.org/releases/bullseye/arm64/release-notes/ch-information.en.html#security-archive
-			sed -i "s/${RELEASE}\/updates/${RELEASE}-security/g" "${SDCARD}"/etc/apt/sources.list
 
 		;;
 	bionic|focal|hirsute|impish)
