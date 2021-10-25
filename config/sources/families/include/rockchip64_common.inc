@@ -79,7 +79,7 @@ elif [[ $BOARD == rockpi-4* ]]; then
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.19.bin'
 	BL31_BLOB='rk33/rk3399_bl31_v1.30.elf'
 
-elif [[ $BOARD == station-p1 ]]; then
+elif [[ $BOARD == station-p1 || $BOARD == firefly-rk3399 ]]; then
 
 	BOOT_USE_BLOBS=yes
 	BOOT_SUPPORT_SPI=yes
