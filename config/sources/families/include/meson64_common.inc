@@ -41,7 +41,7 @@ case $BRANCH in
 esac
 
 if [ "$(uname -m)" = "aarch64" ]; then
-	if [[ "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" ]]; then
+	if [[ "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" || "$(lsb_release -sc)" == "impish" ]]; then
 		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
 	else
 		PKG_PREFIX="qemu-x86_64 "
