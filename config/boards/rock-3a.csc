@@ -6,5 +6,4 @@ KERNEL_TARGET="legacy"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3568-rock-3-a.dtb"
-BOOT_USE_SPL_BLOBS=yes
-BOOT_SOC=rk3568
+BOOT_SCENARIO="spl-blobs"
