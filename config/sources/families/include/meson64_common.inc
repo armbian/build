@@ -244,7 +244,7 @@ uboot_gxl_postprocess_ng()
 			--output bl2.n.bin.sig
 
     $1/aml_encrypt_gxl --bootmk --output u-boot.bin \
-			--bl2 $1/bl2.n.bin.sig \
+			--bl2 bl2.n.bin.sig \
 			--bl30 $1/bl30_new.bin.enc \
 			--bl31 $1/bl31.img.enc \
 			--bl33 bl33.bin.enc
