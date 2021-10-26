@@ -7,7 +7,7 @@
 # warranty of any kind, whether express or implied.
 #
 # This file is a part of the Armbian build script
-# https://github.com/armbian/build/
+# https://github.com.cnpmjs.org/armbian/build/
 
 # Functions:
 
@@ -167,19 +167,19 @@ compilation_prepare()
 		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5 ; then aufstag="5.4.3"; fi
 
 		# check if Mr. Okajima already made a branch for this version
-		improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
+		improved_git ls-remote --exit-code --heads https://github.com.cnpmjs.org/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
 
 		if [ "$?" -ne "0" ]; then
 			# then use rc branch
 			aufstag="5.x-rcN"
-			improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
+			improved_git ls-remote --exit-code --heads https://github.com.cnpmjs.org/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
 		fi
 
 		if [ "$?" -eq "0" ]; then
 
 			display_alert "Adding" "AUFS ${aufstag}" "info"
 			local aufsver="branch:aufs${aufstag}"
-			fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
+			fetch_from_repo "https://github.com.cnpmjs.org/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
 			cd "$kerneldir" || exit
 			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch" "applying"
 			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch" "applying"
@@ -232,7 +232,7 @@ compilation_prepare()
 		local rtl8152ver="branch:master"
 
 		display_alert "Adding" "Drivers for 2.5Gb RTL8152/RTL8153 USB dongles ${rtl8152ver}" "info"
-		fetch_from_repo "https://github.com/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes"
 		cp -R "${SRC}/cache/sources/rtl8152/${rtl8152ver#*:}"/{r8152.c,compatibility.h} \
 		"$kerneldir/drivers/net/usb/"
 
@@ -247,7 +247,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
-		fetch_from_repo "https://github.com/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8189es"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8189es/"
@@ -282,7 +282,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
-		fetch_from_repo "https://github.com/jwrdegoede/rtl8189ES_linux" "rtl8189fs" "${rtl8189fsver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/jwrdegoede/rtl8189ES_linux" "rtl8189fs" "${rtl8189fsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8189fs"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8189fs/"
@@ -317,7 +317,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
-		fetch_from_repo "https://github.com/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8192eu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8192eu/"
@@ -352,7 +352,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
-		fetch_from_repo "https://github.com/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8812au"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8812au/"
@@ -382,7 +382,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "https://github.com/karabek/xradio" "xradio" "branch:master" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/karabek/xradio" "xradio" "branch:master" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
@@ -421,7 +421,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
-		fetch_from_repo "https://github.com/brektrou/rtl8821CU" "rtl8811cu" "${rtl8811cuver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/brektrou/rtl8821CU" "rtl8811cu" "${rtl8811cuver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8811cu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8811cu/"
@@ -441,7 +441,7 @@ compilation_prepare()
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 		"$kerneldir/drivers/net/wireless/rtl8811cu/Makefile"
 
-		# Address ARM related bug https://github.com/aircrack-ng/rtl8812au/issues/233
+		# Address ARM related bug https://github.com.cnpmjs.org/aircrack-ng/rtl8812au/issues/233
 		sed -i "s/^CONFIG_MP_VHT_HW_TX_MODE.*/CONFIG_MP_VHT_HW_TX_MODE = n/" \
 		"$kerneldir/drivers/net/wireless/rtl8811cu/Makefile"
 
@@ -471,7 +471,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets ${rtl8188euver}" "info"
 
-		fetch_from_repo "https://github.com/aircrack-ng/rtl8188eus" "rtl8188eu" "${rtl8188euver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/aircrack-ng/rtl8188eus" "rtl8188eu" "${rtl8188euver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8188eu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8188eu/"
@@ -515,7 +515,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
-		fetch_from_repo "https://github.com/cilynx/rtl88x2bu" "rtl88x2bu" "${rtl88x2buver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/cilynx/rtl88x2bu" "rtl88x2bu" "${rtl88x2buver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2bu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2bu/"
@@ -552,7 +552,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
-		fetch_from_repo "https://github.com/jethome-ru/rtl88x2cs" "rtl88x2cs" "${rtl88x2csver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/jethome-ru/rtl88x2cs" "rtl88x2cs" "${rtl88x2csver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2cs"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2cs/"
@@ -604,7 +604,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
-		fetch_from_repo "https://github.com/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8723ds"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8723ds/"
@@ -647,7 +647,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
-		fetch_from_repo "https://github.com/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf $kerneldir/drivers/net/wireless/rtl8723du
 		mkdir -p $kerneldir/drivers/net/wireless/rtl8723du/
@@ -679,7 +679,7 @@ compilation_prepare()
 		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
 
 		local rtl8822bsver="branch:local_rtl8822bs"
-		fetch_from_repo "https://github.com/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
+		fetch_from_repo "https://github.com.cnpmjs.org/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8822bs"
 		mkdir -p $kerneldir/drivers/net/wireless/rtl8822bs/

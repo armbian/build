@@ -7,7 +7,7 @@
 # warranty of any kind, whether express or implied.
 #
 # This file is a part of the Armbian build script
-# https://github.com/armbian/build/
+# https://github.com.cnpmjs.org/armbian/build/
 
 # Functions:
 
@@ -78,7 +78,7 @@ compile_atf()
 
 	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
-	# Check: https://github.com/armbian/build/issues/1157
+	# Check: https://github.com.cnpmjs.org/armbian/build/issues/1157
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
 		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
 		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>> "${DEST}"/${LOG_SUBPATH}/compilation.log \
@@ -544,7 +544,7 @@ compile_firmware()
 	plugin_dir="armbian-firmware${FULL}"
 	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
-	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
+	fetch_from_repo "https://github.com.cnpmjs.org/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
@@ -596,8 +596,8 @@ compile_armbian-zsh()
 	armbian_zsh_dir=armbian-zsh_${REVISION}_all
 	display_alert "Building deb" "armbian-zsh" "info"
 
-	fetch_from_repo "https://github.com/robbyrussell/oh-my-zsh" "oh-my-zsh" "branch:master"
-	fetch_from_repo "https://github.com/mroth/evalcache" "evalcache" "branch:master"
+	fetch_from_repo "https://github.com.cnpmjs.org/robbyrussell/oh-my-zsh" "oh-my-zsh" "branch:master"
+	fetch_from_repo "https://github.com.cnpmjs.org/mroth/evalcache" "evalcache" "branch:master"
 
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
 
@@ -675,9 +675,9 @@ compile_armbian-config()
 	armbian_config_dir=armbian-config_${REVISION}_all
 	display_alert "Building deb" "armbian-config" "info"
 
-	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
-	fetch_from_repo "https://github.com/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
-	fetch_from_repo "https://github.com/complexorganizations/wireguard-manager" "wireguard-manager" "tag:v1.0.0.06-20-2021"
+	fetch_from_repo "https://github.com.cnpmjs.org/armbian/config" "armbian-config" "branch:master"
+	fetch_from_repo "https://github.com.cnpmjs.org/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
+	fetch_from_repo "https://github.com.cnpmjs.org/complexorganizations/wireguard-manager" "wireguard-manager" "tag:v1.0.0.06-20-2021"
 
 	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
@@ -753,7 +753,7 @@ install_rkbin_tools()
 compile_xilinx_bootgen()
 {
 	# Source code checkout
-	(fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
+	(fetch_from_repo "https://github.com.cnpmjs.org/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
 
 	pushd "${SRC}"/cache/sources/xilinx-bootgen || exit
 
@@ -959,7 +959,7 @@ userpatch_create()
 			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
 			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
 			git commit -s -m "$COMMIT_MESSAGE"
-			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
+			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com.cnpmjs.org/armbian/build" > "${patch}"
 			PATCHFILE=$(git format-patch -1 HEAD)
 			rm $PATCHFILE # delete the actual file
 			# create a symlink to have a nice name ready

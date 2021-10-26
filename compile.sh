@@ -66,7 +66,8 @@ update_src() {
 	cd "${SRC}" || exit
 	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
 		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-
+#		rubin remove 删除这个，要不然无法修改备用的git镜像源
+#		CHANGED_FILES=$(git diff --name-only)
 		CHANGED_FILES=$(git diff --name-only)
 		if [[ -n "${CHANGED_FILES}" ]]; then
 			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
