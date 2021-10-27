@@ -524,6 +524,11 @@ compile_kernel()
 	# store git hash to the file and create a change log
 	HASHTARGET="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}"
 	OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2>/dev/null)
+
+	# check if OLDHASHTARGET commit exists otherwise use oldest
+	git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
+	[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} show HEAD~199 --pretty=format:"%H" --no-patch)
+
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
 
@@ -536,9 +541,9 @@ compile_kernel()
 		URL="${KERNELSOURCE}/+/$HASH"
 	fi
 
-	if [[ -f "${HASHTARGET}.githash" ]]; then
+	if [[ -f "${HASHTARGET}".githash ]]; then
 		# create change log
-		git -C ${kerneldir} log --abbrev-commit --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
+		git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
 	else
 		truncate "${HASHTARGET}.gitlog" --size 0
 	fi
