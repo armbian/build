@@ -8,6 +8,7 @@ BOOTDELAY=0
 OVERLAY_PREFIX='rockchip'
 SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
+ATFPATCHDIR='atf-rockchip64'
 BOOTBRANCH="tag:v2020.10"
 BOOTPATCHDIR="u-boot-rockchip64"
 PACKAGE_LIST_FAMILY="ethtool"
@@ -53,7 +54,6 @@ elif [[ $BOOT_SOC == rk3399 ]]; then
 	DDR_BLOB='rk33/rk3399_ddr_933MHz_v1.25.bin'
 	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.26.bin'
 	BL31_BLOB='rk33/rk3399_bl31_v1.35.elf'
-	ATFPATCHDIR='atf-rk3399'
 
 elif [[ $BOOT_SOC == rk3399pro ]]; then
 
