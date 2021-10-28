@@ -14,6 +14,8 @@
 # exit_with_error
 # get_package_list_hash
 # create_sources_list
+# clean_up_repo
+# waiter_local_repo
 # fetch_from_repo
 # improved_git
 # display_alert
@@ -155,7 +157,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster|bullseye|sid)
+	stretch|buster)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -168,6 +170,29 @@ create_sources_list()
 
 	deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
 	#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
+	EOF
+	;;
+
+	bullseye|bookworm|trixie)
+	cat <<-EOF > "${basedir}"/etc/apt/sources.list
+	deb http://${DEBIAN_MIRROR} $release main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+
+	deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+
+	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+
+	deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+	#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+	EOF
+	;;
+
+	sid) # sid is permanent unstable development and has no such thing as updates or security
+	cat <<-EOF > "${basedir}"/etc/apt/sources.list
+	deb http://${DEBIAN_MIRROR} $release main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
 	EOF
 	;;
 
@@ -229,6 +254,134 @@ improved_git()
 
 }
 
+clean_up_repo ()
+{
+	local target_dir=$1
+
+	# Files that are not tracked by git and were added
+	# when the patch was applied must be removed.
+	improved_git -C $target_dir clean -qdf
+
+	# Return the files that are tracked by git to the initial state.
+	improved_git -C $target_dir checkout -qf HEAD
+}
+
+# used : waiter_local_repo arg1='value' arg2:'value'
+#		 waiter_local_repo \
+#			url='https://github.com/megous/linux' \
+#			name='megous' \
+#			dir='linux-mainline/5.14' \
+#			branch='orange-pi-5.14' \
+#			obj=<tag|commit> or tag:$tag ...
+waiter_local_repo ()
+{
+	for arg in $@;do
+
+		case $arg in
+			url=*|https://*|git://*)	eval "local url=${arg/url=/}"
+				;;
+			dir=*|/*/*/*)	eval "local dir=${arg/dir=/}"
+				;;
+			*=*|*:*)	eval "local ${arg/:/=}"
+				;;
+		esac
+
+	done
+
+	# Required variables cannot be empty.
+	for var in url name dir branch; do
+		[ "${var#*=}" == "" ] && exit_with_error "Error in configuration"
+	done
+
+	local reachability
+
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
+	local work_dir="$(realpath ${SRC}/cache/sources)/$dir"
+	mkdir -p $work_dir
+	cd $work_dir || exit_with_error
+
+	display_alert "Checking git sources" "$dir $name/$branch" "info"
+
+	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
+		git init -q .
+
+		# Run in the sub shell to avoid mixing environment variables.
+		if [ -n "$VAR_SHALLOW_ORIGINAL" ]; then
+			(
+			$VAR_SHALLOW_ORIGINAL
+
+			display_alert "Checking git sources" "$dir $name/$branch" "info"
+			if [ "$(git ls-remote -h $url $branch | \
+				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
+				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
+				exit 177
+			fi
+
+			git remote add -t $branch $name $url
+			git fetch --shallow-exclude=$start_tag $name
+			git fetch --deepen=1 $name
+			)
+
+			[ "$?" == "177" ] && exit
+		fi
+	fi
+
+	files_for_clean="$(git status -s | wc -l)"
+	if [ "$files_for_clean" != "0" ];then
+		display_alert " Cleaning .... " "$files_for_clean files"
+		clean_up_repo $work_dir
+	fi
+
+	if [ "$name" != "$(git remote show | grep $name)" ];then
+		git remote add -t $branch $name $url
+	fi
+
+	if ! $offline; then
+		for t_name in $(git remote show);do
+			git fetch $t_name
+		done
+	fi
+
+	# When switching, we use the concept of only "detached branch". Therefore,
+	# we extract the hash from the tag, the branch name, or from the hash itself.
+	# This serves as a check of the reachability of the extraction.
+	# We do not use variables that characterize the current state of the git,
+	# such as `HEAD` and `FETCH_HEAD`.
+	reachability=false
+	for var in obj tag commit branch;do
+		eval pval=\$$var
+
+		if [ -n "$pval" ] && [ "$pval" != *HEAD ]; then
+			case $var in
+				obj|tag|commit) obj=$pval ;;
+				branch) obj=${name}/$branch ;;
+			esac
+
+			if  t_hash=$(git rev-parse $obj 2>/dev/null);then
+				reachability=true
+				break
+			else
+				display_alert "Variable $var=$obj unreachable for extraction"
+			fi
+		fi
+	done
+
+	if $reachability && [ "$t_hash" != "$(git rev-parse @ 2>/dev/null)" ];then
+		# Switch "detached branch" as hash
+		display_alert "Switch $obj = $t_hash"
+		git checkout -qf $t_hash
+	else
+		# the working directory corresponds to the target commit,
+		# nothing needs to be done
+		display_alert "Up to date"
+	fi
+}
 
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
@@ -249,6 +402,15 @@ fetch_from_repo()
 	local dir=$2
 	local ref=$3
 	local ref_subdir=$4
+
+	if [ "${url#*megous/}" == linux ]; then
+		unset LINUXSOURCEDIR
+		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
+		VAR_SHALLOW_ORIGINAL=var_origin_kernel
+		waiter_local_repo "url=$url $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
+		unset VAR_SHALLOW_ORIGINAL
+		return
+	fi
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
@@ -343,15 +505,15 @@ fetch_from_repo()
 		# remote was updated, fetch and check out updates
 		display_alert "Fetching updates"
 		case $ref_type in
-			branch) improved_git fetch --depth 1 origin "${ref_name}" ;;
-			tag) improved_git fetch --depth 1 origin tags/"${ref_name}" ;;
-			head) improved_git fetch --depth 1 origin HEAD ;;
+			branch) improved_git fetch --depth 200 origin "${ref_name}" ;;
+			tag) improved_git fetch --depth 200 origin tags/"${ref_name}" ;;
+			head) improved_git fetch --depth 200 origin HEAD ;;
 		esac
 
 		# commit type needs support for older git servers that doesn't support fetching id directly
 		if [[ $ref_type == commit ]]; then
 
-			improved_git fetch --depth 1 origin "${ref_name}"
+			improved_git fetch --depth 200 origin "${ref_name}"
 
 			# cover old type
 			if [[ $? -ne 0 ]]; then
