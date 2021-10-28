@@ -95,7 +95,7 @@ create_desktop_package ()
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"; cd ..
-	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"  >/dev/null
+	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"  >/dev/null
 
 	# cleanup
 	rm -rf "${tmp_dir}"
@@ -160,7 +160,7 @@ create_bsp_desktop_package ()
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"; cd ..
-	fakeroot dpkg-deb -b "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"  >/dev/null
+	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"  >/dev/null
 
 	# cleanup
 	rm -rf "${tmp_dir}"
@@ -264,7 +264,7 @@ desktop_postinstall ()
 
 	# install per board packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD" 
+		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD"
 	fi
 
 	# install per family packages

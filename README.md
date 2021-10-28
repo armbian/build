@@ -4,8 +4,9 @@ build tools</h3>
 <p align=right>&nbsp;</p>
 
 [![GitHub last commit (branch)](https://img.shields.io/github/last-commit/armbian/build/master)](https://github.com/armbian/build/commits)
-[![GitHub Workflow Status](https://img.shields.io/github/workflow/status/armbian/build/Build)](https://github.com/armbian/build/actions?query=workflow%3ABuild)
+[![GitHub Workflow Status](https://img.shields.io/github/workflow/status/armbian/build/Build)](https://github.com/armbian/build/actions/workflows/build-kernel-on-merge-request.yml)
 [![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
+[![Become a patron](https://img.shields.io/liberapay/patrons/armbian.svg?logo=liberapay)](https://liberapay.com/armbian)
 
 ## Table of contents
 

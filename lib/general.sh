@@ -145,7 +145,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: buster|bullseye|bionic|focal|hirsute|sid
+# <release>: buster|bullseye|bionic|focal|hirsute|impish|sid
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -155,7 +155,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster|bullseye|sid)
+	stretch|buster)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -171,7 +171,30 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|focal|hirsute)
+	bullseye|bookworm|trixie)
+	cat <<-EOF > "${basedir}"/etc/apt/sources.list
+	deb http://${DEBIAN_MIRROR} $release main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+
+	deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+
+	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+
+	deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+	#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+	EOF
+	;;
+
+	sid) # sid is permanent unstable development and has no such thing as updates or security
+	cat <<-EOF > "${basedir}"/etc/apt/sources.list
+	deb http://${DEBIAN_MIRROR} $release main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+	EOF
+	;;
+
+	xenial|bionic|focal|hirsute|impish)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -688,7 +711,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "sid")
+	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "sid")
 	#local distributions=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 	local errors=0
 
@@ -818,7 +841,7 @@ repo-manipulate()
 # "update" search for new files in output/debs* to add them to repository
 # "purge" leave only last 5 versions
 
-	local DISTROS=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "sid")
+	local DISTROS=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "sid")
 	#local DISTROS=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 
 	case $@ in
@@ -1027,7 +1050,12 @@ prepare_host()
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
 
-	# temporally fix for Locales settings
+	# fix for Locales settings
+	if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+		sudo sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+		sudo locale-gen
+	fi
+
 	export LC_ALL="en_US.UTF-8"
 
 	# packages list for host
@@ -1061,7 +1089,7 @@ prepare_host()
   fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
-	if [[ $HOSTRELEASE =~ ^(focal|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
+	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -1076,7 +1104,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "buster bullseye focal hirsute debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
+	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -1092,7 +1120,7 @@ prepare_host()
 # build aarch64
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|hirsute|ulyana|ulyssa|uma)$ ]]; then
+	if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|impish|hirsute|ulyana|ulyssa|uma)$ ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
@@ -1155,6 +1183,8 @@ prepare_host()
 
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
+		# don't prompt for apt cacher selection
+		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 		apt-get -q update
 		apt-get -y upgrade
 		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/${LOG_SUBPATH}/hostdeps.log
