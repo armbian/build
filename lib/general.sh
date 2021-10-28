@@ -366,15 +366,15 @@ fetch_from_repo()
 		# remote was updated, fetch and check out updates
 		display_alert "Fetching updates"
 		case $ref_type in
-			branch) improved_git fetch --depth 1 origin "${ref_name}" ;;
-			tag) improved_git fetch --depth 1 origin tags/"${ref_name}" ;;
-			head) improved_git fetch --depth 1 origin HEAD ;;
+			branch) improved_git fetch --depth 200 origin "${ref_name}" ;;
+			tag) improved_git fetch --depth 200 origin tags/"${ref_name}" ;;
+			head) improved_git fetch --depth 200 origin HEAD ;;
 		esac
 
 		# commit type needs support for older git servers that doesn't support fetching id directly
 		if [[ $ref_type == commit ]]; then
 
-			improved_git fetch --depth 1 origin "${ref_name}"
+			improved_git fetch --depth 200 origin "${ref_name}"
 
 			# cover old type
 			if [[ $? -ne 0 ]]; then
