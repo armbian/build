@@ -526,8 +526,13 @@ compile_kernel()
 	OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2>/dev/null)
 
 	# check if OLDHASHTARGET commit exists otherwise use oldest
-	git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
-	[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} show HEAD~199 --pretty=format:"%H" --no-patch)
+	if  [[ -z ${KERNEL_VERSION_LEVEL} ]]; then
+		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
+		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} show HEAD~199 --pretty=format:"%H" --no-patch)
+		else
+		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
+		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} rev-list --max-parents=0 HEAD)
+	fi
 
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
@@ -542,7 +547,7 @@ compile_kernel()
 	fi
 
 	# create change log
-	git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
+	git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'%H>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
 	
 	echo "${hash}" > "${HASHTARGET}.githash"
 	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
