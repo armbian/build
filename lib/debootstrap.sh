@@ -795,8 +795,8 @@ create_image()
 			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
-			[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
-			[[ ${available_cpu} -gt 8 ]] && available_cpu=8 # using more cpu cores for compressing is pointless
+			#[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
+			[[ ${available_cpu} -gt 16 ]] && available_cpu=16 # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
 			if [[ ${BUILD_ALL} == yes && ( ${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4 )]]; then
