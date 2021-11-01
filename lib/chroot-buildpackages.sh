@@ -38,6 +38,7 @@ create_chroot()
 	apt_mirror['focal']="$UBUNTU_MIRROR"
 	apt_mirror['hirsute']="$UBUNTU_MIRROR"
 	apt_mirror['impish']="$UBUNTU_MIRROR"
+	apt_mirror['jammy']="$UBUNTU_MIRROR"
 	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
 	components['bullseye']='main,contrib'
@@ -47,6 +48,7 @@ create_chroot()
 	components['focal']='main,universe,multiverse'
 	components['hirsute']='main,universe,multiverse'
 	components['impish']='main,universe,multiverse'
+	components['jammy']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc"
 	# perhaps a temporally workaround
