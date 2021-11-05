@@ -1,0 +1,1410 @@
+diff --git a/Makefile b/Makefile
+index b7f6639f4e7a..84410351b27c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 199
++SUBLEVEL = 200
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+@@ -834,6 +834,18 @@ KBUILD_CFLAGS   += $(call cc-option,-Werror=date-time)
+ # enforce correct pointer usage
+ KBUILD_CFLAGS   += $(call cc-option,-Werror=incompatible-pointer-types)
+ 
++# Require designated initializers for all marked structures
++KBUILD_CFLAGS   += $(call cc-option,-Werror=designated-init)
++
++# change __FILE__ to the relative path from the srctree
++KBUILD_CFLAGS	+= $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
++
++# ensure -fcf-protection is disabled when using retpoline as it is
++# incompatible with -mindirect-branch=thunk-extern
++ifdef CONFIG_RETPOLINE
++KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
++endif
++
+ # use the deterministic mode of AR if available
+ KBUILD_ARFLAGS := $(call ar-option,D)
+ 
+diff --git a/arch/arm/boot/dts/imx7s.dtsi b/arch/arm/boot/dts/imx7s.dtsi
+index edc5ddeb851a..0a7ea1a765f9 100644
+--- a/arch/arm/boot/dts/imx7s.dtsi
++++ b/arch/arm/boot/dts/imx7s.dtsi
+@@ -437,7 +437,7 @@
+ 				compatible = "fsl,imx7d-gpt", "fsl,imx6sx-gpt";
+ 				reg = <0x302d0000 0x10000>;
+ 				interrupts = <GIC_SPI 55 IRQ_TYPE_LEVEL_HIGH>;
+-				clocks = <&clks IMX7D_CLK_DUMMY>,
++				clocks = <&clks IMX7D_GPT1_ROOT_CLK>,
+ 					 <&clks IMX7D_GPT1_ROOT_CLK>;
+ 				clock-names = "ipg", "per";
+ 			};
+@@ -446,7 +446,7 @@
+ 				compatible = "fsl,imx7d-gpt", "fsl,imx6sx-gpt";
+ 				reg = <0x302e0000 0x10000>;
+ 				interrupts = <GIC_SPI 54 IRQ_TYPE_LEVEL_HIGH>;
+-				clocks = <&clks IMX7D_CLK_DUMMY>,
++				clocks = <&clks IMX7D_GPT2_ROOT_CLK>,
+ 					 <&clks IMX7D_GPT2_ROOT_CLK>;
+ 				clock-names = "ipg", "per";
+ 				status = "disabled";
+@@ -456,7 +456,7 @@
+ 				compatible = "fsl,imx7d-gpt", "fsl,imx6sx-gpt";
+ 				reg = <0x302f0000 0x10000>;
+ 				interrupts = <GIC_SPI 53 IRQ_TYPE_LEVEL_HIGH>;
+-				clocks = <&clks IMX7D_CLK_DUMMY>,
++				clocks = <&clks IMX7D_GPT3_ROOT_CLK>,
+ 					 <&clks IMX7D_GPT3_ROOT_CLK>;
+ 				clock-names = "ipg", "per";
+ 				status = "disabled";
+@@ -466,7 +466,7 @@
+ 				compatible = "fsl,imx7d-gpt", "fsl,imx6sx-gpt";
+ 				reg = <0x30300000 0x10000>;
+ 				interrupts = <GIC_SPI 52 IRQ_TYPE_LEVEL_HIGH>;
+-				clocks = <&clks IMX7D_CLK_DUMMY>,
++				clocks = <&clks IMX7D_GPT4_ROOT_CLK>,
+ 					 <&clks IMX7D_GPT4_ROOT_CLK>;
+ 				clock-names = "ipg", "per";
+ 				status = "disabled";
+diff --git a/arch/arm/boot/dts/logicpd-torpedo-som.dtsi b/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
+index ceb49d15d243..20ee7ca8c653 100644
+--- a/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
++++ b/arch/arm/boot/dts/logicpd-torpedo-som.dtsi
+@@ -266,3 +266,7 @@
+ &twl_gpio {
+ 	ti,use-leds;
+ };
++
++&twl_keypad {
++	status = "disabled";
++};
+diff --git a/arch/arm/mach-davinci/dm365.c b/arch/arm/mach-davinci/dm365.c
+index ef3add999263..8db549c56914 100644
+--- a/arch/arm/mach-davinci/dm365.c
++++ b/arch/arm/mach-davinci/dm365.c
+@@ -864,8 +864,8 @@ static s8 dm365_queue_priority_mapping[][2] = {
+ };
+ 
+ static const struct dma_slave_map dm365_edma_map[] = {
+-	{ "davinci-mcbsp.0", "tx", EDMA_FILTER_PARAM(0, 2) },
+-	{ "davinci-mcbsp.0", "rx", EDMA_FILTER_PARAM(0, 3) },
++	{ "davinci-mcbsp", "tx", EDMA_FILTER_PARAM(0, 2) },
++	{ "davinci-mcbsp", "rx", EDMA_FILTER_PARAM(0, 3) },
+ 	{ "davinci_voicecodec", "tx", EDMA_FILTER_PARAM(0, 2) },
+ 	{ "davinci_voicecodec", "rx", EDMA_FILTER_PARAM(0, 3) },
+ 	{ "spi_davinci.2", "tx", EDMA_FILTER_PARAM(0, 10) },
+diff --git a/arch/arm/mm/alignment.c b/arch/arm/mm/alignment.c
+index 7d5f4c736a16..cd18eda014c2 100644
+--- a/arch/arm/mm/alignment.c
++++ b/arch/arm/mm/alignment.c
+@@ -767,6 +767,36 @@ do_alignment_t32_to_handler(unsigned long *pinstr, struct pt_regs *regs,
+ 	return NULL;
+ }
+ 
++static int alignment_get_arm(struct pt_regs *regs, u32 *ip, unsigned long *inst)
++{
++	u32 instr = 0;
++	int fault;
++
++	if (user_mode(regs))
++		fault = get_user(instr, ip);
++	else
++		fault = probe_kernel_address(ip, instr);
++
++	*inst = __mem_to_opcode_arm(instr);
++
++	return fault;
++}
++
++static int alignment_get_thumb(struct pt_regs *regs, u16 *ip, u16 *inst)
++{
++	u16 instr = 0;
++	int fault;
++
++	if (user_mode(regs))
++		fault = get_user(instr, ip);
++	else
++		fault = probe_kernel_address(ip, instr);
++
++	*inst = __mem_to_opcode_thumb16(instr);
++
++	return fault;
++}
++
+ static int
+ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ {
+@@ -774,10 +804,10 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 	unsigned long instr = 0, instrptr;
+ 	int (*handler)(unsigned long addr, unsigned long instr, struct pt_regs *regs);
+ 	unsigned int type;
+-	unsigned int fault;
+ 	u16 tinstr = 0;
+ 	int isize = 4;
+ 	int thumb2_32b = 0;
++	int fault;
+ 
+ 	if (interrupts_enabled(regs))
+ 		local_irq_enable();
+@@ -786,15 +816,14 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 
+ 	if (thumb_mode(regs)) {
+ 		u16 *ptr = (u16 *)(instrptr & ~1);
+-		fault = probe_kernel_address(ptr, tinstr);
+-		tinstr = __mem_to_opcode_thumb16(tinstr);
++
++		fault = alignment_get_thumb(regs, ptr, &tinstr);
+ 		if (!fault) {
+ 			if (cpu_architecture() >= CPU_ARCH_ARMv7 &&
+ 			    IS_T32(tinstr)) {
+ 				/* Thumb-2 32-bit */
+-				u16 tinst2 = 0;
+-				fault = probe_kernel_address(ptr + 1, tinst2);
+-				tinst2 = __mem_to_opcode_thumb16(tinst2);
++				u16 tinst2;
++				fault = alignment_get_thumb(regs, ptr + 1, &tinst2);
+ 				instr = __opcode_thumb32_compose(tinstr, tinst2);
+ 				thumb2_32b = 1;
+ 			} else {
+@@ -803,8 +832,7 @@ do_alignment(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
+ 			}
+ 		}
+ 	} else {
+-		fault = probe_kernel_address((void *)instrptr, instr);
+-		instr = __mem_to_opcode_arm(instr);
++		fault = alignment_get_arm(regs, (void *)instrptr, &instr);
+ 	}
+ 
+ 	if (fault) {
+diff --git a/arch/mips/bcm63xx/prom.c b/arch/mips/bcm63xx/prom.c
+index 7019e2967009..bbbf8057565b 100644
+--- a/arch/mips/bcm63xx/prom.c
++++ b/arch/mips/bcm63xx/prom.c
+@@ -84,7 +84,7 @@ void __init prom_init(void)
+ 		 * Here we will start up CPU1 in the background and ask it to
+ 		 * reconfigure itself then go back to sleep.
+ 		 */
+-		memcpy((void *)0xa0000200, &bmips_smp_movevec, 0x20);
++		memcpy((void *)0xa0000200, bmips_smp_movevec, 0x20);
+ 		__sync();
+ 		set_c0_cause(C_SW0);
+ 		cpumask_set_cpu(1, &bmips_booted_mask);
+diff --git a/arch/mips/include/asm/bmips.h b/arch/mips/include/asm/bmips.h
+index a92aee7b977a..23f55af7d6ba 100644
+--- a/arch/mips/include/asm/bmips.h
++++ b/arch/mips/include/asm/bmips.h
+@@ -75,11 +75,11 @@ static inline int register_bmips_smp_ops(void)
+ #endif
+ }
+ 
+-extern char bmips_reset_nmi_vec;
+-extern char bmips_reset_nmi_vec_end;
+-extern char bmips_smp_movevec;
+-extern char bmips_smp_int_vec;
+-extern char bmips_smp_int_vec_end;
++extern char bmips_reset_nmi_vec[];
++extern char bmips_reset_nmi_vec_end[];
++extern char bmips_smp_movevec[];
++extern char bmips_smp_int_vec[];
++extern char bmips_smp_int_vec_end[];
+ 
+ extern int bmips_smp_enabled;
+ extern int bmips_cpu_offset;
+diff --git a/arch/mips/kernel/smp-bmips.c b/arch/mips/kernel/smp-bmips.c
+index d4a293b68249..416d53f587e7 100644
+--- a/arch/mips/kernel/smp-bmips.c
++++ b/arch/mips/kernel/smp-bmips.c
+@@ -453,10 +453,10 @@ static void bmips_wr_vec(unsigned long dst, char *start, char *end)
+ 
+ static inline void bmips_nmi_handler_setup(void)
+ {
+-	bmips_wr_vec(BMIPS_NMI_RESET_VEC, &bmips_reset_nmi_vec,
+-		&bmips_reset_nmi_vec_end);
+-	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, &bmips_smp_int_vec,
+-		&bmips_smp_int_vec_end);
++	bmips_wr_vec(BMIPS_NMI_RESET_VEC, bmips_reset_nmi_vec,
++		bmips_reset_nmi_vec_end);
++	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, bmips_smp_int_vec,
++		bmips_smp_int_vec_end);
+ }
+ 
+ struct reset_vec_info {
+diff --git a/drivers/dma/qcom/bam_dma.c b/drivers/dma/qcom/bam_dma.c
+index 6497f5283e3b..81acbde13394 100644
+--- a/drivers/dma/qcom/bam_dma.c
++++ b/drivers/dma/qcom/bam_dma.c
+@@ -686,7 +686,21 @@ static int bam_dma_terminate_all(struct dma_chan *chan)
+ 
+ 	/* remove all transactions, including active transaction */
+ 	spin_lock_irqsave(&bchan->vc.lock, flag);
++	/*
++	 * If we have transactions queued, then some might be committed to the
++	 * hardware in the desc fifo.  The only way to reset the desc fifo is
++	 * to do a hardware reset (either by pipe or the entire block).
++	 * bam_chan_init_hw() will trigger a pipe reset, and also reinit the
++	 * pipe.  If the pipe is left disabled (default state after pipe reset)
++	 * and is accessed by a connected hardware engine, a fatal error in
++	 * the BAM will occur.  There is a small window where this could happen
++	 * with bam_chan_init_hw(), but it is assumed that the caller has
++	 * stopped activity on any attached hardware engine.  Make sure to do
++	 * this first so that the BAM hardware doesn't cause memory corruption
++	 * by accessing freed resources.
++	 */
+ 	if (bchan->curr_txd) {
++		bam_chan_init_hw(bchan, bchan->curr_txd->dir);
+ 		list_add(&bchan->curr_txd->vd.node, &bchan->vc.desc_issued);
+ 		bchan->curr_txd = NULL;
+ 	}
+diff --git a/drivers/net/ethernet/broadcom/genet/bcmgenet.c b/drivers/net/ethernet/broadcom/genet/bcmgenet.c
+index 1bb923e3a2bc..4a4782b3cc1b 100644
+--- a/drivers/net/ethernet/broadcom/genet/bcmgenet.c
++++ b/drivers/net/ethernet/broadcom/genet/bcmgenet.c
+@@ -1914,6 +1914,8 @@ static void bcmgenet_link_intr_enable(struct bcmgenet_priv *priv)
+ 	 */
+ 	if (priv->internal_phy) {
+ 		int0_enable |= UMAC_IRQ_LINK_EVENT;
++		if (GENET_IS_V1(priv) || GENET_IS_V2(priv) || GENET_IS_V3(priv))
++			int0_enable |= UMAC_IRQ_PHY_DET_R;
+ 	} else if (priv->ext_phy) {
+ 		int0_enable |= UMAC_IRQ_LINK_EVENT;
+ 	} else if (priv->phy_interface == PHY_INTERFACE_MODE_MOCA) {
+@@ -2531,6 +2533,10 @@ static void bcmgenet_irq_task(struct work_struct *work)
+ 		bcmgenet_power_up(priv, GENET_POWER_WOL_MAGIC);
+ 	}
+ 
++	if (status & UMAC_IRQ_PHY_DET_R &&
++	    priv->dev->phydev->autoneg != AUTONEG_ENABLE)
++		phy_init_hw(priv->dev->phydev);
++
+ 	/* Link UP/DOWN event */
+ 	if (status & UMAC_IRQ_LINK_EVENT)
+ 		phy_mac_interrupt(priv->phydev,
+@@ -2627,8 +2633,7 @@ static irqreturn_t bcmgenet_isr0(int irq, void *dev_id)
+ 	}
+ 
+ 	/* all other interested interrupts handled in bottom half */
+-	status &= (UMAC_IRQ_LINK_EVENT |
+-		   UMAC_IRQ_MPD_R);
++	status &= (UMAC_IRQ_LINK_EVENT | UMAC_IRQ_MPD_R | UMAC_IRQ_PHY_DET_R);
+ 	if (status) {
+ 		/* Save irq status for bottom-half processing. */
+ 		spin_lock_irqsave(&priv->lock, flags);
+diff --git a/drivers/net/ethernet/hisilicon/hip04_eth.c b/drivers/net/ethernet/hisilicon/hip04_eth.c
+index f7882c1fde16..407e1177d9d1 100644
+--- a/drivers/net/ethernet/hisilicon/hip04_eth.c
++++ b/drivers/net/ethernet/hisilicon/hip04_eth.c
+@@ -174,6 +174,7 @@ struct hip04_priv {
+ 	dma_addr_t rx_phys[RX_DESC_NUM];
+ 	unsigned int rx_head;
+ 	unsigned int rx_buf_size;
++	unsigned int rx_cnt_remaining;
+ 
+ 	struct device_node *phy_node;
+ 	struct phy_device *phy;
+@@ -487,7 +488,6 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 	struct hip04_priv *priv = container_of(napi, struct hip04_priv, napi);
+ 	struct net_device *ndev = priv->ndev;
+ 	struct net_device_stats *stats = &ndev->stats;
+-	unsigned int cnt = hip04_recv_cnt(priv);
+ 	struct rx_desc *desc;
+ 	struct sk_buff *skb;
+ 	unsigned char *buf;
+@@ -500,8 +500,8 @@ static int hip04_rx_poll(struct napi_struct *napi, int budget)
+ 
+ 	/* clean up tx descriptors */
+ 	tx_remaining = hip04_tx_reclaim(ndev, false);
+-
+-	while (cnt && !last) {
++	priv->rx_cnt_remaining += hip04_recv_cnt(priv);
++	while (priv->rx_cnt_remaining && !last) {
+ 		buf = priv->rx_buf[priv->rx_head];
+ 		skb = build_skb(buf, priv->rx_buf_size);
+ 		if (unlikely(!skb)) {
+@@ -547,11 +547,13 @@ refill:
+ 		hip04_set_recv_desc(priv, phys);
+ 
+ 		priv->rx_head = RX_NEXT(priv->rx_head);
+-		if (rx >= budget)
++		if (rx >= budget) {
++			--priv->rx_cnt_remaining;
+ 			goto done;
++		}
+ 
+-		if (--cnt == 0)
+-			cnt = hip04_recv_cnt(priv);
++		if (--priv->rx_cnt_remaining == 0)
++			priv->rx_cnt_remaining += hip04_recv_cnt(priv);
+ 	}
+ 
+ 	if (!(priv->reg_inten & RCV_INT)) {
+@@ -636,6 +638,7 @@ static int hip04_mac_open(struct net_device *ndev)
+ 	int i;
+ 
+ 	priv->rx_head = 0;
++	priv->rx_cnt_remaining = 0;
+ 	priv->tx_head = 0;
+ 	priv->tx_tail = 0;
+ 	hip04_reset_ppe(priv);
+diff --git a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+index 79944302dd46..7d1e8ab956e6 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
++++ b/drivers/net/ethernet/mellanox/mlx4/resource_tracker.c
+@@ -470,12 +470,31 @@ void mlx4_init_quotas(struct mlx4_dev *dev)
+ 		priv->mfunc.master.res_tracker.res_alloc[RES_MPT].quota[pf];
+ }
+ 
+-static int get_max_gauranteed_vfs_counter(struct mlx4_dev *dev)
++static int
++mlx4_calc_res_counter_guaranteed(struct mlx4_dev *dev,
++				 struct resource_allocator *res_alloc,
++				 int vf)
+ {
+-	/* reduce the sink counter */
+-	return (dev->caps.max_counters - 1 -
+-		(MLX4_PF_COUNTERS_PER_PORT * MLX4_MAX_PORTS))
+-		/ MLX4_MAX_PORTS;
++	struct mlx4_active_ports actv_ports;
++	int ports, counters_guaranteed;
++
++	/* For master, only allocate according to the number of phys ports */
++	if (vf == mlx4_master_func_num(dev))
++		return MLX4_PF_COUNTERS_PER_PORT * dev->caps.num_ports;
++
++	/* calculate real number of ports for the VF */
++	actv_ports = mlx4_get_active_ports(dev, vf);
++	ports = bitmap_weight(actv_ports.ports, dev->caps.num_ports);
++	counters_guaranteed = ports * MLX4_VF_COUNTERS_PER_PORT;
++
++	/* If we do not have enough counters for this VF, do not
++	 * allocate any for it. '-1' to reduce the sink counter.
++	 */
++	if ((res_alloc->res_reserved + counters_guaranteed) >
++	    (dev->caps.max_counters - 1))
++		return 0;
++
++	return counters_guaranteed;
+ }
+ 
+ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+@@ -483,7 +502,6 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+ 	int i, j;
+ 	int t;
+-	int max_vfs_guarantee_counter = get_max_gauranteed_vfs_counter(dev);
+ 
+ 	priv->mfunc.master.res_tracker.slave_list =
+ 		kzalloc(dev->num_slaves * sizeof(struct slave_list),
+@@ -600,16 +618,8 @@ int mlx4_init_resource_tracker(struct mlx4_dev *dev)
+ 				break;
+ 			case RES_COUNTER:
+ 				res_alloc->quota[t] = dev->caps.max_counters;
+-				if (t == mlx4_master_func_num(dev))
+-					res_alloc->guaranteed[t] =
+-						MLX4_PF_COUNTERS_PER_PORT *
+-						MLX4_MAX_PORTS;
+-				else if (t <= max_vfs_guarantee_counter)
+-					res_alloc->guaranteed[t] =
+-						MLX4_VF_COUNTERS_PER_PORT *
+-						MLX4_MAX_PORTS;
+-				else
+-					res_alloc->guaranteed[t] = 0;
++				res_alloc->guaranteed[t] =
++					mlx4_calc_res_counter_guaranteed(dev, res_alloc, t);
+ 				res_alloc->res_free -= res_alloc->guaranteed[t];
+ 				break;
+ 			default:
+diff --git a/drivers/net/vxlan.c b/drivers/net/vxlan.c
+index b6ee0c1690d8..340bd98b8dbd 100644
+--- a/drivers/net/vxlan.c
++++ b/drivers/net/vxlan.c
+@@ -2049,8 +2049,11 @@ static void vxlan_xmit_one(struct sk_buff *skb, struct net_device *dev,
+ 		label = info->key.label;
+ 		udp_sum = !!(info->key.tun_flags & TUNNEL_CSUM);
+ 
+-		if (info->options_len)
++		if (info->options_len) {
++			if (info->options_len < sizeof(*md))
++				goto drop;
+ 			md = ip_tunnel_info_opts(info);
++		}
+ 	} else {
+ 		md->gbp = skb->mark;
+ 	}
+diff --git a/drivers/of/unittest.c b/drivers/of/unittest.c
+index 0a1ebbbd3f16..92530525e355 100644
+--- a/drivers/of/unittest.c
++++ b/drivers/of/unittest.c
+@@ -933,6 +933,7 @@ static int __init unittest_data_add(void)
+ 	of_fdt_unflatten_tree(unittest_data, NULL, &unittest_data_node);
+ 	if (!unittest_data_node) {
+ 		pr_warn("%s: No tree to attach; not running tests\n", __func__);
++		kfree(unittest_data);
+ 		return -ENODATA;
+ 	}
+ 	of_node_set_flag(unittest_data_node, OF_DETACHED);
+diff --git a/drivers/pinctrl/bcm/pinctrl-ns2-mux.c b/drivers/pinctrl/bcm/pinctrl-ns2-mux.c
+index 13a4c2774157..6adfb379ac7e 100644
+--- a/drivers/pinctrl/bcm/pinctrl-ns2-mux.c
++++ b/drivers/pinctrl/bcm/pinctrl-ns2-mux.c
+@@ -640,8 +640,8 @@ static int ns2_pinmux_enable(struct pinctrl_dev *pctrl_dev,
+ 	const struct ns2_pin_function *func;
+ 	const struct ns2_pin_group *grp;
+ 
+-	if (grp_select > pinctrl->num_groups ||
+-		func_select > pinctrl->num_functions)
++	if (grp_select >= pinctrl->num_groups ||
++		func_select >= pinctrl->num_functions)
+ 		return -EINVAL;
+ 
+ 	func = &pinctrl->functions[func_select];
+diff --git a/drivers/regulator/pfuze100-regulator.c b/drivers/regulator/pfuze100-regulator.c
+index 86b348740fcd..ffb1f61d2c75 100644
+--- a/drivers/regulator/pfuze100-regulator.c
++++ b/drivers/regulator/pfuze100-regulator.c
+@@ -608,7 +608,13 @@ static int pfuze100_regulator_probe(struct i2c_client *client,
+ 
+ 		/* SW2~SW4 high bit check and modify the voltage value table */
+ 		if (i >= sw_check_start && i <= sw_check_end) {
+-			regmap_read(pfuze_chip->regmap, desc->vsel_reg, &val);
++			ret = regmap_read(pfuze_chip->regmap,
++						desc->vsel_reg, &val);
++			if (ret) {
++				dev_err(&client->dev, "Fails to read from the register.\n");
++				return ret;
++			}
++
+ 			if (val & sw_hi) {
+ 				if (pfuze_chip->chip_id == PFUZE3000) {
+ 					desc->volt_table = pfuze3000_sw2hi;
+diff --git a/drivers/regulator/ti-abb-regulator.c b/drivers/regulator/ti-abb-regulator.c
+index d2f994298753..6d17357b3a24 100644
+--- a/drivers/regulator/ti-abb-regulator.c
++++ b/drivers/regulator/ti-abb-regulator.c
+@@ -173,19 +173,14 @@ static int ti_abb_wait_txdone(struct device *dev, struct ti_abb *abb)
+ 	while (timeout++ <= abb->settling_time) {
+ 		status = ti_abb_check_txdone(abb);
+ 		if (status)
+-			break;
++			return 0;
+ 
+ 		udelay(1);
+ 	}
+ 
+-	if (timeout > abb->settling_time) {
+-		dev_warn_ratelimited(dev,
+-				     "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
+-				     __func__, timeout, readl(abb->int_base));
+-		return -ETIMEDOUT;
+-	}
+-
+-	return 0;
++	dev_warn_ratelimited(dev, "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
++			     __func__, timeout, readl(abb->int_base));
++	return -ETIMEDOUT;
+ }
+ 
+ /**
+@@ -205,19 +200,14 @@ static int ti_abb_clear_all_txdone(struct device *dev, const struct ti_abb *abb)
+ 
+ 		status = ti_abb_check_txdone(abb);
+ 		if (!status)
+-			break;
++			return 0;
+ 
+ 		udelay(1);
+ 	}
+ 
+-	if (timeout > abb->settling_time) {
+-		dev_warn_ratelimited(dev,
+-				     "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
+-				     __func__, timeout, readl(abb->int_base));
+-		return -ETIMEDOUT;
+-	}
+-
+-	return 0;
++	dev_warn_ratelimited(dev, "%s:TRANXDONE timeout(%duS) int=0x%08x\n",
++			     __func__, timeout, readl(abb->int_base));
++	return -ETIMEDOUT;
+ }
+ 
+ /**
+diff --git a/drivers/scsi/Kconfig b/drivers/scsi/Kconfig
+index 17b1574920fd..941e3f25b4a9 100644
+--- a/drivers/scsi/Kconfig
++++ b/drivers/scsi/Kconfig
+@@ -986,7 +986,7 @@ config SCSI_SNI_53C710
+ 
+ config 53C700_LE_ON_BE
+ 	bool
+-	depends on SCSI_LASI700
++	depends on SCSI_LASI700 || SCSI_SNI_53C710
+ 	default y
+ 
+ config SCSI_STEX
+diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
+index 98787588247b..60c288526355 100644
+--- a/drivers/scsi/device_handler/scsi_dh_alua.c
++++ b/drivers/scsi/device_handler/scsi_dh_alua.c
+@@ -527,6 +527,7 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
+ 	unsigned int tpg_desc_tbl_off;
+ 	unsigned char orig_transition_tmo;
+ 	unsigned long flags;
++	bool transitioning_sense = false;
+ 
+ 	if (!pg->expiry) {
+ 		unsigned long transition_tmo = ALUA_FAILOVER_TIMEOUT * HZ;
+@@ -571,13 +572,19 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
+ 			goto retry;
+ 		}
+ 		/*
+-		 * Retry on ALUA state transition or if any
+-		 * UNIT ATTENTION occurred.
++		 * If the array returns with 'ALUA state transition'
++		 * sense code here it cannot return RTPG data during
++		 * transition. So set the state to 'transitioning' directly.
+ 		 */
+ 		if (sense_hdr.sense_key == NOT_READY &&
+-		    sense_hdr.asc == 0x04 && sense_hdr.ascq == 0x0a)
+-			err = SCSI_DH_RETRY;
+-		else if (sense_hdr.sense_key == UNIT_ATTENTION)
++		    sense_hdr.asc == 0x04 && sense_hdr.ascq == 0x0a) {
++			transitioning_sense = true;
++			goto skip_rtpg;
++		}
++		/*
++		 * Retry on any other UNIT ATTENTION occurred.
++		 */
++		if (sense_hdr.sense_key == UNIT_ATTENTION)
+ 			err = SCSI_DH_RETRY;
+ 		if (err == SCSI_DH_RETRY &&
+ 		    pg->expiry != 0 && time_before(jiffies, pg->expiry)) {
+@@ -665,7 +672,11 @@ static int alua_rtpg(struct scsi_device *sdev, struct alua_port_group *pg)
+ 		off = 8 + (desc[7] * 4);
+ 	}
+ 
++ skip_rtpg:
+ 	spin_lock_irqsave(&pg->lock, flags);
++	if (transitioning_sense)
++		pg->state = SCSI_ACCESS_STATE_TRANSITIONING;
++
+ 	sdev_printk(KERN_INFO, sdev,
+ 		    "%s: port group %02x state %c %s supports %c%c%c%c%c%c%c\n",
+ 		    ALUA_DH_NAME, pg->group_id, print_alua_state(pg->state),
+diff --git a/drivers/scsi/sni_53c710.c b/drivers/scsi/sni_53c710.c
+index 76278072147e..b0f5220ae23a 100644
+--- a/drivers/scsi/sni_53c710.c
++++ b/drivers/scsi/sni_53c710.c
+@@ -78,10 +78,8 @@ static int snirm710_probe(struct platform_device *dev)
+ 
+ 	base = res->start;
+ 	hostdata = kzalloc(sizeof(*hostdata), GFP_KERNEL);
+-	if (!hostdata) {
+-		dev_printk(KERN_ERR, dev, "Failed to allocate host data\n");
++	if (!hostdata)
+ 		return -ENOMEM;
+-	}
+ 
+ 	hostdata->dev = &dev->dev;
+ 	dma_set_mask(&dev->dev, DMA_BIT_MASK(32));
+diff --git a/drivers/target/target_core_device.c b/drivers/target/target_core_device.c
+index cc38a3509f78..c3d576ed6f13 100644
+--- a/drivers/target/target_core_device.c
++++ b/drivers/target/target_core_device.c
+@@ -1046,27 +1046,6 @@ passthrough_parse_cdb(struct se_cmd *cmd,
+ {
+ 	unsigned char *cdb = cmd->t_task_cdb;
+ 
+-	/*
+-	 * Clear a lun set in the cdb if the initiator talking to use spoke
+-	 * and old standards version, as we can't assume the underlying device
+-	 * won't choke up on it.
+-	 */
+-	switch (cdb[0]) {
+-	case READ_10: /* SBC - RDProtect */
+-	case READ_12: /* SBC - RDProtect */
+-	case READ_16: /* SBC - RDProtect */
+-	case SEND_DIAGNOSTIC: /* SPC - SELF-TEST Code */
+-	case VERIFY: /* SBC - VRProtect */
+-	case VERIFY_16: /* SBC - VRProtect */
+-	case WRITE_VERIFY: /* SBC - VRProtect */
+-	case WRITE_VERIFY_12: /* SBC - VRProtect */
+-	case MAINTENANCE_IN: /* SPC - Parameter Data Format for SA RTPG */
+-		break;
+-	default:
+-		cdb[1] &= 0x1f; /* clear logical unit number */
+-		break;
+-	}
+-
+ 	/*
+ 	 * For REPORT LUNS we always need to emulate the response, for everything
+ 	 * else, pass it up.
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index 5367b684c1f7..7ae21ad420fb 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -1178,6 +1178,11 @@ void cifsFileInfo_put(struct cifsFileInfo *cifs_file);
+ struct cifsInodeInfo {
+ 	bool can_cache_brlcks;
+ 	struct list_head llist;	/* locks helb by this inode */
++	/*
++	 * NOTE: Some code paths call down_read(lock_sem) twice, so
++	 * we must always use use cifs_down_write() instead of down_write()
++	 * for this semaphore to avoid deadlocks.
++	 */
+ 	struct rw_semaphore lock_sem;	/* protect the fields above */
+ 	/* BB add in lists for dirty pages i.e. write caching info for oplock */
+ 	struct list_head openFileList;
+diff --git a/fs/cifs/cifsproto.h b/fs/cifs/cifsproto.h
+index cd8025a249bb..cdf244df91c2 100644
+--- a/fs/cifs/cifsproto.h
++++ b/fs/cifs/cifsproto.h
+@@ -138,6 +138,7 @@ extern int cifs_unlock_range(struct cifsFileInfo *cfile,
+ 			     struct file_lock *flock, const unsigned int xid);
+ extern int cifs_push_mandatory_locks(struct cifsFileInfo *cfile);
+ 
++extern void cifs_down_write(struct rw_semaphore *sem);
+ extern struct cifsFileInfo *cifs_new_fileinfo(struct cifs_fid *fid,
+ 					      struct file *file,
+ 					      struct tcon_link *tlink,
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 3504ef015493..1c3f262d9c4d 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -280,6 +280,13 @@ cifs_has_mand_locks(struct cifsInodeInfo *cinode)
+ 	return has_locks;
+ }
+ 
++void
++cifs_down_write(struct rw_semaphore *sem)
++{
++	while (!down_write_trylock(sem))
++		msleep(10);
++}
++
+ struct cifsFileInfo *
+ cifs_new_fileinfo(struct cifs_fid *fid, struct file *file,
+ 		  struct tcon_link *tlink, __u32 oplock)
+@@ -305,7 +312,7 @@ cifs_new_fileinfo(struct cifs_fid *fid, struct file *file,
+ 	INIT_LIST_HEAD(&fdlocks->locks);
+ 	fdlocks->cfile = cfile;
+ 	cfile->llist = fdlocks;
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_add(&fdlocks->llist, &cinode->llist);
+ 	up_write(&cinode->lock_sem);
+ 
+@@ -457,7 +464,7 @@ void _cifsFileInfo_put(struct cifsFileInfo *cifs_file, bool wait_oplock_handler)
+ 	 * Delete any outstanding lock records. We'll lose them when the file
+ 	 * is closed anyway.
+ 	 */
+-	down_write(&cifsi->lock_sem);
++	cifs_down_write(&cifsi->lock_sem);
+ 	list_for_each_entry_safe(li, tmp, &cifs_file->llist->locks, llist) {
+ 		list_del(&li->llist);
+ 		cifs_del_lock_waiters(li);
+@@ -1011,7 +1018,7 @@ static void
+ cifs_lock_add(struct cifsFileInfo *cfile, struct cifsLockInfo *lock)
+ {
+ 	struct cifsInodeInfo *cinode = CIFS_I(d_inode(cfile->dentry));
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_add_tail(&lock->llist, &cfile->llist->locks);
+ 	up_write(&cinode->lock_sem);
+ }
+@@ -1033,7 +1040,7 @@ cifs_lock_add_if(struct cifsFileInfo *cfile, struct cifsLockInfo *lock,
+ 
+ try_again:
+ 	exist = false;
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 
+ 	exist = cifs_find_lock_conflict(cfile, lock->offset, lock->length,
+ 					lock->type, &conf_lock, CIFS_LOCK_OP);
+@@ -1055,7 +1062,7 @@ try_again:
+ 					(lock->blist.next == &lock->blist));
+ 		if (!rc)
+ 			goto try_again;
+-		down_write(&cinode->lock_sem);
++		cifs_down_write(&cinode->lock_sem);
+ 		list_del_init(&lock->blist);
+ 	}
+ 
+@@ -1108,7 +1115,7 @@ cifs_posix_lock_set(struct file *file, struct file_lock *flock)
+ 		return rc;
+ 
+ try_again:
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	if (!cinode->can_cache_brlcks) {
+ 		up_write(&cinode->lock_sem);
+ 		return rc;
+@@ -1312,7 +1319,7 @@ cifs_push_locks(struct cifsFileInfo *cfile)
+ 	int rc = 0;
+ 
+ 	/* we are going to update can_cache_brlcks here - need a write access */
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	if (!cinode->can_cache_brlcks) {
+ 		up_write(&cinode->lock_sem);
+ 		return rc;
+@@ -1501,7 +1508,7 @@ cifs_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
+ 	if (!buf)
+ 		return -ENOMEM;
+ 
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	for (i = 0; i < 2; i++) {
+ 		cur = buf;
+ 		num = 0;
+diff --git a/fs/cifs/smb2file.c b/fs/cifs/smb2file.c
+index dee5250701de..41f1a5dd33a5 100644
+--- a/fs/cifs/smb2file.c
++++ b/fs/cifs/smb2file.c
+@@ -138,7 +138,7 @@ smb2_unlock_range(struct cifsFileInfo *cfile, struct file_lock *flock,
+ 
+ 	cur = buf;
+ 
+-	down_write(&cinode->lock_sem);
++	cifs_down_write(&cinode->lock_sem);
+ 	list_for_each_entry_safe(li, tmp, &cfile->llist->locks, llist) {
+ 		if (flock->fl_start > li->offset ||
+ 		    (flock->fl_start + length) <
+diff --git a/include/linux/gfp.h b/include/linux/gfp.h
+index f8041f9de31e..d11f56bc9c7e 100644
+--- a/include/linux/gfp.h
++++ b/include/linux/gfp.h
+@@ -284,6 +284,29 @@ static inline bool gfpflags_allow_blocking(const gfp_t gfp_flags)
+ 	return !!(gfp_flags & __GFP_DIRECT_RECLAIM);
+ }
+ 
++/**
++ * gfpflags_normal_context - is gfp_flags a normal sleepable context?
++ * @gfp_flags: gfp_flags to test
++ *
++ * Test whether @gfp_flags indicates that the allocation is from the
++ * %current context and allowed to sleep.
++ *
++ * An allocation being allowed to block doesn't mean it owns the %current
++ * context.  When direct reclaim path tries to allocate memory, the
++ * allocation context is nested inside whatever %current was doing at the
++ * time of the original allocation.  The nested allocation may be allowed
++ * to block but modifying anything %current owns can corrupt the outer
++ * context's expectations.
++ *
++ * %true result from this function indicates that the allocation context
++ * can sleep and use anything that's associated with %current.
++ */
++static inline bool gfpflags_normal_context(const gfp_t gfp_flags)
++{
++	return (gfp_flags & (__GFP_DIRECT_RECLAIM | __GFP_MEMALLOC)) ==
++		__GFP_DIRECT_RECLAIM;
++}
++
+ #ifdef CONFIG_HIGHMEM
+ #define OPT_ZONE_HIGHMEM ZONE_HIGHMEM
+ #else
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index f8761774a94f..e37112ac332f 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -1178,7 +1178,8 @@ static inline __u32 skb_get_hash_flowi4(struct sk_buff *skb, const struct flowi4
+ 	return skb->hash;
+ }
+ 
+-__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb);
++__u32 skb_get_hash_perturb(const struct sk_buff *skb,
++			   const siphash_key_t *perturb);
+ 
+ static inline __u32 skb_get_hash_raw(const struct sk_buff *skb)
+ {
+diff --git a/include/net/flow_dissector.h b/include/net/flow_dissector.h
+index d9534927d93b..1505cf7a4aaf 100644
+--- a/include/net/flow_dissector.h
++++ b/include/net/flow_dissector.h
+@@ -3,6 +3,7 @@
+ 
+ #include <linux/types.h>
+ #include <linux/in6.h>
++#include <linux/siphash.h>
+ #include <uapi/linux/if_ether.h>
+ 
+ /**
+@@ -151,7 +152,7 @@ struct flow_dissector {
+ struct flow_keys {
+ 	struct flow_dissector_key_control control;
+ #define FLOW_KEYS_HASH_START_FIELD basic
+-	struct flow_dissector_key_basic basic;
++	struct flow_dissector_key_basic basic __aligned(SIPHASH_ALIGNMENT);
+ 	struct flow_dissector_key_tags tags;
+ 	struct flow_dissector_key_vlan vlan;
+ 	struct flow_dissector_key_keyid keyid;
+diff --git a/include/net/fq.h b/include/net/fq.h
+index 6d8521a30c5c..2c7687902789 100644
+--- a/include/net/fq.h
++++ b/include/net/fq.h
+@@ -70,7 +70,7 @@ struct fq {
+ 	struct list_head backlogs;
+ 	spinlock_t lock;
+ 	u32 flows_cnt;
+-	u32 perturbation;
++	siphash_key_t	perturbation;
+ 	u32 limit;
+ 	u32 memory_limit;
+ 	u32 memory_usage;
+diff --git a/include/net/fq_impl.h b/include/net/fq_impl.h
+index 4e6131cd3f43..45a0d9a006a0 100644
+--- a/include/net/fq_impl.h
++++ b/include/net/fq_impl.h
+@@ -105,7 +105,7 @@ static struct fq_flow *fq_flow_classify(struct fq *fq,
+ 
+ 	lockdep_assert_held(&fq->lock);
+ 
+-	hash = skb_get_hash_perturb(skb, fq->perturbation);
++	hash = skb_get_hash_perturb(skb, &fq->perturbation);
+ 	idx = reciprocal_scale(hash, fq->flows_cnt);
+ 	flow = &fq->flows[idx];
+ 
+@@ -252,7 +252,7 @@ static int fq_init(struct fq *fq, int flows_cnt)
+ 	INIT_LIST_HEAD(&fq->backlogs);
+ 	spin_lock_init(&fq->lock);
+ 	fq->flows_cnt = max_t(u32, flows_cnt, 1);
+-	fq->perturbation = prandom_u32();
++	get_random_bytes(&fq->perturbation, sizeof(fq->perturbation));
+ 	fq->quantum = 300;
+ 	fq->limit = 8192;
+ 	fq->memory_limit = 16 << 20; /* 16 MBytes */
+diff --git a/include/net/sock.h b/include/net/sock.h
+index 116308632fae..469c012a6d01 100644
+--- a/include/net/sock.h
++++ b/include/net/sock.h
+@@ -2045,12 +2045,17 @@ struct sk_buff *sk_stream_alloc_skb(struct sock *sk, int size, gfp_t gfp,
+  * sk_page_frag - return an appropriate page_frag
+  * @sk: socket
+  *
+- * If socket allocation mode allows current thread to sleep, it means its
+- * safe to use the per task page_frag instead of the per socket one.
++ * Use the per task page_frag instead of the per socket one for
++ * optimization when we know that we're in the normal context and owns
++ * everything that's associated with %current.
++ *
++ * gfpflags_allow_blocking() isn't enough here as direct reclaim may nest
++ * inside other socket operations and end up recursing into sk_page_frag()
++ * while it's already in use.
+  */
+ static inline struct page_frag *sk_page_frag(struct sock *sk)
+ {
+-	if (gfpflags_allow_blocking(sk->sk_allocation))
++	if (gfpflags_normal_context(sk->sk_allocation))
+ 		return &current->task_frag;
+ 
+ 	return &sk->sk_frag;
+diff --git a/kernel/time/alarmtimer.c b/kernel/time/alarmtimer.c
+index a519d3cab1a2..6aef4a0bed29 100644
+--- a/kernel/time/alarmtimer.c
++++ b/kernel/time/alarmtimer.c
+@@ -586,7 +586,7 @@ static void alarm_timer_get(struct k_itimer *timr,
+ static int alarm_timer_del(struct k_itimer *timr)
+ {
+ 	if (!rtcdev)
+-		return -ENOTSUPP;
++		return -EOPNOTSUPP;
+ 
+ 	if (alarm_try_to_cancel(&timr->it.alarm.alarmtimer) < 0)
+ 		return TIMER_RETRY;
+@@ -610,7 +610,7 @@ static int alarm_timer_set(struct k_itimer *timr, int flags,
+ 	ktime_t exp;
+ 
+ 	if (!rtcdev)
+-		return -ENOTSUPP;
++		return -EOPNOTSUPP;
+ 
+ 	if (flags & ~TIMER_ABSTIME)
+ 		return -EINVAL;
+diff --git a/net/core/datagram.c b/net/core/datagram.c
+index 146502f310ce..619c63a74594 100644
+--- a/net/core/datagram.c
++++ b/net/core/datagram.c
+@@ -96,7 +96,7 @@ int __skb_wait_for_more_packets(struct sock *sk, int *err, long *timeo_p,
+ 	if (error)
+ 		goto out_err;
+ 
+-	if (sk->sk_receive_queue.prev != skb)
++	if (READ_ONCE(sk->sk_receive_queue.prev) != skb)
+ 		goto out;
+ 
+ 	/* Socket shut down? */
+diff --git a/net/core/ethtool.c b/net/core/ethtool.c
+index ffe7b03c9ab5..454f73fcb3a6 100644
+--- a/net/core/ethtool.c
++++ b/net/core/ethtool.c
+@@ -1438,11 +1438,13 @@ static int ethtool_reset(struct net_device *dev, char __user *useraddr)
+ 
+ static int ethtool_get_wol(struct net_device *dev, char __user *useraddr)
+ {
+-	struct ethtool_wolinfo wol = { .cmd = ETHTOOL_GWOL };
++	struct ethtool_wolinfo wol;
+ 
+ 	if (!dev->ethtool_ops->get_wol)
+ 		return -EOPNOTSUPP;
+ 
++	memset(&wol, 0, sizeof(struct ethtool_wolinfo));
++	wol.cmd = ETHTOOL_GWOL;
+ 	dev->ethtool_ops->get_wol(dev, &wol);
+ 
+ 	if (copy_to_user(useraddr, &wol, sizeof(wol)))
+diff --git a/net/core/flow_dissector.c b/net/core/flow_dissector.c
+index ab7c50026cae..26b0f70d2f1c 100644
+--- a/net/core/flow_dissector.c
++++ b/net/core/flow_dissector.c
+@@ -563,45 +563,34 @@ out_bad:
+ }
+ EXPORT_SYMBOL(__skb_flow_dissect);
+ 
+-static u32 hashrnd __read_mostly;
++static siphash_key_t hashrnd __read_mostly;
+ static __always_inline void __flow_hash_secret_init(void)
+ {
+ 	net_get_random_once(&hashrnd, sizeof(hashrnd));
+ }
+ 
+-static __always_inline u32 __flow_hash_words(const u32 *words, u32 length,
+-					     u32 keyval)
++static const void *flow_keys_hash_start(const struct flow_keys *flow)
+ {
+-	return jhash2(words, length, keyval);
+-}
+-
+-static inline const u32 *flow_keys_hash_start(const struct flow_keys *flow)
+-{
+-	const void *p = flow;
+-
+-	BUILD_BUG_ON(FLOW_KEYS_HASH_OFFSET % sizeof(u32));
+-	return (const u32 *)(p + FLOW_KEYS_HASH_OFFSET);
++	BUILD_BUG_ON(FLOW_KEYS_HASH_OFFSET % SIPHASH_ALIGNMENT);
++	return &flow->FLOW_KEYS_HASH_START_FIELD;
+ }
+ 
+ static inline size_t flow_keys_hash_length(const struct flow_keys *flow)
+ {
+-	size_t diff = FLOW_KEYS_HASH_OFFSET + sizeof(flow->addrs);
+-	BUILD_BUG_ON((sizeof(*flow) - FLOW_KEYS_HASH_OFFSET) % sizeof(u32));
+-	BUILD_BUG_ON(offsetof(typeof(*flow), addrs) !=
+-		     sizeof(*flow) - sizeof(flow->addrs));
++	size_t len = offsetof(typeof(*flow), addrs) - FLOW_KEYS_HASH_OFFSET;
+ 
+ 	switch (flow->control.addr_type) {
+ 	case FLOW_DISSECTOR_KEY_IPV4_ADDRS:
+-		diff -= sizeof(flow->addrs.v4addrs);
++		len += sizeof(flow->addrs.v4addrs);
+ 		break;
+ 	case FLOW_DISSECTOR_KEY_IPV6_ADDRS:
+-		diff -= sizeof(flow->addrs.v6addrs);
++		len += sizeof(flow->addrs.v6addrs);
+ 		break;
+ 	case FLOW_DISSECTOR_KEY_TIPC_ADDRS:
+-		diff -= sizeof(flow->addrs.tipcaddrs);
++		len += sizeof(flow->addrs.tipcaddrs);
+ 		break;
+ 	}
+-	return (sizeof(*flow) - diff) / sizeof(u32);
++	return len;
+ }
+ 
+ __be32 flow_get_u32_src(const struct flow_keys *flow)
+@@ -667,14 +656,15 @@ static inline void __flow_hash_consistentify(struct flow_keys *keys)
+ 	}
+ }
+ 
+-static inline u32 __flow_hash_from_keys(struct flow_keys *keys, u32 keyval)
++static inline u32 __flow_hash_from_keys(struct flow_keys *keys,
++					const siphash_key_t *keyval)
+ {
+ 	u32 hash;
+ 
+ 	__flow_hash_consistentify(keys);
+ 
+-	hash = __flow_hash_words(flow_keys_hash_start(keys),
+-				 flow_keys_hash_length(keys), keyval);
++	hash = siphash(flow_keys_hash_start(keys),
++		       flow_keys_hash_length(keys), keyval);
+ 	if (!hash)
+ 		hash = 1;
+ 
+@@ -684,12 +674,13 @@ static inline u32 __flow_hash_from_keys(struct flow_keys *keys, u32 keyval)
+ u32 flow_hash_from_keys(struct flow_keys *keys)
+ {
+ 	__flow_hash_secret_init();
+-	return __flow_hash_from_keys(keys, hashrnd);
++	return __flow_hash_from_keys(keys, &hashrnd);
+ }
+ EXPORT_SYMBOL(flow_hash_from_keys);
+ 
+ static inline u32 ___skb_get_hash(const struct sk_buff *skb,
+-				  struct flow_keys *keys, u32 keyval)
++				  struct flow_keys *keys,
++				  const siphash_key_t *keyval)
+ {
+ 	skb_flow_dissect_flow_keys(skb, keys,
+ 				   FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL);
+@@ -737,7 +728,7 @@ u32 __skb_get_hash_symmetric(struct sk_buff *skb)
+ 			   NULL, 0, 0, 0,
+ 			   FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL);
+ 
+-	return __flow_hash_from_keys(&keys, hashrnd);
++	return __flow_hash_from_keys(&keys, &hashrnd);
+ }
+ EXPORT_SYMBOL_GPL(__skb_get_hash_symmetric);
+ 
+@@ -757,13 +748,14 @@ void __skb_get_hash(struct sk_buff *skb)
+ 
+ 	__flow_hash_secret_init();
+ 
+-	hash = ___skb_get_hash(skb, &keys, hashrnd);
++	hash = ___skb_get_hash(skb, &keys, &hashrnd);
+ 
+ 	__skb_set_sw_hash(skb, hash, flow_keys_have_l4(&keys));
+ }
+ EXPORT_SYMBOL(__skb_get_hash);
+ 
+-__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb)
++__u32 skb_get_hash_perturb(const struct sk_buff *skb,
++			   const siphash_key_t *perturb)
+ {
+ 	struct flow_keys keys;
+ 
+diff --git a/net/dccp/ipv4.c b/net/dccp/ipv4.c
+index 1d6d3aaa8c3d..322268b88fec 100644
+--- a/net/dccp/ipv4.c
++++ b/net/dccp/ipv4.c
+@@ -121,7 +121,7 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 						    inet->inet_daddr,
+ 						    inet->inet_sport,
+ 						    inet->inet_dport);
+-	inet->inet_id = dp->dccps_iss ^ jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	err = dccp_connect(sk);
+ 	rt = NULL;
+@@ -417,7 +417,7 @@ struct sock *dccp_v4_request_recv_sock(const struct sock *sk,
+ 	RCU_INIT_POINTER(newinet->inet_opt, rcu_dereference(ireq->ireq_opt));
+ 	newinet->mc_index  = inet_iif(skb);
+ 	newinet->mc_ttl	   = ip_hdr(skb)->ttl;
+-	newinet->inet_id   = jiffies;
++	newinet->inet_id   = prandom_u32();
+ 
+ 	if (dst == NULL && (dst = inet_csk_route_child_sock(sk, newsk, req)) == NULL)
+ 		goto put_and_exit;
+diff --git a/net/dsa/dsa2.c b/net/dsa/dsa2.c
+index 0f99297b2fb3..f1792a847d0b 100644
+--- a/net/dsa/dsa2.c
++++ b/net/dsa/dsa2.c
+@@ -59,7 +59,7 @@ static struct dsa_switch_tree *dsa_add_dst(u32 tree)
+ 	dst->tree = tree;
+ 	dst->cpu_switch = -1;
+ 	INIT_LIST_HEAD(&dst->list);
+-	list_add_tail(&dsa_switch_trees, &dst->list);
++	list_add_tail(&dst->list, &dsa_switch_trees);
+ 	kref_init(&dst->refcount);
+ 
+ 	return dst;
+diff --git a/net/ipv4/datagram.c b/net/ipv4/datagram.c
+index f915abff1350..d3eddfd13875 100644
+--- a/net/ipv4/datagram.c
++++ b/net/ipv4/datagram.c
+@@ -75,7 +75,7 @@ int __ip4_datagram_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len
+ 	inet->inet_dport = usin->sin_port;
+ 	sk->sk_state = TCP_ESTABLISHED;
+ 	sk_set_txhash(sk);
+-	inet->inet_id = jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	sk_dst_set(sk, &rt->dst);
+ 	err = 0;
+diff --git a/net/ipv4/tcp_ipv4.c b/net/ipv4/tcp_ipv4.c
+index 848f2c1da8a5..cced424e1176 100644
+--- a/net/ipv4/tcp_ipv4.c
++++ b/net/ipv4/tcp_ipv4.c
+@@ -239,7 +239,7 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
+ 							   inet->inet_sport,
+ 							   usin->sin_port);
+ 
+-	inet->inet_id = tp->write_seq ^ jiffies;
++	inet->inet_id = prandom_u32();
+ 
+ 	err = tcp_connect(sk);
+ 
+@@ -1307,7 +1307,7 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
+ 	inet_csk(newsk)->icsk_ext_hdr_len = 0;
+ 	if (inet_opt)
+ 		inet_csk(newsk)->icsk_ext_hdr_len = inet_opt->opt.optlen;
+-	newinet->inet_id = newtp->write_seq ^ jiffies;
++	newinet->inet_id = prandom_u32();
+ 
+ 	if (!dst) {
+ 		dst = inet_csk_route_child_sock(sk, newsk, req);
+diff --git a/net/sched/sch_fq_codel.c b/net/sched/sch_fq_codel.c
+index a5ea0e9b6be4..29b7465c9d8a 100644
+--- a/net/sched/sch_fq_codel.c
++++ b/net/sched/sch_fq_codel.c
+@@ -57,7 +57,7 @@ struct fq_codel_sched_data {
+ 	struct fq_codel_flow *flows;	/* Flows table [flows_cnt] */
+ 	u32		*backlogs;	/* backlog table [flows_cnt] */
+ 	u32		flows_cnt;	/* number of flows */
+-	u32		perturbation;	/* hash perturbation */
++	siphash_key_t	perturbation;	/* hash perturbation */
+ 	u32		quantum;	/* psched_mtu(qdisc_dev(sch)); */
+ 	u32		drop_batch_size;
+ 	u32		memory_limit;
+@@ -75,7 +75,7 @@ struct fq_codel_sched_data {
+ static unsigned int fq_codel_hash(const struct fq_codel_sched_data *q,
+ 				  struct sk_buff *skb)
+ {
+-	u32 hash = skb_get_hash_perturb(skb, q->perturbation);
++	u32 hash = skb_get_hash_perturb(skb, &q->perturbation);
+ 
+ 	return reciprocal_scale(hash, q->flows_cnt);
+ }
+@@ -482,7 +482,7 @@ static int fq_codel_init(struct Qdisc *sch, struct nlattr *opt)
+ 	q->memory_limit = 32 << 20; /* 32 MBytes */
+ 	q->drop_batch_size = 64;
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	INIT_LIST_HEAD(&q->new_flows);
+ 	INIT_LIST_HEAD(&q->old_flows);
+ 	codel_params_init(&q->cparams);
+diff --git a/net/sched/sch_hhf.c b/net/sched/sch_hhf.c
+index fe32239253a6..1367fe94d630 100644
+--- a/net/sched/sch_hhf.c
++++ b/net/sched/sch_hhf.c
+@@ -4,11 +4,11 @@
+  * Copyright (C) 2013 Nandita Dukkipati <nanditad@google.com>
+  */
+ 
+-#include <linux/jhash.h>
+ #include <linux/jiffies.h>
+ #include <linux/module.h>
+ #include <linux/skbuff.h>
+ #include <linux/vmalloc.h>
++#include <linux/siphash.h>
+ #include <net/pkt_sched.h>
+ #include <net/sock.h>
+ 
+@@ -125,7 +125,7 @@ struct wdrr_bucket {
+ 
+ struct hhf_sched_data {
+ 	struct wdrr_bucket buckets[WDRR_BUCKET_CNT];
+-	u32		   perturbation;   /* hash perturbation */
++	siphash_key_t	   perturbation;   /* hash perturbation */
+ 	u32		   quantum;        /* psched_mtu(qdisc_dev(sch)); */
+ 	u32		   drop_overlimit; /* number of times max qdisc packet
+ 					    * limit was hit
+@@ -263,7 +263,7 @@ static enum wdrr_bucket_idx hhf_classify(struct sk_buff *skb, struct Qdisc *sch)
+ 	}
+ 
+ 	/* Get hashed flow-id of the skb. */
+-	hash = skb_get_hash_perturb(skb, q->perturbation);
++	hash = skb_get_hash_perturb(skb, &q->perturbation);
+ 
+ 	/* Check if this packet belongs to an already established HH flow. */
+ 	flow_pos = hash & HHF_BIT_MASK;
+@@ -593,7 +593,7 @@ static int hhf_init(struct Qdisc *sch, struct nlattr *opt)
+ 
+ 	sch->limit = 1000;
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	INIT_LIST_HEAD(&q->new_buckets);
+ 	INIT_LIST_HEAD(&q->old_buckets);
+ 
+diff --git a/net/sched/sch_sfb.c b/net/sched/sch_sfb.c
+index 20a350bd1b1d..bc176bd48c02 100644
+--- a/net/sched/sch_sfb.c
++++ b/net/sched/sch_sfb.c
+@@ -22,7 +22,7 @@
+ #include <linux/errno.h>
+ #include <linux/skbuff.h>
+ #include <linux/random.h>
+-#include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <net/ip.h>
+ #include <net/pkt_sched.h>
+ #include <net/inet_ecn.h>
+@@ -48,7 +48,7 @@ struct sfb_bucket {
+  * (Section 4.4 of SFB reference : moving hash functions)
+  */
+ struct sfb_bins {
+-	u32		  perturbation; /* jhash perturbation */
++	siphash_key_t	  perturbation; /* siphash key */
+ 	struct sfb_bucket bins[SFB_LEVELS][SFB_NUMBUCKETS];
+ };
+ 
+@@ -219,7 +219,8 @@ static u32 sfb_compute_qlen(u32 *prob_r, u32 *avgpm_r, const struct sfb_sched_da
+ 
+ static void sfb_init_perturbation(u32 slot, struct sfb_sched_data *q)
+ {
+-	q->bins[slot].perturbation = prandom_u32();
++	get_random_bytes(&q->bins[slot].perturbation,
++			 sizeof(q->bins[slot].perturbation));
+ }
+ 
+ static void sfb_swap_slot(struct sfb_sched_data *q)
+@@ -314,9 +315,9 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
+ 		/* If using external classifiers, get result and record it. */
+ 		if (!sfb_classify(skb, fl, &ret, &salt))
+ 			goto other_drop;
+-		sfbhash = jhash_1word(salt, q->bins[slot].perturbation);
++		sfbhash = siphash_1u32(salt, &q->bins[slot].perturbation);
+ 	} else {
+-		sfbhash = skb_get_hash_perturb(skb, q->bins[slot].perturbation);
++		sfbhash = skb_get_hash_perturb(skb, &q->bins[slot].perturbation);
+ 	}
+ 
+ 
+@@ -352,7 +353,7 @@ static int sfb_enqueue(struct sk_buff *skb, struct Qdisc *sch,
+ 		/* Inelastic flow */
+ 		if (q->double_buffering) {
+ 			sfbhash = skb_get_hash_perturb(skb,
+-			    q->bins[slot].perturbation);
++			    &q->bins[slot].perturbation);
+ 			if (!sfbhash)
+ 				sfbhash = 1;
+ 			sfb_skb_cb(skb)->hashes[slot] = sfbhash;
+diff --git a/net/sched/sch_sfq.c b/net/sched/sch_sfq.c
+index d8c2b6baaad2..a8d82cb7f073 100644
+--- a/net/sched/sch_sfq.c
++++ b/net/sched/sch_sfq.c
+@@ -18,7 +18,7 @@
+ #include <linux/errno.h>
+ #include <linux/init.h>
+ #include <linux/skbuff.h>
+-#include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <linux/slab.h>
+ #include <linux/vmalloc.h>
+ #include <net/netlink.h>
+@@ -120,7 +120,7 @@ struct sfq_sched_data {
+ 	u8		headdrop;
+ 	u8		maxdepth;	/* limit of packets per flow */
+ 
+-	u32		perturbation;
++	siphash_key_t 	perturbation;
+ 	u8		cur_depth;	/* depth of longest slot */
+ 	u8		flags;
+ 	unsigned short  scaled_quantum; /* SFQ_ALLOT_SIZE(quantum) */
+@@ -158,7 +158,7 @@ static inline struct sfq_head *sfq_dep_head(struct sfq_sched_data *q, sfq_index
+ static unsigned int sfq_hash(const struct sfq_sched_data *q,
+ 			     const struct sk_buff *skb)
+ {
+-	return skb_get_hash_perturb(skb, q->perturbation) & (q->divisor - 1);
++	return skb_get_hash_perturb(skb, &q->perturbation) & (q->divisor - 1);
+ }
+ 
+ static unsigned int sfq_classify(struct sk_buff *skb, struct Qdisc *sch,
+@@ -607,9 +607,11 @@ static void sfq_perturbation(unsigned long arg)
+ 	struct Qdisc *sch = (struct Qdisc *)arg;
+ 	struct sfq_sched_data *q = qdisc_priv(sch);
+ 	spinlock_t *root_lock = qdisc_lock(qdisc_root_sleeping(sch));
++	siphash_key_t nkey;
+ 
++	get_random_bytes(&nkey, sizeof(nkey));
+ 	spin_lock(root_lock);
+-	q->perturbation = prandom_u32();
++	q->perturbation = nkey;
+ 	if (!q->filter_list && q->tail)
+ 		sfq_rehash(sch);
+ 	spin_unlock(root_lock);
+@@ -681,7 +683,7 @@ static int sfq_change(struct Qdisc *sch, struct nlattr *opt)
+ 	del_timer(&q->perturb_timer);
+ 	if (q->perturb_period) {
+ 		mod_timer(&q->perturb_timer, jiffies + q->perturb_period);
+-		q->perturbation = prandom_u32();
++		get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 	}
+ 	sch_tree_unlock(sch);
+ 	kfree(p);
+@@ -737,7 +739,7 @@ static int sfq_init(struct Qdisc *sch, struct nlattr *opt)
+ 	q->quantum = psched_mtu(qdisc_dev(sch));
+ 	q->scaled_quantum = SFQ_ALLOT_SIZE(q->quantum);
+ 	q->perturb_period = 0;
+-	q->perturbation = prandom_u32();
++	get_random_bytes(&q->perturbation, sizeof(q->perturbation));
+ 
+ 	if (opt) {
+ 		int err = sfq_change(sch, opt);
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index c952abf22535..21ec92011585 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -7734,7 +7734,7 @@ void sctp_copy_sock(struct sock *newsk, struct sock *sk,
+ 	newinet->inet_rcv_saddr = inet->inet_rcv_saddr;
+ 	newinet->inet_dport = htons(asoc->peer.port);
+ 	newinet->pmtudisc = inet->pmtudisc;
+-	newinet->inet_id = asoc->next_tsn ^ jiffies;
++	newinet->inet_id = prandom_u32();
+ 
+ 	newinet->uc_ttl = inet->uc_ttl;
+ 	newinet->mc_loop = 1;
+diff --git a/sound/soc/codecs/wm_adsp.c b/sound/soc/codecs/wm_adsp.c
+index c03c9da076c2..28eb55bc4663 100644
+--- a/sound/soc/codecs/wm_adsp.c
++++ b/sound/soc/codecs/wm_adsp.c
+@@ -948,8 +948,7 @@ static unsigned int wmfw_convert_flags(unsigned int in, unsigned int len)
+ 	}
+ 
+ 	if (in) {
+-		if (in & WMFW_CTL_FLAG_READABLE)
+-			out |= rd;
++		out |= rd;
+ 		if (in & WMFW_CTL_FLAG_WRITEABLE)
+ 			out |= wr;
+ 		if (in & WMFW_CTL_FLAG_VOLATILE)
+diff --git a/sound/soc/rockchip/rockchip_i2s.c b/sound/soc/rockchip/rockchip_i2s.c
+index 08bfee447a36..94b6f9c7dd6b 100644
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -649,7 +649,7 @@ static int rockchip_i2s_probe(struct platform_device *pdev)
+ 	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "Could not register PCM\n");
+-		return ret;
++		goto err_suspend;
+ 	}
+ 
+ 	return 0;
+diff --git a/tools/perf/builtin-kmem.c b/tools/perf/builtin-kmem.c
+index d426dcb18ce9..496a4ca11667 100644
+--- a/tools/perf/builtin-kmem.c
++++ b/tools/perf/builtin-kmem.c
+@@ -674,6 +674,7 @@ static char *compact_gfp_flags(char *gfp_flags)
+ 			new = realloc(new_flags, len + strlen(cpt) + 2);
+ 			if (new == NULL) {
+ 				free(new_flags);
++				free(orig_flags);
+ 				return NULL;
+ 			}
+ 
+diff --git a/tools/testing/selftests/net/reuseport_dualstack.c b/tools/testing/selftests/net/reuseport_dualstack.c
+index 90958aaaafb9..2737d6a595f4 100644
+--- a/tools/testing/selftests/net/reuseport_dualstack.c
++++ b/tools/testing/selftests/net/reuseport_dualstack.c
+@@ -128,7 +128,7 @@ static void test(int *rcv_fds, int count, int proto)
+ {
+ 	struct epoll_event ev;
+ 	int epfd, i, test_fd;
+-	uint16_t test_family;
++	int test_family;
+ 	socklen_t len;
+ 
+ 	epfd = epoll_create(1);
+@@ -145,6 +145,7 @@ static void test(int *rcv_fds, int count, int proto)
+ 	send_from_v4(proto);
+ 
+ 	test_fd = receive_once(epfd, proto);
++	len = sizeof(test_family);
+ 	if (getsockopt(test_fd, SOL_SOCKET, SO_DOMAIN, &test_family, &len))
+ 		error(1, errno, "failed to read socket domain");
+ 	if (test_family != AF_INET)

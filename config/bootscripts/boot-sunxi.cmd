@@ -25,9 +25,9 @@ itest.b *0x28 == 0x03 && echo "U-boot loaded from SPI"
 # get PARTUUID of first partition on SD/eMMC it was loaded from
 # mmc 0 is always mapped to device u-boot (2016.09+) was loaded from
 if test "${devtype}" = "mmc"; then
-  part uuid mmc ${devnum}:1 partuuid;
-  setenv devnum ${mmc_bootdev}
-  setenv rootdev "/dev/mmcblk${mmc_bootdev}p1"
+	part uuid mmc ${devnum}:1 partuuid;
+	setenv devnum ${mmc_bootdev}
+	setenv rootdev "/dev/mmcblk${mmc_bootdev}p1"
 fi
 
 echo "Boot script loaded from ${devtype}"
