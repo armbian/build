@@ -2,4 +2,4 @@
 BOARD_NAME="Merrii Hummingbird"
 BOARDFAMILY="sun7i"
 BOOTCONFIG="Merrii_Hummingbird_A20_defconfig"
-KERNEL_TARGET="legacy,current,dev"
+KERNEL_TARGET="legacy,current,edge"

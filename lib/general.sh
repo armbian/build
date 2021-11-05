@@ -14,6 +14,8 @@
 # exit_with_error
 # get_package_list_hash
 # create_sources_list
+# clean_up_repo
+# waiter_local_repo
 # fetch_from_repo
 # improved_git
 # display_alert
@@ -27,16 +29,20 @@
 # webseed
 # download_and_verify
 
+
 # cleaning <target>
 #
 # target: what to clean
 # "make" - "make clean" for selected kernel and u-boot
-# "debs" - delete output/debs
+# "debs" - delete output/debs for board&branch
+# "ubootdebs" - delete output/debs for uboot&board&branch
+# "alldebs" - delete output/debs
 # "cache" - delete output/cache
 # "oldcache" - remove old output/cache
 # "images" - delete output/images
 # "sources" - delete output/sources
 #
+
 cleaning()
 {
 	case $1 in
@@ -53,6 +59,14 @@ cleaning()
 				-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
 			[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/${CHOSEN_ROOTFS}"_*.deb
 			[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/armbian-desktop-${RELEASE}"_*.deb
+		fi
+		;;
+
+		ubootdebs) # delete ${DEB_STORAGE} for uboot, current branch and family
+		if [[ -d "${DEB_STORAGE}" ]]; then
+			display_alert "Cleaning ${DEB_STORAGE} for u-boot" "$BOARD $BRANCH" "info"
+			# easier than dealing with variable expansion and escaping dashes in file names
+			find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
 		fi
 		;;
 
@@ -123,13 +137,17 @@ exit_with_error()
 
 get_package_list_hash()
 {
-	( printf '%s\n' "${PACKAGE_LIST}" | sort -u; printf '%s\n' "${PACKAGE_LIST_EXCLUDE}" | sort -u; echo "${1}" ) \
+	local package_arr exclude_arr
+	local list_content
+	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
+	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
+	( ( printf "%s\n" "${package_arr[@]}"; printf -- "-%s\n" "${exclude_arr[@]}" ) | sort -u; echo "${1}" ) \
 		| md5sum | cut -d' ' -f 1
 }
 
 # create_sources_list <release> <basedir>
 #
-# <release>: stretch|buster|bullseye|xenial|bionic|groovy|focal
+# <release>: buster|bullseye|bionic|focal|hirsute|impish|sid
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -139,7 +157,7 @@ create_sources_list()
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster|bullseye)
+	stretch|buster)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${DEBIAN_MIRROR} $release main contrib non-free
 	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -155,7 +173,30 @@ create_sources_list()
 	EOF
 	;;
 
-	xenial|bionic|groovy|focal)
+	bullseye|bookworm|trixie)
+	cat <<-EOF > "${basedir}"/etc/apt/sources.list
+	deb http://${DEBIAN_MIRROR} $release main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+
+	deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+
+	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+
+	deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+	#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+	EOF
+	;;
+
+	sid) # sid is permanent unstable development and has no such thing as updates or security
+	cat <<-EOF > "${basedir}"/etc/apt/sources.list
+	deb http://${DEBIAN_MIRROR} $release main contrib non-free
+	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+	EOF
+	;;
+
+	xenial|bionic|focal|hirsute|impish)
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -174,7 +215,9 @@ create_sources_list()
 
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
-		echo "deb http://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+		echo "deb https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
+	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	else
 		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 	fi
@@ -211,6 +254,134 @@ improved_git()
 
 }
 
+clean_up_repo ()
+{
+	local target_dir=$1
+
+	# Files that are not tracked by git and were added
+	# when the patch was applied must be removed.
+	improved_git -C $target_dir clean -qdf
+
+	# Return the files that are tracked by git to the initial state.
+	improved_git -C $target_dir checkout -qf HEAD
+}
+
+# used : waiter_local_repo arg1='value' arg2:'value'
+#		 waiter_local_repo \
+#			url='https://github.com/megous/linux' \
+#			name='megous' \
+#			dir='linux-mainline/5.14' \
+#			branch='orange-pi-5.14' \
+#			obj=<tag|commit> or tag:$tag ...
+waiter_local_repo ()
+{
+	for arg in $@;do
+
+		case $arg in
+			url=*|https://*|git://*)	eval "local url=${arg/url=/}"
+				;;
+			dir=*|/*/*/*)	eval "local dir=${arg/dir=/}"
+				;;
+			*=*|*:*)	eval "local ${arg/:/=}"
+				;;
+		esac
+
+	done
+
+	# Required variables cannot be empty.
+	for var in url name dir branch; do
+		[ "${var#*=}" == "" ] && exit_with_error "Error in configuration"
+	done
+
+	local reachability
+
+	# The 'offline' variable must always be set to 'true' or 'false'
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+		local offline=true
+	else
+		local offline=false
+	fi
+
+	local work_dir="$(realpath ${SRC}/cache/sources)/$dir"
+	mkdir -p $work_dir
+	cd $work_dir || exit_with_error
+
+	display_alert "Checking git sources" "$dir $name/$branch" "info"
+
+	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
+		git init -q .
+
+		# Run in the sub shell to avoid mixing environment variables.
+		if [ -n "$VAR_SHALLOW_ORIGINAL" ]; then
+			(
+			$VAR_SHALLOW_ORIGINAL
+
+			display_alert "Checking git sources" "$dir $name/$branch" "info"
+			if [ "$(git ls-remote -h $url $branch | \
+				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
+				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
+				exit 177
+			fi
+
+			git remote add -t $branch $name $url
+			git fetch --shallow-exclude=$start_tag $name
+			git fetch --deepen=1 $name
+			)
+
+			[ "$?" == "177" ] && exit
+		fi
+	fi
+
+	files_for_clean="$(git status -s | wc -l)"
+	if [ "$files_for_clean" != "0" ];then
+		display_alert " Cleaning .... " "$files_for_clean files"
+		clean_up_repo $work_dir
+	fi
+
+	if [ "$name" != "$(git remote show | grep $name)" ];then
+		git remote add -t $branch $name $url
+	fi
+
+	if ! $offline; then
+		for t_name in $(git remote show);do
+			git fetch $t_name
+		done
+	fi
+
+	# When switching, we use the concept of only "detached branch". Therefore,
+	# we extract the hash from the tag, the branch name, or from the hash itself.
+	# This serves as a check of the reachability of the extraction.
+	# We do not use variables that characterize the current state of the git,
+	# such as `HEAD` and `FETCH_HEAD`.
+	reachability=false
+	for var in obj tag commit branch;do
+		eval pval=\$$var
+
+		if [ -n "$pval" ] && [ "$pval" != *HEAD ]; then
+			case $var in
+				obj|tag|commit) obj=$pval ;;
+				branch) obj=${name}/$branch ;;
+			esac
+
+			if  t_hash=$(git rev-parse $obj 2>/dev/null);then
+				reachability=true
+				break
+			else
+				display_alert "Variable $var=$obj unreachable for extraction"
+			fi
+		fi
+	done
+
+	if $reachability && [ "$t_hash" != "$(git rev-parse @ 2>/dev/null)" ];then
+		# Switch "detached branch" as hash
+		display_alert "Switch $obj = $t_hash"
+		git checkout -qf $t_hash
+	else
+		# the working directory corresponds to the target commit,
+		# nothing needs to be done
+		display_alert "Up to date"
+	fi
+}
 
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
@@ -231,6 +402,15 @@ fetch_from_repo()
 	local dir=$2
 	local ref=$3
 	local ref_subdir=$4
+
+	if [ "${url#*megous/}" == linux ]; then
+		unset LINUXSOURCEDIR
+		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
+		VAR_SHALLOW_ORIGINAL=var_origin_kernel
+		waiter_local_repo "url=$url $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
+		unset VAR_SHALLOW_ORIGINAL
+		return
+	fi
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
@@ -270,7 +450,7 @@ fetch_from_repo()
 	#  Then the target URL matches the local URL.
 
 	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != "$(improved_git remote get-url origin 2>/dev/null)" ]]; then
+		  "$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
@@ -325,15 +505,15 @@ fetch_from_repo()
 		# remote was updated, fetch and check out updates
 		display_alert "Fetching updates"
 		case $ref_type in
-			branch) improved_git fetch --depth 1 origin "${ref_name}" ;;
-			tag) improved_git fetch --depth 1 origin tags/"${ref_name}" ;;
-			head) improved_git fetch --depth 1 origin HEAD ;;
+			branch) improved_git fetch --depth 200 origin "${ref_name}" ;;
+			tag) improved_git fetch --depth 200 origin tags/"${ref_name}" ;;
+			head) improved_git fetch --depth 200 origin HEAD ;;
 		esac
 
 		# commit type needs support for older git servers that doesn't support fetching id directly
 		if [[ $ref_type == commit ]]; then
 
-			improved_git fetch --depth 1 origin "${ref_name}"
+			improved_git fetch --depth 200 origin "${ref_name}"
 
 			# cover old type
 			if [[ $? -ne 0 ]]; then
@@ -396,7 +576,7 @@ fetch_from_repo()
 display_alert()
 {
 	# log function parameters to install.log
-	[[ -n "${DEST}" ]] && echo "Displaying message: $@" >> "${DEST}"/debug/output.log
+	[[ -n "${DEST}" ]] && echo "Displaying message: $@" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	local tmp=""
 	[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
@@ -430,10 +610,9 @@ display_alert()
 #--------------------------------------------------------------------------------------------------------------------------------
 fingerprint_image()
 {
-	display_alert "Fingerprinting"
 	cat <<-EOF > "${1}"
 	--------------------------------------------------------------------------------
-	Title:			Armbian $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
+	Title:			${VENDOR} $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
 	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
@@ -445,28 +624,27 @@ fingerprint_image()
 	EOF
 
 	if [ -n "$2" ]; then
-	cat <<-EOF >> "${1}"
-	--------------------------------------------------------------------------------
-	Partitioning configuration:
-	Root partition type: $ROOTFS_TYPE
-	Boot partition type: ${BOOTFS_TYPE:-(none)}
-	User provided boot partition size: ${BOOTSIZE:-0}
-	Offset: $OFFSET
-	CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
-	--------------------------------------------------------------------------------
-	Verify GPG signature:
-	gpg --verify $2.img.asc
+		cat <<-EOF >> "${1}"
+		--------------------------------------------------------------------------------
+		Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
+		Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
+		Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
 
-	Verify image file integrity:
-	sha256sum --check $2.img.sha
+		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
+		--------------------------------------------------------------------------------
+		Verify GPG signature:
+		gpg --verify $2.img.asc
 
-	Prepare SD card (four methodes):
-	zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
-	dd if=$2.img of=/dev/mmcblkX bs=1M
-	balena-etcher $2.img.gz -d /dev/mmcblkX
-	balena-etcher $2.img -d /dev/mmcblkX
-	EOF
-        fi
+		Verify image file integrity:
+		sha256sum --check $2.img.sha
+
+		Prepare SD card (four methodes):
+		zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
+		dd if=$2.img of=/dev/mmcblkX bs=1M
+		balena-etcher $2.img.gz -d /dev/mmcblkX
+		balena-etcher $2.img -d /dev/mmcblkX
+		EOF
+	fi
 
 	cat <<-EOF >> "${1}"
 	--------------------------------------------------------------------------------
@@ -598,30 +776,48 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 
 
+DISTRIBUTIONS_DESC_DIR="config/distributions"
+
 function distro_menu ()
 {
 # create a select menu for choosing a distribution based EXPERT status
-# also sets DISTRIBUTION_STATUS which goes to BSP package / armbian-release
 
-	for i in "${!distro_name[@]}"
-	do
-		if [[ "${i}" == "${1}" ]]; then
-			if [[ "${distro_support[$i]}" != "supported" && $EXPERT != "yes" ]]; then
-				:
-			else
-				local text=""
-				[[ $EXPERT == "yes" ]] && local text="(${distro_support[$i]})"
-				options+=("$i" "${distro_name[$i]} $text")
-			fi
-			DISTRIBUTION_STATUS=${distro_support[$i]}
-			break
+	local distrib_dir="${1}"
+
+	if [[ -d "${distrib_dir}" && -f "${distrib_dir}/support" ]]; then
+		local support_level="$(cat "${distrib_dir}/support")"
+		if [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
+			:
+		else
+			local distro_codename="$(basename "${distrib_dir}")"
+			local distro_fullname="$(cat "${distrib_dir}/name")"
+			local expert_infos=""
+			[[ $EXPERT == "yes" ]] && expert_infos="(${support_level})"
+			options+=("${distro_codename}" "${distro_fullname} ${expert_infos}")
 		fi
-	done
+	fi
 
 }
 
 
+function distros_options() {
+	for distrib_dir in "${DISTRIBUTIONS_DESC_DIR}/"*; do
+		distro_menu "${distrib_dir}"
+	done
+}
 
+function set_distribution_status() {
+
+	local distro_support_desc_filepath="${SRC}/${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
+	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
+		exit_with_error "Distribution ${distribution_name} does not exist"
+	else
+		DISTRIBUTION_STATUS="$(cat "${distro_support_desc_filepath}")"
+	fi
+
+	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
+
+}
 
 adding_packages()
 {
@@ -637,7 +833,7 @@ adding_packages()
 		# add if not already there
 		aptly repo search -architectures="${arch}" -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" 'Name (% '${name}'), $Version (='${version}'), $Architecture (='${arch}')' &>/dev/null
 		if [[ $? -ne 0 ]]; then
-			display_alert "Adding" "$name" "info"
+			display_alert "Adding ${1}" "$name" "info"
 			aptly repo add -force-replace=true -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" "${f}" &>/dev/null
 		fi
 	done
@@ -654,7 +850,8 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "sid")
+	#local distributions=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 	local errors=0
 
 	for release in "${distributions[@]}"; do
@@ -668,10 +865,11 @@ addtorepo()
 
 		# create local repository if not exist
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}") ]]; then
-			display_alert "Creating section" "$release" "info"
+			display_alert "Creating section" "main" "info"
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="main" \
 			-comment="Armbian main repository" "${release}" >/dev/null
 		fi
+
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="utils" \
 			-comment="Armbian utilities (backwards compatibility)" utils >/dev/null
@@ -697,7 +895,7 @@ addtorepo()
 
 		# adding main distribution packages
 		if find "${DEB_STORAGE}/${release}" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
-			adding_packages "$release" "/${release}" "release"
+			adding_packages "${release}-utils" "/${release}" "release packages"
 		else
 			# workaround - add dummy package to not trigger error
 			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
@@ -726,9 +924,17 @@ addtorepo()
 		desknum=$(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-utils" | grep "Number of packages" | awk '{print $NF}')
 
 		if [ $mainnum -gt 0 ] && [ $utilnum -gt 0 ] && [ $desknum -gt 0 ]; then
+
 			# publish
-			aptly publish -force-overwrite -passphrase="${GPG_PASS}" -origin=Armbian -label=Armbian -config="${SCRIPTPATH}config/${REPO_CONFIG}" -component="${COMPONENTS// /,}" \
-				--distribution="${release}" repo "${release}" ${COMPONENTS//main/} >/dev/null
+			aptly publish \
+			-acquire-by-hash \
+			-passphrase="${GPG_PASS}" \
+			-origin="Armbian" \
+			-label="Armbian" \
+			-config="${SCRIPTPATH}config/${REPO_CONFIG}" \
+			-component="${COMPONENTS// /,}" \
+			-distribution="${release}" repo "${release}" ${COMPONENTS//main/} >/dev/null
+
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "${release}" "err"
 				errors=$((errors+1))
@@ -765,15 +971,27 @@ addtorepo()
 
 
 
-repo-manipulate() {
-	local DISTROS=("xenial" "stretch" "bionic" "buster" "bullseye" "groovy" "focal")
+repo-manipulate()
+{
+# repository manipulation
+# "show" displays packages in each repository
+# "server" serve repository - useful for local diagnostics
+# "unique" manually select which package should be removed from all repositories
+# "update" search for new files in output/debs* to add them to repository
+# "purge" leave only last 5 versions
+
+	local DISTROS=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "sid")
+	#local DISTROS=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
+
 	case $@ in
+
 		serve)
 			# display repository content
 			display_alert "Serving content" "common utils" "ext"
 			aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1):80 -config="${SCRIPTPATH}config/${REPO_CONFIG}"
 			exit 0
 			;;
+
 		show)
 			# display repository content
 			for release in "${DISTROS[@]}"; do
@@ -788,6 +1006,7 @@ repo-manipulate() {
 			;;
 
 		unique)
+			# which package should be removed from all repositories
 			IFS=$'\n'
 			while true; do
 				LIST=()
@@ -807,7 +1026,7 @@ repo-manipulate() {
 				LIST=("${new_list[@]}")
 				LIST_LENGTH=$((${#LIST[@]}/2));
 				exec 3>&1
-				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Switch from and reboot" --clear --menu "Delete" $((9+${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
+				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9+${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
 				exitstatus=$?;
 				exec 3>&-
 				if [[ $exitstatus -eq 0 ]]; then
@@ -819,8 +1038,10 @@ repo-manipulate() {
 				else
 					exit 1
 				fi
+				aptly db cleanup -config="${SCRIPTPATH}config/${REPO_CONFIG}" > /dev/null 2>&1
 			done
 			;;
+
 		update)
 			# display full help test
 			# run repository update
@@ -829,6 +1050,7 @@ repo-manipulate() {
 			cp "${SCRIPTPATH}"config/armbian.key "${REPO_STORAGE}"/public/
 			exit 0
 			;;
+
 		purge)
 			for release in "${DISTROS[@]}"; do
 				repo-remove-old-packages "$release" "armhf" "5"
@@ -838,6 +1060,7 @@ repo-manipulate() {
 			done
 			exit 0
 			;;
+
 		purgesource)
 			for release in "${DISTROS[@]}"; do
 				aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" 'Name (% *-source*)'
@@ -847,15 +1070,20 @@ repo-manipulate() {
 			exit 0
 			;;
 		*)
-			echo -e "Usage: repository show | serve | create | update | purge\n"
-			echo -e "\n show   = display repository content"
-			echo -e "\n serve  = publish your repositories on current server over HTTP"
-			echo -e "\n update = updating repository"
-			echo -e "\n purge  = removes all but last 5 versions\n\n"
+
+			echo -e "Usage: repository show | serve | unique | create | update | purge | purgesource\n"
+			echo -e "\n show           = display repository content"
+			echo -e "\n serve          = publish your repositories on current server over HTTP"
+			echo -e "\n unique         = manually select which package should be removed from all repositories"
+			echo -e "\n update         = updating repository"
+			echo -e "\n purge          = removes all but last 5 versions"
+			echo -e "\n purgesource    = removes all sources\n\n"
 			exit 0
 			;;
+
 	esac
-} # ParseOptions
+
+}
 
 
 
@@ -875,11 +1103,8 @@ repo-remove-old-packages() {
 		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
 		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)"  | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
 			((count+=1))
-#			echo $subpkg
 			if [[ $count -gt $keep ]]; then
-			#echo "rem"
 			pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
-			#echo $pkg_version
 			aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
 			fi
 		done
@@ -908,28 +1133,26 @@ wait_for_package_manager()
 
 
 
-
 # prepare_host_basic
 #
 # * installs only basic packages
 #
 prepare_host_basic()
 {
-	# wait until package manager finishes possible system maintanace
-	wait_for_package_manager
+	# the checklist includes a list of package names separated by a space
+	local checklist="dialog psmisc acl uuid-runtime curl gnupg gawk"
 
-	# need lsb_release to decide what to install
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' lsb-release 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "lsb-release"
-		apt-get -q update && apt-get install -q -y --no-install-recommends lsb-release
-	fi
+	# Don't use this function here.
+	# wait_for_package_manager
+	#
+	# The `psmisk` package is not installed yet.
 
-	# need to install dialog if person is starting with a interactive mode
+	# We will check one package and install the entire list.
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing package" "dialog"
-		apt-get -q update && apt-get install -q -y --no-install-recommends dialog
+		display_alert "Installing basic packages" "$checklist"
+		apt-get -qq update && \
+		apt-get install -qq -y --no-install-recommends $checklist
 	fi
-
 }
 
 
@@ -951,33 +1174,61 @@ prepare_host()
 	else
 		local offline=false
 	fi
+# build aarch64
+  if [[ $(dpkg --print-architecture) != arm64 ]]; then
 
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "http://www.armbian.com/using-armbian-tools/"
+		display_alert "https://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on non x86-x64 build host is not supported"
 	fi
+
+# build aarch64
+  fi
 
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
 
-	# temporally fix for Locales settings
+	# fix for Locales settings
+	if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+		sudo sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+		sudo locale-gen
+	fi
+
 	export LC_ALL="en_US.UTF-8"
 
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
 	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
 	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
-	locales ncurses-base pixz dialog systemd-container udev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
+	locales ncurses-base pixz dialog systemd-container udev libfdt-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
 	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
 
-	local codename=$(lsb_release -sc)
+# build aarch64
+  else
 
-	# Getting ready for Ubuntu 20.04
-	if [[ $codename == focal || $codename == groovy || $codename == ulyana ]]; then
+	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
+	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi gcc-arm-none-eabi \
+	qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
+	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-amd64-cross libc6-dev-armhf-cross imagemagick \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
+	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libc6 qemu \
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz \
+	dirmngr python3-distutils jq "
+
+# build aarch64
+  fi
+
+	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
+	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -985,20 +1236,19 @@ prepare_host()
 		hostdeps+=" python libpython-dev"
 	fi
 
-	display_alert "Build host OS release" "${codename:-(unknown)}" "info"
+	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
 
-	# Ubuntu Focal x86_64 is the only fully supported host OS release
-	# Ubuntu Bionic x86_64 support is no longer supported
+	# Ubuntu 21.04.x (Hirsute) x86_64 is the only fully supported host OS release
 	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
-	# Disable host OS check at your own risk, any issues reported with unsupported releases will be closed without a discussion
-	if [[ -z $codename || "buster groovy focal debbie tricia ulyana" != *"$codename"* ]]; then
+	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
+	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
-			display_alert "You are running on an unsupported system" "${codename:-(unknown)}" "wrn"
+			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
 		else
-			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${codename:-(unknown)}"
+			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${HOSTRELEASE:-(unknown)}"
 		fi
 	fi
 
@@ -1006,11 +1256,17 @@ prepare_host()
 		exit_with_error "Windows subsystem for Linux is not a supported build environment"
 	fi
 
-	if [[ -z $codename || "focal" == "$codename" || "groovy" == "$codename"  || "debbie" == "$codename"  || "buster" == "$codename" || "ulyana" == "$codename" ]]; then
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
+	if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|impish|hirsute|ulyana|ulyssa|uma)$ ]]; then
 	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
 	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+# build aarch64
+  fi
+
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
 		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
@@ -1027,6 +1283,7 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
+
 	# Skip verification if you are working offline
 	if ! $offline; then
 
@@ -1042,25 +1299,32 @@ prepare_host()
 	done
 
 	# distribution packages are buggy, download from author
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
 		display_alert "Updating from external repository" "aptly" "info"
 		if [ x"" != x"${http_proxy}" ]; then
 			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
-			apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --keyserver-options http-proxy="${http_proxy}" --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
 		else
 			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
-			apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
 		fi
 		echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
 	else
 		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
 	fi
 
+# build aarch64
+  fi
+
 	if [[ ${#deps[@]} -gt 0 ]]; then
 		display_alert "Installing build dependencies"
+		# don't prompt for apt cacher selection
+		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 		apt-get -q update
 		apt-get -y upgrade
-		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/debug/hostdeps.log
+		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/${LOG_SUBPATH}/hostdeps.log
 		update-ccache-symlinks
 	fi
 
@@ -1070,9 +1334,15 @@ prepare_host()
 		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
 	fi
 
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
 	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
 		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
 	fi
+
+# build aarch64
+  fi
 
 	# create directory structure
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
@@ -1085,6 +1355,9 @@ prepare_host()
 		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 	fi
 	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+
+# build aarch64
+  if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
 	display_alert "Checking for external GCC compilers" "" "info"
 	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
@@ -1133,12 +1406,15 @@ prepare_host()
 		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 	fi
 
+# build aarch64
+  fi
+
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
 	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
 		rm -f "${USERPATCHES_PATH}"/readme.txt
 		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
-		echo 'http://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
+		echo 'https://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
 
 		# create patches directory structure under USERPATCHES_PATH
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
@@ -1168,6 +1444,10 @@ function webseed ()
 		WEBSEED=(
 		"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 		)
+	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
+		WEBSEED=(
+		"https://mirrors.bfsu.edu.cn/armbian-releases/"
+		)
 	fi
 	for toolchain in ${WEBSEED[@]}; do
 		# use only live, tnahosting return ok also when file is absent
@@ -1191,17 +1471,34 @@ download_and_verify()
 	local dirname=${filename//.tar.xz}
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
-		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-			else
-		local server="${ARMBIAN_MIRROR}/"
+			local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
+			local server="https://mirrors.bfsu.edu.cn/armbian-releases/"
+		else
+			local server=${ARMBIAN_MIRROR}
         fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
 		return
 	fi
 
+	# switch to china mirror if US timeouts
+	timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
+		display_alert "Timeout from $server" "retrying" "info"
+		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+
+		# switch to another china mirror if tuna timeouts
+		timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+		if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
+			display_alert "Timeout from $server" "retrying" "info"
+			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
+		fi
+	fi
+
+
 	# check if file exists on remote server before running aria2 downloader
-	[[ ! `wget -S --spider ${server}${remotedir}/${filename}  2>&1 | grep 'HTTP/1.1 200 OK'` ]] && return
+	[[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}` ]] && return
 
 	cd "${localdir}" || exit
 
@@ -1209,7 +1506,7 @@ download_and_verify()
 	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
 		local torrent="${SRC}"/config/torrents/${filename}.torrent
 		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
-	elif [[ ! $(wget -S --spider "${server}${remotedir}/${filename}.asc" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') ]]; then
+	elif [[ ! `timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}.asc"` ]]; then
 		return
 	else
 		# download control file
@@ -1223,7 +1520,7 @@ download_and_verify()
 	if [[ ${USE_TORRENT} == "yes" ]]; then
 
 		display_alert "downloading using torrent network" "$filename"
-		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=15 --console-log-level=error \
+		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=120 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
 		--file-allocation=trunc --continue=true ${torrent} \
 		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=$localdir"
@@ -1234,7 +1531,7 @@ download_and_verify()
 			aria2c ${ariatorrent}
 		else
 			# shellcheck disable=SC2035
-			aria2c ${ariatorrent} &> "${DEST}"/debug/torrent.log
+			aria2c ${ariatorrent} &> "${DEST}"/${LOG_SUBPATH}/torrent.log
 		fi
 		# mark complete
 		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete"
@@ -1244,8 +1541,7 @@ download_and_verify()
 
 	# direct download if torrent fails
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
-		if [[ $(wget -S --spider "${server}${remotedir}/${filename}" 2>&1 >/dev/null \
-			| grep 'HTTP/1.1 200 OK') ]]; then
+		if [[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null` ]]; then
 			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
 			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
@@ -1269,29 +1565,29 @@ download_and_verify()
 			# Verify archives with Linaro and Armbian GPG keys
 
 			if [ x"" != x"${http_proxy}" ]; then
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 			else
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 8F427EAF >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1\
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
 				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 9F0E78D5 >> "${DEST}"/debug/output.log 2>&1)
+				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 			fi
 
 			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify \
-			--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/debug/output.log 2>&1
+			--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
 
 		else
@@ -1341,3 +1637,33 @@ show_developer_warning()
 	[[ $? -ne 0 ]] && exit_with_error "Error switching to the expert mode"
 	SHOW_WARNING=no
 }
+
+# is a formatted output of the values of variables
+# from the list at the place of the function call.
+#
+# The LOG_OUTPUT_FILE variable must be defined in the calling function
+# before calling the `show_checklist_variables` function and unset after.
+#
+show_checklist_variables ()
+{
+	local checklist=$*
+	local var pval
+	local log_file=${LOG_OUTPUT_FILE:-"${SRC}"/output/${LOG_SUBPATH}/trash.log}
+	local _line=${BASH_LINENO[0]}
+	local _function=${FUNCNAME[1]}
+	local _file=$(basename "${BASH_SOURCE[1]}")
+
+	echo -e "Show variables in function: $_function" "[$_file:$_line]\n" >>$log_file
+
+	for var in $checklist;do
+		eval pval=\$$var
+		echo -e "\n$var =:" >>$log_file
+		if [ $(echo "$pval" | gawk -F"/" '{print NF}') -ge 4 ];then
+			printf "%s\n" $pval >>$log_file
+		else
+			printf "%-30s %-30s %-30s %-30s\n" $pval >>$log_file
+		fi
+	done
+}
+
+

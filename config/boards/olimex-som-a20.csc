@@ -2,4 +2,4 @@
 BOARD_NAME="SOM-A20"
 BOARDFAMILY="sun7i"
 BOOTCONFIG="A20-Olimex-SOM-EVB_defconfig"
-KERNEL_TARGET="current,dev"
+KERNEL_TARGET="current,edge"

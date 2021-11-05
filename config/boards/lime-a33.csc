@@ -3,5 +3,5 @@ BOARD_NAME="Lime A33"
 BOARDFAMILY="sun8i"
 BOOTCONFIG="A33-OLinuXino_defconfig"
 OVERLAY_PREFIX="sun8i-a33"
-KERNEL_TARGET="legacy,current,dev"
+KERNEL_TARGET="legacy,current,edge"
 
