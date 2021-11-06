@@ -247,6 +247,12 @@ family_tweaks()
 
 	fi
 
+	if [[ $BOARD == nanopim4* ]]; then
+
+		# enable fan support
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable nanopim4-pwm-fan.service >/dev/null 2>&1"
+
+	fi
 
 	if [[ $BOARD == pinebook-pro ]]; then
 
@@ -295,6 +301,14 @@ family_tweaks_bsp()
 		if [[ $BOARD == nanop*4* || $BOARD == firefly* || $BOARD == orangepi-rk3399 ]]; then
 			sed -i s%BCM4345C5%BCM4356A2%g $destination/lib/systemd/system/rk3399-bluetooth.service
 		fi
+	fi
+
+	if [[ $BOARD == nanopim4* ]]; then
+
+		# Fan support
+		cp $SRC/packages/bsp/nanopim4/nanopim4-pwm-fan.service $destination/lib/systemd/system/
+		install -m 755 $SRC/packages/bsp/nanopim4/nanopim4-pwm-fan.sh $destination/usr/bin/nanopim4-pwm-fan.sh
+
 	fi
 
 	if [[ $BOARD == helios64 ]]; then
