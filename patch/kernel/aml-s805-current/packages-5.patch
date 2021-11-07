@@ -1,0 +1,137 @@
+--- /scripts/package/builddeb
++++ /scripts/package/builddeb
+@@ -41,23 +41,6 @@
+ 	# in case we are in a restrictive umask environment like 0077
+ 	chmod -R a+rX "$pdir"
+ 
+-	# Create preinstall and post install script to remove dtb
+-	if [ "$3" = "dtb" ]; then
+-
+-	cat >> $pdir/DEBIAN/preinst <<EOT
+-rm -rf /boot/dtb-$version; rm -rf /boot/dtb
+-exit 0
+-EOT
+-
+-	cat >> $pdir/DEBIAN/postinst <<EOT
+-cd /boot
+-ln -sfT dtb-$version dtb 2> /dev/null || mv dtb-$version dtb
+-exit 0
+-EOT
+-
+-	chmod 775 $pdir/DEBIAN/preinst ; chmod 775 $pdir/DEBIAN/postinst
+-	fi
+-
+ 	# Create postinst prerm scripts for headers
+ 	if [ "$3" = "headers" ]; then
+ 
+@@ -141,7 +124,6 @@
+ kernel_headers_dir="$objtree/debian/hdrtmp"
+ libc_headers_dir="$objtree/debian/headertmp"
+ dbg_dir="$objtree/debian/dbgtmp"
+-dtb_dir="$objtree/debian/dtbtmp"
+ packagename=linux-image-"$BRANCH$LOCALVERSION"
+ kernel_headers_packagename=linux-headers-"$BRANCH$LOCALVERSION"
+ dtb_packagename=linux-dtb-"$BRANCH$LOCALVERSION"
+@@ -178,9 +160,7 @@
+ BUILD_DEBUG=$(if_enabled_echo CONFIG_DEBUG_INFO Yes)
+ 
+ # Setup the directory structure
+-rm -rf "$tmpdir" "$kernel_headers_dir" "$libc_headers_dir" "$dbg_dir" "$dtb_dir" $objtree/debian/files
+-mkdir -m 755 -p "$dtb_dir/DEBIAN"
+-mkdir -p "$dtb_dir/boot/dtb-$version" "$dtb_dir/usr/share/doc/$dtb_packagename"
++rm -rf "$tmpdir" "$kernel_headers_dir" "$libc_headers_dir" "$dbg_dir" $objtree/debian/files
+ mkdir -m 755 -p "$tmpdir/DEBIAN"
+ mkdir -p "$tmpdir/lib" "$tmpdir/boot"
+ mkdir -p "$kernel_headers_dir/lib/modules/$version/"
+@@ -201,7 +181,7 @@
+ if is_enabled CONFIG_OF_EARLY_FLATTREE; then
+ 	# Only some architectures with OF support have this target
+ 	if [ -d "${srctree}/arch/$SRCARCH/boot/dts" ]; then
+-		$MAKE -f $srctree/Makefile INSTALL_DTBS_PATH="$tmpdir/usr/lib/$packagename" dtbs_install
++		$MAKE -f $srctree/Makefile INSTALL_DTBS_PATH="$tmpdir/boot/dtb" dtbs_install
+ 	fi
+ fi
+ 
+@@ -232,11 +212,6 @@
+ 	fi
+ fi
+ 
+-if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG ; then
+-	#mkdir -p "$tmpdir/boot/dtb"
+-	INSTALL_DTBS_PATH="$dtb_dir/boot/dtb-$version" $MAKE KBUILD_SRC= dtbs_install
+-fi
+-
+ if [ "$ARCH" != "um" ]; then
+ 	$MAKE -f $srctree/Makefile headers
+ 	$MAKE -f $srctree/Makefile headers_install INSTALL_HDR_PATH="$libc_headers_dir/usr"
+@@ -272,53 +247,21 @@
+ 	chmod 755 "$tmpdir/DEBIAN/$script"
+ done
+ 
+-##
+-## Create sym link to kernel image
+-##
++## Add postinstall
+ sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
+-cat >> $tmpdir/DEBIAN/postinst <<EOT
+-if [ "\$(grep nand /proc/partitions)" != "" ] && [ "\$(grep mmc /proc/partitions)" = "" ]; then
+-	mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
+-	cp /boot/uImage /tmp/uImage
+-	sync
+-	mountpoint -q /boot || mount /boot
+-	cp /tmp/uImage /boot/uImage
+-	rm -f /$installed_image_path
+-else
+-	ln -sf $(basename $installed_image_path) /boot/$image_name 2> /dev/null || mv /$installed_image_path /boot/$image_name
+-fi
+-touch /boot/.next
++cat >> $tmpdir/DEBIAN/postinst <<EOT 
++mkimage -A arm -O linux -T kernel -C none -a "0x00208000" -e "0x00208000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
+ exit 0
+ EOT
+ 
+-##
+-## FAT install workaround
+-##
++## Add preinstall
+ sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
+ cat >> $tmpdir/DEBIAN/preinst <<EOT
+-# exit if we are running chroot
+-if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
+-
+-check_and_unmount (){
+-	boot_device=\$(mountpoint -d /boot)
+-
+-	for file in /dev/* ; do
+-		CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
+-		if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
+-			boot_partition=\$file
+-			break
+-		fi
+-	done
+-
+-	bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
+-	if [ "\$bootfstype" = "vfat" ]; then
+-		# we have to keep it mounted! umount /boot
+-		rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
+-	fi
+-}
+-mountpoint -q /boot && check_and_unmount
++if [ -d /boot/dtb.old ]; then rm -rf /boot/dtb.old; fi
++if [ -d /boot/dtb ]; then mv /boot/dtb /boot/dtb.old; fi
++rm -f /boot/System.map* /boot/config*
++exit 0
+ EOT
+-echo "exit 0" >> $tmpdir/DEBIAN/preinst
+ 
+ # Build kernel header package
+ (cd $srctree; find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl) > "$objtree/debian/hdrsrcfiles"
+@@ -346,7 +289,6 @@
+ 
+ if [ "$ARCH" != "um" ]; then
+ 	create_package "$kernel_headers_packagename" "$kernel_headers_dir" "headers"
+-	create_package "$dtb_packagename" "$dtb_dir" "dtb"
+ fi
+ 
+ create_package "$packagename" "$tmpdir"
+
