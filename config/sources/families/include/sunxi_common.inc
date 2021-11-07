@@ -15,7 +15,7 @@ case $BRANCH in
 
 	current) KERNEL_VERSION_LEVEL="5.10" ;;
 
-	edge)	 KERNEL_VERSION_LEVEL="5.14" ;;
+	edge)	 KERNEL_VERSION_LEVEL="5.15" ;;
 esac
 
 KERNELSOURCE="https://github.com/megous/linux"
