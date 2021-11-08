@@ -15,3 +15,5 @@
 | Allwinner sun9i : sunxi &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; | virtual : qemu-virtual  &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; |
 || zynq : zynq |
 || jetson-nano : jetson-nano |
+|| jethubj80   : meson64 |
+|| jethubj100  : meson64 |

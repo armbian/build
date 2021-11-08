@@ -1,0 +1,213 @@
+name: Lint scripts and build kernel
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+
+  Shellcheck:
+
+    name: Shell script analysis
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'Armbian' }}
+    steps:
+
+       - name: Checkout repository
+         uses: actions/checkout@v2
+
+       - name: Environment variables
+         run: sudo -E bash -c set
+
+       - name: Install required packages
+         run: sudo apt-get install shellcheck jq
+
+       - name: "Shellcheck lint error report in diff format"
+         shell: bash {0}
+         run: |
+
+           (for file in $(find lib -type f -exec grep -Iq . {} \; -print); do shellcheck --format=diff $file; done;) 2> /dev/null > lib.diff || true
+           (for file in $(find packages -type f -exec grep -Iq . {} \; -print); do shellcheck --format=diff $file; done;) 2> /dev/null > packages.diff || true
+           (for file in $(find config -type f -exec grep -Iq . {} \; -print); do shellcheck --format=diff $file; done;) 2> /dev/null > config.diff || true
+
+       - name: Upload build artifacts
+         uses: actions/upload-artifact@v2
+         with:
+          name: Shellcheck
+          path: "*.diff"
+          retention-days: 14
+
+  Docker:
+
+    name: Build x86 Docker image
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'Armbian' }}
+    steps:
+      - name: Checkout Armbian build script
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+      - name: Build Docker image
+        run: |
+          cd build
+          sed -i "s/-it --rm/-i --rm/" config/templates/config-docker.conf
+          touch .ignore_changes
+          ./compile.sh dockerpurge KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" \
+          USE_TORRENT="yes" REPOSITORY_INSTALL="kernel" 'prepare_host'
+          sed -i "s/-it --rm/-i --rm/" userpatches/config-docker.conf
+
+  Prepare:
+    
+    name: "Finding changed kernels"    
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'Armbian' }}
+    outputs:
+      matrix: ${{steps.list_dirs.outputs.matrix}}
+    steps:
+
+      - name: Cache build parameters
+        uses: actions/cache@v2
+        env:
+          cache-name: build-kernel
+        with:
+          path: build-kernel
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+      - name: Store environment variables values
+        run: |
+
+          echo "FILE_EXT=-beta" >> $GITHUB_ENV
+          echo "REPO_DEST=nightly" >> $GITHUB_ENV
+          echo "BETA=yes" >> $GITHUB_ENV
+
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: ${{ github.event.pull_request.head.sha }}
+          clean: false
+
+      - name: Checkout support scripts
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/scripts
+          path: scripts
+          clean: true
+
+      - name: Determine changed kernels
+        run: |
+
+          cd build
+          [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
+          BETA="${{ env.BETA }}"
+          FILE_EXT="${{ env.FILE_EXT }}"
+          ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" \
+          BETA="$BETA" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host'
+          mkdir -p cache/hash${FILE_EXT}
+          sudo rsync -ar --delete ../scripts/hash${FILE_EXT}/. cache/hash${FILE_EXT}/ 2> /dev/null
+          sudo cp ../scripts/configs/* userpatches/
+          sudo rm -f userpatches/targets.conf          
+          if [[ "$(cat ../build-kernel/build_type 2> /dev/null || true)" =~ stable|edge ]]; then
+            cat config/targets.conf | grep edge | grep cli | grep hirsute | sudo tee userpatches/targets.conf 1>/dev/null 
+            echo "FILE_EXT=" >> $GITHUB_ENV
+            echo "REPO_DEST=master" >> $GITHUB_ENV
+            echo "BETA=no" >> $GITHUB_ENV
+          fi
+
+      - name: Prepare build matrix
+        id: list_dirs
+        run: |
+
+          BETA="${{ env.BETA }}"
+          MATRIX=$(cd build;./compile.sh all-new-beta-kernels BETA="$BETA" BUILD_ALL="demo" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | egrep "^[0-9]" | awk '{ print $2 ":" $4 }' | sort | uniq)
+          mkdir -p build-kernel
+          echo "no" > build-kernel/skip          
+          if [[ -z "$MATRIX" ]]; then
+              MATRIX="none:none"
+              echo "yes" > build-kernel/skip
+          fi          
+          echo ::set-output name=matrix::$(for x in $(echo "${MATRIX}"); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
+          
+  Linux:
+
+    name: "Build Linux"
+    needs: [ Prepare ]
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'armbian' }}
+    timeout-minutes: 480
+    strategy:
+      fail-fast: false
+      matrix: 
+        node: ${{fromJson(needs.Prepare.outputs.matrix)}}
+
+    steps:
+
+      - name: Checkout Armbian support scripts
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/scripts
+          path: scripts
+          clean: true
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        env:
+          cache-name: build-kernel
+        with:
+          path: build-kernel
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux 
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+      - name: Read value
+        run: |
+
+          echo "FILE_EXT=-beta" >> $GITHUB_ENV
+          echo "REPO_DEST=nightly" >> $GITHUB_ENV
+          echo "BETA=yes" >> $GITHUB_ENV
+          if [[ "$(cat build-kernel/build_type 2> /dev/null || true)" =~ stable|edge ]]; then
+              echo "FILE_EXT=" >> $GITHUB_ENV
+              echo "REPO_DEST=master" >> $GITHUB_ENV
+              echo "BETA=no" >> $GITHUB_ENV
+          fi
+
+      - name: Checkout Armbian build script
+
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: ${{ github.event.pull_request.head.sha }}
+          clean: false
+
+      - name: Build
+        if: ${{ matrix.node != 'none:none' }}
+        run: |
+
+              CHUNK="${{ matrix.node }}"              
+              FILE_EXT="${{ env.FILE_EXT }}"
+              BOARD=$(echo $CHUNK | cut -d":" -f1)
+              BRANCH=$(echo $CHUNK | cut -d":" -f2)
+              echo "FILE_NAME=${BOARD}-${BRANCH}" >> $GITHUB_ENV
+              cd build
+              [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
+              ./compile.sh ARMBIAN_MIRROR="https://github.com/armbian/mirror/releases/download/" BOARD="$BOARD" \
+              BETA="yes" KERNEL_ONLY="yes" BRANCH="$BRANCH" KERNEL_CONFIGURE="no" OFFLINE="no"              
+          
+      - name: Upload build artifacts
+        if: ${{ matrix.node != 'none:none' }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.FILE_NAME }}
+          path: build/output/debs${{ env.FILE_EXT }}/linux-*
+          retention-days: 14

@@ -36,10 +36,9 @@ debootstrap_ng()
 	mkdir -p $SDCARD $MOUNT $DEST/images $SRC/cache/rootfs
 
 	# stage: verify tmpfs configuration and mount
-	# default maximum size for tmpfs mount is 1/2 of available RAM
-	# CLI needs ~1.2GiB+ (Xenial CLI), Desktop - ~2.8GiB+ (Xenial Desktop w/o HW acceleration)
-	# calculate and set tmpfs mount to use 2/3 of available RAM
-	local phymem=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 * 2 / 3 )) # MiB
+	# CLI needs ~1.5GiB, desktop - ~3.5GiB
+	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
+	local phymem=$(( (($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10 )) # MiB
 	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi # MiB
 	if [[ $FORCE_USE_RAMDISK == no ]]; then	local use_tmpfs=no
 	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
@@ -796,8 +795,8 @@ create_image()
 			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
-			[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
-			[[ ${available_cpu} -gt 8 ]] && available_cpu=8 # using more cpu cores for compressing is pointless
+			#[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
+			[[ ${available_cpu} -gt 16 ]] && available_cpu=16 # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
 			if [[ ${BUILD_ALL} == yes && ( ${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4 )]]; then
