@@ -1,0 +1,246 @@
+From 49853eacbe2c75761c34e6198e5c3eec142a8d7c Mon Sep 17 00:00:00 2001
+From: Russell King <rmk+kernel@arm.linux.org.uk>
+Date: Tue, 29 Nov 2016 10:13:46 +0000
+Subject: mvebu/clearfog pcie updates
+
+Signed-off-by: Russell King <rmk+kernel@arm.linux.org.uk>
+---
+ drivers/pci/controller/pci-mvebu.c | 112 ++++++++++++++++++++++++++++++++++++-
+ drivers/pci/pci-bridge-emul.c      |   2 +
+ drivers/pci/pcie/aspm.c            |   6 ++
+ drivers/pci/pcie/portdrv_core.c    |   2 +
+ 4 files changed, 121 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/controller/pci-mvebu.c b/drivers/pci/controller/pci-mvebu.c
+index ed13e81cd691..2dc9f457bc76 100644
+--- a/drivers/pci/controller/pci-mvebu.c
++++ b/drivers/pci/controller/pci-mvebu.c
+@@ -52,7 +52,14 @@
+ 	 PCIE_CONF_ADDR_EN)
+ #define PCIE_CONF_DATA_OFF	0x18fc
+ #define PCIE_MASK_OFF		0x1910
++#define  PCIE_MASK_PM_PME		BIT(28)
+ #define  PCIE_MASK_ENABLE_INTS          0x0f000000
++#define  PCIE_MASK_ERR_COR		BIT(18)
++#define  PCIE_MASK_ERR_NONFATAL		BIT(17)
++#define  PCIE_MASK_ERR_FATAL		BIT(16)
++#define  PCIE_MASK_FERR_DET		BIT(10)
++#define  PCIE_MASK_NFERR_DET		BIT(9)
++#define  PCIE_MASK_CORERR_DET		BIT(8)
+ #define PCIE_CTRL_OFF		0x1a00
+ #define  PCIE_CTRL_X1_MODE		0x0001
+ #define PCIE_STAT_OFF		0x1a04
+@@ -430,6 +437,54 @@ static void mvebu_pcie_handle_membase_change(struct mvebu_pcie_port *port)
+ 			      &port->memwin);
+ }
+ 
++static void mvebu_pcie_handle_irq_change(struct mvebu_pcie_port *port)
++{
++	u32 reg, old;
++	u16 devctl, rtctl;
++
++	/*
++	 * Errors from downstream devices:
++	 *  bridge control register SERR: enables reception of errors
++	 * Errors from this device, or received errors:
++	 *  command SERR: enables ERR_NONFATAL and ERR_FATAL messages
++	 *   => when enabled, these conditions also flag SERR in status register
++	 *  devctl CERE: enables ERR_CORR messages
++	 *  devctl NFERE: enables ERR_NONFATAL messages
++	 *  devctl FERE: enables ERR_FATAL messages
++	 * Enabled messages then have three paths:
++	 *  1. rtctl: enables system error indication
++	 *  2. root error status register updated
++	 *  3. root error command register: forwarding via MSI
++	 */
++	old = mvebu_readl(port, PCIE_MASK_OFF);
++	reg = old & ~(PCIE_MASK_PM_PME | PCIE_MASK_FERR_DET |
++		      PCIE_MASK_NFERR_DET | PCIE_MASK_CORERR_DET |
++		      PCIE_MASK_ERR_COR | PCIE_MASK_ERR_NONFATAL |
++		      PCIE_MASK_ERR_FATAL);
++
++	devctl = port->bridge.pcie_conf.devctl;
++	if (devctl & PCI_EXP_DEVCTL_FERE)
++		reg |= PCIE_MASK_FERR_DET | PCIE_MASK_ERR_FATAL;
++	if (devctl & PCI_EXP_DEVCTL_NFERE)
++		reg |= PCIE_MASK_NFERR_DET | PCIE_MASK_ERR_NONFATAL;
++	if (devctl & PCI_EXP_DEVCTL_CERE)
++		reg |= PCIE_MASK_CORERR_DET | PCIE_MASK_ERR_COR;
++	if (port->bridge.conf.command & PCI_COMMAND_SERR)
++		reg |= PCIE_MASK_FERR_DET | PCIE_MASK_NFERR_DET |
++		       PCIE_MASK_ERR_FATAL | PCIE_MASK_ERR_NONFATAL;
++
++	if (!(port->bridge.conf.bridgectrl & PCI_BRIDGE_CTL_SERR))
++		reg &= ~(PCIE_MASK_ERR_COR | PCIE_MASK_ERR_NONFATAL |
++			 PCIE_MASK_ERR_FATAL);
++
++	rtctl = port->bridge.pcie_conf.rootctl;
++	if (rtctl & PCI_EXP_RTCTL_PMEIE)
++		reg |= PCIE_MASK_PM_PME;
++
++	if (old != reg)
++		mvebu_writel(port, reg, PCIE_MASK_OFF);
++}
++
+ static pci_bridge_emul_read_status_t
+ mvebu_pci_bridge_emul_pcie_conf_read(struct pci_bridge_emul *bridge,
+ 				     int reg, u32 *value)
+@@ -475,6 +530,30 @@ mvebu_pci_bridge_emul_pcie_conf_read(struct pci_bridge_emul *bridge,
+ 	return PCI_BRIDGE_EMUL_HANDLED;
+ }
+ 
++static pci_bridge_emul_read_status_t
++mvebu_pci_bridge_emul_pcie_ext_read(struct pci_bridge_emul *bridge,
++				    int reg, u32 *value)
++{
++	struct mvebu_pcie_port *port = bridge->data;
++
++	switch (reg) {
++	case 0x00 ... 0x28:
++		*value = mvebu_readl(port, 0x100 + (reg & ~3));
++		break;
++
++	case PCI_ERR_ROOT_COMMAND:
++	case PCI_ERR_ROOT_STATUS:
++	case PCI_ERR_ROOT_ERR_SRC:
++		*value = 0;
++		break;
++
++	default:
++		return PCI_BRIDGE_EMUL_NOT_HANDLED;
++	}
++
++	return PCI_BRIDGE_EMUL_HANDLED;
++}
++
+ static void
+ mvebu_pci_bridge_emul_base_conf_write(struct pci_bridge_emul *bridge,
+ 				      int reg, u32 old, u32 new, u32 mask)
+@@ -492,7 +571,8 @@ mvebu_pci_bridge_emul_base_conf_write(struct pci_bridge_emul *bridge,
+ 			mvebu_pcie_handle_iobase_change(port);
+ 		if ((old ^ new) & PCI_COMMAND_MEMORY)
+ 			mvebu_pcie_handle_membase_change(port);
+-
++		if ((old ^ new) & PCI_COMMAND_SERR)
++			mvebu_pcie_handle_irq_change(port);
+ 		break;
+ 	}
+ 
+@@ -515,6 +595,11 @@ mvebu_pci_bridge_emul_base_conf_write(struct pci_bridge_emul *bridge,
+ 		mvebu_pcie_handle_iobase_change(port);
+ 		break;
+ 
++	case PCI_INTERRUPT_LINE:
++		if (((old ^ new) >> 16) & PCI_BRIDGE_CTL_SERR)
++			mvebu_pcie_handle_irq_change(port);
++		break;
++
+ 	case PCI_PRIMARY_BUS:
+ 		mvebu_pcie_set_local_bus_nr(port, conf->secondary_bus);
+ 		break;
+@@ -532,6 +617,10 @@ mvebu_pci_bridge_emul_pcie_conf_write(struct pci_bridge_emul *bridge,
+ 
+ 	switch (reg) {
+ 	case PCI_EXP_DEVCTL:
++		if ((new ^ old) & (PCI_EXP_DEVCTL_FERE | PCI_EXP_DEVCTL_NFERE |
++				   PCI_EXP_DEVCTL_CERE | PCI_EXP_DEVCTL_URRE))
++			mvebu_pcie_handle_irq_change(port);
++
+ 		/*
+ 		 * Armada370 data says these bits must always
+ 		 * be zero when in root complex mode.
+@@ -557,6 +646,25 @@ mvebu_pci_bridge_emul_pcie_conf_write(struct pci_bridge_emul *bridge,
+ 	case PCI_EXP_RTSTA:
+ 		mvebu_writel(port, new, PCIE_RC_RTSTA);
+ 		break;
++
++	case PCI_EXP_RTCTL:
++		if ((new ^ old) & (PCI_EXP_RTCTL_SECEE | PCI_EXP_RTCTL_SENFEE |
++				   PCI_EXP_RTCTL_SEFEE | PCI_EXP_RTCTL_PMEIE))
++			mvebu_pcie_handle_irq_change(port);
++		break;
++	}
++}
++
++static void
++mvebu_pci_bridge_emul_pcie_ext_write(struct pci_bridge_emul *bridge,
++				     int reg, u32 old, u32 new, u32 mask)
++{
++	struct mvebu_pcie_port *port = bridge->data;
++
++	switch (reg) {
++	case 0x00 ... 0x28:
++		mvebu_writel(port, new, 0x100 + (reg & ~3));
++		break;
+ 	}
+ }
+ 
+@@ -564,6 +672,8 @@ static struct pci_bridge_emul_ops mvebu_pci_bridge_emul_ops = {
+ 	.write_base = mvebu_pci_bridge_emul_base_conf_write,
+ 	.read_pcie = mvebu_pci_bridge_emul_pcie_conf_read,
+ 	.write_pcie = mvebu_pci_bridge_emul_pcie_conf_write,
++	.read_ext = mvebu_pci_bridge_emul_pcie_ext_read,
++	.write_ext = mvebu_pci_bridge_emul_pcie_ext_write,
+ };
+ 
+ /*
+diff --git a/drivers/pci/pci-bridge-emul.c b/drivers/pci/pci-bridge-emul.c
+index fbff7da94245..50b1b48f6e0d 100644
+--- a/drivers/pci/pci-bridge-emul.c
++++ b/drivers/pci/pci-bridge-emul.c
+@@ -153,6 +153,7 @@ struct pci_bridge_reg_behavior pci_regs_behavior[PCI_STD_HEADER_SIZEOF / 4] = {
+ 		.rw = (GENMASK(7, 0) |
+ 		       ((PCI_BRIDGE_CTL_PARITY |
+ 			 PCI_BRIDGE_CTL_SERR |
++			 /* NOTE: PCIe does not allow ISA, VGA, MASTER_ABORT */
+ 			 PCI_BRIDGE_CTL_ISA |
+ 			 PCI_BRIDGE_CTL_VGA |
+ 			 PCI_BRIDGE_CTL_MASTER_ABORT |
+@@ -269,6 +270,7 @@ int pci_bridge_emul_init(struct pci_bridge_emul *bridge,
+ 	bridge->conf.header_type = PCI_HEADER_TYPE_BRIDGE;
+ 	bridge->conf.cache_line_size = 0x10;
+ 	bridge->conf.status = cpu_to_le16(PCI_STATUS_CAP_LIST);
++	bridge->conf.bridgectrl = cpu_to_le16(PCI_BRIDGE_CTL_SERR);
+ 	bridge->pci_regs_behavior = kmemdup(pci_regs_behavior,
+ 					    sizeof(pci_regs_behavior),
+ 					    GFP_KERNEL);
+diff --git a/drivers/pci/pcie/aspm.c b/drivers/pci/pcie/aspm.c
+index 013a47f587ce..26ee590caec0 100644
+--- a/drivers/pci/pcie/aspm.c
++++ b/drivers/pci/pcie/aspm.c
+@@ -578,6 +578,12 @@ static void pcie_aspm_cap_init(struct pcie_link_state *link, int blacklist)
+ 	pcie_capability_read_dword(child, PCI_EXP_LNKCAP, &child_lnkcap);
+ 	pcie_capability_read_word(parent, PCI_EXP_LNKCTL, &parent_lnkctl);
+ 	pcie_capability_read_word(child, PCI_EXP_LNKCTL, &child_lnkctl);
++dev_info(&parent->dev, "up support %x enabled %x\n",
++	 (parent_lnkcap & PCI_EXP_LNKCAP_ASPMS) >> 10,
++	 !!(parent_lnkctl & PCI_EXP_LNKCTL_ASPMC));
++dev_info(&parent->dev, "dn support %x enabled %x\n",
++	 (child_lnkcap & PCI_EXP_LNKCAP_ASPMS) >> 10,
++	 !!(child_lnkctl & PCI_EXP_LNKCTL_ASPMC));
+ 
+ 	/*
+ 	 * Setup L0s state
+diff --git a/drivers/pci/pcie/portdrv_core.c b/drivers/pci/pcie/portdrv_core.c
+index e1fed6649c41..a50dac9f8d39 100644
+--- a/drivers/pci/pcie/portdrv_core.c
++++ b/drivers/pci/pcie/portdrv_core.c
+@@ -322,6 +322,7 @@ int pcie_port_device_register(struct pci_dev *dev)
+ 
+ 	/* Get and check PCI Express port services */
+ 	capabilities = get_port_device_capability(dev);
++dev_info(&dev->dev, "PCIe capabilities: 0x%x\n", capabilities);
+ 	if (!capabilities)
+ 		return 0;
+ 
+@@ -334,6 +335,7 @@ int pcie_port_device_register(struct pci_dev *dev)
+ 	 * if that is to be used.
+ 	 */
+ 	status = pcie_init_service_irqs(dev, irqs, capabilities);
++dev_info(&dev->dev, "init_service_irqs: %d\n", status);
+ 	if (status) {
+ 		capabilities &= PCIE_PORT_SERVICE_HP;
+ 		if (!capabilities)
+-- 
+cgit v1.2.3
+
