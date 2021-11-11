@@ -5,7 +5,7 @@ Common tags:
 - self-hosted
 - Linux
 - X64
-- ARM64
+- ARM64 (4Gb memory with ZRAM_PERCENTAGE=50)
 - public (isolated runners for merge reqeusts)
 - local (local network)
 - cache (mounted cache)

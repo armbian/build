@@ -1,0 +1,735 @@
+From a026e2e9f55116e81ed49f48d918fdb91e28eff6 Mon Sep 17 00:00:00 2001
+From: Neil Armstrong <narmstrong@baylibre.com>
+Date: Fri, 24 Sep 2021 16:19:04 +0200
+Subject: [PATCH 71/75] drm/meson: add cursor plane using OSD2
+
+Tested on A311D using modetest, Weston & Sway, should work on SM1 & G12A.
+
+Cursor doesn't move with Xorg, this would need some debugging.
+
+Non tested on GXBB, GXL & GXM SoCs.
+
+Signed-off-by: Neil Armstrong <narmstrong@baylibre.com>
+Change-Id: I81994f13ad507748af3b577608d6cf40433b69ff
+---
+ drivers/gpu/drm/meson/Makefile       |   2 +-
+ drivers/gpu/drm/meson/meson_crtc.c   |  89 +++++++++-
+ drivers/gpu/drm/meson/meson_cursor.c | 244 +++++++++++++++++++++++++++
+ drivers/gpu/drm/meson/meson_cursor.h |  14 ++
+ drivers/gpu/drm/meson/meson_drv.c    |   8 +
+ drivers/gpu/drm/meson/meson_drv.h    |  17 ++
+ drivers/gpu/drm/meson/meson_plane.c  |   1 -
+ drivers/gpu/drm/meson/meson_viu.c    |  69 ++++++--
+ 8 files changed, 422 insertions(+), 22 deletions(-)
+ create mode 100644 drivers/gpu/drm/meson/meson_cursor.c
+ create mode 100644 drivers/gpu/drm/meson/meson_cursor.h
+
+diff --git a/drivers/gpu/drm/meson/Makefile b/drivers/gpu/drm/meson/Makefile
+index 28a519cdf66b..39c4ffcb7b18 100644
+--- a/drivers/gpu/drm/meson/Makefile
++++ b/drivers/gpu/drm/meson/Makefile
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+-meson-drm-y := meson_drv.o meson_plane.o meson_crtc.o meson_venc_cvbs.o
++meson-drm-y := meson_drv.o meson_plane.o meson_cursor.o meson_crtc.o meson_venc_cvbs.o
+ meson-drm-y += meson_viu.o meson_vpp.o meson_venc.o meson_vclk.o meson_overlay.o
+ meson-drm-y += meson_rdma.o meson_osd_afbcd.o
+ 
+diff --git a/drivers/gpu/drm/meson/meson_crtc.c b/drivers/gpu/drm/meson/meson_crtc.c
+index d70616da8ce2..c1ba3b4fe7ce 100644
+--- a/drivers/gpu/drm/meson/meson_crtc.c
++++ b/drivers/gpu/drm/meson/meson_crtc.c
+@@ -36,6 +36,7 @@ struct meson_crtc {
+ 	struct drm_pending_vblank_event *event;
+ 	struct meson_drm *priv;
+ 	void (*enable_osd1)(struct meson_drm *priv);
++	void (*enable_osd2)(struct meson_drm *priv);
+ 	void (*enable_vd1)(struct meson_drm *priv);
+ 	void (*enable_osd1_afbc)(struct meson_drm *priv);
+ 	void (*disable_osd1_afbc)(struct meson_drm *priv);
+@@ -110,6 +111,20 @@ static void meson_g12a_crtc_atomic_enable(struct drm_crtc *crtc,
+ 	writel_relaxed(0 << 16 |
+ 			(crtc_state->mode.vdisplay - 1),
+ 			priv->io_base + _REG(VPP_OSD1_BLD_V_SCOPE));
++	writel_relaxed(0 << 16 |
++			(crtc_state->mode.hdisplay - 1),
++			priv->io_base + _REG(VPP_OSD2_BLD_H_SCOPE));
++	writel_relaxed(0 << 16 |
++			(crtc_state->mode.vdisplay - 1),
++			priv->io_base + _REG(VPP_OSD2_BLD_V_SCOPE));
++	writel_relaxed(crtc_state->mode.hdisplay |
++			crtc_state->mode.vdisplay << 16,
++		       priv->io_base +
++		       _REG(VIU_OSD_BLEND_BLEND0_SIZE));
++	writel_relaxed(crtc_state->mode.hdisplay |
++			crtc_state->mode.vdisplay << 16,
++		       priv->io_base +
++		       _REG(VIU_OSD_BLEND_BLEND1_SIZE));
+ 	writel_relaxed(crtc_state->mode.hdisplay << 16 |
+ 			crtc_state->mode.vdisplay,
+ 			priv->io_base + _REG(VPP_OUT_H_V_SIZE));
+@@ -158,6 +173,9 @@ static void meson_g12a_crtc_atomic_disable(struct drm_crtc *crtc,
+ 	priv->viu.osd1_enabled = false;
+ 	priv->viu.osd1_commit = false;
+ 
++	priv->viu.osd2_enabled = false;
++	priv->viu.osd2_commit = false;
++
+ 	priv->viu.vd1_enabled = false;
+ 	priv->viu.vd1_commit = false;
+ 
+@@ -183,11 +201,14 @@ static void meson_crtc_atomic_disable(struct drm_crtc *crtc,
+ 	priv->viu.osd1_enabled = false;
+ 	priv->viu.osd1_commit = false;
+ 
++	priv->viu.osd2_enabled = false;
++	priv->viu.osd2_commit = false;
++
+ 	priv->viu.vd1_enabled = false;
+ 	priv->viu.vd1_commit = false;
+ 
+ 	/* Disable VPP Postblend */
+-	writel_bits_relaxed(VPP_OSD1_POSTBLEND | VPP_VD1_POSTBLEND |
++	writel_bits_relaxed(VPP_OSD1_POSTBLEND | VPP_OSD2_POSTBLEND | VPP_VD1_POSTBLEND |
+ 			    VPP_VD1_PREBLEND | VPP_POSTBLEND_ENABLE, 0,
+ 			    priv->io_base + _REG(VPP_MISC));
+ 
+@@ -223,6 +244,7 @@ static void meson_crtc_atomic_flush(struct drm_crtc *crtc,
+ 	struct meson_drm *priv = meson_crtc->priv;
+ 
+ 	priv->viu.osd1_commit = true;
++	priv->viu.osd2_commit = true;
+ 	priv->viu.vd1_commit = true;
+ }
+ 
+@@ -246,6 +268,12 @@ static void meson_crtc_enable_osd1(struct meson_drm *priv)
+ 			    priv->io_base + _REG(VPP_MISC));
+ }
+ 
++static void meson_crtc_enable_osd2(struct meson_drm *priv)
++{
++	writel_bits_relaxed(VPP_OSD2_POSTBLEND, VPP_OSD2_POSTBLEND,
++			    priv->io_base + _REG(VPP_MISC));
++}
++
+ static void meson_crtc_g12a_enable_osd1_afbc(struct meson_drm *priv)
+ {
+ 	writel_relaxed(priv->viu.osd1_blk2_cfg4,
+@@ -274,14 +302,20 @@ static void meson_g12a_crtc_enable_osd1(struct meson_drm *priv)
+ 	writel_relaxed(priv->viu.osd_blend_din0_scope_v,
+ 		       priv->io_base +
+ 		       _REG(VIU_OSD_BLEND_DIN0_SCOPE_V));
+-	writel_relaxed(priv->viu.osb_blend0_size,
++	writel_bits_relaxed(OSD_BLEND_POSTBLD_SRC_OSD1, OSD_BLEND_POSTBLD_SRC_OSD1,
++			    priv->io_base + _REG(OSD1_BLEND_SRC_CTRL));
++}
++
++static void meson_g12a_crtc_enable_osd2(struct meson_drm *priv)
++{
++	writel_relaxed(priv->viu.osd_blend_din3_scope_h,
+ 		       priv->io_base +
+-		       _REG(VIU_OSD_BLEND_BLEND0_SIZE));
+-	writel_relaxed(priv->viu.osb_blend1_size,
++		       _REG(VIU_OSD_BLEND_DIN1_SCOPE_H));
++	writel_relaxed(priv->viu.osd_blend_din3_scope_v,
+ 		       priv->io_base +
+-		       _REG(VIU_OSD_BLEND_BLEND1_SIZE));
+-	writel_bits_relaxed(3 << 8, 3 << 8,
+-			    priv->io_base + _REG(OSD1_BLEND_SRC_CTRL));
++		       _REG(VIU_OSD_BLEND_DIN1_SCOPE_V));
++	writel_bits_relaxed(OSD_BLEND_POSTBLD_SRC_OSD2, OSD_BLEND_POSTBLD_SRC_OSD2,
++			    priv->io_base + _REG(OSD2_BLEND_SRC_CTRL));
+ }
+ 
+ static void meson_crtc_enable_vd1(struct meson_drm *priv)
+@@ -388,6 +422,43 @@ void meson_crtc_irq(struct meson_drm *priv)
+ 		priv->viu.osd1_commit = false;
+ 	}
+ 
++	if (priv->viu.osd2_enabled && priv->viu.osd2_commit) {
++		writel_relaxed(priv->viu.osd2_ctrl_stat,
++				priv->io_base + _REG(VIU_OSD2_CTRL_STAT));
++		writel_relaxed(priv->viu.osd2_ctrl_stat2,
++				priv->io_base + _REG(VIU_OSD2_CTRL_STAT2));
++		writel_relaxed(priv->viu.osd2_blk0_cfg[0],
++				priv->io_base + _REG(VIU_OSD2_BLK0_CFG_W0));
++		writel_relaxed(priv->viu.osd2_blk0_cfg[1],
++				priv->io_base + _REG(VIU_OSD2_BLK0_CFG_W1));
++		writel_relaxed(priv->viu.osd2_blk0_cfg[2],
++				priv->io_base + _REG(VIU_OSD2_BLK0_CFG_W2));
++		writel_relaxed(priv->viu.osd2_blk0_cfg[3],
++				priv->io_base + _REG(VIU_OSD2_BLK0_CFG_W3));
++		writel_relaxed(priv->viu.osd2_blk0_cfg[4],
++				priv->io_base + _REG(VIU_OSD2_BLK0_CFG_W4));
++
++		/* vsync forced to update INTERLACE_SEL_ODD in interlace mode */
++		meson_crtc->vsync_forced = priv->viu.osd2_interlace;
++
++		meson_canvas_config(priv->canvas, priv->canvas_id_osd2,
++				priv->viu.osd2_addr,
++				priv->viu.osd2_stride,
++				priv->viu.osd2_height,
++				MESON_CANVAS_WRAP_NONE,
++				MESON_CANVAS_BLKMODE_LINEAR, 0);
++
++		/* Enable OSD2 */
++		if (meson_crtc->enable_osd2)
++			meson_crtc->enable_osd2(priv);
++
++		priv->viu.osd2_commit = false;
++	} else if (priv->viu.osd2_enabled && priv->viu.osd2_interlace) {
++		u32 reg = readl_relaxed(priv->io_base + _REG(VIU_OSD2_BLK0_CFG_W0)) & ~BIT(0);
++		writel_relaxed(reg | meson_venci_get_field(priv) ? 1 : 0,
++				priv->io_base + _REG(VIU_OSD2_BLK0_CFG_W0));
++	}
++
+ 	/* Update the VD1 registers */
+ 	if (priv->viu.vd1_enabled && priv->viu.vd1_commit) {
+ 
+@@ -685,7 +756,7 @@ int meson_crtc_create(struct meson_drm *priv)
+ 	meson_crtc->priv = priv;
+ 	crtc = &meson_crtc->base;
+ 	ret = drm_crtc_init_with_planes(priv->drm, crtc,
+-					priv->primary_plane, NULL,
++					priv->primary_plane, priv->cursor_plane,
+ 					&meson_crtc_funcs, "meson_crtc");
+ 	if (ret) {
+ 		dev_err(priv->drm->dev, "Failed to init CRTC\n");
+@@ -694,6 +765,7 @@ int meson_crtc_create(struct meson_drm *priv)
+ 
+ 	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A)) {
+ 		meson_crtc->enable_osd1 = meson_g12a_crtc_enable_osd1;
++		meson_crtc->enable_osd2 = meson_g12a_crtc_enable_osd2;
+ 		meson_crtc->enable_vd1 = meson_g12a_crtc_enable_vd1;
+ 		meson_crtc->viu_offset = MESON_G12A_VIU_OFFSET;
+ 		meson_crtc->enable_osd1_afbc =
+@@ -703,6 +775,7 @@ int meson_crtc_create(struct meson_drm *priv)
+ 		drm_crtc_helper_add(crtc, &meson_g12a_crtc_helper_funcs);
+ 	} else {
+ 		meson_crtc->enable_osd1 = meson_crtc_enable_osd1;
++		meson_crtc->enable_osd2 = meson_crtc_enable_osd2;
+ 		meson_crtc->enable_vd1 = meson_crtc_enable_vd1;
+ 		if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_GXM)) {
+ 			meson_crtc->enable_osd1_afbc =
+diff --git a/drivers/gpu/drm/meson/meson_cursor.c b/drivers/gpu/drm/meson/meson_cursor.c
+new file mode 100644
+index 000000000000..6ba733c511e7
+--- /dev/null
++++ b/drivers/gpu/drm/meson/meson_cursor.c
+@@ -0,0 +1,244 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) 2021 BayLibre, SAS
++ * Author: Neil Armstrong <narmstrong@baylibre.com>
++ */
++
++#include <linux/bitfield.h>
++
++#include <drm/drm_atomic.h>
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_device.h>
++#include <drm/drm_fb_cma_helper.h>
++#include <drm/drm_fourcc.h>
++#include <drm/drm_gem_atomic_helper.h>
++#include <drm/drm_gem_cma_helper.h>
++#include <drm/drm_plane_helper.h>
++
++#include "meson_cursor.h"
++#include "meson_registers.h"
++#include "meson_viu.h"
++
++struct meson_cursor {
++	struct drm_plane base;
++	struct meson_drm *priv;
++};
++#define to_meson_cursor(x) container_of(x, struct meson_cursor, base)
++
++static int meson_cursor_atomic_check(struct drm_plane *plane,
++				    struct drm_atomic_state *state)
++{
++	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
++										 plane);
++	struct drm_crtc_state *crtc_state;
++
++	if (!new_plane_state->crtc)
++		return 0;
++
++	crtc_state = drm_atomic_get_crtc_state(state,
++					       new_plane_state->crtc);
++	if (IS_ERR(crtc_state))
++		return PTR_ERR(crtc_state);
++
++	return drm_atomic_helper_check_plane_state(new_plane_state,
++						   crtc_state,
++						   DRM_PLANE_HELPER_NO_SCALING,
++						   DRM_PLANE_HELPER_NO_SCALING,
++						   true, true);
++}
++
++/* Takes a fixed 16.16 number and converts it to integer. */
++static inline int64_t fixed16_to_int(int64_t value)
++{
++	return value >> 16;
++}
++
++static void meson_cursor_atomic_update(struct drm_plane *plane,
++				      struct drm_atomic_state *state)
++{
++	struct meson_cursor *meson_cursor = to_meson_cursor(plane);
++	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
++									   plane);
++	struct drm_rect dest = drm_plane_state_dest(new_state);
++	struct meson_drm *priv = meson_cursor->priv;
++	struct drm_framebuffer *fb = new_state->fb;
++	struct drm_gem_cma_object *gem;
++	unsigned long flags;
++	int dst_w, dst_h;
++
++	/*
++	 * Update Coordinates
++	 * Update Formats
++	 * Update Buffer
++	 * Enable Plane
++	 */
++	spin_lock_irqsave(&priv->drm->event_lock, flags);
++
++	/* Enable OSD and BLK0, set max global alpha */
++	priv->viu.osd2_ctrl_stat = OSD_ENABLE |
++				   (0xFF << OSD_GLOBAL_ALPHA_SHIFT) |
++				   OSD_BLK0_ENABLE;
++
++	priv->viu.osd2_ctrl_stat2 = readl(priv->io_base +
++					  _REG(VIU_OSD2_CTRL_STAT2));
++
++	/* Set up BLK0 to point to the right canvas */
++	priv->viu.osd2_blk0_cfg[0] = priv->canvas_id_osd2 << OSD_CANVAS_SEL;
++	priv->viu.osd2_blk0_cfg[0] |= OSD_ENDIANNESS_LE;
++
++	/* On GXBB, Use the old non-HDR RGB2YUV converter */
++	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_GXBB))
++		priv->viu.osd2_blk0_cfg[0] |= OSD_OUTPUT_COLOR_RGB;
++
++	switch (fb->format->format) {
++	case DRM_FORMAT_XRGB8888:
++	case DRM_FORMAT_ARGB8888:
++		priv->viu.osd2_blk0_cfg[0] |= OSD_BLK_MODE_32 |
++			OSD_COLOR_MATRIX_32_ARGB;
++		break;
++	case DRM_FORMAT_XBGR8888:
++	case DRM_FORMAT_ABGR8888:
++		priv->viu.osd2_blk0_cfg[0] |= OSD_BLK_MODE_32 |
++			OSD_COLOR_MATRIX_32_ABGR;
++		break;
++	case DRM_FORMAT_RGB888:
++		priv->viu.osd2_blk0_cfg[0] |= OSD_BLK_MODE_24 |
++			OSD_COLOR_MATRIX_24_RGB;
++		break;
++	case DRM_FORMAT_RGB565:
++		priv->viu.osd2_blk0_cfg[0] |= OSD_BLK_MODE_16 |
++			OSD_COLOR_MATRIX_16_RGB565;
++		break;
++	}
++
++	switch (fb->format->format) {
++	case DRM_FORMAT_XRGB8888:
++	case DRM_FORMAT_XBGR8888:
++		/* For XRGB, replace the pixel's alpha by 0xFF */
++		priv->viu.osd2_ctrl_stat2 |= OSD_REPLACE_EN;
++		break;
++	case DRM_FORMAT_ARGB8888:
++	case DRM_FORMAT_ABGR8888:
++		/* For ARGB, use the pixel's alpha */
++		priv->viu.osd2_ctrl_stat2 &= ~OSD_REPLACE_EN;
++		break;
++	}
++
++	dst_w = new_state->crtc_w;
++	dst_h = new_state->crtc_h;
++
++	if (new_state->crtc->mode.flags & DRM_MODE_FLAG_INTERLACE)
++		priv->viu.osd2_interlace = true;
++	else
++		priv->viu.osd2_interlace = false;
++
++	/*
++	 * The format of these registers is (x2 << 16 | x1),
++	 * where x2 is exclusive.
++	 * e.g. +30x1920 would be (1919 << 16) | 30
++	 */
++	priv->viu.osd2_blk0_cfg[1] =
++				((fixed16_to_int(new_state->src.x2) - 1) << 16) |
++				fixed16_to_int(new_state->src.x1);
++	priv->viu.osd2_blk0_cfg[2] =
++				((fixed16_to_int(new_state->src.y2) - 1) << 16) |
++				fixed16_to_int(new_state->src.y1);
++	priv->viu.osd2_blk0_cfg[3] = ((dest.x2 - 1) << 16) | dest.x1;
++	priv->viu.osd2_blk0_cfg[4] = ((dest.y2 - 1) << 16) | dest.y1;
++
++	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A)) {
++		priv->viu.osd_blend_din3_scope_h = ((dest.x2 - 1) << 16) | dest.x1;
++		priv->viu.osd_blend_din3_scope_v = ((dest.y2 - 1) << 16) | dest.y1;
++		priv->viu.osb_blend1_size = dst_h << 16 | dst_w;
++	}
++
++	/* Update Canvas with buffer address */
++	gem = drm_fb_cma_get_gem_obj(fb, 0);
++
++	priv->viu.osd2_addr = gem->paddr;
++	priv->viu.osd2_stride = fb->pitches[0];
++	priv->viu.osd2_height = fb->height;
++	priv->viu.osd2_width = fb->width;
++
++	/* TOFIX: Reset OSD2 before enabling it on GXL+ SoCs ? */
++
++	priv->viu.osd2_enabled = true;
++
++	spin_unlock_irqrestore(&priv->drm->event_lock, flags);
++}
++
++static void meson_cursor_atomic_disable(struct drm_plane *plane,
++				       struct drm_atomic_state *state)
++{
++	struct meson_cursor *meson_cursor = to_meson_cursor(plane);
++	struct meson_drm *priv = meson_cursor->priv;
++
++	/* Disable OSD2 */
++	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A))
++		writel_bits_relaxed(OSD_BLEND_POSTBLD_SRC_OSD2, 0,
++				    priv->io_base + _REG(OSD2_BLEND_SRC_CTRL));
++	else
++		writel_bits_relaxed(VPP_OSD2_POSTBLEND, 0,
++				    priv->io_base + _REG(VPP_MISC));
++
++	priv->viu.osd2_enabled = false;
++}
++
++static const struct drm_plane_helper_funcs meson_cursor_helper_funcs = {
++	.atomic_check	= meson_cursor_atomic_check,
++	.atomic_disable	= meson_cursor_atomic_disable,
++	.atomic_update	= meson_cursor_atomic_update,
++};
++
++static const struct drm_plane_funcs meson_cursor_funcs = {
++	.update_plane		= drm_atomic_helper_update_plane,
++	.disable_plane		= drm_atomic_helper_disable_plane,
++	.destroy		= drm_plane_cleanup,
++	.reset			= drm_atomic_helper_plane_reset,
++	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
++	.atomic_destroy_state	= drm_atomic_helper_plane_destroy_state,
++};
++
++static const uint32_t supported_drm_formats[] = {
++	DRM_FORMAT_ARGB8888,
++	DRM_FORMAT_ABGR8888,
++	DRM_FORMAT_XRGB8888,
++	DRM_FORMAT_XBGR8888,
++	DRM_FORMAT_RGB888,
++	DRM_FORMAT_RGB565,
++};
++
++static const uint64_t format_modifiers_default[] = {
++	DRM_FORMAT_MOD_LINEAR,
++	DRM_FORMAT_MOD_INVALID,
++};
++
++int meson_cursor_create(struct meson_drm *priv)
++{
++	struct meson_cursor *meson_cursor;
++	struct drm_plane *cursor;
++
++	meson_cursor = devm_kzalloc(priv->drm->dev, sizeof(*meson_cursor),
++				   GFP_KERNEL);
++	if (!meson_cursor)
++		return -ENOMEM;
++
++	meson_cursor->priv = priv;
++	cursor = &meson_cursor->base;
++
++	drm_universal_plane_init(priv->drm, cursor, 0xFF,
++				 &meson_cursor_funcs,
++				 supported_drm_formats,
++				 ARRAY_SIZE(supported_drm_formats),
++				 format_modifiers_default,
++				 DRM_PLANE_TYPE_CURSOR, "meson_cursor_plane");
++
++	drm_plane_helper_add(cursor, &meson_cursor_helper_funcs);
++
++	/* For now, OSD Cursor is always on top of the primary plane */
++	drm_plane_create_zpos_immutable_property(cursor, 2);
++
++	priv->cursor_plane = cursor;
++
++	return 0;
++}
+diff --git a/drivers/gpu/drm/meson/meson_cursor.h b/drivers/gpu/drm/meson/meson_cursor.h
+new file mode 100644
+index 000000000000..28b5de49a646
+--- /dev/null
++++ b/drivers/gpu/drm/meson/meson_cursor.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) 2021 BayLibre, SAS
++ * Author: Neil Armstrong <narmstrong@baylibre.com>
++ */
++
++#ifndef __MESON_CURSOR_H
++#define __MESON_CURSOR_H
++
++#include "meson_drv.h"
++
++int meson_cursor_create(struct meson_drm *priv);
++
++#endif /* __MESON_CURSOR_H */
+diff --git a/drivers/gpu/drm/meson/meson_drv.c b/drivers/gpu/drm/meson/meson_drv.c
+index 447a000178a1..9d932b4c7a4b 100644
+--- a/drivers/gpu/drm/meson/meson_drv.c
++++ b/drivers/gpu/drm/meson/meson_drv.c
+@@ -29,6 +29,7 @@
+ #include "meson_drv.h"
+ #include "meson_overlay.h"
+ #include "meson_plane.h"
++#include "meson_cursor.h"
+ #include "meson_osd_afbcd.h"
+ #include "meson_registers.h"
+ #include "meson_venc_cvbs.h"
+@@ -242,6 +243,9 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
+ 	}
+ 
+ 	ret = meson_canvas_alloc(priv->canvas, &priv->canvas_id_osd1);
++	if (ret)
++		goto free_drm;
++	ret = meson_canvas_alloc(priv->canvas, &priv->canvas_id_osd2);
+ 	if (ret)
+ 		goto free_drm;
+ 	ret = meson_canvas_alloc(priv->canvas, &priv->canvas_id_vd1_0);
+@@ -319,6 +323,10 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
+ 		}
+ 	}
+ 
++	ret = meson_cursor_create(priv);
++	if (ret)
++		goto free_drm;
++
+ 	ret = meson_plane_create(priv);
+ 	if (ret)
+ 		goto free_drm;
+diff --git a/drivers/gpu/drm/meson/meson_drv.h b/drivers/gpu/drm/meson/meson_drv.h
+index 177dac3ca3be..ebe8b050c704 100644
+--- a/drivers/gpu/drm/meson/meson_drv.h
++++ b/drivers/gpu/drm/meson/meson_drv.h
+@@ -43,12 +43,14 @@ struct meson_drm {
+ 
+ 	struct meson_canvas *canvas;
+ 	u8 canvas_id_osd1;
++	u8 canvas_id_osd2;
+ 	u8 canvas_id_vd1_0;
+ 	u8 canvas_id_vd1_1;
+ 	u8 canvas_id_vd1_2;
+ 
+ 	struct drm_device *drm;
+ 	struct drm_crtc *crtc;
++	struct drm_plane *cursor_plane;
+ 	struct drm_plane *primary_plane;
+ 	struct drm_plane *overlay_plane;
+ 
+@@ -82,6 +84,21 @@ struct meson_drm {
+ 		uint32_t osd_blend_din0_scope_h;
+ 		uint32_t osd_blend_din0_scope_v;
+ 		uint32_t osb_blend0_size;
++
++		bool osd2_enabled;
++		bool osd2_interlace;
++		bool osd2_commit;
++		uint32_t osd2_ctrl_stat;
++		uint32_t osd2_ctrl_stat2;
++		uint32_t osd2_blk0_cfg[5];
++		uint32_t osd2_blk1_cfg4;
++		uint32_t osd2_blk2_cfg4;
++		uint32_t osd2_addr;
++		uint32_t osd2_stride;
++		uint32_t osd2_height;
++		uint32_t osd2_width;
++		uint32_t osd_blend_din3_scope_h;
++		uint32_t osd_blend_din3_scope_v;
+ 		uint32_t osb_blend1_size;
+ 
+ 		bool vd1_enabled;
+diff --git a/drivers/gpu/drm/meson/meson_plane.c b/drivers/gpu/drm/meson/meson_plane.c
+index 8640a8a8a469..8163d6ecfda6 100644
+--- a/drivers/gpu/drm/meson/meson_plane.c
++++ b/drivers/gpu/drm/meson/meson_plane.c
+@@ -360,7 +360,6 @@ static void meson_plane_atomic_update(struct drm_plane *plane,
+ 		priv->viu.osd_blend_din0_scope_h = ((dest.x2 - 1) << 16) | dest.x1;
+ 		priv->viu.osd_blend_din0_scope_v = ((dest.y2 - 1) << 16) | dest.y1;
+ 		priv->viu.osb_blend0_size = dst_h << 16 | dst_w;
+-		priv->viu.osb_blend1_size = dst_h << 16 | dst_w;
+ 	}
+ 
+ 	/* Update Canvas with buffer address */
+diff --git a/drivers/gpu/drm/meson/meson_viu.c b/drivers/gpu/drm/meson/meson_viu.c
+index 1287444b1bc8..dba2ca484b26 100644
+--- a/drivers/gpu/drm/meson/meson_viu.c
++++ b/drivers/gpu/drm/meson/meson_viu.c
+@@ -78,32 +78,52 @@ static int eotf_bypass_coeff[EOTF_COEFF_SIZE] = {
+ 	EOTF_COEFF_RIGHTSHIFT /* right shift */
+ };
+ 
+-static void meson_viu_set_g12a_osd1_matrix(struct meson_drm *priv,
+-					   int *m, bool csc_on)
++static void meson_viu_set_g12a_osd_matrix(struct meson_drm *priv,
++					  int *m, bool csc_on)
+ {
+ 	/* VPP WRAP OSD1 matrix */
+ 	writel(((m[0] & 0xfff) << 16) | (m[1] & 0xfff),
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_PRE_OFFSET0_1));
++	writel(((m[0] & 0xfff) << 16) | (m[1] & 0xfff),
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_PRE_OFFSET0_1));
+ 	writel(m[2] & 0xfff,
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_PRE_OFFSET2));
++	writel(m[2] & 0xfff,
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_PRE_OFFSET2));
+ 	writel(((m[3] & 0x1fff) << 16) | (m[4] & 0x1fff),
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_COEF00_01));
++	writel(((m[3] & 0x1fff) << 16) | (m[4] & 0x1fff),
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_COEF00_01));
+ 	writel(((m[5] & 0x1fff) << 16) | (m[6] & 0x1fff),
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_COEF02_10));
++	writel(((m[5] & 0x1fff) << 16) | (m[6] & 0x1fff),
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_COEF02_10));
+ 	writel(((m[7] & 0x1fff) << 16) | (m[8] & 0x1fff),
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_COEF11_12));
++	writel(((m[7] & 0x1fff) << 16) | (m[8] & 0x1fff),
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_COEF11_12));
+ 	writel(((m[9] & 0x1fff) << 16) | (m[10] & 0x1fff),
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_COEF20_21));
++	writel(((m[9] & 0x1fff) << 16) | (m[10] & 0x1fff),
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_COEF20_21));
+ 	writel((m[11] & 0x1fff) << 16,
+ 		priv->io_base +	_REG(VPP_WRAP_OSD1_MATRIX_COEF22));
++	writel((m[11] & 0x1fff) << 16,
++		priv->io_base +	_REG(VPP_WRAP_OSD2_MATRIX_COEF22));
+ 
+ 	writel(((m[18] & 0xfff) << 16) | (m[19] & 0xfff),
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_OFFSET0_1));
++	writel(((m[18] & 0xfff) << 16) | (m[19] & 0xfff),
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_OFFSET0_1));
+ 	writel(m[20] & 0xfff,
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_OFFSET2));
++	writel(m[20] & 0xfff,
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_OFFSET2));
+ 
+ 	writel_bits_relaxed(BIT(0), csc_on ? BIT(0) : 0,
+ 		priv->io_base + _REG(VPP_WRAP_OSD1_MATRIX_EN_CTRL));
++	writel_bits_relaxed(BIT(0), csc_on ? BIT(0) : 0,
++		priv->io_base + _REG(VPP_WRAP_OSD2_MATRIX_EN_CTRL));
+ }
+ 
+ static void meson_viu_set_osd_matrix(struct meson_drm *priv,
+@@ -114,21 +134,36 @@ static void meson_viu_set_osd_matrix(struct meson_drm *priv,
+ 		/* osd matrix, VIU_MATRIX_0 */
+ 		writel(((m[0] & 0xfff) << 16) | (m[1] & 0xfff),
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_PRE_OFFSET0_1));
++		writel(((m[0] & 0xfff) << 16) | (m[1] & 0xfff),
++			priv->io_base + _REG(VIU_OSD2_MATRIX_PRE_OFFSET0_1));
+ 		writel(m[2] & 0xfff,
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_PRE_OFFSET2));
++		writel(m[2] & 0xfff,
++			priv->io_base + _REG(VIU_OSD2_MATRIX_PRE_OFFSET2));
+ 		writel(((m[3] & 0x1fff) << 16) | (m[4] & 0x1fff),
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_COEF00_01));
++		writel(((m[3] & 0x1fff) << 16) | (m[4] & 0x1fff),
++			priv->io_base + _REG(VIU_OSD2_MATRIX_COEF00_01));
+ 		writel(((m[5] & 0x1fff) << 16) | (m[6] & 0x1fff),
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_COEF02_10));
++		writel(((m[5] & 0x1fff) << 16) | (m[6] & 0x1fff),
++			priv->io_base + _REG(VIU_OSD2_MATRIX_COEF02_10));
+ 		writel(((m[7] & 0x1fff) << 16) | (m[8] & 0x1fff),
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_COEF11_12));
++		writel(((m[7] & 0x1fff) << 16) | (m[8] & 0x1fff),
++			priv->io_base + _REG(VIU_OSD2_MATRIX_COEF11_12));
+ 		writel(((m[9] & 0x1fff) << 16) | (m[10] & 0x1fff),
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_COEF20_21));
++		writel(((m[9] & 0x1fff) << 16) | (m[10] & 0x1fff),
++			priv->io_base + _REG(VIU_OSD2_MATRIX_COEF20_21));
+ 
+ 		if (m[21]) {
+ 			writel(((m[11] & 0x1fff) << 16) | (m[12] & 0x1fff),
+ 				priv->io_base +
+ 					_REG(VIU_OSD1_MATRIX_COEF22_30));
++			writel(((m[11] & 0x1fff) << 16),
++				priv->io_base +
++					_REG(VIU_OSD2_MATRIX_COEF22));
+ 			writel(((m[13] & 0x1fff) << 16) | (m[14] & 0x1fff),
+ 				priv->io_base +
+ 					_REG(VIU_OSD1_MATRIX_COEF31_32));
+@@ -137,14 +172,21 @@ static void meson_viu_set_osd_matrix(struct meson_drm *priv,
+ 					_REG(VIU_OSD1_MATRIX_COEF40_41));
+ 			writel(m[17] & 0x1fff, priv->io_base +
+ 				_REG(VIU_OSD1_MATRIX_COLMOD_COEF42));
+-		} else
++		} else {
+ 			writel((m[11] & 0x1fff) << 16, priv->io_base +
+ 				_REG(VIU_OSD1_MATRIX_COEF22_30));
++			writel((m[11] & 0x1fff) << 16, priv->io_base +
++				_REG(VIU_OSD2_MATRIX_COEF22));
++		}
+ 
+ 		writel(((m[18] & 0xfff) << 16) | (m[19] & 0xfff),
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_OFFSET0_1));
++		writel(((m[18] & 0xfff) << 16) | (m[19] & 0xfff),
++			priv->io_base + _REG(VIU_OSD2_MATRIX_OFFSET0_1));
+ 		writel(m[20] & 0xfff,
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_OFFSET2));
++		writel(m[20] & 0xfff,
++			priv->io_base + _REG(VIU_OSD2_MATRIX_OFFSET2));
+ 
+ 		writel_bits_relaxed(3 << 30, m[21] << 30,
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_COLMOD_COEF42));
+@@ -154,8 +196,12 @@ static void meson_viu_set_osd_matrix(struct meson_drm *priv,
+ 		/* 23 reserved for clipping control */
+ 		writel_bits_relaxed(BIT(0), csc_on ? BIT(0) : 0,
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_CTRL));
++		writel_bits_relaxed(BIT(0), csc_on ? BIT(0) : 0,
++			priv->io_base + _REG(VIU_OSD2_MATRIX_CTRL));
+ 		writel_bits_relaxed(BIT(1), 0,
+ 			priv->io_base + _REG(VIU_OSD1_MATRIX_CTRL));
++		writel_bits_relaxed(BIT(1), 0,
++			priv->io_base + _REG(VIU_OSD2_MATRIX_CTRL));
+ 	} else if (m_select == VIU_MATRIX_OSD_EOTF) {
+ 		int i;
+ 
+@@ -428,7 +474,7 @@ void meson_viu_init(struct meson_drm *priv)
+ #if 0
+ 	/* FIXME: */
+ 	else if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A))
+-		meson_viu_set_g12a_osd1_matrix(priv, RGB709_to_YUV709l_coeff,
++		meson_viu_set_g12a_osd_matrix(priv, RGB709_to_YUV709l_coeff,
+ 					       true);
+ #endif
+ 
+@@ -467,14 +513,13 @@ void meson_viu_init(struct meson_drm *priv)
+ 			priv->io_base + _REG(VD2_IF0_LUMA_FIFO_SIZE));
+ 
+ 	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A)) {
+-		writel_relaxed(VIU_OSD_BLEND_REORDER(0, 1) |
+-			       VIU_OSD_BLEND_REORDER(1, 0) |
+-			       VIU_OSD_BLEND_REORDER(2, 0) |
+-			       VIU_OSD_BLEND_REORDER(3, 0) |
+-			       VIU_OSD_BLEND_DIN_EN(1) |
+-			       VIU_OSD_BLEND1_DIN3_BYPASS_TO_DOUT1 |
+-			       VIU_OSD_BLEND1_DOUT_BYPASS_TO_BLEND2 |
+-			       VIU_OSD_BLEND_DIN0_BYPASS_TO_DOUT0 |
++		/* setup bypass to have OSD1->DOUT0 + OSD2->DOUT1 */
++		writel_relaxed(VIU_OSD_BLEND_REORDER(0, 1) |	/* OSD1 to DIN0 */
++			       VIU_OSD_BLEND_REORDER(1, 4) |
++			       VIU_OSD_BLEND_REORDER(2, 4) |
++			       VIU_OSD_BLEND_REORDER(3, 2) |	/* OSD2 to DIN3 */
++			       VIU_OSD_BLEND_DIN_EN(9) |	/* Enable DIN0 & DIN3 */
++			       VIU_OSD_BLEND_DIN0_BYPASS_TO_DOUT0 |	/* DIN0 to DOUT0 */
+ 			       VIU_OSD_BLEND_BLEN2_PREMULT_EN(1) |
+ 			       VIU_OSD_BLEND_HOLD_LINES(4),
+ 			       priv->io_base + _REG(VIU_OSD_BLEND_CTRL));
+-- 
+2.25.1
+
