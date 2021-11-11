@@ -31,15 +31,15 @@ then
     # (since around ~November 2020 ?)
 
     apt install -y --allow-downgrades \
-        armbian-firmware=20.08.17 \
-        linux-buster-root-current-lime2=20.08.17 \
-        linux-dtb-current-sunxi=20.08.14 \
-        linux-image-current-sunxi=20.08.14 \
-        linux-u-boot-lime2-current=20.08.13 \
+        armbian-firmware=21.08.3 \
+        armbian-bsp-cli-lime2=21.08.3 \
+        linux-dtb-current-sunxi=21.08.2 \
+        linux-image-current-sunxi=21.08.2 \
+        linux-u-boot-lime2-current=21.08.1 \
     || exit 1
 
     apt-mark hold armbian-firmware
-    apt-mark hold linux-buster-root-current-lime2
+    apt-mark hold armbian-bsp-cli-lime2
     apt-mark hold linux-dtb-current-sunxi
     apt-mark hold linux-image-current-sunxi
     apt-mark hold linux-u-boot-lime2-current
