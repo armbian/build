@@ -147,7 +147,7 @@ get_package_list_hash()
 
 # create_sources_list <release> <basedir>
 #
-# <release>: buster|bullseye|bionic|focal|hirsute|impish|sid
+# <release>: buster|bullseye|bionic|focal|hirsute|impish|jammy|sid
 # <basedir>: path to root directory
 #
 create_sources_list()
@@ -850,7 +850,7 @@ addtorepo()
 # parameter "delete" remove incoming directory if publishing is succesful
 # function: cycle trough distributions
 
-	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "sid")
+	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "jammy" "sid")
 	#local distributions=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 	local errors=0
 
