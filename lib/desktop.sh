@@ -211,9 +211,10 @@ add_apt_sources() {
 				display_alert "Adding APT Source ${new_apt_source}"
 				# -y -> Assumes yes to all queries
 				# -n -> Do not update package cache after adding
-				run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
+				OUTPUT_PPA=$(run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\"  | grep \"Adding deb entry\" | cut -d\" \" -f5")
 				display_alert "Return code : $?"
-
+				# exception
+				if [[ $RELEASE == jammy && -f "$OUTPUT_PPA" ]] && sed -i "s/jammy/hirsute/" "$OUTPUT_PPA"
 				local apt_source_gpg_filepath="${apt_source_filepath}.gpg"
 
 				# PPA provide GPG keys automatically, it seems.
