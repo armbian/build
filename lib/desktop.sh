@@ -214,7 +214,7 @@ add_apt_sources() {
 				run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
 				display_alert "Return code : $?"
 
-				# exception for jammy
+				# temporally exception for jammy
 				[[ $RELEASE == "jammy" ]] && find "${SDCARD}/etc/apt/sources.list.d/." -type f \( -name "*.list" ! -name "armbian.list" \) -print0 | xargs -0 sed -i 's/jammy/hirsute/g'
 
 				local apt_source_gpg_filepath="${apt_source_filepath}.gpg"
