@@ -371,7 +371,7 @@ function build_all()
 					IFS=',' read -r -a RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
-					RELTARGETS=(xenial stretch buster bullseye bionic focal hirsute sid)
+					RELTARGETS=($(ls -1d config/distributions/*/ | cut -d"/" -f3))
 					# we don't need to cycle all distributions when making u-boot package
 					[[ $BOOTONLY == "yes" ]] && RELTARGETS=(focal)
 					for RELEASE in "${RELTARGETS[@]}"
