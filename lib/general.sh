@@ -238,7 +238,7 @@ create_sources_list()
 improved_git()
 {
 
-	local realgit=$(which git)
+	local realgit=$(command -v git)
 	local retries=3
 	local delay=10
 	local count=1
