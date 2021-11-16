@@ -463,6 +463,7 @@ FAMILY_TWEAKS
 	sed '/daemon\.\*\;mail.*/,/xconsole/ s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.d/50-default.conf
 
 	# disable deprecated parameter
+	[[ -f "${SDCARD}"/etc/rsyslog.conf ]] && \
 	sed '/.*$KLogPermitNonKernelFacility.*/,// s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.conf
 
 	# enable getty on multiple serial consoles
