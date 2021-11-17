@@ -30,20 +30,16 @@ create_chroot()
 	declare -A qemu_binary apt_mirror components
 	qemu_binary['armhf']='qemu-arm-static'
 	qemu_binary['arm64']='qemu-aarch64-static'
-	apt_mirror['stretch']="$DEBIAN_MIRROR"
 	apt_mirror['buster']="$DEBIAN_MIRROR"
 	apt_mirror['bullseye']="$DEBIAN_MIRROR"
-	apt_mirror['xenial']="$UBUNTU_MIRROR"
 	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
 	apt_mirror['hirsute']="$UBUNTU_MIRROR"
 	apt_mirror['impish']="$UBUNTU_MIRROR"
 	apt_mirror['jammy']="$UBUNTU_MIRROR"
-	components['stretch']='main,contrib'
 	components['buster']='main,contrib'
 	components['bullseye']='main,contrib'
 	components['sid']='main,contrib'
-	components['xenial']='main,universe,multiverse'
 	components['bionic']='main,universe,multiverse'
 	components['focal']='main,universe,multiverse'
 	components['hirsute']='main,universe,multiverse'
@@ -58,12 +54,15 @@ create_chroot()
 	else
 		local mirror_addr="http://${apt_mirror[${release}]}"
 	fi
+	mkdir -p "${target_dir}"
+	cd "${target_dir}"
 	debootstrap --variant=buildd --components="${components[${release}]}" --arch="${arch}" $DEBOOTSTRAP_OPTION --foreign --include="${includes}" "${release}" "${target_dir}" "${mirror_addr}"
 	[[ $? -ne 0 || ! -f "${target_dir}"/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
 	cp /usr/bin/${qemu_binary[$arch]} "${target_dir}"/usr/bin/
 	[[ ! -f "${target_dir}"/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
 		mkdir -p  "${target_dir}"/usr/share/keyrings/ && \
 		cp /usr/share/keyrings/debian-archive-keyring.gpg "${target_dir}"/usr/share/keyrings/
+
 	chroot "${target_dir}" /bin/bash -c "/debootstrap/debootstrap --second-stage"
 	[[ $? -ne 0 || ! -f "${target_dir}"/bin/bash ]] && exit_with_error "Create chroot second stage failed"
 	create_sources_list "$release" "${target_dir}"
@@ -101,10 +100,8 @@ chroot_prepare_distccd()
 	local arch=$2
 	local dest=/tmp/distcc/${release}-${arch}
 	declare -A gcc_version gcc_type
-	gcc_version['stretch']='6.3'
 	gcc_version['buster']='8.3'
 	gcc_version['bullseye']='9.2'
-	gcc_version['xenial']='5.4'
 	gcc_version['bionic']='5.4'
 	gcc_version['focal']='9.2'
 	gcc_version['hirsute']='10.2'
@@ -142,7 +139,7 @@ chroot_build_packages()
 		target_arch="${ARCH}"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="stretch bionic buster bullseye focal hirsute sid"
+		target_release="bionic buster bullseye focal hirsute jammy sid"
 		target_arch="armhf arm64"
 	fi
 
@@ -228,7 +225,7 @@ chroot_build_packages()
 				mv "${target_dir}"/root/*.deb "${plugin_target_dir}" 2>/dev/null
 			done
 			# cleanup for distcc
-			kill "$(<"/var/run/distcc/${release}-${arch}.pid")"
+			kill $(</var/run/distcc/${release}-${arch}.pid)
 		done
 	done
 	if [[ ${#built_ok[@]} -gt 0 ]]; then
