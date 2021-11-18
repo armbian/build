@@ -5,8 +5,48 @@ on:
 
 jobs:
 
-  Cache:
-    
+  Merge:
+
+    name: "Merge master into nightly"
+    runs-on: [self-hosted, Linux]
+    if: ${{ github.repository_owner == 'Armbian' }}
+
+    steps:
+
+      - name: Checkout Armbian build script
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v3
+        with:
+          gpg-private-key: ${{ secrets.GPG_KEY2 }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE2 }}
+          workdir: build
+          git-user-signingkey: true
+          git-commit-gpgsign: true
+
+      - name: Merge master into nightly
+
+        run: |
+          cd build
+          git config --global user.email "info@armbian.com"
+          git config --global user.name "Armbianworker"
+          git checkout master
+          git fetch
+          git merge origin/master
+          git checkout nightly
+          git merge master nightly
+          git push
+
+  Prepare:
+
+    needs: [ Merge ]
     name: Determine needed targets
     runs-on: [self-hosted, Linux, cache]
     if: ${{ github.repository_owner == 'armbian' }}
@@ -75,30 +115,28 @@ jobs:
                 sudo mkdir -p cache/toolchain cache/rootfs || true
                 ! sudo mountpoint -q cache/toolchain && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
                 ! sudo mountpoint -q cache/rootfs && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
-            fi  
+            fi
+            sudo rm -f cache/rootfs/*.complete
             sudo rm -f userpatches/targets.conf
-            cd ../scripts
-            ./cacherebuild.sh  "" "../build-rootfs/filelist.txt"
-            cd ..
-            cd build-rootfs
-            PARTS=$(cat filelist.txt | wc -l)
-            split -d --numeric=1 --number=r/${PARTS} --additional-suffix=.conf --suffix-length=3 filelist.txt split-
+            ../scripts/cacherebuild.sh "no" "../build-rootfs/filelist.txt" 
+            PARTS=$(cat ../build-rootfs/filelist.txt | wc -l)
+            split -d --numeric=1 --number=r/${PARTS} --additional-suffix=.conf --suffix-length=3 ../build-rootfs/filelist.txt ../build-rootfs/split-
         - name: Prepare matrix
           id: list_dirs
           run: |
             PARTS=$(cat build-rootfs/filelist.txt | wc -l)
             echo ::set-output name=matrix::$(for x in $(seq -w 1 $PARTS); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
 
-  Job:
+  Cache:
 
-    needs: [ Cache ]
+    needs: [ Prepare ]
     runs-on: [self-hosted, Linux, cache]
     if: ${{ github.repository_owner == 'armbian' }}
     timeout-minutes: 480
     strategy:
       fail-fast: false
       matrix: 
-        node: ${{fromJson(needs.Cache.outputs.matrix)}}
+        node: ${{fromJson(needs.Prepare.outputs.matrix)}}
 
     steps:
  
@@ -159,7 +197,7 @@ jobs:
           workdir: scripts
           git-user-signingkey: true
 
-      - name: Build beta images
+      - name: Build rootfs cache
         env:
           GPG_PASS: ${{ secrets.GPG_PASSPHRASE1 }}
 
@@ -180,7 +218,7 @@ jobs:
           
   Finish:
     name: Finish
-    needs: [Job]
+    needs: [Cache]
     runs-on: [self-hosted, Linux, cache]
     if: ${{ github.repository_owner == 'Armbian' }}
     steps:
@@ -246,5 +284,5 @@ jobs:
                 ! sudo mountpoint -q cache/toolchain && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
                 ! sudo mountpoint -q cache/rootfs && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
             fi  
-            sudo rm -f userpatches/targets.conf            
-            ../scripts/cacherebuild.sh "yes"
+            sudo rm -f userpatches/targets.conf
+            ../scripts/cacherebuild.sh "yes" test 
