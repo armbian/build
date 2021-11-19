@@ -403,7 +403,7 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
-	if [ "${url#*megous/}" == linux ]; then
+	if [ "$dir" == "linux-mainline" ] && [[ "$LINUXFAMILY" == sunxi* ]]; then
 		unset LINUXSOURCEDIR
 		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
 		VAR_SHALLOW_ORIGINAL=var_origin_kernel
