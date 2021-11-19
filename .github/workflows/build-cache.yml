@@ -1,0 +1,288 @@
+name: Build rootfs cache
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  Merge:
+
+    name: "Merge master into nightly"
+    runs-on: [self-hosted, Linux]
+    if: ${{ github.repository_owner == 'Armbian' }}
+
+    steps:
+
+      - name: Checkout Armbian build script
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v3
+        with:
+          gpg-private-key: ${{ secrets.GPG_KEY2 }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE2 }}
+          workdir: build
+          git-user-signingkey: true
+          git-commit-gpgsign: true
+
+      - name: Merge master into nightly
+
+        run: |
+          cd build
+          git config --global user.email "info@armbian.com"
+          git config --global user.name "Armbianworker"
+          git checkout master
+          git fetch
+          git merge origin/master
+          git checkout nightly
+          git merge master nightly
+          git push
+
+  Prepare:
+
+    needs: [ Merge ]
+    name: Determine needed targets
+    runs-on: [self-hosted, Linux, cache]
+    if: ${{ github.repository_owner == 'armbian' }}
+    outputs:
+      matrix: ${{steps.list_dirs.outputs.matrix}}
+    steps:
+
+        - name: Fix permissions
+          run: |
+            # make sure no temporally dirs are mounted from previous runs
+            while :
+            do
+                sudo pkill compile.sh || true
+                sudo pkill arm-binfmt-P || true
+                sudo pkill aarch64-binfmt-P || true
+                sudo pkill pixz || true
+                sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
+                [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 ]] && sudo rm -rf build/.tmp && break                
+                echo "Mounted temp directories. Trying to unmount."
+                df | grep "/.tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+                sleep 10
+            done
+            sudo chown -R $USER:$USER build/.git
+        - name: Checkout Armbian build script
+
+          uses: actions/checkout@v2
+          with:
+            fetch-depth: 0
+            repository: armbian/build
+            path: build
+            ref: nightly
+            clean: false
+
+        - name: Checkout Armbian support scripts
+
+          uses: actions/checkout@v2
+          with:
+            fetch-depth: 0
+            repository: armbian/scripts
+            token: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+            path: scripts
+            ref: master
+            clean: true
+
+        - name: Cache build configurations
+          uses: actions/cache@v2
+          env:
+            cache-name: build-rootfs
+          with:
+            path: build-rootfs
+            key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+        - name: Build rootfs cache
+
+          run: |
+            echo "BLTPATH=\"$(pwd)/build/\"" | tee scripts/cacherebuild.conf scripts/betarepository.conf >/dev/null
+            mkdir -p build-rootfs
+            rm -f build-rootfs/*
+            cd build
+            sudo rm -rf output/images/*
+            sudo mkdir -p userpatches
+            sudo cp ../scripts/configs/* userpatches/
+            [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
+            ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" USE_TORRENT="yes" REPOSITORY_INSTALL="kernel" 'prepare_host'
+            if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
+                sudo mkdir -p cache/toolchain cache/rootfs || true
+                ! sudo mountpoint -q cache/toolchain && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+                ! sudo mountpoint -q cache/rootfs && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+            fi
+            sudo rm -f cache/rootfs/*.complete
+            sudo rm -f userpatches/targets.conf
+            ../scripts/cacherebuild.sh "no" "../build-rootfs/filelist.txt" 
+            PARTS=$(cat ../build-rootfs/filelist.txt | wc -l)
+            split -d --numeric=1 --number=r/${PARTS} --additional-suffix=.conf --suffix-length=3 ../build-rootfs/filelist.txt ../build-rootfs/split-
+        - name: Prepare matrix
+          id: list_dirs
+          run: |
+            PARTS=$(cat build-rootfs/filelist.txt | wc -l)
+            echo ::set-output name=matrix::$(for x in $(seq -w 1 $PARTS); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
+
+  Cache:
+
+    needs: [ Prepare ]
+    runs-on: [self-hosted, Linux, cache]
+    if: ${{ github.repository_owner == 'armbian' }}
+    timeout-minutes: 480
+    strategy:
+      fail-fast: false
+      matrix: 
+        node: ${{fromJson(needs.Prepare.outputs.matrix)}}
+
+    steps:
+ 
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        env:
+          cache-name: build-rootfs
+        with:
+          path: build-rootfs
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+      - name: Fix permissions
+        run: |
+          # make sure no temporally dirs are mounted from previous runs
+          while :
+          do
+              sudo pkill compile.sh || true
+              sudo pkill arm-binfmt-P || true
+              sudo pkill aarch64-binfmt-P || true
+              sudo pkill pixz || true
+              sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
+              [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 && $(sudo mountpoint -q build/output/images; echo $?) -eq 1 ]] && sudo rm -rf build/.tmp && break
+              echo "Mounted temp directories. Trying to unmount."
+              df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+              sleep 10
+          done
+          [[ -d build/.git ]] && sudo chown -R $USER:$USER build/.git || true
+          [[ -d build/output/images ]] && sudo rm -rf build/output/images/* || true
+          [[ -d build/cache/sources ]] && sudo rm -rf build/cache/sources/* || true
+          
+      - name: Checkout Armbian build script
+
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+
+      - name: Checkout Armbian support scripts
+
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/scripts
+          token: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+          path: scripts
+          clean: false
+
+      - name: Import GPG key
+
+        uses: crazy-max/ghaction-import-gpg@v3
+        with:
+          gpg-private-key: ${{ secrets.GPG_KEY1 }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE1 }}
+          workdir: scripts
+          git-user-signingkey: true
+
+      - name: Build rootfs cache
+        env:
+          GPG_PASS: ${{ secrets.GPG_PASSPHRASE1 }}
+
+        run: |
+          CHUNK="${{ matrix.node }}"
+          if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
+              sudo mkdir -p build/cache/toolchain build/cache/rootfs || true
+              ! sudo mountpoint -q build/cache/toolchain && sudo mount nas:/tank/armbian/toolchain.armbian.com build/cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+              ! sudo mountpoint -q build/cache/rootfs && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs build/cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+          fi          
+          cd build
+          # use prepared configs
+          sudo mkdir -p userpatches
+          sudo cp ../scripts/configs/* userpatches/
+          # prepare host
+          [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes || true
+          bash ../build-rootfs/split-${CHUNK}.conf
+          
+  Finish:
+    name: Finish
+    needs: [Cache]
+    runs-on: [self-hosted, Linux, cache]
+    if: ${{ github.repository_owner == 'Armbian' }}
+    steps:
+        - name: Fix permissions
+          run: |
+            # make sure no temporally dirs are mounted from previous runs
+            while :
+            do
+                sudo pkill compile.sh || true
+                sudo pkill arm-binfmt-P || true
+                sudo pkill aarch64-binfmt-P || true
+                sudo pkill pixz || true
+                sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
+                [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 ]] && sudo rm -rf build/.tmp && break                
+                echo "Mounted temp directories. Trying to unmount."
+                df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+                sleep 10
+            done
+            sudo chown -R $USER:$USER build/.git
+        - name: Checkout Armbian build script
+
+          uses: actions/checkout@v2
+          with:
+            fetch-depth: 0
+            repository: armbian/build
+            path: build
+            ref: nightly
+            clean: false
+
+        - name: Checkout Armbian support scripts
+
+          uses: actions/checkout@v2
+          with:
+            fetch-depth: 0
+            repository: armbian/scripts
+            token: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+            path: scripts
+            ref: master
+            clean: true
+
+        - name: Cache build configurations
+          uses: actions/cache@v2
+          env:
+            cache-name: build-rootfs
+          with:
+            path: build-rootfs
+            key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+        - name: Build rootfs cache
+
+          run: |
+            echo "BLTPATH=\"$(pwd)/build/\"" | tee scripts/cacherebuild.conf scripts/betarepository.conf >/dev/null
+            mkdir -p build-rootfs
+            rm -f build-rootfs/*
+            cd build
+            sudo rm -rf output/images/*
+            sudo mkdir -p userpatches
+            sudo cp ../scripts/configs/* userpatches/
+            [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
+            ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" USE_TORRENT="yes" REPOSITORY_INSTALL="kernel" 'prepare_host'
+            if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
+                sudo mkdir -p cache/toolchain cache/rootfs || true
+                ! sudo mountpoint -q cache/toolchain && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+                ! sudo mountpoint -q cache/rootfs && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+            fi  
+            sudo rm -f userpatches/targets.conf
+            ../scripts/cacherebuild.sh "yes" test 

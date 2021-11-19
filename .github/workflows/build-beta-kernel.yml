@@ -1,0 +1,512 @@
+name: Build beta kernel packages
+
+on:
+  schedule:
+    - cron:  '0 4 * * *'
+
+  workflow_dispatch:
+    inputs:
+
+      release_type:
+        description: 'Release type: nightly | stable | edge'
+        required: false
+        default: 'nightly'
+
+jobs:
+
+  Merge:
+
+    name: "Merge master into nightly"
+    runs-on: [self-hosted, Linux]
+    if: ${{ github.repository_owner == 'Armbian' }}
+
+    steps:
+
+      - name: Checkout Armbian build script
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: nightly
+          clean: false
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v3
+        with:
+          gpg-private-key: ${{ secrets.GPG_KEY2 }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE2 }}
+          workdir: build
+          git-user-signingkey: true
+          git-commit-gpgsign: true
+
+      - name: Merge master into nightly
+
+        run: |
+          cd build
+          git config --global user.email "info@armbian.com"
+          git config --global user.name "Armbianworker"
+          git checkout master
+          git fetch
+          git merge origin/master
+          git checkout nightly
+          git merge master nightly
+          git push
+
+  Prepare:
+    
+    name: "Finding changed kernels"
+    needs: [ Merge ]
+    runs-on: [self-hosted, Linux, small]
+    if: ${{ github.repository_owner == 'Armbian' }}
+    outputs:
+      matrix: ${{steps.list_dirs.outputs.matrix}}
+    steps:
+
+      - name: Cache build parameters
+        uses: actions/cache@v2
+        env:
+          cache-name: build-kernel
+        with:
+          path: build-kernel
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+      - name: Store matrix values
+        run: |
+          mkdir -p build-kernel
+          echo "${{ github.event.inputs.release_type }}" > build-kernel/build_type
+
+      - name: Store environment variables values
+        run: |
+
+          echo "FILE_EXT=-beta" >> $GITHUB_ENV
+          echo "REPO_DEST=nightly" >> $GITHUB_ENV
+          echo "BETA=yes" >> $GITHUB_ENV
+          if [[ "$(cat build-kernel/build_type 2> /dev/null || true)" =~ "stable|edge" ]]; then
+              echo "FILE_EXT=" >> $GITHUB_ENV
+              echo "REPO_DEST=master" >> $GITHUB_ENV
+              echo "BETA=no" >> $GITHUB_ENV
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: ${{ env.REPO_DEST }}
+          clean: false
+
+      - name: Checkout support scripts
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/scripts
+          path: scripts
+          clean: true
+
+      - name: Fix permissions
+        if: ${{ success() }}
+        run: |
+
+          # make sure no temporally dirs are mounted from previous runs
+          while :
+          do
+              sudo pkill compile.sh || true
+              sudo pkill arm-binfmt-P || true
+              sudo pkill aarch64-binfmt-P || true
+              sudo pkill pixz || true
+              sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
+              [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 && $(sudo mountpoint -q build/output/images; echo $?) -eq 1 ]] && sudo rm -rf build/.tmp && break
+              echo "Mounted temp directories. Trying to unmount."
+              df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+              sleep 10
+          done
+          [[ -d build/.git ]] && sudo chown -R $USER:$USER build/.git || true
+          [[ -d build/output/images ]] && sudo rm -rf build/output/images/* || true
+
+      - name: Determine changed kernels
+        run: |
+
+          cd build
+          BETA="${{ env.BETA }}"
+          FILE_EXT="${{ env.FILE_EXT }}"
+          sudo rm -rf cache/sources
+          ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" BETA="$BETA" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host'
+          [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
+          if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
+              sudo mkdir -p cache/toolchain cache/rootfs || true
+              # umount 
+              sudo umount cache/toolchain || true
+              # erase below
+              sudo mountpoint -q cache/toolchain && sudo rm -rf cache/toolchain/*
+              ! sudo mountpoint -q cache/toolchain && sudo rm -rf cache/toolchain/* && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+              ! sudo mountpoint -q cache/rootfs && sudo rm -rf cache/rootfs/* && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+          fi           
+          mkdir -p cache/hash${FILE_EXT}
+          sudo rsync -ar --delete ../scripts/hash${FILE_EXT}/. cache/hash${FILE_EXT}/ 2> /dev/null
+          sudo cp ../scripts/configs/* userpatches/
+          sudo rm -f userpatches/targets.conf          
+          if [[ "$(cat ../build-kernel/build_type 2> /dev/null || true)" =~ stable|edge ]]; then
+            cat config/targets.conf | grep edge | grep cli | grep hirsute | sudo tee userpatches/targets.conf 1>/dev/null 
+            echo "FILE_EXT=" >> $GITHUB_ENV
+            echo "REPO_DEST=master" >> $GITHUB_ENV
+            echo "BETA=no" >> $GITHUB_ENV
+          fi
+
+      - name: Prepare build matrix
+        id: list_dirs
+        run: |
+
+          BETA="${{ env.BETA }}"
+          MATRIX=$(cd build;./compile.sh all-new-beta-kernels BETA="$BETA" BUILD_ALL="demo" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | egrep "^[0-9]" | awk '{ print $2 ":" $4 }' | sort | uniq)
+          mkdir -p build-kernel
+          echo "no" > build-kernel/skip          
+          if [[ -z "$MATRIX" ]]; then
+              MATRIX="none:none"
+              echo "yes" > build-kernel/skip
+          fi          
+          echo ::set-output name=matrix::$(for x in $(echo "${MATRIX}"); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
+          
+  Linux:
+
+    name: "Build Linux"
+    needs: [ Prepare ]
+    runs-on: [self-hosted, Linux, fast] # lets run this on runners labelled with 'fast'
+    if: ${{ github.repository_owner == 'armbian' }}
+    timeout-minutes: 480
+    strategy:
+      fail-fast: false
+      matrix: 
+        node: ${{fromJson(needs.Prepare.outputs.matrix)}}
+
+    steps:
+
+      - name: Install SSH key for storage
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.KEY_TORRENTS }}
+          known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
+          if_key_exists: replace
+
+      - name: Checkout Armbian support scripts
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/scripts
+          path: scripts
+          clean: true
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        env:
+          cache-name: build-kernel
+        with:
+          path: build-kernel
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux 
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+
+      - name: Read value
+        run: |
+
+          echo "FILE_EXT=-beta" >> $GITHUB_ENV
+          echo "REPO_DEST=nightly" >> $GITHUB_ENV
+          echo "BETA=yes" >> $GITHUB_ENV
+          if [[ "$(cat build-kernel/build_type 2> /dev/null || true)" =~ stable|edge ]]; then
+              echo "FILE_EXT=" >> $GITHUB_ENV
+              echo "REPO_DEST=master" >> $GITHUB_ENV
+              echo "BETA=no" >> $GITHUB_ENV
+          fi
+
+      - name: Fix permissions
+        if: ${{ success() }}
+        run: |
+
+          # make sure no temporally dirs are mounted from previous runs
+          while :
+          do
+              sudo pkill compile.sh || true
+              sudo pkill arm-binfmt-P || true
+              sudo pkill aarch64-binfmt-P || true
+              sudo pkill pixz || true
+              sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
+              [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 && $(sudo mountpoint -q build/output/images; echo $?) -eq 1 ]] && sudo rm -rf build/.tmp && break
+              echo "Mounted temp directories. Trying to unmount."
+              df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+              sleep 10
+          done
+          [[ -d build/.git ]] && sudo chown -R $USER:$USER build/.git || true
+          [[ -d build/output/images ]] && sudo rm -rf build/output/images/* || true
+ 
+      - name: Checkout Armbian build script
+
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: ${{ env.REPO_DEST }}
+          clean: false
+
+      - name: Build
+        run: |
+
+          if [[ "$(cat build-kernel/skip 2> /dev/null || true)" == "no" ]]; then
+
+              CHUNK="${{ matrix.node }}"
+              BETA="${{ env.BETA }}"
+              FILE_EXT="${{ env.FILE_EXT }}"
+              BOARD=$(echo $CHUNK | cut -d":" -f1)
+              BRANCH=$(echo $CHUNK | cut -d":" -f2)
+              echo "FILE_NAME=${BOARD}-${BRANCH}" >> $GITHUB_ENV
+              cd build
+              sudo rm -f cache/hash${FILE_EXT}/*
+              [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes          
+              ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host_basic'          
+              if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
+                  sudo mkdir -p cache/toolchain cache/rootfs || true
+                  ! sudo mountpoint -q cache/toolchain && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+                  ! sudo mountpoint -q cache/rootfs && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+              fi 
+              sudo rm -rf output/debs*
+              ./compile.sh ARMBIAN_MIRROR="https://github.com/armbian/mirror/releases/download/" BOARD="$BOARD" CLEAN_LEVEL="alldebs" \
+              PRIVATE_CCACHE="yes" BETA="$BETA" KERNEL_ONLY="yes" BRANCH="$BRANCH" KERNEL_CONFIGURE="no" OFFLINE="no"
+              if [[ $? -eq 0 ]]; then
+                  echo "UPLOAD=true" >> $GITHUB_ENV
+                  sudo mkdir -p ../build-kernel
+                  cp cache/hash${FILE_EXT}/*.git* ../build-kernel/
+                  echo "FILE_HASH=$(ls -1 cache/hash${FILE_EXT}/*.githash | head -1)"  >> $GITHUB_ENV
+              fi
+          fi
+
+      - name: Upload hash
+        if: ${{ matrix.node != 'none:none' }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: hash
+          path: build/${{ env.FILE_HASH }}
+          
+      - name: Upload build artifacts
+        if: ${{ matrix.node != 'none:none' }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.FILE_NAME }}
+          path: build/output/debs${{ env.FILE_EXT }}/linux-*
+          retention-days: 14
+
+      - name: Deploy to server
+        if: ${{ matrix.node != 'none:none' && github.event.label.name != '7.needs testing' }}
+        run: |
+
+          echo ${{ env.UPLOAD }}
+          # edge kernels if any, simply copy to stable
+          rsync -arv build/output/debs-beta/*edge* --exclude='*u-boot*' build/output/debs/ 2> /dev/null || true
+          sudo apt-get -y -qq install lftp
+          sudo chown -R $USER:$USER build/output/debs${{ env.FILE_EXT }}/
+          lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/debs/ debs/ ;bye" sftp://users.armbian.com
+          lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/debs-beta/ debs-beta/ ;bye" sftp://users.armbian.com
+
+  Deploy:
+
+    name: Update kernel status
+    needs: [Linux]
+    runs-on: [self-hosted, Linux]
+    if: ${{ github.repository_owner == 'Armbian' }}
+    steps:
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        env:
+          cache-name: build-kernel
+        with:
+          path: build-kernel
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux            
+
+      - name: Read value
+        run: |
+
+          echo "SKIP=$(cat build-kernel/skip 2> /dev/null || true)" >> $GITHUB_ENV
+          echo "FILE_EXT=-beta" >> $GITHUB_ENV
+          echo "REPO_DEST=nightly" >> $GITHUB_ENV
+          echo "BETA=yes" >> $GITHUB_ENV
+          if [[ "$(cat build-kernel/build_type 2> /dev/null || true)" =~ stable|edge  ]]; then
+              echo "FILE_EXT=" >> $GITHUB_ENV
+              echo "REPO_DEST=master" >> $GITHUB_ENV
+              echo "BETA=no" >> $GITHUB_ENV
+          fi
+
+      - name: Checkout Armbian support scripts
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/scripts
+          token: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+          path: scripts
+          clean: true
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v3
+        with:
+          gpg-private-key: ${{ secrets.GPG_KEY2 }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE2 }}
+          workdir: scripts
+          git-user-signingkey: true
+          git-commit-gpgsign: true
+
+      - name: Download artefacts
+        if: ${{ env.SKIP != 'yes' }} 
+        uses: actions/download-artifact@v2
+        with:
+          name: hash
+
+      - name: Update scripts
+        if: ${{ env.SKIP != 'yes' }} 
+        run: |
+          ls -l build-kernel
+          if [[ "$(cat build-kernel/skip 2> /dev/null || true)" == "no" ]]; then
+          sudo rsync -ar --remove-source-files *.git* scripts/hash${{ env.FILE_EXT }}/ || true
+          cd scripts
+          sudo chown -R $USER:$USER .git
+          if git status --porcelain | grep .; then
+             git config --global user.email "info@armbian.com"
+             git config --global user.name "Armbianworker"
+             git config pull.rebase false
+             git pull
+             echo "update"
+             git add .
+             git commit -m "Update hashes for ${{ env.FILE_DEST }} repository"
+             git push
+          fi
+          fi
+
+  Closing:
+
+    name: Build board support packages
+    needs: [Deploy]
+    runs-on: [self-hosted, Linux,fast]
+    if: ${{ github.repository_owner == 'Armbian' }}
+    steps:
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v2
+        env:
+          cache-name: build-kernel
+        with:
+          path: build-kernel
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux
+
+      - name: Read value
+        run: |
+
+          echo "SKIP=$(cat build-kernel/skip 2> /dev/null || true)" >> $GITHUB_ENV
+          echo "FILE_EXT=-beta" >> $GITHUB_ENV
+          echo "REPO_DEST=nightly" >> $GITHUB_ENV
+          echo "BETA=yes" >> $GITHUB_ENV
+          if [[ "$(cat build-kernel/build_type 2> /dev/null || true)" =~ stable|edge  ]]; then
+              echo "FILE_EXT=" >> $GITHUB_ENV
+              echo "REPO_DEST=master" >> $GITHUB_ENV
+              echo "BETA=no" >> $GITHUB_ENV
+          fi
+
+      - name: Checkout Armbian build script
+
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/build
+          path: build
+          ref: ${{ env.REPO_DEST }}
+          clean: false
+
+      - name: Checkout support scripts
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+          repository: armbian/scripts
+          token: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+          path: scripts
+          clean: true
+
+      - name: Make board support packages        
+        run: |
+
+          if [[ "$(cat build-kernel/skip 2> /dev/null || true)" == "no" ]]; then
+
+            cd build              
+            if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
+               sudo mkdir -p cache/toolchain cache/rootfs || true
+               # umount 
+               sudo umount cache/toolchain || true
+               # erase below
+               sudo mountpoint -q cache/toolchain && sudo rm -rf cache/toolchain/*
+               ! sudo mountpoint -q cache/toolchain && sudo rm -rf cache/toolchain/* && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+               ! sudo mountpoint -q cache/rootfs && sudo rm -rf cache/rootfs/* && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+            fi   
+
+            # use prepared configs
+            sudo cp ../scripts/configs/* userpatches/
+
+            [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes          
+            ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host_basic'          
+            rm -rf output/debs*
+      
+            ./compile.sh all-new-beta-bsp
+            # wait until it finishes
+            while :
+            do
+                [[ $(sudo ps -uax | grep compile.sh | wc -l) -le 1 ]] && exit
+                echo "Waiting for background processes to finish."
+                sleep 10
+            done
+          fi
+
+      - name: Deploy to server        
+        run: |
+
+          if [[ "$(cat build-kernel/skip 2> /dev/null || true)" == "no" ]]; then
+              sudo apt-get -y -qq install lftp
+              sudo chown -R $USER:$USER build/output/debs*
+              lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/debs/ debs/ ;bye" sftp://users.armbian.com
+              lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/debs-beta/ debs-beta/ ;bye" sftp://users.armbian.com
+          fi
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v3
+        with:
+          gpg-private-key: ${{ secrets.GPG_KEY2 }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE2 }}
+          workdir: build
+          git-user-signingkey: true
+          git-commit-gpgsign: true
+
+      - name: Bump version        
+        run: |
+
+          if [[ "$(cat build-kernel/skip 2> /dev/null || true)" == "no" ]]; then
+          cd build
+          git symbolic-ref --short -q HEAD
+              if [[ "$(git symbolic-ref --short -q HEAD)" == nightly ]]; then
+                CURRENT_VERSION=$(cat VERSION)
+                NEW_VERSION="${CURRENT_VERSION%%-trunk}"
+                if [[ $CURRENT_VERSION == *trunk* ]]; then
+                  NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
+                else
+                  NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
+                fi
+                sudo git checkout -f
+                sudo chown -R $USER:$USER .git
+                git pull
+                echo "${NEW_VERSION}" > VERSION
+                git config --global user.email "info@armbian.com"
+                git config --global user.name "Armbianworker"
+                git add VERSION
+                git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs-beta/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
+                git push
+              fi
+          fi

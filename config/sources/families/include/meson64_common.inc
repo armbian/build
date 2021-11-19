@@ -1,11 +1,11 @@
-UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin.sd.bin:u-boot.bin u-boot-dtb.img"
+UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-u-boot-dtb.img;;u-boot.bin.sd.bin:u-boot.bin u-boot-dtb.img}"
 BOOTSCRIPT="boot-meson64.cmd:boot.cmd"
 BOOTENV_FILE='meson.txt'
 LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2021.04"
+BOOTBRANCH="tag:v2021.07"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
@@ -34,14 +34,14 @@ case $BRANCH in
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.14.y'
+		KERNELBRANCH='branch:linux-5.15.y'
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
 esac
 
 if [ "$(uname -m)" = "aarch64" ]; then
-	if [[ "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" ]]; then
+	if [[ "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" || "$(lsb_release -sc)" == "impish" ]]; then
 		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
 	else
 		PKG_PREFIX="qemu-x86_64 "
@@ -88,6 +88,54 @@ uboot_gxl_postprocess()
 				--bl30 $1/$2/bl30_new.bin.enc \
 				--bl31 $1/$2/bl31.img.enc \
 				--bl33 bl33.bin.enc
+}
+
+# this helper function includes postprocess for s400 and its variants.
+# $1 PATH for uboot blob repo
+# $2 dir name in uboot blob repo
+uboot_axg_postprocess_ng()
+{
+	mv u-boot.bin bl33.bin
+
+	$1/blx_fix.sh 	$1/$2/bl30.bin \
+			$1/$2/zero_tmp \
+			$1/$2/bl30_zero.bin \
+			$1/$2/bl301.bin \
+			$1/$2/bl301_zero.bin \
+			$1/$2/bl30_new.bin bl30
+
+	python3 $1/acs_tool.py $1/$2/bl2.bin \
+			$1/$2/bl2_acs.bin \
+			$1/$2/acs.bin 0
+
+	$1/blx_fix.sh 	$1/$2/bl2_acs.bin \
+			$1/$2/zero_tmp \
+			$1/$2/bl2_zero.bin \
+			$1/$2/bl21.bin \
+			$1/$2/bl21_zero.bin \
+			$1/$2/bl2_new.bin bl2
+
+	$PKG_PREFIX$1/$2/aml_encrypt_axg        --bl3sig --input $1/$2/bl30_new.bin \
+                                --output bl30_new.bin.enc \
+                                --level v3 --type bl30
+
+	$PKG_PREFIX$1/$2/aml_encrypt_axg        --bl3sig --input $1/$2/bl31.img \
+                                --output bl31.img.enc \
+                                --level v3 --type bl31
+
+	$PKG_PREFIX$1/$2/aml_encrypt_axg        --bl3sig --input bl33.bin --compress lz4 \
+                                --output bl33.bin.enc \
+                                --level v3 --type bl33
+
+	$PKG_PREFIX$1/$2/aml_encrypt_axg        --bl2sig --input $1/$2/bl2_new.bin \
+                                --output bl2.n.bin.sig
+
+	$PKG_PREFIX$1/$2/aml_encrypt_axg        --bootmk \
+                                --output u-boot.bin \
+                                --bl2 bl2.n.bin.sig \
+                                --bl30 bl30_new.bin.enc \
+                                --bl31 bl31.img.enc \
+                                --bl33 bl33.bin.enc --level v3
 }
 
 # this helper function includes postprocess for u200 and its variants.
@@ -196,7 +244,7 @@ uboot_gxl_postprocess_ng()
 			--output bl2.n.bin.sig
 
     $1/aml_encrypt_gxl --bootmk --output u-boot.bin \
-			--bl2 $1/bl2.n.bin.sig \
+			--bl2 bl2.n.bin.sig \
 			--bl30 $1/bl30_new.bin.enc \
 			--bl31 $1/bl31.img.enc \
 			--bl33 bl33.bin.enc
