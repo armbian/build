@@ -390,6 +390,15 @@ compile_kernel()
 	# read kernel git hash
 	hash=$(improved_git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
+	# Apply a series of patches if a series file exists
+	if test -f "${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf; then
+		display_alert "series.conf file visible. Apply"
+		series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
+
+		# apply_patch_series <target dir> <full path to series file>
+		apply_patch_series "${kerneldir}" "$series_conf"
+	fi
+
 	# build 3rd party drivers
 	compilation_prepare
 
