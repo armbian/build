@@ -14,7 +14,10 @@ case $BRANCH in
 
 	current) KERNEL_VERSION_LEVEL="5.10" ;;
 
-	edge)	 KERNEL_VERSION_LEVEL="5.15" ;;
+	edge)
+		KERNEL_VERSION_LEVEL="5.15"
+		KERNELSWITCHOBJ="tag=v5.15.2"
+	;;
 esac
 
 if [ "$KERNEL_VERSION_LEVEL" != "5.15" ]; then
