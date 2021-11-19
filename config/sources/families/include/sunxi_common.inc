@@ -18,9 +18,15 @@ case $BRANCH in
 	edge)	 KERNEL_VERSION_LEVEL="5.15" ;;
 esac
 
-KERNELSOURCE="https://github.com/megous/linux"
-KERNELSOURCENAME='name=megous'
-KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
+if [ "$KERNEL_VERSION_LEVEL" != "5.15" ]; then
+	KERNELSOURCE="https://github.com/megous/linux"
+	KERNELSOURCENAME='name=megous'
+	KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
+else
+	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+	KERNELSOURCENAME='name=origin'
+	KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
+fi
 KERNELPATCHDIR='sunxi-'$BRANCH
 
 # An optional parameter for switching to a git object such as a tag, commit,
