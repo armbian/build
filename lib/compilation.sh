@@ -390,6 +390,15 @@ compile_kernel()
 	# read kernel git hash
 	hash=$(improved_git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
+	# Apply a series of patches if a series file exists
+	if test -f "${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf; then
+		display_alert "series.conf file visible. Apply"
+		series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
+
+		# apply_patch_series <target dir> <full path to series file>
+		apply_patch_series "${kerneldir}" "$series_conf"
+	fi
+
 	# build 3rd party drivers
 	compilation_prepare
 
@@ -548,7 +557,7 @@ compile_kernel()
 
 	# create change log
 	git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'%H>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
-	
+
 	echo "${hash}" > "${HASHTARGET}.githash"
 	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
@@ -953,6 +962,54 @@ process_patch_file()
 		display_alert "* $status $(basename "${patch}")" "" "info"
 	fi
 	echo >> "${DEST}"/${LOG_SUBPATH}/patching.log
+}
+
+
+# apply_patch_series <target dir> <full path to series file>
+apply_patch_series ()
+{
+	local t_dir="${1}"
+	local series="${2}"
+	local bzdir="$(dirname $series)"
+	local flag
+	local err_pt=$(mktemp /tmp/apply_patch_series_XXXXX)
+
+	list=$(gawk '$0 !~ /^#.*|^-.*|^$/' "${series}")
+	skiplist=$(gawk '$0 ~ /^-.*/' "${series}")
+
+	display_alert "apply a series of " "[$(echo $list | wc -w)] patches"
+	display_alert "skip [$(echo $skiplist | wc -w)] patches"
+
+	cd "${t_dir}" || exit 1
+	for p in $list
+	do
+		# Detect and remove files as '*.patch' which patch will create.
+		# So we need to delete the file before applying the patch if it exists.
+		lsdiff -s --strip=1 "$bzdir/$p" | \
+		awk '$0 ~ /^+.*patch$/{print $2}' | \
+		xargs -I % sh -c 'rm -f %'
+
+		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >$err_pt 2>&1
+		flag=$?
+
+
+		case $flag in
+			0)	printf "%-72s [\033[32m done \033[0m]\n" "${p#*/}"
+				printf "%-72s [ done ]\n" "${p#*/}" >> "${DEST}"/debug/patching.log
+				;;
+			1)
+				printf "%-72s [\033[33m FAILED \033[0m]\n" "${p#*/}"
+				echo -e "For ${p} \t\tprocess exit [ $flag ]" >>"${DEST}"/debug/patching.log
+				cat $err_pt >>"${DEST}"/debug/patching.log
+				;;
+			2)
+				printf "%-72s [\033[31m Patch wrong \033[0m]\n" "${p#*/}"
+				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >>"${DEST}"/debug/patching.log
+				cat $err_pt >>"${DEST}"/debug/patching.log
+			;;
+		esac
+	done
+	rm $err_pt
 }
 
 userpatch_create()
