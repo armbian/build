@@ -308,6 +308,13 @@ waiter_local_repo ()
 
 	display_alert "Checking git sources" "$dir $name/$branch" "info"
 
+	# Check the exception for 5.15 sunxi. We will remove this after a while.
+	if [ "$dir" == "linux-mainline/5.15" ] && \
+	   [ "$(git remote show | grep megous)" == "megous" ]; then
+			display_alert "Remove mistakenly created and excessively large" "$dir" "info"
+			rm -rf .git ./*
+	fi
+
 	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
 		git init -q .
 
@@ -316,7 +323,7 @@ waiter_local_repo ()
 			(
 			$VAR_SHALLOW_ORIGINAL
 
-			display_alert "Checking git sources" "$dir $name/$branch" "info"
+			display_alert "Add original git sources" "$dir $name/$branch" "info"
 			if [ "$(git ls-remote -h $url $branch | \
 				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
 				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
@@ -403,7 +410,7 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
-	if [ "${url#*megous/}" == linux ]; then
+	if [ "$dir" == "linux-mainline" ] && [[ "$LINUXFAMILY" == sunxi* ]]; then
 		unset LINUXSOURCEDIR
 		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
 		VAR_SHALLOW_ORIGINAL=var_origin_kernel

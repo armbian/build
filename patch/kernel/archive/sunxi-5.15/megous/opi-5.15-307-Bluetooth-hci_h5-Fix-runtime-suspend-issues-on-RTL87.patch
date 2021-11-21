@@ -1,0 +1,82 @@
+From 717b2c5ce47aa39323e56a35e85994290b0d8f4c Mon Sep 17 00:00:00 2001
+From: Hans de Goede <hdegoede@redhat.com>
+Date: Mon, 20 Sep 2021 14:57:39 +0200
+Subject: [PATCH 307/473] Bluetooth: hci_h5: Fix (runtime)suspend issues on
+ RTL8723BS HCIs
+
+The recently added H5_WAKEUP_DISABLE h5->flags flag gets checked in
+h5_btrtl_open(), but it gets set in h5_serdev_probe() *after*
+calling  hci_uart_register_device() and thus after h5_btrtl_open()
+is called, set this flag earlier.
+
+Also on devices where suspend/resume involves fully re-probing the HCI,
+runtime-pm suspend should not be used, make the runtime-pm setup
+conditional on the H5_WAKEUP_DISABLE flag too.
+
+This fixes the HCI being removed and then re-added every 10 seconds
+because it was being reprobed as soon as it was runtime-suspended.
+
+Fixes: 66f077dde749 ("Bluetooth: hci_h5: add WAKEUP_DISABLE flag")
+Fixes: d9dd833cf6d2 ("Bluetooth: hci_h5: Add runtime suspend")
+Signed-off-by: Hans de Goede <hdegoede@redhat.com>
+Reviewed-by: Archie Pusaka <apusaka@chromium.org>
+Signed-off-by: Marcel Holtmann <marcel@holtmann.org>
+---
+ drivers/bluetooth/hci_h5.c | 20 +++++++++++---------
+ 1 file changed, 11 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/bluetooth/hci_h5.c b/drivers/bluetooth/hci_h5.c
+index 0c0dedece59c..59b712742d33 100644
+--- a/drivers/bluetooth/hci_h5.c
++++ b/drivers/bluetooth/hci_h5.c
+@@ -846,6 +846,8 @@ static int h5_serdev_probe(struct serdev_device *serdev)
+ 		h5->vnd = data->vnd;
+ 	}
+ 
++	if (data->driver_info & H5_INFO_WAKEUP_DISABLE)
++		set_bit(H5_WAKEUP_DISABLE, &h5->flags);
+ 
+ 	h5->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
+ 	if (IS_ERR(h5->enable_gpio))
+@@ -860,9 +862,6 @@ static int h5_serdev_probe(struct serdev_device *serdev)
+ 	if (err)
+ 		return err;
+ 
+-	if (data->driver_info & H5_INFO_WAKEUP_DISABLE)
+-		set_bit(H5_WAKEUP_DISABLE, &h5->flags);
+-
+ 	return 0;
+ }
+ 
+@@ -962,11 +961,13 @@ static void h5_btrtl_open(struct h5 *h5)
+ 	serdev_device_set_parity(h5->hu->serdev, SERDEV_PARITY_EVEN);
+ 	serdev_device_set_baudrate(h5->hu->serdev, 115200);
+ 
+-	pm_runtime_set_active(&h5->hu->serdev->dev);
+-	pm_runtime_use_autosuspend(&h5->hu->serdev->dev);
+-	pm_runtime_set_autosuspend_delay(&h5->hu->serdev->dev,
+-					 SUSPEND_TIMEOUT_MS);
+-	pm_runtime_enable(&h5->hu->serdev->dev);
++	if (!test_bit(H5_WAKEUP_DISABLE, &h5->flags)) {
++		pm_runtime_set_active(&h5->hu->serdev->dev);
++		pm_runtime_use_autosuspend(&h5->hu->serdev->dev);
++		pm_runtime_set_autosuspend_delay(&h5->hu->serdev->dev,
++						 SUSPEND_TIMEOUT_MS);
++		pm_runtime_enable(&h5->hu->serdev->dev);
++	}
+ 
+ 	/* The controller needs up to 500ms to wakeup */
+ 	gpiod_set_value_cansleep(h5->enable_gpio, 1);
+@@ -976,7 +977,8 @@ static void h5_btrtl_open(struct h5 *h5)
+ 
+ static void h5_btrtl_close(struct h5 *h5)
+ {
+-	pm_runtime_disable(&h5->hu->serdev->dev);
++	if (!test_bit(H5_WAKEUP_DISABLE, &h5->flags))
++		pm_runtime_disable(&h5->hu->serdev->dev);
+ 
+ 	gpiod_set_value_cansleep(h5->device_wake_gpio, 0);
+ 	gpiod_set_value_cansleep(h5->enable_gpio, 0);
+-- 
+2.33.1
+
