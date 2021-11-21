@@ -439,6 +439,14 @@ compile_kernel()
 		fi
 	fi
 
+	call_extension_method "custom_kernel_config" << 'CUSTOM_KERNEL_CONFIG'
+*Kernel .config is in place, still clean from git version*
+Called after ${LINUXCONFIG}.config is put in place (.config).
+Before any olddefconfig any Kconfig make is called.
+A good place to customize the .config directly.
+CUSTOM_KERNEL_CONFIG
+
+
 	# hack for OdroidXU4. Copy firmare files
 	if [[ $BOARD == odroidxu4 ]]; then
 		mkdir -p "${kerneldir}/firmware/edid"

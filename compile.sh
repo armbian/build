@@ -269,6 +269,11 @@ fi
 
 CONFIG_PATH=$(dirname "${CONFIG_FILE}")
 
+# Source the extensions manager library at this point, before sourcing the config.
+# This allows early calls to enable_extension(), but initialization proper is done later.
+# shellcheck source=lib/extensions.sh
+source "${SRC}"/lib/extensions.sh
+
 display_alert "Using config file" "${CONFIG_FILE}" "info"
 pushd "${CONFIG_PATH}" > /dev/null || exit
 # shellcheck source=/dev/null
