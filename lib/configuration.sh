@@ -113,8 +113,11 @@ ATF_COMPILE=yes
 [[ -z $CRYPTROOT_PARAMETERS ]] && CRYPTROOT_PARAMETERS="--pbkdf pbkdf2"
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
+[[ -z $SKIP_BOOTSPLASH ]] && SKIP_BOOTSPLASH="no"
 [[ -z $AUFS ]] && AUFS="yes"
 [[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
+[[ -z $EXTRA_BSP_NAME ]] && EXTRA_BSP_NAME=""
+[[ -z $EXTRA_ROOTFS_MIB_SIZE ]] && EXTRA_ROOTFS_MIB_SIZE=0
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -545,6 +548,10 @@ if [[ $DOWNLOAD_MIRROR == "bfsu" ]] ; then
 	DEBIAN_MIRROR='mirrors.bfsu.edu.cn/debian'
 	DEBIAN_SECURTY='mirrors.bfsu.edu.cn/debian-security'
 	UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
+fi
+
+if [[ "${ARCHITECTURE}" == "x86" ]]; then
+	UBUNTU_MIRROR='archive.ubuntu.com/ubuntu' # ports are only for non-amd64, of course.
 fi
 
 # don't use mirrors that throws garbage on 404

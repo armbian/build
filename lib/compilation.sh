@@ -413,29 +413,26 @@ compile_kernel()
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	local toolchain
-	toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
-	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
-
-# build aarch64
-  fi
+	# if _building_ on amd64, find the toolchain, but not if _targeting_ x86 itself. in that case just use system gcc
+	if [[ $(dpkg --print-architecture) == amd64 ]] && [[ "${ARCHITECTURE}" != "x86" ]]; then
+		local toolchain
+		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+	fi
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
 
 	# copy kernel config
 	if [[ $KERNEL_KEEP_CONFIG == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
 		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
-		cp "${DEST}/config/${LINUXCONFIG}.config" .config
+		cp -p "${DEST}/config/${LINUXCONFIG}.config" .config
 	else
 		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
+			cp -p "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
-			cp "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
+			cp -p "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
 		fi
 	fi
 
@@ -496,7 +493,7 @@ CUSTOM_KERNEL_CONFIG
 		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
 		$SRC_LOADADDR \
 		LOCALVERSION="-$LINUXFAMILY" \
-		$KERNEL_IMAGE_TYPE modules dtbs 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
+		$KERNEL_IMAGE_TYPE ${KERNEL_EXTRA_TARGETS:-modules dtbs} 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" \
 		--progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
@@ -832,6 +829,7 @@ grab_version()
 #
 find_toolchain()
 {
+	[[ "${SKIP_EXTERNAL_TOOLCHAINS}" == "yes" ]] && { echo "/usr/bin"; return; }
 	local compiler=$1
 	local expression=$2
 	local dist=10
