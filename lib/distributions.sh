@@ -379,6 +379,12 @@ install_common()
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
+	call_extension_method "post_family_tweaks" << 'FAMILY_TWEAKS'
+*customize the tweaks made by $LINUXFAMILY-specific family_tweaks*
+It is run after packages are installed in the rootfs, but before enabling additional services.
+It allows implementors access to the rootfs (`${SDCARD}`) in its pristine state after packages are installed.
+FAMILY_TWEAKS
+
 	# enable additional services
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-firstrun.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-firstrun-config.service >/dev/null 2>&1"
@@ -669,5 +675,11 @@ post_debootstrap_tweaks()
 	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
 	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
 	rm -f "${SDCARD}"/usr/sbin/policy-rc.d "${SDCARD}/usr/bin/${QEMU_BINARY}"
+
+	call_extension_method "post_post_debootstrap_tweaks" "config_post_debootstrap_tweaks" << 'POST_POST_DEBOOTSTRAP_TWEAKS'
+*run after removing diversions and qemu with chroot unmounted*
+Last chance to touch the `${SDCARD}` filesystem before it is copied to the final media.
+It is too late to run any chrooted commands, since the supporting filesystems are already unmounted.
+POST_POST_DEBOOTSTRAP_TWEAKS
 
 }
