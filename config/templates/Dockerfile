@@ -121,4 +121,5 @@ RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/de
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
+LABEL org.opencontainers.image.source="https://github.com/armbian/build"
 ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]
