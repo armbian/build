@@ -51,6 +51,11 @@ debootstrap_ng()
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	create_rootfs_cache
 
+	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" << 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
+*give config a chance to act before install_distribution_specific*
+Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
+PRE_INSTALL_DISTRIBUTION_SPECIFIC
+
 	# stage: install kernel and u-boot packages
 	# install distribution and board specific applications
 
@@ -490,8 +495,17 @@ prepare_partitions()
 	fi
 
 	# stage: calculate rootfs size
-	local rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
+	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
 	display_alert "Current rootfs size" "$rootfs_size MiB" "info"
+
+	call_extension_method "prepare_image_size" "config_prepare_image_size" << 'PREPARE_IMAGE_SIZE'
+*allow dynamically determining the size based on the $rootfs_size*
+Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}` is taken into account.
+A good spot to determine `FIXED_IMAGE_SIZE` based on `rootfs_size`.
+UEFISIZE can be set to 0 for no UEFI partition, or to a size in MiB to include one.
+Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
+PREPARE_IMAGE_SIZE
+
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
 		local sdsize=$FIXED_IMAGE_SIZE
@@ -611,6 +625,11 @@ prepare_partitions()
 	fi
 	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
+
+	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
+	*if you created your own partitions, this would be a good time to format them*
+	The loop device is mounted, so ${LOOP}p1 is it's first partition etc.
+	FORMAT_PARTITIONS
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
@@ -734,6 +753,11 @@ create_image()
 		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	fi
 
+	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
+*allow config to hack into the initramfs create process*
+Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
+PRE_UPDATE_INITRAMFS
+
 	# stage: create final initramfs
 	update_initramfs $MOUNT
 
@@ -749,11 +773,21 @@ create_image()
 	# fix wrong / permissions
 	chmod 755 $MOUNT
 
-	# unmount /boot first, rootfs second, image file last
+	call_extension_method "pre_umount_final_image" "config_pre_umount_final_image" << 'PRE_UMOUNT_FINAL_IMAGE'
+*allow config to hack into the image before the unmount*
+Called before unmounting both `/root` and `/boot`.
+PRE_UMOUNT_FINAL_IMAGE
+
+	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
+
+	call_extension_method "post_umount_final_image" "config_post_umount_final_image" << 'POST_UMOUNT_FINAL_IMAGE'
+*allow config to hack into the image after the unmount*
+Called after unmounting both `/root` and `/boot`.
+POST_UMOUNT_FINAL_IMAGE
 
 	# to make sure its unmounted
 	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
@@ -858,8 +892,15 @@ create_image()
 	fi
 	display_alert "Done building" "${DESTIMG}/${version}.img" "info"
 
-	# call custom post build hook
-	[[ $(type -t post_build_image) == function ]] && post_build_image "${DESTIMG}/${version}.img"
+	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
+	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
+	call_extension_method "post_build_image"  << 'POST_BUILD_IMAGE'
+*custom post build hook*
+Called after the final .img file is built, before it is (possibly) written to an SD writer.
+- *NOTE*: this hook used to take an argument ($1) for the final image produced.
+  - Now it is passed as an environment variable `${FINAL_IMAGE_FILE}`
+It is the last possible chance to modify `$CARD_DEVICE`.
+POST_BUILD_IMAGE
 
 	# move artefacts from temporally directory to its final destination
 	[[ -n $compression_type ]] && rm $DESTIMG/${version}.img
