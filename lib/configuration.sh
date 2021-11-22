@@ -572,12 +572,12 @@ if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 	source "$USERPATCHES_PATH"/lib.config
 fi
 
-call_extension_method "user_config" << 'EXTENSION_PREPARE_CONFIG'
+call_extension_method "user_config" << 'USER_CONFIG'
 *Invoke function with user override*
 Allows for overriding configuration values set anywhere else.
 It is called after sourcing the `lib.config` file if it exists,
 but before assembling any package lists.
-EXTENSION_PREPARE_CONFIG
+USER_CONFIG
 
 call_extension_method "extension_prepare_config" << 'EXTENSION_PREPARE_CONFIG'
 *allow extensions to prepare their own config, after user config is done*
