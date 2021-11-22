@@ -22,15 +22,11 @@
 # install_deb_chroot
 # run_on_sdcard
 
-
-
-
 # mount_chroot <target>
 #
 # helper to reduce code duplication
 #
-mount_chroot()
-{
+mount_chroot() {
 
 	local target=$1
 	mount -t proc chproc "${target}"/proc
@@ -40,35 +36,26 @@ mount_chroot()
 
 }
 
-
-
-
 # umount_chroot <target>
 #
 # helper to reduce code duplication
 #
-umount_chroot()
-{
+umount_chroot() {
 
 	local target=$1
 	display_alert "Unmounting" "$target" "info"
-	while grep -Eq "${target}.*(dev|proc|sys)" /proc/mounts
-	do
-		umount -l --recursive "${target}"/dev >/dev/null 2>&1
-		umount -l "${target}"/proc >/dev/null 2>&1
-		umount -l "${target}"/sys >/dev/null 2>&1
+	while grep -Eq "${target}.*(dev|proc|sys)" /proc/mounts; do
+		umount -l --recursive "${target}"/dev > /dev/null 2>&1
+		umount -l "${target}"/proc > /dev/null 2>&1
+		umount -l "${target}"/sys > /dev/null 2>&1
 		sleep 5
 	done
 
 }
 
-
-
-
 # unmount_on_exit
 #
-unmount_on_exit()
-{
+unmount_on_exit() {
 
 	trap - INT TERM EXIT
 	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
@@ -84,24 +71,20 @@ unmount_on_exit()
 	umount_chroot "${SDCARD}/"
 	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
 	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs
-	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
-	umount -l "${SDCARD}" >/dev/null 2>&1
-	umount -l "${MOUNT}"/boot >/dev/null 2>&1
-	umount -l "${MOUNT}" >/dev/null 2>&1
+	umount -l "${SDCARD}"/tmp > /dev/null 2>&1
+	umount -l "${SDCARD}" > /dev/null 2>&1
+	umount -l "${MOUNT}"/boot > /dev/null 2>&1
+	umount -l "${MOUNT}" > /dev/null 2>&1
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
-	losetup -d "${LOOP}" >/dev/null 2>&1
+	losetup -d "${LOOP}" > /dev/null 2>&1
 	rm -rf --one-file-system "${SDCARD}"
 	exit_with_error "debootstrap-ng was interrupted" || true # don't trigger again
 
 }
 
-
-
-
 # check_loop_device <device_node>
 #
-check_loop_device()
-{
+check_loop_device() {
 
 	local device=$1
 	if [[ ! -b $device ]]; then
@@ -115,13 +98,9 @@ check_loop_device()
 
 }
 
-
-
-
 # write_uboot <loopdev>
 #
-write_uboot()
-{
+write_uboot() {
 
 	local loop=$1 revision
 	display_alert "Writing U-boot bootloader" "$loop" "info"
@@ -143,30 +122,20 @@ write_uboot()
 
 }
 
-
-
-
 # copy_all_packages_files_for <folder> to package
 #
-copy_all_packages_files_for()
-{
+copy_all_packages_files_for() {
 	local package_name="${1}"
-	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS};
-	do
+	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS}; do
 		local package_dirpath="${package_src_dir}/${package_name}"
-		if [ -d "${package_dirpath}" ];
-		then
+		if [ -d "${package_dirpath}" ]; then
 			cp -r "${package_dirpath}/"* "${destination}/" 2> /dev/null
 			display_alert "Adding files from" "${package_dirpath}"
 		fi
 	done
 }
 
-
-
-
-customize_image()
-{
+customize_image() {
 
 	# for users that need to prepare files at host
 	[[ -f $USERPATCHES_PATH/customize-image-host.sh ]] && source "$USERPATCHES_PATH"/customize-image-host.sh
@@ -185,7 +154,7 @@ PRE_CUSTOMIZE_IMAGE
 	display_alert "Calling image customization script" "customize-image.sh" "info"
 	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP $ARCH"
 	CUSTOMIZE_IMAGE_RC=$?
-	umount -i "${SDCARD}"/tmp/overlay >/dev/null 2>&1
+	umount -i "${SDCARD}"/tmp/overlay > /dev/null 2>&1
 	mountpoint -q "${SDCARD}"/tmp/overlay || rm -r "${SDCARD}"/tmp/overlay
 	if [[ $CUSTOMIZE_IMAGE_RC != 0 ]]; then
 		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
@@ -197,11 +166,7 @@ Run after the customize-image.sh script is run, and the overlay is unmounted.
 POST_CUSTOMIZE_IMAGE
 }
 
-
-
-
-install_deb_chroot()
-{
+install_deb_chroot() {
 
 	local package=$1
 	local variant=$2
@@ -227,9 +192,7 @@ install_deb_chroot()
 
 }
 
-
-run_on_sdcard()
-{
+run_on_sdcard() {
 
 	# Lack of quotes allows for redirections and pipes easily.
 	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}"/${LOG_SUBPATH}/install.log

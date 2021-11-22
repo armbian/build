@@ -1,4 +1,4 @@
-# Allwinner H2+ quad core 256MB/512MB RAM SoC WiFi SPI 2xETH 
+# Allwinner H2+ quad core 256MB/512MB RAM SoC WiFi SPI 2xETH
 BOARD_NAME="Orange Pi R1"
 BOARDFAMILY="sun8i"
 BOOTCONFIG="orangepi_r1_defconfig"

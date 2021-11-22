@@ -1,6 +1,6 @@
 #!/bin/bash
 
-GPIO_CONFIGURED_CHECK_DIRECTORY="/var/run/rtk_bt" 
+GPIO_CONFIGURED_CHECK_DIRECTORY="/var/run/rtk_bt"
 GPIO_CONFIGURED_CHECK_FILE="/var/run/rtk_bt/gpio_configured"
 
 function die_on_error {
@@ -14,9 +14,8 @@ function die_on_error {
 # Do not complain if we didn't kill anything.
 killall -q -SIGTERM rtk_hciattach
 
-# If the GPIO are not yet configured 
-if [ ! -f "$GPIO_CONFIGURED_CHECK_FILE" ];
-then
+# If the GPIO are not yet configured
+if [ ! -f "$GPIO_CONFIGURED_CHECK_FILE" ]; then
 	# We'll create the directory first
 	# So that, if the user is not root
 	# he'll get a user permission error
@@ -41,11 +40,11 @@ fi
 
 echo "Resetting the Bluetooth chip"
 echo 0 > /sys/class/gpio/gpio149/value &&
-echo -e "\tBluetooth chip power down..." && 
-sleep 1 &&
-echo 1 > /sys/class/gpio/gpio149/value &&
-echo -e "\tBluetooth chip power up..." &&
-sleep 1
+	echo -e "\tBluetooth chip power down..." &&
+	sleep 1 &&
+	echo 1 > /sys/class/gpio/gpio149/value &&
+	echo -e "\tBluetooth chip power up..." &&
+	sleep 1
 echo -e "\tResetting done"
 
 /usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS0 rtk_h5 || die_on_error "Could not create hci0 through rtk_hciattach"

@@ -16,26 +16,26 @@ BRIGHTNESS=/sys/class/leds/helios4\:red\:fault/brightness
 
 # Active component device of an array has been marked as faulty OR A newly noticed array appears to be degraded.
 if [[ $EVENT == "Fail" || $EVENT == "DegradedArray" ]]; then
-    echo none > $TRIGGER
-    echo 1 > $BRIGHTNESS
+	echo none > $TRIGGER
+	echo 1 > $BRIGHTNESS
 fi
 
 # An md array started reconstruction
 if [ $EVENT == "RebuildStarted" ]; then
-    echo timer > $TRIGGER
-    echo 1 > $BRIGHTNESS
+	echo timer > $TRIGGER
+	echo 1 > $BRIGHTNESS
 fi
 
-# An md array that was rebuilding, isn't any more, either because it finished normally or was aborted. 
+# An md array that was rebuilding, isn't any more, either because it finished normally or was aborted.
 if [ $EVENT == "RebuildFinished" ]; then
-    echo none > $TRIGGER
-    echo 0 > $BRIGHTNESS
+	echo none > $TRIGGER
+	echo 0 > $BRIGHTNESS
 fi
 
 # Test RED Fault LED
 if [ $EVENT == "TestMessage" ]; then
-    echo timer > $TRIGGER
-    echo 1 > $BRIGHTNESS
-    sleep 5
-    echo 0 > $BRIGHTNESS
+	echo timer > $TRIGGER
+	echo 1 > $BRIGHTNESS
+	sleep 5
+	echo 0 > $BRIGHTNESS
 fi

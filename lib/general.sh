@@ -24,14 +24,10 @@
 # addtorepo
 # repo-remove-old-packages
 # wait_for_package_manager
-# install_pkg_deb
 # prepare_host_basic
 # prepare_host
 # webseed
 # download_and_verify
-# show_developer_warning
-# show_checklist_variables
-
 
 # cleaning <target>
 #
@@ -46,64 +42,69 @@
 # "sources" - delete output/sources
 #
 
-cleaning()
-{
+cleaning() {
 	case $1 in
 		debs) # delete ${DEB_STORAGE} for current branch and family
-		if [[ -d "${DEB_STORAGE}" ]]; then
-			display_alert "Cleaning ${DEB_STORAGE} for" "$BOARD $BRANCH" "info"
-			# easier than dealing with variable expansion and escaping dashes in file names
-			find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
-			find "${DEB_STORAGE}" \( -name "${CHOSEN_KERNEL}_*.deb" -o \
-				-name "armbian-*.deb" -o \
-				-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
-				-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
-				-name "${CHOSEN_KERNEL/image/source}_*.deb" -o \
-				-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
-			[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/${CHOSEN_ROOTFS}"_*.deb
-			[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/armbian-desktop-${RELEASE}"_*.deb
-		fi
-		;;
+			if [[ -d "${DEB_STORAGE}" ]]; then
+				display_alert "Cleaning ${DEB_STORAGE} for" "$BOARD $BRANCH" "info"
+				# easier than dealing with variable expansion and escaping dashes in file names
+				find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
+				find "${DEB_STORAGE}" \( -name "${CHOSEN_KERNEL}_*.deb" -o \
+					-name "armbian-*.deb" -o \
+					-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
+					-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
+					-name "${CHOSEN_KERNEL/image/source}_*.deb" -o \
+					-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
+				[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/${CHOSEN_ROOTFS}"_*.deb
+				[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/armbian-desktop-${RELEASE}"_*.deb
+			fi
+			;;
 
 		ubootdebs) # delete ${DEB_STORAGE} for uboot, current branch and family
-		if [[ -d "${DEB_STORAGE}" ]]; then
-			display_alert "Cleaning ${DEB_STORAGE} for u-boot" "$BOARD $BRANCH" "info"
-			# easier than dealing with variable expansion and escaping dashes in file names
-			find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
-		fi
-		;;
+			if [[ -d "${DEB_STORAGE}" ]]; then
+				display_alert "Cleaning ${DEB_STORAGE} for u-boot" "$BOARD $BRANCH" "info"
+				# easier than dealing with variable expansion and escaping dashes in file names
+				find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
+			fi
+			;;
 
 		extras) # delete ${DEB_STORAGE}/extra/$RELEASE for all architectures
-		if [[ -n $RELEASE && -d ${DEB_STORAGE}/extra/$RELEASE ]]; then
-			display_alert "Cleaning ${DEB_STORAGE}/extra for" "$RELEASE" "info"
-			rm -rf "${DEB_STORAGE}/extra/${RELEASE}"
-		fi
-		;;
+			if [[ -n $RELEASE && -d ${DEB_STORAGE}/extra/$RELEASE ]]; then
+				display_alert "Cleaning ${DEB_STORAGE}/extra for" "$RELEASE" "info"
+				rm -rf "${DEB_STORAGE}/extra/${RELEASE}"
+			fi
+			;;
 
 		alldebs) # delete output/debs
-		[[ -d "${DEB_STORAGE}" ]] && display_alert "Cleaning" "${DEB_STORAGE}" "info" && rm -rf "${DEB_STORAGE}"/*
-		;;
+			[[ -d "${DEB_STORAGE}" ]] && display_alert "Cleaning" "${DEB_STORAGE}" "info" && rm -rf "${DEB_STORAGE}"/*
+			;;
 
 		cache) # delete output/cache
-		[[ -d "${SRC}"/cache/rootfs ]] && display_alert "Cleaning" "rootfs cache (all)" "info" && find "${SRC}"/cache/rootfs -type f -delete
-		;;
+			[[ -d "${SRC}"/cache/rootfs ]] && display_alert "Cleaning" "rootfs cache (all)" "info" && find "${SRC}"/cache/rootfs -type f -delete
+			;;
 
 		images) # delete output/images
-		[[ -d "${DEST}"/images ]] && display_alert "Cleaning" "output/images" "info" && rm -rf "${DEST}"/images/*
-		;;
+			[[ -d "${DEST}"/images ]] && display_alert "Cleaning" "output/images" "info" && rm -rf "${DEST}"/images/*
+			;;
 
 		sources) # delete output/sources and output/buildpkg
-		[[ -d "${SRC}"/cache/sources ]] && display_alert "Cleaning" "sources" "info" && rm -rf "${SRC}"/cache/sources/* "${DEST}"/buildpkg/*
-		;;
+			[[ -d "${SRC}"/cache/sources ]] && display_alert "Cleaning" "sources" "info" && rm -rf "${SRC}"/cache/sources/* "${DEST}"/buildpkg/*
+			;;
 
 		oldcache) # remove old `cache/rootfs` except for the newest 8 files
-		if [[ -d "${SRC}"/cache/rootfs && $(ls -1 "${SRC}"/cache/rootfs/*.lz4 2> /dev/null | wc -l) -gt "${ROOTFS_CACHE_MAX}" ]]; then
-			display_alert "Cleaning" "rootfs cache (old)" "info"
-			(cd "${SRC}"/cache/rootfs; ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
-			# Remove signatures if they are present. We use them for internal purpose
-			(cd "${SRC}"/cache/rootfs; ls -t *.asc | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
-		fi
-		;;
+			if [[ -d "${SRC}"/cache/rootfs && $(ls -1 "${SRC}"/cache/rootfs/*.lz4 2> /dev/null | wc -l) -gt "${ROOTFS_CACHE_MAX}" ]]; then
+				display_alert "Cleaning" "rootfs cache (old)" "info"
+				(
+					cd "${SRC}"/cache/rootfs
+					ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f
+				)
+				# Remove signatures if they are present. We use them for internal purpose
+				(
+					cd "${SRC}"/cache/rootfs
+					ls -t *.asc | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f
+				)
+			fi
+			;;
 	esac
 }
 
@@ -113,8 +114,7 @@ cleaning()
 # with verbose error message
 #
 
-exit_with_error()
-{
+exit_with_error() {
 	local _file
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
@@ -137,7 +137,7 @@ exit_with_error()
 	# TODO: execute run_after_build here?
 	overlayfs_wrapper "cleanup"
 	# unlock loop device access in case of starvation
-	exec {FD}>/var/lock/armbian-debootstrap-losetup
+	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -u "${FD}"
 
 	exit 255
@@ -147,14 +147,19 @@ exit_with_error()
 #
 # returns md5 hash for current package list and rootfs cache version
 
-get_package_list_hash()
-{
+get_package_list_hash() {
 	local package_arr exclude_arr
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	( ( printf "%s\n" "${package_arr[@]}"; printf -- "-%s\n" "${exclude_arr[@]}" ) | sort -u; echo "${1}" ) \
-		| md5sum | cut -d' ' -f 1
+	( 
+		(
+			printf "%s\n" "${package_arr[@]}"
+			printf -- "-%s\n" "${exclude_arr[@]}"
+		) | sort -u
+		echo "${1}"
+	) |
+		md5sum | cut -d' ' -f 1
 }
 
 # create_sources_list <release> <basedir>
@@ -162,76 +167,75 @@ get_package_list_hash()
 # <release>: buster|bullseye|bionic|focal|hirsute|impish|jammy|sid
 # <basedir>: path to root directory
 #
-create_sources_list()
-{
+create_sources_list() {
 	local release=$1
 	local basedir=$2
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	stretch|buster)
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${DEBIAN_MIRROR} $release main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+		stretch | buster)
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
 
-	deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
-	#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
-	EOF
-	;;
+				deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
+				#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
+			EOF
+			;;
 
-	bullseye|bookworm|trixie)
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${DEBIAN_MIRROR} $release main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+		bullseye | bookworm | trixie)
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
 
-	deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
-	#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
-	EOF
-	;;
+				deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+				#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+			EOF
+			;;
 
-	sid) # sid is permanent unstable development and has no such thing as updates or security
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${DEBIAN_MIRROR} $release main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
-	EOF
-	;;
+		sid) # sid is permanent unstable development and has no such thing as updates or security
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+			EOF
+			;;
 
-	xenial|bionic|focal|hirsute|impish|jammy)
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
+		xenial | bionic | focal | hirsute | impish | jammy)
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 
-	deb http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
+				deb http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
 
-	deb http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
+				deb http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
 
-	deb http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
-	EOF
-	;;
+				deb http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
+			EOF
+			;;
 	esac
 
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
 		echo "deb https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
-	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt")".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development
@@ -249,12 +253,10 @@ create_sources_list()
 	rm "${basedir}"/armbian.key
 }
 
-
 #
 # This function retries Git operations to avoid failure in case remote is borked
 #
-improved_git()
-{
+improved_git() {
 
 	local realgit=$(command -v git)
 	local retries=3
@@ -266,14 +268,13 @@ improved_git()
 			retries=0
 			break
 		fi
-	let count=$count+1
-	sleep $delay
+		let count=$count+1
+		sleep $delay
 	done
 
 }
 
-clean_up_repo ()
-{
+clean_up_repo() {
 	local target_dir=$1
 
 	# Files that are not tracked by git and were added
@@ -291,16 +292,18 @@ clean_up_repo ()
 #			dir='linux-mainline/5.14' \
 #			branch='orange-pi-5.14' \
 #			obj=<tag|commit> or tag:$tag ...
-waiter_local_repo ()
-{
-	for arg in $@;do
+waiter_local_repo() {
+	for arg in $@; do
 
 		case $arg in
-			url=*|https://*|git://*)	eval "local url=${arg/url=/}"
+			url=* | https://* | git://*)
+				eval "local url=${arg/url=/}"
 				;;
-			dir=*|/*/*/*)	eval "local dir=${arg/dir=/}"
+			dir=* | /*/*/*)
+				eval "local dir=${arg/dir=/}"
 				;;
-			*=*|*:*)	eval "local ${arg/:/=}"
+			*=* | *:*)
+				eval "local ${arg/:/=}"
 				;;
 		esac
 
@@ -327,30 +330,30 @@ waiter_local_repo ()
 	display_alert "Checking git sources" "$dir $name/$branch" "info"
 
 	# Check the exception for 5.15 sunxi. We will remove this after a while.
-	if [ "$dir" == "linux-mainline/5.15" ] && \
-	   [ "$(git remote show | grep megous)" == "megous" ]; then
-			display_alert "Remove mistakenly created and excessively large" "$dir" "info"
-			rm -rf .git ./*
+	if [ "$dir" == "linux-mainline/5.15" ] &&
+		[ "$(git remote show | grep megous)" == "megous" ]; then
+		display_alert "Remove mistakenly created and excessively large" "$dir" "info"
+		rm -rf .git ./*
 	fi
 
-	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
+	if [ "$(git rev-parse --git-dir 2> /dev/null)" != ".git" ]; then
 		git init -q .
 
 		# Run in the sub shell to avoid mixing environment variables.
 		if [ -n "$VAR_SHALLOW_ORIGINAL" ]; then
 			(
-			$VAR_SHALLOW_ORIGINAL
+				$VAR_SHALLOW_ORIGINAL
 
-			display_alert "Add original git sources" "$dir $name/$branch" "info"
-			if [ "$(git ls-remote -h $url $branch | \
-				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
-				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
-				exit 177
-			fi
+				display_alert "Add original git sources" "$dir $name/$branch" "info"
+				if [ "$(git ls-remote -h $url $branch |
+					awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ]; then
+					display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
+					exit 177
+				fi
 
-			git remote add -t $branch $name $url
-			git fetch --shallow-exclude=$start_tag $name
-			git fetch --deepen=1 $name
+				git remote add -t $branch $name $url
+				git fetch --shallow-exclude=$start_tag $name
+				git fetch --deepen=1 $name
 			)
 
 			[ "$?" == "177" ] && exit
@@ -358,17 +361,17 @@ waiter_local_repo ()
 	fi
 
 	files_for_clean="$(git status -s | wc -l)"
-	if [ "$files_for_clean" != "0" ];then
+	if [ "$files_for_clean" != "0" ]; then
 		display_alert " Cleaning .... " "$files_for_clean files"
 		clean_up_repo $work_dir
 	fi
 
-	if [ "$name" != "$(git remote show | grep $name)" ];then
+	if [ "$name" != "$(git remote show | grep $name)" ]; then
 		git remote add -t $branch $name $url
 	fi
 
 	if ! $offline; then
-		for t_name in $(git remote show);do
+		for t_name in $(git remote show); do
 			git fetch $t_name
 		done
 	fi
@@ -379,16 +382,16 @@ waiter_local_repo ()
 	# We do not use variables that characterize the current state of the git,
 	# such as `HEAD` and `FETCH_HEAD`.
 	reachability=false
-	for var in obj tag commit branch;do
+	for var in obj tag commit branch; do
 		eval pval=\$$var
 
 		if [ -n "$pval" ] && [ "$pval" != *HEAD ]; then
 			case $var in
-				obj|tag|commit) obj=$pval ;;
+				obj | tag | commit) obj=$pval ;;
 				branch) obj=${name}/$branch ;;
 			esac
 
-			if  t_hash=$(git rev-parse $obj 2>/dev/null);then
+			if t_hash=$(git rev-parse $obj 2> /dev/null); then
 				reachability=true
 				break
 			else
@@ -397,7 +400,7 @@ waiter_local_repo ()
 		fi
 	done
 
-	if $reachability && [ "$t_hash" != "$(git rev-parse @ 2>/dev/null)" ];then
+	if $reachability && [ "$t_hash" != "$(git rev-parse @ 2> /dev/null)" ]; then
 		# Switch "detached branch" as hash
 		display_alert "Switch $obj = $t_hash"
 		git checkout -qf $t_hash
@@ -421,8 +424,7 @@ waiter_local_repo ()
 #
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
-fetch_from_repo()
-{
+fetch_from_repo() {
 	local url=$1
 	local dir=$2
 	local ref=$3
@@ -447,7 +449,7 @@ fetch_from_repo()
 		local offline=false
 	fi
 
-	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:* ) ]] && exit_with_error "Error in configuration"
+	[[ -z $ref || ($ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:*) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
 	if [[ $ref_type == head ]]; then
 		local ref_name=HEAD
@@ -467,7 +469,7 @@ fetch_from_repo()
 		local workdir=$dir
 	fi
 
-	mkdir -p "${SRC}/cache/sources/${workdir}" 2>/dev/null || \
+	mkdir -p "${SRC}/cache/sources/${workdir}" 2> /dev/null ||
 		exit_with_error "No path or no write permission" "${SRC}/cache/sources/${workdir}"
 
 	cd "${SRC}/cache/sources/${workdir}" || exit
@@ -477,13 +479,13 @@ fetch_from_repo()
 	#  Check the folder as a git repository.
 	#  Then the target URL matches the local URL.
 
-	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
+	if [[ "$(improved_git rev-parse --git-dir 2> /dev/null)" == ".git" &&
+	"$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2> /dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
 
-	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
+	if [[ "$(improved_git rev-parse --git-dir 2> /dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
 		improved_git init -q .
 		improved_git remote add origin "${url}"
@@ -496,34 +498,34 @@ fetch_from_repo()
 	# when we work offline we simply return the sources to their original state
 	if ! $offline; then
 		local local_hash
-		local_hash=$(git rev-parse @ 2>/dev/null)
+		local_hash=$(git rev-parse @ 2> /dev/null)
 
 		case $ref_type in
 			branch)
-			# TODO: grep refs/heads/$name
-			local remote_hash
-			remote_hash=$(improved_git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
-			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
-			;;
+				# TODO: grep refs/heads/$name
+				local remote_hash
+				remote_hash=$(improved_git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
+				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				;;
 
 			tag)
-			local remote_hash
-			remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name" | cut -f1)
-			if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
-				remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
-				[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
-			fi
-			;;
+				local remote_hash
+				remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name" | cut -f1)
+				if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
+					remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
+					[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				fi
+				;;
 
 			head)
-			local remote_hash
-			remote_hash=$(improved_git ls-remote "${url}" HEAD | cut -f1)
-			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
-			;;
+				local remote_hash
+				remote_hash=$(improved_git ls-remote "${url}" HEAD | cut -f1)
+				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				;;
 
 			commit)
-			[[ -z $local_hash || $local_hash == "@" ]] && changed=true
-			;;
+				[[ -z $local_hash || $local_hash == "@" ]] && changed=true
+				;;
 		esac
 
 	fi # offline
@@ -601,8 +603,7 @@ fetch_from_repo()
 #--------------------------------------------------------------------------------------------------------------------------------
 # Let's have unique way of displaying alerts
 #--------------------------------------------------------------------------------------------------------------------------------
-display_alert()
-{
+display_alert() {
 	# log function parameters to install.log
 	[[ -n "${DEST}" ]] && echo "Displaying message: $@" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
@@ -611,24 +612,24 @@ display_alert()
 
 	case $3 in
 		err)
-		echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
-		;;
+			echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
+			;;
 
 		wrn)
-		echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
-		;;
+			echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
+			;;
 
 		ext)
-		echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
-		;;
+			echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
+			;;
 
 		info)
-		echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
-		;;
+			echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
+			;;
 
 		*)
-		echo -e "[\e[0;32m .... \x1B[0m] $1 $tmp"
-		;;
+			echo -e "[\e[0;32m .... \x1B[0m] $1 $tmp"
+			;;
 	esac
 }
 
@@ -636,59 +637,56 @@ display_alert()
 # fingerprint_image <out_txt_file> [image_filename]
 # Saving build summary to the image
 #--------------------------------------------------------------------------------------------------------------------------------
-fingerprint_image()
-{
-	cat <<-EOF > "${1}"
-	--------------------------------------------------------------------------------
-	Title:			${VENDOR} $REVISION ${BOARD^} $BRANCH
-	Kernel:			Linux $VER
-	Build date:		$(date +'%d.%m.%Y')
-	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
-	Authors:		https://www.armbian.com/authors
-	Sources: 		https://github.com/armbian/
-	Support: 		https://forum.armbian.com/
-	Changelog: 		https://www.armbian.com/logbook/
-	Documantation:		https://docs.armbian.com/
+fingerprint_image() {
+	cat <<- EOF > "${1}"
+		--------------------------------------------------------------------------------
+		Title:           ${VENDOR} $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
+		Kernel:          Linux $VER
+		Build date:     $(date +'%d.%m.%Y')
+		Maintainer:     $MAINTAINER <$MAINTAINERMAIL>
+		Authors:        https://www.armbian.com/authors
+		Sources:        https://github.com/armbian/
+		Support:        https://forum.armbian.com/
+		Changelog:      https://www.armbian.com/logbook/
+		Documantation:  https://docs.armbian.com/
 	EOF
 
 	if [ -n "$2" ]; then
-		cat <<-EOF >> "${1}"
-		--------------------------------------------------------------------------------
-		Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
-		Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
-		Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
+		cat <<- EOF >> "${1}"
+			--------------------------------------------------------------------------------
+			Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
+			Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
+			Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
 
-		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
-		--------------------------------------------------------------------------------
-		Verify GPG signature:
-		gpg --verify $2.img.asc
+			CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
+			--------------------------------------------------------------------------------
+			Verify GPG signature:
+			gpg --verify $2.img.asc
 
-		Verify image file integrity:
-		sha256sum --check $2.img.sha
+			Verify image file integrity:
+			sha256sum --check $2.img.sha
 
-		Prepare SD card (four methodes):
-		zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
-		dd if=$2.img of=/dev/mmcblkX bs=1M
-		balena-etcher $2.img.gz -d /dev/mmcblkX
-		balena-etcher $2.img -d /dev/mmcblkX
+			Prepare SD card (four methodes):
+			zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
+			dd if=$2.img of=/dev/mmcblkX bs=1M
+			balena-etcher $2.img.gz -d /dev/mmcblkX
+			balena-etcher $2.img -d /dev/mmcblkX
 		EOF
 	fi
 
-	cat <<-EOF >> "${1}"
-	--------------------------------------------------------------------------------
-	$(cat "${SRC}"/LICENSE)
-	--------------------------------------------------------------------------------
+	cat <<- EOF >> "${1}"
+		--------------------------------------------------------------------------------
+		$(cat "${SRC}"/LICENSE)
+		--------------------------------------------------------------------------------
 	EOF
 }
-
 
 #--------------------------------------------------------------------------------------------------------------------------------
 # Create kernel boot logo from packages/blobs/splash/logo.png and packages/blobs/splash/spinner.gif (animated)
 # and place to the file /lib/firmware/bootsplash
 #--------------------------------------------------------------------------------------------------------------------------------
-function boot_logo ()
-{
-display_alert "Building kernel splash logo" "$RELEASE" "info"
+function boot_logo() {
+	display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 	LOGO=${SRC}/packages/blobs/splash/logo.png
 	LOGO_WIDTH=$(identify $LOGO | cut -d " " -f 3 | cut -d x -f 1)
@@ -696,105 +694,105 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 	THROBBER=${SRC}/packages/blobs/splash/spinner.gif
 	THROBBER_WIDTH=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 1)
 	THROBBER_HEIGHT=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 2)
-	convert -alpha remove -background "#000000"	$LOGO "${SDCARD}"/tmp/logo.rgb
+	convert -alpha remove -background "#000000" $LOGO "${SDCARD}"/tmp/logo.rgb
 	convert -alpha remove -background "#000000" $THROBBER "${SDCARD}"/tmp/throbber%02d.rgb
 	${SRC}/packages/blobs/splash/bootsplash-packer \
-	--bg_red 0x00 \
-	--bg_green 0x00 \
-	--bg_blue 0x00 \
-	--frame_ms 48 \
-	--picture \
-	--pic_width $LOGO_WIDTH \
-	--pic_height $LOGO_HEIGHT \
-	--pic_position 0 \
-	--blob "${SDCARD}"/tmp/logo.rgb \
-	--picture \
-	--pic_width $THROBBER_WIDTH \
-	--pic_height $THROBBER_HEIGHT \
-	--pic_position 0x05 \
-	--pic_position_offset 200 \
-	--pic_anim_type 1 \
-	--pic_anim_loop 0 \
-	--blob "${SDCARD}"/tmp/throbber00.rgb \
-	--blob "${SDCARD}"/tmp/throbber01.rgb \
-	--blob "${SDCARD}"/tmp/throbber02.rgb \
-	--blob "${SDCARD}"/tmp/throbber03.rgb \
-	--blob "${SDCARD}"/tmp/throbber04.rgb \
-	--blob "${SDCARD}"/tmp/throbber05.rgb \
-	--blob "${SDCARD}"/tmp/throbber06.rgb \
-	--blob "${SDCARD}"/tmp/throbber07.rgb \
-	--blob "${SDCARD}"/tmp/throbber08.rgb \
-	--blob "${SDCARD}"/tmp/throbber09.rgb \
-	--blob "${SDCARD}"/tmp/throbber10.rgb \
-	--blob "${SDCARD}"/tmp/throbber11.rgb \
-	--blob "${SDCARD}"/tmp/throbber12.rgb \
-	--blob "${SDCARD}"/tmp/throbber13.rgb \
-	--blob "${SDCARD}"/tmp/throbber14.rgb \
-	--blob "${SDCARD}"/tmp/throbber15.rgb \
-	--blob "${SDCARD}"/tmp/throbber16.rgb \
-	--blob "${SDCARD}"/tmp/throbber17.rgb \
-	--blob "${SDCARD}"/tmp/throbber18.rgb \
-	--blob "${SDCARD}"/tmp/throbber19.rgb \
-	--blob "${SDCARD}"/tmp/throbber20.rgb \
-	--blob "${SDCARD}"/tmp/throbber21.rgb \
-	--blob "${SDCARD}"/tmp/throbber22.rgb \
-	--blob "${SDCARD}"/tmp/throbber23.rgb \
-	--blob "${SDCARD}"/tmp/throbber24.rgb \
-	--blob "${SDCARD}"/tmp/throbber25.rgb \
-	--blob "${SDCARD}"/tmp/throbber26.rgb \
-	--blob "${SDCARD}"/tmp/throbber27.rgb \
-	--blob "${SDCARD}"/tmp/throbber28.rgb \
-	--blob "${SDCARD}"/tmp/throbber29.rgb \
-	--blob "${SDCARD}"/tmp/throbber30.rgb \
-	--blob "${SDCARD}"/tmp/throbber31.rgb \
-	--blob "${SDCARD}"/tmp/throbber32.rgb \
-	--blob "${SDCARD}"/tmp/throbber33.rgb \
-	--blob "${SDCARD}"/tmp/throbber34.rgb \
-	--blob "${SDCARD}"/tmp/throbber35.rgb \
-	--blob "${SDCARD}"/tmp/throbber36.rgb \
-	--blob "${SDCARD}"/tmp/throbber37.rgb \
-	--blob "${SDCARD}"/tmp/throbber38.rgb \
-	--blob "${SDCARD}"/tmp/throbber39.rgb \
-	--blob "${SDCARD}"/tmp/throbber40.rgb \
-	--blob "${SDCARD}"/tmp/throbber41.rgb \
-	--blob "${SDCARD}"/tmp/throbber42.rgb \
-	--blob "${SDCARD}"/tmp/throbber43.rgb \
-	--blob "${SDCARD}"/tmp/throbber44.rgb \
-	--blob "${SDCARD}"/tmp/throbber45.rgb \
-	--blob "${SDCARD}"/tmp/throbber46.rgb \
-	--blob "${SDCARD}"/tmp/throbber47.rgb \
-	--blob "${SDCARD}"/tmp/throbber48.rgb \
-	--blob "${SDCARD}"/tmp/throbber49.rgb \
-	--blob "${SDCARD}"/tmp/throbber50.rgb \
-	--blob "${SDCARD}"/tmp/throbber51.rgb \
-	--blob "${SDCARD}"/tmp/throbber52.rgb \
-	--blob "${SDCARD}"/tmp/throbber53.rgb \
-	--blob "${SDCARD}"/tmp/throbber54.rgb \
-	--blob "${SDCARD}"/tmp/throbber55.rgb \
-	--blob "${SDCARD}"/tmp/throbber56.rgb \
-	--blob "${SDCARD}"/tmp/throbber57.rgb \
-	--blob "${SDCARD}"/tmp/throbber58.rgb \
-	--blob "${SDCARD}"/tmp/throbber59.rgb \
-	--blob "${SDCARD}"/tmp/throbber60.rgb \
-	--blob "${SDCARD}"/tmp/throbber61.rgb \
-	--blob "${SDCARD}"/tmp/throbber62.rgb \
-	--blob "${SDCARD}"/tmp/throbber63.rgb \
-	--blob "${SDCARD}"/tmp/throbber64.rgb \
-	--blob "${SDCARD}"/tmp/throbber65.rgb \
-	--blob "${SDCARD}"/tmp/throbber66.rgb \
-	--blob "${SDCARD}"/tmp/throbber67.rgb \
-	--blob "${SDCARD}"/tmp/throbber68.rgb \
-	--blob "${SDCARD}"/tmp/throbber69.rgb \
-	--blob "${SDCARD}"/tmp/throbber70.rgb \
-	--blob "${SDCARD}"/tmp/throbber71.rgb \
-	--blob "${SDCARD}"/tmp/throbber72.rgb \
-	--blob "${SDCARD}"/tmp/throbber73.rgb \
-	--blob "${SDCARD}"/tmp/throbber74.rgb \
-	"${SDCARD}"/lib/firmware/bootsplash.armbian >/dev/null 2>&1
+		--bg_red 0x00 \
+		--bg_green 0x00 \
+		--bg_blue 0x00 \
+		--frame_ms 48 \
+		--picture \
+		--pic_width $LOGO_WIDTH \
+		--pic_height $LOGO_HEIGHT \
+		--pic_position 0 \
+		--blob "${SDCARD}"/tmp/logo.rgb \
+		--picture \
+		--pic_width $THROBBER_WIDTH \
+		--pic_height $THROBBER_HEIGHT \
+		--pic_position 0x05 \
+		--pic_position_offset 200 \
+		--pic_anim_type 1 \
+		--pic_anim_loop 0 \
+		--blob "${SDCARD}"/tmp/throbber00.rgb \
+		--blob "${SDCARD}"/tmp/throbber01.rgb \
+		--blob "${SDCARD}"/tmp/throbber02.rgb \
+		--blob "${SDCARD}"/tmp/throbber03.rgb \
+		--blob "${SDCARD}"/tmp/throbber04.rgb \
+		--blob "${SDCARD}"/tmp/throbber05.rgb \
+		--blob "${SDCARD}"/tmp/throbber06.rgb \
+		--blob "${SDCARD}"/tmp/throbber07.rgb \
+		--blob "${SDCARD}"/tmp/throbber08.rgb \
+		--blob "${SDCARD}"/tmp/throbber09.rgb \
+		--blob "${SDCARD}"/tmp/throbber10.rgb \
+		--blob "${SDCARD}"/tmp/throbber11.rgb \
+		--blob "${SDCARD}"/tmp/throbber12.rgb \
+		--blob "${SDCARD}"/tmp/throbber13.rgb \
+		--blob "${SDCARD}"/tmp/throbber14.rgb \
+		--blob "${SDCARD}"/tmp/throbber15.rgb \
+		--blob "${SDCARD}"/tmp/throbber16.rgb \
+		--blob "${SDCARD}"/tmp/throbber17.rgb \
+		--blob "${SDCARD}"/tmp/throbber18.rgb \
+		--blob "${SDCARD}"/tmp/throbber19.rgb \
+		--blob "${SDCARD}"/tmp/throbber20.rgb \
+		--blob "${SDCARD}"/tmp/throbber21.rgb \
+		--blob "${SDCARD}"/tmp/throbber22.rgb \
+		--blob "${SDCARD}"/tmp/throbber23.rgb \
+		--blob "${SDCARD}"/tmp/throbber24.rgb \
+		--blob "${SDCARD}"/tmp/throbber25.rgb \
+		--blob "${SDCARD}"/tmp/throbber26.rgb \
+		--blob "${SDCARD}"/tmp/throbber27.rgb \
+		--blob "${SDCARD}"/tmp/throbber28.rgb \
+		--blob "${SDCARD}"/tmp/throbber29.rgb \
+		--blob "${SDCARD}"/tmp/throbber30.rgb \
+		--blob "${SDCARD}"/tmp/throbber31.rgb \
+		--blob "${SDCARD}"/tmp/throbber32.rgb \
+		--blob "${SDCARD}"/tmp/throbber33.rgb \
+		--blob "${SDCARD}"/tmp/throbber34.rgb \
+		--blob "${SDCARD}"/tmp/throbber35.rgb \
+		--blob "${SDCARD}"/tmp/throbber36.rgb \
+		--blob "${SDCARD}"/tmp/throbber37.rgb \
+		--blob "${SDCARD}"/tmp/throbber38.rgb \
+		--blob "${SDCARD}"/tmp/throbber39.rgb \
+		--blob "${SDCARD}"/tmp/throbber40.rgb \
+		--blob "${SDCARD}"/tmp/throbber41.rgb \
+		--blob "${SDCARD}"/tmp/throbber42.rgb \
+		--blob "${SDCARD}"/tmp/throbber43.rgb \
+		--blob "${SDCARD}"/tmp/throbber44.rgb \
+		--blob "${SDCARD}"/tmp/throbber45.rgb \
+		--blob "${SDCARD}"/tmp/throbber46.rgb \
+		--blob "${SDCARD}"/tmp/throbber47.rgb \
+		--blob "${SDCARD}"/tmp/throbber48.rgb \
+		--blob "${SDCARD}"/tmp/throbber49.rgb \
+		--blob "${SDCARD}"/tmp/throbber50.rgb \
+		--blob "${SDCARD}"/tmp/throbber51.rgb \
+		--blob "${SDCARD}"/tmp/throbber52.rgb \
+		--blob "${SDCARD}"/tmp/throbber53.rgb \
+		--blob "${SDCARD}"/tmp/throbber54.rgb \
+		--blob "${SDCARD}"/tmp/throbber55.rgb \
+		--blob "${SDCARD}"/tmp/throbber56.rgb \
+		--blob "${SDCARD}"/tmp/throbber57.rgb \
+		--blob "${SDCARD}"/tmp/throbber58.rgb \
+		--blob "${SDCARD}"/tmp/throbber59.rgb \
+		--blob "${SDCARD}"/tmp/throbber60.rgb \
+		--blob "${SDCARD}"/tmp/throbber61.rgb \
+		--blob "${SDCARD}"/tmp/throbber62.rgb \
+		--blob "${SDCARD}"/tmp/throbber63.rgb \
+		--blob "${SDCARD}"/tmp/throbber64.rgb \
+		--blob "${SDCARD}"/tmp/throbber65.rgb \
+		--blob "${SDCARD}"/tmp/throbber66.rgb \
+		--blob "${SDCARD}"/tmp/throbber67.rgb \
+		--blob "${SDCARD}"/tmp/throbber68.rgb \
+		--blob "${SDCARD}"/tmp/throbber69.rgb \
+		--blob "${SDCARD}"/tmp/throbber70.rgb \
+		--blob "${SDCARD}"/tmp/throbber71.rgb \
+		--blob "${SDCARD}"/tmp/throbber72.rgb \
+		--blob "${SDCARD}"/tmp/throbber73.rgb \
+		--blob "${SDCARD}"/tmp/throbber74.rgb \
+		"${SDCARD}"/lib/firmware/bootsplash.armbian > /dev/null 2>&1
 	if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
-		[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] &&	grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt && \
-		sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt || echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
-		[[ -f "${SDCARD}"/boot/boot.ini ]] &&	sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
+		[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt &&
+			sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt || echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
+		[[ -f "${SDCARD}"/boot/boot.ini ]] && sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
 	fi
 	# enable additional services
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-ask-password-console.path >/dev/null 2>&1"
@@ -802,13 +800,10 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-show-on-shutdown.service >/dev/null 2>&1"
 }
 
-
-
 DISTRIBUTIONS_DESC_DIR="config/distributions"
 
-function distro_menu ()
-{
-# create a select menu for choosing a distribution based EXPERT status
+function distro_menu() {
+	# create a select menu for choosing a distribution based EXPERT status
 
 	local distrib_dir="${1}"
 
@@ -826,7 +821,6 @@ function distro_menu ()
 	fi
 
 }
-
 
 function distros_options() {
 	for distrib_dir in "${DISTRIBUTIONS_DESC_DIR}/"*; do
@@ -847,36 +841,30 @@ function set_distribution_status() {
 
 }
 
-adding_packages()
-{
-# add deb files to repository if they are not already there
+adding_packages() {
+	# add deb files to repository if they are not already there
 
 	display_alert "Checking and adding to repository $release" "$3" "ext"
-	for f in "${DEB_STORAGE}${2}"/*.deb
-	do
+	for f in "${DEB_STORAGE}${2}"/*.deb; do
 		local name version arch
 		name=$(dpkg-deb -I "${f}" | grep Package | awk '{print $2}')
 		version=$(dpkg-deb -I "${f}" | grep Version | awk '{print $2}')
 		arch=$(dpkg-deb -I "${f}" | grep Architecture | awk '{print $2}')
 		# add if not already there
-		aptly repo search -architectures="${arch}" -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" 'Name (% '${name}'), $Version (='${version}'), $Architecture (='${arch}')' &>/dev/null
+		aptly repo search -architectures="${arch}" -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" 'Name (% '${name}'), $Version (='${version}'), $Architecture (='${arch}')' &> /dev/null
 		if [[ $? -ne 0 ]]; then
 			display_alert "Adding ${1}" "$name" "info"
-			aptly repo add -force-replace=true -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" "${f}" &>/dev/null
+			aptly repo add -force-replace=true -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" "${f}" &> /dev/null
 		fi
 	done
 
 }
 
-
-
-
-addtorepo()
-{
-# create repository
-# parameter "remove" dumps all and creates new
-# parameter "delete" remove incoming directory if publishing is succesful
-# function: cycle trough distributions
+addtorepo() {
+	# create repository
+	# parameter "remove" dumps all and creates new
+	# parameter "delete" remove incoming directory if publishing is succesful
+	# function: cycle trough distributions
 
 	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "jammy" "sid")
 	#local distributions=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
@@ -895,54 +883,53 @@ addtorepo()
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}") ]]; then
 			display_alert "Creating section" "main" "info"
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="main" \
-			-comment="Armbian main repository" "${release}" >/dev/null
+				-comment="Armbian main repository" "${release}" > /dev/null
 		fi
 
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="utils" \
-			-comment="Armbian utilities (backwards compatibility)" utils >/dev/null
+				-comment="Armbian utilities (backwards compatibility)" utils > /dev/null
 		fi
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="${release}-utils" \
-			-comment="Armbian ${release} utilities" "${release}-utils" >/dev/null
+				-comment="Armbian ${release} utilities" "${release}-utils" > /dev/null
 		fi
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="${release}-desktop" \
-			-comment="Armbian ${release} desktop" "${release}-desktop" >/dev/null
+				-comment="Armbian ${release} desktop" "${release}-desktop" > /dev/null
 		fi
 
-
 		# adding main
-		if find "${DEB_STORAGE}"/ -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}"/ -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			adding_packages "$release" "" "main"
 		else
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 
 		local COMPONENTS="main"
 
 		# adding main distribution packages
-		if find "${DEB_STORAGE}/${release}" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}/${release}" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			adding_packages "${release}-utils" "/${release}" "release packages"
 		else
 			# workaround - add dummy package to not trigger error
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 
 		# adding release-specific utils
-		if find "${DEB_STORAGE}/extra/${release}-utils" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}/extra/${release}-utils" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			adding_packages "${release}-utils" "/extra/${release}-utils" "release utils"
 		else
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-utils" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-utils" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-utils"
 
 		# adding desktop
-		if find "${DEB_STORAGE}/extra/${release}-desktop" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}/extra/${release}-desktop" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			adding_packages "${release}-desktop" "/extra/${release}-desktop" "desktop"
 		else
 			# workaround - add dummy package to not trigger error
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-desktop"
 
@@ -955,21 +942,21 @@ addtorepo()
 
 			# publish
 			aptly publish \
-			-acquire-by-hash \
-			-passphrase="${GPG_PASS}" \
-			-origin="Armbian" \
-			-label="Armbian" \
-			-config="${SCRIPTPATH}config/${REPO_CONFIG}" \
-			-component="${COMPONENTS// /,}" \
-			-distribution="${release}" repo "${release}" ${COMPONENTS//main/} >/dev/null
+				-acquire-by-hash \
+				-passphrase="${GPG_PASS}" \
+				-origin="Armbian" \
+				-label="Armbian" \
+				-config="${SCRIPTPATH}config/${REPO_CONFIG}" \
+				-component="${COMPONENTS// /,}" \
+				-distribution="${release}" repo "${release}" ${COMPONENTS//main/} > /dev/null
 
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "${release}" "err"
-				errors=$((errors+1))
+				errors=$((errors + 1))
 				exit 0
 			fi
 		else
-			errors=$((errors+1))
+			errors=$((errors + 1))
 			local err_txt=": All components must be present: main, utils and desktop for first build"
 		fi
 
@@ -996,17 +983,13 @@ addtorepo()
 
 }
 
-
-
-
-repo-manipulate()
-{
-# repository manipulation
-# "show" displays packages in each repository
-# "server" serve repository - useful for local diagnostics
-# "unique" manually select which package should be removed from all repositories
-# "update" search for new files in output/debs* to add them to repository
-# "purge" leave only last 5 versions
+repo-manipulate() {
+	# repository manipulation
+	# "show" displays packages in each repository
+	# "server" serve repository - useful for local diagnostics
+	# "unique" manually select which package should be removed from all repositories
+	# "update" search for new files in output/debs* to add them to repository
+	# "purge" leave only last 5 versions
 
 	local DISTROS=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "jammy" "sid")
 	#local DISTROS=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
@@ -1039,28 +1022,27 @@ repo-manipulate()
 			while true; do
 				LIST=()
 				for release in "${DISTROS[@]}"; do
-					LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" | tail -n +7) )
-					LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" | tail -n +7) )
+					LIST+=($(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" | tail -n +7))
+					LIST+=($(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" | tail -n +7))
 				done
-				LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" utils | tail -n +7) )
-				LIST=( $(echo "${LIST[@]}" | tr ' ' '\n' | sort -u))
+				LIST+=($(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" utils | tail -n +7))
+				LIST=($(echo "${LIST[@]}" | tr ' ' '\n' | sort -u))
 				new_list=()
 				# create a human readable menu
-				for ((n=0;n<$((${#LIST[@]}));n++));
-				do
-					new_list+=( "${LIST[$n]}" )
-					new_list+=( "" )
+				for ((n = 0; n < $((${#LIST[@]})); n++)); do
+					new_list+=("${LIST[$n]}")
+					new_list+=("")
 				done
 				LIST=("${new_list[@]}")
-				LIST_LENGTH=$((${#LIST[@]}/2));
+				LIST_LENGTH=$((${#LIST[@]} / 2))
 				exec 3>&1
-				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9+${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
-				exitstatus=$?;
+				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9 + ${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
+				exitstatus=$?
 				exec 3>&-
 				if [[ $exitstatus -eq 0 ]]; then
 					for release in "${DISTROS[@]}"; do
-						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}"  "${release}" "$TARGET_VERSION"
-						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}"  "${release}-desktop" "$TARGET_VERSION"
+						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "$TARGET_VERSION"
+						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" "$TARGET_VERSION"
 					done
 					aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "utils" "$TARGET_VERSION"
 				else
@@ -1090,22 +1072,22 @@ repo-manipulate()
 			exit 0
 			;;
 
-                purgeedge)
-                        for release in "${DISTROS[@]}"; do
+		purgeedge)
+			for release in "${DISTROS[@]}"; do
 				repo-remove-old-packages "$release" "armhf" "3" "edge"
 				repo-remove-old-packages "$release" "arm64" "3" "edge"
 				repo-remove-old-packages "$release" "amd64" "3" "edge"
 				repo-remove-old-packages "$release" "all" "3" "edge"
 				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
-                        done
-                        exit 0
-                        ;;
+			done
+			exit 0
+			;;
 
-
-		purgesource)
+		\
+			purgesource)
 			for release in "${DISTROS[@]}"; do
 				aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" 'Name (% *-source*)'
-				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}"  > /dev/null 2>&1
+				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
 			done
 			aptly db cleanup -config="${SCRIPTPATH}config/${REPO_CONFIG}" > /dev/null 2>&1
 			exit 0
@@ -1127,9 +1109,6 @@ repo-manipulate()
 
 }
 
-
-
-
 # Removes old packages in the received repo
 #
 # $1: Repository
@@ -1144,163 +1123,59 @@ repo-remove-old-packages() {
 		local pkg_name
 		count=0
 		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
-		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)"  | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
-			((count+=1))
+		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)" | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
+			((count += 1))
 			if [[ $count -gt $keep ]]; then
-			pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
-			aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
+				pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
+				aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
 			fi
 		done
-    done
+	done
 }
-
-
-
 
 # wait_for_package_manager
 #
 # * installation will break if we try to install when package manager is running
 #
-wait_for_package_manager()
-{
+wait_for_package_manager() {
 	# exit if package manager is running in the back
 	while true; do
-		if [[ "$(fuser /var/lib/dpkg/lock 2>/dev/null; echo $?)" != 1 && "$(fuser /var/lib/dpkg/lock-frontend 2>/dev/null; echo $?)" != 1 ]]; then
-				display_alert "Package manager is running in the background." "Please wait! Retrying in 30 sec" "wrn"
-				sleep 30
-			else
-				break
+		if [[ "$(
+			fuser /var/lib/dpkg/lock 2> /dev/null
+			echo $?
+		)" != 1 && "$(
+			fuser /var/lib/dpkg/lock-frontend 2> /dev/null
+			echo $?
+		)" != 1 ]]; then
+			display_alert "Package manager is running in the background." "Please wait! Retrying in 30 sec" "wrn"
+			sleep 30
+		else
+			break
 		fi
 	done
 }
-
-
-
-# Installing debian packages in the armbian build system.
-# The function accepts three optional parameters:
-# upgrade, clean - the same name for apt
-# verbose - detailed log for the function
-#
-# list="pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
-# install_pkg_deb upgrade verbose $list
-#
-# If the package has a bad name, we will see it in the log file.
-# If there is an LOG_OUTPUT_FILE variable and it has a value as
-# the full real path to the log file, then all the information will be there.
-#
-# The LOG_OUTPUT_FILE variable must be defined in the calling function
-# before calling the install_pkg_deb function and unset after.
-#
-install_pkg_deb ()
-{
-	local list=""
-	local log_file
-	local for_install
-	local need_upgrade=false
-	local need_clean=false
-	local need_verbose=false
-	local _line=${BASH_LINENO[0]}
-	local _function=${FUNCNAME[1]}
-	local _file=$(basename "${BASH_SOURCE[1]}")
-	local tmp_file=$(mktemp /tmp/install_log_XXXXX)
-	export DEBIAN_FRONTEND=noninteractive
-
-	list=$(
-	for p in $*;do
-		case $p in
-			upgrade) need_upgrade=true; continue ;;
-			clean) need_clean=true; continue ;;
-			verbose) need_verbose=true; continue ;;
-			\||\(*|*\)) continue ;;
-		esac
-		echo " $p"
-	done
-	)
-
-	if [ -d $(dirname $LOG_OUTPUT_FILE) ]; then
-		log_file=${LOG_OUTPUT_FILE}
-	else
-		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
-	fi
-
-	# This is necessary first when there is no apt cache.
-	if $need_upgrade; then
-		apt-get -q update || echo "apt cannot update" >>$tmp_file
-		apt-get -y upgrade || echo "apt cannot upgrade" >>$tmp_file
-	fi
-
-	# If the package is not installed, check the latest
-	# up-to-date version in the apt cache.
-	# Exclude bad package names and send a message to the log.
-	for_install=$(
-	for p in $list;do
-	  if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}');then
-		apt-cache  show $p -o APT::Cache::AllVersions=no |& \
-		awk -v p=$p -v tmp_file=$tmp_file \
-		'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
-	  fi
-	done
-	)
-
-	# This information should be logged.
-	if [ -s $tmp_file ]; then
-		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" \
-		>>$log_file
-		echo -e "\nIncoming list:" >>$log_file
-		printf "%-30s %-30s %-30s %-30s\n" $list >>$log_file
-		echo "" >>$log_file
-		cat $tmp_file >>$log_file
-	fi
-
-	if [ -n "$for_install" ]; then
-		if ! $need_upgrade; then
-			apt-get -q update
-			apt-get -y upgrade
-		fi
-		apt-get install -qq -y --no-install-recommends $for_install
-		echo -e "\nPackages installed:" >>$log_file
-		dpkg-query -W \
-		  -f '${binary:Package;-27} ${Version;-23}\n' \
-		  $for_install >>$log_file
-
-	fi
-
-	# We will show the status after installation all listed
-	if $need_verbose; then
-		echo -e "\nstatus after installation:" >>$log_file
-		dpkg-query -W \
-		  -f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
-		  $list >>$log_file
-	fi
-
-	if $need_clean;then apt-get clean; fi
-	rm $tmp_file
-}
-
-
 
 # prepare_host_basic
 #
 # * installs only basic packages
 #
-prepare_host_basic()
-{
+prepare_host_basic() {
 
 	# command:package1 package2 ...
 	# list of commands that are neeeded:packages where this command is
 	local check_pack install_pack
 	local checklist=(
-			"dialog:dialog"
-			"fuser:psmisc"
-			"getfacl:acl"
-			"uuid:uuid uuid-runtime"
-			"curl:curl"
-			"gpg:gnupg"
-			"gawk:gawk"
-			)
+		"dialog:dialog"
+		"fuser:psmisc"
+		"getfacl:acl"
+		"uuid:uuid uuid-runtime"
+		"curl:curl"
+		"gpg:gnupg"
+		"gawk:gawk"
+	)
 
 	for check_pack in "${checklist[@]}"; do
-	        if ! which ${check_pack%:*} >/dev/null; then local install_pack+=${check_pack#*:}" "; fi
+		if ! which ${check_pack%:*} > /dev/null; then local install_pack+=${check_pack#*:}" "; fi
 	done
 
 	if [[ -n $install_pack ]]; then
@@ -1310,17 +1185,13 @@ prepare_host_basic()
 
 }
 
-
-
-
 # prepare_host
 #
 # * checks and installs necessary packages
 # * creates directory structure
 # * changes system settings
 #
-prepare_host()
-{
+prepare_host() {
 	display_alert "Preparing" "host" "info"
 
 	# The 'offline' variable must always be set to 'true' or 'false'
@@ -1328,6 +1199,17 @@ prepare_host()
 		local offline=true
 	else
 		local offline=false
+	fi
+	# build aarch64
+	if [[ $(dpkg --print-architecture) != arm64 ]]; then
+
+		if [[ $(dpkg --print-architecture) != amd64 ]]; then
+			display_alert "Please read documentation to set up proper compilation environment"
+			display_alert "https://www.armbian.com/using-armbian-tools/"
+			exit_with_error "Running this tool on non x86_64 build host is not supported"
+		fi
+
+		# build aarch64
 	fi
 
 	# wait until package manager finishes possible system maintanace
@@ -1344,38 +1226,35 @@ prepare_host()
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 
-	local hostdeps="acl aptly aria2 bc binfmt-support bison btrfs-progs       \
-	build-essential  ca-certificates ccache cpio cryptsetup curl              \
-	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
-	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabihf gdisk gnupg1 gpg imagemagick jq kmod libbison-dev \
-	libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl        \
-	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
-	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
-	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
-	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
-	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev"
+	# build aarch64
+	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+		local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
+	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
+	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
+	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libelf-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg cpio aria2 pigz dirmngr python3-distutils jq distcc gdisk dwarves"
 
-	hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386 zlib1g:i386"
-	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+		# build aarch64
+	else
 
-  elif [[ $(dpkg --print-architecture) == arm64 ]]; then
+		local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
+	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi gcc-arm-none-eabi \
+	qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
+	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
+	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-amd64-cross libc6-dev-armhf-cross imagemagick \
+	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
+	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libelf-dev libc6 qemu \
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg cpio aria2 pigz \
+	dirmngr python3-distutils jq gdisk dwarves"
 
-	hostdeps+=" gcc-arm-linux-gnueabi gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
-
-  else
-
-	display_alert "Please read documentation to set up proper compilation environment"
-	display_alert "https://www.armbian.com/using-armbian-tools/"
-	exit_with_error "Running this tool on non x86_64 build host is not supported"
-
-  fi
+		# build aarch64
+	fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
-	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
+	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|jammy|ulyana|ulyssa|bullseye|uma)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -1390,7 +1269,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
+	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute jammy debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -1405,6 +1284,17 @@ prepare_host()
 		else
 			exit_with_error "Windows subsystem for Linux is not a supported build environment"
 		fi
+	fi
+
+	# build aarch64
+	if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
+		if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|impish|hirsute|ulyana|ulyssa|uma)$ ]]; then
+			hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
+		fi
+
+		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+		# build aarch64
 	fi
 
 	if systemd-detect-virt -q -c; then
@@ -1423,141 +1313,156 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
-
 	# Skip verification if you are working offline
 	if ! $offline; then
 
-	# warning: apt-cacher-ng will fail if installed and used both on host and in
-	# container/chroot environment with shared network
-	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
+		# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
+		# set NO_APT_CACHER=yes to prevent installation errors in such case
+		if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
 
-	export EXTRA_BUILD_DEPS=""
-	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
-	*run before installing host dependencies*
-	you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
-	ADD_HOST_DEPENDENCIES
+		local deps=()
+		local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2> /dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
 
-	if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
+		export EXTRA_BUILD_DEPS=""
+		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
+			*run before installing host dependencies*
+			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
+		ADD_HOST_DEPENDENCIES
 
-	# distribution packages are buggy, download from author
+		for packet in $hostdeps ${EXTRA_BUILD_DEPS}; do
+			if ! grep -q -x -e "$packet" <<< "$installed"; then deps+=("$packet"); fi
+		done
 
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+		# distribution packages are buggy, download from author
 
-	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
-		display_alert "Updating from external repository" "aptly" "info"
-		if [ x"" != x"${http_proxy}" ]; then
-			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
-		else
-			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
-		fi
-		echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
-	else
-		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
-	fi
+		# build aarch64
+		if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-# build aarch64
-  fi
-
-	display_alert "Installing build dependencies"
-	# don't prompt for apt cacher selection
-	sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
-
-	LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
-	install_pkg_deb "$hostdeps"
-	unset LOG_OUTPUT_FILE
-
-	update-ccache-symlinks
-
-	export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
-	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
-	*run after all host dependencies are installed*
-	At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
-	All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
-	are installed at this point. The system clock has not yet been synced.
-	HOST_DEPENDENCIES_READY
-
-
-	# sync clock
-	if [[ $SYNC_CLOCK != no ]]; then
-		display_alert "Syncing clock" "host" "info"
-		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
-	fi
-
-	# create directory structure
-	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
-	if [[ -n $SUDO_USER ]]; then
-		chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
-		# SGID bit on cache/sources breaks kernel dpkg packaging
-		chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
-		# fix existing permissions
-		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
-		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
-	fi
-	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
-
-# build aarch64
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-		if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
-
-			# bind mount toolchain if defined
-			if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
-				mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
-				mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+			if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
+				display_alert "Updating from external repository" "aptly" "info"
+				if [ x"" != x"${http_proxy}" ]; then
+					apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" --recv-keys ED75B5A4483DA07C > /dev/null 2>&1
+				else
+					apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys ED75B5A4483DA07C > /dev/null 2>&1
+				fi
+				echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
+			else
+				sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
 			fi
 
-			display_alert "Checking for external GCC compilers" "" "info"
-			# download external Linaro compiler and missing special dependencies since they are needed for certain sources
+			# build aarch64
+		fi
 
-			local toolchains=(
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+		if [[ ${#deps[@]} -gt 0 ]]; then
+			display_alert "Installing build dependencies"
+			# don't prompt for apt cacher selection
+			sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
+			apt-get -q update
+			# @TODO: DO NOT COMMIT THIS
+			display_alert "NOT upgrading host-side packages" "apt upgrade" "wrn"
+			#apt-get -y upgrade
+			apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/${LOG_SUBPATH}/hostdeps.log
+			update-ccache-symlinks
+		fi
+
+		export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
+		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
+			*run after all host dependencies are installed*
+			At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+			All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+			are installed at this point. The system clock has not yet been synced.
+		HOST_DEPENDENCIES_READY
+
+		# sync clock
+		if [[ $SYNC_CLOCK != no ]]; then
+			display_alert "Syncing clock" "host" "info"
+			ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
+		fi
+
+		# build aarch64
+		if [[ $(dpkg --print-architecture) == amd64 ]]; then
+
+			if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2> /dev/null) != *ii* ]]; then
+				apt-get install -qq -y --no-install-recommends zlib1g:i386 > /dev/null 2>&1
+			fi
+
+			# build aarch64
+		fi
+
+		# create directory structure
+		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
+		if [[ -n $SUDO_USER ]]; then
+			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
+			# SGID bit on cache/sources breaks kernel dpkg packaging
+			chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
+			# fix existing permissions
+			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
+			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
+		fi
+		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+
+		# build aarch64
+		if [[ $(dpkg --print-architecture) == amd64 ]]; then
+			if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
+
+				# bind mount toolchain if defined
+				if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
+					mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+					mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+				fi
+
+				display_alert "Checking for external GCC compilers" "" "info"
+				# download external Linaro compiler and missing special dependencies since they are needed for certain sources
+
+				local toolchains=(
+					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+					"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
 				)
 
-			USE_TORRENT_STATUS=${USE_TORRENT}
-			USE_TORRENT="no"
-			for toolchain in ${toolchains[@]}; do
-				download_and_verify "_toolchain" "${toolchain##*/}"
-			done
-			USE_TORRENT=${USE_TORRENT_STATUS}
-
-			rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
-			local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchain) )
-			for dir in ${existing_dirs[@]}; do
-				local found=no
+				USE_TORRENT_STATUS=${USE_TORRENT}
+				USE_TORRENT="no"
 				for toolchain in ${toolchains[@]}; do
-					local filename=${toolchain##*/}
-					local dirname=${filename//.tar.xz}
-					[[ $dir == $dirname ]] && found=yes
+					download_and_verify "_toolchain" "${toolchain##*/}"
 				done
-				if [[ $found == no ]]; then
-					display_alert "Removing obsolete toolchain" "$dir"
-					rm -rf "${SRC}/cache/toolchain/${dir}"
-				fi
-			done
-		else
-			display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
-		fi
-	fi
+				USE_TORRENT=${USE_TORRENT_STATUS}
 
-  fi # check offline
+				rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
+				local existing_dirs=($(ls -1 "${SRC}"/cache/toolchain))
+				for dir in ${existing_dirs[@]}; do
+					local found=no
+					for toolchain in ${toolchains[@]}; do
+						local filename=${toolchain##*/}
+						local dirname=${filename//.tar.xz/}
+						[[ $dir == $dirname ]] && found=yes
+					done
+					if [[ $found == no ]]; then
+						display_alert "Removing obsolete toolchain" "$dir"
+						rm -rf "${SRC}/cache/toolchain/${dir}"
+					fi
+				done
+			else
+				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
+			fi
+		fi # check offline
 
-	# enable arm binary format so that the cross-architecture chroot environment will work
-	if [[ $KERNEL_ONLY != yes ]]; then
-		modprobe -q binfmt_misc
-		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-		if [[ "$(arch)" != "aarch64" ]]; then
-			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-			test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+		# enable arm binary format so that the cross-architecture chroot environment will work
+		if [[ $KERNEL_ONLY != yes ]]; then
+			modprobe -q binfmt_misc
+			mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
+			if [[ "$(arch)" != "aarch64" ]]; then
+				test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+				test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+			fi
 		fi
+
+		# build aarch64
 	fi
 
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
@@ -1572,20 +1477,16 @@ prepare_host()
 	fi
 
 	# check free space (basic)
-	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2>/dev/null) # in bytes
-	if [[ -n $freespace && $(( $freespace / 1073741824 )) -lt 10 ]]; then
-		display_alert "Low free space left" "$(( $freespace / 1073741824 )) GiB" "wrn"
+	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes
+	if [[ -n $freespace && $(($freespace / 1073741824)) -lt 10 ]]; then
+		display_alert "Low free space left" "$(($freespace / 1073741824)) GiB" "wrn"
 		# pause here since dialog-based menu will hide this message otherwise
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read
 	fi
 }
 
-
-
-
-function webseed ()
-{
+function webseed() {
 	# list of mirrors that host our files
 	unset text
 	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
@@ -1593,16 +1494,16 @@ function webseed ()
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
 		WEBSEED=(
-		"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+			"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 		)
 	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
 		WEBSEED=(
-		"https://mirrors.bfsu.edu.cn/armbian-releases/"
+			"https://mirrors.bfsu.edu.cn/armbian-releases/"
 		)
 	fi
 	for toolchain in ${WEBSEED[@]}; do
 		# use only live, tnahosting return ok also when file is absent
-		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 >/dev/null | grep 'HTTP/1.1 200 OK') && ${toolchain} != *tnahosting* ]]; then
+		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 > /dev/null | grep 'HTTP/1.1 200 OK') && ${toolchain} != *tnahosting* ]]; then
 			text="${text} ${toolchain}${1}"
 		fi
 	done
@@ -1610,46 +1511,41 @@ function webseed ()
 	echo "${text}"
 }
 
-
-
-
-download_and_verify()
-{
+download_and_verify() {
 
 	local remotedir=$1
 	local filename=$2
-	local localdir=$SRC/cache/${remotedir//_}
-	local dirname=${filename//.tar.xz}
+	local localdir=$SRC/cache/${remotedir//_/}
+	local dirname=${filename//.tar.xz/}
 
-        if [[ $DOWNLOAD_MIRROR == china ]]; then
-			local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-		elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-			local server="https://mirrors.bfsu.edu.cn/armbian-releases/"
-		else
-			local server=${ARMBIAN_MIRROR}
-        fi
+	if [[ $DOWNLOAD_MIRROR == china ]]; then
+		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
+		local server="https://mirrors.bfsu.edu.cn/armbian-releases/"
+	else
+		local server=${ARMBIAN_MIRROR}
+	fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
 		return
 	fi
 
 	# switch to china mirror if US timeouts
-	timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+	timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 > /dev/null
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 		display_alert "Timeout from $server" "retrying" "info"
 		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 
 		# switch to another china mirror if tuna timeouts
-		timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
+		timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 > /dev/null
 		if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 			display_alert "Timeout from $server" "retrying" "info"
 			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
 		fi
 	fi
 
-
 	# check if file exists on remote server before running aria2 downloader
-	[[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}` ]] && return
+	[[ ! $(timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}) ]] && return
 
 	cd "${localdir}" || exit
 
@@ -1657,13 +1553,13 @@ download_and_verify()
 	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
 		local torrent="${SRC}"/config/torrents/${filename}.torrent
 		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
-	elif [[ ! `timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}.asc"` ]]; then
+	elif [[ ! $(timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}.asc") ]]; then
 		return
 	else
 		# download control file
 		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
-		--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
+			--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
 
@@ -1689,13 +1585,12 @@ download_and_verify()
 
 	fi
 
-
 	# direct download if torrent fails
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
-		if [[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null` ]]; then
+		if [[ ! $(timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 > /dev/null) ]]; then
 			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
+				--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
 
@@ -1716,29 +1611,25 @@ download_and_verify()
 			# Verify archives with Linaro and Armbian GPG keys
 
 			if [ x"" != x"${http_proxy}" ]; then
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+					--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
+					--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+					--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
+					--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 			else
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+					--keyserver hkp://keyserver.ubuntu.com:80 \
+					--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+					--keyserver hkp://keyserver.ubuntu.com:80 \
+					--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
 			fi
 
 			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify \
-			--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
+				--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
 
 		else
@@ -1761,15 +1652,11 @@ download_and_verify()
 	fi
 }
 
-
-
-
-show_developer_warning()
-{
+show_developer_warning() {
 	local temp_rc
 	temp_rc=$(mktemp)
-	cat <<-'EOF' > "${temp_rc}"
-	screen_color = (WHITE,RED,ON)
+	cat <<- 'EOF' > "${temp_rc}"
+		screen_color = (WHITE,RED,ON)
 	EOF
 	local warn_text="You are switching to the \Z1EXPERT MODE\Zn
 
@@ -1795,8 +1682,7 @@ show_developer_warning()
 # The LOG_OUTPUT_FILE variable must be defined in the calling function
 # before calling the `show_checklist_variables` function and unset after.
 #
-show_checklist_variables ()
-{
+show_checklist_variables() {
 	local checklist=$*
 	local var pval
 	local log_file=${LOG_OUTPUT_FILE:-"${SRC}"/output/${LOG_SUBPATH}/trash.log}
@@ -1804,17 +1690,15 @@ show_checklist_variables ()
 	local _function=${FUNCNAME[1]}
 	local _file=$(basename "${BASH_SOURCE[1]}")
 
-	echo -e "Show variables in function: $_function" "[$_file:$_line]\n" >>$log_file
+	echo -e "Show variables in function: $_function" "[$_file:$_line]\n" >> $log_file
 
-	for var in $checklist;do
+	for var in $checklist; do
 		eval pval=\$$var
-		echo -e "\n$var =:" >>$log_file
-		if [ $(echo "$pval" | awk -F"/" '{print NF}') -ge 4 ];then
-			printf "%s\n" $pval >>$log_file
+		echo -e "\n$var =:" >> $log_file
+		if [ $(echo "$pval" | gawk -F"/" '{print NF}') -ge 4 ]; then
+			printf "%s\n" $pval >> $log_file
 		else
-			printf "%-30s %-30s %-30s %-30s\n" $pval >>$log_file
+			printf "%-30s %-30s %-30s %-30s\n" $pval >> $log_file
 		fi
 	done
 }
-
-

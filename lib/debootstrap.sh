@@ -17,13 +17,9 @@
 # update_initramfs
 # create_image
 
-
-
-
 # debootstrap_ng
 #
-debootstrap_ng()
-{
+debootstrap_ng() {
 	display_alert "Starting rootfs and image building process for" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" "info"
 
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
@@ -44,9 +40,10 @@ debootstrap_ng()
 	# stage: verify tmpfs configuration and mount
 	# CLI needs ~1.5GiB, desktop - ~3.5GiB
 	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
-	local phymem=$(( (($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10 )) # MiB
-	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi # MiB
-	if [[ $FORCE_USE_RAMDISK == no ]]; then	local use_tmpfs=no
+	local phymem=$(((($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10)) # MiB
+	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi                                 # MiB
+	if [[ $FORCE_USE_RAMDISK == no ]]; then
+		local use_tmpfs=no
 	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
 		local use_tmpfs=yes
 	fi
@@ -80,10 +77,10 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 
 	# remove packages that are no longer needed. Since we have intrudoced uninstall feature, we might want to clean things that are no longer needed
 	display_alert "No longer needed packages" "purge" "info"
-	chroot $SDCARD /bin/bash -c "apt-get autoremove -y"  >/dev/null 2>&1
+	chroot $SDCARD /bin/bash -c "apt-get autoremove -y" > /dev/null 2>&1
 
 	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes ]] && echo "-desktop").list 2>&1
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
@@ -101,8 +98,7 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# stage: unmount tmpfs
 	umount $SDCARD 2>&1
 	if [[ $use_tmpfs = yes ]]; then
-		while grep -qs "$SDCARD" /proc/mounts
-		do
+		while grep -qs "$SDCARD" /proc/mounts; do
 			umount $SDCARD
 			sleep 5
 		done
@@ -117,16 +113,15 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 #
 # unpacks cached rootfs for $RELEASE or creates one
 #
-create_rootfs_cache()
-{
+create_rootfs_cache() {
 	if [[ "$ROOT_FS_CREATE_ONLY" == "force" ]]; then
 		local cycles=1
-		else
+	else
 		local cycles=2
 	fi
 
 	# seek last cache, proceed to previous otherwise build it
-	for ((n=0;n<${cycles};n++)); do
+	for ((n = 0; n < ${cycles}; n++)); do
 
 		[[ -z ${FORCED_MONTH_OFFSET} ]] && FORCED_MONTH_OFFSET=${n}
 		local packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
@@ -184,7 +179,7 @@ create_rootfs_cache()
 			exit
 		fi
 
-		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
+		local date_diff=$((($(date +%s) - $(stat -c %Y $cache_fname)) / 86400))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
@@ -410,7 +405,7 @@ create_rootfs_cache()
 		rm -rf $SDCARD
 		# remove exit trap
 		trap - INT TERM EXIT
-        exit
+		exit
 	fi
 
 	mount_chroot "$SDCARD"
@@ -422,8 +417,7 @@ create_rootfs_cache()
 # and mounts it to local dir
 # FS-dependent stuff (boot and root fs partition types) happens here
 #
-prepare_partitions()
-{
+prepare_partitions() {
 	display_alert "Preparing image file for rootfs" "$BOARD $RELEASE" "info"
 
 	# possible partition combinations
@@ -450,9 +444,9 @@ prepare_partitions()
 	# create bigger number for desktop builds
 	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
 	if [[ $HOSTRELEASE =~ bionic|buster|bullseye|cosmic|focal|hirsute|impish|jammy|sid ]]; then
-		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
+		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128 * ${node_number}))"
 	elif [[ $HOSTRELEASE == xenial ]]; then
-		mkopts[ext4]="-q -m 2 -N $((128*${node_number}))"
+		mkopts[ext4]="-q -m 2 -N $((128 * ${node_number}))"
 	fi
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
@@ -478,14 +472,14 @@ prepare_partitions()
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
-	DEFAULT_BOOTSIZE=256	# MiB
+	DEFAULT_BOOTSIZE=256 # MiB
 	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
 	UEFISIZE=${UEFISIZE:-0}
 	BIOSSIZE=${BIOSSIZE:-0}
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
 	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbiefi}"
 
-	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
+	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" << 'PRE_PREPARE_PARTITIONS'
 *allow custom options for mkfs*
 Good time to change stuff like mkfs opts, types etc.
 PRE_PREPARE_PARTITIONS
@@ -550,7 +544,7 @@ PREPARE_IMAGE_SIZE
 			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
 		fi
 	else
-		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
+		local imagesize=$(($rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
 		case $ROOTFS_TYPE in
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
@@ -579,7 +573,7 @@ PREPARE_IMAGE_SIZE
 		truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
 		sync
 	else
-		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
+		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(($sdsize * 1024 * 1024)) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
 	fi
 
 	# stage: calculate boot partition size
@@ -592,9 +586,9 @@ PREPARE_IMAGE_SIZE
 	parted -s ${SDCARD}.raw -- mklabel ${IMAGE_PARTITION_TABLE}
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
-		*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
-		Finally, we can get our own partition table. You have to partition ${SDCARD}.raw
-		yourself. Good luck.
+			*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
+			Finally, we can get our own partition table. You have to partition ${SDCARD}.raw
+			yourself. Good luck.
 		CREATE_PARTITION_TABLE
 	elif [[ $ROOTFS_TYPE == nfs ]]; then
 		# single /boot partition
@@ -607,7 +601,7 @@ PREPARE_IMAGE_SIZE
 				# UEFI + GPT automatically get a BIOS partition at 14, EFI at 15
 				local biosstart=$(($OFFSET * 2048))
 				local uefistart=$(($OFFSET * 2048 + ($BIOSSIZE * 2048)))
-				local rootstart=$(($uefistart + ($UEFISIZE * 2048) ))
+				local rootstart=$(($uefistart + ($UEFISIZE * 2048)))
 				local biosend=$(($uefistart - 1))
 				local uefiend=$(($rootstart - 1))
 				parted -s ${SDCARD}.raw -- mkpart bios fat32 ${biosstart}s ${biosend}s
@@ -645,12 +639,12 @@ PREPARE_IMAGE_SIZE
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
-	*called after all partitions are created, but not yet formatted*
+		*called after all partitions are created, but not yet formatted*
 	POST_CREATE_PARTITIONS
 
 	# stage: mount image
 	# lock access to loop devices
-	exec {FD}>/var/lock/armbian-debootstrap-losetup
+	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -x $FD
 
 	LOOP=$(losetup -f)
@@ -708,17 +702,17 @@ PREPARE_IMAGE_SIZE
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
 		check_loop_device "${LOOP}p${uefipart}"
-		mkfs.fat -F32 -n "${UEFI_FS_LABEL}" ${LOOP}p${uefipart} >>"${DEST}"/debug/install.log 2>&1
+		mkfs.fat -F32 -n "${UEFI_FS_LABEL}" ${LOOP}p${uefipart} >> "${DEST}"/debug/install.log 2>&1
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
 		mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
-		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >>$SDCARD/etc/fstab
+		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
 	fi
 	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
-	*if you created your own partitions, this would be a good time to format them*
-	The loop device is mounted, so ${LOOP}p1 is it's first partition etc.
+		*if you created your own partitions, this would be a good time to format them*
+		The loop device is mounted, so ${LOOP}p1 is it's first partition etc.
 	FORMAT_PARTITIONS
 
 	# stage: adjust boot script or boot environment
@@ -745,7 +739,7 @@ PREPARE_IMAGE_SIZE
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		fi
-		if [[  $LINUXFAMILY != meson64 ]]; then
+		if [[ $LINUXFAMILY != meson64 ]]; then
 			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 		fi
 	fi
@@ -756,11 +750,11 @@ PREPARE_IMAGE_SIZE
 			sed -i "s/console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
 		else
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
-	        fi
+		fi
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
-	[[ -f $SDCARD/boot/boot.cmd ]] && \
+	[[ -f $SDCARD/boot/boot.cmd ]] &&
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr > /dev/null 2>&1
 
 	# create extlinux config
@@ -785,8 +779,7 @@ PREPARE_IMAGE_SIZE
 # path instead of $SDCARD (which can be a tmpfs and breaks cryptsetup-initramfs).
 # see: https://github.com/armbian/build/issues/1584
 #
-update_initramfs()
-{
+update_initramfs() {
 	local chroot_target=$1
 	local target_dir=$(
 		find ${chroot_target}/lib/modules/ -maxdepth 1 -type d -name "*${VER}*"
@@ -818,8 +811,7 @@ update_initramfs()
 #
 # finishes creation of image from cached rootfs
 #
-create_image()
-{
+create_image() {
 	# create DESTIMG, hooks might put stuff there early.
 	mkdir -p $DESTIMG
 
@@ -831,15 +823,15 @@ create_image()
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files to" "/"
-		echo -e "\nCopying files to [/]" >>"${DEST}"/${LOG_SUBPATH}/install.log
+		echo -e "\nCopying files to [/]" >> "${DEST}"/${LOG_SUBPATH}/install.log
 		rsync -aHWXh \
-			  --exclude="/boot/*" \
-			  --exclude="/dev/*" \
-			  --exclude="/proc/*" \
-			  --exclude="/run/*" \
-			  --exclude="/tmp/*" \
-			  --exclude="/sys/*" \
-			  --info=progress0,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+			--exclude="/boot/*" \
+			--exclude="/dev/*" \
+			--exclude="/proc/*" \
+			--exclude="/run/*" \
+			--exclude="/tmp/*" \
+			--exclude="/sys/*" \
+			--info=progress0,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
@@ -848,17 +840,17 @@ create_image()
 
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot"
-	echo -e "\nCopying files to [/boot]" >>"${DEST}"/${LOG_SUBPATH}/install.log
+	echo -e "\nCopying files to [/boot]" >> "${DEST}"/${LOG_SUBPATH}/install.log
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh \
-			  --info=progress0,stats1 \
-			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
+			--info=progress0,stats1 \
+			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
 	else
 		# ext4
 		rsync -aHWXh \
-			  --info=progress0,stats1 \
-			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
+			--info=progress0,stats1 \
+			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
 	fi
 
 	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
@@ -878,7 +870,7 @@ PRE_UPDATE_INITRAMFS
 	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
-	[[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] &&  write_uboot $LOOP
+	[[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] && write_uboot $LOOP
 
 	# fix wrong / permissions
 	chmod 755 $MOUNT
@@ -901,8 +893,7 @@ Called after unmounting both `/root` and `/boot`.
 POST_UMOUNT_FINAL_IMAGE
 
 	# to make sure its unmounted
-	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
-	do
+	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts; do
 		display_alert "Wait for unmount" "${MOUNT}" "info"
 		sleep 5
 	done
@@ -928,7 +919,6 @@ POST_UMOUNT_FINAL_IMAGE
 		install -d ${FINALDEST}
 	fi
 
-
 	# custom post_build_image_modify hook to run before fingerprinting and compression
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
 
@@ -951,12 +941,12 @@ POST_UMOUNT_FINAL_IMAGE
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
 			#[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
-			[[ ${available_cpu} -gt 16 ]] && available_cpu=16 # using more cpu cores for compressing is pointless
+			[[ ${available_cpu} -gt 16 ]] && available_cpu=16                                               # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
-			if [[ ${BUILD_ALL} == yes && ( ${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4 )]]; then
-				while [[ $(ps -uax | grep "pixz" | wc -l) -gt 2 ]]
-					do echo -en "#"
+			if [[ ${BUILD_ALL} == yes && (${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4) ]]; then
+				while [[ $(ps -uax | grep "pixz" | wc -l) -gt 2 ]]; do
+					echo -en "#"
 					sleep 20
 				done
 			fi
@@ -965,7 +955,7 @@ POST_UMOUNT_FINAL_IMAGE
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *img* || $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-#			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
+			#			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
 			compression_type=""
 		fi
 
@@ -996,10 +986,10 @@ POST_UMOUNT_FINAL_IMAGE
 		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
 			display_alert "Compressing" "${DESTIMG}/${version}.7z" "info"
 			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on \
-			${DESTIMG}/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
+				${DESTIMG}/${version}.7z ${version}.key ${version}.img* > /dev/null 2>&1
 			find ${DESTIMG}/ -type \
-			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 \
-			| xargs -0 rm >/dev/null 2>&1
+				f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 |
+				xargs -0 rm > /dev/null 2>&1
 		fi
 
 	fi
@@ -1007,7 +997,7 @@ POST_UMOUNT_FINAL_IMAGE
 
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
 	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
-	call_extension_method "post_build_image"  << 'POST_BUILD_IMAGE'
+	call_extension_method "post_build_image" << 'POST_BUILD_IMAGE'
 *custom post build hook*
 Called after the final .img file is built, before it is (possibly) written to an SD writer.
 - *NOTE*: this hook used to take an argument ($1) for the final image produced.
@@ -1021,7 +1011,7 @@ POST_BUILD_IMAGE
 	rm -rf --one-file-system $DESTIMG
 
 	# write image to SD card
-	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f ${FINALDEST}/${version}.img ]]; then
+	if [[ $(lsblk "$CARD_DEVICE" 2> /dev/null) && -f ${FINALDEST}/${version}.img ]]; then
 
 		# make sha256sum if it does not exists. we need it for comparisson
 		if [[ -f "${FINALDEST}/${version}".img.sha ]]; then
@@ -1035,10 +1025,10 @@ POST_BUILD_IMAGE
 		# write to SD card
 		pv -p -b -r -c -N "[ .... ] dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
-		call_extension_method "post_write_sdcard"  <<- 'POST_BUILD_IMAGE'
-		*run after writing img to sdcard*
-		After the image is written to `$CARD_DEVICE`, but before verifying it.
-		You can still set SKIP_VERIFY=yes to skip verification.
+		call_extension_method "post_write_sdcard" <<- 'POST_BUILD_IMAGE'
+			*run after writing img to sdcard*
+			After the image is written to `$CARD_DEVICE`, but before verifying it.
+			You can still set SKIP_VERIFY=yes to skip verification.
 		POST_BUILD_IMAGE
 
 		if [[ "${SKIP_VERIFY}" != "yes" ]]; then
@@ -1051,7 +1041,7 @@ POST_BUILD_IMAGE
 				display_alert "Writing failed" "${version}.img" "err"
 			fi
 		fi
-	elif [[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]]; then
+	elif [[ $(systemd-detect-virt) == 'docker' && -n $CARD_DEVICE ]]; then
 		# display warning when we want to write sd card under Docker
 		display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
 	fi

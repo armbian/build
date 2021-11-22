@@ -20,35 +20,32 @@ case $BRANCH in
 		KERNELBRANCH="branch:linux-5.4.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-        ;;
+		;;
 	current)
 
 		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-current'
 
-	;;
+		;;
 	edge)
 
 		KERNELBRANCH="branch:linux-5.11.y"
 		KERNELPATCHDIR='meson-current'
 
-	;;
+		;;
 esac
 
-write_uboot_platform()
-{
+write_uboot_platform() {
 	dd if=$1/bl1.bin.hardkernel of=$2 bs=1 count=442 conv=fsync > /dev/null 2>&1
 	dd if=$1/bl1.bin.hardkernel of=$2 bs=512 skip=1 seek=1 conv=fsync > /dev/null 2>&1
 	dd if=$1/u-boot.bin of=$2 bs=512 seek=64 conv=fsync > /dev/null 2>&1
 	dd if=/dev/zero of=$2 seek=1024 count=32 bs=512 conv=fsync > /dev/null 2>&1
 }
 
-family_tweaks()
-{
+family_tweaks() {
 	:
 }
 
-family_tweaks_bsp()
-{
-	:	
+family_tweaks_bsp() {
+	:
 }
