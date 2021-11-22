@@ -99,6 +99,7 @@ RUN apt-get update \
        qemu-user-static \
        rsync \
        swig \
+       sudo \
        systemd-container \
        tzdata \
        u-boot-tools \
