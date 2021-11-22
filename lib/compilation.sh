@@ -16,8 +16,6 @@
 # compile_kernel
 # compile_firmware
 # compile_armbian-config
-# compile_sunxi_tools
-# install_rkbin_tools
 # compile_xilinx_bootgen
 # grab_version
 # find_toolchain
@@ -763,34 +761,6 @@ compile_armbian-config()
 
 
 
-compile_sunxi_tools()
-{
-	# Compile and install only if git commit hash changed
-	cd "${SRC}"/cache/sources/sunxi-tools || exit
-	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/sunxi-fexc ]]; then
-		display_alert "Compiling" "sunxi-tools" "info"
-		make -s clean >/dev/null
-		make -s tools >/dev/null
-		mkdir -p /usr/local/bin/
-		make install-tools >/dev/null 2>&1
-		improved_git rev-parse @ 2>/dev/null > .commit_id
-	fi
-}
-
-install_rkbin_tools()
-{
-	# install only if git commit hash changed
-	cd "${SRC}"/cache/sources/rkbin-tools || exit
-	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/loaderimage ]]; then
-		display_alert "Installing" "rkbin-tools" "info"
-		mkdir -p /usr/local/bin/
-		install -m 755 tools/loaderimage /usr/local/bin/
-		install -m 755 tools/trust_merger /usr/local/bin/
-		improved_git rev-parse @ 2>/dev/null > .commit_id
-	fi
-}
 
 compile_xilinx_bootgen()
 {
