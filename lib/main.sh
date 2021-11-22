@@ -428,6 +428,8 @@ start=$(date +%s)
 # The OFFLINE_WORK variable inside the function
 prepare_host
 
+[[ "${JUST_INIT}" == "yes" ]] && exit 0
+
 [[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
 # fetch_from_repo <url> <dir> <ref> <subdir_flag>

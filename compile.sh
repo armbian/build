@@ -288,9 +288,6 @@ while [[ "${1}" == *=* ]]; do
 
 done
 
-# Used to prepare Docker image
-[[ "${JUST_INIT}" == "yes" ]] && exit 0
-
 
 if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
 
