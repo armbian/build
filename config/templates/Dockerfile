@@ -47,6 +47,7 @@ RUN apt-get update \
        debootstrap \
        device-tree-compiler \
        dialog \
+       distcc \
        dosfstools \
        f2fs-tools \
        fakeroot \
@@ -96,6 +97,7 @@ RUN apt-get update \
        python3-pkg-resources \
        python3-setuptools \
        qemu \
+       qemu-utils \
        qemu-user-static \
        rsync \
        swig \
