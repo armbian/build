@@ -1,3 +1,4 @@
+enable_extension "sunxi-tools"
 ARCH=armhf
 BOOTDELAY=1
 BOOTPATCHDIR='u-boot-sunxi'
