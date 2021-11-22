@@ -16,7 +16,7 @@ PACKAGE_LIST_FAMILY="ethtool"
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 if [ "$(uname -m)" = "aarch64" ]; then
 	case "$(lsb_release -sc)" in
-	"focal"|"hirsute"|"impish")
+	"bullseye"|"focal"|"hirsute"|"impish"|"jammy")
 			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
 		;;
 	*)
