@@ -14,7 +14,7 @@ case $BRANCH in
 
 	current)
 		KERNEL_VERSION_LEVEL="5.10"
-		KERNELSWITCHOBJ="tag=v5.10.40"
+		KERNELSWITCHOBJ="tag=v5.10.81"
 	;;
 
 	edge)
