@@ -210,6 +210,8 @@ function check_hash()
 		ref_name=HEAD
 	else
 		ref_name=${KERNELBRANCH##*:}
+		# handle sunxi exceptions
+		[[ $ref_name != "*.y" ]] && ref_name=$ref_name".y"
 	fi
 	[[ -z $LINUXFAMILY ]] && LINUXFAMILY=$BOARDFAMILY
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
