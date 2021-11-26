@@ -12,7 +12,10 @@ case $BRANCH in
 
 	legacy)  KERNEL_VERSION_LEVEL="5.4" ;;
 
-	current) KERNEL_VERSION_LEVEL="5.10" ;;
+	current)
+		KERNEL_VERSION_LEVEL="5.10"
+		KERNELSWITCHOBJ="tag=v5.10.81"
+	;;
 
 	edge)
 		KERNEL_VERSION_LEVEL="5.15"
@@ -20,7 +23,7 @@ case $BRANCH in
 	;;
 esac
 
-if [ "$KERNEL_VERSION_LEVEL" != "5.15" ]; then
+if [ "$KERNEL_VERSION_LEVEL" == "5.4" ]; then
 	KERNELSOURCE="https://github.com/megous/linux"
 	KERNELSOURCENAME='name=megous'
 	KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
