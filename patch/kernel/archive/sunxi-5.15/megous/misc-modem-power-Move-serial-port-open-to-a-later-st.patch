@@ -1,0 +1,229 @@
+From fe088548b871060e9bd4212a460da75b361b8156 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Fri, 4 Sep 2020 16:52:01 +0200
+Subject: [PATCH 260/467] misc: modem-power: Move serial port open to a later
+ stage, drop RDY wait
+
+Waiting for RDY is not reliable. Modem will not send it in some
+configurations. Just poll for empty command OK response.
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/misc/modem-power.c | 114 +++++++++----------------------------
+ 1 file changed, 26 insertions(+), 88 deletions(-)
+
+diff --git a/drivers/misc/modem-power.c b/drivers/misc/modem-power.c
+index 68aa7ecc6..65ec69c7a 100644
+--- a/drivers/misc/modem-power.c
++++ b/drivers/misc/modem-power.c
+@@ -173,12 +173,9 @@ enum {
+         /* serdev */
+         MPWR_F_RECEIVING_MSG,
+         /* eg25 */
+-        MPWR_F_GOT_RDY,
+         MPWR_F_GOT_PDN,
+-
+ 	/* config options */
+         MPWR_F_DUMB_POWERUP,
+-        MPWR_F_WAIT_RDY,
+ 	/* file */
+ 	MPWR_F_OPEN,
+ 	MPWR_F_OVERFLOW,
+@@ -387,8 +384,6 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 	int ret, i, off;
+ 	ktime_t start;
+ 
+-	clear_bit(MPWR_F_GOT_RDY, mpwr->flags);
+-
+ 	if (regulator_is_enabled(mpwr->regulator))
+ 		dev_warn(mpwr->dev,
+ 			 "regulator was already enabled during powerup");
+@@ -420,22 +415,6 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 	/* Switch status key to input, in case it's multiplexed with pwrkey. */
+ 	gpiod_direction_input(mpwr->status_gpio);
+ 
+-	/* open serial console */
+-	ret = serdev_device_open(mpwr->serdev);
+-	if (ret) {
+-		dev_err(mpwr->dev, "error opening serdev (%d)\n", ret);
+-		goto err_shutdown_noclose;
+-	}
+-
+-	of_property_read_u32(mpwr->dev->of_node, "current-speed", &speed);
+-	serdev_device_set_baudrate(mpwr->serdev, speed);
+-	serdev_device_set_flow_control(mpwr->serdev, false);
+-	ret = serdev_device_set_parity(mpwr->serdev, SERDEV_PARITY_NONE);
+-	if (ret) {
+-		dev_err(mpwr->dev, "error setting serdev parity (%d)\n", ret);
+-		goto err_shutdown;
+-	}
+-
+ 	/*
+ 	 * Wait for status/wakeup change, assume good values, if CTS/status
+ 	 * signals, are not configured.
+@@ -467,40 +446,39 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 		dev_err(mpwr->dev, "The modem looks kill-switched\n");
+ 		if (!test_and_set_bit(MPWR_F_KILLSWITCHED, mpwr->flags))
+ 			sysfs_notify(&mpwr->dev->kobj, NULL, "killswitched");
+-		goto err_shutdown;
++		goto err_shutdown_noclose;
+ 	}
+ 
+ 	if (!status_ok) {
+ 		dev_err(mpwr->dev, "The modem didn't report powerup success in time\n");
+-		goto err_shutdown;
++		goto err_shutdown_noclose;
+ 	}
+ 
+ 	if (test_and_clear_bit(MPWR_F_KILLSWITCHED, mpwr->flags))
+ 		sysfs_notify(&mpwr->dev->kobj, NULL, "killswitched");
+ 
++	/* open serial console */
++	ret = serdev_device_open(mpwr->serdev);
++	if (ret) {
++		dev_err(mpwr->dev, "error opening serdev (%d)\n", ret);
++		goto err_shutdown_noclose;
++	}
++
++	of_property_read_u32(mpwr->dev->of_node, "current-speed", &speed);
++	serdev_device_set_baudrate(mpwr->serdev, speed);
++	serdev_device_set_flow_control(mpwr->serdev, false);
++	ret = serdev_device_set_parity(mpwr->serdev, SERDEV_PARITY_NONE);
++	if (ret) {
++		dev_err(mpwr->dev, "error setting serdev parity (%d)\n", ret);
++		goto err_shutdown;
++	}
++
+ 	if (test_bit(MPWR_F_DUMB_POWERUP, mpwr->flags))
+ 		goto powered_up;
+ 
+-	if (test_bit(MPWR_F_WAIT_RDY, mpwr->flags)) {
+-		// wait for RDY for up to 30s
+-		ret = wait_event_timeout(mpwr->wait,
+-					 test_bit(MPWR_F_GOT_RDY, mpwr->flags),
+-					 msecs_to_jiffies(30000));
+-		if (ret <= 0) {
+-			dev_err(mpwr->dev, "The modem didn't send RDY in time\n");
+-			goto err_shutdown;
+-		}
+-
+-		// configure the link (disable echo)
+-		ret = mpwr_serdev_at_cmd(mpwr, "AT&FE0", 1000);
+-		if (ret)
+-			goto err_shutdown;
+-	} else {
+-		// configure the link (disable echo)
+-		ret = mpwr_serdev_at_cmd_with_retry_ignore_timeout(mpwr, "AT&FE0", 1000, 30);
+-		if (ret)
+-			goto err_shutdown;
+-	}
++	ret = mpwr_serdev_at_cmd_with_retry_ignore_timeout(mpwr, "AT&FE0", 1000, 30);
++	if (ret)
++		goto err_shutdown;
+ 
+ 	/* print firmware version */
+         ret = mpwr_serdev_at_cmd_with_retry(mpwr, "AT+QVERSION;+QSUBSYSVER", 1000, 15);
+@@ -545,18 +523,11 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 
+ 	/* reset the modem, to apply QDAI config if necessary */
+ 	if (needs_restart) {
+-		clear_bit(MPWR_F_GOT_RDY, mpwr->flags);
+-
+ 		mpwr_serdev_at_cmd(mpwr, "AT+CFUN=1,1", 15000);
+ 
+-		// wait for RDY for up to 30s
+-		ret = wait_event_timeout(mpwr->wait,
+-					 test_bit(MPWR_F_GOT_RDY, mpwr->flags),
+-					 msecs_to_jiffies(30000));
+-		if (ret <= 0) {
+-			dev_err(mpwr->dev, "The modem didn't send RDY in time\n");
++		ret = mpwr_serdev_at_cmd_with_retry_ignore_timeout(mpwr, "AT&FE0", 1000, 30);
++		if (ret)
+ 			goto err_shutdown;
+-		}
+ 
+ 		// wait until QDAI starts succeeding (then the modem is ready
+ 		// to accept the following QCFGs)
+@@ -794,8 +765,6 @@ static void mpwr_eg25_receive_msg(struct mpwr_dev *mpwr, const char *msg)
+ 
+ 	if (!strcmp(msg, "RDY")) {
+ 		// system is ready after powerup
+-                set_bit(MPWR_F_GOT_RDY, mpwr->flags);
+-		wake_up(&mpwr->wait);
+                 return;
+ 	}
+ 
+@@ -1227,43 +1196,15 @@ static ssize_t dumb_powerup_store(struct device *dev,
+ 	if (ret)
+ 		return ret;
+ 
+-	if (val)
++	if (val) {
++		dev_err(mpwr->dev, "Don't use dumb_powerup, it's just a debug function!\n");
+ 		set_bit(MPWR_F_DUMB_POWERUP, mpwr->flags);
+-	else
++	} else
+ 		clear_bit(MPWR_F_DUMB_POWERUP, mpwr->flags);
+ 
+ 	return len;
+ }
+ 
+-static ssize_t wait_rdy_show(struct device *dev,
+-			     struct device_attribute *attr, char *buf)
+-{
+-	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-
+-	return scnprintf(buf, PAGE_SIZE, "%u\n",
+-			 !!test_bit(MPWR_F_WAIT_RDY, mpwr->flags));
+-}
+-
+-static ssize_t wait_rdy_store(struct device *dev,
+-			      struct device_attribute *attr,
+-			      const char *buf, size_t len)
+-{
+-	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-	bool val;
+-	int ret;
+-
+-	ret = kstrtobool(buf, &val);
+-	if (ret)
+-		return ret;
+-
+-	if (val)
+-		set_bit(MPWR_F_WAIT_RDY, mpwr->flags);
+-	else
+-		clear_bit(MPWR_F_WAIT_RDY, mpwr->flags);
+-
+-	return len;
+-}
+-
+ static ssize_t killswitched_show(struct device *dev,
+ 				 struct device_attribute *attr, char *buf)
+ {
+@@ -1302,7 +1243,6 @@ static ssize_t hard_reset_store(struct device *dev,
+ static DEVICE_ATTR_RW(powered);
+ static DEVICE_ATTR_WO(powered_blocking);
+ static DEVICE_ATTR_RW(dumb_powerup);
+-static DEVICE_ATTR_RW(wait_rdy);
+ static DEVICE_ATTR_RO(killswitched);
+ static DEVICE_ATTR_RO(is_busy);
+ static DEVICE_ATTR_WO(hard_reset);
+@@ -1311,7 +1251,6 @@ static struct attribute *mpwr_attrs[] = {
+ 	&dev_attr_powered.attr,
+ 	&dev_attr_powered_blocking.attr,
+ 	&dev_attr_dumb_powerup.attr,
+-	&dev_attr_wait_rdy.attr,
+ 	&dev_attr_killswitched.attr,
+ 	&dev_attr_is_busy.attr,
+ 	&dev_attr_hard_reset.attr,
+@@ -1372,7 +1311,6 @@ static int mpwr_probe_generic(struct device *dev, struct mpwr_dev **mpwr_out)
+ 	INIT_WORK(&mpwr->finish_pdn_work, &mpwr_finish_pdn_work);
+         INIT_DELAYED_WORK(&mpwr->host_ready_work, mpwr_host_ready_work);
+ 	INIT_KFIFO(mpwr->kfifo);
+-	set_bit(MPWR_F_WAIT_RDY, mpwr->flags);
+ 
+ 	ret = of_property_read_string(np, "char-device-name", &cdev_name);
+ 	if (ret) {
+-- 
+2.34.0
+
