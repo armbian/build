@@ -20,7 +20,7 @@ case $BRANCH in
 
 	edge)
 		KERNEL_VERSION_LEVEL="5.15"
-		KERNELSWITCHOBJ="tag=v5.15.4"
+		KERNELSWITCHOBJ="tag=v5.15.5"
 	;;
 esac
 
