@@ -14,7 +14,7 @@ case $BRANCH in
 
 	current)
 		KERNEL_VERSION_LEVEL="5.10"
-		KERNELSWITCHOBJ="tag=v5.10.81"
+		KERNELSWITCHOBJ="tag=v5.10.82"
 	;;
 
 	edge)
@@ -23,15 +23,21 @@ case $BRANCH in
 	;;
 esac
 
-if [ "$KERNEL_VERSION_LEVEL" == "5.4" ]; then
-	KERNELSOURCE="https://github.com/megous/linux"
-	KERNELSOURCENAME='name=megous'
-	KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
-else
-	KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-	KERNELSOURCENAME='name=origin'
-	KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
-fi
+case "$KERNEL_VERSION_LEVEL" in
+
+	5.10|5.15)
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELSOURCENAME='name=origin'
+		KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
+	;;
+
+	*)
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELSOURCENAME='name=megous'
+		KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
+	;;
+esac
+
 KERNELPATCHDIR='sunxi-'$BRANCH
 
 # An optional parameter for switching to a git object such as a tag, commit,
