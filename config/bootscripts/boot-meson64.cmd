@@ -3,7 +3,7 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-setenv load_addr "0x32000000"
+setenv scriptaddr "0x32000000"
 setenv kernel_addr_r "0x34000000"
 setenv fdt_addr_r "0x4080000"
 setenv overlay_error "false"
@@ -94,8 +94,8 @@ fi
 # legacy kernel values from boot.ini
 
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
-	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt
-	env import -t ${load_addr} ${filesize}
+	load ${devtype} ${devnum} ${scriptaddr} ${prefix}armbianEnv.txt
+	env import -t ${scriptaddr} ${filesize}
 fi
 
 # get PARTUUID of first partition on SD/eMMC it was loaded from
@@ -140,16 +140,16 @@ else
 	fdt addr ${fdt_addr_r}
 	fdt resize 65536
 	for overlay_file in ${overlays}; do
-		if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
+		if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 			echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
-			fdt apply ${load_addr} || setenv overlay_error "true"
+			fdt apply ${scriptaddr} || setenv overlay_error "true"
 		fi
 	done
 
 	for overlay_file in ${user_overlays}; do
-		if load ${devtype} ${devnum} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
+		if load ${devtype} ${devnum} ${scriptaddr} ${prefix}overlay-user/${overlay_file}.dtbo; then
 			echo "Applying user provided DT overlay ${overlay_file}.dtbo"
-			fdt apply ${load_addr} || setenv overlay_error "true"
+			fdt apply ${scriptaddr} || setenv overlay_error "true"
 		fi
 	done
 
@@ -157,14 +157,14 @@ else
 		echo "Error applying DT overlays, restoring original DT"
 		load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 	else
-		if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-fixup.scr; then
+		if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-fixup.scr; then
 			echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
-			source ${load_addr}
+			source ${scriptaddr}
 		fi
 		if test -e ${devtype} ${devnum} ${prefix}fixup.scr; then
-			load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr
+			load ${devtype} ${devnum} ${scriptaddr} ${prefix}fixup.scr
 			echo "Applying user provided fixup script (fixup.scr)"
-			source ${load_addr}
+			source ${scriptaddr}
 		fi
 	fi
 
