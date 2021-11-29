@@ -323,12 +323,11 @@ enable_extension() {
 
 	enable_extension_recurse_counter=$((enable_extension_recurse_counter + 1))
 	# for now we block reentrant enable_extension() as to maintain the stack traces readable.
-	# in the future we could just push it onto a stack and process it at the end.
-	# @TODO: implement a simple stack, call it at the end of this method. For now just let it run.
-	#if [[ $enable_extension_recurse_counter -gt 1 ]]; then
-	#	display_alert "Extension problem" "call to enable_extension() inside a extension detected (trace: ${stacktrace})" "err" | tee -a "${EXTENSION_MANAGER_LOG_FILE}"
-	#	exit 3
-	#fi
+	# @TODO: rpardini: we could just push it onto a stack and process it at the end.
+	if [[ $enable_extension_recurse_counter -gt 1 ]]; then
+		display_alert "Extension problem" "call to enable_extension() inside a extension detected (trace: ${stacktrace})" "err" | tee -a "${EXTENSION_MANAGER_LOG_FILE}"
+		exit 3
+	fi
 
 	# there are many opportunities here. too many, actually. let userpatches override just some functions, etc.
 	for extension_base_path in "${SRC}/userpatches/extensions" "${SRC}/extensions"; do
