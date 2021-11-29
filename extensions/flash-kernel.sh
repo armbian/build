@@ -1,5 +1,3 @@
-enable_extension "package-list-utils" # this extension depends on another extension.
-
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 function extension_prepare_config__prepare_flash_kernel() {
 	# Configuration defaults, or lack thereof.
