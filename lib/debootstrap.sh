@@ -135,10 +135,18 @@ create_rootfs_cache()
 			download_and_verify "_rootfs" "$cache_name"
 		fi
 
-		display_alert "Checking for local cache" "$display_name" "info"
+		display_alert "Checking local cache" "$display_name" "info"
 
 		if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
 			touch $cache_fname.current
+			display_alert "Checking cache integrity" "$display_name" "info"
+			sudo lz4 -tqq ${cache_fname}
+			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
+			# sign if signature is missing
+			if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
+				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
+				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
+			fi
 			break
 		elif [[ -f ${cache_fname} ]]; then
 			break
