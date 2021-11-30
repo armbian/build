@@ -16,8 +16,5 @@ edge)
 	export KERNELBRANCH="branch:linux-5.15.y"
 	export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 	export KERNELDIR="linux-uefi-${LINUXFAMILY}"          # Avoid sharing a source tree with others, until we know it's safe.
-	function add_host_dependencies__libelf_and_libfdt() { # Conditional extension: when building the UEFI kernels, make sure some host-side libs are available
-		export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} libfdt-dev libelf-dev"
-	}
 	;;
 esac
