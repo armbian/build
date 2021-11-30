@@ -1,11 +1,11 @@
 # global variables managing the state of the extension manager. treat as private.
 declare -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
 declare -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?
-declare -A defined_hook_point_functions          # keeps a map of hook point functions that were defined and their extension info
-declare -A hook_point_function_trace_sources     # keeps a map of hook point functions that were actually called and their source
-declare -A hook_point_function_trace_lines       # keeps a map of hook point functions that were actually called and their source
+declare -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
+declare -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
+declare -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
 # configuration.
-export DEBUG_EXTENSION_CALLS=no       # set to yes to log every hook function called to the main build log
+export DEBUG_EXTENSION_CALLS=no # set to yes to log every hook function called to the main build log
 export LOG_ENABLE_EXTENSION=yes # colorful logs with stacktrace when enable_extension is called.
 
 # This is a helper function for calling hooks.
@@ -52,7 +52,7 @@ initialize_extension_manager() {
 	[[ ${initialize_extension_manager_counter} -lt 1 ]] && [[ "${ENABLE_EXTENSIONS}" != "" ]] && {
 		local auto_extension
 		for auto_extension in $(echo "${ENABLE_EXTENSIONS}" | tr "," " "); do
-			ENABLE_EXTENSION_TRACE_HINT="CMDLINE -> " enable_extension "${auto_extension}"
+			ENABLE_EXTENSION_TRACE_HINT="ENABLE_EXTENSIONS -> " enable_extension "${auto_extension}"
 		done
 	}
 
@@ -253,7 +253,7 @@ EXTENSION_METADATA_READY
 	export EXTENSION_MANAGER_LOG_FILE="${DEST}"/debug/extensions.log
 }
 
-# This is called by call_extension_method(). To say the truth, this should be in a extension. But then it gets too meta for anyone's head.
+# This is called by call_extension_method(). To say the truth, this should be in an extension. But then it gets too meta for anyone's head.
 write_hook_point_metadata() {
 	local main_hook_point_name="$1"
 
@@ -275,38 +275,41 @@ get_extension_hook_stracktrace() {
 	IFS=' ' read -r -a sources <<<"${sources_str}"
 	IFS=' ' read -r -a lines <<<"${lines_str}"
 	for index in "${!sources[@]}"; do
-		local source="${sources[index]}" line="${lines[index]}" nextline="${lines[((index+1))]}" prevline="${lines[((index-1))]}"
+		local source="${sources[index]}" line="${lines[((index - 1))]}"
 		# skip extension infrastructure sources, these only pollute the trace and add no insight to users
 		[[ ${source} == */.tmp/extension_function_definition.sh ]] && continue
 		[[ ${source} == *lib/extensions.sh ]] && continue
-		#[[ ${source} == */compile.sh ]] && continue
+		[[ ${source} == */compile.sh ]] && continue
 		# relativize the source, otherwise too long to display
 		source="${source#"${SRC}/"}"
 		# remove 'lib/'. hope this is not too confusing.
 		source="${source#"lib/"}"
 		# add to the list
 		arrow="$([[ "$final_stack" != "" ]] && echo "-> ")"
-		final_stack="${source}:${prevline} ${arrow} ${final_stack} "
+		final_stack="${source}:${line} ${arrow} ${final_stack} "
 	done
 	# output the result, no newline
+	# shellcheck disable=SC2086 # I wanna suppress double spacing, thanks
 	echo -n $final_stack
 }
 
 show_caller_full() {
-  local frame=0
-  while caller $frame; do
-    ((frame++));
-  done
+	local frame=0
+	while caller $frame; do
+		((frame++))
+	done
 }
-# can be called by board, family, config or user to make sure a extension is included.
+# can be called by board, family, config or user to make sure an extension is included.
 # single argument is the extension name.
 # will look for it in /userpatches/extensions first.
 # if not found there will look in /extensions
-# if not found will throw and abort compilation (or will it? no set -e no this codebase in general)
+# if not found will exit 17
 declare -i enable_extension_recurse_counter=0
+declare -a enable_extension_recurse_stack
 enable_extension() {
 	local extension_name="$1"
-	local extension_dir extension_file extension_file_in_dir extension_floating_file stacktrace
+	local extension_dir extension_file extension_file_in_dir extension_floating_file
+	local stacktrace
 
 	# capture the stack leading to this, possibly with a hint in front.
 	stacktrace="${ENABLE_EXTENSION_TRACE_HINT}$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
@@ -321,13 +324,14 @@ enable_extension() {
 		exit 2
 	fi
 
-	enable_extension_recurse_counter=$((enable_extension_recurse_counter + 1))
-	# for now we block reentrant enable_extension() as to maintain the stack traces readable.
-	# @TODO: rpardini: we could just push it onto a stack and process it at the end.
+	# check the counter. if recurring, add to the stack and return success
 	if [[ $enable_extension_recurse_counter -gt 1 ]]; then
-		display_alert "Extension problem" "call to enable_extension() inside a extension detected (trace: ${stacktrace})" "err" | tee -a "${EXTENSION_MANAGER_LOG_FILE}"
-		exit 3
+		enable_extension_recurse_stack+=("${extension_name}")
+		return 0
 	fi
+
+	# increment the counter
+	enable_extension_recurse_counter=$((enable_extension_recurse_counter + 1))
 
 	# there are many opportunities here. too many, actually. let userpatches override just some functions, etc.
 	for extension_base_path in "${SRC}/userpatches/extensions" "${SRC}/extensions"; do
@@ -394,6 +398,15 @@ enable_extension() {
 
 	# Always output to the log
 	echo "Extension added: '${extension_name}': from ${extension_file} - added by: '${stacktrace}'" >>"${EXTENSION_MANAGER_LOG_FILE}"
+
+	# snapshot, then clear, the stack
+	local -a stack_snapshot=("${enable_extension_recurse_stack[@]}")
+	enable_extension_recurse_stack=()
+
+	# process the stacked snapshot, finally enabling the extensions
+	for stacked_extension in "${stack_snapshot[@]}"; do
+		ENABLE_EXTENSION_TRACE_HINT="RECURSE ${stacktrace} ->" enable_extension "${stacked_extension}"
+	done
 
 }
 
