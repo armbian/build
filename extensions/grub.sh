@@ -11,7 +11,6 @@ function extension_prepare_config__prepare_flash_kernel() {
 	# User config overrides.
 	export BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
 	unset BOOTSOURCE                                                             # To try and convince lib/ to not build or install u-boot.
-	export SKIP_KERNEL_SYMLINK="yes"                                             # symlinks help u-boot, but fails with grub and other standard bootloaders
 	export IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
 	export UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
 	export BOOTSIZE=0                                                            # No separate /boot when using UEFI.
