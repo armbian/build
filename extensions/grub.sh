@@ -63,13 +63,25 @@ function extension_prepare_config__prepare_flash_kernel() {
 	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }
 
+# @TODO: extract u-boot into an extension, so that core bsps don't have this stuff in there to begin with.
+# @TODO: this code is duplicated in flash-kernel.sh extension, so another reason to refactor the root of the evil
+post_family_tweaks_bsp__remove_uboot_grub() {
+	display_alert "Removing uboot from BSP" "${EXTENSION}" "info"
+	# Simply remove everything with 'uboot' or 'u-boot' in their filenames from the BSP package.
+	# shellcheck disable=SC2154 # $destination is the target dir of the bsp building function
+	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs echo "Removing from BSP: "
+	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs rm
+}
+
+pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
+	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
+	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot
+}
+
 pre_umount_final_image__install_grub() {
 	configure_grub
 	local chroot_target=$MOUNT
 	display_alert "Installing bootloader" "GRUB" "info"
-
-	# disarm bomb that was planted by the bsp. @TODO: move to bsp tweaks hook
-	rm -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot
 
 	# getting rid of the dtb package, if installed, is hard. for now just zap it, otherwise update-grub goes bananas
 	rm -rf "$MOUNT"/boot/dtb* || true
