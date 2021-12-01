@@ -58,9 +58,17 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 }
 
 # @TODO: extract u-boot into an extension, so that core bsps don't have this stuff in there to begin with.
-pre_umount_final_image__remove_uboot_initramfs_hook() {
-	# disarm bomb that was planted by the core bsp.
-	rm -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot
+# @TODO: this code is duplicated in grub.sh extension, so another reason to refactor the root of the evil
+post_family_tweaks_bsp__remove_uboot_flash_kernel() {
+	display_alert "Removing uboot from BSP" "${EXTENSION}" "info"
+	# Simply remove everything with 'uboot' or 'u-boot' in their filenames from the BSP package.
+	# shellcheck disable=SC2154 # $destination is the target dir of the bsp building function
+	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs rm
+}
+
+pre_umount_final_image__remove_uboot_initramfs_hook_flash_kernel() {
+	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
+	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot
 }
 
 function pre_update_initramfs__setup_flash_kernel() {
