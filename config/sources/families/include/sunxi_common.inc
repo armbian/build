@@ -13,15 +13,10 @@ case $BRANCH in
 
 	legacy)  KERNEL_VERSION_LEVEL="5.4" ;;
 
-	current)
-		KERNEL_VERSION_LEVEL="5.10"
-		KERNELSWITCHOBJ="tag=v5.10.82"
-	;;
+	current) KERNEL_VERSION_LEVEL="5.10" ;;
 
-	edge)
-		KERNEL_VERSION_LEVEL="5.15"
-		KERNELSWITCHOBJ="tag=v5.15.5"
-	;;
+	edge) KERNEL_VERSION_LEVEL="5.15" ;;
+
 esac
 
 case "$KERNEL_VERSION_LEVEL" in
@@ -30,7 +25,6 @@ case "$KERNEL_VERSION_LEVEL" in
 		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCENAME='name=origin'
 		KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
-	;;
 
 	*)
 		KERNELSOURCE="https://github.com/megous/linux"
