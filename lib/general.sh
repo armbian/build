@@ -123,14 +123,14 @@ exit_with_error()
 	display_alert "ERROR in function $_function" "$stacktrace" "err"
 	display_alert "$_description" "$_highlight" "err"
 	display_alert "Process terminated" "" "info"
-	
+
 	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
 		display_alert "MOUNT" "${MOUNT}" "err"
 		display_alert "SDCARD" "${SDCARD}" "err"
 		display_alert "Here's a shell." "debug it" "err"
 		bash < /dev/tty || true
 	fi
-	
+
 	# TODO: execute run_after_build here?
 	overlayfs_wrapper "cleanup"
 	# unlock loop device access in case of starvation
@@ -239,7 +239,7 @@ create_sources_list()
 		display_alert "Disabling armbian repo" "${ARCH}-${RELEASE}" "wrn"
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
-	
+
 	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
 	cp "${SRC}"/config/armbian.key "${basedir}"
 	chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
@@ -1202,7 +1202,7 @@ prepare_host()
 	if [[ $(dpkg --print-architecture) != amd64 ]]; then
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "https://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86-x64 build host is not supported"
+		exit_with_error "Running this tool on non x86_64 build host is not supported"
 	fi
 
 # build aarch64
@@ -1315,7 +1315,7 @@ prepare_host()
 
 	local deps=()
 	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
-	
+
 	export EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 	*run before installing host dependencies*

@@ -550,7 +550,7 @@ if [[ $DOWNLOAD_MIRROR == "bfsu" ]] ; then
 	UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
 fi
 
-if [[ "${ARCHITECTURE}" == "x86" ]]; then
+if [[ "${ARCH}" == "amd64" ]]; then
 	UBUNTU_MIRROR='archive.ubuntu.com/ubuntu' # ports are only for non-amd64, of course.
 fi
 
