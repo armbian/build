@@ -22,7 +22,7 @@ function extension_prepare_config__prepare_flash_kernel() {
 
 	# BIOS-compatibility for amd64
 	if [[ "${ARCH}" == "amd64" ]]; then
-		export UEFI_GRUB_TARGET="x86_64-efi" # Default for x86
+		export UEFI_GRUB_TARGET="x86_64-efi" # Default for x86_64
 		if [[ "${UEFI_ENABLE_BIOS_AMD64}" == "yes" ]]; then
 			export uefi_packages="${uefi_packages} grub-pc-bin grub-pc"
 			export UEFI_GRUB_TARGET_BIOS="i386-pc"
