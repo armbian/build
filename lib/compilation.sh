@@ -598,8 +598,7 @@ compile_firmware()
 	# cp : create hardlinks
 	cp -af --reflink=auto "${SRC}"/cache/sources/armbian-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 
-	# cleanup what's not needed for sure
-	rm -rf "${firmwaretempdir}/${plugin_dir}"/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	rm -rf "${firmwaretempdir}/${plugin_dir}"/lib/firmware/.git
 	cd "${firmwaretempdir}/${plugin_dir}" || exit
 
 	# set up control file

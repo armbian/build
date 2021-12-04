@@ -498,8 +498,7 @@ fi
 if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
 
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
-		# @TODO: add build_firmware() extension method, to armbian-firmware extension
-		[[ -n $KERNELSOURCE ]] && { # Only build firmware if we're building the kernel, otherwise no
+		[[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]] && { # Build firmware by default.
 			FULL=""
 			REPLACE="-full"
 			compile_firmware

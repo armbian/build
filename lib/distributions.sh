@@ -346,15 +346,14 @@ POST_INSTALL_KERNEL_DEBS
 		fi
 	fi
 
-	# install armbian-firmware
-	# @TODO: refactor into armbian-firmware fragment, via to-be-added install_firmware() extension method
-	[[ -n $KERNELSOURCE ]] && {
+	# install armbian-firmware by default. Set BOARD_FIRMWARE_INSTALL="-full" to install full firmware variant
+	[[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]] && {
 		if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
 			if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb ]]; then
-				install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
+				install_deb_chroot "${DEB_STORAGE}/armbian-firmware${BOARD_FIRMWARE_INSTALL:-""}_${REVISION}_all.deb"
 			fi
 		else
-			install_deb_chroot "armbian-firmware" "remote"
+			install_deb_chroot "armbian-firmware${BOARD_FIRMWARE_INSTALL:-""}" "remote"
 		fi
 	}
 

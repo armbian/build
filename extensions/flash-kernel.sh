@@ -20,6 +20,8 @@ function extension_prepare_config__prepare_flash_kernel() {
 }
 
 function post_install_kernel_debs__install_kernel_and_flash_packages() {
+	export INSTALL_ARMBIAN_FIRMWARE="no" # Disable Armbian-firmware install, which would happen after this method.
+	
 	if [[ "${FK__EXTRA_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel extra packages" "${FK__EXTRA_PACKAGES}"
 		echo "-- install extra pkgs" >>"${DEST}"/debug/flash-kernel.log
@@ -36,9 +38,6 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 			display_alert "Failed to install flash-kernel's kernel packages." "${EXTENSION}" "err"
 			exit 28
 		}
-	else
-		# Using armbian-built kernel, but with Ubuntu's firmware.
-		unset KERNELSOURCE # weird, but when done at this point in time, means "don't install armbian-firmware"
 	fi
 
 	display_alert "Installing flash-kernel package" "${FK__TOOL_PACKAGE}"
