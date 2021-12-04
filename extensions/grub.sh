@@ -69,7 +69,6 @@ post_family_tweaks_bsp__remove_uboot_grub() {
 	display_alert "Removing uboot from BSP" "${EXTENSION}" "info"
 	# Simply remove everything with 'uboot' or 'u-boot' in their filenames from the BSP package.
 	# shellcheck disable=SC2154 # $destination is the target dir of the bsp building function
-	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs echo "Removing from BSP: "
 	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs rm
 }
 
