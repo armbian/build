@@ -413,7 +413,7 @@ compile_kernel()
 
 	# compare with the architecture of the current Debian node
 	# if it matches we use the system compiler
-	if $(dpkg-architecture -e $ARCH); then
+	if $(dpkg-architecture -e "${ARCH}"); then
 		display_alert "Native compilation"
 	elif [[ $(dpkg --print-architecture) == amd64 ]]; then
 		local toolchain
