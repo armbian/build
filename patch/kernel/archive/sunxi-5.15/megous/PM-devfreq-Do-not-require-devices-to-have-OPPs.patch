@@ -1,0 +1,90 @@
+From bf87c517939615f4dcff34d2e45e55d4c54e0850 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 3 Apr 2021 16:47:11 -0500
+Subject: [PATCH 408/467] PM / devfreq: Do not require devices to have OPPs
+
+Since commit ea572f816032 ("PM / devfreq: Change return type of
+devfreq_set_freq_table()"), all devfreq devices are required to have a
+valid freq_table. If freq_table is not provided by the driver, it will
+be filled in by set_freq_table() from the OPPs; if that fails,
+devfreq_add_device() will return an error.
+
+However, since commit ab8f58ad72c4 ("PM / devfreq: Set min/max_freq when
+adding the devfreq device"), devfreq devices are _also_ required to have
+an OPP table, even if they provide freq_table. devfreq_add_device()
+requires dev_pm_opp_find_freq_ceil() and dev_pm_opp_find_freq_floor() to
+return successfully, specifically to initialize scaling_min/max_freq.
+
+Not all drivers need an OPP table. For example, a driver where all
+frequencies are determined dynamically could work by filling out only
+freq_table. But with the current code it must call dev_pm_opp_add() on
+every freq_table entry to probe successfully.
+
+The offending properties, scaling_min/max_freq, are only necessary if a
+device has OPPs; if no OPPs exist at all, OPPs cannot be dynamically
+enabled or disabled, so those values have no effect. Thus it is trivial
+to restore support for devices with freq_table only and not OPPs -- move
+those initializations behind the check for a valid OPP table.
+
+Since get_freq_range() uses scaling_max_freq in a min() expression, it
+must be initialized to the maximum possible value. scaling_min_freq is
+initialized as well for consistency.
+
+Fixes: ab8f58ad72c4 ("PM / devfreq: Set min/max_freq when adding the devfreq device")
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/devfreq/devfreq.c | 36 ++++++++++++++++++++----------------
+ 1 file changed, 20 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/devfreq/devfreq.c b/drivers/devfreq/devfreq.c
+index 06333d430..dea2fab64 100644
+--- a/drivers/devfreq/devfreq.c
++++ b/drivers/devfreq/devfreq.c
+@@ -835,24 +835,28 @@ struct devfreq *devfreq_add_device(struct device *dev,
+ 		mutex_lock(&devfreq->lock);
+ 	}
+ 
+-	devfreq->scaling_min_freq = find_available_min_freq(devfreq);
+-	if (!devfreq->scaling_min_freq) {
+-		mutex_unlock(&devfreq->lock);
+-		err = -EINVAL;
+-		goto err_dev;
+-	}
+-
+-	devfreq->scaling_max_freq = find_available_max_freq(devfreq);
+-	if (!devfreq->scaling_max_freq) {
+-		mutex_unlock(&devfreq->lock);
+-		err = -EINVAL;
+-		goto err_dev;
+-	}
+-
+-	devfreq->suspend_freq = dev_pm_opp_get_suspend_opp_freq(dev);
+ 	devfreq->opp_table = dev_pm_opp_get_opp_table(dev);
+-	if (IS_ERR(devfreq->opp_table))
++	if (IS_ERR(devfreq->opp_table)) {
+ 		devfreq->opp_table = NULL;
++		devfreq->scaling_min_freq = 0;
++		devfreq->scaling_max_freq = ULONG_MAX;
++	} else {
++		devfreq->scaling_min_freq = find_available_min_freq(devfreq);
++		if (!devfreq->scaling_min_freq) {
++			mutex_unlock(&devfreq->lock);
++			err = -EINVAL;
++			goto err_dev;
++		}
++
++		devfreq->scaling_max_freq = find_available_max_freq(devfreq);
++		if (!devfreq->scaling_max_freq) {
++			mutex_unlock(&devfreq->lock);
++			err = -EINVAL;
++			goto err_dev;
++		}
++
++		devfreq->suspend_freq = dev_pm_opp_get_suspend_opp_freq(dev);
++	}
+ 
+ 	atomic_set(&devfreq->suspend_count, 0);
+ 
+-- 
+2.34.0
+

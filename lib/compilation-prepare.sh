@@ -24,7 +24,7 @@ compilation_prepare()
 	# Maintaining one from central location starting with 5.3+
 	# Temporally set for new "default->legacy,next->current" family naming
 
-	if linux-version compare "${version}" ge 5.12; then
+	if linux-version compare "${version}" ge 5.10; then
 
 		if test -d ${kerneldir}/debian
 		then
@@ -41,10 +41,6 @@ compilation_prepare()
 
 		chmod 755 ${kerneldir}/scripts/package/{builddeb,mkdebian}
 
-	elif linux-version compare "${version}" ge 5.10; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.10.y.patch" "applying"
 	elif linux-version compare "${version}" ge 5.8.17 \
 		&& linux-version compare "${version}" le 5.9 \
 		|| linux-version compare "${version}" ge 5.9.2; then
@@ -165,6 +161,7 @@ compilation_prepare()
 
 		# manual overrides
 		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5 ; then aufstag="5.4.3"; fi
+		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11 ; then aufstag="5.10.82"; fi
 
 		# check if Mr. Okajima already made a branch for this version
 		improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null

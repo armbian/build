@@ -20,6 +20,13 @@ grep -q "[[:space:]]" <<<"${SRC}" && { echo "\"${SRC}\" contains whitespace. Not
 
 cd "${SRC}" || exit
 
+if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
+	set -T # inherit return/debug traps
+	mkdir -p "${SRC}"/output/debug
+	echo -n "" > "${SRC}"/output/debug/calls.txt
+	trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/debug/calls.txt ;' RETURN
+fi
+
 if [[ -f "${SRC}"/lib/general.sh ]]; then
 
 	# shellcheck source=lib/general.sh
@@ -280,6 +287,7 @@ while [[ "${1}" == *=* ]]; do
 	eval "$parameter=\"$value\""
 
 done
+
 
 if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
 

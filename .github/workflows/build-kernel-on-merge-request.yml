@@ -1,88 +1,20 @@
-name: Lint scripts and build kernel
+name: Build at pull request
 
 on:
   workflow_dispatch:
   pull_request:
+    types: [review_requested, ready_for_review]
 
 jobs:
 
-  Shellcheck:
-
-    name: Shell script analysis
-    runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'Armbian' }}
-    steps:
-
-       - name: Checkout repository
-         uses: actions/checkout@v2
-
-       - name: Environment variables
-         run: sudo -E bash -c set
-
-       - name: Install required packages
-         run: sudo apt-get install shellcheck jq
-
-       - name: "Shellcheck lint error report in diff format"
-         shell: bash {0}
-         run: |
-
-           (for file in $(find lib -type f -exec grep -Iq . {} \; -print); do shellcheck --format=diff $file; done;) 2> /dev/null > lib.diff || true
-           (for file in $(find packages -type f -exec grep -Iq . {} \; -print); do shellcheck --format=diff $file; done;) 2> /dev/null > packages.diff || true
-           (for file in $(find config -type f -exec grep -Iq . {} \; -print); do shellcheck --format=diff $file; done;) 2> /dev/null > config.diff || true
-
-       - name: Upload build artifacts
-         uses: actions/upload-artifact@v2
-         with:
-          name: Shellcheck
-          path: "*.diff"
-          retention-days: 14
-
-  Docker:
-
-    name: Build x86 Docker image
-    runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'Armbian' }}
-    steps:
-      - name: Checkout Armbian build script
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-          repository: armbian/build
-          path: build
-          ref: nightly
-          clean: false
-      - name: Build Docker image
-        run: |
-          cd build
-          sed -i "s/-it --rm/-i --rm/" config/templates/config-docker.conf
-          touch .ignore_changes
-          ./compile.sh dockerpurge KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" \
-          USE_TORRENT="yes" REPOSITORY_INSTALL="kernel" 'prepare_host'
-          sed -i "s/-it --rm/-i --rm/" userpatches/config-docker.conf
-
   Prepare:
     
-    name: "Finding changed kernels"    
+    name: "Find changed kernels"
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'Armbian' }}
     outputs:
       matrix: ${{steps.list_dirs.outputs.matrix}}
     steps:
-
-      - name: Cache build parameters
-        uses: actions/cache@v2
-        env:
-          cache-name: build-kernel
-        with:
-          path: build-kernel
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
-
-      - name: Store environment variables values
-        run: |
-
-          echo "FILE_EXT=-beta" >> $GITHUB_ENV
-          echo "REPO_DEST=nightly" >> $GITHUB_ENV
-          echo "BETA=yes" >> $GITHUB_ENV
 
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -101,36 +33,58 @@ jobs:
           path: scripts
           clean: true
 
+      - name: Sync
+        run: |
+
+          mkdir -p build/userpatches
+          sudo cp scripts/configs/* build/userpatches/
+          
+      - name: Pull Docker image
+        run: |
+
+          sudo docker pull ghcr.io/armbian/build:$(cat build/VERSION)
+
       - name: Determine changed kernels
         run: |
 
           cd build
+
+          # we need to fix this once but fake toolchain will prevent downloading it each time
+          mkdir -p cache/toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu
+          touch cache/toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu/.download-complete
+          mkdir -p cache/toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi
+          touch cache/toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi/.download-complete
+          mkdir -p cache/toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux
+          touch cache/toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux/.download-complete
+          mkdir -p cache/toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux
+          touch cache/toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux/.download-complete
+          mkdir -p cache/toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux
+          touch cache/toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux/.download-complete
+          mkdir -p cache/toolchain/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu
+          touch cache/toolchain/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu/.download-complete
+          mkdir -p cache/toolchain/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf
+          touch cache/toolchain/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf/.download-complete
+          mkdir -p cache/toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu
+          touch cache/toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu/.download-complete
+          mkdir -p cache/toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf
+          touch cache/toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf/.download-complete
           [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
-          BETA="${{ env.BETA }}"
-          FILE_EXT="${{ env.FILE_EXT }}"
-          ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" \
-          BETA="$BETA" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host'
-          mkdir -p cache/hash${FILE_EXT}
-          sudo rsync -ar --delete ../scripts/hash${FILE_EXT}/. cache/hash${FILE_EXT}/ 2> /dev/null
+          mkdir -p cache/hash-beta
+          sudo rsync -ar --delete ../scripts/hash-beta/. cache/hash-beta/ 2> /dev/null
           sudo cp ../scripts/configs/* userpatches/
-          sudo rm -f userpatches/targets.conf          
-          if [[ "$(cat ../build-kernel/build_type 2> /dev/null || true)" =~ stable|edge ]]; then
-            cat config/targets.conf | grep edge | grep cli | grep hirsute | sudo tee userpatches/targets.conf 1>/dev/null 
-            echo "FILE_EXT=" >> $GITHUB_ENV
-            echo "REPO_DEST=master" >> $GITHUB_ENV
-            echo "BETA=no" >> $GITHUB_ENV
-          fi
+          sudo rm -f userpatches/targets.conf
+          sed -i "s/-it --rm/-i --rm/" userpatches/config-docker.conf
+          sed -i "s/COMPRESS_OUTPUTIMAGE=.*/COMPRESS_OUTPUTIMAGE=\"no\"/" userpatches/lib.config
 
       - name: Prepare build matrix
         id: list_dirs
         run: |
 
-          BETA="${{ env.BETA }}"
-          MATRIX=$(cd build;./compile.sh all-new-beta-kernels BETA="$BETA" BUILD_ALL="demo" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | egrep "^[0-9]" | awk '{ print $2 ":" $4 }' | sort | uniq)
+          MATRIX=$(cd build;./compile.sh docker all-new-beta-kernels BUILD_ALL="demo" | sed -r "s/\x1B\[([0-9]{1,3}(;[0-9]{1,2})?)?[mGK]//g" | egrep "^[0-9]" | awk '{ print $2 ":" $4 ":" $3 }' | tr -d '(),' | sort | uniq)
           mkdir -p build-kernel
           echo "no" > build-kernel/skip          
           if [[ -z "$MATRIX" ]]; then
-              MATRIX="none:none"
+              MATRIX="none:none:none"
               echo "yes" > build-kernel/skip
           fi          
           echo ::set-output name=matrix::$(for x in $(echo "${MATRIX}"); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
@@ -157,29 +111,6 @@ jobs:
           path: scripts
           clean: true
 
-      - name: Cache Gradle packages
-        uses: actions/cache@v2
-        env:
-          cache-name: build-kernel
-        with:
-          path: build-kernel
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}-linux 
-            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
-
-      - name: Read value
-        run: |
-
-          echo "FILE_EXT=-beta" >> $GITHUB_ENV
-          echo "REPO_DEST=nightly" >> $GITHUB_ENV
-          echo "BETA=yes" >> $GITHUB_ENV
-          if [[ "$(cat build-kernel/build_type 2> /dev/null || true)" =~ stable|edge ]]; then
-              echo "FILE_EXT=" >> $GITHUB_ENV
-              echo "REPO_DEST=master" >> $GITHUB_ENV
-              echo "BETA=no" >> $GITHUB_ENV
-          fi
-
       - name: Checkout Armbian build script
 
         uses: actions/checkout@v2
@@ -190,24 +121,41 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           clean: false
 
+      - name: Sync
+        run: |
+
+          mkdir -p build/userpatches
+          sudo cp scripts/configs/* build/userpatches/
+          
+      - name: Pull Docker image
+        if: ${{ matrix.node != 'none:none:none' }}
+        run: |
+
+          sudo docker pull ghcr.io/armbian/build:$(cat build/VERSION)
+
       - name: Build
-        if: ${{ matrix.node != 'none:none' }}
+        if: ${{ matrix.node != 'none:none:none' }}
         run: |
 
               CHUNK="${{ matrix.node }}"              
-              FILE_EXT="${{ env.FILE_EXT }}"
+
               BOARD=$(echo $CHUNK | cut -d":" -f1)
               BRANCH=$(echo $CHUNK | cut -d":" -f2)
-              echo "FILE_NAME=${BOARD}-${BRANCH}" >> $GITHUB_ENV
+              FAMILY=$(echo $CHUNK | cut -d":" -f2)
+
               cd build
               [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
-              ./compile.sh ARMBIAN_MIRROR="https://github.com/armbian/mirror/releases/download/" BOARD="$BOARD" \
+              sed -i "s/-it --rm/-i --rm/" userpatches/config-docker.conf
+              sed -i "s/COMPRESS_OUTPUTIMAGE=.*/COMPRESS_OUTPUTIMAGE=\"no\"/" userpatches/lib.config
+
+              ./compile.sh docker ARMBIAN_MIRROR="https://github.com/armbian/mirror/releases/download/" BOARD="$BOARD" \
               BETA="yes" KERNEL_ONLY="yes" BRANCH="$BRANCH" KERNEL_CONFIGURE="no" OFFLINE="no"              
           
       - name: Upload build artifacts
-        if: ${{ matrix.node != 'none:none' }}
+        if: ${{ matrix.node != 'none:none:none' }}
         uses: actions/upload-artifact@v2
         with:
-          name: ${{ env.FILE_NAME }}
-          path: build/output/debs${{ env.FILE_EXT }}/linux-*
+          name: "${FAMILY}-${BRANCH}"
+          path: build/output/debs-beta/linux-*
+          if-no-files-found: ignore
           retention-days: 14

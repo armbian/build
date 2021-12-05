@@ -47,6 +47,7 @@ RUN apt-get update \
        debootstrap \
        device-tree-compiler \
        dialog \
+       distcc \
        dosfstools \
        f2fs-tools \
        fakeroot \
@@ -96,9 +97,11 @@ RUN apt-get update \
        python3-pkg-resources \
        python3-setuptools \
        qemu \
+       qemu-utils \
        qemu-user-static \
        rsync \
        swig \
+       sudo \
        systemd-container \
        tzdata \
        u-boot-tools \
@@ -121,4 +124,5 @@ RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/de
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
+LABEL org.opencontainers.image.source="https://github.com/armbian/build"
 ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]

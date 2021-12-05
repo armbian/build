@@ -215,20 +215,20 @@ create_sources_list()
 
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
-		echo "deb https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+		echo "deb https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
-	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development
-	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
 	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
-	cp "${SRC}"/config/armbian.key "${SDCARD}"
-	chroot "${SDCARD}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
-	rm "${SDCARD}"/armbian.key
+	cp "${SRC}"/config/armbian.key "${basedir}"
+	chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
+	rm "${basedir}"/armbian.key
 }
 
 
@@ -308,6 +308,13 @@ waiter_local_repo ()
 
 	display_alert "Checking git sources" "$dir $name/$branch" "info"
 
+	# Check the exception for 5.15 sunxi. We will remove this after a while.
+	if [ "$dir" == "linux-mainline/5.15" ] && \
+	   [ "$(git remote show | grep megous)" == "megous" ]; then
+			display_alert "Remove mistakenly created and excessively large" "$dir" "info"
+			rm -rf .git ./*
+	fi
+
 	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
 		git init -q .
 
@@ -316,7 +323,7 @@ waiter_local_repo ()
 			(
 			$VAR_SHALLOW_ORIGINAL
 
-			display_alert "Checking git sources" "$dir $name/$branch" "info"
+			display_alert "Add original git sources" "$dir $name/$branch" "info"
 			if [ "$(git ls-remote -h $url $branch | \
 				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
 				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
@@ -403,7 +410,7 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
-	if [ "${url#*megous/}" == linux ]; then
+	if [ "$dir" == "linux-mainline" ] && [[ "$LINUXFAMILY" == sunxi* ]]; then
 		unset LINUXSOURCEDIR
 		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
 		VAR_SHALLOW_ORIGINAL=var_origin_kernel
@@ -1209,7 +1216,7 @@ prepare_host()
 	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
 	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
 	locales ncurses-base pixz dialog systemd-container udev libfdt-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq"
+	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq distcc"
 
 # build aarch64
   else

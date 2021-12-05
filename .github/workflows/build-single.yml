@@ -1,4 +1,4 @@
-name: Build selected image
+name: Build Selected Image
 
 on:
 
@@ -21,25 +21,32 @@ jobs:
     prepare:
 
       name: Build image(s) for download section
-      runs-on: [self-hosted, Linux, X64, cache]
+      runs-on: [self-hosted, Linux, X64, cache, big]
       if: ${{ github.repository_owner == 'Armbian' }}
       steps:
-
         - name: Fix permissions
           run: |
-
+    
             # make sure no temporally dirs are mounted from previous runs
             while :
             do
-                sudo pkill compile.sh || true
-                sudo pkill arm-binfmt-P || true
-                sudo pkill aarch64-binfmt-P || true
-                sudo pkill pixz || true
-                [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 ]] && sudo rm -rf build/.tmp && break
-                echo "Mounted temp directories. Trying to unmount."
-                df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
-                sleep 10
+              sudo pkill compile.sh || true
+              sudo pkill arm-binfmt-P || true
+              sudo pkill aarch64-binfmt-P || true
+              sudo pkill pixz || true
+              if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
+                  sudo mountpoint -q build/cache/rootfs &&  sudo fusermount -u build/cache/rootfs || true
+                  sudo mountpoint -q build/cache/toolchain &&  sudo fusermount -u build/cache/toolchain || true
+              fi
+              sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
+              [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 && $(sudo mountpoint -q build/output/images; echo $?) -eq 1 ]] && sudo rm -rf build/.tmp && break
+              echo "Mounted temp directories. Trying to unmount."
+              df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
+              sleep 10
             done
+            [[ -d build/output/debug ]] && rm -rf build/output/debug/* || true
+            [[ -d build/.git ]] && sudo chown -R $USER:$USER build/.git || true
+            [[ -d build/output/images ]] && sudo rm -rf build/output/images/* || true
 
         - name: Checkout Armbian build script
 
@@ -71,8 +78,7 @@ jobs:
             git-user-signingkey: true
             git-commit-gpgsign: true
 
-
-        - name: Build beta images
+        - name: Prepare
           env:
 
             GPG_PASS:        ${{ secrets.GPG_PASSPHRASE1 }}
@@ -85,9 +91,7 @@ jobs:
            
             [[ "${REPOSITORY}" == "yes" ]] && REPOSITORY_INSTALL="u-boot,kernel,armbian-config,armbian-zsh,armbian-firmware"
             [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
-            sudo apt -y -qq install git
-            ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" USE_TORRENT="yes" REPOSITORY_INSTALL="kernel" 'prepare_host_basic'
-            ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" USE_TORRENT="yes" REPOSITORY_INSTALL="kernel" 'prepare_host'
+            
             PARALLEL_BUILDS=$(awk '{printf("%d",$1/8000)}' <<<$(($(LC_ALL=C free -w 2>/dev/null | grep "^Mem" | awk '{print $2}' || LC_ALL=C free | grep "^Mem"| awk '{print $2}')/1024)))
 
             if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
@@ -98,11 +102,16 @@ jobs:
                 sudo mountpoint -q cache/toolchain && sudo rm -rf cache/toolchain/*
                 ! sudo mountpoint -q cache/toolchain && sudo rm -rf cache/toolchain/* && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
                 ! sudo mountpoint -q cache/rootfs && sudo rm -rf cache/rootfs/* && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
+            else
+                sudo rsync --size-only --delete -avr rsync://rsync.armbian.com/dl/_rootfs/. cache/rootfs/ || true
             fi   
 
-            # sync rootfs
-            mkdir -p cache/rootfs/
-            sudo rsync --size-only --delete -avr rsync://rsync.armbian.com/dl/_rootfs/. cache/rootfs/
+            # mount deploy target
+            sudo apt-get -y -qq install sshfs
+            sudo mkdir -p /root/.ssh/
+            sudo cp ~/.ssh/known_hosts /root/.ssh/
+            sudo mkdir -p output/images || true
+            sudo sshfs upload@users.armbian.com:/images output/images -o IdentityFile=~/.ssh/id_rsa
 
             # use prepared configs
             sudo cp ../scripts/configs/* userpatches/
@@ -111,11 +120,19 @@ jobs:
             sudo cp ../scripts/VERSION .
 
             # cleaning leftovers if any
-            rm -rf output/images/* output/debs/*
-            rm -f userpatches/targets.conf
+            sudo rm -rf output/debs/*
+            sudo rm -f userpatches/targets.conf
 
             [[ "${REPOSITORY}" != "yes" ]] && ./compile.sh single IGNORE_HASH="yes" REPOSITORY_INSTALL="${REPOSITORY_INSTALL}" REBUILD_IMAGES="${REBUILD_IMAGES}" KERNEL_ONLY="yes" BETA="no" BUILD_ALL="yes" BSP_BUILD="yes" MAKE_ALL_BETA="yes" GPG_PASS="${GPG_PASS}"
             ./compile.sh single MULTITHREAD="${PARALLEL_BUILDS}" REPOSITORY_INSTALL="${REPOSITORY_INSTALL}" IGNORE_HASH="yes" IGNORE_UPDATES="yes" REBUILD_IMAGES="${REBUILD_IMAGES}" KERNEL_ONLY="no" BETA="no" BUILD_ALL="yes" GPG_PASS="${GPG_PASS}"
+
+            # umount
+            while mountpoint output/images -q
+            do
+                sudo umount output/images || true
+                echo "Trying to unmount ..."
+                sleep 10
+            done
 
         - name: Import GPG key
 
@@ -142,6 +159,13 @@ jobs:
             if [[ $(cat .tmp/n 2> /dev/null) -ne 0 ]]; then
               ./compile.sh all-new-stable-bsp GPG_PASS="${GPG_PASS}"
               sudo touch .tmp/bump
+               # wait until it finishes
+               while :
+               do
+                 [[ $(sudo ps -uax | grep compile.sh | wc -l) -le 1 ]] && exit
+                 echo "Waiting for background processes to finish."
+                 sleep 10
+               done
             fi
 
         - name: Bump stable version if we build from sources
@@ -170,14 +194,6 @@ jobs:
             key: ${{ secrets.KEY_TORRENTS }}
             known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
             if_key_exists: replace
-
-        - name: Deploy images to server
-          if: ${{ success() }}
-          run: |
-
-            sudo apt-get -y -qq install lftp
-            sudo chown -R $USER:$USER $(pwd)/build/output/images/
-            lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/images/ images/ ;bye" sftp://users.armbian.com
 
         - name: Deploy packages to server
           if: ${{ success() && github.event.inputs.repository != 'yes' }}
@@ -210,29 +226,3 @@ jobs:
         - name: Update repository
 
           run: ssh -T -i ~/.ssh/id_repository ${{ secrets.USER_REPOSITORY }}@${{ secrets.HOST_REPOSITORY }}
-
-
-    torrents:
-
-      #
-      # Rebuilt torrent files for rootfs cache
-      #
-
-      name: Update download infrastructure
-      needs: [prepare]
-      runs-on: [self-hosted, Linux, local]
-      if: ${{ github.repository_owner == 'Armbian' }}
-      steps:
-
-        - name: Install SSH key for torrent
-
-          uses: shimataro/ssh-key-action@v2
-          with:
-            key: ${{ secrets.KEY_TORRENTS }}
-            name: id_torrent # optional
-            known_hosts: ${{ secrets.KNOWN_HOSTS_TORRENTS }}
-            if_key_exists: replace
-
-        - name: Create torrents
-
-          run: ssh -T -i ~/.ssh/id_torrent ${{ secrets.USER_TORRENTS }}@${{ secrets.HOST_TORRENTS }}
