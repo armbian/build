@@ -300,6 +300,7 @@ function build_all()
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i ]] && BOARDFAMILY=sunxi
+		[[ ${BOARDFAMILY} == sun8i-v3s ]] && BOARDFAMILY=sunxi
 		[[ ${BOARDFAMILY} == sun*iw* ]] && BOARDFAMILY=sunxi64
 		[[ ${BOARDFAMILY} == meson8b ]] && BOARDFAMILY=meson
 		[[ ${BOARDFAMILY} == meson-* ]] && BOARDFAMILY=meson64
