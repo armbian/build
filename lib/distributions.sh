@@ -289,12 +289,12 @@ install_common()
 			UPSTREM_VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
 		fi
 	}
-	
+
 	call_extension_method "pre_install_kernel_debs"  << 'PRE_INSTALL_KERNEL_DEBS'
 *called before installing the Armbian-built kernel deb packages*
 It is not too late to `unset KERNELSOURCE` here and avoid kernel install.
 PRE_INSTALL_KERNEL_DEBS
-	
+
 	# install kernel
 	[[ -n $KERNELSOURCE ]] && {
 		if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
@@ -445,6 +445,9 @@ FAMILY_TWEAKS
 	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723
 	chroot "${SDCARD}" /bin/bash -c "chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
 	chroot "${SDCARD}" /bin/bash -c "chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
+
+	# disable sambe since it hangs when no network is present at boot
+	chroot "${SDCARD}" /bin/bash -c "systemctl --quiet disable smbd 2> /dev/null"
 
 	# disable low-level kernel messages for non betas
 	if [[ -z $BETA ]]; then
