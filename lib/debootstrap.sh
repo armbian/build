@@ -51,6 +51,11 @@ debootstrap_ng()
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	create_rootfs_cache
 
+	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" << 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
+*give config a chance to act before install_distribution_specific*
+Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
+PRE_INSTALL_DISTRIBUTION_SPECIFIC
+
 	# stage: install kernel and u-boot packages
 	# install distribution and board specific applications
 
@@ -248,8 +253,10 @@ create_rootfs_cache()
 		# stage: create apt-get sources list
 		create_sources_list "$RELEASE" "$SDCARD/"
 
-		# add armhf arhitecture to arm64
-		[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
+		# add armhf arhitecture to arm64, unless configured not to do so.
+		if [[ "a${ARMHF_ARCH}" != "askip" ]]; then
+			[[ $ARCH == arm64 ]] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "dpkg --add-architecture armhf"'
+		fi
 
 		# this should fix resolvconf installation failure in some cases
 		chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
@@ -458,6 +465,16 @@ prepare_partitions()
 
 	# default BOOTSIZE to use if not specified
 	DEFAULT_BOOTSIZE=256	# MiB
+	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
+	UEFISIZE=${UEFISIZE:-0}
+	BIOSSIZE=${BIOSSIZE:-0}
+	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
+	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbiefi}"
+
+	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
+*allow custom options for mkfs*
+Good time to change stuff like mkfs opts, types etc.
+PRE_PREPARE_PARTITIONS
 
 	# stage: determine partition configuration
 	if [[ -n $BOOTFS_TYPE ]]; then
@@ -483,6 +500,16 @@ prepare_partitions()
 		local bootpart=1
 		local rootpart=2
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
+	elif [[ $UEFISIZE -gt 0 ]]; then
+		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
+			# efi partition and ext4 root. some juggling is done by parted/sgdisk
+			local uefipart=15
+			local rootpart=1
+		else
+			# efi partition and ext4 root.
+			local uefipart=1
+			local rootpart=2
+		fi
 	else
 		# single partition ext4 root
 		local rootpart=1
@@ -490,8 +517,17 @@ prepare_partitions()
 	fi
 
 	# stage: calculate rootfs size
-	local rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
+	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
 	display_alert "Current rootfs size" "$rootfs_size MiB" "info"
+
+	call_extension_method "prepare_image_size" "config_prepare_image_size" << 'PREPARE_IMAGE_SIZE'
+*allow dynamically determining the size based on the $rootfs_size*
+Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}` is taken into account.
+A good spot to determine `FIXED_IMAGE_SIZE` based on `rootfs_size`.
+UEFISIZE can be set to 0 for no UEFI partition, or to a size in MiB to include one.
+Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
+PREPARE_IMAGE_SIZE
+
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
 		local sdsize=$FIXED_IMAGE_SIZE
@@ -500,7 +536,7 @@ prepare_partitions()
 			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
 		fi
 	else
-		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE )) # MiB
+		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
 		case $ROOTFS_TYPE in
 			btrfs)
 				# Used for server images, currently no swap functionality, so disk space
@@ -534,23 +570,69 @@ prepare_partitions()
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
-	local rootstart=$(($bootstart + ($BOOTSIZE * 2048)))
+	local rootstart=$(($bootstart + ($BOOTSIZE * 2048) + ($UEFISIZE * 2048)))
 	local bootend=$(($rootstart - 1))
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
 	parted -s ${SDCARD}.raw -- mklabel ${IMAGE_PARTITION_TABLE}
-	if [[ $ROOTFS_TYPE == nfs ]]; then
+	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
+		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
+		*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
+		Finally, we can get our own partition table. You have to partition ${SDCARD}.raw
+		yourself. Good luck.
+		CREATE_PARTITION_TABLE
+	elif [[ $ROOTFS_TYPE == nfs ]]; then
 		# single /boot partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s 100%
+		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s "100%"
+	elif [[ $UEFISIZE -gt 0 ]]; then
+		# uefi partition + root partition
+		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
+			if [[ ${BIOSSIZE} -gt 0 ]]; then
+				display_alert "Creating partitions" "BIOS+UEFI+rootfs" "info"
+				# UEFI + GPT automatically get a BIOS partition at 14, EFI at 15
+				local biosstart=$(($OFFSET * 2048))
+				local uefistart=$(($OFFSET * 2048 + ($BIOSSIZE * 2048)))
+				local rootstart=$(($uefistart + ($UEFISIZE * 2048) ))
+				local biosend=$(($uefistart - 1))
+				local uefiend=$(($rootstart - 1))
+				parted -s ${SDCARD}.raw -- mkpart bios fat32 ${biosstart}s ${biosend}s
+				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${uefistart}s ${uefiend}s
+				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+				# transpose so BIOS is in sda14; EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
+				sgdisk --transpose 1:14 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 1:14 FAILED"
+				sgdisk --transpose 2:15 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 2:15 FAILED"
+				sgdisk --transpose 3:1 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 3:1 FAILED"
+				# set the ESP (efi) flag on 15
+				parted -s ${SDCARD}.raw -- set 14 bios_grub on || echo "*** SETTING bios_grub ON 14 FAILED"
+				parted -s ${SDCARD}.raw -- set 15 esp on || echo "*** SETTING ESP ON 15 FAILED"
+			else
+				display_alert "Creating partitions" "UEFI+rootfs (no BIOS)" "info"
+				# Simple EFI + root partition on GPT, no BIOS.
+				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${bootstart}s ${bootend}s
+				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+				# transpose so EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
+				sgdisk --transpose 1:15 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 1:15 FAILED"
+				sgdisk --transpose 2:1 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 2:1 FAILED"
+				# set the ESP (efi) flag on 15
+				parted -s ${SDCARD}.raw -- set 15 esp on || echo "*** SETTING ESP ON 15 FAILED"
+			fi
+		else
+			parted -s ${SDCARD}.raw -- mkpart primary fat32 ${bootstart}s ${bootend}s
+			parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+		fi
 	elif [[ $BOOTSIZE == 0 ]]; then
 		# single root partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s 100%
+		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	else
 		# /boot partition + root partition
 		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s 100%
+		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	fi
+	
+	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
+	*called after all partitions are created, but not yet formatted*
+	POST_CREATE_PARTITIONS
 
 	# stage: mount image
 	# lock access to loop devices
@@ -609,8 +691,21 @@ prepare_partitions()
 		mount ${LOOP}p${bootpart} $MOUNT/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
 	fi
+	if [[ -n $uefipart ]]; then
+		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
+		check_loop_device "${LOOP}p${uefipart}"
+		mkfs.fat -F32 -n "${UEFI_FS_LABEL}" ${LOOP}p${uefipart} >>"${DEST}"/debug/install.log 2>&1
+		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
+		mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
+		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >>$SDCARD/etc/fstab
+	fi
 	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
+
+	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
+	*if you created your own partitions, this would be a good time to format them*
+	The loop device is mounted, so ${LOOP}p1 is it's first partition etc.
+	FORMAT_PARTITIONS
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
@@ -691,7 +786,10 @@ update_initramfs()
 	cp /usr/bin/$QEMU_BINARY $chroot_target/usr/bin/
 	mount_chroot "$chroot_target/"
 
-	chroot $chroot_target /bin/bash -c "$update_initramfs_cmd" >> $DEST/${LOG_SUBPATH}/install.log 2>&1
+	chroot $chroot_target /bin/bash -c "$update_initramfs_cmd" >> $DEST/${LOG_SUBPATH}/install.log 2>&1 || {
+		display_alert "Updating initramfs FAILED, see:" "$DEST/${LOG_SUBPATH}/install.log" "err"
+		exit 23
+	}
 	display_alert "Updated initramfs." "for details see: $DEST/${LOG_SUBPATH}/install.log" "info"
 
 	display_alert "Re-enabling" "initramfs-tools hook for kernel"
@@ -708,6 +806,9 @@ update_initramfs()
 #
 create_image()
 {
+	# create DESTIMG, hooks might put stuff there early.
+	mkdir -p $DESTIMG
+
 	# stage: create file name
 	local version="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
@@ -734,8 +835,15 @@ create_image()
 		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	fi
 
+	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
+*allow config to hack into the initramfs create process*
+Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
+PRE_UPDATE_INITRAMFS
+
 	# stage: create final initramfs
-	update_initramfs $MOUNT
+	[[ -n $KERNELSOURCE ]] && {
+		update_initramfs $MOUNT
+	}
 
 	# DEBUG: print free space
 	local freespace=$(LC_ALL=C df -h)
@@ -743,27 +851,39 @@ create_image()
 	display_alert "Free SD cache" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
 	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
-	# stage: write u-boot
-	write_uboot $LOOP
+	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
+	[[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] &&  write_uboot $LOOP
 
 	# fix wrong / permissions
 	chmod 755 $MOUNT
 
-	# unmount /boot first, rootfs second, image file last
+	call_extension_method "pre_umount_final_image" "config_pre_umount_final_image" << 'PRE_UMOUNT_FINAL_IMAGE'
+*allow config to hack into the image before the unmount*
+Called before unmounting both `/root` and `/boot`.
+PRE_UMOUNT_FINAL_IMAGE
+
+	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
+	[[ $UEFISIZE != 0 ]] && umount -l "${MOUNT}${UEFI_MOUNT_POINT}"
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
+	call_extension_method "post_umount_final_image" "config_post_umount_final_image" << 'POST_UMOUNT_FINAL_IMAGE'
+*allow config to hack into the image after the unmount*
+Called after unmounting both `/root` and `/boot`.
+POST_UMOUNT_FINAL_IMAGE
+
 	# to make sure its unmounted
 	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
 	do
-		display_alert "Unmounting" "${MOUNT}" "info"
+		display_alert "Wait for unmount" "${MOUNT}" "info"
 		sleep 5
 	done
 
 	losetup -d $LOOP
-	rm -rf --one-file-system $DESTIMG $MOUNT
+	# Don't delete $DESTIMG here, extensions might have put nice things there already.
+	rm -rf --one-file-system $MOUNT 
 
 	mkdir -p $DESTIMG
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
@@ -858,13 +978,20 @@ create_image()
 	fi
 	display_alert "Done building" "${DESTIMG}/${version}.img" "info"
 
-	# call custom post build hook
-	[[ $(type -t post_build_image) == function ]] && post_build_image "${DESTIMG}/${version}.img"
+	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
+	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
+	call_extension_method "post_build_image"  << 'POST_BUILD_IMAGE'
+*custom post build hook*
+Called after the final .img file is built, before it is (possibly) written to an SD writer.
+- *NOTE*: this hook used to take an argument ($1) for the final image produced.
+  - Now it is passed as an environment variable `${FINAL_IMAGE_FILE}`
+It is the last possible chance to modify `$CARD_DEVICE`.
+POST_BUILD_IMAGE
 
 	# move artefacts from temporally directory to its final destination
 	[[ -n $compression_type ]] && rm $DESTIMG/${version}.img
 	rsync -a --no-owner --no-group --remove-source-files $DESTIMG/${version}* ${FINALDEST}
-	rm -rf $DESTIMG
+	rm -rf --one-file-system $DESTIMG
 
 	# write image to SD card
 	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f ${FINALDEST}/${version}.img ]]; then
@@ -881,13 +1008,21 @@ create_image()
 		# write to SD card
 		pv -p -b -r -c -N "[ .... ] dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
-		# read and compare
-		display_alert "Verifying. Please wait!"
-		local ofsha=$(dd if=$CARD_DEVICE count=$(du -b ${FINALDEST}/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
-		if [[ $ifsha == $ofsha ]]; then
-			display_alert "Writing verified" "${version}.img" "info"
-		else
-			display_alert "Writing failed" "${version}.img" "err"
+		call_extension_method "post_write_sdcard"  <<- 'POST_BUILD_IMAGE'
+		*run after writing img to sdcard*
+		After the image is written to `$CARD_DEVICE`, but before verifying it.
+		You can still set SKIP_VERIFY=yes to skip verification.
+		POST_BUILD_IMAGE
+
+		if [[ "${SKIP_VERIFY}" != "yes" ]]; then
+			# read and compare
+			display_alert "Verifying. Please wait!"
+			local ofsha=$(dd if=$CARD_DEVICE count=$(du -b ${FINALDEST}/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
+			if [[ $ifsha == $ofsha ]]; then
+				display_alert "Writing verified" "${version}.img" "info"
+			else
+				display_alert "Writing failed" "${version}.img" "err"
+			fi
 		fi
 	elif [[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]]; then
 		# display warning when we want to write sd card under Docker

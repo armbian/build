@@ -393,6 +393,11 @@ else
 
 fi
 
+call_extension_method "post_determine_cthreads" "config_post_determine_cthreads" << 'POST_DETERMINE_CTHREADS'
+*give config a chance modify CTHREADS programatically. A build server may work better with hyperthreads-1 for example.*
+Called early, before any compilation work starts.
+POST_DETERMINE_CTHREADS
+
 if [[ $BETA == yes ]]; then
 	IMAGE_TYPE=nightly
 elif [[ $BETA != "yes" && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
@@ -409,9 +414,9 @@ BOOTSOURCEDIR="${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
 LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
 [[ -n $ATFSOURCE ]] && ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 
-BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}"
+BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
 BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
-BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}"
+BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}${EXTRA_BSP_NAME}"
 BSP_DESKTOP_PACKAGE_FULLNAME="${BSP_DESKTOP_PACKAGE_NAME}_${REVISION}_${ARCH}"
 
 CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
@@ -436,46 +441,42 @@ prepare_host
 
 # ignore updates help on building all images - for internal purposes
 if [[ $IGNORE_UPDATES != yes ]]; then
-display_alert "Downloading sources" "" "info"
+	display_alert "Downloading sources" "" "info"
+	[[ -n $BOOTSOURCE ]] && fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+	[[ -n $KERNELSOURCE ]] && fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+	[[ -n $ATFSOURCE ]] && fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 
-fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
-if [[ -n $ATFSOURCE ]]; then
-	fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
-fi
-fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
-fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
-fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/A3700-utils-marvell" "marvell-tools" "branch:A3700_utils-armada-18.12"
-fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/mv-ddr-marvell.git" "marvell-ddr" "branch:mv_ddr-armada-18.12"
-fetch_from_repo "https://github.com/MarvellEmbeddedProcessors/binaries-marvell" "marvell-binaries" "branch:binaries-marvell-armada-18.12"
-fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
-fetch_from_repo "https://github.com/armbian/testings" "testing-reports" "branch:master"
-fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
-
-compile_sunxi_tools
-install_rkbin_tools
-
-for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
-	[[ $option != sources ]] && cleaning "$option"
-done
-
+	call_extension_method "fetch_sources_tools"  <<- 'FETCH_SOURCES_TOOLS'
+	*fetch host-side sources needed for tools and build*
+	Run early to fetch_from_repo or otherwise obtain sources for needed tools.
+	FETCH_SOURCES_TOOLS
+	
+	call_extension_method "build_host_tools"  <<- 'BUILD_HOST_TOOLS'
+	*build needed tools for the build, host-side*
+	After sources are fetched, build host-side tools needed for the build.
+	BUILD_HOST_TOOLS
+	
+	for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
+		[[ $option != sources ]] && cleaning "$option"
+	done
 fi
 
-# Compile u-boot if packed .deb does not exist or use the one from repository
-if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-
-	if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
-		compile_atf
+# Don't build at all if the BOOTCONFIG is 'none'.
+[[ "${BOOTCONFIG}" != "none" ]] && {
+	# Compile u-boot if packed .deb does not exist or use the one from repository
+	if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+		if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+			compile_atf
+		fi
+		[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
 	fi
-	[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
-
-fi
+}
 
 # Compile kernel if packed .deb does not exist or use the one from repository
 if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 
 	KDEB_CHANGELOG_DIST=$RELEASE
-	[[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
+	[[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
 
 fi
 
@@ -497,13 +498,14 @@ fi
 if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
 
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
-
-		FULL=""
-		REPLACE="-full"
-		compile_firmware
-		FULL="-full"
-		REPLACE=""
-		compile_firmware
+		[[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]] && { # Build firmware by default.
+			FULL=""
+			REPLACE="-full"
+			compile_firmware
+			FULL="-full"
+			REPLACE=""
+			compile_firmware
+		}
 
 	fi
 
@@ -540,9 +542,12 @@ else
 
 fi
 
-# hook for function to run after build, i.e. to change owner of $SRC
-# NOTE: this will run only if there were no errors during build process
-[[ $(type -t run_after_build) == function ]] && run_after_build || true
+call_extension_method "run_after_build"  << 'RUN_AFTER_BUILD'
+*hook for function to run after build, i.e. to change owner of `$SRC`*
+Really one of the last hooks ever called. The build has ended. Congratulations.
+- *NOTE:* this will run only if there were no errors during build process.
+RUN_AFTER_BUILD
+
 
 end=$(date +%s)
 runtime=$(((end-start)/60))
