@@ -203,9 +203,9 @@ function check_hash()
 
 	BOARDFAMILY=$(grep BOARDFAMILY "${SRC}/config/boards/${BOARD}".* | cut -d \" -f2)
 	# shellcheck source=/dev/null
-	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
+	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf" &> /dev/null
 	# shellcheck source=/dev/null
-	source "${SRC}/config/sources/${ARCH}.conf"
+	source "${SRC}/config/sources/${ARCH}.conf" &> /dev/null
 	ref_type=${KERNELBRANCH%%:*}
 	if [[ $ref_type == head ]]; then
 		ref_name=HEAD
@@ -228,7 +228,7 @@ function check_hash()
 	# ignore diff checking in case of network errrors
 	local kernel_hash="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "idential"
+		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "IDENTICAL"
 	fi
 }
 
@@ -334,7 +334,7 @@ function build_all()
 				local store_hash
 				store_hash=$(check_hash)
 			fi
-			if [[ "$store_hash" != idential ]]; then
+			if [[ "$store_hash" != IDENTICAL ]]; then
 
 			if [[ $1 != "dryrun" ]] && [[ $n -ge $START ]]; then
 					((n+=1))
