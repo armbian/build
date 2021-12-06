@@ -1,3 +1,4 @@
+enable_extension "rkbin-tools"
 ARCH=arm64
 KERNEL_IMAGE_TYPE=Image
 OFFSET=16

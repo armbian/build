@@ -71,6 +71,16 @@ unmount_on_exit()
 {
 
 	trap - INT TERM EXIT
+	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	display_alert "unmount_on_exit() called!" "$stacktrace" "err"
+	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
+		ERROR_DEBUG_SHELL=no # dont do it twice
+		display_alert "MOUNT" "${MOUNT}" "err"
+		display_alert "SDCARD" "${SDCARD}" "err"
+		display_alert "ERROR_DEBUG_SHELL=yes, starting a shell." "ERROR_DEBUG_SHELL" "err"
+		bash < /dev/tty || true
+	fi
+	
 	umount_chroot "${SDCARD}/"
 	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
 	umount -l "${SDCARD}" >/dev/null 2>&1
@@ -79,7 +89,7 @@ unmount_on_exit()
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
 	losetup -d "${LOOP}" >/dev/null 2>&1
 	rm -rf --one-file-system "${SDCARD}"
-	exit_with_error "debootstrap-ng was interrupted"
+	exit_with_error "debootstrap-ng was interrupted" || true # don't trigger again
 
 }
 
@@ -158,6 +168,13 @@ customize_image()
 
 	# for users that need to prepare files at host
 	[[ -f $USERPATCHES_PATH/customize-image-host.sh ]] && source "$USERPATCHES_PATH"/customize-image-host.sh
+
+	call_extension_method "pre_customize_image" "image_tweaks_pre_customize" << 'PRE_CUSTOMIZE_IMAGE'
+*run before customize-image.sh*
+This hook is called after `customize-image-host.sh` is called, but before the overlay is mounted.
+It thus can be used for the same purposes as `customize-image-host.sh`.
+PRE_CUSTOMIZE_IMAGE
+
 	cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
 	chmod +x "${SDCARD}"/tmp/customize-image.sh
 	mkdir -p "${SDCARD}"/tmp/overlay
@@ -172,6 +189,10 @@ customize_image()
 		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
 	fi
 
+	call_extension_method "post_customize_image" "image_tweaks_post_customize" << 'POST_CUSTOMIZE_IMAGE'
+*post customize-image.sh hook*
+Run after the customize-image.sh script is run, and the overlay is unmounted.
+POST_CUSTOMIZE_IMAGE
 }
 
 
