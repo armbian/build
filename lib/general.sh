@@ -234,8 +234,8 @@ create_sources_list()
 	# replace local package server if defined. Suitable for development
 	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
-	# disable repo if amd64 or SKIP_ARMBIAN_REPO=yes
-	if [[ "${ARCH}" == "amd64" ]] || [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
+	# disable repo if SKIP_ARMBIAN_REPO=yes
+	if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
 		display_alert "Disabling armbian repo" "${ARCH}-${RELEASE}" "wrn"
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
