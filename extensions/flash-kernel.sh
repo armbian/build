@@ -16,12 +16,12 @@ function extension_prepare_config__prepare_flash_kernel() {
 	export CLOUD_INIT_CONFIG_LOCATION="/boot/firmware"                          # use /boot/firmware for cloud-init as well
 	export VER="${FK__PUBLISHED_KERNEL_VERSION}"                                # For the VERSION
 	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-fk${FK__PUBLISHED_KERNEL_VERSION}" # Unique bsp name.
-	echo "-- starting" >"${DEST}"/"${LOG_SUBPATH}"/flash-kernel.log                        # Zero out the log for this extension.
+	echo "-- starting" >"${DEST}"/"${LOG_SUBPATH}"/flash-kernel.log             # Zero out the log for this extension.
 }
 
 function post_install_kernel_debs__install_kernel_and_flash_packages() {
 	export INSTALL_ARMBIAN_FIRMWARE="no" # Disable Armbian-firmware install, which would happen after this method.
-	
+
 	if [[ "${FK__EXTRA_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel extra packages" "${FK__EXTRA_PACKAGES}"
 		echo "-- install extra pkgs" >>"${DEST}"/"${LOG_SUBPATH}"/flash-kernel.log
@@ -116,4 +116,7 @@ function pre_update_initramfs__setup_flash_kernel() {
 
 	umount_chroot "$chroot_target/"
 	rm "$chroot_target"/usr/bin/"$QEMU_BINARY"
+
+	display_alert "Disabling Armbian-core update_initramfs, was already done above." "${EXTENSION}"
+	unset KERNELSOURCE # ugly. sorry. we'll have better mechanism for this soon. this is tested at lib/debootstrap.sh:844
 }
