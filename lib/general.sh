@@ -1077,11 +1077,24 @@ repo-manipulate()
 			for release in "${DISTROS[@]}"; do
 				repo-remove-old-packages "$release" "armhf" "5"
 				repo-remove-old-packages "$release" "arm64" "5"
+				repo-remove-old-packages "$release" "amd64" "5"
 				repo-remove-old-packages "$release" "all" "5"
 				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
 			done
 			exit 0
 			;;
+
+                purgeedge)
+                        for release in "${DISTROS[@]}"; do
+				repo-remove-old-packages "$release" "armhf" "3" "edge"
+				repo-remove-old-packages "$release" "arm64" "3" "edge"
+				repo-remove-old-packages "$release" "amd64" "3" "edge"
+				repo-remove-old-packages "$release" "all" "3" "edge"
+				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
+                        done
+                        exit 0
+                        ;;
+
 
 		purgesource)
 			for release in "${DISTROS[@]}"; do
@@ -1099,6 +1112,7 @@ repo-manipulate()
 			echo -e "\n unique         = manually select which package should be removed from all repositories"
 			echo -e "\n update         = updating repository"
 			echo -e "\n purge          = removes all but last 5 versions"
+			echo -e "\n purgeedge      = removes all but last 3 edge versions"
 			echo -e "\n purgesource    = removes all sources\n\n"
 			exit 0
 			;;
@@ -1115,11 +1129,12 @@ repo-manipulate()
 # $1: Repository
 # $2: Architecture
 # $3: Amount of packages to keep
+# $4: Additional search pattern
 repo-remove-old-packages() {
 	local repo=$1
 	local arch=$2
 	local keep=$3
-	for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -t '.' -nk4); do
+	for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -t '.' -nk4 | grep -e "$4"); do
 		local pkg_name
 		count=0
 		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
