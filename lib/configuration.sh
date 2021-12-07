@@ -91,11 +91,20 @@ esac
 
 MAINLINE_KERNEL_DIR='linux-mainline'
 
-if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
-	MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
-else
-	MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
-fi
+[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github
+
+case $UBOOT_MIRROR in
+	gitee)
+		MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
+		;;
+	github)
+		MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
+		;;
+	*)
+		MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
+		;;
+esac
+
 MAINLINE_UBOOT_DIR='u-boot'
 
 # Let's set default data if not defined in board configuration above
