@@ -446,8 +446,8 @@ FAMILY_TWEAKS
 	chroot "${SDCARD}" /bin/bash -c "chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
 	chroot "${SDCARD}" /bin/bash -c "chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
 
-	# disable sambe since it hangs when no network is present at boot
-	chroot "${SDCARD}" /bin/bash -c "systemctl --quiet disable smbd 2> /dev/null"
+	# disable samba NetBIOS over IP name service requests since it hangs when no network is present at boot
+	chroot "${SDCARD}" /bin/bash -c "systemctl --quiet disable nmbd 2> /dev/null"
 
 	# disable low-level kernel messages for non betas
 	if [[ -z $BETA ]]; then
