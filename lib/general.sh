@@ -425,6 +425,9 @@ fetch_from_repo()
 	local ref=$3
 	local ref_subdir=$4
 
+	# Set GitHub mirror before anything else touches $url
+	url=${url//'https://github.com/'/$GITHUB_SOURCE}
+
 	if [ "$dir" == "linux-mainline" ] && [[ "$LINUXFAMILY" == sunxi* ]]; then
 		unset LINUXSOURCEDIR
 		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
