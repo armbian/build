@@ -67,6 +67,20 @@ fi
 # small SD card with kernel, boot script and .dtb/.bin files
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
 
+# Since we are having too many options for mirror management,
+# then here is yet another mirror related option.
+# Respecting user's override in case a mirror is unreachable.
+case $REGIONAL_MIRROR in
+	china)
+		[[ -z $USE_MAINLINE_GOOGLE_MIRROR ]] && [[ -z $MAINLINE_MIRROR ]] && MAINLINE_MIRROR=tuna
+		[[ -z $USE_GITHUB_UBOOT_MIRROR ]] && [[ -z $UBOOT_MIRROR ]] && UBOOT_MIRROR=gitee
+		[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=fastgit
+		[[ -z $DOWNLOAD_MIRROR ]] && DOWNLOAD_MIRROR=china
+		;;
+	*)
+		;;
+esac
+
 # used by multiple sources - reduce code duplication
 [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
 
