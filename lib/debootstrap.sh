@@ -637,7 +637,7 @@ PREPARE_IMAGE_SIZE
 		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
 		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	fi
-	
+
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
 	*called after all partitions are created, but not yet formatted*
 	POST_CREATE_PARTITIONS
@@ -825,8 +825,15 @@ create_image()
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files to" "/"
-		rsync -aHWXh --exclude="/boot/*" --exclude="/dev/*" --exclude="/proc/*" --exclude="/run/*" --exclude="/tmp/*" \
-			--exclude="/sys/*" --info=progress2,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		echo -e "\nCopying files to [/]" >>"${DEST}"/${LOG_SUBPATH}/install.log
+		rsync -aHWXh \
+			  --exclude="/boot/*" \
+			  --exclude="/dev/*" \
+			  --exclude="/proc/*" \
+			  --exclude="/run/*" \
+			  --exclude="/tmp/*" \
+			  --exclude="/sys/*" \
+			  --info=progress0,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
@@ -835,12 +842,17 @@ create_image()
 
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot"
+	echo -e "\nCopying files to [/boot]" >>"${DEST}"/${LOG_SUBPATH}/install.log
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
-		rsync -rLtWh --info=progress2,stats1 $SDCARD/boot $MOUNT >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		rsync -rLtWh \
+			  --info=progress0,stats1 \
+			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
 	else
 		# ext4
-		rsync -aHWXh --info=progress2,stats1 $SDCARD/boot $MOUNT >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		rsync -aHWXh \
+			  --info=progress0,stats1 \
+			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
 	fi
 
 	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
@@ -891,7 +903,7 @@ POST_UMOUNT_FINAL_IMAGE
 
 	losetup -d $LOOP
 	# Don't delete $DESTIMG here, extensions might have put nice things there already.
-	rm -rf --one-file-system $MOUNT 
+	rm -rf --one-file-system $MOUNT
 
 	mkdir -p $DESTIMG
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
@@ -914,7 +926,7 @@ POST_UMOUNT_FINAL_IMAGE
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
 
 	if [[ -z $SEND_TO_SERVER ]]; then
-	
+
 		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
 			COMPRESS_OUTPUTIMAGE="sha,gpg,img"
 		elif [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
