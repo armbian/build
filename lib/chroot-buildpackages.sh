@@ -127,11 +127,15 @@ chroot_prepare_distccd()
 }
 
 # chroot_build_packages
+# chroot_build_packages <a list of packages separated by a space>
 #
 chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
+	local selected_packages=$@
+
+	display_alert "selected_packages=" "$selected_packages" "info"
 
 	if [[ $IMAGE_TYPE == user-built ]]; then
 		# if user-built image compile only for selected arch/release
@@ -170,10 +174,24 @@ chroot_build_packages()
 				date +%s > "${t}"
 			fi
 
-			for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
+			if [ -n "$selected_packages" ]; then
+				config_for_packages=$(
+					for n in $selected_packages; do
+						find "${SRC}"/packages/extras-buildpkgs/ -maxdepth 1 -name '*'${n%:*}'*.conf'
+					done
+				)
+			else
+				config_for_packages=$(
+					find "${SRC}"/packages/extras-buildpkgs/ -maxdepth 1 -name '*.conf'
+				)
+			fi
+
+			for plugin in $config_for_packages; do
 				unset package_name package_repo package_ref package_builddeps package_install_chroot package_install_target \
 					package_upstream_version needs_building plugin_target_dir package_component "package_builddeps_${release}"
 				source "${plugin}"
+
+				ts=$(date +%s); display_alert "Process for" "$package_name" "ext"
 
 				# check build condition
 				if [[ $(type -t package_checkbuild) == function ]] && ! package_checkbuild; then
@@ -215,7 +233,7 @@ chroot_build_packages()
 					--capability=CAP_MKNOD -D "${target_dir}" \
 					--tmpfs=/root/build \
 					--tmpfs=/tmp:mode=777 \
-					--bind-ro "${SRC}"/packages/extras-buildpkgs/:/root/overlay \
+					--bind-ro "$(dirname $plugin)"/:/root/overlay \
 					--bind-ro "${SRC}"/cache/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
 					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/buildpkg.log'}
 
@@ -226,6 +244,8 @@ chroot_build_packages()
 				fi
 				mv "${target_dir}"/root/*.deb "${plugin_target_dir}" 2>/dev/null
 				mv "${target_dir}"/root/*.log "$DEST/${LOG_SUBPATH}/"
+				te=$(date +%s)
+				display_alert "Build time $package_name " " $(($te - $ts)) sec." "info"
 			done
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)
