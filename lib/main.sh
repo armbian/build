@@ -450,12 +450,12 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 	*fetch host-side sources needed for tools and build*
 	Run early to fetch_from_repo or otherwise obtain sources for needed tools.
 	FETCH_SOURCES_TOOLS
-	
+
 	call_extension_method "build_host_tools"  <<- 'BUILD_HOST_TOOLS'
 	*build needed tools for the build, host-side*
 	After sources are fetched, build host-side tools needed for the build.
 	BUILD_HOST_TOOLS
-	
+
 	for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 		[[ $option != sources ]] && cleaning "$option"
 	done
@@ -569,6 +569,15 @@ $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUT
 " "ext"
 
 } # end of do_default()
+
+if [ "$BUILD_CHROOT" != "" ]; then
+	start=$(date +%s)
+	chroot_build_packages $BUILD_CHROOT
+	end=$(date +%s)
+	runtime=$(((end-start)/60))
+	display_alert "Runtime" "$runtime min" "info"
+	exit
+fi
 
 if [[ -z $1 ]]; then
 	do_default
