@@ -84,7 +84,6 @@ unmount_on_exit()
 	umount_chroot "${SDCARD}/"
 	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
 	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs
-	unset ARMBIAN_CACHE_TOOLCHAIN_PATH ARMBIAN_CACHE_ROOTFS_PATH
 	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
 	umount -l "${SDCARD}" >/dev/null 2>&1
 	umount -l "${MOUNT}"/boot >/dev/null 2>&1
