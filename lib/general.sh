@@ -1423,6 +1423,10 @@ prepare_host()
 # build aarch64
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 		if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
+
+			# bind mount toolchain if defined
+			[[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]] && mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+
 			display_alert "Checking for external GCC compilers" "" "info"
 			# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 

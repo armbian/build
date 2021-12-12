@@ -35,6 +35,9 @@ debootstrap_ng()
 	rm -rf $SDCARD $MOUNT
 	mkdir -p $SDCARD $MOUNT $DEST/images $SRC/cache/rootfs
 
+	# bind mount rootfs if defined
+	[[ -d "${ARMBIAN_CACHE_ROOTFS_PATH}" ]] && mount --bind "${ARMBIAN_CACHE_ROOTFS_PATH}" "${SRC}"/cache/rootfs
+
 	# stage: verify tmpfs configuration and mount
 	# CLI needs ~1.5GiB, desktop - ~3.5GiB
 	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
