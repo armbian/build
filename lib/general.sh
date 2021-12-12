@@ -1425,7 +1425,10 @@ prepare_host()
 		if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
 
 			# bind mount toolchain if defined
-			[[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]] && mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+			if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
+				mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+				mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+			fi
 
 			display_alert "Checking for external GCC compilers" "" "info"
 			# download external Linaro compiler and missing special dependencies since they are needed for certain sources
