@@ -1193,6 +1193,7 @@ install_pkg_deb ()
 	local list=$*
 	local log_file
 	local for_install
+	local need_upgrade=false
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
 	local _file=$(basename "${BASH_SOURCE[1]}")
@@ -1204,11 +1205,19 @@ install_pkg_deb ()
 		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
 	fi
 
+	echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" >>$log_file
+	echo -e "\nIncoming list:" >>$log_file
+	printf "%-30s %-30s %-30s %-30s\n" $list >>$log_file
+	echo "" >>$log_file
 	# If the package is not installed, check the latest
 	# up-to-date version in the apt cache.
 	# Exclude bad package names and send a message to the log.
 	for_install=$(
 	for p in $list;do
+	  case $p in
+	    upgrade) need_upgrade=true; continue ;;
+	    \||\(*|*\)) continue ;;
+	  esac
 	  if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}');then
 		apt-cache  show $p -o APT::Cache::AllVersions=no |& \
 		awk -v p=$p -v tmp_file=$tmp_file \
@@ -1219,14 +1228,16 @@ install_pkg_deb ()
 
 	# This information should be logged.
 	if [ -s $tmp_file ]; then
-		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" >>$log_file
 		cat $tmp_file >>$log_file
 	fi
 
 	if [ -n "$for_install" ]; then
 
 		export DEBIAN_FRONTEND=noninteractive
-		apt-get -qq update && \
+		(
+		apt-get -qq update
+		if $need_upgrade; then apt-get -y upgrade;fi
+		) && \
 		apt-get install -qq -y --no-install-recommends $for_install 2>>$log_file
 
 		# We will show the status after installation
