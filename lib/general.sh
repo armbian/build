@@ -1179,20 +1179,29 @@ wait_for_package_manager()
 #
 prepare_host_basic()
 {
-	# the checklist includes a list of package names separated by a space
-	local checklist="dialog psmisc acl uuid-runtime curl gnupg gawk"
 
-	# Don't use this function here.
-	# wait_for_package_manager
-	#
-	# The `psmisk` package is not installed yet.
+	# command:package1 package2 ...
+	# list of commands that are neeeded:packages where this command is
+	local check_pack install_pack
+	local checklist=(
+			"dialog:dialog"
+			"fuser:psmisc"
+			"getfacl:acl"
+			"uuid:uuid uuid-runtime"
+			"curl:curl"
+			"gpg:gnupg"
+			"gawk:gawk"
+			)
 
-	# We will check one package and install the entire list.
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing basic packages" "$checklist"
-		apt-get -qq update && \
-		apt-get install -qq -y --no-install-recommends $checklist
+	for check_pack in "${checklist[@]}"; do
+	        if ! which ${check_pack%:*} >/dev/null; then local install_pack+=${check_pack#*:}" "; fi
+	done
+
+	if [[ -n $install_pack ]]; then
+		display_alert "Installing basic packages" "$install_pack"
+		apt-get -qq update && apt-get install -qq -y --no-install-recommends $install_pack
 	fi
+
 }
 
 
@@ -1293,7 +1302,11 @@ prepare_host()
 	fi
 
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
-		exit_with_error "Windows subsystem for Linux is not a supported build environment"
+		if [ -f /.dockerenv ]; then
+			display_alert "Building images using Docker on WSL2 may fail" "" "wrn"
+		else
+			exit_with_error "Windows subsystem for Linux is not a supported build environment"
+		fi
 	fi
 
 # build aarch64
@@ -1414,6 +1427,13 @@ prepare_host()
 # build aarch64
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 		if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
+
+			# bind mount toolchain if defined
+			if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
+				mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+				mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+			fi
+
 			display_alert "Checking for external GCC compilers" "" "info"
 			# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 

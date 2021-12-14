@@ -80,8 +80,10 @@ unmount_on_exit()
 		display_alert "ERROR_DEBUG_SHELL=yes, starting a shell." "ERROR_DEBUG_SHELL" "err"
 		bash < /dev/tty || true
 	fi
-	
+
 	umount_chroot "${SDCARD}/"
+	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs
 	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
 	umount -l "${SDCARD}" >/dev/null 2>&1
 	umount -l "${MOUNT}"/boot >/dev/null 2>&1
