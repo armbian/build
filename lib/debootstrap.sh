@@ -38,7 +38,11 @@ debootstrap_ng()
 	# stage: verify tmpfs configuration and mount
 	# CLI needs ~1.5GiB, desktop - ~3.5GiB
 	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
-	local phymem=$(( (($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10 )) # MiB
+	local phymem=$(( (($(
+			awk '/MemTotal/ {print $2}' /proc/meminfo
+			) + $(
+			awk '/SwapTotal/ {print $2}' /proc/meminfo
+			))) / 1024 * 9 / 10 )) # MiB
 	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi # MiB
 	if [[ $FORCE_USE_RAMDISK == no ]]; then	local use_tmpfs=no
 	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
@@ -53,7 +57,9 @@ debootstrap_ng()
 
 	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" << 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
 *give config a chance to act before install_distribution_specific*
-Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
+Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or
+create from scratch_) but before `install_distribution_specific` (_install
+distribution and board specific applications_).
 PRE_INSTALL_DISTRIBUTION_SPECIFIC
 
 	# stage: install kernel and u-boot packages
@@ -72,12 +78,20 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# NOTE: installing too many packages may fill tmpfs mount
 	customize_image
 
-	# remove packages that are no longer needed. Since we have intrudoced uninstall feature, we might want to clean things that are no longer needed
+	# remove packages that are no longer needed. Since we have intrudoced
+	# uninstall feature, we might want to clean things that are no longer needed
 	display_alert "No longer needed packages" "purge" "info"
 	chroot $SDCARD /bin/bash -c "apt-get autoremove -y"  >/dev/null 2>&1
 
 	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | \
+		grep -v deinstall | \
+		awk '{print $1}' | \
+		cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$(
+				[[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal"
+			)$(
+				[[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop"
+			).list 2>&1
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
@@ -123,7 +137,11 @@ create_rootfs_cache()
 	for ((n=0;n<${cycles};n++)); do
 
 		[[ -z ${FORCED_MONTH_OFFSET} ]] && FORCED_MONTH_OFFSET=${n}
-		local packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
+		local packages_hash=$(
+			get_package_list_hash "$(
+				date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//'
+				)"
+			)
 		local cache_type="cli"
 		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
 		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
@@ -202,21 +220,41 @@ create_rootfs_cache()
 
 		# Ok so for eval+PIPESTATUS.
 		# Try this on your bash shell:
-		# ONEVAR="testing" eval 'bash -c "echo value once $ONEVAR && false && echo value twice $ONEVAR"' '| grep value'  '| grep value' ; echo ${PIPESTATUS[*]}
-		# Notice how PIPESTATUS has only one element. and it is always true, although we failed explicitly with false in the middle of the bash.
-		# That is because eval itself is considered a single command, no matter how many pipes you put in there, you'll get a single value, the return code of the LAST pipe.
-		# Lets export the value of the pipe inside eval so we know outside what happened:
-		# ONEVAR="testing" eval 'bash -e -c "echo value once $ONEVAR && false && echo value twice $ONEVAR"' '| grep value'  '| grep value' ';EVALPIPE=(${PIPESTATUS[@]})' ; echo ${EVALPIPE[*]}
+		# ONEVAR="testing" eval 'bash -c "echo value once $ONEVAR && false && \
+		# echo value twice $ONEVAR"' '| grep value'  '| grep value' ;
+		# echo ${PIPESTATUS[*]}
+		# Notice how PIPESTATUS has only one element. and it is always true,
+		# although we failed explicitly with false in the middle of the bash.
+		# That is because eval itself is considered a single command, no matter
+		# how many pipes you put in there, you'll get a single value, the return
+		# code of the LAST pipe. Lets export the value of the pipe inside eval
+		# so we know outside what happened:
+		# ONEVAR="testing" eval 'bash -e -c "echo value once $ONEVAR && false && \
+		# echo value twice $ONEVAR"' '| grep value'  '| grep value' ';
+		# EVALPIPE=(${PIPESTATUS[@]})' ; echo ${EVALPIPE[*]}
 
 		display_alert "Installing base system" "Stage 1/2" "info"
 		cd $SDCARD # this will prevent error sh: 0: getcwd() failed
-		eval 'debootstrap --variant=minbase --include=${DEBOOTSTRAP_LIST// /,} ${PACKAGE_LIST_EXCLUDE:+ --exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
-			--arch=$ARCH --components=${DEBOOTSTRAP_COMPONENTS} $DEBOOTSTRAP_OPTION --foreign $RELEASE $SDCARD/ $apt_mirror' \
+		eval 'debootstrap \
+			--variant=minbase \
+			--include=${DEBOOTSTRAP_LIST// /,} ${PACKAGE_LIST_EXCLUDE:+ \
+			--exclude=${PACKAGE_LIST_EXCLUDE// /,}} \
+			--arch=$ARCH \
+			--components=${DEBOOTSTRAP_COMPONENTS} $DEBOOTSTRAP_OPTION \
+			--foreign $RELEASE $SDCARD/ $apt_mirror' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 1/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
-		[[ ${EVALPIPE[0]} -ne 0 || ! -f $SDCARD/debootstrap/debootstrap ]] && exit_with_error "Debootstrap base system for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} first stage failed"
+		[[ ${EVALPIPE[0]} -ne 0 || ! -f $SDCARD/debootstrap/debootstrap ]] && \
+		exit_with_error "Debootstrap base system for
+		BRANCH=${BRANCH}
+		BOARD=${BOARD}
+		RELEASE=${RELEASE}
+		DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED}
+		DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT}
+		BUILD_MINIMAL=${BUILD_MINIMAL}
+		first stage failed"
 
 		cp /usr/bin/$QEMU_BINARY $SDCARD/usr/bin/
 
@@ -229,7 +267,15 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Debootstrap (stage 2/2)..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
-		[[ ${EVALPIPE[0]} -ne 0 || ! -f $SDCARD/bin/bash ]] && exit_with_error "Debootstrap base system for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} second stage failed"
+		[[ ${EVALPIPE[0]} -ne 0 || ! -f $SDCARD/bin/bash ]] && \
+		exit_with_error "Debootstrap base system for
+		BRANCH=${BRANCH}
+		BOARD=${BOARD}
+		RELEASE=${RELEASE}
+		DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED}
+		DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT}
+		BUILD_MINIMAL=${BUILD_MINIMAL}
+		second stage failed"
 
 		mount_chroot "$SDCARD"
 
@@ -302,7 +348,15 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian main packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
-		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+		[[ ${EVALPIPE[0]} -ne 0 ]] && \
+		exit_with_error "Installation of Armbian main packages for
+		BRANCH=${BRANCH}
+		BOARD=${BOARD}
+		RELEASE=${RELEASE}
+		DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED}
+		DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT}
+		BUILD_MINIMAL=${BUILD_MINIMAL}
+		failed"
 
 		if [[ $BUILD_DESKTOP == "yes" ]]; then
 			# FIXME Myy : Are we keeping this only for Desktop users,
@@ -330,7 +384,15 @@ create_rootfs_cache()
 				${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian desktop packages..." $TTY_Y $TTY_X'} \
 				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
-			[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+			[[ ${EVALPIPE[0]} -ne 0 ]] && \
+			exit_with_error "Installation of Armbian desktop packages for
+			BRANCH=${BRANCH}
+			BOARD=${BOARD}
+			RELEASE=${RELEASE}
+			DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED}
+			DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT}
+			BUILD_MINIMAL=${BUILD_MINIMAL}
+			failed"
 		fi
 
 		# Remove packages from packages.uninstall
@@ -384,8 +446,15 @@ create_rootfs_cache()
 		# based on rootfs size calculation
 		umount_chroot "$SDCARD"
 
-		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
+		tar cp --xattrs \
+			--directory=$SDCARD/ \
+			--exclude='./dev/*' \
+			--exclude='./proc/*' \
+			--exclude='./run/*' \
+			--exclude='./tmp/*' \
+			--exclude='./sys/*' . | \
+			pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | \
+			lz4 -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
@@ -427,8 +496,8 @@ prepare_partitions()
 	# declare makes local variables by default if used inside a function
 	# NOTE: mountopts string should always start with comma if not empty
 
-	# array copying in old bash versions is tricky, so having filesystems as arrays
-	# with attributes as keys is not a good idea
+	# array copying in old bash versions is tricky, so having filesystems
+	# as arrays with attributes as keys is not a good idea
 	declare -A parttype mkopts mkfs mountopts
 
 	parttype[ext4]=ext4
@@ -439,9 +508,9 @@ prepare_partitions()
 	parttype[xfs]=xfs
 	# parttype[nfs] is empty
 
-	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	# add -N number of inodes to keep mount from running out
-	# create bigger number for desktop builds
+	# metadata_csum and 64bit may need to be disabled explicitly when migrating
+	# to newer supported host OS releases add -N number of inodes to keep mount
+	# from running out create bigger number for desktop builds
 	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
 	if [[ $HOSTRELEASE =~ bionic|buster|bullseye|cosmic|focal|hirsute|impish|jammy|sid ]]; then
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
@@ -530,10 +599,11 @@ PRE_PREPARE_PARTITIONS
 
 	call_extension_method "prepare_image_size" "config_prepare_image_size" << 'PREPARE_IMAGE_SIZE'
 *allow dynamically determining the size based on the $rootfs_size*
-Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}` is taken into account.
-A good spot to determine `FIXED_IMAGE_SIZE` based on `rootfs_size`.
-UEFISIZE can be set to 0 for no UEFI partition, or to a size in MiB to include one.
-Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
+Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}`
+is taken into account. A good spot to determine `FIXED_IMAGE_SIZE` based
+on `rootfs_size`. UEFISIZE can be set to 0 for no UEFI partition, or to
+a size in MiB to include one. Last chance to set `USE_HOOK_FOR_PARTITION`=yes
+and then implement create_partition_table hook_point.
 PREPARE_IMAGE_SIZE
 
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
@@ -570,10 +640,13 @@ PREPARE_IMAGE_SIZE
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
 	if [[ $FAST_CREATE_IMAGE == yes ]]; then
-		truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
+		# sometimes results in fs corruption, revert to previous know to work solution
+		truncate --size=${sdsize}M ${SDCARD}.raw
 		sync
 	else
-		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
+		dd if=/dev/zero bs=1M status=none count=$sdsize | \
+		pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | \
+		dd status=none of=${SDCARD}.raw
 	fi
 
 	# stage: calculate boot partition size
@@ -607,7 +680,8 @@ PREPARE_IMAGE_SIZE
 				parted -s ${SDCARD}.raw -- mkpart bios fat32 ${biosstart}s ${biosend}s
 				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${uefistart}s ${uefiend}s
 				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
-				# transpose so BIOS is in sda14; EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
+				# transpose so BIOS is in sda14; EFI is in sda15 and root in sda1;
+				# requires sgdisk, parted cant do numbers
 				sgdisk --transpose 1:14 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 1:14 FAILED"
 				sgdisk --transpose 2:15 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 2:15 FAILED"
 				sgdisk --transpose 3:1 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 3:1 FAILED"
@@ -836,8 +910,16 @@ create_image()
 			  --info=progress0,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
-		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "rootfs.tgz" | gzip -c > $DEST/images/${version}-rootfs.tgz
+		tar cp --xattrs \
+			--directory=$SDCARD/ \
+			--exclude='./boot/*' \
+			--exclude='./dev/*' \
+			--exclude='./proc/*' \
+			--exclude='./run/*' \
+			--exclude='./tmp/*' \
+			--exclude='./sys/*' . | \
+			pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "rootfs.tgz" | \
+			gzip -c > $DEST/images/${version}-rootfs.tgz
 	fi
 
 	# stage: rsync /boot
@@ -857,7 +939,8 @@ create_image()
 
 	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
 *allow config to hack into the initramfs create process*
-Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
+Called after rsync has synced both `/root` and `/boot` on
+the target, but before calling `update_initramfs`.
 PRE_UPDATE_INITRAMFS
 
 	# stage: create final initramfs
@@ -923,7 +1006,9 @@ POST_UMOUNT_FINAL_IMAGE
 
 
 	# custom post_build_image_modify hook to run before fingerprinting and compression
-	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
+	[[ $(type -t post_build_image_modify) == function ]] && \
+	display_alert "Custom Hook Detected" "post_build_image_modify" "info" && \
+	post_build_image_modify "${DESTIMG}/${version}.img"
 
 	if [[ -z $SEND_TO_SERVER ]]; then
 
@@ -941,9 +1026,11 @@ POST_UMOUNT_FINAL_IMAGE
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
-			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
+			# compressing consumes a lot of memory we don't have. Waiting for
+			# previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
-			#[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
+			# [[ ${BUILD_ALL} == yes ]] && \
+			# available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
 			[[ ${available_cpu} -gt 16 ]] && available_cpu=16 # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
@@ -1026,7 +1113,8 @@ POST_BUILD_IMAGE
 		display_alert "Writing image" "$CARD_DEVICE ${readsha}" "info"
 
 		# write to SD card
-		pv -p -b -r -c -N "[ .... ] dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
+		pv -p -b -r -c -N "[ .... ] dd" ${FINALDEST}/${version}.img | \
+		dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
 		call_extension_method "post_write_sdcard"  <<- 'POST_BUILD_IMAGE'
 		*run after writing img to sdcard*
@@ -1037,7 +1125,12 @@ POST_BUILD_IMAGE
 		if [[ "${SKIP_VERIFY}" != "yes" ]]; then
 			# read and compare
 			display_alert "Verifying. Please wait!"
-			local ofsha=$(dd if=$CARD_DEVICE count=$(du -b ${FINALDEST}/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
+			local ofsha=$(
+				dd if=$CARD_DEVICE count=$(
+					du -b ${FINALDEST}/${version}.img | cut -f1
+				) status=none iflag=count_bytes oflag=direct | \
+				sha256sum | awk '{print $1}'
+			)
 			if [[ $ifsha == $ofsha ]]; then
 				display_alert "Writing verified" "${version}.img" "info"
 			else
