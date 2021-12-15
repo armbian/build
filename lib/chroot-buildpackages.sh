@@ -89,6 +89,11 @@ create_chroot()
 	[[ $release == bullseye || $release == focal || $release == hirsute || $release == sid ]] && chroot "${target_dir}" /bin/bash -c "ln -s /usr/bin/python3 /usr/bin/python"
 	touch "${target_dir}"/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "${release}/${arch}" "info"
+
+	display_alert "Upgrading packages for $release/$arch" "$(basename $target_dir)" "info"
+	local t=$target_dir/root/.update-timestamp
+	chroot "${target_dir}" /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
+	date +%s > "${t}"
 } #############################################################################
 
 
@@ -153,7 +158,28 @@ chroot_build_packages()
 
 			local target_dir
 			target_dir="${SRC}/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}"
+			local t_name="${release}-${arch}-v${CHROOT_CACHE_VERSION}"
+			target_dir="${SRC}/cache/buildpkg/${t_name}"
 			local distcc_bindaddr="127.0.0.2"
+
+			if [ ! -f "${target_dir}.tar.xz" ]; then
+				display_alert "Create a clean Environment archive" "${t_name}.tar.xz" "info"
+				local tmp_dir=$(mktemp -d /tmp/debootstrap-XXXXX)
+				create_chroot "${tmp_dir}/${t_name}" "${release}" "${arch}"
+				(cd "${tmp_dir}"; tar -cJf "${t_name}.tar.xz" "${t_name}"
+				mv "${t_name}.tar.xz" "${SRC}/cache/buildpkg/")
+				rm -rf $tmp_dir
+			fi
+
+			if ${BUILD_IS_CLEAN:-false};then
+				local tmp_dir=$(mktemp -d /tmp/build-XXXXX)
+				(	cd $tmp_dir
+					display_alert "Unpack the clean environment" "${t_name}.tar.xz" "info"
+					tar -xJf "${SRC}/cache/buildpkg/${t_name}.tar.xz" || \
+					exit_with_error "Do not exists" "${SRC}/cache/buildpkg/${t_name}.tar.xz"
+				)
+				target_dir="$tmp_dir/${t_name}"
+			fi
 
 			[[ ! -f "${target_dir}"/root/.debootstrap-complete ]] && create_chroot "${target_dir}" "${release}" "${arch}"
 			[[ ! -f "${target_dir}"/root/.debootstrap-complete ]] && exit_with_error "Creating chroot failed" "${release}/${arch}"
@@ -246,6 +272,7 @@ chroot_build_packages()
 				mv "${target_dir}"/root/*.log "$DEST/${LOG_SUBPATH}/"
 				te=$(date +%s)
 				display_alert "Build time $package_name " " $(($te - $ts)) sec." "info"
+				if ${BUILD_IS_CLEAN:-false};then rm -rf $tmp_dir;fi
 			done
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)
