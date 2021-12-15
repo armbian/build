@@ -915,8 +915,9 @@ POST_UMOUNT_FINAL_IMAGE
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
 
 	FINALDEST=$DEST/images
+	[[ "${BUILD_ALL}" == yes ]] && MAKE_FOLDERS="yes"
 
-	if [[ $BUILD_ALL == yes ]]; then
+	if [[ "${MAKE_FOLDERS}" == yes ]]; then
 		if [[ "$RC" == yes ]]; then
 			FINALDEST=$DEST/images/"${BOARD}"/RC
 		elif [[ "$BETA" == yes ]]; then
