@@ -47,24 +47,41 @@ create_chroot()
 	components['jammy']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc,gawk,apt-utils"
+
 	# perhaps a temporally workaround
-	[[ $release == buster || $release == bullseye || $release == focal || $release == hirsute || $release == sid ]] && includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
+	case $release in
+		buster|bullseye|focal|hirsute|sid)
+			includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
+		;;
+	esac
+
 	if [[ $NO_APT_CACHER != yes ]]; then
 		local mirror_addr="http://localhost:3142/${apt_mirror[${release}]}"
 	else
 		local mirror_addr="http://${apt_mirror[${release}]}"
 	fi
+
 	mkdir -p "${target_dir}"
 	cd "${target_dir}"
-	debootstrap --variant=buildd --components="${components[${release}]}" --arch="${arch}" $DEBOOTSTRAP_OPTION --foreign --include="${includes}" "${release}" "${target_dir}" "${mirror_addr}"
-	[[ $? -ne 0 || ! -f "${target_dir}"/debootstrap/debootstrap ]] && exit_with_error "Create chroot first stage failed"
+
+	debootstrap --variant=buildd \
+				--components="${components[${release}]}" \
+				--arch="${arch}" $DEBOOTSTRAP_OPTION \
+				--foreign \
+				--include="${includes}" "${release}" "${target_dir}" "${mirror_addr}"
+
+	[[ $? -ne 0 || ! -f "${target_dir}"/debootstrap/debootstrap ]] && \
+		exit_with_error "Create chroot first stage failed"
+
 	cp /usr/bin/${qemu_binary[$arch]} "${target_dir}"/usr/bin/
 	[[ ! -f "${target_dir}"/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
 		mkdir -p  "${target_dir}"/usr/share/keyrings/ && \
 		cp /usr/share/keyrings/debian-archive-keyring.gpg "${target_dir}"/usr/share/keyrings/
 
 	chroot "${target_dir}" /bin/bash -c "/debootstrap/debootstrap --second-stage"
-	[[ $? -ne 0 || ! -f "${target_dir}"/bin/bash ]] && exit_with_error "Create chroot second stage failed"
+	[[ $? -ne 0 || ! -f "${target_dir}"/bin/bash ]] && \
+	exit_with_error "Create chroot second stage failed"
+
 	create_sources_list "$release" "${target_dir}"
 	[[ $NO_APT_CACHER != yes ]] && \
 		echo 'Acquire::http { Proxy "http://localhost:3142"; };' > "${target_dir}"/etc/apt/apt.conf.d/02proxy
@@ -86,7 +103,13 @@ create_chroot()
 		mkdir -p "${target_dir}"/var/lock
 	fi
 	chroot "${target_dir}" /bin/bash -c "/usr/sbin/update-ccache-symlinks"
-	[[ $release == bullseye || $release == focal || $release == hirsute || $release == sid ]] && chroot "${target_dir}" /bin/bash -c "ln -s /usr/bin/python3 /usr/bin/python"
+
+	case $release in
+		bullseye|focal|hirsute|sid)
+			chroot "${target_dir}" /bin/bash -c "ln -s /usr/bin/python3 /usr/bin/python"
+		;;
+	esac
+
 	touch "${target_dir}"/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "${release}/${arch}" "info"
 
