@@ -18,7 +18,7 @@ RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 if [ "$(uname -m)" = "aarch64" ]; then
 	case "$(lsb_release -sc)" in
 	"bullseye"|"focal"|"hirsute"|"impish"|"jammy")
-			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
+		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
 		;;
 	*)
 		PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
@@ -30,15 +30,23 @@ fi
 
 BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
 
+CPUMIN=${CPUMIN:="408000"}
+
 if [[ $BOOT_SOC == rk3399 ]]; then
 
-	CPUMIN=${CPUMIN:="408000"}
 	CPUMAX=${CPUMAX:="2016000"}
 
-else # rk3308, rk3328
+elif [[ $BOOT_SOC == rk3328 || $BOOT_SOC == rk3308 ]]; then
 
-	CPUMIN=${CPUMIN:="408000"}
 	CPUMAX=${CPUMAX:="1296000"}
+
+elif [[ "${BOOT_SOC}" == rk3566 ]]; then
+
+	CPUMAX=${CPUMAX:="1800000"}
+
+elif [[ "${BOOT_SOC}" == rk3568 ]]; then
+
+	CPUMAX=${CPUMAX:="1992000"}
 
 fi
 
@@ -62,6 +70,18 @@ elif [[ $BOOT_SOC == rk3399pro ]]; then
 	DDR_BLOB='rk33/rk3399pro_npu_ddr_933MHz_v1.02.bin'
 	MINILOADER_BLOB='rk33/rk3399pro_miniloader_v1.26.bin'
 	BL31_BLOB='rk33/rk3399pro_bl31_v1.35.elf'
+
+elif [[ $BOOT_SOC == rk3566 ]]; then
+
+	BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
+	DDR_BLOB='rk35/rk3566_ddr_1056MHz_v1.10.bin'
+	BL31_BLOB='rk35/rk3568_bl31_v1.29.elf'
+
+elif [[ $BOOT_SOC == rk3568 ]]; then
+
+	BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
+	DDR_BLOB='rk35/rk3568_ddr_1560MHz_v1.10.bin'
+	BL31_BLOB='rk35/rk3568_bl31_v1.29.elf'
 
 elif [[ $BOARD == rockpi-s ]]; then
 
