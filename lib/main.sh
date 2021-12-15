@@ -84,15 +84,13 @@ date +"%d_%m_%Y-%H_%M_%S" > "${DEST}"/${LOG_SUBPATH}/timestamp
 (cd "${DEST}"/${LOG_SUBPATH} && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
 
 if [[ $PROGRESS_DISPLAY == none ]]; then
-
-	OUTPUT_VERYSILENT=yes
-
-elif [[ $PROGRESS_DISPLAY == dialog ]]; then
-
-	OUTPUT_DIALOG=yes
-
+	display_alert "Output will be silenced." "PROGRESS_DISPLAY=none" "warning"
+	export OUTPUT_VERYSILENT=yes
+elif [[ $PROGRESS_DISPLAY == dialog ]]; then # @TODO: WHO SETS THIS?? this is key to solving the logging cray-cray
+	export OUTPUT_DIALOG=yes
 fi
 
+# PROGRESS_LOG_TO_FILE is either yes, or unset.
 if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
 SHOW_WARNING=yes
@@ -408,11 +406,10 @@ do_default() {
 
 	[[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
 
-	# fetch_from_repo <url> <dir> <ref> <subdir_flag>
-
 	# ignore updates help on building all images - for internal purposes
 	if [[ $IGNORE_UPDATES != yes ]]; then
 		display_alert "Downloading sources" "" "info"
+		# fetch_from_repo <url> <dir> <ref> <subdir_flag>
 		[[ -n $BOOTSOURCE ]] && fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
 		[[ -n $KERNELSOURCE ]] && fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 		[[ -n $ATFSOURCE ]] && fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
@@ -433,7 +430,7 @@ do_default() {
 	fi
 
 	# Don't build at all if the BOOTCONFIG is 'none'.
-	[[ "${BOOTCONFIG}" != "none" ]] && {
+	if [[ "${BOOTCONFIG}" != "none" ]]; then
 		# Compile u-boot if packed .deb does not exist or use the one from repository
 		if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
 			if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
@@ -441,28 +438,22 @@ do_default() {
 			fi
 			[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
 		fi
-	}
+	fi
 
 	# Compile kernel if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
-
-		KDEB_CHANGELOG_DIST=$RELEASE
+		export KDEB_CHANGELOG_DIST=$RELEASE
 		[[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
-
 	fi
 
 	# Compile armbian-config if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-
 		[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
-
 	fi
 
 	# Compile armbian-zsh if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then
-
 		[[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]] && compile_armbian-zsh
-
 	fi
 
 	# Compile armbian-firmware if packed .deb does not exist or use the one from repository
@@ -494,16 +485,18 @@ do_default() {
 	# build additional packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
 
+	# end of kernel-only. logging.
 	if [[ $KERNEL_ONLY != yes ]]; then
-
-		[[ $BSP_BUILD != yes ]] && debootstrap_ng
-
-	else
-
-		display_alert "Kernel build done" "@host" "info"
+		display_alert "Kernel build done" "@host" "target-reached"
 		display_alert "Target directory" "${DEB_STORAGE}/" "info"
 		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
+	fi
 
+	# build rootfs, if not only kernel.
+	if [[ $KERNEL_ONLY != yes ]]; then
+		display_alert "Building image" "${BOARD}" "target-started"
+		[[ $BSP_BUILD != yes ]] && build_rootfs_image # old debootstrap-ng.
+		display_alert "Done building image" "${BOARD}" "target-reached"
 	fi
 
 	call_extension_method "run_after_build" << 'RUN_AFTER_BUILD'

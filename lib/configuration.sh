@@ -654,7 +654,6 @@ PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 unset aggregated_content
 
 if [[ -n $PACKAGE_LIST_RM ]]; then
-	display_alert "Package remove list ${PACKAGE_LIST_RM}"
 	# Turns out that \b can be tricked by dashes.
 	# So if you remove mesa-utils but still want to install "mesa-utils-extra"
 	# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".

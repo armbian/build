@@ -111,15 +111,12 @@ generate_bash_sample_for_hook_point() {
 	# shellcheck disable=SC2001
 	local COMMENT_BODY="$(echo "${MARKDOWN_BODY}" | tr '`' '"' | sed -e 's/^/###  /')"
 
-	local bonus=""
-	[[ "${HOOK_POINT_COUNTER}" == "1" ]] && bonus="$(echo -e "\n\texport PROGRESS_DISPLAY=verysilent # Example: export a variable. This one silences the built.")"
-
 	cat << SAMPLE_BASH_CODE
 ${COMMENT_HEAD}
 ${COMMENT_BODY}
 function ${HOOK_POINT}__be_more_awesome() {
 	# @TODO: Please rename this function to reflect what it does, but preserve the "${HOOK_POINT}__" prefix.
-	display_alert "Being awesome at \${HOOK_POINT}" "\${EXTENSION}" "info"${bonus}
+	display_alert "Being awesome at \${HOOK_POINT}" "\${EXTENSION}" "info"
 }
 
 SAMPLE_BASH_CODE

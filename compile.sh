@@ -31,6 +31,10 @@ if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 fi
 
 if [[ -f "${SRC}"/lib/general.sh ]]; then
+	# Source the logging library as early as possible.
+
+	# shellcheck source=functions/logging.sh
+	source "${SRC}"/lib/functions/logging.sh # Logging subsystem.
 
 	# shellcheck source=lib/general.sh
 	source "${SRC}"/lib/general.sh

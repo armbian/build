@@ -9,19 +9,6 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
-# Functions:
-
-# mount_chroot
-# umount_chroot
-# unmount_on_exit
-# check_loop_device
-# install_external_applications
-# write_uboot
-# copy_all_packages_files_for
-# customize_image
-# install_deb_chroot
-# run_on_sdcard
-
 # mount_chroot <target>
 #
 # helper to reduce code duplication
@@ -56,10 +43,8 @@ umount_chroot() {
 # unmount_on_exit
 #
 unmount_on_exit() {
-
-	trap - INT TERM EXIT
+	trap - INT TERM EXIT # remove the trap
 	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
-	display_alert "unmount_on_exit() called!" "$stacktrace" "err"
 	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
 		ERROR_DEBUG_SHELL=no # dont do it twice
 		display_alert "MOUNT" "${MOUNT}" "err"
@@ -78,8 +63,13 @@ unmount_on_exit() {
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
 	losetup -d "${LOOP}" > /dev/null 2>&1
 	rm -rf --one-file-system "${SDCARD}"
-	exit_with_error "debootstrap-ng was interrupted" || true # don't trigger again
 
+	# if we've been called by exit_with_error itself, don't recurse. it makes no sense.
+	if [[ "${ALREADY_EXITING_WITH_ERROR:-no}" != "yes" ]]; then
+		exit_with_error "generic error during build_rootfs_image: ${stacktrace}" || true # but don't trigger error again
+	fi
+
+	return 0 # exit successfully. we're already handling a trap here.
 }
 
 # check_loop_device <device_node>
@@ -87,6 +77,7 @@ unmount_on_exit() {
 check_loop_device() {
 
 	local device=$1
+	#display_alert "Checking look device" "${device}" "wrn"
 	if [[ ! -b $device ]]; then
 		if [[ $CONTAINER_COMPAT == yes && -b /tmp/$device ]]; then
 			display_alert "Creating device node" "$device"
@@ -164,16 +155,51 @@ PRE_CUSTOMIZE_IMAGE
 *post customize-image.sh hook*
 Run after the customize-image.sh script is run, and the overlay is unmounted.
 POST_CUSTOMIZE_IMAGE
+
+	return 0
 }
 
-install_deb_chroot() {
+# shortcut
+function chroot_sdcard_apt_get_install() {
+	chroot_sdcard_apt_get --no-install-recommends install "$@"
+}
 
+function chroot_sdcard_apt_get() {
+	local -a apt_params=("-${APT_OPTS:-yqq}")
+	[[ $NO_APT_CACHER != yes ]] && apt_params+=(
+		-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
+		-o "Acquire::http::Proxy::localhost=\"DIRECT\""
+		-o "Dpkg::Use-Pty=0" # Please be quiet
+	)
+	# IMPORTANT: this function returns the exit code of last statement, in this case chroot (which gets its result from bash which calls apt-get)
+	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
+}
+
+# please, please, unify around this function. if SDCARD is not enough, I'll make a mount version.
+function chroot_sdcard() {
+	# Log the command to the current logfile, so it has context of what was run.
+	if [[ -f "${CURRENT_LOGFILE}" ]]; then
+		echo "(=-Armbian-->" chroot "\${SDCARD}" /bin/bash -e -c "$*" " <- at $(date --utc)" >> "${CURRENT_LOGFILE}" # SDCARD's $ is escaped on purpose here.
+	fi
+	local exit_code=666
+	chroot "${SDCARD}" /bin/bash -e -c "$*" 2>&1 # redirect stderr to stdout. $* is NOT $@!
+	exit_code=$?
+	if [[ -f "${CURRENT_LOGFILE}" ]]; then
+		echo "(=-Armbian--> cmd exited with code ${exit_code} at $(date --utc)" >> "${CURRENT_LOGFILE}" # SDCARD's $ is escaped on purpose here.
+	fi
+	return $exit_code
+}
+
+# this is called by distributions.sh->install_common(), and thus already under a logging manager.
+install_deb_chroot() {
 	local package=$1
 	local variant=$2
 	local transfer=$3
 	local name
 	local desc
 	if [[ ${variant} != remote ]]; then
+		# @TODO: this can be sped up significantly by mounting debs readonly directly in chroot /root/debs and installing from there
+		# also won't require cleanup later
 		name="/root/"$(basename "${package}")
 		[[ ! -f "${SDCARD}${name}" ]] && cp "${package}" "${SDCARD}${name}"
 		desc=""
@@ -182,19 +208,26 @@ install_deb_chroot() {
 		desc=" from repository"
 	fi
 
+	# @TODO: this is mostly duplicated in distributions.sh->install_common(), refactor into "chroot_apt_get()"
 	display_alert "Installing${desc}" "${name/\/root\//}"
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 	# when building in bulk from remote, lets make sure we have up2date index
 	[[ $BUILD_ALL == yes && ${variant} == remote ]] && chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get $apt_extra -yqq update"
-	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get -yqq $apt_extra --no-install-recommends install $name" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
-	[[ $? -ne 0 ]] && exit_with_error "Installation of $name failed" "${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
+
+	# install in chroot via apt-get, not dpkg, so dependencies are also installed from repo if needed.
+	chroot_sdcard_apt_get --no-install-recommends install "${name}" || {
+		exit_with_error "Installation of $name failed" "${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
+	}
+
+	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?
 	[[ ${variant} == remote && ${transfer} == yes ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/*.deb ${DEB_STORAGE}/
 
+	# IMPORTANT! Do not use conditional above as last statement in a function, since it determines the result of the function.
+	return 0
 }
 
+# @TODO: logging: used by desktop.sh exclusively. let's unify?
 run_on_sdcard() {
-
 	# Lack of quotes allows for redirections and pipes easily.
-	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}"/${LOG_SUBPATH}/install.log
-
+	chroot "${SDCARD}" /bin/bash -c "${@}" >> "${DEST}/${LOG_SUBPATH}/install.log"
 }

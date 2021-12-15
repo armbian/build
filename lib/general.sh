@@ -114,18 +114,24 @@ cleaning() {
 # with verbose error message
 #
 
-exit_with_error() {
+function exit_with_error() {
 	local _file
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
 	local _description=$1
 	local _highlight=$2
 	_file=$(basename "${BASH_SOURCE[1]}")
-	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	local stacktrace logfile
+	stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+
+	local logfile_to_show="${CURRENT_LOGFILE}" # store it
+	unset CURRENT_LOGFILE                      # stop logging, otherwise crazy
 
 	display_alert "ERROR in function $_function" "$stacktrace" "err"
 	display_alert "$_description" "$_highlight" "err"
-	display_alert "Process terminated" "" "info"
+
+	# delegate to logging to make it pretty
+	logging_error_show_log "$_description" "$_highlight" "${stacktrace}" "${logfile_to_show}"
 
 	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
 		display_alert "MOUNT" "${MOUNT}" "err"
@@ -134,13 +140,16 @@ exit_with_error() {
 		bash < /dev/tty || true
 	fi
 
-	# TODO: execute run_after_build here?
+	display_alert "Build terminating... wait for cleanups..." "" "err"
+
 	overlayfs_wrapper "cleanup"
-	# unlock loop device access in case of starvation
+	# unlock loop device access in case of starvation # @TODO: hmm, say that again?
 	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -u "${FD}"
 
+	export ALREADY_EXITING_WITH_ERROR=yes # marker for future trap handlers. avoid showing errors twice.
 	exit 255
+	display_alert "Never to be seen" "after exit and traps" "bye"
 }
 
 # get_package_list_hash
@@ -152,7 +161,7 @@ get_package_list_hash() {
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	( 
+	(
 		(
 			printf "%s\n" "${package_arr[@]}"
 			printf -- "-%s\n" "${exclude_arr[@]}"
@@ -601,39 +610,6 @@ fetch_from_repo() {
 } #############################################################################
 
 #--------------------------------------------------------------------------------------------------------------------------------
-# Let's have unique way of displaying alerts
-#--------------------------------------------------------------------------------------------------------------------------------
-display_alert() {
-	# log function parameters to install.log
-	[[ -n "${DEST}" ]] && echo "Displaying message: $@" >> "${DEST}"/${LOG_SUBPATH}/output.log
-
-	local tmp=""
-	[[ -n $2 ]] && tmp="[\e[0;33m $2 \x1B[0m]"
-
-	case $3 in
-		err)
-			echo -e "[\e[0;31m error \x1B[0m] $1 $tmp"
-			;;
-
-		wrn)
-			echo -e "[\e[0;35m warn \x1B[0m] $1 $tmp"
-			;;
-
-		ext)
-			echo -e "[\e[0;32m o.k. \x1B[0m] \e[1;32m$1\x1B[0m $tmp"
-			;;
-
-		info)
-			echo -e "[\e[0;32m o.k. \x1B[0m] $1 $tmp"
-			;;
-
-		*)
-			echo -e "[\e[0;32m .... \x1B[0m] $1 $tmp"
-			;;
-	esac
-}
-
-#--------------------------------------------------------------------------------------------------------------------------------
 # fingerprint_image <out_txt_file> [image_filename]
 # Saving build summary to the image
 #--------------------------------------------------------------------------------------------------------------------------------
@@ -798,6 +774,7 @@ function boot_logo() {
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-ask-password-console.path >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-hide-when-booted.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-show-on-shutdown.service >/dev/null 2>&1"
+	return 0
 }
 
 DISTRIBUTIONS_DESC_DIR="config/distributions"
@@ -1642,7 +1619,7 @@ download_and_verify() {
 			if [[ "${filename:(-6)}" == "tar.xz" ]]; then
 
 				display_alert "decompressing"
-				pv -p -b -r -c -N "[ .... ] ${filename}" "${filename}" | xz -dc | tar xp --xattrs --no-same-owner --overwrite
+				pv -p -b -r -c -N "[🗜] ${filename}" "${filename}" | xz -dc | tar xp --xattrs --no-same-owner --overwrite
 				[[ $? -eq 0 ]] && touch "${localdir}/${dirname}/.download-complete"
 			fi
 		else

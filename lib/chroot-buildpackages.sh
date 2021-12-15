@@ -235,7 +235,7 @@ chroot_build_packages() {
 	fi
 } #############################################################################
 
-# create build script
+# create build script # @TODO: what is this?
 create_build_script() {
 	cat <<- EOF > "${target_dir}"/root/build.sh
 		#!/bin/bash
