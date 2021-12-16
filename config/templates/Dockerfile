@@ -58,6 +58,7 @@ RUN apt-get update \
        gcc-arm-linux-gnueabihf \
        gcc-arm-linux-gnueabi \
        gcc-arm-none-eabi \
+       gdisk \
        git \
        imagemagick \
        jq \
@@ -108,6 +109,7 @@ RUN apt-get update \
        u-boot-tools \
        udev \
        unzip \
+       uuid \
        uuid-dev \
        uuid-runtime \
        wget \
