@@ -13,6 +13,8 @@
 # use configuration files like config-default.conf to set the build configuration
 # check Armbian documentation https://docs.armbian.com/ for more info
 
+set -e # exit on errors.
+
 SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
 # check for whitespace in ${SRC} and exit for safety reasons
@@ -30,78 +32,28 @@ if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 	trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/debug/calls.txt ;' RETURN
 fi
 
-if [[ -f "${SRC}"/lib/general.sh ]]; then
-	# Source the logging library as early as possible.
-
-	# shellcheck source=functions/logging.sh
-	source "${SRC}"/lib/functions/logging.sh # Logging subsystem.
-
-	# shellcheck source=lib/general.sh
-	source "${SRC}"/lib/general.sh
-
-else
-
+# Sanity check.
+if [[ ! -f "${SRC}"/lib/single.sh ]]; then
 	echo "Error: missing build directory structure"
 	echo "Please clone the full repository https://github.com/armbian/build/"
 	exit 255
-
 fi
 
-#  Add the variables needed at the beginning of the path
-check_args() {
+# Source the meat of the build system.
 
-	for p in "$@"; do
+### Logging system
+# shellcheck source=functions/logging.sh
+source "${SRC}"/lib/functions/logging.sh # Logging subsystem.
 
-		case "${p%=*}" in
-			LIB_TAG)
-				# Take a variable if the branch exists locally
-				if [ "${p#*=}" == "$(git branch |
-					gawk -v b="${p#*=}" '{if ( $NF == b ) {print $NF}}')" ]; then
-					echo -e "[\e[0;35m warn \x1B[0m] Setting $p"
-					eval "$p"
-				else
-					echo -e "[\e[0;35m warn \x1B[0m] Skip $p setting as LIB_TAG=\"\""
-					eval LIB_TAG=""
-				fi
-				;;
-		esac
+### Single-build. This in turn sources most of everything else. Reusable.
+# shellcheck source=lib/single.sh
+source "${SRC}"/lib/single.sh
 
-	done
-
-}
+### Multi-build. (sourced even if not used, for consistency)
+# shellcheck source=lib/functions/build-multi.sh
+source "${SRC}"/lib/functions/build-multi.sh
 
 check_args "$@"
-
-update_src() {
-
-	cd "${SRC}" || exit
-	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
-		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-
-		CHANGED_FILES=$(git diff --name-only)
-		if [[ -n "${CHANGED_FILES}" ]]; then
-			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
-			while true; do
-				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation" \
-					", \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
-				read -r
-				if [[ "${REPLY}" == "diff" ]]; then
-					git diff
-				elif [[ "${REPLY}" == "exit" ]]; then
-					exit 1
-				elif [[ "${REPLY}" == "" ]]; then
-					break
-				else
-					echo "Unknown command!"
-				fi
-			done
-		elif [[ $(git branch | grep "*" | awk '{print $2}') != "${LIB_TAG}" && -n "${LIB_TAG}" ]]; then
-			git checkout "${LIB_TAG:-master}"
-			git pull
-		fi
-	fi
-
-}
 
 TMPFILE=$(mktemp)
 chmod 644 "${TMPFILE}"
@@ -139,18 +91,14 @@ else
 fi
 
 if [ "$OFFLINE_WORK" == "yes" ]; then
-
 	echo -e "\n"
 	display_alert "* " "You are working offline."
 	display_alert "* " "Sources, time and host will not be checked"
 	echo -e "\n"
 	sleep 3s
-
 else
-
-	# check and install the basic utilities here
+	# check and install the basic utilities here # @TODO: logging?
 	prepare_host_basic
-
 fi
 
 # Check for Vagrant
@@ -179,7 +127,6 @@ fi
 
 # Install Docker if not there but wanted. We cover only Debian based distro install. On other distros, manual Docker install is needed
 if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]; then
-
 	DOCKER_BINARY="docker-ce"
 
 	# add exception for Ubuntu Focal until Docker provides dedicated binary
@@ -253,7 +200,7 @@ if [[ -z "${CONFIG}" && -n "$1" && -f "${SRC}/userpatches/config-$1.conf" ]]; th
 	shift
 fi
 
-# usind default if custom not found
+# using default if custom not found
 if [[ -z "${CONFIG}" && -f "${SRC}/userpatches/config-default.conf" ]]; then
 	CONFIG="userpatches/config-default.conf"
 fi
@@ -272,6 +219,7 @@ CONFIG_PATH=$(dirname "${CONFIG_FILE}")
 # This allows early calls to enable_extension(), but initialization proper is done later.
 # shellcheck source=lib/extensions.sh
 source "${SRC}"/lib/extensions.sh
+internal_init_extension_manager # and call its global initializer. @TODO: could be avoided?
 
 display_alert "Using config file" "${CONFIG_FILE}" "info"
 pushd "${CONFIG_PATH}" > /dev/null || exit
@@ -283,23 +231,23 @@ popd > /dev/null || exit
 
 # Script parameters handling
 while [[ "${1}" == *=* ]]; do
-
 	parameter=${1%%=*}
 	value=${1##*=}
 	shift
 	display_alert "Command line: setting $parameter to" "${value:-(empty)}" "info"
 	eval "$parameter=\"$value\""
-
 done
 
 if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
-
-	# shellcheck source=lib/build-all-ng.sh
-	source "${SRC}"/lib/build-all-ng.sh
-
+	do_main_build_all_ng
 else
+	# configuration etc
+	prepare_and_config_main_build_single
 
-	# shellcheck source=lib/main.sh
-	source "${SRC}"/lib/main.sh
-
+	# Allow for custom user-invoked functions. @TODO: check this with extensions usage?
+	if [[ -z $1 ]]; then
+		main_default_build_single
+	else
+		eval "$@"
+	fi
 fi

@@ -1466,19 +1466,15 @@ prepare_host() {
 function webseed() {
 	# list of mirrors that host our files
 	unset text
-	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++'))
+	WEBSEED=("$(curl -s https://redirect.armbian.com/mirrors | jq '.[] |.[] | values' | grep https | awk '!a[$0]++')")
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
-		WEBSEED=(
-			"https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-		)
+		WEBSEED=("https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/")
 	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-		WEBSEED=(
-			"https://mirrors.bfsu.edu.cn/armbian-releases/"
-		)
+		WEBSEED=("https://mirrors.bfsu.edu.cn/armbian-releases/")
 	fi
-	for toolchain in ${WEBSEED[@]}; do
+	for toolchain in "${WEBSEED[@]}"; do
 		# use only live, tnahosting return ok also when file is absent
 		if [[ $(wget -S --spider "${toolchain}${1}" 2>&1 > /dev/null | grep 'HTTP/1.1 200 OK') && ${toolchain} != *tnahosting* ]]; then
 			text="${text} ${toolchain}${1}"
@@ -1489,7 +1485,6 @@ function webseed() {
 }
 
 download_and_verify() {
-
 	local remotedir=$1
 	local filename=$2
 	local localdir=$SRC/cache/${remotedir//_/}

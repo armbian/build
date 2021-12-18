@@ -1,14 +1,3 @@
-# global variables managing the state of the extension manager. treat as private.
-declare -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
-declare -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?
-declare -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
-declare -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
-declare -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
-declare fragment_manager_cleanup_file             # this is a file used to cleanup the manager's produced functions, for build_all_ng
-# configuration.
-export DEBUG_EXTENSION_CALLS=no # set to yes to log every hook function called to the main build log
-export LOG_ENABLE_EXTENSION=yes # colorful logs with stacktrace when enable_extension is called.
-
 # This is a helper function for calling hooks.
 # It follows the pattern long used in the codebase for hook-like behaviour:
 #    [[ $(type -t name_of_hook_function) == function ]] && name_of_hook_function
@@ -245,6 +234,20 @@ initialize_extension_manager() {
 	# Dont show any output until we have more than 1 hook function (we implement one already, below)
 	[[ ${hook_functions_counter} -gt 0 ]] &&
 		display_alert "Extension manager" "processed ${hook_points_counter} Extension Methods calls and ${hook_functions_counter} Extension Method implementations" "info" | tee -a "${EXTENSION_MANAGER_LOG_FILE}"
+}
+
+# target
+internal_init_extension_manager() {
+	# global variables managing the state of the extension manager. treat as private.
+	declare -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
+	declare -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?
+	declare -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
+	declare -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
+	declare -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
+	declare fragment_manager_cleanup_file             # this is a file used to cleanup the manager's produced functions, for build_all_ng
+	# configuration.
+	export DEBUG_EXTENSION_CALLS=${DEBUG_EXTENSION_CALLS:-no} # set to yes to log every hook function called to the main build log
+	export LOG_ENABLE_EXTENSION=${LOG_ENABLE_EXTENSION:-yes}  # colorful logs with stacktrace when enable_extension is called.
 }
 
 cleanup_extension_manager() {

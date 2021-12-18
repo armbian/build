@@ -1,49 +1,94 @@
-#!/bin/bash
-#
-# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
-#
-# This file is licensed under the terms of the GNU General Public
-# License version 2. This program is licensed "as is" without any
-# warranty of any kind, whether express or implied.
-#
-# This file is a part of the Armbian build script
-# https://github.com/armbian/build/
+function do_main_build_all_ng() {
+	if [[ -z $VENDOR ]]; then VENDOR="Armbian"; fi
+	if [[ $BETA == "yes" ]]; then STABILITY="beta"; else STABILITY="stable"; fi
+	if [[ $BETA == "yes" ]]; then upload_subdir=nightly; else upload_subdir="archive"; fi
+	if [[ $MAKE_ALL_BETA == "yes" ]]; then STABILITY="stable"; fi
+	if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
+	if [[ -z $MULTITHREAD ]]; then MULTITHREAD=0; fi
+	if [[ -z $START ]]; then START=0; fi
+	if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
+	if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
 
-# Functions:
-# unset_all
-# pack_upload
-# build_main
-# array_contains
-# check_hash
-# build_all
+	MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
 
-if [[ -z $VENDOR ]]; then VENDOR="Armbian"; fi
-if [[ $BETA == "yes" ]]; then STABILITY="beta"; else STABILITY="stable"; fi
-if [[ $BETA == "yes" ]]; then upload_subdir=nightly; else upload_subdir="archive"; fi
-if [[ $MAKE_ALL_BETA == "yes" ]]; then STABILITY="stable"; fi
-if [[ -z $KERNEL_ONLY ]]; then KERNEL_ONLY="yes"; fi
-if [[ -z $MULTITHREAD ]]; then MULTITHREAD=0; fi
-if [[ -z $START ]]; then START=0; fi
-if [[ -z $KERNEL_CONFIGURE ]]; then KERNEL_CONFIGURE="no"; fi
-if [[ -z $CLEAN_LEVEL ]]; then CLEAN_LEVEL="make,oldcache"; fi
+	# cleanup
+	rm -f /run/armbian/*.pid
+	mkdir -p /run/armbian
 
-MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+	# read user defined targets if exits
+	if [[ -f $USERPATCHES_PATH/targets.conf ]]; then
+		display_alert "Adding user provided targets configuration"
+		BUILD_TARGETS="${USERPATCHES_PATH}/targets.conf"
+	else
+		BUILD_TARGETS="${SRC}/config/targets.conf"
+	fi
 
-# cleanup
-rm -f /run/armbian/*.pid
-mkdir -p /run/armbian
+	# bump version in case there was a change
+	if [[ ${BUMP_VERSION} == yes ]]; then
+		cd "${SRC}" || exit
+		CURRENT_VERSION=$(cat VERSION)
+		NEW_VERSION="${CURRENT_VERSION%%-trunk}"
+		if [[ $CURRENT_VERSION == *trunk* ]]; then
+			NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
+		else
+			NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
+		fi
 
-# read user defined targets if exits
-if [[ -f $USERPATCHES_PATH/targets.conf ]]; then
+		echo "${NEW_VERSION}" > VERSION
+		improved_git add "${SRC}"/VERSION
+		improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs-beta/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
+		improved_git push
+		display_alert "Bumping to new version" "${NEW_VERSION}" "info"
+	else
 
-	display_alert "Adding user provided targets configuration"
-	BUILD_TARGETS="${USERPATCHES_PATH}/targets.conf"
+		# display what will be build
+		echo ""
+		[[ -f userpatches/family.skip ]] && display_alert "userpatches/family.skip exists and familes noted there will be skipped" "" "wrn"
+		display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]]; then
+			echo "kernels"
+		else echo "images"; fi)" "info"
 
-else
+		printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "DE" "desktop" "minimal" "DE app groups"
 
-	BUILD_TARGETS="${SRC}/config/targets.conf"
+		# display what we will build
+		build_all "dryrun"
 
-fi
+		if [[ $BUILD_ALL != demo ]]; then
+			echo ""
+			# build
+			build_all
+		fi
+
+		# wait until they are not finshed
+		sleep 5
+		while :; do
+			if [[ $(df | grep -c /.tmp) -lt 1 ]]; then
+				break
+			fi
+			sleep 5
+		done
+
+		while :; do
+			if [[ -z $(ps -uax | grep 7z | grep Armbian) ]]; then
+				break
+			fi
+			sleep 5
+		done
+
+	fi
+
+	[[ $n -eq 0 ]] && display_alert "No changes in upstream sources, patches or configs found. Exiting." "info"
+
+	buildall_end=$(date +%s)
+	buildall_runtime=$(((buildall_end - buildall_start) / 60))
+	display_alert "Runtime in total" "${buildall_runtime} min" "info"
+	mkdir -p .tmp
+	echo "${n}" > "${SRC}"/.tmp/n
+
+	# display what we will build
+	build_all "dryrun"
+	display_alert "Done"
+}
 
 unset_all() {
 	cleanup_extension_manager
@@ -244,6 +289,7 @@ function build_all() {
 	read -r -a unique_boards <<< "$(echo "${unique_boards[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' ')"
 
 	while read -r line; do
+		# @TODO: this almost a complete copy of main.sh. refactor.
 
 		[[ "${line}" =~ ^#.*$ ]] && continue
 		[[ -n "${REBUILD_IMAGES}" ]] && [[ -z $(echo "${line}" | eval grep -w "${filter}") ]] && continue
@@ -392,73 +438,3 @@ function build_all() {
 	done < "${BUILD_TARGETS}"
 
 }
-
-# bump version in case there was a change
-if [[ ${BUMP_VERSION} == yes ]]; then
-
-	cd "${SRC}" || exit
-	CURRENT_VERSION=$(cat VERSION)
-	NEW_VERSION="${CURRENT_VERSION%%-trunk}"
-	if [[ $CURRENT_VERSION == *trunk* ]]; then
-		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-3)"."$((${NEW_VERSION##*.} + 1))
-	else
-		NEW_VERSION=$(echo "${CURRENT_VERSION}" | cut -d. -f1-2)"."$((${NEW_VERSION##*.} + 1))
-	fi
-
-	echo "${NEW_VERSION}" > VERSION
-	improved_git add "${SRC}"/VERSION
-	improved_git commit -m "Bumping to new version" -m "" -m "Adding following kernels:" -m "$(find output/debs-beta/ -type f -name "linux-image*${CURRENT_VERSION}*.deb" -printf "%f\n" | sort)"
-	improved_git push
-	display_alert "Bumping to new version" "${NEW_VERSION}" "info"
-
-else
-
-	# display what will be build
-	echo ""
-	[[ -f userpatches/family.skip ]] && display_alert "userpatches/family.skip exists and familes noted there will be skipped" "" "wrn"
-	display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]]; then
-		echo "kernels"
-	else echo "images"; fi)" "info"
-
-	printf "\n%s\t%-32s\t%-8s\t%-14s\t%-6s\t%-6s\t%-6s\t%-6s\n\n" "" "board" "branch" "release" "DE" "desktop" "minimal" "DE app groups"
-
-	# display what we will build
-	build_all "dryrun"
-
-	if [[ $BUILD_ALL != demo ]]; then
-
-		echo ""
-		# build
-		build_all
-
-	fi
-
-	# wait until they are not finshed
-	sleep 5
-	while :; do
-		if [[ $(df | grep -c /.tmp) -lt 1 ]]; then
-			break
-		fi
-		sleep 5
-	done
-
-	while :; do
-		if [[ -z $(ps -uax | grep 7z | grep Armbian) ]]; then
-			break
-		fi
-		sleep 5
-	done
-
-fi
-
-[[ $n -eq 0 ]] && display_alert "No changes in upstream sources, patches or configs found. Exiting." "info"
-
-buildall_end=$(date +%s)
-buildall_runtime=$(((buildall_end - buildall_start) / 60))
-display_alert "Runtime in total" "${buildall_runtime} min" "info"
-mkdir -p .tmp
-echo "${n}" > "${SRC}"/.tmp/n
-
-# display what we will build
-build_all "dryrun"
-display_alert "Done"

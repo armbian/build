@@ -137,7 +137,6 @@ compile_uboot() {
 
 	# build aarch64
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
 		local toolchain
 		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
 		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
@@ -149,7 +148,6 @@ compile_uboot() {
 			toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
 			[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
 		fi
-
 		# build aarch64
 	fi
 
@@ -157,12 +155,12 @@ compile_uboot() {
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpversion)" "info"
 
 	# create directory structure for the .deb package
-	uboottempdir=$(mktemp -d)
-	chmod 700 ${uboottempdir}
+	uboottempdir="$(mktemp -d)"
+	chmod 700 "${uboottempdir}"
 	trap "rm -rf \"${uboottempdir}\" ; exit 0" 0 1 2 3 15
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
-	rm -rf $uboottempdir/$uboot_name
-	mkdir -p $uboottempdir/$uboot_name/usr/lib/{u-boot,$uboot_name} $uboottempdir/$uboot_name/DEBIAN
+	rm -rf "$uboottempdir/$uboot_name"
+	mkdir -p "$uboottempdir/$uboot_name/usr/lib/{u-boot,$uboot_name}" "$uboottempdir/$uboot_name/DEBIAN"
 
 	# process compilation for one or multiple targets
 	while read -r target; do
