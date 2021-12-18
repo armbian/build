@@ -122,7 +122,7 @@ function exit_with_error() {
 	local _highlight=$2
 	_file=$(basename "${BASH_SOURCE[1]}")
 	local stacktrace logfile
-	stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}" || true)"
 
 	local logfile_to_show="${CURRENT_LOGFILE}" # store it
 	unset CURRENT_LOGFILE                      # stop logging, otherwise crazy
@@ -148,7 +148,7 @@ function exit_with_error() {
 	flock -u "${FD}"
 
 	export ALREADY_EXITING_WITH_ERROR=yes # marker for future trap handlers. avoid showing errors twice.
-	exit 255
+	exit 43
 	display_alert "Never to be seen" "after exit and traps" "bye"
 }
 
@@ -266,13 +266,12 @@ create_sources_list() {
 # This function retries Git operations to avoid failure in case remote is borked
 #
 improved_git() {
-
 	local realgit=$(command -v git)
 	local retries=3
 	local delay=10
 	local count=1
 	while [ $count -lt $retries ]; do
-		$realgit "$@"
+		$realgit "$@" 2>&1
 		if [[ $? -eq 0 || -f .git/index.lock ]]; then
 			retries=0
 			break
@@ -280,7 +279,6 @@ improved_git() {
 		let count=$count+1
 		sleep $delay
 	done
-
 }
 
 clean_up_repo() {
@@ -490,12 +488,12 @@ fetch_from_repo() {
 
 	if [[ "$(improved_git rev-parse --git-dir 2> /dev/null)" == ".git" &&
 	"$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2> /dev/null)" ]]; then
-		display_alert "Remote URL does not match, removing existing local copy"
+		display_alert "Remote URL does not match, removing existing local copy" "$dir $ref_name"
 		rm -rf .git ./*
 	fi
 
 	if [[ "$(improved_git rev-parse --git-dir 2> /dev/null)" != ".git" ]]; then
-		display_alert "Creating local copy"
+		display_alert "Creating local copy" "$dir $ref_name"
 		improved_git init -q .
 		improved_git remote add origin "${url}"
 		# Here you need to upload from a new address
@@ -507,7 +505,7 @@ fetch_from_repo() {
 	# when we work offline we simply return the sources to their original state
 	if ! $offline; then
 		local local_hash
-		local_hash=$(git rev-parse @ 2> /dev/null)
+		local_hash=$(git rev-parse @ 2> /dev/null || true)
 
 		case $ref_type in
 			branch)
@@ -516,7 +514,6 @@ fetch_from_repo() {
 				remote_hash=$(improved_git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
 				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 				;;
-
 			tag)
 				local remote_hash
 				remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name" | cut -f1)
@@ -525,13 +522,11 @@ fetch_from_repo() {
 					[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 				fi
 				;;
-
 			head)
 				local remote_hash
 				remote_hash=$(improved_git ls-remote "${url}" HEAD | cut -f1)
 				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 				;;
-
 			commit)
 				[[ -z $local_hash || $local_hash == "@" ]] && changed=true
 				;;
@@ -540,9 +535,8 @@ fetch_from_repo() {
 	fi # offline
 
 	if [[ $changed == true ]]; then
-
 		# remote was updated, fetch and check out updates
-		display_alert "Fetching updates"
+		display_alert "Fetching updates" "$dir $ref_name"
 		case $ref_type in
 			branch) improved_git fetch --depth 200 origin "${ref_name}" ;;
 			tag) improved_git fetch --depth 200 origin tags/"${ref_name}" ;;
@@ -551,30 +545,23 @@ fetch_from_repo() {
 
 		# commit type needs support for older git servers that doesn't support fetching id directly
 		if [[ $ref_type == commit ]]; then
-
 			improved_git fetch --depth 200 origin "${ref_name}"
 
 			# cover old type
 			if [[ $? -ne 0 ]]; then
-
 				display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
 				improved_git pull
 				improved_git checkout -fq "${ref_name}"
 				display_alert "Checkout out to" "$(improved_git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
-
 			else
-
-				display_alert "Checking out"
+				display_alert "Checking out" "$dir $ref_name"
 				improved_git checkout -f -q FETCH_HEAD
 				improved_git clean -qdf
-
 			fi
 		else
-
-			display_alert "Checking out"
+			display_alert "Checking out" "$dir $ref_name"
 			improved_git checkout -f -q FETCH_HEAD
 			improved_git clean -qdf
-
 		fi
 	elif [[ -n $(improved_git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
@@ -588,7 +575,7 @@ fetch_from_repo() {
 		improved_git clean -qdf
 	else
 		# working directory is clean, nothing to do
-		display_alert "Up to date"
+		display_alert "Up to date" "$dir $ref_name"
 	fi
 
 	if [[ -f .gitmodules ]]; then
@@ -662,6 +649,11 @@ fingerprint_image() {
 # and place to the file /lib/firmware/bootsplash
 #--------------------------------------------------------------------------------------------------------------------------------
 function boot_logo() {
+	if [[ $(dpkg --print-architecture) != amd64 ]]; then
+		display_alert "Can't build boot_logo throbber using this arch" "$(dpkg --print-architecture)"
+		return 0
+	fi
+
 	display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 	LOGO=${SRC}/packages/blobs/splash/logo.png
@@ -672,6 +664,7 @@ function boot_logo() {
 	THROBBER_HEIGHT=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 2)
 	convert -alpha remove -background "#000000" $LOGO "${SDCARD}"/tmp/logo.rgb
 	convert -alpha remove -background "#000000" $THROBBER "${SDCARD}"/tmp/throbber%02d.rgb
+	# @TODO I guess this is a x86 binary?
 	${SRC}/packages/blobs/splash/bootsplash-packer \
 		--bg_red 0x00 \
 		--bg_green 0x00 \
@@ -771,9 +764,9 @@ function boot_logo() {
 		[[ -f "${SDCARD}"/boot/boot.ini ]] && sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
 	fi
 	# enable additional services
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-ask-password-console.path >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-hide-when-booted.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-show-on-shutdown.service >/dev/null 2>&1"
+	chroot_sdcard systemctl --no-reload enable bootsplash-ask-password-console.path || true
+	chroot_sdcard systemctl --no-reload enable bootsplash-hide-when-booted.service || true
+	chroot_sdcard systemctl --no-reload enable bootsplash-show-on-shutdown.service || true
 	return 0
 }
 
@@ -806,7 +799,6 @@ function distros_options() {
 }
 
 function set_distribution_status() {
-
 	local distro_support_desc_filepath="${SRC}/${DISTRIBUTIONS_DESC_DIR}/${RELEASE}/support"
 	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
 		exit_with_error "Distribution ${distribution_name} does not exist"
@@ -816,6 +808,7 @@ function set_distribution_status() {
 
 	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
 
+	return 0 # due to last stmt above being a shortcut conditional
 }
 
 adding_packages() {
@@ -1334,11 +1327,14 @@ prepare_host() {
 			display_alert "Installing build dependencies"
 			# don't prompt for apt cacher selection
 			sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
-			apt-get -q update
+			apt-get -q update 2>&1
+
 			# @TODO: DO NOT COMMIT THIS
 			display_alert "NOT upgrading host-side packages" "apt upgrade" "wrn"
-			#apt-get -y upgrade
-			apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/${LOG_SUBPATH}/hostdeps.log
+			#apt-get -y upgrade  2>&1
+
+			display_alert "Installing host-side dependency packages" "apt upgrade" "info"
+			apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" 2>&1
 			update-ccache-symlinks
 		fi
 
@@ -1425,7 +1421,7 @@ prepare_host() {
 					fi
 				done
 			else
-				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
+				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS=${SKIP_EXTERNAL_TOOLCHAINS}" "info"
 			fi
 		fi # check offline
 
@@ -1502,8 +1498,11 @@ download_and_verify() {
 		return
 	fi
 
+	# allow errors here, too hackish to actually handle them
+	set +e
+
 	# switch to china mirror if US timeouts
-	timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 > /dev/null
+	timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}" 2>&1 > /dev/null || true
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 		display_alert "Timeout from $server" "retrying" "info"
 		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
@@ -1515,6 +1514,8 @@ download_and_verify() {
 			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
 		fi
 	fi
+
+	set -e # Back to normal
 
 	# check if file exists on remote server before running aria2 downloader
 	[[ ! $(timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}) ]] && return
@@ -1614,7 +1615,7 @@ download_and_verify() {
 			if [[ "${filename:(-6)}" == "tar.xz" ]]; then
 
 				display_alert "decompressing"
-				pv -p -b -r -c -N "[🗜] ${filename}" "${filename}" | xz -dc | tar xp --xattrs --no-same-owner --overwrite
+				pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "decompress") ${filename}" "${filename}" | xz -dc | tar xp --xattrs --no-same-owner --overwrite
 				[[ $? -eq 0 ]] && touch "${localdir}/${dirname}/.download-complete"
 			fi
 		else

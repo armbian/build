@@ -10,6 +10,8 @@
 # https://github.com/armbian/build/
 
 function do_main_configuration() {
+	display_alert "Starting main configuration" "" "info"
+
 	# common options
 	# daily beta build contains date in subrevision
 	#if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
@@ -163,6 +165,7 @@ function do_main_configuration() {
 	[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] &&
 		exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
+	display_alert "Sourcing family configuration" "${LINUXFAMILY}.conf" "info"
 	source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 
 	if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
@@ -171,6 +174,7 @@ function do_main_configuration() {
 	fi
 
 	# load architecture defaults
+	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
 	source "${SRC}/config/sources/${ARCH}.conf"
 
 	## Extensions: at this point we've sourced all the config files that will be used,

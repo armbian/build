@@ -18,7 +18,9 @@ create_board_package() {
 
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
-	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
+	# @TODO: these traps are a real trap.
+	#trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
+
 	local destination=${bsptempdir}/${RELEASE}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
@@ -298,7 +300,7 @@ create_board_package() {
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
 	# execute $LINUXFAMILY-specific tweaks
-	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
+	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp  2>&1
 
 	call_extension_method "post_family_tweaks_bsp" << 'POST_FAMILY_TWEAKS_BSP'
 *family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
@@ -313,9 +315,9 @@ POST_FAMILY_TWEAKS_BSP
 	find "${destination}" ! -type l -print0 2> /dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
 
 	# create board DEB file
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${destination}.deb" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
+	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${destination}.deb" 2>&1
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
-	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"
+	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"  2>&1
 
 	# cleanup
 	rm -rf ${bsptempdir}

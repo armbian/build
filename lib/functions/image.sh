@@ -41,7 +41,7 @@ function build_rootfs_image() {
 	[[ $use_tmpfs == yes ]] && mount -t tmpfs -o size=${phymem}M tmpfs $SDCARD
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
-	LOG_SECTION="rootfs" do_with_logging create_rootfs_cache
+	LOG_SECTION="create_rootfs_cache" do_with_logging create_rootfs_cache
 
 	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" << 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
 *give config a chance to act before install_distribution_specific*
@@ -52,7 +52,7 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# install distribution and board specific applications
 
 	LOG_SECTION="distro" do_with_logging install_distribution_specific
-	LOG_SECTION="common" do_with_logging install_common
+	LOG_SECTION="install_common" do_with_logging install_common
 
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && LOG_SECTION="packages_local" do_with_logging chroot_installpackages_local
@@ -64,24 +64,23 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# NOTE: installing too many packages may fill tmpfs mount
 	LOG_SECTION="custom" do_with_logging customize_image
 
-	# remove packages that are no longer needed. Since we have intrudoced uninstall feature, we might want to clean things that are no longer needed
-	display_alert "No longer needed packages" "purge" "info"
-	LOG_SECTION="rootfs" do_with_logging chroot $SDCARD /bin/bash -c "apt-get  -y autoremove" # YES! THIS NEVER WORKED BEFORE!
+	# remove packages that are no longer needed. rootfs cache + uninstall might have leftovers.
+	LOG_SECTION="rootfs_apt_get_autoremove" do_with_logging apt_purge_unneeded_packages
 
 	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes ]] && echo "-desktop").list 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes ]] && echo "-desktop").list.log 2>&1
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
-	LOG_SECTION="rootfs" post_debootstrap_tweaks
+	LOG_SECTION="post_debootstrap_tweaks" post_debootstrap_tweaks
 
 	if [[ $ROOTFS_TYPE == fel ]]; then
 		FEL_ROOTFS=$SDCARD/
 		display_alert "Starting FEL boot" "$BOARD" "info"
 		start_fel_boot
 	else
-		LOG_SECTION="partitioning" do_with_logging prepare_partitions # do_with_logging
-		LOG_SECTION="image" do_with_logging create_image # do_with_logging where is LOOP?
+		LOG_SECTION="partitioning" do_with_logging prepare_partitions
+		LOG_SECTION="image" do_with_logging create_image
 	fi
 
 	# stage: unmount tmpfs
@@ -260,7 +259,9 @@ PREPARE_IMAGE_SIZE
 		truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
 		sync
 	else
-		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(($sdsize * 1024 * 1024)) -N "[🤓] dd" | dd status=none of=${SDCARD}.raw
+		dd if=/dev/zero bs=1M status=none count=$sdsize |
+			pv -p -b -r -s $(($sdsize * 1024 * 1024)) -N "$(logging_echo_prefix_for_pv "zero") zero" |
+			dd status=none of=${SDCARD}.raw
 	fi
 
 	# stage: calculate boot partition size
@@ -470,26 +471,23 @@ PREPARE_IMAGE_SIZE
 # @TODO: logging?
 update_initramfs() {
 	local chroot_target=$1
-	local target_dir=$(
-		find ${chroot_target}/lib/modules/ -maxdepth 1 -type d -name "*${VER}*"
-	)
+	local target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${VER}*")"
 	if [ "$target_dir" != "" ]; then
-		update_initramfs_cmd="update-initramfs -uv -k $(basename $target_dir)"
+		update_initramfs_cmd="update-initramfs -uv -k $(basename "$target_dir")"
 	else
 		exit_with_error "No kernel installed for the version" "${VER}"
 	fi
 	display_alert "Updating initramfs..." "$update_initramfs_cmd" ""
-	cp /usr/bin/$QEMU_BINARY $chroot_target/usr/bin/
+	cp "/usr/bin/$QEMU_BINARY" "$chroot_target/usr/bin"/
 	mount_chroot "$chroot_target/"
 
-	chroot $chroot_target /bin/bash -c "$update_initramfs_cmd" >> $DEST/${LOG_SUBPATH}/install.log 2>&1 || {
-		display_alert "Updating initramfs FAILED, see:" "$DEST/${LOG_SUBPATH}/install.log" "err"
-		exit 23
+	chroot_custom_long_running "$chroot_target" "$update_initramfs_cmd" || {
+		exit_with_error "Updating initramfs FAILED"
 	}
-	display_alert "Updated initramfs." "for details see: $DEST/${LOG_SUBPATH}/install.log" "info"
+	display_alert "Updated initramfs." "${update_initramfs_cmd}" "info"
 
 	display_alert "Re-enabling" "initramfs-tools hook for kernel"
-	chroot $chroot_target /bin/bash -c "chmod -v +x /etc/kernel/postinst.d/initramfs-tools" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+	chroot "$chroot_target" /bin/bash -c "chmod -v +x /etc/kernel/postinst.d/initramfs-tools" 2>&1
 
 	umount_chroot "$chroot_target/"
 	rm $chroot_target/usr/bin/$QEMU_BINARY
@@ -523,7 +521,10 @@ create_image() {
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "rootfs.tgz" | gzip -c > $DEST/images/${version}-rootfs.tgz
+			--exclude='./sys/*' . |
+			pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" \
+				-N "$(logging_echo_prefix_for_pv "create_rootfs_archive") rootfs.tgz" |
+			gzip -c > "$DEST/images/${version}-rootfs.tgz"
 	fi
 
 	# stage: rsync /boot
@@ -532,12 +533,12 @@ create_image() {
 		# fat32
 		rsync -rLtWh \
 			--info=progress0,stats1 \
-			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT 2>&1
+			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT 2>&1 #@TODO: log to stdout, terse?
 	else
 		# ext4
 		rsync -aHWXh \
 			--info=progress0,stats1 \
-			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT 2>&1
+			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT 2>&1 #@TODO: log to stdout, terse?
 	fi
 
 	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
@@ -712,7 +713,7 @@ POST_BUILD_IMAGE
 		display_alert "Writing image" "$CARD_DEVICE ${readsha}" "info"
 
 		# write to SD card
-		pv -p -b -r -c -N "[💾] dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
+		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "write_device") dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
 		call_extension_method "post_write_sdcard" <<- 'POST_BUILD_IMAGE'
 			*run after writing img to sdcard*

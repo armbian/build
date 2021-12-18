@@ -13,7 +13,8 @@
 # use configuration files like config-default.conf to set the build configuration
 # check Armbian documentation https://docs.armbian.com/ for more info
 
-set -e # exit on errors.
+set -e # disallow errors
+set -o errtrace # error trace
 
 SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
@@ -44,6 +45,7 @@ fi
 ### Logging system
 # shellcheck source=functions/logging.sh
 source "${SRC}"/lib/functions/logging.sh # Logging subsystem.
+logging_init                             # and initialize it.
 
 ### Single-build. This in turn sources most of everything else. Reusable.
 # shellcheck source=lib/single.sh
@@ -219,7 +221,6 @@ CONFIG_PATH=$(dirname "${CONFIG_FILE}")
 # This allows early calls to enable_extension(), but initialization proper is done later.
 # shellcheck source=lib/extensions.sh
 source "${SRC}"/lib/extensions.sh
-internal_init_extension_manager # and call its global initializer. @TODO: could be avoided?
 
 display_alert "Using config file" "${CONFIG_FILE}" "info"
 pushd "${CONFIG_PATH}" > /dev/null || exit
@@ -238,6 +239,7 @@ while [[ "${1}" == *=* ]]; do
 	eval "$parameter=\"$value\""
 done
 
+set -e # no errors...
 if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
 	do_main_build_all_ng
 else

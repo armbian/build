@@ -11,6 +11,16 @@ cleanup_list() {
 	echo ${list_to_clean}
 }
 
+function main_error_monitor() {
+	trap - ERR # remove this trap
+	local stacktrace
+	stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}" || true)"
+	display_alert "main_error_monitor! '$*'" "${stacktrace}" "err"
+	show_caller_full >&2 || true
+	display_alert "main_error_monitor2! '$*'" "${stacktrace}" "err"
+	exit 46
+}
+
 # This does NOT run under the logging manager. We should invoke the do_with_logging wrapper for
 # strategic parts of this. Attention: build_rootfs_image does it's own logging, so just let that be.
 main_default_build_single() {
@@ -22,6 +32,9 @@ main_default_build_single() {
 	if [[ "${JUST_INIT}" == "yes" ]]; then
 		exit 0
 	fi
+
+	trap 'main_error_monitor $?' ERR
+
 
 	if [[ $CLEAN_LEVEL == *sources* ]]; then
 		cleaning "sources"
@@ -213,15 +226,21 @@ function prepare_and_config_main_build_single() {
 
 	# set log path
 	LOG_SUBPATH=${LOG_SUBPATH:=debug}
+	mkdir -p "${DEST}/${LOG_SUBPATH}" # This creates the logging output.
 
-	# compress and remove old logs # @TODO: logging, this is essential...
-	mkdir -p "${DEST}"/${LOG_SUBPATH}
-	(cd "${DEST}"/${LOG_SUBPATH} && tar -czf logs-"$(< timestamp)".tgz ./*.log) > /dev/null 2>&1
-	rm -f "${DEST}"/${LOG_SUBPATH}/*.log > /dev/null 2>&1
+	# compress and remove old logs, if they exist.
+	if [[ -f "${DEST}/${LOG_SUBPATH}/timestamp" ]]; then
+		if ls "${DEST}/${LOG_SUBPATH}/"*.log &> /dev/null; then
+			display_alert "Archiving previous build logs..." "${DEST}/${LOG_SUBPATH}" "info"
+			(cd "${DEST}/${LOG_SUBPATH}" && tar -czf logs-"$(< timestamp)".tgz ./*.log) # > /dev/null 2>&1
+			rm -f "${DEST}/${LOG_SUBPATH}"/*.log
+		fi
+		# delete compressed logs older than 7 days
+		find "${DEST}"/${LOG_SUBPATH} -name '*.tgz' -mtime +7 -delete
+	fi
+
+	# Mark a timestamp, for next build.
 	date +"%d_%m_%Y-%H_%M_%S" > "${DEST}"/${LOG_SUBPATH}/timestamp
-
-	# delete compressed logs older than 7 days
-	(cd "${DEST}"/${LOG_SUBPATH} && find . -name '*.tgz' -mtime +7 -delete) > /dev/null
 
 	if [[ $PROGRESS_DISPLAY == none ]]; then
 		display_alert "Output will be silenced." "PROGRESS_DISPLAY=none" "warning"
@@ -234,6 +253,8 @@ function prepare_and_config_main_build_single() {
 	if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
 	SHOW_WARNING=yes
+
+	display_alert "Starting single build process" "${BOARD}" "info"
 
 	if [[ $USE_CCACHE != no ]]; then
 		CCACHE=ccache
@@ -365,6 +386,7 @@ function prepare_and_config_main_build_single() {
 		BOARD_TYPE='tvb'
 	fi
 
+	display_alert "Sourcing board configuration" "${BOARD}.${BOARD_TYPE}" "info"
 	# shellcheck source=/dev/null
 	source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
 	LINUXFAMILY="${BOARDFAMILY}"
@@ -492,4 +514,7 @@ function prepare_and_config_main_build_single() {
 	CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
 	CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
 	CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
+
+	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
+
 }

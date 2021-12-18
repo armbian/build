@@ -1,3 +1,14 @@
+# global variables managing the state of the extension manager. treat as private.
+declare -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
+declare -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?
+declare -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
+declare -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
+declare -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
+declare fragment_manager_cleanup_file             # this is a file used to cleanup the manager's produced functions, for build_all_ng
+# configuration. Command line might override this.
+export DEBUG_EXTENSION_CALLS=no # set to yes to log every hook function called to the main build log
+export LOG_ENABLE_EXTENSION=yes # colorful logs with stacktrace when enable_extension is called.
+
 # This is a helper function for calling hooks.
 # It follows the pattern long used in the codebase for hook-like behaviour:
 #    [[ $(type -t name_of_hook_function) == function ]] && name_of_hook_function
@@ -26,7 +37,8 @@ call_extension_method() {
 	for hook_name in "$@"; do
 		echo "-- Extension Method being called: ${hook_name}" >> "${EXTENSION_MANAGER_LOG_FILE}"
 		# shellcheck disable=SC2086
-		[[ $(type -t ${hook_name}) == function ]] && { ${hook_name}; }
+		# shellcheck disable=SC2015
+		[[ $(type -t ${hook_name}||true) == function ]] && { ${hook_name}; } || true
 	done
 }
 
@@ -89,7 +101,7 @@ initialize_extension_manager() {
 		# for now, just warn, but we could devise a way to actually integrate it in the call list.
 		# or: advise the user to rename their user_config() function to something like user_config__make_it_awesome()
 		local existing_hook_point_function
-		existing_hook_point_function="$(compgen -A function | grep "^${hook_point}\$")"
+		existing_hook_point_function="$(compgen -A function | grep "^${hook_point}\$" || true)"
 		if [[ "${existing_hook_point_function}" == "${hook_point}" ]]; then
 			echo "--- hook_point_functions (final sorted realnames): ${hook_point_functions}" >> "${EXTENSION_MANAGER_LOG_FILE}"
 			display_alert "Extension conflict" "function ${hook_point} already defined! ignoring functions: $(compgen -A function | grep "^${hook_point}${hook_extension_delimiter}")" "wrn"
@@ -193,7 +205,6 @@ initialize_extension_manager() {
 
 			# output the call, passing arguments, and also logging the output to the extensions log.
 			# attention: don't pipe here (eg, capture output), otherwise hook function cant modify the environment (which is mostly the point)
-			# @TODO: better error handling. we have a good opportunity to 'set -e' here, and 'set +e' after, so that extension authors are encouraged to write error-free handling code
 			cat <<- FUNCTION_DEFINITION_CALLSITE >> "${temp_source_file_for_hook_point}"
 				hook_point_function_trace_sources["${hook_point}${hook_extension_delimiter}${hook_point_function}"]="\${BASH_SOURCE[*]}"
 				hook_point_function_trace_lines["${hook_point}${hook_extension_delimiter}${hook_point_function}"]="\${BASH_LINENO[*]}"
@@ -234,20 +245,6 @@ initialize_extension_manager() {
 	# Dont show any output until we have more than 1 hook function (we implement one already, below)
 	[[ ${hook_functions_counter} -gt 0 ]] &&
 		display_alert "Extension manager" "processed ${hook_points_counter} Extension Methods calls and ${hook_functions_counter} Extension Method implementations" "info" | tee -a "${EXTENSION_MANAGER_LOG_FILE}"
-}
-
-# target
-internal_init_extension_manager() {
-	# global variables managing the state of the extension manager. treat as private.
-	declare -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
-	declare -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?
-	declare -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
-	declare -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
-	declare -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
-	declare fragment_manager_cleanup_file             # this is a file used to cleanup the manager's produced functions, for build_all_ng
-	# configuration.
-	export DEBUG_EXTENSION_CALLS=${DEBUG_EXTENSION_CALLS:-no} # set to yes to log every hook function called to the main build log
-	export LOG_ENABLE_EXTENSION=${LOG_ENABLE_EXTENSION:-yes}  # colorful logs with stacktrace when enable_extension is called.
 }
 
 cleanup_extension_manager() {
@@ -322,10 +319,13 @@ get_extension_hook_stracktrace() {
 		# skip extension infrastructure sources, these only pollute the trace and add no insight to users
 		[[ ${source} == */.tmp/extension_function_definition.sh ]] && continue
 		[[ ${source} == *lib/extensions.sh ]] && continue
+		[[ ${source} == *lib/functions/logging.sh ]] && continue
 		[[ ${source} == */compile.sh ]] && continue
+		[[ ${line} -lt 1 ]] && continue
 		# relativize the source, otherwise too long to display
 		source="${source#"${SRC}/"}"
 		# remove 'lib/'. hope this is not too confusing.
+		source="${source#"lib/functions/"}"
 		source="${source#"lib/"}"
 		# add to the list
 		arrow="$([[ "$final_stack" != "" ]] && echo "-> ")"
@@ -435,6 +435,7 @@ enable_extension() {
 
 	# iterate over defined functions, store them in global associative array extension_function_info
 	for newly_defined_function in ${new_function_list}; do
+		#echo "func: ${newly_defined_function} has DIR: ${extension_dir}"
 		extension_function_info["${newly_defined_function}"]="EXTENSION=\"${extension_name}\" EXTENSION_DIR=\"${extension_dir}\" EXTENSION_FILE=\"${extension_file}\" EXTENSION_ADDED_BY=\"${stacktrace}\""
 	done
 
