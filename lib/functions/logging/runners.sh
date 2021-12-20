@@ -49,7 +49,7 @@ function run_host_command_logged_long_running() {
 		run_host_command_logged_raw /bin/bash -e -c "$*"
 		_exit_code=$?
 	else
-		run_host_command_logged_raw /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
+		run_host_command_logged_raw /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")  " --progress --timer --line-mode --force --cursor --delay-start 0 -i "2"
 		_exit_code=$?
 	fi
 	return $_exit_code

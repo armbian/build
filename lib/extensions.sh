@@ -328,7 +328,8 @@ get_extension_hook_stracktrace() {
 		source="${source#"lib/functions/"}"
 		source="${source#"lib/"}"
 		# add to the list
-		arrow="$([[ "$final_stack" != "" ]] && echo "-> ")"
+		# shellcheck disable=SC2015 # i know. thanks. I won't write an if here
+		arrow="$([[ "$final_stack" != "" ]] && echo "-> " || true)"
 		final_stack="${source}:${line} ${arrow} ${final_stack} "
 	done
 	# output the result, no newline
@@ -337,10 +338,12 @@ get_extension_hook_stracktrace() {
 }
 
 show_caller_full() {
-	local frame=0
-	while caller $frame; do
-		((frame++))
-	done
+	{
+		local frame=0
+		while caller $frame; do
+			((frame++))
+		done
+	} || true # always success
 }
 # can be called by board, family, config or user to make sure an extension is included.
 # single argument is the extension name.
