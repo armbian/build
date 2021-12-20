@@ -9,17 +9,9 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
-# Functions:
-
-# create_chroot
-# chroot_prepare_distccd
-# chroot_build_packages
-# chroot_installpackages_local
-# chroot_installpackages
-
-# create_chroot <target_dir> <release> <arch>
+# create_chroot_for_buildpkg <target_dir> <release> <arch>
 #
-create_chroot() {
+create_chroot_for_buildpkg() {
 	local target_dir="$1"
 	local release=$2
 	local arch=$3
@@ -144,7 +136,7 @@ chroot_build_packages() {
 			target_dir="${SRC}/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}"
 			local distcc_bindaddr="127.0.0.2"
 
-			[[ ! -f "${target_dir}"/root/.debootstrap-complete ]] && create_chroot "${target_dir}" "${release}" "${arch}"
+			[[ ! -f "${target_dir}"/root/.debootstrap-complete ]] && create_chroot_for_buildpkg "${target_dir}" "${release}" "${arch}"
 			[[ ! -f "${target_dir}"/root/.debootstrap-complete ]] && exit_with_error "Creating chroot failed" "${release}/${arch}"
 
 			[[ -f /var/run/distcc/"${release}-${arch}".pid ]] && kill "$(< "/var/run/distcc/${release}-${arch}.pid")" > /dev/null 2>&1

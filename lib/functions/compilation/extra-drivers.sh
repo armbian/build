@@ -9,11 +9,7 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
-# Functions:
-
-# compilation_prepare
-
-compilation_prepare() {
+prepare_extra_kernel_drivers() {
 
 	# Packaging patch for modern kernels should be one for all.
 	# Currently we have it per kernel family since we can't have one

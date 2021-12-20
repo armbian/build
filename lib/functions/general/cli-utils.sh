@@ -4,9 +4,7 @@
 
 #  Add the variables needed at the beginning of the path
 check_args() {
-
 	for p in "$@"; do
-
 		case "${p%=*}" in
 			LIB_TAG)
 				# Take a variable if the branch exists locally
@@ -20,13 +18,10 @@ check_args() {
 				fi
 				;;
 		esac
-
 	done
-
 }
 
 update_src() {
-
 	cd "${SRC}" || exit
 	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
 		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"

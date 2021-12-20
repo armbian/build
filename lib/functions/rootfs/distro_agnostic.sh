@@ -1,25 +1,4 @@
-#!/bin/bash
-#
-# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
-#
-# This file is licensed under the terms of the GNU General Public
-# License version 2. This program is licensed "as is" without any
-# warranty of any kind, whether express or implied.
-#
-# This file is a part of the Armbian build script
-# https://github.com/armbian/build/
-
-# Functions:
-
-# install_common
-# install_rclocal
-# install_distribution_specific
-# post_debootstrap_tweaks
-
-# LOGGING: we're running under the logger framework here.
-# LOGGING: so we just log directly to stdout and let it handle it.
-# LOGGING: redirect commands' stderr to stdout so it goes into the log, not screen.
-install_common() {
+install_distribution_agnostic() {
 	display_alert "Applying common tweaks" "install_common" "info"
 
 	# install rootfs encryption related packages separate to not break packages cache
@@ -595,7 +574,6 @@ FAMILY_TWEAKS
 }
 
 install_rclocal() {
-
 	cat <<- EOF > "${SDCARD}"/etc/rc.local
 		#!/bin/sh -e
 		#
@@ -613,114 +591,4 @@ install_rclocal() {
 		exit 0
 	EOF
 	chmod +x "${SDCARD}"/etc/rc.local
-
-}
-
-install_distribution_specific() {
-
-	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
-
-	case $RELEASE in
-
-		xenial)
-
-			# remove legal info from Ubuntu
-			[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
-
-			# ureadahead needs kernel tracing options that AFAIK are present only in mainline. disable
-			chroot "${SDCARD}" /bin/bash -c \
-				"systemctl --no-reload mask ondemand.service ureadahead.service >/dev/null 2>&1"
-			chroot "${SDCARD}" /bin/bash -c \
-				"systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-
-			;;
-
-		stretch | buster | sid)
-
-			# remove doubled uname from motd
-			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
-			# rc.local is not existing but one might need it
-			install_rclocal
-
-			;;
-
-		bullseye)
-
-			# remove doubled uname from motd
-			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
-			# rc.local is not existing but one might need it
-			install_rclocal
-			# fix missing versioning
-			[[ $(grep -L "VERSION_ID=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION_ID="11"' >> "${SDCARD}"/etc/os-release
-			[[ $(grep -L "VERSION=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION="11 (bullseye)"' >> "${SDCARD}"/etc/os-release
-
-			;;
-
-		bionic | focal | hirsute | impish | jammy)
-
-			# by using default lz4 initrd compression leads to corruption, go back to proven method
-			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
-
-			# cleanup motd services and related files
-			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.service >/dev/null 2>&1"
-			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.timer >/dev/null 2>&1"
-
-			rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
-
-			# remove motd news from motd.ubuntu.com
-			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
-
-			# rc.local is not existing but one might need it
-			install_rclocal
-
-			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
-				local RENDERER=NetworkManager
-			else
-				local RENDERER=networkd
-			fi
-
-			# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-			[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
-				network:
-				  version: 2
-				  renderer: $RENDERER
-			EOF
-
-			# DNS fix
-			if [ -n "$NAMESERVER" ]; then
-				sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
-			fi
-
-			# Journal service adjustements
-			sed -i "s/#Storage=.*/Storage=volatile/g" "${SDCARD}"/etc/systemd/journald.conf
-			sed -i "s/#Compress=.*/Compress=yes/g" "${SDCARD}"/etc/systemd/journald.conf
-			sed -i "s/#RateLimitIntervalSec=.*/RateLimitIntervalSec=30s/g" "${SDCARD}"/etc/systemd/journald.conf
-			sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" "${SDCARD}"/etc/systemd/journald.conf
-
-			# Chrony temporal fix https://bugs.launchpad.net/ubuntu/+source/chrony/+bug/1878005
-			[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
-
-			# disable conflicting services
-			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
-
-			;;
-
-	esac
-
-}
-
-post_debootstrap_tweaks() {
-
-	# remove service start blockers and QEMU binary
-	rm -f "${SDCARD}"/sbin/initctl "${SDCARD}"/sbin/start-stop-daemon
-	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
-	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
-	rm -f "${SDCARD}"/usr/sbin/policy-rc.d "${SDCARD}/usr/bin/${QEMU_BINARY}"
-
-	call_extension_method "post_post_debootstrap_tweaks" "config_post_debootstrap_tweaks" << 'POST_POST_DEBOOTSTRAP_TWEAKS'
-*run after removing diversions and qemu with chroot unmounted*
-Last chance to touch the `${SDCARD}` filesystem before it is copied to the final media.
-It is too late to run any chrooted commands, since the supporting filesystems are already unmounted.
-POST_POST_DEBOOTSTRAP_TWEAKS
-
 }
