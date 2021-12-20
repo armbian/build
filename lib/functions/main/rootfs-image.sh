@@ -101,4 +101,3 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# remove exit trap
 	trap - INT TERM EXIT
 }
-

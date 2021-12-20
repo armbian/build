@@ -285,7 +285,7 @@ create_board_package() {
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
 	# execute $LINUXFAMILY-specific tweaks
-	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp  2>&1
+	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp 2>&1
 
 	call_extension_method "post_family_tweaks_bsp" << 'POST_FAMILY_TWEAKS_BSP'
 *family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
@@ -302,7 +302,7 @@ POST_FAMILY_TWEAKS_BSP
 	# create board DEB file
 	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${destination}.deb" 2>&1
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
-	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/"  2>&1
+	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/" 2>&1
 
 	# cleanup
 	rm -rf ${bsptempdir}

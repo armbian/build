@@ -83,7 +83,6 @@ function run_host_command_logged_raw() {
 	return $exit_code
 }
 
-
 # @TODO: logging: used by desktop.sh exclusively. let's unify?
 run_on_sdcard() {
 	chroot_sdcard "${@}"

@@ -80,7 +80,6 @@ install_distribution_specific() {
 	esac
 }
 
-
 # create_sources_list <release> <basedir>
 #
 # <release>: buster|bullseye|bionic|focal|hirsute|impish|jammy|sid
@@ -175,4 +174,3 @@ create_sources_list() {
 # Create kernel boot logo from packages/blobs/splash/logo.png and packages/blobs/splash/spinner.gif (animated)
 # and place to the file /lib/firmware/bootsplash
 #--------------------------------------------------------------------------------------------------------------------------------
-

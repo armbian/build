@@ -10,4 +10,3 @@ copy_all_packages_files_for() {
 		fi
 	done
 }
-

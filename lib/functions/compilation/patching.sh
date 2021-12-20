@@ -1,4 +1,3 @@
-
 # advanced_patch <dest> <family> <board> <target> <branch> <description>
 #
 # parameters:
@@ -190,4 +189,3 @@ userpatch_create() {
 	git reset --soft HEAD~
 	for i in {3..1..1}; do echo -n "$i." && sleep 1; done
 }
-

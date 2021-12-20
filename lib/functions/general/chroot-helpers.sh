@@ -59,4 +59,3 @@ umount_chroot_recursive() {
 	display_alert "Unmounted OK after ${tries} attempt(s)" "$target" "info"
 	return 0
 }
-

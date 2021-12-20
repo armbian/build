@@ -1,4 +1,3 @@
-
 # this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
 function compile_uboot_target() {
 	local uboot_prefix="{u-boot:${uboot_target_counter}} "
@@ -235,4 +234,3 @@ compile_uboot() {
 	display_alert "Built u-boot deb OK" "${uboot_name}.deb" "info"
 	return 0 # success
 }
-

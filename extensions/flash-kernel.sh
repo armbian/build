@@ -24,7 +24,7 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 
 	if [[ "${FK__EXTRA_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel extra packages" "${FK__EXTRA_PACKAGES}"
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install ${FK__EXTRA_PACKAGES}"  || {
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install ${FK__EXTRA_PACKAGES}" || {
 			display_alert "Failed to install flash-kernel's extra packages." "${EXTENSION}" "err"
 			exit 28
 		}
@@ -32,7 +32,7 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 
 	if [[ "${FK__KERNEL_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel kernel packages" "${FK__KERNEL_PACKAGES}"
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install ${FK__KERNEL_PACKAGES}"  || {
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install ${FK__KERNEL_PACKAGES}" || {
 			display_alert "Failed to install flash-kernel's kernel packages." "${EXTENSION}" "err"
 			exit 28
 		}
@@ -86,7 +86,7 @@ function pre_update_initramfs__setup_flash_kernel() {
 
 	local update_initramfs_cmd="update-initramfs -c -k all"
 	display_alert "Updating flash-kernel initramfs..." "$update_initramfs_cmd" ""
-	chroot "$chroot_target" /bin/bash -c "$update_initramfs_cmd"  2>&1 || {
+	chroot "$chroot_target" /bin/bash -c "$update_initramfs_cmd" 2>&1 || {
 		display_alert "Failed to run '$update_initramfs_cmd'" "Check logs" "err"
 		exit 29
 	}

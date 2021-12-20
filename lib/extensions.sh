@@ -38,7 +38,7 @@ call_extension_method() {
 		echo "-- Extension Method being called: ${hook_name}" >> "${EXTENSION_MANAGER_LOG_FILE}"
 		# shellcheck disable=SC2086
 		# shellcheck disable=SC2015
-		[[ $(type -t ${hook_name}||true) == function ]] && { ${hook_name}; } || true
+		[[ $(type -t ${hook_name} || true) == function ]] && { ${hook_name}; } || true
 	done
 }
 

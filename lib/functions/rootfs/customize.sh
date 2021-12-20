@@ -30,4 +30,3 @@ POST_CUSTOMIZE_IMAGE
 
 	return 0
 }
-

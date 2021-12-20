@@ -94,7 +94,6 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 	mount_chroot "$SDCARD"
 } #############################################################################
 
-
 function create_new_rootfs_cache() {
 	# @TODO: unify / remove this. distribuitions has the good stuff.
 	# stage: debootstrap base system
@@ -271,7 +270,6 @@ function create_new_rootfs_cache() {
 
 }
 
-
 # get_package_list_hash
 #
 # returns md5 hash for current package list and rootfs cache version
@@ -280,7 +278,7 @@ get_package_list_hash() {
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	(
+	( 
 		(
 			printf "%s\n" "${package_arr[@]}"
 			printf -- "-%s\n" "${exclude_arr[@]}"

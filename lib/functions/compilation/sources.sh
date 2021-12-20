@@ -1,4 +1,3 @@
-
 function fetch_sources_kernel_uboot_atf() {
 	if [[ -n $BOOTSOURCE ]]; then
 		display_alert "Downloading sources" "u-boot" "git"
