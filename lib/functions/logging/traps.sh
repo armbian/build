@@ -5,9 +5,9 @@ unmount_on_exit() {
 	set +e               # we just wanna plow through this, ignoring errors.
 	trap - INT TERM EXIT # remove the trap
 
-	local stacktrace
-	stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
-	display_alert "trap caught, shutting down" "${stacktrace}" "err"
+	local stack_here
+	stack_here="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	display_alert "trap caught, shutting down" "${stack_here}" "err"
 	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
 		ERROR_DEBUG_SHELL=no # dont do it twice
 		display_alert "MOUNT" "${MOUNT}" "err"
@@ -36,7 +36,7 @@ unmount_on_exit() {
 
 	# if we've been called by exit_with_error itself, don't recurse.
 	if [[ "${ALREADY_EXITING_WITH_ERROR:-no}" != "yes" ]]; then
-		exit_with_error "generic error during build_rootfs_image: ${stacktrace}" || true # but don't trigger error again
+		exit_with_error "generic error during build_rootfs_image: ${stack_here}" || true # but don't trigger error again
 	fi
 
 	return 47 # trap returns error. # exit successfully. we're already handling a trap here.
@@ -44,11 +44,17 @@ unmount_on_exit() {
 
 # added by main_default_build_single to show details about errors when they happen and exit. exit might trigger the above.
 function main_error_monitor() {
-	trap - ERR # remove this trap
-	local stacktrace
-	stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}" || true)"
-	display_alert "main_error_monitor! '$*'" "${stacktrace}" "err"
-	show_caller_full >&2 || true
-	display_alert "main_error_monitor2! '$*'" "${stacktrace}" "err"
-	exit 46
+	if [[ "${ALREADY_EXITING_WITH_ERROR}" == "yes" ]]; then
+		display_alert "second run detected" "ERR trap" "err"
+		#exit 46
+	fi
+	#trap - ERR # remove this trap
+	local errcode="${1}"
+	local stack_caller="${2}"
+	local full_stack_caller="${3}"
+	display_alert "main_error_monitor: ${errcode}! stack:" "${stack_caller}" "err"
+	display_alert "main_error_monitor: ${errcode}! full:" "${full_stack_caller}" "err"
+	ALREADY_EXITING_WITH_ERROR=yes
+	exit 45
+	return 44
 }

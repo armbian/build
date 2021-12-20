@@ -35,5 +35,8 @@ fi
 # shellcheck source=lib/single.sh
 source "${SRC}"/lib/single.sh
 
+# hook up the error handler early, we wanna see stack for all errors.
+trap 'main_error_monitor "$?" "$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")" "$(show_caller_full)"; exit 48' ERR EXIT
+
 # And execute the main entrypoint.
 cli_entrypoint "$@"

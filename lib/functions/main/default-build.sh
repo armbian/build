@@ -10,8 +10,6 @@ main_default_build_single() {
 		exit 0
 	fi
 
-	trap 'main_error_monitor $?' ERR
-
 	if [[ $CLEAN_LEVEL == *sources* ]]; then
 		cleaning "sources"
 	fi
