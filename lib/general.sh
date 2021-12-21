@@ -24,10 +24,13 @@
 # addtorepo
 # repo-remove-old-packages
 # wait_for_package_manager
+# install_pkg_deb
 # prepare_host_basic
 # prepare_host
 # webseed
 # download_and_verify
+# show_developer_warning
+# show_checklist_variables
 
 
 # cleaning <target>
@@ -1173,6 +1176,92 @@ wait_for_package_manager()
 
 
 
+# Installing debian packages in the armbian build system.
+#
+# list="upgrade clean pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
+# install_pkg_deb $list
+#
+# If the package has a bad name, we will see it in the log file.
+# If there is an LOG_OUTPUT_FILE variable and it has a value as
+# the full real path to the log file, then all the information will be there.
+#
+# The LOG_OUTPUT_FILE variable must be defined in the calling function
+# before calling the install_pkg_deb function and unset after.
+#
+install_pkg_deb ()
+{
+	local list=""
+	local log_file
+	local for_install
+	local need_upgrade=false
+	local need_clean=false
+	local _line=${BASH_LINENO[0]}
+	local _function=${FUNCNAME[1]}
+	local _file=$(basename "${BASH_SOURCE[1]}")
+	local tmp_file=$(mktemp /tmp/install_log_XXXXX)
+	export DEBIAN_FRONTEND=noninteractive
+
+	list=$(
+	for p in $*;do
+		case $p in
+			upgrade) need_upgrade=true; continue ;;
+			clean) need_clean=true; continue ;;
+			\||\(*|*\)) continue ;;
+		esac
+		echo " $p"
+	done
+	)
+
+	if [ -d $(dirname $LOG_OUTPUT_FILE) ]; then
+		log_file=${LOG_OUTPUT_FILE}
+	else
+		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
+	fi
+
+	echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" >>$log_file
+	echo -e "\nIncoming list:" >>$log_file
+	printf "%-30s %-30s %-30s %-30s\n" $list >>$log_file
+	echo "" >>$log_file
+
+	(	apt-get -qq update
+		if $need_upgrade; then apt-get -y upgrade;fi
+	) 2>>$log_file
+
+	# If the package is not installed, check the latest
+	# up-to-date version in the apt cache.
+	# Exclude bad package names and send a message to the log.
+	for_install=$(
+	for p in $list;do
+	  if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}');then
+		apt-cache  show $p -o APT::Cache::AllVersions=no |& \
+		awk -v p=$p -v tmp_file=$tmp_file \
+		'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
+	  fi
+	done
+	)
+
+	# This information should be logged.
+	if [ -s $tmp_file ]; then
+		cat $tmp_file >>$log_file
+	fi
+
+	if [ -n "$for_install" ]; then
+
+		apt-get install -qq -y --no-install-recommends $for_install 2>>$log_file
+
+		# We will show the status after installation
+		echo -e "\nstatus after installation:" >>$log_file
+		dpkg-query -W \
+		  -f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
+		  $for_install >>$log_file
+	fi
+
+	if $need_clean;then apt-get clean; fi
+	rm $tmp_file
+}
+
+
+
 # prepare_host_basic
 #
 # * installs only basic packages
@@ -1737,7 +1826,7 @@ show_checklist_variables ()
 	for var in $checklist;do
 		eval pval=\$$var
 		echo -e "\n$var =:" >>$log_file
-		if [ $(echo "$pval" | gawk -F"/" '{print NF}') -ge 4 ];then
+		if [ $(echo "$pval" | awk -F"/" '{print NF}') -ge 4 ];then
 			printf "%s\n" $pval >>$log_file
 		else
 			printf "%-30s %-30s %-30s %-30s\n" $pval >>$log_file
