@@ -12,6 +12,7 @@ compile_firmware() {
 	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
+
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:master"
 		# cp : create hardlinks
@@ -42,11 +43,11 @@ compile_firmware() {
 	# pack
 	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
 	display_alert "Building firmware package" "armbian-firmware${FULL}_${REVISION}_all" "info"
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "armbian-firmware${FULL}_${REVISION}_all" 2>&1
+	fakeroot_dpkg_deb_build "armbian-firmware${FULL}_${REVISION}_all"
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
 	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
-	# remove temp directory
+	# remove temp directory - @TODO: maybe not, just leave thrash behind.
 	rm -rf "${firmwaretempdir}"
 }
 
@@ -121,7 +122,7 @@ compile_armbian-zsh() {
 
 	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${armbian_zsh_dir}" 2>&1
+	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}"
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
 	rm -rf "${tmp_dir}"
 
@@ -176,7 +177,7 @@ compile_armbian-config() {
 	ln -sf /usr/sbin/armbian-config "${tmp_dir}/${armbian_config_dir}"/usr/bin/armbian-config
 	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
 
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${armbian_config_dir}" > /dev/null
+	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_config_dir}"
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
 	rm -rf "${tmp_dir}"
 }

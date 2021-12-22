@@ -16,7 +16,7 @@ function chroot_sdcard_apt_get() {
 
 # please, please, unify around this function. if SDCARD is not enough, I'll make a mount version.
 function chroot_sdcard() {
-	run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -c "$*"
+	TMPDIR="" run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -c "$*"
 }
 
 function chroot_custom_long_running() {
@@ -24,10 +24,10 @@ function chroot_custom_long_running() {
 	shift
 	local _exit_code=1
 	if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
-		run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
+		TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
 		_exit_code=$?
 	else
-		run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
+		TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
 		_exit_code=$?
 	fi
 	return $_exit_code
@@ -36,7 +36,13 @@ function chroot_custom_long_running() {
 function chroot_custom() {
 	local target=$1
 	shift
-	run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
+	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
+}
+
+# for deb building.
+function fakeroot_dpkg_deb_build() {
+	display_alert "Building .deb package" "$(basename "${3:-${2:-${1}}}" || true)" "debug"
+	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "$@" 2>&1
 }
 
 # for long-running, host-side expanded bash invocations.
@@ -58,6 +64,11 @@ function run_host_command_logged_long_running() {
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
 function run_host_command_logged() {
 	run_host_command_logged_raw /bin/bash -e -c "$*"
+}
+
+# for interactive, dialog-like host-side invocations. no redirections performed, but same bash usage and expansion, for consistency.
+function run_host_command_dialog() {
+	/bin/bash -e -c "$*"
 }
 
 # do NOT use directly, it does NOT expand the way it should (through bash)

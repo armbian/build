@@ -84,7 +84,7 @@ create_desktop_package() {
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"
 	cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb" > /dev/null
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
 
 	# cleanup
 	rm -rf "${tmp_dir}"
@@ -146,7 +146,7 @@ create_bsp_desktop_package() {
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"
 	cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb" > /dev/null
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"
 
 	# cleanup
 	rm -rf "${tmp_dir}"
