@@ -222,7 +222,7 @@ compile_uboot() {
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf" 2>&1
 
 	display_alert "Building u-boot deb" "${uboot_name}.deb"
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb" 2>&1
+	fakeroot_dpkg_deb_build "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb"
 	rm -rf "$uboottempdir/${uboot_name}"
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir}"
 

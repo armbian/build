@@ -119,6 +119,11 @@ display_alert() {
 			inline_logs_color="\e[0;32m"
 			;;
 
+		debug | deprecation)
+			level_indicator="✨" # "🌴" 🥑
+			inline_logs_color="\e[1;33m"
+			;;
+
 		*)
 			level_indicator="🌿" #  "✨" 🌿 🪵
 			inline_logs_color="\e[1;37m"

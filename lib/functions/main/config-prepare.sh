@@ -9,6 +9,7 @@ function prepare_and_config_main_build_single() {
 	else
 		DEST="${SRC}"/output
 	fi
+	display_alert "Determined DEST:" "${DEST}" "debug"
 
 	if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
 		if [[ -t 0 ]]; then # "-t fd return True if file descriptor fd is open and refers to a terminal". 0 = stdin, 1 = stdout, 2 = stderr, 3+ custom
@@ -116,7 +117,7 @@ function prepare_and_config_main_build_single() {
 		WIP_STATE=supported
 		WIP_BUTTON='CSC/WIP/EOS/TVB'
 		STATE_DESCRIPTION=' - boards with high level of software maturity'
-		temp_rc=$(mktemp)
+		temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
 
 		while true; do
 			options=()

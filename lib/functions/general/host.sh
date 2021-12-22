@@ -243,11 +243,20 @@ prepare_host() {
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 		fi
-		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+		# @TODO: rpardini: _very_ important spot, this is where ".tmp" is created. A _huge_ opportunity for tmpfs here.
+		display_alert "Creating directory structure: .tmp" "${SRC}/.tmp" "debug"
+		display_alert "Creating directory structure: DEST" "${DEST}" "debug"
+		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} \
+			"${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} \
+			"${SRC}"/.tmp "${WORKDIR}"
+
+		display_alert "Setting TMPDIR" "${WORKDIR}" "debug"
+		export TMPDIR="${WORKDIR}"
 
 		# build aarch64
 		if [[ $(dpkg --print-architecture) == amd64 ]]; then
 			if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
+				display_alert "Warning! SKIP_EXTERNAL_TOOLCHAINS is not yes. This is deprecated, upgrade!" "please set SKIP_EXTERNAL_TOOLCHAINS=yes" "deprecation"
 
 				# bind mount toolchain if defined
 				if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then

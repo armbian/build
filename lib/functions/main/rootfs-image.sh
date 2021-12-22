@@ -52,7 +52,7 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# install distribution and board specific applications
 
 	LOG_SECTION="distro" do_with_logging install_distribution_specific
-	LOG_SECTION="install_common" do_with_logging install_distribution_agnostic
+	LOG_SECTION="install_distribution_agnostic" do_with_logging install_distribution_agnostic
 
 	# install locally built packages
 	[[ $EXTERNAL_NEW == compile ]] && LOG_SECTION="packages_local" do_with_logging chroot_installpackages_local

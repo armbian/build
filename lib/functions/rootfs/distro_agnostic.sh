@@ -1,5 +1,5 @@
 install_distribution_agnostic() {
-	display_alert "Applying common tweaks" "install_common" "info"
+	display_alert "Installing distro-agnostic part of rootfs" "install_distribution_agnostic" "debug"
 
 	# install rootfs encryption related packages separate to not break packages cache
 	# @TODO: terrible, this does not use apt-cacher, extract to extension and fix

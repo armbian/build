@@ -300,7 +300,7 @@ POST_FAMILY_TWEAKS_BSP
 	find "${destination}" ! -type l -print0 2> /dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
 
 	# create board DEB file
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${destination}.deb" 2>&1
+	fakeroot_dpkg_deb_build "${destination}" "${destination}.deb"
 	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/" 2>&1
 

@@ -190,7 +190,7 @@ function do_main_configuration() {
 		it is often used to in turn override those.
 	POST_FAMILY_CONFIG
 
-	display_alert "Handling some" "desktop config stuff 1" "warning"
+	display_alert "Handling some" "desktop config stuff 1" "debug"
 
 	# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
 	DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
@@ -216,6 +216,7 @@ function do_main_configuration() {
 		fi
 
 	fi
+	display_alert "Handling some" "desktop config stuff 2" "debug"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		# Expected environment variables :
@@ -226,6 +227,7 @@ function do_main_configuration() {
 
 		desktop_environment_check_if_valid
 	fi
+	display_alert "Handling some" "desktop config stuff 3" "debug"
 
 	if [[ $BUILD_DESKTOP == "yes" && -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
 		# FIXME Check for empty folders, just in case the current maintainer
@@ -249,6 +251,7 @@ function do_main_configuration() {
 			exit_with_error "No desktop configuration selected... Do you really want a desktop environment ?"
 		fi
 	fi
+	display_alert "Handling some" "desktop config stuff 4" "debug"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
@@ -266,6 +269,7 @@ function do_main_configuration() {
 			options+=("${appgroup}" "${appgroup^}" off)
 		done
 
+		# FIXME: pardini: here's a subshell to run dialog. in the middle of the main config. refactor this away
 		DESKTOP_APPGROUPS_SELECTED=$(
 			show_select_menu \
 				"Choose desktop softwares to add" \
@@ -277,15 +281,18 @@ function do_main_configuration() {
 		unset options
 	fi
 
-	#exit_with_error 'Testing'
+	display_alert "Done with" "desktop config stuff - END" "debug"
 
 	# set unique mounting directory
 	MOUNT_UUID=$(uuidgen)
-	SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
-	MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
-	DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 
-	# dropbear needs to be configured differently
+	# Super-global variables, used everywhere. They're not _created_ here, since this is config stage, not build.
+	export WORKDIR="${SRC}/.tmp/work-${MOUNT_UUID}"  # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
+	export SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}" # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
+	export MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"   # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
+	export DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}" # DESTIMG is where the backing image (raw, huge, sparse file) is kept
+
+	# dropbear needs to be configured differently # @TODO: rpardini: yes, and? are you a lost leftover comment from a previous era?
 	[[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
 	[[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
 	[[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
@@ -423,6 +430,7 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		but before assembling any package lists.
 	USER_CONFIG
 
+	display_alert "Extension initialization" "extension_prepare_config" "debug"
 	call_extension_method "extension_prepare_config" <<- 'EXTENSION_PREPARE_CONFIG'
 		*allow extensions to prepare their own config, after user config is done*
 		Implementors should preserve variable values pre-set, but can default values an/or validate them.

@@ -1,3 +1,39 @@
+function run_kernel_make() {
+	declare -a common_make_params_quoted common_make_envs full_command
+
+	common_make_envs=(
+		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse
+		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
+	)
+
+	common_make_params_quoted=(
+		"$CTHREADS"                                  # Parallel compile, "-j X" for X cpus
+		"LOCALVERSION=-${LINUXFAMILY}"               # Kernel param
+		"KDEB_PKGVERSION=${REVISION}"                # deb package version
+		"KDEB_COMPRESS=${DEB_COMPRESS}"              # dpkg compression for deb
+		"BRANCH=${BRANCH}"                           # @TODO: rpardini: Wonder what BRANCH is used for during packaging?
+		"ARCH=${ARCHITECTURE}"                       # Why?
+		"KBUILD_DEBARCH=${ARCH}"                     # Where used?
+		"DEBFULLNAME=${MAINTAINER}"                  # For changelog generation
+		"DEBEMAIL=${MAINTAINERMAIL}"                 # idem
+		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}" # Prefix for tool invocations.
+	)
+
+	# last statement, so it passes the result to calling function.
+	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "${common_make_envs[@]}" make "$@" "${common_make_params_quoted[@]@Q}")
+	display_alert "Kernel make" "${full_command[*]}" "debug"
+	# echo "${full_command[@]}" >&2 # last-resort bash-quoting debugging
+	"${full_command[@]}" # and exit with it's code, since it's the last statement
+}
+
+function run_kernel_make_dialog() {
+	KERNEL_MAKE_RUNNER="run_host_command_dialog" run_kernel_make "$@"
+}
+
+function run_kernel_make_long_running() {
+	KERNEL_MAKE_RUNNER="run_host_command_logged_long_running" run_kernel_make "$@"
+}
+
 compile_kernel() {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
@@ -18,14 +54,16 @@ compile_kernel() {
 	rm -f localversion
 
 	# read kernel version
-	local version hash
+	local version hash pre_patch_version
 	version=$(grab_version "$kerneldir")
+	pre_patch_version="${version}"
+	display_alert "Pre-patch kernel version" "${pre_patch_version}" "debug"
 
 	# read kernel git hash
 	hash=$(improved_git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
 	# Apply a series of patches if a series file exists
-	if test -f "${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf; then
+	if test -f "${SRC}"/patch/kernel/"${KERNELPATCHDIR}"/series.conf; then
 		display_alert "series.conf file visible. Apply"
 		series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
 
@@ -33,7 +71,7 @@ compile_kernel() {
 		apply_patch_series "${kerneldir}" "$series_conf"
 	fi
 
-	# build 3rd party drivers
+	# build 3rd party drivers; # @TODO: does it build? or only patch?
 	prepare_extra_kernel_drivers
 
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
@@ -61,7 +99,8 @@ compile_kernel() {
 		exit_with_error "Architecture [$ARCH] is not supported"
 	fi
 
-	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
+	kernel_compiler_version="$(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)"
+	display_alert "Compiler version" "${KERNEL_COMPILER}gcc ${kernel_compiler_version}" "info"
 
 	# copy kernel config
 	local COPY_CONFIG_BACK_TO=""
@@ -93,28 +132,26 @@ compile_kernel() {
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
-	cp "${SRC}"/patch/misc/headers-debian-byteshift.patch /tmp
+	cp "${SRC}"/patch/misc/headers-debian-byteshift.patch /tmp # @TODO: ok, but why /tmp? It's leaking there.
 
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		if [[ $BRANCH == default ]]; then
-			run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${PATH}" \
-				make "ARCH=$ARCHITECTURE" "CROSS_COMPILE=\"$CCACHE $KERNEL_COMPILER\"" silentoldconfig
+			run_kernel_make silentoldconfig # This will exit with generic error if it fails.
 		else
 			# TODO: check if required
-			run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${PATH}" \
-				make "ARCH=$ARCHITECTURE" "CROSS_COMPILE=\"$CCACHE $KERNEL_COMPILER\"" olddefconfig || {
+			run_kernel_make olddefconfig || {
 				exit_with_error "Error kernel olddefconfig"
 			}
 		fi
 	else
-		run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${PATH}" \
-			make "$CTHREADS" "ARCH=$ARCHITECTURE" "CROSS_COMPILE=\"$CCACHE $KERNEL_COMPILER\"" oldconfig
+		display_alert "Starting kernel oldconfig+menuconfig" "${LINUXCONFIG}" "debug"
+
+		run_kernel_make oldconfig
 
 		# No logging for this. this is UI piece
-		CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${PATH}" \
-			make "$CTHREADS" "ARCH=$ARCHITECTURE" "CROSS_COMPILE=\"$CCACHE $KERNEL_COMPILER\"" "${KERNEL_MENUCONFIG:-menuconfig}" || {
+		run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}" || {
 			exit_with_error "Error kernel menuconfig failed"
 		}
 
@@ -127,8 +164,7 @@ compile_kernel() {
 
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
-			run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${PATH}" \
-				make "ARCH=$ARCHITECTURE" "CROSS_COMPILE=\"$CCACHE $KERNEL_COMPILER\"" savedefconfig
+			run_kernel_make savedefconfig
 
 			[[ -f defconfig ]] && cp defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
 		fi
@@ -142,11 +178,7 @@ compile_kernel() {
 	fi
 
 	display_alert "Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
-	# shellcheck disable=SC2086 # sorry gotta expand the targets somewhere
-	run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${PATH}" \
-		make "$CTHREADS" "ARCH=$ARCHITECTURE" "CROSS_COMPILE=\"$CCACHE $KERNEL_COMPILER\"" \
-		"$SRC_LOADADDR" "LOCALVERSION=\"-$LINUXFAMILY\"" \
-		$KERNEL_IMAGE_TYPE ${KERNEL_EXTRA_TARGETS:-modules dtbs} || {
+	run_kernel_make_long_running "${KERNEL_IMAGE_TYPE}" modules "${KERNEL_EXTRA_TARGETS:-dtbs}" || {
 		exit_with_error "Failure during kernel compile" "@host"
 	}
 
@@ -164,17 +196,7 @@ compile_kernel() {
 	display_alert "Creating kernel packages" "${LINUXCONFIG} $kernel_packaging_target" "info"
 
 	# produce deb packages: image, headers, firmware, dtb
-	run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-		make "$CTHREADS" $kernel_packaging_target \
-		"KDEB_PKGVERSION=$REVISION" \
-		"KDEB_COMPRESS=${DEB_COMPRESS}" \
-		"BRANCH=$BRANCH" \
-		"LOCALVERSION=\"-${LINUXFAMILY}\"" \
-		"KBUILD_DEBARCH=$ARCH" \
-		"ARCH=$ARCHITECTURE" \
-		"DEBFULLNAME=\"$MAINTAINER\"" \
-		"DEBEMAIL=\"$MAINTAINERMAIL\"" \
-		"CROSS_COMPILE=\"$CCACHE $KERNEL_COMPILER\"" || {
+	run_kernel_make_long_running $kernel_packaging_target || {
 		exit_with_error "Failure during kernel packaging" "@host"
 	}
 
@@ -259,7 +281,7 @@ create_linux-source_package() {
 		Description: This package provides the source code for the Linux kernel $version
 	EOF
 
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} -z0 "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
+	fakeroot_dpkg_deb_build -z0 "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
 	rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
 
 	te=$(date +%s)

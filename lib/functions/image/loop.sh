@@ -31,7 +31,7 @@ write_uboot_to_loop_image() {
 
 	local loop=$1 revision
 	display_alert "Preparing u-boot bootloader" "$loop" "info"
-	TEMP_DIR=$(mktemp -d || exit 1)
+	TEMP_DIR=$(mktemp -d) # set-e is in effect. no need to exit on errors explicitly
 	chmod 700 ${TEMP_DIR}
 	revision=${REVISION}
 	if [[ -n $UPSTREM_VER ]]; then
