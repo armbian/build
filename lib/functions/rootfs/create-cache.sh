@@ -239,13 +239,13 @@ function create_new_rootfs_cache() {
 	[[ -d "${MOUNT}" ]] &&
 		display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
-	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
+	# create list of installed packages for debug purposes - this captures it's own stdout.
+	chroot "${SDCARD}" /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > "${cache_fname}.list"
 
 	# creating xapian index that synaptic runs faster
 	if [[ $BUILD_DESKTOP == yes ]]; then
 		display_alert "Recreating Synaptic search index" "Please wait" "info"
-		chroot $SDCARD /bin/bash -c "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u"
+		chroot_sdcard "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u || true"
 	fi
 
 	# this is needed for the build process later since resolvconf generated file in /run is not saved
@@ -260,7 +260,7 @@ function create_new_rootfs_cache() {
 	umount_chroot "$SDCARD"
 
 	tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-		--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$(logging_echo_prefix_for_pv "store_rootfs") $display_name" | lz4 -5 -c > $cache_fname
+		--exclude='./sys/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $display_name" | lz4 -5 -c > "$cache_fname"
 
 	# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
@@ -268,6 +268,7 @@ function create_new_rootfs_cache() {
 		echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 	fi
 
+	return 0 # protect against possible future short-circuiting above this
 }
 
 # get_package_list_hash
@@ -278,7 +279,7 @@ get_package_list_hash() {
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	( 
+	(
 		(
 			printf "%s\n" "${package_arr[@]}"
 			printf -- "-%s\n" "${exclude_arr[@]}"

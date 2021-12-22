@@ -339,12 +339,19 @@ get_extension_hook_stracktrace() {
 
 show_caller_full() {
 	{
-		local frame=0
-		while caller $frame; do
-			((frame++))
+		local i=0
+		local line_no
+		local function_name
+		local file_name
+		echo "" # line break
+		while caller $i; do
+			((i++))
+		done | while read -r line_no function_name file_name; do
+			echo -e "\t$file_name:$line_no\tat\t$function_name"
 		done
 	} || true # always success
 }
+
 # can be called by board, family, config or user to make sure an extension is included.
 # single argument is the extension name.
 # will look for it in /userpatches/extensions first.

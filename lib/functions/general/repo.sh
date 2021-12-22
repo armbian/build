@@ -193,7 +193,7 @@ repo-manipulate() {
 				LIST=("${new_list[@]}")
 				LIST_LENGTH=$((${#LIST[@]} / 2))
 				exec 3>&1
-				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9 + ${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
+				TARGET_VERSION=$(dialog_if_terminal --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9 + ${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
 				exitstatus=$?
 				exec 3>&-
 				if [[ $exitstatus -eq 0 ]]; then

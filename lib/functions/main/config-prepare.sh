@@ -11,7 +11,8 @@ function prepare_and_config_main_build_single() {
 	fi
 
 	if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
-		if [[ -t 1 ]]; then # "-t fd return True if file descriptor fd is open and refers to a terminal"
+		if [[ -t 0 ]]; then # "-t fd return True if file descriptor fd is open and refers to a terminal". 0 = stdin, 1 = stdout, 2 = stderr, 3+ custom
+			display_alert "stdin is a terminal" "or is it?" "warning"
 			# override stty size, if stdin is a terminal.
 			[[ -n $COLUMNS ]] && stty cols $COLUMNS
 			[[ -n $LINES ]] && stty rows $LINES
@@ -95,7 +96,7 @@ function prepare_and_config_main_build_single() {
 	if [[ -z $KERNEL_ONLY ]]; then
 		options+=("yes" "U-boot and kernel packages")
 		options+=("no" "Full OS image for flashing")
-		KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
+		KERNEL_ONLY=$(dialog_if_terminal --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 			--menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		unset options
 		[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
@@ -105,7 +106,7 @@ function prepare_and_config_main_build_single() {
 		options+=("no" "Do not change the kernel configuration")
 		options+=("yes" "Show a kernel configuration menu before compilation")
 		options+=("prebuilt" "Use precompiled packages from Armbian repository")
-		KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
+		KERNEL_CONFIGURE=$(dialog_if_terminal --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 			--menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		unset options
 		[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected"
@@ -150,7 +151,7 @@ function prepare_and_config_main_build_single() {
 			else
 				echo > "${temp_rc}"
 			fi
-			BOARD=$(DIALOGRC=$temp_rc dialog --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar \
+			BOARD=$(DIALOGRC=$temp_rc dialog_if_terminal --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar \
 				--colors --extra-label "Show $WIP_BUTTON" --extra-button \
 				--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 			STATUS=$?
@@ -206,7 +207,7 @@ function prepare_and_config_main_build_single() {
 		if [[ "${#options[@]}" == 2 ]]; then
 			BRANCH="${options[0]}"
 		else
-			BRANCH=$(dialog --stdout --title "Choose a kernel" --backtitle "$backtitle" --colors \
+			BRANCH=$(dialog_if_terminal --stdout --title "Choose a kernel" --backtitle "$backtitle" --colors \
 				--menu "Select the target kernel branch\nExact kernel versions depend on selected board" \
 				$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		fi
@@ -223,7 +224,7 @@ function prepare_and_config_main_build_single() {
 	if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 		options=()
 		distros_options
-		RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
+		RELEASE=$(dialog_if_terminal --stdout --title "Choose a release package base" --backtitle "$backtitle" \
 			--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		echo "options : ${options}"
 		[[ -z $RELEASE ]] && exit_with_error "No release selected"
@@ -239,7 +240,7 @@ function prepare_and_config_main_build_single() {
 		options=()
 		options+=("no" "Image with console interface (server)")
 		options+=("yes" "Image with desktop environment")
-		BUILD_DESKTOP=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+		BUILD_DESKTOP=$(dialog_if_terminal --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
 			--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		unset options
 		[[ -z $BUILD_DESKTOP ]] && exit_with_error "No option selected"
@@ -253,7 +254,7 @@ function prepare_and_config_main_build_single() {
 		options=()
 		options+=("no" "Standard image with console interface")
 		options+=("yes" "Minimal image with console interface")
-		BUILD_MINIMAL=$(dialog --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+		BUILD_MINIMAL=$(dialog_if_terminal --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
 			--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		unset options
 		[[ -z $BUILD_MINIMAL ]] && exit_with_error "No option selected"
