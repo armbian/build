@@ -190,8 +190,9 @@ function do_main_configuration() {
 		it is often used to in turn override those.
 	POST_FAMILY_CONFIG
 
-	# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
+	display_alert "Handling some" "desktop config stuff 1" "warning"
 
+	# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
 	DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
 	DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
 	DESKTOP_CONFIG_PREFIX="config_"

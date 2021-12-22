@@ -1,12 +1,11 @@
 # unmount_on_exit - used during rootfs building, to avoid leaving mounted stuff behind
 #
 unmount_on_exit() {
-	trap - ERR           # Also remove any error trap. it's too late for that.
 	set +e               # we just wanna plow through this, ignoring errors.
 	trap - INT TERM EXIT # remove the trap
 
 	local stack_here
-	stack_here="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	stack_here="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}" || true)"
 	display_alert "trap caught, shutting down" "${stack_here}" "err"
 	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
 		ERROR_DEBUG_SHELL=no # dont do it twice
@@ -39,7 +38,7 @@ unmount_on_exit() {
 		exit_with_error "generic error during build_rootfs_image: ${stack_here}" || true # but don't trigger error again
 	fi
 
-	return 47 # trap returns error. # exit successfully. we're already handling a trap here.
+	return 49 # trap returns error.
 }
 
 # added by main_default_build_single to show details about errors when they happen and exit. exit might trigger the above.

@@ -1,5 +1,12 @@
 # Stuff involving dialog
 
+# Pardini: dialog_if_terminal prints error and exits if stdin is not a terminal, or if running under CI.
+function dialog_if_terminal() {
+	[[ ! -t 0 ]] && exit_with_error "stdin is not a terminal. can't use dialog." "dialog_if_terminal ${*}" "err"
+	[[ "${CI}" == "true" ]] && exit_with_error "CI=true. can't use dialog." "dialog_if_terminal ${*}" "err"
+	dialog "$@"
+}
+
 # Myy : Menu configuration for choosing desktop configurations
 show_menu() {
 	provided_title=$1
@@ -11,7 +18,7 @@ show_menu() {
 	#echo "Provided menuname : $provided_menuname"
 	#echo "Provided options : " "${@:4}"
 	#echo "TTY X: $TTY_X Y: $TTY_Y"
-	dialog --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
+	dialog_if_terminal --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
 		--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
 }
 
@@ -20,7 +27,7 @@ show_select_menu() {
 	provided_title=$1
 	provided_backtitle=$2
 	provided_menuname=$3
-	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
+	dialog_if_terminal --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
 		--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
 }
 
@@ -44,7 +51,7 @@ show_developer_warning() {
 	- Forum posts related to dev kernel, CSC, WIP and EOS boards
 	should be created in the \Z2\"Community forums\"\Zn section
 	"
-	DIALOGRC=$temp_rc dialog --title "Expert mode warning" --backtitle "${backtitle}" --colors --defaultno --no-label "I do not agree" \
+	DIALOGRC=$temp_rc dialog_if_terminal --title "Expert mode warning" --backtitle "${backtitle}" --colors --defaultno --no-label "I do not agree" \
 		--yes-label "I understand and agree" --yesno "$warn_text" "${TTY_Y}" "${TTY_X}"
 	[[ $? -ne 0 ]] && exit_with_error "Error switching to the expert mode"
 	SHOW_WARNING=no
