@@ -7,3 +7,5 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="nvidia/tegra210-p3450-0000.dtb"
 SRC_EXTLINUX="yes"
+SRC_CMDLINE="console=ttyS0,115200n8 console=tty0"
+
