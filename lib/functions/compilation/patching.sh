@@ -87,14 +87,15 @@ process_patch_file() {
 	# detect and remove files which patch will create
 	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
-	patch --batch -p1 -N < "${patch}" 2>&1
-
-	if [[ $? -ne 0 ]]; then
+	# @TODO: try patching with `git am` first, so git contains the patch commit info/msg. -- For future git-based hashing.
+	# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
+	patch --batch -p1 -N < "${patch}" && {
+		display_alert "* $status $(basename "${patch}")" "" "info"
+	} || {
 		display_alert "* $status $(basename "${patch}")" "failed" "wrn"
 		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
-	else
-		display_alert "* $status $(basename "${patch}")" "" "info"
-	fi
+	}
+	return 0 # short-circuit above, avoid exiting with error
 }
 
 # apply_patch_series <target dir> <full path to series file>
