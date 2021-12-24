@@ -25,7 +25,7 @@ function logging_error_show_log() {
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 		display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
 		# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it TO stderr!!
+		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 		display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
 		display_alert "🦞 Error Msg" "$message" "err"
 		display_alert "🐞 Error stacktrace" "$stacktrace" "err"
@@ -55,16 +55,21 @@ function do_with_logging() {
 	# this is mostly handled by redirecting stderr to stdout: 2>&1
 
 	local exit_code=176 # fail by default...
-	local prefix_sed_contents
-	prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${gray_color}")"
-	local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 	if [[ "${SHOW_LOG}" == "yes" ]]; then
+		local prefix_sed_contents
+		local tool_color="${gray_color}" # default to gray... (should be ok on terminals)
+		if [[ "${CI}" == "true" ]]; then # ... but that is too dark for Github Actions
+			tool_color="${normal_color}"
+		fi
+		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")"
+		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
+
 		# This is sick. Create a 3rd file descriptor sending it to sed. https://unix.stackexchange.com/questions/174849/redirecting-stdout-to-terminal-and-file-without-using-a-pipe
 		# Also terrible: don't hold a reference to cwd by changing to SRC always
 		exec 3> >(
 			cd "${SRC}" || exit 2
 			#grep --line-buffered -v "^$" | \
-			sed -e "${prefix_sed_cmd}"
+			sed -u -e "${prefix_sed_cmd}"
 		)
 		"$@" >&3
 		exit_code=$? # hopefully this is the pipe
