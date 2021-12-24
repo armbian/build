@@ -96,14 +96,14 @@ pre_umount_final_image__install_grub() {
 
 	if [[ "${UEFI_GRUB_TARGET_BIOS}" != "" ]]; then
 		display_alert "Installing GRUB BIOS..." "${UEFI_GRUB_TARGET_BIOS} device ${LOOP}" ""
-		chroot "$chroot_target" /bin/bash -c "grub-install --target=${UEFI_GRUB_TARGET_BIOS} ${LOOP}" 2>&1 || {
+		chroot_custom "$chroot_target" grub-install --target=${UEFI_GRUB_TARGET_BIOS} "${LOOP}" || {
 			exit_with_error "${install_grub_cmdline} failed!"
 		}
 	fi
 
 	local install_grub_cmdline="update-initramfs -c -k all && update-grub && grub-install --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
 	display_alert "Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
-	chroot "$chroot_target" /bin/bash -c "$install_grub_cmdline" 2>&1 || {
+	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
 		exit_with_error "${install_grub_cmdline} failed!"
 	}
 
