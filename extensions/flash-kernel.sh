@@ -16,7 +16,6 @@ function extension_prepare_config__prepare_flash_kernel() {
 	export CLOUD_INIT_CONFIG_LOCATION="/boot/firmware"                          # use /boot/firmware for cloud-init as well
 	export VER="${FK__PUBLISHED_KERNEL_VERSION}"                                # For the VERSION
 	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-fk${FK__PUBLISHED_KERNEL_VERSION}" # Unique bsp name.
-	echo "-- starting" > "${DEST}"/"${LOG_SUBPATH}"/flash-kernel.log            # Zero out the log for this extension.
 }
 
 function post_install_kernel_debs__install_kernel_and_flash_packages() {
@@ -24,7 +23,7 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 
 	if [[ "${FK__EXTRA_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel extra packages" "${FK__EXTRA_PACKAGES}"
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install ${FK__EXTRA_PACKAGES}" || {
+		chroot_sdcard_apt_get_install "${FK__EXTRA_PACKAGES}" || {
 			display_alert "Failed to install flash-kernel's extra packages." "${EXTENSION}" "err"
 			exit 28
 		}
@@ -32,7 +31,7 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 
 	if [[ "${FK__KERNEL_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel kernel packages" "${FK__KERNEL_PACKAGES}"
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install ${FK__KERNEL_PACKAGES}" || {
+		chroot_sdcard_apt_get_install "${FK__KERNEL_PACKAGES}" || {
 			display_alert "Failed to install flash-kernel's kernel packages." "${EXTENSION}" "err"
 			exit 28
 		}
@@ -44,7 +43,7 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 	umount "${SDCARD}"/sys
 	mkdir -p "${SDCARD}"/sys/firmware/efi
 
-	chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install ${FK__TOOL_PACKAGE}" || {
+	chroot_sdcard_apt_get_install "${FK__TOOL_PACKAGE}" || {
 		display_alert "Failed to install flash-kernel package." "${EXTENSION}" "err"
 		exit 28
 	}
@@ -74,9 +73,8 @@ function pre_update_initramfs__setup_flash_kernel() {
 	# hack, umount the chroot's /sys, otherwise flash-kernel tries to EFI flash due to the build host (!) being EFI
 	umount "$chroot_target/sys"
 
-	echo "--  flash-kernel disabling hooks"
-	chroot "$chroot_target" /bin/bash -c "chmod -v -x /etc/kernel/postinst.d/initramfs-tools" 2>&1
-	chroot "$chroot_target" /bin/bash -c "chmod -v -x /etc/initramfs/post-update.d/flash-kernel" 2>&1
+	chroot_custom "$chroot_target" chmod -v -x "/etc/kernel/postinst.d/initramfs-tools"
+	chroot_custom "$chroot_target" chmod -v -x "/etc/initramfs/post-update.d/flash-kernel"
 
 	export FIRMWARE_DIR="${MOUNT}"/boot/firmware
 	call_extension_method "pre_initramfs_flash_kernel" <<- 'PRE_INITRAMFS_FLASH_KERNEL'
@@ -86,7 +84,7 @@ function pre_update_initramfs__setup_flash_kernel() {
 
 	local update_initramfs_cmd="update-initramfs -c -k all"
 	display_alert "Updating flash-kernel initramfs..." "$update_initramfs_cmd" ""
-	chroot "$chroot_target" /bin/bash -c "$update_initramfs_cmd" 2>&1 || {
+	chroot_custom "$chroot_target"  "$update_initramfs_cmd" || {
 		display_alert "Failed to run '$update_initramfs_cmd'" "Check logs" "err"
 		exit 29
 	}
@@ -99,14 +97,14 @@ function pre_update_initramfs__setup_flash_kernel() {
 
 	local flash_kernel_cmd="flash-kernel --machine '${FK__MACHINE_MODEL}'"
 	display_alert "flash-kernel" "${FK__MACHINE_MODEL}" "info"
-	chroot "$chroot_target" /bin/bash -c "${flash_kernel_cmd}" 2>&1 || {
+	chroot_custom "$chroot_target" "${flash_kernel_cmd}"  || {
 		display_alert "Failed to run '${flash_kernel_cmd}'" "Check logs" "err"
 		exit 29
 	}
 
 	display_alert "Re-enabling" "initramfs-tools/flash-kernel hook for kernel"
-	chroot "$chroot_target" /bin/bash -c "chmod -v +x /etc/kernel/postinst.d/initramfs-tools" 2>&1
-	chroot "$chroot_target" /bin/bash -c "chmod -v +x /etc/initramfs/post-update.d/flash-kernel" 2>&1
+	chroot_custom "$chroot_target" chmod -v +x "/etc/kernel/postinst.d/initramfs-tools"
+	chroot_custom "$chroot_target" chmod -v +x "/etc/initramfs/post-update.d/flash-kernel"
 
 	umount_chroot "$chroot_target/"
 	rm "$chroot_target"/usr/bin/"$QEMU_BINARY"
