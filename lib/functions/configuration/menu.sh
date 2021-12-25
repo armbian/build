@@ -56,3 +56,32 @@ show_developer_warning() {
 	[[ $? -ne 0 ]] && exit_with_error "Error switching to the expert mode"
 	SHOW_WARNING=no
 }
+
+
+# Stuff that was in config files
+function distro_menu() {
+	# create a select menu for choosing a distribution based EXPERT status
+
+	local distrib_dir="${1}"
+
+	if [[ -d "${distrib_dir}" && -f "${distrib_dir}/support" ]]; then
+		local support_level="$(cat "${distrib_dir}/support")"
+		if [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
+			:
+		else
+			local distro_codename="$(basename "${distrib_dir}")"
+			local distro_fullname="$(cat "${distrib_dir}/name")"
+			local expert_infos=""
+			[[ $EXPERT == "yes" ]] && expert_infos="(${support_level})"
+			options+=("${distro_codename}" "${distro_fullname} ${expert_infos}")
+		fi
+	fi
+
+}
+
+function distros_options() {
+	for distrib_dir in "config/distributions/"*; do
+		distro_menu "${distrib_dir}"
+	done
+}
+

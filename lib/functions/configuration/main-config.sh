@@ -430,7 +430,7 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		but before assembling any package lists.
 	USER_CONFIG
 
-	display_alert "Extension initialization" "extension_prepare_config" "debug"
+	display_alert "Extensions: prepare configuration" "extension_prepare_config" "debug"
 	call_extension_method "extension_prepare_config" <<- 'EXTENSION_PREPARE_CONFIG'
 		*allow extensions to prepare their own config, after user config is done*
 		Implementors should preserve variable values pre-set, but can default values an/or validate them.
