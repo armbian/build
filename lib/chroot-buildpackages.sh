@@ -176,9 +176,9 @@ chroot_build_packages()
 			display_alert "Starting package building process" "$release/$arch" "info"
 
 			local t_name=${release}-${arch}-v${CHROOT_CACHE_VERSION}
-			#target_dir="${SRC}/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}"
 			local distcc_bindaddr="127.0.0.2"
 
+			# Create a clean environment archive if it does not exist.
 			if [ ! -f "${SRC}/cache/buildpkg/${t_name}.tar.xz" ]; then
 				local tmp_dir=$(mktemp -d "${SRC}"/.tmp/debootstrap-XXXXX)
 				create_chroot "${tmp_dir}/${t_name}" "${release}" "${arch}"
@@ -191,7 +191,7 @@ chroot_build_packages()
 				rm -rf $tmp_dir
 			fi
 
-
+			# Unpack the clean environment archive, if it exists.
 			if [ -f "${SRC}/cache/buildpkg/${t_name}.tar.xz" ]; then
 				local tmp_dir=$(mktemp -d "${SRC}"/.tmp/build-XXXXX)
 				(	cd $tmp_dir
@@ -224,7 +224,13 @@ chroot_build_packages()
 				display_alert "Upgrading packages" "$release/$arch" "info"
 				systemd-nspawn -a -q -D "${target_dir}" /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
 				date +%s > "${t}"
-				display_alert "TODO: update a clean Environment archive" "${t_name}.tar.xz" "info"
+				display_alert "Repack a clean Environment archive after upgrading" "${t_name}.tar.xz" "info"
+				rm "${SRC}/cache/buildpkg/${t_name}.tar.xz"
+				(
+					tar -cp --directory="${tmp_dir}/" ${t_name} \
+					| pv -p -b -r -s "$(du -sb "${tmp_dir}/${t_name}" | cut -f1)" \
+					| pixz -4 >"${SRC}/cache/buildpkg/${t_name}.tar.xz"
+				)
 			fi
 
 			for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
@@ -258,6 +264,8 @@ chroot_build_packages()
 					continue
 				fi
 
+				# Delete the environment if there was a build in it.
+				# And unpack the clean environment again.
 				if [[ -f "${target_dir}"/root/build.sh ]] && [[ -d $tmp_dir ]]; then
 					rm -rf $tmp_dir
 					local tmp_dir=$(mktemp -d "${SRC}"/.tmp/build-XXXXX)
@@ -299,6 +307,7 @@ chroot_build_packages()
 				te=$(date +%s)
 				display_alert "Build time $package_name " " $(($te - $ts)) sec." "info"
 			done
+			# Delete a temporary directory
 			if [ -d $tmp_dir ]; then rm -rf $tmp_dir;fi
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)
@@ -368,6 +377,8 @@ create_build_script ()
 	debchange -l~armbian"${REVISION}"+ "Custom $VENDOR release"
 
 	display_alert "Building package"
+	# Set the number of build threads and certainly send
+	# the standard error stream to the log file.
 	dpkg-buildpackage -b -us -j${NCPU_CHROOT:-2} 2>>\$LOG_OUTPUT_FILE
 
 	if [[ \$? -eq 0 ]]; then
