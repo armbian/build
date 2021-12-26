@@ -102,8 +102,7 @@ function prepare_and_config_main_build_single() {
 	source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
 	LINUXFAMILY="${BOARDFAMILY}"
 
-	# @TODO: interesting. this sourced the board config. What sources the family?
-
+	# @TODO: interesting. this sourced the board config. What sources the family? do_main_configuration!
 
 	[[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 
@@ -174,7 +173,6 @@ function prepare_and_config_main_build_single() {
 	export CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 
 	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
-
 }
 
 # cli-bsp also uses this

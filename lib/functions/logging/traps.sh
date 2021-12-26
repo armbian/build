@@ -49,6 +49,10 @@ function main_error_monitor() {
 	fi
 	#trap - ERR # remove this trap
 	local errcode="${1}"
+	# If there's no error, do nothing.
+	if [[ $errcode -eq 0 ]]; then
+		return 0
+	fi
 	local stack_caller="${2}"
 	local full_stack_caller="${3}"
 	display_alert "main_error_monitor: ${errcode}! stack:" "${stack_caller}" "err"

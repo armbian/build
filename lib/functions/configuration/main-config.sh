@@ -377,7 +377,7 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	# Dependent desktop packages
 	# Myy : Sources packages from file here
 
-	# Myy : FIXME Rename aggregate_all to aggregate_all_desktop
+	# Myy : FIXME Rename aggregate_all to aggregate_all_desktop # @TODO: rpardini: already done?
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
 		echo -e "\nGroups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES :" >> "${LOG_OUTPUT_FILE}"
@@ -446,7 +446,7 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 
 	[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 
-	# Build final package list after possible override
+	display_alert "Build final package list" "after possible override" "debug"
 	PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 	PACKAGE_MAIN_LIST="$(cleanup_list PACKAGE_LIST)"
 
@@ -505,28 +505,38 @@ Packages will still be installed after this is called, so it is the last chance
 to confirm or change any packages.
 POST_AGGREGATE_PACKAGES
 
-	# debug
-	cat <<- EOF >> "${DEST}"/${LOG_SUBPATH}/output.log
+	local build_script_env_file="${DEST}/${LOG_SUBPATH}/output.log"
+	display_alert "Writing build config summary to" "${build_script_env_file}" "debug"
 
+	# debug
+	local debug_dpkg_arch debug_uname debug_virt debug_src_mount debug_src_perms debug_src_temp_perms
+	debug_dpkg_arch="$(dpkg --print-architecture)"
+	debug_uname="$(uname -a)"
+	debug_virt="$(systemd-detect-virt)"
+	debug_src_mount="$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")"
+	debug_src_perms="$(getfacl -p "${SRC}")"
+	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"
+
+	cat <<- EOF >> "${build_script_env_file}"
 		## BUILD SCRIPT ENVIRONMENT
 
 		Repository: $REPOSITORY_URL
 		Version: $REPOSITORY_COMMIT
 
 		Host OS: $HOSTRELEASE
-		Host arch: $(dpkg --print-architecture)
-		Host system: $(uname -a)
-		Virtualization type: $(systemd-detect-virt)
+		Host arch: ${debug_dpkg_arch}
+		Host system: ${debug_uname}
+		Virtualization type: ${debug_virt}
 
 		## Build script directories
 		Build directory is located on:
-		$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")
+		${debug_src_mount}
 
 		Build directory permissions:
-		$(getfacl -p "${SRC}")
+		${debug_src_perms}
 
 		Temp directory permissions:
-		$(getfacl -p "${SRC}"/.tmp 2> /dev/null)
+		${debug_src_temp_perms}
 
 		## BUILD CONFIGURATION
 
@@ -554,4 +564,6 @@ POST_AGGREGATE_PACKAGES
 
 		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 	EOF
+
+	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
 }
