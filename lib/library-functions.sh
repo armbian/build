@@ -167,6 +167,10 @@ source "${SRC}"/lib/functions/compilation/extra-drivers.sh
 # shellcheck source=functions/compilation/patching.sh
 source "${SRC}"/lib/functions/compilation/patching.sh
 
+### lib/functions/logging/capture.sh
+# shellcheck source=functions/logging/capture.sh
+source "${SRC}"/lib/functions/logging/capture.sh
+
 ### lib/functions/logging/runners.sh
 # shellcheck source=functions/logging/runners.sh
 source "${SRC}"/lib/functions/logging/runners.sh

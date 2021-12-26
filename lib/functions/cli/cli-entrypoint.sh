@@ -108,7 +108,14 @@ function cli_entrypoint() {
 		do_main_build_all_ng
 	else
 		# configuration etc
-		prepare_and_config_main_build_single
+		do_capturing_defs prepare_and_config_main_build_single # this sets CAPTURED_VARS
+
+		if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
+			echo "${CAPTURED_VARS}" # to stdout!
+			return 0
+		else
+			unset CAPTURED_VARS
+		fi
 
 		# Allow for custom user-invoked functions. @TODO: check this with extensions usage?
 		if [[ -z $1 ]]; then

@@ -18,7 +18,7 @@ main_default_build_single() {
 		LOG_SECTION="fetch_sources_kernel_uboot_atf" do_with_logging fetch_sources_kernel_uboot_atf
 		LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
 
-		for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
+		for option in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
 			if [[ $option != sources ]]; then
 				LOG_SECTION="cleaning" do_with_logging cleaning "$option"
 			fi
