@@ -175,27 +175,56 @@ chroot_build_packages()
 		for arch in $target_arch; do
 			display_alert "Starting package building process" "$release/$arch" "info"
 
-			local target_dir
-			target_dir="${SRC}/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}"
+			local t_name=${release}-${arch}-v${CHROOT_CACHE_VERSION}
+			#target_dir="${SRC}/cache/buildpkg/${release}-${arch}-v${CHROOT_CACHE_VERSION}"
 			local distcc_bindaddr="127.0.0.2"
 
-			[[ ! -f "${target_dir}"/root/.debootstrap-complete ]] && create_chroot "${target_dir}" "${release}" "${arch}"
-			[[ ! -f "${target_dir}"/root/.debootstrap-complete ]] && exit_with_error "Creating chroot failed" "${release}/${arch}"
+			if [ ! -f "${SRC}/cache/buildpkg/${t_name}.tar.xz" ]; then
+				local tmp_dir=$(mktemp -d "${SRC}"/.tmp/debootstrap-XXXXX)
+				create_chroot "${tmp_dir}/${t_name}" "${release}" "${arch}"
+				display_alert "Create a clean Environment archive" "${t_name}.tar.xz" "info"
+				(
+					tar -cp --directory="${tmp_dir}/" ${t_name} \
+					| pv -p -b -r -s "$(du -sb "${tmp_dir}/${t_name}" | cut -f1)" \
+					| pixz -4 >"${SRC}/cache/buildpkg/${t_name}.tar.xz"
+				)
+				rm -rf $tmp_dir
+			fi
 
-			[[ -f /var/run/distcc/"${release}-${arch}".pid ]] && kill "$(<"/var/run/distcc/${release}-${arch}.pid")" > /dev/null 2>&1
+
+			if [ -f "${SRC}/cache/buildpkg/${t_name}.tar.xz" ]; then
+				local tmp_dir=$(mktemp -d "${SRC}"/.tmp/build-XXXXX)
+				(	cd $tmp_dir
+					display_alert "Unpack the clean environment" "${t_name}.tar.xz" "info"
+					tar -xJf "${SRC}/cache/buildpkg/${t_name}.tar.xz" || \
+					exit_with_error "Is not extracted" "${SRC}/cache/buildpkg/${t_name}.tar.xz"
+				)
+				target_dir="$tmp_dir/${t_name}"
+			else
+				exit_with_error "Creating chroot failed" "${release}/${arch}"
+			fi
+
+			[[ -f /var/run/distcc/"${release}-${arch}".pid ]] &&
+				kill "$(<"/var/run/distcc/${release}-${arch}.pid")" > /dev/null 2>&1
 
 			chroot_prepare_distccd "${release}" "${arch}"
 
 			# DISTCC_TCP_DEFER_ACCEPT=0
-			DISTCC_CMDLIST=/tmp/distcc/${release}-${arch}/cmdlist TMPDIR=/tmp/distcc distccd --daemon \
-				--pid-file "/var/run/distcc/${release}-${arch}.pid" --listen $distcc_bindaddr --allow 127.0.0.0/24 \
+			DISTCC_CMDLIST=/tmp/distcc/${release}-${arch}/cmdlist \
+				TMPDIR=/tmp/distcc distccd --daemon \
+				--pid-file "/var/run/distcc/${release}-${arch}.pid" \
+				--listen $distcc_bindaddr --allow 127.0.0.0/24 \
 				--log-file "/tmp/distcc/${release}-${arch}.log" --user distccd
+
+			[[ -d $target_dir ]] ||
+				exit_with_error "Clean Environment is not visible" "$target_dir"
 
 			local t=$target_dir/root/.update-timestamp
 			if [[ ! -f ${t} || $(( ($(date +%s) - $(<"${t}")) / 86400 )) -gt 7 ]]; then
 				display_alert "Upgrading packages" "$release/$arch" "info"
 				systemd-nspawn -a -q -D "${target_dir}" /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
 				date +%s > "${t}"
+				display_alert "TODO: update a clean Environment archive" "${t_name}.tar.xz" "info"
 			fi
 
 			for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
@@ -229,6 +258,17 @@ chroot_build_packages()
 					continue
 				fi
 
+				if [[ -f "${target_dir}"/root/build.sh ]] && [[ -d $tmp_dir ]]; then
+					rm -rf $tmp_dir
+					local tmp_dir=$(mktemp -d "${SRC}"/.tmp/build-XXXXX)
+					(	cd $tmp_dir
+						display_alert "Unpack the clean environment" "${t_name}.tar.xz" "info"
+						tar -xJf "${SRC}/cache/buildpkg/${t_name}.tar.xz" || \
+						exit_with_error "Is not extracted" "${SRC}/cache/buildpkg/${t_name}.tar.xz"
+					)
+					target_dir="$tmp_dir/${t_name}"
+				fi
+
 				display_alert "Building packages" "$package_name $release/$arch" "ext"
 				ts=$(date +%s)
 				local dist_builddeps_name="package_builddeps_${release}"
@@ -259,6 +299,7 @@ chroot_build_packages()
 				te=$(date +%s)
 				display_alert "Build time $package_name " " $(($te - $ts)) sec." "info"
 			done
+			if [ -d $tmp_dir ]; then rm -rf $tmp_dir;fi
 			# cleanup for distcc
 			kill $(</var/run/distcc/${release}-${arch}.pid)
 		done
