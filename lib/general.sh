@@ -1338,31 +1338,27 @@ prepare_host()
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 
-# build aarch64
+	local hostdeps="acl aptly aria2 bc binfmt-support bison btrfs-progs       \
+	build-essential  ca-certificates ccache cpio cryptsetup curl              \
+	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
+	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
+	gcc-arm-linux-gnueabihf gdisk gnupg1 gpg imagemagick jq kmod libbison-dev \
+	libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl        \
+	libfl-dev liblz4-tool libncurses5-dev libpython2.7-dev libssl-dev         \
+	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
+	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
+	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
+	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
+	zlib1g-dev"
+
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
-	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
-	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libelf-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq distcc gdisk dwarves"
+	hostdeps+=" distcc lib32ncurses5 lib32stdc++6 lib32tinfo5 libc6-i386 pkg1"
 
-# build aarch64
-  else
+  elif [[ $(dpkg --print-architecture) == arm64 ]]; then
 
-	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
-	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi gcc-arm-none-eabi \
-	qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-amd64-cross libc6-dev-armhf-cross imagemagick \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
-	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libelf-dev libc6 qemu \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz \
-	dirmngr python3-distutils jq gdisk dwarves"
+	hostdeps+=" gcc-arm-linux-gnueabi gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
 
-# build aarch64
   fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
