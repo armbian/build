@@ -1342,7 +1342,7 @@ prepare_host()
 
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	hostdeps+=" distcc lib32ncurses5 lib32stdc++6 lib32tinfo5 libc6-i386 pkg1"
+	hostdeps+=" distcc lib32ncurses5 lib32stdc++6 lib32tinfo5 libc6-i386 pkg1 zlib1g:i386"
 
   elif [[ $(dpkg --print-architecture) == arm64 ]]; then
 
@@ -1420,12 +1420,10 @@ prepare_host()
 	# Skip verification if you are working offline
 	if ! $offline; then
 
-	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
+	# warning: apt-cacher-ng will fail if installed and used both on host and in
+	# container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
-
-	local deps=()
-	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
+	if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
 
 	export EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
@@ -1433,9 +1431,7 @@ prepare_host()
 	you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
 	ADD_HOST_DEPENDENCIES
 
-	for packet in $hostdeps ${EXTRA_BUILD_DEPS}; do
-		if ! grep -q -x -e "$packet" <<< "$installed"; then deps+=("$packet"); fi
-	done
+	if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
 
 	# distribution packages are buggy, download from author
 
@@ -1457,15 +1453,15 @@ prepare_host()
 # build aarch64
   fi
 
-	if [[ ${#deps[@]} -gt 0 ]]; then
-		display_alert "Installing build dependencies"
-		# don't prompt for apt cacher selection
-		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
-		apt-get -q update
-		apt-get -y upgrade
-		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/${LOG_SUBPATH}/hostdeps.log
-		update-ccache-symlinks
-	fi
+	display_alert "Installing build dependencies"
+	# don't prompt for apt cacher selection
+	sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
+
+	LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
+	install_pkg_deb "upgrade $hostdeps"
+	unset LOG_OUTPUT_FILE
+
+	update-ccache-symlinks
 
 	export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
 	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
@@ -1481,16 +1477,6 @@ prepare_host()
 		display_alert "Syncing clock" "host" "info"
 		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
 	fi
-
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
-		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
-	fi
-
-# build aarch64
-  fi
 
 	# create directory structure
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
