@@ -1312,17 +1312,6 @@ prepare_host()
 	else
 		local offline=false
 	fi
-# build aarch64
-  if [[ $(dpkg --print-architecture) != arm64 ]]; then
-
-	if [[ $(dpkg --print-architecture) != amd64 ]]; then
-		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "https://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86_64 build host is not supported"
-	fi
-
-# build aarch64
-  fi
 
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
@@ -1358,6 +1347,12 @@ prepare_host()
   elif [[ $(dpkg --print-architecture) == arm64 ]]; then
 
 	hostdeps+=" gcc-arm-linux-gnueabi gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
+
+  else
+
+	display_alert "Please read documentation to set up proper compilation environment"
+	display_alert "https://www.armbian.com/using-armbian-tools/"
+	exit_with_error "Running this tool on non x86_64 build host is not supported"
 
   fi
 
