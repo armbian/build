@@ -1333,16 +1333,16 @@ prepare_host()
 	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
 	gcc-arm-linux-gnueabihf gdisk gnupg1 gpg imagemagick jq kmod libbison-dev \
 	libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl        \
-	libfl-dev liblz4-tool libncurses5-dev libpython2.7-dev libssl-dev         \
+	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
 	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
 	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
 	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
 	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev"
+	zlib1g-dev lib32ncurses-dev"
 
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	hostdeps+=" distcc lib32ncurses5 lib32stdc++6 lib32tinfo5 libc6-i386 pkg1 zlib1g:i386"
+	hostdeps+=" distcc lib32stdc++6 libc6-i386 zlib1g:i386"
 
   elif [[ $(dpkg --print-architecture) == arm64 ]]; then
 
@@ -1391,10 +1391,6 @@ prepare_host()
 
 # build aarch64
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|impish|hirsute|ulyana|ulyssa|uma)$ ]]; then
-	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
-	fi
 
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 # build aarch64
