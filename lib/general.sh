@@ -1343,6 +1343,7 @@ prepare_host()
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
 	hostdeps+=" distcc lib32stdc++6 libc6-i386 zlib1g:i386"
+	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 
   elif [[ $(dpkg --print-architecture) == arm64 ]]; then
 
@@ -1388,13 +1389,6 @@ prepare_host()
 			exit_with_error "Windows subsystem for Linux is not a supported build environment"
 		fi
 	fi
-
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-# build aarch64
-  fi
 
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
