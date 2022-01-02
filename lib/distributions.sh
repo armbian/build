@@ -581,6 +581,9 @@ FAMILY_TWEAKS
 	# build logo in any case
 	boot_logo
 
+	# disable MOTD for first boot - we want as clean 1st run as possible
+	chmod -x "${SDCARD}"/etc/update-motd.d/*
+
 }
 
 install_rclocal()
