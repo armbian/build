@@ -1338,11 +1338,11 @@ prepare_host()
 	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
 	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
 	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev lib32ncurses-dev"
+	zlib1g-dev"
 
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	hostdeps+=" distcc lib32stdc++6 libc6-i386 zlib1g:i386"
+	hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386 zlib1g:i386"
 	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 
   elif [[ $(dpkg --print-architecture) == arm64 ]]; then
@@ -1529,7 +1529,9 @@ prepare_host()
 		else
 			display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
 		fi
-	fi # check offline
+	fi
+
+  fi # check offline
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	if [[ $KERNEL_ONLY != yes ]]; then
@@ -1540,9 +1542,6 @@ prepare_host()
 			test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 		fi
 	fi
-
-# build aarch64
-  fi
 
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
