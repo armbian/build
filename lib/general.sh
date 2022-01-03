@@ -1177,9 +1177,12 @@ wait_for_package_manager()
 
 
 # Installing debian packages in the armbian build system.
+# The function accepts three optional parameters:
+# upgrade, clean - the same name for apt
+# verbose - detailed log for the function
 #
-# list="upgrade clean pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
-# install_pkg_deb $list
+# list="pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
+# install_pkg_deb upgrade verbose $list
 #
 # If the package has a bad name, we will see it in the log file.
 # If there is an LOG_OUTPUT_FILE variable and it has a value as
@@ -1195,6 +1198,7 @@ install_pkg_deb ()
 	local for_install
 	local need_upgrade=false
 	local need_clean=false
+	local need_verbose=false
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
 	local _file=$(basename "${BASH_SOURCE[1]}")
@@ -1206,6 +1210,7 @@ install_pkg_deb ()
 		case $p in
 			upgrade) need_upgrade=true; continue ;;
 			clean) need_clean=true; continue ;;
+			verbose) need_verbose=true; continue ;;
 			\||\(*|*\)) continue ;;
 		esac
 		echo " $p"
@@ -1218,14 +1223,12 @@ install_pkg_deb ()
 		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
 	fi
 
-	echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" >>$log_file
-	echo -e "\nIncoming list:" >>$log_file
-	printf "%-30s %-30s %-30s %-30s\n" $list >>$log_file
-	echo "" >>$log_file
-
-	(	apt-get -qq update
-		if $need_upgrade; then apt-get -y upgrade;fi
-	) 2>>$log_file
+	apt-get -q update
+	if [ "$?" != "0" ]; then echo "apt cannot update" >>$log_file; fi
+	if $need_upgrade; then
+		apt-get -y upgrade
+		if [ "$?" != "0" ]; then echo "apt cannot upgrade" >>$log_file; fi
+	fi
 
 	# If the package is not installed, check the latest
 	# up-to-date version in the apt cache.
@@ -1242,18 +1245,30 @@ install_pkg_deb ()
 
 	# This information should be logged.
 	if [ -s $tmp_file ]; then
+		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" \
+		>>$log_file
+		echo -e "\nIncoming list:" >>$log_file
+		printf "%-30s %-30s %-30s %-30s\n" $list >>$log_file
+		echo "" >>$log_file
 		cat $tmp_file >>$log_file
 	fi
 
 	if [ -n "$for_install" ]; then
 
-		apt-get install -qq -y --no-install-recommends $for_install 2>>$log_file
+		apt-get install -qq -y --no-install-recommends $for_install
+		echo -e "\nPackages installed:" >>$log_file
+		dpkg-query -W \
+		  -f '${binary:Package;-27} ${Version;-23}\n' \
+		  $for_install >>$log_file
 
-		# We will show the status after installation
+	fi
+
+	# We will show the status after installation all listed
+	if $need_verbose; then
 		echo -e "\nstatus after installation:" >>$log_file
 		dpkg-query -W \
 		  -f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
-		  $for_install >>$log_file
+		  $list >>$log_file
 	fi
 
 	if $need_clean;then apt-get clean; fi
