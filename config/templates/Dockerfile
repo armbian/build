@@ -47,7 +47,9 @@ RUN apt-get update \
        debootstrap \
        device-tree-compiler \
        dialog \
+       distcc \
        dosfstools \
+       dwarves \
        f2fs-tools \
        fakeroot \
        flex \
@@ -56,6 +58,7 @@ RUN apt-get update \
        gcc-arm-linux-gnueabihf \
        gcc-arm-linux-gnueabi \
        gcc-arm-none-eabi \
+       gdisk \
        git \
        imagemagick \
        jq \
@@ -63,7 +66,7 @@ RUN apt-get update \
        libbison-dev \
        libc6-amd64-cross \
        libc6-dev-armhf-cross \
-       libfdt-dev \
+       libfdt-dev libelf-dev \
        libfile-fcntllock-perl \
        libfl-dev \
        liblz4-tool \
@@ -96,14 +99,17 @@ RUN apt-get update \
        python3-pkg-resources \
        python3-setuptools \
        qemu \
+       qemu-utils \
        qemu-user-static \
        rsync \
        swig \
+       sudo \
        systemd-container \
        tzdata \
        u-boot-tools \
        udev \
        unzip \
+       uuid \
        uuid-dev \
        uuid-runtime \
        wget \
@@ -121,4 +127,5 @@ RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/de
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
+LABEL org.opencontainers.image.source="https://github.com/armbian/build"
 ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]

@@ -186,10 +186,12 @@ install_common()
 		fi
 	else
 
-		if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
-			cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
-		else
-			cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+		if [[ "${BOOTCONFIG}" != "none" ]]; then
+			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
+				cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+			else
+				cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+			fi
 		fi
 
 		if [[ -n $BOOTENV_FILE ]]; then
@@ -240,60 +242,88 @@ install_common()
 
 	cd $SRC
 
+	# Prepare and export caching-related params common to all apt calls below, to maximize apt-cacher-ng usage
+	export APT_EXTRA_DIST_PARAMS=""
+	[[ $NO_APT_CACHER != yes ]] && APT_EXTRA_DIST_PARAMS="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
+
 	display_alert "Updating" "package lists"
-	chroot "${SDCARD}" /bin/bash -c "apt-get update" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+	chroot "${SDCARD}" /bin/bash -c "apt-get ${APT_EXTRA_DIST_PARAMS} update" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 
 	display_alert "Temporarily disabling" "initramfs-tools hook for kernel"
 	chroot "${SDCARD}" /bin/bash -c "chmod -v -x /etc/kernel/postinst.d/initramfs-tools" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 
 	# install family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/${LOG_SUBPATH}/install.log
+		display_alert "Installing PACKAGE_LIST_FAMILY packages" "${PACKAGE_LIST_FAMILY}"
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install $PACKAGE_LIST_FAMILY" >> "${DEST}"/${LOG_SUBPATH}/install.log
 	fi
 
 	# install board packages
 	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/${LOG_SUBPATH}/install.log
+		display_alert "Installing PACKAGE_LIST_BOARD packages" "${PACKAGE_LIST_BOARD}"
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/${LOG_SUBPATH}/install.log || { display_alert "Failed to install PACKAGE_LIST_BOARD" "${PACKAGE_LIST_BOARD}" "err"; exit 2; } 
 	fi
 
 	# remove family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY_REMOVE} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq remove --auto-remove $PACKAGE_LIST_FAMILY_REMOVE" >> "${DEST}"/${LOG_SUBPATH}/install.log
+		display_alert "Removing PACKAGE_LIST_FAMILY_REMOVE packages" "${PACKAGE_LIST_FAMILY_REMOVE}"
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get ${APT_EXTRA_DIST_PARAMS} -yqq remove --auto-remove $PACKAGE_LIST_FAMILY_REMOVE" >> "${DEST}"/${LOG_SUBPATH}/install.log
 	fi
 
 	# remove board packages
 	if [[ -n ${PACKAGE_LIST_BOARD_REMOVE} ]]; then
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get -yqq remove --auto-remove $PACKAGE_LIST_BOARD_REMOVE" >> "${DEST}"/${LOG_SUBPATH}/install.log
+		display_alert "Removing PACKAGE_LIST_BOARD_REMOVE packages" "${PACKAGE_LIST_BOARD_REMOVE}"
+		for PKG_REMOVE in ${PACKAGE_LIST_BOARD_REMOVE}; do
+			chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive apt-get ${APT_EXTRA_DIST_PARAMS} -yqq remove --auto-remove ${PKG_REMOVE}" >> "${DEST}"/${LOG_SUBPATH}/install.log
+		done
 	fi
 
 	# install u-boot
-	if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
-		UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
-		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
-	else
-		install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes"
-		UPSTREM_VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
-	fi
+	# @TODO: add install_bootloader() extension method, refactor into u-boot extension
+	[[ "${BOOTCONFIG}" != "none" ]] && {
+		if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+			UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
+			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
+		else
+			install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes"
+			UPSTREM_VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
+		fi
+	}
+
+	call_extension_method "pre_install_kernel_debs"  << 'PRE_INSTALL_KERNEL_DEBS'
+*called before installing the Armbian-built kernel deb packages*
+It is not too late to `unset KERNELSOURCE` here and avoid kernel install.
+PRE_INSTALL_KERNEL_DEBS
 
 	# install kernel
-	if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
-		VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | awk -F"-" '/Source:/{print $2}')
+	[[ -n $KERNELSOURCE ]] && {
+		if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
+			VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | awk -F"-" '/Source:/{print $2}')
 
-		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
-		if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
+			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
+			if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
+				install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
+			fi
+			if [[ $INSTALL_HEADERS == yes ]]; then
+				install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
+			fi
+		else
+			install_deb_chroot "linux-image-${BRANCH}-${LINUXFAMILY}" "remote"
+			VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
+			VER="${VER/-$LINUXFAMILY/}"
+			VER="${VER/linux-/}"
+			if [[ "${ARCH}" != "amd64" ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
+				install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
+			fi
+			[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
 		fi
-		if [[ $INSTALL_HEADERS == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
-		fi
-	else
-		install_deb_chroot "linux-image-${BRANCH}-${LINUXFAMILY}" "remote"
-		VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
-		VER="${VER/-$LINUXFAMILY/}"
-		VER="${VER/linux-/}"
-		install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
-		[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
-	fi
+	}
+
+	call_extension_method "post_install_kernel_debs" << 'POST_INSTALL_KERNEL_DEBS'
+*allow config to do more with the installed kernel/headers*
+Called after packages, u-boot, kernel and headers installed in the chroot, but before the BSP is installed.
+If `KERNELSOURCE` is (still?) unset after this, Armbian-built firmware will not be installed.
+POST_INSTALL_KERNEL_DEBS
 
 	# install board support packages
 	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
@@ -318,14 +348,16 @@ install_common()
 		fi
 	fi
 
-	# install armbian-firmware
-	if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
-		if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb"
+	# install armbian-firmware by default. Set BOARD_FIRMWARE_INSTALL="-full" to install full firmware variant
+	[[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]] && {
+		if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
+			if [[ -f ${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb ]]; then
+				install_deb_chroot "${DEB_STORAGE}/armbian-firmware${BOARD_FIRMWARE_INSTALL:-""}_${REVISION}_all.deb"
+			fi
+		else
+			install_deb_chroot "armbian-firmware${BOARD_FIRMWARE_INSTALL:-""}" "remote"
 		fi
-	else
-		install_deb_chroot "armbian-firmware" "remote"
-	fi
+	}
 
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
@@ -379,6 +411,12 @@ install_common()
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks) == function ]] && family_tweaks
 
+	call_extension_method "post_family_tweaks" << 'FAMILY_TWEAKS'
+*customize the tweaks made by $LINUXFAMILY-specific family_tweaks*
+It is run after packages are installed in the rootfs, but before enabling additional services.
+It allows implementors access to the rootfs (`${SDCARD}`) in its pristine state after packages are installed.
+FAMILY_TWEAKS
+
 	# enable additional services
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-firstrun.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-firstrun-config.service >/dev/null 2>&1"
@@ -408,6 +446,9 @@ install_common()
 	chroot "${SDCARD}" /bin/bash -c "chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
 	chroot "${SDCARD}" /bin/bash -c "chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
 
+	# disable samba NetBIOS over IP name service requests since it hangs when no network is present at boot
+	chroot "${SDCARD}" /bin/bash -c "systemctl --quiet disable nmbd 2> /dev/null"
+
 	# disable low-level kernel messages for non betas
 	if [[ -z $BETA ]]; then
 		sed -i "s/^#kernel.printk*/kernel.printk/" "${SDCARD}"/etc/sysctl.conf
@@ -429,6 +470,8 @@ install_common()
 	for i in $(echo "${SERIALCON:-'ttyS0'}" | sed "s/,/ /g")
 	do
 		IFS=':' read -r -a array <<< "$i"
+		[[ "${array[0]}" == "tty1" ]] && continue # Don't enable tty1 as serial console.
+		display_alert "Enabling serial console" "${array[0]}" "info"
 		# add serial console to secure tty list
 		[ -z "$(grep -w '^${array[0]}' "${SDCARD}"/etc/securetty 2> /dev/null)" ] && \
 		echo "${array[0]}" >>  "${SDCARD}"/etc/securetty
@@ -439,7 +482,6 @@ install_common()
 			sed -i "s/--keep-baud 115200/--keep-baud ${array[1]},115200/" \
 			"${SDCARD}/lib/systemd/system/serial-getty@${array[0]}.service"
 		fi
-		display_alert "Enabling serial console" "${array[0]}" "info"
 		chroot "${SDCARD}" /bin/bash -c "systemctl daemon-reload" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 		chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable serial-getty@${array[0]}.service" \
 		>> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
@@ -669,5 +711,11 @@ post_debootstrap_tweaks()
 	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/initctl"
 	chroot "${SDCARD}" /bin/bash -c "dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon"
 	rm -f "${SDCARD}"/usr/sbin/policy-rc.d "${SDCARD}/usr/bin/${QEMU_BINARY}"
+
+	call_extension_method "post_post_debootstrap_tweaks" "config_post_debootstrap_tweaks" << 'POST_POST_DEBOOTSTRAP_TWEAKS'
+*run after removing diversions and qemu with chroot unmounted*
+Last chance to touch the `${SDCARD}` filesystem before it is copied to the final media.
+It is too late to run any chrooted commands, since the supporting filesystems are already unmounted.
+POST_POST_DEBOOTSTRAP_TWEAKS
 
 }

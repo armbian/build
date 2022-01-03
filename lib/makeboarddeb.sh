@@ -31,27 +31,30 @@ create_board_package()
 	copy_all_packages_files_for "bsp-cli"
 
 	# install copy of boot script & environment file
-	local bootscript_src=${BOOTSCRIPT%%:*}
-	local bootscript_dst=${BOOTSCRIPT##*:}
-	mkdir -p "${destination}"/usr/share/armbian/
-
-	# create extlinux config file
-	if [[ $SRC_EXTLINUX != yes ]]; then
-		if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
-		  cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
-		else
-		  cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+	if [[ "${BOOTCONFIG}" != "none" ]]; then
+		# @TODO: add extension method bsp_prepare_bootloader(), refactor into u-boot extension
+		local bootscript_src=${BOOTSCRIPT%%:*}
+		local bootscript_dst=${BOOTSCRIPT##*:}
+		mkdir -p "${destination}"/usr/share/armbian/
+	
+		# create extlinux config file
+		if [[ $SRC_EXTLINUX != yes ]]; then
+			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
+			  cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+			else
+			  cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+			fi
+			[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
+				cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
 		fi
-		[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] && \
-			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
-	fi
-
-	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
-	if [[ -n $UBOOT_FW_ENV ]]; then
-		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
-		mkdir -p "${destination}"/etc
-		echo "# Device to access      offset           env size" > "${destination}"/etc/fw_env.config
-		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> "${destination}"/etc/fw_env.config
+	
+		# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
+		if [[ -n $UBOOT_FW_ENV ]]; then
+			UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
+			mkdir -p "${destination}"/etc
+			echo "# Device to access      offset           env size" > "${destination}"/etc/fw_env.config
+			echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> "${destination}"/etc/fw_env.config
+		fi
 	fi
 
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
@@ -160,7 +163,7 @@ create_board_package()
 	# ${BOARD} BSP post installation script
 	#
 
-	systemctl --no-reload enable armbian-ramlog.service
+	[ -f /etc/lib/systemd/system/armbian-ramlog.service ] && systemctl --no-reload enable armbian-ramlog.service
 
 	# check if it was disabled in config and disable in new service
 	if [ -n "\$(grep -w '^ENABLED=false' /etc/default/log2ram 2> /dev/null)" ]; then
@@ -225,17 +228,17 @@ create_board_package()
 
 fi
 
-	[ ! -f "/etc/network/interfaces" ] && cp /etc/network/interfaces.default /etc/network/interfaces
+	[ ! -f "/etc/network/interfaces" ] && [ -f "/etc/network/interfaces.default" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 
 	if [ ! -f "/etc/default/armbian-motd" ]; then
 		mv /etc/default/armbian-motd.dpkg-dist /etc/default/armbian-motd
 	fi
-	if [ ! -f "/etc/default/armbian-ramlog" ]; then
+	if [ ! -f "/etc/default/armbian-ramlog" ] && [ -f /etc/default/armbian-ramlog.dpkg-dist ]; then
 		mv /etc/default/armbian-ramlog.dpkg-dist /etc/default/armbian-ramlog
 	fi
-	if [ ! -f "/etc/default/armbian-zram-config" ]; then
+	if [ ! -f "/etc/default/armbian-zram-config" ] && [ -f /etc/default/armbian-zram-config.dpkg-dist ]; then
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
 	fi
 
@@ -300,6 +303,11 @@ fi
 
 	# execute $LINUXFAMILY-specific tweaks
 	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
+
+	call_extension_method "post_family_tweaks_bsp" << 'POST_FAMILY_TWEAKS_BSP'
+*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
+This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
+POST_FAMILY_TWEAKS_BSP
 
 	# add some summary to the image
 	fingerprint_image "${destination}/etc/armbian.txt"

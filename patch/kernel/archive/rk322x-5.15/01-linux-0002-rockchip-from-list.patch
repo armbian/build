@@ -21,14 +21,14 @@ index 80acca4e9e14..15339338aae3 100644
 +++ b/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
 @@ -790,8 +790,8 @@ static int inno_hdmi_phy_rk3328_clk_set_rate(struct clk_hw *hw,
  			 RK3328_PRE_PLL_POWER_DOWN);
- 
+
  	/* Configure pre-pll */
 -	inno_update_bits(inno, 0xa0, RK3228_PCLK_VCO_DIV_5_MASK,
 -			 RK3228_PCLK_VCO_DIV_5(cfg->vco_div_5_en));
 +	inno_update_bits(inno, 0xa0, RK3328_PCLK_VCO_DIV_5_MASK,
 +			 RK3328_PCLK_VCO_DIV_5(cfg->vco_div_5_en));
  	inno_write(inno, 0xa1, RK3328_PRE_PLL_PRE_DIV(cfg->prediv));
- 
+
  	val = RK3328_SPREAD_SPECTRUM_MOD_DISABLE;
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
@@ -59,18 +59,18 @@ index 15339338aae3..15a008a1ac7b 100644
 @@ -745,10 +745,12 @@ unsigned long inno_hdmi_phy_rk3328_clk_recalc_rate(struct clk_hw *hw,
  		do_div(vco, (nd * (no_a == 1 ? no_b : no_a) * no_d * 2));
  	}
- 
+
 -	inno->pixclock = vco;
 -	dev_dbg(inno->dev, "%s rate %lu\n", __func__, inno->pixclock);
 +	inno->pixclock = DIV_ROUND_CLOSEST((unsigned long)vco, 1000) * 1000;
- 
+
 -	return vco;
 +	dev_dbg(inno->dev, "%s rate %lu vco %llu\n",
 +		__func__, inno->pixclock, vco);
 +
 +	return inno->pixclock;
  }
- 
+
  static long inno_hdmi_phy_rk3328_clk_round_rate(struct clk_hw *hw,
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
@@ -98,7 +98,7 @@ index 15a008a1ac7b..4b936ca19920 100644
 +	u8 nd, no_a, no_b, no_d;
  	u64 vco;
  	u16 nf;
- 
+
 @@ -737,9 +737,6 @@ unsigned long inno_hdmi_phy_rk3328_clk_recalc_rate(struct clk_hw *hw,
  		no_b = inno_read(inno, 0xa5) & RK3328_PRE_PLL_PCLK_DIV_B_MASK;
  		no_b >>= RK3328_PRE_PLL_PCLK_DIV_B_SHIFT;
@@ -107,7 +107,7 @@ index 15a008a1ac7b..4b936ca19920 100644
 -		no_c >>= RK3328_PRE_PLL_PCLK_DIV_C_SHIFT;
 -		no_c = 1 << no_c;
  		no_d = inno_read(inno, 0xa6) & RK3328_PRE_PLL_PCLK_DIV_D_MASK;
- 
+
  		do_div(vco, (nd * (no_a == 1 ? no_b : no_a) * no_d * 2));
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
@@ -135,7 +135,7 @@ index 4b936ca19920..620961fcfc1d 100644
 --- a/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
 +++ b/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
 @@ -1020,9 +1020,10 @@ inno_hdmi_phy_rk3328_power_on(struct inno_hdmi_phy *inno,
- 
+
  	inno_write(inno, 0xac, RK3328_POST_PLL_FB_DIV_7_0(cfg->fbdiv));
  	if (cfg->postdiv == 1) {
 -		inno_write(inno, 0xaa, RK3328_POST_PLL_REFCLK_SEL_TMDS);
@@ -154,7 +154,7 @@ index 4b936ca19920..620961fcfc1d 100644
 +			   RK3328_POST_PLL_REFCLK_SEL_TMDS |
 +			   RK3328_POST_PLL_POWER_DOWN);
  	}
- 
+
  	for (v = 0; v < 14; v++)
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
@@ -188,30 +188,30 @@ index 620961fcfc1d..2f01259823ea 100644
  	unsigned long pixclock;
 +	unsigned long tmdsclock;
  };
- 
+
  struct pre_pll_config {
 @@ -485,6 +486,8 @@ static int inno_hdmi_phy_power_on(struct phy *phy)
- 
+
  	dev_dbg(inno->dev, "Inno HDMI PHY Power On\n");
- 
+
 +	inno->plat_data->clk_ops->set_rate(&inno->hw, inno->pixclock, 24000000);
 +
  	ret = clk_prepare_enable(inno->phyclk);
  	if (ret)
  		return ret;
 @@ -509,6 +512,8 @@ static int inno_hdmi_phy_power_off(struct phy *phy)
- 
+
  	clk_disable_unprepare(inno->phyclk);
- 
+
 +	inno->tmdsclock = 0;
 +
  	dev_dbg(inno->dev, "Inno HDMI PHY Power Off\n");
- 
+
  	return 0;
 @@ -628,6 +633,9 @@ static int inno_hdmi_phy_rk3228_clk_set_rate(struct clk_hw *hw,
  	dev_dbg(inno->dev, "%s rate %lu tmdsclk %lu\n",
  		__func__, rate, tmdsclock);
- 
+
 +	if (inno->pixclock == rate && inno->tmdsclock == tmdsclock)
 +		return 0;
 +
@@ -220,16 +220,16 @@ index 620961fcfc1d..2f01259823ea 100644
  		return PTR_ERR(cfg);
 @@ -670,6 +678,7 @@ static int inno_hdmi_phy_rk3228_clk_set_rate(struct clk_hw *hw,
  	}
- 
+
  	inno->pixclock = rate;
 +	inno->tmdsclock = tmdsclock;
- 
+
  	return 0;
  }
 @@ -781,6 +790,9 @@ static int inno_hdmi_phy_rk3328_clk_set_rate(struct clk_hw *hw,
  	dev_dbg(inno->dev, "%s rate %lu tmdsclk %lu\n",
  		__func__, rate, tmdsclock);
- 
+
 +	if (inno->pixclock == rate && inno->tmdsclock == tmdsclock)
 +		return 0;
 +
@@ -238,10 +238,10 @@ index 620961fcfc1d..2f01259823ea 100644
  		return PTR_ERR(cfg);
 @@ -820,6 +832,7 @@ static int inno_hdmi_phy_rk3328_clk_set_rate(struct clk_hw *hw,
  	}
- 
+
  	inno->pixclock = rate;
 +	inno->tmdsclock = tmdsclock;
- 
+
  	return 0;
  }
 
@@ -276,7 +276,7 @@ index 95fedcf56e4a..38e75b275bb6 100644
 @@ -1355,6 +1355,14 @@ void mmc_power_off(struct mmc_host *host)
  	if (host->ios.power_mode == MMC_POWER_OFF)
  		return;
- 
+
 +	mmc_set_initial_signal_voltage(host);
 +
 +	/*
@@ -286,39 +286,8 @@ index 95fedcf56e4a..38e75b275bb6 100644
 +	mmc_delay(host->ios.power_delay_ms);
 +
  	mmc_pwrseq_power_off(host);
- 
+
  	host->ios.clock = 0;
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Alex Bee <knaerzche@gmail.com>
-Date: Wed, 23 Jun 2021 13:59:26 +0200
-Subject: [PATCH] arm64: dts: rockchip: Fix GPU register width for RK3328
-
-As can be seen in RK3328's TRM the register range for the GPU is
-0xff300000 to 0xff330000.
-It would (and does in vendor kernel) overlap with the registers of
-the HEVC encoder (node/driver do not exist yet in upstream kernel).
-See already existing h265e_mmu node.
-
-Fixes: 752fbc0c8da7 ("arm64: dts: rockchip: add rk3328 mali gpu node")
-Signed-off-by: Alex Bee <knaerzche@gmail.com>
----
- arch/arm64/boot/dts/rockchip/rk3328.dtsi | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-diff --git a/arch/arm64/boot/dts/rockchip/rk3328.dtsi b/arch/arm64/boot/dts/rockchip/rk3328.dtsi
-index becc1c61b182..5b2020590f53 100644
---- a/arch/arm64/boot/dts/rockchip/rk3328.dtsi
-+++ b/arch/arm64/boot/dts/rockchip/rk3328.dtsi
-@@ -599,7 +599,7 @@ saradc: adc@ff280000 {
- 
- 	gpu: gpu@ff300000 {
- 		compatible = "rockchip,rk3328-mali", "arm,mali-450";
--		reg = <0x0 0xff300000 0x0 0x40000>;
-+		reg = <0x0 0xff300000 0x0 0x30000>;
- 		interrupts = <GIC_SPI 90 IRQ_TYPE_LEVEL_HIGH>,
- 			     <GIC_SPI 87 IRQ_TYPE_LEVEL_HIGH>,
- 			     <GIC_SPI 93 IRQ_TYPE_LEVEL_HIGH>,
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Alex Bee <knaerzche@gmail.com>
@@ -342,7 +311,7 @@ index 5b2020590f53..df46edbec82c 100644
 @@ -975,6 +975,20 @@ usb_host0_ohci: usb@ff5d0000 {
  		status = "disabled";
  	};
- 
+
 +	sdmmc_ext: mmc@ff5f0000 {
 +		compatible = "rockchip,rk3328-dw-mshc", "rockchip,rk3288-dw-mshc";
 +		reg = <0x0 0xff5f0000 0x0 0x4000>;
@@ -388,7 +357,7 @@ index df46edbec82c..cfc57be009a6 100644
 +		reset-names = "reset";
  		status = "disabled";
  	};
- 
+
 @@ -865,6 +867,8 @@ sdio: mmc@ff510000 {
  		clock-names = "biu", "ciu", "ciu-drive", "ciu-sample";
  		fifo-depth = <0x100>;
@@ -397,7 +366,7 @@ index df46edbec82c..cfc57be009a6 100644
 +		reset-names = "reset";
  		status = "disabled";
  	};
- 
+
 @@ -877,6 +881,8 @@ emmc: mmc@ff520000 {
  		clock-names = "biu", "ciu", "ciu-drive", "ciu-sample";
  		fifo-depth = <0x100>;
@@ -406,7 +375,7 @@ index df46edbec82c..cfc57be009a6 100644
 +		reset-names = "reset";
  		status = "disabled";
  	};
- 
+
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Alex Bee <knaerzche@gmail.com>

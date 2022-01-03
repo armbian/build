@@ -1,3 +1,4 @@
+enable_extension "sunxi-tools"
 ARCH=arm64
 ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 BOOTDELAY=1
@@ -14,12 +15,24 @@ case $BRANCH in
 
 	current) KERNEL_VERSION_LEVEL="5.10" ;;
 
-	edge)	 KERNEL_VERSION_LEVEL="5.15" ;;
+	edge) KERNEL_VERSION_LEVEL="5.15" ;;
 esac
 
-KERNELSOURCE="https://github.com/megous/linux"
-KERNELSOURCENAME='name=megous'
-KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
+case "$KERNEL_VERSION_LEVEL" in
+
+	5.10|5.15)
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELSOURCENAME='name=origin'
+		KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
+	;;
+
+	*)
+		KERNELSOURCE="https://github.com/megous/linux"
+		KERNELSOURCENAME='name=megous'
+		KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
+	;;
+esac
+
 KERNELPATCHDIR='sunxi-'$BRANCH
 
 # An optional parameter for switching to a git object such as a tag, commit,

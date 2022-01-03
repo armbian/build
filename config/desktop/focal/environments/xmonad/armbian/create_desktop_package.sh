@@ -11,4 +11,4 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
-cp "${SRC}"/packages/blobs/desktop/wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
+cp "${SRC}"/packages/blobs/desktop/desktop-wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
