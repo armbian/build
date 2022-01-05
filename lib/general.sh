@@ -640,7 +640,7 @@ fingerprint_image()
 {
 	cat <<-EOF > "${1}"
 	--------------------------------------------------------------------------------
-	Title:			${VENDOR} $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
+	Title:			${VENDOR} $REVISION ${BOARD^} $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
 	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
