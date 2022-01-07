@@ -57,7 +57,6 @@ show_developer_warning() {
 	SHOW_WARNING=no
 }
 
-
 # Stuff that was in config files
 function distro_menu() {
 	# create a select menu for choosing a distribution based EXPERT status
@@ -84,4 +83,3 @@ function distros_options() {
 		distro_menu "${distrib_dir}"
 	done
 }
-

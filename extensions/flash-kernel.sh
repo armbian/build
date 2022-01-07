@@ -84,7 +84,7 @@ function pre_update_initramfs__setup_flash_kernel() {
 
 	local update_initramfs_cmd="update-initramfs -c -k all"
 	display_alert "Updating flash-kernel initramfs..." "$update_initramfs_cmd" ""
-	chroot_custom "$chroot_target"  "$update_initramfs_cmd" || {
+	chroot_custom "$chroot_target" "$update_initramfs_cmd" || {
 		display_alert "Failed to run '$update_initramfs_cmd'" "Check logs" "err"
 		exit 29
 	}
@@ -97,7 +97,7 @@ function pre_update_initramfs__setup_flash_kernel() {
 
 	local flash_kernel_cmd="flash-kernel --machine '${FK__MACHINE_MODEL}'"
 	display_alert "flash-kernel" "${FK__MACHINE_MODEL}" "info"
-	chroot_custom "$chroot_target" "${flash_kernel_cmd}"  || {
+	chroot_custom "$chroot_target" "${flash_kernel_cmd}" || {
 		display_alert "Failed to run '${flash_kernel_cmd}'" "Check logs" "err"
 		exit 29
 	}
