@@ -6,7 +6,7 @@ create_board_package() {
 	# @TODO: these traps are a real trap.
 	#trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
 
-	local destination=${bsptempdir}/${RELEASE}/${BSP_CLI_PACKAGE_FULLNAME}
+	local destination=${bsptempdir}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
 
@@ -59,7 +59,7 @@ create_board_package() {
 		Replaces: zram-config, base-files, armbian-tools-$RELEASE, linux-${RELEASE}-root-legacy-$BOARD (<< $REVISION~), linux-${RELEASE}-root-current-$BOARD (<< $REVISION~), linux-${RELEASE}-root-edge-$BOARD (<< $REVISION~)
 		Breaks: linux-${RELEASE}-root-legacy-$BOARD (<< $REVISION~), linux-${RELEASE}-root-current-$BOARD (<< $REVISION~), linux-${RELEASE}-root-edge-$BOARD (<< $REVISION~)
 		Recommends: bsdutils, parted, util-linux, toilet
-		Description: Tweaks for Armbian $RELEASE on $BOARD
+		Description: Armbian board support files for $BOARD
 	EOF
 
 	# set up pre install script
@@ -229,10 +229,15 @@ create_board_package() {
 				mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
 			fi
 
-			sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION "${RELEASE^}"\"/" /etc/os-release
-			echo "${VENDOR} ${REVISION} ${RELEASE^} \\l \n" > /etc/issue
-			echo "${VENDOR} ${REVISION} ${RELEASE^}" > /etc/issue.net
+			# Read release value
+			if [ -f /etc/lsb-release ]; then
+				RELEASE=\$(cat /etc/lsb-release | grep CODENAME | cut -d"=" -f2 | sed 's/.*/\u&/')
+				sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION "\${RELEASE}"\"/" /etc/os-release
+				echo "${VENDOR} ${REVISION} \${RELEASE} \\l \n" > /etc/issue
+				echo "${VENDOR} ${REVISION} \${RELEASE}" > /etc/issue.net
+			fi
 
+			# Reload services
 			systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
 			exit 0
 	EOF
@@ -253,8 +258,11 @@ create_board_package() {
 		activate update-initramfs
 	EOF
 
-	# read distribution support status
-	set_distribution_status
+	# copy distribution support status
+	local releases=($(find ${SRC}/config/distributions -mindepth 1 -maxdepth 1 -type d))
+	for i in ${releases[@]}; do
+		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)" >> "${destination}"/etc/armbian-distribution-status
+	done
 
 	# armhwinfo, firstrun, armbianmonitor, etc. config file
 	cat <<- EOF > "${destination}"/etc/armbian-release
@@ -264,8 +272,6 @@ create_board_package() {
 		BOARDFAMILY=${BOARDFAMILY}
 		BUILD_REPOSITORY_URL=${BUILD_REPOSITORY_URL}
 		BUILD_REPOSITORY_COMMIT=${BUILD_REPOSITORY_COMMIT}
-		DISTRIBUTION_CODENAME=${RELEASE}
-		DISTRIBUTION_STATUS=${DISTRIBUTION_STATUS}
 		VERSION=$REVISION
 		LINUXFAMILY=$LINUXFAMILY
 		ARCH=$ARCHITECTURE
@@ -274,12 +280,6 @@ create_board_package() {
 		INITRD_ARCH=$INITRD_ARCH
 		KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 	EOF
-
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		cat <<- EOF >> "${destination}"/etc/armbian-release
-			DESKTOP=$DESKTOP_ENVIRONMENT
-		EOF
-	fi
 
 	# this is required for NFS boot to prevent deconfiguring the network on shutdown
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
@@ -301,8 +301,8 @@ POST_FAMILY_TWEAKS_BSP
 
 	# create board DEB file
 	fakeroot_dpkg_deb_build "${destination}" "${destination}.deb"
-	mkdir -p "${DEB_STORAGE}/${RELEASE}/"
-	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/${RELEASE}/" 2>&1
+	mkdir -p "${DEB_STORAGE}/"
+	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/" 2>&1
 
 	# cleanup
 	rm -rf ${bsptempdir}

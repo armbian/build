@@ -339,8 +339,8 @@ fetch_from_repo() {
 fingerprint_image() {
 	cat <<- EOF > "${1}"
 		--------------------------------------------------------------------------------
-		Title:           ${VENDOR} $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
-		Kernel:          Linux $VER
+		Title:          ${VENDOR} $REVISION ${BOARD^} $BRANCH
+		Kernel:         Linux $VER
 		Build date:     $(date +'%d.%m.%Y')
 		Maintainer:     $MAINTAINER <$MAINTAINERMAIL>
 		Authors:        https://www.armbian.com/authors

@@ -80,7 +80,7 @@ main_default_build_single() {
 	overlayfs_wrapper "cleanup"
 
 	# create board support package
-	if [[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/$RELEASE/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]]; then
+	if [[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]]; then
 		LOG_SECTION="create_board_package" do_with_logging create_board_package
 	fi
 

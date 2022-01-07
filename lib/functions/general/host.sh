@@ -43,17 +43,6 @@ prepare_host() {
 	else
 		local offline=false
 	fi
-	# build aarch64
-	if [[ $(dpkg --print-architecture) != arm64 ]]; then
-
-		if [[ $(dpkg --print-architecture) != amd64 ]]; then
-			display_alert "Please read documentation to set up proper compilation environment"
-			display_alert "https://www.armbian.com/using-armbian-tools/"
-			exit_with_error "Running this tool on non x86_64 build host is not supported"
-		fi
-
-		# build aarch64
-	fi
 
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
@@ -69,35 +58,38 @@ prepare_host() {
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 
-	# build aarch64
+	local hostdeps="acl aptly aria2 bc binfmt-support bison btrfs-progs       \
+	build-essential  ca-certificates ccache cpio cryptsetup curl              \
+	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
+	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
+	gcc-arm-linux-gnueabihf gdisk gnupg1 gpg imagemagick jq kmod libbison-dev \
+	libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl        \
+	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
+	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
+	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
+	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
+	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
+	zlib1g-dev"
+
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-		local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
-	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
-	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libelf-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg cpio aria2 pigz dirmngr python3-distutils jq distcc gdisk dwarves"
+		hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386 zlib1g:i386"
+		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 
-		# build aarch64
+	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
+
+		hostdeps+=" gcc-arm-linux-gnueabi gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
+
 	else
 
-		local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
-	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi gcc-arm-none-eabi \
-	qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-amd64-cross libc6-dev-armhf-cross imagemagick \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
-	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libelf-dev libc6 qemu \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg cpio aria2 pigz \
-	dirmngr python3-distutils jq gdisk dwarves"
+		display_alert "Please read documentation to set up proper compilation environment"
+		display_alert "https://www.armbian.com/using-armbian-tools/"
+		exit_with_error "Running this tool on non x86_64 build host is not supported"
 
-		# build aarch64
 	fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
-	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|jammy|ulyana|ulyssa|bullseye|uma)$ ]]; then
+	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -112,7 +104,7 @@ prepare_host() {
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute jammy debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
+	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -127,17 +119,6 @@ prepare_host() {
 		else
 			exit_with_error "Windows subsystem for Linux is not a supported build environment"
 		fi
-	fi
-
-	# build aarch64
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-		if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|impish|hirsute|ulyana|ulyssa|uma)$ ]]; then
-			hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
-		fi
-
-		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-		# build aarch64
 	fi
 
 	if systemd-detect-virt -q -c; then
@@ -159,12 +140,10 @@ prepare_host() {
 	# Skip verification if you are working offline
 	if ! $offline; then
 
-		# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
+		# warning: apt-cacher-ng will fail if installed and used both on host and in
+		# container/chroot environment with shared network
 		# set NO_APT_CACHER=yes to prevent installation errors in such case
-		if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
-
-		local deps=()
-		local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2> /dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
+		if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
 
 		export EXTRA_BUILD_DEPS=""
 		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
@@ -172,9 +151,7 @@ prepare_host() {
 			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
 		ADD_HOST_DEPENDENCIES
 
-		for packet in $hostdeps ${EXTRA_BUILD_DEPS}; do
-			if ! grep -q -x -e "$packet" <<< "$installed"; then deps+=("$packet"); fi
-		done
+		if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
 
 		# distribution packages are buggy, download from author
 
@@ -196,18 +173,15 @@ prepare_host() {
 			# build aarch64
 		fi
 
-		if [[ ${#deps[@]} -gt 0 ]]; then
-			display_alert "Installing build dependencies"
-			# don't prompt for apt cacher selection
-			sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
-			display_alert "Updating apt host-side" "apt update" "info"
-			apt-get -q update 2>&1
-			display_alert "Upgrading apt host-side" "apt upgrade" "info"
-			apt-get -y upgrade 2>&1
-			display_alert "Installing host-side dependency packages" "apt upgrade" "info"
-			apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" 2>&1
-			update-ccache-symlinks
-		fi
+		display_alert "Installing build dependencies"
+		# don't prompt for apt cacher selection
+		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
+
+		LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
+		install_pkg_deb "upgrade $hostdeps"
+		unset LOG_OUTPUT_FILE
+
+		update-ccache-symlinks
 
 		export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
 		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
@@ -223,16 +197,6 @@ prepare_host() {
 			ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
 		fi
 
-		# build aarch64
-		if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-			if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2> /dev/null) != *ii* ]]; then
-				apt-get install -qq -y --no-install-recommends zlib1g:i386 > /dev/null 2>&1
-			fi
-
-			# build aarch64
-		fi
-
 		# create directory structure
 		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
 		if [[ -n $SUDO_USER ]]; then
@@ -243,20 +207,11 @@ prepare_host() {
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 		fi
-		# @TODO: rpardini: _very_ important spot, this is where ".tmp" is created. A _huge_ opportunity for tmpfs here.
-		display_alert "Creating directory structure: .tmp" "${SRC}/.tmp" "debug"
-		display_alert "Creating directory structure: DEST" "${DEST}" "debug"
-		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} \
-			"${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} \
-			"${SRC}"/.tmp "${WORKDIR}"
-
-		display_alert "Setting TMPDIR" "${WORKDIR}" "debug"
-		export TMPDIR="${WORKDIR}"
+		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
 		# build aarch64
 		if [[ $(dpkg --print-architecture) == amd64 ]]; then
 			if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
-				display_alert "Warning! SKIP_EXTERNAL_TOOLCHAINS is not yes. This is deprecated, upgrade!" "please set SKIP_EXTERNAL_TOOLCHAINS=yes" "deprecation"
 
 				# bind mount toolchain if defined
 				if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
@@ -301,21 +256,20 @@ prepare_host() {
 					fi
 				done
 			else
-				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS=${SKIP_EXTERNAL_TOOLCHAINS}" "info"
-			fi
-		fi # check offline
-
-		# enable arm binary format so that the cross-architecture chroot environment will work
-		if [[ $KERNEL_ONLY != yes ]]; then
-			modprobe -q binfmt_misc
-			mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-			if [[ "$(arch)" != "aarch64" ]]; then
-				test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-				test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
 			fi
 		fi
 
-		# build aarch64
+	fi # check offline
+
+	# enable arm binary format so that the cross-architecture chroot environment will work
+	if [[ $KERNEL_ONLY != yes ]]; then
+		modprobe -q binfmt_misc
+		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
+		if [[ "$(arch)" != "aarch64" ]]; then
+			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+			test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+		fi
 	fi
 
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
@@ -372,4 +326,111 @@ function fetch_and_build_host_tools() {
 		After sources are fetched, build host-side tools needed for the build.
 	BUILD_HOST_TOOLS
 
+}
+
+# Installing debian packages in the armbian build system.
+# The function accepts three optional parameters:
+# upgrade, clean - the same name for apt
+# verbose - detailed log for the function
+#
+# list="pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
+# install_pkg_deb upgrade verbose $list
+#
+# If the package has a bad name, we will see it in the log file.
+# If there is an LOG_OUTPUT_FILE variable and it has a value as
+# the full real path to the log file, then all the information will be there.
+#
+# The LOG_OUTPUT_FILE variable must be defined in the calling function
+# before calling the install_pkg_deb function and unset after.
+#
+install_pkg_deb() {
+	local list=""
+	local log_file
+	local for_install
+	local need_upgrade=false
+	local need_clean=false
+	local need_verbose=false
+	local _line=${BASH_LINENO[0]}
+	local _function=${FUNCNAME[1]}
+	local _file=$(basename "${BASH_SOURCE[1]}")
+	local tmp_file=$(mktemp /tmp/install_log_XXXXX)
+	export DEBIAN_FRONTEND=noninteractive
+
+	list=$(
+		for p in $*; do
+			case $p in
+				upgrade)
+					need_upgrade=true
+					continue
+					;;
+				clean)
+					need_clean=true
+					continue
+					;;
+				verbose)
+					need_verbose=true
+					continue
+					;;
+				\| | \(* | *\)) continue ;;
+			esac
+			echo " $p"
+		done
+	)
+
+	if [ -d $(dirname $LOG_OUTPUT_FILE) ]; then
+		log_file=${LOG_OUTPUT_FILE}
+	else
+		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
+	fi
+
+	apt-get -q update
+	if [ "$?" != "0" ]; then echo "apt cannot update" >> $log_file; fi
+	if $need_upgrade; then
+		apt-get -y upgrade
+		if [ "$?" != "0" ]; then echo "apt cannot upgrade" >> $log_file; fi
+	fi
+
+	# If the package is not installed, check the latest
+	# up-to-date version in the apt cache.
+	# Exclude bad package names and send a message to the log.
+	for_install=$(
+		for p in $list; do
+			if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}'); then
+				apt-cache show $p -o APT::Cache::AllVersions=no |&
+					awk -v p=$p -v tmp_file=$tmp_file \
+						'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
+			fi
+		done
+	)
+
+	# This information should be logged.
+	if [ -s $tmp_file ]; then
+		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" \
+			>> $log_file
+		echo -e "\nIncoming list:" >> $log_file
+		printf "%-30s %-30s %-30s %-30s\n" $list >> $log_file
+		echo "" >> $log_file
+		cat $tmp_file >> $log_file
+	fi
+
+	if [ -n "$for_install" ]; then
+
+		apt-get install -qq -y --no-install-recommends $for_install
+		echo -e "\nPackages installed:" >> $log_file
+		dpkg-query -W \
+			-f '${binary:Package;-27} ${Version;-23}\n' \
+			$for_install >> $log_file
+
+	fi
+
+	# We will show the status after installation all listed
+	if $need_verbose; then
+		echo -e "\nstatus after installation:" >> $log_file
+		dpkg-query -W \
+			-f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
+			$list >> $log_file
+	fi
+
+	if $need_clean; then apt-get clean; fi
+	rm $tmp_file
 }
