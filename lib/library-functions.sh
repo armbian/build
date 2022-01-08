@@ -147,11 +147,6 @@ set -e # no errors tolerated. set -e is invoked before each sourced file to make
 source "${SRC}"/lib/functions/image/partitioning.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
-### lib/functions/image.sh
-# shellcheck source=functions/image.sh
-source "${SRC}"/lib/functions/image.sh
-
-set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
 ### lib/functions/main/rootfs-image.sh
 # shellcheck source=functions/main/rootfs-image.sh
 source "${SRC}"/lib/functions/main/rootfs-image.sh
