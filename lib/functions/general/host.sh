@@ -178,7 +178,7 @@ prepare_host() {
 		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
 		LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
-		install_pkg_deb "upgrade $hostdeps"
+		install_pkg_deb "$hostdeps"
 		unset LOG_OUTPUT_FILE
 
 		update-ccache-symlinks
@@ -383,11 +383,10 @@ install_pkg_deb() {
 		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
 	fi
 
-	apt-get -q update
-	if [ "$?" != "0" ]; then echo "apt cannot update" >> $log_file; fi
+	# This is necessary first when there is no apt cache.
 	if $need_upgrade; then
-		apt-get -y upgrade
-		if [ "$?" != "0" ]; then echo "apt cannot upgrade" >> $log_file; fi
+		apt-get -q update || echo "apt cannot update" >> $tmp_file
+		apt-get -y upgrade || echo "apt cannot upgrade" >> $tmp_file
 	fi
 
 	# If the package is not installed, check the latest
@@ -414,7 +413,10 @@ install_pkg_deb() {
 	fi
 
 	if [ -n "$for_install" ]; then
-
+		if ! $need_upgrade; then
+			apt-get -q update
+			apt-get -y upgrade
+		fi
 		apt-get install -qq -y --no-install-recommends $for_install
 		echo -e "\nPackages installed:" >> $log_file
 		dpkg-query -W \
