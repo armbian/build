@@ -18,7 +18,7 @@ cat <<- AUTOGEN_INCLUDES_HEADER > "${TARGET_SH}"
 AUTOGEN_INCLUDES_HEADER
 
 find lib/functions -type f -name \*.sh | while read -r path; do
-	ref="$(echo -n "${path}" | sed -e 's/lib\///g')"
+	ref="$(echo -n "${path}")"
 	cat <<- AUTOGEN_INCLUDES_EACH >> "${TARGET_SH}"
 		set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
 		### ${path}
