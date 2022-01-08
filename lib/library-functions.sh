@@ -37,19 +37,14 @@ set -e # no errors tolerated. set -e is invoked before each sourced file to make
 source "${SRC}"/lib/functions/rootfs/apt.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
-### lib/functions/rootfs/distro_agnostic.sh
-# shellcheck source=functions/rootfs/distro_agnostic.sh
-source "${SRC}"/lib/functions/rootfs/distro_agnostic.sh
+### lib/functions/rootfs/distro-specific.sh
+# shellcheck source=functions/rootfs/distro-specific.sh
+source "${SRC}"/lib/functions/rootfs/distro-specific.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
 ### lib/functions/rootfs/rootfs-desktop.sh
 # shellcheck source=functions/rootfs/rootfs-desktop.sh
 source "${SRC}"/lib/functions/rootfs/rootfs-desktop.sh
-
-set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
-### lib/functions/rootfs/distro_specific.sh
-# shellcheck source=functions/rootfs/distro_specific.sh
-source "${SRC}"/lib/functions/rootfs/distro_specific.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
 ### lib/functions/rootfs/post-tweaks.sh
@@ -60,6 +55,11 @@ set -e # no errors tolerated. set -e is invoked before each sourced file to make
 ### lib/functions/rootfs/customize.sh
 # shellcheck source=functions/rootfs/customize.sh
 source "${SRC}"/lib/functions/rootfs/customize.sh
+
+set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
+### lib/functions/rootfs/distro-agnostic.sh
+# shellcheck source=functions/rootfs/distro-agnostic.sh
+source "${SRC}"/lib/functions/rootfs/distro-agnostic.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
 ### lib/functions/rootfs/boot_logo.sh
@@ -102,9 +102,9 @@ set -e # no errors tolerated. set -e is invoked before each sourced file to make
 source "${SRC}"/lib/functions/multi/build-all.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
-### lib/functions/cli/cli-utils.sh
-# shellcheck source=functions/cli/cli-utils.sh
-source "${SRC}"/lib/functions/cli/cli-utils.sh
+### lib/functions/cli/utils-cli.sh
+# shellcheck source=functions/cli/utils-cli.sh
+source "${SRC}"/lib/functions/cli/utils-cli.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
 ### lib/functions/cli/cli-entrypoint.sh
@@ -177,9 +177,9 @@ set -e # no errors tolerated. set -e is invoked before each sourced file to make
 source "${SRC}"/lib/functions/compilation/atf.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
-### lib/functions/compilation/compilation-utils.sh
-# shellcheck source=functions/compilation/compilation-utils.sh
-source "${SRC}"/lib/functions/compilation/compilation-utils.sh
+### lib/functions/compilation/utils-compilation.sh
+# shellcheck source=functions/compilation/utils-compilation.sh
+source "${SRC}"/lib/functions/compilation/utils-compilation.sh
 
 set -e # no errors tolerated. set -e is invoked before each sourced file to make sure.
 ### lib/functions/compilation/kernel.sh
