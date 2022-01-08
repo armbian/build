@@ -74,6 +74,7 @@ setup_write_uboot_platform() {
 
 # default settings for kernel variables of the original kernel
 # VAR_SHALLOW_ORIGINAL=var_origin_kernel
+# Note: rpardini: this is called via VAR_SHALLOW_ORIGINAL during fetch_from_repo via waiter_local_repo
 var_origin_kernel() {
 	url=$MAINLINE_KERNEL_SOURCE
 	name='origin'
@@ -81,8 +82,7 @@ var_origin_kernel() {
 	start_tag="v$KERNEL_VERSION_LEVEL"
 
 	# checking the reachability of the initial tag
-	if [ "$(git ls-remote --tags $url $start_tag |
-		awk -F'/' '{if (NR == 1) print $NF}')" != "$start_tag" ]; then
+	if [ "$(git ls-remote --tags $url $start_tag | awk -F'/' '{if (NR == 1) print $NF}' || true)" != "$start_tag" ]; then
 		exit 177
 	fi
 
@@ -90,4 +90,6 @@ var_origin_kernel() {
 	# a bifurcation point at which all previous merge branches converge.
 	# This is due to the subsequent extraction of `megous`
 	[ "$KERNEL_VERSION_LEVEL" == "5.12" ] && start_tag="v5.12-rc7"
+
+	return 0 # don't fail due to short-circuit above
 }
