@@ -93,12 +93,12 @@ function handle_docker_vagrant() {
 		[[ "${codename}" =~ focal|hirsute ]] && DOCKER_BINARY="docker containerd docker.io"
 
 		display_alert "Docker not installed." "Installing" "Info"
-		echo "deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable" > /etc/apt/sources.list.d/docker.list
+		sudo bash -c "echo \"deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable\" > /etc/apt/sources.list.d/docker.list"
 
-		curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
+		sudo bash -c "curl -fsSL \"https://download.docker.com/linux/${codeid}/gpg\" | apt-key add -qq - > /dev/null 2>&1 "
 		export DEBIAN_FRONTEND=noninteractive
-		apt-get update
-		apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
+		sudo apt-get update
+		sudo apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
 		display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 		"${SRC}/compile.sh" "$@"
 		exit $?
