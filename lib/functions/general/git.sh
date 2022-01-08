@@ -74,7 +74,7 @@ waiter_local_repo() {
 
 	# Check the exception for 5.15 sunxi. We will remove this after a while.
 	if [ "$dir" == "linux-mainline/5.15" ] &&
-		[ "$(git remote show | grep megous)" == "megous" ]; then
+		[ "$(git remote show | grep megous || true)" == "megous" ]; then
 		display_alert "Remove mistakenly created and excessively large" "$dir" "info"
 		rm -rf .git ./*
 	fi
@@ -84,12 +84,12 @@ waiter_local_repo() {
 
 		# Run in the sub shell to avoid mixing environment variables.
 		if [ -n "$VAR_SHALLOW_ORIGINAL" ]; then
+			display_alert "Unshallowing original:" "${VAR_SHALLOW_ORIGINAL}" "debug"
 			(
 				$VAR_SHALLOW_ORIGINAL
 
 				display_alert "Add original git sources" "$dir $name/$branch" "info"
-				if [ "$(git ls-remote -h $url $branch |
-					awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ]; then
+				if [ "$(git ls-remote -h $url $branch | awk -F'/' '{if (NR == 1) print $NF}' || true)" != "$branch" ]; then
 					display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
 					exit 177
 				fi
@@ -109,7 +109,7 @@ waiter_local_repo() {
 		clean_up_repo $work_dir
 	fi
 
-	if [ "$name" != "$(git remote show | grep $name)" ]; then
+	if [ "$name" != "$(git remote show | grep $name || true)" ]; then
 		git remote add -t $branch $name $url
 	fi
 
