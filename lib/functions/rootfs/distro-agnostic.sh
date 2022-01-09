@@ -397,10 +397,12 @@ POST_INSTALL_KERNEL_DEBS
 	# copy boot splash images
 	cp "${SRC}"/packages/blobs/splash/armbian-u-boot.bmp "${SDCARD}"/boot/boot.bmp
 
-	display_alert "Running tweaks" "$BOARD :: $LINUXFAMILY" "info"
-
 	# execute $LINUXFAMILY-specific tweaks
-	[[ $(type -t family_tweaks) == function ]] && family_tweaks
+	if [[ $(type -t family_tweaks) == function ]]; then
+		display_alert "Running family_tweaks" "$BOARD :: $LINUXFAMILY" "debug"
+		family_tweaks
+		display_alert "Done with family_tweaks" "$BOARD :: $LINUXFAMILY" "debug"
+	fi
 
 	call_extension_method "post_family_tweaks" << 'FAMILY_TWEAKS'
 *customize the tweaks made by $LINUXFAMILY-specific family_tweaks*

@@ -285,7 +285,11 @@ create_board_package() {
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
 	# execute $LINUXFAMILY-specific tweaks
-	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp 2>&1
+	if [[ $(type -t family_tweaks_bsp) == function ]]; then
+		display_alert "Running family_tweaks_bsp" "${LINUXFAMILY}" "debug"
+		family_tweaks_bsp 2>&1
+		display_alert "Done with family_tweaks_bsp" "${LINUXFAMILY}" "debug"
+	fi
 
 	call_extension_method "post_family_tweaks_bsp" << 'POST_FAMILY_TWEAKS_BSP'
 *family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
@@ -303,6 +307,8 @@ POST_FAMILY_TWEAKS_BSP
 	fakeroot_dpkg_deb_build "${destination}" "${destination}.deb"
 	mkdir -p "${DEB_STORAGE}/"
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/" 2>&1
+
+	display_alert "Done building BSP CLI package" "${destination}" "debug"
 
 	# cleanup
 	rm -rf ${bsptempdir}
