@@ -1305,7 +1305,7 @@ prepare_host_basic()
 
 	if [[ -n $install_pack ]]; then
 		display_alert "Installing basic packages" "$install_pack"
-		apt-get -qq update && apt-get install -qq -y --no-install-recommends $install_pack
+		sudo bash -c "apt-get -qq update && apt-get install -qq -y --no-install-recommends $install_pack"
 	fi
 
 }
