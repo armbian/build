@@ -14,7 +14,7 @@ case $BRANCH in
 
 	legacy)  KERNEL_VERSION_LEVEL="5.4" ;;
 	current) KERNEL_VERSION_LEVEL="5.10" ;;
-	edge)    KERNEL_VERSION_LEVEL="5.16" ;;
+	edge)    KERNEL_VERSION_LEVEL="5.15" ;;
 
 esac
 
@@ -33,8 +33,7 @@ case "$KERNEL_VERSION_LEVEL" in
 	;;
 esac
 
-#KERNELPATCHDIR='sunxi-'$BRANCH
-KERNELPATCHDIR=archive/'sunxi-'$KERNEL_VERSION_LEVEL
+KERNELPATCHDIR='sunxi-'$BRANCH
 
 # An optional parameter for switching to a git object such as a tag, commit,
 # or a specific branch. The object must exist in the local repository.

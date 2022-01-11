@@ -33,8 +33,7 @@ case "$KERNEL_VERSION_LEVEL" in
 	;;
 esac
 
-#KERNELPATCHDIR='sunxi-'$BRANCH
-KERNELPATCHDIR=archive/'sunxi-'$KERNEL_VERSION_LEVEL
+KERNELPATCHDIR='sunxi-'$BRANCH
 
 # An optional parameter for switching to a git object such as a tag, commit,
 # or a specific branch. The object must exist in the local repository.
