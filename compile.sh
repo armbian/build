@@ -191,12 +191,12 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	[[ "${codename}" =~ focal|hirsute ]] && DOCKER_BINARY="docker containerd docker.io"
 
 	display_alert "Docker not installed." "Installing" "Info"
-	echo "deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable" > /etc/apt/sources.list.d/docker.list
+	sudo bash -c "echo \"deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable\" > /etc/apt/sources.list.d/docker.list"
 
-	curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
+	sudo bash -c "curl -fsSL \"https://download.docker.com/linux/${codeid}/gpg\" | apt-key add -qq - > /dev/null 2>&1 "
 	export DEBIAN_FRONTEND=noninteractive
-	apt-get update
-	apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
+	sudo apt-get update
+	sudo apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"${SRC}/compile.sh" "$@"
 	exit $?
@@ -268,6 +268,11 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
 fi
 
 CONFIG_PATH=$(dirname "${CONFIG_FILE}")
+
+# Source the extensions manager library at this point, before sourcing the config.
+# This allows early calls to enable_extension(), but initialization proper is done later.
+# shellcheck source=lib/extensions.sh
+source "${SRC}"/lib/extensions.sh
 
 display_alert "Using config file" "${CONFIG_FILE}" "info"
 pushd "${CONFIG_PATH}" > /dev/null || exit

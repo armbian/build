@@ -9,6 +9,15 @@
 # /etc/kernel/{pre,post}{inst,rm}.d/ directories (or an alternative location
 # specified in KDEB_HOOKDIR) that will be called on package install and
 # removal.
+#
+# armbian/bulddeb 0.1
+# Copyright 2021 Leonid Gasheev (The-going <48602507+The-going@users.noreply.github.com>)
+#
+# In order to make a choice, it is enough for us to check the value
+# of the variable in the kernel configuration file and Debian's own variables.
+#
+# Uncomment the next line to see all the current values.
+# echo "$(dpkg-architecture -l)" >&2
 
 set -e
 
@@ -22,6 +31,14 @@ if_enabled_echo() {
 	elif [ $# -ge 3 ]; then
 		echo -n "$3"
 	fi
+}
+
+is_native() {
+	dpkg-architecture -qDEB_BUILD_ARCH | grep -q "$(dpkg-architecture -qDEB_HOST_ARCH)"
+}
+
+is_build_on_amd64() {
+	dpkg-architecture -qDEB_BUILD_ARCH | grep -q amd64
 }
 
 create_package() {
@@ -67,7 +84,7 @@ EOT
 	chmod 775 $pdir/DEBIAN/postinst
 	fi
 
-	# Create postinstall prerm script for headers
+	# Create postinst prerm script for headers
 	if [ "$3" = "headers" ]; then
 
 	# Set the time for all files to the current time.
@@ -87,8 +104,7 @@ EOT
 	# appear that the package manager does not know anything about.
 	# Just clear all the files in the target directory.
 	cat >> $pdir/DEBIAN/prerm << EOT
-cd /usr/src/linux-headers-$version
-find ./ -type f -exec rm {} +
+rm -rf /usr/src/linux-headers-$version
 exit 0
 EOT
 
@@ -132,10 +148,14 @@ deploy_kernel_headers () {
 		fi
 	} > debian/hdrobjfiles
 
-	(
+	if is_native; then
+		echo "info: Build native: Skip headers-debian-byteshift.patch" >&2
+	elif is_build_on_amd64; then
+		(
 		cd $destdir
 		patch -p1 < /tmp/headers-debian-byteshift.patch
-	)
+		)
+	fi
 
 	tar -c -f - -C $srctree -T debian/hdrsrcfiles | tar -xf - -C $destdir
 	tar -c -f - -T debian/hdrobjfiles | tar -xf - -C $destdir
@@ -198,6 +218,7 @@ parisc|mips|powerpc)
 	installed_image_path="boot/vmlinux-$version"
 	;;
 *)
+	image_name=vmlinuz
 	installed_image_path="boot/vmlinuz-$version"
 esac
 
@@ -293,7 +314,7 @@ done
 ## Create sym link to kernel image
 ##
 sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
-cat >> $tmpdir/DEBIAN/postinst <<EOT
+cat >> $tmpdir/DEBIAN/postinst << EOT
 ln -sf $(basename $installed_image_path) /boot/$image_name 2> /dev/null || mv /$installed_image_path /boot/$image_name
 touch /boot/.next
 exit 0
@@ -330,17 +351,27 @@ EOT
 create_package "$packagename" "$tmpdir"
 
 if [ "$ARCH" != "um" ]; then
-	create_package "$dtb_packagename" "$dtb_dir" "dtb"
+
+	if [ "$(cat debian/arch)" != "amd64" ]; then # No DTB for amd64 target
+		create_package "$dtb_packagename" "$dtb_dir" "dtb"
+	fi
 
 	deploy_libc_headers $libc_headers_dir
 	create_package $libc_headers_packagename $libc_headers_dir
 
 	if is_enabled CONFIG_MODULES; then
-		# Clean up the executables that are left over from
-		# cross-compilation for a different host architecture.
-		(cd $srctree; make M=scripts clean;)
-		deploy_kernel_headers $kernel_headers_dir
-		create_package $kernel_headers_packagename $kernel_headers_dir "headers"
+		if is_native ; then
+			# echo "Skip scripts folder cleaning" >&2
+			# echo "Skip creating postinst prerm scripts for headers" >&2
+			deploy_kernel_headers $kernel_headers_dir
+			create_package $kernel_headers_packagename $kernel_headers_dir
+		else
+			# Clean up the executables that are left over from
+			# cross-compilation for a different host architecture.
+			(cd $srctree; make M=scripts clean;)
+			deploy_kernel_headers $kernel_headers_dir
+			create_package $kernel_headers_packagename $kernel_headers_dir "headers"
+		fi
 	fi
 
 fi

@@ -1,3 +1,4 @@
+enable_extension "sunxi-tools"
 ARCH=arm64
 ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 BOOTDELAY=1
@@ -12,15 +13,9 @@ case $BRANCH in
 
 	legacy)  KERNEL_VERSION_LEVEL="5.4" ;;
 
-	current)
-		KERNEL_VERSION_LEVEL="5.10"
-		KERNELSWITCHOBJ="tag=v5.10.82"
-	;;
+	current) KERNEL_VERSION_LEVEL="5.10" ;;
 
-	edge)
-		KERNEL_VERSION_LEVEL="5.15"
-		KERNELSWITCHOBJ="tag=v5.15.5"
-	;;
+	edge) KERNEL_VERSION_LEVEL="5.15" ;;
 esac
 
 case "$KERNEL_VERSION_LEVEL" in

@@ -58,11 +58,17 @@ compilation_prepare()
 	fi
 
 	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 || \
-	"$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu || "$LINUXFAMILY" == rk35xx ]]; then
+	"$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
 		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch" "applying"
 	fi
+
+        if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == rk35xx ]]; then
+                display_alert "Adjusting" "packaging" "info"
+                cd "$kerneldir" || exit
+                process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y-rk35xx.patch" "applying"
+        fi
 
 	if [[ "${version}" == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 || \
 	"$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
@@ -101,7 +107,7 @@ compilation_prepare()
 	# Linux splash file
 	#
 
-	if linux-version compare "${version}" ge 5.8.10; then
+	if linux-version compare "${version}" ge 5.8.10 && [ $SKIP_BOOTSPLASH != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
 

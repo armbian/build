@@ -24,10 +24,13 @@
 # addtorepo
 # repo-remove-old-packages
 # wait_for_package_manager
+# install_pkg_deb
 # prepare_host_basic
 # prepare_host
 # webseed
 # download_and_verify
+# show_developer_warning
+# show_checklist_variables
 
 
 # cleaning <target>
@@ -118,10 +121,19 @@ exit_with_error()
 	local _description=$1
 	local _highlight=$2
 	_file=$(basename "${BASH_SOURCE[1]}")
+	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
 
-	display_alert "ERROR in function $_function" "$_file:$_line" "err"
+	display_alert "ERROR in function $_function" "$stacktrace" "err"
 	display_alert "$_description" "$_highlight" "err"
 	display_alert "Process terminated" "" "info"
+
+	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
+		display_alert "MOUNT" "${MOUNT}" "err"
+		display_alert "SDCARD" "${SDCARD}" "err"
+		display_alert "Here's a shell." "debug it" "err"
+		bash < /dev/tty || true
+	fi
+
 	# TODO: execute run_after_build here?
 	overlayfs_wrapper "cleanup"
 	# unlock loop device access in case of starvation
@@ -224,6 +236,12 @@ create_sources_list()
 
 	# replace local package server if defined. Suitable for development
 	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+
+	# disable repo if SKIP_ARMBIAN_REPO=yes
+	if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
+		display_alert "Disabling armbian repo" "${ARCH}-${RELEASE}" "wrn"
+		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
+	fi
 
 	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
 	cp "${SRC}"/config/armbian.key "${basedir}"
@@ -409,6 +427,9 @@ fetch_from_repo()
 	local dir=$2
 	local ref=$3
 	local ref_subdir=$4
+
+	# Set GitHub mirror before anything else touches $url
+	url=${url//'https://github.com/'/$GITHUB_SOURCE}
 
 	if [ "$dir" == "linux-mainline" ] && [[ "$LINUXFAMILY" == sunxi* ]]; then
 		unset LINUXSOURCEDIR
@@ -619,7 +640,7 @@ fingerprint_image()
 {
 	cat <<-EOF > "${1}"
 	--------------------------------------------------------------------------------
-	Title:			${VENDOR} $REVISION ${BOARD^} $DISTRIBUTION $RELEASE $BRANCH
+	Title:			${VENDOR} $REVISION ${BOARD^} $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
 	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
@@ -1062,11 +1083,24 @@ repo-manipulate()
 			for release in "${DISTROS[@]}"; do
 				repo-remove-old-packages "$release" "armhf" "5"
 				repo-remove-old-packages "$release" "arm64" "5"
+				repo-remove-old-packages "$release" "amd64" "5"
 				repo-remove-old-packages "$release" "all" "5"
 				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
 			done
 			exit 0
 			;;
+
+                purgeedge)
+                        for release in "${DISTROS[@]}"; do
+				repo-remove-old-packages "$release" "armhf" "3" "edge"
+				repo-remove-old-packages "$release" "arm64" "3" "edge"
+				repo-remove-old-packages "$release" "amd64" "3" "edge"
+				repo-remove-old-packages "$release" "all" "3" "edge"
+				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
+                        done
+                        exit 0
+                        ;;
+
 
 		purgesource)
 			for release in "${DISTROS[@]}"; do
@@ -1084,6 +1118,7 @@ repo-manipulate()
 			echo -e "\n unique         = manually select which package should be removed from all repositories"
 			echo -e "\n update         = updating repository"
 			echo -e "\n purge          = removes all but last 5 versions"
+			echo -e "\n purgeedge      = removes all but last 3 edge versions"
 			echo -e "\n purgesource    = removes all sources\n\n"
 			exit 0
 			;;
@@ -1100,11 +1135,12 @@ repo-manipulate()
 # $1: Repository
 # $2: Architecture
 # $3: Amount of packages to keep
+# $4: Additional search pattern
 repo-remove-old-packages() {
 	local repo=$1
 	local arch=$2
 	local keep=$3
-	for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -t '.' -nk4); do
+	for pkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Architecture ($arch)" | grep -v "ERROR: no results" | sort -t '.' -nk4 | grep -e "$4"); do
 		local pkg_name
 		count=0
 		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
@@ -1140,26 +1176,138 @@ wait_for_package_manager()
 
 
 
+# Installing debian packages in the armbian build system.
+# The function accepts three optional parameters:
+# upgrade, clean - the same name for apt
+# verbose - detailed log for the function
+#
+# list="pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
+# install_pkg_deb upgrade verbose $list
+#
+# If the package has a bad name, we will see it in the log file.
+# If there is an LOG_OUTPUT_FILE variable and it has a value as
+# the full real path to the log file, then all the information will be there.
+#
+# The LOG_OUTPUT_FILE variable must be defined in the calling function
+# before calling the install_pkg_deb function and unset after.
+#
+install_pkg_deb ()
+{
+	local list=""
+	local log_file
+	local for_install
+	local need_upgrade=false
+	local need_clean=false
+	local need_verbose=false
+	local _line=${BASH_LINENO[0]}
+	local _function=${FUNCNAME[1]}
+	local _file=$(basename "${BASH_SOURCE[1]}")
+	local tmp_file=$(mktemp /tmp/install_log_XXXXX)
+	export DEBIAN_FRONTEND=noninteractive
+
+	list=$(
+	for p in $*;do
+		case $p in
+			upgrade) need_upgrade=true; continue ;;
+			clean) need_clean=true; continue ;;
+			verbose) need_verbose=true; continue ;;
+			\||\(*|*\)) continue ;;
+		esac
+		echo " $p"
+	done
+	)
+
+	if [ -d $(dirname $LOG_OUTPUT_FILE) ]; then
+		log_file=${LOG_OUTPUT_FILE}
+	else
+		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
+	fi
+
+	# This is necessary first when there is no apt cache.
+	if $need_upgrade; then
+		apt-get -q update || echo "apt cannot update" >>$tmp_file
+		apt-get -y upgrade || echo "apt cannot upgrade" >>$tmp_file
+	fi
+
+	# If the package is not installed, check the latest
+	# up-to-date version in the apt cache.
+	# Exclude bad package names and send a message to the log.
+	for_install=$(
+	for p in $list;do
+	  if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}');then
+		apt-cache  show $p -o APT::Cache::AllVersions=no |& \
+		awk -v p=$p -v tmp_file=$tmp_file \
+		'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
+	  fi
+	done
+	)
+
+	# This information should be logged.
+	if [ -s $tmp_file ]; then
+		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" \
+		>>$log_file
+		echo -e "\nIncoming list:" >>$log_file
+		printf "%-30s %-30s %-30s %-30s\n" $list >>$log_file
+		echo "" >>$log_file
+		cat $tmp_file >>$log_file
+	fi
+
+	if [ -n "$for_install" ]; then
+		if ! $need_upgrade; then
+			apt-get -q update
+			apt-get -y upgrade
+		fi
+		apt-get install -qq -y --no-install-recommends $for_install
+		echo -e "\nPackages installed:" >>$log_file
+		dpkg-query -W \
+		  -f '${binary:Package;-27} ${Version;-23}\n' \
+		  $for_install >>$log_file
+
+	fi
+
+	# We will show the status after installation all listed
+	if $need_verbose; then
+		echo -e "\nstatus after installation:" >>$log_file
+		dpkg-query -W \
+		  -f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
+		  $list >>$log_file
+	fi
+
+	if $need_clean;then apt-get clean; fi
+	rm $tmp_file
+}
+
+
+
 # prepare_host_basic
 #
 # * installs only basic packages
 #
 prepare_host_basic()
 {
-	# the checklist includes a list of package names separated by a space
-	local checklist="dialog psmisc acl uuid-runtime curl gnupg gawk"
 
-	# Don't use this function here.
-	# wait_for_package_manager
-	#
-	# The `psmisk` package is not installed yet.
+	# command:package1 package2 ...
+	# list of commands that are neeeded:packages where this command is
+	local check_pack install_pack
+	local checklist=(
+			"dialog:dialog"
+			"fuser:psmisc"
+			"getfacl:acl"
+			"uuid:uuid uuid-runtime"
+			"curl:curl"
+			"gpg:gnupg"
+			"gawk:gawk"
+			)
 
-	# We will check one package and install the entire list.
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' dialog 2>/dev/null) != *ii* ]]; then
-		display_alert "Installing basic packages" "$checklist"
-		apt-get -qq update && \
-		apt-get install -qq -y --no-install-recommends $checklist
+	for check_pack in "${checklist[@]}"; do
+	        if ! which ${check_pack%:*} >/dev/null; then local install_pack+=${check_pack#*:}" "; fi
+	done
+
+	if [[ -n $install_pack ]]; then
+		display_alert "Installing basic packages" "$install_pack"
+		sudo bash -c "apt-get -qq update && apt-get install -qq -y --no-install-recommends $install_pack"
 	fi
+
 }
 
 
@@ -1181,17 +1329,6 @@ prepare_host()
 	else
 		local offline=false
 	fi
-# build aarch64
-  if [[ $(dpkg --print-architecture) != arm64 ]]; then
-
-	if [[ $(dpkg --print-architecture) != amd64 ]]; then
-		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "https://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86-x64 build host is not supported"
-	fi
-
-# build aarch64
-  fi
 
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
@@ -1207,31 +1344,34 @@ prepare_host()
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 
-# build aarch64
+	local hostdeps="acl aptly aria2 bc binfmt-support bison btrfs-progs       \
+	build-essential  ca-certificates ccache cpio cryptsetup curl              \
+	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
+	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
+	gcc-arm-linux-gnueabihf gdisk gnupg1 gpg imagemagick jq kmod libbison-dev \
+	libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl        \
+	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
+	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
+	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
+	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
+	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
+	zlib1g-dev"
+
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
-	gawk gcc-arm-linux-gnueabihf qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-dev-armhf-cross imagemagick \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev python3-distutils \
-	locales ncurses-base pixz dialog systemd-container udev libfdt-dev lib32stdc++6 libc6-i386 lib32ncurses5 lib32tinfo5 \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz dirmngr python3-distutils jq distcc"
+	hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386 zlib1g:i386"
+	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 
-# build aarch64
+  elif [[ $(dpkg --print-architecture) == arm64 ]]; then
+
+	hostdeps+=" gcc-arm-linux-gnueabi gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
+
   else
 
-	local hostdeps="wget ca-certificates device-tree-compiler pv bc lzop zip binfmt-support build-essential ccache debootstrap ntpdate \
-	gawk gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi gcc-arm-none-eabi \
-	qemu-user-static u-boot-tools uuid-dev zlib1g-dev unzip libusb-1.0-0-dev fakeroot \
-	parted pkg-config libncurses5-dev whiptail debian-keyring debian-archive-keyring f2fs-tools libfile-fcntllock-perl rsync libssl-dev \
-	nfs-kernel-server btrfs-progs ncurses-term p7zip-full kmod dosfstools libc6-amd64-cross libc6-dev-armhf-cross imagemagick \
-	curl patchutils liblz4-tool libpython2.7-dev linux-base swig aptly acl python3-dev \
-	locales ncurses-base pixz dialog systemd-container udev libfdt-dev libc6 qemu \
-	bison libbison-dev flex libfl-dev cryptsetup gpg gnupg1 cpio aria2 pigz \
-	dirmngr python3-distutils jq "
+	display_alert "Please read documentation to set up proper compilation environment"
+	display_alert "https://www.armbian.com/using-armbian-tools/"
+	exit_with_error "Running this tool on non x86_64 build host is not supported"
 
-# build aarch64
   fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
@@ -1260,19 +1400,12 @@ prepare_host()
 	fi
 
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
-		exit_with_error "Windows subsystem for Linux is not a supported build environment"
+		if [ -f /.dockerenv ]; then
+			display_alert "Building images using Docker on WSL2 may fail" "" "wrn"
+		else
+			exit_with_error "Windows subsystem for Linux is not a supported build environment"
+		fi
 	fi
-
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	if [[ -z $HOSTRELEASE || $HOSTRELEASE =~ ^(focal|debbie|buster|bullseye|impish|hirsute|ulyana|ulyssa|uma)$ ]]; then
-	    hostdeps="${hostdeps/lib32ncurses5 lib32tinfo5/lib32ncurses6 lib32tinfo6}"
-	fi
-
-	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-# build aarch64
-  fi
 
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
@@ -1294,16 +1427,18 @@ prepare_host()
 	# Skip verification if you are working offline
 	if ! $offline; then
 
-	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
+	# warning: apt-cacher-ng will fail if installed and used both on host and in
+	# container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	if [[ $NO_APT_CACHER != yes ]]; then hostdeps="$hostdeps apt-cacher-ng"; fi
+	if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
 
-	local deps=()
-	local installed=$(dpkg-query -W -f '${db:Status-Abbrev}|${binary:Package}\n' '*' 2>/dev/null | grep '^ii' | awk -F '|' '{print $2}' | cut -d ':' -f 1)
+	export EXTRA_BUILD_DEPS=""
+	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
+	*run before installing host dependencies*
+	you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
+	ADD_HOST_DEPENDENCIES
 
-	for packet in $hostdeps; do
-		if ! grep -q -x -e "$packet" <<< "$installed"; then deps+=("$packet"); fi
-	done
+	if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
 
 	# distribution packages are buggy, download from author
 
@@ -1325,31 +1460,30 @@ prepare_host()
 # build aarch64
   fi
 
-	if [[ ${#deps[@]} -gt 0 ]]; then
-		display_alert "Installing build dependencies"
-		# don't prompt for apt cacher selection
-		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
-		apt-get -q update
-		apt-get -y upgrade
-		apt-get -q -y --no-install-recommends install -o Dpkg::Options::='--force-confold' "${deps[@]}" | tee -a "${DEST}"/${LOG_SUBPATH}/hostdeps.log
-		update-ccache-symlinks
-	fi
+	display_alert "Installing build dependencies"
+	# don't prompt for apt cacher selection
+	sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
+
+	LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
+	install_pkg_deb "$hostdeps"
+	unset LOG_OUTPUT_FILE
+
+	update-ccache-symlinks
+
+	export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
+	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
+	*run after all host dependencies are installed*
+	At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+	All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+	are installed at this point. The system clock has not yet been synced.
+	HOST_DEPENDENCIES_READY
+
 
 	# sync clock
 	if [[ $SYNC_CLOCK != no ]]; then
 		display_alert "Syncing clock" "host" "info"
 		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
 	fi
-
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	if [[ $(dpkg-query -W -f='${db:Status-Abbrev}\n' 'zlib1g:i386' 2>/dev/null) != *ii* ]]; then
-		apt-get install -qq -y --no-install-recommends zlib1g:i386 >/dev/null 2>&1
-	fi
-
-# build aarch64
-  fi
 
 	# create directory structure
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
@@ -1364,57 +1498,67 @@ prepare_host()
 	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
 # build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+	if [[ $(dpkg --print-architecture) == amd64 ]]; then
+		if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
 
-	display_alert "Checking for external GCC compilers" "" "info"
-	# download external Linaro compiler and missing special dependencies since they are needed for certain sources
+			# bind mount toolchain if defined
+			if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
+				mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+				mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+			fi
 
-	local toolchains=(
-		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-		"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
-		)
+			display_alert "Checking for external GCC compilers" "" "info"
+			# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
-	USE_TORRENT_STATUS=${USE_TORRENT}
-	USE_TORRENT="no"
-	for toolchain in ${toolchains[@]}; do
-		download_and_verify "_toolchain" "${toolchain##*/}"
-	done
-	USE_TORRENT=${USE_TORRENT_STATUS}
+			local toolchains=(
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+				)
 
-	rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
-	local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchain) )
-	for dir in ${existing_dirs[@]}; do
-		local found=no
-		for toolchain in ${toolchains[@]}; do
-			local filename=${toolchain##*/}
-			local dirname=${filename//.tar.xz}
-			[[ $dir == $dirname ]] && found=yes
-		done
-		if [[ $found == no ]]; then
-			display_alert "Removing obsolete toolchain" "$dir"
-			rm -rf "${SRC}/cache/toolchain/${dir}"
+			USE_TORRENT_STATUS=${USE_TORRENT}
+			USE_TORRENT="no"
+			for toolchain in ${toolchains[@]}; do
+				download_and_verify "_toolchain" "${toolchain##*/}"
+			done
+			USE_TORRENT=${USE_TORRENT_STATUS}
+
+			rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
+			local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchain) )
+			for dir in ${existing_dirs[@]}; do
+				local found=no
+				for toolchain in ${toolchains[@]}; do
+					local filename=${toolchain##*/}
+					local dirname=${filename//.tar.xz}
+					[[ $dir == $dirname ]] && found=yes
+				done
+				if [[ $found == no ]]; then
+					display_alert "Removing obsolete toolchain" "$dir"
+					rm -rf "${SRC}/cache/toolchain/${dir}"
+				fi
+			done
+		else
+			display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
 		fi
-	done
+	fi
 
-	fi # check offline
+  fi # check offline
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	if [[ $KERNEL_ONLY != yes ]]; then
 		modprobe -q binfmt_misc
 		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-		test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-		test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+		if [[ "$(arch)" != "aarch64" ]]; then
+			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+			test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+		fi
 	fi
-
-# build aarch64
-  fi
 
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
@@ -1663,7 +1807,7 @@ show_checklist_variables ()
 	for var in $checklist;do
 		eval pval=\$$var
 		echo -e "\n$var =:" >>$log_file
-		if [ $(echo "$pval" | gawk -F"/" '{print NF}') -ge 4 ];then
+		if [ $(echo "$pval" | awk -F"/" '{print NF}') -ge 4 ];then
 			printf "%s\n" $pval >>$log_file
 		else
 			printf "%-30s %-30s %-30s %-30s\n" $pval >>$log_file
