@@ -193,7 +193,7 @@ POST_UMOUNT_FINAL_IMAGE
 		fi
 
 	fi
-	display_alert "Done building" "${DESTIMG}/${version}.img" "info"
+	display_alert "Done building" "${FINALDEST}/${version}.img" "info" # A bit predicting the future, since it's still in DESTIMG at this point.
 
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
 	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
