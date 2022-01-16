@@ -344,7 +344,7 @@ waiter_local_repo ()
 			git remote add -t $branch $name $url
 
 			# Handle an exception if the initial tag is the top of the branch
-			# As v5.16 == HEAD or branch=master; start_tag=v5.16-rc6
+			# As v5.16 == HEAD
 			if $(git ls-remote -t $url ${start_tag}\* | \
 				awk -F'/' '$NF !~ /v[4-5][.][1-9]{1,2}[.][1]$/ {
 					exit 1
