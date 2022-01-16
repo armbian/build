@@ -16,8 +16,6 @@
 # compile_kernel
 # compile_firmware
 # compile_armbian-config
-# compile_sunxi_tools
-# install_rkbin_tools
 # compile_xilinx_bootgen
 # grab_version
 # find_toolchain
@@ -236,9 +234,9 @@ compile_uboot()
 			"${cross_compile}"' 2>>"${DEST}"/${LOG_SUBPATH}/compilation.log \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a "${DEST}"/${LOG_SUBPATH}/compilation.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling u-boot..." $TTY_Y $TTY_X'} \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
-		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "U-boot compilation failed"
+		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "U-boot compilation failed"
 
 		[[ $(type -t uboot_custom_postprocess) == function ]] && uboot_custom_postprocess
 
@@ -390,6 +388,15 @@ compile_kernel()
 	# read kernel git hash
 	hash=$(improved_git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
+	# Apply a series of patches if a series file exists
+	if test -f "${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf; then
+		display_alert "series.conf file visible. Apply"
+		series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
+
+		# apply_patch_series <target dir> <full path to series file>
+		apply_patch_series "${kerneldir}" "$series_conf"
+	fi
+
 	# build 3rd party drivers
 	compilation_prepare
 
@@ -404,31 +411,41 @@ compile_kernel()
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	local toolchain
-	toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
-	[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
-
-# build aarch64
-  fi
+	# compare with the architecture of the current Debian node
+	# if it matches we use the system compiler
+	if $(dpkg-architecture -e "${ARCH}"); then
+		display_alert "Native compilation"
+	elif [[ $(dpkg --print-architecture) == amd64 ]]; then
+		local toolchain
+		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+	else
+		exit_with_error "Architecture [$ARCH] is not supported"
+	fi
 
 	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
 
 	# copy kernel config
 	if [[ $KERNEL_KEEP_CONFIG == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
 		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
-		cp "${DEST}/config/${LINUXCONFIG}.config" .config
+		cp -p "${DEST}/config/${LINUXCONFIG}.config" .config
 	else
 		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
+			cp -p "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
-			cp "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
+			cp -p "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
 		fi
 	fi
+
+	call_extension_method "custom_kernel_config" << 'CUSTOM_KERNEL_CONFIG'
+*Kernel .config is in place, still clean from git version*
+Called after ${LINUXCONFIG}.config is put in place (.config).
+Before any olddefconfig any Kconfig make is called.
+A good place to customize the .config directly.
+CUSTOM_KERNEL_CONFIG
+
 
 	# hack for OdroidXU4. Copy firmare files
 	if [[ $BOARD == odroidxu4 ]]; then
@@ -479,7 +496,7 @@ compile_kernel()
 		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
 		$SRC_LOADADDR \
 		LOCALVERSION="-$LINUXFAMILY" \
-		$KERNEL_IMAGE_TYPE modules dtbs 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
+		$KERNEL_IMAGE_TYPE ${KERNEL_EXTRA_TARGETS:-modules dtbs} 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" \
 		--progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
@@ -548,9 +565,9 @@ compile_kernel()
 
 	# create change log
 	git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'%H>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
-	
+
 	echo "${hash}" > "${HASHTARGET}.githash"
-	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
+	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -name '*.patch' -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | LC_COLLATE=C sort -n)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
 	echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin >> "${HASHTARGET}.githash"
 
@@ -573,7 +590,7 @@ compile_firmware()
 
 	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
 	if [[ -n $FULL ]]; then
-		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:master"
+		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:main"
 		# cp : create hardlinks
 		cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 	fi
@@ -581,8 +598,7 @@ compile_firmware()
 	# cp : create hardlinks
 	cp -af --reflink=auto "${SRC}"/cache/sources/armbian-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 
-	# cleanup what's not needed for sure
-	rm -rf "${firmwaretempdir}/${plugin_dir}"/lib/firmware/{amdgpu,amd-ucode,radeon,nvidia,matrox,.git}
+	rm -rf "${firmwaretempdir}/${plugin_dir}"/lib/firmware/.git
 	cd "${firmwaretempdir}/${plugin_dir}" || exit
 
 	# set up control file
@@ -749,34 +765,6 @@ compile_armbian-config()
 
 
 
-compile_sunxi_tools()
-{
-	# Compile and install only if git commit hash changed
-	cd "${SRC}"/cache/sources/sunxi-tools || exit
-	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/sunxi-fexc ]]; then
-		display_alert "Compiling" "sunxi-tools" "info"
-		make -s clean >/dev/null
-		make -s tools >/dev/null
-		mkdir -p /usr/local/bin/
-		make install-tools >/dev/null 2>&1
-		improved_git rev-parse @ 2>/dev/null > .commit_id
-	fi
-}
-
-install_rkbin_tools()
-{
-	# install only if git commit hash changed
-	cd "${SRC}"/cache/sources/rkbin-tools || exit
-	# need to check if /usr/local/bin/sunxi-fexc to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/loaderimage ]]; then
-		display_alert "Installing" "rkbin-tools" "info"
-		mkdir -p /usr/local/bin/
-		install -m 755 tools/loaderimage /usr/local/bin/
-		install -m 755 tools/trust_merger /usr/local/bin/
-		improved_git rev-parse @ 2>/dev/null > .commit_id
-	fi
-}
 
 compile_xilinx_bootgen()
 {
@@ -815,6 +803,7 @@ grab_version()
 #
 find_toolchain()
 {
+	[[ "${SKIP_EXTERNAL_TOOLCHAINS}" == "yes" ]] && { echo "/usr/bin"; return; }
 	local compiler=$1
 	local expression=$2
 	local dist=10
@@ -953,6 +942,54 @@ process_patch_file()
 		display_alert "* $status $(basename "${patch}")" "" "info"
 	fi
 	echo >> "${DEST}"/${LOG_SUBPATH}/patching.log
+}
+
+
+# apply_patch_series <target dir> <full path to series file>
+apply_patch_series ()
+{
+	local t_dir="${1}"
+	local series="${2}"
+	local bzdir="$(dirname $series)"
+	local flag
+	local err_pt=$(mktemp /tmp/apply_patch_series_XXXXX)
+
+	list=$(gawk '$0 !~ /^#.*|^-.*|^$/' "${series}")
+	skiplist=$(gawk '$0 ~ /^-.*/' "${series}")
+
+	display_alert "apply a series of " "[$(echo $list | wc -w)] patches"
+	display_alert "skip [$(echo $skiplist | wc -w)] patches"
+
+	cd "${t_dir}" || exit 1
+	for p in $list
+	do
+		# Detect and remove files as '*.patch' which patch will create.
+		# So we need to delete the file before applying the patch if it exists.
+		lsdiff -s --strip=1 "$bzdir/$p" | \
+		awk '$0 ~ /^+.*patch$/{print $2}' | \
+		xargs -I % sh -c 'rm -f %'
+
+		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >$err_pt 2>&1
+		flag=$?
+
+
+		case $flag in
+			0)	printf "%-72s [\033[32m done \033[0m]\n" "${p#*/}"
+				printf "%-72s [ done ]\n" "${p#*/}" >> "${DEST}"/debug/patching.log
+				;;
+			1)
+				printf "%-72s [\033[33m FAILED \033[0m]\n" "${p#*/}"
+				echo -e "For ${p} \t\tprocess exit [ $flag ]" >>"${DEST}"/debug/patching.log
+				cat $err_pt >>"${DEST}"/debug/patching.log
+				;;
+			2)
+				printf "%-72s [\033[31m Patch wrong \033[0m]\n" "${p#*/}"
+				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >>"${DEST}"/debug/patching.log
+				cat $err_pt >>"${DEST}"/debug/patching.log
+			;;
+		esac
+	done
+	rm $err_pt
 }
 
 userpatch_create()
