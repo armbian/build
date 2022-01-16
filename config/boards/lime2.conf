@@ -3,4 +3,3 @@ BOARD_NAME="Lime 2"
 BOARDFAMILY="sun7i"
 BOOTCONFIG="A20-OLinuXino-Lime2-eMMC_defconfig"
 KERNEL_TARGET="legacy,current,edge"
-

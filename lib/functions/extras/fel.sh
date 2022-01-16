@@ -13,8 +13,7 @@
 # unless you want to kill your /etc/fstab and share your rootfs on NFS
 # without any access control
 
-fel_prepare_host()
-{
+fel_prepare_host() {
 	# Start rpcbind for NFS if inside docker container
 	[ "$(systemd-detect-virt)" == 'docker' ] && service rpcbind start
 
@@ -27,8 +26,7 @@ fel_prepare_host()
 	exportfs -ra
 }
 
-fel_prepare_target()
-{
+fel_prepare_target() {
 	if [[ -f $USERPATCHES_PATH/fel-boot.cmd ]]; then
 		display_alert "Using custom boot script" "userpatches/fel-boot.cmd" "info"
 		cp "$USERPATCHES_PATH"/fel-boot.cmd "${FEL_ROOTFS}"/boot/boot.cmd
@@ -49,8 +47,7 @@ fel_prepare_target()
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> "${FEL_ROOTFS}"/etc/fstab
 }
 
-fel_load()
-{
+fel_load() {
 	# update each time in case boot/script.bin link was changed in multi-board images
 	local dtb_file
 	if [[ -n $FEL_DTB_FILE ]]; then
@@ -77,27 +74,29 @@ fel_load()
 		write 0x43100000 "${FEL_ROOTFS}"/boot/boot.scr
 }
 
-if [[ -f $USERPATCHES_PATH/fel-hooks.sh ]]; then
-	display_alert "Using additional FEL hooks in" "userpatches/fel-hooks.sh" "info"
-	# shellcheck source=/dev/null
-	source "$USERPATCHES_PATH"/fel-hooks.sh
-fi
+function start_fel_boot() {
+	if [[ -f $USERPATCHES_PATH/fel-hooks.sh ]]; then
+		display_alert "Using additional FEL hooks in" "userpatches/fel-hooks.sh" "info"
+		# shellcheck source=/dev/null
+		source "$USERPATCHES_PATH"/fel-hooks.sh
+	fi
 
-# basic sanity check
-if [[ -n $FEL_ROOTFS ]]; then
-	fel_prepare_host
-	fel_prepare_target
-	[[ $(type -t fel_post_prepare) == function ]] && fel_post_prepare
-	RES=b
-	while [[ $RES != q ]]; do
-		if [[ $FEL_AUTO != yes ]]; then
-			display_alert "Connect device in FEL mode and press" "<Enter>" "info"
-			read -r
-		fi
-		fel_load
-		display_alert "Press any key to boot again, <q> to finish" "FEL" "info"
-		read -r -n 1 RES
-		echo
-	done
-	service nfs-kernel-server restart
-fi
+	# basic sanity check
+	if [[ -n $FEL_ROOTFS ]]; then
+		fel_prepare_host
+		fel_prepare_target
+		[[ $(type -t fel_post_prepare) == function ]] && fel_post_prepare
+		RES=b
+		while [[ $RES != q ]]; do
+			if [[ $FEL_AUTO != yes ]]; then
+				display_alert "Connect device in FEL mode and press" "<Enter>" "info"
+				read -r
+			fi
+			fel_load
+			display_alert "Press any key to boot again, <q> to finish" "FEL" "info"
+			read -r -n 1 RES
+			echo
+		done
+		service nfs-kernel-server restart
+	fi
+}
