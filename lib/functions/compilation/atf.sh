@@ -51,7 +51,7 @@ compile_atf() {
 	# Check: https://github.com/armbian/build/issues/1157
 	CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
-		CROSS_COMPILE=$CCACHE $ATF_COMPILER 2>&1 || {
+		CROSS_COMPILE="$CCACHE $ATF_COMPILER" 2>&1 || {
 		exit_with_error "ATF compilation failed"
 	}
 
@@ -80,4 +80,6 @@ compile_atf() {
 
 	# copy license file to pack it to u-boot package later
 	[[ -f license.md ]] && cp license.md "${atftempdir}"/
+
+	return 0 # avoid error due to short-circuit above
 }
