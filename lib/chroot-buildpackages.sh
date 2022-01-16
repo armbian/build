@@ -160,6 +160,7 @@ chroot_build_packages()
 {
 	local built_ok=()
 	local failed=()
+	mkdir -p ${SRC}/cache/buildpkg
 
 	if [[ $IMAGE_TYPE == user-built ]]; then
 		# if user-built image compile only for selected arch/release
