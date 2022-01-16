@@ -1177,12 +1177,15 @@ wait_for_package_manager()
 
 
 # Installing debian packages in the armbian build system.
-# The function accepts three optional parameters:
+# The function accepts four optional parameters:
+# autoupdate - If the installation list is not empty then update first.
 # upgrade, clean - the same name for apt
 # verbose - detailed log for the function
 #
 # list="pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
 # install_pkg_deb upgrade verbose $list
+# or
+# install_pkg_deb autoupdate $list
 #
 # If the package has a bad name, we will see it in the log file.
 # If there is an LOG_OUTPUT_FILE variable and it has a value as
@@ -1196,6 +1199,7 @@ install_pkg_deb ()
 	local list=""
 	local log_file
 	local for_install
+	local need_autoup=false
 	local need_upgrade=false
 	local need_clean=false
 	local need_verbose=false
@@ -1208,6 +1212,7 @@ install_pkg_deb ()
 	list=$(
 	for p in $*;do
 		case $p in
+			autoupdate) need_autoup=true; continue ;;
 			upgrade) need_upgrade=true; continue ;;
 			clean) need_clean=true; continue ;;
 			verbose) need_verbose=true; continue ;;
@@ -1253,7 +1258,7 @@ install_pkg_deb ()
 	fi
 
 	if [ -n "$for_install" ]; then
-		if ! $need_upgrade; then
+		if $need_autoup; then
 			apt-get -q update
 			apt-get -y upgrade
 		fi
@@ -1465,7 +1470,7 @@ prepare_host()
 	sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
 	LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
-	install_pkg_deb "$hostdeps"
+	install_pkg_deb "autoupdate $hostdeps"
 	unset LOG_OUTPUT_FILE
 
 	update-ccache-symlinks
