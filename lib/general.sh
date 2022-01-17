@@ -326,13 +326,6 @@ waiter_local_repo ()
 
 	display_alert "Checking git sources" "$dir $name/$branch" "info"
 
-	# Check the exception for 5.15 sunxi. We will remove this after a while.
-	if [ "$dir" == "linux-mainline/5.15" ] && \
-	   [ "$(git remote show | grep megous)" == "megous" ]; then
-			display_alert "Remove mistakenly created and excessively large" "$dir" "info"
-			rm -rf .git ./*
-	fi
-
 	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
 		git init -q .
 
@@ -349,8 +342,22 @@ waiter_local_repo ()
 			fi
 
 			git remote add -t $branch $name $url
-			git fetch --shallow-exclude=$start_tag $name
+
+			# Handle an exception if the initial tag is the top of the branch
+			# As v5.16 == HEAD
+			if $(git ls-remote -t $url ${start_tag}\* | \
+				awk -F'/' '$NF !~ /v[4-5][.][1-9]{1,2}[.][1]$/ {
+					exit 1
+					}'
+				)
+			then
+				git fetch --shallow-exclude=$start_tag $name
+			else
+				git fetch --depth 1 $name
+			fi
 			git fetch --deepen=1 $name
+			# For a shallow clone, this works quickly and saves space.
+			git gc
 			)
 
 			[ "$?" == "177" ] && exit
