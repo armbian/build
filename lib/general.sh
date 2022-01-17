@@ -278,10 +278,10 @@ clean_up_repo ()
 
 	# Files that are not tracked by git and were added
 	# when the patch was applied must be removed.
-	improved_git -C $target_dir clean -qdf
+	git -C $target_dir clean -qdf
 
 	# Return the files that are tracked by git to the initial state.
-	improved_git -C $target_dir checkout -qf HEAD
+	git -C $target_dir checkout -qf HEAD
 }
 
 # used : waiter_local_repo arg1='value' arg2:'value'
@@ -334,8 +334,8 @@ waiter_local_repo ()
 			(
 			$VAR_SHALLOW_ORIGINAL
 
-			display_alert "Add original git sources" "$dir $url$name/$branch" "info"
-			if [ "$(git ls-remote -h $url $branch | \
+			display_alert "Add original git sources" "$dir $name/$branch" "info"
+			if [ "$(improved_git ls-remote -h $url $branch | \
 				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
 				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
 				exit 177
@@ -345,14 +345,14 @@ waiter_local_repo ()
 
 			# Handle an exception if the initial tag is the top of the branch
 			# As v5.16 == HEAD
-			if [ "${start_tag}.1" == "$(git ls-remote -t $url ${start_tag}.1 | \
+			if [ "${start_tag}.1" == "$(improved_git ls-remote -t $url ${start_tag}.1 | \
 					awk -F'/' '{ print $NF }')" ]
 			then
-				git fetch --shallow-exclude=$start_tag $name
+				improved_git fetch --shallow-exclude=$start_tag $name
 			else
-				git fetch --depth 1 $name
+				improved_git fetch --depth 1 $name
 			fi
-			git fetch --deepen=1 $name
+			improved_git fetch --deepen=1 $name
 			# For a shallow clone, this works quickly and saves space.
 			git gc
 			)
@@ -373,7 +373,7 @@ waiter_local_repo ()
 
 	if ! $offline; then
 		for t_name in $(git remote show);do
-			git fetch $t_name
+			improved_git fetch $t_name
 		done
 	fi
 
