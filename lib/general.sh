@@ -272,7 +272,7 @@ improved_git()
 
 }
 
-clean_up_repo ()
+clean_up_git ()
 {
 	local target_dir=$1
 
@@ -284,14 +284,14 @@ clean_up_repo ()
 	git -C $target_dir checkout -qf HEAD
 }
 
-# used : waiter_local_repo arg1='value' arg2:'value'
-#		 waiter_local_repo \
+# used : waiter_local_git arg1='value' arg2:'value'
+#		 waiter_local_git \
 #			url='https://github.com/megous/linux' \
 #			name='megous' \
 #			dir='linux-mainline/5.14' \
 #			branch='orange-pi-5.14' \
 #			obj=<tag|commit> or tag:$tag ...
-waiter_local_repo ()
+waiter_local_git ()
 {
 	for arg in $@;do
 
@@ -364,7 +364,7 @@ waiter_local_repo ()
 	files_for_clean="$(git status -s | wc -l)"
 	if [ "$files_for_clean" != "0" ];then
 		display_alert " Cleaning .... " "$files_for_clean files"
-		clean_up_repo $work_dir
+		clean_up_git $work_dir
 	fi
 
 	if [ "$name" != "$(git remote show | grep $name)" ];then
@@ -439,7 +439,7 @@ fetch_from_repo()
 		unset LINUXSOURCEDIR
 		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
 		VAR_SHALLOW_ORIGINAL=var_origin_kernel
-		waiter_local_repo "url=$url $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
+		waiter_local_git "url=$url $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
 		unset VAR_SHALLOW_ORIGINAL
 		return
 	fi
