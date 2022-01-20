@@ -326,13 +326,6 @@ waiter_local_repo ()
 
 	display_alert "Checking git sources" "$dir $name/$branch" "info"
 
-	# Check the exception for 5.15 sunxi. We will remove this after a while.
-	if [ "$dir" == "linux-mainline/5.15" ] && \
-	   [ "$(git remote show | grep megous)" == "megous" ]; then
-			display_alert "Remove mistakenly created and excessively large" "$dir" "info"
-			rm -rf .git ./*
-	fi
-
 	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
 		git init -q .
 
@@ -349,8 +342,22 @@ waiter_local_repo ()
 			fi
 
 			git remote add -t $branch $name $url
-			git fetch --shallow-exclude=$start_tag $name
+
+			# Handle an exception if the initial tag is the top of the branch
+			# As v5.16 == HEAD
+			if $(git ls-remote -t $url ${start_tag}\* | \
+				awk -F'/' '$NF !~ /v[4-5][.][1-9]{1,2}[.][1]$/ {
+					exit 1
+					}'
+				)
+			then
+				git fetch --shallow-exclude=$start_tag $name
+			else
+				git fetch --depth 1 $name
+			fi
 			git fetch --deepen=1 $name
+			# For a shallow clone, this works quickly and saves space.
+			git gc
 			)
 
 			[ "$?" == "177" ] && exit
@@ -1444,26 +1451,6 @@ prepare_host()
 	ADD_HOST_DEPENDENCIES
 
 	if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
-
-	# distribution packages are buggy, download from author
-
-# build aarch64
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-	if [[ ! -f /etc/apt/sources.list.d/aptly.list ]]; then
-		display_alert "Updating from external repository" "aptly" "info"
-		if [ x"" != x"${http_proxy}" ]; then
-			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
-		else
-			apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys ED75B5A4483DA07C >/dev/null 2>&1
-		fi
-		echo "deb http://repo.aptly.info/ nightly main" > /etc/apt/sources.list.d/aptly.list
-	else
-		sed "s/squeeze/nightly/" -i /etc/apt/sources.list.d/aptly.list
-	fi
-
-# build aarch64
-  fi
 
 	display_alert "Installing build dependencies"
 	# don't prompt for apt cacher selection

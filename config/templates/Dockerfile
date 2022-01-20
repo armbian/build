@@ -10,14 +10,7 @@ RUN apt-get update && apt-get -y install \
     && rm -rf /var/lib/apt/lists/*
 RUN sh -c " \
     if [ $(dpkg --print-architecture) = amd64 ]; then \
-        if [ x'' != x$http_proxy ]; then \
-            curl -fsSL -x $http_proxy https://www.aptly.info/pubkey.txt | apt-key add - >/dev/null 2>&1; \
-        else \
-            curl -fsSL https://www.aptly.info/pubkey.txt | apt-key add - >/dev/null 2>&1; \
-        fi; \
-        echo \"deb http://repo.aptly.info/ nightly main\" > /etc/apt/sources.list.d/aptly.list; \
-        dpkg --add-architecture i386 \
-        && apt-get update \
+        apt-get update \
         && apt-get install -y --no-install-recommends \
         lib32ncurses6 \
         lib32stdc++6 \
@@ -66,7 +59,8 @@ RUN apt-get update \
        libbison-dev \
        libc6-amd64-cross \
        libc6-dev-armhf-cross \
-       libfdt-dev libelf-dev \
+       libfdt-dev \
+       libelf-dev \
        libfile-fcntllock-perl \
        libfl-dev \
        liblz4-tool \
