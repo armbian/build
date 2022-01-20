@@ -435,15 +435,6 @@ fetch_from_repo()
 	# Set GitHub mirror before anything else touches $url
 	url=${url//'https://github.com/'/$GITHUB_SOURCE}
 
-	if [ "$dir" == "linux-mainline" ] && [[ "$LINUXFAMILY" == sunxi* ]]; then
-		unset LINUXSOURCEDIR
-		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
-		VAR_SHALLOW_ORIGINAL=var_origin_kernel
-		waiter_local_git "url=$url $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
-		unset VAR_SHALLOW_ORIGINAL
-		return
-	fi
-
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
 		local offline=true
