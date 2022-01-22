@@ -41,48 +41,38 @@ case $BRANCH in
 
 esac
 
-if [ "$(uname -m)" = "aarch64" ]; then
-	if [[ "$(lsb_release -sc)" == "bullseye" || "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" || "$(lsb_release -sc)" == "impish" || "$(lsb_release -sc)" == "jammy" ]]; then
-		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
-	else
-		PKG_PREFIX="qemu-x86_64 "
-	fi
-else
-	PKG_PREFIX=""
-fi
-
 # this helper function includes postprocess for p212 and its variants.
 # $1 PATH for uboot blob repo
 # $2 dir name in uboot blob repo
 uboot_gxl_postprocess() {
-	mv u-boot.bin bl33.bin
+	run_host_command_logged mv -v u-boot.bin bl33.bin
 
-	$1/blx_fix.sh $1/$2/bl30.bin \
+	run_host_command_logged $1/blx_fix.sh $1/$2/bl30.bin \
 		$1/$2/zero_tmp \
 		$1/$2/bl30_zero.bin \
 		$1/$2/bl301.bin \
 		$1/$2/bl301_zero.bin \
 		$1/$2/bl30_new.bin bl30
 
-	python $1/acs_tool.pyc $1/$2/bl2.bin \
+	run_host_command_logged python $1/acs_tool.pyc $1/$2/bl2.bin \
 		$1/$2/bl2_acs.bin \
 		$1/$2/acs.bin 0
 
-	$1/blx_fix.sh $1/$2/bl2_acs.bin \
+	run_host_command_logged $1/blx_fix.sh $1/$2/bl2_acs.bin \
 		$1/$2/zero_tmp \
 		$1/$2/bl2_zero.bin \
 		$1/$2/bl21.bin \
 		$1/$2/bl21_zero.bin \
 		$1/$2/bl2_new.bin bl2
 
-	$PKG_PREFIX$1/$2/aml_encrypt_gxl --bl3enc --input $1/$2/bl30_new.bin
-	$PKG_PREFIX$1/$2/aml_encrypt_gxl --bl3enc --input $1/$2/bl31.img
-	$PKG_PREFIX$1/$2/aml_encrypt_gxl --bl3enc --input bl33.bin
+	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl3enc --input $1/$2/bl30_new.bin
+	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl3enc --input $1/$2/bl31.img
+	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl3enc --input bl33.bin
 
-	$PKG_PREFIX$1/$2/aml_encrypt_gxl --bl2sig --input $1/$2/bl2_new.bin \
+	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl2sig --input $1/$2/bl2_new.bin \
 		--output bl2.n.bin.sig
 
-	$PKG_PREFIX$1/$2/aml_encrypt_gxl --bootmk \
+	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bootmk \
 		--output u-boot.bin \
 		--bl2 bl2.n.bin.sig \
 		--bl30 $1/$2/bl30_new.bin.enc \
@@ -94,42 +84,42 @@ uboot_gxl_postprocess() {
 # $1 PATH for uboot blob repo
 # $2 dir name in uboot blob repo
 uboot_axg_postprocess_ng() {
-	mv u-boot.bin bl33.bin
+	run_host_command_logged mv -v u-boot.bin bl33.bin
 
-	$1/blx_fix.sh $1/$2/bl30.bin \
+	run_host_command_logged $1/blx_fix.sh $1/$2/bl30.bin \
 		$1/$2/zero_tmp \
 		$1/$2/bl30_zero.bin \
 		$1/$2/bl301.bin \
 		$1/$2/bl301_zero.bin \
 		$1/$2/bl30_new.bin bl30
 
-	python3 $1/acs_tool.py $1/$2/bl2.bin \
+	run_host_command_logged python3 $1/acs_tool.py $1/$2/bl2.bin \
 		$1/$2/bl2_acs.bin \
 		$1/$2/acs.bin 0
 
-	$1/blx_fix.sh $1/$2/bl2_acs.bin \
+	run_host_command_logged $1/blx_fix.sh $1/$2/bl2_acs.bin \
 		$1/$2/zero_tmp \
 		$1/$2/bl2_zero.bin \
 		$1/$2/bl21.bin \
 		$1/$2/bl21_zero.bin \
 		$1/$2/bl2_new.bin bl2
 
-	$PKG_PREFIX$1/$2/aml_encrypt_axg --bl3sig --input $1/$2/bl30_new.bin \
+	run_host_x86_binary_logged $1/$2/aml_encrypt_axg --bl3sig --input $1/$2/bl30_new.bin \
 		--output bl30_new.bin.enc \
 		--level v3 --type bl30
 
-	$PKG_PREFIX$1/$2/aml_encrypt_axg --bl3sig --input $1/$2/bl31.img \
+	run_host_x86_binary_logged $1/$2/aml_encrypt_axg --bl3sig --input $1/$2/bl31.img \
 		--output bl31.img.enc \
 		--level v3 --type bl31
 
-	$PKG_PREFIX$1/$2/aml_encrypt_axg --bl3sig --input bl33.bin --compress lz4 \
+	run_host_x86_binary_logged $1/$2/aml_encrypt_axg --bl3sig --input bl33.bin --compress lz4 \
 		--output bl33.bin.enc \
 		--level v3 --type bl33
 
-	$PKG_PREFIX$1/$2/aml_encrypt_axg --bl2sig --input $1/$2/bl2_new.bin \
+	run_host_x86_binary_logged $1/$2/aml_encrypt_axg --bl2sig --input $1/$2/bl2_new.bin \
 		--output bl2.n.bin.sig
 
-	$PKG_PREFIX$1/$2/aml_encrypt_axg --bootmk \
+	run_host_x86_binary_logged $1/$2/aml_encrypt_axg --bootmk \
 		--output u-boot.bin \
 		--bl2 bl2.n.bin.sig \
 		--bl30 bl30_new.bin.enc \
@@ -141,44 +131,44 @@ uboot_axg_postprocess_ng() {
 # $1 PATH for uboot blob repo
 # $2 family g12a or g12b
 uboot_g12_postprocess() {
-	mv u-boot.bin bl33.bin
+	run_host_command_logged mv -v u-boot.bin bl33.bin
 
-	$1/blx_fix.sh $1/bl30.bin \
+	run_host_command_logged $1/blx_fix.sh $1/bl30.bin \
 		zero_tmp \
 		bl30_zero.bin \
 		$1/bl301.bin \
 		bl301_zero.bin \
 		bl30_new.bin bl30
 
-	$1/blx_fix.sh $1/bl2.bin \
+	run_host_command_logged $1/blx_fix.sh $1/bl2.bin \
 		zero_tmp \
 		bl2_zero.bin \
 		$1/acs.bin \
 		bl21_zero.bin \
 		bl2_new.bin bl2
 
-	$PKG_PREFIX$1/aml_encrypt_$2 --bl30sig \
+	run_host_x86_binary_logged $1/aml_encrypt_$2 --bl30sig \
 		--input bl30_new.bin \
 		--output bl30_new.bin.g12.enc \
 		--level v3
-	$PKG_PREFIX$1/aml_encrypt_$2 --bl3sig \
+	run_host_x86_binary_logged $1/aml_encrypt_$2 --bl3sig \
 		--input bl30_new.bin.g12.enc \
 		--output bl30_new.bin.enc \
 		--level v3 --type bl30
-	$PKG_PREFIX$1/aml_encrypt_$2 --bl3sig \
+	run_host_x86_binary_logged $1/aml_encrypt_$2 --bl3sig \
 		--input $1/bl31.img \
 		--output bl31.img.enc \
 		--level v3 --type bl31
-	$PKG_PREFIX$1/aml_encrypt_$2 --bl3sig \
+	run_host_x86_binary_logged $1/aml_encrypt_$2 --bl3sig \
 		--input bl33.bin \
 		--compress lz4 \
 		--output bl33.bin.enc \
 		--level v3 --type bl33
-	$PKG_PREFIX$1/aml_encrypt_$2 --bl2sig \
+	run_host_x86_binary_logged $1/aml_encrypt_$2 --bl2sig \
 		--input bl2_new.bin \
 		--output bl2.n.bin.sig
 	if [ -e $1/lpddr3_1d.fw ]; then
-		$PKG_PREFIX$1/aml_encrypt_$2 --bootmk --output u-boot.bin \
+		run_host_x86_binary_logged $1/aml_encrypt_$2 --bootmk --output u-boot.bin \
 			--bl2 bl2.n.bin.sig \
 			--bl30 bl30_new.bin.enc \
 			--bl31 bl31.img.enc \
@@ -194,7 +184,7 @@ uboot_g12_postprocess() {
 			--ddrfw9 $1/lpddr3_1d.fw \
 			--level v3
 	else
-		$PKG_PREFIX$1/aml_encrypt_$2 --bootmk --output u-boot.bin \
+		run_host_x86_binary_logged $1/aml_encrypt_$2 --bootmk --output u-boot.bin \
 			--bl2 bl2.n.bin.sig \
 			--bl30 bl30_new.bin.enc \
 			--bl31 bl31.img.enc \
@@ -215,31 +205,31 @@ uboot_g12_postprocess() {
 # this helper function includes postprocess for meson gxl and gxm.
 # $1 PATH for uboot blob repo
 uboot_gxl_postprocess_ng() {
-	mv u-boot.bin bl33.bin
+	run_host_command_logged mv -v u-boot.bin bl33.bin
 
-	$1/blx_fix.sh $1/bl30.bin \
+	run_host_command_logged $1/blx_fix.sh $1/bl30.bin \
 		$1/zero_tmp \
 		$1/bl30_zero.bin \
 		$1/bl301.bin \
 		$1/bl301_zero.bin \
 		$1/bl30_new.bin bl30
 
-	python3 $1/acs_tool.py $1/bl2.bin $1/bl2_acs.bin $1/acs.bin 0
+	run_host_command_logged python3 $1/acs_tool.py $1/bl2.bin $1/bl2_acs.bin $1/acs.bin 0
 
-	$1/blx_fix.sh $1/bl2_acs.bin \
+	run_host_command_logged $1/blx_fix.sh $1/bl2_acs.bin \
 		$1/zero_tmp \
 		$1/bl2_zero.bin \
 		$1/bl21.bin \
 		$1/bl21_zero.bin \
 		$1/bl2_new.bin bl2
 
-	$1/aml_encrypt_gxl --bl3enc --input $1/bl30_new.bin
-	$1/aml_encrypt_gxl --bl3enc --input $1/bl31.img
-	$1/aml_encrypt_gxl --bl3enc --input bl33.bin
-	$1/aml_encrypt_gxl --bl2sig --input $1/bl2_new.bin \
+	run_host_command_logged $1/aml_encrypt_gxl --bl3enc --input $1/bl30_new.bin
+	run_host_command_logged $1/aml_encrypt_gxl --bl3enc --input $1/bl31.img
+	run_host_command_logged $1/aml_encrypt_gxl --bl3enc --input bl33.bin
+	run_host_command_logged $1/aml_encrypt_gxl --bl2sig --input $1/bl2_new.bin \
 		--output bl2.n.bin.sig
 
-	$1/aml_encrypt_gxl --bootmk --output u-boot.bin \
+	run_host_command_logged $1/aml_encrypt_gxl --bootmk --output u-boot.bin \
 		--bl2 bl2.n.bin.sig \
 		--bl30 $1/bl30_new.bin.enc \
 		--bl31 $1/bl31.img.enc \
@@ -247,8 +237,8 @@ uboot_gxl_postprocess_ng() {
 }
 
 write_uboot_platform() {
-	dd if=$1/u-boot.bin of=$2 bs=1 count=442 conv=fsync > /dev/null 2>&1
-	dd if=$1/u-boot.bin of=$2 bs=512 skip=1 seek=1 conv=fsync > /dev/null 2>&1
+	dd if=$1/u-boot.bin of=$2 bs=1 count=442 conv=fsync 2>&1
+	dd if=$1/u-boot.bin of=$2 bs=512 skip=1 seek=1 conv=fsync 2>&1
 }
 
 family_tweaks_bsp() {
@@ -283,7 +273,7 @@ family_tweaks_bsp() {
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf
 				Section "Device"
 				    Identifier  "DRM Graphics Acclerated"
-				    
+
 				    ## Use modesetting and glamor
 				        Driver      "modesetting"
 				        Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
@@ -291,9 +281,9 @@ family_tweaks_bsp() {
 				        Option      "Dri2Vsync"      "true"
 				        Option      "TripleBuffer"   "True"
 				    ## End glamor configuration
-				    
+
 				    EndSection
-				       
+
 				    Section "Screen"
 				        Identifier "Default Screen"
 				            SubSection "Display"

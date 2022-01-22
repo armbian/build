@@ -15,19 +15,6 @@ BOOTPATCHDIR="u-boot-rockchip64"
 PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
-if [ "$(uname -m)" = "aarch64" ]; then
-	case "$(lsb_release -sc)" in
-		"bullseye" | "focal" | "hirsute" | "impish" | "jammy")
-			PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
-			;;
-		*)
-			PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
-			;;
-	esac
-else
-	PKG_PREFIX=""
-fi
-
 BOOT_SOC=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*')
 
 if [[ $BOOT_SOC == rk3399 ]]; then
@@ -153,8 +140,8 @@ uboot_custom_postprocess() {
 		local tempfile=$(mktemp)
 		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
 		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
-		$PKG_PREFIX$RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
-		$PKG_PREFIX$RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
+		run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+		run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
 	else
 		echo "Unsupported u-boot processing configuration!"

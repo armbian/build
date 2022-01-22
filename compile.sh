@@ -13,8 +13,11 @@
 # use configuration files like config-default.conf to set the build configuration
 # check Armbian documentation https://docs.armbian.com/ for more info
 
-set -e          # disallow errors
-set -o errtrace # error trace
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+# Important, go read http://mywiki.wooledge.org/BashFAQ/105 NOW!
 
 SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 cd "${SRC}" || exit

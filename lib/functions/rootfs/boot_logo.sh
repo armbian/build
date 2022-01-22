@@ -1,9 +1,4 @@
 function boot_logo() {
-	if [[ $(dpkg --print-architecture) != amd64 ]]; then
-		display_alert "Can't build boot_logo throbber using this arch" "$(dpkg --print-architecture)"
-		return 0
-	fi
-
 	display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 	LOGO=${SRC}/packages/blobs/splash/logo.png
@@ -14,8 +9,8 @@ function boot_logo() {
 	THROBBER_HEIGHT=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 2)
 	convert -alpha remove -background "#000000" $LOGO "${SDCARD}"/tmp/logo.rgb
 	convert -alpha remove -background "#000000" $THROBBER "${SDCARD}"/tmp/throbber%02d.rgb
-	# @TODO I guess this is a x86 binary?
-	${SRC}/packages/blobs/splash/bootsplash-packer \
+
+	run_host_x86_binary_logged "${SRC}/packages/blobs/splash/bootsplash-packer" \
 		--bg_red 0x00 \
 		--bg_green 0x00 \
 		--bg_blue 0x00 \
@@ -107,7 +102,8 @@ function boot_logo() {
 		--blob "${SDCARD}"/tmp/throbber72.rgb \
 		--blob "${SDCARD}"/tmp/throbber73.rgb \
 		--blob "${SDCARD}"/tmp/throbber74.rgb \
-		"${SDCARD}"/lib/firmware/bootsplash.armbian > /dev/null 2>&1
+		"${SDCARD}"/lib/firmware/bootsplash.armbian
+
 	if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
 		[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt &&
 			sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt || echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt

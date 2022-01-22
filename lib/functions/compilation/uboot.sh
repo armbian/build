@@ -72,7 +72,7 @@ function compile_uboot_target() {
 
 	if [[ $(type -t uboot_custom_postprocess) == function ]]; then
 		display_alert "${uboot_prefix}Postprocessing u-boot" "${version} ${target_make}"
-		uboot_custom_postprocess 2>&1
+		uboot_custom_postprocess
 	fi
 
 	display_alert "${uboot_prefix}Preparing u-boot targets packaging" "${version} ${target_make}"
@@ -155,9 +155,7 @@ compile_uboot() {
 	for target in ${UBOOT_TARGET_MAP}; do
 		IFS="${_old_ifs}" # restore for the body of loop
 		export target uboot_name uboottempdir toolchain version uboot_target_counter
-		compile_uboot_target || {
-			exit_with_error "Failed to compile u-boot target" "${target}"
-		}
+		compile_uboot_target
 		uboot_target_counter=$((uboot_target_counter + 1))
 		IFS="${_new_ifs}" # split on newlines only for rest of loop
 	done

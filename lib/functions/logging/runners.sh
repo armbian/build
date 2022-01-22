@@ -90,6 +90,7 @@ function run_host_command_logged_raw() {
 	fi
 	if [[ $exit_code != 0 ]]; then
 		display_alert "cmd exited with code ${exit_code}" "$*" "wrn"
+		display_alert "stacktrace for failed command" "$(show_caller_full)" "wrn"
 	fi
 	return $exit_code
 }
@@ -97,4 +98,26 @@ function run_host_command_logged_raw() {
 # @TODO: logging: used by desktop.sh exclusively. let's unify?
 run_on_sdcard() {
 	chroot_sdcard "${@}"
+}
+
+# For host-side invocations of binaries we _know_ are x86-only.
+# Determine if we're building on non-amd64, and if so, which qemu binary to use.
+function run_host_x86_binary_logged() {
+	local -a qemu_invocation target_bin_arch
+	target_bin_arch="$(file -b "$1" | cut -d "," -f 1,2 | xargs echo -n)" # obtain the ELF name from the binary using 'file'
+	qemu_invocation=("$@")                                                # Default to calling directly, without qemu.
+	if [[ "$(uname -m)" != "x86_64" ]]; then                              # If we're NOT on x86...
+		if [[ -f /usr/bin/qemu-x86_64-static ]]; then
+			display_alert "Using qemu-x86_64-static for running on $(uname -m)" "$1 (${target_bin_arch})" "debug"
+			qemu_invocation=("/usr/bin/qemu-x86_64-static" "-L" "/usr/x86_64-linux-gnu" "$@")
+		elif [[ -f /usr/bin/qemu-x86_64 ]]; then
+			display_alert "Using qemu-x86_64 (non-static) for running on $(uname -m)" "$1 (${target_bin_arch})" "debug"
+			qemu_invocation=("/usr/bin/qemu-x86_64" "-L" "/usr/x86_64-linux-gnu" "$@")
+		else
+			exit_with_error "Can't find appropriate qemu binary for running '$1' on $(uname -m), missing packages?"
+		fi
+	else
+		display_alert "Not using qemu for running x86 binary on $(uname -m)" "$1 (${target_bin_arch})" "debug"
+	fi
+	run_host_command_logged "${qemu_invocation[@]}" # Exit with this result code
 }
