@@ -705,7 +705,7 @@ display_alert "Building kernel splash logo" "$RELEASE" "info"
 	THROBBER_HEIGHT=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 2)
 	convert -alpha remove -background "#000000"	$LOGO "${SDCARD}"/tmp/logo.rgb
 	convert -alpha remove -background "#000000" $THROBBER "${SDCARD}"/tmp/throbber%02d.rgb
-	${SRC}/packages/blobs/splash/bootsplash-packer \
+	$PKG_PREFIX${SRC}/packages/blobs/splash/bootsplash-packer \
 	--bg_red 0x00 \
 	--bg_green 0x00 \
 	--bg_blue 0x00 \
