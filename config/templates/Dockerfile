@@ -15,8 +15,7 @@ RUN sh -c " \
         lib32ncurses6 \
         lib32stdc++6 \
         lib32tinfo6 \
-        libc6-i386 \
-        zlib1g:i386; \
+        libc6-i386; \
     fi"
 RUN apt-get update \
     && apt-get -y upgrade \
