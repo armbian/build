@@ -17,7 +17,7 @@ cat <<- AUTOGEN_INCLUDES_HEADER > "${TARGET_SH}"
 
 AUTOGEN_INCLUDES_HEADER
 
-find lib/functions -type f -name \*.sh | while read -r path; do
+find lib/functions -type f -name \*.sh | sort -h | while read -r path; do
 	ref="$(echo -n "${path}")"
 	cat <<- AUTOGEN_INCLUDES_EACH >> "${TARGET_SH}"
 		# no errors tolerated. invoked before each sourced file to make sure.
