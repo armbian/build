@@ -73,7 +73,7 @@ prepare_host() {
 
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-		hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386 zlib1g:i386"
+		hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386"
 		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 
 	elif [[ $(dpkg --print-architecture) == arm64 ]]; then

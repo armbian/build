@@ -229,6 +229,9 @@ install_distribution_agnostic() {
 	display_alert "Temporarily disabling" "initramfs-tools hook for kernel"
 	chroot_sdcard chmod -v -x /etc/kernel/postinst.d/initramfs-tools
 
+	display_alert "Cleaning" "package lists"
+	APT_OPTS="y" chroot_sdcard_apt_get clean
+
 	display_alert "Updating" "apt package lists"
 	APT_OPTS="y" chroot_sdcard_apt_get update
 
