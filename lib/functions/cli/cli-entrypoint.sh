@@ -15,8 +15,8 @@ function cli_entrypoint() {
 		:
 	elif [[ "${1}" == docker || "${1}" == dockerpurge || "${1}" == docker-shell ]] && grep -q "$(whoami)" <(getent group docker); then
 		:
-	elif [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then # not really building in this case, just gathering meta-data.
-		:
+	elif [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then                 # this var is set in the ENVIRONMENT, not as parameter.
+		display_alert "No sudo for" "env CONFIG_DEFS_ONLY=yes" "debug" # not really building in this case, just gathering meta-data.
 	else
 		display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 		sudo "${SRC}/compile.sh" "$@"
@@ -115,7 +115,8 @@ function cli_entrypoint() {
 		do_capturing_defs prepare_and_config_main_build_single # this sets CAPTURED_VARS
 
 		if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
-			echo "${CAPTURED_VARS}" # to stdout!
+			echo "${CAPTURED_VARS}"   # to stdout!
+			cleanup_extension_manager # manually cleanup extension manager before exiting
 			return 0
 		else
 			unset CAPTURED_VARS

@@ -5,6 +5,7 @@
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # Don't write to disk in this case.
 	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/potential-paths.log"
 	echo -e "Potential paths :" >> "${LOG_OUTPUT_FILE}"
 	show_checklist_variables potential_paths
@@ -117,6 +118,7 @@ cleanup_list() {
 # before calling the `show_checklist_variables` function and unset after.
 #
 show_checklist_variables() {
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # Don't write to disk in this case.
 	local checklist=$*
 	local var pval
 	local log_file=${LOG_OUTPUT_FILE:-"${SRC}"/output/${LOG_SUBPATH}/trash.log}

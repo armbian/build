@@ -103,6 +103,12 @@ display_alert() {
 		echo "--> A: [" "$@" "]" >> "${CURRENT_LOGFILE}"
 	fi
 
+	# If asked, avoid any fancy ANSI escapes completely.
+	if [[ "${ANSI_COLOR}" == "none" ]]; then
+		echo "${@}" >&2
+		return 0
+	fi
+
 	local message="$1" level="$3"                                    # params
 	local level_indicator="" inline_logs_color="" extra="" ci_log="" # this log
 	case "${level}" in

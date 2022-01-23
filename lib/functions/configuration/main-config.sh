@@ -491,33 +491,42 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
 	fi
 
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
-	echo -e "\nVariables after manual configuration" >> $LOG_OUTPUT_FILE
-	show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
-	unset LOG_OUTPUT_FILE
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] || write_deboostrap_list_debug_log
 
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
-	call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" << 'POST_AGGREGATE_PACKAGES'
-*For final user override, using a function, after all aggregations are done*
-Called after aggregating all package lists, before the end of `compilation.sh`.
-Packages will still be installed after this is called, so it is the last chance
-to confirm or change any packages.
-POST_AGGREGATE_PACKAGES
+	call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
+		*For final user override, using a function, after all aggregations are done*
+		Called after aggregating all package lists, before the end of `compilation.sh`.
+		Packages will still be installed after this is called, so it is the last chance
+		to confirm or change any packages.
+	POST_AGGREGATE_PACKAGES
 
+	# If not only capturing defs, write the output file. This an early write to disk, and @TODO: should be moved later into the configuration phase
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] || write_config_summary_output_file
+
+	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
+}
+
+function write_deboostrap_list_debug_log() {
+	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
+	echo -e "\nVariables after manual configuration" >> $LOG_OUTPUT_FILE
+	show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
+	unset LOG_OUTPUT_FILE
+}
+
+function write_config_summary_output_file() {
 	local build_script_env_file="${DEST}/${LOG_SUBPATH}/output.log"
-	display_alert "Writing build config summary to" "${build_script_env_file}" "debug"
-
-	# debug
 	local debug_dpkg_arch debug_uname debug_virt debug_src_mount debug_src_perms debug_src_temp_perms
 	debug_dpkg_arch="$(dpkg --print-architecture)"
 	debug_uname="$(uname -a)"
-	debug_virt="$(systemd-detect-virt)"
+	debug_virt="$(systemd-detect-virt || true)"
 	debug_src_mount="$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")"
 	debug_src_perms="$(getfacl -p "${SRC}")"
 	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"
 
+	display_alert "Writing build config summary to" "${build_script_env_file}" "debug"
 	cat <<- EOF >> "${build_script_env_file}"
 		## BUILD SCRIPT ENVIRONMENT
 
@@ -565,6 +574,4 @@ POST_AGGREGATE_PACKAGES
 
 		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 	EOF
-
-	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
 }
