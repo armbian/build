@@ -19,15 +19,15 @@ create_image_from_sdcard_rootfs() {
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files to" "/"
-		rsync -aHWXh \
+		display_alert "Copying files via rsync to" "/"
+		run_host_command_logged rsync -aHWXh \
 			--exclude="/boot/*" \
 			--exclude="/dev/*" \
 			--exclude="/proc/*" \
 			--exclude="/run/*" \
 			--exclude="/tmp/*" \
 			--exclude="/sys/*" \
-			--info=progress0,stats1 $SDCARD/ $MOUNT/ 2>&1
+			--info=progress0,stats1 $SDCARD/ $MOUNT/
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
@@ -41,14 +41,10 @@ create_image_from_sdcard_rootfs() {
 	display_alert "Copying files to" "/boot"
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
-		rsync -rLtWh \
-			--info=progress0,stats1 \
-			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT 2>&1 #@TODO: log to stdout, terse?
+		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT"
 	else
 		# ext4
-		rsync -aHWXh \
-			--info=progress0,stats1 \
-			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT 2>&1 #@TODO: log to stdout, terse?
+		run_host_command_logged rsync -aHWXh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT"
 	fi
 
 	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
@@ -58,7 +54,7 @@ PRE_UPDATE_INITRAMFS
 
 	# stage: create final initramfs
 	[[ -n $KERNELSOURCE ]] && {
-		update_initramfs $MOUNT
+		update_initramfs "$MOUNT"
 	}
 
 	# DEBUG: print free space

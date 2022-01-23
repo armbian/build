@@ -32,7 +32,7 @@ create_desktop_package() {
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
 
 	local destination tmp_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 	destination=${tmp_dir}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
@@ -66,7 +66,7 @@ create_desktop_package() {
 	chmod 755 "${destination}"/DEBIAN/postinst
 
 	#display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/${LOG_SUBPATH}/install.log
+	cat "${destination}/DEBIAN/postinst" >> "${DEST}/${LOG_SUBPATH}/bsp_postinst.log"
 
 	# Armbian create_desktop_package scripts
 
@@ -86,9 +86,6 @@ create_desktop_package() {
 	cd ..
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
 
-	# cleanup
-	rm -rf "${tmp_dir}"
-
 	unset aggregated_content
 
 }
@@ -100,7 +97,7 @@ create_bsp_desktop_package() {
 	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
 
 	local destination tmp_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 	destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
@@ -147,9 +144,6 @@ create_bsp_desktop_package() {
 	cd "${destination}"
 	cd ..
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"
-
-	# cleanup
-	rm -rf "${tmp_dir}"
 
 	unset aggregated_content
 

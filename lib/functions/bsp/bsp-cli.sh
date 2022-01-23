@@ -1,10 +1,8 @@
 create_board_package() {
 	display_alert "Creating board support package for CLI" "$CHOSEN_ROOTFS" "info"
 
-	bsptempdir=$(mktemp -d)
+	bsptempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 	chmod 700 ${bsptempdir}
-	# @TODO: these traps are a real trap.
-	#trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
 
 	local destination=${bsptempdir}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
@@ -309,7 +307,4 @@ POST_FAMILY_TWEAKS_BSP
 	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/" 2>&1
 
 	display_alert "Done building BSP CLI package" "${destination}" "debug"
-
-	# cleanup
-	rm -rf ${bsptempdir}
 }

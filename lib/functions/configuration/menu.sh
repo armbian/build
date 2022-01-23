@@ -35,7 +35,7 @@ show_select_menu() {
 
 show_developer_warning() {
 	local temp_rc
-	temp_rc=$(mktemp)
+	temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
 	cat <<- 'EOF' > "${temp_rc}"
 		screen_color = (WHITE,RED,ON)
 	EOF

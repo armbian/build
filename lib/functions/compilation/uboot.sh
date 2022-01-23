@@ -144,7 +144,7 @@ compile_uboot() {
 	local uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"
 
 	# create directory structure for the .deb package
-	uboottempdir="$(mktemp -d)"
+	uboottempdir="$(mktemp -d)" # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 	chmod 700 "${uboottempdir}"
 	mkdir -p "$uboottempdir/$uboot_name/usr/lib/u-boot" "$uboottempdir/$uboot_name/usr/lib/$uboot_name" "$uboottempdir/$uboot_name/DEBIAN"
 
@@ -227,7 +227,6 @@ compile_uboot() {
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
 	rsync --remove-source-files -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/" 2>&1
-	rm -rf "$uboottempdir"
 
 	display_alert "Built u-boot deb OK" "${uboot_name}.deb" "info"
 	return 0 # success

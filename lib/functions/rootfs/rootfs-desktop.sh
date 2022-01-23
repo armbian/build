@@ -9,7 +9,7 @@ install_ppa_prerequisites() {
 
 	# Myy : TODO Try to find a way to install this package only when
 	# we encounter a PPA.
-	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
+	chroot_sdcard_apt_get_install "software-properties-common"
 
 }
 
@@ -34,7 +34,7 @@ add_apt_sources() {
 				display_alert "Adding APT Source ${new_apt_source}"
 				# -y -> Assumes yes to all queries
 				# -n -> Do not update package cache after adding
-				run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
+				chroot_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
 				display_alert "Return code : $?"
 
 				# temporally exception for jammy
@@ -52,7 +52,7 @@ add_apt_sources() {
 					display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
 					local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
 					cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
-					run_on_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
+					chroot_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
 					echo "APT Key returned : $?"
 				fi
 			done
@@ -66,9 +66,9 @@ add_desktop_package_sources() {
 	# Myy : I see Snap and Flatpak coming up in the next releases
 	# so... let's prepare for that
 	add_apt_sources
-	run_on_sdcard "apt -y -q update"
-	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}"/${LOG_SUBPATH}/install.log
-	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}"/${LOG_SUBPATH}/install.log
+	chroot_sdcard_apt_get "update"
+	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}/${LOG_SUBPATH}/desktop_packages_apt_sources.log"
+	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}/${LOG_SUBPATH}/desktop_packages_apt_sources.log"
 
 }
 
@@ -76,20 +76,20 @@ add_desktop_package_sources() {
 desktop_postinstall() {
 
 	# disable display manager for the first run
-	run_on_sdcard "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
-	run_on_sdcard "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
+	chroot_sdcard "systemctl --no-reload disable lightdm.service"
+	chroot_sdcard "systemctl --no-reload disable gdm3.service"
 
 	# update packages index
-	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1"
+	chroot_sdcard_apt_get "update"
 
 	# install per board packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD"
+		chroot_sdcard_apt_get_install "$PACKAGE_LIST_DESKTOP_BOARD"
 	fi
 
 	# install per family packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
-		run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY"
+		chroot_sdcard_apt_get_install "$PACKAGE_LIST_DESKTOP_FAMILY"
 	fi
 
 }

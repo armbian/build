@@ -4,7 +4,7 @@ function chroot_sdcard_apt_get_install() {
 }
 
 function chroot_sdcard_apt_get() {
-	local -a apt_params=("-${APT_OPTS:-yqq}")
+	local -a apt_params=("-${APT_OPTS:-y}")
 	[[ $NO_APT_CACHER != yes ]] && apt_params+=(
 		-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
 		-o "Acquire::http::Proxy::localhost=\"DIRECT\""

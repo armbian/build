@@ -1,6 +1,15 @@
 # This does NOT run under the logging manager. We should invoke the do_with_logging wrapper for
 # strategic parts of this. Attention: rootfs does it's own logging, so just let that be.
 main_default_build_single() {
+
+	# Starting work. Export TMPDIR, which will be picked up by all `mktemp` invocations hopefully.
+	# Runner functions in logging/runners.sh will explicitly unset TMPDIR before invoking chroot.
+	# Invoking chroot directly will fail in subtle ways, so, please use the runner.sh functions.
+	display_alert "Starting single build, exporting TMPDIR" "${WORKDIR}" "debug"
+	mkdir -p "${WORKDIR}"
+	export TMPDIR="${WORKDIR}"
+	# @todo: handle this in the exit trap, don't leave garbage behind when exiting.
+
 	start=$(date +%s)
 	# Check and install dependencies, directory structure and settings
 	# The OFFLINE_WORK variable inside the function
@@ -116,6 +125,16 @@ main_default_build_single() {
 Really one of the last hooks ever called. The build has ended. Congratulations.
 - *NOTE:* this will run only if there were no errors during build process.
 RUN_AFTER_BUILD
+
+	# Cleanup. Remove the WORKDIR, unset the TMPDIR
+	unset TMPDIR
+	if [[ -d "${WORKDIR}" ]]; then
+		display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "debug"
+		rm -rf "${WORKDIR}"
+	fi
+
+	# cleanup the extension manager, that was initialized during prepare_and_config_main_build_single
+	cleanup_extension_manager
 
 	end=$(date +%s)
 	runtime=$(((end - start) / 60))

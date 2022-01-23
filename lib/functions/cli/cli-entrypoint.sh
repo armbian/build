@@ -15,6 +15,8 @@ function cli_entrypoint() {
 		:
 	elif [[ "${1}" == docker || "${1}" == dockerpurge || "${1}" == docker-shell ]] && grep -q "$(whoami)" <(getent group docker); then
 		:
+	elif [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then # not really building in this case, just gathering meta-data.
+		:
 	else
 		display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 		sudo "${SRC}/compile.sh" "$@"
@@ -109,7 +111,7 @@ function cli_entrypoint() {
 	if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
 		do_main_build_all_ng
 	else
-		# configuration etc
+		# configuration etc - it initializes the extension manager.
 		do_capturing_defs prepare_and_config_main_build_single # this sets CAPTURED_VARS
 
 		if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
@@ -119,11 +121,13 @@ function cli_entrypoint() {
 			unset CAPTURED_VARS
 		fi
 
-		# Allow for custom user-invoked functions. @TODO: check this with extensions usage?
+		# Allow for custom user-invoked functions, or do the default build.
 		if [[ -z $1 ]]; then
-			main_default_build_single
+			main_default_build_single # this cleans up the extension manager
 		else
+			# @TODO: check this with extensions usage?
 			eval "$@"
 		fi
+
 	fi
 }

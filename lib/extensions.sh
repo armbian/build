@@ -61,8 +61,8 @@ initialize_extension_manager() {
 	# This marks the manager as initialized, no more extensions are allowed to load after this.
 	export initialize_extension_manager_counter=$((initialize_extension_manager_counter + 1))
 
-	# Have a unique temporary dir, even if being built concurrently by build_all_ng.
-	export EXTENSION_MANAGER_TMP_DIR="${SRC}/.tmp/.extensions/${LOG_SUBPATH}"
+	# Extensions has its own work/tmp directory, defined by do_main_configuration, with build UUID. We just create it here.
+	display_alert "EXTENSION_MANAGER_TMP_DIR" "${EXTENSION_MANAGER_TMP_DIR}" "debug"
 	mkdir -p "${EXTENSION_MANAGER_TMP_DIR}"
 
 	# Log destination.
@@ -245,6 +245,8 @@ initialize_extension_manager() {
 	# Dont show any output until we have more than 1 hook function (we implement one already, below)
 	[[ ${hook_functions_counter} -gt 0 ]] &&
 		display_alert "Extension manager" "processed ${hook_points_counter} Extension Methods calls and ${hook_functions_counter} Extension Method implementations" "info" | tee -a "${EXTENSION_MANAGER_LOG_FILE}"
+
+	return 0 # exit with success, short-circuit above.
 }
 
 cleanup_extension_manager() {
@@ -253,6 +255,11 @@ cleanup_extension_manager() {
 		# this will unset all the functions.
 		# shellcheck disable=SC1090 # dynamic source, thanks, shellcheck
 		source "${fragment_manager_cleanup_file}"
+		rm "${fragment_manager_cleanup_file}" # remove the cleanup file
+	fi
+	# cleanup our tmpdir.
+	if [[ -d "${EXTENSION_MANAGER_TMP_DIR}" ]]; then
+		rm -rf "${EXTENSION_MANAGER_TMP_DIR}"
 	fi
 	# reset/unset the variables used
 	initialize_extension_manager_counter=0
@@ -287,9 +294,6 @@ EXTENSION_METADATA_READY
 	# Move temporary log file over to final destination, and start writing to it instead (although 999 is pretty late in the game)
 	mv "${EXTENSION_MANAGER_LOG_FILE}" "${DEST}/${LOG_SUBPATH:-debug}/extensions.log"
 	export EXTENSION_MANAGER_LOG_FILE="${DEST}/${LOG_SUBPATH:-debug}/extensions.log"
-
-	# Cleanup. Leave no trace...
-	[[ -d "${EXTENSION_MANAGER_TMP_DIR}" ]] && rm -rf "${EXTENSION_MANAGER_TMP_DIR}"
 }
 
 # This is called by call_extension_method(). To say the truth, this should be in an extension. But then it gets too meta for anyone's head.

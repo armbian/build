@@ -133,7 +133,7 @@ function prepare_and_config_main_build_single() {
 	[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] &&
 		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
 
-	do_main_configuration
+	do_main_configuration # This initializes the extension manager among a lot of other things
 
 	# @TODO: this does not belong in configuration. it's a compilation thing. move there
 	# optimize build time with 100% CPU usage

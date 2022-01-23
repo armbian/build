@@ -337,7 +337,7 @@ install_pkg_deb() {
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
 	local _file=$(basename "${BASH_SOURCE[1]}")
-	local tmp_file=$(mktemp /tmp/install_log_XXXXX)
+	local tmp_file=$(mktemp /tmp/install_log_XXXXX) # @TODO: rpardini: hmm. why? lets use TMPDIR just like everyone else.
 	export DEBIAN_FRONTEND=noninteractive
 
 	list=$(

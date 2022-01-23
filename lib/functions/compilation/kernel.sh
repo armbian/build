@@ -249,10 +249,8 @@ compile_kernel() {
 create_linux-source_package() {
 	ts=$(date +%s)
 	local sources_pkg_dir tmp_src_dir
-	tmp_src_dir=$(mktemp -d)
+	tmp_src_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 
-	# @TODO: these traps are a real trap.
-	#trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
 	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
 	mkdir -p "${sources_pkg_dir}"/usr/src/ \
 		"${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} \
@@ -264,7 +262,7 @@ create_linux-source_package() {
 	display_alert "Compressing sources for the linux-source package"
 	tar cp --directory="$kerneldir" --exclude='.git' --owner=root . |
 		pv -N "$(logging_echo_prefix_for_pv "compress_kernel_sources") $display_name" -p -b -r -s "$(du -sb "$kerneldir" --exclude=='.git' | cut -f1)" |
-		pixz -4 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
+		pixz -0 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz" # @TODO: .deb will compress this later. -0 for now, but should be a plain tar
 	cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
 
 	cat <<- EOF > "${sources_pkg_dir}"/DEBIAN/control
@@ -285,5 +283,4 @@ create_linux-source_package() {
 
 	te=$(date +%s)
 	display_alert "Make the linux-source package" "$(($te - $ts)) sec." "info"
-	rm -rf "${tmp_src_dir}"
 }

@@ -104,7 +104,7 @@ apply_patch_series() {
 	local series="${2}"
 	local bzdir="$(dirname $series)"
 	local flag
-	local err_pt=$(mktemp /tmp/apply_patch_series_XXXXX)
+	local err_pt=$(mktemp /tmp/apply_patch_series_XXXXX) # @OTODO: rpardini: hmm, why is this different from all others?
 
 	list=$(gawk '$0 !~ /^#.*|^-.*|^$/' "${series}")
 	skiplist=$(gawk '$0 ~ /^-.*/' "${series}")

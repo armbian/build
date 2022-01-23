@@ -3,11 +3,9 @@ compile_firmware() {
 
 	local firmwaretempdir plugin_dir
 
-	firmwaretempdir=$(mktemp -d)
+	firmwaretempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 	chmod 700 ${firmwaretempdir}
 
-	# @TODO: these traps are a real trap.
-	#trap "rm -rf \"${firmwaretempdir}\" ; exit 0" 0 1 2 3 15
 	plugin_dir="armbian-firmware${FULL}"
 	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
@@ -47,18 +45,14 @@ compile_firmware() {
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
 	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
-	# remove temp directory - @TODO: maybe not, just leave thrash behind.
-	rm -rf "${firmwaretempdir}"
 }
 
 compile_armbian-zsh() {
 
 	local tmp_dir armbian_zsh_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 	chmod 700 ${tmp_dir}
 
-	# @TODO: these traps are a real trap.
-	#trap "rm -rf \"${tmp_dir}\" ; exit 0" 0 1 2 3 15
 	armbian_zsh_dir=armbian-zsh_${REVISION}_all
 	display_alert "Building deb" "armbian-zsh" "info"
 
@@ -124,18 +118,15 @@ compile_armbian-zsh() {
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}"
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
-	rm -rf "${tmp_dir}"
 
 }
 
 compile_armbian-config() {
 
 	local tmp_dir armbian_config_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
 	chmod 700 ${tmp_dir}
 
-	# @TODO: these traps are a real trap.
-	#trap "rm -rf \"${tmp_dir}\" ; exit 0" 0 1 2 3 15
 	armbian_config_dir=armbian-config_${REVISION}_all
 	display_alert "Building deb" "armbian-config" "info"
 
@@ -179,7 +170,6 @@ compile_armbian-config() {
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_config_dir}"
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
-	rm -rf "${tmp_dir}"
 }
 
 compile_xilinx_bootgen() {

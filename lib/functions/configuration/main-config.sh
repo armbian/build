@@ -10,7 +10,17 @@
 # https://github.com/armbian/build/
 
 function do_main_configuration() {
-	display_alert "Starting main configuration" "" "info"
+	# set unique mounting directory for this build.
+	MOUNT_UUID=$(uuidgen)
+
+	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this is config stage, not build.
+	export WORKDIR="${SRC}/.tmp/work-${MOUNT_UUID}"                         # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
+	export SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"                        # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
+	export MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"                          # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
+	export EXTENSION_MANAGER_TMP_DIR="${SRC}/.tmp/extensions-${MOUNT_UUID}" # EXTENSION_MANAGER_TMP_DIR used to store extension-composed functions
+	export DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"                        # DESTIMG is where the backing image (raw, huge, sparse file) is kept
+
+	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
 
 	# common options
 	# daily beta build contains date in subrevision
@@ -282,15 +292,6 @@ function do_main_configuration() {
 	fi
 
 	display_alert "Done with" "desktop config stuff - END" "debug"
-
-	# set unique mounting directory
-	MOUNT_UUID=$(uuidgen)
-
-	# Super-global variables, used everywhere. They're not _created_ here, since this is config stage, not build.
-	export WORKDIR="${SRC}/.tmp/work-${MOUNT_UUID}"  # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
-	export SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}" # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
-	export MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"   # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
-	export DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}" # DESTIMG is where the backing image (raw, huge, sparse file) is kept
 
 	# dropbear needs to be configured differently # @TODO: rpardini: yes, and? are you a lost leftover comment from a previous era?
 	[[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
