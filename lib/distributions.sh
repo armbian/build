@@ -246,6 +246,9 @@ install_common()
 	export APT_EXTRA_DIST_PARAMS=""
 	[[ $NO_APT_CACHER != yes ]] && APT_EXTRA_DIST_PARAMS="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
 
+	display_alert "Cleaning" "package lists"
+	chroot "${SDCARD}" /bin/bash -c "apt-get clean"
+
 	display_alert "Updating" "package lists"
 	chroot "${SDCARD}" /bin/bash -c "apt-get ${APT_EXTRA_DIST_PARAMS} update" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 
