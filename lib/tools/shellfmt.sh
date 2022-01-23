@@ -54,7 +54,7 @@ cd "${SRC}"
 
 # Should match the .editorconfig [*.{sh,inc,conf,eos,wip,tvb,csc}]
 
-declare -a ALL_BASH_FILES=($(find . -type f -name '*.sh') $(find ./config -type f -name '*.inc' -o -name '*.conf' -o -name '*.eos' -o -name '*.wip' -o -name '*.tvb' -o -name '*.csc' | grep -v -e "\/config\/aptly" -e "\/config\/targets"))
+declare -a ALL_BASH_FILES=($(find . -type f -name '*.sh' | grep -v -e "^./cache/" -e "^./.tmp/") $(find ./config -type f -name '*.inc' -o -name '*.conf' -o -name '*.eos' -o -name '*.wip' -o -name '*.tvb' -o -name '*.csc' | grep -v -e "\/config\/aptly" -e "\/config\/targets"))
 
 echo "All files:" "${ALL_BASH_FILES[@]}"
 
