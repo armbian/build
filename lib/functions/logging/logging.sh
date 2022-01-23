@@ -4,7 +4,7 @@ function logging_init() {
 	# globals
 	export padding="" left_marker="[" right_marker="]"
 	export normal_color="\x1B[0m" gray_color="\e[1;30m" # "bright black", which is grey
-	declare -i logging_section_counter=0 # -i: integer
+	declare -i logging_section_counter=0                # -i: integer
 	export logging_section_counter
 }
 
@@ -45,7 +45,7 @@ function do_with_logging() {
 	export CURRENT_LOGGING_COUNTER
 	CURRENT_LOGGING_COUNTER="$(printf "%03d" "$logging_section_counter")"
 	export CURRENT_LOGGING_SECTION=${LOG_SECTION:-build} # default to "build"
-	export CURRENT_LOGGING_DIR="${DEST}/${LOG_SUBPATH}" # origin: build-all-ng - @TODO: rpardini: lets revisit this later
+	export CURRENT_LOGGING_DIR="${DEST}/${LOG_SUBPATH}"  # origin: build-all-ng - @TODO: rpardini: lets revisit this later
 	export CURRENT_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.${CURRENT_LOGGING_SECTION}.log"
 	mkdir -p "${CURRENT_LOGGING_DIR}"
 

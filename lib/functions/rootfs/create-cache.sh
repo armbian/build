@@ -279,7 +279,7 @@ get_package_list_hash() {
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	(
+	( 
 		(
 			printf "%s\n" "${package_arr[@]}"
 			printf -- "-%s\n" "${exclude_arr[@]}"
