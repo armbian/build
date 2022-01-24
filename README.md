@@ -1,4 +1,4 @@
-<h3 align=center><a href="#build-tools"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
+<h3 align=center><a href="#build-framework"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
 build framework</h3>
 
 <p align=right>&nbsp;</p>
@@ -17,7 +17,7 @@ build framework</h3>
 - [Compare with industry standards](#compare-with-industry-standards)
 - [Where to download prebuilt images?](#where-to-download-prebuilt-images)
 - [Additional information](#additional-information)
-- [Build tools overview](#build-tools-overview)
+- [Build framework overview](#build-framework-overview)
 - [Support](#support)
 - [Contribute](#contribute)
 - [Social](#social)
@@ -65,7 +65,7 @@ Show work in progress areas in interactive mode:
 ./compile.sh EXPERT="yes"
 ```
 
-Run build tools inside Docker container:
+Run build framework inside Docker container:
 
 ```text
 ./compile.sh docker
@@ -129,7 +129,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 
 <p align=right><a href=#table-of-contents>⇧</a></p>
 
-## Build tools overview
+## Build framework overview
 
 ```text
 ├── cache                                Work / cache directory
@@ -148,7 +148,6 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   ├── sources                          Kernel and u-boot sources locations and scripts
 │   ├── templates                        User configuration templates which populate userpatches
 │   └── torrents                         External compiler and rootfs cache torrents
-├── lib                                  Main build tools libraries
 ├── output                               Build artifact
 │   └── deb                              Deb packages
 │   └── images                           Bootable images - RAW or compressed
@@ -170,7 +169,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 |       ├── u-boot-board                 For specific board
 |       └── u-boot-family                For entire kernel family
 └── userpatches                          User: configuration patching area
-    ├── lib.config                       User: tools common config/override file
+    ├── lib.config                       User: framework common config/override file
     ├── config-default.conf              User: default user config file
     ├── customize-image.sh               User: script will execute just before closing the image
     ├── atf                              User: ARM trusted firmware
@@ -183,9 +182,9 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 
 ## Support
 
-- Have you found a bug in the **build tools**? 
+- Have you found a bug in the **build framework**? 
 
-    Try to recreate it with a clean build tools clone. Then search for [existing and closed issues](https://github.com/armbian/build/issues). If you don't find it there, [open a new issue](https://github.com/armbian/build/issues/new).
+    Try to recreate it with a clean build framework clone. Then search for [existing and closed issues](https://github.com/armbian/build/issues). If you don't find it there, [open a new issue](https://github.com/armbian/build/issues/new).
 
 - Do you have troubles **elsewhere**? 
 
