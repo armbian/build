@@ -829,7 +829,19 @@ create_image()
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
-	if [[ $ROOTFS_TYPE != nfs ]]; then
+	if [[ $ROOTFS_TYPE == nfs ]]; then
+		call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
+*allow config to hack into the initramfs create process*
+Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
+PRE_UPDATE_INITRAMFS
+		# stage: create final initramfs
+		[[ -n $KERNELSOURCE ]] && {
+			update_initramfs $SDCARD
+		}
+		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
+		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
+			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "rootfs.tgz" | gzip -c > $DEST/images/${version}-rootfs.tgz
+	else
 		display_alert "Copying files to" "/"
 		echo -e "\nCopying files to [/]" >>"${DEST}"/${LOG_SUBPATH}/install.log
 		rsync -aHWXh \
@@ -840,10 +852,16 @@ create_image()
 			  --exclude="/tmp/*" \
 			  --exclude="/sys/*" \
 			  --info=progress0,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
-	else
-		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
-		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "rootfs.tgz" | gzip -c > $DEST/images/${version}-rootfs.tgz
+
+		call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
+*allow config to hack into the initramfs create process*
+Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
+PRE_UPDATE_INITRAMFS
+
+		# stage: create final initramfs
+		[[ -n $KERNELSOURCE ]] && {
+			update_initramfs $MOUNT
+		}
 	fi
 
 	# stage: rsync /boot
@@ -860,16 +878,6 @@ create_image()
 			  --info=progress0,stats1 \
 			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
 	fi
-
-	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
-*allow config to hack into the initramfs create process*
-Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
-PRE_UPDATE_INITRAMFS
-
-	# stage: create final initramfs
-	[[ -n $KERNELSOURCE ]] && {
-		update_initramfs $MOUNT
-	}
 
 	# DEBUG: print free space
 	local freespace=$(LC_ALL=C df -h)
