@@ -933,7 +933,6 @@ process_patch_file()
 	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
 	echo "Processing file $patch" >> "${DEST}"/${LOG_SUBPATH}/patching.log
-	echo "$patch" >> "${DEST}"/${LOG_SUBPATH}/series.armbian.log
 	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/${LOG_SUBPATH}/patching.log 2>&1
 
 	if [[ $? -ne 0 ]]; then
