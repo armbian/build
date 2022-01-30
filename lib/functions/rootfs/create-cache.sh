@@ -231,6 +231,7 @@ function create_new_rootfs_cache() {
 	}
 
 	# stage: remove downloaded packages
+	chroot_sdcard_apt_get autoremove
 	chroot_sdcard_apt_get clean
 
 	# DEBUG: print free space
@@ -260,7 +261,7 @@ function create_new_rootfs_cache() {
 	umount_chroot "$SDCARD"
 
 	tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-		--exclude='./sys/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $display_name" | lz4 -5 -c > "$cache_fname"
+		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $display_name" | lz4 -5 -c > "$cache_fname"
 
 	# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then

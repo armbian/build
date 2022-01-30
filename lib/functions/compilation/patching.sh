@@ -106,8 +106,8 @@ apply_patch_series() {
 	local flag
 	local err_pt=$(mktemp /tmp/apply_patch_series_XXXXX) # @OTODO: rpardini: hmm, why is this different from all others?
 
-	list=$(gawk '$0 !~ /^#.*|^-.*|^$/' "${series}")
-	skiplist=$(gawk '$0 ~ /^-.*/' "${series}")
+	list=$(awk '$0 !~ /^#.*|^-.*|^$/' "${series}")
+	skiplist=$(awk '$0 ~ /^-.*/{print $NF}' "${series}")
 
 	display_alert "apply a series of " "[$(echo $list | wc -w)] patches"
 	display_alert "skip [$(echo $skiplist | wc -w)] patches"
@@ -125,16 +125,16 @@ apply_patch_series() {
 
 		case $flag in
 			0)
-				printf "%-72s [\033[32m done \033[0m]\n" "${p#*/}"
-				printf "%-72s [ done ]\n" "${p#*/}" >> "${DEST}"/debug/patching.log
+				printf "%-77s [\033[32m done \033[0m]\n" "${p}"
+				printf "%-77s [ done ]\n" "${p}" >> "${DEST}"/debug/patching.log
 				;;
 			1)
-				printf "%-72s [\033[33m FAILED \033[0m]\n" "${p#*/}"
+				printf "%-77s [\033[33m FAILED \033[0m]\n" "${p}"
 				echo -e "For ${p} \t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
 				cat $err_pt >> "${DEST}"/debug/patching.log
 				;;
 			2)
-				printf "%-72s [\033[31m Patch wrong \033[0m]\n" "${p#*/}"
+				printf "%-77s [\033[31m Patch wrong \033[0m]\n" "${p}"
 				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
 				cat $err_pt >> "${DEST}"/debug/patching.log
 				;;

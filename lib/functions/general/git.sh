@@ -91,12 +91,8 @@ waiter_local_repo() {
 
 				# Handle an exception if the initial tag is the top of the branch
 				# As v5.16 == HEAD
-				if $(
-					git ls-remote -t $url ${start_tag}\* |
-						awk -F'/' '$NF !~ /v[4-5][.][1-9]{1,2}[.][1]$/ {
-					exit 1
-					}'
-				); then
+				if [ "${start_tag}.1" == "$(git ls-remote -t $url ${start_tag}.1 |
+					awk -F'/' '{ print $NF }')" ]; then
 					git fetch --shallow-exclude=$start_tag $name
 				else
 					git fetch --depth 1 $name
