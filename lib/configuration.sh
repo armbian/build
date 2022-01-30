@@ -590,6 +590,10 @@ fi
 
 if [[ "${ARCH}" == "amd64" ]]; then
 	UBUNTU_MIRROR='archive.ubuntu.com/ubuntu' # ports are only for non-amd64, of course.
+
+		if [[ -n ${CUSTOM_UBUNTU_MIRROR} ]]; then # ubuntu redirector doesn't work well on amd64
+			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR}"
+		fi
 fi
 
 # don't use mirrors that throws garbage on 404
