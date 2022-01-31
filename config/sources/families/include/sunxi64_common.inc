@@ -11,11 +11,11 @@ LINUXFAMILY=sunxi64
 
 case $BRANCH in
 
-	legacy)  KERNEL_VERSION_LEVEL="5.4" ;;
+	legacy)  KERNEL_VERSION_LEVEL="5.10" ;;
 
-	current) KERNEL_VERSION_LEVEL="5.10" ;;
+	current) KERNEL_VERSION_LEVEL="5.15" ;;
 
-	edge) KERNEL_VERSION_LEVEL="5.15" ;;
+	edge) KERNEL_VERSION_LEVEL="5.16" ;;
 esac
 
 case "$KERNEL_VERSION_LEVEL" in
