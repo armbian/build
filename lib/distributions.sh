@@ -704,6 +704,12 @@ install_distribution_specific()
 
 	esac
 
+	# use list modules INITRAMFS
+	if [ -f "${SRC}"/config/modules/"${MODULES_LIST}" ]; then
+		display_alert "Use file list modules INITRAMFS" "${MODULES_LIST}"
+		sed -i "s/^MODULES=.*/MODULES=list/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
+		cat "${SRC}"/config/modules/"${MODULES_LIST}" >> "${SDCARD}"/etc/initramfs-tools/modules
+	fi
 }
 
 
