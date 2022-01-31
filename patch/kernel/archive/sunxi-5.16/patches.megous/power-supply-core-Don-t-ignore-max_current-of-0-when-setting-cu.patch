@@ -1,0 +1,89 @@
+From a3ed0cabec2f1cf2e00ca33e9be11fb6878a276c Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Sun, 14 Nov 2021 21:24:05 +0100
+Subject: [PATCH 258/446] power: supply: core: Don't ignore max_current of 0
+ when setting current limit
+
+If we ignore current limit of 0, the dependent power source will not
+set input current limit to that value when the supplier changes max
+current to 0. This may happen when USB power is disconnected from the
+device.
+
+On next connection, the dependent power supply will start consuming
+power at the previously set limit even before the PD/BC1.2 power
+negotiation has a chance to complete.
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/power/supply/power_supply_core.c | 47 ++++++++++--------------
+ 1 file changed, 20 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/power/supply/power_supply_core.c b/drivers/power/supply/power_supply_core.c
+index 6093754ce..1c5be0dba 100644
+--- a/drivers/power/supply/power_supply_core.c
++++ b/drivers/power/supply/power_supply_core.c
+@@ -375,41 +375,34 @@ int power_supply_is_system_supplied(void)
+ }
+ EXPORT_SYMBOL_GPL(power_supply_is_system_supplied);
+ 
+-static int __power_supply_get_supplier_max_current(struct device *dev,
+-						   void *data)
+-{
+-	union power_supply_propval ret = {0,};
+-	struct power_supply *epsy = dev_get_drvdata(dev);
+-	struct power_supply *psy = data;
+-
+-	if (__power_supply_is_supplied_by(epsy, psy))
+-		if (!epsy->desc->get_property(epsy,
+-					      POWER_SUPPLY_PROP_CURRENT_MAX,
+-					      &ret))
+-			return ret.intval;
+-
+-	return 0;
+-}
+-
+ int power_supply_set_input_current_limit_from_supplier(struct power_supply *psy)
+ {
+ 	union power_supply_propval val = {0,};
+-	int curr;
++	struct class_dev_iter iter;
++	struct power_supply *epsy;
++	struct device *dev;
++	int ret;
+ 
+ 	if (!psy->desc->set_property)
+ 		return -EINVAL;
+ 
+-	/*
+-	 * This function is not intended for use with a supply with multiple
+-	 * suppliers, we simply pick the first supply to report a non 0
+-	 * max-current.
+-	 */
+-	curr = class_for_each_device(power_supply_class, NULL, psy,
+-				      __power_supply_get_supplier_max_current);
+-	if (curr <= 0)
+-		return (curr == 0) ? -ENODEV : curr;
++	class_dev_iter_init(&iter, power_supply_class, NULL, NULL);
++	while ((dev = class_dev_iter_next(&iter))) {
++		epsy = dev_get_drvdata(dev);
++
++		if (!__power_supply_is_supplied_by(epsy, psy))
++			continue;
+ 
+-	val.intval = curr;
++		ret = epsy->desc->get_property(epsy,
++					       POWER_SUPPLY_PROP_CURRENT_MAX,
++					       &val);
++		if (!ret)
++			break;
++	}
++	class_dev_iter_exit(&iter);
++
++	if (ret)
++		return ret;
+ 
+ 	return psy->desc->set_property(psy,
+ 				POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &val);
+-- 
+2.31.1
+
