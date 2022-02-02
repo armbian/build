@@ -111,6 +111,10 @@ compilation_prepare()
 
 		display_alert "Adding" "Kernel splash file" "info"
 
+                if linux-version compare "${version}" ge 5.16; then
+                        process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbdev-Garbage-collect-fbdev-scrolling-acceler.patch" "applying"
+                fi
+
                 if linux-version compare "${version}" ge 5.13; then
                         process_patch_file "${SRC}/patch/misc/bootsplash-5.10.y-0001-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
                 fi
