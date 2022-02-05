@@ -552,9 +552,8 @@ prepare_extra_kernel_drivers() {
 
 	# Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets
 	# For sunxi, these two patches are applied in a series.
-	if linux-version compare "${version}" ge 5.11 && [[ "$LINUXFAMILY" != sunxi* ]] && [[ "$EXTRAWIFI" == yes ]]; then
+	if linux-version compare "${version}" ge 5.11 && [[ "$LINUXFAMILY" != sunxi* ]]; then
 		display_alert "Adding" "Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets" "info"
-
 		process_patch_file "${SRC}/patch/misc/bluetooth-rtl8822cs-hci_ver-0x8.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/Bluetooth-hci_h5-Add-power-reset-via-gpio-in-h5_btrt.patch" "applying"
 	fi

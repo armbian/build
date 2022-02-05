@@ -101,6 +101,12 @@ main_default_build_single() {
 		LOG_SECTION="create_bsp_desktop_package" do_with_logging create_bsp_desktop_package
 	fi
 
+	# skip image creation if exists. useful for CI when making a lot of images
+	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
+		display_alert "Skipping image creation" "image already made - IMAGE_PRESENT is set" "wrn"
+		exit
+	fi
+
 	# build additional packages
 	if [[ $EXTERNAL_NEW == compile ]]; then
 		LOG_SECTION="chroot_build_packages" do_with_logging chroot_build_packages

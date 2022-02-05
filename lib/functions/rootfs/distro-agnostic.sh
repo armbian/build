@@ -152,7 +152,6 @@ install_distribution_agnostic() {
 
 	# create extlinux config file @TODO: refactor into extensions u-boot, extlinux
 	if [[ $SRC_EXTLINUX == yes ]]; then
-
 		mkdir -p $SDCARD/boot/extlinux
 		cat <<- EOF > "$SDCARD/boot/extlinux/extlinux.conf"
 			LABEL ${VENDOR}
@@ -160,7 +159,9 @@ install_distribution_agnostic() {
 			  INITRD /boot/$NAME_INITRD
 		EOF
 		if [[ -n $BOOT_FDT_FILE ]]; then
-			echo "  FDT /boot/dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
+			if [[ $BOOT_FDT_FILE != "none" ]]; then
+				echo "  FDT /boot/dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
+			fi
 		else
 			echo "  FDTDIR /boot/dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		fi
