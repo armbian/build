@@ -283,10 +283,10 @@ install_distribution_agnostic() {
 		fi
 	}
 
-	call_extension_method "pre_install_kernel_debs" << 'PRE_INSTALL_KERNEL_DEBS'
-*called before installing the Armbian-built kernel deb packages*
-It is not too late to `unset KERNELSOURCE` here and avoid kernel install.
-PRE_INSTALL_KERNEL_DEBS
+	call_extension_method "pre_install_kernel_debs" <<- 'PRE_INSTALL_KERNEL_DEBS'
+		*called before installing the Armbian-built kernel deb packages*
+		It is not too late to `unset KERNELSOURCE` here and avoid kernel install.
+	PRE_INSTALL_KERNEL_DEBS
 
 	# install kernel
 	[[ -n $KERNELSOURCE ]] && {
@@ -312,11 +312,11 @@ PRE_INSTALL_KERNEL_DEBS
 		fi
 	}
 
-	call_extension_method "post_install_kernel_debs" << 'POST_INSTALL_KERNEL_DEBS'
-*allow config to do more with the installed kernel/headers*
-Called after packages, u-boot, kernel and headers installed in the chroot, but before the BSP is installed.
-If `KERNELSOURCE` is (still?) unset after this, Armbian-built firmware will not be installed.
-POST_INSTALL_KERNEL_DEBS
+	call_extension_method "post_install_kernel_debs" <<- 'POST_INSTALL_KERNEL_DEBS'
+		*allow config to do more with the installed kernel/headers*
+		Called after packages, u-boot, kernel and headers installed in the chroot, but before the BSP is installed.
+		If `KERNELSOURCE` is (still?) unset after this, Armbian-built firmware will not be installed.
+	POST_INSTALL_KERNEL_DEBS
 
 	# install board support packages
 	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
@@ -408,11 +408,11 @@ POST_INSTALL_KERNEL_DEBS
 		display_alert "Done with family_tweaks" "$BOARD :: $LINUXFAMILY" "debug"
 	fi
 
-	call_extension_method "post_family_tweaks" << 'FAMILY_TWEAKS'
-*customize the tweaks made by $LINUXFAMILY-specific family_tweaks*
-It is run after packages are installed in the rootfs, but before enabling additional services.
-It allows implementors access to the rootfs (`${SDCARD}`) in its pristine state after packages are installed.
-FAMILY_TWEAKS
+	call_extension_method "post_family_tweaks" <<- 'FAMILY_TWEAKS'
+		*customize the tweaks made by $LINUXFAMILY-specific family_tweaks*
+		It is run after packages are installed in the rootfs, but before enabling additional services.
+		It allows implementors access to the rootfs (`${SDCARD}`) in its pristine state after packages are installed.
+	FAMILY_TWEAKS
 
 	# enable additional services
 	chroot_sdcard systemctl --no-reload enable armbian-firstrun.service || true

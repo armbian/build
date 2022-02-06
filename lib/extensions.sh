@@ -275,21 +275,21 @@ run_after_build__999_finish_extension_manager() {
 	export defined_hook_point_functions hook_point_function_trace_sources
 
 	# eat our own dog food, pt2.
-	call_extension_method "extension_metadata_ready" << 'EXTENSION_METADATA_READY'
-*meta-Meta time!*
-Implement this hook to work with/on the meta-data made available by the extension manager.
-Interesting stuff to process:
-- `"${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt"` contains a list of all hook points called, in order.
-- For each hook_point in the list, more files will have metadata about that hook point.
-  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.orig.md` contains the hook documentation at the call site (inline docs), hopefully in Markdown format.
-  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.compat` contains the compatibility names for the hooks.
-  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.exports` contains _exported_ environment variables.
-  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.vars` contains _all_ environment variables.
-- `${defined_hook_point_functions}` is a map of _all_ the defined hook point functions and their extension information.
-- `${hook_point_function_trace_sources}` is a map of all the hook point functions _that were really called during the build_ and their BASH_SOURCE information.
-- `${hook_point_function_trace_lines}` is the same, but BASH_LINENO info.
-After this hook is done, the `${EXTENSION_MANAGER_TMP_DIR}` will be removed.
-EXTENSION_METADATA_READY
+	call_extension_method "extension_metadata_ready" <<- 'EXTENSION_METADATA_READY'
+		*meta-Meta time!*
+		Implement this hook to work with/on the meta-data made available by the extension manager.
+		Interesting stuff to process:
+		- `"${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt"` contains a list of all hook points called, in order.
+		- For each hook_point in the list, more files will have metadata about that hook point.
+		  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.orig.md` contains the hook documentation at the call site (inline docs), hopefully in Markdown format.
+		  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.compat` contains the compatibility names for the hooks.
+		  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.exports` contains _exported_ environment variables.
+		  - `${EXTENSION_MANAGER_TMP_DIR}/hook_point.vars` contains _all_ environment variables.
+		- `${defined_hook_point_functions}` is a map of _all_ the defined hook point functions and their extension information.
+		- `${hook_point_function_trace_sources}` is a map of all the hook point functions _that were really called during the build_ and their BASH_SOURCE information.
+		- `${hook_point_function_trace_lines}` is the same, but BASH_LINENO info.
+		After this hook is done, the `${EXTENSION_MANAGER_TMP_DIR}` will be removed.
+	EXTENSION_METADATA_READY
 
 	# Move temporary log file over to final destination, and start writing to it instead (although 999 is pretty late in the game)
 	mv "${EXTENSION_MANAGER_LOG_FILE}" "${DEST}/${LOG_SUBPATH:-debug}/extensions.log"

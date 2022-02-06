@@ -126,11 +126,11 @@ main_default_build_single() {
 		display_alert "Done building image" "${BOARD}" "target-reached"
 	fi
 
-	call_extension_method "run_after_build" << 'RUN_AFTER_BUILD'
-*hook for function to run after build, i.e. to change owner of `$SRC`*
-Really one of the last hooks ever called. The build has ended. Congratulations.
-- *NOTE:* this will run only if there were no errors during build process.
-RUN_AFTER_BUILD
+	call_extension_method "run_after_build" <<- 'RUN_AFTER_BUILD'
+		*hook for function to run after build, i.e. to change owner of `$SRC`*
+		Really one of the last hooks ever called. The build has ended. Congratulations.
+		- *NOTE:* this will run only if there were no errors during build process.
+	RUN_AFTER_BUILD
 
 	# Cleanup. Remove the WORKDIR, unset the TMPDIR
 	unset TMPDIR

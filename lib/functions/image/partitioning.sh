@@ -68,10 +68,10 @@ prepare_partitions() {
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
 	UEFI_FS_LABEL="${UEFI_FS_LABEL:-ARMBIEFI}" # Should be always uppercase
 
-	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" << 'PRE_PREPARE_PARTITIONS'
-*allow custom options for mkfs*
-Good time to change stuff like mkfs opts, types etc.
-PRE_PREPARE_PARTITIONS
+	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<- 'PRE_PREPARE_PARTITIONS'
+		*allow custom options for mkfs*
+		Good time to change stuff like mkfs opts, types etc.
+	PRE_PREPARE_PARTITIONS
 
 	# stage: determine partition configuration
 	if [[ -n $BOOTFS_TYPE ]]; then
@@ -117,13 +117,13 @@ PRE_PREPARE_PARTITIONS
 	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
 	display_alert "Current rootfs size" "$rootfs_size MiB" "info"
 
-	call_extension_method "prepare_image_size" "config_prepare_image_size" << 'PREPARE_IMAGE_SIZE'
-*allow dynamically determining the size based on the $rootfs_size*
-Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}` is taken into account.
-A good spot to determine `FIXED_IMAGE_SIZE` based on `rootfs_size`.
-UEFISIZE can be set to 0 for no UEFI partition, or to a size in MiB to include one.
-Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
-PREPARE_IMAGE_SIZE
+	call_extension_method "prepare_image_size" "config_prepare_image_size" <<- 'PREPARE_IMAGE_SIZE'
+		*allow dynamically determining the size based on the $rootfs_size*
+		Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}` is taken into account.
+		A good spot to determine `FIXED_IMAGE_SIZE` based on `rootfs_size`.
+		UEFISIZE can be set to 0 for no UEFI partition, or to a size in MiB to include one.
+		Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
+	PREPARE_IMAGE_SIZE
 
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"

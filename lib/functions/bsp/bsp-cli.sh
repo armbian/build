@@ -289,10 +289,10 @@ create_board_package() {
 		display_alert "Done with family_tweaks_bsp" "${LINUXFAMILY}" "debug"
 	fi
 
-	call_extension_method "post_family_tweaks_bsp" << 'POST_FAMILY_TWEAKS_BSP'
-*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
-This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
-POST_FAMILY_TWEAKS_BSP
+	call_extension_method "post_family_tweaks_bsp" <<- 'POST_FAMILY_TWEAKS_BSP'
+		*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
+		This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
+	POST_FAMILY_TWEAKS_BSP
 
 	# add some summary to the image
 	fingerprint_image "${destination}/etc/armbian.txt"

@@ -47,10 +47,10 @@ create_image_from_sdcard_rootfs() {
 		run_host_command_logged rsync -aHWXh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT"
 	fi
 
-	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
-*allow config to hack into the initramfs create process*
-Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
-PRE_UPDATE_INITRAMFS
+	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" <<- 'PRE_UPDATE_INITRAMFS'
+		*allow config to hack into the initramfs create process*
+		Called after rsync has synced both `/root` and `/root` on the target, but before calling `update_initramfs`.
+	PRE_UPDATE_INITRAMFS
 
 	# stage: create final initramfs
 	[[ -n $KERNELSOURCE ]] && {
@@ -82,10 +82,10 @@ PRE_UMOUNT_FINAL_IMAGE
 	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
-	call_extension_method "post_umount_final_image" "config_post_umount_final_image" << 'POST_UMOUNT_FINAL_IMAGE'
-*allow config to hack into the image after the unmount*
-Called after unmounting both `/root` and `/boot`.
-POST_UMOUNT_FINAL_IMAGE
+	call_extension_method "post_umount_final_image" "config_post_umount_final_image" <<- 'POST_UMOUNT_FINAL_IMAGE'
+		*allow config to hack into the image after the unmount*
+		Called after unmounting both `/root` and `/boot`.
+	POST_UMOUNT_FINAL_IMAGE
 
 	# to make sure its unmounted
 	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts; do
@@ -179,13 +179,13 @@ POST_UMOUNT_FINAL_IMAGE
 
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
 	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
-	call_extension_method "post_build_image" << 'POST_BUILD_IMAGE'
-*custom post build hook*
-Called after the final .img file is built, before it is (possibly) written to an SD writer.
-- *NOTE*: this hook used to take an argument ($1) for the final image produced.
-  - Now it is passed as an environment variable `${FINAL_IMAGE_FILE}`
-It is the last possible chance to modify `$CARD_DEVICE`.
-POST_BUILD_IMAGE
+	call_extension_method "post_build_image" <<- 'POST_BUILD_IMAGE'
+		*custom post build hook*
+		Called after the final .img file is built, before it is (possibly) written to an SD writer.
+		- *NOTE*: this hook used to take an argument ($1) for the final image produced.
+		  - Now it is passed as an environment variable `${FINAL_IMAGE_FILE}`
+		It is the last possible chance to modify `$CARD_DEVICE`.
+	POST_BUILD_IMAGE
 
 	# move artefacts from temporally directory to its final destination
 	[[ -n $compression_type ]] && rm $DESTIMG/${version}.img
