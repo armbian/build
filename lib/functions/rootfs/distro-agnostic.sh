@@ -267,7 +267,7 @@ install_distribution_agnostic() {
 		_pkg_list=${PACKAGE_LIST_BOARD_REMOVE}
 		display_alert "Removing PACKAGE_LIST_BOARD_REMOVE packages" "${_pkg_list}"
 		for PKG_REMOVE in ${_pkg_list}; do
-			chroot_sdcard_apt_get remove --auto-remove "${PKG_REMOVE}" 2>&1
+			chroot_sdcard_apt_get remove --auto-remove "${PKG_REMOVE}"
 		done
 	fi
 
@@ -414,14 +414,14 @@ install_distribution_agnostic() {
 		It allows implementors access to the rootfs (`${SDCARD}`) in its pristine state after packages are installed.
 	FAMILY_TWEAKS
 
-	# enable additional services
-	chroot_sdcard systemctl --no-reload enable armbian-firstrun.service || true
-	chroot_sdcard systemctl --no-reload enable armbian-firstrun-config.service || true
-	chroot_sdcard systemctl --no-reload enable armbian-zram-config.service || true
-	chroot_sdcard systemctl --no-reload enable armbian-hardware-optimize.service || true
-	chroot_sdcard systemctl --no-reload enable armbian-ramlog.service || true
-	chroot_sdcard systemctl --no-reload enable armbian-resize-filesystem.service || true
-	chroot_sdcard systemctl --no-reload enable armbian-hardware-monitor.service || true
+	# enable additional services, if they exist.
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun.service
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun-config.service
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-zram-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-zram-config.service
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service ]] && chroot_sdcard systemctl --no-reload enable armbian-hardware-optimize.service
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-ramlog.service ]] && chroot_sdcard systemctl --no-reload enable armbian-ramlog.service
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-resize-filesystem.service ]] && chroot_sdcard systemctl --no-reload enable armbian-resize-filesystem.service
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-hardware-monitor.service ]] && chroot_sdcard systemctl --no-reload enable armbian-hardware-monitor.service
 
 	# copy "first run automated config, optional user configured"
 	cp "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
