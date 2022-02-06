@@ -108,10 +108,11 @@ function boot_logo() {
 		[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt &&
 			sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt || echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
 		[[ -f "${SDCARD}"/boot/boot.ini ]] && sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
+
+		# enable additional services. @TODO: rpardini: really wonder where do these come from?
+		chroot_sdcard "systemctl --no-reload enable bootsplash-ask-password-console.path || true"
+		chroot_sdcard "systemctl --no-reload enable bootsplash-hide-when-booted.service || true"
+		chroot_sdcard "systemctl --no-reload enable bootsplash-show-on-shutdown.service || true"
 	fi
-	# enable additional services
-	chroot_sdcard systemctl --no-reload enable bootsplash-ask-password-console.path || true
-	chroot_sdcard systemctl --no-reload enable bootsplash-hide-when-booted.service || true
-	chroot_sdcard systemctl --no-reload enable bootsplash-show-on-shutdown.service || true
 	return 0
 }
