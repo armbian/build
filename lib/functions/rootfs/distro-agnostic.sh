@@ -262,13 +262,20 @@ install_distribution_agnostic() {
 		chroot_sdcard_apt_get remove --auto-remove ${_pkg_list}
 	fi
 
-	# remove board packages
+	# remove board packages. loop over the list to remove, check if they're actually installed, then remove individually.
 	if [[ -n ${PACKAGE_LIST_BOARD_REMOVE} ]]; then
 		_pkg_list=${PACKAGE_LIST_BOARD_REMOVE}
-		display_alert "Removing PACKAGE_LIST_BOARD_REMOVE packages" "${_pkg_list}"
+		declare -a currently_installed_packages
+		# shellcheck disable=SC2207 # I wanna split, thanks.
+		currently_installed_packages=($(chroot_sdcard_with_stdout dpkg-query --show --showformat='${Package} '))
 		for PKG_REMOVE in ${_pkg_list}; do
-			chroot_sdcard_apt_get remove --auto-remove "${PKG_REMOVE}"
+			# shellcheck disable=SC2076 # I wanna match literally, thanks.
+			if [[ " ${currently_installed_packages[*]} " =~ " ${PKG_REMOVE} " ]]; then
+				display_alert "Removing PACKAGE_LIST_BOARD_REMOVE package" "${PKG_REMOVE}"
+				chroot_sdcard_apt_get remove --auto-remove "${PKG_REMOVE}"
+			fi
 		done
+		unset currently_installed_packages
 	fi
 
 	# install u-boot

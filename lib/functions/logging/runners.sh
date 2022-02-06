@@ -19,6 +19,12 @@ function chroot_sdcard() {
 	TMPDIR="" run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -c "$*"
 }
 
+# This should be used if you need to capture the stdout produced by the command. It is NOT logged, and NOT run thru bash, and NOT quoted.
+function chroot_sdcard_with_stdout() {
+	TMPDIR="" chroot "${SDCARD}" "$@"
+}
+
+
 function chroot_custom_long_running() {
 	local target=$1
 	shift
