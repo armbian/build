@@ -120,26 +120,28 @@ apply_patch_series() {
 			awk '$0 ~ /^+.*patch$/{print $2}' |
 			xargs -I % sh -c 'rm -f %'
 
-		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" > $err_pt 2>&1
+		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >> $err_pt 2>&1
 		flag=$?
 
 		case $flag in
 			0)
-				printf "%-77s [\033[32m done \033[0m]\n" "${p}"
-				printf "%-77s [ done ]\n" "${p}" >> "${DEST}"/debug/patching.log
+				printf "[\033[32m done \033[0m]    %s\n" "${p}"
+				printf "[ done ]    %s\n" "${p}" >> "${DEST}"/debug/patching.log
 				;;
 			1)
-				printf "%-77s [\033[33m FAILED \033[0m]\n" "${p}"
-				echo -e "For ${p} \t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
+				printf "[\033[33m FAILED \033[0m]  %s\n" "${p}"
+				echo -e "[ FAILED ]  For ${p} \t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
 				cat $err_pt >> "${DEST}"/debug/patching.log
 				;;
 			2)
-				printf "%-77s [\033[31m Patch wrong \033[0m]\n" "${p}"
+				printf "[\033[31m Patch wrong \033[0m] %s\n" "${p}"
 				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
 				cat $err_pt >> "${DEST}"/debug/patching.log
 				;;
 		esac
+		echo "" > $err_pt
 	done
+	echo "" >> "${DEST}"/debug/patching.log
 	rm $err_pt
 }
 
