@@ -324,7 +324,7 @@ waiter_local_repo ()
 	mkdir -p $work_dir
 	cd $work_dir || exit_with_error
 
-	display_alert "Checking git sources" "$dir $name/$branch" "info"
+	display_alert "Checking git sources" "$dir $url$name/$branch" "info"
 
 	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
 		git init -q .
@@ -334,7 +334,7 @@ waiter_local_repo ()
 			(
 			$VAR_SHALLOW_ORIGINAL
 
-			display_alert "Add original git sources" "$dir $name/$branch" "info"
+			display_alert "Add original git sources" "$dir $url$name/$branch" "info"
 			if [ "$(git ls-remote -h $url $branch | \
 				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
 				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"

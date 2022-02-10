@@ -765,7 +765,7 @@ PREPARE_IMAGE_SIZE
 
 	# create extlinux config
 	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
-		echo "  APPEND root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
+		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 	fi
 
@@ -913,21 +913,6 @@ POST_UMOUNT_FINAL_IMAGE
 
 	mkdir -p $DESTIMG
 	mv ${SDCARD}.raw $DESTIMG/${version}.img
-
-	FINALDEST=$DEST/images
-	[[ "${BUILD_ALL}" == yes ]] && MAKE_FOLDERS="yes"
-
-	if [[ "${MAKE_FOLDERS}" == yes ]]; then
-		if [[ "$RC" == yes ]]; then
-			FINALDEST=$DEST/images/"${BOARD}"/RC
-		elif [[ "$BETA" == yes ]]; then
-			FINALDEST=$DEST/images/"${BOARD}"/nightly
-		else
-			FINALDEST=$DEST/images/"${BOARD}"/archive
-		fi
-		install -d ${FINALDEST}
-	fi
-
 
 	# custom post_build_image_modify hook to run before fingerprinting and compression
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
