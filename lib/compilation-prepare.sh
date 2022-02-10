@@ -111,8 +111,9 @@ compilation_prepare()
 
 		display_alert "Adding" "Kernel splash file" "info"
 
-                if linux-version compare "${version}" ge 5.16; then
-                        process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbdev-Garbage-collect-fbdev-scrolling-acceler.patch" "applying"
+                if linux-version compare "${version}" ge 5.15; then
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0002-Revert-Revert-fbcon-Disable-accelerated-scrolling.patch" "applying"
                 fi
 
                 if linux-version compare "${version}" ge 5.13; then
@@ -172,6 +173,7 @@ compilation_prepare()
 		# manual overrides
 		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5 ; then aufstag="5.4.3"; fi
 		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11 ; then aufstag="5.10.82"; fi
+		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16 ; then aufstag="5.15.5"; fi
 
 		# check if Mr. Okajima already made a branch for this version
 		improved_git ls-remote --exit-code --heads $GITHUB_SOURCE/sfjro/aufs5-standalone "aufs${aufstag}" >/dev/null
