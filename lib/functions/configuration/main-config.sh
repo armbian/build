@@ -63,7 +63,7 @@ function do_main_configuration() {
 	if [[ "${MAKE_FOLDERS}" == yes ]]; then
 
 		if [[ "$RC" == yes ]]; then
-			FINALDEST=$DEST/images/"${BOARD}"/RC
+			FINALDEST=$DEST/images/"${BOARD}"/rc
 		elif [[ "$BETA" == yes ]]; then
 			FINALDEST=$DEST/images/"${BOARD}"/nightly
 		else
