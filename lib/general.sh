@@ -15,7 +15,7 @@
 # get_package_list_hash
 # create_sources_list
 # clean_up_repo
-# waiter_local_repo
+# waiter_local_git
 # fetch_from_repo
 # improved_git
 # display_alert
@@ -291,6 +291,15 @@ clean_up_git ()
 #			dir='linux-mainline/5.14' \
 #			branch='orange-pi-5.14' \
 #			obj=<tag|commit> or tag:$tag ...
+# An optional parameter for switching to a git object such as a tag, commit,
+# or a specific branch. The object must exist in the local repository.
+# This optional parameter takes precedence. If it is specified, then
+# the commit state corresponding to the specified git object will be extracted
+# to the working directory. Otherwise, the commit corresponding to the top of
+# the branch will be extracted.
+# The settings for the kernel variables of the original kernel
+# VAR_SHALLOW_ORIGINAL=var_origin_kernel must be in the main script
+# before calling the function
 waiter_local_git ()
 {
 	for arg in $@;do
