@@ -12,9 +12,9 @@ GOVERNOR=ondemand
 
 case $BRANCH in
 
-	legacy) KERNEL_VERSION_LEVEL="5.4" ;;
-	current) KERNEL_VERSION_LEVEL="5.10" ;;
-	edge) KERNEL_VERSION_LEVEL="5.15" ;;
+	legacy) KERNEL_VERSION_LEVEL="5.10" ;;
+	current) KERNEL_VERSION_LEVEL="5.15" ;;
+	edge) KERNEL_VERSION_LEVEL="5.16" ;;
 
 esac
 
