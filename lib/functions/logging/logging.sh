@@ -22,7 +22,6 @@ function logging_error_show_log() {
 	local logfile_to_show="$4"
 
 	if [[ -f "${logfile_to_show}" ]]; then
-
 		local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 		display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"

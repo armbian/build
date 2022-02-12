@@ -44,8 +44,7 @@ unmount_on_exit() {
 # added by main_default_build_single to show details about errors when they happen and exit. exit might trigger the above.
 function main_error_monitor() {
 	if [[ "${ALREADY_EXITING_WITH_ERROR}" == "yes" ]]; then
-		display_alert "second run detected" "ERR trap" "err"
-		#exit 46
+		return 46
 	fi
 	local errcode="${1}"
 	# If there's no error, do nothing.
@@ -61,7 +60,6 @@ function main_error_monitor() {
 	display_alert "main_error_monitor: error code ${errcode}" "\n${stack_caller}\n" "err"
 
 	ALREADY_EXITING_WITH_ERROR=yes
-	trap - EXIT # remove EXIT trap, we're gonna exit...
 	exit 45
 	return 44
 }
