@@ -420,28 +420,11 @@ enable_extension() {
 	# store a list of existing functions at this point, before sourcing the extension.
 	before_function_list="$(compgen -A function)"
 
-	# error handling during a 'source' call is quite insane in bash after 4.3.
-	# to be able to catch errors in sourced scripts the only way is to trap
-	declare -i extension_source_generated_error=0
-	trap 'extension_source_generated_error=1;' ERR
-
-	# source the file. extensions are not supposed to do anything except export variables and define functions, so nothing should happen here.
-	# there is no way to enforce it though, short of static analysis.
-	# we could punish the extension authors who violate it by removing some essential variables temporarily from the environment during this source, and restore them later.
 	# shellcheck disable=SC1090
 	source "${extension_file}"
 
-	# remove the trap we set.
-	trap - ERR
-
 	# decrement the recurse counter, so calls to this method are allowed again.
 	enable_extension_recurse_counter=$((enable_extension_recurse_counter - 1))
-
-	# test if it fell into the trap, and abort immediately with an error.
-	if [[ $extension_source_generated_error != 0 ]]; then
-		display_alert "Extension failed to load" "${extension_file}" "err"
-		exit 4
-	fi
 
 	# get a new list of functions after sourcing the extension
 	after_function_list="$(compgen -A function)"
