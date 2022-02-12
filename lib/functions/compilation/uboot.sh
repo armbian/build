@@ -30,10 +30,9 @@ function compile_uboot_target() {
 	fi
 
 	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"
+	export MSG_IF_ERROR="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
-		make "$CTHREADS" "$BOOTCONFIG" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\"" || {
-		exit_with_error "${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
-	}
+		make "$CTHREADS" "$BOOTCONFIG" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 
 	# armbian specifics u-boot settings
 	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
@@ -66,9 +65,8 @@ function compile_uboot_target() {
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
-	run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" make "$target_make" "$CTHREADS" "${cross_compile}" || {
-		exit_with_error "${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
-	}
+	export MSG_IF_ERROR="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
+	run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" make "$target_make" "$CTHREADS" "${cross_compile}"
 
 	if [[ $(type -t uboot_custom_postprocess) == function ]]; then
 		display_alert "${uboot_prefix}Postprocessing u-boot" "${version} ${target_make}"

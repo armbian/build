@@ -126,9 +126,8 @@ function create_new_rootfs_cache() {
 	cp /usr/share/keyrings/*-archive-keyring.gpg "${SDCARD}/usr/share/keyrings/"
 
 	display_alert "Installing base system" "Stage 2/2" "info"
-	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage 2>&1 || { # invoke inside chroot/qemu, stderr to stdout.
-		exit_with_error "Debootstrap second stage failed" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
-	}
+	export MSG_IF_ERROR="Debootstrap second stage failed ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
+	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"
 
 	mount_chroot "${SDCARD}"
@@ -171,15 +170,11 @@ function create_new_rootfs_cache() {
 
 	# stage: update packages list
 	display_alert "Updating package list" "$RELEASE" "info"
-	chroot_sdcard_apt_get update || {
-		display_alert "Updating package lists" "failed" "wrn"
-	}
+	chroot_sdcard_apt_get update
 
 	# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 	display_alert "Upgrading base packages" "Armbian" "info"
-	chroot_sdcard_apt_get upgrade || {
-		display_alert "Upgrading packages" "failed" "wrn"
-	}
+	chroot_sdcard_apt_get upgrade
 
 	# Myy: Dividing the desktop packages installation steps into multiple
 	# ones. We first install the "ADDITIONAL_PACKAGES" in order to get
@@ -189,9 +184,8 @@ function create_new_rootfs_cache() {
 
 	# stage: install additional packages
 	display_alert "Installing the main packages for" "Armbian" "info"
-	chroot_sdcard_apt_get_install "$PACKAGE_MAIN_LIST" || {
-		exit_with_error "Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
-	}
+	export MSG_IF_ERROR="Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+	chroot_sdcard_apt_get_install "$PACKAGE_MAIN_LIST"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		# FIXME Myy : Are we keeping this only for Desktop users,
@@ -213,22 +207,19 @@ function create_new_rootfs_cache() {
 		fi
 
 		display_alert "Installing the desktop packages for" "Armbian" "info"
-		chroot_sdcard_apt_get install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP || {
-			exit_with_error "Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
-		}
+		MSG_IF_ERROR="Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+		chroot_sdcard_apt_get install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP
 	fi
 
 	# Remove packages from packages.uninstall
 	display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
 	# shellcheck disable=SC2086
-	chroot_sdcard_apt_get purge $PACKAGE_LIST_UNINSTALL || exit_with_error "Un-Installation of packages failed"
+	chroot_sdcard_apt_get purge $PACKAGE_LIST_UNINSTALL
 
 	# stage: purge residual packages
 	display_alert "Purging residual packages for" "Armbian" "info"
 	PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
-	chroot_sdcard_apt_get remove --purge $PURGINGPACKAGES || {
-		exit_with_error "Purging of residual Armbian packages failed"
-	}
+	chroot_sdcard_apt_get remove --purge $PURGINGPACKAGES
 
 	# stage: remove downloaded packages
 	chroot_sdcard_apt_get autoremove
@@ -280,7 +271,7 @@ get_package_list_hash() {
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	( 
+	(
 		(
 			printf "%s\n" "${package_arr[@]}"
 			printf -- "-%s\n" "${exclude_arr[@]}"

@@ -249,10 +249,7 @@ install_distribution_agnostic() {
 		_pkg_list=${PACKAGE_LIST_BOARD}
 		display_alert "Installing PACKAGE_LIST_BOARD packages" "${_pkg_list}"
 		# shellcheck disable=SC2086 # we need to expand.
-		chroot_sdcard_apt_get_install ${_pkg_list} || {
-			# exit_with_error will collaborate with logging to show the current log before exiting.
-			exit_with_error "Failed to install PACKAGE_LIST_BOARD" "${_pkg_list}" "err"
-		}
+		chroot_sdcard_apt_get_install ${_pkg_list}
 	fi
 
 	# remove family packages

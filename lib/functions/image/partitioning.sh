@@ -199,22 +199,22 @@ prepare_partitions() {
 				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${uefistart}s ${uefiend}s
 				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 				# transpose so BIOS is in sda14; EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
-				sgdisk --transpose 1:14 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 1:14 FAILED"
-				sgdisk --transpose 2:15 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 2:15 FAILED"
-				sgdisk --transpose 3:1 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 3:1 FAILED"
+				sgdisk --transpose 1:14 ${SDCARD}.raw
+				sgdisk --transpose 2:15 ${SDCARD}.raw
+				sgdisk --transpose 3:1 ${SDCARD}.raw
 				# set the ESP (efi) flag on 15
-				parted -s ${SDCARD}.raw -- set 14 bios_grub on || echo "*** SETTING bios_grub ON 14 FAILED"
-				parted -s ${SDCARD}.raw -- set 15 esp on || echo "*** SETTING ESP ON 15 FAILED"
+				parted -s ${SDCARD}.raw -- set 14 bios_grub on
+				parted -s ${SDCARD}.raw -- set 15 esp on
 			else
 				display_alert "Creating partitions" "UEFI+rootfs (no BIOS)" "info"
 				# Simple EFI + root partition on GPT, no BIOS.
 				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${bootstart}s ${bootend}s
 				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 				# transpose so EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
-				sgdisk --transpose 1:15 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 1:15 FAILED"
-				sgdisk --transpose 2:1 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 2:1 FAILED"
+				sgdisk --transpose 1:15 ${SDCARD}.raw
+				sgdisk --transpose 2:1 ${SDCARD}.raw
 				# set the ESP (efi) flag on 15
-				parted -s ${SDCARD}.raw -- set 15 esp on || echo "*** SETTING ESP ON 15 FAILED"
+				parted -s ${SDCARD}.raw -- set 15 esp on
 			fi
 		else
 			parted -s ${SDCARD}.raw -- mkpart primary fat32 ${bootstart}s ${bootend}s
@@ -238,7 +238,8 @@ prepare_partitions() {
 	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -x $FD
 
-	export LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
+	export LOOP
+	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
 	display_alert "Allocated loop device" "LOOP=${LOOP}" "wrn"
 
 	check_loop_device "$LOOP"
