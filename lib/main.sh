@@ -443,9 +443,10 @@ prepare_host
 if [[ $IGNORE_UPDATES != yes ]]; then
 	display_alert "Downloading sources" "" "info"
 	[[ -n $BOOTSOURCE ]] && fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+	[[ -n $ATFSOURCE ]] && fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 
 	if [[ -n $KERNELSOURCE ]]; then
-		if [[ "$LINUXFAMILY" == sunxi* ]]; then
+		if $(declare -f var_origin_kernel >/dev/null); then
 			unset LINUXSOURCEDIR
 			LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
 			VAR_SHALLOW_ORIGINAL=var_origin_kernel
@@ -455,8 +456,6 @@ if [[ $IGNORE_UPDATES != yes ]]; then
 			fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 		fi
 	fi
-
-	[[ -n $ATFSOURCE ]] && fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 
 	call_extension_method "fetch_sources_tools"  <<- 'FETCH_SOURCES_TOOLS'
 	*fetch host-side sources needed for tools and build*
