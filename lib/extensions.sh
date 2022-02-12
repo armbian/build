@@ -314,51 +314,6 @@ write_hook_point_metadata() {
 	echo "${main_hook_point_name}" >> "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt"
 }
 
-# Helper function, to get clean "stack traces" that do not include the hook/extension infrastructure code.
-get_extension_hook_stracktrace() {
-	local sources_str="$1" # Give this ${BASH_SOURCE[*]} - expanded
-	local lines_str="$2"   # And this # Give this ${BASH_LINENO[*]} - expanded
-	local sources lines index final_stack=""
-	IFS=' ' read -r -a sources <<< "${sources_str}"
-	IFS=' ' read -r -a lines <<< "${lines_str}"
-	for index in "${!sources[@]}"; do
-		local source="${sources[index]}" line="${lines[((index - 1))]}"
-		# skip extension infrastructure sources, these only pollute the trace and add no insight to users
-		[[ ${source} == */.tmp/extension_function_definition.sh ]] && continue
-		[[ ${source} == *lib/extensions.sh ]] && continue
-		[[ ${source} == *lib/functions/logging.sh ]] && continue
-		[[ ${source} == */compile.sh ]] && continue
-		[[ ${line} -lt 1 ]] && continue
-		# relativize the source, otherwise too long to display
-		source="${source#"${SRC}/"}"
-		# remove 'lib/'. hope this is not too confusing.
-		source="${source#"lib/functions/"}"
-		source="${source#"lib/"}"
-		# add to the list
-		# shellcheck disable=SC2015 # i know. thanks. I won't write an if here
-		arrow="$([[ "$final_stack" != "" ]] && echo "-> " || true)"
-		final_stack="${source}:${line} ${arrow} ${final_stack} "
-	done
-	# output the result, no newline
-	# shellcheck disable=SC2086 # I wanna suppress double spacing, thanks
-	echo -n $final_stack
-}
-
-show_caller_full() {
-	{
-		local i=0
-		local line_no
-		local function_name
-		local file_name
-		echo "" # line break
-		while caller $i; do
-			((i++))
-		done | while read -r line_no function_name file_name; do
-			echo -e "\t$file_name:$line_no\tat\t$function_name"
-		done
-	} || true # always success
-}
-
 # can be called by board, family, config or user to make sure an extension is included.
 # single argument is the extension name.
 # will look for it in /userpatches/extensions first.

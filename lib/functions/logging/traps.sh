@@ -47,23 +47,21 @@ function main_error_monitor() {
 		display_alert "second run detected" "ERR trap" "err"
 		#exit 46
 	fi
-	#trap - ERR # remove this trap
 	local errcode="${1}"
 	# If there's no error, do nothing.
 	if [[ $errcode -eq 0 ]]; then
 		return 0
 	fi
-	local stack_caller="${2}"
-	local full_stack_caller="${3}"
+	local stack_caller="$(show_caller_full)"
 	if [[ "${ALREADY_EXITING_WITH_ERROR}" != "yes" ]]; then # Don't do this is exit_with_error already did it.
 		local logfile_to_show="${CURRENT_LOGFILE}"             # store it
 		unset CURRENT_LOGFILE                                  # stop logging, otherwise crazy
 		logging_error_show_log "main_error_monitor unknown error" "main_error_monitor unknown highlight" "${stack_caller}" "${logfile_to_show}"
 	fi
-	display_alert "main_error_monitor: ${errcode}! stack:" "${stack_caller}" "err"
-	display_alert "main_error_monitor: ${errcode}! full:" "${full_stack_caller}" "err"
+	display_alert "main_error_monitor: error code ${errcode}" "\n${stack_caller}\n" "err"
 
 	ALREADY_EXITING_WITH_ERROR=yes
+	trap - EXIT # remove EXIT trap, we're gonna exit...
 	exit 45
 	return 44
 }

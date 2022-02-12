@@ -15,6 +15,7 @@
 
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -e
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 # Important, go read http://mywiki.wooledge.org/BashFAQ/105 NOW!
@@ -39,7 +40,7 @@ fi
 source "${SRC}"/lib/single.sh
 
 # hook up the error handler early, we wanna see stack for all errors.
-trap 'main_error_monitor "$?" "$(show_caller_full)" "$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"' ERR EXIT
+trap 'main_error_monitor "$?"' ERR EXIT
 
 # And execute the main entrypoint.
 cli_entrypoint "$@"
