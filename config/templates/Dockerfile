@@ -1,7 +1,4 @@
-ARG BASE_IMAGE=ubuntu:jammy
-FROM $BASE_IMAGE as armbian_builder
-ARG CUSTOM_PACKAGES='g++-11-arm-linux-gnueabihf libssl3'
-ENV CUSTOM_PACKAGES $CUSTOM_PACKAGES
+FROM ubuntu:rolling
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y dist-upgrade && apt-get -y install \
        joe \
@@ -23,7 +20,6 @@ RUN sh -c " \
 RUN apt-get update \
     && apt-get -y dist-upgrade \
     && apt-get install -y --no-install-recommends \
-       $CUSTOM_PACKAGES \
        acl \
        aptly \
        aria2 \
@@ -50,6 +46,7 @@ RUN apt-get update \
        f2fs-tools \
        fakeroot \
        flex \
+       g++-arm-linux-gnueabihf \
        gawk \
        gcc-aarch64-linux-gnu \
        gcc-arm-linux-gnueabihf \
