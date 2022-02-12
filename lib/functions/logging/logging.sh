@@ -97,7 +97,7 @@ function do_with_logging() {
 	return $exit_code
 }
 
-display_alert() {
+function display_alert() {
 	# We'll be writing to stderr (" >&2"), so also write the message to the generic logfile, for context.
 	if [[ -f "${CURRENT_LOGFILE}" ]]; then
 		echo "--> A: [" "$@" "]" >> "${CURRENT_LOGFILE}"

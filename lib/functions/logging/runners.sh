@@ -24,7 +24,6 @@ function chroot_sdcard_with_stdout() {
 	TMPDIR="" chroot "${SDCARD}" "$@"
 }
 
-
 function chroot_custom_long_running() {
 	local target=$1
 	shift
@@ -56,15 +55,19 @@ function fakeroot_dpkg_deb_build() {
 # the raw version is already redirect stderr to stdout, and we'll be running under do_with_logging,
 # so: _the stdout must flow_!!!
 function run_host_command_logged_long_running() {
-	local _exit_code=1
-	if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
-		run_host_command_logged_raw /bin/bash -e -c "$*"
-		_exit_code=$?
-	else
-		run_host_command_logged_raw /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")  " --progress --timer --line-mode --force --cursor --delay-start 0 -i "2"
-		_exit_code=$?
-	fi
-	return $_exit_code
+	# @TODO: disabled. The Pipe used for "pv" causes the left-hand side to run in a subshell.
+	#local _exit_code=1
+	#if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
+	#	run_host_command_logged_raw /bin/bash -e -c "$*"
+	#	_exit_code=$?
+	#else
+	#	run_host_command_logged_raw /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")  " --progress --timer --line-mode --force --cursor --delay-start 0 -i "2"
+	#	_exit_code=$?
+	#fi
+	#return $_exit_code
+
+	# Run simple and exit with it's code. Sorry.
+	run_host_command_logged_raw /bin/bash -e -c "$*"
 }
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
@@ -88,15 +91,19 @@ function run_host_command_logged_raw() {
 	# uncomment when desperate to understand what's going on
 	# echo "cmd about to run" "$@" >&2
 
+	# In this case I wanna KNOW exactly what failed, thus disable errexit, then re-enable immediately after running.
+	set +e
 	local exit_code=666
 	"$@" 2>&1 # redirect stderr to stdout. $* is NOT $@!
 	exit_code=$?
+	set -e
 	if [[ -f "${CURRENT_LOGFILE}" ]]; then
 		echo "--> cmd exited with code ${exit_code} at $(date --utc)" >> "${CURRENT_LOGFILE}"
 	fi
 	if [[ $exit_code != 0 ]]; then
-		display_alert "cmd exited with code ${exit_code}" "$*" "wrn"
-		display_alert "stacktrace for failed command" "$(show_caller_full)" "wrn"
+		# This is very specific; remove CURRENT_LOGFILE's value when calling display_alert here otherwise logged twice.
+		CURRENT_LOGFILE="" display_alert "cmd exited with code ${exit_code}" "$*" "wrn"
+		CURRENT_LOGFILE="" display_alert "stacktrace for failed command" "$(show_caller_full)" "wrn"
 	fi
 	return $exit_code
 }

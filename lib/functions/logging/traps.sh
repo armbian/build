@@ -55,8 +55,14 @@ function main_error_monitor() {
 	fi
 	local stack_caller="${2}"
 	local full_stack_caller="${3}"
+	if [[ "${ALREADY_EXITING_WITH_ERROR}" != "yes" ]]; then # Don't do this is exit_with_error already did it.
+		local logfile_to_show="${CURRENT_LOGFILE}"             # store it
+		unset CURRENT_LOGFILE                                  # stop logging, otherwise crazy
+		logging_error_show_log "main_error_monitor unknown error" "main_error_monitor unknown highlight" "${stack_caller}" "${logfile_to_show}"
+	fi
 	display_alert "main_error_monitor: ${errcode}! stack:" "${stack_caller}" "err"
 	display_alert "main_error_monitor: ${errcode}! full:" "${full_stack_caller}" "err"
+
 	ALREADY_EXITING_WITH_ERROR=yes
 	exit 45
 	return 44

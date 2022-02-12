@@ -1,4 +1,5 @@
 function run_kernel_make() {
+	set -e
 	declare -a common_make_params_quoted common_make_envs full_command
 
 	common_make_envs=(
@@ -19,6 +20,10 @@ function run_kernel_make() {
 		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}" # Prefix for tool invocations.
 	)
 
+	#if [[ "${SHOW_LOG}" == "yes" ]]; then
+		common_make_params_quoted+=("KCFLAGS=-fdiagnostics-color=always") # Force GCC colored messages.
+	#fi
+
 	# last statement, so it passes the result to calling function.
 	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "${common_make_envs[@]}" make "$@" "${common_make_params_quoted[@]@Q}")
 	display_alert "Kernel make" "${full_command[*]}" "debug"
@@ -34,7 +39,7 @@ function run_kernel_make_long_running() {
 	KERNEL_MAKE_RUNNER="run_host_command_logged_long_running" run_kernel_make "$@"
 }
 
-compile_kernel() {
+function compile_kernel() {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
 		(
@@ -140,9 +145,7 @@ compile_kernel() {
 			run_kernel_make silentoldconfig # This will exit with generic error if it fails.
 		else
 			# TODO: check if required
-			run_kernel_make olddefconfig || {
-				exit_with_error "Error kernel olddefconfig"
-			}
+			run_kernel_make olddefconfig
 		fi
 	else
 		display_alert "Starting kernel oldconfig+menuconfig" "${LINUXCONFIG}" "debug"
@@ -150,9 +153,7 @@ compile_kernel() {
 		run_kernel_make oldconfig
 
 		# No logging for this. this is UI piece
-		run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}" || {
-			exit_with_error "Error kernel menuconfig failed"
-		}
+		run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}"
 
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
@@ -177,9 +178,8 @@ compile_kernel() {
 	fi
 
 	display_alert "Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
-	run_kernel_make_long_running "${KERNEL_IMAGE_TYPE}" modules "${KERNEL_EXTRA_TARGETS:-dtbs}" || {
-		exit_with_error "Failure during kernel compile" "@host"
-	}
+	run_kernel_make_long_running "${KERNEL_IMAGE_TYPE}" modules "${KERNEL_EXTRA_TARGETS:-dtbs}"
+	#run_kernel_make "${KERNEL_IMAGE_TYPE}" modules "${KERNEL_EXTRA_TARGETS:-dtbs}"
 
 	if [[ ! -f arch/$ARCHITECTURE/boot/$KERNEL_IMAGE_TYPE ]]; then
 		exit_with_error "Kernel was not built" "arch/$ARCHITECTURE/boot/$KERNEL_IMAGE_TYPE"
@@ -195,9 +195,7 @@ compile_kernel() {
 	display_alert "Creating kernel packages" "${LINUXCONFIG} $kernel_packaging_target" "info"
 
 	# produce deb packages: image, headers, firmware, dtb
-	run_kernel_make_long_running $kernel_packaging_target || {
-		exit_with_error "Failure during kernel packaging" "@host"
-	}
+	run_kernel_make_long_running $kernel_packaging_target
 
 	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
 
