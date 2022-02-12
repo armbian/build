@@ -878,7 +878,12 @@ PRE_UPDATE_INITRAMFS
 	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
-	[[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] &&  write_uboot $LOOP
+	# exception: if we use the one from repository, install version which was downloaded from repo
+	if [[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+		 write_uboot $LOOP
+	elif [[ "${UPSTREM_VER}" ]]; then
+		 write_uboot $LOOP
+	fi
 
 	# fix wrong / permissions
 	chmod 755 $MOUNT
