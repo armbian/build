@@ -34,8 +34,8 @@ write_uboot_to_loop_image() {
 	TEMP_DIR=$(mktemp -d) # set-e is in effect. no need to exit on errors explicitly
 	chmod 700 ${TEMP_DIR}
 	revision=${REVISION}
-	if [[ -n $UPSTREM_VER ]]; then
-		revision=${UPSTREM_VER}
+	if [[ -n $UBOOT_REPO_VERSION ]]; then
+		revision=${UBOOT_REPO_VERSION}
 		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" ${TEMP_DIR}/ 2>&1
 	else
 		dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/ 2>&1

@@ -66,10 +66,8 @@ create_image_from_sdcard_rootfs() {
 
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
 	# exception: if we use the one from repository, install version which was downloaded from repo
-	if [[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-		write_uboot $LOOP
-	elif [[ "${UPSTREM_VER}" ]]; then
-		write_uboot $LOOP
+	if [[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] || [[ -n $UBOOT_REPO_VERSION ]]; then
+		write_uboot_to_loop_image $LOOP
 	fi
 
 	# fix wrong / permissions
