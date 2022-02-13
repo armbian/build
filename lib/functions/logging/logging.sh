@@ -9,17 +9,12 @@ function logging_init() {
 }
 
 function logging_error_show_log() {
-	# Do nothing if we're already showing the log on stderr.
-	[[ "${SHOW_LOG}" == "yes" ]] && return 0
-
-	# Close opened CI group, even if there is none; errors would be buried otherwise.
-	if [[ "${CI}" == "true" ]]; then
+	local logfile_to_show="${CURRENT_LOGFILE}" # store current logfile in separate var
+	unset CURRENT_LOGFILE                      # stop logging, otherwise crazy
+	[[ "${SHOW_LOG}" == "yes" ]] && return 0   # Do nothing if we're already showing the log on stderr.
+	if [[ "${CI}" == "true" ]]; then           # Close opened CI group, even if there is none; errors would be buried otherwise.
 		echo "::endgroup::"
 	fi
-
-	local message="$1"
-	local stacktrace="$3"
-	local logfile_to_show="$4"
 
 	if [[ -f "${logfile_to_show}" ]]; then
 		local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
@@ -28,10 +23,8 @@ function logging_error_show_log() {
 		# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
 		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 		display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
-		display_alert "🦞 Error Msg" "$message" "err"
-		display_alert "🐞 Error stacktrace" "$stacktrace" "err"
 	else
-		display_alert "✋ Error Log not Available" "${logfile_to_show}" "err"
+		display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
 	fi
 	return 0
 }

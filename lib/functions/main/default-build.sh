@@ -7,8 +7,9 @@ main_default_build_single() {
 	# Invoking chroot directly will fail in subtle ways, so, please use the runner.sh functions.
 	display_alert "Starting single build, exporting TMPDIR" "${WORKDIR}" "debug"
 	mkdir -p "${WORKDIR}"
+	add_cleanup_handler trap_handler_cleanup_workdir
+
 	export TMPDIR="${WORKDIR}"
-	# @todo: handle this in the exit trap, don't leave garbage behind when exiting.
 
 	start=$(date +%s)
 	# Check and install dependencies, directory structure and settings
@@ -132,16 +133,6 @@ main_default_build_single() {
 		- *NOTE:* this will run only if there were no errors during build process.
 	RUN_AFTER_BUILD
 
-	# Cleanup. Remove the WORKDIR, unset the TMPDIR
-	unset TMPDIR
-	if [[ -d "${WORKDIR}" ]]; then
-		display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "debug"
-		rm -rf "${WORKDIR}"
-	fi
-
-	# cleanup the extension manager, that was initialized during prepare_and_config_main_build_single
-	cleanup_extension_manager
-
 	end=$(date +%s)
 	runtime=$(((end - start) / 60))
 	display_alert "Runtime" "$runtime min" "info"
@@ -162,4 +153,13 @@ main_default_build_single() {
 	[[ -n ${COMPRESS_OUTPUTIMAGE} ]] && repeat_args+=("COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE}")
 	display_alert "Repeat Build Options" "${repeat_args[*]}" "ext" # * = expand array, space delimited, single-word.
 
+}
+
+function trap_handler_cleanup_workdir() {
+	echo "-- cleanup handler: Should cleanup $WORKDIR WORKDIR here" 1>&2
+	unset TMPDIR
+	if [[ -d "${WORKDIR}" ]]; then
+		display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "debug"
+		rm -rf "${WORKDIR}"
+	fi
 }

@@ -13,8 +13,8 @@ function build_rootfs_and_image() {
 
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
 
-	# trap to unmount stuff in case of error/manual interruption
-	trap unmount_on_exit INT TERM EXIT
+	# add handler to cleanup when done or if something fails or is interrupted.
+	add_cleanup_handler trap_handler_cleanup_rootfs_and_image
 
 	# stage: clean and create directories
 	rm -rf $SDCARD $MOUNT
@@ -98,6 +98,28 @@ function build_rootfs_and_image() {
 	fi
 	rm -rf $SDCARD
 
-	# remove exit trap
-	trap - INT TERM EXIT
+	# No need to remove the cleanup handler here, it's automatic.
+	return 0
+}
+
+function trap_handler_cleanup_rootfs_and_image() {
+	echo "-- trap_handler_cleanup_rootfs_and_image cleaning up..." 1>&2
+
+	cd "${SRC}" || echo "Failed to cwd to ${SRC}" # Move pwd away, so unmounts work
+	# those will loop until they're unmounted.
+	umount_chroot_recursive "${SDCARD}/" || true
+	umount_chroot_recursive "${MOUNT}/" || true
+
+	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain >&2 # @TODO: why does Igor uses lazy umounts? nfs?
+	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs >&2
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}" >&2
+
+	# shellcheck disable=SC2153 # global var.
+	if [[ -b "${LOOP}" ]]; then
+		display_alert "Freeing loop" "trap_handler_cleanup_rootfs_and_image ${LOOP}" "wrn"
+		losetup -d "${LOOP}" >&2 || true
+	fi
+
+	[[ -d "${SDCARD}" ]] && rm -rf --one-file-system "${SDCARD}"
+	[[ -d "${MOUNT}" ]] && rm -rf --one-file-system "${MOUNT}"
 }

@@ -44,8 +44,13 @@ fi
 # shellcheck source=lib/single.sh
 source "${SRC}"/lib/single.sh
 
-# hook up the error handler early, we wanna see stack for all errors.
-trap 'main_error_monitor "$?"' ERR EXIT
+# initialize logging variables.
+logging_init
 
-# And execute the main entrypoint.
+# initialize the traps
+traps_init
+
+# Execute the main CLI entrypoint.
 cli_entrypoint "$@"
+
+echo "-- very last thing" 1>&2

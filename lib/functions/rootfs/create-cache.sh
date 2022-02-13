@@ -61,7 +61,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 			umount --lazy "$SDCARD"
 			rm -rf $SDCARD
 			# remove exit trap
-			trap - INT TERM EXIT
+			remove_all_trap_handlers INT TERM EXIT
 			exit
 		fi
 
@@ -87,7 +87,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		umount --lazy "$SDCARD"
 		rm -rf $SDCARD
 		# remove exit trap
-		trap - INT TERM EXIT
+		remove_all_trap_handlers INT TERM EXIT
 		exit
 	fi
 

@@ -1,3 +1,23 @@
+function bla_cleanup1() {
+	echo "-- bla cleanup1" 1>&2
+}
+function bla_cleanup2() {
+	echo "-- bla cleanup2" 1>&2
+}
+
+function bla() {
+	display_alert "bla starting" "bla is here! PID: $$ - BASHPID: $BASHPID" "debug"
+	add_cleanup_handler bla_cleanup1
+	add_cleanup_handler bla_cleanup2
+
+	#sleep 10
+	#explode_here
+	#exit 66 # exit with error
+	exit_with_error "something" "wrong"
+	#exit 0 # exit without error
+}
+
+
 function cli_entrypoint() {
 	if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 		set -T # inherit return/debug traps
@@ -5,8 +25,6 @@ function cli_entrypoint() {
 		echo -n "" > "${SRC}"/output/debug/calls.txt
 		trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/debug/calls.txt ;' RETURN
 	fi
-
-	logging_init #  initialize logging.
 
 	check_args "$@"
 	do_update_src "$@"
@@ -108,27 +126,23 @@ function cli_entrypoint() {
 	set -o errtrace # trace ERR through - enabled
 	set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 
-	if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
-		do_main_build_all_ng
+	# configuration etc - it initializes the extension manager.
+	do_capturing_defs prepare_and_config_main_build_single # this sets CAPTURED_VARS
+
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
+		echo "${CAPTURED_VARS}" # to stdout!
 	else
-		# configuration etc - it initializes the extension manager.
-		do_capturing_defs prepare_and_config_main_build_single # this sets CAPTURED_VARS
-
-		if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
-			echo "${CAPTURED_VARS}"   # to stdout!
-			cleanup_extension_manager # manually cleanup extension manager before exiting
-			return 0
-		else
-			unset CAPTURED_VARS
-		fi
-
+		unset CAPTURED_VARS
 		# Allow for custom user-invoked functions, or do the default build.
 		if [[ -z $1 ]]; then
-			main_default_build_single # this cleans up the extension manager
+			main_default_build_single
 		else
 			# @TODO: check this with extensions usage?
 			eval "$@"
 		fi
-
 	fi
+
+	# Build done, run the cleanup handlers explicitly.
+	# This zeroes out the list of cleanups, so it's not done again when the main script exits.
+	run_cleanup_handlers
 }

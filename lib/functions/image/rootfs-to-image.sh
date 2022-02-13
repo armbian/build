@@ -78,7 +78,7 @@ create_image_from_sdcard_rootfs() {
 Called before unmounting both `/root` and `/boot`.
 PRE_UMOUNT_FINAL_IMAGE
 
-	# unmount /boot/efi first, then /boot, rootfs third, image file last
+	# unmount /boot/efi first, then /boot, rootfs third, image file last # @TODO: why using lazy unmount?
 	sync
 	[[ $UEFISIZE != 0 ]] && umount -l "${MOUNT}${UEFI_MOUNT_POINT}"
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
@@ -90,7 +90,7 @@ PRE_UMOUNT_FINAL_IMAGE
 		Called after unmounting both `/root` and `/boot`.
 	POST_UMOUNT_FINAL_IMAGE
 
-	# to make sure its unmounted
+	# to make sure its unmounted # @TODO: maybe use the recursive unmount we have now
 	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts; do
 		display_alert "Wait for unmount" "${MOUNT}" "info"
 		sleep 5
@@ -98,6 +98,8 @@ PRE_UMOUNT_FINAL_IMAGE
 
 	display_alert "Freeing loop device" "${LOOP}" "wrn"
 	losetup -d "${LOOP}"
+	unset LOOP # unset so cleanup handler does not try it again
+
 	# Don't delete $DESTIMG here, extensions might have put nice things there already.
 	rm -rf --one-file-system $MOUNT
 
