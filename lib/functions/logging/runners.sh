@@ -121,9 +121,12 @@ run_on_sdcard() {
 # Determine if we're building on non-amd64, and if so, which qemu binary to use.
 function run_host_x86_binary_logged() {
 	local -a qemu_invocation target_bin_arch
-	target_bin_arch="$(file -b "$1" | cut -d "," -f 1,2 | xargs echo -n)" # obtain the ELF name from the binary using 'file'
-	qemu_invocation=("$@")                                                # Default to calling directly, without qemu.
-	if [[ "$(uname -m)" != "x86_64" ]]; then                              # If we're NOT on x86...
+	target_bin_arch="unknown - file util missing"
+	if [[ -f /usr/bin/file ]]; then
+		target_bin_arch="$(file -b "$1" | cut -d "," -f 1,2 | xargs echo -n)" # obtain the ELF name from the binary using 'file'
+	fi
+	qemu_invocation=("$@")                   # Default to calling directly, without qemu.
+	if [[ "$(uname -m)" != "x86_64" ]]; then # If we're NOT on x86...
 		if [[ -f /usr/bin/qemu-x86_64-static ]]; then
 			display_alert "Using qemu-x86_64-static for running on $(uname -m)" "$1 (${target_bin_arch})" "debug"
 			qemu_invocation=("/usr/bin/qemu-x86_64-static" "-L" "/usr/x86_64-linux-gnu" "$@")
