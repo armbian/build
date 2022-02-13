@@ -36,6 +36,11 @@ if [[ ! -f "${SRC}"/lib/single.sh ]]; then
 	exit 255
 fi
 
+# Most CI runners, GitHub Actions included, pass env var "CI=true". In this case, force full logging.
+if [[ "${CI}" == "true" ]]; then
+	export SHOW_LOG=yes
+fi
+
 # shellcheck source=lib/single.sh
 source "${SRC}"/lib/single.sh
 
