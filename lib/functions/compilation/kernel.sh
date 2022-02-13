@@ -245,7 +245,7 @@ function compile_kernel() {
 create_linux-source_package() {
 	ts=$(date +%s)
 	local sources_pkg_dir tmp_src_dir
-	tmp_src_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
+	tmp_src_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 
 	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
 	mkdir -p "${sources_pkg_dir}"/usr/src/ \

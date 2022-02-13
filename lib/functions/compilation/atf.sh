@@ -57,7 +57,7 @@ compile_atf() {
 
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess 2>&1
 
-	atftempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
+	atftempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${atftempdir}
 
 	# copy files to temp directory

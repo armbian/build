@@ -1,7 +1,7 @@
 create_board_package() {
 	display_alert "Creating board support package for CLI" "$CHOSEN_ROOTFS" "info"
 
-	bsptempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
+	bsptempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${bsptempdir}
 
 	local destination=${bsptempdir}/${BSP_CLI_PACKAGE_FULLNAME}

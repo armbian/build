@@ -142,7 +142,7 @@ compile_uboot() {
 	local uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"
 
 	# create directory structure for the .deb package
-	uboottempdir="$(mktemp -d)" # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
+	uboottempdir="$(mktemp -d)" # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 "${uboottempdir}"
 	mkdir -p "$uboottempdir/$uboot_name/usr/lib/u-boot" "$uboottempdir/$uboot_name/usr/lib/$uboot_name" "$uboottempdir/$uboot_name/DEBIAN"
 

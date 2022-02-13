@@ -3,7 +3,7 @@ compile_firmware() {
 
 	local firmwaretempdir plugin_dir
 
-	firmwaretempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
+	firmwaretempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${firmwaretempdir}
 
 	plugin_dir="armbian-firmware${FULL}"
@@ -50,7 +50,7 @@ compile_firmware() {
 compile_armbian-zsh() {
 
 	local tmp_dir armbian_zsh_dir
-	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${tmp_dir}
 
 	armbian_zsh_dir=armbian-zsh_${REVISION}_all
@@ -124,7 +124,7 @@ compile_armbian-zsh() {
 compile_armbian-config() {
 
 	local tmp_dir armbian_config_dir
-	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trap to clean-up.
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${tmp_dir}
 
 	armbian_config_dir=armbian-config_${REVISION}_all
