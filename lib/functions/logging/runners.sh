@@ -27,15 +27,19 @@ function chroot_sdcard_with_stdout() {
 function chroot_custom_long_running() {
 	local target=$1
 	shift
-	local _exit_code=1
-	if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
-		TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
-		_exit_code=$?
-	else
-		TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
-		_exit_code=$?
-	fi
-	return $_exit_code
+
+	# @TODO: disabled, the pipe causes the left-hand side to subshell and caos ensues.
+	# local _exit_code=1
+	# if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
+	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
+	# 	_exit_code=$?
+	# else
+	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
+	# 	_exit_code=$?
+	# fi
+	# return $_exit_code
+
+	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
 }
 
 function chroot_custom() {
