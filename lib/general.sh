@@ -14,7 +14,7 @@
 # exit_with_error
 # get_package_list_hash
 # create_sources_list
-# clean_up_repo
+# clean_up_git
 # waiter_local_git
 # fetch_from_repo
 # improved_git
@@ -252,6 +252,7 @@ create_sources_list()
 
 #
 # This function retries Git operations to avoid failure in case remote is borked
+# If the git team needs to call a remote server, use this function.
 #
 improved_git()
 {
@@ -481,16 +482,16 @@ fetch_from_repo()
 	#  Check the folder as a git repository.
 	#  Then the target URL matches the local URL.
 
-	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" == ".git" && \
+		  "$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
 
-	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
-		improved_git init -q .
-		improved_git remote add origin "${url}"
+		git init -q .
+		git remote add origin "${url}"
 		# Here you need to upload from a new address
 		offline=false
 	fi
@@ -552,33 +553,33 @@ fetch_from_repo()
 
 				display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
 				improved_git pull
-				improved_git checkout -fq "${ref_name}"
-				display_alert "Checkout out to" "$(improved_git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
+				git checkout -fq "${ref_name}"
+				display_alert "Checkout out to" "$(git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
 
 			else
 
 				display_alert "Checking out"
-				improved_git checkout -f -q FETCH_HEAD
-				improved_git clean -qdf
+				git checkout -f -q FETCH_HEAD
+				git clean -qdf
 
 			fi
 		else
 
 			display_alert "Checking out"
-			improved_git checkout -f -q FETCH_HEAD
-			improved_git clean -qdf
+			git checkout -f -q FETCH_HEAD
+			git clean -qdf
 
 		fi
-	elif [[ -n $(improved_git status -uno --porcelain --ignore-submodules=all) ]]; then
+	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
-		display_alert " Cleaning .... " "$(improved_git status -s | wc -l) files"
+		display_alert " Cleaning .... " "$(git status -s | wc -l) files"
 
 		# Return the files that are tracked by git to the initial state.
-		improved_git checkout -f -q HEAD
+		git checkout -f -q HEAD
 
 		# Files that are not tracked by git and were added
 		# when the patch was applied must be removed.
-		improved_git clean -qdf
+		git clean -qdf
 	else
 		# working directory is clean, nothing to do
 		display_alert "Up to date"
@@ -587,11 +588,11 @@ fetch_from_repo()
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
-		for i in $(improved_git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
 			cd "${SRC}/cache/sources/${workdir}" || exit
 			local surl sref
-			surl=$(improved_git config -f .gitmodules --get "submodule.$i.url")
-			sref=$(improved_git config -f .gitmodules --get "submodule.$i.branch")
+			surl=$(git config -f .gitmodules --get "submodule.$i.url")
+			sref=$(git config -f .gitmodules --get "submodule.$i.branch")
 			if [[ -n $sref ]]; then
 				sref="branch:$sref"
 			else
