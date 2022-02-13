@@ -8,8 +8,8 @@ function chroot_sdcard_apt_get() {
 	[[ $NO_APT_CACHER != yes ]] && apt_params+=(
 		-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
 		-o "Acquire::http::Proxy::localhost=\"DIRECT\""
-		-o "Dpkg::Use-Pty=0" # Please be quiet
 	)
+	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
 	# IMPORTANT: this function returns the exit code of last statement, in this case chroot (which gets its result from bash which calls apt-get)
 	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
 }
@@ -72,6 +72,18 @@ function run_host_command_logged_long_running() {
 
 	# Run simple and exit with it's code. Sorry.
 	run_host_command_logged_raw /bin/bash -e -c "$*"
+}
+
+# For installing packages host-side. Not chroot!
+function host_apt_get_install() {
+	host_apt_get --no-install-recommends install "$@"
+}
+
+# For running apt-get stuff host-side. Not chroot!
+function host_apt_get() {
+	local -a apt_params=("-${APT_OPTS:-y}")
+	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
+	run_host_command_logged DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
 }
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.

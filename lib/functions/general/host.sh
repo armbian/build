@@ -157,9 +157,8 @@ prepare_host() {
 		# don't prompt for apt cacher selection
 		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
-		LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
-		install_pkg_deb "$hostdeps"
-		unset LOG_OUTPUT_FILE
+		# This handles the wanted list in $hostdeps, updates apt only if needed
+		install_host_side_packages "$hostdeps"
 
 		update-ccache-symlinks
 
@@ -308,119 +307,33 @@ function fetch_and_build_host_tools() {
 
 }
 
-# Installing debian packages in the armbian build system.
-# The function accepts four optional parameters:
-# autoupdate - If the installation list is not empty then update first.
-# upgrade, clean - the same name for apt
-# verbose - detailed log for the function
-#
-# list="pkg1 pkg2 pkg3 pkgbadname pkg-1.0 | pkg-2.0 pkg5 (>= 9)"
-# install_pkg_deb upgrade verbose $list
-# or
-# install_pkg_deb autoupdate $list
-#
-# If the package has a bad name, we will see it in the log file.
-# If there is an LOG_OUTPUT_FILE variable and it has a value as
-# the full real path to the log file, then all the information will be there.
-#
-# The LOG_OUTPUT_FILE variable must be defined in the calling function
-# before calling the install_pkg_deb function and unset after.
-#
-install_pkg_deb() {
-	local list=""
-	local log_file
-	local for_install
-	local need_autoup=false
-	local need_upgrade=false
-	local need_clean=false
-	local need_verbose=false
-	local _line=${BASH_LINENO[0]}
-	local _function=${FUNCNAME[1]}
-	local _file=$(basename "${BASH_SOURCE[1]}")
-	local tmp_file=$(mktemp /tmp/install_log_XXXXX) # @TODO: rpardini: hmm. why? lets use TMPDIR just like everyone else.
-	export DEBIAN_FRONTEND=noninteractive
-
-	list=$(
-		for p in $*; do
-			case $p in
-				autoupdate)
-					need_autoup=true
-					continue
-					;;
-				upgrade)
-					need_upgrade=true
-					continue
-					;;
-				clean)
-					need_clean=true
-					continue
-					;;
-				verbose)
-					need_verbose=true
-					continue
-					;;
-				\| | \(* | *\)) continue ;;
-			esac
-			echo " $p"
-		done
-	)
-
-	if [ -d $(dirname $LOG_OUTPUT_FILE) ]; then
-		log_file=${LOG_OUTPUT_FILE}
-	else
-		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
-	fi
-
-	# This is necessary first when there is no apt cache.
-	if $need_upgrade; then
-		apt-get -q update || echo "apt cannot update" >> $tmp_file
-		apt-get -y upgrade || echo "apt cannot upgrade" >> $tmp_file
-	fi
-
-	# If the package is not installed, check the latest
-	# up-to-date version in the apt cache.
-	# Exclude bad package names and send a message to the log.
-	for_install=$(
-		for p in $list; do
-			if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}'); then
-				apt-cache show $p -o APT::Cache::AllVersions=no |&
-					awk -v p=$p -v tmp_file=$tmp_file \
-						'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
-			fi
-		done
-	)
-
-	# This information should be logged.
-	if [ -s $tmp_file ]; then
-		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" \
-			>> $log_file
-		echo -e "\nIncoming list:" >> $log_file
-		printf "%-30s %-30s %-30s %-30s\n" $list >> $log_file
-		echo "" >> $log_file
-		cat $tmp_file >> $log_file
-	fi
-
-	if [ -n "$for_install" ]; then
-		if $need_autoup; then
-			apt-get -q update
-			apt-get -y upgrade
+# Install the whitespace-delimited packages listed in the first parameter, in the host (not chroot).
+# It handles correctly the case where all wanted packages are already installed, and in that case does nothing.
+# If packages are to be installed, it does an apt-get update first.
+function install_host_side_packages() {
+	declare wanted_packages_string
+	declare -a currently_installed_packages missing_packages
+	wanted_packages_string=${*}
+	missing_packages=()
+	# shellcheck disable=SC2207 # I wanna split, thanks.
+	currently_installed_packages=($(dpkg-query --show --showformat='${Package} '))
+	for PKG_TO_INSTALL in ${wanted_packages_string}; do
+		# shellcheck disable=SC2076 # I wanna match literally, thanks.
+		if [[ ! " ${currently_installed_packages[*]} " =~ " ${PKG_TO_INSTALL} " ]]; then
+			display_alert "Should install package" "${PKG_TO_INSTALL}"
+			missing_packages+=("${PKG_TO_INSTALL}")
 		fi
-		apt-get install -qq -y --no-install-recommends $for_install
-		echo -e "\nPackages installed:" >> $log_file
-		dpkg-query -W \
-			-f '${binary:Package;-27} ${Version;-23}\n' \
-			$for_install >> $log_file
+	done
 
+	if [[ ${#missing_packages[@]} -gt 0 ]]; then
+		display_alert "Updating apt host-side for installing packages" "${#missing_packages[@]} packages" "info"
+		host_apt_get update
+		display_alert "Installing host-side packages" "${missing_packages[*]}" "info"
+		host_apt_get_install "${missing_packages[@]}"
+	else
+		display_alert "All host-side dependencies/packages already installed." "Skipping host-hide install" "debug"
 	fi
 
-	# We will show the status after installation all listed
-	if $need_verbose; then
-		echo -e "\nstatus after installation:" >> $log_file
-		dpkg-query -W \
-			-f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
-			$list >> $log_file
-	fi
-
-	if $need_clean; then apt-get clean; fi
-	rm $tmp_file
+	unset currently_installed_packages
+	return 0
 }
