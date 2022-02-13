@@ -20,9 +20,7 @@ function run_kernel_make() {
 		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}" # Prefix for tool invocations.
 	)
 
-	#if [[ "${SHOW_LOG}" == "yes" ]]; then
-		common_make_params_quoted+=("KCFLAGS=-fdiagnostics-color=always") # Force GCC colored messages.
-	#fi
+	common_make_params_quoted+=("KCFLAGS=-fdiagnostics-color=always") # Force GCC colored messages.
 
 	# last statement, so it passes the result to calling function.
 	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "${common_make_envs[@]}" make "$@" "${common_make_params_quoted[@]@Q}")
