@@ -14,8 +14,8 @@
 # exit_with_error
 # get_package_list_hash
 # create_sources_list
-# clean_up_repo
-# waiter_local_repo
+# clean_up_git
+# waiter_local_git
 # fetch_from_repo
 # improved_git
 # display_alert
@@ -252,6 +252,7 @@ create_sources_list()
 
 #
 # This function retries Git operations to avoid failure in case remote is borked
+# If the git team needs to call a remote server, use this function.
 #
 improved_git()
 {
@@ -272,26 +273,35 @@ improved_git()
 
 }
 
-clean_up_repo ()
+clean_up_git ()
 {
 	local target_dir=$1
 
 	# Files that are not tracked by git and were added
 	# when the patch was applied must be removed.
-	improved_git -C $target_dir clean -qdf
+	git -C $target_dir clean -qdf
 
 	# Return the files that are tracked by git to the initial state.
-	improved_git -C $target_dir checkout -qf HEAD
+	git -C $target_dir checkout -qf HEAD
 }
 
-# used : waiter_local_repo arg1='value' arg2:'value'
-#		 waiter_local_repo \
+# used : waiter_local_git arg1='value' arg2:'value'
+#		 waiter_local_git \
 #			url='https://github.com/megous/linux' \
 #			name='megous' \
 #			dir='linux-mainline/5.14' \
 #			branch='orange-pi-5.14' \
 #			obj=<tag|commit> or tag:$tag ...
-waiter_local_repo ()
+# An optional parameter for switching to a git object such as a tag, commit,
+# or a specific branch. The object must exist in the local repository.
+# This optional parameter takes precedence. If it is specified, then
+# the commit state corresponding to the specified git object will be extracted
+# to the working directory. Otherwise, the commit corresponding to the top of
+# the branch will be extracted.
+# The settings for the kernel variables of the original kernel
+# VAR_SHALLOW_ORIGINAL=var_origin_kernel must be in the main script
+# before calling the function
+waiter_local_git ()
 {
 	for arg in $@;do
 
@@ -334,8 +344,8 @@ waiter_local_repo ()
 			(
 			$VAR_SHALLOW_ORIGINAL
 
-			display_alert "Add original git sources" "$dir $url$name/$branch" "info"
-			if [ "$(git ls-remote -h $url $branch | \
+			display_alert "Add original git sources" "$dir $name/$branch" "info"
+			if [ "$(improved_git ls-remote -h $url $branch | \
 				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
 				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
 				exit 177
@@ -345,14 +355,14 @@ waiter_local_repo ()
 
 			# Handle an exception if the initial tag is the top of the branch
 			# As v5.16 == HEAD
-			if [ "${start_tag}.1" == "$(git ls-remote -t $url ${start_tag}.1 | \
+			if [ "${start_tag}.1" == "$(improved_git ls-remote -t $url ${start_tag}.1 | \
 					awk -F'/' '{ print $NF }')" ]
 			then
-				git fetch --shallow-exclude=$start_tag $name
+				improved_git fetch --shallow-exclude=$start_tag $name
 			else
-				git fetch --depth 1 $name
+				improved_git fetch --depth 1 $name
 			fi
-			git fetch --deepen=1 $name
+			improved_git fetch --deepen=1 $name
 			# For a shallow clone, this works quickly and saves space.
 			git gc
 			)
@@ -364,7 +374,7 @@ waiter_local_repo ()
 	files_for_clean="$(git status -s | wc -l)"
 	if [ "$files_for_clean" != "0" ];then
 		display_alert " Cleaning .... " "$files_for_clean files"
-		clean_up_repo $work_dir
+		clean_up_git $work_dir
 	fi
 
 	if [ "$name" != "$(git remote show | grep $name)" ];then
@@ -373,7 +383,7 @@ waiter_local_repo ()
 
 	if ! $offline; then
 		for t_name in $(git remote show);do
-			git fetch $t_name
+			improved_git fetch $t_name
 		done
 	fi
 
@@ -435,15 +445,6 @@ fetch_from_repo()
 	# Set GitHub mirror before anything else touches $url
 	url=${url//'https://github.com/'/$GITHUB_SOURCE}
 
-	if [ "$dir" == "linux-mainline" ] && [[ "$LINUXFAMILY" == sunxi* ]]; then
-		unset LINUXSOURCEDIR
-		LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
-		VAR_SHALLOW_ORIGINAL=var_origin_kernel
-		waiter_local_repo "url=$url $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
-		unset VAR_SHALLOW_ORIGINAL
-		return
-	fi
-
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
 		local offline=true
@@ -481,16 +482,16 @@ fetch_from_repo()
 	#  Check the folder as a git repository.
 	#  Then the target URL matches the local URL.
 
-	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != *"$(improved_git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" == ".git" && \
+		  "$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
 
-	if [[ "$(improved_git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
+	if [[ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
-		improved_git init -q .
-		improved_git remote add origin "${url}"
+		git init -q .
+		git remote add origin "${url}"
 		# Here you need to upload from a new address
 		offline=false
 	fi
@@ -552,33 +553,33 @@ fetch_from_repo()
 
 				display_alert "Commit checkout not supported on this repository. Doing full clone." "" "wrn"
 				improved_git pull
-				improved_git checkout -fq "${ref_name}"
-				display_alert "Checkout out to" "$(improved_git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
+				git checkout -fq "${ref_name}"
+				display_alert "Checkout out to" "$(git --no-pager log -2 --pretty=format:"$ad%s [%an]" | head -1)" "info"
 
 			else
 
 				display_alert "Checking out"
-				improved_git checkout -f -q FETCH_HEAD
-				improved_git clean -qdf
+				git checkout -f -q FETCH_HEAD
+				git clean -qdf
 
 			fi
 		else
 
 			display_alert "Checking out"
-			improved_git checkout -f -q FETCH_HEAD
-			improved_git clean -qdf
+			git checkout -f -q FETCH_HEAD
+			git clean -qdf
 
 		fi
-	elif [[ -n $(improved_git status -uno --porcelain --ignore-submodules=all) ]]; then
+	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then
 		# working directory is not clean
-		display_alert " Cleaning .... " "$(improved_git status -s | wc -l) files"
+		display_alert " Cleaning .... " "$(git status -s | wc -l) files"
 
 		# Return the files that are tracked by git to the initial state.
-		improved_git checkout -f -q HEAD
+		git checkout -f -q HEAD
 
 		# Files that are not tracked by git and were added
 		# when the patch was applied must be removed.
-		improved_git clean -qdf
+		git clean -qdf
 	else
 		# working directory is clean, nothing to do
 		display_alert "Up to date"
@@ -587,11 +588,11 @@ fetch_from_repo()
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
 		# FML: http://stackoverflow.com/a/17692710
-		for i in $(improved_git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
 			cd "${SRC}/cache/sources/${workdir}" || exit
 			local surl sref
-			surl=$(improved_git config -f .gitmodules --get "submodule.$i.url")
-			sref=$(improved_git config -f .gitmodules --get "submodule.$i.branch")
+			surl=$(git config -f .gitmodules --get "submodule.$i.url")
+			sref=$(git config -f .gitmodules --get "submodule.$i.branch")
 			if [[ -n $sref ]]; then
 				sref="branch:$sref"
 			else
