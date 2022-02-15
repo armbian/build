@@ -134,26 +134,13 @@ prepare_partitions() {
 		fi
 	else
 		local imagesize=$(($rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
-		case $ROOTFS_TYPE in
-			btrfs)
-				# Used for server images, currently no swap functionality, so disk space
-				if [[ $BTRFS_COMPRESSION == none ]]; then
-					local sdsize=$(bc -l <<< "scale=0; (($imagesize * 1.25) / 4 + 1) * 4")
-				else
-					# requirements are rather low since rootfs gets filled with compress-force=zlib
-					local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
-				fi
-				;;
-			*)
-				# Hardcoded overhead +25% is needed for desktop images,
-				# for CLI it could be lower. Align the size up to 4MiB
-				if [[ $BUILD_DESKTOP == yes ]]; then
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
-				else
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
-				fi
-				;;
-		esac
+		# Hardcoded overhead +25% is needed for desktop images,
+		# for CLI it could be lower. Align the size up to 4MiB
+		if [[ $BUILD_DESKTOP == yes ]]; then
+			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
+		else
+			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
+		fi
 	fi
 
 	# stage: create blank image
