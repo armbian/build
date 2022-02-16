@@ -51,7 +51,7 @@ function chroot_custom() {
 # for deb building.
 function fakeroot_dpkg_deb_build() {
 	display_alert "Building .deb package" "$(basename "${3:-${2:-${1}}}" || true)" "debug"
-	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "$@" 2>&1
+	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "$@"
 }
 
 # for long-running, host-side expanded bash invocations.
