@@ -6,6 +6,10 @@ function logging_init() {
 	export normal_color="\x1B[0m" gray_color="\e[1;30m" # "bright black", which is grey
 	declare -i logging_section_counter=0                # -i: integer
 	export logging_section_counter
+	export tool_color="${gray_color}" # default to gray... (should be ok on terminals)
+	if [[ "${CI}" == "true" ]]; then  # ... but that is too dark for Github Actions
+		export tool_color="${normal_color}"
+	fi
 }
 
 function logging_error_show_log() {
@@ -54,10 +58,6 @@ function do_with_logging() {
 	local exit_code=176 # fail by default...
 	if [[ "${SHOW_LOG}" == "yes" ]]; then
 		local prefix_sed_contents
-		local tool_color="${gray_color}" # default to gray... (should be ok on terminals)
-		if [[ "${CI}" == "true" ]]; then # ... but that is too dark for Github Actions
-			tool_color="${normal_color}"
-		fi
 		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")"
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 
@@ -123,17 +123,22 @@ function display_alert() {
 			;;
 
 		info)
-			level_indicator="🌱" # "🌴" 🥑
+			level_indicator="🌱"
 			inline_logs_color="\e[0;32m"
 			;;
 
 		debug | deprecation)
-			level_indicator="✨" # "🌴" 🥑
+			level_indicator="✨"
 			inline_logs_color="\e[1;33m"
 			;;
 
+		command)
+			level_indicator="🐸"
+			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
+			;;
+
 		*)
-			level_indicator="🌿" #  "✨" 🌿 🪵
+			level_indicator="🌿"
 			inline_logs_color="\e[1;37m"
 			;;
 	esac

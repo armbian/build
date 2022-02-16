@@ -24,8 +24,6 @@ function run_kernel_make() {
 
 	# last statement, so it passes the result to calling function.
 	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "${common_make_envs[@]}" make "$@" "${common_make_params_quoted[@]@Q}")
-	display_alert "Kernel make" "${full_command[*]}" "debug"
-	# echo "${full_command[@]}" >&2 # last-resort bash-quoting debugging
 	"${full_command[@]}" # and exit with it's code, since it's the last statement
 }
 

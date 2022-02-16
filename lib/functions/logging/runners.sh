@@ -103,7 +103,7 @@ function run_host_command_logged_raw() {
 		echo "       " >> "${CURRENT_LOGFILE}" # blank line for reader's benefit
 		echo "-->" "$*" " <- at $(date --utc)" >> "${CURRENT_LOGFILE}"
 	else
-		display_alert "Running at host: " "$*" "debug"
+		display_alert "Command debug" "$*" "command" # A special 'command' level.
 	fi
 
 	# uncomment when desperate to understand what's going on
