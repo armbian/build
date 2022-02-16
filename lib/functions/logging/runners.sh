@@ -102,6 +102,8 @@ function run_host_command_logged_raw() {
 	if [[ -f "${CURRENT_LOGFILE}" ]]; then
 		echo "       " >> "${CURRENT_LOGFILE}" # blank line for reader's benefit
 		echo "-->" "$*" " <- at $(date --utc)" >> "${CURRENT_LOGFILE}"
+	else
+		display_alert "Running at host: " "$*" "debug"
 	fi
 
 	# uncomment when desperate to understand what's going on
