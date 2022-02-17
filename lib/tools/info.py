@@ -135,8 +135,8 @@ def parse_board_file_for_static_info(board_file, board_id):
 	hw_desc_clean = hw_desc_line.strip("# ").strip("\n")
 
 	# Parse KERNEL_TARGET line.
-	kernel_target_matches = re.findall(r"^KERNEL_TARGET=\"(.*)\"", "\n".join(file_lines), re.MULTILINE)
-	kernel_targets = kernel_target_matches[0].split(",")
+	kernel_target_matches = re.findall(r"^(export )?KERNEL_TARGET=\"(.*)\"", "\n".join(file_lines), re.MULTILINE)
+	kernel_targets = kernel_target_matches[0][1].split(",")
 	eprint("Possible kernel branches for board: ", board_id, " : ", kernel_targets)
 
 	return {
@@ -167,16 +167,21 @@ if True:
 	all_boards = get_all_boards_list_from_armbian(armbian_src_path)
 	# eprint(json.dumps(all_boards, indent=4, sort_keys=True))
 
+	# first, gather the board_info for every board. if any fail, stop.
+	info_for_board = {}
+	for board in all_boards.keys():
+		try:
+			board_info = parse_board_file_for_static_info(all_boards[board], board)
+			info_for_board[board] = board_info
+		except BaseException as e:
+			eprint("** Failed to parse board file {} static: {}".format(board, e))
+			raise e
+	# now loop over gathered infos
 	every_info = []
 	with concurrent.futures.ProcessPoolExecutor(max_workers=32) as executor:
 		every_future = []
 		for board in all_boards.keys():
-			try:
-				board_info = parse_board_file_for_static_info(all_boards[board], board)
-			except:
-				eprint("** Failed to parse board file {} static.".format(board))
-				continue
-
+			board_info = info_for_board[board]
 			for possible_branch in board_info["BOARD_POSSIBLE_BRANCHES"]:
 				all_params = common_compile_params | board_compile_params | {"BRANCH": possible_branch}
 				eprint("Submitting future for board {} with BRANCH={}".format(board, possible_branch))

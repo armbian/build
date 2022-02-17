@@ -173,6 +173,7 @@ function prepare_and_config_main_build_single() {
 	export CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
 	export CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
 	export CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
+	export CHOSEN_KERNEL_WITH_ARCH=${CHOSEN_KERNEL}-${ARCH} # Only for reporting purposes.
 
 	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
 }
