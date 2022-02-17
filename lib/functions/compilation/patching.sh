@@ -120,8 +120,10 @@ apply_patch_series() {
 			awk '$0 ~ /^+.*patch$/{print $2}' |
 			xargs -I % sh -c 'rm -f %'
 
+		set +e # has to tolerate error here to catch them
 		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >> $err_pt 2>&1
 		flag=$?
+		set -e # back to normal, errors cause stop.
 
 		case $flag in
 			0)

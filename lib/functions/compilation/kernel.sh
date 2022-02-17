@@ -61,7 +61,7 @@ function compile_kernel() {
 	display_alert "Pre-patch kernel version" "${pre_patch_version}" "debug"
 
 	# read kernel git hash
-	hash=$(improved_git --git-dir="$kerneldir"/.git rev-parse HEAD)
+	hash=$(git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
 	# Apply a series of patches if a series file exists
 	if test -f "${SRC}"/patch/kernel/"${KERNELPATCHDIR}"/series.conf; then
@@ -208,12 +208,7 @@ function compile_kernel() {
 		HASHTARGET="${SRC}/cache/hash$([[ ${BETA} == yes ]] && echo "-beta" || true)/linux-image-${BRANCH}-${LINUXFAMILY}"
 		OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2> /dev/null || true)
 
-		# check if OLDHASHTARGET commit exists otherwise use oldest
-		if [[ -z ${KERNEL_VERSION_LEVEL} ]]; then
-			git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1 && OLDHASHTARGET=$(git -C ${kerneldir} show HEAD~199 --pretty=format:"%H" --no-patch)
-		else
-			git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1 && OLDHASHTARGET=$(git -C ${kerneldir} rev-list --max-parents=0 HEAD)
-		fi
+		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1 && OLDHASHTARGET=$(git -C ${kerneldir} rev-list --max-parents=0 HEAD)
 
 		[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 		[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
@@ -233,7 +228,7 @@ function compile_kernel() {
 		echo "${hash}" > "${HASHTARGET}.githash"
 		hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -name '*.patch' -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | LC_COLLATE=C sort -n)
 		hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-		echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin >> "${HASHTARGET}.githash"
+		echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin >> "${HASHTARGET}.githash"
 
 		display_alert "Finished updating kernel hashes" "${LINUXCONFIG} $kernel_packaging_target" "info"
 	fi

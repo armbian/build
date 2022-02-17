@@ -166,6 +166,7 @@ prepare_extra_kernel_drivers() {
 		if [ "$?" -ne "0" ]; then
 			# then use rc branch
 			aufstag="5.x-rcN"
+			# @TODO: this does not do what you think it does; nonzero explode always
 			improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" > /dev/null
 		fi
 

@@ -6,7 +6,8 @@ function fetch_sources_kernel_uboot_atf() {
 
 	if [[ -n $KERNELSOURCE ]]; then
 		display_alert "Downloading sources" "kernel" "git"
-		fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+		GIT_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL}" \
+			fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 	fi
 
 	if [[ -n $ATFSOURCE ]]; then

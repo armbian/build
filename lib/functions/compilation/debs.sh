@@ -180,13 +180,13 @@ compile_xilinx_bootgen() {
 
 	# Compile and install only if git commit hash changed
 	# need to check if /usr/local/bin/bootgen to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2> /dev/null) != $(< .commit_id) || ! -f /usr/local/bin/bootgen ]]; then
+	if [[ ! -f .commit_id || $(git rev-parse @ 2> /dev/null) != $(< .commit_id) || ! -f /usr/local/bin/bootgen ]]; then
 		display_alert "Compiling" "xilinx-bootgen" "info"
 		make -s clean > /dev/null
 		make -s -j$(nproc) bootgen > /dev/null
 		mkdir -p /usr/local/bin/
 		install bootgen /usr/local/bin > /dev/null 2>&1
-		improved_git rev-parse @ 2> /dev/null > .commit_id
+		git rev-parse @ 2> /dev/null > .commit_id
 	fi
 
 	popd

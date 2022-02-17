@@ -9,7 +9,7 @@ function compile_uboot_target() {
 
 	# needed for multiple targets and for calling compile_uboot directly
 	display_alert "${uboot_prefix} Checking out to clean sources" "{$BOOTSOURCEDIR} for ${target_make}"
-	improved_git checkout -f -q HEAD
+	git checkout -f -q HEAD
 
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "${uboot_prefix}Cleaning" "${BOOTSOURCEDIR}" "info"
@@ -116,7 +116,7 @@ compile_uboot() {
 	# read uboot version
 	local version hash
 	version=$(grab_version "$ubootdir")
-	hash=$(improved_git --git-dir="$ubootdir"/.git rev-parse HEAD)
+	hash=$(git --git-dir="$ubootdir"/.git rev-parse HEAD)
 
 	display_alert "Compiling u-boot" "$version ${ubootdir}" "info"
 

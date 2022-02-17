@@ -44,8 +44,8 @@ function do_main_configuration() {
 	cd "${SRC}" || exit
 	[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=14
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
-	BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2> /dev/null | grep origin) 2> /dev/null)
-	BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2> /dev/null)
+	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote 2> /dev/null | grep origin)" 2> /dev/null)
+	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2> /dev/null)
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
 
 	if [[ $BETA == yes ]]; then
@@ -111,6 +111,9 @@ function do_main_configuration() {
 
 	# used by multiple sources - reduce code duplication
 	[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+
+	# URL for the git bundle used to "bootstrap" local git copies.
+	export MAINLINE_KERNEL_COLD_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle"
 
 	case $MAINLINE_MIRROR in
 		google)
