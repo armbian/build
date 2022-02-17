@@ -388,7 +388,6 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
 
 	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
-	show_checklist_variables "DEBOOTSTRAP_LIST DEBOOTSTRAP_COMPONENTS PACKAGE_LIST PACKAGE_LIST_ADDITIONAL PACKAGE_LIST_UNINSTALL"
 
 	# Dependent desktop packages
 	# Myy : Sources packages from file here
@@ -397,7 +396,6 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
 		echo -e "\nGroups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES :" >> "${LOG_OUTPUT_FILE}"
-		show_checklist_variables PACKAGE_LIST_DESKTOP
 	fi
 	unset LOG_OUTPUT_FILE
 
@@ -509,8 +507,6 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
 	fi
 
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] || write_deboostrap_list_debug_log
-
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
@@ -525,13 +521,6 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] || write_config_summary_output_file
 
 	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
-}
-
-function write_deboostrap_list_debug_log() {
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
-	echo -e "\nVariables after manual configuration" >> $LOG_OUTPUT_FILE
-	show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
-	unset LOG_OUTPUT_FILE
 }
 
 function write_config_summary_output_file() {

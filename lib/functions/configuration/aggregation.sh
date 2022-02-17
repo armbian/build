@@ -5,22 +5,12 @@
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # Don't write to disk in this case.
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/potential-paths.log"
-	echo -e "Potential paths :" >> "${LOG_OUTPUT_FILE}"
-	show_checklist_variables potential_paths
 	for filepath in ${potential_paths}; do
 		if [[ -f "${filepath}" ]]; then
-			echo -e "${filepath/"$SRC"\//} yes" >> "${LOG_OUTPUT_FILE}"
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
-			#		else
-			#			echo -e "${filepath/"$SRC"\//} no\n" >> "${LOG_OUTPUT_FILE}"
 		fi
-
 	done
-	echo "" >> "${LOG_OUTPUT_FILE}"
-	unset LOG_OUTPUT_FILE
 }
 
 get_all_potential_paths() {
@@ -35,14 +25,6 @@ get_all_potential_paths() {
 			done
 		done
 	done
-	# for ppath in ${potential_paths}; do
-	#  	echo "Checking for ${ppath}"
-	#  	if [[ -f "${ppath}" ]]; then
-	#  		echo "OK !|"
-	#  	else
-	#  		echo "Nope|"
-	#  	fi
-	# done
 }
 
 # Environment variables expected :
@@ -109,32 +91,4 @@ cleanup_list() {
 	list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
 	list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
 	echo ${list_to_clean}
-}
-
-# is a formatted output of the values of variables
-# from the list at the place of the function call.
-#
-# The LOG_OUTPUT_FILE variable must be defined in the calling function
-# before calling the `show_checklist_variables` function and unset after.
-#
-show_checklist_variables() {
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # Don't write to disk in this case.
-	local checklist=$*
-	local var pval
-	local log_file=${LOG_OUTPUT_FILE:-"${SRC}"/output/${LOG_SUBPATH}/trash.log}
-	local _line=${BASH_LINENO[0]}
-	local _function=${FUNCNAME[1]}
-	local _file=$(basename "${BASH_SOURCE[1]}")
-
-	echo -e "Show variables in function: $_function" "[$_file:$_line]\n" >> $log_file
-
-	for var in $checklist; do
-		eval pval=\$$var
-		echo -e "\n$var =:" >> $log_file
-		if [ $(echo "$pval" | gawk -F"/" '{print NF}') -ge 4 ]; then
-			printf "%s\n" $pval >> $log_file
-		else
-			printf "%-30s %-30s %-30s %-30s\n" $pval >> $log_file
-		fi
-	done
 }
