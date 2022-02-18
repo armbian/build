@@ -76,15 +76,10 @@ fetch_from_repo() {
 
 	display_alert "Git working dir" "${git_work_dir}" "debug"
 
-	# check if existing remote URL for the repo or branch does not match current one
-	# may not be supported by older git versions
-	#  Check the folder as a git repository.
-	#  Then the target URL matches the local URL.
 
+	# "Sanity check" since we only support one "origin"
 	if [[ "$(git rev-parse --git-dir)" == ".git" && "$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///')" ]]; then
-		display_alert "Remote URL does not match, removing existing local copy" "$dir $ref_name" "warn"
-		rm -rf "${git_work_dir}"
-		mkdir -p "${git_work_dir}"
+		exit_with_error "Remote URL does not match. Stopping!" "${git_work_dir} $dir $ref_name" "warn"
 	fi
 
 	if [[ "$(git rev-parse --git-dir)" != ".git" ]]; then
@@ -187,25 +182,26 @@ fetch_from_repo() {
 		# - add the warmup as remote, fetch from it; export it as a cached bundle for next time.
 
 		# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
-		display_alert "Fetching updates from origin" "$dir $ref_name "
+		display_alert "Fetching updates from origin" "$dir $ref_name"
 		case $ref_type in
-			branch | commit) improved_git_fetch origin "${ref_name}" ;;
-			tag) improved_git_fetch origin tags/"${ref_name}" ;;
-			head) improved_git_fetch origin HEAD ;;
+			branch | commit) improved_git_fetch --tags origin "${ref_name}" ;;
+			tag) improved_git_fetch --tags origin tags/"${ref_name}" ;;
+			head) improved_git_fetch --tags origin HEAD ;;
 		esac
 		display_alert "Origin fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size again
 
 		display_alert "Checking out" "$dir $ref_name"
 		improved_git checkout -f -q FETCH_HEAD
 		improved_git clean -q -d -f
+		display_alert "After checkout, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
 
-		if [[ $has_fetched_from_bundle -gt 0 ]]; then
-			display_alert "Pre-pruning, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
-			echo -n "${remote_hash}" > .git/shallow                                                 # commit to keep for shallowing, can be something else. for now is full prune.
-			improved_git remote remove "${git_cold_bundle_remote_id}"
-			improved_git reflog expire --expire=0 --all
-			improved_git gc --prune=all
-		fi
+		#if [[ $has_fetched_from_bundle -gt 0 ]]; then
+		#	display_alert "Pre-pruning, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
+		#	echo -n "${remote_hash}" > .git/shallow                                                 # commit to keep for shallowing, can be something else. for now is full prune.
+		#	improved_git remote remove "${git_cold_bundle_remote_id}"
+		#	improved_git reflog expire --expire=0 --all
+		#	improved_git gc --prune=all
+		#fi
 
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then # if not changed, but dirty...
 		display_alert "Cleaning git dir" "$(git status -s | wc -l) files"         # working directory is not clean, show it
