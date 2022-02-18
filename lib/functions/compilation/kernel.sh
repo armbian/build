@@ -44,11 +44,10 @@ function compile_kernel() {
 		)
 	fi
 
+	local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local kerneldir
+		display_alert "Using overlayfs_wrapper" "kernel_${LINUXFAMILY}_${BRANCH}" "debug"
 		kerneldir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
-	else
-		local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
 	fi
 	cd "${kerneldir}" || exit
 
@@ -63,19 +62,39 @@ function compile_kernel() {
 	# read kernel git hash
 	hash=$(git --git-dir="$kerneldir"/.git rev-parse HEAD)
 
-	# Apply a series of patches if a series file exists
-	if test -f "${SRC}"/patch/kernel/"${KERNELPATCHDIR}"/series.conf; then
-		display_alert "series.conf file visible. Apply"
-		series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
+	## Start kernel patching process.
+	## There's a few objectives here:
+	## - (always) produce a fasthash: represents "what would be done" (eg: md5 of a patch, crc32 of description).
+	## - (optionally) execute modification against living tree (eg: apply a patch, copy a file, etc). only if `DO_MODIFY=yes`
+	## - (always) call mark_change_commit with the description of what was done and fasthash.
+	initialize_fasthash "kernel" "${hash}" "${pre_patch_version}" "${kerneldir}"
+	declare -a fast_hash_list=()
 
-		# apply_patch_series <target dir> <full path to series file>
-		apply_patch_series "${kerneldir}" "$series_conf"
+	# Apply a series of patches if a series file exists
+	local series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
+	if test -f "${series_conf}"; then
+		display_alert "series.conf file visible. Apply"
+		fasthash_branch "patches-${KERNELPATCHDIR}-series.conf"
+		apply_patch_series "${kerneldir}" "${series_conf}" # applies a series of patches, read from a file. calls process_patch_file
 	fi
 
-	# build 3rd party drivers; # @TODO: does it build? or only patch?
-	prepare_extra_kernel_drivers
+	# mostly local-based packaging fixes.
+	fasthash_branch "packaging-patches"
+	apply_kernel_patches_for_packaging "${kerneldir}" "${version}" # calls process_patch_file and other stuff.
 
-	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
+	# applies a humongous amount of patches coming from github repos.
+	# it's mostly conditional, and very complex.
+	# @TODO: re-enable after finishing converting it with fasthash magic
+	# apply_kernel_patches_for_drivers  "${kerneldir}" "${version}" # calls process_patch_file and other stuff. there is A LOT of it.
+
+	# applies a series of patches, in directory order, from multiple directories (default/"user" patches)
+	# @TODO: I believe using the $BOARD here is the most confusing thing in the whole of Armbian. It should be disabled.
+	# @TODO: Armbian built kernels dont't vary per-board, but only per "$ARCH-$LINUXFAMILY-$BRANCH"
+	# @TODO: allowing for board-specific kernel patches creates insanity. uboot is enough.
+	fasthash_branch "patches-${KERNELPATCHDIR}-$BRANCH"
+	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH" # calls process_patch_file, "target" is empty there
+
+	finish_fasthash "kernel" # this reports the final hash and creates git branch to build ID. All modifications commited.
 
 	# create patch for manual source changes in debug mode
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"

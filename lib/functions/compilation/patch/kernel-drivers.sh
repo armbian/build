@@ -9,125 +9,7 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
-prepare_extra_kernel_drivers() {
-
-	# Packaging patch for modern kernels should be one for all.
-	# Currently we have it per kernel family since we can't have one
-	# Maintaining one from central location starting with 5.3+
-	# Temporally set for new "default->legacy,next->current" family naming
-
-	if linux-version compare "${version}" ge 5.10; then
-
-		if test -d ${kerneldir}/debian; then
-			rm -rf ${kerneldir}/debian/*
-		fi
-		sed -i -e '
-			s/^KBUILD_IMAGE	:= \$(boot)\/Image\.gz$/KBUILD_IMAGE	:= \$(boot)\/Image/
-		' ${kerneldir}/arch/arm64/Makefile
-
-		rm -f ${kerneldir}/scripts/package/{builddeb,mkdebian}
-
-		cp ${SRC}/packages/armbian/builddeb ${kerneldir}/scripts/package/builddeb
-		cp ${SRC}/packages/armbian/mkdebian ${kerneldir}/scripts/package/mkdebian
-
-		chmod 755 ${kerneldir}/scripts/package/{builddeb,mkdebian}
-
-	elif linux-version compare "${version}" ge 5.8.17 &&
-		linux-version compare "${version}" le 5.9 ||
-		linux-version compare "${version}" ge 5.9.2; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.8-9.y.patch" "applying"
-	elif linux-version compare "${version}" ge 5.6; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
-	elif linux-version compare "${version}" ge 5.3; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 ||
-		"$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == rk35xx ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y-rk35xx.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 ||
-		"$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.4."* || "${version}" == "4.9."* ]] &&
-		[[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rk3399 ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.4."* ]] &&
-		[[ "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == station* ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip || "$LINUXFAMILY" == rk322x ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == odroidc4 ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch" "applying"
-	fi
-
-	#
-	# Linux splash file
-	#
-
-	if linux-version compare "${version}" ge 5.10 && [ $SKIP_BOOTSPLASH != yes ]; then
-
-		display_alert "Adding" "Kernel splash file" "info"
-
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
-
-		if linux-version compare "${version}" ge 5.15; then
-			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0002-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
-		fi
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0003-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0004-Revert-drivers-video-fbcon-fix-NULL-dereference-in-f.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0005-Revert-fbcon-remove-no-op-fbcon_set_origin.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0006-Revert-fbcon-remove-now-unusued-softback_lines-curso.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0007-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
-
-		process_patch_file "${SRC}/patch/misc/0001-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0002-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0003-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0004-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0005-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0006-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0007-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0008-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0009-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0010-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0011-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0012-bootsplash.patch" "applying"
-
-	fi
-
+function prepare_extra_kernel_drivers() {
 	#
 	# mac80211 wireless driver injection features from Kali Linux
 	#
@@ -150,45 +32,35 @@ prepare_extra_kernel_drivers() {
 	# Older versions have AUFS support with a patch
 
 	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.12 && [ "$AUFS" == yes ]; then
-
-		# attach to specifics tag or branch
-		local aufstag
-		aufstag=$(echo "${version}" | cut -f 1-2 -d ".")
+		# @TODO: Fasthash for this whole block is only the git hash of revision we'd apply from Mr. Okajima
+		local aufs_tag # attach to specifics tag or branch
+		aufs_tag=$(echo "${version}" | cut -f 1-2 -d ".")
 
 		# manual overrides
-		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5; then aufstag="5.4.3"; fi
-		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11; then aufstag="5.10.82"; fi
-		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16; then aufstag="5.15.5"; fi
+		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5; then aufs_tag="5.4.3"; fi
+		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11; then aufs_tag="5.10.82"; fi
+		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16; then aufs_tag="5.15.5"; fi
 
-		# check if Mr. Okajima already made a branch for this version
-		improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" > /dev/null
-
-		if [ "$?" -ne "0" ]; then
-			# then use rc branch
-			aufstag="5.x-rcN"
-			# @TODO: this does not do what you think it does; nonzero explode always
-			improved_git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufstag}" > /dev/null
-		fi
-
-		if [ "$?" -eq "0" ]; then
-
-			display_alert "Adding" "AUFS ${aufstag}" "info"
-			local aufsver="branch:aufs${aufstag}"
-			fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
-			cd "$kerneldir" || exit
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch" "applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch" "applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch" "applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch" "applying"
-			cp -R "${SRC}/cache/sources/aufs5/${aufsver#*:}"/{Documentation,fs} .
-			cp "${SRC}/cache/sources/aufs5/${aufsver#*:}"/include/uapi/linux/aufs_type.h include/uapi/linux/
-
-		fi
+		# check if Mr. Okajima already made a branch for this version, otherwise use RC.
+		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufs_tag}" > /dev/null || {
+			aufs_tag="5.x-rcN" # then use rc branch
+			git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufs_tag}" > /dev/null
+		}
+		display_alert "Adding" "AUFS ${aufs_tag}" "info"
+		local aufs_branch="branch:aufs${aufs_tag}"
+		fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufs_branch}" "yes"
+		cd "$kerneldir" || exit
+		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-kbuild.patch" "applying"
+		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-base.patch" "applying"
+		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-mmap.patch" "applying"
+		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-standalone.patch" "applying"
+		cp -R "${SRC}/cache/sources/aufs5/${aufs_branch#*:}"/{Documentation,fs} .
+		cp "${SRC}/cache/sources/aufs5/${aufs_branch#*:}"/include/uapi/linux/aufs_type.h include/uapi/linux/
 	fi
 
 	# WireGuard VPN for Linux 3.10 - 5.5
 	if linux-version compare "${version}" ge 3.10 && linux-version compare "${version}" le 5.5 && [ "${WIREGUARD}" == yes ]; then
-
+		# @TODO: fasthash for this is... ? remote git hash?
 		# attach to specifics tag or branch
 		local wirever="branch:master"
 
@@ -218,6 +90,7 @@ prepare_extra_kernel_drivers() {
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 
 	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ $LINUXFAMILY != mvebu64 ] && [ $LINUXFAMILY != rk322x ] && [ $LINUXFAMILY != odroidxu4 ] && [ $EXTRAWIFI == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8152ver="branch:master"
@@ -232,6 +105,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 8189ES chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8189esver="branch:master"
@@ -264,6 +138,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 8189FS chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8189fsver="branch:rtl8189fs"
@@ -296,6 +171,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 8192EU chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8192euver="branch:realtek-4.4.x"
@@ -328,6 +204,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8812auver="branch:v5.6.4.2"
@@ -358,6 +235,7 @@ prepare_extra_kernel_drivers() {
 
 	# Wireless drivers for Xradio XR819 chipsets
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]] && [[ "$EXTRAWIFI" == yes ]]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
@@ -391,6 +269,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8811cuver="commit:2bebdb9a35c1d9b6e6a928e371fa39d5fcec8a62"
@@ -440,6 +319,7 @@ prepare_extra_kernel_drivers() {
 	if linux-version compare "${version}" ge 3.14 &&
 		linux-version compare "${version}" lt 5.15 &&
 		[ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8188euver="branch:v5.7.6.1"
@@ -481,6 +361,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 88x2bu chipsets
 
 	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl88x2buver="branch:5.8.7.1_35809.20191129_COEX20191120-7777"
@@ -517,6 +398,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 88x2cs chipsets
 
 	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"
@@ -564,6 +446,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 8723DS chipsets
 
 	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
@@ -600,6 +483,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 8723DU chipsets
 
 	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		if linux-version compare $version ge 5.12; then
@@ -636,6 +520,7 @@ prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek 8822BS chipsets
 
 	if linux-version compare "${version}" ge 4.4 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
