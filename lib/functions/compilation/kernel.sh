@@ -5,25 +5,30 @@ function run_kernel_make() {
 	common_make_envs=(
 		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse
 		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
+		"DPKG_COLORS=always"            # Use colors for dpkg
 	)
 
 	common_make_params_quoted=(
-		"$CTHREADS"                                  # Parallel compile, "-j X" for X cpus
-		"LOCALVERSION=-${LINUXFAMILY}"               # Kernel param
-		"KDEB_PKGVERSION=${REVISION}"                # deb package version
-		"KDEB_COMPRESS=${DEB_COMPRESS}"              # dpkg compression for deb
-		"BRANCH=${BRANCH}"                           # @TODO: rpardini: Wonder what BRANCH is used for during packaging?
-		"ARCH=${ARCHITECTURE}"                       # Why?
-		"KBUILD_DEBARCH=${ARCH}"                     # Where used?
-		"DEBFULLNAME=${MAINTAINER}"                  # For changelog generation
-		"DEBEMAIL=${MAINTAINERMAIL}"                 # idem
-		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}" # Prefix for tool invocations.
+		"$CTHREADS"                                         # Parallel compile, "-j X" for X cpus
+		"LOCALVERSION=-${LINUXFAMILY}"                      # Kernel param
+		"KDEB_PKGVERSION=${REVISION}"                       # deb package version
+		"KDEB_COMPRESS=${DEB_COMPRESS}"                     # dpkg compression for deb
+		"BRANCH=${BRANCH}"                                  # @TODO: rpardini: Wonder what BRANCH is used for during packaging?
+		"INSTALL_HDR_PATH=debian/hdrtmp/usr"                # For packaging headers_install used for headers
+		"INSTALL_MOD_PATH=debian/tmp"                       # For packaging modules for image package
+		"INSTALL_DTBS_PATH=debian/dtbtmp/boot/dtbs_install" # For packaging DTBs for dtb package
+		"ARCH=${ARCHITECTURE}"                              # Why?
+		"KBUILD_DEBARCH=${ARCH}"                            # Where used?
+		"DEBFULLNAME=${MAINTAINER}"                         # For changelog generation
+		"DEBEMAIL=${MAINTAINERMAIL}"                        # idem
+		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}"        # Prefix for tool invocations.
 	)
 
 	common_make_params_quoted+=("KCFLAGS=-fdiagnostics-color=always") # Force GCC colored messages.
 
 	# last statement, so it passes the result to calling function.
-	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "${common_make_envs[@]}" make "$@" "${common_make_params_quoted[@]@Q}")
+	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "${common_make_envs[@]}"
+		make "$@" "${common_make_params_quoted[@]@Q}" "${make_filter}")
 	"${full_command[@]}" # and exit with it's code, since it's the last statement
 }
 
@@ -32,7 +37,9 @@ function run_kernel_make_dialog() {
 }
 
 function run_kernel_make_long_running() {
+	local seconds_start=${SECONDS} # Bash has a builtin SECONDS that is seconds since start of script
 	KERNEL_MAKE_RUNNER="run_host_command_logged_long_running" run_kernel_make "$@"
+	display_alert "Kernel Make '$*' took" "$((SECONDS - seconds_start)) seconds" "debug"
 }
 
 function compile_kernel() {
@@ -43,6 +50,7 @@ function compile_kernel() {
 			make ARCH="${ARCHITECTURE}" clean > /dev/null 2>&1
 		)
 	fi
+	fasthash_debug "post git clean"
 
 	local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
 	if [[ $USE_OVERLAYFS == yes ]]; then
@@ -51,6 +59,7 @@ function compile_kernel() {
 	fi
 	cd "${kerneldir}" || exit
 
+	# @TODO: why would we delete localversion?
 	rm -f localversion
 
 	# read kernel version
@@ -58,6 +67,12 @@ function compile_kernel() {
 	version=$(grab_version "$kerneldir")
 	pre_patch_version="${version}"
 	display_alert "Pre-patch kernel version" "${pre_patch_version}" "debug"
+
+	# different packaging for 4.3+
+	local kernel_packaging_target="deb-pkg"
+	if linux-version compare "${version}" ge 4.3; then
+		kernel_packaging_target="bindeb-pkg"
+	fi
 
 	# read kernel git hash
 	hash=$(git --git-dir="$kerneldir"/.git rev-parse HEAD)
@@ -68,7 +83,7 @@ function compile_kernel() {
 	## - (optionally) execute modification against living tree (eg: apply a patch, copy a file, etc). only if `DO_MODIFY=yes`
 	## - (always) call mark_change_commit with the description of what was done and fasthash.
 	initialize_fasthash "kernel" "${hash}" "${pre_patch_version}" "${kerneldir}"
-	declare -a fast_hash_list=()
+	fasthash_debug "init"
 
 	# Apply a series of patches if a series file exists
 	local series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
@@ -94,6 +109,7 @@ function compile_kernel() {
 	fasthash_branch "patches-${KERNELPATCHDIR}-$BRANCH"
 	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH" # calls process_patch_file, "target" is empty there
 
+	fasthash_debug "finish"
 	finish_fasthash "kernel" # this reports the final hash and creates git branch to build ID. All modifications commited.
 
 	# create patch for manual source changes in debug mode
@@ -137,6 +153,10 @@ function compile_kernel() {
 		fi
 	fi
 
+	# Store the .config modification date at this time, for restoring later. Otherwise rebuilds.
+	local kernel_config_mtime
+	kernel_config_mtime=$(get_file_modification_time ".config")
+
 	call_extension_method "custom_kernel_config" <<- 'CUSTOM_KERNEL_CONFIG'
 		*Kernel .config is in place, still clean from git version*
 		Called after ${LINUXCONFIG}.config is put in place (.config).
@@ -156,12 +176,7 @@ function compile_kernel() {
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
-		if [[ $BRANCH == default ]]; then
-			run_kernel_make silentoldconfig # This will exit with generic error if it fails.
-		else
-			# TODO: check if required
-			run_kernel_make olddefconfig
-		fi
+		run_kernel_make olddefconfig # @TODO: what is this? does it fuck up dates?
 	else
 		display_alert "Starting kernel oldconfig+menuconfig" "${LINUXCONFIG}" "debug"
 
@@ -169,6 +184,9 @@ function compile_kernel() {
 
 		# No logging for this. this is UI piece
 		run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}"
+
+		# Capture new date. Otherwise changes not detected by make.
+		kernel_config_mtime=$(get_file_modification_time ".config")
 
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
@@ -185,6 +203,9 @@ function compile_kernel() {
 		fi
 	fi
 
+	# Restore the date of .config. Above delta is a pure function, theoretically.
+	set_files_modification_time "${kernel_config_mtime}" ".config"
+
 	# create linux-source package - with already patched sources
 	# We will build this package first and clear the memory.
 	if [[ $BUILD_KSRC != no ]]; then
@@ -192,27 +213,55 @@ function compile_kernel() {
 		create_linux-source_package
 	fi
 
+	local -a build_targets=("headers")
+	[[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]] && build_targets+=("dtbs")
+	build_targets+=("${KERNEL_IMAGE_TYPE}" modules)
+
 	display_alert "Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
-	run_kernel_make_long_running "${KERNEL_IMAGE_TYPE}" modules "${KERNEL_EXTRA_TARGETS:-dtbs}"
-	#run_kernel_make "${KERNEL_IMAGE_TYPE}" modules "${KERNEL_EXTRA_TARGETS:-dtbs}"
+	fasthash_debug "pre-compile"
+	run_kernel_make_long_running "${build_targets[@]}"
+	fasthash_debug "post-compile"
 
-	if [[ ! -f arch/$ARCHITECTURE/boot/$KERNEL_IMAGE_TYPE ]]; then
-		exit_with_error "Kernel was not built" "arch/$ARCHITECTURE/boot/$KERNEL_IMAGE_TYPE"
+	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
+		display_alert "DOUBLE Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
+		fasthash_debug "pre-double-compile"
+		run_kernel_make_long_running "${build_targets[@]}"
+		fasthash_debug "post-double-compile"
 	fi
 
-	# different packaging for 4.3+
-	if linux-version compare "${version}" ge 4.3; then
-		local kernel_packaging_target="bindeb-pkg"
-	else
-		local kernel_packaging_target="deb-pkg"
+	# Check for built kernel image file file; can override default with KERNEL_IMAGE_TYPE_PATH
+	local check_built_kernel_file="${kerneldir}/${KERNEL_IMAGE_TYPE_PATH:-"arch/${ARCHITECTURE}/boot/${KERNEL_IMAGE_TYPE}"}"
+	if [[ ! -f "${check_built_kernel_file}" ]]; then
+		exit_with_error "Kernel was not built" "${check_built_kernel_file}"
 	fi
 
-	display_alert "Creating kernel packages" "${LINUXCONFIG} $kernel_packaging_target" "info"
+	local -a prepackage_targets=(modules_install headers_install)
+	[[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]] && prepackage_targets+=("dtbs_install")
+
+	display_alert "Packaging Kernel" "${LINUXCONFIG} $kernel_packaging_target" "info"
+
+	# Prepare for packaging, using the exact same options as original compile.
+	display_alert "Installing kernel headers and modules for packaging" "${LINUXCONFIG} ${prepackage_targets[*]}" "info"
+	fasthash_debug "pre-prepackage"
+	make_filter="| grep --line-buffered -v -e 'INSTALL' -e 'SIGN'" run_kernel_make_long_running "${prepackage_targets[@]}"
+	fasthash_debug "post-prepackage"
 
 	# produce deb packages: image, headers, firmware, dtb
+	# This mostly only does
+	fasthash_debug "pre-packaging"
 	run_kernel_make_long_running $kernel_packaging_target
+	fasthash_debug "post-packaging"
+
+	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
+		display_alert "DOUBLE Packaging Kernel, Headers and DTBs" "${LINUXCONFIG} $kernel_packaging_target" "info"
+		fasthash_debug "pre-double-packaging"
+		run_kernel_make_long_running $kernel_packaging_target
+		fasthash_debug "post-double-packaging"
+	fi
 
 	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
+
+	display_alert "Done with" "kernel compile" "debug"
 
 	cd .. || exit
 	# remove firmware image packages here - easier than patching ~40 packaging scripts at once
@@ -220,37 +269,6 @@ function compile_kernel() {
 
 	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 
-	if [[ "a" == "b" ]]; then # @TODO DISABLED! TOO CRAZY
-		display_alert "Update Kernel hashes" "${LINUXCONFIG} $kernel_packaging_target"
-
-		# store git hash to the file and create a change log
-		HASHTARGET="${SRC}/cache/hash$([[ ${BETA} == yes ]] && echo "-beta" || true)/linux-image-${BRANCH}-${LINUXFAMILY}"
-		OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2> /dev/null || true)
-
-		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1 && OLDHASHTARGET=$(git -C ${kerneldir} rev-list --max-parents=0 HEAD)
-
-		[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
-		[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-
-		# calculate URL
-		if [[ "$KERNELSOURCE" == *"github.com"* ]]; then
-			URL="${KERNELSOURCE/git:/https:}/commit/${HASH}"
-		elif [[ "$KERNELSOURCE" == *"kernel.org"* ]]; then
-			URL="${KERNELSOURCE/git:/https:}/commit/?h=$(echo $KERNELBRANCH | cut -d":" -f2)&id=${HASH}"
-		else
-			URL="${KERNELSOURCE}/+/$HASH"
-		fi
-
-		# create change log
-		git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'%H>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
-
-		echo "${hash}" > "${HASHTARGET}.githash"
-		hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -name '*.patch' -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | LC_COLLATE=C sort -n)
-		hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-		echo "${hash_watch_1}${hash_watch_2}" | git hash-object --stdin >> "${HASHTARGET}.githash"
-
-		display_alert "Finished updating kernel hashes" "${LINUXCONFIG} $kernel_packaging_target" "info"
-	fi
 	return 0
 }
 

@@ -1,5 +1,4 @@
 function apply_kernel_patches_for_packaging() {
-	set -x
 	local kerneldir="${1}"
 	local version="${2}"
 	# Packaging patch for modern kernels should be one for all.
@@ -13,15 +12,16 @@ function apply_kernel_patches_for_packaging() {
 		local mkdebian="packages/armbian/mkdebian"
 		local kernel_package_dir="${kerneldir}/scripts/package"
 		if report_fashtash_should_execute text "$(cat "${SRC}/${builddeb}" "${SRC}/${mkdebian}")" "armbian builddeb and mkdebian replace"; then
-			rm -rf "${kerneldir}/debian"/*
-
-			# @TODO: is this idempotent?
-			# shellcheck disable=SC2016
-			sed -i -e 's/^KBUILD_IMAGE	:= \$(boot)\/Image\.gz$/KBUILD_IMAGE	:= \$(boot)\/Image/' "${kerneldir}/arch/arm64/Makefile"
+			# Read mtime, then sed, then restore it
+			local arm64_makefile="${kerneldir}/arch/arm64/Makefile" arm64_makefile_mtime
+			arm64_makefile_mtime="$(get_file_modification_time "${arm64_makefile}")"
+			# shellcheck disable=SC2016 # this should be a .patch?
+			sed -i -e 's/^KBUILD_IMAGE	:= \$(boot)\/Image\.gz$/KBUILD_IMAGE	:= \$(boot)\/Image/' "${arm64_makefile}"
+			set_files_modification_time "${arm64_makefile_mtime}" "${arm64_makefile}"
 
 			# cp with -p to preserve the original dates
-			cp -p "${SRC}/${builddeb}" "${kernel_package_dir}/builddeb"
-			cp -p "${SRC}/${mkdebian}" "${kernel_package_dir}/mkdebian"
+			cp -pv "${SRC}/${builddeb}" "${kernel_package_dir}/builddeb"
+			cp -pv "${SRC}/${mkdebian}" "${kernel_package_dir}/mkdebian"
 
 			chmod 755 "${kernel_package_dir}/builddeb" "${kernel_package_dir}/mkdebian"
 			mark_fasthash_done # will do git commit, associate fasthash to real hash.

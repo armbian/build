@@ -83,13 +83,23 @@ advanced_patch() {
 process_patch_file() {
 	local patch=$1
 	local status=$2
+	local patch_date
+
+	# get the modification date of the patch. make it not less than MIN_PATCH_AGE, if set.
+	# [[CC]YY]MMDDhhmm[.ss] time format
+	patch_date=$(get_file_modification_time "${patch}")
 
 	# detect and remove files which patch will create
 	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
+	# store an array of the files that patch will modify, we'll set their modification times after the fact
+	declare -a patched_files
+	mapfile -t patched_files < <(lsdiff -s --strip=1 "${patch}" | awk '{print $2}')
+
 	# @TODO: try patching with `git am` first, so git contains the patch commit info/msg. -- For future git-based hashing.
 	# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
 	patch --batch -p1 -N < "${patch}" && {
+		set_files_modification_time "${patch_date}" "${patched_files[@]}"
 		display_alert "* $status $(basename "${patch}")" "" "info"
 	} || {
 		display_alert "* $status $(basename "${patch}")" "failed" "wrn"

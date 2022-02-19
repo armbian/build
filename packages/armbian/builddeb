@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/bash
 #
 # builddeb 1.3
 # Copyright 2003 Wichert Akkerman <wichert@wiggy.net>
@@ -45,11 +45,13 @@ create_package() {
 	local pname="$1" pdir="$2"
 	local dpkg_deb_opts
 
+	echo "Armbian kernel packaging: ${pname} ${pdir}"
+
 	mkdir -m 755 -p "$pdir/DEBIAN"
 	mkdir -p "$pdir/usr/share/doc/$pname"
-	cp debian/copyright "$pdir/usr/share/doc/$pname/"
-	cp debian/changelog "$pdir/usr/share/doc/$pname/changelog.Debian"
-	gzip -9 "$pdir/usr/share/doc/$pname/changelog.Debian"
+	cp -pv debian/copyright "$pdir/usr/share/doc/$pname/"
+	cp -pv debian/changelog "$pdir/usr/share/doc/$pname/changelog.Debian"
+	gzip --force -9 "$pdir/usr/share/doc/$pname/changelog.Debian"
 	sh -c "cd '$pdir'; find . -type f ! -path './DEBIAN/*' -printf '%P\0' \
 		| xargs -r0 md5sum > DEBIAN/md5sums"
 
@@ -114,13 +116,14 @@ create_package() {
 
 	# Create the package
 	dpkg-gencontrol -p$pname -P"$pdir"
+	echo "Building deb package with compression '$KDEB_COMPRESS'" 1>&2
 	dpkg-deb ${KDEB_COMPRESS:+-Z$KDEB_COMPRESS} --build "$pdir" ..
 }
 
 deploy_kernel_headers() {
-	pdir=$1
+	pdir=$1 # kernel_headers_dir
 
-	rm -rf $pdir
+	echo "Armbian deploy_kernel_headers: ${pdir}"
 
 	destdir=$pdir/usr/src/linux-headers-$version
 	mkdir -p $destdir
@@ -128,15 +131,14 @@ deploy_kernel_headers() {
 	(
 		cd $srctree
 		find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl
-		find arch/*/include include scripts -type f -o -type l
+		find arch/*/include include scripts -type f -o -type l # @TODO: could strip off some stuff?
 		find security/*/include -type f
 		find arch/$SRCARCH -name module.lds -o -name Kbuild.platforms -o -name Platform
 		find $(find arch/$SRCARCH -name include -o -name scripts -type d) -type f
-	) > debian/hdrsrcfiles
+	) | grep -v "^\/debian" > debian/hdrsrcfiles
 
 	{
 		if is_enabled CONFIG_STACK_VALIDATION; then
-			#	echo tools/objtool/objtool
 			find tools/objtool -type f -executable
 		fi
 
@@ -145,147 +147,77 @@ deploy_kernel_headers() {
 		if is_enabled CONFIG_GCC_PLUGINS; then
 			find scripts/gcc-plugins -name \*.so -o -name gcc-common.h
 		fi
-	} > debian/hdrobjfiles
+	} | grep -v "^\/debian" > debian/hdrobjfiles
 
+	echo "Headers copying over..."
+	tar -c -f - -C $srctree -T debian/hdrsrcfiles | tar -xf - -C $destdir # Copy over using tar pipes, sources
+	tar -c -f - -T debian/hdrobjfiles | tar -xf - -C $destdir             # Copy over using tar pipes, object files
+	rm -f debian/hdrsrcfiles debian/hdrobjfiles                           # remove file lists
+
+	# After copying over, apply patch;
 	if is_native; then
 		echo "info: Build native: Skip headers-debian-byteshift.patch" >&2
 	elif is_build_on_amd64; then
 		(
 			cd $destdir
-			patch -p1 < /tmp/headers-debian-byteshift.patch
+			# detect and remove files which patch will create
+			lsdiff -s --strip=1 "/tmp/headers-debian-byteshift.patch" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
+			patch --batch -p1 < "/tmp/headers-debian-byteshift.patch"
 		)
 	fi
 
-	tar -c -f - -C $srctree -T debian/hdrsrcfiles | tar -xf - -C $destdir
-	tar -c -f - -T debian/hdrobjfiles | tar -xf - -C $destdir
-	rm -f debian/hdrsrcfiles debian/hdrobjfiles
-
 	# copy .config manually to be where it's expected to be
-	cp $KCONFIG_CONFIG $destdir/.config
+	cp -pv $KCONFIG_CONFIG $destdir/.config
 
 	mkdir -p $pdir/lib/modules/$version/
+	rm -f $pdir/lib/modules/$version/build
 	ln -s /usr/src/linux-headers-$version $pdir/lib/modules/$version/build
 }
 
 deploy_libc_headers() {
 	pdir=$1
-
-	rm -rf $pdir
-
-	$MAKE -f $srctree/Makefile headers
-	$MAKE -f $srctree/Makefile headers_install INSTALL_HDR_PATH=$pdir/usr
-
 	# move asm headers to /usr/include/<libc-machine>/asm to match the structure
 	# used by Debian-based distros (to support multi-arch)
 	host_arch=$(dpkg-architecture -a$(cat debian/arch) -qDEB_HOST_MULTIARCH)
-	mkdir $pdir/usr/include/$host_arch
-	mv $pdir/usr/include/asm $pdir/usr/include/$host_arch/
+	mkdir -p $pdir/usr/include/$host_arch
+	[ -d $pdir/usr/include/asm ] && cp -rv $pdir/usr/include/asm $pdir/usr/include/$host_arch/
+	return 0
 }
 
-version=$KERNELRELEASE
+# set -x
+echo "Armbian builddeb starting: ${KERNELRELEASE}..."
+
+version=${KERNELRELEASE}
 tmpdir="debian/tmp"
 kernel_headers_dir="debian/hdrtmp"
-libc_headers_dir="debian/headertmp"
+libc_headers_dir="debian/libc_header_tmp"
 dbg_dir="debian/dbgtmp"
 dtb_dir="debian/dtbtmp"
-packagename=linux-image-"$BRANCH$LOCALVERSION"
-kernel_headers_packagename=linux-headers-"$BRANCH$LOCALVERSION"
-dtb_packagename=linux-dtb-"$BRANCH$LOCALVERSION"
+packagename=linux-image-"${BRANCH}${LOCALVERSION}"
+kernel_headers_packagename=linux-headers-"${BRANCH}${LOCALVERSION}"
+dtb_packagename=linux-dtb-"${BRANCH}${LOCALVERSION}"
 libc_headers_packagename=linux-libc-dev
-dbg_packagename=$packagename-dbg
-
-if [ "$ARCH" = "um" ]; then
-	packagename=user-mode-linux-$version
-fi
-
-# Not all arches have the same installed path in debian
-# XXX: have each arch Makefile export a variable of the canonical image install
-# path instead
-case $ARCH in
-	++aarch64|arm64)
-		image_name=Image
-		installed_image_path="boot/vmlinuz-$version"
-		;;
-	arm*)
-		image_name=zImage
-		installed_image_path="boot/vmlinuz-$version"
-		;;
-	um)
-		installed_image_path="usr/bin/linux-$version"
-		;;
-	parisc|mips|powerpc)
-		installed_image_path="boot/vmlinux-$version"
-		;;
-	*)
-		image_name=vmlinuz
-		installed_image_path="boot/vmlinuz-$version"
-		;;
-esac
+dbg_packagename=${packagename}-dbg
+installed_image_path="boot/vmlinuz-$version" # for all arches
 
 BUILD_DEBUG=$(if_enabled_echo CONFIG_DEBUG_INFO Yes)
 
-# Setup the directory structure
-rm -rf "$tmpdir" "$dbg_dir" "$dtb_dir" debian/files
+# Complement the directory structure
 mkdir -m 755 -p "$tmpdir/DEBIAN"
 mkdir -p "$tmpdir/lib" "$tmpdir/boot"
 mkdir -m 755 -p "$dtb_dir/DEBIAN"
-mkdir -p "$dtb_dir/boot/dtb-$version" "$dtb_dir/usr/share/doc/$dtb_packagename"
+mkdir -p "$dtb_dir/usr/share/doc/$dtb_packagename"
 mkdir -m 755 -p "$kernel_headers_dir/lib/modules/$version/"
 mkdir -m 755 -p "$libc_headers_dir/DEBIAN"
 
-# Install the kernel
-if [ "$ARCH" = "um" ]; then
-	mkdir -p "$tmpdir/usr/lib/uml/modules/$version" "$tmpdir/usr/bin" "$tmpdir/usr/share/doc/$packagename"
-	$MAKE linux
-	cp System.map "$tmpdir/usr/lib/uml/modules/$version/System.map"
-	cp $KCONFIG_CONFIG "$tmpdir/usr/share/doc/$packagename/config"
-	gzip "$tmpdir/usr/share/doc/$packagename/config"
-else
-	cp System.map "$tmpdir/boot/System.map-$version"
-	cp $KCONFIG_CONFIG "$tmpdir/boot/config-$version"
-fi
-cp "$($MAKE -s -f $srctree/Makefile image_name)" "$tmpdir/$installed_image_path"
+# Install the kernel's System.map and config
+cp -pv System.map "$tmpdir/boot/System.map-$version"
+cp -pv $KCONFIG_CONFIG "$tmpdir/boot/config-$version"
 
-if is_enabled CONFIG_OF_EARLY_FLATTREE; then
-	# Only some architectures with OF support have this target
-	if [ -d "${srctree}/arch/$SRCARCH/boot/dts" ]; then
-		$MAKE -f $srctree/Makefile INSTALL_DTBS_PATH="$tmpdir/usr/lib/linux-image-$version" dtbs_install
-	fi
-fi
-
-if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG; then
-	#mkdir -p "$tmpdir/boot/dtb"
-	INSTALL_DTBS_PATH="$dtb_dir/boot/dtb-$version" $MAKE KBUILD_SRC= dtbs_install
-fi
-
-if is_enabled CONFIG_MODULES; then
-	INSTALL_MOD_PATH="$tmpdir" $MAKE -f $srctree/Makefile modules_install
-	rm -f "$tmpdir/lib/modules/$version/build"
-	rm -f "$tmpdir/lib/modules/$version/source"
-
-	if [ "$ARCH" = "um" ]; then
-		mv "$tmpdir/lib/modules/$version"/* "$tmpdir/usr/lib/uml/modules/$version/"
-		rmdir "$tmpdir/lib/modules/$version"
-	fi
-
-	if [ -n "$BUILD_DEBUG" ]; then
-		for module in $(find $tmpdir/lib/modules/ -name *.ko -printf '%P\n'); do
-			module=lib/modules/$module
-			mkdir -p $(dirname $dbg_dir/usr/lib/debug/$module)
-			# only keep debug symbols in the debug file
-			$OBJCOPY --only-keep-debug $tmpdir/$module $dbg_dir/usr/lib/debug/$module
-			# strip original module from debug symbols
-			$OBJCOPY --strip-debug $tmpdir/$module
-			# then add a link to those
-			$OBJCOPY --add-gnu-debuglink=$dbg_dir/usr/lib/debug/$module $tmpdir/$module
-		done
-
-		# resign stripped modules
-		if is_enabled CONFIG_MODULE_SIG_ALL; then
-			INSTALL_MOD_PATH="$tmpdir" $MAKE -f $srctree/Makefile modules_sign
-		fi
-	fi
-fi
+# Get the image from the makefile and install it as vmlinuz
+image_name_from_makefile="$($MAKE -s -f "$srctree/Makefile" image_name)"
+cp -pv "${image_name_from_makefile}" "$tmpdir/$installed_image_path"
+image_name="$(basename "${image_name_from_makefile}")" # Just the file name
 
 # Install the maintainer scripts
 # Note: hook scripts under /etc/kernel are also executed by official Debian
@@ -297,7 +229,7 @@ for script in postinst postrm preinst prerm; do
 	mkdir -p "$tmpdir$debhookdir/$script.d"
 	cat <<- EOF > "$tmpdir/DEBIAN/$script"
 		#!/bin/bash
-
+		set -x
 		set -e
 
 		# Pass maintainer script parameters to hook scripts
@@ -330,12 +262,12 @@ cat >> $tmpdir/DEBIAN/preinst <<- EOT
 	# exit if we are running chroot
 	if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
 
-	check_boot_dev (){
+	check_and_unmount (){
 		boot_device=\$(mountpoint -d /boot)
 
 		for file in /dev/* ; do
 			CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
-			if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
+			if [ "\$CURRENT_DEVICE" = "\$boot_device" ]; then
 				boot_partition=\$file
 				break
 			fi
@@ -343,41 +275,43 @@ cat >> $tmpdir/DEBIAN/preinst <<- EOT
 
 		bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
 		if [ "\$bootfstype" = "vfat" ]; then
+			umount /boot
 			rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
 		fi
 	}
-	mountpoint -q /boot && check_boot_dev
+	mountpoint -q /boot && check_and_unmount
 	exit 0
 EOT
 
 create_package "$packagename" "$tmpdir"
 
-if [ "$ARCH" != "um" ]; then
+# Put the DTBs, installed by kernel make at "$dtb_dir/boot/dtbs_install", at "$dtb_dir/boot/dtb-$version"
+if [ -d "$dtb_dir/boot/dtbs_install" ]; then
+	echo "Armbian: DTB " "$dtb_dir/boot/dtbs_install" "exists, moving to" "$dtb_dir/boot/dtb-$version"
+	[ -d "$dtb_dir/boot/dtb-$version" ] && rm -rf "$dtb_dir/boot/dtb-$version"
+	mv -v "$dtb_dir/boot/dtbs_install" "$dtb_dir/boot/dtb-$version"
+	create_package "$dtb_packagename" "$dtb_dir" "dtb"
+fi
 
-	if [ "$(cat debian/arch)" != "amd64" ]; then # No DTB for amd64 target
-		create_package "$dtb_packagename" "$dtb_dir" "dtb"
-	fi
+deploy_libc_headers ${libc_headers_dir}
+create_package $libc_headers_packagename $libc_headers_dir
 
-	deploy_libc_headers $libc_headers_dir
-	create_package $libc_headers_packagename $libc_headers_dir
-
-	if is_enabled CONFIG_MODULES; then
-		if is_native; then
-			# echo "Skip scripts folder cleaning" >&2
-			# echo "Skip creating postinst prerm scripts for headers" >&2
-			deploy_kernel_headers $kernel_headers_dir
-			create_package $kernel_headers_packagename $kernel_headers_dir
-		else
-			# Clean up the executables that are left over from
-			# cross-compilation for a different host architecture.
-			#(
-			#	cd $srctree
-			#	make M=scripts clean
-			#)
-			echo "-- NOT CLEANING before packaging headers. " 1>&2
-			deploy_kernel_headers $kernel_headers_dir
-			create_package $kernel_headers_packagename $kernel_headers_dir "headers"
-		fi
+if is_enabled CONFIG_MODULES; then
+	if is_native; then
+		# echo "Skip scripts folder cleaning" >&2
+		# echo "Skip creating postinst prerm scripts for headers" >&2
+		deploy_kernel_headers $kernel_headers_dir
+		create_package $kernel_headers_packagename $kernel_headers_dir # no "headers" here, no postinst
+	else
+		# Clean up the executables that are left over from
+		# cross-compilation for a different host architecture.
+		#(
+		#	cd $srctree
+		#	make M=scripts clean
+		#)
+		echo "-- NOT CLEANING before packaging headers. " 1>&2
+		deploy_kernel_headers $kernel_headers_dir
+		create_package $kernel_headers_packagename $kernel_headers_dir "headers"
 	fi
 
 fi
@@ -387,7 +321,7 @@ if [ -n "$BUILD_DEBUG" ]; then
 	# Different tools want the image in different locations
 	# perf
 	mkdir -p $dbg_dir/usr/lib/debug/lib/modules/$version/
-	cp vmlinux $dbg_dir/usr/lib/debug/lib/modules/$version/
+	cp -pv vmlinux $dbg_dir/usr/lib/debug/lib/modules/$version/
 	# systemtap
 	mkdir -p $dbg_dir/usr/lib/debug/boot/
 	ln -s ../lib/modules/$version/vmlinux $dbg_dir/usr/lib/debug/boot/vmlinux-$version

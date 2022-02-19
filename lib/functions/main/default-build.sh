@@ -13,7 +13,6 @@ main_default_build_single() {
 
 	start=$(date +%s)
 	# Check and install dependencies, directory structure and settings
-	# The OFFLINE_WORK variable inside the function
 	LOG_SECTION="prepare_host" do_with_logging prepare_host
 
 	if [[ "${JUST_INIT}" == "yes" ]]; then
@@ -31,6 +30,7 @@ main_default_build_single() {
 		for option in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
 			if [[ $option != sources ]]; then
 				LOG_SECTION="cleaning" do_with_logging cleaning "$option"
+				fasthash_debug "main_cleaning_armbian"
 			fi
 		done
 	fi
@@ -40,7 +40,7 @@ main_default_build_single() {
 		# @TODO: refactor this. we use it very often
 		# Compile u-boot if packed .deb does not exist or use the one from repository
 		if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-			if [[ -n "${ATFSOURCE}" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+			if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
 				LOG_SECTION="compile_atf" do_with_logging compile_atf
 			fi
 			# @TODO: refactor this construct. we use it too many times.
