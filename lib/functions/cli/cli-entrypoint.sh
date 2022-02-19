@@ -17,7 +17,6 @@ function bla() {
 	#exit 0 # exit without error
 }
 
-
 function cli_entrypoint() {
 	if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 		set -T # inherit return/debug traps
@@ -42,12 +41,9 @@ function cli_entrypoint() {
 	fi
 
 	# The only way to get this is via ENV var...
-	if [ "$OFFLINE_WORK" == "yes" ]; then
-		echo -e "\n"
-		display_alert "* " "You are working offline."
+	if [ "${OFFLINE_WORK}" == "yes" ]; then
+		display_alert "* " "You are working offline!"
 		display_alert "* " "Sources, time and host will not be checked"
-		echo -e "\n"
-		sleep 3s
 	else
 		# check and install the basic utilities here # @TODO: logging?
 		prepare_host_basic

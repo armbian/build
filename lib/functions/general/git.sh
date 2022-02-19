@@ -47,18 +47,15 @@ fetch_from_repo() {
 	url=${url//'https://github.com/'/$GITHUB_SOURCE}
 
 	# The 'offline' variable must always be set to 'true' or 'false'
-	if [ "$OFFLINE_WORK" == "yes" ]; then
-		local offline=true
-	else
-		local offline=false
+	local offline=false
+	if [[ "${OFFLINE_WORK}" == "yes" ]]; then
+		offline=true
 	fi
 
 	[[ -z $ref || ($ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:*) ]] && exit_with_error "Error in configuration"
-	local ref_type=${ref%%:*}
+	local ref_type=${ref%%:*} ref_name=${ref##*:}
 	if [[ $ref_type == head ]]; then
-		local ref_name=HEAD
-	else
-		local ref_name=${ref##*:}
+		ref_name=HEAD
 	fi
 
 	display_alert "Getting sources from Git" "$dir $ref_name" "info"
@@ -76,7 +73,6 @@ fetch_from_repo() {
 
 	display_alert "Git working dir" "${git_work_dir}" "debug"
 
-
 	# "Sanity check" since we only support one "origin"
 	if [[ "$(git rev-parse --git-dir)" == ".git" && "$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///')" ]]; then
 		exit_with_error "Remote URL does not match. Stopping!" "${git_work_dir} $dir $ref_name" "warn"
@@ -91,10 +87,12 @@ fetch_from_repo() {
 
 	local changed=false
 
+	# get local hash; might fail
+	local local_hash
+	local_hash=$(git rev-parse @ 2> /dev/null || true) # Don't fail nor output anything if failure
+
 	# when we work offline we simply return the sources to their original state
 	if ! $offline; then
-		local local_hash
-		local_hash=$(git rev-parse @ 2> /dev/null || true) # Don't fail nor output anything if failure
 
 		case $ref_type in
 			branch)
@@ -125,7 +123,7 @@ fetch_from_repo() {
 
 	fi # offline
 
-	if [[ $changed == true ]]; then
+	if [[ "${changed}" == "true" ]]; then
 
 		# If there's a cold bundle URL specified:
 		# - if there's already a cold_bundle_xxx remote, move on.
