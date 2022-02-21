@@ -14,16 +14,16 @@ case "${BRANCH}" in
 	current)
 		export DISTRO_GENERIC_KERNEL=no
 		export LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		export KERNELBRANCH="branch:linux-5.15.y"
+		export KERNEL_MAJOR_MINOR="5.15"                      # Major and minor versions of this kernel. For mainline caching.
+		export KERNELBRANCH="branch:linux-5.15.y"             # Branch or tag to build from. It should match MAJOR_MINOR
 		export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
-		export KERNELDIR="linux-uefi-${LINUXFAMILY}"          # Avoid sharing a source tree with others, until we know it's safe.
 		;;
 
 	edge)
 		export DISTRO_GENERIC_KERNEL=no
 		export LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		export KERNELBRANCH="branch:linux-5.16.y"
+		export KERNEL_MAJOR_MINOR="5.16"                      # Major and minor versions of this kernel. For mainline caching.
+		export KERNELBRANCH="branch:linux-5.16.y"             # Branch or tag to build from. It should match MAJOR_MINOR
 		export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
-		export KERNELDIR="linux-uefi-${LINUXFAMILY}"          # Avoid sharing a source tree with others, until we know it's safe.
 		;;
 esac

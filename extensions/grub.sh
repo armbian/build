@@ -53,7 +53,6 @@ function extension_prepare_config__prepare_flash_kernel() {
 		unset KERNELSOURCE                 # This should make Armbian skip most stuff. At least, I hacked it to.
 		export INSTALL_ARMBIAN_FIRMWARE=no # Should skip build and install of Armbian-firmware.
 	else
-		export KERNELDIR="linux-uefi-${LINUXFAMILY}" # Avoid sharing a source tree with others, until we know it's safe.
 		# Don't install anything. Armbian handles everything.
 		DISTRO_KERNEL_PACKAGES=""
 		DISTRO_FIRMWARE_PACKAGES=""
