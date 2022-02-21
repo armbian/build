@@ -23,38 +23,60 @@ main_default_build_single() {
 		cleaning "sources"
 	fi
 
+	# Too many things being done. Allow doing only one thing. For core development, mostly.
+	# Also because "KERNEL_ONLY=yes" should really be spelled "PACKAGES_ONLY=yes"
+	local do_build_uboot="yes" do_build_kernel="yes" exit_after_kernel_build="no" do_host_tools="yes"
+	if [[ "${JUST_KERNEL}" == "yes" ]]; then
+		display_alert "JUST_KERNEL set to yes" "Building only kernel and exiting after that" "debug"
+		do_build_uboot="no"
+		exit_after_kernel_build="yes"
+		do_host_tools="no"
+	fi
+
 	# ignore updates help on building all images - for internal purposes
 	if [[ $IGNORE_UPDATES != yes ]]; then
-		LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
+
+		# Fetch and build the host tools (via extensions)
+		if [[ "${do_host_tools}" == "yes" ]]; then
+			LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
+		fi
 
 		for option in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
 			if [[ $option != sources ]]; then
 				LOG_SECTION="cleaning" do_with_logging cleaning "$option"
-				fasthash_debug "main_cleaning_armbian"
+				#fasthash_debug "main_cleaning_armbian"
 			fi
 		done
 	fi
 
-	# Don't build u-boot at all if the BOOTCONFIG is 'none'.
-	if [[ "${BOOTCONFIG}" != "none" ]]; then
-		# @TODO: refactor this. we use it very often
-		# Compile u-boot if packed .deb does not exist or use the one from repository
-		if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-			if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
-				LOG_SECTION="compile_atf" do_with_logging compile_atf
-			fi
-			# @TODO: refactor this construct. we use it too many times.
-			if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
-				LOG_SECTION="compile_uboot" do_with_logging compile_uboot
+	if [[ "${do_build_uboot}" == "yes" ]]; then
+		# Don't build u-boot at all if the BOOTCONFIG is 'none'.
+		if [[ "${BOOTCONFIG}" != "none" ]]; then
+			# @TODO: refactor this. we use it very often
+			# Compile u-boot if packed .deb does not exist or use the one from repository
+			if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+				if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+					LOG_SECTION="compile_atf" do_with_logging compile_atf
+				fi
+				# @TODO: refactor this construct. we use it too many times.
+				if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+					LOG_SECTION="compile_uboot" do_with_logging compile_uboot
+				fi
 			fi
 		fi
 	fi
 
 	# Compile kernel if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
-		export KDEB_CHANGELOG_DIST=$RELEASE
-		if [[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
-			LOG_SECTION="compile_kernel" do_with_logging compile_kernel
+	if [[ "${do_build_kernel}" == "yes" ]]; then
+		if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+			export KDEB_CHANGELOG_DIST=$RELEASE
+			if [[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
+				LOG_SECTION="compile_kernel" do_with_logging compile_kernel
+			fi
+		fi
+		if [[ "${exit_after_kernel_build}" == "yes" ]]; then
+			display "Only building kernel and exiting" "NOW" "debug"
+			exit 0
 		fi
 	fi
 
