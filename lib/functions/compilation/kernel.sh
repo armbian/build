@@ -43,6 +43,12 @@ function run_kernel_make_long_running() {
 }
 
 function compile_kernel() {
+	if [[ -n $KERNELSOURCE ]]; then
+		display_alert "Downloading sources" "kernel" "git"
+		GIT_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL}" \
+			fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+	fi
+
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
 		(

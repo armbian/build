@@ -1,4 +1,9 @@
 compile_atf() {
+	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
+		display_alert "Downloading sources" "atf" "git"
+		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
+	fi
+
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$ATFSOURCEDIR" "info"
 		(

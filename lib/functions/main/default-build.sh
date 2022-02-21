@@ -22,9 +22,9 @@ main_default_build_single() {
 	if [[ $CLEAN_LEVEL == *sources* ]]; then
 		cleaning "sources"
 	fi
+
 	# ignore updates help on building all images - for internal purposes
 	if [[ $IGNORE_UPDATES != yes ]]; then
-		LOG_SECTION="fetch_sources_kernel_uboot_atf" do_with_logging fetch_sources_kernel_uboot_atf
 		LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
 
 		for option in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do

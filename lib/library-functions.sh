@@ -123,15 +123,6 @@ source "${SRC}"/lib/functions/compilation/patch/kernel-pkg.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/compilation/sources.sh
-# shellcheck source=lib/functions/compilation/sources.sh
-source "${SRC}"/lib/functions/compilation/sources.sh
-
-# no errors tolerated. invoked before each sourced file to make sure.
-#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
-#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
-set -o errtrace # trace ERR through - enabled
-set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/compilation/uboot.sh
 # shellcheck source=lib/functions/compilation/uboot.sh
 source "${SRC}"/lib/functions/compilation/uboot.sh
@@ -315,15 +306,6 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/logging/capture.sh
 # shellcheck source=lib/functions/logging/capture.sh
 source "${SRC}"/lib/functions/logging/capture.sh
-
-# no errors tolerated. invoked before each sourced file to make sure.
-#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
-#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
-set -o errtrace # trace ERR through - enabled
-set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/logging/errors.sh
-# shellcheck source=lib/functions/logging/errors.sh
-source "${SRC}"/lib/functions/logging/errors.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
