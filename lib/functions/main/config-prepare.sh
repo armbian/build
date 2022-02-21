@@ -163,6 +163,19 @@ function prepare_and_config_main_build_single() {
 	export LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
 	[[ -n $ATFSOURCE ]] && export ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 
+	# So for kernel full cached rebuilds.
+	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
+	# That is the "default" layout; there will be as many source dirs as there are built kernel debs.
+	# But, it really makes much more sense if the major.minor (such as 5.10, 5.15, or 4.4) of kernel has its own
+	# tree. So in the end:
+	# <arch>-<major.minor>[-<family>]
+	# So we gotta explictly know the major.minor to be able to do that scheme.
+	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
+	if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
+		exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
+	fi
+	export LINUXSOURCEDIR="kernel/${ARCH}__${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}"
+
 	export BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
 	export BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
 	export BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}${EXTRA_BSP_NAME}"

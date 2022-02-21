@@ -67,6 +67,11 @@ fetch_from_repo() {
 
 	git_work_dir="${SRC}/cache/sources/${workdir}"
 
+	if [[ "${GIT_FIXED_WORKDIR}" != "" ]]; then
+		display_alert "GIT_FIXED_WORKDIR is set to" "${GIT_FIXED_WORKDIR}" "debug"
+		git_work_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
+	fi
+
 	mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}"
 
 	cd "${git_work_dir}" || exit
@@ -82,7 +87,7 @@ fetch_from_repo() {
 		display_alert "Creating local copy" "$dir $ref_name"
 		improved_git init -q --initial-branch="armbian_unused_initial_branch" .
 		improved_git remote add origin "${url}"
-		offline=false # Force only, we'll need to fetch.
+		offline=false # Force online, we'll need to fetch.
 	fi
 
 	local changed=false

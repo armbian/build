@@ -75,7 +75,7 @@ main_default_build_single() {
 			fi
 		fi
 		if [[ "${exit_after_kernel_build}" == "yes" ]]; then
-			display "Only building kernel and exiting" "NOW" "debug"
+			display_alert "Only building kernel and exiting" "NOW" "debug"
 			exit 0
 		fi
 	fi

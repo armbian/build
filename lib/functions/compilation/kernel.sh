@@ -43,34 +43,39 @@ function run_kernel_make_long_running() {
 }
 
 function compile_kernel() {
+	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
+
 	if [[ -n $KERNELSOURCE ]]; then
 		display_alert "Downloading sources" "kernel" "git"
-		GIT_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL}" \
-			fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+		GIT_FIXED_WORKDIR="${LINUXSOURCEDIR}" \
+			WARM_REMOTE_NAME="kernel-stable-${KERNEL_MAJOR_MINOR}" \
+			WARM_REMOTE_URL="${MAINLINE_KERNEL_SOURCE}" \
+			WARM_REMOTE_BRANCH="branch:linux-${KERNEL_MAJOR_MINOR}.y" \
+			GIT_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL}" \
+			fetch_from_repo "$KERNELSOURCE" "unused:set via GIT_FIXED_WORKDIR" "$KERNELBRANCH" "yes"
 	fi
 
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
 		(
-			cd "${SRC}/cache/sources/${LINUXSOURCEDIR}"
+			cd "${kernel_work_dir}"
 			make ARCH="${ARCHITECTURE}" clean > /dev/null 2>&1
 		)
 	fi
 	fasthash_debug "post git clean"
 
-	local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
 	if [[ $USE_OVERLAYFS == yes ]]; then
 		display_alert "Using overlayfs_wrapper" "kernel_${LINUXFAMILY}_${BRANCH}" "debug"
-		kerneldir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
+		kernel_work_dir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
 	fi
-	cd "${kerneldir}" || exit
+	cd "${kernel_work_dir}" || exit
 
 	# @TODO: why would we delete localversion?
 	rm -f localversion
 
 	# read kernel version
 	local version hash pre_patch_version
-	version=$(grab_version "$kerneldir")
+	version=$(grab_version "$kernel_work_dir")
 	pre_patch_version="${version}"
 	display_alert "Pre-patch kernel version" "${pre_patch_version}" "debug"
 
@@ -81,14 +86,14 @@ function compile_kernel() {
 	fi
 
 	# read kernel git hash
-	hash=$(git --git-dir="$kerneldir"/.git rev-parse HEAD)
+	hash=$(git --git-dir="$kernel_work_dir"/.git rev-parse HEAD)
 
 	## Start kernel patching process.
 	## There's a few objectives here:
 	## - (always) produce a fasthash: represents "what would be done" (eg: md5 of a patch, crc32 of description).
 	## - (optionally) execute modification against living tree (eg: apply a patch, copy a file, etc). only if `DO_MODIFY=yes`
 	## - (always) call mark_change_commit with the description of what was done and fasthash.
-	initialize_fasthash "kernel" "${hash}" "${pre_patch_version}" "${kerneldir}"
+	initialize_fasthash "kernel" "${hash}" "${pre_patch_version}" "${kernel_work_dir}"
 	fasthash_debug "init"
 
 	# Apply a series of patches if a series file exists
@@ -96,17 +101,17 @@ function compile_kernel() {
 	if test -f "${series_conf}"; then
 		display_alert "series.conf file visible. Apply"
 		fasthash_branch "patches-${KERNELPATCHDIR}-series.conf"
-		apply_patch_series "${kerneldir}" "${series_conf}" # applies a series of patches, read from a file. calls process_patch_file
+		apply_patch_series "${kernel_work_dir}" "${series_conf}" # applies a series of patches, read from a file. calls process_patch_file
 	fi
 
 	# mostly local-based packaging fixes.
 	fasthash_branch "packaging-patches"
-	apply_kernel_patches_for_packaging "${kerneldir}" "${version}" # calls process_patch_file and other stuff.
+	apply_kernel_patches_for_packaging "${kernel_work_dir}" "${version}" # calls process_patch_file and other stuff.
 
 	# applies a humongous amount of patches coming from github repos.
 	# it's mostly conditional, and very complex.
 	# @TODO: re-enable after finishing converting it with fasthash magic
-	# apply_kernel_patches_for_drivers  "${kerneldir}" "${version}" # calls process_patch_file and other stuff. there is A LOT of it.
+	# apply_kernel_patches_for_drivers  "${kernel_work_dir}" "${version}" # calls process_patch_file and other stuff. there is A LOT of it.
 
 	# applies a series of patches, in directory order, from multiple directories (default/"user" patches)
 	# @TODO: I believe using the $BOARD here is the most confusing thing in the whole of Armbian. It should be disabled.
@@ -123,7 +128,7 @@ function compile_kernel() {
 
 	# re-read kernel version after patching
 	local version
-	version=$(grab_version "$kerneldir")
+	version=$(grab_version "$kernel_work_dir")
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
@@ -172,8 +177,8 @@ function compile_kernel() {
 
 	# hack for OdroidXU4. Copy firmare files
 	if [[ $BOARD == odroidxu4 ]]; then
-		mkdir -p "${kerneldir}/firmware/edid"
-		cp "${SRC}"/packages/blobs/odroidxu4/*.bin "${kerneldir}/firmware/edid"
+		mkdir -p "${kernel_work_dir}/firmware/edid"
+		cp "${SRC}"/packages/blobs/odroidxu4/*.bin "${kernel_work_dir}/firmware/edid"
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
@@ -236,7 +241,7 @@ function compile_kernel() {
 	fi
 
 	# Check for built kernel image file file; can override default with KERNEL_IMAGE_TYPE_PATH
-	local check_built_kernel_file="${kerneldir}/${KERNEL_IMAGE_TYPE_PATH:-"arch/${ARCHITECTURE}/boot/${KERNEL_IMAGE_TYPE}"}"
+	local check_built_kernel_file="${kernel_work_dir}/${KERNEL_IMAGE_TYPE_PATH:-"arch/${ARCHITECTURE}/boot/${KERNEL_IMAGE_TYPE}"}"
 	if [[ ! -f "${check_built_kernel_file}" ]]; then
 		exit_with_error "Kernel was not built" "${check_built_kernel_file}"
 	fi
@@ -292,8 +297,8 @@ create_linux-source_package() {
 	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
 
 	display_alert "Compressing sources for the linux-source package"
-	tar cp --directory="$kerneldir" --exclude='.git' --owner=root . |
-		pv -N "$(logging_echo_prefix_for_pv "compress_kernel_sources") $display_name" -p -b -r -s "$(du -sb "$kerneldir" --exclude=='.git' | cut -f1)" |
+	tar cp --directory="$kernel_work_dir" --exclude='.git' --owner=root . |
+		pv -N "$(logging_echo_prefix_for_pv "compress_kernel_sources") $display_name" -p -b -r -s "$(du -sb "$kernel_work_dir" --exclude=='.git' | cut -f1)" |
 		pixz -0 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz" # @TODO: .deb will compress this later. -0 for now, but should be a plain tar
 	cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
 
