@@ -115,7 +115,7 @@ function do_main_configuration() {
 	# URL for the git bundle used to "bootstrap" local git copies without too much server load. This applies independently of git mirror below.
 	export MAINLINE_KERNEL_TORVALDS_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle" # this is plain torvalds, single branch
 	export MAINLINE_KERNEL_STABLE_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/clone.bundle"     # this is all stable branches. with tags!
-	export MAINLINE_KERNEL_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL:-$MAINLINE_KERNEL_STABLE_BUNDLE_URL}"              # default to stable. it's bigger but more useful for developers.
+	export MAINLINE_KERNEL_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL:-${MAINLINE_KERNEL_TORVALDS_BUNDLE_URL}}"          # default to Torvalds; everything else is small enough with this
 
 	case $MAINLINE_MIRROR in
 		google)

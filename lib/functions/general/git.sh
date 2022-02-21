@@ -166,7 +166,7 @@ fetch_from_repo() {
 				fi
 
 				display_alert "Fetching from git bundle, wait" "${git_cold_bundle_id}" "info"
-				improved_git_fetch --tags "${git_cold_bundle_remote_id}"                                           # Fetch it! and all its tags, too.
+				improved_git_fetch --no-tags "${git_cold_bundle_remote_id}"                                        # Fetch it! (all refs!)
 				has_fetched_from_bundle=1                                                                          # marker for pruning logic below
 				echo "${remote_hash}" > "${git_cold_bundle_fetched_marker_file}"                                   # marker for future invocation
 				display_alert "Bundle fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
@@ -182,9 +182,9 @@ fetch_from_repo() {
 		# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
 		display_alert "Fetching updates from origin" "$dir $ref_name"
 		case $ref_type in
-			branch | commit) improved_git_fetch --tags origin "${ref_name}" ;;
-			tag) improved_git_fetch --tags origin tags/"${ref_name}" ;;
-			head) improved_git_fetch --tags origin HEAD ;;
+			branch | commit) improved_git_fetch --no-tags origin "${ref_name}" ;;
+			tag) improved_git_fetch --no-tags origin tags/"${ref_name}" ;;
+			head) improved_git_fetch --no-tags origin HEAD ;;
 		esac
 		display_alert "Origin fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size again
 
@@ -193,13 +193,16 @@ fetch_from_repo() {
 		improved_git clean -q -d -f
 		display_alert "After checkout, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
 
-		#if [[ $has_fetched_from_bundle -gt 0 ]]; then
-		#	display_alert "Pre-pruning, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
-		#	echo -n "${remote_hash}" > .git/shallow                                                 # commit to keep for shallowing, can be something else. for now is full prune.
-		#	improved_git remote remove "${git_cold_bundle_remote_id}"
-		#	improved_git reflog expire --expire=0 --all
-		#	improved_git gc --prune=all
-		#fi
+		# @TODO: find fork point, shallow from there, repack, and export bundle for that version;
+		#        would need a mainline reference to to this (eg: find 5.10.0, export 5.10 bundle from there)
+		if [[ $has_fetched_from_bundle -gt 0 ]]; then
+			display_alert "Pre-pruning, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
+			display_alert "@TODO" "export bundle after full fetch" "warn"
+			#	echo -n "${remote_hash}" > .git/shallow                                                 # commit to keep for shallowing, can be something else. for now is full prune.
+			#	improved_git remote remove "${git_cold_bundle_remote_id}"
+			#	improved_git reflog expire --expire=0 --all
+			#	improved_git gc --prune=all
+		fi
 
 	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then # if not changed, but dirty...
 		display_alert "Cleaning git dir" "$(git status -s | wc -l) files"         # working directory is not clean, show it
