@@ -47,10 +47,18 @@ function compile_kernel() {
 
 	if [[ -n $KERNELSOURCE ]]; then
 		display_alert "Downloading sources" "kernel" "git"
+
+		# Does not work well with rpi for example: GIT_WARM_REMOTE_SHALLOW_AT_TAG="v${KERNEL_MAJOR_MINOR}" \
+		# GIT_WARM_REMOTE_SHALLOW_AT_TAG sets GIT_WARM_REMOTE_SHALLOW_AT_DATE for you, as long as it is included by GIT_WARM_REMOTE_FETCH_TAGS
+		# GIT_WARM_REMOTE_SHALLOW_AT_DATE is the only one really used for making shallow
+
 		GIT_FIXED_WORKDIR="${LINUXSOURCEDIR}" \
-			WARM_REMOTE_NAME="kernel-stable-${KERNEL_MAJOR_MINOR}" \
-			WARM_REMOTE_URL="${MAINLINE_KERNEL_SOURCE}" \
-			WARM_REMOTE_BRANCH="branch:linux-${KERNEL_MAJOR_MINOR}.y" \
+			GIT_WARM_REMOTE_NAME="kernel-stable-${KERNEL_MAJOR_MINOR}" \
+			GIT_WARM_REMOTE_URL="${MAINLINE_KERNEL_SOURCE}" \
+			GIT_WARM_REMOTE_BRANCH="linux-${KERNEL_MAJOR_MINOR}.y" \
+			GIT_WARM_REMOTE_FETCH_TAGS="v${KERNEL_MAJOR_MINOR}*" \
+			GIT_WARM_REMOTE_SHALLOW_AT_TAG="${KERNEL_MAJOR_SHALLOW_TAG}" \
+			GIT_WARM_REMOTE_BUNDLE="kernel-stable-${KERNEL_MAJOR_MINOR}" \
 			GIT_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL}" \
 			fetch_from_repo "$KERNELSOURCE" "unused:set via GIT_FIXED_WORKDIR" "$KERNELBRANCH" "yes"
 	fi
@@ -254,7 +262,7 @@ function compile_kernel() {
 	# Prepare for packaging, using the exact same options as original compile.
 	display_alert "Installing kernel headers and modules for packaging" "${LINUXCONFIG} ${prepackage_targets[*]}" "info"
 	fasthash_debug "pre-prepackage"
-	make_filter="| grep --line-buffered -v -e 'INSTALL' -e 'SIGN'" run_kernel_make_long_running "${prepackage_targets[@]}"
+	make_filter="| grep --line-buffered -v -e 'INSTALL' -e 'SIGN' -e 'XZ'" run_kernel_make_long_running "${prepackage_targets[@]}"
 	fasthash_debug "post-prepackage"
 
 	# produce deb packages: image, headers, firmware, dtb

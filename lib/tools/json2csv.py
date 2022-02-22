@@ -33,6 +33,8 @@ for obj in flat:
 		value = obj[key]
 		if type(value) == str:
 			columns_map[key] = True
+		if type(value) == bool:
+			columns_map[key] = True
 
 columns = columns_map.keys()
 

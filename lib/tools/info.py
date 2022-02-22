@@ -44,7 +44,8 @@ def map_to_armbian_params(map_params):
 
 def run_armbian_compile_and_parse(path_to_compile_sh, compile_params):
 	exec_cmd = ([path_to_compile_sh] + map_to_armbian_params(compile_params))
-	# print(exec_cmd)
+	result = None
+	logs = ["Not available"]
 	try:
 		result = subprocess.run(
 			exec_cmd,
@@ -62,7 +63,11 @@ def run_armbian_compile_and_parse(path_to_compile_sh, compile_params):
 				compile_params, e.returncode, e.stderr
 			)
 		)
-		raise e
+		return {"in": compile_params, "out": {}, "logs": e.stderr.split("\n"), "config_ok": False}
+
+	if result is not None:
+		if result.stderr:
+			logs = result.stderr.split("\n")
 
 	# Now parse it with regex-power!
 	# regex = r"^declare (..) (.*?)=\"(.*?)\"$" # old multiline version
@@ -83,11 +88,7 @@ def run_armbian_compile_and_parse(path_to_compile_sh, compile_params):
 
 		all_keys[key] = value
 
-	logs = ["Not available"]
-	if result.stderr:
-		logs = result.stderr.split("\n")
-
-	return {"in": compile_params, "out": all_keys, "logs": logs}
+	return {"in": compile_params, "out": all_keys, "logs": logs, "config_ok": True}
 
 
 # Find the location of compile.sh, relative to this Python script.
@@ -160,7 +161,7 @@ def get_info_for_one_board(board_file, board_name, common_params, board_info):
 		return parsed | board_info
 	except:
 		eprint("Failed get info for board '{}'".format(board_name))
-		return None
+		return board_info | {"ARMBIAN_CONFIG_OK": False}
 
 
 if True:

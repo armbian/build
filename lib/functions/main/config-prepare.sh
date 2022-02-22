@@ -160,21 +160,7 @@ function prepare_and_config_main_build_single() {
 	fi
 
 	export BOOTSOURCEDIR="${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
-	export LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
 	[[ -n $ATFSOURCE ]] && export ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
-
-	# So for kernel full cached rebuilds.
-	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
-	# That is the "default" layout; there will be as many source dirs as there are built kernel debs.
-	# But, it really makes much more sense if the major.minor (such as 5.10, 5.15, or 4.4) of kernel has its own
-	# tree. So in the end:
-	# <arch>-<major.minor>[-<family>]
-	# So we gotta explictly know the major.minor to be able to do that scheme.
-	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
-	if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
-		exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
-	fi
-	export LINUXSOURCEDIR="kernel/${ARCH}__${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}"
 
 	export BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
 	export BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
@@ -186,7 +172,41 @@ function prepare_and_config_main_build_single() {
 	export CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
 	export CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
 	export CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
-	export CHOSEN_KERNEL_WITH_ARCH=${CHOSEN_KERNEL}-${ARCH} # Only for reporting purposes.
+
+	# So for kernel full cached rebuilds.
+	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
+	# That is the "default" layout; there will be as many source dirs as there are built kernel debs.
+	# But, it really makes much more sense if the major.minor (such as 5.10, 5.15, or 4.4) of kernel has its own
+	# tree. So in the end:
+	# <arch>-<major.minor>[-<family>]
+	# So we gotta explictly know the major.minor to be able to do that scheme.
+	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
+	if [[ -n "${KERNELSOURCE}" ]]; then
+		export ARMBIAN_WILL_BUILD_KERNEL="${CHOSEN_KERNEL}-${ARCH}"
+		if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
+			exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
+		fi
+		# Parse/validate the the major, bail if no match
+		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge "5.4"; then # We support 5.x from 5.4; 5.10+ brings unified packaging.
+			export KERNEL_MAJOR=5
+			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
+		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.4" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "5.0"; then
+			export KERNEL_MAJOR=4                                                      # We support 4.x from 4.4; all require custom packaging.
+			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
+		else
+			exit_with_error "Kernel series unsupported" "'${KERNEL_MAJOR_MINOR}' is unsupported, or bad config"
+		fi
+
+		export LINUXSOURCEDIR="kernel/${ARCH}__${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}"
+	else
+		export ARMBIAN_WILL_BUILD_KERNEL=no
+	fi
+
+	if [[ -n "${BOOTCONFIG}" ]] && [[ "${BOOTCONFIG}" != "none" ]]; then
+		export ARMBIAN_WILL_BUILD_UBOOT=yes
+	else
+		export ARMBIAN_WILL_BUILD_UBOOT=no
+	fi
 
 	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
 }
