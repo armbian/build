@@ -17,18 +17,21 @@ GOVERNOR=ondemand
 case $BRANCH in
 	legacy)
 
+		export KERNEL_MAJOR_MINOR="5.4" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.4.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
 	current)
 
+		export KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-current'
 
 		;;
 	edge)
 
+		export KERNEL_MAJOR_MINOR="5.11" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.11.y"
 		KERNELPATCHDIR='meson-current'
 
