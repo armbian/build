@@ -383,11 +383,11 @@ compilation_prepare()
 
 
 	# Wireless drivers for Xradio XR819 chipsets
-	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]] && [[ "$EXTRAWIFI" == yes ]]; then
+	if linux-version compare "${version}" ge 4.19 && [[ ( "$LINUXFAMILY" == sunxi* && "$EXTRAWIFI" == yes ) || "$BOARD" == "tanix-tx6" ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/karabek/xradio" "xradio" "branch:master" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "branch:master" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
@@ -404,15 +404,63 @@ compilation_prepare()
 		"$kerneldir/drivers/net/wireless/xradio/Kconfig"
 
 		# Add to section Makefile
-		echo "obj-\$(CONFIG_WLAN_VENDOR_XRADIO) += xradio/" \
+		echo "obj-\$(CONFIG_XRADIO) += xradio/" \
 		>> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# add support for K5.13+
-                process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
+		# patch xradio
+                process_patch_file "${SRC}/patch/misc/xradio.patch" "applying"
+                
+                # disable tux
+                display_alert "Patching" "Disabling Tux splash" "info"
+                
+                if [ ! -f "${SRC}/packages/blobs/splash/logo_linux_clut224.ppm" ]; then
+                      display_alert "OpenVfd" "packages/blobs/splash/logo_linux_clut224.ppm" "error"
+                      exit
+                fi
+                
+                cp "${SRC}/packages/blobs/splash/logo_linux_clut224.ppm" "$kerneldir/drivers/video/logo/"
+                
+                # installing openvfd
+                display_alert "Adding" "LED clock support (openvfd)" "info"
+                fetch_from_repo "$GITHUB_SOURCE/arthur-liberman/linux_openvfd" "openvfd" "branch:master" "yes"
+		
+                cd "$kerneldir" || exit
+                rm -rf "$kerneldir/drivers/misc/openvfd"
+                mkdir -p "$kerneldir/drivers/misc/openvfd/"
+		
+                cp -R "${SRC}"/cache/sources/openvfd/master/driver/* "$kerneldir/drivers/misc/openvfd/"
+                echo "obj-m += openvfd/" >> "$kerneldir/drivers/misc/Makefile"
+				
+                if $(dpkg-architecture -e "${ARCH}"); then
+                       display_alert "Native compilation"
+                elif [[ $(dpkg --print-architecture) == amd64 ]]; then
+                       local toolchain
+                       toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
+                       [[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+                else
+                       exit_with_error "Architecture [$ARCH] is not supported"
+                fi
 
-	fi
+                display_alert "OpenVfd service compiler" "ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER PATH=${toolchain}" "info"
+                cd "${SRC}"/cache/sources/openvfd/master/
+                rm ./OpenVFDService
+                rm -rf "${SRC}/packages/bsp/common/usr/sbin/OpenVFDService"
+                
+                eval env PATH="${toolchain}:${PATH}" "make ARCH=$ARCHITECTURE CROSS_COMPILE=$KERNEL_COMPILER CC=${KERNEL_COMPILER}gcc OpenVFDService"
+                cp ./OpenVFDService "${SRC}/packages/bsp/common/usr/sbin" || exit
+                
+                if [ ! -f "${SRC}/packages/bsp/common/etc/modprobe.d/vfd.conf" ]; then
+                      display_alert "OpenVfd" "File not exists: packages/bsp/common/etc/modprobe.d/vfd.conf" "error"
+                      exit
+                fi
+                
+                if [ ! -f "${SRC}/packages/bsp/common/etc/systemd/system/openvfd.service" ]; then
+                      display_alert "OpenVfd" "File not exists: packages/bsp/common/etc/systemd/system/openvfd.service" "error"
+                      exit
+                fi                
+        fi
 
 
 
@@ -552,7 +600,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 88x2cs chipsets
 
-	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 5.15 && [[ ( "$LINUXFAMILY" == sunxi* && "$EXTRAWIFI" == yes ) || "$BOARD" == "tanix-tx6" ]]; then
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"

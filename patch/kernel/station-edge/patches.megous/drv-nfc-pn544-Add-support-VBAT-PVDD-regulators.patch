@@ -1,0 +1,106 @@
+From 03792a5da077b62a2ac55c824e21b56df1dfb198 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Fri, 10 Nov 2017 14:29:26 +0100
+Subject: [PATCH 018/446] drv:nfc:pn544: Add support VBAT/PVDD regulators
+
+Regulators are required, so this can't go into mainline as is.
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/nfc/pn544/i2c.c | 31 +++++++++++++++++++++++++++++--
+ 1 file changed, 29 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/nfc/pn544/i2c.c b/drivers/nfc/pn544/i2c.c
+index 37d26f019..abb23bd4f 100644
+--- a/drivers/nfc/pn544/i2c.c
++++ b/drivers/nfc/pn544/i2c.c
+@@ -16,6 +16,7 @@
+ #include <linux/nfc.h>
+ #include <linux/firmware.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/regulator/consumer.h>
+ 
+ #include <asm/unaligned.h>
+ 
+@@ -59,6 +60,14 @@ MODULE_DEVICE_TABLE(acpi, pn544_hci_i2c_acpi_match);
+ 
+ #define PN544_HCI_I2C_DRIVER_NAME "pn544_hci_i2c"
+ 
++/* regulator supplies */
++static const char * const pn544_supply_names[] = {
++	"PVDD",  /* Digital Core (1.8V) supply */
++	"VBAT",  /* Analog (2.9V-5.5V) supply */
++};
++
++#define PN544_NUM_SUPPLIES ARRAY_SIZE(pn544_supply_names)
++
+ /*
+  * Exposed through the 4 most significant bytes
+  * from the HCI SW_VERSION first byte, a.k.a.
+@@ -150,6 +159,7 @@ struct pn544_i2c_phy {
+ 	struct i2c_client *i2c_dev;
+ 	struct nfc_hci_dev *hdev;
+ 
++	struct regulator_bulk_data supplies[PN544_NUM_SUPPLIES];
+ 	struct gpio_desc *gpiod_en;
+ 	struct gpio_desc *gpiod_fw;
+ 
+@@ -240,6 +250,13 @@ static void pn544_hci_i2c_enable_mode(struct pn544_i2c_phy *phy, int run_mode)
+ static int pn544_hci_i2c_enable(void *phy_id)
+ {
+ 	struct pn544_i2c_phy *phy = phy_id;
++	int ret;
++
++	pr_info("%s\n", __func__);
++
++	ret = regulator_bulk_enable(PN544_NUM_SUPPLIES, phy->supplies);
++	if (ret)
++		return ret;
+ 
+ 	pn544_hci_i2c_enable_mode(phy, PN544_HCI_MODE);
+ 
+@@ -262,6 +279,8 @@ static void pn544_hci_i2c_disable(void *phy_id)
+ 	gpiod_set_value_cansleep(phy->gpiod_en, !phy->en_polarity);
+ 	usleep_range(10000, 15000);
+ 
++	regulator_bulk_disable(PN544_NUM_SUPPLIES, phy->supplies);
++
+ 	phy->powered = 0;
+ }
+ 
+@@ -368,7 +387,7 @@ static int pn544_hci_i2c_read(struct pn544_i2c_phy *phy, struct sk_buff **skb)
+ 
+ 	if ((len < (PN544_HCI_I2C_LLC_MIN_SIZE - 1)) ||
+ 	    (len > (PN544_HCI_I2C_LLC_MAX_SIZE - 1))) {
+-		nfc_err(&client->dev, "invalid len byte\n");
++		nfc_err(&client->dev, "invalid len byte %hhx\n", len);
+ 		r = -EBADMSG;
+ 		goto flush;
+ 	}
+@@ -871,7 +890,7 @@ static int pn544_hci_i2c_probe(struct i2c_client *client,
+ {
+ 	struct device *dev = &client->dev;
+ 	struct pn544_i2c_phy *phy;
+-	int r = 0;
++	int r = 0, i;
+ 
+ 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
+ 		nfc_err(&client->dev, "Need I2C_FUNC_I2C\n");
+@@ -893,6 +912,14 @@ static int pn544_hci_i2c_probe(struct i2c_client *client,
+ 	if (r)
+ 		dev_dbg(dev, "Unable to add GPIO mapping table\n");
+ 
++	for (i = 0; i < PN544_NUM_SUPPLIES; i++)
++		phy->supplies[i].supply = pn544_supply_names[i];
++
++	r = devm_regulator_bulk_get(&client->dev, PN544_NUM_SUPPLIES,
++				    phy->supplies);
++	if (r)
++		return r;
++
+ 	/* Get EN GPIO */
+ 	phy->gpiod_en = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
+ 	if (IS_ERR(phy->gpiod_en)) {
+-- 
+2.31.1
+

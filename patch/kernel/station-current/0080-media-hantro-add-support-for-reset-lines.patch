@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sat, 7 Aug 2021 17:29:11 +0200
+Subject: [PATCH] media: hantro: add support for reset lines
+
+Some SoCs like Allwinner H6 use reset lines for resetting Hantro G2. Add
+support for them.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/staging/media/hantro/hantro.h     |  3 +++
+ drivers/staging/media/hantro/hantro_drv.c | 15 ++++++++++++++-
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/media/hantro/hantro.h b/drivers/staging/media/hantro/hantro.h
+index 7da23f7f207a..33eb3e092cc1 100644
+--- a/drivers/staging/media/hantro/hantro.h
++++ b/drivers/staging/media/hantro/hantro.h
+@@ -16,6 +16,7 @@
+ #include <linux/videodev2.h>
+ #include <linux/wait.h>
+ #include <linux/clk.h>
++#include <linux/reset.h>
+ 
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+@@ -171,6 +172,7 @@ hantro_vdev_to_func(struct video_device *vdev)
+  * @dev:		Pointer to device for convenient logging using
+  *			dev_ macros.
+  * @clocks:		Array of clock handles.
++ * @resets:		Array of reset handles.
+  * @reg_bases:		Mapped addresses of VPU registers.
+  * @enc_base:		Mapped address of VPU encoder register for convenience.
+  * @dec_base:		Mapped address of VPU decoder register for convenience.
+@@ -190,6 +192,7 @@ struct hantro_dev {
+ 	struct platform_device *pdev;
+ 	struct device *dev;
+ 	struct clk_bulk_data *clocks;
++	struct reset_control *resets;
+ 	void __iomem **reg_bases;
+ 	void __iomem *enc_base;
+ 	void __iomem *dec_base;
+diff --git a/drivers/staging/media/hantro/hantro_drv.c b/drivers/staging/media/hantro/hantro_drv.c
+index 3d3107a39dae..770f4ce71d29 100644
+--- a/drivers/staging/media/hantro/hantro_drv.c
++++ b/drivers/staging/media/hantro/hantro_drv.c
+@@ -905,6 +905,10 @@ static int hantro_probe(struct platform_device *pdev)
+ 			return PTR_ERR(vpu->clocks[0].clk);
+ 	}
+ 
++	vpu->resets = devm_reset_control_array_get(&pdev->dev, false, true);
++	if (IS_ERR(vpu->resets))
++		return PTR_ERR(vpu->resets);
++
+ 	num_bases = vpu->variant->num_regs ?: 1;
+ 	vpu->reg_bases = devm_kcalloc(&pdev->dev, num_bases,
+ 				      sizeof(*vpu->reg_bases), GFP_KERNEL);
+@@ -978,10 +982,16 @@ static int hantro_probe(struct platform_device *pdev)
+ 	pm_runtime_use_autosuspend(vpu->dev);
+ 	pm_runtime_enable(vpu->dev);
+ 
++	ret = reset_control_deassert(vpu->resets);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to deassert resets\n");
++		goto err_pm_disable;
++	}
++
+ 	ret = clk_bulk_prepare(vpu->variant->num_clocks, vpu->clocks);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "Failed to prepare clocks\n");
+-		goto err_pm_disable;
++		goto err_rst_assert;
+ 	}
+ 
+ 	ret = v4l2_device_register(&pdev->dev, &vpu->v4l2_dev);
+@@ -1037,6 +1047,8 @@ static int hantro_probe(struct platform_device *pdev)
+ 	v4l2_device_unregister(&vpu->v4l2_dev);
+ err_clk_unprepare:
+ 	clk_bulk_unprepare(vpu->variant->num_clocks, vpu->clocks);
++err_rst_assert:
++	reset_control_assert(vpu->resets);
+ err_pm_disable:
+ 	pm_runtime_dont_use_autosuspend(vpu->dev);
+ 	pm_runtime_disable(vpu->dev);
+@@ -1056,6 +1068,7 @@ static int hantro_remove(struct platform_device *pdev)
+ 	v4l2_m2m_release(vpu->m2m_dev);
+ 	v4l2_device_unregister(&vpu->v4l2_dev);
+ 	clk_bulk_unprepare(vpu->variant->num_clocks, vpu->clocks);
++	reset_control_assert(vpu->resets);
+ 	pm_runtime_dont_use_autosuspend(vpu->dev);
+ 	pm_runtime_disable(vpu->dev);
+ 	return 0;
