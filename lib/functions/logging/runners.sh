@@ -16,7 +16,7 @@ function chroot_sdcard_apt_get() {
 
 # please, please, unify around this function. if SDCARD is not enough, I'll make a mount version.
 function chroot_sdcard() {
-	TMPDIR="" run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -c "$*"
+	TMPDIR="" run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -o pipefail -c "$*"
 }
 
 # This should be used if you need to capture the stdout produced by the command. It is NOT logged, and NOT run thru bash, and NOT quoted.
@@ -31,21 +31,21 @@ function chroot_custom_long_running() {
 	# @TODO: disabled, the pipe causes the left-hand side to subshell and caos ensues.
 	# local _exit_code=1
 	# if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
-	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
+	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
 	# 	_exit_code=$?
 	# else
-	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
+	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
 	# 	_exit_code=$?
 	# fi
 	# return $_exit_code
 
-	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
+	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
 }
 
 function chroot_custom() {
 	local target=$1
 	shift
-	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -c "$*"
+	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
 }
 
 # for deb building.
@@ -62,16 +62,16 @@ function run_host_command_logged_long_running() {
 	# @TODO: disabled. The Pipe used for "pv" causes the left-hand side to run in a subshell.
 	#local _exit_code=1
 	#if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
-	#	run_host_command_logged_raw /bin/bash -e -c "$*"
+	#	run_host_command_logged_raw /bin/bash -e -o pipefail-c "$*"
 	#	_exit_code=$?
 	#else
-	#	run_host_command_logged_raw /bin/bash -e -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")  " --progress --timer --line-mode --force --cursor --delay-start 0 -i "2"
+	#	run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")  " --progress --timer --line-mode --force --cursor --delay-start 0 -i "2"
 	#	_exit_code=$?
 	#fi
 	#return $_exit_code
 
 	# Run simple and exit with it's code. Sorry.
-	run_host_command_logged_raw /bin/bash -e -c "$*"
+	run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
 }
 
 # For installing packages host-side. Not chroot!
@@ -113,12 +113,12 @@ function run_host_x86_binary_logged() {
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
 function run_host_command_logged() {
-	run_host_command_logged_raw /bin/bash -e -c "$*"
+	run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
 }
 
 # for interactive, dialog-like host-side invocations. no redirections performed, but same bash usage and expansion, for consistency.
 function run_host_command_dialog() {
-	/bin/bash -e -c "$*"
+	/bin/bash -e -o pipefail -c "$*"
 }
 
 # do NOT use directly, it does NOT expand the way it should (through bash)
