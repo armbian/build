@@ -178,7 +178,7 @@ main_default_build_single() {
 }
 
 function trap_handler_cleanup_workdir() {
-	echo "-- cleanup handler: Should cleanup $WORKDIR WORKDIR here" 1>&2
+	display_alert "Cleanup WORKDIR: $WORKDIR" "trap_handler_cleanup_workdir" "cleanup"
 	unset TMPDIR
 	if [[ -d "${WORKDIR}" ]]; then
 		display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "debug"

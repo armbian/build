@@ -21,7 +21,6 @@ function initialize_fasthash() {
 	display_alert "initialize_fasthash" "$*" "debug"
 	return 0
 	declare -a fast_hash_list=()
-
 }
 
 function fasthash_branch() {
@@ -36,6 +35,9 @@ function finish_fasthash() {
 
 function fasthash_debug() {
 	display_alert "fasthash_debug" "$*" "debug"
+	if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
+		return 0
+	fi
 	find . -type f -printf '%T@ %p\n' |
 		grep -v -e "\.ko" -e "\.o" -e "\.cmd" -e "\.mod" -e "\.a" -e "\.tmp" -e "\.dtb" -e ".scr" -e "\.\/debian" |
 		sort -n | tail -n 10 1>&2
@@ -47,7 +49,7 @@ function get_file_modification_time() {
 		exit_with_error "Can't get modification time of nonexisting file" "${1}"
 	fi
 
-	# [[CC]YY]MMDDhhmm[ss] - it is a valid integer
+	# [[CC]YY]MMDDhhmm.[ss] - it is NOT a valid integer
 	file_date=$(date +%Y%m%d%H%M.%S -r "${1}")
 	display_alert "Got date ${file_date} for file" "${1}" "debug"
 

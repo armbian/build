@@ -267,7 +267,7 @@ cleanup_extension_manager() {
 }
 
 function cleanup_handler_extensions() {
-	echo "-- yeah the extensions trap handler..." 1>&2
+	display_alert "yeah the extensions trap handler..."  "cleanup_handler_extensions" "cleanup"
 	cleanup_extension_manager
 
 	# Move temporary log file over to final destination.

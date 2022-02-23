@@ -32,7 +32,7 @@ function main_trap_handler() {
 	stack_caller="$(show_caller_full)"
 	short_stack="${BASH_SOURCE[1]}:${BASH_LINENO[0]}"
 
-	echo "-- main_trap_handler: ${trap_type} and ${trap_exit_code} trap_manager_error_handled:${trap_manager_error_handled} " 1>&2
+	display_alert "main_trap_handler" "${trap_type} and ${trap_exit_code} trap_manager_error_handled:${trap_manager_error_handled}" "trap"
 
 	case "${trap_type}" in
 		TERM | INT)
@@ -71,7 +71,7 @@ function main_trap_handler() {
 
 # Run the cleanup handlers, if any, and clean the cleanup list.
 function run_cleanup_handlers() {
-	echo "-- run_cleanup_handlers! list: ${trap_manager_cleanup_handlers[*]}" 1>&2
+	display_alert "run_cleanup_handlers! list:" "${trap_manager_cleanup_handlers[*]}" "cleanup"
 	if [[ ${#trap_manager_cleanup_handlers[@]} -lt 1 ]]; then
 		return 0 # No handlers set, just return.
 	else
@@ -90,12 +90,12 @@ function run_cleanup_handlers() {
 # Adds a callback for trap types; first argument is function name; extra params are the types to add for.
 function add_cleanup_handler() {
 	local callback="$1"
-	echo "-- Add callback ${callback} as cleanup handler" 1>&2
+	display_alert "Add callback as cleanup handler" "${callback}" "cleanup"
 	trap_manager_cleanup_handlers+=("$callback")
 }
 
 function remove_all_trap_handlers() {
-	echo "-- Will remove ALL trap handlers, for a clean exit..." 1>&2
+	display_alert "Will remove ALL trap handlers, for a clean exit..." "" "cleanup"
 }
 
 # exit_with_error <message> <highlight>

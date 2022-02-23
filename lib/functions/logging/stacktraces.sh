@@ -34,11 +34,13 @@ function show_caller_full() {
 		local line_no
 		local function_name
 		local file_name
+		local padded_function_name
+		local short_file_name
 		while caller $i; do
 			((i++))
 		done | while read -r line_no function_name file_name; do
-			local padded_function_name=$(printf "%30s" "$function_name()")
-			local short_file_name="${file_name/"${SRC}/"/"./"}"
+			padded_function_name="$(printf "%30s" "$function_name()")"
+			short_file_name="${file_name/"${SRC}/"/"./"}"
 			echo -e "$padded_function_name --> $short_file_name:$line_no"
 		done
 	} || true # always success

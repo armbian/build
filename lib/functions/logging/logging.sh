@@ -24,8 +24,15 @@ function logging_error_show_log() {
 		local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 		display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
-		# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
+
+		if [[ -f /usr/bin/ccze ]]; then # use 'ccze' to colorize the log, making errors a lot more obvious.
+			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
+			cat "${logfile_to_show}" | grep -v -e "^$" | /usr/bin/ccze -A | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
+		else
+			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
+			cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
+		fi
+
 		display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
 	else
 		display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
@@ -92,12 +99,12 @@ function do_with_logging() {
 function display_alert() {
 	# We'll be writing to stderr (" >&2"), so also write the message to the generic logfile, for context.
 	if [[ -f "${CURRENT_LOGFILE}" ]]; then
-		echo "--> A: [" "$@" "]" >> "${CURRENT_LOGFILE}"
+		echo -e "--> A: [" "$@" "]" | sed 's/\x1b\[[0-9;]*m//g' >> "${CURRENT_LOGFILE}"
 	fi
 
 	# If asked, avoid any fancy ANSI escapes completely.
 	if [[ "${ANSI_COLOR}" == "none" ]]; then
-		echo "${@}" >&2
+		echo -e "${@}" | sed 's/\x1b\[[0-9;]*m//g' >&2
 		return 0
 	fi
 
@@ -127,12 +134,26 @@ function display_alert() {
 			inline_logs_color="\e[0;32m"
 			;;
 
+		cleanup | trap)
+			if [[ "${SHOW_TRAPS}" != "yes" ]]; then # enable debug for many, many debugging msgs
+				return 0
+			fi
+			level_indicator="🧽"
+			inline_logs_color="\e[1;33m"
+			;;
+
 		debug | deprecation)
+			if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
+				return 0
+			fi
 			level_indicator="✨"
 			inline_logs_color="\e[1;33m"
 			;;
 
 		command)
+			if [[ "${SHOW_COMMAND}" != "yes" ]]; then # enable to log all calls to external cmds
+				return 0
+			fi
 			level_indicator="🐸"
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
 			;;
@@ -142,8 +163,14 @@ function display_alert() {
 			inline_logs_color="\e[1;37m"
 			;;
 	esac
+
+	local timing_info=""
+	if [[ "${SHOW_TIMING}" == "yes" ]]; then
+		timing_info="${tool_color}(${normal_color}$(printf "%3s" "${SECONDS}")${tool_color})" # SECONDS is bash builtin for seconds since start of script.
+	fi
+
 	[[ -n $2 ]] && extra=" [${inline_logs_color} ${2} ${normal_color}]"
-	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker} ${normal_color}${message}${extra}${normal_color}" >&2
+	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker}${timing_info} ${normal_color}${message}${extra}${normal_color}" >&2
 
 	# Now write to CI, if we're running on it
 	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]]; then
