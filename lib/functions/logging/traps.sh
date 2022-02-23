@@ -5,7 +5,7 @@ function traps_init() {
 	# shellcheck disable=SC2034 # Array of cleanup handlers.
 	declare -a trap_manager_cleanup_handlers=()
 	# shellcheck disable=SC2034 # Global to avoid doubly reporting ERR/EXIT pairs.
-	declare -a trap_manager_error_handled=0
+	declare -i trap_manager_error_handled=0
 	trap 'main_trap_handler "ERR" "$?"' ERR
 	trap 'main_trap_handler "EXIT" "$?"' EXIT
 	trap 'main_trap_handler "INT" "$?"' INT
