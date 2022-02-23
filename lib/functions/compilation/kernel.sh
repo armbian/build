@@ -44,7 +44,28 @@ function run_kernel_make_long_running() {
 
 function compile_kernel() {
 	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
+	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
+	LOG_SECTION="kernel_prepare_git" do_with_logging do_with_hooks kernel_prepare_git
+	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
+	local version hash pre_patch_version
+	local kernel_packaging_target
+	LOG_SECTION="kernel_prepare_patching" do_with_logging do_with_hooks kernel_prepare_patching
+	LOG_SECTION="kernel_patching" do_with_logging do_with_hooks kernel_patching
+	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel" # create patch for manual source changes
+	local version
+	local toolchain
+	LOG_SECTION="kernel_config" do_with_logging do_with_hooks kernel_config
+	LOG_SECTION="kernel_package_source" do_with_logging do_with_hooks kernel_package_source
+	LOG_SECTION="kernel_make_headers_dtbs_image_modules" do_with_logging do_with_hooks kernel_make_headers_dtbs_image_modules
+	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
+	display_alert "Done with" "kernel compile" "debug"
+	cd .. || exit
+	rm -f linux-firmware-image-*.deb # remove firmware image packages here - easier than patching ~40 packaging scripts at once
+	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+	return 0
+}
 
+function kernel_prepare_git() {
 	if [[ -n $KERNELSOURCE ]]; then
 		display_alert "Downloading sources" "kernel" "git"
 
@@ -62,15 +83,20 @@ function compile_kernel() {
 			GIT_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL}" \
 			fetch_from_repo "$KERNELSOURCE" "unused:set via GIT_FIXED_WORKDIR" "$KERNELBRANCH" "yes"
 	fi
+}
 
+function kernel_maybe_clean() {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
 		(
 			cd "${kernel_work_dir}"
 			make ARCH="${ARCHITECTURE}" clean > /dev/null 2>&1
 		)
+		fasthash_debug "post make clean"
 	fi
-	fasthash_debug "post git clean"
+}
+
+function kernel_prepare_patching() {
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
 		display_alert "Using overlayfs_wrapper" "kernel_${LINUXFAMILY}_${BRANCH}" "debug"
@@ -82,20 +108,21 @@ function compile_kernel() {
 	rm -f localversion
 
 	# read kernel version
-	local version hash pre_patch_version
 	version=$(grab_version "$kernel_work_dir")
 	pre_patch_version="${version}"
 	display_alert "Pre-patch kernel version" "${pre_patch_version}" "debug"
 
 	# different packaging for 4.3+
-	local kernel_packaging_target="deb-pkg"
+	kernel_packaging_target="deb-pkg"
 	if linux-version compare "${version}" ge 4.3; then
 		kernel_packaging_target="bindeb-pkg"
 	fi
 
 	# read kernel git hash
 	hash=$(git --git-dir="$kernel_work_dir"/.git rev-parse HEAD)
+}
 
+function kernel_patching() {
 	## Start kernel patching process.
 	## There's a few objectives here:
 	## - (always) produce a fasthash: represents "what would be done" (eg: md5 of a patch, crc32 of description).
@@ -130,12 +157,10 @@ function compile_kernel() {
 
 	fasthash_debug "finish"
 	finish_fasthash "kernel" # this reports the final hash and creates git branch to build ID. All modifications commited.
+}
 
-	# create patch for manual source changes in debug mode
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
-
+function kernel_config() {
 	# re-read kernel version after patching
-	local version
 	version=$(grab_version "$kernel_work_dir")
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
@@ -146,7 +171,6 @@ function compile_kernel() {
 		display_alert "Native compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
 	elif [[ $(dpkg --print-architecture) == amd64 ]]; then
 		display_alert "Cross compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
-		local toolchain
 		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
 		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
 	else
@@ -224,71 +248,15 @@ function compile_kernel() {
 
 	# Restore the date of .config. Above delta is a pure function, theoretically.
 	set_files_modification_time "${kernel_config_mtime}" ".config"
+}
 
+function kernel_package_source() {
 	# create linux-source package - with already patched sources
 	# We will build this package first and clear the memory.
 	if [[ $BUILD_KSRC != no ]]; then
 		display_alert "Creating kernel source package" "${LINUXCONFIG}" "info"
 		create_linux-source_package
 	fi
-
-	local -a build_targets=("headers")
-	[[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]] && build_targets+=("dtbs")
-	build_targets+=("${KERNEL_IMAGE_TYPE}" modules)
-
-	display_alert "Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
-	fasthash_debug "pre-compile"
-	make_filter="| grep --line-buffered -v -e 'CC' -e 'LD' -e 'AR'" run_kernel_make_long_running "${build_targets[@]}"
-	fasthash_debug "post-compile"
-
-	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
-		display_alert "DOUBLE Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
-		fasthash_debug "pre-double-compile"
-		run_kernel_make_long_running "${build_targets[@]}"
-		fasthash_debug "post-double-compile"
-	fi
-
-	# Check for built kernel image file file; can override default with KERNEL_IMAGE_TYPE_PATH
-	local check_built_kernel_file="${kernel_work_dir}/${KERNEL_IMAGE_TYPE_PATH:-"arch/${ARCHITECTURE}/boot/${KERNEL_IMAGE_TYPE}"}"
-	if [[ ! -f "${check_built_kernel_file}" ]]; then
-		exit_with_error "Kernel was not built" "${check_built_kernel_file}"
-	fi
-
-	local -a prepackage_targets=(modules_install headers_install)
-	[[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]] && prepackage_targets+=("dtbs_install")
-
-	display_alert "Packaging Kernel" "${LINUXCONFIG} $kernel_packaging_target" "info"
-
-	# Prepare for packaging, using the exact same options as original compile.
-	display_alert "Installing kernel headers and modules for packaging" "${LINUXCONFIG} ${prepackage_targets[*]}" "info"
-	fasthash_debug "pre-prepackage"
-	make_filter="| grep --line-buffered -v -e 'INSTALL' -e 'SIGN' -e 'XZ'" run_kernel_make_long_running "${prepackage_targets[@]}"
-	fasthash_debug "post-prepackage"
-
-	# produce deb packages: image, headers, firmware, dtb
-	# This mostly only does
-	fasthash_debug "pre-packaging"
-	run_kernel_make_long_running $kernel_packaging_target
-	fasthash_debug "post-packaging"
-
-	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
-		display_alert "DOUBLE Packaging Kernel, Headers and DTBs" "${LINUXCONFIG} $kernel_packaging_target" "info"
-		fasthash_debug "pre-double-packaging"
-		run_kernel_make_long_running $kernel_packaging_target
-		fasthash_debug "post-double-packaging"
-	fi
-
-	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
-
-	display_alert "Done with" "kernel compile" "debug"
-
-	cd .. || exit
-	# remove firmware image packages here - easier than patching ~40 packaging scripts at once
-	rm -f linux-firmware-image-*.deb
-
-	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
-
-	return 0
 }
 
 create_linux-source_package() {
@@ -328,4 +296,57 @@ create_linux-source_package() {
 
 	te=$(date +%s)
 	display_alert "Make the linux-source package" "$(($te - $ts)) sec." "info"
+}
+
+function kernel_make_headers_dtbs_image_modules() {
+	local -a build_targets=("headers")
+	[[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]] && build_targets+=("dtbs")
+	build_targets+=("${KERNEL_IMAGE_TYPE}" modules)
+
+	display_alert "Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
+	fasthash_debug "pre-compile"
+	make_filter="| grep --line-buffered -v -e 'CC' -e 'LD' -e 'AR'" run_kernel_make_long_running "${build_targets[@]}"
+	fasthash_debug "post-compile"
+
+	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
+		display_alert "DOUBLE Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
+		fasthash_debug "pre-double-compile"
+		run_kernel_make_long_running "${build_targets[@]}"
+		fasthash_debug "post-double-compile"
+	fi
+
+	# Check for built kernel image file file; can override default with KERNEL_IMAGE_TYPE_PATH
+	local check_built_kernel_file="${kernel_work_dir}/${KERNEL_IMAGE_TYPE_PATH:-"arch/${ARCHITECTURE}/boot/${KERNEL_IMAGE_TYPE}"}"
+	if [[ ! -f "${check_built_kernel_file}" ]]; then
+		exit_with_error "Kernel was not built" "${check_built_kernel_file}"
+	fi
+}
+
+function kernel_package() {
+
+	local -a prepackage_targets=(modules_install headers_install)
+	[[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]] && prepackage_targets+=("dtbs_install")
+
+	display_alert "Packaging Kernel" "${LINUXCONFIG} $kernel_packaging_target" "info"
+
+	# Prepare for packaging, using the exact same options as original compile.
+	display_alert "Installing kernel headers and modules for packaging" "${LINUXCONFIG} ${prepackage_targets[*]}" "info"
+	fasthash_debug "pre-prepackage"
+	make_filter="| grep --line-buffered -v -e 'INSTALL' -e 'SIGN' -e 'XZ'" run_kernel_make_long_running "${prepackage_targets[@]}"
+	fasthash_debug "post-prepackage"
+
+	# produce deb packages: image, headers, firmware, dtb
+	# This mostly only does
+	fasthash_debug "pre-packaging"
+	run_kernel_make_long_running $kernel_packaging_target
+	fasthash_debug "post-packaging"
+
+	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
+		display_alert "DOUBLE Packaging Kernel, Headers and DTBs" "${LINUXCONFIG} $kernel_packaging_target" "info"
+		fasthash_debug "pre-double-packaging"
+		run_kernel_make_long_running $kernel_packaging_target
+		fasthash_debug "post-double-packaging"
+	fi
+
+	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
 }

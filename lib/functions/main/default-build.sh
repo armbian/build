@@ -71,7 +71,7 @@ main_default_build_single() {
 		if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 			export KDEB_CHANGELOG_DIST=$RELEASE
 			if [[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
-				LOG_SECTION="compile_kernel" do_with_logging compile_kernel
+				compile_kernel # This handles its own logging sections.
 			fi
 		fi
 		if [[ "${exit_after_kernel_build}" == "yes" ]]; then
