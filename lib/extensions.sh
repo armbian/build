@@ -267,7 +267,7 @@ cleanup_extension_manager() {
 }
 
 function cleanup_handler_extensions() {
-	display_alert "yeah the extensions trap handler..."  "cleanup_handler_extensions" "cleanup"
+	display_alert "yeah the extensions trap handler..." "cleanup_handler_extensions" "cleanup"
 	cleanup_extension_manager
 
 	# Move temporary log file over to final destination.
@@ -416,4 +416,9 @@ enable_extension() {
 		ENABLE_EXTENSION_TRACE_HINT="RECURSE ${stacktrace} ->" enable_extension "${stacked_extension}"
 	done
 
+}
+
+# Fancy placeholder for future ideas. allow any core function to be hooked. maybe with "voters" infrastructure?
+function do_with_hooks() {
+	"$@"
 }
