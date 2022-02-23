@@ -186,7 +186,7 @@ function compile_kernel() {
 	# hack for OdroidXU4. Copy firmare files
 	if [[ $BOARD == odroidxu4 ]]; then
 		mkdir -p "${kernel_work_dir}/firmware/edid"
-		cp "${SRC}"/packages/blobs/odroidxu4/*.bin "${kernel_work_dir}/firmware/edid"
+		cp -p "${SRC}"/packages/blobs/odroidxu4/*.bin "${kernel_work_dir}/firmware/edid"
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
@@ -238,7 +238,7 @@ function compile_kernel() {
 
 	display_alert "Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
 	fasthash_debug "pre-compile"
-	run_kernel_make_long_running "${build_targets[@]}"
+	make_filter="| grep --line-buffered -v -e 'CC' -e 'LD' -e 'AR'" run_kernel_make_long_running "${build_targets[@]}"
 	fasthash_debug "post-compile"
 
 	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then

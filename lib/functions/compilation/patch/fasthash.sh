@@ -34,10 +34,10 @@ function finish_fasthash() {
 }
 
 function fasthash_debug() {
-	display_alert "fasthash_debug" "$*" "debug"
-	if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
+	if [[ "${SHOW_FASTHASH}" != "yes" ]]; then # enable debug for many, many debugging msgs
 		return 0
 	fi
+	display_alert "fasthash_debug" "$*" "debug"
 	find . -type f -printf '%T@ %p\n' |
 		grep -v -e "\.ko" -e "\.o" -e "\.cmd" -e "\.mod" -e "\.a" -e "\.tmp" -e "\.dtb" -e ".scr" -e "\.\/debian" |
 		sort -n | tail -n 10 1>&2
