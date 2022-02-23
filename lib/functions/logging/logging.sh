@@ -40,10 +40,7 @@ function logging_error_show_log() {
 	return 0
 }
 
-function do_with_logging() {
-	[[ -z "${DEST}" ]] && exit_with_error "DEST is not defined. Can't start logging."
-
-	# @TODO: check we're not currently logging (eg: this has been called 2 times without exiting)
+function start_logging_section() {
 	export logging_section_counter=$((logging_section_counter + 1)) # increment counter, used in filename
 	export CURRENT_LOGGING_COUNTER
 	CURRENT_LOGGING_COUNTER="$(printf "%03d" "$logging_section_counter")"
@@ -56,13 +53,31 @@ function do_with_logging() {
 	if [[ "${CI}" == "true" ]]; then
 		echo "::group::[🥑] Group ${CURRENT_LOGGING_SECTION}"
 	fi
+	return 0
+}
+
+function finish_logging_section() {
+	# Close opened CI group.
+	if [[ "${CI}" == "true" ]]; then
+		echo "::endgroup::"
+	fi
+}
+
+function do_with_logging() {
+	[[ -z "${DEST}" ]] && exit_with_error "DEST is not defined. Can't start logging."
+
+	# @TODO: check we're not currently logging (eg: this has been called 2 times without exiting)
+
+	start_logging_section
+
+	# Important: no error control is done here.
+	# Called arguments are run with set -e in effect.
 
 	# We now execute whatever was passed as parameters, in some different conditions:
 	# In both cases, writing to stderr will display to terminal.
 	# So whatever is being called, should prevent rogue stuff writing to stderr.
 	# this is mostly handled by redirecting stderr to stdout: 2>&1
 
-	local exit_code=176 # fail by default...
 	if [[ "${SHOW_LOG}" == "yes" ]]; then
 		local prefix_sed_contents
 		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")"
@@ -76,24 +91,15 @@ function do_with_logging() {
 			sed -u -e "${prefix_sed_cmd}"
 		)
 		"$@" >&3
-		exit_code=$? # hopefully this is the pipe
-		exec 3>&-    # close the file descriptor, lest sed keeps running forever.
+		exec 3>&- # close the file descriptor, lest sed keeps running forever.
 	else
 		# If not showing the log, just send stdout to logfile. stderr will flow to screen.
 		"$@" >> "${CURRENT_LOGFILE}"
-		exit_code=$?
 	fi
 
-	# Close opened CI group.
-	if [[ "${CI}" == "true" ]]; then
-		echo "::endgroup::"
-	fi
+	finish_logging_section
 
-	if [[ $exit_code != 0 ]]; then
-		display_alert "build group FAILED: exit code: ${exit_code}" "${CURRENT_LOGGING_SECTION}" "err"
-	fi
-
-	return $exit_code
+	return 0
 }
 
 function display_alert() {
