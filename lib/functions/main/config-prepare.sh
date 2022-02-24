@@ -83,29 +83,24 @@ function prepare_and_config_main_build_single() {
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected: KERNEL_ONLY"
 	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected: KERNEL_CONFIGURE"
 
-	interactive_config_ask_board_list # @TODO: rpardini: This obtains a list of boards. refactor that...
+	interactive_config_ask_board_list # this uses get_list_of_all_buildable_boards too
 	[[ -z $BOARD ]] && exit_with_error "No board selected: BOARD"
 
-	if [[ -f $SRC/config/boards/${BOARD}.conf ]]; then
-		BOARD_TYPE='conf'
-	elif [[ -f $SRC/config/boards/${BOARD}.csc ]]; then
-		BOARD_TYPE='csc'
-	elif [[ -f $SRC/config/boards/${BOARD}.wip ]]; then
-		BOARD_TYPE='wip'
-	elif [[ -f $SRC/config/boards/${BOARD}.eos ]]; then
-		BOARD_TYPE='eos'
-	elif [[ -f $SRC/config/boards/${BOARD}.tvb ]]; then
-		BOARD_TYPE='tvb'
-	fi
+	declare -a arr_all_board_names=()                                                                           # arrays
+	declare -A dict_all_board_types=() dict_all_board_source_files=()                                           # dictionaries
+	get_list_of_all_buildable_boards arr_all_board_names "" dict_all_board_types dict_all_board_source_files "" # invoke
 
-	# @TODO: rpardini: this is when Alice enters the hole. Sourcing stuff, extensions getting activated, etc.
+	BOARD_TYPE="${dict_all_board_types["${BOARD}"]}"
+	BOARD_SOURCE_FILES="${dict_all_board_source_files["${BOARD}"]}"
 
-	display_alert "Sourcing board configuration" "${BOARD}.${BOARD_TYPE}" "info"
-	# shellcheck source=/dev/null
-	source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
+	for BOARD_SOURCE_FILE in ${BOARD_SOURCE_FILES}; do # No quotes, so expand the space-delimited list
+		display_alert "Sourcing board configuration" "${BOARD_SOURCE_FILE}" "info"
+		# shellcheck source=/dev/null
+		source "${BOARD_SOURCE_FILE}"
+	done
+
 	LINUXFAMILY="${BOARDFAMILY}" # @TODO: wtf? why? this is (100%?) rewritten by family config!
-
-	# @TODO: interesting. this sourced the board config. What sources the family? do_main_configuration!
+	# this sourced the board config. do_main_configuration will source the family file.
 
 	[[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 

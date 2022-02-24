@@ -39,8 +39,48 @@ function interactive_config_ask_kernel_configure() {
 	unset options
 }
 
+# Required usage:
+# declare -a arr_all_board_names=() arr_all_board_options=()                                                                                              # arrays
+# declare -A dict_all_board_types=() dict_all_board_source_files=() dict_all_board_descriptions=()                                                        # dictionaries
+# get_list_of_all_buildable_boards arr_all_board_names arr_all_board_options dict_all_board_types dict_all_board_source_files dict_all_board_descriptions # invoke
+function get_list_of_all_buildable_boards() {
+	local -a board_types=("conf")
+	[[ "${WIP_STATE}" != "supported" ]] && board_types+=("wip" "csc" "eos" "tvb")
+	local -a board_file_paths=("${SRC}/config/boards" "${USERPATCHES_PATH}/config/boards")
+
+	# local -n is a name reference, see https://www.linuxjournal.com/content/whats-new-bash-parameter-expansion
+	# it works with arrays and associative arrays/dictionaries
+	local -n ref_arr_all_board_names="${1}"
+	[[ "${2}" != "" ]] && local -n ref_arr_all_board_options="${2}" # optional
+	local -n ref_dict_all_board_types="${3}"
+	local -n ref_dict_all_board_source_files="${4}"
+	[[ "${5}" != "" ]] && local -n ref_dict_all_board_descriptions="${5}" # optional
+
+	local board_file_path board_type full_board_file
+	for board_file_path in "${board_file_paths[@]}"; do
+		[[ ! -d "${board_file_path}" ]] && continue
+		for board_type in "${board_types[@]}"; do
+			for full_board_file in "${board_file_path}"/*."${board_type}"; do
+				[[ "${full_board_file}" == *"*"* ]] && continue # ignore non-matches, due to bash's (non-)globbing behaviour
+				local board_name board_desc
+				board_name="$(basename "${full_board_file}" | cut -d'.' -f1)"
+				ref_dict_all_board_types["${board_name}"]="${board_type}"
+				ref_dict_all_board_source_files["${board_name}"]="${ref_dict_all_board_source_files["${board_name}"]} ${full_board_file}" # accumulate, will have extra space
+
+				if [[ "${2}" != "" || "${5}" != "" ]]; then # only if second or fifth reference specified, otherwise too costly
+					board_desc="$(head -1 "${full_board_file}" | cut -d'#' -f2)"
+					ref_arr_all_board_options+=("${board_name}" "\Z1(${board_type})\Zn ${board_desc}")
+					ref_dict_all_board_descriptions["${board_name}"]="${board_desc}"
+				fi
+			done
+		done
+	done
+	ref_arr_all_board_names=("${!ref_dict_all_board_types[@]}") # Expand the keys of one of the dicts, that's the list of boards.
+	return 0
+}
+
 function interactive_config_ask_board_list() {
-	# if BOARD is not set, display selection menu
+	# if BOARD is not set, display selection menu, otherwise return success
 	[[ -n ${BOARD} ]] && return 0
 
 	WIP_STATE=supported
@@ -49,27 +89,11 @@ function interactive_config_ask_board_list() {
 	temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
 
 	while true; do
-		options=()
-		if [[ $WIP_STATE == supported ]]; then
-			for board in "${SRC}"/config/boards/*.conf; do
-				options+=("$(basename "${board}" | cut -d'.' -f1)" "$(head -1 "${board}" | cut -d'#' -f2)")
-			done
-		else
-			for board in "${SRC}"/config/boards/*.wip; do
-				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(WIP)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
-			done
-			for board in "${SRC}"/config/boards/*.csc; do
-				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(CSC)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
-			done
-			for board in "${SRC}"/config/boards/*.eos; do
-				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(EOS)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
-			done
-			for board in "${SRC}"/config/boards/*.tvb; do
-				options+=("$(basename "${board}" | cut -d'.' -f1)" "\Z1(TVB)\Zn $(head -1 "${board}" | cut -d'#' -f2)")
-			done
-		fi
-
-		if [[ $WIP_STATE != supported ]]; then
+		declare -a arr_all_board_names=() arr_all_board_options=()                                                                                              # arrays
+		declare -A dict_all_board_types=() dict_all_board_source_files=() dict_all_board_descriptions=()                                                        # dictionaries
+		get_list_of_all_buildable_boards arr_all_board_names arr_all_board_options dict_all_board_types dict_all_board_source_files dict_all_board_descriptions # invoke
+		echo > "${temp_rc}"                                                                                                                                     # zero out the rcfile to start
+		if [[ $WIP_STATE != supported ]]; then                                                                                                                  # be if wip csc etc included. I personally disagree here.
 			cat <<- 'EOF' > "${temp_rc}"
 				dialog_color = (RED,WHITE,OFF)
 				screen_color = (WHITE,RED,ON)
@@ -78,14 +102,12 @@ function interactive_config_ask_board_list() {
 				tag_selected_color = (WHITE,RED,ON)
 				tag_key_selected_color = (WHITE,RED,ON)
 			EOF
-		else
-			echo > "${temp_rc}"
 		fi
 
 		DIALOGRC=$temp_rc \
 			dialog_if_terminal_set_vars --title "Choose a board" --backtitle "$backtitle" --scrollbar \
 			--colors --extra-label "Show $WIP_BUTTON" --extra-button \
-			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
+			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${arr_all_board_options[@]}"
 		BOARD="${DIALOG_RESULT}"
 		STATUS=${DIALOG_EXIT_CODE}
 
@@ -101,7 +123,7 @@ function interactive_config_ask_board_list() {
 				STATE_DESCRIPTION=' - boards with high level of software maturity'
 				WIP_STATE=supported
 				WIP_BUTTON='CSC/WIP/EOS'
-				EXPERT=no
+				EXPERT=no # @TODO: this overrides an "expert" mode that could be set on by the user. revert to original one?
 			fi
 			continue
 		elif [[ $STATUS == 0 ]]; then
@@ -109,7 +131,6 @@ function interactive_config_ask_board_list() {
 		else
 			exit_with_error "You cancelled interactive config" "Build cancelled, board not chosen"
 		fi
-		unset options
 	done
 }
 

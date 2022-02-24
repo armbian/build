@@ -190,19 +190,36 @@ function do_main_configuration() {
 
 	# single ext4 partition is the default and preferred configuration
 	#BOOTFS_TYPE=''
-	[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] &&
-		exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-	display_alert "Sourcing family configuration" "${LINUXFAMILY}.conf" "info"
-	source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
+	## ------ Sourcing family config ---------------------------
 
+	declare -a family_source_paths=("${SRC}/config/sources/families/${LINUXFAMILY}.conf" "${USERPATCHES_PATH}/config/sources/families/${LINUXFAMILY}.conf")
+	declare -i family_sourced_ok=0
+	for family_source_path in "${family_source_paths[@]}"; do
+		[[ ! -f "${family_source_path}" ]] && continue
+
+		display_alert "Sourcing family configuration" "${family_source_path}" "info"
+		# shellcheck source=/dev/null
+		source "${family_source_path}"
+
+		# @TODO: reset error handling, go figure what they do in there.
+
+		family_sourced_ok=$((family_sourced_ok + 1))
+	done
+
+	[[ ${family_sourced_ok} -lt 1 ]] &&
+		exit_with_error "Sources configuration not found" "tried ${family_source_paths[*]}"
+
+	# This is for compatibility only; path above should suffice
 	if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 		display_alert "Adding user provided $LINUXFAMILY overrides"
+		# shellcheck source=/dev/null
 		source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
 	fi
 
 	# load architecture defaults
 	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
+	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
 
 	## Extensions: at this point we've sourced all the config files that will be used,

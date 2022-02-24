@@ -189,6 +189,9 @@ function kernel_config() {
 		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			cp -p "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
+		elif [[ -f "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" ]]; then
+			display_alert "Using kernel config provided by user in config/kernel folder" "config/kernel/${LINUXCONFIG}.config" "info"
+			cp -p "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
 			cp -p "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
