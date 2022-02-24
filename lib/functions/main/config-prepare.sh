@@ -102,7 +102,7 @@ function prepare_and_config_main_build_single() {
 	display_alert "Sourcing board configuration" "${BOARD}.${BOARD_TYPE}" "info"
 	# shellcheck source=/dev/null
 	source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
-	LINUXFAMILY="${BOARDFAMILY}"
+	LINUXFAMILY="${BOARDFAMILY}" # @TODO: wtf? why? this is (100%?) rewritten by family config!
 
 	# @TODO: interesting. this sourced the board config. What sources the family? do_main_configuration!
 
@@ -110,7 +110,7 @@ function prepare_and_config_main_build_single() {
 
 	interactive_config_ask_branch
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected: BRANCH"
-	[[ $KERNEL_TARGET != *$BRANCH* ]] && exit_with_error "Kernel branch not defined for this board" "$BRANCH"
+	[[ $KERNEL_TARGET != *$BRANCH* ]] && display_alert "Kernel branch not defined for this board" "$BRANCH for ${BOARD}" "warn"
 
 	interactive_config_ask_release
 	[[ -z $RELEASE ]] && exit_with_error "No release selected: RELEASE"
