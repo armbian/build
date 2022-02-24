@@ -245,7 +245,6 @@ function do_main_configuration() {
 	CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
 	DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
 
-
 	AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
 ${SRC}/config
 ${SRC}/config/optional/_any_board/_config

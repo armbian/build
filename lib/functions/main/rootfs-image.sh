@@ -103,7 +103,7 @@ function build_rootfs_and_image() {
 }
 
 function trap_handler_cleanup_rootfs_and_image() {
-	echo "-- trap_handler_cleanup_rootfs_and_image cleaning up..." 1>&2
+	display_alert "Cleanup for rootfs and image" "trap_handler_cleanup_rootfs_and_image" "cleanup"
 
 	cd "${SRC}" || echo "Failed to cwd to ${SRC}" # Move pwd away, so unmounts work
 	# those will loop until they're unmounted.

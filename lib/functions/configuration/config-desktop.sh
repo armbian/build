@@ -2,9 +2,8 @@ function desktop_element_available_for_arch() {
 	local desktop_element_path="${1}"
 	local targeted_arch="${2}"
 	local arch_limitation_file="${1}/only_for"
-	echo "Checking if ${desktop_element_path} is available for ${targeted_arch} in ${arch_limitation_file}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 	if [[ -f "${arch_limitation_file}" ]]; then
-		if ! grep -- "${targeted_arch}" "${arch_limitation_file}"; then
+		if ! grep -- "${targeted_arch}" "${arch_limitation_file}" &> /dev/null; then
 			return 1
 		fi
 	fi
@@ -35,7 +34,7 @@ function desktop_element_supported() {
 function desktop_environments_prepare_menu() {
 	for desktop_env_dir in "${DESKTOP_CONFIGS_DIR}/"*; do
 		local desktop_env_name expert_infos="" desktop_element_supported_result=0
-		desktop_env_name=$(basename ${desktop_env_dir})
+		desktop_env_name="$(basename "${desktop_env_dir}")"
 		[[ "${EXPERT}" == "yes" ]] && expert_infos="[$(cat "${desktop_env_dir}/support" 2> /dev/null)]"
 		desktop_element_supported "${desktop_env_dir}" "${ARCH}"
 		[[ ${desktop_element_supported_result} == 0 ]] && options+=("${desktop_env_name}" "${desktop_env_name^} desktop environment ${expert_infos}")

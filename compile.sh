@@ -53,4 +53,5 @@ traps_init
 # Execute the main CLI entrypoint.
 cli_entrypoint "$@"
 
-echo "-- very last thing" 1>&2
+# Log the last statement of this script for debugging purposes.
+display_alert "Armbian build script exiting" "very last thing" "cleanup"
