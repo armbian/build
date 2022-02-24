@@ -17,6 +17,7 @@ function prepare_and_config_main_build_single() {
 	[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"      # set to english if not set
 	[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8" # set console to UTF-8 if not set
 
+	# @TODO: rpardini: this definitely should NOT be done during config preparation. move outside
 	if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
 		# set log path
 		LOG_SUBPATH=${LOG_SUBPATH:=debug}
@@ -40,7 +41,7 @@ function prepare_and_config_main_build_single() {
 	# PROGRESS_LOG_TO_FILE is either yes, or unset. (@TODO: this is still used in buildpkg)
 	if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
-	SHOW_WARNING=yes
+	export SHOW_WARNING=yes # If you try something that requires EXPERT=yes.
 
 	display_alert "Starting single build process" "${BOARD}" "info"
 

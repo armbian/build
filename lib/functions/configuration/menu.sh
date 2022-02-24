@@ -1,47 +1,60 @@
 # Stuff involving dialog
 
 # rpardini: dialog reports what happened via nonzero exit codes.
-# most certainly, we also want to capture the stdout of dialog.
+# we also want to capture the stdout of dialog.
 # this is a helper function that handles the error logging on/off and does the capturing
-# then reports via exported variables, which we can test directly.
-# warning: this will exit on errors if dialog is not a terminal or running under CI, or if dialog not installed
-# otherwise it will NOT exit on common errors.
+# then reports via exported variables, which the caller can/should test for later.
+# warning: this will exit with error if stdin/stdout/stderr is not a terminal or running under CI, or if dialog not installed
+# otherwise it will NOT exit with error, even if user cancelled.
+# This is a boring topic, see https://askubuntu.com/questions/491509/how-to-get-dialog-box-input-directed-to-a-variable
 function dialog_if_terminal_set_vars() {
 	export DIALOG_RESULT=""
 	export DIALOG_EXIT_CODE=0
+
 	[[ ! -t 0 ]] && exit_with_error "stdin is not a terminal. can't use dialog." "dialog_if_terminal_set_vars ${*}" "err"
+	[[ ! -t 1 ]] && exit_with_error "stdout is not a terminal. can't use dialog." "dialog_if_terminal_set_vars ${*}" "err"
+	[[ ! -t 2 ]] && exit_with_error "stderr is not a terminal. can't use dialog." "dialog_if_terminal_set_vars ${*}" "err"
+
 	[[ "${CI}" == "true" ]] && exit_with_error "CI=true. can't use dialog." "dialog_if_terminal_set_vars ${*}" "err"
+
 	[[ ! -f /usr/bin/dialog ]] && exit_with_error "Dialog is not installed at /usr/bin/dialog" "dialog_if_terminal_set_vars ${*}" "err"
+
 	set +e          # allow errors through
 	set +o errtrace # do not trap errors inside a subshell/function
 	set +o errexit  # disable
-	DIALOG_RESULT=$(dialog "$@")
-	export DIALOG_EXIT_CODE=$?
-	export DIALOG_RESULT
+
+	exec 3>&1                              # open fd 3...
+	DIALOG_RESULT=$(dialog "$@" 2>&1 1>&3) # juggle fds and capture.
+	DIALOG_EXIT_CODE=$?                    # get the exit code.
+	exec 3>&-                              # close fd 3...
+
 	set -e          # back to normal
 	set -o errtrace # back to normal
 	set -o errexit  # back to normal
-	return 0        # always success
+
+	return 0 # always success, caller must check DIALOG_EXIT_CODE and DIALOG_RESULT
 }
 
 # Myy : Menu configuration for choosing desktop configurations
-show_menu() {
+dialog_menu() {
+	export DIALOG_MENU_RESULT=""
 	provided_title=$1
 	provided_backtitle=$2
 	provided_menuname=$3
-	dialog_if_terminal_set_vars --stdout --title "$provided_title" --backtitle "${provided_backtitle}" --menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
-	[[ $DIALOG_EXIT_CODE != 0 ]] && return $DIALOG_EXIT_CODE
-	echo -n "${DIALOG_RESULT}"
+	dialog_if_terminal_set_vars --title "$provided_title" --backtitle "${provided_backtitle}" --menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+	DIALOG_MENU_RESULT="${DIALOG_RESULT}"
+	return $DIALOG_EXIT_CODE
 }
 
-# Myy : FIXME Factorize
-show_select_menu() {
+# Almost identical, but is a checklist instead of menu
+dialog_checklist() {
+	export DIALOG_CHECKLIST_RESULT=""
 	provided_title=$1
 	provided_backtitle=$2
 	provided_menuname=$3
-	dialog_if_terminal_set_vars --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" --checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
-	[[ $DIALOG_EXIT_CODE != 0 ]] && return $DIALOG_EXIT_CODE
-	echo -n "${DIALOG_RESULT}"
+	dialog_if_terminal_set_vars --title "${provided_title}" --backtitle "${provided_backtitle}" --checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+	DIALOG_CHECKLIST_RESULT="${DIALOG_RESULT}"
+	return $DIALOG_EXIT_CODE
 }
 
 # Other menu stuff
@@ -63,7 +76,7 @@ show_developer_warning() {
 	- Forum posts related to dev kernel, CSC, WIP and EOS boards
 	should be created in the \Z2\"Community forums\"\Zn section
 	"
-	DIALOGRC=$temp_rc dialog_if_terminal_set_vars --stdout --title "Expert mode warning" --backtitle "${backtitle}" --colors --defaultno --no-label "I do not agree" --yes-label "I understand and agree" --yesno "$warn_text" "${TTY_Y}" "${TTY_X}"
+	DIALOGRC=$temp_rc dialog_if_terminal_set_vars --title "Expert mode warning" --backtitle "${backtitle}" --colors --defaultno --no-label "I do not agree" --yes-label "I understand and agree" --yesno "$warn_text" "${TTY_Y}" "${TTY_X}"
 	[[ ${DIALOG_EXIT_CODE} -ne 0 ]] && exit_with_error "Error switching to the expert mode"
 	SHOW_WARNING=no
 }

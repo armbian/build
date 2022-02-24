@@ -217,7 +217,7 @@ function do_main_configuration() {
 		it is often used to in turn override those.
 	POST_FAMILY_CONFIG
 
-	desktop_main_configuration_interactive
+	interactive_desktop_main_configuration
 
 	# dropbear needs to be configured differently # @TODO: rpardini: yes, and? are you a lost leftover comment from a previous era?
 	[[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
@@ -295,17 +295,9 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
 	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
 
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
-
-	# Dependent desktop packages
-	# Myy : Sources packages from file here
-
-	# Myy : FIXME Rename aggregate_all to aggregate_all_desktop # @TODO: rpardini: already done?
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
-		echo -e "\nGroups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES :" >> "${LOG_OUTPUT_FILE}"
 	fi
-	unset LOG_OUTPUT_FILE
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
 	DEBIAN_SECURTY='security.debian.org/'
@@ -333,10 +325,8 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	# don't use mirrors that throws garbage on 404
 	if [[ -z ${ARMBIAN_MIRROR} ]]; then
 		while true; do
-
 			ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
 			[[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]] && break
-
 		done
 	fi
 
@@ -363,10 +353,9 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	EXTENSION_PREPARE_CONFIG
 
 	# apt-cacher-ng mirror configurarion
+	APT_MIRROR=$DEBIAN_MIRROR
 	if [[ $DISTRIBUTION == Ubuntu ]]; then
 		APT_MIRROR=$UBUNTU_MIRROR
-	else
-		APT_MIRROR=$DEBIAN_MIRROR
 	fi
 
 	[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
@@ -391,6 +380,7 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 	unset aggregated_content
 
+	# @TODO: rpardini: this has to stop. refactor this into array or dict-based and stop the madness.
 	if [[ -n $PACKAGE_LIST_RM ]]; then
 		# Turns out that \b can be tricked by dashes.
 		# So if you remove mesa-utils but still want to install "mesa-utils-extra"

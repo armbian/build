@@ -22,7 +22,7 @@ function interactive_config_ask_kernel_only() {
 	[[ -n ${KERNEL_ONLY} ]] && return 0
 	options+=("yes" "U-boot and kernel packages")
 	options+=("no" "Full OS image for flashing")
-	dialog_if_terminal_set_vars --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
+	dialog_if_terminal_set_vars --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	KERNEL_ONLY="${DIALOG_RESULT}"
 	[[ "${DIALOG_EXIT_CODE}" != "0" ]] && exit_with_error "You cancelled interactive during KERNEL_ONLY selection: '${DIALOG_EXIT_CODE}'" "Build cancelled: ${DIALOG_EXIT_CODE}"
 	unset options
@@ -33,7 +33,7 @@ function interactive_config_ask_kernel_configure() {
 	options+=("no" "Do not change the kernel configuration")
 	options+=("yes" "Show a kernel configuration menu before compilation")
 	options+=("prebuilt" "Use precompiled packages from Armbian repository")
-	dialog_if_terminal_set_vars --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
+	dialog_if_terminal_set_vars --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	KERNEL_CONFIGURE="${DIALOG_RESULT}"
 	[[ ${DIALOG_EXIT_CODE} != 0 ]] && exit_with_error "You cancelled interactive during kernel configuration" "Build cancelled"
 	unset options
@@ -83,7 +83,7 @@ function interactive_config_ask_board_list() {
 		fi
 
 		DIALOGRC=$temp_rc \
-			dialog_if_terminal_set_vars --stdout --title "Choose a board" --backtitle "$backtitle" --scrollbar \
+			dialog_if_terminal_set_vars --title "Choose a board" --backtitle "$backtitle" --scrollbar \
 			--colors --extra-label "Show $WIP_BUTTON" --extra-button \
 			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 		BOARD="${DIALOG_RESULT}"
@@ -125,7 +125,7 @@ function interactive_config_ask_branch() {
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
 	else
-		dialog_if_terminal_set_vars --stdout --title "Choose a kernel" --backtitle "$backtitle" --colors \
+		dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
 			--menu "Select the target kernel branch\nExact kernel versions depend on selected board" \
 			$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 		BRANCH="${DIALOG_RESULT}"
@@ -141,7 +141,7 @@ function interactive_config_ask_release() {
 
 	options=()
 	distros_options
-	dialog_if_terminal_set_vars --stdout --title "Choose a release package base" --backtitle "$backtitle" --menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
+	dialog_if_terminal_set_vars --title "Choose a release package base" --backtitle "$backtitle" --menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	RELEASE="${DIALOG_RESULT}"
 	[[ -z ${RELEASE} ]] && exit_with_error "No release selected"
 	unset options
@@ -158,7 +158,7 @@ function interactive_config_ask_desktop_build() {
 	options=()
 	options+=("no" "Image with console interface (server)")
 	options+=("yes" "Image with desktop environment")
-	dialog_if_terminal_set_vars --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+	dialog_if_terminal_set_vars --title "Choose image type" --backtitle "$backtitle" --no-tags \
 		--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	BUILD_DESKTOP="${DIALOG_RESULT}"
 	unset options
@@ -177,7 +177,7 @@ function interactive_config_ask_standard_or_minimal() {
 	options=()
 	options+=("no" "Standard image with console interface")
 	options+=("yes" "Minimal image with console interface")
-	dialog_if_terminal_set_vars --stdout --title "Choose image type" --backtitle "$backtitle" --no-tags \
+	dialog_if_terminal_set_vars --title "Choose image type" --backtitle "$backtitle" --no-tags \
 		--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	BUILD_MINIMAL="${DIALOG_RESULT}"
 	unset options

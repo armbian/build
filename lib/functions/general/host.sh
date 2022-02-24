@@ -268,7 +268,7 @@ prepare_host() {
 		display_alert "Low free space left" "$(($freespace / 1073741824)) GiB" "wrn"
 		# pause here since dialog-based menu will hide this message otherwise
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-		read
+		read # @TODO: this fails if stdin is not a tty, or just hangs
 	fi
 }
 
