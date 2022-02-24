@@ -175,8 +175,13 @@ function display_alert() {
 		timing_info="${tool_color}(${normal_color}$(printf "%3s" "${SECONDS}")${tool_color})" # SECONDS is bash builtin for seconds since start of script.
 	fi
 
+	local pids_info=""
+	if [[ "${SHOW_PIDS}" == "yes" ]]; then
+		pids_info="${tool_color}(${normal_color}$$ - ${BASHPID}${tool_color})" # BASHPID is the current subshell; $$ is parent's?
+	fi
+
 	[[ -n $2 ]] && extra=" [${inline_logs_color} ${2} ${normal_color}]"
-	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker}${timing_info} ${normal_color}${message}${extra}${normal_color}" >&2
+	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker}${timing_info}${pids_info} ${normal_color}${message}${extra}${normal_color}" >&2
 
 	# Now write to CI, if we're running on it
 	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]]; then
