@@ -82,7 +82,7 @@ function prepare_and_config_main_build_single() {
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected: KERNEL_ONLY"
 	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected: KERNEL_CONFIGURE"
 
-	interactive_config_ask_board_list
+	interactive_config_ask_board_list # @TODO: rpardini: This obtains a list of boards. refactor that...
 	[[ -z $BOARD ]] && exit_with_error "No board selected: BOARD"
 
 	if [[ -f $SRC/config/boards/${BOARD}.conf ]]; then
@@ -113,7 +113,7 @@ function prepare_and_config_main_build_single() {
 	[[ $KERNEL_TARGET != *$BRANCH* ]] && display_alert "Kernel branch not defined for this board" "$BRANCH for ${BOARD}" "warn"
 
 	interactive_config_ask_release
-	[[ -z $RELEASE ]] && exit_with_error "No release selected: RELEASE"
+	[[ -z $RELEASE && ${KERNEL_ONLY} != yes ]] && exit_with_error "No release selected: RELEASE"
 
 	interactive_config_ask_desktop_build
 
@@ -191,7 +191,7 @@ function prepare_and_config_main_build_single() {
 			export KERNEL_MAJOR=5
 			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
 		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.4" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "5.0"; then
-			export KERNEL_MAJOR=4                                                      # We support 4.x from 4.4; all require custom packaging.
+			export KERNEL_MAJOR=4 # We support 4.x from 4.4; all require custom packaging.
 			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
 		else
 			exit_with_error "Kernel series unsupported" "'${KERNEL_MAJOR_MINOR}' is unsupported, or bad config"
