@@ -22,13 +22,12 @@ function run_kernel_make() {
 		"DEBFULLNAME=${MAINTAINER}"                         # For changelog generation
 		"DEBEMAIL=${MAINTAINERMAIL}"                        # idem
 		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}"        # Prefix for tool invocations.
+		"KCFLAGS=-fdiagnostics-color=always"                # Force GCC colored messages.
 	)
-
-	common_make_params_quoted+=("KCFLAGS=-fdiagnostics-color=always") # Force GCC colored messages.
 
 	# last statement, so it passes the result to calling function.
 	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "${common_make_envs[@]}"
-		make "$@" "${common_make_params_quoted[@]@Q}" "${make_filter}")
+		make "${common_make_params_quoted[@]@Q}" "$@" "${make_filter}")
 	"${full_command[@]}" # and exit with it's code, since it's the last statement
 }
 
@@ -254,38 +253,37 @@ function kernel_config() {
 }
 
 function kernel_package_source() {
-	# create linux-source package - with already patched sources
-	# We will build this package first and clear the memory.
-	if [[ $BUILD_KSRC != no ]]; then
-		display_alert "Creating kernel source package" "${LINUXCONFIG}" "info"
-		create_linux-source_package
-	fi
-}
+	[[ "${BUILD_KSRC}" != "yes" ]] && return 0
 
-create_linux-source_package() {
-	ts=$(date +%s)
-	local sources_pkg_dir tmp_src_dir
+	display_alert "Creating kernel source package" "${LINUXCONFIG}" "info"
+
+	local ts=${SECONDS}
+	local sources_pkg_dir tmp_src_dir tarball_size package_size
 	tmp_src_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 
 	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
 	mkdir -p "${sources_pkg_dir}"/usr/src/ \
-		"${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} \
+		"${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}" \
 		"${sources_pkg_dir}"/DEBIAN
 
-	cp "${SRC}/config/kernel/${LINUXCONFIG}.config" "default_${LINUXCONFIG}.config"
-	xz < .config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
+	run_host_command_logged cp -v "${SRC}/config/kernel/${LINUXCONFIG}.config" "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config"
+	run_host_command_logged cp -v COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
 
-	display_alert "Compressing sources for the linux-source package"
-	tar cp --directory="$kernel_work_dir" --exclude='.git' --owner=root . |
-		pv -N "$(logging_echo_prefix_for_pv "compress_kernel_sources") $display_name" -p -b -r -s "$(du -sb "$kernel_work_dir" --exclude=='.git' | cut -f1)" |
-		pixz -0 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz" # @TODO: .deb will compress this later. -0 for now, but should be a plain tar
-	cp COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
+	display_alert "Compressing sources for the linux-source package" "exporting from git" "info"
+	cd "${kernel_work_dir}"
+
+	local tar_prefix="${version}/"
+	local output_tarball="${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.zst"
+
+	# export tar with `git archive`; we point it at HEAD, but could be anything else too
+	run_host_command_logged git archive "--prefix=${tar_prefix}" --format=tar HEAD "| zstdmt > '${output_tarball}'"
+	tarball_size="$(du -h -s "${output_tarball}" | awk '{print $1}')"
 
 	cat <<- EOF > "${sources_pkg_dir}"/DEBIAN/control
 		Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
 		Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
 		Architecture: all
-		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
 		Priority: optional
 		Depends: binutils, coreutils
@@ -294,11 +292,10 @@ create_linux-source_package() {
 		Description: This package provides the source code for the Linux kernel $version
 	EOF
 
-	fakeroot_dpkg_deb_build -z0 "${sources_pkg_dir}" "${sources_pkg_dir}.deb"
-	rsync --remove-source-files -rq "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
-
-	te=$(date +%s)
-	display_alert "Make the linux-source package" "$(($te - $ts)) sec." "info"
+	fakeroot_dpkg_deb_build -Znone -z0 "${sources_pkg_dir}" "${sources_pkg_dir}.deb" # do not compress .deb, it already contains a zstd compressed tarball! ignores ${KDEB_COMPRESS} on purpose
+	package_size="$(du -h -s "${sources_pkg_dir}.deb" | awk '{print $1}')"
+	run_host_command_logged rsync --remove-source-files -r "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+	display_alert "linux-source-${version}-${BRANCH}-${LINUXFAMILY} packaged" "$((SECONDS - ts)) seconds, ${tarball_size} tarball, ${package_size} .deb" "info"
 }
 
 function kernel_make_headers_dtbs_image_modules() {
