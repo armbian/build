@@ -551,26 +551,13 @@ PREPARE_IMAGE_SIZE
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
-		case $ROOTFS_TYPE in
-			btrfs)
-				# Used for server images, currently no swap functionality, so disk space
-				if [[ $BTRFS_COMPRESSION == none ]]; then
-					local sdsize=$(bc -l <<< "scale=0; (($imagesize * 1.25) / 4 + 1) * 4")
-				else
-					# requirements are rather low since rootfs gets filled with compress-force=zlib
-					local sdsize=$(bc -l <<< "scale=0; (($imagesize * 0.8) / 4 + 1) * 4")
-				fi
-				;;
-			*)
-				# Hardcoded overhead +25% is needed for desktop images,
-				# for CLI it could be lower. Align the size up to 4MiB
-				if [[ $BUILD_DESKTOP == yes ]]; then
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
-				else
-					local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
-				fi
-				;;
-		esac
+		# Hardcoded overhead +25% is needed for desktop images,
+		# for CLI it could be lower. Align the size up to 4MiB
+		if [[ $BUILD_DESKTOP == yes ]]; then
+			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
+		else
+			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.25) / 1 + 0) / 4 + 1) * 4")
+		fi
 	fi
 
 	# stage: create blank image
@@ -878,7 +865,12 @@ PRE_UPDATE_INITRAMFS
 	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
-	[[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] &&  write_uboot $LOOP
+	# exception: if we use the one from repository, install version which was downloaded from repo
+	if [[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+		 write_uboot $LOOP
+	elif [[ "${UPSTREM_VER}" ]]; then
+		 write_uboot $LOOP
+	fi
 
 	# fix wrong / permissions
 	chmod 755 $MOUNT

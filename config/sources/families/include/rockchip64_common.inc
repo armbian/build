@@ -284,6 +284,7 @@ family_tweaks()
 	if [[ $BOARD == station* ]]; then
 
 		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
+		cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
 
 	fi
 
