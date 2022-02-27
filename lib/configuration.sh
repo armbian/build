@@ -47,17 +47,11 @@ fi
 
 # image artefact destination with or without subfolder
 FINALDEST=$DEST/images
-if [[ "${MAKE_FOLDERS}" == yes ]]; then
+if [[ -n "${MAKE_FOLDERS}" ]]; then
 
-	if [[ "$RC" == yes ]]; then
-		FINALDEST=$DEST/images/"${BOARD}"/rc
-	elif [[ "$BETA" == yes ]]; then
-		FINALDEST=$DEST/images/"${BOARD}"/nightly
-	else
-		FINALDEST=$DEST/images/"${BOARD}"/archive
-	fi
-
+	FINALDEST=$DEST/images/"${BOARD}"/"${MAKE_FOLDERS}"
 	install -d ${FINALDEST}
+
 fi
 
 
