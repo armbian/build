@@ -7,6 +7,9 @@ function apply_kernel_patches_for_packaging() {
 	# Temporally set for new "default->legacy,next->current" family naming
 
 	if linux-version compare "${version}" ge 5.10; then
+		display_alert "NOT using old packaging mkdebian etc" "skipping mkdebian patching" "warn"
+		return 0 # Not anymore for new packaging.
+
 		# This case is special: it does not use process_patch_file. fasthash manually.
 		local builddeb="packages/armbian/builddeb"
 		local mkdebian="packages/armbian/mkdebian"
