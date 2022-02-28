@@ -23,7 +23,8 @@ update_initramfs() {
 	cp "/usr/bin/$QEMU_BINARY" "$chroot_target/usr/bin"/
 	mount_chroot "$chroot_target/"
 
-	chroot_custom_long_running "$chroot_target" "$update_initramfs_cmd" || {
+	local logging_filter="| grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary' "
+	chroot_custom_long_running "$chroot_target" "$update_initramfs_cmd" "${logging_filter}" || {
 		exit_with_error "Updating initramfs FAILED"
 	}
 	display_alert "Updated initramfs." "${update_initramfs_cmd}" "info"

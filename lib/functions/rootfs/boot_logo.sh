@@ -102,7 +102,8 @@ function boot_logo() {
 		--blob "${SDCARD}"/tmp/throbber72.rgb \
 		--blob "${SDCARD}"/tmp/throbber73.rgb \
 		--blob "${SDCARD}"/tmp/throbber74.rgb \
-		"${SDCARD}"/lib/firmware/bootsplash.armbian
+		"${SDCARD}"/lib/firmware/bootsplash.armbian \
+		"| grep --line-buffered -v -e 'File header' -e 'Picture header' -e 'Blob header' -e 'length:'  -e 'type:' -e 'picture_id:' -e 'bg_' -e 'num_' -e '^$'"
 
 	if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
 		[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt &&
