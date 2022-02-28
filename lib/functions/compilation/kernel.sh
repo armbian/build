@@ -43,7 +43,9 @@ function run_kernel_make_long_running() {
 function compile_kernel() {
 	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
 	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
+	declare checked_out_revision_mtime="" # set by fetch_from_repo
 	LOG_SECTION="kernel_prepare_git" do_with_logging do_with_hooks kernel_prepare_git
+	declare kernel_base_revision_mtime="${checked_out_revision_mtime}"
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
 	local version hash pre_patch_version
 	local kernel_packaging_target
@@ -66,6 +68,8 @@ function compile_kernel() {
 
 function kernel_prepare_git() {
 	if [[ -n $KERNELSOURCE ]]; then
+		[[ -d "${kernel_work_dir}" ]] && "${kernel_work_dir}" && fasthash_debug "pre git, existing tree"
+
 		display_alert "Downloading sources" "kernel" "git"
 
 		# Does not work well with rpi for example: GIT_WARM_REMOTE_SHALLOW_AT_TAG="v${KERNEL_MAJOR_MINOR}" \
@@ -127,6 +131,9 @@ function kernel_patching() {
 	## - (always) produce a fasthash: represents "what would be done" (eg: md5 of a patch, crc32 of description).
 	## - (optionally) execute modification against living tree (eg: apply a patch, copy a file, etc). only if `DO_MODIFY=yes`
 	## - (always) call mark_change_commit with the description of what was done and fasthash.
+	declare -i patch_minimum_target_mtime="${kernel_base_revision_mtime}"
+	display_alert "patch_minimum_target_mtime:" "${patch_minimum_target_mtime}" "debug"
+
 	initialize_fasthash "kernel" "${hash}" "${pre_patch_version}" "${kernel_work_dir}"
 	fasthash_debug "init"
 

@@ -138,6 +138,8 @@ fetch_from_repo() {
 
 	fi # offline
 
+	local checkout_from="HEAD" # Probably best to use the local revision?
+
 	if [[ "${changed}" == "true" ]]; then
 		git_handle_cold_and_warm_bundle_remotes # Delegate to function to find or create cache if appropriate.
 
@@ -153,21 +155,25 @@ fetch_from_repo() {
 			head) improved_git_fetch --no-tags origin HEAD ;;
 		esac
 		display_alert "Origin fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size again
-
-		display_alert "Checking out" "$dir $ref_name"
-		regular_git checkout -f -q FETCH_HEAD
-		regular_git clean -q -d -f
-		display_alert "After checkout, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
-
-	elif [[ -n $(git status -uno --porcelain --ignore-submodules=all) ]]; then # if not changed, but dirty...
-		display_alert "Cleaning git dir" "$(git status -s | wc -l) files"         # working directory is not clean, show it
-		regular_git checkout -f -q HEAD                                           # Return the files that are tracked by git to the initial state.
-		regular_git clean -q -d -f                                                # Files that are not tracked by git and were added when the patch was applied must be removed.
-	else                                                                       # not changed, not dirty.
-		display_alert "Up to date" "$dir $ref_name at revision ${local_hash}"     # working directory is clean, nothing to do
+		checkout_from="FETCH_HEAD"
 	fi
 
-	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "debug"
+	# should be declared in outside scope, so can be read.
+	checked_out_revision_mtime="$(git log --date='format:%Y%m%d%H%M%S' --format='format:%ad' -1 "${checkout_from}")"
+	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime}" "debug"
+
+	display_alert "Cleaning git dir" "$(git status -s 2> /dev/null | wc -l) files" # working directory is not clean, show it
+
+	fasthash_debug "before git checkout of $dir $ref_name" # fasthash interested in this
+	regular_git checkout -f -q "${checkout_from}"          # Return the files that are tracked by git to the initial state.
+
+	fasthash_debug "before git clean of $dir $ref_name"
+	regular_git clean -q -d -f # Files that are not tracked by git and were added when the patch was applied must be removed.
+
+	# set the checkout date on all the versioned files.
+	git ls-tree -r -z --name-only "${checkout_from}" | xargs -0 -- touch -m -t "${checked_out_revision_mtime:0:12}.${checked_out_revision_mtime:12}"
+
+	fasthash_debug "after setting checkout time for $dir $ref_name" #yeah
 
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
@@ -182,9 +188,13 @@ fetch_from_repo() {
 			else
 				sref="head"
 			fi
+			# @TODO: in case of the bundle stuff this will fail terribly
 			fetch_from_repo "$surl" "$workdir/$i" "$sref"
 		done
 	fi
+
+	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "debug"
+	fasthash_debug "at the end of fetch_from_repo $dir $ref_name"
 }
 
 function git_fetch_from_bundle_file() {

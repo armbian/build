@@ -81,49 +81,41 @@ advanced_patch() {
 # <status>: additional status text
 #
 process_patch_file() {
-	local patch=$1
-	local status=$2
-	local patch_date
-
-	# get the modification date of the patch. make it not less than MIN_PATCH_AGE, if set.
-	# [[CC]YY]MMDDhhmm[.ss] time format
-	patch_date=$(get_file_modification_time "${patch}")
-
-	# detect and remove files which patch will create
-	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
-
-	# store an array of the files that patch will modify, we'll set their modification times after the fact
-	declare -a patched_files
-	mapfile -t patched_files < <(lsdiff -s --strip=1 "${patch}" | awk '{print $2}')
-
-	# @TODO: try patching with `git am` first, so git contains the patch commit info/msg. -- For future git-based hashing.
-	# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
-	patch --batch -p1 -N < "${patch}" && {
-		set_files_modification_time "${patch_date}" "${patched_files[@]}"
-		display_alert "* $status $(basename "${patch}")" "" "info"
-	} || {
-		display_alert "* $status $(basename "${patch}")" "failed" "wrn"
-		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
-	}
-	return 0 # short-circuit above, avoid exiting with error
-}
-function new_process_patch_file() {
-	local patch="$1"                           # full filename
-	local status="$2"                          # message, may contain ANSI
+	local patch="${1}"
+	local status="${2}"
+	local -i patch_date
 	local relative_patch="${patch##"${SRC}"/}" # ${FOO##prefix} remove prefix from FOO
 
 	# report_fashtash_should_execute is report_fasthash returns true only if we're supposed to apply the patch on disk.
 	if report_fashtash_should_execute file "${patch}" "Apply patch ${relative_patch}"; then
+
+		# get the modification date of the patch. make it not less than MIN_PATCH_AGE, if set.
+		patch_date=$(get_file_modification_time "${patch}")
+		# shellcheck disable=SC2154 # patch_minimum_target_mtime can be declared in outer scope
+		if [[ "${patch_minimum_target_mtime}" != "" ]]; then
+			if [[ ${patch_date} -lt ${patch_minimum_target_mtime} ]]; then
+				display_alert "Patch before minimum date" "${patch_date} -lt ${patch_minimum_target_mtime}" "debug"
+				patch_date=${patch_minimum_target_mtime}
+			fi
+		fi
+
 		# detect and remove files which patch will create
 		lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
+
+		# store an array of the files that patch will add or modify, we'll set their modification times after the fact
+		declare -a patched_files
+		mapfile -t patched_files < <(lsdiff -s --strip=1 "${patch}" | grep -e '^+' -e '^!' | awk '{print $2}')
 
 		# @TODO: try patching with `git am` first, so git contains the patch commit info/msg. -- For future git-based hashing.
 		# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
 		patch --batch -p1 -N < "${patch}" && {
-			display_alert "* ${status} ${relative_patch}" "" "info" || true
+			# Fix the dates.
+			set_files_modification_time "${patch_date}" "${patched_files[@]}"
+
+			display_alert "* $status ${relative_patch}" "" "info"
 		} || {
-			display_alert "* ${status} ${relative_patch}" "failed" "wrn"
-			[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to EXIT_PATCHING_ERROR" "Patch ${relative_patch} failed"
+			display_alert "* $status ${relative_patch}" "failed" "wrn"
+			[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
 		}
 		mark_fasthash_done # will do git commit, associate fasthash to real hash.
 	fi

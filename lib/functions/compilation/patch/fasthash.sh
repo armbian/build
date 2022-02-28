@@ -20,7 +20,7 @@ function report_fasthash() {
 function initialize_fasthash() {
 	display_alert "initialize_fasthash" "$*" "debug"
 	return 0
-	declare -a fast_hash_list=()
+	declare -a fast_hash_list=() # @TODO: declaring here won't do it any good, this is a shared var
 }
 
 function fasthash_branch() {
@@ -43,25 +43,25 @@ function fasthash_debug() {
 		sort -n | tail -n 10 1>&2
 }
 
-function get_file_modification_time() {
-	local file_date
+function get_file_modification_time() { # @TODO: This is almost always called from a subshell. No use throwing errors?
+	local -i file_date
 	if [[ ! -f "${1}" ]]; then
 		exit_with_error "Can't get modification time of nonexisting file" "${1}"
+		return 1
 	fi
-
-	# [[CC]YY]MMDDhhmm.[ss] - it is NOT a valid integer
-	file_date=$(date +%Y%m%d%H%M.%S -r "${1}")
-	display_alert "Got date ${file_date} for file" "${1}" "debug"
-
-	# @TODO: if MIN_PATCH_AGE
+	# YYYYMMDDhhmm.ss - it is NOT a valid integer, but is what 'touch' wants for its "-t" parameter
+	# YYYYMMDDhhmmss - IS a valid integer and we can do math to it. 'touch' code will format it later
+	file_date=$(date +%Y%m%d%H%M%S -r "${1}")
 	echo -n "${file_date}"
-
 	return 0
 }
 
+# This is for simple "set without thinking" usage, date preservation is done directly by process_patch_file
 function set_files_modification_time() {
-	local mtime="${1}"
+	local -i mtime="${1}"
+	local formatted_mtime
 	shift
-	display_alert "Setting date ${mtime} " "${*}" "debug"
-	touch -m -t "${mtime}" "${@}"
+	display_alert "Setting date ${mtime}" "${*} (no newer check)" "debug"
+	formatted_mtime="${mtime:0:12}.${mtime:12}"
+	touch --no-create -m -t "${formatted_mtime}" "${@}"
 }
