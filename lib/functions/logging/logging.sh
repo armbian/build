@@ -50,8 +50,10 @@ function start_logging_section() {
 	mkdir -p "${CURRENT_LOGGING_DIR}"
 
 	# Markers for CI (GitHub Actions); CI env var comes predefined as true there.
-	if [[ "${CI}" == "true" ]]; then
+	if [[ "${CI}" == "true" ]]; then # On CI, this has special meaning.
 		echo "::group::[🥑] Group ${CURRENT_LOGGING_SECTION}"
+	else
+		display_alert "start group" "<${CURRENT_LOGGING_SECTION}>" "group"
 	fi
 	return 0
 }
@@ -60,6 +62,8 @@ function finish_logging_section() {
 	# Close opened CI group.
 	if [[ "${CI}" == "true" ]]; then
 		echo "::endgroup::"
+	else
+		display_alert "finish group" "</${CURRENT_LOGGING_SECTION}>" "group"
 	fi
 }
 
@@ -154,6 +158,14 @@ function display_alert() {
 			fi
 			level_indicator="✨"
 			inline_logs_color="\e[1;33m"
+			;;
+
+		group)
+			if [[ "${SHOW_DEBUG}" != "yes" && "${SHOW_GROUPS}" != "yes" ]]; then # show when debugging, or when specifically requested
+				return 0
+			fi
+			level_indicator="🦋"
+			inline_logs_color="\e[1;36m" # cyan
 			;;
 
 		command)
