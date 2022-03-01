@@ -80,7 +80,6 @@ download_and_verify() {
 
 	# download torrent first
 	if [[ ${USE_TORRENT} == "yes" ]]; then
-
 		display_alert "downloading using torrent network" "$filename"
 		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=120 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
@@ -90,14 +89,13 @@ download_and_verify() {
 		# exception. It throws error if dht.dat file does not exists. Error suppress needed only at first download.
 		if [[ -f "${SRC}"/cache/.aria2/dht.dat ]]; then
 			# shellcheck disable=SC2086
-			aria2c ${ariatorrent}
+			run_host_command_logged aria2c ${ariatorrent}
 		else
 			# shellcheck disable=SC2035
-			aria2c ${ariatorrent} &> "${DEST}"/${LOG_SUBPATH}/torrent.log
+			run_host_command_logged aria2c ${ariatorrent}
 		fi
 		# mark complete
-		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete"
-
+		touch "${localdir}/${filename}.complete"
 	fi
 
 	# direct download if torrent fails
@@ -126,39 +124,38 @@ download_and_verify() {
 			# Verify archives with Linaro and Armbian GPG keys
 
 			if [ x"" != x"${http_proxy}" ]; then
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 					--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-					--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+					--recv-keys 8F427EAF)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 					--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-					--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+					--recv-keys 9F0E78D5)
 			else
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 					--keyserver hkp://keyserver.ubuntu.com:80 \
-					--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+					--recv-keys 8F427EAF)
 
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
+				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
 					--keyserver hkp://keyserver.ubuntu.com:80 \
-					--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
+					--recv-keys 9F0E78D5)
 			fi
 
 			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify \
-				--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
+				--trust-model always -q "${localdir}/${filename}.asc"
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
 
 		else
-
 			md5sum -c --status "${localdir}/${filename}.asc" && verified=true && display_alert "Verified" "MD5" "info"
-
 		fi
 
 		if [[ $verified == true ]]; then
 			if [[ "${filename:(-6)}" == "tar.xz" ]]; then
-
 				display_alert "decompressing"
-				pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "decompress") ${filename}" "${filename}" | xz -dc | tar xp --xattrs --no-same-owner --overwrite
-				[[ $? -eq 0 ]] && touch "${localdir}/${dirname}/.download-complete"
+				pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "decompress") ${filename}" "${filename}" |
+					xz -dc |
+					tar xp --xattrs --no-same-owner --overwrite &&
+					touch "${localdir}/${dirname}/.download-complete"
 			fi
 		else
 			exit_with_error "verification failed"

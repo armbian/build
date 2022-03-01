@@ -161,7 +161,7 @@ prepare_partitions() {
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
-	parted -s ${SDCARD}.raw -- mklabel ${IMAGE_PARTITION_TABLE}
+	run_host_command_logged parted -s ${SDCARD}.raw -- mklabel ${IMAGE_PARTITION_TABLE}
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
 			*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
@@ -170,7 +170,7 @@ prepare_partitions() {
 		CREATE_PARTITION_TABLE
 	elif [[ $ROOTFS_TYPE == nfs ]]; then
 		# single /boot partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s "100%"
+		run_host_command_logged parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s "100%"
 	elif [[ $UEFISIZE -gt 0 ]]; then
 		# uefi partition + root partition
 		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
@@ -182,38 +182,38 @@ prepare_partitions() {
 				local rootstart=$(($uefistart + ($UEFISIZE * 2048)))
 				local biosend=$(($uefistart - 1))
 				local uefiend=$(($rootstart - 1))
-				parted -s ${SDCARD}.raw -- mkpart bios fat32 ${biosstart}s ${biosend}s
-				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${uefistart}s ${uefiend}s
-				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+				run_host_command_logged parted -s ${SDCARD}.raw -- mkpart bios fat32 ${biosstart}s ${biosend}s
+				run_host_command_logged parted -s ${SDCARD}.raw -- mkpart efi fat32 ${uefistart}s ${uefiend}s
+				run_host_command_logged parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 				# transpose so BIOS is in sda14; EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
-				sgdisk --transpose 1:14 ${SDCARD}.raw
-				sgdisk --transpose 2:15 ${SDCARD}.raw
-				sgdisk --transpose 3:1 ${SDCARD}.raw
+				run_host_command_logged sgdisk --transpose 1:14 ${SDCARD}.raw
+				run_host_command_logged sgdisk --transpose 2:15 ${SDCARD}.raw
+				run_host_command_logged sgdisk --transpose 3:1 ${SDCARD}.raw
 				# set the ESP (efi) flag on 15
-				parted -s ${SDCARD}.raw -- set 14 bios_grub on
-				parted -s ${SDCARD}.raw -- set 15 esp on
+				run_host_command_logged parted -s ${SDCARD}.raw -- set 14 bios_grub on
+				run_host_command_logged parted -s ${SDCARD}.raw -- set 15 esp on
 			else
 				display_alert "Creating partitions" "UEFI+rootfs (no BIOS)" "info"
 				# Simple EFI + root partition on GPT, no BIOS.
-				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${bootstart}s ${bootend}s
-				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+				run_host_command_logged parted -s ${SDCARD}.raw -- mkpart efi fat32 ${bootstart}s ${bootend}s
+				run_host_command_logged parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 				# transpose so EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
-				sgdisk --transpose 1:15 ${SDCARD}.raw
-				sgdisk --transpose 2:1 ${SDCARD}.raw
+				run_host_command_logged sgdisk --transpose 1:15 ${SDCARD}.raw
+				run_host_command_logged sgdisk --transpose 2:1 ${SDCARD}.raw
 				# set the ESP (efi) flag on 15
-				parted -s ${SDCARD}.raw -- set 15 esp on
+				run_host_command_logged parted -s ${SDCARD}.raw -- set 15 esp on
 			fi
 		else
-			parted -s ${SDCARD}.raw -- mkpart primary fat32 ${bootstart}s ${bootend}s
-			parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+			run_host_command_logged parted -s ${SDCARD}.raw -- mkpart primary fat32 ${bootstart}s ${bootend}s
+			run_host_command_logged parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 		fi
 	elif [[ $BOOTSIZE == 0 ]]; then
 		# single root partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+		run_host_command_logged parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	else
 		# /boot partition + root partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+		run_host_command_logged parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
+		run_host_command_logged parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
@@ -231,12 +231,13 @@ prepare_partitions() {
 
 	check_loop_device "$LOOP"
 
-	losetup $LOOP ${SDCARD}.raw
+	run_host_command_logged losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
 
-	partprobe $LOOP
+	display_alert "Running partprobe" "${LOOP}" "debug"
+	run_host_command_logged partprobe $LOOP
 
 	# stage: create fs, mount partitions, create fstab
 	rm -f $SDCARD/etc/fstab
@@ -259,7 +260,7 @@ prepare_partitions() {
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
 		fi
-		mount ${fscreateopt} $rootdevice $MOUNT/
+		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
@@ -273,17 +274,17 @@ prepare_partitions() {
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
 		check_loop_device "${LOOP}p${bootpart}"
-		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart} 2>&1
+		run_host_command_logged mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart} 2>&1
 		mkdir -p $MOUNT/boot/
-		mount ${LOOP}p${bootpart} $MOUNT/boot/
+		run_host_command_logged mount ${LOOP}p${bootpart} $MOUNT/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
 		check_loop_device "${LOOP}p${uefipart}"
-		mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
+		run_host_command_logged mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
-		mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
+		run_host_command_logged mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
 	fi
 	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
@@ -334,7 +335,7 @@ prepare_partitions() {
 
 	# recompile .cmd to .scr if boot.cmd exists
 	[[ -f $SDCARD/boot/boot.cmd ]] &&
-		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr > /dev/null 2>&1
+		run_host_command_logged mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr
 
 	# create extlinux config
 	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then

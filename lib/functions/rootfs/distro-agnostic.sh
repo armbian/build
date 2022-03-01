@@ -1,4 +1,4 @@
-install_distribution_agnostic() {
+function install_distribution_agnostic() {
 	display_alert "Installing distro-agnostic part of rootfs" "install_distribution_agnostic" "debug"
 
 	# install rootfs encryption related packages separate to not break packages cache

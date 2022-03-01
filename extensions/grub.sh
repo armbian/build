@@ -75,6 +75,7 @@ post_family_tweaks_bsp__remove_uboot_grub() {
 pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
 	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
 	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot
+	return 0 # shortcircuit above
 }
 
 pre_umount_final_image__install_grub() {

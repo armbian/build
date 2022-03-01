@@ -14,9 +14,14 @@ function chroot_sdcard_apt_get() {
 	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
 }
 
-# please, please, unify around this function. if SDCARD is not enough, I'll make a mount version.
+# please, please, unify around this function.
 function chroot_sdcard() {
 	TMPDIR="" run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -o pipefail -c "$*"
+}
+
+# please, please, unify around this function.
+function chroot_mount() {
+	TMPDIR="" run_host_command_logged_raw chroot "${MOUNT}" /bin/bash -e -o pipefail -c "$*"
 }
 
 # This should be used if you need to capture the stdout produced by the command. It is NOT logged, and NOT run thru bash, and NOT quoted.
@@ -127,9 +132,8 @@ function run_host_command_logged_raw() {
 	if [[ -f "${CURRENT_LOGFILE}" ]]; then
 		echo "       " >> "${CURRENT_LOGFILE}" # blank line for reader's benefit
 		echo "-->" "$*" " <- at $(date --utc)" >> "${CURRENT_LOGFILE}"
-	else
-		display_alert "Command debug" "$*" "command" # A special 'command' level.
 	fi
+	display_alert "Command debug" "$*" "command" # A special 'command' level.
 
 	# uncomment when desperate to understand what's going on
 	# echo "cmd about to run" "$@" >&2

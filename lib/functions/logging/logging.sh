@@ -44,10 +44,11 @@ function start_logging_section() {
 	export logging_section_counter=$((logging_section_counter + 1)) # increment counter, used in filename
 	export CURRENT_LOGGING_COUNTER
 	CURRENT_LOGGING_COUNTER="$(printf "%03d" "$logging_section_counter")"
-	export CURRENT_LOGGING_SECTION=${LOG_SECTION:-build} # default to "build"
-	export CURRENT_LOGGING_DIR="${DEST}/${LOG_SUBPATH}"  # origin: build-all-ng - @TODO: rpardini: lets revisit this later
+	export CURRENT_LOGGING_SECTION=${LOG_SECTION:-early} # default to "early", should be overwritten soon enough
+	export CURRENT_LOGGING_DIR="${LOGDIR}"               # set in cli-entrypoint.sh
 	export CURRENT_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.${CURRENT_LOGGING_SECTION}.log"
 	mkdir -p "${CURRENT_LOGGING_DIR}"
+	touch "${CURRENT_LOGFILE}" # Touch it, make sure it's writable.
 
 	# Markers for CI (GitHub Actions); CI env var comes predefined as true there.
 	if [[ "${CI}" == "true" ]]; then # On CI, this has special meaning.
@@ -192,8 +193,13 @@ function display_alert() {
 		pids_info="${tool_color}(${normal_color}$$ - ${BASHPID}${tool_color})" # BASHPID is the current subshell; $$ is parent's?
 	fi
 
+	local bashopts_info=""
+	if [[ "${SHOW_BASHOPTS}" == "yes" ]]; then
+		bashopts_info="${tool_color}(${normal_color}$-${tool_color})" # $- is the currently active bashopts
+	fi
+
 	[[ -n $2 ]] && extra=" [${inline_logs_color} ${2} ${normal_color}]"
-	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker}${timing_info}${pids_info} ${normal_color}${message}${extra}${normal_color}" >&2
+	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker}${timing_info}${pids_info}${bashopts_info} ${normal_color}${message}${extra}${normal_color}" >&2
 
 	# Now write to CI, if we're running on it
 	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]]; then

@@ -4,7 +4,7 @@ function extension_metadata_ready__499_display_docs_generation_start_info() {
 }
 
 function extension_metadata_ready__docs_markdown() {
-	generate_markdown_docs_to_stdout > "${DEST}/"${LOG_SUBPATH}"/hooks.auto.docs.md"
+	generate_markdown_docs_to_stdout > "${EXTENSION_MANAGER_TMP_DIR}/hooks.auto.docs.md"
 }
 
 function extension_metadata_ready__docs_sample_extension() {

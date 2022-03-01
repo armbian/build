@@ -10,16 +10,6 @@
 # https://github.com/armbian/build/
 
 function do_main_configuration() {
-	# set unique mounting directory for this build.
-	MOUNT_UUID=$(uuidgen)
-
-	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this is config stage, not build.
-	export WORKDIR="${SRC}/.tmp/work-${MOUNT_UUID}"                         # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
-	export SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"                        # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
-	export MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"                          # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
-	export EXTENSION_MANAGER_TMP_DIR="${SRC}/.tmp/extensions-${MOUNT_UUID}" # EXTENSION_MANAGER_TMP_DIR used to store extension-composed functions
-	export DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"                        # DESTIMG is where the backing image (raw, huge, sparse file) is kept
-
 	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
 
 	# common options
@@ -439,7 +429,6 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 }
 
 function write_config_summary_output_file() {
-	local build_script_env_file="${DEST}/${LOG_SUBPATH}/output.log"
 	local debug_dpkg_arch debug_uname debug_virt debug_src_mount debug_src_perms debug_src_temp_perms
 	debug_dpkg_arch="$(dpkg --print-architecture)"
 	debug_uname="$(uname -a)"
@@ -448,8 +437,8 @@ function write_config_summary_output_file() {
 	debug_src_perms="$(getfacl -p "${SRC}")"
 	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"
 
-	display_alert "Writing build config summary to" "${build_script_env_file}" "debug"
-	cat <<- EOF >> "${build_script_env_file}"
+	display_alert "Writing build config summary to" "debug log" "debug"
+	run_host_command_logged cat "1>&2" <<- EOF
 		## BUILD SCRIPT ENVIRONMENT
 
 		Repository: $REPOSITORY_URL

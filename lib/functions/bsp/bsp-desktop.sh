@@ -10,10 +10,7 @@
 # https://github.com/armbian/build/
 
 create_desktop_package() {
-
-	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log
-	# Use quotes to show leading and trailing spaces
-	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/${LOG_SUBPATH}/output.log
+	display_alert "bsp-desktop: PACKAGE_LIST_DESKTOP" "'${PACKAGE_LIST_DESKTOP}'" "debug"
 
 	# Remove leading and trailing spaces with some bash monstruosity
 	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
@@ -24,7 +21,7 @@ create_desktop_package() {
 	# Remove others 'spacing characters' (like tabs)
 	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
 
-	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
+	display_alert "bsp-desktop: DEBIAN_RECOMMENDS" "'${DEBIAN_RECOMMENDS}'" "debug"
 
 	# Replace whitespace characters by commas
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,}
@@ -37,7 +34,7 @@ create_desktop_package() {
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
-	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
+	display_alert "bsp-desktop: PACKAGE_LIST_PREDEPENDS" "'${PACKAGE_LIST_PREDEPENDS}'" "debug"
 
 	# set up control file
 	cat <<- EOF > "${destination}"/DEBIAN/control
@@ -64,9 +61,6 @@ create_desktop_package() {
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
 
 	chmod 755 "${destination}"/DEBIAN/postinst
-
-	#display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst" >> "${DEST}/${LOG_SUBPATH}/bsp_postinst.log"
 
 	# Armbian create_desktop_package scripts
 
@@ -138,7 +132,7 @@ create_bsp_desktop_package() {
 	local aggregated_content=""
 	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
 	eval "${aggregated_content}"
-	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
+	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn" # @TODO: this is a fantasy, error would be thrown in line above
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"

@@ -20,7 +20,7 @@ export LOG_ENABLE_EXTENSION=yes # colorful logs with stacktrace when enable_exte
 # notice: this is not involved in how the hook functions came to be. read below for that.
 call_extension_method() {
 	# First, consume the stdin and write metadata about the call.
-	write_hook_point_metadata "$@" || true
+	write_hook_point_metadata "$@"
 
 	# @TODO: hack to handle stdin again, possibly with '< /dev/tty'
 
@@ -36,9 +36,9 @@ call_extension_method() {
 	# Then call the hooks, if they are defined.
 	for hook_name in "$@"; do
 		echo "-- Extension Method being called: ${hook_name}" >> "${EXTENSION_MANAGER_LOG_FILE}"
-		# shellcheck disable=SC2086
-		# shellcheck disable=SC2015
-		[[ $(type -t ${hook_name} || true) == function ]] && { ${hook_name}; } || true
+		if [[ $(type -t ${hook_name} || true) == function ]]; then
+			${hook_name}
+		fi
 	done
 }
 
@@ -66,7 +66,7 @@ initialize_extension_manager() {
 	mkdir -p "${EXTENSION_MANAGER_TMP_DIR}"
 
 	# Log destination.
-	export EXTENSION_MANAGER_LOG_FILE="${EXTENSION_MANAGER_TMP_DIR}/extensions.log"
+	export EXTENSION_MANAGER_LOG_FILE="${LOGDIR}/999.extensions.log"
 	[[ "${WRITE_EXTENSIONS_METADATA:-yes}" == "no" ]] && echo -n "" > "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt"
 
 	# Add trap handler to cleanup and not leave garbage behind when exiting.
@@ -270,10 +270,7 @@ function cleanup_handler_extensions() {
 	display_alert "yeah the extensions trap handler..." "cleanup_handler_extensions" "cleanup"
 	cleanup_extension_manager
 
-	# Move temporary log file over to final destination.
-	if [[ -f "${EXTENSION_MANAGER_LOG_FILE}" ]]; then
-		mv "${EXTENSION_MANAGER_LOG_FILE}" "${DEST}/${LOG_SUBPATH:-debug}/extensions.log"
-	fi
+	# Stop logging.
 	unset EXTENSION_MANAGER_LOG_FILE
 
 	# cleanup our tmpdir.

@@ -62,14 +62,10 @@ add_apt_sources() {
 }
 
 add_desktop_package_sources() {
-
-	# Myy : I see Snap and Flatpak coming up in the next releases
-	# so... let's prepare for that
 	add_apt_sources
 	chroot_sdcard_apt_get "update"
-	ls -l "${SDCARD}/etc/apt/sources.list.d" >> "${DEST}/${LOG_SUBPATH}/desktop_packages_apt_sources.log"
-	cat "${SDCARD}/etc/apt/sources.list" >> "${DEST}/${LOG_SUBPATH}/desktop_packages_apt_sources.log"
-
+	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
+	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"
 }
 
 # a-kind-of-hook, called by install_distribution_agnostic() if it's a desktop build

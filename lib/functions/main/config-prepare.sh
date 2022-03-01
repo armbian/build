@@ -3,43 +3,11 @@ function prepare_and_config_main_build_single() {
 	# this is used instead of making the chmod in prepare_host() recursive
 	umask 002
 
-	# destination. # @TODO: logging this is when we can start logging to file. make sure.
-	if [ -d "$CONFIG_PATH/output" ]; then
-		DEST="${CONFIG_PATH}"/output
-	else
-		DEST="${SRC}"/output
-	fi
-	display_alert "Determined DEST:" "${DEST}" "debug"
-
 	interactive_config_prepare_terminal
 
 	# Warnings mitigation
 	[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"      # set to english if not set
 	[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8" # set console to UTF-8 if not set
-
-	# @TODO: rpardini: this definitely should NOT be done during config preparation. move outside
-	if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
-		# set log path
-		LOG_SUBPATH=${LOG_SUBPATH:=debug}
-		mkdir -p "${DEST}/${LOG_SUBPATH}" # This creates the logging output.
-
-		# compress and remove old logs, if they exist.
-		if [[ -f "${DEST}/${LOG_SUBPATH}/timestamp" ]]; then
-			if ls "${DEST}/${LOG_SUBPATH}/"*.log &> /dev/null; then
-				display_alert "Archiving previous build logs..." "${DEST}/${LOG_SUBPATH}" "info"
-				(cd "${DEST}/${LOG_SUBPATH}" && tar -czf logs-"$(< timestamp)".tgz ./*.log) # > /dev/null 2>&1
-				rm -f "${DEST}/${LOG_SUBPATH}"/*.log
-			fi
-			# delete compressed logs older than 7 days
-			find "${DEST}"/${LOG_SUBPATH} -name '*.tgz' -mtime +7 -delete
-		fi
-
-		# Mark a timestamp, for next build.
-		date +"%d_%m_%Y-%H_%M_%S" > "${DEST}"/${LOG_SUBPATH}/timestamp
-	fi
-
-	# PROGRESS_LOG_TO_FILE is either yes, or unset. (@TODO: this is still used in buildpkg)
-	if [[ $PROGRESS_LOG_TO_FILE != yes ]]; then unset PROGRESS_LOG_TO_FILE; fi
 
 	export SHOW_WARNING=yes # If you try something that requires EXPERT=yes.
 

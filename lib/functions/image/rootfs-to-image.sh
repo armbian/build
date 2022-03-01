@@ -19,7 +19,7 @@ create_image_from_sdcard_rootfs() {
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files via rsync to" "/"
+		display_alert "Copying files via rsync to" "/ at ${MOUNT}"
 		run_host_command_logged rsync -aHWXh \
 			--exclude="/boot/*" \
 			--exclude="/dev/*" \
@@ -38,7 +38,7 @@ create_image_from_sdcard_rootfs() {
 	fi
 
 	# stage: rsync /boot
-	display_alert "Copying files to" "/boot"
+	display_alert "Copying files to" "/boot at ${MOUNT}"
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT"
@@ -58,11 +58,10 @@ create_image_from_sdcard_rootfs() {
 	}
 
 	# DEBUG: print free space
-	local freespace=$(LC_ALL=C df -h)
-	# @TODO: this is very specific; we don't want it on screen ever?
-	#echo $freespace >> $DEST/${LOG_SUBPATH}/debootstrap.log
-	display_alert "Free SD cache" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
-	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
+	local freespace
+	freespace=$(LC_ALL=C df -h)
+	display_alert "Free SD cache" "$(echo -e "$freespace" | grep "${SDCARD}" | awk '{print $5}')" "info"
+	display_alert "Mount point" "$(echo -e "$freespace" | grep "${MOUNT}" | head -1 | awk '{print $5}')" "info"
 
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
 	# exception: if we use the one from repository, install version which was downloaded from repo
@@ -78,11 +77,11 @@ create_image_from_sdcard_rootfs() {
 Called before unmounting both `/root` and `/boot`.
 PRE_UMOUNT_FINAL_IMAGE
 
-	# unmount /boot/efi first, then /boot, rootfs third, image file last # @TODO: why using lazy unmount?
+	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
-	[[ $UEFISIZE != 0 ]] && umount -l "${MOUNT}${UEFI_MOUNT_POINT}"
-	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
-	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
+	[[ $UEFISIZE != 0 ]] && umount "${MOUNT}${UEFI_MOUNT_POINT}"
+	[[ $BOOTSIZE != 0 ]] && umount "${MOUNT}/boot"
+	[[ $ROOTFS_TYPE != nfs ]] && umount "${MOUNT}"
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
 	call_extension_method "post_umount_final_image" "config_post_umount_final_image" <<- 'POST_UMOUNT_FINAL_IMAGE'
@@ -90,7 +89,7 @@ PRE_UMOUNT_FINAL_IMAGE
 		Called after unmounting both `/root` and `/boot`.
 	POST_UMOUNT_FINAL_IMAGE
 
-	# to make sure its unmounted # @TODO: maybe use the recursive unmount we have now
+	# @TODO: this is simply wrong and never does anything. we should use the recursive unmounter here
 	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts; do
 		display_alert "Wait for unmount" "${MOUNT}" "info"
 		sleep 5

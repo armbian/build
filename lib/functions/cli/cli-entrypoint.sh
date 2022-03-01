@@ -1,22 +1,3 @@
-function bla_cleanup1() {
-	echo "-- bla cleanup1" 1>&2
-}
-function bla_cleanup2() {
-	echo "-- bla cleanup2" 1>&2
-}
-
-function bla() {
-	display_alert "bla starting" "bla is here! PID: $$ - BASHPID: $BASHPID" "debug"
-	add_cleanup_handler bla_cleanup1
-	add_cleanup_handler bla_cleanup2
-
-	#sleep 10
-	#explode_here
-	#exit 66 # exit with error
-	exit_with_error "something" "wrong"
-	#exit 0 # exit without error
-}
-
 function cli_entrypoint() {
 	if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 		set -T # inherit return/debug traps
@@ -89,6 +70,28 @@ function cli_entrypoint() {
 	fi
 
 	CONFIG_PATH=$(dirname "${CONFIG_FILE}")
+
+	# DEST is the main output dir.
+	# destination. # @TODO: logging this is when we can start logging to file. make sure.
+	declare DEST="${SRC}/output"
+	if [ -d "$CONFIG_PATH/output" ]; then
+		DEST="${CONFIG_PATH}/output"
+	fi
+	display_alert "Output directory DEST:" "${DEST}" "debug"
+
+	# set unique mounting directory for this build.
+	export ARMBIAN_BUILD_UUID="$(uuidgen)"
+	display_alert "Build UUID:" "${ARMBIAN_BUILD_UUID}" "debug"
+
+	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this very early stage.
+	export WORKDIR="${SRC}/.tmp/work-${ARMBIAN_BUILD_UUID}"                         # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
+	export SDCARD="${SRC}/.tmp/rootfs-${ARMBIAN_BUILD_UUID}"                        # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
+	export MOUNT="${SRC}/.tmp/mount-${ARMBIAN_BUILD_UUID}"                          # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
+	export EXTENSION_MANAGER_TMP_DIR="${SRC}/.tmp/extensions-${ARMBIAN_BUILD_UUID}" # EXTENSION_MANAGER_TMP_DIR used to store extension-composed functions
+	export DESTIMG="${SRC}/.tmp/image-${ARMBIAN_BUILD_UUID}"                        # DESTIMG is where the backing image (raw, huge, sparse file) is kept
+	export LOGDIR="${SRC}/.tmp/logs-${ARMBIAN_BUILD_UUID}"                          # Will be initialized very soon, literally, below.
+
+	LOG_SECTION=entrypoint start_logging_section # This creates LOGDIR. Hopefully.
 
 	# Source the extensions manager library at this point, before sourcing the config.
 	# This allows early calls to enable_extension(), but initialization proper is done later.

@@ -68,7 +68,8 @@ function build_rootfs_and_image() {
 	LOG_SECTION="rootfs_apt_get_autoremove" do_with_logging apt_purge_unneeded_packages
 
 	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes ]] && echo "-desktop").list.log 2>&1
+	display_alert "Recording list of installed packages" "debug log" "debug"
+	chroot_sdcard dpkg --get-selections "| grep -v deinstall | awk '{print \$1}' | cut -f1 -d':' 1>&2"
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
