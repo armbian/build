@@ -29,14 +29,12 @@ case $BRANCH in
 	;;
 
         current)
-                #KERNELBRANCH='branch:linux-5.10.y'
-		KERNELBRANCH="tag:v5.10.102"
+                KERNELBRANCH='branch:linux-5.10.y'
                 KERNELPATCHDIR='meson64-current'
         ;;
 
         edge)
-		#KERNELBRANCH='branch:linux-5.15.y'
-		KERNELBRANCH="tag:v5.15.25"
+		KERNELBRANCH='branch:linux-5.15.y'
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
