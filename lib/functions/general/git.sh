@@ -171,9 +171,9 @@ fetch_from_repo() {
 	regular_git clean -q -d -f # Files that are not tracked by git and were added when the patch was applied must be removed.
 
 	# set the checkout date on all the versioned files.
-	git ls-tree -r -z --name-only "${checkout_from}" | xargs -0 -- touch -m -t "${checked_out_revision_mtime:0:12}.${checked_out_revision_mtime:12}"
-
-	fasthash_debug "after setting checkout time for $dir $ref_name" #yeah
+	# @TODO: this is contentious. disable for now. patches will still use the mininum date set by checked_out_revision_mtime above
+	#git ls-tree -r -z --name-only "${checkout_from}" | xargs -0 -- touch -m -t "${checked_out_revision_mtime:0:12}.${checked_out_revision_mtime:12}"
+	#fasthash_debug "after setting checkout time for $dir $ref_name" #yeah
 
 	if [[ -f .gitmodules ]]; then
 		display_alert "Updating submodules" "" "ext"
