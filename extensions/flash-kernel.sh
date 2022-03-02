@@ -50,6 +50,8 @@ function post_install_kernel_debs__install_kernel_and_flash_packages() {
 
 	# Remove fake /sys/firmware (/efi) directory
 	rm -rf "${SDCARD}"/sys/firmware
+
+	return 0 # prevent future shortcircuits exiting with error
 }
 
 # @TODO: extract u-boot into an extension, so that core bsps don't have this stuff in there to begin with.
@@ -64,6 +66,7 @@ post_family_tweaks_bsp__remove_uboot_flash_kernel() {
 pre_umount_final_image__remove_uboot_initramfs_hook_flash_kernel() {
 	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
 	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot
+	return 0 # shortcircuit above
 }
 
 function pre_update_initramfs__setup_flash_kernel() {
