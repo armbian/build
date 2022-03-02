@@ -33,7 +33,7 @@ function do_main_configuration() {
 	[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 	[[ -z $HOST ]] && HOST="$BOARD"                         # set hostname to the board
 	cd "${SRC}" || exit
-	[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=14
+	[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=15
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote 2> /dev/null | grep origin)" 2> /dev/null)
 	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2> /dev/null)
@@ -51,16 +51,8 @@ function do_main_configuration() {
 
 	# image artefact destination with or without subfolder
 	FINALDEST=$DEST/images
-	if [[ "${MAKE_FOLDERS}" == yes ]]; then
-
-		if [[ "$RC" == yes ]]; then
-			FINALDEST=$DEST/images/"${BOARD}"/rc
-		elif [[ "$BETA" == yes ]]; then
-			FINALDEST=$DEST/images/"${BOARD}"/nightly
-		else
-			FINALDEST=$DEST/images/"${BOARD}"/archive
-		fi
-
+	if [[ -n "${MAKE_FOLDERS}" ]]; then
+		FINALDEST=$DEST/images/"${BOARD}"/"${MAKE_FOLDERS}"
 		install -d ${FINALDEST}
 	fi
 

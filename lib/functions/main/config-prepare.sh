@@ -117,7 +117,7 @@ function prepare_and_config_main_build_single() {
 
 	if [[ $BETA == yes ]]; then
 		IMAGE_TYPE=nightly
-	elif [[ $BETA != "yes" && $BUILD_ALL == yes && -n $GPG_PASS ]]; then
+	elif [[ $BETA != "yes" && $BUILD_ALL == yes ]]; then
 		IMAGE_TYPE=stable
 	else
 		IMAGE_TYPE=user-built
