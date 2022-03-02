@@ -227,7 +227,7 @@ prepare_partitions() {
 
 	export LOOP
 	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
-	display_alert "Allocated loop device" "LOOP=${LOOP}" "wrn"
+	display_alert "Allocated loop device" "LOOP=${LOOP}"
 
 	check_loop_device "$LOOP"
 

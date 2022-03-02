@@ -45,7 +45,8 @@ function start_logging_section() {
 	export CURRENT_LOGGING_COUNTER
 	CURRENT_LOGGING_COUNTER="$(printf "%03d" "$logging_section_counter")"
 	export CURRENT_LOGGING_SECTION=${LOG_SECTION:-early} # default to "early", should be overwritten soon enough
-	export CURRENT_LOGGING_DIR="${LOGDIR}"               # set in cli-entrypoint.sh
+	export CURRENT_LOGGING_SECTION_START=${SECONDS}
+	export CURRENT_LOGGING_DIR="${LOGDIR}" # set in cli-entrypoint.sh
 	export CURRENT_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.${CURRENT_LOGGING_SECTION}.log"
 	mkdir -p "${CURRENT_LOGGING_DIR}"
 	touch "${CURRENT_LOGFILE}" # Touch it, make sure it's writable.
@@ -54,7 +55,7 @@ function start_logging_section() {
 	if [[ "${CI}" == "true" ]]; then # On CI, this has special meaning.
 		echo "::group::[🥑] Group ${CURRENT_LOGGING_SECTION}"
 	else
-		display_alert "start group" "<${CURRENT_LOGGING_SECTION}>" "group"
+		display_alert "" "<${CURRENT_LOGGING_SECTION}>" "group"
 	fi
 	return 0
 }
@@ -62,9 +63,10 @@ function start_logging_section() {
 function finish_logging_section() {
 	# Close opened CI group.
 	if [[ "${CI}" == "true" ]]; then
+		echo "Section '${CURRENT_LOGGING_SECTION}' took $((SECONDS - CURRENT_LOGGING_SECTION_START))s to execute." 1>&2 # write directly to stderr
 		echo "::endgroup::"
 	else
-		display_alert "finish group" "</${CURRENT_LOGGING_SECTION}>" "group"
+		display_alert "" "</${CURRENT_LOGGING_SECTION}> in $((SECONDS - CURRENT_LOGGING_SECTION_START))s" "group"
 	fi
 }
 
@@ -93,6 +95,7 @@ function do_with_logging() {
 		exec 3> >(
 			cd "${SRC}" || exit 2
 			#grep --line-buffered -v "^$" | \
+			# @TODO: tee to CURRENT_LOGFILE.
 			sed -u -e "${prefix_sed_cmd}"
 		)
 		"$@" >&3
@@ -166,7 +169,7 @@ function display_alert() {
 				return 0
 			fi
 			level_indicator="🦋"
-			inline_logs_color="\e[1;36m" # cyan
+			inline_logs_color="\e[1;34m" # blue; 36 would be cyan
 			;;
 
 		command)

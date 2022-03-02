@@ -422,12 +422,10 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		to confirm or change any packages.
 	POST_AGGREGATE_PACKAGES
 
-	# If not only capturing defs, write the output file. This an early write to disk, and @TODO: should be moved later into the configuration phase
-	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] || write_config_summary_output_file
-
 	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
 }
 
+# This is called by main_default_build_single(), which is logged correctly. so just output to stdout here.
 function write_config_summary_output_file() {
 	local debug_dpkg_arch debug_uname debug_virt debug_src_mount debug_src_perms debug_src_temp_perms
 	debug_dpkg_arch="$(dpkg --print-architecture)"
@@ -438,7 +436,7 @@ function write_config_summary_output_file() {
 	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"
 
 	display_alert "Writing build config summary to" "debug log" "debug"
-	run_host_command_logged cat "1>&2" <<- EOF
+	run_host_command_logged cat <<- EOF
 		## BUILD SCRIPT ENVIRONMENT
 
 		Repository: $REPOSITORY_URL

@@ -94,6 +94,12 @@ function add_cleanup_handler() {
 	trap_manager_cleanup_handlers+=("$callback")
 }
 
+function execute_and_remove_cleanup_handler() {
+	local callback="$1"
+	display_alert "Execute and remove cleanup handler" "${callback}" "cleanup"
+	# @TODO implement!
+}
+
 function remove_all_trap_handlers() {
 	display_alert "Will remove ALL trap handlers, for a clean exit..." "" "cleanup"
 }

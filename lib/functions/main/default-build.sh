@@ -1,6 +1,6 @@
 # This does NOT run under the logging manager. We should invoke the do_with_logging wrapper for
 # strategic parts of this. Attention: rootfs does it's own logging, so just let that be.
-main_default_build_single() {
+function main_default_build_single() {
 
 	# Starting work. Export TMPDIR, which will be picked up by all `mktemp` invocations hopefully.
 	# Runner functions in logging/runners.sh will explicitly unset TMPDIR before invoking chroot.
@@ -12,6 +12,10 @@ main_default_build_single() {
 	export TMPDIR="${WORKDIR}"
 
 	start=$(date +%s)
+
+	### Write config summary to its own logging section.
+	LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
+
 	# Check and install dependencies, directory structure and settings
 	LOG_SECTION="prepare_host" do_with_logging prepare_host
 
@@ -103,7 +107,7 @@ main_default_build_single() {
 				FULL="" REPLACE="-full" LOG_SECTION="compile_firmware" do_with_logging compile_firmware
 
 				# Build the full version of firmware package
-				FULL="-full" REPLACE="" LOG_SECTION="compile_firmware" do_with_logging compile_firmware
+				FULL="-full" REPLACE="" LOG_SECTION="compile_firmware_full" do_with_logging compile_firmware
 
 			fi
 		fi

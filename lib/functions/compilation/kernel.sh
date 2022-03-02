@@ -68,7 +68,7 @@ function compile_kernel() {
 
 function kernel_prepare_git() {
 	if [[ -n $KERNELSOURCE ]]; then
-		[[ -d "${kernel_work_dir}" ]] && "${kernel_work_dir}" && fasthash_debug "pre git, existing tree"
+		[[ -d "${kernel_work_dir}" ]] && cd "${kernel_work_dir}" && fasthash_debug "pre git, existing tree"
 
 		display_alert "Downloading sources" "kernel" "git"
 
@@ -268,7 +268,8 @@ function kernel_package_source() {
 	local sources_pkg_dir tmp_src_dir tarball_size package_size
 	tmp_src_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 
-	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
+	sources_pkg_dir="${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all"
+
 	mkdir -p "${sources_pkg_dir}"/usr/src/ \
 		"${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}" \
 		"${sources_pkg_dir}"/DEBIAN
@@ -287,7 +288,7 @@ function kernel_package_source() {
 	tarball_size="$(du -h -s "${output_tarball}" | awk '{print $1}')"
 
 	cat <<- EOF > "${sources_pkg_dir}"/DEBIAN/control
-		Package: linux-source-${version}-${BRANCH}-${LINUXFAMILY}
+		Package: linux-source-${BRANCH}-${LINUXFAMILY}
 		Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
 		Architecture: all
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
@@ -302,7 +303,7 @@ function kernel_package_source() {
 	fakeroot_dpkg_deb_build -Znone -z0 "${sources_pkg_dir}" "${sources_pkg_dir}.deb" # do not compress .deb, it already contains a zstd compressed tarball! ignores ${KDEB_COMPRESS} on purpose
 	package_size="$(du -h -s "${sources_pkg_dir}.deb" | awk '{print $1}')"
 	run_host_command_logged rsync --remove-source-files -r "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
-	display_alert "linux-source-${version}-${BRANCH}-${LINUXFAMILY} packaged" "$((SECONDS - ts)) seconds, ${tarball_size} tarball, ${package_size} .deb" "info"
+	display_alert "$(basename "${sources_pkg_dir}.deb" ".deb") packaged" "$((SECONDS - ts)) seconds, ${tarball_size} tarball, ${package_size} .deb" "info"
 }
 
 function kernel_make_headers_dtbs_image_modules() {

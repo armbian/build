@@ -336,15 +336,19 @@ enable_extension() {
 	local extension_dir extension_file extension_file_in_dir extension_floating_file
 	local stacktrace
 
-	# capture the stack leading to this, possibly with a hint in front.
-	stacktrace="${ENABLE_EXTENSION_TRACE_HINT}$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
-
 	# if LOG_ENABLE_EXTENSION, output useful stack, so user can figure out which extensions are being added where
-	[[ "${LOG_ENABLE_EXTENSION}" == "yes" ]] &&
-		display_alert "Extension being added" "${extension_name} :: added by ${stacktrace}" ""
+	if [[ "${LOG_ENABLE_EXTENSION}" == "yes" ]]; then
+		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+			stacktrace="${ENABLE_EXTENSION_TRACE_HINT}$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+			display_alert "Enabling extension" "${extension_name} :: added by ${stacktrace}" "debug"
+		else
+			display_alert "Enabling extension" "${extension_name}" ""
+		fi
+	fi
 
 	# first a check, has the extension manager already initialized? then it is too late to enable_extension(). bail.
 	if [[ ${initialize_extension_manager_counter} -gt 0 ]]; then
+		stacktrace="${ENABLE_EXTENSION_TRACE_HINT}$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
 		display_alert "Extension problem" "already initialized -- too late to add '${extension_name}' (trace: ${stacktrace})" "err"
 		exit 2
 	fi

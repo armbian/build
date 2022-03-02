@@ -84,101 +84,28 @@ PRE_UMOUNT_FINAL_IMAGE
 	[[ $ROOTFS_TYPE != nfs ]] && umount "${MOUNT}"
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
+	umount_chroot_recursive "${MOUNT}" # @TODO: wait. NFS is not really unmounted above.
+
 	call_extension_method "post_umount_final_image" "config_post_umount_final_image" <<- 'POST_UMOUNT_FINAL_IMAGE'
 		*allow config to hack into the image after the unmount*
 		Called after unmounting both `/root` and `/boot`.
 	POST_UMOUNT_FINAL_IMAGE
 
-	# @TODO: this is simply wrong and never does anything. we should use the recursive unmounter here
-	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts; do
-		display_alert "Wait for unmount" "${MOUNT}" "info"
-		sleep 5
-	done
-
-	display_alert "Freeing loop device" "${LOOP}" "wrn"
+	display_alert "Freeing loop device" "${LOOP}"
 	losetup -d "${LOOP}"
 	unset LOOP # unset so cleanup handler does not try it again
 
 	# Don't delete $DESTIMG here, extensions might have put nice things there already.
-	rm -rf --one-file-system $MOUNT
+	rm -rf --one-file-system "${MOUNT}"
 
-	mkdir -p $DESTIMG
-	mv ${SDCARD}.raw $DESTIMG/${version}.img
+	mkdir -p "${DESTIMG}"
+	mv "${SDCARD}.raw" "${DESTIMG}/${version}.img"
 
 	# custom post_build_image_modify hook to run before fingerprinting and compression
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
 
-	if [[ -z $SEND_TO_SERVER ]]; then
+	image_compress_and_checksum
 
-		if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
-			COMPRESS_OUTPUTIMAGE="sha,gpg,img"
-		elif [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
-			COMPRESS_OUTPUTIMAGE="sha,gpg,7z"
-		fi
-
-		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
-			display_alert "Compressing" "${DESTIMG}/${version}.img.gz" "info"
-			pigz -3 < $DESTIMG/${version}.img > $DESTIMG/${version}.img.gz
-			compression_type=".gz"
-		fi
-
-		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
-			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
-			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
-			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
-			#[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
-			[[ ${available_cpu} -gt 16 ]] && available_cpu=16                                               # using more cpu cores for compressing is pointless
-			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
-			# build optimisations when memory drops below 5%
-			if [[ ${BUILD_ALL} == yes && (${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4) ]]; then
-				while [[ $(ps -uax | grep "pixz" | wc -l) -gt 2 ]]; do
-					echo -en "#"
-					sleep 20
-				done
-			fi
-			pixz -7 -p ${available_cpu} -f $(expr ${available_cpu} + 2) < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
-			compression_type=".xz"
-		fi
-
-		if [[ $COMPRESS_OUTPUTIMAGE == *img* || $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			#			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
-			compression_type=""
-		fi
-
-		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
-			cd ${DESTIMG}
-			display_alert "SHA256 calculating" "${version}.img${compression_type}" "info"
-			sha256sum -b ${version}.img${compression_type} > ${version}.img${compression_type}.sha
-		fi
-
-		if [[ $COMPRESS_OUTPUTIMAGE == *gpg* ]]; then
-			cd ${DESTIMG}
-			if [[ -n $GPG_PASS ]]; then
-				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				if [[ -n $SUDO_USER ]]; then
-					sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DESTIMG}"/
-					SUDO_PREFIX="sudo -H -u ${SUDO_USER}"
-				else
-					SUDO_PREFIX=""
-				fi
-				echo "${GPG_PASS}" | $SUDO_PREFIX bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type}" || exit 1
-			else
-				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
-			fi
-		fi
-
-		fingerprint_image "${DESTIMG}/${version}.img${compression_type}.txt" "${version}"
-
-		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-			display_alert "Compressing" "${DESTIMG}/${version}.7z" "info"
-			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on \
-				${DESTIMG}/${version}.7z ${version}.key ${version}.img* > /dev/null 2>&1
-			find ${DESTIMG}/ -type \
-				f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 |
-				xargs -0 rm > /dev/null 2>&1
-		fi
-
-	fi
 	display_alert "Done building" "${FINALDEST}/${version}.img" "info" # A bit predicting the future, since it's still in DESTIMG at this point.
 
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
@@ -197,39 +124,6 @@ PRE_UMOUNT_FINAL_IMAGE
 	rm -rf --one-file-system $DESTIMG
 
 	# write image to SD card
-	if [[ $(lsblk "$CARD_DEVICE" 2> /dev/null) && -f ${FINALDEST}/${version}.img ]]; then
-
-		# make sha256sum if it does not exists. we need it for comparisson
-		if [[ -f "${FINALDEST}/${version}".img.sha ]]; then
-			local ifsha=$(cat ${FINALDEST}/${version}.img.sha | awk '{print $1}')
-		else
-			local ifsha=$(sha256sum -b "${FINALDEST}/${version}".img | awk '{print $1}')
-		fi
-
-		display_alert "Writing image" "$CARD_DEVICE ${readsha}" "info"
-
-		# write to SD card
-		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "write_device") dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
-
-		call_extension_method "post_write_sdcard" <<- 'POST_BUILD_IMAGE'
-			*run after writing img to sdcard*
-			After the image is written to `$CARD_DEVICE`, but before verifying it.
-			You can still set SKIP_VERIFY=yes to skip verification.
-		POST_BUILD_IMAGE
-
-		if [[ "${SKIP_VERIFY}" != "yes" ]]; then
-			# read and compare
-			display_alert "Verifying. Please wait!"
-			local ofsha=$(dd if=$CARD_DEVICE count=$(du -b ${FINALDEST}/${version}.img | cut -f1) status=none iflag=count_bytes oflag=direct | sha256sum | awk '{print $1}')
-			if [[ $ifsha == $ofsha ]]; then
-				display_alert "Writing verified" "${version}.img" "info"
-			else
-				display_alert "Writing failed" "${version}.img" "err"
-			fi
-		fi
-	elif [[ $(systemd-detect-virt) == 'docker' && -n $CARD_DEVICE ]]; then
-		# display warning when we want to write sd card under Docker
-		display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
-	fi
+	write_image_to_device "${FINALDEST}/${version}.img" "${CARD_DEVICE}"
 
 }
