@@ -5,7 +5,7 @@ export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-1} # Default 1-second timeout for 
 export BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
 case "${BRANCH}" in
 
-	legacy | ddk)
+	ddk)
 		# This will force `unset KERNELSOURCE` later; no kernel will be built.
 		# Instead, the distro's default linux-generic kernel will be installed.
 		export DISTRO_GENERIC_KERNEL=yes
