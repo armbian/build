@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Copyright (C) 2006-2009 Debian hostapd maintainers
+# Copyright (C) 2006-2009 Debian hostapd maintainers 
 # 	Faidon Liambotis <paravoid@debian.org>
 #	Kel Modderman <kel@otaku42.de>
 #
@@ -43,7 +43,7 @@ else
 	TO_NULL="/dev/null"
 fi
 
-hostapd_msg() {
+hostapd_msg () {
 	case "$1" in
 		verbose)
 			shift
@@ -53,12 +53,12 @@ hostapd_msg() {
 			shift
 			echo "$HOSTAPD_PNAME: $@" > /dev/stderr
 			;;
-		*) ;;
-
+		*)
+			;;
 	esac
 }
 
-test_hostapd_pidfile() {
+test_hostapd_pidfile () {
 	if [ -n "$1" ] && [ -f "$2" ]; then
 		if start-stop-daemon --stop --quiet --signal 0 \
 			--exec "$1" --pidfile "$2"; then
@@ -72,10 +72,10 @@ test_hostapd_pidfile() {
 	fi
 }
 
-init_hostapd() {
+init_hostapd () {
 	HOSTAPD_OPTIONS="-B -P $HOSTAPD_PIDFILE $HOSTAPD_CONF"
 	HOSTAPD_MESSAGE="$HOSTAPD_BIN $HOSTAPD_OPTIONS"
-
+	
 	test_hostapd_pidfile "$HOSTAPD_BIN" "$HOSTAPD_PIDFILE" && return 0
 
 	hostapd_msg verbose "$HOSTAPD_MESSAGE"
@@ -102,19 +102,19 @@ init_hostapd() {
 	return 0
 }
 
-kill_hostapd() {
+kill_hostapd () {
 	HOSTAPD_MESSAGE="stopping $HOSTAPD_PNAME via pidfile: $HOSTAPD_PIDFILE"
 
 	test_hostapd_pidfile "$HOSTAPD_BIN" "$HOSTAPD_PIDFILE" || return 0
-
+	
 	hostapd_msg verbose "$HOSTAPD_MESSAGE"
 	start-stop-daemon --stop --oknodo --quiet --exec "$HOSTAPD_BIN" \
 		--pidfile "$HOSTAPD_PIDFILE" > "$TO_NULL"
-
+	
 	[ "$HOSTAPD_OMIT_PIDFILE" ] && rm -f "$HOSTAPD_OMIT_PIDFILE"
 }
 
-case "$MODE" in
+case "$MODE" in 
 	start)
 		case "$PHASE" in
 			pre-up)

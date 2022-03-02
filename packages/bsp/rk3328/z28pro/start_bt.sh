@@ -7,6 +7,7 @@ function die_on_error {
 	fi
 }
 
+
 # Kill any rtk_hciattach actually running.
 # Do not complain if we didn't kill anything.
 killall -q -SIGTERM 8822b_hciattach
