@@ -339,8 +339,8 @@ function kernel_package() {
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
 		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"  # Used by `make install`
-		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/headers" # Used by `make headers_install`
 		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules" # Used by `make modules_install`
+		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/headers" # Used by `make headers_install`
 	)
 
 	local -a prepackage_targets=(install modules_install headers_install)
@@ -371,7 +371,7 @@ function kernel_package() {
 	fasthash_debug "post-prepackage"
 
 	cd "${kernel_work_dir}"
-	prepare_kernel_packaging_debs "${kernel_work_dir}" "${version}" kernel_install_dirs
+	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 
 	### # produce deb packages: image, headers, firmware, dtb
 	### # This mostly only does

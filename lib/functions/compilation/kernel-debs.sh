@@ -38,23 +38,51 @@ if_enabled_echo() {
 
 function prepare_kernel_packaging_debs() {
 	declare kernel_work_dir="${1}"
-	declare kernel_version="${2}"
-	declare -n tmp_kernel_install_dirs="${3}" # nameref to 	declare -n kernel_install_dirs dictionary
-	declare kernel_package_dir
-
-	kernel_package_dir=$(mktemp -d "${WORKDIR}/kernel.image.package.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-	display_alert "kernel_package_dir" "${kernel_package_dir}" "debug"
+	declare kernel_dest_install_dir="${2}"
+	declare kernel_version="${3}"
+	declare -n tmp_kernel_install_dirs="${4}" # nameref to 	declare -n kernel_install_dirs dictionary
+	declare debs_target_dir="${kernel_work_dir}/.."
 
 	# Some variables and settings used throughout the script
 	declare kernel_version_family="${kernel_version}-${LINUXFAMILY}"
-	declare packageversion="${REVISION}"
-	declare linux_image_package_name="linux-image-${BRANCH}-${LINUXFAMILY}"
+	declare package_version="${REVISION}"
 
-	mkdir -p "${kernel_package_dir}/DEBIAN"
+	# show incoming tree
+	display_alert "Kernel install dir" "incoming from KBUILD make" "debug"
+	run_host_command_logged tree -C --du -h "${kernel_dest_install_dir}" "| grep --line-buffered -v -e '\.ko' -e '\.h' "
+
+	display_alert "tmp_kernel_install_dirs INSTALL_PATH:" "${tmp_kernel_install_dirs[INSTALL_PATH]}" "debug"
+	display_alert "tmp_kernel_install_dirs INSTALL_MOD_PATH:" "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}" "debug"
+	display_alert "tmp_kernel_install_dirs INSTALL_HDR_PATH:" "${tmp_kernel_install_dirs[INSTALL_HDR_PATH]}" "debug"
+	display_alert "tmp_kernel_install_dirs INSTALL_DTBS_PATH:" "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "debug"
+
+	# package the linux-image (image, modules, dtbs (if present))
+	create_kernel_deb "linux-image-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_image
+
+	# if dtbs present, package those too separately, for u-boot usage.
+	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
+		create_kernel_deb "linux-dtb-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_dtb
+	fi
+
+	# @TODO: package headers. probably in 3 phases: common per-version (libc headers), common per-arch (arch-specific, with binary tools), and kernel specific (kernel-headers, no tools)
+
+}
+
+function create_kernel_deb() {
+	declare package_name="${1}"
+	declare deb_output_dir="${2}"
+	declare callback_function="${3}"
+
+	declare package_directory
+	package_directory=$(mktemp -d "${WORKDIR}/${package_name}.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
+	display_alert "package_directory" "${package_directory}" "debug"
+
+	declare package_DEBIAN_dir="${package_directory}/DEBIAN" # DEBIAN dir
+	mkdir -p "${package_DEBIAN_dir}"                         # maintainer scripts et al
 
 	# Generate copyright file
-	mkdir -p "${kernel_package_dir}/usr/share/doc/${linux_image_package_name}"
-	cat <<- EOF > "${kernel_package_dir}/usr/share/doc/${linux_image_package_name}/copyright"
+	mkdir -p "${package_directory}/usr/share/doc/${package_name}"
+	cat <<- COPYRIGHT > "${package_directory}/usr/share/doc/${package_name}/copyright"
 		This is a packaged Armbian patched version of the Linux kernel.
 
 		The sources may be found at most Linux archive sites, including:
@@ -71,12 +99,55 @@ function prepare_kernel_packaging_debs() {
 
 		On Debian GNU/Linux systems, the complete text of the GNU General Public
 		License version 2 can be found in \`/usr/share/common-licenses/GPL-2'.
-	EOF
+	COPYRIGHT
+
+	# Run the callback.
+	display_alert "Running callback" "callback: ${callback_function}" "debug"
+	"${callback_function}" "${@}"
+
+	run_host_command_logged chown -R root:root "${package_directory}" # Fix ownership and permissions
+	run_host_command_logged chmod -R go-w "${package_directory}"      # Fix ownership and permissions
+	run_host_command_logged chmod -R a+rX "${package_directory}"      # in case we are in a restrictive umask environment like 0077
+	run_host_command_logged chmod -R ug-s "${package_directory}"      # in case we build in a setuid/setgid directory
+
+	cd "${package_directory}" || exit_with_error "major failure 774 for ${package_name}"
+
+	# create md5sums file
+	sh -c "cd '${package_directory}'; find . -type f ! -path './DEBIAN/*' -printf '%P\0' | xargs -r0 md5sum > DEBIAN/md5sums"
+
+	declare unpacked_size
+	unpacked_size="$(du -h -s "${package_directory}" | awk '{print $1}')"
+	display_alert "Unpacked ${package_name} tree" "${unpacked_size}" "debug"
+
+	# Show it
+	display_alert "Package dir" "for package ${package_name}" "debug"
+	run_host_command_logged tree -C -h -d --du "${package_directory}"
+
+	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${deb_output_dir}" # not KDEB compress, we're not under a Makefile
+}
+
+function kernel_package_callback_linux_image() {
+	display_alert "package_directory" "${package_directory}" "debug"
+
+	declare installed_image_path="boot/vmlinuz-${kernel_version_family}" # using old mkdebian terminology here.
+	declare image_name="Image"                                           # for arm64. or, "zImage" for arm, or "vmlinuz" for others. Why? See where u-boot puts them.
+
+	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_PATH]}" "${package_directory}/"         # /boot stuff
+	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}/lib" "${package_directory}/" # so "lib" stuff sits at the root
+
+	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
+		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel
+		# /lib/firmware/${kernel_version_family}/device-tree/ would also be acceptable
+
+		display_alert "DTBs present on kernel output" "DTBs ${package_name}: /usr/lib/linux-image-${kernel_version_family}" "debug"
+		mkdir -p "${package_directory}/usr/lib"
+		run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${package_directory}/usr/lib/linux-image-${kernel_version_family}"
+	fi
 
 	# Generate a control file
-	cat <<- EOF > "${kernel_package_dir}/DEBIAN/control"
-		Package: ${linux_image_package_name}
-		Version: ${packageversion}
+	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
+		Package: ${package_name}
+		Version: ${package_version}
 		Architecture: ${ARCH}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
@@ -84,20 +155,20 @@ function prepare_kernel_packaging_debs() {
 		Description: Linux kernel, armbian version $kernel_version_family $BRANCH
 		 This package contains the Linux kernel, modules and corresponding other
 		 files, kernel_version_family: $kernel_version_family.
-	EOF
+	CONTROL_FILE
 
 	# Install the maintainer scripts
 	# Note: hook scripts under /etc/kernel are also executed by official Debian
 	# kernel packages, as well as kernel packages built using make-kpkg.
 	# make-kpkg sets $INITRD to indicate whether an initramfs is wanted, and
 	# so do we; recent versions of dracut and initramfs-tools will obey this.
-	declare debhookdir="/etc/kernel"
-	for script in postinst postrm preinst prerm; do
-		mkdir -p "${kernel_package_dir}${debhookdir}/${script}.d"
-		cat <<- EOF > "${kernel_package_dir}/DEBIAN/${script}"
+	declare debian_kernel_hook_dir="/etc/kernel"
+	for script in "postinst" "postrm" "preinst" "prerm"; do
+		mkdir -p "${package_directory}${debian_kernel_hook_dir}/${script}.d" # create kernel hook dir, make sure.
+		cat <<- KERNEL_HOOK_DELEGATION > "${package_DEBIAN_dir}/${script}"
 			#!/bin/bash
-			set -x
 			set -e
+			set -x
 
 			# Pass maintainer script parameters to hook scripts
 			export DEB_MAINT_PARAMS="\$*"
@@ -105,50 +176,60 @@ function prepare_kernel_packaging_debs() {
 			# Tell initramfs builder whether it's wanted
 			export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No)
 
-			test -d $debhookdir/$script.d && run-parts --arg="$kernel_version_family" --arg="/$installed_image_path" $debhookdir/$script.d
-			exit 0
-		EOF
-		chmod 755 "${kernel_package_dir}/DEBIAN/${script}"
+			test -d ${debian_kernel_hook_dir}/${script}.d && run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d
+
+			true
+		KERNEL_HOOK_DELEGATION
+		chmod 755 "${package_DEBIAN_dir}/${script}"
 	done
 
-	display_alert "tmp_kernel_install_dirs INSTALL_PATH:" "${tmp_kernel_install_dirs[INSTALL_PATH]}" "debug"
-	display_alert "tmp_kernel_install_dirs INSTALL_MOD_PATH:" "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}" "debug"
-	display_alert "tmp_kernel_install_dirs INSTALL_HDR_PATH:" "${tmp_kernel_install_dirs[INSTALL_HDR_PATH]}" "debug"
-
-	display_alert "Kernel install dir" "tree 1" "debug"
-	run_host_command_logged tree -C -h --du -d -L 3 "${tmp_kernel_install_dirs[INSTALL_PATH]}/../.."
-
-	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_PATH]}" "${kernel_package_dir}/"         # /boot stuff
-	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}/lib" "${kernel_package_dir}/" # so "lib" stuff sits at the root
-
-	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
-		display_alert "tmp_kernel_install_dirs INSTALL_DTBS_PATH:" "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "debug"
-		display_alert "Kernel build will produce DTBs package!" "DTBs YES PACKAGE" "debug"
-
-		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel
-		# /lib/firmware/${kernel_version_family}/device-tree/ would also be acceptable
-		mkdir -p "${kernel_package_dir}/usr/lib"
-		run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${kernel_package_dir}/usr/lib/linux-image-${kernel_version_family}"
+	# @TODO: only if u-boot
+	if [[ "yes" == "yes" ]]; then
+		cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL >> "${package_DEBIAN_dir}/postinst"
+			echo "Armbian: update last-installed kernel symlink..."
+			ln -sf $(basename "${installed_image_path}") /boot/$image_name || mv /${installed_image_path} /boot/${image_name}
+			touch /boot/.next
+		HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
 	fi
 
-	run_host_command_logged chown -R root:root "${kernel_package_dir}" # Fix ownership and permissions
-	run_host_command_logged chmod -R go-w "${kernel_package_dir}"      # Fix ownership and permissions
-	run_host_command_logged chmod -R a+rX "${kernel_package_dir}"      # in case we are in a restrictive umask environment like 0077
-	run_host_command_logged chmod -R ug-s "${kernel_package_dir}"      # in case we build in a setuid/setgid directory
+}
 
-	cd "${kernel_package_dir}" || exit_with_error "major failure 774"
+function kernel_package_callback_linux_dtb() {
+	display_alert "package_directory" "${package_directory}" "debug"
 
-	# create md5sums file. needed? @TODO: convert to subshell?
-	sh -c "cd '${kernel_package_dir}'; find . -type f ! -path './DEBIAN/*' -printf '%P\0' | xargs -r0 md5sum > DEBIAN/md5sums"
+	mkdir -p "${package_directory}/boot/dtb-${kernel_version_family}"
+	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${package_directory}/boot/dtb-${kernel_version_family}"
 
-	declare unpacked_size
-	unpacked_size="$(du -h -s "${kernel_package_dir}" | awk '{print $1}')"
-	display_alert "Unpacked linux-kernel image" "${unpacked_size}" "debug"
+	# Generate a control file
+	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
+		Version: ${package_version}
+		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
+		Section: kernel
+		Package: ${package_name}
+		Architecture: ${ARCH}
+		Provides: linux-dtb, linux-dtb-armbian, armbian-$BRANCH
+		Description: Armbian Linux DTB, version ${kernel_version_family} $BRANCH
+		 This package contains device blobs from the Linux kernel, version ${kernel_version_family}
+	CONTROL_FILE
 
-	# Show it
-	display_alert "Package dir" "tree 2" "debug"
-	run_host_command_logged tree -C -h --du -d -L 3 "${kernel_package_dir}"
+	cat >> "${package_DEBIAN_dir}/preinst" <<- EOT
+		#!/bin/bash
+		set -e
+		set -x
+		rm -rf /boot/dtb
+		rm -rf /boot/dtb-${kernel_version_family}
+		exit 0
+	EOT
+	chmod 775 "${package_DEBIAN_dir}/preinst"
 
-	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${kernel_package_dir}" "${kernel_work_dir}/.." # not KDEB compress, we're not under a Makefile
+	cat >> "${package_DEBIAN_dir}/postinst" <<- EOT
+		#!/bin/bash
+		set -e
+		set -x
+		cd /boot
+		ln -sfT dtb-${kernel_version_family} dtb || mv dtb-${kernel_version_family} dtb
+		exit 0
+	EOT
+	chmod 775 "${package_DEBIAN_dir}/postinst"
 
 }
