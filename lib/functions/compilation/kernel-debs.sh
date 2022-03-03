@@ -126,6 +126,27 @@ function create_kernel_deb() {
 	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${deb_output_dir}" # not KDEB compress, we're not under a Makefile
 }
 
+function kernel_package_hook_helper() {
+	declare script="${1}"
+	declare contents="${2}"
+
+	cat >> "${package_DEBIAN_dir}/${script}" <<- EOT
+		#!/bin/bash
+		echo "Armbian ${package_name} for ${kernel_version_family}: ${script} starting."
+		set -e # Error control
+		set -x # Debugging
+
+		$(cat "${contents}")
+
+		echo "Armbian ${package_name} for ${kernel_version_family}: ${script} finishing."
+		true
+	EOT
+	chmod 775 "${package_DEBIAN_dir}/${script}"
+
+	display_alert "Hook debug" "${script} for ${package_name}" "debug"
+	run_host_command_logged cat "${package_DEBIAN_dir}/${script}"
+}
+
 function kernel_package_callback_linux_image() {
 	display_alert "package_directory" "${package_directory}" "debug"
 
@@ -165,33 +186,27 @@ function kernel_package_callback_linux_image() {
 	declare debian_kernel_hook_dir="/etc/kernel"
 	for script in "postinst" "postrm" "preinst" "prerm"; do
 		mkdir -p "${package_directory}${debian_kernel_hook_dir}/${script}.d" # create kernel hook dir, make sure.
-		cat <<- KERNEL_HOOK_DELEGATION > "${package_DEBIAN_dir}/${script}"
-			#!/bin/bash
-			set -e
-			set -x
 
-			# Pass maintainer script parameters to hook scripts
-			export DEB_MAINT_PARAMS="\$*"
+		kernel_package_hook_helper "${script}" <(
+			cat <<- KERNEL_HOOK_DELEGATION
+				export DEB_MAINT_PARAMS="\$*" # Pass maintainer script parameters to hook scripts
+				export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No) # Tell initramfs builder whether it's wanted
+				# Run the same hooks Debian/Ubuntu would for their kernel packages.
+				test -d ${debian_kernel_hook_dir}/${script}.d && run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d
+			KERNEL_HOOK_DELEGATION
 
-			# Tell initramfs builder whether it's wanted
-			export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No)
-
-			test -d ${debian_kernel_hook_dir}/${script}.d && run-parts --arg="${kernel_version_family}" --arg="/${installed_image_path}" ${debian_kernel_hook_dir}/${script}.d
-
-			true
-		KERNEL_HOOK_DELEGATION
-		chmod 755 "${package_DEBIAN_dir}/${script}"
+			# @TODO: only if u-boot, only for postinst. Gotta find a hook scheme for these...
+			if [[ "${script}" == "postinst" ]]; then
+				if [[ "yes" == "yes" ]]; then
+					cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
+						echo "Armbian: update last-installed kernel symlink..."
+						ln -sf $(basename "${installed_image_path}") /boot/$image_name || mv /${installed_image_path} /boot/${image_name}
+						touch /boot/.next
+					HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
+				fi
+			fi
+		)
 	done
-
-	# @TODO: only if u-boot
-	if [[ "yes" == "yes" ]]; then
-		cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL >> "${package_DEBIAN_dir}/postinst"
-			echo "Armbian: update last-installed kernel symlink..."
-			ln -sf $(basename "${installed_image_path}") /boot/$image_name || mv /${installed_image_path} /boot/${image_name}
-			touch /boot/.next
-		HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
-	fi
-
 }
 
 function kernel_package_callback_linux_dtb() {
@@ -212,24 +227,18 @@ function kernel_package_callback_linux_dtb() {
 		 This package contains device blobs from the Linux kernel, version ${kernel_version_family}
 	CONTROL_FILE
 
-	cat >> "${package_DEBIAN_dir}/preinst" <<- EOT
-		#!/bin/bash
-		set -e
-		set -x
-		rm -rf /boot/dtb
-		rm -rf /boot/dtb-${kernel_version_family}
-		exit 0
-	EOT
-	chmod 775 "${package_DEBIAN_dir}/preinst"
+	kernel_package_hook_helper "preinst" <(
+		cat <<- EOT
+			rm -rf /boot/dtb
+			rm -rf /boot/dtb-${kernel_version_family}
+		EOT
+	)
 
-	cat >> "${package_DEBIAN_dir}/postinst" <<- EOT
-		#!/bin/bash
-		set -e
-		set -x
-		cd /boot
-		ln -sfT dtb-${kernel_version_family} dtb || mv dtb-${kernel_version_family} dtb
-		exit 0
-	EOT
-	chmod 775 "${package_DEBIAN_dir}/postinst"
+	kernel_package_hook_helper "postinst" <(
+		cat <<- EOT
+			cd /boot
+			ln -sfT dtb-${kernel_version_family} dtb || mv dtb-${kernel_version_family} dtb
+		EOT
+	)
 
 }
