@@ -212,7 +212,7 @@ function kernel_package_callback_linux_image() {
 function kernel_package_callback_linux_dtb() {
 	display_alert "package_directory" "${package_directory}" "debug"
 
-	mkdir -p "${package_directory}/boot/dtb-${kernel_version_family}"
+	mkdir -p "${package_directory}/boot/"
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${package_directory}/boot/dtb-${kernel_version_family}"
 
 	# Generate a control file
