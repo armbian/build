@@ -297,13 +297,22 @@ prepare_partitions() {
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
+		display_alert "Found armbianEnv.txt" "${SDCARD}/boot/armbianEnv.txt" "debug"
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> $SDCARD/boot/armbianEnv.txt
+			echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> "${SDCARD}/boot/armbianEnv.txt"
 		else
-			echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+			echo "rootdev=$rootfs" >> "${SDCARD}/boot/armbianEnv.txt"
 		fi
-		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
-	elif [[ $rootpart != 1 ]]; then
+		echo "rootfstype=$ROOTFS_TYPE" >> "${SDCARD}/boot/armbianEnv.txt"
+
+		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
+			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
+			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
+		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
+
+	elif
+		[[ $rootpart != 1 ]]
+	then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
@@ -312,6 +321,7 @@ prepare_partitions() {
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
+		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			local rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
@@ -319,7 +329,7 @@ prepare_partitions() {
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		fi
-		if [[ $LINUXFAMILY != meson64 ]]; then
+		if [[ $LINUXFAMILY != meson64 ]]; then # @TODO: why only for meson64?
 			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 		fi
 	fi

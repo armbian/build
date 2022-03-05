@@ -18,7 +18,11 @@ create_board_package() {
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		mkdir -p "${destination}"/usr/share/armbian/
 
-		# create extlinux config file
+		display_alert "BOOTSCRIPT" "${BOOTSCRIPT}" "debug"
+		display_alert "bootscript_src" "${bootscript_src}" "debug"
+		display_alert "bootscript_dst" "${bootscript_dst}" "debug"
+
+		# if not using extlinux, copy armbianEnv from template; prefer userpatches source
 		if [[ $SRC_EXTLINUX != yes ]]; then
 			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
 				cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
