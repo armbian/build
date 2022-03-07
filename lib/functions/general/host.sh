@@ -57,44 +57,42 @@ prepare_host() {
 
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
-
-	local hostdeps="acl aptly aria2 bc binfmt-support bison btrfs-progs       \
-	build-essential  ca-certificates ccache cpio cryptsetup curl              \
-	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
-	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabihf gdisk gnupg1 gpg imagemagick jq kmod libbison-dev \
-	libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl        \
-	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
-	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
-	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
-	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
-	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev file ccze"
+	declare -a host_dependencies=(
+		acl aptly aria2 bc binfmt-support bison btrfs-progs
+		build-essential ca-certificates ccache cpio cryptsetup curl
+		debian-archive-keyring debian-keyring debootstrap device-tree-compiler
+		dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk
+		gcc-arm-linux-gnueabihf
+		gcc-arm-linux-gnueabi gcc-arm-none-eabi
+		gdisk gnupg1 gpg imagemagick jq kmod libbison-dev
+		libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl
+		libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev
+		libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term
+		nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz
+		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
+		systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip
+		zlib1g-dev file ccze tree
+	)
 
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-		hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386"
-		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-
+		:
+		#host_dependencies+=(distcc lib32ncurses-dev lib32stdc++6 libc6-i386)
+		#grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386 # @TODO: WHY?! don't do this! we don't want 32-bit x86 ever
 	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
-
-		hostdeps+=" gcc-arm-linux-gnueabi gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
-
+		host_dependencies+=(libc6 libc6-amd64-cross qemu) # What?
 	else
-
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "https://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86_64 build host is not supported"
-
+		exit_with_error "Running this tool on non x86_64 or arm64 build host is not supported"
 	fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
 	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
-		hostdeps+=" python2 python3"
+		host_dependencies+=(python2 python3)
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
 	else
-		hostdeps+=" python libpython-dev"
+		host_dependencies+=("python" "libpython-dev")
 	fi
 
 	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
@@ -143,7 +141,7 @@ prepare_host() {
 		# warning: apt-cacher-ng will fail if installed and used both on host and in
 		# container/chroot environment with shared network
 		# set NO_APT_CACHER=yes to prevent installation errors in such case
-		if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
+		if [[ $NO_APT_CACHER != yes ]]; then host_dependencies+=("apt-cacher-ng"); fi
 
 		export EXTRA_BUILD_DEPS=""
 		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
@@ -151,18 +149,19 @@ prepare_host() {
 			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
 		ADD_HOST_DEPENDENCIES
 
-		if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
+		# shellcheck disable=SC2206 # I wanna expand. later will convert to proper array
+		if [ -n "${EXTRA_BUILD_DEPS}" ]; then host_dependencies+=(${EXTRA_BUILD_DEPS}); fi
 
 		display_alert "Installing build dependencies"
 		# don't prompt for apt cacher selection
 		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
-		# This handles the wanted list in $hostdeps, updates apt only if needed
-		install_host_side_packages "$hostdeps"
+		# This handles the wanted list in $host_dependencies, updates apt only if needed
+		install_host_side_packages "${host_dependencies[@]}"
 
 		update-ccache-symlinks
 
-		export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
+		export FINAL_HOST_DEPS="${host_dependencies[*]}"
 		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
 			*run after all host dependencies are installed*
 			At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
