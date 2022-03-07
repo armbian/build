@@ -37,8 +37,32 @@ KERNELPATCHDIR='sunxi-'$BRANCH
 
 # An optional parameter for switching to a git object such as a tag, commit,
 # or a specific branch. The object must exist in the local repository.
-# KERNELSWITCHOBJ=""
-# tag|obj|commit=v5.10.15|megous/$branch|$hash
+# This optional parameter takes precedence. If it is specified, then
+# the commit state corresponding to the specified git object will be extracted
+# to the working directory. Otherwise, the commit corresponding to the top of
+# the branch will be extracted.
+# KERNELSWITCHOBJ="tag=v5.10.15"
+# tag | obj | commit=v5.10.15 | [origin|megous]/$branch | $hash
+
+var_origin_kernel ()
+{
+	url=$MAINLINE_KERNEL_SOURCE
+	name='origin'
+	branch="linux-${KERNEL_VERSION_LEVEL}.y"
+	start_tag="v$KERNEL_VERSION_LEVEL"
+
+	# checking the reachability of the initial tag
+	if [ "$(git ls-remote --tags $url $start_tag | \
+		awk -F'/' '{if (NR == 1) print $NF}')" != "$start_tag" ];then
+		exit 177
+	fi
+
+	# Exceptions to the rule are when the desired tag is not
+	# a bifurcation point at which all previous merge branches converge.
+	# This is due to the subsequent extraction of `megous`
+	# [ "$KERNEL_VERSION_LEVEL" == "5.12" ] && start_tag="v5.12-rc7"
+}
+
 
 family_tweaks()
 {
@@ -73,25 +97,4 @@ setup_write_uboot_platform()
 		# do not try to write u-boot to USB devices
 		[[ -n $dev && $dev == mmcblk* ]] && DEVICE="/dev/$dev"
 	fi
-}
-
-# default settings for kernel variables of the original kernel
-# VAR_SHALLOW_ORIGINAL=var_origin_kernel
-var_origin_kernel ()
-{
-	url=$MAINLINE_KERNEL_SOURCE
-	name='origin'
-	branch="linux-${KERNEL_VERSION_LEVEL}.y"
-	start_tag="v$KERNEL_VERSION_LEVEL"
-
-	# checking the reachability of the initial tag
-	if [ "$(git ls-remote --tags $url $start_tag | \
-		awk -F'/' '{if (NR == 1) print $NF}')" != "$start_tag" ];then
-		exit 177
-	fi
-
-	# Exceptions to the rule are when the desired tag is not
-	# a bifurcation point at which all previous merge branches converge.
-	# This is due to the subsequent extraction of `megous`
-	[ "$KERNEL_VERSION_LEVEL" == "5.12" ] && start_tag="v5.12-rc7"
 }

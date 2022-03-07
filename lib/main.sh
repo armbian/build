@@ -443,19 +443,30 @@ prepare_host
 if [[ $IGNORE_UPDATES != yes ]]; then
 	display_alert "Downloading sources" "" "info"
 	[[ -n $BOOTSOURCE ]] && fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-	[[ -n $KERNELSOURCE ]] && fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 	[[ -n $ATFSOURCE ]] && fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
+
+	if [[ -n $KERNELSOURCE ]]; then
+		if $(declare -f var_origin_kernel >/dev/null); then
+			unset LINUXSOURCEDIR
+			LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
+			VAR_SHALLOW_ORIGINAL=var_origin_kernel
+			waiter_local_git "url=$KERNELSOURCE $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
+			unset VAR_SHALLOW_ORIGINAL
+		else
+			fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
+		fi
+	fi
 
 	call_extension_method "fetch_sources_tools"  <<- 'FETCH_SOURCES_TOOLS'
 	*fetch host-side sources needed for tools and build*
 	Run early to fetch_from_repo or otherwise obtain sources for needed tools.
 	FETCH_SOURCES_TOOLS
-	
+
 	call_extension_method "build_host_tools"  <<- 'BUILD_HOST_TOOLS'
 	*build needed tools for the build, host-side*
 	After sources are fetched, build host-side tools needed for the build.
 	BUILD_HOST_TOOLS
-	
+
 	for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 		[[ $option != sources ]] && cleaning "$option"
 	done

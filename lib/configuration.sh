@@ -139,13 +139,10 @@ MAINLINE_UBOOT_DIR='u-boot'
 
 case $GITHUB_MIRROR in
 	fastgit)
-		GITHUB_SOURCE='https://hub.fastgit.org/'
+		GITHUB_SOURCE='https://hub.fastgit.xyz/'
 		;;
 	gitclone)
 		GITHUB_SOURCE='https://gitclone.com/github.com/'
-		;;
-	cnpmjs)
-		GITHUB_SOURCE='https://github.com.cnpmjs.org/'
 		;;
 	*)
 		GITHUB_SOURCE='https://github.com/'
