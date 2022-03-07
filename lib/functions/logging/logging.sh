@@ -87,7 +87,7 @@ function do_with_logging() {
 
 	if [[ "${SHOW_LOG}" == "yes" ]]; then
 		local prefix_sed_contents
-		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")"
+		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")" # spaces are significant
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 
 		# This is sick. Create a 3rd file descriptor sending it to sed. https://unix.stackexchange.com/questions/174849/redirecting-stdout-to-terminal-and-file-without-using-a-pipe
@@ -95,7 +95,8 @@ function do_with_logging() {
 		exec 3> >(
 			cd "${SRC}" || exit 2
 			#grep --line-buffered -v "^$" | \
-			# @TODO: tee to CURRENT_LOGFILE.
+			# @TODO: tee to CURRENT_LOGFILE. @TODO this is essential. if this does not work whole thing comes down
+
 			sed -u -e "${prefix_sed_cmd}"
 		)
 		"$@" >&3
@@ -108,6 +109,14 @@ function do_with_logging() {
 	finish_logging_section
 
 	return 0
+}
+
+# This takes LOG_ASSET, which can and should include an extension.
+function do_with_log_asset() {
+	# @TODO: check that CURRENT_LOGGING_COUNTER is set, otherwise crazy?
+	local ASSET_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.${LOG_ASSET}"
+	display_alert "Logging to asset" "${CURRENT_LOGGING_COUNTER}.0.${LOG_ASSET}" "debug"
+	"$@" >> "${ASSET_LOGFILE}"
 }
 
 function display_alert() {
@@ -138,7 +147,7 @@ function display_alert() {
 			;;
 
 		ext)
-			level_indicator="✅"
+			level_indicator="✨" # or ✅ ?
 			inline_logs_color="\e[1;32m"
 			ci_log="notice"
 			;;
@@ -160,7 +169,7 @@ function display_alert() {
 			if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
 				return 0
 			fi
-			level_indicator="✨"
+			level_indicator="🐛"
 			inline_logs_color="\e[1;33m"
 			;;
 
@@ -177,14 +186,22 @@ function display_alert() {
 				return 0
 			fi
 			level_indicator="🐸"
-			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
+			inline_logs_color="\e[0;36m" # a dim cyan
 			;;
 
 		timestamp | fasthash)
 			if [[ "${SHOW_FASTHASH}" != "yes" ]]; then # timestamp-related debugging messages, very very verbose
 				return 0
 			fi
-			level_indicator="⏱"
+			level_indicator="🐜"
+			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
+			;;
+
+		git)
+			if [[ "${SHOW_GIT}" != "yes" ]]; then # git-related debugging messages, very very verbose
+				return 0
+			fi
+			level_indicator="🔖"
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
 			;;
 

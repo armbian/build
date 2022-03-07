@@ -422,6 +422,7 @@ function install_distribution_agnostic() {
 	FAMILY_TWEAKS
 
 	# enable additional services, if they exist.
+	display_alert "Enabling Armbian services" "systemd" "info"
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun-config.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-zram-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-zram-config.service

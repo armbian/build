@@ -34,13 +34,13 @@ function finish_fasthash() {
 }
 
 function fasthash_debug() {
-	if [[ "${SHOW_FASTHASH}" != "yes" ]]; then # enable debug for many, many debugging msgs
+	if [[ "${SHOW_FASTHASH}" != "yes" ]]; then
 		return 0
 	fi
 	display_alert "fasthash_debug" "$*" "fasthash"
-	find . -type f -printf '%T@ %p\n' |
-		grep -v -e "\.ko" -e "\.o" -e "\.cmd" -e "\.mod" -e "\.a" -e "\.tmp" -e "\.dtb" -e ".scr" -e "\.\/debian" |
-		sort -n | tail -n 10 1>&2
+	run_host_command_logged find . -type f -printf "'%T@ %p\\n'" "|" \
+		grep -v -e "\.ko" -e "\.o" -e "\.cmd" -e "\.mod" -e "\.a" -e "\.tmp" -e "\.dtb" -e ".scr" -e "\.\/debian" "|" \
+		sort -n "|" tail -n 10
 }
 
 function get_file_modification_time() { # @TODO: This is almost always called from a subshell. No use throwing errors?

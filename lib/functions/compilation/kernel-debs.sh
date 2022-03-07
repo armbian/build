@@ -51,10 +51,10 @@ function prepare_kernel_packaging_debs() {
 	#display_alert "Kernel install dir" "incoming from KBUILD make" "debug"
 	#run_host_command_logged tree -C --du -h "${kernel_dest_install_dir}" "| grep --line-buffered -v -e '\.ko' -e '\.h' "
 
-	display_alert "tmp_kernel_install_dirs INSTALL_PATH:" "${tmp_kernel_install_dirs[INSTALL_PATH]}" "debug"
-	display_alert "tmp_kernel_install_dirs INSTALL_MOD_PATH:" "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}" "debug"
-	display_alert "tmp_kernel_install_dirs INSTALL_HDR_PATH:" "${tmp_kernel_install_dirs[INSTALL_HDR_PATH]}" "debug"
-	display_alert "tmp_kernel_install_dirs INSTALL_DTBS_PATH:" "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "debug"
+	# display_alert "tmp_kernel_install_dirs INSTALL_PATH:" "${tmp_kernel_install_dirs[INSTALL_PATH]}" "debug"
+	# display_alert "tmp_kernel_install_dirs INSTALL_MOD_PATH:" "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}" "debug"
+	# display_alert "tmp_kernel_install_dirs INSTALL_HDR_PATH:" "${tmp_kernel_install_dirs[INSTALL_HDR_PATH]}" "debug"
+	# display_alert "tmp_kernel_install_dirs INSTALL_DTBS_PATH:" "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "debug"
 
 	# package the linux-image (image, modules, dtbs (if present))
 	create_kernel_deb "linux-image-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_image
@@ -77,8 +77,8 @@ function create_kernel_deb() {
 	declare callback_function="${3}"
 
 	declare package_directory
-	package_directory=$(mktemp -d "${WORKDIR}/${package_name}.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-	display_alert "package_directory" "${package_directory}" "debug"
+	package_directory=$(mktemp -d "${WORKDIR}/${package_name}.XXXXXXXXX") # explicitly created in WORKDIR, so is protected by that cleanup trap already
+	#display_alert "package_directory" "${package_directory}" "debug"
 
 	declare package_DEBIAN_dir="${package_directory}/DEBIAN" # DEBIAN dir
 	mkdir -p "${package_DEBIAN_dir}"                         # maintainer scripts et al
@@ -105,7 +105,7 @@ function create_kernel_deb() {
 	COPYRIGHT
 
 	# Run the callback.
-	display_alert "Running callback" "callback: ${callback_function}" "debug"
+	# display_alert "Running callback" "callback: ${callback_function}" "debug"
 	"${callback_function}" "${@}"
 
 	run_host_command_logged chown -R root:root "${package_directory}" # Fix ownership and permissions
@@ -116,7 +116,7 @@ function create_kernel_deb() {
 	cd "${package_directory}" || exit_with_error "major failure 774 for ${package_name}"
 
 	# create md5sums file
-	sh -c "cd '${package_directory}'; find . -type f ! -path './DEBIAN/*' -printf '%P\0' | xargs -r0 md5sum > DEBIAN/md5sums"
+	# sh -c "cd '${package_directory}'; find . -type f ! -path './DEBIAN/*' -printf '%P\0' | xargs -r0 md5sum > DEBIAN/md5sums"
 
 	declare unpacked_size
 	unpacked_size="$(du -h -s "${package_directory}" | awk '{print $1}')"
@@ -135,23 +135,25 @@ function kernel_package_hook_helper() {
 
 	cat >> "${package_DEBIAN_dir}/${script}" <<- EOT
 		#!/bin/bash
-		echo "Armbian ${package_name} for ${kernel_version_family}: ${script} starting."
+		echo "Armbian '${package_name}' for '${kernel_version_family}': '${script}' starting."
 		set -e # Error control
 		set -x # Debugging
 
 		$(cat "${contents}")
 
-		echo "Armbian ${package_name} for ${kernel_version_family}: ${script} finishing."
+		set +x # Disable debugging
+		echo "Armbian '${package_name}' for '${kernel_version_family}': '${script}' finishing."
 		true
 	EOT
 	chmod 775 "${package_DEBIAN_dir}/${script}"
 
-	display_alert "Hook debug" "${script} for ${package_name}" "debug"
-	run_host_command_logged cat "${package_DEBIAN_dir}/${script}"
+	# produce log asset for script
+	LOG_ASSET="deb-${package_name}-${script}.sh" do_with_log_asset run_host_command_logged cat "${package_DEBIAN_dir}/${script}"
+
 }
 
 function kernel_package_callback_linux_image() {
-	display_alert "package_directory" "${package_directory}" "debug"
+	display_alert "linux-image deb packaging" "${package_directory}" "debug"
 
 	declare installed_image_path="boot/vmlinuz-${kernel_version_family}" # using old mkdebian terminology here.
 	declare image_name="Image"                                           # for arm64. or, "zImage" for arm, or "vmlinuz" for others. Why? See where u-boot puts them.
@@ -217,7 +219,7 @@ function kernel_package_callback_linux_image() {
 }
 
 function kernel_package_callback_linux_dtb() {
-	display_alert "package_directory" "${package_directory}" "debug"
+	display_alert "linux-dtb packaging" "${package_directory}" "debug"
 
 	mkdir -p "${package_directory}/boot/"
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${package_directory}/boot/dtb-${kernel_version_family}"
@@ -251,7 +253,7 @@ function kernel_package_callback_linux_dtb() {
 }
 
 function kernel_package_callback_linux_headers() {
-	display_alert "package_directory for headers" "${package_directory}" "debug"
+	display_alert "linux-headers packaging" "${package_directory}" "debug"
 
 	# targets.
 	local headers_target_dir="${package_directory}/usr/src/linux-headers-${kernel_version_family}" # headers/tools etc

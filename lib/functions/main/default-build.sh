@@ -13,7 +13,7 @@ function main_default_build_single() {
 
 	start=$(date +%s)
 
-	### Write config summary to its own logging section.
+	### Write config summary
 	LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
 
 	# Check and install dependencies, directory structure and settings

@@ -109,8 +109,8 @@ function build_rootfs_and_image() {
 }
 
 function list_installed_packages() {
-	display_alert "Recording list of installed packages" "debug log" "debug"
-	chroot_sdcard dpkg --get-selections "| grep -v deinstall | awk '{print \$1}' | cut -f1 -d':' | column -c 80"
+	display_alert "Recording list of installed packages" "asset log" "debug"
+	LOG_ASSET="installed_packages.txt" do_with_log_asset chroot_sdcard dpkg --get-selections "| grep -v deinstall | awk '{print \$1}' | cut -f1 -d':'"
 }
 
 function trap_handler_cleanup_rootfs_and_image() {

@@ -41,7 +41,7 @@ function improved_git_fetch() {
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
 fetch_from_repo() {
-	display_alert "fetch_from_repo" "$*" "debug"
+	display_alert "fetch_from_repo" "$*" "git"
 	local url=$1
 	local dir=$2
 	local ref=$3
@@ -74,7 +74,7 @@ fetch_from_repo() {
 
 	# if GIT_FIXED_WORKDIR has something, ignore above logic and use that directly.
 	if [[ "${GIT_FIXED_WORKDIR}" != "" ]]; then
-		display_alert "GIT_FIXED_WORKDIR is set to" "${GIT_FIXED_WORKDIR}" "debug"
+		display_alert "GIT_FIXED_WORKDIR is set to" "${GIT_FIXED_WORKDIR}" "git"
 		git_work_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
 	fi
 
@@ -82,7 +82,7 @@ fetch_from_repo() {
 
 	cd "${git_work_dir}" || exit
 
-	display_alert "Git working dir" "${git_work_dir}" "debug"
+	display_alert "Git working dir" "${git_work_dir}" "git"
 
 	# "Sanity check" since we only support one "origin"
 	if [[ "$(git rev-parse --git-dir)" == ".git" && "$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///')" ]]; then
@@ -134,7 +134,7 @@ fetch_from_repo() {
 				;;
 		esac
 
-		display_alert "Git local_hash vs remote_hash" "${local_hash} vs ${remote_hash}" "debug"
+		display_alert "Git local_hash vs remote_hash" "${local_hash} vs ${remote_hash}" "git"
 
 	fi # offline
 
@@ -154,21 +154,21 @@ fetch_from_repo() {
 			tag) improved_git_fetch --no-tags origin tags/"${ref_name}" ;;
 			head) improved_git_fetch --no-tags origin HEAD ;;
 		esac
-		display_alert "Origin fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size again
+		display_alert "Origin fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "git"
 		checkout_from="FETCH_HEAD"
 	fi
 
 	# should be declared in outside scope, so can be read.
 	checked_out_revision_mtime="$(git log --date='format:%Y%m%d%H%M%S' --format='format:%ad' -1 "${checkout_from}")"
 	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"
-	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "debug"
+	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "git"
 
 	display_alert "Cleaning git dir" "$(git status -s 2> /dev/null | wc -l) files" # working directory is not clean, show it
 
-	fasthash_debug "before git checkout of $dir $ref_name" # fasthash interested in this
+	#fasthash_debug "before git checkout of $dir $ref_name" # fasthash interested in this
 	regular_git checkout -f -q "${checkout_from}"          # Return the files that are tracked by git to the initial state.
 
-	fasthash_debug "before git clean of $dir $ref_name"
+	#fasthash_debug "before git clean of $dir $ref_name"
 	regular_git clean -q -d -f # Files that are not tracked by git and were added when the patch was applied must be removed.
 
 	# set the checkout date on all the versioned files.
@@ -194,8 +194,8 @@ fetch_from_repo() {
 		done
 	fi
 
-	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "debug"
-	fasthash_debug "at the end of fetch_from_repo $dir $ref_name"
+	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "git"
+	#fasthash_debug "at the end of fetch_from_repo $dir $ref_name"
 }
 
 function git_fetch_from_bundle_file() {
@@ -203,20 +203,20 @@ function git_fetch_from_bundle_file() {
 	regular_git bundle verify "${bundle_file}"               # Make sure bundle is valid.
 	regular_git remote add "${remote_name}" "${bundle_file}" # Add the remote pointing to the cold bundle file
 	if [[ -f "${shallow_file}" ]]; then
-		display_alert "Bundle is shallow" "${shallow_file}" "debug"
+		display_alert "Bundle is shallow" "${shallow_file}" "git"
 		cp -p "${shallow_file}" ".git/shallow"
 	fi
 	improved_git_fetch --tags "${remote_name}" # Fetch it! (including tags!)
-	display_alert "Bundle fetch '${remote_name}' completed, working copy size" "$(du -h -s | awk '{print $1}')" "debug"
+	display_alert "Bundle fetch '${remote_name}' completed, working copy size" "$(du -h -s | awk '{print $1}')" "git"
 }
 
 function download_git_bundle_from_http() {
 	local bundle_file="${1}" bundle_url="${2}"
 	if [[ ! -f "${git_cold_bundle_cache_file}" ]]; then                                         # Download the bundle file if it does not exist.
-		display_alert "Downloading cold bundle from remote server" "${bundle_url}" "debug"         # This gonna take a while. And waste bandwidth
-		run_host_command_logged wget --continue --output-document="${bundle_file}" "${bundle_url}" # @TODO: progress giga?
+		display_alert "Downloading Git cold bundle via HTTP" "${bundle_url}" "info"         # This gonna take a while. And waste bandwidth
+		run_host_command_logged wget --continue --progress=giga --output-document="${bundle_file}" "${bundle_url}"
 	else
-		display_alert "Cold bundle file exists, using it" "${bundle_file}" "debug"
+		display_alert "Cold bundle file exists, using it" "${bundle_file}" "git"
 	fi
 }
 
@@ -254,13 +254,13 @@ function git_handle_cold_and_warm_bundle_remotes() {
 			git_warm_remote_bundle_file="${git_warm_remote_bundle_cache_dir}/${GIT_WARM_REMOTE_BUNDLE}${git_warm_remote_bundle_extra_fn}.gitbundle" # final filename of bundle
 			git_warm_remote_bundle_file_shallowfile="${git_warm_remote_bundle_file}.shallow"                                                        # it can be there's a shallow revision
 			if [[ -f "${git_warm_remote_bundle_file}" ]]; then
-				display_alert "Fetching from Warm git bundle, wait" "${GIT_WARM_REMOTE_BUNDLE}" "info" # This is gonna take a long while...
+				display_alert "Fetching from warm git bundle, wait" "${GIT_WARM_REMOTE_BUNDLE}" "info" # This is gonna take a long while...
 				git_fetch_from_bundle_file "${git_warm_remote_bundle_file}" "${GIT_WARM_REMOTE_NAME}" "${git_warm_remote_bundle_file_shallowfile}"
 				do_cold_bundle="no"   # Skip the cold bundle, below.
 				do_warmup_remote="no" # Skip the warm bundle creation, below, too.
 				has_git_warm_remote=1 # mark warm remote as added.
 			else
-				display_alert "Could not find warm bundle file" "${git_warm_remote_bundle_file}" "debug"
+				display_alert "Could not find warm bundle file" "${git_warm_remote_bundle_file}" "git"
 			fi
 		fi
 	fi
@@ -272,7 +272,6 @@ function git_handle_cold_and_warm_bundle_remotes() {
 		# - do nothing else with this, it'll be used internally by git to avoid a huge fetch later.
 		# - but, after this, the wanted branch will be fetched. signal has_git_cold_remote=1 for later.
 		if [[ "${GIT_COLD_BUNDLE_URL}" != "" ]]; then
-			display_alert "There's a " "${GIT_COLD_BUNDLE_URL} -- ${git_cold_bundle_id} -- file: ${git_cold_bundle_cache_file}" "debug" # @TODO: remove
 			local git_cold_bundle_id git_cold_bundle_cache_dir git_cold_bundle_cache_file git_cold_bundle_remote_name
 			git_cold_bundle_cache_dir="${SRC}/cache/gitbundles/cold"                                  # calculate the id, dir and name of local file and remote
 			git_cold_bundle_id="$(echo -n "${GIT_COLD_BUNDLE_URL}" | md5sum | awk '{print $1}')"      # md5 of the URL.
@@ -292,12 +291,12 @@ function git_handle_cold_and_warm_bundle_remotes() {
 	if [[ "${do_warmup_remote}" == "yes" ]]; then
 		if [[ "${GIT_WARM_REMOTE_NAME}" != "" ]] && [[ "${GIT_WARM_REMOTE_URL}" != "" ]] && [[ "${GIT_WARM_REMOTE_BRANCH}" != "" ]]; then
 
-			display_alert "Using Warmup Remote before origin fetch" "${GIT_WARM_REMOTE_NAME} - ${GIT_WARM_REMOTE_BRANCH}" "debug"
+			display_alert "Using Warmup Remote before origin fetch" "${GIT_WARM_REMOTE_NAME} - ${GIT_WARM_REMOTE_BRANCH}" "git"
 			regular_git remote add "${GIT_WARM_REMOTE_NAME}" "${GIT_WARM_REMOTE_URL}" # Add the remote to the warmup source
 			has_git_warm_remote=1                                                     # mark as done. Will export the bundle!
 
 			improved_git_fetch --no-tags "${GIT_WARM_REMOTE_NAME}" "${GIT_WARM_REMOTE_BRANCH}"            # Fetch the remote branch, but no tags
-			display_alert "After warm bundle, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after bundle pull
+			display_alert "After warm bundle, working copy size" "$(du -h -s | awk '{print $1}')" "git" # Show size after bundle pull
 
 			# Checkout that to a branch. We wanna have a local reference to what has been fetched.
 			# @TODO: could be a param instead of FETCH_HEAD; would drop commits after that rev
@@ -305,18 +304,18 @@ function git_handle_cold_and_warm_bundle_remotes() {
 			regular_git branch "${git_warm_branch_name}" FETCH_HEAD || true
 
 			improved_git_fetch "${GIT_WARM_REMOTE_NAME}" "'refs/tags/${GIT_WARM_REMOTE_FETCH_TAGS}:refs/tags/${GIT_WARM_REMOTE_FETCH_TAGS}'" || true # Fetch the remote branch, but no tags
-			display_alert "After warm bundle tags, working copy size" "$(du -h -s | awk '{print $1}')" "debug"                                       # Show size after bundle pull
+			display_alert "After warm bundle tags, working copy size" "$(du -h -s | awk '{print $1}')" "git"                                       # Show size after bundle pull
 
 			# Lookup the tag (at the warm remote directly) to find the rev to shallow to.
 			if [[ "${GIT_WARM_REMOTE_SHALLOW_AT_TAG}" != "" ]]; then
-				display_alert "GIT_WARM_REMOTE_SHALLOW_AT_TAG" "${GIT_WARM_REMOTE_SHALLOW_AT_TAG}" "debug"
+				display_alert "GIT_WARM_REMOTE_SHALLOW_AT_TAG" "${GIT_WARM_REMOTE_SHALLOW_AT_TAG}" "git"
 				GIT_WARM_REMOTE_SHALLOW_AT_DATE="$(git tag --list --format="%(creatordate)" "${GIT_WARM_REMOTE_SHALLOW_AT_TAG}")"
-				display_alert "GIT_WARM_REMOTE_SHALLOW_AT_TAG ${GIT_WARM_REMOTE_SHALLOW_AT_TAG} resulted in GIT_WARM_REMOTE_SHALLOW_AT_DATE" "Date: ${GIT_WARM_REMOTE_SHALLOW_AT_DATE}" "debug"
+				display_alert "GIT_WARM_REMOTE_SHALLOW_AT_TAG ${GIT_WARM_REMOTE_SHALLOW_AT_TAG} resulted in GIT_WARM_REMOTE_SHALLOW_AT_DATE" "Date: ${GIT_WARM_REMOTE_SHALLOW_AT_DATE}" "git"
 			fi
 
 			# At this stage, we might wanna make the local copy shallow and re-pack it.
 			if [[ "${GIT_WARM_REMOTE_SHALLOW_AT_DATE}" != "" ]]; then
-				display_alert "Making working copy shallow" "before date ${GIT_WARM_REMOTE_SHALLOW_AT_DATE}" "debug"
+				display_alert "Making working copy shallow" "before date ${GIT_WARM_REMOTE_SHALLOW_AT_DATE}" "info"
 
 				# 'git clone' is the only consistent, usable thing we can do to do this.
 				# it does require a temporary dir, though. use one.
@@ -329,7 +328,7 @@ function git_handle_cold_and_warm_bundle_remotes() {
 					--tags --shallow-since="${GIT_WARM_REMOTE_SHALLOW_AT_DATE}" \
 					"file://${git_work_dir}" "${temp_git_dir}"
 
-				display_alert "After shallow clone, temp_git_dir" "$(du -h -s "${temp_git_dir}" | awk '{print $1}')" "debug" # Show size after shallow
+				display_alert "After shallow clone, temp_git_dir" "$(du -h -s "${temp_git_dir}" | awk '{print $1}')" "git" # Show size after shallow
 
 				# Get rid of original, replace with new. Move cwd so no warnings are produced.
 				cd "${SRC}" || exit_with_error "Failed to move cwd away so we can remove" "${git_work_dir}"
@@ -342,18 +341,18 @@ function git_handle_cold_and_warm_bundle_remotes() {
 				has_git_cold_remote=0
 				has_git_warm_remote=0
 
-				display_alert "After shallow, working copy size" "$(du -h -s | awk '{print $1}')" "debug" # Show size after shallow
+				display_alert "After shallow, working copy size" "$(du -h -s | awk '{print $1}')" "git" # Show size after shallow
 			fi
 
 			# Now git working copy has a precious state we might wanna preserve (export the bundle).
 			if [[ "${GIT_WARM_REMOTE_BUNDLE}" != "" ]]; then
 				mkdir -p "${git_warm_remote_bundle_cache_dir}"
-				display_alert "Exporting warm remote bundle" "${git_warm_remote_bundle_file}" "debug"
+				display_alert "Exporting warm remote bundle" "${git_warm_remote_bundle_file}" "info"
 				regular_git bundle create "${git_warm_remote_bundle_file}" --all
 
 				rm -f "${git_warm_remote_bundle_file_shallowfile}" # not shallow at first...
 				if [[ -f ".git/shallow" ]]; then
-					display_alert "Exported bundle is shallow" "Will copy to ${git_warm_remote_bundle_file_shallowfile}" "debug"
+					display_alert "Exported bundle is shallow" "Will copy to ${git_warm_remote_bundle_file_shallowfile}" "git"
 					cp -p ".git/shallow" "${git_warm_remote_bundle_file_shallowfile}"
 				fi
 

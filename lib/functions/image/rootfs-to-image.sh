@@ -10,9 +10,13 @@
 #
 create_image_from_sdcard_rootfs() {
 	# create DESTIMG, hooks might put stuff there early.
-	mkdir -p $DESTIMG
+	mkdir -p "${DESTIMG}"
+
+	# add a cleanup trap hook do make sure we don't leak it if stuff fails
+	add_cleanup_handler trap_handler_cleanup_destimg
 
 	# stage: create file name
+	# @TODO: rpardini: determine the image file name produced. a bit late in the game, since it uses VER which is from the kernel package.
 	local version="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
@@ -66,11 +70,11 @@ create_image_from_sdcard_rootfs() {
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
 	# exception: if we use the one from repository, install version which was downloaded from repo
 	if [[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]] || [[ -n $UBOOT_REPO_VERSION ]]; then
-		write_uboot_to_loop_image $LOOP
+		write_uboot_to_loop_image "${LOOP}"
 	fi
 
 	# fix wrong / permissions
-	chmod 755 $MOUNT
+	chmod 755 "${MOUNT}"
 
 	call_extension_method "pre_umount_final_image" "config_pre_umount_final_image" << 'PRE_UMOUNT_FINAL_IMAGE'
 *allow config to hack into the image before the unmount*
@@ -95,10 +99,13 @@ PRE_UMOUNT_FINAL_IMAGE
 	losetup -d "${LOOP}"
 	unset LOOP # unset so cleanup handler does not try it again
 
-	# Don't delete $DESTIMG here, extensions might have put nice things there already.
+	# We're done with ${MOUNT} by now, remove it.
 	rm -rf --one-file-system "${MOUNT}"
+	unset MOUNT
 
 	mkdir -p "${DESTIMG}"
+	# @TODO: misterious cwd, who sets it?
+
 	mv "${SDCARD}.raw" "${DESTIMG}/${version}.img"
 
 	# custom post_build_image_modify hook to run before fingerprinting and compression
@@ -119,11 +126,17 @@ PRE_UMOUNT_FINAL_IMAGE
 	POST_BUILD_IMAGE
 
 	# move artefacts from temporally directory to its final destination
-	[[ -n $compression_type ]] && rm $DESTIMG/${version}.img
-	rsync -a --no-owner --no-group --remove-source-files $DESTIMG/${version}* ${FINALDEST}
-	rm -rf --one-file-system $DESTIMG
+	[[ -n $compression_type ]] && rm "${DESTIMG}/${version}.img"
+	rsync -a --no-owner --no-group --remove-source-files "${DESTIMG}/${version}"* "${FINALDEST}"
+	rm -rf --one-file-system "${DESTIMG}"
 
 	# write image to SD card
 	write_image_to_device "${FINALDEST}/${version}.img" "${CARD_DEVICE}"
 
+}
+
+function trap_handler_cleanup_destimg() {
+	[[ ! -d "${DESTIMG}" ]] && return 0
+	display_alert "Cleaning up temporary DESTIMG" "${DESTIMG}" "debug"
+	rm -rf --one-file-system "${DESTIMG}"
 }
