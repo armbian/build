@@ -54,11 +54,8 @@ compile_atf() {
 
 	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
 	# Check: https://github.com/armbian/build/issues/1157
-	CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
-		make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
-		CROSS_COMPILE="$CCACHE $ATF_COMPILER" 2>&1 || { # HANDLED SHORTCIRCUIT: direct command invocation; @TODO: replace with runner
-		exit_with_error "ATF compilation failed"
-	}
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		make ENABLE_BACKTRACE="0" $target_make "${CTHREADS}" "CROSS_COMPILE='$CCACHE $ATF_COMPILER'"
 
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess 2>&1
 
