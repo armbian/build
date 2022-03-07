@@ -435,15 +435,7 @@ function install_distribution_agnostic() {
 		echo "deb https://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" \
 			> "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
-	# Cosmetic fix [FAILED] Failed to start Set console font and keymap at first boot
-	[[ -f "${SDCARD}"/etc/console-setup/cached_setup_font.sh ]] &&
-		sed -i "s/^printf '.*/printf '\\\033\%\%G'/g" "${SDCARD}"/etc/console-setup/cached_setup_font.sh
-	[[ -f "${SDCARD}"/etc/console-setup/cached_setup_terminal.sh ]] &&
-		sed -i "s/^printf '.*/printf '\\\033\%\%G'/g" "${SDCARD}"/etc/console-setup/cached_setup_terminal.sh
-	[[ -f "${SDCARD}"/etc/console-setup/cached_setup_keyboard.sh ]] &&
-		sed -i "s/-u/-x'/g" "${SDCARD}"/etc/console-setup/cached_setup_keyboard.sh
-
-	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723
+	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723 @TODO: from ubuntu 15. maybe gone?
 	chroot "${SDCARD}" /bin/bash -c "chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
 	chroot "${SDCARD}" /bin/bash -c "chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
 
@@ -522,15 +514,16 @@ function install_distribution_agnostic() {
 		# configure network manager
 		sed "s/managed=\(.*\)/managed=true/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
 
-		# remove network manager defaults to handle eth by default
+		## remove network manager defaults to handle eth by default @TODO: why?
 		rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
 
 		# most likely we don't need to wait for nm to get online
 		chroot_sdcard systemctl disable NetworkManager-wait-online.service
 
-		# Just regular DNS and maintain /etc/resolv.conf as a file
+		# Just regular DNS and maintain /etc/resolv.conf as a file @TODO: this does not apply as of impish at least
 		sed "/dns/d" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
 		sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
+
 		if [[ -n $NM_IGNORE_DEVICES ]]; then
 			mkdir -p "${SDCARD}"/etc/NetworkManager/conf.d/
 			cat <<- EOF > "${SDCARD}"/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
