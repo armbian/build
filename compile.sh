@@ -293,15 +293,5 @@ while [[ "${1}" == *=* ]]; do
 
 done
 
-
-if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
-
-	# shellcheck source=lib/build-all-ng.sh
-	source "${SRC}"/lib/build-all-ng.sh
-
-else
-
-	# shellcheck source=lib/main.sh
-	source "${SRC}"/lib/main.sh
-
-fi
+# shellcheck source=lib/main.sh
+source "${SRC}"/lib/main.sh

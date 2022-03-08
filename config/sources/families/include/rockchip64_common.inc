@@ -102,7 +102,7 @@ case $BRANCH in
 
 	current)
 
-		KERNELBRANCH="branch:linux-5.10.y"
+		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
@@ -111,7 +111,7 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.15.y"
+		KERNELBRANCH="branch:linux-5.16.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -250,7 +250,7 @@ family_tweaks()
 
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable z28pro-bluetooth.service >/dev/null 2>&1"
 
-	elif [[ $BOARD == nanopi-r2s || $BOARD == nanopi-r2c || $BOARD == orangepi-r1plus ]]; then
+	elif [[ $BOARD == nanopi-r2s || $BOARD == nanopi-r2c || $BOARD == orangepi-r1plus || $BOARD == orangepi-r1plus-lts ]]; then
 
 		# rename USB based network to lan0
 		mkdir -p $SDCARD/etc/udev/rules.d/

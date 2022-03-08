@@ -15,7 +15,9 @@ case $BRANCH in
 
 	current) KERNEL_VERSION_LEVEL="5.15" ;;
 
-	edge) KERNEL_VERSION_LEVEL="5.16" ;;
+	edge) KERNEL_VERSION_LEVEL="5.16"
+	      #KERNELSWITCHOBJ="tag=v5.16.11"
+	      ;;
 esac
 
 case "$KERNEL_VERSION_LEVEL" in

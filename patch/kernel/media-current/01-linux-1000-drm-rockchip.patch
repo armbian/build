@@ -769,26 +769,6 @@ index 8b957af7c61a..303c6e81ca4f 100644
  		return ret;
  	}
  
-@@ -525,12 +524,16 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
- 	if (IS_ERR(hdmi->phy)) {
- 		ret = PTR_ERR(hdmi->phy);
- 		if (ret != -EPROBE_DEFER)
--			DRM_DEV_ERROR(hdmi->dev, "failed to get phy\n");
--		return ret;
-+			DRM_DEV_ERROR(hdmi->dev, "Failed to get phy: %d\n", ret);
-+		goto err_disable_clk;
- 	}
- 
- 	drm_encoder_helper_add(encoder, &dw_hdmi_rockchip_encoder_helper_funcs);
--	drm_simple_encoder_init(drm, encoder, DRM_MODE_ENCODER_TMDS);
-+	ret = drm_simple_encoder_init(drm, encoder, DRM_MODE_ENCODER_TMDS);
-+	if (ret) {
-+		DRM_DEV_ERROR(hdmi->dev, "Failed to init encoder: %d\n", ret);
-+		goto err_disable_clk;
-+	}
- 
- 	platform_set_drvdata(pdev, hdmi);
- 
 @@ -542,10 +545,18 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
  	 */
  	if (IS_ERR(hdmi->hdmi)) {
@@ -1431,31 +1411,6 @@ index 9af45fdfbd19..134c2db8d0fe 100644
  	struct drm_encoder *encoder;
  	struct rockchip_hdmi *hdmi;
  	int ret;
-@@ -618,19 +647,21 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
- 		goto err_disable_clk;
- 	}
- 
--	drm_encoder_helper_add(encoder, &dw_hdmi_rockchip_encoder_helper_funcs);
- 	ret = drm_simple_encoder_init(drm, encoder, DRM_MODE_ENCODER_TMDS);
- 	if (ret) {
- 		DRM_DEV_ERROR(hdmi->dev, "Failed to init encoder: %d\n", ret);
- 		goto err_disable_clk;
- 	}
- 
-+	hdmi->bridge.funcs = &dw_hdmi_rockchip_bridge_funcs;
-+	drm_bridge_attach(encoder, &hdmi->bridge, NULL, 0);
-+
- 	platform_set_drvdata(pdev, hdmi);
- 
--	hdmi->hdmi = dw_hdmi_bind(pdev, encoder, plat_data);
-+	hdmi->hdmi = dw_hdmi_probe(pdev, plat_data);
- 
- 	/*
--	 * If dw_hdmi_bind() fails we'll never call dw_hdmi_unbind(),
-+	 * If dw_hdmi_probe() fails we'll never call dw_hdmi_remove(),
- 	 * which would have called the encoder cleanup.  Do it manually.
- 	 */
- 	if (IS_ERR(hdmi->hdmi)) {
 @@ -640,8 +671,23 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
  		goto err_encoder_cleanup;
  	}
@@ -3500,217 +3455,45 @@ index 20a73cb3005e..b1473459a579 100644
 +		DRM_DEV_ERROR(vop->dev, "Maximum dst width (4096) exceeded\n");
  		return;
  	}
- 
 
-
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Jonas Karlman <jonas@kwiboo.se>
-Date: Tue, 1 Oct 2019 20:52:42 +0000
-Subject: [PATCH] media: cec-adap: add debounce support when setting an invalid
- phys addr
-
-When EDID is refreshed, HDMI cable is unplugged/replugged or
-an AVR is power cycled the CEC phys addr gets invalidated.
-
-This can cause some disruption of CEC communication when
-adapter is being reconfigured.
-
-Add a debounce_ms module option that can be used to debounce setting
-an invalid phys addr. Default is not to use debouncing.
-
-Using a configured debounce_ms of e.g. 5000 ms, cec reconfiguring
-could be avoided when AVR was power cycled on my setup.
-
-Power off AVR (default cec.debounce_ms=0):
-[  101.536866] cec-dw_hdmi: new physical address f.f.f.f
-[  102.495686] cec-dw_hdmi: new physical address 2.1.0.0
-[  102.495913] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
-[  102.628574] cec-dw_hdmi: config: la 1 pa 2.1.0.0
-[  105.130115] cec-dw_hdmi: new physical address f.f.f.f
-[  106.979705] cec-dw_hdmi: new physical address 2.1.0.0
-[  106.979872] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
-[  107.112399] cec-dw_hdmi: config: la 1 pa 2.1.0.0
-[  108.979408] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 5
-[  109.205386] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 11
-
-Power on AVR (default cec.debounce_ms=0):
-[  158.398447] cec-dw_hdmi: new physical address f.f.f.f
-[  161.977714] cec-dw_hdmi: new physical address 2.1.0.0
-[  161.978766] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
-[  162.115624] cec-dw_hdmi: config: la 1 pa 2.1.0.0
-[  162.402750] cec-dw_hdmi: new physical address f.f.f.f
-[  162.403389] cec-dw_hdmi: cec_transmit_msg_fh: adapter is unconfigured
-[  162.886757] cec-dw_hdmi: new physical address 2.1.0.0
-[  162.886964] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
-[  163.510725] cec-dw_hdmi: config: la 1 pa 2.1.0.0
-[  173.034200] cec-dw_hdmi: message 10 89 02 05 timed out
-
-Power off AVR (cec.debounce_ms=5000):
-[  251.720471] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 5
-[  251.922432] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 11
-
-Power on AVR (cec.debounce_ms=5000):
-[  291.154262] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 5
-[  291.296199] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 11
-
-Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
----
- drivers/media/cec/core/cec-adap.c |  9 ++++++++-
- drivers/media/cec/core/cec-core.c | 18 ++++++++++++++++++
- drivers/media/cec/core/cec-priv.h |  1 +
- include/media/cec.h               |  2 ++
- 4 files changed, 29 insertions(+), 1 deletion(-)
-
-diff --git a/drivers/media/cec/core/cec-adap.c b/drivers/media/cec/core/cec-adap.c
-index 79fa36de8a04..ffc934df0f4c 100644
---- a/drivers/media/cec/core/cec-adap.c
-+++ b/drivers/media/cec/core/cec-adap.c
-@@ -1613,8 +1613,15 @@ void cec_s_phys_addr(struct cec_adapter *adap, u16 phys_addr, bool block)
- 	if (IS_ERR_OR_NULL(adap))
- 		return;
- 
-+	cancel_delayed_work_sync(&adap->debounce_work);
-+
- 	mutex_lock(&adap->lock);
--	__cec_s_phys_addr(adap, phys_addr, block);
-+	if (cec_debounce_ms > 0 && !block && phys_addr == CEC_PHYS_ADDR_INVALID &&
-+	    adap->phys_addr != phys_addr)
-+		schedule_delayed_work(&adap->debounce_work,
-+				      msecs_to_jiffies(cec_debounce_ms));
-+	else
-+		__cec_s_phys_addr(adap, phys_addr, block);
- 	mutex_unlock(&adap->lock);
- }
- EXPORT_SYMBOL_GPL(cec_s_phys_addr);
-diff --git a/drivers/media/cec/core/cec-core.c b/drivers/media/cec/core/cec-core.c
-index 551689d371a7..e3e038021e29 100644
---- a/drivers/media/cec/core/cec-core.c
-+++ b/drivers/media/cec/core/cec-core.c
-@@ -28,6 +28,10 @@ static bool debug_phys_addr;
- module_param(debug_phys_addr, bool, 0644);
- MODULE_PARM_DESC(debug_phys_addr, "add CEC_CAP_PHYS_ADDR if set");
- 
-+int cec_debounce_ms;
-+module_param_named(debounce_ms, cec_debounce_ms, int, 0644);
-+MODULE_PARM_DESC(debounce_ms, "debounce invalid phys addr");
-+
- static dev_t cec_dev_t;
- 
- /* Active devices */
-@@ -174,6 +178,8 @@ static void cec_devnode_unregister(struct cec_adapter *adap)
- 
- 	mutex_unlock(&devnode->lock);
- 
-+	cancel_delayed_work_sync(&adap->debounce_work);
-+
- 	mutex_lock(&adap->lock);
- 	__cec_s_phys_addr(adap, CEC_PHYS_ADDR_INVALID, false);
- 	__cec_s_log_addrs(adap, NULL, false);
-@@ -232,6 +238,17 @@ static const struct file_operations cec_error_inj_fops = {
- };
- #endif
- 
-+static void cec_s_phys_addr_debounce(struct work_struct *work)
-+{
-+	struct delayed_work *delayed_work = to_delayed_work(work);
-+	struct cec_adapter *adap =
-+		container_of(delayed_work, struct cec_adapter, debounce_work);
-+
-+	mutex_lock(&adap->lock);
-+	__cec_s_phys_addr(adap, CEC_PHYS_ADDR_INVALID, false);
-+	mutex_unlock(&adap->lock);
-+}
-+
- struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops,
- 					 void *priv, const char *name, u32 caps,
- 					 u8 available_las)
-@@ -269,6 +286,7 @@ struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops,
- 	INIT_LIST_HEAD(&adap->transmit_queue);
- 	INIT_LIST_HEAD(&adap->wait_queue);
- 	init_waitqueue_head(&adap->kthread_waitq);
-+	INIT_DELAYED_WORK(&adap->debounce_work, cec_s_phys_addr_debounce);
- 
- 	/* adap->devnode initialization */
- 	INIT_LIST_HEAD(&adap->devnode.fhs);
-diff --git a/drivers/media/cec/core/cec-priv.h b/drivers/media/cec/core/cec-priv.h
-index 9bbd05053d42..d479dbd50528 100644
---- a/drivers/media/cec/core/cec-priv.h
-+++ b/drivers/media/cec/core/cec-priv.h
-@@ -27,6 +27,7 @@ static inline bool msg_is_raw(const struct cec_msg *msg)
- 
- /* cec-core.c */
- extern int cec_debug;
-+extern int cec_debounce_ms;
- int cec_get_device(struct cec_devnode *devnode);
- void cec_put_device(struct cec_devnode *devnode);
- 
-diff --git a/include/media/cec.h b/include/media/cec.h
-index 208c9613c07e..6cea463b37bd 100644
---- a/include/media/cec.h
-+++ b/include/media/cec.h
-@@ -217,6 +217,8 @@ struct cec_adapter {
- 	struct task_struct *kthread;
- 	wait_queue_head_t kthread_waitq;
- 
-+	struct delayed_work debounce_work;
-+
- 	const struct cec_adap_ops *ops;
- 	void *priv;
- 	u32 capabilities;
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Alex Bee <knaerzche@gmail.com>
-Date: Fri, 22 Oct 2021 11:17:30 +0200
-Subject: [PATCH] WIP: drm/bridge: synopsys: Fix CEC not working after
- power-cyclying
-
-This fixes standby -> power-on on Rockchip platform for, at least,
-RK3288/RK3328/RK3399 where CEC wasn't working after powering on again.
-It might differ for other phy implementations:
-The whole HPD-detection part shoud be reworked and we should in general
-avoid to rely in RX_SENSE phy status (at least for HDMI), since it differs
-depending on sink's implementation.
-
-Signed-off-by: Alex Bee <knaerzche@gmail.com>
----
- drivers/gpu/drm/bridge/synopsys/dw-hdmi.c | 16 ++++++++--------
- 1 file changed, 9 insertions(+), 8 deletions(-)
-
-diff --git a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
-index 84cc52858ffb..3c20ef3bd3c1 100644
---- a/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
-+++ b/drivers/gpu/drm/bridge/synopsys/dw-hdmi.c
-@@ -3036,18 +3036,11 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
- 	 * ask the source to re-read the EDID.
- 	 */
- 	if (intr_stat &
--	    (HDMI_IH_PHY_STAT0_RX_SENSE | HDMI_IH_PHY_STAT0_HPD)) {
-+	    (HDMI_IH_PHY_STAT0_RX_SENSE | HDMI_IH_PHY_STAT0_HPD))
- 		dw_hdmi_setup_rx_sense(hdmi,
- 				       phy_stat & HDMI_PHY_HPD,
- 				       phy_stat & HDMI_PHY_RX_SENSE);
- 
--		if ((phy_stat & (HDMI_PHY_RX_SENSE | HDMI_PHY_HPD)) == 0) {
--			mutex_lock(&hdmi->cec_notifier_mutex);
--			cec_notifier_phys_addr_invalidate(hdmi->cec_notifier);
--			mutex_unlock(&hdmi->cec_notifier_mutex);
--		}
--	}
--
- 	if (intr_stat & HDMI_IH_PHY_STAT0_HPD) {
- 		enum drm_connector_status status = phy_int_pol & HDMI_PHY_HPD
- 						 ? connector_status_connected
-@@ -3061,6 +3054,14 @@ static irqreturn_t dw_hdmi_irq(int irq, void *dev_id)
- 			drm_helper_hpd_irq_event(hdmi->bridge.dev);
- 			drm_bridge_hpd_notify(&hdmi->bridge, status);
- 		}
-+
-+		if (status == connector_status_disconnected &&
-+		    (phy_stat & HDMI_PHY_RX_SENSE) &&
-+		    (phy_int_pol & HDMI_PHY_RX_SENSE)) {
-+			mutex_lock(&hdmi->cec_notifier_mutex);
-+			cec_notifier_phys_addr_invalidate(hdmi->cec_notifier);
-+			mutex_unlock(&hdmi->cec_notifier_mutex);
-+		}
+diff --git a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+index e40bd3c858a..6a47ae2078b 100644
+--- a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+@@ -743,8 +743,8 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
+ 	if (IS_ERR(hdmi->phy)) {
+ 		ret = PTR_ERR(hdmi->phy);
+ 		if (ret != -EPROBE_DEFER)
+-			DRM_DEV_ERROR(hdmi->dev, "failed to get phy\n");
+-		return ret;
++			DRM_DEV_ERROR(hdmi->dev, "Failed to get phy: %d\n", ret);
++		goto err_disable_clk;
  	}
  
- 	hdmi_writeb(hdmi, intr_stat, HDMI_IH_PHY_STAT0);
+ 	ret = clk_prepare_enable(hdmi->vpll_clk);
+@@ -753,15 +753,21 @@ static int dw_hdmi_rockchip_bind(struct device *dev, struct device *master,
+ 		return ret;
+ 	}
+ 
+-	drm_encoder_helper_add(encoder, &dw_hdmi_rockchip_encoder_helper_funcs);
+-	drm_simple_encoder_init(drm, encoder, DRM_MODE_ENCODER_TMDS);
++	ret = drm_simple_encoder_init(drm, encoder, DRM_MODE_ENCODER_TMDS);
++	if (ret) {
++		DRM_DEV_ERROR(hdmi->dev, "Failed to init encoder: %d\n", ret);
++		goto err_disable_clk;
++	}
++
++	hdmi->bridge.funcs = &dw_hdmi_rockchip_bridge_funcs;
++	drm_bridge_attach(encoder, &hdmi->bridge, NULL, 0);
+ 
+ 	platform_set_drvdata(pdev, hdmi);
+ 
+-	hdmi->hdmi = dw_hdmi_bind(pdev, encoder, plat_data);
++	hdmi->hdmi = dw_hdmi_probe(pdev, plat_data);
+ 
+ 	/*
+-	 * If dw_hdmi_bind() fails we'll never call dw_hdmi_unbind(),
++	 * If dw_hdmi_probe() fails we'll never call dw_hdmi_remove(),
+ 	 * which would have called the encoder cleanup.  Do it manually.
+ 	 */
+ 	if (IS_ERR(hdmi->hdmi)) {
