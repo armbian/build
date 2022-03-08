@@ -169,6 +169,7 @@ function kernel_package_callback_linux_image() {
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
 		Package: ${package_name}
 		Version: ${package_version}
+		Source: linux-${kernel_version}
 		Architecture: ${ARCH}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel

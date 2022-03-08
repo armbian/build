@@ -292,6 +292,9 @@ function install_distribution_agnostic() {
 		It is not too late to `unset KERNELSOURCE` here and avoid kernel install.
 	PRE_INSTALL_KERNEL_DEBS
 
+	# default VER, will be parsed from Kernel version in the installed deb package.
+	VER="linux"
+
 	# install kernel
 	[[ -n $KERNELSOURCE ]] && {
 		if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
