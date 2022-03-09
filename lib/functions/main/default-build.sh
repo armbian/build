@@ -185,7 +185,11 @@ function trap_handler_cleanup_workdir() {
 	display_alert "Cleanup WORKDIR: $WORKDIR" "trap_handler_cleanup_workdir" "cleanup"
 	unset TMPDIR
 	if [[ -d "${WORKDIR}" ]]; then
-		display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "debug"
-		rm -rf "${WORKDIR}"
+		if [[ "${PRESERVE_WORKDIR}" != "yes" ]]; then
+			display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "debug"
+			rm -rf "${WORKDIR}"
+		else
+			display_alert "Preserving WORKDIR due to PRESERVE_WORKDIR=yes" "$(du -h -s "$WORKDIR")" "warn"
+		fi
 	fi
 }
