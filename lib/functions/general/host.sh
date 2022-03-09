@@ -58,20 +58,30 @@ prepare_host() {
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 	declare -a host_dependencies=(
-		acl aptly aria2 bc binfmt-support bison btrfs-progs
-		build-essential ca-certificates ccache cpio cryptsetup curl
+		# big bag of stuff from before
+		acl aptly bc binfmt-support bison btrfs-progs
+		build-essential ca-certificates ccache cpio cryptsetup
 		debian-archive-keyring debian-keyring debootstrap device-tree-compiler
 		dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk
-		gcc-arm-linux-gnueabihf
-		gcc-arm-linux-gnueabi gcc-arm-none-eabi
-		gdisk gnupg1 gpg imagemagick jq kmod libbison-dev
-		libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl
-		libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev
-		libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term
-		nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz pbzip2
+		gnupg gpg imagemagick jq kmod libbison-dev
+		libelf-dev libfdt-dev libfile-fcntllock-perl
+		libfl-dev liblz4-tool libncurses-dev libssl-dev
+		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
+		ntpdate patchutils
 		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
-		systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip
-		zlib1g-dev file ccze colorized-logs tree
+		systemd-container u-boot-tools udev uuid-dev whiptail
+		zlib1g-dev
+
+		# non-mess below?
+		file ccze colorized-logs tree              # logging utilities
+		unzip zip p7zip-full pigz pixz pbzip2 lzop # compressors et al
+		parted gdisk                               # partition tools
+		aria2 curl wget                            # downloaders et al
+
+		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
+		crossbuild-essential-armhf
+		crossbuild-essential-arm64
+		crossbuild-essential-amd64
 	)
 
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
@@ -84,15 +94,6 @@ prepare_host() {
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "https://www.armbian.com/using-armbian-tools/"
 		exit_with_error "Running this tool on non x86_64 or arm64 build host is not supported"
-	fi
-
-	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
-	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
-		host_dependencies+=(python2 python3)
-		ln -fs /usr/bin/python2.7 /usr/bin/python2
-		ln -fs /usr/bin/python2.7 /usr/bin/python
-	else
-		host_dependencies+=("python" "libpython-dev")
 	fi
 
 	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
