@@ -22,7 +22,12 @@ function webseed() {
 	echo "${text}"
 }
 
-download_and_verify() {
+# Non-error handled version @TODO: might be a terrible idea?
+function download_and_verify() {
+	download_and_verify_internal "${@}" || true
+}
+
+function download_and_verify_internal() {
 	local remotedir=$1
 	local filename=$2
 	local localdir=$SRC/cache/${remotedir//_/}
@@ -40,24 +45,19 @@ download_and_verify() {
 		return
 	fi
 
-	# allow errors here, too hackish to actually handle them
-	set +e
-
 	# switch to china mirror if US timeouts
-	timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}" 2>&1 > /dev/null || true
+	run_host_command_logged timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}"
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 		display_alert "Timeout from $server" "retrying" "info"
 		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 
 		# switch to another china mirror if tuna timeouts
-		timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 > /dev/null
+		run_host_command_logged timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}
 		if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 			display_alert "Timeout from $server" "retrying" "info"
 			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
 		fi
 	fi
-
-	set -e # Back to normal
 
 	# check if file exists on remote server before running aria2 downloader
 	[[ ! $(timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}) ]] && return
@@ -73,7 +73,7 @@ download_and_verify() {
 	else
 		# download control file
 		local torrent=${server}$remotedir/${filename}.torrent
-		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
+		run_host_command_logged aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
 			--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
@@ -102,7 +102,7 @@ download_and_verify() {
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
 		if [[ ! $(timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 > /dev/null) ]]; then
 			display_alert "downloading from $(echo $server | cut -d'/' -f3 | cut -d':' -f1) using http(s) network" "$filename"
-			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
+			run_host_command_logged aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
 				--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
@@ -141,10 +141,8 @@ download_and_verify() {
 					--recv-keys 9F0E78D5)
 			fi
 
-			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify \
-				--trust-model always -q "${localdir}/${filename}.asc"
+			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify --trust-model always -q "${localdir}/${filename}.asc"
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
-
 		else
 			md5sum -c --status "${localdir}/${filename}.asc" && verified=true && display_alert "Verified" "MD5" "info"
 		fi
@@ -160,6 +158,5 @@ download_and_verify() {
 		else
 			exit_with_error "verification failed"
 		fi
-
 	fi
 }
