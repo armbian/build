@@ -185,6 +185,9 @@ function create_new_rootfs_cache() {
 	# stage: install additional packages
 	display_alert "Installing the main packages for" "Armbian" "info"
 	export MSG_IF_ERROR="Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+	# First, try to download-only up to 3 times, to work around network/proxy problems.
+	chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST" || chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST" || chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST"
+	# Now do the install.
 	chroot_sdcard_apt_get_install "$PACKAGE_MAIN_LIST"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then

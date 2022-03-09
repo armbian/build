@@ -3,6 +3,10 @@ function chroot_sdcard_apt_get_install() {
 	chroot_sdcard_apt_get --no-install-recommends install "$@"
 }
 
+function chroot_sdcard_apt_get_install_download_only() {
+	chroot_sdcard_apt_get --no-install-recommends --download-only install "$@"
+}
+
 function chroot_sdcard_apt_get() {
 	local -a apt_params=("-${APT_OPTS:-y}")
 	[[ $NO_APT_CACHER != yes ]] && apt_params+=(
