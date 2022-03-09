@@ -85,7 +85,7 @@ function do_main_configuration() {
 		china)
 			[[ -z $USE_MAINLINE_GOOGLE_MIRROR ]] && [[ -z $MAINLINE_MIRROR ]] && MAINLINE_MIRROR=tuna
 			[[ -z $USE_GITHUB_UBOOT_MIRROR ]] && [[ -z $UBOOT_MIRROR ]] && UBOOT_MIRROR=gitee
-			[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=cnpmjs
+			[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=gitclone
 			[[ -z $DOWNLOAD_MIRROR ]] && DOWNLOAD_MIRROR=china
 			;;
 		*) ;;
@@ -139,13 +139,13 @@ function do_main_configuration() {
 
 	case $GITHUB_MIRROR in
 		fastgit)
-			GITHUB_SOURCE='https://hub.fastgit.xyz/'
+			GITHUB_SOURCE='https://hub.fastgit.xyz'
 			;;
 		gitclone)
-			GITHUB_SOURCE='https://gitclone.com/github.com/'
+			GITHUB_SOURCE='https://gitclone.com/github.com'
 			;;
 		*)
-			GITHUB_SOURCE='https://github.com/'
+			GITHUB_SOURCE='https://github.com'
 			;;
 	esac
 
