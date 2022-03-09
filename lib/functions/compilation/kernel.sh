@@ -56,12 +56,30 @@ function compile_kernel() {
 	local toolchain
 	LOG_SECTION="kernel_config" do_with_logging do_with_hooks kernel_config
 	LOG_SECTION="kernel_package_source" do_with_logging do_with_hooks kernel_package_source
-	LOG_SECTION="kernel_make_headers_dtbs_image_modules" do_with_logging do_with_hooks kernel_make_headers_dtbs_image_modules
-	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
+
+	# @TODO: might be interesting to package kernel-headers at this stage.
+	# @TODO: would allow us to have a "HEADERS_ONLY=yes" that can prepare arm64 headers on arm64 without building the whole kernel
+	# @TODO: also it makes sense, logically, to package headers after configuration, since that's all what's needed; it's the same
+	# @TODO: stage at which `dkms` would run (a configured, tool-built, kernel tree).
+
+	# @TODO: might also be interesting to do the same for DTBs.
+	# @TODO: those get packaged twice (once in linux-dtb and once in linux-image)
+	# @TODO: but for the u-boot bootloader, only the linux-dtb is what matters.
+	# @TODO: some users/maintainers do a lot of their work on "DTS/DTB only changes", which do require the kernel tree
+	# @TODO: but the only testable artifacts are the .dtb themselves. Allow for a `DTB_ONLY=yes` might be useful.
+
+	if [[ "a" == "b" ]]; then
+		# Do it individually
+		LOG_SECTION="kernel_make_headers_dtbs_image_modules" do_with_logging do_with_hooks kernel_make_headers_dtbs_image_modules
+		LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
+	else
+		# Do it all together
+		LOG_SECTION="kernel_build_and_package" do_with_logging do_with_hooks kernel_build_and_package
+	fi
+
 	display_alert "Done with" "kernel compile" "debug"
 	cd "${kernel_work_dir}/.." || exit
 	rm -f linux-firmware-image-*.deb # remove firmware image packages here - easier than patching ~40 packaging scripts at once
-	#run_host_command_logged dpkg-deb --contents ./*.deb || true
 	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
 	return 0
 }
@@ -188,6 +206,7 @@ function kernel_config() {
 
 	# copy kernel config
 	local COPY_CONFIG_BACK_TO=""
+
 	if [[ $KERNEL_KEEP_CONFIG == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
 		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
 		cp -p "${DEST}/config/${LINUXCONFIG}.config" .config
@@ -223,6 +242,7 @@ function kernel_config() {
 	fi
 
 	# hack for deb builder. To pack what's missing in headers pack.
+	# @TODO: only for legacy builds?
 	cp "${SRC}"/patch/misc/headers-debian-byteshift.patch /tmp # @TODO: ok, but why /tmp? It's leaking there.
 
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
@@ -254,6 +274,13 @@ function kernel_config() {
 			[[ -f defconfig ]] && cp defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
 		fi
 	fi
+
+	call_extension_method "custom_kernel_config_post_defconfig" <<- 'CUSTOM_KERNEL_CONFIG_POST_DEFCONFIG'
+		*Kernel .config is in place, already processed by Armbian*
+		Called after ${LINUXCONFIG}.config is put in place (.config).
+		After all olddefconfig any Kconfig make is called.
+		A good place to customize the .config last-minute.
+	CUSTOM_KERNEL_CONFIG_POST_DEFCONFIG
 
 	# Restore the date of .config. Above delta is a pure function, theoretically.
 	set_files_modification_time "${kernel_config_mtime}" ".config"
@@ -338,9 +365,9 @@ function kernel_package() {
 
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
-		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"  # Used by `make install`
-		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules" # Used by `make modules_install`
-		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/headers" # Used by `make headers_install`
+		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"       # Used by `make install`
+		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules"      # Used by `make modules_install`
+		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install`
 	)
 
 	local -a prepackage_targets=(install modules_install headers_install)
@@ -386,5 +413,48 @@ function kernel_package() {
 	### 	fasthash_debug "post-double-packaging"
 	### fi
 
+	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
+}
+
+function kernel_build_and_package() {
+	cd "${kernel_work_dir}"
+
+	local -a build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
+	declare kernel_dest_install_dir
+	kernel_dest_install_dir=$(mktemp -d "${WORKDIR}/kernel.temp.install.target.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
+
+	# define dict with vars passed and target directories
+	declare -A kernel_install_dirs=(
+		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"       # Used by `make install`
+		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules"      # Used by `make modules_install`
+		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install`
+	)
+
+	build_targets+=(install modules_install headers_install)
+	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
+		display_alert "Kernel build will produce DTBs!" "DTBs YES" "debug"
+		build_targets+=("dtbs_install")
+		kernel_install_dirs+=(["INSTALL_DTBS_PATH"]="${kernel_dest_install_dir}/dtbs") # Used by `make dtbs_install`
+	fi
+
+	# loop over the keys above, get the value, create param value in array; also mkdir the dir
+	declare -a install_make_params_quoted
+	local dir_key
+	for dir_key in "${!kernel_install_dirs[@]}"; do
+		local dir="${kernel_install_dirs["${dir_key}"]}"
+		local value="${dir_key}=${dir}"
+		mkdir -p "${dir}"
+		display_alert "Adding kernel packaging param" "${value}" "debug"
+		install_make_params_quoted+=("${value}")
+	done
+
+	display_alert "Building kernel" "${LINUXCONFIG} ${build_targets[*]}" "info"
+	fasthash_debug "build"
+	make_filter="| grep --line-buffered -v -e 'CC' -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \
+		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}"
+	fasthash_debug "build"
+
+	cd "${kernel_work_dir}"
+	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
 }

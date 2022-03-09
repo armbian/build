@@ -48,8 +48,8 @@ function prepare_kernel_packaging_debs() {
 	declare package_version="${REVISION}"
 
 	# show incoming tree
-	display_alert "Kernel install dir" "incoming from KBUILD make" "debug"
-	run_host_command_logged tree -C --du -h "${kernel_dest_install_dir}" "| grep --line-buffered -v -e '\.ko' -e '\.h' "
+	#display_alert "Kernel install dir" "incoming from KBUILD make" "debug"
+	#run_host_command_logged tree -C --du -h "${kernel_dest_install_dir}" "| grep --line-buffered -v -e '\.ko' -e '\.h' "
 
 	display_alert "tmp_kernel_install_dirs INSTALL_PATH:" "${tmp_kernel_install_dirs[INSTALL_PATH]}" "debug"
 	display_alert "tmp_kernel_install_dirs INSTALL_MOD_PATH:" "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}" "debug"
@@ -64,8 +64,11 @@ function prepare_kernel_packaging_debs() {
 		create_kernel_deb "linux-dtb-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_dtb
 	fi
 
-	# @TODO: package headers. probably in 3 phases: common per-version (libc headers), common per-arch (arch-specific, with binary tools), and kernel specific (kernel-headers, no tools)
-
+	if dpkg-architecture -e "${ARCH}"; then
+		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
+	else
+		display_alert "Cross-compilation" "skip kernel-headers packaging" "warn"
+	fi
 }
 
 function create_kernel_deb() {
@@ -120,8 +123,8 @@ function create_kernel_deb() {
 	display_alert "Unpacked ${package_name} tree" "${unpacked_size}" "debug"
 
 	# Show it
-	display_alert "Package dir" "for package ${package_name}" "debug"
-	run_host_command_logged tree -C -h -d --du "${package_directory}"
+	#display_alert "Package dir" "for package ${package_name}" "debug"
+	#run_host_command_logged tree -C -h -d --du "${package_directory}"
 
 	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${deb_output_dir}" # not KDEB compress, we're not under a Makefile
 }
@@ -155,6 +158,9 @@ function kernel_package_callback_linux_image() {
 
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_PATH]}" "${package_directory}/"         # /boot stuff
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}/lib" "${package_directory}/" # so "lib" stuff sits at the root
+
+	# Clean up symlinks in lib/modules/${kernel_version_family}/build and lib/modules/${kernel_version_family}/source; will be in the headers package
+	run_host_command_logged rm -v -f "${package_directory}/lib/modules/${kernel_version_family}/build" "${package_directory}/lib/modules/${kernel_version_family}/source"
 
 	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
 		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel
@@ -242,4 +248,85 @@ function kernel_package_callback_linux_dtb() {
 		EOT
 	)
 
+}
+
+function kernel_package_callback_linux_headers() {
+	display_alert "package_directory for headers" "${package_directory}" "debug"
+
+	# targets.
+	local headers_target_dir="${package_directory}/usr/src/linux-headers-${kernel_version_family}" # headers/tools etc
+	local modules_target_dir="${package_directory}/lib/modules/${kernel_version_family}"           # symlink to above later
+
+	mkdir -p "${headers_target_dir}" "${modules_target_dir}"                                                         # create both dirs
+	run_host_command_logged ln -v -s "/usr/src/linux-headers-${kernel_version_family}" "${modules_target_dir}/build" # Symlink in modules so builds find the headers
+	run_host_command_logged cp -vp "${kernel_work_dir}"/.config "${headers_target_dir}"/.config                      # copy .config manually to be where it's expected to be
+
+	# gather stuff from the linux source tree: ${kernel_work_dir} (NOT the make install destination)
+	# those can be source files or object (binary/compiled) stuff
+	# how to get SRCARCH? only from the makefile itself. ARCH=amd64 then SRCARCH=x86. How to we know? @TODO
+	local SRC_ARCH="${ARCH}"
+	[[ "${SRC_ARCH}" == "amd64" ]] && SRC_ARCH="x86"
+
+	# Create a list of files to include, path-relative to the kernel tree
+	local temp_file_list="${WORKDIR}/tmp_file_list_${kernel_version_family}.kernel.headers"
+
+	# Source stuff. No binaries. I think.
+	(
+		cd "${kernel_work_dir}" || exit 2
+		#echo "-- Sources: Makefiles and Kconfigs and perl"
+		find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl
+
+		#echo "-- Sources: all arches include, include and scripts both files and symlinks "
+		find arch/*/include include scripts -type f -o -type l
+
+		#echo "-- Sources: security include"
+		find security/*/include -type f
+
+		#echo "-- Sources: arch ${SRC_ARCH} module lds or Kbuild platforms or Platform"
+		find "arch/${SRC_ARCH}" -name module.lds -o -name Kbuild.platforms -o -name Platform
+
+		#echo "-- Sources: All files somewhere for some reason"
+		# shellcheck disable=SC2046 # I need to expand. Thanks.
+		find $(find "arch/${SRC_ARCH}" -name include -o -name scripts -type d) -type f
+
+		if is_enabled CONFIG_STACK_VALIDATION; then
+			#echo "-- Binaries: objtool due to CONFIG_STACK_VALIDATION"
+			find tools/objtool -type f -executable
+		fi
+
+		#echo "-- Binaries: Module.symvers and includes scripts FILES"
+		find arch/${SRC_ARCH}/include Module.symvers include scripts -type f
+
+		if is_enabled CONFIG_GCC_PLUGINS; then
+			#echo "-- Binaries: gcc plugins due to CONFIG_GCC_PLUGINS"
+			find scripts/gcc-plugins -name \*.so -o -name gcc-common.h
+		fi
+	) > "${temp_file_list}"
+
+	# Now include/copy those, using tar as intermediary. Just like builddeb does it.
+	tar -c -f - -C "${kernel_work_dir}" -T "${temp_file_list}" | tar -xf - -C "${headers_target_dir}"
+
+	# ${temp_file_list} is left at WORKDIR for later debugging, will be removed by WORKDIR cleanup trap
+
+	# @TODO: maybe split all binaries to a separate package at this stage; that way cross compile can still produce
+	# @TODO: source-only headers, which can then be patched (byteshift?) and compiled client-side later
+
+	# @TODO: cat "${temp_file_list}" | grep -v -e "\.h$" -e ".c$" -e "Makefile$" -e "Kconfig$" -e "Kbuild$" -e "\.cocci$"  |  xargs file | grep -v -e "ASCII" -e "script text"
+
+	# Generate a control file
+	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
+		Version: ${package_version}
+		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
+		Section: devel
+		Package: ${package_name}
+		Architecture: ${ARCH}
+		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
+		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev
+		Description: Linux kernel headers for ${kernel_version_family}
+		 This package provides kernel header files for ${kernel_version_family}
+		 .
+		 This is useful for DKMS and building of external modules.
+	CONTROL_FILE
+
+	# @TODO: preinst postinst? dependent on split, see todo above
 }
