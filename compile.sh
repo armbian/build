@@ -209,7 +209,7 @@ mkdir -p "${SRC}"/userpatches
 
 
 # Create example configs if none found in userpatches
-if ! ls "${SRC}"/userpatches/{config-example.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
+if ! ls "${SRC}"/userpatches/{config-default.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
 
 	# Migrate old configs
 	if ls "${SRC}"/*.conf 1> /dev/null 2>&1; then
