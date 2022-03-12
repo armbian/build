@@ -224,6 +224,10 @@ if ! ls "${SRC}"/userpatches/{config-example.conf,config-docker.conf,config-vagr
 	# Create example config
 	if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
 		cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
+	fi
+
+	# Link default config to example config
+	if [[ ! -f "${SRC}"/userpatches/config-default.conf ]]; then
                 ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
 	fi
 
