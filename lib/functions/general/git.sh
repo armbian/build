@@ -160,7 +160,8 @@ fetch_from_repo() {
 
 	# should be declared in outside scope, so can be read.
 	checked_out_revision_mtime="$(git log --date='format:%Y%m%d%H%M%S' --format='format:%ad' -1 "${checkout_from}")"
-	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime}" "debug"
+	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"
+	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "debug"
 
 	display_alert "Cleaning git dir" "$(git status -s 2> /dev/null | wc -l) files" # working directory is not clean, show it
 

@@ -94,7 +94,7 @@ process_patch_file() {
 		# shellcheck disable=SC2154 # patch_minimum_target_mtime can be declared in outer scope
 		if [[ "${patch_minimum_target_mtime}" != "" ]]; then
 			if [[ ${patch_date} -lt ${patch_minimum_target_mtime} ]]; then
-				display_alert "Patch before minimum date" "${patch_date} -lt ${patch_minimum_target_mtime}" "debug"
+				display_alert "Patch before minimum date" "${patch_date} -lt ${patch_minimum_target_mtime}" "timestamp"
 				patch_date=${patch_minimum_target_mtime}
 			fi
 		fi
@@ -108,10 +108,9 @@ process_patch_file() {
 
 		# @TODO: try patching with `git am` first, so git contains the patch commit info/msg. -- For future git-based hashing.
 		# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
-		patch --batch -p1 -N < "${patch}" && {
-			# Fix the dates.
+		patch --batch -p1 -N --input="${patch}" --quiet --reject-file=- && { # "-" discards rejects
+			# Fix the dates on the patched files
 			set_files_modification_time "${patch_date}" "${patched_files[@]}"
-
 			display_alert "* $status ${relative_patch}" "" "info"
 		} || {
 			display_alert "* $status ${relative_patch}" "failed" "wrn"

@@ -180,6 +180,14 @@ function display_alert() {
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
 			;;
 
+		timestamp | fasthash)
+			if [[ "${SHOW_FASTHASH}" != "yes" ]]; then # timestamp-related debugging messages, very very verbose
+				return 0
+			fi
+			level_indicator="⏱"
+			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
+			;;
+
 		*)
 			level_indicator="🌿"
 			inline_logs_color="\e[1;37m"
