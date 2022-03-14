@@ -6,6 +6,7 @@ function run_kernel_make() {
 		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse
 		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
 		"DPKG_COLORS=always"            # Use colors for dpkg
+		"XZ_OPT='--threads=0'"          # Use parallel XZ compression
 	)
 
 	common_make_params_quoted=(
@@ -13,15 +14,15 @@ function run_kernel_make() {
 		"ARCH=${ARCHITECTURE}"         # Key param. Everything depends on this.
 		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles
 
-		"BRANCH=${BRANCH}"              # For mkdebian/builddep packaging only
-		"KBUILD_DEBARCH=${ARCH}"        # For mkdebian/builddep packaging only
-		"KDEB_PKGVERSION=${REVISION}"   # For mkdebian/builddep packaging only
-		"KDEB_COMPRESS=${DEB_COMPRESS}" # For mkdebian/builddep packaging only
-		"DEBFULLNAME=${MAINTAINER}"     # For mkdebian/builddep packaging only
-		"DEBEMAIL=${MAINTAINERMAIL}"    # For mkdebian/builddep packaging only
-
 		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}" # added as prefix to every compiler invocation by make
 		"KCFLAGS=-fdiagnostics-color=always"         # Force GCC colored messages.
+
+		"SOURCE_DATE_EPOCH=${kernel_base_revision_ts}"        # https://reproducible-builds.org/docs/source-date-epoch/ and https://www.kernel.org/doc/html/latest/kbuild/reproducible-builds.html
+		"KBUILD_BUILD_TIMESTAMP=${kernel_base_revision_date}" # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-timestamp
+		"KBUILD_BUILD_USER=armbian-build"                     # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
+		"KBUILD_BUILD_HOST=armbian-bm"                        # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
+
+		"KGZIP=pigz" "KBZIP2=pbzip2" # Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/
 	)
 
 	# last statement, so it passes the result to calling function.
@@ -43,9 +44,15 @@ function run_kernel_make_long_running() {
 function compile_kernel() {
 	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
 	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
-	declare checked_out_revision_mtime="" # set by fetch_from_repo
+	declare checked_out_revision_mtime="" checked_out_revision_ts="" # set by fetch_from_repo
 	LOG_SECTION="kernel_prepare_git" do_with_logging do_with_hooks kernel_prepare_git
+
+	# Capture date variables set by fetch_from_repo; it's the date of the last kernel revision
+	declare kernel_base_revision_date
 	declare kernel_base_revision_mtime="${checked_out_revision_mtime}"
+	declare kernel_base_revision_ts="${checked_out_revision_ts}"
+	kernel_base_revision_date="$(LC_ALL=C date -d "@${kernel_base_revision_ts}")"
+
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
 	local version hash pre_patch_version
 	LOG_SECTION="kernel_prepare_patching" do_with_logging do_with_hooks kernel_prepare_patching
@@ -315,6 +322,8 @@ function kernel_package_source() {
 }
 
 function kernel_build_and_package() {
+	local ts=${SECONDS}
+
 	cd "${kernel_work_dir}"
 
 	local -a build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
@@ -323,12 +332,12 @@ function kernel_build_and_package() {
 
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
-		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"       # Used by `make install`
-		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules"      # Used by `make modules_install`
-		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install`
+		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"  # Used by `make install`
+		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules" # Used by `make modules_install`
+		#["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install` - disabled, only used for libc headers
 	)
 
-	build_targets+=(install modules_install headers_install)
+	build_targets+=(install modules_install) # headers_install disabled, only used for libc headers
 	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
 		display_alert "Kernel build will produce DTBs!" "DTBs YES" "debug"
 		build_targets+=("dtbs_install")
@@ -342,7 +351,6 @@ function kernel_build_and_package() {
 		local dir="${kernel_install_dirs["${dir_key}"]}"
 		local value="${dir_key}=${dir}"
 		mkdir -p "${dir}"
-		display_alert "Adding kernel packaging param" "${value}" "debug"
 		install_make_params_quoted+=("${value}")
 	done
 
@@ -354,5 +362,6 @@ function kernel_build_and_package() {
 
 	cd "${kernel_work_dir}"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
-	display_alert "Package building done" "${LINUXCONFIG}" "info"
+
+	display_alert "Kernel built and packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
 }

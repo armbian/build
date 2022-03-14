@@ -68,7 +68,7 @@ prepare_host() {
 		libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl
 		libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev
 		libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term
-		nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz
+		nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz pbzip2
 		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
 		systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip
 		zlib1g-dev file ccze tree
