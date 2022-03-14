@@ -11,17 +11,17 @@ function run_kernel_make() {
 	common_make_params_quoted=(
 		"$CTHREADS"                    # Parallel compile, "-j X" for X cpus
 		"ARCH=${ARCHITECTURE}"         # Key param. Everything depends on this.
-		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family.?
+		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles
 
-		"BRANCH=${BRANCH}"                           # For mkdebian/builddep packaging only
-		"KBUILD_DEBARCH=${ARCH}"                     # For mkdebian/builddep packaging only
-		"KDEB_PKGVERSION=${REVISION}"                # For mkdebian/builddep packaging only
-		"KDEB_COMPRESS=${DEB_COMPRESS}"              # For mkdebian/builddep packaging only
-		"DEBFULLNAME=${MAINTAINER}"                  # For mkdebian/builddep packaging only
-		"DEBEMAIL=${MAINTAINERMAIL}"                 # For mkdebian/builddep packaging only
-		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}" # For mkdebian/builddep packaging only
+		"BRANCH=${BRANCH}"              # For mkdebian/builddep packaging only
+		"KBUILD_DEBARCH=${ARCH}"        # For mkdebian/builddep packaging only
+		"KDEB_PKGVERSION=${REVISION}"   # For mkdebian/builddep packaging only
+		"KDEB_COMPRESS=${DEB_COMPRESS}" # For mkdebian/builddep packaging only
+		"DEBFULLNAME=${MAINTAINER}"     # For mkdebian/builddep packaging only
+		"DEBEMAIL=${MAINTAINERMAIL}"    # For mkdebian/builddep packaging only
 
-		"KCFLAGS=-fdiagnostics-color=always" # Force GCC colored messages.
+		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}" # added as prefix to every compiler invocation by make
+		"KCFLAGS=-fdiagnostics-color=always"         # Force GCC colored messages.
 	)
 
 	# last statement, so it passes the result to calling function.
@@ -48,7 +48,6 @@ function compile_kernel() {
 	declare kernel_base_revision_mtime="${checked_out_revision_mtime}"
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
 	local version hash pre_patch_version
-	local kernel_packaging_target
 	LOG_SECTION="kernel_prepare_patching" do_with_logging do_with_hooks kernel_prepare_patching
 	LOG_SECTION="kernel_patching" do_with_logging do_with_hooks kernel_patching
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel" # create patch for manual source changes
@@ -68,14 +67,7 @@ function compile_kernel() {
 	# @TODO: some users/maintainers do a lot of their work on "DTS/DTB only changes", which do require the kernel tree
 	# @TODO: but the only testable artifacts are the .dtb themselves. Allow for a `DTB_ONLY=yes` might be useful.
 
-	if [[ "a" == "b" ]]; then
-		# Do it individually
-		LOG_SECTION="kernel_make_headers_dtbs_image_modules" do_with_logging do_with_hooks kernel_make_headers_dtbs_image_modules
-		LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
-	else
-		# Do it all together
-		LOG_SECTION="kernel_build_and_package" do_with_logging do_with_hooks kernel_build_and_package
-	fi
+	LOG_SECTION="kernel_build_and_package" do_with_logging do_with_hooks kernel_build_and_package
 
 	display_alert "Done with" "kernel compile" "debug"
 	cd "${kernel_work_dir}/.." || exit
@@ -118,8 +110,7 @@ function kernel_maybe_clean() {
 }
 
 function kernel_prepare_patching() {
-
-	if [[ $USE_OVERLAYFS == yes ]]; then
+	if [[ $USE_OVERLAYFS == yes ]]; then # @TODO: when is this set to yes?
 		display_alert "Using overlayfs_wrapper" "kernel_${LINUXFAMILY}_${BRANCH}" "debug"
 		kernel_work_dir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
 	fi
@@ -132,12 +123,6 @@ function kernel_prepare_patching() {
 	version=$(grab_version "$kernel_work_dir")
 	pre_patch_version="${version}"
 	display_alert "Pre-patch kernel version" "${pre_patch_version}" "debug"
-
-	# different packaging for 4.3+
-	kernel_packaging_target="deb-pkg"
-	if linux-version compare "${version}" ge 4.3; then
-		kernel_packaging_target="bindeb-pkg"
-	fi
 
 	# read kernel git hash
 	hash=$(git --git-dir="$kernel_work_dir"/.git rev-parse HEAD)
@@ -162,10 +147,6 @@ function kernel_patching() {
 		fasthash_branch "patches-${KERNELPATCHDIR}-series.conf"
 		apply_patch_series "${kernel_work_dir}" "${series_conf}" # applies a series of patches, read from a file. calls process_patch_file
 	fi
-
-	# mostly local-based packaging fixes.
-	fasthash_branch "packaging-patches"
-	apply_kernel_patches_for_packaging "${kernel_work_dir}" "${version}" # calls process_patch_file and other stuff.
 
 	# applies a humongous amount of patches coming from github repos.
 	# it's mostly conditional, and very complex.
@@ -333,89 +314,6 @@ function kernel_package_source() {
 	display_alert "$(basename "${sources_pkg_dir}.deb" ".deb") packaged" "$((SECONDS - ts)) seconds, ${tarball_size} tarball, ${package_size} .deb" "info"
 }
 
-function kernel_make_headers_dtbs_image_modules() {
-	local -a build_targets=("headers")
-	[[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]] && build_targets+=("dtbs")
-	build_targets+=("${KERNEL_IMAGE_TYPE}" modules)
-
-	display_alert "Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
-	fasthash_debug "pre-compile"
-	make_filter="| grep --line-buffered -v -e 'CC' -e 'LD' -e 'AR'" run_kernel_make_long_running "${build_targets[@]}"
-	fasthash_debug "post-compile"
-
-	if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
-		display_alert "DOUBLE Compiling Kernel" "${LINUXCONFIG} ${KERNEL_IMAGE_TYPE}" "info"
-		fasthash_debug "pre-double-compile"
-		run_kernel_make_long_running "${build_targets[@]}"
-		fasthash_debug "post-double-compile"
-	fi
-
-	# Check for built kernel image file file; can override default with KERNEL_IMAGE_TYPE_PATH
-	local check_built_kernel_file="${kernel_work_dir}/${KERNEL_IMAGE_TYPE_PATH:-"arch/${ARCHITECTURE}/boot/${KERNEL_IMAGE_TYPE}"}"
-	if [[ ! -f "${check_built_kernel_file}" ]]; then
-		exit_with_error "Kernel was not built" "${check_built_kernel_file}"
-	fi
-}
-
-function kernel_package() {
-	cd "${kernel_work_dir}"
-
-	declare kernel_dest_install_dir
-	kernel_dest_install_dir=$(mktemp -d "${WORKDIR}/kernel.temp.install.target.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-
-	# define dict with vars passed and target directories
-	declare -A kernel_install_dirs=(
-		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"       # Used by `make install`
-		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules"      # Used by `make modules_install`
-		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install`
-	)
-
-	local -a prepackage_targets=(install modules_install headers_install)
-	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
-		display_alert "Kernel build will produce DTBs!" "DTBs YES" "debug"
-		prepackage_targets+=("dtbs_install")
-		kernel_install_dirs+=(["INSTALL_DTBS_PATH"]="${kernel_dest_install_dir}/dtbs") # Used by `make dtbs_install`
-	fi
-
-	display_alert "Packaging Kernel" "${LINUXCONFIG} $kernel_packaging_target at ${kernel_dest_install_dir}" "info"
-
-	# loop over the keys above, get the value, create param value in array; also mkdir the dir
-	declare -a install_make_params_quoted
-	local dir_key
-	for dir_key in "${!kernel_install_dirs[@]}"; do
-		local dir="${kernel_install_dirs["${dir_key}"]}"
-		local value="${dir_key}=${dir}"
-		mkdir -p "${dir}"
-		display_alert "Adding kernel packaging param" "${value}" "debug"
-		install_make_params_quoted+=("${value}")
-	done
-
-	# See https://www.kernel.org/doc/Documentation/kbuild/headers_install.txt
-	# Prepare for packaging, using the exact same options as original compile.
-	display_alert "Installing kernel headers and modules for packaging" "${LINUXCONFIG} ${prepackage_targets[*]}" "info"
-	fasthash_debug "pre-prepackage"
-	make_filter="| grep --line-buffered -v -e 'INSTALL' -e 'SIGN' -e 'XZ'" run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${prepackage_targets[@]}"
-	fasthash_debug "post-prepackage"
-
-	cd "${kernel_work_dir}"
-	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
-
-	### # produce deb packages: image, headers, firmware, dtb
-	### # This mostly only does
-	### fasthash_debug "pre-packaging"
-	### run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" $kernel_packaging_target
-	### fasthash_debug "post-packaging"
-	###
-	### if [[ "${DOUBLE_COMPILE_KERNEL}" == "yes" ]]; then
-	### 	display_alert "DOUBLE Packaging Kernel, Headers and DTBs" "${LINUXCONFIG} $kernel_packaging_target" "info"
-	### 	fasthash_debug "pre-double-packaging"
-	### 	run_kernel_make_long_running $kernel_packaging_target
-	### 	fasthash_debug "post-double-packaging"
-	### fi
-
-	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
-}
-
 function kernel_build_and_package() {
 	cd "${kernel_work_dir}"
 
@@ -456,5 +354,5 @@ function kernel_build_and_package() {
 
 	cd "${kernel_work_dir}"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
-	display_alert "Package building done" "${LINUXCONFIG} $kernel_packaging_target" "info"
+	display_alert "Package building done" "${LINUXCONFIG}" "info"
 }
