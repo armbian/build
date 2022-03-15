@@ -91,7 +91,8 @@ function cli_entrypoint() {
 	export DESTIMG="${SRC}/.tmp/image-${ARMBIAN_BUILD_UUID}"                        # DESTIMG is where the backing image (raw, huge, sparse file) is kept (not the final destination)
 	export LOGDIR="${SRC}/.tmp/logs-${ARMBIAN_BUILD_UUID}"                          # Will be initialized very soon, literally, below.
 
-	LOG_SECTION=entrypoint start_logging_section # This creates LOGDIR. Hopefully.
+	LOG_SECTION=entrypoint start_logging_section     # This creates LOGDIR.
+	add_cleanup_handler trap_handler_cleanup_logging # cleanup handler for logs; it rolls it up from LOGDIR into DEST/logs
 
 	# Source the extensions manager library at this point, before sourcing the config.
 	# This allows early calls to enable_extension(), but initialization proper is done later.

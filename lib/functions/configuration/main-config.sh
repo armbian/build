@@ -50,10 +50,10 @@ function do_main_configuration() {
 	fi
 
 	# image artefact destination with or without subfolder
-	FINALDEST=$DEST/images
+	FINALDEST="${DEST}/images"
 	if [[ -n "${MAKE_FOLDERS}" ]]; then
-		FINALDEST=$DEST/images/"${BOARD}"/"${MAKE_FOLDERS}"
-		install -d ${FINALDEST}
+		FINALDEST="${DEST}"/images/"${BOARD}"/"${MAKE_FOLDERS}"
+		install -d "${FINALDEST}"
 	fi
 
 	# TODO: fixed name can't be used for parallel image building

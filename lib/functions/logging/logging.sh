@@ -27,7 +27,7 @@ function logging_error_show_log() {
 
 		if [[ -f /usr/bin/ccze ]]; then # use 'ccze' to colorize the log, making errors a lot more obvious.
 			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-			cat "${logfile_to_show}" | grep -v -e "^$" | /usr/bin/ccze -A | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
+			cat "${logfile_to_show}" | grep -v -e "^$" | /usr/bin/ccze -o nolookups -A | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 		else
 			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
 			cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
@@ -261,4 +261,62 @@ function logging_echo_prefix_for_pv() {
 	echo -n -e "${normal_color}${left_marker}${padding}${indicator}${padding}${normal_color}${right_marker}"
 	return 0
 
+}
+
+# Cleanup for logging.
+function trap_handler_cleanup_logging() {
+	[[ ! -d "${LOGDIR}" ]] && return 0
+	display_alert "Cleaning up logs from LOGDIR" "${LOGDIR}" "debug"
+
+	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode.
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
+		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY}" "debug"
+		rm -rf --one-file-system "${LOGDIR}"
+		return 0
+	fi
+
+	local target_path="${DEST}/logs"
+	mkdir -p "${target_path}"
+	local target_file="${target_path}/armbian-logs-${ARMBIAN_BUILD_UUID}.html"
+
+	cat <<- HTML_HEADER > "${target_file}"
+		<html>
+			<head>
+			<title>Armbian logs for ${ARMBIAN_BUILD_UUID}</title>
+			<style>
+				html { background-color: black !important; color: white !important; font-family: JetBrains Mono, monospace, cursive !important; }
+				hr { border: 0; border-bottom: 1px dashed silver; }
+			</style>
+			</head>
+		<body>
+	HTML_HEADER
+
+	# Find and sort the files there, store in array one per logfile
+	declare -a logfiles_array
+	mapfile -t logfiles_array < <(find "${LOGDIR}" -type f | LC_ALL=C sort -h)
+
+	for logfile_full in "${logfiles_array[@]}"; do
+		local logfile_base="$(basename "${logfile_full}")"
+		if [[ -f /usr/bin/ccze ]] && [[ -f /usr/bin/ansi2html ]]; then
+			cat <<- HTML_ONE_LOGFILE_WITH_CCZE >> "${target_file}"
+				<h3>${logfile_base}</h3>
+				<div style="padding: 1em">
+				$(cat "${logfile_full}" | ccze -o nolookups --raw-ansi | ansi2html --no-wrap --no-header)
+				</div>
+				<hr/>
+			HTML_ONE_LOGFILE_WITH_CCZE
+		else
+			cat <<- HTML_ONE_LOGFILE_NO_CCZE >> "${target_file}"
+				<h1>${logfile_base}</h1>
+				<pre>$(cat "${logfile_full}")</pre>
+			HTML_ONE_LOGFILE_NO_CCZE
+		fi
+	done
+
+	cat <<- HTML_FOOTER >> "${target_file}"
+		</body></html>
+	HTML_FOOTER
+
+	rm -rf --one-file-system "${LOGDIR}"
+	display_alert "Build log file" "${target_file}"
 }
