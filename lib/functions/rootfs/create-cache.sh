@@ -170,11 +170,11 @@ function create_new_rootfs_cache() {
 
 	# stage: update packages list
 	display_alert "Updating package list" "$RELEASE" "info"
-	chroot_sdcard_apt_get update
+	do_with_retries 3 chroot_sdcard_apt_get update
 
 	# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 	display_alert "Upgrading base packages" "Armbian" "info"
-	chroot_sdcard_apt_get upgrade
+	do_with_retries 3 chroot_sdcard_apt_get upgrade
 
 	# Myy: Dividing the desktop packages installation steps into multiple
 	# ones. We first install the "ADDITIONAL_PACKAGES" in order to get
@@ -186,8 +186,9 @@ function create_new_rootfs_cache() {
 	display_alert "Installing the main packages for" "Armbian" "info"
 	export MSG_IF_ERROR="Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 	# First, try to download-only up to 3 times, to work around network/proxy problems.
-	chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST" || chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST" || chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST"
-	# Now do the install.
+	do_with_retries 3 chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST"
+
+	# Now do the install, all packages should have been downloaded by now
 	chroot_sdcard_apt_get_install "$PACKAGE_MAIN_LIST"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
@@ -211,6 +212,10 @@ function create_new_rootfs_cache() {
 
 		display_alert "Installing the desktop packages for" "Armbian" "info"
 		MSG_IF_ERROR="Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+		# Retry download-only 3 times first.
+		do_with_retries 3 chroot_sdcard_apt_get_install_download_only ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP
+
+		# Then do the actual install.
 		chroot_sdcard_apt_get install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP
 	fi
 

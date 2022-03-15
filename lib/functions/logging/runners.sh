@@ -163,3 +163,18 @@ function run_host_command_logged_raw() {
 run_on_sdcard() {
 	chroot_sdcard "${@}"
 }
+
+# Auto retries the number of times passed on first argument to run all the other arguments.
+function do_with_retries() {
+	local retries="${1}"
+	shift
+	local counter=0
+	while [[ $counter -lt $retries ]]; do
+		counter=$((counter + 1))
+		"$@" && return 0 # execute and return 0 if success; if not, let it loop;
+		display_alert "Command failed, retrying in 5s" "$*" "warn"
+		sleep 5
+	done
+	display_alert "Command failed ${counter} times, giving up" "$*" "warn"
+	return 1
+}
