@@ -707,6 +707,9 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
 		$kerneldir/drivers/net/wireless/Kconfig
 
+                # add support for K5.11+
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs.patch" "applying"
+
 	fi
 
 
