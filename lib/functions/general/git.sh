@@ -84,20 +84,32 @@ fetch_from_repo() {
 
 	display_alert "Git working dir" "${git_work_dir}" "git"
 
-	# "Sanity check" since we only support one "origin"
-	if [[ "$(git rev-parse --git-dir)" == ".git" && "$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///')" ]]; then
-		exit_with_error "Remote URL does not match. Stopping!" "${git_work_dir} $dir $ref_name" "warn"
+	local expected_origin_url actual_origin_url
+	expected_origin_url="$(echo -n "${url}" | sed 's/^.*@//' | sed 's/^.*\/\///')"
+
+	# Make sure the origin matches what is expected. If it doesn't, clean up and start again.
+	if [[ "$(git rev-parse --git-dir)" == ".git" ]]; then
+		actual_origin_url="$(git config remote.origin.url | sed 's/^.*@//' | sed 's/^.*\/\///')"
+		if [[ "${expected_origin_url}" != "${actual_origin_url}" ]]; then
+			display_alert "Remote git URL does not match, deleting working copy" "${git_work_dir} expected: '${expected_origin_url}' actual: '${actual_origin_url}'" "warn"
+			cd "${SRC}" || exit 3                                                                            # free up cwd
+			run_host_command_logged rm -rf "${git_work_dir}"                                                 # delete the dir
+			mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}" # recreate
+			cd "${git_work_dir}" || exit                                                                     #reset cwd
+		fi
 	fi
 
 	local do_warmup_remote="no" do_cold_bundle="no" do_add_origin="no"
 
 	if [[ "$(git rev-parse --git-dir)" != ".git" ]]; then
+		# Dir is not a git working copy. Make it so.
 		display_alert "Creating local copy" "$dir $ref_name"
 		regular_git init -q --initial-branch="armbian_unused_initial_branch" .
 		offline=false          # Force online, we'll need to fetch.
 		do_add_origin="yes"    # Just created the repo, it needs an origin later.
 		do_warmup_remote="yes" # Just created the repo, mark it as ready to receive the warm remote if exists.
 		do_cold_bundle="yes"   # Just created the repo, mark it as ready to receive a cold bundle if that is available.
+		# @TODO: possibly hang a cleanup handler here: if this fails, ${git_work_dir} should be removed.
 	fi
 
 	local changed=false
@@ -166,7 +178,7 @@ fetch_from_repo() {
 	display_alert "Cleaning git dir" "$(git status -s 2> /dev/null | wc -l) files" # working directory is not clean, show it
 
 	#fasthash_debug "before git checkout of $dir $ref_name" # fasthash interested in this
-	regular_git checkout -f -q "${checkout_from}"          # Return the files that are tracked by git to the initial state.
+	regular_git checkout -f -q "${checkout_from}" # Return the files that are tracked by git to the initial state.
 
 	#fasthash_debug "before git clean of $dir $ref_name"
 	regular_git clean -q -d -f # Files that are not tracked by git and were added when the patch was applied must be removed.
@@ -212,9 +224,9 @@ function git_fetch_from_bundle_file() {
 
 function download_git_bundle_from_http() {
 	local bundle_file="${1}" bundle_url="${2}"
-	if [[ ! -f "${git_cold_bundle_cache_file}" ]]; then                                         # Download the bundle file if it does not exist.
-		display_alert "Downloading Git cold bundle via HTTP" "${bundle_url}" "info"         # This gonna take a while. And waste bandwidth
-		run_host_command_logged wget --continue --progress=giga --output-document="${bundle_file}" "${bundle_url}"
+	if [[ ! -f "${git_cold_bundle_cache_file}" ]]; then                          # Download the bundle file if it does not exist.
+		display_alert "Downloading Git cold bundle via HTTP" "${bundle_url}" "info" # This gonna take a while. And waste bandwidth
+		run_host_command_logged wget --continue --progress=dot:giga --output-document="${bundle_file}" "${bundle_url}"
 	else
 		display_alert "Cold bundle file exists, using it" "${bundle_file}" "git"
 	fi
@@ -295,7 +307,7 @@ function git_handle_cold_and_warm_bundle_remotes() {
 			regular_git remote add "${GIT_WARM_REMOTE_NAME}" "${GIT_WARM_REMOTE_URL}" # Add the remote to the warmup source
 			has_git_warm_remote=1                                                     # mark as done. Will export the bundle!
 
-			improved_git_fetch --no-tags "${GIT_WARM_REMOTE_NAME}" "${GIT_WARM_REMOTE_BRANCH}"            # Fetch the remote branch, but no tags
+			improved_git_fetch --no-tags "${GIT_WARM_REMOTE_NAME}" "${GIT_WARM_REMOTE_BRANCH}"          # Fetch the remote branch, but no tags
 			display_alert "After warm bundle, working copy size" "$(du -h -s | awk '{print $1}')" "git" # Show size after bundle pull
 
 			# Checkout that to a branch. We wanna have a local reference to what has been fetched.
@@ -304,7 +316,7 @@ function git_handle_cold_and_warm_bundle_remotes() {
 			regular_git branch "${git_warm_branch_name}" FETCH_HEAD || true
 
 			improved_git_fetch "${GIT_WARM_REMOTE_NAME}" "'refs/tags/${GIT_WARM_REMOTE_FETCH_TAGS}:refs/tags/${GIT_WARM_REMOTE_FETCH_TAGS}'" || true # Fetch the remote branch, but no tags
-			display_alert "After warm bundle tags, working copy size" "$(du -h -s | awk '{print $1}')" "git"                                       # Show size after bundle pull
+			display_alert "After warm bundle tags, working copy size" "$(du -h -s | awk '{print $1}')" "git"                                         # Show size after bundle pull
 
 			# Lookup the tag (at the warm remote directly) to find the rev to shallow to.
 			if [[ "${GIT_WARM_REMOTE_SHALLOW_AT_TAG}" != "" ]]; then
