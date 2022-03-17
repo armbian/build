@@ -4,19 +4,19 @@ compile_atf() {
 		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 	fi
 
-	if [[ $CLEAN_LEVEL == *make* ]]; then
-		display_alert "Cleaning" "$ATFSOURCEDIR" "info"
+	if [[ $CLEAN_LEVEL == *make-atf* ]]; then
+		display_alert "Cleaning ATF tree - CLEAN_LEVEL contains 'make-atf'" "$ATFSOURCEDIR" "info"
 		(
-			cd "${SRC}/cache/sources/${ATFSOURCEDIR}"
-			make distclean 2>&1
+			cd "${SRC}/cache/sources/${ATFSOURCEDIR}" || exit_with_error "crazy about ${ATFSOURCEDIR}"
+			run_host_command_logged make distclean
 		)
+	else
+		display_alert "Not cleaning ATF tree, use CLEAN_LEVEL=make-atf if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
 	fi
 
+	local atfdir="$SRC/cache/sources/$ATFSOURCEDIR"
 	if [[ $USE_OVERLAYFS == yes ]]; then
-		local atfdir
 		atfdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$ATFSOURCEDIR" "atf_${LINUXFAMILY}_${BRANCH}")
-	else
-		local atfdir="$SRC/cache/sources/$ATFSOURCEDIR"
 	fi
 	cd "$atfdir" || exit
 

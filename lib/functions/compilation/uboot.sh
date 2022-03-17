@@ -1,3 +1,15 @@
+function maybe_make_clean_uboot() {
+	if [[ $CLEAN_LEVEL == *make-uboot* ]]; then
+		display_alert "${uboot_prefix}Cleaning u-boot tree - CLEAN_LEVEL contains 'make-uboot'" "${BOOTSOURCEDIR}" "info"
+		(
+			cd "${SRC}/cache/sources/${BOOTSOURCEDIR}" || exit_with_error "crazy about ${BOOTSOURCEDIR}"
+			run_host_command_logged make clean
+		)
+	else
+		display_alert "${uboot_prefix}Not cleaning u-boot tree, use CLEAN_LEVEL=make-uboot if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
+	fi
+}
+
 # this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
 function compile_uboot_target() {
 	local uboot_prefix="{u-boot:${uboot_target_counter}} "
@@ -9,15 +21,9 @@ function compile_uboot_target() {
 
 	# needed for multiple targets and for calling compile_uboot directly
 	display_alert "${uboot_prefix} Checking out to clean sources" "{$BOOTSOURCEDIR} for ${target_make}"
-	git checkout -f -q HEAD
+	git checkout -f -q HEAD # @TODO: this assumes way too much. should call the wrapper again, not directly
 
-	if [[ $CLEAN_LEVEL == *make* ]]; then
-		display_alert "${uboot_prefix}Cleaning" "${BOOTSOURCEDIR}" "info"
-		(
-			cd "${SRC}/cache/sources/${BOOTSOURCEDIR}"
-			make clean 2>&1
-		)
-	fi
+	maybe_make_clean_uboot
 
 	advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
@@ -102,13 +108,7 @@ compile_uboot() {
 	fi
 
 	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean
-	if [[ $CLEAN_LEVEL == *make* ]]; then
-		display_alert "Cleaning" "$BOOTSOURCEDIR" "info"
-		(
-			cd "${SRC}/cache/sources/${BOOTSOURCEDIR}"
-			make clean > /dev/null 2>&1
-		)
-	fi
+	maybe_make_clean_uboot
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
 		local ubootdir

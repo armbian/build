@@ -106,13 +106,15 @@ function kernel_prepare_git() {
 }
 
 function kernel_maybe_clean() {
-	if [[ $CLEAN_LEVEL == *make* ]]; then
-		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
+	if [[ $CLEAN_LEVEL == *make-kernel* ]]; then
+		display_alert "Cleaning Kernel tree - CLEAN_LEVEL contains 'make-kernel'" "$LINUXSOURCEDIR" "info"
 		(
 			cd "${kernel_work_dir}"
-			make ARCH="${ARCHITECTURE}" clean > /dev/null 2>&1
+			run_host_command_logged make ARCH="${ARCHITECTURE}" clean
 		)
 		fasthash_debug "post make clean"
+	else
+		display_alert "Not cleaning Kernel tree; use CLEAN_LEVEL=make-kernel if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
 	fi
 }
 

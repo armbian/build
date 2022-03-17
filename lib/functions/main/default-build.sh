@@ -45,10 +45,9 @@ function main_default_build_single() {
 			LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
 		fi
 
-		for option in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
-			if [[ $option != sources ]]; then
-				LOG_SECTION="cleaning" do_with_logging cleaning "$option"
-				#fasthash_debug "main_cleaning_armbian"
+		for cleaning_fragment in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
+			if [[ $cleaning_fragment != sources ]] && [[ $cleaning_fragment != make* ]]; then
+				LOG_SECTION="cleaning_${cleaning_fragment}" do_with_logging general_cleaning "${cleaning_fragment}"
 			fi
 		done
 	fi
