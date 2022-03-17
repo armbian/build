@@ -8,13 +8,14 @@ function chroot_sdcard_apt_get_install_download_only() {
 }
 
 function chroot_sdcard_apt_get() {
+	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
+
 	local -a apt_params=("-${APT_OPTS:-y}")
 	[[ $NO_APT_CACHER != yes ]] && apt_params+=(
 		-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
 		-o "Acquire::http::Proxy::localhost=\"DIRECT\""
 	)
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
-	# IMPORTANT: this function returns the exit code of last statement, in this case chroot (which gets its result from bash which calls apt-get)
 	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
 }
 

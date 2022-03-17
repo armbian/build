@@ -1,33 +1,3 @@
-# prepare_host_basic
-#
-# * installs only basic packages
-#
-prepare_host_basic() {
-
-	# command:package1 package2 ...
-	# list of commands that are neeeded:packages where this command is
-	local check_pack install_pack
-	local checklist=(
-		"dialog:dialog"
-		"fuser:psmisc"
-		"getfacl:acl"
-		"uuid:uuid uuid-runtime"
-		"curl:curl"
-		"gpg:gnupg"
-		"gawk:gawk"
-	)
-
-	for check_pack in "${checklist[@]}"; do
-		if ! which ${check_pack%:*} > /dev/null; then local install_pack+=${check_pack#*:}" "; fi
-	done
-
-	if [[ -n $install_pack ]]; then
-		display_alert "Installing basic packages" "$install_pack"
-		sudo bash -c "apt-get -qq update && apt-get install -qq -y --no-install-recommends $install_pack"
-	fi
-
-}
-
 # prepare_host
 #
 # * checks and installs necessary packages
@@ -139,10 +109,11 @@ prepare_host() {
 	# Skip verification if you are working offline
 	if ! $offline; then
 
-		# warning: apt-cacher-ng will fail if installed and used both on host and in
-		# container/chroot environment with shared network
+		# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 		# set NO_APT_CACHER=yes to prevent installation errors in such case
-		if [[ $NO_APT_CACHER != yes ]]; then host_dependencies+=("apt-cacher-ng"); fi
+		if [[ $NO_APT_CACHER != yes ]]; then
+			host_dependencies+=("apt-cacher-ng")
+		fi
 
 		export EXTRA_BUILD_DEPS=""
 		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
@@ -150,17 +121,20 @@ prepare_host() {
 			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
 		ADD_HOST_DEPENDENCIES
 
-		# shellcheck disable=SC2206 # I wanna expand. later will convert to proper array
-		if [ -n "${EXTRA_BUILD_DEPS}" ]; then host_dependencies+=(${EXTRA_BUILD_DEPS}); fi
+		if [ -n "${EXTRA_BUILD_DEPS}" ]; then
+			# shellcheck disable=SC2206 # I wanna expand. @TODO: later will convert to proper array
+			host_dependencies+=(${EXTRA_BUILD_DEPS})
+		fi
 
 		display_alert "Installing build dependencies"
-		# don't prompt for apt cacher selection
+
+		# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
 		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
 		# This handles the wanted list in $host_dependencies, updates apt only if needed
 		install_host_side_packages "${host_dependencies[@]}"
 
-		update-ccache-symlinks
+		run_host_command_logged update-ccache-symlinks
 
 		export FINAL_HOST_DEPS="${host_dependencies[*]}"
 		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
@@ -170,13 +144,16 @@ prepare_host() {
 			are installed at this point. The system clock has not yet been synced.
 		HOST_DEPENDENCIES_READY
 
+		# Manage apt-cacher-ng
+		acng_configure_and_restart_acng
+
 		# sync clock
 		if [[ $SYNC_CLOCK != no ]]; then
 			display_alert "Syncing clock" "host" "info"
-			ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
+			run_host_command_logged ntpdate "${NTP_SERVER:-pool.ntp.org}"
 		fi
 
-		# create directory structure
+		# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
 		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
 		if [[ -n $SUDO_USER ]]; then
 			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
@@ -189,56 +166,8 @@ prepare_host() {
 		# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 		mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
-		# build aarch64
-		if [[ $(dpkg --print-architecture) == amd64 ]]; then
-			if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
-
-				# bind mount toolchain if defined
-				if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
-					mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
-					mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
-				fi
-
-				display_alert "Checking for external GCC compilers" "" "info"
-				# download external Linaro compiler and missing special dependencies since they are needed for certain sources
-
-				local toolchains=(
-					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchain/gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-					"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
-				)
-
-				USE_TORRENT_STATUS=${USE_TORRENT}
-				USE_TORRENT="no"
-				for toolchain in ${toolchains[@]}; do
-					download_and_verify "_toolchain" "${toolchain##*/}"
-				done
-				USE_TORRENT=${USE_TORRENT_STATUS}
-
-				rm -rf "${SRC}"/cache/toolchain/*.tar.xz*
-				local existing_dirs=($(ls -1 "${SRC}"/cache/toolchain))
-				for dir in ${existing_dirs[@]}; do
-					local found=no
-					for toolchain in ${toolchains[@]}; do
-						local filename=${toolchain##*/}
-						local dirname=${filename//.tar.xz/}
-						[[ $dir == $dirname ]] && found=yes
-					done
-					if [[ $found == no ]]; then
-						display_alert "Removing obsolete toolchain" "$dir"
-						rm -rf "${SRC}/cache/toolchain/${dir}"
-					fi
-				done
-			else
-				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
-			fi
-		fi
+		# Mostly deprecated.
+		download_external_toolchains
 
 	fi # check offline
 
@@ -252,8 +181,9 @@ prepare_host() {
 		fi
 	fi
 
-	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
+	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
+	# @TODO: what is this, and why?
 	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
 		rm -f "${USERPATCHES_PATH}"/readme.txt
 		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
@@ -263,78 +193,13 @@ prepare_host() {
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
 	fi
 
-	# check free space (basic)
-	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes
-	if [[ -n $freespace && $(($freespace / 1073741824)) -lt 10 ]]; then
-		display_alert "Low free space left" "$(($freespace / 1073741824)) GiB" "wrn"
+	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
+	local free_space_bytes
+	free_space_bytes=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes
+	if [[ -n $free_space_bytes && $((free_space_bytes / 1073741824)) -lt 10 ]]; then
+		display_alert "Low free space left" "$((free_space_bytes / 1073741824)) GiB" "wrn"
 		# pause here since dialog-based menu will hide this message otherwise
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read # @TODO: this fails if stdin is not a tty, or just hangs
 	fi
-}
-
-# wait_for_package_manager
-#
-# * installation will break if we try to install when package manager is running
-#
-wait_for_package_manager() {
-	# exit if package manager is running in the back
-	while true; do
-		if [[ "$(
-			fuser /var/lib/dpkg/lock 2> /dev/null
-			echo $?
-		)" != 1 && "$(
-			fuser /var/lib/dpkg/lock-frontend 2> /dev/null
-			echo $?
-		)" != 1 ]]; then
-			display_alert "Package manager is running in the background." "Please wait! Retrying in 30 sec" "wrn"
-			sleep 30
-		else
-			break
-		fi
-	done
-}
-
-function fetch_and_build_host_tools() {
-	call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
-		*fetch host-side sources needed for tools and build*
-		Run early to fetch_from_repo or otherwise obtain sources for needed tools.
-	FETCH_SOURCES_TOOLS
-
-	call_extension_method "build_host_tools" <<- 'BUILD_HOST_TOOLS'
-		*build needed tools for the build, host-side*
-		After sources are fetched, build host-side tools needed for the build.
-	BUILD_HOST_TOOLS
-
-}
-
-# Install the whitespace-delimited packages listed in the first parameter, in the host (not chroot).
-# It handles correctly the case where all wanted packages are already installed, and in that case does nothing.
-# If packages are to be installed, it does an apt-get update first.
-function install_host_side_packages() {
-	declare wanted_packages_string
-	declare -a currently_installed_packages missing_packages
-	wanted_packages_string=${*}
-	missing_packages=()
-	# shellcheck disable=SC2207 # I wanna split, thanks.
-	currently_installed_packages=($(dpkg-query --show --showformat='${Package} '))
-	for PKG_TO_INSTALL in ${wanted_packages_string}; do
-		# shellcheck disable=SC2076 # I wanna match literally, thanks.
-		if [[ ! " ${currently_installed_packages[*]} " =~ " ${PKG_TO_INSTALL} " ]]; then
-			display_alert "Should install package" "${PKG_TO_INSTALL}"
-			missing_packages+=("${PKG_TO_INSTALL}")
-		fi
-	done
-
-	if [[ ${#missing_packages[@]} -gt 0 ]]; then
-		display_alert "Updating apt host-side for installing packages" "${#missing_packages[@]} packages" "info"
-		host_apt_get update
-		display_alert "Installing host-side packages" "${missing_packages[*]}" "info"
-		host_apt_get_install "${missing_packages[@]}"
-	else
-		display_alert "All host-side dependencies/packages already installed." "Skipping host-hide install" "debug"
-	fi
-
-	unset currently_installed_packages
-	return 0
 }

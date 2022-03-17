@@ -92,17 +92,14 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 	fi
 
 	mount_chroot "$SDCARD"
-} #############################################################################
+}
 
 function create_new_rootfs_cache() {
-	# @TODO: unify / remove this. distribuitions has the good stuff.
-	# stage: debootstrap base system
+	# this is different between debootstrap and regular apt-get; here we use acng as a prefix to the real repo
+	local debootstrap_apt_mirror="http://${APT_MIRROR}"
 	if [[ $NO_APT_CACHER != yes ]]; then
-		# apt-cacher-ng apt-get proxy parameter
-		local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
-		local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$APT_MIRROR"
-	else
-		local apt_mirror="http://$APT_MIRROR"
+		local debootstrap_apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/${APT_MIRROR}"
+		acng_check_status_or_restart
 	fi
 
 	display_alert "Installing base system" "Stage 1/2" "info"
@@ -113,17 +110,18 @@ function create_new_rootfs_cache() {
 		${PACKAGE_LIST_EXCLUDE:+ --exclude="${PACKAGE_LIST_EXCLUDE// /,}"} # exclude some
 		"--arch=${ARCH}"                                                   # the arch
 		"--components=${DEBOOTSTRAP_COMPONENTS}"                           # from aggregation?
-		"--foreign" "${RELEASE}" "${SDCARD}/" "${apt_mirror}"              # path and mirror
+		"--foreign" "${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}"  # path and mirror
 	)
-	debootstrap "${deboostrap_arguments[@]}" 2>&1 || { # invoke debootstrap, stderr to stdout.
+
+	run_host_command_logged debootstrap "${deboostrap_arguments[@]}" || {
 		exit_with_error "Debootstrap first stage failed" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
-	[[ ! -f $SDCARD/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
+	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
 
-	cp "/usr/bin/$QEMU_BINARY" "$SDCARD/usr/bin/" # @TODO: who cleans this up later?
+	run_host_command_logged cp -pv "/usr/bin/$QEMU_BINARY" "$SDCARD/usr/bin/" # @TODO: who cleans this up later?
 
 	mkdir -p "${SDCARD}/usr/share/keyrings/"
-	cp /usr/share/keyrings/*-archive-keyring.gpg "${SDCARD}/usr/share/keyrings/"
+	run_host_command_logged cp -pv /usr/share/keyrings/*-archive-keyring.gpg "${SDCARD}/usr/share/keyrings/"
 
 	display_alert "Installing base system" "Stage 2/2" "info"
 	export MSG_IF_ERROR="Debootstrap second stage failed ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
