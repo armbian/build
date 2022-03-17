@@ -24,7 +24,6 @@ function do_main_configuration() {
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	[[ -z $DEB_COMPRESS ]] && DEB_COMPRESS="xz"                          # compress .debs with XZ by default. Use 'none' for faster/larger builds
 	export SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}"   # don't use any external toolchains, by default.
 	TZDATA=$(cat /etc/timezone)                                          # Timezone for target is taken from host or defined here.
 	USEALLCORES=yes                                                      # Use all CPU cores for compiling
@@ -38,6 +37,13 @@ function do_main_configuration() {
 	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote 2> /dev/null | grep origin)" 2> /dev/null)
 	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2> /dev/null)
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
+
+	# .deb compression. xz is standard, but is slow, so if avoided by default if not running in CI. one day, zstd.
+	if [[ -z ${DEB_COMPRESS} ]]; then
+		DEB_COMPRESS="none"                          # none is very fast bug produces big artifacts.
+		[[ "${CI}" == "true" ]] && DEB_COMPRESS="xz" # xz is small and slow
+	fi
+	display_alert ".deb compression" "DEB_COMPRESS=${DEB_COMPRESS}" "debug"
 
 	if [[ $BETA == yes ]]; then
 		DEB_STORAGE=$DEST/debs-beta
