@@ -8,7 +8,7 @@ improved_git() {
 	local delay=10
 	local count=0
 	while [ $count -lt $retries ]; do
-		run_host_command_logged_raw eatmydata "$real_git" --no-pager "$@" && return 0 # this gobbles up errors, but returns if OK, so everything after is error
+		run_host_command_logged_raw "$real_git" --no-pager "$@" && return 0 # this gobbles up errors, but returns if OK, so everything after is error
 		count=$((count + 1))
 		display_alert "improved_git try $count failed, retrying in ${delay} seconds" "git $*" "warn"
 		sleep $delay
@@ -19,7 +19,7 @@ improved_git() {
 
 # Not improved, just regular, but logged "correctly".
 regular_git() {
-	run_host_command_logged_raw eatmydata -- git --no-pager "$@"
+	run_host_command_logged_raw git --no-pager "$@"
 }
 
 # avoid repeating myself too much
