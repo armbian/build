@@ -27,25 +27,24 @@ function build_rootfs_and_image() {
 	fi
 
 	# stage: verify tmpfs configuration and mount
-	# CLI needs ~1.5GiB, desktop - ~3.5GiB
-	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
-	# @TODO: this does not make sense; swap should not be considered. Actually, only free + cached memory should be considered!
-	local phymem=$(((($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10)) # MiB
-	local tmpfs_max_size=1500                                                                                                          # MiB
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		tmpfs_max_size=3500
-	fi
+	# CLI needs ~2GiB, desktop ~5GiB
+	# vs 60% of available RAM (free + buffers + magic)
+	local available_physical_memory_mib=$(($(awk '/MemAvailable/ {print $2}' /proc/meminfo) * 6 / 1024 / 10)) # MiB
+	local tmpfs_estimated_size=2000                                                                           # MiB
+	[[ $BUILD_DESKTOP == yes ]] && tmpfs_estimated_size=5000                                                  # MiB
 
-	if [[ $FORCE_USE_RAMDISK == no ]]; then
-		local use_tmpfs=no
-	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
-		local use_tmpfs=yes
+	local use_tmpfs=no                        # by default
+	if [[ ${FORCE_USE_RAMDISK} == no ]]; then # do not use, even if it fits
+		:
+	elif [[ ${FORCE_USE_RAMDISK} == yes || ${available_physical_memory_mib} -gt ${tmpfs_estimated_size} ]]; then # use, either force or fits
+		use_tmpfs=yes
+		display_alert "Using tmpfs for rootfs" "RAM available: ${available_physical_memory_mib}MiB > ${tmpfs_estimated_size}MiB estimated" "debug"
+	else
+		display_alert "Not using tmpfs for rootfs" "RAM available: ${available_physical_memory_mib}MiB < ${tmpfs_estimated_size}MiB estimated" "debug"
 	fi
-	[[ -n $FORCE_TMPFS_SIZE ]] && phymem=$FORCE_TMPFS_SIZE
 
 	if [[ $use_tmpfs == yes ]]; then
-		display_alert "Using tmpfs for rootfs" "${phymem}M" "debug"
-		mount -t tmpfs -o "size=${phymem}M" tmpfs "${SDCARD}"
+		mount -t tmpfs tmpfs "${SDCARD}" # do not specify size; we've calculated above that it should fit, and Linux will try its best if it doesn't.
 	fi
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
