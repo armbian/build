@@ -134,28 +134,25 @@ function run_host_command_dialog() {
 # do NOT use directly, it does NOT expand the way it should (through bash)
 function run_host_command_logged_raw() {
 	# Log the command to the current logfile, so it has context of what was run.
-	if [[ -f "${CURRENT_LOGFILE}" ]]; then
-		echo "       " >> "${CURRENT_LOGFILE}" # blank line for reader's benefit
-		echo "-->" "$*" " <- at $(date --utc)" >> "${CURRENT_LOGFILE}"
-	fi
 	display_alert "Command debug" "$*" "command" # A special 'command' level.
-
-	# uncomment when desperate to understand what's going on
-	# echo "cmd about to run" "$@" >&2
 
 	# In this case I wanna KNOW exactly what failed, thus disable errexit, then re-enable immediately after running.
 	set +e
 	local exit_code=666
-	"$@" 2>&1 # redirect stderr to stdout. $* is NOT $@!
+	local seconds_start=${SECONDS} # Bash has a builtin SECONDS that is seconds since start of script
+	"$@" 2>&1                      # redirect stderr to stdout. $* is NOT $@!
 	exit_code=$?
 	set -e
-	if [[ -f "${CURRENT_LOGFILE}" ]]; then
-		echo "--> cmd exited with code ${exit_code} at $(date --utc)" >> "${CURRENT_LOGFILE}"
-	fi
+
 	if [[ $exit_code != 0 ]]; then
+		if [[ -f "${CURRENT_LOGFILE}" ]]; then
+			echo "-->--> command failed with error code ${exit_code} after $((SECONDS - seconds_start)) seconds" >> "${CURRENT_LOGFILE}"
+		fi
 		# This is very specific; remove CURRENT_LOGFILE's value when calling display_alert here otherwise logged twice.
 		CURRENT_LOGFILE="" display_alert "cmd exited with code ${exit_code}" "$*" "wrn"
 		CURRENT_LOGFILE="" display_alert "stacktrace for failed command" "$(show_caller_full)" "wrn"
+	elif [[ -f "${CURRENT_LOGFILE}" ]]; then
+		echo "-->--> command run successfully after $((SECONDS - seconds_start)) seconds" >> "${CURRENT_LOGFILE}"
 	fi
 	return $exit_code
 }

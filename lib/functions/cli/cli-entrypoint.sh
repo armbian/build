@@ -1,4 +1,7 @@
 function cli_entrypoint() {
+	# array, readonly, global, for future reference, "exported" to shutup shellcheck
+	declare -rg -x -a ARMBIAN_ORIGINAL_ARGV=("${@}")
+
 	if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 		set -T # inherit return/debug traps
 		mkdir -p "${SRC}"/output/debug

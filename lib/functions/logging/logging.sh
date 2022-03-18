@@ -47,7 +47,7 @@ function start_logging_section() {
 	export CURRENT_LOGGING_SECTION=${LOG_SECTION:-early} # default to "early", should be overwritten soon enough
 	export CURRENT_LOGGING_SECTION_START=${SECONDS}
 	export CURRENT_LOGGING_DIR="${LOGDIR}" # set in cli-entrypoint.sh
-	export CURRENT_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.${CURRENT_LOGGING_SECTION}.log"
+	export CURRENT_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.000.${CURRENT_LOGGING_SECTION}.log"
 	mkdir -p "${CURRENT_LOGGING_DIR}"
 	touch "${CURRENT_LOGFILE}" # Touch it, make sure it's writable.
 
@@ -94,10 +94,8 @@ function do_with_logging() {
 		# Also terrible: don't hold a reference to cwd by changing to SRC always
 		exec 3> >(
 			cd "${SRC}" || exit 2
-			#grep --line-buffered -v "^$" | \
-			# @TODO: tee to CURRENT_LOGFILE. @TODO this is essential. if this does not work whole thing comes down
-
-			sed -u -e "${prefix_sed_cmd}"
+			# First, log to file, then add prefix via sed for what goes to screen.
+			tee -a "${CURRENT_LOGFILE}" | sed -u -e "${prefix_sed_cmd}"
 		)
 		"$@" >&3
 		exec 3>&- # close the file descriptor, lest sed keeps running forever.
@@ -115,24 +113,21 @@ function do_with_logging() {
 function do_with_log_asset() {
 	# @TODO: check that CURRENT_LOGGING_COUNTER is set, otherwise crazy?
 	local ASSET_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.${LOG_ASSET}"
-	display_alert "Logging to asset" "${CURRENT_LOGGING_COUNTER}.0.${LOG_ASSET}" "debug"
+	display_alert "Logging to asset" "${CURRENT_LOGGING_COUNTER}.${LOG_ASSET}" "debug"
 	"$@" >> "${ASSET_LOGFILE}"
 }
 
 function display_alert() {
-	# We'll be writing to stderr (" >&2"), so also write the message to the generic logfile, for context.
-	if [[ -f "${CURRENT_LOGFILE}" ]]; then
-		echo -e "--> A: [" "$@" "]" | sed 's/\x1b\[[0-9;]*m//g' >> "${CURRENT_LOGFILE}"
-	fi
-
-	# If asked, avoid any fancy ANSI escapes completely.
+	# If asked, avoid any fancy ANSI escapes completely. For python-driven log collection. Formatting could be improved.
+	# If used, also does not write to logfile even if it exists.
 	if [[ "${ANSI_COLOR}" == "none" ]]; then
 		echo -e "${@}" | sed 's/\x1b\[[0-9;]*m//g' >&2
 		return 0
 	fi
 
-	local message="$1" level="$3"                                    # params
+	local message="${1}" level="${3}"                                # params
 	local level_indicator="" inline_logs_color="" extra="" ci_log="" # this log
+	local skip_screen=0                                              # setting to 1 will write to logfile only
 	case "${level}" in
 		err | error)
 			level_indicator="💥"
@@ -159,7 +154,7 @@ function display_alert() {
 
 		cleanup | trap)
 			if [[ "${SHOW_TRAPS}" != "yes" ]]; then # enable debug for many, many debugging msgs
-				return 0
+				skip_screen=1
 			fi
 			level_indicator="🧽"
 			inline_logs_color="\e[1;33m"
@@ -167,7 +162,7 @@ function display_alert() {
 
 		debug | deprecation)
 			if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
-				return 0
+				skip_screen=1
 			fi
 			level_indicator="🐛"
 			inline_logs_color="\e[1;33m"
@@ -175,7 +170,7 @@ function display_alert() {
 
 		group)
 			if [[ "${SHOW_DEBUG}" != "yes" && "${SHOW_GROUPS}" != "yes" ]]; then # show when debugging, or when specifically requested
-				return 0
+				skip_screen=1
 			fi
 			level_indicator="🦋"
 			inline_logs_color="\e[1;34m" # blue; 36 would be cyan
@@ -183,7 +178,7 @@ function display_alert() {
 
 		command)
 			if [[ "${SHOW_COMMAND}" != "yes" ]]; then # enable to log all calls to external cmds
-				return 0
+				skip_screen=1
 			fi
 			level_indicator="🐸"
 			inline_logs_color="\e[0;36m" # a dim cyan
@@ -191,7 +186,7 @@ function display_alert() {
 
 		timestamp | fasthash)
 			if [[ "${SHOW_FASTHASH}" != "yes" ]]; then # timestamp-related debugging messages, very very verbose
-				return 0
+				skip_screen=1
 			fi
 			level_indicator="🐜"
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
@@ -199,17 +194,28 @@ function display_alert() {
 
 		git)
 			if [[ "${SHOW_GIT}" != "yes" ]]; then # git-related debugging messages, very very verbose
-				return 0
+				skip_screen=1
 			fi
 			level_indicator="🔖"
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
 			;;
 
 		*)
+			level="${level:-other}" # for file logging.
 			level_indicator="🌿"
 			inline_logs_color="\e[1;37m"
 			;;
 	esac
+
+	# Now, log to file. This will be colorized later by ccze and such, so remove any colors it might already have.
+	# See also the stuff done in runners.sh for logging exact command lines and runtimes.
+	if [[ -f "${CURRENT_LOGFILE}" ]]; then
+		echo -e "--> [${level_indicator} ] $(printf "%4s" "${SECONDS}"): $$ - ${BASHPID}: $-: ${level}: ${1} [ ${2} ]" | sed 's/\x1b\[[0-9;]*m//g' >> "${CURRENT_LOGFILE}"
+	fi
+
+	if [[ ${skip_screen} -eq 1 ]]; then
+		return 0
+	fi
 
 	local timing_info=""
 	if [[ "${SHOW_TIMING}" == "yes" ]]; then
@@ -279,16 +285,44 @@ function trap_handler_cleanup_logging() {
 	mkdir -p "${target_path}"
 	local target_file="${target_path}/armbian-logs-${ARMBIAN_BUILD_UUID}.html"
 
+	# Before writing new logfile, compress and move existing ones to archive folder. Unless running under CI.
+	if [[ "${CI}" != "true" ]]; then
+		declare -a existing_log_files_array
+		mapfile -t existing_log_files_array < <(find "${target_path}" -maxdepth 1 -type f -name "armbian-logs-*.html")
+		declare one_old_logfile old_logfile_fn target_archive_path="${target_path}"/archive
+		for one_old_logfile in "${existing_log_files_array[@]}"; do
+			old_logfile_fn="$(basename "${one_old_logfile}")"
+			display_alert "Archiving old logfile" "${old_logfile_fn}" "debug"
+			mkdir -p "${target_archive_path}"
+			# shellcheck disable=SC2002 # my cat is not useless. a bit whiny. not useless.
+			zstdmt --quiet "${one_old_logfile}" -o "${target_archive_path}/${old_logfile_fn}.zst"
+			rm -f "${one_old_logfile}"
+		done
+	fi
+
 	cat <<- HTML_HEADER > "${target_file}"
 		<html>
 			<head>
 			<title>Armbian logs for ${ARMBIAN_BUILD_UUID}</title>
 			<style>
-				html { background-color: black !important; color: white !important; font-family: JetBrains Mono, monospace, cursive !important; }
+				html, html pre { background-color: black !important; color: white !important; font-family: JetBrains Mono, monospace, cursive !important; }
 				hr { border: 0; border-bottom: 1px dashed silver; }
 			</style>
 			</head>
 		<body>
+			<h2>Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)</h2>
+			<h2>${ARMBIAN_ORIGINAL_ARGV[@]@Q}</h2>
+			<hr/>
+
+			$(git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate | ansi2html --no-wrap --no-header)
+			<hr/>
+
+			$(git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status | ansi2html --no-wrap --no-header)
+			<hr/>
+
+			$(git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color | ansi2html --no-wrap --no-header)
+			<hr/>
+
 	HTML_HEADER
 
 	# Find and sort the files there, store in array one per logfile
@@ -301,13 +335,13 @@ function trap_handler_cleanup_logging() {
 			cat <<- HTML_ONE_LOGFILE_WITH_CCZE >> "${target_file}"
 				<h3>${logfile_base}</h3>
 				<div style="padding: 1em">
-				$(cat "${logfile_full}" | ccze -o nolookups --raw-ansi | ansi2html --no-wrap --no-header)
+				$(ccze -o nolookups --raw-ansi < "${logfile_full}" | ansi2html --no-wrap --no-header)
 				</div>
 				<hr/>
 			HTML_ONE_LOGFILE_WITH_CCZE
 		else
 			cat <<- HTML_ONE_LOGFILE_NO_CCZE >> "${target_file}"
-				<h1>${logfile_base}</h1>
+				<h3>${logfile_base}</h3>
 				<pre>$(cat "${logfile_full}")</pre>
 			HTML_ONE_LOGFILE_NO_CCZE
 		fi
