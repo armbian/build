@@ -20,6 +20,13 @@ grep -q "[[:space:]]" <<<"${SRC}" && { echo "\"${SRC}\" contains whitespace. Not
 
 cd "${SRC}" || exit
 
+if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
+	set -T # inherit return/debug traps
+	mkdir -p "${SRC}"/output/debug
+	echo -n "" > "${SRC}"/output/debug/calls.txt
+	trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/debug/calls.txt ;' RETURN
+fi
+
 if [[ -f "${SRC}"/lib/general.sh ]]; then
 
 	# shellcheck source=lib/general.sh
@@ -178,18 +185,18 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 	codename=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 	codeid=$(cat /etc/os-release | grep ^NAME | cut -d"=" -f2 | awk '{print tolower($0)}' | tr -d '"' | awk '{print $1}')
 	[[ "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
-	[[ "${codename}" == "ulyana" ]] && codename="focal" && codeid="ubuntu"
+	[[ "${codename}" == "ulyana" || "${codename}" == "jammy" ]] && codename="focal" && codeid="ubuntu"
 
 	# different binaries for some. TBD. Need to check for all others
 	[[ "${codename}" =~ focal|hirsute ]] && DOCKER_BINARY="docker containerd docker.io"
 
 	display_alert "Docker not installed." "Installing" "Info"
-	echo "deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable" > /etc/apt/sources.list.d/docker.list
+	sudo bash -c "echo \"deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable\" > /etc/apt/sources.list.d/docker.list"
 
-	curl -fsSL "https://download.docker.com/linux/${codeid}/gpg" | apt-key add -qq - > /dev/null 2>&1
+	sudo bash -c "curl -fsSL \"https://download.docker.com/linux/${codeid}/gpg\" | apt-key add -qq - > /dev/null 2>&1 "
 	export DEBIAN_FRONTEND=noninteractive
-	apt-get update
-	apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
+	sudo apt-get update
+	sudo apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
 	display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 	"${SRC}/compile.sh" "$@"
 	exit $?
@@ -262,6 +269,11 @@ fi
 
 CONFIG_PATH=$(dirname "${CONFIG_FILE}")
 
+# Source the extensions manager library at this point, before sourcing the config.
+# This allows early calls to enable_extension(), but initialization proper is done later.
+# shellcheck source=lib/extensions.sh
+source "${SRC}"/lib/extensions.sh
+
 display_alert "Using config file" "${CONFIG_FILE}" "info"
 pushd "${CONFIG_PATH}" > /dev/null || exit
 # shellcheck source=/dev/null
@@ -281,14 +293,5 @@ while [[ "${1}" == *=* ]]; do
 
 done
 
-if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
-
-	# shellcheck source=lib/build-all-ng.sh
-	source "${SRC}"/lib/build-all-ng.sh
-
-else
-
-	# shellcheck source=lib/main.sh
-	source "${SRC}"/lib/main.sh
-
-fi
+# shellcheck source=lib/main.sh
+source "${SRC}"/lib/main.sh

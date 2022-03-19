@@ -1,0 +1,113 @@
+From a97298d66757c3f60f9c5a2a21dba7f6da7d3053 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Mon, 30 Sep 2019 11:49:54 +0200
+Subject: [PATCH 165/467] mtd: spi-nor: Add regulator support
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/mtd/spi-nor/core.c  | 37 +++++++++++++++++++++++++++++++------
+ include/linux/mtd/spi-nor.h |  3 +++
+ 2 files changed, 34 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/mtd/spi-nor/core.c b/drivers/mtd/spi-nor/core.c
+index cc08bd707..333fe6ca5 100644
+--- a/drivers/mtd/spi-nor/core.c
++++ b/drivers/mtd/spi-nor/core.c
+@@ -3307,6 +3307,22 @@ static int spi_nor_probe(struct spi_mem *spimem)
+ 	if (!nor)
+ 		return -ENOMEM;
+ 
++	nor->reg_vdd = devm_regulator_get(&spi->dev, "vdd");
++	if (IS_ERR(nor->reg_vdd)) {
++		ret = PTR_ERR(nor->reg_vdd);
++		if (ret != -EPROBE_DEFER)
++			dev_err(&spi->dev, "unable to get regulator: %d\n", ret);
++		return ret;
++	}
++
++	ret = regulator_enable(nor->reg_vdd);
++	if (ret) {
++		dev_err(&spi->dev, "unable to enable regulator: %d\n", ret);
++		return ret;
++	}
++
++	msleep(5);
++
+ 	nor->spimem = spimem;
+ 	nor->dev = &spi->dev;
+ 	spi_nor_set_flash_node(nor, spi->dev.of_node);
+@@ -3334,7 +3350,7 @@ static int spi_nor_probe(struct spi_mem *spimem)
+ 
+ 	ret = spi_nor_scan(nor, flash_name, &hwcaps);
+ 	if (ret)
+-		return ret;
++		goto err_reg_disable;
+ 
+ 	/*
+ 	 * None of the existing parts have > 512B pages, but let's play safe
+@@ -3347,20 +3363,28 @@ static int spi_nor_probe(struct spi_mem *spimem)
+ 		nor->bouncebuf = devm_kmalloc(nor->dev,
+ 					      nor->bouncebuf_size,
+ 					      GFP_KERNEL);
+-		if (!nor->bouncebuf)
+-			return -ENOMEM;
++		if (!nor->bouncebuf) {
++			ret = -ENOMEM;
++			goto err_reg_disable;
++		}
+ 	}
+ 
+ 	ret = spi_nor_create_read_dirmap(nor);
+ 	if (ret)
+-		return ret;
++		goto err_reg_disable;
+ 
+ 	ret = spi_nor_create_write_dirmap(nor);
+ 	if (ret)
+-		return ret;
++		goto err_reg_disable;
+ 
+-	return mtd_device_register(&nor->mtd, data ? data->parts : NULL,
++	ret = mtd_device_register(&nor->mtd, data ? data->parts : NULL,
+ 				   data ? data->nr_parts : 0);
++	if (!ret)
++		return 0;
++
++err_reg_disable:
++	regulator_disable(nor->reg_vdd);
++	return ret;
+ }
+ 
+ static int spi_nor_remove(struct spi_mem *spimem)
+@@ -3368,6 +3392,7 @@ static int spi_nor_remove(struct spi_mem *spimem)
+ 	struct spi_nor *nor = spi_mem_get_drvdata(spimem);
+ 
+ 	spi_nor_restore(nor);
++	regulator_disable(nor->reg_vdd);
+ 
+ 	/* Clean up MTD stuff. */
+ 	return mtd_device_unregister(&nor->mtd);
+diff --git a/include/linux/mtd/spi-nor.h b/include/linux/mtd/spi-nor.h
+index f67457748..6cb15f147 100644
+--- a/include/linux/mtd/spi-nor.h
++++ b/include/linux/mtd/spi-nor.h
+@@ -10,6 +10,7 @@
+ #include <linux/mtd/cfi.h>
+ #include <linux/mtd/mtd.h>
+ #include <linux/spi/spi-mem.h>
++#include <linux/regulator/consumer.h>
+ 
+ /*
+  * Note on opcode nomenclature: some opcodes have a format like
+@@ -424,6 +425,8 @@ struct spi_nor {
+ 		struct spi_mem_dirmap_desc *wdesc;
+ 	} dirmap;
+ 
++	struct regulator* reg_vdd;
++
+ 	void *priv;
+ };
+ 
+-- 
+2.34.0
+

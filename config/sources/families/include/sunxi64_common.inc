@@ -1,8 +1,8 @@
+enable_extension "sunxi-tools"
 ARCH=arm64
 ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 BOOTDELAY=1
-##https://armbian.atlassian.net/browse/AR-867
-BOOTBRANCH='tag:v2020.10'
+
 BOOTPATCHDIR='u-boot-sunxi'
 BOOTENV_FILE='sunxi.txt'
 UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
@@ -10,30 +10,61 @@ BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 LINUXFAMILY=sunxi64
 
 case $BRANCH in
-	legacy)
-		
-		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.4"
-		KERNELPATCHDIR='sunxi-'$BRANCH
 
+	legacy)  KERNEL_VERSION_LEVEL="5.10" ;;
+
+	current) KERNEL_VERSION_LEVEL="5.15" ;;
+
+	edge) KERNEL_VERSION_LEVEL="5.16"
+	      #KERNELSWITCHOBJ="tag=v5.16.11"
+	      ;;
+esac
+
+case "$KERNEL_VERSION_LEVEL" in
+
+	5.10|5.15|5.16)
+		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+		KERNELSOURCENAME='name=origin'
+		KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
 	;;
 
-	current)
-
+	*)
 		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.10"
-		KERNELPATCHDIR='sunxi-'$BRANCH
-
-	;;
-
-	edge)
-
-		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELBRANCH="branch:orange-pi-5.13"
-		KERNELPATCHDIR='sunxi-'$BRANCH
-
+		KERNELSOURCENAME='name=megous'
+		KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
 	;;
 esac
+
+KERNELPATCHDIR='sunxi-'$BRANCH
+
+# An optional parameter for switching to a git object such as a tag, commit,
+# or a specific branch. The object must exist in the local repository.
+# This optional parameter takes precedence. If it is specified, then
+# the commit state corresponding to the specified git object will be extracted
+# to the working directory. Otherwise, the commit corresponding to the top of
+# the branch will be extracted.
+# KERNELSWITCHOBJ="tag=v5.10.15"
+# tag | obj | commit=v5.10.15 | [origin|megous]/$branch | $hash
+
+var_origin_kernel ()
+{
+	url=$MAINLINE_KERNEL_SOURCE
+	name='origin'
+	branch="linux-${KERNEL_VERSION_LEVEL}.y"
+	start_tag="v$KERNEL_VERSION_LEVEL"
+
+	# checking the reachability of the initial tag
+	if [ "$(git ls-remote --tags $url $start_tag | \
+		awk -F'/' '{if (NR == 1) print $NF}')" != "$start_tag" ];then
+		exit 177
+	fi
+
+	# Exceptions to the rule are when the desired tag is not
+	# a bifurcation point at which all previous merge branches converge.
+	# This is due to the subsequent extraction of `megous`
+	# [ "$KERNEL_VERSION_LEVEL" == "5.12" ] && start_tag="v5.12-rc7"
+}
+
 
 family_tweaks()
 {

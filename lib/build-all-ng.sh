@@ -49,6 +49,7 @@ fi
 
 unset_all ()
 {
+cleanup_extension_manager
 unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSOURCE BOOTBRANCH ARCH UBOOT_USE_GCC KERNEL_USE_GCC CPUMIN CPUMAX \
 		UBOOT_VER KERNEL_VER GOVERNOR BOOTSIZE BOOTFS_TYPE UBOOT_TOOLCHAIN KERNEL_TOOLCHAIN DEBOOTSTRAP_LIST PACKAGE_LIST_EXCLUDE KERNEL_IMAGE_TYPE \
 		write_uboot_platform family_tweaks family_tweaks_bsp setup_write_uboot_platform uboot_custom_postprocess atf_custom_postprocess family_tweaks_s \
@@ -58,13 +59,13 @@ unset	LINUXFAMILY LINUXCONFIG KERNELDIR KERNELSOURCE KERNELBRANCH BOOTDIR BOOTSO
 		CRYPTROOT_SSH_UNLOCK_PORT CRYPTROOT_SSH_UNLOCK_KEY_NAME ROOT_MAPPER NETWORK HDMI USB WIRELESS ARMBIANMONITOR FORCE_BOOTSCRIPT_UPDATE \
 		UBOOT_TOOLCHAIN2 toolchain2 BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT BUILD_TARGET HOST BUILD_IMAGE DEB_STORAGE REPO_STORAGE REPO_CONFIG \
 		REPOSITORY_UPDATE PACKAGE_LIST_RELEASE LOCAL_MIRROR COMPILE_ATF PACKAGE_LIST_BOARD PACKAGE_LIST_FAMILY PACKAGE_LIST_DESKTOP_BOARD \
-		PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR BOOT_USE_BLOBS BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB \
-		BOOT_RK3328_USE_AYUFAN_ATF BOOT_USE_BLOBS BOOT_RK3399_LEGACY_HYBRID BOOT_USE_MAINLINE_ATF BOOT_USE_TPL_SPL_BLOB BOOT_SUPPORT_SPI OFFLINE_WORK \
-		IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER FORCED_MONTH_OFFSET PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE \
+		PACKAGE_LIST_DESKTOP_FAMILY ATF_COMPILE ATFPATCHDIR OFFSET BOOTSOURCEDIR KERNEL_VERSION_LEVEL KERNELSOURCENAME \
+		BOOT_SOC DDR_BLOB MINILOADER_BLOB BL31_BLOB BOOT_SCENARIO BOOT_SUPPORT_SPI OFFLINE_WORK VAR_SHALLOW_ORIGINAL KERNELSWITCHOBJ \
+		IMAGE_PARTITION_TABLE BOOT_LOGO UPSTREM_VER FORCED_MONTH_OFFSET PACKAGE_LIST_BOARD_REMOVE PACKAGE_LIST_FAMILY_REMOVE PACKAGE_LIST_DESKTOP \
 		PACKAGE_LIST_DESKTOP_BOARD_REMOVE PACKAGE_LIST_DESKTOP_FAMILY_REMOVE BOOTCONFIG_EDGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME \
 		DESKTOP_APPGROUPS_SELECTED DESKTOP_APT_FLAGS_SELECTED DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH UBOOT_TARGET_MAP \
 		DESKTOP_ENVIRONMENT_DIRPATH DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH DESKTOP_CONFIG_PREFIX DESKTOP_CONFIGS_DIR DESKTOP_APPGROUPS_DIR \
-		DEBIAN_RECOMMENDS USE_OVERLAYFS aggregated_content DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_OPTION MAINTAINER MAINTAINERMAIL EXTRAWIFI BOOTSCRIPT 
+		DEBIAN_RECOMMENDS USE_OVERLAYFS aggregated_content DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_OPTION DEB_COMPRESS MAINTAINER MAINTAINERMAIL EXTRAWIFI BOOTSCRIPT
 }
 
 pack_upload ()
@@ -202,9 +203,9 @@ function check_hash()
 
 	BOARDFAMILY=$(grep BOARDFAMILY "${SRC}/config/boards/${BOARD}".* | cut -d \" -f2)
 	# shellcheck source=/dev/null
-	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf"
+	source "${SRC}/config/sources/families/${BOARDFAMILY}.conf" &> /dev/null
 	# shellcheck source=/dev/null
-	source "${SRC}/config/sources/${ARCH}.conf"
+	source "${SRC}/config/sources/${ARCH}.conf" &> /dev/null
 	ref_type=${KERNELBRANCH%%:*}
 	if [[ $ref_type == head ]]; then
 		ref_name=HEAD
@@ -214,7 +215,7 @@ function check_hash()
 	[[ -z $LINUXFAMILY ]] && LINUXFAMILY=$BOARDFAMILY
 	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
 	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | sort -n)
+	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -name '*.patch' -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | LC_COLLATE=C sort -n)
 	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config" 2> /dev/null)
 	patch_hash=$(echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin)
 
@@ -227,7 +228,7 @@ function check_hash()
 	# ignore diff checking in case of network errrors
 	local kernel_hash="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}.githash"
 	if [[ -f ${kernel_hash} ]]; then
-		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "idential"
+		[[ "$hash" == "$(head -1 "${kernel_hash}")" && "$patch_hash" == "$(tail -1 "${kernel_hash}")" || -z $hash ]] && echo "IDENTICAL"
 	fi
 }
 
@@ -273,7 +274,7 @@ function build_all()
 		# unset also board related variables
 		unset BOARDFAMILY DESKTOP_AUTOLOGIN DEFAULT_CONSOLE FULL_DESKTOP MODULES MODULES_CURRENT MODULES_LEGACY MODULES_EDGE \
 		BOOTCONFIG MODULES_BLACKLIST MODULES_BLACKLIST_LEGACY MODULES_BLACKLIST_CURRENT MODULES_BLACKLIST_EDGE DEFAULT_OVERLAYS SERIALCON \
-		BUILD_MINIMAL RELEASE ATFBRANCH BOOT_FDT_FILE BOOTCONFIG_EDGE BOOTSOURCEDIR SRC_CMDLINE SRC_EXTLINUX
+		BUILD_MINIMAL RELEASE ATFBRANCH BOOT_FDT_FILE BOOTCONFIG_EDGE BOOTSOURCEDIR SRC_CMDLINE SRC_EXTLINUX INITRD_ARCH
 
 		read -r BOARD BRANCH RELEASE BUILD_TARGET BUILD_STABILITY BUILD_IMAGE DESKTOP_ENVIRONMENT DESKTOP_ENVIRONMENT_CONFIG_NAME DESKTOP_APPGROUPS_SELECTED<<< "${line}"
 		DESKTOP_APPGROUPS_SELECTED="${DESKTOP_APPGROUPS_SELECTED//,/ }"
@@ -300,10 +301,10 @@ function build_all()
 
 		# exceptions handling
 		[[ ${BOARDFAMILY} == sun*i ]] && BOARDFAMILY=sunxi
+		[[ ${BOARDFAMILY} == sun8i-v3s ]] && BOARDFAMILY=sunxi
 		[[ ${BOARDFAMILY} == sun*iw* ]] && BOARDFAMILY=sunxi64
 		[[ ${BOARDFAMILY} == meson8b ]] && BOARDFAMILY=meson
 		[[ ${BOARDFAMILY} == meson-* ]] && BOARDFAMILY=meson64
-
 		# small optimisation. we only (try to) build needed kernels
 		if [[ $KERNEL_ONLY == yes ]]; then
 			LINUXFAMILY="${BOARDFAMILY}"
@@ -323,6 +324,9 @@ function build_all()
 		[[ ${BUILD_TARGET} == "minimal" ]] && BUILD_MINIMAL="yes"
 		[[ ${BSP_BUILD} == yes ]] && BUILD_STABILITY=$STABILITY
 
+		# create a file and put grep style list of the one that must be skipped: sunxi\|sunxi64
+		[[ -f userpatches/family.skip ]] && grep -qw "$BOARDFAMILY" userpatches/family.skip && continue
+
 		# create beta or stable
 		if [[ "${BUILD_STABILITY}" == "${STABILITY}" ]]; then
 			# check if currnt hash is the same as upstream
@@ -330,7 +334,7 @@ function build_all()
 				local store_hash
 				store_hash=$(check_hash)
 			fi
-			if [[ "$store_hash" != idential ]]; then
+			if [[ "$store_hash" != IDENTICAL ]]; then
 
 			if [[ $1 != "dryrun" ]] && [[ $n -ge $START ]]; then
 					((n+=1))
@@ -371,7 +375,7 @@ function build_all()
 					IFS=',' read -r -a RELBRANCH <<< "${KERNEL_TARGET}"
 					for BRANCH in "${RELBRANCH[@]}"
 					do
-					RELTARGETS=(xenial stretch buster bullseye bionic focal hirsute sid)
+					RELTARGETS=($(ls -1d config/distributions/*/ | cut -d"/" -f3))
 					# we don't need to cycle all distributions when making u-boot package
 					[[ $BOOTONLY == "yes" ]] && RELTARGETS=(focal)
 					for RELEASE in "${RELTARGETS[@]}"
@@ -436,6 +440,7 @@ else
 
 # display what will be build
 echo ""
+[[ -f userpatches/family.skip ]] && display_alert "userpatches/family.skip exists and familes noted there will be skipped" ""  "wrn"
 display_alert "Building all targets" "$STABILITY $(if [[ $KERNEL_ONLY == "yes" ]] ; then echo "kernels"; \
 else echo "images"; fi)" "info"
 
