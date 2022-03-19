@@ -80,9 +80,15 @@ setenv maxcpus "4"
 echo "U-boot default fdtfile: ${fdtfile}"
 echo "Current variant: ${variant}"
 # there is a mismatch between u-boot and kernel in the n2-plus/n2_plus DTB filename.
+# Also u-boot can't seem to decide between having, or not, 'amlogic/' in there.
 if test "${variant}" = "n2_plus"; then
 	setenv fdtfile "amlogic/meson-g12b-odroid-n2-plus.dtb"
 	echo "For variant ${variant}, set default fdtfile: ${fdtfile}"
+fi
+
+if test "${variant}" = "n2-plus"; then
+	setenv fdtfile "amlogic/meson-g12b-odroid-n2-plus.dtb"
+	echo "For variant ${variant} (dash version, 2021.07 or up), set default fdtfile: ${fdtfile}"
 fi
 
 # legacy kernel values from boot.ini

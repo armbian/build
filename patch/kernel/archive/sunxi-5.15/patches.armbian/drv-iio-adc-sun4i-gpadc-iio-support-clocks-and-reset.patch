@@ -1,0 +1,168 @@
+From 2af58aa3d474a1521a5c78ba317c22d9bffe74f1 Mon Sep 17 00:00:00 2001
+From: Philipp Rossak <embed3d@gmail.com>
+Date: Sun, 21 Jan 2018 22:23:00 +0100
+Subject: [PATCH 030/101] drv:iio:adc: sun4i-gpadc-iio: support clocks and
+ reset
+
+For adding newer sensor some basic rework of the code is necessary.
+
+The SoCs after H3 has newer thermal sensor ADCs, which have two clock
+inputs (bus clock and sampling clock) and a reset. The registers are
+also re-arranged.
+
+This commit reworks the code, adds the process of the clocks and
+resets.
+
+Signed-off-by: Philipp Rossak <embed3d@gmail.com>
+Signed-off-by: Icenowy Zheng <icenowy@aosc.io>
+---
+ drivers/iio/adc/sun4i-gpadc-iio.c | 80 +++++++++++++++++++++++++++++++
+ 1 file changed, 80 insertions(+)
+
+diff --git a/drivers/iio/adc/sun4i-gpadc-iio.c b/drivers/iio/adc/sun4i-gpadc-iio.c
+index 8fc414107..2045a4aa3 100644
+--- a/drivers/iio/adc/sun4i-gpadc-iio.c
++++ b/drivers/iio/adc/sun4i-gpadc-iio.c
+@@ -19,6 +19,7 @@
+  * shutdown for not being used.
+  */
+ 
++#include <linux/clk.h>
+ #include <linux/completion.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+@@ -28,6 +29,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
++#include <linux/reset.h>
+ #include <linux/thermal.h>
+ #include <linux/delay.h>
+ 
+@@ -72,6 +74,9 @@ struct gpadc_data {
+ 	u32		ctrl2_map;
+ 	u32		sensor_en_map;
+ 	u32		filter_map;
++	bool		has_bus_clk;
++	bool		has_bus_rst;
++	bool		has_mod_clk;
+ };
+ 
+ static const struct gpadc_data sun4i_gpadc_data = {
+@@ -131,6 +136,9 @@ struct sun4i_gpadc_iio {
+ 	atomic_t			ignore_temp_data_irq;
+ 	const struct gpadc_data		*data;
+ 	bool				no_irq;
++	struct clk			*bus_clk;
++	struct clk			*mod_clk;
++	struct reset_control		*reset;
+ 	/* prevents concurrent reads of temperature and ADC */
+ 	struct mutex			mutex;
+ 	struct thermal_zone_device	*tzd;
+@@ -432,6 +440,12 @@ static int sun4i_gpadc_runtime_suspend(struct device *dev)
+ {
+ 	struct sun4i_gpadc_iio *info = iio_priv(dev_get_drvdata(dev));
+ 
++	if (info->data->has_mod_clk)
++		clk_disable(info->mod_clk);
++
++	if (info->data->has_bus_clk)
++		clk_disable(info->bus_clk);
++
+ 	return info->data->sample_end(info);
+ }
+ 
+@@ -480,6 +494,12 @@ static int sun4i_gpadc_runtime_resume(struct device *dev)
+ {
+ 	struct sun4i_gpadc_iio *info = iio_priv(dev_get_drvdata(dev));
+ 
++	if (info->data->has_mod_clk)
++		clk_enable(info->mod_clk);
++
++	if (info->data->has_bus_clk)
++		clk_enable(info->bus_clk);
++
+ 	return info->data->sample_start(info);
+ }
+ 
+@@ -590,10 +610,61 @@ static int sun4i_gpadc_probe_dt(struct platform_device *pdev,
+ 		return ret;
+ 	}
+ 
++	if (info->data->has_bus_rst) {
++		info->reset = devm_reset_control_get(&pdev->dev, NULL);
++		if (IS_ERR(info->reset)) {
++			ret = PTR_ERR(info->reset);
++			return ret;
++		}
++
++		ret = reset_control_deassert(info->reset);
++		if (ret)
++			return ret;
++	}
++
++	if (info->data->has_bus_clk) {
++		info->bus_clk = devm_clk_get(&pdev->dev, "bus");
++		if (IS_ERR(info->bus_clk)) {
++			ret = PTR_ERR(info->bus_clk);
++			goto assert_reset;
++		}
++
++		ret = clk_prepare_enable(info->bus_clk);
++		if (ret)
++			goto assert_reset;
++	}
++
++	if (info->data->has_mod_clk) {
++		info->mod_clk = devm_clk_get(&pdev->dev, "mod");
++		if (IS_ERR(info->mod_clk)) {
++			ret = PTR_ERR(info->mod_clk);
++			goto disable_bus_clk;
++		}
++
++		/* Running at 6MHz */
++		ret = clk_set_rate(info->mod_clk, 4000000);
++		if (ret)
++			goto disable_bus_clk;
++
++		ret = clk_prepare_enable(info->mod_clk);
++		if (ret)
++			goto disable_bus_clk;
++	}
++
+ 	if (IS_ENABLED(CONFIG_THERMAL_OF))
+ 		info->sensor_device = &pdev->dev;
+ 
+ 	return 0;
++
++disable_bus_clk:
++	if (info->data->has_bus_clk)
++		clk_disable_unprepare(info->bus_clk);
++
++assert_reset:
++	if (info->data->has_bus_rst)
++		reset_control_assert(info->reset);
++
++	return ret;
+ }
+ 
+ static int sun4i_gpadc_probe_mfd(struct platform_device *pdev,
+@@ -758,6 +829,15 @@ static int sun4i_gpadc_remove(struct platform_device *pdev)
+ 	if (!info->no_irq)
+ 		iio_map_array_unregister(indio_dev);
+ 
++	if (info->data->has_mod_clk)
++		clk_disable_unprepare(info->mod_clk);
++
++	if (info->data->has_bus_clk)
++		clk_disable_unprepare(info->bus_clk);
++
++	if (info->data->has_bus_rst)
++		reset_control_assert(info->reset);
++
+ 	return 0;
+ }
+ 
+-- 
+2.31.1
+

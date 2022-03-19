@@ -1,0 +1,116 @@
+From 3598aedc38b2567cfb73f9ef13bc1a1063f74353 Mon Sep 17 00:00:00 2001
+From: Po-Hao Huang <phhuang@realtek.com>
+Date: Fri, 21 Jan 2022 15:08:13 +0800
+Subject: [PATCH 550/562] rtw88: fix memory overrun and memory leak during
+ hw_scan
+
+Previously we allocated less memory than actual required, overwrite
+to the buffer causes the mm module to complaint and raise access
+violation faults. Along with potential memory leaks when returned
+early. Fix these by passing the correct size and proper deinit flow.
+
+Fixes: 10d162b2ed39 ("rtw88: 8822c: add ieee80211_ops::hw_scan")
+Signed-off-by: Po-Hao Huang <phhuang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220121070813.9656-4-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw88/fw.c | 34 +++++++++++++++++--------
+ 1 file changed, 24 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.c b/drivers/net/wireless/realtek/rtw88/fw.c
+index a631042753ea..ce9535cce723 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.c
++++ b/drivers/net/wireless/realtek/rtw88/fw.c
+@@ -1784,9 +1784,9 @@ void rtw_fw_scan_notify(struct rtw_dev *rtwdev, bool start)
+ 	rtw_fw_send_h2c_command(rtwdev, h2c_pkt);
+ }
+ 
+-static void rtw_append_probe_req_ie(struct rtw_dev *rtwdev, struct sk_buff *skb,
+-				    struct sk_buff_head *list,
+-				    struct rtw_vif *rtwvif)
++static int rtw_append_probe_req_ie(struct rtw_dev *rtwdev, struct sk_buff *skb,
++				   struct sk_buff_head *list, u8 *bands,
++				   struct rtw_vif *rtwvif)
+ {
+ 	struct ieee80211_scan_ies *ies = rtwvif->scan_ies;
+ 	struct rtw_chip_info *chip = rtwdev->chip;
+@@ -1797,19 +1797,24 @@ static void rtw_append_probe_req_ie(struct rtw_dev *rtwdev, struct sk_buff *skb,
+ 		if (!(BIT(idx) & chip->band))
+ 			continue;
+ 		new = skb_copy(skb, GFP_KERNEL);
++		if (!new)
++			return -ENOMEM;
+ 		skb_put_data(new, ies->ies[idx], ies->len[idx]);
+ 		skb_put_data(new, ies->common_ies, ies->common_ie_len);
+ 		skb_queue_tail(list, new);
++		(*bands)++;
+ 	}
++
++	return 0;
+ }
+ 
+-static int _rtw_hw_scan_update_probe_req(struct rtw_dev *rtwdev, u8 num_ssids,
++static int _rtw_hw_scan_update_probe_req(struct rtw_dev *rtwdev, u8 num_probes,
+ 					 struct sk_buff_head *probe_req_list)
+ {
+ 	struct rtw_chip_info *chip = rtwdev->chip;
+ 	struct sk_buff *skb, *tmp;
+ 	u8 page_offset = 1, *buf, page_size = chip->page_size;
+-	u8 pages = page_offset + num_ssids * RTW_PROBE_PG_CNT;
++	u8 pages = page_offset + num_probes * RTW_PROBE_PG_CNT;
+ 	u16 pg_addr = rtwdev->fifo.rsvd_h2c_info_addr, loc;
+ 	u16 buf_offset = page_size * page_offset;
+ 	u8 tx_desc_sz = chip->tx_pkt_desc_sz;
+@@ -1848,6 +1853,8 @@ static int _rtw_hw_scan_update_probe_req(struct rtw_dev *rtwdev, u8 num_ssids,
+ 	rtwdev->scan_info.probe_pg_size = page_offset;
+ out:
+ 	kfree(buf);
++	skb_queue_walk(probe_req_list, skb)
++		kfree_skb(skb);
+ 
+ 	return ret;
+ }
+@@ -1858,7 +1865,8 @@ static int rtw_hw_scan_update_probe_req(struct rtw_dev *rtwdev,
+ 	struct cfg80211_scan_request *req = rtwvif->scan_req;
+ 	struct sk_buff_head list;
+ 	struct sk_buff *skb;
+-	u8 num = req->n_ssids, i;
++	u8 num = req->n_ssids, i, bands = 0;
++	int ret;
+ 
+ 	skb_queue_head_init(&list);
+ 	for (i = 0; i < num; i++) {
+@@ -1866,19 +1874,25 @@ static int rtw_hw_scan_update_probe_req(struct rtw_dev *rtwdev,
+ 					     req->ssids[i].ssid,
+ 					     req->ssids[i].ssid_len,
+ 					     req->ie_len);
+-		if (!skb)
++		if (!skb) {
++			ret = -ENOMEM;
+ 			goto out;
+-		rtw_append_probe_req_ie(rtwdev, skb, &list, rtwvif);
++		}
++		ret = rtw_append_probe_req_ie(rtwdev, skb, &list, &bands,
++					      rtwvif);
++		if (ret)
++			goto out;
++
+ 		kfree_skb(skb);
+ 	}
+ 
+-	return _rtw_hw_scan_update_probe_req(rtwdev, num, &list);
++	return _rtw_hw_scan_update_probe_req(rtwdev, num * bands, &list);
+ 
+ out:
+ 	skb_queue_walk(&list, skb)
+ 		kfree_skb(skb);
+ 
+-	return -ENOMEM;
++	return ret;
+ }
+ 
+ static int rtw_add_chan_info(struct rtw_dev *rtwdev, struct rtw_chan_info *info,
+-- 
+2.34.1
+

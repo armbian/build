@@ -21,6 +21,7 @@ fi
 [[ -z $ROOTPWD ]] && ROOTPWD="1234" # Must be changed @first login
 [[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
+[[ -z $DEB_COMPRESS ]] && DEB_COMPRESS="xz" # compress .debs with XZ by default. Use 'none' for faster/larger builds
 TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
 USEALLCORES=yes # Use all CPU cores for compiling
 HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
@@ -28,8 +29,8 @@ HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-ROOTFSCACHE_VERSION=7
-CHROOT_CACHE_VERSION=7
+[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=15
+[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
 ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
@@ -43,6 +44,16 @@ else
 	REPO_STORAGE=$DEST/repository
 	REPO_CONFIG="aptly.conf"
 fi
+
+# image artefact destination with or without subfolder
+FINALDEST=$DEST/images
+if [[ -n "${MAKE_FOLDERS}" ]]; then
+
+	FINALDEST=$DEST/images/"${BOARD}"/"${MAKE_FOLDERS}"
+	install -d ${FINALDEST}
+
+fi
+
 
 # TODO: fixed name can't be used for parallel image building
 ROOT_MAPPER="armbian-root"
@@ -65,6 +76,20 @@ fi
 
 # small SD card with kernel, boot script and .dtb/.bin files
 [[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
+
+# Since we are having too many options for mirror management,
+# then here is yet another mirror related option.
+# Respecting user's override in case a mirror is unreachable.
+case $REGIONAL_MIRROR in
+	china)
+		[[ -z $USE_MAINLINE_GOOGLE_MIRROR ]] && [[ -z $MAINLINE_MIRROR ]] && MAINLINE_MIRROR=tuna
+		[[ -z $USE_GITHUB_UBOOT_MIRROR ]] && [[ -z $UBOOT_MIRROR ]] && UBOOT_MIRROR=gitee
+		[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=gitclone
+		[[ -z $DOWNLOAD_MIRROR ]] && DOWNLOAD_MIRROR=china
+		;;
+	*)
+		;;
+esac
 
 # used by multiple sources - reduce code duplication
 [[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
@@ -90,12 +115,33 @@ esac
 
 MAINLINE_KERNEL_DIR='linux-mainline'
 
-if [[ $USE_GITHUB_UBOOT_MIRROR == yes ]]; then
-	MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
-else
-	MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
-fi
+[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github
+
+case $UBOOT_MIRROR in
+	gitee)
+		MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
+		;;
+	github)
+		MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
+		;;
+	*)
+		MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
+		;;
+esac
+
 MAINLINE_UBOOT_DIR='u-boot'
+
+case $GITHUB_MIRROR in
+	fastgit)
+		GITHUB_SOURCE='https://hub.fastgit.xyz'
+		;;
+	gitclone)
+		GITHUB_SOURCE='https://gitclone.com/github.com'
+		;;
+	*)
+		GITHUB_SOURCE='https://github.com'
+		;;
+esac
 
 # Let's set default data if not defined in board configuration above
 [[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
@@ -112,8 +158,11 @@ ATF_COMPILE=yes
 [[ -z $CRYPTROOT_PARAMETERS ]] && CRYPTROOT_PARAMETERS="--pbkdf pbkdf2"
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
+[[ -z $SKIP_BOOTSPLASH ]] && SKIP_BOOTSPLASH="no"
 [[ -z $AUFS ]] && AUFS="yes"
 [[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
+[[ -z $EXTRA_BSP_NAME ]] && EXTRA_BSP_NAME=""
+[[ -z $EXTRA_ROOTFS_MIB_SIZE ]] && EXTRA_ROOTFS_MIB_SIZE=0
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
@@ -129,6 +178,19 @@ fi
 
 # load architecture defaults
 source "${SRC}/config/sources/${ARCH}.conf"
+
+## Extensions: at this point we've sourced all the config files that will be used,
+##             and (hopefully) not yet invoked any extension methods. So this is the perfect
+##             place to initialize the extension manager. It will create functions
+##             like the 'post_family_config' that is invoked below.
+initialize_extension_manager
+
+call_extension_method "post_family_config" "config_tweaks_post_family_config" << 'POST_FAMILY_CONFIG'
+*give the config a chance to override the family/arch defaults*
+This hook is called after the family configuration (`sources/families/xxx.conf`) is sourced.
+Since the family can override values from the user configuration and the board configuration,
+it is often used to in turn override those.
+POST_FAMILY_CONFIG
 
 # Myy : Menu configuration for choosing desktop configurations
 
@@ -361,7 +423,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ "$RELEASE" =~ ^(xenial|bionic|focal|hirsute|impish)$ ]]; then
+if [[ "$RELEASE" =~ ^(xenial|bionic|focal|hirsute|impish|jammy)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -533,6 +595,14 @@ if [[ $DOWNLOAD_MIRROR == "bfsu" ]] ; then
 	UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
 fi
 
+if [[ "${ARCH}" == "amd64" ]]; then
+	UBUNTU_MIRROR='archive.ubuntu.com/ubuntu' # ports are only for non-amd64, of course.
+
+		if [[ -n ${CUSTOM_UBUNTU_MIRROR} ]]; then # ubuntu redirector doesn't work well on amd64
+			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR}"
+		fi
+fi
+
 # don't use mirrors that throws garbage on 404
 if [[ -z ${ARMBIAN_MIRROR} ]]; then
 	while true; do
@@ -543,16 +613,26 @@ if [[ -z ${ARMBIAN_MIRROR} ]]; then
 	done
 fi
 
-# For user override
+# For (late) user override.
+# Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.
+#         in case the user tries to use them in lib.config, hopefully they'll be detected as "wishful hooking" and the user will be wrn'ed.
 if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 	display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
 	source "$USERPATCHES_PATH"/lib.config
 fi
 
-if [[ "$(type -t user_config)" == "function" ]]; then
-	display_alert "Invoke function with user override" "user_config" "info"
-	user_config
-fi
+call_extension_method "user_config" << 'USER_CONFIG'
+*Invoke function with user override*
+Allows for overriding configuration values set anywhere else.
+It is called after sourcing the `lib.config` file if it exists,
+but before assembling any package lists.
+USER_CONFIG
+
+call_extension_method "extension_prepare_config" << 'EXTENSION_PREPARE_CONFIG'
+*allow extensions to prepare their own config, after user config is done*
+Implementors should preserve variable values pre-set, but can default values an/or validate them.
+This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
+EXTENSION_PREPARE_CONFIG
 
 # apt-cacher-ng mirror configurarion
 if [[ $DISTRIBUTION == Ubuntu ]]; then
@@ -617,6 +697,13 @@ unset LOG_OUTPUT_FILE
 
 # Give the option to configure DNS server used in the chroot during the build process
 [[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
+
+call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" << 'POST_AGGREGATE_PACKAGES'
+*For final user override, using a function, after all aggregations are done*
+Called after aggregating all package lists, before the end of `compilation.sh`.
+Packages will still be installed after this is called, so it is the last chance
+to confirm or change any packages.
+POST_AGGREGATE_PACKAGES
 
 # debug
 cat <<-EOF >> "${DEST}"/${LOG_SUBPATH}/output.log
