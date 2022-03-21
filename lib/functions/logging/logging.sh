@@ -209,8 +209,13 @@ function display_alert() {
 
 	# Now, log to file. This will be colorized later by ccze and such, so remove any colors it might already have.
 	# See also the stuff done in runners.sh for logging exact command lines and runtimes.
+	# the "echo" runs in a subshell due to the "sed" pipe (! important !), so we store BASHPID (current subshell) outside the scope
+	# BASHPID is the current subshell; $$ is parent's?; $_ is the current bashopts
+	local CALLER_PID="${BASHPID}"
 	if [[ -f "${CURRENT_LOGFILE}" ]]; then
-		echo -e "--> [${level_indicator} ] $(printf "%4s" "${SECONDS}"): $$ - ${BASHPID}: $-: ${level}: ${1} [ ${2} ]" | sed 's/\x1b\[[0-9;]*m//g' >> "${CURRENT_LOGFILE}"
+		# ANSI-less version
+		#echo -e "--> ${level_indicator} $(printf "%4s" "${SECONDS}"): $$ - ${CALLER_PID} - ${BASHPID}: $-: ${level}: ${1} [ ${2} ]" >> "${CURRENT_LOGFILE}" #  | sed 's/\x1b\[[0-9;]*m//g'
+		echo -e "--> ${level_indicator} $(printf "%4s" "${SECONDS}"): $$ - ${CALLER_PID} - ${BASHPID}: $-: ${level}: ${1} [ ${2} ]" >> "${CURRENT_LOGFILE}" #  | sed 's/\x1b\[[0-9;]*m//g'
 	fi
 
 	if [[ ${skip_screen} -eq 1 ]]; then
@@ -224,7 +229,7 @@ function display_alert() {
 
 	local pids_info=""
 	if [[ "${SHOW_PIDS}" == "yes" ]]; then
-		pids_info="${tool_color}(${normal_color}$$ - ${BASHPID}${tool_color})" # BASHPID is the current subshell; $$ is parent's?
+		pids_info="${tool_color}(${normal_color}$$ - ${CALLER_PID}${tool_color})" # BASHPID is the current subshell (should be equal to CALLER_PID here); $$ is parent's?
 	fi
 
 	local bashopts_info=""
