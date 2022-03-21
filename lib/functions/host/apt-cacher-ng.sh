@@ -35,8 +35,9 @@ function acng_configure_and_restart_acng() {
 		RedirMax: 15
 		ReuseConnections: 1
 
-		# Allow HTTPS CONNECT, although this is not ideal, since packages are not actually cached then. Disabled for now.
-		# PassThroughPattern: .*
+		# Allow HTTPS CONNECT, although this is not ideal, since packages are not actually cached.
+		# Enabled, since PPA's require this.
+		PassThroughPattern: .*
 	ACNG_CONFIG
 
 	# Ensure correct permissions on the directories
