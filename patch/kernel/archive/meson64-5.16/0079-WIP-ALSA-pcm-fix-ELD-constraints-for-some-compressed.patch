@@ -1,0 +1,91 @@
+From bb1ac34d340c84ff3d1d304d1d187925b2d7faf7 Mon Sep 17 00:00:00 2001
+From: Matthias Reichl <hias@horus.com>
+Date: Fri, 19 Mar 2021 12:14:17 +0100
+Subject: [PATCH 79/94] WIP: ALSA: pcm: fix ELD constraints for some compressed
+ audio formats
+
+The SADs of compressed formats like AC3 and DTS contain the channel
+and sample rate info of the audio data inside the compressed stream,
+but when building constraints we must use the rates and formats used
+to pass through the stream. eg 2ch 48kHz for AC3.
+
+Signed-off-by: Matthias Reichl <hias@horus.com>
+---
+ sound/core/pcm_drm_eld.c | 38 +++++++++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/sound/core/pcm_drm_eld.c b/sound/core/pcm_drm_eld.c
+index 4b5faae5d16e..e7ec7a8b9d42 100644
+--- a/sound/core/pcm_drm_eld.c
++++ b/sound/core/pcm_drm_eld.c
+@@ -6,6 +6,7 @@
+ #include <drm/drm_edid.h>
+ #include <sound/pcm.h>
+ #include <sound/pcm_drm_eld.h>
++#include <linux/hdmi.h>
+ 
+ static const unsigned int eld_rates[] = {
+ 	32000,
+@@ -17,9 +18,40 @@ static const unsigned int eld_rates[] = {
+ 	192000,
+ };
+ 
++static unsigned int sad_format(const u8 *sad)
++{
++	return (sad[0] & 0x78) >> 3;
++}
++
+ static unsigned int sad_max_channels(const u8 *sad)
+ {
+-	return 1 + (sad[0] & 7);
++	switch (sad_format(sad)) {
++	case HDMI_AUDIO_CODING_TYPE_AC3:
++	case HDMI_AUDIO_CODING_TYPE_DTS:
++	case HDMI_AUDIO_CODING_TYPE_EAC3:
++		return 2;
++	case HDMI_AUDIO_CODING_TYPE_DTS_HD:
++	case HDMI_AUDIO_CODING_TYPE_MLP:
++		return 8;
++	default:
++		return 1 + (sad[0] & 7);
++	}
++}
++
++static unsigned int sad_rate_mask(const u8 *sad)
++{
++	switch (sad_format(sad)) {
++	case HDMI_AUDIO_CODING_TYPE_AC3:
++	case HDMI_AUDIO_CODING_TYPE_DTS:
++		return 0x07; // 32-48kHz
++	case HDMI_AUDIO_CODING_TYPE_EAC3:
++		return 0x7f; // 32-192kHz
++	case HDMI_AUDIO_CODING_TYPE_DTS_HD:
++	case HDMI_AUDIO_CODING_TYPE_MLP:
++		return 0x60; // 176.4, 192kHz
++	default:
++		return sad[1] & 0x7f;
++	}
+ }
+ 
+ static int eld_limit_rates(struct snd_pcm_hw_params *params,
+@@ -42,7 +74,7 @@ static int eld_limit_rates(struct snd_pcm_hw_params *params,
+ 			 * requested number of channels.
+ 			 */
+ 			if (c->min <= max_channels)
+-				rate_mask |= sad[1];
++				rate_mask |= sad_rate_mask(sad);
+ 		}
+ 	}
+ 
+@@ -70,7 +102,7 @@ static int eld_limit_channels(struct snd_pcm_hw_params *params,
+ 				rate_mask |= BIT(i);
+ 
+ 		for (i = drm_eld_sad_count(eld); i > 0; i--, sad += 3)
+-			if (rate_mask & sad[1])
++			if (rate_mask & sad_rate_mask(sad))
+ 				t.max = max(t.max, sad_max_channels(sad));
+ 	}
+ 
+-- 
+2.35.1
+
