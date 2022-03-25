@@ -1,5 +1,4 @@
 enable_extension "grub"
-enable_extension "nvidia"
 export SERIALCON="tty1"                          # Cant reasonably expect UEFI stuff to have a serial console. Customize if otherwise.
 export SKIP_BOOTSPLASH="yes"                     # No splash.
 export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-1} # Default 1-second timeout for GRUB menu.
