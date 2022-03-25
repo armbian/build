@@ -207,7 +207,8 @@ add_apt_sources() {
 	for apt_sources_dirpath in ${potential_paths}; do
 		if [[ -d "${apt_sources_dirpath}" ]]; then
 			for apt_source_filepath in "${apt_sources_dirpath}/"*.source; do
-				local new_apt_source="$(cat "${apt_source_filepath}")"
+				apt_source_filepath=$(echo $apt_source_filepath | sed -re 's/(^.*[^/])\.[^./]*$/\1/')
+				local new_apt_source="$(cat "${apt_source_filepath}.source")"
 				local apt_source_gpg_filepath="${apt_source_filepath}.gpg"
 
 				# extract filenames
