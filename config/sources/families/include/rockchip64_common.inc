@@ -15,20 +15,9 @@ BOOTPATCHDIR="u-boot-rockchip64"
 PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
-#if [ "$(uname -m)" = "aarch64" ]; then
-#	case "$(lsb_release -sc)" in
-#	"bullseye"|"focal"|"hirsute"|"impish"|"jammy")
-#		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
-#		;;
-#	*)
-#		PKG_PREFIX="qemu-x86_64 -L /usr/x86_64-linux-gnu "
-#		;;
-#	esac
-#else
-#	PKG_PREFIX=""
-#fi
 
-BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
+#BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
+BOOT_SOC=${BOOT_SOC:=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`}
 
 CPUMIN=${CPUMIN:="408000"}
 
@@ -81,7 +70,7 @@ elif [[ $BOOT_SOC == rk3568 ]]; then
 
 	BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
 	DDR_BLOB='rk35/rk3568_ddr_1560MHz_v1.10.bin'
-	BL31_BLOB='rk35/rk3568_bl31_v1.29.elf'
+	BL31_BLOB='rk35/rk3568_bl31_v1.28.elf'
 
 elif [[ $BOARD == rockpi-s ]]; then
 
@@ -102,7 +91,7 @@ case $BRANCH in
 
 	current)
 
-		KERNELBRANCH="branch:linux-5.10.y"
+		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
@@ -111,7 +100,7 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.15.y"
+		KERNELBRANCH="branch:linux-5.16.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -250,7 +239,7 @@ family_tweaks()
 
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable z28pro-bluetooth.service >/dev/null 2>&1"
 
-	elif [[ $BOARD == nanopi-r2s || $BOARD == nanopi-r2c || $BOARD == orangepi-r1plus ]]; then
+	elif [[ $BOARD == nanopi-r2s || $BOARD == nanopi-r2c || $BOARD == orangepi-r1plus || $BOARD == orangepi-r1plus-lts ]]; then
 
 		# rename USB based network to lan0
 		mkdir -p $SDCARD/etc/udev/rules.d/
@@ -285,6 +274,14 @@ family_tweaks()
 
 		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
 		cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
+		if [[ $BRANCH == legacy && ($BOARD == station-m1) ]]; then
+			cp $SRC/packages/blobs/rtl8723bt_fw/rtl8723ds_config.bin $SDCARD/lib/firmware/rtlbt/rtl8723d_config
+			cp $SRC/packages/blobs/rtl8723bt_fw/rtl8723ds_fw.bin $SDCARD/lib/firmware/rtlbt/rtl8723d_fw
+			install -m 755 $SRC/packages/bsp/rk3328/m1/rtk_hciattach $SDCARD/usr/bin/rtk_hciattach
+			sed -e 's/exit 0//g' -i $SDCARD/etc/rc.local
+			echo "su -c '/usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS2 rtk_h5 &'" >> $SDCARD/etc/rc.local
+			echo "exit 0" >> $SDCARD/etc/rc.local
+		fi
 
 	fi
 

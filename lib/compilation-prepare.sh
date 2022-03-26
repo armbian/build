@@ -85,10 +85,14 @@ compilation_prepare()
 	fi
 
 	if [[ "${version}" == "4.4."* ]] && \
-	[[ "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == station* ]]; then
+	[[ "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == media* ]]; then
 		display_alert "Adjusting" "packaging" "info"
 		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
+		if [[ $BOARD == nanopct4 ]]; then
+			process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
+		else
+			process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
+		fi
 	fi
 
 	if [[ "${version}" == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip || "$LINUXFAMILY" == rk322x ]]; then
@@ -706,6 +710,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8822BS) += rtl8822bs/" >> $kerneldir/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
 		$kerneldir/drivers/net/wireless/Kconfig
+
+                # add support for K5.11+
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs.patch" "applying"
 
 	fi
 

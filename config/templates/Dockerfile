@@ -120,5 +120,12 @@ RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/de
 
 ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
 WORKDIR /root/armbian
-LABEL org.opencontainers.image.source="https://github.com/armbian/build"
+LABEL org.opencontainers.image.source="https://github.com/armbian/build/blob/master/config/templates/Dockerfile" \
+    org.opencontainers.image.url="https://github.com/armbian/build/pkgs/container/build"  \
+    org.opencontainers.image.vendor="armbian" \
+    org.opencontainers.image.title="Armbian build framework" \
+    org.opencontainers.image.description="Custom Linux build framework" \
+    org.opencontainers.image.documentation="https://docs.armbian.com" \
+    org.opencontainers.image.authors="Igor Pecovnik" \
+    org.opencontainers.image.licenses="GPL-2.0"
 ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]

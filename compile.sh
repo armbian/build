@@ -209,7 +209,7 @@ mkdir -p "${SRC}"/userpatches
 
 
 # Create example configs if none found in userpatches
-if ! ls "${SRC}"/userpatches/{config-example.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
+if ! ls "${SRC}"/userpatches/{config-default.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
 
 	# Migrate old configs
 	if ls "${SRC}"/*.conf 1> /dev/null 2>&1; then
@@ -224,6 +224,10 @@ if ! ls "${SRC}"/userpatches/{config-example.conf,config-docker.conf,config-vagr
 	# Create example config
 	if [[ ! -f "${SRC}"/userpatches/config-example.conf ]]; then
 		cp "${SRC}"/config/templates/config-example.conf "${SRC}"/userpatches/config-example.conf || exit 1
+	fi
+
+	# Link default config to example config
+	if [[ ! -f "${SRC}"/userpatches/config-default.conf ]]; then
                 ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
 	fi
 
@@ -293,15 +297,5 @@ while [[ "${1}" == *=* ]]; do
 
 done
 
-
-if [[ "${BUILD_ALL}" == "yes" || "${BUILD_ALL}" == "demo" ]]; then
-
-	# shellcheck source=lib/build-all-ng.sh
-	source "${SRC}"/lib/build-all-ng.sh
-
-else
-
-	# shellcheck source=lib/main.sh
-	source "${SRC}"/lib/main.sh
-
-fi
+# shellcheck source=lib/main.sh
+source "${SRC}"/lib/main.sh

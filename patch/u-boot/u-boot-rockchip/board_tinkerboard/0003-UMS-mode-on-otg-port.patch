@@ -1,0 +1,399 @@
+From 2636bc3f11c953c24b3af7334082811737bf475b Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Sat, 19 Mar 2022 21:41:38 +0000
+Subject: [PATCH] rk3288: tinkerboard: add UMS mode when USB host is connected
+ to OTG port during boot
+
+---
+ arch/arm/include/asm/arch-rockchip/gpio.h  |  22 ++++
+ arch/arm/mach-rockchip/board.c             | 115 +++++++++++++++++++++
+ arch/arm/mach-rockchip/spl.c               |  23 ++++-
+ cmd/usb_mass_storage.c                     |   9 +-
+ common/autoboot.c                          |  22 ++++
+ common/board_r.c                           |   1 +
+ drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c |   1 +
+ drivers/usb/gadget/f_mass_storage.c        |  10 +-
+ include/init.h                             |   1 +
+ include/linux/usb/gadget.h                 |   3 +
+ 10 files changed, 203 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/include/asm/arch-rockchip/gpio.h b/arch/arm/include/asm/arch-rockchip/gpio.h
+index 1aaec5fae..135688d3b 100644
+--- a/arch/arm/include/asm/arch-rockchip/gpio.h
++++ b/arch/arm/include/asm/arch-rockchip/gpio.h
+@@ -24,6 +24,28 @@ struct rockchip_gpio_regs {
+ };
+ check_member(rockchip_gpio_regs, ls_sync, 0x60);
+ 
++/*
++ * RK3288 IO memory map:
++ *
++ */
++#define RKIO_GPIO0_PHYS                 0xFF750000
++#define RKIO_GRF_PHYS                   0xFF770000
++#define RKIO_GPIO1_PHYS                 0xFF780000
++#define RKIO_GPIO2_PHYS                 0xFF790000
++#define RKIO_GPIO3_PHYS                 0xFF7A0000
++#define RKIO_GPIO4_PHYS                 0xFF7B0000
++#define RKIO_GPIO5_PHYS                 0xFF7C0000
++#define RKIO_GPIO6_PHYS                 0xFF7D0000
++
++/* gpio power down/up control */
++#define GRF_GPIO2A_P		0x150
++#define GRF_GPIO6A_P		0x190
++
++/* gpio input/output control */
++#define GPIO_SWPORT_DR		0x00
++#define GPIO_SWPORT_DDR		0x04
++#define GPIO_EXT_PORT		0x50
++
+ enum gpio_pu_pd {
+ 	GPIO_PULL_NORMAL = 0,
+ 	GPIO_PULL_UP,
+diff --git a/arch/arm/mach-rockchip/board.c b/arch/arm/mach-rockchip/board.c
+index ba4da72b3..5ae2c7f8f 100644
+--- a/arch/arm/mach-rockchip/board.c
++++ b/arch/arm/mach-rockchip/board.c
+@@ -17,10 +17,26 @@
+ #include <asm/arch-rockchip/clock.h>
+ #include <asm/arch-rockchip/periph.h>
+ #include <asm/arch-rockchip/misc.h>
++#include <asm/arch-rockchip/gpio.h>
++#include <linux/delay.h>
+ #include <power/regulator.h>
+ 
+ DECLARE_GLOBAL_DATA_PTR;
+ 
++enum project_id {
++	TinkerBoardS = 0,
++	TinkerBoard  = 7,
++};
++
++enum pcb_id {
++	SR,
++	ER,
++	PR,
++};
++
++extern bool force_ums;
++
++
+ __weak int rk_board_late_init(void)
+ {
+ 	return 0;
+@@ -33,6 +49,105 @@ int board_late_init(void)
+ 	return rk_board_late_init();
+ }
+ 
++/*
++*
++* usb current limit : GPIO6_A6 (H:unlock, L:lock)
++*
++*/
++void usb_current_limit_ctrl(bool unlock_current)
++{
++	int tmp;
++
++	printf("%s: unlock_current = %d\n", __func__, unlock_current);
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	if(unlock_current == true)
++		writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	else
++		writel(tmp & ~0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++}
++
++/*
++*
++* eMMC maskrom mode : GPIO6_A7 (H:disable maskrom, L:enable maskrom)
++*
++*/
++void rk3288_maskrom_ctrl(bool enable_emmc)
++{
++	int tmp;
++
++	printf("%s: enable_emmc = %d\n", __func__, enable_emmc);
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	if(enable_emmc == true)
++		writel(tmp | 0x80, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	else
++		writel(tmp & ~0x80, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp | 0x80, RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	mdelay(10);
++}
++
++/*
++*
++* project id        : GPIO2_A3 GPIO2_A2 GPIO2_A1
++* pcb id            : GPIO2_B2 GPIO2_B1 GPIO2_B0
++* SDP/CDP           : GPIO6_A5 (H:SDP, L:CDP)
++* usb current limit : GPIO6_A6 (H:unlock, L:lock)
++* eMMC maskrom mode : GPIO6_A7 (H:disable maskrom, L:enable maskrom)
++*
++* Please check TRM V1.2 part1 page 152 for the following register settings
++*
++*/
++int check_force_enter_ums_mode(void)
++{
++	int tmp;
++	enum pcb_id pcbid;
++	enum project_id projectid;
++
++	// GPIO2_A3/GPIO2_A2/GPIO2_A1 pull up enable
++	tmp = readl(RKIO_GRF_PHYS + GRF_GPIO2A_P);
++	writel((tmp&~(0x03F<<2)) | 0x3F<<(16 + 2) | 0x15<<2, RKIO_GRF_PHYS + GRF_GPIO2A_P);
++
++	// GPIO2_A3/GPIO2_A2/GPIO2_A1/GPIO2_B2/GPIO2_B1/GPIO2_B0 set to input
++	tmp = readl(RKIO_GPIO2_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp & ~(0x70E), RKIO_GPIO2_PHYS + GPIO_SWPORT_DDR);
++
++	// GPIO6_A5 pull up/down disable
++	tmp = readl(RKIO_GRF_PHYS + GRF_GPIO6A_P);
++	writel((tmp&~(0x03<<10)) | 0x03<<(16 + 10), RKIO_GRF_PHYS + GRF_GPIO6A_P);
++
++	// GPIO6_A5 set to input
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp & ~(0x20), RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++
++	mdelay(10);
++
++	// read GPIO2_A3/GPIO2_A2/GPIO2_A1 value
++	projectid = (readl(RKIO_GPIO2_PHYS + GPIO_EXT_PORT) & 0x0E) >>1;
++
++	// read GPIO2_B2/GPIO2_B1/GPIO2_B0 value
++	pcbid = (readl(RKIO_GPIO2_PHYS + GPIO_EXT_PORT) & 0x700) >> 8;
++
++	// only Tinker Board S and the PR stage PCB has this function
++	if(projectid!=TinkerBoard && pcbid >= ER){
++		printf("PC event = 0x%x\n", readl(RKIO_GPIO6_PHYS + GPIO_EXT_PORT)&0x20);
++		if((readl(RKIO_GPIO6_PHYS + GPIO_EXT_PORT)&0x20)==0x20) {
++			// SDP detected, enable EMMC and unlock usb current limit
++			printf("usb connected to SDP, force enter ums mode\n");
++			force_ums = true;
++			rk3288_maskrom_ctrl(true);
++			usb_current_limit_ctrl(true);
++		} else {
++			usb_current_limit_ctrl(false);
++		}
++	}
++	return 0;
++}
++
++
+ int board_init(void)
+ {
+ 	int ret;
+diff --git a/arch/arm/mach-rockchip/spl.c b/arch/arm/mach-rockchip/spl.c
+index f148d48b6..59daff438 100644
+--- a/arch/arm/mach-rockchip/spl.c
++++ b/arch/arm/mach-rockchip/spl.c
+@@ -106,6 +106,27 @@ __weak int arch_cpu_init(void)
+ 	return 0;
+ }
+ 
++/*
++*
++* usb current limit : GPIO6_A6 (H:unlock, L:lock)
++*
++*/
++void usb_current_limit_ctrl(bool unlock_current)
++{
++	int tmp;
++
++#include <asm/arch/gpio.h>
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	if(unlock_current == true)
++		writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	else
++		writel(tmp & ~0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++}
++
+ void board_init_f(ulong dummy)
+ {
+ 	int ret;
+@@ -122,7 +143,7 @@ void board_init_f(ulong dummy)
+ 	debug_uart_init();
+ 	debug("\nspl:debug uart enabled in %s\n", __func__);
+ #endif
+-
++	usb_current_limit_ctrl(true);
+ 	board_early_init_f();
+ 
+ 	ret = spl_early_init();
+diff --git a/cmd/usb_mass_storage.c b/cmd/usb_mass_storage.c
+index cf2f55994..d406ea453 100644
+--- a/cmd/usb_mass_storage.c
++++ b/cmd/usb_mass_storage.c
+@@ -111,7 +111,7 @@ static int ums_init(const char *devtype, const char *devnums_part_str)
+ 		name = malloc(UMS_NAME_LEN);
+ 		if (!name)
+ 			goto cleanup;
+-		snprintf(name, UMS_NAME_LEN, "UMS disk %d", ums_count);
++		snprintf(name, UMS_NAME_LEN, "Armbian UMS disk %d", ums_count);
+ 		ums[ums_count].name = name;
+ 		ums[ums_count].block_dev = *block_dev;
+ 
+@@ -136,7 +136,7 @@ cleanup:
+ 	return ret;
+ }
+ 
+-static int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
++int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
+ 			       int argc, char *const argv[])
+ {
+ 	const char *usb_controller;
+@@ -218,6 +218,11 @@ static int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
+ 		usb_gadget_handle_interrupts(controller_index);
+ 
+ 		rc = fsg_main_thread(NULL);
++
++		if (rc == -ETIMEDOUT) {
++			goto cleanup_register;
++		}
++
+ 		if (rc) {
+ 			/* Check I/O error */
+ 			if (rc == -EIO)
+diff --git a/common/autoboot.c b/common/autoboot.c
+index e628baffb..eefaa28d4 100644
+--- a/common/autoboot.c
++++ b/common/autoboot.c
+@@ -40,6 +40,9 @@ DECLARE_GLOBAL_DATA_PTR;
+ static int stored_bootdelay;
+ static int menukey;
+ 
++bool force_ums = false;
++bool getdescriptor = false;
++
+ #if !defined(CONFIG_AUTOBOOT_STOP_STR_CRYPT)
+ #define CONFIG_AUTOBOOT_STOP_STR_CRYPT ""
+ #endif
+@@ -49,6 +52,10 @@ static int menukey;
+ #define AUTOBOOT_MENUKEY 0
+ #endif
+ 
++extern int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[]);
++void usb_current_limit_ctrl(bool unlock_current);
++void rk3288_maskrom_ctrl(bool enable_emmc);
++
+ /*
+  * Use a "constant-length" time compare function for this
+  * hash compare:
+@@ -363,6 +370,21 @@ void autoboot_command(const char *s)
+ {
+ 	debug("### main_loop: bootcmd=\"%s\"\n", s ? s : "<UNDEFINED>");
+ 
++	if (force_ums) {
++		// force to enter ums mode
++		char *local_args[4];
++		char str1[]="ums", str2[]="1", str3[]="mmc", str4[]="0";
++
++		local_args[0]=str1;
++		local_args[1]=str2;
++		local_args[2]=str3;
++		local_args[3]=str4;
++		if (do_usb_mass_storage(NULL, 0, 4, local_args) == -ETIMEDOUT) {
++			rk3288_maskrom_ctrl(false);
++			usb_current_limit_ctrl(false);
++		}
++	}
++
+ 	if (s && (stored_bootdelay == -2 ||
+ 		 (stored_bootdelay != -1 && !abortboot(stored_bootdelay)))) {
+ 		bool lock;
+diff --git a/common/board_r.c b/common/board_r.c
+index 29dd7d26d..5b952d00c 100644
+--- a/common/board_r.c
++++ b/common/board_r.c
+@@ -797,6 +797,7 @@ static init_fnc_t init_sequence_r[] = {
+ #ifdef CONFIG_MMC
+ 	initr_mmc,
+ #endif
++	check_force_enter_ums_mode,
+ #ifdef CONFIG_XEN
+ 	initr_xen,
+ #endif
+diff --git a/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c b/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c
+index f17009a29..b85b3f825 100644
+--- a/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c
++++ b/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c
+@@ -1393,6 +1393,7 @@ static void dwc2_ep0_setup(struct dwc2_udc *dev)
+ 			debug_cond(DEBUG_SETUP != 0,
+ 				   "%s: *** USB_REQ_GET_DESCRIPTOR\n",
+ 				   __func__);
++			getdescriptor = true;
+ 			break;
+ 
+ 		case USB_REQ_SET_INTERFACE:
+diff --git a/drivers/usb/gadget/f_mass_storage.c b/drivers/usb/gadget/f_mass_storage.c
+index 45f0504b6..80706d41b 100644
+--- a/drivers/usb/gadget/f_mass_storage.c
++++ b/drivers/usb/gadget/f_mass_storage.c
+@@ -655,7 +655,7 @@ static void busy_indicator(void)
+ static int sleep_thread(struct fsg_common *common)
+ {
+ 	int	rc = 0;
+-	int i = 0, k = 0;
++	int i = 0, k = 0, j = 0;
+ 
+ 	/* Wait until a signal arrives or we are woken up */
+ 	for (;;) {
+@@ -666,6 +666,7 @@ static int sleep_thread(struct fsg_common *common)
+ 			busy_indicator();
+ 			i = 0;
+ 			k++;
++			j++;
+ 		}
+ 
+ 		if (k == 10) {
+@@ -680,6 +681,13 @@ static int sleep_thread(struct fsg_common *common)
+ 			k = 0;
+ 		}
+ 
++		if (j == 300) {  //about 3 seconds
++			if(force_ums && !getdescriptor) {
++				printf("wait for usb get descriptor cmd timeout\n");
++				return -ETIMEDOUT;
++			}
++		}
++
+ 		usb_gadget_handle_interrupts(controller_index);
+ 	}
+ 	common->thread_wakeup_needed = 0;
+diff --git a/include/init.h b/include/init.h
+index 0f48ccb57..bae1cb88e 100644
+--- a/include/init.h
++++ b/include/init.h
+@@ -261,6 +261,7 @@ int board_early_init_f(void);
+ /* manipulate the U-Boot fdt before its relocation */
+ int board_fix_fdt(void *rw_fdt_blob);
+ int board_late_init(void);
++int check_force_enter_ums_mode (void);
+ int board_postclk_init(void); /* after clocks/timebase, before env/serial */
+ int board_early_init_r(void);
+ 
+diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
+index 06292ddeb..48709f3b0 100644
+--- a/include/linux/usb/gadget.h
++++ b/include/linux/usb/gadget.h
+@@ -25,6 +25,9 @@
+ 
+ struct usb_ep;
+ 
++extern bool force_ums;
++extern bool getdescriptor;
++
+ /**
+  * struct usb_request - describes one i/o request
+  * @buf: Buffer used for data.  Always provide this; some controllers
+-- 
+2.30.2
+

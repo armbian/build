@@ -225,17 +225,33 @@ create_sources_list()
 	;;
 	esac
 
+	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
+
+	# apt-key add is getting deprecated
+	APT_VERSION=$(chroot "${basedir}" /bin/bash -c "apt --version | cut -d\" \" -f2")
+	if linux-version compare "${APT_VERSION}" ge 2.4.1; then
+		# add armbian key
+		mkdir -p "${basedir}"/usr/share/keyrings
+		# change to binary form
+		gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}"/usr/share/keyrings/armbian.gpg
+		SIGNED_BY="[signed-by=/usr/share/keyrings/armbian.gpg] "
+	else
+		# use old method for compatibility reasons
+		cp "${SRC}"/config/armbian.key "${basedir}"
+		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
+	fi
+
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
-		echo "deb https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
-	    echo "deb http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	    echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development
-	[[ -n $LOCAL_MIRROR ]] && echo "deb http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
 	# disable repo if SKIP_ARMBIAN_REPO=yes
 	if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
@@ -243,10 +259,6 @@ create_sources_list()
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
 
-	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
-	cp "${SRC}"/config/armbian.key "${basedir}"
-	chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
-	rm "${basedir}"/armbian.key
 }
 
 
@@ -443,7 +455,7 @@ fetch_from_repo()
 	local ref_subdir=$4
 
 	# Set GitHub mirror before anything else touches $url
-	url=${url//'https://github.com/'/$GITHUB_SOURCE}
+	url=${url//'https://github.com/'/$GITHUB_SOURCE'/'}
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
@@ -1385,7 +1397,7 @@ prepare_host()
   fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
-	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma)$ ]]; then
+	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|ulyana|ulyssa|bullseye|uma|una)$ ]]; then
 		hostdeps+=" python2 python3"
 		ln -fs /usr/bin/python2.7 /usr/bin/python2
 		ln -fs /usr/bin/python2.7 /usr/bin/python
@@ -1400,7 +1412,7 @@ prepare_host()
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute debbie tricia ulyana ulyssa uma" != *"$HOSTRELEASE"* ]]; then
+	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute debbie tricia ulyana ulyssa uma una" != *"$HOSTRELEASE"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -1805,5 +1817,3 @@ show_checklist_variables ()
 		fi
 	done
 }
-
-

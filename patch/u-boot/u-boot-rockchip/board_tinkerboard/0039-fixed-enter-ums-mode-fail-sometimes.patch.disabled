@@ -1,0 +1,160 @@
+From c793281fb8fb1d6a4c8573f2e7497cf07344dea6 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Sat, 19 Mar 2022 11:58:43 +0000
+Subject: [PATCH] rk3288: fix UMS mode fail sometimes
+
+---
+ arch/arm/mach-rockchip/board.c | 70 ++++++++++++++++++++++++++++------
+ arch/arm/mach-rockchip/spl.c   | 23 ++++++++++-
+ 2 files changed, 80 insertions(+), 13 deletions(-)
+
+diff --git a/arch/arm/mach-rockchip/board.c b/arch/arm/mach-rockchip/board.c
+index fc53f2e8..e7a14973 100644
+--- a/arch/arm/mach-rockchip/board.c
++++ b/arch/arm/mach-rockchip/board.c
+@@ -47,18 +47,67 @@ int board_late_init(void)
+ 	return rk_board_late_init();
+ }
+ 
++/*
++*
++* usb current limit : GPIO6_A6 (H:unlock, L:lock)
++*
++*/
++void usb_current_limit_ctrl(bool unlock_current)
++{
++	int tmp;
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	if(unlock_current == true)
++		writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	else
++		writel(tmp & ~0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++}
++
++/*
++*
++* eMMC maskrom mode : GPIO6_A7 (H:disable maskrom, L:enable maskrom)
++*
++*/
++void rk3288_maskrom_ctrl(bool enable_emmc)
++{
++	int tmp;
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	if(enable_emmc == true)
++		writel(tmp | 0x80, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	else
++		writel(tmp & ~0x80, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp | 0x80, RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	mdelay(10);
++}
++
++/*
++*
++* project id        : GPIO2_A3 GPIO2_A2 GPIO2_A1
++* pcb id            : GPIO2_B2 GPIO2_B1 GPIO2_B0
++* SDP/CDP           : GPIO6_A5 (H:SDP, L:CDP)
++* usb current limit : GPIO6_A6 (H:unlock, L:lock)
++* eMMC maskrom mode : GPIO6_A7 (H:disable maskrom, L:enable maskrom)
++*
++* Please check TRM V1.2 part1 page 152 for the following register settings
++*
++*/
+ int check_force_enter_ums_mode(void)
+ {
+ 	int tmp;
+ 	enum pcb_id pcbid;
+ 	enum project_id projectid;
+ 
+-	// GPIO2_A1/GPIO2_A2/GPIO2_A3 pull up enable
+-	// please check TRM V1.2 part1 page 152
++	// GPIO2_A3/GPIO2_A2/GPIO2_A1 pull up enable
+ 	tmp = readl(RKIO_GRF_PHYS + GRF_GPIO2A_P);
+ 	writel((tmp&~(0x03F<<2)) | 0x3F<<(16 + 2) | 0x15<<2, RKIO_GRF_PHYS + GRF_GPIO2A_P);
+ 
+-	// GPIO2_A1/GPIO2_A2/GPIO2_A3/GPIO2_B0/GPIO2_B1/GPIO2_B2 set to input
++	// GPIO2_A3/GPIO2_A2/GPIO2_A1/GPIO2_B2/GPIO2_B1/GPIO2_B0 set to input
+ 	tmp = readl(RKIO_GPIO2_PHYS + GPIO_SWPORT_DDR);
+ 	writel(tmp & ~(0x70E), RKIO_GPIO2_PHYS + GPIO_SWPORT_DDR);
+ 
+@@ -72,10 +121,10 @@ int check_force_enter_ums_mode(void)
+ 
+ 	mdelay(10);
+ 
+-	// read GPIO2_A1/GPIO2_A2/GPIO2_A3 value
++	// read GPIO2_A3/GPIO2_A2/GPIO2_A1 value
+ 	projectid = (readl(RKIO_GPIO2_PHYS + GPIO_EXT_PORT) & 0x0E) >>1;
+ 
+-	// read GPIO2_B0/GPIO2_B1/GPIO2_B2 value
++	// read GPIO2_B2/GPIO2_B1/GPIO2_B0 value
+ 	pcbid = (readl(RKIO_GPIO2_PHYS + GPIO_EXT_PORT) & 0x700) >> 8;
+ 
+ 	// only Tinker Board S and the PR stage PCB has this function
+@@ -85,13 +134,10 @@ int check_force_enter_ums_mode(void)
+ 			// SDP detected, enable EMMC and unlock usb current limit
+ 			printf("usb connected to SDP, force enter ums mode\n");
+ 			force_ums = true;
+-			// unlock usb current limit and re-enable EMMC
+-			// set GPIO6_A6, GPIO6_A7 to high
+-			tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
+-			writel(tmp | 0xc0, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
+-			tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
+-			writel(tmp | 0xc0, RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
+-			mdelay(10);
++			rk3288_maskrom_ctrl(true);
++			usb_current_limit_ctrl(true);
++		} else {
++			usb_current_limit_ctrl(false);
+ 		}
+ 	}
+ 	return 0;
+diff --git a/arch/arm/mach-rockchip/spl.c b/arch/arm/mach-rockchip/spl.c
+index f148d48b..59daff43 100644
+--- a/arch/arm/mach-rockchip/spl.c
++++ b/arch/arm/mach-rockchip/spl.c
+@@ -106,6 +106,27 @@ __weak int arch_cpu_init(void)
+ 	return 0;
+ }
+ 
++/*
++*
++* usb current limit : GPIO6_A6 (H:unlock, L:lock)
++*
++*/
++void usb_current_limit_ctrl(bool unlock_current)
++{
++	int tmp;
++
++#include <asm/arch/gpio.h>
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	if(unlock_current == true)
++		writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++	else
++		writel(tmp & ~0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
++
++	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++	writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DDR);
++}
++
+ void board_init_f(ulong dummy)
+ {
+ 	int ret;
+@@ -122,7 +143,7 @@ void board_init_f(ulong dummy)
+ 	debug_uart_init();
+ 	debug("\nspl:debug uart enabled in %s\n", __func__);
+ #endif
+-
++	usb_current_limit_ctrl(true);
+ 	board_early_init_f();
+ 
+ 	ret = spl_early_init();
+-- 
+2.30.2
+
