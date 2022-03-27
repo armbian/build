@@ -1370,7 +1370,7 @@ prepare_host()
 	build-essential  ca-certificates ccache cpio cryptsetup curl              \
 	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
 	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu gdisk gnupg1 gpg            \
+	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gnupg1 gpg              \
 	imagemagick jq kmod libbison-dev libc6-dev-armhf-cross libcrypto++-dev    \
 	libelf-dev libfdt-dev libfile-fcntllock-perl                              \
 	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
@@ -1387,7 +1387,7 @@ prepare_host()
 
   elif [[ $(dpkg --print-architecture) == arm64 ]]; then
 
-	hostdeps+=" gcc-arm-linux-gnueabi gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
+	hostdeps+="gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
 
   else
 
@@ -1523,7 +1523,7 @@ prepare_host()
 				"${ARMBIAN_MIRROR}/_toolchains/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
 				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
 				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
-				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-11.2-2022.02-x86_64-arm-none-linux-gnueabihf.tar.xz"
+				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-11.2-2022.02-x86_64-arm-none-eabi.tar.xz"
 				"${ARMBIAN_MIRROR}/_toolchain/gcc-arm-11.2-2022.02-x86_64-aarch64-none-linux-gnu.tar.xz"
 				)
 
