@@ -1,6 +1,6 @@
-ARG BASE_IMAGE
+ARG BASE_IMAGE=ubuntu:jammy
 FROM $BASE_IMAGE as armbian_builder
-ARG ARM_GCC_COMPILER
+ARG ARM_GCC_COMPILER='g++-11-arm-linux-gnueabihf'
 ENV ARM_GCC_COMPILER $ARM_GCC_COMPILER
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y install \
