@@ -1370,8 +1370,9 @@ prepare_host()
 	build-essential  ca-certificates ccache cpio cryptsetup curl              \
 	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
 	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabihf gdisk gnupg1 gpg imagemagick jq kmod libbison-dev \
-	libc6-dev-armhf-cross libelf-dev libfdt-dev libfile-fcntllock-perl        \
+	gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu gdisk gnupg1 gpg            \
+	imagemagick jq kmod libbison-dev libc6-dev-armhf-cross libcrypto++-dev    \
+	libelf-dev libfdt-dev libfile-fcntllock-perl                              \
 	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
 	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
 	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
