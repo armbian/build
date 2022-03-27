@@ -1,7 +1,7 @@
 ARG BASE_IMAGE
 FROM $BASE_IMAGE as armbian_builder
-ARG GCC_COMPILER
-ENV GCC_COMPILER $GCC_COMPILER
+ARG ARM_GCC_COMPILER
+ENV ARM_GCC_COMPILER $ARM_GCC_COMPILER
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y install \
        joe \
@@ -23,6 +23,7 @@ RUN sh -c " \
 RUN apt-get update \
     && apt-get -y upgrade \
     && apt-get install -y --no-install-recommends \
+       $ARM_GCC_COMPILER \    
        acl \
        aptly \
        aria2 \
@@ -48,7 +49,6 @@ RUN apt-get update \
        f2fs-tools \
        fakeroot \
        flex \
-       $GCC_COMPILER \
        gawk \
        gcc-arm-linux-gnueabihf \
        gcc-arm-linux-gnueabi \
