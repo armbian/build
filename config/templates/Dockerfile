@@ -70,6 +70,7 @@ RUN apt-get update \
        libpython2.7-dev \
        libpython3-dev \
        libssl-dev \
+       libssl1.1 \
        libusb-1.0-0-dev \
        linux-base \
        locales \
