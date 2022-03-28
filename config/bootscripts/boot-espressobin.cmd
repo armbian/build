@@ -5,7 +5,7 @@
 
 # default values
 setenv rootdev "/dev/mmcblk0p1"
-setenv verbosity "1"
+setenv verbosity "7"
 setenv rootfstype "ext4"
 setenv fdt_name_a dtb/marvell/armada-3720-community.dtb
 setenv fdt_name_b dtb/marvell/armada-3720-espressobin.dtb
@@ -13,7 +13,7 @@ setenv fdt_name_b dtb/marvell/armada-3720-espressobin.dtb
 load ${boot_interface} ${devnum}:1 ${scriptaddr} ${prefix}armbianEnv.txt
 env import -t ${scriptaddr} ${filesize}
 
-setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} mtdparts=spi0.0:1536k(uboot),64k(uboot-environment),-(reserved) ${extraargs}"
+setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks}  ${extraargs}"
 
 ext4load $boot_interface 0:1 $kernel_addr ${prefix}$image_name
 ext4load $boot_interface 0:1 $initrd_addr ${prefix}$initrd_image
