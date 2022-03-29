@@ -202,7 +202,7 @@ add_apt_sources() {
 	get_all_potential_paths "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "." "sources/apt"
 	get_all_potential_paths "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
 
-	display_alert "ADDING ADDITIONAL APT SOURCES"
+	display_alert "Adding additional apt sources"
 
 	for apt_sources_dirpath in ${potential_paths}; do
 		if [[ -d "${apt_sources_dirpath}" ]]; then

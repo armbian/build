@@ -276,7 +276,6 @@ create_rootfs_cache()
 		chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
 
 		# TODO change name of the function from "desktop" and move to appropriate location
-		display_alert "Adding additional apt sources"
 		add_desktop_package_sources
 
 		# stage: update packages list
