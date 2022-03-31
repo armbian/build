@@ -328,10 +328,21 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	fi
 
 	# don't use mirrors that throws garbage on 404
-	if [[ -z ${ARMBIAN_MIRROR} ]]; then
+	if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+		declare -i armbian_mirror_tries=1
 		while true; do
+			display_alert "Obtaining Armbian mirror" "via https://redirect.armbian.com" "debug"
 			ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
-			[[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]] && break
+			if [[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]]; then # @TODO: hosthatch is not good enough. Why?
+				display_alert "Obtained Armbian mirror OK" "${ARMBIAN_MIRROR}" "debug"
+				break
+			else
+				display_alert "Obtained Armbian mirror is invalid, retrying..." "${ARMBIAN_MIRROR}" "debug"
+			fi
+			armbian_mirror_tries=$((armbian_mirror_tries + 1))
+			if [[ $armbian_mirror_tries -ge 5 ]]; then
+				exit_with_error "Unable to obtain ARMBIAN_MIRROR after ${armbian_mirror_tries} tries. Please set ARMBIAN_MIRROR to a valid mirror manually, or avoid the automatic mirror selection by setting SKIP_ARMBIAN_REPO=yes"
+			fi
 		done
 	fi
 
