@@ -30,31 +30,40 @@ add_apt_sources() {
 	for apt_sources_dirpath in ${potential_paths}; do
 		if [[ -d "${apt_sources_dirpath}" ]]; then
 			for apt_source_filepath in "${apt_sources_dirpath}/"*.source; do
-				local new_apt_source="$(cat "${apt_source_filepath}")"
-				display_alert "Adding APT Source ${new_apt_source}"
-				# -y -> Assumes yes to all queries
-				# -n -> Do not update package cache after adding
-				chroot_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
-				display_alert "Return code : $?"
-
-				# temporally exception for jammy
-				[[ $RELEASE == "jammy" ]] && find "${SDCARD}/etc/apt/sources.list.d/." -type f \( -name "*.list" ! -name "armbian.list" \) -print0 | xargs -0 sed -i 's/jammy/hirsute/g'
-
+				apt_source_filepath=$(echo "${apt_source_filepath}" | sed -re 's/(^.*[^/])\.[^./]*$/\1/')
+				local new_apt_source="$(cat "${apt_source_filepath}.source")"
 				local apt_source_gpg_filepath="${apt_source_filepath}.gpg"
 
-				# PPA provide GPG keys automatically, it seems.
-				# But other repositories (Docker for example) require the
-				# user to import GPG keys manually
-				# Myy : FIXME We need some automatic Git warnings when someone
-				# add a GPG key, since trusting the wrong keys could lead to
-				# serious issues.
-				if [[ -f "${apt_source_gpg_filepath}" ]]; then
-					display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
-					local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
-					cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
-					chroot_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
-					echo "APT Key returned : $?"
+				# extract filenames
+				local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
+				local apt_source_filename="$(basename ${apt_source_filepath}).list"
+
+				display_alert "Adding APT Source ${new_apt_source}"
+
+				if [[ "${new_apt_source}" == ppa* ]]; then
+
+					# add list with apt-add
+					# -y -> Assumes yes to all queries
+					# -n -> Do not update package cache after adding
+					run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
+					if [[ -f "${apt_source_gpg_filepath}" ]]; then
+						display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
+						cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
+						chroot_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
+						echo "APT Key returned : $?"
+					fi
+				else
+					# copy list if its not ppa
+					echo "${new_apt_source}" > "${SDCARD}/etc/apt/sources.list.d/${apt_source_filename}"
+					if [[ -f "${apt_source_gpg_filepath}" ]]; then
+						display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
+						#						local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
+						mkdir -p "${SDCARD}"/usr/share/keyrings/
+						cp "${apt_source_gpg_filepath}" "${SDCARD}"/usr/share/keyrings/
+					fi
+
 				fi
+
 			done
 		fi
 	done
@@ -64,6 +73,7 @@ add_apt_sources() {
 add_desktop_package_sources() {
 	add_apt_sources
 	chroot_sdcard_apt_get "update"
+	run_host_command_logged ls -l "${SDCARD}/usr/share/keyrings"
 	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
 	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"
 }

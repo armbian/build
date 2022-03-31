@@ -305,12 +305,8 @@ function prepare_extra_kernel_drivers() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# add support for K5.11+
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu.patch" "applying"
-
-		# add support for K5.12+
-		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-5.12.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-xxx.patch" "applying"
+		# add support for K5.17+
+		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-5.17.patch" "applying"
 
 	fi
 
@@ -547,8 +543,8 @@ function prepare_extra_kernel_drivers() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
 			$kerneldir/drivers/net/wireless/Kconfig
 
-                # add support for K5.11+
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs.patch" "applying"
+		# add support for K5.11+
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs.patch" "applying"
 
 	fi
 

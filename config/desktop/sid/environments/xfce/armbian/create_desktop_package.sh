@@ -7,7 +7,7 @@ cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 
 # using different icon pack. Workaround due to this bug https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=867779
 sed -i 's/<property name="IconThemeName" type="string" value=".*$/<property name="IconThemeName" type="string" value="Humanity-Dark"\/>/g' \
-	"${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+"${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
 
 # install dedicated startup icons
 mkdir -p "${destination}"/usr/share/pixmaps/armbian "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/

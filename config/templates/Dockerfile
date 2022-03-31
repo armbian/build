@@ -1,4 +1,7 @@
-FROM ubuntu:rolling
+ARG BASE_IMAGE=ubuntu:jammy
+FROM $BASE_IMAGE as armbian_builder
+ARG ARM_GCC_COMPILER='g++-11-arm-linux-gnueabihf'
+ENV ARM_GCC_COMPILER $ARM_GCC_COMPILER
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y dist-upgrade && apt-get -y install \
        joe \
@@ -20,6 +23,7 @@ RUN sh -c " \
 RUN apt-get update \
     && apt-get -y dist-upgrade \
     && apt-get install -y --no-install-recommends \
+       $ARM_GCC_COMPILER \    
        acl \
        aptly \
        aria2 \
@@ -46,14 +50,11 @@ RUN apt-get update \
        f2fs-tools \
        fakeroot \
        flex \
-       g++-arm-linux-gnueabihf \
        gawk \
        gcc-aarch64-linux-gnu \
        gcc-arm-linux-gnueabihf \
        gcc-arm-linux-gnueabi \
        gcc-arm-none-eabi \
-       gcc-aarch64-linux-gnu \
-       g++-aarch64-linux-gnu \
        gdisk \
        git \
        imagemagick \
@@ -71,6 +72,7 @@ RUN apt-get update \
        libpython2.7-dev \
        libpython3-dev \
        libssl-dev \
+       libssl1.1 \
        libusb-1.0-0-dev \
        linux-base \
        libmpc-dev \

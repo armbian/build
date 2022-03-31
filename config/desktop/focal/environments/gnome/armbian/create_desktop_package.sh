@@ -23,7 +23,7 @@ cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/
 
 #generate wallpaper list for background changer
 mkdir -p "${destination}"/usr/share/gnome-background-properties
-cat << EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
+cat <<EOF > "${destination}"/usr/share/gnome-background-properties/armbian.xml
 <?xml version="1.0"?>
 <!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
 <wallpapers>
