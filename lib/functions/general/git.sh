@@ -195,7 +195,7 @@ fetch_from_repo() {
 			cd "${git_work_dir}" || exit
 			local surl sref
 			surl=$(git config -f .gitmodules --get "submodule.$i.url")
-			sref=$(git config -f .gitmodules --get "submodule.$i.branch")
+			sref=$(git config -f .gitmodules --get "submodule.$i.branch" || true)
 			if [[ -n $sref ]]; then
 				sref="branch:$sref"
 			else
