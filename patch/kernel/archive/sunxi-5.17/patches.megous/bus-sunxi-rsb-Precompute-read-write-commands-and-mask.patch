@@ -1,0 +1,222 @@
+From eded1fe26d91517db6e298875f2822dfd16f612c Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Mon, 30 Dec 2019 21:49:29 -0600
+Subject: [PATCH 155/456] bus: sunxi-rsb: Precompute read/write commands and
+ mask
+
+Since we know the size of the transfer at context creation time, go
+ahead and determine the commands used for reading and writing then,
+instead of running through a switch statement for every read/write.
+We can do the same thing for the read mask.
+
+The context pointer could be passed directly to sunxi_rsb_read/write
+to avoid adding more parameters (which would be spilled for mutex_lock).
+That would make the regmap read/write wrappers even more trivial, so I
+inlined sunxi_rsb_read/write into them.
+
+I changed the error message to print the name of the device requesting
+the regmap, not the RSB controller; I expect that to be more helpful
+when tracking down the source of the error.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/bus/sunxi-rsb.c | 120 +++++++++++++++-------------------------
+ 1 file changed, 44 insertions(+), 76 deletions(-)
+
+diff --git a/drivers/bus/sunxi-rsb.c b/drivers/bus/sunxi-rsb.c
+index 01ba1613196a..0e00cf577b7b 100644
+--- a/drivers/bus/sunxi-rsb.c
++++ b/drivers/bus/sunxi-rsb.c
+@@ -314,29 +314,26 @@ static int _sunxi_rsb_run_xfer(struct sunxi_rsb *rsb)
+ 	return 0;
+ }
+ 
+-static int sunxi_rsb_read(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
+-			  u32 *buf, size_t len)
++/* RSB regmap functions */
++struct sunxi_rsb_ctx {
++	struct sunxi_rsb_device *rdev;
++	u32 mask;
++	u8 rd_cmd;
++	u8 wr_cmd;
++};
++
++static int regmap_sunxi_rsb_reg_read(void *context, unsigned int reg,
++				     unsigned int *val)
+ {
+-	u32 cmd;
++	struct sunxi_rsb_ctx *ctx = context;
++	struct sunxi_rsb_device *rdev = ctx->rdev;
++	struct sunxi_rsb *rsb = rdev->rsb;
+ 	int ret;
+ 
+-	if (!buf)
++	if (!val)
+ 		return -EINVAL;
+-
+-	switch (len) {
+-	case 1:
+-		cmd = RSB_CMD_RD8;
+-		break;
+-	case 2:
+-		cmd = RSB_CMD_RD16;
+-		break;
+-	case 4:
+-		cmd = RSB_CMD_RD32;
+-		break;
+-	default:
+-		dev_err(rsb->dev, "Invalid access width: %zd\n", len);
++	if (reg > 0xff)
+ 		return -EINVAL;
+-	}
+ 
+ 	ret = pm_runtime_resume_and_get(rsb->dev);
+ 	if (ret)
+@@ -344,15 +341,15 @@ static int sunxi_rsb_read(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
+ 
+ 	mutex_lock(&rsb->lock);
+ 
+-	writel(addr, rsb->regs + RSB_ADDR);
+-	writel(RSB_DAR_RTA(rtaddr), rsb->regs + RSB_DAR);
+-	writel(cmd, rsb->regs + RSB_CMD);
++	writel(reg, rsb->regs + RSB_ADDR);
++	writel(RSB_DAR_RTA(rdev->rtaddr), rsb->regs + RSB_DAR);
++	writel(ctx->rd_cmd, rsb->regs + RSB_CMD);
+ 
+ 	ret = _sunxi_rsb_run_xfer(rsb);
+ 	if (ret)
+ 		goto unlock;
+ 
+-	*buf = readl(rsb->regs + RSB_DATA) & GENMASK(len * 8 - 1, 0);
++	*val = readl(rsb->regs + RSB_DATA) & ctx->mask;
+ 
+ unlock:
+ 	mutex_unlock(&rsb->lock);
+@@ -363,29 +360,16 @@ static int sunxi_rsb_read(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
+ 	return ret;
+ }
+ 
+-static int sunxi_rsb_write(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
+-			   const u32 *buf, size_t len)
++static int regmap_sunxi_rsb_reg_write(void *context, unsigned int reg,
++				      unsigned int val)
+ {
+-	u32 cmd;
++	struct sunxi_rsb_ctx *ctx = context;
++	struct sunxi_rsb_device *rdev = ctx->rdev;
++	struct sunxi_rsb *rsb = rdev->rsb;
+ 	int ret;
+ 
+-	if (!buf)
+-		return -EINVAL;
+-
+-	switch (len) {
+-	case 1:
+-		cmd = RSB_CMD_WR8;
+-		break;
+-	case 2:
+-		cmd = RSB_CMD_WR16;
+-		break;
+-	case 4:
+-		cmd = RSB_CMD_WR32;
+-		break;
+-	default:
+-		dev_err(rsb->dev, "Invalid access width: %zd\n", len);
++	if (reg > 0xff)
+ 		return -EINVAL;
+-	}
+ 
+ 	ret = pm_runtime_resume_and_get(rsb->dev);
+ 	if (ret)
+@@ -393,10 +377,11 @@ static int sunxi_rsb_write(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
+ 
+ 	mutex_lock(&rsb->lock);
+ 
+-	writel(addr, rsb->regs + RSB_ADDR);
+-	writel(RSB_DAR_RTA(rtaddr), rsb->regs + RSB_DAR);
+-	writel(*buf, rsb->regs + RSB_DATA);
+-	writel(cmd, rsb->regs + RSB_CMD);
++	writel(reg, rsb->regs + RSB_ADDR);
++	writel(RSB_DAR_RTA(rdev->rtaddr), rsb->regs + RSB_DAR);
++	writel(val, rsb->regs + RSB_DATA);
++	writel(ctx->wr_cmd, rsb->regs + RSB_CMD);
++
+ 	ret = _sunxi_rsb_run_xfer(rsb);
+ 
+ 	mutex_unlock(&rsb->lock);
+@@ -407,36 +392,6 @@ static int sunxi_rsb_write(struct sunxi_rsb *rsb, u8 rtaddr, u8 addr,
+ 	return ret;
+ }
+ 
+-/* RSB regmap functions */
+-struct sunxi_rsb_ctx {
+-	struct sunxi_rsb_device *rdev;
+-	int size;
+-};
+-
+-static int regmap_sunxi_rsb_reg_read(void *context, unsigned int reg,
+-				     unsigned int *val)
+-{
+-	struct sunxi_rsb_ctx *ctx = context;
+-	struct sunxi_rsb_device *rdev = ctx->rdev;
+-
+-	if (reg > 0xff)
+-		return -EINVAL;
+-
+-	return sunxi_rsb_read(rdev->rsb, rdev->rtaddr, reg, val, ctx->size);
+-}
+-
+-static int regmap_sunxi_rsb_reg_write(void *context, unsigned int reg,
+-				      unsigned int val)
+-{
+-	struct sunxi_rsb_ctx *ctx = context;
+-	struct sunxi_rsb_device *rdev = ctx->rdev;
+-
+-	if (reg > 0xff)
+-		return -EINVAL;
+-
+-	return sunxi_rsb_write(rdev->rsb, rdev->rtaddr, reg, &val, ctx->size);
+-}
+-
+ static void regmap_sunxi_rsb_free_ctx(void *context)
+ {
+ 	struct sunxi_rsb_ctx *ctx = context;
+@@ -456,13 +411,24 @@ static struct sunxi_rsb_ctx *regmap_sunxi_rsb_init_ctx(struct sunxi_rsb_device *
+ 		const struct regmap_config *config)
+ {
+ 	struct sunxi_rsb_ctx *ctx;
++	u8 rd_cmd, wr_cmd;
+ 
+ 	switch (config->val_bits) {
+ 	case 8:
++		rd_cmd = RSB_CMD_RD8;
++		wr_cmd = RSB_CMD_WR8;
++		break;
+ 	case 16:
++		rd_cmd = RSB_CMD_RD16;
++		wr_cmd = RSB_CMD_WR16;
++		break;
+ 	case 32:
++		rd_cmd = RSB_CMD_RD32;
++		wr_cmd = RSB_CMD_WR32;
+ 		break;
+ 	default:
++		dev_err(&rdev->dev, "Invalid RSB access width: %d\n",
++			config->val_bits);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+@@ -471,7 +437,9 @@ static struct sunxi_rsb_ctx *regmap_sunxi_rsb_init_ctx(struct sunxi_rsb_device *
+ 		return ERR_PTR(-ENOMEM);
+ 
+ 	ctx->rdev = rdev;
+-	ctx->size = config->val_bits / 8;
++	ctx->mask = GENMASK(config->val_bits - 1, 0);
++	ctx->rd_cmd = rd_cmd;
++	ctx->wr_cmd = wr_cmd;
+ 
+ 	return ctx;
+ }
+-- 
+2.34.1
+
