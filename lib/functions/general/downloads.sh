@@ -7,22 +7,18 @@ function webseed() {
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
-		WEBSEED=(
-			https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/
-		)
+		WEBSEED=(https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/)
 	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-		WEBSEED=(
-			https://mirrors.bfsu.edu.cn/armbian-releases/
-		)
+		WEBSEED=(https://mirrors.bfsu.edu.cn/armbian-releases/)
 	fi
-	for toolchain in ${WEBSEED[@]}; do
+	for toolchain in "${WEBSEED[@]}"; do
 		text="${text} ${toolchain}${1}"
 	done
 	text="${text:1}"
 	echo "${text}"
 }
 
-# Non-error handled version @TODO: might be a terrible idea?
+# Terrible idea, this runs download_and_verify_internal() with error handling disabled.
 function download_and_verify() {
 	download_and_verify_internal "${@}" || true
 }
@@ -33,26 +29,30 @@ function download_and_verify_internal() {
 	local localdir=$SRC/cache/${remotedir//_/}
 	local dirname=${filename//.tar.xz/}
 
+	local server=${ARMBIAN_MIRROR}
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
-		local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
+		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-		local server="https://mirrors.bfsu.edu.cn/armbian-releases/"
-	else
-		local server=${ARMBIAN_MIRROR}
+		server="https://mirrors.bfsu.edu.cn/armbian-releases/"
+	fi
+
+	if [[ "x${server}x" == "xx" ]]; then
+		display_alert "ARMBIAN_MIRROR is not set, nor valid DOWNLOAD_MIRROR" "not downloading '${filename}'" "debug"
+		return 0
 	fi
 
 	if [[ -f ${localdir}/${dirname}/.download-complete ]]; then
-		return
+		return 0
 	fi
 
 	# switch to china mirror if US timeouts
-	run_host_command_logged timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}"
+	timeout 10 curl --head --fail --silent "${server}${remotedir}/${filename}"
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 		display_alert "Timeout from $server" "retrying" "info"
 		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 
 		# switch to another china mirror if tuna timeouts
-		run_host_command_logged timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}
+		timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename}
 		if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
 			display_alert "Timeout from $server" "retrying" "info"
 			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
