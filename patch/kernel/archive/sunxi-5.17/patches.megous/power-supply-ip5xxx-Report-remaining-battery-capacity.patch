@@ -1,0 +1,194 @@
+From 224b769ffa590eb25ee86f023f4c111da7e576ce Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 16 Feb 2022 18:12:56 +0100
+Subject: [PATCH 417/456] power: supply: ip5xxx: Report remaining battery
+ capacity
+
+This uses OCV tables from device tree. Internal resistance value used
+by the chip is not very precise. Use the value from DT, too.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/power/supply/ip5xxx_power.c | 100 +++++++++++++++++++++-------
+ 1 file changed, 77 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/power/supply/ip5xxx_power.c b/drivers/power/supply/ip5xxx_power.c
+index f9b5dfd2cfac..04c055ae3c2e 100644
+--- a/drivers/power/supply/ip5xxx_power.c
++++ b/drivers/power/supply/ip5xxx_power.c
+@@ -78,6 +78,8 @@ struct ip5xxx {
+ 	struct device *dev;
+ 	struct regmap *regmap;
+ 	struct delayed_work wd_work;
++	struct power_supply_battery_info *bat;
++	int r_int;
+ 	bool initialized;
+ };
+ 
+@@ -169,6 +171,8 @@ static const enum power_supply_property ip5xxx_charger_properties[] = {
+ 	POWER_SUPPLY_PROP_PRESENT,
+ 	POWER_SUPPLY_PROP_CHARGE_TYPE,
+ 	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_CALIBRATE,
+ 	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
+ 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+ 	POWER_SUPPLY_PROP_VOLTAGE_OCV,
+@@ -327,12 +331,46 @@ static int ip5xxx_charger_read_adc(struct ip5xxx *ip5xxx,
+ 	return 0;
+ }
+ 
++static int ip5xxx_charger_get_voltage_now(struct ip5xxx *ip5xxx, int *val)
++{
++	int ret, raw;
++
++	ret = ip5xxx_charger_read_adc(ip5xxx, IP5XXX_BATVADC_DAT0,
++				      IP5XXX_BATVADC_DAT1, &raw);
++	if (ret == -EXDEV) {
++		*val = 0;
++		return 0;
++	} else if (ret) {
++		return ret;
++	}
++
++	*val = (2600 + DIV_ROUND_CLOSEST(raw * 1000, 3724)) * 1000;
++	return 0;
++}
++
++static int ip5xxx_charger_get_current_now(struct ip5xxx *ip5xxx, int *val)
++{
++	int ret, raw;
++
++	ret = ip5xxx_charger_read_adc(ip5xxx, IP5XXX_BATIADC_DAT0,
++				      IP5XXX_BATIADC_DAT1, &raw);
++	if (ret == -EXDEV) {
++		*val = 0;
++		return 0;
++	} else if (ret) {
++		return ret;
++	}
++
++	*val = DIV_ROUND_CLOSEST(raw * 1000, 1341) * 1000;
++	return 0;
++}
++
+ static int ip5xxx_charger_get_property(struct power_supply *psy,
+ 				       enum power_supply_property psp,
+ 				       union power_supply_propval *val)
+ {
+ 	struct ip5xxx *ip5xxx = power_supply_get_drvdata(psy);
+-	int raw, ret, vmax;
++	int raw, ret, vmax, cur, vol;
+ 	unsigned int rval;
+ 
+ 	switch (psp) {
+@@ -356,22 +394,28 @@ static int ip5xxx_charger_get_property(struct power_supply *psy,
+ 	case POWER_SUPPLY_PROP_HEALTH:
+ 		return ip5xxx_charger_get_health(ip5xxx, &val->intval);
+ 
+-	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
+-		return ip5xxx_charger_get_voltage_max(ip5xxx, &val->intval);
++	case POWER_SUPPLY_PROP_CAPACITY:
++		ret = ip5xxx_charger_get_voltage_now(ip5xxx, &vol);
++		if (ret)
++			return ret;
+ 
+-	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+-		ret = ip5xxx_charger_read_adc(ip5xxx, IP5XXX_BATVADC_DAT0,
+-					      IP5XXX_BATVADC_DAT1, &raw);
+-		if (ret == -EXDEV) {
+-			val->intval = 0;
+-			return 0;
+-		} else if (ret) {
++		ret = ip5xxx_charger_get_current_now(ip5xxx, &cur);
++		if (ret)
+ 			return ret;
+-		}
+ 
+-		val->intval = (2600 + DIV_ROUND_CLOSEST(raw * 1000, 3724)) * 1000;
++		ret = power_supply_batinfo_ocv2cap(ip5xxx->bat, vol - cur * ip5xxx->r_int / 1000, 20);
++		if (ret < 0)
++			return ret;
++			
++		val->intval = ret;
+ 		return 0;
+ 
++	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
++		return ip5xxx_charger_get_voltage_max(ip5xxx, &val->intval);
++
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		return ip5xxx_charger_get_voltage_now(ip5xxx, &val->intval);
++
+ 	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
+ 		ret = ip5xxx_charger_read_adc(ip5xxx, IP5XXX_BATOCV_DAT0,
+ 					      IP5XXX_BATOCV_DAT1, &raw);
+@@ -386,17 +430,7 @@ static int ip5xxx_charger_get_property(struct power_supply *psy,
+ 		return 0;
+ 
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+-		ret = ip5xxx_charger_read_adc(ip5xxx, IP5XXX_BATIADC_DAT0,
+-					      IP5XXX_BATIADC_DAT1, &raw);
+-		if (ret == -EXDEV) {
+-			val->intval = 0;
+-			return 0;
+-		} else if (ret) {
+-			return ret;
+-		}
+-
+-		val->intval = DIV_ROUND_CLOSEST(raw * 1000, 1341) * 1000;
+-		return 0;
++		return ip5xxx_charger_get_current_now(ip5xxx, &val->intval);
+ 
+ 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
+ 		ret = regmap_read(ip5xxx->regmap, IP5XXX_CHG_CTL4A, &rval);
+@@ -444,6 +478,10 @@ static int ip5xxx_charger_get_property(struct power_supply *psy,
+ 		val->intval = vmax + 14000 * 3;
+ 		return 0;
+ 
++	case POWER_SUPPLY_PROP_CALIBRATE:
++		val->intval = ip5xxx->r_int;
++		return 0;
++
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -523,6 +561,12 @@ static int ip5xxx_charger_set_property(struct power_supply *psy,
+ 		return regmap_update_bits(ip5xxx->regmap, IP5XXX_CHG_CTL2,
+ 					  IP5XXX_CHG_CTL2_CONST_VOLT_SEL, rval);
+ 
++	case POWER_SUPPLY_PROP_CALIBRATE:
++		if (val->intval < 0 || val->intval > 1000)
++			return -EINVAL;
++		ip5xxx->r_int = val->intval;
++		return 0;
++
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -533,6 +577,7 @@ static int ip5xxx_charger_property_is_writeable(struct power_supply *psy,
+ {
+ 	return psp == POWER_SUPPLY_PROP_STATUS ||
+ 	       psp == POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN ||
++	       psp == POWER_SUPPLY_PROP_CALIBRATE ||
+ 	       psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT ||
+ 	       psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE;
+ }
+@@ -656,6 +701,15 @@ int ip5xxx_power_probe_with_regmap(struct device* dev, struct regmap *regmap)
+ 		return ret;
+ 	}
+ 
++	ret = power_supply_get_battery_info(psy, &ip5xxx->bat);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get battery info\n");
++
++	if (ip5xxx->bat->factory_internal_resistance_uohm >= 0)
++		ip5xxx->r_int = ip5xxx->bat->factory_internal_resistance_uohm / 1000;
++	else
++		ip5xxx->r_int = 187;
++
+ 	schedule_delayed_work(&ip5xxx->wd_work, msecs_to_jiffies(500));
+ 
+ 	return 0;
+-- 
+2.34.1
+
