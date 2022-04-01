@@ -79,7 +79,7 @@ function compile_kernel() {
 	display_alert "Done with" "kernel compile" "debug"
 	cd "${kernel_work_dir}/.." || exit
 	rm -f linux-firmware-image-*.deb # remove firmware image packages here - easier than patching ~40 packaging scripts at once
-	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+	run_host_command_logged rsync --remove-source-files -r ./*.deb "${DEB_STORAGE}/"
 	return 0
 }
 

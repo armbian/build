@@ -252,7 +252,7 @@ create_board_package() {
 	#EOF
 
 	# copy common files from a premade directory structure
-	rsync -a ${SRC}/packages/bsp/common/* ${destination}
+	run_host_command_logged rsync -av ${SRC}/packages/bsp/common/* ${destination}
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -308,7 +308,7 @@ create_board_package() {
 	# create board DEB file
 	fakeroot_dpkg_deb_build "${destination}" "${destination}.deb"
 	mkdir -p "${DEB_STORAGE}/"
-	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/" 2>&1
+	run_host_command_logged rsync --remove-source-files -r "${destination}.deb" "${DEB_STORAGE}/"
 
 	display_alert "Done building BSP CLI package" "${destination}" "debug"
 }

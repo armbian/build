@@ -33,7 +33,7 @@ install_deb_chroot() {
 	chroot_sdcard_apt_get --no-install-recommends install "${name}"
 
 	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?
-	[[ ${variant} == remote && ${transfer} == yes ]] && rsync -rq "${SDCARD}"/var/cache/apt/archives/*.deb "${DEB_STORAGE}"/
+	[[ ${variant} == remote && ${transfer} == yes ]] && run_host_command_logged rsync -r "${SDCARD}"/var/cache/apt/archives/*.deb "${DEB_STORAGE}"/
 
 	# IMPORTANT! Do not use short-circuit above as last statement in a function, since it determines the result of the function.
 	return 0

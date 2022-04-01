@@ -43,7 +43,7 @@ compile_firmware() {
 	display_alert "Building firmware package" "armbian-firmware${FULL}_${REVISION}_all" "info"
 	fakeroot_dpkg_deb_build "armbian-firmware${FULL}_${REVISION}_all"
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
-	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
+	run_host_command_logged rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
 }
 
@@ -117,7 +117,7 @@ compile_armbian-zsh() {
 	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}"
-	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
+	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
 
 }
 
@@ -169,7 +169,7 @@ compile_armbian-config() {
 	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_config_dir}"
-	rsync --remove-source-files -rq "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
+	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
 }
 
 compile_xilinx_bootgen() {

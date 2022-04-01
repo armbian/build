@@ -229,7 +229,7 @@ compile_uboot() {
 
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
-	rsync --remove-source-files -rq "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/" 2>&1
+	run_host_command_logged rsync --remove-source-files -r "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
 
 	display_alert "Built u-boot deb OK" "${uboot_name}.deb" "info"
 	return 0 # success
