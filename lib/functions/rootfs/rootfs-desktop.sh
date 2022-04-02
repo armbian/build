@@ -25,7 +25,7 @@ add_apt_sources() {
 	get_all_potential_paths "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "." "sources/apt"
 	get_all_potential_paths "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
 
-	display_alert "ADDING ADDITIONAL APT SOURCES"
+	display_alert "Adding additional apt sources" "add_apt_sources()" "debug"
 
 	for apt_sources_dirpath in ${potential_paths}; do
 		if [[ -d "${apt_sources_dirpath}" ]]; then
@@ -41,11 +41,10 @@ add_apt_sources() {
 				display_alert "Adding APT Source ${new_apt_source}"
 
 				if [[ "${new_apt_source}" == ppa* ]]; then
-
+					chroot_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
 					# add list with apt-add
 					# -y -> Assumes yes to all queries
 					# -n -> Do not update package cache after adding
-					run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
 					if [[ -f "${apt_source_gpg_filepath}" ]]; then
 						display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
 						cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
@@ -53,7 +52,7 @@ add_apt_sources() {
 						echo "APT Key returned : $?"
 					fi
 				else
-					# copy list if its not ppa
+					# installation without software-common-properties, sources.list + key.gpg
 					echo "${new_apt_source}" > "${SDCARD}/etc/apt/sources.list.d/${apt_source_filename}"
 					if [[ -f "${apt_source_gpg_filepath}" ]]; then
 						display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
@@ -72,7 +71,6 @@ add_apt_sources() {
 
 add_desktop_package_sources() {
 	add_apt_sources
-	chroot_sdcard_apt_get "update"
 	run_host_command_logged ls -l "${SDCARD}/usr/share/keyrings"
 	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
 	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"

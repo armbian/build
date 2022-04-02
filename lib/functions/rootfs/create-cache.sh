@@ -166,6 +166,9 @@ function create_new_rootfs_cache() {
 	# this should fix resolvconf installation failure in some cases
 	chroot_sdcard 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
 
+	# TODO change name of the function from "desktop" and move to appropriate location
+	add_desktop_package_sources
+
 	# stage: update packages list
 	display_alert "Updating package list" "$RELEASE" "info"
 	do_with_retries 3 chroot_sdcard_apt_get update
@@ -173,12 +176,6 @@ function create_new_rootfs_cache() {
 	# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 	display_alert "Upgrading base packages" "Armbian" "info"
 	do_with_retries 3 chroot_sdcard_apt_get upgrade
-
-	# Myy: Dividing the desktop packages installation steps into multiple
-	# ones. We first install the "ADDITIONAL_PACKAGES" in order to get
-	# access to software-common-properties installation.
-	# THEN we add the APT sources and install the Desktop packages.
-	# TODO : Find a way to add APT sources WITHOUT software-common-properties
 
 	# stage: install additional packages
 	display_alert "Installing the main packages for" "Armbian" "info"
@@ -190,13 +187,6 @@ function create_new_rootfs_cache() {
 	chroot_sdcard_apt_get_install "$PACKAGE_MAIN_LIST"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
-		# FIXME Myy : Are we keeping this only for Desktop users,
-		# or should we extend this to CLI users too ?
-		# There might be some clunky boards that require Debian packages from
-		# specific repos...
-		display_alert "Adding apt sources for Desktop packages"
-		add_desktop_package_sources
-
 		local apt_desktop_install_flags=""
 		if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
 			for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
