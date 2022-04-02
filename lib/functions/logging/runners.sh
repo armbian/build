@@ -144,17 +144,51 @@ function run_host_command_logged_raw() {
 	exit_code=$?
 	set -e
 
-	if [[ $exit_code != 0 ]]; then
+	if [[ ${exit_code} != 0 ]]; then
 		if [[ -f "${CURRENT_LOGFILE}" ]]; then
 			echo "-->--> command failed with error code ${exit_code} after $((SECONDS - seconds_start)) seconds" >> "${CURRENT_LOGFILE}"
 		fi
 		# This is very specific; remove CURRENT_LOGFILE's value when calling display_alert here otherwise logged twice.
 		CURRENT_LOGFILE="" display_alert "cmd exited with code ${exit_code}" "$*" "wrn"
 		CURRENT_LOGFILE="" display_alert "stacktrace for failed command" "$(show_caller_full)" "wrn"
+
+		# Obtain extra info about error, eg, log files produced, extra messages set by caller, etc.
+		logging_enrich_run_command_error_info
+
 	elif [[ -f "${CURRENT_LOGFILE}" ]]; then
 		echo "-->--> command run successfully after $((SECONDS - seconds_start)) seconds" >> "${CURRENT_LOGFILE}"
 	fi
-	return $exit_code
+	return ${exit_code} #  exiting with the same error code as the original error
+}
+
+function logging_enrich_run_command_error_info() {
+	declare -a found_files=()
+
+	for path in "${if_error_find_files_sdcard[@]}"; do
+		declare -a sdcard_files
+		# shellcheck disable=SC2086 # I wanna expand, thank you...
+		mapfile -t sdcard_files < <(find ${SDCARD}/${path} -type f)
+		display_alert "Found if_error_find_files_sdcard files" "${sdcard_files[@]}" "debug"
+		found_files+=("${sdcard_files[@]}") # add to result
+	done
+	unset if_error_find_files_sdcard # remember, this is global.
+
+	display_alert "Error-related files found" "${found_files[*]}" "debug"
+	for found_file in "${found_files[@]}"; do
+		# Log to asset, so it's available in the HTML log
+		LOG_ASSET="chroot_error_context__$(basename "${found_file}")" do_with_log_asset cat "${found_file}"
+
+		display_alert "File contents for error context" "${found_file}" "err"
+		# shellcheck disable=SC2002 # cat is not useless, ccze _only_ takes stdin
+		cat "${found_file}" | ccze -A 1>&2 # to stderr
+		# @TODO: 3x repeated ccze invocation, lets refactor it later
+	done
+
+	### if_error_detail_message, array: messages to display if the command failed.
+	if [[ -n ${if_error_detail_message} ]]; then
+		display_alert "Error context msg" "${if_error_detail_message}" "err"
+		unset if_error_detail_message
+	fi
 }
 
 # @TODO: logging: used by desktop.sh exclusively. let's unify?

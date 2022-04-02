@@ -277,7 +277,6 @@ function logging_echo_prefix_for_pv() {
 # Cleanup for logging.
 function trap_handler_cleanup_logging() {
 	[[ ! -d "${LOGDIR}" ]] && return 0
-	display_alert "Cleaning up logs from LOGDIR" "${LOGDIR}" "debug"
 
 	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode.
 	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
@@ -304,6 +303,8 @@ function trap_handler_cleanup_logging() {
 			rm -f "${one_old_logfile}"
 		done
 	fi
+
+	display_alert "Preparing HTML log from" "${LOGDIR}" "debug"
 
 	cat <<- HTML_HEADER > "${target_file}"
 		<html>

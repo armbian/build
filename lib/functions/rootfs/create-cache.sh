@@ -124,7 +124,7 @@ function create_new_rootfs_cache() {
 	run_host_command_logged cp -pv /usr/share/keyrings/*-archive-keyring.gpg "${SDCARD}/usr/share/keyrings/"
 
 	display_alert "Installing base system" "Stage 2/2" "info"
-	export MSG_IF_ERROR="Debootstrap second stage failed ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
+	export if_error_detail_message="Debootstrap second stage failed ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"
 
@@ -179,7 +179,7 @@ function create_new_rootfs_cache() {
 
 	# stage: install additional packages
 	display_alert "Installing the main packages for" "Armbian" "info"
-	export MSG_IF_ERROR="Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+	export if_error_detail_message="Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 	# First, try to download-only up to 3 times, to work around network/proxy problems.
 	do_with_retries 3 chroot_sdcard_apt_get_install_download_only "$PACKAGE_MAIN_LIST"
 
@@ -199,11 +199,11 @@ function create_new_rootfs_cache() {
 		fi
 
 		display_alert "Installing the desktop packages for" "Armbian" "info"
-		MSG_IF_ERROR="Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 		# Retry download-only 3 times first.
 		do_with_retries 3 chroot_sdcard_apt_get_install_download_only ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP
 
 		# Then do the actual install.
+		export if_error_detail_message="Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 		chroot_sdcard_apt_get install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP
 	fi
 

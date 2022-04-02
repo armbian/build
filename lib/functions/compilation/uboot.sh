@@ -36,7 +36,7 @@ function compile_uboot_target() {
 	fi
 
 	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"
-	export MSG_IF_ERROR="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
+	export if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		make "$CTHREADS" "$BOOTCONFIG" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\"" "KCFLAGS=-fdiagnostics-color=always"
 
@@ -71,7 +71,7 @@ function compile_uboot_target() {
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
-	export MSG_IF_ERROR="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
+	export if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
 	run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" make "$target_make" "$CTHREADS" "${cross_compile}" "KCFLAGS=-fdiagnostics-color=always"
 
 	if [[ $(type -t uboot_custom_postprocess) == function ]]; then

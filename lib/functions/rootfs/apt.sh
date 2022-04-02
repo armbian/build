@@ -29,7 +29,7 @@ install_deb_chroot() {
 	[[ $BUILD_ALL == yes && ${variant} == remote ]] && chroot_sdcard_apt_get update
 
 	# install in chroot via apt-get, not dpkg, so dependencies are also installed from repo if needed.
-	export MSG_IF_ERROR="Installation of $name failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
+	export if_error_detail_message="Installation of $name failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	chroot_sdcard_apt_get --no-install-recommends install "${name}"
 
 	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?
