@@ -426,7 +426,7 @@ compilation_prepare()
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:ef3ff12118a75ea9ca1db8f4806bb0861e4fffef"
+		local rtl8811cuver="commit:de68bd50671ad8a5c09af97def3f2059b4a088aa"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -458,9 +458,6 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8821CU) += rtl8811cu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# add support for K5.17+
-		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-5.17.patch" "applying"
 
 	fi
 
