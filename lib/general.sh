@@ -209,6 +209,13 @@ create_sources_list()
 	;;
 
 	xenial|bionic|focal|hirsute|impish|jammy)
+	display_alert "Applying certificate workaround" "https://armbian.atlassian.net/browse/AR-1140" "info"
+	cat <<-EOF > "${basedir}"/etc/apt/sources.list
+	deb http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
+	EOF
+	chroot ${basedir} /bin/bash -c 'sudo apt-get -y update' > "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+	chroot ${basedir} /bin/bash -c 'sudo apt-get -y --only-upgrade true install ca-certificates' > "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+
 	cat <<-EOF > "${basedir}"/etc/apt/sources.list
 	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
