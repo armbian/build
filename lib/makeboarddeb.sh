@@ -22,7 +22,7 @@ create_board_package()
 
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
-	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${bsptempdir}\" ; exit \$ret" 0 1 2 3 15
 	local destination=${bsptempdir}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
