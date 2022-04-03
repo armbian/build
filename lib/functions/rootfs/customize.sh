@@ -12,12 +12,17 @@ customize_image() {
 	cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
 	chmod +x "${SDCARD}"/tmp/customize-image.sh
 	mkdir -p "${SDCARD}"/tmp/overlay
+
 	# util-linux >= 2.27 required
-	mount -o bind,ro "$USERPATCHES_PATH"/overlay "${SDCARD}"/tmp/overlay
+	[[ -d "${USERPATCHES_PATH}"/overlay ]] && mount -o bind,ro "${USERPATCHES_PATH}"/overlay "${SDCARD}"/tmp/overlay
 	display_alert "Calling image customization script" "customize-image.sh" "info"
-	chroot "${SDCARD}" /bin/bash -c "/tmp/customize-image.sh $RELEASE $LINUXFAMILY $BOARD $BUILD_DESKTOP $ARCH"
+
+	set +e # disable error control
+	chroot_sdcard /tmp/customize-image.sh "${RELEASE}" "$LINUXFAMILY" "$BOARD" "$BUILD_DESKTOP" "$ARCH"
 	CUSTOMIZE_IMAGE_RC=$?
-	umount -i "${SDCARD}"/tmp/overlay > /dev/null 2>&1
+	set -e # back to normal error control
+
+	mountpoint -q "${SDCARD}"/tmp/overlay && umount "${SDCARD}"/tmp/overlay
 	mountpoint -q "${SDCARD}"/tmp/overlay || rm -r "${SDCARD}"/tmp/overlay
 	if [[ $CUSTOMIZE_IMAGE_RC != 0 ]]; then
 		exit_with_error "customize-image.sh exited with error (rc: $CUSTOMIZE_IMAGE_RC)"
