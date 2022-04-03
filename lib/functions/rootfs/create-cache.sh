@@ -7,22 +7,25 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 	fi
 
 	# seek last cache, proceed to previous otherwise build it
-	for ((n = 0; n < ${cycles}; n++)); do
+	for ((n = 0; n < cycles; n++)); do
 
 		[[ -z ${FORCED_MONTH_OFFSET} ]] && FORCED_MONTH_OFFSET=${n}
-		local packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
+		local packages_hash
+		packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
+
 		local cache_type="cli"
-		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
-		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
-		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
+		[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
+		[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}"
+		[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
+
+		local cache_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash}.tar.zst
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
-		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
+		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
 
 		[[ "$ROOT_FS_CREATE_ONLY" == force ]] && break
 
 		if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
-			rm ${cache_fname}*
+			rm "${cache_fname}"*
 			display_alert "Partially downloaded file. Re-start."
 			download_and_verify "_rootfs" "$cache_name"
 		fi
@@ -30,10 +33,14 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		display_alert "Checking local cache" "$display_name" "info"
 
 		if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			touch $cache_fname.current
+			touch "${cache_fname}.current"
 			display_alert "Checking cache integrity" "$display_name" "info"
-			sudo lz4 -tqq ${cache_fname}
-			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
+
+			sudo zstd -tqq "${cache_fname}" || {
+				rm -f "${cache_fname}"
+				exit_with_error "Cache ${cache_fname} is corrupted and was deleted. Please restart!"
+			}
+
 			# sign if signature is missing
 			if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
 				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
@@ -67,7 +74,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 
 		local date_diff=$((($(date +%s) - $(stat -c %Y $cache_fname)) / 86400))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
+		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $display_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
@@ -78,7 +85,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		create_new_rootfs_cache
 
 		# needed for backend to keep current only
-		touch $cache_fname.current
+		touch "${cache_fname}.current"
 
 	fi
 
@@ -91,7 +98,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		exit
 	fi
 
-	mount_chroot "$SDCARD"
+	mount_chroot "${SDCARD}"
 }
 
 function create_new_rootfs_cache() {
@@ -248,7 +255,7 @@ function create_new_rootfs_cache() {
 	umount_chroot "$SDCARD"
 
 	tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $display_name" | lz4 -5 -c > "$cache_fname"
+		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $display_name" | zstdmt -5 -c > "${cache_fname}"
 
 	# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
