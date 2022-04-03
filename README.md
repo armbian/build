@@ -1,31 +1,29 @@
-<h3 align=center><a href="#build-framework"><img src=".github/armbian-logo.png" alt="Armbian logo" width="144"></a><br>
-build framework</h3>
-
-<p align=right>&nbsp;</p>
+<p align="center">
+  <a href="#build-framework">
+  <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
+  </a><br>
+  <strong>armbian build framework</strong><br>
+</p>
 
 [![GitHub last commit (branch)](https://img.shields.io/github/last-commit/armbian/build/master)](https://github.com/armbian/build/commits)
 [![GitHub Workflow Status](https://img.shields.io/github/workflow/status/armbian/build/Build?label=build%20train)](https://github.com/armbian/build/actions/workflows/build-train.yml)
 [![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
+[![Join the Discord server](https://img.shields.io/discord/854735915313659944.svg?color=7289da&label=Discord%20server&logo=discord)](https://twitter.com/intent/follow?screen_name=armbian)
 [![Become a patron](https://img.shields.io/liberapay/patrons/armbian.svg?logo=liberapay)](https://liberapay.com/armbian)
 
 ## Table of contents
 
 - [What this project does?](#what-this-project-does)
-- [What do you need to get started?](#what-do-you-need-to-get-started)
-- [How to build an image or a kernel?](#how-to-build-an-image-or-a-kernel)
-- [Build parameter examples](#build-parameter-examples)
+- [Getting started](#getting-started)
 - [Compare with industry standards](#compare-with-industry-standards)
-- [Where to download prebuilt images?](#where-to-download-prebuilt-images)
-- [Additional information](#additional-information)
-- [Build framework overview](#build-framework-overview)
+- [Download prebuilt images](#download-prebuilt-images)
+- [Project structure](#project-structure)
+- [Contribution](#contribution)
 - [Support](#support)
-- [Contribute](#contribute)
-- [Social](#social)
-- [Credits](#credits)
+- [Contact](#contact)
+- [Contributors](#contributors)
 - [Sponsors](#sponsors)
-
-<p align=right>&nbsp;</p>
-
+- [License](#license)
 
 ## What this project does?
 
@@ -33,17 +31,13 @@ build framework</h3>
 - covers filesystem generation, low-level control software, kernel image compilation and bootloader compilation,
 - provides a consistent user experience by keeping system standards across different platforms.
 
-<p align=right>&nbsp;</p>
-
-## What do you need to get started?
+## Getting started
 
 - x64 / aarch64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
 - Ubuntu Hirsute 21.04 x64 / aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
 - superuser rights (configured sudo or root access).
 
-<p align=right><a href=#table-of-contents>⇧</a></p>
-
-## How to build an image or a kernel?
+### Build script overview
 
 ```text
 apt-get -y install git
@@ -51,13 +45,13 @@ git clone https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
+
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
+
 - will prepare the workspace by installing necessary dependencies and sources
 - it guides through the process until either a kernel package set or a ready-to-use image for a SDcard is created
 
-<p align=right><a href=#table-of-contents>⇧</a></p>
-
-## Build parameter examples
+#### Build parameter examples
 
 Show work in progress areas in interactive mode:
 
@@ -87,8 +81,6 @@ CARD_DEVICE="/dev/sda"
 
 [Build parameters, advanced build options, user defined configuration, build with Docker?](#additional-information)
 
-<p align=right><a href=#table-of-contents>⇧</a></p>
-
 ## Compare with industry standards
 
 Check similarity, advantages and disadvantages compared with leading industry standard build software.
@@ -105,31 +97,13 @@ Function | Armbian | Yocto | Buildroot |
 | Getting started | quick | very slow | slow |
 | Cross compilation | yes | yes | yes |
 
-<p align=right><a href=#table-of-contents>⇧</a></p>
+## Download prebuilt images
 
-## Where to download prebuilt images?
-
-https://www.armbian.com/download/
+<https://www.armbian.com/download/>
 
 Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the end of [February, May, August, November](https://github.com/armbian/documentation/blob/master/docs/Process_Release-Model.md). You are welcome to propose changes to our default [images build list](https://github.com/armbian/build/blob/master/config/targets.conf).
 
-
-
-<p align=right><a href=#table-of-contents>⇧</a></p>
-
-## Additional information
-
-- [Build parameters and advanced build options](https://docs.armbian.com/Developer-Guide_Build-Options/),
-- [Make use of user defined configurations](https://docs.armbian.com/Developer-Guide_User-Configurations/),
-- [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) and [Vagrant](https://docs.armbian.com/Developer-Guide_Using-Vagrant/) building guides,
-- Engage in [Armbian build framework forums](https://forum.armbian.com/forum/4-development/),
-- Check [Jira project management application](https://armbian.atlassian.net/browse/AR) status,
-- Make use of [central project search engine](https://www.armbian.com/search),
-- Browse [IRC channel logs](http://irc.armbian.com) or interact at #armbian on [Libera](https://libera.chat/).
-
-<p align=right><a href=#table-of-contents>⇧</a></p>
-
-## Build framework overview
+## Project structure
 
 ```text
 ├── cache                                Work / cache directory
@@ -179,61 +153,55 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
     └── u-boot                           User: universal boot loader patches
 ```
 
-<p align=right><a href=#table-of-contents>⇧</a></p>
+## Contribution
+
+- **You don't need to be a programmer to help!**
+
+- The easiest way to help is by "Starring" our repository - it helps more people find our code.
+
+- You also can maintain and develop [docs](https://github.com/armbian/documentation), [CI](https://github.com/armbian/ci-testing-tools), [autotests](https://github.com/armbian/autotests), [seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/), help on [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/), [project administration](https://forum.armbian.com/forum/39-armbian-project-administration/), [costs](https://www.armbian.com/donate).
+
+Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) before you write any code.
 
 ## Support
 
-- Have you found a bug in the **build framework**? 
-
-    Try to recreate it with a clean build framework clone. Then search for [existing and closed issues](https://github.com/armbian/build/issues). If you don't find it there, [open a new issue](https://github.com/armbian/build/issues/new).
-
-- Do you have troubles **elsewhere**? 
+- Community support
 
     Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com), consider [hiring an expert](https://www.debian.org/consultants/).
 
-- Personalised support?
+- Personal support
 
-    It is limited to active project supporters and sponsors. The shortest way to become one and receive our attention is a four figure [donation to our non-profit project](https://www.armbian.com/donate).
+    Personal support limited to active project supporters and sponsors. The shortest way to become one and receive our attention is a four figure [donation to our non-profit project](https://www.armbian.com/donate).
 
-<p align=right><a href=#table-of-contents>⇧</a></p>
+## Contact
 
-## Contribute
+- [Forums](https://forum.armbian.com) for Participate in Armbian
+- IRC: `#armbian` on Libera.chat
+- Follow [@armbian](https://twitter.com/armbian) on twitter or [LinkedIn](https://www.linkedin.com/company/armbian).
+- Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/software/c/projects/AR/issues)
 
-- Adding a new feature? 
+## Contributors
 
-    You are welcome to suggest or contribute directly to the code with a pull request. In case your proposed changes are large, remember to discuss them prior to development.
+Thank you to all the people who already contributed armbian!
 
-- Join development? 
+<a href="https://github.com/armbian/build/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=armbian/build" />
+</a>
 
-    Join regulars on their active missions, start maintaining any part of the code: patches, drivers or scripted applications like [armbian-config](https://github.com/armbian/config), address [community wishes](https://github.com/armbian/build/issues),
-
-- Help elsewhere?
-
-    Maintain and develop [documentation](https://github.com/armbian/documentation), [CI](https://github.com/armbian/ci-testing-tools), [autotests](https://github.com/armbian/autotests), [seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/), help on [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/), [project administration](https://forum.armbian.com/forum/39-armbian-project-administration/), [costs](https://www.armbian.com/donate).
-
-<p align=right><a href=#table-of-contents>⇧</a></p>
-
-## Social
-
-- [Participate in Armbian forums](https://forum.armbian.com),
-- Chat with fellow users on IRC #armbian on Libera.chat,
-- Follow [@armbian on Twitter](https://twitter.com/armbian) or [LinkedIN](https://www.linkedin.com/company/armbian).
-
-<p align=right><a href=#table-of-contents>⇧</a></p>
-
-## Credits
+### Also
 
 - [Current and past contributors](https://github.com/armbian/build/graphs/contributors), our families and friends,
-- [Support staff that keeps forums usable](https://forum.armbian.com/members/2-moderators/),
-- [Individuals that help with their ideas](https://forum.armbian.com/), reports and [donations](https://www.armbian.com/donate).
-
-<p align=right><a href=#table-of-contents>⇧</a></p>
+- [Support staff](https://forum.armbian.com/members/2-moderators/) that keeps forums usable.
+- [Individuals](https://forum.armbian.com/)that help with their ideas, reports and [donations](https://www.armbian.com/donate).
 
 ## Sponsors
 
-Most of the project is sponsored with a work done by volunteer collaborators, while some part of the project costs are being covered by the industry. We would not be able to get this far without their help. 
+Most of the project is sponsored with a work done by volunteer collaborators, while some part of the project costs are being covered by the industry. We would not be able to get this far without their help.
 
 [Do you want to see yourself below?](https://www.armbian.com/#contact)
 
 <a href="https://www.armbian.com/download/?tx_maker=xunlong" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=friendlyelec" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" width="122" height="122"></a><a href="https://k-space.ee" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="122" height="122"></a><a href="https://www.innoscale.net" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/07/innoscale-2-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=olimex" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=kobol" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="122" height="122"></a><a href="https://github.com/WorksOnArm/cluster/issues/223" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/work-on-arm-150x150.png" width="122" height="122"></a><a href="https://fosshost.org/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/foss-host-150x150.png" width="122" height="122"></a><a href="https://nlnet.nl/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2022/01/nlnet-fundation-150x150.png" width="122" height="122"></a><a href="#"><img border=0 src="https://www.armbian.com/wp-content/uploads/2021/06/lanecloud-150x150.png" width="122" height="122"></a><a href="https://www.khadas.com/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2021/05/khadas-150x150.png" width="122" height="122"></a>
-<p align=right><a href=#table-of-contents>⇧</a></p>
+
+## License
+
+This software is published under the GPL-2.0 License license.
