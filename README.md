@@ -8,7 +8,7 @@
 [![GitHub last commit (branch)](https://img.shields.io/github/last-commit/armbian/build/master)](https://github.com/armbian/build/commits)
 [![GitHub Workflow Status](https://img.shields.io/github/workflow/status/armbian/build/Build?label=build%20train)](https://github.com/armbian/build/actions/workflows/build-train.yml)
 [![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
-[![Join the Discord server](https://img.shields.io/discord/854735915313659944.svg?color=7289da&label=Discord%20server&logo=discord)](https://twitter.com/intent/follow?screen_name=armbian)
+[![Join the Discord server](https://img.shields.io/discord/854735915313659944.svg?color=7289da&label=Discord%20server&logo=discord)](https://discord.gg/gNJ2fPZKvc)
 [![Become a patron](https://img.shields.io/liberapay/patrons/armbian.svg?logo=liberapay)](https://liberapay.com/armbian)
 
 ## Table of contents
