@@ -566,16 +566,16 @@ CUSTOM_KERNEL_CONFIG
 	# create change log
 	git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'%H>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
 
+	# hash origin
 	echo "${hash}" > "${HASHTARGET}.githash"
+
 	# hash_patches=
-	$(git -C $SRC log --format="%H" -1 -- \
-		$(realpath --relative-base="$SRC" "${SRC}/patch/kernel/${KERNELPATCHDIR}")
-	) >> "${HASHTARGET}.githash"
+	git -C $SRC log --format="%H" -1 -- \
+		$(realpath --relative-base="$SRC" "${SRC}/patch/kernel/${KERNELPATCHDIR}") >> "${HASHTARGET}.githash"
 
 	# hash_kernel_config=
-	$(git -C $SRC log --format="%H" -1 -- \
-		$(realpath --relative-base="$SRC" "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	) >> "${HASHTARGET}.githash"
+	git -C $SRC log --format="%H" -1 -- \
+		$(realpath --relative-base="$SRC" "${SRC}/config/kernel/${LINUXCONFIG}.config")	>> "${HASHTARGET}.githash"
 
 }
 
