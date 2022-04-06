@@ -32,18 +32,12 @@ create_chroot()
 	qemu_binary['arm64']='qemu-aarch64-static'
 	apt_mirror['buster']="$DEBIAN_MIRROR"
 	apt_mirror['bullseye']="$DEBIAN_MIRROR"
-	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
-	apt_mirror['hirsute']="$UBUNTU_MIRROR"
-	apt_mirror['impish']="$UBUNTU_MIRROR"
 	apt_mirror['jammy']="$UBUNTU_MIRROR"
 	components['buster']='main,contrib'
 	components['bullseye']='main,contrib'
 	components['sid']='main,contrib'
-	components['bionic']='main,universe,multiverse'
 	components['focal']='main,universe,multiverse'
-	components['hirsute']='main,universe,multiverse'
-	components['impish']='main,universe,multiverse'
 	components['jammy']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc,apt-utils"

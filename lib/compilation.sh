@@ -546,7 +546,7 @@ CUSTOM_KERNEL_CONFIG
 	if  [[ -z ${KERNEL_VERSION_LEVEL} ]]; then
 		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
 		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} show HEAD~199 --pretty=format:"%H" --no-patch)
-		else
+	else
 		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
 		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} rev-list --max-parents=0 HEAD)
 	fi
@@ -566,10 +566,16 @@ CUSTOM_KERNEL_CONFIG
 	# create change log
 	git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'%H>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
 
+	# hash origin
 	echo "${hash}" > "${HASHTARGET}.githash"
-	hash_watch_1=$(LC_COLLATE=C find -L "${SRC}/patch/kernel/${KERNELPATCHDIR}"/ -name '*.patch' -mindepth 1 -maxdepth 1 -printf '%s %P\n' 2> /dev/null | LC_COLLATE=C sort -n)
-	hash_watch_2=$(cat "${SRC}/config/kernel/${LINUXCONFIG}.config")
-	echo "${hash_watch_1}${hash_watch_2}" | improved_git hash-object --stdin >> "${HASHTARGET}.githash"
+
+	# hash_patches=
+	git -C $SRC log --format="%H" -1 -- \
+		$(realpath --relative-base="$SRC" "${SRC}/patch/kernel/${KERNELPATCHDIR}") >> "${HASHTARGET}.githash"
+
+	# hash_kernel_config=
+	git -C $SRC log --format="%H" -1 -- \
+		$(realpath --relative-base="$SRC" "${SRC}/config/kernel/${LINUXCONFIG}.config")	>> "${HASHTARGET}.githash"
 
 }
 

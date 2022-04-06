@@ -620,20 +620,7 @@ install_distribution_specific()
 
 	case $RELEASE in
 
-	xenial)
-
-			# remove legal info from Ubuntu
-			[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
-
-			# ureadahead needs kernel tracing options that AFAIK are present only in mainline. disable
-			chroot "${SDCARD}" /bin/bash -c \
-			"systemctl --no-reload mask ondemand.service ureadahead.service >/dev/null 2>&1"
-			chroot "${SDCARD}" /bin/bash -c \
-			"systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-
-		;;
-
-	stretch|buster|sid)
+	buster|sid)
 
 			# remove doubled uname from motd
 			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
@@ -654,7 +641,8 @@ install_distribution_specific()
 
 
 		;;
-	bionic|focal|hirsute|impish|jammy)
+
+	focal|jammy)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf

@@ -406,12 +406,6 @@ SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
 MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
 DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 
-# dropbear needs to be configured differently
-[[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
-[[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
-[[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
-[[ $RELEASE == hirsute && $HOSTRELEASE == focal ]] && exit_with_error "Building Ubuntu Hirsute images requires Hirsute build host. Please upgrade your host or select a different target OS"
-
 [[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 [[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
@@ -423,7 +417,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ "$RELEASE" =~ ^(xenial|bionic|focal|hirsute|impish|jammy)$ ]]; then
+if [[ "$RELEASE" =~ ^(focal|jammy)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
