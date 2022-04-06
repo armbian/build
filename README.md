@@ -8,7 +8,7 @@
 [![GitHub last commit (branch)](https://img.shields.io/github/last-commit/armbian/build/master)](https://github.com/armbian/build/commits)
 [![GitHub Workflow Status](https://img.shields.io/github/workflow/status/armbian/build/Build?label=build%20train)](https://github.com/armbian/build/actions/workflows/build-train.yml)
 [![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
-[![Join the Discord server](https://img.shields.io/discord/854735915313659944.svg?color=7289da&label=Discord%20server&logo=discord)](https://discord.gg/gNJ2fPZKvc)
+[![Join the Discord](https://img.shields.io/discord/854735915313659944.svg?color=7289da&label=Discord%20&logo=discord)](https://discord.com/invite/gNJ2fPZKvc)
 [![Become a patron](https://img.shields.io/liberapay/patrons/armbian.svg?logo=liberapay)](https://liberapay.com/armbian)
 
 ## Table of contents
@@ -27,19 +27,21 @@
 
 ## What this project does?
 
-- builds custom Linux optimized for [single board computers](https://www.armbian.com/download/),
-- covers filesystem generation, low-level control software, kernel image compilation and bootloader compilation,
-- provides a consistent user experience by keeping system standards across different platforms.
+- Builds custom Linux optimized for [single board computers(SBCs)](https://en.wikipedia.org/wiki/Single-board_computer).
+- Including filesystem generation, low-level control software, kernel image compilation and bootloader compilation.
+- Provides a consistent user experience by keeping system standards across different platforms.
 
 ## Getting started
 
+### Prepare your environment
+
 - x64 / aarch64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
 - Ubuntu Jammy 22.04 x64 / aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
-- superuser rights (configured sudo or root access).
+- Superuser rights (configured sudo or root access).
 
-### Build script overview
+### Simply start with the build script
 
-```text
+```bash
 apt-get -y install git
 git clone https://github.com/armbian/build
 cd build
@@ -48,26 +50,27 @@ cd build
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
-- will prepare the workspace by installing necessary dependencies and sources
-- it guides through the process until either a kernel package set or a ready-to-use image for a SDcard is created
+- Interactive graphical interface.
+- The workspace will be prepared by installing the necessary dependencies and sources.
+- It guides the entire process until a kernel package or ready-to-use image of the SD card is created.
 
-#### Build parameter examples
+### Build parameter examples
 
 Show work in progress areas in interactive mode:
 
-```text
+```bash
 ./compile.sh EXPERT="yes"
 ```
 
 Run build framework inside Docker container:
 
-```text
+```bash
 ./compile.sh docker
 ```
 
 Build minimal CLI Armbian Focal image for Orangepi Zero. Use modern kernel and write image to the SD card:
 
-```text
+```bash
 ./compile.sh \
 BOARD=orangepizero \
 BRANCH=current \
@@ -97,7 +100,7 @@ Function | Armbian | Yocto | Buildroot |
 | Getting started | quick | very slow | slow |
 | Cross compilation | yes | yes | yes |
 
-## Download prebuilt images
+## Download
 
 <https://www.armbian.com/download/>
 
@@ -153,9 +156,9 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
     └── u-boot                           User: universal boot loader patches
 ```
 
-## Contribution
+## 🙌 Contribution
 
-- **You don't need to be a programmer to help!**
+- You don't need to be a programmer to help! [Check out  our list](https://forum.armbian.com/staffapplications/) choose what you wanna do ❤️
 
 - The easiest way to help is by "Starring" our repository - it helps more people find our code.
 
@@ -190,15 +193,15 @@ Thank you to all the people who already contributed armbian!
 
 ### Also
 
-- [Current and past contributors](https://github.com/armbian/build/graphs/contributors), our families and friends,
+- [Current and past contributors](https://github.com/armbian/build/graphs/contributors), our families and friends.
 - [Support staff](https://forum.armbian.com/members/2-moderators/) that keeps forums usable.
-- [Individuals](https://forum.armbian.com/)that help with their ideas, reports and [donations](https://www.armbian.com/donate).
+- [Individuals](https://forum.armbian.com/) that help with their ideas, reports and [donations](https://www.armbian.com/donate).
 
 ## Sponsors
 
 Most of the project is sponsored with a work done by volunteer collaborators, while some part of the project costs are being covered by the industry. We would not be able to get this far without their help.
 
-[Do you want to see yourself below?](https://www.armbian.com/#contact)
+[Would you like your name to appear below?](https://www.armbian.com/#contact)
 
 <a href="https://www.armbian.com/download/?tx_maker=xunlong" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/orangepi-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=friendlyelec" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/friendlyelec-logo-150x150.png" width="122" height="122"></a><a href="https://k-space.ee" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/03/kspace-150x150.png" width="122" height="122"></a><a href="https://www.innoscale.net" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/07/innoscale-2-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=olimex" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2018/02/olimex-logo-150x150.png" width="122" height="122"></a><a href="https://www.armbian.com/download/?tx_maker=kobol" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/06/Kobol_logo-150x150.png" width="122" height="122"></a><a href="https://github.com/WorksOnArm/cluster/issues/223" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/work-on-arm-150x150.png" width="122" height="122"></a><a href="https://fosshost.org/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2020/11/foss-host-150x150.png" width="122" height="122"></a><a href="https://nlnet.nl/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2022/01/nlnet-fundation-150x150.png" width="122" height="122"></a><a href="#"><img border=0 src="https://www.armbian.com/wp-content/uploads/2021/06/lanecloud-150x150.png" width="122" height="122"></a><a href="https://www.khadas.com/" target="_blank"><img border=0 src="https://www.armbian.com/wp-content/uploads/2021/05/khadas-150x150.png" width="122" height="122"></a>
 
