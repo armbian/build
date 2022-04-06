@@ -181,7 +181,7 @@ Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) befor
 - [Forums](https://forum.armbian.com) for Participate in Armbian
 - IRC: `#armbian` on Libera.chat
 - Follow [@armbian](https://twitter.com/armbian) on twitter or [LinkedIn](https://www.linkedin.com/company/armbian).
-- Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/software/c/projects/AR/issues)
+- Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
 
 ## Contributors
 
