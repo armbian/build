@@ -44,7 +44,7 @@ create_chroot()
 
 	# perhaps a temporally workaround
 	case $release in
-		buster|bullseye|focal|hirsute|sid)
+		buster|bullseye|focal|hirsute|sid|jammy)
 			includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
 		;;
 	esac
