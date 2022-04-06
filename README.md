@@ -34,7 +34,7 @@
 ## Getting started
 
 - x64 / aarch64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
-- Ubuntu Hirsute 21.04 x64 / aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
+- Ubuntu Jammy 22.04 x64 / aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
 - superuser rights (configured sudo or root access).
 
 ### Build script overview

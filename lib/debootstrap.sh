@@ -275,6 +275,9 @@ create_rootfs_cache()
 		# this should fix resolvconf installation failure in some cases
 		chroot $SDCARD /bin/bash -c 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
 
+		# TODO change name of the function from "desktop" and move to appropriate location
+		add_desktop_package_sources
+
 		# stage: update packages list
 		display_alert "Updating package list" "$RELEASE" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -e -c "apt-get -q -y $apt_extra update"' \
@@ -292,12 +295,6 @@ create_rootfs_cache()
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Upgrading base packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
-		# Myy: Dividing the desktop packages installation steps into multiple
-		# ones. We first install the "ADDITIONAL_PACKAGES" in order to get
-		# access to software-common-properties installation.
-		# THEN we add the APT sources and install the Desktop packages.
-		# TODO : Find a way to add APT sources WITHOUT software-common-properties
-
 		[[ ${EVALPIPE[0]} -ne 0 ]] && display_alert "Upgrading base packages" "failed" "wrn"
 
 		# stage: install additional packages
@@ -311,12 +308,6 @@ create_rootfs_cache()
 		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 
 		if [[ $BUILD_DESKTOP == "yes" ]]; then
-			# FIXME Myy : Are we keeping this only for Desktop users,
-			# or should we extend this to CLI users too ?
-			# There might be some clunky boards that require Debian packages from
-			# specific repos...
-			display_alert "Adding apt sources for Desktop packages"
-			add_desktop_package_sources
 
 			local apt_desktop_install_flags=""
 			if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
@@ -449,10 +440,8 @@ prepare_partitions()
 	# add -N number of inodes to keep mount from running out
 	# create bigger number for desktop builds
 	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
-	if [[ $HOSTRELEASE =~ bionic|buster|bullseye|cosmic|focal|hirsute|impish|jammy|sid ]]; then
+	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|sid ]]; then
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
-	elif [[ $HOSTRELEASE == xenial ]]; then
-		mkopts[ext4]="-q -m 2 -N $((128*${node_number}))"
 	fi
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'
