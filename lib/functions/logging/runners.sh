@@ -158,7 +158,16 @@ function run_host_command_logged_raw() {
 	elif [[ -f "${CURRENT_LOGFILE}" ]]; then
 		echo "-->--> command run successfully after $((SECONDS - seconds_start)) seconds" >> "${CURRENT_LOGFILE}"
 	fi
+
+	logging_clear_run_command_error_info # clear the error info vars, always, otherwise they'll leak into the next invocation.
+
 	return ${exit_code} #  exiting with the same error code as the original error
+}
+
+function logging_clear_run_command_error_info() {
+	# Unset those globals; they're only valid for the first invocation of a runner helper function after they're set.
+	unset if_error_detail_message
+	unset if_error_find_files_sdcard # remember, this is global.
 }
 
 function logging_enrich_run_command_error_info() {
@@ -171,7 +180,6 @@ function logging_enrich_run_command_error_info() {
 		display_alert "Found if_error_find_files_sdcard files" "${sdcard_files[@]}" "debug"
 		found_files+=("${sdcard_files[@]}") # add to result
 	done
-	unset if_error_find_files_sdcard # remember, this is global.
 
 	display_alert "Error-related files found" "${found_files[*]}" "debug"
 	for found_file in "${found_files[@]}"; do
@@ -187,7 +195,6 @@ function logging_enrich_run_command_error_info() {
 	### if_error_detail_message, array: messages to display if the command failed.
 	if [[ -n ${if_error_detail_message} ]]; then
 		display_alert "Error context msg" "${if_error_detail_message}" "err"
-		unset if_error_detail_message
 	fi
 }
 

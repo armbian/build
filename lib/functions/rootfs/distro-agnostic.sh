@@ -392,7 +392,7 @@ function install_distribution_agnostic() {
 
 	# install wireguard tools
 	if [[ $WIREGUARD == yes ]]; then
-		install_deb_chroot "wireguard-tools --no-install-recommends" "remote"
+		install_deb_chroot "wireguard-tools" "remote"
 	fi
 
 	# freeze armbian packages
