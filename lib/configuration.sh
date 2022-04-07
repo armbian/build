@@ -607,6 +607,8 @@ if [[ -z ${ARMBIAN_MIRROR} ]]; then
 	done
 fi
 
+[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
+
 # For (late) user override.
 # Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.
 #         in case the user tries to use them in lib.config, hopefully they'll be detected as "wishful hooking" and the user will be wrn'ed.
