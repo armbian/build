@@ -38,7 +38,7 @@ add_apt_sources() {
 				local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
 				local apt_source_filename="$(basename ${apt_source_filepath}).list"
 
-				display_alert "Adding APT Source ${new_apt_source}"
+				display_alert "Adding APT Source" "${new_apt_source}" "info"
 
 				if [[ "${new_apt_source}" == ppa* ]]; then
 					chroot_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
@@ -55,7 +55,7 @@ add_apt_sources() {
 					# installation without software-common-properties, sources.list + key.gpg
 					echo "${new_apt_source}" > "${SDCARD}/etc/apt/sources.list.d/${apt_source_filename}"
 					if [[ -f "${apt_source_gpg_filepath}" ]]; then
-						display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
+						display_alert "Adding GPG Key" "${apt_source_gpg_filepath}" "info"
 						#						local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
 						mkdir -p "${SDCARD}"/usr/share/keyrings/
 						cp "${apt_source_gpg_filepath}" "${SDCARD}"/usr/share/keyrings/
