@@ -90,7 +90,7 @@ compile_atf()
 
 	atftempdir=$(mktemp -d)
 	chmod 700 ${atftempdir}
-	trap "rm -rf \"${atftempdir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${atftempdir}\" ; exit \$ret" 0 1 2 3 15
 
 	# copy files to temp directory
 	for f in $target_files; do
@@ -161,7 +161,7 @@ compile_uboot()
 	# create directory structure for the .deb package
 	uboottempdir=$(mktemp -d)
 	chmod 700 ${uboottempdir}
-	trap "rm -rf \"${uboottempdir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${uboottempdir}\" ; exit \$ret" 0 1 2 3 15
 	local uboot_name=${CHOSEN_UBOOT}_${REVISION}_${ARCH}
 	rm -rf $uboottempdir/$uboot_name
 	mkdir -p $uboottempdir/$uboot_name/usr/lib/{u-boot,$uboot_name} $uboottempdir/$uboot_name/DEBIAN
@@ -328,7 +328,7 @@ create_linux-source_package ()
 	ts=$(date +%s)
 	local sources_pkg_dir tmp_src_dir
 	tmp_src_dir=$(mktemp -d)
-	trap "rm -rf \"${tmp_src_dir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${tmp_src_dir}\" ; exit \$ret" 0 1 2 3 15
 	sources_pkg_dir=${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all
 	mkdir -p "${sources_pkg_dir}"/usr/src/ \
 		"${sources_pkg_dir}"/usr/share/doc/linux-source-${version}-${LINUXFAMILY} \
@@ -590,7 +590,7 @@ compile_firmware()
 
 	firmwaretempdir=$(mktemp -d)
 	chmod 700 ${firmwaretempdir}
-	trap "rm -rf \"${firmwaretempdir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${firmwaretempdir}\" ; exit \$ret" 0 1 2 3 15
 	plugin_dir="armbian-firmware${FULL}"
 	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
@@ -642,7 +642,7 @@ compile_armbian-zsh()
 	local tmp_dir armbian_zsh_dir
 	tmp_dir=$(mktemp -d)
 	chmod 700 ${tmp_dir}
-	trap "rm -rf \"${tmp_dir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${tmp_dir}\" ; exit \$ret" 0 1 2 3 15
 	armbian_zsh_dir=armbian-zsh_${REVISION}_all
 	display_alert "Building deb" "armbian-zsh" "info"
 
@@ -721,7 +721,7 @@ compile_armbian-config()
 	local tmp_dir armbian_config_dir
 	tmp_dir=$(mktemp -d)
 	chmod 700 ${tmp_dir}
-	trap "rm -rf \"${tmp_dir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${tmp_dir}\" ; exit \$ret" 0 1 2 3 15
 	armbian_config_dir=armbian-config_${REVISION}_all
 	display_alert "Building deb" "armbian-config" "info"
 
