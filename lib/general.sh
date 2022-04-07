@@ -1624,7 +1624,8 @@ download_and_verify()
 	local filename=$2
 	local localdir=$SRC/cache/${remotedir//_}
 	local dirname=${filename//.tar.xz}
-    [[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
+
+	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
 			local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
