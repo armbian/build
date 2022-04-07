@@ -60,7 +60,14 @@ function compile_kernel() {
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel" # create patch for manual source changes
 	local version
 	local toolchain
-	LOG_SECTION="kernel_config" do_with_logging do_with_hooks kernel_config
+
+	# Check if we're gonna do some interactive configuration; if so, don't run kernel_config under logging manager.
+	if [[ $KERNEL_CONFIGURE != yes ]]; then
+		LOG_SECTION="kernel_config" do_with_logging do_with_hooks kernel_config
+	else
+		LOG_SECTION="kernel_config_interactive" do_with_hooks kernel_config
+	fi
+
 	LOG_SECTION="kernel_package_source" do_with_logging do_with_hooks kernel_package_source
 
 	# @TODO: might be interesting to package kernel-headers at this stage.
@@ -240,28 +247,30 @@ function kernel_config() {
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		run_kernel_make olddefconfig # @TODO: what is this? does it fuck up dates?
 	else
-		display_alert "Starting kernel oldconfig+menuconfig" "${LINUXCONFIG}" "debug"
+		display_alert "Starting (interactive) kernel oldconfig" "${LINUXCONFIG}" "debug"
 
-		run_kernel_make oldconfig
+		run_kernel_make_dialog oldconfig
 
 		# No logging for this. this is UI piece
+		display_alert "Starting (interactive) kernel ${KERNEL_MENUCONFIG:-menuconfig}" "${LINUXCONFIG}" "debug"
 		run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}"
 
 		# Capture new date. Otherwise changes not detected by make.
 		kernel_config_mtime=$(get_file_modification_time ".config")
 
 		# store kernel config in easily reachable place
+		mkdir -p "${DEST}"/config
 		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
-		cp .config "${DEST}/config/${LINUXCONFIG}.config"
+		run_host_command_logged cp -pv .config "${DEST}/config/${LINUXCONFIG}.config"
 
 		# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.
-		[[ "${COPY_CONFIG_BACK_TO}" != "" ]] && cp -v .config "${COPY_CONFIG_BACK_TO}"
+		[[ "${COPY_CONFIG_BACK_TO}" != "" ]] && run_host_command_logged cp -pv .config "${COPY_CONFIG_BACK_TO}"
 
 		# export defconfig too if requested
 		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
 			run_kernel_make savedefconfig
 
-			[[ -f defconfig ]] && cp defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
+			[[ -f defconfig ]] && run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
 		fi
 	fi
 
