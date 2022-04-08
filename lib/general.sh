@@ -1370,7 +1370,7 @@ prepare_host()
 	build-essential  ca-certificates ccache cpio cryptsetup curl              \
 	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
 	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gnupg1 gpg              \
+	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gpg                     \
 	imagemagick jq kmod libbison-dev libc6-dev-armhf-cross libcrypto++-dev    \
 	libelf-dev libfdt-dev libfile-fcntllock-perl                              \
 	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
@@ -1625,6 +1625,8 @@ download_and_verify()
 	local localdir=$SRC/cache/${remotedir//_}
 	local dirname=${filename//.tar.xz}
 
+	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
+
         if [[ $DOWNLOAD_MIRROR == china ]]; then
 			local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
 		elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
@@ -1666,7 +1668,7 @@ download_and_verify()
 	else
 		# download control file
 		local torrent=${server}$remotedir/${filename}.torrent
-		aria2c --download-result=hide --disable-ipv6=true --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
+		aria2c --download-result=hide --disable-ipv6=$DISABLE_IPV6 --summary-interval=0 --console-log-level=error --auto-file-renaming=false \
 		--continue=false --allow-overwrite=true --dir="${localdir}" ${server}${remotedir}/${filename}.asc $(webseed "$remotedir/${filename}.asc") -o "${filename}.asc"
 		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
 	fi
@@ -1678,7 +1680,7 @@ download_and_verify()
 		local ariatorrent="--summary-interval=0 --auto-save-interval=0 --seed-time=0 --bt-stop-timeout=120 --console-log-level=error \
 		--allow-overwrite=true --download-result=hide --rpc-save-upload-metadata=false --auto-file-renaming=false \
 		--file-allocation=trunc --continue=true ${torrent} \
-		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=true --stderr --follow-torrent=mem --dir=$localdir"
+		--dht-file-path=${SRC}/cache/.aria2/dht.dat --disable-ipv6=$DISABLE_IPV6 --stderr --follow-torrent=mem --dir=$localdir"
 
 		# exception. It throws error if dht.dat file does not exists. Error suppress needed only at first download.
 		if [[ -f "${SRC}"/cache/.aria2/dht.dat ]]; then
@@ -1699,7 +1701,7 @@ download_and_verify()
 		if [[ ! `timeout 10 curl --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null` ]]; then
 			display_alert "downloading using http(s) network" "$filename"
 			aria2c --download-result=hide --rpc-save-upload-metadata=false --console-log-level=error \
-			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=true --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
+			--dht-file-path="${SRC}"/cache/.aria2/dht.dat --disable-ipv6=$DISABLE_IPV6 --summary-interval=0 --auto-file-renaming=false --dir="${localdir}" ${server}${remotedir}/${filename} $(webseed "${remotedir}/${filename}") -o "${filename}"
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
 
