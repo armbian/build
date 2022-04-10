@@ -44,7 +44,7 @@ create_chroot()
 
 	# perhaps a temporally workaround
 	case $release in
-		buster|bullseye|focal|hirsute|sid|jammy)
+		bullseye|focal|jammy|sid)
 			includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
 		;;
 	esac
@@ -128,6 +128,7 @@ chroot_prepare_distccd()
 	gcc_version['focal']='9.2'
 	gcc_version['hirsute']='10.2'
 	gcc_version['sid']='10.2'
+	gcc_version['jammy']='12'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f "${dest}"/cmdlist
@@ -162,8 +163,8 @@ chroot_build_packages()
 		target_arch="${ARCH}"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="bionic buster bullseye focal hirsute jammy sid"
-		target_arch="armhf arm64"
+		target_release="bullseye focal jammy sid"
+		target_arch="armhf arm64 amd64"
 	fi
 
 	for release in $target_release; do
