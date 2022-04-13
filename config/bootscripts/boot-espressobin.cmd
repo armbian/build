@@ -3,22 +3,15 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-# default values
-setenv rootdev "/dev/mmcblk0p1"
-setenv verbosity "7"
-setenv rootfstype "ext4"
-setenv fdt_name_a dtb/marvell/armada-3720-community.dtb
-setenv fdt_name_b dtb/marvell/armada-3720-espressobin.dtb
-
-load ${boot_interface} ${devnum}:1 ${scriptaddr} ${prefix}armbianEnv.txt
+load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}armbianEnv.txt
 env import -t ${scriptaddr} ${filesize}
 
 setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks}  ${extraargs}"
 
-ext4load $boot_interface 0:1 $kernel_addr ${prefix}$image_name
-ext4load $boot_interface 0:1 $initrd_addr ${prefix}$initrd_image
-ext4load $boot_interface 0:1 $fdt_addr ${prefix}$fdt_name_a
-ext4load $boot_interface 0:1 $fdt_addr ${prefix}$fdt_name_b
+load $devtype ${devnum}:${distro_bootpart} $kernel_addr_r ${prefix}Image
+load $devtype ${devnum}:${distro_bootpart} $ramdisk_addr_r ${prefix}uInitrd
+load $devtype ${devnum}:${distro_bootpart} $fdt_addr_r ${prefix}dtb/$fdtfile
 
-booti $kernel_addr $initrd_addr $fdt_addr
-# mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
+booti $kernel_addr_r $ramdisk_addr_r $fdt_addr_r
+
+# mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr.uimg
