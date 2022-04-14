@@ -32,10 +32,8 @@ prepare_partitions() {
 	# add -N number of inodes to keep mount from running out
 	# create bigger number for desktop builds
 	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
-	if [[ $HOSTRELEASE =~ bionic|buster|bullseye|cosmic|focal|hirsute|impish|jammy|sid ]]; then
-		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128 * ${node_number}))"
-	elif [[ $HOSTRELEASE == xenial ]]; then
-		mkopts[ext4]="-q -m 2 -N $((128 * ${node_number}))"
+	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|sid ]]; then
+		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128 * node_number))"
 	fi
 	mkopts[fat]='-n BOOT'
 	mkopts[ext2]='-q'

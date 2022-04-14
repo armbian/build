@@ -1,7 +1,7 @@
 ARG BASE_IMAGE=ubuntu:jammy
 FROM $BASE_IMAGE as armbian_builder
-ARG ARM_GCC_COMPILER='g++-11-arm-linux-gnueabihf'
-ENV ARM_GCC_COMPILER $ARM_GCC_COMPILER
+ARG CUSTOM_PACKAGES='g++-11-arm-linux-gnueabihf libssl3'
+ENV CUSTOM_PACKAGES $CUSTOM_PACKAGES
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -y dist-upgrade && apt-get -y install \
        joe \
@@ -23,7 +23,7 @@ RUN sh -c " \
 RUN apt-get update \
     && apt-get -y dist-upgrade \
     && apt-get install -y --no-install-recommends \
-       $ARM_GCC_COMPILER \    
+       $CUSTOM_PACKAGES \
        acl \
        aptly \
        aria2 \
@@ -72,7 +72,6 @@ RUN apt-get update \
        libpython2.7-dev \
        libpython3-dev \
        libssl-dev \
-       libssl1.1 \
        libusb-1.0-0-dev \
        linux-base \
        libmpc-dev \

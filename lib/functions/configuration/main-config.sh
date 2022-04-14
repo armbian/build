@@ -225,12 +225,6 @@ function do_main_configuration() {
 
 	interactive_desktop_main_configuration
 
-	# dropbear needs to be configured differently # @TODO: rpardini: yes, and? are you a lost leftover comment from a previous era?
-	[[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
-	[[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
-	[[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
-	[[ $RELEASE == hirsute && $HOSTRELEASE == focal ]] && exit_with_error "Building Ubuntu Hirsute images requires Hirsute build host. Please upgrade your host or select a different target OS"
-
 	[[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 	[[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 	[[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
@@ -242,7 +236,7 @@ function do_main_configuration() {
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 	[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-	if [[ "$RELEASE" =~ ^(xenial|bionic|focal|hirsute|impish|jammy)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -345,6 +339,9 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 			fi
 		done
 	fi
+
+	# Control aria2c's usage of ipv6.
+	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
 	# For (late) user override.
 	# Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.

@@ -28,25 +28,19 @@ create_chroot() {
 	qemu_binary['arm64']='qemu-aarch64-static'
 	apt_mirror['buster']="$DEBIAN_MIRROR"
 	apt_mirror['bullseye']="$DEBIAN_MIRROR"
-	apt_mirror['bionic']="$UBUNTU_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
-	apt_mirror['hirsute']="$UBUNTU_MIRROR"
-	apt_mirror['impish']="$UBUNTU_MIRROR"
 	apt_mirror['jammy']="$UBUNTU_MIRROR"
 	components['buster']='main,contrib'
 	components['bullseye']='main,contrib'
 	components['sid']='main,contrib'
-	components['bionic']='main,universe,multiverse'
 	components['focal']='main,universe,multiverse'
-	components['hirsute']='main,universe,multiverse'
-	components['impish']='main,universe,multiverse'
 	components['jammy']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc,apt-utils"
 
 	# perhaps a temporally workaround
 	case $release in
-		buster | bullseye | focal | hirsute | sid)
+		bullseye | focal | jammy | sid)
 			includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
 			;;
 	esac
@@ -128,6 +122,7 @@ chroot_prepare_distccd() {
 	gcc_version['focal']='9.2'
 	gcc_version['hirsute']='10.2'
 	gcc_version['sid']='10.2'
+	gcc_version['jammy']='12'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f "${dest}"/cmdlist
@@ -161,8 +156,8 @@ chroot_build_packages() {
 		target_arch="${ARCH}"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="bionic buster bullseye focal hirsute jammy sid"
-		target_arch="armhf arm64"
+		target_release="bullseye focal jammy sid"
+		target_arch="armhf arm64 amd64"
 	fi
 
 	for release in $target_release; do

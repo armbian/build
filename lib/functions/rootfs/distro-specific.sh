@@ -2,19 +2,7 @@ install_distribution_specific() {
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
 	case $RELEASE in
-		xenial)
-			# remove legal info from Ubuntu
-			[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
-
-			# ureadahead needs kernel tracing options that AFAIK are present only in mainline. disable
-			chroot "${SDCARD}" /bin/bash -c \
-				"systemctl --no-reload mask ondemand.service ureadahead.service >/dev/null 2>&1"
-			chroot "${SDCARD}" /bin/bash -c \
-				"systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-
-			;;
-
-		stretch | buster | sid)
+		buster | sid)
 			# remove doubled uname from motd
 			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
 			# rc.local is not existing but one might need it
@@ -31,7 +19,7 @@ install_distribution_specific() {
 			[[ $(grep -L "VERSION=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION="11 (bullseye)"' >> "${SDCARD}"/etc/os-release
 			;;
 
-		bionic | focal | hirsute | impish | jammy)
+		focal | jammy)
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
@@ -89,7 +77,7 @@ install_distribution_specific() {
 
 # create_sources_list <release> <basedir>
 #
-# <release>: buster|bullseye|bionic|focal|hirsute|impish|jammy|sid
+# <release>: bullseye|focal|jammy|sid
 # <basedir>: path to root directory
 #
 create_sources_list() {
@@ -98,7 +86,7 @@ create_sources_list() {
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-		stretch | buster)
+		buster)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -137,7 +125,7 @@ create_sources_list() {
 			EOF
 			;;
 
-		xenial | bionic | focal | hirsute | impish | jammy)
+		focal | jammy)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse

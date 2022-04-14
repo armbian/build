@@ -31,7 +31,7 @@ function prepare_extra_kernel_drivers() {
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.17 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.18 && [ "$AUFS" == yes ]; then
 		# @TODO: Fasthash for this whole block is only the git hash of revision we'd apply from Mr. Okajima
 		local aufs_tag # attach to specifics tag or branch
 		aufs_tag=$(echo "${version}" | cut -f 1-2 -d ".")
