@@ -1,0 +1,116 @@
+From 5e9043df839e06f1144f0641baf2e8105b539ab8 Mon Sep 17 00:00:00 2001
+From: Zong-Zhe Yang <kevin_yang@realtek.com>
+Date: Mon, 14 Mar 2022 15:12:43 +0800
+Subject: [PATCH 508/544] rtw89: ser: fix CAM leaks occurring in L2 reset
+
+The CAM, meaning address CAM and bssid CAM here, will get leaks during
+SER (system error recover) L2 reset process and ieee80211_restart_hw()
+which is called by L2 reset process eventually.
+
+The normal flow would be like
+-> add interface (acquire 1)
+-> enter ips (release 1)
+-> leave ips (acquire 1)
+-> connection (occupy 1) <(A) 1 leak after L2 reset if non-sec connection>
+
+The ieee80211_restart_hw() flow (under connection)
+-> ieee80211 reconfig
+-> add interface (acquire 1)
+-> leave ips (acquire 1)
+-> connection (occupy (A) + 2) <(B) 1 more leak>
+
+Originally, CAM is released before HW restart only if connection is under
+security. Now, release CAM whatever connection it is to fix leak in (A).
+OTOH, check if CAM is already valid to avoid acquiring multiple times to
+fix (B).
+
+Besides, if AP mode, release address CAM of all stations before HW restart.
+
+Signed-off-by: Zong-Zhe Yang <kevin_yang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+---
+ drivers/net/wireless/realtek/rtw89/cam.c | 14 ++++++++++++--
+ drivers/net/wireless/realtek/rtw89/ser.c | 21 +++++++++++++++++++++
+ 2 files changed, 33 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/cam.c b/drivers/net/wireless/realtek/rtw89/cam.c
+index 305dbbebff6b..26bef9fdd205 100644
+--- a/drivers/net/wireless/realtek/rtw89/cam.c
++++ b/drivers/net/wireless/realtek/rtw89/cam.c
+@@ -421,10 +421,8 @@ static void rtw89_cam_reset_key_iter(struct ieee80211_hw *hw,
+ 				     void *data)
+ {
+ 	struct rtw89_dev *rtwdev = (struct rtw89_dev *)data;
+-	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
+ 
+ 	rtw89_cam_sec_key_del(rtwdev, vif, sta, key, false);
+-	rtw89_cam_deinit(rtwdev, rtwvif);
+ }
+ 
+ void rtw89_cam_deinit_addr_cam(struct rtw89_dev *rtwdev,
+@@ -480,6 +478,12 @@ int rtw89_cam_init_addr_cam(struct rtw89_dev *rtwdev,
+ 	int i;
+ 	int ret;
+ 
++	if (unlikely(addr_cam->valid)) {
++		rtw89_debug(rtwdev, RTW89_DBG_FW,
++			    "addr cam is already valid; skip init\n");
++		return 0;
++	}
++
+ 	ret = rtw89_cam_get_avail_addr_cam(rtwdev, &addr_cam_idx);
+ 	if (ret) {
+ 		rtw89_err(rtwdev, "failed to get available addr cam\n");
+@@ -531,6 +535,12 @@ static int rtw89_cam_init_bssid_cam(struct rtw89_dev *rtwdev,
+ 	u8 bssid_cam_idx;
+ 	int ret;
+ 
++	if (unlikely(bssid_cam->valid)) {
++		rtw89_debug(rtwdev, RTW89_DBG_FW,
++			    "bssid cam is already valid; skip init\n");
++		return 0;
++	}
++
+ 	ret = rtw89_cam_get_avail_bssid_cam(rtwdev, &bssid_cam_idx);
+ 	if (ret) {
+ 		rtw89_err(rtwdev, "failed to get available bssid cam\n");
+diff --git a/drivers/net/wireless/realtek/rtw89/ser.c b/drivers/net/wireless/realtek/rtw89/ser.c
+index 837cdc366a61..e86f3d89ef1b 100644
+--- a/drivers/net/wireless/realtek/rtw89/ser.c
++++ b/drivers/net/wireless/realtek/rtw89/ser.c
+@@ -220,11 +220,32 @@ static void ser_reset_vif(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
+ 	rtwvif->trigger = false;
+ }
+ 
++static void ser_sta_deinit_addr_cam_iter(void *data, struct ieee80211_sta *sta)
++{
++	struct rtw89_dev *rtwdev = (struct rtw89_dev *)data;
++	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
++
++	rtw89_cam_deinit_addr_cam(rtwdev, &rtwsta->addr_cam);
++}
++
++static void ser_deinit_cam(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
++{
++	if (rtwvif->net_type == RTW89_NET_TYPE_AP_MODE)
++		ieee80211_iterate_stations_atomic(rtwdev->hw,
++						  ser_sta_deinit_addr_cam_iter,
++						  rtwdev);
++
++	rtw89_cam_deinit(rtwdev, rtwvif);
++}
++
+ static void ser_reset_mac_binding(struct rtw89_dev *rtwdev)
+ {
+ 	struct rtw89_vif *rtwvif;
+ 
+ 	rtw89_cam_reset_keys(rtwdev);
++	rtw89_for_each_rtwvif(rtwdev, rtwvif)
++		ser_deinit_cam(rtwdev, rtwvif);
++
+ 	rtw89_core_release_all_bits_map(rtwdev->mac_id_map, RTW89_MAX_MAC_ID_NUM);
+ 	rtw89_for_each_rtwvif(rtwdev, rtwvif)
+ 		ser_reset_vif(rtwdev, rtwvif);
+-- 
+2.34.1
+
