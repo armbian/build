@@ -150,19 +150,23 @@ function prepare_and_config_main_build_single() {
 		if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
 			exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
 		fi
+		export KERNEL_HAS_WORKING_HEADERS="no" # assume the worst, and all surprises will be happy ones
 		# Parse/validate the the major, bail if no match
-		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge "5.4"; then # We support 5.x from 5.4; 5.10+ brings unified packaging.
+		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge "5.4"; then # We support 5.x from 5.4
+			export KERNEL_HAS_WORKING_HEADERS="yes"                        # We can build working headers for 5.x even when cross compiling.
 			export KERNEL_MAJOR=5
 			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
 		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.4" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "5.0"; then
-			export KERNEL_MAJOR=4 # We support 4.x from 4.4; all require custom packaging.
+			export KERNEL_MAJOR=4 # We support 4.x from 4.4
 			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
 		else
+			# If you think you can patch packaging to support this, you're probably right. Is _worth_ it though?
 			exit_with_error "Kernel series unsupported" "'${KERNEL_MAJOR_MINOR}' is unsupported, or bad config"
 		fi
 
 		export LINUXSOURCEDIR="kernel/${ARCH}__${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}"
 	else
+		export KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
 		export ARMBIAN_WILL_BUILD_KERNEL=no
 	fi
 

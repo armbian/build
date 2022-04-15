@@ -58,7 +58,12 @@ function prepare_kernel_packaging_debs() {
 		create_kernel_deb "linux-dtb-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_dtb
 	fi
 
-	create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
+	# Only recent kernels get linux-headers package; some tuning has to be done for 4.x
+	if [[ "${KERNEL_HAS_WORKING_HEADERS}" == "yes" ]]; then
+		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
+	else
+		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "warn"
+	fi
 }
 
 function create_kernel_deb() {
