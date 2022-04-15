@@ -179,6 +179,15 @@ fi
 # load architecture defaults
 source "${SRC}/config/sources/${ARCH}.conf"
 
+# Board level config
+while read -r line; do
+	name=${line%%=*}
+
+	eval "$name=\"\${BOARDCONFIG_$name}\""
+
+	unset name
+done <<<"$(declare -p | grep "^declare -[a-z\-] BOARDCONFIG_" | sed 's/^declare -[a-z\-] BOARDCONFIG_//g')"
+
 ## Extensions: at this point we've sourced all the config files that will be used,
 ##             and (hopefully) not yet invoked any extension methods. So this is the perfect
 ##             place to initialize the extension manager. It will create functions
