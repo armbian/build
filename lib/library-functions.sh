@@ -429,9 +429,18 @@ source "${SRC}"/lib/functions/main/rootfs-image.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/rootfs/apt.sh
-# shellcheck source=lib/functions/rootfs/apt.sh
-source "${SRC}"/lib/functions/rootfs/apt.sh
+### lib/functions/rootfs/apt-install.sh
+# shellcheck source=lib/functions/rootfs/apt-install.sh
+source "${SRC}"/lib/functions/rootfs/apt-install.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/rootfs/apt-sources.sh
+# shellcheck source=lib/functions/rootfs/apt-sources.sh
+source "${SRC}"/lib/functions/rootfs/apt-sources.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"

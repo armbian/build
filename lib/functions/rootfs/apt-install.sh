@@ -16,7 +16,7 @@ install_deb_chroot() {
 		# also won't require cleanup later
 
 		name="/root/"$(basename "${package}")
-		[[ ! -f "${SDCARD}${name}" ]] && cp "${package}" "${SDCARD}${name}"
+		[[ ! -f "${SDCARD}${name}" ]] && run_host_command_logged cp -pv "${package}" "${SDCARD}${name}"
 		desc=""
 	else
 		name=$1

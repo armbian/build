@@ -162,7 +162,7 @@ function create_new_rootfs_cache() {
 		chroot_sdcard LC_ALL=C LANG=C setupcon --save --force
 	fi
 
-	# stage: create apt-get sources list
+	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS)
 	create_sources_list "$RELEASE" "$SDCARD/"
 
 	# add armhf arhitecture to arm64, unless configured not to do so.
@@ -173,8 +173,13 @@ function create_new_rootfs_cache() {
 	# this should fix resolvconf installation failure in some cases
 	chroot_sdcard 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
 
-	# TODO change name of the function from "desktop" and move to appropriate location
-	add_desktop_package_sources
+	# Add external / PPAs to apt sources; decides internally based on minimal/cli/desktop dir/file structure
+	add_apt_sources
+
+	# uset asset logging for this; actually log contents of the files too
+	run_host_command_logged ls -l "${SDCARD}/usr/share/keyrings"
+	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
+	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"
 
 	# stage: update packages list
 	display_alert "Updating package list" "$RELEASE" "info"
