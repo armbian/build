@@ -16,7 +16,15 @@ function chroot_sdcard_apt_get() {
 		-o "Acquire::http::Proxy::localhost=\"DIRECT\""
 	)
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
-	chroot_sdcard DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
+
+	# Allow for clean-environment apt-get
+	local -a prelude_clean_env=()
+	if [[ "${use_clean_environment:-no}" == "yes" ]]; then
+		display_alert "Running with clean environment" "$*" "debug"
+		prelude_clean_env=("env" "-i")
+	fi
+
+	chroot_sdcard "${prelude_clean_env[@]}" DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
 }
 
 # please, please, unify around this function.
