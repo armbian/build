@@ -238,10 +238,6 @@ function kernel_config() {
 		cp -p "${SRC}"/packages/blobs/odroidxu4/*.bin "${kernel_work_dir}/firmware/edid"
 	fi
 
-	# hack for deb builder. To pack what's missing in headers pack.
-	# @TODO: only for legacy builds?
-	cp "${SRC}"/patch/misc/headers-debian-byteshift.patch /tmp # @TODO: ok, but why /tmp? It's leaking there.
-
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 
 	if [[ $KERNEL_CONFIGURE != yes ]]; then

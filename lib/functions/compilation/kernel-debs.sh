@@ -3,26 +3,20 @@
 # We wanna produce Debian/Ubuntu compatible packages so we're able to use their standard tools, like
 # `flash-kernel`, `u-boot-menu`, `grub2`, and others, so we gotta stick to their conventions.
 
-# Headers are important. We wanna be compatible with `dkms` stuff from Ubuntu, like `nvidia-driver-xxx`.
-# This is affected by cross-compilation: Armbian usually builds arm64 on amd64, and the KBUILD tools
-# that would be included in such headers package will be the wrong arch for `dkms`ing on target arm64 machine.
-
 # The main difference is that this is NOT invoked from KBUILD's Makefile, but instead
 # directly by Armbian, with references to the dirs where KBUILD's
 # `make install dtbs_install modules_install headers_install` have already successfully been run.
 
 # This will create a SET of packages. It should always create these:
 # image package: vmlinuz and such, config, modules, and dtbs (if exist) in /usr/lib/xxx
-# libc header package: just the libc headers
-# linux-headers package: just the image headers. (what about the binaries? cross compilation?)
+# linux-headers package: just the kernel headers, for building out-of-tree modules, dkms, etc.
 # linux-dtbs package: only dtbs, if they exist. in /boot/
 
 # So this will handle
 # - Creating .deb package skeleton dir (mktemp)
 # - Moving/copying around of KBUILD installed stuff for Debian/Ubuntu/Armbian standard locations, in the correct packages
-# - Separating headers, between image and libc packages.
 # - Fixing the symlinks to stuff so they fit a target system.
-# - building the .debs;
+# - building the .debs.
 
 is_enabled() {
 	grep -q "^$1=y" include/config/auto.conf
@@ -64,11 +58,7 @@ function prepare_kernel_packaging_debs() {
 		create_kernel_deb "linux-dtb-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_dtb
 	fi
 
-	if dpkg-architecture -e "${ARCH}"; then
-		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
-	else
-		display_alert "Cross-compilation" "skip kernel-headers packaging" "warn"
-	fi
+	create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
 }
 
 function create_kernel_deb() {
@@ -268,40 +258,33 @@ function kernel_package_callback_linux_headers() {
 	# how to get SRCARCH? only from the makefile itself. ARCH=amd64 then SRCARCH=x86. How to we know? @TODO
 	local SRC_ARCH="${ARCH}"
 	[[ "${SRC_ARCH}" == "amd64" ]] && SRC_ARCH="x86"
+	[[ "${SRC_ARCH}" == "armhf" ]] && SRC_ARCH="arm"
 
 	# Create a list of files to include, path-relative to the kernel tree
 	local temp_file_list="${WORKDIR}/tmp_file_list_${kernel_version_family}.kernel.headers"
 
-	# Source stuff. No binaries. I think.
+	# Find the files we want to include in the package. Those will be later cleaned, etc.
 	(
 		cd "${kernel_work_dir}" || exit 2
-		#echo "-- Sources: Makefiles and Kconfigs and perl"
 		find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl
-
-		#echo "-- Sources: all arches include, include and scripts both files and symlinks "
 		find arch/*/include include scripts -type f -o -type l
-
-		#echo "-- Sources: security include"
 		find security/*/include -type f
-
-		#echo "-- Sources: arch ${SRC_ARCH} module lds or Kbuild platforms or Platform"
-		find "arch/${SRC_ARCH}" -name module.lds -o -name Kbuild.platforms -o -name Platform
-
-		#echo "-- Sources: All files somewhere for some reason"
-		# shellcheck disable=SC2046 # I need to expand. Thanks.
-		find $(find "arch/${SRC_ARCH}" -name include -o -name scripts -type d) -type f
-
-		if is_enabled CONFIG_STACK_VALIDATION; then
-			#echo "-- Binaries: objtool due to CONFIG_STACK_VALIDATION"
-			find tools/objtool -type f -executable
-		fi
-
-		#echo "-- Binaries: Module.symvers and includes scripts FILES"
-		find arch/${SRC_ARCH}/include Module.symvers include scripts -type f
+		[[ -d "arch/${SRC_ARCH}" ]] && {
+			find "arch/${SRC_ARCH}" -name module.lds -o -name Kbuild.platforms -o -name Platform
+			# shellcheck disable=SC2046 # I need to expand. Thanks.
+			find $(find "arch/${SRC_ARCH}" -name include -o -name scripts -type d) -type f
+			find arch/${SRC_ARCH}/include Module.symvers include scripts -type f
+		}
+		# Include the byteshift utilities shared between kernel proper and the build scripts/tools.
+		# This replaces 'headers-debian-byteshift.patch' which was used for years in Armbian.
+		#find tools/include/tools/be_byteshift.h tools/include/tools/le_byteshift.h -type f
+		#find tools/objtool -type f
+		#find tools/build -type f
+		find tools -type f       # all tools. all of it? we might get away with a little less. eg: tools/perf and tools/testing
+		find arch/x86/lib/insn.c # required by objtool stuff...
 
 		if is_enabled CONFIG_GCC_PLUGINS; then
-			#echo "-- Binaries: gcc plugins due to CONFIG_GCC_PLUGINS"
-			find scripts/gcc-plugins -name \*.so -o -name gcc-common.h
+			find scripts/gcc-plugins -name gcc-common.h # @TODO something else here too?
 		fi
 	) > "${temp_file_list}"
 
@@ -310,10 +293,21 @@ function kernel_package_callback_linux_headers() {
 
 	# ${temp_file_list} is left at WORKDIR for later debugging, will be removed by WORKDIR cleanup trap
 
-	# @TODO: maybe split all binaries to a separate package at this stage; that way cross compile can still produce
-	# @TODO: source-only headers, which can then be patched (byteshift?) and compiled client-side later
+	# Now, make the script dirs clean.
+	# This is run in our _target_ dir, not the source tree, so we're free to make clean as we wish without invalidating the next build's cache.
+	run_host_command_logged cd "${headers_target_dir}" "&&" make "ARCH=${SRC_ARCH}" "M=scripts" clean
+	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" clean
 
-	# @TODO: cat "${temp_file_list}" | grep -v -e "\.h$" -e ".c$" -e "Makefile$" -e "Kconfig$" -e "Kbuild$" -e "\.cocci$"  |  xargs file | grep -v -e "ASCII" -e "script text"
+	# Hack: after cleaning, copy over the scripts/module.lds file from the source tree. It will only exist on 5.10+
+	# See https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1906131
+	[[ -f "${kernel_work_dir}/scripts/module.lds" ]] &&
+		run_host_command_logged cp -v "${kernel_work_dir}/scripts/module.lds" "${headers_target_dir}/scripts/module.lds"
+
+	# Check that no binaries are included by now. Expensive... @TODO: remove after me make sure.
+	(
+		cd "${headers_target_dir}" || exit 33
+		find . -type f | grep -v -e "include/config/" -e "\.h$" -e ".c$" -e "Makefile$" -e "Kconfig$" -e "Kbuild$" -e "\.cocci$" | xargs file | grep -v -e "ASCII" -e "script text" -e "empty" -e "Unicode text" -e "symbolic link" -e "CSV text" -e "SAS 7+" || true
+	)
 
 	# Generate a control file
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
@@ -323,12 +317,44 @@ function kernel_package_callback_linux_headers() {
 		Package: ${package_name}
 		Architecture: ${ARCH}
 		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
-		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev
+		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
 		Description: Linux kernel headers for ${kernel_version_family}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .
 		 This is useful for DKMS and building of external modules.
 	CONTROL_FILE
 
-	# @TODO: preinst postinst? dependent on split, see todo above
+	# Make sure the target dir is clean/not-existing before installing.
+	kernel_package_hook_helper "preinst" <(
+		cat <<- EOT_PREINST
+			if [[ -d "/usr/src/linux-headers-${kernel_version_family}" ]]; then
+				echo "Cleaning pre-existing directory /usr/src/linux-headers-${kernel_version_family} ..."
+				rm -rf "/usr/src/linux-headers-${kernel_version_family}"
+			fi
+		EOT_PREINST
+	)
+
+	# Make sure the target dir is removed before removing the package; that way we don't leave eventual compilation artifacts over there.
+	kernel_package_hook_helper "prerm" <(
+		cat <<- EOT_PRERM
+			if [[ -d "/usr/src/linux-headers-${kernel_version_family}" ]]; then
+				echo "Cleaning directory /usr/src/linux-headers-${kernel_version_family} ..."
+				rm -rf "/usr/src/linux-headers-${kernel_version_family}"
+			fi
+		EOT_PRERM
+	)
+
+	kernel_package_hook_helper "postinst" <(
+		cat <<- EOT_POSTINST
+			cd "/usr/src/linux-headers-${kernel_version_family}"
+			NCPU=\$(grep -c 'processor' /proc/cpuinfo)
+			echo "Compiling kernel-headers tools (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
+			yes "" | make ARCH="${SRC_ARCH}" oldconfig
+			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
+			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
+			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
+			make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool
+			echo "Done compiling kernel-headers tools (${kernel_version_family})."
+		EOT_POSTINST
+	)
 }
