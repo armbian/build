@@ -190,12 +190,10 @@ function kernel_config() {
 	# if it matches we use the system compiler
 	if dpkg-architecture -e "${ARCH}"; then
 		display_alert "Native compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
-	elif [[ $(dpkg --print-architecture) == amd64 ]]; then
+	else
 		display_alert "Cross compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
 		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
 		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
-	else
-		display_alert "Unhandled cross compilation combo" "target ${ARCH} on host $(dpkg --print-architecture) - headers might not work" "warn"
 	fi
 
 	kernel_compiler_version="$(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)"
