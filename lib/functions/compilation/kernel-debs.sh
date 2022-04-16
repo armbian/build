@@ -280,12 +280,9 @@ function kernel_package_callback_linux_headers() {
 			find $(find "arch/${SRC_ARCH}" -name include -o -name scripts -type d) -type f
 			find arch/${SRC_ARCH}/include Module.symvers include scripts -type f
 		}
-		# Include the byteshift utilities shared between kernel proper and the build scripts/tools.
+		# tools/include/tools has the byteshift utilities shared between kernel proper and the build scripts/tools.
 		# This replaces 'headers-debian-byteshift.patch' which was used for years in Armbian.
-		#find tools/include/tools/be_byteshift.h tools/include/tools/le_byteshift.h -type f
-		#find tools/objtool -type f
-		#find tools/build -type f
-		find tools -type f       # all tools. all of it? we might get away with a little less. eg: tools/perf and tools/testing
+		find tools -type f       # all tools; will trim a bit later
 		find arch/x86/lib/insn.c # required by objtool stuff...
 
 		if is_enabled CONFIG_GCC_PLUGINS; then
@@ -300,8 +297,11 @@ function kernel_package_callback_linux_headers() {
 
 	# Now, make the script dirs clean.
 	# This is run in our _target_ dir, not the source tree, so we're free to make clean as we wish without invalidating the next build's cache.
-	run_host_command_logged cd "${headers_target_dir}" "&&" make "ARCH=${SRC_ARCH}" "M=scripts" clean
-	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" clean
+	run_host_command_logged cd "${headers_target_dir}" "&&" make -s "ARCH=${SRC_ARCH}" "M=scripts" clean
+	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make -s "ARCH=${SRC_ARCH}" clean
+
+	# Trim down on the tools dir a bit after cleaning.
+	rm -rf "${headers_target_dir}/tools/perf" "${headers_target_dir}/tools/testing"
 
 	# Hack: after cleaning, copy over the scripts/module.lds file from the source tree. It will only exist on 5.10+
 	# See https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1906131
