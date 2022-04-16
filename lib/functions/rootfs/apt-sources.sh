@@ -8,7 +8,7 @@ add_apt_sources() {
 	# @TODO: rpardini: The logic here is meant to be evolved over time. Originally, all of this only ran when BUILD_DESKTOP=yes.
 	#                  Igor had bumped it to run on all builds, but that adds external sources to cli and minimal.
 	#                  Here I'm tuning it down to 1/4th of the original, eg: no nala on my cli builds, thanks.
-	[[ "${BUILD_MINIMAL}" != "yes" ]] && get_all_potential_paths "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
+	[[ "${BUILD_DESKTOP}" != "yes" ]] && get_all_potential_paths "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
 	[[ "${BUILD_DESKTOP}" == "yes" ]] && get_all_potential_paths "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
 	[[ "${BUILD_DESKTOP}" == "yes" ]] && get_all_potential_paths "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "." "sources/apt"
 	[[ "${BUILD_DESKTOP}" == "yes" ]] && get_all_potential_paths "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
