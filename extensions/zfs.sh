@@ -1,4 +1,4 @@
-function extension_prepare_config__build_zfs_kernel_module() {
+function extension_finish_config__build_zfs_kernel_module() {
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping ZFS for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0

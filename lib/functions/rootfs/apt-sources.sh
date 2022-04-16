@@ -36,7 +36,7 @@ add_apt_sources() {
 				if [[ "${new_apt_source}" == ppa* ]]; then
 					chroot_sdcard add-apt-repository -y -n "${new_apt_source}" # -y -> Assume yes, -n -> no apt-get update
 					if [[ -f "${apt_source_gpg_filepath}" ]]; then
-						display_alert "Adding GPG Key" "via apt-key add (deprecated): ${apt_source_gpg_filename}" "warn"
+						display_alert "Adding GPG Key" "via apt-key add (deprecated): ${apt_source_gpg_filename}"
 						run_host_command_logged cp -pv "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
 						chroot_sdcard apt-key add "/tmp/${apt_source_gpg_filename}"
 					fi
@@ -44,7 +44,7 @@ add_apt_sources() {
 					# installation without software-common-properties, sources.list + key.gpg
 					echo "${new_apt_source}" > "${SDCARD}/etc/apt/sources.list.d/${apt_source_filename}"
 					if [[ -f "${apt_source_gpg_filepath}" ]]; then
-						display_alert "Adding GPG Key" "via keyrings: ${apt_source_gpg_filename}" "warn"
+						display_alert "Adding GPG Key" "via keyrings: ${apt_source_gpg_filename}"
 						mkdir -p "${SDCARD}"/usr/share/keyrings/
 						run_host_command_logged cp -pv "${apt_source_gpg_filepath}" "${SDCARD}"/usr/share/keyrings/
 					fi

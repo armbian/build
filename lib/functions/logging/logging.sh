@@ -144,7 +144,6 @@ function display_alert() {
 		ext)
 			level_indicator="✨" # or ✅ ?
 			inline_logs_color="\e[1;32m"
-			ci_log="notice"
 			;;
 
 		info)
@@ -240,9 +239,9 @@ function display_alert() {
 	[[ -n $2 ]] && extra=" [${inline_logs_color} ${2} ${normal_color}]"
 	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker}${timing_info}${pids_info}${bashopts_info} ${normal_color}${message}${extra}${normal_color}" >&2
 
-	# Now write to CI, if we're running on it
+	# Now write to CI, if we're running on it. Remove ANSI escapes which confuse GitHub Actions.
 	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]]; then
-		echo "::${ci_log} ::" "$@" >&2
+		echo -e "::${ci_log} ::" "$@" | sed 's/\x1b\[[0-9;]*m//g' >&2
 	fi
 
 	return 0 # make sure to exit with success, always

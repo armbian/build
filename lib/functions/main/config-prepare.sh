@@ -99,7 +99,7 @@ function prepare_and_config_main_build_single() {
 	[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] &&
 		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
 
-	do_main_configuration # This initializes the extension manager among a lot of other things
+	do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
 
 	# @TODO: this does not belong in configuration. it's a compilation thing. move there
 	# optimize build time with 100% CPU usage
@@ -175,6 +175,14 @@ function prepare_and_config_main_build_single() {
 	else
 		export ARMBIAN_WILL_BUILD_UBOOT=no
 	fi
+
+	display_alert "Extensions: finish configuration" "extension_finish_config" "debug"
+	call_extension_method "extension_finish_config" <<- 'EXTENSION_FINISH_CONFIG'
+		*allow extensions a last chance at configuration just before it is done*
+		After kernel versions are set, package names determined, etc.
+		This runs *late*, and is the final step before finishing configuration.
+		Don't change anything not coming from other variables or meant to be configured by the user.
+	EXTENSION_FINISH_CONFIG
 
 	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
 }
