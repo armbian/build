@@ -6,7 +6,7 @@
 #
 # LOGGING: this is run under the log manager. so just redirect unwanted stderr to stdout, and it goes to log.
 # this is under the logging manager. so just log to stdout (no redirections), and redirect stderr to stdout unless you want it on screen.
-prepare_partitions() {
+function prepare_partitions() {
 	display_alert "Preparing image file for rootfs" "$BOARD $RELEASE" "info"
 
 	# possible partition combinations
@@ -161,6 +161,7 @@ prepare_partitions() {
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
 	run_host_command_logged parted -s ${SDCARD}.raw -- mklabel ${IMAGE_PARTITION_TABLE}
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
+		display_alert "Using create_partition_table hook_point" "yes" "debug"
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
 			*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
 			Finally, we can get our own partition table. You have to partition ${SDCARD}.raw
@@ -253,11 +254,13 @@ prepare_partitions() {
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice 2>&1
-		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
+		run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} "${mkopts[$ROOTFS_TYPE]}" "$rootdevice"
+		[[ $ROOTFS_TYPE == ext4 ]] && run_host_command_logged tune2fs -o journal_data_writeback "$rootdevice"
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
 		fi
+		sync # force writes to be really flushed
+		display_alert "Mounting rootfs" "$rootdevice"
 		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
@@ -308,9 +311,7 @@ prepare_partitions() {
 			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
 		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
 
-	elif
-		[[ $rootpart != 1 ]]
-	then
+	elif [[ $rootpart != 1 ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
@@ -351,4 +352,5 @@ prepare_partitions() {
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 	fi
 
+	return 0 # there is a shortcircuit above! very tricky btw!
 }

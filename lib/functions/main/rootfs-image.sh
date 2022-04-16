@@ -124,6 +124,11 @@ function trap_handler_cleanup_rootfs_and_image() {
 	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs >&2
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}" >&2
 
+	if [[ "${PRESERVE_SDCARD_MOUNT}" == "yes" ]]; then
+		display_alert "Preserving SD card mount" "trap_handler_cleanup_rootfs_and_image" "warn"
+		return 0
+	fi
+
 	# shellcheck disable=SC2153 # global var.
 	if [[ -b "${LOOP}" ]]; then
 		display_alert "Freeing loop" "trap_handler_cleanup_rootfs_and_image ${LOOP}" "wrn"
