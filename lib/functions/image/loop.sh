@@ -36,9 +36,9 @@ write_uboot_to_loop_image() {
 	revision=${REVISION}
 	if [[ -n $UBOOT_REPO_VERSION ]]; then
 		revision=${UBOOT_REPO_VERSION}
-		dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" ${TEMP_DIR}/ 2>&1
+		run_host_command_logged dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
 	else
-		dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/ 2>&1
+		run_host_command_logged dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
 	fi
 
 	if [[ ! -f "${TEMP_DIR}/usr/lib/u-boot/platform_install.sh" ]]; then
@@ -46,15 +46,23 @@ write_uboot_to_loop_image() {
 	fi
 
 	display_alert "Sourcing u-boot install functions" "$loop" "info"
-	source ${TEMP_DIR}/usr/lib/u-boot/platform_install.sh 2>&1
+	source ${TEMP_DIR}/usr/lib/u-boot/platform_install.sh
+	set -e # make sure, we just included something that might disable it
 
 	display_alert "Writing u-boot bootloader" "$loop" "info"
-	write_uboot_platform "${TEMP_DIR}${DIR}" "$loop" 2>&1
-	[[ $? -ne 0 ]] && {
-		rm -rf ${TEMP_DIR}
-		exit_with_error "U-boot bootloader failed to install" "@host"
-	}
-	rm -rf ${TEMP_DIR}
+	write_uboot_platform "${TEMP_DIR}${DIR}" "$loop" # @TODO: rpardini: what is ${DIR} ?
+
+	export UBOOT_CHROOT_DIR="${TEMP_DIR}${DIR}"
+
+	call_extension_method "post_write_uboot_platform" <<- 'POST_WRITE_UBOOT_PLATFORM'
+		*allow custom writing of uboot -- only during image build*
+		Called after `write_uboot_platform()`.
+		It receives `UBOOT_CHROOT_DIR` with the full path to the u-boot dir in the chroot.
+		Important: this is only called inside the build system.
+		Consider that `write_uboot_platform()` is also called board-side, when updating uboot, eg: nand-sata-install.
+	POST_WRITE_UBOOT_PLATFORM
+
+	#rm -rf ${TEMP_DIR}
 
 	return 0
 }

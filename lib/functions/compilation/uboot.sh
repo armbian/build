@@ -30,7 +30,8 @@ function compile_uboot_target() {
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
-	if [[ -n $ATFSOURCE ]]; then
+	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
+		display_alert "Copying over bins from atftempdir" "${atftempdir}" "debug"
 		cp -Rv "${atftempdir}"/*.bin .
 		rm -rf "${atftempdir}"
 	fi
@@ -72,7 +73,9 @@ function compile_uboot_target() {
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
-	run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" make "$target_make" "$CTHREADS" "${cross_compile}" "KCFLAGS=-fdiagnostics-color=always"
+	KCFLAGS="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation" \
+		run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		make "$target_make" "$CTHREADS" "${cross_compile}"
 
 	if [[ $(type -t uboot_custom_postprocess) == function ]]; then
 		display_alert "${uboot_prefix}Postprocessing u-boot" "${version} ${target_make}"
@@ -93,7 +96,7 @@ function compile_uboot_target() {
 		fi
 		display_alert "${uboot_prefix}Deploying u-boot binary target" "${version} ${target_make} :: ${f_dst}"
 		[[ ! -f $f_src ]] && exit_with_error "U-boot artifact not found" "$(basename "${f_src}")"
-		run_host_command_logged cp -v "${f_src}" "$uboottempdir/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
+		run_host_command_logged cp -v "${f_src}" "${uboottempdir}/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
 		#display_alert "Done with binary target" "${version} ${target_make} :: ${f_dst}"
 	done
 
@@ -151,18 +154,32 @@ compile_uboot() {
 	chmod 700 "${uboottempdir}"
 	mkdir -p "$uboottempdir/$uboot_name/usr/lib/u-boot" "$uboottempdir/$uboot_name/usr/lib/$uboot_name" "$uboottempdir/$uboot_name/DEBIAN"
 
-	# Try very hard, to fault even, to avoid using subshells while reading a newline-delimited string.
-	# Sorry for the juggling with IFS.
-	local _old_ifs="${IFS}" _new_ifs=$'\n' uboot_target_counter=1
-	IFS="${_new_ifs}" # split on newlines only
-	for target in ${UBOOT_TARGET_MAP}; do
-		IFS="${_old_ifs}" # restore for the body of loop
-		export target uboot_name uboottempdir toolchain version uboot_target_counter
-		compile_uboot_target
-		uboot_target_counter=$((uboot_target_counter + 1))
-		IFS="${_new_ifs}" # split on newlines only for rest of loop
-	done
-	IFS="${_old_ifs}"
+	# Allow extension-based u-boot bulding. We call the hook, and if EXTENSION_BUILT_UBOOT="yes" afterwards, we skip our own compilation.
+	# This is to make it easy to build vendor/downstream uboot with their own quirks.
+
+	display_alert "Extensions: build custom uboot" "build_custom_uboot" "debug"
+	call_extension_method "build_custom_uboot" <<- 'BUILD_CUSTOM_UBOOT'
+		*allow extensions to build their own uboot*
+		For downstream uboot et al.
+		Set \`EXTENSION_BUILT_UBOOT=yes\` to then skip the normal compilation.
+	BUILD_CUSTOM_UBOOT
+
+	if [[ "${EXTENSION_BUILT_UBOOT}" != "yes" ]]; then
+		# Try very hard, to fault even, to avoid using subshells while reading a newline-delimited string.
+		# Sorry for the juggling with IFS.
+		local _old_ifs="${IFS}" _new_ifs=$'\n' uboot_target_counter=1
+		IFS="${_new_ifs}" # split on newlines only
+		for target in ${UBOOT_TARGET_MAP}; do
+			IFS="${_old_ifs}" # restore for the body of loop
+			export target uboot_name uboottempdir toolchain version uboot_target_counter
+			compile_uboot_target
+			uboot_target_counter=$((uboot_target_counter + 1))
+			IFS="${_new_ifs}" # split on newlines only for rest of loop
+		done
+		IFS="${_old_ifs}"
+	else
+		display_alert "Extensions: custom uboot built by extension" "not building regular uboot" "debug"
+	fi
 
 	display_alert "Preparing u-boot general packaging. all_worked:${all_worked}  any_worked:${any_worked} " "${version} ${target_make}"
 

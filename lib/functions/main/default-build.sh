@@ -29,8 +29,15 @@ function main_default_build_single() {
 
 	# Too many things being done. Allow doing only one thing. For core development, mostly.
 	# Also because "KERNEL_ONLY=yes" should really be spelled "PACKAGES_ONLY=yes"
-	local do_build_uboot="yes" do_build_kernel="yes" exit_after_kernel_build="no" do_host_tools="yes"
-	if [[ "${JUST_KERNEL}" == "yes" ]]; then
+	local do_build_uboot="yes" do_build_kernel="yes" exit_after_kernel_build="no" exit_after_uboot_build="no" do_host_tools="yes"
+	if [[ "${JUST_UBOOT}" == "yes" && "${JUST_KERNEL}" == "yes" ]]; then
+		exit_with_error "User of build system" "can't make up his mind about JUST_KERNEL or JUST_UBOOT"
+	elif [[ "${JUST_UBOOT}" == "yes" ]]; then
+		display_alert "JUST_KERNEL set to yes" "Building only kernel and exiting after that" "debug"
+		do_build_uboot="yes"
+		do_host_tools="yes" # rkbin, fips, etc.
+		exit_after_uboot_build="yes"
+	elif [[ "${JUST_KERNEL}" == "yes" ]]; then
 		display_alert "JUST_KERNEL set to yes" "Building only kernel and exiting after that" "debug"
 		do_build_uboot="no"
 		exit_after_kernel_build="yes"
@@ -67,6 +74,10 @@ function main_default_build_single() {
 				fi
 			fi
 		fi
+		if [[ "${exit_after_uboot_build}" == "yes" ]]; then
+			display_alert "Exiting after u-boot build" "JUST_UBOOT=yes" "info"
+			exit 0
+		fi
 	fi
 
 	# Compile kernel if packed .deb does not exist or use the one from repository
@@ -78,7 +89,7 @@ function main_default_build_single() {
 			fi
 		fi
 		if [[ "${exit_after_kernel_build}" == "yes" ]]; then
-			display_alert "Only building kernel and exiting" "NOW" "debug"
+			display_alert "Only building kernel and exiting" "JUST_KERNEL=yes" "debug"
 			exit 0
 		fi
 	fi
