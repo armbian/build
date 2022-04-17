@@ -257,23 +257,31 @@ fi
 
 
 
-if [[ -f $SRC/config/boards/${BOARD}.conf ]]; then
-	BOARD_TYPE='conf'
-elif [[ -f $SRC/config/boards/${BOARD}.csc ]]; then
-	BOARD_TYPE='csc'
-elif [[ -f $SRC/config/boards/${BOARD}.wip ]]; then
-	BOARD_TYPE='wip'
-elif [[ -f $SRC/config/boards/${BOARD}.eos ]]; then
-	BOARD_TYPE='eos'
-elif [[ -f $SRC/config/boards/${BOARD}.tvb ]]; then
-	BOARD_TYPE='tvb'
-fi
+local board_configs=(
+	"$SRC/config/boards/${BOARD}/config.conf"
+	"$SRC/config/boards/${BOARD}/config.csc"
+	"$SRC/config/boards/${BOARD}/config.wip"
+	"$SRC/config/boards/${BOARD}/config.eos"
+	"$SRC/config/boards/${BOARD}/config.tvb"
+	"$SRC/config/boards/${BOARD}.conf"
+	"$SRC/config/boards/${BOARD}.csc"
+	"$SRC/config/boards/${BOARD}.wip"
+	"$SRC/config/boards/${BOARD}.eos"
+	"$SRC/config/boards/${BOARD}.tvb"
+	)
+for BOARD_CONFIG in "${board_configs[@]}"; do
+	if [[ -f "$BOARD_CONFIG" ]]; then
+		BOARD_TYPE="${BOARD_CONFIG%%*.}"
+		break
+	fi
+done
+unset board_configs
 
 
 
 
 # shellcheck source=/dev/null
-source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
+source "$BOARD_CONFIG"
 LINUXFAMILY="${BOARDFAMILY}"
 
 [[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
