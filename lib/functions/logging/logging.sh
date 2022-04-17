@@ -151,6 +151,11 @@ function display_alert() {
 			inline_logs_color="\e[0;32m"
 			;;
 
+		cachehit)
+			level_indicator="💖"
+			inline_logs_color="\e[0;32m"
+			;;
+
 		cleanup | trap)
 			if [[ "${SHOW_TRAPS}" != "yes" ]]; then # enable debug for many, many debugging msgs
 				skip_screen=1
