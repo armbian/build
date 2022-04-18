@@ -29,6 +29,9 @@ fi
 
 if [[ -f "${SRC}"/lib/general.sh ]]; then
 
+	# Declare this folder as safe
+	git config --global --add safe.directory "${SRC}"
+
 	# shellcheck source=lib/general.sh
 	source "${SRC}"/lib/general.sh
 
