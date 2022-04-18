@@ -311,7 +311,7 @@ function prepare_partitions() {
 			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
 		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
 
-	elif [[ $rootpart != 1 ]]; then
+	elif [[ $rootpart != 1 && -f "${SDCARD}/boot/${bootscript_dst}" ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
