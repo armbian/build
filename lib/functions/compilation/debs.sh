@@ -174,7 +174,7 @@ compile_armbian-config() {
 
 compile_xilinx_bootgen() {
 	# Source code checkout
-	(fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
+	fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master"
 
 	pushd "${SRC}"/cache/sources/xilinx-bootgen || exit
 

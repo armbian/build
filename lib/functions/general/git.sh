@@ -27,6 +27,13 @@ function improved_git_fetch() {
 	improved_git fetch --progress --verbose --no-auto-maintenance "$@"
 }
 
+# workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
+function git_ensure_safe_directory() {
+	local git_dir="$1"
+	display_alert "git: Marking directory as safe" "$git_dir" "debug"
+	run_host_command_logged git config --global --add safe.directory "$git_dir"
+}
+
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>
 # <url>: remote repository URL
 # <directory>: local directory; subdir for branch/tag will be created
@@ -83,6 +90,8 @@ fetch_from_repo() {
 	cd "${git_work_dir}" || exit
 
 	display_alert "Git working dir" "${git_work_dir}" "git"
+
+	git_ensure_safe_directory "${git_work_dir}"
 
 	local expected_origin_url actual_origin_url
 	expected_origin_url="$(echo -n "${url}" | sed 's/^.*@//' | sed 's/^.*\/\///')"

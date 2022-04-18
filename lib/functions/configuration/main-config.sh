@@ -34,8 +34,8 @@ function do_main_configuration() {
 	cd "${SRC}" || exit
 	[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=17
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
-	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote 2> /dev/null | grep origin)" 2> /dev/null)
-	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty 2> /dev/null)
+	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote | grep origin)")
+	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty)
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
 
 	# .deb compression. xz is standard, but is slow, so if avoided by default if not running in CI. one day, zstd.
