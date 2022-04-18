@@ -17,6 +17,7 @@ PACKAGE_LIST_FAMILY="ethtool"
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
 BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*')}
+display_alert "BOOT_SOC:" "$BOOT_SOC" "debug"
 
 CPUMIN=${CPUMIN:="408000"}
 
@@ -68,8 +69,11 @@ elif [[ $BOOT_SOC == rk3566 ]]; then
 elif [[ $BOOT_SOC == rk3568 ]]; then
 
 	BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-	DDR_BLOB='rk35/rk3568_ddr_1560MHz_v1.10.bin'
-	BL31_BLOB='rk35/rk3568_bl31_v1.28.elf'
+	DDR_BLOB="${DDR_BLOB:-"rk35/rk3568_ddr_1560MHz_v1.10.bin"}"
+	BL31_BLOB="${BL31_BLOB:-"rk35/rk3568_bl31_v1.28.elf"}"
+	display_alert "BOOT_SCENARIO:" "$BOOT_SCENARIO" "debug"
+	display_alert "DDR_BLOB:" "$DDR_BLOB" "debug"
+	display_alert "BL31_BLOB:" "$BL31_BLOB" "debug"
 
 elif [[ $BOARD == rockpi-s ]]; then
 
@@ -129,6 +133,7 @@ prepare_boot_configuration() {
 
 	elif [[ $BOOT_SCENARIO == "spl-blobs" ]]; then
 
+		display_alert "BOOT Scenario is" "spl-blobs" "debug"
 		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE=''
 		ATF_COMPILE='no'
@@ -153,13 +158,13 @@ uboot_custom_postprocess() {
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
 	elif [[ $BOOT_SCENARIO == "spl-blobs" ]]; then
-
-		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
+		display_alert "mkimage for $BOOT_SOC with $BOOT_SCENARIO" "spl-blobs" "debug"
+		run_host_command_logged tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
 
 	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
 
 		local tempfile=$(mktemp)
-		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
+		run_host_command_logged tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
 		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
 		run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
 		run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
@@ -178,25 +183,22 @@ uboot_custom_postprocess() {
 }
 
 write_uboot_platform() {
+	# This is run board-side too, so account for the non-existance of run_host_command_logged
+	local logging_prelude=""
+	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
+
 	if [[ -f $1/rksd_loader.img ]]; then # legacy rk3399 loader
-
-		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none
 	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob"
-
-		dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none
+		${logging_prelude} dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none
 	elif [[ -f $1/uboot.img ]]; then # $BOOT_SCENARIO == "only-blobs"
-
-		dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none
+		${logging_prelude} dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none
+		${logging_prelude} dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none
 	else
 		echo "Unsupported u-boot processing configuration!"
 		exit 1
-
 	fi
 }
 
