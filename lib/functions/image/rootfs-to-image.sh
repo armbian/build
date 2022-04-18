@@ -70,10 +70,10 @@ create_image_from_sdcard_rootfs() {
 	# fix wrong / permissions
 	chmod 755 "${MOUNT}"
 
-	call_extension_method "pre_umount_final_image" "config_pre_umount_final_image" << 'PRE_UMOUNT_FINAL_IMAGE'
-*allow config to hack into the image before the unmount*
-Called before unmounting both `/root` and `/boot`.
-PRE_UMOUNT_FINAL_IMAGE
+	call_extension_method "pre_umount_final_image" "config_pre_umount_final_image" <<- 'PRE_UMOUNT_FINAL_IMAGE'
+		*allow config to hack into the image before the unmount*
+		Called before unmounting both `/root` and `/boot`.
+	PRE_UMOUNT_FINAL_IMAGE
 
 	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
