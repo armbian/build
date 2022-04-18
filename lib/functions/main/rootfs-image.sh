@@ -120,6 +120,9 @@ function trap_handler_cleanup_rootfs_and_image() {
 	umount_chroot_recursive "${SDCARD}" || true
 	umount_chroot_recursive "${MOUNT}" || true
 
+	# unmount tmpfs mounted on SDCARD if it exists.
+	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
+
 	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain >&2 # @TODO: why does Igor uses lazy umounts? nfs?
 	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs >&2
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}" >&2
