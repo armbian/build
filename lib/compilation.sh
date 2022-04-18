@@ -577,7 +577,7 @@ CUSTOM_KERNEL_CONFIG
 	# hash_kernel_config
 	CALC_CONFIG=$(git -C $SRC log --format="%H" -1 -- $(realpath --relative-base="$SRC" "${SRC}/config/kernel/${LINUXCONFIG}.config"))
 	[[ -z "$CALC_CONFIG" ]] && CALC_CONFIG="null"
-	echo "$HASHES" >> "${HASHTARGET}.githash"
+	echo "$CALC_CONFIG" >> "${HASHTARGET}.githash"
 
 }
 
