@@ -129,13 +129,14 @@ pre_umount_final_image__900_export_kernel_and_initramfs() {
 		display_alert "Exporting Kernel and Initrd for" "kexec" "info"
 		# this writes to ${DESTIMG} directly, since debootstrap.sh will move them later.
 		# capture the $MOUNT/boot/vmlinuz and initrd and send it out ${DESTIMG}
-		cp "$MOUNT"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel"
-		cp "$MOUNT"/boot/initrd.img-* "${DESTIMG}/${version}.initrd"
+		run_host_command_logged ls -la "${MOUNT}"/boot/vmlinuz-* "${MOUNT}"/boot/initrd.img-* || true
+		run_host_command_logged cp -pv "${MOUNT}"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel" || true
+		run_host_command_logged cp -pv "${MOUNT}"/boot/initrd.img-* "${DESTIMG}/${version}.initrd" || true
 	fi
 }
 
 configure_grub() {
-	display_alert "GRUB EFI kernel cmdline" "console=${SERIALCON} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
+	display_alert "GRUB EFI kernel cmdline" "console=${SERIALCON} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT} grub terminal=${UEFI_GRUB_TERMINAL}" ""
 
 	if [[ "_${SERIALCON}_" != "__" ]]; then
 		cat <<- grubCfgFrag >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
