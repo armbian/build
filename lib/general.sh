@@ -484,6 +484,9 @@ fetch_from_repo()
 		local workdir=$dir
 	fi
 
+	# Declare folders we use as safe
+	git config --global --add safe.directory "${SRC}/cache/sources/$workdir"
+
 	mkdir -p "${SRC}/cache/sources/${workdir}" 2>/dev/null || \
 		exit_with_error "No path or no write permission" "${SRC}/cache/sources/${workdir}"
 
