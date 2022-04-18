@@ -164,7 +164,7 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.18 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.16 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag
