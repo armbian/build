@@ -49,9 +49,9 @@ prepare_host() {
 		aria2 curl wget                            # downloaders et al
 
 		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
-		crossbuild-essential-armhf
-		crossbuild-essential-arm64
-		crossbuild-essential-amd64
+		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
+		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
+		crossbuild-essential-amd64                            # For AMD 64-bit, x86_64.
 	)
 
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
