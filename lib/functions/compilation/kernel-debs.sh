@@ -283,14 +283,19 @@ function kernel_package_callback_linux_headers() {
 	(
 		cd "${kernel_work_dir}" || exit 2
 		find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl
+
 		find arch/*/include include scripts -type f -o -type l
+
 		find security/*/include -type f
 		[[ -d "arch/${SRC_ARCH}" ]] && {
 			find "arch/${SRC_ARCH}" -name module.lds -o -name Kbuild.platforms -o -name Platform
 			# shellcheck disable=SC2046 # I need to expand. Thanks.
 			find $(find "arch/${SRC_ARCH}" -name include -o -name scripts -type d) -type f
-			find arch/${SRC_ARCH}/include Module.symvers include scripts -type f
+			find arch/${SRC_ARCH}/include -type f
 		}
+		find Module.symvers include scripts -type f
+		find . -name "bitsperlong.h" -type f
+
 		# tools/include/tools has the byteshift utilities shared between kernel proper and the build scripts/tools.
 		# This replaces 'headers-debian-byteshift.patch' which was used for years in Armbian.
 		find tools -type f       # all tools; will trim a bit later
