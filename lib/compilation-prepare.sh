@@ -678,7 +678,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8822BS chipsets
 
-	if linux-version compare "${version}" ge 4.4 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
