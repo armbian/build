@@ -152,6 +152,7 @@ function install_distribution_agnostic() {
 
 	# create extlinux config file @TODO: refactor into extensions u-boot, extlinux
 	if [[ $SRC_EXTLINUX == yes ]]; then
+		display_alert "Using extlinux, SRC_EXTLINUX: ${SRC_EXTLINUX}" "image will be incompatible with nand-sata-install" "warn"
 		mkdir -p $SDCARD/boot/extlinux
 		cat <<- EOF > "$SDCARD/boot/extlinux/extlinux.conf"
 			label ${VENDOR}
@@ -169,17 +170,17 @@ function install_distribution_agnostic() {
 
 		if [[ "${BOOTCONFIG}" != "none" ]]; then
 			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
-				cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+				run_host_command_logged cp -pv "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 			else
-				cp "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
+				run_host_command_logged cp -pv "${SRC}/config/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 			fi
 		fi
 
 		if [[ -n $BOOTENV_FILE ]]; then
 			if [[ -f $USERPATCHES_PATH/bootenv/$BOOTENV_FILE ]]; then
-				cp "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+				run_host_command_logged cp -pv "$USERPATCHES_PATH/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
 			elif [[ -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
-				cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
+				run_host_command_logged cp -pv "${SRC}/config/bootenv/${BOOTENV_FILE}" "${SDCARD}"/boot/armbianEnv.txt
 			fi
 		fi
 
@@ -188,9 +189,9 @@ function install_distribution_agnostic() {
 		if [[ $ROOTFS_TYPE == nfs ]]; then
 			display_alert "Copying NFS boot script template"
 			if [[ -f $USERPATCHES_PATH/nfs-boot.cmd ]]; then
-				cp "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
+				run_host_command_logged cp -pv "$USERPATCHES_PATH"/nfs-boot.cmd "${SDCARD}"/boot/boot.cmd
 			else
-				cp "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
+				run_host_command_logged cp -pv "${SRC}"/config/templates/nfs-boot.cmd.template "${SDCARD}"/boot/boot.cmd
 			fi
 		fi
 

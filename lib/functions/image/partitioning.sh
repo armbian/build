@@ -346,10 +346,11 @@ function prepare_partitions() {
 	[[ -f $SDCARD/boot/boot.cmd ]] &&
 		run_host_command_logged mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr
 
-	# create extlinux config
+	# complement extlinux config if it exists; remove armbianEnv in this case.
 	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
 		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
-		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "warn"
+		[[ -f $SDCARD/boot/armbianEnv.txt ]] && run_host_command_logged rm -v $SDCARD/boot/armbianEnv.txt
 	fi
 
 	return 0 # there is a shortcircuit above! very tricky btw!

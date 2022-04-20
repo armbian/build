@@ -25,12 +25,14 @@ create_board_package() {
 		# if not using extlinux, copy armbianEnv from template; prefer userpatches source
 		if [[ $SRC_EXTLINUX != yes ]]; then
 			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
-				cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+				run_host_command_logged cp -pv "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
 			else
-				cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+				run_host_command_logged cp -pv "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
 			fi
 			[[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]] &&
-				cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
+				run_host_command_logged cp -pv "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
+		else
+			display_alert "Using extlinux, regular bootscripts ignored" "SRC_EXTLINUX=${SRC_EXTLINUX}" "warn"
 		fi
 
 		# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
