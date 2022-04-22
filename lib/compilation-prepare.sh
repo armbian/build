@@ -678,17 +678,17 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8822BS chipsets
 
-	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 4.4 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
 
-		local rtl8822bsver="branch:local_rtl8822bs"
-		fetch_from_repo "$GITHUB_SOURCE/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
+		local rtl8822bsver="branch:master"
+		fetch_from_repo "$GITHUB_SOURCE/RinCat/RTL88x2BU-Linux-Driver" "rtl8822bs" "${rtl8822bsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8822bs"
 		mkdir -p $kerneldir/drivers/net/wireless/rtl8822bs/
-		cp -R "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}"/{core,hal,include,os_dep,platform,bluetooth,getAP,rtl8822b.mk} \
+		cp -R "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}"/{core,hal,include,os_dep,platform,rtl8822b.mk} \
 		$kerneldir/drivers/net/wireless/rtl8822bs
 
 		# Makefile
@@ -704,9 +704,6 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8822BS) += rtl8822bs/" >> $kerneldir/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
 		$kerneldir/drivers/net/wireless/Kconfig
-
-                # add support for K5.11+
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs.patch" "applying"
 
 	fi
 
