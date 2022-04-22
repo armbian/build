@@ -43,11 +43,11 @@ prepare_host() {
 		zlib1g-dev
 
 		# non-mess below?
-		file ccze colorized-logs tree              # logging utilities
-		unzip zip p7zip-full pigz pixz pbzip2 lzop # compressors et al
-		parted gdisk                               # partition tools
-		aria2 curl wget                            # downloaders et al
-
+		file ccze colorized-logs tree                   # logging utilities
+		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
+		parted gdisk                                    # partition tools
+		aria2 curl wget                                 # downloaders et al
+		parallel                                        # do things in parallel
 		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
 		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
 		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
