@@ -3,16 +3,18 @@ function run_kernel_make() {
 	declare -a common_make_params_quoted common_make_envs full_command
 
 	common_make_envs=(
-		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse
+		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
 		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
 		"DPKG_COLORS=always"            # Use colors for dpkg
 		"XZ_OPT='--threads=0'"          # Use parallel XZ compression
 	)
 
 	common_make_params_quoted=(
+		# @TODO: introduce O=path/to/binaries, so sources and bins are not in the same dir.
+
 		"$CTHREADS"                    # Parallel compile, "-j X" for X cpus
 		"ARCH=${ARCHITECTURE}"         # Key param. Everything depends on this.
-		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles
+		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles # @TODO change to "localversion" file
 
 		"CROSS_COMPILE=${CCACHE} ${KERNEL_COMPILER}"                           # added as prefix to every compiler invocation by make
 		"KCFLAGS=-fdiagnostics-color=always -Wno-error=misleading-indentation" # Force GCC colored messages, downgrade misleading indentation to warning
@@ -133,6 +135,8 @@ function kernel_prepare_patching() {
 	cd "${kernel_work_dir}" || exit
 
 	# @TODO: why would we delete localversion?
+	# @TODO: it should be the opposite, writing localversion to disk, _instead_ of passing it via make.
+	# @TODO: if it turns out to be the case, do a commit with it... (possibly later, after patching?)
 	rm -f localversion
 
 	# read kernel version
@@ -204,17 +208,17 @@ function kernel_config() {
 
 	if [[ $KERNEL_KEEP_CONFIG == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
 		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
-		cp -p "${DEST}/config/${LINUXCONFIG}.config" .config
+		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" .config
 	else
 		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp -p "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
+			run_host_command_logged cp -pv "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
 		elif [[ -f "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" ]]; then
 			display_alert "Using kernel config provided by user in config/kernel folder" "config/kernel/${LINUXCONFIG}.config" "info"
-			cp -p "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" .config
+			run_host_command_logged cp -pv "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" .config
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
-			cp -p "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
+			run_host_command_logged cp -pv "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
 			COPY_CONFIG_BACK_TO="${SRC}/config/kernel/${LINUXCONFIG}.config"
 		fi
 	fi
@@ -362,6 +366,7 @@ function kernel_build_and_package() {
 	display_alert "Building kernel" "${LINUXCONFIG} ${build_targets[*]}" "info"
 	fasthash_debug "build"
 	make_filter="| grep --line-buffered -v -e 'CC' -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \
+		do_with_ccache_statistics \
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}"
 	fasthash_debug "build"
 
@@ -369,4 +374,14 @@ function kernel_build_and_package() {
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 
 	display_alert "Kernel built and packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+}
+
+function do_with_ccache_statistics() {
+	display_alert "Clearing ccache statistics" "ccache" "debug"
+	ccache --zero-stats
+
+	"$@"
+
+	display_alert "Display ccache statistics" "ccache" "debug"
+	run_host_command_logged ccache --show-stats
 }
