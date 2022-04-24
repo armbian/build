@@ -52,6 +52,8 @@ family_tweaks() {
 family_tweaks_bsp() {
 	# execute specific tweaks function if present
 	[[ $(type -t family_tweaks_bsp_s) == function ]] && family_tweaks_bsp_s
+
+	return 0 # short-circuit above, avoid errors on exit.
 }
 
 write_uboot_platform() {

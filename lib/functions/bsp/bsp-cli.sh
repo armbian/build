@@ -288,9 +288,9 @@ create_board_package() {
 
 	# execute $LINUXFAMILY-specific tweaks
 	if [[ $(type -t family_tweaks_bsp) == function ]]; then
-		display_alert "Running family_tweaks_bsp" "${LINUXFAMILY}" "debug"
-		family_tweaks_bsp 2>&1
-		display_alert "Done with family_tweaks_bsp" "${LINUXFAMILY}" "debug"
+		display_alert "Running family_tweaks_bsp" "${LINUXFAMILY} - ${BOARDFAMILY}" "debug"
+		family_tweaks_bsp
+		display_alert "Done with family_tweaks_bsp" "${LINUXFAMILY} - ${BOARDFAMILY}" "debug"
 	fi
 
 	call_extension_method "post_family_tweaks_bsp" <<- 'POST_FAMILY_TWEAKS_BSP'
