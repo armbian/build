@@ -1601,7 +1601,7 @@ function webseed ()
 	local CCODE=$(curl -s redirect.armbian.com/geoip | jq '.continent.code' -r)
 	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
 	# remove dead mirrors to suppress download errors
-	FILE=".conxtrol"
+	FILE=".control"
 	while read -r line
 	do
 		REMOVE=$(echo $line | egrep -o 'https?://[^ ]+/')
