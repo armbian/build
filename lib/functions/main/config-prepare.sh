@@ -147,13 +147,18 @@ function prepare_and_config_main_build_single() {
 		if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
 			exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
 		fi
-		export KERNEL_HAS_WORKING_HEADERS="no" # assume the worst, and all surprises will be happy ones
+		export KERNEL_HAS_WORKING_HEADERS="no"             # assume the worst, and all surprises will be happy ones
+		export KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # assume the worst, and all surprises will be happy ones
 		# Parse/validate the the major, bail if no match
 		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge "5.4"; then # We support 5.x from 5.4
 			export KERNEL_HAS_WORKING_HEADERS="yes"                        # We can build working headers for 5.x even when cross compiling.
 			export KERNEL_MAJOR=5
 			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
-		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.4" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "5.0"; then
+		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.19" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "5.0"; then
+			export KERNEL_MAJOR=4 # We support 4.19+ (less than 5.0) is supported, and headers via full source
+			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
+			export KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # full-source based headers. experimental. set to yes here to enable
+		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.4" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "4.19"; then
 			export KERNEL_MAJOR=4 # We support 4.x from 4.4
 			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
 		else

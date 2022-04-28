@@ -11,7 +11,7 @@
 
 # This will create a SET of packages. It should always create these:
 # image package: vmlinuz and such, config, modules, and dtbs (if exist) in /usr/lib/xxx
-# linux-headers package: just the kernel headers, for building out-of-tree modules, dkms, etc.
+# linux-headers package: "just" the kernel headers, for building out-of-tree modules, dkms, etc.
 # linux-dtbs package: only dtbs, if they exist. in /boot/
 
 # So this will handle
@@ -63,6 +63,8 @@ function prepare_kernel_packaging_debs() {
 	# Only recent kernels get linux-headers package; some tuning has to be done for 4.x
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" == "yes" ]]; then
 		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
+	elif [[ "${KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE}" == "yes" ]]; then
+		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers_full_source
 	else
 		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "warn"
 	fi
@@ -375,6 +377,81 @@ function kernel_package_callback_linux_headers() {
 			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
 			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
 			make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool
+			echo "Done compiling kernel-headers tools (${kernel_version_family})."
+		EOT_POSTINST
+	)
+}
+
+function kernel_package_callback_linux_headers_full_source() {
+	display_alert "linux-headers packaging full source" "${package_directory}" "debug"
+
+	# targets.
+	local headers_target_dir="${package_directory}/usr/src/linux-headers-${kernel_version_family}" # headers/tools etc
+	local modules_target_dir="${package_directory}/lib/modules/${kernel_version_family}"           # symlink to above later
+
+	mkdir -p "${headers_target_dir}" "${modules_target_dir}"                                                         # create both dirs
+	run_host_command_logged ln -v -s "/usr/src/linux-headers-${kernel_version_family}" "${modules_target_dir}/build" # Symlink in modules so builds find the headers
+
+	# gather stuff from the linux source tree: ${kernel_work_dir} (NOT the make install destination)
+	# those can be source files or object (binary/compiled) stuff
+	# how to get SRCARCH? only from the makefile itself. ARCH=amd64 then SRCARCH=x86. How to we know? @TODO
+	local SRC_ARCH="${ARCH}"
+	[[ "${SRC_ARCH}" == "amd64" ]] && SRC_ARCH="x86"
+	[[ "${SRC_ARCH}" == "armhf" ]] && SRC_ARCH="arm"
+
+	# Export git tree to the target directory.
+	# @TODO: this is waay too heavy. add a zst tar ball, and extract during postinst.
+	git -C "${kernel_work_dir}" archive --format=tar HEAD | tar -x -C "${headers_target_dir}"
+
+	# @TODO: add Module.symvers if exists
+
+	run_host_command_logged cp -vp "${kernel_work_dir}"/.config "${headers_target_dir}"/.config # copy .config manually to be where it's expected to be
+
+	# Generate a control file
+	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
+		Version: ${package_version}
+		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
+		Section: devel
+		Package: ${package_name}
+		Architecture: ${ARCH}
+		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
+		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
+		Description: Linux kernel headers for ${kernel_version_family} - based on full source
+		 This package provides kernel header files for ${kernel_version_family}
+		 .
+		 This is useful for DKMS and building of external modules.
+	CONTROL_FILE
+
+	# Make sure the target dir is clean/not-existing before installing.
+	kernel_package_hook_helper "preinst" <(
+		cat <<- EOT_PREINST
+			if [[ -d "/usr/src/linux-headers-${kernel_version_family}" ]]; then
+				echo "Cleaning pre-existing directory /usr/src/linux-headers-${kernel_version_family} ..."
+				rm -rf "/usr/src/linux-headers-${kernel_version_family}"
+			fi
+		EOT_PREINST
+	)
+
+	# Make sure the target dir is removed before removing the package; that way we don't leave eventual compilation artifacts over there.
+	kernel_package_hook_helper "prerm" <(
+		cat <<- EOT_PRERM
+			if [[ -d "/usr/src/linux-headers-${kernel_version_family}" ]]; then
+				echo "Cleaning directory /usr/src/linux-headers-${kernel_version_family} ..."
+				rm -rf "/usr/src/linux-headers-${kernel_version_family}"
+			fi
+		EOT_PRERM
+	)
+
+	kernel_package_hook_helper "postinst" <(
+		cat <<- EOT_POSTINST
+			cd "/usr/src/linux-headers-${kernel_version_family}"
+			NCPU=\$(grep -c 'processor' /proc/cpuinfo)
+			echo "Compiling kernel-headers tools (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
+			yes "" | make ARCH="${SRC_ARCH}" oldconfig
+			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
+			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
+			make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool || echo "objtool failed, but thats okay"
+			# @TODO: modules_prepare -- should work with 4.19+
 			echo "Done compiling kernel-headers tools (${kernel_version_family})."
 		EOT_POSTINST
 	)
