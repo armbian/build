@@ -504,7 +504,7 @@ function install_distribution_agnostic() {
 	cp "${SDCARD}"/etc/armbian-release "${SDCARD}"/etc/armbian-image-release
 
 	# DNS fix. package resolvconf is not available everywhere
-	if [ -d /etc/resolvconf/resolv.conf.d ] && [ -n "$NAMESERVER" ]; then
+	if [ -d "${SDCARD}"/etc/resolvconf/resolv.conf.d ] && [ -n "$NAMESERVER" ]; then
 		echo "nameserver $NAMESERVER" > "${SDCARD}"/etc/resolvconf/resolv.conf.d/head
 	fi
 
