@@ -54,7 +54,7 @@ function acng_configure_and_restart_acng() {
 }
 
 function acng_check_status_or_restart() {
-	[[ $NO_APT_CACHER != yes ]] && return 0                                   # don't if told not to
+	[[ $NO_APT_CACHER == yes ]] && return 0                                   # don't if told not to
 	[[ "${APT_PROXY_ADDR:-localhost:3142}" != "localhost:3142" ]] && return 0 # also not if acng not local to builder machine
 
 	if ! systemctl -q is-active apt-cacher-ng.service; then
