@@ -82,6 +82,7 @@ RUN apt-get update \
        openssh-client \
        p7zip-full \
        parted \
+       parallel \
        patchutils \
        pigz \
        pixz \

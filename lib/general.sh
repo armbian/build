@@ -1376,7 +1376,7 @@ prepare_host()
 	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
 	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gpg                     \
 	imagemagick jq kmod libbison-dev libc6-dev-armhf-cross libcrypto++-dev    \
-	libelf-dev libfdt-dev libfile-fcntllock-perl                              \
+	libelf-dev libfdt-dev libfile-fcntllock-perl parallel                     \
 	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
 	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
 	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
@@ -1600,6 +1600,18 @@ function webseed ()
 	# Hardcoded to EU mirrors since
 	local CCODE=$(curl -s redirect.armbian.com/geoip | jq '.continent.code' -r)
 	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
+	# remove dead mirrors to suppress download errors
+	FILE=".control"
+	while read -r line
+	do
+		REMOVE=$(echo $line | egrep -o 'https?://[^ ]+/')
+        WEBSEED=( "${WEBSEED[@]/$REMOVE}" )
+	done < <(
+	for k in ${WEBSEED[@]}
+	do
+	echo "$k$FILE"
+	done | parallel --halt soon,fail=10 --jobs 32 wget -q --spider --timeout=15 --tries=4 --retry-connrefused {} 2>&1 >/dev/null)
+
 	# aria2 simply split chunks based on sources count not depending on download speed
 	# when selecting china mirrors, use only China mirror, others are very slow there
 	if [[ $DOWNLOAD_MIRROR == china ]]; then
