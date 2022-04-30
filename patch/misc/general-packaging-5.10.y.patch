@@ -12,16 +12,10 @@ index 5858d6e44..e81b8a6fc 100644
  all:	Image.gz
  
 diff --git a/scripts/package/builddeb b/scripts/package/builddeb
-index 1b11f8993..c21d931ea 100755
+index 1b11f89..b1922f6 100755
 --- a/scripts/package/builddeb
 +++ b/scripts/package/builddeb
-@@ -26,31 +26,62 @@
- 
- create_package() {
- 	local pname="$1" pdir="$2"
--	local dpkg_deb_opts
- 
- 	mkdir -m 755 -p "$pdir/DEBIAN"
+@@ -32,7 +32,7 @@ create_package() {
  	mkdir -p "$pdir/usr/share/doc/$pname"
  	cp debian/copyright "$pdir/usr/share/doc/$pname/"
  	cp debian/changelog "$pdir/usr/share/doc/$pname/changelog.Debian"
@@ -30,24 +24,19 @@ index 1b11f8993..c21d931ea 100755
  	sh -c "cd '$pdir'; find . -type f ! -path './DEBIAN/*' -printf '%P\0' \
  		| xargs -r0 md5sum > DEBIAN/md5sums"
  
- 	# Fix ownership and permissions
--	if [ "$DEB_RULES_REQUIRES_ROOT" = "no" ]; then
--		dpkg_deb_opts="--root-owner-group"
--	else
--		chown -R root:root "$pdir"
--	fi
-+	chown -R root:root "$pdir"
+@@ -45,10 +45,61 @@ create_package() {
  	chmod -R go-w "$pdir"
  	# in case we are in a restrictive umask environment like 0077
  	chmod -R a+rX "$pdir"
--	# in case we build in a setuid/setgid directory
--	chmod -R ug-s "$pdir"
++	# in case we build in a setuid/setgid directory
++	chmod -R ug-s "$pdir"
 +
 +	# Create preinstall and post install script to remove dtb
 +	if [ "$3" = "dtb" ]; then
 +
 +	cat >> $pdir/DEBIAN/preinst <<EOT
-+rm -rf /boot/dtb-$version; rm -rf /boot/dtb
++rm -rf /boot/dtb
++rm -rf /boot/dtb-$version
 +exit 0
 +EOT
 +
@@ -57,29 +46,39 @@ index 1b11f8993..c21d931ea 100755
 +exit 0
 +EOT
 +
-+	chmod 775 $pdir/DEBIAN/preinst ; chmod 775 $pdir/DEBIAN/postinst
++	chmod 775 $pdir/DEBIAN/preinst
++	chmod 775 $pdir/DEBIAN/postinst
 +	fi
 +
-+	# Create postinst prerm scripts for headers
++	# Create postinstall prerm script for headers
 +	if [ "$3" = "headers" ]; then
 +
-+cat >> $pdir/DEBIAN/postinst << EOT
++	# Set the time for all files to the current time.
++	# And build them for the current architecture.
++	cat >> $pdir/DEBIAN/postinst << EOT
 +cd /usr/src/linux-headers-$version
 +echo "Compiling headers - please wait ..."
++NCPU=\$(grep -c 'processor' /proc/cpuinfo)
 +find -type f -exec touch {} +
 +yes "" | make oldconfig >/dev/null
-+make -j\$(grep -c 'processor' /proc/cpuinfo) -s scripts >/dev/null
-+make -j\$(grep -c 'processor' /proc/cpuinfo) -s M=scripts/mod/ >/dev/null
++make -j\$NCPU -s scripts >/dev/null
++make -j\$NCPU -s M=scripts/mod/ >/dev/null
 +exit 0
 +EOT
 +
-+cat >> $pdir/DEBIAN/prerm << EOT
++	# After the configuration and compilation processes, new files
++	# appear that the package manager does not know anything about.
++	# Just clear all the files in the target directory.
++	cat >> $pdir/DEBIAN/prerm << EOT
 +cd /usr/src/linux-headers-$version
-+rm -rf scripts .config.old
++find ./ -type f -exec rm {} +
++exit 0
 +EOT
 +
-+	chmod 775 $pdir/DEBIAN/postinst ; chmod 775 $pdir/DEBIAN/prerm
++	chmod 775 $pdir/DEBIAN/postinst
++	chmod 775 $pdir/DEBIAN/prerm
 +	fi
++
  
  	# Create the package
  	dpkg-gencontrol -p$pname -P"$pdir"
@@ -88,42 +87,76 @@ index 1b11f8993..c21d931ea 100755
  }
  
  deploy_kernel_headers () {
-@@ -62,7 +92,7 @@
+@@ -56,28 +107,36 @@ deploy_kernel_headers () {
+ 
+ 	rm -rf $pdir
+ 
++	destdir=$pdir/usr/src/linux-headers-$version
++	mkdir -p $destdir
++
+ 	(
  		cd $srctree
- 		find . arch/$SRCARCH -maxdepth 1 -name Makefile\*
- 		find include scripts -type f -o -type l
+-		find . arch/$SRCARCH -maxdepth 1 -name Makefile\*
+-		find include scripts -type f -o -type l
 -		find arch/$SRCARCH -name Kbuild.platforms -o -name Platform
++		find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl
++		find arch/*/include include scripts -type f -o -type l
++		find security/*/include -type f
 +		find arch/$SRCARCH -name module.lds -o -name Kbuild.platforms -o -name Platform
  		find $(find arch/$SRCARCH -name include -o -name scripts -type d) -type f
  	) > debian/hdrsrcfiles
  
-@@ -107,9 +137,15 @@
+ 	{
+ 		if is_enabled CONFIG_STACK_VALIDATION; then
+-			echo tools/objtool/objtool
++		#	echo tools/objtool/objtool
++			find tools/objtool -type f -executable
+ 		fi
+ 
+ 		find arch/$SRCARCH/include Module.symvers include scripts -type f
+ 
+ 		if is_enabled CONFIG_GCC_PLUGINS; then
+-			find scripts/gcc-plugins -name \*.so
++			find scripts/gcc-plugins -name \*.so -o -name gcc-common.h
+ 		fi
+ 	} > debian/hdrobjfiles
+ 
+-	destdir=$pdir/usr/src/linux-headers-$version
+-	mkdir -p $destdir
++	(
++		cd $destdir
++		patch -p1 < /tmp/headers-debian-byteshift.patch
++	)
++
+ 	tar -c -f - -C $srctree -T debian/hdrsrcfiles | tar -xf - -C $destdir
+ 	tar -c -f - -T debian/hdrobjfiles | tar -xf - -C $destdir
+ 	rm -f debian/hdrsrcfiles debian/hdrobjfiles
+@@ -105,9 +164,15 @@ deploy_libc_headers () {
  }
  
  version=$KERNELRELEASE
 -tmpdir=debian/linux-image
 -dbg_dir=debian/linux-image-dbg
 -packagename=linux-image-$version
-+tmpdir="$objtree/debian/tmp"
-+kernel_headers_dir="$objtree/debian/hdrtmp"
-+libc_headers_dir="$objtree/debian/headertmp"
-+dbg_dir="$objtree/debian/dbgtmp"
-+dtb_dir="$objtree/debian/dtbtmp"
++tmpdir="debian/tmp"
++kernel_headers_dir="debian/hdrtmp"
++libc_headers_dir="debian/headertmp"
++dbg_dir="debian/dbgtmp"
++dtb_dir="debian/dtbtmp"
 +packagename=linux-image-"$BRANCH$LOCALVERSION"
 +kernel_headers_packagename=linux-headers-"$BRANCH$LOCALVERSION"
 +dtb_packagename=linux-dtb-"$BRANCH$LOCALVERSION"
-+libc_headers_packagename=linux-libc-dev-"$BRANCH$LOCALVERSION"
++libc_headers_packagename=linux-libc-dev
  dbg_packagename=$packagename-dbg
  
  if [ "$ARCH" = "um" ] ; then
-@@ -120,6 +156,15 @@
+@@ -118,6 +183,14 @@ fi
  # XXX: have each arch Makefile export a variable of the canonical image install
  # path instead
  case $ARCH in
-+aarch64|arm64)
++++aarch64|arm64)
 +	image_name=Image
 +	installed_image_path="boot/vmlinuz-$version"
-+
 +	;;
 +arm*)
 +	image_name=zImage
@@ -132,27 +165,27 @@ index 1b11f8993..c21d931ea 100755
  um)
  	installed_image_path="usr/bin/linux-$version"
  	;;
-@@ -133,13 +178,17 @@
+@@ -131,13 +204,18 @@ esac
  BUILD_DEBUG=$(if_enabled_echo CONFIG_DEBUG_INFO Yes)
  
  # Setup the directory structure
 -rm -rf "$tmpdir" "$dbg_dir" debian/files
-+rm -rf "$tmpdir" "$kernel_headers_dir" "$libc_headers_dir" "$dbg_dir" "$dtb_dir" $objtree/debian/files
-+mkdir -m 755 -p "$dtb_dir/DEBIAN"
-+mkdir -p "$dtb_dir/boot/dtb-$version" "$dtb_dir/usr/share/doc/$dtb_packagename"
++rm -rf "$tmpdir" "$dbg_dir" "$dtb_dir" debian/files
  mkdir -m 755 -p "$tmpdir/DEBIAN"
  mkdir -p "$tmpdir/lib" "$tmpdir/boot"
-+mkdir -p "$kernel_headers_dir/lib/modules/$version/"
++mkdir -m 755 -p "$dtb_dir/DEBIAN"
++mkdir -p "$dtb_dir/boot/dtb-$version" "$dtb_dir/usr/share/doc/$dtb_packagename"
++mkdir -m 755 -p "$kernel_headers_dir/lib/modules/$version/"
++mkdir -m 755 -p "$libc_headers_dir/DEBIAN"
  
--# Install the kernel
-+# Build and install the kernel
+ # Install the kernel
  if [ "$ARCH" = "um" ] ; then
  	mkdir -p "$tmpdir/usr/lib/uml/modules/$version" "$tmpdir/usr/bin" "$tmpdir/usr/share/doc/$packagename"
 +	$MAKE linux
  	cp System.map "$tmpdir/usr/lib/uml/modules/$version/System.map"
  	cp $KCONFIG_CONFIG "$tmpdir/usr/share/doc/$packagename/config"
  	gzip "$tmpdir/usr/share/doc/$packagename/config"
-@@ -183,6 +232,21 @@
+@@ -154,6 +232,11 @@ if is_enabled CONFIG_OF_EARLY_FLATTREE; then
  	fi
  fi
  
@@ -161,20 +194,10 @@ index 1b11f8993..c21d931ea 100755
 +	INSTALL_DTBS_PATH="$dtb_dir/boot/dtb-$version" $MAKE KBUILD_SRC= dtbs_install
 +fi
 +
-+if [ "$ARCH" != "um" ]; then
-+	$MAKE -f $srctree/Makefile headers
-+	$MAKE -f $srctree/Makefile headers_install INSTALL_HDR_PATH="$libc_headers_dir/usr"
-+	# move asm headers to /usr/include/<libc-machine>/asm to match the structure
-+	# used by Debian-based distros (to support multi-arch)
-+	host_arch=$(dpkg-architecture -a$(cat debian/arch) -qDEB_HOST_MULTIARCH)
-+	mkdir $libc_headers_dir/usr/include/$host_arch
-+	mv $libc_headers_dir/usr/include/asm $libc_headers_dir/usr/include/$host_arch/
-+fi
-+
- # Install the maintainer scripts
- # Note: hook scripts under /etc/kernel are also executed by official Debian
- # kernel packages, as well as kernel packages built using make-kpkg.
-@@ -192,7 +256,7 @@
+ if is_enabled CONFIG_MODULES; then
+ 	INSTALL_MOD_PATH="$tmpdir" $MAKE -f $srctree/Makefile modules_install
+ 	rm -f "$tmpdir/lib/modules/$version/build"
+@@ -190,7 +273,7 @@ debhookdir=${KDEB_HOOKDIR:-/etc/kernel}
  for script in postinst postrm preinst prerm ; do
  	mkdir -p "$tmpdir$debhookdir/$script.d"
  	cat <<EOF > "$tmpdir/DEBIAN/$script"
@@ -183,20 +206,16 @@ index 1b11f8993..c21d931ea 100755
  
  set -e
  
-@@ -208,14 +272,73 @@
+@@ -206,18 +289,62 @@ EOF
  	chmod 755 "$tmpdir/DEBIAN/$script"
  done
  
--if [ "$ARCH" != "um" ]; then
--	if is_enabled CONFIG_MODULES; then
--		deploy_kernel_headers debian/linux-headers
--		create_package linux-headers-$version debian/linux-headers
 +##
 +## Create sym link to kernel image
 +##
 +sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
 +cat >> $tmpdir/DEBIAN/postinst <<EOT
-+ln -sf $(basename $installed_image_path) /boot/$image_name 2> /dev/null || cp /$installed_image_path /boot/$image_name
++ln -sf $(basename $installed_image_path) /boot/$image_name 2> /dev/null || mv /$installed_image_path /boot/$image_name
 +touch /boot/.next
 +exit 0
 +EOT
@@ -219,50 +238,43 @@ index 1b11f8993..c21d931ea 100755
 +			break
 +		fi
 +	done
-+
 +	bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
 +	if [ "\$bootfstype" = "vfat" ]; then
-+		# we have to keep it mounted! umount /boot
++		umount /boot
 +		rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
- 	fi
++	fi
 +}
 +mountpoint -q /boot && check_and_unmount
++exit 0
 +EOT
-+echo "exit 0" >> $tmpdir/DEBIAN/preinst
 +
-+# Build kernel header package
-+(cd $srctree; find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl) > "$objtree/debian/hdrsrcfiles"
-+(cd $srctree; find arch/*/include include scripts -type f -o -type l) >> "$objtree/debian/hdrsrcfiles"
-+(cd $srctree; find security/*/include -type f) >> "$objtree/debian/hdrsrcfiles"
-+(cd $srctree; find arch/$SRCARCH -name module.lds -o -name Kbuild.platforms -o -name Platform) >> "$objtree/debian/hdrsrcfiles"
-+(cd $srctree; find $(find arch/$SRCARCH -name include -o -name scripts -type d) -type f) >> "$objtree/debian/hdrsrcfiles"
-+ldstemp=$(mktemp);cp scripts/module.lds $ldstemp
-+(cd $objtree; make M=scripts clean;)
-+if is_enabled CONFIG_STACK_VALIDATION; then
-+	(cd $objtree; find tools/objtool -type f -executable) >> "$objtree/debian/hdrobjfiles"
-+fi
-+(cd $objtree; find arch/$SRCARCH/include Module.symvers include scripts -type f) >> "$objtree/debian/hdrobjfiles"
-+if is_enabled CONFIG_GCC_PLUGINS; then
-+	(cd $objtree; find scripts/gcc-plugins -name \*.so -o -name gcc-common.h) >> "$objtree/debian/hdrobjfiles"
-+fi
-+destdir=$kernel_headers_dir/usr/src/linux-headers-$version
-+mkdir -p "$destdir"
-+(cd $destdir; patch -p1 < /tmp/headers-debian-byteshift.patch)
-+(cd $srctree; tar -c -f - -T -) < "$objtree/debian/hdrsrcfiles" | (cd $destdir; tar -xf -)
-+(cd $objtree; tar -c -f - -T -) < "$objtree/debian/hdrobjfiles" | (cd $destdir; tar -xf -)
-+(cd $objtree; cp $KCONFIG_CONFIG $destdir/.config) # copy .config manually to be where it's expected to be
-+mv ${ldstemp} $destdir/scripts/module.lds
-+ln -sf "/usr/src/linux-headers-$version" "$kernel_headers_dir/lib/modules/$version/build"
-+rm -f "$objtree/debian/hdrsrcfiles" "$objtree/debian/hdrobjfiles"
++create_package "$packagename" "$tmpdir"
++
+ if [ "$ARCH" != "um" ]; then
++	create_package "$dtb_packagename" "$dtb_dir" "dtb"
++
++	deploy_libc_headers $libc_headers_dir
++	create_package $libc_headers_packagename $libc_headers_dir
++
+ 	if is_enabled CONFIG_MODULES; then
+-		deploy_kernel_headers debian/linux-headers
+-		create_package linux-headers-$version debian/linux-headers
++		# Clean up the executables that are left over from
++		# cross-compilation for a different host architecture.
++		(cd $srctree; make M=scripts clean;)
++		deploy_kernel_headers $kernel_headers_dir
++		create_package $kernel_headers_packagename $kernel_headers_dir "headers"
+ 	fi
  
 -	deploy_libc_headers debian/linux-libc-dev
 -	create_package linux-libc-dev debian/linux-libc-dev
-+if [ "$ARCH" != "um" ]; then
-+	create_package "$kernel_headers_packagename" "$kernel_headers_dir" "headers"
-+	create_package "$dtb_packagename" "$dtb_dir" "dtb"
  fi
  
- create_package "$packagename" "$tmpdir"
+-create_package "$packagename" "$tmpdir"
+-
+ if [ -n "$BUILD_DEBUG" ] ; then
+ 	# Build debug package
+ 	# Different tools want the image in different locations
 diff --git a/scripts/package/mkdebian b/scripts/package/mkdebian
 index 60a2a63a5..7c6197efa 100755
 --- a/scripts/package/mkdebian
