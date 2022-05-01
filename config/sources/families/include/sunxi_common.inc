@@ -12,8 +12,14 @@ GOVERNOR=ondemand
 
 case $BRANCH in
 
-	legacy)  KERNEL_VERSION_LEVEL="5.10" ;;
-	current) KERNEL_VERSION_LEVEL="5.15" ;;
+	legacy)
+		KERNEL_VERSION_LEVEL="5.10"
+		KERNELSWITCHOBJ="tag=v5.10.110"
+		;;
+	current)
+		KERNEL_VERSION_LEVEL="5.15"
+		KERNELSWITCHOBJ="tag=v5.15.35"
+		;;
 	edge) KERNEL_VERSION_LEVEL=${KERNEL_VERSION_LEVEL:-5.17}
 	      #KERNELSWITCHOBJ="tag=v5.16.11"
 	      ;;
