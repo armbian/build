@@ -101,8 +101,8 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.16.y"
-#		KERNELBRANCH="tag:v5.17.5"
+		KERNELBRANCH="branch:linux-5.17.y"
+		KERNELBRANCH="tag:v5.17.5"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
