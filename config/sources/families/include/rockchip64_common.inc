@@ -92,6 +92,7 @@ case $BRANCH in
 	current)
 
 		KERNELBRANCH="branch:linux-5.15.y"
+		KERNELBRANCH="tag:v5.15.35"
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
@@ -101,6 +102,7 @@ case $BRANCH in
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		KERNELBRANCH="branch:linux-5.16.y"
+#		KERNELBRANCH="tag:v5.17.5"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
