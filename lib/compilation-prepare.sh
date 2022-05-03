@@ -117,6 +117,7 @@ compilation_prepare()
 		if linux-version compare "${version}" ge 5.11; then
 			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
 		fi
+
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
 
 		if linux-version compare "${version}" ge 5.15; then
