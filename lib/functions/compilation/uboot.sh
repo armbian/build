@@ -107,7 +107,14 @@ function compile_uboot_target() {
 compile_uboot() {
 	if [[ -n $BOOTSOURCE ]] && [[ "${BOOTSOURCE}" != "none" ]]; then
 		display_alert "Downloading sources" "u-boot" "git"
-		fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes" # fetch_from_repo <url> <dir> <ref> <subdir_flag>
+		GIT_SKIP_SUBMODULES="${UBOOT_GIT_SKIP_SUBMODULES}" fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes" # fetch_from_repo <url> <dir> <ref> <subdir_flag>
+
+		display_alert "Extensions: fetch custom uboot" "fetch_custom_uboot" "debug"
+		call_extension_method "fetch_custom_uboot" <<- 'FETCH_CUSTOM_UBOOT'
+			*allow extensions to fetch extra uboot sources*
+			For downstream uboot et al.
+			This is done after `GIT_SKIP_SUBMODULES="${UBOOT_GIT_SKIP_SUBMODULES}" fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"`
+		FETCH_CUSTOM_UBOOT
 	fi
 
 	# not optimal, but extra cleaning before overlayfs_wrapper should keep sources directory clean

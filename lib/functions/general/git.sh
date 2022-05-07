@@ -198,21 +198,25 @@ fetch_from_repo() {
 	#fasthash_debug "after setting checkout time for $dir $ref_name" #yeah
 
 	if [[ -f .gitmodules ]]; then
-		display_alert "Updating submodules" "" "ext"
-		# FML: http://stackoverflow.com/a/17692710
-		for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
-			cd "${git_work_dir}" || exit
-			local surl sref
-			surl=$(git config -f .gitmodules --get "submodule.$i.url")
-			sref=$(git config -f .gitmodules --get "submodule.$i.branch" || true)
-			if [[ -n $sref ]]; then
-				sref="branch:$sref"
-			else
-				sref="head"
-			fi
-			# @TODO: in case of the bundle stuff this will fail terribly
-			fetch_from_repo "$surl" "$workdir/$i" "$sref"
-		done
+		if [[ "${GIT_SKIP_SUBMODULES}" == "yes" ]]; then
+			display_alert "Skipping submodules" "GIT_SKIP_SUBMODULES=yes" "debug"
+		else
+			display_alert "Updating submodules" "" "ext"
+			# FML: http://stackoverflow.com/a/17692710
+			for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+				cd "${git_work_dir}" || exit
+				local surl sref
+				surl=$(git config -f .gitmodules --get "submodule.$i.url")
+				sref=$(git config -f .gitmodules --get "submodule.$i.branch" || true)
+				if [[ -n $sref ]]; then
+					sref="branch:$sref"
+				else
+					sref="head"
+				fi
+				# @TODO: in case of the bundle stuff this will fail terribly
+				fetch_from_repo "$surl" "$workdir/$i" "$sref"
+			done
+		fi
 	fi
 
 	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "git"
