@@ -104,8 +104,8 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		export KERNEL_MAJOR_MINOR="5.16" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-5.16.y"
+		export KERNEL_MAJOR_MINOR="5.17" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-5.17.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 

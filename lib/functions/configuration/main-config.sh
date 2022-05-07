@@ -32,7 +32,7 @@ function do_main_configuration() {
 	[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 	[[ -z $HOST ]] && HOST="$BOARD"                         # set hostname to the board
 	cd "${SRC}" || exit
-	[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=17
+	[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=18
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote | grep origin)")
 	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty)

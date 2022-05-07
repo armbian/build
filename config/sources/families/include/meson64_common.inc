@@ -245,8 +245,6 @@ write_uboot_platform() {
 family_tweaks_bsp() {
 	mkdir -p $destination/etc/udev/rules.d
 	mkdir -p $destination/usr/local/bin
-	cp $SRC/packages/bsp/rockchip/hdmi.rules $destination/etc/udev/rules.d
-	install -m 755 $SRC/packages/bsp/rockchip/hdmi-hotplug $destination/usr/local/bin
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in

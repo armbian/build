@@ -154,17 +154,23 @@ function install_distribution_agnostic() {
 	if [[ $SRC_EXTLINUX == yes ]]; then
 		display_alert "Using extlinux, SRC_EXTLINUX: ${SRC_EXTLINUX}" "image will be incompatible with nand-sata-install" "warn"
 		mkdir -p $SDCARD/boot/extlinux
+		local bootpart_prefix
+		if [[ -n $BOOTFS_TYPE ]]; then
+			bootpart_prefix=/
+		else
+			bootpart_prefix=/boot/
+		fi
 		cat <<- EOF > "$SDCARD/boot/extlinux/extlinux.conf"
 			label ${VENDOR}
-			  kernel /boot/$NAME_KERNEL
-			  initrd /boot/$NAME_INITRD
+			  kernel ${bootpart_prefix}$NAME_KERNEL
+			  initrd ${bootpart_prefix}$NAME_INITRD
 		EOF
 		if [[ -n $BOOT_FDT_FILE ]]; then
 			if [[ $BOOT_FDT_FILE != "none" ]]; then
-				echo "  fdt /boot/dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
+				echo "  fdt ${bootpart_prefix}dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
 			fi
 		else
-			echo "  fdtdir /boot/dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
+			echo "  fdtdir ${bootpart_prefix}dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		fi
 	else
 
@@ -431,14 +437,13 @@ function install_distribution_agnostic() {
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-ramlog.service ]] && chroot_sdcard systemctl --no-reload enable armbian-ramlog.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-resize-filesystem.service ]] && chroot_sdcard systemctl --no-reload enable armbian-resize-filesystem.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-hardware-monitor.service ]] && chroot_sdcard systemctl --no-reload enable armbian-hardware-monitor.service
+	[[ -f "${SDCARD}"/lib/systemd/system/armbian-led-state.service ]] && chroot_sdcard systemctl --no-reload enable armbian-led-state.service
 
 	# copy "first run automated config, optional user configured"
 	cp "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
-	[[ $IMAGE_TYPE == nightly ]] &&
-		echo "deb https://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" \
-			> "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	[[ $IMAGE_TYPE == nightly ]] && sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
 	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723 @TODO: from ubuntu 15. maybe gone?
 	chroot "${SDCARD}" /bin/bash -c "chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
@@ -457,7 +462,8 @@ function install_distribution_agnostic() {
 		sed '/daemon\.\*\;mail.*/,/xconsole/ s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.d/50-default.conf
 
 	# disable deprecated parameter
-	sed '/.*$KLogPermitNonKernelFacility.*/,// s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.conf
+	[[ -f "${SDCARD}"/etc/rsyslog.conf ]] &&
+		sed '/.*$KLogPermitNonKernelFacility.*/,// s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.conf
 
 	# enable getty on multiple serial consoles
 	# and adjust the speed if it is defined and different than 115200

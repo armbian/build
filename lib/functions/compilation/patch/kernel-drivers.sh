@@ -31,16 +31,16 @@ function prepare_extra_kernel_drivers() {
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" le 5.18 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" lt 5.15 && [ "$AUFS" == yes ]; then
 		# @TODO: Fasthash for this whole block is only the git hash of revision we'd apply from Mr. Okajima
 		local aufs_tag # attach to specifics tag or branch
 		aufs_tag=$(echo "${version}" | cut -f 1-2 -d ".")
 
 		# manual overrides
-		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5 ; then aufstag="5.4.3"; fi
-		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11 ; then aufstag="5.10.82"; fi
-		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16 ; then aufstag="5.15.5"; fi
-		if linux-version compare "${version}" ge 5.17.3 && linux-version compare "${version}" le 5.18 ; then aufstag="5.17.3"; fi
+		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5; then aufstag="5.4.3"; fi
+		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11; then aufstag="5.10.82"; fi
+		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16; then aufstag="5.15.5"; fi
+		if linux-version compare "${version}" ge 5.17.3 && linux-version compare "${version}" le 5.18; then aufstag="5.17.3"; fi
 
 		# check if Mr. Okajima already made a branch for this version, otherwise use RC.
 		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufs_tag}" > /dev/null || {
@@ -516,7 +516,7 @@ function prepare_extra_kernel_drivers() {
 
 	# Wireless drivers for Realtek 8822BS chipsets
 
-	if linux-version compare "${version}" ge 4.4 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16 && [ "$EXTRAWIFI" == yes ]; then
 		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
@@ -543,9 +543,6 @@ function prepare_extra_kernel_drivers() {
 		echo "obj-\$(CONFIG_RTL8822BS) += rtl8822bs/" >> $kerneldir/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
 			$kerneldir/drivers/net/wireless/Kconfig
-
-		# add support for K5.11+
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs.patch" "applying"
 
 	fi
 

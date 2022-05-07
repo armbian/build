@@ -242,7 +242,7 @@ create_board_package() {
 			fi
 
 			# Reload services
-			systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
+			systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service >/dev/null 2>&1
 			exit 0
 	EOF
 

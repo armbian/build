@@ -343,8 +343,12 @@ function prepare_partitions() {
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
-	[[ -f $SDCARD/boot/boot.cmd ]] &&
-		run_host_command_logged mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr
+	if [[ -f $SDCARD/boot/boot.cmd ]]; then
+		if [ -z $BOOTSCRIPT_OUTPUT ]; then
+			BOOTSCRIPT_OUTPUT=boot.scr
+		fi
+		run_host_command_logged mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/${BOOTSCRIPT_OUTPUT}
+	fi
 
 	# complement extlinux config if it exists; remove armbianEnv in this case.
 	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
