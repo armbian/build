@@ -23,8 +23,8 @@ prepare_host_basic() {
 
 	if [[ -n $install_pack ]]; then
 		display_alert "Installing basic packages" "$install_pack"
-		# @TODO: wait, why sudo? we should already be sudo'ed when this executes.
-		sudo bash -c "apt-get -qq update && apt-get install -qq -y --no-install-recommends $install_pack"
+		run_host_command_logged sudo apt-get -qq update
+		run_host_command_logged sudo apt-get install -qq -y --no-install-recommends $install_pack
 	fi
 
 }

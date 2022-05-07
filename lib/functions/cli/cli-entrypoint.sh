@@ -4,9 +4,9 @@ function cli_entrypoint() {
 
 	if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 		set -T # inherit return/debug traps
-		mkdir -p "${SRC}"/output/debug
-		echo -n "" > "${SRC}"/output/debug/calls.txt
-		trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/debug/calls.txt ;' RETURN
+		mkdir -p "${SRC}"/output/call-traces
+		echo -n "" > "${SRC}"/output/call-traces/calls.txt
+		trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/call-traces/calls.txt ;' RETURN
 	fi
 
 	check_args "$@"
@@ -21,16 +21,6 @@ function cli_entrypoint() {
 	else
 		display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
 		sudo "${SRC}/compile.sh" "$@"
-		exit $?
-	fi
-
-	# The only way to get this is via ENV var...
-	if [ "${OFFLINE_WORK}" == "yes" ]; then
-		display_alert "* " "You are working offline!"
-		display_alert "* " "Sources, time and host will not be checked"
-	else
-		# check and install the basic utilities here # @TODO: logging?
-		prepare_host_basic
 	fi
 
 	# Purge Armbian Docker images
@@ -45,7 +35,6 @@ function cli_entrypoint() {
 	# Docker shell
 	if [[ "${1}" == docker-shell ]]; then
 		shift
-		#shellcheck disable=SC2034
 		SHELL_ONLY=yes
 		set -- "docker" "$@"
 	fi
@@ -75,7 +64,6 @@ function cli_entrypoint() {
 	CONFIG_PATH=$(dirname "${CONFIG_FILE}")
 
 	# DEST is the main output dir.
-	# destination. # @TODO: logging this is when we can start logging to file. make sure.
 	declare DEST="${SRC}/output"
 	if [ -d "$CONFIG_PATH/output" ]; then
 		DEST="${CONFIG_PATH}/output"
@@ -83,7 +71,8 @@ function cli_entrypoint() {
 	display_alert "Output directory DEST:" "${DEST}" "debug"
 
 	# set unique mounting directory for this build.
-	export ARMBIAN_BUILD_UUID="$(uuidgen)"
+	declare -g ARMBIAN_BUILD_UUID
+	ARMBIAN_BUILD_UUID="$(uuidgen)"
 	display_alert "Build UUID:" "${ARMBIAN_BUILD_UUID}" "debug"
 
 	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this very early stage.
@@ -96,6 +85,14 @@ function cli_entrypoint() {
 
 	LOG_SECTION=entrypoint start_logging_section     # This creates LOGDIR.
 	add_cleanup_handler trap_handler_cleanup_logging # cleanup handler for logs; it rolls it up from LOGDIR into DEST/logs
+
+	if [ "${OFFLINE_WORK}" == "yes" ]; then
+		display_alert "* " "You are working offline!"
+		display_alert "* " "Sources, time and host will not be checked"
+	else
+		# check and install the basic utilities.
+		LOG_SECTION="prepare_host_basic" do_with_logging prepare_host_basic
+	fi
 
 	# Source the extensions manager library at this point, before sourcing the config.
 	# This allows early calls to enable_extension(), but initialization proper is done later.
@@ -140,12 +137,12 @@ function cli_entrypoint() {
 		if [[ -z $1 ]]; then
 			main_default_build_single
 		else
-			# @TODO: check this with extensions usage?
+			# @TODO: rpardini: check this with extensions usage?
 			eval "$@"
 		fi
 	fi
 
 	# Build done, run the cleanup handlers explicitly.
-	# This zeroes out the list of cleanups, so it's not done again when the main script exits.
+	# This zeroes out the list of cleanups, so it's not done again when the main script exits normally and trap = 0 runs.
 	run_cleanup_handlers
 }
