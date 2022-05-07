@@ -101,7 +101,6 @@ RUN apt-get update \
        rsync \
        swig \
        sudo \
-       systemd-container \
        tzdata \
        u-boot-tools \
        udev \
