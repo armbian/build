@@ -10,6 +10,6 @@ setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait logl
 
 load $devtype ${devnum}:${distro_bootpart} $ramdisk_addr_r ${prefix}espressobin.itb
 
-bootm $ramdisk_addr_r
+bootm ${ramdisk_addr_r}#$board_version
 
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr.uimg
