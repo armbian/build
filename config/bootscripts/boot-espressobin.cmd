@@ -8,10 +8,8 @@ env import -t ${scriptaddr} ${filesize}
 
 setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks}  ${extraargs}"
 
-load $devtype ${devnum}:${distro_bootpart} $kernel_addr_r ${prefix}Image
-load $devtype ${devnum}:${distro_bootpart} $ramdisk_addr_r ${prefix}uInitrd
-load $devtype ${devnum}:${distro_bootpart} $fdt_addr_r ${prefix}dtb/$fdtfile
+load $devtype ${devnum}:${distro_bootpart} $ramdisk_addr_r ${prefix}espressobin.itb
 
-booti $kernel_addr_r $ramdisk_addr_r $fdt_addr_r
+bootm ${ramdisk_addr_r}#$board_version
 
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr.uimg
