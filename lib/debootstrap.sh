@@ -872,7 +872,7 @@ PRE_UPDATE_INITRAMFS
 	chmod 755 $MOUNT
 
 	# remove machine-id so images self-initialize
-    rm ${MOUNT}/etc/machine-id
+    rm ${MOUNT}/etc/machine-id ${MOUNT}/var/lib/dbus/machine-id
 
 	call_extension_method "pre_umount_final_image" "config_pre_umount_final_image" << 'PRE_UMOUNT_FINAL_IMAGE'
 *allow config to hack into the image before the unmount*
