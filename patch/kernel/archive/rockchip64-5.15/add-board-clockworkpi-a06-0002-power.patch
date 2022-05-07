@@ -1,0 +1,124 @@
+diff --git a/drivers/mfd/axp20x.c b/drivers/mfd/axp20x.c
+index 8161a5dc68e8..ec615b6463cb 100644
+--- a/drivers/mfd/axp20x.c
++++ b/drivers/mfd/axp20x.c
+@@ -1000,6 +1000,7 @@ int axp20x_device_probe(struct axp20x_dev *axp20x)
+ 		return ret;
+ 	}
+
++	pm_power_off = 0;
+ 	if (!pm_power_off) {
+ 		axp20x_pm_power_off = axp20x;
+ 		pm_power_off = axp20x_power_off;
+diff --git a/drivers/mfd/rk808.c b/drivers/mfd/rk808.c
+index 77ccd31ca1d9..2515007b6cad 100644
+--- a/drivers/mfd/rk808.c
++++ b/drivers/mfd/rk808.c
+@@ -555,6 +555,12 @@ static void rk808_pm_power_off(void)
+ 		dev_err(&rk808_i2c_client->dev, "Failed to shutdown device!\n");
+ }
+
++static void rk808_pm_power_off_prepare(void)
++{
++	struct rk808 *rk808 = i2c_get_clientdata(rk808_i2c_client);
++	regmap_update_bits(rk808->regmap, RK808_LDO_EN_REG, 0x08, 0x00);
++}
++
+ static void rk8xx_shutdown(struct i2c_client *client)
+ {
+ 	struct rk808 *rk808 = i2c_get_clientdata(client);
+@@ -724,6 +730,8 @@ static int rk808_probe(struct i2c_client *client,
+ 		rk808_i2c_client = client;
+ 		pm_power_off = rk808_pm_power_off;
+ 	}
++	rk808_i2c_client = client;
++	pm_power_off_prepare = rk808_pm_power_off_prepare;
+
+ 	return 0;
+
+diff --git a/drivers/power/supply/axp20x_ac_power.c b/drivers/power/supply/axp20x_ac_power.c
+index ac360016b08a..c11024f3c6a1 100644
+--- a/drivers/power/supply/axp20x_ac_power.c
++++ b/drivers/power/supply/axp20x_ac_power.c
+@@ -53,6 +53,9 @@ static irqreturn_t axp20x_ac_power_irq(int irq, void *devid)
+ {
+ 	struct axp20x_ac_power *power = devid;
+
++	regmap_update_bits(power->regmap, AXP20X_VBUS_IPSOUT_MGMT, 0x03, 0x00);
++	regmap_update_bits(power->regmap, AXP20X_VBUS_IPSOUT_MGMT, 0x03, 0x03);
++
+ 	power_supply_changed(power->supply);
+
+ 	return IRQ_HANDLED;
+diff --git a/drivers/power/supply/axp20x_battery.c b/drivers/power/supply/axp20x_battery.c
+index 335e12cc5e2f..87da705a5831 100644
+--- a/drivers/power/supply/axp20x_battery.c
++++ b/drivers/power/supply/axp20x_battery.c
+@@ -325,6 +325,42 @@ static int axp20x_battery_get_prop(struct power_supply *psy,
+ 		/* IIO framework gives mV but Power Supply framework gives uV */
+ 		val->intval *= 1000;
+ 		break;
++
++	case POWER_SUPPLY_PROP_ENERGY_FULL:
++	case POWER_SUPPLY_PROP_ENERGY_NOW:
++		/* When no battery is present, return 0 */
++		ret = regmap_read(axp20x_batt->regmap, AXP20X_PWR_OP_MODE,
++				  &reg);
++		if (ret)
++			return ret;
++
++		if (!(reg & AXP20X_PWR_OP_BATT_PRESENT)) {
++			val->intval = 0;
++			return 0;
++		}
++
++		if(psp == POWER_SUPPLY_PROP_ENERGY_FULL) {
++			val->intval = 8000000;
++			return 0;
++		}
++
++		ret = regmap_read(axp20x_batt->regmap, AXP20X_FG_RES, &reg);
++		if (ret)
++			return ret;
++
++		if (axp20x_batt->data->has_fg_valid && !(reg & AXP22X_FG_VALID))
++			return -EINVAL;
++
++		val1 = reg & AXP209_FG_PERCENT;
++		if (val1 > 90)
++			val1 = 80;
++		else if (val1 < 10)
++			val1 = 0;
++		else
++			val1 -= 10;
++
++		val->intval = val1 * 100000;
++		break;
+
+ 	default:
+ 		return -EINVAL;
+@@ -497,6 +533,8 @@ static enum power_supply_property axp20x_battery_props[] = {
+ 	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
+ 	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
+ 	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_ENERGY_FULL,
++	POWER_SUPPLY_PROP_ENERGY_NOW,
+ };
+
+ static int axp20x_battery_prop_writeable(struct power_supply *psy,
+@@ -642,6 +680,12 @@ static int axp20x_power_probe(struct platform_device *pdev)
+ 	axp20x_get_constant_charge_current(axp20x_batt,
+ 					   &axp20x_batt->max_ccc);
+
++	regmap_update_bits(axp20x_batt->regmap, AXP20X_VBUS_IPSOUT_MGMT, 0x03, 0x03);
++	regmap_update_bits(axp20x_batt->regmap, AXP20X_OFF_CTRL, 0x08, 0x08);
++	regmap_update_bits(axp20x_batt->regmap, AXP20X_CHRG_CTRL2, 0x30, 0x20);
++	regmap_update_bits(axp20x_batt->regmap, AXP20X_PEK_KEY, 0x0f, 0x0b);
++	regmap_update_bits(axp20x_batt->regmap, AXP20X_GPIO0_CTRL, 0x07, 0x00);
++
+ 	return 0;
+ }
+
+--
+2.25.1
+
