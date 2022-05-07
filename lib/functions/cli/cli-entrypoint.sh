@@ -9,9 +9,6 @@ function cli_entrypoint() {
 		trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/call-traces/calls.txt ;' RETURN
 	fi
 
-	check_args "$@"
-	do_update_src "$@"
-
 	if [[ "${EUID}" == "0" ]] || [[ "${1}" == "vagrant" ]]; then
 		:
 	elif [[ "${1}" == docker || "${1}" == dockerpurge || "${1}" == docker-shell ]] && grep -q "$(whoami)" <(getent group docker); then
