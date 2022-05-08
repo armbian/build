@@ -74,9 +74,6 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# install from apt.armbian.com
 	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
 
-	# remove existing ssh keys. They will be created in 1st boot process
-	rm -f $SDCARD/etc/ssh/ssh_host*
-
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
 	customize_image
