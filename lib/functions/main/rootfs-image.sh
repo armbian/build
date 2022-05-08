@@ -67,9 +67,6 @@ function build_rootfs_and_image() {
 	# install from apt.armbian.com # @TODO: armbian-nextify this eventually
 	[[ $EXTERNAL_NEW == prebuilt ]] && LOG_SECTION="packages_prebuilt" do_with_logging chroot_installpackages "yes"
 
-	# remove existing ssh keys. They will be created in 1st boot process
-	rm -f "${SDCARD}"/etc/ssh/ssh_host*
-
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
 	LOG_SECTION="customize_image" do_with_logging customize_image
