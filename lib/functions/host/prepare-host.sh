@@ -42,6 +42,9 @@ prepare_host() {
 		systemd-container u-boot-tools udev uuid-dev whiptail
 		zlib1g-dev
 
+		# python2, mostly used by some u-boot builds (2018 et al, odroidxu4 and others).
+		python2
+
 		# non-mess below?
 		file ccze colorized-logs tree                   # logging utilities
 		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
