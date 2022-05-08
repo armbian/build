@@ -871,8 +871,9 @@ PRE_UPDATE_INITRAMFS
 	# fix wrong / permissions
 	chmod 755 $MOUNT
 
-	# remove machine-id so images self-initialize
-    rm ${MOUNT}/etc/machine-id ${MOUNT}/var/lib/dbus/machine-id
+	# systemd image cleanup
+    echo -e "uninitialized\n" > ${MOUNT}/etc/machine-id
+    rm ${MOUNT}/var/lib/systemd/random-seed
 
 	call_extension_method "pre_umount_final_image" "config_pre_umount_final_image" << 'PRE_UMOUNT_FINAL_IMAGE'
 *allow config to hack into the image before the unmount*
