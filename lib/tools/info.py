@@ -119,7 +119,7 @@ common_compile_params = {
 }
 
 board_compile_params = {
-	"RELEASE": "impish",
+	"RELEASE": "jammy",
 	"BUILD_DESKTOP": "no"
 }
 
