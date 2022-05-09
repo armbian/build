@@ -48,12 +48,21 @@ update_initramfs() {
 	initrd_cache_file_path="${SRC}/cache/initrd/${initrd_cache_key}"
 	display_alert "initrd cache hash" "${initrd_hash}" "debug"
 
+	display_alert "Mounting chroot for update-initramfs" "update-initramfs" "debug"
+	cp "/usr/bin/$QEMU_BINARY" "$chroot_target/usr/bin"/
+	mount_chroot "$chroot_target/"
+
 	if [[ -f "${initrd_cache_file_path}" ]]; then
 		display_alert "initrd cache hit" "${initrd_cache_key}" "cachehit"
 		run_host_command_logged cp -pv "${initrd_cache_file_path}" "${initrd_file}"
 		touch "${initrd_cache_file_path}" # touch cached file timestamp; LRU bump.
 		if [[ -f "${initrd_cache_last_manifest_filepath}" ]]; then
 			touch "${initrd_cache_last_manifest_filepath}" # touch the manifest file timestamp; LRU bump.
+		fi
+
+		# Convert to bootscript expected format, by calling into the script manually.
+		if [[ -f "${chroot_target}"/etc/initramfs/post-update.d/99-uboot ]]; then
+			chroot_custom "$chroot_target" /etc/initramfs/post-update.d/99-uboot "${initrd_kern_ver}" "/boot/initrd.img-${initrd_kern_ver}"
 		fi
 	else
 		display_alert "Cache miss for initrd cache" "${initrd_cache_key}" "debug"
@@ -67,9 +76,6 @@ update_initramfs() {
 		fi
 
 		display_alert "Updating initramfs..." "$update_initramfs_cmd" ""
-		cp "/usr/bin/$QEMU_BINARY" "$chroot_target/usr/bin"/
-		mount_chroot "$chroot_target/"
-
 		local logging_filter="2>&1 | grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' "
 		chroot_custom_long_running "$chroot_target" "$update_initramfs_cmd" "${logging_filter}"
 		display_alert "Updated initramfs." "${update_initramfs_cmd}" "info"
@@ -84,13 +90,14 @@ update_initramfs() {
 			# 60: keep the last 30 initrd + manifest pairs. this should be higher than the total number of kernels we support, otherwise churn will be high
 			find "${SRC}/cache/initrd" -type f -printf "%T@ %p\\n" | sort -n -r | sed "1,60d" | xargs rm -fv
 		fi
-
-		display_alert "Re-enabling" "initramfs-tools hook for kernel"
-		chroot_custom "$chroot_target" chmod -v +x /etc/kernel/postinst.d/initramfs-tools
-
-		umount_chroot "$chroot_target/"
-		rm "$chroot_target/usr/bin/$QEMU_BINARY"
 	fi
+
+	display_alert "Re-enabling" "initramfs-tools hook for kernel"
+	chroot_custom "$chroot_target" chmod -v +x /etc/kernel/postinst.d/initramfs-tools
+
+	display_alert "Unmounting chroot" "update-initramfs" "debug"
+	umount_chroot "$chroot_target/"
+	rm "$chroot_target/usr/bin/$QEMU_BINARY"
 
 	# no need to remove ${initrd_cache_current_manifest_filepath} manually, since it's under ${WORKDIR}
 	return 0 # avoid future short-circuit problems
