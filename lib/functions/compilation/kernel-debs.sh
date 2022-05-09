@@ -153,6 +153,9 @@ function kernel_package_callback_linux_image() {
 	declare installed_image_path="boot/vmlinuz-${kernel_version_family}" # using old mkdebian terminology here.
 	declare image_name="Image"                                           # for arm64. or, "zImage" for arm, or "vmlinuz" for others. Why? See where u-boot puts them.
 
+	display_alert "Showing contents of Kbuild produced /boot" "linux-image" "debug"
+	run_host_command_logged tree -C --du -h "${tmp_kernel_install_dirs[INSTALL_PATH]}"
+
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_PATH]}" "${package_directory}/"         # /boot stuff
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_MOD_PATH]}/lib" "${package_directory}/" # so "lib" stuff sits at the root
 
