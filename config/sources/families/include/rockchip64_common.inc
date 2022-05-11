@@ -17,7 +17,7 @@ PACKAGE_LIST_FAMILY="ethtool"
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
-BOOT_SOC=${BOOT_SOC:=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`}
+BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*')}
 
 CPUMIN=${CPUMIN:="408000"}
 
@@ -89,29 +89,28 @@ fi
 
 case $BRANCH in
 
-	current)
+current)
 
-		KERNELBRANCH="branch:linux-5.15.y"
-		KERNELBRANCH="tag:v5.15.35"
-		KERNELPATCHDIR='rockchip64-'$BRANCH
-		LINUXFAMILY=rockchip64
-		LINUXCONFIG='linux-rockchip64-'$BRANCH
+	KERNELBRANCH="branch:linux-5.15.y"
+	KERNELBRANCH="tag:v5.15.35"
+	KERNELPATCHDIR='rockchip64-'$BRANCH
+	LINUXFAMILY=rockchip64
+	LINUXCONFIG='linux-rockchip64-'$BRANCH
 	;;
 
-	edge)
+edge)
 
-		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-5.17.y"
-		KERNELBRANCH="tag:v5.17.5"
-		LINUXFAMILY=rockchip64
-		LINUXCONFIG='linux-rockchip64-'$BRANCH
+	KERNELPATCHDIR='rockchip64-'$BRANCH
+	KERNELBRANCH="branch:linux-5.17.y"
+	KERNELBRANCH="tag:v5.17.5"
+	LINUXFAMILY=rockchip64
+	LINUXCONFIG='linux-rockchip64-'$BRANCH
 
 	;;
 
 esac
 
-prepare_boot_configuration()
-{
+prepare_boot_configuration() {
 	if [[ $BOOT_SCENARIO == "blobless" ]]; then
 
 		UBOOT_TARGET_MAP="BL31=bl31.bin idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
@@ -150,8 +149,7 @@ prepare_boot_configuration()
 	fi
 }
 
-uboot_custom_postprocess()
-{
+uboot_custom_postprocess() {
 
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
@@ -163,7 +161,7 @@ uboot_custom_postprocess()
 
 		local tempfile=$(mktemp)
 		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
-		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
+		cat $RKBIN_DIR/$MINILOADER_BLOB >>idbloader.bin
 		$PKG_PREFIX$RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
 		$PKG_PREFIX$RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
@@ -180,8 +178,7 @@ uboot_custom_postprocess()
 	fi
 }
 
-write_uboot_platform()
-{
+write_uboot_platform() {
 	if [[ -f $1/rksd_loader.img ]]; then # legacy rk3399 loader
 
 		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
@@ -204,8 +201,7 @@ write_uboot_platform()
 	fi
 }
 
-write_uboot_platform_mtd()
-{
+write_uboot_platform_mtd() {
 	if [[ -f $1/rkspi_loader.img ]]; then
 
 		dd if=$1/rkspi_loader.img of=$2 conv=notrunc status=none >/dev/null 2>&1
@@ -218,8 +214,7 @@ write_uboot_platform_mtd()
 	fi
 }
 
-setup_write_uboot_platform()
-{
+setup_write_uboot_platform() {
 
 	if grep -q "ubootpart" /proc/cmdline; then
 
@@ -234,8 +229,7 @@ setup_write_uboot_platform()
 
 }
 
-family_tweaks()
-{
+family_tweaks() {
 
 	if [[ $BOARD == z28pro ]]; then
 
@@ -245,7 +239,7 @@ family_tweaks()
 
 		# rename USB based network to lan0
 		mkdir -p $SDCARD/etc/udev/rules.d/
-		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $SDCARD/etc/udev/rules.d/70-rename-lan.rules
+		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' >$SDCARD/etc/udev/rules.d/70-rename-lan.rules
 
 	elif [[ $BOARD == helios64 ]]; then
 
@@ -268,8 +262,8 @@ family_tweaks()
 
 	if [[ $BOARD == pinebook-pro ]]; then
 
-                chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
-                chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
+		chroot $SDCARD /bin/bash -c "echo SuspendState=freeze >> /etc/systemd/sleep.conf"
+		chroot $SDCARD /bin/bash -c "echo HandlePowerKey=ignore >> /etc/systemd/login.d"
 	fi
 
 	if [[ $BOARD == station* ]]; then
@@ -281,27 +275,57 @@ family_tweaks()
 			cp $SRC/packages/blobs/rtl8723bt_fw/rtl8723ds_fw.bin $SDCARD/lib/firmware/rtlbt/rtl8723d_fw
 			install -m 755 $SRC/packages/bsp/rk3328/m1/rtk_hciattach $SDCARD/usr/bin/rtk_hciattach
 			sed -e 's/exit 0//g' -i $SDCARD/etc/rc.local
-			echo "su -c '/usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS2 rtk_h5 &'" >> $SDCARD/etc/rc.local
-			echo "exit 0" >> $SDCARD/etc/rc.local
+			echo "su -c '/usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS2 rtk_h5 &'" >>$SDCARD/etc/rc.local
+			echo "exit 0" >>$SDCARD/etc/rc.local
 		fi
 
 	fi
 
 }
 
-
-family_tweaks_bsp()
-{
+family_tweaks_bsp() {
 
 	if [[ $BOOTCONFIG == *3328* ]] && [[ $BRANCH != legacy ]]; then
 		mkdir -p "$destination"/etc/X11/xorg.conf.d
-		cat <<-EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
-		# set fbdev as default driver.
-		Section "Device"
-	         Identifier "NOGPU"
-	         Driver "fbdev"
-		EndSection
+		cat <<-EOF >"$destination"/etc/X11/xorg.conf.d/02-driver.conf
+			# set fbdev as default driver.
+			Section "Device"
+			         Identifier "NOGPU"
+			         Driver "fbdev"
+			EndSection
 		EOF
+	fi
+
+	if [[ $BOARD == clockworkpi-a06 ]]; then
+		# rotate screen & disable dpms
+		mkdir -p "$destination"/etc/X11/xorg.conf.d
+		cat <<-EOF >"$destination"/etc/X11/xorg.conf.d/10-monitor.conf
+			# set monitor
+			Section "Monitor"
+			        Identifier "DSI-1"
+			        Option "Rotate" "right"
+			        Option "DPMS" "false"
+			EndSection
+
+			Section "ServerLayout"
+			        Identifier "ServerLayout0"
+			        Option "BlankTime"  "0"
+			        Option "StandbyTime" "0"
+			        Option "SuspendTime" "0"
+			        Option "OffTime" "0"
+			EndSection
+		EOF
+		# fan support
+		install -Dm644 $SRC/packages/bsp/clockworkpi-a06/temp_fan_daemon_a06.py $destination/usr/share/clockworkpi-a06-fan-daemon/bin/temp_fan_daemon_a06.py
+		cp $SRC/packages/bsp/clockworkpi-a06/clockworkpi-a06-fan-daemon.service $destination/lib/systemd/system/
+
+		# alsa-ucm-conf profile for DevTerm A06
+		mkdir -p $destination/usr/share/alsa/ucm2/Rockchip/es8388
+		install -Dm644 $SRC/packages/bsp/clockworkpi-a06/es8388.conf $destination/usr/share/alsa/ucm2/Rockchip/es8388/es8388.conf
+		install -Dm644 $SRC/packages/bsp/clockworkpi-a06/HiFi.conf $destination/usr/share/alsa/ucm2/Rockchip/es8388/HiFi.conf
+		mkdir -p $destination/usr/share/alsa/ucm2/conf.d/simple-card
+		ln -sfv /usr/share/alsa/ucm2/Rockchip/es8388/es8388.conf \
+			$destination/usr/share/alsa/ucm2/conf.d/simple-card/rockchip,es8388-codec.conf
 	fi
 
 	if [[ $BOARD == z28pro ]]; then
@@ -372,7 +396,7 @@ family_tweaks_bsp()
 
 		# special keys
 		mkdir -p "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
-		cp $SRC/packages/bsp/pinebook-pro/pointers.xml  "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+		cp $SRC/packages/bsp/pinebook-pro/pointers.xml "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
 
 		# touchpad and keyboard tweaks
 		mkdir -p "${destination}"/etc/X11/xorg.conf.d/
