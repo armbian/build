@@ -484,9 +484,6 @@ fetch_from_repo()
 		local workdir=$dir
 	fi
 
-	# Declare folders we use as safe
-	git config --global --add safe.directory "${SRC}/cache/sources/$workdir"
-
 	mkdir -p "${SRC}/cache/sources/${workdir}" 2>/dev/null || \
 		exit_with_error "No path or no write permission" "${SRC}/cache/sources/${workdir}"
 
@@ -663,7 +660,7 @@ fingerprint_image()
 	Title:			${VENDOR} $REVISION ${BOARD^} $BRANCH
 	Kernel:			Linux $VER
 	Build date:		$(date +'%d.%m.%Y')
-	Builder rev:	$(git rev-parse HEAD)
+	Builder rev:		$BUILD_REPOSITORY_COMMIT
 	Maintainer:		$MAINTAINER <$MAINTAINERMAIL>
 	Authors:		https://www.armbian.com/authors
 	Sources: 		https://github.com/armbian/
