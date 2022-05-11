@@ -255,6 +255,9 @@ function install_distribution_agnostic() {
 	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
 		_pkg_list=${PACKAGE_LIST_BOARD}
 		display_alert "Installing PACKAGE_LIST_BOARD packages" "${_pkg_list}"
+		# shellcheck disable=SC2086 # we need to expand here. retry 3 times download-only to counter apt-cacher-ng failures.
+		do_with_retries 3 chroot_sdcard_apt_get_install_download_only ${_pkg_list}
+
 		# shellcheck disable=SC2086 # we need to expand.
 		chroot_sdcard_apt_get_install ${_pkg_list}
 	fi
