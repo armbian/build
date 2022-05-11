@@ -331,6 +331,13 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		fi
 	fi
 
+	if [[ "${ARCH}" == "arm64" ]]; then
+		if [[ -n ${CUSTOM_UBUNTU_MIRROR_ARM64} ]]; then
+			display_alert "Using custom ports/arm64 mirror" "${CUSTOM_UBUNTU_MIRROR_ARM64}" "info"
+			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR_ARM64}"
+		fi
+	fi
+
 	# don't use mirrors that throws garbage on 404
 	if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
 		declare -i armbian_mirror_tries=1
