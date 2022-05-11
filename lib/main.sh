@@ -316,7 +316,6 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
 	--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-	echo "options : ${options}"
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
 	unset options
