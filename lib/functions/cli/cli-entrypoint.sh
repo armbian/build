@@ -68,8 +68,14 @@ function cli_entrypoint() {
 	display_alert "Output directory DEST:" "${DEST}" "debug"
 
 	# set unique mounting directory for this build.
+	# basic deps, which include "uuidgen", will be installed _after_ this, so we gotta tolerate it not being there yet.
 	declare -g ARMBIAN_BUILD_UUID
-	ARMBIAN_BUILD_UUID="$(uuidgen)"
+	if [[ -f /usr/bin/uuidgen ]]; then
+		ARMBIAN_BUILD_UUID="$(uuidgen)"
+	else
+		display_alert "uuidgen not found" "uuidgen not installed yet" "info"
+		ARMBIAN_BUILD_UUID="no-uuidgen-yet-${RANDOM}-$((1 + $RANDOM % 10))$((1 + $RANDOM % 10))$((1 + $RANDOM % 10))$((1 + $RANDOM % 10))"
+	fi
 	display_alert "Build UUID:" "${ARMBIAN_BUILD_UUID}" "debug"
 
 	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this very early stage.

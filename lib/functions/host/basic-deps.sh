@@ -11,7 +11,7 @@ prepare_host_basic() {
 		"dialog:dialog"
 		"fuser:psmisc"
 		"getfacl:acl"
-		"uuid:uuid uuid-runtime"
+		"uuidgen:uuid-runtime"
 		"curl:curl"
 		"gpg:gnupg"
 		"gawk:gawk"
