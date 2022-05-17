@@ -125,7 +125,7 @@ function create_new_rootfs_cache() {
 	}
 	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
 
-	run_host_command_logged cp -pv "/usr/bin/$QEMU_BINARY" "$SDCARD/usr/bin/" # @TODO: who cleans this up later?
+	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks()
 
 	mkdir -p "${SDCARD}/usr/share/keyrings/"
 	run_host_command_logged cp -pv /usr/share/keyrings/*-archive-keyring.gpg "${SDCARD}/usr/share/keyrings/"

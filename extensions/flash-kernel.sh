@@ -71,7 +71,7 @@ pre_umount_final_image__remove_uboot_initramfs_hook_flash_kernel() {
 
 function pre_update_initramfs__setup_flash_kernel() {
 	local chroot_target=$MOUNT
-	cp /usr/bin/"$QEMU_BINARY" "$chroot_target"/usr/bin/
+	deploy_qemu_binary_to_chroot "${chroot_target}"
 	mount_chroot "$chroot_target/" # this already handles /boot/firmware which is required for it to work.
 	# hack, umount the chroot's /sys, otherwise flash-kernel tries to EFI flash due to the build host (!) being EFI
 	umount "$chroot_target/sys"
@@ -109,8 +109,8 @@ function pre_update_initramfs__setup_flash_kernel() {
 	chroot_custom "$chroot_target" chmod -v +x "/etc/kernel/postinst.d/initramfs-tools"
 	chroot_custom "$chroot_target" chmod -v +x "/etc/initramfs/post-update.d/flash-kernel"
 
-	umount_chroot "$chroot_target/"
-	rm "$chroot_target"/usr/bin/"$QEMU_BINARY"
+	umount_chroot "${chroot_target}/"
+	undeploy_qemu_binary_from_chroot "${chroot_target}"
 
 	display_alert "Disabling Armbian-core update_initramfs, was already done above." "${EXTENSION}"
 	unset KERNELSOURCE # ugly. sorry. we'll have better mechanism for this soon. this is tested at lib/debootstrap.sh:844

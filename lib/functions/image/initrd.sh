@@ -49,7 +49,8 @@ update_initramfs() {
 	display_alert "initrd cache hash" "${initrd_hash}" "debug"
 
 	display_alert "Mounting chroot for update-initramfs" "update-initramfs" "debug"
-	cp "/usr/bin/$QEMU_BINARY" "$chroot_target/usr/bin"/
+	deploy_qemu_binary_to_chroot "${chroot_target}"
+
 	mount_chroot "$chroot_target/"
 
 	if [[ -f "${initrd_cache_file_path}" ]]; then
@@ -96,8 +97,8 @@ update_initramfs() {
 	chroot_custom "$chroot_target" chmod -v +x /etc/kernel/postinst.d/initramfs-tools
 
 	display_alert "Unmounting chroot" "update-initramfs" "debug"
-	umount_chroot "$chroot_target/"
-	rm "$chroot_target/usr/bin/$QEMU_BINARY"
+	umount_chroot "${chroot_target}/"
+	undeploy_qemu_binary_from_chroot "${chroot_target}"
 
 	# no need to remove ${initrd_cache_current_manifest_filepath} manually, since it's under ${WORKDIR}
 	return 0 # avoid future short-circuit problems
