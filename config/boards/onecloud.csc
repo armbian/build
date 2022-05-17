@@ -7,5 +7,3 @@ BOOTCONFIG="odroidc_config"
 
 BOOTSIZE="200"
 BOOTFS_TYPE="fat"
-
-BUILD_DESKTOP=no
