@@ -48,4 +48,4 @@ ext4load $devtype ${devnum}:1 $ramdisk_addr_r ${prefix}$initrd_image
 ext4load $devtype ${devnum}:1 $fdt_addr_r ${prefix}$fdt_name
 
 booti $kernel_addr_r $ramdisk_addr_r $fdt_addr_r
-# mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr.uimg
+# mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
