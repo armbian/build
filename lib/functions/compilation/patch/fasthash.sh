@@ -52,6 +52,7 @@ function get_file_modification_time() { # @TODO: This is almost always called fr
 	# YYYYMMDDhhmm.ss - it is NOT a valid integer, but is what 'touch' wants for its "-t" parameter
 	# YYYYMMDDhhmmss - IS a valid integer and we can do math to it. 'touch' code will format it later
 	file_date=$(date +%Y%m%d%H%M%S -r "${1}")
+	display_alert "Read modification date for file" "${1} - ${file_date}" "timestamp"
 	echo -n "${file_date}"
 	return 0
 }

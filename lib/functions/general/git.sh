@@ -180,8 +180,8 @@ fetch_from_repo() {
 	fi
 
 	# should be declared in outside scope, so can be read.
-	checked_out_revision_mtime="$(git log --date='format:%Y%m%d%H%M%S' --format='format:%ad' -1 "${checkout_from}")"
-	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"
+	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")" # unix timestamp of the commit date
+	checked_out_revision_mtime="$(date +%Y%m%d%H%M%S -d "@${checked_out_revision_ts}")" # convert timestamp to local date/time
 	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "git"
 
 	display_alert "Cleaning git dir" "$(git status -s 2> /dev/null | wc -l) files" # working directory is not clean, show it
