@@ -17,7 +17,7 @@ GOVERNOR=ondemand
 case $BRANCH in
 	legacy)
 
-		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELBRANCH="branch:linux-5.11.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		BUILD_DESKTOP=no
@@ -33,7 +33,7 @@ case $BRANCH in
 	;;
 	edge)
 
-		KERNELBRANCH="branch:linux-5.11.y"
+		KERNELBRANCH="branch:linux-5.14.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		BUILD_DESKTOP=no
