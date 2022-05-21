@@ -42,8 +42,8 @@ prepare_host() {
 		systemd-container u-boot-tools udev uuid-dev whiptail
 		zlib1g-dev
 
-		# python2, mostly used by some u-boot builds (2018 et al, odroidxu4 and others).
-		python2
+		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
+		python2 python2-dev
 
 		# non-mess below?
 		file ccze colorized-logs tree                   # logging utilities
@@ -59,10 +59,8 @@ prepare_host() {
 
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 		:
-		#host_dependencies+=(distcc lib32ncurses-dev lib32stdc++6 libc6-i386)
-		#grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386 # @TODO: WHY?! don't do this! we don't want 32-bit x86 ever
 	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
-		host_dependencies+=(libc6 libc6-amd64-cross qemu) # What?
+		host_dependencies+=(libc6-amd64-cross qemu) # Support for running x86 binaries on ARM64 under qemu.
 	else
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "https://www.armbian.com/using-armbian-tools/"
