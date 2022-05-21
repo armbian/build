@@ -297,10 +297,42 @@ family_tweaks_bsp() {
 		cat <<- EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 			# set fbdev as default driver.
 			Section "Device"
-		         Identifier "NOGPU"
-		         Driver "fbdev"
+			         Identifier "NOGPU"
+			         Driver "fbdev"
 			EndSection
 		EOF
+	fi
+
+	if [[ $BOARD == clockworkpi-a06 ]]; then
+		# rotate screen & disable dpms
+		mkdir -p "$destination"/etc/X11/xorg.conf.d
+		cat <<- EOF > "$destination"/etc/X11/xorg.conf.d/10-monitor.conf
+			# set monitor
+			Section "Monitor"
+			        Identifier "DSI-1"
+			        Option "Rotate" "right"
+			        Option "DPMS" "false"
+			EndSection
+
+			Section "ServerLayout"
+			        Identifier "ServerLayout0"
+			        Option "BlankTime"  "0"
+			        Option "StandbyTime" "0"
+			        Option "SuspendTime" "0"
+			        Option "OffTime" "0"
+			EndSection
+		EOF
+		# fan support
+		install -Dm644 $SRC/packages/bsp/clockworkpi-a06/temp_fan_daemon_a06.py $destination/usr/share/clockworkpi-a06-fan-daemon/bin/temp_fan_daemon_a06.py
+		cp $SRC/packages/bsp/clockworkpi-a06/clockworkpi-a06-fan-daemon.service $destination/lib/systemd/system/
+
+		# alsa-ucm-conf profile for DevTerm A06
+		mkdir -p $destination/usr/share/alsa/ucm2/Rockchip/es8388
+		install -Dm644 $SRC/packages/bsp/clockworkpi-a06/es8388.conf $destination/usr/share/alsa/ucm2/Rockchip/es8388/es8388.conf
+		install -Dm644 $SRC/packages/bsp/clockworkpi-a06/HiFi.conf $destination/usr/share/alsa/ucm2/Rockchip/es8388/HiFi.conf
+		mkdir -p $destination/usr/share/alsa/ucm2/conf.d/simple-card
+		ln -sfv /usr/share/alsa/ucm2/Rockchip/es8388/es8388.conf \
+			$destination/usr/share/alsa/ucm2/conf.d/simple-card/rockchip,es8388-codec.conf
 	fi
 
 	if [[ $BOARD == z28pro ]]; then
