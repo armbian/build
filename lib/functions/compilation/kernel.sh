@@ -7,6 +7,7 @@ function run_kernel_make() {
 		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
 		"DPKG_COLORS=always"            # Use colors for dpkg
 		"XZ_OPT='--threads=0'"          # Use parallel XZ compression
+		"TERM='${TERM}'"                # Pass the terminal type, so that 'make menuconfig' can work.
 	)
 
 	common_make_params_quoted=(
