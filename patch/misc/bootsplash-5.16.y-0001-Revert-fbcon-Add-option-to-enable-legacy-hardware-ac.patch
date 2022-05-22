@@ -1,0 +1,360 @@
+From b205b9e8c05a4e9ea136036f36739e3385878477 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igor.pecovnik@gmail.com>
+Date: Thu, 10 Feb 2022 16:48:05 +0100
+Subject: [PATCH 1/2] Revert "fbcon: Add option to enable legacy hardware
+ acceleration"
+
+This reverts commit 72c4cec1d21ab6fa1b7b6ed5a60a85b421028b89.
+---
+ drivers/video/console/Kconfig           | 20 -------------
+ drivers/video/fbdev/core/fbcon.c        | 39 +++++++------------------
+ drivers/video/fbdev/core/fbcon.h        | 15 +---------
+ drivers/video/fbdev/core/fbcon_ccw.c    | 10 +++----
+ drivers/video/fbdev/core/fbcon_cw.c     | 10 +++----
+ drivers/video/fbdev/core/fbcon_rotate.h |  4 +--
+ drivers/video/fbdev/core/fbcon_ud.c     | 20 ++++++-------
+ 7 files changed, 34 insertions(+), 84 deletions(-)
+
+diff --git a/drivers/video/console/Kconfig b/drivers/video/console/Kconfig
+index fcc46380e7c9..840d9813b0bc 100644
+--- a/drivers/video/console/Kconfig
++++ b/drivers/video/console/Kconfig
+@@ -78,26 +78,6 @@ config FRAMEBUFFER_CONSOLE
+ 	help
+ 	  Low-level framebuffer-based console driver.
+ 
+-config FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION
+-	bool "Enable legacy fbcon hardware acceleration code"
+-	depends on FRAMEBUFFER_CONSOLE
+-	default y if PARISC
+-	default n
+-	help
+-	  This option enables the fbcon (framebuffer text-based) hardware
+-	  acceleration for graphics drivers which were written for the fbdev
+-	  graphics interface.
+-
+-	  On modern machines, on mainstream machines (like x86-64) or when
+-	  using a modern Linux distribution those fbdev drivers usually aren't used.
+-	  So enabling this option wouldn't have any effect, which is why you want
+-	  to disable this option on such newer machines.
+-
+-	  If you compile this kernel for older machines which still require the
+-	  fbdev drivers, you may want to say Y.
+-
+-	  If unsure, select n.
+-
+ config FRAMEBUFFER_CONSOLE_DETECT_PRIMARY
+        bool "Map the console to the primary display device"
+        depends on FRAMEBUFFER_CONSOLE
+diff --git a/drivers/video/fbdev/core/fbcon.c b/drivers/video/fbdev/core/fbcon.c
+index f36829eeb5a9..0cc2a36b674a 100644
+--- a/drivers/video/fbdev/core/fbcon.c
++++ b/drivers/video/fbdev/core/fbcon.c
+@@ -1136,13 +1136,11 @@ static void fbcon_init(struct vc_data *vc, int init)
+ 
+ 	ops->graphics = 0;
+ 
+-#ifdef CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION
+ 	if ((cap & FBINFO_HWACCEL_COPYAREA) &&
+ 	    !(cap & FBINFO_HWACCEL_DISABLED))
+ 		p->scrollmode = SCROLL_MOVE;
+ 	else /* default to something safe */
+ 		p->scrollmode = SCROLL_REDRAW;
+-#endif
+ 
+ 	/*
+ 	 *  ++guenther: console.c:vc_allocate() relies on initializing
+@@ -1707,7 +1705,7 @@ static bool fbcon_scroll(struct vc_data *vc, unsigned int t, unsigned int b,
+ 			count = vc->vc_rows;
+ 		if (logo_shown >= 0)
+ 			goto redraw_up;
+-		switch (fb_scrollmode(p)) {
++		switch (p->scrollmode) {
+ 		case SCROLL_MOVE:
+ 			fbcon_redraw_blit(vc, info, p, t, b - t - count,
+ 				     count);
+@@ -1797,7 +1795,7 @@ static bool fbcon_scroll(struct vc_data *vc, unsigned int t, unsigned int b,
+ 			count = vc->vc_rows;
+ 		if (logo_shown >= 0)
+ 			goto redraw_down;
+-		switch (fb_scrollmode(p)) {
++		switch (p->scrollmode) {
+ 		case SCROLL_MOVE:
+ 			fbcon_redraw_blit(vc, info, p, b - 1, b - t - count,
+ 				     -count);
+@@ -1948,12 +1946,12 @@ static void fbcon_bmove_rec(struct vc_data *vc, struct fbcon_display *p, int sy,
+ 		   height, width);
+ }
+ 
+-static void updatescrollmode_accel(struct fbcon_display *p,
++static void updatescrollmode(struct fbcon_display *p,
+ 					struct fb_info *info,
+ 					struct vc_data *vc)
+ {
+-#ifdef CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION
+ 	struct fbcon_ops *ops = info->fbcon_par;
++	int fh = vc->vc_font.height;
+ 	int cap = info->flags;
+ 	u16 t = 0;
+ 	int ypan = FBCON_SWAP(ops->rotate, info->fix.ypanstep,
+@@ -1974,6 +1972,12 @@ static void updatescrollmode_accel(struct fbcon_display *p,
+ 	int fast_imageblit = (cap & FBINFO_HWACCEL_IMAGEBLIT) &&
+ 		!(cap & FBINFO_HWACCEL_DISABLED);
+ 
++	p->vrows = vyres/fh;
++	if (yres > (fh * (vc->vc_rows + 1)))
++		p->vrows -= (yres - (fh * vc->vc_rows)) / fh;
++	if ((yres % fh) && (vyres % fh < yres % fh))
++		p->vrows--;
++
+ 	if (good_wrap || good_pan) {
+ 		if (reading_fast || fast_copyarea)
+ 			p->scrollmode = good_wrap ?
+@@ -1987,27 +1991,6 @@ static void updatescrollmode_accel(struct fbcon_display *p,
+ 		else
+ 			p->scrollmode = SCROLL_REDRAW;
+ 	}
+-#endif
+-}
+-
+-static void updatescrollmode(struct fbcon_display *p,
+-					struct fb_info *info,
+-					struct vc_data *vc)
+-{
+-	struct fbcon_ops *ops = info->fbcon_par;
+-	int fh = vc->vc_font.height;
+-	int yres = FBCON_SWAP(ops->rotate, info->var.yres, info->var.xres);
+-	int vyres = FBCON_SWAP(ops->rotate, info->var.yres_virtual,
+-				   info->var.xres_virtual);
+-
+-	p->vrows = vyres/fh;
+-	if (yres > (fh * (vc->vc_rows + 1)))
+-		p->vrows -= (yres - (fh * vc->vc_rows)) / fh;
+-	if ((yres % fh) && (vyres % fh < yres % fh))
+-		p->vrows--;
+-
+-	/* update scrollmode in case hardware acceleration is used */
+-	updatescrollmode_accel(p, info, vc);
+ }
+ 
+ #define PITCH(w) (((w) + 7) >> 3)
+@@ -2165,7 +2148,7 @@ static int fbcon_switch(struct vc_data *vc)
+ 
+ 	updatescrollmode(p, info, vc);
+ 
+-	switch (fb_scrollmode(p)) {
++	switch (p->scrollmode) {
+ 	case SCROLL_WRAP_MOVE:
+ 		scrollback_phys_max = p->vrows - vc->vc_rows;
+ 		break;
+diff --git a/drivers/video/fbdev/core/fbcon.h b/drivers/video/fbdev/core/fbcon.h
+index 969d41ecede5..5246d0f2574b 100644
+--- a/drivers/video/fbdev/core/fbcon.h
++++ b/drivers/video/fbdev/core/fbcon.h
+@@ -29,9 +29,7 @@ struct fbcon_display {
+     /* Filled in by the low-level console driver */
+     const u_char *fontdata;
+     int userfont;                   /* != 0 if fontdata kmalloc()ed */
+-#ifdef CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION
+-    u_short scrollmode;             /* Scroll Method, use fb_scrollmode() */
+-#endif
++    u_short scrollmode;             /* Scroll Method */
+     u_short inverse;                /* != 0 text black on white as default */
+     short yscroll;                  /* Hardware scrolling */
+     int vrows;                      /* number of virtual rows */
+@@ -210,17 +208,6 @@ static inline int attr_col_ec(int shift, struct vc_data *vc,
+ #define SCROLL_REDRAW	   0x004
+ #define SCROLL_PAN_REDRAW  0x005
+ 
+-static inline u_short fb_scrollmode(struct fbcon_display *fb)
+-{
+-#ifdef CONFIG_FRAMEBUFFER_CONSOLE_LEGACY_ACCELERATION
+-	return fb->scrollmode;
+-#else
+-	/* hardcoded to SCROLL_REDRAW if acceleration was disabled. */
+-	return SCROLL_REDRAW;
+-#endif
+-}
+-
+-
+ #ifdef CONFIG_FB_TILEBLITTING
+ extern void fbcon_set_tileops(struct vc_data *vc, struct fb_info *info);
+ #endif
+diff --git a/drivers/video/fbdev/core/fbcon_ccw.c b/drivers/video/fbdev/core/fbcon_ccw.c
+index 2789ace79634..9cd2c4b05c32 100644
+--- a/drivers/video/fbdev/core/fbcon_ccw.c
++++ b/drivers/video/fbdev/core/fbcon_ccw.c
+@@ -65,7 +65,7 @@ static void ccw_bmove(struct vc_data *vc, struct fb_info *info, int sy,
+ {
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	struct fb_copyarea area;
+-	u32 vyres = GETVYRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
+ 
+ 	area.sx = sy * vc->vc_font.height;
+ 	area.sy = vyres - ((sx + width) * vc->vc_font.width);
+@@ -83,7 +83,7 @@ static void ccw_clear(struct vc_data *vc, struct fb_info *info, int sy,
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	struct fb_fillrect region;
+ 	int bgshift = (vc->vc_hi_font_mask) ? 13 : 12;
+-	u32 vyres = GETVYRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
+ 
+ 	region.color = attr_bgcol_ec(bgshift,vc,info);
+ 	region.dx = sy * vc->vc_font.height;
+@@ -140,7 +140,7 @@ static void ccw_putcs(struct vc_data *vc, struct fb_info *info,
+ 	u32 cnt, pitch, size;
+ 	u32 attribute = get_attribute(info, scr_readw(s));
+ 	u8 *dst, *buf = NULL;
+-	u32 vyres = GETVYRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
+ 
+ 	if (!ops->fontbuffer)
+ 		return;
+@@ -229,7 +229,7 @@ static void ccw_cursor(struct vc_data *vc, struct fb_info *info, int mode,
+ 	int attribute, use_sw = vc->vc_cursor_type & CUR_SW;
+ 	int err = 1, dx, dy;
+ 	char *src;
+-	u32 vyres = GETVYRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
+ 
+ 	if (!ops->fontbuffer)
+ 		return;
+@@ -387,7 +387,7 @@ static int ccw_update_start(struct fb_info *info)
+ {
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	u32 yoffset;
+-	u32 vyres = GETVYRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
+ 	int err;
+ 
+ 	yoffset = (vyres - info->var.yres) - ops->var.xoffset;
+diff --git a/drivers/video/fbdev/core/fbcon_cw.c b/drivers/video/fbdev/core/fbcon_cw.c
+index 86a254c1b2b7..88d89fad3f05 100644
+--- a/drivers/video/fbdev/core/fbcon_cw.c
++++ b/drivers/video/fbdev/core/fbcon_cw.c
+@@ -50,7 +50,7 @@ static void cw_bmove(struct vc_data *vc, struct fb_info *info, int sy,
+ {
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	struct fb_copyarea area;
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	area.sx = vxres - ((sy + height) * vc->vc_font.height);
+ 	area.sy = sx * vc->vc_font.width;
+@@ -68,7 +68,7 @@ static void cw_clear(struct vc_data *vc, struct fb_info *info, int sy,
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	struct fb_fillrect region;
+ 	int bgshift = (vc->vc_hi_font_mask) ? 13 : 12;
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	region.color = attr_bgcol_ec(bgshift,vc,info);
+ 	region.dx = vxres - ((sy + height) * vc->vc_font.height);
+@@ -125,7 +125,7 @@ static void cw_putcs(struct vc_data *vc, struct fb_info *info,
+ 	u32 cnt, pitch, size;
+ 	u32 attribute = get_attribute(info, scr_readw(s));
+ 	u8 *dst, *buf = NULL;
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	if (!ops->fontbuffer)
+ 		return;
+@@ -212,7 +212,7 @@ static void cw_cursor(struct vc_data *vc, struct fb_info *info, int mode,
+ 	int attribute, use_sw = vc->vc_cursor_type & CUR_SW;
+ 	int err = 1, dx, dy;
+ 	char *src;
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	if (!ops->fontbuffer)
+ 		return;
+@@ -369,7 +369,7 @@ static void cw_cursor(struct vc_data *vc, struct fb_info *info, int mode,
+ static int cw_update_start(struct fb_info *info)
+ {
+ 	struct fbcon_ops *ops = info->fbcon_par;
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 	u32 xoffset;
+ 	int err;
+ 
+diff --git a/drivers/video/fbdev/core/fbcon_rotate.h b/drivers/video/fbdev/core/fbcon_rotate.h
+index 01cbe303b8a2..e233444cda66 100644
+--- a/drivers/video/fbdev/core/fbcon_rotate.h
++++ b/drivers/video/fbdev/core/fbcon_rotate.h
+@@ -12,11 +12,11 @@
+ #define _FBCON_ROTATE_H
+ 
+ #define GETVYRES(s,i) ({                           \
+-        (fb_scrollmode(s) == SCROLL_REDRAW || fb_scrollmode(s) == SCROLL_MOVE) ? \
++        (s == SCROLL_REDRAW || s == SCROLL_MOVE) ? \
+         (i)->var.yres : (i)->var.yres_virtual; })
+ 
+ #define GETVXRES(s,i) ({                           \
+-        (fb_scrollmode(s) == SCROLL_REDRAW || fb_scrollmode(s) == SCROLL_MOVE || !(i)->fix.xpanstep) ? \
++        (s == SCROLL_REDRAW || s == SCROLL_MOVE || !(i)->fix.xpanstep) ? \
+         (i)->var.xres : (i)->var.xres_virtual; })
+ 
+ 
+diff --git a/drivers/video/fbdev/core/fbcon_ud.c b/drivers/video/fbdev/core/fbcon_ud.c
+index 23bc045769d0..8d5e66b1bdfb 100644
+--- a/drivers/video/fbdev/core/fbcon_ud.c
++++ b/drivers/video/fbdev/core/fbcon_ud.c
+@@ -50,8 +50,8 @@ static void ud_bmove(struct vc_data *vc, struct fb_info *info, int sy,
+ {
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	struct fb_copyarea area;
+-	u32 vyres = GETVYRES(ops->p, info);
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	area.sy = vyres - ((sy + height) * vc->vc_font.height);
+ 	area.sx = vxres - ((sx + width) * vc->vc_font.width);
+@@ -69,8 +69,8 @@ static void ud_clear(struct vc_data *vc, struct fb_info *info, int sy,
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	struct fb_fillrect region;
+ 	int bgshift = (vc->vc_hi_font_mask) ? 13 : 12;
+-	u32 vyres = GETVYRES(ops->p, info);
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	region.color = attr_bgcol_ec(bgshift,vc,info);
+ 	region.dy = vyres - ((sy + height) * vc->vc_font.height);
+@@ -162,8 +162,8 @@ static void ud_putcs(struct vc_data *vc, struct fb_info *info,
+ 	u32 mod = vc->vc_font.width % 8, cnt, pitch, size;
+ 	u32 attribute = get_attribute(info, scr_readw(s));
+ 	u8 *dst, *buf = NULL;
+-	u32 vyres = GETVYRES(ops->p, info);
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	if (!ops->fontbuffer)
+ 		return;
+@@ -259,8 +259,8 @@ static void ud_cursor(struct vc_data *vc, struct fb_info *info, int mode,
+ 	int attribute, use_sw = vc->vc_cursor_type & CUR_SW;
+ 	int err = 1, dx, dy;
+ 	char *src;
+-	u32 vyres = GETVYRES(ops->p, info);
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 
+ 	if (!ops->fontbuffer)
+ 		return;
+@@ -410,8 +410,8 @@ static int ud_update_start(struct fb_info *info)
+ {
+ 	struct fbcon_ops *ops = info->fbcon_par;
+ 	int xoffset, yoffset;
+-	u32 vyres = GETVYRES(ops->p, info);
+-	u32 vxres = GETVXRES(ops->p, info);
++	u32 vyres = GETVYRES(ops->p->scrollmode, info);
++	u32 vxres = GETVXRES(ops->p->scrollmode, info);
+ 	int err;
+ 
+ 	xoffset = vxres - info->var.xres - ops->var.xoffset;
+-- 
+2.25.1
+

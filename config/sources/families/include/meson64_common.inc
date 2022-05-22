@@ -5,7 +5,7 @@ LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2021.07"
+BOOTBRANCH="tag:v2022.01"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
@@ -29,26 +29,28 @@ case $BRANCH in
 	;;
 
         current)
-                KERNELBRANCH='branch:linux-5.10.y'
-                KERNELPATCHDIR='meson64-current'
+		KERNELBRANCH='branch:linux-5.10.y'
+		KERNELBRANCH="tag:v5.10.110"
+		KERNELPATCHDIR='meson64-current'
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.14.y'
+		KERNELBRANCH='branch:linux-5.17.y'
+		KERNELBRANCH="tag:v5.17.5"
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
 esac
 
-if [ "$(uname -m)" = "aarch64" ]; then
-	if [[ "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" || "$(lsb_release -sc)" == "impish" ]]; then
-		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
-	else
-		PKG_PREFIX="qemu-x86_64 "
-	fi
-else
-	PKG_PREFIX=""
-fi
+#if [ "$(uname -m)" = "aarch64" ]; then
+#	if [[ "$(lsb_release -sc)" == "bullseye" || "$(lsb_release -sc)" == "focal" || "$(lsb_release -sc)" == "hirsute" || "$(lsb_release -sc)" == "impish"  || "$(lsb_release -sc)" == "jammy" ]]; then
+#		PKG_PREFIX="qemu-x86_64-static -L /usr/x86_64-linux-gnu "
+#	else
+#		PKG_PREFIX="qemu-x86_64 "
+#	fi
+#else
+#	PKG_PREFIX=""
+#fi
 
 # this helper function includes postprocess for p212 and its variants.
 # $1 PATH for uboot blob repo
@@ -261,8 +263,6 @@ family_tweaks_bsp()
 {
 	mkdir -p $destination/etc/udev/rules.d
 	mkdir -p $destination/usr/local/bin
-	cp $SRC/packages/bsp/rockchip/hdmi.rules $destination/etc/udev/rules.d
-	install -m 755 $SRC/packages/bsp/rockchip/hdmi-hotplug $destination/usr/local/bin
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
@@ -286,7 +286,7 @@ family_tweaks_bsp()
 	EndSection
 	EOF
         ;;
-		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" )
+		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2" )
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
 	    Identifier  "DRM Graphics Acclerated"
@@ -311,3 +311,11 @@ family_tweaks_bsp()
         ;;
         esac
 }
+
+# This is an extension method, put directly in meson64_common. A "built-in" extension if you will.
+# If used in more than one place, it could be moved to an extension: enable_extension "amlogic-fip-tools" 
+function fetch_sources_tools__amlogic_fip() {
+	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
+	fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
+}
+

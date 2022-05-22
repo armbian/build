@@ -1,0 +1,149 @@
+From 82fea4089b64d638069a61311504a51ca41b2c7b Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Thu, 25 Jun 2020 03:32:04 +0200
+Subject: [PATCH 175/351] Revert "i2c: mv64xxx: Add runtime PM support"
+
+This reverts commit e6b699322c57c33da90f4234d98b12575baa1995.
+---
+ drivers/i2c/busses/i2c-mv64xxx.c | 67 ++++++--------------------------
+ 1 file changed, 11 insertions(+), 56 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-mv64xxx.c b/drivers/i2c/busses/i2c-mv64xxx.c
+index 2f44eeaf7c13..e0e45fc19b8f 100644
+--- a/drivers/i2c/busses/i2c-mv64xxx.c
++++ b/drivers/i2c/busses/i2c-mv64xxx.c
+@@ -17,7 +17,6 @@
+ #include <linux/interrupt.h>
+ #include <linux/mv643xx_i2c.h>
+ #include <linux/platform_device.h>
+-#include <linux/pm_runtime.h>
+ #include <linux/reset.h>
+ #include <linux/io.h>
+ #include <linux/of.h>
+@@ -148,7 +147,6 @@ struct mv64xxx_i2c_data {
+ 	bool			irq_clear_inverted;
+ 	/* Clk div is 2 to the power n, not 2 to the power n + 1 */
+ 	bool			clk_n_base_0;
+-	bool			needs_init;
+ };
+ 
+ static struct mv64xxx_i2c_regs mv64xxx_i2c_regs_mv64xxx = {
+@@ -715,10 +713,6 @@ mv64xxx_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
+ 	struct mv64xxx_i2c_data *drv_data = i2c_get_adapdata(adap);
+ 	int rc, ret = num;
+ 
+-	rc = pm_runtime_get_sync(&adap->dev);
+-	if (rc < 0)
+-		return rc;
+-
+ 	BUG_ON(drv_data->msgs != NULL);
+ 	drv_data->msgs = msgs;
+ 	drv_data->num_msgs = num;
+@@ -734,9 +728,6 @@ mv64xxx_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
+ 	drv_data->num_msgs = 0;
+ 	drv_data->msgs = NULL;
+ 
+-	pm_runtime_mark_last_busy(&adap->dev);
+-	pm_runtime_put_autosuspend(&adap->dev);
+-
+ 	return ret;
+ }
+ 
+@@ -959,11 +950,6 @@ mv64xxx_i2c_probe(struct platform_device *pd)
+ 		goto exit_free_irq;
+ 	}
+ 
+-	pm_runtime_set_active(&pd->dev);
+-	pm_runtime_set_autosuspend_delay(&pd->dev, 1000);
+-	pm_runtime_use_autosuspend(&pd->dev);
+-	pm_runtime_enable(&pd->dev);
+-
+ 	return 0;
+ 
+ exit_free_irq:
+@@ -982,71 +968,40 @@ mv64xxx_i2c_remove(struct platform_device *dev)
+ {
+ 	struct mv64xxx_i2c_data		*drv_data = platform_get_drvdata(dev);
+ 
+-	pm_runtime_get_sync(&dev->dev);
+-
+ 	i2c_del_adapter(&drv_data->adapter);
+ 	free_irq(drv_data->irq, drv_data);
+ 	reset_control_assert(drv_data->rstc);
+ 	clk_disable_unprepare(drv_data->reg_clk);
+ 	clk_disable_unprepare(drv_data->clk);
+ 
+-	pm_runtime_put_noidle(&dev->dev);
+-	pm_runtime_disable(&dev->dev);
+-
+-	return 0;
+-}
+-
+-static int __maybe_unused mv64xxx_i2c_runtime_suspend(struct device *dev)
+-{
+-	struct mv64xxx_i2c_data *drv_data = dev_get_drvdata(dev);
+-
+-	clk_disable_unprepare(drv_data->reg_clk);
+-	clk_disable_unprepare(drv_data->clk);
+-
+ 	return 0;
+ }
+ 
+-static int __maybe_unused mv64xxx_i2c_runtime_resume(struct device *dev)
++#ifdef CONFIG_PM
++static int mv64xxx_i2c_resume(struct device *dev)
+ {
+ 	struct mv64xxx_i2c_data *drv_data = dev_get_drvdata(dev);
+ 
+-	if (!IS_ERR(drv_data->clk))
+-		clk_prepare_enable(drv_data->clk);
+-	if (!IS_ERR(drv_data->reg_clk))
+-		clk_prepare_enable(drv_data->reg_clk);
+-
+-	if (drv_data->needs_init) {
+-		drv_data->needs_init = false;
+-		reset_control_deassert(drv_data->rstc);
+-		mv64xxx_i2c_hw_init(drv_data);
+-	}
++	mv64xxx_i2c_hw_init(drv_data);
+ 
+ 	return 0;
+ }
+ 
+-static int __maybe_unused mv64xxx_i2c_suspend(struct device *dev)
+-{
+-	struct mv64xxx_i2c_data *drv_data = dev_get_drvdata(dev);
+-
+-	drv_data->needs_init = true;
+-	reset_control_assert(drv_data->rstc);
+-
+-	return pm_runtime_force_suspend(dev);
+-}
+-
+-static const struct dev_pm_ops mv64xxx_i2c_pm_ops = {
+-	SET_RUNTIME_PM_OPS(mv64xxx_i2c_runtime_suspend,
+-			   mv64xxx_i2c_runtime_resume, NULL)
+-	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(mv64xxx_i2c_suspend,
+-				      pm_runtime_force_resume)
++static const struct dev_pm_ops mv64xxx_i2c_pm = {
++	.resume = mv64xxx_i2c_resume,
+ };
+ 
++#define mv64xxx_i2c_pm_ops (&mv64xxx_i2c_pm)
++#else
++#define mv64xxx_i2c_pm_ops NULL
++#endif
++
+ static struct platform_driver mv64xxx_i2c_driver = {
+ 	.probe	= mv64xxx_i2c_probe,
+ 	.remove	= mv64xxx_i2c_remove,
+ 	.driver	= {
+ 		.name	= MV64XXX_I2C_CTLR_NAME,
+-		.pm     = &mv64xxx_i2c_pm_ops,
++		.pm     = mv64xxx_i2c_pm_ops,
+ 		.of_match_table = mv64xxx_i2c_of_match_table,
+ 	},
+ };
+-- 
+2.34.0
+

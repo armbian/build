@@ -1,0 +1,189 @@
+From a33812fc37a6f1ca23c02e785fdb7d405e12b769 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Sat, 19 Mar 2022 12:06:20 +0000
+Subject: [PATCH 2/2] rk3288: add timeout when forcing UMS mode
+
+---
+ arch/arm/mach-rockchip/board.c             |  2 ++
+ cmd/usb_mass_storage.c                     |  5 +++++
+ common/autoboot.c                          |  7 +++++--
+ drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c |  1 +
+ drivers/usb/gadget/f_mass_storage.c        | 10 +++++++++-
+ include/linux/usb/gadget.h                 |  3 +++
+ 6 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/mach-rockchip/board.c b/arch/arm/mach-rockchip/board.c
+index e7a14973..b31823d3 100644
+--- a/arch/arm/mach-rockchip/board.c
++++ b/arch/arm/mach-rockchip/board.c
+@@ -56,6 +56,7 @@ void usb_current_limit_ctrl(bool unlock_current)
+ {
+ 	int tmp;
+
++	printf("%s: unlock_current = %d\n", __func__, unlock_current);
+ 	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
+ 	if(unlock_current == true)
+ 		writel(tmp | 0x40, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
+@@ -75,6 +76,7 @@ void rk3288_maskrom_ctrl(bool enable_emmc)
+ {
+ 	int tmp;
+
++	printf("%s: enable_emmc = %d\n", __func__, enable_emmc);
+ 	tmp = readl(RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
+ 	if(enable_emmc == true)
+ 		writel(tmp | 0x80, RKIO_GPIO6_PHYS + GPIO_SWPORT_DR);
+diff --git a/cmd/usb_mass_storage.c b/cmd/usb_mass_storage.c
+index 7f4623b7..d406ea45 100644
+--- a/cmd/usb_mass_storage.c
++++ b/cmd/usb_mass_storage.c
+@@ -218,6 +218,11 @@ int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag,
+ 		usb_gadget_handle_interrupts(controller_index);
+
+ 		rc = fsg_main_thread(NULL);
++
++		if (rc == -ETIMEDOUT) {
++			goto cleanup_register;
++		}
++
+ 		if (rc) {
+ 			/* Check I/O error */
+ 			if (rc == -EIO)
+diff --git a/common/autoboot.c b/common/autoboot.c
+index ea282664..86f1c6e0 100644
+--- a/common/autoboot.c
++++ b/common/autoboot.c
+@@ -38,6 +38,7 @@ static int stored_bootdelay;
+ static int menukey;
+
+ bool force_ums = false;
++bool getdescriptor = false;
+
+ #ifdef CONFIG_AUTOBOOT_ENCRYPTION
+ #define AUTOBOOT_STOP_STR_SHA256 CONFIG_AUTOBOOT_STOP_STR_SHA256
+@@ -376,8 +377,10 @@ void autoboot_command(const char *s)
+ 		local_args[1]=str2;
+ 		local_args[2]=str3;
+ 		local_args[3]=str4;
+-		do_usb_mass_storage(NULL, 0, 4, local_args);
+-		return;
++		if (do_usb_mass_storage(NULL, 0, 4, local_args) == -ETIMEDOUT) {
++			rk3288_maskrom_ctrl(false);
++			usb_current_limit_ctrl(false);
++		}
+ 	}
+
+ 	if (s && (stored_bootdelay == -2 ||
+diff --git a/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c b/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c
+index f17009a2..b85b3f82 100644
+--- a/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c
++++ b/drivers/usb/gadget/dwc2_udc_otg_xfer_dma.c
+@@ -1393,6 +1393,7 @@ static void dwc2_ep0_setup(struct dwc2_udc *dev)
+ 			debug_cond(DEBUG_SETUP != 0,
+ 				   "%s: *** USB_REQ_GET_DESCRIPTOR\n",
+ 				   __func__);
++			getdescriptor = true;
+ 			break;
+
+ 		case USB_REQ_SET_INTERFACE:
+diff --git a/drivers/usb/gadget/f_mass_storage.c b/drivers/usb/gadget/f_mass_storage.c
+index 45f0504b..80706d41 100644
+--- a/drivers/usb/gadget/f_mass_storage.c
++++ b/drivers/usb/gadget/f_mass_storage.c
+@@ -655,7 +655,7 @@ static void busy_indicator(void)
+ static int sleep_thread(struct fsg_common *common)
+ {
+ 	int	rc = 0;
+-	int i = 0, k = 0;
++	int i = 0, k = 0, j = 0;
+
+ 	/* Wait until a signal arrives or we are woken up */
+ 	for (;;) {
+@@ -666,6 +666,7 @@ static int sleep_thread(struct fsg_common *common)
+ 			busy_indicator();
+ 			i = 0;
+ 			k++;
++			j++;
+ 		}
+
+ 		if (k == 10) {
+@@ -680,6 +681,13 @@ static int sleep_thread(struct fsg_common *common)
+ 			k = 0;
+ 		}
+
++		if (j == 300) {  //about 3 seconds
++			if(force_ums && !getdescriptor) {
++				printf("wait for usb get descriptor cmd timeout\n");
++				return -ETIMEDOUT;
++			}
++		}
++
+ 		usb_gadget_handle_interrupts(controller_index);
+ 	}
+ 	common->thread_wakeup_needed = 0;
+diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
+index 06292dde..48709f3b 100644
+--- a/include/linux/usb/gadget.h
++++ b/include/linux/usb/gadget.h
+@@ -25,6 +25,9 @@
+
+ struct usb_ep;
+
++extern bool force_ums;
++extern bool getdescriptor;
++
+ /**
+  * struct usb_request - describes one i/o request
+  * @buf: Buffer used for data.  Always provide this; some controllers
+
+From 6152cefbf39df4c3023acaa48caa71be33a3f629 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Sat, 19 Mar 2022 13:18:17 +0000
+Subject: [PATCH] rk3288: fix some errors
+
+---
+ arch/arm/mach-rockchip/board.c | 9 +++++----
+ common/autoboot.c              | 4 +++-
+ 2 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm/mach-rockchip/board.c b/arch/arm/mach-rockchip/board.c
+index b31823d38..0932482ce 100644
+--- a/arch/arm/mach-rockchip/board.c
++++ b/arch/arm/mach-rockchip/board.c
+@@ -17,6 +17,7 @@
+ #include <asm/arch-rockchip/clock.h>
+ #include <asm/arch-rockchip/periph.h>
+ #include <asm/arch-rockchip/misc.h>
++#include <linux/delay.h>
+ #include <power/regulator.h>
+
+ DECLARE_GLOBAL_DATA_PTR;
+diff --git a/common/autoboot.c b/common/autoboot.c
+index 86f1c6e02..eefaa28d4 100644
+--- a/common/autoboot.c
++++ b/common/autoboot.c
+@@ -52,7 +52,9 @@ bool getdescriptor = false;
+ #define AUTOBOOT_MENUKEY 0
+ #endif
+
+-extern int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[]);
++extern int do_usb_mass_storage(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[]);
++void usb_current_limit_ctrl(bool unlock_current);
++void rk3288_maskrom_ctrl(bool enable_emmc);
+
+ /*
+  * Use a "constant-length" time compare function for this
+diff --git a/arch/arm/mach-rockchip/board.c b/arch/arm/mach-rockchip/board.c
+index 0932482ce..5ae2c7f8f 100644
+--- a/arch/arm/mach-rockchip/board.c
++++ b/arch/arm/mach-rockchip/board.c
+@@ -17,6 +17,7 @@
+ #include <asm/arch-rockchip/clock.h>
+ #include <asm/arch-rockchip/periph.h>
+ #include <asm/arch-rockchip/misc.h>
++#include <asm/arch-rockchip/gpio.h>
+ #include <linux/delay.h>
+ #include <power/regulator.h>
+
+--
+2.30.2
+

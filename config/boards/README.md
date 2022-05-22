@@ -42,7 +42,7 @@ Statuses displayed at the login prompt:
 
 |file type|description|
 |:--|:--|
-|.csc or. tvb	|community creations|
+|.csc or .tvb	|community creations or no active maintainer|
 |.wip		|work in progress|
 |.eos		|end of life|
 
