@@ -73,7 +73,7 @@ sed -i '/backport/ s/^deb/#deb/' /etc/apt/sources.list
 chage -d 99999999 root
 
 # Run the install script
-wget https://install.yunohost.org/buster -O /tmp/yunohost_install_script
+wget https://install.yunohost.org/bullseye -O /tmp/yunohost_install_script
 bash /tmp/yunohost_install_script -a -d $YNH_BUILDER_BRANCH
 [[ -e /etc/yunohost ]] || exit 1
 rm -f /var/log/yunohost-installation*
