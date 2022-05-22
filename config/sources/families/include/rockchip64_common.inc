@@ -10,7 +10,7 @@ OVERLAY_PREFIX='rockchip'
 SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
 ATFPATCHDIR='atf-rockchip64'
-BOOTBRANCH="tag:v2021.07"
+BOOTBRANCH="tag:v2022.04"
 BOOTPATCHDIR="u-boot-rockchip64"
 PACKAGE_LIST_FAMILY="ethtool"
 
@@ -48,10 +48,7 @@ if [[ $BOOT_SOC == rk3328 ]]; then
 
 elif [[ $BOOT_SOC == rk3399 ]]; then
 
-	BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
-	DDR_BLOB='rk33/rk3399_ddr_933MHz_v1.25.bin'
-	MINILOADER_BLOB='rk33/rk3399_miniloader_v1.26.bin'
-	BL31_BLOB='rk33/rk3399_bl31_v1.35.elf'
+	BOOT_SCENARIO="${BOOT_SCENARIO:=blobless}"
 
 elif [[ $BOOT_SOC == rk3399pro ]]; then
 
@@ -113,14 +110,14 @@ esac
 prepare_boot_configuration() {
 	if [[ $BOOT_SCENARIO == "blobless" ]]; then
 
-		UBOOT_TARGET_MAP="BL31=bl31.bin idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+		UBOOT_TARGET_MAP="BL31=bl31.elf u-boot-rockchip.bin;;u-boot-rockchip.bin"
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATF_COMPILER='aarch64-linux-gnu-'
 		ATFDIR='arm-trusted-firmware'
-		ATFBRANCH='tag:v2.5'
+		ATFBRANCH='tag:v2.6'
 		ATF_USE_GCC='> 6.3'
-		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.bin"
-		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
+		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
+		ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"
 
 	elif [[ $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 
@@ -183,10 +180,9 @@ write_uboot_platform() {
 
 		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
 
-	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob"
+	elif [[ -f $1/u-boot-rockchip.bin ]]; then # $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob"
 
-		dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
-		dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none >/dev/null 2>&1
+		dd if=$1/u-boot-rockchip.bin of=$2 seek=64 conv=notrunc status=none >/dev/null 2>&1
 
 	elif [[ -f $1/uboot.img ]]; then # $BOOT_SCENARIO == "only-blobs"
 

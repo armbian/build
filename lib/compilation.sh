@@ -75,11 +75,9 @@ compile_atf()
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
 	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
-	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
-	# Check: https://github.com/armbian/build/issues/1157
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
-		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
-		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' 2>> "${DEST}"/${LOG_SUBPATH}/compilation.log \
+		'make $target_make $CTHREADS CROSS_COMPILE="$CCACHE $ATF_COMPILER"' \
+        2>> "${DEST}"/${LOG_SUBPATH}/compilation.log \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
 		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -188,7 +186,7 @@ compile_uboot()
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
 		if [[ -n $ATFSOURCE ]]; then
-			cp -Rv "${atftempdir}"/*.bin .
+			cp -Rv "${atftempdir}"/* .
 			rm -rf "${atftempdir}"
 		fi
 
