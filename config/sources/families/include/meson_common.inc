@@ -17,20 +17,26 @@ GOVERNOR=ondemand
 case $BRANCH in
 	legacy)
 
-		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELBRANCH="branch:linux-5.11.y"
 		KERNELPATCHDIR='meson-'$BRANCH
+
+		BUILD_DESKTOP=no
 
         ;;
 	current)
 
-		KERNELBRANCH="branch:linux-5.10.y"
-		KERNELPATCHDIR='meson-current'
+		KERNELBRANCH="branch:linux-5.14.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+		BUILD_DESKTOP=no
 
 	;;
 	edge)
 
-		KERNELBRANCH="branch:linux-5.11.y"
-		KERNELPATCHDIR='meson-current'
+		KERNELDIR='linux-meson'
+		KERNELSOURCE='https://github.com/xdarklight/linux'
+		KERNELBRANCH="branch:meson-mx-integration-5.18-20220417"
+		KERNELPATCHDIR='meson-'$BRANCH
 
 	;;
 esac
