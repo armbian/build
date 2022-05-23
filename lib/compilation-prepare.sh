@@ -107,6 +107,15 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch" "applying"
 	fi
 
+	# After the patches have been applied,
+	# check and add debian package compression if required.
+	#
+	if [ "$(awk '/dpkg --build/{print $1}' $kerneldir/scripts/package/builddeb)" == "dpkg" ];then
+		sed -i -e '
+			s/dpkg --build/dpkg-deb \${KDEB_COMPRESS:+-Z\$KDEB_COMPRESS} --build/
+			' "$kerneldir"/scripts/package/builddeb
+	fi
+
 	#
 	# Linux splash file
 	#
