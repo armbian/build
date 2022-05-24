@@ -113,13 +113,13 @@ esac
 prepare_boot_configuration() {
 	if [[ $BOOT_SCENARIO == "blobless" ]]; then
 
-		UBOOT_TARGET_MAP="BL31=bl31.bin idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+		UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATF_COMPILER='aarch64-linux-gnu-'
 		ATFDIR='arm-trusted-firmware'
-		ATFBRANCH='tag:v2.5'
+		ATFBRANCH='tag:v2.6'
 		ATF_USE_GCC='> 6.3'
-		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.bin"
+		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
 		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
 
 	elif [[ $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
