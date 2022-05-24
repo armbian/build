@@ -120,7 +120,7 @@ prepare_boot_configuration() {
 		ATFBRANCH='tag:v2.6'
 		ATF_USE_GCC='> 6.3'
 		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
-		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
+		ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"
 
 	elif [[ $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 
