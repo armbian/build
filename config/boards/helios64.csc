@@ -2,6 +2,7 @@
 BOARD_NAME="Helios64"
 BOARDFAMILY="rk3399"
 BOOTCONFIG="helios64-rk3399_defconfig"
+BOOT_SCENARIO="blobless"
 KERNEL_TARGET="legacy,current,edge"
 MODULES="lm75 ledtrig-netdev"
 MODULES_LEGACY="lm75"
