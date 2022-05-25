@@ -1,0 +1,570 @@
+From 516069f36ed1942a407dbaf4c1241352d03676ed Mon Sep 17 00:00:00 2001
+From: Benjamin Schaaf <ben.schaaf@gmail.com>
+Date: Mon, 22 Nov 2021 23:38:26 +1100
+Subject: [PATCH 059/515] media: gc2145: Add PIXEL_RATE, HBLANK and VBLANK
+ controls
+
+---
+ drivers/media/i2c/gc2145.c | 475 +++++++++++++++++++++----------------
+ 1 file changed, 264 insertions(+), 211 deletions(-)
+
+diff --git a/drivers/media/i2c/gc2145.c b/drivers/media/i2c/gc2145.c
+index de24ee04be84..9c6a73c5f89f 100644
+--- a/drivers/media/i2c/gc2145.c
++++ b/drivers/media/i2c/gc2145.c
+@@ -216,6 +216,9 @@ static const char * const gc2145_supply_name[] = {
+ 
+ struct gc2145_ctrls {
+ 	struct v4l2_ctrl_handler handler;
++	struct v4l2_ctrl *pixel_rate;
++	struct v4l2_ctrl *hblank;
++	struct v4l2_ctrl *vblank;
+ 	struct {
+ 		struct v4l2_ctrl *auto_exposure;
+ 		struct v4l2_ctrl *exposure;
+@@ -866,6 +869,224 @@ static int gc2145_set_exposure(struct gc2145_dev *sensor)
+ 	return gc2145_tx_commit(sensor);;
+ }
+ 
++struct gc2145_sensor_params {
++	unsigned int enable_scaler;
++	unsigned int col_scaler_only;
++	unsigned int row_skip;
++	unsigned int col_skip;
++	unsigned long sh_delay;
++	unsigned long hb;
++	unsigned long vb;
++	unsigned long st;
++	unsigned long et;
++	unsigned long win_width;
++	unsigned long win_height;
++	unsigned long width;
++	unsigned long height;
++};
++
++static void gc2145_sensor_params_init(struct gc2145_sensor_params* p, int width, int height)
++{
++	p->win_height = height + 32;
++	p->win_width = (width + 16);
++	p->width = width;
++	p->height = height;
++	p->st = 2;
++	p->et = 2;
++	p->vb = 8;
++	p->hb = 0x1f0;
++	p->sh_delay = 30;
++}
++
++// unit is PCLK periods
++static unsigned long
++gc2145_sensor_params_get_row_period(struct gc2145_sensor_params* p)
++{
++	return 2 * (p->win_width / 2 / (p->col_skip + 1) + p->sh_delay + p->hb + 4);
++}
++
++static unsigned long
++gc2145_sensor_params_get_frame_period(struct gc2145_sensor_params* p)
++{
++	unsigned long rt = gc2145_sensor_params_get_row_period(p);
++
++	return rt * (p->vb + p->win_height) / (p->row_skip + 1);
++}
++
++static void
++gc2145_sensor_params_fit_hb_to_power_line_period(struct gc2145_sensor_params* p,
++					  unsigned long power_line_freq,
++					  unsigned long pclk)
++{
++	unsigned long rt, power_line_ratio;
++
++        for (p->hb = 0x1f0; p->hb < 2047; p->hb++) {
++		rt = gc2145_sensor_params_get_row_period(p);
++
++		// power_line_ratio is row_freq / power_line_freq * 1000
++                power_line_ratio = pclk / power_line_freq * 1000 / rt;
++
++		// if we're close enough, stop the search
++                if (power_line_ratio % 1000 < 50)
++                        break;
++        }
++
++	// finding the optimal Hb is not critical
++	if (p->hb == 2047)
++		p->hb = 0x1f0;
++}
++
++static void
++gc2145_sensor_params_fit_vb_to_frame_period(struct gc2145_sensor_params* p,
++				     unsigned long frame_period)
++{
++	unsigned long rt, fp;
++
++	p->vb = 8;
++	rt = gc2145_sensor_params_get_row_period(p);
++	fp = gc2145_sensor_params_get_frame_period(p);
++
++	if (frame_period > fp)
++		p->vb = frame_period * (p->row_skip + 1) / rt - p->win_height;
++
++	if (p->vb > 4095)
++		p->vb = 4095;
++}
++
++static struct gc2145_sensor_params gc2145_get_sensor_params(
++	unsigned long framerate,
++	unsigned long width,
++	unsigned long height,
++	unsigned long *pclk2)
++{
++	struct gc2145_sensor_params params = {0};
++	bool scaling_desired;
++	unsigned long frame_period;
++	unsigned long power_line_freq = 50;
++
++	/*
++	 * Equations for calculating framerate are:
++	 *
++	 *    ww = width + 16
++	 *    wh = height + 32
++	 *    Rt = (ww / 2 / (col_skip + 1) + sh_delay + Hb + 4)
++	 *    Ft = Rt * (Vb + wh) / (row_skip + 1)
++	 *    framerate = 2pclk / 4 / Ft
++	 *
++	 * Based on these equations:
++	 *
++	 * 1) First we need to determine what 2PCLK frequency to use. The 2PCLK
++	 *    frequency is not arbitrarily precise, so we need to calculate the
++	 *    actual frequency used, after setting our target frequency.
++	 *
++	 *    We use a simple heuristic:
++	 *
++	 *      If pixel_count * 2 * framerate * 1.15 is > 40MHz, we use 60MHz,
++	 *      otherwise we use 40MHz.
++	 *
++	 * 2) We want to determine lowest Hb that we can use to extend row
++	 *    period so that row time takes an integer fraction of the power
++	 *    line frequency period. Minimum Hb is 0x1f0.
++	 *
++	 * 3) If the requested resolution is less than half the sensor's size,
++	 *    we'll use scaling, or row skipping + column scaling, or row and
++	 *    column skiping, depending on what allows us to achieve the
++	 *    requested framerate.
++	 *
++	 * 4) We use the selected Hb to calculate Vb value that will give
++	 *    us the desired framerate, given the scaling/skipping option
++	 *    selected in 3).
++	 */
++
++	scaling_desired = width <= GC2145_SENSOR_WIDTH_MAX / 2
++			&& height <= GC2145_SENSOR_HEIGHT_MAX / 2;
++
++	*pclk2 = 60000000;
++
++	gc2145_sensor_params_init(&params, width, height);
++
++	// if the resolution is < half the sensor size, enable the scaler
++	// to cover more area of the chip
++	if (scaling_desired) {
++		params.enable_scaler = 1;
++		*pclk2 *= 2;
++		gc2145_sensor_params_init(&params, width * 2, height * 2);
++	}
++
++	// we need to call this each time pclk or power_line_freq is changed
++	gc2145_sensor_params_fit_hb_to_power_line_period(&params,
++							 power_line_freq,
++							 *pclk2 / 2);
++
++	frame_period = gc2145_sensor_params_get_frame_period(&params);
++	if (framerate <= *pclk2 / 2 / frame_period)
++		goto apply;
++
++	if (scaling_desired) {
++		// try using just the column scaler + row skip
++		params.col_scaler_only = 1;
++		params.row_skip = 1;
++		gc2145_sensor_params_fit_hb_to_power_line_period(&params,
++								 power_line_freq,
++								 *pclk2 / 2);
++
++		frame_period = gc2145_sensor_params_get_frame_period(&params);
++		if (framerate <= *pclk2 / 2 / frame_period)
++			goto apply;
++
++
++		/*
++		// try disabling the scaler and just use skipping
++		params.enable_scaler = 0;
++		*pclk2 /= 2;
++		params.col_scaler_only = 0;
++		params.col_skip = 1;
++		gc2145_sensor_params_fit_hb_to_power_line_period(&params, power_line_freq, *pclk2 / 2);
++
++		frame_period = gc2145_sensor_params_get_frame_period(&params);
++
++		if (framerate <= *pclk2 / 2 / frame_period)
++			goto apply;
++		*/
++	}
++
++apply:
++	// adjust vb to fit the target framerate
++	gc2145_sensor_params_fit_vb_to_frame_period(&params,
++						    *pclk2 / 2 / framerate);
++
++	return params;
++}
++
++static int gc2145_sensor_params_apply(struct gc2145_dev *sensor,
++				      struct gc2145_sensor_params* p)
++{
++	u32 off_x = (GC2145_SENSOR_WIDTH_MAX - p->width) / 2;
++	u32 off_y = (GC2145_SENSOR_HEIGHT_MAX - p->height) / 2;
++
++	gc2145_tx_start(sensor);
++
++	gc2145_tx_write8(sensor, 0xfd, (p->enable_scaler ? BIT(0) : 0)
++			| (p->col_scaler_only ? BIT(1) : 0));
++
++	gc2145_tx_write8(sensor, 0x18, 0x0a
++		       | (p->col_skip ? BIT(7) : 0)
++		       | (p->row_skip ? BIT(6) : 0));
++
++	gc2145_tx_write16(sensor, 0x09, off_y);
++	gc2145_tx_write16(sensor, 0x0b, off_x);
++	gc2145_tx_write16(sensor, 0x0d, p->win_height);
++	gc2145_tx_write16(sensor, 0x0f, p->win_width);
++	gc2145_tx_write16(sensor, 0x05, p->hb);
++	gc2145_tx_write16(sensor, 0x07, p->vb);
++	gc2145_tx_write16(sensor, 0x11, p->sh_delay);
++
++	gc2145_tx_write8(sensor, 0x13, p->st);
++	gc2145_tx_write8(sensor, 0x14, p->et);
++
++	return gc2145_tx_commit(sensor);
++}
++
+ /* Test patterns */
+ 
+ enum {
+@@ -1054,12 +1275,31 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	//u64 wb_mask = 0;
+ 	//unsigned int i;
+ 	int ret;
++	struct gc2145_sensor_params params;
++	unsigned long pixel_rate;
+ 
+ 	v4l2_ctrl_handler_init(hdl, 32);
+ 
+ 	/* we can use our own mutex for the ctrl lock */
+ 	hdl->lock = &sensor->lock;
+ 
++	/* Clock related controls */
++	params = gc2145_get_sensor_params(sensor->frame_interval.denominator,
++					  sensor->fmt.width,
++					  sensor->fmt.height,
++					  &pixel_rate);
++	ctrls->pixel_rate = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_PIXEL_RATE,
++					      0, INT_MAX, 1,
++					      pixel_rate);
++
++	ctrls->hblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_HBLANK,
++					  0, INT_MAX, 1,
++					  params.win_height);
++
++	ctrls->vblank = v4l2_ctrl_new_std(hdl, ops, V4L2_CID_VBLANK,
++					  0, INT_MAX, 1,
++					  params.win_width);
++
+ 	/* Exposure controls */
+ 	ctrls->auto_exposure = v4l2_ctrl_new_std_menu(hdl, ops,
+ 						      V4L2_CID_EXPOSURE_AUTO,
+@@ -1153,6 +1393,10 @@ static int gc2145_init_controls(struct gc2145_dev *sensor)
+ 	v4l2_ctrl_auto_cluster(3, &ctrls->wb, V4L2_WHITE_BALANCE_MANUAL, false);
+ #endif
+ 
++	ctrls->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++	ctrls->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++	ctrls->vblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
+ 	v4l2_ctrl_auto_cluster(4, &ctrls->auto_exposure, V4L2_EXPOSURE_MANUAL,
+ 			       true);
+ 
+@@ -1192,6 +1436,8 @@ static int gc2145_s_frame_interval(struct v4l2_subdev *sd,
+ {
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 	int ret = 0, fps;
++	struct gc2145_sensor_params params;
++	unsigned long pixel_rate;
+ 
+ 	if (fi->pad != 0)
+ 		return -EINVAL;
+@@ -1211,6 +1457,10 @@ static int gc2145_s_frame_interval(struct v4l2_subdev *sd,
+ 	sensor->frame_interval.denominator = fps;
+ 	fi->interval = sensor->frame_interval;
+ 
++	params = gc2145_get_sensor_params(fps, sensor->fmt.width, sensor->fmt.height, &pixel_rate);
++	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
++				 pixel_rate);
++
+ #if 0
+ 	if (sensor->streaming) {
+ 		ret = gc2145_write16(sensor, GC2145_REG_DESIRED_FRAME_RATE_NUM,
+@@ -1439,125 +1689,11 @@ static int gc2145_setup_aec(struct gc2145_dev *sensor,
+ 	return gc2145_tx_commit(sensor);
+ }
+ 
+-struct gc2145_sensor_params {
+-	unsigned int enable_scaler;
+-	unsigned int col_scaler_only;
+-	unsigned int row_skip;
+-	unsigned int col_skip;
+-	unsigned long sh_delay;
+-	unsigned long hb;
+-	unsigned long vb;
+-	unsigned long st;
+-	unsigned long et;
+-	unsigned long win_width;
+-	unsigned long win_height;
+-	unsigned long width;
+-	unsigned long height;
+-};
+-
+-static void gc2145_sensor_params_init(struct gc2145_sensor_params* p, int width, int height)
+-{
+-	p->win_height = height + 32;
+-	p->win_width = (width + 16);
+-	p->width = width;
+-	p->height = height;
+-	p->st = 2;
+-	p->et = 2;
+-	p->vb = 8;
+-	p->hb = 0x1f0;
+-	p->sh_delay = 30;
+-}
+-
+-// unit is PCLK periods
+-static unsigned long
+-gc2145_sensor_params_get_row_period(struct gc2145_sensor_params* p)
+-{
+-	return 2 * (p->win_width / 2 / (p->col_skip + 1) + p->sh_delay + p->hb + 4);
+-}
+-
+-static unsigned long
+-gc2145_sensor_params_get_frame_period(struct gc2145_sensor_params* p)
+-{
+-	unsigned long rt = gc2145_sensor_params_get_row_period(p);
+-
+-	return rt * (p->vb + p->win_height) / (p->row_skip + 1);
+-}
+-
+-static void
+-gc2145_sensor_params_fit_hb_to_power_line_period(struct gc2145_sensor_params* p,
+-					  unsigned long power_line_freq,
+-					  unsigned long pclk)
+-{
+-	unsigned long rt, power_line_ratio;
+-
+-        for (p->hb = 0x1f0; p->hb < 2047; p->hb++) {
+-		rt = gc2145_sensor_params_get_row_period(p);
+-
+-		// power_line_ratio is row_freq / power_line_freq * 1000
+-                power_line_ratio = pclk / power_line_freq * 1000 / rt;
+-
+-		// if we're close enough, stop the search
+-                if (power_line_ratio % 1000 < 50)
+-                        break;
+-        }
+-
+-	// finding the optimal Hb is not critical
+-	if (p->hb == 2047)
+-		p->hb = 0x1f0;
+-}
+-
+-static void
+-gc2145_sensor_params_fit_vb_to_frame_period(struct gc2145_sensor_params* p,
+-				     unsigned long frame_period)
+-{
+-	unsigned long rt, fp;
+-
+-	p->vb = 8;
+-	rt = gc2145_sensor_params_get_row_period(p);
+-	fp = gc2145_sensor_params_get_frame_period(p);
+-
+-	if (frame_period > fp)
+-		p->vb = frame_period * (p->row_skip + 1) / rt - p->win_height;
+-
+-	if (p->vb > 4095)
+-		p->vb = 4095;
+-}
+-
+-static int gc2145_sensor_params_apply(struct gc2145_dev *sensor,
+-				      struct gc2145_sensor_params* p)
+-{
+-	u32 off_x = (GC2145_SENSOR_WIDTH_MAX - p->width) / 2;
+-	u32 off_y = (GC2145_SENSOR_HEIGHT_MAX - p->height) / 2;
+-
+-	gc2145_tx_start(sensor);
+-
+-	gc2145_tx_write8(sensor, 0xfd, (p->enable_scaler ? BIT(0) : 0)
+-			| (p->col_scaler_only ? BIT(1) : 0));
+-
+-	gc2145_tx_write8(sensor, 0x18, 0x0a
+-		       | (p->col_skip ? BIT(7) : 0)
+-		       | (p->row_skip ? BIT(6) : 0));
+-
+-	gc2145_tx_write16(sensor, 0x09, off_y);
+-	gc2145_tx_write16(sensor, 0x0b, off_x);
+-	gc2145_tx_write16(sensor, 0x0d, p->win_height);
+-	gc2145_tx_write16(sensor, 0x0f, p->win_width);
+-	gc2145_tx_write16(sensor, 0x05, p->hb);
+-	gc2145_tx_write16(sensor, 0x07, p->vb);
+-	gc2145_tx_write16(sensor, 0x11, p->sh_delay);
+-
+-	gc2145_tx_write8(sensor, 0x13, p->st);
+-	gc2145_tx_write8(sensor, 0x14, p->et);
+-
+-	return gc2145_tx_commit(sensor);
+-}
+-
+ static int gc2145_setup_mode(struct gc2145_dev *sensor)
+ {
+-	int scaling_desired, ret, pad, i;
+-	struct gc2145_sensor_params params = {0};
+-	unsigned long pclk2, frame_period;
+-	unsigned long power_line_freq = 50;
++	int ret, pad, i;
++	struct gc2145_sensor_params params;
++	unsigned long pclk2;
+ 	unsigned long width = sensor->fmt.width;
+ 	unsigned long height = sensor->fmt.height;
+ 	unsigned long framerate = sensor->frame_interval.denominator;
+@@ -1571,100 +1707,7 @@ static int gc2145_setup_mode(struct gc2145_dev *sensor)
+ 		return -EINVAL;
+ 	}
+ 
+-        /*
+-	 * Equations for calculating framerate are:
+-	 *
+-	 *    ww = width + 16
+-	 *    wh = height + 32
+-	 *    Rt = (ww / 2 / (col_skip + 1) + sh_delay + Hb + 4)
+-	 *    Ft = Rt * (Vb + wh) / (row_skip + 1)
+-	 *    framerate = 2pclk / 4 / Ft
+-	 *
+-	 * Based on these equations:
+-	 *
+-	 * 1) First we need to determine what 2PCLK frequency to use. The 2PCLK
+-	 *    frequency is not arbitrarily precise, so we need to calculate the
+-	 *    actual frequency used, after setting our target frequency.
+-	 *
+-	 *    We use a simple heuristic:
+-	 *
+-	 *      If pixel_count * 2 * framerate * 1.15 is > 40MHz, we use 60MHz,
+-	 *      otherwise we use 40MHz.
+-	 *
+-	 * 2) We want to determine lowest Hb that we can use to extend row
+-	 *    period so that row time takes an integer fraction of the power
+-	 *    line frequency period. Minimum Hb is 0x1f0.
+-	 *
+-	 * 3) If the requested resolution is less than half the sensor's size,
+-	 *    we'll use scaling, or row skipping + column scaling, or row and
+-	 *    column skiping, depending on what allows us to achieve the
+-	 *    requested framerate.
+-         *
+-	 * 4) We use the selected Hb to calculate Vb value that will give
+-	 *    us the desired framerate, given the scaling/skipping option
+-	 *    selected in 3).
+-	 */
+-
+-	scaling_desired = width <= GC2145_SENSOR_WIDTH_MAX / 2
+-			&& height <= GC2145_SENSOR_HEIGHT_MAX / 2;
+-
+-	pclk2 = 60000000;
+-
+-	ret = gc2145_set_2pclk(sensor, &pclk2, false);
+-	if (ret < 0)
+-		return ret;
+-
+-	gc2145_sensor_params_init(&params, width, height);
+-
+-	// if the resolution is < half the sensor size, enable the scaler
+-	// to cover more area of the chip
+-	if (scaling_desired) {
+-		params.enable_scaler = 1;
+-		pclk2 *= 2;
+-		gc2145_sensor_params_init(&params, width * 2, height * 2);
+-	}
+-
+-	// we need to call this each time pclk or power_line_freq is changed
+-	gc2145_sensor_params_fit_hb_to_power_line_period(&params,
+-							 power_line_freq,
+-							 pclk2 / 2);
+-
+-	frame_period = gc2145_sensor_params_get_frame_period(&params);
+-	if (framerate <= pclk2 / 2 / frame_period)
+-		goto apply;
+-
+-	if (scaling_desired) {
+-		// try using just the column scaler + row skip
+-		params.col_scaler_only = 1;
+-		params.row_skip = 1;
+-		gc2145_sensor_params_fit_hb_to_power_line_period(&params,
+-								 power_line_freq,
+-								 pclk2 / 2);
+-
+-		frame_period = gc2145_sensor_params_get_frame_period(&params);
+-		if (framerate <= pclk2 / 2 / frame_period)
+-			goto apply;
+-
+-
+-		/*
+-		// try disabling the scaler and just use skipping
+-		params.enable_scaler = 0;
+-		pclk2 /= 2;
+-		params.col_scaler_only = 0;
+-		params.col_skip = 1;
+-		gc2145_sensor_params_fit_hb_to_power_line_period(&params, power_line_freq, pclk2 / 2);
+-
+-		frame_period = gc2145_sensor_params_get_frame_period(&params);
+-
+-		if (framerate <= pclk2 / 2 / frame_period)
+-			goto apply;
+-                  */
+-	}
+-
+-apply:
+-        // adjust vb to fit the target framerate
+-	gc2145_sensor_params_fit_vb_to_frame_period(&params,
+-						    pclk2 / 2 / framerate);
++	params = gc2145_get_sensor_params(framerate, width, height, &pclk2);
+ 
+ 	gc2145_sensor_params_apply(sensor, &params);
+ 
+@@ -1837,6 +1880,8 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 	struct gc2145_dev *sensor = to_gc2145_dev(sd);
+ 	struct v4l2_mbus_framefmt *mf = &format->format;
+ 	const struct gc2145_pixfmt *pixfmt;
++	struct gc2145_sensor_params params;
++	unsigned long pixel_rate;
+ 	int ret = 0;
+ 
+ 	if (format->pad != 0)
+@@ -1876,6 +1921,14 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
+ 
+ 	sensor->fmt = *mf;
+ 	sensor->pending_mode_change = true;
++
++	params = gc2145_get_sensor_params(sensor->frame_interval.denominator, mf->width, mf->height, &pixel_rate);
++	__v4l2_ctrl_s_ctrl_int64(sensor->ctrls.pixel_rate,
++				 pixel_rate);
++	__v4l2_ctrl_s_ctrl(sensor->ctrls.hblank,
++			   params.win_height);
++	__v4l2_ctrl_s_ctrl(sensor->ctrls.vblank,
++			   params.win_width);
+ out:
+ 	mutex_unlock(&sensor->lock);
+ 	return ret;
+-- 
+2.35.3
+
