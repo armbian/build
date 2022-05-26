@@ -33,6 +33,7 @@ RUN apt-get update \
        bison \
        btrfs-progs \
        build-essential \
+       busybox \
        ca-certificates \
        ccache \
        cpio \
