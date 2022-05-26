@@ -22,7 +22,7 @@ create_board_package()
 
 	bsptempdir=$(mktemp -d)
 	chmod 700 ${bsptempdir}
-	trap "rm -rf \"${bsptempdir}\" ; exit 0" 0 1 2 3 15
+	trap "ret=\$?; rm -rf \"${bsptempdir}\" ; exit \$ret" 0 1 2 3 15
 	local destination=${bsptempdir}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
@@ -255,7 +255,7 @@ fi
 	fi
 
 	# Reload services
-	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service >/dev/null 2>&1
+	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service >/dev/null 2>&1
 	exit 0
 	EOF
 

@@ -12,17 +12,24 @@ GOVERNOR=ondemand
 
 case $BRANCH in
 
-	legacy)  KERNEL_VERSION_LEVEL="5.10" ;;
-	current) KERNEL_VERSION_LEVEL="5.15" ;;
-	edge) KERNEL_VERSION_LEVEL="5.16"
-	      #KERNELSWITCHOBJ="tag=v5.16.11"
-	      ;;
+	legacy)
+		KERNEL_VERSION_LEVEL="5.10"
+		KERNELSWITCHOBJ="tag=v5.10.110"
+		;;
+	current)
+		KERNEL_VERSION_LEVEL="5.15"
+		KERNELSWITCHOBJ="tag=v5.15.35"
+		;;
+	edge) 
+		KERNEL_VERSION_LEVEL=${KERNEL_VERSION_LEVEL:-5.17}
+		KERNELSWITCHOBJ="tag=v5.17.5"
+		;;
 
 esac
 
 case "$KERNEL_VERSION_LEVEL" in
 
-	5.10|5.15|5.16)
+	5.10|5.15|5.16|5.17)
 		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 		KERNELSOURCENAME='name=origin'
 		KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
@@ -35,7 +42,7 @@ case "$KERNEL_VERSION_LEVEL" in
 	;;
 esac
 
-KERNELPATCHDIR='sunxi-'$BRANCH
+KERNELPATCHDIR='archive/sunxi-'$KERNEL_VERSION_LEVEL
 
 # An optional parameter for switching to a git object such as a tag, commit,
 # or a specific branch. The object must exist in the local repository.
