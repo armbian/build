@@ -1379,7 +1379,7 @@ prepare_host()
 	build-essential  ca-certificates ccache cpio cryptsetup curl              \
 	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
 	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gpg                     \
+	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gpg busybox             \
 	imagemagick jq kmod libbison-dev libc6-dev-armhf-cross libcrypto++-dev    \
 	libelf-dev libfdt-dev libfile-fcntllock-perl parallel                     \
 	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
