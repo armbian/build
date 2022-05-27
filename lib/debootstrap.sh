@@ -634,7 +634,7 @@ PREPARE_IMAGE_SIZE
 
 	check_loop_device "$LOOP"
 
-	losetup $LOOP ${SDCARD}.raw
+	losetup -P $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
@@ -736,7 +736,7 @@ PREPARE_IMAGE_SIZE
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
-    
+
 	if [[ -f $SDCARD/boot/boot.cmd ]]; then
 		if [ -z $BOOTSCRIPT_OUTPUT ]; then BOOTSCRIPT_OUTPUT=boot.scr; fi
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/$BOOTSCRIPT_OUTPUT > /dev/null 2>&1
