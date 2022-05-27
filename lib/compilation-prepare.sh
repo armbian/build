@@ -736,14 +736,14 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_EXFAT_FS) += exfat/" >> $kerneldir/fs/Makefile
 
 		# Makefile
-		echo '# SPDX-License-Identifier: GPL-2.0-or-later
-#
-# Makefile for the linux exFAT filesystem support.
-#
-obj-$(CONFIG_EXFAT_FS) += exfat.o
-
-exfat-y	:= inode.o namei.o dir.o super.o fatent.o cache.o nls.o misc.o \
-	file.o balloc.o xattr.o ' > "$kerneldir/fs/exfat/Makefile"
+		cat <<-EOF > "$kerneldir/fs/exfat/Makefile"
+		# SPDX-License-Identifier: GPL-2.0-or-later
+		#
+		# Makefile for the linux exFAT filesystem support.
+		#
+		obj-\$(CONFIG_EXFAT_FS) += exfat.o
+		exfat-y	:= inode.o namei.o dir.o super.o fatent.o cache.o nls.o misc.o file.o balloc.o xattr.o
+		EOF
 
 		# Kconfig
 		sed  -i '$i\source "fs\/exfat\/Kconfig"' $kerneldir/fs/Kconfig
