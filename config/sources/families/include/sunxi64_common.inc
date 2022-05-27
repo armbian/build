@@ -21,9 +21,9 @@ case $BRANCH in
 		KERNELSWITCHOBJ="tag=v5.15.35"
 		;;
 
-	edge) 
+	edge)
 		KERNEL_VERSION_LEVEL=${KERNEL_VERSION_LEVEL:-5.17}
-		KERNELSWITCHOBJ="tag=v5.17.5"
+		KERNELSWITCHOBJ="tag=v5.17.11"
 		;;
 esac
 
