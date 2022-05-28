@@ -17,23 +17,29 @@ GOVERNOR=ondemand
 case $BRANCH in
 	legacy)
 
-		export KERNEL_MAJOR_MINOR="5.4" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-5.4.y"
+		export KERNEL_MAJOR_MINOR="5.11" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-5.11.y"
 		KERNELPATCHDIR='meson-'$BRANCH
+
+		BUILD_DESKTOP=no
 
 		;;
 	current)
 
-		export KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-5.10.y"
-		KERNELPATCHDIR='meson-current'
+		export KERNEL_MAJOR_MINOR="5.14" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-5.14.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+		BUILD_DESKTOP=no
 
 		;;
 	edge)
 
-		export KERNEL_MAJOR_MINOR="5.11" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-5.11.y"
-		KERNELPATCHDIR='meson-current'
+		KERNELDIR='linux-meson'
+		KERNELSOURCE='https://github.com/xdarklight/linux'
+		export KERNEL_MAJOR_MINOR="5.18" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:meson-mx-integration-5.18-20220417"
+		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
 esac

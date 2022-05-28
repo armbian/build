@@ -336,7 +336,7 @@ function prepare_partitions() {
 	# if we have a headless device, set console to DEFAULT_CONSOLE
 	if [[ -n $DEFAULT_CONSOLE && -f $SDCARD/boot/armbianEnv.txt ]]; then
 		if grep -lq "^console=" $SDCARD/boot/armbianEnv.txt; then
-			sed -i "s/console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
+			sed -i "s/^console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
 		else
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
 		fi

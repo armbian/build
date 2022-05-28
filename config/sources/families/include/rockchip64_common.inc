@@ -104,8 +104,8 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		export KERNEL_MAJOR_MINOR="5.17" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-5.17.y"
+		export KERNEL_MAJOR_MINOR="5.18" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-5.18.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -278,8 +278,6 @@ family_tweaks() {
 		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
 		cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
 		if [[ $BRANCH == legacy && ($BOARD == station-m1) ]]; then
-			cp $SRC/packages/blobs/rtl8723bt_fw/rtl8723ds_config.bin $SDCARD/lib/firmware/rtlbt/rtl8723d_config
-			cp $SRC/packages/blobs/rtl8723bt_fw/rtl8723ds_fw.bin $SDCARD/lib/firmware/rtlbt/rtl8723d_fw
 			install -m 755 $SRC/packages/bsp/rk3328/m1/rtk_hciattach $SDCARD/usr/bin/rtk_hciattach
 			sed -e 's/exit 0//g' -i $SDCARD/etc/rc.local
 			echo "su -c '/usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS2 rtk_h5 &'" >> $SDCARD/etc/rc.local

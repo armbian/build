@@ -31,32 +31,38 @@ function prepare_extra_kernel_drivers() {
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" lt 5.15 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" ge 5.10 && linux-version compare "${version}" lt 5.15 && [ "$AUFS" == yes ]; then
 		# @TODO: Fasthash for this whole block is only the git hash of revision we'd apply from Mr. Okajima
-		local aufs_tag # attach to specifics tag or branch
-		aufs_tag=$(echo "${version}" | cut -f 1-2 -d ".")
+		# attach to specifics tag or branch
+		local aufstag
+		aufstag=$(echo "${version}" | cut -f 1-2 -d ".")
 
 		# manual overrides
-		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5; then aufstag="5.4.3"; fi
 		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11; then aufstag="5.10.82"; fi
 		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16; then aufstag="5.15.5"; fi
 		if linux-version compare "${version}" ge 5.17.3 && linux-version compare "${version}" le 5.18; then aufstag="5.17.3"; fi
 
-		# check if Mr. Okajima already made a branch for this version, otherwise use RC.
-		git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufs_tag}" > /dev/null || {
-			aufs_tag="5.x-rcN" # then use rc branch
-			git ls-remote --exit-code --heads https://github.com/sfjro/aufs5-standalone "aufs${aufs_tag}" > /dev/null
-		}
-		display_alert "Adding" "AUFS ${aufs_tag}" "info"
-		local aufs_branch="branch:aufs${aufs_tag}"
-		fetch_from_repo "https://github.com/sfjro/aufs5-standalone" "aufs5" "branch:${aufs_branch}" "yes"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-kbuild.patch" "applying"
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-base.patch" "applying"
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-mmap.patch" "applying"
-		process_patch_file "${SRC}/cache/sources/aufs5/${aufs_branch#*:}/aufs5-standalone.patch" "applying"
-		cp -R "${SRC}/cache/sources/aufs5/${aufs_branch#*:}"/{Documentation,fs} .
-		cp "${SRC}/cache/sources/aufs5/${aufs_branch#*:}"/include/uapi/linux/aufs_type.h include/uapi/linux/
+		# check if Mr. Okajima already made a branch for this version
+		improved_git ls-remote --exit-code --heads $GITHUB_SOURCE/sfjro/aufs5-standalone "aufs${aufstag}" > /dev/null
+
+		if [ "$?" -ne "0" ]; then
+			# then use rc branch
+			aufstag="5.x-rcN"
+			improved_git ls-remote --exit-code --heads $GITHUB_SOURCE/sfjro/aufs5-standalone "aufs${aufstag}" > /dev/null
+		fi
+
+		if [ "$?" -eq "0" ]; then
+			display_alert "Adding" "AUFS ${aufstag}" "info"
+			local aufsver="branch:aufs${aufstag}"
+			fetch_from_repo "$GITHUB_SOURCE/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
+			cd "$kerneldir" || exit
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch" "applying"
+			cp -R "${SRC}/cache/sources/aufs5/${aufsver#*:}"/{Documentation,fs} .
+			cp "${SRC}/cache/sources/aufs5/${aufsver#*:}"/include/uapi/linux/aufs_type.h include/uapi/linux/
+		fi
 	fi
 
 	# WireGuard VPN for Linux 3.10 - 5.5
@@ -543,6 +549,40 @@ function prepare_extra_kernel_drivers() {
 		echo "obj-\$(CONFIG_RTL8822BS) += rtl8822bs/" >> $kerneldir/drivers/net/wireless/Makefile
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
 			$kerneldir/drivers/net/wireless/Kconfig
+
+	fi
+
+	# Exfat driver
+
+	if linux-version compare "${version}" ge 4.9 && linux-version compare "${version}" le 5.4; then
+
+		# attach to specifics tag or branch
+		display_alert "Adding" "exfat driver ${exfatsver}" "info"
+
+		local exfatsver="branch:master"
+		fetch_from_repo "$GITHUB_SOURCE/arter97/exfat-linux" "exfat" "${exfatsver}" "yes"
+		cd "$kerneldir" || exit
+		mkdir -p $kerneldir/fs/exfat/
+		cp -R "${SRC}/cache/sources/exfat/${exfatsver#*:}"/{*.c,*.h} \
+			$kerneldir/fs/exfat/
+
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_EXFAT_FS) += exfat/" >> $kerneldir/fs/Makefile
+
+		# Makefile
+		cat <<- EOF > "$kerneldir/fs/exfat/Makefile"
+			# SPDX-License-Identifier: GPL-2.0-or-later
+			#
+			# Makefile for the linux exFAT filesystem support.
+			#
+			obj-\$(CONFIG_EXFAT_FS) += exfat.o
+			exfat-y := inode.o namei.o dir.o super.o fatent.o cache.o nls.o misc.o file.o balloc.o xattr.o
+		EOF
+
+		# Kconfig
+		sed -i '$i\source "fs\/exfat\/Kconfig"' $kerneldir/fs/Kconfig
+		cp "${SRC}/cache/sources/exfat/${exfatsver#*:}/Kconfig" \
+			"$kerneldir/fs/exfat/Kconfig"
 
 	fi
 

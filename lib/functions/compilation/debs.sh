@@ -56,8 +56,8 @@ compile_armbian-zsh() {
 	armbian_zsh_dir=armbian-zsh_${REVISION}_all
 	display_alert "Building deb" "armbian-zsh" "info"
 
-	fetch_from_repo "https://github.com/robbyrussell/oh-my-zsh" "oh-my-zsh" "branch:master"
-	fetch_from_repo "https://github.com/mroth/evalcache" "evalcache" "branch:master"
+	fetch_from_repo "$GITHUB_SOURCE/ohmyzsh/ohmyzsh" "oh-my-zsh" "branch:master"
+	fetch_from_repo "$GITHUB_SOURCE/mroth/evalcache" "evalcache" "branch:master"
 
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
 
