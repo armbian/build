@@ -175,14 +175,13 @@ compilation_prepare()
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.1 && linux-version compare "${version}" lt 5.15 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" ge 5.10 && linux-version compare "${version}" lt 5.15 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag
 		aufstag=$(echo "${version}" | cut -f 1-2 -d ".")
 
 		# manual overrides
-		if linux-version compare "${version}" ge 5.4.3 && linux-version compare "${version}" le 5.5 ; then aufstag="5.4.3"; fi
 		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11 ; then aufstag="5.10.82"; fi
 		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16 ; then aufstag="5.15.5"; fi
 		if linux-version compare "${version}" ge 5.17.3 && linux-version compare "${version}" le 5.18 ; then aufstag="5.17.3"; fi
@@ -718,7 +717,39 @@ compilation_prepare()
 
 	fi
 
+	# Exfat driver
 
+	if linux-version compare "${version}" ge 4.9 && linux-version compare "${version}" le 5.4; then
+
+		# attach to specifics tag or branch
+		display_alert "Adding" "exfat driver ${exfatsver}" "info"
+
+		local exfatsver="branch:master"
+		fetch_from_repo "$GITHUB_SOURCE/arter97/exfat-linux" "exfat" "${exfatsver}" "yes"
+		cd "$kerneldir" || exit
+		mkdir -p $kerneldir/fs/exfat/
+		cp -R "${SRC}/cache/sources/exfat/${exfatsver#*:}"/{*.c,*.h} \
+		$kerneldir/fs/exfat/
+
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_EXFAT_FS) += exfat/" >> $kerneldir/fs/Makefile
+
+		# Makefile
+		cat <<-EOF > "$kerneldir/fs/exfat/Makefile"
+		# SPDX-License-Identifier: GPL-2.0-or-later
+		#
+		# Makefile for the linux exFAT filesystem support.
+		#
+		obj-\$(CONFIG_EXFAT_FS) += exfat.o
+		exfat-y	:= inode.o namei.o dir.o super.o fatent.o cache.o nls.o misc.o file.o balloc.o xattr.o
+		EOF
+
+		# Kconfig
+		sed  -i '$i\source "fs\/exfat\/Kconfig"' $kerneldir/fs/Kconfig
+		cp "${SRC}/cache/sources/exfat/${exfatsver#*:}/Kconfig" \
+		"$kerneldir/fs/exfat/Kconfig"
+
+	fi
 
 	if linux-version compare $version ge 4.4 && linux-version compare $version lt 5.8; then
 		display_alert "Adjusting" "Framebuffer driver for ST7789 IPS display" "info"
