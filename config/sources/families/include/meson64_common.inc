@@ -30,13 +30,11 @@ case $BRANCH in
 
         current)
 		KERNELBRANCH='branch:linux-5.10.y'
-		KERNELBRANCH="tag:v5.10.110"
 		KERNELPATCHDIR='meson64-current'
         ;;
 
         edge)
 		KERNELBRANCH='branch:linux-5.17.y'
-		KERNELBRANCH="tag:v5.17.5"
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
