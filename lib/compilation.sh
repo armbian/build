@@ -189,6 +189,7 @@ compile_uboot()
 
 		if [[ -n $ATFSOURCE ]]; then
 			cp -Rv "${atftempdir}"/*.bin .
+			cp -Rv "${atftempdir}"/*.elf .
 			rm -rf "${atftempdir}"
 		fi
 
