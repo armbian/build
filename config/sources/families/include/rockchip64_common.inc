@@ -170,10 +170,24 @@ uboot_custom_postprocess() {
 	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
-		tools/mkimage -n $BOOT_SOC -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
-		dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
-		dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
-		dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
+		if [[ $BOARD == "rock-3a" ]]; then
+			dd if=/dev/zero of=rkspi_loader.img bs=1M count=0 seek=16
+			/sbin/parted -s rkspi_loader.img mklabel gpt
+			/sbin/parted -s rkspi_loader.img unit s mkpart idbloader 64 7167
+			/sbin/parted -s rkspi_loader.img unit s mkpart vnvm 7168 7679
+			/sbin/parted -s rkspi_loader.img unit s mkpart reserved_space 7680 8063
+			/sbin/parted -s rkspi_loader.img unit s mkpart reserved1 8064 8127
+			/sbin/parted -s rkspi_loader.img unit s mkpart uboot_env 8128 8191
+			/sbin/parted -s rkspi_loader.img unit s mkpart reserved2 8192 16383
+			/sbin/parted -s rkspi_loader.img unit s mkpart uboot 16384 32734
+			dd if=idbloader.img of=rkspi_loader.img seek=64 conv=notrunc
+			dd if=u-boot.itb of=rkspi_loader.img seek=16384 conv=notrunc
+		else
+			tools/mkimage -n $BOOT_SOC -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
+			dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
+			dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
+			dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
+		fi
 	fi
 }
 
