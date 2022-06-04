@@ -254,6 +254,8 @@ create_rootfs_cache()
 		display_alert "Configuring locales" "$DEST_LANG" "info"
 
 		[[ -f $SDCARD/etc/locale.gen ]] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen C.UTF-8"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen en_US.UTF-8"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen $DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_MESSAGES=$DEST_LANG"' \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
@@ -736,7 +738,7 @@ PREPARE_IMAGE_SIZE
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
-    
+
 	if [[ -f $SDCARD/boot/boot.cmd ]]; then
 		if [ -z $BOOTSCRIPT_OUTPUT ]; then BOOTSCRIPT_OUTPUT=boot.scr; fi
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/$BOOTSCRIPT_OUTPUT > /dev/null 2>&1
