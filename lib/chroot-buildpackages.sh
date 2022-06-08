@@ -76,6 +76,11 @@ create_chroot()
 		/bin/bash -c "/debootstrap/debootstrap --second-stage"'
 	[[ $? -ne 0 || ! -f "${target_dir}"/bin/bash ]] && exit_with_error "Create chroot second stage failed"
 
+	[[ -f "${target_dir}"/etc/locale.gen ]] && \
+		sed -i '/en_US.UTF-8/s/^# //g' "${target_dir}"/etc/locale.gen
+	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+		/bin/bash -c "locale-gen; update-locale --reset LANG=en_US.UTF-8"'
+
 	create_sources_list "$release" "${target_dir}"
 	[[ $NO_APT_CACHER != yes ]] && \
 		echo 'Acquire::http { Proxy "http://localhost:3142"; };' > "${target_dir}"/etc/apt/apt.conf.d/02proxy
@@ -83,11 +88,6 @@ create_chroot()
 	APT::Install-Recommends "0";
 	APT::Install-Suggests "0";
 	EOF
-
-	[[ -f "${target_dir}"/etc/locale.gen ]] && \
-		sed -i '/en_US.UTF-8/s/^# //g' "${target_dir}"/etc/locale.gen
-	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
-		/bin/bash -c "locale-gen; update-locale --reset LANG=en_US.UTF-8"'
 
 	printf '#!/bin/sh\nexit 101' > "${target_dir}"/usr/sbin/policy-rc.d
 	chmod 755 "${target_dir}"/usr/sbin/policy-rc.d
