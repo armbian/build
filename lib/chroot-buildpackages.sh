@@ -40,7 +40,7 @@ create_chroot()
 	components['focal']='main,universe,multiverse'
 	components['jammy']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
-	local includes="ccache,locales,git,ca-certificates,devscripts,libfile-fcntllock-perl,debhelper,rsync,python3,distcc,apt-utils"
+	local includes="ccache,locales,git,ca-certificates,libfile-fcntllock-perl,rsync,python3,distcc,apt-utils"
 
 	# perhaps a temporally workaround
 	case $release in
@@ -103,6 +103,14 @@ create_chroot()
 	display_alert "Upgrading packages in" "${target_dir}" "info"
 	chroot "${target_dir}" /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
 	date +%s >"$target_dir/root/.update-timestamp"
+
+	# Install some packages with a large list of dependencies after the update.
+	# This optimizes the process and eliminates looping when calculating
+	# dependencies.
+	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+		/bin/bash -c "apt-get install \
+		-q -y --no-install-recommends debhelper devscripts"'
+
 
 	case $release in
 	bullseye|focal|hirsute|sid)
