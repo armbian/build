@@ -72,7 +72,8 @@ create_chroot()
 		mkdir -p  "${target_dir}"/usr/share/keyrings/ && \
 		cp /usr/share/keyrings/debian-archive-keyring.gpg "${target_dir}"/usr/share/keyrings/
 
-	chroot "${target_dir}" /bin/bash -c "/debootstrap/debootstrap --second-stage"
+	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+		/bin/bash -c "/debootstrap/debootstrap --second-stage"'
 	[[ $? -ne 0 || ! -f "${target_dir}"/bin/bash ]] && exit_with_error "Create chroot second stage failed"
 
 	create_sources_list "$release" "${target_dir}"
@@ -85,7 +86,8 @@ create_chroot()
 
 	[[ -f "${target_dir}"/etc/locale.gen ]] && \
 		sed -i '/en_US.UTF-8/s/^# //g' "${target_dir}"/etc/locale.gen
-	chroot "${target_dir}" /bin/bash -c "locale-gen; update-locale --reset LANG=en_US.UTF-8"
+	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+		/bin/bash -c "locale-gen; update-locale --reset LANG=en_US.UTF-8"'
 
 	printf '#!/bin/sh\nexit 101' > "${target_dir}"/usr/sbin/policy-rc.d
 	chmod 755 "${target_dir}"/usr/sbin/policy-rc.d
@@ -98,10 +100,12 @@ create_chroot()
 		rm -rf "${target_dir}"/var/lock 2>/dev/null
 		mkdir -p "${target_dir}"/var/lock
 	fi
-	chroot "${target_dir}" /bin/bash -c "/usr/sbin/update-ccache-symlinks"
+	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+		/bin/bash -c "/usr/sbin/update-ccache-symlinks"'
 
 	display_alert "Upgrading packages in" "${target_dir}" "info"
-	chroot "${target_dir}" /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
+	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+		/bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"'
 	date +%s >"$target_dir/root/.update-timestamp"
 
 	# Install some packages with a large list of dependencies after the update.
@@ -114,7 +118,8 @@ create_chroot()
 
 	case $release in
 	bullseye|focal|hirsute|sid)
-		chroot "${target_dir}" /bin/bash -c "apt-get install python-is-python3"
+		eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+			/bin/bash -c "apt-get install python-is-python3"'
 		;;
 	esac
 
