@@ -4,7 +4,5 @@
   <br>
   <img src=https://raw.githubusercontent.com/armbian/build/AR-1214/.github/progress.gif width=50>
   <br><br>
-  How to add or remove images in this automated build?
-  Simply by editing <a href="https://github.com/armbian/build/blob/master/config/targets-cli-beta.conf">CLI</a> or 
-  <a href="https://github.com/armbian/build/blob/master/config/targets-desktop-beta.conf">desktop</a> build list config files.</p>
+  <a href="https://github.com/armbian/build/actions/workflows/build-images.yml">Build in progress</a></p>
 </p>
