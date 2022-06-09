@@ -74,6 +74,7 @@ RUN apt-get update \
        libssl-dev \
        libusb-1.0-0-dev \
        linux-base \
+       libmpc-dev \
        locales \
        lsb-release \
        lzop \
