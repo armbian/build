@@ -13,7 +13,7 @@ case $BRANCH in
 
 	legacy)
 		KERNEL_VERSION_LEVEL="5.10"
-		KERNELSWITCHOBJ="tag=v5.10.119"
+		KERNELSWITCHOBJ="tag=v5.10.121"
 		;;
 
 	current)
