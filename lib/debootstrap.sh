@@ -386,9 +386,8 @@ create_rootfs_cache()
 			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
-		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
-			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
-			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
+		if [[ -n "${GPG_PASS}" ]]; then
+			echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
 		fi
 
 		# needed for backend to keep current only
@@ -950,13 +949,7 @@ POST_UMOUNT_FINAL_IMAGE
 			cd ${DESTIMG}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				if [[ -n $SUDO_USER ]]; then
-					sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DESTIMG}"/
-					SUDO_PREFIX="sudo -H -u ${SUDO_USER}"
-				else
-					SUDO_PREFIX=""
-				fi
-				echo "${GPG_PASS}" | $SUDO_PREFIX bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type}" || exit 1
+				echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type} || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
