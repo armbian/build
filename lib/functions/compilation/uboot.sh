@@ -32,8 +32,9 @@ function compile_uboot_target() {
 
 	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
 		display_alert "Copying over bins from atftempdir" "${atftempdir}" "debug"
-		cp -Rv "${atftempdir}"/*.bin .
-		rm -rf "${atftempdir}"
+		run_host_command_logged cp -Rv "${atftempdir}"/*.bin .
+		run_host_command_logged cp -Rv "${atftempdir}"/*.elf .
+		run_host_command_logged rm -rf "${atftempdir}"
 	fi
 
 	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"

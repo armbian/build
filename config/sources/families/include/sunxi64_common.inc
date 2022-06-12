@@ -26,9 +26,9 @@ case $BRANCH in
 		;;
 
 	edge)
-		export KERNEL_MAJOR_MINOR="5.17" # Major and minor versions of this kernel.
-		export KERNELBRANCH="branch:linux-5.17.y"
-		export KERNELBRANCH_MEGOUS="branch:orange-pi-5.17"
+		export KERNEL_MAJOR_MINOR="5.18" # Major and minor versions of this kernel.
+		export KERNELBRANCH="branch:linux-5.18.y"
+		export KERNELBRANCH_MEGOUS="branch:orange-pi-5.18"
 		;;
 esac
 

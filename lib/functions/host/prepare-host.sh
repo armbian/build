@@ -34,7 +34,7 @@ prepare_host() {
 		debian-archive-keyring debian-keyring debootstrap device-tree-compiler
 		dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk
 		gnupg gpg imagemagick jq kmod libbison-dev
-		libelf-dev libfdt-dev libfile-fcntllock-perl
+		libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev
 		libfl-dev liblz4-tool libncurses-dev libssl-dev
 		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
 		ntpdate patchutils

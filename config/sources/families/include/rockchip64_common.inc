@@ -116,14 +116,14 @@ esac
 prepare_boot_configuration() {
 	if [[ $BOOT_SCENARIO == "blobless" ]]; then
 
-		UBOOT_TARGET_MAP="BL31=bl31.bin idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+		UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 		ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 		ATF_COMPILER='aarch64-linux-gnu-'
 		ATFDIR='arm-trusted-firmware'
 		ATFBRANCH='tag:v2.6'
 		ATF_USE_GCC='> 6.3'
-		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.bin"
-		ATF_TOOLCHAIN2="arm-linux-gnueabi-:> 5.0"
+		ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
+		ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"
 
 	elif [[ $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 
@@ -148,7 +148,11 @@ prepare_boot_configuration() {
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
 
-		UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.itb ${UBOOT_TARGET_MAP} rkspi_loader.img"
+		if [[ $BOARD != "rock-3a" ]]; then
+			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.itb ${UBOOT_TARGET_MAP} rkspi_loader.img"
+		else
+			UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP} rkspi_loader.img"
+		fi
 
 	fi
 }
@@ -175,10 +179,24 @@ uboot_custom_postprocess() {
 	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
-		tools/mkimage -n $BOOT_SOC -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
-		dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
-		dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
-		dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
+		if [[ $BOARD == "rock-3a" ]]; then
+			dd if=/dev/zero of=rkspi_loader.img bs=1M count=0 seek=16
+			/sbin/parted -s rkspi_loader.img mklabel gpt
+			/sbin/parted -s rkspi_loader.img unit s mkpart idbloader 64 7167
+			/sbin/parted -s rkspi_loader.img unit s mkpart vnvm 7168 7679
+			/sbin/parted -s rkspi_loader.img unit s mkpart reserved_space 7680 8063
+			/sbin/parted -s rkspi_loader.img unit s mkpart reserved1 8064 8127
+			/sbin/parted -s rkspi_loader.img unit s mkpart uboot_env 8128 8191
+			/sbin/parted -s rkspi_loader.img unit s mkpart reserved2 8192 16383
+			/sbin/parted -s rkspi_loader.img unit s mkpart uboot 16384 32734
+			dd if=idbloader.img of=rkspi_loader.img seek=64 conv=notrunc
+			dd if=u-boot.itb of=rkspi_loader.img seek=16384 conv=notrunc
+		else
+			tools/mkimage -n $BOOT_SOC -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
+			dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
+			dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
+			dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
+		fi
 	fi
 }
 

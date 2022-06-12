@@ -31,15 +31,14 @@ function prepare_extra_kernel_drivers() {
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" ge 5.10 && linux-version compare "${version}" lt 5.15 && [ "$AUFS" == yes ]; then
-		# @TODO: Fasthash for this whole block is only the git hash of revision we'd apply from Mr. Okajima
+	if linux-version compare "${version}" gt 5.11 && linux-version compare "${version}" lt 5.19 && [ "$AUFS" == yes ]; then
 		# attach to specifics tag or branch
 		local aufstag
 		aufstag=$(echo "${version}" | cut -f 1-2 -d ".")
 
 		# manual overrides
 		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11; then aufstag="5.10.82"; fi
-		if linux-version compare "${version}" ge 5.15.5 && linux-version compare "${version}" le 5.16; then aufstag="5.15.5"; fi
+		if linux-version compare "${version}" ge 5.15.41 && linux-version compare "${version}" le 5.16; then aufstag="5.15.41"; fi
 		if linux-version compare "${version}" ge 5.17.3 && linux-version compare "${version}" le 5.18; then aufstag="5.17.3"; fi
 
 		# check if Mr. Okajima already made a branch for this version
@@ -276,14 +275,13 @@ function prepare_extra_kernel_drivers() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
-		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:2bebdb9a35c1d9b6e6a928e371fa39d5fcec8a62"
+		local rtl8811cuver="commit:8c2226a74ae718439d56248bd2e44ccf717086d5"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
-		fetch_from_repo "https://github.com/brektrou/rtl8821CU" "rtl8811cu" "${rtl8811cuver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/brektrou/rtl8821CU" "rtl8811cu" "${rtl8811cuver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8811cu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8811cu/"
@@ -303,7 +301,7 @@ function prepare_extra_kernel_drivers() {
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/rtl8811cu/Makefile"
 
-		# Address ARM related bug https://github.com/aircrack-ng/rtl8812au/issues/233
+		# Address ARM related bug $GITHUB_SOURCE/aircrack-ng/rtl8812au/issues/233
 		sed -i "s/^CONFIG_MP_VHT_HW_TX_MODE.*/CONFIG_MP_VHT_HW_TX_MODE = n/" \
 			"$kerneldir/drivers/net/wireless/rtl8811cu/Makefile"
 
@@ -312,8 +310,8 @@ function prepare_extra_kernel_drivers() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# add support for K5.17+
-		process_patch_file "${SRC}/patch/misc/wireless-realtek-8811cu-5.17.patch" "applying"
+		# add support for 5.18.y
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu.patch" "applying"
 
 	fi
 

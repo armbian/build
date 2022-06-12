@@ -230,7 +230,7 @@ function prepare_partitions() {
 
 	check_loop_device "$LOOP"
 
-	run_host_command_logged losetup $LOOP ${SDCARD}.raw
+	run_host_command_logged losetup -P $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
