@@ -30,11 +30,11 @@ function compile_uboot_target() {
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
+	# atftempdir comes from atf.sh's compile_atf()
 	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
-		display_alert "Copying over bins from atftempdir" "${atftempdir}" "debug"
-		run_host_command_logged cp -Rv "${atftempdir}"/*.bin .
-		run_host_command_logged cp -Rv "${atftempdir}"/*.elf .
-		run_host_command_logged rm -rf "${atftempdir}"
+		display_alert "Copying over bin/elf's from atftempdir" "${atftempdir}" "debug"
+		run_host_command_logged cp -pv "${atftempdir}"/*.bin "${atftempdir}"/*.elf ./ # only works due to nullglob
+		# atftempdir is under WORKDIR, so no cleanup necessary.
 	fi
 
 	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"
