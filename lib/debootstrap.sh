@@ -56,7 +56,6 @@ debootstrap_ng()
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	create_rootfs_cache
-
 	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" << 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
 *give config a chance to act before install_distribution_specific*
 Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
@@ -153,10 +152,10 @@ create_rootfs_cache()
 			display_alert "Checking cache integrity" "$display_name" "info"
 			sudo lz4 -tqq ${cache_fname}
 			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
+
 			# sign if signature is missing
-			if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
-				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
-				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
+			if [[ -n "${GPG_PASS}" && ! -f ${cache_fname}.asc ]]; then
+				echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
 			fi
 			break
 		elif [[ -f ${cache_fname} ]]; then
