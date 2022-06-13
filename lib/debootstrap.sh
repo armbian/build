@@ -156,7 +156,8 @@ create_rootfs_cache()
 			# sign if signature is missing
 			if [[ -n "${GPG_PASS}" ]]; then
 				display_alert "Signing cache" "$display_name" "info"
-				echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
+				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
+		#		echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
 			fi
 			break
 		elif [[ -f ${cache_fname} ]]; then
