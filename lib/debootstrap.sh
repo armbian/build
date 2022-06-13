@@ -156,7 +156,7 @@ create_rootfs_cache()
 			# sign if signature is missing
 			if [[ -n "${GPG_PASS}" ]]; then
 				display_alert "Signing cache" "$display_name" "info"
-				echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
+				echo "${GPG_PASS}" | sudo --preserve-env gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
 			fi
 			break
 		elif [[ -f ${cache_fname} ]]; then
@@ -388,7 +388,7 @@ create_rootfs_cache()
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n "${GPG_PASS}" ]]; then
-			echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
+			echo "${GPG_PASS}" | sudo --preserve-env gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
 		fi
 
 		# needed for backend to keep current only
@@ -950,7 +950,7 @@ POST_UMOUNT_FINAL_IMAGE
 			cd ${DESTIMG}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type} || exit 1
+				echo "${GPG_PASS}" | sudo --preserve-env gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type} || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
