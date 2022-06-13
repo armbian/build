@@ -154,7 +154,8 @@ create_rootfs_cache()
 			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
 
 			# sign if signature is missing
-			if [[ -n "${GPG_PASS}" && ! -f ${cache_fname}.asc ]]; then
+			if [[ -n "${GPG_PASS}" ]]; then
+				display_alert "Signing cache" "$display_name" "info"
 				echo "${GPG_PASS}" | gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
 			fi
 			break
