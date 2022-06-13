@@ -267,6 +267,12 @@ family_tweaks() {
 		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable rk3399-bluetooth.service >/dev/null 2>&1"
 
+	elif [[ -f $SDCARD/lib/systemd/system/sprd-bluetooth.service ]]; then
+
+		# install and enable Bluetooth
+		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable sprd-bluetooth.service >/dev/null 2>&1"
+
 	fi
 
 	if [[ $BOARD == nanopim4* ]]; then
@@ -360,6 +366,15 @@ family_tweaks_bsp() {
 		if [[ $BOARD == nanop*4* || $BOARD == firefly* || $BOARD == orangepi-rk3399 ]]; then
 			sed -i s%BCM4345C5%BCM4356A2%g $destination/lib/systemd/system/rk3399-bluetooth.service
 		fi
+	fi
+
+	if [[ $BOARD == orangepi4-lts ]]; then
+		
+		# Bluetooth on orangepi 4 LTS board is handled by a Spreadtrum (sprd) chip and requires
+		# a custom hciattach_opi binary, plus a systemd service to run it at boot time
+		install -m 755 $SRC/packages/bsp/rk3399/hciattach_opi $destination/usr/bin
+		cp $SRC/packages/bsp/rk3399/sprd-bluetooth.service $destination/lib/systemd/system/
+
 	fi
 
 	if [[ $BOARD == nanopim4* ]]; then
