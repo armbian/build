@@ -230,3 +230,75 @@ jobs:
           name: "Root fs cache"
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Runner cleanup
+        uses: igorpecovnik/freespace@main
+
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          repository: armbian/build
+          path: build
+          clean: false
+
+      - name: Checkout tracker lists
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: '1'
+          repository: ngosang/trackerslist
+          path: trackerslist
+          clean: false
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v3
+        with:
+          gpg-private-key: ${{ secrets.GPG_KEY1 }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE1 }}
+          workdir: build
+          git-user-signingkey: true
+
+      - name: Install SSH key for storage
+        uses: shimataro/ssh-key-action@v2
+        with:
+
+          key: ${{ secrets.KEY_TORRENTS }}
+          known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
+          if_key_exists: replace
+
+      - name: Mount upload folders
+        run: |
+
+          sudo mountpoint -q build/cache/rootfs && sudo fusermount -u build/cache/rootfs || true
+          sudo rm -f build/cache/rootfs/*
+          sudo apt-get -y -qq install sshfs
+          sudo mkdir -p /root/.ssh/
+          sudo cp ~/.ssh/* /root/.ssh/
+          sudo mkdir -p build/cache/rootfs || true
+          sudo sshfs upload@users.armbian.com:/rootfs build/cache/rootfs -o IdentityFile=~/.ssh/id_rsa -o reconnect -o allow_other
+
+      - name: Signing
+        run: |
+
+          sudo apt-get -y -qq install parallel buildtorrent
+
+          ANNOUNCE=$(cat trackerslist/trackers_best_ip.txt | head -1)ANNOUNCE=$(cat trackerslist/trackers_best_ip.txt | sed '/^$/d' | shuf -n 1)
+          TRACKERS=$(cat trackerslist/trackers_all.txt | sed '/^\s*$/d' | while read line; do printf ",""${line}"; done | cut -c 2-)
+          WEBSEEDS="--webseeds=https://github.com/armbian/mirror/releases/download/_rootfs/$FILE,https://imola.armbian.com/dl/_rootfs/_rootfs/$FILE,https://stpete-mirror.armbian.com/dl/_rootfs/$FILE"
+          cd build/cache/rootfs
+          FILES=$(ls -1 *.lz4)
+          for FILE in ${FILES[@]}
+          do
+          if [[ ! -f $FILE.asc ]]; then
+              echo "$FILE"
+          fi
+          done | sudo --preserve-env parallel --jobs 18 '
+              echo "Signing {} "; echo ${{ secrets.GPG_PASSPHRASE1 }} | gpg --quiet --armor --batch --yes --passphrase-fd 0 --detach-sign --pinentry-mode loopback {};
+              echo "Generating {}.torrent "; buildtorrent -q -s -m '$WEBSEEDS' --announce="'$ANNOUNCE'" --announcelist="'$TRACKERS'" {} -c "Armbian rootfs cache" {}.torrent >/dev/null
+          '
+
+      - name: Unmount folders
+
+        run: |
+
+          sudo mountpoint -q build/cache/rootfs && sudo fusermount -u build/cache/rootfs || true
+          sudo mountpoint -q build/cache/rootfs.upload && sudo fusermount -u build/cache/rootfs.upload || true
