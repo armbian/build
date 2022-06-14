@@ -148,7 +148,6 @@ create_rootfs_cache()
 		display_alert "Checking local cache" "$display_name" "info"
 
 		if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			touch $cache_fname.current
 			display_alert "Checking cache integrity" "$display_name" "info"
 			sudo lz4 -tqq ${cache_fname}
 			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
@@ -176,7 +175,6 @@ create_rootfs_cache()
 
 		# speed up checking
 		if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			touch $cache_fname.current
 			umount --lazy "$SDCARD"
 			rm -rf $SDCARD
 			# remove exit trap
@@ -390,9 +388,6 @@ create_rootfs_cache()
 		if [[ -n "${GPG_PASS}" ]]; then
 			echo "${GPG_PASS}" | sudo --preserve-env gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
 		fi
-
-		# needed for backend to keep current only
-		touch $cache_fname.current
 
 	fi
 
