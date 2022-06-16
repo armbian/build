@@ -1,6 +1,10 @@
 name: Build Images
 
 on:
+
+  schedule:
+    - cron: "30 2 */2 * *"
+
   workflow_dispatch:
     inputs:
       choice:
@@ -18,22 +22,28 @@ on:
         - ubuntu-latest
       sourcerepo:
         description: Source repository
-        required: true
+        required: false
         default: 'nightly'
       advanced:
         description: 'Single board (grep -w tinkerboard |)'
         required: false
         default: ''
 
-permissions:
-  contents: read
-
 jobs:
 
+  Cancel:
+    name: "Cancel currently active"
+    if: ${{ github.repository_owner == 'Armbian' }}
+    runs-on: small
+    steps:
+      - uses: n1hility/cancel-previous-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   fake:
-    permissions:
-      contents: none
+
     runs-on: ubuntu-latest
+    needs: [ Cancel ]
     name: Source changes
     if: ${{ github.repository_owner == 'Armbian' }}
     steps:
@@ -45,49 +55,59 @@ jobs:
           name: changes
           if-no-files-found: ignore
 
-  sync-servers:
-    permissions:
-      contents: none
-    name: "Sync servers"
-    needs: [ fake]
-    if: ${{ github.repository_owner == 'Armbian' }}
-    uses: armbian/scripts/.github/workflows/sync-servers.yml@master
 
-    with:
-      KEY_ID: 'upload'
+  generaterelease:
 
-    secrets:
-      KEY_UPLOAD: ${{ secrets.KEY_UPLOAD }}
-      USER_REPOSITORY: ${{ secrets.USER_REPOSITORY }}
-      HOST_REPOSITORY: ${{ secrets.HOST_REPOSITORY }}
-      KNOWN_HOSTS_REPOSITORY: ${{ secrets.KNOWN_HOSTS_REPOSITORY }}
+    needs: [ fake ]
+    runs-on: ubuntu-latest
+    name: "Update latest release"
+    steps:
 
-      
+      - run: |
+          echo "Env: ${{ github.event.inputs.choice }}"
+          echo "Env: ${{ github.event.inputs.runner }}"
+          echo "Env: ${{ github.event.inputs.sourcerepo }}"
+          echo "Branch: ${{ github.event.inputs.branch }}"
+
+      - uses: actions/checkout@v3
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          fetch-depth: 1
+
+      - uses: ncipollo/release-action@v1
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          artifacts: "LICENSE"
+          tag: "latest"
+          name: "Build in progress"
+          bodyFile: ".github/Releases-wip.md"
+          allowUpdates: true
+          removeArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   merge:
-    permissions:
-      contents: none
-    needs: [ sync-servers ]
-    uses: armbian/scripts/.github/workflows/merge-from-branch.yml@master    
+
+    needs: [ generaterelease ]
+    uses: armbian/scripts/.github/workflows/merge-from-branch.yml@master
 
     with:
       branch: 'nightly'
       runner: small
 
-    secrets:  
+    secrets:
       GPG_KEY2: ${{ secrets.GPG_KEY2 }}
       GPG_PASSPHRASE2: ${{ secrets.GPG_PASSPHRASE2 }}
 
   x86:
-    permissions:
-      contents: none
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
     with:
- 
+
       variant: 'cli:${{ github.event.inputs.choice }}'
       sourcerepo: '${{ github.event.inputs.sourcerepo }}'
-      runner: '${{ github.event.inputs.runner }}'
+      runner: ubuntu-latest
       part: 1
       of: 1
       include: 'grep uefi-x86 | ${{ github.event.inputs.advanced }}'
@@ -104,8 +124,7 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
   x86-desktop:
-    permissions:
-      contents: none
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
@@ -130,16 +149,15 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
   cli1:
-    permissions:
-      contents: none
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
     with:
- 
+
       variant: 'cli:${{ github.event.inputs.choice }}'
       sourcerepo: '${{ github.event.inputs.sourcerepo }}'
-      runner: '${{ github.event.inputs.runner }}'
+      runner: ubuntu-latest
       part: 1
       of: 2
       include: '${{ github.event.inputs.advanced }}'
@@ -157,8 +175,7 @@ jobs:
 
 
   cli2:
-    permissions:
-      contents: none
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
@@ -183,8 +200,7 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
   desktop1:
-    permissions:
-      contents: none
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
@@ -208,8 +224,7 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
   desktop2:
-    permissions:
-      contents: none
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
@@ -233,12 +248,19 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
   jobsend:
-    permissions:
-      contents: none
+
     name: finish
     needs: [x86,x86-desktop,cli1,desktop1,cli2,desktop2]
     runs-on: [ubuntu-latest]
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
     steps:
-      - run: |
-          echo "End"
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: "latest"
+          bodyFile: ".github/Releases.md"
+          name: "Automated builds"
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
