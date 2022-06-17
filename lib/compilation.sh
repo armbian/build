@@ -440,6 +440,9 @@ compile_kernel()
 		fi
 	fi
 
+	# mark kernel by default
+	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
+
 	call_extension_method "custom_kernel_config" << 'CUSTOM_KERNEL_CONFIG'
 *Kernel .config is in place, still clean from git version*
 Called after ${LINUXCONFIG}.config is put in place (.config).
