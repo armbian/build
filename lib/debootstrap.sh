@@ -56,6 +56,7 @@ debootstrap_ng()
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	create_rootfs_cache
+
 	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" << 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
 *give config a chance to act before install_distribution_specific*
 Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
@@ -148,14 +149,14 @@ create_rootfs_cache()
 		display_alert "Checking local cache" "$display_name" "info"
 
 		if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
+			touch $cache_fname.current
 			display_alert "Checking cache integrity" "$display_name" "info"
 			sudo lz4 -tqq ${cache_fname}
 			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-
 			# sign if signature is missing
-			if [[ -n "${GPG_PASS}" ]]; then
-				display_alert "Signing cache" "$display_name" "info"
-				echo "${GPG_PASS}" | sudo --preserve-env gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
+			if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
+				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
+				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 			fi
 			break
 		elif [[ -f ${cache_fname} ]]; then
@@ -175,6 +176,7 @@ create_rootfs_cache()
 
 		# speed up checking
 		if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+			touch $cache_fname.current
 			umount --lazy "$SDCARD"
 			rm -rf $SDCARD
 			# remove exit trap
@@ -385,9 +387,13 @@ create_rootfs_cache()
 			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
-		if [[ -n "${GPG_PASS}" ]]; then
-			echo "${GPG_PASS}" | sudo --preserve-env gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname} || exit 1
+		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
+			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
+			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
+
+		# needed for backend to keep current only
+		touch $cache_fname.current
 
 	fi
 
@@ -945,7 +951,13 @@ POST_UMOUNT_FINAL_IMAGE
 			cd ${DESTIMG}
 			if [[ -n $GPG_PASS ]]; then
 				display_alert "GPG signing" "${version}.img${compression_type}" "info"
-				echo "${GPG_PASS}" | sudo --preserve-env gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type} || exit 1
+				if [[ -n $SUDO_USER ]]; then
+					sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DESTIMG}"/
+					SUDO_PREFIX="sudo -H -u ${SUDO_USER}"
+				else
+					SUDO_PREFIX=""
+				fi
+				echo "${GPG_PASS}" | $SUDO_PREFIX bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${DESTIMG}/${version}.img${compression_type}" || exit 1
 			else
 				display_alert "GPG signing skipped - no GPG_PASS" "${version}.img" "wrn"
 			fi
