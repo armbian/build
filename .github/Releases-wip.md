@@ -4,5 +4,5 @@
   <br>
   <img src=https://raw.githubusercontent.com/armbian/.github/master/profile/progress.gif width=50>
   <br><br>
-  <a href="https://github.com/armbian/build/actions/workflows/build-images.yml">Build in progress</a></p>
+  <a href="https://github.com/armbian/build/actions">Build in progress</a></p>
 </p>
