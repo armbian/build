@@ -28,7 +28,7 @@ RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 # Available options for BOOT_SCENARIO are:
 # - only-blobs: proprietary rockchip ddrbin, miniloader and ATF
 # - spl-blobs: proprietary rockchip ddrin and ATF, but uses mainline u-boot SPL in place of rockchip miniloader
-# - tpl-spl-blob: uses a pre-made idbloader.img (ddrbin + miniloader) but mainline ATF
+# - tpl-spl-blob: uses mainline u-boot TPL and SPL with proprietary rockchip ATF blob
 # - tpl-blob-atf-mainline: proprietary rockchip ddrbin + mainline u-boot SPL + mainline ATF
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 
