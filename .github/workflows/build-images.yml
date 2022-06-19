@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: "30 2 */2 * *"
 
+  workflow_run:
+    workflows: ["Build train"]
+    types:
+      - completed
+
   workflow_dispatch:
 
     inputs:
@@ -41,8 +46,8 @@ on:
 jobs:
 
   Cancel:
+    if: ${{ github.repository_owner == 'Armbian' }}
     name: "Cancel currently active"
-    if: ${{ github.repository_owner == 'Armbian' && github.event.schedule == '' }}
     runs-on: small
     steps:
       - uses: n1hility/cancel-previous-runs@v2
@@ -50,14 +55,36 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   fake:
-
+    if: ${{ github.repository_owner == 'Armbian' }}
     runs-on: ubuntu-latest
     needs: [ Cancel ]
     name: Source changes
-    if: ${{ github.repository_owner == 'Armbian' }}
+    outputs:
+      changes: ${{steps.list_releases.outputs.changes}}
     steps:
       - run: |
           echo "not empty" > changes
+
+      - uses: actions/checkout@v3
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          fetch-depth: 1
+          path: build
+          clean: false
+          ref: nightly
+
+      - name: "Get latest release version"
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        id: list_releases
+        run: |
+
+          RELE=$(curl -ks https://api.github.com/repos/armbian/build/releases/latest ^| grep "browser_download_url" | grep -o -P '(?<=trunk.).*(?=_)' | cut -d"_" -f1 | sort | uniq)
+          SOUR=$(cat build/VERSION | cut -d"." -f4-4)
+          # skip if version in git is the same as at release
+          if [[ "$RELE" == "$SOUR" ]]; then
+              echo ::set-output name=changes::$(echo 'true')
+          fi
+
       - uses: actions/upload-artifact@v3
         with:
           path: changes
@@ -68,6 +95,7 @@ jobs:
   generaterelease:
 
     needs: [ fake ]
+    if: ${{ github.repository_owner == 'Armbian' && needs.fake.outputs.changes != 'true' }}
     runs-on: ubuntu-latest
     name: "Update latest release"
     steps:
@@ -83,6 +111,14 @@ jobs:
         if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
         with:
           fetch-depth: 1
+
+      - uses: dev-drprasad/delete-tag-and-release@v0.2.0
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          delete_release: true
+          tag_name: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: ncipollo/release-action@v1
         if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
