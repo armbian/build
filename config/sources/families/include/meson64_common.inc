@@ -24,7 +24,8 @@ case $BRANCH in
 	
 	legacy)
 		KERNELSOURCE='https://github.com/hardkernel/linux'
-		KERNELBRANCH='branch:odroidg12-4.9.y'
+		#KERNELBRANCH='branch:odroidg12-4.9.y'
+		KERNELBRANCH='tag:4.9.277-122'
 		KERNELDIR='linux-odroid'
 	;;
 
