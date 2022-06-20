@@ -1,0 +1,140 @@
+From 67f3e6eed945eaf2ce21e4d72c4fb8d6a677fa59 Mon Sep 17 00:00:00 2001
+From: Po Hao Huang <phhuang@realtek.com>
+Date: Wed, 8 Jun 2022 19:32:23 +0800
+Subject: [PATCH 535/538] rtw89: 8852c: add trigger frame counter
+
+Adding this allows us to maintain trigger frame statistics, which is
+required for our CFO tracking decisions.
+
+Signed-off-by: Po Hao Huang <phhuang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220608113224.11193-3-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.c  | 48 ++++++++++++++++++++++
+ drivers/net/wireless/realtek/rtw89/core.h  | 14 +++++++
+ drivers/net/wireless/realtek/rtw89/debug.c |  3 +-
+ 3 files changed, 64 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.c b/drivers/net/wireless/realtek/rtw89/core.c
+index 97731c7a3fd6..77738d72e3bb 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.c
++++ b/drivers/net/wireless/realtek/rtw89/core.c
+@@ -1343,6 +1343,47 @@ struct rtw89_vif_rx_stats_iter_data {
+ 	const u8 *bssid;
+ };
+ 
++static void rtw89_stats_trigger_frame(struct rtw89_dev *rtwdev,
++				      struct ieee80211_vif *vif,
++				      struct sk_buff *skb)
++{
++	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
++	struct ieee80211_trigger *tf = (struct ieee80211_trigger *)skb->data;
++	u8 *pos, *end, type;
++	u16 aid;
++
++	if (!ether_addr_equal(vif->bss_conf.bssid, tf->ta) ||
++	    rtwvif->wifi_role != RTW89_WIFI_ROLE_STATION ||
++	    rtwvif->net_type == RTW89_NET_TYPE_NO_LINK)
++		return;
++
++	type = le64_get_bits(tf->common_info, IEEE80211_TRIGGER_TYPE_MASK);
++	if (type != IEEE80211_TRIGGER_TYPE_BASIC)
++		return;
++
++	end = (u8 *)tf + skb->len;
++	pos = tf->variable;
++
++	while (end - pos >= RTW89_TF_BASIC_USER_INFO_SZ) {
++		aid = RTW89_GET_TF_USER_INFO_AID12(pos);
++		rtw89_debug(rtwdev, RTW89_DBG_TXRX,
++			    "[TF] aid: %d, ul_mcs: %d, rua: %d\n",
++			    aid, RTW89_GET_TF_USER_INFO_UL_MCS(pos),
++			    RTW89_GET_TF_USER_INFO_RUA(pos));
++
++		if (aid == RTW89_TF_PAD)
++			break;
++
++		if (aid == vif->bss_conf.aid) {
++			rtwvif->stats.rx_tf_acc++;
++			rtwdev->stats.rx_tf_acc++;
++			break;
++		}
++
++		pos += RTW89_TF_BASIC_USER_INFO_SZ;
++	}
++}
++
+ static void rtw89_vif_rx_stats_iter(void *data, u8 *mac,
+ 				    struct ieee80211_vif *vif)
+ {
+@@ -1355,6 +1396,11 @@ static void rtw89_vif_rx_stats_iter(void *data, u8 *mac,
+ 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
+ 	const u8 *bssid = iter_data->bssid;
+ 
++	if (ieee80211_is_trigger(hdr->frame_control)) {
++		rtw89_stats_trigger_frame(rtwdev, vif, skb);
++		return;
++	}
++
+ 	if (!ether_addr_equal(vif->bss_conf.bssid, bssid))
+ 		return;
+ 
+@@ -2023,6 +2069,8 @@ static bool rtw89_traffic_stats_calc(struct rtw89_dev *rtwdev,
+ 	stats->rx_unicast = 0;
+ 	stats->tx_cnt = 0;
+ 	stats->rx_cnt = 0;
++	stats->rx_tf_periodic = stats->rx_tf_acc;
++	stats->rx_tf_acc = 0;
+ 
+ 	if (tx_tfc_lv != stats->tx_tfc_lv || rx_tfc_lv != stats->rx_tfc_lv)
+ 		return true;
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index 71e66c7ac858..7660b10d5377 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -55,6 +55,16 @@ enum htc_om_channel_width {
+ #define RTW89_HTC_MASK_HTC_OM_DL_MU_MIMO_RR BIT(16)
+ #define RTW89_HTC_MASK_HTC_OM_UL_MU_DATA_DIS BIT(17)
+ 
++#define RTW89_TF_PAD GENMASK(11, 0)
++#define RTW89_TF_BASIC_USER_INFO_SZ 6
++
++#define RTW89_GET_TF_USER_INFO_AID12(data)	\
++	le32_get_bits(*((const __le32 *)(data)), GENMASK(11, 0))
++#define RTW89_GET_TF_USER_INFO_RUA(data)	\
++	le32_get_bits(*((const __le32 *)(data)), GENMASK(19, 12))
++#define RTW89_GET_TF_USER_INFO_UL_MCS(data)	\
++	le32_get_bits(*((const __le32 *)(data)), GENMASK(24, 21))
++
+ enum rtw89_subband {
+ 	RTW89_CH_2G = 0,
+ 	RTW89_CH_5G_BAND_1 = 1,
+@@ -943,6 +953,10 @@ struct rtw89_traffic_stats {
+ 	u32 rx_throughput;
+ 	u32 tx_throughput_raw;
+ 	u32 rx_throughput_raw;
++
++	u32 rx_tf_acc;
++	u32 rx_tf_periodic;
++
+ 	enum rtw89_tfc_lv tx_tfc_lv;
+ 	enum rtw89_tfc_lv rx_tfc_lv;
+ 	struct ewma_tp tx_ewma_tp;
+diff --git a/drivers/net/wireless/realtek/rtw89/debug.c b/drivers/net/wireless/realtek/rtw89/debug.c
+index 7820bc3ab3b4..f00f81916f2f 100644
+--- a/drivers/net/wireless/realtek/rtw89/debug.c
++++ b/drivers/net/wireless/realtek/rtw89/debug.c
+@@ -2376,7 +2376,8 @@ static int rtw89_debug_priv_phy_info_get(struct seq_file *m, void *v)
+ 	seq_printf(m, "TP TX: %u [%u] Mbps (lv: %d), RX: %u [%u] Mbps (lv: %d)\n",
+ 		   stats->tx_throughput, stats->tx_throughput_raw, stats->tx_tfc_lv,
+ 		   stats->rx_throughput, stats->rx_throughput_raw, stats->rx_tfc_lv);
+-	seq_printf(m, "Beacon: %u\n", pkt_stat->beacon_nr);
++	seq_printf(m, "Beacon: %u, TF: %u\n", pkt_stat->beacon_nr,
++		   stats->rx_tf_periodic);
+ 	seq_printf(m, "Avg packet length: TX=%u, RX=%u\n", stats->tx_avg_len,
+ 		   stats->rx_avg_len);
+ 
+-- 
+2.35.3
+
