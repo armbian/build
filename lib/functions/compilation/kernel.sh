@@ -95,26 +95,67 @@ function compile_kernel() {
 	return 0
 }
 
-function kernel_prepare_git() {
-	if [[ -n $KERNELSOURCE ]]; then
-		[[ -d "${kernel_work_dir}" ]] && cd "${kernel_work_dir}" && fasthash_debug "pre git, existing tree"
+function kernel_init_git_from_http_gitball() {
+	local kernel_git_dir="${1}"
 
-		display_alert "Downloading sources" "kernel" "git"
-
-		# Does not work well with rpi for example: GIT_WARM_REMOTE_SHALLOW_AT_TAG="v${KERNEL_MAJOR_MINOR}" \
-		# GIT_WARM_REMOTE_SHALLOW_AT_TAG sets GIT_WARM_REMOTE_SHALLOW_AT_DATE for you, as long as it is included by GIT_WARM_REMOTE_FETCH_TAGS
-		# GIT_WARM_REMOTE_SHALLOW_AT_DATE is the only one really used for making shallow
-
-		GIT_FIXED_WORKDIR="${LINUXSOURCEDIR}" \
-			GIT_WARM_REMOTE_NAME="kernel-stable-${KERNEL_MAJOR_MINOR}" \
-			GIT_WARM_REMOTE_URL="${MAINLINE_KERNEL_SOURCE}" \
-			GIT_WARM_REMOTE_BRANCH="linux-${KERNEL_MAJOR_MINOR}.y" \
-			GIT_WARM_REMOTE_FETCH_TAGS="v${KERNEL_MAJOR_MINOR}*" \
-			GIT_WARM_REMOTE_SHALLOW_AT_TAG="${KERNEL_MAJOR_SHALLOW_TAG}" \
-			GIT_WARM_REMOTE_BUNDLE="kernel-stable-${KERNEL_MAJOR_MINOR}" \
-			GIT_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL}" \
-			fetch_from_repo "$KERNELSOURCE" "unused:set via GIT_FIXED_WORKDIR" "$KERNELBRANCH" "yes"
+	local gitball_dir="${SRC}/cache/gitballs/kernel"
+	if [[ ! -d "${gitball_dir}" ]]; then
+		display_alert "Creating kernel git gitball cache dir" "${gitball_dir}" "info"
+		run_host_command_logged mkdir -pv "${gitball_dir}"
+		[[ -d "${SRC}/cache/gitbundles" ]] && run_host_command_logged rm -rf "${SRC}/cache/gitbundles" # remove old gitbundles dir. we won't be using those anymore; @TODO: remove this line in the future
 	fi
+
+	local gitball_file="${gitball_dir}/linux-${KERNEL_MAJOR_MINOR}.git.tar"
+	local gitball_url="https://github.com/armbian/gitutils/releases/download/latest/linux-${KERNEL_MAJOR_MINOR}.git.tar"
+
+	if [[ ! -f "${gitball_file}" ]]; then                                          # Download the gitball file if it does not exist.
+		display_alert "Downloading Git cold gitball via HTTP" "${gitball_url}" "info" # This gonna take a while. And waste bandwidth
+		run_host_command_logged wget --continue --progress=dot:giga --output-document="${gitball_file}.tmp" "${gitball_url}"
+		run_host_command_logged mv -v "${gitball_file}.tmp" "${gitball_file}"
+	else
+		display_alert "Cold gitball file exists, using it" "${gitball_file}" "git"
+	fi
+
+	# Extract the gitball file to the git directory. This will create '.git'
+	run_host_command_logged tar -xvf "${gitball_file}" -C "${kernel_git_dir}"
+
+	# Sanity check
+	regular_git branch -a --list --color
+}
+
+function kernel_prepare_git_pre_fetch() {
+	local remote_name="kernel-stable-${KERNEL_MAJOR_MINOR}"
+	local remote_url="${MAINLINE_KERNEL_SOURCE}"
+	local remote_tags_to_fetch="v${KERNEL_MAJOR_MINOR}*"
+
+	# shellcheck disable=SC2154 # do_add_origin is defined in fetch_from_repo, and this is hook for it, so it's in context.
+	if [[ "${do_add_origin}" == "yes" ]]; then
+		display_alert "Fetching mainline stable tags" "${remote_name} tags: ${remote_tags_to_fetch}" "git"
+		regular_git remote add "${remote_name}" "${remote_url}" # Add the remote to the warmup source
+
+		# Fetch the tags. This allows working -rcX versions of still-unreleased minor versions.
+		improved_git_fetch "${remote_name}" "'refs/tags/${remote_tags_to_fetch}:refs/tags/${remote_tags_to_fetch}'" || true # Fetch the remote branch tags
+		display_alert "After mainline stable tags, working copy size" "$(du -h -s | awk '{print $1}')" "git"                # Show size after bundle pull
+	fi
+}
+
+function kernel_prepare_git() {
+	[[ -z $KERNELSOURCE ]] && return 0 # do nothing if no kernel source... but again, why were we called then?
+
+	# LINUXSOURCEDIR has changed a lot, cleanup old incarnations if they exist
+	if [[ -d "${SRC}/cache/sources/kernel" ]]; then
+		display_alert "Cleaning up old kernel sources directory" "might take a while" "debug"
+		run_host_command_logged rm -rf "${SRC}/cache/sources/kernel"
+	fi
+
+	[[ -d "${kernel_work_dir}" ]] && cd "${kernel_work_dir}" && fasthash_debug "pre git, existing tree"
+
+	display_alert "Downloading sources" "kernel" "git"
+
+	GIT_FIXED_WORKDIR="${LINUXSOURCEDIR}" \
+		GIT_INIT_REPO_HOOK=kernel_init_git_from_http_gitball \
+		GIT_PRE_FETCH_HOOK=kernel_prepare_git_pre_fetch_tags \
+		fetch_from_repo "$KERNELSOURCE" "unused:set via GIT_FIXED_WORKDIR" "$KERNELBRANCH" "yes"
 }
 
 function kernel_maybe_clean() {
