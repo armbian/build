@@ -9,7 +9,6 @@ export LINUXFAMILY=sunxi
 export UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
 export ASOUND_STATE='asound.state.sunxi-next'
 export GOVERNOR=ondemand
-export KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 export KERNELPATCHDIR='sunxi-'$BRANCH
 
 case $BRANCH in
