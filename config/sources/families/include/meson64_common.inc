@@ -25,7 +25,8 @@ case $BRANCH in
 	legacy)
 		KERNELSOURCE='https://github.com/hardkernel/linux'
 		export KERNEL_MAJOR_MINOR="4.9" # Major and minor versions of this kernel. For mainline caching.
-		KERNELBRANCH='branch:odroidg12-4.9.y'
+		#KERNELBRANCH='branch:odroidg12-4.9.y'
+		KERNELBRANCH='tag:4.9.277-122'
 		;;
 
 	current)
