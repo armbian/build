@@ -8,7 +8,6 @@ export BOOTENV_FILE='sunxi.txt'
 export UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
 export BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 export LINUXFAMILY=sunxi64
-export KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
 export KERNELPATCHDIR='sunxi-'$BRANCH
 
 case $BRANCH in
