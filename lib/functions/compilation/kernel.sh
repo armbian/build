@@ -156,15 +156,37 @@ function kernel_patching() {
 	## - (optionally) execute modification against living tree (eg: apply a patch, copy a file, etc). only if `DO_MODIFY=yes`
 	## - (always) call mark_change_commit with the description of what was done and fasthash.
 	declare -i patch_minimum_target_mtime="${kernel_base_revision_mtime}"
+	declare -i series_conf_mtime="${patch_minimum_target_mtime}"
+	declare -i patch_dir_mtime="${patch_minimum_target_mtime}"
 	display_alert "patch_minimum_target_mtime:" "${patch_minimum_target_mtime}" "debug"
+
+	local patch_dir="${SRC}/patch/kernel/${KERNELPATCHDIR}"
+	local series_conf="${patch_dir}/series.conf"
+
+	# So the minimum date has to account for removed patches; if a patch was removed from disk, the only way to reflect that
+	# is by looking at the parent directory's mtime, which will have been bumped.
+	# So we take a look at the possible directories involved here (series.conf file, and ${KERNELPATCHDIR} dir itself)
+	# and bump up the minimum date if that is the case.
+	if [[ -f "${series_conf}" ]]; then
+		series_conf_mtime=$(get_file_modification_time "${series_conf}")
+		display_alert "series.conf mtime:" "${series_conf_mtime}" "debug"
+		patch_minimum_target_mtime=$((series_conf_mtime > patch_minimum_target_mtime ? series_conf_mtime : patch_minimum_target_mtime))
+		display_alert "patch_minimum_target_mtime after series.conf mtime:" "${patch_minimum_target_mtime}" "debug"
+	fi
+
+	if [[ -d "${patch_dir}" ]]; then
+		patch_dir_mtime=$(get_dir_modification_time "${patch_dir}")
+		display_alert "patch_dir mtime:" "${patch_dir_mtime}" "debug"
+		patch_minimum_target_mtime=$((patch_dir_mtime > patch_minimum_target_mtime ? patch_dir_mtime : patch_minimum_target_mtime))
+		display_alert "patch_minimum_target_mtime after patch_dir mtime:" "${patch_minimum_target_mtime}" "debug"
+	fi
 
 	initialize_fasthash "kernel" "${hash}" "${pre_patch_version}" "${kernel_work_dir}"
 	fasthash_debug "init"
 
 	# Apply a series of patches if a series file exists
-	local series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
-	if test -f "${series_conf}"; then
-		display_alert "series.conf file visible. Apply"
+	if [[ -f "${series_conf}" ]]; then
+		display_alert "series.conf exists. Apply"
 		fasthash_branch "patches-${KERNELPATCHDIR}-series.conf"
 		apply_patch_series "${kernel_work_dir}" "${series_conf}" # applies a series of patches, read from a file. calls process_patch_file
 	fi
