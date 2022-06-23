@@ -246,9 +246,9 @@ function kernel_config() {
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
 		run_kernel_make olddefconfig # @TODO: what is this? does it fuck up dates?
 	else
-		display_alert "Starting (interactive) kernel oldconfig" "${LINUXCONFIG}" "debug"
+		display_alert "Starting (non-interactive) kernel olddefconfig" "${LINUXCONFIG}" "debug"
 
-		run_kernel_make_dialog oldconfig
+		run_kernel_make olddefconfig
 
 		# No logging for this. this is UI piece
 		display_alert "Starting (interactive) kernel ${KERNEL_MENUCONFIG:-menuconfig}" "${LINUXCONFIG}" "debug"
