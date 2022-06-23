@@ -390,7 +390,7 @@ function kernel_build_and_package() {
 
 	display_alert "Building kernel" "${LINUXCONFIG} ${build_targets[*]}" "info"
 	fasthash_debug "build"
-	make_filter="| grep --line-buffered -v -e 'CC' -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \
+	make_filter="| grep --line-buffered -v -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \
 		do_with_ccache_statistics \
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}"
 	fasthash_debug "build"
