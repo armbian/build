@@ -312,7 +312,8 @@ function install_distribution_agnostic() {
 	# install kernel
 	[[ -n $KERNELSOURCE ]] && {
 		if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
-			VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | awk -F"-" '/Source:/{print $2}')
+			VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | grep "^ Source:" | sed -e 's/ Source: linux-//')
+			display_alert "Parsed kernel version from local package" "${VER}" "debug"
 
 			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
 			if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
@@ -329,6 +330,7 @@ function install_distribution_agnostic() {
 			VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
 			VER="${VER/-$LINUXFAMILY/}"
 			VER="${VER/linux-/}"
+			display_alert "Parsed kernel version from remote package" "${VER}" "debug"
 			if [[ "${ARCH}" != "amd64" && "${LINUXFAMILY}" != "media" ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
 				install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
 			fi
