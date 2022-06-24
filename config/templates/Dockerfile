@@ -3,7 +3,7 @@ FROM $BASE_IMAGE as armbian_builder
 ARG CUSTOM_PACKAGES='g++-11-arm-linux-gnueabihf libssl3'
 ENV CUSTOM_PACKAGES $CUSTOM_PACKAGES
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get -y install \
+RUN apt-get update && apt-get -y dist-upgrade && apt-get -y install \
        joe \
        software-properties-common \
        gnupg \
