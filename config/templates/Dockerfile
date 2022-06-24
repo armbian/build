@@ -21,7 +21,7 @@ RUN sh -c " \
         libc6-i386; \
     fi"
 RUN apt-get update \
-    && apt-get -y upgrade \
+    && apt-get -y dist-upgrade \
     && apt-get install -y --no-install-recommends \
        $CUSTOM_PACKAGES \
        acl \
