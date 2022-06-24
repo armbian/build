@@ -70,13 +70,42 @@ function compile_uboot_target() {
 	[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
 	[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
 
+	if [[ "${UBOOT_DEBUGGING}" == "yes" ]]; then
+		display_alert "Enabling u-boot debugging" "UBOOT_DEBUGGING=yes" "debug"
+
+		# Remove unsets...
+		cp .config .config.pre.debug
+		cat .config.pre.debug | grep -v -e "CONFIG_LOG is not set" -e "CONFIG_ERRNO_STR" > .config
+		rm .config.pre.debug
+
+		# 0 - emergency ; 1 - alert; 2 - critical; 3 - error; 4 - warning; 5 - note; 6 - info; 7 - debug; 8 - debug content; 9 - debug hardware I/O
+		cat <<- EXTRA_UBOOT_DEBUG_CONFIGS >> .config
+			CONFIG_LOG=y
+			CONFIG_LOG_MAX_LEVEL=7
+			CONFIG_LOG_DEFAULT_LEVEL=7
+			CONFIG_LOG_CONSOLE=y
+			CONFIG_SPL_LOG=y
+			CONFIG_SPL_LOG_MAX_LEVEL=6
+			CONFIG_SPL_LOG_CONSOLE=y
+			CONFIG_TPL_LOG=y
+			CONFIG_TPL_LOG_MAX_LEVEL=6
+			CONFIG_TPL_LOG_CONSOLE=y
+			# CONFIG_ERRNO_STR is not set
+		EXTRA_UBOOT_DEBUG_CONFIGS
+
+		run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+			make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\"" "KCFLAGS=-fdiagnostics-color=always"
+
+	fi
+
 	# workaround when two compilers are needed
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
-	KCFLAGS="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation" \
+	CFLAGS="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation" \
+		KCFLAGS="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation" \
 		run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		make "$target_make" "$CTHREADS" "${cross_compile}"
 
