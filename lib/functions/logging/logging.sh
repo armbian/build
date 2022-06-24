@@ -278,39 +278,49 @@ function logging_echo_prefix_for_pv() {
 
 }
 
-# Cleanup for logging.
-function trap_handler_cleanup_logging() {
-	[[ ! -d "${LOGDIR}" ]] && return 0
+# Export logs in plain format.
+function export_ansi_logs() {
+	display_alert "Preparing ANSI log from" "${LOGDIR}" "debug"
 
-	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode.
-	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
-		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY}" "debug"
-		rm -rf --one-file-system "${LOGDIR}"
-		return 0
-	fi
+	cat <<- ANSI_HEADER > "${target_file}"
+		# Armbian logs for ${ARMBIAN_BUILD_UUID}
+		# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
+		----------------------------------------------------------------------------------------------------------------
+		# ARGs: {ARMBIAN_ORIGINAL_ARGV[@]@Q}
+		----------------------------------------------------------------------------------------------------------------
+		# Last revision:
+		$(git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate)
+		----------------------------------------------------------------------------------------------------------------
+		# Git status:
+		$(git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status)
+		----------------------------------------------------------------------------------------------------------------
+		# Git changes:
+		$(git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color)
+		----------------------------------------------------------------------------------------------------------------
+	ANSI_HEADER
 
-	local target_path="${DEST}/logs"
-	mkdir -p "${target_path}"
-	local target_file="${target_path}/armbian-logs-${ARMBIAN_BUILD_UUID}.html"
+	# Find and sort the files there, store in array one per logfile
+	declare -a logfiles_array
+	mapfile -t logfiles_array < <(find "${LOGDIR}" -type f | LC_ALL=C sort -h)
 
-	# Before writing new logfile, compress and move existing ones to archive folder. Unless running under CI.
-	if [[ "${CI}" != "true" ]]; then
-		declare -a existing_log_files_array
-		mapfile -t existing_log_files_array < <(find "${target_path}" -maxdepth 1 -type f -name "armbian-logs-*.html")
-		declare one_old_logfile old_logfile_fn target_archive_path="${target_path}"/archive
-		for one_old_logfile in "${existing_log_files_array[@]}"; do
-			old_logfile_fn="$(basename "${one_old_logfile}")"
-			display_alert "Archiving old logfile" "${old_logfile_fn}" "debug"
-			mkdir -p "${target_archive_path}"
-			# shellcheck disable=SC2002 # my cat is not useless. a bit whiny. not useless.
-			zstdmt --quiet "${one_old_logfile}" -o "${target_archive_path}/${old_logfile_fn}.zst"
-			rm -f "${one_old_logfile}"
-		done
-	fi
+	for logfile_full in "${logfiles_array[@]}"; do
+		local logfile_base="$(basename "${logfile_full}")"
+		cat <<- ANSI_ONE_LOGFILE_NO_CCZE >> "${target_file}"
+			------------------------------------------------------------------------------------------------------------
+			## ${logfile_base}
+			$(cat "${logfile_full}")
+			------------------------------------------------------------------------------------------------------------
+		ANSI_ONE_LOGFILE_NO_CCZE
+	done
 
+	display_alert "Built ANSI log file" "${target_file}"
+}
+
+# Export logs in HTML format. (EXPORT_HTML_LOG=yes) -- very slow.
+function export_html_logs() {
 	display_alert "Preparing HTML log from" "${LOGDIR}" "debug"
 
-	cat <<- HTML_HEADER > "${target_file}"
+	cat <<- ANSI_HEADER > "${target_file}"
 		<html>
 			<head>
 			<title>Armbian logs for ${ARMBIAN_BUILD_UUID}</title>
@@ -333,7 +343,7 @@ function trap_handler_cleanup_logging() {
 			$(git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color | ansi2html --no-wrap --no-header)
 			<hr/>
 
-	HTML_HEADER
+	ANSI_HEADER
 
 	# Find and sort the files there, store in array one per logfile
 	declare -a logfiles_array
@@ -350,10 +360,10 @@ function trap_handler_cleanup_logging() {
 				<hr/>
 			HTML_ONE_LOGFILE_WITH_CCZE
 		else
-			cat <<- HTML_ONE_LOGFILE_NO_CCZE >> "${target_file}"
+			cat <<- ANSI_ONE_LOGFILE_NO_CCZE >> "${target_file}"
 				<h3>${logfile_base}</h3>
 				<pre>$(cat "${logfile_full}")</pre>
-			HTML_ONE_LOGFILE_NO_CCZE
+			ANSI_ONE_LOGFILE_NO_CCZE
 		fi
 	done
 
@@ -361,6 +371,45 @@ function trap_handler_cleanup_logging() {
 		</body></html>
 	HTML_FOOTER
 
+	display_alert "Built HTML log file" "${target_file}"
+}
+
+# Cleanup for logging.
+function trap_handler_cleanup_logging() {
+	[[ ! -d "${LOGDIR}" ]] && return 0
+
+	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode.
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
+		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY}" "debug"
+		rm -rf --one-file-system "${LOGDIR}"
+		return 0
+	fi
+
+	local target_path="${DEST}/logs"
+	mkdir -p "${target_path}"
+
+	# Before writing new logfile, compress and move existing ones to archive folder. Unless running under CI.
+	if [[ "${CI}" != "true" ]]; then
+		declare -a existing_log_files_array
+		mapfile -t existing_log_files_array < <(find "${target_path}" -maxdepth 1 -type f -name "armbian-logs-*.*")
+		declare one_old_logfile old_logfile_fn target_archive_path="${target_path}"/archive
+		for one_old_logfile in "${existing_log_files_array[@]}"; do
+			old_logfile_fn="$(basename "${one_old_logfile}")"
+			display_alert "Archiving old logfile" "${old_logfile_fn}" "debug"
+			mkdir -p "${target_archive_path}"
+			# shellcheck disable=SC2002 # my cat is not useless. a bit whiny. not useless.
+			zstdmt --quiet "${one_old_logfile}" -o "${target_archive_path}/${old_logfile_fn}.zst"
+			rm -f "${one_old_logfile}"
+		done
+	fi
+
+	if [[ "${EXPORT_HTML_LOG}" == "yes" ]]; then
+		local target_file="${target_path}/armbian-logs-${ARMBIAN_BUILD_UUID}.html"
+		export_html_logs
+	fi
+
+	local target_file="${target_path}/armbian-logs-ansi-${ARMBIAN_BUILD_UUID}.txt.log"
+	export_ansi_logs
+
 	rm -rf --one-file-system "${LOGDIR}"
-	display_alert "Build log file" "${target_file}"
 }
