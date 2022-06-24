@@ -35,8 +35,8 @@ case $BRANCH in
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.17.y'
-		KERNELBRANCH="tag:v5.19-rc2"
+		KERNELBRANCH='branch:linux-5.19.y' # @TODO: Not yet released, using tag below
+		KERNELBRANCH="tag:v5.19-rc3"
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
@@ -313,7 +313,7 @@ family_tweaks_bsp()
 }
 
 # This is an extension method, put directly in meson64_common. A "built-in" extension if you will.
-# If used in more than one place, it could be moved to an extension: enable_extension "amlogic-fip-tools" 
+# If used in more than one place, it could be moved to an extension: enable_extension "amlogic-fip-tools"
 function fetch_sources_tools__amlogic_fip() {
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 	fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
