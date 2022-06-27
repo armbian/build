@@ -11,14 +11,8 @@ function maybe_make_clean_uboot() {
 }
 
 # this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
+# also receives uboot_prefix, target_make, target_patchdir, target_files as input
 function compile_uboot_target() {
-	local uboot_prefix="{u-boot:${uboot_target_counter}} "
-
-	local target_make target_patchdir target_files
-	target_make=$(cut -d';' -f1 <<< "${target}")
-	target_patchdir=$(cut -d';' -f2 <<< "${target}")
-	target_files=$(cut -d';' -f3 <<< "${target}")
-
 	# needed for multiple targets and for calling compile_uboot directly
 	display_alert "${uboot_prefix} Checking out to clean sources" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q HEAD # @TODO: this assumes way too much. should call the wrapper again, not directly
@@ -112,6 +106,42 @@ function compile_uboot_target() {
 		uboot_custom_postprocess
 	fi
 
+	# Hook time, for extra post-processing
+	display_alert "Extensions: post_uboot_custom_postprocess" "post_uboot_custom_postprocess" "debug"
+	call_extension_method "post_uboot_custom_postprocess" <<- 'POST_UBOOT_CUSTOM_POSTPROCESS'
+		*allow extensions to do extra u-boot postprocessing, after uboot_custom_postprocess*
+		For hacking at the produced binaries after u-boot is compiled and post-processed.
+	POST_UBOOT_CUSTOM_POSTPROCESS
+
+	deploy_built_uboot_bins_for_one_target_to_packaging_area # copy according to the target_files
+
+	display_alert "${uboot_prefix}Done with u-boot target" "${version} ${target_make}"
+	return 0
+}
+
+function loop_over_uboot_targets_and_do() {
+	# Try very hard, to fault even, to avoid using subshells while reading a newline-delimited string.
+	# Sorry for the juggling with IFS.
+	local _old_ifs="${IFS}" _new_ifs=$'\n' uboot_target_counter=1
+	IFS="${_new_ifs}" # split on newlines only
+	for target in ${UBOOT_TARGET_MAP}; do
+		IFS="${_old_ifs}" # restore for the body of loop
+		declare -g target uboot_name uboottempdir toolchain version
+		declare -g uboot_prefix="{u-boot:${uboot_target_counter}} "
+		declare -g target_make target_patchdir target_files
+		target_make=$(cut -d';' -f1 <<< "${target}")
+		target_patchdir=$(cut -d';' -f2 <<< "${target}")
+		target_files=$(cut -d';' -f3 <<< "${target}")
+		# Invoke our parameters directly
+		"$@"
+		# Increment the counter
+		uboot_target_counter=$((uboot_target_counter + 1))
+		IFS="${_new_ifs}" # split on newlines only for rest of loop
+	done
+	IFS="${_old_ifs}"
+}
+
+function deploy_built_uboot_bins_for_one_target_to_packaging_area() {
 	display_alert "${uboot_prefix}Preparing u-boot targets packaging" "${version} ${target_make}"
 	# copy files to build directory
 	for f in $target_files; do
@@ -129,9 +159,6 @@ function compile_uboot_target() {
 		run_host_command_logged cp -v "${f_src}" "${uboottempdir}/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
 		#display_alert "Done with binary target" "${version} ${target_make} :: ${f_dst}"
 	done
-
-	display_alert "${uboot_prefix}Done with u-boot target" "${version} ${target_make}"
-	return 0
 }
 
 compile_uboot() {
@@ -202,18 +229,7 @@ compile_uboot() {
 	BUILD_CUSTOM_UBOOT
 
 	if [[ "${EXTENSION_BUILT_UBOOT}" != "yes" ]]; then
-		# Try very hard, to fault even, to avoid using subshells while reading a newline-delimited string.
-		# Sorry for the juggling with IFS.
-		local _old_ifs="${IFS}" _new_ifs=$'\n' uboot_target_counter=1
-		IFS="${_new_ifs}" # split on newlines only
-		for target in ${UBOOT_TARGET_MAP}; do
-			IFS="${_old_ifs}" # restore for the body of loop
-			export target uboot_name uboottempdir toolchain version uboot_target_counter
-			compile_uboot_target
-			uboot_target_counter=$((uboot_target_counter + 1))
-			IFS="${_new_ifs}" # split on newlines only for rest of loop
-		done
-		IFS="${_old_ifs}"
+		loop_over_uboot_targets_and_do compile_uboot_target
 	else
 		display_alert "Extensions: custom uboot built by extension" "not building regular uboot" "debug"
 	fi
