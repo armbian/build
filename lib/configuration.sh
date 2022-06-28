@@ -29,7 +29,13 @@ HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=20
+
+# if variable not provided, check which is current version in the cache storage
+if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
+	ROOTFSCACHE_VERSION=$(wget --tries=10 -O - -o /dev/null https://github.com/armbian/mirror/releases/download/rootfs/rootfscache.version || true)
+	ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-"0"}
+fi
+
 [[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
