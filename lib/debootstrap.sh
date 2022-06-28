@@ -128,8 +128,9 @@ create_rootfs_cache()
 	# seek last cache, proceed to previous otherwise build it
 	for ((n=0;n<${cycles};n++)); do
 
-		[[ -z ${FORCED_MONTH_OFFSET} ]] && FORCED_MONTH_OFFSET=${n}
-		local packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
+		FORCED_MONTH_OFFSET=${n}
+
+		local packages_hash=$(get_package_list_hash "$(date -d "$D -${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
 		local cache_type="cli"
 		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
 		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
@@ -164,6 +165,7 @@ create_rootfs_cache()
 		else
 			display_alert "searching on servers"
 			download_and_verify "_rootfs" "$cache_name"
+			[[ -f ${cache_fname} ]] && break
 		fi
 
 		if [[ ! -f $cache_fname ]]; then
