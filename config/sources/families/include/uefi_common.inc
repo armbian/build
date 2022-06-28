@@ -22,7 +22,7 @@ current)
 edge)
 	export DISTRO_GENERIC_KERNEL=no
 	export LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-	export KERNELBRANCH="branch:linux-5.18.y"
+	export KERNELBRANCH="branch:linux-5.19.y"
 	export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 	export KERNELDIR="linux-uefi-${LINUXFAMILY}"          # Avoid sharing a source tree with others, until we know it's safe.
 	;;
