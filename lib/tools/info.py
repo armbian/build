@@ -6,15 +6,12 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 
 def eprint(*args, **kwargs):
 	print(*args, file=sys.stderr, **kwargs)
-
-
-def armbian_value_parse_list(item_value):
-	return item_value.split()
 
 
 def get_all_boards_list_from_armbian(src_path):
@@ -27,11 +24,24 @@ def get_all_boards_list_from_armbian(src_path):
 	return ret
 
 
-def armbian_value_parse_newline_map(item_value):
+# replace occurences of path_to_compile_sh in value with "${SRC}"
+def armbian_value_parse_simple(value, armbian_src_path):
+	return value.replace(armbian_src_path, "${SRC}")
+
+
+def armbian_value_parse_list(item_value, delimiter, armbian_src_path):
+	# return map(lambda x: armbian_value_parse_simple(x, armbian_src_path), item_value.split())
+	ret = []
+	for item in item_value.split(delimiter):
+		ret.append(armbian_value_parse_simple(item, armbian_src_path))
+	return ret
+
+
+def armbian_value_parse_newline_map(item_value, armbian_src_path):
 	lines = item_value.split("\n")
 	ret = []
 	for line in lines:
-		ret.append(line.split(";"))
+		ret.append(armbian_value_parse_list(line, ":", armbian_src_path))
 	return ret
 
 
@@ -42,7 +52,7 @@ def map_to_armbian_params(map_params):
 	return ret
 
 
-def run_armbian_compile_and_parse(path_to_compile_sh, compile_params):
+def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_params):
 	exec_cmd = ([path_to_compile_sh] + map_to_armbian_params(compile_params))
 	result = None
 	logs = ["Not available"]
@@ -67,9 +77,10 @@ def run_armbian_compile_and_parse(path_to_compile_sh, compile_params):
 
 	if result is not None:
 		if result.stderr:
-			logs = result.stderr.split("\n")
+			# parse list, split by newline, remove armbian_src_path
+			logs = armbian_value_parse_list(result.stderr, "\n", armbian_src_path)
 
-	# Now parse it with regex-power!
+		# Now parse it with regex-power!
 	# regex = r"^declare (..) (.*?)=\"(.*?)\"$" # old multiline version
 	regex = r"declare (..) (.*?)=\"(.*?)\""
 	test_str = result.stdout
@@ -82,9 +93,11 @@ def run_armbian_compile_and_parse(path_to_compile_sh, compile_params):
 		value = match.group(3)
 
 		if ("_LIST" in key) or ("_DIRS" in key):
-			value = armbian_value_parse_list(value)
+			value = armbian_value_parse_list(value, " ", armbian_src_path)
 		elif "_TARGET_MAP" in key:
-			value = armbian_value_parse_newline_map(value)
+			value = armbian_value_parse_newline_map(value, armbian_src_path)
+		else:
+			value = armbian_value_parse_simple(value, armbian_src_path)
 
 		all_keys[key] = value
 
@@ -156,12 +169,14 @@ def get_info_for_one_board(board_file, board_name, common_params, board_info):
 
 	# eprint("Running Armbian bash for board '{}'".format(board_name))
 	try:
-		parsed = run_armbian_compile_and_parse(compile_sh_full_path, common_params | {"BOARD": board_name})
+		parsed = run_armbian_compile_and_parse(compile_sh_full_path, armbian_src_path,
+						       common_params | {"BOARD": board_name})
 		# print(json.dumps(parsed, indent=4, sort_keys=True))
 		return parsed | board_info
-	except:
-		eprint("Failed get info for board '{}'".format(board_name))
-		return board_info | {"ARMBIAN_CONFIG_OK": False}
+	except BaseException as e:
+		eprint("Failed get info for board '{}': '{}'".format(board_name, e))
+		traceback.print_exc()
+		return board_info | {"ARMBIAN_CONFIG_OK": False, "PYTHON_INFO_ERROR": "{}".format(e)}
 
 
 if True:
