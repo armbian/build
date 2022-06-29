@@ -32,7 +32,14 @@ function do_main_configuration() {
 	[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 	[[ -z $HOST ]] && HOST="$BOARD"                         # set hostname to the board
 	cd "${SRC}" || exit
-	[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=20
+
+	# if variable not provided, check which is current version in the cache storage
+	if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
+		display_alert "ROOTFSCACHE_VERSION not set, getting remotely" "https://github.com/armbian/mirror/releases/download/rootfs/rootfscache.version" "warn"
+		ROOTFSCACHE_VERSION=$(wget --tries=10 -O - -o /dev/null https://github.com/armbian/mirror/releases/download/rootfs/rootfscache.version || true)
+		ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-"0"}
+	fi
+
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote | grep origin)")
 	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty)

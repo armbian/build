@@ -9,9 +9,10 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 	# seek last cache, proceed to previous otherwise build it
 	for ((n = 0; n < cycles; n++)); do
 
-		[[ -z ${FORCED_MONTH_OFFSET} ]] && FORCED_MONTH_OFFSET=${n}
+		FORCED_MONTH_OFFSET=${n}
+
 		local packages_hash
-		packages_hash=$(get_package_list_hash "$(date -d "$D +${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
+		packages_hash=$(get_package_list_hash "$(date -d "$D -${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
 
 		local cache_type="cli"
 		[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
@@ -33,7 +34,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		display_alert "Checking local cache" "$display_name" "info"
 
 		if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			touch "${cache_fname}.current"
+			echo "$cache_fname" > $cache_fname.current
 			display_alert "Checking cache integrity" "$display_name" "info"
 
 			sudo zstd -tqq "${cache_fname}" || {
@@ -52,6 +53,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		else
 			display_alert "searching on servers"
 			download_and_verify "_rootfs" "$cache_name"
+			[[ -f ${cache_fname} ]] && break
 		fi
 
 		if [[ ! -f $cache_fname ]]; then
@@ -64,7 +66,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 
 		# speed up checking
 		if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			touch $cache_fname.current
+			echo "$cache_fname" > $cache_fname.current
 			umount --lazy "$SDCARD"
 			rm -rf $SDCARD
 			# remove exit trap
@@ -85,7 +87,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		create_new_rootfs_cache
 
 		# needed for backend to keep current only
-		touch "${cache_fname}.current"
+		echo "$cache_fname" > $cache_fname.current
 
 	fi
 

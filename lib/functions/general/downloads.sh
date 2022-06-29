@@ -1,17 +1,22 @@
 function webseed() {
+
 	# list of mirrors that host our files
 	unset text
-	# Hardcoded to EU mirrors since
 	local CCODE=$(curl -s redirect.armbian.com/geoip | jq '.continent.code' -r)
-	WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
+
+	if [[ "$2" == "rootfs" ]]; then
+		WEBSEED=($(curl -s ${1}mirrors | jq -r '.'${CCODE}' | .[] | values'))
+	else
+		WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
+	fi
+
 	# remove dead mirrors to suppress download errors
-	FILE=".control"
 	while read -r line; do
 		REMOVE=$(echo $line | egrep -o 'https?://[^ ]+/')
 		WEBSEED=("${WEBSEED[@]/$REMOVE/}")
 	done < <(
 		for k in ${WEBSEED[@]}; do
-			echo "$k$FILE"
+			echo "$k$2/$3"
 		done | parallel --halt soon,fail=10 --jobs 32 wget -q --spider --timeout=15 --tries=4 --retry-connrefused {} 2>&1 > /dev/null
 	)
 
@@ -26,8 +31,9 @@ function webseed() {
 			https://mirrors.bfsu.edu.cn/armbian-releases/
 		)
 	fi
+
 	for toolchain in ${WEBSEED[@]}; do
-		text="${text} ${toolchain}${1}"
+		text="${text} ${toolchain}"$2/"${3}"
 	done
 	text="${text:1}"
 	echo "${text}"
