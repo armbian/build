@@ -6,6 +6,13 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		local cycles=2
 	fi
 
+	# if variable not provided, check which is current version in the cache storage in GitHub.
+	if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
+		display_alert "ROOTFSCACHE_VERSION not set, getting remotely" "https://github.com/armbian/mirror/releases/download/rootfs/rootfscache.version" "debug"
+		ROOTFSCACHE_VERSION=$(wget --tries=10 -O - -o /dev/null https://github.com/armbian/mirror/releases/download/rootfs/rootfscache.version || true)
+		ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-"0"}
+	fi
+
 	# seek last cache, proceed to previous otherwise build it
 	for ((n = 0; n < cycles; n++)); do
 
