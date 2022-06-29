@@ -25,6 +25,26 @@ prepare_host() {
 
 	export LC_ALL="en_US.UTF-8"
 
+	# don't use mirrors that throws garbage on 404
+	if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+		display_alert "Determining best Armbian mirror to use" "via redirector" "debug"
+		declare -i armbian_mirror_tries=1
+		while true; do
+			display_alert "Obtaining Armbian mirror" "via https://redirect.armbian.com" "debug"
+			ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
+			if [[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]]; then # @TODO: hosthatch is not good enough. Why?
+				display_alert "Obtained Armbian mirror OK" "${ARMBIAN_MIRROR}" "debug"
+				break
+			else
+				display_alert "Obtained Armbian mirror is invalid, retrying..." "${ARMBIAN_MIRROR}" "debug"
+			fi
+			armbian_mirror_tries=$((armbian_mirror_tries + 1))
+			if [[ $armbian_mirror_tries -ge 5 ]]; then
+				exit_with_error "Unable to obtain ARMBIAN_MIRROR after ${armbian_mirror_tries} tries. Please set ARMBIAN_MIRROR to a valid mirror manually, or avoid the automatic mirror selection by setting SKIP_ARMBIAN_REPO=yes"
+			fi
+		done
+	fi
+
 	# packages list for host
 	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
 	declare -a host_dependencies=(
