@@ -1,18 +1,26 @@
 # check_loop_device <device_node>
 #
-check_loop_device() {
+function check_loop_device() {
+	do_with_retries 5 check_loop_device_internal "${@}" || {
+		exit_with_error "Device node ${device} does not exist after 5 tries."
+	}
+	return 0 # shortcircuit above
+}
 
+function check_loop_device_internal() {
 	local device=$1
-	#display_alert "Checking look device" "${device}" "wrn"
+	display_alert "Checking look device" "${device}" "debug"
 	if [[ ! -b $device ]]; then
 		if [[ $CONTAINER_COMPAT == yes && -b /tmp/$device ]]; then
 			display_alert "Creating device node" "$device"
 			mknod -m0660 "${device}" b "0x$(stat -c '%t' "/tmp/$device")" "0x$(stat -c '%T' "/tmp/$device")"
+			return 1 # fail, it will be retried, and should exist on next retry.
 		else
-			exit_with_error "Device node $device does not exist"
+			display_alert "Device node does not exist yet" "$device" "debug"
+			return 1
 		fi
 	fi
-
+	return 0
 }
 
 #
