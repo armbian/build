@@ -155,7 +155,14 @@ function prepare_and_config_main_build_single() {
 			exit_with_error "Kernel series unsupported" "'${KERNEL_MAJOR_MINOR}' is unsupported, or bad config"
 		fi
 
+		# Default LINUXSOURCEDIR:
 		export LINUXSOURCEDIR="linux-kernel/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}/${ARCH}"
+
+		# Allow adding to it with KERNEL_EXTRA_DIR
+		if [[ "${KERNEL_EXTRA_DIR}" != "" ]]; then
+			export LINUXSOURCEDIR="linux-kernel/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}_${KERNEL_EXTRA_DIR}/${ARCH}"
+			display_alert "Using kernel extra dir: '${KERNEL_EXTRA_DIR}'" "LINUXSOURCEDIR: ${LINUXSOURCEDIR}" "debug"
+		fi
 	else
 		export KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
 		export ARMBIAN_WILL_BUILD_KERNEL=no
