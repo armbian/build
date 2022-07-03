@@ -359,6 +359,10 @@ create_rootfs_cache()
 		# stage: remove downloaded packages
 		chroot $SDCARD /bin/bash -c "apt-get -y autoremove; apt-get clean"
 
+                # stage: remove downloaded packages
+                chroot $SDCARD /bin/bash -c "dpkg -l | awk '/^ii/ { print $2 }' | xargs debsums | grep -vE 'OK$'"
+echo $?
+
 		# DEBUG: print free space
 		local freespace=$(LC_ALL=C df -h)
 		echo $freespace >> $DEST/${LOG_SUBPATH}/debootstrap.log
