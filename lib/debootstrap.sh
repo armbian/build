@@ -363,7 +363,6 @@ create_rootfs_cache()
 		display_alert "Check md5 sum of installed packages" "info"
 		eval "LC_ALL=C LANG=C sudo chroot $SDCARD /bin/bash -e -c 'dpkg-query -f "'\${binary:Package}\\n'" -W | xargs debsums'" \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} \
-			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Installing Armbian desktop packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
 		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "MD5 sums of installed Debian packages failed"
