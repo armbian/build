@@ -17,5 +17,6 @@ function custom_kernel_config_post_defconfig__apply_localmodconfig() {
 	if [[ "a${KERNEL_CONFIG_FROM_LSMOD}a" != "aa" ]]; then
 		local lsmod_file="${SRC}/userpatches/lsmod/${KERNEL_CONFIG_FROM_LSMOD}.lsmod"
 		run_kernel_make "LSMOD=${lsmod_file}" localmodconfig
+		kernel_config_mtime=$(get_file_modification_time ".config") # capture the mtime of the config file after the localmodconfig
 	fi
 }
