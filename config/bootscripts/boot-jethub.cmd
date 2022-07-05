@@ -54,13 +54,23 @@ load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
 
-if test "$board" = "jethub-j110"; then
-
-	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/jethub-d1plus.dtbo; then
-		echo "Applying kernel provided DT overlay for JetHub D1P device"
-		fdt apply ${scriptaddr} || setenv overlay_error "true"
-	fi
-fi
+echo "Checking board setup"
+if test "$board" = "jethub-j100"; then
+  if test "$hwrev" = "04"; then
+    if test "$perev" = "01"; then
+      if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/jethub-d1plus.dtbo; then
+        echo "Applying kernel provided DT overlay for JetHub D1P 04:01 device"
+        fdt apply ${scriptaddr} || setenv overlay_error "true"
+      fi;
+    fi;
+    if test "$perev" = "02"; then
+      if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/jethub-d1plus-w1.dtbo; then
+        echo "Applying kernel provided DT overlay for JetHub D1P 04:02 device"
+        fdt apply ${scriptaddr} || setenv overlay_error "true"
+      fi;
+    fi;
+  fi;
+fi;
 
 for overlay_file in ${overlays}; do
 	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
