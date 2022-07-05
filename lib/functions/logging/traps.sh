@@ -80,6 +80,7 @@ function run_cleanup_handlers() {
 		display_alert "Cleaning up" "please wait for cleanups to finish" "debug"
 	fi
 	# Loop over the handlers, execute one by one. Ignore errors.
+	# IMPORTANT: cleanups are added first to the list, so cleanups run in the reverse order they were added.
 	local one_cleanup_handler
 	for one_cleanup_handler in "${trap_manager_cleanup_handlers[@]}"; do
 		display_alert "Running cleanup handler" "${one_cleanup_handler}" "debug"
@@ -93,13 +94,23 @@ function run_cleanup_handlers() {
 function add_cleanup_handler() {
 	local callback="$1"
 	display_alert "Add callback as cleanup handler" "${callback}" "cleanup"
-	trap_manager_cleanup_handlers+=("$callback")
+	# IMPORTANT: cleanups are added first to the list, so they're executed in reverse order.
+	trap_manager_cleanup_handlers=("${callback}" "${trap_manager_cleanup_handlers[@]}")
 }
 
 function execute_and_remove_cleanup_handler() {
 	local callback="$1"
 	display_alert "Execute and remove cleanup handler" "${callback}" "cleanup"
-	# @TODO implement!
+	# @TODO implement! loop over the list of cleanups; run the one that matches the callback; remove it from the list.
+	local remaning_cleanups=()
+	for one_cleanup_handler in "${trap_manager_cleanup_handlers[@]}"; do
+		if [[ "${one_cleanup_handler}" != "${callback}" ]]; then
+			remaning_cleanups+=("${one_cleanup_handler}")
+		else
+			"${one_cleanup_handler}" || true
+		fi
+	done
+	trap_manager_cleanup_handlers=("${remaning_cleanups[@]}")
 }
 
 function remove_all_trap_handlers() {
