@@ -1,5 +1,4 @@
 # cleaning <target>
-#
 
 # target: what to clean
 # "make-atf" = make clean for ATF, if it is built.
@@ -15,7 +14,7 @@
 # "sources" = delete "./sources"
 # "oldcache" = remove old cached rootfs except for the newest 8 files
 
-general_cleaning() {
+function general_cleaning() {
 	case $1 in
 		debs) # delete ${DEB_STORAGE} for current branch and family
 			if [[ -d "${DEB_STORAGE}" ]]; then
@@ -79,5 +78,11 @@ general_cleaning() {
 				)
 			fi
 			;;
+
+		*)
+			display_alert "Unknown clean level" "Unknown clean level '${1}'" "warn"
+			;;
 	esac
+
+	return 0 # a LOT of shortcircuits above; prevent spurious error messages
 }
