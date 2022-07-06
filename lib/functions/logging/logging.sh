@@ -286,16 +286,16 @@ function export_ansi_logs() {
 		# Armbian logs for ${ARMBIAN_BUILD_UUID}
 		# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
 		----------------------------------------------------------------------------------------------------------------
-		# ARGs: {ARMBIAN_ORIGINAL_ARGV[@]@Q}
+		# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}
 		----------------------------------------------------------------------------------------------------------------
 		# Last revision:
-		$(git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate)
+		$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate)
 		----------------------------------------------------------------------------------------------------------------
 		# Git status:
-		$(git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status)
+		$(LC_ALL=C LANG=C git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status)
 		----------------------------------------------------------------------------------------------------------------
 		# Git changes:
-		$(git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color)
+		$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color)
 		----------------------------------------------------------------------------------------------------------------
 	ANSI_HEADER
 
@@ -334,13 +334,13 @@ function export_html_logs() {
 			<h2>${ARMBIAN_ORIGINAL_ARGV[@]@Q}</h2>
 			<hr/>
 
-			$(git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate | ansi2html --no-wrap --no-header)
+			$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate | ansi2html --no-wrap --no-header)
 			<hr/>
 
-			$(git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status | ansi2html --no-wrap --no-header)
+			$(LC_ALL=C LANG=C git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status | ansi2html --no-wrap --no-header)
 			<hr/>
 
-			$(git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color | ansi2html --no-wrap --no-header)
+			$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color | ansi2html --no-wrap --no-header)
 			<hr/>
 
 	ANSI_HEADER
