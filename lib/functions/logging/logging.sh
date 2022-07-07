@@ -378,6 +378,9 @@ function export_html_logs() {
 function trap_handler_cleanup_logging() {
 	[[ ! -d "${LOGDIR}" ]] && return 0
 
+	# `pwd` might not even be valid anymore. Move back to ${SRC}
+	cd "${SRC}" || exit_with_error "cray-cray about SRC: ${SRC}"
+
 	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode.
 	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
 		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY}" "debug"
