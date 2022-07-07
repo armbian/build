@@ -485,6 +485,9 @@ CUSTOM_KERNEL_CONFIG
 		fi
 	fi
 
+	# kernel package name extension
+	NAME_EXTENSION="${NAME_EXTENSION:-${BRANCH}-$LINUXFAMILY}"
+
 	# create linux-source package - with already patched sources
 	# We will build this package first and clear the memory.
 	if [[ $BUILD_KSRC != no ]]; then
@@ -523,8 +526,7 @@ CUSTOM_KERNEL_CONFIG
 		'make $CTHREADS $kernel_packing \
 		KDEB_PKGVERSION=$REVISION \
 		KDEB_COMPRESS=${DEB_COMPRESS} \
-		BRANCH=$BRANCH \
-		LOCALVERSION="-${LINUXFAMILY}" \
+		NAME_EXTENSION=$NAME_EXTENSION \
 		KBUILD_DEBARCH=$ARCH \
 		ARCH=$ARCHITECTURE \
 		DEBFULLNAME="$MAINTAINER" \
