@@ -67,7 +67,7 @@ prepare_host() {
 		python2 python2-dev
 
 		# non-mess below?
-		file ccze colorized-logs tree                   # logging utilities
+		file ccze colorized-logs tree expect            # logging utilities; expect is needed for 'unbuffer' command
 		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
 		parted gdisk                                    # partition tools
 		aria2 curl wget                                 # downloaders et al
