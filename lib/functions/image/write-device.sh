@@ -3,13 +3,16 @@ function write_image_to_device() {
 	local image_file="${1}"
 	local device="${2}"
 	if [[ $(lsblk "${device}" 2> /dev/null) && -f "${image_file}" ]]; then
-		# create sha256sum if it does not exist. we need it for comparison, later.
-		local if_sha=""
-		if [[ -f "${image_file}.img.sha" ]]; then
-			# shellcheck disable=SC2002 # cat most definitely is useful. she purrs.
-			if_sha=$(cat "${image_file}.sha" | awk '{print $1}')
-		else
-			if_sha=$(sha256sum -b "${image_file}" | awk '{print $1}')
+
+		if [[ "${SKIP_VERIFY}" != "yes" ]]; then
+			# create sha256sum if it does not exist. we need it for comparison, later.
+			local if_sha=""
+			if [[ -f "${image_file}.img.sha" ]]; then
+				# shellcheck disable=SC2002 # cat most definitely is useful. she purrs.
+				if_sha=$(cat "${image_file}.sha" | awk '{print $1}')
+			else
+				if_sha=$(sha256sum -b "${image_file}" | awk '{print $1}')
+			fi
 		fi
 
 		display_alert "Writing image" "${device} ${if_sha}" "info"
