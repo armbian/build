@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-function run_kernel_make() {
+function run_kernel_make_internal() {
 	set -e
 	declare -a common_make_params_quoted common_make_envs full_command
 
@@ -36,13 +36,17 @@ function run_kernel_make() {
 	"${full_command[@]}" # and exit with it's code, since it's the last statement
 }
 
+function run_kernel_make() {
+	KERNEL_MAKE_RUNNER="run_host_command_logged" KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@"
+}
+
 function run_kernel_make_dialog() {
-	KERNEL_MAKE_RUNNER="run_host_command_dialog" run_kernel_make "$@"
+	KERNEL_MAKE_RUNNER="run_host_command_dialog" run_kernel_make_internal "$@"
 }
 
 function run_kernel_make_long_running() {
 	local seconds_start=${SECONDS} # Bash has a builtin SECONDS that is seconds since start of script
-	KERNEL_MAKE_RUNNER="run_host_command_logged_long_running" run_kernel_make "$@"
+	KERNEL_MAKE_RUNNER="run_host_command_logged_long_running" KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@"
 	display_alert "Kernel Make '$*' took" "$((SECONDS - seconds_start)) seconds" "debug"
 }
 
