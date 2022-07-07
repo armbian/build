@@ -67,7 +67,8 @@ function compile_uboot_target() {
 	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
-		make "$CTHREADS" "$BOOTCONFIG" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\"" "KCFLAGS=-fdiagnostics-color=always"
+		"KCFLAGS=-fdiagnostics-color=always" \
+		unbuffer make "$CTHREADS" "$BOOTCONFIG" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 
 	# armbian specifics u-boot settings
 	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
@@ -120,7 +121,8 @@ function compile_uboot_target() {
 		EXTRA_UBOOT_DEBUG_CONFIGS
 
 		run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
-			make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\"" "KCFLAGS=-fdiagnostics-color=always"
+			"KCFLAGS=-fdiagnostics-color=always" \
+			unbuffer make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 
 	fi
 
@@ -131,12 +133,15 @@ function compile_uboot_target() {
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
+	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
+	# @TODO make configurable/expandable
+	local uboot_cflags="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation"
+
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
-	CFLAGS="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation" \
-		KCFLAGS="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation" \
-		run_host_command_logged_long_running CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
-		make "$target_make" "$CTHREADS" "${cross_compile}"
+	run_host_command_logged_long_running "CFLAGS='${uboot_cflags}'" "KCFLAGS='${uboot_cflags}'" \
+		CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		unbuffer make "$target_make" "$CTHREADS" "${cross_compile}"
 
 	if [[ $(type -t uboot_custom_postprocess) == function ]]; then
 		display_alert "${uboot_prefix}Postprocessing u-boot" "${version} ${target_make}"
