@@ -21,7 +21,7 @@ CPUMAX=${CPUMAX:-1536000}
 GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
-	
+
 	legacy)
 		KERNELSOURCE='https://github.com/hardkernel/linux'
 		#KERNELBRANCH='branch:odroidg12-4.9.y'
@@ -36,7 +36,7 @@ case $BRANCH in
 
         edge)
 		KERNELBRANCH='branch:linux-5.19.y' # @TODO: Not yet released, using tag below
-		KERNELBRANCH="tag:v5.19-rc4"
+		KERNELBRANCH="tag:v5.19-rc5"
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
@@ -290,7 +290,7 @@ family_tweaks_bsp()
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
 	    Identifier  "DRM Graphics Acclerated"
-	    
+
 	    ## Use modesetting and glamor
 	        Driver      "modesetting"
 	        Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
@@ -298,9 +298,9 @@ family_tweaks_bsp()
 	        Option      "Dri2Vsync"      "true"
 	        Option      "TripleBuffer"   "True"
 	    ## End glamor configuration
-	    
+
 	    EndSection
-       
+
 	    Section "Screen"
 	        Identifier "Default Screen"
 	            SubSection "Display"
