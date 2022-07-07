@@ -12,10 +12,10 @@
 # common options
 # daily beta build contains date in subrevision
 #if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
-if [ -f $USERPATCHES_PATH/VERSION ]; then
-  REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)"$SUBREVISION" # all boards have same revision
+if [ -f $USERPATCHES_PATH/REVISION ]; then
+  REVISION=$(cat "${USERPATCHES_PATH}"/REVISION)"$SUBREVISION" # all boards have same revision
 else
-  REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
+  REVISION=$(cat "${SRC}"/REVISION)"$SUBREVISION" # all boards have same revision
 fi
 [[ -z $VENDOR ]] && VENDOR="Armbian"
 [[ -z $ROOTPWD ]] && ROOTPWD="1234" # Must be changed @first login
