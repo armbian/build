@@ -488,6 +488,8 @@ CUSTOM_KERNEL_CONFIG
 	# kernel package name extension
 	NAME_EXTENSION="${NAME_EXTENSION:-${BRANCH}-$LINUXFAMILY}"
 
+	KDEB_PKGVERSION=${version}-${VENDOR}.${REVISION%-*}
+
 	# create linux-source package - with already patched sources
 	# We will build this package first and clear the memory.
 	if [[ $BUILD_KSRC != no ]]; then
@@ -524,7 +526,7 @@ CUSTOM_KERNEL_CONFIG
 	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make $CTHREADS $kernel_packing \
-		KDEB_PKGVERSION=$REVISION \
+		KDEB_PKGVERSION=$KDEB_PKGVERSION \
 		KDEB_COMPRESS=${DEB_COMPRESS} \
 		NAME_EXTENSION=$NAME_EXTENSION \
 		KBUILD_DEBARCH=$ARCH \
