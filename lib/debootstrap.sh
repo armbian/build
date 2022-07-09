@@ -334,6 +334,14 @@ create_rootfs_cache()
 			[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 		fi
 
+		# stage: check md5 sum of installed packages. Just in case.
+		display_alert "Check MD5 sum of installed packages" "info"
+		eval "LC_ALL=C LANG=C sudo chroot $SDCARD /bin/bash -e -c 'dpkg-query -f "'\${binary:Package}\\n'" -W | xargs debsums'" \
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} \
+			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
+
+		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "MD5 sums check of installed packages failed"
+
 		# Remove packages from packages.uninstall
 
 		display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
