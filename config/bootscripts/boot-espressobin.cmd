@@ -43,9 +43,9 @@ if test -z "${fdt_name}"; then
     setenv fdt_name "dtb/$fdtfile"
   fi
 fi
-ext4load $devtype ${devnum}:1 $kernel_addr_r ${prefix}$image_name
-ext4load $devtype ${devnum}:1 $ramdisk_addr_r ${prefix}$initrd_image
-ext4load $devtype ${devnum}:1 $fdt_addr_r ${prefix}$fdt_name
+load $devtype ${devnum}:$distro_bootpart $kernel_addr_r ${prefix}$image_name
+load $devtype ${devnum}:$distro_bootpart $ramdisk_addr_r ${prefix}$initrd_image
+load $devtype ${devnum}:$distro_bootpart $fdt_addr_r ${prefix}$fdt_name
 
 booti $kernel_addr_r $ramdisk_addr_r $fdt_addr_r
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
