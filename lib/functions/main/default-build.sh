@@ -53,7 +53,7 @@ function main_default_build_single() {
 		fi
 
 		for cleaning_fragment in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
-			if [[ $cleaning_fragment != sources ]] && [[ $cleaning_fragment != make* ]]; then
+			if [[ $cleaning_fragment != sources ]] && [[ $cleaning_fragment != none ]] && [[ $cleaning_fragment != make* ]]; then
 				LOG_SECTION="cleaning_${cleaning_fragment}" do_with_logging general_cleaning "${cleaning_fragment}"
 			fi
 		done
