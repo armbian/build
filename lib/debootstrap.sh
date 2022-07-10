@@ -336,7 +336,7 @@ create_rootfs_cache()
 
 		# stage: check md5 sum of installed packages. Just in case.
 		display_alert "Check MD5 sum of installed packages" "info"
-		eval "LC_ALL=C LANG=C sudo chroot $SDCARD /bin/bash -e -c 'dpkg-query -f "'\${binary:Package}\\n'" -W | xargs debsums'" \
+		eval 'LC_ALL=C LANG=C sudo chroot $SDCARD /bin/bash -e -c "dpkg-query -f ${binary:Package} -W | xargs debsums"' \
 			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 
