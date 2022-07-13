@@ -55,7 +55,7 @@ function store_led() {
 [[ -f $STATE_PATH ]] && echo -n > $STATE_PATH
 
 for LED in /sys/class/leds/*; do
-
+	[[ -d "$LED" ]] || continue
 	store_led $LED $STATE_PATH
 	echo >> $STATE_PATH
 
