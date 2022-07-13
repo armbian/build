@@ -56,22 +56,20 @@ fdt resize 65536
 
 echo "Checking board setup"
 if test "$board" = "jethub-j100"; then
-  if test "$hwrev" = "04"; then
     if test "$perev" = "02"; then
 # D1P + RTL8822CS
       if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/jethub-d1plus.dtbo; then
-        echo "Applying kernel provided DT overlay for JetHub D1P 04:01 device"
+        echo "Applying kernel provided DT overlay for JetHub D1/P RTL8822CS device"
         fdt apply ${scriptaddr} || setenv overlay_error "true"
       fi;
     fi;
     if test "$perev" = "03"; then
 # D1P + W155S1
       if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/jethub-d1plus-w1.dtbo; then
-        echo "Applying kernel provided DT overlay for JetHub D1P 04:02 device"
+        echo "Applying kernel provided DT overlay for JetHub D1/P W155S1 device"
         fdt apply ${scriptaddr} || setenv overlay_error "true"
       fi;
     fi;
-  fi;
 fi;
 
 for overlay_file in ${overlays}; do
