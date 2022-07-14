@@ -30,7 +30,7 @@ fi
 if [[ -f "${SRC}"/lib/general.sh ]]; then
 
 	# Declare this folder as safe
-	if [[ -z $(cat ${HOME}/.gitconfig | grep "directory = \*") ]]; then
+	if [[ -z $(cat ${HOME}/.gitconfig 2>/dev/null | grep "directory = \*") ]]; then
 		git config --global --add safe.directory "*"
 	fi
 
