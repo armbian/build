@@ -48,11 +48,29 @@ if test -n "${usid}"; then setenv bootargs "${bootargs} usid=${usid}"; fi
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
 echo "Mainline bootargs: ${bootargs}"
 
+
+echo "Checking board setup"
+if test "$board" = "jethub-j100"; then
+    if test "$perev" = "02"; then
+    # D1P + RTL8822CS
+        echo "Applying DT kernel file for JetHub D1/P RTL8822CS device"
+        setenv fdtfile "amlogic/meson-axg-jethome-jethub-j110-rev-2.dts"
+    fi;
+    if test "$perev" = "03"; then
+    # D1P + W155S1
+        echo "Applying DT kernel file for JetHub D1/P W155S1 device"
+        setenv fdtfile "amlogic/meson-axg-jethome-jethub-j110-rev-3.dts"
+    fi;
+fi;
+
+
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
+
+
 for overlay_file in ${overlays}; do
 	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
