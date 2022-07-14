@@ -474,6 +474,19 @@ CUSTOM_KERNEL_CONFIG
 
 		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Error kernel menuconfig failed"
 
+		# The local version in the configuration file must be empty.
+		# Use the ADDITIONAL_LOCALVERSION variable to
+		# add to the local version, if required.
+		LOCALVERSION="$(awk -F'\"' '/^CONFIG_LOCALVERSION/{print $2}' .config)"
+		if [ "$LOCALVERSION" != "" ]; then
+			display_alert "CONFIG_LOCALVERSION=" "$LOCALVERSION" "wrn"
+			display_alert "Fix it." "" "info"
+			ADDITIONAL_LOCALVERSION=$LOCALVERSION
+			sed -i '/^CONFIG_LOCALVERSION/s/=.*$/=""/g' .config
+			eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
+				'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig'
+		fi
+
 		# store kernel config in easily reachable place
 		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
 		cp .config "${DEST}/config/${LINUXCONFIG}.config"
@@ -485,9 +498,10 @@ CUSTOM_KERNEL_CONFIG
 		fi
 	fi
 
-	# kernel package name extension
+	# Uniquely define variables before building source and binary packages:
+	# kernel package name extension, local version, debian package version
 	NAME_EXTENSION="${NAME_EXTENSION:-${BRANCH}-$LINUXFAMILY}"
-
+	LOCALVERSION="-$LINUXFAMILY$ADDITIONAL_LOCALVERSION"
 	KDEB_PKGVERSION=${version}-${VENDOR}.${REVISION%-*}
 
 	# create linux-source package - with already patched sources
@@ -501,7 +515,7 @@ CUSTOM_KERNEL_CONFIG
 		'make $CTHREADS ARCH=$ARCHITECTURE \
 		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
 		$SRC_LOADADDR \
-		LOCALVERSION="-$LINUXFAMILY" \
+		LOCALVERSION="$LOCALVERSION" \
 		$KERNEL_IMAGE_TYPE ${KERNEL_EXTRA_TARGETS:-modules dtbs} 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
 		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
 		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" \
@@ -527,6 +541,7 @@ CUSTOM_KERNEL_CONFIG
 	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
 		'make $CTHREADS $kernel_packing \
 		KDEB_PKGVERSION=$KDEB_PKGVERSION \
+		LOCALVERSION="$LOCALVERSION" \
 		KDEB_COMPRESS=${DEB_COMPRESS} \
 		NAME_EXTENSION=$NAME_EXTENSION \
 		KBUILD_DEBARCH=$ARCH \
