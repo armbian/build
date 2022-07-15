@@ -20,7 +20,7 @@ This section describes how to start a contribution to Armbian.
 
 ### Prepare your environment
 
-* Create an Ubuntu 20.04 VM with VirtualBox or other hypervisor.
+* Create an Ubuntu 22.04 VM with VirtualBox or other hypervisor.
 * Install Github CLI (or any other git tool you liked).
   * `sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0`
   * `sudo apt-add-repository https://cli.github.com/packages`
