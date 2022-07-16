@@ -932,16 +932,9 @@ POST_UMOUNT_FINAL_IMAGE
 			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
-			#[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
 			[[ ${available_cpu} -gt 16 ]] && available_cpu=16 # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
-			if [[ ${BUILD_ALL} == yes && ( ${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4 )]]; then
-				while [[ $(ps -uax | grep "pixz" | wc -l) -gt 2 ]]
-					do echo -en "#"
-					sleep 20
-				done
-			fi
 			pixz -7 -p ${available_cpu} -f $(expr ${available_cpu} + 2) < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
 			compression_type=".xz"
 		fi
