@@ -25,9 +25,6 @@ install_deb_chroot() {
 
 	display_alert "Installing${desc}" "${name/\/root\//}"
 
-	# when building in bulk from remote, lets make sure we have up2date index
-	[[ $BUILD_ALL == yes && ${variant} == remote ]] && chroot_sdcard_apt_get update
-
 	# install in chroot via apt-get, not dpkg, so dependencies are also installed from repo if needed.
 	export if_error_detail_message="Installation of $name failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	chroot_sdcard_apt_get --no-install-recommends install "${name}"

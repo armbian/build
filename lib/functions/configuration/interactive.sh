@@ -1,5 +1,5 @@
 function interactive_config_prepare_terminal() {
-	if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
+	if [[ -z $ROOT_FS_CREATE_ONLY ]]; then
 		if [[ -t 0 ]]; then # "-t fd return True if file descriptor fd is open and refers to a terminal". 0 = stdin, 1 = stdout, 2 = stderr, 3+ custom
 			# override stty size, if stdin is a terminal.
 			[[ -n $COLUMNS ]] && stty cols $COLUMNS
