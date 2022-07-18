@@ -221,6 +221,12 @@ function create_new_rootfs_cache() {
 		chroot_sdcard_apt_get install ${apt_desktop_install_flags} $PACKAGE_LIST_DESKTOP
 	fi
 
+	# stage: check md5 sum of installed packages. Just in case.
+	display_alert "Check MD5 sum of installed packages" "info"
+	export if_error_detail_message="Check MD5 sum of installed packages failed"
+	# shellcheck disable=SC2154 # this '$' and '\n' syntax is for dpkg-query
+	chroot_sdcard dpkg-query -f '"${binary:Package}\n"' -W "|" xargs debsums --silent || true # @TODO: ignore result for now until we can find all the divergences
+
 	# Remove packages from packages.uninstall
 	display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
 	# shellcheck disable=SC2086
