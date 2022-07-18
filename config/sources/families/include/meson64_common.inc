@@ -36,7 +36,7 @@ case $BRANCH in
 
         edge)
 		KERNELBRANCH='branch:linux-5.19.y' # @TODO: Not yet released, using tag below
-		KERNELBRANCH="tag:v5.19-rc5"
+		KERNELBRANCH="tag:v5.19-rc7"
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
