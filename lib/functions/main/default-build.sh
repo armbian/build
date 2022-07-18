@@ -19,6 +19,13 @@ function main_default_build_single() {
 	# Check and install dependencies, directory structure and settings
 	LOG_SECTION="prepare_host" do_with_logging prepare_host
 
+	# Create a directory inside WORKDIR with a "python" symlink to "/usr/bin/python2"; add it to PATH first.
+	BIN_WORK_DIR="${WORKDIR}/bin"
+	# No cleanup of this is necessary, since it's inside WORKDIR.
+	mkdir -p "${BIN_WORK_DIR}"
+	ln -s "/usr/bin/python2" "${BIN_WORK_DIR}/python"
+	export PATH="${BIN_WORK_DIR}:${PATH}"
+
 	if [[ "${JUST_INIT}" == "yes" ]]; then
 		exit 0
 	fi
