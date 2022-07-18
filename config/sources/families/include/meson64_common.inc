@@ -50,7 +50,7 @@ uboot_gxl_postprocess() {
 		$1/$2/bl301_zero.bin \
 		$1/$2/bl30_new.bin bl30
 
-	run_host_command_logged python $1/acs_tool.pyc $1/$2/bl2.bin \
+	run_host_command_logged python2 $1/acs_tool.pyc $1/$2/bl2.bin \
 		$1/$2/bl2_acs.bin \
 		$1/$2/acs.bin 0
 
