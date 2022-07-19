@@ -1,10 +1,10 @@
-# Contributing to Armbian
+# Contributing to Armbian Linux build framework
 
 We'd love to have you join the Armbian community! Below summarizes the processes that we follow.
 
 ## Reporting Issues
 
-Before reporting an issue, check our backlog of open issues to see if someone else has already reported it. If so, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
+Before [reporting an issue](https://github.com/armbian/build/issues/new/choose), check our [backlog of open issues](https://github.com/armbian/build/issues) and [Pull requests](https://github.com/armbian/build/pulls) to see if someone else has already reported or working on it. If so, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
 
 If you find a new issue with the project we'd love to hear about it! The most important aspect of a bug report is that it includes enough information for us to reproduce it. So, please include as much detail as possible and try to remove the extra stuff that doesn't really relate to the issue itself. The easier it is for us to reproduce it, the faster it'll be fixed!
 
@@ -12,7 +12,7 @@ Please don't include any private/sensitive information in your issue!
 
 ## Working On Issues
 
-Once you have decided to contribute to Armbian by working on an issue, check our backlog of open (or our [JIRA](https://armbian.atlassian.net)) looking for any that do not have an "In Progress" label attached to it. Often issues will be assigned to someone, to be worked on at a later time. If you have the time to work on the issue now add yourself as an assignee, and set the "In Progress" label if you’re a member of the “Containers” GitHub organization. If you can not set the label, just add a quick comment in the issue asking that the “In Progress” label be set and a member will do so for you.
+Once you have decided to contribute to Armbian by working on an issue, check our backlog of open (or [JIRA](https://armbian.atlassian.net/jira/dashboards/10000) issues open by the team) looking for any that do not have an "In Progress" label attached to it. Often issues will be assigned to someone, to be worked on at a later time. If you have the time to work on the issue now add yourself as an assignee, and set the "In Progress" label if you’re a member of the “Containers” GitHub organization. If you can not set the label, just add a quick comment in the issue asking that the “In Progress” label be set and a member will do so for you.
 
 ## Contributing
 
@@ -20,34 +20,42 @@ This section describes how to start a contribution to Armbian.
 
 ### Prepare your environment
 
-* Create an Ubuntu 22.04 VM with VirtualBox or other hypervisor.
-* Install Github CLI (or any other git tool you liked).
-  * `sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0`
-  * `sudo apt-add-repository https://cli.github.com/packages`
-  * `sudo apt update`
-  * `sudo apt -y install gh git`
-  * Configure git
-  * `git config --global user.email "your@email.com"`
-  * `git config --global user.name "Your Name"`
-* Generate gpg key
-  * `gpg --generate-key`
+* Create an Ubuntu 22.04 VM with VirtualBox or other hypervisor. Then proceed with:
+
+      sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
+      sudo apt-add-repository https://cli.github.com/packages
+      sudo apt update
+      sudo apt -y install gh git
+      
+      # Configure git
+      git config --global user.email "your@email.com"
+      git config --global user.name "Your Name"
+      
+      # Generate gpg key
+      gpg --generate-key
+      
 * Generate Github login [token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token)
 * Login to Github (you only have to do the steps above once)
-  * `gh auth login --with-token <<< 'your_token'`
+      
+      gh auth login --with-token <<< 'your_token'
 
 ### Fork and clone Armbian
 
 * Fork armbian/build, clone and add remote
-* `gh repo fork armbian/build --clone=true --remote=true`
+
+      gh repo fork armbian/build --clone=true --remote=true
+      
 * Create branch
-  * `cd build`
-  * `git checkout -b your_branch_name`
-    * Change branch name for your patch
+
+      cd build
+      git checkout -b your_branch_name # change branch name for your patch
 
 ### Generate new patch template
 
 * Compile Armbian (this use case is to change something in the device tree and test the built image)
-  * `./compile.sh CREATE_PATCHES="yes"`
+
+      ./compile.sh CREATE_PATCHES="yes"
+
     * Full OS image for flashing
     * Do not change kernel configuration
     * Chose a board
@@ -57,14 +65,15 @@ This section describes how to start a contribution to Armbian.
     * Chose image type
     * Configuring apt-cacher-ng
 * Wait for prompt to make u-boot changes (press Enter after making changes in specified directory)
-  * `[ o.k. ] * [l][c] enable-distro-bootcmd.patch`
-  * `[ warn ] Make your changes in this directory: [ /home/yourhome/build/cache/sources/u-boot-odroidxu/odroidxu4-v2017.05 ]`
-  * `[ warn ] Press <Enter> after you are done [ waiting ]`
+
+      [ o.k. ] * [l][c] enable-distro-bootcmd.patch
+      [ warn ] Make your changes in directory: [ /home/yourhome/build/cache/sources/u-boot-odroidxu/odroidxu4-v2017.05 ]
+      [ warn ] Press <Enter> after you are done [ waiting ]
 
 ### Work on your patch
 
 * Open another terminal or Files window
-* In this case I want to add gpio-line-names to the Odroid UX4 device tree when prompted to do so
+* In this case I want to add gpio-line-names to the Odroid XU4 device tree when prompted to do so
   * `sudo nano build/cache/sources/linux-odroidxu4/odroid-5.4.y/arch/arm/boot/dts/exynos5420-pinctrl.dtsi`
 * Wait for prompt to make kernel changes (press Enter after making changes in specified directory)
   * `[ warn ] Make your changes in this directory: [ /home/yourhome/build/cache/sources/linux-odroidxu4/odroid-5.4.y ]`
@@ -92,6 +101,6 @@ Describe your problem. Whether your patch is a one-line bug fix or 5000 lines of
 
 ## Communications
 
-For general questions and discussion, please use the IRC `#armbian` on Libera.chat or [discord server](https://discord.com/invite/gNJ2fPZKvc).
+For general questions and discussion, please use the IRC `#armbian`, `#armbian-devel` or `#armbian-desktop` on Libera.chat or [discord server](http://discord.armbian.com).
 
-For discussions around issues/bugs and features, you can use the GitHub issues and PRs tracking system.
+For discussions around issues/bugs and features, you can use the [GitHub issues](https://github.com/armbian/build/issues) and [PRs tracking system](https://github.com/armbian/build/pulls).
