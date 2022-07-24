@@ -68,5 +68,13 @@ family_tweaks()
 
 family_tweaks_bsp()
 {
-	:	
+	mkdir -p "$destination/etc/X11/xorg.conf.d"
+	cat <<-EOF >"$destination/etc/X11/xorg.conf.d/02-driver.conf"
+	Section "OutputClass"
+		Identifier "Amlogic"
+		MatchDriver "meson"
+		Driver "modesetting"
+		Option "PrimaryGPU" "true"
+	EndSection
+	EOF
 }
