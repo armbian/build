@@ -319,6 +319,22 @@ family_tweaks() {
 
 	fi
 
+	if [[ $BOARD == jetson-nano ]]; then
+		install -m 755 $SRC/packages/blobs/jetson/jetson.sh $SDCARD/etc/initramfs-tools/hooks/jetson.sh
+		if [[ $BRANCH == legacy ]]; then
+			install -m 755 $SRC/packages/blobs/jetson/tegra21x_xusb_firmware $SDCARD/lib/firmware/tegra21x_xusb_firmware
+			install -m 755 $SRC/packages/blobs/jetson/asound.conf.tegrahda $SDCARD/etc/asound.conf.tegrahda
+			install -m 755 $SRC/packages/blobs/jetson/asound.conf.tegrahda $SDCARD/etc/asound.conf
+			install -m 755 $SRC/packages/blobs/jetson/asound.conf.tegrasndt210ref $SDCARD/etc/asound.conf.tegrasndt210ref
+			install -m 755 $SRC/packages/blobs/jetson/tegra-hda.conf $SDCARD/usr/share/alsa/cards/tegra-hda.conf
+			install -m 755 $SRC/packages/blobs/jetson/tegra-snd-t210r.conf $SDCARD/usr/share/alsa/cards/tegra-snd-t210r.conf
+			sed -e 's/exit 0//g' -i $SDCARD/etc/rc.local
+			echo "su -c 'echo 255 > /sys/devices/pwm-fan/target_pwm'" >> $SDCARD/etc/rc.local
+			echo "exit 0" >> $SDCARD/etc/rc.local
+		else
+			cp -R $SRC/packages/blobs/jetson/firmware/* $SDCARD/lib/firmware/
+		fi
+    	fi
 }
 
 family_tweaks_bsp() {
