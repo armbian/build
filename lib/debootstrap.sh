@@ -646,7 +646,7 @@ PREPARE_IMAGE_SIZE
 
 	check_loop_device "$LOOP"
 
-	losetup -P $LOOP ${SDCARD}.raw
+	losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
