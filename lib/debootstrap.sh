@@ -485,6 +485,8 @@ prepare_partitions()
 	BIOSSIZE=${BIOSSIZE:-0}
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
 	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbiefi}"
+	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbian_root}"
+	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbian_boot}"
 
 	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
 *allow custom options for mkfs*
@@ -669,7 +671,7 @@ PREPARE_IMAGE_SIZE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} -L "${ROOT_FS_LABEL}" $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
@@ -688,7 +690,7 @@ PREPARE_IMAGE_SIZE
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
 		check_loop_device "${LOOP}p${bootpart}"
-		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} -L "${BOOT_FS_LABEL}" ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 		mkdir -p $MOUNT/boot/
 		mount ${LOOP}p${bootpart} $MOUNT/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
