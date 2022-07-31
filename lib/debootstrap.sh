@@ -130,15 +130,13 @@ create_rootfs_cache()
 	local cache_fname=${SRC}/cache/rootfs/${cache_name}
 	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
 
-	[[ "$ROOT_FS_CREATE_ONLY" == force ]] && break
+	display_alert "Checking local cache" "$display_name" "info"
 
 	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
 		rm ${cache_fname}*
 		display_alert "Partially downloaded file. Re-start."
 		download_and_verify "_rootfs" "$cache_name"
 	fi
-
-	display_alert "Checking local cache" "$display_name" "info"
 
 	if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
 		echo "$cache_fname" > $cache_fname.current
@@ -150,13 +148,9 @@ create_rootfs_cache()
 			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
 			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
-		break
-	elif [[ -f ${cache_fname} ]]; then
-		break
 	else
 		display_alert "searching on servers"
 		download_and_verify "_rootfs" "$cache_name"
-		[[ -f ${cache_fname} ]] && break
 	fi
 
 	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
