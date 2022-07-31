@@ -24,7 +24,7 @@
 #
 debootstrap_ng()
 {
-	display_alert "Starting rootfs and image building process for" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" "info"
+	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
 
@@ -130,15 +130,13 @@ create_rootfs_cache()
 	local cache_fname=${SRC}/cache/rootfs/${cache_name}
 	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
 
-	display_alert "Checking local cache" "$display_name" "info"
-
-	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
+	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 && "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
 		rm ${cache_fname}*
 		display_alert "Partially downloaded file. Re-start."
 		download_and_verify "_rootfs" "$cache_name"
 	fi
 
-	if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
+	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
 		echo "$cache_fname" > $cache_fname.current
 		display_alert "Checking cache integrity" "$display_name" "info"
 		sudo lz4 -tqq ${cache_fname}
@@ -148,22 +146,13 @@ create_rootfs_cache()
 			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
 			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
-	else
+	elif [[ "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
 		display_alert "searching on servers"
 		download_and_verify "_rootfs" "$cache_name"
 	fi
 
+	# if aria2 file exists download didn't succeeded
 	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
-
-		# speed up checking
-		if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			echo "$cache_fname" > $cache_fname.current
-			umount --lazy "$SDCARD"
-			rm -rf $SDCARD
-			# remove exit trap
-			trap - INT TERM EXIT
-			exit
-		fi
 
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
@@ -173,7 +162,7 @@ create_rootfs_cache()
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 		create_sources_list "$RELEASE" "$SDCARD/"
 	else
-		display_alert "... remote not found" "Creating new rootfs cache for $RELEASE" "info"
+		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
 
 		# stage: debootstrap base system
 		if [[ $NO_APT_CACHER != yes ]]; then
@@ -387,7 +376,7 @@ create_rootfs_cache()
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
-	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
 		umount --lazy "$SDCARD"
 		rm -rf $SDCARD
 		# remove exit trap
