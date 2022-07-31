@@ -82,7 +82,12 @@ KERNEL_CONFIGURE=no \
 CARD_DEVICE="/dev/sda"
 ```
 
-[Build parameters, advanced build options, user defined configuration, build with Docker?](https://docs.armbian.com/Developer-Guide_Build-Preparation/)
+More information:
+
+- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
+- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
+- [Building with Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) — how to build inside container;
+- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
 
 ## Compare with industry standards
 
