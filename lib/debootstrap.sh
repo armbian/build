@@ -119,60 +119,45 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 #
 create_rootfs_cache()
 {
-	if [[ "$ROOT_FS_CREATE_ONLY" == "force" ]]; then
-		local cycles=1
-		else
-		local cycles=2
+
+
+	local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
+	local cache_type="cli"
+	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
+	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
+	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
+	local cache_fname=${SRC}/cache/rootfs/${cache_name}
+	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
+
+	[[ "$ROOT_FS_CREATE_ONLY" == force ]] && break
+
+	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
+		rm ${cache_fname}*
+		display_alert "Partially downloaded file. Re-start."
+		download_and_verify "_rootfs" "$cache_name"
 	fi
 
-	# seek last cache, proceed to previous otherwise build it
-	for ((n=0;n<${cycles};n++)); do
+	display_alert "Checking local cache" "$display_name" "info"
 
-		FORCED_MONTH_OFFSET=${n}
-
-		local packages_hash=$(get_package_list_hash "$(date -d "$D -${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
-		local cache_type="cli"
-		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
-		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
-		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
-		local cache_fname=${SRC}/cache/rootfs/${cache_name}
-		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
-
-		[[ "$ROOT_FS_CREATE_ONLY" == force ]] && break
-
-		if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
-			rm ${cache_fname}*
-			display_alert "Partially downloaded file. Re-start."
-			download_and_verify "_rootfs" "$cache_name"
+	if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
+		echo "$cache_fname" > $cache_fname.current
+		display_alert "Checking cache integrity" "$display_name" "info"
+		sudo lz4 -tqq ${cache_fname}
+		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
+		# sign if signature is missing
+		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
+			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
+			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
-
-		display_alert "Checking local cache" "$display_name" "info"
-
-		if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			echo "$cache_fname" > $cache_fname.current
-			display_alert "Checking cache integrity" "$display_name" "info"
-			sudo lz4 -tqq ${cache_fname}
-			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-			# sign if signature is missing
-			if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
-				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
-				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
-			fi
-			break
-		elif [[ -f ${cache_fname} ]]; then
-			break
-		else
-			display_alert "searching on servers"
-			download_and_verify "_rootfs" "$cache_name"
-			[[ -f ${cache_fname} ]] && break
-		fi
-
-		if [[ ! -f $cache_fname ]]; then
-			display_alert "not found: try to use previous cache"
-		fi
-
-	done
+		break
+	elif [[ -f ${cache_fname} ]]; then
+		break
+	else
+		display_alert "searching on servers"
+		download_and_verify "_rootfs" "$cache_name"
+		[[ -f ${cache_fname} ]] && break
+	fi
 
 	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
