@@ -23,7 +23,7 @@ case "${BRANCH}" in
 		export DISTRO_GENERIC_KERNEL=no
 		export LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
 		export KERNEL_MAJOR_MINOR="5.19"                      # Major and minor versions of this kernel. For mainline caching.
-		export KERNELBRANCH="tag:v5.19-rc7"                   # Branch or tag to build from. It should match MAJOR_MINOR
+		export KERNELBRANCH="branch:linux-5.19.y"             # Branch or tag to build from. It should match MAJOR_MINOR
 		export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 		;;
 esac
