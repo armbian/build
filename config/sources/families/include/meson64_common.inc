@@ -37,8 +37,7 @@ case $BRANCH in
 
 	edge)
 		export KERNEL_MAJOR_MINOR="5.19" # Major and minor versions of this kernel. For mainline caching.
-		#KERNELBRANCH='branch:linux-5.17.y'
-		KERNELBRANCH="tag:v5.19-rc7"
+		KERNELBRANCH="branch:linux-5.19.y"
 		KERNELPATCHDIR='meson64-edge'
 		;;
 
