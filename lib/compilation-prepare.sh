@@ -120,7 +120,7 @@ compilation_prepare()
 	# Linux splash file
 	#
 
-	if linux-version compare "${version}" ge 5.10 && [ $SKIP_BOOTSPLASH != yes ]; then
+	if linux-version compare "${version}" ge 5.10 && linux-version compare "${version}" lt 5.19 && [ $SKIP_BOOTSPLASH != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
 		if linux-version compare "${version}" ge 5.11; then
