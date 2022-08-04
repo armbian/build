@@ -1,0 +1,85 @@
+From 13bc283ed990c3991b3254c4b58a4ad79f3363d4 Mon Sep 17 00:00:00 2001
+From: Icenowy Zheng <icenowy@aosc.io>
+Date: Wed, 17 Jun 2020 08:42:52 +0800
+Subject: [PATCH 193/417] clk: sunxi-ng: a64: try to keep TCON0 clock in CCU
+
+As part of the clock tree of LCD and HDMI pipelines on A64 are
+conflicted, usual way to keep LCD clock cannot work on A64.
+
+However, there's a PLL dedicated to TCON0, PLL-MIPI, which can be
+utilized to get a clock tree that can satisfy both clock rates on LCD
+and HDMI pipelines.
+
+This patch forbids the PLL-Video0-2X parent of TCON0 clock, and let TCON0
+clock (and then PLL-MIPI by CLK_SET_RATE_PARENT) gets resetted when
+PLL-Video0 changes (because of HDMI PHY clk which is a child of
+PLL-Video0 and has CLK_SET_RATE_PARENT set). In this way we can get
+clock tree to satisfy both pipelines.
+
+Signed-off-by: Icenowy Zheng <icenowy@aosc.io>
+---
+ drivers/clk/sunxi-ng/ccu-sun50i-a64.c | 27 +++++++++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun50i-a64.c b/drivers/clk/sunxi-ng/ccu-sun50i-a64.c
+index 415191856..f03aaf4f3 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun50i-a64.c
++++ b/drivers/clk/sunxi-ng/ccu-sun50i-a64.c
+@@ -528,8 +528,18 @@ static SUNXI_CCU_M_WITH_MUX_GATE(de_clk, "de", de_parents,
+ 				 0x104, 0, 4, 24, 3, BIT(31),
+ 				 CLK_SET_RATE_PARENT);
+ 
+-static const char * const tcon0_parents[] = { "pll-mipi", "pll-video0-2x" };
+-static const u8 tcon0_table[] = { 0, 2, };
++#define SUN50I_A64_TCON0_REG	0x118
++
++/*
++ * When using PLL-Video0 as the parent of tcon0 clock, tcon0 clock will
++ * conflict with HDMI PHY clock (also a child of PLL-Video0) which is on
++ * another display pipeline. Force tcon0 to use PLL-MIPI as parent here
++ * to prevent this. As the parent of PLL-MIPI is still PLL-Video0, a notifier
++ * is required to restore the rate of TCON0 when the rate of PLL-Video0
++ * changed.
++ */
++static const char * const tcon0_parents[] = { "pll-mipi", /* "pll-video0-2x" */ };
++static const u8 tcon0_table[] = { 0, /* 2, */ };
+ static SUNXI_CCU_MUX_TABLE_WITH_GATE(tcon0_clk, "tcon0", tcon0_parents,
+ 				     tcon0_table, 0x118, 24, 3, BIT(31),
+ 				     CLK_SET_RATE_PARENT);
+@@ -936,6 +946,10 @@ static struct ccu_mux_nb sun50i_a64_cpu_nb = {
+ 	.bypass_index	= 1, /* index of 24 MHz oscillator */
+ };
+ 
++static struct ccu_rate_reset_nb sun50i_a64_pll_video0_reset_tcon0_nb = {
++	.common		= &pll_video0_clk.common,
++};
++
+ static int sun50i_a64_ccu_probe(struct platform_device *pdev)
+ {
+ 	void __iomem *reg;
+@@ -953,6 +967,11 @@ static int sun50i_a64_ccu_probe(struct platform_device *pdev)
+ 
+ 	writel(0x515, reg + SUN50I_A64_PLL_MIPI_REG);
+ 
++	/* Force the parent of TCON0 to PLL-MIPI */
++	val = readl(reg + SUN50I_A64_TCON0_REG);
++	val &= ~GENMASK(26, 24);
++	writel(val | (0 << 24), reg + SUN50I_A64_TCON0_REG);
++
+ 	ret = devm_sunxi_ccu_probe(&pdev->dev, reg, &sun50i_a64_ccu_desc);
+ 	if (ret)
+ 		return ret;
+@@ -964,6 +983,10 @@ static int sun50i_a64_ccu_probe(struct platform_device *pdev)
+ 	ccu_mux_notifier_register(pll_cpux_clk.common.hw.clk,
+ 				  &sun50i_a64_cpu_nb);
+ 
++	/* Reset the rate of TCON0 clock when PLL-VIDEO0 is changed */
++	sun50i_a64_pll_video0_reset_tcon0_nb.target_clk = tcon0_clk.common.hw.clk;
++	ccu_rate_reset_notifier_register(&sun50i_a64_pll_video0_reset_tcon0_nb);
++
+ 	return 0;
+ }
+ 
+-- 
+2.35.3
+
