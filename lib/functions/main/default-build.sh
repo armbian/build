@@ -30,10 +30,6 @@ function main_default_build_single() {
 		exit 0
 	fi
 
-	if [[ $CLEAN_LEVEL == *sources* ]]; then
-		cleaning "sources"
-	fi
-
 	# Too many things being done. Allow doing only one thing. For core development, mostly.
 	# Also because "KERNEL_ONLY=yes" should really be spelled "PACKAGES_ONLY=yes"
 	local do_build_uboot="yes" do_build_kernel="yes" exit_after_kernel_build="no" exit_after_uboot_build="no" do_host_tools="yes"
