@@ -1,0 +1,170 @@
+From ab73d1a2cb44c65cc5547dcef7a286c108c05ec1 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@siol.net>
+Date: Sun, 15 Mar 2020 21:35:39 +0100
+Subject: [PATCH 039/170] drv:media:cedrus: 10-bit HEVC support
+
+WIp: 10-bit HEVC support
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@siol.net>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.c   |  4 +--
+ .../staging/media/sunxi/cedrus/cedrus_h265.c  | 12 ++++++++
+ .../staging/media/sunxi/cedrus/cedrus_regs.h  |  4 +++
+ .../staging/media/sunxi/cedrus/cedrus_video.c | 30 +++++++++++++++----
+ .../staging/media/sunxi/cedrus/cedrus_video.h |  2 +-
+ 5 files changed, 44 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.c b/drivers/staging/media/sunxi/cedrus/cedrus.c
+index 0c67e1ee3..98487d8fe 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.c
+@@ -336,7 +336,7 @@ static int cedrus_open(struct file *file)
+ 		goto err_ctrls;
+ 	}
+ 	ctx->dst_fmt.pixelformat = V4L2_PIX_FMT_NV12_32L32;
+-	cedrus_prepare_format(&ctx->dst_fmt);
++	cedrus_prepare_format(&ctx->dst_fmt, 0);
+ 	ctx->src_fmt.pixelformat = V4L2_PIX_FMT_MPEG2_SLICE;
+ 	/*
+ 	 * TILED_NV12 has more strict requirements, so copy the width and
+@@ -344,7 +344,7 @@ static int cedrus_open(struct file *file)
+ 	 */
+ 	ctx->src_fmt.width = ctx->dst_fmt.width;
+ 	ctx->src_fmt.height = ctx->dst_fmt.height;
+-	cedrus_prepare_format(&ctx->src_fmt);
++	cedrus_prepare_format(&ctx->src_fmt, 0);
+ 
+ 	v4l2_fh_add(&ctx->fh);
+ 
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index 908bccde2..422046a6a 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -534,6 +534,18 @@ static void cedrus_h265_setup(struct cedrus_ctx *ctx,
+ 
+ 	cedrus_write(dev, VE_DEC_H265_DEC_PCM_CTRL, reg);
+ 
++	if (sps->bit_depth_luma_minus8 == 2) {
++		unsigned int size;
++
++		size = ALIGN(ctx->src_fmt.width, 16) * ALIGN(ctx->src_fmt.height, 16);
++
++		reg = (size * 3) / 2;
++		cedrus_write(dev, VE_DEC_H265_OFFSET_ADDR_FIRST_OUT, reg);
++
++		reg = DIV_ROUND_UP(ctx->src_fmt.width, 4);
++		cedrus_write(dev, VE_DEC_H265_10BIT_CONFIGURE, ALIGN(reg, 32));
++	}
++
+ 	/* PPS. */
+ 
+ 	reg = VE_DEC_H265_DEC_PPS_CTRL0_PPS_CR_QP_OFFSET(pps->pps_cr_qp_offset) |
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+index bdb062ad8..7ab3a2b0a 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_regs.h
+@@ -499,6 +499,10 @@
+ 
+ #define VE_DEC_H265_LOW_ADDR			(VE_ENGINE_DEC_H265 + 0x80)
+ 
++#define VE_DEC_H265_OFFSET_ADDR_FIRST_OUT	(VE_ENGINE_DEC_H265 + 0x84)
++#define VE_DEC_H265_OFFSET_ADDR_SECOND_OUT	(VE_ENGINE_DEC_H265 + 0x88)
++#define VE_DEC_H265_10BIT_CONFIGURE		(VE_ENGINE_DEC_H265 + 0x8c)
++
+ #define VE_DEC_H265_LOW_ADDR_PRIMARY_CHROMA(a) \
+ 	SHIFT_AND_MASK_BITS(a, 31, 24)
+ #define VE_DEC_H265_LOW_ADDR_SECONDARY_CHROMA(a) \
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.c b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+index 9bb82c8e0..2a4fcc9c9 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.c
+@@ -100,7 +100,7 @@ static struct cedrus_format *cedrus_find_format(u32 pixelformat, u32 directions,
+ 	return &cedrus_formats[i];
+ }
+ 
+-void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt)
++void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt, int extended)
+ {
+ 	unsigned int width = pix_fmt->width;
+ 	unsigned int height = pix_fmt->height;
+@@ -155,6 +155,17 @@ void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt)
+ 		break;
+ 	}
+ 
++	if (extended) {
++		unsigned int extra_size;
++
++		extra_size = DIV_ROUND_UP(pix_fmt->width, 4);
++		extra_size = ALIGN(extra_size, 32);
++		extra_size *= ALIGN(pix_fmt->height, 16) * 3;
++		extra_size /= 2;
++
++		sizeimage += extra_size;
++	}
++
+ 	pix_fmt->width = width;
+ 	pix_fmt->height = height;
+ 
+@@ -247,17 +258,27 @@ static int cedrus_try_fmt_vid_cap(struct file *file, void *priv,
+ 	struct cedrus_ctx *ctx = cedrus_file2ctx(file);
+ 	struct cedrus_dev *dev = ctx->dev;
+ 	struct v4l2_pix_format *pix_fmt = &f->fmt.pix;
++	const struct v4l2_ctrl_hevc_sps *sps;
+ 	struct cedrus_format *fmt =
+ 		cedrus_find_format(pix_fmt->pixelformat, CEDRUS_DECODE_DST,
+ 				   dev->capabilities);
++	int extended;
+ 
+ 	if (!fmt)
+ 		return -EINVAL;
+ 
++	sps = cedrus_find_control_data(ctx, V4L2_CID_MPEG_VIDEO_HEVC_SPS);
++
++	/* The 10-bitHEVC decoder needs extra size on the output buffer. */
++	extended = ctx->src_fmt.pixelformat == V4L2_PIX_FMT_HEVC_SLICE &&
++	sps->bit_depth_luma_minus8 == 2;
++
+ 	pix_fmt->pixelformat = fmt->pixelformat;
+ 	pix_fmt->width = ctx->src_fmt.width;
+ 	pix_fmt->height = ctx->src_fmt.height;
+-	cedrus_prepare_format(pix_fmt);
++
++	pix_fmt->pixelformat = fmt->pixelformat;
++	cedrus_prepare_format(pix_fmt, extended);
+ 
+ 	return 0;
+ }
+@@ -275,8 +296,7 @@ static int cedrus_try_fmt_vid_out(struct file *file, void *priv,
+ 	if (!fmt)
+ 		return -EINVAL;
+ 
+-	pix_fmt->pixelformat = fmt->pixelformat;
+-	cedrus_prepare_format(pix_fmt);
++	cedrus_prepare_format(pix_fmt, 0);
+ 
+ 	return 0;
+ }
+@@ -357,7 +377,7 @@ static int cedrus_s_fmt_vid_out(struct file *file, void *priv,
+ 	ctx->dst_fmt.quantization = f->fmt.pix.quantization;
+ 	ctx->dst_fmt.width = ctx->src_fmt.width;
+ 	ctx->dst_fmt.height = ctx->src_fmt.height;
+-	cedrus_prepare_format(&ctx->dst_fmt);
++	cedrus_prepare_format(&ctx->dst_fmt, 0);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_video.h b/drivers/staging/media/sunxi/cedrus/cedrus_video.h
+index 05050c0a0..d42e4ebf6 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_video.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_video.h
+@@ -26,6 +26,6 @@ extern const struct v4l2_ioctl_ops cedrus_ioctl_ops;
+ 
+ int cedrus_queue_init(void *priv, struct vb2_queue *src_vq,
+ 		      struct vb2_queue *dst_vq);
+-void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt);
++void cedrus_prepare_format(struct v4l2_pix_format *pix_fmt, int extended);
+ 
+ #endif
+-- 
+2.35.3
+
