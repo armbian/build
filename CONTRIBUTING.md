@@ -16,7 +16,7 @@ Once you have decided to contribute to Armbian by working on an issue, check our
 
 ## Contributing
 
-This section describes how to start a contribution to Armbian.
+This section describes how to start a contribution to Armbian. 
 
 ### Prepare your environment
 
