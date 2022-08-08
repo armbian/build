@@ -104,3 +104,9 @@ Describe your problem. Whether your patch is a one-line bug fix or 5000 lines of
 For general questions and discussion, please use the IRC `#armbian`, `#armbian-devel` or `#armbian-desktop` on Libera.chat or [discord server](http://discord.armbian.com). IRC and Discord channels are bridged and recorded.
 
 For discussions around issues/bugs and features, you can use the [GitHub issues](https://github.com/armbian/build/issues) and [PRs tracking system](https://github.com/armbian/build/pulls).
+
+## Other ways to contribute
+
+- [Become a new board maintainer](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/)
+- [Apply for one of the position](https://forum.armbian.com/staffapplications/)
+- [Help us covering costs](https://forum.armbian.com/subscriptions/)
