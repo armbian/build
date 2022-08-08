@@ -1,32 +1,40 @@
-# Runners setup
+# Runners requirements
 
-Common tags: 
+- big (6-16 cores, 64Gb SSD, 16Gb memory, 2Gb swap)
+- small (4 cores, 64Gb SSD, 8Gb memory, 2Gb swap)
 
-- self-hosted
-- Linux
-- X64
-- ARM64 (4Gb memory with ZRAM_PERCENTAGE=50)
-- public (isolated runners for merge reqeusts)
-- local (local network)
-- cache (mounted cache)
-- images (present cache, good enough for making images)
-- big (16-128 cores, 64Gb SSD, 20Gb+ memory)
-- small (< 16 cores, 32Gb SSD, 4Gb memory)
+## Preparation
 
-# Preparing GPG
 
-use gpg1 otherwise signing fails
 
-# Preparing Runner
+Adding x86 runner to your Jammy VM (check [here](https://docs.github.com/en/actions/hosting-your-own-runners/adding-self-hosted-runners) if any changes):
 
-- make sure to choose proper architecture
-- create startup
+    $ mkdir actions-runner 
+    $ cd actions-runner
+    $ curl -o actions-runner-linux-x64-2.294.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.294.0/actions-runner-linux-x64-2.294.0.tar.gz
+    $ tar xzf ./actions-runner-linux-x64-2.294.0.tar.gz
 
-        sudo ./svc.sh install # install
-        sudo ./svc.sh start   # start
-        sudo ./svc.sh status  # check
+## Configuration
 
-# Use workflows in forked repositories
+Once asked, tag your runner accordingly:
+
+- small
+- big
+- arm64
+
+Start the configuration experience
+
+    $ ./config.sh --url https://github.com/armbian --token XXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+You need to get a valid token from our DevOps team to proceed.
+
+## Create startup scripts
+
+    sudo ./svc.sh install # install
+    sudo ./svc.sh start   # start
+    sudo ./svc.sh status  # check
+
+## Use workflows in forked repositories
 
 `forked-helper.yml` workflow helper can help to run custom workflows on the forked repositories.
 
