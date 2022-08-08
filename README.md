@@ -36,7 +36,7 @@
 ### Prepare your environment
 
 - x64 / aarch64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
-- Ubuntu Jammy 22.04 x64 / aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
+- Ubuntu Jammy 22.04 x64 or aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
 - Superuser rights (configured sudo or root access).
 
 ### Simply start with the build script
@@ -82,7 +82,12 @@ KERNEL_CONFIGURE=no \
 CARD_DEVICE="/dev/sda"
 ```
 
-[Build parameters, advanced build options, user defined configuration, build with Docker?](https://docs.armbian.com/Developer-Guide_Build-Preparation/)
+More information:
+
+- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
+- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
+- [Building with Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) — how to build inside container;
+- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
 
 ## Compare with industry standards
 
@@ -180,12 +185,13 @@ Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) befor
 
 - [Forums](https://forum.armbian.com) for Participate in Armbian
 - IRC: `#armbian` on Libera.chat
-- Follow [@armbian](https://twitter.com/armbian) on twitter or [LinkedIn](https://www.linkedin.com/company/armbian).
+- Discord: [http://discord.armbian.com](http://discord.armbian.com)
+- Follow [@armbian](https://twitter.com/armbian) on Twitter or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
 
 ## Contributors
 
-Thank you to all the people who already contributed armbian!
+Thank you to all the people who already contributed Armbian!
 
 <a href="https://github.com/armbian/build/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=armbian/build" />

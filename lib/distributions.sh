@@ -322,7 +322,8 @@ PRE_INSTALL_KERNEL_DEBS
 			VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
 			VER="${VER/-$LINUXFAMILY/}"
 			VER="${VER/linux-/}"
-			if [[ "${ARCH}" != "amd64" && "${LINUXFAMILY}" != "media"  ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
+
+			if [[ "${ARCH}" != "amd64" && "${LINUXFAMILY}" != "media" && "${LINUXFAMILY}" != station* ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
 				install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
 			fi
 			[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
