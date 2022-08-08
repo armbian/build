@@ -4,7 +4,7 @@ We'd love to have you join the Armbian community! Below summarizes the processes
 
 ## Reporting Issues
 
-Before [reporting an issue](https://github.com/armbian/build/issues/new/choose), check our [backlog of open issues](https://github.com/armbian/build/issues) and [Pull requests](https://github.com/armbian/build/pulls) to see if someone else has already reported or working on it. If so, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
+Before [reporting an issue](https://github.com/armbian/build/issues/new/choose), check our [backlog of open issues](https://github.com/armbian/build/issues) and [pull requests](https://github.com/armbian/build/pulls) to see if someone else has already reported or working on it. If so, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
 
 If you find a new issue with the project we'd love to hear about it! The most important aspect of a bug report is that it includes enough information for us to reproduce it. So, please include as much detail as possible and try to remove the extra stuff that doesn't really relate to the issue itself. The easier it is for us to reproduce it, the faster it'll be fixed!
 
