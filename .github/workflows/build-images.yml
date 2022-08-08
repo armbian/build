@@ -39,13 +39,16 @@ on:
         type: choice
         description: Beta packages repository
         options:
-        - yes
-        - no
+        - "yes"
+        - "no"
 
       advanced:
         description: 'Single board (grep -w tinkerboard |)'
         required: false
         default: ''
+
+env:
+   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
 
@@ -54,17 +57,34 @@ jobs:
     name: "Cancel currently active"
     runs-on: small
     steps:
-      - uses: n1hility/cancel-previous-runs@v2
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.10.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          access_token: ${{ secrets.GITHUB_TOKEN }}
+
+  clean:
+
+    if: ${{ github.repository_owner == 'Armbian' }}
+    name: Purge older releases
+    needs: [ Cancel ]
+    runs-on: [ubuntu-latest]
+    steps:
+      - name: Purge
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          keep_latest: 7
+          delete_tag_pattern: trunk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   fake:
     if: ${{ github.repository_owner == 'Armbian' }}
     runs-on: small
-    needs: [ Cancel ]
+    needs: [ clean ]
     name: Source changes
     outputs:
       changes: ${{steps.list_releases.outputs.changes}}
+      version: ${{steps.list_releases.outputs.version}}
     steps:
       - run: |
           echo "not empty" > changes
@@ -82,12 +102,21 @@ jobs:
         id: list_releases
         run: |
 
-          RELE=$(curl -ks https://api.github.com/repos/armbian/build/releases/latest ^| grep "browser_download_url" | grep -o -P '(?<=trunk.).*(?=_)' | cut -d"_" -f1 | sort | uniq)
-          SOUR=$(cat build/VERSION | cut -d"." -f4-4)
+          RELE=$(curl -ks https://api.github.com/repos/armbian/build/releases/latest ^| grep "browser_download_url" | grep -o -P '(?<=Armbian.).*(?=_)' | cut -d"_" -f1 | sort | uniq | head -1)
+          SOUR=$(cat build/VERSION)
+          
           # skip if version in git is the same as at release
           if [[ "$RELE" == "$SOUR" ]]; then
               echo ::set-output name=changes::$(echo 'true')
           fi
+          # output version
+          echo ::set-output name=version::$(echo ${SOUR})
+
+      - uses: actions/upload-artifact@v3
+        with:
+          path: changes
+          name: changes
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v3
         with:
@@ -110,6 +139,7 @@ jobs:
           echo "Env: ${{ github.event.inputs.runner }}"
           echo "Env: ${{ github.event.inputs.sourcerepo }}"
           echo "Branch: ${{ github.event.inputs.branch }}"
+          echo "Version: ${{ needs.fake.outputs.version }}"
 
       - uses: actions/checkout@v3
         if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
@@ -128,7 +158,7 @@ jobs:
         if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
         with:
           artifacts: "LICENSE"
-          tag: "latest"
+          tag: "${{ needs.fake.outputs.version }}"
           name: "Build in progress"
           bodyFile: ".github/Releases-wip.md"
           allowUpdates: true
@@ -310,13 +340,47 @@ jobs:
     runs-on: [ubuntu-latest]
     if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
     steps:
-      - uses: actions/checkout@v3
+
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
           fetch-depth: 1
+          ref: nightly
+          
+      - name: Make build list
+        run: |
+        
+          sudo npm install --location=global json || true
+          truncate README.me --size=0 || true
+          echo "VERSION=$(cat VERSION)" >> $GITHUB_ENV
+          cat ".github/Releases.md" >> README.tmp
+          echo -en "&nbsp;\n\n" >> README.tmp
+          echo "| Image &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | GPG | SHA | Release | Branch | Variant | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Size | Kernel |" >> README.tmp
+          echo "| --- | :--: | :--: | :--: | :--: | :--: | --: | --: |" >> README.tmp
+          gh release view --json assets 2>/dev/null | python3 -mjson.tool | sed  '1,2d;$d' | json -ga name url size -d, | sort | (
+          while read -r line; do
+           name=$(echo $line | cut -d"," -f1 | awk '{print tolower($0)}')
+           url=$(echo $line | cut -d"," -f2)
+           size=$(echo $line | cut -d"," -f3)
+           if [ "${name: -3}" == ".xz" ]; then
+             board_name=$(echo $name | cut -d"_" -f3)
+             source config/boards/$board_name.*
+             out_release=$(echo $name | cut -d"_" -f4)
+             out_branch=$(echo $name | cut -d"_" -f5)
+             out_kernel=$(echo $name | cut -d"_" -f6-7 | cut -d"." -f1-3 | cut -d"_" -f1)
+             out_desktop=$(echo $name | cut -d"_" -f7)
+             out_desktop=${out_desktop:-cli}
+             out_size=$(echo "scale=2; $size/1024/1024" | bc -l)" Mb"
+             echo -ne "| [$BOARD_NAME]($url) | [:file_folder:]($url".asc") | [:file_folder:]($url".sha") | $out_release | $out_branch | $out_desktop | $out_size | $out_kernel |\n" >> README.tmp
+           fi
+          done
+          )
+          cat README.tmp
+        
       - uses: ncipollo/release-action@v1
         with:
-          tag: "latest"
-          bodyFile: ".github/Releases.md"
-          name: "Automated builds"
+          tag: "${{ env.VERSION }}"
+          bodyFile: "README.tmp"
+          omitName: true
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
