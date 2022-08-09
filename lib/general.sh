@@ -1685,6 +1685,12 @@ download_and_verify()
 		return
 	fi
 
+	# rootfs has its own infra
+	if [[ "${remotedir}" == "_rootfs" ]]; then
+		local server="https://cache.armbian.com/"
+		remotedir="rootfs/$ROOTFSCACHE_VERSION"
+	fi
+
 	# switch to china mirror if US timeouts
 	timeout 10 curl --location --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
@@ -1697,12 +1703,6 @@ download_and_verify()
 			display_alert "Timeout from $server" "retrying" "info"
 			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
 		fi
-	fi
-
-	# rootfs has its own infra
-	if [[ "${remotedir}" == "_rootfs" ]]; then
-		local server="https://cache.armbian.com/"
-		remotedir="rootfs"
 	fi
 
 	# check if file exists on remote server before running aria2 downloader

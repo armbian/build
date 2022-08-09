@@ -146,7 +146,7 @@ create_rootfs_cache()
 			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
 			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
-	elif [[ "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
+	elif [[ ! -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
 		display_alert "searching on servers"
 		download_and_verify "_rootfs" "$cache_name"
 	fi
