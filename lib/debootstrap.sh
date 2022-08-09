@@ -129,9 +129,9 @@ create_rootfs_cache()
 	INITAL_ROOTFSCACHE_VERSION=$ROOTFSCACHE_VERSION
 
 	# seek last cache, proceed to previous otherwise build it
-	for ((noc = 0; noc < cycles; noc++)); do
+	for ((n = 0; n < cycles; n++)); do
 
-	ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $noc)
+	ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
 	ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
 
 	local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
