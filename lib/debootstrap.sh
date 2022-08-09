@@ -120,35 +120,57 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 create_rootfs_cache()
 {
 
+	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
+		local cycles=1
+	else
+		local cycles=3
+	fi
+
+	INITAL_ROOTFSCACHE_VERSION=$ROOTFSCACHE_VERSION
+
+	# seek last cache, proceed to previous otherwise build it
+	for ((n = 0; n < cycles; n++)); do
+
+	ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
+	ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
 
 	local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
 	local cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
 	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
 	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
+	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.zst
 	local cache_fname=${SRC}/cache/rootfs/${cache_name}
-	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
+	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
 
-	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 && "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
+	[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
+
+	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
 		rm ${cache_fname}*
 		display_alert "Partially downloaded file. Re-start."
 		download_and_verify "_rootfs" "$cache_name"
 	fi
 
-	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-		echo "$cache_fname" > $cache_fname.current
-		display_alert "Checking cache integrity" "$display_name" "info"
-		sudo lz4 -tqq ${cache_fname}
-		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-		# sign if signature is missing
-		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
-			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
-			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
-		fi
-	elif [[ "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
+	display_alert "Checking local cache" "$display_name" "info"
+
+	if [[ -f $cache_fname ]]; then
+		break
+	else
 		display_alert "searching on servers"
 		download_and_verify "_rootfs" "$cache_name"
+		[[ -f ${cache_fname} ]] && break
+	fi
+
+	if [[ ! -f $cache_fname ]]; then
+		display_alert "not found: try to use previous cache"
+	fi
+	done
+
+	# check if cache exists and we want to make it
+        if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
+                display_alert "Checking cache integrity" "$display_name" "info"
+                sudo zstd -tqq ${cache_fname}
+                [[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
 	fi
 
 	# if aria2 file exists download didn't succeeded
@@ -156,7 +178,7 @@ create_rootfs_cache()
 
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
+		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
@@ -362,7 +384,7 @@ create_rootfs_cache()
 		umount_chroot "$SDCARD"
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
+			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | zstdmt -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
