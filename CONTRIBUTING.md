@@ -86,7 +86,7 @@ Then you can ready to submit your patch to the Armbian project.
 
 ## Submitting Pull Requests
 
-No Pull Request (PR) is too small! Typos, additional comments in the code, new test cases, bug fixes, new features, more documentation, ... everything welcome!
+No Pull Request (PR) is too small! Typos, additional comments in the code, new test cases, bug fixes, new features, more documentation, ... everything is welcome!
 
 While bug fixes can first be identified via an "issue", that is not required for things mentioned above. It is fine to just open up a PR with the fix, but make sure you include the same information you would have included in an actual issue - like how to reproduce it.
 
