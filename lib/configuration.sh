@@ -33,7 +33,7 @@ cd "${SRC}" || exit
 # if variable not provided, check which is current version in the cache storage
 if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
 	ROOTFSCACHE_VERSION=$(curl https://api.github.com/repos/armbian/cache/releases/latest -s | jq .tag_name -r || true)
-	ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-"0001"}
+	ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-"0003"}
 fi
 
 [[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
