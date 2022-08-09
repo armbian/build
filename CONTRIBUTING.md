@@ -1,18 +1,18 @@
 # Contributing to Armbian Linux build framework
 
-We'd love to have you join the Armbian community! Below summarizes the processes that we follow.
+We would love to have you join the Armbian community! Below summarizes the processes that we follow.
 
 ## Reporting Issues
 
 Before [reporting an issue](https://github.com/armbian/build/issues/new/choose), check our [backlog of open issues](https://github.com/armbian/build/issues) and [pull requests](https://github.com/armbian/build/pulls) to see if someone else has already reported or working on it. If so, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
 
-If you find a new issue with the project we'd love to hear about it! The most important aspect of a bug report is that it includes enough information for us to reproduce it. So, please include as much detail as possible and try to remove the extra stuff that doesn't really relate to the issue itself. The easier it is for us to reproduce it, the faster it'll be fixed!
+If you find a new issue with the project please let us hear about it! The most important aspect of a bug report is that it includes enough information for us to reproduce it. So, please include as much detail as possible and try to remove the extra stuff that does not really relate to the issue itself. The easier it is for us to reproduce it, the faster it will be fixed!
 
-Please don't include any private/sensitive information in your issue!
+Please do not include any private/sensitive information in your issue!
 
 ## Working On Issues
 
-Once you have decided to contribute to Armbian by working on an issue, check our backlog of open (or [JIRA](https://armbian.atlassian.net/jira/dashboards/10000) issues open by the team) looking for any that do not have an "In Progress" label attached to it. Often issues will be assigned to someone, to be worked on at a later time. If you have the time to work on the issue now add yourself as an assignee, and set the "In Progress" label if you’re a member of the “Containers” GitHub organization. If you can not set the label, just add a quick comment in the issue asking that the “In Progress” label be set and a member will do so for you.
+Once you have decided to contribute to Armbian by working on an issue, check our backlog of open (or [JIRA](https://armbian.atlassian.net/jira/dashboards/10000) issues open by the team) looking for any that do not have an "In Progress" label attached to it. Often issues will be assigned to someone, to be worked on at a later time. If you have the time to work on the issue now add yourself as an assignee, and set the "In Progress" label if you are a member of the “Containers” GitHub organization. If you can not set the label, just add a quick comment in the issue asking that the “In Progress” label be set and a member will do so for you.
 
 ## Contributing
 
@@ -20,7 +20,7 @@ This section describes how to start a contribution to Armbian.
 
 ### Prepare your environment
 
-* Create an Ubuntu 22.04 VM with VirtualBox or other hypervisor. Then proceed with:
+* Create an Ubuntu 22.04 VM with VirtualBox or any other suitable hypervisor. Then proceed with:
 
       sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
       sudo apt-add-repository https://cli.github.com/packages
@@ -58,11 +58,10 @@ This section describes how to start a contribution to Armbian.
 
     * Full OS image for flashing
     * Do not change kernel configuration
-    * Chose a board
-    * Chose a kernel
-    * Chose a release package base
-    * Chose image type
-    * Chose image type
+    * Choose a board
+    * Choose a kernel
+    * Choose a release package base
+    * Choose image type
     * Configuring apt-cacher-ng
 * Wait for prompt to make u-boot changes (press Enter after making changes in specified directory)
 
@@ -87,13 +86,13 @@ Then you can ready to submit your patch to the Armbian project.
 
 ## Submitting Pull Requests
 
-No Pull Request (PR) is too small! Typos, additional comments in the code, new test cases, bug fixes, new features, more documentation, ... it's all welcome!
+No Pull Request (PR) is too small! Typos, additional comments in the code, new test cases, bug fixes, new features, more documentation, ... everything welcome!
 
-While bug fixes can first be identified via an "issue", that is not required. It's ok to just open up a PR with the fix, but make sure you include the same information you would have included in an issue - like how to reproduce it.
+While bug fixes can first be identified via an "issue", that is not required for things mentioned above. It is fine to just open up a PR with the fix, but make sure you include the same information you would have included in an actual issue - like how to reproduce it.
 
-PRs for new features should include some background on what use cases the new code is trying to address. When possible and when it makes sense, try to break-up larger PRs into smaller ones - it's easier to review smaller code changes. But only if those smaller ones make sense as stand-alone PRs.
+PRs for new features should include some background on what use cases the new code is trying to address. When possible and when it makes sense, try to break-up larger PRs into smaller parts - it is easier to review smaller code changes. But only if those smaller ones make sense as stand-alone PRs.
 
-Squash your commits into logical pieces of work that might want to be reviewed separate from the rest of the PRs. But, squashing down to just one commit is ok too since in the end the entire PR will be reviewed anyway. When in doubt, squash.
+Squash your commits into logical pieces of work that might want to be reviewed separate from the rest of the PRs. But, squashing down to just one commit is ok too since in the end the entire PR will be reviewed anyway. If in doubt, squash.
 
 ### Describe your Changes in Commit Messages
 
@@ -101,7 +100,7 @@ Describe your problem. Whether your patch is a one-line bug fix or 5000 lines of
 
 ## Communications
 
-For general questions and discussion, please use the IRC `#armbian`, `#armbian-devel` or `#armbian-desktop` on Libera.chat or [discord server](http://discord.armbian.com). IRC and Discord channels are bridged and recorded.
+For general questions and discussion, please use the IRC `#armbian`, `#armbian-devel` or `#armbian-desktop` on Libera.Chat or [Discord server](http://discord.armbian.com). Most IRC and Discord channels are bridged and recorded.
 
 For discussions around issues/bugs and features, you can use the [GitHub issues](https://github.com/armbian/build/issues) and [PRs tracking system](https://github.com/armbian/build/pulls).
 
