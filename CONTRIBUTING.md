@@ -2,7 +2,7 @@
 
 We would love to have you join the Armbian community! Below summarizes the processes that we follow.
 
-## Reporting Issues
+## Reporting issues
 
 Before [reporting an issue](https://github.com/armbian/build/issues/new/choose), check our [backlog of open issues](https://github.com/armbian/build/issues) and [pull requests](https://github.com/armbian/build/pulls) to see if someone else has already reported or working on it. If an issues is already open, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
 
@@ -10,7 +10,7 @@ If you find a new issue with the project please let us hear about it! The most i
 
 Please do not include any private/sensitive information in your issue! We are not responsible for your privacy, this is open source software.
 
-## Working On Issues
+## Working on issues
 
 Once you have decided to contribute to Armbian by working on an issue, check our backlog of open (or [JIRA](https://armbian.atlassian.net/jira/dashboards/10000) issues open by the team) looking for any that do not have an "In Progress" label attached to it. Often issues will be assigned to someone, to be worked on at a later time. If you have the time to work on the issue now add yourself as an assignee, and set the "In Progress" label if you are a member of the “Containers” GitHub organization. If you can not set the label, just add a quick comment in the issue asking that the “In Progress” label be set and a member will do so for you.
 
@@ -109,7 +109,7 @@ This section describes how to start contributing to Armbian.
 
 Next, you can prepare to submit your patch to the Armbian project.
 
-## Submitting Pull Requests
+## Submitting pull requests
 
 No Pull Request (PR) is too small! Typos, additional comments in the code, new test cases, bug fixes, new features, more documentation, ... everything is welcome!
 
@@ -119,7 +119,7 @@ PRs for new features should include some background on what use cases the new co
 
 You should squash your commits into logical pieces of work that can be reviewed separate from the rest of the PRs. Squashing down to just one commit is ok as well, since in the end the entire PR will be reviewed anyway. If in doubt, squash.
 
-### Describe your Changes in Commit Messages
+### Describe your changes in commit messages
 
 Describe your problem(s). Whether your patch is a one-line bug fix or 5000 lines including a new feature, there must be an underlying problem that motivated you to do this work. Your description should work to convince the reviewer that there is a problem worth fixing and that it makes sense for them to read past the first paragraph.  This means providing comprehensive details about the issue, including, but not limited to: 
 * How the problem presented itself
