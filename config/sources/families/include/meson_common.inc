@@ -1,10 +1,3 @@
-BOOTDIR='u-boot-odroidc1'
-BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
-BOOTBRANCH='branch:odroidc-v2011.03'
-UBOOT_COMPILER="arm-linux-gnueabihf-"
-UBOOT_USE_GCC='< 4.9'
-UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
-
 ARCH=armhf
 LINUXFAMILY=meson
 KERNEL_IMAGE_TYPE=uImage
@@ -15,6 +8,21 @@ SERIALCON="ttyAML0"
 CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=ondemand
+
+case $BOARD in
+	odroidc1)
+
+		BOOTDIR='u-boot-odroidc1'
+		BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
+		BOOTBRANCH='branch:odroidc-v2011.03'
+
+		UBOOT_COMPILER="arm-linux-gnueabihf-"
+		UBOOT_USE_GCC='< 4.9'
+
+		UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
+
+	;;
+esac
 
 case $BRANCH in
 	legacy)
