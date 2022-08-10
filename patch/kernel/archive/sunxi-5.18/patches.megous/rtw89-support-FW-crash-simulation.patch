@@ -1,0 +1,222 @@
+From e7f0053eca82d86b5bb303552dcc88a0fd78018c Mon Sep 17 00:00:00 2001
+From: Zong-Zhe Yang <kevin_yang@realtek.com>
+Date: Mon, 14 Mar 2022 15:12:50 +0800
+Subject: [PATCH 406/534] rtw89: support FW crash simulation
+
+Originally, there is already a mechanism, SER (system error recover),
+to deal with HW/FW recovery. After FW v0.13.36.0, FW supports a H2C
+(host to chip) command to make a CPU exception. Then, SER is supposed
+to catch this FW crash and do L2 reset. This feature is a simulation
+to verify if flow of recovering from FW crash works.
+
+Usage of fw_crash debugfs is as the following.
+$ echo 1 > fw_crash	// trigger FW crash and wait SER handling
+$ cat fw_crash		// return 0 if restart has been done
+
+Signed-off-by: Zong-Zhe Yang <kevin_yang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220314071250.40292-9-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.h  |  2 +
+ drivers/net/wireless/realtek/rtw89/debug.c | 48 ++++++++++++++++++++++
+ drivers/net/wireless/realtek/rtw89/fw.c    | 36 ++++++++++++++++
+ drivers/net/wireless/realtek/rtw89/fw.h    | 12 ++++++
+ drivers/net/wireless/realtek/rtw89/ser.c   |  1 +
+ 5 files changed, 99 insertions(+)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index 9eba16b0b..f1c1be7a3 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -2400,6 +2400,7 @@ enum rtw89_fw_feature {
+ 	RTW89_FW_FEATURE_OLD_HT_RA_FORMAT,
+ 	RTW89_FW_FEATURE_SCAN_OFFLOAD,
+ 	RTW89_FW_FEATURE_TX_WAKE,
++	RTW89_FW_FEATURE_CRASH_TRIGGER,
+ };
+ 
+ struct rtw89_fw_suit {
+@@ -2503,6 +2504,7 @@ enum rtw89_flags {
+ 	RTW89_FLAG_LEISURE_PS,
+ 	RTW89_FLAG_LOW_POWER_MODE,
+ 	RTW89_FLAG_INACTIVE_PS,
++	RTW89_FLAG_RESTART_TRIGGER,
+ 
+ 	NUM_OF_RTW89_FLAGS,
+ };
+diff --git a/drivers/net/wireless/realtek/rtw89/debug.c b/drivers/net/wireless/realtek/rtw89/debug.c
+index 09c545497..f93f3fee1 100644
+--- a/drivers/net/wireless/realtek/rtw89/debug.c
++++ b/drivers/net/wireless/realtek/rtw89/debug.c
+@@ -2184,6 +2184,48 @@ rtw89_debug_priv_early_h2c_set(struct file *filp, const char __user *user_buf,
+ 	return count;
+ }
+ 
++static int
++rtw89_debug_priv_fw_crash_get(struct seq_file *m, void *v)
++{
++	struct rtw89_debugfs_priv *debugfs_priv = m->private;
++	struct rtw89_dev *rtwdev = debugfs_priv->rtwdev;
++
++	seq_printf(m, "%d\n",
++		   test_bit(RTW89_FLAG_RESTART_TRIGGER, rtwdev->flags));
++	return 0;
++}
++
++static ssize_t
++rtw89_debug_priv_fw_crash_set(struct file *filp, const char __user *user_buf,
++			      size_t count, loff_t *loff)
++{
++	struct seq_file *m = (struct seq_file *)filp->private_data;
++	struct rtw89_debugfs_priv *debugfs_priv = m->private;
++	struct rtw89_dev *rtwdev = debugfs_priv->rtwdev;
++	bool fw_crash;
++	int ret;
++
++	if (!RTW89_CHK_FW_FEATURE(CRASH_TRIGGER, &rtwdev->fw))
++		return -EOPNOTSUPP;
++
++	ret = kstrtobool_from_user(user_buf, count, &fw_crash);
++	if (ret)
++		return -EINVAL;
++
++	if (!fw_crash)
++		return -EINVAL;
++
++	mutex_lock(&rtwdev->mutex);
++	set_bit(RTW89_FLAG_RESTART_TRIGGER, rtwdev->flags);
++	ret = rtw89_fw_h2c_trigger_cpu_exception(rtwdev);
++	mutex_unlock(&rtwdev->mutex);
++
++	if (ret)
++		return ret;
++
++	return count;
++}
++
+ static int rtw89_debug_priv_btc_info_get(struct seq_file *m, void *v)
+ {
+ 	struct rtw89_debugfs_priv *debugfs_priv = m->private;
+@@ -2468,6 +2510,11 @@ static struct rtw89_debugfs_priv rtw89_debug_priv_early_h2c = {
+ 	.cb_write = rtw89_debug_priv_early_h2c_set,
+ };
+ 
++static struct rtw89_debugfs_priv rtw89_debug_priv_fw_crash = {
++	.cb_read = rtw89_debug_priv_fw_crash_get,
++	.cb_write = rtw89_debug_priv_fw_crash_set,
++};
++
+ static struct rtw89_debugfs_priv rtw89_debug_priv_btc_info = {
+ 	.cb_read = rtw89_debug_priv_btc_info_get,
+ };
+@@ -2522,6 +2569,7 @@ void rtw89_debugfs_init(struct rtw89_dev *rtwdev)
+ 	rtw89_debugfs_add_rw(mac_dbg_port_dump);
+ 	rtw89_debugfs_add_w(send_h2c);
+ 	rtw89_debugfs_add_rw(early_h2c);
++	rtw89_debugfs_add_rw(fw_crash);
+ 	rtw89_debugfs_add_r(btc_info);
+ 	rtw89_debugfs_add_w(btc_manual);
+ 	rtw89_debugfs_add_w(fw_log_manual);
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.c b/drivers/net/wireless/realtek/rtw89/fw.c
+index bf2e18c57..c13dcf3de 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.c
++++ b/drivers/net/wireless/realtek/rtw89/fw.c
+@@ -221,6 +221,7 @@ static const struct __fw_feat_cfg fw_feat_tbl[] = {
+ 	__CFG_FW_FEAT(RTL8852A, le, 0, 13, 29, 0, OLD_HT_RA_FORMAT),
+ 	__CFG_FW_FEAT(RTL8852A, ge, 0, 13, 35, 0, SCAN_OFFLOAD),
+ 	__CFG_FW_FEAT(RTL8852A, ge, 0, 13, 35, 0, TX_WAKE),
++	__CFG_FW_FEAT(RTL8852A, ge, 0, 13, 36, 0, CRASH_TRIGGER),
+ };
+ 
+ static void rtw89_fw_recognize_features(struct rtw89_dev *rtwdev)
+@@ -2292,3 +2293,38 @@ void rtw89_store_op_chan(struct rtw89_dev *rtwdev)
+ 	scan_info->op_bw = hal->current_band_width;
+ 	scan_info->op_band = hal->current_band_type;
+ }
++
++#define H2C_FW_CPU_EXCEPTION_LEN 4
++#define H2C_FW_CPU_EXCEPTION_TYPE_DEF 0x5566
++int rtw89_fw_h2c_trigger_cpu_exception(struct rtw89_dev *rtwdev)
++{
++	struct sk_buff *skb;
++
++	skb = rtw89_fw_h2c_alloc_skb_with_hdr(H2C_FW_CPU_EXCEPTION_LEN);
++	if (!skb) {
++		rtw89_err(rtwdev,
++			  "failed to alloc skb for fw cpu exception\n");
++		return -ENOMEM;
++	}
++
++	skb_put(skb, H2C_FW_CPU_EXCEPTION_LEN);
++	RTW89_SET_FWCMD_CPU_EXCEPTION_TYPE(skb->data,
++					   H2C_FW_CPU_EXCEPTION_TYPE_DEF);
++
++	rtw89_h2c_pkt_set_hdr(rtwdev, skb, FWCMD_TYPE_H2C,
++			      H2C_CAT_TEST,
++			      H2C_CL_FW_STATUS_TEST,
++			      H2C_FUNC_CPU_EXCEPTION, 0, 0,
++			      H2C_FW_CPU_EXCEPTION_LEN);
++
++	if (rtw89_h2c_tx(rtwdev, skb, false)) {
++		rtw89_err(rtwdev, "failed to send h2c\n");
++		goto fail;
++	}
++
++	return 0;
++
++fail:
++	dev_kfree_skb_any(skb);
++	return -EBUSY;
++}
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.h b/drivers/net/wireless/realtek/rtw89/fw.h
+index 1aaec2672..24ab249a8 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.h
++++ b/drivers/net/wireless/realtek/rtw89/fw.h
+@@ -1461,6 +1461,11 @@ static inline void SET_LPS_PARM_LASTRPWM(void *h2c, u32 val)
+ 	le32p_replace_bits((__le32 *)(h2c) + 1, val, GENMASK(15, 8));
+ }
+ 
++static inline void RTW89_SET_FWCMD_CPU_EXCEPTION_TYPE(void *cmd, u32 val)
++{
++	le32p_replace_bits((__le32 *)cmd, val, GENMASK(31, 0));
++}
++
+ enum rtw89_btc_btf_h2c_class {
+ 	BTFC_SET = 0x10,
+ 	BTFC_GET = 0x11,
+@@ -2140,6 +2145,12 @@ struct rtw89_fw_h2c_rf_reg_info {
+ 
+ #define FWCMD_TYPE_H2C			0
+ 
++#define H2C_CAT_TEST		0x0
++
++/* CLASS 5 - FW STATUS TEST */
++#define H2C_CL_FW_STATUS_TEST		0x5
++#define H2C_FUNC_CPU_EXCEPTION		0x1
++
+ #define H2C_CAT_MAC		0x1
+ 
+ /* CLASS 0 - FW INFO */
+@@ -2284,5 +2295,6 @@ void rtw89_hw_scan_status_report(struct rtw89_dev *rtwdev, struct sk_buff *skb);
+ void rtw89_hw_scan_chan_switch(struct rtw89_dev *rtwdev, struct sk_buff *skb);
+ void rtw89_hw_scan_abort(struct rtw89_dev *rtwdev, struct ieee80211_vif *vif);
+ void rtw89_store_op_chan(struct rtw89_dev *rtwdev);
++int rtw89_fw_h2c_trigger_cpu_exception(struct rtw89_dev *rtwdev);
+ 
+ #endif
+diff --git a/drivers/net/wireless/realtek/rtw89/ser.c b/drivers/net/wireless/realtek/rtw89/ser.c
+index f28cd0645..25d1df10f 100644
+--- a/drivers/net/wireless/realtek/rtw89/ser.c
++++ b/drivers/net/wireless/realtek/rtw89/ser.c
+@@ -619,6 +619,7 @@ static void ser_l2_reset_st_hdl(struct rtw89_ser *ser, u8 evt)
+ 		fallthrough;
+ 	case SER_EV_L2_RECFG_DONE:
+ 		ser_state_goto(ser, SER_IDLE_ST);
++		clear_bit(RTW89_FLAG_RESTART_TRIGGER, rtwdev->flags);
+ 		break;
+ 
+ 	case SER_EV_STATE_OUT:
+-- 
+2.35.3
+

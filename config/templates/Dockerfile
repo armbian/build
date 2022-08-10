@@ -1,6 +1,9 @@
-FROM ubuntu:21.04
+ARG BASE_IMAGE=ubuntu:jammy
+FROM $BASE_IMAGE as armbian_builder
+ARG CUSTOM_PACKAGES='g++-11-arm-linux-gnueabihf libssl3'
+ENV CUSTOM_PACKAGES $CUSTOM_PACKAGES
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get -y install \
+RUN apt-get update && apt-get -y dist-upgrade && apt-get -y install \
        joe \
        software-properties-common \
        gnupg \
@@ -18,8 +21,9 @@ RUN sh -c " \
         libc6-i386; \
     fi"
 RUN apt-get update \
-    && apt-get -y upgrade \
+    && apt-get -y dist-upgrade \
     && apt-get install -y --no-install-recommends \
+       $CUSTOM_PACKAGES \
        acl \
        aptly \
        aria2 \
@@ -29,6 +33,7 @@ RUN apt-get update \
        bison \
        btrfs-progs \
        build-essential \
+       busybox \
        ca-certificates \
        ccache \
        cpio \
@@ -45,8 +50,8 @@ RUN apt-get update \
        f2fs-tools \
        fakeroot \
        flex \
-       g++-8-arm-linux-gnueabihf \
        gawk \
+       gcc-aarch64-linux-gnu \
        gcc-arm-linux-gnueabihf \
        gcc-arm-linux-gnueabi \
        gcc-arm-none-eabi \
@@ -69,6 +74,7 @@ RUN apt-get update \
        libssl-dev \
        libusb-1.0-0-dev \
        linux-base \
+       libmpc-dev \
        locales \
        lsb-release \
        lzop \
@@ -79,6 +85,7 @@ RUN apt-get update \
        openssh-client \
        p7zip-full \
        parted \
+       parallel \
        patchutils \
        pigz \
        pixz \
@@ -91,13 +98,11 @@ RUN apt-get update \
        python3-distutils \
        python3-pkg-resources \
        python3-setuptools \
-       qemu \
        qemu-utils \
        qemu-user-static \
        rsync \
        swig \
        sudo \
-       systemd-container \
        tzdata \
        u-boot-tools \
        udev \
@@ -110,6 +115,7 @@ RUN apt-get update \
        xfsprogs \
        xxd \
        zip \
+       zstd \
        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN locale-gen en_US.UTF-8

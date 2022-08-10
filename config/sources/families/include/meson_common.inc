@@ -4,7 +4,6 @@ BOOTBRANCH='branch:odroidc-v2011.03'
 BOOTDIR='u-boot-odroidc1'
 UBOOT_COMPILER="arm-linux-gnueabihf-"
 UBOOT_USE_GCC='< 4.9'
-BOOTSCRIPT="boot-odroid-c1.ini:boot.ini"
 SERIALCON="ttyAML0"
 UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
 SRC_LOADADDR='LOADADDR=0x00208000'
@@ -17,20 +16,39 @@ GOVERNOR=ondemand
 case $BRANCH in
 	legacy)
 
-		KERNELBRANCH="branch:linux-5.4.y"
+		KERNELBRANCH="branch:linux-5.11.y"
 		KERNELPATCHDIR='meson-'$BRANCH
+
+		BUILD_DESKTOP=no
 
         ;;
 	current)
 
-		KERNELBRANCH="branch:linux-5.10.y"
-		KERNELPATCHDIR='meson-current'
+		KERNELBRANCH="branch:linux-5.14.y"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+		BUILD_DESKTOP=no
 
 	;;
 	edge)
 
-		KERNELBRANCH="branch:linux-5.11.y"
-		KERNELPATCHDIR='meson-current'
+		KERNELDIR='linux-meson'
+		KERNELSOURCE='https://github.com/xdarklight/linux'
+		KERNELBRANCH="branch:meson-mx-integration-5.18-20220417"
+		KERNELPATCHDIR='meson-'$BRANCH
+
+	;;
+esac
+
+case $BOARD in
+	odroidc1)
+
+		BOOTSCRIPT="boot-odroid-c1.ini:boot.ini"
+
+	;;
+	onecloud)
+
+		BOOTSCRIPT="boot-onecloud.cmd:boot.cmd"
 
 	;;
 esac
@@ -50,5 +68,13 @@ family_tweaks()
 
 family_tweaks_bsp()
 {
-	:	
+	mkdir -p "$destination/etc/X11/xorg.conf.d"
+	cat <<-EOF >"$destination/etc/X11/xorg.conf.d/02-driver.conf"
+	Section "OutputClass"
+		Identifier "Amlogic"
+		MatchDriver "meson"
+		Driver "modesetting"
+		Option "PrimaryGPU" "true"
+	EndSection
+	EOF
 }

@@ -29,6 +29,11 @@ fi
 
 if [[ -f "${SRC}"/lib/general.sh ]]; then
 
+	# Declare this folder as safe
+	if ! grep -q 2>/dev/null "directory = \*" "$HOME/.gitconfig"; then
+		git config --global --add safe.directory "*"
+	fi
+
 	# shellcheck source=lib/general.sh
 	source "${SRC}"/lib/general.sh
 
@@ -238,7 +243,7 @@ if ! ls "${SRC}"/userpatches/{config-default.conf,config-docker.conf,config-vagr
 
 	# Create Docker file
         if [[ ! -f "${SRC}"/userpatches/Dockerfile ]]; then
-                cp "${SRC}"/config/templates/Dockerfile "${SRC}"/userpatches/Dockerfile || exit 1
+		cp "${SRC}"/config/templates/Dockerfile "${SRC}"/userpatches/Dockerfile || exit 1
         fi
 
 	# Create Vagrant config

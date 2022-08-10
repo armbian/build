@@ -1,0 +1,128 @@
+From 9b47468ac15d7a541ced840eb413e30eb2a6addc Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Tue, 5 Mar 2019 22:02:41 -0600
+Subject: [PATCH 162/534] firmware: arm_scpi: Support unidirectional mailbox
+ channels
+
+Some mailbox controllers have only unidirectional channels, so we need a
+pair of them for each SCPI channel. If a mbox-names property is present,
+look for "rx" and "tx" mbox channels; otherwise, the existing behavior
+is preserved, and a single mbox channel is used for each SCPI channel.
+
+Note that since the mailbox framework only supports a single phandle
+with each name (mbox_request_channel_byname always returns the first
+one), this new mode only supports a single SCPI channel.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/firmware/arm_scpi.c | 58 +++++++++++++++++++++++++++++--------
+ 1 file changed, 46 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/firmware/arm_scpi.c b/drivers/firmware/arm_scpi.c
+index 5b4c02786..94b872ef1 100644
+--- a/drivers/firmware/arm_scpi.c
++++ b/drivers/firmware/arm_scpi.c
+@@ -234,7 +234,8 @@ struct scpi_xfer {
+ 
+ struct scpi_chan {
+ 	struct mbox_client cl;
+-	struct mbox_chan *chan;
++	struct mbox_chan *rx_chan;
++	struct mbox_chan *tx_chan;
+ 	void __iomem *tx_payload;
+ 	void __iomem *rx_payload;
+ 	struct list_head rx_pending;
+@@ -508,7 +509,7 @@ static int scpi_send_message(u8 idx, void *tx_buf, unsigned int tx_len,
+ 	msg->rx_len = rx_len;
+ 	reinit_completion(&msg->done);
+ 
+-	ret = mbox_send_message(scpi_chan->chan, msg);
++	ret = mbox_send_message(scpi_chan->tx_chan, msg);
+ 	if (ret < 0 || !rx_buf)
+ 		goto out;
+ 
+@@ -867,8 +868,13 @@ static void scpi_free_channels(void *data)
+ 	struct scpi_drvinfo *info = data;
+ 	int i;
+ 
+-	for (i = 0; i < info->num_chans; i++)
+-		mbox_free_channel(info->channels[i].chan);
++	for (i = 0; i < info->num_chans; i++) {
++		struct scpi_chan *pchan = &info->channels[i];
++
++		if (pchan->tx_chan != pchan->rx_chan)
++			mbox_free_channel(pchan->tx_chan);
++		mbox_free_channel(pchan->rx_chan);
++	}
+ }
+ 
+ static int scpi_remove(struct platform_device *pdev)
+@@ -924,6 +930,7 @@ static int scpi_probe(struct platform_device *pdev)
+ 	struct resource res;
+ 	struct device *dev = &pdev->dev;
+ 	struct device_node *np = dev->of_node;
++	bool use_mbox_names = false;
+ 
+ 	scpi_info = devm_kzalloc(dev, sizeof(*scpi_info), GFP_KERNEL);
+ 	if (!scpi_info)
+@@ -937,6 +944,14 @@ static int scpi_probe(struct platform_device *pdev)
+ 		dev_err(dev, "no mboxes property in '%pOF'\n", np);
+ 		return -ENODEV;
+ 	}
++	if (of_get_property(dev->of_node, "mbox-names", NULL)) {
++		use_mbox_names = true;
++		if (count != 2) {
++			dev_err(dev, "need exactly 2 mboxes with mbox-names\n");
++			return -ENODEV;
++		}
++		count /= 2;
++	}
+ 
+ 	scpi_info->channels = devm_kcalloc(dev, count, sizeof(struct scpi_chan),
+ 					   GFP_KERNEL);
+@@ -985,15 +1000,34 @@ static int scpi_probe(struct platform_device *pdev)
+ 		mutex_init(&pchan->xfers_lock);
+ 
+ 		ret = scpi_alloc_xfer_list(dev, pchan);
+-		if (!ret) {
+-			pchan->chan = mbox_request_channel(cl, idx);
+-			if (!IS_ERR(pchan->chan))
+-				continue;
+-			ret = PTR_ERR(pchan->chan);
+-			if (ret != -EPROBE_DEFER)
+-				dev_err(dev, "failed to get channel%d err %d\n",
+-					idx, ret);
++		if (ret)
++			return ret;
++
++		if (use_mbox_names) {
++			pchan->rx_chan = mbox_request_channel_byname(cl, "rx");
++			if (IS_ERR(pchan->rx_chan)) {
++				ret = PTR_ERR(pchan->rx_chan);
++				goto fail;
++			}
++			pchan->tx_chan = mbox_request_channel_byname(cl, "tx");
++			if (IS_ERR(pchan->rx_chan)) {
++				ret = PTR_ERR(pchan->tx_chan);
++				goto fail;
++			}
++		} else {
++			pchan->rx_chan = mbox_request_channel(cl, idx);
++			if (IS_ERR(pchan->rx_chan)) {
++				ret = PTR_ERR(pchan->rx_chan);
++				goto fail;
++			}
++			pchan->tx_chan = pchan->rx_chan;
+ 		}
++		continue;
++
++fail:
++		if (ret != -EPROBE_DEFER)
++			dev_err(dev, "failed to get channel%d err %d\n",
++				idx, ret);
+ 		return ret;
+ 	}
+ 
+-- 
+2.35.3
+

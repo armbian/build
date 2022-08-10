@@ -1,8 +1,20 @@
 name: Build Images
+#
+# Generates beta, stable or RC images. You can select build runners. By default it generates all images, but you can build images only for one target
+# Images are placed at www.arnmbian.com and nighly beta also at https://github.com/armbian/build/releases/tag/latest
+#
 
 on:
+
+  workflow_run:
+    workflows: ["Build train"]
+    types:
+      - completed
+
   workflow_dispatch:
+
     inputs:
+
       choice:
         type: choice
         description: Build targets
@@ -10,71 +22,176 @@ on:
         - beta
         - stable
         - rc
+
       runner:
         type: choice
         description: Build runners for CLI
         options:
         - small
         - ubuntu-latest
+
       sourcerepo:
         description: Source repository
-        required: true
+        required: false
         default: 'nightly'
+
+      packagesrepo:
+        type: choice
+        description: Beta packages repository
+        options:
+        - "yes"
+        - "no"
+
+      advanced:
+        description: 'Single board (grep -w tinkerboard |)'
+        required: false
+        default: ''
+
+env:
+   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
 
-  fake:
-    runs-on: ubuntu-latest
-    name: Source changes
+  Cancel:
+    if: ${{ github.repository_owner == 'Armbian' && github.event.schedule == '' }}
+    name: "Cancel currently active"
+    runs-on: small
+    steps:
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.10.0
+        with:
+          access_token: ${{ secrets.GITHUB_TOKEN }}
+
+  clean:
+
     if: ${{ github.repository_owner == 'Armbian' }}
+    name: Purge older releases
+    needs: [ Cancel ]
+    runs-on: [ubuntu-latest]
+    steps:
+      - name: Purge
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          keep_latest: 7
+          delete_tag_pattern: trunk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  fake:
+    if: ${{ github.repository_owner == 'Armbian' }}
+    runs-on: small
+    needs: [ clean ]
+    name: Source changes
+    outputs:
+      changes: ${{steps.list_releases.outputs.changes}}
+      version: ${{steps.list_releases.outputs.version}}
     steps:
       - run: |
           echo "not empty" > changes
-      - uses: actions/upload-artifact@v2
+
+      - uses: actions/checkout@v3
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          fetch-depth: 1
+          path: build
+          clean: false
+          ref: nightly
+
+      - name: "Get latest release version"
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        id: list_releases
+        run: |
+
+          RELE=$(curl -ks https://api.github.com/repos/armbian/build/releases/latest ^| grep "browser_download_url" | grep -o -P '(?<=Armbian.).*(?=_)' | cut -d"_" -f1 | sort | uniq | head -1)
+          SOUR=$(cat build/VERSION)
+          
+          # skip if version in git is the same as at release
+          if [[ "$RELE" == "$SOUR" ]]; then
+              echo ::set-output name=changes::$(echo 'true')
+          fi
+          # output version
+          echo ::set-output name=version::$(echo ${SOUR})
+
+      - uses: actions/upload-artifact@v3
         with:
           path: changes
           name: changes
           if-no-files-found: ignore
 
-  sync-servers:
-    name: "Sync servers"
-    needs: [ fake]
-    if: ${{ github.repository_owner == 'Armbian' }}
-    uses: armbian/scripts/.github/workflows/sync-servers.yml@master
+      - uses: actions/upload-artifact@v3
+        with:
+          path: changes
+          name: changes
+          if-no-files-found: ignore
 
-    with:
-      KEY_ID: 'upload'
 
-    secrets:
-      KEY_UPLOAD: ${{ secrets.KEY_UPLOAD }}
-      USER_REPOSITORY: ${{ secrets.USER_REPOSITORY }}
-      HOST_REPOSITORY: ${{ secrets.HOST_REPOSITORY }}
-      KNOWN_HOSTS_REPOSITORY: ${{ secrets.KNOWN_HOSTS_REPOSITORY }}
+  generaterelease:
 
-      
+    needs: [ fake ]
+    if: ${{ github.repository_owner == 'Armbian' && needs.fake.outputs.changes != 'true' }}
+    runs-on: ubuntu-latest
+    name: "Update latest release"
+    steps:
+
+      - run: |
+
+          echo "Env: ${{ github.event.inputs.choice }}"
+          echo "Env: ${{ github.event.inputs.runner }}"
+          echo "Env: ${{ github.event.inputs.sourcerepo }}"
+          echo "Branch: ${{ github.event.inputs.branch }}"
+          echo "Version: ${{ needs.fake.outputs.version }}"
+
+      - uses: actions/checkout@v3
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          fetch-depth: 1
+
+      - uses: dev-drprasad/delete-tag-and-release@v0.2.0
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          delete_release: true
+          tag_name: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ncipollo/release-action@v1
+        if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
+        with:
+          artifacts: "LICENSE"
+          tag: "${{ needs.fake.outputs.version }}"
+          name: "Build in progress"
+          bodyFile: ".github/Releases-wip.md"
+          allowUpdates: true
+          removeArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   merge:
-    needs: [ sync-servers ]
-    uses: armbian/scripts/.github/workflows/merge-from-branch.yml@master    
+
+    needs: [ generaterelease ]
+    uses: armbian/scripts/.github/workflows/merge-from-branch.yml@master
 
     with:
       branch: 'nightly'
       runner: small
 
-    secrets:  
+    secrets:
       GPG_KEY2: ${{ secrets.GPG_KEY2 }}
       GPG_PASSPHRASE2: ${{ secrets.GPG_PASSPHRASE2 }}
 
   x86:
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
     with:
- 
+
       variant: 'cli:${{ github.event.inputs.choice }}'
       sourcerepo: '${{ github.event.inputs.sourcerepo }}'
-      runner: '${{ github.event.inputs.runner }}'
+      packagesrepo: '${{ github.event.inputs.packagesrepo }}'
+      runner: ubuntu-latest
       part: 1
       of: 1
-      include: 'grep uefi-x86 | '
+      include: 'grep uefi-x86 | ${{ github.event.inputs.advanced }}'
       exclude: ''
       uploading: false
 
@@ -88,6 +205,7 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
   x86-desktop:
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
@@ -95,10 +213,11 @@ jobs:
 
       variant: 'desktop:${{ github.event.inputs.choice }}'
       sourcerepo: '${{ github.event.inputs.sourcerepo }}'
+      packagesrepo: '${{ github.event.inputs.packagesrepo }}'
       runner: "big"
       part: 1
       of: 1
-      include: 'grep uefi-x86 | '
+      include: 'grep uefi-x86 | ${{ github.event.inputs.advanced }}'
       exclude: ''
       uploading: false
 
@@ -111,18 +230,20 @@ jobs:
       SSH_KEY_TORRENTS: ${{ secrets.KEY_TORRENTS }}
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
-  cli:
+  cli1:
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
     with:
- 
+
       variant: 'cli:${{ github.event.inputs.choice }}'
       sourcerepo: '${{ github.event.inputs.sourcerepo }}'
-      runner: '${{ github.event.inputs.runner }}'
+      packagesrepo: '${{ github.event.inputs.packagesrepo }}'
+      runner: ubuntu-latest
       part: 1
-      of: 1
-      include: ''
+      of: 2
+      include: '${{ github.event.inputs.advanced }}'
       exclude: 'grep -v uefi-x86 | '
       uploading: false
 
@@ -136,17 +257,70 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
 
-  desktop:
+  cli2:
+
+    needs: [ merge ]
+    uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
+
+    with:
+
+      variant: 'cli:${{ github.event.inputs.choice }}'
+      sourcerepo: '${{ github.event.inputs.sourcerepo }}'
+      packagesrepo: '${{ github.event.inputs.packagesrepo }}'
+      runner: '${{ github.event.inputs.runner }}'
+      part: 2
+      of: 2
+      include: '${{ github.event.inputs.advanced }}'
+      exclude: 'grep -v uefi-x86 | '
+      uploading: false
+
+    secrets:
+      GPG_KEY1: ${{ secrets.GPG_KEY1 }}
+      GPG_PASSPHRASE1: ${{ secrets.GPG_PASSPHRASE1 }}
+      GPG_KEY2: ${{ secrets.GPG_KEY2 }}
+      GPG_PASSPHRASE2: ${{ secrets.GPG_PASSPHRASE2 }}
+      SCRIPTS_ACCESS_TOKEN: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+      SSH_KEY_TORRENTS: ${{ secrets.KEY_TORRENTS }}
+      KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
+
+  desktop1:
+
     needs: [ merge ]
     uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
 
     with:
       variant: 'desktop:${{ github.event.inputs.choice }}'
       sourcerepo: '${{ github.event.inputs.sourcerepo }}'
+      packagesrepo: '${{ github.event.inputs.packagesrepo }}'
       runner: "big"
       part: 1
-      of: 1      
-      include: ''
+      of: 2
+      include: '${{ github.event.inputs.advanced }}'
+      exclude: 'grep -v uefi-x86 | '
+      uploading: false
+
+    secrets:
+      GPG_KEY1: ${{ secrets.GPG_KEY1 }}
+      GPG_PASSPHRASE1: ${{ secrets.GPG_PASSPHRASE1 }}
+      GPG_KEY2: ${{ secrets.GPG_KEY2 }}
+      GPG_PASSPHRASE2: ${{ secrets.GPG_PASSPHRASE2 }}
+      SCRIPTS_ACCESS_TOKEN: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+      SSH_KEY_TORRENTS: ${{ secrets.KEY_TORRENTS }}
+      KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
+
+  desktop2:
+
+    needs: [ merge ]
+    uses: armbian/scripts/.github/workflows/build-with-docker.yml@master
+
+    with:
+      variant: 'desktop:${{ github.event.inputs.choice }}'
+      sourcerepo: '${{ github.event.inputs.sourcerepo }}'
+      packagesrepo: '${{ github.event.inputs.packagesrepo }}'
+      runner: "big"
+      part: 2
+      of: 2
+      include: '${{ github.event.inputs.advanced }}'
       exclude: 'grep -v uefi-x86 | '
       uploading: false
 
@@ -160,10 +334,53 @@ jobs:
       KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
   jobsend:
+
     name: finish
-    needs: [x86,x86-desktop,cli,desktop]
+    needs: [x86,x86-desktop,cli1,desktop1,cli2,desktop2]
     runs-on: [ubuntu-latest]
-    if: ${{ github.repository_owner == 'Armbian' }}
+    if: ${{ github.repository_owner == 'Armbian' && github.event.inputs.choice != 'stable'  && github.event.inputs.choice != 'rc' }}
     steps:
-      - run: |
-          echo "End"
+
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+          ref: nightly
+          
+      - name: Make build list
+        run: |
+        
+          sudo npm install --location=global json || true
+          truncate README.me --size=0 || true
+          echo "VERSION=$(cat VERSION)" >> $GITHUB_ENV
+          cat ".github/Releases.md" >> README.tmp
+          echo -en "&nbsp;\n\n" >> README.tmp
+          echo "| Image &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | GPG | SHA | Release | Branch | Variant | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Size | Kernel |" >> README.tmp
+          echo "| --- | :--: | :--: | :--: | :--: | :--: | --: | --: |" >> README.tmp
+          gh release view --json assets 2>/dev/null | python3 -mjson.tool | sed  '1,2d;$d' | json -ga name url size -d, | sort | (
+          while read -r line; do
+           name=$(echo $line | cut -d"," -f1 | awk '{print tolower($0)}')
+           url=$(echo $line | cut -d"," -f2)
+           size=$(echo $line | cut -d"," -f3)
+           if [ "${name: -3}" == ".xz" ]; then
+             board_name=$(echo $name | cut -d"_" -f3)
+             source config/boards/$board_name.*
+             out_release=$(echo $name | cut -d"_" -f4)
+             out_branch=$(echo $name | cut -d"_" -f5)
+             out_kernel=$(echo $name | cut -d"_" -f6-7 | cut -d"." -f1-3 | cut -d"_" -f1)
+             out_desktop=$(echo $name | cut -d"_" -f7)
+             out_desktop=${out_desktop:-cli}
+             out_size=$(echo "scale=2; $size/1024/1024" | bc -l)" Mb"
+             echo -ne "| [$BOARD_NAME]($url) | [:file_folder:]($url".asc") | [:file_folder:]($url".sha") | $out_release | $out_branch | $out_desktop | $out_size | $out_kernel |\n" >> README.tmp
+           fi
+          done
+          )
+          cat README.tmp
+        
+      - uses: ncipollo/release-action@v1
+        with:
+          tag: "${{ env.VERSION }}"
+          bodyFile: "README.tmp"
+          omitName: true
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}

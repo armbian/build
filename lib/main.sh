@@ -44,7 +44,7 @@ else
 	DEST="${SRC}"/output
 fi
 
-if [[ $BUILD_ALL != "yes" && -z $ROOT_FS_CREATE_ONLY ]]; then
+if [[ -z $ROOT_FS_CREATE_ONLY ]]; then
 	# override stty size
 	[[ -n $COLUMNS ]] && stty cols $COLUMNS
 	[[ -n $LINES ]] && stty rows $LINES
@@ -316,7 +316,6 @@ if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
 
 	RELEASE=$(dialog --stdout --title "Choose a release package base" --backtitle "$backtitle" \
 	--menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
-	echo "options : ${options}"
 	[[ -z $RELEASE ]] && exit_with_error "No release selected"
 
 	unset options
@@ -400,7 +399,7 @@ POST_DETERMINE_CTHREADS
 
 if [[ $BETA == yes ]]; then
 	IMAGE_TYPE=nightly
-elif [[ $BETA != "yes" && $BUILD_ALL == yes ]]; then
+elif [[ $BETA != "yes" ]]; then
 	IMAGE_TYPE=stable
 else
 	IMAGE_TYPE=user-built

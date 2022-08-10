@@ -29,7 +29,13 @@ HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 [[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
 cd "${SRC}" || exit
-[[ -z "${ROOTFSCACHE_VERSION}" ]] && ROOTFSCACHE_VERSION=16
+
+# if variable not provided, check which is current version in the cache storage
+if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
+	ROOTFSCACHE_VERSION=$(curl https://api.github.com/repos/armbian/cache/releases/latest -s | jq .tag_name -r || true)
+	ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-"0003"}
+fi
+
 [[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
 BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
@@ -406,12 +412,6 @@ SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
 MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
 DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 
-# dropbear needs to be configured differently
-[[ $CRYPTROOT_ENABLE == yes && $RELEASE == xenial ]] && exit_with_error "Encrypted rootfs is not supported in Xenial"
-[[ $RELEASE == stretch && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Debian Stretch images with selected kernel is not supported"
-[[ $RELEASE == bionic && $CAN_BUILD_STRETCH != yes ]] && exit_with_error "Building Ubuntu Bionic images with selected kernel is not supported"
-[[ $RELEASE == hirsute && $HOSTRELEASE == focal ]] && exit_with_error "Building Ubuntu Hirsute images requires Hirsute build host. Please upgrade your host or select a different target OS"
-
 [[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 [[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 [[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
@@ -423,7 +423,7 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-if [[ "$RELEASE" =~ ^(xenial|bionic|focal|hirsute|impish|jammy)$ ]]; then
+if [[ "$RELEASE" =~ ^(focal|jammy)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -612,6 +612,8 @@ if [[ -z ${ARMBIAN_MIRROR} ]]; then
 
 	done
 fi
+
+[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
 # For (late) user override.
 # Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.

@@ -21,20 +21,21 @@ CPUMAX=${CPUMAX:-1536000}
 GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
-	
+
 	legacy)
 		KERNELSOURCE='https://github.com/hardkernel/linux'
-		KERNELBRANCH='branch:odroidg12-4.9.y'
+		#KERNELBRANCH='branch:odroidg12-4.9.y'
+		KERNELBRANCH='tag:4.9.277-122'
 		KERNELDIR='linux-odroid'
 	;;
 
         current)
-                KERNELBRANCH='branch:linux-5.10.y'
-                KERNELPATCHDIR='meson64-current'
+		KERNELBRANCH='branch:linux-5.10.y'
+		KERNELPATCHDIR='meson64-current'
         ;;
 
         edge)
-		KERNELBRANCH='branch:linux-5.15.y'
+		KERNELBRANCH='branch:linux-5.19.y'
 		KERNELPATCHDIR='meson64-edge'
         ;;
 
@@ -261,8 +262,6 @@ family_tweaks_bsp()
 {
 	mkdir -p $destination/etc/udev/rules.d
 	mkdir -p $destination/usr/local/bin
-	cp $SRC/packages/bsp/rockchip/hdmi.rules $destination/etc/udev/rules.d
-	install -m 755 $SRC/packages/bsp/rockchip/hdmi-hotplug $destination/usr/local/bin
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
@@ -290,7 +289,7 @@ family_tweaks_bsp()
 	cat <<-EOF > "$destination"/etc/X11/xorg.conf
 	Section "Device"
 	    Identifier  "DRM Graphics Acclerated"
-	    
+
 	    ## Use modesetting and glamor
 	        Driver      "modesetting"
 	        Option      "AccelMethod"    "glamor"     ### "glamor" to enable 3D acceleration, "none" to disable.
@@ -298,9 +297,9 @@ family_tweaks_bsp()
 	        Option      "Dri2Vsync"      "true"
 	        Option      "TripleBuffer"   "True"
 	    ## End glamor configuration
-	    
+
 	    EndSection
-       
+
 	    Section "Screen"
 	        Identifier "Default Screen"
 	            SubSection "Display"
@@ -313,7 +312,7 @@ family_tweaks_bsp()
 }
 
 # This is an extension method, put directly in meson64_common. A "built-in" extension if you will.
-# If used in more than one place, it could be moved to an extension: enable_extension "amlogic-fip-tools" 
+# If used in more than one place, it could be moved to an extension: enable_extension "amlogic-fip-tools"
 function fetch_sources_tools__amlogic_fip() {
 	fetch_from_repo "https://github.com/armbian/odroidc2-blobs" "odroidc2-blobs" "branch:master"
 	fetch_from_repo "https://github.com/LibreELEC/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"

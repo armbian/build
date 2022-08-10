@@ -1,0 +1,90 @@
+From 2b0f155e8ea363447fd7b340fff54e4ce2767301 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Wed, 23 Sep 2020 14:59:41 +0200
+Subject: [PATCH 219/515] power: supply: axp20x_battery: Setup thermal
+ regulation (experimental)
+
+Values for NTC resistances were pulled out of thin air!
+
+None of this is tested to actually work.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/power/supply/axp20x_battery.c | 54 +++++++++++++++++++++++++++
+ 1 file changed, 54 insertions(+)
+
+diff --git a/drivers/power/supply/axp20x_battery.c b/drivers/power/supply/axp20x_battery.c
+index 8ff7042ff852..1ca11e93f984 100644
+--- a/drivers/power/supply/axp20x_battery.c
++++ b/drivers/power/supply/axp20x_battery.c
+@@ -590,6 +590,7 @@ static int axp20x_power_probe(struct platform_device *pdev)
+ 	struct power_supply_config psy_cfg = {};
+ 	struct power_supply_battery_info *info;
+ 	struct device *dev = &pdev->dev;
++	int ret;
+ 
+ 	if (!of_device_is_available(pdev->dev.of_node))
+ 		return -ENODEV;
+@@ -670,6 +671,59 @@ static int axp20x_power_probe(struct platform_device *pdev)
+ 	axp20x_get_constant_charge_current(axp20x_batt,
+ 					   &axp20x_batt->max_ccc);
+ 
++	if (of_machine_is_compatible("pine64,pinephone-1.2") > 0 ||
++		of_machine_is_compatible("pine64,pinephone-1.1") > 0 ||
++		of_machine_is_compatible("pine64,pinephone-1.0") > 0) {
++		// 3kOhm NTC inside PinePhone batery
++		// ---------------------------------
++		//
++		// Charging:
++		//  0 - 15 °C: Max 0.2C CC to 4.35V : 9750 Ohm - 4710 Ohm
++		// 15 - 50 °C: Max 0.5C CC to 4.35V : 4710 Ohm - 1080 Ohm
++		//
++		// Discharging:
++		// -10 °C : 16500 Ohm
++		//  55 °C : 896 Ohm
++		// enable TS pin input to ADC
++
++		dev_info(dev, "Configuring battery thermal regulation for Pinephone\n");
++
++		ret = regmap_update_bits(axp20x_batt->regmap, 0x82, BIT(0), BIT(0));
++		if (ret)
++			goto warn_bat;
++
++		// safety thresholds:
++
++		// voltage = reg_val * 12800 uV (range is 0 - 3.264V)
++		ret = regmap_write(axp20x_batt->regmap, 0x38,  9750 * 80 / 12800); // V_LTF-charge
++		if (ret)
++			goto warn_bat;
++
++		ret = regmap_write(axp20x_batt->regmap, 0x39,  1080 * 80 / 12800); // V_HTF-charge
++		if (ret)
++			goto warn_bat;
++
++		ret = regmap_write(axp20x_batt->regmap, 0x3c, 16500 * 80 / 12800); // V_LTF-work
++		if (ret)
++			goto warn_bat;
++
++		ret = regmap_write(axp20x_batt->regmap, 0x3d,   896 * 80 / 12800); // V_HTF-work
++		if (ret)
++			goto warn_bat;
++
++		// There is a hysteresis of 460.8 mV(refer to TS pin voltage) for UTP
++		// threshold, and there is a hysteresis of 57.6 mV for OTP threshold.
++
++		// use TS pin only when charging, make it affect the charger, I = 80uA
++		ret = regmap_update_bits(axp20x_batt->regmap, 0x84, 0x37, 0x31);
++		if (ret)
++			goto warn_bat;
++	}
++
++	return 0;
++
++warn_bat:
++	dev_err(dev, "Failed to configure battery thermal regulation\n");
+ 	return 0;
+ }
+ 
+-- 
+2.35.3
+

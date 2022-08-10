@@ -1,0 +1,245 @@
+From e5464070b7b15a21dc9bc133734f95a45d0c58e4 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@siol.net>
+Date: Sat, 9 Nov 2019 13:22:05 +0100
+Subject: [PATCH 049/101] drv:media:cedrus: hevc: Improve buffer management
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@siol.net>
+---
+ drivers/staging/media/sunxi/cedrus/cedrus.h   |   9 +-
+ .../staging/media/sunxi/cedrus/cedrus_h265.c  | 119 ++++++++++--------
+ 2 files changed, 70 insertions(+), 58 deletions(-)
+
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus.h b/drivers/staging/media/sunxi/cedrus/cedrus.h
+index 35faf42f2..6ddcff8f5 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus.h
++++ b/drivers/staging/media/sunxi/cedrus/cedrus.h
+@@ -106,6 +106,11 @@ struct cedrus_buffer {
+ 			unsigned int			position;
+ 			enum cedrus_h264_pic_type	pic_type;
+ 		} h264;
++		struct {
++			void		*mv_col_buf;
++			dma_addr_t	mv_col_buf_dma;
++			ssize_t		mv_col_buf_size;
++		} h265;
+ 	} codec;
+ };
+ 
+@@ -139,10 +144,6 @@ struct cedrus_ctx {
+ 			ssize_t		intra_pred_buf_size;
+ 		} h264;
+ 		struct {
+-			void		*mv_col_buf;
+-			dma_addr_t	mv_col_buf_addr;
+-			ssize_t		mv_col_buf_size;
+-			ssize_t		mv_col_buf_unit_size;
+ 			void		*neighbor_info_buf;
+ 			dma_addr_t	neighbor_info_buf_addr;
+ 			void		*entry_points_buf;
+diff --git a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+index 4fa5016a2..3d7f87a80 100644
+--- a/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
++++ b/drivers/staging/media/sunxi/cedrus/cedrus_h265.c
+@@ -91,26 +91,66 @@ static void cedrus_h265_sram_write_data(struct cedrus_dev *dev, void *data,
+ 
+ static inline dma_addr_t
+ cedrus_h265_frame_info_mv_col_buf_addr(struct cedrus_ctx *ctx,
+-				       unsigned int index, unsigned int field)
++				       unsigned int index,
++				       const struct v4l2_ctrl_hevc_sps *sps)
+ {
+-	return ctx->codec.h265.mv_col_buf_addr + index *
+-	       ctx->codec.h265.mv_col_buf_unit_size +
+-	       field * ctx->codec.h265.mv_col_buf_unit_size / 2;
++	struct cedrus_buffer *cedrus_buf = NULL;
++	struct vb2_buffer *buf = NULL;
++	struct vb2_queue *vq;
++
++	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, V4L2_BUF_TYPE_VIDEO_CAPTURE);
++	if (vq)
++		buf = vb2_get_buffer(vq, index);
++
++	if (buf)
++		cedrus_buf = vb2_to_cedrus_buffer(buf);
++
++	if (!cedrus_buf)
++		return 0;
++
++	if (!cedrus_buf->codec.h265.mv_col_buf_size) {
++		unsigned int ctb_size_luma, width_in_ctb_luma;
++		unsigned int log2_max_luma_coding_block_size;
++
++		log2_max_luma_coding_block_size =
++			sps->log2_min_luma_coding_block_size_minus3 + 3 +
++			sps->log2_diff_max_min_luma_coding_block_size;
++		ctb_size_luma = 1 << log2_max_luma_coding_block_size;
++		width_in_ctb_luma = DIV_ROUND_UP(sps->pic_width_in_luma_samples,
++						 ctb_size_luma);
++
++		cedrus_buf->codec.h265.mv_col_buf_size = ALIGN(width_in_ctb_luma *
++			DIV_ROUND_UP(sps->pic_height_in_luma_samples, ctb_size_luma) *
++			CEDRUS_H265_MV_COL_BUF_UNIT_CTB_SIZE, 1024);
++
++		cedrus_buf->codec.h265.mv_col_buf =
++			dma_alloc_attrs(ctx->dev->dev,
++					cedrus_buf->codec.h265.mv_col_buf_size,
++					&cedrus_buf->codec.h265.mv_col_buf_dma,
++					GFP_KERNEL, DMA_ATTR_NO_KERNEL_MAPPING);
++
++		if (!cedrus_buf->codec.h265.mv_col_buf) {
++			cedrus_buf->codec.h265.mv_col_buf_size = 0;
++			cedrus_buf->codec.h265.mv_col_buf_dma = 0;
++		}
++	}
++
++	return cedrus_buf->codec.h265.mv_col_buf_dma;
+ }
+ 
+ static void cedrus_h265_frame_info_write_single(struct cedrus_ctx *ctx,
+ 						unsigned int index,
+ 						bool field_pic,
+ 						u32 pic_order_cnt[],
+-						int buffer_index)
++						int buffer_index,
++						const struct v4l2_ctrl_hevc_sps *sps)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+ 	dma_addr_t dst_luma_addr = cedrus_dst_buf_addr(ctx, buffer_index, 0);
+ 	dma_addr_t dst_chroma_addr = cedrus_dst_buf_addr(ctx, buffer_index, 1);
+ 	dma_addr_t mv_col_buf_addr[2] = {
+-		cedrus_h265_frame_info_mv_col_buf_addr(ctx, buffer_index, 0),
+-		cedrus_h265_frame_info_mv_col_buf_addr(ctx, buffer_index,
+-						       field_pic ? 1 : 0)
++		cedrus_h265_frame_info_mv_col_buf_addr(ctx, buffer_index, sps),
++		cedrus_h265_frame_info_mv_col_buf_addr(ctx, buffer_index, sps)
+ 	};
+ 	u32 offset = VE_DEC_H265_SRAM_OFFSET_FRAME_INFO +
+ 		     VE_DEC_H265_SRAM_OFFSET_FRAME_INFO_UNIT * index;
+@@ -134,7 +174,8 @@ static void cedrus_h265_frame_info_write_single(struct cedrus_ctx *ctx,
+ 
+ static void cedrus_h265_frame_info_write_dpb(struct cedrus_ctx *ctx,
+ 					     const struct v4l2_hevc_dpb_entry *dpb,
+-					     u8 num_active_dpb_entries)
++					     u8 num_active_dpb_entries,
++					     const struct v4l2_ctrl_hevc_sps *sps)
+ {
+ 	struct vb2_queue *vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx,
+ 					       V4L2_BUF_TYPE_VIDEO_CAPTURE);
+@@ -149,7 +190,7 @@ static void cedrus_h265_frame_info_write_dpb(struct cedrus_ctx *ctx,
+ 
+ 		cedrus_h265_frame_info_write_single(ctx, i, dpb[i].field_pic,
+ 						    pic_order_cnt,
+-						    buffer_index);
++						    buffer_index, sps);
+ 	}
+ }
+ 
+@@ -388,37 +388,6 @@ static void cedrus_h265_setup(struct cedrus_ctx *ctx,
+ 	width_in_ctb_luma =
+ 		DIV_ROUND_UP(sps->pic_width_in_luma_samples, ctb_size_luma);
+ 
+-	/* MV column buffer size and allocation. */
+-	if (!ctx->codec.h265.mv_col_buf_size) {
+-		unsigned int num_buffers =
+-			run->dst->vb2_buf.vb2_queue->num_buffers;
+-
+-		/*
+-		 * Each CTB requires a MV col buffer with a specific unit size.
+-		 * Since the address is given with missing lsb bits, 1 KiB is
+-		 * added to each buffer to ensure proper alignment.
+-		 */
+-		ctx->codec.h265.mv_col_buf_unit_size =
+-			DIV_ROUND_UP(ctx->src_fmt.width, ctb_size_luma) *
+-			DIV_ROUND_UP(ctx->src_fmt.height, ctb_size_luma) *
+-			CEDRUS_H265_MV_COL_BUF_UNIT_CTB_SIZE + SZ_1K;
+-
+-		ctx->codec.h265.mv_col_buf_size = num_buffers *
+-			ctx->codec.h265.mv_col_buf_unit_size;
+-
+-		/* Buffer is never accessed by CPU, so we can skip kernel mapping. */
+-		ctx->codec.h265.mv_col_buf =
+-			dma_alloc_attrs(dev->dev,
+-					ctx->codec.h265.mv_col_buf_size,
+-					&ctx->codec.h265.mv_col_buf_addr,
+-					GFP_KERNEL, DMA_ATTR_NO_KERNEL_MAPPING);
+-		if (!ctx->codec.h265.mv_col_buf) {
+-			ctx->codec.h265.mv_col_buf_size = 0;
+-			// TODO: Abort the process here.
+-			return;
+-		}
+-	}
+-
+ 	/* Activate H265 engine. */
+ 	cedrus_engine_enable(ctx, CEDRUS_CODEC_H265);
+ 
+@@ -671,7 +682,7 @@ static void cedrus_h265_setup(struct cedrus_ctx *ctx,
+ 
+ 	/* Write decoded picture buffer in pic list. */
+ 	cedrus_h265_frame_info_write_dpb(ctx, decode_params->dpb,
+-					 decode_params->num_active_dpb_entries);
++					 decode_params->num_active_dpb_entries, sps);
+ 
+ 	/* Output frame. */
+ 
+@@ -682,7 +693,7 @@ static void cedrus_h265_setup(struct cedrus_ctx *ctx,
+ 	cedrus_h265_frame_info_write_single(ctx, output_pic_list_index,
+ 					    slice_params->pic_struct != 0,
+ 					    pic_order_cnt,
+-					    run->dst->vb2_buf.index);
++					    run->dst->vb2_buf.index, sps);
+ 
+ 	cedrus_write(dev, VE_DEC_H265_OUTPUT_FRAME_IDX, output_pic_list_index);
+ 
+@@ -732,9 +701,6 @@ static int cedrus_h265_start(struct cedrus_ctx *ctx)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+ 
+-	/* The buffer size is calculated at setup time. */
+-	ctx->codec.h265.mv_col_buf_size = 0;
+-
+ 	/* Buffer is never accessed by CPU, so we can skip kernel mapping. */
+ 	ctx->codec.h265.neighbor_info_buf =
+ 		dma_alloc_attrs(dev->dev, CEDRUS_H265_NEIGHBOR_INFO_BUF_SIZE,
+@@ -759,15 +767,6 @@ static void cedrus_h265_stop(struct cedrus_ctx *ctx)
+ {
+ 	struct cedrus_dev *dev = ctx->dev;
+ 
+-	if (ctx->codec.h265.mv_col_buf_size > 0) {
+-		dma_free_attrs(dev->dev, ctx->codec.h265.mv_col_buf_size,
+-			       ctx->codec.h265.mv_col_buf,
+-			       ctx->codec.h265.mv_col_buf_addr,
+-			       DMA_ATTR_NO_KERNEL_MAPPING);
+-
+-		ctx->codec.h265.mv_col_buf_size = 0;
+-	}
+-
+ 	dma_free_attrs(dev->dev, CEDRUS_H265_NEIGHBOR_INFO_BUF_SIZE,
+ 		       ctx->codec.h265.neighbor_info_buf,
+ 		       ctx->codec.h265.neighbor_info_buf_addr,
+@@ -784,6 +783,17 @@ static void cedrus_h265_trigger(struct cedrus_ctx *ctx)
+ 	cedrus_write(dev, VE_DEC_H265_TRIGGER, VE_DEC_H265_TRIGGER_DEC_SLICE);
+ }
+ 
++static void cedrus_h265_buf_cleanup(struct cedrus_ctx *ctx,
++				    struct cedrus_buffer *buf)
++{
++	if (buf->codec.h265.mv_col_buf_size)
++		dma_free_attrs(ctx->dev->dev,
++			       buf->codec.h265.mv_col_buf_size,
++			       buf->codec.h265.mv_col_buf,
++			       buf->codec.h265.mv_col_buf_dma,
++			       DMA_ATTR_NO_KERNEL_MAPPING);
++}
++
+ struct cedrus_dec_ops cedrus_dec_ops_h265 = {
+ 	.irq_clear	= cedrus_h265_irq_clear,
+ 	.irq_disable	= cedrus_h265_irq_disable,
+@@ -792,4 +802,5 @@ struct cedrus_dec_ops cedrus_dec_ops_h265 = {
+ 	.start		= cedrus_h265_start,
+ 	.stop		= cedrus_h265_stop,
+ 	.trigger	= cedrus_h265_trigger,
++	.buf_cleanup	= cedrus_h265_buf_cleanup,
+ };
+-- 
+2.31.1
+

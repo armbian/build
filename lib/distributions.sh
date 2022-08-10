@@ -173,21 +173,27 @@ install_common()
 	# create extlinux config file
 	if [[ $SRC_EXTLINUX == yes ]]; then
 		mkdir -p $SDCARD/boot/extlinux
+		local bootpart_prefix
+		if [[ -n $BOOTFS_TYPE ]]; then
+			bootpart_prefix=/
+		else
+			bootpart_prefix=/boot/
+		fi
 		cat <<-EOF > "$SDCARD/boot/extlinux/extlinux.conf"
 		label ${VENDOR}
-		  kernel /boot/$NAME_KERNEL
-		  initrd /boot/$NAME_INITRD
-	EOF
+		  kernel ${bootpart_prefix}$NAME_KERNEL
+		  initrd ${bootpart_prefix}$NAME_INITRD
+		EOF
 		if [[ -n $BOOT_FDT_FILE ]]; then
 			if [[ $BOOT_FDT_FILE != "none" ]]; then
-				echo "  fdt /boot/dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
+				echo "  fdt ${bootpart_prefix}dtb/$BOOT_FDT_FILE" >> "$SDCARD/boot/extlinux/extlinux.conf"
 			fi
 		else
-			echo "  fdtdir /boot/dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
+			echo "  fdtdir ${bootpart_prefix}dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		fi
 	else
 
-		if [[ "${BOOTCONFIG}" != "none" ]]; then
+		if [[ -n "${BOOTSCRIPT}" ]]; then
 			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
 				cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 			else
@@ -265,7 +271,7 @@ install_common()
 	# install board packages
 	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
 		display_alert "Installing PACKAGE_LIST_BOARD packages" "${PACKAGE_LIST_BOARD}"
-		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/${LOG_SUBPATH}/install.log || { display_alert "Failed to install PACKAGE_LIST_BOARD" "${PACKAGE_LIST_BOARD}" "err"; exit 2; } 
+		chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive  apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends install $PACKAGE_LIST_BOARD" >> "${DEST}"/${LOG_SUBPATH}/install.log || { display_alert "Failed to install PACKAGE_LIST_BOARD" "${PACKAGE_LIST_BOARD}" "err"; exit 2; }
 	fi
 
 	# remove family packages
@@ -316,7 +322,8 @@ PRE_INSTALL_KERNEL_DEBS
 			VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
 			VER="${VER/-$LINUXFAMILY/}"
 			VER="${VER/linux-/}"
-			if [[ "${ARCH}" != "amd64" ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
+
+			if [[ "${ARCH}" != "amd64" && "${LINUXFAMILY}" != "media" && "${LINUXFAMILY}" != station* ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
 				install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
 			fi
 			[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
@@ -429,14 +436,13 @@ FAMILY_TWEAKS
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-ramlog.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-resize-filesystem.service >/dev/null 2>&1"
 	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-hardware-monitor.service >/dev/null 2>&1"
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable armbian-led-state.service >/dev/null 2>&1"
 
 	# copy "first run automated config, optional user configured"
  	cp "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
-	[[ $IMAGE_TYPE == nightly ]] \
-	&& echo "deb https://beta.armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" \
-	> "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	[[ $IMAGE_TYPE == nightly ]] && sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
 	# Cosmetic fix [FAILED] Failed to start Set console font and keymap at first boot
 	[[ -f "${SDCARD}"/etc/console-setup/cached_setup_font.sh ]] \
@@ -463,6 +469,7 @@ FAMILY_TWEAKS
 	sed '/daemon\.\*\;mail.*/,/xconsole/ s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.d/50-default.conf
 
 	# disable deprecated parameter
+	[[ -f "${SDCARD}"/etc/rsyslog.conf ]] && \
 	sed '/.*$KLogPermitNonKernelFacility.*/,// s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.conf
 
 	# enable getty on multiple serial consoles
@@ -620,25 +627,23 @@ install_distribution_specific()
 
 	case $RELEASE in
 
-	xenial)
-
-			# remove legal info from Ubuntu
-			[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
-
-			# ureadahead needs kernel tracing options that AFAIK are present only in mainline. disable
-			chroot "${SDCARD}" /bin/bash -c \
-			"systemctl --no-reload mask ondemand.service ureadahead.service >/dev/null 2>&1"
-			chroot "${SDCARD}" /bin/bash -c \
-			"systemctl --no-reload mask setserial.service etc-setserial.service >/dev/null 2>&1"
-
-		;;
-
-	stretch|buster|sid)
+	buster|sid)
 
 			# remove doubled uname from motd
 			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
 			# rc.local is not existing but one might need it
 			install_rclocal
+
+			# configure language and locales
+			display_alert "Configuring locales" "$DEST_LANG" "info"
+			if [[ -f $SDCARD/etc/locale.gen ]]; then
+				[ -n "$DEST_LANG" ] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
+				sed -i '/ C.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
+				sed -i '/en_US.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
+			fi
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+			[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale --reset LANG=$DEST_LANG"' \
+				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 		;;
 
@@ -652,9 +657,19 @@ install_distribution_specific()
 			[[ $(grep -L "VERSION_ID=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION_ID="11"' >> "${SDCARD}"/etc/os-release
 			[[ $(grep -L "VERSION=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION="11 (bullseye)"' >> "${SDCARD}"/etc/os-release
 
-
+			# configure language and locales
+			display_alert "Configuring locales" "$DEST_LANG" "info"
+			if [[ -f $SDCARD/etc/locale.gen ]]; then
+				[ -n "$DEST_LANG" ] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
+				sed -i '/ C.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
+				sed -i '/en_US.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
+			fi
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+			[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale --reset LANG=$DEST_LANG"' \
+				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		;;
-	bionic|focal|hirsute|impish|jammy)
+
+	focal|jammy)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
@@ -700,6 +715,12 @@ install_distribution_specific()
 
 			# disable conflicting services
 			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
+
+			# configure language and locales
+			display_alert "Configuring locales" "$DEST_LANG" "info"
+			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen en_US.UTF-8 $DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>&1'}
+			[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale --reset LANG=$DEST_LANG"' \
+				${OUTPUT_VERYSILENT:+' >/dev/null 2>&1'}
 
 		;;
 

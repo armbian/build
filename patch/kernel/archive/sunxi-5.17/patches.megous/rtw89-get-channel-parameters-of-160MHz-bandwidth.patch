@@ -1,0 +1,136 @@
+From ad12b7cb75fac21679cd4c374c13fe26b7afdbce Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Date: Tue, 22 Feb 2022 11:21:03 +0800
+Subject: [PATCH 476/544] rtw89: get channel parameters of 160MHz bandwidth
+
+Calculate the offset of center and primary frequencies to get hardware
+indices of center channel and primary channel, and then use them to
+configure hardware to a specific channel.
+
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220222032103.29392-1-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.c | 26 ++++++++++-------------
+ drivers/net/wireless/realtek/rtw89/core.h | 25 ++++++++++++++++++++++
+ 2 files changed, 36 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.c b/drivers/net/wireless/realtek/rtw89/core.c
+index 36b1dde007c7..a0086b14550a 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.c
++++ b/drivers/net/wireless/realtek/rtw89/core.c
+@@ -232,6 +232,7 @@ static void rtw89_get_channel_params(struct cfg80211_chan_def *chandef,
+ 	u8 center_chan;
+ 	u8 bandwidth = RTW89_CHANNEL_WIDTH_20;
+ 	u8 primary_chan_idx = 0;
++	u32 offset;
+ 	u8 band;
+ 	u8 subband;
+ 
+@@ -256,23 +257,16 @@ static void rtw89_get_channel_params(struct cfg80211_chan_def *chandef,
+ 		}
+ 		break;
+ 	case NL80211_CHAN_WIDTH_80:
+-		bandwidth = RTW89_CHANNEL_WIDTH_80;
++	case NL80211_CHAN_WIDTH_160:
++		bandwidth = nl_to_rtw89_bandwidth(width);
+ 		if (primary_freq > center_freq) {
+-			if (primary_freq - center_freq == 10) {
+-				primary_chan_idx = RTW89_SC_20_UPPER;
+-				center_chan -= 2;
+-			} else {
+-				primary_chan_idx = RTW89_SC_20_UPMOST;
+-				center_chan -= 6;
+-			}
++			offset = (primary_freq - center_freq - 10) / 20;
++			primary_chan_idx = RTW89_SC_20_UPPER + offset * 2;
++			center_chan -= 2 + offset * 4;
+ 		} else {
+-			if (center_freq - primary_freq == 10) {
+-				primary_chan_idx = RTW89_SC_20_LOWER;
+-				center_chan += 2;
+-			} else {
+-				primary_chan_idx = RTW89_SC_20_LOWEST;
+-				center_chan += 6;
+-			}
++			offset = (center_freq - primary_freq - 10) / 20;
++			primary_chan_idx = RTW89_SC_20_LOWER + offset * 2;
++			center_chan += 2 + offset * 4;
+ 		}
+ 		break;
+ 	default:
+@@ -349,6 +343,7 @@ static void rtw89_get_channel_params(struct cfg80211_chan_def *chandef,
+ 	}
+ 
+ 	chan_param->center_chan = center_chan;
++	chan_param->center_freq = center_freq;
+ 	chan_param->primary_chan = channel->hw_value;
+ 	chan_param->bandwidth = bandwidth;
+ 	chan_param->pri_ch_idx = primary_chan_idx;
+@@ -377,6 +372,7 @@ void rtw89_set_channel(struct rtw89_dev *rtwdev)
+ 
+ 	hal->current_band_width = bandwidth;
+ 	hal->current_channel = center_chan;
++	hal->current_freq = ch_param.center_freq;
+ 	hal->prev_primary_channel = hal->current_primary_channel;
+ 	hal->current_primary_channel = ch_param.primary_chan;
+ 	hal->current_band_type = ch_param.band_type;
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index 8d709a2da52e..a64080f4007e 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -589,12 +589,17 @@ enum rtw89_sc_offset {
+ 	RTW89_SC_20_LOWER	= 2,
+ 	RTW89_SC_20_UPMOST	= 3,
+ 	RTW89_SC_20_LOWEST	= 4,
++	RTW89_SC_20_UP2X	= 5,
++	RTW89_SC_20_LOW2X	= 6,
++	RTW89_SC_20_UP3X	= 7,
++	RTW89_SC_20_LOW3X	= 8,
+ 	RTW89_SC_40_UPPER	= 9,
+ 	RTW89_SC_40_LOWER	= 10,
+ };
+ 
+ struct rtw89_channel_params {
+ 	u8 center_chan;
++	u32 center_freq;
+ 	u8 primary_chan;
+ 	u8 bandwidth;
+ 	u8 pri_ch_idx;
+@@ -2404,6 +2409,7 @@ struct rtw89_hal {
+ 	u32 rx_fltr;
+ 	u8 cv;
+ 	u8 current_channel;
++	u32 current_freq;
+ 	u8 prev_primary_channel;
+ 	u8 current_primary_channel;
+ 	enum rtw89_subband current_subband;
+@@ -3201,6 +3207,25 @@ static inline u8 rtw89_hw_to_rate_info_bw(enum rtw89_bandwidth hw_bw)
+ 		return RATE_INFO_BW_20;
+ }
+ 
++static inline
++enum rtw89_bandwidth nl_to_rtw89_bandwidth(enum nl80211_chan_width width)
++{
++	switch (width) {
++	default:
++		WARN(1, "Not support bandwidth %d\n", width);
++		fallthrough;
++	case NL80211_CHAN_WIDTH_20_NOHT:
++	case NL80211_CHAN_WIDTH_20:
++		return RTW89_CHANNEL_WIDTH_20;
++	case NL80211_CHAN_WIDTH_40:
++		return RTW89_CHANNEL_WIDTH_40;
++	case NL80211_CHAN_WIDTH_80:
++		return RTW89_CHANNEL_WIDTH_80;
++	case NL80211_CHAN_WIDTH_160:
++		return RTW89_CHANNEL_WIDTH_160;
++	}
++}
++
+ static inline
+ struct rtw89_addr_cam_entry *rtw89_get_addr_cam_of(struct rtw89_vif *rtwvif,
+ 						   struct rtw89_sta *rtwsta)
+-- 
+2.34.1
+

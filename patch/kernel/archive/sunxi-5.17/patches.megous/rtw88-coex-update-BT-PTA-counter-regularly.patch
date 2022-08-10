@@ -1,0 +1,124 @@
+From a17900739716f3c83141b7065bfbc0eab58b2303 Mon Sep 17 00:00:00 2001
+From: Ching-Te Ku <ku920601@realtek.com>
+Date: Tue, 15 Feb 2022 08:48:52 +0800
+Subject: [PATCH 460/544] rtw88: coex: update BT PTA counter regularly
+
+If BT PTA counter can not update regularly, it will lead coex mechanism
+run into some unexpected state.
+
+Signed-off-by: Ching-Te Ku <ku920601@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220215004855.4098-4-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw88/coex.c | 46 +++++++++++++++++------
+ drivers/net/wireless/realtek/rtw88/coex.h |  1 +
+ drivers/net/wireless/realtek/rtw88/main.c |  2 +
+ 3 files changed, 37 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/coex.c b/drivers/net/wireless/realtek/rtw88/coex.c
+index 70adaee01762..0aca8f089ebb 100644
+--- a/drivers/net/wireless/realtek/rtw88/coex.c
++++ b/drivers/net/wireless/realtek/rtw88/coex.c
+@@ -460,6 +460,29 @@ static void rtw_coex_gnt_workaround(struct rtw_dev *rtwdev, bool force, u8 mode)
+ 	rtw_coex_set_gnt_fix(rtwdev);
+ }
+ 
++static void rtw_coex_monitor_bt_ctr(struct rtw_dev *rtwdev)
++{
++	struct rtw_coex *coex = &rtwdev->coex;
++	struct rtw_coex_stat *coex_stat = &coex->stat;
++	u32 tmp;
++
++	tmp = rtw_read32(rtwdev, REG_BT_ACT_STATISTICS);
++	coex_stat->hi_pri_tx = FIELD_GET(MASKLWORD, tmp);
++	coex_stat->hi_pri_rx = FIELD_GET(MASKHWORD, tmp);
++
++	tmp = rtw_read32(rtwdev, REG_BT_ACT_STATISTICS_1);
++	coex_stat->lo_pri_tx = FIELD_GET(MASKLWORD, tmp);
++	coex_stat->lo_pri_rx = FIELD_GET(MASKHWORD, tmp);
++
++	rtw_write8(rtwdev, REG_BT_COEX_ENH_INTR_CTRL,
++		   BIT_R_GRANTALL_WLMASK | BIT_STATIS_BT_EN);
++
++	rtw_dbg(rtwdev, RTW_DBG_COEX,
++		"[BTCoex], Hi-Pri Rx/Tx: %d/%d, Lo-Pri Rx/Tx: %d/%d\n",
++		coex_stat->hi_pri_rx, coex_stat->hi_pri_tx,
++		coex_stat->lo_pri_rx, coex_stat->lo_pri_tx);
++}
++
+ static void rtw_coex_monitor_bt_enable(struct rtw_dev *rtwdev)
+ {
+ 	struct rtw_chip_info *chip = rtwdev->chip;
+@@ -3170,6 +3193,17 @@ void rtw_coex_wl_status_change_notify(struct rtw_dev *rtwdev, u32 type)
+ 	rtw_coex_run_coex(rtwdev, COEX_RSN_WLSTATUS);
+ }
+ 
++void rtw_coex_wl_status_check(struct rtw_dev *rtwdev)
++{
++	struct rtw_coex_stat *coex_stat = &rtwdev->coex.stat;
++
++	if ((coex_stat->wl_under_lps && !coex_stat->wl_force_lps_ctrl) ||
++	    coex_stat->wl_under_ips)
++		return;
++
++	rtw_coex_monitor_bt_ctr(rtwdev);
++}
++
+ void rtw_coex_bt_relink_work(struct work_struct *work)
+ {
+ 	struct rtw_dev *rtwdev = container_of(work, struct rtw_dev,
+@@ -3653,7 +3687,6 @@ void rtw_coex_display_coex_info(struct rtw_dev *rtwdev, struct seq_file *m)
+ 	u16 score_board_WB, score_board_BW;
+ 	u32 wl_reg_6c0, wl_reg_6c4, wl_reg_6c8, wl_reg_778, wl_reg_6cc;
+ 	u32 lte_coex, bt_coex;
+-	u32 bt_hi_pri, bt_lo_pri;
+ 	int i;
+ 
+ 	score_board_BW = rtw_coex_read_scbd(rtwdev);
+@@ -3664,17 +3697,6 @@ void rtw_coex_display_coex_info(struct rtw_dev *rtwdev, struct seq_file *m)
+ 	wl_reg_6cc = rtw_read32(rtwdev, REG_BT_COEX_TABLE_H);
+ 	wl_reg_778 = rtw_read8(rtwdev, REG_BT_STAT_CTRL);
+ 
+-	bt_hi_pri = rtw_read32(rtwdev, REG_BT_ACT_STATISTICS);
+-	bt_lo_pri = rtw_read32(rtwdev, REG_BT_ACT_STATISTICS_1);
+-	rtw_write8(rtwdev, REG_BT_COEX_ENH_INTR_CTRL,
+-		   BIT_R_GRANTALL_WLMASK | BIT_STATIS_BT_EN);
+-
+-	coex_stat->hi_pri_tx = FIELD_GET(MASKLWORD, bt_hi_pri);
+-	coex_stat->hi_pri_rx = FIELD_GET(MASKHWORD, bt_hi_pri);
+-
+-	coex_stat->lo_pri_tx = FIELD_GET(MASKLWORD, bt_lo_pri);
+-	coex_stat->lo_pri_rx = FIELD_GET(MASKHWORD, bt_lo_pri);
+-
+ 	sys_lte = rtw_read8(rtwdev, 0x73);
+ 	lte_coex = rtw_coex_read_indirect_reg(rtwdev, 0x38);
+ 	bt_coex = rtw_coex_read_indirect_reg(rtwdev, 0x54);
+diff --git a/drivers/net/wireless/realtek/rtw88/coex.h b/drivers/net/wireless/realtek/rtw88/coex.h
+index fc61a0cab3e4..60a701c8ac13 100644
+--- a/drivers/net/wireless/realtek/rtw88/coex.h
++++ b/drivers/net/wireless/realtek/rtw88/coex.h
+@@ -404,6 +404,7 @@ void rtw_coex_bt_info_notify(struct rtw_dev *rtwdev, u8 *buf, u8 length);
+ void rtw_coex_wl_fwdbginfo_notify(struct rtw_dev *rtwdev, u8 *buf, u8 length);
+ void rtw_coex_switchband_notify(struct rtw_dev *rtwdev, u8 type);
+ void rtw_coex_wl_status_change_notify(struct rtw_dev *rtwdev, u32 type);
++void rtw_coex_wl_status_check(struct rtw_dev *rtwdev);
+ void rtw_coex_display_coex_info(struct rtw_dev *rtwdev, struct seq_file *m);
+ 
+ static inline bool rtw_coex_disabled(struct rtw_dev *rtwdev)
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index 41b6db422638..da4657ac7c30 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -207,6 +207,8 @@ static void rtw_watch_dog_work(struct work_struct *work)
+ 	else
+ 		clear_bit(RTW_FLAG_BUSY_TRAFFIC, rtwdev->flags);
+ 
++	rtw_coex_wl_status_check(rtwdev);
++
+ 	if (busy_traffic != test_bit(RTW_FLAG_BUSY_TRAFFIC, rtwdev->flags))
+ 		rtw_coex_wl_status_change_notify(rtwdev, 0);
+ 
+-- 
+2.34.1
+
