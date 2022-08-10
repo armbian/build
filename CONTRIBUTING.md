@@ -16,71 +16,94 @@ Once you have decided to contribute to Armbian by working on an issue, check our
 
 ## Contributing
 
-This section describes how to start a contribution to Armbian. 
+This section describes how to start a contribution to Armbian.
 
 ### Prepare your environment
 
 * Create an Ubuntu 22.04 VM with VirtualBox or any other suitable hypervisor. Then proceed with:
 
-      sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
-      sudo apt-add-repository https://cli.github.com/packages
-      sudo apt update
-      sudo apt -y install gh git
+```bash
+    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
+    sudo apt-add-repository https://cli.github.com/packages
+    sudo apt update
+    sudo apt -y install gh git
       
-      # Configure git
-      git config --global user.email "your@email.com"
-      git config --global user.name "Your Name"
+    # Configure git
+    git config --global user.email "your@email.com"
+    git config --global user.name "Your Name"
       
-      # Generate gpg key
-      gpg --generate-key
-      
+    # Generate gpg key
+    gpg --generate-key
+```
+
 * Generate Github login [token](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/creating-a-personal-access-token)
 * Login to Github (you only have to do the steps above once)
-      
-      gh auth login --with-token <<< 'your_token'
+
+```bash
+    gh auth login --with-token <<< 'your_token'
+```
 
 ### Fork and clone Armbian
 
 * Fork armbian/build, clone and add remote
 
-      gh repo fork armbian/build --clone=true --remote=true
-      
+```bash
+    gh repo fork armbian/build --clone=true --remote=true
+```
+
 * Create branch
 
-      cd build
-      git checkout -b your_branch_name # change branch name for your patch
+```bash
+    cd build
+    git checkout -b your_branch_name # change branch name for your patch
+```
 
 ### Generate new patch template
 
 * Compile Armbian (this use case is to change something in the device tree and test the built image)
 
-      ./compile.sh CREATE_PATCHES="yes"
+```bash
+    ./compile.sh CREATE_PATCHES="yes"
+```
 
-    * Full OS image for flashing
-    * Do not change kernel configuration
-    * Choose a board
-    * Choose a kernel
-    * Choose a release package base
-    * Choose image type
-    * Configuring apt-cacher-ng
+* Full OS image for flashing
+* Do not change kernel configuration
+* Choose a board
+* Choose a kernel
+* Choose a release package base
+* Choose image type
+* Configuring apt-cacher-ng
 * Wait for prompt to make u-boot changes (press Enter after making changes in specified directory)
 
-      [ o.k. ] * [l][c] enable-distro-bootcmd.patch
-      [ warn ] Make your changes in directory: [ /home/yourhome/build/cache/sources/u-boot-odroidxu/odroidxu4-v2017.05 ]
-      [ warn ] Press <Enter> after you are done [ waiting ]
+```bash
+    [ o.k. ] * [l][c] enable-distro-bootcmd.patch
+    [ warn ] Make your changes in directory: [ /home/yourhome/build/cache/sources/u-boot-odroidxu/odroidxu4-v2017.05 ]
+    [ warn ] Press <Enter> after you are done [ waiting ]
+```
 
 ### Work on your patch
 
 * Open another terminal or Files window
 * In this case I want to add gpio-line-names to the Odroid XU4 device tree when prompted to do so
-  * `sudo nano build/cache/sources/linux-odroidxu4/odroid-5.4.y/arch/arm/boot/dts/exynos5420-pinctrl.dtsi`
+
+  ```bash
+    sudo nano build/cache/sources/linux-odroidxu4/odroid-5.4.y/arch/arm/boot/dts/exynos5420-pinctrl.dtsi
+  ```
+
 * Wait for prompt to make kernel changes (press Enter after making changes in specified directory)
-  * `[ warn ] Make your changes in this directory: [ /home/yourhome/build/cache/sources/linux-odroidxu4/odroid-5.4.y ]`
-  * `[ warn ] Press <Enter> after you are done [ waiting ]`
+
+  ```bash
+    [ warn ] Make your changes in this directory: [ /home/yourhome/build/cache/sources/linux-odroidxu4/odroid-5.4.y ]
+    [ warn ] Press <Enter> after you are done [ waiting ]
+  ```
+
 * Test changes you made on your board
   * Mine was located in `/home/yourhome/build/output/images/Armbian_21.02.0-trunk_Odroidxu4_focal_current_5.4.83.img`
 * Rename patch to something meaningful and move to proper location
-  * `mv output/patch/kernel-odroidxu4-current.patch patch/kernel/odroidxu4-current/add-gpio-line-names.patch`
+
+  ```bash
+    mv output/patch/kernel-odroidxu4-current.patch patch/kernel/odroidxu4-current/add-gpio-line-names.patch
+  ```
 
 Then you can ready to submit your patch to the Armbian project.
 
@@ -106,6 +129,6 @@ For discussions around issues/bugs and features, you can use the [GitHub issues]
 
 ## Other ways to contribute
 
-- [Become a new board maintainer](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/)
-- [Apply for one of the position](https://forum.armbian.com/staffapplications/)
-- [Help us covering costs](https://forum.armbian.com/subscriptions/)
+* [Become a new board maintainer](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/)
+* [Apply for one of the position](https://forum.armbian.com/staffapplications/)
+* [Help us covering costs](https://forum.armbian.com/subscriptions/)
