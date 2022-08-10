@@ -5,19 +5,19 @@
 
 # We can't use `test -z` due to the bug: https://lists.denx.de/pipermail/u-boot/2005-August/011447.html
 if test -n "${bootdev}"; test $? != 0; then
-    echo '=============================================================='
-    echo 'Please set "bootdev" before calling this script.'
-    echo ''
-    echo 'Boot from usb:'
-    echo '  setenv bootdev "usb 0"'
-    echo '  usb start'
-    echo '  fatload ${bootdev} 0x20800000 boot.scr && autoscr 0x20800000'
-    echo ''
-    echo 'Boot from eMMC:'
-    echo '  setenv bootdev "mmc 1"'
-    echo '  fatload ${bootdev} 0x20800000 boot.scr && autoscr 0x20800000'
-    echo '=============================================================='
-    exit 22
+	echo '=============================================================='
+	echo 'Please set "bootdev" before calling this script.'
+	echo ''
+	echo 'Boot from usb:'
+	echo '  setenv bootdev "usb 0"'
+	echo '  usb start'
+	echo '  fatload ${bootdev} 0x20800000 boot.scr && autoscr 0x20800000'
+	echo ''
+	echo 'Boot from eMMC:'
+	echo '  setenv bootdev "mmc 1"'
+	echo '  fatload ${bootdev} 0x20800000 boot.scr && autoscr 0x20800000'
+	echo '=============================================================='
+	exit 22
 fi
 
 echo "Try to boot from ${bootdev}"
