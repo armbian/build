@@ -4,20 +4,17 @@
 #
 
 # We can't use `test -z` due to the bug: https://lists.denx.de/pipermail/u-boot/2005-August/011447.html
-test -n "${bootdev}" && test -n "${rootdev}"
-if test $? != 0; then
+if test -n "${bootdev}"; test $? != 0; then
     echo '=============================================================='
-    echo 'Please set "bootdev" and "rootdev" before calling this script.'
+    echo 'Please set "bootdev" before calling this script.'
     echo ''
     echo 'Boot from usb:'
-    echo '  bootdev="usb 0"'
-    echo '  rootdev="/dev/sda2"'
+    echo '  setenv bootdev "usb 0"'
     echo '  usb start'
     echo '  fatload ${bootdev} 0x20800000 boot.scr && autoscr 0x20800000'
     echo ''
     echo 'Boot from eMMC:'
-    echo '  bootdev="mmc 1"'
-    echo '  rootdev="/dev/mmcblk1p2"'
+    echo '  setenv bootdev "mmc 1"'
     echo '  fatload ${bootdev} 0x20800000 boot.scr && autoscr 0x20800000'
     echo '=============================================================='
     exit 22
@@ -26,6 +23,13 @@ fi
 echo "Try to boot from ${bootdev}"
 
 fatload ${bootdev} 0x20800000 /armbianEnv.txt && env import -t 0x20800000 ${filesize}
+
+if test -n "${rootdev}"; test $? != 0; then
+	echo 'Please set "rootdev" before calling this script'
+	echo 'or set it in armbianEnv.txt.'
+	exit 22
+fi
+
 test -n "${consoleargs}" || setenv consoleargs "console=ttyAML0,115200n8"
 
 # Boot Arguments

@@ -5,6 +5,7 @@ KERNEL_TARGET="legacy,current,edge"
 
 BOOTCONFIG="none"
 BOOTSCRIPT="boot-onecloud.cmd:boot.cmd"
+BOOTENV_FILE="onecloud.txt"
 
 BOOTSIZE="200"
 BOOTFS_TYPE="fat"
