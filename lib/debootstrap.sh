@@ -24,7 +24,7 @@
 #
 debootstrap_ng()
 {
-	display_alert "Starting rootfs and image building process for" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" "info"
+	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
 
@@ -119,82 +119,72 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 #
 create_rootfs_cache()
 {
-	if [[ "$ROOT_FS_CREATE_ONLY" == "force" ]]; then
+
+	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
 		local cycles=1
-		else
-		local cycles=2
+	else
+		local cycles=3
 	fi
 
+	INITAL_ROOTFSCACHE_VERSION=$ROOTFSCACHE_VERSION
+
 	# seek last cache, proceed to previous otherwise build it
-	for ((n=0;n<${cycles};n++)); do
+	for ((n = 0; n < cycles; n++)); do
 
-		FORCED_MONTH_OFFSET=${n}
+	ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
+	ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
 
-		local packages_hash=$(get_package_list_hash "$(date -d "$D -${FORCED_MONTH_OFFSET} month" +"%Y-%m-module$ROOTFSCACHE_VERSION" | sed 's/^0*//')")
-		local cache_type="cli"
-		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
-		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
-		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
-		local cache_fname=${SRC}/cache/rootfs/${cache_name}
-		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
+	local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
+	local cache_type="cli"
+	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
+	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
+	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.zst
+	local cache_fname=${SRC}/cache/rootfs/${cache_name}
+	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
 
-		[[ "$ROOT_FS_CREATE_ONLY" == force ]] && break
+	[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
 
-		if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
-			rm ${cache_fname}*
-			display_alert "Partially downloaded file. Re-start."
-			download_and_verify "_rootfs" "$cache_name"
-		fi
+	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
+		rm ${cache_fname}*
+		display_alert "Partially downloaded file. Re-start."
+		download_and_verify "_rootfs" "$cache_name"
+	fi
 
-		display_alert "Checking local cache" "$display_name" "info"
+	display_alert "Checking local cache" "$display_name" "info"
 
-		if [[ -f ${cache_fname} && -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			echo "$cache_fname" > $cache_fname.current
-			display_alert "Checking cache integrity" "$display_name" "info"
-			sudo lz4 -tqq ${cache_fname}
-			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-			# sign if signature is missing
-			if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
-				[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
-				echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
-			fi
-			break
-		elif [[ -f ${cache_fname} ]]; then
-			break
-		else
-			display_alert "searching on servers"
-			download_and_verify "_rootfs" "$cache_name"
-			[[ -f ${cache_fname} ]] && break
-		fi
+	if [[ -f $cache_fname ]]; then
+		break
+	else
+		display_alert "searching on servers"
+		download_and_verify "_rootfs" "$cache_name"
+		[[ -f ${cache_fname} ]] && break
+	fi
 
-		if [[ ! -f $cache_fname ]]; then
-			display_alert "not found: try to use previous cache"
-		fi
-
+	if [[ ! -f $cache_fname ]]; then
+		display_alert "not found: try to use previous cache"
+	fi
 	done
 
-	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
+	# check if cache exists and we want to make it
+        if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
+                display_alert "Checking cache integrity" "$display_name" "info"
+                sudo zstd -tqq ${cache_fname}
+                [[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
+	fi
 
-		# speed up checking
-		if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
-			echo "$cache_fname" > $cache_fname.current
-			umount --lazy "$SDCARD"
-			rm -rf $SDCARD
-			# remove exit trap
-			trap - INT TERM EXIT
-			exit
-		fi
+	# if aria2 file exists download didn't succeeded
+	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $display_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
+		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 		create_sources_list "$RELEASE" "$SDCARD/"
 	else
-		display_alert "... remote not found" "Creating new rootfs cache for $RELEASE" "info"
+		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
 
 		# stage: debootstrap base system
 		if [[ $NO_APT_CACHER != yes ]]; then
@@ -394,7 +384,7 @@ create_rootfs_cache()
 		umount_chroot "$SDCARD"
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
+			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | zstdmt -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
@@ -408,7 +398,7 @@ create_rootfs_cache()
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
-	if [[ -n "$ROOT_FS_CREATE_ONLY" ]]; then
+	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
 		umount --lazy "$SDCARD"
 		rm -rf $SDCARD
 		# remove exit trap
@@ -438,7 +428,7 @@ prepare_partitions()
 
 	# array copying in old bash versions is tricky, so having filesystems as arrays
 	# with attributes as keys is not a good idea
-	declare -A parttype mkopts mkfs mountopts
+	declare -A parttype mkopts mkopts_label mkfs mountopts
 
 	parttype[ext4]=ext4
 	parttype[ext2]=ext2
@@ -455,12 +445,20 @@ prepare_partitions()
 	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|sid ]]; then
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
 	fi
-	mkopts[fat]='-n BOOT'
+	# mkopts[fat] is empty
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
 	mkopts[btrfs]='-m dup'
 	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
+
+	mkopts_label[ext4]='-L '
+	mkopts_label[ext2]='-L '
+	mkopts_label[fat]='-n '
+	mkopts_label[f2fs]='-l '
+	mkopts_label[btrfs]='-L '
+	mkopts_label[xfs]='-L '
+	# mkopts_label[nfs] is empty
 
 	mkfs[ext4]=ext4
 	mkfs[ext2]=ext2
@@ -485,6 +483,8 @@ prepare_partitions()
 	BIOSSIZE=${BIOSSIZE:-0}
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
 	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbiefi}"
+	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbian_root}"
+	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbian_boot}"
 
 	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
 *allow custom options for mkfs*
@@ -646,7 +646,7 @@ PREPARE_IMAGE_SIZE
 
 	check_loop_device "$LOOP"
 
-	losetup -P $LOOP ${SDCARD}.raw
+	losetup $LOOP ${SDCARD}.raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
@@ -669,7 +669,7 @@ PREPARE_IMAGE_SIZE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
@@ -688,7 +688,7 @@ PREPARE_IMAGE_SIZE
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
 		check_loop_device "${LOOP}p${bootpart}"
-		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 		mkdir -p $MOUNT/boot/
 		mount ${LOOP}p${bootpart} $MOUNT/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
@@ -932,16 +932,9 @@ POST_UMOUNT_FINAL_IMAGE
 			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
-			#[[ ${BUILD_ALL} == yes ]] && available_cpu=$(( $available_cpu * 30 / 100 )) # lets use 20% of resources in case of build-all
 			[[ ${available_cpu} -gt 16 ]] && available_cpu=16 # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
-			if [[ ${BUILD_ALL} == yes && ( ${available_mem} -lt 15 || $(ps -uax | grep "pixz" | wc -l) -gt 4 )]]; then
-				while [[ $(ps -uax | grep "pixz" | wc -l) -gt 2 ]]
-					do echo -en "#"
-					sleep 20
-				done
-			fi
 			pixz -7 -p ${available_cpu} -f $(expr ${available_cpu} + 2) < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
 			compression_type=".xz"
 		fi

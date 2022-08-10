@@ -1,5 +1,5 @@
 # Rockchip RK3568 quad core 2GB-4GB 5GBE eMMC SATA USB3 Mini PCIE M.2 key-e
-BOARD_NAME="Banana Pi R2"
+BOARD_NAME="Banana Pi R2 Pro"
 BOARDFAMILY="media"
 BOOTCONFIG="bpi-r2pro-rk3568_defconfig"
 KERNEL_TARGET="legacy,current,edge"
