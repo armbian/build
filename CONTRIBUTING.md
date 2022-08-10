@@ -85,7 +85,7 @@ This section describes how to start contributing to Armbian.
 
 ### Work on your patch
 
-* Open another terminal or Files window
+* Open another terminal or files window
 * In this case I want to add gpio-line-names to the Odroid XU4 device tree when prompted to do so
 
   ```bash
