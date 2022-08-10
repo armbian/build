@@ -193,7 +193,7 @@ install_common()
 		fi
 	else
 
-		if [[ "${BOOTCONFIG}" != "none" ]]; then
+		if [[ -n "${BOOTSCRIPT}" ]]; then
 			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
 				cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 			else
