@@ -36,6 +36,7 @@ test -n "${consoleargs}" || setenv consoleargs "console=ttyAML0,115200n8"
 setenv bootargs ""
 setenv bootargs "${bootargs} root=${rootdev} rootwait rw"
 setenv bootargs "${bootargs} ${consoleargs} no_console_suspend consoleblank=0"
+setenv bootargs "${bootargs} ${extraargs}"
 
 # Booting
 fatload ${bootdev} 0x20800000 /uImage || exit 1
