@@ -4,19 +4,21 @@ We would love to have you join the Armbian community! Below summarizes the proce
 
 ## Reporting Issues
 
-Before [reporting an issue](https://github.com/armbian/build/issues/new/choose), check our [backlog of open issues](https://github.com/armbian/build/issues) and [pull requests](https://github.com/armbian/build/pulls) to see if someone else has already reported or working on it. If so, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
+Before [reporting an issue](https://github.com/armbian/build/issues/new/choose), check our [backlog of open issues](https://github.com/armbian/build/issues) and [pull requests](https://github.com/armbian/build/pulls) to see if someone else has already reported or working on it. If an issues is already open, feel free to add your scenario, or additional information, to the discussion. Or simply "subscribe" to it to be notified when it is updated.
 
 If you find a new issue with the project please let us hear about it! The most important aspect of a bug report is that it includes enough information for us to reproduce it. So, please include as much detail as possible and try to remove the extra stuff that does not really relate to the issue itself. The easier it is for us to reproduce it, the faster it will be fixed!
 
-Please do not include any private/sensitive information in your issue!
+Please do not include any private/sensitive information in your issue! We are not responsible for your privacy, this is open source software.
 
 ## Working On Issues
 
 Once you have decided to contribute to Armbian by working on an issue, check our backlog of open (or [JIRA](https://armbian.atlassian.net/jira/dashboards/10000) issues open by the team) looking for any that do not have an "In Progress" label attached to it. Often issues will be assigned to someone, to be worked on at a later time. If you have the time to work on the issue now add yourself as an assignee, and set the "In Progress" label if you are a member of the “Containers” GitHub organization. If you can not set the label, just add a quick comment in the issue asking that the “In Progress” label be set and a member will do so for you.
 
+Please be sure to review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/) as well before you begin.
+
 ## Contributing
 
-This section describes how to start a contribution to Armbian.
+This section describes how to start contributing to Armbian.
 
 ### Prepare your environment
 
@@ -67,7 +69,7 @@ This section describes how to start a contribution to Armbian.
 ```
 
 * Full OS image for flashing
-* Do not change kernel configuration
+* Do not change the kernel configuration
 * Choose a board
 * Choose a kernel
 * Choose a release package base
@@ -97,7 +99,7 @@ This section describes how to start a contribution to Armbian.
     [ warn ] Press <Enter> after you are done [ waiting ]
   ```
 
-* Test changes you made on your board
+* Test the changes you made on your board
   * Mine was located in `/home/yourhome/build/output/images/Armbian_21.02.0-trunk_Odroidxu4_focal_current_5.4.83.img`
 * Rename patch to something meaningful and move to proper location
 
@@ -105,7 +107,7 @@ This section describes how to start a contribution to Armbian.
     mv output/patch/kernel-odroidxu4-current.patch patch/kernel/odroidxu4-current/add-gpio-line-names.patch
   ```
 
-Then you can ready to submit your patch to the Armbian project.
+Next, you can prepare to submit your patch to the Armbian project.
 
 ## Submitting Pull Requests
 
@@ -115,20 +117,26 @@ While bug fixes can first be identified via an "issue", that is not required for
 
 PRs for new features should include some background on what use cases the new code is trying to address. When possible and when it makes sense, try to break-up larger PRs into smaller parts - it is easier to review smaller code changes. But only if those smaller ones make sense as stand-alone PRs.
 
-Squash your commits into logical pieces of work that might want to be reviewed separate from the rest of the PRs. But, squashing down to just one commit is ok too since in the end the entire PR will be reviewed anyway. If in doubt, squash.
+You should squash your commits into logical pieces of work that can be reviewed separate from the rest of the PRs. Squashing down to just one commit is ok as well, since in the end the entire PR will be reviewed anyway. If in doubt, squash.
 
 ### Describe your Changes in Commit Messages
 
-Describe your problem. Whether your patch is a one-line bug fix or 5000 lines of a new feature, there must be an underlying problem that motivated you to do this work. Convince the reviewer that there is a problem worth fixing and that it makes sense for them to read past the first paragraph.
+Describe your problem(s). Whether your patch is a one-line bug fix or 5000 lines including a new feature, there must be an underlying problem that motivated you to do this work. Your description should work to convince the reviewer that there is a problem worth fixing and that it makes sense for them to read past the first paragraph.  This means providing comprehensive details about the issue, including, but not limited to: 
+* How the problem presented itself
+* How to replicate the problem
+* Provide 'dmesg' and/or 'armbianmonitor -u' output showing board used and any console output surrounding the issue
+* Why you feel it is important for this issue to be resolved
 
 ## Communications
 
 For general questions and discussion, please use the IRC `#armbian`, `#armbian-devel` or `#armbian-desktop` on Libera.Chat or [Discord server](http://discord.armbian.com). Most IRC and Discord channels are bridged and recorded.
 
-For discussions around issues/bugs and features, you can use the [GitHub issues](https://github.com/armbian/build/issues) and [PRs tracking system](https://github.com/armbian/build/pulls).
+For discussions around issues/bugs and features, you can use the [GitHub issues](https://github.com/armbian/build/issues), the [PR tracking system](https://github.com/armbian/build/pulls) or our [Jira ticketing system](https://armbian.atlassian.net/jira/software/c/projects/AR/issues/?filter=allissues).
 
 ## Other ways to contribute
 
 * [Become a new board maintainer](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/)
 * [Apply for one of the position](https://forum.armbian.com/staffapplications/)
 * [Help us covering costs](https://forum.armbian.com/subscriptions/)
+* [Help community memebers in the Forum](https://forum.armbian.com/)
+* [Check forum announcements section for any requests for help from the community](https://forum.armbian.com/forum/37-announcements/)
