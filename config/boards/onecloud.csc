@@ -4,6 +4,7 @@ BOARDFAMILY="meson8b"
 KERNEL_TARGET="legacy,current,edge"
 
 BOOTCONFIG="odroidc_config"
+BOOTSCRIPT="boot-onecloud.cmd:boot.cmd"
 
 BOOTSIZE="200"
 BOOTFS_TYPE="fat"
