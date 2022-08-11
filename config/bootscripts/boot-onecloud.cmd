@@ -30,12 +30,23 @@ if test -n "${rootdev}"; test $? != 0; then
 	exit 22
 fi
 
-test -n "${consoleargs}" || setenv consoleargs "console=ttyAML0,115200n8"
+if test -n "${consoleargs}"; test $? != 0; then
+	test -n "${console}" || setenv console "both"
+
+	setenv consoleargs ""
+	# Due to https://github.com/systemd/systemd/issues/9899, only the latest
+	# console will be the primary console (/dev/console) which is the only
+	# console the initramfs shell and the systemd log use.
+	# So when set "both", we use serial console as the primary console.
+	test "${console}" = "display" || test "${console}" = "both" && setenv consoleargs "${consoleargs} console=tty1"
+	test "${console}" = "serial" || test "${console}" = "both" && setenv consoleargs "${consoleargs} console=ttyAML0,115200n8"
+	setenv consoleargs "${consoleargs} no_console_suspend consoleblank=0"
+fi
 
 # Boot Arguments
 setenv bootargs ""
 setenv bootargs "${bootargs} root=${rootdev} rootwait rw"
-setenv bootargs "${bootargs} ${consoleargs} no_console_suspend consoleblank=0"
+setenv bootargs "${bootargs} ${consoleargs}"
 setenv bootargs "${bootargs} ${extraargs}"
 
 # Booting
