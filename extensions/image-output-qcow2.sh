@@ -1,4 +1,4 @@
-add_host_dependencies__ovf_host_deps() {
+function add_host_dependencies__qcow2_host_deps() {
 	[[ "${SKIP_QCOW2}" == "yes" ]] && return 0
 	export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} qemu-utils"
 }
