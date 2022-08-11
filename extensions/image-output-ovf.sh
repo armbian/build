@@ -10,6 +10,7 @@ function extension_prepare_config__prepare_ovf_config() {
 	export OVF_VM_CPUS="${OVF_VM_CPUS:-4}"        # Number of CPUs
 	export OVF_VM_RAM_GB="${OVF_VM_RAM_GB:-4}"    # RAM in Gigabytes
 	export OVF_KEEP_QCOW2="${OVF_KEEP_QCOW2:-no}" # keep the qcow2 image after conversion to OVF
+	export OVF_KEEP_IMG="${OVF_KEEP_IMG:-no}"     # keep the .img image after conversion to OVF
 }
 
 #### *custom post build hook*
@@ -34,6 +35,10 @@ function post_build_image__920_create_ovf() {
 	if [[ "${OVF_KEEP_QCOW2}" != "yes" ]]; then                                                                  # check if told to keep the qcow2 image
 		display_alert "Discarding qcow2 image after" "conversion to VMDK" "debug"                                   # debug
 		run_host_command_logged rm -vf "${original_qcow2_image}"                                                    # remove the original qcow2, free space
+	fi                                                                                                           # /check
+	if [[ "${OVF_KEEP_IMG}" != "yes" ]]; then                                                                    # check if told to keep the img image
+		display_alert "Discarding .img image after" "conversion to OVF" "debug"                                     # debug
+		run_host_command_logged rm -vf "${DESTIMG}/${version}.img" "${DESTIMG}/${version}.img.txt"                  # remove the original .img and .img.txt if there
 	fi                                                                                                           # /check
 	run_host_command_logged qemu-img info "${full_file_vmdk}"                                                    # show info
 
