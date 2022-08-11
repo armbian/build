@@ -237,7 +237,8 @@ function deploy_built_uboot_bins_for_one_target_to_packaging_area() {
 	done
 }
 
-compile_uboot() {
+function compile_uboot() {
+	display_alert "Compiling u-boot" "BOOTSOURCE: ${BOOTSOURCE}" "debug"
 	if [[ -n $BOOTSOURCE ]] && [[ "${BOOTSOURCE}" != "none" ]]; then
 		display_alert "Downloading sources" "u-boot" "git"
 		GIT_SKIP_SUBMODULES="${UBOOT_GIT_SKIP_SUBMODULES}" fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes" # fetch_from_repo <url> <dir> <ref> <subdir_flag>

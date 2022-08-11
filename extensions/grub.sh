@@ -10,32 +10,37 @@ function extension_prepare_config__prepare_flash_kernel() {
 	export GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-}"   # Cmdline by default
 	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-yes}"        # Enable BIOS too if target is amd64
 	export UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"   # Export kernel and initrd for direct kernel boot "kexec"
-	# User config overrides.
-	export BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
-	unset BOOTSOURCE                                                             # To try and convince lib/ to not build or install u-boot.
-	export IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-	export UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-	export BOOTSIZE=0                                                            # No separate /boot when using UEFI.
-	export CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
-	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
-	export UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
-	local uefi_packages="efibootmgr efivar cloud-initramfs-growroot"             # Use growroot, add some efi-related packages
-	uefi_packages="os-prober grub-efi-${ARCH}-bin ${uefi_packages}"              # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
 
-	# BIOS-compatibility for amd64
-	if [[ "${ARCH}" == "amd64" ]]; then
-		export UEFI_GRUB_TARGET="x86_64-efi" # Default for x86_64
-		if [[ "${UEFI_ENABLE_BIOS_AMD64}" == "yes" ]]; then
-			export uefi_packages="${uefi_packages} grub-pc-bin grub-pc"
-			export UEFI_GRUB_TARGET_BIOS="i386-pc"
-			export BIOSSIZE=4 # 4 MiB BIOS partition
-		else
-			export uefi_packages="${uefi_packages} grub-efi-${ARCH}"
+	if [[ "${UEFI_GRUB}" != "skip" ]]; then
+		# User config overrides for GRUB.
+		export BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
+		unset BOOTSOURCE                                                             # To try and convince lib/ to not build or install u-boot.
+		export IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
+		export UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+		export BOOTSIZE=0                                                            # No separate /boot when using UEFI.
+		export CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
+		export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
+		export UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
+		local uefi_packages=""                                                       # Use growroot, add some efi-related packages
+
+		uefi_packages="efibootmgr efivar cloud-initramfs-growroot"      # Use growroot, add some efi-related packages
+		uefi_packages="os-prober grub-efi-${ARCH}-bin ${uefi_packages}" # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
+
+		# BIOS-compatibility for amd64
+		if [[ "${ARCH}" == "amd64" ]]; then
+			export UEFI_GRUB_TARGET="x86_64-efi" # Default for x86_64
+			if [[ "${UEFI_ENABLE_BIOS_AMD64}" == "yes" ]]; then
+				export uefi_packages="${uefi_packages} grub-pc-bin grub-pc"
+				export UEFI_GRUB_TARGET_BIOS="i386-pc"
+				export BIOSSIZE=4 # 4 MiB BIOS partition
+			else
+				export uefi_packages="${uefi_packages} grub-efi-${ARCH}"
+			fi
 		fi
-	fi
 
-	[[ "${ARCH}" == "arm64" ]] && export uefi_packages="${uefi_packages} grub-efi-${ARCH}"
-	[[ "${ARCH}" == "arm64" ]] && export UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+		[[ "${ARCH}" == "arm64" ]] && export uefi_packages="${uefi_packages} grub-efi-${ARCH}"
+		[[ "${ARCH}" == "arm64" ]] && export UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+	fi
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 		DISTRO_KERNEL_PACKAGES="linux-image-generic"
@@ -65,7 +70,7 @@ function extension_prepare_config__prepare_flash_kernel() {
 	# shellcheck disable=SC2086
 	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}
 
-	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
+	display_alert "${UEFI_GRUB} activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }
 
 # @TODO: extract u-boot into an extension, so that core bsps don't have this stuff in there to begin with.
@@ -74,7 +79,9 @@ post_family_tweaks_bsp__remove_uboot_grub() {
 	display_alert "Removing uboot from BSP" "${EXTENSION}" "info"
 	# Simply remove everything with 'uboot' or 'u-boot' in their filenames from the BSP package.
 	# shellcheck disable=SC2154 # $destination is the target dir of the bsp building function
-	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs rm
+	pushd "${destination}" || exit_with_error "cray-cray about destination: ${destination}"
+	run_host_command_logged find "." -type f "|" grep -e "uboot" -e "u-boot" "|" xargs rm -v
+	popd
 }
 
 pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
@@ -84,6 +91,15 @@ pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
 }
 
 pre_umount_final_image__install_grub() {
+	if [[ "${UEFI_GRUB}" == "skip" ]]; then
+		display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
+		if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
+			display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB} - calling update_initramfs directly" "debug"
+			VER="generic" update_initramfs "${MOUNT}"
+		fi
+		return 0
+	fi
+
 	configure_grub
 	local chroot_target=$MOUNT
 	display_alert "Installing bootloader" "GRUB" "info"
