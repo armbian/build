@@ -1624,7 +1624,7 @@ function webseed ()
 	unset text
 	local CCODE=$(curl -s redirect.armbian.com/geoip | jq '.continent.code' -r)
 
-	if [[ "$2" == "rootfs" ]]; then
+	if [[ "$2" == rootfs* ]]; then
 		WEBSEED=($(curl -s ${1}mirrors | jq -r '.'${CCODE}' | .[] | values'))
 		else
 		WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
