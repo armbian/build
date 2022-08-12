@@ -115,7 +115,7 @@ No Pull Request (PR) is too small! Typos, additional comments in the code, new t
 
 While bug fixes can first be identified via an "issue", that is not required for things mentioned above. It is fine to just open up a PR with the fix, but make sure you include the same information you would have included in an actual issue - like how to reproduce it.
 
-PRs for new features should include some background on what use cases the new code is trying to address. When possible and when it makes sense, try to break-up larger PRs into smaller parts - it is easier to review smaller code changes. But only if those smaller ones make sense as stand-alone PRs.
+PRs for new features should include some background on what use cases the new code is trying to address. When possible and when it makes sense, try to break-up larger PRs into smaller parts - it is easier to [review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired+label%3A%22Ready+%3Aarrow_right%3A%22) smaller code changes. But only if those smaller ones make sense as stand-alone PRs.
 
 You should squash your commits into logical pieces of work that can be reviewed separate from the rest of the PRs. Squashing down to just one commit is ok as well, since in the end the entire PR will be reviewed anyway. If in doubt, squash.
 
