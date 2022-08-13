@@ -33,7 +33,9 @@ cd "${SRC}" || exit
 # if variable not provided, check which is current version in the cache storage
 if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
 	ROOTFSCACHE_VERSION=$(curl https://api.github.com/repos/armbian/cache/releases/latest -s | jq .tag_name -r || true)
-	ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-"0003"}
+	[[ "$ROOTFSCACHE_VERSION" == null ]] && unset ROOTFSCACHE_VERSION
+	# anonymous API access is very limited which is why we need a fallback
+	ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-$(curl -L --silent https://cache.armbian.com/rootfs/latest --fail)}
 fi
 
 [[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
