@@ -45,42 +45,10 @@ prepare_host() {
 		done
 	fi
 
-	# packages list for host
-	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
-	declare -a host_dependencies=(
-		# big bag of stuff from before
-		acl aptly bc binfmt-support bison btrfs-progs
-		build-essential ca-certificates ccache cpio cryptsetup
-		debian-archive-keyring debian-keyring debootstrap device-tree-compiler
-		dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk
-		gnupg gpg imagemagick jq kmod libbison-dev
-		libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev
-		libfl-dev liblz4-tool libncurses-dev libssl-dev
-		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
-		ntpdate patchutils
-		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
-		systemd-container u-boot-tools udev uuid-dev whiptail
-		zlib1g-dev busybox
-
-		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
-		python2 python2-dev
-
-		# non-mess below?
-		file ccze colorized-logs tree expect            # logging utilities; expect is needed for 'unbuffer' command
-		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
-		parted gdisk                                    # partition tools
-		aria2 curl wget                                 # downloaders et al
-		parallel                                        # do things in parallel
-		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
-		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
-		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
-		crossbuild-essential-amd64                            # For AMD 64-bit, x86_64.
-	)
-
 	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 		:
 	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
-		host_dependencies+=(libc6-amd64-cross qemu) # Support for running x86 binaries on ARM64 under qemu.
+		:
 	else
 		display_alert "Please read documentation to set up proper compilation environment"
 		display_alert "https://www.armbian.com/using-armbian-tools/"
@@ -129,30 +97,13 @@ prepare_host() {
 
 	# Skip verification if you are working offline
 	if ! $offline; then
-
-		# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
-		# set NO_APT_CACHER=yes to prevent installation errors in such case
-		if [[ $NO_APT_CACHER != yes ]]; then
-			host_dependencies+=("apt-cacher-ng")
-		fi
-
-		export EXTRA_BUILD_DEPS=""
-		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
-			*run before installing host dependencies*
-			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
-		ADD_HOST_DEPENDENCIES
-
-		if [ -n "${EXTRA_BUILD_DEPS}" ]; then
-			# shellcheck disable=SC2206 # I wanna expand. @TODO: later will convert to proper array
-			host_dependencies+=(${EXTRA_BUILD_DEPS})
-		fi
-
 		display_alert "Installing build dependencies"
 
 		# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
 		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
 		# This handles the wanted list in $host_dependencies, updates apt only if needed
+		# $host_dependencies is produced by early_prepare_host_dependencies()
 		install_host_side_packages "${host_dependencies[@]}"
 
 		run_host_command_logged update-ccache-symlinks
@@ -223,4 +174,68 @@ prepare_host() {
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read # @TODO: this fails if stdin is not a tty, or just hangs
 	fi
+}
+
+function early_prepare_host_dependencies() {
+	# packages list for host
+	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+	declare -a -g host_dependencies=(
+		# big bag of stuff from before
+		acl aptly bc binfmt-support bison btrfs-progs
+		build-essential ca-certificates ccache cpio cryptsetup
+		debian-archive-keyring debian-keyring debootstrap device-tree-compiler
+		dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk
+		gnupg gpg imagemagick jq kmod libbison-dev
+		libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev
+		libfl-dev liblz4-tool libncurses-dev libssl-dev
+		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
+		ntpdate patchutils
+		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
+		systemd-container u-boot-tools udev uuid-dev whiptail
+		zlib1g-dev busybox
+
+		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
+		python2 python2-dev
+
+		# non-mess below?
+		file ccze colorized-logs tree expect            # logging utilities; expect is needed for 'unbuffer' command
+		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
+		parted gdisk                                    # partition tools
+		aria2 curl wget                                 # downloaders et al
+		parallel                                        # do things in parallel
+		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
+		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
+		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
+		crossbuild-essential-amd64                            # For AMD 64-bit, x86_64.
+	)
+
+	if [[ $(dpkg --print-architecture) == arm64 ]]; then
+		host_dependencies+=(libc6-amd64-cross qemu) # Support for running x86 binaries on ARM64 under qemu.
+	fi
+
+	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
+	# set NO_APT_CACHER=yes to prevent installation errors in such case
+	if [[ $NO_APT_CACHER != yes ]]; then
+		host_dependencies+=("apt-cacher-ng")
+	fi
+
+	export EXTRA_BUILD_DEPS=""
+	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
+		*run before installing host dependencies*
+		you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
+	ADD_HOST_DEPENDENCIES
+
+	if [ -n "${EXTRA_BUILD_DEPS}" ]; then
+		# shellcheck disable=SC2206 # I wanna expand. @TODO: later will convert to proper array
+		host_dependencies+=(${EXTRA_BUILD_DEPS})
+	fi
+
+	export FINAL_HOST_DEPS="${host_dependencies[*]}"
+	call_extension_method "host_dependencies_known" <<- 'HOST_DEPENDENCIES_KNOWN'
+		*run after all host dependencies are known (but not installed)*
+		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+		are determined at this point, but not yet installed.
+	HOST_DEPENDENCIES_KNOWN
+
 }

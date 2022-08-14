@@ -369,6 +369,9 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		but before assembling any package lists.
 	USER_CONFIG
 
+	# Prepare the list of host dependencies.
+	early_prepare_host_dependencies
+
 	display_alert "Extensions: prepare configuration" "extension_prepare_config" "debug"
 	call_extension_method "extension_prepare_config" <<- 'EXTENSION_PREPARE_CONFIG'
 		*allow extensions to prepare their own config, after user config is done*
