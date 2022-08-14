@@ -33,15 +33,15 @@
 
 ## What this project does?
 
-- Builds custom Linux optimized for [single board computers(SBCs)](https://en.wikipedia.org/wiki/Single-board_computer).
-- Including filesystem generation, low-level control software, kernel image compilation and bootloader compilation.
+- Builds custom Linux kernel, image or a distribution optimized for low resource hardware such as single board computers,
+- Including filesystem generation, low-level control software, kernel image and bootloader compilation,
 - Provides a consistent user experience by keeping system standards across different platforms.
 
 ## Getting started
 
-### Prepare your environment
+### Basic requirements
 
-- x64 / aarch64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
+- x64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, container or bare metal installation,
 - Ubuntu Jammy 22.04 x64 or aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
 - Superuser rights (configured sudo or root access).
 
@@ -113,9 +113,9 @@ Function | Armbian | Yocto | Buildroot |
 
 ## Download
 
-<https://www.armbian.com/download/>
-
-Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the end of [February, May, August, November](https://github.com/armbian/documentation/blob/master/docs/Process_Release-Model.md). You are welcome to propose changes to our default [images build list](https://github.com/armbian/build/blob/master/config/targets.conf).
+- quarterly released **supported** builds <https://www.armbian.com/download/>
+- weekly released **unsupported** community builds <https://github.com/armbian/community/>
+- upon code change **unsupported** development builds <https://github.com/armbian/build/releases>
 
 ## Project structure
 
@@ -136,6 +136,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   ├── sources                          Kernel and u-boot sources locations and scripts
 │   ├── templates                        User configuration templates which populate userpatches
 │   └── torrents                         External compiler and rootfs cache torrents
+├── extensions                           extend build system with specific functionality
 ├── lib                                  Main build framework libraries
 ├── output                               Build artifact
 │   └── deb                              Deb packages
@@ -157,6 +158,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   └── u-boot                           Universal boot loader patches
 |       ├── u-boot-board                 For specific board
 |       └── u-boot-family                For entire kernel family
+├── tools                                Tools for dealing with kernel patches and configs
 └── userpatches                          User: configuration patching area
     ├── lib.config                       User: framework common config/override file
     ├── config-default.conf              User: default user config file
