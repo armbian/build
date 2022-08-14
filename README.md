@@ -182,7 +182,7 @@ Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) befor
 
 ## Support
 
-Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). Make sure to use help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com) before opening new forum topic. In case you require attention, check community or business [subscriptions](https://forum.armbian.com/subscriptions) before asking for dedicated help https://www.armbian.com/contact.
+Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). Make sure to use help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com) before opening new forum topic. In case you require attention, buy appropriate [subscription level](https://forum.armbian.com/subscriptions) before asking for dedicated attention to the issue you have https://www.armbian.com/contact.
 
 ## Contact
 
