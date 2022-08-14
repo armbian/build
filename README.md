@@ -33,7 +33,7 @@
 
 ## What this project does?
 
-- Builds custom Linux kernel, image or a distribution optimized for low resource hardware such as single board computers,
+- Builds custom kernel, image or a distribution optimized for low resource HW such as single board computers,
 - Including filesystem generation, low-level control software, kernel image and bootloader compilation,
 - Provides a consistent user experience by keeping system standards across different platforms.
 
