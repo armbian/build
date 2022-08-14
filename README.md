@@ -121,8 +121,8 @@ Function | Armbian | Yocto | Buildroot |
 
 ```text
 ├── cache                                Work / cache directory
-│   ├── rootfs                           Compressed vanilla Debian and Ubuntu rootfilesystem cache
-│   ├── sources                          Kernel, u-boot and various drivers sources. Mainly C code
+│   ├── rootfs                           Compressed userspace packages cache
+│   ├── sources                          Kernel, u-boot and various drivers sources.
 │   ├── toolchains                       External cross compilers from Linaro™ or ARM™
 ├── config                               Packages repository configurations
 │   ├── targets.conf                     Board build target configuration
