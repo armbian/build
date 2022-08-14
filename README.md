@@ -6,7 +6,7 @@
 <br>
 <a href=https://github.com/armbian/build/actions/workflows/build-train.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/armbian/build/Build%20train?logo=githubactions&label=Build%20train&style=for-the-badge"></a>
 <a href=https://github.com/armbian/build/actions/workflows/check-integrity.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/armbian/build/Check%20images%20integrity?logo=files&label=Images%20integrity&style=for-the-badge"></a>
-<a href=https://github.com/armbian/build/actions/workflows/smoke-tests.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/armbian/build/Smoke%20tests%20on%20DUTs?logo=speedtest&label=Smoke%20tests%20on%20hardware&style=for-the-badge"></a>
+<a href=https://github.com/armbian/build/actions/workflows/smoke-tests.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/armbian/build/Smoke%20tests%20on%20DUTs?logo=speedtest&label=Tested%20on%20hardware&style=for-the-badge"></a>
  <br>
 
 <br>
