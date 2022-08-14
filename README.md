@@ -95,6 +95,13 @@ More information:
 - [Building with Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) — how to build inside container;
 - [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
 
+
+## Download prebuilt images
+
+- quarterly released **supported** builds —  <https://www.armbian.com/download>
+- weekly released **unsupported** community builds —  <https://github.com/armbian/community>
+- upon code change **unsupported** development builds —  <https://github.com/armbian/build/releases>
+
 ## Compare with industry standards
 
 Check similarity, advantages and disadvantages compared with leading industry standard build software.
@@ -110,12 +117,6 @@ Function | Armbian | Yocto | Buildroot |
 | Initramfs support | yes | yes | yes |
 | Getting started | quick | very slow | slow |
 | Cross compilation | yes | yes | yes |
-
-## Download
-
-- quarterly released **supported** builds <https://www.armbian.com/download/>
-- weekly released **unsupported** community builds <https://github.com/armbian/community/>
-- upon code change **unsupported** development builds <https://github.com/armbian/build/releases>
 
 ## Project structure
 
@@ -181,13 +182,7 @@ Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) befor
 
 ## Support
 
-- Community support
-
-    Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com), consider [hiring an expert](https://www.debian.org/consultants/).
-
-- Personal support
-
-    Personal support limited to active project supporters and sponsors. The shortest way to become one and receive our attention is a four figure [donation to our non-profit project](https://www.armbian.com/donate).
+Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). Make sure to use help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com) before opening new forum topic. In case you require attention, check community or business [subscriptions](https://forum.armbian.com/subscriptions) before asking for dedicated help https://www.armbian.com/contact.
 
 ## Contact
 
