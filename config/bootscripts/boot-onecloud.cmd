@@ -34,9 +34,9 @@ if test -n "${consoleargs}"; test $? != 0; then
 	test -n "${console}" || setenv console "both"
 
 	setenv consoleargs ""
-	# Due to https://github.com/systemd/systemd/issues/9899, only the latest
-	# console will be the primary console (/dev/console) which is the only
-	# console the initramfs shell and the systemd log use.
+	# Due to https://github.com/systemd/systemd/issues/9899, only the last
+	#   console will be the primary console (/dev/console) which is the
+	#   only console the initramfs shell and the systemd log use.
 	# So when set "both", we use serial console as the primary console.
 	test "${console}" = "display" || test "${console}" = "both" && setenv consoleargs "${consoleargs} console=tty1"
 	test "${console}" = "serial" || test "${console}" = "both" && setenv consoleargs "${consoleargs} console=ttyAML0,115200n8"
