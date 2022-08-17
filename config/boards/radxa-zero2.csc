@@ -2,7 +2,7 @@
 BOARD_NAME="Radxa Zero 2"
 BOARDFAMILY="meson-g12b"
 BOOTCONFIG="radxa-zero2_config"
-KERNEL_TARGET="current"
+KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 ASOUND_STATE="asound.state.radxa-zero2"
