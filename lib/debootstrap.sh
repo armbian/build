@@ -187,6 +187,11 @@ create_rootfs_cache()
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 		create_sources_list "$RELEASE" "$SDCARD/"
 	else
+
+		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-0000}
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash:0:8}-${ROOT_FS_CREATE_VERSION}.tar.zst
+		local cache_fname=${SRC}/cache/rootfs/${cache_name}
+
 		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
 
 		# stage: debootstrap base system
