@@ -166,6 +166,17 @@ create_rootfs_cache()
 
 	done
 
+	# if we can't download any remote caches, search for a local cache
+	if [[ ! -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
+		local filename=$(find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash:0:8}-*.tar.zst" | sort | tail -1)
+		if [[ -n "$filename" ]]; then
+			local cache_fname=$filename
+			local cache_name=${cache_fname##*/}
+			ROOTFSCACHE_VERSION=$(echo ${cache_fname%%.*} | awk -F'-' '{print $5}')
+			display_alert "Found local cache" "$cache_name" "info"
+		fi
+	fi
+
 	# check if cache exists and we want to make it
 	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
 			display_alert "Checking cache integrity" "$cache_name" "info"
