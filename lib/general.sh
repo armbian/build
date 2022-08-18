@@ -153,8 +153,10 @@ get_package_list_hash()
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	( ( printf "%s\n" "${package_arr[@]}"; printf -- "-%s\n" "${exclude_arr[@]}" ) | sort -u; echo "${1}" ) \
-		| md5sum | cut -d' ' -f 1
+	(
+		printf "%s\n" "${package_arr[@]}"
+		printf -- "-%s\n" "${exclude_arr[@]}"
+	) | sort -u | md5sum | cut -d' ' -f 1
 }
 
 # create_sources_list <release> <basedir>

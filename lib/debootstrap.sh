@@ -134,14 +134,13 @@ create_rootfs_cache()
 		ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
 		ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
 
-		local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
+		local packages_hash=$(get_package_list_hash)
 		local cache_type="cli"
 		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
 		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
 		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.zst
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash:0:8}-${ROOTFSCACHE_VERSION}.tar.zst
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
-		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
 
 		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
 
@@ -151,7 +150,7 @@ create_rootfs_cache()
 			download_and_verify "_rootfs" "$cache_name"
 		fi
 
-		display_alert "Checking local cache" "$display_name" "info"
+		display_alert "Checking local cache" "$cache_name" "info"
 
 		if [[ -f $cache_fname ]]; then
 			break
@@ -169,7 +168,7 @@ create_rootfs_cache()
 
 	# check if cache exists and we want to make it
 	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-			display_alert "Checking cache integrity" "$display_name" "info"
+			display_alert "Checking cache integrity" "$cache_name" "info"
 			sudo zstd -tqq ${cache_fname}
 			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
 	fi
@@ -178,8 +177,8 @@ create_rootfs_cache()
 	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
-		display_alert "Extracting $display_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
+		display_alert "Extracting $cache_name" "$date_diff days old" "info"
+		pv -p -b -r -c -N "[ .... ] $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
@@ -385,7 +384,7 @@ create_rootfs_cache()
 		umount_chroot "$SDCARD"
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | zstdmt -5 -c > $cache_fname
+			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$cache_name" | zstdmt -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
