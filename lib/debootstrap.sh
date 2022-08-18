@@ -120,19 +120,11 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 create_rootfs_cache()
 {
 
-	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-		local cycles=1
-	else
-		local cycles=3
-	fi
-
-	INITAL_ROOTFSCACHE_VERSION=$ROOTFSCACHE_VERSION
+	local cache_list=$(curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r .[].tag_name)
+	[ -z "$cache_list" ] && local cache_list=$(curl --silent --fail -L https://cache.armbian.com/rootfs/list)
 
 	# seek last cache, proceed to previous otherwise build it
-	for ((n = 0; n < cycles; n++)); do
-
-		ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
-		ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
+	while read -r ROOTFSCACHE_VERSION; do
 
 		local packages_hash=$(get_package_list_hash)
 		local cache_type="cli"
@@ -164,7 +156,7 @@ create_rootfs_cache()
 			display_alert "not found: try to use previous cache"
 		fi
 
-	done
+	done <<<"${cache_list}"
 
 	# if we can't download any remote caches, search for a local cache
 	if [[ ! -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
