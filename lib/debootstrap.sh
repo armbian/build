@@ -119,43 +119,42 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 #
 create_rootfs_cache()
 {
+	local packages_hash=$(get_package_list_hash)
+	local packages_hash=${packages_hash:0:8}
 
-	local cache_list=$(curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r .[].tag_name)
-	[ -z "$cache_list" ] && local cache_list=$(curl --silent --fail -L https://cache.armbian.com/rootfs/list)
+	local cache_type="cli"
+	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
+	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
 
 	# seek last cache, proceed to previous otherwise build it
+	local cache_list=$(curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r .[].tag_name)
+	[ -z "$cache_list" ] && local cache_list=$(curl --silent --fail -L https://cache.armbian.com/rootfs/list)
 	while read -r ROOTFSCACHE_VERSION; do
 
-		local packages_hash=$(get_package_list_hash)
-		local cache_type="cli"
-		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
-		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
-		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash:0:8}-${ROOTFSCACHE_VERSION}.tar.zst
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
 
 		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
 
-		if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
+		display_alert "Checking cache" "$cache_name" "info"
+
+		if [[ -f ${cache_fname}.aria2 ]]; then
+			display_alert "Removing partially downloaded file."
 			rm ${cache_fname}*
-			display_alert "Partially downloaded file. Re-start."
-			download_and_verify "_rootfs" "$cache_name"
-		fi
-
-		display_alert "Checking local cache" "$cache_name" "info"
-
-		if [[ -f $cache_fname ]]; then
-			break
-		else
-			display_alert "searching on servers"
-			download_and_verify "_rootfs" "$cache_name"
-			[[ -f ${cache_fname} ]] && break
 		fi
 
 		if [[ ! -f $cache_fname ]]; then
-			display_alert "not found: try to use previous cache"
+			display_alert "Downloading from servers"
+			download_and_verify "_rootfs" "$cache_name"
 		fi
 
+		if [[ ! -f ${cache_fname} ]]; then
+			display_alert "not found"
+			continue
+		fi
+
+		break
 	done <<<"${cache_list}"
 
 	# if we can't download any remote caches, search for a local cache
@@ -169,15 +168,8 @@ create_rootfs_cache()
 		fi
 	fi
 
-	# check if cache exists and we want to make it
-	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-			display_alert "Checking cache integrity" "$cache_name" "info"
-			sudo zstd -tqq ${cache_fname}
-			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-	fi
-
 	# if aria2 file exists download didn't succeeded
-	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
+	if [[ "$ROOT_FS_CREATE_ONLY" != "yes" && -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
 		display_alert "Extracting $cache_name" "$date_diff days old" "info"
@@ -189,7 +181,7 @@ create_rootfs_cache()
 	else
 
 		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc "+%Y%M%d")}
-		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash:0:8}-${ROOT_FS_CREATE_VERSION}.tar.zst
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
 
 		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
