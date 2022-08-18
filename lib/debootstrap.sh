@@ -12,6 +12,7 @@
 # Functions:
 
 # debootstrap_ng
+# get_rootfs_cache_list
 # create_rootfs_cache
 # prepare_partitions
 # update_initramfs
@@ -113,6 +114,25 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	trap - INT TERM EXIT
 } #############################################################################
 
+# get_rootfs_cache_list <cache_type> <packages_hash>
+#
+# return a list of versions of all avaiable cache from remote and local.
+get_rootfs_cache_list()
+{
+	local cache_type=$1
+	local packages_hash=$2
+
+	{
+		curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r .[].tag_name \
+		|| curl --silent --fail -L https://cache.armbian.com/rootfs/list
+
+		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" \
+			| sed -e 's#^.*/##' \
+			| sed -e 's#\..*$##' \
+			| awk -F'-' '{print $5}'
+	} | sort | uniq
+}
+
 # create_rootfs_cache
 #
 # unpacks cached rootfs for $RELEASE or creates one
@@ -128,9 +148,9 @@ create_rootfs_cache()
 	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
 
 	# seek last cache, proceed to previous otherwise build it
-	local cache_list=$(curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r .[].tag_name)
-	[ -z "$cache_list" ] && local cache_list=$(curl --silent --fail -L https://cache.armbian.com/rootfs/list)
-	while read -r ROOTFSCACHE_VERSION; do
+	local cache_list
+	readarray -t cache_list <<<"$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
+	for ROOTFSCACHE_VERSION in "${cache_list[@]}"; do
 
 		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
@@ -155,18 +175,7 @@ create_rootfs_cache()
 		fi
 
 		break
-	done <<<"${cache_list}"
-
-	# if we can't download any remote caches, search for a local cache
-	if [[ ! -f $cache_fname && "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
-		local filename=$(find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash:0:8}-*.tar.zst" | sort | tail -1)
-		if [[ -n "$filename" ]]; then
-			local cache_fname=$filename
-			local cache_name=${cache_fname##*/}
-			ROOTFSCACHE_VERSION=$(echo ${cache_fname%%.*} | awk -F'-' '{print $5}')
-			display_alert "Found local cache" "$cache_name" "info"
-		fi
-	fi
+	done
 
 	# if aria2 file exists download didn't succeeded
 	if [[ "$ROOT_FS_CREATE_ONLY" != "yes" && -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
