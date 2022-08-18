@@ -131,46 +131,47 @@ create_rootfs_cache()
 	# seek last cache, proceed to previous otherwise build it
 	for ((n = 0; n < cycles; n++)); do
 
-	ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
-	ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
+		ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
+		ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
 
-	local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
-	local cache_type="cli"
-	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
-	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
-	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.zst
-	local cache_fname=${SRC}/cache/rootfs/${cache_name}
-	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
+		local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
+		local cache_type="cli"
+		[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
+		[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
+		[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
+		local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.zst
+		local cache_fname=${SRC}/cache/rootfs/${cache_name}
+		local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
 
-	[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
+		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
 
-	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
-		rm ${cache_fname}*
-		display_alert "Partially downloaded file. Re-start."
-		download_and_verify "_rootfs" "$cache_name"
-	fi
+		if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
+			rm ${cache_fname}*
+			display_alert "Partially downloaded file. Re-start."
+			download_and_verify "_rootfs" "$cache_name"
+		fi
 
-	display_alert "Checking local cache" "$display_name" "info"
+		display_alert "Checking local cache" "$display_name" "info"
 
-	if [[ -f $cache_fname ]]; then
-		break
-	else
-		display_alert "searching on servers"
-		download_and_verify "_rootfs" "$cache_name"
-		[[ -f ${cache_fname} ]] && break
-	fi
+		if [[ -f $cache_fname ]]; then
+			break
+		else
+			display_alert "searching on servers"
+			download_and_verify "_rootfs" "$cache_name"
+			[[ -f ${cache_fname} ]] && break
+		fi
 
-	if [[ ! -f $cache_fname ]]; then
-		display_alert "not found: try to use previous cache"
-	fi
+		if [[ ! -f $cache_fname ]]; then
+			display_alert "not found: try to use previous cache"
+		fi
+
 	done
 
 	# check if cache exists and we want to make it
-        if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-                display_alert "Checking cache integrity" "$display_name" "info"
-                sudo zstd -tqq ${cache_fname}
-                [[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
+	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
+			display_alert "Checking cache integrity" "$display_name" "info"
+			sudo zstd -tqq ${cache_fname}
+			[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
 	fi
 
 	# if aria2 file exists download didn't succeeded
