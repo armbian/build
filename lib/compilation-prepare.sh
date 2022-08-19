@@ -127,6 +127,11 @@ compilation_prepare()
 			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
 		fi
 
+		if ( linux-version compare "${version}" ge 5.18.18 && linux-version compare "${version}" lt 5.19 ) \
+			|| ( linux-version compare "${version}" ge 5.15.61 && linux-version compare "${version}" lt 5.16 ) ; then
+			process_patch_file "${SRC}/patch/misc/0001-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
+		fi
+
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
 
 		if linux-version compare "${version}" ge 5.15; then
