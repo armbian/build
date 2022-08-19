@@ -374,7 +374,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 5.19.2 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8812auver="commit:41532e3b16dcf27f06e6fe5a26314f3aa24d4f87"
@@ -400,6 +400,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_88XXAU) += rtl8812au/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+                # add support for 5.19.2
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-5.9.2.patch" "applying"
 
 	fi
 
