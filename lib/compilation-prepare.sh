@@ -289,7 +289,7 @@ compilation_prepare()
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
                 # add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-5.9.2.patch" "applying"
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-5.19.2.patch" "applying"
 
 	fi
 
@@ -327,7 +327,7 @@ compilation_prepare()
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
                 # add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-5.9.2.patch" "applying"
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-5.19.2.patch" "applying"
 
 	fi
 
@@ -402,7 +402,7 @@ compilation_prepare()
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
                 # add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-5.9.2.patch" "applying"
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-5.19.2.patch" "applying"
 
 	fi
 
@@ -487,7 +487,7 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu.patch" "applying"
 
 		# add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-5.9.2.patch" "applying"
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-5.19.2.patch" "applying"
 
 	fi
 
@@ -631,7 +631,7 @@ compilation_prepare()
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 5.19.2 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
@@ -662,6 +662,8 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-5.19.2.patch" "applying"
 
 	fi
 
