@@ -365,7 +365,7 @@ compilation_prepare()
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
 		# add support for 5.19.2
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192-5.19.2.patch" "applying"
 
 	fi
 
