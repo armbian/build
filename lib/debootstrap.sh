@@ -680,7 +680,7 @@ PREPARE_IMAGE_SIZE
 		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]=:''} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}${ROOT_FS_LABEL}} ${rootdevice} >> ${DEST}/${LOG_SUBPATH}/install.log 2>&1
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		[[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]] && local rfsmntopt='-o compress-force='${BTRFS_COMPRESSION}
-		mount ${rfsmntopt:=''} ${rootdevice} ${MOUNT}
+		mount ${rfsmntopt:=} ${rootdevice} ${MOUNT}
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
@@ -695,13 +695,13 @@ PREPARE_IMAGE_SIZE
 		local bootdevice="${LOOP}p${bootpart}"
 		display_alert "Creating boot fs" "${bootfs} on ${bootdevice}"
 		check_loop_device ${bootdevice}
-		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]:=''} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}${BOOT_FS_LABEL}} ${bootdevice} >> ${DEST}/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]:=} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}${BOOT_FS_LABEL}} ${bootdevice} >> ${DEST}/${LOG_SUBPATH}/install.log 2>&1
 		mkdir -p ${MOUNT}/boot
 		[[ ${bootfs} == fat ]] && {
 			local bfsmntopt="${mkfs[$bootfs]:+ -t vfat}"' '
 			display_alert "Mount command line parameter with the type of the boot file system:" "${bfsmntopt}"
 		}
-		mount ${bfsmntopt:=''} ${bootdevice} ${MOUNT}/boot
+		mount ${bfsmntopt:=} ${bootdevice} ${MOUNT}/boot
 		echo "UUID=$(blkid -s UUID -o value ${bootdevice}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> ${SDCARD}/etc/fstab
 	fi
 	if [[ -n $uefipart ]]; then
