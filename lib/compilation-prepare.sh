@@ -293,6 +293,9 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
+                # add support for 5.19.2
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-5.19.2.patch" "applying"
+
 	fi
 
 
@@ -327,6 +330,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8189FS) += rtl8189fs/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189fs\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+                # add support for 5.19.2
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-5.19.2.patch" "applying"
 
 	fi
 
@@ -363,6 +369,9 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
+		# add support for 5.19.2
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-5.19.2.patch" "applying"
+
 	fi
 
 
@@ -396,6 +405,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_88XXAU) += rtl8812au/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+                # add support for 5.19.2
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-5.19.2.patch" "applying"
 
 	fi
 
@@ -478,6 +490,9 @@ compilation_prepare()
 
 		# add support for 5.18.y
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu.patch" "applying"
+
+		# add support for 5.19.2
+                process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-5.19.2.patch" "applying"
 
 	fi
 
@@ -653,6 +668,8 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-5.19.2.patch" "applying"
+
 	fi
 
 
@@ -662,12 +679,7 @@ compilation_prepare()
 
 	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
-		# attach to specifics tag or branch
-		if linux-version compare $version ge 5.12 ; then
-			local rtl8723duver="branch:v5.13.4"
-		else
-			local rtl8723duver="branch:master"
-		fi
+		local rtl8723duver="branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
@@ -691,7 +703,7 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723du\/Kconfig"' \
 		$kerneldir/drivers/net/wireless/Kconfig
 
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-5.19.2.patch" "applying"
 	fi
 
 
