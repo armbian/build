@@ -444,8 +444,9 @@ prepare_partitions()
 	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
 	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|sid ]]; then
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
+		display_alert "ext4 mkfs options calculated as" "${mkopts[ext4]}" "info"
 	fi
-	# mkopts[fat] is empty
+	mkopts[fat]=' -F 16 '
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
 	mkopts[btrfs]='-m dup'
@@ -577,7 +578,7 @@ PREPARE_IMAGE_SIZE
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
-	parted -s ${SDCARD}.raw -- mklabel ${IMAGE_PARTITION_TABLE}
+	parted --script ${SDCARD}.raw mklabel ${IMAGE_PARTITION_TABLE}
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
 		*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
@@ -628,8 +629,15 @@ PREPARE_IMAGE_SIZE
 		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	else
 		# /boot partition + root partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+		local parm1='primary'
+		local parm2=${parm1}
+		# in case of gpt the first mkpart parameter is a label, not a fs category
+		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
+			parm1='boot'
+			parm2='rootfs'
+		fi
+		parted --script ${SDCARD}.raw mkpart ${parm1} ${parttype[$bootfs]} ${bootstart}s ${bootend}s
+		parted --script ${SDCARD}.raw mkpart ${parm2} ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
@@ -668,13 +676,11 @@ PREPARE_IMAGE_SIZE
 		fi
 
 		check_loop_device "$rootdevice"
-		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		display_alert "Creating root fs" "${ROOTFS_TYPE} on ${rootdevice}"
+		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]=:''} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}${ROOT_FS_LABEL}} ${rootdevice} >> ${DEST}/${LOG_SUBPATH}/install.log 2>&1
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
-		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
-			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
-		fi
-		mount ${fscreateopt} $rootdevice $MOUNT/
+		[[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]] && local rfsmntopt='-o compress-force='${BTRFS_COMPRESSION}
+		mount ${rfsmntopt:=''} ${rootdevice} ${MOUNT}
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
@@ -686,12 +692,17 @@ PREPARE_IMAGE_SIZE
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
-		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
-		check_loop_device "${LOOP}p${bootpart}"
-		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
-		mkdir -p $MOUNT/boot/
-		mount ${LOOP}p${bootpart} $MOUNT/boot/
-		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
+		local bootdevice="${LOOP}p${bootpart}"
+		display_alert "Creating boot fs" "${bootfs} on ${bootdevice}"
+		check_loop_device ${bootdevice}
+		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]:=''} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}${BOOT_FS_LABEL}} ${bootdevice} >> ${DEST}/${LOG_SUBPATH}/install.log 2>&1
+		mkdir -p ${MOUNT}/boot
+		[[ ${bootfs} == fat ]] && {
+			local bfsmntopt="${mkfs[$bootfs]:+ -t vfat}"' '
+			display_alert "Mount command line parameter with the type of the boot file system:" "${bfsmntopt}"
+		}
+		mount ${bfsmntopt:=''} ${bootdevice} ${MOUNT}/boot
+		echo "UUID=$(blkid -s UUID -o value ${bootdevice}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> ${SDCARD}/etc/fstab
 	fi
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
@@ -843,14 +854,16 @@ create_image()
 	echo -e "\nCopying files to [/boot]" >>"${DEST}"/${LOG_SUBPATH}/install.log
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
+		display_alert "rsync parameters adapted to " "fat type boot fs target" "info"
 		rsync -rLtWh \
 			  --info=progress0,stats1 \
-			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
+			  --log-file=${DEST}/${LOG_SUBPATH}/install.log ${SDCARD}/boot/* ${MOUNT}/boot
 	else
 		# ext4
+		display_alert "rsync parameters adapted to " "extN type boot fs target" "info"
 		rsync -aHWXh \
 			  --info=progress0,stats1 \
-			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
+			  --log-file=${DEST}/${LOG_SUBPATH}/install.log ${SDCARD}/boot/* ${MOUNT}/boot
 	fi
 
 	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
