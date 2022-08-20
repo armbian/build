@@ -679,12 +679,7 @@ compilation_prepare()
 
 	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
-		# attach to specifics tag or branch
-		if linux-version compare $version ge 5.12 ; then
-			local rtl8723duver="branch:v5.13.4"
-		else
-			local rtl8723duver="branch:master"
-		fi
+		local rtl8723duver="branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
@@ -708,7 +703,7 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723du\/Kconfig"' \
 		$kerneldir/drivers/net/wireless/Kconfig
 
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-5.19.2.patch" "applying"
 	fi
 
 
