@@ -550,7 +550,7 @@ compilation_prepare()
 	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl88x2buver="branch:5.8.7.1_35809.20191129_COEX20191120-7777"
+		local rtl88x2buver="branch:fix-6.0"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
@@ -578,6 +578,9 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
+
+		# add support for 5.19.2
+                process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-5.19.2.patch" "applying"
 
 	fi
 
