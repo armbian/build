@@ -369,9 +369,6 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# add support for 5.19.2
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-5.19.2.patch" "applying"
-
 	fi
 
 
