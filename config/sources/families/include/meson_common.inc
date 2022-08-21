@@ -9,6 +9,8 @@ CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=ondemand
 
+SKIP_BOOTSPLASH="yes"
+
 case $BOARD in
 	odroidc1)
 
