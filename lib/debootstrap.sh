@@ -629,15 +629,15 @@ PREPARE_IMAGE_SIZE
 		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	else
 		# /boot partition + root partition
-		local parm1='primary'
-		local parm2=${parm1}
-		# in case of gpt the first mkpart parameter is a label, not a fs category
+		local ptype_or_label1='primary'
+		local ptype_or_label2='primary'
+		# in case of gpt the first mkpart parameter is a label, not a partition type
 		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
-			parm1='boot'
-			parm2='rootfs'
+			ptype_or_label1='boot'
+			ptype_or_label2='rootfs'
 		fi
-		parted --script ${SDCARD}.raw mkpart ${parm1} ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted --script ${SDCARD}.raw mkpart ${parm2} ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+		parted --script ${SDCARD}.raw mkpart ${ptype_or_label1} ${parttype[$bootfs]} ${bootstart}s ${bootend}s
+		parted --script ${SDCARD}.raw mkpart ${ptype_or_label2} ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
@@ -677,7 +677,7 @@ PREPARE_IMAGE_SIZE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating root fs" "${ROOTFS_TYPE} on ${rootdevice}"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]=:''} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}${ROOT_FS_LABEL}} ${rootdevice} >> ${DEST}/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]:=} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}${ROOT_FS_LABEL}} ${rootdevice} >> ${DEST}/${LOG_SUBPATH}/install.log 2>&1
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		[[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]] && local rfsmntopt='-o compress-force='${BTRFS_COMPRESSION}
 		mount ${rfsmntopt:=} ${rootdevice} ${MOUNT}
@@ -689,7 +689,7 @@ PREPARE_IMAGE_SIZE
 		else
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]:=} defaults,noatime${mountopts[$ROOTFS_TYPE]:=} 0 1" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
 		local bootdevice="${LOOP}p${bootpart}"
@@ -702,7 +702,7 @@ PREPARE_IMAGE_SIZE
 			display_alert "Mount command line parameter with the type of the boot file system:" "${bfsmntopt}"
 		}
 		mount ${bfsmntopt:=} ${bootdevice} ${MOUNT}/boot
-		echo "UUID=$(blkid -s UUID -o value ${bootdevice}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> ${SDCARD}/etc/fstab
+		echo "UUID=$(blkid -s UUID -o value ${bootdevice}) /boot ${mkfs[$bootfs]:=} defaults${mountopts[$bootfs]:=} 0 2" >> ${SDCARD}/etc/fstab
 	fi
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
