@@ -120,6 +120,10 @@ compilation_prepare()
 	# Linux splash file
 	#
 
+	# disable it.
+	# todo: cleanup logo generation code and bring in plymouth
+	SKIP_BOOTSPLASH=yes
+
 	if linux-version compare "${version}" ge 5.10 && linux-version compare "${version}" lt 5.19 && [ $SKIP_BOOTSPLASH != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
