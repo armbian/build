@@ -211,6 +211,11 @@ function display_alert() {
 			;;
 	esac
 
+	# Log to journald, if asked to.
+	if [[ "${ARMBIAN_LOGS_TO_JOURNAL}" == "yes" ]]; then
+		echo -e "${level}: ${1} [ ${2} ]" | sed 's/\x1b\[[0-9;]*m//g' | systemd-cat --identifier="${ARMBIAN_LOGS_JOURNAL_IDENTIFIER:-armbian}"
+	fi
+
 	# Now, log to file. This will be colorized later by ccze and such, so remove any colors it might already have.
 	# See also the stuff done in runners.sh for logging exact command lines and runtimes.
 	# the "echo" runs in a subshell due to the "sed" pipe (! important !), so we store BASHPID (current subshell) outside the scope
