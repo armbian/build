@@ -2,14 +2,20 @@
   <a href="#build-framework">
   <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
   </a><br>
-  <strong>armbian build framework</strong><br>
+  <strong>Armbian Linux Build Framework</strong><br>
+<br>
+<a href=https://github.com/armbian/build/actions/workflows/build-train.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/armbian/build/Build%20train?logo=githubactions&label=Kernel%20compile&logoColor=white&style=for-the-badge"></a>
+<a href=https://github.com/armbian/build/actions/workflows/build-all-desktops.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/armbian/build/Build%20All%20Desktops?logo=githubactions&logoColor=white&label=Images%20assembly&style=for-the-badge"></a>
+<a href=https://github.com/armbian/build/actions/workflows/smoke-tests.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/workflow/status/armbian/build/Smoke%20tests%20on%20DUTs?logo=speedtest&label=Smoke%20test&style=for-the-badge"></a>
+ <br>
+
+<br>
+<a href=https://twitter.com/armbian><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/armbian?logo=twitter&style=flat-square"></a>
+<a href=http://discord.armbian.com/><img alt="Discord" src="https://img.shields.io/discord/854735915313659944?label=Discord&logo=discord&style=flat-square"></a>
+<a href=https://liberapay.com/armbian><img alt="Liberapay patrons" src="https://img.shields.io/liberapay/patrons/armbian?logo=liberapay&style=flat-square"></a>
 </p>
 
-[![GitHub last commit (branch)](https://img.shields.io/github/last-commit/armbian/build/master)](https://github.com/armbian/build/commits)
-[![GitHub Workflow Status](https://img.shields.io/github/workflow/status/armbian/build/Build?label=build%20train)](https://github.com/armbian/build/actions/workflows/build-train.yml)
-[![Twitter Follow](https://img.shields.io/twitter/follow/armbian?style=flat-square)](https://twitter.com/intent/follow?screen_name=armbian)
-[![Join the Discord](https://img.shields.io/discord/854735915313659944.svg?color=7289da&label=Discord%20&logo=discord)](https://discord.com/invite/gNJ2fPZKvc)
-[![Become a patron](https://img.shields.io/liberapay/patrons/armbian.svg?logo=liberapay)](https://liberapay.com/armbian)
+
 
 ## Table of contents
 
@@ -27,15 +33,15 @@
 
 ## What this project does?
 
-- Builds custom Linux optimized for [single board computers(SBCs)](https://en.wikipedia.org/wiki/Single-board_computer).
-- Including filesystem generation, low-level control software, kernel image compilation and bootloader compilation.
+- Builds custom kernel, image or a distribution optimized for low resource HW such as single board computers,
+- Include filesystem generation, low-level control software, kernel image and bootloader compilation,
 - Provides a consistent user experience by keeping system standards across different platforms.
 
 ## Getting started
 
-### Prepare your environment
+### Basic requirements
 
-- x64 / aarch64 machine with at least 2GB of memory and ~35GB of disk space for a VM, container or native OS,
+- x64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, container or bare metal installation,
 - Ubuntu Jammy 22.04 x64 or aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable x64 / aarch64 Linux for containerised,
 - Superuser rights (configured sudo or root access).
 
@@ -89,6 +95,13 @@ More information:
 - [Building with Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) — how to build inside container;
 - [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
 
+
+## Download prebuilt images
+
+- quarterly released **supported** builds —  <https://www.armbian.com/download>
+- weekly released **unsupported** community builds —  <https://github.com/armbian/community>
+- upon code change **unsupported** development builds —  <https://github.com/armbian/build/releases>
+
 ## Compare with industry standards
 
 Check similarity, advantages and disadvantages compared with leading industry standard build software.
@@ -105,18 +118,12 @@ Function | Armbian | Yocto | Buildroot |
 | Getting started | quick | very slow | slow |
 | Cross compilation | yes | yes | yes |
 
-## Download
-
-<https://www.armbian.com/download/>
-
-Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the end of [February, May, August, November](https://github.com/armbian/documentation/blob/master/docs/Process_Release-Model.md). You are welcome to propose changes to our default [images build list](https://github.com/armbian/build/blob/master/config/targets.conf).
-
 ## Project structure
 
 ```text
 ├── cache                                Work / cache directory
-│   ├── rootfs                           Compressed vanilla Debian and Ubuntu rootfilesystem cache
-│   ├── sources                          Kernel, u-boot and various drivers sources. Mainly C code
+│   ├── rootfs                           Compressed userspace packages cache
+│   ├── sources                          Kernel, u-boot and various drivers sources.
 │   ├── toolchains                       External cross compilers from Linaro™ or ARM™
 ├── config                               Packages repository configurations
 │   ├── targets.conf                     Board build target configuration
@@ -130,6 +137,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   ├── sources                          Kernel and u-boot sources locations and scripts
 │   ├── templates                        User configuration templates which populate userpatches
 │   └── torrents                         External compiler and rootfs cache torrents
+├── extensions                           extend build system with specific functionality
 ├── lib                                  Main build framework libraries
 ├── output                               Build artifact
 │   └── deb                              Deb packages
@@ -151,6 +159,7 @@ Armbian [releases](https://docs.armbian.com/Release_Changelog/) quarterly at the
 │   └── u-boot                           Universal boot loader patches
 |       ├── u-boot-board                 For specific board
 |       └── u-boot-family                For entire kernel family
+├── tools                                Tools for dealing with kernel patches and configs
 └── userpatches                          User: configuration patching area
     ├── lib.config                       User: framework common config/override file
     ├── config-default.conf              User: default user config file
@@ -173,13 +182,7 @@ Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) befor
 
 ## Support
 
-- Community support
-
-    Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). If you can't find answer there and/or with help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com), consider [hiring an expert](https://www.debian.org/consultants/).
-
-- Personal support
-
-    Personal support limited to active project supporters and sponsors. The shortest way to become one and receive our attention is a four figure [donation to our non-profit project](https://www.armbian.com/donate).
+Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). Make sure to use help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com) before opening new forum topic. In case you require attention, buy appropriate [subscription level](https://forum.armbian.com/subscriptions) before asking for dedicated attention to the issue you have https://www.armbian.com/contact.
 
 ## Contact
 
