@@ -580,9 +580,6 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-5.19.2.patch" "applying"
-
 	fi
 
 
