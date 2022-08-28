@@ -164,6 +164,17 @@ compilation_prepare()
 	fi
 
 	#
+	# Returning headers needed for some wireless drivers
+	#
+
+	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
+
+		display_alert "Adding" "Wireless package injections for mac80211 compatible chipsets" "info"
+		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
+
+	fi
+
+	#
 	# mac80211 wireless driver injection features from Kali Linux
 	#
 
