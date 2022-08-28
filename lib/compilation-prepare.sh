@@ -169,7 +169,7 @@ compilation_prepare()
 
 	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
 
-		display_alert "Adding" "Wireless package injections for mac80211 compatible chipsets" "info"
+		display_alert "Adding" "Missing headers" "info"
 		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
 
 	fi
