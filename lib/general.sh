@@ -56,6 +56,7 @@ cleaning()
 			find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
 			find "${DEB_STORAGE}" \( -name "${CHOSEN_KERNEL}_*.deb" -o \
 				-name "armbian-*.deb" -o \
+				-name "plymouth-theme-armbian_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
 				-name "${CHOSEN_KERNEL/image/source}_*.deb" -o \

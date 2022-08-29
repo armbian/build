@@ -396,6 +396,15 @@ POST_INSTALL_KERNEL_DEBS
 		fi
 	fi
 
+	# install plymouth-theme-armbian
+	if [[ $PLYMOUTH == yes ]]; then
+		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
+			install_deb_chroot "${DEB_STORAGE}/plymouth-theme-armbian_${REVISION}_all.deb"
+		else
+			install_deb_chroot "plymouth-theme-armbian" "remote"
+		fi
+	fi
+
 	# install kernel sources
 	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
