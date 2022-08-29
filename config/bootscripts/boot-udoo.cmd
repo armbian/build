@@ -25,7 +25,7 @@ fi
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttymxc1,115200 console=tty1"; fi
 if test "${console}" = "serial"; then setenv consoleargs "console=ttymxc1,115200"; fi
 if test "${earlycon}" = "on"; then setenv consoleargs "earlycon ${consoleargs}"; fi
-if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
+if test "${bootlogo}" = "true"; then setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"; fi
 
 setenv bootargs "root=${rootdev} rootfstype=${rootfstype} rootwait ${consoleargs} video=mxcfb0:dev=hdmi,${disp_mode},if=RGB24,bpp=32 rd.dm=0 rd.luks=0 rd.lvm=0 raid=noautodetect pci=nomsi ahci_imx.hotplug=1 vt.global_cursor_default=0 loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 run findfdt
