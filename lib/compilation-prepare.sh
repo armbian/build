@@ -122,25 +122,24 @@ compilation_prepare()
 
 	# disable it.
 	# todo: cleanup logo generation code and bring in plymouth
-	SKIP_BOOTSPLASH=yes
 
-	if linux-version compare "${version}" ge 5.10 && linux-version compare "${version}" lt 5.19 && [ $SKIP_BOOTSPLASH != yes ]; then
+	if linux-version compare "${version}" ge 5.15 && [ $SKIP_BOOTSPLASH != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
-		if linux-version compare "${version}" ge 5.11; then
+#		if linux-version compare "${version}" ge 5.11; then
 			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
-		fi
+#		fi
 
-		if ( linux-version compare "${version}" ge 5.18.18 && linux-version compare "${version}" lt 5.19 ) \
-			|| ( linux-version compare "${version}" ge 5.15.61 && linux-version compare "${version}" lt 5.16 ) ; then
+#		if ( linux-version compare "${version}" ge 5.18.18 && linux-version compare "${version}" lt 5.19 ) \
+#			|| ( linux-version compare "${version}" ge 5.15.61 && linux-version compare "${version}" lt 5.16 ) ; then
 			process_patch_file "${SRC}/patch/misc/0001-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
-		fi
+#		fi
 
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
 
-		if linux-version compare "${version}" ge 5.15; then
+#		if linux-version compare "${version}" ge 5.15; then
 			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0002-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
-		fi
+#		fi
 
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0003-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0004-Revert-drivers-video-fbcon-fix-NULL-dereference-in-f.patch" "applying"
@@ -160,6 +159,17 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/0010-bootsplash.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/0011-bootsplash.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/0012-bootsplash.patch" "applying"
+
+	fi
+
+	#
+	# Returning headers needed for some wireless drivers
+	#
+
+	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
+
+		display_alert "Adding" "Missing headers" "info"
+		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
 
 	fi
 
@@ -579,9 +589,6 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-5.19.2.patch" "applying"
 
 	fi
 
