@@ -601,6 +601,18 @@ FAMILY_TWEAKS
 	# build logo in any case
 	boot_logo
 
+	# Show logo
+	if [[ $PLYMOUTH == yes ]]; then
+		if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
+			[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt \
+				&& sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt \
+				|| echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
+
+			[[ -f "${SDCARD}"/boot/boot.ini ]] \
+				&& sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
+		fi
+	fi
+
 	# disable MOTD for first boot - we want as clean 1st run as possible
 	chmod -x "${SDCARD}"/etc/update-motd.d/*
 
