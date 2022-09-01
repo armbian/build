@@ -82,7 +82,7 @@ if [[ $CRYPTROOT_ENABLE == yes && -z $CRYPTROOT_PASSPHRASE ]]; then
 fi
 
 # small SD card with kernel, boot script and .dtb/.bin files
-[[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=64
+[[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=256
 
 # Since we are having too many options for mirror management,
 # then here is yet another mirror related option.
