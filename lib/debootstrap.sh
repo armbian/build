@@ -684,6 +684,10 @@ PREPARE_IMAGE_SIZE
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+	else
+		# update_initramfs will fail if /lib/modules/ doesn't exist
+		mount --bind --make-private $SDCARD $MOUNT/
+		echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
@@ -701,7 +705,6 @@ PREPARE_IMAGE_SIZE
 		mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >>$SDCARD/etc/fstab
 	fi
-	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
@@ -889,7 +892,7 @@ PRE_UMOUNT_FINAL_IMAGE
 	sync
 	[[ $UEFISIZE != 0 ]] && umount -l "${MOUNT}${UEFI_MOUNT_POINT}"
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
-	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
+	umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
 	call_extension_method "post_umount_final_image" "config_post_umount_final_image" << 'POST_UMOUNT_FINAL_IMAGE'
