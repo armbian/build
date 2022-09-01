@@ -9,6 +9,8 @@ CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=ondemand
 
+SKIP_BOOTSPLASH="yes"
+
 case $BOARD in
 	odroidc1)
 
@@ -27,7 +29,7 @@ esac
 case $BRANCH in
 	legacy)
 
-		KERNELBRANCH="branch:linux-5.11.y"
+		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		BUILD_DESKTOP=no
@@ -35,7 +37,7 @@ case $BRANCH in
         ;;
 	current)
 
-		KERNELBRANCH="branch:linux-5.14.y"
+		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		BUILD_DESKTOP=no
@@ -43,9 +45,7 @@ case $BRANCH in
 	;;
 	edge)
 
-		KERNELDIR='linux-meson'
-		KERNELSOURCE='https://github.com/xdarklight/linux'
-		KERNELBRANCH="branch:meson-mx-integration-5.18-20220417"
+		KERNELBRANCH="branch:linux-5.18.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 	;;

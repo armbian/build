@@ -493,7 +493,7 @@ prepare_partitions()
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
 	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbiefi}"
 	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbian_root}"
-	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbian_boot}"
+	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbianboot}"
 
 	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
 *allow custom options for mkfs*

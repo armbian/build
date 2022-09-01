@@ -681,15 +681,15 @@ fingerprint_image()
 		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 		--------------------------------------------------------------------------------
 		Verify GPG signature:
-		gpg --verify $2.img.asc
+		gpg --verify $2.img.xz.asc
 
 		Verify image file integrity:
-		sha256sum --check $2.img.sha
+		sha256sum --check $2.img.xz.sha
 
-		Prepare SD card (four methodes):
-		zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
+		Prepare SD card (four methods):
+		xzcat $2.img.xz | pv | dd of=/dev/mmcblkX bs=1M
 		dd if=$2.img of=/dev/mmcblkX bs=1M
-		balena-etcher $2.img.gz -d /dev/mmcblkX
+		balena-etcher $2.img.xz -d /dev/mmcblkX
 		balena-etcher $2.img -d /dev/mmcblkX
 		EOF
 	fi
