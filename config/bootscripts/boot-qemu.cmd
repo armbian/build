@@ -27,7 +27,11 @@ fi
 if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyAMA0 console=tty1"; fi
 if test "${console}" = "serial"; then setenv consoleargs "console=ttyAMA0"; fi
 if test "${earlycon}" = "on"; then setenv consoleargs "earlycon ${consoleargs}"; fi
-if test "${bootlogo}" = "true"; then setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"; fi
+if test "${bootlogo}" = "true"; then
+	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
+else
+	setenv consoleargs "splash=verbose ${consoleargs}"
+fi
 
 setenv bootargs "root=${rootdev} rw rootdelay=5 rootwait rootfstype=${rootfstype} ${consoleargs} loglevel=7 apparmor=0 nousb selinux=0 ${extraargs} ${extraboardargs}"
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
