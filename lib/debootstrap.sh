@@ -12,6 +12,7 @@
 # Functions:
 
 # debootstrap_ng
+# get_rootfs_cache_list
 # create_rootfs_cache
 # prepare_partitions
 # update_initramfs
@@ -82,8 +83,9 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	display_alert "No longer needed packages" "purge" "info"
 	chroot $SDCARD /bin/bash -c "apt-get autoremove -y"  >/dev/null 2>&1
 
-	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
+	# create list of all installed packages for debug purposes
+	chroot $SDCARD /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] \
+	&& echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
@@ -113,77 +115,85 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	trap - INT TERM EXIT
 } #############################################################################
 
+# get_rootfs_cache_list <cache_type> <packages_hash>
+#
+# return a list of versions of all avaiable cache from remote and local.
+get_rootfs_cache_list()
+{
+	local cache_type=$1
+	local packages_hash=$2
+
+	{
+		curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' \
+		|| curl --silent --fail -L https://cache.armbian.com/rootfs/list
+
+		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" \
+			| sed -e 's#^.*/##' \
+			| sed -e 's#\..*$##' \
+			| awk -F'-' '{print $5}'
+	} | sort | uniq
+}
+
 # create_rootfs_cache
 #
 # unpacks cached rootfs for $RELEASE or creates one
 #
 create_rootfs_cache()
 {
+	local packages_hash=$(get_package_list_hash)
+	local packages_hash=${packages_hash:0:8}
 
-	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-		local cycles=1
-	else
-		local cycles=3
-	fi
-
-	INITAL_ROOTFSCACHE_VERSION=$ROOTFSCACHE_VERSION
-
-	# seek last cache, proceed to previous otherwise build it
-	for ((n = 0; n < cycles; n++)); do
-
-	ROOTFSCACHE_VERSION=$(expr $INITAL_ROOTFSCACHE_VERSION - $n)
-	ROOTFSCACHE_VERSION=$(printf "%04d\n" ${ROOTFSCACHE_VERSION})
-
-	local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
 	local cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
 	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
 	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.zst
-	local cache_fname=${SRC}/cache/rootfs/${cache_name}
-	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.zst
 
-	[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
+	# seek last cache, proceed to previous otherwise build it
+	local cache_list
+	readarray -t cache_list <<<"$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
+	for ROOTFSCACHE_VERSION in "${cache_list[@]}"; do
 
-	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 ]]; then
-		rm ${cache_fname}*
-		display_alert "Partially downloaded file. Re-start."
-		download_and_verify "_rootfs" "$cache_name"
-	fi
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst
+		local cache_fname=${SRC}/cache/rootfs/${cache_name}
 
-	display_alert "Checking local cache" "$display_name" "info"
+		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
 
-	if [[ -f $cache_fname ]]; then
+		display_alert "Checking cache" "$cache_name" "info"
+
+		if [[ -f ${cache_fname}.aria2 ]]; then
+			display_alert "Removing partially downloaded file."
+			rm ${cache_fname}*
+		fi
+
+		if [[ ! -f $cache_fname ]]; then
+			display_alert "Downloading from servers"
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
+		if [[ ! -f ${cache_fname} ]]; then
+			display_alert "not found"
+			continue
+		fi
+
 		break
-	else
-		display_alert "searching on servers"
-		download_and_verify "_rootfs" "$cache_name"
-		[[ -f ${cache_fname} ]] && break
-	fi
-
-	if [[ ! -f $cache_fname ]]; then
-		display_alert "not found: try to use previous cache"
-	fi
 	done
 
-	# check if cache exists and we want to make it
-        if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-                display_alert "Checking cache integrity" "$display_name" "info"
-                sudo zstd -tqq ${cache_fname}
-                [[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-	fi
-
 	# if aria2 file exists download didn't succeeded
-	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
+	if [[ "$ROOT_FS_CREATE_ONLY" != "yes" && -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
-		display_alert "Extracting $display_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
+		display_alert "Extracting $cache_name" "$date_diff days old" "info"
+		pv -p -b -r -c -N "[ .... ] $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 		create_sources_list "$RELEASE" "$SDCARD/"
 	else
+
+		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc "+%Y%M%d")}
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
+		local cache_fname=${SRC}/cache/rootfs/${cache_name}
+
 		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
 
 		# stage: debootstrap base system
@@ -325,11 +335,9 @@ create_rootfs_cache()
 		fi
 
 		# stage: check md5 sum of installed packages. Just in case.
-		display_alert "Check MD5 sum of installed packages" "info"
+		display_alert "Checking MD5 sum of installed packages" "debsums" "info"
 		eval 'LC_ALL=C LANG=C sudo chroot $SDCARD /bin/bash -e -c "dpkg-query -f ${binary:Package} -W | xargs debsums"' \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
-
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} '>/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "MD5 sums check of installed packages failed"
 
 		# Remove packages from packages.uninstall
@@ -364,7 +372,7 @@ create_rootfs_cache()
 		display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
 		# create list of installed packages for debug purposes
-		chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
+		chroot $SDCARD /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > ${cache_fname}.list 2>&1
 
 		# creating xapian index that synaptic runs faster
 		if [[ $BUILD_DESKTOP == yes ]]; then
@@ -384,16 +392,13 @@ create_rootfs_cache()
 		umount_chroot "$SDCARD"
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | zstdmt -5 -c > $cache_fname
+			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$cache_name" | zstdmt -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
 			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
 			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
-
-		# needed for backend to keep current only
-		echo "$cache_fname" > $cache_fname.current
 
 	fi
 
