@@ -13,70 +13,84 @@
 
 do_expand_partition()
 {
-	# check if growroot (from cloud-initramfs-growroot package) is installed.
-	# despite it's name, that package does NOT require cloud-init.
-	# if so, it means the partition with root filesystem was already resized during initramfs.
-	# in this case do nothing here, but return 0 to allow resize2fs to run (growroot does not handle that).
-	if [[ -f /usr/share/initramfs-tools/hooks/growroot ]] || [[ -f /usr/share/initramfs-tools/scripts/local-bottom/growroot ]]; then
-		echo "partition resize skipped: growroot detected."
-		return 0
+	local partdev=$1
+	echo -e "\n### [resize2fs] Trying to resize partition $partdev:\n"
+
+	# make sure the target is a partition
+	local parttype=$(lsblk -n -o TYPE $partdev | head -1)
+	if [[ "$parttype" != "part" ]]; then
+		echo -e "\n$partdev isn't a partition: $parttype" >&2
+		return 1
 	fi
-	
-	# trim any btrfs subvolume identifier given in square brackets (e.g. /dev/mapper/armbian-root[/@])
-	local rootsource=$(findmnt -n -o SOURCE / | sed 's~\[.*\]~~') # i.e. /dev/mmcblk0p1 or /dev/mapper/armbian-root
-	
-	# check for device type
-	local roottype=$(lsblk -n -o TYPE $rootsource) # crypt, part or disk
-	case ${roottype} in
-		crypt)
-			IS_CRYPTDEVICE=true
-			local cryptname=$(lsblk -n -o NAME $rootsource)
-			local parent_uuid=$(cat /etc/crypttab | awk '{if($1=="'$cryptname'"){print $2}}' | sed 's/UUID=//')
-			local rootpart=$(blkid -U $parent_uuid)
-			;;
-		part)
-			local rootpart=$rootsource # i.e. /dev/mmcblk0p1
-			;;
-	esac
-	
-	local rootdevice=$(lsblk -n -o PKNAME $rootpart | head -1) # i.e. mmcblk0	
+
+	local diskdevname=$(lsblk -n -o PKNAME $partdev | head -1) # i.e. mmcblk0 or sda
 	# due to the bug in util-linux 2.34 which fails to show device, let's use this failover:
-	[[ -z $rootdevice ]] && rootdevice=$(echo $rootpart | sed -e "s/^\/dev\///" | sed "s/p.*//")	
-	local rootdevicepath="/dev/$rootdevice" # i.e. /dev/mmcblk0
-	# get count of partitions and their boundaries
-	local partitions=$(parted $rootdevicepath print -sm | tail -1 | awk -F ':' '{print $1}')
-	local partstart=$(parted $rootdevicepath unit s print -sm | tail -1 | cut -d: -f2 | sed 's/s//') # start of first partition
-	local partend=$(parted $rootdevicepath unit s print -sm | head -3 | tail -1 | cut -d: -f3 | sed 's/s//') # end of first partition
-	local startfrom=$(( $partend + 1 ))
-	[[ $partitions == 1 ]] && startfrom=$partstart
-	local capacity=$(( $(lsblk -n -b -d -o SIZE $rootdevicepath) / 1024 / 1024 / 1024 )) # GiB
+	[[ -z $diskdevname ]] && diskdevname=$(echo $partdev | sed -e "s/^\/dev\///" | sed "s/p.*//")
+	local diskdev="/dev/$diskdevname" # i.e. /dev/mmcblk0, /dev/sda
+	echo "diskdevname: $diskdevname"
+	echo "diskdev: $diskdev"
+
+	# detect partindex
+	local partindex="$(echo $partdev | sed "s|^$diskdev||" | sed 's/^p//')" # i.e. 1
+	if [[ -n "$(echo "$partindex" | tr -d '[:digit:]')" ]]; then
+		echo -e "\nFail to detect partindex: $partindex" >&2
+		return 1
+	fi
+	echo "partindex: $partindex"
+
+	# find the target part's boundaries
+	local partstart=$(parted $diskdev unit s print -sm | awk -F':' "NR>=3{if(\$1 == $partindex){print \$2}}" | sed 's/s//')
+	local partend=$(parted $diskdev unit s print -sm | awk -F':' "NR>=3{if(\$1 == $partindex){print \$3}}" | sed 's/s//')
+	if [[ -z "$partstart" ]] || [[ -z "$partend" ]]; then
+		echo -e "\nFail to find the target partition" >&2
+		return 1
+	fi
+	echo "partstart: ${partstart}s"
+	echo "partend: ${partend}s"
+
+	# check if it's the last partition in logical layout
+	# Note: the order may be different between partition table and logical layout
+	local list=$(parted $diskdev unit s print -sm | awk -F':' "NR>=3{if(\$2 - $partstart > 0){print \$1}}")
+	if [[ -n "$list" ]]; then
+		echo -e "\nThe target partition isn't the last partition in logical layout" >&2
+		echo "Partition ${list[*]} behind it" >&2
+		return 1
+	fi
+
+	local capacity=$(parted $diskdev unit s print -sm | awk -F':' 'NR==2{print $2}' | sed 's/s//')
+	local sectorsize=$(parted $diskdev unit s print -sm | awk -F':' 'NR==2{print $4}')
+	echo "capacity: ${capacity}s"
+	echo "sectorsize: ${sectorsize}B"
 
 	# check whether a resizing rule is defined. We will take this value if it's not too low. In
 	# this case the value will be ignored and resizing to the whole card size happens.
 	if [[ -f /root/.rootfs_resize ]]; then
 		read RESIZE_VALUE </root/.rootfs_resize
-		ResizeLog="Resize rule $RESIZE_VALUE defined for root partition"
+		echo "Resize rule $RESIZE_VALUE defined for root partition"
 		case $RESIZE_VALUE in
 			*%)
-				# percentage value, we try to use 16MiB to align partitions since this is
-				# the erase block size of more recent SD cards (512 byte sectors, so we use 32768
-				# as divider and substract 1)
+				# percentage value
 				local percentage=$(echo $RESIZE_VALUE | tr -c -d '[:digit:]')
-				local lastsector=$(( 32768 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * $percentage / 3276800))}") - 1 ))
-				[[ $lastsector -lt $partend ]] && unset lastsector
+				local lastsector=$(( $capacity * $percentage / 100 ))
 				;;
 			*s)
 				# sector value, we use it directly
 				local lastsector=$(echo $RESIZE_VALUE | tr -c -d '[:digit:]')
-				[[ $lastsector -lt $partend ]] && unset lastsector
+				;;
+			*B)
+				# byte value
+				local byte=$(echo $RESIZE_VALUE | tr -c -d '[:digit:]')
+				local lastsector=$(( $byte / $sectorsize ))
+				;;
+			*)
+				echo -e "\nUnknown rule: $RESIZE_VALUE" >&2
+				return 1;
 				;;
 		esac
-		# if SD card is larger than 4GiB then create another partition behind first one(s)
-		if [[ $capacity -ge 5 ]]; then
-			local secondpartition=$(( 32768 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 99 / 3276800))}") -1 ))
-			if [[ $secondpartition -lt $partend ]]; then
-				unset secondpartition
-			fi
+
+		# if remain more than 1GiB then create another partition
+		if [[ $(( $sectorsize * ($capacity - $lastsector) )) -ge $(( 1 * 1024 * 1024 * 1024 )) ]]; then
+			local newpartition=$(( $capacity * 99 / 100 ))
 		fi
 	else
 		# check device capacity. If 4GiB or below do not use whole card but leave a 5% spare area
@@ -84,137 +98,202 @@ do_expand_partition()
 		# capacity is less than the actual image capacity this is a clear sign that someone wants
 		# to use Armbian on a card of inappropriate size so he gets what he deserves (at least he
 		# should know what he's doing)
-		if [[ $capacity -lt 5 ]]; then # 4 GiB or less
-			local lastsector=$(( 32768 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 95 / 3276800))}") -1 ))
-			if [[ $lastsector -lt $partend ]]; then
-				unset lastsector
-			else
-				ResizeLog="4GiB or smaller media - leaving 5% spare area"
-			fi
-		elif [[ $capacity -lt 9 ]]; then # 8 GiB or less
+		if [[ $(( $sectorsize * $capacity )) -lt $(( 4 * 1024 * 1024 * 1024 )) ]]; then # 4 GiB or less
+			# Leave 5 percent unpartitioned
+			local lastsector=$(( $capacity * 95 / 100 ))
+			echo "4GiB or smaller media - leaving 5% spare area"
+		elif [[ $(( $sectorsize * $capacity )) -lt $(( 8 * 1024 * 1024 * 1024 )) ]]; then # 8 GiB or less
 			# Leave 2 percent unpartitioned
-			local lastsector=$(( 32768 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 98 / 3276800))}") -1 ))
-			if [[ $lastsector -lt $partend ]]; then
-				unset lastsector
-			else
-				ResizeLog="8GiB or smaller media - leaving 2% spare area"
-			fi
+			local lastsector=$(( $capacity * 98 / 100 ))
+			echo "8GiB or smaller media - leaving 2% spare area"
 		else
 			# Leave 1 percent unpartitioned
-			local lastsector=$(( 32768 * $(parted $rootdevicepath unit s print -sm | grep "^$rootdevicepath" | awk -F":" "{printf (\"%0d\", ( \$2 * 99 / 3276800))}") -1 ))
-			if [[ $lastsector -lt $partend ]]; then
-				unset lastsector
-			else
-				ResizeLog="Leaving 1% spare area"
-			fi
+			local lastsector=$(( $capacity * 99 / 100 ))
+			echo "Leaving 1% spare area"
 		fi
 	fi
 
+	# use 16MiB to align partitions since this is the erase block size of more recent SD cards
+	local lastsector=$(( $lastsector - ($lastsector % (16 * 1024 * 1024 / $sectorsize)) ))
+	[[ -n "$newpartition" ]] && local newpartition=$(( $newpartition - ($newpartition % (16 * 1024 * 1024 / $sectorsize)) ))
+
+	if [[ $lastsector -lt $partend ]]; then
+		echo -e "\n${partend} is larger than ${lastsector}s, that means you trying to shrink filesystem. Sorry, this tool designed for expanding only." >&2
+		return 1
+	elif [[ $lastsector -eq $partend ]]; then
+		echo -e "\nSame size. Skip" >&2
+		return 0
+	fi
+	if [[ $newpartition -le $(( $lastsector + 1 )) ]]; then
+		unset newpartition
+	fi
+
+	echo -e "Old partition table:\n"
+	cat /proc/partitions
+
 	# Start resizing
-	echo -e "\n### [resize2fs] ${ResizeLog}. Start resizing partition $rootsource now:\n" >>${Log}
-	cat /proc/partitions >>${Log}
-	echo -e "\nExecuting fdisk, fsck and partprobe:" >>${Log}
+	echo -e "\nExecuting fdisk:"
+	local partnum=$(parted $diskdev unit s print -sm | awk 'END{print NR-2}')
 	local fdisk_version=$(fdisk --version | awk '{print $NF}' | grep -oE "^[[:digit:]]\.[[:digit:]]+")
-	if [[ $partitions == 1 ]] && awk "BEGIN{exit ! ($fdisk_version >= 2.27 )}"; then
+	if [[ $partnum == 1 ]] && awk "BEGIN{exit ! ($fdisk_version >= 2.27 )}"; then
 		# if dealing with fdisk from util-linux 2.27+ we need a workaround for just 1 partition
 		# though it does not break anything - just prevents an "unexpected command" to fdisk
 		# https://github.com/igorpecovnik/lib/issues/353#issuecomment-224728506
-		((echo d; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
+		{
+			echo d
+			echo n; echo p; echo $partindex; echo $partstart; echo $lastsector
+			echo w
+		} | fdisk $diskdev
 	else
-		((echo d; echo $partitions; echo n; echo p; echo ; echo $startfrom; echo $lastsector ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
+		{
+			echo d; echo $partindex
+			echo n; echo p; echo $partindex; echo $partstart; echo $lastsector
+			echo w
+		} | fdisk $diskdev
 	fi
-	[[ -n $secondpartition ]] && \
-		((echo n; echo p; echo ; echo $(( $lastsector + 1 )); echo $secondpartition ; echo w;) | fdisk $rootdevicepath) >>${Log} 2>&1
-	local s=0
-	partprobe $rootdevicepath >>${Log} 2>&1 || s=$?
+	if [[ -n $newpartition ]]; then
+		{
+			echo n; echo p; echo ; echo $(( $lastsector + 1 )); echo $newpartition
+			echo w
+		} | fdisk $diskdev
+	fi
 
-	#
+	echo -e "\nExecuting partprobe:"
 	# Workaround for Kernel bug in 5.8.y and up. Ignore partprobe returning error and inticating that fs is not expended while it is
-	#
 	KERNELID=$(uname -r |  awk -F'.' '{print ($1 * 100) + $2}')
-	[[ ${KERNELID} -gt 507 ]] && s=0
-	#
-	#
-	#
-
-	echo -e "New partition table:\n" >>${Log}
-	cat /proc/partitions >>${Log}
-	echo -e "\nNow trying to resize $1 filesystem on $rootsource to the limits:\n" >>${Log}
-	
-	# if crypt-device, resize LUKS container first
-	if [[ $IS_CRYPTDEVICE ]]; then
-		do_resize_crypt $cryptname
+	if ! partprobe $rootdev && [[ ${KERNELID} -le 507 ]]; then
+		echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure"
+		touch /var/run/resize2fs-reboot
 	fi
-	
-	case $1 in
-		ext4)
-			resize2fs $rootsource >>${Log} 2>&1
-			# check whether reboot is necessary for resize2fs to take effect
-			local usedpercent=$(findmnt --target / -n -o USE% -b | sed 's/[^0-9]*//g') # images before resize have 70-75%
-			if [[ $s != 0 || $usedpercent -gt 70 ]]; then
-				touch /var/run/resize2fs-reboot
-				echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure" >>${Log}
-			fi
-			;;
-		btrfs)
-			btrfs filesystem resize max / >> ${Log} 2>&1
-			;;
-	esac
+
+	local partsize=$(lsblk -n -b -o SIZE $partdev | head -1)
+	local actualsize=$(( $sectorsize * ($lastsector - $partstart + 1) ))
+	if [[ $actualsize -ne $partsize ]]; then
+		echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure"
+		touch /var/run/resize2fs-reboot
+	fi
+
+	echo -e "New partition table:\n"
+	cat /proc/partitions
+
+	return 0
 }
 
 do_resize_crypt()
 {
-	echo -e "\n### [resize2fs] Start resizing LUKS container now\n" >> ${Log}
-	cryptsetup resize $1
+	local dev=$1
+	local parentdev=$2
+	local name=$(lsblk -n -o NAME $dev | head -1) # i.e. armbian-root
+
+	echo -e "\n### [resize2fs] Start resizing LUKS container now\n"
+	# It's probably no need to run 'cryptsetup resize'.
+	# After reboot, it will auto resize to adapte the partition
+	# 'cryptsetup resize' requires passphrase, so it will fail.
+	cryptsetup resize $name
+
+	local parentsize=$(lsblk -n -b -o SIZE $parentdev | head -1)
+
+	local sectorsize=$(cryptsetup status $name | awk -F':' '/^ *sector size/ {print $2}' | tr -c -d '[:digit:]')
+	local offset=$(cryptsetup status $name | awk -F':' '/^ *offset/ {print $2}' | tr -c -d '[:digit:]')
+	local size=$(cryptsetup status $name | awk -F':' '/^ *size/ {print $2}' | tr -c -d '[:digit:]')
+	local actualsize=$(( $sectorsize * ($offset + $size) ))
+	if [[ $actualsize -ne $parentsize ]]; then
+		echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure"
+		touch /var/run/resize2fs-reboot
+	fi
 }
 
-do_expand_ext4()
+do_expand_filesystem()
 {
-	echo -e "\n### [resize2fs] Start resizing ext4 partition $1 now\n" >> ${Log}
-	echo "Running 'resize2fs ${rootpart}' now..."
-	resize2fs ${rootpart} >> ${Log} 2>&1
+	local partdev=$1
+	local mountpoint=$2
+
+	local fstype=$(findmnt -n -o FSTYPE $mountpoint) # i.e. ext4 or btrfs
+
+	echo -e "\n### [resize2fs] Trying to resize $fstype filesystem on $partdev:\n"
+
+	case $fstype in
+		ext4)
+			echo "Running 'resize2fs $partdev' now..."
+			resize2fs $partdev
+			;;
+		btrfs)
+			echo "Running 'btrfs filesystem resize max $mountpoint' now..."
+			btrfs filesystem resize max $mountpoint
+			;;
+		*)
+			echo "Unsupported filesystem: $fstype"
+			echo "Trying to run 'resize2fs $partdev' now..."
+			resize2fs $partdev
+			return
+			;;
+	esac
+
+	# check whether reboot is necessary for resize2fs to take effect
+	local devsize=$(lsblk -n -b -o SIZE $partdev | head -1)
+	local fssize=$(findmnt -n -b -o SIZE --target $mountpoint)
+	if [[ $(( 100 * $fssize / $devsize )) -lt 90 ]]; then
+		echo -e "\n### [resize2fs] Automated reboot needed to finish the resize procedure"
+		touch /var/run/resize2fs-reboot
+	fi
 }
 
-do_expand_btrfs()
+main()
 {
-	echo -e "\n### [resize2fs] Start resizing btrfs partition $1 now\n" >> ${Log}
-	btrfs filesystem resize max / >> ${Log} 2>&1
+	rm /var/run/resize2fs-reboot 2>/dev/null
+
+	# skip resizing if explicitly disabled
+	if [[ -f /root/.no_rootfs_resize ]]; then
+		systemctl disable armbian-resize-filesystem
+		exit 0
+	fi
+
+	# Logging header
+	CPU_ARCH=$(lscpu | awk '/Architecture/ {print $2}')
+	DISTRO_ARCH=$(dpkg --print-architecture)
+	KERNELID=$(uname -r)
+	echo "$(date) | ${BOARD_NAME} | ${VERSION} | ${DISTRO_ARCH} | ${CPU_ARCH} | ${KERNELID}"
+
+	# trim any btrfs subvolume identifier given in square brackets (e.g. /dev/mapper/armbian-root[/@])
+	local rootdev=$(findmnt -n -o SOURCE / | sed 's~\[.*\]~~') # i.e. /dev/mmcblk0p1, /dev/sda1 or /dev/mapper/armbian-root
+
+	# check for crypt
+	local cryptname=""
+	if [[ "$(lsblk -n -o TYPE $rootdev | head -1)" == "crypt" ]]; then
+		local cryptname=$(lsblk -n -o NAME $rootdev | head -1) # i.e. armbian-root
+		local parent_uuid=$(cat /etc/crypttab | awk "{if(\$1 == \"$cryptname\"){print \$2}}" | sed 's/UUID=//')
+		local parentdev=$(blkid -U $parent_uuid) # i.e. /dev/mmcblk0p1 or /dev/sda1
+
+		do_expand_partition "$parentdev"
+
+		# resize LUKS container
+		do_resize_crypt "$rootdev" "$parentdev"
+	else
+		# check if growroot (from cloud-initramfs-growroot package) is installed.
+		# despite it's name, that package does NOT require cloud-init.
+		# it will resize the *partition* which root filesystem on during initramfs.
+		# in this case do nothing here, just run resize2fs (growroot does not handle that).
+		# Note: it can't handle crypt device
+		if [[ -f /usr/share/initramfs-tools/hooks/growroot ]] || [[ -f /usr/share/initramfs-tools/scripts/local-bottom/growroot ]]; then
+			echo "partition resize skipped: growroot detected."
+		else
+			do_expand_partition "$rootdev"
+		fi
+	fi
+
+	do_expand_filesystem "$rootdev" "/"
+
+	# disable itself
+	[[ ! -f /var/run/resize2fs-reboot ]] && systemctl disable armbian-resize-filesystem
+	exit 0
 }
 
 case "$1" in
 	start)
-		# skip resizing if rootfs is neither ext4 not btrfs or if explicitly disabled
-		if [[ -f /root/.no_rootfs_resize ]]; then
-			systemctl disable armbian-resize-filesystem
-			exit 0
-		fi
-
-		# Logging header
-		CPU_ARCH=$(lscpu | awk '/Architecture/ {print $2}')
-		DISTRO_ARCH=$(dpkg --print-architecture)
-		KERNELID=$(uname -r)
-		echo "$(date) | ${BOARD_NAME} | ${VERSION} | ${DISTRO_ARCH} | ${CPU_ARCH} | ${KERNELID}" >>${Log}
+		touch ${Log}
 		chmod 644 ${Log}
-
-		rootfstype=$(findmnt -n -o FSTYPE /)
-		rootpart=$(findmnt -n -o SOURCE /) # i.e. /dev/mmcblk0p1
-		case ${rootfstype} in
-			ext4)
-				# first stage - resize the rootfs partition
-				[[ ! -f /var/lib/armbian/resize_second_stage ]] && do_expand_partition ${rootfstype}
-				# second stage - resize the filesystem
-				[[ ! -f /var/run/resize2fs-reboot ]] && do_expand_ext4 ${rootpart}
-				;;
-			btrfs)
-				do_expand_partition ${rootfstype} && systemctl disable armbian-resize-filesystem
-				;;
-		esac
-
-		# disable itself
-		[[ ! -f /var/run/resize2fs-reboot ]] && systemctl disable armbian-resize-filesystem
-		exit 0
+		main |& tee -a ${Log}
 		;;
-
 	*)
 		echo "Usage: $0 start"
 		exit 0
