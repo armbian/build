@@ -190,7 +190,7 @@ create_rootfs_cache()
 		create_sources_list "$RELEASE" "$SDCARD/"
 	else
 
-		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc "+%Y%M%d")}
+		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc "+%Y%m%d")}
 		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
 		local cache_fname=${SRC}/cache/rootfs/${cache_name}
 
