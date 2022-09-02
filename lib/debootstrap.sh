@@ -401,9 +401,6 @@ create_rootfs_cache()
 			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
 
-		# needed for backend to keep current only
-		echo "$cache_fname" > $cache_fname.current
-
 	fi
 
 	# used for internal purposes. Faster rootfs cache rebuilding
