@@ -124,8 +124,10 @@ get_rootfs_cache_list()
 	local packages_hash=$2
 
 	{
-		curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' \
-		|| curl --silent --fail -L https://cache.armbian.com/rootfs/list
+		# Temportally disable Github API because we don't support to download from it
+		# curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' \
+		# || curl --silent --fail -L https://cache.armbian.com/rootfs/list
+		curl --silent --fail -L https://cache.armbian.com/rootfs/list
 
 		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" \
 			| sed -e 's#^.*/##' \
