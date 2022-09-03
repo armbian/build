@@ -307,9 +307,6 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
-                # add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-5.19.2.patch" "applying"
-
 	fi
 
 
@@ -344,9 +341,6 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8189FS) += rtl8189fs/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189fs\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
-
-                # add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-5.19.2.patch" "applying"
 
 	fi
 
