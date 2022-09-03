@@ -188,8 +188,9 @@ compile_uboot()
 		[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
 
 		if [[ -n $ATFSOURCE ]]; then
-			cp -Rv "${atftempdir}"/*.bin .
-			cp -Rv "${atftempdir}"/*.elf .
+			cp -Rv "${atftempdir}"/*.bin . 2>/dev/null || \
+			cp -Rv "${atftempdir}"/*.elf . 2>/dev/null
+			[[ $? -ne 0 ]] && exit_with_error "ATF binary not found"
 			rm -rf "${atftempdir}"
 		fi
 
