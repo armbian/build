@@ -97,7 +97,7 @@ cleaning()
 		;;
 
 		oldcache) # remove old `cache/rootfs` except for the newest 8 files
-		if [[ -d "${SRC}"/cache/rootfs && $(ls -1 "${SRC}"/cache/rootfs/*.lz4 2> /dev/null | wc -l) -gt "${ROOTFS_CACHE_MAX}" ]]; then
+		if [[ -d "${SRC}"/cache/rootfs && $(ls -1 "${SRC}"/cache/rootfs/*.zst* 2> /dev/null | wc -l) -gt "${ROOTFS_CACHE_MAX}" ]]; then
 			display_alert "Cleaning" "rootfs cache (old)" "info"
 			(cd "${SRC}"/cache/rootfs; ls -t *.lz4 | sed -e "1,${ROOTFS_CACHE_MAX}d" | xargs -d '\n' rm -f)
 			# Remove signatures if they are present. We use them for internal purpose
@@ -153,8 +153,10 @@ get_package_list_hash()
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	( ( printf "%s\n" "${package_arr[@]}"; printf -- "-%s\n" "${exclude_arr[@]}" ) | sort -u; echo "${1}" ) \
-		| md5sum | cut -d' ' -f 1
+	(
+		printf "%s\n" "${package_arr[@]}"
+		printf -- "-%s\n" "${exclude_arr[@]}"
+	) | sort -u | md5sum | cut -d' ' -f 1
 }
 
 # create_sources_list <release> <basedir>
@@ -679,15 +681,15 @@ fingerprint_image()
 		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 		--------------------------------------------------------------------------------
 		Verify GPG signature:
-		gpg --verify $2.img.asc
+		gpg --verify $2.img.xz.asc
 
 		Verify image file integrity:
-		sha256sum --check $2.img.sha
+		sha256sum --check $2.img.xz.sha
 
-		Prepare SD card (four methodes):
-		zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
+		Prepare SD card (four methods):
+		xzcat $2.img.xz | pv | dd of=/dev/mmcblkX bs=1M
 		dd if=$2.img of=/dev/mmcblkX bs=1M
-		balena-etcher $2.img.gz -d /dev/mmcblkX
+		balena-etcher $2.img.xz -d /dev/mmcblkX
 		balena-etcher $2.img -d /dev/mmcblkX
 		EOF
 	fi
@@ -1406,7 +1408,7 @@ prepare_host()
 	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
 	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
 	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev"
+	zlib1g-dev zstd"
 
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
@@ -1624,7 +1626,7 @@ function webseed ()
 	unset text
 	local CCODE=$(curl -s redirect.armbian.com/geoip | jq '.continent.code' -r)
 
-	if [[ "$2" == "rootfs" ]]; then
+	if [[ "$2" == rootfs* ]]; then
 		WEBSEED=($(curl -s ${1}mirrors | jq -r '.'${CCODE}' | .[] | values'))
 		else
 		WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
@@ -1685,6 +1687,12 @@ download_and_verify()
 		return
 	fi
 
+	# rootfs has its own infra
+	if [[ "${remotedir}" == "_rootfs" ]]; then
+		local server="https://cache.armbian.com/"
+		remotedir="rootfs/$ROOTFSCACHE_VERSION"
+	fi
+
 	# switch to china mirror if US timeouts
 	timeout 10 curl --location --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
 	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
@@ -1697,12 +1705,6 @@ download_and_verify()
 			display_alert "Timeout from $server" "retrying" "info"
 			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
 		fi
-	fi
-
-	# rootfs has its own infra
-	if [[ "${remotedir}" == "_rootfs" ]]; then
-		local server="https://cache.armbian.com/"
-		remotedir="rootfs"
 	fi
 
 	# check if file exists on remote server before running aria2 downloader

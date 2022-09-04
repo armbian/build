@@ -12,6 +12,7 @@
 # Functions:
 
 # debootstrap_ng
+# get_rootfs_cache_list
 # create_rootfs_cache
 # prepare_partitions
 # update_initramfs
@@ -82,8 +83,9 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	display_alert "No longer needed packages" "purge" "info"
 	chroot $SDCARD /bin/bash -c "apt-get autoremove -y"  >/dev/null 2>&1
 
-	# create list of installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] && echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
+	# create list of all installed packages for debug purposes
+	chroot $SDCARD /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] \
+	&& echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
@@ -113,55 +115,87 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	trap - INT TERM EXIT
 } #############################################################################
 
+# get_rootfs_cache_list <cache_type> <packages_hash>
+#
+# return a list of versions of all avaiable cache from remote and local.
+get_rootfs_cache_list()
+{
+	local cache_type=$1
+	local packages_hash=$2
+
+	{
+		# Temportally disable Github API because we don't support to download from it
+		# curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' \
+		# || curl --silent --fail -L https://cache.armbian.com/rootfs/list
+		curl --silent --fail -L https://cache.armbian.com/rootfs/list
+
+		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" \
+			| sed -e 's#^.*/##' \
+			| sed -e 's#\..*$##' \
+			| awk -F'-' '{print $5}'
+	} | sort | uniq
+}
+
 # create_rootfs_cache
 #
 # unpacks cached rootfs for $RELEASE or creates one
 #
 create_rootfs_cache()
 {
+	local packages_hash=$(get_package_list_hash)
+	local packages_hash=${packages_hash:0:8}
 
-
-	local packages_hash=$(get_package_list_hash "$ROOTFSCACHE_VERSION")
 	local cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
 	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
 	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
-	local cache_name=${RELEASE}-${cache_type}-${ARCH}.$packages_hash.tar.lz4
-	local cache_fname=${SRC}/cache/rootfs/${cache_name}
-	local display_name=${RELEASE}-${cache_type}-${ARCH}.${packages_hash:0:3}...${packages_hash:29}.tar.lz4
 
-	if [[ -f ${cache_fname} && -f ${cache_fname}.aria2 && "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
-		rm ${cache_fname}*
-		display_alert "Partially downloaded file. Re-start."
-		download_and_verify "_rootfs" "$cache_name"
-	fi
+	# seek last cache, proceed to previous otherwise build it
+	local cache_list
+	readarray -t cache_list <<<"$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
+	for ROOTFSCACHE_VERSION in "${cache_list[@]}"; do
 
-	if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-		echo "$cache_fname" > $cache_fname.current
-		display_alert "Checking cache integrity" "$display_name" "info"
-		sudo lz4 -tqq ${cache_fname}
-		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-		# sign if signature is missing
-		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" && ! -f ${cache_fname}.asc ]]; then
-			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
-			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst
+		local cache_fname=${SRC}/cache/rootfs/${cache_name}
+
+		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
+
+		display_alert "Checking cache" "$cache_name" "info"
+
+		if [[ -f ${cache_fname}.aria2 ]]; then
+			display_alert "Removing partially downloaded file."
+			rm ${cache_fname}*
 		fi
-	elif [[ "$ROOT_FS_CREATE_ONLY" != "yes" ]]; then
-		display_alert "searching on servers"
-		download_and_verify "_rootfs" "$cache_name"
-	fi
+
+		if [[ ! -f $cache_fname ]]; then
+			display_alert "Downloading from servers"
+			download_and_verify "_rootfs" "$cache_name"
+		fi
+
+		if [[ ! -f ${cache_fname} ]]; then
+			display_alert "not found"
+			continue
+		fi
+
+		break
+	done
 
 	# if aria2 file exists download didn't succeeded
-	if [[ -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
+	if [[ "$ROOT_FS_CREATE_ONLY" != "yes" && -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
 		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
-		display_alert "Extracting $display_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "[ .... ] $display_name" "$cache_fname" | lz4 -dc | tar xp --xattrs -C $SDCARD/
+		display_alert "Extracting $cache_name" "$date_diff days old" "info"
+		pv -p -b -r -c -N "[ .... ] $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 		create_sources_list "$RELEASE" "$SDCARD/"
 	else
+
+		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc +"%Y%m%d")}
+		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
+		local cache_fname=${SRC}/cache/rootfs/${cache_name}
+
 		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
 
 		# stage: debootstrap base system
@@ -303,11 +337,9 @@ create_rootfs_cache()
 		fi
 
 		# stage: check md5 sum of installed packages. Just in case.
-		display_alert "Check MD5 sum of installed packages" "info"
+		display_alert "Checking MD5 sum of installed packages" "debsums" "info"
 		eval 'LC_ALL=C LANG=C sudo chroot $SDCARD /bin/bash -e -c "dpkg-query -f ${binary:Package} -W | xargs debsums"' \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} \
-			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
-
+			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} '>/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
 		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "MD5 sums check of installed packages failed"
 
 		# Remove packages from packages.uninstall
@@ -342,7 +374,7 @@ create_rootfs_cache()
 		display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
 		# create list of installed packages for debug purposes
-		chroot $SDCARD /bin/bash -c "dpkg --get-selections" | grep -v deinstall | awk '{print $1}' | cut -f1 -d':' > ${cache_fname}.list 2>&1
+		chroot $SDCARD /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > ${cache_fname}.list 2>&1
 
 		# creating xapian index that synaptic runs faster
 		if [[ $BUILD_DESKTOP == yes ]]; then
@@ -362,16 +394,13 @@ create_rootfs_cache()
 		umount_chroot "$SDCARD"
 
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$display_name" | lz4 -5 -c > $cache_fname
+			--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s $(du -sb $SDCARD/ | cut -f1) -N "$cache_name" | zstdmt -5 -c > $cache_fname
 
 		# sign rootfs cache archive that it can be used for web cache once. Internal purposes
 		if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
 			[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
 			echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 		fi
-
-		# needed for backend to keep current only
-		echo "$cache_fname" > $cache_fname.current
 
 	fi
 
@@ -406,7 +435,7 @@ prepare_partitions()
 
 	# array copying in old bash versions is tricky, so having filesystems as arrays
 	# with attributes as keys is not a good idea
-	declare -A parttype mkopts mkfs mountopts
+	declare -A parttype mkopts mkopts_label mkfs mountopts
 
 	parttype[ext4]=ext4
 	parttype[ext2]=ext2
@@ -423,12 +452,20 @@ prepare_partitions()
 	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|sid ]]; then
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
 	fi
-	mkopts[fat]='-n BOOT'
+	# mkopts[fat] is empty
 	mkopts[ext2]='-q'
 	# mkopts[f2fs] is empty
 	mkopts[btrfs]='-m dup'
 	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
+
+	mkopts_label[ext4]='-L '
+	mkopts_label[ext2]='-L '
+	mkopts_label[fat]='-n '
+	mkopts_label[f2fs]='-l '
+	mkopts_label[btrfs]='-L '
+	mkopts_label[xfs]='-L '
+	# mkopts_label[nfs] is empty
 
 	mkfs[ext4]=ext4
 	mkfs[ext2]=ext2
@@ -454,7 +491,7 @@ prepare_partitions()
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
 	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbiefi}"
 	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbian_root}"
-	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbian_boot}"
+	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbianboot}"
 
 	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
 *allow custom options for mkfs*
@@ -639,7 +676,7 @@ PREPARE_IMAGE_SIZE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} -L "${ROOT_FS_LABEL}" $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
@@ -654,11 +691,15 @@ PREPARE_IMAGE_SIZE
 			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+	else
+		# update_initramfs will fail if /lib/modules/ doesn't exist
+		mount --bind --make-private $SDCARD $MOUNT/
+		echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
 		check_loop_device "${LOOP}p${bootpart}"
-		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} -L "${BOOT_FS_LABEL}" ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 		mkdir -p $MOUNT/boot/
 		mount ${LOOP}p${bootpart} $MOUNT/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
@@ -671,7 +712,6 @@ PREPARE_IMAGE_SIZE
 		mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >>$SDCARD/etc/fstab
 	fi
-	[[ $ROOTFS_TYPE == nfs ]] && echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
@@ -859,7 +899,7 @@ PRE_UMOUNT_FINAL_IMAGE
 	sync
 	[[ $UEFISIZE != 0 ]] && umount -l "${MOUNT}${UEFI_MOUNT_POINT}"
 	[[ $BOOTSIZE != 0 ]] && umount -l $MOUNT/boot
-	[[ $ROOTFS_TYPE != nfs ]] && umount -l $MOUNT
+	umount -l $MOUNT
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
 	call_extension_method "post_umount_final_image" "config_post_umount_final_image" << 'POST_UMOUNT_FINAL_IMAGE'
