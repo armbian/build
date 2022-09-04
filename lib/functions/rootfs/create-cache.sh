@@ -5,10 +5,17 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 	# @TODO: this was moved from configuration to this stage, that way configuration can be offline
 	# if variable not provided, check which is current version in the cache storage in GitHub.
 	if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
-		display_alert "ROOTFSCACHE_VERSION not set, getting remotely" "Github API and armbian/mirror " "debug"
-		ROOTFSCACHE_VERSION=$(curl https://api.github.com/repos/armbian/cache/releases/latest -s --fail | jq .tag_name -r || true)
-		# anonymous API access is very limited which is why we need a fallback
-		ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-$(curl -L --silent https://cache.armbian.com/rootfs/latest --fail)}
+		if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+			display_alert "ROOTFSCACHE_VERSION not set, getting remotely" "Github API and armbian/mirror " "debug"
+			# rpardini: why 2 calls?
+			ROOTFSCACHE_VERSION=$(curl https://api.github.com/repos/armbian/cache/releases/latest -s --fail | jq .tag_name -r || true)
+			# anonymous API access is very limited which is why we need a fallback
+			# rpardini: yeah but this is 404'ing
+			#ROOTFSCACHE_VERSION=${ROOTFSCACHE_VERSION:-$(curl -L --silent https://cache.armbian.com/rootfs/latest --fail)}
+			display_alert "Remotely-obtained ROOTFSCACHE_VERSION" "${ROOTFSCACHE_VERSION}" "debug"
+		else
+			ROOTFSCACHE_VERSION=668 # The neighbour of the beast.
+		fi
 	fi
 
 	local packages_hash=$(get_package_list_hash)
