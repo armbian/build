@@ -2,5 +2,5 @@
 BOARD_NAME="Macchiatobin DS"
 BOARDFAMILY="mvebu64"
 BOOTCONFIG="mvebu_mcbin-88f8040_defconfig"
-BUILD_DESKTOP="no"
+HAS_VIDEO_OUTPUT="no"
 KERNEL_TARGET="legacy,current,edge"

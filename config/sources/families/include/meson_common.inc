@@ -32,7 +32,7 @@ case $BRANCH in
 		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-		BUILD_DESKTOP=no
+		HAS_VIDEO_OUTPUT=no
 
         ;;
 	current)
@@ -40,7 +40,7 @@ case $BRANCH in
 		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-		BUILD_DESKTOP=no
+		HAS_VIDEO_OUTPUT=no
 
 	;;
 	edge)

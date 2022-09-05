@@ -187,6 +187,12 @@ fi
 # load architecture defaults
 source "${SRC}/config/sources/${ARCH}.conf"
 
+if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
+	SKIP_BOOTSPLASH="yes"
+	PLYMOUTH="no"
+	[[ $BUILD_DESKTOP != "no" ]] && exit_with_error "HAS_VIDEO_OUTPUT is set to no. So we shouldn't build desktop environment"
+fi
+
 ## Extensions: at this point we've sourced all the config files that will be used,
 ##             and (hopefully) not yet invoked any extension methods. So this is the perfect
 ##             place to initialize the extension manager. It will create functions
