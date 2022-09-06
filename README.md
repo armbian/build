@@ -191,7 +191,7 @@ If you want to help with development, you should first review the [Development C
 - [pull requests that needs a review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired)
 - dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
 - [documentation](https://docs.armbian.com/)
-- [continuous integration](https://github.com/armbian/ci-testing-tools)
+- [continuous integration](https://docs.armbian.com/Process_CI/)
 
 ## Support
 
