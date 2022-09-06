@@ -172,8 +172,9 @@ Function | Armbian | Yocto | Buildroot |
 
 ## 🙌 Contribution
 
-#### You don't need to be a programmer to help! [Check out  our list](https://forum.armbian.com/staffapplications/) choose what you wanna do ❤️
+#### You don't need to be a programmer to help! 
 - The easiest way to help is by "Starring" our repository - it helps more people find our code.
+- [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
 - [Seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/)
 - Help with [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/)
 - [Project administration](https://forum.armbian.com/forum/39-armbian-project-administration/)
