@@ -420,7 +420,7 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/karabek/xradio" "xradio" "branch:master" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/dbeinder/xradio" "xradio" "branch:karabek_rebase" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
@@ -444,6 +444,11 @@ compilation_prepare()
 
 		# add support for K5.13+
                 process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
+
+		# add support for aarch64
+		if [[ $ARCH == arm64 ]]; then
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-aarch64.patch" "applying"
+		fi
 
 	fi
 
