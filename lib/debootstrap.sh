@@ -593,7 +593,7 @@ PREPARE_IMAGE_SIZE
 			fi
 			if [[ -n "$bootpart" ]]; then
 				if [[ -n "$rootpart" ]]; then
-					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=linux"
+					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=\"Linux extended boot\""
 					local next=$(( $next + $BOOTSIZE ))
 				else
 					# no `size` argument mean "as much as possible"
