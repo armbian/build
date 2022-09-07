@@ -627,46 +627,11 @@ install_distribution_specific()
 
 	case $RELEASE in
 
-	buster|sid)
+	sid)
 
-			# remove doubled uname from motd
-			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
-			# rc.local is not existing but one might need it
-			install_rclocal
+			# (temporally) disable broken service
+			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
 
-			# configure language and locales
-			display_alert "Configuring locales" "$DEST_LANG" "info"
-			if [[ -f $SDCARD/etc/locale.gen ]]; then
-				[ -n "$DEST_LANG" ] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
-				sed -i '/ C.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-				sed -i '/en_US.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-			fi
-			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-			[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale --reset LANG=$DEST_LANG"' \
-				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-		;;
-
-	bullseye)
-
-			# remove doubled uname from motd
-			[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
-			# rc.local is not existing but one might need it
-			install_rclocal
-			# fix missing versioning
-			[[ $(grep -L "VERSION_ID=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION_ID="11"' >> "${SDCARD}"/etc/os-release
-			[[ $(grep -L "VERSION=" "${SDCARD}"/etc/os-release) ]] && echo 'VERSION="11 (bullseye)"' >> "${SDCARD}"/etc/os-release
-
-			# configure language and locales
-			display_alert "Configuring locales" "$DEST_LANG" "info"
-			if [[ -f $SDCARD/etc/locale.gen ]]; then
-				[ -n "$DEST_LANG" ] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
-				sed -i '/ C.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-				sed -i '/en_US.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-			fi
-			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-			[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale --reset LANG=$DEST_LANG"' \
-				${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 		;;
 
 	focal|jammy)
@@ -674,30 +639,13 @@ install_distribution_specific()
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
-			# cleanup motd services and related files
-			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.service >/dev/null 2>&1"
-			chroot "${SDCARD}" /bin/bash -c "systemctl disable  motd-news.timer >/dev/null 2>&1"
-
 			rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
-
-			# remove motd news from motd.ubuntu.com
-			[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
-
-			# rc.local is not existing but one might need it
-			install_rclocal
 
 			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
 				local RENDERER=NetworkManager
 			else
 				local RENDERER=networkd
 			fi
-
-			# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-			[[ -d "${SDCARD}"/etc/netplan ]] && cat <<-EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
-			network:
-			  version: 2
-			  renderer: $RENDERER
-			EOF
 
 			# DNS fix
 			if [ -n "$NAMESERVER" ]; then
@@ -716,15 +664,40 @@ install_distribution_specific()
 			# disable conflicting services
 			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 
-			# configure language and locales
-			display_alert "Configuring locales" "$DEST_LANG" "info"
-			eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen en_US.UTF-8 $DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>&1'}
-			[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "update-locale --reset LANG=$DEST_LANG"' \
-				${OUTPUT_VERYSILENT:+' >/dev/null 2>&1'}
-
 		;;
 
 	esac
+
+	# configure language and locales
+	display_alert "Configuring locales" "$DEST_LANG" "info"
+	if [[ -f $SDCARD/etc/locale.gen ]]; then
+		[ -n "$DEST_LANG" ] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
+		sed -i '/ C.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
+		sed -i '/en_US.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
+	fi
+	eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+	[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c \
+	"update-locale --reset LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_ALL=$DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+
+	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
+	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<-EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
+	network:
+		  version: 2
+		  renderer: $RENDERER
+	EOF
+
+	# cleanup motd services and related files
+	chroot "${SDCARD}" /bin/bash -c "systemctl disable motd-news.service >/dev/null 2>&1"
+	chroot "${SDCARD}" /bin/bash -c "systemctl disable motd-news.timer >/dev/null 2>&1"
+
+	# remove motd news from motd.ubuntu.com
+	[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
+
+	# remove doubled uname from motd
+	[[ -f "${SDCARD}"/etc/update-motd.d/10-uname ]] && rm "${SDCARD}"/etc/update-motd.d/10-uname
+
+	# rc.local is not existing but one might need it
+	install_rclocal
 
 	# use list modules INITRAMFS
 	if [ -f "${SRC}"/config/modules/"${MODULES_INITRD}" ]; then

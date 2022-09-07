@@ -153,8 +153,10 @@ get_package_list_hash()
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
 	read -ra exclude_arr <<< "${PACKAGE_LIST_EXCLUDE}"
-	( ( printf "%s\n" "${package_arr[@]}"; printf -- "-%s\n" "${exclude_arr[@]}" ) | sort -u; echo "${1}" ) \
-		| md5sum | cut -d' ' -f 1
+	(
+		printf "%s\n" "${package_arr[@]}"
+		printf -- "-%s\n" "${exclude_arr[@]}"
+	) | sort -u | md5sum | cut -d' ' -f 1
 }
 
 # create_sources_list <release> <basedir>
@@ -679,15 +681,15 @@ fingerprint_image()
 		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 		--------------------------------------------------------------------------------
 		Verify GPG signature:
-		gpg --verify $2.img.asc
+		gpg --verify $2.img.xz.asc
 
 		Verify image file integrity:
-		sha256sum --check $2.img.sha
+		sha256sum --check $2.img.xz.sha
 
-		Prepare SD card (four methodes):
-		zcat $2.img.gz | pv | dd of=/dev/mmcblkX bs=1M
+		Prepare SD card (four methods):
+		xzcat $2.img.xz | pv | dd of=/dev/mmcblkX bs=1M
 		dd if=$2.img of=/dev/mmcblkX bs=1M
-		balena-etcher $2.img.gz -d /dev/mmcblkX
+		balena-etcher $2.img.xz -d /dev/mmcblkX
 		balena-etcher $2.img -d /dev/mmcblkX
 		EOF
 	fi
