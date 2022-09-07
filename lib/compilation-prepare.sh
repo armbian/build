@@ -424,16 +424,16 @@ compilation_prepare()
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
-		cp "${SRC}"/cache/sources/xradio/master/*.{h,c} \
+		cp "${SRC}"/cache/sources/xradio/karabek_rebase/*.{h,c} \
 		"$kerneldir/drivers/net/wireless/xradio/"
 
 		# Makefile
-		cp "${SRC}/cache/sources/xradio/master/Makefile" \
+		cp "${SRC}/cache/sources/xradio/karabek_rebase/Makefile" \
 		"$kerneldir/drivers/net/wireless/xradio/Makefile"
 
 		# Kconfig
-		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/master/Kconfig"
-		cp "${SRC}/cache/sources/xradio/master/Kconfig" \
+		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig"
+		cp "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig" \
 		"$kerneldir/drivers/net/wireless/xradio/Kconfig"
 
 		# Add to section Makefile
