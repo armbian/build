@@ -172,13 +172,26 @@ Function | Armbian | Yocto | Buildroot |
 
 ## 🙌 Contribution
 
-- You don't need to be a programmer to help! [Check out  our list](https://forum.armbian.com/staffapplications/) choose what you wanna do ❤️
-
+### You don't need to be a programmer to help! 
 - The easiest way to help is by "Starring" our repository - it helps more people find our code.
+- [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
+- [Seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/)
+- Help with [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/)
+- [Project administration](https://forum.armbian.com/forum/39-armbian-project-administration/)
+- [Donate](https://www.armbian.com/donate).
 
-- You also can maintain and develop [docs](https://github.com/armbian/documentation), [CI](https://github.com/armbian/ci-testing-tools), [autotests](https://github.com/armbian/autotests), [seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/), help on [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/), [project administration](https://forum.armbian.com/forum/39-armbian-project-administration/), [costs](https://www.armbian.com/donate).
+### Want to become a maintainer?
 
-Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) before you write any code.
+Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/) and if you can meet the requirements as well as find a board on the [Board Maintainers](https://docs.armbian.com/Release_Board-Maintainers/) list which has less than 2 maintainers, then please apply using the linked form.
+
+### Want to become a developer?
+
+If you want to help with development, you should first review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/) and then you can review the pre-made Jira dashboards and additional resources provided below to find open tasks and how you can assist:
+
+- [pull requests that needs a review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired)
+- dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
+- [documentation](https://docs.armbian.com/)
+- [continuous integration](https://docs.armbian.com/Process_CI/)
 
 ## Support
 
