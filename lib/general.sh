@@ -27,7 +27,7 @@
 # install_pkg_deb
 # prepare_host_basic
 # prepare_host
-# webseed
+# get_urls
 # download_and_verify
 # show_developer_warning
 # show_checklist_variables
@@ -1631,47 +1631,44 @@ prepare_host()
 
 
 
-function webseed ()
+function get_urls()
 {
+	local catalog=$1
+	local filename=$2
 
-	# list of mirrors that host our files
-	unset text
-	local CCODE=$(curl -s redirect.armbian.com/geoip | jq '.continent.code' -r)
+	case $catalog in
+		toolchain)
+			local CCODE=$(curl --silent --fail https://dl.armbian.com/geoip | jq '.continent.code' -r)
+			local urls=(
+				# "https://dl.armbian.com/_toolchain/${filename}"
+				# "${ARMBIAN_MIRROR}/${filename}"
 
-	if [[ "$2" == rootfs* ]]; then
-		WEBSEED=($(curl -s ${1}mirrors | jq -r '.'${CCODE}' | .[] | values'))
-		else
-		WEBSEED=($(curl -s https://redirect.armbian.com/mirrors | jq -r '.'${CCODE}' | .[] | values'))
-	fi
+				$( curl --silent --fail  "https://dl.armbian.com/mirrors" \
+					| jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" \
+					| sed "s#\$#/_toolchain/${filename}#"
+				)
+			)
+			;;
 
-	# remove dead mirrors to suppress download errors
-	while read -r line
-	do
-		REMOVE=$(echo $line | egrep -o 'https?://[^ ]+/')
-		WEBSEED=( "${WEBSEED[@]/$REMOVE}" )
-	done < <(
-	for k in ${WEBSEED[@]}
-	do
-	echo "$k$2/$3"
-	done | parallel --halt soon,fail=10 --jobs 32 wget -q --spider --timeout=15 --tries=4 --retry-connrefused {} 2>&1 >/dev/null)
+		rootfs)
+			local CCODE=$(curl --silent --fail  https://cache.armbian.com/geoip | jq '.continent.code' -r)
+			local urls=(
+				# "https://cache.armbian.com/rootfs/${ROOTFSCACHE_VERSION}/${filename}"
 
-	# aria2 simply split chunks based on sources count not depending on download speed
-	# when selecting china mirrors, use only China mirror, others are very slow there
-	if [[ $DOWNLOAD_MIRROR == china ]]; then
-		WEBSEED=(
-		https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/
-		)
-	elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-		WEBSEED=(
-		https://mirrors.bfsu.edu.cn/armbian-releases/
-		)
-	fi
+				$( curl --silent --fail  "https://cache.armbian.com/mirrors" \
+					| jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" \
+					| sed "s#\$#/rootfs/${ROOTFSCACHE_VERSION}/${filename}#"
+				)
+			)
+			;;
 
-	for toolchain in ${WEBSEED[@]}; do
-		text="${text} ${toolchain}"$2/"${3}"
-	done
-	text="${text:1}"
-	echo "${text}"
+		*)
+			exit_with_error "Unknown catalog" "$catalog" >&2
+			return
+			;;
+	esac
+
+	echo "${urls[@]}"
 }
 
 
@@ -1680,6 +1677,7 @@ function webseed ()
 download_and_verify()
 {
 
+	local catalog=${1#_}
 	local remotedir=$1
 	local filename=$2
 	local localdir=$SRC/cache/${remotedir//_}
@@ -1764,8 +1762,7 @@ download_and_verify()
 		aria2c "${aria2_options[@]}" \
 			--continue=false \
 			--dir="${localdir}" --out="${filename}.asc" \
-			${server}${remotedir}/${filename}.asc \
-			$(webseed "${server}" "${remotedir}" "${filename}.asc")
+			$(get_urls "${catalog}" "${filename}.asc")
 
 		local rc=$?
 		if [[ $rc -ne 0 ]]; then
@@ -1775,7 +1772,7 @@ download_and_verify()
 		fi
 
 		[[ ${USE_TORRENT} == "yes" ]] \
-		&& local torrent="${server}${remotedir}/${filename}.torrent $(webseed "${server}" "${remotedir}" "${filename}.torrent")"
+		&& local torrent="$(get_urls "${catalog}" "${filename}.torrent")"
 	fi
 
 	# download torrent first
@@ -1799,8 +1796,7 @@ download_and_verify()
 			display_alert "downloading using http(s) network" "$filename"
 			aria2c "${aria2_options[@]}" \
 				--dir="${localdir}" --out="${filename}" \
-				${server}${remotedir}/${filename} \
-				$(webseed "${server}" "${remotedir}" "${filename}")
+				$(get_urls "${catalog}" "${filename}")
 
 			# mark complete
 			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
