@@ -169,7 +169,7 @@ create_rootfs_cache()
 
 		if [[ ! -f $cache_fname ]]; then
 			display_alert "Downloading from servers"
-			download_and_verify "_rootfs" "$cache_name"
+			download_and_verify "rootfs" "$cache_name"
 		fi
 
 		if [[ ! -f ${cache_fname} ]]; then

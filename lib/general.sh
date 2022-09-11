@@ -1563,7 +1563,7 @@ prepare_host()
 				local toolchain_zip="${SRC}/cache/toolchain/${toolchain}"
 				local toolchain_dir="${toolchain_zip%.tar.*}"
 				if [[ ! -f "${toolchain_dir}/.download-complete" ]]; then
-					download_and_verify "_toolchain" "${toolchain}"
+					download_and_verify "toolchain" "${toolchain}"
 					[[ ! -f "${toolchain_zip}" ]] && exit_with_error "Failed to download toolchain" "${toolchain}"
 
 					display_alert "decompressing"
@@ -1678,11 +1678,9 @@ function get_urls()
 download_and_verify()
 {
 
-	local catalog=${1#_}
-	local remotedir=$1
+	local catalog=$1
 	local filename=$2
-	local localdir=$SRC/cache/${remotedir//_}
-	local dirname=${filename//.tar.xz}
+	local localdir=$SRC/cache/$catalog
 
 	local keys=(
 		"8F427EAF" # Linaro Toolchain Builder
