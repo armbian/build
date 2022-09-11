@@ -1755,21 +1755,25 @@ download_and_verify()
 
 	cd "${localdir}" || exit
 
-	# use local control file
-	if [[ -f "${SRC}"/config/torrents/${filename}.asc ]]; then
-		local torrent="${SRC}"/config/torrents/${filename}.torrent
+	# use local signature file
+	if [[ -f "${SRC}/config/torrents/${filename}.asc" ]]; then
+		local torrent="${SRC}/config/torrents/${filename}.torrent"
 		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
-	elif [[ ! `timeout 10 curl --location --head --fail --silent "${server}${remotedir}/${filename}.asc"` ]]; then
-		return
 	else
-		# download control file
+		# download signature file
 		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c "${aria2_options[@]}" \
 			--continue=false \
 			--dir="${localdir}" --out="${filename}.asc" \
 			${server}${remotedir}/${filename}.asc \
 			$(webseed "${server}" "${remotedir}" "${filename}.asc")
-		[[ $? -ne 0 ]] && display_alert "Failed to download control file" "" "wrn"
+
+		local rc=$?
+		if [[ $rc -ne 0 ]]; then
+			# Except `not found`
+			[[ $rc -ne 3 ]] && display_alert "Failed to download signature file. aria2 exit code:" "$rc" "wrn"
+			return $rc
+		fi
 	fi
 
 	# download torrent first
