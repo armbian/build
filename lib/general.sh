@@ -1685,6 +1685,11 @@ download_and_verify()
 	local localdir=$SRC/cache/${remotedir//_}
 	local dirname=${filename//.tar.xz}
 
+	local keys=(
+		"8F427EAF" # Linaro Toolchain Builder
+		"9F0E78D5" # Igor Pecovnik
+	)
+
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
@@ -1781,32 +1786,18 @@ download_and_verify()
 				chmod 600 "${SRC}"/cache/.gpg/gpg.conf
 			fi
 
-			# Verify archives with Linaro and Armbian GPG keys
+			for key in "${keys[@]}"; do
+				gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
+					--list-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 \
+				|| gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
+					${http_proxy:+--keyserver-options http-proxy="${http_proxy}"} \
+					--keyserver "hkp://keyserver.ubuntu.com:80" \
+					--recv-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 \
+				|| exit_with_error "Failed to recieve key" "${key}"
+			done
 
-			if [ x"" != x"${http_proxy}" ]; then
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
-
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 --keyserver-options http-proxy="${http_proxy}" \
-				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
-			else
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				 || gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 8F427EAF >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
-
-				(gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --list-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1\
-				|| gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning \
-				--keyserver hkp://keyserver.ubuntu.com:80 \
-				--recv-keys 9F0E78D5 >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1)
-			fi
-
-			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --verify \
-			--trust-model always -q "${localdir}/${filename}.asc" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
+			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --trust-model always \
+				-q --verify "${localdir}/${filename}.asc" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
 
 		else
