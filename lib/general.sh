@@ -1805,6 +1805,7 @@ download_and_verify()
 		fi
 
 		if [[ $verified != true ]]; then
+			rm -rf "${localdir}/${filename}"* # We also delete asc file
 			exit_with_error "verification failed"
 		fi
 
