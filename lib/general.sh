@@ -1720,38 +1720,6 @@ download_and_verify()
 		--bt-stop-timeout=30
 	)
 
-        if [[ $DOWNLOAD_MIRROR == china ]]; then
-			local server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-		elif [[ $DOWNLOAD_MIRROR == bfsu ]]; then
-			local server="https://mirrors.bfsu.edu.cn/armbian-releases/"
-		else
-			local server=${ARMBIAN_MIRROR}
-        fi
-
-	# rootfs has its own infra
-	if [[ "${remotedir}" == "_rootfs" ]]; then
-		local server="https://cache.armbian.com/"
-		remotedir="rootfs/$ROOTFSCACHE_VERSION"
-	fi
-
-	# switch to china mirror if US timeouts
-	timeout 10 curl --location --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
-	if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
-		display_alert "Timeout from $server" "retrying" "info"
-		server="https://mirrors.tuna.tsinghua.edu.cn/armbian-releases/"
-
-		# switch to another china mirror if tuna timeouts
-		timeout 10 curl --location --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
-		if [[ $? -ne 7 && $? -ne 22 && $? -ne 0 ]]; then
-			display_alert "Timeout from $server" "retrying" "info"
-			server="https://mirrors.bfsu.edu.cn/armbian-releases/"
-		fi
-	fi
-
-	# check if file exists on remote server before running aria2 downloader
-	timeout 10 curl --location --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null
-	[[ $? -ne 0 ]] && return
-
 	cd "${localdir}" || exit
 
 	# use local signature file
@@ -1793,16 +1761,13 @@ download_and_verify()
 
 	# direct download if torrent fails
 	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
-		if [[ ! `timeout 10 curl --location --head --fail --silent ${server}${remotedir}/${filename} 2>&1 >/dev/null` ]]; then
-			display_alert "downloading using http(s) network" "$filename"
-			aria2c "${aria2_options[@]}" \
-				--dir="${localdir}" --out="${filename}" \
-				$(get_urls "${catalog}" "${filename}")
+		display_alert "downloading using http(s) network" "$filename"
+		aria2c "${aria2_options[@]}" \
+			--dir="${localdir}" --out="${filename}" \
+			$(get_urls "${catalog}" "${filename}")
 
-			# mark complete
-			[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
-
-		fi
+		# mark complete
+		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
 	fi
 
 	if [[ -f ${localdir}/${filename}.asc ]]; then
