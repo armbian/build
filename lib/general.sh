@@ -1563,8 +1563,8 @@ prepare_host()
 				local toolchain_zip="${SRC}/cache/toolchain/${toolchain}"
 				local toolchain_dir="${toolchain_zip%.tar.*}"
 				if [[ ! -f "${toolchain_dir}/.download-complete" ]]; then
-					download_and_verify "toolchain" "${toolchain}"
-					[[ ! -f "${toolchain_zip}" ]] && exit_with_error "Failed to download toolchain" "${toolchain}"
+					download_and_verify "toolchain" "${toolchain}" \
+					|| exit_with_error "Failed to download toolchain" "${toolchain}"
 
 					display_alert "decompressing"
 					pv -p -b -r -c -N "[ .... ] ${toolchain}" "${toolchain_zip}" | xz -dc | tar xp --xattrs --no-same-owner --overwrite
