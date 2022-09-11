@@ -1697,6 +1697,8 @@ download_and_verify()
 		--download-result=hide
 
 		# Meta
+		--server-stat-if="${SRC}/cache/.aria2/server_stats"
+		--server-stat-of="${SRC}/cache/.aria2/server_stats"
 		--dht-file-path="${SRC}/cache/.aria2/dht.dat"
 		--rpc-save-upload-metadata=false
 		--auto-save-interval=0
@@ -1708,10 +1710,15 @@ download_and_verify()
 
 		# Connection
 		--disable-ipv6=$DISABLE_IPV6
+		--connect-timeout=10
+		--timeout=10
+		--allow-piece-length-change=true
+		--max-connection-per-server=2
+		--lowest-speed-limit=500K
 
 		# BT
 		--seed-time=0
-		--bt-stop-timeout=120
+		--bt-stop-timeout=30
 	)
 
         if [[ $DOWNLOAD_MIRROR == china ]]; then
