@@ -1761,7 +1761,6 @@ download_and_verify()
 		ln -sf "${SRC}/config/torrents/${filename}.asc" "${localdir}/${filename}.asc"
 	else
 		# download signature file
-		local torrent=${server}$remotedir/${filename}.torrent
 		aria2c "${aria2_options[@]}" \
 			--continue=false \
 			--dir="${localdir}" --out="${filename}.asc" \
@@ -1774,6 +1773,9 @@ download_and_verify()
 			[[ $rc -ne 3 ]] && display_alert "Failed to download signature file. aria2 exit code:" "$rc" "wrn"
 			return $rc
 		fi
+
+		[[ ${USE_TORRENT} == "yes" ]] \
+		&& local torrent="${server}${remotedir}/${filename}.torrent $(webseed "${server}" "${remotedir}" "${filename}.torrent")"
 	fi
 
 	# download torrent first
@@ -1783,7 +1785,7 @@ download_and_verify()
 		aria2c "${aria2_options[@]}" \
 			--follow-torrent=mem \
 			--dir="${localdir}" \
-			"${torrent}"
+			${torrent}
 
 		# mark complete
 		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete"
