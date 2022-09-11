@@ -1654,6 +1654,7 @@ function get_urls()
 			local CCODE=$(curl --silent --fail  https://cache.armbian.com/geoip | jq '.continent.code' -r)
 			local urls=(
 				# "https://cache.armbian.com/rootfs/${ROOTFSCACHE_VERSION}/${filename}"
+				"https://github.com/armbian/cache/releases/download/${ROOTFSCACHE_VERSION}/${filename}"
 
 				$( curl --silent --fail  "https://cache.armbian.com/mirrors" \
 					| jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" \
