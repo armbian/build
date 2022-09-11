@@ -1743,6 +1743,7 @@ download_and_verify()
 	fi
 
 	# download torrent first
+	local direct=yes
 	if [[ ${USE_TORRENT} == "yes" ]]; then
 
 		display_alert "downloading using torrent network" "$filename"
@@ -1751,21 +1752,25 @@ download_and_verify()
 			--dir="${localdir}" \
 			${torrent}
 
-		# mark complete
-		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete"
+		[[ $? -eq 0 ]] && direct=no
 
 	fi
 
 
 	# direct download if torrent fails
-	if [[ ! -f "${localdir}/${filename}.complete" ]]; then
+	if [[ $direct != "no" ]]; then
 		display_alert "downloading using http(s) network" "$filename"
 		aria2c "${aria2_options[@]}" \
 			--dir="${localdir}" --out="${filename}" \
 			$(get_urls "${catalog}" "${filename}")
 
-		# mark complete
-		[[ $? -eq 0 ]] && touch "${localdir}/${filename}.complete" && echo ""
+		local rc=$?
+		if [[ $rc -ne 0 ]]; then
+			display_alert "Failed to download. aria2 exit code:" "$rc" "wrn"
+			return $rc
+		fi
+
+		echo ""
 	fi
 
 	if [[ -f ${localdir}/${filename}.asc ]]; then
