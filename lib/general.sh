@@ -1641,7 +1641,6 @@ function get_urls()
 			local CCODE=$(curl --silent --fail https://dl.armbian.com/geoip | jq '.continent.code' -r)
 			local urls=(
 				# "https://dl.armbian.com/_toolchain/${filename}"
-				# "${ARMBIAN_MIRROR}/${filename}"
 
 				$( curl --silent --fail  "https://dl.armbian.com/mirrors" \
 					| jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" \

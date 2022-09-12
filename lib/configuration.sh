@@ -597,16 +597,6 @@ if [[ "${ARCH}" == "amd64" ]]; then
 		fi
 fi
 
-# don't use mirrors that throws garbage on 404
-if [[ -z ${ARMBIAN_MIRROR} ]]; then
-	while true; do
-
-		ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
-		[[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]] && break
-
-	done
-fi
-
 [[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
 # For (late) user override.
