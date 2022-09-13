@@ -1567,7 +1567,9 @@ prepare_host()
 					|| exit_with_error "Failed to download toolchain" "${toolchain}"
 
 					display_alert "decompressing"
-					pv -p -b -r -c -N "[ .... ] ${toolchain}" "${toolchain_zip}" | xz -dc | tar xp --xattrs --no-same-owner --overwrite
+					pv -p -b -r -c -N "[ .... ] ${toolchain}" "${toolchain_zip}" \
+					| xz -dc \
+					| tar xp --xattrs --no-same-owner --overwrite -C "${SRC}/cache/toolchain/"
 					if [[ $? -ne 0 ]]; then
 						rm -rf "${toolchain_dir}"
 						exit_with_error "Failed to decompress toolchain" "${toolchain}"
@@ -1717,8 +1719,6 @@ download_and_verify()
 		--bt-stop-timeout=30
 	)
 
-	cd "${localdir}" || exit
-
 	# use local signature file
 	if [[ -f "${SRC}/config/torrents/${filename}.asc" ]]; then
 		local torrent="${SRC}/config/torrents/${filename}.torrent"
@@ -1800,7 +1800,9 @@ download_and_verify()
 
 		else
 
-			md5sum -c --status "${localdir}/${filename}.asc" && verified=true && display_alert "Verified" "MD5" "info"
+			[[ "$(md5sum "${localdir}/${filename}" | awk '{printf $1}')" \
+				== "$(awk '{printf $1}' ${localdir}/${filename}.asc)" \
+			]] && verified=true && display_alert "Verified" "MD5" "info"
 
 		fi
 
