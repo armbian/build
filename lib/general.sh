@@ -1772,6 +1772,7 @@ download_and_verify()
 		echo ""
 	fi
 
+	local verified=false
 	if [[ -f ${localdir}/${filename}.asc ]]; then
 
 		if grep -q 'BEGIN PGP SIGNATURE' "${localdir}/${filename}.asc"; then
