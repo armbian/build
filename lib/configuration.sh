@@ -159,6 +159,7 @@ ATF_COMPILE=yes
 [[ -z $WIREGUARD ]] && WIREGUARD="yes"
 [[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 [[ -z $SKIP_BOOTSPLASH ]] && SKIP_BOOTSPLASH="no"
+[[ -z $PLYMOUTH ]] && PLYMOUTH="yes"
 [[ -z $AUFS ]] && AUFS="yes"
 [[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
 [[ -z $EXTRA_BSP_NAME ]] && EXTRA_BSP_NAME=""
@@ -178,6 +179,12 @@ fi
 
 # load architecture defaults
 source "${SRC}/config/sources/${ARCH}.conf"
+
+if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
+	SKIP_BOOTSPLASH="yes"
+	PLYMOUTH="no"
+	[[ $BUILD_DESKTOP != "no" ]] && exit_with_error "HAS_VIDEO_OUTPUT is set to no. So we shouldn't build desktop environment"
+fi
 
 ## Extensions: at this point we've sourced all the config files that will be used,
 ##             and (hopefully) not yet invoked any extension methods. So this is the perfect
