@@ -780,14 +780,14 @@ compile_plymouth-theme-armbian()
 	tmp_dir=$(mktemp -d)
 	chmod 700 ${tmp_dir}
 	trap "ret=\$?; rm -rf \"${tmp_dir}\" ; exit \$ret" 0 1 2 3 15
-	plymouth_theme_armbian_dir=plymouth-theme-armbian_${REVISION}_all
-	display_alert "Building deb" "plymouth-theme-armbian" "info"
+	plymouth_theme_armbian_dir=armbian-plymouth-theme_${REVISION}_all
+	display_alert "Building deb" "armbian-plymouth-theme" "info"
 
 	mkdir -p "${tmp_dir}/${plymouth_theme_armbian_dir}"/{DEBIAN,usr/share/plymouth/themes/armbian}
 
 	# set up control file
 	cat <<-END > "${tmp_dir}/${plymouth_theme_armbian_dir}"/DEBIAN/control
-	Package: plymouth-theme-armbian
+	Package: armbian-plymouth-theme
 	Version: $REVISION
 	Architecture: all
 	Maintainer: $MAINTAINER <$MAINTAINERMAIL>

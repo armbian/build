@@ -399,9 +399,9 @@ POST_INSTALL_KERNEL_DEBS
 	# install plymouth-theme-armbian
 	if [[ $PLYMOUTH == yes ]]; then
 		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
-			install_deb_chroot "${DEB_STORAGE}/plymouth-theme-armbian_${REVISION}_all.deb"
+			install_deb_chroot "${DEB_STORAGE}/armbian-plymouth-theme_${REVISION}_all.deb"
 		else
-			install_deb_chroot "plymouth-theme-armbian" "remote"
+			install_deb_chroot "armbian-plymouth-theme" "remote"
 		fi
 	fi
 
