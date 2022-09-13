@@ -31,20 +31,22 @@ case $BRANCH in
 
 		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-'$BRANCH
-        ;;
+
+    ;;
 
 	current)
 
 		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-	;;
+	  ;;
+
 	edge)
 
 		KERNELBRANCH="branch:linux-5.18.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-	;;
+	  ;;
 esac
 
 write_uboot_platform()

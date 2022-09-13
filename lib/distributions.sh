@@ -396,6 +396,15 @@ POST_INSTALL_KERNEL_DEBS
 		fi
 	fi
 
+	# install plymouth-theme-armbian
+	if [[ $PLYMOUTH == yes ]]; then
+		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
+			install_deb_chroot "${DEB_STORAGE}/armbian-plymouth-theme_${REVISION}_all.deb"
+		else
+			install_deb_chroot "armbian-plymouth-theme" "remote"
+		fi
+	fi
+
 	# install kernel sources
 	if [[ -f ${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb && $INSTALL_KSRC == yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KSRC}_${REVISION}_all.deb"
@@ -591,6 +600,18 @@ FAMILY_TWEAKS
 
 	# build logo in any case
 	boot_logo
+
+	# Show logo
+	if [[ $PLYMOUTH == yes ]]; then
+		if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
+			[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt \
+				&& sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt \
+				|| echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
+
+			[[ -f "${SDCARD}"/boot/boot.ini ]] \
+				&& sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
+		fi
+	fi
 
 	# disable MOTD for first boot - we want as clean 1st run as possible
 	chmod -x "${SDCARD}"/etc/update-motd.d/*

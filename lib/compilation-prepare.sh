@@ -117,13 +117,13 @@ compilation_prepare()
 	fi
 
 	#
-	# Linux splash file
+	# Linux splash file (legacy)
 	#
 
-	# disable it.
-	# todo: cleanup logo generation code and bring in plymouth
+	# since plymouth introduction, boot scripts are not supporting this method anymore.
+	# In order to enable it, you need to use this: setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"
 
-	if linux-version compare "${version}" ge 5.15 && [ $SKIP_BOOTSPLASH != yes ]; then
+	if linux-version compare "${version}" ge 5.15 && [ "${SKIP_BOOTSPLASH}" != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
 
