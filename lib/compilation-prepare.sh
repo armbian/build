@@ -122,26 +122,20 @@ compilation_prepare()
 
 	# disable it.
 	# todo: cleanup logo generation code and bring in plymouth
-	SKIP_BOOTSPLASH=yes
 
-	if linux-version compare "${version}" ge 5.10 && linux-version compare "${version}" lt 5.19 && [ $SKIP_BOOTSPLASH != yes ]; then
+	if linux-version compare "${version}" ge 5.15 && [ $SKIP_BOOTSPLASH != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
-		if linux-version compare "${version}" ge 5.11; then
-			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
+
+		if linux-version compare "${version}" ge 5.19.6 \
+		|| ( linux-version compare "${version}" ge 5.15.64 && linux-version compare "${version}" lt 5.16 ) ; then
+			process_patch_file "${SRC}/patch/misc/0001-Revert-fbdev-fbcon-Properly-revert-changes-when-vc_r.patch" "applying"
 		fi
 
-		if ( linux-version compare "${version}" ge 5.18.18 && linux-version compare "${version}" lt 5.19 ) \
-			|| ( linux-version compare "${version}" ge 5.15.61 && linux-version compare "${version}" lt 5.16 ) ; then
-			process_patch_file "${SRC}/patch/misc/0001-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
-		fi
-
+		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/0001-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
-
-		if linux-version compare "${version}" ge 5.15; then
-			process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0002-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
-		fi
-
+		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0002-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0003-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0004-Revert-drivers-video-fbcon-fix-NULL-dereference-in-f.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0005-Revert-fbcon-remove-no-op-fbcon_set_origin.patch" "applying"
@@ -160,6 +154,17 @@ compilation_prepare()
 		process_patch_file "${SRC}/patch/misc/0010-bootsplash.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/0011-bootsplash.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/0012-bootsplash.patch" "applying"
+
+	fi
+
+	#
+	# Returning headers needed for some wireless drivers
+	#
+
+	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
+
+		display_alert "Adding" "Missing headers" "info"
+		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
 
 	fi
 
@@ -297,9 +302,6 @@ compilation_prepare()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
 
-                # add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-5.19.2.patch" "applying"
-
 	fi
 
 
@@ -334,9 +336,6 @@ compilation_prepare()
 		echo "obj-\$(CONFIG_RTL8189FS) += rtl8189fs/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189fs\/Kconfig"' \
 		"$kerneldir/drivers/net/wireless/Kconfig"
-
-                # add support for 5.19.2
-                process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-5.19.2.patch" "applying"
 
 	fi
 
@@ -421,20 +420,20 @@ compilation_prepare()
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/karabek/xradio" "xradio" "branch:master" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/dbeinder/xradio" "xradio" "branch:karabek_rebase" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
-		cp "${SRC}"/cache/sources/xradio/master/*.{h,c} \
+		cp "${SRC}"/cache/sources/xradio/karabek_rebase/*.{h,c} \
 		"$kerneldir/drivers/net/wireless/xradio/"
 
 		# Makefile
-		cp "${SRC}/cache/sources/xradio/master/Makefile" \
+		cp "${SRC}/cache/sources/xradio/karabek_rebase/Makefile" \
 		"$kerneldir/drivers/net/wireless/xradio/Makefile"
 
 		# Kconfig
-		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/master/Kconfig"
-		cp "${SRC}/cache/sources/xradio/master/Kconfig" \
+		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig"
+		cp "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig" \
 		"$kerneldir/drivers/net/wireless/xradio/Kconfig"
 
 		# Add to section Makefile
@@ -445,6 +444,11 @@ compilation_prepare()
 
 		# add support for K5.13+
                 process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
+
+		# add support for aarch64
+		if [[ $ARCH == arm64 ]]; then
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-aarch64.patch" "applying"
+		fi
 
 	fi
 

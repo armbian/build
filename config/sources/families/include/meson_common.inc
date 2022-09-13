@@ -32,23 +32,21 @@ case $BRANCH in
 		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-		HAS_VIDEO_OUTPUT=no
+    ;;
 
-        ;;
 	current)
 
 		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-		HAS_VIDEO_OUTPUT=no
+	  ;;
 
-	;;
 	edge)
 
 		KERNELBRANCH="branch:linux-5.18.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
-	;;
+	  ;;
 esac
 
 write_uboot_platform()
