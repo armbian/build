@@ -120,10 +120,10 @@ compilation_prepare()
 	# Linux splash file (legacy)
 	#
 
-	# since plymouth introduction, this is disabled by default and boot scripts are not supporting this anymore
+	# since plymouth introduction, boot scripts are not supporting this method anymore.
 	# In order to enable it, you need to use this: setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"
 
-	if linux-version compare "${version}" ge 5.15 && [ "${KERNEL_BOOTSPLASH}" == yes ]; then
+	if linux-version compare "${version}" ge 5.15 && [ "${SKIP_BOOTSPLASH}" != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
 
