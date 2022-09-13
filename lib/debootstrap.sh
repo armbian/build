@@ -864,6 +864,11 @@ PRE_UPDATE_INITRAMFS
 Called before unmounting both `/root` and `/boot`.
 PRE_UMOUNT_FINAL_IMAGE
 
+	# Check the partition table after the uboot code has been written
+	# and print to the log file.
+	echo -e "\nPartition table after write_uboot $LOOP" >>$DEST/${LOG_SUBPATH}/debootstrap.log
+	sfdisk -l $LOOP >>$DEST/${LOG_SUBPATH}/debootstrap.log
+
 	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
 	[[ $UEFISIZE != 0 ]] && umount -l "${MOUNT}${UEFI_MOUNT_POINT}"
