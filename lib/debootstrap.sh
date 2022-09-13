@@ -369,7 +369,7 @@ create_rootfs_cache()
 
 		# DEBUG: print free space
 		local freespace=$(LC_ALL=C df -h)
-		echo $freespace >> $DEST/${LOG_SUBPATH}/debootstrap.log
+		echo -e "$freespace" >> $DEST/${LOG_SUBPATH}/debootstrap.log
 		display_alert "Free SD cache" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
 		display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
@@ -844,7 +844,7 @@ PRE_UPDATE_INITRAMFS
 
 	# DEBUG: print free space
 	local freespace=$(LC_ALL=C df -h)
-	echo $freespace >> $DEST/${LOG_SUBPATH}/debootstrap.log
+	echo -e "$freespace" >> $DEST/${LOG_SUBPATH}/debootstrap.log
 	display_alert "Free SD cache" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
 	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
