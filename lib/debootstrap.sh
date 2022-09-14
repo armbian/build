@@ -499,44 +499,28 @@ Good time to change stuff like mkfs opts, types etc.
 PRE_PREPARE_PARTITIONS
 
 	# stage: determine partition configuration
-	if [[ -n $BOOTFS_TYPE ]]; then
-		# 2 partition setup with forced /boot type
-		local bootfs=$BOOTFS_TYPE
-		local bootpart=1
-		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
-	elif [[ $ROOTFS_TYPE != ext4 && $ROOTFS_TYPE != nfs ]]; then
-		# 2 partition setup for non-ext4 local root
-		local bootfs=ext4
-		local bootpart=1
-		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
-	elif [[ $ROOTFS_TYPE == nfs ]]; then
-		# single partition ext4 /boot, no root
-		local bootfs=ext4
-		local bootpart=1
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE} # For cleanup processing only
-	elif [[ $CRYPTROOT_ENABLE == yes ]]; then
-		# 2 partition setup for encrypted /root and non-encrypted /boot
-		local bootfs=ext4
-		local bootpart=1
-		local rootpart=2
-		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
-	elif [[ $UEFISIZE -gt 0 ]]; then
+	local next=1
+	# Check if we need UEFI partition
+	if [[ $UEFISIZE -gt 0 ]]; then
 		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
-			# efi partition and ext4 root. some juggling is done by parted/sgdisk
 			local uefipart=15
-			local rootpart=1
+			# Check if we need BIOS partition
+			[[ $BIOSSIZE -gt 0 ]] && local biospart=14
 		else
-			# efi partition and ext4 root.
-			local uefipart=1
-			local rootpart=2
+			local uefipart=$(( next++ ))
 		fi
+	fi
+	# Check if we need boot partition
+	if [[ -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes ]]; then
+		local bootpart=$(( next++ ))
+		local bootfs=${BOOTFS_TYPE:-ext4}
+		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	else
-		# single partition ext4 root
-		local rootpart=1
 		BOOTSIZE=0
 	fi
+	# Check if we need root partition
+	[[ $ROOTFS_TYPE != nfs ]] \
+		&& local rootpart=$(( next++ ))
 
 	# stage: calculate rootfs size
 	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
@@ -577,66 +561,51 @@ PREPARE_IMAGE_SIZE
 		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
 	fi
 
-	# stage: calculate boot partition size
-	local bootstart=$(($OFFSET * 2048))
-	local rootstart=$(($bootstart + ($BOOTSIZE * 2048) + ($UEFISIZE * 2048)))
-	local bootend=$(($rootstart - 1))
-
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
-	parted -s ${SDCARD}.raw -- mklabel ${IMAGE_PARTITION_TABLE}
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
+		{
+			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] \
+				&& echo "label: dos" \
+				|| echo "label: $IMAGE_PARTITION_TABLE"
+		} | sfdisk ${SDCARD}.raw >>"${DEST}/${LOG_SUBPATH}/install.log" 2>&1 \
+			|| exit_with_error "Create partition table fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
+
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
 		*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
 		Finally, we can get our own partition table. You have to partition ${SDCARD}.raw
 		yourself. Good luck.
 		CREATE_PARTITION_TABLE
-	elif [[ $ROOTFS_TYPE == nfs ]]; then
-		# single /boot partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s "100%"
-	elif [[ $UEFISIZE -gt 0 ]]; then
-		# uefi partition + root partition
-		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
-			if [[ ${BIOSSIZE} -gt 0 ]]; then
-				display_alert "Creating partitions" "BIOS+UEFI+rootfs" "info"
-				# UEFI + GPT automatically get a BIOS partition at 14, EFI at 15
-				local biosstart=$(($OFFSET * 2048))
-				local uefistart=$(($OFFSET * 2048 + ($BIOSSIZE * 2048)))
-				local rootstart=$(($uefistart + ($UEFISIZE * 2048) ))
-				local biosend=$(($uefistart - 1))
-				local uefiend=$(($rootstart - 1))
-				parted -s ${SDCARD}.raw -- mkpart bios fat32 ${biosstart}s ${biosend}s
-				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${uefistart}s ${uefiend}s
-				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
-				# transpose so BIOS is in sda14; EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
-				sgdisk --transpose 1:14 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 1:14 FAILED"
-				sgdisk --transpose 2:15 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 2:15 FAILED"
-				sgdisk --transpose 3:1 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 3:1 FAILED"
-				# set the ESP (efi) flag on 15
-				parted -s ${SDCARD}.raw -- set 14 bios_grub on || echo "*** SETTING bios_grub ON 14 FAILED"
-				parted -s ${SDCARD}.raw -- set 15 esp on || echo "*** SETTING ESP ON 15 FAILED"
-			else
-				display_alert "Creating partitions" "UEFI+rootfs (no BIOS)" "info"
-				# Simple EFI + root partition on GPT, no BIOS.
-				parted -s ${SDCARD}.raw -- mkpart efi fat32 ${bootstart}s ${bootend}s
-				parted -s ${SDCARD}.raw -- mkpart rootfs ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
-				# transpose so EFI is in sda15 and root in sda1; requires sgdisk, parted cant do numbers
-				sgdisk --transpose 1:15 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 1:15 FAILED"
-				sgdisk --transpose 2:1 ${SDCARD}.raw &> /dev/null || echo "*** TRANSPOSE 2:1 FAILED"
-				# set the ESP (efi) flag on 15
-				parted -s ${SDCARD}.raw -- set 15 esp on || echo "*** SETTING ESP ON 15 FAILED"
-			fi
-		else
-			parted -s ${SDCARD}.raw -- mkpart primary fat32 ${bootstart}s ${bootend}s
-			parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
-		fi
-	elif [[ $BOOTSIZE == 0 ]]; then
-		# single root partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
 	else
-		# /boot partition + root partition
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$bootfs]} ${bootstart}s ${bootend}s
-		parted -s ${SDCARD}.raw -- mkpart primary ${parttype[$ROOTFS_TYPE]} ${rootstart}s "100%"
+		{
+			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] \
+				&& echo "label: dos" \
+				|| echo "label: $IMAGE_PARTITION_TABLE"
+
+			local next=$OFFSET
+			if [[ -n "$biospart" ]]; then
+				echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=\"BIOS boot\""
+				local next=$(( $next + $BIOSSIZE ))
+			fi
+			if [[ -n "$uefipart" ]]; then
+				echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=uefi"
+				local next=$(( $next + $UEFISIZE ))
+			fi
+			if [[ -n "$bootpart" ]]; then
+				if [[ -n "$rootpart" ]]; then
+					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=\"Linux extended boot\""
+					local next=$(( $next + $BOOTSIZE ))
+				else
+					# no `size` argument mean "as much as possible"
+					echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=linux"
+				fi
+			fi
+			if [[ -n "$rootpart" ]]; then
+				# no `size` argument  mean "as much as possible"
+				echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=linux"
+			fi
+		} | sfdisk ${SDCARD}.raw >>"${DEST}/${LOG_SUBPATH}/install.log" 2>&1 \
+			|| exit_with_error "Partition fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
