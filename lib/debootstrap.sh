@@ -763,7 +763,7 @@ update_initramfs()
 		find ${chroot_target}/lib/modules/ -maxdepth 1 -type d -name "*${VER}*"
 	)
 	if [ "$target_dir" != "" ]; then
-		update_initramfs_cmd="update-initramfs -uv -k $(basename $target_dir)"
+		update_initramfs_cmd="TMPDIR=/tmp update-initramfs -uv -k $(basename $target_dir)"
 	else
 		exit_with_error "No kernel installed for the version" "${VER}"
 	fi
