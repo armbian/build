@@ -1409,7 +1409,7 @@ prepare_host()
 	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
 	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
 	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev zstd"
+	zlib1g-dev zstd fdisk"
 
   if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
