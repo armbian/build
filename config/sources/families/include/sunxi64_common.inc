@@ -80,11 +80,23 @@ family_tweaks()
 	cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
 }
 
-write_uboot_platform()
-{
-	dd if=/dev/zero of=$2 bs=1k count=1023 seek=1 status=noxfer > /dev/null 2>&1
-	dd if=$1/u-boot-sunxi-with-spl.bin of=$2 bs=1024 seek=8 status=noxfer > /dev/null 2>&1
-}
+case $IMAGE_PARTITION_TABLE in
+	msdos)
+		write_uboot_platform()
+		{
+			dd if=/dev/zero of=$2 bs=1k count=1023 seek=1 status=noxfer > /dev/null 2>&1
+			dd if=$1/u-boot-sunxi-with-spl.bin of=$2 bs=1024 seek=8 status=noxfer > /dev/null 2>&1
+		}
+	;;
+
+	gpt) # Skip 128K for writing if the partition table is GPT.
+		write_uboot_platform()
+		{
+			dd if=/dev/zero of=$2 bs=1024 count=1023 seek=128 status=noxfer > /dev/null 2>&1
+			dd if=$1/u-boot-sunxi-with-spl.bin of=$2 bs=1024 seek=128 status=noxfer > /dev/null 2>&1
+		}
+	;;
+esac
 
 setup_write_uboot_platform()
 {
