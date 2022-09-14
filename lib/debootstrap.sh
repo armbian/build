@@ -559,13 +559,8 @@ PREPARE_IMAGE_SIZE
 		fi
 	else
 		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
-		# Hardcoded overhead +25% is needed for desktop images,
-		# for CLI it could be lower. Align the size up to 4MiB
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.35) / 1 + 0) / 4 + 1) * 4")
-		else
-			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
-		fi
+		# +40% overhead for kernel, boot loader and plymouth. Align the size up to 4MiB
+		local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.40) / 1 + 0) / 4 + 1) * 4")
 	fi
 
 	# stage: create blank image
