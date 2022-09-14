@@ -369,7 +369,7 @@ create_rootfs_cache()
 
 		# DEBUG: print free space
 		local freespace=$(LC_ALL=C df -h)
-		echo $freespace >> $DEST/${LOG_SUBPATH}/debootstrap.log
+		echo -e "$freespace" >> $DEST/${LOG_SUBPATH}/debootstrap.log
 		display_alert "Free SD cache" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
 		display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
@@ -489,9 +489,9 @@ prepare_partitions()
 	UEFISIZE=${UEFISIZE:-0}
 	BIOSSIZE=${BIOSSIZE:-0}
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
-	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbiefi}"
-	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbian_root}"
-	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbianboot}"
+	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbi_efi}"
+	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbi_root}"
+	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbi_boot}"
 
 	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
 *allow custom options for mkfs*
@@ -844,7 +844,7 @@ PRE_UPDATE_INITRAMFS
 
 	# DEBUG: print free space
 	local freespace=$(LC_ALL=C df -h)
-	echo $freespace >> $DEST/${LOG_SUBPATH}/debootstrap.log
+	echo -e "$freespace" >> $DEST/${LOG_SUBPATH}/debootstrap.log
 	display_alert "Free SD cache" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
 	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
 
@@ -863,6 +863,11 @@ PRE_UPDATE_INITRAMFS
 *allow config to hack into the image before the unmount*
 Called before unmounting both `/root` and `/boot`.
 PRE_UMOUNT_FINAL_IMAGE
+
+	# Check the partition table after the uboot code has been written
+	# and print to the log file.
+	echo -e "\nPartition table after write_uboot $LOOP" >>$DEST/${LOG_SUBPATH}/debootstrap.log
+	sfdisk -l $LOOP >>$DEST/${LOG_SUBPATH}/debootstrap.log
 
 	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
