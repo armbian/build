@@ -584,25 +584,41 @@ PREPARE_IMAGE_SIZE
 
 			local next=$OFFSET
 			if [[ -n "$biospart" ]]; then
-				echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=\"BIOS boot\""
+				# gpt: BIOS boot
+				local type="21686148-6449-6E6F-744E-656564454649"
+				echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=${type}"
 				local next=$(( $next + $BIOSSIZE ))
 			fi
 			if [[ -n "$uefipart" ]]; then
-				echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=uefi"
+				# dos: EFI (FAT-12/16/32)
+				# gpt: EFI System
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] \
+					&& local type="ef" \
+					|| local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+				echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=${type}"
 				local next=$(( $next + $UEFISIZE ))
 			fi
 			if [[ -n "$bootpart" ]]; then
+				# Linux extended boot
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] \
+					&& local type="ea" \
+					|| local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
 				if [[ -n "$rootpart" ]]; then
-					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=\"Linux extended boot\""
+					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=${type}"
 					local next=$(( $next + $BOOTSIZE ))
 				else
 					# no `size` argument mean "as much as possible"
-					echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=linux"
+					echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=${type}"
 				fi
 			fi
 			if [[ -n "$rootpart" ]]; then
-				# no `size` argument  mean "as much as possible"
-				echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=linux"
+				# dos: Linux
+				# gpt: Linux filesystem
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] \
+					&& local type="83" \
+					|| local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+				# no `size` argument mean "as much as possible"
+				echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
 			fi
 		} | sfdisk ${SDCARD}.raw >>"${DEST}/${LOG_SUBPATH}/install.log" 2>&1 \
 			|| exit_with_error "Partition fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
