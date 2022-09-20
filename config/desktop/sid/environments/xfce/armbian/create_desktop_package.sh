@@ -14,9 +14,13 @@ mkdir -p "${destination}"/usr/share/pixmaps/armbian "${destination}"/etc/skel/.c
 cp "${SRC}/packages/blobs/desktop/icons/${DISTRIBUTION,,}.png" "${destination}"/usr/share/pixmaps/armbian
 sed 's/xenial.png/'"${DISTRIBUTION,,}"'.png/' -i "${destination}"/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
 
-# install logo for login screen
-cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
+# install login screen wallpapers
+mkdir -p "${destination}"/usr/share/backgrounds/armbian-lightdm/
+cp "${SRC}"/packages/blobs/desktop/lightdm-wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian-lightdm
 
 # install wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
 cp "${SRC}"/packages/blobs/desktop/desktop-wallpapers/armbian*.jpg "${destination}"/usr/share/backgrounds/armbian/
+
+# install logo for login screen
+cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
