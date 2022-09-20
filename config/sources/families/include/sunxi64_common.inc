@@ -75,6 +75,12 @@ var_origin_kernel ()
 
 family_tweaks()
 {
+	if [[ $BOARD == nanopi-r1s-h5 ]]; then
+		# rename USB based network to lan0
+		mkdir -p $SDCARD/etc/udev/rules.d/
+		echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="eth1", NAME="lan0"' > $SDCARD/etc/udev/rules.d/70-rename-lan.rules
+	fi
+
 	# execute specific tweaks function if present
 	[[ $(type -t family_tweaks_s) == function ]] && family_tweaks_s
 	cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
