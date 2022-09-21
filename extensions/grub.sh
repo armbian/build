@@ -91,6 +91,10 @@ pre_umount_final_image__install_grub() {
 		GRUB_DISABLE_OS_PROBER=true
 	grubCfgFragHostSide
 
+	# copy Armbian GRUB wallpaper
+	mkdir -p "${MOUNT}"/usr/share/images/grub/
+	cp "${SRC}"/packages/blobs/splash/grub.png "${MOUNT}"/usr/share/images/grub/wallpaper.png
+
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
 
@@ -143,10 +147,22 @@ configure_grub() {
 		grubCfgFrag
 	fi
 
+	# Enable Armbian Wallpaper on GRUB
+	if [[ "${VENDOR}" == Armbian ]]; then
+		cat <<-grubWallpaper >>"${MOUNT}"/usr/share/desktop-base/grub_background.sh
+			WALLPAPER=/usr/share/images/grub/wallpaper.png
+			COLOR_NORMAL=white/black
+			COLOR_HIGHLIGHT=black/white
+		grubWallpaper
+	fi
+
 	cat <<-grubCfgFrag >>"${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 		GRUB_TIMEOUT_STYLE=menu                                  # Show the menu with Kernel options (Armbian or -generic)...
 		GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT}                        # ... for ${UEFI_GRUB_TIMEOUT} seconds, then boot the Armbian default.
 		GRUB_DISTRIBUTOR="${UEFI_GRUB_DISTRO_NAME}"              # On GRUB menu will show up as "Armbian GNU/Linux" (will show up in some UEFI BIOS boot menu (F8?) as "armbian", not on others)
+		GRUB_GFXMODE=1024x768
+		GRUB_GFXPAYLOAD=keep
+		GRUB_TERMINAL=gfxterm
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
