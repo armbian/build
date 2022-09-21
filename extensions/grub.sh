@@ -162,7 +162,6 @@ configure_grub() {
 		GRUB_DISTRIBUTOR="${UEFI_GRUB_DISTRO_NAME}"              # On GRUB menu will show up as "Armbian GNU/Linux" (will show up in some UEFI BIOS boot menu (F8?) as "armbian", not on others)
 		GRUB_GFXMODE=1024x768
 		GRUB_GFXPAYLOAD=keep
-		GRUB_TERMINAL=gfxterm
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
