@@ -144,8 +144,8 @@ configure_grub() {
 		&& GRUB_CMDLINE_LINUX_DEFAULT+=" console=${SERIALCON}"
 
 	[[ "$BOOT_LOGO" == "yes" || "$BOOT_LOGO" == "desktop" && "$BUILD_DESKTOP" == "yes" ]] \
-		&& GRUB_CMDLINE_LINUX_DEFAULT+=" splash plymouth.ignore-serial-consoles" \
-		|| GRUB_CMDLINE_LINUX_DEFAULT+=" splash=verbose"
+		&& GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles i915.force_probe=* loglevel=3" \
+		|| GRUB_CMDLINE_LINUX_DEFAULT+=" splash=verbose i915.force_probe=*"
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
