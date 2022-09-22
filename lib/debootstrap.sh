@@ -162,22 +162,14 @@ create_rootfs_cache()
 
 		display_alert "Checking cache" "$cache_name" "info"
 
-		if [[ -f ${cache_fname}.aria2 ]]; then
-			display_alert "Removing partially downloaded file."
-			rm ${cache_fname}*
-		fi
-
-		if [[ ! -f $cache_fname ]]; then
+		# if aria2 file exists download didn't succeeded
+		if [[ ! -f $cache_fname || -f ${cache_fname}.aria2 ]]; then
 			display_alert "Downloading from servers"
-			download_and_verify "_rootfs" "$cache_name"
+			download_and_verify "rootfs" "$cache_name" \
+			|| continue
 		fi
 
-		if [[ ! -f ${cache_fname} ]]; then
-			display_alert "not found"
-			continue
-		fi
-
-		break
+		[[ -f $cache_fname && ! -f ${cache_fname}.aria2 ]] && break
 	done
 
 	# if aria2 file exists download didn't succeeded
