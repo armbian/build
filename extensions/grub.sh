@@ -149,6 +149,7 @@ configure_grub() {
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
+		mkdir -p "${MOUNT}"/usr/share/desktop-base/
 		cat <<-grubWallpaper >>"${MOUNT}"/usr/share/desktop-base/grub_background.sh
 			WALLPAPER=/usr/share/images/grub/wallpaper.png
 			COLOR_NORMAL=white/black
