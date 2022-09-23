@@ -6,6 +6,7 @@ function extension_prepare_config__prepare_flash_kernel() {
 	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}"        # 'true' will disable os-probing, useful for SD cards.
 	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"             # Will be used on grub menu display
 	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                             # Small timeout by default
+	export GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-}"          # Cmdline by default
 	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-yes}"               # Enable BIOS too if target is amd64
 	export UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"          # Export kernel and initrd for direct kernel boot "kexec"
 	# User config overrides.
@@ -91,6 +92,10 @@ pre_umount_final_image__install_grub() {
 		GRUB_DISABLE_OS_PROBER=true
 	grubCfgFragHostSide
 
+	# copy Armbian GRUB wallpaper
+	mkdir -p "${MOUNT}"/usr/share/images/grub/
+	cp "${SRC}"/packages/blobs/splash/grub.png "${MOUNT}"/usr/share/images/grub/wallpaper.png
+
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
 
@@ -135,18 +140,31 @@ pre_umount_final_image__900_export_kernel_and_initramfs() {
 }
 
 configure_grub() {
-	display_alert "GRUB EFI kernel cmdline" "console=${SERIALCON} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
+	[[ -n "$SERIALCON" ]] \
+		&& GRUB_CMDLINE_LINUX_DEFAULT+=" console=${SERIALCON}"
 
-	if [[ "_${SERIALCON}_" != "__" ]]; then
-		cat <<-grubCfgFrag >>"${MOUNT}"/etc/default/grub.d/98-armbian.cfg
-			GRUB_CMDLINE_LINUX_DEFAULT="console=${SERIALCON}"        # extra Kernel cmdline is configured here
-		grubCfgFrag
+	[[ "$BOOT_LOGO" == "yes" || "$BOOT_LOGO" == "desktop" && "$BUILD_DESKTOP" == "yes" ]] \
+		&& GRUB_CMDLINE_LINUX_DEFAULT+=" quiet splash plymouth.ignore-serial-consoles i915.force_probe=* loglevel=3" \
+		|| GRUB_CMDLINE_LINUX_DEFAULT+=" splash=verbose i915.force_probe=*"
+
+	# Enable Armbian Wallpaper on GRUB
+	if [[ "${VENDOR}" == Armbian ]]; then
+		mkdir -p "${MOUNT}"/usr/share/desktop-base/
+		cat <<-grubWallpaper >>"${MOUNT}"/usr/share/desktop-base/grub_background.sh
+			WALLPAPER=/usr/share/images/grub/wallpaper.png
+			COLOR_NORMAL=white/black
+			COLOR_HIGHLIGHT=black/white
+		grubWallpaper
 	fi
 
+	display_alert "GRUB EFI kernel cmdline" "${GRUB_CMDLINE_LINUX_DEFAULT} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
 	cat <<-grubCfgFrag >>"${MOUNT}"/etc/default/grub.d/98-armbian.cfg
+		GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT}"
 		GRUB_TIMEOUT_STYLE=menu                                  # Show the menu with Kernel options (Armbian or -generic)...
 		GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT}                        # ... for ${UEFI_GRUB_TIMEOUT} seconds, then boot the Armbian default.
 		GRUB_DISTRIBUTOR="${UEFI_GRUB_DISTRO_NAME}"              # On GRUB menu will show up as "Armbian GNU/Linux" (will show up in some UEFI BIOS boot menu (F8?) as "armbian", not on others)
+		GRUB_GFXMODE=1024x768
+		GRUB_GFXPAYLOAD=keep
 	grubCfgFrag
 
 	if [[ "a${UEFI_GRUB_DISABLE_OS_PROBER}" != "a" ]]; then
