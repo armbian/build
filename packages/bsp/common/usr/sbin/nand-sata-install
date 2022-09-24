@@ -28,6 +28,7 @@ title="NAND, eMMC, SATA, USB and NVMe Armbian installer v${VERSION}"
 # exceptions
 if grep -q 'sun4i' /proc/cpuinfo; then DEVICE_TYPE="a10";
 elif grep -q 'sun5i' /proc/cpuinfo; then DEVICE_TYPE="a13";
+elif efibootmgr -q 2>/dev/null; then DEVICE_TYPE="uefi";
 else DEVICE_TYPE="a20"; fi
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
 case ${LINUXFAMILY} in
@@ -42,13 +43,17 @@ esac
 #recognize_root
 root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
 root_partition=$(blkid | tr -d '":' | grep "${root_uuid}" | awk '{print $1}')
-root_partition_device="${root_partition::-2}"
+root_partition_device=$(echo $root_partition | sed 's/[0-9]//g')
+root_partition_device_name=$(echo $root_partition_device | sed 's/\/dev\///g')
 
 # find targets: NAND, EMMC, SATA, SPI flash, NVMe
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
-emmccheck=$(ls -d -1 /dev/mmcblk* | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
-diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme')
+emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
+diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme' | grep -v "$root_partition_device_name")
 spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
+
+#recognize EFI partition
+efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI System" | awk '{print $1}')
 
 # define makefs and mount options
 declare -A mkopts mountopts
@@ -348,6 +353,24 @@ create_armbian()
 			fallocate -l 128M "${TempDir}"/rootfs/var/swap || dd if=/dev/zero of="${TempDir}"/rootfs/var/swap bs=1M count=128 status=noxfer
 			mkswap "${TempDir}"/rootfs/var/swap
 		fi
+	if [[ $DEVICE_TYPE = uefi ]]; then
+
+		echo "Install frub to $efi_partition"
+		mount $efi_partition "${TempDir}"/rootfs/boot/efi
+		mount --bind /dev "${TempDir}"/rootfs/dev
+		mount --make-rslave --bind /dev/pts "${TempDir}"/rootfs/dev/pts
+		mount --bind /proc "${TempDir}"/rootfs/proc
+		mount --make-rslave --rbind /sys "${TempDir}"/rootfs/sys
+		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=boot/efi --bootloader-id=GRUB --removable >/dev/null" >> $logfile
+		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg >/dev/null" >> $logfile
+		grep "${TempDir}"/rootfs/sys /proc/mounts | cut -f2 -d" " | sort -r | xargs umount -n
+		umount "${TempDir}"/rootfs/proc
+		umount "${TempDir}"/rootfs/dev/pts
+		umount "${TempDir}"/rootfs/dev
+		umount "${TempDir}"/rootfs/boot/efi
+	fi
+
+
 	fi
 
 	# Boot from SPI, root = SATA / USB
@@ -375,7 +398,7 @@ create_armbian()
 	sync
 
 	umount "${TempDir}"/rootfs
-	[[ $1 != "spi" ]] && umount "${TempDir}"/bootfs
+	mountpoint -q "${TempDir}"/bootfs && umount "${TempDir}"/bootfs
 } # create_armbian
 
 # Accept device as parameter: for example /dev/sda unmounts all their mounts
@@ -656,15 +679,17 @@ main()
 	fi
 
 	# Boot + RootFS relocation options
-	[[ -n $diskcheck ]] && options+=(1 'Boot from SD   - system on SATA, USB or NVMe')
+	[[ -n $diskcheck && ${DEVICE_TYPE} != "uefi" ]] && options+=(1 'Boot from SD - system on SATA, USB or NVMe')
 	[[ -n $nandcheck || -n $emmccheck ]] && options+=(2 "Boot from $ichip - system on $ichip")
 	[[ ( -n $nandcheck || -n $emmccheck ) && -n $diskcheck ]] && options+=(3 "Boot from $ichip - system on SATA, USB or NVMe")
 	[[ -n $spicheck ]] && options+=(4 'Boot from SPI  - system on SATA, USB or NVMe')
 
+	[[ -n $diskcheck ]] && options+=(7 "Boot from $diskcheck - system on $diskcheck")
+
 	# U-boot install/update options
-	[[ -n ${root_partition_device} ]] && options+=(5 'Install/Update the bootloader on SD/eMMC')
+	[[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]] && options+=(8 'Install/Update the bootloader on SD/eMMC')
 	[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* || $LINUXFAMILY == mt7623 ) && ( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]] && options+=(6 'Install/Update the bootloader on special eMMC partition')
-	[[ -n $spicheck && $(type -t write_uboot_platform_mtd) == function ]] && options+=(7 'Install/Update the bootloader on SPI Flash')
+	[[ -n $spicheck && $(type -t write_uboot_platform_mtd) == function ]] && options+=(8 'Install/Update the bootloader on SPI Flash')
 
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
 	dialog --ok-label 'Cancel' --title ' Warning ' --backtitle "$backtitle" --colors --no-collapse --msgbox '\n\Z1There are no targets. Please check your drives.\Zn' 7 52
@@ -751,6 +776,16 @@ main()
 				return
 				;;
 			7)
+                                title='Boot from NVMe install'
+                                command='Reboot'
+                                check_partitions
+                                # we need to copy boot
+                                sed -i '/boot/d' $EX_LIST
+                                show_warning "This script will erase your device $DISK_ROOT_PART. Continue?"
+                                format_disk "$DISK_ROOT_PART"
+                                create_armbian "" "$DISK_ROOT_PART"
+                                ;;
+			8)
 				write_uboot_to_spi_flash $spicheck "$DIR"
 				return
 				;;
