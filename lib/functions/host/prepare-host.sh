@@ -193,7 +193,7 @@ function early_prepare_host_dependencies() {
 		ntpdate patchutils
 		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
 		systemd-container u-boot-tools udev uuid-dev whiptail
-		zlib1g-dev busybox
+		zlib1g-dev busybox fdisk
 
 		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
 		python2 python2-dev
