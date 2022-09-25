@@ -97,7 +97,9 @@ function prepare_partitions() {
 	fi
 	# Check if we need root partition
 	[[ $ROOTFS_TYPE != nfs ]] &&
-		local rootpart=$((next++))
+		rootpart=$((next++))
+
+	display_alert "calculated rootpart" "rootpart: ${rootpart}" "debug"
 
 	# stage: calculate rootfs size
 	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
