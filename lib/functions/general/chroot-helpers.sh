@@ -21,13 +21,13 @@ umount_chroot() {
 	local target=$1
 	display_alert "Unmounting" "$target" "info"
 	while grep -Eq "${target}\/(dev|proc|sys|tmp)" /proc/mounts; do
-		display_alert "Still things mounted at" "target: ${target}"
-		run_host_command_logged grep -E "'${target}/(dev|proc|sys|tmp)'" /proc/mounts
+		display_alert "Unmounting..." "target: ${target}" "debug"
 		umount --recursive "${target}"/dev || true
 		umount "${target}"/proc || true
 		umount "${target}"/sys || true
 		umount "${target}"/tmp || true
 		sync
+		run_host_command_logged grep -E "'${target}/(dev|proc|sys|tmp)'" /proc/mounts "||" true
 	done
 }
 
