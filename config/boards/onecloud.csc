@@ -9,3 +9,5 @@ BOOTENV_FILE="onecloud.txt"
 
 BOOTSIZE="200"
 BOOTFS_TYPE="fat"
+
+BOOT_LOGO=desktop
