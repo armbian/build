@@ -79,15 +79,10 @@ create_image_from_sdcard_rootfs() {
 	display_alert "Partition table after write_uboot" "$LOOP" "debug"
 	run_host_command_logged sfdisk -l "${LOOP}" # @TODO: use asset..
 
-	# unmount /boot/efi first, then /boot, rootfs third, image file last
-	sync
-	[[ $UEFISIZE != 0 ]] && run_host_command_logged umount "${MOUNT}${UEFI_MOUNT_POINT}"
-	[[ $BOOTSIZE != 0 ]] && run_host_command_logged umount "${MOUNT}/boot"
-	run_host_command_logged umount "${MOUNT}"/tmp || true
-	run_host_command_logged umount "${MOUNT}" || true
-	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
+	run_host_command_logged sync
 
-	umount_chroot_recursive "${MOUNT}" # @TODO: wait. NFS is not really unmounted above.
+	umount_chroot_recursive "${MOUNT}"
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose $ROOT_MAPPER
 
 	call_extension_method "post_umount_final_image" "config_post_umount_final_image" <<- 'POST_UMOUNT_FINAL_IMAGE'
 		*allow config to hack into the image after the unmount*
