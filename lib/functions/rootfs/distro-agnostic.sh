@@ -579,10 +579,6 @@ function install_distribution_agnostic() {
 		fi
 
 	elif [ -d "${SDCARD}"/etc/systemd/network ]; then
-		# configure networkd
-		rm "${SDCARD}"/etc/resolv.conf
-		ln -s /run/systemd/resolve/resolv.conf "${SDCARD}"/etc/resolv.conf
-
 		# enable services
 		chroot_sdcard systemctl enable systemd-networkd.service systemd-resolved.service
 
