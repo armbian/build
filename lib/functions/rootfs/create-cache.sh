@@ -38,9 +38,11 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 
 		# if aria2 file exists download didn't succeeded
 		if [[ ! -f $cache_fname || -f ${cache_fname}.aria2 ]]; then
-			display_alert "Downloading from servers"
-			download_and_verify "rootfs" "$cache_name" ||
-				continue
+			if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+				display_alert "Downloading from servers"
+				download_and_verify "rootfs" "$cache_name" ||
+					continue
+			fi
 		fi
 
 		[[ -f $cache_fname && ! -f ${cache_fname}.aria2 ]] && break
@@ -264,6 +266,7 @@ function create_new_rootfs_cache() {
 	# based on rootfs size calculation
 	umount_chroot "$SDCARD"
 
+	display_alert "zstd ball of rootfs" "$RELEASE:: $cache_name" "debug"
 	tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
 		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" | zstdmt -5 -c > "${cache_fname}"
 
@@ -275,6 +278,8 @@ function create_new_rootfs_cache() {
 
 	# needed for backend to keep current only
 	echo "$cache_fname" > $cache_fname.current
+
+	display_alert "Cache prepared" "$RELEASE:: $cache_fname" "debug"
 
 	return 0 # protect against possible future short-circuiting above this
 }

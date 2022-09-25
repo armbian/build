@@ -77,10 +77,10 @@ function build_rootfs_and_image() {
 	# for reference, debugging / sanity checking
 	LOG_SECTION="list_installed_packages" do_with_logging list_installed_packages
 
+	LOG_SECTION="post_debootstrap_tweaks" do_with_logging post_debootstrap_tweaks
+
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
-
-	LOG_SECTION="post_debootstrap_tweaks" do_with_logging post_debootstrap_tweaks
 
 	# ------------------------------------ UP HERE IT's 'rootfs' stuff -------------------------------
 
