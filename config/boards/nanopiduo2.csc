@@ -1,7 +1,7 @@
 # Allwinner H3 quad core 512MB RAM SoC headless WiFi/BT
 BOARD_NAME="NanoPi Duo2"
 BOARDFAMILY="sun8i"
-BOOTCONFIG="nanopi_duo2_defconfig"
+BOOTCONFIG="nanopi_neo_defconfig"
 MODULES="g_serial"
 MODULES_BLACKLIST="lima"
 DEFAULT_OVERLAYS="usbhost0 usbhost2 usbhost3"
@@ -9,3 +9,4 @@ DEFAULT_CONSOLE="serial"
 HAS_VIDEO_OUTPUT="no"
 SERIALCON="ttyS0,ttyGS0"
 KERNEL_TARGET="current,edge"
+BOOT_FDT_FILE="allwinner/sun8i-h3-nanopi-duo2.dtb"
