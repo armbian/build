@@ -132,15 +132,9 @@ function prepare_partitions() {
 	fi
 
 	# stage: create blank image
-	display_alert "Creating blank image for rootfs" "$sdsize MiB" "info"
-	if [[ $FAST_CREATE_IMAGE == yes ]]; then
-		truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
-		sync
-	else
-		dd if=/dev/zero bs=1M status=none count=$sdsize |
-			pv -p -b -r -s $(($sdsize * 1024 * 1024)) -N "$(logging_echo_prefix_for_pv "zero") zero" |
-			dd status=none of=${SDCARD}.raw
-	fi
+	display_alert "Creating blank image for rootfs" "truncate: $sdsize MiB" "info"
+	run_host_command_logged truncate --size=${sdsize}M ${SDCARD}.raw # please provide EVIDENCE of problems with this; using dd is very slow
+	run_host_command_logged sync
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
