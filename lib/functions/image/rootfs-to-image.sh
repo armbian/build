@@ -75,7 +75,7 @@ create_image_from_sdcard_rootfs() {
 	PRE_UMOUNT_FINAL_IMAGE
 
 	# Check the partition table after the uboot code has been written
-	display_alert "nPartition table after write_uboot" "$LOOP" "debug"
+	display_alert "Partition table after write_uboot" "$LOOP" "debug"
 	run_host_command_logged sfdisk -l "${LOOP}" # @TODO: use asset..
 
 	# unmount /boot/efi first, then /boot, rootfs third, image file last
