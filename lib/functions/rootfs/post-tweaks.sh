@@ -1,6 +1,14 @@
 function post_debootstrap_tweaks() {
 	display_alert "Applying post-tweaks" "post_debootstrap_tweaks" "debug"
 
+	# activate systemd-resolved
+	if [[ -d "${SDCARD}"/etc/systemd/network ]]; then
+		display_alert "Activating systemd-resolved" "Symlink resolv.conf" "debug"
+		# configure networkd
+		run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
+		run_host_command_logged ln -s /run/systemd/resolve/resolv.conf "${SDCARD}"/etc/resolv.conf
+	fi
+
 	# remove service start blockers
 	run_host_command_logged rm -fv "${SDCARD}"/sbin/initctl "${SDCARD}"/sbin/start-stop-daemon
 	chroot_sdcard dpkg-divert --quiet --local --rename --remove /sbin/initctl
