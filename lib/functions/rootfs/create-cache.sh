@@ -237,7 +237,7 @@ function create_new_rootfs_cache() {
 		display_alert "Mount point" "$(echo -e "$freespace" | awk -v mp="${MOUNT}" '$6==mp {print $5}')" "info"
 
 	# create list of installed packages for debug purposes - this captures it's own stdout.
-	chroot "${SDCARD}" /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }' > '${cache_fname}.list'"
+	chroot_sdcard "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > "${cache_fname}.list"
 
 	# creating xapian index that synaptic runs faster
 	if [[ $BUILD_DESKTOP == yes ]]; then
