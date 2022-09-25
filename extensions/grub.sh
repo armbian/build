@@ -98,6 +98,11 @@ pre_umount_final_image__install_grub() {
 	mkdir -p "${MOUNT}"/usr/share/images/grub/
 	cp "${SRC}"/packages/blobs/splash/grub.png "${MOUNT}"/usr/share/images/grub/wallpaper.png
 
+	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
+		display_alert "Using Distro Generic Kernel" "${EXTENSION}: update_initramfs" "debug"
+		VER="generic" update_initramfs "${MOUNT}"
+	fi
+
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
 
@@ -127,8 +132,8 @@ pre_umount_final_image__900_export_kernel_and_initramfs() {
 		# this writes to ${DESTIMG} directly, since debootstrap.sh will move them later.
 		# capture the $MOUNT/boot/vmlinuz and initrd and send it out ${DESTIMG}
 		run_host_command_logged ls -la "${MOUNT}"/boot/vmlinuz-* "${MOUNT}"/boot/initrd.img-* || true
-		run_host_command_logged cp -pv "${MOUNT}"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel" || true
-		run_host_command_logged cp -pv "${MOUNT}"/boot/initrd.img-* "${DESTIMG}/${version}.initrd" || true
+		run_host_command_logged cp -pv "${MOUNT}"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel"
+		run_host_command_logged cp -pv "${MOUNT}"/boot/initrd.img-* "${DESTIMG}/${version}.initrd"
 	fi
 }
 
