@@ -35,6 +35,9 @@ umount_chroot() {
 
 # demented recursive version, for final umount.
 function umount_chroot_recursive() {
+	if [[ ! -d "${1}" ]]; then # only even try if target is a directory
+		return 0
+	fi
 	local target
 	target="$(realpath "$1")/" # normalize, make sure to have slash as last element
 
