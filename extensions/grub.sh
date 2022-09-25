@@ -108,7 +108,7 @@ pre_umount_final_image__install_grub() {
 		}
 	fi
 
-	local install_grub_cmdline="update-grub && grub-install --verbose --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
+	local install_grub_cmdline="update-grub && grub-install --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
 	display_alert "Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
 	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
 		exit_with_error "${install_grub_cmdline} failed!"
