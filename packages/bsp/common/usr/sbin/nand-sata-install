@@ -11,7 +11,6 @@
 # DIR: path to u-boot directory
 # write_uboot_platform: function to write u-boot to a block device
 # write_uboot_platform_mtd: function to write u-boot to a mtd (eg. SPI flash) device
-
 [[ -f /usr/lib/u-boot/platform_install.sh ]] && source /usr/lib/u-boot/platform_install.sh
 
 # script configuration
@@ -23,13 +22,11 @@ logfile="/var/log/nand-sata-install.log"
 # read in board info
 [[ -f /etc/armbian-release ]] && source /etc/armbian-release
 backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
-title="NAND, eMMC, SATA, USB and NVMe Armbian installer v${VERSION}"
+title="Armbian installer v${VERSION}"
 
 # exceptions
-if grep -q 'sun4i' /proc/cpuinfo; then DEVICE_TYPE="a10";
-elif grep -q 'sun5i' /proc/cpuinfo; then DEVICE_TYPE="a13";
-elif efibootmgr -q 2>/dev/null; then DEVICE_TYPE="uefi";
-else DEVICE_TYPE="a20"; fi
+if efibootmgr -q 2>/dev/null; then DEVICE_TYPE="uefi";
+
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
 case ${LINUXFAMILY} in
 	rk3328|rk3399|rk35xx|rockchip64|rockpis|station*|media)
@@ -46,8 +43,7 @@ root_partition=$(blkid | tr -d '":' | grep "${root_uuid}" | awk '{print $1}')
 root_partition_device=$(echo $root_partition | sed 's/[0-9]//g')
 root_partition_device_name=$(echo $root_partition_device | sed 's/\/dev\///g')
 
-# find targets: NAND, EMMC, SATA, SPI flash, NVMe
-[[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
+# find targets: EMMC, SATA, SPI flash, NVMe
 emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme' | grep -v "$root_partition_device_name")
 spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
@@ -131,13 +127,13 @@ create_armbian()
 
 	# stop running services
 	echo -e "\nFiles currently open for writing:" >> $logfile
-	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
+	lsof / 2>/dev/null | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
 	echo -e "\nTrying to stop running services to minimize open files:\c" >> $logfile
 	stop_running_services "nfs-|smbd|nmbd|winbind|ftpd|netatalk|monit|cron|webmin|rrdcached" >> $logfile
 	stop_running_services "fail2ban|ramlog|folder2ram|postgres|mariadb|mysql|postfix|mail|nginx|apache|snmpd" >> $logfile
 	pkill dhclient 2>/dev/null
 	LANG=C echo -e "\n\nChecking again for open files:" >> $logfile
-	lsof / | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
+	lsof / 2>/dev/null | awk 'NR==1 || $4~/[0-9][uw]/' | grep -v "^COMMAND" >> $logfile
 
 	# count files is needed for progress bar
 	dialog --title " $title " --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 60
@@ -401,6 +397,8 @@ create_armbian()
 	mountpoint -q "${TempDir}"/bootfs && umount "${TempDir}"/bootfs
 } # create_armbian
 
+
+
 # Accept device as parameter: for example /dev/sda unmounts all their mounts
 umount_device()
 {
@@ -416,41 +414,7 @@ umount_device()
 	fi
 } # umount_device
 
-show_nand_warning()
-{
-	local temp_rc=$(mktemp)
-	cat <<-'EOF' > $temp_rc
-	screen_color = (WHITE,RED,ON)
-	EOF
-	local warn_text="You are installing the system to sunxi NAND.
 
-	This is not recommended as NAND has \Z1worse performance
-	and reliability\Zn than a good SD card.
-
-	You have been warned."
-
-	DIALOGRC=$temp_rc dialog --title "NAND warning" --backtitle "$backtitle" --colors \
-		--ok-label "I understand and agree" --msgbox "$warn_text" 10 70
-}
-
-# formatting sunxi NAND - no parameters, fixed solution.
-#
-format_nand()
-{
-	[[ ! -e /dev/nand ]] && echo '/dev/nand does not exist' >&2 && exit 8
-
-	show_nand_warning
-
-	dialog --title "$title" --backtitle "$backtitle" --infobox "\n            Formatting ... up to one minute." 5 60
-	if [[ $DEVICE_TYPE = a20 ]]; then
-		(echo y;) | sunxi-nand-part -f a20 /dev/nand 65536 'bootloader 65536' 'linux 0' >> $logfile 2>&1
-	else
-		(echo y;) | sunxi-nand-part -f a10 /dev/nand 65536 'bootloader 65536' 'linux 0' >> $logfile 2>&1
-	fi
-
-	mkfs.vfat /dev/nand1 >> $logfile 2>&1
-	mkfs.ext4 -qF /dev/nand2 >> $logfile 2>&1
-}
 
 
 # formatting eMMC [device] example /dev/mmcblk1 - one can select filesystem type
@@ -577,18 +541,26 @@ format_disk()
 check_partitions()
 {
 	IFS=" "
-	AvailablePartitions=$(lsblk -l | awk -F" " '/ part | raid..? / {print $1}' | grep -E '^sd|^nvme|^md')
+	[[ -n "$1" ]] && EXCLUDE=" | grep -v $1"
+	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINTS | grep \"btrfs\|ext4\|f2fs\" $EXCLUDE | grep -E '^sd|^nvme|^md' | awk -F\" \" '/ part | raid..? / {print \$1}'"
+	AvailablePartitions=$(eval $CMD)
 	if [[ -z $AvailablePartitions ]]; then
-		dialog --title "$title" --backtitle "$backtitle" --colors --msgbox \
-		"\n\Z1There are no avaliable partitions. Please create them.\Zn" 7 60
-		# We need gdisk for proper partition alignment
-		apt-get -y -q install gdisk >/dev/null 2>&1
-		gdisk /dev/$diskcheck
+		FREE_SPACE=$(parted /dev/$diskcheck unit GB print free | awk '/Free Space/{c++; sum += $3; print sum}' | tail -1)
+		if [[ "$FREE_SPACE" -gt 32 ]]; then
+			dialog --yes-label "Proceed" --no-label 'Exit' --title "$title" --backtitle "$backtitle" --yesno "\nDestnation $diskcheck has $FREE_SPACE Gb of available space. \n\n                Automated install?" 10 54
+		fi
+		if [[ $? -eq 0 ]]; then
+			{
+				echo n; echo ; echo ; echo ; echo
+				echo w
+			} | fdisk /dev/$diskcheck > /dev/null || true
+		fi
 	fi
-	AvailablePartitions=$(lsblk -l | awk -F" " '/ part | raid..? / {print $1}' | grep -E '^sd|^nvme|^md' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n)
+	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINTS | grep \"btrfs\|ext4\|f2fs\" $EXCLUDE | grep -E '^sd|^nvme|^md' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
+	AvailablePartitions=$(eval $CMD)
 	PartitionOptions=($AvailablePartitions)
 
-	PartitionCmd=(dialog --title 'Select destination:' --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
+	PartitionCmd=(dialog --title 'Select the destination:' --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
 	PartitionChoices=$("${PartitionCmd[@]}" "${PartitionOptions[@]}" 2>&1 >/dev/tty)
 
 	[[ $? -ne 0 ]] && exit 11
@@ -651,45 +623,32 @@ main()
 		exit 14
 	fi
 
-	# Check if we run it from SD card
-	# TODO: Disable/remove this in the future
-#	case ${root_partition_device} in
-#		/dev/mmcblk*) # mmc device, we can continue
-#			:
-#			;;
-#		*)
-#			dialog --title "$title" --backtitle "$backtitle" --colors --infobox '\n\Z1            This tool must run from SD-card! \Zn' 5 60
-#			exit 15
-#			;;
-#	esac
-
 	[ -f $logfile ] && echo -e '\n\n\n' >> $logfile
 	LANG=C echo -e "$(date): Start ${0##*/}.\n" >> $logfile
 
 	IFS="'"
 	options=()
-	if [[ -n $emmccheck ]]; then
-		ichip='eMMC';
-		dest_boot=$emmccheck'p1'
-		dest_root=$emmccheck'p1'
+	ichip='eMMC';
+	dest_boot=$emmccheck'p1'
+	dest_root=$emmccheck'p1'
+
+	if [[ -n $diskcheck && -d /sys/firmware/efi ]]; then
+
+		options+=(8 "Install system to $diskcheck")
+
 	else
-		ichip='NAND'
-		dest_boot='/dev/nand1'
-		dest_root='/dev/nand2'
+
+		[[ -n $diskcheck ]] 						&& options+=(1 'Boot from SD - system on SATA, USB or NVMe')
+		[[ -n $emmccheck ]] 						&& options+=(2 "Boot from $ichip - system on $ichip")
+		[[ -n $emmccheck && -n $diskcheck ]] 				&& options+=(3 "Boot from $ichip - system on SATA, USB or NVMe")
+		[[ -n $spicheck ]] 						&& options+=(4 'Boot from SPI  - system on SATA, USB or NVMe')
+		[[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]]	&& options+=(5 'Install/Update the bootloader on SD/eMMC')
+		[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* \
+		|| $LINUXFAMILY == mt7623 ) && \
+		( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]]		&& options+=(6 'Install/Update the bootloader on special eMMC partition')
+		[[ -n $spicheck && \
+		$(type -t write_uboot_platform_mtd) == function ]] 		&& options+=(7 'Install/Update the bootloader on SPI Flash')
 	fi
-
-	# Boot + RootFS relocation options
-	[[ -n $diskcheck && ${DEVICE_TYPE} != "uefi" ]] && options+=(1 'Boot from SD - system on SATA, USB or NVMe')
-	[[ -n $nandcheck || -n $emmccheck ]] && options+=(2 "Boot from $ichip - system on $ichip")
-	[[ ( -n $nandcheck || -n $emmccheck ) && -n $diskcheck ]] && options+=(3 "Boot from $ichip - system on SATA, USB or NVMe")
-	[[ -n $spicheck ]] && options+=(4 'Boot from SPI  - system on SATA, USB or NVMe')
-
-	[[ -n $diskcheck ]] && options+=(7 "Boot from $diskcheck - system on $diskcheck")
-
-	# U-boot install/update options
-	[[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]] && options+=(8 'Install/Update the bootloader on SD/eMMC')
-	[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* || $LINUXFAMILY == mt7623 ) && ( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]] && options+=(6 'Install/Update the bootloader on special eMMC partition')
-	[[ -n $spicheck && $(type -t write_uboot_platform_mtd) == function ]] && options+=(8 'Install/Update the bootloader on SPI Flash')
 
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
 	dialog --ok-label 'Cancel' --title ' Warning ' --backtitle "$backtitle" --colors --no-collapse --msgbox '\n\Z1There are no targets. Please check your drives.\Zn' 7 52
@@ -712,13 +671,8 @@ main()
 				title="$ichip install"
 				command='Power off'
 				show_warning "This script will erase your $ichip. Continue?"
-				if [[ -n $emmccheck ]]; then
-					umount_device "$emmccheck"
-					format_emmc "$emmccheck"
-				else
-					umount_device '/dev/nand'
-					format_nand
-				fi
+				umount_device "$emmccheck"
+				format_emmc "$emmccheck"
 				create_armbian "$dest_boot" "$dest_root"
 				;;
 			3)
@@ -726,13 +680,8 @@ main()
 				command='Power off'
 				check_partitions
 				show_warning "This script will erase your $ichip and $DISK_ROOT_PART. Continue?"
-				if [[ -n $emmccheck ]]; then
-					umount_device "$emmccheck"
-					format_emmc "$emmccheck"
-					else
-					umount_device '/dev/nand'
-					format_nand
-				fi
+				umount_device "$emmccheck"
+				format_emmc "$emmccheck"
 				umount_device "${DISK_ROOT_PART//[0-9]*/}"
 				format_disk "$DISK_ROOT_PART"
 				create_armbian "$dest_boot" "$DISK_ROOT_PART"
@@ -776,19 +725,20 @@ main()
 				return
 				;;
 			7)
+				write_uboot_to_spi_flash $spicheck "$DIR"
+				return
+				;;
+
+			8)
                                 title='Boot from NVMe install'
                                 command='Reboot'
-                                check_partitions
+                                check_partitions "$root_partition_device_name"
                                 # we need to copy boot
                                 sed -i '/boot/d' $EX_LIST
                                 show_warning "This script will erase your device $DISK_ROOT_PART. Continue?"
                                 format_disk "$DISK_ROOT_PART"
                                 create_armbian "" "$DISK_ROOT_PART"
                                 ;;
-			8)
-				write_uboot_to_spi_flash $spicheck "$DIR"
-				return
-				;;
 		esac
 	done
 
