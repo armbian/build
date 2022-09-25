@@ -58,8 +58,8 @@ create_image_from_sdcard_rootfs() {
 	# DEBUG: print free space
 	local freespace
 	freespace=$(LC_ALL=C df -h)
-	display_alert "Free SD cache" "$(echo -e "$freespace" | grep "${SDCARD}" | awk '{print $5}')" "info"
-	display_alert "Mount point" "$(echo -e "$freespace" | grep "${MOUNT}" | head -1 | awk '{print $5}')" "info"
+	display_alert "Free SD cache" "$(echo "$freespace" | grep "${SDCARD}" | awk '{print $5}')" "info"
+	display_alert "Mount point" "$(echo "$freespace" | grep "${MOUNT}" | head -1 | awk '{print $5}')" "info"
 
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
 	# exception: if we use the one from repository, install version which was downloaded from repo
@@ -76,7 +76,7 @@ create_image_from_sdcard_rootfs() {
 	PRE_UMOUNT_FINAL_IMAGE
 
 	# Check the partition table after the uboot code has been written
-	display_alert "nPartition table after write_uboot" "$LOOP" "debug"
+	display_alert "Partition table after write_uboot" "$LOOP" "debug"
 	run_host_command_logged sfdisk -l "${LOOP}" # @TODO: use asset..
 
 	# unmount /boot/efi first, then /boot, rootfs third, image file last
