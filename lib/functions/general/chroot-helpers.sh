@@ -3,14 +3,14 @@
 # helper to reduce code duplication
 #
 mount_chroot() {
-
-	local target=$1
+	local target
+	target="$(realpath "$1")" # normalize, remove last slash if dir
+	display_alert "mount_chroot" "$target" "debug"
 	mount -t tmpfs tmpfs "${target}/tmp"
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
 	mount -t devpts chpts "${target}"/dev/pts
-
 }
 
 # umount_chroot <target>
@@ -18,10 +18,12 @@ mount_chroot() {
 # helper to reduce code duplication
 #
 umount_chroot() {
-	local target=$1
+	local target
+	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
 	while grep -Eq "${target}\/(dev|proc|sys|tmp)" /proc/mounts; do
 		display_alert "Unmounting..." "target: ${target}" "debug"
+		umount "${target}"/dev/pts || true
 		umount --recursive "${target}"/dev || true
 		umount "${target}"/proc || true
 		umount "${target}"/sys || true
@@ -33,7 +35,8 @@ umount_chroot() {
 
 # demented recursive version, for final umount.
 function umount_chroot_recursive() {
-	local target="${1}/"
+	local target
+	target="$(realpath "$1")/" # normalize, make sure to have slash as last element
 
 	if [[ ! -d "${target}" ]]; then     # only even try if target is a directory
 		return 0                           # success, nothing to do.
