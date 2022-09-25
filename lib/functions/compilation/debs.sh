@@ -200,7 +200,6 @@ compile_plymouth-theme-armbian() {
 	local tmp_dir work_dir
 	tmp_dir=$(mktemp -d)
 	chmod 700 ${tmp_dir}
-	trap "ret=\$?; rm -rf \"${tmp_dir}\" ; exit \$ret" 0 1 2 3 15
 	plymouth_theme_armbian_dir=armbian-plymouth-theme_${REVISION}_all
 	display_alert "Building deb" "armbian-plymouth-theme" "info"
 
