@@ -25,7 +25,7 @@ backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
 title="Armbian installer v${VERSION}"
 
 # exceptions
-if efibootmgr -q 2>/dev/null; then DEVICE_TYPE="uefi";
+if efibootmgr -q 2>/dev/null; then DEVICE_TYPE="uefi"; fi
 
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
 case ${LINUXFAMILY} in
@@ -207,49 +207,6 @@ create_armbian()
 	echo "tmpfs						/tmp		tmpfs	defaults,nosuid							0	0" >> "${TempDir}"/rootfs/etc/fstab
 	grep swap /etc/fstab >> "${TempDir}"/rootfs/etc/fstab
 
-	# creating fstab, kernel and boot script for NAND partition
-	#
-	if [[ $1 == *nand* ]]; then
-		echo "Finishing installation to NAND." >> $logfile
-		REMOVESDTXT="and remove SD to boot from NAND"
-		echo "$1 /boot vfat	defaults 0 0" >> "${TempDir}"/rootfs/etc/fstab
-		echo "$2 / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1" >> "${TempDir}"/rootfs/etc/fstab
-		dialog --title "$title" --backtitle "$backtitle" --infobox "\nConverting kernel ... few seconds." 5 60
-		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d \
-			/boot/zImage "${TempDir}"/bootfs/uImage >/dev/null 2>&1
-		cp /boot/script.bin "${TempDir}"/bootfs/
-
-		if [[ $DEVICE_TYPE != a13 ]]; then
-			# Note: Not using UUID based boot for NAND
-			cat <<-EOF > "${TempDir}"/bootfs/uEnv.txt
-			console=ttyS0,115200
-			root=$2 rootwait
-			extraargs="console=tty1 hdmi.audio=EDID:0 disp.screen0_output_mode=EDID:0 consoleblank=0 loglevel=1"
-			EOF
-		else
-			# Note: Not using UUID based boot for NAND
-			cat <<-EOF > "${TempDir}"/bootfs/uEnv.txt
-			console=ttyS0,115200
-			root=$2 rootwait
-			extraargs="consoleblank=0 loglevel=1"
-			EOF
-		fi
-
-		sync
-
-		[[ $DEVICE_TYPE = a20 ]] && echo "machid=10bb" >> "${TempDir}"/bootfs/uEnv.txt
-		# ugly hack becouse we don't have sources for A10 nand uboot
-		if [[ $ID == Cubieboard || $BOARD_NAME == Cubieboard || $ID == "Lime A10" || $BOARD_NAME == "Lime A10" ]]; then
-			cp "${TempDir}"/bootfs/uEnv.txt "${TempDir}"/rootfs/boot/uEnv.txt
-			cp "${TempDir}"/bootfs/script.bin "${TempDir}"/rootfs/boot/script.bin
-			cp "${TempDir}"/bootfs/uImage "${TempDir}"/rootfs/boot/uImage
-		fi
-		umount_device "/dev/nand"
-		tune2fs -o journal_data_writeback /dev/nand2 >/dev/null 2>&1
-		tune2fs -O ^has_journal /dev/nand2 >/dev/null 2>&1
-		e2fsck -f /dev/nand2 >/dev/null 2>&1
-	fi
-
 	# Boot from eMMC, root = eMMC or SATA / USB
 	#
 	if [[ $2 == ${emmccheck}p* || $1 == ${emmccheck}p* ]]; then
@@ -319,7 +276,7 @@ create_armbian()
 
 	# Boot from SD card, root = SATA / USB
 	#
-	if [[ $2 == ${DISK_ROOT_PART} && -z $1 ]]; then
+	if [[ $2 == ${DISK_ROOT_PART} && -z $1 && $DEVICE_TYPE != uefi ]]; then
 		echo -e "Finishing transfer to disk, boot from SD/eMMC" >> $logfile
 		[[ -f /boot/boot.cmd ]] && sed -e 's,root='"$root_uuid"',root='"$satauuid"',g' -i /boot/boot.cmd
 		[[ -f /boot/boot.ini ]] && sed -e 's,^setenv rootdev.*$,setenv rootdev "'"$satauuid"'",' -i /boot/boot.ini
@@ -349,7 +306,33 @@ create_armbian()
 			fallocate -l 128M "${TempDir}"/rootfs/var/swap || dd if=/dev/zero of="${TempDir}"/rootfs/var/swap bs=1M count=128 status=noxfer
 			mkswap "${TempDir}"/rootfs/var/swap
 		fi
-	if [[ $DEVICE_TYPE = uefi ]]; then
+	fi
+
+	if [[ $2 == ${DISK_ROOT_PART} && -z $1 && $DEVICE_TYPE = uefi ]]; then
+
+		# create swap file size of your memory so we can use it for S4
+		dd if=/dev/zero of="${TempDir}"/rootfs/swapfile bs=$(cat /proc/meminfo | awk '/MemTotal/ {print $2}') count=1024 conv=notrunc
+		mkswap "${TempDir}"/rootfs/swapfile
+		chmod 0600 "${TempDir}"/rootfs/swapfile
+		sed -i "/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/\"$/ resume=UUID=$(findmnt -no UUID -T "${TempDir}"/rootfs/swapfile) resume_offset=$(filefrag -v "${TempDir}"/rootfs/swapfile |grep " 0:"| awk '{print $4}' | cut -d"." -f1)\"/" "${TempDir}"/rootfs/etc/default/grub.d/98-armbian.cfg
+
+		echo "GRUB_DISABLE_OS_PROBER=false" >> "${TempDir}"/rootfs/etc/default/grub.d/98-armbian.cfg
+
+		echo "$satauuid	/		$FilesystemChoosen	${mountopts[$FilesystemChoosen]}" >> "${TempDir}"/rootfs/etc/fstab
+		echo "UUID=$(lsblk -io KNAME,PARTLABEL,UUID | grep $diskcheck | grep EFI | awk '{print $NF}') 				/boot/efi 		vfat	 defaults 0 2" >> "${TempDir}"/rootfs/etc/fstab
+		echo "/swapfile none swap sw 0 0" >> "${TempDir}"/rootfs/etc/fstab
+
+		cat <<-hibernatemenu >"${TempDir}"/rootfs/etc/polkit-1/localauthority/50-local.d/com.ubuntu.enable-hibernate.pkla
+		[Re-enable hibernate by default in upower]
+		Identity=unix-user:*
+		Action=org.freedesktop.upower.hibernate
+		ResultActive=yes
+
+		[Re-enable hibernate by default in logind]
+		Identity=unix-user:*
+		Action=org.freedesktop.login1.hibernate;org.freedesktop.login1.handle-hibernate-key;org.freedesktop.login1;org.freedesktop.login1.hibernate-multiple-sessions;org.freedesktop.login1.hibernate-ignore-inhibit
+		ResultActive=yes
+		hibernatemenu
 
 		echo "Install frub to $efi_partition"
 		mount $efi_partition "${TempDir}"/rootfs/boot/efi
@@ -357,7 +340,7 @@ create_armbian()
 		mount --make-rslave --bind /dev/pts "${TempDir}"/rootfs/dev/pts
 		mount --bind /proc "${TempDir}"/rootfs/proc
 		mount --make-rslave --rbind /sys "${TempDir}"/rootfs/sys
-		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=boot/efi --bootloader-id=GRUB --removable >/dev/null" >> $logfile
+		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --removable >/dev/null" >> $logfile
 		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg >/dev/null" >> $logfile
 		grep "${TempDir}"/rootfs/sys /proc/mounts | cut -f2 -d" " | sort -r | xargs umount -n
 		umount "${TempDir}"/rootfs/proc
@@ -367,7 +350,7 @@ create_armbian()
 	fi
 
 
-	fi
+
 
 	# Boot from SPI, root = SATA / USB
 	#
