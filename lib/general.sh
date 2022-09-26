@@ -1689,6 +1689,7 @@ download_and_verify()
 		"9F0E78D5" # Igor Pecovnik
 	)
 
+	mkdir -p "${SRC}/cache/.aria2"
 	local aria2_options=(
 		# Display
 		--console-log-level=error
