@@ -582,26 +582,24 @@ unset LOG_OUTPUT_FILE
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
-UBUNTU_MIRROR='ports.ubuntu.com/'
+[[ "${ARCH}" == "amd64" ]] \
+	&& UBUNTU_MIRROR='archive.ubuntu.com/ubuntu/' \
+	|| UBUNTU_MIRROR='ports.ubuntu.com/'
 
 if [[ $DOWNLOAD_MIRROR == "china" ]] ; then
 	DEBIAN_MIRROR='mirrors.tuna.tsinghua.edu.cn/debian'
 	DEBIAN_SECURTY='mirrors.tuna.tsinghua.edu.cn/debian-security'
-	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
+	[[ "${ARCH}" == "amd64" ]] \
+		&& UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu/' \
+		|| UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
 fi
 
 if [[ $DOWNLOAD_MIRROR == "bfsu" ]] ; then
 	DEBIAN_MIRROR='mirrors.bfsu.edu.cn/debian'
 	DEBIAN_SECURTY='mirrors.bfsu.edu.cn/debian-security'
-	UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
-fi
-
-if [[ "${ARCH}" == "amd64" ]]; then
-	UBUNTU_MIRROR='archive.ubuntu.com/ubuntu' # ports are only for non-amd64, of course.
-
-		if [[ -n ${CUSTOM_UBUNTU_MIRROR} ]]; then # ubuntu redirector doesn't work well on amd64
-			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR}"
-		fi
+	[[ "${ARCH}" == "amd64" ]] \
+		&& UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu/' \
+		|| UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
 fi
 
 [[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
