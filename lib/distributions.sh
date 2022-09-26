@@ -473,6 +473,9 @@ FAMILY_TWEAKS
 		sed -i "s/^#kernel.printk*/kernel.printk/" "${SDCARD}"/etc/sysctl.conf
 	fi
 
+	# enable access to kernel syslog to everyone
+	chroot "${SDCARD}" /bin/bash -c "echo 'kernel.dmesg_restrict=0' | sudo tee -a /etc/sysctl.conf > /dev/null"
+
 	# disable repeated messages due to xconsole not being installed.
 	[[ -f "${SDCARD}"/etc/rsyslog.d/50-default.conf ]] && \
 	sed '/daemon\.\*\;mail.*/,/xconsole/ s/.*/#&/' -i "${SDCARD}"/etc/rsyslog.d/50-default.conf
