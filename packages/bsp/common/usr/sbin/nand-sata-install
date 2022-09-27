@@ -11,6 +11,7 @@
 # DIR: path to u-boot directory
 # write_uboot_platform: function to write u-boot to a block device
 # write_uboot_platform_mtd: function to write u-boot to a mtd (eg. SPI flash) device
+
 [[ -f /usr/lib/u-boot/platform_install.sh ]] && source /usr/lib/u-boot/platform_install.sh
 
 # script configuration
@@ -25,8 +26,9 @@ backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
 title="Armbian installer v${VERSION}"
 
 # exceptions
-if efibootmgr -q 2>/dev/null; then DEVICE_TYPE="uefi"; fi
-
+if grep -q 'sun4i' /proc/cpuinfo; then DEVICE_TYPE="a10";
+elif grep -q 'sun5i' /proc/cpuinfo; then DEVICE_TYPE="a13";
+else DEVICE_TYPE="a20"; fi
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
 case ${LINUXFAMILY} in
 	rk3328|rk3399|rk35xx|rockchip64|rockpis|station*|media)
@@ -43,7 +45,8 @@ root_partition=$(blkid | tr -d '":' | grep "${root_uuid}" | awk '{print $1}')
 root_partition_device=$(echo $root_partition | sed 's/[0-9]//g')
 root_partition_device_name=$(echo $root_partition_device | sed 's/\/dev\///g')
 
-# find targets: EMMC, SATA, SPI flash, NVMe
+# find targets: NAND, EMMC, SATA, SPI flash, NVMe
+[[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme' | grep -v "$root_partition_device_name")
 spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
@@ -206,6 +209,49 @@ create_armbian()
 	echo "# <file system>					<mount point>	<type>	<options>							<dump>	<pass>" > "${TempDir}"/rootfs/etc/fstab
 	echo "tmpfs						/tmp		tmpfs	defaults,nosuid							0	0" >> "${TempDir}"/rootfs/etc/fstab
 	grep swap /etc/fstab >> "${TempDir}"/rootfs/etc/fstab
+
+	# creating fstab, kernel and boot script for NAND partition
+	#
+	if [[ $1 == *nand* ]]; then
+		echo "Finishing installation to NAND." >> $logfile
+		REMOVESDTXT="and remove SD to boot from NAND"
+		echo "$1 /boot vfat	defaults 0 0" >> "${TempDir}"/rootfs/etc/fstab
+		echo "$2 / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1" >> "${TempDir}"/rootfs/etc/fstab
+		dialog --title "$title" --backtitle "$backtitle" --infobox "\nConverting kernel ... few seconds." 5 60
+		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d \
+			/boot/zImage "${TempDir}"/bootfs/uImage >/dev/null 2>&1
+		cp /boot/script.bin "${TempDir}"/bootfs/
+
+		if [[ $DEVICE_TYPE != a13 ]]; then
+			# Note: Not using UUID based boot for NAND
+			cat <<-EOF > "${TempDir}"/bootfs/uEnv.txt
+			console=ttyS0,115200
+			root=$2 rootwait
+			extraargs="console=tty1 hdmi.audio=EDID:0 disp.screen0_output_mode=EDID:0 consoleblank=0 loglevel=1"
+			EOF
+		else
+			# Note: Not using UUID based boot for NAND
+			cat <<-EOF > "${TempDir}"/bootfs/uEnv.txt
+			console=ttyS0,115200
+			root=$2 rootwait
+			extraargs="consoleblank=0 loglevel=1"
+			EOF
+		fi
+
+		sync
+
+		[[ $DEVICE_TYPE = a20 ]] && echo "machid=10bb" >> "${TempDir}"/bootfs/uEnv.txt
+		# ugly hack becouse we don't have sources for A10 nand uboot
+		if [[ $ID == Cubieboard || $BOARD_NAME == Cubieboard || $ID == "Lime A10" || $BOARD_NAME == "Lime A10" ]]; then
+			cp "${TempDir}"/bootfs/uEnv.txt "${TempDir}"/rootfs/boot/uEnv.txt
+			cp "${TempDir}"/bootfs/script.bin "${TempDir}"/rootfs/boot/script.bin
+			cp "${TempDir}"/bootfs/uImage "${TempDir}"/rootfs/boot/uImage
+		fi
+		umount_device "/dev/nand"
+		tune2fs -o journal_data_writeback /dev/nand2 >/dev/null 2>&1
+		tune2fs -O ^has_journal /dev/nand2 >/dev/null 2>&1
+		e2fsck -f /dev/nand2 >/dev/null 2>&1
+	fi
 
 	# Boot from eMMC, root = eMMC or SATA / USB
 	#
@@ -397,7 +443,41 @@ umount_device()
 	fi
 } # umount_device
 
+show_nand_warning()
+{
+	local temp_rc=$(mktemp)
+	cat <<-'EOF' > $temp_rc
+	screen_color = (WHITE,RED,ON)
+	EOF
+	local warn_text="You are installing the system to sunxi NAND.
 
+	This is not recommended as NAND has \Z1worse performance
+	and reliability\Zn than a good SD card.
+
+	You have been warned."
+
+	DIALOGRC=$temp_rc dialog --title "NAND warning" --backtitle "$backtitle" --colors \
+		--ok-label "I understand and agree" --msgbox "$warn_text" 10 70
+}
+
+# formatting sunxi NAND - no parameters, fixed solution.
+#
+format_nand()
+{
+	[[ ! -e /dev/nand ]] && echo '/dev/nand does not exist' >&2 && exit 8
+
+	show_nand_warning
+
+	dialog --title "$title" --backtitle "$backtitle" --infobox "\n            Formatting ... up to one minute." 5 60
+	if [[ $DEVICE_TYPE = a20 ]]; then
+		(echo y;) | sunxi-nand-part -f a20 /dev/nand 65536 'bootloader 65536' 'linux 0' >> $logfile 2>&1
+	else
+		(echo y;) | sunxi-nand-part -f a10 /dev/nand 65536 'bootloader 65536' 'linux 0' >> $logfile 2>&1
+	fi
+
+	mkfs.vfat /dev/nand1 >> $logfile 2>&1
+	mkfs.ext4 -qF /dev/nand2 >> $logfile 2>&1
+}
 
 
 # formatting eMMC [device] example /dev/mmcblk1 - one can select filesystem type
@@ -611,9 +691,15 @@ main()
 
 	IFS="'"
 	options=()
-	ichip='eMMC';
-	dest_boot=$emmccheck'p1'
-	dest_root=$emmccheck'p1'
+	if [[ -n $emmccheck ]]; then
+		ichip='eMMC';
+		dest_boot=$emmccheck'p1'
+		dest_root=$emmccheck'p1'
+	else
+		ichip='NAND'
+		dest_boot='/dev/nand1'
+		dest_root='/dev/nand2'
+	fi
 
 	if [[ -n $diskcheck && -d /sys/firmware/efi ]]; then
 
@@ -654,8 +740,13 @@ main()
 				title="$ichip install"
 				command='Power off'
 				show_warning "This script will erase your $ichip. Continue?"
-				umount_device "$emmccheck"
-				format_emmc "$emmccheck"
+				if [[ -n $emmccheck ]]; then
+					umount_device "$emmccheck"
+					format_emmc "$emmccheck"
+				else
+					umount_device '/dev/nand'
+					format_nand
+				fi
 				create_armbian "$dest_boot" "$dest_root"
 				;;
 			3)
@@ -663,8 +754,13 @@ main()
 				command='Power off'
 				check_partitions
 				show_warning "This script will erase your $ichip and $DISK_ROOT_PART. Continue?"
-				umount_device "$emmccheck"
-				format_emmc "$emmccheck"
+				if [[ -n $emmccheck ]]; then
+					umount_device "$emmccheck"
+					format_emmc "$emmccheck"
+					else
+					umount_device '/dev/nand'
+					format_nand
+				fi
 				umount_device "${DISK_ROOT_PART//[0-9]*/}"
 				format_disk "$DISK_ROOT_PART"
 				create_armbian "$dest_boot" "$DISK_ROOT_PART"
