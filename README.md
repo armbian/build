@@ -195,7 +195,9 @@ If you want to help with development, you should first review the [Development C
 
 ## Support
 
-Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). Make sure to use help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com) before opening new forum topic. In case you require attention, buy appropriate [subscription level](https://forum.armbian.com/subscriptions) before asking for dedicated attention to the issue you have https://www.armbian.com/contact.
+Support is provided via two ways:
+- For commercial/prioritized consider signing a support contract. Get more information by reaching out at https://www.armbian.com/contact.
+- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in **best effort** manner and therefore there are no guarantees for anything.
 
 ## Contact
 
