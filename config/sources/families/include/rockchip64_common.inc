@@ -10,7 +10,7 @@ OVERLAY_PREFIX='rockchip'
 SERIALCON=${SERIALCON:=$([ $BRANCH == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
 ATFPATCHDIR='atf-rockchip64'
-BOOTBRANCH="tag:v2022.04"
+BOOTBRANCH="tag:v2022.07"
 BOOTPATCHDIR="u-boot-rockchip64"
 PACKAGE_LIST_FAMILY="ethtool"
 
