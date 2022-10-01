@@ -1,4 +1,4 @@
-# cleaning <target>
+# general_cleaning <target>
 
 # target: what to clean
 # "make-atf" = make clean for ATF, if it is built.
