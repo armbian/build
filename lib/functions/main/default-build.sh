@@ -31,7 +31,7 @@ function main_default_build_single() {
 	fi
 
 	if [[ $CLEAN_LEVEL == *sources* ]]; then
-		cleaning "sources"
+		general_cleaning "sources"
 	fi
 
 	# Too many things being done. Allow doing only one thing. For core development, mostly.
