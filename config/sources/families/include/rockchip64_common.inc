@@ -33,7 +33,13 @@ RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
-BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*')}
+BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
+
+if [[ "a${BOOT_SOC}a" == "aa" ]]; then
+	display_alert "Could not determine BOOT_SOC from BOOTCONFIG" "BOOTCONFIG: '${BOOTCONFIG}'" "warning"
+else
+	display_alert "Determined BOOT_SOC from BOOTCONFIG" "BOOT_SOC: '${BOOT_SOC}'; BOOTCONFIG: '${BOOTCONFIG}'" "info"
+fi
 
 CPUMIN=${CPUMIN:="408000"}
 
