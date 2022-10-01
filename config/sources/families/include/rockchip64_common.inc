@@ -32,7 +32,13 @@ RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
-BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*')}
+BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
+
+if [[ "a${BOOT_SOC}a" == "aa" ]]; then
+	display_alert "Could not determine BOOT_SOC from BOOTCONFIG" "BOOTCONFIG: '${BOOTCONFIG}'" "warning"
+else
+	display_alert "Determined BOOT_SOC from BOOTCONFIG" "BOOT_SOC: '${BOOT_SOC}'; BOOTCONFIG: '${BOOTCONFIG}'" "info"
+fi
 
 CPUMIN=${CPUMIN:="408000"}
 
@@ -181,12 +187,18 @@ prepare_boot_configuration() {
 }
 
 uboot_custom_postprocess() {
+	[[ -z ${BOOT_SOC} ]] && exit_with_error "BOOT_SOC not defined for scenario '${BOOT_SCENARIO}' for BOARD'=${BOARD}' and BOOTCONFIG='${BOOTCONFIG}'"
 
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
 	elif [[ $BOOT_SCENARIO == "spl-blobs" || $BOOT_SCENARIO == "tpl-blob-atf-mainline" ]]; then
-		display_alert "mkimage for $BOOT_SOC with $BOOT_SCENARIO" "spl-blobs/tpl-blob-atf-mainline" "debug"
-		run_host_command_logged tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
+		# Bomb if DDR_BLOB not defined or does not exist
+		declare SPL_BIN_PATH="${RKBIN_DIR}/${DDR_BLOB}"
+		[[ -z ${SPL_BIN_PATH} ]] && exit_with_error "DDR_BLOB not defined for scenario ${BOOT_SCENARIO}"
+		[[ ! -f "${SPL_BIN_PATH}" ]] && exit_with_error "DDR_BLOB ${SPL_BIN_PATH} does not exist for scenario ${BOOT_SCENARIO}"
+
+		display_alert "mkimage for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
+		run_host_command_logged tools/mkimage -n "${BOOT_SOC}" -T rksd -d "${SPL_BIN_PATH}:spl/u-boot-spl.bin" idbloader.img
 
 	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
 
@@ -197,8 +209,7 @@ uboot_custom_postprocess() {
 		run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
 	else
-		echo "Unsupported u-boot processing configuration!"
-		exit 1
+		exit_with_error "Unsupported u-boot processing configuration!"
 	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
