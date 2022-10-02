@@ -5,7 +5,7 @@ LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2022.10-rc5"
+BOOTBRANCH="tag:v2022.07"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
