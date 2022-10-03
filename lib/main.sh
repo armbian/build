@@ -64,8 +64,6 @@ backtitle="Armbian building script, https://www.armbian.com | https://docs.armbi
 # shellcheck source=import-functions.sh
 source "${SRC}/lib/import-functions.sh"
 
-# shellcheck source=desktop.sh
-source "${SRC}"/lib/desktop.sh                              # desktop specific install
 # shellcheck source=compilation.sh
 source "${SRC}"/lib/compilation.sh                          # patching and compilation of kernel, uboot, ATF
 # shellcheck source=compilation-prepare.sh
