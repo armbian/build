@@ -53,6 +53,14 @@ function run_kernel_make_long_running() {
 function compile_kernel() {
 	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
 	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
+
+	# Extension hook: fetch_sources_for_kernel_driver
+	call_extension_method "fetch_sources_for_kernel_driver" <<- 'FETCH_SOURCES_FOR_KERNEL_DRIVER'
+		*fetch external drivers from source, before fetching kernel git sources*
+		Do your kernel driver fetching from external sources here.
+		`${kernel_work_dir}` is set, but not yet populated with kernel sources.
+	FETCH_SOURCES_FOR_KERNEL_DRIVER
+
 	declare checked_out_revision_mtime="" checked_out_revision_ts="" # set by fetch_from_repo
 	LOG_SECTION="kernel_prepare_git" do_with_logging do_with_hooks kernel_prepare_git
 
@@ -242,6 +250,14 @@ function kernel_patching() {
 	# it's mostly conditional, and very complex.
 	# @TODO: re-enable after finishing converting it with fasthash magic
 	# apply_kernel_patches_for_drivers  "${kernel_work_dir}" "${version}" # calls process_patch_file and other stuff. there is A LOT of it.
+
+	# Extension hook: patch_kernel_for_driver
+	call_extension_method "patch_kernel_for_driver" <<- 'PATCH_KERNEL_FOR_DRIVER'
+		*allow to add drivers/patch kernel for drivers before applying the family patches*
+		Patch *series* (not normal family patches) are already applied.
+		Useful for migrating EXTRAWIFI-related stuff to individual extensions.
+		Receives `${version}` and `${kernel_work_dir}` as environment variables.
+	PATCH_KERNEL_FOR_DRIVER
 
 	# applies a series of patches, in directory order, from multiple directories (default/"user" patches)
 	# @TODO: I believe using the $BOARD here is the most confusing thing in the whole of Armbian. It should be disabled.
