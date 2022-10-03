@@ -66,8 +66,6 @@ source "${SRC}/lib/import-functions.sh"
 
 # shellcheck source=compilation-prepare.sh
 source "${SRC}"/lib/compilation-prepare.sh                  # drivers that are not upstreamed
-# shellcheck source=makeboarddeb.sh
-source "${SRC}"/lib/makeboarddeb.sh                         # board support package
 # shellcheck source=chroot-buildpackages.sh
 source "${SRC}"/lib/chroot-buildpackages.sh                 # chroot packages building
 
