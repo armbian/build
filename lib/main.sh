@@ -64,8 +64,6 @@ backtitle="Armbian building script, https://www.armbian.com | https://docs.armbi
 # shellcheck source=import-functions.sh
 source "${SRC}/lib/import-functions.sh"
 
-# shellcheck source=distributions.sh
-source "${SRC}"/lib/distributions.sh                        # system specific install
 # shellcheck source=desktop.sh
 source "${SRC}"/lib/desktop.sh                              # desktop specific install
 # shellcheck source=compilation.sh
