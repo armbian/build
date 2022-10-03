@@ -27,15 +27,15 @@ if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 	trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/debug/calls.txt ;' RETURN
 fi
 
-if [[ -f "${SRC}"/lib/general.sh ]]; then
+if [[ -f "${SRC}"/lib/import-functions.sh ]]; then
 
 	# Declare this folder as safe
 	if ! grep -q 2>/dev/null "directory = \*" "$HOME/.gitconfig"; then
 		git config --global --add safe.directory "*"
 	fi
 
-	# shellcheck source=lib/general.sh
-	source "${SRC}"/lib/general.sh
+	# shellcheck source=lib/import-functions.sh
+	source "${SRC}"/lib/import-functions.sh
 
 else
 
