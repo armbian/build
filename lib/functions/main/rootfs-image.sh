@@ -1,3 +1,33 @@
+# unmount_on_exit
+#
+unmount_on_exit()
+{
+
+	trap - INT TERM EXIT
+	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	display_alert "unmount_on_exit() called!" "$stacktrace" "err"
+	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
+		ERROR_DEBUG_SHELL=no # dont do it twice
+		display_alert "MOUNT" "${MOUNT}" "err"
+		display_alert "SDCARD" "${SDCARD}" "err"
+		display_alert "ERROR_DEBUG_SHELL=yes, starting a shell." "ERROR_DEBUG_SHELL" "err"
+		bash < /dev/tty || true
+	fi
+
+	umount_chroot "${SDCARD}/"
+	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs
+	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
+	umount -l "${SDCARD}" >/dev/null 2>&1
+	umount -l "${MOUNT}"/boot >/dev/null 2>&1
+	umount -l "${MOUNT}" >/dev/null 2>&1
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
+	losetup -d "${LOOP}" >/dev/null 2>&1
+	rm -rf --one-file-system "${SDCARD}"
+	exit_with_error "debootstrap-ng was interrupted" || true # don't trigger again
+
+}
+
 # debootstrap_ng
 #
 debootstrap_ng()
