@@ -61,6 +61,8 @@ backtitle="Armbian building script, https://www.armbian.com | https://docs.armbi
 [[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8"       # set console to UTF-8 if not set
 
 # Libraries include
+# shellcheck source=import-functions.sh
+source "${SRC}/lib/import-functions.sh"
 
 # shellcheck source=debootstrap.sh
 source "${SRC}"/lib/debootstrap.sh                          # system specific install
