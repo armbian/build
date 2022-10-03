@@ -64,10 +64,6 @@ backtitle="Armbian building script, https://www.armbian.com | https://docs.armbi
 # shellcheck source=import-functions.sh
 source "${SRC}/lib/import-functions.sh"
 
-# shellcheck source=compilation-prepare.sh
-source "${SRC}"/lib/compilation-prepare.sh                  # drivers that are not upstreamed
-
-
 # set log path
 LOG_SUBPATH=${LOG_SUBPATH:=debug}
 
