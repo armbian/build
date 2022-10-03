@@ -195,9 +195,9 @@ If you want to help with development, you should first review the [Development C
 
 ## Support
 
-Support is provided via two ways:
-- For commercial/prioritized consider signing a support contract. Get more information by reaching out at https://www.armbian.com/contact.
-- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in **best effort** manner and therefore there are no guarantees for anything.
+Support is provided in one of two ways:
+- For commercial or prioritized assistance consider becoming a Partner. Get more information about becoming a Partner by reaching out at https://armbian.com/contact or subscribing to one of our Partner tiers at https://forum.armbian.com/subscriptions.
+- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guarenteed solutions.
 
 ## Contact
 
