@@ -78,8 +78,6 @@ source "${SRC}"/lib/compilation.sh                          # patching and compi
 source "${SRC}"/lib/compilation-prepare.sh                  # drivers that are not upstreamed
 # shellcheck source=makeboarddeb.sh
 source "${SRC}"/lib/makeboarddeb.sh                         # board support package
-# shellcheck source=general.sh
-source "${SRC}"/lib/general.sh                              # general functions
 # shellcheck source=chroot-buildpackages.sh
 source "${SRC}"/lib/chroot-buildpackages.sh                 # chroot packages building
 
