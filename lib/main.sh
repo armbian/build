@@ -64,8 +64,6 @@ backtitle="Armbian building script, https://www.armbian.com | https://docs.armbi
 # shellcheck source=import-functions.sh
 source "${SRC}/lib/import-functions.sh"
 
-# shellcheck source=debootstrap.sh
-source "${SRC}"/lib/debootstrap.sh                          # system specific install
 # shellcheck source=image-helpers.sh
 source "${SRC}"/lib/image-helpers.sh                        # helpers for OS image building
 # shellcheck source=distributions.sh
