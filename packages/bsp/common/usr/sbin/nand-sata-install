@@ -381,6 +381,7 @@ create_armbian()
 		hibernatemenu
 
 		echo "Install frub to $efi_partition"
+		mkdir -p "${TempDir}"/rootfs/boot/efi
 		mount $efi_partition "${TempDir}"/rootfs/boot/efi
 		mount --bind /dev "${TempDir}"/rootfs/dev
 		mount --make-rslave --bind /dev/pts "${TempDir}"/rootfs/dev/pts
@@ -609,17 +610,33 @@ check_partitions()
 	AvailablePartitions=$(eval $CMD)
 	if [[ -z $AvailablePartitions ]]; then
 		FREE_SPACE=$(parted /dev/$diskcheck unit GB print free | awk '/Free Space/{c++; sum += $3; print sum}' | tail -1)
-		if [[ "$FREE_SPACE" -gt 32 ]]; then
-			dialog --yes-label "Proceed" --no-label 'Exit' --title "$title" --backtitle "$backtitle" --yesno "\nDestnation $diskcheck has $FREE_SPACE Gb of available space. \n\n                Automated install?" 10 54
-		fi
-		if [[ $? -eq 0 ]]; then
+		dialog --yes-label "Proceed" --no-label 'Exit' --title "$title" --backtitle "$backtitle" --yesno "\nDestnation $diskcheck has $FREE_SPACE Gb of available space. \n\nAutomated install will generate needed partitions!" 9 55
+		if [[ "${FREE_SPACE%.*}" -gt 16 && $? == 0 ]]; then
+			if [[ "$DEVICE_TYPE" == uefi && -z "$efi_partition" ]]; then
+			# create EFI parition
+	                {
+	                     echo n; echo ; echo ; echo ; echo +200M;
+	                     echo t; echo EF; echo w;
+			} | fdisk /dev/$diskcheck &> /dev/null || true
+			yes | mkfs.vfat /dev/${diskcheck}p1 &> /dev/null || true
+			fatlabel /dev/${diskcheck}p1 EFI
+			fi
 			{
-				echo n; echo ; echo ; echo ; echo
-				echo w
-			} | fdisk /dev/$diskcheck > /dev/null || true
-		fi
+			echo n; echo ; echo ; echo ; echo
+			echo w
+			} | fdisk /dev/$diskcheck &> /dev/null || true
+			yes | mkfs.ext4 /dev/${diskcheck}p2 &> /dev/null || true
+
+			# re-read
+			emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
+			efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI" | awk '{print $1}')
+
+			else
+				exit 11
+			fi
 	fi
 	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINTS | grep \"btrfs\|ext4\|f2fs\" $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
+	partprobe
 	AvailablePartitions=$(eval $CMD)
 	PartitionOptions=($AvailablePartitions)
 
@@ -809,7 +826,7 @@ main()
 				;;
 
 			8)
-                                title='Boot from NVMe install'
+                                title='UEFI install to internal drive'
                                 command='Reboot'
                                 check_partitions "$root_partition_device_name"
                                 # we need to copy boot
