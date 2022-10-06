@@ -1,0 +1,216 @@
+From 25238317e77a6d21a73b055406def35c2733bd1c Mon Sep 17 00:00:00 2001
+From: Zong-Zhe Yang <kevin_yang@realtek.com>
+Date: Wed, 14 Sep 2022 11:50:34 +0800
+Subject: [PATCH 468/486] wifi: rtw89: support SER L1 simulation
+
+SER (system error recovery) can deal with different crash types by
+different levels of processes. Previous FW crash simulation triggers
+a CPU exception which is one kind of SER L2 type. It can verify SER L2
+flow which includes HW/FW restart.
+
+Now, we want to increase crash simulation types. A debug function is added
+to trigger control error in purpose for SER L1 simulation/verification.
+And, debugfs fw_crash is extended to accept different parameters.
+
+echo 1 > fw_crash:
+	simulate CPU exception as before
+	(keep 1 for compatibility with previous)
+
+	It will be catched and handled by SER L2.
+	(this requires HW/FW restart)
+
+echo 2 > fw_crash:
+	simulate control error
+
+	It will be catched and handled by SER L1.
+	(driver and FW cooperate to recover this)
+
+Besides, in order to apply to the above two cases,
+rename RTW89_FLAG_RESTART_TRIGGER to RTW89_FLAG_CRASH_SIMULATING
+and adjust where SER flow clears this bit for both L1 and L2.
+
+Signed-off-by: Zong-Zhe Yang <kevin_yang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220914035034.14521-5-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.h  |  2 +-
+ drivers/net/wireless/realtek/rtw89/debug.c | 62 ++++++++++++++++++----
+ drivers/net/wireless/realtek/rtw89/mac.c   |  8 ++-
+ drivers/net/wireless/realtek/rtw89/mac.h   |  3 ++
+ drivers/net/wireless/realtek/rtw89/ser.c   |  2 +-
+ 5 files changed, 61 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index af77bec0c..fa7b3d0cf 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -2895,7 +2895,7 @@ enum rtw89_flags {
+ 	RTW89_FLAG_LEISURE_PS,
+ 	RTW89_FLAG_LOW_POWER_MODE,
+ 	RTW89_FLAG_INACTIVE_PS,
+-	RTW89_FLAG_RESTART_TRIGGER,
++	RTW89_FLAG_CRASH_SIMULATING,
+ 
+ 	NUM_OF_RTW89_FLAGS,
+ };
+diff --git a/drivers/net/wireless/realtek/rtw89/debug.c b/drivers/net/wireless/realtek/rtw89/debug.c
+index db953010d..934518068 100644
+--- a/drivers/net/wireless/realtek/rtw89/debug.c
++++ b/drivers/net/wireless/realtek/rtw89/debug.c
+@@ -2190,6 +2190,37 @@ rtw89_debug_priv_early_h2c_set(struct file *filp, const char __user *user_buf,
+ 	return count;
+ }
+ 
++static int rtw89_dbg_trigger_ctrl_error(struct rtw89_dev *rtwdev)
++{
++	struct rtw89_cpuio_ctrl ctrl_para = {0};
++	u16 pkt_id;
++
++	rtw89_leave_ps_mode(rtwdev);
++
++	pkt_id = rtw89_mac_dle_buf_req(rtwdev, 0x20, true);
++	switch (pkt_id) {
++	case 0xffff:
++		return -ETIMEDOUT;
++	case 0xfff:
++		return -ENOMEM;
++	default:
++		break;
++	}
++
++	/* intentionally, enqueue two pkt, but has only one pkt id */
++	ctrl_para.cmd_type = CPUIO_OP_CMD_ENQ_TO_HEAD;
++	ctrl_para.start_pktid = pkt_id;
++	ctrl_para.end_pktid = pkt_id;
++	ctrl_para.pkt_num = 1; /* start from 0 */
++	ctrl_para.dst_pid = WDE_DLE_PORT_ID_WDRLS;
++	ctrl_para.dst_qid = WDE_DLE_QUEID_NO_REPORT;
++
++	if (rtw89_mac_set_cpuio(rtwdev, &ctrl_para, true))
++		return -EFAULT;
++
++	return 0;
++}
++
+ static int
+ rtw89_debug_priv_fw_crash_get(struct seq_file *m, void *v)
+ {
+@@ -2197,10 +2228,15 @@ rtw89_debug_priv_fw_crash_get(struct seq_file *m, void *v)
+ 	struct rtw89_dev *rtwdev = debugfs_priv->rtwdev;
+ 
+ 	seq_printf(m, "%d\n",
+-		   test_bit(RTW89_FLAG_RESTART_TRIGGER, rtwdev->flags));
++		   test_bit(RTW89_FLAG_CRASH_SIMULATING, rtwdev->flags));
+ 	return 0;
+ }
+ 
++enum rtw89_dbg_crash_simulation_type {
++	RTW89_DBG_SIM_CPU_EXCEPTION = 1,
++	RTW89_DBG_SIM_CTRL_ERROR = 2,
++};
++
+ static ssize_t
+ rtw89_debug_priv_fw_crash_set(struct file *filp, const char __user *user_buf,
+ 			      size_t count, loff_t *loff)
+@@ -2208,22 +2244,30 @@ rtw89_debug_priv_fw_crash_set(struct file *filp, const char __user *user_buf,
+ 	struct seq_file *m = (struct seq_file *)filp->private_data;
+ 	struct rtw89_debugfs_priv *debugfs_priv = m->private;
+ 	struct rtw89_dev *rtwdev = debugfs_priv->rtwdev;
+-	bool fw_crash;
++	int (*sim)(struct rtw89_dev *rtwdev);
++	u8 crash_type;
+ 	int ret;
+ 
+-	if (!RTW89_CHK_FW_FEATURE(CRASH_TRIGGER, &rtwdev->fw))
+-		return -EOPNOTSUPP;
+-
+-	ret = kstrtobool_from_user(user_buf, count, &fw_crash);
++	ret = kstrtou8_from_user(user_buf, count, 0, &crash_type);
+ 	if (ret)
+ 		return -EINVAL;
+ 
+-	if (!fw_crash)
++	switch (crash_type) {
++	case RTW89_DBG_SIM_CPU_EXCEPTION:
++		if (!RTW89_CHK_FW_FEATURE(CRASH_TRIGGER, &rtwdev->fw))
++			return -EOPNOTSUPP;
++		sim = rtw89_fw_h2c_trigger_cpu_exception;
++		break;
++	case RTW89_DBG_SIM_CTRL_ERROR:
++		sim = rtw89_dbg_trigger_ctrl_error;
++		break;
++	default:
+ 		return -EINVAL;
++	}
+ 
+ 	mutex_lock(&rtwdev->mutex);
+-	set_bit(RTW89_FLAG_RESTART_TRIGGER, rtwdev->flags);
+-	ret = rtw89_fw_h2c_trigger_cpu_exception(rtwdev);
++	set_bit(RTW89_FLAG_CRASH_SIMULATING, rtwdev->flags);
++	ret = sim(rtwdev);
+ 	mutex_unlock(&rtwdev->mutex);
+ 
+ 	if (ret)
+diff --git a/drivers/net/wireless/realtek/rtw89/mac.c b/drivers/net/wireless/realtek/rtw89/mac.c
+index d2d002d61..d126fa963 100644
+--- a/drivers/net/wireless/realtek/rtw89/mac.c
++++ b/drivers/net/wireless/realtek/rtw89/mac.c
+@@ -2487,8 +2487,7 @@ int rtw89_mac_resume_sch_tx_v1(struct rtw89_dev *rtwdev, u8 mac_idx, u32 tx_en)
+ }
+ EXPORT_SYMBOL(rtw89_mac_resume_sch_tx_v1);
+ 
+-static u16 rtw89_mac_dle_buf_req(struct rtw89_dev *rtwdev, u16 buf_len,
+-				 bool wd)
++u16 rtw89_mac_dle_buf_req(struct rtw89_dev *rtwdev, u16 buf_len, bool wd)
+ {
+ 	u32 val, reg;
+ 	int ret;
+@@ -2508,9 +2507,8 @@ static u16 rtw89_mac_dle_buf_req(struct rtw89_dev *rtwdev, u16 buf_len,
+ 	return FIELD_GET(B_AX_WD_BUF_STAT_PKTID_MASK, val);
+ }
+ 
+-static int rtw89_mac_set_cpuio(struct rtw89_dev *rtwdev,
+-			       struct rtw89_cpuio_ctrl *ctrl_para,
+-			       bool wd)
++int rtw89_mac_set_cpuio(struct rtw89_dev *rtwdev,
++			struct rtw89_cpuio_ctrl *ctrl_para, bool wd)
+ {
+ 	u32 val, cmd_type, reg;
+ 	int ret;
+diff --git a/drivers/net/wireless/realtek/rtw89/mac.h b/drivers/net/wireless/realtek/rtw89/mac.h
+index 9d8574714..22db80716 100644
+--- a/drivers/net/wireless/realtek/rtw89/mac.h
++++ b/drivers/net/wireless/realtek/rtw89/mac.h
+@@ -1004,5 +1004,8 @@ enum rtw89_mac_xtal_si_offset {
+ int rtw89_mac_write_xtal_si(struct rtw89_dev *rtwdev, u8 offset, u8 val, u8 mask);
+ int rtw89_mac_read_xtal_si(struct rtw89_dev *rtwdev, u8 offset, u8 *val);
+ void rtw89_mac_pkt_drop_vif(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif);
++u16 rtw89_mac_dle_buf_req(struct rtw89_dev *rtwdev, u16 buf_len, bool wd);
++int rtw89_mac_set_cpuio(struct rtw89_dev *rtwdev,
++			struct rtw89_cpuio_ctrl *ctrl_para, bool wd);
+ 
+ #endif
+diff --git a/drivers/net/wireless/realtek/rtw89/ser.c b/drivers/net/wireless/realtek/rtw89/ser.c
+index 1b01ff040..c1a4bc1c6 100644
+--- a/drivers/net/wireless/realtek/rtw89/ser.c
++++ b/drivers/net/wireless/realtek/rtw89/ser.c
+@@ -396,6 +396,7 @@ static void ser_idle_st_hdl(struct rtw89_ser *ser, u8 evt)
+ 	switch (evt) {
+ 	case SER_EV_STATE_IN:
+ 		rtw89_hci_recovery_complete(rtwdev);
++		clear_bit(RTW89_FLAG_CRASH_SIMULATING, rtwdev->flags);
+ 		break;
+ 	case SER_EV_L1_RESET:
+ 		ser_state_goto(ser, SER_RESET_TRX_ST);
+@@ -632,7 +633,6 @@ static void ser_l2_reset_st_hdl(struct rtw89_ser *ser, u8 evt)
+ 		fallthrough;
+ 	case SER_EV_L2_RECFG_DONE:
+ 		ser_state_goto(ser, SER_IDLE_ST);
+-		clear_bit(RTW89_FLAG_RESTART_TRIGGER, rtwdev->flags);
+ 		break;
+ 
+ 	case SER_EV_STATE_OUT:
+-- 
+2.35.3
+

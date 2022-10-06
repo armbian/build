@@ -1,0 +1,213 @@
+From 5c0e26d700fa1b5b3f6acd5455c154e865b375e2 Mon Sep 17 00:00:00 2001
+From: Zong-Zhe Yang <kevin_yang@realtek.com>
+Date: Tue, 9 Aug 2022 18:49:52 +0800
+Subject: [PATCH 405/486] wifi: rtw89: early recognize FW feature to decide if
+ chanctx
+
+In current flow, FW is asynchronously loaded after alloc_hw(). It defers
+the decision on FW feature map. It makes things difficult for us to decide
+whether to hook chanctx ops, which should be decided while alloc_hw() is
+calling. Still, asynchronous gets its advantages. So, we want to resolve
+this without dropping them.
+
+Based on multi-FW flag, RTW89_MFW_SIG, we can determine runtime FW is
+multi-FW (MFW) or single FW (SFW). Both of them have a quite small chunk
+for header at the head. The difference is that MFW doesn't describe version
+code in its header while SFW does. So, we plan to extend MFW header for
+version code. After that, in both cases, we can determine FW feature map by
+just FW header. And, according to the map, we can decide chanctx.
+
+So, we call request_partial_firmware_into_buf() to request a quite small
+chunk before alloc_hw() to get a early FW feature map without affecting
+things much and only use early map to decide whether to hook chanctx ops.
+
+It means that if non-extended MFW is used at runtime, driver just acts
+without chanctx as before. If extended MFW or SFW, which supports required
+FW features, is used at runtime, driver can hook chanctx ops to mac80211 if
+chip has configured support_chanctx_num > 0.
+
+Besides, key point for now to support single one chanctx is whether HW scan
+is supported at runtime. So, we configure all chip's support_chanctx_num to
+1, and check if HW scan is supported at runtime via early FW feature map.
+
+Signed-off-by: Zong-Zhe Yang <kevin_yang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220809104952.61355-14-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.c     | 12 +++++-
+ drivers/net/wireless/realtek/rtw89/core.h     | 12 ++++++
+ drivers/net/wireless/realtek/rtw89/fw.c       | 40 +++++++++++++++++++
+ drivers/net/wireless/realtek/rtw89/fw.h       | 12 +++++-
+ drivers/net/wireless/realtek/rtw89/rtw8852a.c |  2 +-
+ drivers/net/wireless/realtek/rtw89/rtw8852c.c |  2 +-
+ 6 files changed, 76 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.c b/drivers/net/wireless/realtek/rtw89/core.c
+index 90b18be4f..93d4d3166 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.c
++++ b/drivers/net/wireless/realtek/rtw89/core.c
+@@ -3216,12 +3216,19 @@ struct rtw89_dev *rtw89_alloc_ieee80211_hw(struct device *device,
+ 	struct rtw89_dev *rtwdev;
+ 	struct ieee80211_ops *ops;
+ 	u32 driver_data_size;
++	u32 early_feat_map = 0;
++	bool no_chanctx;
++
++	rtw89_early_fw_feature_recognize(device, chip, &early_feat_map);
+ 
+ 	ops = kmemdup(&rtw89_ops, sizeof(rtw89_ops), GFP_KERNEL);
+ 	if (!ops)
+ 		goto err;
+ 
+-	if (chip->support_chanctx_num == 0) {
++	no_chanctx = chip->support_chanctx_num == 0 ||
++		     !(early_feat_map & BIT(RTW89_FW_FEATURE_SCAN_OFFLOAD));
++
++	if (no_chanctx) {
+ 		ops->add_chanctx = NULL;
+ 		ops->remove_chanctx = NULL;
+ 		ops->change_chanctx = NULL;
+@@ -3240,6 +3247,9 @@ struct rtw89_dev *rtw89_alloc_ieee80211_hw(struct device *device,
+ 	rtwdev->ops = ops;
+ 	rtwdev->chip = chip;
+ 
++	rtw89_debug(rtwdev, RTW89_DBG_FW, "probe driver %s chanctx\n",
++		    no_chanctx ? "without" : "with");
++
+ 	return rtwdev;
+ 
+ err:
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index cb3ff094f..739d9a0f5 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -2561,6 +2561,18 @@ struct rtw89_fw_suit {
+ #define RTW89_FW_SUIT_VER_CODE(s)	\
+ 	RTW89_FW_VER_CODE((s)->major_ver, (s)->minor_ver, (s)->sub_ver, (s)->sub_idex)
+ 
++#define RTW89_MFW_HDR_VER_CODE(mfw_hdr)		\
++	RTW89_FW_VER_CODE((mfw_hdr)->ver.major,	\
++			  (mfw_hdr)->ver.minor,	\
++			  (mfw_hdr)->ver.sub,	\
++			  (mfw_hdr)->ver.idx)
++
++#define RTW89_FW_HDR_VER_CODE(fw_hdr)				\
++	RTW89_FW_VER_CODE(GET_FW_HDR_MAJOR_VERSION(fw_hdr),	\
++			  GET_FW_HDR_MINOR_VERSION(fw_hdr),	\
++			  GET_FW_HDR_SUBVERSION(fw_hdr),	\
++			  GET_FW_HDR_SUBINDEX(fw_hdr))
++
+ struct rtw89_fw_info {
+ 	const void *firmware;
+ 	size_t firmware_size;
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.c b/drivers/net/wireless/realtek/rtw89/fw.c
+index b3dc1af03..3ffc74bf7 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.c
++++ b/drivers/net/wireless/realtek/rtw89/fw.c
+@@ -248,6 +248,46 @@ static void rtw89_fw_recognize_features(struct rtw89_dev *rtwdev)
+ 	}
+ }
+ 
++void rtw89_early_fw_feature_recognize(struct device *device,
++				      const struct rtw89_chip_info *chip,
++				      u32 *early_feat_map)
++{
++	union {
++		struct rtw89_mfw_hdr mfw_hdr;
++		u8 fw_hdr[RTW89_FW_HDR_SIZE];
++	} buf = {};
++	const struct firmware *firmware;
++	u32 ver_code;
++	int ret;
++	int i;
++
++	ret = request_partial_firmware_into_buf(&firmware, chip->fw_name,
++						device, &buf, sizeof(buf), 0);
++	if (ret) {
++		dev_err(device, "failed to early request firmware: %d\n", ret);
++		goto out;
++	}
++
++	ver_code = buf.mfw_hdr.sig != RTW89_MFW_SIG ?
++		   RTW89_FW_HDR_VER_CODE(&buf.fw_hdr) :
++		   RTW89_MFW_HDR_VER_CODE(&buf.mfw_hdr);
++	if (!ver_code)
++		goto out;
++
++	for (i = 0; i < ARRAY_SIZE(fw_feat_tbl); i++) {
++		const struct __fw_feat_cfg *ent = &fw_feat_tbl[i];
++
++		if (chip->chip_id != ent->chip_id)
++			continue;
++
++		if (ent->cond(ver_code, ent->ver_code))
++			*early_feat_map |= BIT(ent->feature);
++	}
++
++out:
++	release_firmware(firmware);
++}
++
+ int rtw89_fw_recognize(struct rtw89_dev *rtwdev)
+ {
+ 	int ret;
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.h b/drivers/net/wireless/realtek/rtw89/fw.h
+index e75ad22aa..1e193928d 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.h
++++ b/drivers/net/wireless/realtek/rtw89/fw.h
+@@ -2446,7 +2446,14 @@ struct rtw89_mfw_info {
+ struct rtw89_mfw_hdr {
+ 	u8 sig;	/* RTW89_MFW_SIG */
+ 	u8 fw_nr;
+-	u8 rsvd[14];
++	u8 rsvd0[2];
++	struct {
++		u8 major;
++		u8 minor;
++		u8 sub;
++		u8 idx;
++	} ver;
++	u8 rsvd1[8];
+ 	struct rtw89_mfw_info info[];
+ } __packed;
+ 
+@@ -2563,6 +2570,9 @@ struct rtw89_fw_h2c_rf_get_mccch {
+ 
+ int rtw89_fw_check_rdy(struct rtw89_dev *rtwdev);
+ int rtw89_fw_recognize(struct rtw89_dev *rtwdev);
++void rtw89_early_fw_feature_recognize(struct device *device,
++				      const struct rtw89_chip_info *chip,
++				      u32 *early_feat_map);
+ int rtw89_fw_download(struct rtw89_dev *rtwdev, enum rtw89_fw_type type);
+ int rtw89_load_firmware(struct rtw89_dev *rtwdev);
+ void rtw89_unload_firmware(struct rtw89_dev *rtwdev);
+diff --git a/drivers/net/wireless/realtek/rtw89/rtw8852a.c b/drivers/net/wireless/realtek/rtw89/rtw8852a.c
+index 3516e480e..f6810fbb3 100644
+--- a/drivers/net/wireless/realtek/rtw89/rtw8852a.c
++++ b/drivers/net/wireless/realtek/rtw89/rtw8852a.c
+@@ -2133,7 +2133,7 @@ const struct rtw89_chip_info rtw8852a_chip_info = {
+ 	.txpwr_factor_mac	= 1,
+ 	.dig_table		= &rtw89_8852a_phy_dig_table,
+ 	.tssi_dbw_table		= NULL,
+-	.support_chanctx_num	= 0,
++	.support_chanctx_num	= 1,
+ 	.support_bands		= BIT(NL80211_BAND_2GHZ) |
+ 				  BIT(NL80211_BAND_5GHZ),
+ 	.support_bw160		= false,
+diff --git a/drivers/net/wireless/realtek/rtw89/rtw8852c.c b/drivers/net/wireless/realtek/rtw89/rtw8852c.c
+index 0218fa905..01d1ad765 100644
+--- a/drivers/net/wireless/realtek/rtw89/rtw8852c.c
++++ b/drivers/net/wireless/realtek/rtw89/rtw8852c.c
+@@ -2981,7 +2981,7 @@ const struct rtw89_chip_info rtw8852c_chip_info = {
+ 	.txpwr_factor_mac	= 1,
+ 	.dig_table		= NULL,
+ 	.tssi_dbw_table		= &rtw89_8852c_tssi_dbw_table,
+-	.support_chanctx_num	= 0,
++	.support_chanctx_num	= 1,
+ 	.support_bands		= BIT(NL80211_BAND_2GHZ) |
+ 				  BIT(NL80211_BAND_5GHZ) |
+ 				  BIT(NL80211_BAND_6GHZ),
+-- 
+2.35.3
+

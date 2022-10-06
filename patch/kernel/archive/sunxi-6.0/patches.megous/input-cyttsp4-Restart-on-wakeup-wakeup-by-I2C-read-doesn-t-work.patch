@@ -1,0 +1,126 @@
+From 9ef892625fc870f450fcb6cc8dfcf3ea29376700 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Tue, 1 Oct 2019 02:21:43 +0200
+Subject: [PATCH 074/486] input: cyttsp4: Restart on wakeup (wakeup by I2C read
+ doesn't work)
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/input/touchscreen/cyttsp4_core.c | 30 ++++++++++++++++--------
+ 1 file changed, 20 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/input/touchscreen/cyttsp4_core.c b/drivers/input/touchscreen/cyttsp4_core.c
+index 4afcac61c..1f258d900 100644
+--- a/drivers/input/touchscreen/cyttsp4_core.c
++++ b/drivers/input/touchscreen/cyttsp4_core.c
+@@ -26,7 +26,7 @@
+ #define CY_CORE_SLEEP_REQUEST_EXCLUSIVE_TIMEOUT	5000
+ #define CY_CORE_MODE_CHANGE_TIMEOUT		1000
+ #define CY_CORE_RESET_AND_WAIT_TIMEOUT		500
+-#define CY_CORE_WAKEUP_TIMEOUT			50
++#define CY_CORE_WAKEUP_TIMEOUT			250
+ 
+ #define CY_CORE_STARTUP_RETRY_COUNT		3
+ 
+@@ -137,13 +137,11 @@ static int cyttsp4_hw_reset(struct cyttsp4 *cd)
+ 		return cyttsp4_hw_soft_reset(cd);
+ 
+ 	gpiod_set_value_cansleep(cd->reset_gpio, 1);
+-	msleep(20);
+-
+-	gpiod_set_value_cansleep(cd->reset_gpio, 0);
+ 	msleep(40);
+ 
+-	gpiod_set_value_cansleep(cd->reset_gpio, 1);
++	gpiod_set_value_cansleep(cd->reset_gpio, 0);
+ 	msleep(20);
++
+ 	return 0;
+ }
+ 
+@@ -1524,12 +1522,14 @@ static int cyttsp4_core_sleep_(struct cyttsp4 *cd)
+ 	}
+ 	dev_vdbg(cd->dev, "%s: write DEEP SLEEP succeeded\n", __func__);
+ 
++	/*
+ 	rc = cyttsp4_set_power(cd, 0);
+ 	if (rc < 0) {
+ 		dev_err(cd->dev, "%s: HW Power down fails r=%d\n",
+ 				__func__, rc);
+ 		goto error;
+ 	}
++          */
+ 
+ 	/* Give time to FW to sleep */
+ 	msleep(50);
+@@ -1748,6 +1748,7 @@ static int cyttsp4_core_wake_(struct cyttsp4 *cd)
+ 	u8 mode;
+ 	int t;
+ 
++#if 0
+ 	/* Already woken? */
+ 	mutex_lock(&cd->system_lock);
+ 	if (cd->sleep_state == SS_SLEEP_OFF) {
+@@ -1765,7 +1766,8 @@ static int cyttsp4_core_wake_(struct cyttsp4 *cd)
+ 				__func__, rc);
+ 
+ 		/* Initiate a read transaction to wake up */
+-		cyttsp4_adap_read(cd, CY_REG_BASE, sizeof(mode), &mode);
++		rc = cyttsp4_adap_read(cd, CY_REG_BASE, sizeof(mode), &mode);
++		dev_err(dev, "Waking up by read rc=%d\n", rc);
+ 	} else
+ 		dev_vdbg(cd->dev, "%s: HW power up succeeds\n",
+ 			__func__);
+@@ -1782,7 +1784,13 @@ static int cyttsp4_core_wake_(struct cyttsp4 *cd)
+ 		cyttsp4_queue_startup_(cd);
+ 		mutex_unlock(&cd->system_lock);
+ 	}
+-
++#else
++	mutex_lock(&cd->system_lock);
++	cd->int_status &= ~CY_INT_AWAKE;
++	/* Try starting up */
++	cyttsp4_queue_startup_(cd);
++	mutex_unlock(&cd->system_lock);
++#endif
+ 	mutex_lock(&cd->system_lock);
+ 	cd->sleep_state = SS_SLEEP_OFF;
+ 	mutex_unlock(&cd->system_lock);
+@@ -1996,6 +2004,7 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 
++	cd->irq = irq;
+ 	cd->signals = cyttsp4_default_signals;
+ 	cd->n_signals = ARRAY_SIZE(cyttsp4_default_signals);
+ 
+@@ -2009,7 +2018,8 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 	cd->vdd_supply = devm_regulator_get(dev, "vdd");
+ 	if (IS_ERR(cd->vdd_supply)) {
+ 		rc = PTR_ERR(cd->vdd_supply);
+-		dev_err(dev, "can't get vdd power (%d)\n", rc);
++		if (rc != -EPROBE_DEFER)
++			dev_err(dev, "can't get vdd power (%d)\n", rc);
+ 		return ERR_PTR(rc);
+ 	}
+ 
+@@ -2023,14 +2033,14 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 	if (IS_ERR(cd->reset_gpio)) {
+ 		rc = PTR_ERR(cd->reset_gpio);
+ 		dev_err(dev, "can't get reset gpio (%d)\n", rc);
+-		return ERR_PTR(rc);
++		goto error_disable_vdd;
+ 	}
+ 
+ 	cd->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
+ 	if (IS_ERR(cd->reset_gpio)) {
+ 		rc = PTR_ERR(cd->reset_gpio);
+ 		dev_err(dev, "can't get reset gpio (%d)\n", rc);
+-		return ERR_PTR(rc);
++		goto error_disable_vdd;
+ 	}
+ 
+ 	cd->xfer_buf = devm_kzalloc(dev, xfer_buf_size, GFP_KERNEL);
+-- 
+2.35.3
+
