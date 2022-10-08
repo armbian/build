@@ -29,6 +29,7 @@ esac
 case $BRANCH in
 	legacy)
 
+		export KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.10.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
@@ -36,6 +37,7 @@ case $BRANCH in
 
 	current)
 
+		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
@@ -43,6 +45,7 @@ case $BRANCH in
 
 	edge)
 
+		export KERNEL_MAJOR_MINOR="5.19" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.19.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 

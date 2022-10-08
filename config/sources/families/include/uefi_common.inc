@@ -5,7 +5,7 @@ export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3} # Default 3-seconds timeout for
 export BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
 case "${BRANCH}" in
 
-	legacy)
+	ddk)
 		# This will force `unset KERNELSOURCE` later; no kernel will be built.
 		# Instead, the distro's default linux-generic kernel will be installed.
 		export DISTRO_GENERIC_KERNEL=yes
@@ -14,16 +14,16 @@ case "${BRANCH}" in
 	current)
 		export DISTRO_GENERIC_KERNEL=no
 		export LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		export KERNELBRANCH="branch:linux-5.15.y"
+		export KERNEL_MAJOR_MINOR="5.15"                      # Major and minor versions of this kernel. For mainline caching.
+		export KERNELBRANCH="branch:linux-5.15.y"             # Branch or tag to build from. It should match MAJOR_MINOR
 		export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
-		export KERNELDIR="linux-uefi-${LINUXFAMILY}"          # Avoid sharing a source tree with others, until we know it's safe.
 		;;
 
 	edge)
 		export DISTRO_GENERIC_KERNEL=no
 		export LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		export KERNELBRANCH="branch:linux-5.19.y"
+		export KERNEL_MAJOR_MINOR="5.19"                      # Major and minor versions of this kernel. For mainline caching.
+		export KERNELBRANCH="branch:linux-5.19.y"             # Branch or tag to build from. It should match MAJOR_MINOR
 		export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
-		export KERNELDIR="linux-uefi-${LINUXFAMILY}"          # Avoid sharing a source tree with others, until we know it's safe.
 		;;
 esac

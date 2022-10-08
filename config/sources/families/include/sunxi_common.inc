@@ -1,75 +1,46 @@
 enable_extension "sunxi-tools"
-ARCH=armhf
-BOOTDELAY=1
-BOOTPATCHDIR='u-boot-sunxi'
-UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
-BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
-BOOTENV_FILE='sunxi.txt'
-LINUXFAMILY=sunxi
-UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
-ASOUND_STATE='asound.state.sunxi-next'
-GOVERNOR=ondemand
+export ARCH=armhf
+export BOOTDELAY=1
+export BOOTPATCHDIR='u-boot-sunxi'
+export UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
+export BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
+export BOOTENV_FILE='sunxi.txt'
+export LINUXFAMILY=sunxi
+export UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
+export ASOUND_STATE='asound.state.sunxi-next'
+export GOVERNOR=ondemand
+export KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
+export KERNELPATCHDIR='sunxi-'$BRANCH
 
 case $BRANCH in
 
 	legacy)
-		KERNEL_VERSION_LEVEL="5.10"
-		KERNELSWITCHOBJ="tag=v5.10.138"
+		export KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
+		export KERNELBRANCH="branch:linux-5.10.y"
+		export KERNELBRANCH_MEGOUS="branch:orange-pi-5.10"
 		;;
+
 	current)
-		KERNEL_VERSION_LEVEL="5.15"
-		KERNELSWITCHOBJ="tag=v5.15.74"
+		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
+		export KERNELBRANCH="branch:linux-5.15.y"
+		export KERNELBRANCH_MEGOUS="branch:orange-pi-5.15"
 		;;
+
 	edge)
-		KERNEL_VERSION_LEVEL=${KERNEL_VERSION_LEVEL:-5.19}
-		KERNELSWITCHOBJ=${KERNELSWITCHOBJ:-'tag=v5.19.16'}
-		;;
-
-esac
-
-case "$KERNEL_VERSION_LEVEL" in
-
-	5.10 | 5.15 | 5.16 | 5.17 | 5.18 | 5.19)
-		KERNELSOURCE=$MAINLINE_KERNEL_SOURCE
-		KERNELSOURCENAME='name=origin'
-		KERNELBRANCH="branch:linux-${KERNEL_VERSION_LEVEL}.y"
-		;;
-
-	*)
-		KERNELSOURCE="https://github.com/megous/linux"
-		KERNELSOURCENAME='name=megous'
-		KERNELBRANCH="branch:orange-pi-$KERNEL_VERSION_LEVEL"
+		export KERNEL_MAJOR_MINOR="5.19" # Major and minor versions of this kernel.
+		export KERNELBRANCH="branch:linux-5.19.y"
+		export KERNELBRANCH_MEGOUS="branch:orange-pi-5.19"
 		;;
 esac
 
-KERNELPATCHDIR='archive/sunxi-'$KERNEL_VERSION_LEVEL
+# Hack for easily using megous for tests.
+if [[ "$USE_MEGOUS" == "yes" ]]; then
+	display_alert "Using megous/linux for kernel" "USE_MEGOUS: ${USE_MEGOUS}" "debug"
+	export KERNELSOURCE="https://github.com/megous/linux"
+	export KERNELBRANCH="${KERNELBRANCH_MEGOUS}"
+fi
 
-# An optional parameter for switching to a git object such as a tag, commit,
-# or a specific branch. The object must exist in the local repository.
-# This optional parameter takes precedence. If it is specified, then
-# the commit state corresponding to the specified git object will be extracted
-# to the working directory. Otherwise, the commit corresponding to the top of
-# the branch will be extracted.
-# KERNELSWITCHOBJ="tag=v5.10.15"
-# tag | obj | commit=v5.10.15 | [origin|megous]/$branch | $hash
-
-var_origin_kernel() {
-	url=$MAINLINE_KERNEL_SOURCE
-	name='origin'
-	branch="linux-${KERNEL_VERSION_LEVEL}.y"
-	start_tag="v$KERNEL_VERSION_LEVEL"
-
-	# checking the reachability of the initial tag
-	if [ "$(git ls-remote --tags $url $start_tag |
-		awk -F'/' '{if (NR == 1) print $NF}')" != "$start_tag" ]; then
-		exit 177
-	fi
-
-	# Exceptions to the rule are when the desired tag is not
-	# a bifurcation point at which all previous merge branches converge.
-	# This is due to the subsequent extraction of `megous`
-	# [ "$KERNEL_VERSION_LEVEL" == "5.12" ] && start_tag="v5.12-rc7"
-}
+unset KERNELBRANCH_MEGOUS
 
 family_tweaks() {
 	# execute specific tweaks function if present
@@ -81,6 +52,8 @@ family_tweaks() {
 family_tweaks_bsp() {
 	# execute specific tweaks function if present
 	[[ $(type -t family_tweaks_bsp_s) == function ]] && family_tweaks_bsp_s
+
+	return 0 # short-circuit above, avoid errors on exit.
 }
 
 write_uboot_platform() {
