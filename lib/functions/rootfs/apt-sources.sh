@@ -40,14 +40,14 @@ add_apt_sources() {
 
 				display_alert "Adding APT Source ${new_apt_source}"
 
-				if [[ "${new_apt_source}" == ppa* ]] ; then
+				if [[ "${new_apt_source}" == ppa* ]]; then
 					# ppa with software-common-properties
 					run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
 					# add list with apt-add
 					# -y -> Assumes yes to all queries
 					# -n -> Do not update package cache after adding
 					if [[ -f "${apt_source_gpg_filepath}" ]]; then
-						 display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
+						display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
 						cp "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
 						run_on_sdcard "apt-key add \"/tmp/${apt_source_gpg_filename}\""
 						echo "APT Key returned : $?"
@@ -57,7 +57,7 @@ add_apt_sources() {
 					echo "${new_apt_source}" > "${SDCARD}/etc/apt/sources.list.d/${apt_source_filename}"
 					if [[ -f "${apt_source_gpg_filepath}" ]]; then
 						display_alert "Adding GPG Key ${apt_source_gpg_filepath}"
-#						local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
+						#						local apt_source_gpg_filename="$(basename ${apt_source_gpg_filepath})"
 						mkdir -p "${SDCARD}"/usr/share/keyrings/
 						cp "${apt_source_gpg_filepath}" "${SDCARD}"/usr/share/keyrings/
 					fi

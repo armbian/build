@@ -4,8 +4,7 @@
 # * creates directory structure
 # * changes system settings
 #
-prepare_host()
-{
+prepare_host() {
 	display_alert "Preparing" "host" "info"
 
 	# The 'offline' variable must always be set to 'true' or 'false'
@@ -43,22 +42,22 @@ prepare_host()
 	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
 	zlib1g-dev zstd fdisk"
 
-  if [[ $(dpkg --print-architecture) == amd64 ]]; then
+	if [[ $(dpkg --print-architecture) == amd64 ]]; then
 
-	hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386"
-	grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
+		hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386"
+		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
 
-  elif [[ $(dpkg --print-architecture) == arm64 ]]; then
+	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
 
-	hostdeps+="gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
+		hostdeps+="gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
 
-  else
+	else
 
-	display_alert "Please read documentation to set up proper compilation environment"
-	display_alert "https://www.armbian.com/using-armbian-tools/"
-	exit_with_error "Running this tool on non x86_64 build host is not supported"
+		display_alert "Please read documentation to set up proper compilation environment"
+		display_alert "https://www.armbian.com/using-armbian-tools/"
+		exit_with_error "Running this tool on non x86_64 build host is not supported"
 
-  fi
+	fi
 
 	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
 	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|jammy|ulyana|ulyssa|bullseye|uma|una)$ ]]; then
@@ -109,128 +108,126 @@ prepare_host()
 		SYNC_CLOCK=no
 	fi
 
-
 	# Skip verification if you are working offline
 	if ! $offline; then
 
-	# warning: apt-cacher-ng will fail if installed and used both on host and in
-	# container/chroot environment with shared network
-	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
+		# warning: apt-cacher-ng will fail if installed and used both on host and in
+		# container/chroot environment with shared network
+		# set NO_APT_CACHER=yes to prevent installation errors in such case
+		if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
 
-	export EXTRA_BUILD_DEPS=""
-	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
-	*run before installing host dependencies*
-	you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
-	ADD_HOST_DEPENDENCIES
+		export EXTRA_BUILD_DEPS=""
+		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
+			*run before installing host dependencies*
+			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
+		ADD_HOST_DEPENDENCIES
 
-	if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
+		if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
 
-	display_alert "Installing build dependencies"
-	# don't prompt for apt cacher selection
-	sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
+		display_alert "Installing build dependencies"
+		# don't prompt for apt cacher selection
+		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
-	LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
-	install_pkg_deb "autoupdate $hostdeps"
-	unset LOG_OUTPUT_FILE
+		LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
+		install_pkg_deb "autoupdate $hostdeps"
+		unset LOG_OUTPUT_FILE
 
-	update-ccache-symlinks
+		update-ccache-symlinks
 
-	export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
-	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
-	*run after all host dependencies are installed*
-	At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
-	All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
-	are installed at this point. The system clock has not yet been synced.
-	HOST_DEPENDENCIES_READY
+		export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
+		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
+			*run after all host dependencies are installed*
+			At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+			All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+			are installed at this point. The system clock has not yet been synced.
+		HOST_DEPENDENCIES_READY
 
+		# sync clock
+		if [[ $SYNC_CLOCK != no ]]; then
+			display_alert "Syncing clock" "host" "info"
+			ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
+		fi
 
-	# sync clock
-	if [[ $SYNC_CLOCK != no ]]; then
-		display_alert "Syncing clock" "host" "info"
-		ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
-	fi
+		# create directory structure
+		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
+		if [[ -n $SUDO_USER ]]; then
+			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
+			# SGID bit on cache/sources breaks kernel dpkg packaging
+			chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
+			# fix existing permissions
+			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
+			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
+		fi
+		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
-	# create directory structure
-	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
-	if [[ -n $SUDO_USER ]]; then
-		chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
-		# SGID bit on cache/sources breaks kernel dpkg packaging
-		chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
-		# fix existing permissions
-		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
-		find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
-	fi
-	mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+		# build aarch64
+		if [[ $(dpkg --print-architecture) == amd64 ]]; then
+			if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
 
-# build aarch64
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-		if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
+				# bind mount toolchain if defined
+				if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
+					mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
+					mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
+				fi
 
-			# bind mount toolchain if defined
-			if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
-				mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
-				mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
-			fi
+				display_alert "Checking for external GCC compilers" "" "info"
+				# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
-			display_alert "Checking for external GCC compilers" "" "info"
-			# download external Linaro compiler and missing special dependencies since they are needed for certain sources
-
-			local toolchains=(
-				"gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-				"gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-				"gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-				"gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-				"gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-				"gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
-				"gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
-				"gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-				"gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
-				"gcc-arm-11.2-2022.02-x86_64-arm-none-linux-gnueabihf.tar.xz"
-				"gcc-arm-11.2-2022.02-x86_64-aarch64-none-linux-gnu.tar.xz"
+				local toolchains=(
+					"gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
+					"gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
+					"gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
+					"gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
+					"gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
+					"gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
+					"gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
+					"gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
+					"gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
+					"gcc-arm-11.2-2022.02-x86_64-arm-none-linux-gnueabihf.tar.xz"
+					"gcc-arm-11.2-2022.02-x86_64-aarch64-none-linux-gnu.tar.xz"
 				)
 
-			USE_TORRENT_STATUS=${USE_TORRENT}
-			USE_TORRENT="no"
-			for toolchain in ${toolchains[@]}; do
-				local toolchain_zip="${SRC}/cache/toolchain/${toolchain}"
-				local toolchain_dir="${toolchain_zip%.tar.*}"
-				if [[ ! -f "${toolchain_dir}/.download-complete" ]]; then
-					download_and_verify "toolchain" "${toolchain}" \
-					|| exit_with_error "Failed to download toolchain" "${toolchain}"
-
-					display_alert "decompressing"
-					pv -p -b -r -c -N "[ .... ] ${toolchain}" "${toolchain_zip}" \
-					| xz -dc \
-					| tar xp --xattrs --no-same-owner --overwrite -C "${SRC}/cache/toolchain/"
-					if [[ $? -ne 0 ]]; then
-						rm -rf "${toolchain_dir}"
-						exit_with_error "Failed to decompress toolchain" "${toolchain}"
-					fi
-
-					touch "${toolchain_dir}/.download-complete"
-					rm -rf "${toolchain_zip}"* # Also delete asc file
-				fi
-			done
-			USE_TORRENT=${USE_TORRENT_STATUS}
-
-			local existing_dirs=( $(ls -1 "${SRC}"/cache/toolchain) )
-			for dir in ${existing_dirs[@]}; do
-				local found=no
+				USE_TORRENT_STATUS=${USE_TORRENT}
+				USE_TORRENT="no"
 				for toolchain in ${toolchains[@]}; do
-					[[ $dir == ${toolchain%.tar.*} ]] && found=yes
-				done
-				if [[ $found == no ]]; then
-					display_alert "Removing obsolete toolchain" "$dir"
-					rm -rf "${SRC}/cache/toolchain/${dir}"
-				fi
-			done
-		else
-			display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
-		fi
-	fi
+					local toolchain_zip="${SRC}/cache/toolchain/${toolchain}"
+					local toolchain_dir="${toolchain_zip%.tar.*}"
+					if [[ ! -f "${toolchain_dir}/.download-complete" ]]; then
+						download_and_verify "toolchain" "${toolchain}" ||
+							exit_with_error "Failed to download toolchain" "${toolchain}"
 
-  fi # check offline
+						display_alert "decompressing"
+						pv -p -b -r -c -N "[ .... ] ${toolchain}" "${toolchain_zip}" |
+							xz -dc |
+							tar xp --xattrs --no-same-owner --overwrite -C "${SRC}/cache/toolchain/"
+						if [[ $? -ne 0 ]]; then
+							rm -rf "${toolchain_dir}"
+							exit_with_error "Failed to decompress toolchain" "${toolchain}"
+						fi
+
+						touch "${toolchain_dir}/.download-complete"
+						rm -rf "${toolchain_zip}"* # Also delete asc file
+					fi
+				done
+				USE_TORRENT=${USE_TORRENT_STATUS}
+
+				local existing_dirs=($(ls -1 "${SRC}"/cache/toolchain))
+				for dir in ${existing_dirs[@]}; do
+					local found=no
+					for toolchain in ${toolchains[@]}; do
+						[[ $dir == ${toolchain%.tar.*} ]] && found=yes
+					done
+					if [[ $found == no ]]; then
+						display_alert "Removing obsolete toolchain" "$dir"
+						rm -rf "${SRC}/cache/toolchain/${dir}"
+					fi
+				done
+			else
+				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
+			fi
+		fi
+
+	fi # check offline
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	if [[ $KERNEL_ONLY != yes ]]; then
@@ -254,9 +251,9 @@ prepare_host()
 	fi
 
 	# check free space (basic)
-	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2>/dev/null) # in bytes
-	if [[ -n $freespace && $(( $freespace / 1073741824 )) -lt 10 ]]; then
-		display_alert "Low free space left" "$(( $freespace / 1073741824 )) GiB" "wrn"
+	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes
+	if [[ -n $freespace && $(($freespace / 1073741824)) -lt 10 ]]; then
+		display_alert "Low free space left" "$(($freespace / 1073741824)) GiB" "wrn"
 		# pause here since dialog-based menu will hide this message otherwise
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
 		read

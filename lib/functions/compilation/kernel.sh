@@ -1,8 +1,10 @@
-compile_kernel()
-{
+compile_kernel() {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
-		(cd "${SRC}/cache/sources/${LINUXSOURCEDIR}"; make ARCH="${ARCHITECTURE}" clean >/dev/null 2>&1)
+		(
+			cd "${SRC}/cache/sources/${LINUXSOURCEDIR}"
+			make ARCH="${ARCHITECTURE}" clean > /dev/null 2>&1
+		)
 	fi
 
 	if [[ $USE_OVERLAYFS == yes ]]; then
@@ -79,7 +81,6 @@ Called after ${LINUXCONFIG}.config is put in place (.config).
 Before any olddefconfig any Kconfig make is called.
 A good place to customize the .config directly.
 CUSTOM_KERNEL_CONFIG
-
 
 	# hack for OdroidXU4. Copy firmare files
 	if [[ $BOARD == odroidxu4 ]]; then
@@ -175,14 +176,14 @@ CUSTOM_KERNEL_CONFIG
 
 	# store git hash to the file and create a change log
 	HASHTARGET="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}"
-	OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2>/dev/null)
+	OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2> /dev/null)
 
 	# check if OLDHASHTARGET commit exists otherwise use oldest
-	if  [[ -z ${KERNEL_VERSION_LEVEL} ]]; then
-		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
+	if [[ -z ${KERNEL_VERSION_LEVEL} ]]; then
+		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1
 		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} show HEAD~199 --pretty=format:"%H" --no-patch)
 	else
-		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} >/dev/null 2>&1
+		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1
 		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} rev-list --max-parents=0 HEAD)
 	fi
 

@@ -1,18 +1,17 @@
-install_distribution_specific()
-{
+install_distribution_specific() {
 
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
 	case $RELEASE in
 
-	sid)
+		sid)
 
 			# (temporally) disable broken service
 			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
 
-		;;
+			;;
 
-	focal|jammy)
+		focal | jammy)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
@@ -42,7 +41,7 @@ install_distribution_specific()
 			# disable conflicting services
 			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
 
-		;;
+			;;
 
 	esac
 
@@ -58,10 +57,10 @@ install_distribution_specific()
 	"update-locale --reset LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_ALL=$DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<-EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
-	network:
-		  version: 2
-		  renderer: $RENDERER
+	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
+		network:
+			  version: 2
+			  renderer: $RENDERER
 	EOF
 
 	# cleanup motd services and related files
@@ -90,67 +89,66 @@ install_distribution_specific()
 # <release>: bullseye|focal|jammy|sid
 # <basedir>: path to root directory
 #
-create_sources_list()
-{
+create_sources_list() {
 	local release=$1
 	local basedir=$2
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
-	buster)
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${DEBIAN_MIRROR} $release main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+		buster)
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
 
-	deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
-	#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
-	EOF
-	;;
+				deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
+				#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
+			EOF
+			;;
 
-	bullseye|bookworm|trixie)
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${DEBIAN_MIRROR} $release main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+		bullseye | bookworm | trixie)
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
 
-	deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
 
-	deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
-	#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
-	EOF
-	;;
+				deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+				#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
+			EOF
+			;;
 
-	sid) # sid is permanent unstable development and has no such thing as updates or security
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${DEBIAN_MIRROR} $release main contrib non-free
-	#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
-	EOF
-	;;
+		sid) # sid is permanent unstable development and has no such thing as updates or security
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+			EOF
+			;;
 
-	focal|jammy)
-	cat <<-EOF > "${basedir}"/etc/apt/sources.list
-	deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
+		focal | jammy)
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 
-	deb http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
+				deb http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} ${release}-security main restricted universe multiverse
 
-	deb http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
+				deb http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} ${release}-updates main restricted universe multiverse
 
-	deb http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
-	#deb-src http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
-	EOF
-	;;
+				deb http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
+				#deb-src http://${UBUNTU_MIRROR} ${release}-backports main restricted universe multiverse
+			EOF
+			;;
 	esac
 
 	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
@@ -173,9 +171,9 @@ create_sources_list()
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
 		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
-	    echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb ${SIGNED_BY}http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt" )".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt")".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development

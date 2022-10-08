@@ -1,6 +1,5 @@
-function distro_menu ()
-{
-# create a select menu for choosing a distribution based EXPERT status
+function distro_menu() {
+	# create a select menu for choosing a distribution based EXPERT status
 
 	local distrib_dir="${1}"
 
@@ -25,12 +24,11 @@ function distros_options() {
 	done
 }
 
-show_developer_warning()
-{
+show_developer_warning() {
 	local temp_rc
 	temp_rc=$(mktemp)
-	cat <<-'EOF' > "${temp_rc}"
-	screen_color = (WHITE,RED,ON)
+	cat <<- 'EOF' > "${temp_rc}"
+		screen_color = (WHITE,RED,ON)
 	EOF
 	local warn_text="You are switching to the \Z1EXPERT MODE\Zn
 

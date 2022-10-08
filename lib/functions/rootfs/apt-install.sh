@@ -1,5 +1,4 @@
-install_deb_chroot()
-{
+install_deb_chroot() {
 
 	local package=$1
 	local variant=$2

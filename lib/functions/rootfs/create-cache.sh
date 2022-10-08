@@ -2,8 +2,7 @@
 #
 # returns md5 hash for current package list and rootfs cache version
 
-get_package_list_hash()
-{
+get_package_list_hash() {
 	local package_arr exclude_arr
 	local list_content
 	read -ra package_arr <<< "${DEBOOTSTRAP_LIST} ${PACKAGE_LIST}"
@@ -17,8 +16,7 @@ get_package_list_hash()
 # get_rootfs_cache_list <cache_type> <packages_hash>
 #
 # return a list of versions of all avaiable cache from remote and local.
-get_rootfs_cache_list()
-{
+get_rootfs_cache_list() {
 	local cache_type=$1
 	local packages_hash=$2
 
@@ -28,10 +26,10 @@ get_rootfs_cache_list()
 		# || curl --silent --fail -L https://cache.armbian.com/rootfs/list
 		curl --silent --fail -L https://cache.armbian.com/rootfs/list
 
-		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" \
-			| sed -e 's#^.*/##' \
-			| sed -e 's#\..*$##' \
-			| awk -F'-' '{print $5}'
+		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" |
+			sed -e 's#^.*/##' |
+			sed -e 's#\..*$##' |
+			awk -F'-' '{print $5}'
 	} | sort | uniq
 }
 
@@ -39,8 +37,7 @@ get_rootfs_cache_list()
 #
 # unpacks cached rootfs for $RELEASE or creates one
 #
-create_rootfs_cache()
-{
+create_rootfs_cache() {
 	local packages_hash=$(get_package_list_hash)
 	local packages_hash=${packages_hash:0:8}
 
@@ -51,7 +48,7 @@ create_rootfs_cache()
 
 	# seek last cache, proceed to previous otherwise build it
 	local cache_list
-	readarray -t cache_list <<<"$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
+	readarray -t cache_list <<< "$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
 	for ROOTFSCACHE_VERSION in "${cache_list[@]}"; do
 
 		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst
@@ -64,8 +61,8 @@ create_rootfs_cache()
 		# if aria2 file exists download didn't succeeded
 		if [[ ! -f $cache_fname || -f ${cache_fname}.aria2 ]]; then
 			display_alert "Downloading from servers"
-			download_and_verify "rootfs" "$cache_name" \
-			|| continue
+			download_and_verify "rootfs" "$cache_name" ||
+				continue
 		fi
 
 		[[ -f $cache_fname && ! -f ${cache_fname}.aria2 ]] && break
@@ -74,7 +71,7 @@ create_rootfs_cache()
 	# if aria2 file exists download didn't succeeded
 	if [[ "$ROOT_FS_CREATE_ONLY" != "yes" && -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
 
-		local date_diff=$(( ($(date +%s) - $(stat -c %Y $cache_fname)) / 86400 ))
+		local date_diff=$((($(date +%s) - $(stat -c %Y $cache_fname)) / 86400))
 		display_alert "Extracting $cache_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "[ .... ] $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
 		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
@@ -301,7 +298,7 @@ create_rootfs_cache()
 		rm -rf $SDCARD
 		# remove exit trap
 		trap - INT TERM EXIT
-        exit
+		exit
 	fi
 
 	mount_chroot "$SDCARD"

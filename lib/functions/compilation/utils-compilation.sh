@@ -1,5 +1,4 @@
-grab_version()
-{
+grab_version() {
 	local ver=()
 	ver[0]=$(grep "^VERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
 	ver[1]=$(grep "^PATCHLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
@@ -12,9 +11,11 @@ grab_version()
 #
 # returns path to toolchain that satisfies <expression>
 #
-find_toolchain()
-{
-	[[ "${SKIP_EXTERNAL_TOOLCHAINS}" == "yes" ]] && { echo "/usr/bin"; return; }
+find_toolchain() {
+	[[ "${SKIP_EXTERNAL_TOOLCHAINS}" == "yes" ]] && {
+		echo "/usr/bin"
+		return
+	}
 	local compiler=$1
 	local expression=$2
 	local dist=10
@@ -29,14 +30,14 @@ find_toolchain()
 		local gcc_ver
 		gcc_ver=$("${dir}bin/${compiler}gcc" -dumpversion | grep -oE "^[[:digit:]]+\.[[:digit:]]")
 		# check if toolchain version satisfies requirement
-		awk "BEGIN{exit ! ($gcc_ver $expression)}" >/dev/null || continue
+		awk "BEGIN{exit ! ($gcc_ver $expression)}" > /dev/null || continue
 		# check if found version is the closest to target
 		# may need different logic here with more than 1 digit minor version numbers
 		# numbers: 3.9 > 3.10; versions: 3.9 < 3.10
 		# dpkg --compare-versions can be used here if operators are changed
 		local d
 		d=$(awk '{x = $1 - $2}{printf "%.1f\n", (x > 0) ? x : -x}' <<< "$target_ver $gcc_ver")
-		if awk "BEGIN{exit ! ($d < $dist)}" >/dev/null ; then
+		if awk "BEGIN{exit ! ($d < $dist)}" > /dev/null; then
 			dist=$d
 			toolchain=${dir}bin
 		fi
@@ -45,10 +46,10 @@ find_toolchain()
 	# logging a stack of used compilers.
 	if [[ -f "${DEST}"/${LOG_SUBPATH}/compiler.log ]]; then
 		if ! grep -q "$toolchain" "${DEST}"/${LOG_SUBPATH}/compiler.log; then
-			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log;
+			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log
 		fi
 	else
-			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log;
+		echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log
 	fi
 }
 
@@ -66,8 +67,7 @@ find_toolchain()
 # - UB if running multiple compilation tasks in parallel
 # - should not be used with CREATE_PATCHES=yes
 #
-overlayfs_wrapper()
-{
+overlayfs_wrapper() {
 	local operation="$1"
 	if [[ $operation == wrap ]]; then
 		local srcdir="$2"
@@ -87,12 +87,12 @@ overlayfs_wrapper()
 	fi
 	if [[ $operation == cleanup ]]; then
 		if [[ -f /tmp/.overlayfs_wrapper_umount ]]; then
-			for dir in $(</tmp/.overlayfs_wrapper_umount); do
+			for dir in $(< /tmp/.overlayfs_wrapper_umount); do
 				[[ $dir == /tmp/* ]] && umount -l "$dir" > /dev/null 2>&1
 			done
 		fi
 		if [[ -f /tmp/.overlayfs_wrapper_cleanup ]]; then
-			for dir in $(</tmp/.overlayfs_wrapper_cleanup); do
+			for dir in $(< /tmp/.overlayfs_wrapper_cleanup); do
 				[[ $dir == /tmp/* ]] && rm -rf "$dir"
 			done
 		fi

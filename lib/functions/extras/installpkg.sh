@@ -17,8 +17,7 @@
 # The LOG_OUTPUT_FILE variable must be defined in the calling function
 # before calling the install_pkg_deb function and unset after.
 #
-install_pkg_deb ()
-{
+install_pkg_deb() {
 	local list=""
 	local listdeb=""
 	local log_file
@@ -40,38 +39,53 @@ install_pkg_deb ()
 		log_file="${SRC}/output/${LOG_SUBPATH}/install.log"
 	fi
 
-	for p in $*;do
+	for p in $*; do
 		case $p in
-			autoupdate) need_autoup=true; continue ;;
-			upgrade) need_upgrade=true; continue ;;
-			clean) need_clean=true; continue ;;
-			verbose) need_verbose=true; continue ;;
-			\||\(*|*\)) continue ;;
-			*[.]deb) listdeb+=" $p"; continue ;;
+			autoupdate)
+				need_autoup=true
+				continue
+				;;
+			upgrade)
+				need_upgrade=true
+				continue
+				;;
+			clean)
+				need_clean=true
+				continue
+				;;
+			verbose)
+				need_verbose=true
+				continue
+				;;
+			\| | \(* | *\)) continue ;;
+			*[.]deb)
+				listdeb+=" $p"
+				continue
+				;;
 			*) list+=" $p" ;;
 		esac
 	done
 
 	# This is necessary first when there is no apt cache.
 	if $need_upgrade; then
-		apt-get -q update || echo "apt cannot update" >>$tmp_file
-		apt-get -y upgrade || echo "apt cannot upgrade" >>$tmp_file
+		apt-get -q update || echo "apt cannot update" >> $tmp_file
+		apt-get -y upgrade || echo "apt cannot upgrade" >> $tmp_file
 	fi
 
 	# Install debian package files
-	if [ -n "$listdeb" ];then
-		for f in $listdeb;do
+	if [ -n "$listdeb" ]; then
+		for f in $listdeb; do
 			# Calculate dependencies for installing the package file
 			add_for_install=" $(
 				dpkg-deb -f $f Depends | awk '{gsub(/[,]/, "", $0); print $0}'
 			)"
 
-			echo -e "\nfile $f depends on:\n$add_for_install"  >>$log_file
+			echo -e "\nfile $f depends on:\n$add_for_install" >> $log_file
 			install_pkg_deb $add_for_install
-			dpkg -i $f 2>>$log_file
+			dpkg -i $f 2>> $log_file
 			dpkg-query -W \
-					   -f '${binary:Package;-27} ${Version;-23}\n' \
-					   $(dpkg-deb -f $f Package) >>$log_file
+				-f '${binary:Package;-27} ${Version;-23}\n' \
+				$(dpkg-deb -f $f Package) >> $log_file
 		done
 	fi
 
@@ -79,23 +93,23 @@ install_pkg_deb ()
 	# up-to-date version in the apt cache.
 	# Exclude bad package names and send a message to the log.
 	for_install=$(
-	for p in $list;do
-	  if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}');then
-		apt-cache  show $p -o APT::Cache::AllVersions=no |& \
-		awk -v p=$p -v tmp_file=$tmp_file \
-		'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
-	  fi
-	done
+		for p in $list; do
+			if $(dpkg-query -W -f '${db:Status-Abbrev}' $p |& awk '/ii/{exit 1}'); then
+				apt-cache show $p -o APT::Cache::AllVersions=no |&
+					awk -v p=$p -v tmp_file=$tmp_file \
+						'/^Package:/{print $2} /^E:/{print "Bad package name: ",p >>tmp_file}'
+			fi
+		done
 	)
 
 	# This information should be logged.
 	if [ -s $tmp_file ]; then
 		echo -e "\nInstalling packages in function: $_function" "[$_file:$_line]" \
-		>>$log_file
-		echo -e "\nIncoming list:" >>$log_file
-		printf "%-30s %-30s %-30s %-30s\n" $list >>$log_file
-		echo "" >>$log_file
-		cat $tmp_file >>$log_file
+			>> $log_file
+		echo -e "\nIncoming list:" >> $log_file
+		printf "%-30s %-30s %-30s %-30s\n" $list >> $log_file
+		echo "" >> $log_file
+		cat $tmp_file >> $log_file
 	fi
 
 	if [ -n "$for_install" ]; then
@@ -104,21 +118,21 @@ install_pkg_deb ()
 			apt-get -y upgrade
 		fi
 		apt-get install -qq -y --no-install-recommends $for_install
-		echo -e "\nPackages installed:" >>$log_file
+		echo -e "\nPackages installed:" >> $log_file
 		dpkg-query -W \
-		  -f '${binary:Package;-27} ${Version;-23}\n' \
-		  $for_install >>$log_file
+			-f '${binary:Package;-27} ${Version;-23}\n' \
+			$for_install >> $log_file
 
 	fi
 
 	# We will show the status after installation all listed
 	if $need_verbose; then
-		echo -e "\nstatus after installation:" >>$log_file
+		echo -e "\nstatus after installation:" >> $log_file
 		dpkg-query -W \
-		  -f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
-		  $list >>$log_file
+			-f '${binary:Package;-27} ${Version;-23} [ ${Status} ]\n' \
+			$list >> $log_file
 	fi
 
-	if $need_clean;then apt-get clean; fi
+	if $need_clean; then apt-get clean; fi
 	rm $tmp_file
 }

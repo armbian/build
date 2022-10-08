@@ -1,5 +1,4 @@
-function get_urls()
-{
+function get_urls() {
 	local catalog=$1
 	local filename=$2
 
@@ -9,22 +8,24 @@ function get_urls()
 			local urls=(
 				# "https://dl.armbian.com/_toolchain/${filename}"
 
-				$( curl --silent --fail  "https://dl.armbian.com/mirrors" \
-					| jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" \
-					| sed "s#\$#/_toolchain/${filename}#"
+				$(
+					curl --silent --fail "https://dl.armbian.com/mirrors" |
+						jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" |
+						sed "s#\$#/_toolchain/${filename}#"
 				)
 			)
 			;;
 
 		rootfs)
-			local CCODE=$(curl --silent --fail  https://cache.armbian.com/geoip | jq '.continent.code' -r)
+			local CCODE=$(curl --silent --fail https://cache.armbian.com/geoip | jq '.continent.code' -r)
 			local urls=(
 				# "https://cache.armbian.com/rootfs/${ROOTFSCACHE_VERSION}/${filename}"
 				"https://github.com/armbian/cache/releases/download/${ROOTFSCACHE_VERSION}/${filename}"
 
-				$( curl --silent --fail  "https://cache.armbian.com/mirrors" \
-					| jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" \
-					| sed "s#\$#/rootfs/${ROOTFSCACHE_VERSION}/${filename}#"
+				$(
+					curl --silent --fail "https://cache.armbian.com/mirrors" |
+						jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" |
+						sed "s#\$#/rootfs/${ROOTFSCACHE_VERSION}/${filename}#"
 				)
 			)
 			;;
@@ -38,8 +39,7 @@ function get_urls()
 	echo "${urls[@]}"
 }
 
-download_and_verify()
-{
+download_and_verify() {
 
 	local catalog=$1
 	local filename=$2
@@ -100,8 +100,8 @@ download_and_verify()
 			return $rc
 		fi
 
-		[[ ${USE_TORRENT} == "yes" ]] \
-		&& local torrent="$(get_urls "${catalog}" "${filename}.torrent")"
+		[[ ${USE_TORRENT} == "yes" ]] &&
+			local torrent="$(get_urls "${catalog}" "${filename}.torrent")"
 	fi
 
 	# download torrent first
@@ -117,7 +117,6 @@ download_and_verify()
 		[[ $? -eq 0 ]] && direct=no
 
 	fi
-
 
 	# direct download if torrent fails
 	if [[ $direct != "no" ]]; then
@@ -149,12 +148,12 @@ download_and_verify()
 
 			for key in "${keys[@]}"; do
 				gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
-					--list-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 \
-				|| gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
-					${http_proxy:+--keyserver-options http-proxy="${http_proxy}"} \
-					--keyserver "hkp://keyserver.ubuntu.com:80" \
-					--recv-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 \
-				|| exit_with_error "Failed to recieve key" "${key}"
+					--list-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 ||
+					gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
+						${http_proxy:+--keyserver-options http-proxy="${http_proxy}"} \
+						--keyserver "hkp://keyserver.ubuntu.com:80" \
+						--recv-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 ||
+					exit_with_error "Failed to recieve key" "${key}"
 			done
 
 			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --trust-model always \
@@ -163,9 +162,8 @@ download_and_verify()
 
 		else
 
-			[[ "$(md5sum "${localdir}/${filename}" | awk '{printf $1}')" \
-				== "$(awk '{printf $1}' ${localdir}/${filename}.asc)" \
-			]] && verified=true && display_alert "Verified" "MD5" "info"
+			[[ "$(md5sum "${localdir}/${filename}" | awk '{printf $1}')" == "$(awk '{printf $1}' ${localdir}/${filename}.asc)" ]] &&
+				verified=true && display_alert "Verified" "MD5" "info"
 
 		fi
 

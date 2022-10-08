@@ -1,5 +1,4 @@
-post_debootstrap_tweaks()
-{
+post_debootstrap_tweaks() {
 
 	# remove service start blockers and QEMU binary
 	rm -f "${SDCARD}"/sbin/initctl "${SDCARD}"/sbin/start-stop-daemon

@@ -1,5 +1,4 @@
-desktop_postinstall ()
-{
+desktop_postinstall() {
 
 	# disable display manager for the first run
 	run_on_sdcard "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"

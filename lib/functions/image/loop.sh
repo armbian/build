@@ -1,7 +1,6 @@
 # check_loop_device <device_node>
 #
-check_loop_device()
-{
+check_loop_device() {
 
 	local device=$1
 	if [[ ! -b $device ]]; then
@@ -17,8 +16,7 @@ check_loop_device()
 
 # write_uboot <loopdev>
 #
-write_uboot()
-{
+write_uboot() {
 
 	local loop=$1 revision
 	display_alert "Writing U-boot bootloader" "$loop" "info"

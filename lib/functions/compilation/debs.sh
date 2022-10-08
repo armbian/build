@@ -1,5 +1,4 @@
-compile_firmware()
-{
+compile_firmware() {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
 
 	local firmwaretempdir plugin_dir
@@ -27,16 +26,16 @@ compile_firmware()
 
 	# set up control file
 	mkdir -p DEBIAN
-	cat <<-END > DEBIAN/control
-	Package: armbian-firmware${FULL}
-	Version: $REVISION
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Installed-Size: 1
-	Replaces: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
-	Section: kernel
-	Priority: optional
-	Description: Linux firmware${FULL}
+	cat <<- END > DEBIAN/control
+		Package: armbian-firmware${FULL}
+		Version: $REVISION
+		Architecture: all
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Installed-Size: 1
+		Replaces: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}
+		Section: kernel
+		Priority: optional
+		Description: Linux firmware${FULL}
 	END
 
 	cd "${firmwaretempdir}" || exit
@@ -51,8 +50,7 @@ compile_firmware()
 	rm -rf "${firmwaretempdir}"
 }
 
-compile_armbian-zsh()
-{
+compile_armbian-zsh() {
 
 	local tmp_dir armbian_zsh_dir
 	tmp_dir=$(mktemp -d)
@@ -67,32 +65,32 @@ compile_armbian-zsh()
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
 
 	# set up control file
-	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/control
-	Package: armbian-zsh
-	Version: $REVISION
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Depends: zsh, tmux
-	Section: utils
-	Priority: optional
-	Description: Armbian improved ZShell
+	cat <<- END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/control
+		Package: armbian-zsh
+		Version: $REVISION
+		Architecture: all
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Depends: zsh, tmux
+		Section: utils
+		Priority: optional
+		Description: Armbian improved ZShell
 	END
 
 	# set up post install script
-	cat <<-END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
-	#!/bin/sh
+	cat <<- END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
+		#!/bin/sh
 
-	# copy cache directory if not there yet
-	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.oh-my-zsh"}' /etc/passwd | xargs -i sh -c 'test ! -d {} && cp -R --attributes-only /etc/skel/.oh-my-zsh {}'
-	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.zshrc"}' /etc/passwd | xargs -i sh -c 'test ! -f {} && cp -R /etc/skel/.zshrc {}'
+		# copy cache directory if not there yet
+		awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.oh-my-zsh"}' /etc/passwd | xargs -i sh -c 'test ! -d {} && cp -R --attributes-only /etc/skel/.oh-my-zsh {}'
+		awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$6"/.zshrc"}' /etc/passwd | xargs -i sh -c 'test ! -f {} && cp -R /etc/skel/.zshrc {}'
 
-	# fix owner permissions in home directory
-	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.oh-my-zsh"}' /etc/passwd | xargs -n2 chown -R
-	awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.zshrc"}' /etc/passwd | xargs -n2 chown -R
+		# fix owner permissions in home directory
+		awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.oh-my-zsh"}' /etc/passwd | xargs -n2 chown -R
+		awk -F'[:]' '{if (\$3 >= 1000 && \$3 != 65534 || \$3 == 0) print ""\$1":"\$3" "\$6"/.zshrc"}' /etc/passwd | xargs -n2 chown -R
 
-	# add support for bash profile
-	! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
-	exit 0
+		# add support for bash profile
+		! grep emulate /etc/zsh/zprofile  >/dev/null && echo "emulate sh -c 'source /etc/profile'" >> /etc/zsh/zprofile
+		exit 0
 	END
 
 	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
@@ -124,8 +122,7 @@ compile_armbian-zsh()
 
 }
 
-compile_armbian-config()
-{
+compile_armbian-config() {
 
 	local tmp_dir armbian_config_dir
 	tmp_dir=$(mktemp -d)
@@ -141,19 +138,19 @@ compile_armbian-config()
 	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
 
 	# set up control file
-	cat <<-END > "${tmp_dir}/${armbian_config_dir}"/DEBIAN/control
-	Package: armbian-config
-	Version: $REVISION
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Replaces: armbian-bsp, neofetch
-	Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, zip, \
-	debconf-utils, unzip, build-essential, html2text, html2text, dirmngr, software-properties-common, debconf, jq
-	Recommends: armbian-bsp
-	Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
-	Section: utils
-	Priority: optional
-	Description: Armbian configuration utility
+	cat <<- END > "${tmp_dir}/${armbian_config_dir}"/DEBIAN/control
+		Package: armbian-config
+		Version: $REVISION
+		Architecture: all
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Replaces: armbian-bsp, neofetch
+		Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, zip, \
+		debconf-utils, unzip, build-essential, html2text, html2text, dirmngr, software-properties-common, debconf, jq
+		Recommends: armbian-bsp
+		Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
+		Section: utils
+		Priority: optional
+		Description: Armbian configuration utility
 	END
 
 	install -m 755 "${SRC}"/cache/sources/neofetch/neofetch "${tmp_dir}/${armbian_config_dir}"/usr/bin/neofetch
@@ -172,13 +169,12 @@ compile_armbian-config()
 	ln -sf /usr/sbin/armbian-config "${tmp_dir}/${armbian_config_dir}"/usr/bin/armbian-config
 	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
 
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${armbian_config_dir}" >/dev/null
+	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${armbian_config_dir}" > /dev/null
 	rsync --remove-source-files -rq "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
 	rm -rf "${tmp_dir}"
 }
 
-compile_xilinx_bootgen()
-{
+compile_xilinx_bootgen() {
 	# Source code checkout
 	(fetch_from_repo "$GITHUB_SOURCE/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
 
@@ -186,20 +182,19 @@ compile_xilinx_bootgen()
 
 	# Compile and install only if git commit hash changed
 	# need to check if /usr/local/bin/bootgen to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2>/dev/null) != $(<.commit_id) || ! -f /usr/local/bin/bootgen ]]; then
+	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2> /dev/null) != $(< .commit_id) || ! -f /usr/local/bin/bootgen ]]; then
 		display_alert "Compiling" "xilinx-bootgen" "info"
-		make -s clean >/dev/null
-		make -s -j$(nproc) bootgen >/dev/null
+		make -s clean > /dev/null
+		make -s -j$(nproc) bootgen > /dev/null
 		mkdir -p /usr/local/bin/
-		install bootgen /usr/local/bin >/dev/null 2>&1
-		improved_git rev-parse @ 2>/dev/null > .commit_id
+		install bootgen /usr/local/bin > /dev/null 2>&1
+		improved_git rev-parse @ 2> /dev/null > .commit_id
 	fi
 
 	popd
 }
 
-compile_plymouth-theme-armbian()
-{
+compile_plymouth-theme-armbian() {
 
 	local tmp_dir work_dir
 	tmp_dir=$(mktemp -d)
@@ -211,15 +206,15 @@ compile_plymouth-theme-armbian()
 	mkdir -p "${tmp_dir}/${plymouth_theme_armbian_dir}"/{DEBIAN,usr/share/plymouth/themes/armbian}
 
 	# set up control file
-	cat <<-END > "${tmp_dir}/${plymouth_theme_armbian_dir}"/DEBIAN/control
-	Package: armbian-plymouth-theme
-	Version: $REVISION
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Depends: plymouth, plymouth-themes
-	Section: universe/x11
-	Priority: optional
-	Description: boot animation, logger and I/O multiplexer - armbian theme
+	cat <<- END > "${tmp_dir}/${plymouth_theme_armbian_dir}"/DEBIAN/control
+		Package: armbian-plymouth-theme
+		Version: $REVISION
+		Architecture: all
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Depends: plymouth, plymouth-themes
+		Section: universe/x11
+		Priority: optional
+		Description: boot animation, logger and I/O multiplexer - armbian theme
 	END
 
 	cp "${SRC}"/packages/plymouth-theme-armbian/debian/{postinst,prerm,postrm} \
@@ -247,7 +242,7 @@ compile_plymouth-theme-armbian()
 	cp "${SRC}"/packages/plymouth-theme-armbian/armbian.plymouth \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${plymouth_theme_armbian_dir}" >/dev/null
+	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${plymouth_theme_armbian_dir}" > /dev/null
 	rsync --remove-source-files -rq "${tmp_dir}/${plymouth_theme_armbian_dir}.deb" "${DEB_STORAGE}/"
 	rm -rf "${tmp_dir}"
 }

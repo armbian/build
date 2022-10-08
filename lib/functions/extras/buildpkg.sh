@@ -1,7 +1,6 @@
 # create_chroot <target_dir> <release> <arch>
 #
-create_chroot()
-{
+create_chroot() {
 	local target_dir="$1"
 	local release=$2
 	local arch=$3
@@ -22,9 +21,9 @@ create_chroot()
 
 	# perhaps a temporally workaround
 	case $release in
-		bullseye|focal|jammy|sid)
+		bullseye | focal | jammy | sid)
 			includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
-		;;
+			;;
 	esac
 
 	if [[ $NO_APT_CACHER != yes ]]; then
@@ -37,45 +36,45 @@ create_chroot()
 	cd "${target_dir}"
 
 	debootstrap --variant=buildd \
-				--components="${components[${release}]}" \
-				--arch="${arch}" $DEBOOTSTRAP_OPTION \
-				--foreign \
-				--include="${includes}" "${release}" "${target_dir}" "${mirror_addr}"
+		--components="${components[${release}]}" \
+		--arch="${arch}" $DEBOOTSTRAP_OPTION \
+		--foreign \
+		--include="${includes}" "${release}" "${target_dir}" "${mirror_addr}"
 
-	[[ $? -ne 0 || ! -f "${target_dir}"/debootstrap/debootstrap ]] && \
+	[[ $? -ne 0 || ! -f "${target_dir}"/debootstrap/debootstrap ]] &&
 		exit_with_error "Create chroot first stage failed"
 
 	cp /usr/bin/${qemu_binary[$arch]} "${target_dir}"/usr/bin/
-	[[ ! -f "${target_dir}"/usr/share/keyrings/debian-archive-keyring.gpg ]] && \
-		mkdir -p  "${target_dir}"/usr/share/keyrings/ && \
+	[[ ! -f "${target_dir}"/usr/share/keyrings/debian-archive-keyring.gpg ]] &&
+		mkdir -p "${target_dir}"/usr/share/keyrings/ &&
 		cp /usr/share/keyrings/debian-archive-keyring.gpg "${target_dir}"/usr/share/keyrings/
 
 	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
 		/bin/bash -c "/debootstrap/debootstrap --second-stage"'
 	[[ $? -ne 0 || ! -f "${target_dir}"/bin/bash ]] && exit_with_error "Create chroot second stage failed"
 
-	[[ -f "${target_dir}"/etc/locale.gen ]] && \
+	[[ -f "${target_dir}"/etc/locale.gen ]] &&
 		sed -i '/en_US.UTF-8/s/^# //g' "${target_dir}"/etc/locale.gen
 	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
 		/bin/bash -c "locale-gen; update-locale --reset LANG=en_US.UTF-8"'
 
 	create_sources_list "$release" "${target_dir}"
-	[[ $NO_APT_CACHER != yes ]] && \
+	[[ $NO_APT_CACHER != yes ]] &&
 		echo 'Acquire::http { Proxy "http://localhost:3142"; };' > "${target_dir}"/etc/apt/apt.conf.d/02proxy
-	cat <<-EOF > "${target_dir}"/etc/apt/apt.conf.d/71-no-recommends
-	APT::Install-Recommends "0";
-	APT::Install-Suggests "0";
+	cat <<- EOF > "${target_dir}"/etc/apt/apt.conf.d/71-no-recommends
+		APT::Install-Recommends "0";
+		APT::Install-Suggests "0";
 	EOF
 
 	printf '#!/bin/sh\nexit 101' > "${target_dir}"/usr/sbin/policy-rc.d
 	chmod 755 "${target_dir}"/usr/sbin/policy-rc.d
-	rm "${target_dir}"/etc/resolv.conf 2>/dev/null
+	rm "${target_dir}"/etc/resolv.conf 2> /dev/null
 	echo "nameserver $NAMESERVER" > "${target_dir}"/etc/resolv.conf
-	rm "${target_dir}"/etc/hosts 2>/dev/null
+	rm "${target_dir}"/etc/hosts 2> /dev/null
 	echo "127.0.0.1 localhost" > "${target_dir}"/etc/hosts
 	mkdir -p "${target_dir}"/root/{build,overlay,sources} "${target_dir}"/selinux
 	if [[ -L "${target_dir}"/var/lock ]]; then
-		rm -rf "${target_dir}"/var/lock 2>/dev/null
+		rm -rf "${target_dir}"/var/lock 2> /dev/null
 		mkdir -p "${target_dir}"/var/lock
 	fi
 	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
@@ -84,7 +83,7 @@ create_chroot()
 	display_alert "Upgrading packages in" "${target_dir}" "info"
 	eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
 		/bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"'
-	date +%s >"$target_dir/root/.update-timestamp"
+	date +%s > "$target_dir/root/.update-timestamp"
 
 	# Install some packages with a large list of dependencies after the update.
 	# This optimizes the process and eliminates looping when calculating
@@ -93,12 +92,11 @@ create_chroot()
 		/bin/bash -c "apt-get install \
 		-q -y --no-install-recommends debhelper devscripts"'
 
-
 	case $release in
-	bullseye|focal|hirsute|sid)
-		eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
+		bullseye | focal | hirsute | sid)
+			eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
 			/bin/bash -c "apt-get install python-is-python3"'
-		;;
+			;;
 	esac
 
 	touch "${target_dir}"/root/.debootstrap-complete
@@ -107,8 +105,7 @@ create_chroot()
 
 # chroot_prepare_distccd <release> <arch>
 #
-chroot_prepare_distccd()
-{
+chroot_prepare_distccd() {
 	local release=$1
 	local arch=$2
 	local dest=/tmp/distcc/${release}-${arch}
@@ -142,8 +139,7 @@ chroot_prepare_distccd()
 
 # chroot_build_packages
 #
-chroot_build_packages()
-{
+chroot_build_packages() {
 	local built_ok=()
 	local failed=()
 	mkdir -p ${SRC}/cache/buildpkg
@@ -171,9 +167,9 @@ chroot_build_packages()
 				create_chroot "${tmp_dir}/${t_name}" "${release}" "${arch}"
 				display_alert "Create a clean Environment archive" "${t_name}.tar.xz" "info"
 				(
-					tar -cp --directory="${tmp_dir}/" ${t_name} \
-					| pv -p -b -r -s "$(du -sb "${tmp_dir}/${t_name}" | cut -f1)" \
-					| pixz -4 >"${SRC}/cache/buildpkg/${t_name}.tar.xz"
+					tar -cp --directory="${tmp_dir}/" ${t_name} |
+						pv -p -b -r -s "$(du -sb "${tmp_dir}/${t_name}" | cut -f1)" |
+						pixz -4 > "${SRC}/cache/buildpkg/${t_name}.tar.xz"
 				)
 				rm -rf $tmp_dir
 			fi
@@ -181,10 +177,11 @@ chroot_build_packages()
 			# Unpack the clean environment archive, if it exists.
 			if [ -f "${SRC}/cache/buildpkg/${t_name}.tar.xz" ]; then
 				local tmp_dir=$(mktemp -d "${SRC}"/.tmp/build-XXXXX)
-				(	cd $tmp_dir
+				(
+					cd $tmp_dir
 					display_alert "Unpack the clean environment" "${t_name}.tar.xz" "info"
-					tar -xJf "${SRC}/cache/buildpkg/${t_name}.tar.xz" || \
-					exit_with_error "Is not extracted" "${SRC}/cache/buildpkg/${t_name}.tar.xz"
+					tar -xJf "${SRC}/cache/buildpkg/${t_name}.tar.xz" ||
+						exit_with_error "Is not extracted" "${SRC}/cache/buildpkg/${t_name}.tar.xz"
 				)
 				target_dir="$tmp_dir/${t_name}"
 			else
@@ -192,7 +189,7 @@ chroot_build_packages()
 			fi
 
 			[[ -f /var/run/distcc/"${release}-${arch}".pid ]] &&
-				kill "$(<"/var/run/distcc/${release}-${arch}.pid")" > /dev/null 2>&1
+				kill "$(< "/var/run/distcc/${release}-${arch}.pid")" > /dev/null 2>&1
 
 			chroot_prepare_distccd "${release}" "${arch}"
 
@@ -207,16 +204,16 @@ chroot_build_packages()
 				exit_with_error "Clean Environment is not visible" "$target_dir"
 
 			local t=$target_dir/root/.update-timestamp
-			if [[ ! -f ${t} || $(( ($(date +%s) - $(<"${t}")) / 86400 )) -gt 7 ]]; then
+			if [[ ! -f ${t} || $((($(date +%s) - $(< "${t}")) / 86400)) -gt 7 ]]; then
 				display_alert "Upgrading packages" "$release/$arch" "info"
 				systemd-nspawn -a -q -D "${target_dir}" /bin/bash -c "apt-get -q update; apt-get -q -y upgrade; apt-get clean"
 				date +%s > "${t}"
 				display_alert "Repack a clean Environment archive after upgrading" "${t_name}.tar.xz" "info"
 				rm "${SRC}/cache/buildpkg/${t_name}.tar.xz"
 				(
-					tar -cp --directory="${tmp_dir}/" ${t_name} \
-					| pv -p -b -r -s "$(du -sb "${tmp_dir}/${t_name}" | cut -f1)" \
-					| pixz -4 >"${SRC}/cache/buildpkg/${t_name}.tar.xz"
+					tar -cp --directory="${tmp_dir}/" ${t_name} |
+						pv -p -b -r -s "$(du -sb "${tmp_dir}/${t_name}" | cut -f1)" |
+						pixz -4 > "${SRC}/cache/buildpkg/${t_name}.tar.xz"
 				)
 			fi
 
@@ -256,10 +253,11 @@ chroot_build_packages()
 				if [[ -f "${target_dir}"/root/build.sh ]] && [[ -d $tmp_dir ]]; then
 					rm -rf $tmp_dir
 					local tmp_dir=$(mktemp -d "${SRC}"/.tmp/build-XXXXX)
-					(	cd $tmp_dir
+					(
+						cd $tmp_dir
 						display_alert "Unpack the clean environment" "${t_name}.tar.xz" "info"
-						tar -xJf "${SRC}/cache/buildpkg/${t_name}.tar.xz" || \
-						exit_with_error "Is not extracted" "${SRC}/cache/buildpkg/${t_name}.tar.xz"
+						tar -xJf "${SRC}/cache/buildpkg/${t_name}.tar.xz" ||
+							exit_with_error "Is not extracted" "${SRC}/cache/buildpkg/${t_name}.tar.xz"
 					)
 					target_dir="$tmp_dir/${t_name}"
 				fi
@@ -281,23 +279,23 @@ chroot_build_packages()
 					--tmpfs=/root/build \
 					--tmpfs=/tmp:mode=777 \
 					--bind-ro "${SRC}"/packages/extras-buildpkgs/:/root/overlay \
-					--bind-ro "${SRC}"/cache/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" 2>&1 \
-					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/buildpkg.log'}
+					--bind-ro "${SRC}"/cache/sources/extra/:/root/sources /bin/bash -c "/root/build.sh" \
+					${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/buildpkg.log'} 2>&1
 
 				if [[ ${PIPESTATUS[0]} -eq 2 ]]; then
 					failed+=("$package_name:$release/$arch")
 				else
 					built_ok+=("$package_name:$release/$arch")
 				fi
-				mv "${target_dir}"/root/*.deb "${plugin_target_dir}" 2>/dev/null
+				mv "${target_dir}"/root/*.deb "${plugin_target_dir}" 2> /dev/null
 				mv "${target_dir}"/root/*.log "$DEST/${LOG_SUBPATH}/"
 				te=$(date +%s)
 				display_alert "Build time $package_name " " $(($te - $ts)) sec." "info"
 			done
 			# Delete a temporary directory
-			if [ -d $tmp_dir ]; then rm -rf $tmp_dir;fi
+			if [ -d $tmp_dir ]; then rm -rf $tmp_dir; fi
 			# cleanup for distcc
-			kill $(</var/run/distcc/${release}-${arch}.pid)
+			kill $(< /var/run/distcc/${release}-${arch}.pid)
 		done
 	done
 	if [[ ${#built_ok[@]} -gt 0 ]]; then
@@ -315,75 +313,74 @@ chroot_build_packages()
 }
 
 # create build script
-create_build_script ()
-{
-	cat <<-EOF > "${target_dir}"/root/build.sh
-	#!/bin/bash
-	export PATH="/usr/lib/ccache:\$PATH"
-	export HOME="/root"
-	export DEBIAN_FRONTEND="noninteractive"
-	export DEB_BUILD_OPTIONS="nocheck noautodbgsym"
-	export CCACHE_TEMPDIR="/tmp"
-	# distcc is disabled to prevent compilation issues due
-	# to different host and cross toolchain configurations
-	#export CCACHE_PREFIX="distcc"
-	# uncomment for debug
-	#export CCACHE_RECACHE="true"
-	#export CCACHE_DISABLE="true"
-	export DISTCC_HOSTS="$distcc_bindaddr"
-	export DEBFULLNAME="$MAINTAINER"
-	export DEBEMAIL="$MAINTAINERMAIL"
-	$(declare -f display_alert)
+create_build_script() {
+	cat <<- EOF > "${target_dir}"/root/build.sh
+		#!/bin/bash
+		export PATH="/usr/lib/ccache:\$PATH"
+		export HOME="/root"
+		export DEBIAN_FRONTEND="noninteractive"
+		export DEB_BUILD_OPTIONS="nocheck noautodbgsym"
+		export CCACHE_TEMPDIR="/tmp"
+		# distcc is disabled to prevent compilation issues due
+		# to different host and cross toolchain configurations
+		#export CCACHE_PREFIX="distcc"
+		# uncomment for debug
+		#export CCACHE_RECACHE="true"
+		#export CCACHE_DISABLE="true"
+		export DISTCC_HOSTS="$distcc_bindaddr"
+		export DEBFULLNAME="$MAINTAINER"
+		export DEBEMAIL="$MAINTAINERMAIL"
+		$(declare -f display_alert)
 
-	LOG_OUTPUT_FILE=$LOG_OUTPUT_FILE
-	$(declare -f install_pkg_deb)
+		LOG_OUTPUT_FILE=$LOG_OUTPUT_FILE
+		$(declare -f install_pkg_deb)
 
-	cd /root/build
-	display_alert "Copying sources"
-	rsync -aq /root/sources/"${package_name}" /root/build/
-
-	cd /root/build/"${package_name}"
-	# copy overlay / "debianization" files
-	[[ -d "/root/overlay/${package_name}/" ]] && rsync -aq /root/overlay/"${package_name}" /root/build/
-
-	package_builddeps="$package_builddeps"
-	if [ -z "\$package_builddeps" ]; then
-		# Calculate build dependencies by a standard dpkg function
-		package_builddeps="\$(dpkg-checkbuilddeps |& awk -F":" '{print \$NF}')"
-	fi
-	if [[ -n "\${package_builddeps}" ]]; then
-		install_pkg_deb \${package_builddeps}
-	fi
-
-	# set upstream version
-	[[ -n "${package_upstream_version}" ]] && debchange --preserve --newversion "${package_upstream_version}" "Import from upstream"
-
-	# set local version
-	# debchange -l~armbian${REVISION}-${builddate}+ "Custom $VENDOR release"
-	debchange -l~armbian"${REVISION}"+ "Custom $VENDOR release"
-
-	display_alert "Building package"
-	# Set the number of build threads and certainly send
-	# the standard error stream to the log file.
-	dpkg-buildpackage -b -us -j${NCPU_CHROOT:-2} 2>>\$LOG_OUTPUT_FILE
-
-	if [[ \$? -eq 0 ]]; then
 		cd /root/build
-		# install in chroot if other libraries depend on them
-		if [[ -n "$package_install_chroot" ]]; then
-			display_alert "Installing packages"
-			for p in $package_install_chroot; do
-				dpkg -i \${p}_*.deb
-			done
+		display_alert "Copying sources"
+		rsync -aq /root/sources/"${package_name}" /root/build/
+
+		cd /root/build/"${package_name}"
+		# copy overlay / "debianization" files
+		[[ -d "/root/overlay/${package_name}/" ]] && rsync -aq /root/overlay/"${package_name}" /root/build/
+
+		package_builddeps="$package_builddeps"
+		if [ -z "\$package_builddeps" ]; then
+			# Calculate build dependencies by a standard dpkg function
+			package_builddeps="\$(dpkg-checkbuilddeps |& awk -F":" '{print \$NF}')"
 		fi
-		display_alert "Done building" "$package_name $release/$arch" "ext"
-		ls *.deb 2>/dev/null
-		mv *.deb /root 2>/dev/null
-		exit 0
-	else
-		display_alert "Failed building" "$package_name $release/$arch" "err"
-		exit 2
-	fi
+		if [[ -n "\${package_builddeps}" ]]; then
+			install_pkg_deb \${package_builddeps}
+		fi
+
+		# set upstream version
+		[[ -n "${package_upstream_version}" ]] && debchange --preserve --newversion "${package_upstream_version}" "Import from upstream"
+
+		# set local version
+		# debchange -l~armbian${REVISION}-${builddate}+ "Custom $VENDOR release"
+		debchange -l~armbian"${REVISION}"+ "Custom $VENDOR release"
+
+		display_alert "Building package"
+		# Set the number of build threads and certainly send
+		# the standard error stream to the log file.
+		dpkg-buildpackage -b -us -j${NCPU_CHROOT:-2} 2>>\$LOG_OUTPUT_FILE
+
+		if [[ \$? -eq 0 ]]; then
+			cd /root/build
+			# install in chroot if other libraries depend on them
+			if [[ -n "$package_install_chroot" ]]; then
+				display_alert "Installing packages"
+				for p in $package_install_chroot; do
+					dpkg -i \${p}_*.deb
+				done
+			fi
+			display_alert "Done building" "$package_name $release/$arch" "ext"
+			ls *.deb 2>/dev/null
+			mv *.deb /root 2>/dev/null
+			exit 0
+		else
+			display_alert "Failed building" "$package_name $release/$arch" "err"
+			exit 2
+		fi
 	EOF
 
 	chmod +x "${target_dir}"/root/build.sh
@@ -391,8 +388,7 @@ create_build_script ()
 
 # chroot_installpackages_local
 #
-chroot_installpackages_local()
-{
+chroot_installpackages_local() {
 	local conf="${SRC}"/config/aptly-temp.conf
 	rm -rf /tmp/aptly-temp/
 	mkdir -p /tmp/aptly-temp/
@@ -402,17 +398,17 @@ chroot_installpackages_local()
 	aptly -config="${conf}" repo add temp "${DEB_STORAGE}/extra/${RELEASE}-utils/" >> "${DEST}"/${LOG_SUBPATH}/install.log
 	# -gpg-key="925644A6"
 	aptly -keyring="${SRC}/packages/extras-buildpkgs/buildpkg-public.gpg" -secret-keyring="${SRC}/packages/extras-buildpkgs/buildpkg.gpg" -batch=true -config="${conf}" \
-		 -gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution="${RELEASE}" publish repo temp >> "${DEST}"/${LOG_SUBPATH}/install.log
+		-gpg-key="925644A6" -passphrase="testkey1234" -component=temp -distribution="${RELEASE}" publish repo temp >> "${DEST}"/${LOG_SUBPATH}/install.log
 	aptly -config="${conf}" -listen=":8189" serve &
 	local aptly_pid=$!
 	cp "${SRC}"/packages/extras-buildpkgs/buildpkg.key "${SDCARD}"/tmp/buildpkg.key
-	cat <<-'EOF' > "${SDCARD}"/etc/apt/preferences.d/90-armbian-temp.pref
-	Package: *
-	Pin: origin "localhost"
-	Pin-Priority: 550
+	cat <<- 'EOF' > "${SDCARD}"/etc/apt/preferences.d/90-armbian-temp.pref
+		Package: *
+		Pin: origin "localhost"
+		Pin-Priority: 550
 	EOF
-	cat <<-EOF > "${SDCARD}"/etc/apt/sources.list.d/armbian-temp.list
-	deb http://localhost:8189/ $RELEASE temp
+	cat <<- EOF > "${SDCARD}"/etc/apt/sources.list.d/armbian-temp.list
+		deb http://localhost:8189/ $RELEASE temp
 	EOF
 	chroot_installpackages
 	kill "${aptly_pid}"
@@ -420,8 +416,7 @@ chroot_installpackages_local()
 
 # chroot_installpackages <remote_only>
 #
-chroot_installpackages()
-{
+chroot_installpackages() {
 	local remote_only=$1
 	local install_list=""
 	for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
@@ -432,31 +427,31 @@ chroot_installpackages()
 		unset package_install_target package_checkinstall
 	done
 	if [[ -n $PACKAGE_LIST_RM ]]; then
-        install_list=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${install_list} ")
-        install_list="$(echo ${install_list})"
+		install_list=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${install_list} ")
+		install_list="$(echo ${install_list})"
 	fi
 	display_alert "Installing extras-buildpkgs" "$install_list"
 
 	[[ $NO_APT_CACHER != yes ]] && local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\" -o Acquire::http::Proxy::localhost=\"DIRECT\""
-	cat <<-EOF > "${SDCARD}"/tmp/install.sh
-	#!/bin/bash
-	[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
-	apt-get ${apt_extra} -q update
-	# uncomment to debug
-	# /bin/bash
-	# TODO: check if package exists in case new config was added
-	#if [[ -n "$remote_only" == yes ]]; then
-	#	for p in ${install_list}; do
-	#		if grep -qE "apt.armbian.com|localhost" <(apt-cache madison \$p); then
-	#		if apt-get -s -qq install \$p; then
-	#fi
-	apt-get -q ${apt_extra} --show-progress -o DPKG::Progress-Fancy=1 install -y ${install_list}
-	apt-get clean
-	[[ "${remote_only}" != yes ]] && apt-key del "925644A6"
-	rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
-	rm /etc/apt/preferences.d/90-armbian-temp.pref 2>/dev/null
-	rm /tmp/buildpkg.key 2>/dev/null
-	rm -- "\$0"
+	cat <<- EOF > "${SDCARD}"/tmp/install.sh
+		#!/bin/bash
+		[[ "$remote_only" != yes ]] && apt-key add /tmp/buildpkg.key
+		apt-get ${apt_extra} -q update
+		# uncomment to debug
+		# /bin/bash
+		# TODO: check if package exists in case new config was added
+		#if [[ -n "$remote_only" == yes ]]; then
+		# for p in ${install_list}; do
+		#  if grep -qE "apt.armbian.com|localhost" <(apt-cache madison \$p); then
+		#  if apt-get -s -qq install \$p; then
+		#fi
+		apt-get -q ${apt_extra} --show-progress -o DPKG::Progress-Fancy=1 install -y ${install_list}
+		apt-get clean
+		[[ "${remote_only}" != yes ]] && apt-key del "925644A6"
+		rm /etc/apt/sources.list.d/armbian-temp.list 2>/dev/null
+		rm /etc/apt/preferences.d/90-armbian-temp.pref 2>/dev/null
+		rm /tmp/buildpkg.key 2>/dev/null
+		rm -- "\$0"
 	EOF
 	chmod +x "${SDCARD}"/tmp/install.sh
 	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1

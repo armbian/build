@@ -2,8 +2,7 @@
 #
 # helper to reduce code duplication
 #
-mount_chroot()
-{
+mount_chroot() {
 
 	local target=$1
 	mount -t tmpfs tmpfs "${target}/tmp"
@@ -18,17 +17,15 @@ mount_chroot()
 #
 # helper to reduce code duplication
 #
-umount_chroot()
-{
+umount_chroot() {
 
 	local target=$1
 	display_alert "Unmounting" "$target" "info"
-	while grep -Eq "${target}/*(dev|proc|sys|tmp)" /proc/mounts
-	do
-		umount -l --recursive "${target}"/dev >/dev/null 2>&1
-		umount -l "${target}"/proc >/dev/null 2>&1
-		umount -l "${target}"/sys >/dev/null 2>&1
-		umount -l "${target}"/tmp >/dev/null 2>&1
+	while grep -Eq "${target}/*(dev|proc|sys|tmp)" /proc/mounts; do
+		umount -l --recursive "${target}"/dev > /dev/null 2>&1
+		umount -l "${target}"/proc > /dev/null 2>&1
+		umount -l "${target}"/sys > /dev/null 2>&1
+		umount -l "${target}"/tmp > /dev/null 2>&1
 		sleep 5
 	done
 

@@ -2,8 +2,7 @@
 # This function retries Git operations to avoid failure in case remote is borked
 # If the git team needs to call a remote server, use this function.
 #
-improved_git()
-{
+improved_git() {
 
 	local realgit=$(command -v git)
 	local retries=3
@@ -15,14 +14,13 @@ improved_git()
 			retries=0
 			break
 		fi
-	let count=$count+1
-	sleep $delay
+		let count=$count+1
+		sleep $delay
 	done
 
 }
 
-clean_up_git ()
-{
+clean_up_git() {
 	local target_dir=$1
 
 	# Files that are not tracked by git and were added
@@ -49,16 +47,18 @@ clean_up_git ()
 # The settings for the kernel variables of the original kernel
 # VAR_SHALLOW_ORIGINAL=var_origin_kernel must be in the main script
 # before calling the function
-waiter_local_git ()
-{
-	for arg in $@;do
+waiter_local_git() {
+	for arg in $@; do
 
 		case $arg in
-			url=*|https://*|git://*)	eval "local url=${arg/url=/}"
+			url=* | https://* | git://*)
+				eval "local url=${arg/url=/}"
 				;;
-			dir=*|/*/*/*)	eval "local dir=${arg/dir=/}"
+			dir=* | /*/*/*)
+				eval "local dir=${arg/dir=/}"
 				;;
-			*=*|*:*)	eval "local ${arg/:/=}"
+			*=* | *:*)
+				eval "local ${arg/:/=}"
 				;;
 		esac
 
@@ -84,35 +84,34 @@ waiter_local_git ()
 
 	display_alert "Checking git sources" "$dir $url$name/$branch" "info"
 
-	if [ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]; then
+	if [ "$(git rev-parse --git-dir 2> /dev/null)" != ".git" ]; then
 		git init -q .
 
 		# Run in the sub shell to avoid mixing environment variables.
 		if [ -n "$VAR_SHALLOW_ORIGINAL" ]; then
 			(
-			$VAR_SHALLOW_ORIGINAL
+				$VAR_SHALLOW_ORIGINAL
 
-			display_alert "Add original git sources" "$dir $name/$branch" "info"
-			if [ "$(improved_git ls-remote -h $url $branch | \
-				awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ];then
-				display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
-				exit 177
-			fi
+				display_alert "Add original git sources" "$dir $name/$branch" "info"
+				if [ "$(improved_git ls-remote -h $url $branch |
+					awk -F'/' '{if (NR == 1) print $NF}')" != "$branch" ]; then
+					display_alert "Bad $branch for $url in $VAR_SHALLOW_ORIGINAL"
+					exit 177
+				fi
 
-			git remote add -t $branch $name $url
+				git remote add -t $branch $name $url
 
-			# Handle an exception if the initial tag is the top of the branch
-			# As v5.16 == HEAD
-			if [ "${start_tag}.1" == "$(improved_git ls-remote -t $url ${start_tag}.1 | \
-					awk -F'/' '{ print $NF }')" ]
-			then
-				improved_git fetch --shallow-exclude=$start_tag $name
-			else
-				improved_git fetch --depth 1 $name
-			fi
-			improved_git fetch --deepen=1 $name
-			# For a shallow clone, this works quickly and saves space.
-			git gc
+				# Handle an exception if the initial tag is the top of the branch
+				# As v5.16 == HEAD
+				if [ "${start_tag}.1" == "$(improved_git ls-remote -t $url ${start_tag}.1 |
+					awk -F'/' '{ print $NF }')" ]; then
+					improved_git fetch --shallow-exclude=$start_tag $name
+				else
+					improved_git fetch --depth 1 $name
+				fi
+				improved_git fetch --deepen=1 $name
+				# For a shallow clone, this works quickly and saves space.
+				git gc
 			)
 
 			[ "$?" == "177" ] && exit
@@ -120,17 +119,17 @@ waiter_local_git ()
 	fi
 
 	files_for_clean="$(git status -s | wc -l)"
-	if [ "$files_for_clean" != "0" ];then
+	if [ "$files_for_clean" != "0" ]; then
 		display_alert " Cleaning .... " "$files_for_clean files"
 		clean_up_git $work_dir
 	fi
 
-	if [ "$name" != "$(git remote show | grep $name)" ];then
+	if [ "$name" != "$(git remote show | grep $name)" ]; then
 		git remote add -t $branch $name $url
 	fi
 
 	if ! $offline; then
-		for t_name in $(git remote show);do
+		for t_name in $(git remote show); do
 			improved_git fetch $t_name
 		done
 	fi
@@ -141,16 +140,16 @@ waiter_local_git ()
 	# We do not use variables that characterize the current state of the git,
 	# such as `HEAD` and `FETCH_HEAD`.
 	reachability=false
-	for var in obj tag commit branch;do
+	for var in obj tag commit branch; do
 		eval pval=\$$var
 
 		if [ -n "$pval" ] && [ "$pval" != *HEAD ]; then
 			case $var in
-				obj|tag|commit) obj=$pval ;;
+				obj | tag | commit) obj=$pval ;;
 				branch) obj=${name}/$branch ;;
 			esac
 
-			if  t_hash=$(git rev-parse $obj 2>/dev/null);then
+			if t_hash=$(git rev-parse $obj 2> /dev/null); then
 				reachability=true
 				break
 			else
@@ -159,7 +158,7 @@ waiter_local_git ()
 		fi
 	done
 
-	if $reachability && [ "$t_hash" != "$(git rev-parse @ 2>/dev/null)" ];then
+	if $reachability && [ "$t_hash" != "$(git rev-parse @ 2> /dev/null)" ]; then
 		# Switch "detached branch" as hash
 		display_alert "Switch $obj = $t_hash"
 		git checkout -qf $t_hash
@@ -183,8 +182,7 @@ waiter_local_git ()
 #
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
-fetch_from_repo()
-{
+fetch_from_repo() {
 	local url=$1
 	local dir=$2
 	local ref=$3
@@ -200,7 +198,7 @@ fetch_from_repo()
 		local offline=false
 	fi
 
-	[[ -z $ref || ( $ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:* ) ]] && exit_with_error "Error in configuration"
+	[[ -z $ref || ($ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:*) ]] && exit_with_error "Error in configuration"
 	local ref_type=${ref%%:*}
 	if [[ $ref_type == head ]]; then
 		local ref_name=HEAD
@@ -220,7 +218,7 @@ fetch_from_repo()
 		local workdir=$dir
 	fi
 
-	mkdir -p "${SRC}/cache/sources/${workdir}" 2>/dev/null || \
+	mkdir -p "${SRC}/cache/sources/${workdir}" 2> /dev/null ||
 		exit_with_error "No path or no write permission" "${SRC}/cache/sources/${workdir}"
 
 	cd "${SRC}/cache/sources/${workdir}" || exit
@@ -230,13 +228,13 @@ fetch_from_repo()
 	#  Check the folder as a git repository.
 	#  Then the target URL matches the local URL.
 
-	if [[ "$(git rev-parse --git-dir 2>/dev/null)" == ".git" && \
-		  "$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2>/dev/null)" ]]; then
+	if [[ "$(git rev-parse --git-dir 2> /dev/null)" == ".git" &&
+	"$url" != *"$(git remote get-url origin | sed 's/^.*@//' | sed 's/^.*\/\///' 2> /dev/null)" ]]; then
 		display_alert "Remote URL does not match, removing existing local copy"
 		rm -rf .git ./*
 	fi
 
-	if [[ "$(git rev-parse --git-dir 2>/dev/null)" != ".git" ]]; then
+	if [[ "$(git rev-parse --git-dir 2> /dev/null)" != ".git" ]]; then
 		display_alert "Creating local copy"
 		git init -q .
 		git remote add origin "${url}"
@@ -249,34 +247,34 @@ fetch_from_repo()
 	# when we work offline we simply return the sources to their original state
 	if ! $offline; then
 		local local_hash
-		local_hash=$(git rev-parse @ 2>/dev/null)
+		local_hash=$(git rev-parse @ 2> /dev/null)
 
 		case $ref_type in
 			branch)
-			# TODO: grep refs/heads/$name
-			local remote_hash
-			remote_hash=$(improved_git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
-			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
-			;;
+				# TODO: grep refs/heads/$name
+				local remote_hash
+				remote_hash=$(improved_git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
+				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				;;
 
 			tag)
-			local remote_hash
-			remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name" | cut -f1)
-			if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
-				remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
-				[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
-			fi
-			;;
+				local remote_hash
+				remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name" | cut -f1)
+				if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
+					remote_hash=$(improved_git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
+					[[ -z $remote_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				fi
+				;;
 
 			head)
-			local remote_hash
-			remote_hash=$(improved_git ls-remote "${url}" HEAD | cut -f1)
-			[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
-			;;
+				local remote_hash
+				remote_hash=$(improved_git ls-remote "${url}" HEAD | cut -f1)
+				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
+				;;
 
 			commit)
-			[[ -z $local_hash || $local_hash == "@" ]] && changed=true
-			;;
+				[[ -z $local_hash || $local_hash == "@" ]] && changed=true
+				;;
 		esac
 
 	fi # offline

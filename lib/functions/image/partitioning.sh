@@ -4,8 +4,7 @@
 # and mounts it to local dir
 # FS-dependent stuff (boot and root fs partition types) happens here
 #
-prepare_partitions()
-{
+prepare_partitions() {
 	display_alert "Preparing image file for rootfs" "$BOARD $RELEASE" "info"
 
 	# possible partition combinations
@@ -32,7 +31,7 @@ prepare_partitions()
 	# create bigger number for desktop builds
 	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
 	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|sid ]]; then
-		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128*${node_number}))"
+		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128 * ${node_number}))"
 	fi
 	# mkopts[fat] is empty
 	mkopts[ext2]='-q'
@@ -66,7 +65,7 @@ prepare_partitions()
 	# mountopts[nfs] is empty
 
 	# default BOOTSIZE to use if not specified
-	DEFAULT_BOOTSIZE=256	# MiB
+	DEFAULT_BOOTSIZE=256 # MiB
 	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
 	UEFISIZE=${UEFISIZE:-0}
 	BIOSSIZE=${BIOSSIZE:-0}
@@ -75,7 +74,7 @@ prepare_partitions()
 	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbi_root}"
 	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbi_boot}"
 
-	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<'PRE_PREPARE_PARTITIONS'
+	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" << 'PRE_PREPARE_PARTITIONS'
 *allow custom options for mkfs*
 Good time to change stuff like mkfs opts, types etc.
 PRE_PREPARE_PARTITIONS
@@ -89,20 +88,20 @@ PRE_PREPARE_PARTITIONS
 			# Check if we need BIOS partition
 			[[ $BIOSSIZE -gt 0 ]] && local biospart=14
 		else
-			local uefipart=$(( next++ ))
+			local uefipart=$((next++))
 		fi
 	fi
 	# Check if we need boot partition
 	if [[ -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes ]]; then
-		local bootpart=$(( next++ ))
+		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
 	else
 		BOOTSIZE=0
 	fi
 	# Check if we need root partition
-	[[ $ROOTFS_TYPE != nfs ]] \
-		&& local rootpart=$(( next++ ))
+	[[ $ROOTFS_TYPE != nfs ]] &&
+		local rootpart=$((next++))
 
 	# stage: calculate rootfs size
 	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
@@ -124,7 +123,7 @@ PREPARE_IMAGE_SIZE
 			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
 		fi
 	else
-		local imagesize=$(( $rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
+		local imagesize=$(($rootfs_size + $OFFSET + $BOOTSIZE + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE)) # MiB
 		# Hardcoded overhead +25% is needed for desktop images,
 		# for CLI it could be lower. Align the size up to 4MiB
 		if [[ $BUILD_DESKTOP == yes ]]; then
@@ -140,54 +139,54 @@ PREPARE_IMAGE_SIZE
 		truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
 		sync
 	else
-		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(( $sdsize * 1024 * 1024 )) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
+		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(($sdsize * 1024 * 1024)) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
 	fi
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
 		{
-			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] \
-				&& echo "label: dos" \
-				|| echo "label: $IMAGE_PARTITION_TABLE"
-		} | sfdisk ${SDCARD}.raw >>"${DEST}/${LOG_SUBPATH}/install.log" 2>&1 \
-			|| exit_with_error "Create partition table fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
+			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] &&
+				echo "label: dos" ||
+				echo "label: $IMAGE_PARTITION_TABLE"
+		} | sfdisk ${SDCARD}.raw >> "${DEST}/${LOG_SUBPATH}/install.log" 2>&1 ||
+			exit_with_error "Create partition table fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
 
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
-		*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
-		Finally, we can get our own partition table. You have to partition ${SDCARD}.raw
-		yourself. Good luck.
+			*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
+			Finally, we can get our own partition table. You have to partition ${SDCARD}.raw
+			yourself. Good luck.
 		CREATE_PARTITION_TABLE
 	else
 		{
-			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] \
-				&& echo "label: dos" \
-				|| echo "label: $IMAGE_PARTITION_TABLE"
+			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] &&
+				echo "label: dos" ||
+				echo "label: $IMAGE_PARTITION_TABLE"
 
 			local next=$OFFSET
 			if [[ -n "$biospart" ]]; then
 				# gpt: BIOS boot
 				local type="21686148-6449-6E6F-744E-656564454649"
 				echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=${type}"
-				local next=$(( $next + $BIOSSIZE ))
+				local next=$(($next + $BIOSSIZE))
 			fi
 			if [[ -n "$uefipart" ]]; then
 				# dos: EFI (FAT-12/16/32)
 				# gpt: EFI System
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] \
-					&& local type="ef" \
-					|| local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] &&
+					local type="ef" ||
+					local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 				echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=${type}"
-				local next=$(( $next + $UEFISIZE ))
+				local next=$(($next + $UEFISIZE))
 			fi
 			if [[ -n "$bootpart" ]]; then
 				# Linux extended boot
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] \
-					&& local type="ea" \
-					|| local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] &&
+					local type="ea" ||
+					local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
 				if [[ -n "$rootpart" ]]; then
 					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=${type}"
-					local next=$(( $next + $BOOTSIZE ))
+					local next=$(($next + $BOOTSIZE))
 				else
 					# no `size` argument mean "as much as possible"
 					echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=${type}"
@@ -196,23 +195,23 @@ PREPARE_IMAGE_SIZE
 			if [[ -n "$rootpart" ]]; then
 				# dos: Linux
 				# gpt: Linux filesystem
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] \
-					&& local type="83" \
-					|| local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] &&
+					local type="83" ||
+					local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 				# no `size` argument mean "as much as possible"
 				echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
 			fi
-		} | sfdisk ${SDCARD}.raw >>"${DEST}/${LOG_SUBPATH}/install.log" 2>&1 \
-			|| exit_with_error "Partition fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
+		} | sfdisk ${SDCARD}.raw >> "${DEST}/${LOG_SUBPATH}/install.log" 2>&1 ||
+			exit_with_error "Partition fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
-	*called after all partitions are created, but not yet formatted*
+		*called after all partitions are created, but not yet formatted*
 	POST_CREATE_PARTITIONS
 
 	# stage: mount image
 	# lock access to loop devices
-	exec {FD}>/var/lock/armbian-debootstrap-losetup
+	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -x $FD
 
 	LOOP=$(losetup -f)
@@ -274,16 +273,16 @@ PREPARE_IMAGE_SIZE
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
 		check_loop_device "${LOOP}p${uefipart}"
-		mkfs.fat -F32 -n "${UEFI_FS_LABEL}" ${LOOP}p${uefipart} >>"${DEST}"/debug/install.log 2>&1
+		mkfs.fat -F32 -n "${UEFI_FS_LABEL}" ${LOOP}p${uefipart} >> "${DEST}"/debug/install.log 2>&1
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
 		mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
-		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >>$SDCARD/etc/fstab
+		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
 	fi
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
-	*if you created your own partitions, this would be a good time to format them*
-	The loop device is mounted, so ${LOOP}p1 is it's first partition etc.
+		*if you created your own partitions, this would be a good time to format them*
+		The loop device is mounted, so ${LOOP}p1 is it's first partition etc.
 	FORMAT_PARTITIONS
 
 	# stage: adjust boot script or boot environment
@@ -310,7 +309,7 @@ PREPARE_IMAGE_SIZE
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		fi
-		if [[  $LINUXFAMILY != meson64 ]]; then
+		if [[ $LINUXFAMILY != meson64 ]]; then
 			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 		fi
 	fi
@@ -321,7 +320,7 @@ PREPARE_IMAGE_SIZE
 			sed -i "s/^console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
 		else
 			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
-	        fi
+		fi
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
@@ -330,7 +329,6 @@ PREPARE_IMAGE_SIZE
 		if [ -z $BOOTSCRIPT_OUTPUT ]; then BOOTSCRIPT_OUTPUT=boot.scr; fi
 		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/$BOOTSCRIPT_OUTPUT > /dev/null 2>&1
 	fi
-
 
 	# create extlinux config
 	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then

@@ -17,8 +17,7 @@
 # $SRC/patch/<dest>/<family>/branch_<branch>
 # $SRC/patch/<dest>/<family>
 #
-advanced_patch()
-{
+advanced_patch() {
 	local dest=$1
 	local family=$2
 	local board=$3
@@ -39,7 +38,7 @@ advanced_patch()
 		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
 		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
 		"$SRC/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
-		)
+	)
 	local links=()
 
 	# required for "for" command
@@ -81,8 +80,7 @@ advanced_patch()
 # <file>: path to patch file
 # <status>: additional status text
 #
-process_patch_file()
-{
+process_patch_file() {
 	local patch=$1
 	local status=$2
 
@@ -101,10 +99,8 @@ process_patch_file()
 	echo >> "${DEST}"/${LOG_SUBPATH}/patching.log
 }
 
-
 # apply_patch_series <target dir> <full path to series file>
-apply_patch_series ()
-{
+apply_patch_series() {
 	local t_dir="${1}"
 	local series="${2}"
 	local bzdir="$(dirname $series)"
@@ -118,41 +114,39 @@ apply_patch_series ()
 	display_alert "skip [$(echo $skiplist | wc -w)] patches"
 
 	cd "${t_dir}" || exit 1
-	for p in $list
-	do
+	for p in $list; do
 		# Detect and remove files as '*.patch' which patch will create.
 		# So we need to delete the file before applying the patch if it exists.
-		lsdiff -s --strip=1 "$bzdir/$p" | \
-		awk '$0 ~ /^+.*patch$/{print $2}' | \
-		xargs -I % sh -c 'rm -f %'
+		lsdiff -s --strip=1 "$bzdir/$p" |
+			awk '$0 ~ /^+.*patch$/{print $2}' |
+			xargs -I % sh -c 'rm -f %'
 
-		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >>$err_pt 2>&1
+		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >> $err_pt 2>&1
 		flag=$?
 
-
 		case $flag in
-			0)	printf "[\033[32m done \033[0m]    %s\n" "${p}"
+			0)
+				printf "[\033[32m done \033[0m]    %s\n" "${p}"
 				printf "[ done ]    %s\n" "${p}" >> "${DEST}"/debug/patching.log
 				;;
 			1)
 				printf "[\033[33m FAILED \033[0m]  %s\n" "${p}"
-				echo -e "[ FAILED ]  For ${p} \t\tprocess exit [ $flag ]" >>"${DEST}"/debug/patching.log
-				cat $err_pt >>"${DEST}"/debug/patching.log
+				echo -e "[ FAILED ]  For ${p} \t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
+				cat $err_pt >> "${DEST}"/debug/patching.log
 				;;
 			2)
 				printf "[\033[31m Patch wrong \033[0m] %s\n" "${p}"
-				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >>"${DEST}"/debug/patching.log
-				cat $err_pt >>"${DEST}"/debug/patching.log
+				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
+				cat $err_pt >> "${DEST}"/debug/patching.log
 				;;
 		esac
-		echo "" >$err_pt
+		echo "" > $err_pt
 	done
-	echo "" >>"${DEST}"/debug/patching.log
+	echo "" >> "${DEST}"/debug/patching.log
 	rm $err_pt
 }
 
-userpatch_create()
-{
+userpatch_create() {
 	# create commit to start from clean source
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
@@ -172,7 +166,7 @@ userpatch_create()
 	# prompt to alter source
 	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
 	display_alert "Press <Enter> after you are done" "waiting" "wrn"
-	read -r </dev/tty
+	read -r < /dev/tty
 	tput cuu1
 	git add .
 	# create patch out of changes

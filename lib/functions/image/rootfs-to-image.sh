@@ -2,8 +2,7 @@
 #
 # finishes creation of image from cached rootfs
 #
-create_image()
-{
+create_image() {
 	# create DESTIMG, hooks might put stuff there early.
 	mkdir -p $DESTIMG
 
@@ -15,15 +14,15 @@ create_image()
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files to" "/"
-		echo -e "\nCopying files to [/]" >>"${DEST}"/${LOG_SUBPATH}/install.log
+		echo -e "\nCopying files to [/]" >> "${DEST}"/${LOG_SUBPATH}/install.log
 		rsync -aHWXh \
-			  --exclude="/boot/*" \
-			  --exclude="/dev/*" \
-			  --exclude="/proc/*" \
-			  --exclude="/run/*" \
-			  --exclude="/tmp/*" \
-			  --exclude="/sys/*" \
-			  --info=progress0,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+			--exclude="/boot/*" \
+			--exclude="/dev/*" \
+			--exclude="/proc/*" \
+			--exclude="/run/*" \
+			--exclude="/tmp/*" \
+			--exclude="/sys/*" \
+			--info=progress0,stats1 $SDCARD/ $MOUNT/ >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
@@ -32,17 +31,17 @@ create_image()
 
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot"
-	echo -e "\nCopying files to [/boot]" >>"${DEST}"/${LOG_SUBPATH}/install.log
+	echo -e "\nCopying files to [/boot]" >> "${DEST}"/${LOG_SUBPATH}/install.log
 	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
 		# fat32
 		rsync -rLtWh \
-			  --info=progress0,stats1 \
-			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
+			--info=progress0,stats1 \
+			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
 	else
 		# ext4
 		rsync -aHWXh \
-			  --info=progress0,stats1 \
-			  --log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
+			--info=progress0,stats1 \
+			--log-file="${DEST}"/${LOG_SUBPATH}/install.log $SDCARD/boot $MOUNT
 	fi
 
 	call_extension_method "pre_update_initramfs" "config_pre_update_initramfs" << 'PRE_UPDATE_INITRAMFS'
@@ -64,9 +63,9 @@ PRE_UPDATE_INITRAMFS
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
 	# exception: if we use the one from repository, install version which was downloaded from repo
 	if [[ -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
-		 write_uboot $LOOP
+		write_uboot $LOOP
 	elif [[ "${UPSTREM_VER}" ]]; then
-		 write_uboot $LOOP
+		write_uboot $LOOP
 	fi
 
 	# fix wrong / permissions
@@ -79,8 +78,8 @@ PRE_UMOUNT_FINAL_IMAGE
 
 	# Check the partition table after the uboot code has been written
 	# and print to the log file.
-	echo -e "\nPartition table after write_uboot $LOOP" >>$DEST/${LOG_SUBPATH}/debootstrap.log
-	sfdisk -l $LOOP >>$DEST/${LOG_SUBPATH}/debootstrap.log
+	echo -e "\nPartition table after write_uboot $LOOP" >> $DEST/${LOG_SUBPATH}/debootstrap.log
+	sfdisk -l $LOOP >> $DEST/${LOG_SUBPATH}/debootstrap.log
 
 	# unmount /boot/efi first, then /boot, rootfs third, image file last
 	sync
@@ -95,8 +94,7 @@ Called after unmounting both `/root` and `/boot`.
 POST_UMOUNT_FINAL_IMAGE
 
 	# to make sure its unmounted
-	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts
-	do
+	while grep -Eq '(${MOUNT}|${DESTIMG})' /proc/mounts; do
 		display_alert "Wait for unmount" "${MOUNT}" "info"
 		sleep 5
 	done
@@ -129,7 +127,7 @@ POST_UMOUNT_FINAL_IMAGE
 			display_alert "Compressing" "${DESTIMG}/${version}.img.xz" "info"
 			# compressing consumes a lot of memory we don't have. Waiting for previous packing job to finish helps to run a lot more builds in parallel
 			available_cpu=$(grep -c 'processor' /proc/cpuinfo)
-			[[ ${available_cpu} -gt 16 ]] && available_cpu=16 # using more cpu cores for compressing is pointless
+			[[ ${available_cpu} -gt 16 ]] && available_cpu=16                                               # using more cpu cores for compressing is pointless
 			available_mem=$(LC_ALL=c free | grep Mem | awk '{print $4/$2 * 100.0}' | awk '{print int($1)}') # in percentage
 			# build optimisations when memory drops below 5%
 			pixz -7 -p ${available_cpu} -f $(expr ${available_cpu} + 2) < $DESTIMG/${version}.img > ${DESTIMG}/${version}.img.xz
@@ -137,7 +135,7 @@ POST_UMOUNT_FINAL_IMAGE
 		fi
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *img* || $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
-#			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
+			#			mv $DESTIMG/${version}.img ${FINALDEST}/${version}.img || exit 1
 			compression_type=""
 		fi
 
@@ -168,10 +166,10 @@ POST_UMOUNT_FINAL_IMAGE
 		if [[ $COMPRESS_OUTPUTIMAGE == *7z* ]]; then
 			display_alert "Compressing" "${DESTIMG}/${version}.7z" "info"
 			7za a -t7z -bd -m0=lzma2 -mx=3 -mfb=64 -md=32m -ms=on \
-			${DESTIMG}/${version}.7z ${version}.key ${version}.img* >/dev/null 2>&1
+				${DESTIMG}/${version}.7z ${version}.key ${version}.img* > /dev/null 2>&1
 			find ${DESTIMG}/ -type \
-			f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 \
-			| xargs -0 rm >/dev/null 2>&1
+				f \( -name "${version}.img" -o -name "${version}.img.asc" -o -name "${version}.img.txt" -o -name "${version}.img.sha" \) -print0 |
+				xargs -0 rm > /dev/null 2>&1
 		fi
 
 	fi
@@ -179,7 +177,7 @@ POST_UMOUNT_FINAL_IMAGE
 
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
 	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
-	call_extension_method "post_build_image"  << 'POST_BUILD_IMAGE'
+	call_extension_method "post_build_image" << 'POST_BUILD_IMAGE'
 *custom post build hook*
 Called after the final .img file is built, before it is (possibly) written to an SD writer.
 - *NOTE*: this hook used to take an argument ($1) for the final image produced.
@@ -193,7 +191,7 @@ POST_BUILD_IMAGE
 	rm -rf --one-file-system $DESTIMG
 
 	# write image to SD card
-	if [[ $(lsblk "$CARD_DEVICE" 2>/dev/null) && -f ${FINALDEST}/${version}.img ]]; then
+	if [[ $(lsblk "$CARD_DEVICE" 2> /dev/null) && -f ${FINALDEST}/${version}.img ]]; then
 
 		# make sha256sum if it does not exists. we need it for comparisson
 		if [[ -f "${FINALDEST}/${version}".img.sha ]]; then
@@ -207,10 +205,10 @@ POST_BUILD_IMAGE
 		# write to SD card
 		pv -p -b -r -c -N "[ .... ] dd" ${FINALDEST}/${version}.img | dd of=$CARD_DEVICE bs=1M iflag=fullblock oflag=direct status=none
 
-		call_extension_method "post_write_sdcard"  <<- 'POST_BUILD_IMAGE'
-		*run after writing img to sdcard*
-		After the image is written to `$CARD_DEVICE`, but before verifying it.
-		You can still set SKIP_VERIFY=yes to skip verification.
+		call_extension_method "post_write_sdcard" <<- 'POST_BUILD_IMAGE'
+			*run after writing img to sdcard*
+			After the image is written to `$CARD_DEVICE`, but before verifying it.
+			You can still set SKIP_VERIFY=yes to skip verification.
 		POST_BUILD_IMAGE
 
 		if [[ "${SKIP_VERIFY}" != "yes" ]]; then
@@ -223,7 +221,7 @@ POST_BUILD_IMAGE
 				display_alert "Writing failed" "${version}.img" "err"
 			fi
 		fi
-	elif [[ `systemd-detect-virt` == 'docker' && -n $CARD_DEVICE ]]; then
+	elif [[ $(systemd-detect-virt) == 'docker' && -n $CARD_DEVICE ]]; then
 		# display warning when we want to write sd card under Docker
 		display_alert "Can't write to $CARD_DEVICE" "Enable docker privileged mode in config-docker.conf" "wrn"
 	fi

@@ -12,8 +12,7 @@
 # path instead of $SDCARD (which can be a tmpfs and breaks cryptsetup-initramfs).
 # see: https://github.com/armbian/build/issues/1584
 #
-update_initramfs()
-{
+update_initramfs() {
 	local chroot_target=$1
 	local target_dir=$(
 		find ${chroot_target}/lib/modules/ -maxdepth 1 -type d -name "*${VER}*"

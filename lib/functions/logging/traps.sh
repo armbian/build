@@ -4,8 +4,7 @@
 # with verbose error message
 #
 
-exit_with_error()
-{
+exit_with_error() {
 	local _file
 	local _line=${BASH_LINENO[0]}
 	local _function=${FUNCNAME[1]}
@@ -28,7 +27,7 @@ exit_with_error()
 	# TODO: execute run_after_build here?
 	overlayfs_wrapper "cleanup"
 	# unlock loop device access in case of starvation
-	exec {FD}>/var/lock/armbian-debootstrap-losetup
+	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -u "${FD}"
 
 	exit 255

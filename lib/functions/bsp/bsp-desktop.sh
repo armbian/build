@@ -1,5 +1,4 @@
-create_desktop_package ()
-{
+create_desktop_package() {
 
 	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log
 	# Use quotes to show leading and trailing spaces
@@ -10,14 +9,14 @@ create_desktop_package ()
 	DEBIAN_RECOMMENDS="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
 	DEBIAN_RECOMMENDS="${DEBIAN_RECOMMENDS%"${DEBIAN_RECOMMENDS##*[![:space:]]}"}"
 	# Replace whitespace characters by commas
-	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS// /,};
+	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS// /,}
 	# Remove others 'spacing characters' (like tabs)
 	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
 
 	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# Replace whitespace characters by commas
-	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,};
+	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,}
 	# Remove others 'spacing characters' (like tabs)
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
 
@@ -30,19 +29,19 @@ create_desktop_package ()
 	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# set up control file
-	cat <<-EOF > "${destination}"/DEBIAN/control
-	Package: ${CHOSEN_DESKTOP}
-	Version: $REVISION
-	Architecture: all
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Installed-Size: 1
-	Section: xorg
-	Priority: optional
-	Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}, armbian-bsp-desktop
-	Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
-	Conflicts: gdm3
-	Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
-	Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
+	cat <<- EOF > "${destination}"/DEBIAN/control
+		Package: ${CHOSEN_DESKTOP}
+		Version: $REVISION
+		Architecture: all
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Installed-Size: 1
+		Section: xorg
+		Priority: optional
+		Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}, armbian-bsp-desktop
+		Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
+		Conflicts: gdm3
+		Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
+		Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
 	# Recreating the DEBIAN/postinst file
@@ -73,8 +72,9 @@ create_desktop_package ()
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	cd "${destination}"; cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"  >/dev/null
+	cd "${destination}"
+	cd ..
+	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb" > /dev/null
 
 	# cleanup
 	rm -rf "${tmp_dir}"
@@ -83,8 +83,7 @@ create_desktop_package ()
 
 }
 
-create_bsp_desktop_package ()
-{
+create_bsp_desktop_package() {
 
 	display_alert "Creating board support package for desktop" "${package_name}" "info"
 
@@ -99,17 +98,17 @@ create_bsp_desktop_package ()
 	copy_all_packages_files_for "bsp-desktop"
 
 	# set up control file
-	cat <<-EOF > "${destination}"/DEBIAN/control
-	Package: armbian-bsp-desktop-${BOARD}
-	Version: $REVISION
-	Architecture: $ARCH
-	Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-	Installed-Size: 1
-	Section: xorg
-	Priority: optional
-	Provides: armbian-bsp-desktop, armbian-bsp-desktop-${BOARD}
-	Depends: ${BSP_CLI_PACKAGE_NAME}
-	Description: Armbian Board Specific Packages for desktop users using $ARCH ${BOARD} machines
+	cat <<- EOF > "${destination}"/DEBIAN/control
+		Package: armbian-bsp-desktop-${BOARD}
+		Version: $REVISION
+		Architecture: $ARCH
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Installed-Size: 1
+		Section: xorg
+		Priority: optional
+		Provides: armbian-bsp-desktop, armbian-bsp-desktop-${BOARD}
+		Depends: ${BSP_CLI_PACKAGE_NAME}
+		Description: Armbian Board Specific Packages for desktop users using $ARCH ${BOARD} machines
 	EOF
 
 	# Recreating the DEBIAN/postinst file
@@ -135,8 +134,9 @@ create_bsp_desktop_package ()
 	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	cd "${destination}"; cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"  >/dev/null
+	cd "${destination}"
+	cd ..
+	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb" > /dev/null
 
 	# cleanup
 	rm -rf "${tmp_dir}"

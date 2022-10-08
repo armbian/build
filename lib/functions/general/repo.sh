@@ -1,30 +1,27 @@
-adding_packages()
-{
-# add deb files to repository if they are not already there
+adding_packages() {
+	# add deb files to repository if they are not already there
 
 	display_alert "Checking and adding to repository $release" "$3" "ext"
-	for f in "${DEB_STORAGE}${2}"/*.deb
-	do
+	for f in "${DEB_STORAGE}${2}"/*.deb; do
 		local name version arch
 		name=$(dpkg-deb -I "${f}" | grep Package | awk '{print $2}')
 		version=$(dpkg-deb -I "${f}" | grep Version | awk '{print $2}')
 		arch=$(dpkg-deb -I "${f}" | grep Architecture | awk '{print $2}')
 		# add if not already there
-		aptly repo search -architectures="${arch}" -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" 'Name (% '${name}'), $Version (='${version}'), $Architecture (='${arch}')' &>/dev/null
+		aptly repo search -architectures="${arch}" -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" 'Name (% '${name}'), $Version (='${version}'), $Architecture (='${arch}')' &> /dev/null
 		if [[ $? -ne 0 ]]; then
 			display_alert "Adding ${1}" "$name" "info"
-			aptly repo add -force-replace=true -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" "${f}" &>/dev/null
+			aptly repo add -force-replace=true -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${1}" "${f}" &> /dev/null
 		fi
 	done
 
 }
 
-addtorepo()
-{
-# create repository
-# parameter "remove" dumps all and creates new
-# parameter "delete" remove incoming directory if publishing is succesful
-# function: cycle trough distributions
+addtorepo() {
+	# create repository
+	# parameter "remove" dumps all and creates new
+	# parameter "delete" remove incoming directory if publishing is succesful
+	# function: cycle trough distributions
 
 	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "jammy" "sid")
 	#local distributions=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
@@ -34,7 +31,7 @@ addtorepo()
 
 		ADDING_PACKAGES="false"
 		if [[ -d "config/distributions/${release}/" ]]; then
-			[[ -n "$(cat config/distributions/${release}/support | grep "csc\|supported" 2>/dev/null)" ]] && ADDING_PACKAGES="true"
+			[[ -n "$(cat config/distributions/${release}/support | grep "csc\|supported" 2> /dev/null)" ]] && ADDING_PACKAGES="true"
 		else
 			display_alert "Skipping adding packages (not supported)" "$release" "wrn"
 			continue
@@ -51,54 +48,53 @@ addtorepo()
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}") ]]; then
 			display_alert "Creating section" "main" "info"
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="main" \
-			-comment="Armbian main repository" "${release}" >/dev/null
+				-comment="Armbian main repository" "${release}" > /dev/null
 		fi
 
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "^utils") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="utils" \
-			-comment="Armbian utilities (backwards compatibility)" utils >/dev/null
+				-comment="Armbian utilities (backwards compatibility)" utils > /dev/null
 		fi
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-utils") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="${release}-utils" \
-			-comment="Armbian ${release} utilities" "${release}-utils" >/dev/null
+				-comment="Armbian ${release} utilities" "${release}-utils" > /dev/null
 		fi
 		if [[ -z $(aptly repo list -config="${SCRIPTPATH}config/${REPO_CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}-desktop") ]]; then
 			aptly repo create -config="${SCRIPTPATH}config/${REPO_CONFIG}" -distribution="${release}" -component="${release}-desktop" \
-			-comment="Armbian ${release} desktop" "${release}-desktop" >/dev/null
+				-comment="Armbian ${release} desktop" "${release}-desktop" > /dev/null
 		fi
 
-
 		# adding main
-		if find "${DEB_STORAGE}"/ -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}"/ -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			[[ "${ADDING_PACKAGES}" == true ]] && adding_packages "$release" "" "main"
 		else
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 
 		local COMPONENTS="main"
 
 		# adding main distribution packages
-		if find "${DEB_STORAGE}/${release}" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}/${release}" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			[[ "${ADDING_PACKAGES}" == true ]] && adding_packages "${release}-utils" "/${release}" "release packages"
 		else
 			# workaround - add dummy package to not trigger error
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 
 		# adding release-specific utils
-		if find "${DEB_STORAGE}/extra/${release}-utils" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}/extra/${release}-utils" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			[[ "${ADDING_PACKAGES}" == true ]] && adding_packages "${release}-utils" "/extra/${release}-utils" "release utils"
 		else
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-utils" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-utils" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-utils"
 
 		# adding desktop
-		if find "${DEB_STORAGE}/extra/${release}-desktop" -maxdepth 1 -type f -name "*.deb" 2>/dev/null | grep -q .; then
+		if find "${DEB_STORAGE}/extra/${release}-desktop" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			[[ "${ADDING_PACKAGES}" == true ]] && adding_packages "${release}-desktop" "/extra/${release}-desktop" "desktop"
 		else
 			# workaround - add dummy package to not trigger error
-			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" "${SCRIPTPATH}config/templates/example.deb" >/dev/null
+			aptly repo add -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" "${SCRIPTPATH}config/templates/example.deb" > /dev/null
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-desktop"
 
@@ -111,21 +107,21 @@ addtorepo()
 
 			# publish
 			aptly publish \
-			-acquire-by-hash \
-			-passphrase="${GPG_PASS}" \
-			-origin="Armbian" \
-			-label="Armbian" \
-			-config="${SCRIPTPATH}config/${REPO_CONFIG}" \
-			-component="${COMPONENTS// /,}" \
-			-distribution="${release}" repo "${release}" ${COMPONENTS//main/} >/dev/null
+				-acquire-by-hash \
+				-passphrase="${GPG_PASS}" \
+				-origin="Armbian" \
+				-label="Armbian" \
+				-config="${SCRIPTPATH}config/${REPO_CONFIG}" \
+				-component="${COMPONENTS// /,}" \
+				-distribution="${release}" repo "${release}" ${COMPONENTS//main/} > /dev/null
 
 			if [[ $? -ne 0 ]]; then
 				display_alert "Publishing failed" "${release}" "err"
-				errors=$((errors+1))
+				errors=$((errors + 1))
 				exit 0
 			fi
 		else
-			errors=$((errors+1))
+			errors=$((errors + 1))
 			local err_txt=": All components must be present: main, utils and desktop for first build"
 		fi
 
@@ -152,14 +148,13 @@ addtorepo()
 
 }
 
-repo-manipulate()
-{
-# repository manipulation
-# "show" displays packages in each repository
-# "server" serve repository - useful for local diagnostics
-# "unique" manually select which package should be removed from all repositories
-# "update" search for new files in output/debs* to add them to repository
-# "purge" leave only last 5 versions
+repo-manipulate() {
+	# repository manipulation
+	# "show" displays packages in each repository
+	# "server" serve repository - useful for local diagnostics
+	# "unique" manually select which package should be removed from all repositories
+	# "update" search for new files in output/debs* to add them to repository
+	# "purge" leave only last 5 versions
 
 	local DISTROS=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "jammy" "sid")
 	#local DISTROS=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
@@ -192,28 +187,27 @@ repo-manipulate()
 			while true; do
 				LIST=()
 				for release in "${DISTROS[@]}"; do
-					LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" | tail -n +7) )
-					LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" | tail -n +7) )
+					LIST+=($(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" | tail -n +7))
+					LIST+=($(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" | tail -n +7))
 				done
-				LIST+=( $(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" utils | tail -n +7) )
-				LIST=( $(echo "${LIST[@]}" | tr ' ' '\n' | sort -u))
+				LIST+=($(aptly repo show -with-packages -config="${SCRIPTPATH}config/${REPO_CONFIG}" utils | tail -n +7))
+				LIST=($(echo "${LIST[@]}" | tr ' ' '\n' | sort -u))
 				new_list=()
 				# create a human readable menu
-				for ((n=0;n<$((${#LIST[@]}));n++));
-				do
-					new_list+=( "${LIST[$n]}" )
-					new_list+=( "" )
+				for ((n = 0; n < $((${#LIST[@]})); n++)); do
+					new_list+=("${LIST[$n]}")
+					new_list+=("")
 				done
 				LIST=("${new_list[@]}")
-				LIST_LENGTH=$((${#LIST[@]}/2));
+				LIST_LENGTH=$((${#LIST[@]} / 2))
 				exec 3>&1
-				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9+${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
-				exitstatus=$?;
+				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9 + ${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
+				exitstatus=$?
 				exec 3>&-
 				if [[ $exitstatus -eq 0 ]]; then
 					for release in "${DISTROS[@]}"; do
-						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}"  "${release}" "$TARGET_VERSION"
-						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}"  "${release}-desktop" "$TARGET_VERSION"
+						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" "$TARGET_VERSION"
+						aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}-desktop" "$TARGET_VERSION"
 					done
 					aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "utils" "$TARGET_VERSION"
 				else
@@ -243,22 +237,22 @@ repo-manipulate()
 			exit 0
 			;;
 
-                purgeedge)
-                        for release in "${DISTROS[@]}"; do
+		purgeedge)
+			for release in "${DISTROS[@]}"; do
 				repo-remove-old-packages "$release" "armhf" "3" "edge"
 				repo-remove-old-packages "$release" "arm64" "3" "edge"
 				repo-remove-old-packages "$release" "amd64" "3" "edge"
 				repo-remove-old-packages "$release" "all" "3" "edge"
 				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
-                        done
-                        exit 0
-                        ;;
+			done
+			exit 0
+			;;
 
-
-		purgesource)
+		\
+			purgesource)
 			for release in "${DISTROS[@]}"; do
 				aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${release}" 'Name (% *-source*)'
-				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}"  > /dev/null 2>&1
+				aptly -config="${SCRIPTPATH}config/${REPO_CONFIG}" -passphrase="${GPG_PASS}" publish update "${release}" > /dev/null 2>&1
 			done
 			aptly db cleanup -config="${SCRIPTPATH}config/${REPO_CONFIG}" > /dev/null 2>&1
 			exit 0
@@ -294,12 +288,12 @@ repo-remove-old-packages() {
 		local pkg_name
 		count=0
 		pkg_name=$(echo "${pkg}" | cut -d_ -f1)
-		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)"  | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
-			((count+=1))
+		for subpkg in $(aptly repo search -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name)" | grep -v "ERROR: no results" | sort -rt '.' -nk4); do
+			((count += 1))
 			if [[ $count -gt $keep ]]; then
-			pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
-			aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
+				pkg_version=$(echo "${subpkg}" | cut -d_ -f2)
+				aptly repo remove -config="${SCRIPTPATH}config/${REPO_CONFIG}" "${repo}" "Name ($pkg_name), Version (= $pkg_version)"
 			fi
 		done
-    done
+	done
 }

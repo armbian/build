@@ -1,7 +1,6 @@
 # unmount_on_exit
 #
-unmount_on_exit()
-{
+unmount_on_exit() {
 
 	trap - INT TERM EXIT
 	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
@@ -17,12 +16,12 @@ unmount_on_exit()
 	umount_chroot "${SDCARD}/"
 	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
 	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs
-	umount -l "${SDCARD}"/tmp >/dev/null 2>&1
-	umount -l "${SDCARD}" >/dev/null 2>&1
-	umount -l "${MOUNT}"/boot >/dev/null 2>&1
-	umount -l "${MOUNT}" >/dev/null 2>&1
+	umount -l "${SDCARD}"/tmp > /dev/null 2>&1
+	umount -l "${SDCARD}" > /dev/null 2>&1
+	umount -l "${MOUNT}"/boot > /dev/null 2>&1
+	umount -l "${MOUNT}" > /dev/null 2>&1
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
-	losetup -d "${LOOP}" >/dev/null 2>&1
+	losetup -d "${LOOP}" > /dev/null 2>&1
 	rm -rf --one-file-system "${SDCARD}"
 	exit_with_error "debootstrap-ng was interrupted" || true # don't trigger again
 
@@ -30,8 +29,7 @@ unmount_on_exit()
 
 # debootstrap_ng
 #
-debootstrap_ng()
-{
+debootstrap_ng() {
 	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
@@ -52,9 +50,10 @@ debootstrap_ng()
 	# stage: verify tmpfs configuration and mount
 	# CLI needs ~1.5GiB, desktop - ~3.5GiB
 	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
-	local phymem=$(( (($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10 )) # MiB
-	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi # MiB
-	if [[ $FORCE_USE_RAMDISK == no ]]; then	local use_tmpfs=no
+	local phymem=$(((($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10)) # MiB
+	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi                                 # MiB
+	if [[ $FORCE_USE_RAMDISK == no ]]; then
+		local use_tmpfs=no
 	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
 		local use_tmpfs=yes
 	fi
@@ -88,11 +87,11 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 
 	# remove packages that are no longer needed. Since we have intrudoced uninstall feature, we might want to clean things that are no longer needed
 	display_alert "No longer needed packages" "purge" "info"
-	chroot $SDCARD /bin/bash -c "apt-get autoremove -y"  >/dev/null 2>&1
+	chroot $SDCARD /bin/bash -c "apt-get autoremove -y" > /dev/null 2>&1
 
 	# create list of all installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] \
-	&& echo "-minimal")$([[ ${BUILD_DESKTOP} == yes  ]] && echo "-desktop").list 2>&1
+	chroot $SDCARD /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] &&
+		echo "-minimal")$([[ ${BUILD_DESKTOP} == yes ]] && echo "-desktop").list 2>&1
 
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
@@ -110,8 +109,7 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	# stage: unmount tmpfs
 	umount $SDCARD 2>&1
 	if [[ $use_tmpfs = yes ]]; then
-		while grep -qs "$SDCARD" /proc/mounts
-		do
+		while grep -qs "$SDCARD" /proc/mounts; do
 			umount $SDCARD
 			sleep 5
 		done
