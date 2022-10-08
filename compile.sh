@@ -16,7 +16,10 @@
 SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
 # check for whitespace in ${SRC} and exit for safety reasons
-grep -q "[[:space:]]" <<<"${SRC}" && { echo "\"${SRC}\" contains whitespace. Not supported. Aborting." >&2 ; exit 1 ; }
+grep -q "[[:space:]]" <<< "${SRC}" && {
+	echo "\"${SRC}\" contains whitespace. Not supported. Aborting." >&2
+	exit 1
+}
 
 cd "${SRC}" || exit
 
@@ -30,7 +33,7 @@ fi
 if [[ -f "${SRC}"/lib/import-functions.sh ]]; then
 
 	# Declare this folder as safe
-	if ! grep -q 2>/dev/null "directory = \*" "$HOME/.gitconfig"; then
+	if ! grep -q "directory = \*" "$HOME/.gitconfig" 2> /dev/null; then
 		git config --global --add safe.directory "*"
 	fi
 
@@ -46,32 +49,29 @@ else
 fi
 
 #  Add the variables needed at the beginning of the path
-check_args ()
-{
+check_args() {
 
-for p in "$@"; do
+	for p in "$@"; do
 
-	case "${p%=*}" in
-		LIB_TAG)
-			# Take a variable if the branch exists locally
-			if [ "${p#*=}" == "$(git branch | \
-				gawk -v b="${p#*=}" '{if ( $NF == b ) {print $NF}}')" ]; then
-				echo -e "[\e[0;35m warn \x1B[0m] Setting $p"
-				eval "$p"
-			else
-				echo -e "[\e[0;35m warn \x1B[0m] Skip $p setting as LIB_TAG=\"\""
-				eval LIB_TAG=""
-			fi
-			;;
-	esac
+		case "${p%=*}" in
+			LIB_TAG)
+				# Take a variable if the branch exists locally
+				if [ "${p#*=}" == "$(git branch |
+					gawk -v b="${p#*=}" '{if ( $NF == b ) {print $NF}}')" ]; then
+					echo -e "[\e[0;35m warn \x1B[0m] Setting $p"
+					eval "$p"
+				else
+					echo -e "[\e[0;35m warn \x1B[0m] Skip $p setting as LIB_TAG=\"\""
+					eval LIB_TAG=""
+				fi
+				;;
+		esac
 
-done
+	done
 
 }
 
-
 check_args "$@"
-
 
 update_src() {
 
@@ -83,8 +83,8 @@ update_src() {
 		if [[ -n "${CHANGED_FILES}" ]]; then
 			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
 			while true; do
-				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation"\
-				", \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
+				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation" \
+					", \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
 				read -r
 				if [[ "${REPLY}" == "diff" ]]; then
 					git diff
@@ -104,7 +104,6 @@ update_src() {
 
 }
 
-
 TMPFILE=$(mktemp)
 chmod 644 "${TMPFILE}"
 {
@@ -114,7 +113,7 @@ chmod 644 "${TMPFILE}"
 	declare -f update_src
 	echo "update_src"
 
-}  > "$TMPFILE"
+} > "$TMPFILE"
 
 #do not update/checkout git with root privileges to messup files onwership.
 #due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
@@ -128,9 +127,7 @@ if [[ $(systemd-detect-virt) == 'none' ]]; then
 
 fi
 
-
 rm "${TMPFILE}"
-
 
 if [[ "${EUID}" == "0" ]] || [[ "${1}" == "vagrant" ]]; then
 	:
@@ -208,10 +205,8 @@ if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]
 
 fi
 
-
 # Create userpatches directory if not exists
 mkdir -p "${SRC}"/userpatches
-
 
 # Create example configs if none found in userpatches
 if ! ls "${SRC}"/userpatches/{config-default.conf,config-docker.conf,config-vagrant.conf} 1> /dev/null 2>&1; then
@@ -219,7 +214,7 @@ if ! ls "${SRC}"/userpatches/{config-default.conf,config-docker.conf,config-vagr
 	# Migrate old configs
 	if ls "${SRC}"/*.conf 1> /dev/null 2>&1; then
 		display_alert "Migrate config files to userpatches directory" "all *.conf" "info"
-                cp "${SRC}"/*.conf "${SRC}"/userpatches  || exit 1
+		cp "${SRC}"/*.conf "${SRC}"/userpatches || exit 1
 		rm "${SRC}"/*.conf
 		[[ ! -L "${SRC}"/userpatches/config-example.conf ]] && ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
 	fi
@@ -233,7 +228,7 @@ if ! ls "${SRC}"/userpatches/{config-default.conf,config-docker.conf,config-vagr
 
 	# Link default config to example config
 	if [[ ! -f "${SRC}"/userpatches/config-default.conf ]]; then
-                ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
+		ln -fs config-example.conf "${SRC}"/userpatches/config-default.conf || exit 1
 	fi
 
 	# Create Docker config
@@ -242,13 +237,13 @@ if ! ls "${SRC}"/userpatches/{config-default.conf,config-docker.conf,config-vagr
 	fi
 
 	# Create Docker file
-        if [[ ! -f "${SRC}"/userpatches/Dockerfile ]]; then
+	if [[ ! -f "${SRC}"/userpatches/Dockerfile ]]; then
 		cp "${SRC}"/config/templates/Dockerfile "${SRC}"/userpatches/Dockerfile || exit 1
-        fi
+	fi
 
 	# Create Vagrant config
 	if [[ ! -f "${SRC}"/userpatches/config-vagrant.conf ]]; then
-	        cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/userpatches/config-vagrant.conf || exit 1
+		cp "${SRC}"/config/templates/config-vagrant.conf "${SRC}"/userpatches/config-vagrant.conf || exit 1
 	fi
 
 	# Create Vagrant file
