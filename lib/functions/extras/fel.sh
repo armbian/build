@@ -74,27 +74,29 @@ fel_load() {
 		write 0x43100000 "${FEL_ROOTFS}"/boot/boot.scr
 }
 
-if [[ -f $USERPATCHES_PATH/fel-hooks.sh ]]; then
-	display_alert "Using additional FEL hooks in" "userpatches/fel-hooks.sh" "info"
-	# shellcheck source=/dev/null
-	source "$USERPATCHES_PATH"/fel-hooks.sh
-fi
+function start_fel_boot() {
+	if [[ -f $USERPATCHES_PATH/fel-hooks.sh ]]; then
+		display_alert "Using additional FEL hooks in" "userpatches/fel-hooks.sh" "info"
+		# shellcheck source=/dev/null
+		source "$USERPATCHES_PATH"/fel-hooks.sh
+	fi
 
-# basic sanity check
-if [[ -n $FEL_ROOTFS ]]; then
-	fel_prepare_host
-	fel_prepare_target
-	[[ $(type -t fel_post_prepare) == function ]] && fel_post_prepare
-	RES=b
-	while [[ $RES != q ]]; do
-		if [[ $FEL_AUTO != yes ]]; then
-			display_alert "Connect device in FEL mode and press" "<Enter>" "info"
-			read -r
-		fi
-		fel_load
-		display_alert "Press any key to boot again, <q> to finish" "FEL" "info"
-		read -r -n 1 RES
-		echo
-	done
-	service nfs-kernel-server restart
-fi
+	# basic sanity check
+	if [[ -n $FEL_ROOTFS ]]; then
+		fel_prepare_host
+		fel_prepare_target
+		[[ $(type -t fel_post_prepare) == function ]] && fel_post_prepare
+		RES=b
+		while [[ $RES != q ]]; do
+			if [[ $FEL_AUTO != yes ]]; then
+				display_alert "Connect device in FEL mode and press" "<Enter>" "info"
+				read -r
+			fi
+			fel_load
+			display_alert "Press any key to boot again, <q> to finish" "FEL" "info"
+			read -r -n 1 RES
+			echo
+		done
+		service nfs-kernel-server restart
+	fi
+}

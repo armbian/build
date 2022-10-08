@@ -100,7 +100,7 @@ PRE_INSTALL_DISTRIBUTION_SPECIFIC
 	if [[ $ROOTFS_TYPE == fel ]]; then
 		FEL_ROOTFS=$SDCARD/
 		display_alert "Starting FEL boot" "$BOARD" "info"
-		source $SRC/lib/fel-load.sh
+		start_fel_boot
 	else
 		prepare_partitions
 		create_image
