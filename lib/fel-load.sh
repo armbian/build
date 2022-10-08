@@ -13,8 +13,7 @@
 # unless you want to kill your /etc/fstab and share your rootfs on NFS
 # without any access control
 
-fel_prepare_host()
-{
+fel_prepare_host() {
 	# Start rpcbind for NFS if inside docker container
 	[ "$(systemd-detect-virt)" == 'docker' ] && service rpcbind start
 
@@ -27,8 +26,7 @@ fel_prepare_host()
 	exportfs -ra
 }
 
-fel_prepare_target()
-{
+fel_prepare_target() {
 	if [[ -f $USERPATCHES_PATH/fel-boot.cmd ]]; then
 		display_alert "Using custom boot script" "userpatches/fel-boot.cmd" "info"
 		cp "$USERPATCHES_PATH"/fel-boot.cmd "${FEL_ROOTFS}"/boot/boot.cmd
@@ -49,8 +47,7 @@ fel_prepare_target()
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> "${FEL_ROOTFS}"/etc/fstab
 }
 
-fel_load()
-{
+fel_load() {
 	# update each time in case boot/script.bin link was changed in multi-board images
 	local dtb_file
 	if [[ -n $FEL_DTB_FILE ]]; then
