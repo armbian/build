@@ -1,4 +1,4 @@
-# This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
+# This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the u ser.
 function extension_prepare_config__prepare_flash_kernel() {
 	# Extension configuration defaults.
 	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
@@ -77,6 +77,7 @@ post_family_tweaks_bsp__remove_uboot_grub() {
 pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
 	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
 	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot
+	return 0 # shortcircuit above
 }
 
 pre_umount_final_image__install_grub() {
@@ -101,14 +102,14 @@ pre_umount_final_image__install_grub() {
 
 	if [[ "${UEFI_GRUB_TARGET_BIOS}" != "" ]]; then
 		display_alert "Installing GRUB BIOS..." "${UEFI_GRUB_TARGET_BIOS} device ${LOOP}" ""
-		chroot "$chroot_target" /bin/bash -c "grub-install --verbose --target=${UEFI_GRUB_TARGET_BIOS} ${LOOP}" >> "$DEST"/"${LOG_SUBPATH}"/install.log 2>&1 || {
+		chroot_custom "$chroot_target" grub-install --target=${UEFI_GRUB_TARGET_BIOS} "${LOOP}" || {
 			exit_with_error "${install_grub_cmdline} failed!"
 		}
 	fi
 
 	local install_grub_cmdline="update-grub && grub-install --verbose --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
 	display_alert "Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
-	chroot "$chroot_target" /bin/bash -c "$install_grub_cmdline" >> "$DEST"/"${LOG_SUBPATH}"/install.log 2>&1 || {
+	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
 		exit_with_error "${install_grub_cmdline} failed!"
 	}
 
@@ -124,8 +125,9 @@ pre_umount_final_image__900_export_kernel_and_initramfs() {
 		display_alert "Exporting Kernel and Initrd for" "kexec" "info"
 		# this writes to ${DESTIMG} directly, since debootstrap.sh will move them later.
 		# capture the $MOUNT/boot/vmlinuz and initrd and send it out ${DESTIMG}
-		cp "$MOUNT"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel"
-		cp "$MOUNT"/boot/initrd.img-* "${DESTIMG}/${version}.initrd"
+		run_host_command_logged ls -la "${MOUNT}"/boot/vmlinuz-* "${MOUNT}"/boot/initrd.img-* || true
+		run_host_command_logged cp -pv "${MOUNT}"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel" || true
+		run_host_command_logged cp -pv "${MOUNT}"/boot/initrd.img-* "${DESTIMG}/${version}.initrd" || true
 	fi
 }
 
