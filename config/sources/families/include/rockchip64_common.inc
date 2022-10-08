@@ -116,6 +116,7 @@ case $BRANCH in
 
 	current)
 
+		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
@@ -125,6 +126,7 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
+		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-6.1.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
@@ -183,16 +185,16 @@ uboot_custom_postprocess() {
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
 	elif [[ $BOOT_SCENARIO == "spl-blobs" || $BOOT_SCENARIO == "tpl-blob-atf-mainline" ]]; then
-
-		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
+		display_alert "mkimage for $BOOT_SOC with $BOOT_SCENARIO" "spl-blobs/tpl-blob-atf-mainline" "debug"
+		run_host_command_logged tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
 
 	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
 
 		local tempfile=$(mktemp)
-		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
+		run_host_command_logged tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
 		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
-		$PKG_PREFIX$RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
-		$PKG_PREFIX$RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
+		run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+		run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
 	else
 		echo "Unsupported u-boot processing configuration!"
@@ -222,25 +224,22 @@ uboot_custom_postprocess() {
 }
 
 write_uboot_platform() {
+	# This is run board-side too, so account for the non-existance of run_host_command_logged
+	local logging_prelude=""
+	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
+
 	if [[ -f $1/rksd_loader.img ]]; then # legacy rk3399 loader
-
-		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none
 	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob"
-
-		dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none
+		${logging_prelude} dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none
 	elif [[ -f $1/uboot.img ]]; then # $BOOT_SCENARIO == "only-blobs"
-
-		dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none
+		${logging_prelude} dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none
+		${logging_prelude} dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none
 	else
 		echo "Unsupported u-boot processing configuration!"
 		exit 1
-
 	fi
 }
 
@@ -472,11 +471,9 @@ family_tweaks_bsp() {
 	fi
 
 	if [[ $BOARD == rk3318-box ]]; then
-
 		# Optional board dtbo selection script
 		mkdir -p $destination/usr/local/bin
 		install -m 755 $SRC/packages/bsp/rk3318/rk3318-config $destination/usr/sbin
-
 	fi
 
 	if [[ $BOARD == pinebook-pro ]]; then
