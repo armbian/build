@@ -32,7 +32,7 @@ function main_trap_handler() {
 	stack_caller="$(show_caller_full)"
 	short_stack="${BASH_SOURCE[1]}:${BASH_LINENO[0]}"
 
-	display_alert "main_trap_handler" "${trap_type} and ${trap_exit_code} trap_manager_error_handled:${trap_manager_error_handled}" "trap"
+	display_alert "main_trap_handler" "${trap_type} and ${trap_exit_code} trap_manager_error_handled:${trap_manager_error_handled} short_stack:${short_stack}" "trap"
 
 	case "${trap_type}" in
 		TERM | INT)
@@ -42,8 +42,18 @@ function main_trap_handler() {
 			;;
 
 		ERR)
-			logging_error_show_log
-			display_alert "Error occurred" "code ${trap_exit_code} at ${short_stack}\n${stack_caller}\n" "err"
+			# If error occurs in subshell (eg: inside $()), we would show the error twice.
+			# Determine if we're in a subshell, and if so, output a single message.
+			# BASHPID is the current subshell; $$ is parent shell pid
+			if [[ "${BASHPID}" == "${$}" ]]; then
+				# Not in subshell, dump the error, complete with log, and show the stack.
+				logging_error_show_log
+				display_alert "Error occurred in main shell" "code ${trap_exit_code} at ${short_stack}\n${stack_caller}\n" "err"
+			else
+				# In a subshell. This trap will run again in the parent shell, so just output a message about it;
+				# When the parent shell trap runs, it will show the stack and log.
+				display_alert "Error occurred in SUBSHELL" "SUBSHELL: code ${trap_exit_code} at ${short_stack}" "err"
+			fi
 			trap_manager_error_handled=1
 			return # Nothing else to do here, let the EXIT trap do the cleanups.
 			;;
