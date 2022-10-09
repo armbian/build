@@ -293,16 +293,25 @@ function export_ansi_logs() {
 		----------------------------------------------------------------------------------------------------------------
 		# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}
 		----------------------------------------------------------------------------------------------------------------
-		# Last revision:
-		$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate)
-		----------------------------------------------------------------------------------------------------------------
-		# Git status:
-		$(LC_ALL=C LANG=C git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status)
-		----------------------------------------------------------------------------------------------------------------
-		# Git changes:
-		$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color)
-		----------------------------------------------------------------------------------------------------------------
 	ANSI_HEADER
+
+	if [[ -n "$(command -v git)" ]]; then
+		display_alert "Gathering git info for logs" "Processing git information, please wait..." "debug"
+		cat <<- GIT_ANSI_HEADER > "${target_file}"
+			----------------------------------------------------------------------------------------------------------------
+			# Last revision:
+			$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate)
+			----------------------------------------------------------------------------------------------------------------
+			# Git status:
+			$(LC_ALL=C LANG=C git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status)
+			----------------------------------------------------------------------------------------------------------------
+			# Git changes:
+			$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color)
+			----------------------------------------------------------------------------------------------------------------
+		GIT_ANSI_HEADER
+	fi
+
+	display_alert "Preparing ANSI logs..." "Processing log files..." "debug"
 
 	# Find and sort the files there, store in array one per logfile
 	declare -a logfiles_array
@@ -405,8 +414,14 @@ function trap_handler_cleanup_logging() {
 			old_logfile_fn="$(basename "${one_old_logfile}")"
 			display_alert "Archiving old logfile" "${old_logfile_fn}" "debug"
 			mkdir -p "${target_archive_path}"
-			# shellcheck disable=SC2002 # my cat is not useless. a bit whiny. not useless.
-			zstdmt --quiet "${one_old_logfile}" -o "${target_archive_path}/${old_logfile_fn}.zst"
+
+			# Check if we have `zstdmt` at this stage; if not, use standard gzip
+			if [[ -n "$(command -v zstdmt)" ]]; then
+				zstdmt --quiet "${one_old_logfile}" -o "${target_archive_path}/${old_logfile_fn}.zst"
+			else
+				# shellcheck disable=SC2002 # my cat is not useless. a bit whiny. not useless.
+				cat "${one_old_logfile}" | gzip > "${target_archive_path}/${old_logfile_fn}.gz"
+			fi
 			rm -f "${one_old_logfile}"
 		done
 	fi
