@@ -5,21 +5,12 @@
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/potential-paths.log"
-	echo -e "Potential paths :" >> "${LOG_OUTPUT_FILE}"
-	show_checklist_variables potential_paths
 	for filepath in ${potential_paths}; do
 		if [[ -f "${filepath}" ]]; then
-			echo -e "${filepath/"$SRC"\//} yes" >> "${LOG_OUTPUT_FILE}"
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
-			#		else
-			#			echo -e "${filepath/"$SRC"\//} no\n" >> "${LOG_OUTPUT_FILE}"
 		fi
-
 	done
-	echo "" >> "${LOG_OUTPUT_FILE}"
-	unset LOG_OUTPUT_FILE
 }
 
 get_all_potential_paths() {
@@ -34,14 +25,6 @@ get_all_potential_paths() {
 			done
 		done
 	done
-	# for ppath in ${potential_paths}; do
-	#  	echo "Checking for ${ppath}"
-	#  	if [[ -f "${ppath}" ]]; then
-	#  		echo "OK !|"
-	#  	else
-	#  		echo "Nope|"
-	#  	fi
-	# done
 }
 
 # Environment variables expected :

@@ -1,151 +1,22 @@
-compilation_prepare() {
+#!/bin/bash
+#
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+#
+# This file is a part of the Armbian build script
+# https://github.com/armbian/build/
 
-	# Packaging patch for modern kernels should be one for all.
-	# Currently we have it per kernel family since we can't have one
-	# Maintaining one from central location starting with 5.3+
-	# Temporally set for new "default->legacy,next->current" family naming
-
-	if linux-version compare "${version}" ge 5.10; then
-
-		if test -d ${kerneldir}/debian; then
-			rm -rf ${kerneldir}/debian/*
-		fi
-		sed -i -e '
-			s/^KBUILD_IMAGE	:= \$(boot)\/Image\.gz$/KBUILD_IMAGE	:= \$(boot)\/Image/
-		' ${kerneldir}/arch/arm64/Makefile
-
-		rm -f ${kerneldir}/scripts/package/{builddeb,mkdebian}
-
-		cp ${SRC}/packages/armbian/builddeb ${kerneldir}/scripts/package/builddeb
-		cp ${SRC}/packages/armbian/mkdebian ${kerneldir}/scripts/package/mkdebian
-
-		chmod 755 ${kerneldir}/scripts/package/{builddeb,mkdebian}
-
-	elif linux-version compare "${version}" ge 5.8.17 &&
-		linux-version compare "${version}" le 5.9 ||
-		linux-version compare "${version}" ge 5.9.2; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.8-9.y.patch" "applying"
-	elif linux-version compare "${version}" ge 5.6; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.6.y.patch" "applying"
-	elif linux-version compare "${version}" ge 5.3; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-5.3.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == meson64 ||
-		"$LINUXFAMILY" == mvebu64 || "$LINUXFAMILY" == mt7623 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.19."* ]] && [[ "$LINUXFAMILY" == rk35xx ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.19.y-rk35xx.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.14."* ]] && [[ "$LINUXFAMILY" == s5p6818 || "$LINUXFAMILY" == mvebu64 ||
-		"$LINUXFAMILY" == imx7d || "$LINUXFAMILY" == odroidxu4 || "$LINUXFAMILY" == mvebu ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.14.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.4."* || "${version}" == "4.9."* ]] &&
-		[[ "$LINUXFAMILY" == rockpis || "$LINUXFAMILY" == rk3399 ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.4."* ]] &&
-		[[ "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == media* ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		if [[ $BOARD == nanopct4 ]]; then
-			process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rk3399.patch" "applying"
-		else
-			process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y-rockchip64.patch" "applying"
-		fi
-	fi
-
-	if [[ "${version}" == "4.4."* ]] && [[ "$LINUXFAMILY" == rockchip || "$LINUXFAMILY" == rk322x ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.4.y.patch" "applying"
-	fi
-
-	if [[ "${version}" == "4.9."* ]] && [[ "$LINUXFAMILY" == meson64 || "$LINUXFAMILY" == odroidc4 ]]; then
-		display_alert "Adjusting" "packaging" "info"
-		cd "$kerneldir" || exit
-		process_patch_file "${SRC}/patch/misc/general-packaging-4.9.y.patch" "applying"
-	fi
-
-	# After the patches have been applied,
-	# check and add debian package compression if required.
-	#
-	if [ "$(awk '/dpkg --build/{print $1}' $kerneldir/scripts/package/builddeb)" == "dpkg" ]; then
-		sed -i -e '
-			s/dpkg --build/dpkg-deb \${KDEB_COMPRESS:+-Z\$KDEB_COMPRESS} --build/
-			' "$kerneldir"/scripts/package/builddeb
-	fi
-
-	#
-	# Linux splash file (legacy)
-	#
-
-	# since plymouth introduction, boot scripts are not supporting this method anymore.
-	# In order to enable it, you need to use this: setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"
-
-	if linux-version compare "${version}" ge 5.15 && [ "${SKIP_BOOTSPLASH}" != yes ]; then
-
-		display_alert "Adding" "Kernel splash file" "info"
-
-		if linux-version compare "${version}" ge 5.19.6 ||
-			(linux-version compare "${version}" ge 5.15.64 && linux-version compare "${version}" lt 5.16); then
-			process_patch_file "${SRC}/patch/misc/0001-Revert-fbdev-fbcon-Properly-revert-changes-when-vc_r.patch" "applying"
-		fi
-
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0001-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0002-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0003-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0004-Revert-drivers-video-fbcon-fix-NULL-dereference-in-f.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0005-Revert-fbcon-remove-no-op-fbcon_set_origin.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0006-Revert-fbcon-remove-now-unusued-softback_lines-curso.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0007-Revert-fbcon-remove-soft-scrollback-code.patch" "applying"
-
-		process_patch_file "${SRC}/patch/misc/0001-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0002-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0003-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0004-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0005-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0006-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0007-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0008-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0009-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0010-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0011-bootsplash.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0012-bootsplash.patch" "applying"
-
-	fi
-
+function prepare_extra_kernel_drivers() {
 	#
 	# Returning headers needed for some wireless drivers
 	#
 
 	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
-
-		display_alert "Adding" "Missing headers" "info"
+		display_alert "Adding" "Missing headers" "info" # @TODO: which headers?
 		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
-
 	fi
 
 	#
@@ -170,7 +41,6 @@ compilation_prepare() {
 	# Older versions have AUFS support with a patch
 
 	if linux-version compare "${version}" gt 5.11 && linux-version compare "${version}" lt 5.20 && [ "$AUFS" == yes ]; then
-
 		# attach to specifics tag or branch
 		local aufstag
 		aufstag=$(echo "${version}" | cut -f 1-2 -d ".")
@@ -190,7 +60,6 @@ compilation_prepare() {
 		fi
 
 		if [ "$?" -eq "0" ]; then
-
 			display_alert "Adding" "AUFS ${aufstag}" "info"
 			local aufsver="branch:aufs${aufstag}"
 			fetch_from_repo "$GITHUB_SOURCE/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
@@ -201,13 +70,12 @@ compilation_prepare() {
 			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch" "applying"
 			cp -R "${SRC}/cache/sources/aufs5/${aufsver#*:}"/{Documentation,fs} .
 			cp "${SRC}/cache/sources/aufs5/${aufsver#*:}"/include/uapi/linux/aufs_type.h include/uapi/linux/
-
 		fi
 	fi
 
 	# WireGuard VPN for Linux 3.10 - 5.5
 	if linux-version compare "${version}" ge 3.10 && linux-version compare "${version}" le 5.5 && [ "${WIREGUARD}" == yes ]; then
-
+		# @TODO: fasthash for this is... ? remote git hash?
 		# attach to specifics tag or branch
 		local wirever="branch:master"
 
@@ -237,12 +105,13 @@ compilation_prepare() {
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 
 	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ $LINUXFAMILY != mvebu64 ] && [ $LINUXFAMILY != rk322x ] && [ $LINUXFAMILY != odroidxu4 ] && [ $EXTRAWIFI == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8152ver="branch:master"
 
 		display_alert "Adding" "Drivers for 2.5Gb RTL8152/RTL8153 USB dongles ${rtl8152ver}" "info"
-		fetch_from_repo "$GITHUB_SOURCE/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes"
+		fetch_from_repo "https://github.com/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes"
 		cp -R "${SRC}/cache/sources/rtl8152/${rtl8152ver#*:}"/{r8152.c,compatibility.h} \
 			"$kerneldir/drivers/net/usb/"
 
@@ -251,13 +120,14 @@ compilation_prepare() {
 	# Wireless drivers for Realtek 8189ES chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8189esver="branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes"
+		fetch_from_repo "https://github.com/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8189es"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8189es/"
@@ -278,18 +148,22 @@ compilation_prepare() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		# add support for 5.19.2
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-5.19.2.patch" "applying"
+
 	fi
 
 	# Wireless drivers for Realtek 8189FS chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8189fsver="branch:rtl8189fs"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" "rtl8189fs" "${rtl8189fsver}" "yes"
+		fetch_from_repo "https://github.com/jwrdegoede/rtl8189ES_linux" "rtl8189fs" "${rtl8189fsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8189fs"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8189fs/"
@@ -310,18 +184,22 @@ compilation_prepare() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189fs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		# add support for 5.19.2
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-5.19.2.patch" "applying"
+
 	fi
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8192euver="branch:realtek-4.4.x"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes"
+		fetch_from_repo "https://github.com/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8192eu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8192eu/"
@@ -347,13 +225,14 @@ compilation_prepare() {
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8812auver="commit:41532e3b16dcf27f06e6fe5a26314f3aa24d4f87"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes"
+		fetch_from_repo "https://github.com/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8812au"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8812au/"
@@ -413,7 +292,6 @@ compilation_prepare() {
 		if [[ $ARCH == arm64 ]]; then
 			process_patch_file "${SRC}/patch/misc/wireless-xradio-aarch64.patch" "applying"
 		fi
-
 	fi
 
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
@@ -467,6 +345,7 @@ compilation_prepare() {
 	if linux-version compare "${version}" ge 3.14 &&
 		linux-version compare "${version}" lt 5.15 &&
 		[ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8188euver="branch:v5.7.6.1"
@@ -508,13 +387,14 @@ compilation_prepare() {
 	# Wireless drivers for Realtek 88x2bu chipsets
 
 	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl88x2buver="commit:00f51d93fe8309b0e23782ad621a038c98c7f031"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/cilynx/rtl88x2bu" "rtl88x2bu" "${rtl88x2buver}" "yes"
+		fetch_from_repo "https://github.com/cilynx/rtl88x2bu" "rtl88x2bu" "${rtl88x2buver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2bu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2bu/"
@@ -544,13 +424,14 @@ compilation_prepare() {
 	# Wireless drivers for Realtek 88x2cs chipsets
 
 	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/jethome-ru/rtl88x2cs" "rtl88x2cs" "${rtl88x2csver}" "yes"
+		fetch_from_repo "https://github.com/jethome-ru/rtl88x2cs" "rtl88x2cs" "${rtl88x2csver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2cs"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2cs/"
@@ -583,24 +464,22 @@ compilation_prepare() {
 	# Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets
 	# For sunxi, these two patches are applied in a series.
 	if linux-version compare "${version}" ge 5.11 && [[ "$LINUXFAMILY" != sunxi* ]]; then
-
 		display_alert "Adding" "Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets" "info"
-
 		process_patch_file "${SRC}/patch/misc/bluetooth-rtl8822cs-hci_ver-0x8.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/Bluetooth-hci_h5-Add-power-reset-via-gpio-in-h5_btrt.patch" "applying"
-
 	fi
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
 	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
+		fetch_from_repo "https://github.com/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8723ds"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8723ds/"
@@ -626,18 +505,23 @@ compilation_prepare() {
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-5.19.2.patch" "applying"
-
 	fi
 
 	# Wireless drivers for Realtek 8723DU chipsets
 
 	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
-		local rtl8723duver="branch:master"
+		# attach to specifics tag or branch
+		if linux-version compare $version ge 5.12; then
+			local rtl8723duver="branch:v5.13.4"
+		else
+			local rtl8723duver="branch:master"
+		fi
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes"
+		fetch_from_repo "https://github.com/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf $kerneldir/drivers/net/wireless/rtl8723du
 		mkdir -p $kerneldir/drivers/net/wireless/rtl8723du/
@@ -663,12 +547,13 @@ compilation_prepare() {
 	# Wireless drivers for Realtek 8822BS chipsets
 
 	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16 && [ "$EXTRAWIFI" == yes ]; then
+		# @TODO: fasthash for this is... ? remote git hash?
 
 		# attach to specifics tag or branch
 		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
 
 		local rtl8822bsver="branch:local_rtl8822bs"
-		fetch_from_repo "$GITHUB_SOURCE/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
+		fetch_from_repo "https://github.com/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8822bs"
 		mkdir -p $kerneldir/drivers/net/wireless/rtl8822bs/

@@ -25,47 +25,66 @@ prepare_host() {
 
 	export LC_ALL="en_US.UTF-8"
 
-	# packages list for host
-	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
-
-	local hostdeps="acl aptly aria2 bc binfmt-support bison btrfs-progs       \
-	build-essential  ca-certificates ccache cpio cryptsetup curl              \
-	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
-	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gpg busybox             \
-	imagemagick jq kmod libbison-dev libc6-dev-armhf-cross libcrypto++-dev    \
-	libelf-dev libfdt-dev libfile-fcntllock-perl parallel libmpc-dev          \
-	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
-	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
-	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
-	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
-	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev zstd fdisk"
-
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-		hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386"
-		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-
-	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
-
-		hostdeps+="gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
-
-	else
-
-		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "https://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86_64 build host is not supported"
-
+	# don't use mirrors that throws garbage on 404
+	if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+		display_alert "Determining best Armbian mirror to use" "via redirector" "debug"
+		declare -i armbian_mirror_tries=1
+		while true; do
+			display_alert "Obtaining Armbian mirror" "via https://redirect.armbian.com" "debug"
+			ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
+			if [[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]]; then # @TODO: hosthatch is not good enough. Why?
+				display_alert "Obtained Armbian mirror OK" "${ARMBIAN_MIRROR}" "debug"
+				break
+			else
+				display_alert "Obtained Armbian mirror is invalid, retrying..." "${ARMBIAN_MIRROR}" "debug"
+			fi
+			armbian_mirror_tries=$((armbian_mirror_tries + 1))
+			if [[ $armbian_mirror_tries -ge 5 ]]; then
+				exit_with_error "Unable to obtain ARMBIAN_MIRROR after ${armbian_mirror_tries} tries. Please set ARMBIAN_MIRROR to a valid mirror manually, or avoid the automatic mirror selection by setting SKIP_ARMBIAN_REPO=yes"
+			fi
+		done
 	fi
 
-	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
-	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|jammy|ulyana|ulyssa|bullseye|uma|una)$ ]]; then
-		hostdeps+=" python2 python3"
-		ln -fs /usr/bin/python2.7 /usr/bin/python2
-		ln -fs /usr/bin/python2.7 /usr/bin/python
+	# packages list for host
+	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+	declare -a host_dependencies=(
+		# big bag of stuff from before
+		acl aptly bc binfmt-support bison btrfs-progs
+		build-essential ca-certificates ccache cpio cryptsetup
+		debian-archive-keyring debian-keyring debootstrap device-tree-compiler
+		dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk
+		gnupg gpg imagemagick jq kmod libbison-dev
+		libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev
+		libfl-dev liblz4-tool libncurses-dev libssl-dev
+		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
+		ntpdate patchutils
+		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
+		systemd-container u-boot-tools udev uuid-dev whiptail
+		zlib1g-dev busybox
+
+		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
+		python2 python2-dev
+
+		# non-mess below?
+		file ccze colorized-logs tree                   # logging utilities
+		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
+		parted gdisk                                    # partition tools
+		aria2 curl wget                                 # downloaders et al
+		parallel                                        # do things in parallel
+		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
+		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
+		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
+		crossbuild-essential-amd64                            # For AMD 64-bit, x86_64.
+	)
+
+	if [[ $(dpkg --print-architecture) == amd64 ]]; then
+		:
+	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
+		host_dependencies+=(libc6-amd64-cross qemu) # Support for running x86 binaries on ARM64 under qemu.
 	else
-		hostdeps+=" python libpython-dev"
+		display_alert "Please read documentation to set up proper compilation environment"
+		display_alert "https://www.armbian.com/using-armbian-tools/"
+		exit_with_error "Running this tool on non x86_64 or arm64 build host is not supported"
 	fi
 
 	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
@@ -111,10 +130,11 @@ prepare_host() {
 	# Skip verification if you are working offline
 	if ! $offline; then
 
-		# warning: apt-cacher-ng will fail if installed and used both on host and in
-		# container/chroot environment with shared network
+		# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 		# set NO_APT_CACHER=yes to prevent installation errors in such case
-		if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
+		if [[ $NO_APT_CACHER != yes ]]; then
+			host_dependencies+=("apt-cacher-ng")
+		fi
 
 		export EXTRA_BUILD_DEPS=""
 		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
@@ -122,19 +142,22 @@ prepare_host() {
 			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
 		ADD_HOST_DEPENDENCIES
 
-		if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
+		if [ -n "${EXTRA_BUILD_DEPS}" ]; then
+			# shellcheck disable=SC2206 # I wanna expand. @TODO: later will convert to proper array
+			host_dependencies+=(${EXTRA_BUILD_DEPS})
+		fi
 
 		display_alert "Installing build dependencies"
-		# don't prompt for apt cacher selection
+
+		# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
 		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
 
-		LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
-		install_pkg_deb "autoupdate $hostdeps"
-		unset LOG_OUTPUT_FILE
+		# This handles the wanted list in $host_dependencies, updates apt only if needed
+		install_host_side_packages "${host_dependencies[@]}"
 
-		update-ccache-symlinks
+		run_host_command_logged update-ccache-symlinks
 
-		export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
+		export FINAL_HOST_DEPS="${host_dependencies[*]}"
 		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
 			*run after all host dependencies are installed*
 			At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
@@ -142,13 +165,16 @@ prepare_host() {
 			are installed at this point. The system clock has not yet been synced.
 		HOST_DEPENDENCIES_READY
 
+		# Manage apt-cacher-ng
+		acng_configure_and_restart_acng
+
 		# sync clock
 		if [[ $SYNC_CLOCK != no ]]; then
 			display_alert "Syncing clock" "host" "info"
-			ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
+			run_host_command_logged ntpdate "${NTP_SERVER:-pool.ntp.org}"
 		fi
 
-		# create directory structure
+		# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
 		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
 		if [[ -n $SUDO_USER ]]; then
 			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
@@ -158,80 +184,17 @@ prepare_host() {
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 		fi
-		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+		# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+		mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
-		# build aarch64
-		if [[ $(dpkg --print-architecture) == amd64 ]]; then
-			if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
-
-				# bind mount toolchain if defined
-				if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
-					mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
-					mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
-				fi
-
-				display_alert "Checking for external GCC compilers" "" "info"
-				# download external Linaro compiler and missing special dependencies since they are needed for certain sources
-
-				local toolchains=(
-					"gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-					"gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-					"gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-					"gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-					"gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-					"gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
-					"gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
-					"gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-					"gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
-					"gcc-arm-11.2-2022.02-x86_64-arm-none-linux-gnueabihf.tar.xz"
-					"gcc-arm-11.2-2022.02-x86_64-aarch64-none-linux-gnu.tar.xz"
-				)
-
-				USE_TORRENT_STATUS=${USE_TORRENT}
-				USE_TORRENT="no"
-				for toolchain in ${toolchains[@]}; do
-					local toolchain_zip="${SRC}/cache/toolchain/${toolchain}"
-					local toolchain_dir="${toolchain_zip%.tar.*}"
-					if [[ ! -f "${toolchain_dir}/.download-complete" ]]; then
-						download_and_verify "toolchain" "${toolchain}" ||
-							exit_with_error "Failed to download toolchain" "${toolchain}"
-
-						display_alert "decompressing"
-						pv -p -b -r -c -N "[ .... ] ${toolchain}" "${toolchain_zip}" |
-							xz -dc |
-							tar xp --xattrs --no-same-owner --overwrite -C "${SRC}/cache/toolchain/"
-						if [[ $? -ne 0 ]]; then
-							rm -rf "${toolchain_dir}"
-							exit_with_error "Failed to decompress toolchain" "${toolchain}"
-						fi
-
-						touch "${toolchain_dir}/.download-complete"
-						rm -rf "${toolchain_zip}"* # Also delete asc file
-					fi
-				done
-				USE_TORRENT=${USE_TORRENT_STATUS}
-
-				local existing_dirs=($(ls -1 "${SRC}"/cache/toolchain))
-				for dir in ${existing_dirs[@]}; do
-					local found=no
-					for toolchain in ${toolchains[@]}; do
-						[[ $dir == ${toolchain%.tar.*} ]] && found=yes
-					done
-					if [[ $found == no ]]; then
-						display_alert "Removing obsolete toolchain" "$dir"
-						rm -rf "${SRC}/cache/toolchain/${dir}"
-					fi
-				done
-			else
-				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
-			fi
-		fi
+		# Mostly deprecated.
+		download_external_toolchains
 
 	fi # check offline
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	if [[ $KERNEL_ONLY != yes ]]; then
-		modprobe -q binfmt_misc
+		modprobe -q binfmt_misc || display_alert "Failed to modprobe" "binfmt_misc" "warn"
 		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
 		if [[ "$(arch)" != "aarch64" ]]; then
 			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
@@ -239,8 +202,9 @@ prepare_host() {
 		fi
 	fi
 
-	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
+	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
+	# @TODO: what is this, and why?
 	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
 		rm -f "${USERPATCHES_PATH}"/readme.txt
 		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
@@ -250,12 +214,13 @@ prepare_host() {
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
 	fi
 
-	# check free space (basic)
-	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes
-	if [[ -n $freespace && $(($freespace / 1073741824)) -lt 10 ]]; then
-		display_alert "Low free space left" "$(($freespace / 1073741824)) GiB" "wrn"
+	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
+	local free_space_bytes
+	free_space_bytes=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes
+	if [[ -n $free_space_bytes && $((free_space_bytes / 1073741824)) -lt 10 ]]; then
+		display_alert "Low free space left" "$((free_space_bytes / 1073741824)) GiB" "wrn"
 		# pause here since dialog-based menu will hide this message otherwise
 		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-		read
+		read # @TODO: this fails if stdin is not a tty, or just hangs
 	fi
 }

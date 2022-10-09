@@ -1,10 +1,37 @@
+#!/bin/bash
+#
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+#
+# This file is a part of the Armbian build script
+# https://github.com/armbian/build/
+
+# Functions:
+
+# compile_atf
+# compile_uboot
+# compile_kernel
+# compile_firmware
+# compile_armbian-config
+# compile_xilinx_bootgen
+# grab_version
+# find_toolchain
+# advanced_patch
+# process_patch_file
+# userpatch_create
+# overlayfs_wrapper
+
 grab_version() {
 	local ver=()
-	ver[0]=$(grep "^VERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
-	ver[1]=$(grep "^PATCHLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
-	ver[2]=$(grep "^SUBLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')
-	ver[3]=$(grep "^EXTRAVERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^-rc[[:digit:]]+')
+	ver[0]=$(grep "^VERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+' || true)
+	ver[1]=$(grep "^PATCHLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+' || true)
+	ver[2]=$(grep "^SUBLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+' || true)
+	ver[3]=$(grep "^EXTRAVERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^-rc[[:digit:]]+' || true)
 	echo "${ver[0]:-0}${ver[1]:+.${ver[1]}}${ver[2]:+.${ver[2]}}${ver[3]}"
+	return 0
 }
 
 # find_toolchain <compiler_prefix> <expression>
@@ -43,16 +70,7 @@ find_toolchain() {
 		fi
 	done
 	echo "$toolchain"
-	# logging a stack of used compilers.
-	if [[ -f "${DEST}"/${LOG_SUBPATH}/compiler.log ]]; then
-		if ! grep -q "$toolchain" "${DEST}"/${LOG_SUBPATH}/compiler.log; then
-			echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log
-		fi
-	else
-		echo "$toolchain" >> "${DEST}"/${LOG_SUBPATH}/compiler.log
-	fi
 }
-
 # overlayfs_wrapper <operation> <workdir> <description>
 #
 # <operation>: wrap|cleanup
@@ -74,7 +92,7 @@ overlayfs_wrapper() {
 		local description="$3"
 		mkdir -p /tmp/overlay_components/ /tmp/armbian_build/
 		local tempdir workdir mergeddir
-		tempdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
+		tempdir=$(mktemp -d --tmpdir="/tmp/overlay_components/") # @TODO: WORKDIR? otherwise uses host's root disk, which might be small
 		workdir=$(mktemp -d --tmpdir="/tmp/overlay_components/")
 		mergeddir=$(mktemp -d --suffix="_$description" --tmpdir="/tmp/armbian_build/")
 		mount -t overlay overlay -o lowerdir="$srcdir",upperdir="$tempdir",workdir="$workdir" "$mergeddir"

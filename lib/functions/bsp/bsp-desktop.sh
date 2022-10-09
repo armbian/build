@@ -1,8 +1,16 @@
-create_desktop_package() {
+#!/bin/bash
+#
+# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+#
+# This file is a part of the Armbian build script
+# https://github.com/armbian/build/
 
-	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log
-	# Use quotes to show leading and trailing spaces
-	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/${LOG_SUBPATH}/output.log
+create_desktop_package() {
+	display_alert "bsp-desktop: PACKAGE_LIST_DESKTOP" "'${PACKAGE_LIST_DESKTOP}'" "debug"
 
 	# Remove leading and trailing spaces with some bash monstruosity
 	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
@@ -13,7 +21,7 @@ create_desktop_package() {
 	# Remove others 'spacing characters' (like tabs)
 	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
 
-	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
+	display_alert "bsp-desktop: DEBIAN_RECOMMENDS" "'${DEBIAN_RECOMMENDS}'" "debug"
 
 	# Replace whitespace characters by commas
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,}
@@ -21,12 +29,12 @@ create_desktop_package() {
 	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
 
 	local destination tmp_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	destination=${tmp_dir}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
-	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
+	display_alert "bsp-desktop: PACKAGE_LIST_PREDEPENDS" "'${PACKAGE_LIST_PREDEPENDS}'" "debug"
 
 	# set up control file
 	cat <<- EOF > "${destination}"/DEBIAN/control
@@ -55,9 +63,6 @@ create_desktop_package() {
 
 	chmod 755 "${destination}"/DEBIAN/postinst
 
-	#display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/${LOG_SUBPATH}/install.log
-
 	# Armbian create_desktop_package scripts
 
 	unset aggregated_content
@@ -74,10 +79,7 @@ create_desktop_package() {
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"
 	cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb" > /dev/null
-
-	# cleanup
-	rm -rf "${tmp_dir}"
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
 
 	unset aggregated_content
 
@@ -90,7 +92,7 @@ create_bsp_desktop_package() {
 	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
 
 	local destination tmp_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
@@ -131,15 +133,12 @@ create_bsp_desktop_package() {
 	local aggregated_content=""
 	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
 	eval "${aggregated_content}"
-	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
+	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn" # @TODO: this is a fantasy, error would be thrown in line above
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	cd "${destination}"
 	cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb" > /dev/null
-
-	# cleanup
-	rm -rf "${tmp_dir}"
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"
 
 	unset aggregated_content
 

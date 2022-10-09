@@ -10,6 +10,7 @@
 # https://github.com/armbian/build/
 
 function do_main_configuration() {
+	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
 
 	# common options
 	# daily beta build contains date in subrevision
@@ -23,7 +24,7 @@ function do_main_configuration() {
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	[[ -z $DEB_COMPRESS ]] && DEB_COMPRESS="xz"                          # compress .debs with XZ by default. Use 'none' for faster/larger builds
+	export SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}"   # don't use any external toolchains, by default.
 	TZDATA=$(cat /etc/timezone)                                          # Timezone for target is taken from host or defined here.
 	USEALLCORES=yes                                                      # Use all CPU cores for compiling
 	HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
@@ -33,9 +34,16 @@ function do_main_configuration() {
 	cd "${SRC}" || exit
 
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
-	BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2> /dev/null | grep origin) 2> /dev/null)
-	BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2> /dev/null)
+	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote | grep origin)")
+	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty)
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
+
+	# .deb compression. xz is standard, but is slow, so if avoided by default if not running in CI. one day, zstd.
+	if [[ -z ${DEB_COMPRESS} ]]; then
+		DEB_COMPRESS="none"                          # none is very fast bug produces big artifacts.
+		[[ "${CI}" == "true" ]] && DEB_COMPRESS="xz" # xz is small and slow
+	fi
+	display_alert ".deb compression" "DEB_COMPRESS=${DEB_COMPRESS}" "debug"
 
 	if [[ $BETA == yes ]]; then
 		DEB_STORAGE=$DEST/debs-beta
@@ -48,12 +56,10 @@ function do_main_configuration() {
 	fi
 
 	# image artefact destination with or without subfolder
-	FINALDEST=$DEST/images
+	FINALDEST="${DEST}/images"
 	if [[ -n "${MAKE_FOLDERS}" ]]; then
-
-		FINALDEST=$DEST/images/"${BOARD}"/"${MAKE_FOLDERS}"
-		install -d ${FINALDEST}
-
+		FINALDEST="${DEST}"/images/"${BOARD}"/"${MAKE_FOLDERS}"
+		install -d "${FINALDEST}"
 	fi
 
 	# TODO: fixed name can't be used for parallel image building
@@ -94,6 +100,11 @@ function do_main_configuration() {
 
 	# used by multiple sources - reduce code duplication
 	[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+
+	# URL for the git bundle used to "bootstrap" local git copies without too much server load. This applies independently of git mirror below.
+	export MAINLINE_KERNEL_TORVALDS_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle" # this is plain torvalds, single branch
+	export MAINLINE_KERNEL_STABLE_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/clone.bundle"     # this is all stable branches. with tags!
+	export MAINLINE_KERNEL_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL:-${MAINLINE_KERNEL_TORVALDS_BUNDLE_URL}}"          # default to Torvalds; everything else is small enough with this
 
 	case $MAINLINE_MIRROR in
 		google)
@@ -168,17 +179,36 @@ function do_main_configuration() {
 
 	# single ext4 partition is the default and preferred configuration
 	#BOOTFS_TYPE=''
-	[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] &&
-		exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
-	source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
+	## ------ Sourcing family config ---------------------------
 
+	declare -a family_source_paths=("${SRC}/config/sources/families/${LINUXFAMILY}.conf" "${USERPATCHES_PATH}/config/sources/families/${LINUXFAMILY}.conf")
+	declare -i family_sourced_ok=0
+	for family_source_path in "${family_source_paths[@]}"; do
+		[[ ! -f "${family_source_path}" ]] && continue
+
+		display_alert "Sourcing family configuration" "${family_source_path}" "info"
+		# shellcheck source=/dev/null
+		source "${family_source_path}"
+
+		# @TODO: reset error handling, go figure what they do in there.
+
+		family_sourced_ok=$((family_sourced_ok + 1))
+	done
+
+	[[ ${family_sourced_ok} -lt 1 ]] &&
+		exit_with_error "Sources configuration not found" "tried ${family_source_paths[*]}"
+
+	# This is for compatibility only; path above should suffice
 	if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
 		display_alert "Adding user provided $LINUXFAMILY overrides"
+		# shellcheck source=/dev/null
 		source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
 	fi
 
 	# load architecture defaults
+	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
+	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
 
 	if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
@@ -193,22 +223,24 @@ function do_main_configuration() {
 	##             like the 'post_family_config' that is invoked below.
 	initialize_extension_manager
 
-	call_extension_method "post_family_config" "config_tweaks_post_family_config" << 'POST_FAMILY_CONFIG'
-*give the config a chance to override the family/arch defaults*
-This hook is called after the family configuration (`sources/families/xxx.conf`) is sourced.
-Since the family can override values from the user configuration and the board configuration,
-it is often used to in turn override those.
-POST_FAMILY_CONFIG
+	call_extension_method "post_family_config" "config_tweaks_post_family_config" <<- 'POST_FAMILY_CONFIG'
+		*give the config a chance to override the family/arch defaults*
+		This hook is called after the family configuration (`sources/families/xxx.conf`) is sourced.
+		Since the family can override values from the user configuration and the board configuration,
+		it is often used to in turn override those.
+	POST_FAMILY_CONFIG
+
+	# A global killswitch for extlinux.
+	if [[ "${SRC_EXTLINUX}" == "yes" ]]; then
+		if [[ "${ALLOW_EXTLINUX}" != "yes" ]]; then
+			display_alert "Disabling extlinux support" "extlinux global killswitch; set ALLOW_EXTLINUX=yes to avoid" "info"
+			export SRC_EXTLINUX=no
+		else
+			display_alert "Both SRC_EXTLINUX=yes and ALLOW_EXTLINUX=yes" "enabling extlinux, expect breakage" "warn"
+		fi
+	fi
 
 	interactive_desktop_main_configuration
-
-	#exit_with_error 'Testing'
-
-	# set unique mounting directory
-	MOUNT_UUID=$(uuidgen)
-	SDCARD="${SRC}/.tmp/rootfs-${MOUNT_UUID}"
-	MOUNT="${SRC}/.tmp/mount-${MOUNT_UUID}"
-	DESTIMG="${SRC}/.tmp/image-${MOUNT_UUID}"
 
 	[[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 	[[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
@@ -230,52 +262,48 @@ POST_FAMILY_CONFIG
 	CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
 	DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
 
-	if [[ $? != 0 ]]; then
-		exit_with_error "The desktop environment ${DESKTOP_ENVIRONMENT} is not available for your architecture ${ARCH}"
-	fi
-
 	AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
-	${SRC}/config
-	${SRC}/config/optional/_any_board/_config
-	${SRC}/config/optional/architectures/${ARCH}/_config
-	${SRC}/config/optional/families/${LINUXFAMILY}/_config
-	${SRC}/config/optional/boards/${BOARD}/_config
-	${USERPATCHES_PATH}
-	"
+${SRC}/config
+${SRC}/config/optional/_any_board/_config
+${SRC}/config/optional/architectures/${ARCH}/_config
+${SRC}/config/optional/families/${LINUXFAMILY}/_config
+${SRC}/config/optional/boards/${BOARD}/_config
+${USERPATCHES_PATH}
+"
 
 	DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
-	cli/_all_distributions/debootstrap
-	cli/${RELEASE}/debootstrap
-	"
+cli/_all_distributions/debootstrap
+cli/${RELEASE}/debootstrap
+"
 
 	CLI_SEARCH_RELATIVE_DIRS="
-	cli/_all_distributions/main
-	cli/${RELEASE}/main
-	"
+cli/_all_distributions/main
+cli/${RELEASE}/main
+"
 
 	PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
-	${SRC}/packages
-	${SRC}/config/optional/_any_board/_packages
-	${SRC}/config/optional/architectures/${ARCH}/_packages
-	${SRC}/config/optional/families/${LINUXFAMILY}/_packages
-	${SRC}/config/optional/boards/${BOARD}/_packages
-	"
+${SRC}/packages
+${SRC}/config/optional/_any_board/_packages
+${SRC}/config/optional/architectures/${ARCH}/_packages
+${SRC}/config/optional/families/${LINUXFAMILY}/_packages
+${SRC}/config/optional/boards/${BOARD}/_packages
+"
 
 	DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
-	desktop/_all_distributions/environments/_all_environments
-	desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
-	desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
-	desktop/${RELEASE}/environments/_all_environments
-	desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
-	desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
-	"
+desktop/_all_distributions/environments/_all_environments
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+desktop/${RELEASE}/environments/_all_environments
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+"
 
 	DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
-	desktop/_all_distributions/appgroups
-	desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
-	desktop/${RELEASE}/appgroups
-	desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
-	"
+desktop/_all_distributions/appgroups
+desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
+desktop/${RELEASE}/appgroups
+desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
+"
 
 	DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages" " ")"
 	DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components" " ")"
@@ -283,19 +311,9 @@ POST_FAMILY_CONFIG
 	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
 	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
 
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
-	show_checklist_variables "DEBOOTSTRAP_LIST DEBOOTSTRAP_COMPONENTS PACKAGE_LIST PACKAGE_LIST_ADDITIONAL PACKAGE_LIST_UNINSTALL"
-
-	# Dependent desktop packages
-	# Myy : Sources packages from file here
-
-	# Myy : FIXME Rename aggregate_all to aggregate_all_desktop
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
-		echo -e "\nGroups selected ${DESKTOP_APPGROUPS_SELECTED} -> PACKAGES :" >> "${LOG_OUTPUT_FILE}"
-		show_checklist_variables PACKAGE_LIST_DESKTOP
 	fi
-	unset LOG_OUTPUT_FILE
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
 	DEBIAN_SECURTY='security.debian.org/'
@@ -319,6 +337,21 @@ POST_FAMILY_CONFIG
 			UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
 	fi
 
+	if [[ "${ARCH}" == "amd64" ]]; then
+		UBUNTU_MIRROR='archive.ubuntu.com/ubuntu' # ports are only for non-amd64, of course.
+		if [[ -n ${CUSTOM_UBUNTU_MIRROR} ]]; then # ubuntu redirector doesn't work well on amd64
+			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR}"
+		fi
+	fi
+
+	if [[ "${ARCH}" == "arm64" ]]; then
+		if [[ -n ${CUSTOM_UBUNTU_MIRROR_ARM64} ]]; then
+			display_alert "Using custom ports/arm64 mirror" "${CUSTOM_UBUNTU_MIRROR_ARM64}" "info"
+			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR_ARM64}"
+		fi
+	fi
+
+	# Control aria2c's usage of ipv6.
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
 	# For (late) user override.
@@ -329,29 +362,29 @@ POST_FAMILY_CONFIG
 		source "$USERPATCHES_PATH"/lib.config
 	fi
 
-	call_extension_method "user_config" << 'USER_CONFIG'
-*Invoke function with user override*
-Allows for overriding configuration values set anywhere else.
-It is called after sourcing the `lib.config` file if it exists,
-but before assembling any package lists.
-USER_CONFIG
+	call_extension_method "user_config" <<- 'USER_CONFIG'
+		*Invoke function with user override*
+		Allows for overriding configuration values set anywhere else.
+		It is called after sourcing the `lib.config` file if it exists,
+		but before assembling any package lists.
+	USER_CONFIG
 
-	call_extension_method "extension_prepare_config" << 'EXTENSION_PREPARE_CONFIG'
-*allow extensions to prepare their own config, after user config is done*
-Implementors should preserve variable values pre-set, but can default values an/or validate them.
-This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
-EXTENSION_PREPARE_CONFIG
+	display_alert "Extensions: prepare configuration" "extension_prepare_config" "debug"
+	call_extension_method "extension_prepare_config" <<- 'EXTENSION_PREPARE_CONFIG'
+		*allow extensions to prepare their own config, after user config is done*
+		Implementors should preserve variable values pre-set, but can default values an/or validate them.
+		This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
+	EXTENSION_PREPARE_CONFIG
 
 	# apt-cacher-ng mirror configurarion
+	APT_MIRROR=$DEBIAN_MIRROR
 	if [[ $DISTRIBUTION == Ubuntu ]]; then
 		APT_MIRROR=$UBUNTU_MIRROR
-	else
-		APT_MIRROR=$DEBIAN_MIRROR
 	fi
 
 	[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 
-	# Build final package list after possible override
+	display_alert "Build final package list" "after possible override" "debug"
 	PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
 	PACKAGE_MAIN_LIST="$(cleanup_list PACKAGE_LIST)"
 
@@ -371,8 +404,8 @@ EXTENSION_PREPARE_CONFIG
 	PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 	unset aggregated_content
 
+	# @TODO: rpardini: this has to stop. refactor this into array or dict-based and stop the madness.
 	if [[ -n $PACKAGE_LIST_RM ]]; then
-		display_alert "Package remove list ${PACKAGE_LIST_RM}"
 		# Turns out that \b can be tricked by dashes.
 		# So if you remove mesa-utils but still want to install "mesa-utils-extra"
 		# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
@@ -396,43 +429,50 @@ EXTENSION_PREPARE_CONFIG
 		PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
 	fi
 
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
-	echo -e "\nVariables after manual configuration" >> $LOG_OUTPUT_FILE
-	show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
-	unset LOG_OUTPUT_FILE
-
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
-	call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" << 'POST_AGGREGATE_PACKAGES'
-*For final user override, using a function, after all aggregations are done*
-Called after aggregating all package lists, before the end of `compilation.sh`.
-Packages will still be installed after this is called, so it is the last chance
-to confirm or change any packages.
-POST_AGGREGATE_PACKAGES
+	call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
+		*For final user override, using a function, after all aggregations are done*
+		Called after aggregating all package lists, before the end of `compilation.sh`.
+		Packages will still be installed after this is called, so it is the last chance
+		to confirm or change any packages.
+	POST_AGGREGATE_PACKAGES
 
-	# debug
-	cat <<- EOF >> "${DEST}"/${LOG_SUBPATH}/output.log
+	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
+}
 
+# This is called by main_default_build_single() but declared here for 'convenience'
+function write_config_summary_output_file() {
+	local debug_dpkg_arch debug_uname debug_virt debug_src_mount debug_src_perms debug_src_temp_perms
+	debug_dpkg_arch="$(dpkg --print-architecture)"
+	debug_uname="$(uname -a)"
+	debug_virt="$(systemd-detect-virt || true)"
+	debug_src_mount="$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")"
+	debug_src_perms="$(getfacl -p "${SRC}")"
+	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"
+
+	display_alert "Writing build config summary to" "debug log" "debug"
+	LOG_ASSET="build.summary.txt" do_with_log_asset run_host_command_logged cat <<- EOF
 		## BUILD SCRIPT ENVIRONMENT
 
 		Repository: $REPOSITORY_URL
 		Version: $REPOSITORY_COMMIT
 
 		Host OS: $HOSTRELEASE
-		Host arch: $(dpkg --print-architecture)
-		Host system: $(uname -a)
-		Virtualization type: $(systemd-detect-virt)
+		Host arch: ${debug_dpkg_arch}
+		Host system: ${debug_uname}
+		Virtualization type: ${debug_virt}
 
 		## Build script directories
 		Build directory is located on:
-		$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")
+		${debug_src_mount}
 
 		Build directory permissions:
-		$(getfacl -p "${SRC}")
+		${debug_src_perms}
 
 		Temp directory permissions:
-		$(getfacl -p "${SRC}"/.tmp 2> /dev/null)
+		${debug_src_temp_perms}
 
 		## BUILD CONFIGURATION
 
@@ -460,5 +500,4 @@ POST_AGGREGATE_PACKAGES
 
 		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 	EOF
-
 }

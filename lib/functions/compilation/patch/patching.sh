@@ -81,69 +81,66 @@ advanced_patch() {
 # <status>: additional status text
 #
 process_patch_file() {
-	local patch=$1
-	local status=$2
+	local patch="${1}"
+	local status="${2}"
+	local -i patch_date
+	local relative_patch="${patch##"${SRC}"/}" # ${FOO##prefix} remove prefix from FOO
 
-	# detect and remove files which patch will create
-	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
+	# report_fashtash_should_execute is report_fasthash returns true only if we're supposed to apply the patch on disk.
+	if report_fashtash_should_execute file "${patch}" "Apply patch ${relative_patch}"; then
 
-	echo "Processing file $patch" >> "${DEST}"/${LOG_SUBPATH}/patching.log
-	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/${LOG_SUBPATH}/patching.log 2>&1
+		# get the modification date of the patch. make it not less than MIN_PATCH_AGE, if set.
+		patch_date=$(get_file_modification_time "${patch}")
+		# shellcheck disable=SC2154 # patch_minimum_target_mtime can be declared in outer scope
+		if [[ "${patch_minimum_target_mtime}" != "" ]]; then
+			if [[ ${patch_date} -lt ${patch_minimum_target_mtime} ]]; then
+				display_alert "Patch before minimum date" "${patch_date} -lt ${patch_minimum_target_mtime}" "timestamp"
+				patch_date=${patch_minimum_target_mtime}
+			fi
+		fi
 
-	if [[ $? -ne 0 ]]; then
-		display_alert "* $status $(basename "${patch}")" "failed" "wrn"
-		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
-	else
-		display_alert "* $status $(basename "${patch}")" "" "info"
+		# detect and remove files which patch will create
+		lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
+
+		# store an array of the files that patch will add or modify, we'll set their modification times after the fact
+		declare -a patched_files
+		mapfile -t patched_files < <(lsdiff -s --strip=1 "${patch}" | grep -e '^+' -e '^!' | awk '{print $2}')
+
+		# @TODO: try patching with `git am` first, so git contains the patch commit info/msg. -- For future git-based hashing.
+		# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
+		patch --batch -p1 -N --input="${patch}" --quiet --reject-file=- && { # "-" discards rejects
+			# Fix the dates on the patched files
+			set_files_modification_time "${patch_date}" "${patched_files[@]}"
+			display_alert "* $status ${relative_patch}" "" "info"
+		} || {
+			display_alert "* $status ${relative_patch}" "failed" "wrn"
+			[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
+		}
+		mark_fasthash_done # will do git commit, associate fasthash to real hash.
 	fi
-	echo >> "${DEST}"/${LOG_SUBPATH}/patching.log
+
+	return 0 # short-circuit above, avoid exiting with error
 }
 
-# apply_patch_series <target dir> <full path to series file>
+# apply_patch_series <target dir> <full path to series_file_full_path file>
 apply_patch_series() {
-	local t_dir="${1}"
-	local series="${2}"
-	local bzdir="$(dirname $series)"
-	local flag
-	local err_pt=$(mktemp /tmp/apply_patch_series_XXXXX)
+	local target_dir="${1}"
+	local series_file_full_path="${2}"
+	local included_list skip_list skip_count counter=1 base_dir
+	base_dir="$(dirname "${series_file_full_path}")"
+	included_list="$(awk '$0 !~ /^#.*|^-.*|^$/' "${series_file_full_path}")"
+	included_count=$(echo -n "${included_list}" | wc -w)
+	skip_list="$(awk '$0 ~ /^-.*/{print $NF}' "${series_file_full_path}")"
+	skip_count=$(echo -n "${skip_list}" | wc -w)
+	display_alert "apply a series of " "[$(echo -n "$included_list" | wc -w)] patches" "info"
+	[[ ${skip_count} -gt 0 ]] && display_alert "skipping" "[${skip_count}] patches" "warn"
+	cd "${target_dir}" || exit 1
 
-	list=$(awk '$0 !~ /^#.*|^-.*|^$/' "${series}")
-	skiplist=$(awk '$0 ~ /^-.*/{print $NF}' "${series}")
-
-	display_alert "apply a series of " "[$(echo $list | wc -w)] patches"
-	display_alert "skip [$(echo $skiplist | wc -w)] patches"
-
-	cd "${t_dir}" || exit 1
-	for p in $list; do
-		# Detect and remove files as '*.patch' which patch will create.
-		# So we need to delete the file before applying the patch if it exists.
-		lsdiff -s --strip=1 "$bzdir/$p" |
-			awk '$0 ~ /^+.*patch$/{print $2}' |
-			xargs -I % sh -c 'rm -f %'
-
-		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >> $err_pt 2>&1
-		flag=$?
-
-		case $flag in
-			0)
-				printf "[\033[32m done \033[0m]    %s\n" "${p}"
-				printf "[ done ]    %s\n" "${p}" >> "${DEST}"/debug/patching.log
-				;;
-			1)
-				printf "[\033[33m FAILED \033[0m]  %s\n" "${p}"
-				echo -e "[ FAILED ]  For ${p} \t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
-				cat $err_pt >> "${DEST}"/debug/patching.log
-				;;
-			2)
-				printf "[\033[31m Patch wrong \033[0m] %s\n" "${p}"
-				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
-				cat $err_pt >> "${DEST}"/debug/patching.log
-				;;
-		esac
-		echo "" > $err_pt
+	for p in $included_list; do
+		process_patch_file "${base_dir}/${p}" "${counter}/${included_count}"
+		counter=$((counter + 1))
 	done
-	echo "" >> "${DEST}"/debug/patching.log
-	rm $err_pt
+	display_alert "done applying patch series " "[$(echo -n "$included_list" | wc -w)] patches" "info"
 }
 
 userpatch_create() {
@@ -151,6 +148,7 @@ userpatch_create() {
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
+	mkdir -p "${DEST}/patch"
 	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
@@ -177,7 +175,7 @@ userpatch_create() {
 			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
 			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
 			git commit -s -m "$COMMIT_MESSAGE"
-			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools $GITHUB_SOURCE/armbian/build" > "${patch}"
+			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
 			PATCHFILE=$(git format-patch -1 HEAD)
 			rm $PATCHFILE # delete the actual file
 			# create a symlink to have a nice name ready

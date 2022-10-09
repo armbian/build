@@ -3,19 +3,20 @@ compile_firmware() {
 
 	local firmwaretempdir plugin_dir
 
-	firmwaretempdir=$(mktemp -d)
+	firmwaretempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${firmwaretempdir}
-	trap "ret=\$?; rm -rf \"${firmwaretempdir}\" ; exit \$ret" 0 1 2 3 15
+
 	plugin_dir="armbian-firmware${FULL}"
 	mkdir -p "${firmwaretempdir}/${plugin_dir}/lib/firmware"
 
-	fetch_from_repo "$GITHUB_SOURCE/armbian/firmware" "armbian-firmware-git" "branch:master"
+	fetch_from_repo "https://github.com/armbian/firmware" "armbian-firmware-git" "branch:master"
+
 	if [[ -n $FULL ]]; then
 		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:main"
 		# cp : create hardlinks
-		cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
+		run_host_command_logged cp -af --reflink=auto "${SRC}"/cache/sources/linux-firmware-git/* "${firmwaretempdir}/${plugin_dir}/lib/firmware/"
 		# cp : create hardlinks for ath11k WCN685x hw2.1 firmware since they are using the same firmware with hw2.0
-		cp -af --reflink=auto "${firmwaretempdir}/${plugin_dir}/lib/firmware/ath11k/WCN6855/hw2.0/" "${firmwaretempdir}/${plugin_dir}/lib/firmware/ath11k/WCN6855/hw2.1/"
+		run_host_command_logged cp -af --reflink=auto "${firmwaretempdir}/${plugin_dir}/lib/firmware/ath11k/WCN6855/hw2.0/" "${firmwaretempdir}/${plugin_dir}/lib/firmware/ath11k/WCN6855/hw2.1/"
 	fi
 	# overlay our firmware
 	# cp : create hardlinks
@@ -42,20 +43,18 @@ compile_firmware() {
 	# pack
 	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
 	display_alert "Building firmware package" "armbian-firmware${FULL}_${REVISION}_all" "info"
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "armbian-firmware${FULL}_${REVISION}_all" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+	fakeroot_dpkg_deb_build "armbian-firmware${FULL}_${REVISION}_all"
 	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
-	rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
+	run_host_command_logged rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
 
-	# remove temp directory
-	rm -rf "${firmwaretempdir}"
 }
 
 compile_armbian-zsh() {
 
 	local tmp_dir armbian_zsh_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${tmp_dir}
-	trap "ret=\$?; rm -rf \"${tmp_dir}\" ; exit \$ret" 0 1 2 3 15
+
 	armbian_zsh_dir=armbian-zsh_${REVISION}_all
 	display_alert "Building deb" "armbian-zsh" "info"
 
@@ -116,23 +115,24 @@ compile_armbian-zsh() {
 
 	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${armbian_zsh_dir}" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
-	rsync --remove-source-files -rq "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
-	rm -rf "${tmp_dir}"
+	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}"
+	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
 
 }
 
 compile_armbian-config() {
 
 	local tmp_dir armbian_config_dir
-	tmp_dir=$(mktemp -d)
+	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${tmp_dir}
-	trap "ret=\$?; rm -rf \"${tmp_dir}\" ; exit \$ret" 0 1 2 3 15
+
 	armbian_config_dir=armbian-config_${REVISION}_all
 	display_alert "Building deb" "armbian-config" "info"
 
-	fetch_from_repo "$GITHUB_SOURCE/armbian/config" "armbian-config" "branch:master"
-	fetch_from_repo "$GITHUB_SOURCE/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
+	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
+	fetch_from_repo "https://github.com/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
+
+	# @TODO: move this to where it is actually used; not everyone needs to pull this in
 	fetch_from_repo "$GITHUB_SOURCE/complexorganizations/wireguard-manager" "wireguard-manager" "branch:main"
 
 	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
@@ -169,31 +169,31 @@ compile_armbian-config() {
 	ln -sf /usr/sbin/armbian-config "${tmp_dir}/${armbian_config_dir}"/usr/bin/armbian-config
 	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
 
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${tmp_dir}/${armbian_config_dir}" > /dev/null
-	rsync --remove-source-files -rq "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
-	rm -rf "${tmp_dir}"
+	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_config_dir}"
+	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
 }
 
 compile_xilinx_bootgen() {
 	# Source code checkout
-	(fetch_from_repo "$GITHUB_SOURCE/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master")
+	fetch_from_repo "https://github.com/Xilinx/bootgen.git" "xilinx-bootgen" "branch:master"
 
 	pushd "${SRC}"/cache/sources/xilinx-bootgen || exit
 
 	# Compile and install only if git commit hash changed
 	# need to check if /usr/local/bin/bootgen to detect new Docker containers with old cached sources
-	if [[ ! -f .commit_id || $(improved_git rev-parse @ 2> /dev/null) != $(< .commit_id) || ! -f /usr/local/bin/bootgen ]]; then
+	if [[ ! -f .commit_id || $(git rev-parse @ 2> /dev/null) != $(< .commit_id) || ! -f /usr/local/bin/bootgen ]]; then
 		display_alert "Compiling" "xilinx-bootgen" "info"
 		make -s clean > /dev/null
 		make -s -j$(nproc) bootgen > /dev/null
 		mkdir -p /usr/local/bin/
 		install bootgen /usr/local/bin > /dev/null 2>&1
-		improved_git rev-parse @ 2> /dev/null > .commit_id
+		git rev-parse @ 2> /dev/null > .commit_id
 	fi
 
 	popd
 }
 
+# @TODO: code from master via Igor; not yet armbian-next'fied! warning!!
 compile_plymouth-theme-armbian() {
 
 	local tmp_dir work_dir

@@ -1,9 +1,9 @@
 create_board_package() {
 	display_alert "Creating board support package for CLI" "$CHOSEN_ROOTFS" "info"
 
-	bsptempdir=$(mktemp -d)
+	bsptempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${bsptempdir}
-	trap "ret=\$?; rm -rf \"${bsptempdir}\" ; exit \$ret" 0 1 2 3 15
+
 	local destination=${bsptempdir}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
 	cd $destination
@@ -18,23 +18,31 @@ create_board_package() {
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		mkdir -p "${destination}"/usr/share/armbian/
 
-		if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
-			cp "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+		display_alert "BOOTSCRIPT" "${BOOTSCRIPT}" "debug"
+		display_alert "bootscript_src" "${bootscript_src}" "debug"
+		display_alert "bootscript_dst" "${bootscript_dst}" "debug"
+
+		# if not using extlinux, copy armbianEnv from template; prefer userpatches source
+		if [[ $SRC_EXTLINUX != yes ]]; then
+			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
+				run_host_command_logged cp -pv "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+			else
+				run_host_command_logged cp -pv "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+			fi
+			if [[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
+				run_host_command_logged cp -pv "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
+			fi
 		else
-			cp "${SRC}/config/bootscripts/${bootscript_src}" "${destination}/usr/share/armbian/${bootscript_dst}"
+			display_alert "Using extlinux, regular bootscripts ignored" "SRC_EXTLINUX=${SRC_EXTLINUX}" "warn"
 		fi
 
-		if [[ -n $BOOTENV_FILE && -f $SRC/config/bootenv/$BOOTENV_FILE ]]; then
-			cp "${SRC}/config/bootenv/${BOOTENV_FILE}" "${destination}"/usr/share/armbian/armbianEnv.txt
+		# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
+		if [[ -n $UBOOT_FW_ENV ]]; then
+			UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
+			mkdir -p "${destination}"/etc
+			echo "# Device to access      offset           env size" > "${destination}"/etc/fw_env.config
+			echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> "${destination}"/etc/fw_env.config
 		fi
-	fi
-
-	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
-	if [[ -n $UBOOT_FW_ENV ]]; then
-		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
-		mkdir -p "${destination}"/etc
-		echo "# Device to access      offset           env size" > "${destination}"/etc/fw_env.config
-		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> "${destination}"/etc/fw_env.config
 	fi
 
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
@@ -167,7 +175,7 @@ create_board_package() {
 		cat <<- EOF >> "${destination}"/DEBIAN/postinst
 			if [ true ]; then
 
-			    # this package recreate boot scripts
+				# this package recreate boot scripts
 		EOF
 	else
 		cat <<- EOF >> "${destination}"/DEBIAN/postinst
@@ -226,7 +234,7 @@ create_board_package() {
 				mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
 			fi
 
-		    # Read release value
+			# Read release value
 			if [ -f /etc/lsb-release ]; then
 				RELEASE=\$(cat /etc/lsb-release | grep CODENAME | cut -d"=" -f2 | sed 's/.*/\u&/')
 				sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION "\${RELEASE}"\"/" /etc/os-release
@@ -247,7 +255,7 @@ create_board_package() {
 	#EOF
 
 	# copy common files from a premade directory structure
-	rsync -a ${SRC}/packages/bsp/common/* ${destination}
+	run_host_command_logged rsync -av ${SRC}/packages/bsp/common/* ${destination}
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -282,12 +290,16 @@ create_board_package() {
 	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
 
 	# execute $LINUXFAMILY-specific tweaks
-	[[ $(type -t family_tweaks_bsp) == function ]] && family_tweaks_bsp
+	if [[ $(type -t family_tweaks_bsp) == function ]]; then
+		display_alert "Running family_tweaks_bsp" "${LINUXFAMILY} - ${BOARDFAMILY}" "debug"
+		family_tweaks_bsp
+		display_alert "Done with family_tweaks_bsp" "${LINUXFAMILY} - ${BOARDFAMILY}" "debug"
+	fi
 
-	call_extension_method "post_family_tweaks_bsp" << 'POST_FAMILY_TWEAKS_BSP'
-*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
-This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
-POST_FAMILY_TWEAKS_BSP
+	call_extension_method "post_family_tweaks_bsp" <<- 'POST_FAMILY_TWEAKS_BSP'
+		*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
+		This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
+	POST_FAMILY_TWEAKS_BSP
 
 	# add some summary to the image
 	fingerprint_image "${destination}/etc/armbian.txt"
@@ -297,10 +309,9 @@ POST_FAMILY_TWEAKS_BSP
 	find "${destination}" ! -type l -print0 2> /dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
 
 	# create board DEB file
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${destination}.deb" >> "${DEST}"/${LOG_SUBPATH}/output.log 2>&1
+	fakeroot_dpkg_deb_build "${destination}" "${destination}.deb"
 	mkdir -p "${DEB_STORAGE}/"
-	rsync --remove-source-files -rq "${destination}.deb" "${DEB_STORAGE}/"
+	run_host_command_logged rsync --remove-source-files -r "${destination}.deb" "${DEB_STORAGE}/"
 
-	# cleanup
-	rm -rf ${bsptempdir}
+	display_alert "Done building BSP CLI package" "${destination}" "debug"
 }

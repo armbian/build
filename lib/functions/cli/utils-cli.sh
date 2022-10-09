@@ -1,97 +1,15 @@
-#  Add the variables needed at the beginning of the path
-check_args() {
+# Misc functions from compile.sh
 
-	for p in "$@"; do
-
-		case "${p%=*}" in
-			LIB_TAG)
-				# Take a variable if the branch exists locally
-				if [ "${p#*=}" == "$(git branch |
-					gawk -v b="${p#*=}" '{if ( $NF == b ) {print $NF}}')" ]; then
-					echo -e "[\e[0;35m warn \x1B[0m] Setting $p"
-					eval "$p"
-				else
-					echo -e "[\e[0;35m warn \x1B[0m] Skip $p setting as LIB_TAG=\"\""
-					eval LIB_TAG=""
-				fi
-				;;
-		esac
-
-	done
-
-}
-
-update_src() {
-
-	cd "${SRC}" || exit
-	if [[ ! -f "${SRC}"/.ignore_changes ]]; then
-		echo -e "[\e[0;32m o.k. \x1B[0m] This script will try to update"
-
-		CHANGED_FILES=$(git diff --name-only)
-		if [[ -n "${CHANGED_FILES}" ]]; then
-			echo -e "[\e[0;35m warn \x1B[0m] Can't update since you made changes to: \e[0;32m\n${CHANGED_FILES}\x1B[0m"
-			while true; do
-				echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m or \e[0;33mexit\x1B[0m to abort compilation" \
-					", \e[0;33m<Enter>\x1B[0m to ignore and continue, \e[0;33mdiff\x1B[0m to display changes"
-				read -r
-				if [[ "${REPLY}" == "diff" ]]; then
-					git diff
-				elif [[ "${REPLY}" == "exit" ]]; then
-					exit 1
-				elif [[ "${REPLY}" == "" ]]; then
-					break
-				else
-					echo "Unknown command!"
-				fi
-			done
-		elif [[ $(git branch | grep "*" | awk '{print $2}') != "${LIB_TAG}" && -n "${LIB_TAG}" ]]; then
-			git checkout "${LIB_TAG:-master}"
-			git pull
-		fi
-	fi
-
-}
-
-function do_update_src() {
-	TMPFILE=$(mktemp)
-	chmod 644 "${TMPFILE}"
-	{
-
-		echo SRC="$SRC"
-		echo LIB_TAG="$LIB_TAG"
-		declare -f update_src
-		echo "update_src"
-
-	} > "$TMPFILE"
-
-	#do not update/checkout git with root privileges to messup files onwership.
-	#due to in docker/VM, we can't su to a normal user, so do not update/checkout git.
-	if [[ $(systemd-detect-virt) == 'none' ]]; then
-
-		if [[ "${EUID}" == "0" ]]; then
-			su "$(stat --format=%U "${SRC}"/.git)" -c "bash ${TMPFILE}"
-		else
-			bash "${TMPFILE}"
-		fi
-
-	fi
-
-	rm "${TMPFILE}"
-}
-
-function handle_vagrant() {
+function handle_docker_vagrant() {
 	# Check for Vagrant
 	if [[ "${1}" == vagrant && -z "$(command -v vagrant)" ]]; then
 		display_alert "Vagrant not installed." "Installing"
 		sudo apt-get update
 		sudo apt-get install -y vagrant virtualbox
 	fi
-}
 
-function handle_docker() {
 	# Install Docker if not there but wanted. We cover only Debian based distro install. On other distros, manual Docker install is needed
 	if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]; then
-
 		DOCKER_BINARY="docker-ce"
 
 		# add exception for Ubuntu Focal until Docker provides dedicated binary
@@ -113,8 +31,8 @@ function handle_docker() {
 		display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
 		"${SRC}/compile.sh" "$@"
 		exit $?
-
 	fi
+
 }
 
 function prepare_userpatches() {
@@ -163,6 +81,5 @@ function prepare_userpatches() {
 		if [[ ! -f "${SRC}"/userpatches/Vagrantfile ]]; then
 			cp "${SRC}"/config/templates/Vagrantfile "${SRC}"/userpatches/Vagrantfile || exit 1
 		fi
-
 	fi
 }
