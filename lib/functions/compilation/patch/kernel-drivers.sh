@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-compilation_prepare() {
 
+function prepare_extra_kernel_drivers() {
+	
 	source ${SRC}/lib/functions/compilation/patch/drivers_network.sh
 
 	# Packaging patch for modern kernels should be one for all.
