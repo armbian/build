@@ -13,7 +13,15 @@
 # use configuration files like config-default.conf to set the build configuration
 # check Armbian documentation https://docs.armbian.com/ for more info
 
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -e
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+# Important, go read http://mywiki.wooledge.org/BashFAQ/105 NOW!
+
 SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
+cd "${SRC}" || exit
 
 # check for whitespace in ${SRC} and exit for safety reasons
 grep -q "[[:space:]]" <<< "${SRC}" && {
@@ -21,24 +29,27 @@ grep -q "[[:space:]]" <<< "${SRC}" && {
 	exit 1
 }
 
-cd "${SRC}" || exit
-
-if [[ -f "${SRC}"/lib/import-functions.sh ]]; then
-
-	# Declare this folder as safe
-	if ! grep -q "directory = \*" "$HOME/.gitconfig" 2> /dev/null; then
-		git config --global --add safe.directory "*"
-	fi
-
-	# shellcheck source=lib/import-functions.sh
-	source "${SRC}"/lib/import-functions.sh
-
-else
-
+# Sanity check.
+if [[ ! -f "${SRC}"/lib/single.sh ]]; then
 	echo "Error: missing build directory structure"
 	echo "Please clone the full repository https://github.com/armbian/build/"
 	exit 255
-
 fi
 
+# shellcheck source=lib/single.sh
+source "${SRC}"/lib/single.sh
+
+# initialize logging variables.
+logging_init
+
+# initialize the traps
+traps_init
+
+# make sure git considers our build system dir as a safe dir (only if actually building)
+[[ "${CONFIG_DEFS_ONLY}" != "yes" ]] && git_ensure_safe_directory "${SRC}"
+
+# Execute the main CLI entrypoint.
 cli_entrypoint "$@"
+
+# Log the last statement of this script for debugging purposes.
+display_alert "Armbian build script exiting" "very last thing" "cleanup"

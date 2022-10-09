@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
+
+# a-kind-of-hook, called by install_distribution_agnostic() if it's a desktop build
 desktop_postinstall() {
 
 	# disable display manager for the first run
-	run_on_sdcard "systemctl --no-reload disable lightdm.service >/dev/null 2>&1"
-	run_on_sdcard "systemctl --no-reload disable gdm3.service >/dev/null 2>&1"
+	chroot_sdcard "systemctl --no-reload disable lightdm.service"
+	chroot_sdcard "systemctl --no-reload disable gdm3.service"
 
 	# update packages index
-	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1"
+	chroot_sdcard_apt_get "update"
 
 	# install per board packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
-		run_on_sdcard "DEBIAN_FRONTEND=noninteractive  apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_BOARD"
+		chroot_sdcard_apt_get_install "$PACKAGE_LIST_DESKTOP_BOARD"
 	fi
 
 	# install per family packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_FAMILY} ]]; then
-		run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -yqq --no-install-recommends install $PACKAGE_LIST_DESKTOP_FAMILY"
+		chroot_sdcard_apt_get_install "$PACKAGE_LIST_DESKTOP_FAMILY"
 	fi
 
 }

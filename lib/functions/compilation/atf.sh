@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 compile_atf() {
-	if [[ $CLEAN_LEVEL == *make* ]]; then
-		display_alert "Cleaning" "$ATFSOURCEDIR" "info"
-		(
-			cd "${SRC}/cache/sources/${ATFSOURCEDIR}"
-			make distclean > /dev/null 2>&1
-		)
+	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
+		display_alert "Downloading sources" "atf" "git"
+		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 	fi
 
-	if [[ $USE_OVERLAYFS == yes ]]; then
-		local atfdir
-		atfdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$ATFSOURCEDIR" "atf_${LINUXFAMILY}_${BRANCH}")
+	if [[ $CLEAN_LEVEL == *make-atf* ]]; then
+		display_alert "Cleaning ATF tree - CLEAN_LEVEL contains 'make-atf'" "$ATFSOURCEDIR" "info"
+		(
+			cd "${SRC}/cache/sources/${ATFSOURCEDIR}" || exit_with_error "crazy about ${ATFSOURCEDIR}"
+			run_host_command_logged make distclean
+		)
 	else
-		local atfdir="$SRC/cache/sources/$ATFSOURCEDIR"
+		display_alert "Not cleaning ATF tree, use CLEAN_LEVEL=make-atf if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
+	fi
+
+	local atfdir="$SRC/cache/sources/$ATFSOURCEDIR"
+	if [[ $USE_OVERLAYFS == yes ]]; then
+		atfdir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$ATFSOURCEDIR" "atf_${LINUXFAMILY}_${BRANCH}")
 	fi
 	cd "$atfdir" || exit
 
@@ -48,23 +53,15 @@ compile_atf() {
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
-	echo -e "\n\t==  atf  ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
 	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
 	# Check: https://github.com/armbian/build/issues/1157
-	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${toolchain2}:${PATH}" \
-		'make ENABLE_BACKTRACE="0" $target_make $CTHREADS \
-		CROSS_COMPILE="$CCACHE $ATF_COMPILER"' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
-		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Compiling ATF..." $TTY_Y $TTY_X'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} 2>> "${DEST}"/${LOG_SUBPATH}/compilation.log
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		make ENABLE_BACKTRACE="0" $target_make "${CTHREADS}" "CROSS_COMPILE='$CCACHE $ATF_COMPILER'"
 
-	[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "ATF compilation failed"
+	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess 2>&1
 
-	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess
-
-	atftempdir=$(mktemp -d)
+	atftempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	chmod 700 ${atftempdir}
-	trap "ret=\$?; rm -rf \"${atftempdir}\" ; exit \$ret" 0 1 2 3 15
 
 	# copy files to temp directory
 	for f in $target_files; do
@@ -83,4 +80,6 @@ compile_atf() {
 
 	# copy license file to pack it to u-boot package later
 	[[ -f license.md ]] && cp license.md "${atftempdir}"/
+
+	return 0 # avoid error due to short-circuit above
 }
