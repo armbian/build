@@ -101,3 +101,11 @@ one_line() {
 	$aggregate_func_name "${@}"
 	cleanup_list aggregated_content
 }
+
+cleanup_list() {
+	local varname="${1}"
+	local list_to_clean="${!varname}"
+	list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
+	list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
+	echo ${list_to_clean}
+}

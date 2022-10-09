@@ -12,3 +12,7 @@ function set_distribution_status() {
 	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
 
 }
+
+branch2dir() {
+	[[ "${1}" == "head" ]] && echo "HEAD" || echo "${1##*:}"
+}
