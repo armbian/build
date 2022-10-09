@@ -25,8 +25,17 @@ function do_main_configuration() {
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 	export SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}"   # don't use any external toolchains, by default.
-	TZDATA=$(cat /etc/timezone)                                          # Timezone for target is taken from host or defined here.
-	USEALLCORES=yes                                                      # Use all CPU cores for compiling
+
+	# Timezone
+	if [[ -f /etc/timezone ]]; then # Timezone for target is taken from host, if it exists.
+		TZDATA=$(cat /etc/timezone)
+		display_alert "Using host's /etc/timezone for" "TZDATA: ${TZDATA}" "debug"
+	else
+		display_alert "Host has no /etc/timezone" "Using Etc/UTC by default" "debug"
+		TZDATA="Etc/UTC" # If not /etc/timezone at host, default to UTC.
+	fi
+
+	USEALLCORES=yes # Use all CPU cores for compiling
 	HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 	[[ -z $HOSTRELEASE ]] && HOSTRELEASE=$(cut -d'/' -f1 /etc/debian_version)
 	[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
@@ -450,7 +459,12 @@ function write_config_summary_output_file() {
 	local debug_dpkg_arch debug_uname debug_virt debug_src_mount debug_src_perms debug_src_temp_perms
 	debug_dpkg_arch="$(dpkg --print-architecture)"
 	debug_uname="$(uname -a)"
-	debug_virt="$(systemd-detect-virt || true)"
+	# We might not have systemd-detect-virt, specially inside docker. Docker images have no systemd...
+	# @TODO: rpardini: refactor this into util host function; it's used in a few places.
+	debug_virt="unknown-nosystemd"
+	if [[ -n "$(command -v systemd-detect-virt)" ]]; then
+		debug_virt="$(systemd-detect-virt || true)"
+	fi
 	debug_src_mount="$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")"
 	debug_src_perms="$(getfacl -p "${SRC}")"
 	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"

@@ -29,9 +29,13 @@ function improved_git_fetch() {
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
 function git_ensure_safe_directory() {
-	local git_dir="$1"
-	display_alert "git: Marking directory as safe" "$git_dir" "debug"
-	run_host_command_logged git config --global --add safe.directory "$git_dir"
+	if [[ -n "$(command -v git)" ]]; then
+		local git_dir="$1"
+		display_alert "git: Marking directory as safe" "$git_dir" "debug"
+		run_host_command_logged git config --global --add safe.directory "$git_dir"
+	else
+		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
+	fi
 }
 
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>

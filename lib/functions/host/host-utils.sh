@@ -63,3 +63,20 @@ function install_host_side_packages() {
 	unset currently_installed_packages
 	return 0
 }
+
+function is_root_or_sudo_prefix() {
+	declare -n __my_sudo_prefix=${1} # nameref...
+	if [[ "${EUID}" == "0" ]]; then
+		# do not use sudo if we're effectively already root
+		display_alert "EUID=0, so" "we're already root!" "debug"
+		__my_sudo_prefix=""
+	elif [[ -n "$(command -v sudo)" ]]; then
+		# sudo binary found in path, use it.
+		display_alert "EUID is not 0" "sudo binary found, using it" "debug"
+		__my_sudo_prefix="sudo"
+	else
+		# No root and no sudo binary. Bail out
+		exit_with_error "EUID is not 0 and no sudo binary found - Please install sudo or run as root"
+	fi
+	return 0
+}

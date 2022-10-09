@@ -6,6 +6,7 @@
 #
 prepare_host() {
 	display_alert "Preparing" "host" "info"
+	local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
@@ -17,10 +18,14 @@ prepare_host() {
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
 
-	# fix for Locales settings
-	if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
-		sudo sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
-		sudo locale-gen
+	# fix for Locales settings, if locale-gen is installed, and /etc/locale.gen exists.
+	if [[ -n "$(command -v locale-gen)" && -f /etc/locale.gen ]]; then
+		if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+			${sudo_prefix} sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+			${sudo_prefix} locale-gen
+		fi
+	else
+		display_alert "locale-gen is not installed @host" "skipping locale-gen -- problems might arise" "warn"
 	fi
 
 	export LC_ALL="en_US.UTF-8"
@@ -100,7 +105,7 @@ prepare_host() {
 		display_alert "Installing build dependencies"
 
 		# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
-		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
+		${sudo_prefix} echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | ${sudo_prefix} debconf-set-selections
 
 		# This handles the wanted list in $host_dependencies, updates apt only if needed
 		# $host_dependencies is produced by early_prepare_host_dependencies()
@@ -127,7 +132,9 @@ prepare_host() {
 
 		# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
 		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
-		if [[ -n $SUDO_USER ]]; then
+		
+		# @TODO: rpardini: wtf?
+		if [[ -n $SUDO_USER ]]; then 
 			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
 			# SGID bit on cache/sources breaks kernel dpkg packaging
 			chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
@@ -135,6 +142,7 @@ prepare_host() {
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 		fi
+		
 		# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 		mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
