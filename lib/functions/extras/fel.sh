@@ -15,14 +15,14 @@
 
 fel_prepare_host() {
 	# Start rpcbind for NFS if inside docker container
-	[ "$(systemd-detect-virt)" == 'docker' ] && service rpcbind start
+	if armbian_is_running_in_container; then service rpcbind start; fi
 
 	# remove and re-add NFS share
 	rm -f /etc/exports.d/armbian.exports
 	mkdir -p /etc/exports.d
 	echo "$FEL_ROOTFS *(rw,async,no_subtree_check,no_root_squash,fsid=root)" > /etc/exports.d/armbian.exports
 	# Start NFS server if inside docker container
-	[ "$(systemd-detect-virt)" == 'docker' ] && service nfs-kernel-server start
+	if armbian_is_running_in_container; then service nfs-kernel-server; fi
 	exportfs -ra
 }
 
