@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # create_chroot <target_dir> <release> <arch>
 #
 create_chroot() {
@@ -107,7 +108,7 @@ create_chroot() {
 
 	touch "${target_dir}"/root/.debootstrap-complete
 	display_alert "Debootstrap complete" "${release}/${arch}" "info"
-}
+} #############################################################################
 
 # chroot_prepare_distccd <release> <arch>
 #
@@ -319,7 +320,7 @@ chroot_build_packages() {
 			display_alert "$p"
 		done
 	fi
-}
+} #############################################################################
 
 # create build script
 create_build_script() {
@@ -421,7 +422,7 @@ chroot_installpackages_local() {
 	EOF
 	chroot_installpackages
 	kill "${aptly_pid}"
-}
+} #############################################################################
 
 # chroot_installpackages <remote_only>
 #
@@ -464,4 +465,4 @@ chroot_installpackages() {
 	EOF
 	chmod +x "${SDCARD}"/tmp/install.sh
 	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
-}
+} #############################################################################

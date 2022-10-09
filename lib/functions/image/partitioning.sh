@@ -5,7 +5,9 @@
 # and mounts it to local dir
 # FS-dependent stuff (boot and root fs partition types) happens here
 #
-prepare_partitions() {
+# LOGGING: this is run under the log manager. so just redirect unwanted stderr to stdout, and it goes to log.
+# this is under the logging manager. so just log to stdout (no redirections), and redirect stderr to stdout unless you want it on screen.
+function prepare_partitions() {
 	display_alert "Preparing image file for rootfs" "$BOARD $RELEASE" "info"
 
 	# possible partition combinations
@@ -72,10 +74,10 @@ prepare_partitions() {
 	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbi_root}"
 	BOOT_FS_LABEL="${BOOT_FS_LABEL:-armbi_boot}"
 
-	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" << 'PRE_PREPARE_PARTITIONS'
-*allow custom options for mkfs*
-Good time to change stuff like mkfs opts, types etc.
-PRE_PREPARE_PARTITIONS
+	call_extension_method "pre_prepare_partitions" "prepare_partitions_custom" <<- 'PRE_PREPARE_PARTITIONS'
+		*allow custom options for mkfs*
+		Good time to change stuff like mkfs opts, types etc.
+	PRE_PREPARE_PARTITIONS
 
 	# stage: determine partition configuration
 	local next=1
@@ -101,13 +103,13 @@ PRE_PREPARE_PARTITIONS
 	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
 	display_alert "Current rootfs size" "$rootfs_size MiB" "info"
 
-	call_extension_method "prepare_image_size" "config_prepare_image_size" << 'PREPARE_IMAGE_SIZE'
-*allow dynamically determining the size based on the $rootfs_size*
-Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}` is taken into account.
-A good spot to determine `FIXED_IMAGE_SIZE` based on `rootfs_size`.
-UEFISIZE can be set to 0 for no UEFI partition, or to a size in MiB to include one.
-Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
-PREPARE_IMAGE_SIZE
+	call_extension_method "prepare_image_size" "config_prepare_image_size" <<- 'PREPARE_IMAGE_SIZE'
+		*allow dynamically determining the size based on the $rootfs_size*
+		Called after `${rootfs_size}` is known, but before `${FIXED_IMAGE_SIZE}` is taken into account.
+		A good spot to determine `FIXED_IMAGE_SIZE` based on `rootfs_size`.
+		UEFISIZE can be set to 0 for no UEFI partition, or to a size in MiB to include one.
+		Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
+	PREPARE_IMAGE_SIZE
 
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
@@ -133,18 +135,21 @@ PREPARE_IMAGE_SIZE
 		truncate --size=${sdsize}M ${SDCARD}.raw # sometimes results in fs corruption, revert to previous know to work solution
 		sync
 	else
-		dd if=/dev/zero bs=1M status=none count=$sdsize | pv -p -b -r -s $(($sdsize * 1024 * 1024)) -N "[ .... ] dd" | dd status=none of=${SDCARD}.raw
+		dd if=/dev/zero bs=1M status=none count=$sdsize |
+			pv -p -b -r -s $(($sdsize * 1024 * 1024)) -N "$(logging_echo_prefix_for_pv "zero") zero" |
+			dd status=none of=${SDCARD}.raw
 	fi
+
+	# stage: calculate boot partition size
+	local bootstart=$(($OFFSET * 2048))
+	local rootstart=$(($bootstart + ($BOOTSIZE * 2048) + ($UEFISIZE * 2048)))
+	local bootend=$(($rootstart - 1))
 
 	# stage: create partition table
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
-		{
-			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] &&
-				echo "label: dos" ||
-				echo "label: $IMAGE_PARTITION_TABLE"
-		} | sfdisk ${SDCARD}.raw >> "${DEST}/${LOG_SUBPATH}/install.log" 2>&1 ||
-			exit_with_error "Create partition table fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
+		{ [[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] && echo "label: dos" || echo "label: $IMAGE_PARTITION_TABLE"; } |
+			run_host_command_logged sfdisk ${SDCARD}.raw || exit_with_error "Create partition table fail"
 
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
 			*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
@@ -153,9 +158,7 @@ PREPARE_IMAGE_SIZE
 		CREATE_PARTITION_TABLE
 	else
 		{
-			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] &&
-				echo "label: dos" ||
-				echo "label: $IMAGE_PARTITION_TABLE"
+			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] && echo "label: dos" || echo "label: $IMAGE_PARTITION_TABLE"
 
 			local next=$OFFSET
 			if [[ -n "$biospart" ]]; then
@@ -167,17 +170,13 @@ PREPARE_IMAGE_SIZE
 			if [[ -n "$uefipart" ]]; then
 				# dos: EFI (FAT-12/16/32)
 				# gpt: EFI System
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] &&
-					local type="ef" ||
-					local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ef" || local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 				echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=${type}"
 				local next=$(($next + $UEFISIZE))
 			fi
 			if [[ -n "$bootpart" ]]; then
 				# Linux extended boot
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] &&
-					local type="ea" ||
-					local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ea" || local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
 				if [[ -n "$rootpart" ]]; then
 					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=${type}"
 					local next=$(($next + $BOOTSIZE))
@@ -189,14 +188,12 @@ PREPARE_IMAGE_SIZE
 			if [[ -n "$rootpart" ]]; then
 				# dos: Linux
 				# gpt: Linux filesystem
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] &&
-					local type="83" ||
-					local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="83" || local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
 				# no `size` argument mean "as much as possible"
 				echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
 			fi
-		} | sfdisk ${SDCARD}.raw >> "${DEST}/${LOG_SUBPATH}/install.log" 2>&1 ||
-			exit_with_error "Partition fail. Please check" "${DEST}/${LOG_SUBPATH}/install.log"
+		} |
+			run_host_command_logged sfdisk ${SDCARD}.raw || exit_with_error "Partition fail."
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
@@ -208,17 +205,19 @@ PREPARE_IMAGE_SIZE
 	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -x $FD
 
-	LOOP=$(losetup -f)
-	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
+	export LOOP
+	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
+	display_alert "Allocated loop device" "LOOP=${LOOP}"
 
 	check_loop_device "$LOOP"
 
-	losetup $LOOP ${SDCARD}.raw
+	run_host_command_logged losetup $LOOP ${SDCARD}.raw # @TODO: had a '-P- here, what was it?
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
 
-	partprobe $LOOP
+	display_alert "Running partprobe" "${LOOP}" "debug"
+	run_host_command_logged partprobe $LOOP
 
 	# stage: create fs, mount partitions, create fstab
 	rm -f $SDCARD/etc/fstab
@@ -236,12 +235,14 @@ PREPARE_IMAGE_SIZE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
-		mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} $rootdevice >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
-		[[ $ROOTFS_TYPE == ext4 ]] && tune2fs -o journal_data_writeback $rootdevice > /dev/null
+		run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "${rootdevice}"
+		[[ $ROOTFS_TYPE == ext4 ]] && run_host_command_logged tune2fs -o journal_data_writeback "$rootdevice"
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
 		fi
-		mount ${fscreateopt} $rootdevice $MOUNT/
+		sync # force writes to be really flushed
+		display_alert "Mounting rootfs" "$rootdevice"
+		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
@@ -256,20 +257,21 @@ PREPARE_IMAGE_SIZE
 		mount --bind --make-private $SDCARD $MOUNT/
 		echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	fi
+
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
 		check_loop_device "${LOOP}p${bootpart}"
-		mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} ${LOOP}p${bootpart} >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		run_host_command_logged mkfs.${mkfs[$bootfs]} ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} ${LOOP}p${bootpart}
 		mkdir -p $MOUNT/boot/
-		mount ${LOOP}p${bootpart} $MOUNT/boot/
+		run_host_command_logged mount ${LOOP}p${bootpart} $MOUNT/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
 	fi
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
 		check_loop_device "${LOOP}p${uefipart}"
-		mkfs.fat -F32 -n "${UEFI_FS_LABEL}" ${LOOP}p${uefipart} >> "${DEST}"/debug/install.log 2>&1
+		run_host_command_logged mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
-		mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
+		run_host_command_logged mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
 	fi
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
@@ -281,13 +283,22 @@ PREPARE_IMAGE_SIZE
 
 	# stage: adjust boot script or boot environment
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
+		display_alert "Found armbianEnv.txt" "${SDCARD}/boot/armbianEnv.txt" "debug"
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> $SDCARD/boot/armbianEnv.txt
+			echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> "${SDCARD}/boot/armbianEnv.txt"
 		else
-			echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
+			echo "rootdev=$rootfs" >> "${SDCARD}/boot/armbianEnv.txt"
 		fi
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
 	elif [[ $rootpart != 1 ]] && [[ $SRC_EXTLINUX != yes ]]; then
+		echo "rootfstype=$ROOTFS_TYPE" >> "${SDCARD}/boot/armbianEnv.txt"
+
+		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
+			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
+			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
+		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
+
+	elif [[ $rootpart != 1 && $SRC_EXTLINUX != yes && -f "${SDCARD}/boot/${bootscript_dst}" ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
@@ -296,6 +307,7 @@ PREPARE_IMAGE_SIZE
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
+		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			local rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
@@ -303,7 +315,7 @@ PREPARE_IMAGE_SIZE
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		fi
-		if [[ $LINUXFAMILY != meson64 ]]; then
+		if [[ $LINUXFAMILY != meson64 ]]; then # @TODO: why only for meson64?
 			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
 		fi
 	fi
@@ -318,16 +330,19 @@ PREPARE_IMAGE_SIZE
 	fi
 
 	# recompile .cmd to .scr if boot.cmd exists
-
 	if [[ -f $SDCARD/boot/boot.cmd ]]; then
-		if [ -z $BOOTSCRIPT_OUTPUT ]; then BOOTSCRIPT_OUTPUT=boot.scr; fi
-		mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/$BOOTSCRIPT_OUTPUT > /dev/null 2>&1
+		if [ -z $BOOTSCRIPT_OUTPUT ]; then
+			BOOTSCRIPT_OUTPUT=boot.scr
+		fi
+		run_host_command_logged mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/${BOOTSCRIPT_OUTPUT}
 	fi
 
-	# create extlinux config
+	# complement extlinux config if it exists; remove armbianEnv in this case.
 	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
 		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
-		[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "warn"
+		[[ -f $SDCARD/boot/armbianEnv.txt ]] && run_host_command_logged rm -v $SDCARD/boot/armbianEnv.txt
 	fi
 
+	return 0 # there is a shortcircuit above! very tricky btw!
 }
