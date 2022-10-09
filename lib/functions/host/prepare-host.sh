@@ -6,7 +6,6 @@
 #
 prepare_host() {
 	display_alert "Preparing" "host" "info"
-	local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	if [ "$OFFLINE_WORK" == "yes" ]; then
@@ -21,6 +20,7 @@ prepare_host() {
 	# fix for Locales settings, if locale-gen is installed, and /etc/locale.gen exists.
 	if [[ -n "$(command -v locale-gen)" && -f /etc/locale.gen ]]; then
 		if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+			local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
 			${sudo_prefix} sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 			${sudo_prefix} locale-gen
 		fi
@@ -245,5 +245,4 @@ function early_prepare_host_dependencies() {
 		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
 		are determined at this point, but not yet installed.
 	HOST_DEPENDENCIES_KNOWN
-
 }

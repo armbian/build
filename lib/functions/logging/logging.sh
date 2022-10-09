@@ -295,7 +295,7 @@ function export_ansi_logs() {
 		----------------------------------------------------------------------------------------------------------------
 	ANSI_HEADER
 
-	if [[ -n "$(command -v git)" ]]; then
+	if [[ -n "$(command -v git)" && -d "${SRC}/.git" ]]; then
 		display_alert "Gathering git info for logs" "Processing git information, please wait..." "debug"
 		cat <<- GIT_ANSI_HEADER > "${target_file}"
 			----------------------------------------------------------------------------------------------------------------

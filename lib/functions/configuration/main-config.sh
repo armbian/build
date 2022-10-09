@@ -24,6 +24,7 @@ function do_main_configuration() {
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
+	
 	export SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}"   # don't use any external toolchains, by default.
 
 	# Timezone
@@ -43,8 +44,12 @@ function do_main_configuration() {
 	cd "${SRC}" || exit
 
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
-	BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote | grep origin)")
-	BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty)
+
+	if [[ -d "${SRC}/.git" ]]; then
+		BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote | grep origin)")
+		BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty)
+	fi
+
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
 
 	# .deb compression. xz is standard, but is slow, so if avoided by default if not running in CI. one day, zstd.
