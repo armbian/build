@@ -297,5 +297,10 @@ while [[ "${1}" == *=* ]]; do
 
 done
 
-# shellcheck source=lib/main.sh
-source "${SRC}"/lib/main.sh
+prepare_and_config_main_build_single
+
+if [[ -z $1 ]]; then
+	do_default
+else
+	eval "$@"
+fi
