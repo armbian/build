@@ -34,7 +34,7 @@ function prepare_partitions() {
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum"
 	fi
 	# mkopts[fat] is empty
-	mkopts[ext2]='-q'
+	mkopts[ext2]=''
 	# mkopts[f2fs] is empty
 	mkopts[btrfs]='-m dup'
 	# mkopts[xfs] is empty
