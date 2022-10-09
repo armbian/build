@@ -129,7 +129,20 @@ function cli_entrypoint() {
 	set -o errtrace # trace ERR through - enabled
 	set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 
-	# configuration etc - it initializes the extension manager.
+	# requirements, hostdeps, etc; publishes metadata
+	# Prepare the list of host dependencies.
+	if [[ "${REQUIREMENTS_DEFS_ONLY}" == "yes" ]]; then
+		declare -a -g host_dependencies=()
+		early_prepare_host_dependencies # tests itself for REQUIREMENTS_DEFS_ONLY=yes too
+		install_host_dependencies "for REQUIREMENTS_DEFS_ONLY=yes"
+		# @TODO: maybe also toolchains?
+		# @TODO: maybe also some gitballs?
+		
+		display_alert "Done with" "REQUIREMENTS_DEFS_ONLY" "cachehit"
+		exit 0
+	fi
+
+	# configuration etc - it initializes the extension manager
 	do_capturing_defs prepare_and_config_main_build_single # this sets CAPTURED_VARS
 
 	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then

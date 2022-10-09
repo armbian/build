@@ -102,24 +102,7 @@ prepare_host() {
 
 	# Skip verification if you are working offline
 	if ! $offline; then
-		display_alert "Installing build dependencies"
-
-		# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
-		${sudo_prefix} echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | ${sudo_prefix} debconf-set-selections
-
-		# This handles the wanted list in $host_dependencies, updates apt only if needed
-		# $host_dependencies is produced by early_prepare_host_dependencies()
-		install_host_side_packages "${host_dependencies[@]}"
-
-		run_host_command_logged update-ccache-symlinks
-
-		export FINAL_HOST_DEPS="${host_dependencies[*]}"
-		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
-			*run after all host dependencies are installed*
-			At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
-			All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
-			are installed at this point. The system clock has not yet been synced.
-		HOST_DEPENDENCIES_READY
+		install_host_dependencies "dependencies during prepare_release"
 
 		# Manage apt-cacher-ng
 		acng_configure_and_restart_acng
@@ -227,6 +210,11 @@ function early_prepare_host_dependencies() {
 		host_dependencies+=("apt-cacher-ng")
 	fi
 
+	if [[ "${REQUIREMENTS_DEFS_ONLY}" == "yes" ]]; then
+		display_alert "Not calling add_host_dependencies nor host_dependencies_known" "due to REQUIREMENTS_DEFS_ONLY" "debug"
+		return 0
+	fi
+
 	export EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 		*run before installing host dependencies*
@@ -245,4 +233,33 @@ function early_prepare_host_dependencies() {
 		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
 		are determined at this point, but not yet installed.
 	HOST_DEPENDENCIES_KNOWN
+}
+
+function install_host_dependencies() {
+	display_alert "Installing build dependencies"
+	display_alert "Installing build dependencies" "$*" "debug"
+
+	# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
+	local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
+	${sudo_prefix} echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | ${sudo_prefix} debconf-set-selections
+
+	# This handles the wanted list in $host_dependencies, updates apt only if needed
+	# $host_dependencies is produced by early_prepare_host_dependencies()
+	install_host_side_packages "${host_dependencies[@]}"
+
+	run_host_command_logged update-ccache-symlinks
+
+	export FINAL_HOST_DEPS="${host_dependencies[*]}"
+
+	if [[ "${REQUIREMENTS_DEFS_ONLY}" == "yes" ]]; then
+		display_alert "Not calling host_dependencies_ready" "due to REQUIREMENTS_DEFS_ONLY" "debug"
+		return 0
+	fi
+
+	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
+		*run after all host dependencies are installed*
+		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+		are installed at this point. The system clock has not yet been synced.
+	HOST_DEPENDENCIES_READY
 }
