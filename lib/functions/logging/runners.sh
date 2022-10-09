@@ -9,15 +9,25 @@ function chroot_sdcard_apt_get_install_download_only() {
 	chroot_sdcard_apt_get --no-install-recommends --download-only install "$@"
 }
 
+function chroot_sdcard_apt_get_remove() {
+	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get remove "$@"
+}
+
 function chroot_sdcard_apt_get() {
 	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
 
-	local -a apt_params=("-${APT_OPTS:-y}")
+	local -a apt_params=("-y")
 	[[ $NO_APT_CACHER != yes ]] && apt_params+=(
 		-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
 		-o "Acquire::http::Proxy::localhost=\"DIRECT\""
 	)
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
+
+	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
+		# Configure Clean-Installed to off
+		display_alert "Configuring APT to not clean up the cache" "APT will not clean up the cache" "debug"
+		apt_params+=(-o "APT::Clean-Installed=0")
+	fi
 
 	# Allow for clean-environment apt-get
 	local -a prelude_clean_env=()
@@ -26,7 +36,26 @@ function chroot_sdcard_apt_get() {
 		prelude_clean_env=("env" "-i")
 	fi
 
-	chroot_sdcard "${prelude_clean_env[@]}" DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
+	local use_local_apt_cache apt_cache_host_dir
+	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "before 'apt-get $*'" # 2 namerefs + "when"
+	if [[ "${use_local_apt_cache}" == "yes" ]]; then
+		# prepare and mount apt cache dir at /var/cache/apt/archives in the SDCARD.
+		local apt_cache_sdcard_dir="${SDCARD}/var/cache/apt"
+		run_host_command_logged mkdir -pv "${apt_cache_sdcard_dir}"
+		display_alert "Mounting local apt cache dir" "${apt_cache_sdcard_dir}" "debug"
+		run_host_command_logged mount --bind "${apt_cache_host_dir}" "${apt_cache_sdcard_dir}"
+	fi
+
+	local chroot_apt_result=1
+	chroot_sdcard "${prelude_clean_env[@]}" DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
+
+	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "after 'apt-get $*'" # 2 namerefs + "when"
+	if [[ "${use_local_apt_cache}" == "yes" ]]; then
+		display_alert "Unmounting apt cache dir" "${apt_cache_sdcard_dir}" "debug"
+		run_host_command_logged umount "${apt_cache_sdcard_dir}"
+	fi
+
+	return $chroot_apt_result
 }
 
 # please, please, unify around this function.
@@ -101,7 +130,7 @@ function host_apt_get_install() {
 
 # For running apt-get stuff host-side. Not chroot!
 function host_apt_get() {
-	local -a apt_params=("-${APT_OPTS:-y}")
+	local -a apt_params=("-y")
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
 	run_host_command_logged DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
 }
@@ -217,12 +246,20 @@ run_on_sdcard() {
 function do_with_retries() {
 	local retries="${1}"
 	shift
+
+	local sleep_seconds="${sleep_seconds:-5}"
+	local silent_retry="${silent_retry:-no}"
+
 	local counter=0
 	while [[ $counter -lt $retries ]]; do
 		counter=$((counter + 1))
 		"$@" && return 0 # execute and return 0 if success; if not, let it loop;
-		display_alert "Command failed, retrying in 5s" "$*" "warn"
-		sleep 5
+		if [[ "${silent_retry}" == "yes" ]]; then
+			: # do nothing
+		else
+			display_alert "Command failed, retrying in ${sleep_seconds}s" "$*" "warn"
+		fi
+		sleep ${sleep_seconds}
 	done
 	display_alert "Command failed ${counter} times, giving up" "$*" "warn"
 	return 1

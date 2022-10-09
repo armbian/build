@@ -105,19 +105,32 @@ function create_new_rootfs_cache() {
 
 	display_alert "Installing base system" "Stage 1/2" "info"
 	cd "${SDCARD}" || exit_with_error "cray-cray about SDCARD" "${SDCARD}" # this will prevent error sh: 0: getcwd() failed
+
 	local -a deboostrap_arguments=(
 		"--variant=minbase"                                                # minimal base variant. go ask Debian about it.
 		"--include=${DEBOOTSTRAP_LIST// /,}"                               # from aggregation?
 		${PACKAGE_LIST_EXCLUDE:+ --exclude="${PACKAGE_LIST_EXCLUDE// /,}"} # exclude some
 		"--arch=${ARCH}"                                                   # the arch
 		"--components=${DEBOOTSTRAP_COMPONENTS}"                           # from aggregation?
-		"--foreign" "${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}"  # path and mirror
 	)
+
+	# Small detour for local apt caching option.
+	local use_local_apt_cache apt_cache_host_dir
+	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "before debootstrap" # 2 namerefs + "when"
+	if [[ "${use_local_apt_cache}" == "yes" ]]; then
+		# Small difference for debootstrap, if compared to apt: we need to pass it the "/archives" subpath to share cache with apt.
+		deboostrap_arguments+=("--cache-dir=${apt_cache_host_dir}/archives") # cache .deb's used
+	fi
+
+	# This always last, positional arguments.
+	deboostrap_arguments+=("--foreign" "${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # path and mirror
 
 	run_host_command_logged debootstrap "${deboostrap_arguments[@]}" || {
 		exit_with_error "Debootstrap first stage failed" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
 	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
+
+	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "after debootstrap" # 2 namerefs + "when"
 
 	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks()
 
@@ -142,12 +155,14 @@ function create_new_rootfs_cache() {
 	chmod 755 "$SDCARD/sbin/initctl"
 	chmod 755 "$SDCARD/sbin/start-stop-daemon"
 
-	# stage: configure language and locales
-	display_alert "Configuring locales" "$DEST_LANG" "info"
+	# stage: configure language and locales.
+	# this _requires_ DEST_LANG, otherwise, bomb: if it's not here _all_ locales will be generated which is very slow.
+	display_alert "Configuring locales" "DEST_LANG: ${DEST_LANG}" "info"
+	[[ "x${DEST_LANG}x" == "xx" ]] && exit_with_error "Bug: got to config locales without DEST_LANG set"
 
-	[[ -f $SDCARD/etc/locale.gen ]] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
-	chroot_sdcard LC_ALL=C LANG=C locale-gen "$DEST_LANG"
-	chroot_sdcard LC_ALL=C LANG=C update-locale "LANG=$DEST_LANG" "LANGUAGE=$DEST_LANG" "LC_MESSAGES=$DEST_LANG"
+	[[ -f $SDCARD/etc/locale.gen ]] && sed -i "s/^# ${DEST_LANG}/${DEST_LANG}/" $SDCARD/etc/locale.gen
+	chroot_sdcard LC_ALL=C LANG=C locale-gen "${DEST_LANG}"
+	chroot_sdcard LC_ALL=C LANG=C update-locale "LANG=${DEST_LANG}" "LANGUAGE=${DEST_LANG}" "LC_MESSAGES=${DEST_LANG}"
 
 	if [[ -f $SDCARD/etc/default/console-setup ]]; then
 		# @TODO: Should be configurable.
@@ -170,7 +185,7 @@ function create_new_rootfs_cache() {
 	# Add external / PPAs to apt sources; decides internally based on minimal/cli/desktop dir/file structure
 	add_apt_sources
 
-	# uset asset logging for this; actually log contents of the files too
+	# @TODO: use asset logging for this; actually log contents of the files too
 	run_host_command_logged ls -l "${SDCARD}/usr/share/keyrings"
 	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
 	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"
@@ -228,9 +243,15 @@ function create_new_rootfs_cache() {
 	PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
 	chroot_sdcard_apt_get remove --purge $PURGINGPACKAGES
 
-	# stage: remove downloaded packages
-	chroot_sdcard_apt_get autoremove
-	chroot_sdcard_apt_get clean
+	# stage: remove packages that are installed, but not required anymore after other packages were installed/removed.
+	# don't touch the local cache.
+	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get autoremove
+
+	# Only clean if not using local cache. Otherwise it would be cleaning the cache, not the chroot.
+	if [[ "${USE_LOCAL_APT_DEB_CACHE}" != "yes" ]]; then
+		display_alert "Late Cleaning" "late: package lists and apt cache" "warn"
+		chroot_sdcard_apt_get clean
+	fi
 
 	# DEBUG: print free space
 	local freespace=$(LC_ALL=C df -h)
