@@ -142,9 +142,11 @@ function exit_with_error() {
 	# @TODO: integrate both overlayfs and the FD locking with cleanup logic
 	display_alert "Build terminating... wait for cleanups..." "" "err"
 	overlayfs_wrapper "cleanup"
-	# unlock loop device access in case of starvation # @TODO: hmm, say that again?
-	exec {FD}> /var/lock/armbian-debootstrap-losetup
-	flock -u "${FD}"
+	
+	## This does not really make sense. wtf?
+	## unlock loop device access in case of starvation # @TODO: hmm, say that again?
+	#exec {FD}> /var/lock/armbian-debootstrap-losetup
+	#flock -u "${FD}"
 
 	exit 43
 }

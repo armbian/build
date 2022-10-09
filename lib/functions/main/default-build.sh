@@ -163,6 +163,10 @@ function main_default_build_single() {
 		LOG_SECTION="chroot_build_packages" do_with_logging chroot_build_packages
 	fi
 
+	# Reset owner of DEB_STORAGE, if needed. Might be a lot of packages there, but such is life.
+	# @TODO: might be needed also during 'cleanup': if some package fails, the previous package might be left owned by root.
+	reset_uid_owner "${DEB_STORAGE}"
+
 	# end of kernel-only, so display what was built.
 	if [[ $KERNEL_ONLY != yes ]]; then
 		display_alert "Kernel build done" "@host" "target-reached"
@@ -187,7 +191,9 @@ function main_default_build_single() {
 	runtime=$(((end - start) / 60))
 	display_alert "Runtime" "$runtime min" "info"
 
-	[ "$(systemd-detect-virt)" == 'docker' ] && BUILD_CONFIG='docker'
+	if armbian_is_running_in_container; then
+		BUILD_CONFIG='docker' # @TODO: this is not true, depends on how we end up launching this.
+	fi
 
 	# Make it easy to repeat build by displaying build options used. Prepare array.
 	local -a repeat_args=("./compile.sh" "${BUILD_CONFIG}" " BRANCH=${BRANCH}")

@@ -18,10 +18,15 @@ prepare_host() {
 	# wait until package manager finishes possible system maintanace
 	wait_for_package_manager
 
-	# fix for Locales settings
-	if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
-		sudo sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
-		sudo locale-gen
+	# fix for Locales settings, if locale-gen is installed, and /etc/locale.gen exists.
+	if [[ -n "$(command -v locale-gen)" && -f /etc/locale.gen ]]; then
+		if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+			local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
+			${sudo_prefix} sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+			${sudo_prefix} locale-gen
+		fi
+	else
+		display_alert "locale-gen is not installed @host" "skipping locale-gen -- problems might arise" "warn"
 	fi
 
 	export LC_ALL="en_US.UTF-8"
@@ -80,42 +85,30 @@ prepare_host() {
 		fi
 	fi
 
-	if systemd-detect-virt -q -c; then
-		display_alert "Running in container" "$(systemd-detect-virt)" "info"
+	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
+	display_alert "Using local apt cache?" "USE_LOCAL_APT_DEB_CACHE: ${USE_LOCAL_APT_DEB_CACHE}" "debug"
+
+	if armbian_is_running_in_container; then
+		display_alert "Running in container" "Adding provisions for container building" "info"
+		declare -g CONTAINER_COMPAT=yes # this controls mknod usage for loop devices.
 		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
 		if [[ $NO_APT_CACHER != no ]]; then
 			display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
 			NO_APT_CACHER=yes
 		fi
-		CONTAINER_COMPAT=yes
 		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
 		if [[ $EXTERNAL_NEW == compile ]]; then
 			display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
 			EXTERNAL_NEW=prebuilt
 		fi
 		SYNC_CLOCK=no
+	else
+		display_alert "NOT running in container" "No special provisions for container building" "debug"
 	fi
 
 	# Skip verification if you are working offline
 	if ! $offline; then
-		display_alert "Installing build dependencies"
-
-		# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
-		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
-
-		# This handles the wanted list in $host_dependencies, updates apt only if needed
-		# $host_dependencies is produced by early_prepare_host_dependencies()
-		install_host_side_packages "${host_dependencies[@]}"
-
-		run_host_command_logged update-ccache-symlinks
-
-		export FINAL_HOST_DEPS="${host_dependencies[*]}"
-		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
-			*run after all host dependencies are installed*
-			At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
-			All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
-			are installed at this point. The system clock has not yet been synced.
-		HOST_DEPENDENCIES_READY
+		install_host_dependencies "dependencies during prepare_release"
 
 		# Manage apt-cacher-ng
 		acng_configure_and_restart_acng
@@ -128,7 +121,10 @@ prepare_host() {
 
 		# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
 		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
+
+		# @TODO: rpardini: wtf?
 		if [[ -n $SUDO_USER ]]; then
+			display_alert "ARMBIAN-NEXT UNHANDLED! SUDO_USER variable" "ARMBIAN-NEXT UNHANDLED! SUDO_USER: $SUDO_USER" "wrn"
 			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
 			# SGID bit on cache/sources breaks kernel dpkg packaging
 			chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
@@ -136,6 +132,7 @@ prepare_host() {
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 		fi
+
 		# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 		mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
@@ -146,7 +143,7 @@ prepare_host() {
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	if build_task_is_enabled "bootstrap"; then
-		modprobe -q binfmt_misc || display_alert "Failed to modprobe" "binfmt_misc" "warn"
+		modprobe -q binfmt_misc || display_alert "Failed to modprobe" "binfmt_misc" "warn" # @TODO avoid this if possible, is it already loaded, or built-in? then ignore
 		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
 		if [[ "$(arch)" != "aarch64" ]]; then
 			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
@@ -166,6 +163,10 @@ prepare_host() {
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
 	fi
 
+	# Reset owner of userpatches if so required
+	reset_uid_owner "${USERPATCHES_PATH}" # Fix owner of files in the final destination
+
+	# @TODO: check every possible mount point. Not only one. People might have different mounts / Docker volumes...
 	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
 	declare -i free_space_bytes
 	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${SRC}" --uniq 2> /dev/null) # in bytes
@@ -192,11 +193,14 @@ function early_prepare_host_dependencies() {
 		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
 		ntpdate patchutils
 		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
-		systemd-container u-boot-tools udev uuid-dev whiptail
+		u-boot-tools udev uuid-dev whiptail
 		zlib1g-dev busybox fdisk
 
 		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
 		python2 python2-dev
+
+		# systemd-container brings in systemd-nspawn, which is used by the buildpkg functionality
+		# systemd-container # @TODO: bring this back eventually. I don't think trying to use those inside a container is a good idea.
 
 		# non-mess below?
 		file ccze colorized-logs tree expect            # logging utilities; expect is needed for 'unbuffer' command
@@ -220,6 +224,11 @@ function early_prepare_host_dependencies() {
 		host_dependencies+=("apt-cacher-ng")
 	fi
 
+	if [[ "${REQUIREMENTS_DEFS_ONLY}" == "yes" ]]; then
+		display_alert "Not calling add_host_dependencies nor host_dependencies_known" "due to REQUIREMENTS_DEFS_ONLY" "debug"
+		return 0
+	fi
+
 	export EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 		*run before installing host dependencies*
@@ -238,5 +247,33 @@ function early_prepare_host_dependencies() {
 		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
 		are determined at this point, but not yet installed.
 	HOST_DEPENDENCIES_KNOWN
+}
 
+function install_host_dependencies() {
+	display_alert "Installing build dependencies"
+	display_alert "Installing build dependencies" "$*" "debug"
+
+	# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
+	local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
+	${sudo_prefix} echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | ${sudo_prefix} debconf-set-selections
+
+	# This handles the wanted list in $host_dependencies, updates apt only if needed
+	# $host_dependencies is produced by early_prepare_host_dependencies()
+	install_host_side_packages "${host_dependencies[@]}"
+
+	run_host_command_logged update-ccache-symlinks
+
+	export FINAL_HOST_DEPS="${host_dependencies[*]}"
+
+	if [[ "${REQUIREMENTS_DEFS_ONLY}" == "yes" ]]; then
+		display_alert "Not calling host_dependencies_ready" "due to REQUIREMENTS_DEFS_ONLY" "debug"
+		return 0
+	fi
+
+	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
+		*run after all host dependencies are installed*
+		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+		are installed at this point. The system clock has not yet been synced.
+	HOST_DEPENDENCIES_READY
 }

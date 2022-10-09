@@ -27,7 +27,7 @@ call_extension_method() {
 
 	# Then a sanity check, hook points should only be invoked after the manager has initialized.
 	if [[ ${initialize_extension_manager_counter} -lt 1 ]]; then
-		display_alert "Extension problem" "Call to call_extension_method() (in ${BASH_SOURCE[1]- $(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")}) before extension manager is initialized." "err"
+		display_alert "Extension problem" "Call to call_extension_method() ($*: in ${BASH_SOURCE[1]- $(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")}) before extension manager is initialized." "err"
 	fi
 
 	# With DEBUG_EXTENSION_CALLS, log the hook call. Users might be wondering what/when is a good hook point to use, and this is visual aid.

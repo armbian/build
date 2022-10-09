@@ -248,11 +248,14 @@ function install_distribution_agnostic() {
 	display_alert "Temporarily disabling" "initramfs-tools hook for kernel"
 	chroot_sdcard chmod -v -x /etc/kernel/postinst.d/initramfs-tools
 
-	display_alert "Cleaning" "package lists"
-	APT_OPTS="y" chroot_sdcard_apt_get clean
+	# Only clean if not using local cache. Otherwise it would be cleaning the cache, not the chroot.
+	if [[ "${USE_LOCAL_APT_DEB_CACHE}" != "yes" ]]; then
+		display_alert "Cleaning" "package lists and apt cache" "warn"
+		chroot_sdcard_apt_get clean
+	fi
 
 	display_alert "Updating" "apt package lists"
-	APT_OPTS="y" do_with_retries 3 chroot_sdcard_apt_get update
+	do_with_retries 3 chroot_sdcard_apt_get update
 
 	# install family packages
 	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
@@ -280,7 +283,7 @@ function install_distribution_agnostic() {
 	if [[ -n ${PACKAGE_LIST_FAMILY_REMOVE} ]]; then
 		_pkg_list=${PACKAGE_LIST_FAMILY_REMOVE}
 		display_alert "Removing PACKAGE_LIST_FAMILY_REMOVE packages" "${_pkg_list}"
-		chroot_sdcard_apt_get remove --auto-remove ${_pkg_list}
+		chroot_sdcard_apt_get_remove --auto-remove ${_pkg_list}
 	fi
 
 	# remove board packages. loop over the list to remove, check if they're actually installed, then remove individually.
@@ -293,7 +296,7 @@ function install_distribution_agnostic() {
 			# shellcheck disable=SC2076 # I wanna match literally, thanks.
 			if [[ " ${currently_installed_packages[*]} " =~ " ${PKG_REMOVE} " ]]; then
 				display_alert "Removing PACKAGE_LIST_BOARD_REMOVE package" "${PKG_REMOVE}"
-				chroot_sdcard_apt_get remove --auto-remove "${PKG_REMOVE}"
+				chroot_sdcard_apt_get_remove --auto-remove "${PKG_REMOVE}"
 			fi
 		done
 		unset currently_installed_packages
@@ -306,7 +309,7 @@ function install_distribution_agnostic() {
 			UBOOT_VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" | grep Descr | awk '{print $(NF)}')
 			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 		else
-			install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes"
+			install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes" # @TODO: rpardini: this is completely different! "remote" "yes"
 			UBOOT_REPO_VERSION=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
 		fi
 	}
@@ -336,16 +339,17 @@ function install_distribution_agnostic() {
 				install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 			fi
 		else
-			install_deb_chroot "linux-image-${BRANCH}-${LINUXFAMILY}" "remote"
+			install_deb_chroot "linux-image-${BRANCH}-${LINUXFAMILY}" "remote" # @TODO: rpardini: again a different one, without "yes" this time
 			VER=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-image-${BRANCH}-${LINUXFAMILY}*_${ARCH}.deb Source)
 			VER="${VER/-$LINUXFAMILY/}"
 			VER="${VER/linux-/}"
 			display_alert "Parsed kernel version from remote package" "${VER}" "debug"
 			if [[ "${ARCH}" != "amd64" && "${LINUXFAMILY}" != "media" ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
-				install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
+				install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"  # @TODO: rpardini: again a different one, without "yes" this time
 			fi
-			[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
+			[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote" # @TODO: rpardini: again a different one, without "yes" this time
 		fi
+		# Eh, short circuit above. Beware.
 	}
 
 	call_extension_method "post_install_kernel_debs" <<- 'POST_INSTALL_KERNEL_DEBS'
@@ -358,7 +362,7 @@ function install_distribution_agnostic() {
 	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb"
 	else
-		install_deb_chroot "${CHOSEN_ROOTFS}" "remote"
+		install_deb_chroot "${CHOSEN_ROOTFS}" "remote" # @TODO: rpardini: err.... what?
 	fi
 
 	# install armbian-desktop

@@ -9,18 +9,37 @@ function check_loop_device() {
 }
 
 function check_loop_device_internal() {
-	local device=$1
+	local device="${1}"
 	display_alert "Checking look device" "${device}" "debug"
-	if [[ ! -b $device ]]; then
-		if [[ $CONTAINER_COMPAT == yes && -b /tmp/$device ]]; then
-			display_alert "Creating device node" "$device"
-			mknod -m0660 "${device}" b "0x$(stat -c '%t' "/tmp/$device")" "0x$(stat -c '%T' "/tmp/$device")"
-			return 1 # fail, it will be retried, and should exist on next retry.
+	if [[ ! -b "${device}" ]]; then
+		if [[ $CONTAINER_COMPAT == yes && -b "/tmp/${device}" ]]; then
+			display_alert "Creating device node" "${device}"
+			run_host_command_logged mknod -m0660 "${device}" b "0x$(stat -c '%t' "/tmp/${device}")" "0x$(stat -c '%T' "/tmp/${device}")"
+			if [[ ! -b "${device}" ]]; then # try again after creating node
+				return 1                       # fail, it will be retried, and should exist on next retry.
+			else
+				display_alert "Device node created OK" "${device}" "info"
+			fi
 		else
-			display_alert "Device node does not exist yet" "$device" "debug"
+			display_alert "Device node does not exist yet" "${device}" "debug"
 			return 1
 		fi
 	fi
+
+	if [[ "${CHECK_LOOP_FOR_SIZE:-yes}" != "no" ]]; then
+		# Device exists. Make sure it's not 0-sized. Read with blockdev --getsize64 /dev/sda
+		local device_size
+		device_size=$(blockdev --getsize64 "${device}")
+		display_alert "Device node size" "${device}: ${device_size}" "debug"
+		if [[ ${device_size} -eq 0 ]]; then
+			run_host_command_logged ls -la "${device}"
+			run_host_command_logged lsblk
+			run_host_command_logged blkid
+			display_alert "Device node exists but is 0-sized" "${device}" "debug"
+			return 1
+		fi
+	fi
+
 	return 0
 }
 
