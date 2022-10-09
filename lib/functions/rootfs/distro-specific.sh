@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 install_distribution_specific() {
-
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
 	# disable broken service
@@ -18,7 +17,7 @@ install_distribution_specific() {
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
-			rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
+			run_host_command_logged rm -fv "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
 			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
 				local RENDERER=NetworkManager
@@ -38,36 +37,23 @@ install_distribution_specific() {
 			sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" "${SDCARD}"/etc/systemd/journald.conf
 
 			# Chrony temporal fix https://bugs.launchpad.net/ubuntu/+source/chrony/+bug/1878005
-			sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
+			[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
 
 			# disable conflicting services
 			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
-
 			;;
-
 	esac
-
-	# configure language and locales
-	display_alert "Configuring locales" "$DEST_LANG" "info"
-	if [[ -f $SDCARD/etc/locale.gen ]]; then
-		[ -n "$DEST_LANG" ] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
-		sed -i '/ C.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-		sed -i '/en_US.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-	fi
-	eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-	[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c \
-	"update-locale --reset LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_ALL=$DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
 	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 		network:
-			  version: 2
-			  renderer: $RENDERER
+		  version: 2
+		  renderer: $RENDERER
 	EOF
 
 	# cleanup motd services and related files
-	chroot "${SDCARD}" /bin/bash -c "systemctl disable motd-news.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl disable motd-news.timer >/dev/null 2>&1"
+	chroot_sdcard systemctl disable motd-news.service
+	chroot_sdcard systemctl disable motd-news.timer
 
 	# remove motd news from motd.ubuntu.com
 	[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news

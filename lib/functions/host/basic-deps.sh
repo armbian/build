@@ -12,7 +12,7 @@ prepare_host_basic() {
 		"dialog:dialog"
 		"fuser:psmisc"
 		"getfacl:acl"
-		"uuid:uuid uuid-runtime"
+		"uuidgen:uuid-runtime"
 		"curl:curl"
 		"gpg:gnupg"
 		"gawk:gawk"
@@ -24,7 +24,8 @@ prepare_host_basic() {
 
 	if [[ -n $install_pack ]]; then
 		display_alert "Updating and installing basic packages on host" "$install_pack"
-		sudo bash -c "apt-get -qq update && apt-get install -qq -y --no-install-recommends $install_pack"
+		run_host_command_logged sudo apt-get -qq update
+		run_host_command_logged sudo apt-get install -qq -y --no-install-recommends $install_pack
 	fi
 
 }
