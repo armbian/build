@@ -40,7 +40,12 @@ function get_urls() {
 	echo "${urls[@]}"
 }
 
-download_and_verify() {
+# Terrible idea, this runs download_and_verify_internal() with error handling disabled.
+function download_and_verify() {
+	download_and_verify_internal "${@}" || true
+}
+
+function download_and_verify_internal() {
 
 	local catalog=$1
 	local filename=$2

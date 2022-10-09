@@ -1,19 +1,21 @@
-#!/bin/bash
-
 # cleaning <target>
 #
-# target: what to clean
-# "make" - "make clean" for selected kernel and u-boot
-# "debs" - delete output/debs for board&branch
-# "ubootdebs" - delete output/debs for uboot&board&branch
-# "alldebs" - delete output/debs
-# "cache" - delete output/cache
-# "oldcache" - remove old output/cache
-# "images" - delete output/images
-# "sources" - delete output/sources
-#
 
-cleaning() {
+# target: what to clean
+# "make-atf" = make clean for ATF, if it is built.
+# "make-uboot" = make clean for uboot, if it is built.
+# "make-kernel" = make clean for kernel, if it is built. very slow.
+# *important*: "make" by itself has disabled, since Armbian knows how to handle Make timestamping now.
+
+# "debs" = delete packages in "./output/debs" for current branch and family. causes rebuilds, hopefully cached.
+# "ubootdebs" - delete output/debs for uboot&board&branch
+# "alldebs" = delete all packages in "./output/debs"
+# "images" = delete "./output/images"
+# "cache" = delete "./output/cache"
+# "sources" = delete "./sources"
+# "oldcache" = remove old cached rootfs except for the newest 8 files
+
+general_cleaning() {
 	case $1 in
 		debs) # delete ${DEB_STORAGE} for current branch and family
 			if [[ -d "${DEB_STORAGE}" ]]; then
@@ -59,7 +61,7 @@ cleaning() {
 			[[ -d "${DEST}"/images ]] && display_alert "Cleaning" "output/images" "info" && rm -rf "${DEST}"/images/*
 			;;
 
-		sources) # delete output/sources and output/buildpkg
+		sources) # delete cache/sources and output/buildpkg
 			[[ -d "${SRC}"/cache/sources ]] && display_alert "Cleaning" "sources" "info" && rm -rf "${SRC}"/cache/sources/* "${DEST}"/buildpkg/*
 			;;
 
