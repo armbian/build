@@ -107,11 +107,14 @@ docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash -c "uname -a
 docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash -c "free -h && df -h && lscpu"
 docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash -c "mount"
 
-display_alert "Running" "CONFIG_DEFS_ONLY=yes phase" "info"
-docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" CONFIG_DEFS_ONLY=yes BRANCH=ddk BOARD=uefi-x86 KERNEL_ONLY=no KERNEL_CONFIGURE=no BUILD_DESKTOP=no RELEASE=jammy BUILD_MINIMAL=no SHOW_DEBUG=yes SHOW_COMMAND=yes SHOW_LOG=yes
+#display_alert "Running" "CONFIG_DEFS_ONLY=yes phase" "info"
+#docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" CONFIG_DEFS_ONLY=yes BRANCH=ddk BOARD=uefi-x86 KERNEL_ONLY=no KERNEL_CONFIGURE=no BUILD_DESKTOP=no RELEASE=jammy BUILD_MINIMAL=no SHOW_DEBUG=yes SHOW_COMMAND=yes SHOW_LOG=yes
 
-display_alert "Running" "real build!" "info"
-docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" BRANCH=ddk BOARD=uefi-x86 KERNEL_ONLY=no KERNEL_CONFIGURE=no BUILD_DESKTOP=no RELEASE=jammy BUILD_MINIMAL=no SHOW_DEBUG=yes SHOW_COMMAND=yes SHOW_LOG=yes SKIP_ARMBIAN_REPO=yes
+#display_alert "Running" "real build!" "info"
+#docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" BRANCH=ddk BOARD=uefi-x86 KERNEL_ONLY=no KERNEL_CONFIGURE=no BUILD_DESKTOP=no RELEASE=jammy BUILD_MINIMAL=no SHOW_DEBUG=yes SHOW_COMMAND=yes SHOW_LOG=yes SKIP_ARMBIAN_REPO=yes
+
+display_alert "Running" "real build: ${*}" "info"
+docker run -it "${DOCKER_ARGS[@]}" "${INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"
 
 display_alert "Done!"
 
