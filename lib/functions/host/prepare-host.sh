@@ -212,11 +212,8 @@ function early_prepare_host_dependencies() {
 		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
 		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
 		crossbuild-essential-amd64                            # For AMD 64-bit, x86_64.
+		libc6-amd64-cross                                     # Support for running x86 binaries (under qemu on other arches)
 	)
-
-	if [[ $(dpkg --print-architecture) == arm64 ]]; then
-		host_dependencies+=(libc6-amd64-cross qemu) # Support for running x86 binaries on ARM64 under qemu.
-	fi
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
