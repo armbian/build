@@ -80,3 +80,42 @@ function is_root_or_sudo_prefix() {
 	fi
 	return 0
 }
+
+# Usage: local_apt_deb_cache_prepare variable_for_use_yes_no variable_for_cache_dir "when you are using cache/before doing XX/after YY"
+function local_apt_deb_cache_prepare() {
+	declare -n __my_use_yes_or_no=${1}      # nameref...
+	declare -n __my_apt_cache_host_dir=${2} # nameref...
+	declare when_used="${3}"
+
+	__my_use_yes_or_no="no"
+	if [[ "${USE_LOCAL_APT_DEB_CACHE}" != "yes" ]]; then
+		# Not using the local cache, do nothing. Just return "no" in the first nameref.
+		return 0
+	fi
+
+	__my_use_yes_or_no="yes"
+	__my_apt_cache_host_dir="${SRC}/cache/aptcache/${RELEASE}-${ARCH}"
+	mkdir -p "${__my_apt_cache_host_dir}" "${__my_apt_cache_host_dir}/archives"
+
+	# get the size, in bytes, of the cache directory, including subdirs
+	declare -i cache_size # heh, mark var as integer
+	cache_size=$(du -sb "${__my_apt_cache_host_dir}" | cut -f1)
+
+	display_alert "Size of apt/deb cache ${when_used}" "${cache_size} bytes" "debug"
+
+	declare -g -i __previous_apt_cache_size
+	if [[ -z "${__previous_apt_cache_size}" ]]; then
+		# first time, set the size to 0
+		__previous_apt_cache_size=0
+	else
+		# not first time, check if the size has changed
+		if [[ "${cache_size}" -ne "${__previous_apt_cache_size}" ]]; then
+			display_alert "Local apt cache size changed ${when_used}" "from ${__previous_apt_cache_size} to ${cache_size} bytes" "debug"
+		else
+			display_alert "Local apt cache size unchanged ${when_used}" "at ${cache_size} bytes" "debug"
+		fi
+	fi
+	__previous_apt_cache_size=${cache_size}
+
+	return 0
+}
