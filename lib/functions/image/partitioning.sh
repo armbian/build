@@ -208,7 +208,7 @@ function prepare_partitions() {
 	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
 	display_alert "Allocated loop device" "LOOP=${LOOP}"
 
-	check_loop_device "$LOOP"
+	CHECK_LOOP_FOR_SIZE="no" check_loop_device "$LOOP" # initially loop is zero sized, ignore it.
 
 	run_host_command_logged losetup $LOOP ${SDCARD}.raw # @TODO: had a '-P- here, what was it?
 
@@ -217,6 +217,9 @@ function prepare_partitions() {
 
 	display_alert "Running partprobe" "${LOOP}" "debug"
 	run_host_command_logged partprobe $LOOP
+
+	display_alert "Checking again after partprobe" "${LOOP}" "debug"
+	check_loop_device "$LOOP" # check again, now it has to have a size! otherwise wait.
 
 	# stage: create fs, mount partitions, create fstab
 	rm -f $SDCARD/etc/fstab
