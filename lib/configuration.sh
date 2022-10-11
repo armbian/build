@@ -13,26 +13,26 @@
 # daily beta build contains date in subrevision
 #if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
 if [ -f $USERPATCHES_PATH/VERSION ]; then
-  REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)"$SUBREVISION" # all boards have same revision
+	REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)"$SUBREVISION" # all boards have same revision
 else
-  REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
+	REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
 fi
 [[ -z $VENDOR ]] && VENDOR="Armbian"
-[[ -z $ROOTPWD ]] && ROOTPWD="1234" # Must be changed @first login
-[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik" # deb signature
+[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
+[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 [[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-[[ -z $DEB_COMPRESS ]] && DEB_COMPRESS="xz" # compress .debs with XZ by default. Use 'none' for faster/larger builds
-TZDATA=$(cat /etc/timezone) # Timezone for target is taken from host or defined here.
-USEALLCORES=yes # Use all CPU cores for compiling
+[[ -z $DEB_COMPRESS ]] && DEB_COMPRESS="xz"                          # compress .debs with XZ by default. Use 'none' for faster/larger builds
+TZDATA=$(cat /etc/timezone)                                          # Timezone for target is taken from host or defined here.
+USEALLCORES=yes                                                      # Use all CPU cores for compiling
 HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
 [[ -z $HOSTRELEASE ]] && HOSTRELEASE=$(cut -d'/' -f1 /etc/debian_version)
 [[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
-[[ -z $HOST ]] && HOST="$BOARD" # set hostname to the board
+[[ -z $HOST ]] && HOST="$BOARD"                         # set hostname to the board
 cd "${SRC}" || exit
 
 [[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
-BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2>/dev/null | grep origin) 2>/dev/null)
-BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2>/dev/null)
+BUILD_REPOSITORY_URL=$(improved_git remote get-url $(improved_git remote 2> /dev/null | grep origin) 2> /dev/null)
+BUILD_REPOSITORY_COMMIT=$(improved_git describe --match=d_e_a_d_b_e_e_f --always --dirty 2> /dev/null)
 ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
 
 if [[ $BETA == yes ]]; then
@@ -53,7 +53,6 @@ if [[ -n "${MAKE_FOLDERS}" ]]; then
 	install -d ${FINALDEST}
 
 fi
-
 
 # TODO: fixed name can't be used for parallel image building
 ROOT_MAPPER="armbian-root"
@@ -87,8 +86,8 @@ case $REGIONAL_MIRROR in
 		[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=gitclone
 		[[ -z $DOWNLOAD_MIRROR ]] && DOWNLOAD_MIRROR=china
 		;;
-	*)
-		;;
+	*) ;;
+
 esac
 
 # used by multiple sources - reduce code duplication
@@ -167,7 +166,7 @@ ATF_COMPILE=yes
 
 # single ext4 partition is the default and preferred configuration
 #BOOTFS_TYPE=''
-[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] && \
+[[ ! -f ${SRC}/config/sources/families/$LINUXFAMILY.conf ]] &&
 	exit_with_error "Sources configuration not found" "$LINUXFAMILY"
 
 source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
@@ -212,7 +211,7 @@ show_menu() {
 	#echo "Provided options : " "${@:4}"
 	#echo "TTY X: $TTY_X Y: $TTY_Y"
 	dialog --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
-	--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+		--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
 }
 
 # Myy : FIXME Factorize
@@ -221,7 +220,7 @@ show_select_menu() {
 	provided_backtitle=$2
 	provided_menuname=$3
 	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
-	--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+		--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
 }
 
 # Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
@@ -371,12 +370,13 @@ if [[ $BUILD_DESKTOP == "yes" && -z ${DESKTOP_APPGROUPS_SELECTED+x} ]]; then
 		options+=("${appgroup}" "${appgroup^}" off)
 	done
 
-	DESKTOP_APPGROUPS_SELECTED=$(\
+	DESKTOP_APPGROUPS_SELECTED=$(
 		show_select_menu \
-		"Choose desktop softwares to add" \
-		"$backtitle" \
-		"Select which kind of softwares you'd like to add to your build" \
-		"${options[@]}")
+			"Choose desktop softwares to add" \
+			"$backtitle" \
+			"Select which kind of softwares you'd like to add to your build" \
+			"${options[@]}"
+	)
 
 	unset options
 fi
@@ -398,8 +398,8 @@ aggregate_content() {
 			echo -e "${filepath/"$SRC"\//} yes" >> "${LOG_OUTPUT_FILE}"
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
-#		else
-#			echo -e "${filepath/"$SRC"\//} no\n" >> "${LOG_OUTPUT_FILE}"
+			#		else
+			#			echo -e "${filepath/"$SRC"\//} no\n" >> "${LOG_OUTPUT_FILE}"
 		fi
 
 	done
@@ -425,9 +425,9 @@ BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
 [[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
 if [[ "$RELEASE" =~ ^(focal|jammy)$ ]]; then
-		DISTRIBUTION="Ubuntu"
-	else
-		DISTRIBUTION="Debian"
+	DISTRIBUTION="Ubuntu"
+else
+	DISTRIBUTION="Debian"
 fi
 
 CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
@@ -582,36 +582,24 @@ unset LOG_OUTPUT_FILE
 
 DEBIAN_MIRROR='deb.debian.org/debian'
 DEBIAN_SECURTY='security.debian.org/'
-UBUNTU_MIRROR='ports.ubuntu.com/'
+[[ "${ARCH}" == "amd64" ]] &&
+	UBUNTU_MIRROR='archive.ubuntu.com/ubuntu/' ||
+	UBUNTU_MIRROR='ports.ubuntu.com/'
 
-if [[ $DOWNLOAD_MIRROR == "china" ]] ; then
+if [[ $DOWNLOAD_MIRROR == "china" ]]; then
 	DEBIAN_MIRROR='mirrors.tuna.tsinghua.edu.cn/debian'
 	DEBIAN_SECURTY='mirrors.tuna.tsinghua.edu.cn/debian-security'
-	UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
+	[[ "${ARCH}" == "amd64" ]] &&
+		UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu/' ||
+		UBUNTU_MIRROR='mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/'
 fi
 
-if [[ $DOWNLOAD_MIRROR == "bfsu" ]] ; then
+if [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
 	DEBIAN_MIRROR='mirrors.bfsu.edu.cn/debian'
 	DEBIAN_SECURTY='mirrors.bfsu.edu.cn/debian-security'
-	UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
-fi
-
-if [[ "${ARCH}" == "amd64" ]]; then
-	UBUNTU_MIRROR='archive.ubuntu.com/ubuntu' # ports are only for non-amd64, of course.
-
-		if [[ -n ${CUSTOM_UBUNTU_MIRROR} ]]; then # ubuntu redirector doesn't work well on amd64
-			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR}"
-		fi
-fi
-
-# don't use mirrors that throws garbage on 404
-if [[ -z ${ARMBIAN_MIRROR} ]]; then
-	while true; do
-
-		ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
-		[[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]] && break
-
-	done
+	[[ "${ARCH}" == "amd64" ]] &&
+		UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu/' ||
+		UBUNTU_MIRROR='mirrors.bfsu.edu.cn/ubuntu-ports/'
 fi
 
 [[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
@@ -666,7 +654,6 @@ aggregate_all_desktop "packages.uninstall" " "
 PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 unset aggregated_content
 
-
 if [[ -n $PACKAGE_LIST_RM ]]; then
 	display_alert "Package remove list ${PACKAGE_LIST_RM}"
 	# Turns out that \b can be tricked by dashes.
@@ -692,9 +679,8 @@ if [[ -n $PACKAGE_LIST_RM ]]; then
 	PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
 fi
 
-
 LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
-echo -e "\nVariables after manual configuration" >>$LOG_OUTPUT_FILE
+echo -e "\nVariables after manual configuration" >> $LOG_OUTPUT_FILE
 show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
 unset LOG_OUTPUT_FILE
 
@@ -709,51 +695,51 @@ to confirm or change any packages.
 POST_AGGREGATE_PACKAGES
 
 # debug
-cat <<-EOF >> "${DEST}"/${LOG_SUBPATH}/output.log
+cat <<- EOF >> "${DEST}"/${LOG_SUBPATH}/output.log
 
-## BUILD SCRIPT ENVIRONMENT
+	## BUILD SCRIPT ENVIRONMENT
 
-Repository: $REPOSITORY_URL
-Version: $REPOSITORY_COMMIT
+	Repository: $REPOSITORY_URL
+	Version: $REPOSITORY_COMMIT
 
-Host OS: $HOSTRELEASE
-Host arch: $(dpkg --print-architecture)
-Host system: $(uname -a)
-Virtualization type: $(systemd-detect-virt)
+	Host OS: $HOSTRELEASE
+	Host arch: $(dpkg --print-architecture)
+	Host system: $(uname -a)
+	Virtualization type: $(systemd-detect-virt)
 
-## Build script directories
-Build directory is located on:
-$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")
+	## Build script directories
+	Build directory is located on:
+	$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")
 
-Build directory permissions:
-$(getfacl -p "${SRC}")
+	Build directory permissions:
+	$(getfacl -p "${SRC}")
 
-Temp directory permissions:
-$(getfacl -p "${SRC}"/.tmp 2> /dev/null)
+	Temp directory permissions:
+	$(getfacl -p "${SRC}"/.tmp 2> /dev/null)
 
-## BUILD CONFIGURATION
+	## BUILD CONFIGURATION
 
-Build target:
-Board: $BOARD
-Branch: $BRANCH
-Minimal: $BUILD_MINIMAL
-Desktop: $BUILD_DESKTOP
-Desktop Environment: $DESKTOP_ENVIRONMENT
-Software groups: $DESKTOP_APPGROUPS_SELECTED
+	Build target:
+	Board: $BOARD
+	Branch: $BRANCH
+	Minimal: $BUILD_MINIMAL
+	Desktop: $BUILD_DESKTOP
+	Desktop Environment: $DESKTOP_ENVIRONMENT
+	Software groups: $DESKTOP_APPGROUPS_SELECTED
 
-Kernel configuration:
-Repository: $KERNELSOURCE
-Branch: $KERNELBRANCH
-Config file: $LINUXCONFIG
+	Kernel configuration:
+	Repository: $KERNELSOURCE
+	Branch: $KERNELBRANCH
+	Config file: $LINUXCONFIG
 
-U-boot configuration:
-Repository: $BOOTSOURCE
-Branch: $BOOTBRANCH
-Config file: $BOOTCONFIG
+	U-boot configuration:
+	Repository: $BOOTSOURCE
+	Branch: $BOOTBRANCH
+	Config file: $BOOTCONFIG
 
-Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
-Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
-Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
+	Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
+	Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
+	Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
 
-CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
+	CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 EOF

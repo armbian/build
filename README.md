@@ -195,7 +195,11 @@ If you want to help with development, you should first review the [Development C
 
 ## Support
 
-Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). Make sure to use help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com) before opening new forum topic. In case you require attention, buy appropriate [subscription level](https://forum.armbian.com/subscriptions) before asking for dedicated attention to the issue you have https://www.armbian.com/contact.
+Support is provided in one of two ways:
+- For commercial or prioritized assistance:
+  - book a an hour of [professional consultation](https://calendly.com/armbian/consultation),
+  - consider becoming a project partner. Reach us out at https://armbian.com/contact,
+- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guarenteed solutions.
 
 ## Contact
 
@@ -204,6 +208,7 @@ Armbian is free software and provides **best effort help** through [community fo
 - Discord: [http://discord.armbian.com](http://discord.armbian.com)
 - Follow [@armbian](https://twitter.com/armbian) on Twitter or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
+- Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
 
 ## Contributors
 

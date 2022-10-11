@@ -41,6 +41,13 @@ if test -n "${consoleargs}"; test $? != 0; then
 	test "${console}" = "display" || test "${console}" = "both" && setenv consoleargs "${consoleargs} console=tty1"
 	test "${console}" = "serial" || test "${console}" = "both" && setenv consoleargs "${consoleargs} console=ttyAML0,115200n8"
 	setenv consoleargs "${consoleargs} no_console_suspend consoleblank=0"
+
+	test -n "${bootlogo}" || setenv bootlogo "false"
+	if test "${bootlogo}" = "true"; then
+		setenv consoleargs "${consoleargs} splash plymouth.ignore-serial-consoles"
+	else
+		setenv consoleargs "${consoleargs} splash=verbose"
+	fi
 fi
 
 # Boot Arguments
