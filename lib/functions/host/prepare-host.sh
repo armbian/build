@@ -87,6 +87,12 @@ prepare_host() {
 	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
 	display_alert "Using local apt cache?" "USE_LOCAL_APT_DEB_CACHE: ${USE_LOCAL_APT_DEB_CACHE}" "debug"
 
+	display_alert "systemd-detect-virt" "systemd-detect-virt: $(systemd-detect-virt)" "debug"
+	# @TODO: on debian:bullseye, systemd-detect-virt returns 'bhyve' when running in a docker container on MacOS
+	# @TODO: on debian:bullseye, systemd-detect-virt returns 'none' when running in a docker container on Linux
+	# We simply cannot make it detect reliably, so why try at all? Just pass the ARMBIAN_IS_UNDER_DOCKER env and be done with it.
+	
+
 	if systemd-detect-virt -q -c; then
 		display_alert "Running in container" "$(systemd-detect-virt)" "info"
 		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
@@ -101,6 +107,8 @@ prepare_host() {
 			EXTERNAL_NEW=prebuilt
 		fi
 		SYNC_CLOCK=no
+	else
+		display_alert "NOT running in container" "$(systemd-detect-virt)" "info"
 	fi
 
 	# Skip verification if you are working offline
