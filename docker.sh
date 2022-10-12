@@ -30,9 +30,11 @@ source "${SRC}"/lib/single.sh
 
 function docker_cli_prepare() {
 	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:initial"
-	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}"
-	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:jammy"}"
-	declare -g DOCKER_ARMBIAN_TARGET_PATH="${DOCKER_ARMBIAN_TARGET_PATH:-"/armbian_host_mounted"}"
+	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}" # works Linux & Darwin
+	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"      # works Linux & Darwin
+	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}" # does NOT work under Darwin? loop problems.
+	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:jammy"}" # works Linux & Darwin
+	declare -g DOCKER_ARMBIAN_TARGET_PATH="${DOCKER_ARMBIAN_TARGET_PATH:-"/armbian"}"
 
 	# @TODO: this might be unified with prepare_basic_deps
 	declare -g -a BASIC_DEPS=("bash" "git" "psmisc" "uuid-runtime")
@@ -156,7 +158,7 @@ function docker_cli_prepare_launch() {
 		"--mount" "type=volume,source=armbian-cache-initrd,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/initrd"
 		"--mount" "type=volume,source=armbian-cache-sources,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/sources"
 		"--mount" "type=volume,source=armbian-cache-sources-linux-kernel,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/sources/linux-kernel"
-		
+
 		# Pass env var ARMBIAN_RUNNING_IN_CONTAINER to indicate we're running under Docker. This is also set in the Dockerfile; make sure.
 		"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"
 	)
