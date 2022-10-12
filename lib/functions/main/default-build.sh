@@ -160,6 +160,8 @@ function main_default_build_single() {
 
 	# build additional packages
 	if [[ $EXTERNAL_NEW == compile ]]; then
+		display_alert "Building external packages" "$EXTERNAL - WARNING: this has not been armbian-nextifed yet and will fail." "warn"
+		exit_with_error "buildpkg chroot_build_packages() nas not been ported to armbian-next yet, rpardini is a bum"
 		LOG_SECTION="chroot_build_packages" do_with_logging chroot_build_packages
 	fi
 
