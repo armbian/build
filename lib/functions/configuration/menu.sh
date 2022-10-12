@@ -1,3 +1,27 @@
+# Myy : Menu configuration for choosing desktop configurations
+show_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	# Myy : I don't know why there's a TTY_Y - 8...
+	#echo "Provided title : $provided_title"
+	#echo "Provided backtitle : $provided_backtitle"
+	#echo "Provided menuname : $provided_menuname"
+	#echo "Provided options : " "${@:4}"
+	#echo "TTY X: $TTY_X Y: $TTY_Y"
+	dialog --stdout --title "$provided_title" --backtitle "${provided_backtitle}" \
+		--menu "$provided_menuname" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
+# Myy : FIXME Factorize
+show_select_menu() {
+	provided_title=$1
+	provided_backtitle=$2
+	provided_menuname=$3
+	dialog --stdout --title "${provided_title}" --backtitle "${provided_backtitle}" \
+		--checklist "${provided_menuname}" $TTY_Y $TTY_X $((TTY_Y - 8)) "${@:4}"
+}
+
 function distro_menu() {
 	# create a select menu for choosing a distribution based EXPERT status
 
