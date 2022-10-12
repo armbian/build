@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# @TODO: env passing. people (err... me) pass ENV vars to ./compile.sh so they're active before cmdline options are parsed.
+# we'd need to re-pass like (sudo --preserve-env) envs to Docker, or find a solution. or just rewrite overwrites in armbian itself to run super-early & then again where it is now.
+
+# @TODO: integrate logs?
+
+#
+
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -e
@@ -35,6 +42,18 @@ function docker_cli_prepare() {
 	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}" # does NOT work under Darwin? loop problems.
 	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:jammy"}" # works Linux & Darwin
 	declare -g DOCKER_ARMBIAN_TARGET_PATH="${DOCKER_ARMBIAN_TARGET_PATH:-"/armbian"}"
+
+	# If we're NOT building the public, official image, then USE the public, official image as base.
+	# IMPORTANT: This has to match the naming scheme for tag the is used in the GitHub actions workflow.
+	if [[ "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" ]]; then
+		local wanted_os_tag="${DOCKER_ARMBIAN_BASE_IMAGE%%:*}"
+		local wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
+
+		# @TODO: this is rpardini's build. It's done in a different repo, so that's why the strange "armbian-release" name. It should be armbian/build:ubuntu-jammy-latest or something.
+		DOCKER_ARMBIAN_BASE_IMAGE="ghcr.io/rpardini/armbian-release:armbian-next-${wanted_os_tag}-${wanted_release_tag}-latest"
+
+		display_alert "Using official Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
+	fi
 
 	# @TODO: this might be unified with prepare_basic_deps
 	declare -g -a BASIC_DEPS=("bash" "git" "psmisc" "uuid-runtime")
@@ -124,16 +143,50 @@ function docker_cli_prepare() {
 }
 function docker_cli_build_dockerfile() {
 	display_alert "Armbian docker launcher" "docker" "info"
+	local do_force_pull="no"
+	local local_image_sha
+
+	mkdir -p "${SRC}"/cache/docker
+
+	# Find files under "${SRC}"/cache/docker that are older than 1 day, and delete them.
+	EXPIRED_MARKER="$(find "${SRC}"/cache/docker -type f -mtime +1 -exec echo -n {} \;)"
+	display_alert "Expired marker?" "${EXPIRED_MARKER}" "debug"
+
+	if [[ "x${EXPIRED_MARKER}x" != "xx" ]]; then
+		display_alert "More than" "1 day since last pull, pulling again" "info"
+		do_force_pull="yes"
+	fi
+
+	if [[ "${do_force_pull}" == "no" ]]; then
+		# Check if the base image is up to date.
+		local_image_sha="$(docker images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
+		display_alert "Checking if base image exists at all" "local_image_sha: '${local_image_sha}'" "debug"
+		if [[ -n "${local_image_sha}" ]]; then
+			display_alert "Armbian docker image" "already exists: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
+		else
+			display_alert "Armbian docker image" "does not exist: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
+			do_force_pull="yes"
+		fi
+	fi
+
+	if [[ "${do_force_pull:-yes}" == "yes" ]]; then
+		display_alert "Pulling" "${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
+		run_host_command_logged docker pull "${DOCKER_ARMBIAN_BASE_IMAGE}"
+		local_image_sha="$(docker images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
+		display_alert "New local image sha after pull" "local_image_sha: ${local_image_sha}" "debug"
+		# print current date and time in epoch format; touches mtime of file
+		echo "${DOCKER_ARMBIAN_BASE_IMAGE}|${local_image_sha}|$(date +%s)" >> "${SRC}"/cache/docker/last-pull
+	fi
 
 	display_alert "Building" "Dockerfile via '${DOCKER_BUILDX_OR_BUILD[*]}'" "info"
 
-	# @TODO: allow for `--pull`
 	BUILDKIT_COLORS="run=123,20,245:error=yellow:cancel=blue:warning=white" \
 		run_host_command_logged docker "${DOCKER_BUILDX_OR_BUILD[@]}" -t "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" -f "${SRC}"/Dockerfile "${SRC}"
 }
 
 function docker_cli_prepare_launch() {
-	# array for the generic armbian 'volumes' and their paths. Less specific first!
+	# array for the generic armbian 'volumes' and their paths. Less specific first.
+	# @TODO: actually use this for smth.
 	declare -A -g DOCKER_ARMBIAN_VOLUMES=(
 		[".tmp"]="linux=anonymous darwin=anonymous"                    # tmpfs, discard, anonymous; whatever you wanna call  it. It just needs to be 100% local to the container, and there's very little value in being able to look at it from the host.
 		["output"]="linux=bind darwin=bind"                            # catch-all output. specific subdirs are mounted below. it's a bind mount by default on both Linux and Darwin.
@@ -152,16 +205,12 @@ function docker_cli_prepare_launch() {
 
 	display_alert "Preparing" "common Docker arguments" "info"
 	declare -g -a DOCKER_ARGS=(
-		"--rm" # bad side effect - named volumes are considered not attached to anything and are removed on "docker volume prune"
+		"--rm" # side effect - named volumes are considered not attached to anything and are removed on "docker volume prune", since container was removed.
 
 		"--privileged"         # Running this container in privileged mode is a simple way to solve loop device access issues, required for USB FEL or when writing image directly to the block device, when CARD_DEVICE is defined
 		"--cap-add=SYS_ADMIN"  # add only required capabilities instead
 		"--cap-add=MKNOD"      # (though MKNOD should be already present)
 		"--cap-add=SYS_PTRACE" # CAP_SYS_PTRACE is required for systemd-detect-virt in some cases @TODO: rpardini: so lets eliminate it
-
-		"--security-opt=apparmor:unconfined" # mounting things inside the container on Ubuntu won't work without this https://github.com/moby/moby/issues/16429#issuecomment-217126586
-
-		#"--pull"               # pull the base image, don't use outdated local image
 
 		# "--mount" "type=bind,source=${SRC}/lib,target=${DOCKER_ARMBIAN_TARGET_PATH}/lib"
 
@@ -171,7 +220,7 @@ function docker_cli_prepare_launch() {
 		"--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/.tmp"
 
 		# named volumes for different parts of the cache. so easy for user to drop any of them when needed
-		# @TODO: refactor this.
+		# @TODO: refactor this; this is only ideal for Darwin right now. Use DOCKER_ARMBIAN_VOLUMES to generate this.
 		"--mount" "type=volume,source=armbian-cache-parent,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache"
 		"--mount" "type=volume,source=armbian-cache-gitballs,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/gitballs"
 		"--mount" "type=volume,source=armbian-cache-toolchain,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/toolchain"
@@ -195,10 +244,11 @@ function docker_cli_prepare_launch() {
 	# those actually _break_ Darwin with Docker Desktop, so we need to detect that.
 	if [[ "${DOCKER_ARMBIAN_HOST_OS_UNAME}" == "Linux" ]]; then
 		display_alert "Adding /dev/loop* hacks for" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
-		DOCKER_ARGS+=(--device-cgroup-rule='b 7:* rmw')   # allow loop devices (not required)
-		DOCKER_ARGS+=(--device-cgroup-rule='b 259:* rmw') # allow loop device partitions
-		DOCKER_ARGS+=(-v /dev:/tmp/dev:ro)                # this is an ugly hack, but it is required to get /dev/loopXpY minor number for mknod inside the container, and container itself still uses private /dev internally
-		for loop_device_host in /dev/loop*; do            # pass through loop devices from host to container; includes `loop-control`
+		DOCKER_ARGS+=("--security-opt=apparmor:unconfined") # mounting things inside the container on Ubuntu won't work without this https://github.com/moby/moby/issues/16429#issuecomment-217126586
+		DOCKER_ARGS+=(--device-cgroup-rule='b 7:* rmw')     # allow loop devices (not required)
+		DOCKER_ARGS+=(--device-cgroup-rule='b 259:* rmw')   # allow loop device partitions
+		DOCKER_ARGS+=(-v /dev:/tmp/dev:ro)                  # this is an ugly hack (CONTAINER_COMPAT=y), but it is required to get /dev/loopXpY minor number for mknod inside the container, and container itself still uses private /dev internally
+		for loop_device_host in /dev/loop*; do              # pass through loop devices from host to container; includes `loop-control`
 			DOCKER_ARGS+=("--device=${loop_device_host}")
 		done
 	else
