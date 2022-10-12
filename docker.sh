@@ -30,7 +30,8 @@ source "${SRC}"/lib/single.sh
 
 function docker_cli_prepare() {
 	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:initial"
-	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}"
+	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}"
+	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:jammy"}"
 	declare -g DOCKER_ARMBIAN_TARGET_PATH="${DOCKER_ARMBIAN_TARGET_PATH:-"/armbian_host_mounted"}"
 
 	# @TODO: this might be unified with prepare_basic_deps
@@ -102,9 +103,9 @@ function docker_cli_prepare() {
 	display_alert "Creating" "Dockerfile" "info"
 	cat <<- INITIAL_DOCKERFILE > "${SRC}"/Dockerfile
 		FROM ${DOCKER_ARMBIAN_BASE_IMAGE}
-		RUN DEBIAN_FRONTEND=noninteractive apt-get update
-		RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${BASIC_DEPS[@]} ${host_dependencies[@]}
+		RUN DEBIAN_FRONTEND=noninteractive apt-get -y update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${BASIC_DEPS[@]} ${host_dependencies[@]}
 		WORKDIR ${DOCKER_ARMBIAN_TARGET_PATH}
+		ENV ARMBIAN_RUNNING_IN_CONTAINER=yes
 		COPY lib ${DOCKER_ARMBIAN_TARGET_PATH}/lib
 		COPY config ${DOCKER_ARMBIAN_TARGET_PATH}/config
 		COPY extensions ${DOCKER_ARMBIAN_TARGET_PATH}/extensions
@@ -155,6 +156,9 @@ function docker_cli_prepare_launch() {
 		"--mount" "type=volume,source=armbian-cache-initrd,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/initrd"
 		"--mount" "type=volume,source=armbian-cache-sources,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/sources"
 		"--mount" "type=volume,source=armbian-cache-sources-linux-kernel,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/sources/linux-kernel"
+		
+		# Pass env var ARMBIAN_RUNNING_IN_CONTAINER to indicate we're running under Docker. This is also set in the Dockerfile; make sure.
+		"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"
 	)
 
 	# @TODO: auto-compute this list; just get the dirs and filter some out
