@@ -61,11 +61,13 @@ function build_rootfs_and_image() {
 	LOG_SECTION="install_distribution_specific_${RELEASE}" do_with_logging install_distribution_specific
 	LOG_SECTION="install_distribution_agnostic" do_with_logging install_distribution_agnostic
 
-	# install locally built packages #  @TODO: armbian-nextify this eventually
-	[[ $EXTERNAL_NEW == compile ]] && LOG_SECTION="packages_local" do_with_logging chroot_installpackages_local
+	# install locally built packages  #  @TODO: armbian-nextify this eventually
+	#[[ $EXTERNAL_NEW == compile ]] && LOG_SECTION="packages_local" do_with_logging chroot_installpackages_local
+	[[ $EXTERNAL_NEW == compile ]] && display_alert "Not running" "NOT armbian-next ported yet: chroot_installpackages_local" "warn"
 
-	# install from apt.armbian.com # @TODO: armbian-nextify this eventually
-	[[ $EXTERNAL_NEW == prebuilt ]] && LOG_SECTION="packages_prebuilt" do_with_logging chroot_installpackages "yes"
+	# install from apt.armbian.com  # @TODO: armbian-nextify this eventually
+	#[[ $EXTERNAL_NEW == prebuilt ]] && LOG_SECTION="packages_prebuilt" do_with_logging chroot_installpackages "yes"
+	[[ $EXTERNAL_NEW == prebuilt ]] && display_alert "Not running" "NOT armbian-next ported yet: chroot_installpackages 'yes'" "warn"
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
