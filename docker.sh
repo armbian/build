@@ -128,7 +128,8 @@ function docker_cli_build_dockerfile() {
 	display_alert "Building" "Dockerfile via '${DOCKER_BUILDX_OR_BUILD[*]}'" "info"
 
 	# @TODO: allow for `--pull`
-	run_host_command_logged docker "${DOCKER_BUILDX_OR_BUILD[@]}" -t "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" -f "${SRC}"/Dockerfile "${SRC}"
+	BUILDKIT_COLORS="run=123,20,245:error=yellow:cancel=blue:warning=white" \
+		run_host_command_logged docker "${DOCKER_BUILDX_OR_BUILD[@]}" -t "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" -f "${SRC}"/Dockerfile "${SRC}"
 }
 
 function docker_cli_prepare_launch() {
