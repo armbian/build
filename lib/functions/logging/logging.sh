@@ -10,6 +10,10 @@ function logging_init() {
 	if [[ "${CI}" == "true" ]]; then  # ... but that is too dark for Github Actions
 		export tool_color="${normal_color}"
 	fi
+	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then # if in container, add a cyan "whale emoji" to the left marker wrapped in dark gray brackets
+		local container_emoji="🐳"                                #  🐳 or 🐋
+		export left_marker="${gray_color}[${container_emoji}${normal_color}${left_marker}"
+	fi
 }
 
 function logging_error_show_log() {
