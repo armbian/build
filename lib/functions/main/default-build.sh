@@ -187,7 +187,9 @@ function main_default_build_single() {
 	runtime=$(((end - start) / 60))
 	display_alert "Runtime" "$runtime min" "info"
 
-	[ "$(systemd-detect-virt)" == 'docker' ] && BUILD_CONFIG='docker'
+	if armbian_is_running_in_container; then
+		BUILD_CONFIG='docker' # @TODO: this is not true, depends on how we end up launching this.
+	fi
 
 	# Make it easy to repeat build by displaying build options used. Prepare array.
 	local -a repeat_args=("./compile.sh" "${BUILD_CONFIG}" " BRANCH=${BRANCH}")

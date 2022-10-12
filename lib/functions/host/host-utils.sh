@@ -119,3 +119,62 @@ function local_apt_deb_cache_prepare() {
 
 	return 0
 }
+
+# usage: if armbian_is_host_running_systemd; then ... fi
+function armbian_is_host_running_systemd() {
+	# Detect if systemctl is available in the path
+	if [[ -n "$(command -v systemctl)" ]]; then
+		display_alert "systemctl binary found" "host has systemd installed" "debug"
+		# Detect if systemd is actively running
+		if systemctl | grep -q 'running'; then
+			display_alert "systemctl reports" "systemd is running" "debug"
+			return 0
+		else
+			display_alert "systemctl binary found" "but systemd is not running" "debug"
+			return 1
+		fi
+	else
+		display_alert "systemctl binary not found" "host does not have systemd installed" "debug"
+	fi
+
+	# Not running with systemd, return 1.
+	display_alert "Systemd not detected" "host is not running systemd" "debug"
+	return 1
+}
+
+# usage: if armbian_is_running_in_container; then ... fi
+function armbian_is_running_in_container() {
+	# First, check an environment variable. This is passed by the docker launchers, and also set in the Dockerfile, so should be authoritative.
+	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
+		display_alert "ARMBIAN_RUNNING_IN_CONTAINER is set to 'yes' in the environment" "so we're running in a container/Docker" "debug"
+		return 0
+	fi
+
+	# Second, check the hardcoded path `/.dockerenv` -- not all Docker images have this, but if they do, we're pretty sure it is under Docker.
+	if [[ -f "/.dockerenv" ]]; then
+		display_alert "File /.dockerenv exists" "so we're running in a container/Docker" "debug"
+		return 0
+	fi
+
+	# Third: if host is actively running systemd (not just installed), it's very _unlikely_ that we're running under Docker. bail.
+	if armbian_is_host_running_systemd; then
+		display_alert "Host is running systemd" "so we're not running in a container/Docker" "debug"
+		return 1
+	fi
+
+	# Fourth, if `systemd-detect-virt` is available in the path, and executing it returns "docker", we're pretty sure it is under Docker.
+	if [[ -n "$(command -v systemd-detect-virt)" ]]; then
+		local systemd_detect_virt_output
+		systemd_detect_virt_output="$(systemd-detect-virt)"
+		if [[ "${systemd_detect_virt_output}" == "docker" ]]; then
+			display_alert "systemd-detect-virt says we're running in a container/Docker" "so we're running in a container/Docker" "debug"
+			return 0
+		else
+			display_alert "systemd-detect-virt says we're running on '${systemd_detect_virt_output}'" "so we're not running in a container/Docker" "debug"
+		fi
+	fi
+
+	# End of the line. I've nothing else to check here. We're not running in a container/Docker.
+	display_alert "No evidence found that we're running in a container/Docker" "so we're not running in a container/Docker" "debug"
+	return 1
+}

@@ -83,24 +83,18 @@ prepare_host() {
 			exit_with_error "Windows subsystem for Linux is not a supported build environment"
 		fi
 	fi
-	
+
 	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
 	display_alert "Using local apt cache?" "USE_LOCAL_APT_DEB_CACHE: ${USE_LOCAL_APT_DEB_CACHE}" "debug"
 
-	display_alert "systemd-detect-virt" "systemd-detect-virt: $(systemd-detect-virt)" "debug"
-	# @TODO: on debian:bullseye, systemd-detect-virt returns 'bhyve' when running in a docker container on MacOS
-	# @TODO: on debian:bullseye, systemd-detect-virt returns 'none' when running in a docker container on Linux
-	# We simply cannot make it detect reliably, so why try at all? Just pass the ARMBIAN_IS_UNDER_DOCKER env and be done with it.
-	
-
-	if systemd-detect-virt -q -c; then
-		display_alert "Running in container" "$(systemd-detect-virt)" "info"
+	if armbian_is_running_in_container; then
+		display_alert "Running in container" "Adding provisions for container building" "info"
+		declare -g CONTAINER_COMPAT=yes # this controls mknod usage for loop devices.
 		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
 		if [[ $NO_APT_CACHER != no ]]; then
 			display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
 			NO_APT_CACHER=yes
 		fi
-		CONTAINER_COMPAT=yes
 		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
 		if [[ $EXTERNAL_NEW == compile ]]; then
 			display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
@@ -108,7 +102,7 @@ prepare_host() {
 		fi
 		SYNC_CLOCK=no
 	else
-		display_alert "NOT running in container" "$(systemd-detect-virt)" "info"
+		display_alert "NOT running in container" "No special provisions for container building" "debug"
 	fi
 
 	# Skip verification if you are working offline
@@ -126,9 +120,9 @@ prepare_host() {
 
 		# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
 		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
-		
+
 		# @TODO: rpardini: wtf?
-		if [[ -n $SUDO_USER ]]; then 
+		if [[ -n $SUDO_USER ]]; then
 			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
 			# SGID bit on cache/sources breaks kernel dpkg packaging
 			chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
@@ -136,7 +130,7 @@ prepare_host() {
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
 			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
 		fi
-		
+
 		# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 		mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
@@ -193,11 +187,14 @@ function early_prepare_host_dependencies() {
 		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
 		ntpdate patchutils
 		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
-		systemd-container u-boot-tools udev uuid-dev whiptail
+		u-boot-tools udev uuid-dev whiptail
 		zlib1g-dev busybox fdisk
 
 		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
 		python2 python2-dev
+
+		# systemd-container brings in systemd-nspawn, which is used by the buildpkg functionality
+		# systemd-container # @TODO: bring this back eventually. I don't think trying to use those inside a container is a good idea.
 
 		# non-mess below?
 		file ccze colorized-logs tree expect            # logging utilities; expect is needed for 'unbuffer' command

@@ -17,7 +17,6 @@ prepare_host_basic() {
 		"gawk:gawk"
 		"linux-version:linux-base"
 		"locale-gen:locales"
-		"systemd-detect-virt:systemd" # @TODO: rpardini: we really docker-detect-virt that much?
 		"git:git"
 	)
 

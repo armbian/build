@@ -1,6 +1,7 @@
 # Management of apt-cacher-ng aka acng
 
 function acng_configure_and_restart_acng() {
+	if ! armbian_is_host_running_systemd; then return 0; fi                   # do nothing if host is not running systemd
 	[[ $NO_APT_CACHER == yes ]] && return 0                                   # don't if told not to. NO_something=yes is very confusing, but kept for historical reasons
 	[[ "${APT_PROXY_ADDR:-localhost:3142}" != "localhost:3142" ]] && return 0 # also not if acng not local to builder machine
 

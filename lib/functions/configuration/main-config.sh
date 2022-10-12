@@ -465,7 +465,6 @@ function write_config_summary_output_file() {
 	debug_dpkg_arch="$(dpkg --print-architecture)"
 	debug_uname="$(uname -a)"
 	# We might not have systemd-detect-virt, specially inside docker. Docker images have no systemd...
-	# @TODO: rpardini: refactor this into util host function; it's used in a few places.
 	debug_virt="unknown-nosystemd"
 	if [[ -n "$(command -v systemd-detect-virt)" ]]; then
 		debug_virt="$(systemd-detect-virt || true)"
