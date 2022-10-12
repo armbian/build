@@ -133,6 +133,23 @@ function docker_cli_build_dockerfile() {
 }
 
 function docker_cli_prepare_launch() {
+	# array for the generic armbian 'volumes' and their paths. Less specific first!
+	declare -A -g DOCKER_ARMBIAN_VOLUMES=(
+		[".tmp"]="linux=anonymous darwin=anonymous"                    # tmpfs, discard, anonymous; whatever you wanna call  it. It just needs to be 100% local to the container, and there's very little value in being able to look at it from the host.
+		["output"]="linux=bind darwin=bind"                            # catch-all output. specific subdirs are mounted below. it's a bind mount by default on both Linux and Darwin.
+		["output/images"]="linux=bind darwin=bind"                     # 99% of users want this as the result of their build, no matter if it's slow or not. bind on both.
+		["output/debs"]="linux=bind darwin=namedvolume"                # generated output .deb files. not everyone is interested in this: most users just want images. Linux has fast binds, so bound by default. Darwin has slow binds, so it's a volume by default.
+		["output/logs"]="linux=bind darwin=bind"                       # log files produced. 100% of users want this. Bind on both Linux and Darwin. Is used to integrate launcher and actual-build logs, so must exist and work otherwise confusion ensues.
+		["cache"]="linux=bind darwin=namedvolume"                      # catch-all cache, could be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/gitballs"]="linux=bind darwin=namedvolume"             # tarballs of git repos, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/toolchain"]="linux=bind darwin=namedvolume"            # toolchain cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/aptcache"]="linux=bind darwin=namedvolume"             # .deb apt cache, replaces apt-cacher-ng. Can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/rootfs"]="linux=bind darwin=namedvolume"               # rootfs .tar.zst cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/initrd"]="linux=bind darwin=namedvolume"               # initrd.img cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/sources"]="linux=bind darwin=namedvolume"              # operating directory. many things are cloned in here, and some are even built inside. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/sources/linux-kernel"]="linux=bind darwin=namedvolume" # working tree for kernel builds. huge. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
+	)
+
 	display_alert "Preparing" "common Docker arguments" "info"
 	declare -g -a DOCKER_ARGS=(
 		"--rm" # bad side effect - named volumes are considered not attached to anything and are removed on "docker volume prune"
@@ -149,7 +166,8 @@ function docker_cli_prepare_launch() {
 		# "--mount" "type=bind,source=${SRC}/lib,target=${DOCKER_ARMBIAN_TARGET_PATH}/lib"
 
 		# type=volume, without source=, is an anonymous volume -- will be auto cleaned up together with the container;
-		# this could also be a type=tmpfs if you had enough ram - but armbian already does this for you.
+		# this could also be a type=tmpfs if you had enough ram - but armbian already does tmpfs for you if you
+		#                                                         have enough RAM (inside the container) so don't bother.
 		"--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/.tmp"
 
 		# named volumes for different parts of the cache. so easy for user to drop any of them when needed
