@@ -119,10 +119,11 @@ create_image_from_sdcard_rootfs() {
 		It is the last possible chance to modify `$CARD_DEVICE`.
 	POST_BUILD_IMAGE
 
-	display_alert "Moving artefacts from temporary directory to its final destination" "${version}" "debug"
+	display_alert "Moving artefacts from temporary directory to its final destination" "${version}" "info"
 	[[ -n $compression_type ]] && run_host_command_logged rm -v "${DESTIMG}/${version}.img"
 	run_host_command_logged rsync -av --no-owner --no-group --remove-source-files "${DESTIMG}/${version}"* "${FINALDEST}"
 	run_host_command_logged rm -rfv --one-file-system "${DESTIMG}"
+	reset_uid_owner "${FINALDEST}" # Fix owner of files in the final destination
 
 	# write image to SD card
 	write_image_to_device "${FINALDEST}/${version}.img" "${CARD_DEVICE}"

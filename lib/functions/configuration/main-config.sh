@@ -24,8 +24,10 @@ function do_main_configuration() {
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	
-	export SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}"   # don't use any external toolchains, by default.
+	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                              # en_US.UTF-8 is default locale for target
+	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
+
+	export SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
 
 	# Timezone
 	if [[ -f /etc/timezone ]]; then # Timezone for target is taken from host, if it exists.
@@ -406,6 +408,7 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	PACKAGE_MAIN_LIST="$(cleanup_list PACKAGE_LIST)"
 
 	[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
+	# @TODO: what is the use of changing PACKAGE_LIST after PACKAGE_MAIN_LIST was set?
 	PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
 
 	# remove any packages defined in PACKAGE_LIST_RM in lib.config

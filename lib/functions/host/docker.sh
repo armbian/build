@@ -1,41 +1,85 @@
-#!/usr/bin/env bash
+#############################################################################################################
+# @TODO: called by no-one, yet.
+function check_and_install_docker_daemon() {
+	# @TODO: sincerely, not worth keeping this. Send user to Docker install docs. `adduser $USER docker` is important on Linux.
+	# Install Docker if not there but wanted. We cover only Debian based distro install. On other distros, manual Docker install is needed
+	if [[ "${1}" == docker && -f /etc/debian_version && -z "$(command -v docker)" ]]; then
+		DOCKER_BINARY="docker-ce"
 
-# @TODO: env passing. people (err... me) pass ENV vars to ./compile.sh so they're active before cmdline options are parsed.
-# we'd need to re-pass like (sudo --preserve-env) envs to Docker, or find a solution. or just rewrite overwrites in armbian itself to run super-early & then again where it is now.
+		# add exception for Ubuntu Focal until Docker provides dedicated binary
+		codename=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
+		codeid=$(cat /etc/os-release | grep ^NAME | cut -d"=" -f2 | awk '{print tolower($0)}' | tr -d '"' | awk '{print $1}')
+		[[ "${codename}" == "debbie" ]] && codename="buster" && codeid="debian"
+		[[ "${codename}" == "ulyana" || "${codename}" == "jammy" ]] && codename="focal" && codeid="ubuntu"
 
-# @TODO: integrate logs?
+		# different binaries for some. TBD. Need to check for all others
+		[[ "${codename}" =~ focal|hirsute ]] && DOCKER_BINARY="docker containerd docker.io"
 
-#
+		display_alert "Docker not installed." "Installing" "Info"
+		sudo bash -c "echo \"deb [arch=$(dpkg --print-architecture)] https://download.docker.com/linux/${codeid} ${codename} stable\" > /etc/apt/sources.list.d/docker.list"
 
-#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
-#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
-set -e
-set -o errtrace # trace ERR through - enabled
-set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-# Important, go read http://mywiki.wooledge.org/BashFAQ/105 NOW!
+		sudo bash -c "curl -fsSL \"https://download.docker.com/linux/${codeid}/gpg\" | apt-key add -qq - > /dev/null 2>&1 "
+		export DEBIAN_FRONTEND=noninteractive
+		sudo apt-get update
+		sudo apt-get install -y -qq --no-install-recommends ${DOCKER_BINARY}
+		display_alert "Add yourself to docker group to avoid root privileges" "" "wrn"
+		"${SRC}/compile.sh" "$@"
+		exit $?
+	fi
 
-SRC="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
-cd "${SRC}" || exit
+}
+# Usage: if is_docker_ready_to_go; then ...; fi
+function is_docker_ready_to_go() {
+	# For either Linux or Darwin.
+	# Gotta tick all these boxes:
+	# 0) NOT ALREADY UNDER DOCKER.
+	# 1) can find the `docker` command in the path, via command -v
+	# 2) can run `docker info` without errors
+	if [[ "$ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
+		display_alert "Can't use Docker" "Actually ALREADY UNDER DOCKER!" "debug"
+		return 1
+	fi
+	if [[ ! -n "$(command -v docker)" ]]; then
+		display_alert "Can't use Docker" "docker command not found" "debug"
+		return 1
+	fi
+	if ! docker info > /dev/null 2>&1; then
+		display_alert "Can't use Docker" "docker info failed" "debug"
+		return 1
+	fi
 
-# check for whitespace in ${SRC} and exit for safety reasons
-grep -q "[[:space:]]" <<< "${SRC}" && {
-	echo "\"${SRC}\" contains whitespace. Not supported. Aborting." >&2
-	exit 1
+	# If we get here, we're good to go.
+	return 0
 }
 
-# Sanity check.
-if [[ ! -f "${SRC}"/lib/single.sh ]]; then
-	echo "Error: missing build directory structure"
-	echo "Please clone the full repository https://github.com/armbian/build/"
-	exit 255
-fi
+# Called by the cli-entrypoint. At this moment ${1} is already shifted; we know it via ${DOCKER_SUBCMD} now.
+function cli_handle_docker() {
+	display_alert "Handling" "docker" "info"
+	exit 0
 
-# shellcheck source=lib/single.sh
-source "${SRC}"/lib/single.sh
+	# Purge Armbian Docker images
+	if [[ "${1}" == dockerpurge && -f /etc/debian_version ]]; then
+		display_alert "Purging Armbian Docker containers" "" "wrn"
+		docker container ls -a | grep armbian | awk '{print $1}' | xargs docker container rm &> /dev/null
+		docker image ls | grep armbian | awk '{print $3}' | xargs docker image rm &> /dev/null
+		# removes "dockerpurge" from $1, thus $2 becomes $1
+		shift
+		set -- "docker" "$@"
+	fi
 
-#############################################################################################################
+	# Docker shell
+	if [[ "${1}" == docker-shell ]]; then
+		# this swaps the value of $1 with 'docker', and life continues
+		shift
+		SHELL_ONLY=yes
+		set -- "docker" "$@"
+	fi
+
+}
 
 function docker_cli_prepare() {
+	# @TODO: Make sure we can access docker, on Linux; gotta be part of 'docker' group: grep -q "$(whoami)" <(getent group docker)
+
 	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:initial"
 	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}" # works Linux & Darwin
 	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"      # works Linux & Darwin
@@ -52,7 +96,7 @@ function docker_cli_prepare() {
 		# @TODO: this is rpardini's build. It's done in a different repo, so that's why the strange "armbian-release" name. It should be armbian/build:ubuntu-jammy-latest or something.
 		DOCKER_ARMBIAN_BASE_IMAGE="ghcr.io/rpardini/armbian-release:armbian-next-${wanted_os_tag}-${wanted_release_tag}-latest"
 
-		display_alert "Using official Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
+		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
 	# @TODO: this might be unified with prepare_basic_deps
@@ -63,32 +107,32 @@ function docker_cli_prepare() {
 
 	declare -a -g host_dependencies=()
 	REQUIREMENTS_DEFS_ONLY=yes early_prepare_host_dependencies
-	display_alert "Pre-game dependencies" "${host_dependencies[*]}" "info"
+	display_alert "Pre-game dependencies" "${host_dependencies[*]}" "debug"
 
 	#############################################################################################################
 	# Detect some docker info.
 
 	DOCKER_SERVER_VERSION="$(docker info | grep -i -e "Server Version\:" | cut -d ":" -f 2 | xargs echo -n)"
-	display_alert "Docker Server version" "${DOCKER_SERVER_VERSION}" "info"
+	display_alert "Docker Server version" "${DOCKER_SERVER_VERSION}" "debug"
 
 	DOCKER_SERVER_KERNEL_VERSION="$(docker info | grep -i -e "Kernel Version\:" | cut -d ":" -f 2 | xargs echo -n)"
-	display_alert "Docker Server Kernel version" "${DOCKER_SERVER_KERNEL_VERSION}" "info"
-
-	DOCKER_BUILDX_VERSION="$(docker info | grep -i -e "buildx\:" | cut -d ":" -f 2 | xargs echo -n)"
-	display_alert "Docker Buildx version" "${DOCKER_BUILDX_VERSION}" "info"
+	display_alert "Docker Server Kernel version" "${DOCKER_SERVER_KERNEL_VERSION}" "debug"
 
 	DOCKER_SERVER_TOTAL_RAM="$(docker info | grep -i -e "Total memory\:" | cut -d ":" -f 2 | xargs echo -n)"
-	display_alert "Docker Server Total RAM" "${DOCKER_SERVER_TOTAL_RAM}" "info"
+	display_alert "Docker Server Total RAM" "${DOCKER_SERVER_TOTAL_RAM}" "debug"
 
 	DOCKER_SERVER_CPUS="$(docker info | grep -i -e "CPUs\:" | cut -d ":" -f 2 | xargs echo -n)"
-	display_alert "Docker Server CPUs" "${DOCKER_SERVER_CPUS}" "info"
+	display_alert "Docker Server CPUs" "${DOCKER_SERVER_CPUS}" "debug"
 
 	DOCKER_SERVER_OS="$(docker info | grep -i -e "Operating System\:" | cut -d ":" -f 2 | xargs echo -n)"
-	display_alert "Docker Server OS" "${DOCKER_SERVER_OS}" "info"
+	display_alert "Docker Server OS" "${DOCKER_SERVER_OS}" "debug"
 
 	declare -g DOCKER_ARMBIAN_HOST_OS_UNAME
 	DOCKER_ARMBIAN_HOST_OS_UNAME="$(uname)"
-	display_alert "Local uname" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "info"
+	display_alert "Local uname" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
+
+	DOCKER_BUILDX_VERSION="$(docker info | grep -i -e "buildx\:" | cut -d ":" -f 2 | xargs echo -n)"
+	display_alert "Docker Buildx version" "${DOCKER_BUILDX_VERSION}" "debug"
 
 	declare -g DOCKER_HAS_BUILDX=no
 	declare -g -a DOCKER_BUILDX_OR_BUILD=("build")
@@ -96,9 +140,12 @@ function docker_cli_prepare() {
 		DOCKER_HAS_BUILDX=yes
 		DOCKER_BUILDX_OR_BUILD=("buildx" "build" "--progress=plain")
 	fi
-	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "info"
+	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
-	# @TODO: grab git info, add as labels et al to Docker...
+	# Info summary message. Thank you, GitHub Co-pilot!
+	display_alert "Docker info" "Docker ${DOCKER_SERVER_VERSION} Kernel:${DOCKER_SERVER_KERNEL_VERSION} RAM:${DOCKER_SERVER_TOTAL_RAM} CPUs:${DOCKER_SERVER_CPUS} OS:'${DOCKER_SERVER_OS}' under '${DOCKER_ARMBIAN_HOST_OS_UNAME}' - buildx ${DOCKER_HAS_BUILDX}" "sysinfo"
+
+	# @TODO: grab git info, add as labels et al to Docker... (already done in GHA workflow)
 
 	display_alert "Creating" ".dockerignore" "info"
 	cat <<- DOCKERIGNORE > "${SRC}"/.dockerignore
@@ -125,24 +172,19 @@ function docker_cli_prepare() {
 	cat <<- INITIAL_DOCKERFILE > "${SRC}"/Dockerfile
 		FROM ${DOCKER_ARMBIAN_BASE_IMAGE}
 		# PLEASE DO NOT MODIFY THIS FILE. IT IS AUTOGENERATED AND WILL BE OVERWRITTEN. Please don't build this Dockerfile yourself either. Use Armbian helpers instead.
-		RUN echo "--> CACHE MISS IN DOCKERFILE: apt packages." >&2 && \
+		RUN echo "--> CACHE MISS IN DOCKERFILE: apt packages." && \
 			DEBIAN_FRONTEND=noninteractive apt-get -y update && \
 			DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${BASIC_DEPS[@]} ${host_dependencies[@]}
 		WORKDIR ${DOCKER_ARMBIAN_TARGET_PATH}
 		ENV ARMBIAN_RUNNING_IN_CONTAINER=yes
 		ADD . ${DOCKER_ARMBIAN_TARGET_PATH}/
-		RUN echo "--> CACHE MISS IN DOCKERFILE: build system script files changed." >&2 && \
-			ls -laRht ${DOCKER_ARMBIAN_TARGET_PATH}
-		RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." >&2 && \
-			uname -a && cat /etc/os-release && \
-			free -h && df -h && lscpu && \
-			/bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" REQUIREMENTS_DEFS_ONLY=yes SHOW_DEBUG=yes SHOW_COMMAND=yes SHOW_LOG=yes && \
-			rm -rfv "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache" 
+		RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." && \
+			/bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \
+			rm -rf "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache" 
 	INITIAL_DOCKERFILE
 
 }
 function docker_cli_build_dockerfile() {
-	display_alert "Armbian docker launcher" "docker" "info"
 	local do_force_pull="no"
 	local local_image_sha
 
@@ -203,7 +245,7 @@ function docker_cli_prepare_launch() {
 		["cache/sources/linux-kernel"]="linux=bind darwin=namedvolume" # working tree for kernel builds. huge. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 	)
 
-	display_alert "Preparing" "common Docker arguments" "info"
+	display_alert "Preparing" "common Docker arguments" "debug"
 	declare -g -a DOCKER_ARGS=(
 		"--rm" # side effect - named volumes are considered not attached to anything and are removed on "docker volume prune", since container was removed.
 
@@ -258,40 +300,65 @@ function docker_cli_prepare_launch() {
 }
 
 function docker_cli_launch() {
-	display_alert "Showing Docker characteristics" "Docker args: '${DOCKER_ARGS[*]}'" "info"
+	display_alert "Showing Docker cmdline" "Docker args: '${DOCKER_ARGS[*]}'" "debug"
 
-	display_alert "Running" "real build: ${*}" "info"
-	docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"
+	display_alert "Relaunching in Docker" "${*}" "debug"
+	display_alert "Relaunching in Docker" "here comes the 🐳" "info"
+	local -i docker_build_result=1
+	if docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
+		display_alert "Docker Build finished" "successfully" "info"
+		docker_build_result=0
+	else
+		display_alert "Docker Build failed" "with errors" "err"
+	fi
 
-	display_alert "Done!"
+	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
+	local logs_path="${DEST}/logs" log_file
+	log_file="$(find "${logs_path}" -type f -name "*${ARMBIAN_BUILD_UUID}*.*" -print -quit)"
+	display_alert "Build log done inside Docker" "${log_file}" "info"
 
-	display_alert "Showing docker volumes usage" "debug"
-	docker system df -v | grep -e "^armbian-cache" | grep -v "\b0B" | tr -s " " | cut -d " " -f 1,3
+	# Show and help user understand space usage in Docker volumes.
+	# This is done in a loop; `docker df` fails sometimes (for no good reason).
+	docker_cli_show_armbian_volumes_disk_usage
+
+	return ${docker_build_result}
 }
 
-# 'main'
-export SHOW_LOG=${SHOW_LOG:-yes}
-export SHOW_DEBUG=${SHOW_DEBUG:-yes}
-export SHOW_COMMAND=${SHOW_COMMAND:-yes}
-export SHOW_TRAPS=${SHOW_TRAPS:-yes}
-# initialize logging variables.
-logging_init
+function docker_cli_show_armbian_volumes_disk_usage() {
+	display_alert "Gathering docker volumes disk usage" "docker system df, wait..." "debug"
+	sleep_seconds="1" silent_retry="yes" do_with_retries 5 docker_cli_show_armbian_volumes_disk_usage_internal || {
+		display_alert "Could not get Docker volumes disk usage" "docker failed to report disk usage" "warn"
+		return 0 # not really a problem, just move on.
+	}
+	local docker_volume_usage
+	docker_volume_usage="$(docker system df -v | grep -e "^armbian-cache" | grep -v "\b0B" | tr -s " " | cut -d " " -f 1,3 | tr " " ":" | xargs echo || true)"
+	display_alert "Docker Armbian volume usage" "${docker_volume_usage}" "info"
+}
 
-# initialize the traps
-traps_init
+function docker_cli_show_armbian_volumes_disk_usage_internal() {
+	# This fails sometimes, for no reason. Test it.
+	if docker system df -v &> /dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
 
-# create a temp dir where we'll do our business; follow the Armbian convention so we can re-use their functions
-export DEST="${SRC}/output/docker-stuff" # required by do_with_logging, not really used
-export LOGDIR="${DEST}"
-mkdir -p "${DEST}" "${LOGDIR}"
-
-LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare "$@"
-
-if [[ "${DOCKERFILE_GENERATE_ONLY}" == "yes" ]]; then
-	display_alert "Dockerfile generated" "exiting" "info"
-	exit 0
-fi
-
-LOG_SECTION="docker_cli_build_dockerfile" do_with_logging docker_cli_build_dockerfile "$@"
-LOG_SECTION="docker_cli_prepare_launch" do_with_logging docker_cli_prepare_launch "$@"
-docker_cli_launch "$@"
+# Leftovers from original Dockerfile before rewrite
+## OLD DOCKERFILE ## RUN locale-gen en_US.UTF-8
+## OLD DOCKERFILE ##
+## OLD DOCKERFILE ## # Static port for NFSv3 server used for USB FEL boot
+## OLD DOCKERFILE ## RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/default/nfs-common \
+## OLD DOCKERFILE ##     && sed -i 's/\(^RPCMOUNTDOPTS=\).*/\1"--port 32767"/' /etc/default/nfs-kernel-server
+## OLD DOCKERFILE ##
+## OLD DOCKERFILE ## ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
+## OLD DOCKERFILE ## WORKDIR /root/armbian
+## OLD DOCKERFILE ## LABEL org.opencontainers.image.source="https://github.com/armbian/build/blob/master/config/templates/Dockerfile" \
+## OLD DOCKERFILE ##     org.opencontainers.image.url="https://github.com/armbian/build/pkgs/container/build"  \
+## OLD DOCKERFILE ##     org.opencontainers.image.vendor="armbian" \
+## OLD DOCKERFILE ##     org.opencontainers.image.title="Armbian build framework" \
+## OLD DOCKERFILE ##     org.opencontainers.image.description="Custom Linux build framework" \
+## OLD DOCKERFILE ##     org.opencontainers.image.documentation="https://docs.armbian.com" \
+## OLD DOCKERFILE ##     org.opencontainers.image.authors="Igor Pecovnik" \
+## OLD DOCKERFILE ##     org.opencontainers.image.licenses="GPL-2.0"
+## OLD DOCKERFILE ## ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]

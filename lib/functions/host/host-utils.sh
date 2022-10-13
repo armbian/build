@@ -178,3 +178,33 @@ function armbian_is_running_in_container() {
 	display_alert "No evidence found that we're running in a container/Docker" "so we're not running in a container/Docker" "debug"
 	return 1
 }
+
+# This does `mkdir -p` on the parameters, and also sets it to be owned by the correct UID.
+# Call: armbian_mkdir_p_and_chown_to_user "dir1" "dir2" "dir3/dir4"
+function mkdir_recursive_and_set_uid_owner() {
+	# loop over args...
+	for dir in "$@"; do
+		mkdir -p "${dir}"
+		reset_uid_owner "${dir}"
+	done
+}
+
+# Call: reset_uid_owner "one/file" "some/directory" "another/file"
+function reset_uid_owner() {
+	if [[ "x${SET_OWNER_TO_UID}x" == "xx" ]]; then
+		return 0 # Nothing to do.
+	fi
+	# Loop over args..
+	local arg
+	for arg in "$@"; do
+		display_alert "reset_uid_owner: '${arg}' will be owner id '${SET_OWNER_TO_UID}'" "reset_uid_owner" "debug"
+		if [[ -d "${arg}" ]]; then
+			chown -R "${SET_OWNER_TO_UID}" "${arg}"
+		elif [[ -f "${arg}" ]]; then
+			chown "${SET_OWNER_TO_UID}" "${arg}"
+		else
+			display_alert "reset_uid_owner: '${arg}' is not a file or directory" "skipping" "debug"
+			return 1
+		fi
+	done
+}

@@ -25,6 +25,11 @@ prepare_host_basic() {
 	done
 
 	if [[ -n $install_pack ]]; then
+		# This obviously only works on Debian or Ubuntu.
+		if [[ ! -f /etc/debian_version ]]; then
+			exit_with_error "Missing packages -- can't install basic packages on non Debian/Ubuntu"
+		fi
+
 		local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
 		display_alert "Installing basic packages" "${sudo_prefix}: ${install_pack}"
 		run_host_command_logged "${sudo_prefix}" apt-get -qq update

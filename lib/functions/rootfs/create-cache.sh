@@ -153,12 +153,14 @@ function create_new_rootfs_cache() {
 	chmod 755 "$SDCARD/sbin/initctl"
 	chmod 755 "$SDCARD/sbin/start-stop-daemon"
 
-	# stage: configure language and locales
-	display_alert "Configuring locales" "$DEST_LANG" "info"
+	# stage: configure language and locales.
+	# this _requires_ DEST_LANG, otherwise, bomb: if it's not here _all_ locales will be generated which is very slow.
+	display_alert "Configuring locales" "DEST_LANG: ${DEST_LANG}" "info"
+	[[ "x${DEST_LANG}x" == "xx" ]] && exit_with_error "Bug: got to config locales without DEST_LANG set"
 
-	[[ -f $SDCARD/etc/locale.gen ]] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
-	chroot_sdcard LC_ALL=C LANG=C locale-gen "$DEST_LANG"
-	chroot_sdcard LC_ALL=C LANG=C update-locale "LANG=$DEST_LANG" "LANGUAGE=$DEST_LANG" "LC_MESSAGES=$DEST_LANG"
+	[[ -f $SDCARD/etc/locale.gen ]] && sed -i "s/^# ${DEST_LANG}/${DEST_LANG}/" $SDCARD/etc/locale.gen
+	chroot_sdcard LC_ALL=C LANG=C locale-gen "${DEST_LANG}"
+	chroot_sdcard LC_ALL=C LANG=C update-locale "LANG=${DEST_LANG}" "LANGUAGE=${DEST_LANG}" "LC_MESSAGES=${DEST_LANG}"
 
 	if [[ -f $SDCARD/etc/default/console-setup ]]; then
 		# @TODO: Should be configurable.
@@ -181,7 +183,7 @@ function create_new_rootfs_cache() {
 	# Add external / PPAs to apt sources; decides internally based on minimal/cli/desktop dir/file structure
 	add_apt_sources
 
-	# uset asset logging for this; actually log contents of the files too
+	# @TODO: use asset logging for this; actually log contents of the files too
 	run_host_command_logged ls -l "${SDCARD}/usr/share/keyrings"
 	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
 	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"

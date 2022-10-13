@@ -123,6 +123,7 @@ prepare_host() {
 
 		# @TODO: rpardini: wtf?
 		if [[ -n $SUDO_USER ]]; then
+			display_alert "ARMBIAN-NEXT UNHANDLED! SUDO_USER variable" "ARMBIAN-NEXT UNHANDLED! SUDO_USER: $SUDO_USER" "wrn"
 			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
 			# SGID bit on cache/sources breaks kernel dpkg packaging
 			chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
@@ -141,7 +142,7 @@ prepare_host() {
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
 	if [[ $KERNEL_ONLY != yes ]]; then
-		modprobe -q binfmt_misc || display_alert "Failed to modprobe" "binfmt_misc" "warn"
+		modprobe -q binfmt_misc || display_alert "Failed to modprobe" "binfmt_misc" "warn" # @TODO avoid this if possible, is it already loaded, or built-in? then ignore
 		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
 		if [[ "$(arch)" != "aarch64" ]]; then
 			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
@@ -161,6 +162,10 @@ prepare_host() {
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
 	fi
 
+	# Reset owner of userpatches if so required
+	reset_uid_owner "${USERPATCHES_PATH}" # Fix owner of files in the final destination
+
+	# @TODO: check every possible mount point. Not only one. People might have different mounts / Docker volumes...
 	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
 	local free_space_bytes
 	free_space_bytes=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes

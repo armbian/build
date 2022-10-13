@@ -165,6 +165,10 @@ function main_default_build_single() {
 		LOG_SECTION="chroot_build_packages" do_with_logging chroot_build_packages
 	fi
 
+	# Reset owner of DEB_STORAGE, if needed. Might be a lot of packages there, but such is life.
+	# @TODO: might be needed also during 'cleanup': if some package fails, the previous package might be left owned by root.
+	reset_uid_owner "${DEB_STORAGE}"
+
 	# end of kernel-only, so display what was built.
 	if [[ $KERNEL_ONLY != yes ]]; then
 		display_alert "Kernel build done" "@host" "target-reached"

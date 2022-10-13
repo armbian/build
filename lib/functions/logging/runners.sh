@@ -244,12 +244,20 @@ run_on_sdcard() {
 function do_with_retries() {
 	local retries="${1}"
 	shift
+
+	local sleep_seconds="${sleep_seconds:-5}"
+	local silent_retry="${silent_retry:-no}"
+
 	local counter=0
 	while [[ $counter -lt $retries ]]; do
 		counter=$((counter + 1))
 		"$@" && return 0 # execute and return 0 if success; if not, let it loop;
-		display_alert "Command failed, retrying in 5s" "$*" "warn"
-		sleep 5
+		if [[ "${silent_retry}" == "yes" ]]; then
+			: # do nothing
+		else
+			display_alert "Command failed, retrying in ${sleep_seconds}s" "$*" "warn"
+		fi
+		sleep ${sleep_seconds}
 	done
 	display_alert "Command failed ${counter} times, giving up" "$*" "warn"
 	return 1
