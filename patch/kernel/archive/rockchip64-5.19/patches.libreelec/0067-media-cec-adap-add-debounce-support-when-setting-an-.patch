@@ -1,0 +1,157 @@
+From 2798f303211e6c1172a996dfad9cd2941d93ffd4 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Tue, 1 Oct 2019 20:52:42 +0000
+Subject: [PATCH 67/92] media: cec-adap: add debounce support when setting an
+ invalid phys addr
+
+When EDID is refreshed, HDMI cable is unplugged/replugged or
+an AVR is power cycled the CEC phys addr gets invalidated.
+
+This can cause some disruption of CEC communication when
+adapter is being reconfigured.
+
+Add a debounce_ms module option that can be used to debounce setting
+an invalid phys addr. Default is not to use debouncing.
+
+Using a configured debounce_ms of e.g. 5000 ms, cec reconfiguring
+could be avoided when AVR was power cycled on my setup.
+
+Power off AVR (default cec.debounce_ms=0):
+[  101.536866] cec-dw_hdmi: new physical address f.f.f.f
+[  102.495686] cec-dw_hdmi: new physical address 2.1.0.0
+[  102.495913] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
+[  102.628574] cec-dw_hdmi: config: la 1 pa 2.1.0.0
+[  105.130115] cec-dw_hdmi: new physical address f.f.f.f
+[  106.979705] cec-dw_hdmi: new physical address 2.1.0.0
+[  106.979872] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
+[  107.112399] cec-dw_hdmi: config: la 1 pa 2.1.0.0
+[  108.979408] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 5
+[  109.205386] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 11
+
+Power on AVR (default cec.debounce_ms=0):
+[  158.398447] cec-dw_hdmi: new physical address f.f.f.f
+[  161.977714] cec-dw_hdmi: new physical address 2.1.0.0
+[  161.978766] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
+[  162.115624] cec-dw_hdmi: config: la 1 pa 2.1.0.0
+[  162.402750] cec-dw_hdmi: new physical address f.f.f.f
+[  162.403389] cec-dw_hdmi: cec_transmit_msg_fh: adapter is unconfigured
+[  162.886757] cec-dw_hdmi: new physical address 2.1.0.0
+[  162.886964] cec-dw_hdmi: physical address: 2.1.0.0, claim 1 logical addresses
+[  163.510725] cec-dw_hdmi: config: la 1 pa 2.1.0.0
+[  173.034200] cec-dw_hdmi: message 10 89 02 05 timed out
+
+Power off AVR (cec.debounce_ms=5000):
+[  251.720471] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 5
+[  251.922432] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 11
+
+Power on AVR (cec.debounce_ms=5000):
+[  291.154262] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 5
+[  291.296199] cec-dw_hdmi: reported physical address 2.0.0.0 for logical address 11
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/media/cec/core/cec-adap.c |  9 ++++++++-
+ drivers/media/cec/core/cec-core.c | 18 ++++++++++++++++++
+ drivers/media/cec/core/cec-priv.h |  1 +
+ include/media/cec.h               |  2 ++
+ 4 files changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/cec/core/cec-adap.c b/drivers/media/cec/core/cec-adap.c
+index 8bf91b5a7d0e..ad8a2e5a31ac 100644
+--- a/drivers/media/cec/core/cec-adap.c
++++ b/drivers/media/cec/core/cec-adap.c
+@@ -1671,8 +1671,15 @@ void cec_s_phys_addr(struct cec_adapter *adap, u16 phys_addr, bool block)
+ 	if (IS_ERR_OR_NULL(adap))
+ 		return;
+ 
++	cancel_delayed_work_sync(&adap->debounce_work);
++
+ 	mutex_lock(&adap->lock);
+-	__cec_s_phys_addr(adap, phys_addr, block);
++	if (cec_debounce_ms > 0 && !block && phys_addr == CEC_PHYS_ADDR_INVALID &&
++	    adap->phys_addr != phys_addr)
++		schedule_delayed_work(&adap->debounce_work,
++				      msecs_to_jiffies(cec_debounce_ms));
++	else
++		__cec_s_phys_addr(adap, phys_addr, block);
+ 	mutex_unlock(&adap->lock);
+ }
+ EXPORT_SYMBOL_GPL(cec_s_phys_addr);
+diff --git a/drivers/media/cec/core/cec-core.c b/drivers/media/cec/core/cec-core.c
+index af358e901b5f..bece8c56e5af 100644
+--- a/drivers/media/cec/core/cec-core.c
++++ b/drivers/media/cec/core/cec-core.c
+@@ -40,6 +40,10 @@ static bool debug_phys_addr;
+ module_param(debug_phys_addr, bool, 0644);
+ MODULE_PARM_DESC(debug_phys_addr, "add CEC_CAP_PHYS_ADDR if set");
+ 
++int cec_debounce_ms;
++module_param_named(debounce_ms, cec_debounce_ms, int, 0644);
++MODULE_PARM_DESC(debounce_ms, "debounce invalid phys addr");
++
+ static dev_t cec_dev_t;
+ 
+ /* Active devices */
+@@ -188,6 +192,8 @@ static void cec_devnode_unregister(struct cec_adapter *adap)
+ 
+ 	mutex_unlock(&devnode->lock);
+ 
++	cancel_delayed_work_sync(&adap->debounce_work);
++
+ 	mutex_lock(&adap->lock);
+ 	__cec_s_phys_addr(adap, CEC_PHYS_ADDR_INVALID, false);
+ 	__cec_s_log_addrs(adap, NULL, false);
+@@ -246,6 +252,17 @@ static const struct file_operations cec_error_inj_fops = {
+ };
+ #endif
+ 
++static void cec_s_phys_addr_debounce(struct work_struct *work)
++{
++	struct delayed_work *delayed_work = to_delayed_work(work);
++	struct cec_adapter *adap =
++		container_of(delayed_work, struct cec_adapter, debounce_work);
++
++	mutex_lock(&adap->lock);
++	__cec_s_phys_addr(adap, CEC_PHYS_ADDR_INVALID, false);
++	mutex_unlock(&adap->lock);
++}
++
+ struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops,
+ 					 void *priv, const char *name, u32 caps,
+ 					 u8 available_las)
+@@ -283,6 +300,7 @@ struct cec_adapter *cec_allocate_adapter(const struct cec_adap_ops *ops,
+ 	INIT_LIST_HEAD(&adap->transmit_queue);
+ 	INIT_LIST_HEAD(&adap->wait_queue);
+ 	init_waitqueue_head(&adap->kthread_waitq);
++	INIT_DELAYED_WORK(&adap->debounce_work, cec_s_phys_addr_debounce);
+ 
+ 	/* adap->devnode initialization */
+ 	INIT_LIST_HEAD(&adap->devnode.fhs);
+diff --git a/drivers/media/cec/core/cec-priv.h b/drivers/media/cec/core/cec-priv.h
+index b78df931aa74..ebbea63ea9de 100644
+--- a/drivers/media/cec/core/cec-priv.h
++++ b/drivers/media/cec/core/cec-priv.h
+@@ -37,6 +37,7 @@ static inline bool msg_is_raw(const struct cec_msg *msg)
+ 
+ /* cec-core.c */
+ extern int cec_debug;
++extern int cec_debounce_ms;
+ int cec_get_device(struct cec_devnode *devnode);
+ void cec_put_device(struct cec_devnode *devnode);
+ 
+diff --git a/include/media/cec.h b/include/media/cec.h
+index abee41ae02d0..544eedb5d671 100644
+--- a/include/media/cec.h
++++ b/include/media/cec.h
+@@ -236,6 +236,8 @@ struct cec_adapter {
+ 	struct task_struct *kthread;
+ 	wait_queue_head_t kthread_waitq;
+ 
++	struct delayed_work debounce_work;
++
+ 	const struct cec_adap_ops *ops;
+ 	void *priv;
+ 	u32 capabilities;
+-- 
+2.34.1
+

@@ -1,0 +1,143 @@
+From 474460ee525d935c6e7dad4dce08097411d88aa7 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:37 +0000
+Subject: [PATCH 14/92] media: rkvdec: h264: Support High 10 and 4:2:2 profiles
+
+Add support and enable decoding of H264 High 10 and 4:2:2 profiles.
+
+Decoded CAPTURE buffer width is aligned to 64 pixels to accommodate HW
+requirement on 10-bit format buffers.
+
+The new valid_fmt operation is implemented and return a valid pixelformat
+for the provided SPS control.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec-h264.c | 33 ++++++++++++++++------
+ drivers/staging/media/rkvdec/rkvdec.c      | 19 +++++++++----
+ 2 files changed, 37 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-h264.c b/drivers/staging/media/rkvdec/rkvdec-h264.c
+index 54fc3a6d0902..af530b05a789 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-h264.c
++++ b/drivers/staging/media/rkvdec/rkvdec-h264.c
+@@ -1044,19 +1044,14 @@ static int rkvdec_h264_validate_sps(struct rkvdec_ctx *ctx,
+ {
+ 	unsigned int width, height;
+ 
+-	/*
+-	 * TODO: The hardware supports 10-bit and 4:2:2 profiles,
+-	 * but it's currently broken in the driver.
+-	 * Reject them for now, until it's fixed.
+-	 */
+-	if (sps->chroma_format_idc > 1)
+-		/* Only 4:0:0 and 4:2:0 are supported */
++	if (sps->chroma_format_idc > 2)
++		/* Only 4:0:0, 4:2:0 and 4:2:2 are supported */
+ 		return -EINVAL;
+ 	if (sps->bit_depth_luma_minus8 != sps->bit_depth_chroma_minus8)
+ 		/* Luma and chroma bit depth mismatch */
+ 		return -EINVAL;
+-	if (sps->bit_depth_luma_minus8 != 0)
+-		/* Only 8-bit is supported */
++	if (sps->bit_depth_luma_minus8 != 0 && sps->bit_depth_luma_minus8 != 2)
++		/* Only 8-bit and 10-bit is supported */
+ 		return -EINVAL;
+ 
+ 	width = (sps->pic_width_in_mbs_minus1 + 1) * 16;
+@@ -1077,6 +1072,25 @@ static int rkvdec_h264_validate_sps(struct rkvdec_ctx *ctx,
+ 	return 0;
+ }
+ 
++static u32 rkvdec_h264_valid_fmt(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
++{
++	const struct v4l2_ctrl_h264_sps *sps = ctrl->p_new.p_h264_sps;
++
++	if (sps->bit_depth_luma_minus8 == 0) {
++		if (sps->chroma_format_idc == 2)
++			return V4L2_PIX_FMT_NV16;
++		else
++			return V4L2_PIX_FMT_NV12;
++	} else if (sps->bit_depth_luma_minus8 == 2) {
++		if (sps->chroma_format_idc == 2)
++			return V4L2_PIX_FMT_NV20;
++		else
++			return V4L2_PIX_FMT_NV15;
++	}
++
++	return 0;
++}
++
+ static int rkvdec_h264_start(struct rkvdec_ctx *ctx)
+ {
+ 	struct rkvdec_dev *rkvdec = ctx->dev;
+@@ -1198,6 +1212,7 @@ static int rkvdec_h264_try_ctrl(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
+ 
+ const struct rkvdec_coded_fmt_ops rkvdec_h264_fmt_ops = {
+ 	.adjust_fmt = rkvdec_h264_adjust_fmt,
++	.valid_fmt = rkvdec_h264_valid_fmt,
+ 	.start = rkvdec_h264_start,
+ 	.stop = rkvdec_h264_stop,
+ 	.run = rkvdec_h264_run,
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index e93e1cb0f829..4f5436c89e08 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -31,7 +31,7 @@ static void rkvdec_fill_decoded_pixfmt(struct rkvdec_ctx *ctx,
+ 				       struct v4l2_pix_format_mplane *pix_mp)
+ {
+ 	v4l2_fill_pixfmt_mp(pix_mp, pix_mp->pixelformat,
+-			    pix_mp->width, pix_mp->height);
++			    ALIGN(pix_mp->width, 64), pix_mp->height);
+ 	pix_mp->plane_fmt[0].sizeimage += 128 *
+ 		DIV_ROUND_UP(pix_mp->width, 16) *
+ 		DIV_ROUND_UP(pix_mp->height, 16);
+@@ -136,8 +136,11 @@ static const struct rkvdec_ctrls rkvdec_h264_ctrls = {
+ 	.num_ctrls = ARRAY_SIZE(rkvdec_h264_ctrl_descs),
+ };
+ 
+-static const u32 rkvdec_h264_vp9_decoded_fmts[] = {
++static const u32 rkvdec_h264_decoded_fmts[] = {
+ 	V4L2_PIX_FMT_NV12,
++	V4L2_PIX_FMT_NV15,
++	V4L2_PIX_FMT_NV16,
++	V4L2_PIX_FMT_NV20,
+ };
+ 
+ static const struct rkvdec_ctrl_desc rkvdec_vp9_ctrl_descs[] = {
+@@ -160,6 +163,10 @@ static const struct rkvdec_ctrls rkvdec_vp9_ctrls = {
+ 	.num_ctrls = ARRAY_SIZE(rkvdec_vp9_ctrl_descs),
+ };
+ 
++static const u32 rkvdec_vp9_decoded_fmts[] = {
++	V4L2_PIX_FMT_NV12,
++};
++
+ static const struct rkvdec_coded_fmt_desc rkvdec_coded_fmts[] = {
+ 	{
+ 		.fourcc = V4L2_PIX_FMT_H264_SLICE,
+@@ -173,8 +180,8 @@ static const struct rkvdec_coded_fmt_desc rkvdec_coded_fmts[] = {
+ 		},
+ 		.ctrls = &rkvdec_h264_ctrls,
+ 		.ops = &rkvdec_h264_fmt_ops,
+-		.num_decoded_fmts = ARRAY_SIZE(rkvdec_h264_vp9_decoded_fmts),
+-		.decoded_fmts = rkvdec_h264_vp9_decoded_fmts,
++		.num_decoded_fmts = ARRAY_SIZE(rkvdec_h264_decoded_fmts),
++		.decoded_fmts = rkvdec_h264_decoded_fmts,
+ 		.subsystem_flags = VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF,
+ 	},
+ 	{
+@@ -189,8 +196,8 @@ static const struct rkvdec_coded_fmt_desc rkvdec_coded_fmts[] = {
+ 		},
+ 		.ctrls = &rkvdec_vp9_ctrls,
+ 		.ops = &rkvdec_vp9_fmt_ops,
+-		.num_decoded_fmts = ARRAY_SIZE(rkvdec_h264_vp9_decoded_fmts),
+-		.decoded_fmts = rkvdec_h264_vp9_decoded_fmts,
++		.num_decoded_fmts = ARRAY_SIZE(rkvdec_vp9_decoded_fmts),
++		.decoded_fmts = rkvdec_vp9_decoded_fmts,
+ 	}
+ };
+ 
+-- 
+2.34.1
+

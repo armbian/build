@@ -1,0 +1,219 @@
+From 8b9e3cc184623e1de5446be0823c3330b8fb069e Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Wed, 20 May 2020 17:04:47 +0200
+Subject: [PATCH 72/92] WIP: media: rkvdec: implement reset controls
+
+---
+ .../bindings/media/rockchip,vdec.yaml         | 19 +++++++
+ drivers/staging/media/rkvdec/rkvdec-regs.h    |  5 ++
+ drivers/staging/media/rkvdec/rkvdec.c         | 53 +++++++++++++++++++
+ drivers/staging/media/rkvdec/rkvdec.h         | 11 +++-
+ 4 files changed, 87 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/media/rockchip,vdec.yaml b/Documentation/devicetree/bindings/media/rockchip,vdec.yaml
+index 3bcfb8e12333..dd6958df1de8 100644
+--- a/Documentation/devicetree/bindings/media/rockchip,vdec.yaml
++++ b/Documentation/devicetree/bindings/media/rockchip,vdec.yaml
+@@ -53,6 +53,18 @@ properties:
+   iommus:
+     maxItems: 1
+ 
++  resets:
++    maxItems: 6
++
++  reset-names:
++    items:
++      - const: video_h
++      - const: video_a
++      - const: video_core
++      - const: video_cabac
++      - const: niu_a
++      - const: niu_h
++
+ required:
+   - compatible
+   - reg
+@@ -60,6 +72,8 @@ required:
+   - clocks
+   - clock-names
+   - power-domains
++  - resets
++  - reset-names
+ 
+ additionalProperties: false
+ 
+@@ -78,6 +92,11 @@ examples:
+         clock-names = "axi", "ahb", "cabac", "core";
+         power-domains = <&power RK3399_PD_VDU>;
+         iommus = <&vdec_mmu>;
++        resets = <&cru SRST_H_VDU>, <&cru SRST_A_VDU>,
++                 <&cru SRST_VDU_CORE>, <&cru SRST_VDU_CA>,
++                 <&cru SRST_A_VDU_NOC>, <&cru SRST_H_VDU_NOC>;
++        reset-names = "video_h", "video_a", "video_core", "video_cabac",
++                      "niu_a", "niu_h";
+     };
+ 
+ ...
+diff --git a/drivers/staging/media/rkvdec/rkvdec-regs.h b/drivers/staging/media/rkvdec/rkvdec-regs.h
+index 15b9bee92016..3acc914888f6 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-regs.h
++++ b/drivers/staging/media/rkvdec/rkvdec-regs.h
+@@ -28,6 +28,11 @@
+ #define RKVDEC_SOFTRST_EN_P				BIT(20)
+ #define RKVDEC_FORCE_SOFTRESET_VALID			BIT(21)
+ #define RKVDEC_SOFTRESET_RDY				BIT(22)
++#define RKVDEC_ERR_MASK					(RKVDEC_BUS_STA \
++							 | RKVDEC_ERR_STA \
++							 | RKVDEC_TIMEOUT_STA \
++							 | RKVDEC_BUF_EMPTY_STA \
++							 | RKVDEC_COLMV_REF_ERR_STA )
+ 
+ #define RKVDEC_REG_SYSCTRL				0x008
+ #define RKVDEC_IN_ENDIAN				BIT(0)
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 630ef09ab70b..b6d5b26a93c2 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -10,12 +10,15 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm.h>
+ #include <linux/pm_runtime.h>
++#include <linux/reset.h>
++#include <linux/rockchip_pmu.h>
+ #include <linux/slab.h>
+ #include <linux/videodev2.h>
+ #include <linux/workqueue.h>
+@@ -717,6 +720,11 @@ static void rkvdec_job_finish(struct rkvdec_ctx *ctx,
+ 
+ 	pm_runtime_mark_last_busy(rkvdec->dev);
+ 	pm_runtime_put_autosuspend(rkvdec->dev);
++
++	if (result == VB2_BUF_STATE_ERROR &&
++	    rkvdec->reset_mask == RESET_NONE)
++		rkvdec->reset_mask |= RESET_SOFT;
++
+ 	rkvdec_job_finish_no_pm(ctx, result);
+ }
+ 
+@@ -754,6 +762,33 @@ static void rkvdec_device_run(void *priv)
+ 
+ 	if (WARN_ON(!desc))
+ 		return;
++	if (rkvdec->reset_mask != RESET_NONE) {
++
++		if (rkvdec->reset_mask & RESET_SOFT) {
++			writel(RKVDEC_SOFTRST_EN_P,
++			       rkvdec->regs + RKVDEC_REG_INTERRUPT);
++			udelay(RKVDEC_RESET_DELAY);
++			if (readl(rkvdec->regs + RKVDEC_REG_INTERRUPT)
++			    & RKVDEC_SOFTRESET_RDY)
++				dev_info_ratelimited(rkvdec->dev,
++						      "softreset failed\n");
++		}
++
++		if (rkvdec->reset_mask & RESET_HARD) {
++			rockchip_pmu_idle_request(rkvdec->dev, true);
++			ret = reset_control_assert(rkvdec->rstc);
++			if (!ret) {
++				udelay(RKVDEC_RESET_DELAY);
++				ret = reset_control_deassert(rkvdec->rstc);
++			}
++			rockchip_pmu_idle_request(rkvdec->dev, false);
++			if (ret)
++				dev_notice_ratelimited(rkvdec->dev,
++							"hardreset failed\n");
++		}
++		rkvdec->reset_mask = RESET_NONE;
++		pm_runtime_suspend(rkvdec->dev);
++	}
+ 
+ 	ret = pm_runtime_resume_and_get(rkvdec->dev);
+ 	if (ret < 0) {
+@@ -1021,6 +1056,11 @@ static irqreturn_t rkvdec_irq_handler(int irq, void *priv)
+ 	if (cancel_delayed_work(&rkvdec->watchdog_work)) {
+ 		struct rkvdec_ctx *ctx;
+ 
++		if (state == VB2_BUF_STATE_ERROR) {
++			rkvdec->reset_mask |= (status & RKVDEC_ERR_MASK) ?
++						RESET_HARD : RESET_SOFT;
++		}
++
+ 		ctx = v4l2_m2m_get_curr_priv(rkvdec->m2m_dev);
+ 		rkvdec_job_finish(ctx, state);
+ 	}
+@@ -1038,6 +1078,7 @@ static void rkvdec_watchdog_func(struct work_struct *work)
+ 	ctx = v4l2_m2m_get_curr_priv(rkvdec->m2m_dev);
+ 	if (ctx) {
+ 		dev_err(rkvdec->dev, "Frame processing timed out!\n");
++		rkvdec->reset_mask |= RESET_HARD;
+ 		writel(RKVDEC_CONFIG_DEC_CLK_GATE_E | RKVDEC_IRQ_DIS,
+ 		       rkvdec->regs + RKVDEC_REG_INTERRUPT);
+ 		writel(0, rkvdec->regs + RKVDEC_REG_SYSCTRL);
+@@ -1107,6 +1148,18 @@ static int rkvdec_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++
++	rkvdec->rstc = devm_reset_control_array_get(&pdev->dev, false, true);
++	if (IS_ERR(rkvdec->rstc)) {
++		dev_err(&pdev->dev,
++			"get resets failed %ld\n", PTR_ERR(rkvdec->rstc));
++		return PTR_ERR(rkvdec->rstc);
++	} else {
++		dev_dbg(&pdev->dev,
++			 "requested %d resets\n",
++			 reset_control_get_count(&pdev->dev));
++	}
++
+ 	pm_runtime_set_autosuspend_delay(&pdev->dev, 100);
+ 	pm_runtime_use_autosuspend(&pdev->dev);
+ 	pm_runtime_enable(&pdev->dev);
+diff --git a/drivers/staging/media/rkvdec/rkvdec.h b/drivers/staging/media/rkvdec/rkvdec.h
+index b9e219438bc9..f02f79c405f0 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.h
++++ b/drivers/staging/media/rkvdec/rkvdec.h
+@@ -11,10 +11,11 @@
+ #ifndef RKVDEC_H_
+ #define RKVDEC_H_
+ 
++#include <linux/clk.h>
+ #include <linux/platform_device.h>
++#include <linux/reset.h>
+ #include <linux/videodev2.h>
+ #include <linux/wait.h>
+-#include <linux/clk.h>
+ 
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+@@ -22,6 +23,12 @@
+ #include <media/videobuf2-core.h>
+ #include <media/videobuf2-dma-contig.h>
+ 
++#define RESET_NONE		0
++#define RESET_SOFT		BIT(0)
++#define RESET_HARD		BIT(1)
++
++#define RKVDEC_RESET_DELAY	5
++
+ struct rkvdec_ctx;
+ 
+ struct rkvdec_ctrl_desc {
+@@ -96,6 +103,8 @@ struct rkvdec_dev {
+ 	void __iomem *regs;
+ 	struct mutex vdev_lock; /* serializes ioctls */
+ 	struct delayed_work watchdog_work;
++	struct reset_control *rstc;
++	u8 reset_mask;
+ };
+ 
+ struct rkvdec_ctx {
+-- 
+2.34.1
+

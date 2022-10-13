@@ -1,0 +1,159 @@
+From 2d2cd2132a9f9964a725ba9c8b93c3e792eae7f4 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 21:54:37 +0000
+Subject: [PATCH 13/92] media: rkvdec: Lock capture pixel format in s_ctrl and
+ s_fmt
+
+Add an optional valid_fmt operation that should return the valid
+pixelformat of CAPTURE buffers.
+
+This is used in next patch to ensure correct pixelformat is used for 10-bit
+and 4:2:2 content.
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec.c | 67 +++++++++++++++++++++++----
+ drivers/staging/media/rkvdec/rkvdec.h |  2 +
+ 2 files changed, 61 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 40cc791aef26..e93e1cb0f829 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -38,19 +38,56 @@ static void rkvdec_fill_decoded_pixfmt(struct rkvdec_ctx *ctx,
+ 	pix_mp->field = V4L2_FIELD_NONE;
+ }
+ 
++static u32 rkvdec_valid_fmt(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl)
++{
++	const struct rkvdec_coded_fmt_desc *coded_desc = ctx->coded_fmt_desc;
++
++	if (coded_desc->ops->valid_fmt)
++		return coded_desc->ops->valid_fmt(ctx, ctrl);
++
++	return ctx->valid_fmt;
++}
++
+ static int rkvdec_try_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct rkvdec_ctx *ctx = container_of(ctrl->handler, struct rkvdec_ctx, ctrl_hdl);
+ 	const struct rkvdec_coded_fmt_desc *desc = ctx->coded_fmt_desc;
+ 
+-	if (desc->ops->try_ctrl)
+-		return desc->ops->try_ctrl(ctx, ctrl);
++	if (desc->ops->try_ctrl) {
++		int ret;
++		ret = desc->ops->try_ctrl(ctx, ctrl);
++		if (ret)
++			return ret;
++	}
++
++	if (ctx->valid_fmt && ctx->valid_fmt != rkvdec_valid_fmt(ctx, ctrl))
++		/* Only current valid format */
++		return -EINVAL;
++
++	return 0;
++}
++
++static int rkvdec_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct rkvdec_ctx *ctx = container_of(ctrl->handler, struct rkvdec_ctx, ctrl_hdl);
++
++	if (ctrl->id == V4L2_CID_STATELESS_H264_SPS && !ctx->valid_fmt) {
++		ctx->valid_fmt = rkvdec_valid_fmt(ctx, ctrl);
++		if (ctx->valid_fmt) {
++			struct v4l2_pix_format_mplane *pix_mp;
++
++			pix_mp = &ctx->decoded_fmt.fmt.pix_mp;
++			pix_mp->pixelformat = ctx->valid_fmt;
++			rkvdec_fill_decoded_pixfmt(ctx, pix_mp);
++		}
++	}
+ 
+ 	return 0;
+ }
+ 
+ static const struct v4l2_ctrl_ops rkvdec_ctrl_ops = {
+ 	.try_ctrl = rkvdec_try_ctrl,
++	.s_ctrl = rkvdec_s_ctrl,
+ };
+ 
+ static const struct rkvdec_ctrl_desc rkvdec_h264_ctrl_descs[] = {
+@@ -201,6 +238,7 @@ static void rkvdec_reset_decoded_fmt(struct rkvdec_ctx *ctx)
+ {
+ 	struct v4l2_format *f = &ctx->decoded_fmt;
+ 
++	ctx->valid_fmt = 0;
+ 	rkvdec_reset_fmt(ctx, f, ctx->coded_fmt_desc->decoded_fmts[0]);
+ 	f->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+ 	f->fmt.pix_mp.width = ctx->coded_fmt.fmt.pix_mp.width;
+@@ -256,13 +294,17 @@ static int rkvdec_try_capture_fmt(struct file *file, void *priv,
+ 	if (WARN_ON(!coded_desc))
+ 		return -EINVAL;
+ 
+-	for (i = 0; i < coded_desc->num_decoded_fmts; i++) {
+-		if (coded_desc->decoded_fmts[i] == pix_mp->pixelformat)
+-			break;
+-	}
++	if (ctx->valid_fmt) {
++		pix_mp->pixelformat = ctx->valid_fmt;
++	} else {
++		for (i = 0; i < coded_desc->num_decoded_fmts; i++) {
++			if (coded_desc->decoded_fmts[i] == pix_mp->pixelformat)
++				break;
++		}
+ 
+-	if (i == coded_desc->num_decoded_fmts)
+-		pix_mp->pixelformat = coded_desc->decoded_fmts[0];
++		if (i == coded_desc->num_decoded_fmts)
++			pix_mp->pixelformat = coded_desc->decoded_fmts[0];
++	}
+ 
+ 	/* Always apply the frmsize constraint of the coded end. */
+ 	pix_mp->width = max(pix_mp->width, ctx->coded_fmt.fmt.pix_mp.width);
+@@ -326,6 +368,7 @@ static int rkvdec_s_capture_fmt(struct file *file, void *priv,
+ 		return ret;
+ 
+ 	ctx->decoded_fmt = *f;
++	ctx->valid_fmt = f->fmt.pix_mp.pixelformat;
+ 	return 0;
+ }
+ 
+@@ -429,6 +472,14 @@ static int rkvdec_enum_capture_fmt(struct file *file, void *priv,
+ 	if (WARN_ON(!ctx->coded_fmt_desc))
+ 		return -EINVAL;
+ 
++	if (ctx->valid_fmt) {
++		if (f->index)
++			return -EINVAL;
++
++		f->pixelformat = ctx->valid_fmt;
++		return 0;
++	}
++
+ 	if (f->index >= ctx->coded_fmt_desc->num_decoded_fmts)
+ 		return -EINVAL;
+ 
+diff --git a/drivers/staging/media/rkvdec/rkvdec.h b/drivers/staging/media/rkvdec/rkvdec.h
+index 633335ebb9c4..b9e219438bc9 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.h
++++ b/drivers/staging/media/rkvdec/rkvdec.h
+@@ -66,6 +66,7 @@ vb2_to_rkvdec_decoded_buf(struct vb2_buffer *buf)
+ struct rkvdec_coded_fmt_ops {
+ 	int (*adjust_fmt)(struct rkvdec_ctx *ctx,
+ 			  struct v4l2_format *f);
++	u32 (*valid_fmt)(struct rkvdec_ctx *ctx, struct v4l2_ctrl *ctrl);
+ 	int (*start)(struct rkvdec_ctx *ctx);
+ 	void (*stop)(struct rkvdec_ctx *ctx);
+ 	int (*run)(struct rkvdec_ctx *ctx);
+@@ -101,6 +102,7 @@ struct rkvdec_ctx {
+ 	struct v4l2_fh fh;
+ 	struct v4l2_format coded_fmt;
+ 	struct v4l2_format decoded_fmt;
++	u32 valid_fmt;
+ 	const struct rkvdec_coded_fmt_desc *coded_fmt_desc;
+ 	struct v4l2_ctrl_handler ctrl_hdl;
+ 	struct rkvdec_dev *dev;
+-- 
+2.34.1
+

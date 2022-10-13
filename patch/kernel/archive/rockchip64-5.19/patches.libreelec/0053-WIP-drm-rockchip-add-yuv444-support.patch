@@ -1,0 +1,214 @@
+From 5699f4204422a55f8235a8af5381be179b2c42f4 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Fri, 20 Dec 2019 08:12:43 +0000
+Subject: [PATCH 53/92] WIP: drm/rockchip: add yuv444 support
+
+---
+ drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c | 29 ++++++++++++++++++++-
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 29 +++++++++++++++++++++
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.h |  6 +++++
+ drivers/gpu/drm/rockchip/rockchip_vop_reg.c | 14 ++++++++++
+ 4 files changed, 77 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+index 66e463d58a0b..4fad844a18af 100644
+--- a/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw_hdmi-rockchip.c
+@@ -67,6 +67,7 @@ struct rockchip_hdmi_chip_data {
+ 	int	lcdsel_grf_reg;
+ 	u32	lcdsel_big;
+ 	u32	lcdsel_lit;
++	bool	ycbcr_444_allowed;
+ };
+ 
+ struct rockchip_hdmi {
+@@ -394,10 +395,22 @@ static bool is_rgb(u32 format)
+ 	}
+ }
+ 
++static bool is_yuv444(u32 format)
++{
++	switch (format) {
++	case MEDIA_BUS_FMT_YUV10_1X30:
++	case MEDIA_BUS_FMT_YUV8_1X24:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ static bool is_10bit(u32 format)
+ {
+ 	switch (format) {
+ 	case MEDIA_BUS_FMT_RGB101010_1X30:
++	case MEDIA_BUS_FMT_YUV10_1X30:
+ 		return true;
+ 	default:
+ 		return false;
+@@ -414,12 +427,22 @@ dw_hdmi_rockchip_bridge_atomic_check(struct drm_bridge *bridge,
+ 	struct drm_atomic_state *state = bridge_state->base.state;
+ 	struct drm_crtc_state *old_crtc_state;
+ 	struct rockchip_crtc_state *old_state;
++	struct drm_bridge *next_bridge;
++	struct drm_bridge_state *next_bridge_state;
+ 	u32 format = bridge_state->output_bus_cfg.format;
+ 
+ 	s->output_mode = ROCKCHIP_OUT_MODE_AAAA;
+ 	s->output_type = DRM_MODE_CONNECTOR_HDMIA;
+ 	s->output_bpc = 10;
+ 	s->bus_format = format;
++
++	next_bridge = drm_bridge_get_next_bridge(bridge);
++	if (next_bridge) {
++		next_bridge_state = drm_atomic_get_new_bridge_state(state,
++								next_bridge);
++		format = next_bridge_state->output_bus_cfg.format;
++	}
++
+ 	s->bus_width = is_10bit(format) ? 10 : 8;
+ 
+ 	old_crtc_state = drm_atomic_get_old_crtc_state(state, conn_state->crtc);
+@@ -453,7 +476,10 @@ static u32 *dw_hdmi_rockchip_get_input_bus_fmts(struct drm_bridge *bridge,
+ 	if (!has_10bit && is_10bit(output_fmt))
+ 		return NULL;
+ 
+-	if (!is_rgb(output_fmt))
++	if (is_yuv444(output_fmt)) {
++		if (!hdmi->chip_data->ycbcr_444_allowed)
++			return NULL;
++	} else if (!is_rgb(output_fmt))
+ 		return NULL;
+ 
+ 	input_fmt = kzalloc(sizeof(*input_fmt), GFP_KERNEL);
+@@ -603,6 +629,7 @@ static const struct dw_hdmi_phy_ops rk3328_hdmi_phy_ops = {
+ 
+ static struct rockchip_hdmi_chip_data rk3328_chip_data = {
+ 	.lcdsel_grf_reg = -1,
++	.ycbcr_444_allowed = true,
+ };
+ 
+ static const struct dw_hdmi_plat_data rk3328_hdmi_drv_data = {
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+index 7f084377b161..ac44d94317da 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -341,6 +341,17 @@ static int vop_convert_afbc_format(uint32_t format)
+ 	return -EINVAL;
+ }
+ 
++static bool is_yuv_output(uint32_t bus_format)
++{
++	switch (bus_format) {
++	case MEDIA_BUS_FMT_YUV8_1X24:
++	case MEDIA_BUS_FMT_YUV10_1X30:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ static uint16_t scl_vop_cal_scale(enum scale_mode mode, uint32_t src,
+ 				  uint32_t dst, bool is_horizontal,
+ 				  int vsu_mode, int *vskiplines)
+@@ -1412,6 +1423,7 @@ static void vop_crtc_atomic_enable(struct drm_crtc *crtc,
+ 	u16 vact_end = vact_st + vdisplay;
+ 	uint32_t pin_pol, val;
+ 	int dither_bpc = s->output_bpc ? s->output_bpc : 10;
++	bool yuv_output = is_yuv_output(s->bus_format);
+ 	int ret;
+ 
+ 	if (old_state && old_state->self_refresh_active) {
+@@ -1485,6 +1497,8 @@ static void vop_crtc_atomic_enable(struct drm_crtc *crtc,
+ 	    !(vop_data->feature & VOP_FEATURE_OUTPUT_RGB10))
+ 		s->output_mode = ROCKCHIP_OUT_MODE_P888;
+ 
++	VOP_REG_SET(vop, common, dsp_data_swap, yuv_output ? 2 : 0);
++
+ 	if (s->output_mode == ROCKCHIP_OUT_MODE_AAAA && dither_bpc <= 8)
+ 		VOP_REG_SET(vop, common, pre_dither_down, 1);
+ 	else
+@@ -1500,6 +1514,21 @@ static void vop_crtc_atomic_enable(struct drm_crtc *crtc,
+ 
+ 	VOP_REG_SET(vop, common, out_mode, s->output_mode);
+ 
++	VOP_REG_SET(vop, common, overlay_mode, yuv_output);
++	VOP_REG_SET(vop, common, dsp_out_yuv, yuv_output);
++
++	/*
++	 * Background color is 10bit depth if vop version >= 3.5
++	 */
++	if (!yuv_output)
++		val = 0;
++	else if (VOP_MAJOR(vop_data->version) == 3 &&
++		 VOP_MINOR(vop_data->version) >= 5)
++		val = 0x20010200;
++	else
++		val = 0x801080;
++	VOP_REG_SET(vop, common, dsp_background, val);
++
+ 	VOP_REG_SET(vop, modeset, htotal_pw, (htotal << 16) | hsync_len);
+ 	val = hact_st << 16;
+ 	val |= hact_end;
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+index 8db9ea4055f6..e9f256bd8d5a 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+@@ -117,10 +117,16 @@ struct vop_common {
+ 	struct vop_reg mmu_en;
+ 	struct vop_reg out_mode;
+ 	struct vop_reg standby;
++
++	struct vop_reg overlay_mode;
++	struct vop_reg dsp_data_swap;
++	struct vop_reg dsp_out_yuv;
++	struct vop_reg dsp_background;
+ };
+ 
+ struct vop_misc {
+ 	struct vop_reg global_regdone_en;
++	struct vop_reg win_channel[4];
+ };
+ 
+ struct vop_intr {
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+index 6446f2158d30..7c4c3e299760 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -705,6 +705,11 @@ static const struct vop_common rk3288_common = {
+ 	.dsp_blank = VOP_REG(RK3288_DSP_CTRL0, 0x3, 18),
+ 	.out_mode = VOP_REG(RK3288_DSP_CTRL0, 0xf, 0),
+ 	.cfg_done = VOP_REG_SYNC(RK3288_REG_CFG_DONE, 0x1, 0),
++
++	.overlay_mode = VOP_REG(RK3288_SYS_CTRL, 0x1, 16),
++	.dsp_data_swap = VOP_REG(RK3288_DSP_CTRL0, 0x1f, 12),
++	.dsp_out_yuv = VOP_REG(RK3288_POST_SCL_CTRL, 0x1, 2),
++	.dsp_background = VOP_REG(RK3288_DSP_BG, 0xffffffff, 0),
+ };
+ 
+ /*
+@@ -1076,6 +1081,10 @@ static const struct vop_output rk3328_output = {
+ 
+ static const struct vop_misc rk3328_misc = {
+ 	.global_regdone_en = VOP_REG(RK3328_SYS_CTRL, 0x1, 11),
++
++	.win_channel[0] = VOP_REG(RK3328_WIN0_CTRL2, 0xff, 0),
++	.win_channel[1] = VOP_REG(RK3328_WIN1_CTRL2, 0xff, 0),
++	.win_channel[2] = VOP_REG(RK3328_WIN2_CTRL2, 0xff, 0),
+ };
+ 
+ static const struct vop_common rk3328_common = {
+@@ -1088,6 +1097,11 @@ static const struct vop_common rk3328_common = {
+ 	.dsp_blank = VOP_REG(RK3328_DSP_CTRL0, 0x3, 18),
+ 	.out_mode = VOP_REG(RK3328_DSP_CTRL0, 0xf, 0),
+ 	.cfg_done = VOP_REG_SYNC(RK3328_REG_CFG_DONE, 0x1, 0),
++
++	.overlay_mode = VOP_REG(RK3328_SYS_CTRL, 0x1, 16),
++	.dsp_data_swap = VOP_REG(RK3328_DSP_CTRL0, 0x1f, 12),
++	.dsp_out_yuv = VOP_REG(RK3328_POST_SCL_CTRL, 0x1, 2),
++	.dsp_background = VOP_REG(RK3328_DSP_BG, 0xffffffff, 0),
+ };
+ 
+ static const struct vop_intr rk3328_vop_intr = {
+-- 
+2.34.1
+
