@@ -19,7 +19,7 @@
 
 # create_chroot <target_dir> <release> <arch>
 #
-create_chroot() {
+function create_chroot() {
 	local target_dir="$1"
 	local release=$2
 	local arch=$3
@@ -124,7 +124,7 @@ create_chroot() {
 
 # chroot_prepare_distccd <release> <arch>
 #
-chroot_prepare_distccd() {
+function chroot_prepare_distccd() {
 	local release=$1
 	local arch=$2
 	local dest=/tmp/distcc/${release}-${arch}
@@ -158,7 +158,7 @@ chroot_prepare_distccd() {
 
 # chroot_build_packages
 #
-chroot_build_packages() {
+function chroot_build_packages() {
 	local built_ok=()
 	local failed=()
 	mkdir -p ${SRC}/cache/buildpkg
@@ -284,7 +284,7 @@ chroot_build_packages() {
 				display_alert "Building packages" "$package_name $release/$arch" "ext"
 				ts=$(date +%s)
 				local dist_builddeps_name="package_builddeps_${release}"
-				[[ -v $dist_builddeps_name ]] && package_builddeps="${package_builddeps} ${!dist_builddeps_name}"
+				# [[ -v $dist_builddeps_name ]] && package_builddeps="${package_builddeps} ${!dist_builddeps_name}" 
 
 				# create build script
 				LOG_OUTPUT_FILE=/root/build-"${package_name}".log
@@ -332,7 +332,7 @@ chroot_build_packages() {
 } #############################################################################
 
 # create build script
-create_build_script() {
+function create_build_script() {
 	cat <<- EOF > "${target_dir}"/root/build.sh
 		#!/bin/bash
 		export PATH="/usr/lib/ccache:\$PATH"
@@ -407,7 +407,7 @@ create_build_script() {
 
 # chroot_installpackages_local
 #
-chroot_installpackages_local() {
+function chroot_installpackages_local() {
 	local conf="${SRC}"/config/aptly-temp.conf
 	rm -rf /tmp/aptly-temp/
 	mkdir -p /tmp/aptly-temp/
@@ -435,7 +435,7 @@ chroot_installpackages_local() {
 
 # chroot_installpackages <remote_only>
 #
-chroot_installpackages() {
+function chroot_installpackages() {
 	local remote_only=$1
 	local install_list=""
 	for plugin in "${SRC}"/packages/extras-buildpkgs/*.conf; do
@@ -474,4 +474,4 @@ chroot_installpackages() {
 	EOF
 	chmod +x "${SDCARD}"/tmp/install.sh
 	chroot "${SDCARD}" /bin/bash -c "/tmp/install.sh" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
-} #############################################################################
+}
