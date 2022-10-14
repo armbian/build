@@ -83,13 +83,9 @@ PRE_PREPARE_PARTITIONS
 	local next=1
 	# Check if we need UEFI partition
 	if [[ $UEFISIZE -gt 0 ]]; then
-		if [[ "${IMAGE_PARTITION_TABLE}" == "gpt" ]]; then
-			local uefipart=15
-			# Check if we need BIOS partition
-			[[ $BIOSSIZE -gt 0 ]] && local biospart=14
-		else
-			local uefipart=$((next++))
-		fi
+		# Check if we need BIOS partition
+		[[ $BIOSSIZE -gt 0 ]] && local biospart=$((next++))
+		local uefipart=$((next++))
 	fi
 	# Check if we need boot partition
 	if [[ -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes ]]; then
@@ -293,7 +289,7 @@ PREPARE_IMAGE_SIZE
 			echo "rootdev=$rootfs" >> $SDCARD/boot/armbianEnv.txt
 		fi
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
-	elif [[ $rootpart != 1 ]]; then
+	elif [[ $rootpart != 1 ]] && [[ $SRC_EXTLINUX != yes ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
