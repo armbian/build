@@ -22,16 +22,9 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
-	legacy)
-		KERNELSOURCE='https://github.com/hardkernel/linux'
-		#KERNELBRANCH='branch:odroidg12-4.9.y'
-		KERNELBRANCH='tag:4.9.277-122'
-		KERNELDIR='linux-odroid'
-		;;
-
 	current)
-		KERNELBRANCH='branch:linux-5.10.y'
-		KERNELPATCHDIR='meson64-current'
+		KERNELBRANCH='branch:linux-5.19.y'
+		KERNELPATCHDIR='meson64-edge'
 		;;
 
 	edge)
