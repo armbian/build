@@ -526,6 +526,10 @@ FAMILY_TWEAKS
 		# remove network manager defaults to handle eth by default
 		rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
 
+		# `systemd-networkd.service` will be enabled by `/lib/systemd/system-preset/90-systemd.preset` during first-run.
+		# Mask it to avoid conflict
+		chroot "${SDCARD}" /bin/bash -c "systemctl mask systemd-networkd.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+
 		# most likely we don't need to wait for nm to get online
 		chroot "${SDCARD}" /bin/bash -c "systemctl disable NetworkManager-wait-online.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 
@@ -547,6 +551,9 @@ FAMILY_TWEAKS
 
 		# enable services
 		chroot "${SDCARD}" /bin/bash -c "systemctl enable systemd-networkd.service systemd-resolved.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+
+		# Mask `NetworkManager.service` to avoid conflict
+		chroot "${SDCARD}" /bin/bash -c "systemctl mask NetworkManager.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 
 		if [ -e /etc/systemd/timesyncd.conf ]; then
 			chroot "${SDCARD}" /bin/bash -c "systemctl enable systemd-timesyncd.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
