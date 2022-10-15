@@ -274,6 +274,15 @@ create_rootfs_cache() {
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
 
+		# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
+		# Note: This will mark machine `firstboot`
+		echo "uninitialized" > "${SDCARD}/etc/machine-id"
+		rm "${SDCARD}/var/lib/dbus/machine-id"
+
+		# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
+		# `armbian-first-run` will do the same thing later
+		chroot $SDCARD /bin/bash -c "systemctl mask systemd-firstboot.service >/dev/null 2>&1"
+
 		# stage: make rootfs cache archive
 		display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
 		sync
