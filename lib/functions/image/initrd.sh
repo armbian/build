@@ -20,9 +20,10 @@ update_initramfs() {
 	if [ "$target_dir" != "" ]; then
 		initrd_kern_ver="$(basename "$target_dir")"
 		initrd_file="${chroot_target}/boot/initrd.img-${initrd_kern_ver}"
-
 		update_initramfs_cmd="TMPDIR=/tmp update-initramfs -uv -k ${initrd_kern_ver}" # @TODO: why? TMPDIR=/tmp
 	else
+		display_alert "Can't find kernel for version, here's what is in /lib/modules" "VER: ${VER}" "wrn"
+		SHOW_LOG=yes run_host_command_logged find "${chroot_target}/lib/modules"/ -maxdepth 1
 		exit_with_error "No kernel installed for the version" "${VER}"
 	fi
 
