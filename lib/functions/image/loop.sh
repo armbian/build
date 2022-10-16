@@ -35,8 +35,13 @@ function check_loop_device_internal() {
 			run_host_command_logged ls -la "${device}"
 			run_host_command_logged lsblk
 			run_host_command_logged blkid
-			display_alert "Device node exists but is 0-sized" "${device}" "debug"
-			return 1
+			# only break on the first 3 iteractions. then give up; let it try to use the device...
+			if [[ ${RETRY_RUNS} -lt 4 ]]; then
+				display_alert "Device node exists but is 0-sized; retry ${RETRY_RUNS}" "${device}" "warn"
+				return 1
+			else
+				display_alert "Device node exists but is 0-sized; proceeding anyway" "${device}" "warn"
+			fi
 		fi
 	fi
 
