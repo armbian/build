@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the u ser.
-function extension_prepare_config__prepare_flash_kernel() {
+function extension_prepare_config__prepare_grub_standard() {
 	# Extension configuration defaults.
 	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
 	export UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
@@ -43,9 +43,11 @@ function extension_prepare_config__prepare_flash_kernel() {
 	fi
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+		DISTRO_KERNEL_VER="generic"
 		DISTRO_KERNEL_PACKAGES="linux-image-generic"
 		DISTRO_FIRMWARE_PACKAGES="linux-firmware"
 	elif [[ "${DISTRIBUTION}" == "Debian" ]]; then
+		DISTRO_KERNEL_VER="${ARCH}" # Debian's generic kernel is named like "5.19.0-2-amd64", we can't predict, use the arch
 		DISTRO_KERNEL_PACKAGES="linux-image-${ARCH}"
 		DISTRO_FIRMWARE_PACKAGES="firmware-linux-free"
 		# Debian's prebuilt kernels dont support hvc0, hack.
@@ -56,7 +58,7 @@ function extension_prepare_config__prepare_flash_kernel() {
 	fi
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-		export VER="generic"
+		export VER="${DISTRO_KERNEL_VER}"
 		unset KERNELSOURCE                 # This should make Armbian skip most stuff. At least, I hacked it to.
 		export INSTALL_ARMBIAN_FIRMWARE=no # Should skip build and install of Armbian-firmware.
 	else
@@ -94,14 +96,14 @@ pre_umount_final_image__install_grub() {
 	if [[ "${UEFI_GRUB}" == "skip" ]]; then
 		display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
 		if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-			display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB} - calling update_initramfs directly" "debug"
-			VER="generic" update_initramfs "${MOUNT}"
+			display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB} - calling update_initramfs directly with VER=${DISTRO_KERNEL_VER}" "debug"
+			VER="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
 		fi
 		return 0
 	fi
 
 	configure_grub
-	local chroot_target=$MOUNT
+	local chroot_target="${MOUNT}"
 	display_alert "Installing bootloader" "GRUB" "info"
 
 	# getting rid of the dtb package, if installed, is hard. for now just zap it, otherwise update-grub goes bananas
@@ -117,8 +119,8 @@ pre_umount_final_image__install_grub() {
 	cp "${SRC}"/packages/blobs/splash/grub.png "${MOUNT}"/usr/share/images/grub/wallpaper.png
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-		display_alert "Using Distro Generic Kernel" "${EXTENSION}: update_initramfs" "debug"
-		VER="generic" update_initramfs "${MOUNT}"
+		display_alert "Using Distro Generic Kernel" "${EXTENSION}: update_initramfs with VER: ${DISTRO_KERNEL_VER}" "debug"
+		VER="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
 	fi
 
 	# Mount the chroot...
