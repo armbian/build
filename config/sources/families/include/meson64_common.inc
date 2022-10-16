@@ -22,9 +22,16 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
+	legacy)
+		KERNELSOURCE='https://github.com/hardkernel/linux'
+		#KERNELBRANCH='branch:odroidg12-4.9.y'
+		KERNELBRANCH='tag:4.9.277-122'
+		KERNELDIR='linux-odroid'
+		;;
+
 	current)
-		KERNELBRANCH='branch:linux-5.19.y'
-		KERNELPATCHDIR='meson64-edge'
+		KERNELBRANCH='branch:linux-5.10.y'
+		KERNELPATCHDIR='meson64-current'
 		;;
 
 	edge)
@@ -250,7 +257,7 @@ family_tweaks_bsp() {
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
-		"odroidc2" | "nanopik2-s905" | "lepotato" | "lafrite" | "khadas-vim1" | "khadas-vim2")
+		"odroidc2" | "nanopik2-s905" | "lepotato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | "aml-s9xx-box" )
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 				Section "OutputClass"
 				    Identifier "Amlogic"
