@@ -12,7 +12,7 @@ create_board_package() {
 	copy_all_packages_files_for "bsp-cli"
 
 	# install copy of boot script & environment file
-	if [[ -n "${BOOTSCRIPT}" ]]; then
+	if [[ -n "${BOOTSCRIPT}" ]] && [[ $SRC_EXTLINUX != yes ]]; then
 		# @TODO: add extension method bsp_prepare_bootloader(), refactor into u-boot extension
 		local bootscript_src=${BOOTSCRIPT%%:*}
 		local bootscript_dst=${BOOTSCRIPT##*:}
