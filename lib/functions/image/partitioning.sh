@@ -27,11 +27,8 @@ prepare_partitions() {
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	# add -N number of inodes to keep mount from running out
-	# create bigger number for desktop builds
-	if [[ $BUILD_DESKTOP == yes ]]; then local node_number=4096; else local node_number=1024; fi
 	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|sid ]]; then
-		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum -N $((128 * ${node_number}))"
+		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum"
 	fi
 	# mkopts[fat] is empty
 	mkopts[ext2]='-q'
