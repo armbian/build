@@ -89,7 +89,13 @@ create_board_package() {
 		    ;;
 		esac
 		sysctl -p >/dev/null 2>&1
-
+		# replace canonical advertisement
+		if [ -d "/var/lib/ubuntu-advantage/messages/" ]; then
+			echo "\nSupport Armbian! \nLearn more at https://armbian.com/donate" > /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status
+			cp /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status /var/lib/ubuntu-advantage/messages/apt-pre-invoke-no-packages-apps.tmpl
+			cp /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status /var/lib/ubuntu-advantage/messages/apt-pre-invoke-packages-apps
+			cp /var/lib/ubuntu-advantage/messages/apt-pre-invoke-esm-service-status /var/lib/ubuntu-advantage/messages/apt-pre-invoke-packages-apps.tmpl
+		fi
 		# disable deprecated services
 		[ -f "/etc/profile.d/activate_psd_user.sh" ] && rm /etc/profile.d/activate_psd_user.sh
 		[ -f "/etc/profile.d/check_first_login.sh" ] && rm /etc/profile.d/check_first_login.sh
