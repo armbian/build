@@ -1,0 +1,2248 @@
+diff --git a/Documentation/admin-guide/hw-vuln/spectre.rst b/Documentation/admin-guide/hw-vuln/spectre.rst
+index 985181dba..6bd97cd50 100644
+--- a/Documentation/admin-guide/hw-vuln/spectre.rst
++++ b/Documentation/admin-guide/hw-vuln/spectre.rst
+@@ -60,8 +60,8 @@ privileged data touched during the speculative execution.
+ Spectre variant 1 attacks take advantage of speculative execution of
+ conditional branches, while Spectre variant 2 attacks use speculative
+ execution of indirect branches to leak privileged memory.
+-See :ref:`[1] <spec_ref1>` :ref:`[5] <spec_ref5>` :ref:`[7] <spec_ref7>`
+-:ref:`[10] <spec_ref10>` :ref:`[11] <spec_ref11>`.
++See :ref:`[1] <spec_ref1>` :ref:`[5] <spec_ref5>` :ref:`[6] <spec_ref6>`
++:ref:`[7] <spec_ref7>` :ref:`[10] <spec_ref10>` :ref:`[11] <spec_ref11>`.
+ 
+ Spectre variant 1 (Bounds Check Bypass)
+ ---------------------------------------
+@@ -131,6 +131,19 @@ steer its indirect branch speculations to gadget code, and measure the
+ speculative execution's side effects left in level 1 cache to infer the
+ victim's data.
+ 
++Yet another variant 2 attack vector is for the attacker to poison the
++Branch History Buffer (BHB) to speculatively steer an indirect branch
++to a specific Branch Target Buffer (BTB) entry, even if the entry isn't
++associated with the source address of the indirect branch. Specifically,
++the BHB might be shared across privilege levels even in the presence of
++Enhanced IBRS.
++
++Currently the only known real-world BHB attack vector is via
++unprivileged eBPF. Therefore, it's highly recommended to not enable
++unprivileged eBPF, especially when eIBRS is used (without retpolines).
++For a full mitigation against BHB attacks, it's recommended to use
++retpolines (or eIBRS combined with retpolines).
++
+ Attack scenarios
+ ----------------
+ 
+@@ -364,13 +377,15 @@ The possible values in this file are:
+ 
+   - Kernel status:
+ 
+-  ====================================  =================================
+-  'Not affected'                        The processor is not vulnerable
+-  'Vulnerable'                          Vulnerable, no mitigation
+-  'Mitigation: Full generic retpoline'  Software-focused mitigation
+-  'Mitigation: Full AMD retpoline'      AMD-specific software mitigation
+-  'Mitigation: Enhanced IBRS'           Hardware-focused mitigation
+-  ====================================  =================================
++  ========================================  =================================
++  'Not affected'                            The processor is not vulnerable
++  'Mitigation: None'                        Vulnerable, no mitigation
++  'Mitigation: Retpolines'                  Use Retpoline thunks
++  'Mitigation: LFENCE'                      Use LFENCE instructions
++  'Mitigation: Enhanced IBRS'               Hardware-focused mitigation
++  'Mitigation: Enhanced IBRS + Retpolines'  Hardware-focused + Retpolines
++  'Mitigation: Enhanced IBRS + LFENCE'      Hardware-focused + LFENCE
++  ========================================  =================================
+ 
+   - Firmware status: Show if Indirect Branch Restricted Speculation (IBRS) is
+     used to protect against Spectre variant 2 attacks when calling firmware (x86 only).
+@@ -584,12 +599,13 @@ kernel command line.
+ 
+ 		Specific mitigations can also be selected manually:
+ 
+-		retpoline
+-					replace indirect branches
+-		retpoline,generic
+-					google's original retpoline
+-		retpoline,amd
+-					AMD-specific minimal thunk
++                retpoline               auto pick between generic,lfence
++                retpoline,generic       Retpolines
++                retpoline,lfence        LFENCE; indirect branch
++                retpoline,amd           alias for retpoline,lfence
++                eibrs                   enhanced IBRS
++                eibrs,retpoline         enhanced IBRS + Retpolines
++                eibrs,lfence            enhanced IBRS + LFENCE
+ 
+ 		Not specifying this option is equivalent to
+ 		spectre_v2=auto.
+@@ -730,7 +746,7 @@ AMD white papers:
+ 
+ .. _spec_ref6:
+ 
+-[6] `Software techniques for managing speculation on AMD processors <https://developer.amd.com/wp-content/resources/90343-B_SoftwareTechniquesforManagingSpeculation_WP_7-18Update_FNL.pdf>`_.
++[6] `Software techniques for managing speculation on AMD processors <https://developer.amd.com/wp-content/resources/Managing-Speculation-on-AMD-Processors.pdf>`_.
+ 
+ ARM white papers:
+ 
+diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
+index 3d4d736e2..c46fbd2d1 100644
+--- a/Documentation/admin-guide/kernel-parameters.txt
++++ b/Documentation/admin-guide/kernel-parameters.txt
+@@ -5048,8 +5048,12 @@
+ 			Specific mitigations can also be selected manually:
+ 
+ 			retpoline	  - replace indirect branches
+-			retpoline,generic - google's original retpoline
+-			retpoline,amd     - AMD-specific minimal thunk
++			retpoline,generic - Retpolines
++			retpoline,lfence  - LFENCE; indirect branch
++			retpoline,amd     - alias for retpoline,lfence
++			eibrs		  - enhanced IBRS
++			eibrs,retpoline   - enhanced IBRS + Retpolines
++			eibrs,lfence      - enhanced IBRS + LFENCE
+ 
+ 			Not specifying this option is equivalent to
+ 			spectre_v2=auto.
+diff --git a/Documentation/arm64/cpu-feature-registers.rst b/Documentation/arm64/cpu-feature-registers.rst
+index 328e0c454..749ae970c 100644
+--- a/Documentation/arm64/cpu-feature-registers.rst
++++ b/Documentation/arm64/cpu-feature-registers.rst
+@@ -235,7 +235,15 @@ infrastructure:
+      | DPB                          | [3-0]   |    y    |
+      +------------------------------+---------+---------+
+ 
+-  6) ID_AA64MMFR2_EL1 - Memory model feature register 2
++  6) ID_AA64MMFR0_EL1 - Memory model feature register 0
++
++     +------------------------------+---------+---------+
++     | Name                         |  bits   | visible |
++     +------------------------------+---------+---------+
++     | ECV                          | [63-60] |    y    |
++     +------------------------------+---------+---------+
++
++  7) ID_AA64MMFR2_EL1 - Memory model feature register 2
+ 
+      +------------------------------+---------+---------+
+      | Name                         |  bits   | visible |
+@@ -243,7 +251,7 @@ infrastructure:
+      | AT                           | [35-32] |    y    |
+      +------------------------------+---------+---------+
+ 
+-  7) ID_AA64ZFR0_EL1 - SVE feature ID register 0
++  8) ID_AA64ZFR0_EL1 - SVE feature ID register 0
+ 
+      +------------------------------+---------+---------+
+      | Name                         |  bits   | visible |
+@@ -267,6 +275,23 @@ infrastructure:
+      | SVEVer                       | [3-0]   |    y    |
+      +------------------------------+---------+---------+
+ 
++  8) ID_AA64MMFR1_EL1 - Memory model feature register 1
++
++     +------------------------------+---------+---------+
++     | Name                         |  bits   | visible |
++     +------------------------------+---------+---------+
++     | AFP                          | [47-44] |    y    |
++     +------------------------------+---------+---------+
++
++  9) ID_AA64ISAR2_EL1 - Instruction set attribute register 2
++
++     +------------------------------+---------+---------+
++     | Name                         |  bits   | visible |
++     +------------------------------+---------+---------+
++     | RPRES                        | [7-4]   |    y    |
++     +------------------------------+---------+---------+
++
++
+ Appendix I: Example
+ -------------------
+ 
+diff --git a/Documentation/arm64/elf_hwcaps.rst b/Documentation/arm64/elf_hwcaps.rst
+index bbd9cf54d..e88d245d4 100644
+--- a/Documentation/arm64/elf_hwcaps.rst
++++ b/Documentation/arm64/elf_hwcaps.rst
+@@ -245,6 +245,18 @@ HWCAP2_MTE
+     Functionality implied by ID_AA64PFR1_EL1.MTE == 0b0010, as described
+     by Documentation/arm64/memory-tagging-extension.rst.
+ 
++HWCAP2_ECV
++
++    Functionality implied by ID_AA64MMFR0_EL1.ECV == 0b0001.
++
++HWCAP2_AFP
++
++    Functionality implied by ID_AA64MFR1_EL1.AFP == 0b0001.
++
++HWCAP2_RPRES
++
++    Functionality implied by ID_AA64ISAR2_EL1.RPRES == 0b0001.
++
+ 4. Unused AT_HWCAP bits
+ -----------------------
+ 
+diff --git a/Makefile b/Makefile
+index 3d550a4b9..76738a0f8 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 10
+-SUBLEVEL = 104
++SUBLEVEL = 105
+ EXTRAVERSION =
+ NAME = Dare mighty things
+ 
+diff --git a/arch/arm/include/asm/assembler.h b/arch/arm/include/asm/assembler.h
+index 761e88c73..8ff20f9b0 100644
+--- a/arch/arm/include/asm/assembler.h
++++ b/arch/arm/include/asm/assembler.h
+@@ -107,6 +107,16 @@
+ 	.endm
+ #endif
+ 
++#if __LINUX_ARM_ARCH__ < 7
++	.macro	dsb, args
++	mcr	p15, 0, r0, c7, c10, 4
++	.endm
++
++	.macro	isb, args
++	mcr	p15, 0, r0, c7, c5, 4
++	.endm
++#endif
++
+ 	.macro asm_trace_hardirqs_off, save=1
+ #if defined(CONFIG_TRACE_IRQFLAGS)
+ 	.if \save
+diff --git a/arch/arm/include/asm/spectre.h b/arch/arm/include/asm/spectre.h
+new file mode 100644
+index 000000000..d1fa5607d
+--- /dev/null
++++ b/arch/arm/include/asm/spectre.h
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++
++#ifndef __ASM_SPECTRE_H
++#define __ASM_SPECTRE_H
++
++enum {
++	SPECTRE_UNAFFECTED,
++	SPECTRE_MITIGATED,
++	SPECTRE_VULNERABLE,
++};
++
++enum {
++	__SPECTRE_V2_METHOD_BPIALL,
++	__SPECTRE_V2_METHOD_ICIALLU,
++	__SPECTRE_V2_METHOD_SMC,
++	__SPECTRE_V2_METHOD_HVC,
++	__SPECTRE_V2_METHOD_LOOP8,
++};
++
++enum {
++	SPECTRE_V2_METHOD_BPIALL = BIT(__SPECTRE_V2_METHOD_BPIALL),
++	SPECTRE_V2_METHOD_ICIALLU = BIT(__SPECTRE_V2_METHOD_ICIALLU),
++	SPECTRE_V2_METHOD_SMC = BIT(__SPECTRE_V2_METHOD_SMC),
++	SPECTRE_V2_METHOD_HVC = BIT(__SPECTRE_V2_METHOD_HVC),
++	SPECTRE_V2_METHOD_LOOP8 = BIT(__SPECTRE_V2_METHOD_LOOP8),
++};
++
++void spectre_v2_update_state(unsigned int state, unsigned int methods);
++
++int spectre_bhb_update_vectors(unsigned int method);
++
++#endif
+diff --git a/arch/arm/include/asm/vmlinux.lds.h b/arch/arm/include/asm/vmlinux.lds.h
+index 4a91428c3..fad45c884 100644
+--- a/arch/arm/include/asm/vmlinux.lds.h
++++ b/arch/arm/include/asm/vmlinux.lds.h
+@@ -26,6 +26,19 @@
+ #define ARM_MMU_DISCARD(x)	x
+ #endif
+ 
++/*
++ * ld.lld does not support NOCROSSREFS:
++ * https://github.com/ClangBuiltLinux/linux/issues/1609
++ */
++#ifdef CONFIG_LD_IS_LLD
++#define NOCROSSREFS
++#endif
++
++/* Set start/end symbol names to the LMA for the section */
++#define ARM_LMA(sym, section)						\
++	sym##_start = LOADADDR(section);				\
++	sym##_end = LOADADDR(section) + SIZEOF(section)
++
+ #define PROC_INFO							\
+ 		. = ALIGN(4);						\
+ 		__proc_info_begin = .;					\
+@@ -110,19 +123,31 @@
+  * only thing that matters is their relative offsets
+  */
+ #define ARM_VECTORS							\
+-	__vectors_start = .;						\
+-	.vectors 0xffff0000 : AT(__vectors_start) {			\
+-		*(.vectors)						\
++	__vectors_lma = .;						\
++	OVERLAY 0xffff0000 : NOCROSSREFS AT(__vectors_lma) {		\
++		.vectors {						\
++			*(.vectors)					\
++		}							\
++		.vectors.bhb.loop8 {					\
++			*(.vectors.bhb.loop8)				\
++		}							\
++		.vectors.bhb.bpiall {					\
++			*(.vectors.bhb.bpiall)				\
++		}							\
+ 	}								\
+-	. = __vectors_start + SIZEOF(.vectors);				\
+-	__vectors_end = .;						\
++	ARM_LMA(__vectors, .vectors);					\
++	ARM_LMA(__vectors_bhb_loop8, .vectors.bhb.loop8);		\
++	ARM_LMA(__vectors_bhb_bpiall, .vectors.bhb.bpiall);		\
++	. = __vectors_lma + SIZEOF(.vectors) +				\
++		SIZEOF(.vectors.bhb.loop8) +				\
++		SIZEOF(.vectors.bhb.bpiall);				\
+ 									\
+-	__stubs_start = .;						\
+-	.stubs ADDR(.vectors) + 0x1000 : AT(__stubs_start) {		\
++	__stubs_lma = .;						\
++	.stubs ADDR(.vectors) + 0x1000 : AT(__stubs_lma) {		\
+ 		*(.stubs)						\
+ 	}								\
+-	. = __stubs_start + SIZEOF(.stubs);				\
+-	__stubs_end = .;						\
++	ARM_LMA(__stubs, .stubs);					\
++	. = __stubs_lma + SIZEOF(.stubs);				\
+ 									\
+ 	PROVIDE(vector_fiq_offset = vector_fiq - ADDR(.vectors));
+ 
+diff --git a/arch/arm/kernel/Makefile b/arch/arm/kernel/Makefile
+index 89e5d864e..79588b562 100644
+--- a/arch/arm/kernel/Makefile
++++ b/arch/arm/kernel/Makefile
+@@ -106,4 +106,6 @@ endif
+ 
+ obj-$(CONFIG_HAVE_ARM_SMCCC)	+= smccc-call.o
+ 
++obj-$(CONFIG_GENERIC_CPU_VULNERABILITIES) += spectre.o
++
+ extra-y := $(head-y) vmlinux.lds
+diff --git a/arch/arm/kernel/entry-armv.S b/arch/arm/kernel/entry-armv.S
+index 63fbcdc97..3cbd35c82 100644
+--- a/arch/arm/kernel/entry-armv.S
++++ b/arch/arm/kernel/entry-armv.S
+@@ -1005,12 +1005,11 @@ vector_\name:
+ 	sub	lr, lr, #\correction
+ 	.endif
+ 
+-	@
+-	@ Save r0, lr_<exception> (parent PC) and spsr_<exception>
+-	@ (parent CPSR)
+-	@
++	@ Save r0, lr_<exception> (parent PC)
+ 	stmia	sp, {r0, lr}		@ save r0, lr
+-	mrs	lr, spsr
++
++	@ Save spsr_<exception> (parent CPSR)
++2:	mrs	lr, spsr
+ 	str	lr, [sp, #8]		@ save spsr
+ 
+ 	@
+@@ -1031,6 +1030,44 @@ vector_\name:
+ 	movs	pc, lr			@ branch to handler in SVC mode
+ ENDPROC(vector_\name)
+ 
++#ifdef CONFIG_HARDEN_BRANCH_HISTORY
++	.subsection 1
++	.align 5
++vector_bhb_loop8_\name:
++	.if \correction
++	sub	lr, lr, #\correction
++	.endif
++
++	@ Save r0, lr_<exception> (parent PC)
++	stmia	sp, {r0, lr}
++
++	@ bhb workaround
++	mov	r0, #8
++1:	b	. + 4
++	subs	r0, r0, #1
++	bne	1b
++	dsb
++	isb
++	b	2b
++ENDPROC(vector_bhb_loop8_\name)
++
++vector_bhb_bpiall_\name:
++	.if \correction
++	sub	lr, lr, #\correction
++	.endif
++
++	@ Save r0, lr_<exception> (parent PC)
++	stmia	sp, {r0, lr}
++
++	@ bhb workaround
++	mcr	p15, 0, r0, c7, c5, 6	@ BPIALL
++	@ isb not needed due to "movs pc, lr" in the vector stub
++	@ which gives a "context synchronisation".
++	b	2b
++ENDPROC(vector_bhb_bpiall_\name)
++	.previous
++#endif
++
+ 	.align	2
+ 	@ handler addresses follow this label
+ 1:
+@@ -1039,6 +1076,10 @@ ENDPROC(vector_\name)
+ 	.section .stubs, "ax", %progbits
+ 	@ This must be the first word
+ 	.word	vector_swi
++#ifdef CONFIG_HARDEN_BRANCH_HISTORY
++	.word	vector_bhb_loop8_swi
++	.word	vector_bhb_bpiall_swi
++#endif
+ 
+ vector_rst:
+  ARM(	swi	SYS_ERROR0	)
+@@ -1153,8 +1194,10 @@ vector_addrexcptn:
+  * FIQ "NMI" handler
+  *-----------------------------------------------------------------------------
+  * Handle a FIQ using the SVC stack allowing FIQ act like NMI on x86
+- * systems.
++ * systems. This must be the last vector stub, so lets place it in its own
++ * subsection.
+  */
++	.subsection 2
+ 	vector_stub	fiq, FIQ_MODE, 4
+ 
+ 	.long	__fiq_usr			@  0  (USR_26 / USR_32)
+@@ -1187,6 +1230,30 @@ vector_addrexcptn:
+ 	W(b)	vector_irq
+ 	W(b)	vector_fiq
+ 
++#ifdef CONFIG_HARDEN_BRANCH_HISTORY
++	.section .vectors.bhb.loop8, "ax", %progbits
++.L__vectors_bhb_loop8_start:
++	W(b)	vector_rst
++	W(b)	vector_bhb_loop8_und
++	W(ldr)	pc, .L__vectors_bhb_loop8_start + 0x1004
++	W(b)	vector_bhb_loop8_pabt
++	W(b)	vector_bhb_loop8_dabt
++	W(b)	vector_addrexcptn
++	W(b)	vector_bhb_loop8_irq
++	W(b)	vector_bhb_loop8_fiq
++
++	.section .vectors.bhb.bpiall, "ax", %progbits
++.L__vectors_bhb_bpiall_start:
++	W(b)	vector_rst
++	W(b)	vector_bhb_bpiall_und
++	W(ldr)	pc, .L__vectors_bhb_bpiall_start + 0x1008
++	W(b)	vector_bhb_bpiall_pabt
++	W(b)	vector_bhb_bpiall_dabt
++	W(b)	vector_addrexcptn
++	W(b)	vector_bhb_bpiall_irq
++	W(b)	vector_bhb_bpiall_fiq
++#endif
++
+ 	.data
+ 	.align	2
+ 
+diff --git a/arch/arm/kernel/entry-common.S b/arch/arm/kernel/entry-common.S
+index 271cb8a1e..bd619da73 100644
+--- a/arch/arm/kernel/entry-common.S
++++ b/arch/arm/kernel/entry-common.S
+@@ -162,6 +162,29 @@ ENDPROC(ret_from_fork)
+  *-----------------------------------------------------------------------------
+  */
+ 
++	.align	5
++#ifdef CONFIG_HARDEN_BRANCH_HISTORY
++ENTRY(vector_bhb_loop8_swi)
++	sub	sp, sp, #PT_REGS_SIZE
++	stmia	sp, {r0 - r12}
++	mov	r8, #8
++1:	b	2f
++2:	subs	r8, r8, #1
++	bne	1b
++	dsb
++	isb
++	b	3f
++ENDPROC(vector_bhb_loop8_swi)
++
++	.align	5
++ENTRY(vector_bhb_bpiall_swi)
++	sub	sp, sp, #PT_REGS_SIZE
++	stmia	sp, {r0 - r12}
++	mcr	p15, 0, r8, c7, c5, 6	@ BPIALL
++	isb
++	b	3f
++ENDPROC(vector_bhb_bpiall_swi)
++#endif
+ 	.align	5
+ ENTRY(vector_swi)
+ #ifdef CONFIG_CPU_V7M
+@@ -169,6 +192,7 @@ ENTRY(vector_swi)
+ #else
+ 	sub	sp, sp, #PT_REGS_SIZE
+ 	stmia	sp, {r0 - r12}			@ Calling r0 - r12
++3:
+  ARM(	add	r8, sp, #S_PC		)
+  ARM(	stmdb	r8, {sp, lr}^		)	@ Calling sp, lr
+  THUMB(	mov	r8, sp			)
+diff --git a/arch/arm/kernel/spectre.c b/arch/arm/kernel/spectre.c
+new file mode 100644
+index 000000000..0dcefc36f
+--- /dev/null
++++ b/arch/arm/kernel/spectre.c
+@@ -0,0 +1,71 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/bpf.h>
++#include <linux/cpu.h>
++#include <linux/device.h>
++
++#include <asm/spectre.h>
++
++static bool _unprivileged_ebpf_enabled(void)
++{
++#ifdef CONFIG_BPF_SYSCALL
++	return !sysctl_unprivileged_bpf_disabled;
++#else
++	return false;
++#endif
++}
++
++ssize_t cpu_show_spectre_v1(struct device *dev, struct device_attribute *attr,
++			    char *buf)
++{
++	return sprintf(buf, "Mitigation: __user pointer sanitization\n");
++}
++
++static unsigned int spectre_v2_state;
++static unsigned int spectre_v2_methods;
++
++void spectre_v2_update_state(unsigned int state, unsigned int method)
++{
++	if (state > spectre_v2_state)
++		spectre_v2_state = state;
++	spectre_v2_methods |= method;
++}
++
++ssize_t cpu_show_spectre_v2(struct device *dev, struct device_attribute *attr,
++			    char *buf)
++{
++	const char *method;
++
++	if (spectre_v2_state == SPECTRE_UNAFFECTED)
++		return sprintf(buf, "%s\n", "Not affected");
++
++	if (spectre_v2_state != SPECTRE_MITIGATED)
++		return sprintf(buf, "%s\n", "Vulnerable");
++
++	if (_unprivileged_ebpf_enabled())
++		return sprintf(buf, "Vulnerable: Unprivileged eBPF enabled\n");
++
++	switch (spectre_v2_methods) {
++	case SPECTRE_V2_METHOD_BPIALL:
++		method = "Branch predictor hardening";
++		break;
++
++	case SPECTRE_V2_METHOD_ICIALLU:
++		method = "I-cache invalidation";
++		break;
++
++	case SPECTRE_V2_METHOD_SMC:
++	case SPECTRE_V2_METHOD_HVC:
++		method = "Firmware call";
++		break;
++
++	case SPECTRE_V2_METHOD_LOOP8:
++		method = "History overwrite";
++		break;
++
++	default:
++		method = "Multiple mitigations";
++		break;
++	}
++
++	return sprintf(buf, "Mitigation: %s\n", method);
++}
+diff --git a/arch/arm/kernel/traps.c b/arch/arm/kernel/traps.c
+index 17d5a785d..2d9e72ad1 100644
+--- a/arch/arm/kernel/traps.c
++++ b/arch/arm/kernel/traps.c
+@@ -30,6 +30,7 @@
+ #include <linux/atomic.h>
+ #include <asm/cacheflush.h>
+ #include <asm/exception.h>
++#include <asm/spectre.h>
+ #include <asm/unistd.h>
+ #include <asm/traps.h>
+ #include <asm/ptrace.h>
+@@ -806,10 +807,59 @@ static inline void __init kuser_init(void *vectors)
+ }
+ #endif
+ 
++#ifndef CONFIG_CPU_V7M
++static void copy_from_lma(void *vma, void *lma_start, void *lma_end)
++{
++	memcpy(vma, lma_start, lma_end - lma_start);
++}
++
++static void flush_vectors(void *vma, size_t offset, size_t size)
++{
++	unsigned long start = (unsigned long)vma + offset;
++	unsigned long end = start + size;
++
++	flush_icache_range(start, end);
++}
++
++#ifdef CONFIG_HARDEN_BRANCH_HISTORY
++int spectre_bhb_update_vectors(unsigned int method)
++{
++	extern char __vectors_bhb_bpiall_start[], __vectors_bhb_bpiall_end[];
++	extern char __vectors_bhb_loop8_start[], __vectors_bhb_loop8_end[];
++	void *vec_start, *vec_end;
++
++	if (system_state > SYSTEM_SCHEDULING) {
++		pr_err("CPU%u: Spectre BHB workaround too late - system vulnerable\n",
++		       smp_processor_id());
++		return SPECTRE_VULNERABLE;
++	}
++
++	switch (method) {
++	case SPECTRE_V2_METHOD_LOOP8:
++		vec_start = __vectors_bhb_loop8_start;
++		vec_end = __vectors_bhb_loop8_end;
++		break;
++
++	case SPECTRE_V2_METHOD_BPIALL:
++		vec_start = __vectors_bhb_bpiall_start;
++		vec_end = __vectors_bhb_bpiall_end;
++		break;
++
++	default:
++		pr_err("CPU%u: unknown Spectre BHB state %d\n",
++		       smp_processor_id(), method);
++		return SPECTRE_VULNERABLE;
++	}
++
++	copy_from_lma(vectors_page, vec_start, vec_end);
++	flush_vectors(vectors_page, 0, vec_end - vec_start);
++
++	return SPECTRE_MITIGATED;
++}
++#endif
++
+ void __init early_trap_init(void *vectors_base)
+ {
+-#ifndef CONFIG_CPU_V7M
+-	unsigned long vectors = (unsigned long)vectors_base;
+ 	extern char __stubs_start[], __stubs_end[];
+ 	extern char __vectors_start[], __vectors_end[];
+ 	unsigned i;
+@@ -830,17 +880,20 @@ void __init early_trap_init(void *vectors_base)
+ 	 * into the vector page, mapped at 0xffff0000, and ensure these
+ 	 * are visible to the instruction stream.
+ 	 */
+-	memcpy((void *)vectors, __vectors_start, __vectors_end - __vectors_start);
+-	memcpy((void *)vectors + 0x1000, __stubs_start, __stubs_end - __stubs_start);
++	copy_from_lma(vectors_base, __vectors_start, __vectors_end);
++	copy_from_lma(vectors_base + 0x1000, __stubs_start, __stubs_end);
+ 
+ 	kuser_init(vectors_base);
+ 
+-	flush_icache_range(vectors, vectors + PAGE_SIZE * 2);
++	flush_vectors(vectors_base, 0, PAGE_SIZE * 2);
++}
+ #else /* ifndef CONFIG_CPU_V7M */
++void __init early_trap_init(void *vectors_base)
++{
+ 	/*
+ 	 * on V7-M there is no need to copy the vector table to a dedicated
+ 	 * memory area. The address is configurable and so a table in the kernel
+ 	 * image can be used.
+ 	 */
+-#endif
+ }
++#endif
+diff --git a/arch/arm/mm/Kconfig b/arch/arm/mm/Kconfig
+index 423a97dd2..c6bf34a33 100644
+--- a/arch/arm/mm/Kconfig
++++ b/arch/arm/mm/Kconfig
+@@ -833,6 +833,7 @@ config CPU_BPREDICT_DISABLE
+ 
+ config CPU_SPECTRE
+ 	bool
++	select GENERIC_CPU_VULNERABILITIES
+ 
+ config HARDEN_BRANCH_PREDICTOR
+ 	bool "Harden the branch predictor against aliasing attacks" if EXPERT
+@@ -853,6 +854,16 @@ config HARDEN_BRANCH_PREDICTOR
+ 
+ 	   If unsure, say Y.
+ 
++config HARDEN_BRANCH_HISTORY
++	bool "Harden Spectre style attacks against branch history" if EXPERT
++	depends on CPU_SPECTRE
++	default y
++	help
++	  Speculation attacks against some high-performance processors can
++	  make use of branch history to influence future speculation. When
++	  taking an exception, a sequence of branches overwrites the branch
++	  history, or branch history is invalidated.
++
+ config TLS_REG_EMUL
+ 	bool
+ 	select NEED_KUSER_HELPERS
+diff --git a/arch/arm/mm/proc-v7-bugs.c b/arch/arm/mm/proc-v7-bugs.c
+index 114c05ab4..06dbfb968 100644
+--- a/arch/arm/mm/proc-v7-bugs.c
++++ b/arch/arm/mm/proc-v7-bugs.c
+@@ -6,8 +6,35 @@
+ #include <asm/cp15.h>
+ #include <asm/cputype.h>
+ #include <asm/proc-fns.h>
++#include <asm/spectre.h>
+ #include <asm/system_misc.h>
+ 
++#ifdef CONFIG_ARM_PSCI
++static int __maybe_unused spectre_v2_get_cpu_fw_mitigation_state(void)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_1_1_invoke(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
++			     ARM_SMCCC_ARCH_WORKAROUND_1, &res);
++
++	switch ((int)res.a0) {
++	case SMCCC_RET_SUCCESS:
++		return SPECTRE_MITIGATED;
++
++	case SMCCC_ARCH_WORKAROUND_RET_UNAFFECTED:
++		return SPECTRE_UNAFFECTED;
++
++	default:
++		return SPECTRE_VULNERABLE;
++	}
++}
++#else
++static int __maybe_unused spectre_v2_get_cpu_fw_mitigation_state(void)
++{
++	return SPECTRE_VULNERABLE;
++}
++#endif
++
+ #ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+ DEFINE_PER_CPU(harden_branch_predictor_fn_t, harden_branch_predictor_fn);
+ 
+@@ -36,13 +63,61 @@ static void __maybe_unused call_hvc_arch_workaround_1(void)
+ 	arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
+ }
+ 
+-static void cpu_v7_spectre_init(void)
++static unsigned int spectre_v2_install_workaround(unsigned int method)
+ {
+ 	const char *spectre_v2_method = NULL;
+ 	int cpu = smp_processor_id();
+ 
+ 	if (per_cpu(harden_branch_predictor_fn, cpu))
+-		return;
++		return SPECTRE_MITIGATED;
++
++	switch (method) {
++	case SPECTRE_V2_METHOD_BPIALL:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			harden_branch_predictor_bpiall;
++		spectre_v2_method = "BPIALL";
++		break;
++
++	case SPECTRE_V2_METHOD_ICIALLU:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			harden_branch_predictor_iciallu;
++		spectre_v2_method = "ICIALLU";
++		break;
++
++	case SPECTRE_V2_METHOD_HVC:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			call_hvc_arch_workaround_1;
++		cpu_do_switch_mm = cpu_v7_hvc_switch_mm;
++		spectre_v2_method = "hypervisor";
++		break;
++
++	case SPECTRE_V2_METHOD_SMC:
++		per_cpu(harden_branch_predictor_fn, cpu) =
++			call_smc_arch_workaround_1;
++		cpu_do_switch_mm = cpu_v7_smc_switch_mm;
++		spectre_v2_method = "firmware";
++		break;
++	}
++
++	if (spectre_v2_method)
++		pr_info("CPU%u: Spectre v2: using %s workaround\n",
++			smp_processor_id(), spectre_v2_method);
++
++	return SPECTRE_MITIGATED;
++}
++#else
++static unsigned int spectre_v2_install_workaround(unsigned int method)
++{
++	pr_info("CPU%u: Spectre V2: workarounds disabled by configuration\n",
++		smp_processor_id());
++
++	return SPECTRE_VULNERABLE;
++}
++#endif
++
++static void cpu_v7_spectre_v2_init(void)
++{
++	unsigned int state, method = 0;
+ 
+ 	switch (read_cpuid_part()) {
+ 	case ARM_CPU_PART_CORTEX_A8:
+@@ -51,69 +126,133 @@ static void cpu_v7_spectre_init(void)
+ 	case ARM_CPU_PART_CORTEX_A17:
+ 	case ARM_CPU_PART_CORTEX_A73:
+ 	case ARM_CPU_PART_CORTEX_A75:
+-		per_cpu(harden_branch_predictor_fn, cpu) =
+-			harden_branch_predictor_bpiall;
+-		spectre_v2_method = "BPIALL";
++		state = SPECTRE_MITIGATED;
++		method = SPECTRE_V2_METHOD_BPIALL;
+ 		break;
+ 
+ 	case ARM_CPU_PART_CORTEX_A15:
+ 	case ARM_CPU_PART_BRAHMA_B15:
+-		per_cpu(harden_branch_predictor_fn, cpu) =
+-			harden_branch_predictor_iciallu;
+-		spectre_v2_method = "ICIALLU";
++		state = SPECTRE_MITIGATED;
++		method = SPECTRE_V2_METHOD_ICIALLU;
+ 		break;
+ 
+-#ifdef CONFIG_ARM_PSCI
+ 	case ARM_CPU_PART_BRAHMA_B53:
+ 		/* Requires no workaround */
++		state = SPECTRE_UNAFFECTED;
+ 		break;
++
+ 	default:
+ 		/* Other ARM CPUs require no workaround */
+-		if (read_cpuid_implementor() == ARM_CPU_IMP_ARM)
++		if (read_cpuid_implementor() == ARM_CPU_IMP_ARM) {
++			state = SPECTRE_UNAFFECTED;
+ 			break;
++		}
++
+ 		fallthrough;
+-		/* Cortex A57/A72 require firmware workaround */
+-	case ARM_CPU_PART_CORTEX_A57:
+-	case ARM_CPU_PART_CORTEX_A72: {
+-		struct arm_smccc_res res;
+ 
+-		arm_smccc_1_1_invoke(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
+-				     ARM_SMCCC_ARCH_WORKAROUND_1, &res);
+-		if ((int)res.a0 != 0)
+-			return;
++	/* Cortex A57/A72 require firmware workaround */
++	case ARM_CPU_PART_CORTEX_A57:
++	case ARM_CPU_PART_CORTEX_A72:
++		state = spectre_v2_get_cpu_fw_mitigation_state();
++		if (state != SPECTRE_MITIGATED)
++			break;
+ 
+ 		switch (arm_smccc_1_1_get_conduit()) {
+ 		case SMCCC_CONDUIT_HVC:
+-			per_cpu(harden_branch_predictor_fn, cpu) =
+-				call_hvc_arch_workaround_1;
+-			cpu_do_switch_mm = cpu_v7_hvc_switch_mm;
+-			spectre_v2_method = "hypervisor";
++			method = SPECTRE_V2_METHOD_HVC;
+ 			break;
+ 
+ 		case SMCCC_CONDUIT_SMC:
+-			per_cpu(harden_branch_predictor_fn, cpu) =
+-				call_smc_arch_workaround_1;
+-			cpu_do_switch_mm = cpu_v7_smc_switch_mm;
+-			spectre_v2_method = "firmware";
++			method = SPECTRE_V2_METHOD_SMC;
+ 			break;
+ 
+ 		default:
++			state = SPECTRE_VULNERABLE;
+ 			break;
+ 		}
+ 	}
+-#endif
++
++	if (state == SPECTRE_MITIGATED)
++		state = spectre_v2_install_workaround(method);
++
++	spectre_v2_update_state(state, method);
++}
++
++#ifdef CONFIG_HARDEN_BRANCH_HISTORY
++static int spectre_bhb_method;
++
++static const char *spectre_bhb_method_name(int method)
++{
++	switch (method) {
++	case SPECTRE_V2_METHOD_LOOP8:
++		return "loop";
++
++	case SPECTRE_V2_METHOD_BPIALL:
++		return "BPIALL";
++
++	default:
++		return "unknown";
+ 	}
++}
+ 
+-	if (spectre_v2_method)
+-		pr_info("CPU%u: Spectre v2: using %s workaround\n",
+-			smp_processor_id(), spectre_v2_method);
++static int spectre_bhb_install_workaround(int method)
++{
++	if (spectre_bhb_method != method) {
++		if (spectre_bhb_method) {
++			pr_err("CPU%u: Spectre BHB: method disagreement, system vulnerable\n",
++			       smp_processor_id());
++
++			return SPECTRE_VULNERABLE;
++		}
++
++		if (spectre_bhb_update_vectors(method) == SPECTRE_VULNERABLE)
++			return SPECTRE_VULNERABLE;
++
++		spectre_bhb_method = method;
++	}
++
++	pr_info("CPU%u: Spectre BHB: using %s workaround\n",
++		smp_processor_id(), spectre_bhb_method_name(method));
++
++	return SPECTRE_MITIGATED;
+ }
+ #else
+-static void cpu_v7_spectre_init(void)
++static int spectre_bhb_install_workaround(int method)
+ {
++	return SPECTRE_VULNERABLE;
+ }
+ #endif
+ 
++static void cpu_v7_spectre_bhb_init(void)
++{
++	unsigned int state, method = 0;
++
++	switch (read_cpuid_part()) {
++	case ARM_CPU_PART_CORTEX_A15:
++	case ARM_CPU_PART_BRAHMA_B15:
++	case ARM_CPU_PART_CORTEX_A57:
++	case ARM_CPU_PART_CORTEX_A72:
++		state = SPECTRE_MITIGATED;
++		method = SPECTRE_V2_METHOD_LOOP8;
++		break;
++
++	case ARM_CPU_PART_CORTEX_A73:
++	case ARM_CPU_PART_CORTEX_A75:
++		state = SPECTRE_MITIGATED;
++		method = SPECTRE_V2_METHOD_BPIALL;
++		break;
++
++	default:
++		state = SPECTRE_UNAFFECTED;
++		break;
++	}
++
++	if (state == SPECTRE_MITIGATED)
++		state = spectre_bhb_install_workaround(method);
++
++	spectre_v2_update_state(state, method);
++}
++
+ static __maybe_unused bool cpu_v7_check_auxcr_set(bool *warned,
+ 						  u32 mask, const char *msg)
+ {
+@@ -142,16 +281,17 @@ static bool check_spectre_auxcr(bool *warned, u32 bit)
+ void cpu_v7_ca8_ibe(void)
+ {
+ 	if (check_spectre_auxcr(this_cpu_ptr(&spectre_warned), BIT(6)))
+-		cpu_v7_spectre_init();
++		cpu_v7_spectre_v2_init();
+ }
+ 
+ void cpu_v7_ca15_ibe(void)
+ {
+ 	if (check_spectre_auxcr(this_cpu_ptr(&spectre_warned), BIT(0)))
+-		cpu_v7_spectre_init();
++		cpu_v7_spectre_v2_init();
+ }
+ 
+ void cpu_v7_bugs_init(void)
+ {
+-	cpu_v7_spectre_init();
++	cpu_v7_spectre_v2_init();
++	cpu_v7_spectre_bhb_init();
+ }
+diff --git a/arch/arm64/include/asm/vectors.h b/arch/arm64/include/asm/vectors.h
+new file mode 100644
+index 000000000..f64613a96
+--- /dev/null
++++ b/arch/arm64/include/asm/vectors.h
+@@ -0,0 +1,73 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Copyright (C) 2022 ARM Ltd.
++ */
++#ifndef __ASM_VECTORS_H
++#define __ASM_VECTORS_H
++
++#include <linux/bug.h>
++#include <linux/percpu.h>
++
++#include <asm/fixmap.h>
++
++extern char vectors[];
++extern char tramp_vectors[];
++extern char __bp_harden_el1_vectors[];
++
++/*
++ * Note: the order of this enum corresponds to two arrays in entry.S:
++ * tramp_vecs and __bp_harden_el1_vectors. By default the canonical
++ * 'full fat' vectors are used directly.
++ */
++enum arm64_bp_harden_el1_vectors {
++#ifdef CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
++	/*
++	 * Perform the BHB loop mitigation, before branching to the canonical
++	 * vectors.
++	 */
++	EL1_VECTOR_BHB_LOOP,
++
++	/*
++	 * Make the SMC call for firmware mitigation, before branching to the
++	 * canonical vectors.
++	 */
++	EL1_VECTOR_BHB_FW,
++
++	/*
++	 * Use the ClearBHB instruction, before branching to the canonical
++	 * vectors.
++	 */
++	EL1_VECTOR_BHB_CLEAR_INSN,
++#endif /* CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY */
++
++	/*
++	 * Remap the kernel before branching to the canonical vectors.
++	 */
++	EL1_VECTOR_KPTI,
++};
++
++#ifndef CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
++#define EL1_VECTOR_BHB_LOOP		-1
++#define EL1_VECTOR_BHB_FW		-1
++#define EL1_VECTOR_BHB_CLEAR_INSN	-1
++#endif /* !CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY */
++
++/* The vectors to use on return from EL0. e.g. to remap the kernel */
++DECLARE_PER_CPU_READ_MOSTLY(const char *, this_cpu_vector);
++
++#ifndef CONFIG_UNMAP_KERNEL_AT_EL0
++#define TRAMP_VALIAS	0
++#endif
++
++static inline const char *
++arm64_get_bp_hardening_vector(enum arm64_bp_harden_el1_vectors slot)
++{
++	if (arm64_kernel_unmapped_at_el0())
++		return (char *)TRAMP_VALIAS + SZ_2K * slot;
++
++	WARN_ON_ONCE(slot == EL1_VECTOR_KPTI);
++
++	return __bp_harden_el1_vectors + SZ_2K * slot;
++}
++
++#endif /* __ASM_VECTORS_H */
+diff --git a/arch/x86/include/asm/cpufeatures.h b/arch/x86/include/asm/cpufeatures.h
+index dad350d42..3b407f46f 100644
+--- a/arch/x86/include/asm/cpufeatures.h
++++ b/arch/x86/include/asm/cpufeatures.h
+@@ -204,7 +204,7 @@
+ #define X86_FEATURE_SME			( 7*32+10) /* AMD Secure Memory Encryption */
+ #define X86_FEATURE_PTI			( 7*32+11) /* Kernel Page Table Isolation enabled */
+ #define X86_FEATURE_RETPOLINE		( 7*32+12) /* "" Generic Retpoline mitigation for Spectre variant 2 */
+-#define X86_FEATURE_RETPOLINE_AMD	( 7*32+13) /* "" AMD Retpoline mitigation for Spectre variant 2 */
++#define X86_FEATURE_RETPOLINE_LFENCE	( 7*32+13) /* "" Use LFENCE for Spectre variant 2 */
+ #define X86_FEATURE_INTEL_PPIN		( 7*32+14) /* Intel Processor Inventory Number */
+ #define X86_FEATURE_CDP_L2		( 7*32+15) /* Code and Data Prioritization L2 */
+ #define X86_FEATURE_MSR_SPEC_CTRL	( 7*32+16) /* "" MSR SPEC_CTRL is implemented */
+diff --git a/arch/x86/include/asm/nospec-branch.h b/arch/x86/include/asm/nospec-branch.h
+index cb9ad6b73..4d0f5386e 100644
+--- a/arch/x86/include/asm/nospec-branch.h
++++ b/arch/x86/include/asm/nospec-branch.h
+@@ -82,7 +82,7 @@
+ #ifdef CONFIG_RETPOLINE
+ 	ALTERNATIVE_2 __stringify(ANNOTATE_RETPOLINE_SAFE; jmp *%\reg), \
+ 		      __stringify(jmp __x86_retpoline_\reg), X86_FEATURE_RETPOLINE, \
+-		      __stringify(lfence; ANNOTATE_RETPOLINE_SAFE; jmp *%\reg), X86_FEATURE_RETPOLINE_AMD
++		      __stringify(lfence; ANNOTATE_RETPOLINE_SAFE; jmp *%\reg), X86_FEATURE_RETPOLINE_LFENCE
+ #else
+ 	jmp	*%\reg
+ #endif
+@@ -92,7 +92,7 @@
+ #ifdef CONFIG_RETPOLINE
+ 	ALTERNATIVE_2 __stringify(ANNOTATE_RETPOLINE_SAFE; call *%\reg), \
+ 		      __stringify(call __x86_retpoline_\reg), X86_FEATURE_RETPOLINE, \
+-		      __stringify(lfence; ANNOTATE_RETPOLINE_SAFE; call *%\reg), X86_FEATURE_RETPOLINE_AMD
++		      __stringify(lfence; ANNOTATE_RETPOLINE_SAFE; call *%\reg), X86_FEATURE_RETPOLINE_LFENCE
+ #else
+ 	call	*%\reg
+ #endif
+@@ -134,7 +134,7 @@
+ 	"lfence;\n"						\
+ 	ANNOTATE_RETPOLINE_SAFE					\
+ 	"call *%[thunk_target]\n",				\
+-	X86_FEATURE_RETPOLINE_AMD)
++	X86_FEATURE_RETPOLINE_LFENCE)
+ 
+ # define THUNK_TARGET(addr) [thunk_target] "r" (addr)
+ 
+@@ -164,7 +164,7 @@
+ 	"lfence;\n"						\
+ 	ANNOTATE_RETPOLINE_SAFE					\
+ 	"call *%[thunk_target]\n",				\
+-	X86_FEATURE_RETPOLINE_AMD)
++	X86_FEATURE_RETPOLINE_LFENCE)
+ 
+ # define THUNK_TARGET(addr) [thunk_target] "rm" (addr)
+ #endif
+@@ -176,9 +176,11 @@
+ /* The Spectre V2 mitigation variants */
+ enum spectre_v2_mitigation {
+ 	SPECTRE_V2_NONE,
+-	SPECTRE_V2_RETPOLINE_GENERIC,
+-	SPECTRE_V2_RETPOLINE_AMD,
+-	SPECTRE_V2_IBRS_ENHANCED,
++	SPECTRE_V2_RETPOLINE,
++	SPECTRE_V2_LFENCE,
++	SPECTRE_V2_EIBRS,
++	SPECTRE_V2_EIBRS_RETPOLINE,
++	SPECTRE_V2_EIBRS_LFENCE,
+ };
+ 
+ /* The indirect branch speculation control variants */
+diff --git a/arch/x86/kernel/cpu/bugs.c b/arch/x86/kernel/cpu/bugs.c
+index d41b70fe4..78b9514a3 100644
+--- a/arch/x86/kernel/cpu/bugs.c
++++ b/arch/x86/kernel/cpu/bugs.c
+@@ -16,6 +16,7 @@
+ #include <linux/prctl.h>
+ #include <linux/sched/smt.h>
+ #include <linux/pgtable.h>
++#include <linux/bpf.h>
+ 
+ #include <asm/spec-ctrl.h>
+ #include <asm/cmdline.h>
+@@ -613,6 +614,32 @@ static inline const char *spectre_v2_module_string(void)
+ static inline const char *spectre_v2_module_string(void) { return ""; }
+ #endif
+ 
++#define SPECTRE_V2_LFENCE_MSG "WARNING: LFENCE mitigation is not recommended for this CPU, data leaks possible!\n"
++#define SPECTRE_V2_EIBRS_EBPF_MSG "WARNING: Unprivileged eBPF is enabled with eIBRS on, data leaks possible via Spectre v2 BHB attacks!\n"
++#define SPECTRE_V2_EIBRS_LFENCE_EBPF_SMT_MSG "WARNING: Unprivileged eBPF is enabled with eIBRS+LFENCE mitigation and SMT, data leaks possible via Spectre v2 BHB attacks!\n"
++
++#ifdef CONFIG_BPF_SYSCALL
++void unpriv_ebpf_notify(int new_state)
++{
++	if (new_state)
++		return;
++
++	/* Unprivileged eBPF is enabled */
++
++	switch (spectre_v2_enabled) {
++	case SPECTRE_V2_EIBRS:
++		pr_err(SPECTRE_V2_EIBRS_EBPF_MSG);
++		break;
++	case SPECTRE_V2_EIBRS_LFENCE:
++		if (sched_smt_active())
++			pr_err(SPECTRE_V2_EIBRS_LFENCE_EBPF_SMT_MSG);
++		break;
++	default:
++		break;
++	}
++}
++#endif
++
+ static inline bool match_option(const char *arg, int arglen, const char *opt)
+ {
+ 	int len = strlen(opt);
+@@ -627,7 +654,10 @@ enum spectre_v2_mitigation_cmd {
+ 	SPECTRE_V2_CMD_FORCE,
+ 	SPECTRE_V2_CMD_RETPOLINE,
+ 	SPECTRE_V2_CMD_RETPOLINE_GENERIC,
+-	SPECTRE_V2_CMD_RETPOLINE_AMD,
++	SPECTRE_V2_CMD_RETPOLINE_LFENCE,
++	SPECTRE_V2_CMD_EIBRS,
++	SPECTRE_V2_CMD_EIBRS_RETPOLINE,
++	SPECTRE_V2_CMD_EIBRS_LFENCE,
+ };
+ 
+ enum spectre_v2_user_cmd {
+@@ -700,6 +730,13 @@ spectre_v2_parse_user_cmdline(enum spectre_v2_mitigation_cmd v2_cmd)
+ 	return SPECTRE_V2_USER_CMD_AUTO;
+ }
+ 
++static inline bool spectre_v2_in_eibrs_mode(enum spectre_v2_mitigation mode)
++{
++	return (mode == SPECTRE_V2_EIBRS ||
++		mode == SPECTRE_V2_EIBRS_RETPOLINE ||
++		mode == SPECTRE_V2_EIBRS_LFENCE);
++}
++
+ static void __init
+ spectre_v2_user_select_mitigation(enum spectre_v2_mitigation_cmd v2_cmd)
+ {
+@@ -767,7 +804,7 @@ spectre_v2_user_select_mitigation(enum spectre_v2_mitigation_cmd v2_cmd)
+ 	 */
+ 	if (!boot_cpu_has(X86_FEATURE_STIBP) ||
+ 	    !smt_possible ||
+-	    spectre_v2_enabled == SPECTRE_V2_IBRS_ENHANCED)
++	    spectre_v2_in_eibrs_mode(spectre_v2_enabled))
+ 		return;
+ 
+ 	/*
+@@ -787,9 +824,11 @@ spectre_v2_user_select_mitigation(enum spectre_v2_mitigation_cmd v2_cmd)
+ 
+ static const char * const spectre_v2_strings[] = {
+ 	[SPECTRE_V2_NONE]			= "Vulnerable",
+-	[SPECTRE_V2_RETPOLINE_GENERIC]		= "Mitigation: Full generic retpoline",
+-	[SPECTRE_V2_RETPOLINE_AMD]		= "Mitigation: Full AMD retpoline",
+-	[SPECTRE_V2_IBRS_ENHANCED]		= "Mitigation: Enhanced IBRS",
++	[SPECTRE_V2_RETPOLINE]			= "Mitigation: Retpolines",
++	[SPECTRE_V2_LFENCE]			= "Mitigation: LFENCE",
++	[SPECTRE_V2_EIBRS]			= "Mitigation: Enhanced IBRS",
++	[SPECTRE_V2_EIBRS_LFENCE]		= "Mitigation: Enhanced IBRS + LFENCE",
++	[SPECTRE_V2_EIBRS_RETPOLINE]		= "Mitigation: Enhanced IBRS + Retpolines",
+ };
+ 
+ static const struct {
+@@ -800,8 +839,12 @@ static const struct {
+ 	{ "off",		SPECTRE_V2_CMD_NONE,		  false },
+ 	{ "on",			SPECTRE_V2_CMD_FORCE,		  true  },
+ 	{ "retpoline",		SPECTRE_V2_CMD_RETPOLINE,	  false },
+-	{ "retpoline,amd",	SPECTRE_V2_CMD_RETPOLINE_AMD,	  false },
++	{ "retpoline,amd",	SPECTRE_V2_CMD_RETPOLINE_LFENCE,  false },
++	{ "retpoline,lfence",	SPECTRE_V2_CMD_RETPOLINE_LFENCE,  false },
+ 	{ "retpoline,generic",	SPECTRE_V2_CMD_RETPOLINE_GENERIC, false },
++	{ "eibrs",		SPECTRE_V2_CMD_EIBRS,		  false },
++	{ "eibrs,lfence",	SPECTRE_V2_CMD_EIBRS_LFENCE,	  false },
++	{ "eibrs,retpoline",	SPECTRE_V2_CMD_EIBRS_RETPOLINE,	  false },
+ 	{ "auto",		SPECTRE_V2_CMD_AUTO,		  false },
+ };
+ 
+@@ -838,17 +881,30 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
+ 	}
+ 
+ 	if ((cmd == SPECTRE_V2_CMD_RETPOLINE ||
+-	     cmd == SPECTRE_V2_CMD_RETPOLINE_AMD ||
+-	     cmd == SPECTRE_V2_CMD_RETPOLINE_GENERIC) &&
++	     cmd == SPECTRE_V2_CMD_RETPOLINE_LFENCE ||
++	     cmd == SPECTRE_V2_CMD_RETPOLINE_GENERIC ||
++	     cmd == SPECTRE_V2_CMD_EIBRS_LFENCE ||
++	     cmd == SPECTRE_V2_CMD_EIBRS_RETPOLINE) &&
+ 	    !IS_ENABLED(CONFIG_RETPOLINE)) {
+-		pr_err("%s selected but not compiled in. Switching to AUTO select\n", mitigation_options[i].option);
++		pr_err("%s selected but not compiled in. Switching to AUTO select\n",
++		       mitigation_options[i].option);
+ 		return SPECTRE_V2_CMD_AUTO;
+ 	}
+ 
+-	if (cmd == SPECTRE_V2_CMD_RETPOLINE_AMD &&
+-	    boot_cpu_data.x86_vendor != X86_VENDOR_HYGON &&
+-	    boot_cpu_data.x86_vendor != X86_VENDOR_AMD) {
+-		pr_err("retpoline,amd selected but CPU is not AMD. Switching to AUTO select\n");
++	if ((cmd == SPECTRE_V2_CMD_EIBRS ||
++	     cmd == SPECTRE_V2_CMD_EIBRS_LFENCE ||
++	     cmd == SPECTRE_V2_CMD_EIBRS_RETPOLINE) &&
++	    !boot_cpu_has(X86_FEATURE_IBRS_ENHANCED)) {
++		pr_err("%s selected but CPU doesn't have eIBRS. Switching to AUTO select\n",
++		       mitigation_options[i].option);
++		return SPECTRE_V2_CMD_AUTO;
++	}
++
++	if ((cmd == SPECTRE_V2_CMD_RETPOLINE_LFENCE ||
++	     cmd == SPECTRE_V2_CMD_EIBRS_LFENCE) &&
++	    !boot_cpu_has(X86_FEATURE_LFENCE_RDTSC)) {
++		pr_err("%s selected, but CPU doesn't have a serializing LFENCE. Switching to AUTO select\n",
++		       mitigation_options[i].option);
+ 		return SPECTRE_V2_CMD_AUTO;
+ 	}
+ 
+@@ -857,6 +913,16 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
+ 	return cmd;
+ }
+ 
++static enum spectre_v2_mitigation __init spectre_v2_select_retpoline(void)
++{
++	if (!IS_ENABLED(CONFIG_RETPOLINE)) {
++		pr_err("Kernel not compiled with retpoline; no mitigation available!");
++		return SPECTRE_V2_NONE;
++	}
++
++	return SPECTRE_V2_RETPOLINE;
++}
++
+ static void __init spectre_v2_select_mitigation(void)
+ {
+ 	enum spectre_v2_mitigation_cmd cmd = spectre_v2_parse_cmdline();
+@@ -877,49 +943,64 @@ static void __init spectre_v2_select_mitigation(void)
+ 	case SPECTRE_V2_CMD_FORCE:
+ 	case SPECTRE_V2_CMD_AUTO:
+ 		if (boot_cpu_has(X86_FEATURE_IBRS_ENHANCED)) {
+-			mode = SPECTRE_V2_IBRS_ENHANCED;
+-			/* Force it so VMEXIT will restore correctly */
+-			x86_spec_ctrl_base |= SPEC_CTRL_IBRS;
+-			wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
+-			goto specv2_set_mode;
++			mode = SPECTRE_V2_EIBRS;
++			break;
+ 		}
+-		if (IS_ENABLED(CONFIG_RETPOLINE))
+-			goto retpoline_auto;
++
++		mode = spectre_v2_select_retpoline();
+ 		break;
+-	case SPECTRE_V2_CMD_RETPOLINE_AMD:
+-		if (IS_ENABLED(CONFIG_RETPOLINE))
+-			goto retpoline_amd;
++
++	case SPECTRE_V2_CMD_RETPOLINE_LFENCE:
++		pr_err(SPECTRE_V2_LFENCE_MSG);
++		mode = SPECTRE_V2_LFENCE;
+ 		break;
++
+ 	case SPECTRE_V2_CMD_RETPOLINE_GENERIC:
+-		if (IS_ENABLED(CONFIG_RETPOLINE))
+-			goto retpoline_generic;
++		mode = SPECTRE_V2_RETPOLINE;
+ 		break;
++
+ 	case SPECTRE_V2_CMD_RETPOLINE:
+-		if (IS_ENABLED(CONFIG_RETPOLINE))
+-			goto retpoline_auto;
++		mode = spectre_v2_select_retpoline();
++		break;
++
++	case SPECTRE_V2_CMD_EIBRS:
++		mode = SPECTRE_V2_EIBRS;
++		break;
++
++	case SPECTRE_V2_CMD_EIBRS_LFENCE:
++		mode = SPECTRE_V2_EIBRS_LFENCE;
++		break;
++
++	case SPECTRE_V2_CMD_EIBRS_RETPOLINE:
++		mode = SPECTRE_V2_EIBRS_RETPOLINE;
+ 		break;
+ 	}
+-	pr_err("Spectre mitigation: kernel not compiled with retpoline; no mitigation available!");
+-	return;
+ 
+-retpoline_auto:
+-	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
+-	    boot_cpu_data.x86_vendor == X86_VENDOR_HYGON) {
+-	retpoline_amd:
+-		if (!boot_cpu_has(X86_FEATURE_LFENCE_RDTSC)) {
+-			pr_err("Spectre mitigation: LFENCE not serializing, switching to generic retpoline\n");
+-			goto retpoline_generic;
+-		}
+-		mode = SPECTRE_V2_RETPOLINE_AMD;
+-		setup_force_cpu_cap(X86_FEATURE_RETPOLINE_AMD);
+-		setup_force_cpu_cap(X86_FEATURE_RETPOLINE);
+-	} else {
+-	retpoline_generic:
+-		mode = SPECTRE_V2_RETPOLINE_GENERIC;
++	if (mode == SPECTRE_V2_EIBRS && unprivileged_ebpf_enabled())
++		pr_err(SPECTRE_V2_EIBRS_EBPF_MSG);
++
++	if (spectre_v2_in_eibrs_mode(mode)) {
++		/* Force it so VMEXIT will restore correctly */
++		x86_spec_ctrl_base |= SPEC_CTRL_IBRS;
++		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++	}
++
++	switch (mode) {
++	case SPECTRE_V2_NONE:
++	case SPECTRE_V2_EIBRS:
++		break;
++
++	case SPECTRE_V2_LFENCE:
++	case SPECTRE_V2_EIBRS_LFENCE:
++		setup_force_cpu_cap(X86_FEATURE_RETPOLINE_LFENCE);
++		fallthrough;
++
++	case SPECTRE_V2_RETPOLINE:
++	case SPECTRE_V2_EIBRS_RETPOLINE:
+ 		setup_force_cpu_cap(X86_FEATURE_RETPOLINE);
++		break;
+ 	}
+ 
+-specv2_set_mode:
+ 	spectre_v2_enabled = mode;
+ 	pr_info("%s\n", spectre_v2_strings[mode]);
+ 
+@@ -945,7 +1026,7 @@ static void __init spectre_v2_select_mitigation(void)
+ 	 * the CPU supports Enhanced IBRS, kernel might un-intentionally not
+ 	 * enable IBRS around firmware calls.
+ 	 */
+-	if (boot_cpu_has(X86_FEATURE_IBRS) && mode != SPECTRE_V2_IBRS_ENHANCED) {
++	if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_eibrs_mode(mode)) {
+ 		setup_force_cpu_cap(X86_FEATURE_USE_IBRS_FW);
+ 		pr_info("Enabling Restricted Speculation for firmware calls\n");
+ 	}
+@@ -1015,6 +1096,10 @@ void cpu_bugs_smt_update(void)
+ {
+ 	mutex_lock(&spec_ctrl_mutex);
+ 
++	if (sched_smt_active() && unprivileged_ebpf_enabled() &&
++	    spectre_v2_enabled == SPECTRE_V2_EIBRS_LFENCE)
++		pr_warn_once(SPECTRE_V2_EIBRS_LFENCE_EBPF_SMT_MSG);
++
+ 	switch (spectre_v2_user_stibp) {
+ 	case SPECTRE_V2_USER_NONE:
+ 		break;
+@@ -1621,7 +1706,7 @@ static ssize_t tsx_async_abort_show_state(char *buf)
+ 
+ static char *stibp_state(void)
+ {
+-	if (spectre_v2_enabled == SPECTRE_V2_IBRS_ENHANCED)
++	if (spectre_v2_in_eibrs_mode(spectre_v2_enabled))
+ 		return "";
+ 
+ 	switch (spectre_v2_user_stibp) {
+@@ -1651,6 +1736,27 @@ static char *ibpb_state(void)
+ 	return "";
+ }
+ 
++static ssize_t spectre_v2_show_state(char *buf)
++{
++	if (spectre_v2_enabled == SPECTRE_V2_LFENCE)
++		return sprintf(buf, "Vulnerable: LFENCE\n");
++
++	if (spectre_v2_enabled == SPECTRE_V2_EIBRS && unprivileged_ebpf_enabled())
++		return sprintf(buf, "Vulnerable: eIBRS with unprivileged eBPF\n");
++
++	if (sched_smt_active() && unprivileged_ebpf_enabled() &&
++	    spectre_v2_enabled == SPECTRE_V2_EIBRS_LFENCE)
++		return sprintf(buf, "Vulnerable: eIBRS+LFENCE with unprivileged eBPF and SMT\n");
++
++	return sprintf(buf, "%s%s%s%s%s%s\n",
++		       spectre_v2_strings[spectre_v2_enabled],
++		       ibpb_state(),
++		       boot_cpu_has(X86_FEATURE_USE_IBRS_FW) ? ", IBRS_FW" : "",
++		       stibp_state(),
++		       boot_cpu_has(X86_FEATURE_RSB_CTXSW) ? ", RSB filling" : "",
++		       spectre_v2_module_string());
++}
++
+ static ssize_t srbds_show_state(char *buf)
+ {
+ 	return sprintf(buf, "%s\n", srbds_strings[srbds_mitigation]);
+@@ -1676,12 +1782,7 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
+ 		return sprintf(buf, "%s\n", spectre_v1_strings[spectre_v1_mitigation]);
+ 
+ 	case X86_BUG_SPECTRE_V2:
+-		return sprintf(buf, "%s%s%s%s%s%s\n", spectre_v2_strings[spectre_v2_enabled],
+-			       ibpb_state(),
+-			       boot_cpu_has(X86_FEATURE_USE_IBRS_FW) ? ", IBRS_FW" : "",
+-			       stibp_state(),
+-			       boot_cpu_has(X86_FEATURE_RSB_CTXSW) ? ", RSB filling" : "",
+-			       spectre_v2_module_string());
++		return spectre_v2_show_state(buf);
+ 
+ 	case X86_BUG_SPEC_STORE_BYPASS:
+ 		return sprintf(buf, "%s\n", ssb_strings[ssb_mode]);
+diff --git a/drivers/acpi/ec.c b/drivers/acpi/ec.c
+index 8347eaee6..3f2e5ea9a 100644
+--- a/drivers/acpi/ec.c
++++ b/drivers/acpi/ec.c
+@@ -2064,16 +2064,6 @@ bool acpi_ec_dispatch_gpe(void)
+ 	if (acpi_any_gpe_status_set(first_ec->gpe))
+ 		return true;
+ 
+-	/*
+-	 * Cancel the SCI wakeup and process all pending events in case there
+-	 * are any wakeup ones in there.
+-	 *
+-	 * Note that if any non-EC GPEs are active at this point, the SCI will
+-	 * retrigger after the rearming in acpi_s2idle_wake(), so no events
+-	 * should be missed by canceling the wakeup here.
+-	 */
+-	pm_system_cancel_wakeup();
+-
+ 	/*
+ 	 * Dispatch the EC GPE in-band, but do not report wakeup in any case
+ 	 * to allow the caller to process events properly after that.
+diff --git a/drivers/acpi/sleep.c b/drivers/acpi/sleep.c
+index e2614ea82..503935b1d 100644
+--- a/drivers/acpi/sleep.c
++++ b/drivers/acpi/sleep.c
+@@ -1012,15 +1012,21 @@ static bool acpi_s2idle_wake(void)
+ 			return true;
+ 		}
+ 
+-		/*
+-		 * Check non-EC GPE wakeups and if there are none, cancel the
+-		 * SCI-related wakeup and dispatch the EC GPE.
+-		 */
++		/* Check non-EC GPE wakeups and dispatch the EC GPE. */
+ 		if (acpi_ec_dispatch_gpe()) {
+ 			pm_pr_dbg("ACPI non-EC GPE wakeup\n");
+ 			return true;
+ 		}
+ 
++		/*
++		 * Cancel the SCI wakeup and process all pending events in case
++		 * there are any wakeup ones in there.
++		 *
++		 * Note that if any non-EC GPEs are active at this point, the
++		 * SCI will retrigger after the rearming below, so no events
++		 * should be missed by canceling the wakeup here.
++		 */
++		pm_system_cancel_wakeup();
+ 		acpi_os_wait_events_complete();
+ 
+ 		/*
+diff --git a/drivers/block/xen-blkfront.c b/drivers/block/xen-blkfront.c
+index 22842d293..47d4bb23d 100644
+--- a/drivers/block/xen-blkfront.c
++++ b/drivers/block/xen-blkfront.c
+@@ -1352,7 +1352,8 @@ static void blkif_free_ring(struct blkfront_ring_info *rinfo)
+ 			rinfo->ring_ref[i] = GRANT_INVALID_REF;
+ 		}
+ 	}
+-	free_pages((unsigned long)rinfo->ring.sring, get_order(info->nr_ring_pages * XEN_PAGE_SIZE));
++	free_pages_exact(rinfo->ring.sring,
++			 info->nr_ring_pages * XEN_PAGE_SIZE);
+ 	rinfo->ring.sring = NULL;
+ 
+ 	if (rinfo->irq)
+@@ -1436,9 +1437,15 @@ static int blkif_get_final_status(enum blk_req_status s1,
+ 	return BLKIF_RSP_OKAY;
+ }
+ 
+-static bool blkif_completion(unsigned long *id,
+-			     struct blkfront_ring_info *rinfo,
+-			     struct blkif_response *bret)
++/*
++ * Return values:
++ *  1 response processed.
++ *  0 missing further responses.
++ * -1 error while processing.
++ */
++static int blkif_completion(unsigned long *id,
++			    struct blkfront_ring_info *rinfo,
++			    struct blkif_response *bret)
+ {
+ 	int i = 0;
+ 	struct scatterlist *sg;
+@@ -1461,7 +1468,7 @@ static bool blkif_completion(unsigned long *id,
+ 
+ 		/* Wait the second response if not yet here. */
+ 		if (s2->status < REQ_DONE)
+-			return false;
++			return 0;
+ 
+ 		bret->status = blkif_get_final_status(s->status,
+ 						      s2->status);
+@@ -1512,42 +1519,43 @@ static bool blkif_completion(unsigned long *id,
+ 	}
+ 	/* Add the persistent grant into the list of free grants */
+ 	for (i = 0; i < num_grant; i++) {
+-		if (gnttab_query_foreign_access(s->grants_used[i]->gref)) {
++		if (!gnttab_try_end_foreign_access(s->grants_used[i]->gref)) {
+ 			/*
+ 			 * If the grant is still mapped by the backend (the
+ 			 * backend has chosen to make this grant persistent)
+ 			 * we add it at the head of the list, so it will be
+ 			 * reused first.
+ 			 */
+-			if (!info->feature_persistent)
+-				pr_alert_ratelimited("backed has not unmapped grant: %u\n",
+-						     s->grants_used[i]->gref);
++			if (!info->feature_persistent) {
++				pr_alert("backed has not unmapped grant: %u\n",
++					 s->grants_used[i]->gref);
++				return -1;
++			}
+ 			list_add(&s->grants_used[i]->node, &rinfo->grants);
+ 			rinfo->persistent_gnts_c++;
+ 		} else {
+ 			/*
+-			 * If the grant is not mapped by the backend we end the
+-			 * foreign access and add it to the tail of the list,
+-			 * so it will not be picked again unless we run out of
+-			 * persistent grants.
++			 * If the grant is not mapped by the backend we add it
++			 * to the tail of the list, so it will not be picked
++			 * again unless we run out of persistent grants.
+ 			 */
+-			gnttab_end_foreign_access(s->grants_used[i]->gref, 0, 0UL);
+ 			s->grants_used[i]->gref = GRANT_INVALID_REF;
+ 			list_add_tail(&s->grants_used[i]->node, &rinfo->grants);
+ 		}
+ 	}
+ 	if (s->req.operation == BLKIF_OP_INDIRECT) {
+ 		for (i = 0; i < INDIRECT_GREFS(num_grant); i++) {
+-			if (gnttab_query_foreign_access(s->indirect_grants[i]->gref)) {
+-				if (!info->feature_persistent)
+-					pr_alert_ratelimited("backed has not unmapped grant: %u\n",
+-							     s->indirect_grants[i]->gref);
++			if (!gnttab_try_end_foreign_access(s->indirect_grants[i]->gref)) {
++				if (!info->feature_persistent) {
++					pr_alert("backed has not unmapped grant: %u\n",
++						 s->indirect_grants[i]->gref);
++					return -1;
++				}
+ 				list_add(&s->indirect_grants[i]->node, &rinfo->grants);
+ 				rinfo->persistent_gnts_c++;
+ 			} else {
+ 				struct page *indirect_page;
+ 
+-				gnttab_end_foreign_access(s->indirect_grants[i]->gref, 0, 0UL);
+ 				/*
+ 				 * Add the used indirect page back to the list of
+ 				 * available pages for indirect grefs.
+@@ -1562,7 +1570,7 @@ static bool blkif_completion(unsigned long *id,
+ 		}
+ 	}
+ 
+-	return true;
++	return 1;
+ }
+ 
+ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
+@@ -1628,12 +1636,17 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
+ 		}
+ 
+ 		if (bret.operation != BLKIF_OP_DISCARD) {
++			int ret;
++
+ 			/*
+ 			 * We may need to wait for an extra response if the
+ 			 * I/O request is split in 2
+ 			 */
+-			if (!blkif_completion(&id, rinfo, &bret))
++			ret = blkif_completion(&id, rinfo, &bret);
++			if (!ret)
+ 				continue;
++			if (unlikely(ret < 0))
++				goto err;
+ 		}
+ 
+ 		if (add_id_to_freelist(rinfo, id)) {
+@@ -1740,8 +1753,7 @@ static int setup_blkring(struct xenbus_device *dev,
+ 	for (i = 0; i < info->nr_ring_pages; i++)
+ 		rinfo->ring_ref[i] = GRANT_INVALID_REF;
+ 
+-	sring = (struct blkif_sring *)__get_free_pages(GFP_NOIO | __GFP_HIGH,
+-						       get_order(ring_size));
++	sring = alloc_pages_exact(ring_size, GFP_NOIO);
+ 	if (!sring) {
+ 		xenbus_dev_fatal(dev, -ENOMEM, "allocating shared ring");
+ 		return -ENOMEM;
+@@ -1751,7 +1763,7 @@ static int setup_blkring(struct xenbus_device *dev,
+ 
+ 	err = xenbus_grant_ring(dev, rinfo->ring.sring, info->nr_ring_pages, gref);
+ 	if (err < 0) {
+-		free_pages((unsigned long)sring, get_order(ring_size));
++		free_pages_exact(sring, ring_size);
+ 		rinfo->ring.sring = NULL;
+ 		goto fail;
+ 	}
+@@ -2729,11 +2741,10 @@ static void purge_persistent_grants(struct blkfront_info *info)
+ 		list_for_each_entry_safe(gnt_list_entry, tmp, &rinfo->grants,
+ 					 node) {
+ 			if (gnt_list_entry->gref == GRANT_INVALID_REF ||
+-			    gnttab_query_foreign_access(gnt_list_entry->gref))
++			    !gnttab_try_end_foreign_access(gnt_list_entry->gref))
+ 				continue;
+ 
+ 			list_del(&gnt_list_entry->node);
+-			gnttab_end_foreign_access(gnt_list_entry->gref, 0, 0UL);
+ 			rinfo->persistent_gnts_c--;
+ 			gnt_list_entry->gref = GRANT_INVALID_REF;
+ 			list_add_tail(&gnt_list_entry->node, &rinfo->grants);
+diff --git a/drivers/net/xen-netfront.c b/drivers/net/xen-netfront.c
+index 7ed8872d0..1a69b5246 100644
+--- a/drivers/net/xen-netfront.c
++++ b/drivers/net/xen-netfront.c
+@@ -424,14 +424,12 @@ static bool xennet_tx_buf_gc(struct netfront_queue *queue)
+ 			queue->tx_link[id] = TX_LINK_NONE;
+ 			skb = queue->tx_skbs[id];
+ 			queue->tx_skbs[id] = NULL;
+-			if (unlikely(gnttab_query_foreign_access(
+-				queue->grant_tx_ref[id]) != 0)) {
++			if (unlikely(!gnttab_end_foreign_access_ref(
++				queue->grant_tx_ref[id], GNTMAP_readonly))) {
+ 				dev_alert(dev,
+ 					  "Grant still in use by backend domain\n");
+ 				goto err;
+ 			}
+-			gnttab_end_foreign_access_ref(
+-				queue->grant_tx_ref[id], GNTMAP_readonly);
+ 			gnttab_release_grant_reference(
+ 				&queue->gref_tx_head, queue->grant_tx_ref[id]);
+ 			queue->grant_tx_ref[id] = GRANT_INVALID_REF;
+@@ -992,7 +990,6 @@ static int xennet_get_responses(struct netfront_queue *queue,
+ 	struct device *dev = &queue->info->netdev->dev;
+ 	struct bpf_prog *xdp_prog;
+ 	struct xdp_buff xdp;
+-	unsigned long ret;
+ 	int slots = 1;
+ 	int err = 0;
+ 	u32 verdict;
+@@ -1034,8 +1031,13 @@ static int xennet_get_responses(struct netfront_queue *queue,
+ 			goto next;
+ 		}
+ 
+-		ret = gnttab_end_foreign_access_ref(ref, 0);
+-		BUG_ON(!ret);
++		if (!gnttab_end_foreign_access_ref(ref, 0)) {
++			dev_alert(dev,
++				  "Grant still in use by backend domain\n");
++			queue->info->broken = true;
++			dev_alert(dev, "Disabled for further use\n");
++			return -EINVAL;
++		}
+ 
+ 		gnttab_release_grant_reference(&queue->gref_rx_head, ref);
+ 
+@@ -1256,6 +1258,10 @@ static int xennet_poll(struct napi_struct *napi, int budget)
+ 					   &need_xdp_flush);
+ 
+ 		if (unlikely(err)) {
++			if (queue->info->broken) {
++				spin_unlock(&queue->rx_lock);
++				return 0;
++			}
+ err:
+ 			while ((skb = __skb_dequeue(&tmpq)))
+ 				__skb_queue_tail(&errq, skb);
+@@ -1920,7 +1926,7 @@ static int setup_netfront(struct xenbus_device *dev,
+ 			struct netfront_queue *queue, unsigned int feature_split_evtchn)
+ {
+ 	struct xen_netif_tx_sring *txs;
+-	struct xen_netif_rx_sring *rxs;
++	struct xen_netif_rx_sring *rxs = NULL;
+ 	grant_ref_t gref;
+ 	int err;
+ 
+@@ -1940,21 +1946,21 @@ static int setup_netfront(struct xenbus_device *dev,
+ 
+ 	err = xenbus_grant_ring(dev, txs, 1, &gref);
+ 	if (err < 0)
+-		goto grant_tx_ring_fail;
++		goto fail;
+ 	queue->tx_ring_ref = gref;
+ 
+ 	rxs = (struct xen_netif_rx_sring *)get_zeroed_page(GFP_NOIO | __GFP_HIGH);
+ 	if (!rxs) {
+ 		err = -ENOMEM;
+ 		xenbus_dev_fatal(dev, err, "allocating rx ring page");
+-		goto alloc_rx_ring_fail;
++		goto fail;
+ 	}
+ 	SHARED_RING_INIT(rxs);
+ 	FRONT_RING_INIT(&queue->rx, rxs, XEN_PAGE_SIZE);
+ 
+ 	err = xenbus_grant_ring(dev, rxs, 1, &gref);
+ 	if (err < 0)
+-		goto grant_rx_ring_fail;
++		goto fail;
+ 	queue->rx_ring_ref = gref;
+ 
+ 	if (feature_split_evtchn)
+@@ -1967,22 +1973,28 @@ static int setup_netfront(struct xenbus_device *dev,
+ 		err = setup_netfront_single(queue);
+ 
+ 	if (err)
+-		goto alloc_evtchn_fail;
++		goto fail;
+ 
+ 	return 0;
+ 
+ 	/* If we fail to setup netfront, it is safe to just revoke access to
+ 	 * granted pages because backend is not accessing it at this point.
+ 	 */
+-alloc_evtchn_fail:
+-	gnttab_end_foreign_access_ref(queue->rx_ring_ref, 0);
+-grant_rx_ring_fail:
+-	free_page((unsigned long)rxs);
+-alloc_rx_ring_fail:
+-	gnttab_end_foreign_access_ref(queue->tx_ring_ref, 0);
+-grant_tx_ring_fail:
+-	free_page((unsigned long)txs);
+-fail:
++ fail:
++	if (queue->rx_ring_ref != GRANT_INVALID_REF) {
++		gnttab_end_foreign_access(queue->rx_ring_ref, 0,
++					  (unsigned long)rxs);
++		queue->rx_ring_ref = GRANT_INVALID_REF;
++	} else {
++		free_page((unsigned long)rxs);
++	}
++	if (queue->tx_ring_ref != GRANT_INVALID_REF) {
++		gnttab_end_foreign_access(queue->tx_ring_ref, 0,
++					  (unsigned long)txs);
++		queue->tx_ring_ref = GRANT_INVALID_REF;
++	} else {
++		free_page((unsigned long)txs);
++	}
+ 	return err;
+ }
+ 
+diff --git a/drivers/scsi/xen-scsifront.c b/drivers/scsi/xen-scsifront.c
+index 259fc248d..a25c9386f 100644
+--- a/drivers/scsi/xen-scsifront.c
++++ b/drivers/scsi/xen-scsifront.c
+@@ -233,12 +233,11 @@ static void scsifront_gnttab_done(struct vscsifrnt_info *info,
+ 		return;
+ 
+ 	for (i = 0; i < shadow->nr_grants; i++) {
+-		if (unlikely(gnttab_query_foreign_access(shadow->gref[i]))) {
++		if (unlikely(!gnttab_try_end_foreign_access(shadow->gref[i]))) {
+ 			shost_printk(KERN_ALERT, info->host, KBUILD_MODNAME
+ 				     "grant still in use by backend\n");
+ 			BUG();
+ 		}
+-		gnttab_end_foreign_access(shadow->gref[i], 0, 0UL);
+ 	}
+ 
+ 	kfree(shadow->sg);
+diff --git a/drivers/xen/gntalloc.c b/drivers/xen/gntalloc.c
+index 3fa40c723..edb0acd0b 100644
+--- a/drivers/xen/gntalloc.c
++++ b/drivers/xen/gntalloc.c
+@@ -169,20 +169,14 @@ static int add_grefs(struct ioctl_gntalloc_alloc_gref *op,
+ 		__del_gref(gref);
+ 	}
+ 
+-	/* It's possible for the target domain to map the just-allocated grant
+-	 * references by blindly guessing their IDs; if this is done, then
+-	 * __del_gref will leave them in the queue_gref list. They need to be
+-	 * added to the global list so that we can free them when they are no
+-	 * longer referenced.
+-	 */
+-	if (unlikely(!list_empty(&queue_gref)))
+-		list_splice_tail(&queue_gref, &gref_list);
+ 	mutex_unlock(&gref_mutex);
+ 	return rc;
+ }
+ 
+ static void __del_gref(struct gntalloc_gref *gref)
+ {
++	unsigned long addr;
++
+ 	if (gref->notify.flags & UNMAP_NOTIFY_CLEAR_BYTE) {
+ 		uint8_t *tmp = kmap(gref->page);
+ 		tmp[gref->notify.pgoff] = 0;
+@@ -196,21 +190,16 @@ static void __del_gref(struct gntalloc_gref *gref)
+ 	gref->notify.flags = 0;
+ 
+ 	if (gref->gref_id) {
+-		if (gnttab_query_foreign_access(gref->gref_id))
+-			return;
+-
+-		if (!gnttab_end_foreign_access_ref(gref->gref_id, 0))
+-			return;
+-
+-		gnttab_free_grant_reference(gref->gref_id);
++		if (gref->page) {
++			addr = (unsigned long)page_to_virt(gref->page);
++			gnttab_end_foreign_access(gref->gref_id, 0, addr);
++		} else
++			gnttab_free_grant_reference(gref->gref_id);
+ 	}
+ 
+ 	gref_size--;
+ 	list_del(&gref->next_gref);
+ 
+-	if (gref->page)
+-		__free_page(gref->page);
+-
+ 	kfree(gref);
+ }
+ 
+diff --git a/drivers/xen/grant-table.c b/drivers/xen/grant-table.c
+index 3729bea0c..5c83d4176 100644
+--- a/drivers/xen/grant-table.c
++++ b/drivers/xen/grant-table.c
+@@ -134,12 +134,9 @@ struct gnttab_ops {
+ 	 */
+ 	unsigned long (*end_foreign_transfer_ref)(grant_ref_t ref);
+ 	/*
+-	 * Query the status of a grant entry. Ref parameter is reference of
+-	 * queried grant entry, return value is the status of queried entry.
+-	 * Detailed status(writing/reading) can be gotten from the return value
+-	 * by bit operations.
++	 * Read the frame number related to a given grant reference.
+ 	 */
+-	int (*query_foreign_access)(grant_ref_t ref);
++	unsigned long (*read_frame)(grant_ref_t ref);
+ };
+ 
+ struct unmap_refs_callback_data {
+@@ -284,22 +281,6 @@ int gnttab_grant_foreign_access(domid_t domid, unsigned long frame,
+ }
+ EXPORT_SYMBOL_GPL(gnttab_grant_foreign_access);
+ 
+-static int gnttab_query_foreign_access_v1(grant_ref_t ref)
+-{
+-	return gnttab_shared.v1[ref].flags & (GTF_reading|GTF_writing);
+-}
+-
+-static int gnttab_query_foreign_access_v2(grant_ref_t ref)
+-{
+-	return grstatus[ref] & (GTF_reading|GTF_writing);
+-}
+-
+-int gnttab_query_foreign_access(grant_ref_t ref)
+-{
+-	return gnttab_interface->query_foreign_access(ref);
+-}
+-EXPORT_SYMBOL_GPL(gnttab_query_foreign_access);
+-
+ static int gnttab_end_foreign_access_ref_v1(grant_ref_t ref, int readonly)
+ {
+ 	u16 flags, nflags;
+@@ -353,6 +334,16 @@ int gnttab_end_foreign_access_ref(grant_ref_t ref, int readonly)
+ }
+ EXPORT_SYMBOL_GPL(gnttab_end_foreign_access_ref);
+ 
++static unsigned long gnttab_read_frame_v1(grant_ref_t ref)
++{
++	return gnttab_shared.v1[ref].frame;
++}
++
++static unsigned long gnttab_read_frame_v2(grant_ref_t ref)
++{
++	return gnttab_shared.v2[ref].full_page.frame;
++}
++
+ struct deferred_entry {
+ 	struct list_head list;
+ 	grant_ref_t ref;
+@@ -382,12 +373,9 @@ static void gnttab_handle_deferred(struct timer_list *unused)
+ 		spin_unlock_irqrestore(&gnttab_list_lock, flags);
+ 		if (_gnttab_end_foreign_access_ref(entry->ref, entry->ro)) {
+ 			put_free_entry(entry->ref);
+-			if (entry->page) {
+-				pr_debug("freeing g.e. %#x (pfn %#lx)\n",
+-					 entry->ref, page_to_pfn(entry->page));
+-				put_page(entry->page);
+-			} else
+-				pr_info("freeing g.e. %#x\n", entry->ref);
++			pr_debug("freeing g.e. %#x (pfn %#lx)\n",
++				 entry->ref, page_to_pfn(entry->page));
++			put_page(entry->page);
+ 			kfree(entry);
+ 			entry = NULL;
+ 		} else {
+@@ -412,9 +400,18 @@ static void gnttab_handle_deferred(struct timer_list *unused)
+ static void gnttab_add_deferred(grant_ref_t ref, bool readonly,
+ 				struct page *page)
+ {
+-	struct deferred_entry *entry = kmalloc(sizeof(*entry), GFP_ATOMIC);
++	struct deferred_entry *entry;
++	gfp_t gfp = (in_atomic() || irqs_disabled()) ? GFP_ATOMIC : GFP_KERNEL;
+ 	const char *what = KERN_WARNING "leaking";
+ 
++	entry = kmalloc(sizeof(*entry), gfp);
++	if (!page) {
++		unsigned long gfn = gnttab_interface->read_frame(ref);
++
++		page = pfn_to_page(gfn_to_pfn(gfn));
++		get_page(page);
++	}
++
+ 	if (entry) {
+ 		unsigned long flags;
+ 
+@@ -435,11 +432,21 @@ static void gnttab_add_deferred(grant_ref_t ref, bool readonly,
+ 	       what, ref, page ? page_to_pfn(page) : -1);
+ }
+ 
++int gnttab_try_end_foreign_access(grant_ref_t ref)
++{
++	int ret = _gnttab_end_foreign_access_ref(ref, 0);
++
++	if (ret)
++		put_free_entry(ref);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(gnttab_try_end_foreign_access);
++
+ void gnttab_end_foreign_access(grant_ref_t ref, int readonly,
+ 			       unsigned long page)
+ {
+-	if (gnttab_end_foreign_access_ref(ref, readonly)) {
+-		put_free_entry(ref);
++	if (gnttab_try_end_foreign_access(ref)) {
+ 		if (page != 0)
+ 			put_page(virt_to_page(page));
+ 	} else
+@@ -1417,7 +1424,7 @@ static const struct gnttab_ops gnttab_v1_ops = {
+ 	.update_entry			= gnttab_update_entry_v1,
+ 	.end_foreign_access_ref		= gnttab_end_foreign_access_ref_v1,
+ 	.end_foreign_transfer_ref	= gnttab_end_foreign_transfer_ref_v1,
+-	.query_foreign_access		= gnttab_query_foreign_access_v1,
++	.read_frame			= gnttab_read_frame_v1,
+ };
+ 
+ static const struct gnttab_ops gnttab_v2_ops = {
+@@ -1429,7 +1436,7 @@ static const struct gnttab_ops gnttab_v2_ops = {
+ 	.update_entry			= gnttab_update_entry_v2,
+ 	.end_foreign_access_ref		= gnttab_end_foreign_access_ref_v2,
+ 	.end_foreign_transfer_ref	= gnttab_end_foreign_transfer_ref_v2,
+-	.query_foreign_access		= gnttab_query_foreign_access_v2,
++	.read_frame			= gnttab_read_frame_v2,
+ };
+ 
+ static bool gnttab_need_v2(void)
+diff --git a/drivers/xen/pvcalls-front.c b/drivers/xen/pvcalls-front.c
+index 7984645b5..bbe337dc2 100644
+--- a/drivers/xen/pvcalls-front.c
++++ b/drivers/xen/pvcalls-front.c
+@@ -337,8 +337,8 @@ static void free_active_ring(struct sock_mapping *map)
+ 	if (!map->active.ring)
+ 		return;
+ 
+-	free_pages((unsigned long)map->active.data.in,
+-			map->active.ring->ring_order);
++	free_pages_exact(map->active.data.in,
++			 PAGE_SIZE << map->active.ring->ring_order);
+ 	free_page((unsigned long)map->active.ring);
+ }
+ 
+@@ -352,8 +352,8 @@ static int alloc_active_ring(struct sock_mapping *map)
+ 		goto out;
+ 
+ 	map->active.ring->ring_order = PVCALLS_RING_ORDER;
+-	bytes = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO,
+-					PVCALLS_RING_ORDER);
++	bytes = alloc_pages_exact(PAGE_SIZE << PVCALLS_RING_ORDER,
++				  GFP_KERNEL | __GFP_ZERO);
+ 	if (!bytes)
+ 		goto out;
+ 
+diff --git a/drivers/xen/xenbus/xenbus_client.c b/drivers/xen/xenbus/xenbus_client.c
+index 0cd728961..16cfef099 100644
+--- a/drivers/xen/xenbus/xenbus_client.c
++++ b/drivers/xen/xenbus/xenbus_client.c
+@@ -379,7 +379,14 @@ int xenbus_grant_ring(struct xenbus_device *dev, void *vaddr,
+ 		      unsigned int nr_pages, grant_ref_t *grefs)
+ {
+ 	int err;
+-	int i, j;
++	unsigned int i;
++	grant_ref_t gref_head;
++
++	err = gnttab_alloc_grant_references(nr_pages, &gref_head);
++	if (err) {
++		xenbus_dev_fatal(dev, err, "granting access to ring page");
++		return err;
++	}
+ 
+ 	for (i = 0; i < nr_pages; i++) {
+ 		unsigned long gfn;
+@@ -389,23 +396,14 @@ int xenbus_grant_ring(struct xenbus_device *dev, void *vaddr,
+ 		else
+ 			gfn = virt_to_gfn(vaddr);
+ 
+-		err = gnttab_grant_foreign_access(dev->otherend_id, gfn, 0);
+-		if (err < 0) {
+-			xenbus_dev_fatal(dev, err,
+-					 "granting access to ring page");
+-			goto fail;
+-		}
+-		grefs[i] = err;
++		grefs[i] = gnttab_claim_grant_reference(&gref_head);
++		gnttab_grant_foreign_access_ref(grefs[i], dev->otherend_id,
++						gfn, 0);
+ 
+ 		vaddr = vaddr + XEN_PAGE_SIZE;
+ 	}
+ 
+ 	return 0;
+-
+-fail:
+-	for (j = 0; j < i; j++)
+-		gnttab_end_foreign_access_ref(grefs[j], 0);
+-	return err;
+ }
+ EXPORT_SYMBOL_GPL(xenbus_grant_ring);
+ 
+diff --git a/include/linux/arm-smccc.h b/include/linux/arm-smccc.h
+index 62c542345..c07a4ef98 100644
+--- a/include/linux/arm-smccc.h
++++ b/include/linux/arm-smccc.h
+@@ -87,6 +87,11 @@
+ 			   ARM_SMCCC_SMC_32,				\
+ 			   0, 0x7fff)
+ 
++#define ARM_SMCCC_ARCH_WORKAROUND_3					\
++	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
++			   ARM_SMCCC_SMC_32,				\
++			   0, 0x3fff)
++
+ #define SMCCC_ARCH_WORKAROUND_RET_UNAFFECTED	1
+ 
+ /* Paravirtualised time calls (defined by ARM DEN0057A) */
+diff --git a/include/linux/bpf.h b/include/linux/bpf.h
+index 39324ab66..bd004ee1c 100644
+--- a/include/linux/bpf.h
++++ b/include/linux/bpf.h
+@@ -1493,6 +1493,12 @@ struct bpf_prog *bpf_prog_by_id(u32 id);
+ struct bpf_link *bpf_link_by_id(u32 id);
+ 
+ const struct bpf_func_proto *bpf_base_func_proto(enum bpf_func_id func_id);
++
++static inline bool unprivileged_ebpf_enabled(void)
++{
++	return !sysctl_unprivileged_bpf_disabled;
++}
++
+ #else /* !CONFIG_BPF_SYSCALL */
+ static inline struct bpf_prog *bpf_prog_get(u32 ufd)
+ {
+@@ -1687,6 +1693,12 @@ bpf_base_func_proto(enum bpf_func_id func_id)
+ {
+ 	return NULL;
+ }
++
++static inline bool unprivileged_ebpf_enabled(void)
++{
++	return false;
++}
++
+ #endif /* CONFIG_BPF_SYSCALL */
+ 
+ static inline struct bpf_prog *bpf_prog_get_type(u32 ufd,
+diff --git a/include/xen/grant_table.h b/include/xen/grant_table.h
+index 0b1182a3c..57b4ae6a4 100644
+--- a/include/xen/grant_table.h
++++ b/include/xen/grant_table.h
+@@ -97,17 +97,32 @@ int gnttab_end_foreign_access_ref(grant_ref_t ref, int readonly);
+  * access has been ended, free the given page too.  Access will be ended
+  * immediately iff the grant entry is not in use, otherwise it will happen
+  * some time later.  page may be 0, in which case no freeing will occur.
++ * Note that the granted page might still be accessed (read or write) by the
++ * other side after gnttab_end_foreign_access() returns, so even if page was
++ * specified as 0 it is not allowed to just reuse the page for other
++ * purposes immediately. gnttab_end_foreign_access() will take an additional
++ * reference to the granted page in this case, which is dropped only after
++ * the grant is no longer in use.
++ * This requires that multi page allocations for areas subject to
++ * gnttab_end_foreign_access() are done via alloc_pages_exact() (and freeing
++ * via free_pages_exact()) in order to avoid high order pages.
+  */
+ void gnttab_end_foreign_access(grant_ref_t ref, int readonly,
+ 			       unsigned long page);
+ 
++/*
++ * End access through the given grant reference, iff the grant entry is
++ * no longer in use.  In case of success ending foreign access, the
++ * grant reference is deallocated.
++ * Return 1 if the grant entry was freed, 0 if it is still in use.
++ */
++int gnttab_try_end_foreign_access(grant_ref_t ref);
++
+ int gnttab_grant_foreign_transfer(domid_t domid, unsigned long pfn);
+ 
+ unsigned long gnttab_end_foreign_transfer_ref(grant_ref_t ref);
+ unsigned long gnttab_end_foreign_transfer(grant_ref_t ref);
+ 
+-int gnttab_query_foreign_access(grant_ref_t ref);
+-
+ /*
+  * operations on reserved batches of grant references
+  */
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 772288692..a4006f655 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -237,6 +237,10 @@ static int bpf_stats_handler(struct ctl_table *table, int write,
+ 	return ret;
+ }
+ 
++void __weak unpriv_ebpf_notify(int new_state)
++{
++}
++
+ static int bpf_unpriv_handler(struct ctl_table *table, int write,
+ 			      void *buffer, size_t *lenp, loff_t *ppos)
+ {
+@@ -254,6 +258,9 @@ static int bpf_unpriv_handler(struct ctl_table *table, int write,
+ 			return -EPERM;
+ 		*(int *)table->data = unpriv_enable;
+ 	}
++
++	unpriv_ebpf_notify(unpriv_enable);
++
+ 	return ret;
+ }
+ #endif /* CONFIG_BPF_SYSCALL && CONFIG_SYSCTL */
+diff --git a/net/9p/trans_xen.c b/net/9p/trans_xen.c
+index 3ec1a51a6..432ac5a16 100644
+--- a/net/9p/trans_xen.c
++++ b/net/9p/trans_xen.c
+@@ -304,9 +304,9 @@ static void xen_9pfs_front_free(struct xen_9pfs_front_priv *priv)
+ 				ref = priv->rings[i].intf->ref[j];
+ 				gnttab_end_foreign_access(ref, 0, 0);
+ 			}
+-			free_pages((unsigned long)priv->rings[i].data.in,
+-				   priv->rings[i].intf->ring_order -
+-				   (PAGE_SHIFT - XEN_PAGE_SHIFT));
++			free_pages_exact(priv->rings[i].data.in,
++				   1UL << (priv->rings[i].intf->ring_order +
++					   XEN_PAGE_SHIFT));
+ 		}
+ 		gnttab_end_foreign_access(priv->rings[i].ref, 0, 0);
+ 		free_page((unsigned long)priv->rings[i].intf);
+@@ -345,8 +345,8 @@ static int xen_9pfs_front_alloc_dataring(struct xenbus_device *dev,
+ 	if (ret < 0)
+ 		goto out;
+ 	ring->ref = ret;
+-	bytes = (void *)__get_free_pages(GFP_KERNEL | __GFP_ZERO,
+-			order - (PAGE_SHIFT - XEN_PAGE_SHIFT));
++	bytes = alloc_pages_exact(1UL << (order + XEN_PAGE_SHIFT),
++				  GFP_KERNEL | __GFP_ZERO);
+ 	if (!bytes) {
+ 		ret = -ENOMEM;
+ 		goto out;
+@@ -377,9 +377,7 @@ static int xen_9pfs_front_alloc_dataring(struct xenbus_device *dev,
+ 	if (bytes) {
+ 		for (i--; i >= 0; i--)
+ 			gnttab_end_foreign_access(ring->intf->ref[i], 0, 0);
+-		free_pages((unsigned long)bytes,
+-			   ring->intf->ring_order -
+-			   (PAGE_SHIFT - XEN_PAGE_SHIFT));
++		free_pages_exact(bytes, 1UL << (order + XEN_PAGE_SHIFT));
+ 	}
+ 	gnttab_end_foreign_access(ring->ref, 0, 0);
+ 	free_page((unsigned long)ring->intf);
+diff --git a/tools/arch/x86/include/asm/cpufeatures.h b/tools/arch/x86/include/asm/cpufeatures.h
+index dad350d42..b58730cc1 100644
+--- a/tools/arch/x86/include/asm/cpufeatures.h
++++ b/tools/arch/x86/include/asm/cpufeatures.h
+@@ -204,7 +204,7 @@
+ #define X86_FEATURE_SME			( 7*32+10) /* AMD Secure Memory Encryption */
+ #define X86_FEATURE_PTI			( 7*32+11) /* Kernel Page Table Isolation enabled */
+ #define X86_FEATURE_RETPOLINE		( 7*32+12) /* "" Generic Retpoline mitigation for Spectre variant 2 */
+-#define X86_FEATURE_RETPOLINE_AMD	( 7*32+13) /* "" AMD Retpoline mitigation for Spectre variant 2 */
++#define X86_FEATURE_RETPOLINE_LFENCE	( 7*32+13) /* "" Use LFENCEs for Spectre variant 2 */
+ #define X86_FEATURE_INTEL_PPIN		( 7*32+14) /* Intel Processor Inventory Number */
+ #define X86_FEATURE_CDP_L2		( 7*32+15) /* Code and Data Prioritization L2 */
+ #define X86_FEATURE_MSR_SPEC_CTRL	( 7*32+16) /* "" MSR SPEC_CTRL is implemented */
