@@ -1,6 +1,6 @@
 case $BRANCH in
 
-	legacy|current|edge)
+	legacy | current | edge)
 
 		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 		BOOTBRANCH='tag:v2019.04'
@@ -15,14 +15,12 @@ case $BRANCH in
 		UBOOT_USE_GCC='> 7.0'
 
 		OVERLAY_PREFIX='armada-388-helios4'
-	;;
+		;;
 
 esac
 
-
 # Helios4 tweak
-family_tweaks_bsp()
-{
+family_tweaks_bsp() {
 	## Add dependency list
 	local DEPENDENCIES="fancontrol, mdadm"
 	sed -i "/^Depends:/ s/$/, $DEPENDENCIES/" "${destination}"/DEBIAN/control
@@ -56,9 +54,9 @@ family_tweaks_bsp()
 	### Other tweaks
 
 	# add custom motd default conf file
-        install -m 644 $SRC/packages/bsp/mvebu/helios4/armbian-motd $destination/etc/default/
+	install -m 644 $SRC/packages/bsp/mvebu/helios4/armbian-motd $destination/etc/default/
 
-    # create modules file
+	# create modules file
 	if [[ $BRANCH == dev && -n $MODULES_EDGE ]]; then
 		tr ' ' '\n' <<< "$MODULES_DEV" > "${destination}"/etc/modules
 	elif [[ $BRANCH == current || $BRANCH == dev ]]; then
@@ -71,7 +69,7 @@ family_tweaks_bsp()
 	# Remove exit 0 on end of file
 	sed -i '$ s/^exit 0//g' "${destination}"/DEBIAN/postinst
 
-	cat <<-'EOF' >> "${destination}"/DEBIAN/postinst
+	cat <<- 'EOF' >> "${destination}"/DEBIAN/postinst
 		### Mdadm tweaks
 		MDADM_CONF=/etc/mdadm/mdadm.conf
 		MDADM_HOOK=/usr/share/initramfs-tools/hooks/mdadm
