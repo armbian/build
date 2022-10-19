@@ -32,8 +32,8 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-# get PARTUUID of first partition on SD/eMMC the boot script was loaded from
-if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
+# get PARTUUID of first partition on current boot device the boot script was loaded from
+part uuid ${devtype} ${devnum}:1 partuuid
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
