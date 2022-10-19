@@ -16,6 +16,11 @@ if [[ "${BASH_VERSINFO:-0}" -lt 5 ]]; then
 	exit 50
 fi
 
+if [[ -z "$(command -v realpath)" ]]; then
+	echo "Armbian build scripts require coreutils. Go install it." >&2
+	exit 51
+fi
+
 # Users should not start here, but instead use ./compile.sh at the root.
 if [[ $(basename "$0") == single.sh ]]; then
 	echo "Please use compile.sh to start the build process"
