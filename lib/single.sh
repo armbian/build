@@ -9,6 +9,13 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
+# The Armbian functions require Bash 5.x.
+if [[ "${BASH_VERSINFO:-0}" -lt 5 ]]; then
+	echo "Armbian build scripts require Bash 5.x. Go get it..." >&2
+	# @TODO: rpardini: add instructions, maybe.
+	exit 50
+fi
+
 # Users should not start here, but instead use ./compile.sh at the root.
 if [[ $(basename "$0") == single.sh ]]; then
 	echo "Please use compile.sh to start the build process"
