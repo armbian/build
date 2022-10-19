@@ -1,0 +1,3111 @@
+diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
+index db9d53b879f89..8f71a17ad5442 100644
+--- a/Documentation/admin-guide/kernel-parameters.txt
++++ b/Documentation/admin-guide/kernel-parameters.txt
+@@ -4298,6 +4298,18 @@
+ 
+ 	retain_initrd	[RAM] Keep initrd memory after extraction
+ 
++	retbleed=	[X86] Control mitigation of RETBleed (Arbitrary
++			Speculative Code Execution with Return Instructions)
++			vulnerability.
++
++			off         - unconditionally disable
++			auto        - automatically select a migitation
++
++			Selecting 'auto' will choose a mitigation method at run
++			time according to the CPU.
++
++			Not specifying this option is equivalent to retbleed=auto.
++
+ 	rfkill.default_state=
+ 		0	"airplane mode".  All wifi, bluetooth, wimax, gps, fm,
+ 			etc. communication is blocked by default.
+@@ -4541,6 +4553,7 @@
+ 			eibrs		  - enhanced IBRS
+ 			eibrs,retpoline   - enhanced IBRS + Retpolines
+ 			eibrs,lfence      - enhanced IBRS + LFENCE
++			ibrs		  - use IBRS to protect kernel
+ 
+ 			Not specifying this option is equivalent to
+ 			spectre_v2=auto.
+diff --git a/Documentation/process/code-of-conduct-interpretation.rst b/Documentation/process/code-of-conduct-interpretation.rst
+index e899f14a4ba24..4f8a06b00f608 100644
+--- a/Documentation/process/code-of-conduct-interpretation.rst
++++ b/Documentation/process/code-of-conduct-interpretation.rst
+@@ -51,7 +51,7 @@ the Technical Advisory Board (TAB) or other maintainers if you're
+ uncertain how to handle situations that come up.  It will not be
+ considered a violation report unless you want it to be.  If you are
+ uncertain about approaching the TAB or any other maintainers, please
+-reach out to our conflict mediator, Mishi Choudhary <mishi@linux.com>.
++reach out to our conflict mediator, Joanna Lee <joanna.lee@gesmer.com>.
+ 
+ In the end, "be kind to each other" is really what the end goal is for
+ everybody.  We know everyone is human and we all fail at times, but the
+diff --git a/Makefile b/Makefile
+index 3d9d7ef6f8bf1..201ac8e410a94 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 216
++SUBLEVEL = 217
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+diff --git a/arch/x86/entry/calling.h b/arch/x86/entry/calling.h
+index b3f1214787386..29e5675c6d4f2 100644
+--- a/arch/x86/entry/calling.h
++++ b/arch/x86/entry/calling.h
+@@ -6,6 +6,8 @@
+ #include <asm/percpu.h>
+ #include <asm/asm-offsets.h>
+ #include <asm/processor-flags.h>
++#include <asm/msr.h>
++#include <asm/nospec-branch.h>
+ 
+ /*
+ 
+@@ -146,27 +148,19 @@ For 32-bit we have the following conventions - kernel is built with
+ 
+ .endm
+ 
+-.macro POP_REGS pop_rdi=1 skip_r11rcx=0
++.macro POP_REGS pop_rdi=1
+ 	popq %r15
+ 	popq %r14
+ 	popq %r13
+ 	popq %r12
+ 	popq %rbp
+ 	popq %rbx
+-	.if \skip_r11rcx
+-	popq %rsi
+-	.else
+ 	popq %r11
+-	.endif
+ 	popq %r10
+ 	popq %r9
+ 	popq %r8
+ 	popq %rax
+-	.if \skip_r11rcx
+-	popq %rsi
+-	.else
+ 	popq %rcx
+-	.endif
+ 	popq %rdx
+ 	popq %rsi
+ 	.if \pop_rdi
+@@ -316,6 +310,62 @@ For 32-bit we have the following conventions - kernel is built with
+ 
+ #endif
+ 
++/*
++ * IBRS kernel mitigation for Spectre_v2.
++ *
++ * Assumes full context is established (PUSH_REGS, CR3 and GS) and it clobbers
++ * the regs it uses (AX, CX, DX). Must be called before the first RET
++ * instruction (NOTE! UNTRAIN_RET includes a RET instruction)
++ *
++ * The optional argument is used to save/restore the current value,
++ * which is used on the paranoid paths.
++ *
++ * Assumes x86_spec_ctrl_{base,current} to have SPEC_CTRL_IBRS set.
++ */
++.macro IBRS_ENTER save_reg
++	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KERNEL_IBRS
++	movl	$MSR_IA32_SPEC_CTRL, %ecx
++
++.ifnb \save_reg
++	rdmsr
++	shl	$32, %rdx
++	or	%rdx, %rax
++	mov	%rax, \save_reg
++	test	$SPEC_CTRL_IBRS, %eax
++	jz	.Ldo_wrmsr_\@
++	lfence
++	jmp	.Lend_\@
++.Ldo_wrmsr_\@:
++.endif
++
++	movq	PER_CPU_VAR(x86_spec_ctrl_current), %rdx
++	movl	%edx, %eax
++	shr	$32, %rdx
++	wrmsr
++.Lend_\@:
++.endm
++
++/*
++ * Similar to IBRS_ENTER, requires KERNEL GS,CR3 and clobbers (AX, CX, DX)
++ * regs. Must be called after the last RET.
++ */
++.macro IBRS_EXIT save_reg
++	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_KERNEL_IBRS
++	movl	$MSR_IA32_SPEC_CTRL, %ecx
++
++.ifnb \save_reg
++	mov	\save_reg, %rdx
++.else
++	movq	PER_CPU_VAR(x86_spec_ctrl_current), %rdx
++	andl	$(~SPEC_CTRL_IBRS), %edx
++.endif
++
++	movl	%edx, %eax
++	shr	$32, %rdx
++	wrmsr
++.Lend_\@:
++.endm
++
+ /*
+  * Mitigate Spectre v1 for conditional swapgs code paths.
+  *
+diff --git a/arch/x86/entry/entry_32.S b/arch/x86/entry/entry_32.S
+index bde3e0f85425f..2d837fb54c31b 100644
+--- a/arch/x86/entry/entry_32.S
++++ b/arch/x86/entry/entry_32.S
+@@ -750,7 +750,6 @@ ENTRY(__switch_to_asm)
+ 	movl	%ebx, PER_CPU_VAR(stack_canary)+stack_canary_offset
+ #endif
+ 
+-#ifdef CONFIG_RETPOLINE
+ 	/*
+ 	 * When switching from a shallower to a deeper call stack
+ 	 * the RSB may either underflow or use entries populated
+@@ -759,7 +758,6 @@ ENTRY(__switch_to_asm)
+ 	 * speculative execution to prevent attack.
+ 	 */
+ 	FILL_RETURN_BUFFER %ebx, RSB_CLEAR_LOOPS, X86_FEATURE_RSB_CTXSW
+-#endif
+ 
+ 	/* restore callee-saved registers */
+ 	popfl
+diff --git a/arch/x86/entry/entry_64.S b/arch/x86/entry/entry_64.S
+index 2ba3d53ac5b11..c82136030d58f 100644
+--- a/arch/x86/entry/entry_64.S
++++ b/arch/x86/entry/entry_64.S
+@@ -172,6 +172,10 @@ GLOBAL(entry_SYSCALL_64_after_hwframe)
+ 	/* IRQs are off. */
+ 	movq	%rax, %rdi
+ 	movq	%rsp, %rsi
++
++	/* clobbers %rax, make sure it is after saving the syscall nr */
++	IBRS_ENTER
++
+ 	call	do_syscall_64		/* returns with IRQs disabled */
+ 
+ 	TRACE_IRQS_IRETQ		/* we're about to change IF */
+@@ -248,8 +252,8 @@ GLOBAL(entry_SYSCALL_64_after_hwframe)
+ 	 * perf profiles. Nothing jumps here.
+ 	 */
+ syscall_return_via_sysret:
+-	/* rcx and r11 are already restored (see code above) */
+-	POP_REGS pop_rdi=0 skip_r11rcx=1
++	IBRS_EXIT
++	POP_REGS pop_rdi=0
+ 
+ 	/*
+ 	 * Now all regs are restored except RSP and RDI.
+@@ -301,7 +305,6 @@ ENTRY(__switch_to_asm)
+ 	movq	%rbx, PER_CPU_VAR(fixed_percpu_data) + stack_canary_offset
+ #endif
+ 
+-#ifdef CONFIG_RETPOLINE
+ 	/*
+ 	 * When switching from a shallower to a deeper call stack
+ 	 * the RSB may either underflow or use entries populated
+@@ -310,7 +313,6 @@ ENTRY(__switch_to_asm)
+ 	 * speculative execution to prevent attack.
+ 	 */
+ 	FILL_RETURN_BUFFER %r12, RSB_CLEAR_LOOPS, X86_FEATURE_RSB_CTXSW
+-#endif
+ 
+ 	/* restore callee-saved registers */
+ 	popq	%r15
+@@ -622,6 +624,7 @@ GLOBAL(retint_user)
+ 	TRACE_IRQS_IRETQ
+ 
+ GLOBAL(swapgs_restore_regs_and_return_to_usermode)
++	IBRS_EXIT
+ #ifdef CONFIG_DEBUG_ENTRY
+ 	/* Assert that pt_regs indicates user mode. */
+ 	testb	$3, CS(%rsp)
+@@ -1248,7 +1251,13 @@ ENTRY(paranoid_entry)
+ 	 */
+ 	FENCE_SWAPGS_KERNEL_ENTRY
+ 
+-	ret
++	/*
++	 * Once we have CR3 and %GS setup save and set SPEC_CTRL. Just like
++	 * CR3 above, keep the old value in a callee saved register.
++	 */
++	IBRS_ENTER save_reg=%r15
++
++	RET
+ END(paranoid_entry)
+ 
+ /*
+@@ -1276,12 +1285,20 @@ ENTRY(paranoid_exit)
+ 	jmp	.Lparanoid_exit_restore
+ .Lparanoid_exit_no_swapgs:
+ 	TRACE_IRQS_IRETQ_DEBUG
++
++	/*
++	 * Must restore IBRS state before both CR3 and %GS since we need access
++	 * to the per-CPU x86_spec_ctrl_shadow variable.
++	 */
++	IBRS_EXIT save_reg=%r15
++
+ 	/* Always restore stashed CR3 value (see paranoid_entry) */
+ 	RESTORE_CR3	scratch_reg=%rbx save_reg=%r14
+ .Lparanoid_exit_restore:
+ 	jmp restore_regs_and_return_to_kernel
+ END(paranoid_exit)
+ 
++
+ /*
+  * Save all registers in pt_regs, and switch GS if needed.
+  */
+@@ -1301,6 +1318,7 @@ ENTRY(error_entry)
+ 	FENCE_SWAPGS_USER_ENTRY
+ 	/* We have user CR3.  Change to kernel CR3. */
+ 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
++	IBRS_ENTER
+ 
+ .Lerror_entry_from_usermode_after_swapgs:
+ 	/* Put us onto the real thread stack. */
+@@ -1356,6 +1374,7 @@ ENTRY(error_entry)
+ 	SWAPGS
+ 	FENCE_SWAPGS_USER_ENTRY
+ 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
++	IBRS_ENTER
+ 
+ 	/*
+ 	 * Pretend that the exception came from user mode: set up pt_regs
+@@ -1461,6 +1480,8 @@ ENTRY(nmi)
+ 	PUSH_AND_CLEAR_REGS rdx=(%rdx)
+ 	ENCODE_FRAME_POINTER
+ 
++	IBRS_ENTER
++
+ 	/*
+ 	 * At this point we no longer need to worry about stack damage
+ 	 * due to nesting -- we're on the normal thread stack and we're
+@@ -1684,6 +1705,9 @@ end_repeat_nmi:
+ 	movq	$-1, %rsi
+ 	call	do_nmi
+ 
++	/* Always restore stashed SPEC_CTRL value (see paranoid_entry) */
++	IBRS_EXIT save_reg=%r15
++
+ 	/* Always restore stashed CR3 value (see paranoid_entry) */
+ 	RESTORE_CR3 scratch_reg=%r15 save_reg=%r14
+ 
+diff --git a/arch/x86/entry/entry_64_compat.S b/arch/x86/entry/entry_64_compat.S
+index 39913770a44d5..c3c4ea4a6711a 100644
+--- a/arch/x86/entry/entry_64_compat.S
++++ b/arch/x86/entry/entry_64_compat.S
+@@ -4,7 +4,6 @@
+  *
+  * Copyright 2000-2002 Andi Kleen, SuSE Labs.
+  */
+-#include "calling.h"
+ #include <asm/asm-offsets.h>
+ #include <asm/current.h>
+ #include <asm/errno.h>
+@@ -17,6 +16,8 @@
+ #include <linux/linkage.h>
+ #include <linux/err.h>
+ 
++#include "calling.h"
++
+ 	.section .entry.text, "ax"
+ 
+ /*
+@@ -106,6 +107,8 @@ ENTRY(entry_SYSENTER_compat)
+ 	xorl	%r15d, %r15d		/* nospec   r15 */
+ 	cld
+ 
++	IBRS_ENTER
++
+ 	/*
+ 	 * SYSENTER doesn't filter flags, so we need to clear NT and AC
+ 	 * ourselves.  To save a few cycles, we can check whether
+@@ -253,6 +256,8 @@ GLOBAL(entry_SYSCALL_compat_after_hwframe)
+ 	 */
+ 	TRACE_IRQS_OFF
+ 
++	IBRS_ENTER
++
+ 	movq	%rsp, %rdi
+ 	call	do_fast_syscall_32
+ 	/* XEN PV guests always use IRET path */
+@@ -267,6 +272,9 @@ sysret32_from_system_call:
+ 	 */
+ 	STACKLEAK_ERASE
+ 	TRACE_IRQS_ON			/* User mode traces as IRQs on. */
++
++	IBRS_EXIT
++
+ 	movq	RBX(%rsp), %rbx		/* pt_regs->rbx */
+ 	movq	RBP(%rsp), %rbp		/* pt_regs->rbp */
+ 	movq	EFLAGS(%rsp), %r11	/* pt_regs->flags (in r11) */
+@@ -408,6 +416,7 @@ ENTRY(entry_INT80_compat)
+ 	 * gate turned them off.
+ 	 */
+ 	TRACE_IRQS_OFF
++	IBRS_ENTER
+ 
+ 	movq	%rsp, %rdi
+ 	call	do_int80_syscall_32
+diff --git a/arch/x86/include/asm/cpu_device_id.h b/arch/x86/include/asm/cpu_device_id.h
+index 0c814cd9ea42c..cdf39decf7340 100644
+--- a/arch/x86/include/asm/cpu_device_id.h
++++ b/arch/x86/include/asm/cpu_device_id.h
+@@ -5,15 +5,22 @@
+ /*
+  * Declare drivers belonging to specific x86 CPUs
+  * Similar in spirit to pci_device_id and related PCI functions
++ *
++ * The wildcard initializers are in mod_devicetable.h because
++ * file2alias needs them. Sigh.
+  */
+-
+ #include <linux/mod_devicetable.h>
++/* Get the INTEL_FAM* model defines */
++#include <asm/intel-family.h>
++/* And the X86_VENDOR_* ones */
++#include <asm/processor.h>
+ 
++/* Centaur FAM6 models */
++#define X86_CENTAUR_FAM6_C7_A		0xa
+ #define X86_CENTAUR_FAM6_C7_D		0xd
+ #define X86_CENTAUR_FAM6_NANO		0xf
+ 
+ #define X86_STEPPINGS(mins, maxs)    GENMASK(maxs, mins)
+-
+ /**
+  * X86_MATCH_VENDOR_FAM_MODEL_STEPPINGS_FEATURE - Base macro for CPU matching
+  * @_vendor:	The vendor name, e.g. INTEL, AMD, HYGON, ..., ANY
+@@ -26,8 +33,11 @@
+  *		format is unsigned long. The supplied value, pointer
+  *		etc. is casted to unsigned long internally.
+  *
+- * Backport version to keep the SRBDS pile consistant. No shorter variants
+- * required for this.
++ * Use only if you need all selectors. Otherwise use one of the shorter
++ * macros of the X86_MATCH_* family. If there is no matching shorthand
++ * macro, consider to add one. If you really need to wrap one of the macros
++ * into another macro at the usage site for good reasons, then please
++ * start this local macro with X86_MATCH to allow easy grepping.
+  */
+ #define X86_MATCH_VENDOR_FAM_MODEL_STEPPINGS_FEATURE(_vendor, _family, _model, \
+ 						    _steppings, _feature, _data) { \
+@@ -39,6 +49,120 @@
+ 	.driver_data	= (unsigned long) _data				\
+ }
+ 
++/**
++ * X86_MATCH_VENDOR_FAM_MODEL_FEATURE - Macro for CPU matching
++ * @_vendor:	The vendor name, e.g. INTEL, AMD, HYGON, ..., ANY
++ *		The name is expanded to X86_VENDOR_@_vendor
++ * @_family:	The family number or X86_FAMILY_ANY
++ * @_model:	The model number, model constant or X86_MODEL_ANY
++ * @_feature:	A X86_FEATURE bit or X86_FEATURE_ANY
++ * @_data:	Driver specific data or NULL. The internal storage
++ *		format is unsigned long. The supplied value, pointer
++ *		etc. is casted to unsigned long internally.
++ *
++ * The steppings arguments of X86_MATCH_VENDOR_FAM_MODEL_STEPPINGS_FEATURE() is
++ * set to wildcards.
++ */
++#define X86_MATCH_VENDOR_FAM_MODEL_FEATURE(vendor, family, model, feature, data) \
++	X86_MATCH_VENDOR_FAM_MODEL_STEPPINGS_FEATURE(vendor, family, model, \
++						X86_STEPPING_ANY, feature, data)
++
++/**
++ * X86_MATCH_VENDOR_FAM_FEATURE - Macro for matching vendor, family and CPU feature
++ * @vendor:	The vendor name, e.g. INTEL, AMD, HYGON, ..., ANY
++ *		The name is expanded to X86_VENDOR_@vendor
++ * @family:	The family number or X86_FAMILY_ANY
++ * @feature:	A X86_FEATURE bit
++ * @data:	Driver specific data or NULL. The internal storage
++ *		format is unsigned long. The supplied value, pointer
++ *		etc. is casted to unsigned long internally.
++ *
++ * All other missing arguments of X86_MATCH_VENDOR_FAM_MODEL_FEATURE() are
++ * set to wildcards.
++ */
++#define X86_MATCH_VENDOR_FAM_FEATURE(vendor, family, feature, data)	\
++	X86_MATCH_VENDOR_FAM_MODEL_FEATURE(vendor, family,		\
++					   X86_MODEL_ANY, feature, data)
++
++/**
++ * X86_MATCH_VENDOR_FEATURE - Macro for matching vendor and CPU feature
++ * @vendor:	The vendor name, e.g. INTEL, AMD, HYGON, ..., ANY
++ *		The name is expanded to X86_VENDOR_@vendor
++ * @feature:	A X86_FEATURE bit
++ * @data:	Driver specific data or NULL. The internal storage
++ *		format is unsigned long. The supplied value, pointer
++ *		etc. is casted to unsigned long internally.
++ *
++ * All other missing arguments of X86_MATCH_VENDOR_FAM_MODEL_FEATURE() are
++ * set to wildcards.
++ */
++#define X86_MATCH_VENDOR_FEATURE(vendor, feature, data)			\
++	X86_MATCH_VENDOR_FAM_FEATURE(vendor, X86_FAMILY_ANY, feature, data)
++
++/**
++ * X86_MATCH_FEATURE - Macro for matching a CPU feature
++ * @feature:	A X86_FEATURE bit
++ * @data:	Driver specific data or NULL. The internal storage
++ *		format is unsigned long. The supplied value, pointer
++ *		etc. is casted to unsigned long internally.
++ *
++ * All other missing arguments of X86_MATCH_VENDOR_FAM_MODEL_FEATURE() are
++ * set to wildcards.
++ */
++#define X86_MATCH_FEATURE(feature, data)				\
++	X86_MATCH_VENDOR_FEATURE(ANY, feature, data)
++
++/* Transitional to keep the existing code working */
++#define X86_FEATURE_MATCH(feature)	X86_MATCH_FEATURE(feature, NULL)
++
++/**
++ * X86_MATCH_VENDOR_FAM_MODEL - Match vendor, family and model
++ * @vendor:	The vendor name, e.g. INTEL, AMD, HYGON, ..., ANY
++ *		The name is expanded to X86_VENDOR_@vendor
++ * @family:	The family number or X86_FAMILY_ANY
++ * @model:	The model number, model constant or X86_MODEL_ANY
++ * @data:	Driver specific data or NULL. The internal storage
++ *		format is unsigned long. The supplied value, pointer
++ *		etc. is casted to unsigned long internally.
++ *
++ * All other missing arguments of X86_MATCH_VENDOR_FAM_MODEL_FEATURE() are
++ * set to wildcards.
++ */
++#define X86_MATCH_VENDOR_FAM_MODEL(vendor, family, model, data)		\
++	X86_MATCH_VENDOR_FAM_MODEL_FEATURE(vendor, family, model,	\
++					   X86_FEATURE_ANY, data)
++
++/**
++ * X86_MATCH_VENDOR_FAM - Match vendor and family
++ * @vendor:	The vendor name, e.g. INTEL, AMD, HYGON, ..., ANY
++ *		The name is expanded to X86_VENDOR_@vendor
++ * @family:	The family number or X86_FAMILY_ANY
++ * @data:	Driver specific data or NULL. The internal storage
++ *		format is unsigned long. The supplied value, pointer
++ *		etc. is casted to unsigned long internally.
++ *
++ * All other missing arguments to X86_MATCH_VENDOR_FAM_MODEL_FEATURE() are
++ * set of wildcards.
++ */
++#define X86_MATCH_VENDOR_FAM(vendor, family, data)			\
++	X86_MATCH_VENDOR_FAM_MODEL(vendor, family, X86_MODEL_ANY, data)
++
++/**
++ * X86_MATCH_INTEL_FAM6_MODEL - Match vendor INTEL, family 6 and model
++ * @model:	The model name without the INTEL_FAM6_ prefix or ANY
++ *		The model name is expanded to INTEL_FAM6_@model internally
++ * @data:	Driver specific data or NULL. The internal storage
++ *		format is unsigned long. The supplied value, pointer
++ *		etc. is casted to unsigned long internally.
++ *
++ * The vendor is set to INTEL, the family to 6 and all other missing
++ * arguments of X86_MATCH_VENDOR_FAM_MODEL_FEATURE() are set to wildcards.
++ *
++ * See X86_MATCH_VENDOR_FAM_MODEL_FEATURE() for further information.
++ */
++#define X86_MATCH_INTEL_FAM6_MODEL(model, data)				\
++	X86_MATCH_VENDOR_FAM_MODEL(INTEL, 6, INTEL_FAM6_##model, data)
++
+ /*
+  * Match specific microcode revisions.
+  *
+diff --git a/arch/x86/include/asm/cpufeatures.h b/arch/x86/include/asm/cpufeatures.h
+index 736b0e412344b..2ec85d7bfdff2 100644
+--- a/arch/x86/include/asm/cpufeatures.h
++++ b/arch/x86/include/asm/cpufeatures.h
+@@ -203,8 +203,8 @@
+ #define X86_FEATURE_PROC_FEEDBACK	( 7*32+ 9) /* AMD ProcFeedbackInterface */
+ #define X86_FEATURE_SME			( 7*32+10) /* AMD Secure Memory Encryption */
+ #define X86_FEATURE_PTI			( 7*32+11) /* Kernel Page Table Isolation enabled */
+-#define X86_FEATURE_RETPOLINE		( 7*32+12) /* "" Generic Retpoline mitigation for Spectre variant 2 */
+-#define X86_FEATURE_RETPOLINE_LFENCE	( 7*32+13) /* "" Use LFENCE for Spectre variant 2 */
++#define X86_FEATURE_KERNEL_IBRS		( 7*32+12) /* "" Set/clear IBRS on kernel entry/exit */
++#define X86_FEATURE_RSB_VMEXIT		( 7*32+13) /* "" Fill RSB on VM-Exit */
+ #define X86_FEATURE_INTEL_PPIN		( 7*32+14) /* Intel Processor Inventory Number */
+ #define X86_FEATURE_CDP_L2		( 7*32+15) /* Code and Data Prioritization L2 */
+ #define X86_FEATURE_MSR_SPEC_CTRL	( 7*32+16) /* "" MSR SPEC_CTRL is implemented */
+@@ -286,7 +286,10 @@
+ #define X86_FEATURE_CQM_MBM_LOCAL	(11*32+ 3) /* LLC Local MBM monitoring */
+ #define X86_FEATURE_FENCE_SWAPGS_USER	(11*32+ 4) /* "" LFENCE in user entry SWAPGS path */
+ #define X86_FEATURE_FENCE_SWAPGS_KERNEL	(11*32+ 5) /* "" LFENCE in kernel entry SWAPGS path */
+-#define X86_FEATURE_RSB_VMEXIT_LITE	(11*32+ 6) /* "" Fill RSB on VM exit when EIBRS is enabled */
++#define X86_FEATURE_RRSBA_CTRL		(11*32+11) /* "" RET prediction control */
++#define X86_FEATURE_RETPOLINE		(11*32+12) /* "" Generic Retpoline mitigation for Spectre variant 2 */
++#define X86_FEATURE_RETPOLINE_LFENCE	(11*32+13) /* "" Use LFENCE for Spectre variant 2 */
++#define X86_FEATURE_RSB_VMEXIT_LITE	(11*32+17) /* "" Fill RSB on VM exit when EIBRS is enabled */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000007:1 (EAX), word 12 */
+ #define X86_FEATURE_AVX512_BF16		(12*32+ 5) /* AVX512 BFLOAT16 instructions */
+@@ -303,6 +306,7 @@
+ #define X86_FEATURE_AMD_SSBD		(13*32+24) /* "" Speculative Store Bypass Disable */
+ #define X86_FEATURE_VIRT_SSBD		(13*32+25) /* Virtualized Speculative Store Bypass Disable */
+ #define X86_FEATURE_AMD_SSB_NO		(13*32+26) /* "" Speculative Store Bypass is fixed in hardware. */
++#define X86_FEATURE_BTC_NO		(13*32+29) /* "" Not vulnerable to Branch Type Confusion */
+ 
+ /* Thermal and Power Management Leaf, CPUID level 0x00000006 (EAX), word 14 */
+ #define X86_FEATURE_DTHERM		(14*32+ 0) /* Digital Thermal Sensor */
+@@ -407,7 +411,8 @@
+ #define X86_BUG_ITLB_MULTIHIT		X86_BUG(23) /* CPU may incur MCE during certain page attribute changes */
+ #define X86_BUG_SRBDS			X86_BUG(24) /* CPU may leak RNG bits if not mitigated */
+ #define X86_BUG_MMIO_STALE_DATA		X86_BUG(25) /* CPU is affected by Processor MMIO Stale Data vulnerabilities */
+-#define X86_BUG_MMIO_UNKNOWN		X86_BUG(26) /* CPU is too old and its MMIO Stale Data status is unknown */
++#define X86_BUG_RETBLEED		X86_BUG(26) /* CPU is affected by RETBleed */
+ #define X86_BUG_EIBRS_PBRSB		X86_BUG(27) /* EIBRS is vulnerable to Post Barrier RSB Predictions */
++#define X86_BUG_MMIO_UNKNOWN		X86_BUG(28) /* CPU is too old and its MMIO Stale Data status is unknown */
+ 
+ #endif /* _ASM_X86_CPUFEATURES_H */
+diff --git a/arch/x86/include/asm/intel-family.h b/arch/x86/include/asm/intel-family.h
+index 5b07573c3bc87..c1d6d8bbb7dad 100644
+--- a/arch/x86/include/asm/intel-family.h
++++ b/arch/x86/include/asm/intel-family.h
+@@ -35,6 +35,9 @@
+  * The #define line may optionally include a comment including platform names.
+  */
+ 
++/* Wildcard match for FAM6 so X86_MATCH_INTEL_FAM6_MODEL(ANY) works */
++#define INTEL_FAM6_ANY			X86_MODEL_ANY
++
+ #define INTEL_FAM6_CORE_YONAH		0x0E
+ 
+ #define INTEL_FAM6_CORE2_MEROM		0x0F
+@@ -126,6 +129,9 @@
+ #define INTEL_FAM6_XEON_PHI_KNL		0x57 /* Knights Landing */
+ #define INTEL_FAM6_XEON_PHI_KNM		0x85 /* Knights Mill */
+ 
++/* Family 5 */
++#define INTEL_FAM5_QUARK_X1000		0x09 /* Quark X1000 SoC */
++
+ /* Useful macros */
+ #define INTEL_CPU_FAM_ANY(_family, _model, _driver_data)	\
+ {								\
+diff --git a/arch/x86/include/asm/msr-index.h b/arch/x86/include/asm/msr-index.h
+index cef4eba03ff36..713886d5493a8 100644
+--- a/arch/x86/include/asm/msr-index.h
++++ b/arch/x86/include/asm/msr-index.h
+@@ -47,6 +47,8 @@
+ #define SPEC_CTRL_STIBP			BIT(SPEC_CTRL_STIBP_SHIFT)	/* STIBP mask */
+ #define SPEC_CTRL_SSBD_SHIFT		2	   /* Speculative Store Bypass Disable bit */
+ #define SPEC_CTRL_SSBD			BIT(SPEC_CTRL_SSBD_SHIFT)	/* Speculative Store Bypass Disable */
++#define SPEC_CTRL_RRSBA_DIS_S_SHIFT	6	   /* Disable RRSBA behavior */
++#define SPEC_CTRL_RRSBA_DIS_S		BIT(SPEC_CTRL_RRSBA_DIS_S_SHIFT)
+ 
+ #define MSR_IA32_PRED_CMD		0x00000049 /* Prediction Command */
+ #define PRED_CMD_IBPB			BIT(0)	   /* Indirect Branch Prediction Barrier */
+@@ -82,6 +84,7 @@
+ #define MSR_IA32_ARCH_CAPABILITIES	0x0000010a
+ #define ARCH_CAP_RDCL_NO		BIT(0)	/* Not susceptible to Meltdown */
+ #define ARCH_CAP_IBRS_ALL		BIT(1)	/* Enhanced IBRS support */
++#define ARCH_CAP_RSBA			BIT(2)	/* RET may use alternative branch predictors */
+ #define ARCH_CAP_SKIP_VMENTRY_L1DFLUSH	BIT(3)	/* Skip L1D flush on vmentry */
+ #define ARCH_CAP_SSB_NO			BIT(4)	/*
+ 						 * Not susceptible to Speculative Store Bypass
+@@ -129,6 +132,13 @@
+ 						 * bit available to control VERW
+ 						 * behavior.
+ 						 */
++#define ARCH_CAP_RRSBA			BIT(19)	/*
++						 * Indicates RET may use predictors
++						 * other than the RSB. With eIBRS
++						 * enabled predictions in kernel mode
++						 * are restricted to targets in
++						 * kernel.
++						 */
+ #define ARCH_CAP_PBRSB_NO		BIT(24)	/*
+ 						 * Not susceptible to Post-Barrier
+ 						 * Return Stack Buffer Predictions.
+diff --git a/arch/x86/include/asm/nospec-branch.h b/arch/x86/include/asm/nospec-branch.h
+index a1ee1a760c3eb..8c898eed28941 100644
+--- a/arch/x86/include/asm/nospec-branch.h
++++ b/arch/x86/include/asm/nospec-branch.h
+@@ -4,11 +4,14 @@
+ #define _ASM_X86_NOSPEC_BRANCH_H_
+ 
+ #include <linux/static_key.h>
++#include <linux/frame.h>
+ 
+ #include <asm/alternative.h>
+ #include <asm/alternative-asm.h>
+ #include <asm/cpufeatures.h>
+ #include <asm/msr-index.h>
++#include <asm/unwind_hints.h>
++#include <asm/percpu.h>
+ 
+ /*
+  * This should be used immediately before a retpoline alternative. It tells
+@@ -60,9 +63,9 @@
+ 	lfence;					\
+ 	jmp	775b;				\
+ 774:						\
++	add	$(BITS_PER_LONG/8) * 2, sp;	\
+ 	dec	reg;				\
+ 	jnz	771b;				\
+-	add	$(BITS_PER_LONG/8) * nr, sp;	\
+ 	/* barrier for jnz misprediction */	\
+ 	lfence;
+ #else
+@@ -79,13 +82,6 @@
+ 	add	$(BITS_PER_LONG/8) * nr, sp;
+ #endif
+ 
+-#define __ISSUE_UNBALANCED_RET_GUARD(sp)	\
+-	call	881f;				\
+-	int3;					\
+-881:						\
+-	add	$(BITS_PER_LONG/8), sp;		\
+-	lfence;
+-
+ #ifdef __ASSEMBLY__
+ 
+ /*
+@@ -155,26 +151,28 @@
+ #endif
+ .endm
+ 
+-.macro ISSUE_UNBALANCED_RET_GUARD ftr:req
+-	ANNOTATE_NOSPEC_ALTERNATIVE
+-	ALTERNATIVE "jmp .Lskip_pbrsb_\@",				\
+-		__stringify(__ISSUE_UNBALANCED_RET_GUARD(%_ASM_SP))	\
+-		\ftr
+-.Lskip_pbrsb_\@:
++.macro ISSUE_UNBALANCED_RET_GUARD
++	call .Lunbalanced_ret_guard_\@
++	int3
++.Lunbalanced_ret_guard_\@:
++	add $(BITS_PER_LONG/8), %_ASM_SP
++	lfence
+ .endm
+ 
+  /*
+   * A simpler FILL_RETURN_BUFFER macro. Don't make people use the CPP
+   * monstrosity above, manually.
+   */
+-.macro FILL_RETURN_BUFFER reg:req nr:req ftr:req
+-#ifdef CONFIG_RETPOLINE
+-	ANNOTATE_NOSPEC_ALTERNATIVE
+-	ALTERNATIVE "jmp .Lskip_rsb_\@",				\
+-		__stringify(__FILL_RETURN_BUFFER(\reg,\nr,%_ASM_SP))	\
+-		\ftr
++.macro FILL_RETURN_BUFFER reg:req nr:req ftr:req ftr2
++.ifb \ftr2
++	ALTERNATIVE "jmp .Lskip_rsb_\@", "", \ftr
++.else
++	ALTERNATIVE_2 "jmp .Lskip_rsb_\@", "", \ftr, "jmp .Lunbalanced_\@", \ftr2
++.endif
++	__FILL_RETURN_BUFFER(\reg,\nr,%_ASM_SP)
++.Lunbalanced_\@:
++	ISSUE_UNBALANCED_RET_GUARD
+ .Lskip_rsb_\@:
+-#endif
+ .endm
+ 
+ #else /* __ASSEMBLY__ */
+@@ -249,6 +247,7 @@ enum spectre_v2_mitigation {
+ 	SPECTRE_V2_EIBRS,
+ 	SPECTRE_V2_EIBRS_RETPOLINE,
+ 	SPECTRE_V2_EIBRS_LFENCE,
++	SPECTRE_V2_IBRS,
+ };
+ 
+ /* The indirect branch speculation control variants */
+@@ -312,6 +311,9 @@ static inline void indirect_branch_prediction_barrier(void)
+ 
+ /* The Intel SPEC CTRL MSR base value cache */
+ extern u64 x86_spec_ctrl_base;
++DECLARE_PER_CPU(u64, x86_spec_ctrl_current);
++extern void write_spec_ctrl_current(u64 val, bool force);
++extern u64 spec_ctrl_current(void);
+ 
+ /*
+  * With retpoline, we must use IBRS to restrict branch prediction
+@@ -321,18 +323,16 @@ extern u64 x86_spec_ctrl_base;
+  */
+ #define firmware_restrict_branch_speculation_start()			\
+ do {									\
+-	u64 val = x86_spec_ctrl_base | SPEC_CTRL_IBRS;			\
+-									\
+ 	preempt_disable();						\
+-	alternative_msr_write(MSR_IA32_SPEC_CTRL, val,			\
++	alternative_msr_write(MSR_IA32_SPEC_CTRL,			\
++			      spec_ctrl_current() | SPEC_CTRL_IBRS,	\
+ 			      X86_FEATURE_USE_IBRS_FW);			\
+ } while (0)
+ 
+ #define firmware_restrict_branch_speculation_end()			\
+ do {									\
+-	u64 val = x86_spec_ctrl_base;					\
+-									\
+-	alternative_msr_write(MSR_IA32_SPEC_CTRL, val,			\
++	alternative_msr_write(MSR_IA32_SPEC_CTRL,			\
++			      spec_ctrl_current(),			\
+ 			      X86_FEATURE_USE_IBRS_FW);			\
+ 	preempt_enable();						\
+ } while (0)
+diff --git a/arch/x86/kernel/cpu/amd.c b/arch/x86/kernel/cpu/amd.c
+index 88cef978380bf..5571b28d35b60 100644
+--- a/arch/x86/kernel/cpu/amd.c
++++ b/arch/x86/kernel/cpu/amd.c
+@@ -894,12 +894,21 @@ static void init_amd_zn(struct cpuinfo_x86 *c)
+ 	node_reclaim_distance = 32;
+ #endif
+ 
+-	/*
+-	 * Fix erratum 1076: CPB feature bit not being set in CPUID.
+-	 * Always set it, except when running under a hypervisor.
+-	 */
+-	if (!cpu_has(c, X86_FEATURE_HYPERVISOR) && !cpu_has(c, X86_FEATURE_CPB))
+-		set_cpu_cap(c, X86_FEATURE_CPB);
++	/* Fix up CPUID bits, but only if not virtualised. */
++	if (!cpu_has(c, X86_FEATURE_HYPERVISOR)) {
++
++		/* Erratum 1076: CPB feature bit not being set in CPUID. */
++		if (!cpu_has(c, X86_FEATURE_CPB))
++			set_cpu_cap(c, X86_FEATURE_CPB);
++
++		/*
++		 * Zen3 (Fam19 model < 0x10) parts are not susceptible to
++		 * Branch Type Confusion, but predate the allocation of the
++		 * BTC_NO bit.
++		 */
++		if (c->x86 == 0x19 && !cpu_has(c, X86_FEATURE_BTC_NO))
++			set_cpu_cap(c, X86_FEATURE_BTC_NO);
++	}
+ }
+ 
+ static void init_amd(struct cpuinfo_x86 *c)
+diff --git a/arch/x86/kernel/cpu/bugs.c b/arch/x86/kernel/cpu/bugs.c
+index c90d91cb14341..cf5a18e261e36 100644
+--- a/arch/x86/kernel/cpu/bugs.c
++++ b/arch/x86/kernel/cpu/bugs.c
+@@ -37,6 +37,8 @@
+ 
+ static void __init spectre_v1_select_mitigation(void);
+ static void __init spectre_v2_select_mitigation(void);
++static void __init retbleed_select_mitigation(void);
++static void __init spectre_v2_user_select_mitigation(void);
+ static void __init ssb_select_mitigation(void);
+ static void __init l1tf_select_mitigation(void);
+ static void __init mds_select_mitigation(void);
+@@ -46,16 +48,40 @@ static void __init taa_select_mitigation(void);
+ static void __init mmio_select_mitigation(void);
+ static void __init srbds_select_mitigation(void);
+ 
+-/* The base value of the SPEC_CTRL MSR that always has to be preserved. */
++/* The base value of the SPEC_CTRL MSR without task-specific bits set */
+ u64 x86_spec_ctrl_base;
+ EXPORT_SYMBOL_GPL(x86_spec_ctrl_base);
++
++/* The current value of the SPEC_CTRL MSR with task-specific bits set */
++DEFINE_PER_CPU(u64, x86_spec_ctrl_current);
++EXPORT_SYMBOL_GPL(x86_spec_ctrl_current);
++
+ static DEFINE_MUTEX(spec_ctrl_mutex);
+ 
+ /*
+- * The vendor and possibly platform specific bits which can be modified in
+- * x86_spec_ctrl_base.
++ * Keep track of the SPEC_CTRL MSR value for the current task, which may differ
++ * from x86_spec_ctrl_base due to STIBP/SSB in __speculation_ctrl_update().
+  */
+-static u64 __ro_after_init x86_spec_ctrl_mask = SPEC_CTRL_IBRS;
++void write_spec_ctrl_current(u64 val, bool force)
++{
++	if (this_cpu_read(x86_spec_ctrl_current) == val)
++		return;
++
++	this_cpu_write(x86_spec_ctrl_current, val);
++
++	/*
++	 * When KERNEL_IBRS this MSR is written on return-to-user, unless
++	 * forced the update can be delayed until that time.
++	 */
++	if (force || !cpu_feature_enabled(X86_FEATURE_KERNEL_IBRS))
++		wrmsrl(MSR_IA32_SPEC_CTRL, val);
++}
++
++u64 spec_ctrl_current(void)
++{
++	return this_cpu_read(x86_spec_ctrl_current);
++}
++EXPORT_SYMBOL_GPL(spec_ctrl_current);
+ 
+ /*
+  * AMD specific MSR info for Speculative Store Bypass control.
+@@ -105,13 +131,21 @@ void __init check_bugs(void)
+ 	if (boot_cpu_has(X86_FEATURE_MSR_SPEC_CTRL))
+ 		rdmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
+ 
+-	/* Allow STIBP in MSR_SPEC_CTRL if supported */
+-	if (boot_cpu_has(X86_FEATURE_STIBP))
+-		x86_spec_ctrl_mask |= SPEC_CTRL_STIBP;
+-
+ 	/* Select the proper CPU mitigations before patching alternatives: */
+ 	spectre_v1_select_mitigation();
+ 	spectre_v2_select_mitigation();
++	/*
++	 * retbleed_select_mitigation() relies on the state set by
++	 * spectre_v2_select_mitigation(); specifically it wants to know about
++	 * spectre_v2=ibrs.
++	 */
++	retbleed_select_mitigation();
++	/*
++	 * spectre_v2_user_select_mitigation() relies on the state set by
++	 * retbleed_select_mitigation(); specifically the STIBP selection is
++	 * forced for UNRET.
++	 */
++	spectre_v2_user_select_mitigation();
+ 	ssb_select_mitigation();
+ 	l1tf_select_mitigation();
+ 	md_clear_select_mitigation();
+@@ -151,31 +185,17 @@ void __init check_bugs(void)
+ #endif
+ }
+ 
++/*
++ * NOTE: For VMX, this function is not called in the vmexit path.
++ * It uses vmx_spec_ctrl_restore_host() instead.
++ */
+ void
+ x86_virt_spec_ctrl(u64 guest_spec_ctrl, u64 guest_virt_spec_ctrl, bool setguest)
+ {
+-	u64 msrval, guestval, hostval = x86_spec_ctrl_base;
++	u64 msrval, guestval = guest_spec_ctrl, hostval = spec_ctrl_current();
+ 	struct thread_info *ti = current_thread_info();
+ 
+-	/* Is MSR_SPEC_CTRL implemented ? */
+ 	if (static_cpu_has(X86_FEATURE_MSR_SPEC_CTRL)) {
+-		/*
+-		 * Restrict guest_spec_ctrl to supported values. Clear the
+-		 * modifiable bits in the host base value and or the
+-		 * modifiable bits from the guest value.
+-		 */
+-		guestval = hostval & ~x86_spec_ctrl_mask;
+-		guestval |= guest_spec_ctrl & x86_spec_ctrl_mask;
+-
+-		/* SSBD controlled in MSR_SPEC_CTRL */
+-		if (static_cpu_has(X86_FEATURE_SPEC_CTRL_SSBD) ||
+-		    static_cpu_has(X86_FEATURE_AMD_SSBD))
+-			hostval |= ssbd_tif_to_spec_ctrl(ti->flags);
+-
+-		/* Conditional STIBP enabled? */
+-		if (static_branch_unlikely(&switch_to_cond_stibp))
+-			hostval |= stibp_tif_to_spec_ctrl(ti->flags);
+-
+ 		if (hostval != guestval) {
+ 			msrval = setguest ? guestval : hostval;
+ 			wrmsrl(MSR_IA32_SPEC_CTRL, msrval);
+@@ -705,12 +725,103 @@ static int __init nospectre_v1_cmdline(char *str)
+ }
+ early_param("nospectre_v1", nospectre_v1_cmdline);
+ 
+-#undef pr_fmt
+-#define pr_fmt(fmt)     "Spectre V2 : " fmt
+-
+ static enum spectre_v2_mitigation spectre_v2_enabled __ro_after_init =
+ 	SPECTRE_V2_NONE;
+ 
++#undef pr_fmt
++#define pr_fmt(fmt)     "RETBleed: " fmt
++
++enum retbleed_mitigation {
++	RETBLEED_MITIGATION_NONE,
++	RETBLEED_MITIGATION_IBRS,
++	RETBLEED_MITIGATION_EIBRS,
++};
++
++enum retbleed_mitigation_cmd {
++	RETBLEED_CMD_OFF,
++	RETBLEED_CMD_AUTO,
++};
++
++const char * const retbleed_strings[] = {
++	[RETBLEED_MITIGATION_NONE]	= "Vulnerable",
++	[RETBLEED_MITIGATION_IBRS]	= "Mitigation: IBRS",
++	[RETBLEED_MITIGATION_EIBRS]	= "Mitigation: Enhanced IBRS",
++};
++
++static enum retbleed_mitigation retbleed_mitigation __ro_after_init =
++	RETBLEED_MITIGATION_NONE;
++static enum retbleed_mitigation_cmd retbleed_cmd __ro_after_init =
++	RETBLEED_CMD_AUTO;
++
++static int __init retbleed_parse_cmdline(char *str)
++{
++	if (!str)
++		return -EINVAL;
++
++	if (!strcmp(str, "off"))
++		retbleed_cmd = RETBLEED_CMD_OFF;
++	else if (!strcmp(str, "auto"))
++		retbleed_cmd = RETBLEED_CMD_AUTO;
++	else
++		pr_err("Unknown retbleed option (%s). Defaulting to 'auto'\n", str);
++
++	return 0;
++}
++early_param("retbleed", retbleed_parse_cmdline);
++
++#define RETBLEED_UNTRAIN_MSG "WARNING: BTB untrained return thunk mitigation is only effective on AMD/Hygon!\n"
++#define RETBLEED_COMPILER_MSG "WARNING: kernel not compiled with RETPOLINE or -mfunction-return capable compiler!\n"
++#define RETBLEED_INTEL_MSG "WARNING: Spectre v2 mitigation leaves CPU vulnerable to RETBleed attacks, data leaks possible!\n"
++
++static void __init retbleed_select_mitigation(void)
++{
++	if (!boot_cpu_has_bug(X86_BUG_RETBLEED) || cpu_mitigations_off())
++		return;
++
++	switch (retbleed_cmd) {
++	case RETBLEED_CMD_OFF:
++		return;
++
++	case RETBLEED_CMD_AUTO:
++	default:
++		/*
++		 * The Intel mitigation (IBRS) was already selected in
++		 * spectre_v2_select_mitigation().
++		 */
++
++		break;
++	}
++
++	switch (retbleed_mitigation) {
++	default:
++		break;
++	}
++
++	/*
++	 * Let IBRS trump all on Intel without affecting the effects of the
++	 * retbleed= cmdline option.
++	 */
++	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
++		switch (spectre_v2_enabled) {
++		case SPECTRE_V2_IBRS:
++			retbleed_mitigation = RETBLEED_MITIGATION_IBRS;
++			break;
++		case SPECTRE_V2_EIBRS:
++		case SPECTRE_V2_EIBRS_RETPOLINE:
++		case SPECTRE_V2_EIBRS_LFENCE:
++			retbleed_mitigation = RETBLEED_MITIGATION_EIBRS;
++			break;
++		default:
++			pr_err(RETBLEED_INTEL_MSG);
++		}
++	}
++
++	pr_info("%s\n", retbleed_strings[retbleed_mitigation]);
++}
++
++#undef pr_fmt
++#define pr_fmt(fmt)     "Spectre V2 : " fmt
++
+ static enum spectre_v2_user_mitigation spectre_v2_user_stibp __ro_after_init =
+ 	SPECTRE_V2_USER_NONE;
+ static enum spectre_v2_user_mitigation spectre_v2_user_ibpb __ro_after_init =
+@@ -740,6 +851,7 @@ static inline const char *spectre_v2_module_string(void) { return ""; }
+ #define SPECTRE_V2_LFENCE_MSG "WARNING: LFENCE mitigation is not recommended for this CPU, data leaks possible!\n"
+ #define SPECTRE_V2_EIBRS_EBPF_MSG "WARNING: Unprivileged eBPF is enabled with eIBRS on, data leaks possible via Spectre v2 BHB attacks!\n"
+ #define SPECTRE_V2_EIBRS_LFENCE_EBPF_SMT_MSG "WARNING: Unprivileged eBPF is enabled with eIBRS+LFENCE mitigation and SMT, data leaks possible via Spectre v2 BHB attacks!\n"
++#define SPECTRE_V2_IBRS_PERF_MSG "WARNING: IBRS mitigation selected on Enhanced IBRS CPU, this may cause unnecessary performance loss\n"
+ 
+ #ifdef CONFIG_BPF_SYSCALL
+ void unpriv_ebpf_notify(int new_state)
+@@ -781,6 +893,7 @@ enum spectre_v2_mitigation_cmd {
+ 	SPECTRE_V2_CMD_EIBRS,
+ 	SPECTRE_V2_CMD_EIBRS_RETPOLINE,
+ 	SPECTRE_V2_CMD_EIBRS_LFENCE,
++	SPECTRE_V2_CMD_IBRS,
+ };
+ 
+ enum spectre_v2_user_cmd {
+@@ -821,13 +934,15 @@ static void __init spec_v2_user_print_cond(const char *reason, bool secure)
+ 		pr_info("spectre_v2_user=%s forced on command line.\n", reason);
+ }
+ 
++static __ro_after_init enum spectre_v2_mitigation_cmd spectre_v2_cmd;
++
+ static enum spectre_v2_user_cmd __init
+-spectre_v2_parse_user_cmdline(enum spectre_v2_mitigation_cmd v2_cmd)
++spectre_v2_parse_user_cmdline(void)
+ {
+ 	char arg[20];
+ 	int ret, i;
+ 
+-	switch (v2_cmd) {
++	switch (spectre_v2_cmd) {
+ 	case SPECTRE_V2_CMD_NONE:
+ 		return SPECTRE_V2_USER_CMD_NONE;
+ 	case SPECTRE_V2_CMD_FORCE:
+@@ -853,15 +968,16 @@ spectre_v2_parse_user_cmdline(enum spectre_v2_mitigation_cmd v2_cmd)
+ 	return SPECTRE_V2_USER_CMD_AUTO;
+ }
+ 
+-static inline bool spectre_v2_in_eibrs_mode(enum spectre_v2_mitigation mode)
++static inline bool spectre_v2_in_ibrs_mode(enum spectre_v2_mitigation mode)
+ {
+-	return (mode == SPECTRE_V2_EIBRS ||
+-		mode == SPECTRE_V2_EIBRS_RETPOLINE ||
+-		mode == SPECTRE_V2_EIBRS_LFENCE);
++	return mode == SPECTRE_V2_IBRS ||
++	       mode == SPECTRE_V2_EIBRS ||
++	       mode == SPECTRE_V2_EIBRS_RETPOLINE ||
++	       mode == SPECTRE_V2_EIBRS_LFENCE;
+ }
+ 
+ static void __init
+-spectre_v2_user_select_mitigation(enum spectre_v2_mitigation_cmd v2_cmd)
++spectre_v2_user_select_mitigation(void)
+ {
+ 	enum spectre_v2_user_mitigation mode = SPECTRE_V2_USER_NONE;
+ 	bool smt_possible = IS_ENABLED(CONFIG_SMP);
+@@ -874,7 +990,7 @@ spectre_v2_user_select_mitigation(enum spectre_v2_mitigation_cmd v2_cmd)
+ 	    cpu_smt_control == CPU_SMT_NOT_SUPPORTED)
+ 		smt_possible = false;
+ 
+-	cmd = spectre_v2_parse_user_cmdline(v2_cmd);
++	cmd = spectre_v2_parse_user_cmdline();
+ 	switch (cmd) {
+ 	case SPECTRE_V2_USER_CMD_NONE:
+ 		goto set_mode;
+@@ -922,12 +1038,12 @@ spectre_v2_user_select_mitigation(enum spectre_v2_mitigation_cmd v2_cmd)
+ 	}
+ 
+ 	/*
+-	 * If no STIBP, enhanced IBRS is enabled or SMT impossible, STIBP is not
+-	 * required.
++	 * If no STIBP, IBRS or enhanced IBRS is enabled, or SMT impossible,
++	 * STIBP is not required.
+ 	 */
+ 	if (!boot_cpu_has(X86_FEATURE_STIBP) ||
+ 	    !smt_possible ||
+-	    spectre_v2_in_eibrs_mode(spectre_v2_enabled))
++	    spectre_v2_in_ibrs_mode(spectre_v2_enabled))
+ 		return;
+ 
+ 	/*
+@@ -952,6 +1068,7 @@ static const char * const spectre_v2_strings[] = {
+ 	[SPECTRE_V2_EIBRS]			= "Mitigation: Enhanced IBRS",
+ 	[SPECTRE_V2_EIBRS_LFENCE]		= "Mitigation: Enhanced IBRS + LFENCE",
+ 	[SPECTRE_V2_EIBRS_RETPOLINE]		= "Mitigation: Enhanced IBRS + Retpolines",
++	[SPECTRE_V2_IBRS]			= "Mitigation: IBRS",
+ };
+ 
+ static const struct {
+@@ -969,6 +1086,7 @@ static const struct {
+ 	{ "eibrs,lfence",	SPECTRE_V2_CMD_EIBRS_LFENCE,	  false },
+ 	{ "eibrs,retpoline",	SPECTRE_V2_CMD_EIBRS_RETPOLINE,	  false },
+ 	{ "auto",		SPECTRE_V2_CMD_AUTO,		  false },
++	{ "ibrs",		SPECTRE_V2_CMD_IBRS,              false },
+ };
+ 
+ static void __init spec_v2_print_cond(const char *reason, bool secure)
+@@ -1031,6 +1149,24 @@ static enum spectre_v2_mitigation_cmd __init spectre_v2_parse_cmdline(void)
+ 		return SPECTRE_V2_CMD_AUTO;
+ 	}
+ 
++	if (cmd == SPECTRE_V2_CMD_IBRS && boot_cpu_data.x86_vendor != X86_VENDOR_INTEL) {
++		pr_err("%s selected but not Intel CPU. Switching to AUTO select\n",
++		       mitigation_options[i].option);
++		return SPECTRE_V2_CMD_AUTO;
++	}
++
++	if (cmd == SPECTRE_V2_CMD_IBRS && !boot_cpu_has(X86_FEATURE_IBRS)) {
++		pr_err("%s selected but CPU doesn't have IBRS. Switching to AUTO select\n",
++		       mitigation_options[i].option);
++		return SPECTRE_V2_CMD_AUTO;
++	}
++
++	if (cmd == SPECTRE_V2_CMD_IBRS && boot_cpu_has(X86_FEATURE_XENPV)) {
++		pr_err("%s selected but running as XenPV guest. Switching to AUTO select\n",
++		       mitigation_options[i].option);
++		return SPECTRE_V2_CMD_AUTO;
++	}
++
+ 	spec_v2_print_cond(mitigation_options[i].option,
+ 			   mitigation_options[i].secure);
+ 	return cmd;
+@@ -1046,6 +1182,22 @@ static enum spectre_v2_mitigation __init spectre_v2_select_retpoline(void)
+ 	return SPECTRE_V2_RETPOLINE;
+ }
+ 
++/* Disable in-kernel use of non-RSB RET predictors */
++static void __init spec_ctrl_disable_kernel_rrsba(void)
++{
++	u64 ia32_cap;
++
++	if (!boot_cpu_has(X86_FEATURE_RRSBA_CTRL))
++		return;
++
++	ia32_cap = x86_read_arch_cap_msr();
++
++	if (ia32_cap & ARCH_CAP_RRSBA) {
++		x86_spec_ctrl_base |= SPEC_CTRL_RRSBA_DIS_S;
++		write_spec_ctrl_current(x86_spec_ctrl_base, true);
++	}
++}
++
+ static void __init spectre_v2_determine_rsb_fill_type_at_vmexit(enum spectre_v2_mitigation mode)
+ {
+ 	/*
+@@ -1070,10 +1222,6 @@ static void __init spectre_v2_determine_rsb_fill_type_at_vmexit(enum spectre_v2_
+ 	 */
+ 	switch (mode) {
+ 	case SPECTRE_V2_NONE:
+-	/* These modes already fill RSB at vmexit */
+-	case SPECTRE_V2_LFENCE:
+-	case SPECTRE_V2_RETPOLINE:
+-	case SPECTRE_V2_EIBRS_RETPOLINE:
+ 		return;
+ 
+ 	case SPECTRE_V2_EIBRS_LFENCE:
+@@ -1083,6 +1231,14 @@ static void __init spectre_v2_determine_rsb_fill_type_at_vmexit(enum spectre_v2_
+ 			pr_info("Spectre v2 / PBRSB-eIBRS: Retire a single CALL on VMEXIT\n");
+ 		}
+ 		return;
++
++	case SPECTRE_V2_EIBRS_RETPOLINE:
++	case SPECTRE_V2_RETPOLINE:
++	case SPECTRE_V2_LFENCE:
++	case SPECTRE_V2_IBRS:
++		setup_force_cpu_cap(X86_FEATURE_RSB_VMEXIT);
++		pr_info("Spectre v2 / SpectreRSB : Filling RSB on VMEXIT\n");
++		return;
+ 	}
+ 
+ 	pr_warn_once("Unknown Spectre v2 mode, disabling RSB mitigation at VM exit");
+@@ -1113,6 +1269,14 @@ static void __init spectre_v2_select_mitigation(void)
+ 			break;
+ 		}
+ 
++		if (boot_cpu_has_bug(X86_BUG_RETBLEED) &&
++		    retbleed_cmd != RETBLEED_CMD_OFF &&
++		    boot_cpu_has(X86_FEATURE_IBRS) &&
++		    boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
++			mode = SPECTRE_V2_IBRS;
++			break;
++		}
++
+ 		mode = spectre_v2_select_retpoline();
+ 		break;
+ 
+@@ -1129,6 +1293,10 @@ static void __init spectre_v2_select_mitigation(void)
+ 		mode = spectre_v2_select_retpoline();
+ 		break;
+ 
++	case SPECTRE_V2_CMD_IBRS:
++		mode = SPECTRE_V2_IBRS;
++		break;
++
+ 	case SPECTRE_V2_CMD_EIBRS:
+ 		mode = SPECTRE_V2_EIBRS;
+ 		break;
+@@ -1145,10 +1313,9 @@ static void __init spectre_v2_select_mitigation(void)
+ 	if (mode == SPECTRE_V2_EIBRS && unprivileged_ebpf_enabled())
+ 		pr_err(SPECTRE_V2_EIBRS_EBPF_MSG);
+ 
+-	if (spectre_v2_in_eibrs_mode(mode)) {
+-		/* Force it so VMEXIT will restore correctly */
++	if (spectre_v2_in_ibrs_mode(mode)) {
+ 		x86_spec_ctrl_base |= SPEC_CTRL_IBRS;
+-		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++		write_spec_ctrl_current(x86_spec_ctrl_base, true);
+ 	}
+ 
+ 	switch (mode) {
+@@ -1156,6 +1323,12 @@ static void __init spectre_v2_select_mitigation(void)
+ 	case SPECTRE_V2_EIBRS:
+ 		break;
+ 
++	case SPECTRE_V2_IBRS:
++		setup_force_cpu_cap(X86_FEATURE_KERNEL_IBRS);
++		if (boot_cpu_has(X86_FEATURE_IBRS_ENHANCED))
++			pr_warn(SPECTRE_V2_IBRS_PERF_MSG);
++		break;
++
+ 	case SPECTRE_V2_LFENCE:
+ 	case SPECTRE_V2_EIBRS_LFENCE:
+ 		setup_force_cpu_cap(X86_FEATURE_RETPOLINE_LFENCE);
+@@ -1167,16 +1340,56 @@ static void __init spectre_v2_select_mitigation(void)
+ 		break;
+ 	}
+ 
++	/*
++	 * Disable alternate RSB predictions in kernel when indirect CALLs and
++	 * JMPs gets protection against BHI and Intramode-BTI, but RET
++	 * prediction from a non-RSB predictor is still a risk.
++	 */
++	if (mode == SPECTRE_V2_EIBRS_LFENCE ||
++	    mode == SPECTRE_V2_EIBRS_RETPOLINE ||
++	    mode == SPECTRE_V2_RETPOLINE)
++		spec_ctrl_disable_kernel_rrsba();
++
+ 	spectre_v2_enabled = mode;
+ 	pr_info("%s\n", spectre_v2_strings[mode]);
+ 
+ 	/*
+-	 * If spectre v2 protection has been enabled, unconditionally fill
+-	 * RSB during a context switch; this protects against two independent
+-	 * issues:
++	 * If Spectre v2 protection has been enabled, fill the RSB during a
++	 * context switch.  In general there are two types of RSB attacks
++	 * across context switches, for which the CALLs/RETs may be unbalanced.
++	 *
++	 * 1) RSB underflow
++	 *
++	 *    Some Intel parts have "bottomless RSB".  When the RSB is empty,
++	 *    speculated return targets may come from the branch predictor,
++	 *    which could have a user-poisoned BTB or BHB entry.
++	 *
++	 *    AMD has it even worse: *all* returns are speculated from the BTB,
++	 *    regardless of the state of the RSB.
++	 *
++	 *    When IBRS or eIBRS is enabled, the "user -> kernel" attack
++	 *    scenario is mitigated by the IBRS branch prediction isolation
++	 *    properties, so the RSB buffer filling wouldn't be necessary to
++	 *    protect against this type of attack.
++	 *
++	 *    The "user -> user" attack scenario is mitigated by RSB filling.
+ 	 *
+-	 *	- RSB underflow (and switch to BTB) on Skylake+
+-	 *	- SpectreRSB variant of spectre v2 on X86_BUG_SPECTRE_V2 CPUs
++	 * 2) Poisoned RSB entry
++	 *
++	 *    If the 'next' in-kernel return stack is shorter than 'prev',
++	 *    'next' could be tricked into speculating with a user-poisoned RSB
++	 *    entry.
++	 *
++	 *    The "user -> kernel" attack scenario is mitigated by SMEP and
++	 *    eIBRS.
++	 *
++	 *    The "user -> user" scenario, also known as SpectreBHB, requires
++	 *    RSB clearing.
++	 *
++	 * So to mitigate all cases, unconditionally fill RSB on context
++	 * switches.
++	 *
++	 * FIXME: Is this pointless for retbleed-affected AMD?
+ 	 */
+ 	setup_force_cpu_cap(X86_FEATURE_RSB_CTXSW);
+ 	pr_info("Spectre v2 / SpectreRSB mitigation: Filling RSB on context switch\n");
+@@ -1184,28 +1397,29 @@ static void __init spectre_v2_select_mitigation(void)
+ 	spectre_v2_determine_rsb_fill_type_at_vmexit(mode);
+ 
+ 	/*
+-	 * Retpoline means the kernel is safe because it has no indirect
+-	 * branches. Enhanced IBRS protects firmware too, so, enable restricted
+-	 * speculation around firmware calls only when Enhanced IBRS isn't
+-	 * supported.
++	 * Retpoline protects the kernel, but doesn't protect firmware.  IBRS
++	 * and Enhanced IBRS protect firmware too, so enable IBRS around
++	 * firmware calls only when IBRS / Enhanced IBRS aren't otherwise
++	 * enabled.
+ 	 *
+ 	 * Use "mode" to check Enhanced IBRS instead of boot_cpu_has(), because
+ 	 * the user might select retpoline on the kernel command line and if
+ 	 * the CPU supports Enhanced IBRS, kernel might un-intentionally not
+ 	 * enable IBRS around firmware calls.
+ 	 */
+-	if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_eibrs_mode(mode)) {
++	if (boot_cpu_has(X86_FEATURE_IBRS) && !spectre_v2_in_ibrs_mode(mode)) {
+ 		setup_force_cpu_cap(X86_FEATURE_USE_IBRS_FW);
+ 		pr_info("Enabling Restricted Speculation for firmware calls\n");
+ 	}
+ 
+ 	/* Set up IBPB and STIBP depending on the general spectre V2 command */
+-	spectre_v2_user_select_mitigation(cmd);
++	spectre_v2_cmd = cmd;
+ }
+ 
+ static void update_stibp_msr(void * __unused)
+ {
+-	wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++	u64 val = spec_ctrl_current() | (x86_spec_ctrl_base & SPEC_CTRL_STIBP);
++	write_spec_ctrl_current(val, true);
+ }
+ 
+ /* Update x86_spec_ctrl_base in case SMT state changed. */
+@@ -1421,16 +1635,6 @@ static enum ssb_mitigation __init __ssb_select_mitigation(void)
+ 		break;
+ 	}
+ 
+-	/*
+-	 * If SSBD is controlled by the SPEC_CTRL MSR, then set the proper
+-	 * bit in the mask to allow guests to use the mitigation even in the
+-	 * case where the host does not enable it.
+-	 */
+-	if (static_cpu_has(X86_FEATURE_SPEC_CTRL_SSBD) ||
+-	    static_cpu_has(X86_FEATURE_AMD_SSBD)) {
+-		x86_spec_ctrl_mask |= SPEC_CTRL_SSBD;
+-	}
+-
+ 	/*
+ 	 * We have three CPU feature flags that are in play here:
+ 	 *  - X86_BUG_SPEC_STORE_BYPASS - CPU is susceptible.
+@@ -1448,7 +1652,7 @@ static enum ssb_mitigation __init __ssb_select_mitigation(void)
+ 			x86_amd_ssb_disable();
+ 		} else {
+ 			x86_spec_ctrl_base |= SPEC_CTRL_SSBD;
+-			wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++			write_spec_ctrl_current(x86_spec_ctrl_base, true);
+ 		}
+ 	}
+ 
+@@ -1665,7 +1869,7 @@ int arch_prctl_spec_ctrl_get(struct task_struct *task, unsigned long which)
+ void x86_spec_ctrl_setup_ap(void)
+ {
+ 	if (boot_cpu_has(X86_FEATURE_MSR_SPEC_CTRL))
+-		wrmsrl(MSR_IA32_SPEC_CTRL, x86_spec_ctrl_base);
++		write_spec_ctrl_current(x86_spec_ctrl_base, true);
+ 
+ 	if (ssb_mode == SPEC_STORE_BYPASS_DISABLE)
+ 		x86_amd_ssb_disable();
+@@ -1900,7 +2104,7 @@ static ssize_t mmio_stale_data_show_state(char *buf)
+ 
+ static char *stibp_state(void)
+ {
+-	if (spectre_v2_in_eibrs_mode(spectre_v2_enabled))
++	if (spectre_v2_in_ibrs_mode(spectre_v2_enabled))
+ 		return "";
+ 
+ 	switch (spectre_v2_user_stibp) {
+@@ -1934,7 +2138,7 @@ static char *pbrsb_eibrs_state(void)
+ {
+ 	if (boot_cpu_has_bug(X86_BUG_EIBRS_PBRSB)) {
+ 		if (boot_cpu_has(X86_FEATURE_RSB_VMEXIT_LITE) ||
+-		    boot_cpu_has(X86_FEATURE_RETPOLINE))
++		    boot_cpu_has(X86_FEATURE_RSB_VMEXIT))
+ 			return ", PBRSB-eIBRS: SW sequence";
+ 		else
+ 			return ", PBRSB-eIBRS: Vulnerable";
+@@ -1970,6 +2174,11 @@ static ssize_t srbds_show_state(char *buf)
+ 	return sprintf(buf, "%s\n", srbds_strings[srbds_mitigation]);
+ }
+ 
++static ssize_t retbleed_show_state(char *buf)
++{
++	return sprintf(buf, "%s\n", retbleed_strings[retbleed_mitigation]);
++}
++
+ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr,
+ 			       char *buf, unsigned int bug)
+ {
+@@ -2016,6 +2225,9 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
+ 	case X86_BUG_MMIO_UNKNOWN:
+ 		return mmio_stale_data_show_state(buf);
+ 
++	case X86_BUG_RETBLEED:
++		return retbleed_show_state(buf);
++
+ 	default:
+ 		break;
+ 	}
+@@ -2075,4 +2287,9 @@ ssize_t cpu_show_mmio_stale_data(struct device *dev, struct device_attribute *at
+ 	else
+ 		return cpu_show_common(dev, attr, buf, X86_BUG_MMIO_STALE_DATA);
+ }
++
++ssize_t cpu_show_retbleed(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	return cpu_show_common(dev, attr, buf, X86_BUG_RETBLEED);
++}
+ #endif
+diff --git a/arch/x86/kernel/cpu/common.c b/arch/x86/kernel/cpu/common.c
+index 59413e741ecf1..5e1e32f1086ba 100644
+--- a/arch/x86/kernel/cpu/common.c
++++ b/arch/x86/kernel/cpu/common.c
+@@ -1102,48 +1102,60 @@ static const __initconst struct x86_cpu_id cpu_vuln_whitelist[] = {
+ 	{}
+ };
+ 
++#define VULNBL(vendor, family, model, blacklist)	\
++	X86_MATCH_VENDOR_FAM_MODEL(vendor, family, model, blacklist)
++
+ #define VULNBL_INTEL_STEPPINGS(model, steppings, issues)		   \
+ 	X86_MATCH_VENDOR_FAM_MODEL_STEPPINGS_FEATURE(INTEL, 6,		   \
+ 					    INTEL_FAM6_##model, steppings, \
+ 					    X86_FEATURE_ANY, issues)
+ 
++#define VULNBL_AMD(family, blacklist)		\
++	VULNBL(AMD, family, X86_MODEL_ANY, blacklist)
++
++#define VULNBL_HYGON(family, blacklist)		\
++	VULNBL(HYGON, family, X86_MODEL_ANY, blacklist)
++
+ #define SRBDS		BIT(0)
+ /* CPU is affected by X86_BUG_MMIO_STALE_DATA */
+ #define MMIO		BIT(1)
+ /* CPU is affected by Shared Buffers Data Sampling (SBDS), a variant of X86_BUG_MMIO_STALE_DATA */
+ #define MMIO_SBDS	BIT(2)
++/* CPU is affected by RETbleed, speculating where you would not expect it */
++#define RETBLEED	BIT(3)
+ 
+ static const struct x86_cpu_id cpu_vuln_blacklist[] __initconst = {
+ 	VULNBL_INTEL_STEPPINGS(IVYBRIDGE,	X86_STEPPING_ANY,		SRBDS),
+ 	VULNBL_INTEL_STEPPINGS(HASWELL,		X86_STEPPING_ANY,		SRBDS),
+ 	VULNBL_INTEL_STEPPINGS(HASWELL_L,	X86_STEPPING_ANY,		SRBDS),
+ 	VULNBL_INTEL_STEPPINGS(HASWELL_G,	X86_STEPPING_ANY,		SRBDS),
+-	VULNBL_INTEL_STEPPINGS(HASWELL_X,	BIT(2) | BIT(4),		MMIO),
+-	VULNBL_INTEL_STEPPINGS(BROADWELL_D,	X86_STEPPINGS(0x3, 0x5),	MMIO),
++	VULNBL_INTEL_STEPPINGS(HASWELL_X,	X86_STEPPING_ANY,		MMIO),
++	VULNBL_INTEL_STEPPINGS(BROADWELL_D,	X86_STEPPING_ANY,		MMIO),
+ 	VULNBL_INTEL_STEPPINGS(BROADWELL_G,	X86_STEPPING_ANY,		SRBDS),
+ 	VULNBL_INTEL_STEPPINGS(BROADWELL_X,	X86_STEPPING_ANY,		MMIO),
+ 	VULNBL_INTEL_STEPPINGS(BROADWELL,	X86_STEPPING_ANY,		SRBDS),
+-	VULNBL_INTEL_STEPPINGS(SKYLAKE_L,	X86_STEPPINGS(0x3, 0x3),	SRBDS | MMIO),
+-	VULNBL_INTEL_STEPPINGS(SKYLAKE_L,	X86_STEPPING_ANY,		SRBDS),
+-	VULNBL_INTEL_STEPPINGS(SKYLAKE_X,	BIT(3) | BIT(4) | BIT(6) |
+-						BIT(7) | BIT(0xB),              MMIO),
+-	VULNBL_INTEL_STEPPINGS(SKYLAKE,		X86_STEPPINGS(0x3, 0x3),	SRBDS | MMIO),
+-	VULNBL_INTEL_STEPPINGS(SKYLAKE,		X86_STEPPING_ANY,		SRBDS),
+-	VULNBL_INTEL_STEPPINGS(KABYLAKE_L,	X86_STEPPINGS(0x9, 0xC),	SRBDS | MMIO),
+-	VULNBL_INTEL_STEPPINGS(KABYLAKE_L,	X86_STEPPINGS(0x0, 0x8),	SRBDS),
+-	VULNBL_INTEL_STEPPINGS(KABYLAKE,	X86_STEPPINGS(0x9, 0xD),	SRBDS | MMIO),
+-	VULNBL_INTEL_STEPPINGS(KABYLAKE,	X86_STEPPINGS(0x0, 0x8),	SRBDS),
+-	VULNBL_INTEL_STEPPINGS(ICELAKE_L,	X86_STEPPINGS(0x5, 0x5),	MMIO | MMIO_SBDS),
+-	VULNBL_INTEL_STEPPINGS(ICELAKE_D,	X86_STEPPINGS(0x1, 0x1),	MMIO),
+-	VULNBL_INTEL_STEPPINGS(ICELAKE_X,	X86_STEPPINGS(0x4, 0x6),	MMIO),
+-	VULNBL_INTEL_STEPPINGS(COMETLAKE,	BIT(2) | BIT(3) | BIT(5),	MMIO | MMIO_SBDS),
+-	VULNBL_INTEL_STEPPINGS(COMETLAKE_L,	X86_STEPPINGS(0x1, 0x1),	MMIO | MMIO_SBDS),
+-	VULNBL_INTEL_STEPPINGS(COMETLAKE_L,	X86_STEPPINGS(0x0, 0x0),	MMIO),
+-	VULNBL_INTEL_STEPPINGS(LAKEFIELD,	X86_STEPPINGS(0x1, 0x1),	MMIO | MMIO_SBDS),
+-	VULNBL_INTEL_STEPPINGS(ROCKETLAKE,	X86_STEPPINGS(0x1, 0x1),	MMIO),
+-	VULNBL_INTEL_STEPPINGS(ATOM_TREMONT,	X86_STEPPINGS(0x1, 0x1),	MMIO | MMIO_SBDS),
++	VULNBL_INTEL_STEPPINGS(SKYLAKE_L,	X86_STEPPING_ANY,		SRBDS | MMIO | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(SKYLAKE_X,	X86_STEPPING_ANY,		MMIO | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(SKYLAKE,		X86_STEPPING_ANY,		SRBDS | MMIO | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(KABYLAKE_L,	X86_STEPPING_ANY,		SRBDS | MMIO | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(KABYLAKE,	X86_STEPPING_ANY,		SRBDS | MMIO | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(CANNONLAKE_L,	X86_STEPPING_ANY,		RETBLEED),
++	VULNBL_INTEL_STEPPINGS(ICELAKE_L,	X86_STEPPING_ANY,		MMIO | MMIO_SBDS | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(ICELAKE_D,	X86_STEPPING_ANY,		MMIO),
++	VULNBL_INTEL_STEPPINGS(ICELAKE_X,	X86_STEPPING_ANY,		MMIO),
++	VULNBL_INTEL_STEPPINGS(COMETLAKE,	X86_STEPPING_ANY,		MMIO | MMIO_SBDS | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(COMETLAKE_L,	X86_STEPPINGS(0x0, 0x0),	MMIO | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(COMETLAKE_L,	X86_STEPPING_ANY,		MMIO | MMIO_SBDS | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(LAKEFIELD,	X86_STEPPING_ANY,		MMIO | MMIO_SBDS | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(ROCKETLAKE,	X86_STEPPING_ANY,		MMIO | RETBLEED),
++	VULNBL_INTEL_STEPPINGS(ATOM_TREMONT,	X86_STEPPING_ANY,		MMIO | MMIO_SBDS),
+ 	VULNBL_INTEL_STEPPINGS(ATOM_TREMONT_D,	X86_STEPPING_ANY,		MMIO),
+-	VULNBL_INTEL_STEPPINGS(ATOM_TREMONT_L,	X86_STEPPINGS(0x0, 0x0),	MMIO | MMIO_SBDS),
++	VULNBL_INTEL_STEPPINGS(ATOM_TREMONT_L,	X86_STEPPING_ANY,		MMIO | MMIO_SBDS),
++
++	VULNBL_AMD(0x15, RETBLEED),
++	VULNBL_AMD(0x16, RETBLEED),
++	VULNBL_AMD(0x17, RETBLEED),
++	VULNBL_HYGON(0x18, RETBLEED),
+ 	{}
+ };
+ 
+@@ -1251,6 +1263,11 @@ static void __init cpu_set_bug_bits(struct cpuinfo_x86 *c)
+ 			setup_force_cpu_bug(X86_BUG_MMIO_UNKNOWN);
+ 	}
+ 
++	if (!cpu_has(c, X86_FEATURE_BTC_NO)) {
++		if (cpu_matches(cpu_vuln_blacklist, RETBLEED) || (ia32_cap & ARCH_CAP_RSBA))
++			setup_force_cpu_bug(X86_BUG_RETBLEED);
++	}
++
+ 	if (cpu_has(c, X86_FEATURE_IBRS_ENHANCED) &&
+ 	    !cpu_matches(cpu_vuln_whitelist, NO_EIBRS_PBRSB) &&
+ 	    !(ia32_cap & ARCH_CAP_PBRSB_NO))
+diff --git a/arch/x86/kernel/cpu/match.c b/arch/x86/kernel/cpu/match.c
+index 2f163e6646b6f..ad6776081e60d 100644
+--- a/arch/x86/kernel/cpu/match.c
++++ b/arch/x86/kernel/cpu/match.c
+@@ -16,12 +16,17 @@
+  * respective wildcard entries.
+  *
+  * A typical table entry would be to match a specific CPU
+- * { X86_VENDOR_INTEL, 6, 0x12 }
+- * or to match a specific CPU feature
+- * { X86_FEATURE_MATCH(X86_FEATURE_FOOBAR) }
++ *
++ * X86_MATCH_VENDOR_FAM_MODEL_FEATURE(INTEL, 6, INTEL_FAM6_BROADWELL,
++ *				      X86_FEATURE_ANY, NULL);
+  *
+  * Fields can be wildcarded with %X86_VENDOR_ANY, %X86_FAMILY_ANY,
+- * %X86_MODEL_ANY, %X86_FEATURE_ANY or 0 (except for vendor)
++ * %X86_MODEL_ANY, %X86_FEATURE_ANY (except for vendor)
++ *
++ * asm/cpu_device_id.h contains a set of useful macros which are shortcuts
++ * for various common selections. The above can be shortened to:
++ *
++ * X86_MATCH_INTEL_FAM6_MODEL(BROADWELL, NULL);
+  *
+  * Arrays used to match for this should also be declared using
+  * MODULE_DEVICE_TABLE(x86cpu, ...)
+diff --git a/arch/x86/kernel/cpu/scattered.c b/arch/x86/kernel/cpu/scattered.c
+index 53004dbd55c47..a03e309a0ac5f 100644
+--- a/arch/x86/kernel/cpu/scattered.c
++++ b/arch/x86/kernel/cpu/scattered.c
+@@ -26,6 +26,7 @@ struct cpuid_bit {
+ static const struct cpuid_bit cpuid_bits[] = {
+ 	{ X86_FEATURE_APERFMPERF,       CPUID_ECX,  0, 0x00000006, 0 },
+ 	{ X86_FEATURE_EPB,		CPUID_ECX,  3, 0x00000006, 0 },
++	{ X86_FEATURE_RRSBA_CTRL,	CPUID_EDX,  2, 0x00000007, 2 },
+ 	{ X86_FEATURE_CQM_LLC,		CPUID_EDX,  1, 0x0000000f, 0 },
+ 	{ X86_FEATURE_CQM_OCCUP_LLC,	CPUID_EDX,  0, 0x0000000f, 1 },
+ 	{ X86_FEATURE_CQM_MBM_TOTAL,	CPUID_EDX,  1, 0x0000000f, 1 },
+diff --git a/arch/x86/kernel/process.c b/arch/x86/kernel/process.c
+index 068715a52ac10..87cfd2ee9ca0d 100644
+--- a/arch/x86/kernel/process.c
++++ b/arch/x86/kernel/process.c
+@@ -449,7 +449,7 @@ static __always_inline void __speculation_ctrl_update(unsigned long tifp,
+ 	}
+ 
+ 	if (updmsr)
+-		wrmsrl(MSR_IA32_SPEC_CTRL, msr);
++		write_spec_ctrl_current(msr, false);
+ }
+ 
+ static unsigned long speculation_ctrl_update_tif(struct task_struct *tsk)
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index 1efcc7d4bc88e..3db407e3c4166 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -47,6 +47,7 @@
+ #include <asm/kvm_para.h>
+ #include <asm/irq_remapping.h>
+ #include <asm/spec-ctrl.h>
++#include <asm/cpu_device_id.h>
+ 
+ #include <asm/virtext.h>
+ #include "trace.h"
+diff --git a/arch/x86/kvm/vmx/nested.c b/arch/x86/kvm/vmx/nested.c
+index 34ee4835b0177..a7b62a00913e5 100644
+--- a/arch/x86/kvm/vmx/nested.c
++++ b/arch/x86/kvm/vmx/nested.c
+@@ -11,6 +11,7 @@
+ #include "mmu.h"
+ #include "nested.h"
+ #include "trace.h"
++#include "vmx.h"
+ #include "x86.h"
+ 
+ static bool __read_mostly enable_shadow_vmcs = 1;
+@@ -2863,35 +2864,8 @@ static int nested_vmx_check_vmentry_hw(struct kvm_vcpu *vcpu)
+ 		vmx->loaded_vmcs->host_state.cr4 = cr4;
+ 	}
+ 
+-	asm(
+-		"sub $%c[wordsize], %%" _ASM_SP "\n\t" /* temporarily adjust RSP for CALL */
+-		"cmp %%" _ASM_SP ", %c[host_state_rsp](%[loaded_vmcs]) \n\t"
+-		"je 1f \n\t"
+-		__ex("vmwrite %%" _ASM_SP ", %[HOST_RSP]") "\n\t"
+-		"mov %%" _ASM_SP ", %c[host_state_rsp](%[loaded_vmcs]) \n\t"
+-		"1: \n\t"
+-		"add $%c[wordsize], %%" _ASM_SP "\n\t" /* un-adjust RSP */
+-
+-		/* Check if vmlaunch or vmresume is needed */
+-		"cmpb $0, %c[launched](%[loaded_vmcs])\n\t"
+-
+-		/*
+-		 * VMLAUNCH and VMRESUME clear RFLAGS.{CF,ZF} on VM-Exit, set
+-		 * RFLAGS.CF on VM-Fail Invalid and set RFLAGS.ZF on VM-Fail
+-		 * Valid.  vmx_vmenter() directly "returns" RFLAGS, and so the
+-		 * results of VM-Enter is captured via CC_{SET,OUT} to vm_fail.
+-		 */
+-		"call vmx_vmenter\n\t"
+-
+-		CC_SET(be)
+-	      : ASM_CALL_CONSTRAINT, CC_OUT(be) (vm_fail)
+-	      :	[HOST_RSP]"r"((unsigned long)HOST_RSP),
+-		[loaded_vmcs]"r"(vmx->loaded_vmcs),
+-		[launched]"i"(offsetof(struct loaded_vmcs, launched)),
+-		[host_state_rsp]"i"(offsetof(struct loaded_vmcs, host_state.rsp)),
+-		[wordsize]"i"(sizeof(ulong))
+-	      : "memory"
+-	);
++	vm_fail = __vmx_vcpu_run(vmx, (unsigned long *)&vcpu->arch.regs,
++				 __vmx_vcpu_run_flags(vmx));
+ 
+ 	if (vmx->msr_autoload.host.nr)
+ 		vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, vmx->msr_autoload.host.nr);
+diff --git a/arch/x86/kvm/vmx/run_flags.h b/arch/x86/kvm/vmx/run_flags.h
+new file mode 100644
+index 0000000000000..edc3f16cc1896
+--- /dev/null
++++ b/arch/x86/kvm/vmx/run_flags.h
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __KVM_X86_VMX_RUN_FLAGS_H
++#define __KVM_X86_VMX_RUN_FLAGS_H
++
++#define VMX_RUN_VMRESUME	(1 << 0)
++#define VMX_RUN_SAVE_SPEC_CTRL	(1 << 1)
++
++#endif /* __KVM_X86_VMX_RUN_FLAGS_H */
+diff --git a/arch/x86/kvm/vmx/vmenter.S b/arch/x86/kvm/vmx/vmenter.S
+index 946d9205c3b6d..2850670c38bb0 100644
+--- a/arch/x86/kvm/vmx/vmenter.S
++++ b/arch/x86/kvm/vmx/vmenter.S
+@@ -4,6 +4,7 @@
+ #include <asm/bitsperlong.h>
+ #include <asm/kvm_vcpu_regs.h>
+ #include <asm/nospec-branch.h>
++#include "run_flags.h"
+ 
+ #define WORD_SIZE (BITS_PER_LONG / 8)
+ 
+@@ -29,78 +30,12 @@
+ 
+ 	.text
+ 
+-/**
+- * vmx_vmenter - VM-Enter the current loaded VMCS
+- *
+- * %RFLAGS.ZF:	!VMCS.LAUNCHED, i.e. controls VMLAUNCH vs. VMRESUME
+- *
+- * Returns:
+- *	%RFLAGS.CF is set on VM-Fail Invalid
+- *	%RFLAGS.ZF is set on VM-Fail Valid
+- *	%RFLAGS.{CF,ZF} are cleared on VM-Success, i.e. VM-Exit
+- *
+- * Note that VMRESUME/VMLAUNCH fall-through and return directly if
+- * they VM-Fail, whereas a successful VM-Enter + VM-Exit will jump
+- * to vmx_vmexit.
+- */
+-ENTRY(vmx_vmenter)
+-	/* EFLAGS.ZF is set if VMCS.LAUNCHED == 0 */
+-	je 2f
+-
+-1:	vmresume
+-	ret
+-
+-2:	vmlaunch
+-	ret
+-
+-3:	cmpb $0, kvm_rebooting
+-	je 4f
+-	ret
+-4:	ud2
+-
+-	.pushsection .fixup, "ax"
+-5:	jmp 3b
+-	.popsection
+-
+-	_ASM_EXTABLE(1b, 5b)
+-	_ASM_EXTABLE(2b, 5b)
+-
+-ENDPROC(vmx_vmenter)
+-
+-/**
+- * vmx_vmexit - Handle a VMX VM-Exit
+- *
+- * Returns:
+- *	%RFLAGS.{CF,ZF} are cleared on VM-Success, i.e. VM-Exit
+- *
+- * This is vmx_vmenter's partner in crime.  On a VM-Exit, control will jump
+- * here after hardware loads the host's state, i.e. this is the destination
+- * referred to by VMCS.HOST_RIP.
+- */
+-ENTRY(vmx_vmexit)
+-#ifdef CONFIG_RETPOLINE
+-	ALTERNATIVE "jmp .Lvmexit_skip_rsb", "", X86_FEATURE_RETPOLINE
+-	/* Preserve guest's RAX, it's used to stuff the RSB. */
+-	push %_ASM_AX
+-
+-	/* IMPORTANT: Stuff the RSB immediately after VM-Exit, before RET! */
+-	FILL_RETURN_BUFFER %_ASM_AX, RSB_CLEAR_LOOPS, X86_FEATURE_RETPOLINE
+-
+-	/* Clear RFLAGS.CF and RFLAGS.ZF to preserve VM-Exit, i.e. !VM-Fail. */
+-	or $1, %_ASM_AX
+-
+-	pop %_ASM_AX
+-.Lvmexit_skip_rsb:
+-#endif
+-	ISSUE_UNBALANCED_RET_GUARD X86_FEATURE_RSB_VMEXIT_LITE
+-	ret
+-ENDPROC(vmx_vmexit)
+-
+ /**
+  * __vmx_vcpu_run - Run a vCPU via a transition to VMX guest mode
+- * @vmx:	struct vcpu_vmx * (forwarded to vmx_update_host_rsp)
++ * @vmx:	struct vcpu_vmx *
+  * @regs:	unsigned long * (to guest registers)
+- * @launched:	%true if the VMCS has been launched
++ * @flags:	VMX_RUN_VMRESUME:	use VMRESUME instead of VMLAUNCH
++ *		VMX_RUN_SAVE_SPEC_CTRL: save guest SPEC_CTRL into vmx->spec_ctrl
+  *
+  * Returns:
+  *	0 on VM-Exit, 1 on VM-Fail
+@@ -119,24 +54,29 @@ ENTRY(__vmx_vcpu_run)
+ #endif
+ 	push %_ASM_BX
+ 
++	/* Save @vmx for SPEC_CTRL handling */
++	push %_ASM_ARG1
++
++	/* Save @flags for SPEC_CTRL handling */
++	push %_ASM_ARG3
++
+ 	/*
+ 	 * Save @regs, _ASM_ARG2 may be modified by vmx_update_host_rsp() and
+ 	 * @regs is needed after VM-Exit to save the guest's register values.
+ 	 */
+ 	push %_ASM_ARG2
+ 
+-	/* Copy @launched to BL, _ASM_ARG3 is volatile. */
++	/* Copy @flags to BL, _ASM_ARG3 is volatile. */
+ 	mov %_ASM_ARG3B, %bl
+ 
+-	/* Adjust RSP to account for the CALL to vmx_vmenter(). */
+-	lea -WORD_SIZE(%_ASM_SP), %_ASM_ARG2
++	lea (%_ASM_SP), %_ASM_ARG2
+ 	call vmx_update_host_rsp
+ 
+ 	/* Load @regs to RAX. */
+ 	mov (%_ASM_SP), %_ASM_AX
+ 
+ 	/* Check if vmlaunch or vmresume is needed */
+-	cmpb $0, %bl
++	testb $VMX_RUN_VMRESUME, %bl
+ 
+ 	/* Load guest registers.  Don't clobber flags. */
+ 	mov VCPU_RBX(%_ASM_AX), %_ASM_BX
+@@ -158,11 +98,25 @@ ENTRY(__vmx_vcpu_run)
+ 	/* Load guest RAX.  This kills the @regs pointer! */
+ 	mov VCPU_RAX(%_ASM_AX), %_ASM_AX
+ 
+-	/* Enter guest mode */
+-	call vmx_vmenter
++	/* Check EFLAGS.ZF from 'testb' above */
++	jz .Lvmlaunch
+ 
+-	/* Jump on VM-Fail. */
+-	jbe 2f
++/*
++ * If VMRESUME/VMLAUNCH and corresponding vmexit succeed, execution resumes at
++ * the 'vmx_vmexit' label below.
++ */
++.Lvmresume:
++	vmresume
++	jmp .Lvmfail
++
++.Lvmlaunch:
++	vmlaunch
++	jmp .Lvmfail
++
++	_ASM_EXTABLE(.Lvmresume, .Lfixup)
++	_ASM_EXTABLE(.Lvmlaunch, .Lfixup)
++
++SYM_INNER_LABEL(vmx_vmexit, SYM_L_GLOBAL)
+ 
+ 	/* Temporarily save guest's RAX. */
+ 	push %_ASM_AX
+@@ -189,19 +143,21 @@ ENTRY(__vmx_vcpu_run)
+ 	mov %r15, VCPU_R15(%_ASM_AX)
+ #endif
+ 
+-	/* Clear RAX to indicate VM-Exit (as opposed to VM-Fail). */
+-	xor %eax, %eax
++	/* Clear return value to indicate VM-Exit (as opposed to VM-Fail). */
++	xor %ebx, %ebx
+ 
++.Lclear_regs:
+ 	/*
+-	 * Clear all general purpose registers except RSP and RAX to prevent
++	 * Clear all general purpose registers except RSP and RBX to prevent
+ 	 * speculative use of the guest's values, even those that are reloaded
+ 	 * via the stack.  In theory, an L1 cache miss when restoring registers
+ 	 * could lead to speculative execution with the guest's values.
+ 	 * Zeroing XORs are dirt cheap, i.e. the extra paranoia is essentially
+ 	 * free.  RSP and RAX are exempt as RSP is restored by hardware during
+-	 * VM-Exit and RAX is explicitly loaded with 0 or 1 to return VM-Fail.
++	 * VM-Exit and RBX is explicitly loaded with 0 or 1 to hold the return
++	 * value.
+ 	 */
+-1:	xor %ebx, %ebx
++	xor %eax, %eax
+ 	xor %ecx, %ecx
+ 	xor %edx, %edx
+ 	xor %esi, %esi
+@@ -220,8 +176,32 @@ ENTRY(__vmx_vcpu_run)
+ 
+ 	/* "POP" @regs. */
+ 	add $WORD_SIZE, %_ASM_SP
+-	pop %_ASM_BX
+ 
++	/*
++	 * IMPORTANT: RSB filling and SPEC_CTRL handling must be done before
++	 * the first unbalanced RET after vmexit!
++	 *
++	 * For retpoline or IBRS, RSB filling is needed to prevent poisoned RSB
++	 * entries and (in some cases) RSB underflow.
++	 *
++	 * eIBRS has its own protection against poisoned RSB, so it doesn't
++	 * need the RSB filling sequence.  But it does need to be enabled, and a
++	 * single call to retire, before the first unbalanced RET.
++         */
++
++	FILL_RETURN_BUFFER %_ASM_CX, RSB_CLEAR_LOOPS, X86_FEATURE_RSB_VMEXIT,\
++			   X86_FEATURE_RSB_VMEXIT_LITE
++
++
++	pop %_ASM_ARG2	/* @flags */
++	pop %_ASM_ARG1	/* @vmx */
++
++	call vmx_spec_ctrl_restore_host
++
++	/* Put return value in AX */
++	mov %_ASM_BX, %_ASM_AX
++
++	pop %_ASM_BX
+ #ifdef CONFIG_X86_64
+ 	pop %r12
+ 	pop %r13
+@@ -234,11 +214,20 @@ ENTRY(__vmx_vcpu_run)
+ 	pop %_ASM_BP
+ 	ret
+ 
+-	/* VM-Fail.  Out-of-line to avoid a taken Jcc after VM-Exit. */
+-2:	mov $1, %eax
+-	jmp 1b
++.Lfixup:
++	cmpb $0, kvm_rebooting
++	jne .Lvmfail
++	ud2
++.Lvmfail:
++	/* VM-Fail: set return value to 1 */
++	mov $1, %_ASM_BX
++	jmp .Lclear_regs
++
+ ENDPROC(__vmx_vcpu_run)
+ 
++
++.section .text, "ax"
++
+ /**
+  * vmread_error_trampoline - Trampoline from inline asm to vmread_error()
+  * @field:	VMCS field encoding that failed
+diff --git a/arch/x86/kvm/vmx/vmx.c b/arch/x86/kvm/vmx/vmx.c
+index 4bd1bf6214eea..d522c9de41df9 100644
+--- a/arch/x86/kvm/vmx/vmx.c
++++ b/arch/x86/kvm/vmx/vmx.c
+@@ -31,6 +31,7 @@
+ #include <asm/apic.h>
+ #include <asm/asm.h>
+ #include <asm/cpu.h>
++#include <asm/cpu_device_id.h>
+ #include <asm/debugreg.h>
+ #include <asm/desc.h>
+ #include <asm/fpu/internal.h>
+@@ -358,9 +359,9 @@ static __always_inline void vmx_disable_fb_clear(struct vcpu_vmx *vmx)
+ 	if (!vmx->disable_fb_clear)
+ 		return;
+ 
+-	rdmsrl(MSR_IA32_MCU_OPT_CTRL, msr);
++	msr = __rdmsr(MSR_IA32_MCU_OPT_CTRL);
+ 	msr |= FB_CLEAR_DIS;
+-	wrmsrl(MSR_IA32_MCU_OPT_CTRL, msr);
++	native_wrmsrl(MSR_IA32_MCU_OPT_CTRL, msr);
+ 	/* Cache the MSR value to avoid reading it later */
+ 	vmx->msr_ia32_mcu_opt_ctrl = msr;
+ }
+@@ -371,7 +372,7 @@ static __always_inline void vmx_enable_fb_clear(struct vcpu_vmx *vmx)
+ 		return;
+ 
+ 	vmx->msr_ia32_mcu_opt_ctrl &= ~FB_CLEAR_DIS;
+-	wrmsrl(MSR_IA32_MCU_OPT_CTRL, vmx->msr_ia32_mcu_opt_ctrl);
++	native_wrmsrl(MSR_IA32_MCU_OPT_CTRL, vmx->msr_ia32_mcu_opt_ctrl);
+ }
+ 
+ static void vmx_update_fb_clear_dis(struct kvm_vcpu *vcpu, struct vcpu_vmx *vmx)
+@@ -862,6 +863,24 @@ static bool msr_write_intercepted(struct vcpu_vmx *vmx, u32 msr)
+ 	return true;
+ }
+ 
++unsigned int __vmx_vcpu_run_flags(struct vcpu_vmx *vmx)
++{
++	unsigned int flags = 0;
++
++	if (vmx->loaded_vmcs->launched)
++		flags |= VMX_RUN_VMRESUME;
++
++	/*
++	 * If writes to the SPEC_CTRL MSR aren't intercepted, the guest is free
++	 * to change it directly without causing a vmexit.  In that case read
++	 * it after vmexit and store it in vmx->spec_ctrl.
++	 */
++	if (unlikely(!msr_write_intercepted(vmx, MSR_IA32_SPEC_CTRL)))
++		flags |= VMX_RUN_SAVE_SPEC_CTRL;
++
++	return flags;
++}
++
+ static void clear_atomic_switch_msr_special(struct vcpu_vmx *vmx,
+ 		unsigned long entry, unsigned long exit)
+ {
+@@ -6539,7 +6558,30 @@ void vmx_update_host_rsp(struct vcpu_vmx *vmx, unsigned long host_rsp)
+ 	}
+ }
+ 
+-bool __vmx_vcpu_run(struct vcpu_vmx *vmx, unsigned long *regs, bool launched);
++void noinstr vmx_spec_ctrl_restore_host(struct vcpu_vmx *vmx,
++					unsigned int flags)
++{
++	u64 hostval = this_cpu_read(x86_spec_ctrl_current);
++
++	if (!cpu_feature_enabled(X86_FEATURE_MSR_SPEC_CTRL))
++		return;
++
++	if (flags & VMX_RUN_SAVE_SPEC_CTRL)
++		vmx->spec_ctrl = __rdmsr(MSR_IA32_SPEC_CTRL);
++
++	/*
++	 * If the guest/host SPEC_CTRL values differ, restore the host value.
++	 *
++	 * For legacy IBRS, the IBRS bit always needs to be written after
++	 * transitioning from a less privileged predictor mode, regardless of
++	 * whether the guest/host values differ.
++	 */
++	if (cpu_feature_enabled(X86_FEATURE_KERNEL_IBRS) ||
++	    vmx->spec_ctrl != hostval)
++		native_wrmsrl(MSR_IA32_SPEC_CTRL, hostval);
++
++	barrier_nospec();
++}
+ 
+ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
+ {
+@@ -6628,32 +6670,12 @@ static void vmx_vcpu_run(struct kvm_vcpu *vcpu)
+ 		write_cr2(vcpu->arch.cr2);
+ 
+ 	vmx->fail = __vmx_vcpu_run(vmx, (unsigned long *)&vcpu->arch.regs,
+-				   vmx->loaded_vmcs->launched);
++				   __vmx_vcpu_run_flags(vmx));
+ 
+ 	vcpu->arch.cr2 = read_cr2();
+ 
+ 	vmx_enable_fb_clear(vmx);
+ 
+-	/*
+-	 * We do not use IBRS in the kernel. If this vCPU has used the
+-	 * SPEC_CTRL MSR it may have left it on; save the value and
+-	 * turn it off. This is much more efficient than blindly adding
+-	 * it to the atomic save/restore list. Especially as the former
+-	 * (Saving guest MSRs on vmexit) doesn't even exist in KVM.
+-	 *
+-	 * For non-nested case:
+-	 * If the L01 MSR bitmap does not intercept the MSR, then we need to
+-	 * save it.
+-	 *
+-	 * For nested case:
+-	 * If the L02 MSR bitmap does not intercept the MSR, then we need to
+-	 * save it.
+-	 */
+-	if (unlikely(!msr_write_intercepted(vmx, MSR_IA32_SPEC_CTRL)))
+-		vmx->spec_ctrl = native_read_msr(MSR_IA32_SPEC_CTRL);
+-
+-	x86_spec_ctrl_restore_host(vmx->spec_ctrl, 0);
+-
+ 	/* All fields are clean at this point */
+ 	if (static_branch_unlikely(&enable_evmcs))
+ 		current_evmcs->hv_clean_fields |=
+diff --git a/arch/x86/kvm/vmx/vmx.h b/arch/x86/kvm/vmx/vmx.h
+index 7a3362ab59867..4d5be4610af84 100644
+--- a/arch/x86/kvm/vmx/vmx.h
++++ b/arch/x86/kvm/vmx/vmx.h
+@@ -10,6 +10,7 @@
+ #include "capabilities.h"
+ #include "ops.h"
+ #include "vmcs.h"
++#include "run_flags.h"
+ 
+ extern const u32 vmx_msr_index[];
+ extern u64 host_efer;
+@@ -336,6 +337,10 @@ void vmx_set_virtual_apic_mode(struct kvm_vcpu *vcpu);
+ struct shared_msr_entry *find_msr_entry(struct vcpu_vmx *vmx, u32 msr);
+ void pt_update_intercept_for_msr(struct vcpu_vmx *vmx);
+ void vmx_update_host_rsp(struct vcpu_vmx *vmx, unsigned long host_rsp);
++void vmx_spec_ctrl_restore_host(struct vcpu_vmx *vmx, unsigned int flags);
++unsigned int __vmx_vcpu_run_flags(struct vcpu_vmx *vmx);
++bool __vmx_vcpu_run(struct vcpu_vmx *vmx, unsigned long *regs,
++		    unsigned int flags);
+ 
+ #define POSTED_INTR_ON  0
+ #define POSTED_INTR_SN  1
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index d0b297583df88..c431a34522d6c 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -10329,9 +10329,9 @@ void kvm_arch_end_assignment(struct kvm *kvm)
+ }
+ EXPORT_SYMBOL_GPL(kvm_arch_end_assignment);
+ 
+-bool kvm_arch_has_assigned_device(struct kvm *kvm)
++bool noinstr kvm_arch_has_assigned_device(struct kvm *kvm)
+ {
+-	return atomic_read(&kvm->arch.assigned_device_count);
++	return arch_atomic_read(&kvm->arch.assigned_device_count);
+ }
+ EXPORT_SYMBOL_GPL(kvm_arch_has_assigned_device);
+ 
+diff --git a/drivers/base/cpu.c b/drivers/base/cpu.c
+index 9b5edf1dfe9e9..7000c836951c5 100644
+--- a/drivers/base/cpu.c
++++ b/drivers/base/cpu.c
+@@ -574,6 +574,12 @@ ssize_t __weak cpu_show_mmio_stale_data(struct device *dev,
+ 	return sysfs_emit(buf, "Not affected\n");
+ }
+ 
++ssize_t __weak cpu_show_retbleed(struct device *dev,
++				 struct device_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "Not affected\n");
++}
++
+ static DEVICE_ATTR(meltdown, 0444, cpu_show_meltdown, NULL);
+ static DEVICE_ATTR(spectre_v1, 0444, cpu_show_spectre_v1, NULL);
+ static DEVICE_ATTR(spectre_v2, 0444, cpu_show_spectre_v2, NULL);
+@@ -584,6 +590,7 @@ static DEVICE_ATTR(tsx_async_abort, 0444, cpu_show_tsx_async_abort, NULL);
+ static DEVICE_ATTR(itlb_multihit, 0444, cpu_show_itlb_multihit, NULL);
+ static DEVICE_ATTR(srbds, 0444, cpu_show_srbds, NULL);
+ static DEVICE_ATTR(mmio_stale_data, 0444, cpu_show_mmio_stale_data, NULL);
++static DEVICE_ATTR(retbleed, 0444, cpu_show_retbleed, NULL);
+ 
+ static struct attribute *cpu_root_vulnerabilities_attrs[] = {
+ 	&dev_attr_meltdown.attr,
+@@ -596,6 +603,7 @@ static struct attribute *cpu_root_vulnerabilities_attrs[] = {
+ 	&dev_attr_itlb_multihit.attr,
+ 	&dev_attr_srbds.attr,
+ 	&dev_attr_mmio_stale_data.attr,
++	&dev_attr_retbleed.attr,
+ 	NULL
+ };
+ 
+diff --git a/drivers/cpufreq/acpi-cpufreq.c b/drivers/cpufreq/acpi-cpufreq.c
+index 4195834a45912..cf7ebe3bd1ad2 100644
+--- a/drivers/cpufreq/acpi-cpufreq.c
++++ b/drivers/cpufreq/acpi-cpufreq.c
+@@ -30,6 +30,7 @@
+ #include <asm/msr.h>
+ #include <asm/processor.h>
+ #include <asm/cpufeature.h>
++#include <asm/cpu_device_id.h>
+ 
+ MODULE_AUTHOR("Paul Diefenbaugh, Dominik Brodowski");
+ MODULE_DESCRIPTION("ACPI Processor P-States Driver");
+diff --git a/drivers/cpufreq/amd_freq_sensitivity.c b/drivers/cpufreq/amd_freq_sensitivity.c
+index e2df9d1121063..5107cbe2d64dd 100644
+--- a/drivers/cpufreq/amd_freq_sensitivity.c
++++ b/drivers/cpufreq/amd_freq_sensitivity.c
+@@ -18,6 +18,7 @@
+ 
+ #include <asm/msr.h>
+ #include <asm/cpufeature.h>
++#include <asm/cpu_device_id.h>
+ 
+ #include "cpufreq_ondemand.h"
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c
+index d8687868407de..b588e0e409e72 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_display.c
+@@ -35,7 +35,6 @@
+ #include <linux/pci.h>
+ #include <linux/pm_runtime.h>
+ #include <drm/drm_crtc_helper.h>
+-#include <drm/drm_damage_helper.h>
+ #include <drm/drm_edid.h>
+ #include <drm/drm_gem_framebuffer_helper.h>
+ #include <drm/drm_fb_helper.h>
+@@ -496,7 +495,6 @@ bool amdgpu_display_ddc_probe(struct amdgpu_connector *amdgpu_connector,
+ static const struct drm_framebuffer_funcs amdgpu_fb_funcs = {
+ 	.destroy = drm_gem_fb_destroy,
+ 	.create_handle = drm_gem_fb_create_handle,
+-	.dirty = drm_atomic_helper_dirtyfb,
+ };
+ 
+ uint32_t amdgpu_display_supported_domains(struct amdgpu_device *adev,
+diff --git a/drivers/idle/intel_idle.c b/drivers/idle/intel_idle.c
+index 347b08b56042f..63b2212262618 100644
+--- a/drivers/idle/intel_idle.c
++++ b/drivers/idle/intel_idle.c
+@@ -46,11 +46,13 @@
+ #include <linux/tick.h>
+ #include <trace/events/power.h>
+ #include <linux/sched.h>
++#include <linux/sched/smt.h>
+ #include <linux/notifier.h>
+ #include <linux/cpu.h>
+ #include <linux/moduleparam.h>
+ #include <asm/cpu_device_id.h>
+ #include <asm/intel-family.h>
++#include <asm/nospec-branch.h>
+ #include <asm/mwait.h>
+ #include <asm/msr.h>
+ 
+@@ -97,6 +99,12 @@ static struct cpuidle_state *cpuidle_state_table;
+  */
+ #define CPUIDLE_FLAG_TLB_FLUSHED	0x10000
+ 
++/*
++ * Disable IBRS across idle (when KERNEL_IBRS), is exclusive vs IRQ_ENABLE
++ * above.
++ */
++#define CPUIDLE_FLAG_IBRS		BIT(16)
++
+ /*
+  * MWAIT takes an 8-bit "hint" in EAX "suggesting"
+  * the C-state (top nibble) and sub-state (bottom nibble)
+@@ -107,6 +115,24 @@ static struct cpuidle_state *cpuidle_state_table;
+ #define flg2MWAIT(flags) (((flags) >> 24) & 0xFF)
+ #define MWAIT2flg(eax) ((eax & 0xFF) << 24)
+ 
++static __cpuidle int intel_idle_ibrs(struct cpuidle_device *dev,
++				     struct cpuidle_driver *drv, int index)
++{
++	bool smt_active = sched_smt_active();
++	u64 spec_ctrl = spec_ctrl_current();
++	int ret;
++
++	if (smt_active)
++		wrmsrl(MSR_IA32_SPEC_CTRL, 0);
++
++	ret = intel_idle(dev, drv, index);
++
++	if (smt_active)
++		wrmsrl(MSR_IA32_SPEC_CTRL, spec_ctrl);
++
++	return ret;
++}
++
+ /*
+  * States are indexed by the cstate number,
+  * which is also the index into the MWAIT hint array.
+@@ -605,7 +631,7 @@ static struct cpuidle_state skl_cstates[] = {
+ 	{
+ 		.name = "C6",
+ 		.desc = "MWAIT 0x20",
+-		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED,
++		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 85,
+ 		.target_residency = 200,
+ 		.enter = &intel_idle,
+@@ -613,7 +639,7 @@ static struct cpuidle_state skl_cstates[] = {
+ 	{
+ 		.name = "C7s",
+ 		.desc = "MWAIT 0x33",
+-		.flags = MWAIT2flg(0x33) | CPUIDLE_FLAG_TLB_FLUSHED,
++		.flags = MWAIT2flg(0x33) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 124,
+ 		.target_residency = 800,
+ 		.enter = &intel_idle,
+@@ -621,7 +647,7 @@ static struct cpuidle_state skl_cstates[] = {
+ 	{
+ 		.name = "C8",
+ 		.desc = "MWAIT 0x40",
+-		.flags = MWAIT2flg(0x40) | CPUIDLE_FLAG_TLB_FLUSHED,
++		.flags = MWAIT2flg(0x40) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 200,
+ 		.target_residency = 800,
+ 		.enter = &intel_idle,
+@@ -629,7 +655,7 @@ static struct cpuidle_state skl_cstates[] = {
+ 	{
+ 		.name = "C9",
+ 		.desc = "MWAIT 0x50",
+-		.flags = MWAIT2flg(0x50) | CPUIDLE_FLAG_TLB_FLUSHED,
++		.flags = MWAIT2flg(0x50) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 480,
+ 		.target_residency = 5000,
+ 		.enter = &intel_idle,
+@@ -637,7 +663,7 @@ static struct cpuidle_state skl_cstates[] = {
+ 	{
+ 		.name = "C10",
+ 		.desc = "MWAIT 0x60",
+-		.flags = MWAIT2flg(0x60) | CPUIDLE_FLAG_TLB_FLUSHED,
++		.flags = MWAIT2flg(0x60) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 890,
+ 		.target_residency = 5000,
+ 		.enter = &intel_idle,
+@@ -666,7 +692,7 @@ static struct cpuidle_state skx_cstates[] = {
+ 	{
+ 		.name = "C6",
+ 		.desc = "MWAIT 0x20",
+-		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED,
++		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED | CPUIDLE_FLAG_IBRS,
+ 		.exit_latency = 133,
+ 		.target_residency = 600,
+ 		.enter = &intel_idle,
+@@ -1370,6 +1396,11 @@ static void __init intel_idle_cpuidle_driver_init(void)
+ 		drv->states[drv->state_count] =	/* structure copy */
+ 			cpuidle_state_table[cstate];
+ 
++		if (cpu_feature_enabled(X86_FEATURE_KERNEL_IBRS) &&
++		    cpuidle_state_table[cstate].flags & CPUIDLE_FLAG_IBRS) {
++			drv->states[drv->state_count].enter = intel_idle_ibrs;
++		}
++
+ 		drv->state_count += 1;
+ 	}
+ 
+diff --git a/fs/xfs/libxfs/xfs_attr.c b/fs/xfs/libxfs/xfs_attr.c
+index 510ca69746042..c83ff610ecb6c 100644
+--- a/fs/xfs/libxfs/xfs_attr.c
++++ b/fs/xfs/libxfs/xfs_attr.c
+@@ -1007,7 +1007,7 @@ restart:
+ 		 * The INCOMPLETE flag means that we will find the "old"
+ 		 * attr, not the "new" one.
+ 		 */
+-		args->flags |= XFS_ATTR_INCOMPLETE;
++		args->op_flags |= XFS_DA_OP_INCOMPLETE;
+ 		state = xfs_da_state_alloc();
+ 		state->args = args;
+ 		state->mp = mp;
+diff --git a/fs/xfs/libxfs/xfs_attr_leaf.c b/fs/xfs/libxfs/xfs_attr_leaf.c
+index 0c23127347aca..c86ddbf6d105b 100644
+--- a/fs/xfs/libxfs/xfs_attr_leaf.c
++++ b/fs/xfs/libxfs/xfs_attr_leaf.c
+@@ -2345,8 +2345,8 @@ xfs_attr3_leaf_lookup_int(
+ 		 * If we are looking for INCOMPLETE entries, show only those.
+ 		 * If we are looking for complete entries, show only those.
+ 		 */
+-		if ((args->flags & XFS_ATTR_INCOMPLETE) !=
+-		    (entry->flags & XFS_ATTR_INCOMPLETE)) {
++		if (!!(args->op_flags & XFS_DA_OP_INCOMPLETE) !=
++		    !!(entry->flags & XFS_ATTR_INCOMPLETE)) {
+ 			continue;
+ 		}
+ 		if (entry->flags & XFS_ATTR_LOCAL) {
+diff --git a/fs/xfs/libxfs/xfs_attr_leaf.h b/fs/xfs/libxfs/xfs_attr_leaf.h
+index 7b74e18becff7..38c05d6ae2aa4 100644
+--- a/fs/xfs/libxfs/xfs_attr_leaf.h
++++ b/fs/xfs/libxfs/xfs_attr_leaf.h
+@@ -17,13 +17,27 @@ struct xfs_inode;
+ struct xfs_trans;
+ 
+ /*
+- * Used to keep a list of "remote value" extents when unlinking an inode.
++ * Incore version of the attribute leaf header.
+  */
+-typedef struct xfs_attr_inactive_list {
+-	xfs_dablk_t	valueblk;	/* block number of value bytes */
+-	int		valuelen;	/* number of bytes in value */
+-} xfs_attr_inactive_list_t;
+-
++struct xfs_attr3_icleaf_hdr {
++	uint32_t	forw;
++	uint32_t	back;
++	uint16_t	magic;
++	uint16_t	count;
++	uint16_t	usedbytes;
++	/*
++	 * Firstused is 32-bit here instead of 16-bit like the on-disk variant
++	 * to support maximum fsb size of 64k without overflow issues throughout
++	 * the attr code. Instead, the overflow condition is handled on
++	 * conversion to/from disk.
++	 */
++	uint32_t	firstused;
++	__u8		holes;
++	struct {
++		uint16_t	base;
++		uint16_t	size;
++	} freemap[XFS_ATTR_LEAF_MAPSIZE];
++};
+ 
+ /*========================================================================
+  * Function prototypes for the kernel.
+diff --git a/fs/xfs/libxfs/xfs_attr_remote.c b/fs/xfs/libxfs/xfs_attr_remote.c
+index 3e39b7d40f256..de9096b8a47c6 100644
+--- a/fs/xfs/libxfs/xfs_attr_remote.c
++++ b/fs/xfs/libxfs/xfs_attr_remote.c
+@@ -24,6 +24,23 @@
+ 
+ #define ATTR_RMTVALUE_MAPSIZE	1	/* # of map entries at once */
+ 
++/*
++ * Remote Attribute Values
++ * =======================
++ *
++ * Remote extended attribute values are conceptually simple -- they're written
++ * to data blocks mapped by an inode's attribute fork, and they have an upper
++ * size limit of 64k.  Setting a value does not involve the XFS log.
++ *
++ * However, on a v5 filesystem, maximally sized remote attr values require one
++ * block more than 64k worth of space to hold both the remote attribute value
++ * header (64 bytes).  On a 4k block filesystem this results in a 68k buffer;
++ * on a 64k block filesystem, this would be a 128k buffer.  Note that the log
++ * format can only handle a dirty buffer of XFS_MAX_BLOCKSIZE length (64k).
++ * Therefore, we /must/ ensure that remote attribute value buffers never touch
++ * the logging system and therefore never have a log item.
++ */
++
+ /*
+  * Each contiguous block has a header, so it is not just a simple attribute
+  * length to FSB conversion.
+@@ -400,17 +417,25 @@ xfs_attr_rmtval_get(
+ 			       (map[i].br_startblock != HOLESTARTBLOCK));
+ 			dblkno = XFS_FSB_TO_DADDR(mp, map[i].br_startblock);
+ 			dblkcnt = XFS_FSB_TO_BB(mp, map[i].br_blockcount);
+-			error = xfs_trans_read_buf(mp, args->trans,
+-						   mp->m_ddev_targp,
+-						   dblkno, dblkcnt, 0, &bp,
+-						   &xfs_attr3_rmt_buf_ops);
+-			if (error)
++			bp = xfs_buf_read(mp->m_ddev_targp, dblkno, dblkcnt, 0,
++					&xfs_attr3_rmt_buf_ops);
++			if (!bp)
++				return -ENOMEM;
++			error = bp->b_error;
++			if (error) {
++				xfs_buf_ioerror_alert(bp, __func__);
++				xfs_buf_relse(bp);
++
++				/* bad CRC means corrupted metadata */
++				if (error == -EFSBADCRC)
++					error = -EFSCORRUPTED;
+ 				return error;
++			}
+ 
+ 			error = xfs_attr_rmtval_copyout(mp, bp, args->dp->i_ino,
+ 							&offset, &valuelen,
+ 							&dst);
+-			xfs_trans_brelse(args->trans, bp);
++			xfs_buf_relse(bp);
+ 			if (error)
+ 				return error;
+ 
+@@ -551,6 +576,32 @@ xfs_attr_rmtval_set(
+ 	return 0;
+ }
+ 
++/* Mark stale any incore buffers for the remote value. */
++int
++xfs_attr_rmtval_stale(
++	struct xfs_inode	*ip,
++	struct xfs_bmbt_irec	*map,
++	xfs_buf_flags_t		incore_flags)
++{
++	struct xfs_mount	*mp = ip->i_mount;
++	struct xfs_buf		*bp;
++
++	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
++
++	ASSERT((map->br_startblock != DELAYSTARTBLOCK) &&
++	       (map->br_startblock != HOLESTARTBLOCK));
++
++	bp = xfs_buf_incore(mp->m_ddev_targp,
++			XFS_FSB_TO_DADDR(mp, map->br_startblock),
++			XFS_FSB_TO_BB(mp, map->br_blockcount), incore_flags);
++	if (bp) {
++		xfs_buf_stale(bp);
++		xfs_buf_relse(bp);
++	}
++
++	return 0;
++}
++
+ /*
+  * Remove the value associated with an attribute by deleting the
+  * out-of-line buffer that it is stored on.
+@@ -559,7 +610,6 @@ int
+ xfs_attr_rmtval_remove(
+ 	struct xfs_da_args	*args)
+ {
+-	struct xfs_mount	*mp = args->dp->i_mount;
+ 	xfs_dablk_t		lblkno;
+ 	int			blkcnt;
+ 	int			error;
+@@ -574,9 +624,6 @@ xfs_attr_rmtval_remove(
+ 	blkcnt = args->rmtblkcnt;
+ 	while (blkcnt > 0) {
+ 		struct xfs_bmbt_irec	map;
+-		struct xfs_buf		*bp;
+-		xfs_daddr_t		dblkno;
+-		int			dblkcnt;
+ 		int			nmap;
+ 
+ 		/*
+@@ -588,21 +635,9 @@ xfs_attr_rmtval_remove(
+ 		if (error)
+ 			return error;
+ 		ASSERT(nmap == 1);
+-		ASSERT((map.br_startblock != DELAYSTARTBLOCK) &&
+-		       (map.br_startblock != HOLESTARTBLOCK));
+-
+-		dblkno = XFS_FSB_TO_DADDR(mp, map.br_startblock),
+-		dblkcnt = XFS_FSB_TO_BB(mp, map.br_blockcount);
+-
+-		/*
+-		 * If the "remote" value is in the cache, remove it.
+-		 */
+-		bp = xfs_buf_incore(mp->m_ddev_targp, dblkno, dblkcnt, XBF_TRYLOCK);
+-		if (bp) {
+-			xfs_buf_stale(bp);
+-			xfs_buf_relse(bp);
+-			bp = NULL;
+-		}
++		error = xfs_attr_rmtval_stale(args->dp, &map, XBF_TRYLOCK);
++		if (error)
++			return error;
+ 
+ 		lblkno += map.br_blockcount;
+ 		blkcnt -= map.br_blockcount;
+diff --git a/fs/xfs/libxfs/xfs_attr_remote.h b/fs/xfs/libxfs/xfs_attr_remote.h
+index 9d20b66ad379e..6fb4572845ce8 100644
+--- a/fs/xfs/libxfs/xfs_attr_remote.h
++++ b/fs/xfs/libxfs/xfs_attr_remote.h
+@@ -11,5 +11,7 @@ int xfs_attr3_rmt_blocks(struct xfs_mount *mp, int attrlen);
+ int xfs_attr_rmtval_get(struct xfs_da_args *args);
+ int xfs_attr_rmtval_set(struct xfs_da_args *args);
+ int xfs_attr_rmtval_remove(struct xfs_da_args *args);
++int xfs_attr_rmtval_stale(struct xfs_inode *ip, struct xfs_bmbt_irec *map,
++		xfs_buf_flags_t incore_flags);
+ 
+ #endif /* __XFS_ATTR_REMOTE_H__ */
+diff --git a/fs/xfs/libxfs/xfs_da_btree.h b/fs/xfs/libxfs/xfs_da_btree.h
+index ae0bbd20d9caf..588e4674e931f 100644
+--- a/fs/xfs/libxfs/xfs_da_btree.h
++++ b/fs/xfs/libxfs/xfs_da_btree.h
+@@ -82,6 +82,7 @@ typedef struct xfs_da_args {
+ #define XFS_DA_OP_OKNOENT	0x0008	/* lookup/add op, ENOENT ok, else die */
+ #define XFS_DA_OP_CILOOKUP	0x0010	/* lookup to return CI name if found */
+ #define XFS_DA_OP_ALLOCVAL	0x0020	/* lookup to alloc buffer if found  */
++#define XFS_DA_OP_INCOMPLETE	0x0040	/* lookup INCOMPLETE attr keys */
+ 
+ #define XFS_DA_OP_FLAGS \
+ 	{ XFS_DA_OP_JUSTCHECK,	"JUSTCHECK" }, \
+@@ -89,7 +90,8 @@ typedef struct xfs_da_args {
+ 	{ XFS_DA_OP_ADDNAME,	"ADDNAME" }, \
+ 	{ XFS_DA_OP_OKNOENT,	"OKNOENT" }, \
+ 	{ XFS_DA_OP_CILOOKUP,	"CILOOKUP" }, \
+-	{ XFS_DA_OP_ALLOCVAL,	"ALLOCVAL" }
++	{ XFS_DA_OP_ALLOCVAL,	"ALLOCVAL" }, \
++	{ XFS_DA_OP_INCOMPLETE,	"INCOMPLETE" }
+ 
+ /*
+  * Storage for holding state during Btree searches and split/join ops.
+@@ -124,6 +126,19 @@ typedef struct xfs_da_state {
+ 						/* for dirv2 extrablk is data */
+ } xfs_da_state_t;
+ 
++/*
++ * In-core version of the node header to abstract the differences in the v2 and
++ * v3 disk format of the headers. Callers need to convert to/from disk format as
++ * appropriate.
++ */
++struct xfs_da3_icnode_hdr {
++	uint32_t		forw;
++	uint32_t		back;
++	uint16_t		magic;
++	uint16_t		count;
++	uint16_t		level;
++};
++
+ /*
+  * Utility macros to aid in logging changed structure fields.
+  */
+diff --git a/fs/xfs/libxfs/xfs_da_format.c b/fs/xfs/libxfs/xfs_da_format.c
+index b1ae572496b69..31bb250c18992 100644
+--- a/fs/xfs/libxfs/xfs_da_format.c
++++ b/fs/xfs/libxfs/xfs_da_format.c
+@@ -13,6 +13,7 @@
+ #include "xfs_mount.h"
+ #include "xfs_inode.h"
+ #include "xfs_dir2.h"
++#include "xfs_dir2_priv.h"
+ 
+ /*
+  * Shortform directory ops
+diff --git a/fs/xfs/libxfs/xfs_da_format.h b/fs/xfs/libxfs/xfs_da_format.h
+index ae654e06b2fb6..222ee48da5e80 100644
+--- a/fs/xfs/libxfs/xfs_da_format.h
++++ b/fs/xfs/libxfs/xfs_da_format.h
+@@ -93,19 +93,6 @@ struct xfs_da3_intnode {
+ 	struct xfs_da_node_entry __btree[];
+ };
+ 
+-/*
+- * In-core version of the node header to abstract the differences in the v2 and
+- * v3 disk format of the headers. Callers need to convert to/from disk format as
+- * appropriate.
+- */
+-struct xfs_da3_icnode_hdr {
+-	uint32_t	forw;
+-	uint32_t	back;
+-	uint16_t	magic;
+-	uint16_t	count;
+-	uint16_t	level;
+-};
+-
+ /*
+  * Directory version 2.
+  *
+@@ -434,14 +421,6 @@ struct xfs_dir3_leaf_hdr {
+ 	__be32			pad;		/* 64 bit alignment */
+ };
+ 
+-struct xfs_dir3_icleaf_hdr {
+-	uint32_t		forw;
+-	uint32_t		back;
+-	uint16_t		magic;
+-	uint16_t		count;
+-	uint16_t		stale;
+-};
+-
+ /*
+  * Leaf block entry.
+  */
+@@ -520,19 +499,6 @@ struct xfs_dir3_free {
+ 
+ #define XFS_DIR3_FREE_CRC_OFF  offsetof(struct xfs_dir3_free, hdr.hdr.crc)
+ 
+-/*
+- * In core version of the free block header, abstracted away from on-disk format
+- * differences. Use this in the code, and convert to/from the disk version using
+- * xfs_dir3_free_hdr_from_disk/xfs_dir3_free_hdr_to_disk.
+- */
+-struct xfs_dir3_icfree_hdr {
+-	uint32_t	magic;
+-	uint32_t	firstdb;
+-	uint32_t	nvalid;
+-	uint32_t	nused;
+-
+-};
+-
+ /*
+  * Single block format.
+  *
+@@ -709,29 +675,6 @@ struct xfs_attr3_leafblock {
+ 	 */
+ };
+ 
+-/*
+- * incore, neutral version of the attribute leaf header
+- */
+-struct xfs_attr3_icleaf_hdr {
+-	uint32_t	forw;
+-	uint32_t	back;
+-	uint16_t	magic;
+-	uint16_t	count;
+-	uint16_t	usedbytes;
+-	/*
+-	 * firstused is 32-bit here instead of 16-bit like the on-disk variant
+-	 * to support maximum fsb size of 64k without overflow issues throughout
+-	 * the attr code. Instead, the overflow condition is handled on
+-	 * conversion to/from disk.
+-	 */
+-	uint32_t	firstused;
+-	__u8		holes;
+-	struct {
+-		uint16_t	base;
+-		uint16_t	size;
+-	} freemap[XFS_ATTR_LEAF_MAPSIZE];
+-};
+-
+ /*
+  * Special value to represent fs block size in the leaf header firstused field.
+  * Only used when block size overflows the 2-bytes available on disk.
+@@ -740,8 +683,6 @@ struct xfs_attr3_icleaf_hdr {
+ 
+ /*
+  * Flags used in the leaf_entry[i].flags field.
+- * NOTE: the INCOMPLETE bit must not collide with the flags bits specified
+- * on the system call, they are "or"ed together for various operations.
+  */
+ #define	XFS_ATTR_LOCAL_BIT	0	/* attr is stored locally */
+ #define	XFS_ATTR_ROOT_BIT	1	/* limit access to trusted attrs */
+diff --git a/fs/xfs/libxfs/xfs_dir2.h b/fs/xfs/libxfs/xfs_dir2.h
+index f542447794928..e170792c0acce 100644
+--- a/fs/xfs/libxfs/xfs_dir2.h
++++ b/fs/xfs/libxfs/xfs_dir2.h
+@@ -18,6 +18,8 @@ struct xfs_dir2_sf_entry;
+ struct xfs_dir2_data_hdr;
+ struct xfs_dir2_data_entry;
+ struct xfs_dir2_data_unused;
++struct xfs_dir3_icfree_hdr;
++struct xfs_dir3_icleaf_hdr;
+ 
+ extern struct xfs_name	xfs_name_dotdot;
+ 
+diff --git a/fs/xfs/libxfs/xfs_dir2_priv.h b/fs/xfs/libxfs/xfs_dir2_priv.h
+index 59f9fb2241a5f..d2eaea663e7f2 100644
+--- a/fs/xfs/libxfs/xfs_dir2_priv.h
++++ b/fs/xfs/libxfs/xfs_dir2_priv.h
+@@ -8,6 +8,25 @@
+ 
+ struct dir_context;
+ 
++/*
++ * In-core version of the leaf and free block headers to abstract the
++ * differences in the v2 and v3 disk format of the headers.
++ */
++struct xfs_dir3_icleaf_hdr {
++	uint32_t		forw;
++	uint32_t		back;
++	uint16_t		magic;
++	uint16_t		count;
++	uint16_t		stale;
++};
++
++struct xfs_dir3_icfree_hdr {
++	uint32_t		magic;
++	uint32_t		firstdb;
++	uint32_t		nvalid;
++	uint32_t		nused;
++};
++
+ /* xfs_dir2.c */
+ extern int xfs_dir2_grow_inode(struct xfs_da_args *args, int space,
+ 				xfs_dir2_db_t *dbp);
+diff --git a/fs/xfs/libxfs/xfs_format.h b/fs/xfs/libxfs/xfs_format.h
+index c968b60cee15b..28203b626f6a2 100644
+--- a/fs/xfs/libxfs/xfs_format.h
++++ b/fs/xfs/libxfs/xfs_format.h
+@@ -1540,6 +1540,13 @@ typedef struct xfs_bmdr_block {
+ #define BMBT_BLOCKCOUNT_BITLEN	21
+ 
+ #define BMBT_STARTOFF_MASK	((1ULL << BMBT_STARTOFF_BITLEN) - 1)
++#define BMBT_BLOCKCOUNT_MASK	((1ULL << BMBT_BLOCKCOUNT_BITLEN) - 1)
++
++/*
++ * bmbt records have a file offset (block) field that is 54 bits wide, so this
++ * is the largest xfs_fileoff_t that we ever expect to see.
++ */
++#define XFS_MAX_FILEOFF		(BMBT_STARTOFF_MASK + BMBT_BLOCKCOUNT_MASK)
+ 
+ typedef struct xfs_bmbt_rec {
+ 	__be64			l0, l1;
+diff --git a/fs/xfs/xfs_attr_inactive.c b/fs/xfs/xfs_attr_inactive.c
+index 766b1386402a0..9c88203b537b1 100644
+--- a/fs/xfs/xfs_attr_inactive.c
++++ b/fs/xfs/xfs_attr_inactive.c
+@@ -25,22 +25,18 @@
+ #include "xfs_error.h"
+ 
+ /*
+- * Look at all the extents for this logical region,
+- * invalidate any buffers that are incore/in transactions.
++ * Invalidate any incore buffers associated with this remote attribute value
++ * extent.   We never log remote attribute value buffers, which means that they
++ * won't be attached to a transaction and are therefore safe to mark stale.
++ * The actual bunmapi will be taken care of later.
+  */
+ STATIC int
+-xfs_attr3_leaf_freextent(
+-	struct xfs_trans	**trans,
++xfs_attr3_rmt_stale(
+ 	struct xfs_inode	*dp,
+ 	xfs_dablk_t		blkno,
+ 	int			blkcnt)
+ {
+ 	struct xfs_bmbt_irec	map;
+-	struct xfs_buf		*bp;
+-	xfs_dablk_t		tblkno;
+-	xfs_daddr_t		dblkno;
+-	int			tblkcnt;
+-	int			dblkcnt;
+ 	int			nmap;
+ 	int			error;
+ 
+@@ -48,47 +44,28 @@ xfs_attr3_leaf_freextent(
+ 	 * Roll through the "value", invalidating the attribute value's
+ 	 * blocks.
+ 	 */
+-	tblkno = blkno;
+-	tblkcnt = blkcnt;
+-	while (tblkcnt > 0) {
++	while (blkcnt > 0) {
+ 		/*
+ 		 * Try to remember where we decided to put the value.
+ 		 */
+ 		nmap = 1;
+-		error = xfs_bmapi_read(dp, (xfs_fileoff_t)tblkno, tblkcnt,
++		error = xfs_bmapi_read(dp, (xfs_fileoff_t)blkno, blkcnt,
+ 				       &map, &nmap, XFS_BMAPI_ATTRFORK);
+-		if (error) {
++		if (error)
+ 			return error;
+-		}
+ 		ASSERT(nmap == 1);
+-		ASSERT(map.br_startblock != DELAYSTARTBLOCK);
+ 
+ 		/*
+-		 * If it's a hole, these are already unmapped
+-		 * so there's nothing to invalidate.
++		 * Mark any incore buffers for the remote value as stale.  We
++		 * never log remote attr value buffers, so the buffer should be
++		 * easy to kill.
+ 		 */
+-		if (map.br_startblock != HOLESTARTBLOCK) {
+-
+-			dblkno = XFS_FSB_TO_DADDR(dp->i_mount,
+-						  map.br_startblock);
+-			dblkcnt = XFS_FSB_TO_BB(dp->i_mount,
+-						map.br_blockcount);
+-			bp = xfs_trans_get_buf(*trans,
+-					dp->i_mount->m_ddev_targp,
+-					dblkno, dblkcnt, 0);
+-			if (!bp)
+-				return -ENOMEM;
+-			xfs_trans_binval(*trans, bp);
+-			/*
+-			 * Roll to next transaction.
+-			 */
+-			error = xfs_trans_roll_inode(trans, dp);
+-			if (error)
+-				return error;
+-		}
++		error = xfs_attr_rmtval_stale(dp, &map, 0);
++		if (error)
++			return error;
+ 
+-		tblkno += map.br_blockcount;
+-		tblkcnt -= map.br_blockcount;
++		blkno += map.br_blockcount;
++		blkcnt -= map.br_blockcount;
+ 	}
+ 
+ 	return 0;
+@@ -102,86 +79,45 @@ xfs_attr3_leaf_freextent(
+  */
+ STATIC int
+ xfs_attr3_leaf_inactive(
+-	struct xfs_trans	**trans,
+-	struct xfs_inode	*dp,
+-	struct xfs_buf		*bp)
++	struct xfs_trans		**trans,
++	struct xfs_inode		*dp,
++	struct xfs_buf			*bp)
+ {
+-	struct xfs_attr_leafblock *leaf;
+-	struct xfs_attr3_icleaf_hdr ichdr;
+-	struct xfs_attr_leaf_entry *entry;
++	struct xfs_attr3_icleaf_hdr	ichdr;
++	struct xfs_mount		*mp = bp->b_mount;
++	struct xfs_attr_leafblock	*leaf = bp->b_addr;
++	struct xfs_attr_leaf_entry	*entry;
+ 	struct xfs_attr_leaf_name_remote *name_rmt;
+-	struct xfs_attr_inactive_list *list;
+-	struct xfs_attr_inactive_list *lp;
+-	int			error;
+-	int			count;
+-	int			size;
+-	int			tmp;
+-	int			i;
+-	struct xfs_mount	*mp = bp->b_mount;
++	int				error = 0;
++	int				i;
+ 
+-	leaf = bp->b_addr;
+ 	xfs_attr3_leaf_hdr_from_disk(mp->m_attr_geo, &ichdr, leaf);
+ 
+ 	/*
+-	 * Count the number of "remote" value extents.
++	 * Find the remote value extents for this leaf and invalidate their
++	 * incore buffers.
+ 	 */
+-	count = 0;
+ 	entry = xfs_attr3_leaf_entryp(leaf);
+ 	for (i = 0; i < ichdr.count; entry++, i++) {
+-		if (be16_to_cpu(entry->nameidx) &&
+-		    ((entry->flags & XFS_ATTR_LOCAL) == 0)) {
+-			name_rmt = xfs_attr3_leaf_name_remote(leaf, i);
+-			if (name_rmt->valueblk)
+-				count++;
+-		}
+-	}
+-
+-	/*
+-	 * If there are no "remote" values, we're done.
+-	 */
+-	if (count == 0) {
+-		xfs_trans_brelse(*trans, bp);
+-		return 0;
+-	}
++		int		blkcnt;
+ 
+-	/*
+-	 * Allocate storage for a list of all the "remote" value extents.
+-	 */
+-	size = count * sizeof(xfs_attr_inactive_list_t);
+-	list = kmem_alloc(size, 0);
+-
+-	/*
+-	 * Identify each of the "remote" value extents.
+-	 */
+-	lp = list;
+-	entry = xfs_attr3_leaf_entryp(leaf);
+-	for (i = 0; i < ichdr.count; entry++, i++) {
+-		if (be16_to_cpu(entry->nameidx) &&
+-		    ((entry->flags & XFS_ATTR_LOCAL) == 0)) {
+-			name_rmt = xfs_attr3_leaf_name_remote(leaf, i);
+-			if (name_rmt->valueblk) {
+-				lp->valueblk = be32_to_cpu(name_rmt->valueblk);
+-				lp->valuelen = xfs_attr3_rmt_blocks(dp->i_mount,
+-						    be32_to_cpu(name_rmt->valuelen));
+-				lp++;
+-			}
+-		}
+-	}
+-	xfs_trans_brelse(*trans, bp);	/* unlock for trans. in freextent() */
++		if (!entry->nameidx || (entry->flags & XFS_ATTR_LOCAL))
++			continue;
+ 
+-	/*
+-	 * Invalidate each of the "remote" value extents.
+-	 */
+-	error = 0;
+-	for (lp = list, i = 0; i < count; i++, lp++) {
+-		tmp = xfs_attr3_leaf_freextent(trans, dp,
+-				lp->valueblk, lp->valuelen);
++		name_rmt = xfs_attr3_leaf_name_remote(leaf, i);
++		if (!name_rmt->valueblk)
++			continue;
+ 
+-		if (error == 0)
+-			error = tmp;	/* save only the 1st errno */
++		blkcnt = xfs_attr3_rmt_blocks(dp->i_mount,
++				be32_to_cpu(name_rmt->valuelen));
++		error = xfs_attr3_rmt_stale(dp,
++				be32_to_cpu(name_rmt->valueblk), blkcnt);
++		if (error)
++			goto err;
+ 	}
+ 
+-	kmem_free(list);
++	xfs_trans_brelse(*trans, bp);
++err:
+ 	return error;
+ }
+ 
+diff --git a/fs/xfs/xfs_file.c b/fs/xfs/xfs_file.c
+index 203065a647652..e41c13ffa5a43 100644
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -187,7 +187,12 @@ xfs_file_dio_aio_read(
+ 
+ 	file_accessed(iocb->ki_filp);
+ 
+-	xfs_ilock(ip, XFS_IOLOCK_SHARED);
++	if (iocb->ki_flags & IOCB_NOWAIT) {
++		if (!xfs_ilock_nowait(ip, XFS_IOLOCK_SHARED))
++			return -EAGAIN;
++	} else {
++		xfs_ilock(ip, XFS_IOLOCK_SHARED);
++	}
+ 	ret = iomap_dio_rw(iocb, to, &xfs_iomap_ops, NULL);
+ 	xfs_iunlock(ip, XFS_IOLOCK_SHARED);
+ 
+diff --git a/fs/xfs/xfs_inode.c b/fs/xfs/xfs_inode.c
+index 7b72c189cff0b..30202d8c25e4f 100644
+--- a/fs/xfs/xfs_inode.c
++++ b/fs/xfs/xfs_inode.c
+@@ -1513,10 +1513,8 @@ xfs_itruncate_extents_flags(
+ 	struct xfs_mount	*mp = ip->i_mount;
+ 	struct xfs_trans	*tp = *tpp;
+ 	xfs_fileoff_t		first_unmap_block;
+-	xfs_fileoff_t		last_block;
+ 	xfs_filblks_t		unmap_len;
+ 	int			error = 0;
+-	int			done = 0;
+ 
+ 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
+ 	ASSERT(!atomic_read(&VFS_I(ip)->i_count) ||
+@@ -1536,21 +1534,22 @@ xfs_itruncate_extents_flags(
+ 	 * the end of the file (in a crash where the space is allocated
+ 	 * but the inode size is not yet updated), simply remove any
+ 	 * blocks which show up between the new EOF and the maximum
+-	 * possible file size.  If the first block to be removed is
+-	 * beyond the maximum file size (ie it is the same as last_block),
+-	 * then there is nothing to do.
++	 * possible file size.
++	 *
++	 * We have to free all the blocks to the bmbt maximum offset, even if
++	 * the page cache can't scale that far.
+ 	 */
+ 	first_unmap_block = XFS_B_TO_FSB(mp, (xfs_ufsize_t)new_size);
+-	last_block = XFS_B_TO_FSB(mp, mp->m_super->s_maxbytes);
+-	if (first_unmap_block == last_block)
++	if (first_unmap_block >= XFS_MAX_FILEOFF) {
++		WARN_ON_ONCE(first_unmap_block > XFS_MAX_FILEOFF);
+ 		return 0;
++	}
+ 
+-	ASSERT(first_unmap_block < last_block);
+-	unmap_len = last_block - first_unmap_block + 1;
+-	while (!done) {
++	unmap_len = XFS_MAX_FILEOFF - first_unmap_block + 1;
++	while (unmap_len > 0) {
+ 		ASSERT(tp->t_firstblock == NULLFSBLOCK);
+-		error = xfs_bunmapi(tp, ip, first_unmap_block, unmap_len, flags,
+-				    XFS_ITRUNC_MAX_EXTENTS, &done);
++		error = __xfs_bunmapi(tp, ip, first_unmap_block, &unmap_len,
++				flags, XFS_ITRUNC_MAX_EXTENTS);
+ 		if (error)
+ 			goto out;
+ 
+@@ -1570,7 +1569,7 @@ xfs_itruncate_extents_flags(
+ 	if (whichfork == XFS_DATA_FORK) {
+ 		/* Remove all pending CoW reservations. */
+ 		error = xfs_reflink_cancel_cow_blocks(ip, &tp,
+-				first_unmap_block, last_block, true);
++				first_unmap_block, XFS_MAX_FILEOFF, true);
+ 		if (error)
+ 			goto out;
+ 
+diff --git a/fs/xfs/xfs_reflink.c b/fs/xfs/xfs_reflink.c
+index 904d8285c2269..dfbf3f8f1ec86 100644
+--- a/fs/xfs/xfs_reflink.c
++++ b/fs/xfs/xfs_reflink.c
+@@ -1544,7 +1544,8 @@ xfs_reflink_clear_inode_flag(
+ 	 * We didn't find any shared blocks so turn off the reflink flag.
+ 	 * First, get rid of any leftover CoW mappings.
+ 	 */
+-	error = xfs_reflink_cancel_cow_blocks(ip, tpp, 0, NULLFILEOFF, true);
++	error = xfs_reflink_cancel_cow_blocks(ip, tpp, 0, XFS_MAX_FILEOFF,
++			true);
+ 	if (error)
+ 		return error;
+ 
+diff --git a/fs/xfs/xfs_super.c b/fs/xfs/xfs_super.c
+index 8d1df9f8be071..a3a54a0fbffea 100644
+--- a/fs/xfs/xfs_super.c
++++ b/fs/xfs/xfs_super.c
+@@ -512,32 +512,6 @@ xfs_showargs(
+ 		seq_puts(m, ",noquota");
+ }
+ 
+-static uint64_t
+-xfs_max_file_offset(
+-	unsigned int		blockshift)
+-{
+-	unsigned int		pagefactor = 1;
+-	unsigned int		bitshift = BITS_PER_LONG - 1;
+-
+-	/* Figure out maximum filesize, on Linux this can depend on
+-	 * the filesystem blocksize (on 32 bit platforms).
+-	 * __block_write_begin does this in an [unsigned] long long...
+-	 *      page->index << (PAGE_SHIFT - bbits)
+-	 * So, for page sized blocks (4K on 32 bit platforms),
+-	 * this wraps at around 8Tb (hence MAX_LFS_FILESIZE which is
+-	 *      (((u64)PAGE_SIZE << (BITS_PER_LONG-1))-1)
+-	 * but for smaller blocksizes it is less (bbits = log2 bsize).
+-	 */
+-
+-#if BITS_PER_LONG == 32
+-	ASSERT(sizeof(sector_t) == 8);
+-	pagefactor = PAGE_SIZE;
+-	bitshift = BITS_PER_LONG;
+-#endif
+-
+-	return (((uint64_t)pagefactor) << bitshift) - 1;
+-}
+-
+ /*
+  * Set parameters for inode allocation heuristics, taking into account
+  * filesystem size and inode32/inode64 mount options; i.e. specifically
+@@ -1650,6 +1624,26 @@ xfs_fs_fill_super(
+ 	if (error)
+ 		goto out_free_sb;
+ 
++	/*
++	 * XFS block mappings use 54 bits to store the logical block offset.
++	 * This should suffice to handle the maximum file size that the VFS
++	 * supports (currently 2^63 bytes on 64-bit and ULONG_MAX << PAGE_SHIFT
++	 * bytes on 32-bit), but as XFS and VFS have gotten the s_maxbytes
++	 * calculation wrong on 32-bit kernels in the past, we'll add a WARN_ON
++	 * to check this assertion.
++	 *
++	 * Avoid integer overflow by comparing the maximum bmbt offset to the
++	 * maximum pagecache offset in units of fs blocks.
++	 */
++	if (XFS_B_TO_FSBT(mp, MAX_LFS_FILESIZE) > XFS_MAX_FILEOFF) {
++		xfs_warn(mp,
++"MAX_LFS_FILESIZE block offset (%llu) exceeds extent map maximum (%llu)!",
++			 XFS_B_TO_FSBT(mp, MAX_LFS_FILESIZE),
++			 XFS_MAX_FILEOFF);
++		error = -EINVAL;
++		goto out_free_sb;
++	}
++
+ 	error = xfs_filestream_mount(mp);
+ 	if (error)
+ 		goto out_free_sb;
+@@ -1661,7 +1655,7 @@ xfs_fs_fill_super(
+ 	sb->s_magic = XFS_SUPER_MAGIC;
+ 	sb->s_blocksize = mp->m_sb.sb_blocksize;
+ 	sb->s_blocksize_bits = ffs(sb->s_blocksize) - 1;
+-	sb->s_maxbytes = xfs_max_file_offset(sb->s_blocksize_bits);
++	sb->s_maxbytes = MAX_LFS_FILESIZE;
+ 	sb->s_max_links = XFS_MAXLINK;
+ 	sb->s_time_gran = 1;
+ 	sb->s_time_min = S32_MIN;
+diff --git a/include/linux/cpu.h b/include/linux/cpu.h
+index 29a6fa2f518db..b42e9c4134475 100644
+--- a/include/linux/cpu.h
++++ b/include/linux/cpu.h
+@@ -68,6 +68,8 @@ extern ssize_t cpu_show_srbds(struct device *dev, struct device_attribute *attr,
+ extern ssize_t cpu_show_mmio_stale_data(struct device *dev,
+ 					struct device_attribute *attr,
+ 					char *buf);
++extern ssize_t cpu_show_retbleed(struct device *dev,
++				 struct device_attribute *attr, char *buf);
+ 
+ extern __printf(4, 5)
+ struct device *cpu_device_create(struct device *parent, void *drvdata,
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index dd4cdad76b18e..ee7d57478a454 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -955,7 +955,7 @@ static inline void kvm_arch_end_assignment(struct kvm *kvm)
+ {
+ }
+ 
+-static inline bool kvm_arch_has_assigned_device(struct kvm *kvm)
++static __always_inline bool kvm_arch_has_assigned_device(struct kvm *kvm)
+ {
+ 	return false;
+ }
+diff --git a/include/linux/mod_devicetable.h b/include/linux/mod_devicetable.h
+index 4c56404e53a76..8265b99d6d55b 100644
+--- a/include/linux/mod_devicetable.h
++++ b/include/linux/mod_devicetable.h
+@@ -672,9 +672,7 @@ struct x86_cpu_id {
+ 	__u16 steppings;
+ };
+ 
+-#define X86_FEATURE_MATCH(x) \
+-	{ X86_VENDOR_ANY, X86_FAMILY_ANY, X86_MODEL_ANY, x }
+-
++/* Wild cards for x86_cpu_id::vendor, family, model and feature */
+ #define X86_VENDOR_ANY 0xffff
+ #define X86_FAMILY_ANY 0
+ #define X86_MODEL_ANY  0
+diff --git a/scripts/Makefile.extrawarn b/scripts/Makefile.extrawarn
+index 854e2ba9daa29..6a78afc6f13b4 100644
+--- a/scripts/Makefile.extrawarn
++++ b/scripts/Makefile.extrawarn
+@@ -50,6 +50,7 @@ KBUILD_CFLAGS += -Wno-sign-compare
+ KBUILD_CFLAGS += -Wno-format-zero-length
+ KBUILD_CFLAGS += $(call cc-disable-warning, pointer-to-enum-cast)
+ KBUILD_CFLAGS += $(call cc-disable-warning, unaligned-access)
++KBUILD_CFLAGS += $(call cc-disable-warning, cast-function-type-strict)
+ endif
+ 
+ endif
+diff --git a/tools/arch/x86/include/asm/cpufeatures.h b/tools/arch/x86/include/asm/cpufeatures.h
+index 59f924e92c284..3efaf338d3257 100644
+--- a/tools/arch/x86/include/asm/cpufeatures.h
++++ b/tools/arch/x86/include/asm/cpufeatures.h
+@@ -284,7 +284,7 @@
+ #define X86_FEATURE_CQM_MBM_LOCAL	(11*32+ 3) /* LLC Local MBM monitoring */
+ #define X86_FEATURE_FENCE_SWAPGS_USER	(11*32+ 4) /* "" LFENCE in user entry SWAPGS path */
+ #define X86_FEATURE_FENCE_SWAPGS_KERNEL	(11*32+ 5) /* "" LFENCE in kernel entry SWAPGS path */
+-#define X86_FEATURE_RSB_VMEXIT_LITE	(11*32+ 6) /* "" Fill RSB on VM-Exit when EIBRS is enabled */
++#define X86_FEATURE_RSB_VMEXIT_LITE	(11*32+17) /* "" Fill RSB on VM-Exit when EIBRS is enabled */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000007:1 (EAX), word 12 */
+ #define X86_FEATURE_AVX512_BF16		(12*32+ 5) /* AVX512 BFLOAT16 instructions */

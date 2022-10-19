@@ -2,5 +2,5 @@
 BOARD_NAME="Banana Pi R2"
 BOARDFAMILY="mt7623"
 BOOTCONFIG="mt7623n_bpir2_defconfig"
-BUILD_DESKTOP="no"
+HAS_VIDEO_OUTPUT="no"
 KERNEL_TARGET="legacy"

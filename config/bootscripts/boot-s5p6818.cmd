@@ -23,7 +23,11 @@ if ext4load mmc ${devnum}:1 ${kernel_addr_r} ${prefix}/armbianEnv.txt; then
 	env import -t ${kernel_addr_r} ${filesize}
 fi
 
-if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
+if test "${bootlogo}" = "true"; then
+	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
+else
+	setenv consoleargs "splash=verbose ${consoleargs}"
+fi
 
 setenv bootargs "console=ttySAC0,115200n8 console=tty1 ${consoleargs}  root=${rootdev} rootwait rootfstype=${rootfstype} loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 

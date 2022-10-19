@@ -172,17 +172,34 @@ Function | Armbian | Yocto | Buildroot |
 
 ## 🙌 Contribution
 
-- You don't need to be a programmer to help! [Check out  our list](https://forum.armbian.com/staffapplications/) choose what you wanna do ❤️
-
+### You don't need to be a programmer to help! 
 - The easiest way to help is by "Starring" our repository - it helps more people find our code.
+- [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
+- [Seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/)
+- Help with [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/)
+- [Project administration](https://forum.armbian.com/forum/39-armbian-project-administration/)
+- [Donate](https://www.armbian.com/donate).
 
-- You also can maintain and develop [docs](https://github.com/armbian/documentation), [CI](https://github.com/armbian/ci-testing-tools), [autotests](https://github.com/armbian/autotests), [seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/), help on [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/), [project administration](https://forum.armbian.com/forum/39-armbian-project-administration/), [costs](https://www.armbian.com/donate).
+### Want to become a maintainer?
 
-Please make sure to read the [Contributing Guide](.github/CONTRIBUTING.md) before you write any code.
+Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/) and if you can meet the requirements as well as find a board on the [Board Maintainers](https://docs.armbian.com/Release_Board-Maintainers/) list which has less than 2 maintainers, then please apply using the linked form.
+
+### Want to become a developer?
+
+If you want to help with development, you should first review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/) and then you can review the pre-made Jira dashboards and additional resources provided below to find open tasks and how you can assist:
+
+- [pull requests that needs a review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired)
+- dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
+- [documentation](https://docs.armbian.com/)
+- [continuous integration](https://docs.armbian.com/Process_CI/)
 
 ## Support
 
-Armbian is free software and provides **best effort help** through [community forums](https://forum.armbian.com/). Make sure to use help of [general project search engine](https://www.armbian.com/search) and [documentation](https://docs.armbian.com) before opening new forum topic. In case you require attention, buy appropriate [subscription level](https://forum.armbian.com/subscriptions) before asking for dedicated attention to the issue you have https://www.armbian.com/contact.
+Support is provided in one of two ways:
+- For commercial or prioritized assistance:
+  - book a an hour of [professional consultation](https://calendly.com/armbian/consultation),
+  - consider becoming a project partner. Reach us out at https://armbian.com/contact,
+- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guarenteed solutions.
 
 ## Contact
 
@@ -191,6 +208,7 @@ Armbian is free software and provides **best effort help** through [community fo
 - Discord: [http://discord.armbian.com](http://discord.armbian.com)
 - Follow [@armbian](https://twitter.com/armbian) on Twitter or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
+- Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
 
 ## Contributors
 

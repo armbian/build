@@ -49,6 +49,7 @@ RUN apt-get update \
        dwarves \
        f2fs-tools \
        fakeroot \
+       fdisk \
        flex \
        gawk \
        gcc-aarch64-linux-gnu \
