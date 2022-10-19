@@ -21,8 +21,7 @@ function cli_docker_run() {
 		exit 0
 	fi
 
-	# Force showing logs here while bulding Dockerfile.
-	SHOW_LOG=yes LOG_SECTION="docker_cli_build_dockerfile" do_with_logging docker_cli_build_dockerfile
+	LOG_SECTION="docker_cli_build_dockerfile" do_with_logging docker_cli_build_dockerfile
 
 	LOG_SECTION="docker_cli_prepare_launch" do_with_logging docker_cli_prepare_launch
 
