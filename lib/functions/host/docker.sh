@@ -142,8 +142,30 @@ function docker_cli_prepare() {
 	fi
 	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
+	DOCKER_SERVER_NAME_HOST="$(docker info | grep -i -e "name\:" | cut -d ":" -f 2 | xargs echo -n)"
+	display_alert "Docker Server Hostname" "${DOCKER_SERVER_NAME_HOST}" "debug"
+
+	# Gymnastics: under Darwin, Docker Desktop and Rancher Desktop in dockerd mode behave differently.
+	declare -g DOCKER_SERVER_REQUIRES_LOOP_HACKS=yes DOCKER_SERVER_USE_STATIC_LOOPS=no
+	if [[ "${DOCKER_ARMBIAN_HOST_OS_UNAME}" == "Darwin" ]]; then
+		case "${DOCKER_SERVER_NAME_HOST}" in
+			lima-rancher-desktop)
+				display_alert "Detected Rancher Desktop" "due to lima-rancher-desktop; EXPERIMENTAL" "warn"
+				DOCKER_SERVER_USE_STATIC_LOOPS=yes # use static list; the 'host' is not the real Linux machine.
+				;;
+			docker-desktop)
+				display_alert "Detected Docker Desktop under Darwin" "due to docker-desktop" "info"
+				DOCKER_SERVER_USE_STATIC_LOOPS=yes # use static list; the 'host' is not the real Linux machine.
+				# Alternatively, set DOCKER_SERVER_REQUIRES_LOOP_HACKS=no which somehow works without any CONTAINER_COMPAT hacks.
+				;;
+			*)
+				display_alert "Not Docker Desktop nor Rancher Desktop" "due to ${DOCKER_SERVER_NAME_HOST}" "debug"
+				;;
+		esac
+	fi
+
 	# Info summary message. Thank you, GitHub Co-pilot!
-	display_alert "Docker info" "Docker ${DOCKER_SERVER_VERSION} Kernel:${DOCKER_SERVER_KERNEL_VERSION} RAM:${DOCKER_SERVER_TOTAL_RAM} CPUs:${DOCKER_SERVER_CPUS} OS:'${DOCKER_SERVER_OS}' under '${DOCKER_ARMBIAN_HOST_OS_UNAME}' - buildx ${DOCKER_HAS_BUILDX}" "sysinfo"
+	display_alert "Docker info" "Docker ${DOCKER_SERVER_VERSION} Kernel:${DOCKER_SERVER_KERNEL_VERSION} RAM:${DOCKER_SERVER_TOTAL_RAM} CPUs:${DOCKER_SERVER_CPUS} OS:'${DOCKER_SERVER_OS}' hostname '${DOCKER_SERVER_NAME_HOST}' under '${DOCKER_ARMBIAN_HOST_OS_UNAME}' - buildx:${DOCKER_HAS_BUILDX} - loop-hacks:${DOCKER_SERVER_REQUIRES_LOOP_HACKS} static-loops:${DOCKER_SERVER_USE_STATIC_LOOPS}" "sysinfo"
 
 	# @TODO: grab git info, add as labels et al to Docker... (already done in GHA workflow)
 
@@ -284,15 +306,27 @@ function docker_cli_prepare_launch() {
 
 	# eg: NOT on Darwin with Docker Desktop, that works simply with --priviledged and the extra caps.
 	# those actually _break_ Darwin with Docker Desktop, so we need to detect that.
-	if [[ "${DOCKER_ARMBIAN_HOST_OS_UNAME}" == "Linux" ]]; then
+	# 20/Oct/2022: trying with Rancher Desktop in dockerd mode on Mac M1, this is required; also loops have to be hardcoded.
+	# How to detect this? It's Darwin, but not "real" Docker. How to find out?
+	if [[ "${DOCKER_SERVER_REQUIRES_LOOP_HACKS}" == "yes" ]]; then
 		display_alert "Adding /dev/loop* hacks for" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 		DOCKER_ARGS+=("--security-opt=apparmor:unconfined") # mounting things inside the container on Ubuntu won't work without this https://github.com/moby/moby/issues/16429#issuecomment-217126586
 		DOCKER_ARGS+=(--device-cgroup-rule='b 7:* rmw')     # allow loop devices (not required)
 		DOCKER_ARGS+=(--device-cgroup-rule='b 259:* rmw')   # allow loop device partitions
 		DOCKER_ARGS+=(-v /dev:/tmp/dev:ro)                  # this is an ugly hack (CONTAINER_COMPAT=y), but it is required to get /dev/loopXpY minor number for mknod inside the container, and container itself still uses private /dev internally
-		for loop_device_host in /dev/loop*; do              # pass through loop devices from host to container; includes `loop-control`
-			DOCKER_ARGS+=("--device=${loop_device_host}")
-		done
+
+		if [[ "${DOCKER_SERVER_USE_STATIC_LOOPS}" == "yes" ]]; then
+			for loop_device_host in "/dev/loop-control" "/dev/loop0" "/dev/loop1" "/dev/loop2" "/dev/loop3" "/dev/loop4" "/dev/loop5" "/dev/loop6" "/dev/loop7"; do # static list; "host" is not real, there's a VM intermediary
+				display_alert "Passing through host loop device to Docker" "static: ${loop_device_host}" "debug"
+				DOCKER_ARGS+=("--device=${loop_device_host}")
+			done
+		else
+			for loop_device_host in /dev/loop*; do # pass through loop devices from host to container; includes `loop-control`
+				display_alert "Passing through host loop device to Docker" "host: ${loop_device_host}" "debug"
+				DOCKER_ARGS+=("--device=${loop_device_host}")
+			done
+		fi
+
 	else
 		display_alert "Skipping /dev/loop* hacks for" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 	fi
