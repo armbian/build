@@ -21,6 +21,9 @@ function check_loop_device_internal() {
 			fi
 		else
 			display_alert "Device node does not exist yet" "${device}" "debug"
+			run_host_command_logged ls -la "${device}" || true
+			run_host_command_logged lsblk || true
+			run_host_command_logged blkid || true
 			return 1
 		fi
 	fi
