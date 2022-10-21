@@ -565,7 +565,7 @@ function install_distribution_agnostic() {
 
 		# `systemd-networkd.service` will be enabled by `/lib/systemd/system-preset/90-systemd.preset` during first-run.
 		# Mask it to avoid conflict
-		chroot "${SDCARD}" /bin/bash -c "systemctl mask systemd-networkd.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		chroot_sdcard systemctl mask systemd-networkd.service
 
 		# most likely we don't need to wait for nm to get online
 		chroot_sdcard systemctl disable NetworkManager-wait-online.service
@@ -587,7 +587,7 @@ function install_distribution_agnostic() {
 		chroot_sdcard systemctl enable systemd-networkd.service systemd-resolved.service
 
 		# Mask `NetworkManager.service` to avoid conflict
-		chroot "${SDCARD}" /bin/bash -c "systemctl mask NetworkManager.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+		chroot_sdcard systemctl mask NetworkManager.service
 
 		if [ -e /etc/systemd/timesyncd.conf ]; then
 			chroot_sdcard systemctl enable systemd-timesyncd.service
