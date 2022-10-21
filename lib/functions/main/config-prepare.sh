@@ -151,13 +151,13 @@ function prepare_and_config_main_build_single() {
 Called early, before any compilation work starts.
 POST_DETERMINE_CTHREADS
 
-	if [[ $BETA == yes ]]; then
-		IMAGE_TYPE=nightly
-	elif [[ $BETA != "yes" ]]; then
-		IMAGE_TYPE=stable
-	else
-		IMAGE_TYPE=user-built
-	fi
+  if [[ -z $IMAGE_TYPE ]]; then
+    if [[ $BETA == yes ]]; then
+      IMAGE_TYPE=nightly
+    else
+      IMAGE_TYPE=stable
+    fi
+  fi
 
 	BOOTSOURCEDIR="${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
 	LINUXSOURCEDIR="${KERNELDIR}/$(branch2dir "${KERNELBRANCH}")"
