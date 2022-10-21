@@ -110,6 +110,13 @@ function docker_cli_prepare() {
 	display_alert "Pre-game dependencies" "${host_dependencies[*]}" "debug"
 
 	#############################################################################################################
+	# Stop here if Docker can't be used at all.
+	if ! is_docker_ready_to_go; then
+		display_alert "Docker is not ready" "Docker is not available. Make sure you've Docker installed, configured, and running; add your user to the 'docker' group and restart your shell too." "err"
+		exit 56
+	fi
+
+	#############################################################################################################
 	# Detect some docker info.
 
 	DOCKER_SERVER_VERSION="$(docker info | grep -i -e "Server Version\:" | cut -d ":" -f 2 | xargs echo -n)"
