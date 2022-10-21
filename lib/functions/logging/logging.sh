@@ -203,6 +203,22 @@ function display_alert() {
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
 			;;
 
+		extensions)
+			if [[ "${SHOW_EXTENSIONS}" != "yes" ]]; then # enable to log a lot about extensions, hook methos, etc.
+				skip_screen=1
+			fi
+			level_indicator="🎣" # fishing pole and "hook"
+			inline_logs_color="\e[0;36m" # a dim cyan
+			;;
+
+		extensionstrace)
+			if [[ "${SHOW_EXTENSIONS_TRACE}" != "yes" ]]; then # waaaay too verbose, logs traces in extensions
+				skip_screen=1
+			fi
+			level_indicator="🐾"
+			inline_logs_color="\e[0;36m" # a dim cyan
+			;;
+
 		git)
 			if [[ "${SHOW_GIT}" != "yes" ]]; then # git-related debugging messages, very very verbose
 				skip_screen=1
