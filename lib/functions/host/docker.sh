@@ -256,24 +256,6 @@ function docker_cli_build_dockerfile() {
 }
 
 function docker_cli_prepare_launch() {
-	# array for the generic armbian 'volumes' and their paths. Less specific first.
-	# @TODO: actually use this for smth.
-	declare -A -g DOCKER_ARMBIAN_VOLUMES=(
-		[".tmp"]="linux=anonymous darwin=anonymous"                    # tmpfs, discard, anonymous; whatever you wanna call  it. It just needs to be 100% local to the container, and there's very little value in being able to look at it from the host.
-		["output"]="linux=bind darwin=bind"                            # catch-all output. specific subdirs are mounted below. it's a bind mount by default on both Linux and Darwin.
-		["output/images"]="linux=bind darwin=bind"                     # 99% of users want this as the result of their build, no matter if it's slow or not. bind on both.
-		["output/debs"]="linux=bind darwin=namedvolume"                # generated output .deb files. not everyone is interested in this: most users just want images. Linux has fast binds, so bound by default. Darwin has slow binds, so it's a volume by default.
-		["output/logs"]="linux=bind darwin=bind"                       # log files produced. 100% of users want this. Bind on both Linux and Darwin. Is used to integrate launcher and actual-build logs, so must exist and work otherwise confusion ensues.
-		["cache"]="linux=bind darwin=namedvolume"                      # catch-all cache, could be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/gitballs"]="linux=bind darwin=namedvolume"             # tarballs of git repos, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/toolchain"]="linux=bind darwin=namedvolume"            # toolchain cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/aptcache"]="linux=bind darwin=namedvolume"             # .deb apt cache, replaces apt-cacher-ng. Can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/rootfs"]="linux=bind darwin=namedvolume"               # rootfs .tar.zst cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/initrd"]="linux=bind darwin=namedvolume"               # initrd.img cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/sources"]="linux=bind darwin=namedvolume"              # operating directory. many things are cloned in here, and some are even built inside. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
-		["cache/sources/linux-kernel"]="linux=bind darwin=namedvolume" # working tree for kernel builds. huge. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
-	)
-
 	display_alert "Preparing" "common Docker arguments" "debug"
 	declare -g -a DOCKER_ARGS=(
 		"--rm" # side effect - named volumes are considered not attached to anything and are removed on "docker volume prune", since container was removed.
@@ -283,38 +265,52 @@ function docker_cli_prepare_launch() {
 		"--cap-add=MKNOD"      # (though MKNOD should be already present)
 		"--cap-add=SYS_PTRACE" # CAP_SYS_PTRACE is required for systemd-detect-virt in some cases @TODO: rpardini: so lets eliminate it
 
-		# "--mount" "type=bind,source=${SRC}/lib,target=${DOCKER_ARMBIAN_TARGET_PATH}/lib"
-
-		# type=volume, without source=, is an anonymous volume -- will be auto cleaned up together with the container;
-		# this could also be a type=tmpfs if you had enough ram - but armbian already does tmpfs for you if you
-		#                                                         have enough RAM (inside the container) so don't bother.
-		"--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/.tmp"
-
-		# named volumes for different parts of the cache. so easy for user to drop any of them when needed
-		# @TODO: refactor this; this is only ideal for Darwin right now. Use DOCKER_ARMBIAN_VOLUMES to generate this.
-		"--mount" "type=volume,source=armbian-cache-parent,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache"
-		"--mount" "type=volume,source=armbian-cache-gitballs,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/gitballs"
-		"--mount" "type=volume,source=armbian-cache-toolchain,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/toolchain"
-		"--mount" "type=volume,source=armbian-cache-aptcache,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/aptcache"
-		"--mount" "type=volume,source=armbian-cache-rootfs,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/rootfs"
-		"--mount" "type=volume,source=armbian-cache-initrd,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/initrd"
-		"--mount" "type=volume,source=armbian-cache-sources,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/sources"
-		"--mount" "type=volume,source=armbian-cache-sources-linux-kernel,destination=${DOCKER_ARMBIAN_TARGET_PATH}/cache/sources/linux-kernel"
-
 		# Pass env var ARMBIAN_RUNNING_IN_CONTAINER to indicate we're running under Docker. This is also set in the Dockerfile; make sure.
 		"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"
+
+		# @TODO: if user on terminal, pass the TERM down to the container.
+		"--env" "TERM=${TERM}"
+		# @TODO: pass down the CI-related env vars.
 	)
 
-	# @TODO: auto-compute this list; just get the dirs and filter some out
-	for MOUNT_DIR in "lib" "config" "extensions" "packages" "patch" "tools" "userpatches" "output"; do
+	# This will receive the mountpoint as $1 and the mountpoint vars in the environment.
+	function prepare_docker_args_for_mountpoint() {
+		local MOUNT_DIR="$1"
+		# shellcheck disable=SC2154 # $docker_kind: the kind of volume to mount on this OS; see mountpoints.sh
+		#display_alert "Handling Docker mountpoint" "${MOUNT_DIR} id: ${volume_id} - docker_kind: ${docker_kind}" "debug"
+
+		case "${docker_kind}" in
+			anonymous)
+				display_alert "Mounting" "anonymous volume for '${MOUNT_DIR}'" "debug"
+				# type=volume, without source=, is an anonymous volume -- will be auto cleaned up together with the container;
+				# this could also be a type=tmpfs if you had enough ram - but armbian already does tmpfs for you if you
+				#                                                         have enough RAM (inside the container) so don't bother.
+				DOCKER_ARGS+=("--mount" "type=volume,destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				;;
+			bind)
+				display_alert "Mounting" "bind mount for '${MOUNT_DIR}'" "debug"
+				mkdir -p "${SRC}/${MOUNT_DIR}"
+				DOCKER_ARGS+=("--mount" "type=bind,source=${SRC}/${MOUNT_DIR},target=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				;;
+			namedvolume)
+				display_alert "Mounting" "named volume id '${volume_id}' for '${MOUNT_DIR}'" "debug"
+				DOCKER_ARGS+=("--mount" "type=volume,source=armbian-${volume_id},destination=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
+				;;
+			*)
+				display_alert "Unknown Mountpoint Type" "unknown volume type '${docker_kind}' for '${MOUNT_DIR}'" "err"
+				exit 1
+				;;
+		esac
+	}
+
+	loop_over_armbian_mountpoints prepare_docker_args_for_mountpoint
+
+	# @TODO: auto-compute this list; just get the dirs and filter some out?
+	for MOUNT_DIR in "lib" "config" "extensions" "packages" "patch" "tools" "userpatches"; do
 		mkdir -p "${SRC}/${MOUNT_DIR}"
 		DOCKER_ARGS+=("--mount" "type=bind,source=${SRC}/${MOUNT_DIR},target=${DOCKER_ARMBIAN_TARGET_PATH}/${MOUNT_DIR}")
 	done
 
-	# eg: NOT on Darwin with Docker Desktop, that works simply with --priviledged and the extra caps.
-	# those actually _break_ Darwin with Docker Desktop, so we need to detect that.
-	# 20/Oct/2022: trying with Rancher Desktop in dockerd mode on Mac M1, this is required; also loops have to be hardcoded.
-	# How to detect this? It's Darwin, but not "real" Docker. How to find out?
 	if [[ "${DOCKER_SERVER_REQUIRES_LOOP_HACKS}" == "yes" ]]; then
 		display_alert "Adding /dev/loop* hacks for" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 		DOCKER_ARGS+=("--security-opt=apparmor:unconfined") # mounting things inside the container on Ubuntu won't work without this https://github.com/moby/moby/issues/16429#issuecomment-217126586
@@ -345,6 +341,7 @@ function docker_cli_launch() {
 
 	display_alert "Relaunching in Docker" "${*}" "debug"
 	display_alert "Relaunching in Docker" "here comes the 🐳" "info"
+	
 	local -i docker_build_result=1
 	if docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
 		display_alert "Docker Build finished" "successfully" "info"
