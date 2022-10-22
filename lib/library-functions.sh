@@ -366,6 +366,15 @@ source "${SRC}"/lib/functions/host/host-utils.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/host/mountpoints.sh
+# shellcheck source=lib/functions/host/mountpoints.sh
+source "${SRC}"/lib/functions/host/mountpoints.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/host/prepare-host.sh
 # shellcheck source=lib/functions/host/prepare-host.sh
 source "${SRC}"/lib/functions/host/prepare-host.sh
