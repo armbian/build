@@ -12,13 +12,6 @@ install_distribution_specific() {
 
 	case $RELEASE in
 
-		sid)
-
-			# (temporally) disable broken service
-			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
-
-			;;
-
 		focal | jammy)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
