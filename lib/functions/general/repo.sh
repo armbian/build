@@ -23,7 +23,7 @@ addtorepo() {
 	# parameter "delete" remove incoming directory if publishing is succesful
 	# function: cycle trough distributions
 
-	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "jammy" "sid")
+	local distributions=("stretch" "bionic" "buster" "bullseye" "focal" "hirsute" "impish" "jammy" "kinetic" "sid")
 	#local distributions=($(grep -rw config/distributions/*/ -e 'supported' | cut -d"/" -f3))
 	local errors=0
 

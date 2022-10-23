@@ -221,7 +221,7 @@ POST_FAMILY_CONFIG
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 	[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-	if [[ "$RELEASE" =~ ^(focal|jammy)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
