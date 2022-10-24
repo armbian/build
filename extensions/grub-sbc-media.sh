@@ -1,5 +1,5 @@
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
-	function extension_prepare_config__prepare_grub-arm() {
+	function extension_prepare_config__prepare_grub-sbc-media() {
 	display_alert "Prepare config" "${EXTENSION}" "info"
 	# Extension configuration defaults.
 	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}                    # if yes, does not build our own kernel, instead, uses generic one from distro
