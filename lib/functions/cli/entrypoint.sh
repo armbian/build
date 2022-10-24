@@ -86,7 +86,6 @@ function cli_entrypoint() {
 			display_alert "uuidgen not found" "uuidgen not installed yet" "info"
 			ARMBIAN_BUILD_UUID="no-uuidgen-yet-${RANDOM}-$((1 + $RANDOM % 10))$((1 + $RANDOM % 10))$((1 + $RANDOM % 10))$((1 + $RANDOM % 10))"
 		fi
-		ARMBIAN_BUILD_UUID="$(uuidgen)"
 		display_alert "Generated ARMBIAN_BUILD_UUID" "${ARMBIAN_BUILD_UUID}" "debug"
 	fi
 	display_alert "Build UUID:" "${ARMBIAN_BUILD_UUID}" "debug"
