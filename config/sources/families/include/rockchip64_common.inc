@@ -408,7 +408,7 @@ family_tweaks_bsp() {
 		fi
 	fi
 
-	if [[ $BOARD == orangepi4-lts ]]; then
+	if [[ $BOARD == orangepi4-lts || $BOARD == orangepi-800 ]]; then
 
 		# Bluetooth on orangepi 4 LTS board is handled by a Spreadtrum (sprd) chip and requires
 		# a custom hciattach_opi binary, plus a systemd service to run it at boot time
