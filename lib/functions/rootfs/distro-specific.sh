@@ -2,14 +2,15 @@ install_distribution_specific() {
 
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
+	# disable broken service
+	# the problem is in default misconfiguration
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartd.service >/dev/null 2>&1"
+
+	# disable hostapd as it needs to be configured
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable hostapd.service  >/dev/null 2>&1"
+
 	case $RELEASE in
-
-		sid)
-
-			# (temporally) disable broken service
-			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
-
-			;;
 
 		focal | jammy)
 
