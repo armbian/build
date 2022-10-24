@@ -584,7 +584,8 @@ function install_distribution_agnostic() {
 
 	elif [ -d "${SDCARD}"/etc/systemd/network ]; then
 		# enable services
-		chroot_sdcard systemctl enable systemd-networkd.service systemd-resolved.service
+		chroot_sdcard systemctl enable systemd-networkd.service
+		chroot_sdcard systemctl enable systemd-resolved.service || display_alert "Failed to enable systemd-resolved.service" "" "wrn"
 
 		# Mask `NetworkManager.service` to avoid conflict
 		chroot_sdcard systemctl mask NetworkManager.service
