@@ -16,9 +16,9 @@ ENABLED=false
 
 # Never touch anything below here. Only edit /etc/default/armbian-ramlog
 
-HDD_LOG=/var/log.hdd/
-RAM_LOG=/var/log/
-LOG2RAM_LOG="${HDD_LOG}armbian-ramlog.log"
+HDD_LOG=/var/log.hdd
+RAM_LOG=/var/log
+LOG2RAM_LOG="${HDD_LOG}/armbian-ramlog.log"
 LOG_OUTPUT="tee -a $LOG2RAM_LOG"
 
 isSafe () {
@@ -50,11 +50,28 @@ syncToDisk () {
 	if [ "$USE_RSYNC" = true ]; then
 		${NoCache} rsync -aXWv \
 			--exclude "lost+found" --exclude armbian-ramlog.log \
+			--exclude 'journal*' --one-file-system \
 			--links \
 			${XTRA_RSYNC_TO[@]+"${XTRA_RSYNC_TO[@]}"} \
-			$RAM_LOG $HDD_LOG 2>&1 | $LOG_OUTPUT
+			$RAM_LOG/ $HDD_LOG/ 2>&1 | $LOG_OUTPUT
 	else
+		rm -f $RAM_LOG/journal # linked journal cannot copied onto itself, it will be re-created below
 		${NoCache} cp -rfup $RAM_LOG -T $HDD_LOG 2>&1 | $LOG_OUTPUT
+	fi
+	if [ ! -L $RAM_LOG/journal ] && [ -d $RAM_LOG/journal ]; then # move persistent journal to disk
+		systemctl stop systemd-journald # journal folder can be in use
+		if [ -d $HDD_LOG/journal ]; then # optional backup for diagnosis
+			mv $HDD_LOG/journal $HDD_LOG/journal-$(date +"%Y%M%d-%T")
+		fi
+		mv $RAM_LOG/journal $HDD_LOG/journal
+		systemctl start systemd-journald
+	fi
+	if [ ! -L $RAM_LOG/journal ] && [ -d $HDD_LOG/journal ]; then # link persistent journal if applicable
+		ln -s ${HDD_LOG}/journal ${RAM_LOG}/
+	fi
+	if [ -z "`grep ^Storage=volatile /etc/systemd/journald.conf`" ] ;then # flush to disk when applicable
+		journalctl --flush # this will flush to persistent log
+		journalctl --relinquish-var # restart volatile logging
 	fi
 
 	sync /
@@ -68,14 +85,18 @@ syncFromDisk () {
 	if [ "$USE_RSYNC" = true ]; then
 		${NoCache} rsync -aXWv --delete \
 			--exclude "lost+found" --exclude armbian-ramlog.log \
-			--exclude *.gz --exclude *.xz --exclude='*.[0-9]' \
+			--exclude '*.gz' --exclude '*.xz' --exclude='*.[0-9]' \
 			--links \
+			--exclude 'journal*' --one-file-system \
 			${XTRA_RSYNC_FROM[@]+"${XTRA_RSYNC_FROM[@]}"} \
-			$HDD_LOG $RAM_LOG 2>&1 | $LOG_OUTPUT
+			$HDD_LOG/ $RAM_LOG/ 2>&1 | $LOG_OUTPUT
 	else
-		${NoCache} find $HDD_LOG* -maxdepth 1 -type f -not \( -name '*.[0-9]' -or -name '*.xz*' -or -name '*.gz' \) | xargs cp -ut $RAM_LOG
+		${NoCache} find $HDD_LOG/* -maxdepth 1 -type f -not \( -name '*.[0-9]' -or -name '*.xz*' -or -name '*.gz' -or -name 'journal*' \) | xargs cp -ut $RAM_LOG/
 	fi
 
+	if [ ! -L $RAM_LOG/journal ] && [ -d $HDD_LOG/journal ]; then # link persistent journal if applicable
+		ln -s ${HDD_LOG}/journal ${RAM_LOG}/
+	fi
 	sync /
 }
 

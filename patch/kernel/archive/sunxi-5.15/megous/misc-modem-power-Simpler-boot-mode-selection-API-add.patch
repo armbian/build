@@ -1,0 +1,311 @@
+From 5db401f1eb5a605c5933023bd82430d70d65ed0f Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Thu, 3 Dec 2020 20:00:06 +0100
+Subject: [PATCH 275/467] misc: modem-power: Simpler boot mode selection API,
+ add more boot modes
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/misc/modem-power.c | 129 ++++++++++++++-----------------------
+ 1 file changed, 47 insertions(+), 82 deletions(-)
+
+diff --git a/drivers/misc/modem-power.c b/drivers/misc/modem-power.c
+index c33e56f0d..91d2bfdd1 100644
+--- a/drivers/misc/modem-power.c
++++ b/drivers/misc/modem-power.c
+@@ -66,6 +66,14 @@ enum {
+ 	MPWR_REQ_PWUP,
+ };
+ 
++enum {
++	MPWR_MODE_NORMAL = 1,
++	MPWR_MODE_DUMB,
++	MPWR_MODE_FASTBOOT,
++	MPWR_MODE_ALT1,
++	MPWR_MODE_ALT2,
++};
++
+ struct mpwr_dev;
+ 
+ struct mpwr_gpio {
+@@ -157,6 +165,7 @@ struct mpwr_dev {
+ 	// change
+ 	spinlock_t lock; /* protects last_request */
+ 	int last_request;
++	int powerup_mode;
+ 	ktime_t last_wakeup;
+ 
+ 	struct timer_list wd_timer;
+@@ -177,8 +186,6 @@ enum {
+         /* eg25 */
+         MPWR_F_GOT_PDN,
+ 	/* config options */
+-        MPWR_F_DUMB_POWERUP,
+-        MPWR_F_FASTBOOT_POWERUP,
+         MPWR_F_BLOCKED,
+ 	/* file */
+ 	MPWR_F_OPEN,
+@@ -318,7 +325,7 @@ static const struct mpwr_eg25_qcfg mpwr_eg25_qcfgs[] = {
+ 	{ "airplanecontrol",    "1",   mpwr_eg25_qcfg_airplanecontrol_is_ok },
+ 
+ 	// available since firmware R07A08_01.002.01.002
+-	{ "fast/poweroff", 	"1" },
++	{ "fast/poweroff",	"1" },
+ };
+ 
+ static char* mpwr_serdev_get_response_value(struct mpwr_dev *mpwr,
+@@ -388,12 +395,11 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ {
+ 	struct gpio_desc *pwrkey_gpio = mpwr_eg25_get_pwrkey_gpio(mpwr);
+ 	bool wakeup_ok, status_ok;
+-	bool needs_restart = false, fastboot;
++	bool needs_restart = false;
+ 	u32 speed = 115200;
+ 	int ret, i, off;
+ 	ktime_t start;
+-
+-	fastboot = test_and_clear_bit(MPWR_F_FASTBOOT_POWERUP, mpwr->flags);
++	int mode = mpwr->powerup_mode;
+ 
+ 	if (regulator_is_enabled(mpwr->regulator))
+ 		dev_warn(mpwr->dev,
+@@ -408,7 +414,8 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 	}
+ 
+ 	/* Drive default gpio signals during powerup */
+-	gpiod_direction_output(mpwr->host_ready_gpio, 1);
++	/* host_ready_gpio should be 1 during normal powerup */
++	gpiod_direction_output(mpwr->host_ready_gpio, mode != MPWR_MODE_ALT2);
+ 	/* #W_DISABLE must be left pulled up during modem power up
+ 	 * early on, because opensource bootloader uses this signal to enter
+ 	 * fastboot mode when it's pulled down.
+@@ -416,11 +423,12 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 	 * This should be 1 for normal powerup and 0 for fastboot mode with
+ 	 * special Biktor's firmware.
+ 	 */
+-	gpiod_direction_output(mpwr->enable_gpio, !fastboot);
++	gpiod_direction_output(mpwr->enable_gpio, mode != MPWR_MODE_FASTBOOT);
+ 	gpiod_direction_output(mpwr->sleep_gpio, 0);
+ 	gpiod_direction_output(mpwr->reset_gpio, 0);
+ 	gpiod_direction_output(pwrkey_gpio, 0);
+-	gpiod_direction_output(mpwr->dtr_gpio, 0);
++	/* dtr_gpio should be 0 during normal powerup */
++	gpiod_direction_output(mpwr->dtr_gpio, mode == MPWR_MODE_ALT1);
+ 
+ 	/* Wait for powerup. (30ms min. according to datasheet) */
+ 	msleep(50);
+@@ -431,7 +439,7 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 	gpiod_set_value(pwrkey_gpio, 0);
+ 
+ 	/* skip modem killswitch status checks in fastboot bootloader entry mode */
+-	if (fastboot)
++	if (mode != MPWR_MODE_NORMAL)
+ 		goto open_serdev;
+ 
+ 	/* Switch status key to input, in case it's multiplexed with pwrkey. */
+@@ -496,7 +504,7 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 		goto err_shutdown;
+ 	}
+ 
+-	if (test_bit(MPWR_F_DUMB_POWERUP, mpwr->flags) || fastboot)
++	if (mode != MPWR_MODE_NORMAL)
+ 		goto powered_up;
+ 
+ 	ret = mpwr_serdev_at_cmd_with_retry_ignore_timeout(mpwr, "AT&FE0", 1000, 30);
+@@ -556,7 +564,7 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 	/* reset the modem, to apply QDAI config if necessary */
+ 	if (needs_restart) {
+ 		dev_info(mpwr->dev, "Restarting modem\n");
+-        
++
+ 		/* reboot is broken with fastboot enabled */
+ 		mpwr_serdev_at_cmd(mpwr, "AT+QCFG=\"fast/poweroff\",0", 5000);
+ 
+@@ -624,6 +632,11 @@ static int mpwr_eg25_power_up(struct mpwr_dev* mpwr)
+ 		dev_err(mpwr->dev, "Modem will probably not sleep!\n");
+ 
+ powered_up:
++	// if we're signaling some alternate boot mode via GPIO, we need to
++	// sleep here so that modem's boot script notices the gpio
++	if (mode == MPWR_MODE_ALT1 || mode == MPWR_MODE_FASTBOOT || mode == MPWR_MODE_ALT2)
++		msleep(12000);
++
+ 	gpiod_direction_output(mpwr->dtr_gpio, 1);
+ 
+ 	return 0;
+@@ -738,7 +751,7 @@ static int mpwr_eg25_power_down_finish(struct mpwr_dev* mpwr)
+ static int mpwr_eg25_power_down(struct mpwr_dev* mpwr)
+ {
+ 	struct gpio_desc *pwrkey_gpio = mpwr_eg25_get_pwrkey_gpio(mpwr);
+-	int ret;
++	//int ret;
+ 
+ 	/* Send 800ms pwrkey pulse to initiate powerdown. */
+ 	gpiod_direction_output(pwrkey_gpio, 1);
+@@ -1112,7 +1125,7 @@ static void mpwr_work_handler(struct work_struct *work)
+ 	pm_relax(mpwr->dev);
+ }
+ 
+-static void mpwr_request_power_change(struct mpwr_dev* mpwr, int request)
++static void mpwr_request_power_change(struct mpwr_dev* mpwr, int request, int mode)
+ {
+ 	unsigned long flags;
+ 
+@@ -1121,6 +1134,8 @@ static void mpwr_request_power_change(struct mpwr_dev* mpwr, int request)
+ 
+ 	spin_lock_irqsave(&mpwr->lock, flags);
+ 	mpwr->last_request = request;
++	if (mode >= 0)
++		mpwr->powerup_mode = mode;
+ 	spin_unlock_irqrestore(&mpwr->lock, flags);
+ 
+ 	queue_work(mpwr->wq, &mpwr->power_work);
+@@ -1189,17 +1204,17 @@ static ssize_t powered_store(struct device *dev,
+ 			     const char *buf, size_t len)
+ {
+ 	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-	bool status;
++	unsigned status;
+ 	int ret;
+ 
+ 	if (test_bit(MPWR_F_BLOCKED, mpwr->flags))
+ 		return -EPERM;
+ 
+-	ret = kstrtobool(buf, &status);
++	ret = kstrtouint(buf, 10, &status);
+ 	if (ret)
+ 		return ret;
+ 
+-	mpwr_request_power_change(mpwr, status ? MPWR_REQ_PWUP : MPWR_REQ_PWDN);
++	mpwr_request_power_change(mpwr, status ? MPWR_REQ_PWUP : MPWR_REQ_PWDN, status);
+ 
+ 	return len;
+ }
+@@ -1209,17 +1224,17 @@ static ssize_t powered_blocking_store(struct device *dev,
+ 				      const char *buf, size_t len)
+ {
+ 	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-	bool status;
++	unsigned status;
+ 	int ret;
+ 
+ 	if (test_bit(MPWR_F_BLOCKED, mpwr->flags))
+ 		return -EPERM;
+ 
+-	ret = kstrtobool(buf, &status);
++	ret = kstrtouint(buf, 10, &status);
+ 	if (ret)
+ 		return ret;
+ 
+-	mpwr_request_power_change(mpwr, status ? MPWR_REQ_PWUP : MPWR_REQ_PWDN);
++	mpwr_request_power_change(mpwr, status ? MPWR_REQ_PWUP : MPWR_REQ_PWDN, status);
+ 
+ 	ret = wait_event_interruptible_timeout(mpwr->wait,
+ 					       !test_bit(MPWR_F_POWER_CHANGE_INPROGRESS, mpwr->flags),
+@@ -1235,64 +1250,16 @@ static ssize_t powered_blocking_store(struct device *dev,
+ 	return len;
+ }
+ 
+-static ssize_t dumb_powerup_show(struct device *dev,
+-				 struct device_attribute *attr, char *buf)
+-{
+-	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-
+-	return scnprintf(buf, PAGE_SIZE, "%u\n",
+-			 !!test_bit(MPWR_F_DUMB_POWERUP, mpwr->flags));
+-}
+-
+-static ssize_t dumb_powerup_store(struct device *dev,
+-				  struct device_attribute *attr,
+-				  const char *buf, size_t len)
++static ssize_t help_show(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+-	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-	bool val;
+-	int ret;
+-
+-	ret = kstrtobool(buf, &val);
+-	if (ret)
+-		return ret;
+-
+-	if (val) {
+-		dev_err(mpwr->dev, "Don't use dumb_powerup, it's just a debug function!\n");
+-		set_bit(MPWR_F_DUMB_POWERUP, mpwr->flags);
+-	} else
+-		clear_bit(MPWR_F_DUMB_POWERUP, mpwr->flags);
+-
+-	return len;
+-}
+-
+-static ssize_t fastboot_powerup_show(struct device *dev,
+-				     struct device_attribute *attr, char *buf)
+-{
+-	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-
+-	return scnprintf(buf, PAGE_SIZE, "%u\n",
+-			 !!test_bit(MPWR_F_FASTBOOT_POWERUP, mpwr->flags));
+-}
+-
+-static ssize_t fastboot_powerup_store(struct device *dev,
+-				      struct device_attribute *attr,
+-				      const char *buf, size_t len)
+-{
+-	struct mpwr_dev *mpwr = platform_get_drvdata(to_platform_device(dev));
+-	bool val;
+-	int ret;
+-
+-	ret = kstrtobool(buf, &val);
+-	if (ret)
+-		return ret;
+-
+-	if (val) {
+-		dev_warn(mpwr->dev, "Fastboot powerup needs a special bootloader!\n");
+-		set_bit(MPWR_F_FASTBOOT_POWERUP, mpwr->flags);
+-	} else
+-		clear_bit(MPWR_F_FASTBOOT_POWERUP, mpwr->flags);
+-
+-	return len;
++	return scnprintf(buf, PAGE_SIZE,
++			"echo N > powered, where N can be:\n"
++			"0: power off\n"
++			"1: normal powerup\n"
++			"2: dumb powerup (no AT commands and little error checking during powerup)\n"
++			"3: fastboot powerup (with biktor's patched aboot - #W_DISABLE held low during powerup)\n"
++			"4: alternate powerup (megi's userspace - DTR held high during powerup)\n\n"
++			"echo N > powered_blocking can be used for the write to block until power status transition completes\n");
+ }
+ 
+ static ssize_t killswitched_show(struct device *dev,
+@@ -1328,26 +1295,24 @@ static ssize_t hard_reset_store(struct device *dev,
+ 	if (ret)
+ 		return ret;
+ 	if (val)
+-		mpwr_request_power_change(mpwr, MPWR_REQ_RESET);
++		mpwr_request_power_change(mpwr, MPWR_REQ_RESET, -1);
+ 
+ 	return len;
+ }
+ 
+ static DEVICE_ATTR_RW(powered);
+ static DEVICE_ATTR_WO(powered_blocking);
+-static DEVICE_ATTR_RW(dumb_powerup);
+-static DEVICE_ATTR_RW(fastboot_powerup);
+ static DEVICE_ATTR_RO(killswitched);
+ static DEVICE_ATTR_RO(is_busy);
++static DEVICE_ATTR_RO(help);
+ static DEVICE_ATTR_WO(hard_reset);
+ 
+ static struct attribute *mpwr_attrs[] = {
+ 	&dev_attr_powered.attr,
+ 	&dev_attr_powered_blocking.attr,
+-	&dev_attr_dumb_powerup.attr,
+-	&dev_attr_fastboot_powerup.attr,
+ 	&dev_attr_killswitched.attr,
+ 	&dev_attr_is_busy.attr,
++	&dev_attr_help.attr,
+ 	&dev_attr_hard_reset.attr,
+ 	NULL,
+ };
+-- 
+2.34.0
+

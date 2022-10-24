@@ -1,0 +1,298 @@
+From 421bf647df01522bfee34c52402c0f4b40161eaa Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Sun, 7 Nov 2021 19:39:20 +0100
+Subject: [PATCH 437/446] arm64: dts: rk3399-pinephone-pro: Full support for
+ Type-C port
+
+Connect various devices to a extcon bridge. Fix some incorrectly
+specified regulators. With this patch, this is now supported:
+
+- PD charger / current limiting
+- Alt-DisplayPort mode
+- OTG - host/peripheral USB
+- B1.2 detection
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ .../dts/rockchip/rk3399-pinephone-pro.dts     | 142 +++++++++++++-----
+ 1 file changed, 103 insertions(+), 39 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3399-pinephone-pro.dts b/arch/arm64/boot/dts/rockchip/rk3399-pinephone-pro.dts
+index 2a398a994..671de7b15 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3399-pinephone-pro.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3399-pinephone-pro.dts
+@@ -12,8 +12,6 @@
+ #include "rk3399.dtsi"
+ #include "rk3399-opp.dtsi"
+ 
+-#define WITHOUT_CDN_DP // TODO: everything works, but it is simpler to test mipi
+-
+ / {
+ 	model = "Pine64 PinePhonePro";
+ 	compatible = "pine64,pinephone-pro", "rockchip,rk3399";
+@@ -50,6 +48,43 @@ button-down {
+ 		};
+ 	};
+ 
++        bat: battery {
++                compatible = "simple-battery";
++                voltage-min-design-microvolt = <3400000>;
++                voltage-max-design-microvolt = <4350000>;
++                energy-full-design-microwatt-hours = <11400000>;
++                charge-full-design-microamp-hours = <3000000>;
++                precharge-current-microamp = <120000>;
++                charge-term-current-microamp = <150000>;
++                constant-charge-current-max-microamp = <1500000>;
++                constant-charge-voltage-max-microvolt = <4350000>;
++                factory-internal-resistance-micro-ohms = <150000>;
++                resistance-temp-table = <20 150>;
++                ocv-capacity-celsius = <20>;
++                ocv-capacity-table-0 =
++			<4308000 100>,
++			<4217000 95>,
++			<4161000 90>,
++			<4110000 85>,
++			<4066000 80>,
++			<4007000 75>,
++			<3974000 70>,
++			<3937000 65>,
++			<3896000 60>,
++			<3853000 55>,
++			<3827000 50>,
++			<3807000 45>,
++			<3793000 40>,
++			<3780000 35>,
++			<3768000 30>,
++			<3756000 25>,
++			<3740000 20>,
++			<3716000 15>,
++			<3689000 10>,
++			<3675000 5>,
++			<3400000 0>;
++        };
++
+ 	cluster1_opp_ppp: opp-table1b {
+ 		compatible = "operating-points-v2";
+ 		opp-shared;
+@@ -168,25 +203,35 @@ vcc5v0_sys: vcc5v0-host-regulator {
+ 		regulator-max-microvolt = <5000000>;
+ 		regulator-always-on;
+ 		regulator-boot-on;
+-		vin-supply = <&vcc_sysin>;
++		vin-supply = <&boost_otg>;
+ 
+ 		regulator-state-mem {
+ 			regulator-on-in-suspend;
+ 		};
+ 	};
+ 
++	/*
++	 * This is not a regulator, but GPIO0_A6 is used to disable
++	 * VCC_SYS -> VBAT+ switch that helps boost that power path's
++	 * current carrying capacity.
++	 *
++	 * GPIO0_A6 high: path is disabled no matter what
++	 * GPIO0_A6 low: path is enabled if there's 5V voltage on
++	 * VBUS_TYPEC
++	 *
++	 * GPIO0_A6 must be high when the phone is providing VBUS_TYPEC
++	 * power.
++	 */
+ 	vcc5v0_typec: vcc5v0-typec-regulator {
+ 		compatible = "regulator-fixed";
+-		//enable-active-high;
++		enable-active-high;
+ 		gpio = <&gpio0 RK_PA6 GPIO_ACTIVE_HIGH>;
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&vcc5v0_typec_en>;
+ 		regulator-min-microvolt = <5000000>;
+ 		regulator-max-microvolt = <5000000>;
+ 		regulator-name = "vcc5v0_typec";
+-		vin-supply = <&vcc5v0_sys>;
+-		regulator-always-on;
+-		regulator-boot-on;
++		vin-supply = <&boost_otg>;
+ 
+ 		regulator-state-mem {
+ 			regulator-on-in-suspend;
+@@ -257,6 +302,14 @@ vcca1v8_s3: vcc1v8-s3 {
+ 		regulator-always-on;
+ 		regulator-boot-on;
+ 	};
++
++	typec_extcon_bridge: typec-extcon {
++		compatible = "linux,typec-extcon-bridge";
++		usb-role-switch;
++		orientation-switch;
++		mode-switch;
++		svid = /bits/ 16 <0xff01>;
++	};
+ };
+ 
+ &cpu_l0 {
+@@ -285,12 +338,11 @@ &cpu_b1 {
+ 	operating-points-v2 = <&cluster1_opp_ppp>;
+ };
+ 
+-#ifndef WITHOUT_CDN_DP
+ &cdn_dp {
+ 	status = "okay";
+-	extcon = <&fusb0>;
++	extcon = <&typec_extcon_bridge>;
++	phys = <&tcphy0_dp>;
+ };
+-#endif
+ 
+ &emmc_phy {
+ 	status = "okay";
+@@ -318,7 +370,6 @@ rk818: pmic@1c {
+ 		pinctrl-0 = <&pmic_int_l>;
+ 		rockchip,system-power-controller;
+ 		wakeup-source;
+-		extcon = <&fusb0>;
+ 
+ 		vcc1-supply = <&vcc_sysin>;
+ 		vcc2-supply = <&vcc_sysin>;
+@@ -328,6 +379,7 @@ rk818: pmic@1c {
+ 		vcc7-supply = <&vcc3v3_sys>;
+ 		vcc8-supply = <&vcc_sysin>;
+ 		vcc9-supply = <&vcc3v3_sys>;
++		usb-supply = <&vcc5v0_typec>;
+ 
+ 		regulators {
+ 			vdd_cpu_l: DCDC_REG1 {
+@@ -497,13 +549,13 @@ regulator-state-mem {
+ 
+ 			otg_switch: OTG_SWITCH {
+ 				regulator-name = "otg_switch";
+-				// TODO: This requires a proper rk818-charger implementation
+-				// without this always-on the type-c is not powered on
+-				//regulator-always-on;
+-				//regulator-boot-on;
+ 			};
+ 		};
+ 
++		/*
++		 * XXX: Backported BSP stuff, drop this. Use standard
++		 * "monitored-battery" property.
++		 */
+ 		battery {
+ 			compatible = "rockchip,rk818-battery";
+ 			ocv_table = <3400 3675 3689 3716 3740 3756 3768 3780
+@@ -528,6 +580,12 @@ battery {
+ 			power_dc2otg = <0>;
+ 			otg5v_suspend_enable = <1>;
+ 		};
++
++		charger {
++			compatible = "rockchip,rk818-charger";
++			power-supplies = <&fusb0>;
++			monitored-battery = <&bat>;
++		};
+ 	};
+ 
+ 	vdd_cpu_b: regulator@40 {
+@@ -699,7 +757,9 @@ fusb0: typec-portc@22 {
+ 		interrupts = <RK_PA2 IRQ_TYPE_LEVEL_LOW>;
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&fusb0_int>;
+-		vbus-supply = <&vcc5v0_typec>;
++		extcon = <&typec_extcon_bridge>;
++		usb-role-switch = <&typec_extcon_bridge>;
++		vbus-supply = <&otg_switch>;
+ 
+ 		connector {
+ 			compatible = "usb-c-connector";
+@@ -707,12 +767,18 @@ connector {
+ 			label = "USB-C";
+ 			op-sink-microwatt = <2500000>;
+ 			power-role = "dual";
+-			sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM)>;
+-			source-pdos = <PDO_FIXED(5000, 900, PDO_FIXED_USB_COMM)>;
++			sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_USB_COMM | PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
++			source-pdos = <PDO_FIXED(5000, 900, PDO_FIXED_USB_COMM | PDO_FIXED_DUAL_ROLE | PDO_FIXED_DATA_SWAP)>;
+ 			try-power-role = "sink";
++			mode-switch = <&typec_extcon_bridge>;
++			orientation-switch = <&typec_extcon_bridge>;
+ 
+-			extcon-cables = <1 2 5 6 9 10 12 44>;
+-			typec-altmodes = <0xff01 1 0x001c0c00 1>;
++			altmodes {
++				dp {
++					svid = <0xff01>;
++					vdo = <0x0c0046>;
++				};
++			};
+ 
+ 			ports {
+ 				#address-cells = <1>;
+@@ -1037,7 +1103,7 @@ &sdhci {
+ };
+ 
+ &tcphy0 {
+-	extcon = <&fusb0>;
++	extcon = <&typec_extcon_bridge>;
+ 	status = "okay";
+ };
+ 
+@@ -1067,15 +1133,7 @@ &tsadc {
+ 
+ &u2phy0 {
+ 	status = "okay";
+-
+-	u2phy0_otg: otg-port {
+-		status = "okay";
+-	};
+-
+-	u2phy0_host: host-port {
+-		status = "okay";
+-		phy-supply = <&vcc5v0_sys>;
+-	};
++	extcon = <&typec_extcon_bridge>;
+ 
+ 	port {
+ 		u2phy0_typec_hs: endpoint {
+@@ -1084,17 +1142,22 @@ u2phy0_typec_hs: endpoint {
+ 	};
+ };
+ 
+-&u2phy1 {
++&u2phy0_otg {
+ 	status = "okay";
++};
+ 
+-	u2phy1_otg: otg-port {
+-		status = "okay";
+-	};
++&u2phy0_host {
++	status = "okay";
++	phy-supply = <&vcc5v0_sys>;
++};
+ 
+-	u2phy1_host: host-port {
+-		status = "okay";
+-		phy-supply = <&vcc5v0_sys>;
+-	};
++&u2phy1 {
++	status = "okay";
++};
++
++&u2phy1_host {
++	status = "okay";
++	phy-supply = <&vcc5v0_sys>;
+ };
+ 
+ &uart0 {
+@@ -1143,7 +1206,8 @@ &usbdrd3_0 {
+ };
+ 
+ &usbdrd_dwc3_0 {
+-	dr_mode = "peripheral";
++	dr_mode = "otg";
++	extcon = <&typec_extcon_bridge>;
+ 	status = "okay";
+ };
+ 
+-- 
+2.31.1
+

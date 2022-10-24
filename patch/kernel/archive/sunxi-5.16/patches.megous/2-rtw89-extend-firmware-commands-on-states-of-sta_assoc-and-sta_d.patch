@@ -1,0 +1,190 @@
+From 9e6d81e7e276e331bdc95dcacc020514a3368429 Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Date: Fri, 7 Jan 2022 11:42:27 +0800
+Subject: [PATCH 537/562] rtw89: extend firmware commands on states of
+ sta_assoc and sta_disconnect
+
+The h2c_join firmware command is used to indicate a station is connected,
+and the assoc_cmac_tbl firmware command is used to set CMAC table
+corresponding to a mac_id. Both commands must work in both station and AP
+modes. Use the mac_id of rtw89_sta naturally and intuitively.
+
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220107034239.22002-8-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.c |  4 +--
+ drivers/net/wireless/realtek/rtw89/fw.c   | 35 +++++++++++++++++------
+ drivers/net/wireless/realtek/rtw89/fw.h   |  5 ++--
+ drivers/net/wireless/realtek/rtw89/mac.c  |  2 +-
+ 4 files changed, 32 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.c b/drivers/net/wireless/realtek/rtw89/core.c
+index 4fcbccfed823..1b7481bebfa9 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.c
++++ b/drivers/net/wireless/realtek/rtw89/core.c
+@@ -1927,7 +1927,7 @@ int rtw89_core_sta_disconnect(struct rtw89_dev *rtwdev,
+ 		return ret;
+ 	}
+ 
+-	ret = rtw89_fw_h2c_join_info(rtwdev, rtwvif, 1);
++	ret = rtw89_fw_h2c_join_info(rtwdev, rtwvif, rtwsta, true);
+ 	if (ret) {
+ 		rtw89_warn(rtwdev, "failed to send h2c join info\n");
+ 		return ret;
+@@ -1959,7 +1959,7 @@ int rtw89_core_sta_assoc(struct rtw89_dev *rtwdev,
+ 		return ret;
+ 	}
+ 
+-	ret = rtw89_fw_h2c_join_info(rtwdev, rtwvif, 0);
++	ret = rtw89_fw_h2c_join_info(rtwdev, rtwvif, rtwsta, false);
+ 	if (ret) {
+ 		rtw89_warn(rtwdev, "failed to send h2c join info\n");
+ 		return ret;
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.c b/drivers/net/wireless/realtek/rtw89/fw.c
+index b3ad4e86d9cc..0235b7f2e425 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.c
++++ b/drivers/net/wireless/realtek/rtw89/fw.c
+@@ -733,12 +733,14 @@ int rtw89_fw_h2c_lps_parm(struct rtw89_dev *rtwdev,
+ }
+ 
+ #define H2C_CMC_TBL_LEN 68
+-int rtw89_fw_h2c_default_cmac_tbl(struct rtw89_dev *rtwdev, u8 macid)
++int rtw89_fw_h2c_default_cmac_tbl(struct rtw89_dev *rtwdev,
++				  struct rtw89_vif *rtwvif)
+ {
+ 	struct rtw89_hal *hal = &rtwdev->hal;
+ 	struct sk_buff *skb;
+ 	u8 ntx_path = hal->antenna_tx ? hal->antenna_tx : RF_B;
+ 	u8 map_b = hal->antenna_tx == RF_AB ? 1 : 0;
++	u8 macid = rtwvif->mac_id;
+ 
+ 	skb = rtw89_fw_h2c_alloc_skb_with_hdr(H2C_CMC_TBL_LEN);
+ 	if (!skb) {
+@@ -760,6 +762,8 @@ int rtw89_fw_h2c_default_cmac_tbl(struct rtw89_dev *rtwdev, u8 macid)
+ 	SET_CMC_TBL_ANTSEL_D(skb->data, 0);
+ 	SET_CMC_TBL_DOPPLER_CTRL(skb->data, 0);
+ 	SET_CMC_TBL_TXPWR_TOLERENCE(skb->data, 0);
++	if (rtwvif->net_type == RTW89_NET_TYPE_AP_MODE)
++		SET_CMC_TBL_DATA_DCM(skb->data, 0);
+ 
+ 	rtw89_h2c_pkt_set_hdr(rtwdev, skb, FWCMD_TYPE_H2C,
+ 			      H2C_CAT_MAC, H2C_CL_MAC_FR_EXCHG,
+@@ -838,13 +842,15 @@ int rtw89_fw_h2c_assoc_cmac_tbl(struct rtw89_dev *rtwdev,
+ 				struct ieee80211_sta *sta)
+ {
+ 	struct rtw89_hal *hal = &rtwdev->hal;
+-	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
++	struct rtw89_sta *rtwsta = sta_to_rtwsta_safe(sta);
+ 	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
+ 	struct sk_buff *skb;
+ 	u8 pads[RTW89_PPE_BW_NUM];
++	u8 mac_id = rtwsta ? rtwsta->mac_id : rtwvif->mac_id;
+ 
+ 	memset(pads, 0, sizeof(pads));
+-	__get_sta_he_pkt_padding(rtwdev, sta, pads);
++	if (sta)
++		__get_sta_he_pkt_padding(rtwdev, sta, pads);
+ 
+ 	skb = rtw89_fw_h2c_alloc_skb_with_hdr(H2C_CMC_TBL_LEN);
+ 	if (!skb) {
+@@ -852,7 +858,7 @@ int rtw89_fw_h2c_assoc_cmac_tbl(struct rtw89_dev *rtwdev,
+ 		return -ENOMEM;
+ 	}
+ 	skb_put(skb, H2C_CMC_TBL_LEN);
+-	SET_CTRL_INFO_MACID(skb->data, rtwsta->mac_id);
++	SET_CTRL_INFO_MACID(skb->data, mac_id);
+ 	SET_CTRL_INFO_OPERATION(skb->data, 1);
+ 	SET_CMC_TBL_DISRTSFB(skb->data, 1);
+ 	SET_CMC_TBL_DISDATAFB(skb->data, 1);
+@@ -870,7 +876,10 @@ int rtw89_fw_h2c_assoc_cmac_tbl(struct rtw89_dev *rtwdev,
+ 	SET_CMC_TBL_NOMINAL_PKT_PADDING(skb->data, pads[RTW89_CHANNEL_WIDTH_20]);
+ 	SET_CMC_TBL_NOMINAL_PKT_PADDING40(skb->data, pads[RTW89_CHANNEL_WIDTH_40]);
+ 	SET_CMC_TBL_NOMINAL_PKT_PADDING80(skb->data, pads[RTW89_CHANNEL_WIDTH_80]);
+-	SET_CMC_TBL_BSR_QUEUE_SIZE_FORMAT(skb->data, sta->he_cap.has_he);
++	if (sta)
++		SET_CMC_TBL_BSR_QUEUE_SIZE_FORMAT(skb->data, sta->he_cap.has_he);
++	if (rtwvif->net_type == RTW89_NET_TYPE_AP_MODE)
++		SET_CMC_TBL_DATA_DCM(skb->data, 0);
+ 
+ 	rtw89_h2c_pkt_set_hdr(rtwdev, skb, FWCMD_TYPE_H2C,
+ 			      H2C_CAT_MAC, H2C_CL_MAC_FR_EXCHG,
+@@ -1018,9 +1027,17 @@ int rtw89_fw_h2c_vif_maintain(struct rtw89_dev *rtwdev,
+ 
+ #define H2C_JOIN_INFO_LEN 4
+ int rtw89_fw_h2c_join_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+-			   u8 dis_conn)
++			   struct rtw89_sta *rtwsta, bool dis_conn)
+ {
+ 	struct sk_buff *skb;
++	u8 mac_id = rtwsta ? rtwsta->mac_id : rtwvif->mac_id;
++	u8 self_role = rtwvif->self_role;
++	u8 net_type = rtwvif->net_type;
++
++	if (net_type == RTW89_NET_TYPE_AP_MODE && rtwsta) {
++		self_role = RTW89_SELF_ROLE_AP_CLIENT;
++		net_type = dis_conn ? RTW89_NET_TYPE_NO_LINK : net_type;
++	}
+ 
+ 	skb = rtw89_fw_h2c_alloc_skb_with_hdr(H2C_JOIN_INFO_LEN);
+ 	if (!skb) {
+@@ -1028,7 +1045,7 @@ int rtw89_fw_h2c_join_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+ 		return -ENOMEM;
+ 	}
+ 	skb_put(skb, H2C_JOIN_INFO_LEN);
+-	SET_JOININFO_MACID(skb->data, rtwvif->mac_id);
++	SET_JOININFO_MACID(skb->data, mac_id);
+ 	SET_JOININFO_OP(skb->data, dis_conn);
+ 	SET_JOININFO_BAND(skb->data, rtwvif->mac_idx);
+ 	SET_JOININFO_WMM(skb->data, rtwvif->wmm);
+@@ -1038,9 +1055,9 @@ int rtw89_fw_h2c_join_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+ 	SET_JOININFO_TF_MAC_PAD(skb->data, 0);
+ 	SET_JOININFO_DL_T_PE(skb->data, 0);
+ 	SET_JOININFO_PORT_ID(skb->data, rtwvif->port);
+-	SET_JOININFO_NET_TYPE(skb->data, rtwvif->net_type);
++	SET_JOININFO_NET_TYPE(skb->data, net_type);
+ 	SET_JOININFO_WIFI_ROLE(skb->data, rtwvif->wifi_role);
+-	SET_JOININFO_SELF_ROLE(skb->data, rtwvif->self_role);
++	SET_JOININFO_SELF_ROLE(skb->data, self_role);
+ 
+ 	rtw89_h2c_pkt_set_hdr(rtwdev, skb, FWCMD_TYPE_H2C,
+ 			      H2C_CAT_MAC, H2C_CL_MAC_MEDIA_RPT,
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.h b/drivers/net/wireless/realtek/rtw89/fw.h
+index c6e83e4e49fa..55f11e7886d5 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.h
++++ b/drivers/net/wireless/realtek/rtw89/fw.h
+@@ -1871,7 +1871,8 @@ int rtw89_wait_firmware_completion(struct rtw89_dev *rtwdev);
+ void rtw89_h2c_pkt_set_hdr(struct rtw89_dev *rtwdev, struct sk_buff *skb,
+ 			   u8 type, u8 cat, u8 class, u8 func,
+ 			   bool rack, bool dack, u32 len);
+-int rtw89_fw_h2c_default_cmac_tbl(struct rtw89_dev *rtwdev, u8 macid);
++int rtw89_fw_h2c_default_cmac_tbl(struct rtw89_dev *rtwdev,
++				  struct rtw89_vif *rtwvif);
+ int rtw89_fw_h2c_assoc_cmac_tbl(struct rtw89_dev *rtwdev,
+ 				struct ieee80211_vif *vif,
+ 				struct ieee80211_sta *sta);
+@@ -1887,7 +1888,7 @@ int rtw89_fw_h2c_vif_maintain(struct rtw89_dev *rtwdev,
+ 			      struct rtw89_vif *rtwvif,
+ 			      enum rtw89_upd_mode upd_mode);
+ int rtw89_fw_h2c_join_info(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+-			   u8 dis_conn);
++			   struct rtw89_sta *rtwsta, bool dis_conn);
+ int rtw89_fw_h2c_macid_pause(struct rtw89_dev *rtwdev, u8 sh, u8 grp,
+ 			     bool pause);
+ int rtw89_fw_h2c_set_edca(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+diff --git a/drivers/net/wireless/realtek/rtw89/mac.c b/drivers/net/wireless/realtek/rtw89/mac.c
+index bbf3ddd45f8c..104219107ce8 100644
+--- a/drivers/net/wireless/realtek/rtw89/mac.c
++++ b/drivers/net/wireless/realtek/rtw89/mac.c
+@@ -3006,7 +3006,7 @@ int rtw89_mac_vif_init(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = rtw89_fw_h2c_default_cmac_tbl(rtwdev, rtwvif->mac_id);
++	ret = rtw89_fw_h2c_default_cmac_tbl(rtwdev, rtwvif);
+ 	if (ret)
+ 		return ret;
+ 
+-- 
+2.34.1
+

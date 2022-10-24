@@ -1,0 +1,719 @@
+From f2bb22753acb6d451d7de23cec55c94bb0dacf1c Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Sat, 28 Sep 2019 15:05:39 +0200
+Subject: [PATCH 167/467] input: cyttsp4: Remove useless indirection with
+ driver/platform data
+
+It is not necessary to have struct cyttsp4_mt_data fields separate
+from struct cyttsp4, as cyttsp4_mt_data was embedded as 'md' field
+anyway.
+
+The same goes for struct cyttsp4_mt_platform_data.
+
+Remove all this indirection.
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/input/touchscreen/cyttsp4_core.c | 233 +++++++++++------------
+ drivers/input/touchscreen/cyttsp4_core.h |  18 +-
+ include/linux/platform_data/cyttsp4.h    |  26 +--
+ 3 files changed, 128 insertions(+), 149 deletions(-)
+
+diff --git a/drivers/input/touchscreen/cyttsp4_core.c b/drivers/input/touchscreen/cyttsp4_core.c
+index a14300494..c47a01362 100644
+--- a/drivers/input/touchscreen/cyttsp4_core.c
++++ b/drivers/input/touchscreen/cyttsp4_core.c
+@@ -133,8 +133,8 @@ static int cyttsp4_hw_soft_reset(struct cyttsp4 *cd)
+ 
+ static int cyttsp4_hw_hard_reset(struct cyttsp4 *cd)
+ {
+-	if (cd->cpdata->xres) {
+-		cd->cpdata->xres(cd->cpdata, cd->dev);
++	if (cd->pdata->xres) {
++		cd->pdata->xres(cd->pdata, cd->dev);
+ 		dev_dbg(cd->dev, "%s: execute HARD reset\n", __func__);
+ 		return 0;
+ 	}
+@@ -559,8 +559,8 @@ static int cyttsp4_si_get_btn_data(struct cyttsp4 *cd)
+ 
+ 		for (btn = 0; btn < si->si_ofs.num_btns; btn++) {
+ 			si->btn[btn].key_code = KEY_RESERVED;
+-			if (btn < cd->cpdata->n_keys)
+-				si->btn[btn].key_code = cd->cpdata->keys[btn].code;
++			if (btn < cd->pdata->n_keys)
++				si->btn[btn].key_code = cd->pdata->keys[btn].code;
+ 			si->btn[btn].state = CY_BTN_RELEASED;
+ 			si->btn[btn].enabled = true;
+ 		}
+@@ -732,41 +732,41 @@ static void cyttsp4_queue_startup_(struct cyttsp4 *cd)
+ 	}
+ }
+ 
+-static void cyttsp4_report_slot_liftoff(struct cyttsp4_mt_data *md,
++static void cyttsp4_report_slot_liftoff(struct cyttsp4 *cd,
+ 		int max_slots)
+ {
+ 	int t;
+ 
+-	if (md->num_prv_tch == 0)
++	if (cd->num_prv_tch == 0)
+ 		return;
+ 
+ 	for (t = 0; t < max_slots; t++) {
+-		input_mt_slot(md->input, t);
+-		input_mt_report_slot_inactive(md->input);
++		input_mt_slot(cd->input, t);
++		input_mt_report_slot_inactive(cd->input);
+ 	}
+ }
+ 
+-static void cyttsp4_lift_all(struct cyttsp4_mt_data *md)
++static void cyttsp4_lift_all(struct cyttsp4 *cd)
+ {
+-	if (!md->si)
++	if (!cd->si)
+ 		return;
+ 
+-	if (md->num_prv_tch != 0) {
+-		cyttsp4_report_slot_liftoff(md,
+-				md->si->si_ofs.tch_abs[CY_TCH_T].max);
+-		input_sync(md->input);
+-		md->num_prv_tch = 0;
++	if (cd->num_prv_tch != 0) {
++		cyttsp4_report_slot_liftoff(cd,
++				cd->si->si_ofs.tch_abs[CY_TCH_T].max);
++		input_sync(cd->input);
++		cd->num_prv_tch = 0;
+ 	}
+ }
+ 
+-static void cyttsp4_get_touch_axis(struct cyttsp4_mt_data *md,
++static void cyttsp4_get_touch_axis(struct cyttsp4 *cd,
+ 	int *axis, int size, int max, u8 *xy_data, int bofs)
+ {
+ 	int nbyte;
+ 	int next;
+ 
+ 	for (nbyte = 0, *axis = 0, next = 0; nbyte < size; nbyte++) {
+-		dev_vdbg(&md->input->dev,
++		dev_vdbg(&cd->input->dev,
+ 			"%s: *axis=%02X(%d) size=%d max=%08X xy_data=%p"
+ 			" xy_data[%d]=%02X(%d) bofs=%d\n",
+ 			__func__, *axis, *axis, size, max, xy_data, next,
+@@ -777,23 +777,23 @@ static void cyttsp4_get_touch_axis(struct cyttsp4_mt_data *md,
+ 
+ 	*axis &= max - 1;
+ 
+-	dev_vdbg(&md->input->dev,
++	dev_vdbg(&cd->input->dev,
+ 		"%s: *axis=%02X(%d) size=%d max=%08X xy_data=%p"
+ 		" xy_data[%d]=%02X(%d)\n",
+ 		__func__, *axis, *axis, size, max, xy_data, next,
+ 		xy_data[next], xy_data[next]);
+ }
+ 
+-static void cyttsp4_get_touch(struct cyttsp4_mt_data *md,
++static void cyttsp4_get_touch(struct cyttsp4 *cd,
+ 	struct cyttsp4_touch *touch, u8 *xy_data)
+ {
+-	struct device *dev = &md->input->dev;
+-	struct cyttsp4_sysinfo *si = md->si;
++	struct device *dev = &cd->input->dev;
++	struct cyttsp4_sysinfo *si = cd->si;
+ 	enum cyttsp4_tch_abs abs;
+ 	bool flipped;
+ 
+ 	for (abs = CY_TCH_X; abs < CY_TCH_NUM_ABS; abs++) {
+-		cyttsp4_get_touch_axis(md, &touch->abs[abs],
++		cyttsp4_get_touch_axis(cd, &touch->abs[abs],
+ 			si->si_ofs.tch_abs[abs].size,
+ 			si->si_ofs.tch_abs[abs].max,
+ 			xy_data + si->si_ofs.tch_abs[abs].ofs,
+@@ -803,33 +803,33 @@ static void cyttsp4_get_touch(struct cyttsp4_mt_data *md,
+ 			touch->abs[abs], touch->abs[abs]);
+ 	}
+ 
+-	if (md->pdata->flags & CY_FLAG_FLIP) {
++	if (cd->pdata->flags & CY_FLAG_FLIP) {
+ 		swap(touch->abs[CY_TCH_X], touch->abs[CY_TCH_Y]);
+ 		flipped = true;
+ 	} else
+ 		flipped = false;
+ 
+-	if (md->pdata->flags & CY_FLAG_INV_X) {
++	if (cd->pdata->flags & CY_FLAG_INV_X) {
+ 		if (flipped)
+-			touch->abs[CY_TCH_X] = md->si->si_ofs.max_y -
++			touch->abs[CY_TCH_X] = cd->si->si_ofs.max_y -
+ 				touch->abs[CY_TCH_X];
+ 		else
+-			touch->abs[CY_TCH_X] = md->si->si_ofs.max_x -
++			touch->abs[CY_TCH_X] = cd->si->si_ofs.max_x -
+ 				touch->abs[CY_TCH_X];
+ 	}
+-	if (md->pdata->flags & CY_FLAG_INV_Y) {
++	if (cd->pdata->flags & CY_FLAG_INV_Y) {
+ 		if (flipped)
+-			touch->abs[CY_TCH_Y] = md->si->si_ofs.max_x -
++			touch->abs[CY_TCH_Y] = cd->si->si_ofs.max_x -
+ 				touch->abs[CY_TCH_Y];
+ 		else
+-			touch->abs[CY_TCH_Y] = md->si->si_ofs.max_y -
++			touch->abs[CY_TCH_Y] = cd->si->si_ofs.max_y -
+ 				touch->abs[CY_TCH_Y];
+ 	}
+ 
+ 	dev_vdbg(dev, "%s: flip=%s inv-x=%s inv-y=%s x=%04X(%d) y=%04X(%d)\n",
+ 		__func__, flipped ? "true" : "false",
+-		md->pdata->flags & CY_FLAG_INV_X ? "true" : "false",
+-		md->pdata->flags & CY_FLAG_INV_Y ? "true" : "false",
++		cd->pdata->flags & CY_FLAG_INV_X ? "true" : "false",
++		cd->pdata->flags & CY_FLAG_INV_Y ? "true" : "false",
+ 		touch->abs[CY_TCH_X], touch->abs[CY_TCH_X],
+ 		touch->abs[CY_TCH_Y], touch->abs[CY_TCH_Y]);
+ }
+@@ -848,10 +848,10 @@ static void cyttsp4_final_sync(struct input_dev *input, int max_slots, int *ids)
+ 	input_sync(input);
+ }
+ 
+-static void cyttsp4_get_mt_touches(struct cyttsp4_mt_data *md, int num_cur_tch)
++static void cyttsp4_get_mt_touches(struct cyttsp4 *cd, int num_cur_tch)
+ {
+-	struct device *dev = &md->input->dev;
+-	struct cyttsp4_sysinfo *si = md->si;
++	struct device *dev = &cd->input->dev;
++	struct cyttsp4_sysinfo *si = cd->si;
+ 	struct cyttsp4_touch tch;
+ 	int sig;
+ 	int i, j, t = 0;
+@@ -859,42 +859,42 @@ static void cyttsp4_get_mt_touches(struct cyttsp4_mt_data *md, int num_cur_tch)
+ 
+ 	memset(ids, 0, si->si_ofs.tch_abs[CY_TCH_T].max * sizeof(int));
+ 	for (i = 0; i < num_cur_tch; i++) {
+-		cyttsp4_get_touch(md, &tch, si->xy_data +
++		cyttsp4_get_touch(cd, &tch, si->xy_data +
+ 			(i * si->si_ofs.tch_rec_size));
+-		if ((tch.abs[CY_TCH_T] < md->pdata->frmwrk->abs
++		if ((tch.abs[CY_TCH_T] < cd->pdata->frmwrk->abs
+ 			[(CY_ABS_ID_OST * CY_NUM_ABS_SET) + CY_MIN_OST]) ||
+-			(tch.abs[CY_TCH_T] > md->pdata->frmwrk->abs
++			(tch.abs[CY_TCH_T] > cd->pdata->frmwrk->abs
+ 			[(CY_ABS_ID_OST * CY_NUM_ABS_SET) + CY_MAX_OST])) {
+ 			dev_err(dev, "%s: tch=%d -> bad trk_id=%d max_id=%d\n",
+ 				__func__, i, tch.abs[CY_TCH_T],
+-				md->pdata->frmwrk->abs[(CY_ABS_ID_OST *
++				cd->pdata->frmwrk->abs[(CY_ABS_ID_OST *
+ 				CY_NUM_ABS_SET) + CY_MAX_OST]);
+ 			continue;
+ 		}
+ 
+ 		/* use 0 based track id's */
+-		sig = md->pdata->frmwrk->abs
++		sig = cd->pdata->frmwrk->abs
+ 			[(CY_ABS_ID_OST * CY_NUM_ABS_SET) + 0];
+ 		if (sig != CY_IGNORE_VALUE) {
+-			t = tch.abs[CY_TCH_T] - md->pdata->frmwrk->abs
++			t = tch.abs[CY_TCH_T] - cd->pdata->frmwrk->abs
+ 				[(CY_ABS_ID_OST * CY_NUM_ABS_SET) + CY_MIN_OST];
+ 			if (tch.abs[CY_TCH_E] == CY_EV_LIFTOFF) {
+ 				dev_dbg(dev, "%s: t=%d e=%d lift-off\n",
+ 					__func__, t, tch.abs[CY_TCH_E]);
+ 				goto cyttsp4_get_mt_touches_pr_tch;
+ 			}
+-			input_mt_slot(md->input, t);
+-			input_mt_report_slot_state(md->input, MT_TOOL_FINGER,
++			input_mt_slot(cd->input, t);
++			input_mt_report_slot_state(cd->input, MT_TOOL_FINGER,
+ 					true);
+ 			ids[t] = true;
+ 		}
+ 
+ 		/* all devices: position and pressure fields */
+ 		for (j = 0; j <= CY_ABS_W_OST; j++) {
+-			sig = md->pdata->frmwrk->abs[((CY_ABS_X_OST + j) *
++			sig = cd->pdata->frmwrk->abs[((CY_ABS_X_OST + j) *
+ 				CY_NUM_ABS_SET) + 0];
+ 			if (sig != CY_IGNORE_VALUE)
+-				input_report_abs(md->input, sig,
++				input_report_abs(cd->input, sig,
+ 					tch.abs[CY_TCH_X + j]);
+ 		}
+ 		if (si->si_ofs.tch_rec_size > CY_TMA1036_TCH_REC_SIZE) {
+@@ -909,11 +909,11 @@ static void cyttsp4_get_mt_touches(struct cyttsp4_mt_data *md, int num_cur_tch)
+ 
+ 			/* Get the extended touch fields */
+ 			for (j = 0; j < CY_NUM_EXT_TCH_FIELDS; j++) {
+-				sig = md->pdata->frmwrk->abs
++				sig = cd->pdata->frmwrk->abs
+ 					[((CY_ABS_MAJ_OST + j) *
+ 					CY_NUM_ABS_SET) + 0];
+ 				if (sig != CY_IGNORE_VALUE)
+-					input_report_abs(md->input, sig,
++					input_report_abs(cd->input, sig,
+ 						tch.abs[CY_TCH_MAJ + j]);
+ 			}
+ 		}
+@@ -940,9 +940,9 @@ static void cyttsp4_get_mt_touches(struct cyttsp4_mt_data *md, int num_cur_tch)
+ 				tch.abs[CY_TCH_E]);
+ 	}
+ 
+-	cyttsp4_final_sync(md->input, si->si_ofs.tch_abs[CY_TCH_T].max, ids);
++	cyttsp4_final_sync(cd->input, si->si_ofs.tch_abs[CY_TCH_T].max, ids);
+ 
+-	md->num_prv_tch = num_cur_tch;
++	cd->num_prv_tch = num_cur_tch;
+ 
+ 	return;
+ }
+@@ -950,9 +950,8 @@ static void cyttsp4_get_mt_touches(struct cyttsp4_mt_data *md, int num_cur_tch)
+ /* read xy_data for all current touches */
+ static int cyttsp4_xy_worker(struct cyttsp4 *cd)
+ {
+-	struct cyttsp4_mt_data *md = &cd->md;
+-	struct device *dev = &md->input->dev;
+-	struct cyttsp4_sysinfo *si = md->si;
++	struct device *dev = &cd->input->dev;
++	struct cyttsp4_sysinfo *si = cd->si;
+ 	u8 num_cur_tch;
+ 	u8 hst_mode;
+ 	u8 rep_len;
+@@ -1024,9 +1023,9 @@ static int cyttsp4_xy_worker(struct cyttsp4 *cd)
+ 	dev_vdbg(dev, "%s: extract data num_cur_tch=%d\n", __func__,
+ 		num_cur_tch);
+ 	if (num_cur_tch)
+-		cyttsp4_get_mt_touches(md, num_cur_tch);
++		cyttsp4_get_mt_touches(cd, num_cur_tch);
+ 	else
+-		cyttsp4_lift_all(md);
++		cyttsp4_lift_all(cd);
+ 
+ 	rc = 0;
+ 
+@@ -1037,21 +1036,20 @@ static int cyttsp4_xy_worker(struct cyttsp4 *cd)
+ static int cyttsp4_mt_attention(struct cyttsp4 *cd)
+ {
+ 	struct device *dev = cd->dev;
+-	struct cyttsp4_mt_data *md = &cd->md;
+ 	int rc = 0;
+ 
+-	if (!md->si)
++	if (!cd->si)
+ 		return 0;
+ 
+-	mutex_lock(&md->report_lock);
+-	if (!md->is_suspended) {
++	mutex_lock(&cd->report_lock);
++	if (!cd->is_suspended) {
+ 		/* core handles handshake */
+ 		rc = cyttsp4_xy_worker(cd);
+ 	} else {
+ 		dev_vdbg(dev, "%s: Ignoring report while suspended\n",
+ 			__func__);
+ 	}
+-	mutex_unlock(&md->report_lock);
++	mutex_unlock(&cd->report_lock);
+ 	if (rc < 0)
+ 		dev_err(dev, "%s: xy_worker error r=%d\n", __func__, rc);
+ 
+@@ -1222,7 +1220,7 @@ static irqreturn_t cyttsp4_irq(int irq, void *handle)
+ 	 * IRQF_TRIGGER_LOW in order to delay until the
+ 	 * device completes isr deassert
+ 	 */
+-	udelay(cd->cpdata->level_irq_udelay);
++	udelay(cd->pdata->level_irq_udelay);
+ 
+ cyttsp4_irq_exit:
+ 	mutex_unlock(&cd->system_lock);
+@@ -1528,9 +1526,9 @@ static int cyttsp4_core_sleep_(struct cyttsp4 *cd)
+ 	}
+ 	dev_vdbg(cd->dev, "%s: write DEEP SLEEP succeeded\n", __func__);
+ 
+-	if (cd->cpdata->power) {
++	if (cd->pdata->power) {
+ 		dev_dbg(cd->dev, "%s: Power down HW\n", __func__);
+-		rc = cd->cpdata->power(cd->cpdata, 0, cd->dev, &cd->ignore_irq);
++		rc = cd->pdata->power(cd->pdata, 0, cd->dev, &cd->ignore_irq);
+ 	} else {
+ 		dev_dbg(cd->dev, "%s: No power function\n", __func__);
+ 		rc = 0;
+@@ -1645,7 +1643,7 @@ static int cyttsp4_startup_(struct cyttsp4 *cd)
+ 		goto exit;
+ 	}
+ 
+-	cyttsp4_lift_all(&cd->md);
++	cyttsp4_lift_all(cd);
+ 
+ 	/* restore to sleep if was suspended */
+ 	mutex_lock(&cd->system_lock);
+@@ -1768,9 +1766,9 @@ static int cyttsp4_core_wake_(struct cyttsp4 *cd)
+ 	cd->int_status |= CY_INT_AWAKE;
+ 	cd->sleep_state = SS_WAKING;
+ 
+-	if (cd->cpdata->power) {
++	if (cd->pdata->power) {
+ 		dev_dbg(dev, "%s: Power up HW\n", __func__);
+-		rc = cd->cpdata->power(cd->cpdata, 1, dev, &cd->ignore_irq);
++		rc = cd->pdata->power(cd->pdata, 1, dev, &cd->ignore_irq);
+ 	} else {
+ 		dev_dbg(dev, "%s: No power function\n", __func__);
+ 		rc = -ENOSYS;
+@@ -1832,10 +1830,9 @@ static int cyttsp4_core_wake(struct cyttsp4 *cd)
+ static int cyttsp4_core_suspend(struct device *dev)
+ {
+ 	struct cyttsp4 *cd = dev_get_drvdata(dev);
+-	struct cyttsp4_mt_data *md = &cd->md;
+ 	int rc;
+ 
+-	md->is_suspended = true;
++	cd->is_suspended = true;
+ 
+ 	rc = cyttsp4_core_sleep(cd);
+ 	if (rc < 0) {
+@@ -1848,10 +1845,9 @@ static int cyttsp4_core_suspend(struct device *dev)
+ static int cyttsp4_core_resume(struct device *dev)
+ {
+ 	struct cyttsp4 *cd = dev_get_drvdata(dev);
+-	struct cyttsp4_mt_data *md = &cd->md;
+ 	int rc;
+ 
+-	md->is_suspended = false;
++	cd->is_suspended = false;
+ 
+ 	rc = cyttsp4_core_wake(cd);
+ 	if (rc < 0) {
+@@ -1877,18 +1873,17 @@ static int cyttsp4_mt_open(struct input_dev *input)
+ 
+ static void cyttsp4_mt_close(struct input_dev *input)
+ {
+-	struct cyttsp4_mt_data *md = input_get_drvdata(input);
+-	mutex_lock(&md->report_lock);
+-	if (!md->is_suspended)
++	struct cyttsp4 *cd = input_get_drvdata(input);
++	mutex_lock(&cd->report_lock);
++	if (!cd->is_suspended)
+ 		pm_runtime_put(input->dev.parent);
+-	mutex_unlock(&md->report_lock);
++	mutex_unlock(&cd->report_lock);
+ }
+ 
+ 
+ static int cyttsp4_setup_input_device(struct cyttsp4 *cd)
+ {
+ 	struct device *dev = cd->dev;
+-	struct cyttsp4_mt_data *md = &cd->md;
+ 	int signal = CY_IGNORE_VALUE;
+ 	int max_x, max_y, max_p, min, max;
+ 	int max_x_tmp, max_y_tmp;
+@@ -1896,32 +1891,32 @@ static int cyttsp4_setup_input_device(struct cyttsp4 *cd)
+ 	int rc;
+ 
+ 	dev_vdbg(dev, "%s: Initialize event signals\n", __func__);
+-	__set_bit(EV_ABS, md->input->evbit);
+-	__set_bit(EV_REL, md->input->evbit);
+-	__set_bit(EV_KEY, md->input->evbit);
++	__set_bit(EV_ABS, cd->input->evbit);
++	__set_bit(EV_REL, cd->input->evbit);
++	__set_bit(EV_KEY, cd->input->evbit);
+ 
+-	max_x_tmp = md->si->si_ofs.max_x;
+-	max_y_tmp = md->si->si_ofs.max_y;
++	max_x_tmp = cd->si->si_ofs.max_x;
++	max_y_tmp = cd->si->si_ofs.max_y;
+ 
+ 	/* get maximum values from the sysinfo data */
+-	if (md->pdata->flags & CY_FLAG_FLIP) {
++	if (cd->pdata->flags & CY_FLAG_FLIP) {
+ 		max_x = max_y_tmp - 1;
+ 		max_y = max_x_tmp - 1;
+ 	} else {
+ 		max_x = max_x_tmp - 1;
+ 		max_y = max_y_tmp - 1;
+ 	}
+-	max_p = md->si->si_ofs.max_p;
++	max_p = cd->si->si_ofs.max_p;
+ 
+ 	/* set event signal capabilities */
+-	for (i = 0; i < (md->pdata->frmwrk->size / CY_NUM_ABS_SET); i++) {
+-		signal = md->pdata->frmwrk->abs
++	for (i = 0; i < (cd->pdata->frmwrk->size / CY_NUM_ABS_SET); i++) {
++		signal = cd->pdata->frmwrk->abs
+ 			[(i * CY_NUM_ABS_SET) + CY_SIGNAL_OST];
+ 		if (signal != CY_IGNORE_VALUE) {
+-			__set_bit(signal, md->input->absbit);
+-			min = md->pdata->frmwrk->abs
++			__set_bit(signal, cd->input->absbit);
++			min = cd->pdata->frmwrk->abs
+ 				[(i * CY_NUM_ABS_SET) + CY_MIN_OST];
+-			max = md->pdata->frmwrk->abs
++			max = cd->pdata->frmwrk->abs
+ 				[(i * CY_NUM_ABS_SET) + CY_MAX_OST];
+ 			if (i == CY_ABS_ID_OST) {
+ 				/* shift track ids down to start at 0 */
+@@ -1933,23 +1928,23 @@ static int cyttsp4_setup_input_device(struct cyttsp4 *cd)
+ 				max = max_y;
+ 			else if (i == CY_ABS_P_OST)
+ 				max = max_p;
+-			input_set_abs_params(md->input, signal, min, max,
+-				md->pdata->frmwrk->abs
++			input_set_abs_params(cd->input, signal, min, max,
++				cd->pdata->frmwrk->abs
+ 				[(i * CY_NUM_ABS_SET) + CY_FUZZ_OST],
+-				md->pdata->frmwrk->abs
++				cd->pdata->frmwrk->abs
+ 				[(i * CY_NUM_ABS_SET) + CY_FLAT_OST]);
+ 			dev_dbg(dev, "%s: register signal=%02X min=%d max=%d\n",
+ 				__func__, signal, min, max);
+ 			if ((i == CY_ABS_ID_OST) &&
+-				(md->si->si_ofs.tch_rec_size <
++				(cd->si->si_ofs.tch_rec_size <
+ 				CY_TMA4XX_TCH_REC_SIZE))
+ 				break;
+ 		}
+ 	}
+ 
+-	input_mt_init_slots(md->input, md->si->si_ofs.tch_abs[CY_TCH_T].max,
++	input_mt_init_slots(cd->input, cd->si->si_ofs.tch_abs[CY_TCH_T].max,
+ 			INPUT_MT_DIRECT);
+-	rc = input_register_device(md->input);
++	rc = input_register_device(cd->input);
+ 	if (rc < 0)
+ 		dev_err(dev, "%s: Error, failed register input device r=%d\n",
+ 			__func__, rc);
+@@ -1959,34 +1954,31 @@ static int cyttsp4_setup_input_device(struct cyttsp4 *cd)
+ static int cyttsp4_mt_probe(struct cyttsp4 *cd)
+ {
+ 	struct device *dev = cd->dev;
+-	struct cyttsp4_mt_data *md = &cd->md;
+-	struct cyttsp4_mt_platform_data *pdata = cd->pdata->mt_pdata;
+ 	int rc = 0;
+ 
+-	mutex_init(&md->report_lock);
+-	md->pdata = pdata;
++	mutex_init(&cd->report_lock);
+ 	/* Create the input device and register it. */
+ 	dev_vdbg(dev, "%s: Create the input device and register it\n",
+ 		__func__);
+-	md->input = input_allocate_device();
+-	if (md->input == NULL) {
++	cd->input = input_allocate_device();
++	if (cd->input == NULL) {
+ 		dev_err(dev, "%s: Error, failed to allocate input device\n",
+ 			__func__);
+ 		rc = -ENOSYS;
+ 		goto error_alloc_failed;
+ 	}
+ 
+-	md->input->name = pdata->inp_dev_name;
+-	scnprintf(md->phys, sizeof(md->phys)-1, "%s", dev_name(dev));
+-	md->input->phys = md->phys;
+-	md->input->id.bustype = cd->bus_ops->bustype;
+-	md->input->dev.parent = dev;
+-	md->input->open = cyttsp4_mt_open;
+-	md->input->close = cyttsp4_mt_close;
+-	input_set_drvdata(md->input, md);
++	cd->input->name = cd->pdata->inp_dev_name;
++	scnprintf(cd->phys, sizeof(cd->phys)-1, "%s", dev_name(dev));
++	cd->input->phys = cd->phys;
++	cd->input->id.bustype = cd->bus_ops->bustype;
++	cd->input->dev.parent = dev;
++	cd->input->open = cyttsp4_mt_open;
++	cd->input->close = cyttsp4_mt_close;
++	input_set_drvdata(cd->input, cd);
+ 
+ 	/* get sysinfo */
+-	md->si = &cd->sysinfo;
++	cd->si = &cd->sysinfo;
+ 
+ 	rc = cyttsp4_setup_input_device(cd);
+ 	if (rc)
+@@ -1995,7 +1987,7 @@ static int cyttsp4_mt_probe(struct cyttsp4 *cd)
+ 	return 0;
+ 
+ error_init_input:
+-	input_free_device(md->input);
++	input_free_device(cd->input);
+ error_alloc_failed:
+ 	dev_err(dev, "%s failed.\n", __func__);
+ 	return rc;
+@@ -2009,7 +2001,7 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 	unsigned long irq_flags;
+ 	int rc = 0;
+ 
+-	if (!pdata || !pdata->core_pdata || !pdata->mt_pdata) {
++	if (!pdata) {
+ 		dev_err(dev, "%s: Missing platform data\n", __func__);
+ 		rc = -ENODEV;
+ 		goto error_no_pdata;
+@@ -2032,7 +2024,6 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 	/* Initialize device info */
+ 	cd->dev = dev;
+ 	cd->pdata = pdata;
+-	cd->cpdata = pdata->core_pdata;
+ 	cd->bus_ops = ops;
+ 
+ 	/* Initialize mutexes and spinlocks */
+@@ -2047,7 +2038,7 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 	INIT_WORK(&cd->watchdog_work, cyttsp4_watchdog_work);
+ 
+ 	/* Initialize IRQ */
+-	cd->irq = gpio_to_irq(cd->cpdata->irq_gpio);
++	cd->irq = gpio_to_irq(cd->pdata->irq_gpio);
+ 	if (cd->irq < 0) {
+ 		rc = -EINVAL;
+ 		goto error_free_xfer;
+@@ -2056,9 +2047,9 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 	dev_set_drvdata(dev, cd);
+ 
+ 	/* Call platform init function */
+-	if (cd->cpdata->init) {
++	if (cd->pdata->init) {
+ 		dev_dbg(cd->dev, "%s: Init HW\n", __func__);
+-		rc = cd->cpdata->init(cd->cpdata, 1, cd->dev);
++		rc = cd->pdata->init(cd->pdata, 1, cd->dev);
+ 	} else {
+ 		dev_dbg(cd->dev, "%s: No HW INIT function\n", __func__);
+ 		rc = 0;
+@@ -2067,7 +2058,7 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 		dev_err(cd->dev, "%s: HW Init fail r=%d\n", __func__, rc);
+ 
+ 	dev_dbg(dev, "%s: initialize threaded irq=%d\n", __func__, cd->irq);
+-	if (cd->cpdata->level_irq_udelay > 0)
++	if (cd->pdata->level_irq_udelay > 0)
+ 		/* use level triggered interrupts */
+ 		irq_flags = IRQF_TRIGGER_LOW | IRQF_ONESHOT;
+ 	else
+@@ -2114,8 +2105,8 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ 	cyttsp4_free_si_ptrs(cd);
+ 	free_irq(cd->irq, cd);
+ error_request_irq:
+-	if (cd->cpdata->init)
+-		cd->cpdata->init(cd->cpdata, 0, dev);
++	if (cd->pdata->init)
++		cd->pdata->init(cd->pdata, 0, dev);
+ error_free_xfer:
+ 	kfree(cd->xfer_buf);
+ error_free_cd:
+@@ -2127,17 +2118,17 @@ struct cyttsp4 *cyttsp4_probe(const struct cyttsp4_bus_ops *ops,
+ }
+ EXPORT_SYMBOL_GPL(cyttsp4_probe);
+ 
+-static void cyttsp4_mt_release(struct cyttsp4_mt_data *md)
++static void cyttsp4_mt_release(struct cyttsp4 *cd)
+ {
+-	input_unregister_device(md->input);
+-	input_set_drvdata(md->input, NULL);
++	input_unregister_device(cd->input);
++	input_set_drvdata(cd->input, NULL);
+ }
+ 
+ int cyttsp4_remove(struct cyttsp4 *cd)
+ {
+ 	struct device *dev = cd->dev;
+ 
+-	cyttsp4_mt_release(&cd->md);
++	cyttsp4_mt_release(cd);
+ 
+ 	/*
+ 	 * Suspend the device before freeing the startup_work and stopping
+@@ -2151,8 +2142,8 @@ int cyttsp4_remove(struct cyttsp4 *cd)
+ 	cyttsp4_stop_wd_timer(cd);
+ 
+ 	free_irq(cd->irq, cd);
+-	if (cd->cpdata->init)
+-		cd->cpdata->init(cd->cpdata, 0, dev);
++	if (cd->pdata->init)
++		cd->pdata->init(cd->pdata, 0, dev);
+ 	cyttsp4_free_si_ptrs(cd);
+ 	kfree(cd);
+ 	return 0;
+diff --git a/drivers/input/touchscreen/cyttsp4_core.h b/drivers/input/touchscreen/cyttsp4_core.h
+index 6262f6e45..05fb30058 100644
+--- a/drivers/input/touchscreen/cyttsp4_core.h
++++ b/drivers/input/touchscreen/cyttsp4_core.h
+@@ -305,16 +305,6 @@ struct cyttsp4_sysinfo {
+ 	u8 *xy_data;			/* operational touch regs */
+ };
+ 
+-struct cyttsp4_mt_data {
+-	struct cyttsp4_mt_platform_data *pdata;
+-	struct cyttsp4_sysinfo *si;
+-	struct input_dev *input;
+-	struct mutex report_lock;
+-	bool is_suspended;
+-	char phys[NAME_MAX];
+-	int num_prv_tch;
+-};
+-
+ struct cyttsp4 {
+ 	struct device *dev;
+ 	struct mutex system_lock;
+@@ -333,9 +323,13 @@ struct cyttsp4 {
+ 	int exclusive_waits;
+ 	atomic_t ignore_irq;
+ 	bool invalid_touch_app;
+-	struct cyttsp4_mt_data md;
++	struct cyttsp4_sysinfo *si;
++	struct input_dev *input;
++	struct mutex report_lock;
++	bool is_suspended;
++	char phys[NAME_MAX];
++	int num_prv_tch;
+ 	struct cyttsp4_platform_data *pdata;
+-	struct cyttsp4_core_platform_data *cpdata;
+ 	const struct cyttsp4_bus_ops *bus_ops;
+ 	u8 *xfer_buf;
+ #ifdef VERBOSE_DEBUG
+diff --git a/include/linux/platform_data/cyttsp4.h b/include/linux/platform_data/cyttsp4.h
+index c54160c17..1f945aa24 100644
+--- a/include/linux/platform_data/cyttsp4.h
++++ b/include/linux/platform_data/cyttsp4.h
+@@ -27,36 +27,30 @@ struct touch_framework {
+ 	uint8_t         enable_vkeys;
+ } __packed;
+ 
+-struct cyttsp4_mt_platform_data {
+-	struct touch_framework *frmwrk;
+-	unsigned short flags;
+-	char const *inp_dev_name;
+-};
+-
+ struct cyttsp4_virtual_key {
+ 	int code;
+ };
+ 
+-struct cyttsp4_core_platform_data {
++struct cyttsp4_platform_data {
++	char const *inp_dev_name;
++	unsigned short flags;
++
+ 	int irq_gpio;
+ 	int rst_gpio;
+ 	int level_irq_udelay;
+-	int (*xres)(struct cyttsp4_core_platform_data *pdata,
++	int (*xres)(struct cyttsp4_platform_data *pdata,
+ 		struct device *dev);
+-	int (*init)(struct cyttsp4_core_platform_data *pdata,
++	int (*init)(struct cyttsp4_platform_data *pdata,
+ 		int on, struct device *dev);
+-	int (*power)(struct cyttsp4_core_platform_data *pdata,
++	int (*power)(struct cyttsp4_platform_data *pdata,
+ 		int on, struct device *dev, atomic_t *ignore_irq);
+-	int (*irq_stat)(struct cyttsp4_core_platform_data *pdata,
++	int (*irq_stat)(struct cyttsp4_platform_data *pdata,
+ 		struct device *dev);
+ 
++	struct touch_framework *frmwrk;
++
+ 	int n_keys;
+ 	struct cyttsp4_virtual_key* keys;
+ };
+ 
+-struct cyttsp4_platform_data {
+-	struct cyttsp4_core_platform_data *core_pdata;
+-	struct cyttsp4_mt_platform_data *mt_pdata;
+-};
+-
+ #endif /* _CYTTSP4_H_ */
+-- 
+2.34.0
+

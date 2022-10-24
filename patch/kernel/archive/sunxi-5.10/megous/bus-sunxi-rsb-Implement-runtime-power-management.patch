@@ -1,0 +1,127 @@
+From 08e6b515fbf659afaa4ee8c2171e596aae0748de Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Wed, 1 Jan 2020 00:10:40 -0600
+Subject: [PATCH 156/351] bus: sunxi-rsb: Implement runtime power management
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/bus/sunxi-rsb.c | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/drivers/bus/sunxi-rsb.c b/drivers/bus/sunxi-rsb.c
+index 19b8ee47a47a..cbfbee32e15e 100644
+--- a/drivers/bus/sunxi-rsb.c
++++ b/drivers/bus/sunxi-rsb.c
+@@ -46,6 +46,7 @@
+ #include <linux/of_platform.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm.h>
++#include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
+ #include <linux/slab.h>
+@@ -334,6 +335,7 @@ static int regmap_sunxi_rsb_reg_read(void *context, unsigned int reg,
+ 	if (reg > 0xff)
+ 		return -EINVAL;
+ 
++	pm_runtime_get_sync(rsb->dev);
+ 	mutex_lock(&rsb->lock);
+ 
+ 	writel(reg, rsb->regs + RSB_ADDR);
+@@ -348,6 +350,8 @@ static int regmap_sunxi_rsb_reg_read(void *context, unsigned int reg,
+ 
+ unlock:
+ 	mutex_unlock(&rsb->lock);
++	pm_runtime_mark_last_busy(rsb->dev);
++	pm_runtime_put_autosuspend(rsb->dev);
+ 
+ 	return ret;
+ }
+@@ -363,6 +367,7 @@ static int regmap_sunxi_rsb_reg_write(void *context, unsigned int reg,
+ 	if (reg > 0xff)
+ 		return -EINVAL;
+ 
++	pm_runtime_get_sync(rsb->dev);
+ 	mutex_lock(&rsb->lock);
+ 
+ 	writel(reg, rsb->regs + RSB_ADDR);
+@@ -373,6 +378,8 @@ static int regmap_sunxi_rsb_reg_write(void *context, unsigned int reg,
+ 	ret = _sunxi_rsb_run_xfer(rsb);
+ 
+ 	mutex_unlock(&rsb->lock);
++	pm_runtime_mark_last_busy(rsb->dev);
++	pm_runtime_put_autosuspend(rsb->dev);
+ 
+ 	return ret;
+ }
+@@ -649,10 +656,30 @@ static int sunxi_rsb_exit_controller(struct sunxi_rsb *rsb)
+ 	return 0;
+ }
+ 
++static int __maybe_unused sunxi_rsb_runtime_suspend(struct device *dev)
++{
++	struct sunxi_rsb *rsb = dev_get_drvdata(dev);
++
++	clk_disable_unprepare(rsb->clk);
++
++	return 0;
++}
++
++static int __maybe_unused sunxi_rsb_runtime_resume(struct device *dev)
++{
++	struct sunxi_rsb *rsb = dev_get_drvdata(dev);
++
++	return clk_prepare_enable(rsb->clk);
++}
++
+ static int __maybe_unused sunxi_rsb_suspend(struct device *dev)
+ {
+ 	struct sunxi_rsb *rsb = dev_get_drvdata(dev);
+ 
++	/* Ensure the clock is running before asserting reset. */
++	if (pm_runtime_status_suspended(dev))
++		pm_runtime_resume(dev);
++
+ 	return sunxi_rsb_exit_controller(rsb);
+ }
+ 
+@@ -664,6 +691,8 @@ static int __maybe_unused sunxi_rsb_resume(struct device *dev)
+ }
+ 
+ static const struct dev_pm_ops sunxi_rsb_dev_pm_ops = {
++	SET_RUNTIME_PM_OPS(sunxi_rsb_runtime_suspend,
++			   sunxi_rsb_runtime_resume, NULL)
+ 	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(sunxi_rsb_suspend, sunxi_rsb_resume)
+ };
+ 
+@@ -734,6 +763,12 @@ static int sunxi_rsb_probe(struct platform_device *pdev)
+ 
+ 	of_rsb_register_devices(rsb);
+ 
++	pm_suspend_ignore_children(dev, true);
++	pm_runtime_set_autosuspend_delay(dev, 1000);
++	pm_runtime_use_autosuspend(dev);
++	pm_runtime_set_active(dev);
++	pm_runtime_enable(dev);
++
+ 	return 0;
+ }
+ 
+@@ -741,9 +776,14 @@ static int sunxi_rsb_remove(struct platform_device *pdev)
+ {
+ 	struct sunxi_rsb *rsb = platform_get_drvdata(pdev);
+ 
++	pm_runtime_get_sync(&pdev->dev);
++
+ 	device_for_each_child(rsb->dev, NULL, sunxi_rsb_remove_devices);
+ 	sunxi_rsb_exit_controller(rsb);
+ 
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_put_noidle(&pdev->dev);
++
+ 	return 0;
+ }
+ 
+-- 
+2.34.0
+

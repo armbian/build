@@ -1,0 +1,83 @@
+From 140193dc7b81be0b2cb54fb11f75056c18a5f9f8 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 27 Jun 2022 18:01:12 +0200
+Subject: [PATCH 545/548] usb: dwc3: Save desired_dr_role on stack during
+ set_mode processing
+
+While __dwc3_set_mode runs, the new call may come to dwc3_set_mode()
+which would change desired_dr_role at inappropriate time and
+potentially confuse the driver.
+
+Solve this by storing the copy of the desired_dr_role on stack.
+If the new call to dwc3_set_mode happens before __dwc3_set_mode
+is finished, the new mode will be correctly applied afterwards.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/dwc3/core.c | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index d881edddbc97..821887b97b7a 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -120,7 +120,15 @@ static void __dwc3_set_mode(struct work_struct *work)
+ 	struct dwc3 *dwc = work_to_dwc(work);
+ 	unsigned long flags;
+ 	int ret;
+-	u32 reg;
++	u32 reg, desired_dr_role;
++
++	/*
++	 * Copy desired_dr_role because it can be changed again by
++	 * dwc3_set_mode while this function is running.
++	 */
++	spin_lock_irqsave(&dwc->lock, flags);
++	desired_dr_role = dwc->desired_dr_role;
++	spin_unlock_irqrestore(&dwc->lock, flags);
+ 
+ 	mutex_lock(&dwc->mutex);
+ 
+@@ -129,13 +137,13 @@ static void __dwc3_set_mode(struct work_struct *work)
+ 	if (dwc->current_dr_role == DWC3_GCTL_PRTCAP_OTG)
+ 		dwc3_otg_update(dwc, 0);
+ 
+-	if (!dwc->desired_dr_role)
++	if (!desired_dr_role)
+ 		goto out;
+ 
+-	if (dwc->desired_dr_role == dwc->current_dr_role)
++	if (desired_dr_role == dwc->current_dr_role)
+ 		goto out;
+ 
+-	if (dwc->desired_dr_role == DWC3_GCTL_PRTCAP_OTG && dwc->edev)
++	if (desired_dr_role == DWC3_GCTL_PRTCAP_OTG && dwc->edev)
+ 		goto out;
+ 
+ 	switch (dwc->current_dr_role) {
+@@ -158,7 +166,7 @@ static void __dwc3_set_mode(struct work_struct *work)
+ 	}
+ 
+ 	/* For DRD host or device mode only */
+-	if (dwc->desired_dr_role != DWC3_GCTL_PRTCAP_OTG) {
++	if (desired_dr_role != DWC3_GCTL_PRTCAP_OTG) {
+ 		reg = dwc3_readl(dwc->regs, DWC3_GCTL);
+ 		reg |= DWC3_GCTL_CORESOFTRESET;
+ 		dwc3_writel(dwc->regs, DWC3_GCTL, reg);
+@@ -178,11 +186,11 @@ static void __dwc3_set_mode(struct work_struct *work)
+ 
+ 	spin_lock_irqsave(&dwc->lock, flags);
+ 
+-	dwc3_set_prtcap(dwc, dwc->desired_dr_role);
++	dwc3_set_prtcap(dwc, desired_dr_role);
+ 
+ 	spin_unlock_irqrestore(&dwc->lock, flags);
+ 
+-	switch (dwc->desired_dr_role) {
++	switch (desired_dr_role) {
+ 	case DWC3_GCTL_PRTCAP_HOST:
+ 		ret = dwc3_host_init(dwc);
+ 		if (ret) {
+-- 
+2.35.3
+

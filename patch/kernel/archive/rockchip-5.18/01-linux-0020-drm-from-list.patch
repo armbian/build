@@ -1,0 +1,364 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 22:30:13 +0000
+Subject: [PATCH] drm: drm_fourcc: add NV20 and NV30 YUV formats
+
+DRM_FORMAT_NV20 and DRM_FORMAT_NV30 formats is the 2x1 and non-subsampled
+variant of NV15, a 10-bit 2-plane YUV format that has no padding between
+components. Instead, luminance and chrominance samples are grouped into 4s
+so that each group is packed into an integer number of bytes:
+
+YYYY = UVUV = 4 * 10 bits = 40 bits = 5 bytes
+
+The '20' and '30' suffix refers to the optimum effective bits per pixel
+which is achieved when the total number of luminance samples is a multiple
+of 4.
+
+V2: Added NV30 format
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+Reviewed-by: Sandy Huang <hjc@rock-chips.com>
+---
+ drivers/gpu/drm/drm_fourcc.c  | 8 ++++++++
+ include/uapi/drm/drm_fourcc.h | 2 ++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/drivers/gpu/drm/drm_fourcc.c b/drivers/gpu/drm/drm_fourcc.c
+index 25837b1d6639..f11080d63331 100644
+--- a/drivers/gpu/drm/drm_fourcc.c
++++ b/drivers/gpu/drm/drm_fourcc.c
+@@ -261,6 +261,14 @@ const struct drm_format_info *__drm_format_info(u32 format)
+ 		  .num_planes = 2, .char_per_block = { 5, 5, 0 },
+ 		  .block_w = { 4, 2, 0 }, .block_h = { 1, 1, 0 }, .hsub = 2,
+ 		  .vsub = 2, .is_yuv = true },
++		{ .format = DRM_FORMAT_NV20,		.depth = 0,
++		  .num_planes = 2, .char_per_block = { 5, 5, 0 },
++		  .block_w = { 4, 2, 0 }, .block_h = { 1, 1, 0 }, .hsub = 2,
++		  .vsub = 1, .is_yuv = true },
++		{ .format = DRM_FORMAT_NV30,		.depth = 0,
++		  .num_planes = 2, .char_per_block = { 5, 5, 0 },
++		  .block_w = { 4, 2, 0 }, .block_h = { 1, 1, 0 }, .hsub = 1,
++		  .vsub = 1, .is_yuv = true },
+ 		{ .format = DRM_FORMAT_Q410,		.depth = 0,
+ 		  .num_planes = 3, .char_per_block = { 2, 2, 2 },
+ 		  .block_w = { 1, 1, 1 }, .block_h = { 1, 1, 1 }, .hsub = 0,
+diff --git a/include/uapi/drm/drm_fourcc.h b/include/uapi/drm/drm_fourcc.h
+index 7f652c96845b..37824734633c 100644
+--- a/include/uapi/drm/drm_fourcc.h
++++ b/include/uapi/drm/drm_fourcc.h
+@@ -285,6 +285,8 @@ extern "C" {
+  * index 1 = Cr:Cb plane, [39:0] Cr1:Cb1:Cr0:Cb0 little endian
+  */
+ #define DRM_FORMAT_NV15		fourcc_code('N', 'V', '1', '5') /* 2x2 subsampled Cr:Cb plane */
++#define DRM_FORMAT_NV20		fourcc_code('N', 'V', '2', '0') /* 2x1 subsampled Cr:Cb plane */
++#define DRM_FORMAT_NV30		fourcc_code('N', 'V', '3', '0') /* non-subsampled Cr:Cb plane */
+ 
+ /*
+  * 2 plane YCbCr MSB aligned
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Mon, 6 Jul 2020 22:30:13 +0000
+Subject: [PATCH] drm: rockchip: add NV15, NV20 and NV30 support
+
+Add support for displaying 10-bit 4:2:0 and 4:2:2 formats produced by the
+Rockchip Video Decoder on RK322X, RK3288, RK3328, RK3368 and RK3399.
+Also add support for 10-bit 4:4:4 format while at it.
+
+V2: Added NV30 support
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+Reviewed-by: Sandy Huang <hjc@rock-chips.com>
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 29 +++++++++++++++++--
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.h |  1 +
+ drivers/gpu/drm/rockchip/rockchip_vop_reg.c | 32 +++++++++++++++++----
+ 3 files changed, 54 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+index a25b98b7f5bd..91ded8a096ba 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -262,6 +262,18 @@ static bool has_rb_swapped(uint32_t format)
+ 	}
+ }
+ 
++static bool is_fmt_10(uint32_t format)
++{
++	switch (format) {
++	case DRM_FORMAT_NV15:
++	case DRM_FORMAT_NV20:
++	case DRM_FORMAT_NV30:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ static enum vop_data_format vop_convert_format(uint32_t format)
+ {
+ 	switch (format) {
+@@ -277,10 +289,13 @@ static enum vop_data_format vop_convert_format(uint32_t format)
+ 	case DRM_FORMAT_BGR565:
+ 		return VOP_FMT_RGB565;
+ 	case DRM_FORMAT_NV12:
++	case DRM_FORMAT_NV15:
+ 		return VOP_FMT_YUV420SP;
+ 	case DRM_FORMAT_NV16:
++	case DRM_FORMAT_NV20:
+ 		return VOP_FMT_YUV422SP;
+ 	case DRM_FORMAT_NV24:
++	case DRM_FORMAT_NV30:
+ 		return VOP_FMT_YUV444SP;
+ 	default:
+ 		DRM_ERROR("unsupported format[%08x]\n", format);
+@@ -931,7 +946,12 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 	dsp_sty = dest->y1 + crtc->mode.vtotal - crtc->mode.vsync_start;
+ 	dsp_st = dsp_sty << 16 | (dsp_stx & 0xffff);
+ 
+-	offset = (src->x1 >> 16) * fb->format->cpp[0];
++	if (fb->format->block_w[0])
++		offset = (src->x1 >> 16) * fb->format->char_per_block[0] /
++			 fb->format->block_w[0];
++	else
++		offset = (src->x1 >> 16) * fb->format->cpp[0];
++
+ 	offset += (src->y1 >> 16) * fb->pitches[0];
+ 	dma_addr = rk_obj->dma_addr + offset + fb->offsets[0];
+ 
+@@ -957,6 +977,7 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 	}
+ 
+ 	VOP_WIN_SET(vop, win, format, format);
++	VOP_WIN_SET(vop, win, fmt_10, is_fmt_10(fb->format->format));
+ 	VOP_WIN_SET(vop, win, yrgb_vir, DIV_ROUND_UP(fb->pitches[0], 4));
+ 	VOP_WIN_SET(vop, win, yrgb_mst, dma_addr);
+ 	VOP_WIN_YUV2YUV_SET(vop, win_yuv2yuv, y2r_en, is_yuv);
+@@ -973,7 +994,11 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 		uv_obj = fb->obj[1];
+ 		rk_uv_obj = to_rockchip_obj(uv_obj);
+ 
+-		offset = (src->x1 >> 16) * bpp / hsub;
++		if (fb->format->block_w[1])
++			offset = (src->x1 >> 16) * bpp /
++				 fb->format->block_w[1] / hsub;
++		else
++			offset = (src->x1 >> 16) * bpp / hsub;
+ 		offset += (src->y1 >> 16) * fb->pitches[1] / vsub;
+ 
+ 		dma_addr = rk_uv_obj->dma_addr + offset + fb->offsets[1];
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+index 857d97cdc67c..b7169010622a 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+@@ -165,6 +165,7 @@ struct vop_win_phy {
+ 	struct vop_reg enable;
+ 	struct vop_reg gate;
+ 	struct vop_reg format;
++	struct vop_reg fmt_10;
+ 	struct vop_reg rb_swap;
+ 	struct vop_reg act_info;
+ 	struct vop_reg dsp_info;
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+index 1f7353f0684a..474cc8807ac9 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -50,6 +50,23 @@ static const uint32_t formats_win_full[] = {
+ 	DRM_FORMAT_NV24,
+ };
+ 
++static const uint32_t formats_win_full_10[] = {
++	DRM_FORMAT_XRGB8888,
++	DRM_FORMAT_ARGB8888,
++	DRM_FORMAT_XBGR8888,
++	DRM_FORMAT_ABGR8888,
++	DRM_FORMAT_RGB888,
++	DRM_FORMAT_BGR888,
++	DRM_FORMAT_RGB565,
++	DRM_FORMAT_BGR565,
++	DRM_FORMAT_NV12,
++	DRM_FORMAT_NV16,
++	DRM_FORMAT_NV24,
++	DRM_FORMAT_NV15,
++	DRM_FORMAT_NV20,
++	DRM_FORMAT_NV30,
++};
++
+ static const uint64_t format_modifiers_win_full[] = {
+ 	DRM_FORMAT_MOD_LINEAR,
+ 	DRM_FORMAT_MOD_INVALID,
+@@ -613,11 +630,12 @@ static const struct vop_scl_regs rk3288_win_full_scl = {
+ 
+ static const struct vop_win_phy rk3288_win01_data = {
+ 	.scl = &rk3288_win_full_scl,
+-	.data_formats = formats_win_full,
+-	.nformats = ARRAY_SIZE(formats_win_full),
++	.data_formats = formats_win_full_10,
++	.nformats = ARRAY_SIZE(formats_win_full_10),
+ 	.format_modifiers = format_modifiers_win_full,
+ 	.enable = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 0),
+ 	.format = VOP_REG(RK3288_WIN0_CTRL0, 0x7, 1),
++	.fmt_10 = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 4),
+ 	.rb_swap = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 12),
+ 	.act_info = VOP_REG(RK3288_WIN0_ACT_INFO, 0x1fff1fff, 0),
+ 	.dsp_info = VOP_REG(RK3288_WIN0_DSP_INFO, 0x0fff0fff, 0),
+@@ -747,11 +765,12 @@ static const struct vop_intr rk3368_vop_intr = {
+ 
+ static const struct vop_win_phy rk3368_win01_data = {
+ 	.scl = &rk3288_win_full_scl,
+-	.data_formats = formats_win_full,
+-	.nformats = ARRAY_SIZE(formats_win_full),
++	.data_formats = formats_win_full_10,
++	.nformats = ARRAY_SIZE(formats_win_full_10),
+ 	.format_modifiers = format_modifiers_win_full,
+ 	.enable = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 0),
+ 	.format = VOP_REG(RK3368_WIN0_CTRL0, 0x7, 1),
++	.fmt_10 = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 4),
+ 	.rb_swap = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 12),
+ 	.x_mir_en = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 21),
+ 	.y_mir_en = VOP_REG(RK3368_WIN0_CTRL0, 0x1, 22),
+@@ -896,11 +915,12 @@ static const struct vop_win_yuv2yuv_data rk3399_vop_big_win_yuv2yuv_data[] = {
+ 
+ static const struct vop_win_phy rk3399_win01_data = {
+ 	.scl = &rk3288_win_full_scl,
+-	.data_formats = formats_win_full,
+-	.nformats = ARRAY_SIZE(formats_win_full),
++	.data_formats = formats_win_full_10,
++	.nformats = ARRAY_SIZE(formats_win_full_10),
+ 	.format_modifiers = format_modifiers_win_full_afbc,
+ 	.enable = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 0),
+ 	.format = VOP_REG(RK3288_WIN0_CTRL0, 0x7, 1),
++	.fmt_10 = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 4),
+ 	.rb_swap = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 12),
+ 	.y_mir_en = VOP_REG(RK3288_WIN0_CTRL0, 0x1, 22),
+ 	.act_info = VOP_REG(RK3288_WIN0_ACT_INFO, 0x1fff1fff, 0),
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Qinglang Miao <miaoqinglang@huawei.com>
+Date: Tue, 1 Dec 2020 20:54:57 +0800
+Subject: [PATCH] drm/rockchip: cdn-dp: fix reference leak when
+ pm_runtime_get_sync fails
+
+The PM reference count is not expected to be incremented on
+return in cdn_dp_clk_enable.
+
+However, pm_runtime_get_sync will increment the PM reference
+count even failed. Forgetting to putting operation will result
+in a reference leak here.
+
+Replace it with pm_runtime_resume_and_get to keep usage
+counter balanced.
+
+Fixes: efe0220fc2d2 ("drm/rockchip: cdn-dp: Fix error handling")
+Reported-by: Hulk Robot <hulkci@huawei.com>
+Signed-off-by: Qinglang Miao <miaoqinglang@huawei.com>
+---
+ drivers/gpu/drm/rockchip/cdn-dp-core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/rockchip/cdn-dp-core.c b/drivers/gpu/drm/rockchip/cdn-dp-core.c
+index 16497c31d9f9..e46963577854 100644
+--- a/drivers/gpu/drm/rockchip/cdn-dp-core.c
++++ b/drivers/gpu/drm/rockchip/cdn-dp-core.c
+@@ -100,7 +100,7 @@ static int cdn_dp_clk_enable(struct cdn_dp_device *dp)
+ 		goto err_core_clk;
+ 	}
+ 
+-	ret = pm_runtime_get_sync(dp->dev);
++	ret = pm_runtime_resume_and_get(dp->dev);
+ 	if (ret < 0) {
+ 		DRM_DEV_ERROR(dp->dev, "cannot get pm runtime %d\n", ret);
+ 		goto err_pm_runtime_get;
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Qinglang Miao <miaoqinglang@huawei.com>
+Date: Tue, 1 Dec 2020 20:54:58 +0800
+Subject: [PATCH] drm/rockchip: vop: fix reference leak when
+ pm_runtime_get_sync fails
+
+The PM reference count is not expected to be incremented on
+return in functions vop_enable and vop_enable.
+
+However, pm_runtime_get_sync will increment the PM reference
+count even failed. Forgetting to putting operation will result
+in a reference leak here.
+
+Replace it with pm_runtime_resume_and_get to keep usage
+counter balanced.
+
+Fixes: 5e570373c015 ("drm/rockchip: vop: Enable pm domain before vop_initial")
+Reported-by: Hulk Robot <hulkci@huawei.com>
+Signed-off-by: Qinglang Miao <miaoqinglang@huawei.com>
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+index 91ded8a096ba..967f29625d7c 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -603,7 +603,7 @@ static int vop_enable(struct drm_crtc *crtc, struct drm_crtc_state *old_state)
+ 	struct vop *vop = to_vop(crtc);
+ 	int ret, i;
+ 
+-	ret = pm_runtime_get_sync(vop->dev);
++	ret = pm_runtime_resume_and_get(vop->dev);
+ 	if (ret < 0) {
+ 		DRM_DEV_ERROR(vop->dev, "failed to get pm runtime: %d\n", ret);
+ 		return ret;
+@@ -1953,7 +1953,7 @@ static int vop_initial(struct vop *vop)
+ 		return PTR_ERR(vop->dclk);
+ 	}
+ 
+-	ret = pm_runtime_get_sync(vop->dev);
++	ret = pm_runtime_resume_and_get(vop->dev);
+ 	if (ret < 0) {
+ 		DRM_DEV_ERROR(vop->dev, "failed to get pm runtime: %d\n", ret);
+ 		return ret;
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Qinglang Miao <miaoqinglang@huawei.com>
+Date: Tue, 1 Dec 2020 20:54:59 +0800
+Subject: [PATCH] drm/rockchip: lvds: fix reference leak when
+ pm_runtime_get_sync fails
+
+The PM reference count is not expected to be incremented on
+return in functions rk3288_lvds_poweron and px30_lvds_poweron.
+
+However, pm_runtime_get_sync will increment the PM reference
+count even failed. Forgetting to putting operation will result
+in a reference leak here.
+
+Replace it with pm_runtime_resume_and_get to keep usage
+counter balanced.
+
+Fixes: cca1705c3d89 ("drm/rockchip: lvds: Add PX30 support")
+Reported-by: Hulk Robot <hulkci@huawei.com>
+Signed-off-by: Qinglang Miao <miaoqinglang@huawei.com>
+---
+ drivers/gpu/drm/rockchip/rockchip_lvds.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_lvds.c b/drivers/gpu/drm/rockchip/rockchip_lvds.c
+index be74c87a8be4..288462fd5d8e 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_lvds.c
++++ b/drivers/gpu/drm/rockchip/rockchip_lvds.c
+@@ -146,7 +146,7 @@ static int rk3288_lvds_poweron(struct rockchip_lvds *lvds)
+ 		DRM_DEV_ERROR(lvds->dev, "failed to enable lvds pclk %d\n", ret);
+ 		return ret;
+ 	}
+-	ret = pm_runtime_get_sync(lvds->dev);
++	ret = pm_runtime_resume_and_get(lvds->dev);
+ 	if (ret < 0) {
+ 		DRM_DEV_ERROR(lvds->dev, "failed to get pm runtime: %d\n", ret);
+ 		clk_disable(lvds->pclk);
+@@ -330,7 +330,7 @@ static int px30_lvds_poweron(struct rockchip_lvds *lvds)
+ {
+ 	int ret;
+ 
+-	ret = pm_runtime_get_sync(lvds->dev);
++	ret = pm_runtime_resume_and_get(lvds->dev);
+ 	if (ret < 0) {
+ 		DRM_DEV_ERROR(lvds->dev, "failed to get pm runtime: %d\n", ret);
+ 		return ret;
+

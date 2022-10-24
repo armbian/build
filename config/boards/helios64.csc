@@ -1,0 +1,12 @@
+# RK3399 hexa core 4GB SoC 2.5GbE eMMC USB3 SATA M.2 UPS
+BOARD_NAME="Helios64"
+BOARDFAMILY="rk3399"
+BOOTCONFIG="helios64-rk3399_defconfig"
+BOOT_SCENARIO="blobless"
+KERNEL_TARGET="legacy,current,edge"
+MODULES="lm75 ledtrig-netdev"
+MODULES_LEGACY="lm75"
+FULL_DESKTOP="yes"
+PACKAGE_LIST_BOARD="mdadm i2c-tools fancontrol"
+PACKAGE_LIST_BOARD_REMOVE="fake-hwclock"
+CPUMAX="1800000"

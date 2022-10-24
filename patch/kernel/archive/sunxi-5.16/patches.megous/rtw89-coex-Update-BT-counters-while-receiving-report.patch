@@ -1,0 +1,106 @@
+From a53a4da7832dcdf4d12c1e7e6fa9b0a85596115c Mon Sep 17 00:00:00 2001
+From: Ching-Te Ku <ku920601@realtek.com>
+Date: Thu, 9 Dec 2021 16:32:27 +0800
+Subject: [PATCH 516/562] rtw89: coex: Update BT counters while receiving
+ report
+
+Move _chk_btc_err and update_bt_cnt to _chk_btc_report(),
+so we can update counter/info to COEX at a proper moment,
+instead of relying on a user does cat the debug info periodically.
+
+Signed-off-by: Ching-Te Ku <ku920601@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20211209083229.10815-6-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/coex.c | 32 +++++++++++------------
+ 1 file changed, 15 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/coex.c b/drivers/net/wireless/realtek/rtw89/coex.c
+index 436f5ccb193a..929818c3a776 100644
+--- a/drivers/net/wireless/realtek/rtw89/coex.c
++++ b/drivers/net/wireless/realtek/rtw89/coex.c
+@@ -1118,6 +1118,10 @@ static u32 _chk_btc_report(struct rtw89_dev *rtwdev,
+ 			diff_t = pcysta->tavg_cycle[CXT_WL] - wl_slot_set;
+ 			_chk_btc_err(rtwdev, BTC_DCNT_WL_SLOT_DRIFT, diff_t);
+ 		}
++
++		_chk_btc_err(rtwdev, BTC_DCNT_W1_FREEZE, pcysta->slot_cnt[CXST_W1]);
++		_chk_btc_err(rtwdev, BTC_DCNT_W1_FREEZE, pcysta->slot_cnt[CXST_W1]);
++		_chk_btc_err(rtwdev, BTC_DCNT_CYCLE_FREEZE, (u32)pcysta->cycles);
+ 	}
+ 
+ 	if (rpt_type == BTC_RPT_TYPE_CTRL) {
+@@ -1127,8 +1131,17 @@ static u32 _chk_btc_report(struct rtw89_dev *rtwdev,
+ 		wl->ver_info.fw = prpt->wl_fw_ver;
+ 		dm->wl_fw_cx_offload = !!(prpt->wl_fw_cx_offload);
+ 
+-		btc->cx.cnt_bt[BTC_BCNT_POLUT] =
+-			rtw89_mac_get_plt_cnt(rtwdev, RTW89_MAC_0);
++		_chk_btc_err(rtwdev, BTC_DCNT_RPT_FREEZE,
++			     pfwinfo->event[BTF_EVNT_RPT]);
++
++		/* To avoid I/O if WL LPS or power-off */
++		if (wl->status.map.lps != BTC_LPS_RF_OFF && !wl->status.map.rf_off) {
++			rtwdev->chip->ops->btc_update_bt_cnt(rtwdev);
++			_chk_btc_err(rtwdev, BTC_DCNT_BTCNT_FREEZE, 0);
++
++			btc->cx.cnt_bt[BTC_BCNT_POLUT] =
++				rtw89_mac_get_plt_cnt(rtwdev, RTW89_MAC_0);
++		}
+ 	}
+ 
+ 	if (rpt_type >= BTC_RPT_TYPE_BT_VER &&
+@@ -4793,7 +4806,6 @@ static void _show_bt_profile_info(struct rtw89_dev *rtwdev, struct seq_file *m)
+ 
+ static void _show_bt_info(struct rtw89_dev *rtwdev, struct seq_file *m)
+ {
+-	const struct rtw89_chip_info *chip = rtwdev->chip;
+ 	struct rtw89_btc *btc = &rtwdev->btc;
+ 	struct rtw89_btc_cx *cx = &btc->cx;
+ 	struct rtw89_btc_bt_info *bt = &cx->bt;
+@@ -4876,12 +4888,6 @@ static void _show_bt_info(struct rtw89_dev *rtwdev, struct seq_file *m)
+ 		   cx->cnt_bt[BTC_BCNT_INFOUPDATE],
+ 		   cx->cnt_bt[BTC_BCNT_INFOSAME]);
+ 
+-	if (wl->status.map.lps || wl->status.map.rf_off)
+-		return;
+-
+-	chip->ops->btc_update_bt_cnt(rtwdev);
+-	_chk_btc_err(rtwdev, BTC_DCNT_BTCNT_FREEZE, 0);
+-
+ 	seq_printf(m,
+ 		   " %-15s : Hi-rx = %d, Hi-tx = %d, Lo-rx = %d, Lo-tx = %d (bt_polut_wl_tx = %d)\n",
+ 		   "[trx_req_cnt]", cx->cnt_bt[BTC_BCNT_HIPRI_RX],
+@@ -5254,8 +5260,6 @@ static void _show_fbtc_cysta(struct rtw89_dev *rtwdev, struct seq_file *m)
+ 		   pcysta->bcn_cnt[CXBCN_BT_SLOT],
+ 		   pcysta->bcn_cnt[CXBCN_BT_OK]);
+ 
+-	_chk_btc_err(rtwdev, BTC_DCNT_CYCLE_FREEZE, (u32)pcysta->cycles);
+-
+ 	for (i = 0; i < CXST_MAX; i++) {
+ 		if (!pcysta->slot_cnt[i])
+ 			continue;
+@@ -5279,9 +5283,6 @@ static void _show_fbtc_cysta(struct rtw89_dev *rtwdev, struct seq_file *m)
+ 	}
+ 	seq_puts(m, "\n");
+ 
+-	_chk_btc_err(rtwdev, BTC_DCNT_W1_FREEZE, pcysta->slot_cnt[CXST_W1]);
+-	_chk_btc_err(rtwdev, BTC_DCNT_B1_FREEZE, pcysta->slot_cnt[CXST_B1]);
+-
+ 	seq_printf(m, " %-15s : avg_t[wl:%d/bt:%d/lk:%d.%03d]",
+ 		   "[cycle_time]",
+ 		   pcysta->tavg_cycle[CXT_WL],
+@@ -5633,9 +5634,6 @@ static void _show_summary(struct rtw89_dev *rtwdev, struct seq_file *m)
+ 			   pfwinfo->event[BTF_EVNT_RPT], prptctrl->rpt_cnt,
+ 			   prptctrl->rpt_enable, dm->error.val);
+ 
+-		_chk_btc_err(rtwdev, BTC_DCNT_RPT_FREEZE,
+-			     pfwinfo->event[BTF_EVNT_RPT]);
+-
+ 		if (dm->error.map.wl_fw_hang)
+ 			seq_puts(m, " (WL FW Hang!!)");
+ 		seq_puts(m, "\n");
+-- 
+2.34.1
+

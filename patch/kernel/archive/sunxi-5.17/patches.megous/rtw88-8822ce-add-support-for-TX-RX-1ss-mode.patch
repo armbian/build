@@ -1,0 +1,144 @@
+From d13f20eb97f3ef25febacac97e808d6c7a16966c Mon Sep 17 00:00:00 2001
+From: Chin-Yen Lee <timlee@realtek.com>
+Date: Tue, 15 Feb 2022 08:48:50 +0800
+Subject: [PATCH 458/544] rtw88: 8822ce: add support for TX/RX 1ss mode
+
+In some case, wifi chip need to be configed to be TX/RX 1ss mode.
+For this mode, wifi components, such as MAC/BB/RF, need to be
+specially set, and driver need to send SMPS action frame to inform AP.
+
+Signed-off-by: Chin-Yen Lee <timlee@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220215004855.4098-2-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw88/debug.c    |  4 ++-
+ drivers/net/wireless/realtek/rtw88/main.c     | 33 ++++++++++++++++++-
+ drivers/net/wireless/realtek/rtw88/main.h     |  5 ++-
+ drivers/net/wireless/realtek/rtw88/rtw8822c.c |  1 +
+ drivers/net/wireless/realtek/rtw88/tx.c       |  2 +-
+ 5 files changed, 41 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/debug.c b/drivers/net/wireless/realtek/rtw88/debug.c
+index e429428232c1..03a08137066f 100644
+--- a/drivers/net/wireless/realtek/rtw88/debug.c
++++ b/drivers/net/wireless/realtek/rtw88/debug.c
+@@ -715,8 +715,10 @@ static int rtw_debugfs_get_phy_info(struct seq_file *m, void *v)
+ 	seq_printf(m, "Current CH(fc) = %u\n", rtwdev->hal.current_channel);
+ 	seq_printf(m, "Current BW = %u\n", rtwdev->hal.current_band_width);
+ 	seq_printf(m, "Current IGI = 0x%x\n", dm_info->igi_history[0]);
+-	seq_printf(m, "TP {Tx, Rx} = {%u, %u}Mbps\n\n",
++	seq_printf(m, "TP {Tx, Rx} = {%u, %u}Mbps\n",
+ 		   stats->tx_throughput, stats->rx_throughput);
++	seq_printf(m, "1SS for TX and RX = %c\n\n", rtwdev->hal.txrx_1ss ?
++		   'Y' : 'N');
+ 
+ 	seq_puts(m, "==========[Tx Phy Info]========\n");
+ 	seq_puts(m, "[Tx Rate] = ");
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index 2757aa0dc586..41b6db422638 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -1135,7 +1135,7 @@ void rtw_update_sta_info(struct rtw_dev *rtwdev, struct rtw_sta_info *si)
+ 			ldpc_en = HT_LDPC_EN;
+ 	}
+ 
+-	if (efuse->hw_cap.nss == 1)
++	if (efuse->hw_cap.nss == 1 || rtwdev->hal.txrx_1ss)
+ 		ra_mask &= RA_MASK_VHT_RATES_1SS | RA_MASK_HT_RATES_1SS;
+ 
+ 	if (hal->current_band_type == RTW_BAND_5G) {
+@@ -1570,6 +1570,37 @@ static void rtw_unset_supported_band(struct ieee80211_hw *hw,
+ 	kfree(hw->wiphy->bands[NL80211_BAND_5GHZ]);
+ }
+ 
++static void rtw_vif_smps_iter(void *data, u8 *mac,
++			      struct ieee80211_vif *vif)
++{
++	struct rtw_dev *rtwdev = (struct rtw_dev *)data;
++
++	if (vif->type != NL80211_IFTYPE_STATION || !vif->bss_conf.assoc)
++		return;
++
++	if (rtwdev->hal.txrx_1ss)
++		ieee80211_request_smps(vif, IEEE80211_SMPS_STATIC);
++	else
++		ieee80211_request_smps(vif, IEEE80211_SMPS_OFF);
++}
++
++void rtw_set_txrx_1ss(struct rtw_dev *rtwdev, bool txrx_1ss)
++{
++	struct rtw_chip_info *chip = rtwdev->chip;
++	struct rtw_hal *hal = &rtwdev->hal;
++
++	if (!chip->ops->config_txrx_mode || rtwdev->hal.txrx_1ss == txrx_1ss)
++		return;
++
++	rtwdev->hal.txrx_1ss = txrx_1ss;
++	if (txrx_1ss)
++		chip->ops->config_txrx_mode(rtwdev, BB_PATH_A, BB_PATH_A, false);
++	else
++		chip->ops->config_txrx_mode(rtwdev, hal->antenna_tx,
++					    hal->antenna_rx, false);
++	rtw_iterate_vifs_atomic(rtwdev, rtw_vif_smps_iter, rtwdev);
++}
++
+ static void __update_firmware_feature(struct rtw_dev *rtwdev,
+ 				      struct rtw_fw_state *fw)
+ {
+diff --git a/drivers/net/wireless/realtek/rtw88/main.h b/drivers/net/wireless/realtek/rtw88/main.h
+index 36e1e408933d..970d29d19003 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.h
++++ b/drivers/net/wireless/realtek/rtw88/main.h
+@@ -874,6 +874,8 @@ struct rtw_chip_ops {
+ 			       enum rtw_bb_path tx_path_1ss,
+ 			       enum rtw_bb_path tx_path_cck,
+ 			       bool is_tx2_path);
++	void (*config_txrx_mode)(struct rtw_dev *rtwdev, u8 tx_path,
++				 u8 rx_path, bool is_tx2_path);
+ 
+ 	/* for coex */
+ 	void (*coex_set_init)(struct rtw_dev *rtwdev);
+@@ -1867,6 +1869,7 @@ struct rtw_hal {
+ 	u32 antenna_tx;
+ 	u32 antenna_rx;
+ 	u8 bfee_sts_cap;
++	bool txrx_1ss;
+ 
+ 	/* protect tx power section */
+ 	struct mutex tx_power_mutex;
+@@ -2123,5 +2126,5 @@ void rtw_core_fw_scan_notify(struct rtw_dev *rtwdev, bool start);
+ int rtw_dump_fw(struct rtw_dev *rtwdev, const u32 ocp_src, u32 size,
+ 		u32 fwcd_item);
+ int rtw_dump_reg(struct rtw_dev *rtwdev, const u32 addr, const u32 size);
+-
++void rtw_set_txrx_1ss(struct rtw_dev *rtwdev, bool config_1ss);
+ #endif
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8822c.c b/drivers/net/wireless/realtek/rtw88/rtw8822c.c
+index 35c46e5209de..01bb356b4b65 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822c.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822c.c
+@@ -4962,6 +4962,7 @@ static struct rtw_chip_ops rtw8822c_ops = {
+ 	.cfo_init		= rtw8822c_cfo_init,
+ 	.cfo_track		= rtw8822c_cfo_track,
+ 	.config_tx_path		= rtw8822c_config_tx_path,
++	.config_txrx_mode	= rtw8822c_config_trx_mode,
+ 
+ 	.coex_set_init		= rtw8822c_coex_cfg_init,
+ 	.coex_set_ant_switch	= NULL,
+diff --git a/drivers/net/wireless/realtek/rtw88/tx.c b/drivers/net/wireless/realtek/rtw88/tx.c
+index efcc1b0371a8..94d1089f4022 100644
+--- a/drivers/net/wireless/realtek/rtw88/tx.c
++++ b/drivers/net/wireless/realtek/rtw88/tx.c
+@@ -353,7 +353,7 @@ static void rtw_tx_data_pkt_info_update(struct rtw_dev *rtwdev,
+ 
+ 	bw = si->bw_mode;
+ 	rate_id = si->rate_id;
+-	stbc = si->stbc_en;
++	stbc = rtwdev->hal.txrx_1ss ? false : si->stbc_en;
+ 	ldpc = si->ldpc_en;
+ 
+ out:
+-- 
+2.34.1
+

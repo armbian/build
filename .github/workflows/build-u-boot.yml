@@ -1,129 +1,105 @@
-name: Build beta u-boot packages
+name: Build u-boot & BSP
+#
+# Manually generates u-boot & BSP packages
+#
+
 
 on:
   workflow_dispatch:
+    inputs:
+      destref:
+        type: choice
+        description: Beta builds
+        options:
+        - nightly
+        - master
+
+permissions:
+  contents: read
 
 jobs:
 
-  Prepare:
-    runs-on: [self-hosted, Linux, small]
-    if: ${{ github.repository_owner == 'armbian' }}
-    outputs:
-      matrix: ${{steps.list_dirs.outputs.matrix}}
+  fake:
+    permissions:
+      contents: none
+    runs-on: small
+    name: Source changes
+    if: ${{ github.repository_owner == 'Armbian' }}
     steps:
-
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      - run: |
+          echo "not empty" > changes
+      - uses: actions/upload-artifact@v3
         with:
-          fetch-depth: 0
-          repository: armbian/build
-          path: build
-          ref: nightly
-          clean: false
+          path: changes
+          name: changes
+          if-no-files-found: ignore
 
-      - name: Cache build configurations
-        uses: actions/cache@v2
-        env:
-          cache-name: build-u-boot
-        with:
-          path: build-u-boot
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
+  legacy:
+    permissions:
+      contents: none
+    needs: [ fake ]
+    uses: armbian/scripts/.github/workflows/build-u-boot-with-docker.yml@master
 
-      - name: Prepare matrix
-        id: list_dirs
-        run:
-          echo ::set-output name=matrix::$(for x in $(cat build/config/target*.conf | grep -v "^$" | grep -v "^#" | awk '{print $1":"$2}' | sort | uniq); do echo $x; done|jq -cnR '[inputs | select(length>0)]' | jq)
+    with:
 
-  U-boot: # short name because Github will expand with the matrix values
+      runner: "ubuntu-latest"
+      include: 'grep legacy | '
+      exclude: ''
+      uploading: false
+      destref: ${{ github.event.inputs.destref }}
 
-    needs: [ Prepare ]
-    runs-on: [self-hosted, Linux, small]
-    if: ${{ github.repository_owner == 'armbian' }}
-    timeout-minutes: 480
-    strategy:
-      fail-fast: false
-      matrix: 
-        node: ${{fromJson(needs.Prepare.outputs.matrix)}}
+    secrets:
+      GPG_KEY1: ${{ secrets.GPG_KEY1 }}
+      GPG_PASSPHRASE1: ${{ secrets.GPG_PASSPHRASE1 }}
+      GPG_KEY2: ${{ secrets.GPG_KEY2 }}
+      GPG_PASSPHRASE2: ${{ secrets.GPG_PASSPHRASE2 }}
+      SCRIPTS_ACCESS_TOKEN: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+      SSH_KEY_TORRENTS: ${{ secrets.KEY_TORRENTS }}
+      KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
-    steps:
+  current:
+    permissions:
+      contents: none
+    needs: [ fake ]
+    uses: armbian/scripts/.github/workflows/build-u-boot-with-docker.yml@master
 
-      - name: Install SSH key for storage
-        uses: shimataro/ssh-key-action@v2
-        with:
-          key: ${{ secrets.KEY_TORRENTS }}
-          known_hosts: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
-          if_key_exists: replace
+    with:
 
-      - name: Fix permissions
-        run: |
+      runner: "small"
+      include: 'grep current | '
+      exclude: ''
+      uploading: false
+      destref: ${{ github.event.inputs.destref }}
 
-          # make sure no temporally dirs are mounted from previous runs
-          while :
-          do
-              sudo pkill compile.sh || true
-              sudo pkill arm-binfmt-P || true
-              sudo pkill aarch64-binfmt-P || true
-              sudo pkill pixz || true
-              sudo mountpoint -q build/output/images && sudo fusermount -u build/output/images || true
-              [[ "$(df | grep "/.tmp" | wc -l)" -eq 0 && $(sudo mountpoint -q build/output/images; echo $?) -eq 1 ]] && sudo rm -rf build/.tmp && break
-              echo "Mounted temp directories. Trying to unmount."
-              df | grep ".tmp" | awk '{print $6}' | xargs sudo umount 2>/dev/null || true
-              sleep 10
-          done
-          [[ -d build/.git ]] && sudo chown -R $USER:$USER build/.git || true
-          [[ -d build/output/images ]] && sudo rm -rf build/output/images/* || true
- 
- 
-      - name: Cache build configurations
-        uses: actions/cache@v2
-        env:
-          cache-name: build-u-boot
-        with:
-          path: build-u-boot
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-${{ github.run_id }}
- 
-      - name: Checkout Armbian build script
+    secrets:
+      GPG_KEY1: ${{ secrets.GPG_KEY1 }}
+      GPG_PASSPHRASE1: ${{ secrets.GPG_PASSPHRASE1 }}
+      GPG_KEY2: ${{ secrets.GPG_KEY2 }}
+      GPG_PASSPHRASE2: ${{ secrets.GPG_PASSPHRASE2 }}
+      SCRIPTS_ACCESS_TOKEN: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+      SSH_KEY_TORRENTS: ${{ secrets.KEY_TORRENTS }}
+      KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}
 
-        uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-          repository: armbian/build
-          path: build
-          ref: nightly
-          clean: false
 
-      - name: Build
-        run: |
-          CHUNK="${{ matrix.node }}"
-          BOARD=$(echo $CHUNK | cut -d":" -f1)
-          echo "BOARD=$BOARD" >> $GITHUB_ENV
-          BRANCH=$(echo $CHUNK | cut -d":" -f2)
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          cd build
-          [[ ! -f .ignore_changes ]] && sudo touch .ignore_changes
-          sudo rm -rf cache/source/u-boot cache/source/linux-* output/debs/* output/debs-beta/*
-          ./compile.sh KERNEL_ONLY="yes" BOARD="bananapi" BRANCH="current" KERNEL_CONFIGURE="no" REPOSITORY_INSTALL="u-boot,kernel" 'prepare_host_basic'
-           if [[ $(curl -s http://ifconfig.me) == "93.103.15.56" ]]; then
-              sudo mkdir -p cache/toolchain cache/rootfs || true
-              ! sudo mountpoint -q cache/toolchain && sudo mount nas:/tank/armbian/toolchain.armbian.com cache/toolchain -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
-              ! sudo mountpoint -q cache/rootfs && sudo mount nas:/tank/armbian/dl.armbian.com/_rootfs cache/rootfs -o rsize=32768,wsize=32768,timeo=5,retrans=2,actimeo=60,retry=15 || true
-          fi  
-          ./compile.sh ARMBIAN_MIRROR="https://github.com/armbian/mirror/releases/download/" BOARD="$BOARD" PRIVATE_CCACHE="yes" BETA="yes" KERNEL_ONLY="yes" BRANCH="$BRANCH" KERNEL_CONFIGURE="no" OFFLINE="no" REPOSITORY_INSTALL="kernel,bsp,armbian-zsh,armbian-config,armbian-firmware"
-          mkdir -p ../build-u-boot
-          cp output/debs-beta/linux-u-boot-${BRANCH}-${BOARD}_$(cat VERSION)_* ../build-u-boot/
+  edge:
+    permissions:
+      contents: none
+    needs: [ fake ]
+    uses: armbian/scripts/.github/workflows/build-u-boot-with-docker.yml@master
 
-      - name: upload artefacts
-        uses: actions/upload-artifact@v2
-        with:
-          name: u-boot-${{ env.BOARD }}-${{ env.BRANCH }}
-          path: build/output/debs-beta/*u-boot*
+    with:
 
-      - name: Deploy to server
-        if: ${{ success() }}
-        run: |
-          while fuser /var/{lib/{dpkg,apt/lists},cache/apt/archives}/lock >/dev/null 2>&1; do sleep 1; done;
-          sudo apt-get -y -qq install lftp
-          sudo chown -R $USER:$USER build/output/debs-beta/
-          lftp -u upload, -e "set net:timeout 4;set net:max-retries 6;mirror --Remove-source-files -R --no-empty-dirs --parallel=8 --no-perms $(pwd)/build/output/debs-beta/ debs-beta/ ;bye" sftp://users.armbian.com
+      runner: "small"
+      include: 'grep edge | '
+      exclude: ''
+      uploading: false
+      destref: ${{ github.event.inputs.destref }}
+
+    secrets:
+      GPG_KEY1: ${{ secrets.GPG_KEY1 }}
+      GPG_PASSPHRASE1: ${{ secrets.GPG_PASSPHRASE1 }}
+      GPG_KEY2: ${{ secrets.GPG_KEY2 }}
+      GPG_PASSPHRASE2: ${{ secrets.GPG_PASSPHRASE2 }}
+      SCRIPTS_ACCESS_TOKEN: ${{ secrets.SCRIPTS_ACCESS_TOKEN }}
+      SSH_KEY_TORRENTS: ${{ secrets.KEY_TORRENTS }}
+      KNOWN_HOSTS_UPLOAD: ${{ secrets.KNOWN_HOSTS_UPLOAD }}

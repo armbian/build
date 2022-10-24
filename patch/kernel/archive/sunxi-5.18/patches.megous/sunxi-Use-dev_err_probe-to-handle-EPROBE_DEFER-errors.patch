@@ -1,0 +1,151 @@
+From 21922d13fbc6d5d3dd3a60dda3c85e2cb87904b4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Mon, 2 Sep 2019 14:51:17 +0200
+Subject: [PATCH 228/534] sunxi: Use dev_err_probe to handle EPROBE_DEFER
+ errors
+
+This makes it easier to debug EPROBE_DEFER issues via debugfs.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ arch/arm/kernel/topology.c                    |  2 +-
+ drivers/gpu/drm/panel/panel-sitronix-st7703.c |  2 +-
+ drivers/i2c/busses/i2c-gpio.c                 | 11 +++++++++--
+ drivers/phy/allwinner/phy-sun4i-usb.c         | 16 ++++++++++------
+ drivers/phy/allwinner/phy-sun6i-mipi-dphy.c   |  6 ++++--
+ 5 files changed, 25 insertions(+), 12 deletions(-)
+
+diff --git a/arch/arm/kernel/topology.c b/arch/arm/kernel/topology.c
+index ef0058de4..b87be5d00 100644
+--- a/arch/arm/kernel/topology.c
++++ b/arch/arm/kernel/topology.c
+@@ -121,7 +121,7 @@ static void __init parse_dt_topology(void)
+ 
+ 		rate = of_get_property(cn, "clock-frequency", &len);
+ 		if (!rate || len != 4) {
+-			pr_err("%pOF missing clock-frequency property\n", cn);
++			//pr_err("%pOF missing clock-frequency property\n", cn);
+ 			continue;
+ 		}
+ 
+diff --git a/drivers/gpu/drm/panel/panel-sitronix-st7703.c b/drivers/gpu/drm/panel/panel-sitronix-st7703.c
+index bd6a4a3ae..2e0e3a86d 100644
+--- a/drivers/gpu/drm/panel/panel-sitronix-st7703.c
++++ b/drivers/gpu/drm/panel/panel-sitronix-st7703.c
+@@ -588,7 +588,7 @@ static int st7703_probe(struct mipi_dsi_device *dsi)
+ 
+ 	ret = mipi_dsi_attach(dsi);
+ 	if (ret < 0) {
+-		dev_err(dev, "mipi_dsi_attach failed (%d). Is host ready?\n", ret);
++		dev_err_probe(dev, ret, "mipi_dsi_attach failed\n");
+ 		drm_panel_remove(&ctx->panel);
+ 		return ret;
+ 	}
+diff --git a/drivers/i2c/busses/i2c-gpio.c b/drivers/i2c/busses/i2c-gpio.c
+index 7a048abbf..12cbd0977 100644
+--- a/drivers/i2c/busses/i2c-gpio.c
++++ b/drivers/i2c/busses/i2c-gpio.c
+@@ -332,6 +332,13 @@ static struct gpio_desc *i2c_gpio_get_desc(struct device *dev,
+ 		return retdesc;
+ 	}
+ 
++	/* return early so that EPROBE_DEFER is not ignored on named gpios */
++	if (PTR_ERR(retdesc) == -EPROBE_DEFER) {
++		dev_err_probe(dev, PTR_ERR(retdesc),
++			      "error trying to get descriptor\n");
++		return retdesc;
++	}
++
+ 	retdesc = devm_gpiod_get_index(dev, NULL, index, gflags);
+ 	if (!IS_ERR(retdesc)) {
+ 		dev_dbg(dev, "got GPIO from index %u\n", index);
+@@ -348,8 +355,8 @@ static struct gpio_desc *i2c_gpio_get_desc(struct device *dev,
+ 	if (ret == -ENOENT)
+ 		retdesc = ERR_PTR(-EPROBE_DEFER);
+ 
+-	if (PTR_ERR(retdesc) != -EPROBE_DEFER)
+-		dev_err(dev, "error trying to get descriptor: %d\n", ret);
++	dev_err_probe(dev, PTR_ERR(retdesc),
++		      "error trying to get descriptor\n");
+ 
+ 	return retdesc;
+ }
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index cd35dd7b2..eb517ab30 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -740,14 +740,16 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 	data->id_det_gpio = devm_gpiod_get_optional(dev, "usb0_id_det",
+ 						    GPIOD_IN);
+ 	if (IS_ERR(data->id_det_gpio)) {
+-		dev_err(dev, "Couldn't request ID GPIO\n");
++		dev_err_probe(dev, PTR_ERR(data->id_det_gpio),
++			      "Couldn't request ID GPIO\n");
+ 		return PTR_ERR(data->id_det_gpio);
+ 	}
+ 
+ 	data->vbus_det_gpio = devm_gpiod_get_optional(dev, "usb0_vbus_det",
+ 						      GPIOD_IN);
+ 	if (IS_ERR(data->vbus_det_gpio)) {
+-		dev_err(dev, "Couldn't request VBUS detect GPIO\n");
++		dev_err_probe(dev, PTR_ERR(data->vbus_det_gpio),
++			      "Couldn't request VBUS detect GPIO\n");
+ 		return PTR_ERR(data->vbus_det_gpio);
+ 	}
+ 
+@@ -755,7 +757,8 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 		data->vbus_power_supply = devm_power_supply_get_by_phandle(dev,
+ 						     "usb0_vbus_power-supply");
+ 		if (IS_ERR(data->vbus_power_supply)) {
+-			dev_err(dev, "Couldn't get the VBUS power supply\n");
++			dev_err_probe(dev, PTR_ERR(data->vbus_power_supply),
++				      "Couldn't get the VBUS power supply\n");
+ 			return PTR_ERR(data->vbus_power_supply);
+ 		}
+ 
+@@ -788,8 +791,8 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 		phy->vbus = devm_regulator_get_optional(dev, name);
+ 		if (IS_ERR(phy->vbus)) {
+ 			if (PTR_ERR(phy->vbus) == -EPROBE_DEFER) {
+-				dev_err(dev,
+-					"Couldn't get regulator %s... Deferring probe\n",
++				dev_err_probe(dev, PTR_ERR(phy->vbus),
++					"Couldn't get regulator %s\n",
+ 					name);
+ 				return -EPROBE_DEFER;
+ 			}
+@@ -804,7 +807,8 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 
+ 		phy->clk = devm_clk_get(dev, name);
+ 		if (IS_ERR(phy->clk)) {
+-			dev_err(dev, "failed to get clock %s\n", name);
++			dev_err_probe(dev, PTR_ERR(phy->clk),
++				      "failed to get clock %s\n", name);
+ 			return PTR_ERR(phy->clk);
+ 		}
+ 
+diff --git a/drivers/phy/allwinner/phy-sun6i-mipi-dphy.c b/drivers/phy/allwinner/phy-sun6i-mipi-dphy.c
+index db53bbefd..d9206c663 100644
+--- a/drivers/phy/allwinner/phy-sun6i-mipi-dphy.c
++++ b/drivers/phy/allwinner/phy-sun6i-mipi-dphy.c
+@@ -283,13 +283,15 @@ static int sun6i_dphy_probe(struct platform_device *pdev)
+ 	dphy->regs = devm_regmap_init_mmio_clk(&pdev->dev, "bus",
+ 					       regs, &sun6i_dphy_regmap_config);
+ 	if (IS_ERR(dphy->regs)) {
+-		dev_err(&pdev->dev, "Couldn't create the DPHY encoder regmap\n");
++		dev_err_probe(&pdev->dev, PTR_ERR(dphy->regs),
++			      "Couldn't create the DPHY encoder regmap\n");
+ 		return PTR_ERR(dphy->regs);
+ 	}
+ 
+ 	dphy->reset = devm_reset_control_get_shared(&pdev->dev, NULL);
+ 	if (IS_ERR(dphy->reset)) {
+-		dev_err(&pdev->dev, "Couldn't get our reset line\n");
++		dev_err_probe(&pdev->dev, PTR_ERR(dphy->reset),
++			      "Couldn't get our reset line\n");
+ 		return PTR_ERR(dphy->reset);
+ 	}
+ 
+-- 
+2.35.3
+

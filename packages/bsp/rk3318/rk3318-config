@@ -1,0 +1,516 @@
+#!/bin/bash
+
+DEVICE_TREE_PATH="/boot/dtb"
+ARMBIAN_ENV_TXT="/boot/armbianEnv.txt"
+BLACKLIST_MODPROBE_CONF="/etc/modprobe.d/blacklist-rk3318-box.conf"
+
+BACKTITLE="Armbian RK3318/RK3328 device tree board selection | Paolo Sabatino"
+TITLE="Board configuration"
+MENU_TITLE="Please choose your board"
+
+COLOR_RED="\Z1"
+COLOR_BLACK="\Z0"
+
+CONFIRM_FLASH_MISMATCH="\nYour board has a type of internal memory but you \
+selected a board without support for that.\n\nYou will not be able to detect \
+the internal memory and your system may not boot anymore\n\nAre you sure?"
+
+INFORM_ALTERNATE_WIFI="\nNo Wifi chip has been detected.\n\nThis program will \
+enable the alternative SDIO bus. You need to complete the \
+configuration, reboot the box and run again ${COLOR_RED}`basename $0`${COLOR_BLACK} to probe the other \
+bus."
+
+NOTE_BOARD_SELECTION="${COLOR_RED}Important:${COLOR_BLACK} select the \
+board configuration looking on the markings of the board.\nThe right \
+configuration solves problems with devices detection like leds,\n\
+wifi, bluetooth and improve general stability\n\n"
+
+EFUSE_PATH="/sys/bus/nvmem/devices/rockchip-efuse0/nvmem"
+SDIO_WIFI_PATH="/sys/bus/sdio/devices/mmc1:0001:1"
+SDIO2_WIFI_PATH="/sys/bus/sdio/devices/mmc4:0001:1"
+
+EMMC_DEVICE_PATH="/sys/bus/mmc/devices/mmc2:0001"
+
+declare -A CHIP_IDS
+declare -A WIFI_NAMES
+declare -A WIFI_CHIPS
+
+declare -A DT_EMMC_OVERLAYS
+declare -A DT_LED_OVERLAYS
+declare -a DT_LED_OVERLAYS_ORDER
+declare -A DT_CPU_OVERLAYS
+declare -A DT_WIFI_OVERLAYS
+
+# Declarations for the various SoCs IDs
+CHIP_IDS+=(["524b3381"]="RK3318")
+CHIP_IDS+=(["524b3382"]="RK3328")
+
+# Declarations for the various Wifi IDs
+WIFI_NAMES+=(["3030:3030"]="South Silicon Valley 6051p/6256p")
+WIFI_NAMES+=(["024c:b703"]="Realtek RTL8703bs")
+WIFI_NAMES+=(["024c:8179"]="Realtek RTL8189ES/ETV")
+WIFI_NAMES+=(["6666:1111"]="Espressif ESP8089")
+WIFI_NAMES+=(["02d0:4334"]="Broadcom BCM4334/AmPak AP6334")
+WIFI_NAMES+=(["02d0:4330"]="Broadcom BCM4330/AmPak AP6330")
+
+# Declarations for the various wifi IDs -> kernel modules
+# In case the vendor has the same vendor:device ids for more than one
+# device (the infamouse ssv6051p/6256p), modules are separated by comma
+# and the user is asked which one she pefers.
+# Note: this is only for legacy kernel for rockchip_wlan modules which
+# load themselves without declaring their device ids.
+WIFI_CHIPS+=(["3030:3030"]="ssv6051 ssv6x5x")
+WIFI_CHIPS+=(["024c:b703"]="8723cs")
+WIFI_CHIPS+=(["024c:8179"]="8189es")
+#WIFI_CHIPS+=(["6666:1111"]="")
+WIFI_CHIPS+=(["02d0:4334"]="")
+WIFI_CHIPS+=(["02d0:4330"]="")
+
+# Declarations for device tree overlays
+DT_EMMC_OVERLAYS+=(["rk3318-box-emmc-ddr"]="enable eMMC DDR Mode")
+DT_EMMC_OVERLAYS+=(["rk3318-box-emmc-hs200"]="enable eMMC HS200 Mode")
+
+DT_LED_OVERLAYS+=(["rk3318-box-led-conf1"]="Generic (also YX_RK3328, RK3318_V1.x)")
+DT_LED_OVERLAYS+=(["rk3318-box-led-conf4"]="Generic + wifi on sdmmc-ext")
+DT_LED_OVERLAYS+=(["rk3318-box-led-conf2"]="X88_PRO_B boards")
+DT_LED_OVERLAYS+=(["rk3318-box-led-conf3"]="MXQ-RK3328-D4 boards (w/ RK805)")
+
+DT_LED_OVERLAYS_ORDER=("rk3318-box-led-conf1" "rk3318-box-led-conf4" "rk3318-box-led-conf2" "rk3318-box-led-conf3")
+
+DT_CPU_OVERLAYS+=(["rk3318-box-cpu-hs"]="RK3318 or RK3328")
+
+#DT_WIFI_OVERLAYS+=(["6666:1111"]="rk3318-box-wlan-esp8089")
+DT_WIFI_OVERLAYS+=(["02d0:4334"]="rk3318-box-wlan-ap6334")
+DT_WIFI_OVERLAYS+=(["02d0:4330"]="rk3318-box-wlan-ap6330")
+
+KERNEL_VERSION=$(uname -r | cut -d "-" -f 1)
+if [[ "$KERNEL_VERSION" < "4.5.0" ]]; then
+	LEGACY_KERNEL=1
+else
+	LEGACY_KERNEL=0
+fi
+
+DT_OVERLAY_PREFIX="$(grep overlay_prefix /boot/armbianEnv.txt | cut -d "=" -f 2)-"
+
+# Query the efuse to get the chip type.
+function get_chip_type() {
+
+	CHIP_ID=$(od -A none -N 4 -tx1 $EFUSE_PATH | tr -d " ")
+
+	CHIP_TYPE=${CHIP_IDS[$CHIP_ID]}
+	CHIP_TYPE=${CHIP_TYPE:-"unknown"}
+
+	echo $CHIP_TYPE
+
+	return 0
+
+}
+
+# Get the chip serial, from bytes 7 to 22 of the efuse
+function get_chip_serial() {
+
+	ASCII_PART=$(od -A none -j 7 -N 9 -tc $EFUSE_PATH | tr -d " ")
+	BIN_PART=$(od -A none -j 16 -N 7 -tx1 $EFUSE_PATH | tr -d " ")
+
+	echo "$ASCII_PART $BIN_PART"
+
+	return 0
+
+}
+
+# Get the cpu leakage, byte 23 of the efuse
+function get_cpu_leakage() {
+
+	LEAKAGE=$(od -A none -j 23 -N 1 -tx1 $EFUSE_PATH | tr -d " ")
+
+	echo $LEAKAGE
+
+	return 0
+
+}
+
+# Get the logic leakage, byte 25 of the efuse
+function get_logic_leakage() {
+
+	LEAKAGE=$(od -A none -j 25 -N 1 -tx1 $EFUSE_PATH | tr -d " ")
+
+	echo $LEAKAGE
+
+	return 0
+
+}
+
+# Get the CPU Version, byte 26 of the efuse
+function get_cpu_version() {
+
+	CPU_VERSION=$(od -A none -j 26 -N 1 -t dI $EFUSE_PATH | tr -d " ")
+	CPU_VERSION=$((($CPU_VERSION >> 3) & 7)) # offset: 3 bits, size: 3 bits
+
+	echo $CPU_VERSION
+
+	return 0
+
+}
+
+function get_sdio_device_path() {
+
+	[[ -d "$SDIO_WIFI_PATH" ]] && echo $SDIO_WIFI_PATH
+	[[ -d "$SDIO2_WIFI_PATH" ]] && echo $SDIO2_WIFI_PATH
+
+	return 0
+
+}
+
+# Get the vendor and device ids of the wifi chip
+function get_wifi_chip_id() {
+
+	SDIO_PATH="$1"
+
+	if [ -d "$SDIO_PATH" ]; then
+
+		VENDOR=$(cut -c 3- "$SDIO_PATH/vendor")
+		DEVICE=$(cut -c 3- "$SDIO_PATH/device")
+
+		echo "$VENDOR:$DEVICE"
+
+		return 0
+
+	fi
+
+	return 1
+
+}
+
+function get_internal_flash_type() {
+
+	if [ -d "$EMMC_DEVICE_PATH" ]; then
+		echo "eMMC"
+	elif [ -d "$NAND_DEVICE_PATH" ]; then
+		echo "NAND"
+	fi
+
+	return 0
+
+}
+
+function select_wifi_module() {
+
+	MODULES=$1
+
+	declare -a DIALOG_ENTRIES
+	declare -a MODULES
+
+	IDX=0
+	for MODULE in $WIFI_MODULE; do
+		MODULES[$IDX]="$MODULE"
+		DIALOG_ENTRIES+=("$IDX" "$MODULE")
+		IDX=$((IDX + 1))
+	done
+
+	MENU_TITLE="${BOARD_INFO}Please choose the wifi module suitable for your configuration:\n"
+	MENU_CMD=(dialog --colors --backtitle "$BACKTITLE" --title "$TITLE" --default-item "0" --menu "$MENU_TITLE" 24 0 20)
+	SELECTION=$("${MENU_CMD[@]}" "${DIALOG_ENTRIES[@]}" 2>&1 >/dev/tty)
+
+	if [[ $? -ne 0 ]]; then
+		return 1
+	fi
+
+	WIFI_MODULE="${MODULES[$SELECTION]}"
+
+	echo $WIFI_MODULE
+
+	return 0
+
+}
+
+# Blacklists all the modules buth whitelist only that one
+# that has been detected
+function apply_wifi_blacklist() {
+
+	# Detect wifi chip on legacy kernel and unblacklist it
+	WIFI_MODULE=$1
+
+	if [ ! -f $BLACKLIST_MODPROBE_CONF ]; then
+		touch $BLACKLIST_MODPROBE_CONF
+	fi
+
+	if [ -n "$WIFI_MODULE" ]; then
+
+		for MODULES in "${WIFI_CHIPS[@]}"; do
+			for MODULE in $MODULES; do
+				sed -i "/blacklist $MODULE/d" $BLACKLIST_MODPROBE_CONF
+			done
+		done
+
+		declare -A BLACKLIST_MODULES
+
+		for MODULES in "${WIFI_CHIPS[@]}"; do
+			for MODULE in $MODULES; do
+				if [ "$MODULE" != "$WIFI_MODULE" ]; then
+					BLACKLIST_MODULES+=([$MODULE]=1)
+				fi
+			done
+		done
+
+		for MODULE in "${!BLACKLIST_MODULES[@]}"; do
+			echo "blacklist $MODULE" >> $BLACKLIST_MODPROBE_CONF
+		done
+
+		echo "#blacklist $WIFI_MODULE" >> $BLACKLIST_MODPROBE_CONF
+
+	fi
+
+
+	# unsupported wifi_chip_type: blacklist all known wifi
+	# modules if the blacklist file exists. If the blacklist file does not exist just skip over
+	if [ -z $WIFI_MODULE ]; then
+
+		if [ -f $BLACKLIST_MODPROBE_CONF ]; then
+
+			for MODULE in "${WIFI_CHIPS[@]}"; do
+				sed -i "s/#blacklist $MODULE/blacklist $MODULE/g" $BLACKLIST_MODPROBE_CONF
+			done
+
+		fi
+
+	fi
+
+}
+
+function select_soc() {
+
+    declare -a DIALOG_ENTRIES
+
+    # SoC section
+
+    SELECTION="0"
+    [[ "$CHIP_TYPE" = "RK3328" ]] && SELECTION="2"
+
+    DIALOG_ENTRIES=("0" "RK3318 (max 1.1Ghz, slower but safer)")
+    DIALOG_ENTRIES+=("1" "RK3318 (max 1.3Ghz)")
+    DIALOG_ENTRIES+=("2" "RK3328 (max 1.3Ghz)")
+
+    MENU_TITLE="${BOARD_INFO}Select the SoC type:\n"
+
+    MENU_CMD=(dialog --colors --backtitle "$BACKTITLE" --title "$TITLE" --default-item "$SELECTION" --menu "$MENU_TITLE" 24 0 20)
+
+    SELECTION=$("${MENU_CMD[@]}" "${DIALOG_ENTRIES[@]}" 2>&1 >/dev/tty)
+
+    RET=$?
+
+    if [ "$RET" -eq 1 ]; then
+        echo "Cancelled"
+        return 1
+    fi
+
+    if [ "$RET" -ne 0 ]; then
+        echo "dialog utility returned an unexpected error code: $RET"
+        return 1
+    fi
+
+    [[ "$SELECTION" -eq 0 ]] && SELECTION=""
+    [[ "$SELECTION" -eq 1 ]] && SELECTION="rk3318-box-cpu-hs"
+    [[ "$SELECTION" -eq 2 ]] && SELECTION="rk3318-box-cpu-hs"
+
+    echo $SELECTION
+
+    return 0
+
+
+}
+
+function select_emmc_options() {
+
+    declare -a DIALOG_ENTRIES
+
+    for KEY in "${!DT_EMMC_OVERLAYS[@]}"; do
+        DIALOG_ENTRIES+=("$KEY" "${DT_EMMC_OVERLAYS[$KEY]}" "off")
+    done
+
+    MENU_TITLE="${BOARD_INFO}Select the internal eMMC additional speed options\nDefault mode (High Speed) is always enabled. Enabling additional modes may increase throughput, but not all boards/chips support them.\n"
+
+    MENU_CMD=(dialog --colors --backtitle "$BACKTITLE" --title "$TITLE" --checklist "$MENU_TITLE" 24 0 20)
+
+    SELECTION=$("${MENU_CMD[@]}" "${DIALOG_ENTRIES[@]}" 2>&1 >/dev/tty)
+
+    RET=$?
+
+    if [[ "$RET" -eq 1 ]]; then
+        echo "Cancelled"
+	return 1
+    fi
+
+    if [[ "$RES" -ne 0 ]]; then
+	echo "dialog utility returned an unexpected error code: $RET"
+	return 1
+    fi
+
+    echo $SELECTION
+
+    return 0
+
+}
+
+function select_led_configuration() {
+
+    declare -a DIALOG_ENTRIES
+
+    for KEY in "${DT_LED_OVERLAYS_ORDER[@]}"; do
+        DIALOG_ENTRIES+=($KEY "${DT_LED_OVERLAYS[$KEY]}")
+    done
+
+    MENU_TITLE="${BOARD_INFO}${NOTE_BOARD_SELECTION}"
+
+    MENU_CMD=(dialog --colors --backtitle "$BACKTITLE" --title "$TITLE" --menu "$MENU_TITLE" 24 0 20)
+
+    SELECTION=$("${MENU_CMD[@]}" "${DIALOG_ENTRIES[@]}" 2>&1 >/dev/tty)
+
+    RET=$?
+
+    if [[ "$RET" -eq 1 ]]; then
+        echo "Cancelled"
+        return 1
+    fi
+
+    if [[ "$RET" -ne 0 ]]; then
+        echo "dialog utility returned an unexpected error code: $RET"
+        return 1
+    fi
+
+    [[ "$SELECTION" = "default" ]] && SELECTION=""
+
+    echo $SELECTION
+
+    return 0
+
+
+}
+
+function inform_wifi_alternate() {
+
+   dialog --colors --msgbox "$INFORM_ALTERNATE_WIFI" 40 0
+
+}
+
+
+# ----- Entry point -----
+
+USER_ID=$(id -u)
+if [[ $USER_ID -ne 0 ]]; then
+	echo "Please run this script with administrative privileges"
+	exit 2
+fi
+
+declare -a DT_OVERLAYS_TO_APPLY
+
+CHIP_TYPE=$(get_chip_type)
+CHIP_SERIAL=$(get_chip_serial)
+CPU_LEAKAGE=$(get_cpu_leakage)
+LOGIC_LEAKAGE=$(get_logic_leakage)
+CPU_VERSION=$(get_cpu_version)
+FLASH_TYPE=$(get_internal_flash_type)
+
+WIFI_PATH=$(get_sdio_device_path)
+
+WIFI_ID=$(get_wifi_chip_id $WIFI_PATH)
+
+if [[ -z "$WIFI_ID" ]]; then
+	WIFI_NAME="not available"
+else
+	WIFI_NAME="${WIFI_NAMES[$WIFI_ID]:-"unknown"} - Device ID: ${WIFI_ID}"
+fi
+
+if [[ -z "$FLASH_TYPE" ]]; then
+	FLASH_NAME="not detected"
+else
+	FLASH_NAME="$FLASH_TYPE"
+fi
+
+BOARD_INFO="\nDetected board features:\n\
+Chip type: ${COLOR_RED}\Zb${CHIP_TYPE}\Zn${COLOR_BLACK} - \
+Serial: $CHIP_SERIAL\n\
+CPU Leakage: 0x$CPU_LEAKAGE - Logic Leakage: 0x$LOGIC_LEAKAGE - CPU Version: 0x$CPU_VERSION\n\
+Internal flash: ${COLOR_RED}\Zb${FLASH_NAME}\Zn${COLOR_BLACK}\n\
+Wifi device: $WIFI_NAME\n\n"
+
+### --- SOC selection ---
+
+SELECTION=$(select_soc) || exit 1
+DT_OVERLAYS_TO_APPLY+=($SELECTION)
+
+#SELECTION=$(select_flash) || exit 1
+#DT_OVERLAYS_TO_APPLY+=($SELECTION)
+
+SELECTION=$(select_emmc_options) || exit 1
+DT_OVERLAYS_TO_APPLY+=($SELECTION)
+
+SELECTION=$(select_led_configuration) || exit 1
+DT_OVERLAYS_TO_APPLY+=($SELECTION)
+
+# Apply overlays for wifi chips
+if [[ -n $WIFI_ID ]] && [[ -n "${DT_WIFI_OVERLAYS[$WIFI_ID]}" ]]; then
+	DT_OVERLAYS_TO_APPLY+=(${DT_WIFI_OVERLAYS[$WIFI_ID]})
+fi
+
+sed -i '/^overlays=/d' $ARMBIAN_ENV_TXT
+
+if [[ $? -ne 0 ]]; then
+	echo "An error occurred while removing existing fdtfile entry from $ARMBIAN_ENV_TXT"
+	exit 1
+fi
+
+echo "overlays=${DT_OVERLAYS_TO_APPLY[@]}" >> $ARMBIAN_ENV_TXT
+
+if [[ $? -ne 0 ]]; then
+	echo "An error occurred while adding overlays entry in $ARMBIAN_ENV_TXT"
+	exit 1
+fi
+
+# Apply the wifi blacklist only with legacy kernel
+if [[ $LEGACY_KERNEL -eq 1 ]] && [[ -n "$WIFI_ID" ]]; then
+
+	WIFI_MODULE="${WIFI_CHIPS[$WIFI_ID]}"
+
+	if [[ -n $WIFI_MODULE ]]; then
+
+		echo "$WIFI_MODULE" | grep " " > /dev/null 2>&1
+
+		if [[ $? -eq 0 ]]; then
+
+			WIFI_MODULE=$(select_wifi_module "$WIFI_MODULE")
+
+			if [[ $? -ne 0 ]]; then
+				WIFI_MODULE=""
+			fi
+
+		fi
+
+		if [[ -n "$WIFI_MODULE" ]]; then
+			apply_wifi_blacklist "$WIFI_MODULE"
+		fi
+
+	fi
+
+fi
+
+echo ""
+echo ""
+echo "Device tree overlays enabled: ${DT_OVERLAYS_TO_APPLY[@]}"
+
+# Print the outcome of wifi chip selection only with legacy kernel
+# Mainline kernel is supposed to work ok by itself with hardware recognition
+if [[ $LEGACY_KERNEL -eq 1 ]]; then
+
+	if [[ -n "$WIFI_MODULE" ]]; then
+		echo "Forcefully enabled wifi module $WIFI_MODULE"
+	fi
+
+	if [[ -n "$WIFI_ID" ]] && [[ ! -v WIFI_CHIPS[$WIFI_ID] ]]; then
+		echo "Wifi chip $WIFI_ID has been detected, but currently it is unsupported"
+		echo "Please report to: https://forum.armbian.com/topic/12656-wip-armbian-for-rk322x-devices/"
+	fi
+
+fi
+
+echo "Reboot the device to make changes effective!"
+echo ""

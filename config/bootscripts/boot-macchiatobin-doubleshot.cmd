@@ -18,8 +18,8 @@ env import -t ${scriptaddr} ${filesize}
 setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} $extra_params $cpuidle"
 
 ext4load mmc 1:1 $kernel_addr_r $image_name
-ext4load mmc 1:1 $initrd_addr $initrd_image
+ext4load mmc 1:1 $initrd_addr_r $initrd_image
 ext4load mmc 1:1 $fdt_addr_r $fdt_name
 
-booti $kernel_addr_r $initrd_addr $fdt_addr_r
+booti $kernel_addr_r $initrd_addr_r $fdt_addr_r
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr

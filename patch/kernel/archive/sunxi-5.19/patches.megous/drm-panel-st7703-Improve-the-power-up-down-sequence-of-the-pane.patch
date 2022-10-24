@@ -1,0 +1,119 @@
+From 9172e019c0226ee2c3a7e0fbbf6de4789a67d6c9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Sun, 5 Jul 2020 15:55:46 +0200
+Subject: [PATCH 187/417] drm/panel: st7703: Improve the power up/down sequence
+ of the panel
+
+The datasheet specifies that there needs to be 120ms delay after
+the sleep out command, not after reset as the driver assumes.
+
+The delay between init commands and the sleep out is not necessary.
+
+The datasheet also specifies that it's better to keep reset asserted
+while powering up the supplies, and that IOVCC should be enabled
+first.
+
+There also needs to be a delay after enabling the supplies and
+before deasserting the reset. The datasheet specifies 1ms after
+the supplies reach the required voltage. Use 10-20ms to give the
+power supplies some time to reach the required voltage, too.
+
+After issuing SLEEP IN, it's necessary to let the controller complete
+the blanking sequence and drain the charge from the panel. (According
+to the datasheet.)
+
+This fixes panel initialization failures during resume from sleep
+on PinePhone.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/gpu/drm/panel/panel-sitronix-st7703.c | 35 ++++++++++---------
+ 1 file changed, 18 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-sitronix-st7703.c b/drivers/gpu/drm/panel/panel-sitronix-st7703.c
+index 73f69c929..cd82f8cf5 100644
+--- a/drivers/gpu/drm/panel/panel-sitronix-st7703.c
++++ b/drivers/gpu/drm/panel/panel-sitronix-st7703.c
+@@ -290,7 +290,6 @@ static int xbd599_init_sequence(struct st7703 *ctx)
+ 	dsi_dcs_write_seq(dsi, ST7703_CMD_SETBGP,
+ 			  0x07, /* VREF_SEL = 4.2V */
+ 			  0x07  /* NVREF_SEL = 4.2V */);
+-	msleep(20);
+ 
+ 	dsi_dcs_write_seq(dsi, ST7703_CMD_SETVCOM,
+ 			  0x2C, /* VCOMDC_F = -0.67V */
+@@ -367,16 +366,14 @@ static int st7703_enable(struct drm_panel *panel)
+ 		return ret;
+ 	}
+ 
+-	msleep(20);
+-
+ 	ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
+ 	if (ret < 0) {
+ 		dev_err(ctx->dev, "Failed to exit sleep mode: %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	/* Panel is operational 120 msec after reset */
+-	msleep(60);
++	/* Display on can be issued 120 msec after sleep out */
++	msleep(120);
+ 
+ 	ret = mipi_dsi_dcs_set_display_on(dsi);
+ 	if (ret)
+@@ -401,6 +398,9 @@ static int st7703_disable(struct drm_panel *panel)
+ 	if (ret < 0)
+ 		dev_err(ctx->dev, "Failed to enter sleep mode: %d\n", ret);
+ 
++	/* Display needs to be drained of charge, in order to work correctly on next power on. */
++	msleep(120);
++
+ 	return 0;
+ }
+ 
+@@ -428,29 +428,30 @@ static int st7703_prepare(struct drm_panel *panel)
+ 		return 0;
+ 
+ 	dev_dbg(ctx->dev, "Resetting the panel\n");
+-	ret = regulator_enable(ctx->vcc);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++
++	ret = regulator_enable(ctx->iovcc);
+ 	if (ret < 0) {
+-		dev_err(ctx->dev, "Failed to enable vcc supply: %d\n", ret);
++		dev_err(ctx->dev, "Failed to enable iovcc supply: %d\n", ret);
+ 		return ret;
+ 	}
+-	ret = regulator_enable(ctx->iovcc);
++
++	ret = regulator_enable(ctx->vcc);
+ 	if (ret < 0) {
+-		dev_err(ctx->dev, "Failed to enable iovcc supply: %d\n", ret);
+-		goto disable_vcc;
++		dev_err(ctx->dev, "Failed to enable vcc supply: %d\n", ret);
++		regulator_disable(ctx->iovcc);
++		return ret;
+ 	}
+ 
+-	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+-	usleep_range(20, 40);
++	/* Give power supplies time to stabilize before deasserting reset. */
++	usleep_range(10000, 20000);
++
+ 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+-	msleep(20);
++	usleep_range(15000, 20000);
+ 
+ 	ctx->prepared = true;
+ 
+ 	return 0;
+-
+-disable_vcc:
+-	regulator_disable(ctx->vcc);
+-	return ret;
+ }
+ 
+ static const u32 mantix_bus_formats[] = {
+-- 
+2.35.3
+

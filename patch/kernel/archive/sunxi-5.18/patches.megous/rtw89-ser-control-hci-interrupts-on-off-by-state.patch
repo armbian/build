@@ -1,0 +1,151 @@
+From 238368068940c6e53c91309b4d0104f87dd9c20e Mon Sep 17 00:00:00 2001
+From: Zong-Zhe Yang <kevin_yang@realtek.com>
+Date: Mon, 14 Mar 2022 15:12:46 +0800
+Subject: [PATCH 402/534] rtw89: ser: control hci interrupts on/off by state
+
+While SER (system error recover) is processing, it's supposed to mean
+something is under recovery. So, disable interrupts (excluding the one
+of halt which could be used during SER) to avoid unexpected behavior.
+And then, enable interrupts after SER is done.
+
+Signed-off-by: Zong-Zhe Yang <kevin_yang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220314071250.40292-5-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.h | 19 +++++++++++++++
+ drivers/net/wireless/realtek/rtw89/pci.c  | 29 +++++++++++++++++++++++
+ drivers/net/wireless/realtek/rtw89/pci.h  |  1 +
+ drivers/net/wireless/realtek/rtw89/ser.c  |  4 ++++
+ 4 files changed, 53 insertions(+)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index c6513a003..233eb0407 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -2025,6 +2025,13 @@ struct rtw89_hci_ops {
+ 	int (*mac_lv1_rcvy)(struct rtw89_dev *rtwdev, enum rtw89_lv1_rcvy_step step);
+ 	void (*dump_err_status)(struct rtw89_dev *rtwdev);
+ 	int (*napi_poll)(struct napi_struct *napi, int budget);
++
++	/* Deal with locks inside recovery_start and recovery_complete callbacks
++	 * by hci instance, and handle things which need to consider under SER.
++	 * e.g. turn on/off interrupts except for the one for halt notification.
++	 */
++	void (*recovery_start)(struct rtw89_dev *rtwdev);
++	void (*recovery_complete)(struct rtw89_dev *rtwdev);
+ };
+ 
+ struct rtw89_hci_info {
+@@ -3034,6 +3041,18 @@ static inline void rtw89_hci_flush_queues(struct rtw89_dev *rtwdev, u32 queues,
+ 		return rtwdev->hci.ops->flush_queues(rtwdev, queues, drop);
+ }
+ 
++static inline void rtw89_hci_recovery_start(struct rtw89_dev *rtwdev)
++{
++	if (rtwdev->hci.ops->recovery_start)
++		rtwdev->hci.ops->recovery_start(rtwdev);
++}
++
++static inline void rtw89_hci_recovery_complete(struct rtw89_dev *rtwdev)
++{
++	if (rtwdev->hci.ops->recovery_complete)
++		rtwdev->hci.ops->recovery_complete(rtwdev);
++}
++
+ static inline u8 rtw89_read8(struct rtw89_dev *rtwdev, u32 addr)
+ {
+ 	return rtwdev->hci.ops->read8(rtwdev, addr);
+diff --git a/drivers/net/wireless/realtek/rtw89/pci.c b/drivers/net/wireless/realtek/rtw89/pci.c
+index e79bfc335..32e8283e2 100644
+--- a/drivers/net/wireless/realtek/rtw89/pci.c
++++ b/drivers/net/wireless/realtek/rtw89/pci.c
+@@ -647,6 +647,29 @@ static void rtw89_pci_disable_intr(struct rtw89_dev *rtwdev,
+ 	rtw89_write32(rtwdev, R_AX_PCIE_HIMR10, 0);
+ }
+ 
++static void rtw89_pci_ops_recovery_start(struct rtw89_dev *rtwdev)
++{
++	struct rtw89_pci *rtwpci = (struct rtw89_pci *)rtwdev->priv;
++	unsigned long flags;
++
++	spin_lock_irqsave(&rtwpci->irq_lock, flags);
++	rtwpci->under_recovery = true;
++	rtw89_write32(rtwdev, R_AX_PCIE_HIMR00, 0);
++	rtw89_write32(rtwdev, R_AX_PCIE_HIMR10, 0);
++	spin_unlock_irqrestore(&rtwpci->irq_lock, flags);
++}
++
++static void rtw89_pci_ops_recovery_complete(struct rtw89_dev *rtwdev)
++{
++	struct rtw89_pci *rtwpci = (struct rtw89_pci *)rtwdev->priv;
++	unsigned long flags;
++
++	spin_lock_irqsave(&rtwpci->irq_lock, flags);
++	rtwpci->under_recovery = false;
++	rtw89_pci_enable_intr(rtwdev, rtwpci);
++	spin_unlock_irqrestore(&rtwpci->irq_lock, flags);
++}
++
+ static irqreturn_t rtw89_pci_interrupt_threadfn(int irq, void *dev)
+ {
+ 	struct rtw89_dev *rtwdev = dev;
+@@ -664,6 +687,9 @@ static irqreturn_t rtw89_pci_interrupt_threadfn(int irq, void *dev)
+ 	if (unlikely(isrs.halt_c2h_isrs & B_AX_HALT_C2H_INT_EN))
+ 		rtw89_ser_notify(rtwdev, rtw89_mac_get_err_status(rtwdev));
+ 
++	if (unlikely(rtwpci->under_recovery))
++		return IRQ_HANDLED;
++
+ 	if (likely(rtwpci->running)) {
+ 		local_bh_disable();
+ 		napi_schedule(&rtwdev->napi);
+@@ -2931,6 +2957,9 @@ static const struct rtw89_hci_ops rtw89_pci_ops = {
+ 	.mac_lv1_rcvy	= rtw89_pci_ops_mac_lv1_recovery,
+ 	.dump_err_status = rtw89_pci_ops_dump_err_status,
+ 	.napi_poll	= rtw89_pci_napi_poll,
++
++	.recovery_start = rtw89_pci_ops_recovery_start,
++	.recovery_complete = rtw89_pci_ops_recovery_complete,
+ };
+ 
+ int rtw89_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+diff --git a/drivers/net/wireless/realtek/rtw89/pci.h b/drivers/net/wireless/realtek/rtw89/pci.h
+index b84acd0d0..2c8030af3 100644
+--- a/drivers/net/wireless/realtek/rtw89/pci.h
++++ b/drivers/net/wireless/realtek/rtw89/pci.h
+@@ -594,6 +594,7 @@ struct rtw89_pci {
+ 	/* protect TRX resources (exclude RXQ) */
+ 	spinlock_t trx_lock;
+ 	bool running;
++	bool under_recovery;
+ 	struct rtw89_pci_tx_ring tx_rings[RTW89_TXCH_NUM];
+ 	struct rtw89_pci_rx_ring rx_rings[RTW89_RXCH_NUM];
+ 	struct sk_buff_head h2c_queue;
+diff --git a/drivers/net/wireless/realtek/rtw89/ser.c b/drivers/net/wireless/realtek/rtw89/ser.c
+index 5327b97b9..a20389cde 100644
+--- a/drivers/net/wireless/realtek/rtw89/ser.c
++++ b/drivers/net/wireless/realtek/rtw89/ser.c
+@@ -302,8 +302,11 @@ static void hal_send_m4_event(struct rtw89_ser *ser)
+ /* state handler */
+ static void ser_idle_st_hdl(struct rtw89_ser *ser, u8 evt)
+ {
++	struct rtw89_dev *rtwdev = container_of(ser, struct rtw89_dev, ser);
++
+ 	switch (evt) {
+ 	case SER_EV_STATE_IN:
++		rtw89_hci_recovery_complete(rtwdev);
+ 		break;
+ 	case SER_EV_L1_RESET:
+ 		ser_state_goto(ser, SER_RESET_TRX_ST);
+@@ -312,6 +315,7 @@ static void ser_idle_st_hdl(struct rtw89_ser *ser, u8 evt)
+ 		ser_state_goto(ser, SER_L2_RESET_ST);
+ 		break;
+ 	case SER_EV_STATE_OUT:
++		rtw89_hci_recovery_start(rtwdev);
+ 	default:
+ 		break;
+ 	}
+-- 
+2.35.3
+

@@ -1,0 +1,201 @@
+From beeb066e8a4a6714019c82ac94aae0fa0933aa01 Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Date: Mon, 7 Mar 2022 14:04:52 +0800
+Subject: [PATCH 488/544] rtw89: add chip_info::{h2c,c2h}_reg to support more
+ chips
+
+This is a register-based H2C/C2H interface to exchange data with firmware.
+Since the register addresses of 8852A and 8852C are different, add fields
+to chip_info to support this.
+
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220307060457.56789-9-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.h     |  4 ++++
+ drivers/net/wireless/realtek/rtw89/fw.c       | 20 ++++++++-----------
+ drivers/net/wireless/realtek/rtw89/reg.h      | 11 ++++++++++
+ drivers/net/wireless/realtek/rtw89/rtw8852a.c | 15 ++++++++++++++
+ drivers/net/wireless/realtek/rtw89/rtw8852c.c | 15 ++++++++++++++
+ 5 files changed, 53 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index 1aec32e8afba..d876de2d1a8d 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -2309,6 +2309,10 @@ struct rtw89_chip_info {
+ 	u8 ps_mode_supported;
+ 
+ 	u32 hci_func_en_addr;
++	u32 h2c_ctrl_reg;
++	const u32 *h2c_regs;
++	u32 c2h_ctrl_reg;
++	const u32 *c2h_regs;
+ };
+ 
+ union rtw89_bus_info {
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.c b/drivers/net/wireless/realtek/rtw89/fw.c
+index 97224483f618..2fe091cc12c0 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.c
++++ b/drivers/net/wireless/realtek/rtw89/fw.c
+@@ -1832,15 +1832,13 @@ void rtw89_fw_c2h_work(struct work_struct *work)
+ static int rtw89_fw_write_h2c_reg(struct rtw89_dev *rtwdev,
+ 				  struct rtw89_mac_h2c_info *info)
+ {
+-	static const u32 h2c_reg[RTW89_H2CREG_MAX] = {
+-		R_AX_H2CREG_DATA0, R_AX_H2CREG_DATA1,
+-		R_AX_H2CREG_DATA2, R_AX_H2CREG_DATA3
+-	};
++	const struct rtw89_chip_info *chip = rtwdev->chip;
++	const u32 *h2c_reg = chip->h2c_regs;
+ 	u8 i, val, len;
+ 	int ret;
+ 
+ 	ret = read_poll_timeout(rtw89_read8, val, val == 0, 1000, 5000, false,
+-				rtwdev, R_AX_H2CREG_CTRL);
++				rtwdev, chip->h2c_ctrl_reg);
+ 	if (ret) {
+ 		rtw89_warn(rtwdev, "FW does not process h2c registers\n");
+ 		return ret;
+@@ -1854,7 +1852,7 @@ static int rtw89_fw_write_h2c_reg(struct rtw89_dev *rtwdev,
+ 	for (i = 0; i < RTW89_H2CREG_MAX; i++)
+ 		rtw89_write32(rtwdev, h2c_reg[i], info->h2creg[i]);
+ 
+-	rtw89_write8(rtwdev, R_AX_H2CREG_CTRL, B_AX_H2CREG_TRIGGER);
++	rtw89_write8(rtwdev, chip->h2c_ctrl_reg, B_AX_H2CREG_TRIGGER);
+ 
+ 	return 0;
+ }
+@@ -1862,10 +1860,8 @@ static int rtw89_fw_write_h2c_reg(struct rtw89_dev *rtwdev,
+ static int rtw89_fw_read_c2h_reg(struct rtw89_dev *rtwdev,
+ 				 struct rtw89_mac_c2h_info *info)
+ {
+-	static const u32 c2h_reg[RTW89_C2HREG_MAX] = {
+-		R_AX_C2HREG_DATA0, R_AX_C2HREG_DATA1,
+-		R_AX_C2HREG_DATA2, R_AX_C2HREG_DATA3
+-	};
++	const struct rtw89_chip_info *chip = rtwdev->chip;
++	const u32 *c2h_reg = chip->c2h_regs;
+ 	u32 ret;
+ 	u8 i, val;
+ 
+@@ -1873,7 +1869,7 @@ static int rtw89_fw_read_c2h_reg(struct rtw89_dev *rtwdev,
+ 
+ 	ret = read_poll_timeout_atomic(rtw89_read8, val, val, 1,
+ 				       RTW89_C2H_TIMEOUT, false, rtwdev,
+-				       R_AX_C2HREG_CTRL);
++				       chip->c2h_ctrl_reg);
+ 	if (ret) {
+ 		rtw89_warn(rtwdev, "c2h reg timeout\n");
+ 		return ret;
+@@ -1882,7 +1878,7 @@ static int rtw89_fw_read_c2h_reg(struct rtw89_dev *rtwdev,
+ 	for (i = 0; i < RTW89_C2HREG_MAX; i++)
+ 		info->c2hreg[i] = rtw89_read32(rtwdev, c2h_reg[i]);
+ 
+-	rtw89_write8(rtwdev, R_AX_C2HREG_CTRL, 0);
++	rtw89_write8(rtwdev, chip->c2h_ctrl_reg, 0);
+ 
+ 	info->id = RTW89_GET_C2H_HDR_FUNC(*info->c2hreg);
+ 	info->content_len = (RTW89_GET_C2H_HDR_LEN(*info->c2hreg) << 2) -
+diff --git a/drivers/net/wireless/realtek/rtw89/reg.h b/drivers/net/wireless/realtek/rtw89/reg.h
+index 86b18dbbc769..61f9899f02fc 100644
+--- a/drivers/net/wireless/realtek/rtw89/reg.h
++++ b/drivers/net/wireless/realtek/rtw89/reg.h
+@@ -217,6 +217,17 @@
+ #define B_AX_ASFF_FULL_NO_STK BIT(1)
+ #define B_AX_EN_STUCK_DBG BIT(0)
+ 
++#define R_AX_H2CREG_DATA0_V1 0x7140
++#define R_AX_H2CREG_DATA1_V1 0x7144
++#define R_AX_H2CREG_DATA2_V1 0x7148
++#define R_AX_H2CREG_DATA3_V1 0x714C
++#define R_AX_C2HREG_DATA0_V1 0x7150
++#define R_AX_C2HREG_DATA1_V1 0x7154
++#define R_AX_C2HREG_DATA2_V1 0x7158
++#define R_AX_C2HREG_DATA3_V1 0x715C
++#define R_AX_H2CREG_CTRL_V1 0x7160
++#define R_AX_C2HREG_CTRL_V1 0x7164
++
+ #define R_AX_HCI_FUNC_EN_V1 0x7880
+ 
+ #define R_AX_PHYREG_SET 0x8040
+diff --git a/drivers/net/wireless/realtek/rtw89/rtw8852a.c b/drivers/net/wireless/realtek/rtw89/rtw8852a.c
+index 86a5808a76c8..9db8a8f9dd18 100644
+--- a/drivers/net/wireless/realtek/rtw89/rtw8852a.c
++++ b/drivers/net/wireless/realtek/rtw89/rtw8852a.c
+@@ -3,6 +3,7 @@
+  */
+ 
+ #include "coex.h"
++#include "fw.h"
+ #include "mac.h"
+ #include "phy.h"
+ #include "reg.h"
+@@ -376,6 +377,16 @@ static const struct rtw89_pwr_cfg * const pwr_off_seq_8852a[] = {
+ 	rtw8852a_pwroff, NULL
+ };
+ 
++static const u32 rtw8852a_h2c_regs[RTW89_H2CREG_MAX] = {
++	R_AX_H2CREG_DATA0, R_AX_H2CREG_DATA1,  R_AX_H2CREG_DATA2,
++	R_AX_H2CREG_DATA3
++};
++
++static const u32 rtw8852a_c2h_regs[RTW89_C2HREG_MAX] = {
++	R_AX_C2HREG_DATA0, R_AX_C2HREG_DATA1, R_AX_C2HREG_DATA2,
++	R_AX_C2HREG_DATA3
++};
++
+ static void rtw8852ae_efuse_parsing(struct rtw89_efuse *efuse,
+ 				    struct rtw8852a_efuse *map)
+ {
+@@ -2058,6 +2069,10 @@ const struct rtw89_chip_info rtw8852a_chip_info = {
+ 				  BIT(RTW89_PS_MODE_CLK_GATED) |
+ 				  BIT(RTW89_PS_MODE_PWR_GATED),
+ 	.hci_func_en_addr	= R_AX_HCI_FUNC_EN,
++	.h2c_ctrl_reg		= R_AX_H2CREG_CTRL,
++	.h2c_regs		= rtw8852a_h2c_regs,
++	.c2h_ctrl_reg		= R_AX_C2HREG_CTRL,
++	.c2h_regs		= rtw8852a_c2h_regs,
+ };
+ EXPORT_SYMBOL(rtw8852a_chip_info);
+ 
+diff --git a/drivers/net/wireless/realtek/rtw89/rtw8852c.c b/drivers/net/wireless/realtek/rtw89/rtw8852c.c
+index 3fa2dd4ff514..2f5ec94be50f 100644
+--- a/drivers/net/wireless/realtek/rtw89/rtw8852c.c
++++ b/drivers/net/wireless/realtek/rtw89/rtw8852c.c
+@@ -2,10 +2,21 @@
+ /* Copyright(c) 2019-2022  Realtek Corporation
+  */
+ 
++#include "fw.h"
+ #include "mac.h"
+ #include "reg.h"
+ #include "rtw8852c.h"
+ 
++static const u32 rtw8852c_h2c_regs[RTW89_H2CREG_MAX] = {
++	R_AX_H2CREG_DATA0_V1, R_AX_H2CREG_DATA1_V1, R_AX_H2CREG_DATA2_V1,
++	R_AX_H2CREG_DATA3_V1
++};
++
++static const u32 rtw8852c_c2h_regs[RTW89_H2CREG_MAX] = {
++	R_AX_C2HREG_DATA0_V1, R_AX_C2HREG_DATA1_V1, R_AX_C2HREG_DATA2_V1,
++	R_AX_C2HREG_DATA3_V1
++};
++
+ static int rtw8852c_pwr_on_func(struct rtw89_dev *rtwdev)
+ {
+ 	u32 val32;
+@@ -195,6 +206,10 @@ const struct rtw89_chip_info rtw8852c_chip_info = {
+ 	.pwr_on_seq		= NULL,
+ 	.pwr_off_seq		= NULL,
+ 	.hci_func_en_addr	= R_AX_HCI_FUNC_EN_V1,
++	.h2c_ctrl_reg		= R_AX_H2CREG_CTRL_V1,
++	.h2c_regs		= rtw8852c_h2c_regs,
++	.c2h_ctrl_reg		= R_AX_C2HREG_CTRL_V1,
++	.c2h_regs		= rtw8852c_c2h_regs,
+ };
+ EXPORT_SYMBOL(rtw8852c_chip_info);
+ 
+-- 
+2.34.1
+

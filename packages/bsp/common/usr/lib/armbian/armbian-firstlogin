@@ -6,6 +6,10 @@
 # License version 2. This program is licensed "as is" without any
 # warranty of any kind, whether express or implied.
 
+# read distribution status
+[[ -f /etc/lsb-release ]] && . /etc/lsb-release
+[[ -n "$DISTRIB_CODENAME" && -f /etc/armbian-distribution-status ]] && DISTRIBUTION_STATUS=$(grep "$DISTRIB_CODENAME" /etc/armbian-distribution-status | cut -d"=" -f2)
+
 . /etc/armbian-release
 
 
@@ -66,7 +70,7 @@ read_password()
 set_shell()
 {
 
-	optionsAudits=($(cat /etc/shells | grep "zsh\|/bash" | sed 's/\/bin\///g' | sed 's/\/usr//g' | uniq))
+	optionsAudits=($(grep "zsh\|/bash" /etc/shells | sed 's/\/bin\///g' | sed 's/\/usr//g' | uniq))
 	USER_SHELL="bash"
 
 	if [[ "${#optionsAudits[@]}" -gt 1 ]]; then
@@ -102,75 +106,101 @@ set_timezone_and_locales()
 
 	# Grab this machine's public IP address
 	PUBLIC_IP=`curl --max-time 5 -s https://ipinfo.io/ip`
-	if [ $? -eq 0 ]; then
 
-		# Call the geolocation API and capture the output
-		RES=$(
-				curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
-				jq '.timezone, .country, .country_code' | \
-				while read -r TIMEZONE; do
-					read -r COUNTRY
-					echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete \"
-				done
-			)
+	# Check if we have wireless adaptor
+        WIFI_DEVICE=$(LC_ALL=C nmcli dev status | grep  " wifi " 2>/dev/null)
 
-		TZDATA=$(echo ${RES} | cut -d"," -f1)
-		STATE=$(echo ${RES} | cut -d"," -f2)
-		CCODE=$(echo ${RES} | cut -d"," -f3 | xargs)
-		LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  \
-		xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
-		# UTF8 is not present everywhere so check again in case it returns empty value
-		[[ -z "$LOCALES" ]] && LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  \
-		xargs -I{} grep {} /usr/share/i18n/SUPPORTED | cut -d " " -f 1)
-		echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
-		echo ""
-		read -n1 -s -r -p "Set user language based on your location? [Y/n] " response
-		echo ""
-		# change it only if we have a match and if we agree
-		if [[ -n "$LOCALES" && "${response}" =~ ^(Y|y|"")$ ]]; then
+	if [ -z "$PUBLIC_IP" ]; then
 
-			options=(`echo ${LOCALES}`);
-
-			# when having more locales, prompt for choosing one
-			if [[ "${#options[@]}" -gt 1 ]]; then
-
-				options+=("Skip generating locales")
-				echo -e "\nAt your location, more locales are possible:\n"
-				PS3='Please enter your choice:'
-				select opt in "${options[@]}"
-				do
-					if [[ " ${options[@]} " =~ " ${opt} " ]]; then
-						LOCALES=${opt}
-						break
-					fi
-				done
-
+		# ask for connecting to wireless if wifi device is found
+		if [[ -n "$WIFI_DEVICE" ]]; then
+			echo -e "Internet connection was \x1B[91mnot detected\x1B[0m."
+			echo ""
+			read -n1 -s -r -p "Connect via wireless? [Y/n] " response
+			echo ""
+			if [[ "${response}" =~ ^(Y|y|"")$ ]]; then
+				nmtui-connect
 			fi
-
-			if [[ "${LOCALES}" != *Skip* ]]; then
-
-				# reconfigure tzdata
-				timedatectl set-timezone "${TZDATA}"
-				dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
-
-				# generate locales
-				echo ""
-				sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
-				echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
-				locale-gen $LOCALES > /dev/null 2>&1
-
-				# setting detected locales only for user
-				echo "export LC_ALL=$LOCALES" >> /home/$RealUserName/.bashrc
-				echo "export LANG=$LOCALES" >> /home/$RealUserName/.bashrc
-				echo "export LANGUAGE=$LOCALES" >> /home/$RealUserName/.bashrc
-				echo "export LC_ALL=$LOCALES" >> /home/$RealUserName/.xsessionrc
-				echo "export LANG=$LOCALES" >> /home/$RealUserName/.xsessionrc
-				echo "export LANGUAGE=$LOCALES" >> /home/$RealUserName/.xsessionrc
-
-			fi
+			echo ""
 		fi
 	fi
 
+	# Grab IP once again if not found
+	[[ -z "$PUBLIC_IP" && -n "$WIFI_DEVICE" ]] && PUBLIC_IP=`curl --max-time 5 -s https://ipinfo.io/ip`
+
+	# Call the geolocation API and capture the output
+	RES=$(
+		curl --max-time 5 -s http://ipwhois.app/json/${PUBLIC_IP} | \
+			jq '.timezone, .country, .country_code' | \
+			while read -r TIMEZONE; do
+				read -r COUNTRY
+				echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete \"
+			done
+		)
+
+	TZDATA=$(echo ${RES} | cut -d"," -f1)
+	STATE=$(echo ${RES} | cut -d"," -f2)
+	CCODE=$(echo ${RES} | cut -d"," -f3 | xargs)
+	echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
+	echo ""
+	unset response
+	while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
+		read -n1 -s -r -p "Set user language based on your location? [Y/n] " response
+		echo ""
+	done
+	# change it only if we have a match and if we agree
+	if [[ "${response}" =~ ^(N|n)$ ]]; then
+		unset CCODE TZDATA
+	fi
+
+	LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  \
+	xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
+	# UTF8 is not present everywhere so check again in case it returns empty value
+	[[ -z "$LOCALES" ]] && LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  \
+	xargs -I{} grep {} /usr/share/i18n/SUPPORTED | cut -d " " -f 1)
+
+	options=(`echo ${LOCALES}`);
+
+	# when having more locales, prompt for choosing one
+	if [[ "${#options[@]}" -gt 1 ]]; then
+
+		options+=("Skip generating locales")
+		echo -e "\nAt your location, more locales are possible:\n"
+		PS3='Please enter your choice:'
+		select opt in "${options[@]}"
+			do
+				if [[ " ${options[@]} " =~ " ${opt} " ]]; then
+					LOCALES=${opt}
+					break
+				fi
+			done
+		fi
+
+	if [[ "${LOCALES}" != *Skip* ]]; then
+
+		# if TZDATA was not detected, we need to select one
+		if [[ -z ${TZDATA} ]]; then
+			TZDATA=$(tzselect | tail -1)
+		fi
+
+		timedatectl set-timezone "${TZDATA}"
+		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
+
+		# generate locales
+		echo ""
+		sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
+		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
+		locale-gen "${LOCALES}" > /dev/null 2>&1
+
+		# setting detected locales only for user
+		echo "export LC_ALL=$LOCALES" >> /home/"$RealUserName"/.bashrc
+		echo "export LANG=$LOCALES" >> /home/"$RealUserName"/.bashrc
+		echo "export LANGUAGE=$LOCALES" >> /home/"$RealUserName"/.bashrc
+		echo "export LC_ALL=$LOCALES" >> /home/"$RealUserName"/.xsessionrc
+		echo "export LANG=$LOCALES" >> /home/"$RealUserName"/.xsessionrc
+		echo "export LANGUAGE=$LOCALES" >> /home/"$RealUserName"/.xsessionrc
+
+	fi
 }
 
 
@@ -204,23 +234,29 @@ add_profile_sync_settings()
 add_user()
 {
 	read -t 0 temp
-
+	REPEATS=3
 	while [ -f "/root/.not_logged_in_yet" ]; do
-		echo -e "\nPlease provide a username (eg. your forename): \c"
+		echo -e "\nPlease provide a username (eg. your first name): \c"
 		read -e username
+		if ! grep '^[a-zA-Z]*$' <<< $username > /dev/null ; then
+			echo -e "\n\x1B[91mError\x1B[0m: illegal characters in username"
+			return
+		fi
+
+
 		RealUserName="$(echo "$username" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
 		[ -z "$RealUserName" ] && return
 		if ! id "$RealUserName" >/dev/null 2>&1; then break; else echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."; fi
 	done
 
 	while [ -f "/root/.not_logged_in_yet" ]; do
-		read_password "Create"
-		first_input=$password
+		read_password "Create user ($username)"
+		first_input="$password"
 		echo ""
-		read_password "Repeat"
-		second_input=$password
+		read_password "Repeat user ($username)"
+		second_input="$password"
 		echo ""
-		if [[ $first_input == $second_input ]]; then
+		if [[ "$first_input" == "$second_input" ]]; then
 			result="$(cracklib-check <<<"$password")"
 			okay="$(awk -F': ' '{ print $2}' <<<"$result")"
 			if [[ "$okay" == "OK" ]]; then
@@ -228,34 +264,37 @@ add_user()
 				read -e -p "Please provide your real name: " -i "${RealUserName^}" RealName
 
 				adduser --quiet --disabled-password --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
-				(echo $first_input;echo $second_input;) | passwd "$RealUserName" >/dev/null 2>&1
+				(echo "$first_input";echo "$second_input";) | passwd "$RealUserName" >/dev/null 2>&1
 				for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
-					usermod -aG ${additionalgroup} ${RealUserName} 2>/dev/null
+					usermod -aG "${additionalgroup}" "${RealUserName}" 2>/dev/null
 				done
 
 				# fix for gksu in Xenial
-				touch /home/$RealUserName/.Xauthority
-				chown $RealUserName:$RealUserName /home/$RealUserName/.Xauthority
+				touch /home/"$RealUserName"/.Xauthority
+				chown "$RealUserName":"$RealUserName" /home/"$RealUserName"/.Xauthority
 				RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
-				[ -z "$RealName" ] && RealName=$RealUserName
+				[ -z "$RealName" ] && RealName="$RealUserName"
 				echo -e "\nDear \e[0;92m${RealName}\x1B[0m, your account \e[0;92m${RealUserName}\x1B[0m has been created and is sudo enabled."
 				echo -e "Please use this account for your daily work from now on.\n"
 				rm -f /root/.not_logged_in_yet
-
+				chmod +x /etc/update-motd.d/*
 				# set up profile sync daemon on desktop systems
 				command -v psd >/dev/null 2>&1
 				if [ $? -eq 0 ]; then
 					echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
-					touch /home/${RealUserName}/.activate_psd
-					chown $RealUserName:$RealUserName /home/${RealUserName}/.activate_psd
+					touch /home/"${RealUserName}"/.activate_psd
+					chown "$RealUserName":"$RealUserName" /home/"${RealUserName}"/.activate_psd
 				fi
 				break
 			else
-				echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again."
+				echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again [${REPEATS}]."
+				REPEATS=$((REPEATS - 1))
 			fi
 		elif [[ -n $password ]]; then
-			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again."
+			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again [${REPEATS}]."
+			REPEATS=$((REPEATS - 1))
 		fi
+		[[ "$REPEATS" -eq 0 ]] && exit
 	done
 
 }
@@ -270,57 +309,78 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
 	desktop_gdm3=$(dpkg-query -W -f='${db:Status-Abbrev}\n' gdm3 2>/dev/null)
 
-	echo -e "\nWaiting for system to finish booting ...\n"
+	echo -e "\nWaiting for system to finish booting ..."
 
 	systemctl is-system-running --wait >/dev/null
 
-	if [ "$IMAGE_TYPE" != "nightly" ]; then
-		if [ "$BRANCH" == "dev" ]; then
-			echo -e "\nYou are using an Armbian preview build !!!"
-			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
-		elif [ "$DISTRIBUTION_STATUS" != "supported" ]; then
-			echo -e "\nYou are using an Armbian with unsupported ($DISTRIBUTION_CODENAME) userspace !!!"
-			echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
-		fi
-	else
-		echo -e "\nYou are using an Armbian nightly build meant only for developers to provide"
-		echo -e "constructive feedback to improve build system, OS settings or user experience."
-		echo -e "If this does not apply to you, \e[0;31mSTOP NOW!\x1B[0m. Especially don't use this image for"
-		echo -e "daily work since things might not work as expected or at all and may break"
-		echo -e "anytime with next update. \e[0;31mYOU HAVE BEEN WARNED!\x1B[0m"
-		echo -e "\nThis image is provided \e[0;31mAS IS\x1B[0m with \e[0;31mNO WARRANTY\x1B[0m and \e[0;31mNO END USER SUPPORT!\x1B[0m.\n"
+	# enable hiDPI support
+	if [[ "$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null | cut -d, -f1)" -gt 1920 ]]; then
+		# lightdm
+		[[ -f /etc/lightdm/slick-greeter.conf ]] && echo "enable-hidpi = on" >> /etc/lightdm/slick-greeter.conf
+		# xfce
+		[[ -f /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml ]] && sed -i 's|<property name="WindowScalingFactor" type="int" value=".*|<property name="WindowScalingFactor" type="int" value="2">|g' /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+		setfont /usr/share/consolefonts/Uni3-TerminusBold32x16.psf.gz
 	fi
 
-	echo -e "New to Armbian? Documentation: \e[1m\e[39mhttps://docs.armbian.com\x1B[0m Support: \e[1m\e[39mhttps://forum.armbian.com\x1B[0m\n"
+	clear
+
+	echo -e "Welcome to \e[1m\e[97mARMBIAN\x1B[0m! \n"
+	echo -e "Documentation: \e[1m\e[92mhttps://docs.armbian.com\x1B[0m | Community: \e[1m\e[92mhttps://forum.armbian.com\x1B[0m\n"
+	GET_IP=$(bash /etc/update-motd.d/30-armbian-sysinfo | grep IP | sed "s/.*IP://" | sed 's/^[ \t]*//')
+	[[ -n "$GET_IP" ]] && echo -e "IP address: $GET_IP\n"
 
 	trap '' 2
+	REPEATS=3
 	while [ -f "/root/.not_logged_in_yet" ]; do
 
-		read_password "New root"
+		read_password "Create root"
 
 		# only allow one login. Once you enter root password, kill others.
 		loginfrom=$(who am i | awk '{print $2}')
 		who -la | grep root | grep -v "$loginfrom" | awk '{print $7}' | xargs --no-run-if-empty kill -9
 
-		first_input=$password
+		first_input="$password"
 		echo ""
-		read_password "Repeat"
-		second_input=$password
+		read_password "Repeat root"
+		second_input="$password"
 		echo ""
-		if [[ $first_input == $second_input ]]; then
+		if [[ "$first_input" == "$second_input" ]]; then
 			result="$(cracklib-check <<<"$password")"
 			okay="$(awk -F': ' '{ print $2}' <<<"$result")"
 			if [[ "$okay" == "OK" ]]; then
-				(echo $first_input;echo $second_input;) | passwd root >/dev/null 2>&1
+				(echo "$first_input";echo "$second_input";) | passwd root >/dev/null 2>&1
 				break
 				else
-				echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again."
+				echo -e "Rejected - \e[0;31m$okay.\x1B[0m Try again [${REPEATS}]."
+				REPEATS=$((REPEATS - 1))
 			fi
 		elif [[ -n $password ]]; then
-			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again."
+			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again [${REPEATS}]."
+			REPEATS=$((REPEATS - 1))
 		fi
+		[[ "$REPEATS" -eq 0 ]] && exit
 	done
 	trap - INT TERM EXIT
+
+	# display support status
+	if [ "$IMAGE_TYPE" != "nightly" ]; then
+		if [[ "$BRANCH" == "edge" ]]; then
+			echo -e "\nSupport status: \e[0;31mcommunity support\x1B[0m (edge kernel branch)"
+		elif [[ "$DISTRIBUTION_STATUS" != "supported" ]]; then
+			echo -e "\nSupport status: \e[0;31mcommunity support\x1B[0m (unsupported userspace)"
+		elif [[ "$BOARD_TYPE" != "conf" ]]; then
+			echo -e "\nSupport status: \e[0;31mcommunity support\x1B[0m (looking for a dedicated maintainer)"
+		fi
+	else
+
+	echo -e "\e[0;31m\nWARNING!\x1B[0m\n\nYou are using an \e[0;31mautomated build\x1B[0m meant only for developers to provide"
+	echo -e	"constructive feedback to improve build system, OS settings or UX.\n"
+
+	echo -e "If this does not apply to you, \e[0;31mSTOP NOW!\x1B[0m  Especially don't use this "
+	echo -e "image for production since things might not work as expected or at "
+	echo -e "all. They may  break anytime with next update."
+
+	fi
 
 	# ask user to select shell
 	trap '' 2
@@ -363,7 +423,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 			# select budgie session
 			[[ -x $(command -v budgie-desktop) ]] && sed -i "s/user-session.*/user-session=budgie-desktop/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v budgie-desktop) ]] && sed -i "s/user-session.*/user-session=budgie-desktop/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf		
+			[[ -x $(command -v budgie-desktop) ]] && sed -i "s/user-session.*/user-session=budgie-desktop/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
 			# select deepin session
 			[[ -x $(command -v deepin-wm) ]] && sed -i "s/user-session.*/user-session=deepin/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
@@ -371,11 +431,15 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 			# select cinnamon session
 			[[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf			
+			[[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
 			# select mate session
 			[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
 			[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+
+                        # select plasma wayland session
+                        [[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+                        [[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
 			ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
 

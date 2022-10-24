@@ -22,7 +22,7 @@ mkdir -p "${destination}"/usr/share/pixmaps/armbian
 cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
 #generate wallpaper list for background changer
-mkdir -p "${destination}"/usr/sharedeepin-background-properties
+mkdir -p "${destination}"/usr/share/deepin-background-properties
 cat <<EOF > "${destination}"/usr/share/deepin-background-properties/armbian.xml
 <?xml version="1.0"?>
 <!DOCTYPE wallpapers SYSTEM "deepin-wp-list.dtd">

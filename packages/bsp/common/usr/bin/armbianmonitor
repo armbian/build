@@ -64,7 +64,7 @@
 #   Otherwise it should contain the complete command line ('DISK' will be 
 #   dynamically replaced by the device node when the actual monitoring 
 #   happens), for example:
-#   /sbin/hdparm -C DISK | egrep -q "standby|sleeping" || /usr/sbin/smartctl -d sat -a DISK | awk -F" " '/Temperature_Cel/ {printf $10}'
+#   /sbin/hdparm -C DISK | grep -Eq "standby|sleeping" || /usr/sbin/smartctl -d sat -a DISK | awk -F" " '/Temperature_Cel/ {printf $10}'
 # - 'CRC attribute': The decimal value of the S.M.A.R.T. attribute that
 #   is used to store the count of checksum errors between disk and host 
 #   controller (might be omitted if the drive doesn't support it)
@@ -107,7 +107,7 @@ Main() {
 		# we should already provide monitoring, check whether DEBUG
 		# is also set
 		ArmbianMonitoring=TRUE
-		read DebugMode </etc/armbianmonitor/start-monitoring 2>/dev/null
+		read -r DebugMode </etc/armbianmonitor/start-monitoring 2>/dev/null
 	fi
 	
 	# check whether rpimonitord is running and compare with ${ArmbianMonitoring}
@@ -146,24 +146,40 @@ ParseOptions() {
 			exit 0
 			;;
 		u)
-			# Upload /var/log/armbian-hardware-monitor.log with additional support info
-			fping ix.io 2>/dev/null | grep -q alive
-			if [ $? != 0 ]; then
-				echo -e "\nNetwork/firewall problem detected. Not able to upload debug info.\nPlease fix this or use \"-U\" instead and upload ${BOLD}whole output${NC} manually\n" >&2
-				exit 1
-			fi
-			which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
-			echo -e "System diagnosis information will now be uploaded to \c"
-			# we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
-			# in clear since otherwise the log becomes worthless due to randomly generated
-			# addresses here and there that might conflict
-			CollectSupportInfo \
-				| sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' \
-				| curl -F 'f:1=<-' ix.io
-			echo -e "Please post the URL in the forum where you've been asked for.\n"
-			exit 0
-			;;
-		U)
+                        # Upload /var/log/armbian-hardware-monitor.log with additional support info
+                        which curl >/dev/null 2>&1 || apt-get -f -qq -y install curl
+                        echo -e "System diagnosis information will now be uploaded to \c"
+                        fping paste.armbian.com 2>/dev/null | grep -q alive
+                        if [ $? != 0 ]; then
+                                echo -e "\nNetwork/firewall problem detected.\nTrying fallback..." >&2
+                                fping ix.io 2>/dev/null | grep -q alive
+                                if [ $? != 0 ]; then
+                                        echo -e "\nNetwork/firewall problem detected. Not able to upload debug info.\nPlease fix this or use \"-U\" instead and upload ${BOLD}whole output${NC} manually to an online pasteboard service\nand provide the URL in the forum where you have been asked for this.\n"
+					exit 1
+                                fi
+
+                                # we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
+                                # in clear since otherwise the log becomes worthless due to randomly generated
+                                # addresses here and there that might conflict
+	                        CollectSupportInfo \
+                                | sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' \
+                                | curl -F 'f:1=<-' ix.io
+                                echo -e "Please post the URL in the forum where you've been asked for.\n"
+	                        exit 0
+                        fi
+
+                        # we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
+                        # in clear since otherwise the log becomes worthless due to randomly generated
+                        # addresses here and there that might conflict
+                        CollectSupportInfo \
+                        | sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' \
+                        | curl -s --data-binary @- "https://paste.armbian.com/documents" \
+                        | awk -F'"' '{ print "https://paste.armbian.com/" $4 }'
+                        echo -e "Please post the URL in the forum where you've been asked for.\n"
+                        exit 0
+                        ;;
+
+                U)
 			# Send support info to stdout to be uploaded manually. Add line numbers to prevent
 			# users being creative and supressing everything that's important
 			CollectSupportInfo \
@@ -346,7 +362,7 @@ MonitorMode() {
 	[ -f /sys/devices/virtual/thermal/cooling_device0/cur_state ] \
 		&& DisplayHeader="${DisplayHeader}  C.St." || CoolingState='n/a'
 	echo -e "Stop monitoring using [ctrl]-[c]"
-	[ $(echo "${SleepInterval} * 10" | bc | cut -d. -f1) -le 15 2>/dev/null ] \
+	[ $(echo "${SleepInterval} * 10" | bc | cut -d. -f1) -le 15 ] \
 		&& echo "Warning: High update frequency (${SleepInterval} sec) might change system behaviour!"
 	echo -e "${DisplayHeader}"
 	Counter=0
@@ -354,7 +370,7 @@ MonitorMode() {
 		if [ "$c" == "m" ]; then
 			let Counter++
 			if [ ${Counter} -eq 15 ]; then
-				echo -e "\n${DisplayHeader}\c"
+				printf "%s" "$DisplayHeader"
 				Counter=0
 			fi
 		elif [ "$c" == "s" ]; then
@@ -372,46 +388,46 @@ MonitorMode() {
 				BigFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu4/cpufreq/cpuinfo_cur_freq) 2>/dev/null
 				LittleFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq) 2>/dev/null
 				ProcessStats
-				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${BigFreq})/$(printf "%4s" ${LittleFreq})MHz $(printf "%5s" ${LoadAvg}) ${procStats}\c"
+				printf "\n%s: %4s/%4sMHz %5s %s" "$(date "+%H:%M:%S")" "$BigFreq" "$LittleFreq" "$LoadAvg" "$procStats"
 				;;
 			normal)
 				CpuFreq=$(awk '{printf ("%0.0f",$1/1000); }' </sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq) 2>/dev/null
 				ProcessStats
-				echo -e "\n$(date "+%H:%M:%S"): $(printf "%4s" ${CpuFreq})MHz $(printf "%5s" ${LoadAvg}) ${procStats}\c"
+				printf "\n%s: %4sMHz %5s %s" "$(date "+%H:%M:%S")" "$CpuFreq" "$LoadAvg" "$procStats"
 				;;
 			notavailable)
 				ProcessStats
-				echo -e "\n$(date "+%H:%M:%S"):   ---     $(printf "%5s" ${LoadAvg}) ${procStats}\c"
+				printf "\n%s:   ---     %5s %s" "$(date "+%H:%M:%S")" "$LoadAvg" "$procStats"
 				;;
 		esac
 		if [ "X${SocTemp}" != "Xn/a" ]; then
-			read SocTemp <"${Sensors}/soctemp"
+			read -r SocTemp <"${Sensors}/soctemp"
 			if [ ${SocTemp} -ge 1000 ]; then
 				SocTemp=$(awk '{printf ("%0.1f",$1/1000); }' <<<${SocTemp})
 			fi
-			echo -e " $(printf "%4s" ${SocTemp})°C\c"
+			printf " %4s °C" "$SocTemp"
 		fi
 		if [ "X${PMICTemp}" != "Xn/a" ]; then
-			read PMICTemp <"${Sensors}/pmictemp"
+			read -r PMICTemp <"${Sensors}/pmictemp"
 			if [ ${PMICTemp} -ge 1000 ]; then
 				PMICTemp=$(awk '{printf ("%0.1f",$1/1000); }' <<<${PMICTemp})
 			fi
-			echo -e " $(printf "%4s" ${PMICTemp})°C\c"
+			printf " %4s °C" "$PMICTemp"
 		fi
 		if [ "X${DCIN}" != "Xn/a" ]; then
 			case "${DCIN##*/}" in
 				in_voltage2_raw)
 					# Tinkerboard S
-					read RAWvoltage <"${DCIN}"
+					read -r RAWvoltage <"${DCIN}"
 					DCINvoltage=$(echo "(${RAWvoltage} / ((82.0/302.0) * 1023.0 / 1.8)) + 0.1" | bc -l)
 					;;
 				*)
 					DCINvoltage=$(awk '{printf ("%0.2f",$1/1000000); }' <"${DCIN}")
 					;;
 			esac
-			echo -e "  $(printf "%5s" ${DCINvoltage})V\c"
+			printf "  %5sV" "$DCINvoltage"
 		fi
-		[ "X${CoolingState}" != "Xn/a" ] && printf "  %d/%d" $(cat /sys/devices/virtual/thermal/cooling_device0/cur_state) $(cat /sys/devices/virtual/thermal/cooling_device0/max_state)
+		[ "X${CoolingState}" != "Xn/a" ] && printf "  %d/%d" "$(cat /sys/devices/virtual/thermal/cooling_device0/cur_state)" "$(cat /sys/devices/virtual/thermal/cooling_device0/max_state)"
 		[ "$c" == "s" ] && sleep 0.3 || sleep ${SleepInterval}
 	done
 } # MonitorMode
@@ -422,7 +438,7 @@ CheckDCINVoltage() {
 		/sys/devices/platform/sunxi-i2c.0/i2c-0/0-0034/axp20-supplyer.28/power_supply/ac/voltage_now \
 		/sys/power/axp_pmu/ac/voltage '/sys/bus/iio/devices/iio:device0/in_voltage2_raw' ; do
 		if [ -f $i ]; then
-			read DCINvoltage <$i 2>/dev/null
+			read -r DCINvoltage <$i 2>/dev/null
 			if [ ${DCINvoltage} -gt 4080000 ]; then
 				echo $i
 				break
@@ -453,26 +469,26 @@ ProcessStats() {
 
 		Total=0
 		for eachstat in ${procStatLine[@]}; do
-			Total=$(( ${Total} + ${eachstat} ))
+			Total=$(( Total + eachstat ))
 		done
 
-		UserDiff=$(( ${UserStat} - ${LastUserStat} ))
-		NiceDiff=$(( ${NiceStat} - ${LastNiceStat} ))
-		SystemDiff=$(( ${SystemStat} - ${LastSystemStat} ))
-		IOWaitDiff=$(( ${IOWaitStat} - ${LastIOWaitStat} ))
-		IrqDiff=$(( ${IrqStat} - ${LastIrqStat} ))
-		SoftIrqDiff=$(( ${SoftIrqStat} - ${LastSoftIrqStat} ))
+		UserDiff=$(( UserStat - LastUserStat ))
+		NiceDiff=$(( NiceStat - LastNiceStat ))
+		SystemDiff=$(( SystemStat - LastSystemStat ))
+		IOWaitDiff=$(( IOWaitStat - LastIOWaitStat ))
+		IrqDiff=$(( IrqStat - LastIrqStat ))
+		SoftIrqDiff=$(( SoftIrqStat - LastSoftIrqStat ))
 		
-		diffIdle=$(( ${IdleStat} - ${LastIdleStat} ))
-		diffTotal=$(( ${Total} - ${LastTotal} ))
-		diffX=$(( ${diffTotal} - ${diffIdle} ))
-		CPULoad=$(( ${diffX}* 100 / ${diffTotal} ))
-		UserLoad=$(( ${UserDiff}* 100 / ${diffTotal} ))
-		SystemLoad=$(( ${SystemDiff}* 100 / ${diffTotal} ))
-		NiceLoad=$(( ${NiceDiff}* 100 / ${diffTotal} ))
-		IOWaitLoad=$(( ${IOWaitDiff}* 100 / ${diffTotal} ))
-		IrqCombined=$(( ${IrqDiff} + ${SoftIrqDiff} ))
-		IrqCombinedLoad=$(( ${IrqCombined}* 100 / ${diffTotal} ))
+		diffIdle=$(( IdleStat - LastIdleStat ))
+		diffTotal=$(( Total - LastTotal ))
+		diffX=$(( diffTotal - diffIdle ))
+		CPULoad=$(( diffX * 100 / diffTotal ))
+		UserLoad=$(( UserDiff * 100 / diffTotal ))
+		SystemLoad=$(( SystemDiff * 100 / diffTotal ))
+		NiceLoad=$(( NiceDiff * 100 / diffTotal ))
+		IOWaitLoad=$(( IOWaitDiff * 100 / diffTotal ))
+		IrqCombined=$(( IrqDiff + SoftIrqDiff ))
+		IrqCombinedLoad=$(( IrqCombined * 100 / diffTotal ))
 
 		LastUserStat=${UserStat}
 		LastNiceStat=${NiceStat}
@@ -483,7 +499,7 @@ ProcessStats() {
 		LastSoftIrqStat=${SoftIrqStat}
 		LastTotal=${Total}
 	fi
-	procStats=$(echo -e "$(printf "%3s" ${CPULoad})%$(printf "%4s" ${SystemLoad})%$(printf "%4s" ${UserLoad})%$(printf "%4s" ${NiceLoad})%$(printf "%4s" ${IOWaitLoad})%$(printf "%4s" ${IrqCombinedLoad})%")
+	procStats=$(printf "%3s%%%4s%%%4s%%%4s%%%4s%%%4s%%\n" "$CPULoad" "$SystemLoad" "$UserLoad" "$NiceLoad" "$IOWaitLoad" "$IrqCombinedLoad")
 } # ProcessStats
 
 MonitorIO() {
@@ -495,9 +511,9 @@ MonitorIO() {
 		if [ ${CurrentWrite} -gt ${LastWrite} ]; then
 			PagesOut=$(awk -F" " '/pgpgout/ {print $2}' </proc/vmstat)
 			TimeNow=$(date "+%s")
-			PagesWritten=$((${CurrentWrite} - ${LastWrite}))
-			PageOuts=$((${PagesOut} - ${LastPagesOut}))
-			echo -e "$(LANG=C date)$(printf "%8s" ${PagesWritten})/${PageOuts} pages written after $((${TimeNow} - ${LastTimeChecked})) sec"
+			PagesWritten=$((CurrentWrite - LastWrite))
+			PageOuts=$((PagesOut - LastPagesOut))
+			echo -e "$(LANG=C date)$(printf "%8s" ${PagesWritten})/${PageOuts} pages written after $((TimeNow - LastTimeChecked)) sec"
 			LastTimeChecked=${TimeNow}
 			LastPagesOut=${PagesOut}
 			LastWrite=${CurrentWrite}
@@ -526,7 +542,7 @@ CheckDisks() {
 			echo -e "\nSkipping ${DeviceNode} due to missing partition table. Use parted to create one."
 			break
 		else
-			echo -e "\nExamining ${DeviceNode} with GUID ${GUID}\c"
+			printf "\nExamining %s with GUID %s" "$DeviceNode" "$GUID"
 		fi
 		
 		# get name hddtemp needs
@@ -858,7 +874,8 @@ gwYNGjRo0KBBw1eEfwH4UoBHAKAAAA==" | base64 --decode | tar xzf -
 
 CollectSupportInfo() {
 	[[ -s /var/log/armbian-hardware-monitor.log ]] && cat /var/log/armbian-hardware-monitor.log || zcat /var/log/armbian-hardware-monitor.log.1.gz 2>/dev/null
-	[[ -f /boot/armbianEnv.txt ]] && LOGLEVEL=$(awk -F'=' '/^verbosity/ {print $2}' /boot/armbianEnv.txt) || LOGLEVEL=1
+	[[ -f /boot/armbianEnv.txt ]] && LOGLEVEL=$(awk -F'=' '/^verbosity/ {print $2}' /boot/armbianEnv.txt)
+	LOGLEVEL=${LOGLEVEL:-1}
 	if [ ${LOGLEVEL} -gt 4 ]; then
 		VERBOSE='-v'
 		which lshw >/dev/null 2>&1 && (echo -e "\n### lshw:" ; lshw -quiet -sanitize -numeric)
@@ -867,8 +884,8 @@ CollectSupportInfo() {
 	lspci >/dev/null 2>&1 && (echo -e "\n### lspci:\n" ; lspci ${VERBOSE} 2>/dev/null)
 	nvme >/dev/null 2>&1 && (echo -e "\n### nvme:\n" ; nvme list 2>/dev/null)
 	[ -z $SUDO_USER ] || echo -e "\n### Group membership of $(groups $SUDO_USER)"
-	echo -e "\n### Userland:\n\n$(cat /etc/os-release | grep PRETTY_NAME)"
-	echo -e "\n### Installed packages:\n\n$(dpkg -l | egrep "openmediavault|armbian| linux-")"
+	echo -e "\n### Userland:\n\n$(grep PRETTY_NAME /etc/os-release)"
+	echo -e "\n### Installed packages:\n\n$(dpkg -l | grep -E "openmediavault|armbian| linux-")"
 	KernelVersion=$(awk -F" " '{print $3}' < /proc/version)
 	case ${KernelVersion} in
 		3.*)
@@ -877,7 +894,7 @@ CollectSupportInfo() {
 	esac
 	echo -e "\n### Loaded modules:\n\n$(lsmod)"
 	[[ -f /var/log/nand-sata-install.log ]] && echo -e "\n### nand-sata-install.log:\n\n$(cat /var/log/nand-sata-install.log)"
-	echo -e "\n### Current system health:\n\n$("$0" -s | egrep "^Time|^[0-9]")"
+	echo -e "\n### Current system health:\n\n$("$0" -s | grep -E "^Time|^[0-9]")"
 	stress -t 3 -c $(grep -c processor /proc/cpuinfo) --backoff 250 >/dev/null 2>&1 &
 	"$0" -s | grep "^[0-9]"
 	# Include name resolving information only if upload is not possible
@@ -949,14 +966,14 @@ CheckCard() {
 	iozone -e -I -a -s 100M -r 4k -r 512k -r 16M -i 0 -i 1 -i 2 | tee -a "${LogFile}"
 	touch "${TestDir}/.starttime" || ShowDeviceWarning
 	echo -e "\n${BOLD}The results from testing ${DeviceName} (${FileSystem}):${NC}"
-	egrep "Average|Data" "${LogFile}" | sort -r
+	grep -E "Average|Data" "${LogFile}" | sort -r
 	echo "                                            random    random"
 	echo -e "reclen    write  rewrite    read    reread    read     write\c"
 	awk -F"102400  " '/102400/ {print $2}' <"${LogFile}"
 
 	# check health
 	echo -e "\n${BOLD}Health summary: \c"
-	egrep -q "Read-only|Input/output error" "${LogFile}" && (echo -e "${LRED}${BOLD}${DeviceName} failed${NC}" ; exit 0)
+	grep -Eq "Read-only|Input/output error" "${LogFile}" && (echo -e "${LRED}${BOLD}${DeviceName} failed${NC}" ; exit 0)
 	grep -q "Data LOST: 0.00 Byte" "${LogFile}" && echo -e "${LGREEN}OK" || \
 		(echo -e "${LRED}${BOLD}${DeviceName} failed. Replace it as soon as possible!" ; \
 		grep -A3 "^Data LOST" "${LogFile}")
@@ -980,7 +997,7 @@ CheckCard() {
 		[ ${RawReadSpead} -le 5000 ] && Exclamation="${Exclamation}${BOLD}too "
 		[ ${RawReadSpead} -le 7500 ] && echo -e "(${Exclamation}low${NC})\c"
 		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
-		echo -e "\n 4K random reading speed:$(printf "%6s" ${RandomReadSpead}) KB/s \c"
+		printf "\n 4K random reading speed: %6s KB/s " "$RandomReadSpead"
 		[ ${RandomReadSpead} -le 700 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
 		[ ${RandomReadSpead} -le 1400 ] && Exclamation="${Exclamation}${BOLD}too "
 		[ ${RandomReadSpead} -le 2500 ] && echo -e "(${Exclamation}low${NC})\c"
@@ -992,12 +1009,12 @@ CheckCard() {
 		else
 			RawWriteSpeed=$(echo "$1" | cut -f1 -d.)
 		fi
-		echo -e "\nSequential writing speed:$(printf "%6s" $1) $2 \c"
+		printf "\nSequential writing speed: %6s %s " "$1" "$2"
 		[ ${RawWriteSpeed} -le 2500 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
 		[ ${RawWriteSpeed} -le 4000 ] && Exclamation="${Exclamation}${BOLD}too "
 		[ ${RawWriteSpeed} -le 6000 ] && echo -e "(${Exclamation}low${NC})\c"
 		echo "${Exclamation}" | grep -q "too" && ShowWarning=true
-		echo -e "\n 4K random writing speed:$(printf "%6s" ${RandomWriteSpead}) KB/s \c"
+		printf "\n 4K random writing speed: %6s KB/s " "$RandomWriteSpead"
 		[ ${RandomWriteSpead} -le 400 ] && Exclamation="${LRED}${BOLD}way " || Exclamation=""
 		[ ${RandomWriteSpead} -le 750 ] && Exclamation="${Exclamation}${BOLD}too "
 		[ ${RandomWriteSpead} -lt 1000 ] && echo -e "(${Exclamation}low${NC})\c"
@@ -1040,7 +1057,7 @@ VerifyInstallation() {
 	fi
 	
 	echo -e "Starting package integrity check. This might take some time. Be patient please..."
-	OUTPUT=$(dpkg --verify | egrep -v -i "${VerifyRepairExcludes}" | awk -F" /" '{print "/"$2}')
+	OUTPUT=$(dpkg --verify | grep -Evi "${VerifyRepairExcludes}" | awk -F" /" '{print "/"$2}')
 	if [[ -z $OUTPUT ]]; then
 		echo -e "\n${LGREEN}${BOLD}It appears you don't have any corrupt files or packages!${NC}"
 	else
@@ -1058,33 +1075,33 @@ NetworkMonitorMode() {
 	trap "echo ; exit 0" 0 1 2 3 15
 	
 	# Count interfaces - multiple routes causing interfaces to show up more than once, filtering...
-	ifacecount=$(route -n | egrep UG | egrep -o '[^ ]*$' | sort | uniq)
+	ifacecount=$(route -n | grep -E UG | grep -Eo '[^ ]*$' | sort | uniq)
 	# If there are two ore more interfaces detected open a dynamic dialog box to select which to monitor
 	if [ "$(echo -e $ifacecount | tr ' ' '\n' | wc -l)" -gt 1 ]; then
-		ifacemenu=$(route -n | egrep UG | egrep -o '[^ ]*$' | sort | uniq | awk '{a[$1]=$1}END{for(i in a)printf i" "a[i]" "}')
+		ifacemenu=$(route -n | grep -E UG | grep -Eo '[^ ]*$' | sort | uniq | awk '{a[$1]=$1}END{for(i in a)printf i" "a[i]" "}')
 		ifacefunc() {
 			dialog --backtitle "Interface selector" \
 			--title "Multiple network interfaces detected" \
 			--menu "Choose which interface to monitor:" \
-			15 50 $(route -n | egrep UG | egrep -o '[^ ]*$' | sort | uniq | wc -l) \
+			15 50 $(route -n | grep -E UG | grep -Eo '[^ ]*$' | sort | uniq | wc -l) \
 			$(echo $ifacemenu) 2>&1 >$(tty)
 		}
 		iface=$(ifacefunc)
 	else
 	# Use default behavior if one interface is found only
-		iface=$(route -n | egrep UG | egrep -o '[^ ]*$')
+		iface=$(route -n | grep -E UG | grep -Eo '[^ ]*$')
 	fi
 	timerStart
 	kickAllStatsDown
 	
-	printf "\nruntime network statistics: $(uname -n)\n"
-	printf "network interface: $(echo $iface)\n"
+	printf "\nruntime network statistics: %s\m" "$(uname -n)"
+	printf "network interface: %s\n" "$iface"
 	printf "[tap 'd' to display column headings]\n"
 	printf "[tap 'z' to reset counters]\n"
 	printf "[use <ctrl-c> to exit]\n"
 	printf "[bps: bits/s, Mbps: megabits/s, pps: packets/s, MB: megabytes]\n\n"
-	printf "%-11s %-66s          %-66s\n" $(echo -en "$iface rx.stats____________________________________________________________ tx.stats____________________________________________________________")
-	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" $(echo -en "count bps Mbps Mbps pps pps MB bps Mbps Mbps pps pps MB")
+	printf "%-11s %-66s          %-66s\n" "$iface" "rx.stats____________________________________________________________" "tx.stats____________________________________________________________"
+	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" "count" "bps" "Mbps" "Mbps" "pps" "pps" "MB" "bps" "Mbps" "Mbps" "pps" "pps" "MB"
 	
 	while true; do
 		nss=(`sed -n 's/'$iface':\s//p' /proc/net/dev`)
@@ -1092,24 +1109,24 @@ NetworkMonitorMode() {
 		rxP=${nss[1]}
 		txB=${nss[8]}
 		txP=${nss[9]}
-		drxB=$(( ${rxB} - ${prxB} ))
-		drxb=$(( ${drxB}* 8 ))
+		drxB=$(( rxB - prxB ))
+		drxb=$(( drxB* 8 ))
 		drxmb=$(echo "scale=2;$drxb/1000000"|bc)
-		drxP=$(( ${rxP} - ${prxP}  ))
-		dtxB=$(( ${txB} - ${ptxB} ))
-		dtxb=$(( ${dtxB}* 8 ))
+		drxP=$(( rxP - prxP  ))
+		dtxB=$(( txB - ptxB ))
+		dtxb=$(( dtxB * 8 ))
 		dtxmb=$(echo "scale=2;$dtxb/1000000"|bc)
-		dtxP=$(( ${txP} - ${ptxP} ))
+		dtxP=$(( txP - ptxP ))
 		if [ "$cnt" != "0" ]; then
 			if [ "$c" == "N" ]; then
 				printf "\x1b[1A"
 			fi
-			srxb=$(( ${srxb} + ${drxb} ))
-			stxb=$(( ${stxb} + ${dtxb} ))
-			srxB=$(( ${srxB} + ${drxB} ))
-			stxB=$(( ${stxB} + ${dtxB} ))
-			srxP=$(( ${srxP} + ${drxP} ))
-			stxP=$(( ${stxP} + ${dtxP} ))
+			srxb=$(( srxb + drxb ))
+			stxb=$(( stxb + dtxb ))
+			srxB=$(( srxB + drxB ))
+			stxB=$(( stxB + dtxB ))
+			srxP=$(( srxP + drxP ))
+			stxP=$(( stxP + dtxP ))
 			srxMB=$(echo "scale=2;$srxB/1024^2"|bc)
 			stxMB=$(echo "scale=2;$stxB/1024^2"|bc)
 			arxb=$(echo "scale=2;$srxb/$cnt"|bc)
@@ -1118,7 +1135,7 @@ NetworkMonitorMode() {
 			atxmb=$(echo "scale=2;$atxb/1000000"|bc)
 			arxP=$(echo "scale=0;$srxP/$cnt"|bc)
 			atxP=$(echo "scale=0;$stxP/$cnt"|bc)
-			printf "%-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s\n" $(echo -en "$cnt $drxb $drxmb $arxmb $drxP $arxP $srxMB $dtxb $dtxmb $atxmb $dtxP $atxP $stxMB")
+			printf "%-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s %-11s %-11s   %-11s %-11s   %-11s   %-11s\n" "$cnt" "$drxb" "$drxmb" "$arxmb" "$drxP" "$arxP" "$srxMB" "$dtxb" "$dtxmb" "$atxmb" "$dtxP" "$atxP" "$stxMB"
 		fi
 		prxB="$rxB"
 		prxP="$rxP"
@@ -1126,7 +1143,7 @@ NetworkMonitorMode() {
 		ptxP="$txP"
 		let cnt++
 		timerShut
-		read -n1 -s -t$procSecs zeroAll
+		read -r -n1 -s -t$procSecs zeroAll
 		timerStart
 		if [ "$zeroAll" == 'z' ]; then
 			kickAllStatsDown
@@ -1138,19 +1155,19 @@ NetworkMonitorMode() {
 }
 
 scrollingHeader() {
-	printf "%-11s %-66s          %-66s\n" $(echo -en "$iface rx.stats____________________________________________________________ tx.stats____________________________________________________________")
-	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" $(echo -en "count bps Mbps Mbps pps pps MB bps Mbps Mbps pps pps MB")
+	printf "%-11s %-66s          %-66s\n" "$iface" "rx.stats____________________________________________________________" "tx.stats____________________________________________________________"
+	printf "%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s %-11s %-11s \u01B0.%-11s %-11s \u01B0.%-11s \u01A9.%-11s\n\n" "count" "bps" "Mbps" "Mbps" "pps" "pps" "MB" "bps" "Mbps" "Mbps" "pps" "pps" "MB"
 }
 
 timerStart() {
-	read st0 st1 < <(date +'%s %N')
+	read -r st0 st1 < <(date +'%s %N')
 }
 timerShut() {
-	read sh0 sh1 < <(date +'%s %N')
+	read -r sh0 sh1 < <(date +'%s %N')
 	jusquaQuand=$(echo "scale=2;($sh0-$st0)*1000000000+($sh1-$st1)"|bc)
 	procSecs=$(echo "scale=2;(1000000000-$jusquaQuand)/1000000000"|bc)
 	if [ "$rf1" == "debug" ]; then
-		printf "time controller adjustment: $procSecs\n"
+		printf "time controller adjustment: %d\n" "$procSecs"
 		if [ "$c" == "N" ]; then
 			printf "\x1b[1A"
 		fi

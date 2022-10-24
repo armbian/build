@@ -3,22 +3,49 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-# default values
-setenv rootdev "/dev/mmcblk0p1"
-setenv verbosity "1"
-setenv rootfstype "ext4"
-setenv fdt_name_a dtb/marvell/armada-3720-community.dtb
-setenv fdt_name_b dtb/marvell/armada-3720-espressobin.dtb
+# Some tests to try to keep compatibility with old variables
+if test -z "${kernel_addr_r}"; then
+  setenv kernel_addr_r $kernel_addr
+fi
+if test -z "${ramdisk_addr_r}"; then
+  setenv ramdisk_addr_r $initrd_addr
+fi
+if test -z "${fdt_addr_r}"; then
+  setenv fdt_addr_r $fdt_addr
+fi
+if test -z "${distro_bootpart}"; then
+  setenv distro_bootpart 1
+fi
+if test -z "${devtype}"; then
+  setenv devtype $boot_interface
+fi
 
-load ${boot_interface} ${devnum}:1 ${scriptaddr} ${prefix}armbianEnv.txt
+load ${devtype} ${devnum}:${distro_bootpart} ${scriptaddr} ${prefix}armbianEnv.txt
 env import -t ${scriptaddr} ${filesize}
 
-setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} mtdparts=spi0.0:1536k(uboot),64k(uboot-environment),-(reserved) ${extraargs}"
+setenv bootargs "$console root=${rootdev} rootfstype=${rootfstype} rootwait loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks}  ${extraargs}"
 
-ext4load $boot_interface 0:1 $kernel_addr ${prefix}$image_name
-ext4load $boot_interface 0:1 $initrd_addr ${prefix}$initrd_image
-ext4load $boot_interface 0:1 $fdt_addr ${prefix}$fdt_name_a
-ext4load $boot_interface 0:1 $fdt_addr ${prefix}$fdt_name_b
+load $devtype ${devnum}:${distro_bootpart} $ramdisk_addr_r ${prefix}espressobin.itb
 
-booti $kernel_addr $initrd_addr $fdt_addr
+bootm ${ramdisk_addr_r}#$board_version
+
+# fallback to non-FIT image
+if test -z "${image_name}"; then
+  setenv image_name "Image"
+fi
+if test -z "${initrd_image}"; then
+  setenv initrd_image "uInitrd"
+fi
+if test -z "${fdt_name}"; then
+  if test -z "${fdtfile}"; then
+    setenv fdt_name "dtb/marvell/armada-3720-espressobin.dtb"
+  else
+    setenv fdt_name "dtb/$fdtfile"
+  fi
+fi
+load $devtype ${devnum}:$distro_bootpart $kernel_addr_r ${prefix}$image_name
+load $devtype ${devnum}:$distro_bootpart $ramdisk_addr_r ${prefix}$initrd_image
+load $devtype ${devnum}:$distro_bootpart $fdt_addr_r ${prefix}$fdt_name
+
+booti $kernel_addr_r $ramdisk_addr_r $fdt_addr_r
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr

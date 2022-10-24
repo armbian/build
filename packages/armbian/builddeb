@@ -9,6 +9,15 @@
 # /etc/kernel/{pre,post}{inst,rm}.d/ directories (or an alternative location
 # specified in KDEB_HOOKDIR) that will be called on package install and
 # removal.
+#
+# armbian/bulddeb 0.1
+# Copyright 2021 Leonid Gasheev (The-going <48602507+The-going@users.noreply.github.com>)
+#
+# In order to make a choice, it is enough for us to check the value
+# of the variable in the kernel configuration file and Debian's own variables.
+#
+# Uncomment the next line to see all the current values.
+# echo "$(dpkg-architecture -l)" >&2
 
 set -e
 
@@ -22,6 +31,14 @@ if_enabled_echo() {
 	elif [ $# -ge 3 ]; then
 		echo -n "$3"
 	fi
+}
+
+is_native() {
+	dpkg-architecture -qDEB_BUILD_ARCH | grep -q "$(dpkg-architecture -qDEB_HOST_ARCH)"
+}
+
+is_build_on_amd64() {
+	dpkg-architecture -qDEB_BUILD_ARCH | grep -q amd64
 }
 
 create_package() {
@@ -51,58 +68,56 @@ create_package() {
 	# Create preinstall and post install script to remove dtb
 	if [ "$3" = "dtb" ]; then
 
-	cat >> $pdir/DEBIAN/preinst <<EOT
-rm -rf /boot/dtb
-rm -rf /boot/dtb-$version
-exit 0
-EOT
+		cat >> $pdir/DEBIAN/preinst <<- EOT
+			rm -rf /boot/dtb
+			rm -rf /boot/dtb-$version
+			exit 0
+		EOT
 
-	cat >> $pdir/DEBIAN/postinst <<EOT
-cd /boot
-ln -sfT dtb-$version dtb 2> /dev/null || mv dtb-$version dtb
-exit 0
-EOT
+		cat >> $pdir/DEBIAN/postinst <<- EOT
+			cd /boot
+			ln -sfT dtb-$version dtb 2> /dev/null || mv dtb-$version dtb
+			exit 0
+		EOT
 
-	chmod 775 $pdir/DEBIAN/preinst
-	chmod 775 $pdir/DEBIAN/postinst
+		chmod 775 $pdir/DEBIAN/preinst
+		chmod 775 $pdir/DEBIAN/postinst
 	fi
 
-	# Create postinstall prerm script for headers
+	# Create postinst prerm script for headers
 	if [ "$3" = "headers" ]; then
 
-	# Set the time for all files to the current time.
-	# And build them for the current architecture.
-	cat >> $pdir/DEBIAN/postinst << EOT
-cd /usr/src/linux-headers-$version
-echo "Compiling headers - please wait ..."
-NCPU=\$(grep -c 'processor' /proc/cpuinfo)
-find -type f -exec touch {} +
-yes "" | make oldconfig >/dev/null
-make -j\$NCPU -s scripts >/dev/null
-make -j\$NCPU -s M=scripts/mod/ >/dev/null
-exit 0
-EOT
+		# Set the time for all files to the current time.
+		# And build them for the current architecture.
+		cat >> $pdir/DEBIAN/postinst <<- EOT
+			cd /usr/src/linux-headers-$version
+			echo "Compiling headers - please wait ..."
+			NCPU=\$(grep -c 'processor' /proc/cpuinfo)
+			find -type f -exec touch {} +
+			yes "" | make oldconfig >/dev/null
+			make -j\$NCPU -s scripts >/dev/null
+			make -j\$NCPU -s M=scripts/mod/ >/dev/null
+			exit 0
+		EOT
 
-	# After the configuration and compilation processes, new files
-	# appear that the package manager does not know anything about.
-	# Just clear all the files in the target directory.
-	cat >> $pdir/DEBIAN/prerm << EOT
-cd /usr/src/linux-headers-$version
-find ./ -type f -exec rm {} +
-exit 0
-EOT
+		# After the configuration and compilation processes, new files
+		# appear that the package manager does not know anything about.
+		# Just clear all the files in the target directory.
+		cat >> $pdir/DEBIAN/prerm <<- EOT
+			rm -rf /usr/src/linux-headers-$version
+			exit 0
+		EOT
 
-	chmod 775 $pdir/DEBIAN/postinst
-	chmod 775 $pdir/DEBIAN/prerm
+		chmod 775 $pdir/DEBIAN/postinst
+		chmod 775 $pdir/DEBIAN/prerm
 	fi
-
 
 	# Create the package
 	dpkg-gencontrol -p$pname -P"$pdir"
 	dpkg-deb ${KDEB_COMPRESS:+-Z$KDEB_COMPRESS} --build "$pdir" ..
 }
 
-deploy_kernel_headers () {
+deploy_kernel_headers() {
 	pdir=$1
 
 	rm -rf $pdir
@@ -121,7 +136,7 @@ deploy_kernel_headers () {
 
 	{
 		if is_enabled CONFIG_STACK_VALIDATION; then
-		#	echo tools/objtool/objtool
+			#	echo tools/objtool/objtool
 			find tools/objtool -type f -executable
 		fi
 
@@ -132,10 +147,14 @@ deploy_kernel_headers () {
 		fi
 	} > debian/hdrobjfiles
 
-	(
-		cd $destdir
-		patch -p1 < /tmp/headers-debian-byteshift.patch
-	)
+	if is_native; then
+		echo "info: Build native: Skip headers-debian-byteshift.patch" >&2
+	elif is_build_on_amd64; then
+		(
+			cd $destdir
+			patch -p1 < /tmp/headers-debian-byteshift.patch
+		)
+	fi
 
 	tar -c -f - -C $srctree -T debian/hdrsrcfiles | tar -xf - -C $destdir
 	tar -c -f - -T debian/hdrobjfiles | tar -xf - -C $destdir
@@ -148,7 +167,7 @@ deploy_kernel_headers () {
 	ln -s /usr/src/linux-headers-$version $pdir/lib/modules/$version/build
 }
 
-deploy_libc_headers () {
+deploy_libc_headers() {
 	pdir=$1
 
 	rm -rf $pdir
@@ -175,7 +194,7 @@ dtb_packagename=linux-dtb-"$BRANCH$LOCALVERSION"
 libc_headers_packagename=linux-libc-dev
 dbg_packagename=$packagename-dbg
 
-if [ "$ARCH" = "um" ] ; then
+if [ "$ARCH" = "um" ]; then
 	packagename=user-mode-linux-$version
 fi
 
@@ -183,22 +202,24 @@ fi
 # XXX: have each arch Makefile export a variable of the canonical image install
 # path instead
 case $ARCH in
-++aarch64|arm64)
-	image_name=Image
-	installed_image_path="boot/vmlinuz-$version"
-	;;
-arm*)
-	image_name=zImage
-	installed_image_path="boot/vmlinuz-$version"
-	;;
-um)
-	installed_image_path="usr/bin/linux-$version"
-	;;
-parisc|mips|powerpc)
-	installed_image_path="boot/vmlinux-$version"
-	;;
-*)
-	installed_image_path="boot/vmlinuz-$version"
+	++aarch64|arm64)
+		image_name=Image
+		installed_image_path="boot/vmlinuz-$version"
+		;;
+	arm*)
+		image_name=zImage
+		installed_image_path="boot/vmlinuz-$version"
+		;;
+	um)
+		installed_image_path="usr/bin/linux-$version"
+		;;
+	parisc|mips|powerpc)
+		installed_image_path="boot/vmlinux-$version"
+		;;
+	*)
+		image_name=vmlinuz
+		installed_image_path="boot/vmlinuz-$version"
+		;;
 esac
 
 BUILD_DEBUG=$(if_enabled_echo CONFIG_DEBUG_INFO Yes)
@@ -213,7 +234,7 @@ mkdir -m 755 -p "$kernel_headers_dir/lib/modules/$version/"
 mkdir -m 755 -p "$libc_headers_dir/DEBIAN"
 
 # Install the kernel
-if [ "$ARCH" = "um" ] ; then
+if [ "$ARCH" = "um" ]; then
 	mkdir -p "$tmpdir/usr/lib/uml/modules/$version" "$tmpdir/usr/bin" "$tmpdir/usr/share/doc/$packagename"
 	$MAKE linux
 	cp System.map "$tmpdir/usr/lib/uml/modules/$version/System.map"
@@ -228,11 +249,11 @@ cp "$($MAKE -s -f $srctree/Makefile image_name)" "$tmpdir/$installed_image_path"
 if is_enabled CONFIG_OF_EARLY_FLATTREE; then
 	# Only some architectures with OF support have this target
 	if [ -d "${srctree}/arch/$SRCARCH/boot/dts" ]; then
-		$MAKE -f $srctree/Makefile INSTALL_DTBS_PATH="$tmpdir/usr/lib/$packagename" dtbs_install
+		$MAKE -f $srctree/Makefile INSTALL_DTBS_PATH="$tmpdir/usr/lib/linux-image-$version" dtbs_install
 	fi
 fi
 
-if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG ; then
+if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG; then
 	#mkdir -p "$tmpdir/boot/dtb"
 	INSTALL_DTBS_PATH="$dtb_dir/boot/dtb-$version" $MAKE KBUILD_SRC= dtbs_install
 fi
@@ -241,11 +262,13 @@ if is_enabled CONFIG_MODULES; then
 	INSTALL_MOD_PATH="$tmpdir" $MAKE -f $srctree/Makefile modules_install
 	rm -f "$tmpdir/lib/modules/$version/build"
 	rm -f "$tmpdir/lib/modules/$version/source"
-	if [ "$ARCH" = "um" ] ; then
+
+	if [ "$ARCH" = "um" ]; then
 		mv "$tmpdir/lib/modules/$version"/* "$tmpdir/usr/lib/uml/modules/$version/"
 		rmdir "$tmpdir/lib/modules/$version"
 	fi
-	if [ -n "$BUILD_DEBUG" ] ; then
+
+	if [ -n "$BUILD_DEBUG" ]; then
 		for module in $(find $tmpdir/lib/modules/ -name *.ko -printf '%P\n'); do
 			module=lib/modules/$module
 			mkdir -p $(dirname $dbg_dir/usr/lib/debug/$module)
@@ -270,22 +293,22 @@ fi
 # make-kpkg sets $INITRD to indicate whether an initramfs is wanted, and
 # so do we; recent versions of dracut and initramfs-tools will obey this.
 debhookdir=${KDEB_HOOKDIR:-/etc/kernel}
-for script in postinst postrm preinst prerm ; do
+for script in postinst postrm preinst prerm; do
 	mkdir -p "$tmpdir$debhookdir/$script.d"
-	cat <<EOF > "$tmpdir/DEBIAN/$script"
-#!/bin/bash
+	cat <<- EOF > "$tmpdir/DEBIAN/$script"
+		#!/bin/bash
 
-set -e
+		set -e
 
-# Pass maintainer script parameters to hook scripts
-export DEB_MAINT_PARAMS="\$*"
+		# Pass maintainer script parameters to hook scripts
+		export DEB_MAINT_PARAMS="\$*"
 
-# Tell initramfs builder whether it's wanted
-export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No)
+		# Tell initramfs builder whether it's wanted
+		export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No)
 
-test -d $debhookdir/$script.d && run-parts --arg="$version" --arg="/$installed_image_path" $debhookdir/$script.d
-exit 0
-EOF
+		test -d $debhookdir/$script.d && run-parts --arg="$version" --arg="/$installed_image_path" $debhookdir/$script.d
+		exit 0
+	EOF
 	chmod 755 "$tmpdir/DEBIAN/$script"
 done
 
@@ -293,59 +316,72 @@ done
 ## Create sym link to kernel image
 ##
 sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
-cat >> $tmpdir/DEBIAN/postinst <<EOT
-ln -sf $(basename $installed_image_path) /boot/$image_name 2> /dev/null || mv /$installed_image_path /boot/$image_name
-touch /boot/.next
-exit 0
+cat >> $tmpdir/DEBIAN/postinst <<- EOT
+	ln -sf $(basename $installed_image_path) /boot/$image_name 2> /dev/null || mv /$installed_image_path /boot/$image_name
+	touch /boot/.next
+	exit 0
 EOT
 
 ##
 ## FAT install workaround
 ##
 sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
-cat >> $tmpdir/DEBIAN/preinst <<EOT
-# exit if we are running chroot
-if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
+cat >> $tmpdir/DEBIAN/preinst <<- EOT
+	# exit if we are running chroot
+	if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
 
-check_and_unmount (){
-	boot_device=\$(mountpoint -d /boot)
+	check_boot_dev (){
+		boot_device=\$(mountpoint -d /boot)
 
-	for file in /dev/* ; do
-		CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
-		if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
-			boot_partition=\$file
-			break
+		for file in /dev/* ; do
+			CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
+			if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
+				boot_partition=\$file
+				break
+			fi
+		done
+
+		bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
+		if [ "\$bootfstype" = "vfat" ]; then
+			rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
 		fi
-	done
-	bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
-	if [ "\$bootfstype" = "vfat" ]; then
-		umount /boot
-		rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
-	fi
-}
-mountpoint -q /boot && check_and_unmount
-exit 0
+	}
+	mountpoint -q /boot && check_boot_dev
+	exit 0
 EOT
 
 create_package "$packagename" "$tmpdir"
 
 if [ "$ARCH" != "um" ]; then
-	create_package "$dtb_packagename" "$dtb_dir" "dtb"
+
+	if [ "$(cat debian/arch)" != "amd64" ]; then # No DTB for amd64 target
+		create_package "$dtb_packagename" "$dtb_dir" "dtb"
+	fi
 
 	deploy_libc_headers $libc_headers_dir
 	create_package $libc_headers_packagename $libc_headers_dir
 
 	if is_enabled CONFIG_MODULES; then
-		# Clean up the executables that are left over from
-		# cross-compilation for a different host architecture.
-		(cd $srctree; make M=scripts clean;)
-		deploy_kernel_headers $kernel_headers_dir
-		create_package $kernel_headers_packagename $kernel_headers_dir "headers"
+		if is_native; then
+			# echo "Skip scripts folder cleaning" >&2
+			# echo "Skip creating postinst prerm scripts for headers" >&2
+			deploy_kernel_headers $kernel_headers_dir
+			create_package $kernel_headers_packagename $kernel_headers_dir
+		else
+			# Clean up the executables that are left over from
+			# cross-compilation for a different host architecture.
+			(
+				cd $srctree
+				make M=scripts clean
+			)
+			deploy_kernel_headers $kernel_headers_dir
+			create_package $kernel_headers_packagename $kernel_headers_dir "headers"
+		fi
 	fi
 
 fi
 
-if [ -n "$BUILD_DEBUG" ] ; then
+if [ -n "$BUILD_DEBUG" ]; then
 	# Build debug package
 	# Different tools want the image in different locations
 	# perf

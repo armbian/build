@@ -1,0 +1,68 @@
+From 0ba5a25aabb1686ac6fb6f56d3ec2d7f4da3351b Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Date: Thu, 21 Apr 2022 20:08:56 +0800
+Subject: [PATCH 472/515] rtw89: pci: allow to process RPP prior to TX BD
+
+RPP is to report certain skb(s) can be freed, and TX BD indicates which
+TX descriptors can be freed. Normally, TX BD is happened before RPP.
+In low power mode, RPP can happen ahead, so change flow to handle this
+case.
+
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220421120903.73715-8-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/pci.c | 21 ++++++++++-----------
+ 1 file changed, 10 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/pci.c b/drivers/net/wireless/realtek/rtw89/pci.c
+index 31c62d116f44..2bdce7024f25 100644
+--- a/drivers/net/wireless/realtek/rtw89/pci.c
++++ b/drivers/net/wireless/realtek/rtw89/pci.c
+@@ -382,6 +382,10 @@ static void rtw89_pci_reclaim_txbd(struct rtw89_dev *rtwdev, struct rtw89_pci_tx
+ 		}
+ 
+ 		list_del_init(&txwd->list);
++
++		/* this skb has been freed by RPP */
++		if (skb_queue_len(&txwd->queue) == 0)
++			rtw89_pci_enqueue_txwd(tx_ring, txwd);
+ 	}
+ }
+ 
+@@ -413,18 +417,12 @@ static void rtw89_pci_release_txwd_skb(struct rtw89_dev *rtwdev,
+ 
+ 	if (!list_empty(&txwd->list)) {
+ 		rtw89_pci_reclaim_txbd(rtwdev, tx_ring);
+-		if (!list_empty(&txwd->list)) {
++		/* In low power mode, RPP can receive before updating of TX BD.
++		 * In normal mode, it should not happen so give it a warning.
++		 */
++		if (!rtwpci->low_power && !list_empty(&txwd->list))
+ 			rtw89_warn(rtwdev, "queue %d txwd %d is not idle\n",
+ 				   txch, seq);
+-			return;
+-		}
+-	}
+-
+-	/* currently, support for only one frame */
+-	if (skb_queue_len(&txwd->queue) != 1) {
+-		rtw89_warn(rtwdev, "empty pending queue %d page %d\n",
+-			   txch, seq);
+-		return;
+ 	}
+ 
+ 	skb_queue_walk_safe(&txwd->queue, skb, tmp) {
+@@ -437,7 +435,8 @@ static void rtw89_pci_release_txwd_skb(struct rtw89_dev *rtwdev,
+ 		rtw89_pci_tx_status(rtwdev, tx_ring, skb, tx_status);
+ 	}
+ 
+-	rtw89_pci_enqueue_txwd(tx_ring, txwd);
++	if (list_empty(&txwd->list))
++		rtw89_pci_enqueue_txwd(tx_ring, txwd);
+ }
+ 
+ static void rtw89_pci_release_rpp(struct rtw89_dev *rtwdev,
+-- 
+2.35.3
+

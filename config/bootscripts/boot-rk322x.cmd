@@ -14,6 +14,15 @@ setenv bootlogo "false"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 
+# If gpio3 pin 25 is 0, write magic to GRF os_reg[0] register and
+# reset to trigger maskrom mode
+if gpio input D25; then 
+	echo "Resetting into MASKROM mode..."
+        mw.l 0x110005c8 0xEF08A53C 1
+        reset
+fi
+
+
 echo "Boot script loaded from ${devtype} ${devnum}"
 
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
@@ -25,7 +34,11 @@ if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 # get PARTUUID of first partition on SD/eMMC the boot script was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
-if test "${bootlogo}" = "true"; then setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"; fi
+if test "${bootlogo}" = "true"; then
+	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}"
+else
+	setenv consoleargs "splash=verbose ${consoleargs}"
+fi
 
 setenv bootargs "earlyprintk root=${rootdev} console=ttyS2,115200n8 console=tty1 rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 

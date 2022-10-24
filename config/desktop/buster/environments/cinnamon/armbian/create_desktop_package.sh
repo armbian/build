@@ -1,11 +1,11 @@
-# install lightdm greeter
+# install default lightdm greeter settings
 cp -R "${SRC}"/packages/blobs/desktop/lightdm "${destination}"/etc/armbian
 
 # install default desktop settings
 mkdir -p "${destination}"/etc/skel
 cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 
-#install cinnamon desktop bar icons
+# install cinnamon desktop bar icons
 mkdir -p "${destination}"/usr/share/icons/armbian
 cp "${SRC}"/packages/blobs/desktop/desktop-icons/*.png "${destination}"/usr/share/icons/armbian
 
@@ -13,15 +13,15 @@ cp "${SRC}"/packages/blobs/desktop/desktop-icons/*.png "${destination}"/usr/shar
 mkdir -p "${destination}"/usr/share/backgrounds/armbian/
 cp "${SRC}"/packages/blobs/desktop/desktop-wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian
 
-# install wallpapers
+# install lightdm wallpapers
 mkdir -p "${destination}"/usr/share/backgrounds/armbian-lightdm/
 cp "${SRC}"/packages/blobs/desktop/lightdm-wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian-lightdm
 
-# install logo for login screen
+# install startup icons
 mkdir -p "${destination}"/usr/share/pixmaps/armbian
 cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
-#generate wallpaper list for background changer
+# generate wallpaper list for background changer
 mkdir -p "${destination}"/usr/share/cinnamon-background-properties
 cat <<EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.xml
 <?xml version="1.0"?>
@@ -111,7 +111,7 @@ cat <<EOF > "${destination}"/usr/share/cinnamon-background-properties/armbian.xm
     <pcolor>#ffffff</pcolor>
     <scolor>#000000</scolor>
   </wallpaper>
-    <wallpaper deleted="false">
+  <wallpaper deleted="false">
     <name>Armbian purplepunk-resultado</name>
     <filename>/usr/share/backgrounds/armbian/armbian-4k-purplepunk.jpg</filename>
     <options>zoom</options>

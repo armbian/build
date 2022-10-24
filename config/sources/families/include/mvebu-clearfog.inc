@@ -1,6 +1,6 @@
 case $BRANCH in
 
-	legacy|current)
+	legacy | current)
 
 		# Check https://developer.solid-run.com/knowledge-base/a388-u-boot
 		# for advanced config options
@@ -15,9 +15,9 @@ case $BRANCH in
 						  ;sata;u-boot-spl-sata.kwb:u-boot.sata
 						  ;uart;u-boot-spl-uart.kwb:u-boot.uart"
 
-	;;
+		;;
 	edge)
-	    # Check https://developer.solid-run.com/knowledge-base/a388-u-boot
+		# Check https://developer.solid-run.com/knowledge-base/a388-u-boot
 		# for advanced config options
 		BOOTSOURCE='https://github.com/SolidRun/u-boot'
 		BOOTBRANCH='branch:v2018.01-solidrun-a38x'
@@ -30,11 +30,10 @@ case $BRANCH in
 						  ;sata;u-boot-spl-sata.kwb:u-boot.sata
 						  ;uart;u-boot-spl-uart.kwb:u-boot.uart"
 
-	
-	
 		if [[ $BOARD == clearfogbase ]]; then
 			OVERLAY_PREFIX='armada-388-clearfog-base'
 		else
 			OVERLAY_PREFIX='armada-388-clearfog'
 		fi
+		;;
 esac

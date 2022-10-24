@@ -1,0 +1,167 @@
+From f9e181863cc417be9a8af393e0278e45bd820aa0 Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Date: Fri, 10 Jun 2022 15:26:02 +0800
+Subject: [PATCH 400/417] wifi: rtw89: allocate BSSID CAM per TDLS peer
+
+In STA mode, if peer is TDLS. Allocate a BSSID CAM entry with peer's
+address to match address properly, and then hardware can ACK peer's
+packets and receive packets to driver.
+
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220610072610.27095-4-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/cam.c   |  5 +++--
+ drivers/net/wireless/realtek/rtw89/cam.h   |  3 ++-
+ drivers/net/wireless/realtek/rtw89/core.c  | 13 ++++++++++++-
+ drivers/net/wireless/realtek/rtw89/core.h  | 14 ++++++++++++++
+ drivers/net/wireless/realtek/rtw89/debug.c |  3 ++-
+ drivers/net/wireless/realtek/rtw89/fw.c    |  2 +-
+ drivers/net/wireless/realtek/rtw89/ser.c   |  2 ++
+ 7 files changed, 36 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/cam.c b/drivers/net/wireless/realtek/rtw89/cam.c
+index d82a77c74..652f0fb79 100644
+--- a/drivers/net/wireless/realtek/rtw89/cam.c
++++ b/drivers/net/wireless/realtek/rtw89/cam.c
+@@ -605,10 +605,11 @@ int rtw89_cam_init(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
+ }
+ 
+ int rtw89_cam_fill_bssid_cam_info(struct rtw89_dev *rtwdev,
+-				  struct rtw89_vif *rtwvif, u8 *cmd)
++				  struct rtw89_vif *rtwvif,
++				  struct rtw89_sta *rtwsta, u8 *cmd)
+ {
+ 	struct ieee80211_vif *vif = rtwvif_to_vif(rtwvif);
+-	struct rtw89_bssid_cam_entry *bssid_cam = &rtwvif->bssid_cam;
++	struct rtw89_bssid_cam_entry *bssid_cam = rtw89_get_bssid_cam_of(rtwvif, rtwsta);
+ 	u8 bss_color = vif->bss_conf.he_bss_color.color;
+ 	u8 bss_mask;
+ 
+diff --git a/drivers/net/wireless/realtek/rtw89/cam.h b/drivers/net/wireless/realtek/rtw89/cam.h
+index affc50d68..83c160a61 100644
+--- a/drivers/net/wireless/realtek/rtw89/cam.h
++++ b/drivers/net/wireless/realtek/rtw89/cam.h
+@@ -374,7 +374,8 @@ void rtw89_cam_fill_dctl_sec_cam_info_v1(struct rtw89_dev *rtwdev,
+ 					 struct rtw89_sta *rtwsta,
+ 					 u8 *cmd);
+ int rtw89_cam_fill_bssid_cam_info(struct rtw89_dev *rtwdev,
+-				  struct rtw89_vif *vif, u8 *cmd);
++				  struct rtw89_vif *rtwvif,
++				  struct rtw89_sta *rtwsta, u8 *cmd);
+ int rtw89_cam_sec_key_add(struct rtw89_dev *rtwdev,
+ 			  struct ieee80211_vif *vif,
+ 			  struct ieee80211_sta *sta,
+diff --git a/drivers/net/wireless/realtek/rtw89/core.c b/drivers/net/wireless/realtek/rtw89/core.c
+index 628f033e9..ff7483e46 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.c
++++ b/drivers/net/wireless/realtek/rtw89/core.c
+@@ -2325,6 +2325,8 @@ int rtw89_core_sta_disconnect(struct rtw89_dev *rtwdev,
+ 	rtw89_core_free_sta_pending_ba(rtwdev, sta);
+ 	if (vif->type == NL80211_IFTYPE_AP || sta->tdls)
+ 		rtw89_cam_deinit_addr_cam(rtwdev, &rtwsta->addr_cam);
++	if (sta->tdls)
++		rtw89_cam_deinit_bssid_cam(rtwdev, &rtwsta->bssid_cam);
+ 
+ 	if (vif->type == NL80211_IFTYPE_STATION && !sta->tdls)
+ 		rtw89_vif_type_mapping(vif, false);
+@@ -2365,6 +2367,7 @@ int rtw89_core_sta_assoc(struct rtw89_dev *rtwdev,
+ {
+ 	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
+ 	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
++	struct rtw89_bssid_cam_entry *bssid_cam = rtw89_get_bssid_cam_of(rtwvif, rtwsta);
+ 	int ret;
+ 
+ 	if (vif->type == NL80211_IFTYPE_AP || sta->tdls) {
+@@ -2380,7 +2383,15 @@ int rtw89_core_sta_assoc(struct rtw89_dev *rtwdev,
+ 			return ret;
+ 		}
+ 
+-		ret = rtw89_cam_init_addr_cam(rtwdev, &rtwsta->addr_cam, &rtwvif->bssid_cam);
++		if (sta->tdls) {
++			ret = rtw89_cam_init_bssid_cam(rtwdev, rtwvif, bssid_cam, sta->addr);
++			if (ret) {
++				rtw89_warn(rtwdev, "failed to send h2c init bssid cam for TDLS\n");
++				return ret;
++			}
++		}
++
++		ret = rtw89_cam_init_addr_cam(rtwdev, &rtwsta->addr_cam, bssid_cam);
+ 		if (ret) {
+ 			rtw89_warn(rtwdev, "failed to send h2c init addr cam\n");
+ 			return ret;
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index 05694e62b..ca67bbdc4 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -1976,6 +1976,7 @@ struct rtw89_sta {
+ 	u16 rx_hw_rate;
+ 	__le32 htc_template;
+ 	struct rtw89_addr_cam_entry addr_cam; /* AP mode or TDLS peer only */
++	struct rtw89_bssid_cam_entry bssid_cam; /* TDLS peer only */
+ 
+ 	bool use_cfg_mask;
+ 	struct cfg80211_bitrate_mask mask;
+@@ -3568,6 +3569,19 @@ struct rtw89_addr_cam_entry *rtw89_get_addr_cam_of(struct rtw89_vif *rtwvif,
+ 	return &rtwvif->addr_cam;
+ }
+ 
++static inline
++struct rtw89_bssid_cam_entry *rtw89_get_bssid_cam_of(struct rtw89_vif *rtwvif,
++						     struct rtw89_sta *rtwsta)
++{
++	if (rtwsta) {
++		struct ieee80211_sta *sta = rtwsta_to_sta(rtwsta);
++
++		if (sta->tdls)
++			return &rtwsta->bssid_cam;
++	}
++	return &rtwvif->bssid_cam;
++}
++
+ static inline
+ void rtw89_chip_set_channel_prepare(struct rtw89_dev *rtwdev,
+ 				    struct rtw89_channel_help_params *p)
+diff --git a/drivers/net/wireless/realtek/rtw89/debug.c b/drivers/net/wireless/realtek/rtw89/debug.c
+index f00f81916..829c61da9 100644
+--- a/drivers/net/wireless/realtek/rtw89/debug.c
++++ b/drivers/net/wireless/realtek/rtw89/debug.c
+@@ -2438,7 +2438,8 @@ static void rtw89_sta_ids_get_iter(void *data, struct ieee80211_sta *sta)
+ 	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
+ 	struct seq_file *m = (struct seq_file *)data;
+ 
+-	seq_printf(m, "STA [%d] %pM\n", rtwsta->mac_id, sta->addr);
++	seq_printf(m, "STA [%d] %pM %s\n", rtwsta->mac_id, sta->addr,
++		   sta->tdls ? "(TDLS)" : "");
+ 	rtw89_dump_addr_cam(m, &rtwsta->addr_cam);
+ }
+ 
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.c b/drivers/net/wireless/realtek/rtw89/fw.c
+index 92594c65a..5cfe6d9b4 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.c
++++ b/drivers/net/wireless/realtek/rtw89/fw.c
+@@ -584,7 +584,7 @@ int rtw89_fw_h2c_cam(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+ 	}
+ 	skb_put(skb, H2C_CAM_LEN);
+ 	rtw89_cam_fill_addr_cam_info(rtwdev, rtwvif, rtwsta, scan_mac_addr, skb->data);
+-	rtw89_cam_fill_bssid_cam_info(rtwdev, rtwvif, skb->data);
++	rtw89_cam_fill_bssid_cam_info(rtwdev, rtwvif, rtwsta, skb->data);
+ 
+ 	rtw89_h2c_pkt_set_hdr(rtwdev, skb, FWCMD_TYPE_H2C,
+ 			      H2C_CAT_MAC,
+diff --git a/drivers/net/wireless/realtek/rtw89/ser.c b/drivers/net/wireless/realtek/rtw89/ser.c
+index a5d530b04..726223f25 100644
+--- a/drivers/net/wireless/realtek/rtw89/ser.c
++++ b/drivers/net/wireless/realtek/rtw89/ser.c
+@@ -306,6 +306,8 @@ static void ser_sta_deinit_addr_cam_iter(void *data, struct ieee80211_sta *sta)
+ 
+ 	if (rtwvif->net_type == RTW89_NET_TYPE_AP_MODE || sta->tdls)
+ 		rtw89_cam_deinit_addr_cam(rtwdev, &rtwsta->addr_cam);
++	if (sta->tdls)
++		rtw89_cam_deinit_bssid_cam(rtwdev, &rtwsta->bssid_cam);
+ }
+ 
+ static void ser_deinit_cam(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
+-- 
+2.35.3
+
