@@ -1,0 +1,176 @@
+--- a/sound/soc/codecs/es8328.c
++++ b/sound/soc/codecs/es8328.c
+@@ -21,8 +21,13 @@
+ #include <sound/pcm_params.h>
+ #include <sound/soc.h>
+ #include <sound/tlv.h>
++#include <linux/of_gpio.h>
++#include <linux/gpio.h>
+ #include "es8328.h"
+ 
++#define INVALID_GPIO		   -1
++#define ES8328_CODEC_SET_HP		1
++
+ static const unsigned int rates_12288[] = {
+ 	8000, 12000, 16000, 24000, 32000, 48000, 96000,
+ };
+@@ -86,8 +91,18 @@ struct es8328_priv {
+ 	const int *mclk_ratios;
+ 	bool master;
+ 	struct regulator_bulk_data supplies[ES8328_SUPPLY_NUM];
++
++    int hp_ctl_gpio;
++    int hp_det_gpio;
++
++    bool muted;
++    bool hp_inserted;
++    bool hp_gpio_level;
++    bool hp_det_level;
+ };
+ 
++static struct es8328_priv *es8328_private;
++
+ /*
+  * ES8328 Controls
+  */
+@@ -112,6 +127,42 @@ static const struct {
+ 	{ 48000, ES8328_DACCONTROL6_DEEMPH_48k },
+ };
+ 
++static int es8328_set_gpio(int gpio, bool level)
++{
++	struct es8328_priv *es8328 = es8328_private;
++
++	if (!es8328) {
++		return 0;
++	}
++
++	if ((gpio & ES8328_CODEC_SET_HP) && es8328
++	    && es8328->hp_ctl_gpio != INVALID_GPIO) {
++		gpio_set_value(es8328->hp_ctl_gpio, level);
++	}
++
++	return 0;
++}
++
++static irqreturn_t hp_det_irq_handler(int irq, void *dev_id)
++{
++	struct es8328_priv *es8328 = es8328_private;
++
++    if(gpio_get_value(es8328->hp_det_gpio)) {
++        es8328->hp_inserted = 1;
++    } else {
++        es8328->hp_inserted = 0;
++    }
++
++	if(!es8328->muted && es8328->hp_inserted) {
++		es8328_set_gpio(ES8328_CODEC_SET_HP, es8328->hp_gpio_level);
++	} else {
++        es8328_set_gpio(ES8328_CODEC_SET_HP, !es8328->hp_gpio_level);
++    }
++	return IRQ_HANDLED;
++}
++
++
++
+ static int es8328_set_deemph(struct snd_soc_component *component)
+ {
+ 	struct es8328_priv *es8328 = snd_soc_component_get_drvdata(component);
+@@ -451,6 +502,14 @@ static const struct snd_soc_dapm_route es8328_dapm_routes[] = {
+ 
+ static int es8328_mute(struct snd_soc_dai *dai, int mute, int direction)
+ {
++    struct es8328_priv *es8328 = snd_soc_component_get_drvdata(dai->component);
++    es8328->muted = mute;
++    if (!mute && es8328->hp_inserted) {
++        es8328_set_gpio(ES8328_CODEC_SET_HP, es8328->hp_gpio_level);
++    } else {
++        es8328_set_gpio(ES8328_CODEC_SET_HP, !es8328->hp_gpio_level);
++    }
++
+ 	return snd_soc_component_update_bits(dai->component, ES8328_DACCONTROL3,
+ 			ES8328_DACCONTROL3_DACMUTE,
+ 			mute ? ES8328_DACCONTROL3_DACMUTE : 0);
+@@ -795,6 +854,21 @@ static int es8328_component_probe(struct snd_soc_component *component)
+ 		goto clk_fail;
+ 	}
+ 
++    if (es8328->hp_det_gpio != INVALID_GPIO) {
++		if (gpio_get_value(es8328->hp_det_gpio) == es8328->hp_det_level)
++			es8328->hp_inserted = 1;
++	} else {
++        es8328->hp_inserted = 1;
++    }
++        
++ 
++    if (!strncmp(component->dev->of_node->name, "es8388", 6)) {
++        usleep_range(18000, 20000);
++        snd_soc_component_update_bits(component, ES8328_DACCONTROL17,
++			    ES8328_DACCONTROL17_LD2LO, ES8328_DACCONTROL17_LD2LO);
++        snd_soc_component_update_bits(component, ES8328_DACCONTROL20,
++			    ES8328_DACCONTROL20_RD2RO, ES8328_DACCONTROL20_RD2RO);
++    }
+ 	return 0;
+ 
+ clk_fail:
+@@ -850,6 +924,8 @@ int es8328_probe(struct device *dev, struct regmap *regmap)
+ 	struct es8328_priv *es8328;
+ 	int ret;
+ 	int i;
++    int hp_irq = 0;
++    enum of_gpio_flags flags;
+ 
+ 	if (IS_ERR(regmap))
+ 		return PTR_ERR(regmap);
+@@ -859,6 +935,7 @@ int es8328_probe(struct device *dev, struct regmap *regmap)
+ 		return -ENOMEM;
+ 
+ 	es8328->regmap = regmap;
++    es8328_private = es8328;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(es8328->supplies); i++)
+ 		es8328->supplies[i].supply = supply_names[i];
+@@ -870,6 +947,43 @@ int es8328_probe(struct device *dev, struct regmap *regmap)
+ 		return ret;
+ 	}
+ 
++    es8328->hp_ctl_gpio = of_get_named_gpio_flags(dev->of_node, "hp-ctl-gpio", 0, &flags);
++	if (es8328->hp_ctl_gpio < 0) {
++		dev_info(dev, "Can not read property hp_ctl_gpio\n");
++		es8328->hp_ctl_gpio = INVALID_GPIO;
++	} else {
++		es8328->hp_gpio_level = (flags & OF_GPIO_ACTIVE_LOW) ? 0 : 1;
++		ret = devm_gpio_request_one(dev, es8328->hp_ctl_gpio, GPIOF_DIR_OUT, "hp_ctl_gpio");
++		if (ret != 0) {
++			dev_err(dev, "Failed to request hp_ctl_gpio\n");
++			return ret;
++		}
++		es8328_set_gpio(ES8328_CODEC_SET_HP, !es8328->hp_gpio_level);
++	}
++
++	es8328->hp_det_gpio = of_get_named_gpio_flags(dev->of_node, "hp-det-gpio", 0, &flags);
++	if (es8328->hp_det_gpio < 0) {
++		dev_info(dev, "Can not read property hp_det_gpio\n");
++		es8328->hp_det_gpio = INVALID_GPIO;
++	} else {
++		es8328->hp_det_level = (flags & OF_GPIO_ACTIVE_LOW) ? 0 : 1;
++		ret = devm_gpio_request_one(dev, es8328->hp_det_gpio, GPIOF_IN, NULL);
++		if (ret != 0) {
++			dev_err(dev, "Failed to request hp_det_gpio\n");
++			return ret;
++		}
++		hp_irq = gpio_to_irq(es8328->hp_det_gpio);
++
++		if (hp_irq) {
++			ret = devm_request_threaded_irq(dev, hp_irq, NULL, hp_det_irq_handler,
++					IRQ_TYPE_EDGE_BOTH | IRQF_ONESHOT, "ES8323", NULL);
++			if (ret < 0) {
++				dev_err(dev, "request_irq failed: %d\n", ret);
++				return ret;
++			}
++		}
++	}
++
+ 	dev_set_drvdata(dev, es8328);
+ 
+ 	return devm_snd_soc_register_component(dev,
