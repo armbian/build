@@ -388,7 +388,7 @@ function docker_cli_show_armbian_volumes_disk_usage() {
 		return 0 # not really a problem, just move on.
 	}
 	local docker_volume_usage
-	docker_volume_usage="$(docker system df -v | grep -e "^armbian-cache" | grep -v "\b0B" | tr -s " " | cut -d " " -f 1,3 | tr " " ":" | xargs echo || true)"
+	docker_volume_usage="$(docker system df -v | grep -e "^armbian-" | grep -v "\b0B" | tr -s " " | cut -d " " -f 1,3 | tr " " ":" | xargs echo || true)"
 	display_alert "Docker Armbian volume usage" "${docker_volume_usage}" "info"
 }
 
