@@ -1,0 +1,190 @@
+From bc5cce8585b6fc26baeccc77514a886147ffc8bb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Tue, 23 Nov 2021 17:55:34 +0100
+Subject: [PATCH 330/486] usb: typec: fusb302: More useful of logging status on
+ interrupt
+
+This is just for debugging. It prints more info that's useful to
+see how hardware state changes in time.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/typec/tcpm/fusb302.c | 121 ++++++++++++++++++++++++++-----
+ 1 file changed, 104 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 535b44de0..4b63c33a8 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -68,7 +68,7 @@ static const u8 rd_mda_value[] = {
+ };
+ 
+ #define LOG_BUFFER_ENTRIES	1024
+-#define LOG_BUFFER_ENTRY_SIZE	128
++#define LOG_BUFFER_ENTRY_SIZE	256
+ 
+ struct fusb302_chip {
+ 	struct device *dev;
+@@ -1598,6 +1598,84 @@ static irqreturn_t fusb302_irq_intn(int irq, void *dev_id)
+ 	return IRQ_HANDLED;
+ }
+ 
++static void fusb302_print_state(struct fusb302_chip *chip)
++{
++	u8 ctl0, ctl2, measure, status0, status1a, sw0, mask;
++	int ret;
++
++	ret = fusb302_i2c_read(chip, FUSB_REG_CONTROL0, &ctl0);
++	if (ret < 0)
++		return;
++	ret = fusb302_i2c_read(chip, FUSB_REG_CONTROL2, &ctl2);
++	if (ret < 0)
++		return;
++	ret = fusb302_i2c_read(chip, FUSB_REG_MEASURE, &measure);
++	if (ret < 0)
++		return;
++	ret = fusb302_i2c_read(chip, FUSB_REG_STATUS0, &status0);
++	if (ret < 0)
++		return;
++	ret = fusb302_i2c_read(chip, FUSB_REG_STATUS1A, &status1a);
++	if (ret < 0)
++		return;
++	ret = fusb302_i2c_read(chip, FUSB_REG_SWITCHES0, &sw0);
++	if (ret < 0)
++		return;
++	ret = fusb302_i2c_read(chip, FUSB_REG_MASK, &mask);
++	if (ret < 0)
++		return;
++
++	//FUSB_REG(FUSB_REG_POWER) // power control
++
++	const char* host_cur = "?";
++	switch ((ctl0 >> 2) & 3) {
++	case 0: host_cur = "none"; break;
++	case 1: host_cur = "80uA"; break;
++	case 2: host_cur = "160uA"; break;
++	case 3: host_cur = "330uA"; break;
++	}
++
++	const char* bc_lvl = "?";
++	switch (status0 & 3) {
++	case 0: bc_lvl = "0-200mV"; break;
++	case 1: bc_lvl = "200-660mV"; break;
++	case 2: bc_lvl = "660-1230mV"; break;
++	case 3: bc_lvl = ">1230mV"; break;
++	}
++
++	// status0
++	unsigned vbusok = !!(status0 & BIT(7));
++	unsigned activity = !!(status0 & BIT(6));
++	unsigned comp = !!(status0 & BIT(5));
++	unsigned wake = !!(status0 & BIT(2));
++
++	// measure
++	unsigned mdac = ((measure & 0x3f) + 1) * 42 * (measure & BIT(6) ? 10 : 1);
++
++	// status1a
++	unsigned togss = (status1a >> 3) & 7;
++	const char* togss_s = "?";
++	switch (togss) {
++	case 0: togss_s = "running"; break;
++	case 1: togss_s = "src1"; break;
++	case 2: togss_s = "src2"; break;
++	case 5: togss_s = "snk1"; break;
++	case 6: togss_s = "snk2"; break;
++	case 7: togss_s = "audio"; break;
++	}
++
++	// ctl2 print as is
++
++#define SW(n) (!!(sw0 & BIT(n)))
++
++	fusb302_log(chip, "state: cc(puen=%u%u vconn=%u%u meas=%u%u pdwn=%u%u) "
++		    "host_cur=%s mdac=%umV comp=%u bc_lvl=%s vbusok=%u act=%u "
++		    "wake=%u togss=%s ctl2=0x%02x mask=0x%02x",
++		    SW(6), SW(7), SW(4), SW(5), SW(2), SW(3), SW(0), SW(1),
++		    host_cur, mdac, comp, bc_lvl, vbusok, activity,
++		    wake, togss_s, ctl2, mask);
++}
++
+ static void fusb302_irq_work(struct work_struct *work)
+ {
+ 	struct fusb302_chip *chip = container_of(work, struct fusb302_chip,
+@@ -1607,6 +1685,7 @@ static void fusb302_irq_work(struct work_struct *work)
+ 	u8 interrupta;
+ 	u8 interruptb;
+ 	u8 status0;
++	u8 mda;
+ 	bool vbus_present;
+ 	bool comp_result;
+ 	bool intr_togdone;
+@@ -1632,9 +1711,10 @@ static void fusb302_irq_work(struct work_struct *work)
+ 	ret = fusb302_i2c_read(chip, FUSB_REG_STATUS0, &status0);
+ 	if (ret < 0)
+ 		goto done;
+-	fusb302_log(chip,
+-		    "IRQ: 0x%02x, a: 0x%02x, b: 0x%02x, status0: 0x%02x",
+-		    interrupt, interrupta, interruptb, status0);
++	fusb302_log(chip, "IRQ: 0x%02x, a: 0x%02x, b: 0x%02x",
++		    interrupt, interrupta, interruptb);
++
++	fusb302_print_state(chip);
+ 
+ 	if (interrupt & FUSB_REG_INTERRUPT_VBUSOK) {
+ 		vbus_present = !!(status0 & FUSB_REG_STATUS0_VBUSOK);
+@@ -1646,32 +1726,39 @@ static void fusb302_irq_work(struct work_struct *work)
+ 		}
+ 	}
+ 
+-	if ((interrupta & FUSB_REG_INTERRUPTA_TOGDONE) && intr_togdone) {
++	if (interrupta & FUSB_REG_INTERRUPTA_TOGDONE) {
+ 		fusb302_log(chip, "IRQ: TOGDONE");
+-		ret = fusb302_handle_togdone(chip);
+-		if (ret < 0) {
+-			fusb302_log(chip,
+-				    "handle togdone error, ret=%d", ret);
+-			goto done;
++		if (intr_togdone) {
++			ret = fusb302_handle_togdone(chip);
++			if (ret < 0) {
++				fusb302_log(chip,
++					    "handle togdone error, ret=%d", ret);
++				goto done;
++			}
+ 		}
+ 	}
+ 
+-	if ((interrupt & FUSB_REG_INTERRUPT_BC_LVL) && intr_bc_lvl) {
++	if (interrupt & FUSB_REG_INTERRUPT_BC_LVL) {
+ 		fusb302_log(chip, "IRQ: BC_LVL, handler pending");
+ 		/*
+ 		 * as BC_LVL interrupt can be affected by PD activity,
+ 		 * apply delay to for the handler to wait for the PD
+ 		 * signaling to finish.
+ 		 */
+-		mod_delayed_work(chip->wq, &chip->bc_lvl_handler,
+-				 msecs_to_jiffies(T_BC_LVL_DEBOUNCE_DELAY_MS));
++		if (intr_bc_lvl)
++			mod_delayed_work(chip->wq, &chip->bc_lvl_handler,
++					 msecs_to_jiffies(T_BC_LVL_DEBOUNCE_DELAY_MS));
+ 	}
+ 
+-	if ((interrupt & FUSB_REG_INTERRUPT_COMP_CHNG) && intr_comp_chng) {
++	if (interrupt & FUSB_REG_INTERRUPT_COMP_CHNG) {
++		ret = fusb302_i2c_read(chip, FUSB_REG_MEASURE, &mda);
++		if (ret < 0)
++			goto done;
++
+ 		comp_result = !!(status0 & FUSB_REG_STATUS0_COMP);
+-		fusb302_log(chip, "IRQ: COMP_CHNG, comp=%s",
+-			    comp_result ? "true" : "false");
+-		if (comp_result) {
++		fusb302_log(chip, "IRQ: COMP_CHNG, cc* %s mdac (%u mV)",
++			    comp_result ? ">" : "<", ((mda & 0x3f) + 1) * 42 * (mda & BIT(6) ? 10 : 1));
++		if (comp_result && intr_comp_chng) {
+ 			/* cc level > Rd_threshold, detach */
+ 			chip->cc1 = TYPEC_CC_OPEN;
+ 			chip->cc2 = TYPEC_CC_OPEN;
+-- 
+2.35.3
+

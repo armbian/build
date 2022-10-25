@@ -1,0 +1,149 @@
+From c72103bbadc294020fca42500febe47e8e9473fb Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Date: Fri, 26 Aug 2022 14:10:09 +0800
+Subject: [PATCH 435/486] wifi: rtw89: no HTC field if TX rate might fallback
+ to legacy
+
+Packets containing HTC field with legacy rate could be dropped by AP. If
+TX rate of report is lower than MCS2, hardware might fall back rate to
+legacy. Therefore, add a checking rule to avoid HTC field in this
+situation.
+
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220826061011.9037-1-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/core.c  |  4 ++++
+ drivers/net/wireless/realtek/rtw89/core.h  |  1 +
+ drivers/net/wireless/realtek/rtw89/debug.c |  1 +
+ drivers/net/wireless/realtek/rtw89/phy.c   | 20 ++++++++------------
+ 4 files changed, 14 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.c b/drivers/net/wireless/realtek/rtw89/core.c
+index c1c636812..6ff8b4191 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.c
++++ b/drivers/net/wireless/realtek/rtw89/core.c
+@@ -585,6 +585,7 @@ __rtw89_core_tx_check_he_qos_htc(struct rtw89_dev *rtwdev,
+ 				 enum btc_pkt_type pkt_type)
+ {
+ 	struct ieee80211_sta *sta = tx_req->sta;
++	struct rtw89_sta *rtwsta = sta_to_rtwsta_safe(sta);
+ 	struct sk_buff *skb = tx_req->skb;
+ 	struct ieee80211_hdr *hdr = (void *)skb->data;
+ 	__le16 fc = hdr->frame_control;
+@@ -602,6 +603,9 @@ __rtw89_core_tx_check_he_qos_htc(struct rtw89_dev *rtwdev,
+ 	if (skb_headroom(skb) < IEEE80211_HT_CTL_LEN)
+ 		return false;
+ 
++	if (rtwsta && rtwsta->ra_report.might_fallback_legacy)
++		return false;
++
+ 	return true;
+ }
+ 
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index 71129d938..39539a5fd 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -2079,6 +2079,7 @@ struct rtw89_ra_report {
+ 	struct rate_info txrate;
+ 	u32 bit_rate;
+ 	u16 hw_rate;
++	bool might_fallback_legacy;
+ };
+ 
+ DECLARE_EWMA(rssi, 10, 16);
+diff --git a/drivers/net/wireless/realtek/rtw89/debug.c b/drivers/net/wireless/realtek/rtw89/debug.c
+index 68dabac68..738cfcd6f 100644
+--- a/drivers/net/wireless/realtek/rtw89/debug.c
++++ b/drivers/net/wireless/realtek/rtw89/debug.c
+@@ -2306,6 +2306,7 @@ static void rtw89_sta_info_get_iter(void *data, struct ieee80211_sta *sta)
+ 			   he_gi_str[rate->he_gi] : "N/A");
+ 	else
+ 		seq_printf(m, "Legacy %d", rate->legacy);
++	seq_printf(m, "%s", rtwsta->ra_report.might_fallback_legacy ? " FB_G" : "");
+ 	seq_printf(m, "\t(hw_rate=0x%x)", rtwsta->ra_report.hw_rate);
+ 	seq_printf(m, "\t==> agg_wait=%d (%d)\n", rtwsta->max_agg_wait,
+ 		   sta->max_rc_amsdu_len);
+diff --git a/drivers/net/wireless/realtek/rtw89/phy.c b/drivers/net/wireless/realtek/rtw89/phy.c
+index a4dfd2ec8..4dfeedeb0 100644
+--- a/drivers/net/wireless/realtek/rtw89/phy.c
++++ b/drivers/net/wireless/realtek/rtw89/phy.c
+@@ -14,23 +14,14 @@
+ static u16 get_max_amsdu_len(struct rtw89_dev *rtwdev,
+ 			     const struct rtw89_ra_report *report)
+ {
+-	const struct rate_info *txrate = &report->txrate;
+ 	u32 bit_rate = report->bit_rate;
+-	u8 mcs;
+ 
+ 	/* lower than ofdm, do not aggregate */
+ 	if (bit_rate < 550)
+ 		return 1;
+ 
+-	/* prevent hardware rate fallback to G mode rate */
+-	if (txrate->flags & RATE_INFO_FLAGS_MCS)
+-		mcs = txrate->mcs & 0x07;
+-	else if (txrate->flags & (RATE_INFO_FLAGS_VHT_MCS | RATE_INFO_FLAGS_HE_MCS))
+-		mcs = txrate->mcs;
+-	else
+-		mcs = 0;
+-
+-	if (mcs <= 2)
++	/* avoid AMSDU for legacy rate */
++	if (report->might_fallback_legacy)
+ 		return 1;
+ 
+ 	/* lower than 20M vht 2ss mcs8, make it small */
+@@ -1978,6 +1969,7 @@ static void rtw89_phy_c2h_ra_rpt_iter(void *data, struct ieee80211_sta *sta)
+ 	u8 mode, rate, bw, giltf, mac_id;
+ 	u16 legacy_bitrate;
+ 	bool valid;
++	u8 mcs = 0;
+ 
+ 	mac_id = RTW89_GET_PHY_C2H_RA_RPT_MACID(c2h->data);
+ 	if (mac_id != rtwsta->mac_id)
+@@ -1994,7 +1986,7 @@ static void rtw89_phy_c2h_ra_rpt_iter(void *data, struct ieee80211_sta *sta)
+ 			return;
+ 	}
+ 
+-	memset(ra_report, 0, sizeof(*ra_report));
++	memset(&ra_report->txrate, 0, sizeof(ra_report->txrate));
+ 
+ 	switch (mode) {
+ 	case RTW89_RA_RPT_MODE_LEGACY:
+@@ -2010,6 +2002,7 @@ static void rtw89_phy_c2h_ra_rpt_iter(void *data, struct ieee80211_sta *sta)
+ 		ra_report->txrate.mcs = rate;
+ 		if (giltf)
+ 			ra_report->txrate.flags |= RATE_INFO_FLAGS_SHORT_GI;
++		mcs = ra_report->txrate.mcs & 0x07;
+ 		break;
+ 	case RTW89_RA_RPT_MODE_VHT:
+ 		ra_report->txrate.flags |= RATE_INFO_FLAGS_VHT_MCS;
+@@ -2017,6 +2010,7 @@ static void rtw89_phy_c2h_ra_rpt_iter(void *data, struct ieee80211_sta *sta)
+ 		ra_report->txrate.nss = FIELD_GET(RTW89_RA_RATE_MASK_NSS, rate) + 1;
+ 		if (giltf)
+ 			ra_report->txrate.flags |= RATE_INFO_FLAGS_SHORT_GI;
++		mcs = ra_report->txrate.mcs;
+ 		break;
+ 	case RTW89_RA_RPT_MODE_HE:
+ 		ra_report->txrate.flags |= RATE_INFO_FLAGS_HE_MCS;
+@@ -2028,6 +2022,7 @@ static void rtw89_phy_c2h_ra_rpt_iter(void *data, struct ieee80211_sta *sta)
+ 			ra_report->txrate.he_gi = NL80211_RATE_INFO_HE_GI_1_6;
+ 		else
+ 			ra_report->txrate.he_gi = NL80211_RATE_INFO_HE_GI_3_2;
++		mcs = ra_report->txrate.mcs;
+ 		break;
+ 	}
+ 
+@@ -2035,6 +2030,7 @@ static void rtw89_phy_c2h_ra_rpt_iter(void *data, struct ieee80211_sta *sta)
+ 	ra_report->bit_rate = cfg80211_calculate_bitrate(&ra_report->txrate);
+ 	ra_report->hw_rate = FIELD_PREP(RTW89_HW_RATE_MASK_MOD, mode) |
+ 			     FIELD_PREP(RTW89_HW_RATE_MASK_VAL, rate);
++	ra_report->might_fallback_legacy = mcs <= 2;
+ 	sta->max_rc_amsdu_len = get_max_amsdu_len(rtwdev, ra_report);
+ 	rtwsta->max_agg_wait = sta->max_rc_amsdu_len / 1500 - 1;
+ }
+-- 
+2.35.3
+
