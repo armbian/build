@@ -21,10 +21,8 @@ get_rootfs_cache_list() {
 	local packages_hash=$2
 
 	{
-		# Temportally disable Github API because we don't support to download from it
-		# curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' \
-		# || curl --silent --fail -L https://cache.armbian.com/rootfs/list
-		curl --silent --fail -L https://cache.armbian.com/rootfs/list
+		curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' \
+		|| curl --silent --fail -L https://cache.armbian.com/rootfs/list
 
 		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" |
 			sed -e 's#^.*/##' |
@@ -273,6 +271,15 @@ create_rootfs_cache() {
 		# this is needed for the build process later since resolvconf generated file in /run is not saved
 		rm $SDCARD/etc/resolv.conf
 		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
+
+		# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
+		# Note: This will mark machine `firstboot`
+		echo "uninitialized" > "${SDCARD}/etc/machine-id"
+		rm "${SDCARD}/var/lib/dbus/machine-id"
+
+		# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
+		# `armbian-first-run` will do the same thing later
+		chroot $SDCARD /bin/bash -c "systemctl mask systemd-firstboot.service >/dev/null 2>&1"
 
 		# stage: make rootfs cache archive
 		display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
