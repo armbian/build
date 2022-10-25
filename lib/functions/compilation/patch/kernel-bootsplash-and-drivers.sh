@@ -169,11 +169,12 @@ compilation_prepare() {
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" gt 5.11 && linux-version compare "${version}" lt 5.20 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" gt 5.11 && linux-version compare "${version}" lt 6.1 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag
 		aufstag=$(echo "${version}" | cut -f 1-2 -d ".")
+		aufsmajor=$(echo "${aufstag}" | cut -f 1 -d ".")
 
 		# manual overrides
 		if linux-version compare "${version}" ge 5.10.82 && linux-version compare "${version}" le 5.11; then aufstag="5.10.82"; fi
@@ -195,10 +196,10 @@ compilation_prepare() {
 			local aufsver="branch:aufs${aufstag}"
 			fetch_from_repo "$GITHUB_SOURCE/sfjro/aufs5-standalone" "aufs5" "branch:${aufsver}" "yes"
 			cd "$kerneldir" || exit
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-kbuild.patch" "applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-base.patch" "applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-mmap.patch" "applying"
-			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs5-standalone.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs${aufsmajor}-kbuild.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs${aufsmajor}-base.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs${aufsmajor}-mmap.patch" "applying"
+			process_patch_file "${SRC}/cache/sources/aufs5/${aufsver#*:}/aufs${aufsmajor}-standalone.patch" "applying"
 			cp -R "${SRC}/cache/sources/aufs5/${aufsver#*:}"/{Documentation,fs} .
 			cp "${SRC}/cache/sources/aufs5/${aufsver#*:}"/include/uapi/linux/aufs_type.h include/uapi/linux/
 
@@ -593,7 +594,7 @@ compilation_prepare() {
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" le 6.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
@@ -624,8 +625,6 @@ compilation_prepare() {
 		echo "obj-\$(CONFIG_RTL8723DS) += rtl8723ds/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-5.19.2.patch" "applying"
 
 	fi
 
