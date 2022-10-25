@@ -1,0 +1,104 @@
+From 283f46611478df1d492719f54d2c597c3a3f7e68 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Fri, 22 Oct 2021 21:44:30 +0200
+Subject: [PATCH 314/486] media: i2c: imx258: Add support for power supplies
+
+They were documented in DT, but not implemented.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/imx258.c | 39 ++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 37 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/imx258.c b/drivers/media/i2c/imx258.c
+index ec6e919d5..2570b51e4 100644
+--- a/drivers/media/i2c/imx258.c
++++ b/drivers/media/i2c/imx258.c
+@@ -602,6 +602,15 @@ static const struct imx258_mode supported_modes[] = {
+ 	},
+ };
+ 
++/* regulator supplies */
++static const char * const imx258_supply_names[] = {
++	"vana", /* Analog (2.8V) supply */
++	"vdig", /* Digital Core (1.5V) supply */
++	"vif",  /* Digital I/O (1.8V) supply */
++};
++
++#define IMX258_SUPPLY_COUNT ARRAY_SIZE(imx258_supply_names)
++
+ struct imx258 {
+ 	struct v4l2_subdev sd;
+ 	struct media_pad pad;
+@@ -616,6 +625,7 @@ struct imx258 {
+ 
+ 	struct gpio_desc *pwdn_gpio;
+ 	struct gpio_desc *reset_gpio;
++	struct regulator_bulk_data supplies[IMX258_SUPPLY_COUNT];
+ 
+ 	/* Current mode */
+ 	const struct imx258_mode *cur_mode;
+@@ -1015,11 +1025,26 @@ static int imx258_power_on(struct device *dev)
+ 	struct imx258 *imx258 = to_imx258(sd);
+ 	int ret;
+ 
++	ret = regulator_bulk_enable(IMX258_SUPPLY_COUNT, imx258->supplies);
++	if (ret) {
++		dev_err(dev, "failed to enable regulators\n");
++		return ret;
++	}
++
++	mdelay(20);
++
+ 	gpiod_set_value_cansleep(imx258->pwdn_gpio, 0);
+ 
++	mdelay(5);
++
+ 	ret = clk_prepare_enable(imx258->clk);
+-	if (ret)
++	if (ret) {
+ 		dev_err(dev, "failed to enable clock\n");
++		regulator_bulk_disable(IMX258_SUPPLY_COUNT, imx258->supplies);
++		return ret;
++	}
++
++	usleep_range(1000, 2000);
+ 
+ 	gpiod_set_value_cansleep(imx258->reset_gpio, 0);
+ 
+@@ -1038,6 +1063,8 @@ static int imx258_power_off(struct device *dev)
+ 	gpiod_set_value_cansleep(imx258->reset_gpio, 1);
+ 	gpiod_set_value_cansleep(imx258->pwdn_gpio, 1);
+ 
++	regulator_bulk_disable(IMX258_SUPPLY_COUNT, imx258->supplies);
++
+ 	return 0;
+ }
+ 
+@@ -1266,7 +1293,7 @@ static void imx258_free_controls(struct imx258 *imx258)
+ static int imx258_probe(struct i2c_client *client)
+ {
+ 	struct imx258 *imx258;
+-	int ret;
++	int ret, i;
+ 	u32 val = 0;
+ 
+ 	imx258 = devm_kzalloc(&client->dev, sizeof(*imx258), GFP_KERNEL);
+@@ -1301,6 +1328,14 @@ static int imx258_probe(struct i2c_client *client)
+ 	if (ret || val != 180)
+ 		return -EINVAL;
+ 
++	for (i = 0; i < IMX258_SUPPLY_COUNT; i++)
++		imx258->supplies[i].supply = imx258_supply_names[i];
++	ret = devm_regulator_bulk_get(&client->dev,
++				      IMX258_SUPPLY_COUNT,
++				      imx258->supplies);
++	if (ret)
++		return dev_err_probe(&client->dev, ret, "Failed to get supplies\n");
++
+ 	/* request optional power down pin */
+ 	imx258->pwdn_gpio = devm_gpiod_get_optional(&client->dev, "powerdown",
+ 						    GPIOD_OUT_HIGH);
+-- 
+2.35.3
+

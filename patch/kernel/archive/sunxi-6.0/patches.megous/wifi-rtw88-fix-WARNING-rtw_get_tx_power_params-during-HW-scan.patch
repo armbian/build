@@ -1,0 +1,151 @@
+From 1a8569755976ff5484839b9fe691a53d397659d7 Mon Sep 17 00:00:00 2001
+From: Chih-Kang Chang <gary.chang@realtek.com>
+Date: Tue, 9 Aug 2022 16:41:04 +0800
+Subject: [PATCH 385/486] wifi: rtw88: fix WARNING:rtw_get_tx_power_params()
+ during HW scan
+
+During HW scan, the channel related feilds in hal struct changed partially.
+If setting Tx power will get WARNING:rtw_get_tx_power_params() due to some
+of fields in hal struct mismatch. Therefore, we fix to change all required
+fields in hal struct when channel switch during HW scan.
+
+Signed-off-by: Chih-Kang Chang <gary.chang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220809084107.38137-5-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw88/fw.c       | 37 +++++++++++++------
+ drivers/net/wireless/realtek/rtw88/fw.h       |  2 +-
+ drivers/net/wireless/realtek/rtw88/mac80211.c |  2 +-
+ drivers/net/wireless/realtek/rtw88/main.h     |  1 +
+ 4 files changed, 28 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.c b/drivers/net/wireless/realtek/rtw88/fw.c
+index c08220ae6..992cae1b0 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.c
++++ b/drivers/net/wireless/realtek/rtw88/fw.c
+@@ -14,6 +14,7 @@
+ #include "util.h"
+ #include "wow.h"
+ #include "ps.h"
++#include "phy.h"
+ 
+ static void rtw_fw_c2h_cmd_handle_ext(struct rtw_dev *rtwdev,
+ 				      struct sk_buff *skb)
+@@ -2087,10 +2088,9 @@ void rtw_hw_scan_complete(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 	rtw_core_scan_complete(rtwdev, vif, true);
+ 
+ 	rtwvif = (struct rtw_vif *)vif->drv_priv;
+-	if (chan) {
+-		hal->current_channel = chan;
+-		hal->current_band_type = chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
+-	}
++	if (chan)
++		rtw_store_op_chan(rtwdev, false);
++	rtw_phy_set_tx_power_level(rtwdev, hal->current_channel);
+ 	ieee80211_wake_queues(rtwdev->hw);
+ 	ieee80211_scan_completed(rtwdev->hw, &info);
+ 
+@@ -2179,14 +2179,23 @@ void rtw_hw_scan_status_report(struct rtw_dev *rtwdev, struct sk_buff *skb)
+ 		rtw_dbg(rtwdev, RTW_DBG_HW_SCAN, "HW scan aborted with code: %d\n", rc);
+ }
+ 
+-void rtw_store_op_chan(struct rtw_dev *rtwdev)
++void rtw_store_op_chan(struct rtw_dev *rtwdev, bool backup)
+ {
+ 	struct rtw_hw_scan_info *scan_info = &rtwdev->scan_info;
+ 	struct rtw_hal *hal = &rtwdev->hal;
++	u8 band;
+ 
+-	scan_info->op_chan = hal->current_channel;
+-	scan_info->op_bw = hal->current_band_width;
+-	scan_info->op_pri_ch_idx = hal->current_primary_channel_index;
++	if (backup) {
++		scan_info->op_chan = hal->current_channel;
++		scan_info->op_bw = hal->current_band_width;
++		scan_info->op_pri_ch_idx = hal->current_primary_channel_index;
++		scan_info->op_pri_ch = hal->primary_channel;
++	} else {
++		band = scan_info->op_chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
++		rtw_update_channel(rtwdev, scan_info->op_chan,
++				   scan_info->op_pri_ch,
++				   band, scan_info->op_bw);
++	}
+ }
+ 
+ void rtw_clear_op_chan(struct rtw_dev *rtwdev)
+@@ -2196,6 +2205,7 @@ void rtw_clear_op_chan(struct rtw_dev *rtwdev)
+ 	scan_info->op_chan = 0;
+ 	scan_info->op_bw = 0;
+ 	scan_info->op_pri_ch_idx = 0;
++	scan_info->op_pri_ch = 0;
+ }
+ 
+ static bool rtw_is_op_chan(struct rtw_dev *rtwdev, u8 channel)
+@@ -2210,7 +2220,7 @@ void rtw_hw_scan_chan_switch(struct rtw_dev *rtwdev, struct sk_buff *skb)
+ 	struct rtw_hal *hal = &rtwdev->hal;
+ 	struct rtw_c2h_cmd *c2h;
+ 	enum rtw_scan_notify_id id;
+-	u8 chan, status;
++	u8 chan, band, status;
+ 
+ 	if (!test_bit(RTW_FLAG_SCANNING, rtwdev->flags))
+ 		return;
+@@ -2221,10 +2231,13 @@ void rtw_hw_scan_chan_switch(struct rtw_dev *rtwdev, struct sk_buff *skb)
+ 	status = GET_CHAN_SWITCH_STATUS(c2h->payload);
+ 
+ 	if (id == RTW_SCAN_NOTIFY_ID_POSTSWITCH) {
+-		if (rtw_is_op_chan(rtwdev, chan))
++		band = chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
++		rtw_update_channel(rtwdev, chan, chan, band,
++				   RTW_CHANNEL_WIDTH_20);
++		if (rtw_is_op_chan(rtwdev, chan)) {
++			rtw_store_op_chan(rtwdev, false);
+ 			ieee80211_wake_queues(rtwdev->hw);
+-		hal->current_channel = chan;
+-		hal->current_band_type = chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
++		}
+ 	} else if (id == RTW_SCAN_NOTIFY_ID_PRESWITCH) {
+ 		if (IS_CH_5G_BAND(chan)) {
+ 			rtw_coex_switchband_notify(rtwdev, COEX_SWITCH_TO_5G);
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.h b/drivers/net/wireless/realtek/rtw88/fw.h
+index 20c56e031..a5a965803 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.h
++++ b/drivers/net/wireless/realtek/rtw88/fw.h
+@@ -847,7 +847,7 @@ int rtw_fw_dump_fifo(struct rtw_dev *rtwdev, u8 fifo_sel, u32 addr, u32 size,
+ 		     u32 *buffer);
+ void rtw_fw_scan_notify(struct rtw_dev *rtwdev, bool start);
+ void rtw_fw_adaptivity(struct rtw_dev *rtwdev);
+-void rtw_store_op_chan(struct rtw_dev *rtwdev);
++void rtw_store_op_chan(struct rtw_dev *rtwdev, bool backup);
+ void rtw_clear_op_chan(struct rtw_dev *rtwdev);
+ void rtw_hw_scan_start(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 		       struct ieee80211_scan_request *req);
+diff --git a/drivers/net/wireless/realtek/rtw88/mac80211.c b/drivers/net/wireless/realtek/rtw88/mac80211.c
+index fa6a920fa..ef60041fe 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac80211.c
++++ b/drivers/net/wireless/realtek/rtw88/mac80211.c
+@@ -397,7 +397,7 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
+ 		if (is_zero_ether_addr(rtwvif->bssid))
+ 			rtw_clear_op_chan(rtwdev);
+ 		else
+-			rtw_store_op_chan(rtwdev);
++			rtw_store_op_chan(rtwdev, true);
+ 	}
+ 
+ 	if (changed & BSS_CHANGED_BEACON_INT) {
+diff --git a/drivers/net/wireless/realtek/rtw88/main.h b/drivers/net/wireless/realtek/rtw88/main.h
+index e15d35f2c..bccd7b28f 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.h
++++ b/drivers/net/wireless/realtek/rtw88/main.h
+@@ -1966,6 +1966,7 @@ struct rtw_hw_scan_info {
+ 	struct ieee80211_vif *scanning_vif;
+ 	u8 probe_pg_size;
+ 	u8 op_pri_ch_idx;
++	u8 op_pri_ch;
+ 	u8 op_chan;
+ 	u8 op_bw;
+ };
+-- 
+2.35.3
+
