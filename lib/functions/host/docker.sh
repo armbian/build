@@ -109,6 +109,7 @@ function docker_cli_prepare() {
 	#############################################################################################################
 	# Prepare some dependencies; these will be used on the Dockerfile
 
+	enable_all_extensions_builtin_and_user
 	initialize_extension_manager  # initialize the extension manager.
 	declare -a -g host_dependencies=()
 	early_prepare_host_dependencies
@@ -209,6 +210,8 @@ function docker_cli_prepare() {
 		RUN echo "--> CACHE MISS IN DOCKERFILE: apt packages." && \
 			DEBIAN_FRONTEND=noninteractive apt-get -y update && \
 			DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${BASIC_DEPS[@]} ${host_dependencies[@]}
+		RUN sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+		RUN locale-gen
 		WORKDIR ${DOCKER_ARMBIAN_TARGET_PATH}
 		ENV ARMBIAN_RUNNING_IN_CONTAINER=yes
 		ADD . ${DOCKER_ARMBIAN_TARGET_PATH}/
