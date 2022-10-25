@@ -326,7 +326,7 @@ enable_extension() {
 		stacktrace="${ENABLE_EXTENSION_TRACE_HINT}$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
 		display_alert "Enabling extension" "${extension_name} :: added by ${stacktrace}" "debug"
 	else
-		display_alert "Enabling extension" "${extension_name}" ""
+		[[ "${enable_extension_quiet:-no}" != "yes" ]] && display_alert "Enabling extension" "${extension_name}" ""
 	fi
 
 	# first a check, has the extension manager already initialized? then it is too late to enable_extension(). bail.
@@ -400,6 +400,36 @@ enable_extension() {
 		ENABLE_EXTENSION_TRACE_HINT="RECURSE ${stacktrace} ->" enable_extension "${stacked_extension}"
 	done
 
+}
+
+# This looks up and enables _all_ existing extensions.
+# The reasoning is simple: during Dockerfile build, we wanna have all the hostdeps defined, even if we're not gonna use them.
+function enable_all_extensions_builtin_and_user() {
+	declare -a extension_list=()
+	declare -a ext_dirs=("${SRC}/extensions" "${SRC}/userpatches/extensions")
+	declare -a ignore_extensions=("sample-extension")
+
+	# Extensions are files of the format <dir>/extension_name.sh or <dir>/extension_name/extension_name.sh
+	for ext_dir in "${ext_dirs[@]}"; do
+		if [[ -d "${ext_dir}" ]]; then
+			declare -a ext_list_dir=()
+			mapfile -t ext_list_dir < <(find "${ext_dir}" -maxdepth 2 -type f -name "*.sh")
+			extension_list+=("${ext_list_dir[@]}")
+		fi
+	done
+
+	# loop over the files found; remove the prefix
+	for extension_file in "${extension_list[@]}"; do
+		extension_file="${extension_file#${SRC}/}"
+		extension_file="${extension_file%.sh}"
+		extension_name="${extension_file##*/}"
+		# skip, if extension_name is in the ignore_extensions array
+		if [[ " ${ignore_extensions[*]} " == *" ${extension_name} "* ]]; then
+			continue
+		fi
+		# enable the extensions, quietly.
+		enable_extension_quiet="yes" enable_extension "${extension_name}"
+	done
 }
 
 # Fancy placeholder for future ideas. allow any core function to be hooked. maybe with "voters" infrastructure?
