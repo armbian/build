@@ -128,7 +128,7 @@ function armbian_is_host_running_systemd() {
 	if [[ -n "$(command -v systemctl)" ]]; then
 		display_alert "systemctl binary found" "host has systemd installed" "debug"
 		# Detect if systemd is actively running
-		if systemctl | grep -q 'running'; then
+		if systemctl is-system-running --quiet; then
 			display_alert "systemctl reports" "systemd is running" "debug"
 			return 0
 		else
