@@ -165,6 +165,7 @@ function do_main_configuration() {
 	[[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
 	[[ -z $EXTRA_BSP_NAME ]] && EXTRA_BSP_NAME=""
 	[[ -z $EXTRA_ROOTFS_MIB_SIZE ]] && EXTRA_ROOTFS_MIB_SIZE=0
+	[[ -z $SERIAL_AUTOLOGIN ]] && SERIAL_AUTOLOGIN="yes"
 
 	# single ext4 partition is the default and preferred configuration
 	#BOOTFS_TYPE=''
