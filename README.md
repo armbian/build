@@ -199,7 +199,7 @@ Support is provided in one of two ways:
 - For commercial or prioritized assistance:
   - book a an hour of [professional consultation](https://calendly.com/armbian/consultation),
   - consider becoming a project partner. Reach us out at https://armbian.com/contact,
-- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guarenteed solutions.
+- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guaranteed solutions.
 
 ## Contact
 

@@ -11,17 +11,19 @@ create_chroot() {
 	apt_mirror['bullseye']="$DEBIAN_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
 	apt_mirror['jammy']="$UBUNTU_MIRROR"
+	apt_mirror['kinetic']="$UBUNTU_MIRROR"
 	components['buster']='main,contrib'
 	components['bullseye']='main,contrib'
 	components['sid']='main,contrib'
 	components['focal']='main,universe,multiverse'
 	components['jammy']='main,universe,multiverse'
+	components['kinetic']='main,universe,multiverse'
 	display_alert "Creating build chroot" "$release/$arch" "info"
 	local includes="ccache,locales,git,ca-certificates,libfile-fcntllock-perl,rsync,python3,distcc,apt-utils"
 
 	# perhaps a temporally workaround
 	case $release in
-		bullseye | focal | jammy | sid)
+		bullseye | focal | jammy | sid | kinetic)
 			includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
 			;;
 	esac
@@ -34,7 +36,6 @@ create_chroot() {
 
 	mkdir -p "${target_dir}"
 	cd "${target_dir}"
-
 	debootstrap --variant=buildd \
 		--components="${components[${release}]}" \
 		--arch="${arch}" $DEBOOTSTRAP_OPTION \
@@ -117,6 +118,7 @@ chroot_prepare_distccd() {
 	gcc_version['hirsute']='10.2'
 	gcc_version['sid']='10.2'
 	gcc_version['jammy']='12'
+	gcc_version['kinetic']='12'
 	gcc_type['armhf']='arm-linux-gnueabihf-'
 	gcc_type['arm64']='aarch64-linux-gnu-'
 	rm -f "${dest}"/cmdlist

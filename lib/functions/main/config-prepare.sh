@@ -151,9 +151,9 @@ function prepare_and_config_main_build_single() {
 Called early, before any compilation work starts.
 POST_DETERMINE_CTHREADS
 
-	if [[ $BETA == yes ]]; then
+	if [[ "$BETA" == "yes" ]]; then
 		IMAGE_TYPE=nightly
-	elif [[ $BETA != "yes" ]]; then
+	elif [ "$BETA" == "no" ] || [ "$RC" == "yes" ]; then
 		IMAGE_TYPE=stable
 	else
 		IMAGE_TYPE=user-built
