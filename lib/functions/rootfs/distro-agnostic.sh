@@ -109,17 +109,19 @@ install_common() {
 	# set root password
 	chroot "${SDCARD}" /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 
-	# enable automated login to console(s)
-	mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
-	mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
-	cat <<- EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
-		[Service]
-		ExecStartPre=/bin/sh -c 'exec /bin/sleep 10'
-		ExecStart=
-		ExecStart=-/sbin/agetty --noissue --autologin root %I \$TERM
-		Type=idle
-	EOF
-	cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
+	if [[ $CONSOLE_AUTOLOGIN == yes ]]; then
+		# enable automated login to console(s)
+		mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
+		mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
+		cat <<- EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
+			[Service]
+			ExecStartPre=/bin/sh -c 'exec /bin/sleep 10'
+			ExecStart=
+			ExecStart=-/sbin/agetty --noissue --autologin root %I \$TERM
+			Type=idle
+		EOF
+		cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
+	fi
 
 	# force change root password at first login
 	#chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
