@@ -141,16 +141,54 @@ prepare_host() {
 
 	fi # check offline
 
-	# enable arm binary format so that the cross-architecture chroot environment will work
+	# if we're building an image, not only packages...
+	# ... and the host arch does not match the target arch ...
+	# ... we then require binfmt_misc to be enabled.
+	# "enable arm binary format so that the cross-architecture chroot environment will work"
 	if build_task_is_enabled "bootstrap"; then
-		modprobe -q binfmt_misc || display_alert "Failed to modprobe" "binfmt_misc" "warn" # @TODO avoid this if possible, is it already loaded, or built-in? then ignore
-		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-		if [[ "$(arch)" != "aarch64" ]]; then
-			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-			test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+		if dpkg-architecture -e "${ARCH}"; then
+			display_alert "Native arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "cachehit"
+		else
+			local failed_binfmt_modprobe=0
+
+			display_alert "Cross arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "debug"
+
+			# Check if binfmt_misc is loaded; if not, try to load it, but don't fail: it might be built in.
+			if grep -q "^binfmt_misc" /proc/modules; then
+				display_alert "binfmt_misc is already loaded" "binfmt_misc already loaded" "debug"
+			else
+				display_alert "binfmt_misc is not loaded" "trying to load binfmt_misc" "debug"
+
+				# try to modprobe. if it fails, emit a warning later, but not here.
+				# this is for the in-container case, where the host already has the module, but won't let the container know about it.
+				modprobe -q binfmt_misc || failed_binfmt_modprobe=1
+			fi
+
+			# Now, /proc/sys/fs/binfmt_misc/ has to be mounted. Mount, or fail with a message
+			if mountpoint -q /proc/sys/fs/binfmt_misc/; then
+				display_alert "binfmt_misc is already mounted" "binfmt_misc already mounted" "debug"
+			else
+				display_alert "binfmt_misc is not mounted" "trying to mount binfmt_misc" "debug"
+				mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc/ || {
+					if [[ $failed_binfmt_modprobe == 1 ]]; then
+						display_alert "Failed to load binfmt_misc module" "modprobe binfmt_misc failed" "wrn"
+					fi
+					display_alert "Check your HOST kernel" "CONFIG_BINFMT_MISC=m is required in host kernel" "warn"
+					display_alert "Failed to mount" "binfmt_misc /proc/sys/fs/binfmt_misc/" "err"
+					exit_with_error "Failed to mount binfmt_misc"
+				}
+				display_alert "binfmt_misc mounted" "binfmt_misc mounted" "debug"
+			fi
+
+			# @TODO: rpardini: Hmm, this is from long ago. Why? Is it needed? Why not for aarch64?
+			if [[ "$(arch)" != "aarch64" ]]; then
+				test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
+				test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+			fi
 		fi
 	fi
 
+	# @TODO: rpardini: this does not belong here, instead with the other templates, pre-configuration.
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
 	# @TODO: what is this, and why?
