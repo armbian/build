@@ -544,7 +544,7 @@ compilation_prepare() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
 
-	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ] && linux-version compare "${version}" lt 6.0 ; then
+	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ] ; then
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"
