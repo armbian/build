@@ -71,6 +71,7 @@ else
 		source ${load_addr}
 	fi
 fi
+kaslrseed
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
