@@ -102,7 +102,7 @@ fetch_from_repo() {
 	expected_origin_url="$(echo -n "${url}" | sed 's/^.*@//' | sed 's/^.*\/\///')"
 
 	# Make sure the origin matches what is expected. If it doesn't, clean up and start again.
-	if [[ "$(git rev-parse --git-dir)" == ".git" ]]; then
+	if [[ -d ".git" && "$(git rev-parse --git-dir)" == ".git" ]]; then
 		actual_origin_url="$(git config remote.origin.url | sed 's/^.*@//' | sed 's/^.*\/\///')"
 		if [[ "${expected_origin_url}" != "${actual_origin_url}" ]]; then
 			display_alert "Remote git URL does not match, deleting working copy" "${git_work_dir} expected: '${expected_origin_url}' actual: '${actual_origin_url}'" "warn"
@@ -115,7 +115,7 @@ fetch_from_repo() {
 
 	local do_add_origin="no"
 
-	if [[ "$(git rev-parse --git-dir)" != ".git" ]]; then
+	if [[ ! -d ".git" || "$(git rev-parse --git-dir)" != ".git" ]]; then
 		# Dir is not a git working copy. Make it so;
 		# If callback is defined, call it. Give it the dir as param. The rest it will read from environment.
 		# If not callback defined, do an init, and schedule a fetch.
@@ -128,8 +128,8 @@ fetch_from_repo() {
 			regular_git init -q --initial-branch="armbian_unused_initial_branch" .
 		fi
 
-		offline=false          # Force online, we'll need to fetch.
-		do_add_origin="yes"    # Just created the repo, it needs an origin later.
+		offline=false       # Force online, we'll need to fetch.
+		do_add_origin="yes" # Just created the repo, it needs an origin later.
 	fi
 
 	local changed=false
@@ -232,4 +232,3 @@ fetch_from_repo() {
 	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "git"
 	#fasthash_debug "at the end of fetch_from_repo $dir $ref_name"
 }
-
