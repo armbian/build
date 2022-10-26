@@ -109,7 +109,7 @@ install_common() {
 	# set root password
 	chroot "${SDCARD}" /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 
-	if [[ $SERIAL_AUTOLOGIN == yes ]]; then
+	if [[ $CONSOLE_AUTOLOGIN == yes ]]; then
 		# enable automated login to console(s)
 		mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
 		mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
