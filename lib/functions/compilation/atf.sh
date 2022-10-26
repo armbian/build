@@ -41,7 +41,7 @@ compile_atf() {
 		# build aarch64
 	fi
 
-	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${ATF_COMPILER}gcc" -dumpversion)" "info"
+	display_alert "Compiler version" "${ATF_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${ATF_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
 
 	local target_make target_patchdir target_files
 	target_make=$(cut -d';' -f1 <<< "${ATF_TARGET_MAP}")
