@@ -185,11 +185,12 @@ function produce_relaunch_parameters() {
 }
 
 function cli_standard_relaunch_docker_or_sudo() {
-	if [[ "${EUID}" == "0" ]]; then # we're already root. Either running as real root, or already sudo'ed.
+	if [[ "${EUID}" == "0" && "${PREFER_DOCKER:-no}" != "yes" ]]; then # we're already root. Either running as real root, or already sudo'ed.
 		display_alert "Already running as root" "great, running '${ARMBIAN_COMMAND}' normally" "debug"
 	else # not root.
-		# Pass the current UID to any further relaunchings (under docker or sudo).
-		ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SET_OWNER_TO_UID"]="${EUID}") # add params when relaunched under docker
+		# add params when relaunched under docker or sudo
+		ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SET_OWNER_TO_UID"]="${EUID}") # Pass the current UID to any further relaunchings
+		ARMBIAN_CLI_RELAUNCH_PARAMS+=(["PREFER_DOCKER"]="no")         # make sure we don't loop forever when relaunching.
 
 		# We've a few options.
 		# 1) We could check if Docker is working, and do everything under Docker. Users who can use Docker, can "become" root inside a container.
