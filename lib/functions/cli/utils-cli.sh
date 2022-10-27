@@ -178,6 +178,40 @@ function produce_relaunch_parameters() {
 		ARMBIAN_CLI_RELAUNCH_ARGS+=("${config}")
 	done
 	display_alert "Produced relaunch args:" "ARMBIAN_CLI_RELAUNCH_ARGS: ${ARMBIAN_CLI_RELAUNCH_ARGS[*]}" "debug"
-	# @TODO: add the command. if we have one.
+	# add the command; defaults to the last command, but can be changed by the last pre-run.
+	if [[ -n "${ARMBIAN_CLI_RELAUNCH_COMMAND}" ]]; then
+		ARMBIAN_CLI_RELAUNCH_ARGS+=("${ARMBIAN_CLI_RELAUNCH_COMMAND}")
+	fi
+}
 
+function cli_standard_relaunch_docker_or_sudo() {
+	if [[ "${EUID}" == "0" ]]; then # we're already root. Either running as real root, or already sudo'ed.
+		display_alert "Already running as root" "great, running '${ARMBIAN_COMMAND}' normally" "debug"
+	else # not root.
+		# Pass the current UID to any further relaunchings (under docker or sudo).
+		ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SET_OWNER_TO_UID"]="${EUID}") # add params when relaunched under docker
+
+		# We've a few options.
+		# 1) We could check if Docker is working, and do everything under Docker. Users who can use Docker, can "become" root inside a container.
+		# 2) We could ask for sudo (which _might_ require a password)...
+		# @TODO: GitHub actions can do both. Sudo without password _and_ Docker; should we prefer Docker? Might have unintended consequences...
+		if is_docker_ready_to_go; then
+			display_alert "Trying to build, not root, but Docker is ready to go" "delegating to Docker" "debug"
+			ARMBIAN_CHANGE_COMMAND_TO="docker"
+			ARMBIAN_CLI_RELAUNCH_COMMAND="${ARMBIAN_COMMAND}" # add params when relaunched under docker
+			return 0
+		fi
+
+		# check if we're on Linux via uname. if not, refuse to do anything.
+		if [[ "$(uname)" != "Linux" ]]; then
+			display_alert "Not running on Linux; Docker is not available" "refusing to run" "err"
+			exit 1
+		fi
+
+		display_alert "This script requires root privileges; Docker is unavailable" "trying to use sudo" "wrn"
+		declare -g ARMBIAN_CLI_RELAUNCH_ARGS=()
+		produce_relaunch_parameters                                               # produces ARMBIAN_CLI_RELAUNCH_ARGS
+		sudo --preserve-env "${SRC}/compile.sh" "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: relaunch done here!
+		display_alert "AFTER SUDO!!!" "AFTER SUDO!!!" "warn"
+	fi
 }
