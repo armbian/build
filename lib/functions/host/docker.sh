@@ -39,7 +39,7 @@ function is_docker_ready_to_go() {
 		display_alert "Can't use Docker" "Actually ALREADY UNDER DOCKER!" "debug"
 		return 1
 	fi
-	if [[ ! -n "$(command -v docker)" ]]; then
+	if [[ -z "$(command -v docker)" ]]; then
 		display_alert "Can't use Docker" "docker command not found" "debug"
 		return 1
 	fi
@@ -351,6 +351,12 @@ function docker_cli_prepare_launch() {
 
 	else
 		display_alert "Skipping /dev/loop* hacks for" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
+	fi
+
+	# if DOCKER_EXTRA_ARGS is an array and has more than zero elements, add its contents to the DOCKER_ARGS array
+	if [[ "${DOCKER_EXTRA_ARGS[*]+isset}" == "isset" && "${#DOCKER_EXTRA_ARGS[@]}" -gt 0 ]]; then
+		display_alert "Adding extra Docker arguments" "${DOCKER_EXTRA_ARGS[*]}" "debug"
+		DOCKER_ARGS+=("${DOCKER_EXTRA_ARGS[@]}")
 	fi
 
 }
