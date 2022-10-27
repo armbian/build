@@ -58,6 +58,7 @@ function cli_entrypoint() {
 	while [[ "${ARMBIAN_CHANGE_COMMAND_TO}" != "" ]]; do
 		display_alert "Still a command to pre-run, this time:" "${ARMBIAN_CHANGE_COMMAND_TO}" "debug"
 
+		declare -g ARMBIAN_COMMAND_REQUIRE_BASIC_DEPS="no" # reset this before every pre_run, so only the last one wins.
 		ARMBIAN_COMMAND="${ARMBIAN_CHANGE_COMMAND_TO}"
 		armbian_prepare_cli_command_to_run "${ARMBIAN_COMMAND}"
 
