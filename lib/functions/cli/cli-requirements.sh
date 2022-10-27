@@ -15,10 +15,8 @@ function cli_requirements_pre_run() {
 }
 
 function cli_requirements_run() {
-	declare -g REQUIREMENTS_DEFS_ONLY='yes' # @TODO: decide, this is already set in ARMBIAN_COMMANDS_TO_VARS_DICT
-
 	declare -a -g host_dependencies=()
 	early_prepare_host_dependencies # tests itself for REQUIREMENTS_DEFS_ONLY=yes too
-	install_host_dependencies "for REQUIREMENTS_DEFS_ONLY=yes"
-	display_alert "Done with" "REQUIREMENTS_DEFS_ONLY" "cachehit"
+	LOG_SECTION="install_host_dependencies" do_with_logging install_host_dependencies "for requirements command"
+	display_alert "Done with" "@host dependencies" "cachehit"
 }
