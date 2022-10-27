@@ -11,6 +11,10 @@ OVERLAY_PREFIX='meson'
 # this family does not need it
 ATF_COMPILE="no"
 
+if [[ $BOARD == khadas-vim3l ]]; then
+	BOOTBRANCH='tag:v2022.04'
+fi
+
 if [[ $BOARD == lafrite ]]; then
 	UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
 fi
