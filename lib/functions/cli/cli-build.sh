@@ -15,6 +15,7 @@ function cli_standard_build_pre_run() {
 		if is_docker_ready_to_go; then
 			# add the current user EUID as a parameter when it's relaunched under docker. SET_OWNER_TO_UID="${EUID}"
 			display_alert "Trying to build, not root, but Docker is ready to go" "delegating to Docker" "debug"
+			ARMBIAN_CLI_RELAUNCH_PARAMS+=(["DOCKER_CLI_CMD"]="build") # add params when relaunched under docker
 			ARMBIAN_CHANGE_COMMAND_TO="docker"
 			return 0
 		fi
