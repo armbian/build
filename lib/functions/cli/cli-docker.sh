@@ -6,11 +6,9 @@ function cli_docker_pre_run() {
 
 	# make sure we're not _ALREADY_ running under docker... otherwise eternal loop?
 	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
-		display_alert "wtf" "asking for docker... inside docker; turning to build command" "warn"
-		# @TODO: wrong, what if we wanna run other stuff inside Docker? not build?
-		ARMBIAN_CHANGE_COMMAND_TO="build"
+		display_alert "DOCKER_CLI_CMD" "asking for docker... inside docker; turning to '${DOCKER_CLI_CMD}' command" "warn"
+		ARMBIAN_CHANGE_COMMAND_TO="${DOCKER_CLI_CMD}"
 	fi
-
 }
 
 function cli_docker_run() {
