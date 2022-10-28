@@ -22,7 +22,7 @@
 | MODULES_BLACKLIST_CURRENT | space delimited modules blacklist for current branch |
 | MODULES_BLACKLIST_EDGE | space delimited modules blacklist for edge branch |
 | SERIALCON | ttyS0,ttyS1, ... |
-| BUILD_DESKTOP | yes/no |
+| HAS_VIDEO_OUTPUT | yes/no |
 | KERNEL_TARGET | legacy,current,edge |
 | FULL_DESKTOP | yes/no = install Office, Thunderbird, ... |
 | DESKTOP_AUTOLOGIN | yes/no |

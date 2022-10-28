@@ -5,7 +5,7 @@ LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2022.07"
+BOOTBRANCH="${BOOTBRANCH_BOARD:-"tag:v2022.07"}"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
@@ -35,7 +35,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		KERNELBRANCH='branch:linux-5.19.y'
+		KERNELBRANCH='branch:linux-6.0.y'
 		KERNELPATCHDIR='meson64-edge'
 		;;
 
