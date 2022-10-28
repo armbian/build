@@ -260,11 +260,6 @@ function early_prepare_host_dependencies() {
 		host_dependencies+=("apt-cacher-ng")
 	fi
 
-	if [[ "${REQUIREMENTS_DEFS_ONLY}" == "yes" ]]; then
-		display_alert "Not calling add_host_dependencies nor host_dependencies_known" "due to REQUIREMENTS_DEFS_ONLY" "debug"
-		return 0
-	fi
-
 	export EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 		*run before installing host dependencies*
@@ -300,11 +295,6 @@ function install_host_dependencies() {
 	run_host_command_logged update-ccache-symlinks
 
 	export FINAL_HOST_DEPS="${host_dependencies[*]}"
-
-	if [[ "${REQUIREMENTS_DEFS_ONLY}" == "yes" ]]; then
-		display_alert "Not calling host_dependencies_ready" "due to REQUIREMENTS_DEFS_ONLY" "debug"
-		return 0
-	fi
 
 	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
 		*run after all host dependencies are installed*

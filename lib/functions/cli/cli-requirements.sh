@@ -15,8 +15,9 @@ function cli_requirements_pre_run() {
 }
 
 function cli_requirements_run() {
+	initialize_extension_manager # initialize the extension manager.
 	declare -a -g host_dependencies=()
-	early_prepare_host_dependencies # tests itself for REQUIREMENTS_DEFS_ONLY=yes too
+	early_prepare_host_dependencies
 	LOG_SECTION="install_host_dependencies" do_with_logging install_host_dependencies "for requirements command"
 	display_alert "Done with" "@host dependencies" "cachehit"
 }

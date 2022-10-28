@@ -109,8 +109,9 @@ function docker_cli_prepare() {
 	#############################################################################################################
 	# Prepare some dependencies; these will be used on the Dockerfile
 
+	initialize_extension_manager  # initialize the extension manager.
 	declare -a -g host_dependencies=()
-	REQUIREMENTS_DEFS_ONLY=yes early_prepare_host_dependencies
+	early_prepare_host_dependencies
 	display_alert "Pre-game dependencies" "${host_dependencies[*]}" "debug"
 
 	#############################################################################################################
