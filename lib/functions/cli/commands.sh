@@ -29,8 +29,6 @@ function armbian_register_commands() {
 
 		["generate-dockerfile"]="DOCKERFILE_GENERATE_ONLY='yes'"
 
-		["requirements"]="REQUIREMENTS_DEFS_ONLY='yes'"
-
 		["config-dump"]="CONFIG_DEFS_ONLY='yes'"
 		["configdump"]="CONFIG_DEFS_ONLY='yes'"
 
