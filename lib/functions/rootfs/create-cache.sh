@@ -224,9 +224,8 @@ create_rootfs_cache() {
 
 		# stage: check md5 sum of installed packages. Just in case.
 		display_alert "Checking MD5 sum of installed packages" "debsums" "info"
-		eval 'LC_ALL=C LANG=C sudo chroot $SDCARD /bin/bash -e -c "dpkg-query -f ${binary:Package} -W | xargs debsums"' \
-			${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/debootstrap.log'} '>/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
-		[[ ${EVALPIPE[0]} -ne 0 ]] && exit_with_error "MD5 sums check of installed packages failed"
+		chroot $SDCARD /bin/bash -e -c "debsums -s"
+		[[ $? -ne 0 ]] && exit_with_error "MD5 sums check of installed packages failed"
 
 		# Remove packages from packages.uninstall
 
