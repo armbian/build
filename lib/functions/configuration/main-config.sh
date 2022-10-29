@@ -331,7 +331,14 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
 	fi
 
-	DEBIAN_MIRROR='deb.debian.org/debian'
+	if [[ "${ARCH}" == "amd64" ]] || [[ "${ARCH}" == "arm64" ]]; then
+		DEBIAN_MIRROR='deb.debian.org/debian'
+	fi
+	
+	if [[ "${ARCH}" == "riscv64" ]]; then
+		DEBIAN_MIRROR='deb.debian.org/debian-ports'
+	fi
+	
 	DEBIAN_SECURTY='security.debian.org/'
 	[[ "${ARCH}" == "amd64" ]] &&
 		UBUNTU_MIRROR='archive.ubuntu.com/ubuntu/' ||
@@ -366,6 +373,13 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR_ARM64}"
 		fi
 	fi
+
+	if [[ "${ARCH}" == "riscv64" ]]; then
+		if [[ -n ${CUSTOM_UBUNTU_MIRROR_RISCV64} ]]; then
+			display_alert "Using custom ports/riscv64 mirror" "${CUSTOM_UBUNTU_MIRROR_RISV64}" "info"
+			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR_RISCV64}"
+		fi
+	fi	
 
 	# Control aria2c's usage of ipv6.
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"

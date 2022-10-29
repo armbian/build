@@ -22,6 +22,7 @@ case "$MACHINE" in
 esac
 
 case "$MACHINE" in
+	*riscv64*) SHELLFMT_ARCH="riscv64" ;;
 	*aarch64*) SHELLFMT_ARCH="arm64" ;;
 	*x86_64*) SHELLFMT_ARCH="amd64" ;;
 	*)
