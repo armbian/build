@@ -5,7 +5,7 @@ LINUXFAMILY=meson64
 ARCH=arm64
 SERIALCON=ttyAML0
 SRC_LOADADDR='LOADADDR=0x1080000'
-BOOTBRANCH="tag:v2022.07"
+BOOTBRANCH="${BOOTBRANCH_BOARD:-"tag:v2022.07"}"
 OVERLAY_PREFIX='meson'
 
 # this family does not need it
@@ -22,20 +22,13 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
-	legacy)
-		KERNELSOURCE='https://github.com/hardkernel/linux'
-		#KERNELBRANCH='branch:odroidg12-4.9.y'
-		KERNELBRANCH='tag:4.9.277-122'
-		KERNELDIR='linux-odroid'
-		;;
-
 	current)
-		KERNELBRANCH='branch:linux-5.10.y'
-		KERNELPATCHDIR='meson64-current'
+		KERNELBRANCH='branch:linux-5.19.y'
+		KERNELPATCHDIR='meson64-edge'
 		;;
 
 	edge)
-		KERNELBRANCH='branch:linux-5.19.y'
+		KERNELBRANCH='branch:linux-6.0.y'
 		KERNELPATCHDIR='meson64-edge'
 		;;
 

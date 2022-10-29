@@ -109,17 +109,19 @@ install_common() {
 	# set root password
 	chroot "${SDCARD}" /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
 
-	# enable automated login to console(s)
-	mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
-	mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
-	cat <<- EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
-		[Service]
-		ExecStartPre=/bin/sh -c 'exec /bin/sleep 10'
-		ExecStart=
-		ExecStart=-/sbin/agetty --noissue --autologin root %I \$TERM
-		Type=idle
-	EOF
-	cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
+	if [[ $CONSOLE_AUTOLOGIN == yes ]]; then
+		# enable automated login to console(s)
+		mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
+		mkdir -p "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/
+		cat <<- EOF > "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf
+			[Service]
+			ExecStartPre=/bin/sh -c 'exec /bin/sleep 10'
+			ExecStart=
+			ExecStart=-/sbin/agetty --noissue --autologin root %I \$TERM
+			Type=idle
+		EOF
+		cp "${SDCARD}"/etc/systemd/system/serial-getty@.service.d/override.conf "${SDCARD}"/etc/systemd/system/getty@.service.d/override.conf
+	fi
 
 	# force change root password at first login
 	#chroot "${SDCARD}" /bin/bash -c "chage -d 0 root"
@@ -509,7 +511,7 @@ FAMILY_TWEAKS
 	cp "${SDCARD}"/etc/armbian-release "${SDCARD}"/etc/armbian-image-release
 
 	# DNS fix. package resolvconf is not available everywhere
-	if [ -d /etc/resolvconf/resolv.conf.d ] && [ -n "$NAMESERVER" ]; then
+	if [ -d "${SDCARD}"/etc/resolvconf/resolv.conf.d ] && [ -n "$NAMESERVER" ]; then
 		echo "nameserver $NAMESERVER" > "${SDCARD}"/etc/resolvconf/resolv.conf.d/head
 	fi
 
@@ -525,6 +527,10 @@ FAMILY_TWEAKS
 
 		# remove network manager defaults to handle eth by default
 		rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
+
+		# `systemd-networkd.service` will be enabled by `/lib/systemd/system-preset/90-systemd.preset` during first-run.
+		# Mask it to avoid conflict
+		chroot "${SDCARD}" /bin/bash -c "systemctl mask systemd-networkd.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 
 		# most likely we don't need to wait for nm to get online
 		chroot "${SDCARD}" /bin/bash -c "systemctl disable NetworkManager-wait-online.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
@@ -547,6 +553,9 @@ FAMILY_TWEAKS
 
 		# enable services
 		chroot "${SDCARD}" /bin/bash -c "systemctl enable systemd-networkd.service systemd-resolved.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+
+		# Mask `NetworkManager.service` to avoid conflict
+		chroot "${SDCARD}" /bin/bash -c "systemctl mask NetworkManager.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 
 		if [ -e /etc/systemd/timesyncd.conf ]; then
 			chroot "${SDCARD}" /bin/bash -c "systemctl enable systemd-timesyncd.service" >> "${DEST}"/${LOG_SUBPATH}/install.log 2>&1

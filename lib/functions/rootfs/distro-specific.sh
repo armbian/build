@@ -2,16 +2,17 @@ install_distribution_specific() {
 
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
+	# disable broken service
+	# the problem is in default misconfiguration
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartd.service >/dev/null 2>&1"
+
+	# disable hostapd as it needs to be configured
+	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable hostapd.service  >/dev/null 2>&1"
+
 	case $RELEASE in
 
-		sid)
-
-			# (temporally) disable broken service
-			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
-
-			;;
-
-		focal | jammy)
+		focal | jammy | kinetic )
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
@@ -86,7 +87,7 @@ install_distribution_specific() {
 
 # create_sources_list <release> <basedir>
 #
-# <release>: bullseye|focal|jammy|sid
+# <release>: bullseye|focal|jammy|kinetic|sid
 # <basedir>: path to root directory
 #
 create_sources_list() {
@@ -134,7 +135,7 @@ create_sources_list() {
 			EOF
 			;;
 
-		focal | jammy)
+		focal | jammy | kinetic)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse

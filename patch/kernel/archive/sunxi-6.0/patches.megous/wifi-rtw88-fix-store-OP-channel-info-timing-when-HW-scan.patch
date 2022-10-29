@@ -1,0 +1,105 @@
+From b6b4a0262751f09729344a4ddd665447363ec71d Mon Sep 17 00:00:00 2001
+From: Chih-Kang Chang <gary.chang@realtek.com>
+Date: Wed, 27 Jul 2022 14:50:02 +0800
+Subject: [PATCH 376/486] wifi: rtw88: fix store OP channel info timing when HW
+ scan
+
+The original timing that store OP channel info is after associated.
+However, HW scan might happen before associated without backing to
+OP channel, that will cause authentication or association fail.
+Therefore, we modify the timing of storing OP channel info.
+
+Signed-off-by: Chih-Kang Chang <gary.chang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220727065003.28340-4-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw88/fw.c       | 14 ++++++++++++--
+ drivers/net/wireless/realtek/rtw88/fw.h       |  1 +
+ drivers/net/wireless/realtek/rtw88/mac80211.c |  5 ++++-
+ 3 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.c b/drivers/net/wireless/realtek/rtw88/fw.c
+index a644e2b61..5ad940224 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.c
++++ b/drivers/net/wireless/realtek/rtw88/fw.c
+@@ -2087,7 +2087,7 @@ void rtw_hw_scan_complete(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 	rtw_core_scan_complete(rtwdev, vif, true);
+ 
+ 	rtwvif = (struct rtw_vif *)vif->drv_priv;
+-	if (rtwvif->net_type == RTW_NET_MGD_LINKED) {
++	if (chan) {
+ 		hal->current_channel = chan;
+ 		hal->current_band_type = chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
+ 	}
+@@ -2131,6 +2131,7 @@ int rtw_hw_scan_offload(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 			bool enable)
+ {
+ 	struct rtw_vif *rtwvif = vif ? (struct rtw_vif *)vif->drv_priv : NULL;
++	struct rtw_hw_scan_info *scan_info = &rtwdev->scan_info;
+ 	struct rtw_ch_switch_option cs_option = {0};
+ 	struct rtw_chan_list chan_list = {0};
+ 	int ret = 0;
+@@ -2139,7 +2140,7 @@ int rtw_hw_scan_offload(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 		return -EINVAL;
+ 
+ 	cs_option.switch_en = enable;
+-	cs_option.back_op_en = rtwvif->net_type == RTW_NET_MGD_LINKED;
++	cs_option.back_op_en = scan_info->op_chan != 0;
+ 	if (enable) {
+ 		ret = rtw_hw_scan_prehandle(rtwdev, rtwvif, &chan_list);
+ 		if (ret)
+@@ -2188,6 +2189,15 @@ void rtw_store_op_chan(struct rtw_dev *rtwdev)
+ 	scan_info->op_pri_ch_idx = hal->current_primary_channel_index;
+ }
+ 
++void rtw_clear_op_chan(struct rtw_dev *rtwdev)
++{
++	struct rtw_hw_scan_info *scan_info = &rtwdev->scan_info;
++
++	scan_info->op_chan = 0;
++	scan_info->op_bw = 0;
++	scan_info->op_pri_ch_idx = 0;
++}
++
+ static bool rtw_is_op_chan(struct rtw_dev *rtwdev, u8 channel)
+ {
+ 	struct rtw_hw_scan_info *scan_info = &rtwdev->scan_info;
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.h b/drivers/net/wireless/realtek/rtw88/fw.h
+index bd3b9318b..20c56e031 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.h
++++ b/drivers/net/wireless/realtek/rtw88/fw.h
+@@ -848,6 +848,7 @@ int rtw_fw_dump_fifo(struct rtw_dev *rtwdev, u8 fifo_sel, u32 addr, u32 size,
+ void rtw_fw_scan_notify(struct rtw_dev *rtwdev, bool start);
+ void rtw_fw_adaptivity(struct rtw_dev *rtwdev);
+ void rtw_store_op_chan(struct rtw_dev *rtwdev);
++void rtw_clear_op_chan(struct rtw_dev *rtwdev);
+ void rtw_hw_scan_start(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 		       struct ieee80211_scan_request *req);
+ void rtw_hw_scan_complete(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+diff --git a/drivers/net/wireless/realtek/rtw88/mac80211.c b/drivers/net/wireless/realtek/rtw88/mac80211.c
+index c7b98a059..a582758b7 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac80211.c
++++ b/drivers/net/wireless/realtek/rtw88/mac80211.c
+@@ -377,7 +377,6 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
+ 			rtw_coex_media_status_notify(rtwdev, vif->cfg.assoc);
+ 			if (rtw_bf_support)
+ 				rtw_bf_assoc(rtwdev, vif, conf);
+-			rtw_store_op_chan(rtwdev);
+ 		} else {
+ 			rtw_leave_lps(rtwdev);
+ 			rtw_bf_disassoc(rtwdev, vif, conf);
+@@ -395,6 +394,10 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
+ 	if (changed & BSS_CHANGED_BSSID) {
+ 		ether_addr_copy(rtwvif->bssid, conf->bssid);
+ 		config |= PORT_SET_BSSID;
++		if (is_zero_ether_addr(rtwvif->bssid))
++			rtw_clear_op_chan(rtwdev);
++		else
++			rtw_store_op_chan(rtwdev);
+ 	}
+ 
+ 	if (changed & BSS_CHANGED_BEACON_INT) {
+-- 
+2.35.3
+

@@ -37,42 +37,45 @@ FIRSTSECTOR=32768
 #recognize_root
 root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
 root_partition=$(blkid | tr -d '":' | grep "${root_uuid}" | awk '{print $1}')
-root_partition_device=$(echo $root_partition | sed 's/[0-9]//g')
+root_partition_device=$(lsblk -ndo pkname $root_partition)
 root_partition_device_name=$(echo $root_partition_device | sed 's/\/dev\///g')
 
 # find targets: NAND, EMMC, SATA, SPI flash, NVMe
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
-diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme|^mmc' | grep -v "$root_partition_device_name" | grep -v boot )
+diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme|^mmc' | grep -v "$root_partition_device_name" | grep -v boot)
 spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
 
-#recognize EFI partition
+#recognize EFI
+[[ -d /sys/firmware/efi ]] && DEVICE_TYPE="uefi"
 efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI" | awk '{print $1}')
 
 # define makefs and mount options
 declare -A mkopts mountopts
 # for ARMv7 remove 64bit feature from default mke2fs format features
 if [[ $LINUXFAMILY == mvebu ]]; then
-	mkopts[ext2]='-O ^64bit -qF'
-	mkopts[ext3]='-O ^64bit -qF'
 	mkopts[ext4]='-O ^64bit -qF'
 else
-	mkopts[ext2]='-qF'
-	mkopts[ext3]='-qF'
 	mkopts[ext4]='-qF'
 fi
 mkopts[btrfs]='-f'
 mkopts[f2fs]='-f'
 
-mountopts[ext2]='defaults,noatime,commit=600,errors=remount-ro,x-gvfs-hide	0	1'
-mountopts[ext3]='defaults,noatime,commit=600,errors=remount-ro,x-gvfs-hide	0	1'
 mountopts[ext4]='defaults,noatime,commit=600,errors=remount-ro,x-gvfs-hide	0	1'
 mountopts[btrfs]='defaults,noatime,commit=600,compress=lzo,x-gvfs-hide			0	2'
 mountopts[f2fs]='defaults,noatime,x-gvfs-hide	0	2'
 
-# Create boot and root file system "$1" = boot, "$2" = root (Example: create_armbian "/dev/nand1" "/dev/sda3")
+# Create boot and root file system #
+#
+# "$1" = boot
+# "$2" = root (Example: create_armbian "/dev/nand1" "/dev/sda3")
+# "$3" = selected UEFI root target
+#
 create_armbian()
 {
+
+	[[ -n "$3" ]] && diskcheck=$3
+
 	# create mount points, mount and clean
 	TempDir=$(mktemp -d /mnt/${0##*/}.XXXXXX || exit 2)
 	sync &&	mkdir -p "${TempDir}"/bootfs "${TempDir}"/rootfs
@@ -301,7 +304,11 @@ create_armbian()
 			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> "${TempDir}"/rootfs/etc/fstab
 			# swap file not supported under btrfs but we might have made a partition
 			[[ -n ${emmcswapuuid} ]] && sed -e 's,/var/swap.*,'$emmcswapuuid' 	none		swap	sw								0	0,g' -i "${TempDir}"/rootfs/etc/fstab
-			[[ -f "${TempDir}"/bootfs/boot/armbianEnv.txt ]] && sed -e 's,rootfstype=.*,rootfstype='$eMMCFilesystemChoosen',g' -i "${TempDir}"/bootfs/boot/armbianEnv.txt
+			if [[ -f "${TempDir}"/bootfs/boot/armbianEnv.txt ]]; then
+			    sed -e 's,rootfstype=.*,rootfstype='$eMMCFilesystemChoosen',g' -i "${TempDir}"/bootfs/boot/armbianEnv.txt
+			else
+			    echo 'rootfstype='$eMMCFilesystemChoosen >>"${TempDir}"/bootfs/boot/armbianEnv.txt
+			fi
 		else
 			[[ -f "${TempDir}"/bootfs/boot/armbianEnv.txt ]] && sed -e 's,rootfstype=.*,rootfstype='$choosen_fs',g' -i "${TempDir}"/bootfs/boot/armbianEnv.txt
 			echo "$targetuuid	/		$choosen_fs	${mountopts[$choosen_fs]}" >> "${TempDir}"/rootfs/etc/fstab
@@ -375,14 +382,17 @@ create_armbian()
 		ResultActive=yes
 		hibernatemenu
 
-		echo "Install frub to $efi_partition"
+		efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI" | awk '{print $1}')
+
+		echo "Install GRUB to $efi_partition"
 		mkdir -p "${TempDir}"/rootfs/boot/efi
 		mount $efi_partition "${TempDir}"/rootfs/boot/efi
 		mount --bind /dev "${TempDir}"/rootfs/dev
 		mount --make-rslave --bind /dev/pts "${TempDir}"/rootfs/dev/pts
 		mount --bind /proc "${TempDir}"/rootfs/proc
 		mount --make-rslave --rbind /sys "${TempDir}"/rootfs/sys
-		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=GRUB --removable >/dev/null" >> $logfile
+		arch_target=$([[ $(arch) == x86_64 ]] && echo "x86_64-efi" || echo "arm64-efi")
+		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-install --target=$arch_target --efi-directory=/boot/efi --bootloader-id=GRUB --removable >/dev/null" >> $logfile
 		chroot "${TempDir}/rootfs/" /bin/bash -c "grub-mkconfig -o /boot/grub/grub.cfg >/dev/null" >> $logfile
 		grep "${TempDir}"/rootfs/sys /proc/mounts | cut -f2 -d" " | sort -r | xargs umount -n
 		umount "${TempDir}"/rootfs/proc
@@ -483,8 +493,8 @@ format_emmc()
 	# choose and create fs
 	IFS=" "
 	BTRFS=$(grep -o btrfs /proc/filesystems)
-	FilesystemTargets="1 ext4 2 ext3 3 ext2 4 f2fs"
-	[[ -n $BTRFS && ! `uname -r | grep '^3.' ` ]] && FilesystemTargets=$FilesystemTargets" 5 $BTRFS"
+	FilesystemTargets="1 ext4 2 f2fs"
+	[[ -n $BTRFS && ! `uname -r | grep '^3.' ` ]] && FilesystemTargets=$FilesystemTargets" 3 $BTRFS"
 	FilesystemOptions=($FilesystemTargets)
 
 	FilesystemCmd=(dialog --title "Select filesystem type for eMMC $1" --backtitle "$backtitle" --menu "\n$infos" 10 60 16)
@@ -579,8 +589,8 @@ format_disk()
 			;;
 		*)
 			BTRFS=$(grep -o btrfs /proc/filesystems)
-			FilesystemTargets='1 ext4 2 ext3 3 ext2'
-			[[ -n $BTRFS && ! `uname -r | grep '^3.' ` && $choice != 6 ]] && FilesystemTargets=$FilesystemTargets" 4 $BTRFS"
+			FilesystemTargets='1 ext4'
+			[[ -n $BTRFS && ! `uname -r | grep '^3.' ` && $choice != 6 ]] && FilesystemTargets=$FilesystemTargets" 2 $BTRFS"
 			;;
 	esac
 	FilesystemOptions=($FilesystemTargets)
@@ -601,17 +611,19 @@ check_partitions()
 {
 	IFS=" "
 	[[ -n "$1" ]] && EXCLUDE=" | grep -v $1"
-	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINTS | grep \"btrfs\|ext4\|f2fs\" $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}'"
+	[[ -n "$2" ]] && INCLUDE=" | grep $2" && diskcheck=$2
+	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINTS | grep \"btrfs\|ext4\|f2fs\" $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}'"
 	AvailablePartitions=$(eval $CMD)
 	if [[ -z $AvailablePartitions ]]; then
 		FREE_SPACE=$(parted /dev/$diskcheck unit GB print free | awk '/Free Space/{c++; sum += $3; print sum}' | tail -1)
 		dialog --yes-label "Proceed" --no-label 'Exit' --title "$title" --backtitle "$backtitle" --yesno "\nDestnation $diskcheck has $FREE_SPACE Gb of available space. \n\nAutomated install will generate needed partitions!" 9 55
-		if [[ "${FREE_SPACE%.*}" -gt 16 && $? == 0 ]]; then
+		if [[ "${FREE_SPACE%.*}" -gt 4 && $? == 0 ]]; then
 			if [[ "$DEVICE_TYPE" == uefi && -z "$efi_partition" ]]; then
+			wipefs -aq /dev/$diskcheck
 			# create EFI parition
 	                {
-	                     echo n; echo ; echo ; echo ; echo +200M;
-	                     echo t; echo EF; echo w;
+				echo n; echo ; echo ; echo ; echo +200M;
+				echo t; echo EF; echo w;
 			} | fdisk /dev/$diskcheck &> /dev/null || true
 			yes | mkfs.vfat /dev/${diskcheck}p1 &> /dev/null || true
 			fatlabel /dev/${diskcheck}p1 EFI
@@ -630,7 +642,7 @@ check_partitions()
 				exit 11
 			fi
 	fi
-	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINTS | grep \"btrfs\|ext4\|f2fs\" $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
+	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINTS | grep \"btrfs\|ext4\|f2fs\" $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
 	partprobe
 	AvailablePartitions=$(eval $CMD)
 	PartitionOptions=($AvailablePartitions)
@@ -715,7 +727,10 @@ main()
 
 	if [[ -n $diskcheck && -d /sys/firmware/efi ]]; then
 
-		options+=(8 "Install system to $diskcheck")
+		while read line
+		do
+			options+=("$line" "Install UEFI system with Grub")
+		done <<< "$diskcheck"
 
 	else
 
@@ -820,15 +835,15 @@ main()
 				return
 				;;
 
-			8)
+			*)
                                 title='UEFI install to internal drive'
                                 command='Reboot'
-                                check_partitions "$root_partition_device_name"
+                                check_partitions "$root_partition_device_name" "$choice"
                                 # we need to copy boot
                                 sed -i '/boot/d' $EX_LIST
                                 show_warning "This script will erase your device $DISK_ROOT_PART. Continue?"
                                 format_disk "$DISK_ROOT_PART"
-                                create_armbian "" "$DISK_ROOT_PART"
+                                create_armbian "" "$DISK_ROOT_PART" "$choice"
                                 ;;
 		esac
 	done
