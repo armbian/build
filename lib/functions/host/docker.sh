@@ -35,7 +35,7 @@ function is_docker_ready_to_go() {
 	# 0) NOT ALREADY UNDER DOCKER.
 	# 1) can find the `docker` command in the path, via command -v
 	# 2) can run `docker info` without errors
-	if [[ "$ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
+	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
 		display_alert "Can't use Docker" "Actually ALREADY UNDER DOCKER!" "debug"
 		return 1
 	fi
@@ -386,7 +386,8 @@ function docker_cli_launch() {
 
 	# Show and help user understand space usage in Docker volumes.
 	# This is done in a loop; `docker df` fails sometimes (for no good reason).
-	docker_cli_show_armbian_volumes_disk_usage
+	# @TODO: this is very, very slow when the volumes are full. disable.
+	# docker_cli_show_armbian_volumes_disk_usage
 
 	return ${docker_build_result}
 }
