@@ -1,0 +1,11 @@
+# Rockchip RK3328 quad core 1/2GB GBE USB3 USB-C
+BOARD_NAME="NanoPi Neo 3"
+BOARDFAMILY="rockchip64"
+BOOTCONFIG="nanopi-r2s-rk3328_defconfig"
+KERNEL_TARGET="current,edge"
+DEFAULT_CONSOLE="serial"
+MODULES="g_serial"
+MODULES_BLACKLIST="rockchipdrm analogix_dp dw_mipi_dsi dw_hdmi gpu_sched lima"
+SERIALCON="ttyS2:1500000,ttyGS0"
+HAS_VIDEO_OUTPUT="no"
+BOOT_FDT_FILE="rockchip/rk3328-nanopi-neo3-rev02.dtb"
