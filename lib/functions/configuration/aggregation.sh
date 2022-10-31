@@ -6,8 +6,10 @@
 # Write to variables :
 # - aggregated_content
 aggregate_content() {
+	display_alert "Aggregation: aggregate_content" "potential_paths: '${potential_paths}'" "aggregation"
 	for filepath in ${potential_paths}; do
 		if [[ -f "${filepath}" ]]; then
+			display_alert "Aggregation: aggregate_content" "HIT: '${filepath}'" "aggregation"
 			aggregated_content+=$(cat "${filepath}")
 			aggregated_content+="${separator}"
 		fi
@@ -15,6 +17,8 @@ aggregate_content() {
 }
 
 get_all_potential_paths() {
+	display_alert "Aggregation: get_all_potential_paths" "${*}" "aggregation"
+
 	local root_dirs="${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}"
 	local rel_dirs="${1}"
 	local sub_dirs="${2}"
@@ -49,6 +53,7 @@ get_all_potential_paths() {
 # (debootstrap, cli, desktop environments, desktop appgroups, ...)
 
 aggregate_all_root_rel_sub() {
+	display_alert "Aggregation: aggregate_all_root_rel_sub" "${*}" "aggregation"
 	local separator="${2}"
 
 	local potential_paths=""
@@ -58,6 +63,7 @@ aggregate_all_root_rel_sub() {
 }
 
 aggregate_all_debootstrap() {
+	display_alert "Aggregation: aggregate_all_debootstrap" "${*}" "aggregation"
 	local sub_dirs_to_check=". "
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
@@ -66,6 +72,7 @@ aggregate_all_debootstrap() {
 }
 
 aggregate_all_cli() {
+	display_alert "Aggregation: aggregate_all_cli" "${*}" "aggregation"
 	local sub_dirs_to_check=". "
 	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
 		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
@@ -74,6 +81,7 @@ aggregate_all_cli() {
 }
 
 aggregate_all_desktop() {
+	display_alert "Aggregation: aggregate_all_desktop" "${*}" "aggregation"
 	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "."
 	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}"
 }
