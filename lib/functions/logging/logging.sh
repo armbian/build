@@ -207,7 +207,7 @@ function display_alert() {
 			if [[ "${SHOW_EXTENSIONS}" != "yes" ]]; then # enable to log a lot about extensions, hook methos, etc.
 				skip_screen=1
 			fi
-			level_indicator="🎣" # fishing pole and "hook"
+			level_indicator="🎣"          # fishing pole and "hook"
 			inline_logs_color="\e[0;36m" # a dim cyan
 			;;
 
@@ -225,6 +225,14 @@ function display_alert() {
 			fi
 			level_indicator="🔖"
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
+			;;
+
+		aggregation)
+			if [[ "${SHOW_AGGREGATION}" != "yes" ]]; then # aggregation (PACKAGE LISTS), very very verbose
+				skip_screen=1
+			fi
+			level_indicator="📦"
+			inline_logs_color="\e[0;32m"
 			;;
 
 		*)
