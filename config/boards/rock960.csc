@@ -2,7 +2,7 @@
 BOARD_NAME="ROCK960"
 BOARDFAMILY="rk3399"
 BOOTCONFIG="rock960-rk3399_defconfig"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3399-rock960.dtb"
