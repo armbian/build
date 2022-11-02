@@ -6,7 +6,8 @@ function cli_entrypoint() {
 		set -T # inherit return/debug traps
 		mkdir -p "${SRC}"/output/call-traces
 		echo -n "" > "${SRC}"/output/call-traces/calls.txt
-		trap 'echo "${BASH_LINENO[@]}|${BASH_SOURCE[@]}|${FUNCNAME[@]}" >> ${SRC}/output/call-traces/calls.txt ;' RETURN
+		# See https://www.gnu.org/software/bash/manual/html_node/Bash-Variables.html
+		trap 'echo "${FUNCNAME[*]}|${BASH_LINENO[*]}|${BASH_SOURCE[*]}|${LINENO}" >> ${SRC}/output/call-traces/calls.txt ;' RETURN
 	fi
 
 	# @TODO: allow for a super-early userpatches/config-000.custom.conf.sh to be loaded, before anything else.
