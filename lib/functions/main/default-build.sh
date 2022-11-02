@@ -118,7 +118,7 @@ function main_default_build_single() {
 	# Compile plymouth-theme-armbian if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/plymouth-theme-armbian_${REVISION}_all.deb ]]; then
 		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
-			compile_plymouth-theme-armbian
+			compile_plymouth_theme_armbian
 		fi
 	fi
 
