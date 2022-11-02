@@ -195,7 +195,7 @@ compile_xilinx_bootgen() {
 }
 
 # @TODO: code from master via Igor; not yet armbian-next'fied! warning!!
-compile_plymouth-theme-armbian() {
+compile_plymouth_theme_armbian() {
 
 	local tmp_dir work_dir
 	tmp_dir=$(mktemp -d)
