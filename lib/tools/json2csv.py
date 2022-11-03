@@ -38,16 +38,30 @@ for obj in flat:
 
 columns = columns_map.keys()
 
-eprint("columns: {}".format(columns_map))
+eprint("columns: {}".format(len(columns)))
 
-eprint("columns: {}".format(columns))
+# Now, find the columns of which all values are the same
+# and remove them
+columns_to_remove = []
+for column in columns:
+	values = []
+	for obj in flat:
+		value = obj.get(column)
+		values.append(value)
+	if len(set(values)) == 1:
+		columns_to_remove.append(column)
+
+eprint("columns with all-identical values: {}".format(len(columns_to_remove)))
+
+# Now actually filter columns, removing columns_to_remove
+columns = [column for column in columns if column not in columns_to_remove]
 
 import csv
 
-with open('boards_vs_branches.csv', 'w', newline='') as csvfile:
-	fieldnames = columns
-	writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
+writer = csv.DictWriter(sys.stdout, fieldnames=columns, extrasaction='ignore')
 
-	writer.writeheader()
-	for obj in flat:
-		writer.writerow(obj)
+writer.writeheader()
+for obj in flat:
+	writer.writerow(obj)
+
+eprint("Done writing to stdout.")
