@@ -53,7 +53,8 @@ def map_to_armbian_params(map_params):
 
 
 def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_params):
-	exec_cmd = ([path_to_compile_sh] + map_to_armbian_params(compile_params))
+	exec_cmd = ([path_to_compile_sh] + ["config-dump"] + map_to_armbian_params(compile_params))
+	# eprint("Running command: '{}' ", exec_cmd)
 	result = None
 	logs = ["Not available"]
 	try:
@@ -70,7 +71,7 @@ def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_
 	except subprocess.CalledProcessError as e:
 		eprint(
 			"Error calling Armbian: params: {}, return code: {}, stderr: {}".format(
-				compile_params, e.returncode, e.stderr
+				compile_params, e.returncode, e.stderr.split("\n")[-1]
 			)
 		)
 		return {"in": compile_params, "out": {}, "logs": e.stderr.split("\n"), "config_ok": False}
@@ -80,7 +81,7 @@ def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_
 			# parse list, split by newline, remove armbian_src_path
 			logs = armbian_value_parse_list(result.stderr, "\n", armbian_src_path)
 
-		# Now parse it with regex-power!
+	# Now parse it with regex-power!
 	# regex = r"^declare (..) (.*?)=\"(.*?)\"$" # old multiline version
 	regex = r"declare (..) (.*?)=\"(.*?)\""
 	test_str = result.stdout
@@ -151,7 +152,7 @@ def parse_board_file_for_static_info(board_file, board_id):
 	# Parse KERNEL_TARGET line.
 	kernel_target_matches = re.findall(r"^(export )?KERNEL_TARGET=\"(.*)\"", "\n".join(file_lines), re.MULTILINE)
 	kernel_targets = kernel_target_matches[0][1].split(",")
-	eprint("Possible kernel branches for board: ", board_id, " : ", kernel_targets)
+	# eprint("Possible kernel branches for board: ", board_id, " : ", kernel_targets)
 
 	return {
 		"BOARD_FILE_HARDWARE_DESC": hw_desc_clean,
@@ -161,11 +162,11 @@ def parse_board_file_for_static_info(board_file, board_id):
 
 
 def get_info_for_one_board(board_file, board_name, common_params, board_info):
-	eprint(
-		"Getting info for board '{}' branch '{}' in file '{}'".format(
-			board_name, common_params["BRANCH"], board_file
-		)
-	)
+	# eprint(
+	#	"Getting info for board '{}' branch '{}' in file '{}'".format(
+	#		board_name, common_params["BRANCH"], board_file
+	#	)
+	# )
 
 	# eprint("Running Armbian bash for board '{}'".format(board_name))
 	try:
@@ -194,13 +195,13 @@ if True:
 			raise e
 	# now loop over gathered infos
 	every_info = []
-	with concurrent.futures.ProcessPoolExecutor(max_workers=32) as executor:
+	with concurrent.futures.ProcessPoolExecutor() as executor:  # max_workers=32
 		every_future = []
 		for board in all_boards.keys():
 			board_info = info_for_board[board]
 			for possible_branch in board_info["BOARD_POSSIBLE_BRANCHES"]:
 				all_params = common_compile_params | board_compile_params | {"BRANCH": possible_branch}
-				eprint("Submitting future for board {} with BRANCH={}".format(board, possible_branch))
+				# eprint("Submitting future for board {} with BRANCH={}".format(board, possible_branch))
 				future = executor.submit(get_info_for_one_board, all_boards[board], board, all_params,
 							 board_info)
 				every_future.append(future)
