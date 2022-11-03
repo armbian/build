@@ -10,10 +10,12 @@ function armbian_register_commands() {
 
 		["vagrant"]="vagrant" # thus requires cli_vagrant_pre_run and cli_vagrant_run
 
-		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run # @TODO
+		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run
 
-		["config-dump"]="config_dump" # implemented in cli_config_dump_pre_run and cli_config_dump_run # @TODO
+		["config-dump"]="config_dump" # implemented in cli_config_dump_pre_run and cli_config_dump_run
 		["configdump"]="config_dump"  # idem
+
+		["json-info"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 
