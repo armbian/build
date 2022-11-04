@@ -45,15 +45,16 @@ show_checklist_variables() {
 	local _function=${FUNCNAME[1]}
 	local _file=$(basename "${BASH_SOURCE[1]}")
 
-	echo -e "Show variables in function: $_function" "[$_file:$_line]\n" >> $log_file
+	echo -e "Show variables in function: $_function" "[$_file:$_line]" >> $log_file
 
 	for var in $checklist; do
 		eval pval=\$$var
-		echo -e "\n$var =:" >> $log_file
+		echo -e "$var=" >> $log_file
 		if [ $(echo "$pval" | awk -F"/" '{print NF}') -ge 4 ]; then
 			printf "%s\n" $pval >> $log_file
 		else
 			printf "%-30s %-30s %-30s %-30s\n" $pval >> $log_file
 		fi
+		echo "" >> $log_file
 	done
 }

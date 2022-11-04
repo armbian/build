@@ -284,7 +284,7 @@ POST_FAMILY_CONFIG
 	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
 	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
 
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
+	LOG_OUTPUT_FILE="$DEST/${LOG_SUBPATH}/debootstrap-list.log"
 	show_checklist_variables "DEBOOTSTRAP_LIST DEBOOTSTRAP_COMPONENTS PACKAGE_LIST PACKAGE_LIST_ADDITIONAL PACKAGE_LIST_UNINSTALL"
 
 	# Dependent desktop packages
@@ -380,26 +380,31 @@ EXTENSION_PREPARE_CONFIG
 		# \W is not tricked by this but consumes the surrounding spaces, so we
 		# replace the occurence by one space, to avoid sticking the next word to
 		# the previous one after consuming the spaces.
-		DEBOOTSTRAP_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${DEBOOTSTRAP_LIST} ")
-		PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
-		PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
-		if [[ $BUILD_DESKTOP == "yes" ]]; then
-			PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
-			# Removing double spaces... AGAIN, since we might have used a sed on them
-			# Do not quote the variables. This would defeat the trick.
-			PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
-		fi
+		#
+		# If the unwanted packages are grouped in one place, it is necessary
+		# to perform the removal operation several times.
+		for loop_var in 1 2 3; do
+			DEBOOTSTRAP_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${DEBOOTSTRAP_LIST} ")
+			PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
+			PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
+			if [[ $BUILD_DESKTOP == "yes" ]]; then
+				PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+			fi
+		done
 
 		# Removing double spaces... AGAIN, since we might have used a sed on them
 		# Do not quote the variables. This would defeat the trick.
 		DEBOOTSTRAP_LIST="$(echo ${DEBOOTSTRAP_LIST})"
 		PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
 		PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
+		if [[ $BUILD_DESKTOP == "yes" ]]; then
+			PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+		fi
 	fi
 
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/debootstrap-list.log"
+	LOG_OUTPUT_FILE="$DEST/${LOG_SUBPATH}/debootstrap-list.log"
 	echo -e "\nVariables after manual configuration" >> $LOG_OUTPUT_FILE
-	show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST"
+	show_checklist_variables "DEBOOTSTRAP_COMPONENTS DEBOOTSTRAP_LIST PACKAGE_LIST PACKAGE_MAIN_LIST PACKAGE_LIST_RM"
 	unset LOG_OUTPUT_FILE
 
 	# Give the option to configure DNS server used in the chroot during the build process
