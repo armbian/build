@@ -16,8 +16,16 @@ compilation_prepare() {
 
 		rm -f ${kerneldir}/scripts/package/{builddeb,mkdebian}
 
-		cp ${SRC}/packages/armbian/builddeb ${kerneldir}/scripts/package/builddeb
-		cp ${SRC}/packages/armbian/mkdebian ${kerneldir}/scripts/package/mkdebian
+		if [ -f "${USERPATCHES_PATH}/packages/armbian/builddeb" ]; then
+			cp ${USERPATCHES_PATH}/packages/armbian/builddeb ${kerneldir}/scripts/package/builddeb
+		else
+			cp ${SRC}/packages/armbian/builddeb ${kerneldir}/scripts/package/builddeb
+		fi
+		if [ -f "${USERPATCHES_PATH}/packages/armbian/mkdebian" ]; then
+			cp ${USERPATCHES_PATH}/packages/armbian/mkdebian ${kerneldir}/scripts/package/mkdebian
+		else
+			cp ${SRC}/packages/armbian/mkdebian ${kerneldir}/scripts/package/mkdebian
+		fi
 
 		chmod 755 ${kerneldir}/scripts/package/{builddeb,mkdebian}
 
