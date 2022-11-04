@@ -16,7 +16,7 @@ function cli_entrypoint() {
 		:
 	else
 		display_alert "This script requires root privileges, trying to use sudo" "" "wrn"
-		sudo "${SRC}/compile.sh" "$@"
+		sudo -E "${SRC}/compile.sh" "$@"
 		exit $?
 	fi
 

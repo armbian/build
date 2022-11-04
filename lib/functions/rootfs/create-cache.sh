@@ -90,6 +90,7 @@ create_rootfs_cache() {
 			local apt_extra="-o Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
 			local apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/$APT_MIRROR"
 		else
+			local apt_extra="-o Acquire::Retries=\"3\""
 			local apt_mirror="http://$APT_MIRROR"
 		fi
 

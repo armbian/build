@@ -87,6 +87,8 @@ prepare_host() {
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
 		if [ -f /.dockerenv ]; then
 			display_alert "Building images using Docker on WSL2 may fail" "" "wrn"
+		elif [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
+			display_alert "Windows subsystem for Linux is not a supported build environment"
 		else
 			exit_with_error "Windows subsystem for Linux is not a supported build environment"
 		fi
