@@ -288,6 +288,13 @@ install_common() {
 It is not too late to `unset KERNELSOURCE` here and avoid kernel install.
 PRE_INSTALL_KERNEL_DEBS
 
+	# install board support packages
+	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
+		install_deb_chroot "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" | tee -a "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
+	else
+		install_deb_chroot "${CHOSEN_ROOTFS}" "remote"
+	fi
+
 	# install kernel
 	[[ -n $KERNELSOURCE ]] && {
 		if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
@@ -318,13 +325,6 @@ PRE_INSTALL_KERNEL_DEBS
 Called after packages, u-boot, kernel and headers installed in the chroot, but before the BSP is installed.
 If `KERNELSOURCE` is (still?) unset after this, Armbian-built firmware will not be installed.
 POST_INSTALL_KERNEL_DEBS
-
-	# install board support packages
-	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" | tee -a "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
-	else
-		install_deb_chroot "${CHOSEN_ROOTFS}" "remote"
-	fi
 
 	# install armbian-desktop
 	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
