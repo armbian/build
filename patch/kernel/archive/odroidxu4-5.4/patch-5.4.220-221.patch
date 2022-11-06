@@ -1,0 +1,3276 @@
+diff --git a/Documentation/arm64/silicon-errata.rst b/Documentation/arm64/silicon-errata.rst
+index 59daa4c21816b..36a8c01191a07 100644
+--- a/Documentation/arm64/silicon-errata.rst
++++ b/Documentation/arm64/silicon-errata.rst
+@@ -70,8 +70,12 @@ stable kernels.
+ +----------------+-----------------+-----------------+-----------------------------+
+ | ARM            | Cortex-A57      | #834220         | ARM64_ERRATUM_834220        |
+ +----------------+-----------------+-----------------+-----------------------------+
++| ARM            | Cortex-A57      | #1742098        | ARM64_ERRATUM_1742098       |
+++----------------+-----------------+-----------------+-----------------------------+
+ | ARM            | Cortex-A72      | #853709         | N/A                         |
+ +----------------+-----------------+-----------------+-----------------------------+
++| ARM            | Cortex-A72      | #1655431        | ARM64_ERRATUM_1742098       |
+++----------------+-----------------+-----------------+-----------------------------+
+ | ARM            | Cortex-A73      | #858921         | ARM64_ERRATUM_858921        |
+ +----------------+-----------------+-----------------+-----------------------------+
+ | ARM            | Cortex-A55      | #1024718        | ARM64_ERRATUM_1024718       |
+diff --git a/Makefile b/Makefile
+index 813d17bd45861..1f42636e9efaf 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 5
+ PATCHLEVEL = 4
+-SUBLEVEL = 220
++SUBLEVEL = 221
+ EXTRAVERSION =
+ NAME = Kleptomaniac Octopus
+ 
+@@ -802,7 +802,9 @@ DEBUG_CFLAGS	+= -gsplit-dwarf
+ else
+ DEBUG_CFLAGS	+= -g
+ endif
+-ifneq ($(LLVM_IAS),1)
++ifeq ($(LLVM_IAS),1)
++KBUILD_AFLAGS	+= -g
++else
+ KBUILD_AFLAGS	+= -Wa,-gdwarf-2
+ endif
+ endif
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index 6b73143f0cf8c..384b1bf56667c 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -574,6 +574,22 @@ config ARM64_ERRATUM_1542419
+ 
+ 	  If unsure, say Y.
+ 
++config ARM64_ERRATUM_1742098
++	bool "Cortex-A57/A72: 1742098: ELR recorded incorrectly on interrupt taken between cryptographic instructions in a sequence"
++	depends on COMPAT
++	default y
++	help
++	  This option removes the AES hwcap for aarch32 user-space to
++	  workaround erratum 1742098 on Cortex-A57 and Cortex-A72.
++
++	  Affected parts may corrupt the AES state if an interrupt is
++	  taken between a pair of AES instructions. These instructions
++	  are only present if the cryptography extensions are present.
++	  All software should have a fallback implementation for CPUs
++	  that don't implement the cryptography extensions.
++
++	  If unsure, say Y.
++
+ config CAVIUM_ERRATUM_22375
+ 	bool "Cavium erratum 22375, 24313"
+ 	default y
+diff --git a/arch/arm64/include/asm/cpucaps.h b/arch/arm64/include/asm/cpucaps.h
+index 4ffa86149d28d..3b16cbc945cfa 100644
+--- a/arch/arm64/include/asm/cpucaps.h
++++ b/arch/arm64/include/asm/cpucaps.h
+@@ -56,7 +56,8 @@
+ #define ARM64_WORKAROUND_CAVIUM_TX2_219_PRFM	46
+ #define ARM64_WORKAROUND_1542419		47
+ #define ARM64_SPECTRE_BHB			48
++#define ARM64_WORKAROUND_1742098		49
+ 
+-#define ARM64_NCAPS				49
++#define ARM64_NCAPS				50
+ 
+ #endif /* __ASM_CPUCAPS_H */
+diff --git a/arch/arm64/kernel/cpu_errata.c b/arch/arm64/kernel/cpu_errata.c
+index 33b33416fea42..4c7545cf5a02d 100644
+--- a/arch/arm64/kernel/cpu_errata.c
++++ b/arch/arm64/kernel/cpu_errata.c
+@@ -817,6 +817,14 @@ static const struct arm64_cpu_capabilities erratum_843419_list[] = {
+ };
+ #endif
+ 
++#ifdef CONFIG_ARM64_ERRATUM_1742098
++static struct midr_range broken_aarch32_aes[] = {
++	MIDR_RANGE(MIDR_CORTEX_A57, 0, 1, 0xf, 0xf),
++	MIDR_ALL_VERSIONS(MIDR_CORTEX_A72),
++	{},
++};
++#endif
++
+ const struct arm64_cpu_capabilities arm64_errata[] = {
+ #ifdef CONFIG_ARM64_WORKAROUND_CLEAN_CACHE
+ 	{
+@@ -997,6 +1005,14 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
+ 		.matches = has_neoverse_n1_erratum_1542419,
+ 		.cpu_enable = cpu_enable_trap_ctr_access,
+ 	},
++#endif
++#ifdef CONFIG_ARM64_ERRATUM_1742098
++	{
++		.desc = "ARM erratum 1742098",
++		.capability = ARM64_WORKAROUND_1742098,
++		CAP_MIDR_RANGE_LIST(broken_aarch32_aes),
++		.type = ARM64_CPUCAP_LOCAL_CPU_ERRATUM,
++	},
+ #endif
+ 	{
+ 	}
+diff --git a/arch/arm64/kernel/cpufeature.c b/arch/arm64/kernel/cpufeature.c
+index d07dadd6b8ff7..396d96224b48b 100644
+--- a/arch/arm64/kernel/cpufeature.c
++++ b/arch/arm64/kernel/cpufeature.c
+@@ -21,6 +21,7 @@
+ #include <asm/cpufeature.h>
+ #include <asm/cpu_ops.h>
+ #include <asm/fpsimd.h>
++#include <asm/hwcap.h>
+ #include <asm/mmu_context.h>
+ #include <asm/processor.h>
+ #include <asm/sysreg.h>
+@@ -1280,6 +1281,14 @@ static bool can_use_gic_priorities(const struct arm64_cpu_capabilities *entry,
+ }
+ #endif
+ 
++static void elf_hwcap_fixup(void)
++{
++#ifdef CONFIG_ARM64_ERRATUM_1742098
++	if (cpus_have_const_cap(ARM64_WORKAROUND_1742098))
++		compat_elf_hwcap2 &= ~COMPAT_HWCAP2_AES;
++#endif /* ARM64_ERRATUM_1742098 */
++}
++
+ static const struct arm64_cpu_capabilities arm64_features[] = {
+ 	{
+ 		.desc = "GIC system register CPU interface",
+@@ -2103,8 +2112,10 @@ void __init setup_cpu_features(void)
+ 	mark_const_caps_ready();
+ 	setup_elf_hwcaps(arm64_elf_hwcaps);
+ 
+-	if (system_supports_32bit_el0())
++	if (system_supports_32bit_el0()) {
+ 		setup_elf_hwcaps(compat_elf_hwcaps);
++		elf_hwcap_fixup();
++	}
+ 
+ 	if (system_uses_ttbr0_pan())
+ 		pr_info("emulated: Privileged Access Never (PAN) using TTBR0_EL1 switching\n");
+diff --git a/arch/arm64/kernel/topology.c b/arch/arm64/kernel/topology.c
+index 113903db666c0..3d3a673c67041 100644
+--- a/arch/arm64/kernel/topology.c
++++ b/arch/arm64/kernel/topology.c
+@@ -21,46 +21,6 @@
+ #include <asm/cputype.h>
+ #include <asm/topology.h>
+ 
+-void store_cpu_topology(unsigned int cpuid)
+-{
+-	struct cpu_topology *cpuid_topo = &cpu_topology[cpuid];
+-	u64 mpidr;
+-
+-	if (cpuid_topo->package_id != -1)
+-		goto topology_populated;
+-
+-	mpidr = read_cpuid_mpidr();
+-
+-	/* Uniprocessor systems can rely on default topology values */
+-	if (mpidr & MPIDR_UP_BITMASK)
+-		return;
+-
+-	/*
+-	 * This would be the place to create cpu topology based on MPIDR.
+-	 *
+-	 * However, it cannot be trusted to depict the actual topology; some
+-	 * pieces of the architecture enforce an artificial cap on Aff0 values
+-	 * (e.g. GICv3's ICC_SGI1R_EL1 limits it to 15), leading to an
+-	 * artificial cycling of Aff1, Aff2 and Aff3 values. IOW, these end up
+-	 * having absolutely no relationship to the actual underlying system
+-	 * topology, and cannot be reasonably used as core / package ID.
+-	 *
+-	 * If the MT bit is set, Aff0 *could* be used to define a thread ID, but
+-	 * we still wouldn't be able to obtain a sane core ID. This means we
+-	 * need to entirely ignore MPIDR for any topology deduction.
+-	 */
+-	cpuid_topo->thread_id  = -1;
+-	cpuid_topo->core_id    = cpuid;
+-	cpuid_topo->package_id = cpu_to_node(cpuid);
+-
+-	pr_debug("CPU%u: cluster %d core %d thread %d mpidr %#016llx\n",
+-		 cpuid, cpuid_topo->package_id, cpuid_topo->core_id,
+-		 cpuid_topo->thread_id, mpidr);
+-
+-topology_populated:
+-	update_siblings_masks(cpuid);
+-}
+-
+ #ifdef CONFIG_ACPI
+ static bool __init acpi_cpu_is_threaded(int cpu)
+ {
+diff --git a/arch/riscv/Kconfig b/arch/riscv/Kconfig
+index b21549a34447c..e0a77af5c130c 100644
+--- a/arch/riscv/Kconfig
++++ b/arch/riscv/Kconfig
+@@ -51,7 +51,7 @@ config RISCV
+ 	select PCI_MSI if PCI
+ 	select RISCV_TIMER
+ 	select GENERIC_IRQ_MULTI_HANDLER
+-	select GENERIC_ARCH_TOPOLOGY if SMP
++	select GENERIC_ARCH_TOPOLOGY
+ 	select ARCH_HAS_PTE_SPECIAL
+ 	select ARCH_HAS_MMIOWB
+ 	select HAVE_EBPF_JIT if 64BIT
+diff --git a/arch/riscv/kernel/smpboot.c b/arch/riscv/kernel/smpboot.c
+index 261f4087cc39e..0576a6b2bcc56 100644
+--- a/arch/riscv/kernel/smpboot.c
++++ b/arch/riscv/kernel/smpboot.c
+@@ -46,6 +46,8 @@ void __init smp_prepare_cpus(unsigned int max_cpus)
+ {
+ 	int cpuid;
+ 
++	store_cpu_topology(smp_processor_id());
++
+ 	/* This covers non-smp usecase mandated by "nosmp" option */
+ 	if (max_cpus == 0)
+ 		return;
+@@ -142,8 +144,8 @@ asmlinkage __visible void __init smp_callin(void)
+ 	current->active_mm = mm;
+ 
+ 	trap_init();
++	store_cpu_topology(smp_processor_id());
+ 	notify_cpu_starting(smp_processor_id());
+-	update_siblings_masks(smp_processor_id());
+ 	set_cpu_online(smp_processor_id(), 1);
+ 	/*
+ 	 * Remote TLB flushes are ignored while the CPU is offline, so emit
+diff --git a/arch/x86/kernel/cpu/microcode/amd.c b/arch/x86/kernel/cpu/microcode/amd.c
+index 3b82d022dcd43..addaaf31ac0a5 100644
+--- a/arch/x86/kernel/cpu/microcode/amd.c
++++ b/arch/x86/kernel/cpu/microcode/amd.c
+@@ -441,7 +441,13 @@ apply_microcode_early_amd(u32 cpuid_1_eax, void *ucode, size_t size, bool save_p
+ 		return ret;
+ 
+ 	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+-	if (rev >= mc->hdr.patch_id)
++
++	/*
++	 * Allow application of the same revision to pick up SMT-specific
++	 * changes even if the revision of the other SMT thread is already
++	 * up-to-date.
++	 */
++	if (rev > mc->hdr.patch_id)
+ 		return ret;
+ 
+ 	if (!__apply_microcode_amd(mc)) {
+@@ -523,8 +529,12 @@ void load_ucode_amd_ap(unsigned int cpuid_1_eax)
+ 
+ 	native_rdmsr(MSR_AMD64_PATCH_LEVEL, rev, dummy);
+ 
+-	/* Check whether we have saved a new patch already: */
+-	if (*new_rev && rev < mc->hdr.patch_id) {
++	/*
++	 * Check whether a new patch has been saved already. Also, allow application of
++	 * the same revision in order to pick up SMT-thread-specific configuration even
++	 * if the sibling SMT thread already has an up-to-date revision.
++	 */
++	if (*new_rev && rev <= mc->hdr.patch_id) {
+ 		if (!__apply_microcode_amd(mc)) {
+ 			*new_rev = mc->hdr.patch_id;
+ 			return;
+diff --git a/drivers/acpi/acpi_extlog.c b/drivers/acpi/acpi_extlog.c
+index 91d0b0fc392b1..4c05c3828c9e5 100644
+--- a/drivers/acpi/acpi_extlog.c
++++ b/drivers/acpi/acpi_extlog.c
+@@ -12,6 +12,7 @@
+ #include <linux/ratelimit.h>
+ #include <linux/edac.h>
+ #include <linux/ras.h>
++#include <acpi/ghes.h>
+ #include <asm/cpu.h>
+ #include <asm/mce.h>
+ 
+@@ -140,8 +141,8 @@ static int extlog_print(struct notifier_block *nb, unsigned long val,
+ 	int	cpu = mce->extcpu;
+ 	struct acpi_hest_generic_status *estatus, *tmp;
+ 	struct acpi_hest_generic_data *gdata;
+-	const guid_t *fru_id = &guid_null;
+-	char *fru_text = "";
++	const guid_t *fru_id;
++	char *fru_text;
+ 	guid_t *sec_type;
+ 	static u32 err_seq;
+ 
+@@ -162,17 +163,23 @@ static int extlog_print(struct notifier_block *nb, unsigned long val,
+ 
+ 	/* log event via trace */
+ 	err_seq++;
+-	gdata = (struct acpi_hest_generic_data *)(tmp + 1);
+-	if (gdata->validation_bits & CPER_SEC_VALID_FRU_ID)
+-		fru_id = (guid_t *)gdata->fru_id;
+-	if (gdata->validation_bits & CPER_SEC_VALID_FRU_TEXT)
+-		fru_text = gdata->fru_text;
+-	sec_type = (guid_t *)gdata->section_type;
+-	if (guid_equal(sec_type, &CPER_SEC_PLATFORM_MEM)) {
+-		struct cper_sec_mem_err *mem = (void *)(gdata + 1);
+-		if (gdata->error_data_length >= sizeof(*mem))
+-			trace_extlog_mem_event(mem, err_seq, fru_id, fru_text,
+-					       (u8)gdata->error_severity);
++	apei_estatus_for_each_section(tmp, gdata) {
++		if (gdata->validation_bits & CPER_SEC_VALID_FRU_ID)
++			fru_id = (guid_t *)gdata->fru_id;
++		else
++			fru_id = &guid_null;
++		if (gdata->validation_bits & CPER_SEC_VALID_FRU_TEXT)
++			fru_text = gdata->fru_text;
++		else
++			fru_text = "";
++		sec_type = (guid_t *)gdata->section_type;
++		if (guid_equal(sec_type, &CPER_SEC_PLATFORM_MEM)) {
++			struct cper_sec_mem_err *mem = (void *)(gdata + 1);
++
++			if (gdata->error_data_length >= sizeof(*mem))
++				trace_extlog_mem_event(mem, err_seq, fru_id, fru_text,
++						       (u8)gdata->error_severity);
++		}
+ 	}
+ 
+ out:
+diff --git a/drivers/acpi/video_detect.c b/drivers/acpi/video_detect.c
+index 3b972ca536896..e5518b88f7102 100644
+--- a/drivers/acpi/video_detect.c
++++ b/drivers/acpi/video_detect.c
+@@ -463,6 +463,70 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
+ 		DMI_MATCH(DMI_BOARD_NAME, "PF5LUXG"),
+ 		},
+ 	},
++	/*
++	 * More Tongfang devices with the same issue as the Clevo NL5xRU and
++	 * NL5xNU/TUXEDO Aura 15 Gen1 and Gen2. See the description above.
++	 */
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GKxNRxx",
++	.matches = {
++		DMI_MATCH(DMI_BOARD_NAME, "GKxNRxx"),
++		},
++	},
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GKxNRxx",
++	.matches = {
++		DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
++		DMI_MATCH(DMI_BOARD_NAME, "POLARIS1501A1650TI"),
++		},
++	},
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GKxNRxx",
++	.matches = {
++		DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
++		DMI_MATCH(DMI_BOARD_NAME, "POLARIS1501A2060"),
++		},
++	},
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GKxNRxx",
++	.matches = {
++		DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
++		DMI_MATCH(DMI_BOARD_NAME, "POLARIS1701A1650TI"),
++		},
++	},
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GKxNRxx",
++	.matches = {
++		DMI_MATCH(DMI_SYS_VENDOR, "TUXEDO"),
++		DMI_MATCH(DMI_BOARD_NAME, "POLARIS1701A2060"),
++		},
++	},
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GMxNGxx",
++	.matches = {
++		DMI_MATCH(DMI_BOARD_NAME, "GMxNGxx"),
++		},
++	},
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GMxZGxx",
++	.matches = {
++		DMI_MATCH(DMI_BOARD_NAME, "GMxZGxx"),
++		},
++	},
++	{
++	.callback = video_detect_force_native,
++	.ident = "TongFang GMxRGxx",
++	.matches = {
++		DMI_MATCH(DMI_BOARD_NAME, "GMxRGxx"),
++		},
++	},
+ 	/*
+ 	 * Desktops which falsely report a backlight and which our heuristics
+ 	 * for this do not catch.
+diff --git a/drivers/ata/ahci.h b/drivers/ata/ahci.h
+index 732912cd4e083..0d7631580150a 100644
+--- a/drivers/ata/ahci.h
++++ b/drivers/ata/ahci.h
+@@ -254,7 +254,7 @@ enum {
+ 	PCS_7				= 0x94, /* 7+ port PCS (Denverton) */
+ 
+ 	/* em constants */
+-	EM_MAX_SLOTS			= 8,
++	EM_MAX_SLOTS			= SATA_PMP_MAX_PORTS,
+ 	EM_MAX_RETRY			= 5,
+ 
+ 	/* em_ctl bits */
+diff --git a/drivers/ata/ahci_imx.c b/drivers/ata/ahci_imx.c
+index bfc617cc8ac59..8460b464f4dbc 100644
+--- a/drivers/ata/ahci_imx.c
++++ b/drivers/ata/ahci_imx.c
+@@ -1239,4 +1239,4 @@ module_platform_driver(imx_ahci_driver);
+ MODULE_DESCRIPTION("Freescale i.MX AHCI SATA platform driver");
+ MODULE_AUTHOR("Richard Zhu <Hong-Xing.Zhu@freescale.com>");
+ MODULE_LICENSE("GPL");
+-MODULE_ALIAS("ahci:imx");
++MODULE_ALIAS("platform:" DRV_NAME);
+diff --git a/drivers/base/arch_topology.c b/drivers/base/arch_topology.c
+index 503404f3280e3..0dfe20d18b8da 100644
+--- a/drivers/base/arch_topology.c
++++ b/drivers/base/arch_topology.c
+@@ -538,4 +538,23 @@ void __init init_cpu_topology(void)
+ 	else if (of_have_populated_dt() && parse_dt_topology())
+ 		reset_cpu_topology();
+ }
++
++void store_cpu_topology(unsigned int cpuid)
++{
++	struct cpu_topology *cpuid_topo = &cpu_topology[cpuid];
++
++	if (cpuid_topo->package_id != -1)
++		goto topology_populated;
++
++	cpuid_topo->thread_id = -1;
++	cpuid_topo->core_id = cpuid;
++	cpuid_topo->package_id = cpu_to_node(cpuid);
++
++	pr_debug("CPU%u: package %d core %d thread %d\n",
++		 cpuid, cpuid_topo->package_id, cpuid_topo->core_id,
++		 cpuid_topo->thread_id);
++
++topology_populated:
++	update_siblings_masks(cpuid);
++}
+ #endif
+diff --git a/drivers/hid/hid-magicmouse.c b/drivers/hid/hid-magicmouse.c
+index fc4c074597539..28158d2f23523 100644
+--- a/drivers/hid/hid-magicmouse.c
++++ b/drivers/hid/hid-magicmouse.c
+@@ -387,7 +387,7 @@ static int magicmouse_raw_event(struct hid_device *hdev,
+ 		magicmouse_raw_event(hdev, report, data + 2, data[1]);
+ 		magicmouse_raw_event(hdev, report, data + 2 + data[1],
+ 			size - 2 - data[1]);
+-		break;
++		return 0;
+ 	default:
+ 		return 0;
+ 	}
+diff --git a/drivers/hwmon/coretemp.c b/drivers/hwmon/coretemp.c
+index d855c78fb8bea..d2530f5811869 100644
+--- a/drivers/hwmon/coretemp.c
++++ b/drivers/hwmon/coretemp.c
+@@ -46,9 +46,6 @@ MODULE_PARM_DESC(tjmax, "TjMax value in degrees Celsius");
+ #define TOTAL_ATTRS		(MAX_CORE_ATTRS + 1)
+ #define MAX_CORE_DATA		(NUM_REAL_CORES + BASE_SYSFS_ATTR_NO)
+ 
+-#define TO_CORE_ID(cpu)		(cpu_data(cpu).cpu_core_id)
+-#define TO_ATTR_NO(cpu)		(TO_CORE_ID(cpu) + BASE_SYSFS_ATTR_NO)
+-
+ #ifdef CONFIG_SMP
+ #define for_each_sibling(i, cpu) \
+ 	for_each_cpu(i, topology_sibling_cpumask(cpu))
+@@ -91,6 +88,8 @@ struct temp_data {
+ struct platform_data {
+ 	struct device		*hwmon_dev;
+ 	u16			pkg_id;
++	u16			cpu_map[NUM_REAL_CORES];
++	struct ida		ida;
+ 	struct cpumask		cpumask;
+ 	struct temp_data	*core_data[MAX_CORE_DATA];
+ 	struct device_attribute name_attr;
+@@ -441,7 +440,7 @@ static struct temp_data *init_temp_data(unsigned int cpu, int pkg_flag)
+ 							MSR_IA32_THERM_STATUS;
+ 	tdata->is_pkg_data = pkg_flag;
+ 	tdata->cpu = cpu;
+-	tdata->cpu_core_id = TO_CORE_ID(cpu);
++	tdata->cpu_core_id = topology_core_id(cpu);
+ 	tdata->attr_size = MAX_CORE_ATTRS;
+ 	mutex_init(&tdata->update_lock);
+ 	return tdata;
+@@ -454,7 +453,7 @@ static int create_core_data(struct platform_device *pdev, unsigned int cpu,
+ 	struct platform_data *pdata = platform_get_drvdata(pdev);
+ 	struct cpuinfo_x86 *c = &cpu_data(cpu);
+ 	u32 eax, edx;
+-	int err, attr_no;
++	int err, index, attr_no;
+ 
+ 	/*
+ 	 * Find attr number for sysfs:
+@@ -462,14 +461,26 @@ static int create_core_data(struct platform_device *pdev, unsigned int cpu,
+ 	 * The attr number is always core id + 2
+ 	 * The Pkgtemp will always show up as temp1_*, if available
+ 	 */
+-	attr_no = pkg_flag ? PKG_SYSFS_ATTR_NO : TO_ATTR_NO(cpu);
++	if (pkg_flag) {
++		attr_no = PKG_SYSFS_ATTR_NO;
++	} else {
++		index = ida_alloc(&pdata->ida, GFP_KERNEL);
++		if (index < 0)
++			return index;
++		pdata->cpu_map[index] = topology_core_id(cpu);
++		attr_no = index + BASE_SYSFS_ATTR_NO;
++	}
+ 
+-	if (attr_no > MAX_CORE_DATA - 1)
+-		return -ERANGE;
++	if (attr_no > MAX_CORE_DATA - 1) {
++		err = -ERANGE;
++		goto ida_free;
++	}
+ 
+ 	tdata = init_temp_data(cpu, pkg_flag);
+-	if (!tdata)
+-		return -ENOMEM;
++	if (!tdata) {
++		err = -ENOMEM;
++		goto ida_free;
++	}
+ 
+ 	/* Test if we can access the status register */
+ 	err = rdmsr_safe_on_cpu(cpu, tdata->status_reg, &eax, &edx);
+@@ -505,6 +516,9 @@ static int create_core_data(struct platform_device *pdev, unsigned int cpu,
+ exit_free:
+ 	pdata->core_data[attr_no] = NULL;
+ 	kfree(tdata);
++ida_free:
++	if (!pkg_flag)
++		ida_free(&pdata->ida, index);
+ 	return err;
+ }
+ 
+@@ -524,6 +538,9 @@ static void coretemp_remove_core(struct platform_data *pdata, int indx)
+ 
+ 	kfree(pdata->core_data[indx]);
+ 	pdata->core_data[indx] = NULL;
++
++	if (indx >= BASE_SYSFS_ATTR_NO)
++		ida_free(&pdata->ida, indx - BASE_SYSFS_ATTR_NO);
+ }
+ 
+ static int coretemp_probe(struct platform_device *pdev)
+@@ -537,6 +554,7 @@ static int coretemp_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	pdata->pkg_id = pdev->id;
++	ida_init(&pdata->ida);
+ 	platform_set_drvdata(pdev, pdata);
+ 
+ 	pdata->hwmon_dev = devm_hwmon_device_register_with_groups(dev, DRVNAME,
+@@ -553,6 +571,7 @@ static int coretemp_remove(struct platform_device *pdev)
+ 		if (pdata->core_data[i])
+ 			coretemp_remove_core(pdata, i);
+ 
++	ida_destroy(&pdata->ida);
+ 	return 0;
+ }
+ 
+@@ -647,7 +666,7 @@ static int coretemp_cpu_offline(unsigned int cpu)
+ 	struct platform_device *pdev = coretemp_get_pdev(cpu);
+ 	struct platform_data *pd;
+ 	struct temp_data *tdata;
+-	int indx, target;
++	int i, indx = -1, target;
+ 
+ 	/*
+ 	 * Don't execute this on suspend as the device remove locks
+@@ -660,12 +679,19 @@ static int coretemp_cpu_offline(unsigned int cpu)
+ 	if (!pdev)
+ 		return 0;
+ 
+-	/* The core id is too big, just return */
+-	indx = TO_ATTR_NO(cpu);
+-	if (indx > MAX_CORE_DATA - 1)
++	pd = platform_get_drvdata(pdev);
++
++	for (i = 0; i < NUM_REAL_CORES; i++) {
++		if (pd->cpu_map[i] == topology_core_id(cpu)) {
++			indx = i + BASE_SYSFS_ATTR_NO;
++			break;
++		}
++	}
++
++	/* Too many cores and this core is not populated, just return */
++	if (indx < 0)
+ 		return 0;
+ 
+-	pd = platform_get_drvdata(pdev);
+ 	tdata = pd->core_data[indx];
+ 
+ 	cpumask_clear_cpu(cpu, &pd->cpumask);
+diff --git a/drivers/iommu/intel-iommu.c b/drivers/iommu/intel-iommu.c
+index a2a03df977046..ff120d7ed3424 100644
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -2751,6 +2751,7 @@ static int __init si_domain_init(int hw)
+ 
+ 	if (md_domain_init(si_domain, DEFAULT_DOMAIN_ADDRESS_WIDTH)) {
+ 		domain_exit(si_domain);
++		si_domain = NULL;
+ 		return -EFAULT;
+ 	}
+ 
+@@ -3371,6 +3372,10 @@ free_iommu:
+ 		disable_dmar_iommu(iommu);
+ 		free_dmar_iommu(iommu);
+ 	}
++	if (si_domain) {
++		domain_exit(si_domain);
++		si_domain = NULL;
++	}
+ 
+ 	kfree(g_iommus);
+ 
+diff --git a/drivers/media/platform/qcom/venus/vdec.c b/drivers/media/platform/qcom/venus/vdec.c
+index 658825b4c4e8d..d1ac1d78c08ff 100644
+--- a/drivers/media/platform/qcom/venus/vdec.c
++++ b/drivers/media/platform/qcom/venus/vdec.c
+@@ -157,6 +157,8 @@ vdec_try_fmt_common(struct venus_inst *inst, struct v4l2_format *f)
+ 		else
+ 			return NULL;
+ 		fmt = find_format(inst, pixmp->pixelformat, f->type);
++		if (!fmt)
++			return NULL;
+ 	}
+ 
+ 	pixmp->width = clamp(pixmp->width, frame_width_min(inst),
+diff --git a/drivers/net/ethernet/hisilicon/hns/hnae.c b/drivers/net/ethernet/hisilicon/hns/hnae.c
+index 08339278c722a..7c838a75934e8 100644
+--- a/drivers/net/ethernet/hisilicon/hns/hnae.c
++++ b/drivers/net/ethernet/hisilicon/hns/hnae.c
+@@ -419,8 +419,10 @@ int hnae_ae_register(struct hnae_ae_dev *hdev, struct module *owner)
+ 	hdev->cls_dev.release = hnae_release;
+ 	(void)dev_set_name(&hdev->cls_dev, "hnae%d", hdev->id);
+ 	ret = device_register(&hdev->cls_dev);
+-	if (ret)
++	if (ret) {
++		put_device(&hdev->cls_dev);
+ 		return ret;
++	}
+ 
+ 	__module_get(THIS_MODULE);
+ 
+diff --git a/drivers/net/hyperv/hyperv_net.h b/drivers/net/hyperv/hyperv_net.h
+index e74f2d1def802..43ba2213851c5 100644
+--- a/drivers/net/hyperv/hyperv_net.h
++++ b/drivers/net/hyperv/hyperv_net.h
+@@ -954,6 +954,9 @@ struct net_device_context {
+ 	u32 vf_alloc;
+ 	/* Serial number of the VF to team with */
+ 	u32 vf_serial;
++
++	/* completion variable to confirm vf association */
++	struct completion vf_add;
+ };
+ 
+ /* Per channel data */
+diff --git a/drivers/net/hyperv/netvsc.c b/drivers/net/hyperv/netvsc.c
+index 6c0732fc8c250..01425bfa5cbdb 100644
+--- a/drivers/net/hyperv/netvsc.c
++++ b/drivers/net/hyperv/netvsc.c
+@@ -1223,6 +1223,10 @@ static void netvsc_send_vf(struct net_device *ndev,
+ 
+ 	net_device_ctx->vf_alloc = nvmsg->msg.v4_msg.vf_assoc.allocated;
+ 	net_device_ctx->vf_serial = nvmsg->msg.v4_msg.vf_assoc.serial;
++
++	if (net_device_ctx->vf_alloc)
++		complete(&net_device_ctx->vf_add);
++
+ 	netdev_info(ndev, "VF slot %u %s\n",
+ 		    net_device_ctx->vf_serial,
+ 		    net_device_ctx->vf_alloc ? "added" : "removed");
+diff --git a/drivers/net/hyperv/netvsc_drv.c b/drivers/net/hyperv/netvsc_drv.c
+index 57e92c5bfcc92..471c289dd941f 100644
+--- a/drivers/net/hyperv/netvsc_drv.c
++++ b/drivers/net/hyperv/netvsc_drv.c
+@@ -2133,6 +2133,7 @@ static struct net_device *get_netvsc_byslot(const struct net_device *vf_netdev)
+ {
+ 	struct device *parent = vf_netdev->dev.parent;
+ 	struct net_device_context *ndev_ctx;
++	struct net_device *ndev;
+ 	struct pci_dev *pdev;
+ 	u32 serial;
+ 
+@@ -2159,6 +2160,18 @@ static struct net_device *get_netvsc_byslot(const struct net_device *vf_netdev)
+ 			return hv_get_drvdata(ndev_ctx->device_ctx);
+ 	}
+ 
++	/* Fallback path to check synthetic vf with
++	 * help of mac addr
++	 */
++	list_for_each_entry(ndev_ctx, &netvsc_dev_list, list) {
++		ndev = hv_get_drvdata(ndev_ctx->device_ctx);
++		if (ether_addr_equal(vf_netdev->perm_addr, ndev->perm_addr)) {
++			netdev_notice(vf_netdev,
++				      "falling back to mac addr based matching\n");
++			return ndev;
++		}
++	}
++
+ 	netdev_notice(vf_netdev,
+ 		      "no netdev found for vf serial:%u\n", serial);
+ 	return NULL;
+@@ -2232,6 +2245,11 @@ static int netvsc_vf_changed(struct net_device *vf_netdev)
+ 	if (!netvsc_dev)
+ 		return NOTIFY_DONE;
+ 
++	if (vf_is_up && !net_device_ctx->vf_alloc) {
++		netdev_info(ndev, "Waiting for the VF association from host\n");
++		wait_for_completion(&net_device_ctx->vf_add);
++	}
++
+ 	netvsc_switch_datapath(ndev, vf_is_up);
+ 	netdev_info(ndev, "Data path switched %s VF: %s\n",
+ 		    vf_is_up ? "to" : "from", vf_netdev->name);
+@@ -2253,6 +2271,7 @@ static int netvsc_unregister_vf(struct net_device *vf_netdev)
+ 
+ 	netdev_info(ndev, "VF unregistering: %s\n", vf_netdev->name);
+ 
++	reinit_completion(&net_device_ctx->vf_add);
+ 	netdev_rx_handler_unregister(vf_netdev);
+ 	netdev_upper_dev_unlink(vf_netdev, ndev);
+ 	RCU_INIT_POINTER(net_device_ctx->vf_netdev, NULL);
+@@ -2290,6 +2309,7 @@ static int netvsc_probe(struct hv_device *dev,
+ 
+ 	INIT_DELAYED_WORK(&net_device_ctx->dwork, netvsc_link_change);
+ 
++	init_completion(&net_device_ctx->vf_add);
+ 	spin_lock_init(&net_device_ctx->lock);
+ 	INIT_LIST_HEAD(&net_device_ctx->reconfig_events);
+ 	INIT_DELAYED_WORK(&net_device_ctx->vf_takeover, netvsc_vf_setup);
+diff --git a/drivers/net/phy/dp83867.c b/drivers/net/phy/dp83867.c
+index 87c0cdbf262ae..c7d91415a4369 100644
+--- a/drivers/net/phy/dp83867.c
++++ b/drivers/net/phy/dp83867.c
+@@ -432,6 +432,14 @@ static int dp83867_config_init(struct phy_device *phydev)
+ 		else
+ 			val &= ~DP83867_SGMII_TYPE;
+ 		phy_write_mmd(phydev, DP83867_DEVADDR, DP83867_SGMIICTL, val);
++
++		/* This is a SW workaround for link instability if RX_CTRL is
++		 * not strapped to mode 3 or 4 in HW. This is required for SGMII
++		 * in addition to clearing bit 7, handled above.
++		 */
++		if (dp83867->rxctrl_strap_quirk)
++			phy_set_bits_mmd(phydev, DP83867_DEVADDR, DP83867_CFG4,
++					 BIT(8));
+ 	}
+ 
+ 	val = phy_read(phydev, DP83867_CFG3);
+diff --git a/drivers/net/usb/cdc_ether.c b/drivers/net/usb/cdc_ether.c
+index eee402a59f6da..e457fa8c0ca5d 100644
+--- a/drivers/net/usb/cdc_ether.c
++++ b/drivers/net/usb/cdc_ether.c
+@@ -764,6 +764,13 @@ static const struct usb_device_id	products[] = {
+ },
+ #endif
+ 
++/* Lenovo ThinkPad OneLink+ Dock (based on Realtek RTL8153) */
++{
++	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x3054, USB_CLASS_COMM,
++			USB_CDC_SUBCLASS_ETHERNET, USB_CDC_PROTO_NONE),
++	.driver_info = 0,
++},
++
+ /* ThinkPad USB-C Dock (based on Realtek RTL8153) */
+ {
+ 	USB_DEVICE_AND_INTERFACE_INFO(LENOVO_VENDOR_ID, 0x3062, USB_CLASS_COMM,
+diff --git a/drivers/net/usb/r8152.c b/drivers/net/usb/r8152.c
+index d1519138f8334..b0412d14e8f6c 100644
+--- a/drivers/net/usb/r8152.c
++++ b/drivers/net/usb/r8152.c
+@@ -5823,6 +5823,7 @@ static const struct usb_device_id rtl8152_table[] = {
+ 	{REALTEK_USB_DEVICE(VENDOR_ID_MICROSOFT, 0x0927)},
+ 	{REALTEK_USB_DEVICE(VENDOR_ID_SAMSUNG, 0xa101)},
+ 	{REALTEK_USB_DEVICE(VENDOR_ID_LENOVO,  0x304f)},
++	{REALTEK_USB_DEVICE(VENDOR_ID_LENOVO,  0x3054)},
+ 	{REALTEK_USB_DEVICE(VENDOR_ID_LENOVO,  0x3062)},
+ 	{REALTEK_USB_DEVICE(VENDOR_ID_LENOVO,  0x3069)},
+ 	{REALTEK_USB_DEVICE(VENDOR_ID_LENOVO,  0x7205)},
+diff --git a/fs/btrfs/backref.c b/fs/btrfs/backref.c
+index c701a19fac533..7147bb66a4821 100644
+--- a/fs/btrfs/backref.c
++++ b/fs/btrfs/backref.c
+@@ -136,6 +136,7 @@ struct share_check {
+ 	u64 root_objectid;
+ 	u64 inum;
+ 	int share_count;
++	bool have_delayed_delete_refs;
+ };
+ 
+ static inline int extent_is_shared(struct share_check *sc)
+@@ -812,16 +813,11 @@ static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
+ 			    struct preftrees *preftrees, struct share_check *sc)
+ {
+ 	struct btrfs_delayed_ref_node *node;
+-	struct btrfs_delayed_extent_op *extent_op = head->extent_op;
+ 	struct btrfs_key key;
+-	struct btrfs_key tmp_op_key;
+ 	struct rb_node *n;
+ 	int count;
+ 	int ret = 0;
+ 
+-	if (extent_op && extent_op->update_key)
+-		btrfs_disk_key_to_cpu(&tmp_op_key, &extent_op->key);
+-
+ 	spin_lock(&head->lock);
+ 	for (n = rb_first_cached(&head->ref_tree); n; n = rb_next(n)) {
+ 		node = rb_entry(n, struct btrfs_delayed_ref_node,
+@@ -847,10 +843,16 @@ static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
+ 		case BTRFS_TREE_BLOCK_REF_KEY: {
+ 			/* NORMAL INDIRECT METADATA backref */
+ 			struct btrfs_delayed_tree_ref *ref;
++			struct btrfs_key *key_ptr = NULL;
++
++			if (head->extent_op && head->extent_op->update_key) {
++				btrfs_disk_key_to_cpu(&key, &head->extent_op->key);
++				key_ptr = &key;
++			}
+ 
+ 			ref = btrfs_delayed_node_to_tree_ref(node);
+ 			ret = add_indirect_ref(fs_info, preftrees, ref->root,
+-					       &tmp_op_key, ref->level + 1,
++					       key_ptr, ref->level + 1,
+ 					       node->bytenr, count, sc,
+ 					       GFP_ATOMIC);
+ 			break;
+@@ -876,13 +878,22 @@ static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
+ 			key.offset = ref->offset;
+ 
+ 			/*
+-			 * Found a inum that doesn't match our known inum, we
+-			 * know it's shared.
++			 * If we have a share check context and a reference for
++			 * another inode, we can't exit immediately. This is
++			 * because even if this is a BTRFS_ADD_DELAYED_REF
++			 * reference we may find next a BTRFS_DROP_DELAYED_REF
++			 * which cancels out this ADD reference.
++			 *
++			 * If this is a DROP reference and there was no previous
++			 * ADD reference, then we need to signal that when we
++			 * process references from the extent tree (through
++			 * add_inline_refs() and add_keyed_refs()), we should
++			 * not exit early if we find a reference for another
++			 * inode, because one of the delayed DROP references
++			 * may cancel that reference in the extent tree.
+ 			 */
+-			if (sc && sc->inum && ref->objectid != sc->inum) {
+-				ret = BACKREF_FOUND_SHARED;
+-				goto out;
+-			}
++			if (sc && count < 0)
++				sc->have_delayed_delete_refs = true;
+ 
+ 			ret = add_indirect_ref(fs_info, preftrees, ref->root,
+ 					       &key, 0, node->bytenr, count, sc,
+@@ -912,7 +923,7 @@ static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
+ 	}
+ 	if (!ret)
+ 		ret = extent_is_shared(sc);
+-out:
++
+ 	spin_unlock(&head->lock);
+ 	return ret;
+ }
+@@ -1015,7 +1026,8 @@ static int add_inline_refs(const struct btrfs_fs_info *fs_info,
+ 			key.type = BTRFS_EXTENT_DATA_KEY;
+ 			key.offset = btrfs_extent_data_ref_offset(leaf, dref);
+ 
+-			if (sc && sc->inum && key.objectid != sc->inum) {
++			if (sc && sc->inum && key.objectid != sc->inum &&
++			    !sc->have_delayed_delete_refs) {
+ 				ret = BACKREF_FOUND_SHARED;
+ 				break;
+ 			}
+@@ -1025,6 +1037,7 @@ static int add_inline_refs(const struct btrfs_fs_info *fs_info,
+ 			ret = add_indirect_ref(fs_info, preftrees, root,
+ 					       &key, 0, bytenr, count,
+ 					       sc, GFP_NOFS);
++
+ 			break;
+ 		}
+ 		default:
+@@ -1114,7 +1127,8 @@ static int add_keyed_refs(struct btrfs_fs_info *fs_info,
+ 			key.type = BTRFS_EXTENT_DATA_KEY;
+ 			key.offset = btrfs_extent_data_ref_offset(leaf, dref);
+ 
+-			if (sc && sc->inum && key.objectid != sc->inum) {
++			if (sc && sc->inum && key.objectid != sc->inum &&
++			    !sc->have_delayed_delete_refs) {
+ 				ret = BACKREF_FOUND_SHARED;
+ 				break;
+ 			}
+@@ -1537,6 +1551,7 @@ int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
+ 		.root_objectid = root->root_key.objectid,
+ 		.inum = inum,
+ 		.share_count = 0,
++		.have_delayed_delete_refs = false,
+ 	};
+ 
+ 	ulist_init(roots);
+@@ -1571,6 +1586,7 @@ int btrfs_check_shared(struct btrfs_root *root, u64 inum, u64 bytenr,
+ 			break;
+ 		bytenr = node->val;
+ 		shared.share_count = 0;
++		shared.have_delayed_delete_refs = false;
+ 		cond_resched();
+ 	}
+ 
+diff --git a/fs/ocfs2/namei.c b/fs/ocfs2/namei.c
+index 8ea51cf27b970..e1a83fc8f2eb9 100644
+--- a/fs/ocfs2/namei.c
++++ b/fs/ocfs2/namei.c
+@@ -231,6 +231,7 @@ static int ocfs2_mknod(struct inode *dir,
+ 	handle_t *handle = NULL;
+ 	struct ocfs2_super *osb;
+ 	struct ocfs2_dinode *dirfe;
++	struct ocfs2_dinode *fe = NULL;
+ 	struct buffer_head *new_fe_bh = NULL;
+ 	struct inode *inode = NULL;
+ 	struct ocfs2_alloc_context *inode_ac = NULL;
+@@ -381,6 +382,7 @@ static int ocfs2_mknod(struct inode *dir,
+ 		goto leave;
+ 	}
+ 
++	fe = (struct ocfs2_dinode *) new_fe_bh->b_data;
+ 	if (S_ISDIR(mode)) {
+ 		status = ocfs2_fill_new_dir(osb, handle, dir, inode,
+ 					    new_fe_bh, data_ac, meta_ac);
+@@ -446,8 +448,11 @@ static int ocfs2_mknod(struct inode *dir,
+ leave:
+ 	if (status < 0 && did_quota_inode)
+ 		dquot_free_inode(inode);
+-	if (handle)
++	if (handle) {
++		if (status < 0 && fe)
++			ocfs2_set_links_count(fe, 0);
+ 		ocfs2_commit_trans(osb, handle);
++	}
+ 
+ 	ocfs2_inode_unlock(dir, 1);
+ 	if (did_block_signals)
+@@ -625,18 +630,9 @@ static int ocfs2_mknod_locked(struct ocfs2_super *osb,
+ 		return status;
+ 	}
+ 
+-	status = __ocfs2_mknod_locked(dir, inode, dev, new_fe_bh,
++	return __ocfs2_mknod_locked(dir, inode, dev, new_fe_bh,
+ 				    parent_fe_bh, handle, inode_ac,
+ 				    fe_blkno, suballoc_loc, suballoc_bit);
+-	if (status < 0) {
+-		u64 bg_blkno = ocfs2_which_suballoc_group(fe_blkno, suballoc_bit);
+-		int tmp = ocfs2_free_suballoc_bits(handle, inode_ac->ac_inode,
+-				inode_ac->ac_bh, suballoc_bit, bg_blkno, 1);
+-		if (tmp)
+-			mlog_errno(tmp);
+-	}
+-
+-	return status;
+ }
+ 
+ static int ocfs2_mkdir(struct inode *dir,
+@@ -2017,8 +2013,11 @@ bail:
+ 					ocfs2_clusters_to_bytes(osb->sb, 1));
+ 	if (status < 0 && did_quota_inode)
+ 		dquot_free_inode(inode);
+-	if (handle)
++	if (handle) {
++		if (status < 0 && fe)
++			ocfs2_set_links_count(fe, 0);
+ 		ocfs2_commit_trans(osb, handle);
++	}
+ 
+ 	ocfs2_inode_unlock(dir, 1);
+ 	if (did_block_signals)
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index f51dadd1ce431..d9633e5a5ddd2 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -884,7 +884,7 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
+ 		last_vma_end = vma->vm_end;
+ 	}
+ 
+-	show_vma_header_prefix(m, priv->mm->mmap->vm_start,
++	show_vma_header_prefix(m, priv->mm->mmap ? priv->mm->mmap->vm_start : 0,
+ 			       last_vma_end, 0, 0, 0, 0);
+ 	seq_pad(m, ' ');
+ 	seq_puts(m, "[rollup]\n");
+diff --git a/fs/xfs/libxfs/xfs_alloc.c b/fs/xfs/libxfs/xfs_alloc.c
+index 084d39d8856bd..1193fd6e4bad0 100644
+--- a/fs/xfs/libxfs/xfs_alloc.c
++++ b/fs/xfs/libxfs/xfs_alloc.c
+@@ -685,7 +685,7 @@ xfs_alloc_update_counters(
+ 	xfs_trans_agblocks_delta(tp, len);
+ 	if (unlikely(be32_to_cpu(agf->agf_freeblks) >
+ 		     be32_to_cpu(agf->agf_length))) {
+-		xfs_buf_corruption_error(agbp);
++		xfs_buf_mark_corrupt(agbp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+diff --git a/fs/xfs/libxfs/xfs_attr_leaf.c b/fs/xfs/libxfs/xfs_attr_leaf.c
+index c86ddbf6d105b..e69332d8f1cb5 100644
+--- a/fs/xfs/libxfs/xfs_attr_leaf.c
++++ b/fs/xfs/libxfs/xfs_attr_leaf.c
+@@ -2288,7 +2288,7 @@ xfs_attr3_leaf_lookup_int(
+ 	xfs_attr3_leaf_hdr_from_disk(args->geo, &ichdr, leaf);
+ 	entries = xfs_attr3_leaf_entryp(leaf);
+ 	if (ichdr.count >= args->geo->blksize / 8) {
+-		xfs_buf_corruption_error(bp);
++		xfs_buf_mark_corrupt(bp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+@@ -2307,11 +2307,11 @@ xfs_attr3_leaf_lookup_int(
+ 			break;
+ 	}
+ 	if (!(probe >= 0 && (!ichdr.count || probe < ichdr.count))) {
+-		xfs_buf_corruption_error(bp);
++		xfs_buf_mark_corrupt(bp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 	if (!(span <= 4 || be32_to_cpu(entry->hashval) == hashval)) {
+-		xfs_buf_corruption_error(bp);
++		xfs_buf_mark_corrupt(bp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+diff --git a/fs/xfs/libxfs/xfs_bmap.c b/fs/xfs/libxfs/xfs_bmap.c
+index 8d035842fe51d..d900e3e6c9337 100644
+--- a/fs/xfs/libxfs/xfs_bmap.c
++++ b/fs/xfs/libxfs/xfs_bmap.c
+@@ -5925,8 +5925,8 @@ del_cursor:
+  * @split_fsb is a block where the extents is split.  If split_fsb lies in a
+  * hole or the first block of extents, just return 0.
+  */
+-STATIC int
+-xfs_bmap_split_extent_at(
++int
++xfs_bmap_split_extent(
+ 	struct xfs_trans	*tp,
+ 	struct xfs_inode	*ip,
+ 	xfs_fileoff_t		split_fsb)
+@@ -6037,34 +6037,6 @@ del_cursor:
+ 	return error;
+ }
+ 
+-int
+-xfs_bmap_split_extent(
+-	struct xfs_inode        *ip,
+-	xfs_fileoff_t           split_fsb)
+-{
+-	struct xfs_mount        *mp = ip->i_mount;
+-	struct xfs_trans        *tp;
+-	int                     error;
+-
+-	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write,
+-			XFS_DIOSTRAT_SPACE_RES(mp, 0), 0, 0, &tp);
+-	if (error)
+-		return error;
+-
+-	xfs_ilock(ip, XFS_ILOCK_EXCL);
+-	xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
+-
+-	error = xfs_bmap_split_extent_at(tp, ip, split_fsb);
+-	if (error)
+-		goto out;
+-
+-	return xfs_trans_commit(tp);
+-
+-out:
+-	xfs_trans_cancel(tp);
+-	return error;
+-}
+-
+ /* Deferred mapping is only for real extents in the data fork. */
+ static bool
+ xfs_bmap_is_update_needed(
+diff --git a/fs/xfs/libxfs/xfs_bmap.h b/fs/xfs/libxfs/xfs_bmap.h
+index 093716a074fb7..640dcc036ea94 100644
+--- a/fs/xfs/libxfs/xfs_bmap.h
++++ b/fs/xfs/libxfs/xfs_bmap.h
+@@ -222,7 +222,8 @@ int	xfs_bmap_can_insert_extents(struct xfs_inode *ip, xfs_fileoff_t off,
+ int	xfs_bmap_insert_extents(struct xfs_trans *tp, struct xfs_inode *ip,
+ 		xfs_fileoff_t *next_fsb, xfs_fileoff_t offset_shift_fsb,
+ 		bool *done, xfs_fileoff_t stop_fsb);
+-int	xfs_bmap_split_extent(struct xfs_inode *ip, xfs_fileoff_t split_offset);
++int	xfs_bmap_split_extent(struct xfs_trans *tp, struct xfs_inode *ip,
++		xfs_fileoff_t split_offset);
+ int	xfs_bmapi_reserve_delalloc(struct xfs_inode *ip, int whichfork,
+ 		xfs_fileoff_t off, xfs_filblks_t len, xfs_filblks_t prealloc,
+ 		struct xfs_bmbt_irec *got, struct xfs_iext_cursor *cur,
+diff --git a/fs/xfs/libxfs/xfs_btree.c b/fs/xfs/libxfs/xfs_btree.c
+index a13a25e922ec6..8c43cac15832b 100644
+--- a/fs/xfs/libxfs/xfs_btree.c
++++ b/fs/xfs/libxfs/xfs_btree.c
+@@ -1820,7 +1820,7 @@ xfs_btree_lookup_get_block(
+ 
+ out_bad:
+ 	*blkp = NULL;
+-	xfs_buf_corruption_error(bp);
++	xfs_buf_mark_corrupt(bp);
+ 	xfs_trans_brelse(cur->bc_tp, bp);
+ 	return -EFSCORRUPTED;
+ }
+diff --git a/fs/xfs/libxfs/xfs_da_btree.c b/fs/xfs/libxfs/xfs_da_btree.c
+index 1e2dc65adeb85..12ef16c157dc7 100644
+--- a/fs/xfs/libxfs/xfs_da_btree.c
++++ b/fs/xfs/libxfs/xfs_da_btree.c
+@@ -504,7 +504,7 @@ xfs_da3_split(
+ 	node = oldblk->bp->b_addr;
+ 	if (node->hdr.info.forw) {
+ 		if (be32_to_cpu(node->hdr.info.forw) != addblk->blkno) {
+-			xfs_buf_corruption_error(oldblk->bp);
++			xfs_buf_mark_corrupt(oldblk->bp);
+ 			error = -EFSCORRUPTED;
+ 			goto out;
+ 		}
+@@ -517,7 +517,7 @@ xfs_da3_split(
+ 	node = oldblk->bp->b_addr;
+ 	if (node->hdr.info.back) {
+ 		if (be32_to_cpu(node->hdr.info.back) != addblk->blkno) {
+-			xfs_buf_corruption_error(oldblk->bp);
++			xfs_buf_mark_corrupt(oldblk->bp);
+ 			error = -EFSCORRUPTED;
+ 			goto out;
+ 		}
+@@ -1544,7 +1544,7 @@ xfs_da3_node_lookup_int(
+ 		}
+ 
+ 		if (magic != XFS_DA_NODE_MAGIC && magic != XFS_DA3_NODE_MAGIC) {
+-			xfs_buf_corruption_error(blk->bp);
++			xfs_buf_mark_corrupt(blk->bp);
+ 			return -EFSCORRUPTED;
+ 		}
+ 
+@@ -1559,7 +1559,7 @@ xfs_da3_node_lookup_int(
+ 
+ 		/* Tree taller than we can handle; bail out! */
+ 		if (nodehdr.level >= XFS_DA_NODE_MAXDEPTH) {
+-			xfs_buf_corruption_error(blk->bp);
++			xfs_buf_mark_corrupt(blk->bp);
+ 			return -EFSCORRUPTED;
+ 		}
+ 
+@@ -1567,7 +1567,7 @@ xfs_da3_node_lookup_int(
+ 		if (blkno == args->geo->leafblk)
+ 			expected_level = nodehdr.level - 1;
+ 		else if (expected_level != nodehdr.level) {
+-			xfs_buf_corruption_error(blk->bp);
++			xfs_buf_mark_corrupt(blk->bp);
+ 			return -EFSCORRUPTED;
+ 		} else
+ 			expected_level--;
+diff --git a/fs/xfs/libxfs/xfs_dir2_block.c b/fs/xfs/libxfs/xfs_dir2_block.c
+index 49e4bc39e7bb2..d034d661957cf 100644
+--- a/fs/xfs/libxfs/xfs_dir2_block.c
++++ b/fs/xfs/libxfs/xfs_dir2_block.c
+@@ -114,6 +114,23 @@ const struct xfs_buf_ops xfs_dir3_block_buf_ops = {
+ 	.verify_struct = xfs_dir3_block_verify,
+ };
+ 
++static xfs_failaddr_t
++xfs_dir3_block_header_check(
++	struct xfs_inode	*dp,
++	struct xfs_buf		*bp)
++{
++	struct xfs_mount	*mp = dp->i_mount;
++
++	if (xfs_sb_version_hascrc(&mp->m_sb)) {
++		struct xfs_dir3_blk_hdr *hdr3 = bp->b_addr;
++
++		if (be64_to_cpu(hdr3->owner) != dp->i_ino)
++			return __this_address;
++	}
++
++	return NULL;
++}
++
+ int
+ xfs_dir3_block_read(
+ 	struct xfs_trans	*tp,
+@@ -121,12 +138,24 @@ xfs_dir3_block_read(
+ 	struct xfs_buf		**bpp)
+ {
+ 	struct xfs_mount	*mp = dp->i_mount;
++	xfs_failaddr_t		fa;
+ 	int			err;
+ 
+ 	err = xfs_da_read_buf(tp, dp, mp->m_dir_geo->datablk, -1, bpp,
+ 				XFS_DATA_FORK, &xfs_dir3_block_buf_ops);
+-	if (!err && tp && *bpp)
+-		xfs_trans_buf_set_type(tp, *bpp, XFS_BLFT_DIR_BLOCK_BUF);
++	if (err || !*bpp)
++		return err;
++
++	/* Check things that we can't do in the verifier. */
++	fa = xfs_dir3_block_header_check(dp, *bpp);
++	if (fa) {
++		__xfs_buf_mark_corrupt(*bpp, fa);
++		xfs_trans_brelse(tp, *bpp);
++		*bpp = NULL;
++		return -EFSCORRUPTED;
++	}
++
++	xfs_trans_buf_set_type(tp, *bpp, XFS_BLFT_DIR_BLOCK_BUF);
+ 	return err;
+ }
+ 
+diff --git a/fs/xfs/libxfs/xfs_dir2_data.c b/fs/xfs/libxfs/xfs_dir2_data.c
+index 2c79be4c31538..2d92bcd8c8010 100644
+--- a/fs/xfs/libxfs/xfs_dir2_data.c
++++ b/fs/xfs/libxfs/xfs_dir2_data.c
+@@ -348,6 +348,22 @@ static const struct xfs_buf_ops xfs_dir3_data_reada_buf_ops = {
+ 	.verify_write = xfs_dir3_data_write_verify,
+ };
+ 
++static xfs_failaddr_t
++xfs_dir3_data_header_check(
++	struct xfs_inode	*dp,
++	struct xfs_buf		*bp)
++{
++	struct xfs_mount	*mp = dp->i_mount;
++
++	if (xfs_sb_version_hascrc(&mp->m_sb)) {
++		struct xfs_dir3_data_hdr *hdr3 = bp->b_addr;
++
++		if (be64_to_cpu(hdr3->hdr.owner) != dp->i_ino)
++			return __this_address;
++	}
++
++	return NULL;
++}
+ 
+ int
+ xfs_dir3_data_read(
+@@ -357,12 +373,24 @@ xfs_dir3_data_read(
+ 	xfs_daddr_t		mapped_bno,
+ 	struct xfs_buf		**bpp)
+ {
++	xfs_failaddr_t		fa;
+ 	int			err;
+ 
+ 	err = xfs_da_read_buf(tp, dp, bno, mapped_bno, bpp,
+ 				XFS_DATA_FORK, &xfs_dir3_data_buf_ops);
+-	if (!err && tp && *bpp)
+-		xfs_trans_buf_set_type(tp, *bpp, XFS_BLFT_DIR_DATA_BUF);
++	if (err || !*bpp)
++		return err;
++
++	/* Check things that we can't do in the verifier. */
++	fa = xfs_dir3_data_header_check(dp, *bpp);
++	if (fa) {
++		__xfs_buf_mark_corrupt(*bpp, fa);
++		xfs_trans_brelse(tp, *bpp);
++		*bpp = NULL;
++		return -EFSCORRUPTED;
++	}
++
++	xfs_trans_buf_set_type(tp, *bpp, XFS_BLFT_DIR_DATA_BUF);
+ 	return err;
+ }
+ 
+diff --git a/fs/xfs/libxfs/xfs_dir2_leaf.c b/fs/xfs/libxfs/xfs_dir2_leaf.c
+index 388b5da122287..c8ee3250b7498 100644
+--- a/fs/xfs/libxfs/xfs_dir2_leaf.c
++++ b/fs/xfs/libxfs/xfs_dir2_leaf.c
+@@ -1344,7 +1344,7 @@ xfs_dir2_leaf_removename(
+ 	ltp = xfs_dir2_leaf_tail_p(args->geo, leaf);
+ 	bestsp = xfs_dir2_leaf_bests_p(ltp);
+ 	if (be16_to_cpu(bestsp[db]) != oldbest) {
+-		xfs_buf_corruption_error(lbp);
++		xfs_buf_mark_corrupt(lbp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 	/*
+diff --git a/fs/xfs/libxfs/xfs_dir2_node.c b/fs/xfs/libxfs/xfs_dir2_node.c
+index 35e698fa85fd7..c8c3c3af539f9 100644
+--- a/fs/xfs/libxfs/xfs_dir2_node.c
++++ b/fs/xfs/libxfs/xfs_dir2_node.c
+@@ -208,7 +208,7 @@ __xfs_dir3_free_read(
+ 	/* Check things that we can't do in the verifier. */
+ 	fa = xfs_dir3_free_header_check(dp, fbno, *bpp);
+ 	if (fa) {
+-		xfs_verifier_error(*bpp, -EFSCORRUPTED, fa);
++		__xfs_buf_mark_corrupt(*bpp, fa);
+ 		xfs_trans_brelse(tp, *bpp);
+ 		*bpp = NULL;
+ 		return -EFSCORRUPTED;
+@@ -375,7 +375,7 @@ xfs_dir2_leaf_to_node(
+ 	ltp = xfs_dir2_leaf_tail_p(args->geo, leaf);
+ 	if (be32_to_cpu(ltp->bestcount) >
+ 				(uint)dp->i_d.di_size / args->geo->blksize) {
+-		xfs_buf_corruption_error(lbp);
++		xfs_buf_mark_corrupt(lbp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+@@ -449,7 +449,7 @@ xfs_dir2_leafn_add(
+ 	 * into other peoples memory
+ 	 */
+ 	if (index < 0) {
+-		xfs_buf_corruption_error(bp);
++		xfs_buf_mark_corrupt(bp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+@@ -745,7 +745,7 @@ xfs_dir2_leafn_lookup_for_entry(
+ 
+ 	xfs_dir3_leaf_check(dp, bp);
+ 	if (leafhdr.count <= 0) {
+-		xfs_buf_corruption_error(bp);
++		xfs_buf_mark_corrupt(bp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+diff --git a/fs/xfs/libxfs/xfs_dquot_buf.c b/fs/xfs/libxfs/xfs_dquot_buf.c
+index e8bd688a4073d..bedc1e752b601 100644
+--- a/fs/xfs/libxfs/xfs_dquot_buf.c
++++ b/fs/xfs/libxfs/xfs_dquot_buf.c
+@@ -35,10 +35,10 @@ xfs_calc_dquots_per_chunk(
+ 
+ xfs_failaddr_t
+ xfs_dquot_verify(
+-	struct xfs_mount *mp,
+-	xfs_disk_dquot_t *ddq,
+-	xfs_dqid_t	 id,
+-	uint		 type)	  /* used only during quotacheck */
++	struct xfs_mount	*mp,
++	struct xfs_disk_dquot	*ddq,
++	xfs_dqid_t		id,
++	uint			type)	/* used only during quotacheck */
+ {
+ 	/*
+ 	 * We can encounter an uninitialized dquot buffer for 2 reasons:
+diff --git a/fs/xfs/libxfs/xfs_format.h b/fs/xfs/libxfs/xfs_format.h
+index 28203b626f6a2..1f24473121f0c 100644
+--- a/fs/xfs/libxfs/xfs_format.h
++++ b/fs/xfs/libxfs/xfs_format.h
+@@ -1144,11 +1144,11 @@ static inline void xfs_dinode_put_rdev(struct xfs_dinode *dip, xfs_dev_t rdev)
+ 
+ /*
+  * This is the main portion of the on-disk representation of quota
+- * information for a user. This is the q_core of the xfs_dquot_t that
++ * information for a user. This is the q_core of the struct xfs_dquot that
+  * is kept in kernel memory. We pad this with some more expansion room
+  * to construct the on disk structure.
+  */
+-typedef struct	xfs_disk_dquot {
++struct xfs_disk_dquot {
+ 	__be16		d_magic;	/* dquot magic = XFS_DQUOT_MAGIC */
+ 	__u8		d_version;	/* dquot version */
+ 	__u8		d_flags;	/* XFS_DQ_USER/PROJ/GROUP */
+@@ -1171,15 +1171,15 @@ typedef struct	xfs_disk_dquot {
+ 	__be32		d_rtbtimer;	/* similar to above; for RT disk blocks */
+ 	__be16		d_rtbwarns;	/* warnings issued wrt RT disk blocks */
+ 	__be16		d_pad;
+-} xfs_disk_dquot_t;
++};
+ 
+ /*
+  * This is what goes on disk. This is separated from the xfs_disk_dquot because
+  * carrying the unnecessary padding would be a waste of memory.
+  */
+ typedef struct xfs_dqblk {
+-	xfs_disk_dquot_t  dd_diskdq;	/* portion that lives incore as well */
+-	char		  dd_fill[4];	/* filling for posterity */
++	struct xfs_disk_dquot	dd_diskdq; /* portion living incore as well */
++	char			dd_fill[4];/* filling for posterity */
+ 
+ 	/*
+ 	 * These two are only present on filesystems with the CRC bits set.
+diff --git a/fs/xfs/libxfs/xfs_trans_resv.c b/fs/xfs/libxfs/xfs_trans_resv.c
+index b3584cd2cc164..824073a839acb 100644
+--- a/fs/xfs/libxfs/xfs_trans_resv.c
++++ b/fs/xfs/libxfs/xfs_trans_resv.c
+@@ -776,7 +776,7 @@ xfs_calc_clear_agi_bucket_reservation(
+ 
+ /*
+  * Adjusting quota limits.
+- *    the xfs_disk_dquot_t: sizeof(struct xfs_disk_dquot)
++ *    the disk quota buffer: sizeof(struct xfs_disk_dquot)
+  */
+ STATIC uint
+ xfs_calc_qm_setqlim_reservation(void)
+@@ -800,7 +800,7 @@ xfs_calc_qm_dqalloc_reservation(
+ 
+ /*
+  * Turning off quotas.
+- *    the xfs_qoff_logitem_t: sizeof(struct xfs_qoff_logitem) * 2
++ *    the quota off logitems: sizeof(struct xfs_qoff_logitem) * 2
+  *    the superblock for the quota flags: sector size
+  */
+ STATIC uint
+@@ -813,7 +813,7 @@ xfs_calc_qm_quotaoff_reservation(
+ 
+ /*
+  * End of turning off quotas.
+- *    the xfs_qoff_logitem_t: sizeof(struct xfs_qoff_logitem) * 2
++ *    the quota off logitems: sizeof(struct xfs_qoff_logitem) * 2
+  */
+ STATIC uint
+ xfs_calc_qm_quotaoff_end_reservation(void)
+diff --git a/fs/xfs/xfs_attr_inactive.c b/fs/xfs/xfs_attr_inactive.c
+index 9c88203b537b1..f052de128fa18 100644
+--- a/fs/xfs/xfs_attr_inactive.c
++++ b/fs/xfs/xfs_attr_inactive.c
+@@ -145,7 +145,7 @@ xfs_attr3_node_inactive(
+ 	 * Since this code is recursive (gasp!) we must protect ourselves.
+ 	 */
+ 	if (level > XFS_DA_NODE_MAXDEPTH) {
+-		xfs_buf_corruption_error(bp);
++		xfs_buf_mark_corrupt(bp);
+ 		xfs_trans_brelse(*trans, bp);	/* no locks for later trans */
+ 		return -EFSCORRUPTED;
+ 	}
+@@ -196,7 +196,7 @@ xfs_attr3_node_inactive(
+ 			error = xfs_attr3_leaf_inactive(trans, dp, child_bp);
+ 			break;
+ 		default:
+-			xfs_buf_corruption_error(child_bp);
++			xfs_buf_mark_corrupt(child_bp);
+ 			xfs_trans_brelse(*trans, child_bp);
+ 			error = -EFSCORRUPTED;
+ 			break;
+@@ -281,7 +281,7 @@ xfs_attr3_root_inactive(
+ 		break;
+ 	default:
+ 		error = -EFSCORRUPTED;
+-		xfs_buf_corruption_error(bp);
++		xfs_buf_mark_corrupt(bp);
+ 		xfs_trans_brelse(*trans, bp);
+ 		break;
+ 	}
+diff --git a/fs/xfs/xfs_attr_list.c b/fs/xfs/xfs_attr_list.c
+index 8b9b500e75e81..8c09728344497 100644
+--- a/fs/xfs/xfs_attr_list.c
++++ b/fs/xfs/xfs_attr_list.c
+@@ -271,7 +271,7 @@ xfs_attr_node_list_lookup(
+ 	return 0;
+ 
+ out_corruptbuf:
+-	xfs_buf_corruption_error(bp);
++	xfs_buf_mark_corrupt(bp);
+ 	xfs_trans_brelse(tp, bp);
+ 	return -EFSCORRUPTED;
+ }
+diff --git a/fs/xfs/xfs_bmap_util.c b/fs/xfs/xfs_bmap_util.c
+index 113bed28bc310..5b211cb8b5798 100644
+--- a/fs/xfs/xfs_bmap_util.c
++++ b/fs/xfs/xfs_bmap_util.c
+@@ -1237,7 +1237,6 @@ xfs_collapse_file_space(
+ 	int			error;
+ 	xfs_fileoff_t		next_fsb = XFS_B_TO_FSB(mp, offset + len);
+ 	xfs_fileoff_t		shift_fsb = XFS_B_TO_FSB(mp, len);
+-	uint			resblks = XFS_DIOSTRAT_SPACE_RES(mp, 0);
+ 	bool			done = false;
+ 
+ 	ASSERT(xfs_isilocked(ip, XFS_IOLOCK_EXCL));
+@@ -1253,32 +1252,34 @@ xfs_collapse_file_space(
+ 	if (error)
+ 		return error;
+ 
+-	while (!error && !done) {
+-		error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write, resblks, 0, 0,
+-					&tp);
+-		if (error)
+-			break;
++	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write, 0, 0, 0, &tp);
++	if (error)
++		return error;
+ 
+-		xfs_ilock(ip, XFS_ILOCK_EXCL);
+-		error = xfs_trans_reserve_quota(tp, mp, ip->i_udquot,
+-				ip->i_gdquot, ip->i_pdquot, resblks, 0,
+-				XFS_QMOPT_RES_REGBLKS);
+-		if (error)
+-			goto out_trans_cancel;
+-		xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
++	xfs_ilock(ip, XFS_ILOCK_EXCL);
++	xfs_trans_ijoin(tp, ip, 0);
+ 
++	while (!done) {
+ 		error = xfs_bmap_collapse_extents(tp, ip, &next_fsb, shift_fsb,
+ 				&done);
+ 		if (error)
+ 			goto out_trans_cancel;
++		if (done)
++			break;
+ 
+-		error = xfs_trans_commit(tp);
++		/* finish any deferred frees and roll the transaction */
++		error = xfs_defer_finish(&tp);
++		if (error)
++			goto out_trans_cancel;
+ 	}
+ 
++	error = xfs_trans_commit(tp);
++	xfs_iunlock(ip, XFS_ILOCK_EXCL);
+ 	return error;
+ 
+ out_trans_cancel:
+ 	xfs_trans_cancel(tp);
++	xfs_iunlock(ip, XFS_ILOCK_EXCL);
+ 	return error;
+ }
+ 
+@@ -1321,35 +1322,41 @@ xfs_insert_file_space(
+ 	if (error)
+ 		return error;
+ 
++	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write,
++			XFS_DIOSTRAT_SPACE_RES(mp, 0), 0, 0, &tp);
++	if (error)
++		return error;
++
++	xfs_ilock(ip, XFS_ILOCK_EXCL);
++	xfs_trans_ijoin(tp, ip, 0);
++
+ 	/*
+ 	 * The extent shifting code works on extent granularity. So, if stop_fsb
+ 	 * is not the starting block of extent, we need to split the extent at
+ 	 * stop_fsb.
+ 	 */
+-	error = xfs_bmap_split_extent(ip, stop_fsb);
++	error = xfs_bmap_split_extent(tp, ip, stop_fsb);
+ 	if (error)
+-		return error;
++		goto out_trans_cancel;
+ 
+-	while (!error && !done) {
+-		error = xfs_trans_alloc(mp, &M_RES(mp)->tr_write, 0, 0, 0,
+-					&tp);
++	do {
++		error = xfs_trans_roll_inode(&tp, ip);
+ 		if (error)
+-			break;
++			goto out_trans_cancel;
+ 
+-		xfs_ilock(ip, XFS_ILOCK_EXCL);
+-		xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
+ 		error = xfs_bmap_insert_extents(tp, ip, &next_fsb, shift_fsb,
+ 				&done, stop_fsb);
+ 		if (error)
+ 			goto out_trans_cancel;
++	} while (!done);
+ 
+-		error = xfs_trans_commit(tp);
+-	}
+-
++	error = xfs_trans_commit(tp);
++	xfs_iunlock(ip, XFS_ILOCK_EXCL);
+ 	return error;
+ 
+ out_trans_cancel:
+ 	xfs_trans_cancel(tp);
++	xfs_iunlock(ip, XFS_ILOCK_EXCL);
+ 	return error;
+ }
+ 
+diff --git a/fs/xfs/xfs_buf.c b/fs/xfs/xfs_buf.c
+index 1264ac63e4e55..4f18457aae2a9 100644
+--- a/fs/xfs/xfs_buf.c
++++ b/fs/xfs/xfs_buf.c
+@@ -1546,6 +1546,28 @@ xfs_buf_zero(
+ 	}
+ }
+ 
++/*
++ * Log a message about and stale a buffer that a caller has decided is corrupt.
++ *
++ * This function should be called for the kinds of metadata corruption that
++ * cannot be detect from a verifier, such as incorrect inter-block relationship
++ * data.  Do /not/ call this function from a verifier function.
++ *
++ * The buffer must be XBF_DONE prior to the call.  Afterwards, the buffer will
++ * be marked stale, but b_error will not be set.  The caller is responsible for
++ * releasing the buffer or fixing it.
++ */
++void
++__xfs_buf_mark_corrupt(
++	struct xfs_buf		*bp,
++	xfs_failaddr_t		fa)
++{
++	ASSERT(bp->b_flags & XBF_DONE);
++
++	xfs_buf_corruption_error(bp, fa);
++	xfs_buf_stale(bp);
++}
++
+ /*
+  *	Handling of buffer targets (buftargs).
+  */
+diff --git a/fs/xfs/xfs_buf.h b/fs/xfs/xfs_buf.h
+index f6ce17d8d8480..621467ab17c87 100644
+--- a/fs/xfs/xfs_buf.h
++++ b/fs/xfs/xfs_buf.h
+@@ -270,6 +270,8 @@ static inline int xfs_buf_submit(struct xfs_buf *bp)
+ }
+ 
+ void xfs_buf_zero(struct xfs_buf *bp, size_t boff, size_t bsize);
++void __xfs_buf_mark_corrupt(struct xfs_buf *bp, xfs_failaddr_t fa);
++#define xfs_buf_mark_corrupt(bp) __xfs_buf_mark_corrupt((bp), __this_address)
+ 
+ /* Buffer Utility Routines */
+ extern void *xfs_buf_offset(struct xfs_buf *, size_t);
+diff --git a/fs/xfs/xfs_dquot.c b/fs/xfs/xfs_dquot.c
+index aa50841802703..9596b86e7de90 100644
+--- a/fs/xfs/xfs_dquot.c
++++ b/fs/xfs/xfs_dquot.c
+@@ -48,7 +48,7 @@ static struct lock_class_key xfs_dquot_project_class;
+  */
+ void
+ xfs_qm_dqdestroy(
+-	xfs_dquot_t	*dqp)
++	struct xfs_dquot	*dqp)
+ {
+ 	ASSERT(list_empty(&dqp->q_lru));
+ 
+@@ -113,8 +113,8 @@ xfs_qm_adjust_dqlimits(
+  */
+ void
+ xfs_qm_adjust_dqtimers(
+-	xfs_mount_t		*mp,
+-	xfs_disk_dquot_t	*d)
++	struct xfs_mount	*mp,
++	struct xfs_disk_dquot	*d)
+ {
+ 	ASSERT(d->d_id);
+ 
+@@ -497,7 +497,7 @@ xfs_dquot_from_disk(
+ 	struct xfs_disk_dquot	*ddqp = bp->b_addr + dqp->q_bufoffset;
+ 
+ 	/* copy everything from disk dquot to the incore dquot */
+-	memcpy(&dqp->q_core, ddqp, sizeof(xfs_disk_dquot_t));
++	memcpy(&dqp->q_core, ddqp, sizeof(struct xfs_disk_dquot));
+ 
+ 	/*
+ 	 * Reservation counters are defined as reservation plus current usage
+@@ -989,7 +989,7 @@ xfs_qm_dqput(
+  */
+ void
+ xfs_qm_dqrele(
+-	xfs_dquot_t	*dqp)
++	struct xfs_dquot	*dqp)
+ {
+ 	if (!dqp)
+ 		return;
+@@ -1018,8 +1018,8 @@ xfs_qm_dqflush_done(
+ 	struct xfs_buf		*bp,
+ 	struct xfs_log_item	*lip)
+ {
+-	xfs_dq_logitem_t	*qip = (struct xfs_dq_logitem *)lip;
+-	xfs_dquot_t		*dqp = qip->qli_dquot;
++	struct xfs_dq_logitem	*qip = (struct xfs_dq_logitem *)lip;
++	struct xfs_dquot	*dqp = qip->qli_dquot;
+ 	struct xfs_ail		*ailp = lip->li_ailp;
+ 
+ 	/*
+@@ -1105,8 +1105,8 @@ xfs_qm_dqflush(
+ 	 * Get the buffer containing the on-disk dquot
+ 	 */
+ 	error = xfs_trans_read_buf(mp, NULL, mp->m_ddev_targp, dqp->q_blkno,
+-				   mp->m_quotainfo->qi_dqchunklen, 0, &bp,
+-				   &xfs_dquot_buf_ops);
++				   mp->m_quotainfo->qi_dqchunklen, XBF_TRYLOCK,
++				   &bp, &xfs_dquot_buf_ops);
+ 	if (error)
+ 		goto out_unlock;
+ 
+@@ -1129,7 +1129,7 @@ xfs_qm_dqflush(
+ 	}
+ 
+ 	/* This is the only portion of data that needs to persist */
+-	memcpy(ddqp, &dqp->q_core, sizeof(xfs_disk_dquot_t));
++	memcpy(ddqp, &dqp->q_core, sizeof(struct xfs_disk_dquot));
+ 
+ 	/*
+ 	 * Clear the dirty field and remember the flush lsn for later use.
+@@ -1176,7 +1176,7 @@ xfs_qm_dqflush(
+ 
+ out_unlock:
+ 	xfs_dqfunlock(dqp);
+-	return -EIO;
++	return error;
+ }
+ 
+ /*
+@@ -1187,8 +1187,8 @@ out_unlock:
+  */
+ void
+ xfs_dqlock2(
+-	xfs_dquot_t	*d1,
+-	xfs_dquot_t	*d2)
++	struct xfs_dquot	*d1,
++	struct xfs_dquot	*d2)
+ {
+ 	if (d1 && d2) {
+ 		ASSERT(d1 != d2);
+diff --git a/fs/xfs/xfs_dquot.h b/fs/xfs/xfs_dquot.h
+index 4fe85709d55d2..fe3e46df604b4 100644
+--- a/fs/xfs/xfs_dquot.h
++++ b/fs/xfs/xfs_dquot.h
+@@ -30,33 +30,36 @@ enum {
+ /*
+  * The incore dquot structure
+  */
+-typedef struct xfs_dquot {
+-	uint		 dq_flags;	/* various flags (XFS_DQ_*) */
+-	struct list_head q_lru;		/* global free list of dquots */
+-	struct xfs_mount*q_mount;	/* filesystem this relates to */
+-	uint		 q_nrefs;	/* # active refs from inodes */
+-	xfs_daddr_t	 q_blkno;	/* blkno of dquot buffer */
+-	int		 q_bufoffset;	/* off of dq in buffer (# dquots) */
+-	xfs_fileoff_t	 q_fileoffset;	/* offset in quotas file */
+-
+-	xfs_disk_dquot_t q_core;	/* actual usage & quotas */
+-	xfs_dq_logitem_t q_logitem;	/* dquot log item */
+-	xfs_qcnt_t	 q_res_bcount;	/* total regular nblks used+reserved */
+-	xfs_qcnt_t	 q_res_icount;	/* total inos allocd+reserved */
+-	xfs_qcnt_t	 q_res_rtbcount;/* total realtime blks used+reserved */
+-	xfs_qcnt_t	 q_prealloc_lo_wmark;/* prealloc throttle wmark */
+-	xfs_qcnt_t	 q_prealloc_hi_wmark;/* prealloc disabled wmark */
+-	int64_t		 q_low_space[XFS_QLOWSP_MAX];
+-	struct mutex	 q_qlock;	/* quota lock */
+-	struct completion q_flush;	/* flush completion queue */
+-	atomic_t          q_pincount;	/* dquot pin count */
+-	wait_queue_head_t q_pinwait;	/* dquot pinning wait queue */
+-} xfs_dquot_t;
++struct xfs_dquot {
++	uint			dq_flags;
++	struct list_head	q_lru;
++	struct xfs_mount	*q_mount;
++	uint			q_nrefs;
++	xfs_daddr_t		q_blkno;
++	int			q_bufoffset;
++	xfs_fileoff_t		q_fileoffset;
++
++	struct xfs_disk_dquot	q_core;
++	struct xfs_dq_logitem	q_logitem;
++	/* total regular nblks used+reserved */
++	xfs_qcnt_t		q_res_bcount;
++	/* total inos allocd+reserved */
++	xfs_qcnt_t		q_res_icount;
++	/* total realtime blks used+reserved */
++	xfs_qcnt_t		q_res_rtbcount;
++	xfs_qcnt_t		q_prealloc_lo_wmark;
++	xfs_qcnt_t		q_prealloc_hi_wmark;
++	int64_t			q_low_space[XFS_QLOWSP_MAX];
++	struct mutex		q_qlock;
++	struct completion	q_flush;
++	atomic_t		q_pincount;
++	struct wait_queue_head	q_pinwait;
++};
+ 
+ /*
+  * Lock hierarchy for q_qlock:
+  *	XFS_QLOCK_NORMAL is the implicit default,
+- * 	XFS_QLOCK_NESTED is the dquot with the higher id in xfs_dqlock2
++ *	XFS_QLOCK_NESTED is the dquot with the higher id in xfs_dqlock2
+  */
+ enum {
+ 	XFS_QLOCK_NORMAL = 0,
+@@ -64,21 +67,21 @@ enum {
+ };
+ 
+ /*
+- * Manage the q_flush completion queue embedded in the dquot.  This completion
++ * Manage the q_flush completion queue embedded in the dquot. This completion
+  * queue synchronizes processes attempting to flush the in-core dquot back to
+  * disk.
+  */
+-static inline void xfs_dqflock(xfs_dquot_t *dqp)
++static inline void xfs_dqflock(struct xfs_dquot *dqp)
+ {
+ 	wait_for_completion(&dqp->q_flush);
+ }
+ 
+-static inline bool xfs_dqflock_nowait(xfs_dquot_t *dqp)
++static inline bool xfs_dqflock_nowait(struct xfs_dquot *dqp)
+ {
+ 	return try_wait_for_completion(&dqp->q_flush);
+ }
+ 
+-static inline void xfs_dqfunlock(xfs_dquot_t *dqp)
++static inline void xfs_dqfunlock(struct xfs_dquot *dqp)
+ {
+ 	complete(&dqp->q_flush);
+ }
+@@ -112,7 +115,7 @@ static inline int xfs_this_quota_on(struct xfs_mount *mp, int type)
+ 	}
+ }
+ 
+-static inline xfs_dquot_t *xfs_inode_dquot(struct xfs_inode *ip, int type)
++static inline struct xfs_dquot *xfs_inode_dquot(struct xfs_inode *ip, int type)
+ {
+ 	switch (type & XFS_DQ_ALLTYPES) {
+ 	case XFS_DQ_USER:
+@@ -147,31 +150,30 @@ static inline bool xfs_dquot_lowsp(struct xfs_dquot *dqp)
+ #define XFS_QM_ISPDQ(dqp)	((dqp)->dq_flags & XFS_DQ_PROJ)
+ #define XFS_QM_ISGDQ(dqp)	((dqp)->dq_flags & XFS_DQ_GROUP)
+ 
+-extern void		xfs_qm_dqdestroy(xfs_dquot_t *);
+-extern int		xfs_qm_dqflush(struct xfs_dquot *, struct xfs_buf **);
+-extern void		xfs_qm_dqunpin_wait(xfs_dquot_t *);
+-extern void		xfs_qm_adjust_dqtimers(xfs_mount_t *,
+-					xfs_disk_dquot_t *);
+-extern void		xfs_qm_adjust_dqlimits(struct xfs_mount *,
+-					       struct xfs_dquot *);
+-extern xfs_dqid_t	xfs_qm_id_for_quotatype(struct xfs_inode *ip,
+-					uint type);
+-extern int		xfs_qm_dqget(struct xfs_mount *mp, xfs_dqid_t id,
++void		xfs_qm_dqdestroy(struct xfs_dquot *dqp);
++int		xfs_qm_dqflush(struct xfs_dquot *dqp, struct xfs_buf **bpp);
++void		xfs_qm_dqunpin_wait(struct xfs_dquot *dqp);
++void		xfs_qm_adjust_dqtimers(struct xfs_mount *mp,
++						struct xfs_disk_dquot *d);
++void		xfs_qm_adjust_dqlimits(struct xfs_mount *mp,
++						struct xfs_dquot *d);
++xfs_dqid_t	xfs_qm_id_for_quotatype(struct xfs_inode *ip, uint type);
++int		xfs_qm_dqget(struct xfs_mount *mp, xfs_dqid_t id,
+ 					uint type, bool can_alloc,
+ 					struct xfs_dquot **dqpp);
+-extern int		xfs_qm_dqget_inode(struct xfs_inode *ip, uint type,
+-					bool can_alloc,
+-					struct xfs_dquot **dqpp);
+-extern int		xfs_qm_dqget_next(struct xfs_mount *mp, xfs_dqid_t id,
++int		xfs_qm_dqget_inode(struct xfs_inode *ip, uint type,
++						bool can_alloc,
++						struct xfs_dquot **dqpp);
++int		xfs_qm_dqget_next(struct xfs_mount *mp, xfs_dqid_t id,
+ 					uint type, struct xfs_dquot **dqpp);
+-extern int		xfs_qm_dqget_uncached(struct xfs_mount *mp,
+-					xfs_dqid_t id, uint type,
+-					struct xfs_dquot **dqpp);
+-extern void		xfs_qm_dqput(xfs_dquot_t *);
++int		xfs_qm_dqget_uncached(struct xfs_mount *mp,
++						xfs_dqid_t id, uint type,
++						struct xfs_dquot **dqpp);
++void		xfs_qm_dqput(struct xfs_dquot *dqp);
+ 
+-extern void		xfs_dqlock2(struct xfs_dquot *, struct xfs_dquot *);
++void		xfs_dqlock2(struct xfs_dquot *, struct xfs_dquot *);
+ 
+-extern void		xfs_dquot_set_prealloc_limits(struct xfs_dquot *);
++void		xfs_dquot_set_prealloc_limits(struct xfs_dquot *);
+ 
+ static inline struct xfs_dquot *xfs_qm_dqhold(struct xfs_dquot *dqp)
+ {
+diff --git a/fs/xfs/xfs_dquot_item.c b/fs/xfs/xfs_dquot_item.c
+index d60647d7197b2..baad1748d0d10 100644
+--- a/fs/xfs/xfs_dquot_item.c
++++ b/fs/xfs/xfs_dquot_item.c
+@@ -189,7 +189,8 @@ xfs_qm_dquot_logitem_push(
+ 		if (!xfs_buf_delwri_queue(bp, buffer_list))
+ 			rval = XFS_ITEM_FLUSHING;
+ 		xfs_buf_relse(bp);
+-	}
++	} else if (error == -EAGAIN)
++		rval = XFS_ITEM_LOCKED;
+ 
+ 	spin_lock(&lip->li_ailp->ail_lock);
+ out_unlock:
+@@ -307,35 +308,61 @@ xfs_qm_qoffend_logitem_committed(
+ {
+ 	struct xfs_qoff_logitem	*qfe = QOFF_ITEM(lip);
+ 	struct xfs_qoff_logitem	*qfs = qfe->qql_start_lip;
+-	struct xfs_ail		*ailp = qfs->qql_item.li_ailp;
+ 
+-	/*
+-	 * Delete the qoff-start logitem from the AIL.
+-	 * xfs_trans_ail_delete() drops the AIL lock.
+-	 */
+-	spin_lock(&ailp->ail_lock);
+-	xfs_trans_ail_delete(ailp, &qfs->qql_item, SHUTDOWN_LOG_IO_ERROR);
++	xfs_qm_qoff_logitem_relse(qfs);
+ 
+-	kmem_free(qfs->qql_item.li_lv_shadow);
+ 	kmem_free(lip->li_lv_shadow);
+-	kmem_free(qfs);
+ 	kmem_free(qfe);
+ 	return (xfs_lsn_t)-1;
+ }
+ 
++STATIC void
++xfs_qm_qoff_logitem_release(
++	struct xfs_log_item	*lip)
++{
++	struct xfs_qoff_logitem	*qoff = QOFF_ITEM(lip);
++
++	if (test_bit(XFS_LI_ABORTED, &lip->li_flags)) {
++		if (qoff->qql_start_lip)
++			xfs_qm_qoff_logitem_relse(qoff->qql_start_lip);
++		xfs_qm_qoff_logitem_relse(qoff);
++	}
++}
++
+ static const struct xfs_item_ops xfs_qm_qoffend_logitem_ops = {
+ 	.iop_size	= xfs_qm_qoff_logitem_size,
+ 	.iop_format	= xfs_qm_qoff_logitem_format,
+ 	.iop_committed	= xfs_qm_qoffend_logitem_committed,
+ 	.iop_push	= xfs_qm_qoff_logitem_push,
++	.iop_release	= xfs_qm_qoff_logitem_release,
+ };
+ 
+ static const struct xfs_item_ops xfs_qm_qoff_logitem_ops = {
+ 	.iop_size	= xfs_qm_qoff_logitem_size,
+ 	.iop_format	= xfs_qm_qoff_logitem_format,
+ 	.iop_push	= xfs_qm_qoff_logitem_push,
++	.iop_release	= xfs_qm_qoff_logitem_release,
+ };
+ 
++/*
++ * Delete the quotaoff intent from the AIL and free it. On success,
++ * this should only be called for the start item. It can be used for
++ * either on shutdown or abort.
++ */
++void
++xfs_qm_qoff_logitem_relse(
++	struct xfs_qoff_logitem	*qoff)
++{
++	struct xfs_log_item	*lip = &qoff->qql_item;
++
++	ASSERT(test_bit(XFS_LI_IN_AIL, &lip->li_flags) ||
++	       test_bit(XFS_LI_ABORTED, &lip->li_flags) ||
++	       XFS_FORCED_SHUTDOWN(lip->li_mountp));
++	xfs_trans_ail_remove(lip, SHUTDOWN_LOG_IO_ERROR);
++	kmem_free(lip->li_lv_shadow);
++	kmem_free(qoff);
++}
++
+ /*
+  * Allocate and initialize an quotaoff item of the correct quota type(s).
+  */
+diff --git a/fs/xfs/xfs_dquot_item.h b/fs/xfs/xfs_dquot_item.h
+index 1aed34ccdabc2..2b86a43d7ce2e 100644
+--- a/fs/xfs/xfs_dquot_item.h
++++ b/fs/xfs/xfs_dquot_item.h
+@@ -11,25 +11,28 @@ struct xfs_trans;
+ struct xfs_mount;
+ struct xfs_qoff_logitem;
+ 
+-typedef struct xfs_dq_logitem {
+-	struct xfs_log_item	 qli_item;	   /* common portion */
+-	struct xfs_dquot	*qli_dquot;	   /* dquot ptr */
+-	xfs_lsn_t		 qli_flush_lsn;	   /* lsn at last flush */
+-} xfs_dq_logitem_t;
++struct xfs_dq_logitem {
++	struct xfs_log_item	qli_item;	/* common portion */
++	struct xfs_dquot	*qli_dquot;	/* dquot ptr */
++	xfs_lsn_t		qli_flush_lsn;	/* lsn at last flush */
++};
+ 
+-typedef struct xfs_qoff_logitem {
+-	struct xfs_log_item	 qql_item;	/* common portion */
+-	struct xfs_qoff_logitem *qql_start_lip; /* qoff-start logitem, if any */
++struct xfs_qoff_logitem {
++	struct xfs_log_item	qql_item;	/* common portion */
++	struct xfs_qoff_logitem *qql_start_lip;	/* qoff-start logitem, if any */
+ 	unsigned int		qql_flags;
+-} xfs_qoff_logitem_t;
++};
+ 
+ 
+-extern void		   xfs_qm_dquot_logitem_init(struct xfs_dquot *);
+-extern xfs_qoff_logitem_t *xfs_qm_qoff_logitem_init(struct xfs_mount *,
+-					struct xfs_qoff_logitem *, uint);
+-extern xfs_qoff_logitem_t *xfs_trans_get_qoff_item(struct xfs_trans *,
+-					struct xfs_qoff_logitem *, uint);
+-extern void		   xfs_trans_log_quotaoff_item(struct xfs_trans *,
+-					struct xfs_qoff_logitem *);
++void xfs_qm_dquot_logitem_init(struct xfs_dquot *dqp);
++struct xfs_qoff_logitem	*xfs_qm_qoff_logitem_init(struct xfs_mount *mp,
++		struct xfs_qoff_logitem *start,
++		uint flags);
++void xfs_qm_qoff_logitem_relse(struct xfs_qoff_logitem *);
++struct xfs_qoff_logitem	*xfs_trans_get_qoff_item(struct xfs_trans *tp,
++		struct xfs_qoff_logitem *startqoff,
++		uint flags);
++void xfs_trans_log_quotaoff_item(struct xfs_trans *tp,
++		struct xfs_qoff_logitem *qlp);
+ 
+ #endif	/* __XFS_DQUOT_ITEM_H__ */
+diff --git a/fs/xfs/xfs_error.c b/fs/xfs/xfs_error.c
+index d8cdb27fe6ed3..e9acd58248f90 100644
+--- a/fs/xfs/xfs_error.c
++++ b/fs/xfs/xfs_error.c
+@@ -345,16 +345,19 @@ xfs_corruption_error(
+  * Complain about the kinds of metadata corruption that we can't detect from a
+  * verifier, such as incorrect inter-block relationship data.  Does not set
+  * bp->b_error.
++ *
++ * Call xfs_buf_mark_corrupt, not this function.
+  */
+ void
+ xfs_buf_corruption_error(
+-	struct xfs_buf		*bp)
++	struct xfs_buf		*bp,
++	xfs_failaddr_t		fa)
+ {
+ 	struct xfs_mount	*mp = bp->b_mount;
+ 
+ 	xfs_alert_tag(mp, XFS_PTAG_VERIFIER_ERROR,
+ 		  "Metadata corruption detected at %pS, %s block 0x%llx",
+-		  __return_address, bp->b_ops->name, bp->b_bn);
++		  fa, bp->b_ops->name, bp->b_bn);
+ 
+ 	xfs_alert(mp, "Unmount and run xfs_repair");
+ 
+diff --git a/fs/xfs/xfs_error.h b/fs/xfs/xfs_error.h
+index c319379f7d1a3..c6bb7d7a21618 100644
+--- a/fs/xfs/xfs_error.h
++++ b/fs/xfs/xfs_error.h
+@@ -15,7 +15,7 @@ extern void xfs_corruption_error(const char *tag, int level,
+ 			struct xfs_mount *mp, const void *buf, size_t bufsize,
+ 			const char *filename, int linenum,
+ 			xfs_failaddr_t failaddr);
+-void xfs_buf_corruption_error(struct xfs_buf *bp);
++void xfs_buf_corruption_error(struct xfs_buf *bp, xfs_failaddr_t fa);
+ extern void xfs_buf_verifier_error(struct xfs_buf *bp, int error,
+ 			const char *name, const void *buf, size_t bufsz,
+ 			xfs_failaddr_t failaddr);
+diff --git a/fs/xfs/xfs_export.c b/fs/xfs/xfs_export.c
+index f1372f9046e38..5a4b0119143a8 100644
+--- a/fs/xfs/xfs_export.c
++++ b/fs/xfs/xfs_export.c
+@@ -15,7 +15,6 @@
+ #include "xfs_trans.h"
+ #include "xfs_inode_item.h"
+ #include "xfs_icache.h"
+-#include "xfs_log.h"
+ #include "xfs_pnfs.h"
+ 
+ /*
+@@ -221,18 +220,7 @@ STATIC int
+ xfs_fs_nfs_commit_metadata(
+ 	struct inode		*inode)
+ {
+-	struct xfs_inode	*ip = XFS_I(inode);
+-	struct xfs_mount	*mp = ip->i_mount;
+-	xfs_lsn_t		lsn = 0;
+-
+-	xfs_ilock(ip, XFS_ILOCK_SHARED);
+-	if (xfs_ipincount(ip))
+-		lsn = ip->i_itemp->ili_last_lsn;
+-	xfs_iunlock(ip, XFS_ILOCK_SHARED);
+-
+-	if (!lsn)
+-		return 0;
+-	return xfs_log_force_lsn(mp, lsn, XFS_LOG_SYNC, NULL);
++	return xfs_log_force_inode(XFS_I(inode));
+ }
+ 
+ const struct export_operations xfs_export_operations = {
+diff --git a/fs/xfs/xfs_file.c b/fs/xfs/xfs_file.c
+index e41c13ffa5a43..cbca91b4b5b84 100644
+--- a/fs/xfs/xfs_file.c
++++ b/fs/xfs/xfs_file.c
+@@ -80,19 +80,9 @@ xfs_dir_fsync(
+ 	int			datasync)
+ {
+ 	struct xfs_inode	*ip = XFS_I(file->f_mapping->host);
+-	struct xfs_mount	*mp = ip->i_mount;
+-	xfs_lsn_t		lsn = 0;
+ 
+ 	trace_xfs_dir_fsync(ip);
+-
+-	xfs_ilock(ip, XFS_ILOCK_SHARED);
+-	if (xfs_ipincount(ip))
+-		lsn = ip->i_itemp->ili_last_lsn;
+-	xfs_iunlock(ip, XFS_ILOCK_SHARED);
+-
+-	if (!lsn)
+-		return 0;
+-	return xfs_log_force_lsn(mp, lsn, XFS_LOG_SYNC, NULL);
++	return xfs_log_force_inode(ip);
+ }
+ 
+ STATIC int
+@@ -1054,7 +1044,11 @@ xfs_file_remap_range(
+ 
+ 	ret = xfs_reflink_update_dest(dest, pos_out + len, cowextsize,
+ 			remap_flags);
++	if (ret)
++		goto out_unlock;
+ 
++	if (mp->m_flags & XFS_MOUNT_WSYNC)
++		xfs_log_force_inode(dest);
+ out_unlock:
+ 	xfs_reflink_remap_unlock(file_in, file_out);
+ 	if (ret)
+diff --git a/fs/xfs/xfs_inode.c b/fs/xfs/xfs_inode.c
+index 30202d8c25e4f..f8b5a37134f8f 100644
+--- a/fs/xfs/xfs_inode.c
++++ b/fs/xfs/xfs_inode.c
+@@ -2149,7 +2149,7 @@ xfs_iunlink_update_bucket(
+ 	 * head of the list.
+ 	 */
+ 	if (old_value == new_agino) {
+-		xfs_buf_corruption_error(agibp);
++		xfs_buf_mark_corrupt(agibp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+@@ -2283,7 +2283,7 @@ xfs_iunlink(
+ 	next_agino = be32_to_cpu(agi->agi_unlinked[bucket_index]);
+ 	if (next_agino == agino ||
+ 	    !xfs_verify_agino_or_null(mp, agno, next_agino)) {
+-		xfs_buf_corruption_error(agibp);
++		xfs_buf_mark_corrupt(agibp);
+ 		return -EFSCORRUPTED;
+ 	}
+ 
+@@ -3973,3 +3973,22 @@ xfs_irele(
+ 	trace_xfs_irele(ip, _RET_IP_);
+ 	iput(VFS_I(ip));
+ }
++
++/*
++ * Ensure all commited transactions touching the inode are written to the log.
++ */
++int
++xfs_log_force_inode(
++	struct xfs_inode	*ip)
++{
++	xfs_lsn_t		lsn = 0;
++
++	xfs_ilock(ip, XFS_ILOCK_SHARED);
++	if (xfs_ipincount(ip))
++		lsn = ip->i_itemp->ili_last_lsn;
++	xfs_iunlock(ip, XFS_ILOCK_SHARED);
++
++	if (!lsn)
++		return 0;
++	return xfs_log_force_lsn(ip->i_mount, lsn, XFS_LOG_SYNC, NULL);
++}
+diff --git a/fs/xfs/xfs_inode.h b/fs/xfs/xfs_inode.h
+index 558173f95a03a..e493d491b7cc7 100644
+--- a/fs/xfs/xfs_inode.h
++++ b/fs/xfs/xfs_inode.h
+@@ -441,6 +441,7 @@ int		xfs_itruncate_extents_flags(struct xfs_trans **,
+ 				struct xfs_inode *, int, xfs_fsize_t, int);
+ void		xfs_iext_realloc(xfs_inode_t *, int, int);
+ 
++int		xfs_log_force_inode(struct xfs_inode *ip);
+ void		xfs_iunpin_wait(xfs_inode_t *);
+ #define xfs_ipincount(ip)	((unsigned int) atomic_read(&ip->i_pincount))
+ 
+diff --git a/fs/xfs/xfs_inode_item.c b/fs/xfs/xfs_inode_item.c
+index 726aa3bfd6e84..76a60526af94f 100644
+--- a/fs/xfs/xfs_inode_item.c
++++ b/fs/xfs/xfs_inode_item.c
+@@ -732,29 +732,27 @@ xfs_iflush_done(
+ 	 * holding the lock before removing the inode from the AIL.
+ 	 */
+ 	if (need_ail) {
+-		bool			mlip_changed = false;
++		xfs_lsn_t	tail_lsn = 0;
+ 
+ 		/* this is an opencoded batch version of xfs_trans_ail_delete */
+ 		spin_lock(&ailp->ail_lock);
+ 		list_for_each_entry(blip, &tmp, li_bio_list) {
+ 			if (INODE_ITEM(blip)->ili_logged &&
+-			    blip->li_lsn == INODE_ITEM(blip)->ili_flush_lsn)
+-				mlip_changed |= xfs_ail_delete_one(ailp, blip);
+-			else {
++			    blip->li_lsn == INODE_ITEM(blip)->ili_flush_lsn) {
++				/*
++				 * xfs_ail_update_finish() only cares about the
++				 * lsn of the first tail item removed, any
++				 * others will be at the same or higher lsn so
++				 * we just ignore them.
++				 */
++				xfs_lsn_t lsn = xfs_ail_delete_one(ailp, blip);
++				if (!tail_lsn && lsn)
++					tail_lsn = lsn;
++			} else {
+ 				xfs_clear_li_failed(blip);
+ 			}
+ 		}
+-
+-		if (mlip_changed) {
+-			if (!XFS_FORCED_SHUTDOWN(ailp->ail_mount))
+-				xlog_assign_tail_lsn_locked(ailp->ail_mount);
+-			if (list_empty(&ailp->ail_head))
+-				wake_up_all(&ailp->ail_empty);
+-		}
+-		spin_unlock(&ailp->ail_lock);
+-
+-		if (mlip_changed)
+-			xfs_log_space_wake(ailp->ail_mount);
++		xfs_ail_update_finish(ailp, tail_lsn);
+ 	}
+ 
+ 	/*
+diff --git a/fs/xfs/xfs_log.c b/fs/xfs/xfs_log.c
+index 7b0d9ad8cb1a9..63c0f1e9d1018 100644
+--- a/fs/xfs/xfs_log.c
++++ b/fs/xfs/xfs_log.c
+@@ -837,19 +837,6 @@ xfs_log_write_unmount_record(
+ 	if (error)
+ 		goto out_err;
+ 
+-	/*
+-	 * If we think the summary counters are bad, clear the unmount header
+-	 * flag in the unmount record so that the summary counters will be
+-	 * recalculated during log recovery at next mount.  Refer to
+-	 * xlog_check_unmount_rec for more details.
+-	 */
+-	if (XFS_TEST_ERROR(xfs_fs_has_sickness(mp, XFS_SICK_FS_COUNTERS), mp,
+-			XFS_ERRTAG_FORCE_SUMMARY_RECALC)) {
+-		xfs_alert(mp, "%s: will fix summary counters at next mount",
+-				__func__);
+-		flags &= ~XLOG_UNMOUNT_TRANS;
+-	}
+-
+ 	/* remove inited flag, and account for space used */
+ 	tic->t_flags = 0;
+ 	tic->t_curr_res -= sizeof(magic);
+@@ -932,6 +919,19 @@ xfs_log_unmount_write(xfs_mount_t *mp)
+ 	} while (iclog != first_iclog);
+ #endif
+ 	if (! (XLOG_FORCED_SHUTDOWN(log))) {
++		/*
++		 * If we think the summary counters are bad, avoid writing the
++		 * unmount record to force log recovery at next mount, after
++		 * which the summary counters will be recalculated.  Refer to
++		 * xlog_check_unmount_rec for more details.
++		 */
++		if (XFS_TEST_ERROR(xfs_fs_has_sickness(mp, XFS_SICK_FS_COUNTERS),
++				mp, XFS_ERRTAG_FORCE_SUMMARY_RECALC)) {
++			xfs_alert(mp,
++				"%s: will fix summary counters at next mount",
++				__func__);
++			return 0;
++		}
+ 		xfs_log_write_unmount_record(mp);
+ 	} else {
+ 		/*
+diff --git a/fs/xfs/xfs_log_cil.c b/fs/xfs/xfs_log_cil.c
+index ef652abd112c8..550fd5de2404a 100644
+--- a/fs/xfs/xfs_log_cil.c
++++ b/fs/xfs/xfs_log_cil.c
+@@ -670,6 +670,12 @@ xlog_cil_push(
+ 	push_seq = cil->xc_push_seq;
+ 	ASSERT(push_seq <= ctx->sequence);
+ 
++	/*
++	 * Wake up any background push waiters now this context is being pushed.
++	 */
++	if (ctx->space_used >= XLOG_CIL_BLOCKING_SPACE_LIMIT(log))
++		wake_up_all(&cil->xc_push_wait);
++
+ 	/*
+ 	 * Check if we've anything to push. If there is nothing, then we don't
+ 	 * move on to a new sequence number and so we have to be able to push
+@@ -740,7 +746,7 @@ xlog_cil_push(
+ 
+ 	/*
+ 	 * initialise the new context and attach it to the CIL. Then attach
+-	 * the current context to the CIL committing lsit so it can be found
++	 * the current context to the CIL committing list so it can be found
+ 	 * during log forces to extract the commit lsn of the sequence that
+ 	 * needs to be forced.
+ 	 */
+@@ -900,7 +906,7 @@ xlog_cil_push_work(
+  */
+ static void
+ xlog_cil_push_background(
+-	struct xlog	*log)
++	struct xlog	*log) __releases(cil->xc_ctx_lock)
+ {
+ 	struct xfs_cil	*cil = log->l_cilp;
+ 
+@@ -914,14 +920,36 @@ xlog_cil_push_background(
+ 	 * don't do a background push if we haven't used up all the
+ 	 * space available yet.
+ 	 */
+-	if (cil->xc_ctx->space_used < XLOG_CIL_SPACE_LIMIT(log))
++	if (cil->xc_ctx->space_used < XLOG_CIL_SPACE_LIMIT(log)) {
++		up_read(&cil->xc_ctx_lock);
+ 		return;
++	}
+ 
+ 	spin_lock(&cil->xc_push_lock);
+ 	if (cil->xc_push_seq < cil->xc_current_sequence) {
+ 		cil->xc_push_seq = cil->xc_current_sequence;
+ 		queue_work(log->l_mp->m_cil_workqueue, &cil->xc_push_work);
+ 	}
++
++	/*
++	 * Drop the context lock now, we can't hold that if we need to sleep
++	 * because we are over the blocking threshold. The push_lock is still
++	 * held, so blocking threshold sleep/wakeup is still correctly
++	 * serialised here.
++	 */
++	up_read(&cil->xc_ctx_lock);
++
++	/*
++	 * If we are well over the space limit, throttle the work that is being
++	 * done until the push work on this context has begun.
++	 */
++	if (cil->xc_ctx->space_used >= XLOG_CIL_BLOCKING_SPACE_LIMIT(log)) {
++		trace_xfs_log_cil_wait(log, cil->xc_ctx->ticket);
++		ASSERT(cil->xc_ctx->space_used < log->l_logsize);
++		xlog_wait(&cil->xc_push_wait, &cil->xc_push_lock);
++		return;
++	}
++
+ 	spin_unlock(&cil->xc_push_lock);
+ 
+ }
+@@ -1038,9 +1066,9 @@ xfs_log_commit_cil(
+ 		if (lip->li_ops->iop_committing)
+ 			lip->li_ops->iop_committing(lip, xc_commit_lsn);
+ 	}
+-	xlog_cil_push_background(log);
+ 
+-	up_read(&cil->xc_ctx_lock);
++	/* xlog_cil_push_background() releases cil->xc_ctx_lock */
++	xlog_cil_push_background(log);
+ }
+ 
+ /*
+@@ -1194,6 +1222,7 @@ xlog_cil_init(
+ 	INIT_LIST_HEAD(&cil->xc_committing);
+ 	spin_lock_init(&cil->xc_cil_lock);
+ 	spin_lock_init(&cil->xc_push_lock);
++	init_waitqueue_head(&cil->xc_push_wait);
+ 	init_rwsem(&cil->xc_ctx_lock);
+ 	init_waitqueue_head(&cil->xc_commit_wait);
+ 
+diff --git a/fs/xfs/xfs_log_priv.h b/fs/xfs/xfs_log_priv.h
+index b880c23cb6e4f..3a5d7fb09c43f 100644
+--- a/fs/xfs/xfs_log_priv.h
++++ b/fs/xfs/xfs_log_priv.h
+@@ -280,6 +280,7 @@ struct xfs_cil {
+ 	wait_queue_head_t	xc_commit_wait;
+ 	xfs_lsn_t		xc_current_sequence;
+ 	struct work_struct	xc_push_work;
++	wait_queue_head_t	xc_push_wait;	/* background push throttle */
+ } ____cacheline_aligned_in_smp;
+ 
+ /*
+@@ -323,13 +324,53 @@ struct xfs_cil {
+  * tries to keep 25% of the log free, so we need to keep below that limit or we
+  * risk running out of free log space to start any new transactions.
+  *
+- * In order to keep background CIL push efficient, we will set a lower
+- * threshold at which background pushing is attempted without blocking current
+- * transaction commits.  A separate, higher bound defines when CIL pushes are
+- * enforced to ensure we stay within our maximum checkpoint size bounds.
+- * threshold, yet give us plenty of space for aggregation on large logs.
++ * In order to keep background CIL push efficient, we only need to ensure the
++ * CIL is large enough to maintain sufficient in-memory relogging to avoid
++ * repeated physical writes of frequently modified metadata. If we allow the CIL
++ * to grow to a substantial fraction of the log, then we may be pinning hundreds
++ * of megabytes of metadata in memory until the CIL flushes. This can cause
++ * issues when we are running low on memory - pinned memory cannot be reclaimed,
++ * and the CIL consumes a lot of memory. Hence we need to set an upper physical
++ * size limit for the CIL that limits the maximum amount of memory pinned by the
++ * CIL but does not limit performance by reducing relogging efficiency
++ * significantly.
++ *
++ * As such, the CIL push threshold ends up being the smaller of two thresholds:
++ * - a threshold large enough that it allows CIL to be pushed and progress to be
++ *   made without excessive blocking of incoming transaction commits. This is
++ *   defined to be 12.5% of the log space - half the 25% push threshold of the
++ *   AIL.
++ * - small enough that it doesn't pin excessive amounts of memory but maintains
++ *   close to peak relogging efficiency. This is defined to be 16x the iclog
++ *   buffer window (32MB) as measurements have shown this to be roughly the
++ *   point of diminishing performance increases under highly concurrent
++ *   modification workloads.
++ *
++ * To prevent the CIL from overflowing upper commit size bounds, we introduce a
++ * new threshold at which we block committing transactions until the background
++ * CIL commit commences and switches to a new context. While this is not a hard
++ * limit, it forces the process committing a transaction to the CIL to block and
++ * yeild the CPU, giving the CIL push work a chance to be scheduled and start
++ * work. This prevents a process running lots of transactions from overfilling
++ * the CIL because it is not yielding the CPU. We set the blocking limit at
++ * twice the background push space threshold so we keep in line with the AIL
++ * push thresholds.
++ *
++ * Note: this is not a -hard- limit as blocking is applied after the transaction
++ * is inserted into the CIL and the push has been triggered. It is largely a
++ * throttling mechanism that allows the CIL push to be scheduled and run. A hard
++ * limit will be difficult to implement without introducing global serialisation
++ * in the CIL commit fast path, and it's not at all clear that we actually need
++ * such hard limits given the ~7 years we've run without a hard limit before
++ * finding the first situation where a checkpoint size overflow actually
++ * occurred. Hence the simple throttle, and an ASSERT check to tell us that
++ * we've overrun the max size.
+  */
+-#define XLOG_CIL_SPACE_LIMIT(log)	(log->l_logsize >> 3)
++#define XLOG_CIL_SPACE_LIMIT(log)	\
++	min_t(int, (log)->l_logsize >> 3, BBTOB(XLOG_TOTAL_REC_SHIFT(log)) << 4)
++
++#define XLOG_CIL_BLOCKING_SPACE_LIMIT(log)	\
++	(XLOG_CIL_SPACE_LIMIT(log) * 2)
+ 
+ /*
+  * ticket grant locks, queues and accounting have their own cachlines
+diff --git a/fs/xfs/xfs_log_recover.c b/fs/xfs/xfs_log_recover.c
+index 248101876e1ec..46b1e255f55fc 100644
+--- a/fs/xfs/xfs_log_recover.c
++++ b/fs/xfs/xfs_log_recover.c
+@@ -2577,6 +2577,7 @@ xlog_recover_do_reg_buffer(
+ 	int			bit;
+ 	int			nbits;
+ 	xfs_failaddr_t		fa;
++	const size_t		size_disk_dquot = sizeof(struct xfs_disk_dquot);
+ 
+ 	trace_xfs_log_recover_buf_reg_buf(mp->m_log, buf_f);
+ 
+@@ -2619,7 +2620,7 @@ xlog_recover_do_reg_buffer(
+ 					"XFS: NULL dquot in %s.", __func__);
+ 				goto next;
+ 			}
+-			if (item->ri_buf[i].i_len < sizeof(xfs_disk_dquot_t)) {
++			if (item->ri_buf[i].i_len < size_disk_dquot) {
+ 				xfs_alert(mp,
+ 					"XFS: dquot too small (%d) in %s.",
+ 					item->ri_buf[i].i_len, __func__);
+@@ -3250,7 +3251,7 @@ xlog_recover_dquot_pass2(
+ 		xfs_alert(log->l_mp, "NULL dquot in %s.", __func__);
+ 		return -EFSCORRUPTED;
+ 	}
+-	if (item->ri_buf[1].i_len < sizeof(xfs_disk_dquot_t)) {
++	if (item->ri_buf[1].i_len < sizeof(struct xfs_disk_dquot)) {
+ 		xfs_alert(log->l_mp, "dquot too small (%d) in %s.",
+ 			item->ri_buf[1].i_len, __func__);
+ 		return -EFSCORRUPTED;
+diff --git a/fs/xfs/xfs_mount.h b/fs/xfs/xfs_mount.h
+index fdb60e09a9c54..ca7e0c656cee2 100644
+--- a/fs/xfs/xfs_mount.h
++++ b/fs/xfs/xfs_mount.h
+@@ -179,6 +179,11 @@ typedef struct xfs_mount {
+ 	struct xfs_error_cfg	m_error_cfg[XFS_ERR_CLASS_MAX][XFS_ERR_ERRNO_MAX];
+ 	struct xstats		m_stats;	/* per-fs stats */
+ 
++	/*
++	 * Workqueue item so that we can coalesce multiple inode flush attempts
++	 * into a single flush.
++	 */
++	struct work_struct	m_flush_inodes_work;
+ 	struct workqueue_struct *m_buf_workqueue;
+ 	struct workqueue_struct	*m_unwritten_workqueue;
+ 	struct workqueue_struct	*m_cil_workqueue;
+diff --git a/fs/xfs/xfs_qm.c b/fs/xfs/xfs_qm.c
+index 66ea8e4fca86c..ef2faee969096 100644
+--- a/fs/xfs/xfs_qm.c
++++ b/fs/xfs/xfs_qm.c
+@@ -121,12 +121,11 @@ xfs_qm_dqpurge(
+ {
+ 	struct xfs_mount	*mp = dqp->q_mount;
+ 	struct xfs_quotainfo	*qi = mp->m_quotainfo;
++	int			error = -EAGAIN;
+ 
+ 	xfs_dqlock(dqp);
+-	if ((dqp->dq_flags & XFS_DQ_FREEING) || dqp->q_nrefs != 0) {
+-		xfs_dqunlock(dqp);
+-		return -EAGAIN;
+-	}
++	if ((dqp->dq_flags & XFS_DQ_FREEING) || dqp->q_nrefs != 0)
++		goto out_unlock;
+ 
+ 	dqp->dq_flags |= XFS_DQ_FREEING;
+ 
+@@ -139,7 +138,6 @@ xfs_qm_dqpurge(
+ 	 */
+ 	if (XFS_DQ_IS_DIRTY(dqp)) {
+ 		struct xfs_buf	*bp = NULL;
+-		int		error;
+ 
+ 		/*
+ 		 * We don't care about getting disk errors here. We need
+@@ -149,6 +147,8 @@ xfs_qm_dqpurge(
+ 		if (!error) {
+ 			error = xfs_bwrite(bp);
+ 			xfs_buf_relse(bp);
++		} else if (error == -EAGAIN) {
++			goto out_unlock;
+ 		}
+ 		xfs_dqflock(dqp);
+ 	}
+@@ -174,6 +174,10 @@ xfs_qm_dqpurge(
+ 
+ 	xfs_qm_dqdestroy(dqp);
+ 	return 0;
++
++out_unlock:
++	xfs_dqunlock(dqp);
++	return error;
+ }
+ 
+ /*
+@@ -244,14 +248,14 @@ xfs_qm_unmount_quotas(
+ 
+ STATIC int
+ xfs_qm_dqattach_one(
+-	xfs_inode_t	*ip,
+-	xfs_dqid_t	id,
+-	uint		type,
+-	bool		doalloc,
+-	xfs_dquot_t	**IO_idqpp)
++	struct xfs_inode	*ip,
++	xfs_dqid_t		id,
++	uint			type,
++	bool			doalloc,
++	struct xfs_dquot	**IO_idqpp)
+ {
+-	xfs_dquot_t	*dqp;
+-	int		error;
++	struct xfs_dquot	*dqp;
++	int			error;
+ 
+ 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
+ 	error = 0;
+@@ -544,8 +548,8 @@ xfs_qm_set_defquota(
+ 	uint		type,
+ 	xfs_quotainfo_t	*qinf)
+ {
+-	xfs_dquot_t		*dqp;
+-	struct xfs_def_quota    *defq;
++	struct xfs_dquot	*dqp;
++	struct xfs_def_quota	*defq;
+ 	struct xfs_disk_dquot	*ddqp;
+ 	int			error;
+ 
+@@ -875,12 +879,20 @@ xfs_qm_reset_dqcounts(
+ 		ddq->d_bcount = 0;
+ 		ddq->d_icount = 0;
+ 		ddq->d_rtbcount = 0;
+-		ddq->d_btimer = 0;
+-		ddq->d_itimer = 0;
+-		ddq->d_rtbtimer = 0;
+-		ddq->d_bwarns = 0;
+-		ddq->d_iwarns = 0;
+-		ddq->d_rtbwarns = 0;
++
++		/*
++		 * dquot id 0 stores the default grace period and the maximum
++		 * warning limit that were set by the administrator, so we
++		 * should not reset them.
++		 */
++		if (ddq->d_id != 0) {
++			ddq->d_btimer = 0;
++			ddq->d_itimer = 0;
++			ddq->d_rtbtimer = 0;
++			ddq->d_bwarns = 0;
++			ddq->d_iwarns = 0;
++			ddq->d_rtbwarns = 0;
++		}
+ 
+ 		if (xfs_sb_version_hascrc(&mp->m_sb)) {
+ 			xfs_update_cksum((char *)&dqb[j],
+@@ -1746,14 +1758,14 @@ error_rele:
+  * Actually transfer ownership, and do dquot modifications.
+  * These were already reserved.
+  */
+-xfs_dquot_t *
++struct xfs_dquot *
+ xfs_qm_vop_chown(
+-	xfs_trans_t	*tp,
+-	xfs_inode_t	*ip,
+-	xfs_dquot_t	**IO_olddq,
+-	xfs_dquot_t	*newdq)
++	struct xfs_trans	*tp,
++	struct xfs_inode	*ip,
++	struct xfs_dquot	**IO_olddq,
++	struct xfs_dquot	*newdq)
+ {
+-	xfs_dquot_t	*prevdq;
++	struct xfs_dquot	*prevdq;
+ 	uint		bfield = XFS_IS_REALTIME_INODE(ip) ?
+ 				 XFS_TRANS_DQ_RTBCOUNT : XFS_TRANS_DQ_BCOUNT;
+ 
+diff --git a/fs/xfs/xfs_qm_bhv.c b/fs/xfs/xfs_qm_bhv.c
+index 5d72e88598b41..b784a3751fe25 100644
+--- a/fs/xfs/xfs_qm_bhv.c
++++ b/fs/xfs/xfs_qm_bhv.c
+@@ -54,11 +54,11 @@ xfs_fill_statvfs_from_dquot(
+  */
+ void
+ xfs_qm_statvfs(
+-	xfs_inode_t		*ip,
++	struct xfs_inode	*ip,
+ 	struct kstatfs		*statp)
+ {
+-	xfs_mount_t		*mp = ip->i_mount;
+-	xfs_dquot_t		*dqp;
++	struct xfs_mount	*mp = ip->i_mount;
++	struct xfs_dquot	*dqp;
+ 
+ 	if (!xfs_qm_dqget(mp, xfs_get_projid(ip), XFS_DQ_PROJ, false, &dqp)) {
+ 		xfs_fill_statvfs_from_dquot(statp, dqp);
+diff --git a/fs/xfs/xfs_qm_syscalls.c b/fs/xfs/xfs_qm_syscalls.c
+index da7ad0383037b..5d5ac65aa1cca 100644
+--- a/fs/xfs/xfs_qm_syscalls.c
++++ b/fs/xfs/xfs_qm_syscalls.c
+@@ -19,9 +19,71 @@
+ #include "xfs_qm.h"
+ #include "xfs_icache.h"
+ 
+-STATIC int	xfs_qm_log_quotaoff(xfs_mount_t *, xfs_qoff_logitem_t **, uint);
+-STATIC int	xfs_qm_log_quotaoff_end(xfs_mount_t *, xfs_qoff_logitem_t *,
+-					uint);
++STATIC int
++xfs_qm_log_quotaoff(
++	struct xfs_mount	*mp,
++	struct xfs_qoff_logitem	**qoffstartp,
++	uint			flags)
++{
++	struct xfs_trans	*tp;
++	int			error;
++	struct xfs_qoff_logitem	*qoffi;
++
++	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_qm_quotaoff, 0, 0, 0, &tp);
++	if (error)
++		goto out;
++
++	qoffi = xfs_trans_get_qoff_item(tp, NULL, flags & XFS_ALL_QUOTA_ACCT);
++	xfs_trans_log_quotaoff_item(tp, qoffi);
++
++	spin_lock(&mp->m_sb_lock);
++	mp->m_sb.sb_qflags = (mp->m_qflags & ~(flags)) & XFS_MOUNT_QUOTA_ALL;
++	spin_unlock(&mp->m_sb_lock);
++
++	xfs_log_sb(tp);
++
++	/*
++	 * We have to make sure that the transaction is secure on disk before we
++	 * return and actually stop quota accounting. So, make it synchronous.
++	 * We don't care about quotoff's performance.
++	 */
++	xfs_trans_set_sync(tp);
++	error = xfs_trans_commit(tp);
++	if (error)
++		goto out;
++
++	*qoffstartp = qoffi;
++out:
++	return error;
++}
++
++STATIC int
++xfs_qm_log_quotaoff_end(
++	struct xfs_mount	*mp,
++	struct xfs_qoff_logitem	**startqoff,
++	uint			flags)
++{
++	struct xfs_trans	*tp;
++	int			error;
++	struct xfs_qoff_logitem	*qoffi;
++
++	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_qm_equotaoff, 0, 0, 0, &tp);
++	if (error)
++		return error;
++
++	qoffi = xfs_trans_get_qoff_item(tp, *startqoff,
++					flags & XFS_ALL_QUOTA_ACCT);
++	xfs_trans_log_quotaoff_item(tp, qoffi);
++	*startqoff = NULL;
++
++	/*
++	 * We have to make sure that the transaction is secure on disk before we
++	 * return and actually stop quota accounting. So, make it synchronous.
++	 * We don't care about quotoff's performance.
++	 */
++	xfs_trans_set_sync(tp);
++	return xfs_trans_commit(tp);
++}
+ 
+ /*
+  * Turn off quota accounting and/or enforcement for all udquots and/or
+@@ -40,7 +102,7 @@ xfs_qm_scall_quotaoff(
+ 	uint			dqtype;
+ 	int			error;
+ 	uint			inactivate_flags;
+-	xfs_qoff_logitem_t	*qoffstart;
++	struct xfs_qoff_logitem	*qoffstart = NULL;
+ 
+ 	/*
+ 	 * No file system can have quotas enabled on disk but not in core.
+@@ -165,7 +227,7 @@ xfs_qm_scall_quotaoff(
+ 	 * So, we have QUOTAOFF start and end logitems; the start
+ 	 * logitem won't get overwritten until the end logitem appears...
+ 	 */
+-	error = xfs_qm_log_quotaoff_end(mp, qoffstart, flags);
++	error = xfs_qm_log_quotaoff_end(mp, &qoffstart, flags);
+ 	if (error) {
+ 		/* We're screwed now. Shutdown is the only option. */
+ 		xfs_force_shutdown(mp, SHUTDOWN_CORRUPT_INCORE);
+@@ -198,6 +260,8 @@ xfs_qm_scall_quotaoff(
+ 	}
+ 
+ out_unlock:
++	if (error && qoffstart)
++		xfs_qm_qoff_logitem_relse(qoffstart);
+ 	mutex_unlock(&q->qi_quotaofflock);
+ 	return error;
+ }
+@@ -538,74 +602,6 @@ out_unlock:
+ 	return error;
+ }
+ 
+-STATIC int
+-xfs_qm_log_quotaoff_end(
+-	xfs_mount_t		*mp,
+-	xfs_qoff_logitem_t	*startqoff,
+-	uint			flags)
+-{
+-	xfs_trans_t		*tp;
+-	int			error;
+-	xfs_qoff_logitem_t	*qoffi;
+-
+-	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_qm_equotaoff, 0, 0, 0, &tp);
+-	if (error)
+-		return error;
+-
+-	qoffi = xfs_trans_get_qoff_item(tp, startqoff,
+-					flags & XFS_ALL_QUOTA_ACCT);
+-	xfs_trans_log_quotaoff_item(tp, qoffi);
+-
+-	/*
+-	 * We have to make sure that the transaction is secure on disk before we
+-	 * return and actually stop quota accounting. So, make it synchronous.
+-	 * We don't care about quotoff's performance.
+-	 */
+-	xfs_trans_set_sync(tp);
+-	return xfs_trans_commit(tp);
+-}
+-
+-
+-STATIC int
+-xfs_qm_log_quotaoff(
+-	xfs_mount_t	       *mp,
+-	xfs_qoff_logitem_t     **qoffstartp,
+-	uint		       flags)
+-{
+-	xfs_trans_t	       *tp;
+-	int			error;
+-	xfs_qoff_logitem_t     *qoffi;
+-
+-	*qoffstartp = NULL;
+-
+-	error = xfs_trans_alloc(mp, &M_RES(mp)->tr_qm_quotaoff, 0, 0, 0, &tp);
+-	if (error)
+-		goto out;
+-
+-	qoffi = xfs_trans_get_qoff_item(tp, NULL, flags & XFS_ALL_QUOTA_ACCT);
+-	xfs_trans_log_quotaoff_item(tp, qoffi);
+-
+-	spin_lock(&mp->m_sb_lock);
+-	mp->m_sb.sb_qflags = (mp->m_qflags & ~(flags)) & XFS_MOUNT_QUOTA_ALL;
+-	spin_unlock(&mp->m_sb_lock);
+-
+-	xfs_log_sb(tp);
+-
+-	/*
+-	 * We have to make sure that the transaction is secure on disk before we
+-	 * return and actually stop quota accounting. So, make it synchronous.
+-	 * We don't care about quotoff's performance.
+-	 */
+-	xfs_trans_set_sync(tp);
+-	error = xfs_trans_commit(tp);
+-	if (error)
+-		goto out;
+-
+-	*qoffstartp = qoffi;
+-out:
+-	return error;
+-}
+-
+ /* Fill out the quota context. */
+ static void
+ xfs_qm_scall_getquota_fill_qc(
+diff --git a/fs/xfs/xfs_stats.c b/fs/xfs/xfs_stats.c
+index 113883c4f202e..f70f1255220b3 100644
+--- a/fs/xfs/xfs_stats.c
++++ b/fs/xfs/xfs_stats.c
+@@ -57,13 +57,13 @@ int xfs_stats_format(struct xfsstats __percpu *stats, char *buf)
+ 	/* Loop over all stats groups */
+ 
+ 	for (i = j = 0; i < ARRAY_SIZE(xstats); i++) {
+-		len += snprintf(buf + len, PATH_MAX - len, "%s",
++		len += scnprintf(buf + len, PATH_MAX - len, "%s",
+ 				xstats[i].desc);
+ 		/* inner loop does each group */
+ 		for (; j < xstats[i].endpoint; j++)
+-			len += snprintf(buf + len, PATH_MAX - len, " %u",
++			len += scnprintf(buf + len, PATH_MAX - len, " %u",
+ 					counter_val(stats, j));
+-		len += snprintf(buf + len, PATH_MAX - len, "\n");
++		len += scnprintf(buf + len, PATH_MAX - len, "\n");
+ 	}
+ 	/* extra precision counters */
+ 	for_each_possible_cpu(i) {
+@@ -72,9 +72,9 @@ int xfs_stats_format(struct xfsstats __percpu *stats, char *buf)
+ 		xs_read_bytes += per_cpu_ptr(stats, i)->s.xs_read_bytes;
+ 	}
+ 
+-	len += snprintf(buf + len, PATH_MAX-len, "xpc %Lu %Lu %Lu\n",
++	len += scnprintf(buf + len, PATH_MAX-len, "xpc %Lu %Lu %Lu\n",
+ 			xs_xstrat_bytes, xs_write_bytes, xs_read_bytes);
+-	len += snprintf(buf + len, PATH_MAX-len, "debug %u\n",
++	len += scnprintf(buf + len, PATH_MAX-len, "debug %u\n",
+ #if defined(DEBUG)
+ 		1);
+ #else
+diff --git a/fs/xfs/xfs_super.c b/fs/xfs/xfs_super.c
+index a3a54a0fbffea..2429acbfb1324 100644
+--- a/fs/xfs/xfs_super.c
++++ b/fs/xfs/xfs_super.c
+@@ -840,6 +840,20 @@ xfs_destroy_mount_workqueues(
+ 	destroy_workqueue(mp->m_buf_workqueue);
+ }
+ 
++static void
++xfs_flush_inodes_worker(
++	struct work_struct	*work)
++{
++	struct xfs_mount	*mp = container_of(work, struct xfs_mount,
++						   m_flush_inodes_work);
++	struct super_block	*sb = mp->m_super;
++
++	if (down_read_trylock(&sb->s_umount)) {
++		sync_inodes_sb(sb);
++		up_read(&sb->s_umount);
++	}
++}
++
+ /*
+  * Flush all dirty data to disk. Must not be called while holding an XFS_ILOCK
+  * or a page lock. We use sync_inodes_sb() here to ensure we block while waiting
+@@ -850,12 +864,15 @@ void
+ xfs_flush_inodes(
+ 	struct xfs_mount	*mp)
+ {
+-	struct super_block	*sb = mp->m_super;
++	/*
++	 * If flush_work() returns true then that means we waited for a flush
++	 * which was already in progress.  Don't bother running another scan.
++	 */
++	if (flush_work(&mp->m_flush_inodes_work))
++		return;
+ 
+-	if (down_read_trylock(&sb->s_umount)) {
+-		sync_inodes_sb(sb);
+-		up_read(&sb->s_umount);
+-	}
++	queue_work(mp->m_sync_workqueue, &mp->m_flush_inodes_work);
++	flush_work(&mp->m_flush_inodes_work);
+ }
+ 
+ /* Catch misguided souls that try to use this interface on XFS */
+@@ -1532,6 +1549,7 @@ xfs_mount_alloc(
+ 	spin_lock_init(&mp->m_perag_lock);
+ 	mutex_init(&mp->m_growlock);
+ 	atomic_set(&mp->m_active_trans, 0);
++	INIT_WORK(&mp->m_flush_inodes_work, xfs_flush_inodes_worker);
+ 	INIT_DELAYED_WORK(&mp->m_reclaim_work, xfs_reclaim_worker);
+ 	INIT_DELAYED_WORK(&mp->m_eofblocks_work, xfs_eofblocks_worker);
+ 	INIT_DELAYED_WORK(&mp->m_cowblocks_work, xfs_cowblocks_worker);
+diff --git a/fs/xfs/xfs_trace.h b/fs/xfs/xfs_trace.h
+index ffb398c1de698..b5d4ca60145a5 100644
+--- a/fs/xfs/xfs_trace.h
++++ b/fs/xfs/xfs_trace.h
+@@ -1011,6 +1011,7 @@ DEFINE_LOGGRANT_EVENT(xfs_log_regrant_reserve_sub);
+ DEFINE_LOGGRANT_EVENT(xfs_log_ungrant_enter);
+ DEFINE_LOGGRANT_EVENT(xfs_log_ungrant_exit);
+ DEFINE_LOGGRANT_EVENT(xfs_log_ungrant_sub);
++DEFINE_LOGGRANT_EVENT(xfs_log_cil_wait);
+ 
+ DECLARE_EVENT_CLASS(xfs_log_item_class,
+ 	TP_PROTO(struct xfs_log_item *lip),
+diff --git a/fs/xfs/xfs_trans_ail.c b/fs/xfs/xfs_trans_ail.c
+index 812108f6cc89c..af782a7de21a6 100644
+--- a/fs/xfs/xfs_trans_ail.c
++++ b/fs/xfs/xfs_trans_ail.c
+@@ -108,17 +108,25 @@ xfs_ail_next(
+  * We need the AIL lock in order to get a coherent read of the lsn of the last
+  * item in the AIL.
+  */
++static xfs_lsn_t
++__xfs_ail_min_lsn(
++	struct xfs_ail		*ailp)
++{
++	struct xfs_log_item	*lip = xfs_ail_min(ailp);
++
++	if (lip)
++		return lip->li_lsn;
++	return 0;
++}
++
+ xfs_lsn_t
+ xfs_ail_min_lsn(
+ 	struct xfs_ail		*ailp)
+ {
+-	xfs_lsn_t		lsn = 0;
+-	struct xfs_log_item	*lip;
++	xfs_lsn_t		lsn;
+ 
+ 	spin_lock(&ailp->ail_lock);
+-	lip = xfs_ail_min(ailp);
+-	if (lip)
+-		lsn = lip->li_lsn;
++	lsn = __xfs_ail_min_lsn(ailp);
+ 	spin_unlock(&ailp->ail_lock);
+ 
+ 	return lsn;
+@@ -680,6 +688,28 @@ xfs_ail_push_all_sync(
+ 	finish_wait(&ailp->ail_empty, &wait);
+ }
+ 
++void
++xfs_ail_update_finish(
++	struct xfs_ail		*ailp,
++	xfs_lsn_t		old_lsn) __releases(ailp->ail_lock)
++{
++	struct xfs_mount	*mp = ailp->ail_mount;
++
++	/* if the tail lsn hasn't changed, don't do updates or wakeups. */
++	if (!old_lsn || old_lsn == __xfs_ail_min_lsn(ailp)) {
++		spin_unlock(&ailp->ail_lock);
++		return;
++	}
++
++	if (!XFS_FORCED_SHUTDOWN(mp))
++		xlog_assign_tail_lsn_locked(mp);
++
++	if (list_empty(&ailp->ail_head))
++		wake_up_all(&ailp->ail_empty);
++	spin_unlock(&ailp->ail_lock);
++	xfs_log_space_wake(mp);
++}
++
+ /*
+  * xfs_trans_ail_update - bulk AIL insertion operation.
+  *
+@@ -711,7 +741,7 @@ xfs_trans_ail_update_bulk(
+ 	xfs_lsn_t		lsn) __releases(ailp->ail_lock)
+ {
+ 	struct xfs_log_item	*mlip;
+-	int			mlip_changed = 0;
++	xfs_lsn_t		tail_lsn = 0;
+ 	int			i;
+ 	LIST_HEAD(tmp);
+ 
+@@ -726,9 +756,10 @@ xfs_trans_ail_update_bulk(
+ 				continue;
+ 
+ 			trace_xfs_ail_move(lip, lip->li_lsn, lsn);
++			if (mlip == lip && !tail_lsn)
++				tail_lsn = lip->li_lsn;
++
+ 			xfs_ail_delete(ailp, lip);
+-			if (mlip == lip)
+-				mlip_changed = 1;
+ 		} else {
+ 			trace_xfs_ail_insert(lip, 0, lsn);
+ 		}
+@@ -739,23 +770,23 @@ xfs_trans_ail_update_bulk(
+ 	if (!list_empty(&tmp))
+ 		xfs_ail_splice(ailp, cur, &tmp, lsn);
+ 
+-	if (mlip_changed) {
+-		if (!XFS_FORCED_SHUTDOWN(ailp->ail_mount))
+-			xlog_assign_tail_lsn_locked(ailp->ail_mount);
+-		spin_unlock(&ailp->ail_lock);
+-
+-		xfs_log_space_wake(ailp->ail_mount);
+-	} else {
+-		spin_unlock(&ailp->ail_lock);
+-	}
++	xfs_ail_update_finish(ailp, tail_lsn);
+ }
+ 
+-bool
++/*
++ * Delete one log item from the AIL.
++ *
++ * If this item was at the tail of the AIL, return the LSN of the log item so
++ * that we can use it to check if the LSN of the tail of the log has moved
++ * when finishing up the AIL delete process in xfs_ail_update_finish().
++ */
++xfs_lsn_t
+ xfs_ail_delete_one(
+ 	struct xfs_ail		*ailp,
+ 	struct xfs_log_item	*lip)
+ {
+ 	struct xfs_log_item	*mlip = xfs_ail_min(ailp);
++	xfs_lsn_t		lsn = lip->li_lsn;
+ 
+ 	trace_xfs_ail_delete(lip, mlip->li_lsn, lip->li_lsn);
+ 	xfs_ail_delete(ailp, lip);
+@@ -763,7 +794,9 @@ xfs_ail_delete_one(
+ 	clear_bit(XFS_LI_IN_AIL, &lip->li_flags);
+ 	lip->li_lsn = 0;
+ 
+-	return mlip == lip;
++	if (mlip == lip)
++		return lsn;
++	return 0;
+ }
+ 
+ /**
+@@ -791,10 +824,10 @@ void
+ xfs_trans_ail_delete(
+ 	struct xfs_ail		*ailp,
+ 	struct xfs_log_item	*lip,
+-	int			shutdown_type) __releases(ailp->ail_lock)
++	int			shutdown_type)
+ {
+ 	struct xfs_mount	*mp = ailp->ail_mount;
+-	bool			mlip_changed;
++	xfs_lsn_t		tail_lsn;
+ 
+ 	if (!test_bit(XFS_LI_IN_AIL, &lip->li_flags)) {
+ 		spin_unlock(&ailp->ail_lock);
+@@ -807,17 +840,8 @@ xfs_trans_ail_delete(
+ 		return;
+ 	}
+ 
+-	mlip_changed = xfs_ail_delete_one(ailp, lip);
+-	if (mlip_changed) {
+-		if (!XFS_FORCED_SHUTDOWN(mp))
+-			xlog_assign_tail_lsn_locked(mp);
+-		if (list_empty(&ailp->ail_head))
+-			wake_up_all(&ailp->ail_empty);
+-	}
+-
+-	spin_unlock(&ailp->ail_lock);
+-	if (mlip_changed)
+-		xfs_log_space_wake(ailp->ail_mount);
++	tail_lsn = xfs_ail_delete_one(ailp, lip);
++	xfs_ail_update_finish(ailp, tail_lsn);
+ }
+ 
+ int
+diff --git a/fs/xfs/xfs_trans_dquot.c b/fs/xfs/xfs_trans_dquot.c
+index 904780dd74aa3..2a85c393cb710 100644
+--- a/fs/xfs/xfs_trans_dquot.c
++++ b/fs/xfs/xfs_trans_dquot.c
+@@ -25,8 +25,8 @@ STATIC void	xfs_trans_alloc_dqinfo(xfs_trans_t *);
+  */
+ void
+ xfs_trans_dqjoin(
+-	xfs_trans_t	*tp,
+-	xfs_dquot_t	*dqp)
++	struct xfs_trans	*tp,
++	struct xfs_dquot	*dqp)
+ {
+ 	ASSERT(XFS_DQ_IS_LOCKED(dqp));
+ 	ASSERT(dqp->q_logitem.qli_dquot == dqp);
+@@ -49,8 +49,8 @@ xfs_trans_dqjoin(
+  */
+ void
+ xfs_trans_log_dquot(
+-	xfs_trans_t	*tp,
+-	xfs_dquot_t	*dqp)
++	struct xfs_trans	*tp,
++	struct xfs_dquot	*dqp)
+ {
+ 	ASSERT(XFS_DQ_IS_LOCKED(dqp));
+ 
+@@ -486,12 +486,12 @@ xfs_trans_apply_dquot_deltas(
+  */
+ void
+ xfs_trans_unreserve_and_mod_dquots(
+-	xfs_trans_t		*tp)
++	struct xfs_trans	*tp)
+ {
+ 	int			i, j;
+-	xfs_dquot_t		*dqp;
++	struct xfs_dquot	*dqp;
+ 	struct xfs_dqtrx	*qtrx, *qa;
+-	bool                    locked;
++	bool			locked;
+ 
+ 	if (!tp->t_dqinfo || !(tp->t_flags & XFS_TRANS_DQ_DIRTY))
+ 		return;
+@@ -571,21 +571,21 @@ xfs_quota_warn(
+  */
+ STATIC int
+ xfs_trans_dqresv(
+-	xfs_trans_t	*tp,
+-	xfs_mount_t	*mp,
+-	xfs_dquot_t	*dqp,
+-	int64_t		nblks,
+-	long		ninos,
+-	uint		flags)
++	struct xfs_trans	*tp,
++	struct xfs_mount	*mp,
++	struct xfs_dquot	*dqp,
++	int64_t			nblks,
++	long			ninos,
++	uint			flags)
+ {
+-	xfs_qcnt_t	hardlimit;
+-	xfs_qcnt_t	softlimit;
+-	time_t		timer;
+-	xfs_qwarncnt_t	warns;
+-	xfs_qwarncnt_t	warnlimit;
+-	xfs_qcnt_t	total_count;
+-	xfs_qcnt_t	*resbcountp;
+-	xfs_quotainfo_t	*q = mp->m_quotainfo;
++	xfs_qcnt_t		hardlimit;
++	xfs_qcnt_t		softlimit;
++	time_t			timer;
++	xfs_qwarncnt_t		warns;
++	xfs_qwarncnt_t		warnlimit;
++	xfs_qcnt_t		total_count;
++	xfs_qcnt_t		*resbcountp;
++	xfs_quotainfo_t		*q = mp->m_quotainfo;
+ 	struct xfs_def_quota	*defq;
+ 
+ 
+@@ -824,13 +824,13 @@ xfs_trans_reserve_quota_nblks(
+ /*
+  * This routine is called to allocate a quotaoff log item.
+  */
+-xfs_qoff_logitem_t *
++struct xfs_qoff_logitem *
+ xfs_trans_get_qoff_item(
+-	xfs_trans_t		*tp,
+-	xfs_qoff_logitem_t	*startqoff,
++	struct xfs_trans	*tp,
++	struct xfs_qoff_logitem	*startqoff,
+ 	uint			flags)
+ {
+-	xfs_qoff_logitem_t	*q;
++	struct xfs_qoff_logitem	*q;
+ 
+ 	ASSERT(tp != NULL);
+ 
+@@ -852,8 +852,8 @@ xfs_trans_get_qoff_item(
+  */
+ void
+ xfs_trans_log_quotaoff_item(
+-	xfs_trans_t		*tp,
+-	xfs_qoff_logitem_t	*qlp)
++	struct xfs_trans	*tp,
++	struct xfs_qoff_logitem	*qlp)
+ {
+ 	tp->t_flags |= XFS_TRANS_DIRTY;
+ 	set_bit(XFS_LI_DIRTY, &qlp->qql_item.li_flags);
+diff --git a/fs/xfs/xfs_trans_priv.h b/fs/xfs/xfs_trans_priv.h
+index 2e073c1c4614f..35655eac01a65 100644
+--- a/fs/xfs/xfs_trans_priv.h
++++ b/fs/xfs/xfs_trans_priv.h
+@@ -91,9 +91,11 @@ xfs_trans_ail_update(
+ 	xfs_trans_ail_update_bulk(ailp, NULL, &lip, 1, lsn);
+ }
+ 
+-bool xfs_ail_delete_one(struct xfs_ail *ailp, struct xfs_log_item *lip);
++xfs_lsn_t xfs_ail_delete_one(struct xfs_ail *ailp, struct xfs_log_item *lip);
++void xfs_ail_update_finish(struct xfs_ail *ailp, xfs_lsn_t old_lsn)
++			__releases(ailp->ail_lock);
+ void xfs_trans_ail_delete(struct xfs_ail *ailp, struct xfs_log_item *lip,
+-		int shutdown_type) __releases(ailp->ail_lock);
++		int shutdown_type);
+ 
+ static inline void
+ xfs_trans_ail_remove(
+diff --git a/net/atm/mpoa_proc.c b/net/atm/mpoa_proc.c
+index 46d6cd9a36ae7..c4e9538ac144d 100644
+--- a/net/atm/mpoa_proc.c
++++ b/net/atm/mpoa_proc.c
+@@ -222,11 +222,12 @@ static ssize_t proc_mpc_write(struct file *file, const char __user *buff,
+ 	if (!page)
+ 		return -ENOMEM;
+ 
+-	for (p = page, len = 0; len < nbytes; p++, len++) {
++	for (p = page, len = 0; len < nbytes; p++) {
+ 		if (get_user(*p, buff++)) {
+ 			free_page((unsigned long)page);
+ 			return -EFAULT;
+ 		}
++		len += 1;
+ 		if (*p == '\0' || *p == '\n')
+ 			break;
+ 	}
+diff --git a/net/sched/sch_cake.c b/net/sched/sch_cake.c
+index 0eb4d4a568f77..9e5e7fda0f4a9 100644
+--- a/net/sched/sch_cake.c
++++ b/net/sched/sch_cake.c
+@@ -2190,8 +2190,12 @@ retry:
+ 
+ static void cake_reset(struct Qdisc *sch)
+ {
++	struct cake_sched_data *q = qdisc_priv(sch);
+ 	u32 c;
+ 
++	if (!q->tins)
++		return;
++
+ 	for (c = 0; c < CAKE_MAX_TINS; c++)
+ 		cake_clear_tin(sch, c);
+ }
+diff --git a/net/tipc/discover.c b/net/tipc/discover.c
+index c138d68e8a695..0006c9f871998 100644
+--- a/net/tipc/discover.c
++++ b/net/tipc/discover.c
+@@ -146,8 +146,8 @@ static bool tipc_disc_addr_trial_msg(struct tipc_discoverer *d,
+ {
+ 	struct net *net = d->net;
+ 	struct tipc_net *tn = tipc_net(net);
+-	bool trial = time_before(jiffies, tn->addr_trial_end);
+ 	u32 self = tipc_own_addr(net);
++	bool trial = time_before(jiffies, tn->addr_trial_end) && !self;
+ 
+ 	if (mtyp == DSC_TRIAL_FAIL_MSG) {
+ 		if (!trial)
+diff --git a/net/tipc/topsrv.c b/net/tipc/topsrv.c
+index 444e1792d02cf..b8797ff153e6b 100644
+--- a/net/tipc/topsrv.c
++++ b/net/tipc/topsrv.c
+@@ -568,7 +568,7 @@ bool tipc_topsrv_kern_subscr(struct net *net, u32 port, u32 type, u32 lower,
+ 	sub.seq.upper = upper;
+ 	sub.timeout = TIPC_WAIT_FOREVER;
+ 	sub.filter = filter;
+-	*(u32 *)&sub.usr_handle = port;
++	*(u64 *)&sub.usr_handle = (u64)port;
+ 
+ 	con = tipc_conn_alloc(tipc_topsrv(net));
+ 	if (IS_ERR(con))
+diff --git a/virt/kvm/arm/vgic/vgic-its.c b/virt/kvm/arm/vgic/vgic-its.c
+index 35be0e2a46393..e06bb8ed7688a 100644
+--- a/virt/kvm/arm/vgic/vgic-its.c
++++ b/virt/kvm/arm/vgic/vgic-its.c
+@@ -2095,7 +2095,7 @@ static int scan_its_table(struct vgic_its *its, gpa_t base, int size, u32 esz,
+ 
+ 	memset(entry, 0, esz);
+ 
+-	while (len > 0) {
++	while (true) {
+ 		int next_offset;
+ 		size_t byte_offset;
+ 
+@@ -2108,6 +2108,9 @@ static int scan_its_table(struct vgic_its *its, gpa_t base, int size, u32 esz,
+ 			return next_offset;
+ 
+ 		byte_offset = next_offset * esz;
++		if (byte_offset >= len)
++			break;
++
+ 		id += next_offset;
+ 		gpa += byte_offset;
+ 		len -= byte_offset;
