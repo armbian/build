@@ -25,7 +25,7 @@ function extension_prepare_config__prepare_grub-riscv64() {
 
 	local uefi_packages="efibootmgr efivar cloud-initramfs-growroot os-prober grub-efi-${ARCH}-bin grub-efi-${ARCH}"
 
-	elif [[ "${DISTRIBUTION}" == "Debian" ]]; then
+	elif [[ "${DISTRIBUTION}" == "Debian" && "${KERNEL_ONLY}" == "no" ]]; then
 
 		exit_with_error "${DISTRIBUTION} is not supported yet"
 
