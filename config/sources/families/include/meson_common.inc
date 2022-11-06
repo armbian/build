@@ -17,7 +17,7 @@ case $BOARD in
 		BOOTDIR='u-boot-odroidc1'
 		BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
 		BOOTBRANCH='branch:odroidc-v2011.03'
-
+		BOOTPATCHDIR="legacy"
 		UBOOT_COMPILER="arm-linux-gnueabihf-"
 		UBOOT_USE_GCC='< 4.9'
 

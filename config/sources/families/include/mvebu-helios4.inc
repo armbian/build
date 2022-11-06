@@ -5,7 +5,7 @@ case $BRANCH in
 		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
 		BOOTBRANCH='tag:v2019.04'
 		BOOTDIR=$MAINLINE_UBOOT_DIR
-		BOOTPATCHDIR='u-boot-helios4'
+		BOOTPATCHDIR='legacy/u-boot-helios4'
 		BOOTSCRIPT='boot-mvebu.cmd:boot.cmd'
 
 		UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
