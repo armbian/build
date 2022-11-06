@@ -322,12 +322,6 @@ POST_FAMILY_CONFIG
 
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
-	# riscv is not in main repo
-	if [[ "${ARCH}" == "riscv64" ]] && [[ $DISTRIBUTION == Debian ]]; then
-		DEBIAN_MIRROR='deb.debian.org/debian-ports'
-		DEBOOTSTRAP_OPTION="--keyring /usr/share/keyrings/debian-ports-archive-keyring.gpg --include=debian-ports-archive-keyring"
-	fi
-
 	# For (late) user override.
 	# Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.
 	#         in case the user tries to use them in lib.config, hopefully they'll be detected as "wishful hooking" and the user will be wrn'ed.

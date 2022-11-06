@@ -26,17 +26,9 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	local uefi_packages="efibootmgr efivar cloud-initramfs-growroot os-prober grub-efi-${ARCH}-bin grub-efi-${ARCH}"
 
 	elif [[ "${DISTRIBUTION}" == "Debian" ]]; then
-	display_alert "Prepare Debian" "${EXTENSION}" "info"
 
-	local uefi_packages=""
+		exit_with_error "${DISTRIBUTION} is not supported yet"
 
-	export uefi_packages="${uefi_packages} grub-pc-bin grub-pc"
-
-		# Debian's prebuilt kernels dont support hvc0, hack.
-		if [[ "${SERIALCON}" == "hvc0" ]]; then
-			display_alert "Debian's kernels don't support hvc0, changing to ttyS0" "${DISTRIBUTION}" "wrn"
-			export SERIALCON="ttyS0"
-		fi
 	fi
 
 	DISTRO_KERNEL_PACKAGES=""
