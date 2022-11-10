@@ -84,6 +84,11 @@ function prepare_and_config_main_build_single() {
 
 	fi
 
+	if [[ $UBOOT_ONLY == yes ]]; then
+		# UBOOT_ONLY implies KERNEL_ONLY=yes to make subsequent config validation happy
+		KERNEL_ONLY=yes
+	fi
+
 	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 	interactive_config_ask_kernel

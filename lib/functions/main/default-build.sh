@@ -56,81 +56,91 @@ do_default() {
 		fi
 	}
 
-	# Compile kernel if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
+	if [[ $UBOOT_ONLY == yes ]]; then
 
-		KDEB_CHANGELOG_DIST=$RELEASE
-		[[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
-
-	fi
-
-	# Compile armbian-config if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-
-		[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
-
-	fi
-
-	# Compile armbian-zsh if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then
-
-		[[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]] && compile_armbian-zsh
-
-	fi
-
-	# Compile plymouth-theme-armbian if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/plymouth-theme-armbian_${REVISION}_all.deb ]]; then
-
-		[[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]] && compile_plymouth-theme-armbian
-
-	fi
-
-	# Compile armbian-firmware if packed .deb does not exist or use the one from repository
-	if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
-
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
-			[[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]] && { # Build firmware by default.
-				FULL=""
-				REPLACE="-full"
-				compile_firmware
-				FULL="-full"
-				REPLACE=""
-				compile_firmware
-			}
-
-		fi
-
-	fi
-
-	overlayfs_wrapper "cleanup"
-
-	# create board support package
-	[[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]] && create_board_package
-
-	# create desktop package
-	[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb" && "${REPOSITORY_INSTALL}" != *armbian-desktop* ]] && create_desktop_package
-	[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-desktop* ]] && create_bsp_desktop_package
-
-	# skip image creation if exists. useful for CI when making a lot of images
-	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
-		display_alert "Skipping image creation" "image already made - IMAGE_PRESENT is set" "wrn"
-		exit
-	fi
-
-	# build additional packages
-	[[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
-
-	if [[ $KERNEL_ONLY != yes ]]; then
-
-		[[ $BSP_BUILD != yes ]] && debootstrap_ng
+		display_alert "U-Boot build done" "@host" "info"
+		display_alert "Target directory" "${DEB_STORAGE}/" "info"
+		display_alert "File name" "${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" "info"
 
 	else
 
-		display_alert "Kernel build done" "@host" "info"
-		display_alert "Target directory" "${DEB_STORAGE}/" "info"
-		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
+		# Compile kernel if packed .deb does not exist or use the one from repository
+		if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 
-	fi
+			KDEB_CHANGELOG_DIST=$RELEASE
+			[[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
+
+		fi
+
+		# Compile armbian-config if packed .deb does not exist or use the one from repository
+		if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
+
+			[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
+
+		fi
+
+		# Compile armbian-zsh if packed .deb does not exist or use the one from repository
+		if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then
+
+			[[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]] && compile_armbian-zsh
+
+		fi
+
+		# Compile plymouth-theme-armbian if packed .deb does not exist or use the one from repository
+		if [[ ! -f ${DEB_STORAGE}/plymouth-theme-armbian_${REVISION}_all.deb ]]; then
+
+			[[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]] && compile_plymouth-theme-armbian
+
+		fi
+
+		# Compile armbian-firmware if packed .deb does not exist or use the one from repository
+		if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
+
+			if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
+				[[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]] && { # Build firmware by default.
+					FULL=""
+					REPLACE="-full"
+					compile_firmware
+					FULL="-full"
+					REPLACE=""
+					compile_firmware
+				}
+
+			fi
+
+		fi
+
+		overlayfs_wrapper "cleanup"
+
+		# create board support package
+		[[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]] && create_board_package
+
+		# create desktop package
+		[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb" && "${REPOSITORY_INSTALL}" != *armbian-desktop* ]] && create_desktop_package
+		[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-desktop* ]] && create_bsp_desktop_package
+
+		# skip image creation if exists. useful for CI when making a lot of images
+		if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
+			display_alert "Skipping image creation" "image already made - IMAGE_PRESENT is set" "wrn"
+			exit
+		fi
+
+		# build additional packages
+		[[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
+
+		if [[ $KERNEL_ONLY != yes ]]; then
+
+			[[ $BSP_BUILD != yes ]] && debootstrap_ng
+
+		else
+
+			display_alert "Kernel build done" "@host" "info"
+			display_alert "Target directory" "${DEB_STORAGE}/" "info"
+			display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
+
+		fi
+
+	fi # end of else UBOOT_ONLY
 
 	call_extension_method "run_after_build" << 'RUN_AFTER_BUILD'
 *hook for function to run after build, i.e. to change owner of `$SRC`*
@@ -148,6 +158,7 @@ RUN_AFTER_BUILD
 $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
 $([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
+$([[ -n $UBOOT_ONLY ]] && echo "UBOOT_ONLY=${UBOOT_ONLY} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
 $([[ -n $DESKTOP_ENVIRONMENT ]] && echo "DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT} ")\
