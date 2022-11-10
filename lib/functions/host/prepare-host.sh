@@ -212,6 +212,7 @@ function early_prepare_host_dependencies() {
 		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
 		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
 		crossbuild-essential-amd64                            # For AMD 64-bit, x86_64.
+		gcc-riscv64-linux-gnu                                 # For RISC-V 64-bit, riscv64; crossbuild-essential-riscv64 is not available.
 		libc6-amd64-cross                                     # Support for running x86 binaries (under qemu on other arches)
 	)
 
