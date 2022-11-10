@@ -206,6 +206,11 @@ function do_main_configuration() {
 		source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
 	fi
 
+	# load "all-around common arch defaults" common.conf
+	display_alert "Sourcing common arch configuration" "common.conf" "debug"
+	# shellcheck source=config/sources/common.conf
+	source "${SRC}/config/sources/common.conf"
+
 	# load architecture defaults
 	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
 	# shellcheck source=/dev/null
