@@ -341,9 +341,12 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 	DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
 	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
 	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
+	PACKAGE_LIST_EXTERNAL="$(one_line aggregate_all_cli "packages.external" " ")"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
+		# @TODO: desktop vs packages.external?
+		PACKAGE_LIST_DESKTOP+=" ${PACKAGE_LIST_EXTERNAL}" # external packages are only included in desktop builds
 	fi
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
