@@ -269,6 +269,12 @@ function kernel_package_callback_linux_headers() {
 	local SRC_ARCH="${ARCH}"
 	[[ "${SRC_ARCH}" == "amd64" ]] && SRC_ARCH="x86"
 	[[ "${SRC_ARCH}" == "armhf" ]] && SRC_ARCH="arm"
+	[[ "${SRC_ARCH}" == "riscv64" ]] && SRC_ARCH="riscv"
+	# @TODO: ok so this actually a duplicate from ARCH/ARCHITECTURE in config/sources/*.conf. We should use that instead.
+	# Lets check and warn if it isn't. If warns don't popup over time we remove and just use ARCHITECTURE later.
+	if [[ "${SRC_ARCH}" != "${ARCHITECTURE}" ]]; then
+		display_alert "WARNING: ARCHITECTURE and SRC_ARCH don't match during kernel build." "ARCHITECTURE=${ARCHITECTURE} SRC_ARCH=${SRC_ARCH}" "wrn"
+	fi
 
 	# Create a list of files to include, path-relative to the kernel tree
 	local temp_file_list="${WORKDIR}/tmp_file_list_${kernel_version_family}.kernel.headers"
