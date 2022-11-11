@@ -251,6 +251,16 @@ function do_main_configuration() {
 		it is often used to in turn override those.
 	POST_FAMILY_CONFIG
 
+	# A secondary post_family_config hook, this time with the BRANCH in the name, lowercase.
+	call_extension_method "post_family_config_branch_${BRANCH,,}" <<- 'POST_FAMILY_CONFIG_PER_BRANCH'
+		*give the config a chance to override the family/arch defaults, per branch*
+		This hook is called after the family configuration (`sources/families/xxx.conf`) is sourced,
+		and after `post_family_config()` hook is already run.
+		The sole purpose of this is to avoid "case ... esac for $BRANCH" in the board configuration, 
+		allowing separate functions for different branches. You're welcome.
+	POST_FAMILY_CONFIG_PER_BRANCH
+
+
 	# A global killswitch for extlinux.
 	if [[ "${SRC_EXTLINUX}" == "yes" ]]; then
 		if [[ "${ALLOW_EXTLINUX}" != "yes" ]]; then
