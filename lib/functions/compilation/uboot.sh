@@ -88,14 +88,37 @@ function compile_uboot_target() {
 	fi
 
 	# @TODO: this does not belong here
-	[[ -f tools/logos/udoo.bmp ]] && cp "${SRC}"/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
+	[[ -f tools/logos/udoo.bmp ]] && run_host_command_logged cp -pv "${SRC}"/packages/blobs/splash/udoo.bmp tools/logos/udoo.bmp
 
 	# @TODO: why?
 	touch .scmversion
 
-	# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
-	[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
-	[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
+	# use `scripts/config` instead of sed if available. Cleaner results.
+	if [[ ! -f scripts/config ]]; then
+		display_alert "scripts/config not found" "u-boot ${version} $BOOTCONFIG ${target_make}" "debug"
+		# Old, pre-2022.10 u-boot; does not have the scripts/config script. Do it the old way.
+		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
+		[[ $BOOTDELAY == 0 ]] && echo -e "CONFIG_ZERO_BOOTDELAY_CHECK=y" >> .config
+		[[ -n $BOOTDELAY ]] && sed -i "s/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=${BOOTDELAY}/" .config || [[ -f .config ]] && echo "CONFIG_BOOTDELAY=${BOOTDELAY}" >> .config
+	else
+		display_alert "scripts/config found" "u-boot ${version} $BOOTCONFIG ${target_make}" "debug"
+
+		# $BOOTDELAY can be set in board family config, ensure autoboot can be stopped even if set to 0
+		if [[ $BOOTDELAY == 0 ]]; then
+			display_alert "Adding CONFIG_ZERO_BOOTDELAY_CHECK=y u-boot config" "BOOTDELAY==0 for ${target}" "warn"
+			run_host_command_logged scripts/config --enable CONFIG_ZERO_BOOTDELAY_CHECK
+		fi
+
+		# If BOOTDELAY is set, either change a preexisting CONFIG_BOOTDELAY or add it
+		if [[ -n $BOOTDELAY ]]; then
+			display_alert "Hacking autoboot delay in u-boot config" "BOOTDELAY=${BOOTDELAY} for ${target}" "warn"
+			run_host_command_logged scripts/config --set-val CONFIG_BOOTDELAY "${BOOTDELAY}"
+		fi
+
+		# Hack, up the log level to 6: "info" (default is 4: "warning")
+		display_alert "Hacking log level in u-boot config" "LOGLEVEL=6 for ${target}" "warn"
+		run_host_command_logged scripts/config --set-val CONFIG_LOGLEVEL 6
+	fi
 
 	if [[ "${UBOOT_DEBUGGING}" == "yes" ]]; then
 		display_alert "Enabling u-boot debugging" "UBOOT_DEBUGGING=yes" "debug"
