@@ -249,8 +249,11 @@ create_board_package() {
 
 	# won't recreate files if they were removed by user
 	# TODO: Add proper handling for updated conffiles
-	#cat <<-EOF > "${destination}"/DEBIAN/conffiles
-	#EOF
+	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
+	# Keeping armbian-apt-updates as a configuration, solve the problem
+	cat <<-EOF > "${destination}"/DEBIAN/conffiles
+	/usr/lib/armbian/armbian-apt-updates
+	EOF
 
 	# copy common files from a premade directory structure
 	rsync -a ${SRC}/packages/bsp/common/* ${destination}
