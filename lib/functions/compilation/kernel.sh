@@ -10,7 +10,6 @@ function run_kernel_make_internal() {
 	declare -a -g DISTCC_MAKE_J_PARALLEL=()
 	prepare_distcc_compilation_config
 
-
 	common_make_envs=(
 		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
 		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
@@ -19,14 +18,19 @@ function run_kernel_make_internal() {
 		"TERM='${TERM}'"                # Pass the terminal type, so that 'make menuconfig' can work.
 	)
 
+	# If CCACHE_DIR is set, pass it to the kernel build; Pass the ccache dir explicitly, since we'll run under "env -i"
+	if [[ -n "${CCACHE_DIR}" ]]; then
+		common_make_envs+=("CCACHE_DIR='${CCACHE_DIR}'")
+	fi
+
 	# Add the distcc envs, if any.
 	common_make_envs+=("${DISTCC_EXTRA_ENVS[@]}")
 
 	common_make_params_quoted=(
 		# @TODO: introduce O=path/to/binaries, so sources and bins are not in the same dir.
-		
+
 		"${DISTCC_MAKE_J_PARALLEL[@]}" # Parallel compile, "-j X" for X cpus; determined by distcc, or is just "$CTHREADS" if distcc is not enabled.
-		
+
 		"ARCH=${ARCHITECTURE}"         # Key param. Everything depends on this.
 		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles # @TODO change to "localversion" file
 
@@ -35,8 +39,8 @@ function run_kernel_make_internal() {
 
 		"SOURCE_DATE_EPOCH=${kernel_base_revision_ts}"        # https://reproducible-builds.org/docs/source-date-epoch/ and https://www.kernel.org/doc/html/latest/kbuild/reproducible-builds.html
 		"KBUILD_BUILD_TIMESTAMP=${kernel_base_revision_date}" # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-timestamp
-		"KBUILD_BUILD_USER=armbian-build"                     # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
-		"KBUILD_BUILD_HOST=armbian-bm"                        # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
+		"KBUILD_BUILD_USER=armbian"                           # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
+		"KBUILD_BUILD_HOST=next"                              # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
 
 		"KGZIP=pigz" "KBZIP2=pbzip2" # Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/
 	)
@@ -471,14 +475,4 @@ function kernel_build_and_package() {
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 
 	display_alert "Kernel built and packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
-}
-
-function do_with_ccache_statistics() {
-	display_alert "Clearing ccache statistics" "ccache" "debug"
-	ccache --zero-stats
-
-	"$@"
-
-	display_alert "Display ccache statistics" "ccache" "debug"
-	run_host_command_logged ccache --show-stats
 }

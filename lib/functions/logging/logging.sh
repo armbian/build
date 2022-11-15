@@ -227,6 +227,14 @@ function display_alert() {
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
 			;;
 
+		ccache)
+			if [[ "${SHOW_CCACHE}" != "yes" ]]; then # ccache-related debugging messages, very very verbose
+				skip_screen=1
+			fi
+			level_indicator="🙈"
+			inline_logs_color="\e[1;34m" # blue; 36 would be cyan
+			;;
+
 		aggregation)
 			if [[ "${SHOW_AGGREGATION}" != "yes" ]]; then # aggregation (PACKAGE LISTS), very very verbose
 				skip_screen=1

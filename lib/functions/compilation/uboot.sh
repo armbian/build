@@ -156,15 +156,20 @@ function compile_uboot_target() {
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
+	local ts=${SECONDS}
+
 	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
 	# @TODO make configurable/expandable
 	local uboot_cflags="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation"
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
-	run_host_command_logged_long_running "CFLAGS='${uboot_cflags}'" "KCFLAGS='${uboot_cflags}'" \
+	do_with_ccache_statistics run_host_command_logged_long_running \
+		"CFLAGS='${uboot_cflags}'" "KCFLAGS='${uboot_cflags}'" \
 		CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		unbuffer make "$target_make" "$CTHREADS" "${cross_compile}"
+
+	display_alert "${uboot_prefix}built u-boot target" "${version} in $((SECONDS - ts)) seconds" "info"
 
 	if [[ $(type -t uboot_custom_postprocess) == function ]]; then
 		display_alert "${uboot_prefix}Postprocessing u-boot" "${version} ${target_make}"
