@@ -101,7 +101,7 @@ function pre_update_initramfs__setup_flash_kernel() {
 		Write to `${MOUNT}`, eg: `"${MOUNT}"/etc/flash-kernel`
 	PRE_FLASH_KERNEL
 
-	local flash_kernel_cmd="flash-kernel --machine '${FK__MACHINE_MODEL}'"
+	local flash_kernel_cmd="FK_FORCE=yes flash-kernel --machine '${FK__MACHINE_MODEL}'" # FK_FORCE=yes is required since flash-kernel 3.104ubuntu14 / 3.106ubuntu7
 	display_alert "flash-kernel" "${FK__MACHINE_MODEL}" "info"
 	echo "--  flash-kernel itself" >> "${DEST}"/"${LOG_SUBPATH}"/flash-kernel.log
 	chroot "$chroot_target" /bin/bash -c "${flash_kernel_cmd}" >> "${DEST}"/"${LOG_SUBPATH}"/flash-kernel.log 2>&1 || {
