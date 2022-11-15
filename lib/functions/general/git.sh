@@ -104,7 +104,11 @@ fetch_from_repo() {
 	# Make sure the origin matches what is expected. If it doesn't, clean up and start again.
 	if [[ -d ".git" && "$(git rev-parse --git-dir)" == ".git" ]]; then
 		actual_origin_url="$(git config remote.origin.url | sed 's/^.*@//' | sed 's/^.*\/\///')"
-		if [[ "${expected_origin_url}" != "${actual_origin_url}" ]]; then
+		if [[ "a${actual_origin_url}a" != "aa" && "${expected_origin_url}" != "${actual_origin_url}" ]]; then
+			display_alert "Remote git URL does not match" "${git_work_dir} expected: '${expected_origin_url}' actual: '${actual_origin_url}'" "warn"
+			if [[ "${ALLOW_GIT_ORIGIN_CHANGE}" != "yes" ]]; then
+				exit_with_error "Would have deleted ${git_work_dir} to change origin URL, but ALLOW_GIT_ORIGIN_CHANGE is not set to 'yes'"
+			fi
 			display_alert "Remote git URL does not match, deleting working copy" "${git_work_dir} expected: '${expected_origin_url}' actual: '${actual_origin_url}'" "warn"
 			cd "${SRC}" || exit 3                                                                            # free up cwd
 			run_host_command_logged rm -rf "${git_work_dir}"                                                 # delete the dir
