@@ -291,6 +291,9 @@ function docker_cli_prepare_launch() {
 		# Pass env var ARMBIAN_RUNNING_IN_CONTAINER to indicate we're running under Docker. This is also set in the Dockerfile; make sure.
 		"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"
 
+		# Change the ccache directory to the named volume or bind created.
+		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
+
 		# @TODO: if user on terminal, pass the TERM down to the container.
 		"--env" "TERM=${TERM}"
 		# @TODO: pass down the CI-related env vars.
