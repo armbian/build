@@ -14,11 +14,20 @@ do_default() {
 
 	# ignore updates help on building all images - for internal purposes
 	if [[ $IGNORE_UPDATES != yes ]]; then
-		display_alert "Downloading sources" "" "info"
-		[[ -n $BOOTSOURCE ]] && fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-		[[ -n $ATFSOURCE ]] && fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
+	build_get_boot_sources() {
+		if [[ -n $BOOTSOURCE ]]; then
+			display_alert "Downloading U-Boot sources" "" "info"
+			fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+		fi
+		if [[ -n $ATFSOURCE ]]; then
+			display_alert "Downloading ATF sources" "" "info"
+			fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
+		fi
+	}
 
+	build_get_kernel_sources() {
 		if [[ -n $KERNELSOURCE ]]; then
+			display_alert "Downloading Kernel sources" "" "info"
 			if $(declare -f var_origin_kernel > /dev/null); then
 				unset LINUXSOURCEDIR
 				LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
@@ -29,6 +38,7 @@ do_default() {
 				fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 			fi
 		fi
+	}
 
 		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
 			*fetch host-side sources needed for tools and build*
@@ -45,6 +55,7 @@ do_default() {
 		done
 	fi
 
+build_uboot() {
 	# Don't build at all if the BOOTCONFIG is 'none'.
 	[[ "${BOOTCONFIG}" != "none" ]] && {
 		# Compile u-boot if packed .deb does not exist or use the one from repository
@@ -55,7 +66,9 @@ do_default() {
 			[[ "${REPOSITORY_INSTALL}" != *u-boot* ]] && compile_uboot
 		fi
 	}
+}
 
+build_kernel() {
 	# Compile kernel if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
 
@@ -63,28 +76,36 @@ do_default() {
 		[[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]] && compile_kernel
 
 	fi
+}
 
+build_armbian-config() {
 	# Compile armbian-config if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
 
 		[[ "${REPOSITORY_INSTALL}" != *armbian-config* ]] && compile_armbian-config
 
 	fi
+}
 
+build_armbian-zsh() {
 	# Compile armbian-zsh if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then
 
 		[[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]] && compile_armbian-zsh
 
 	fi
+}
 
+build_plymouth-theme-armbian() {
 	# Compile plymouth-theme-armbian if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/plymouth-theme-armbian_${REVISION}_all.deb ]]; then
 
 		[[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]] && compile_plymouth-theme-armbian
 
 	fi
+}
 
+build_armbian-firmware() {
 	# Compile armbian-firmware if packed .deb does not exist or use the one from repository
 	if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
 
@@ -101,15 +122,18 @@ do_default() {
 		fi
 
 	fi
+}
 
 	overlayfs_wrapper "cleanup"
 
+build_armbian-bsp() {
 	# create board support package
 	[[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]] && create_board_package
 
 	# create desktop package
 	[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb" && "${REPOSITORY_INSTALL}" != *armbian-desktop* ]] && create_desktop_package
 	[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-desktop* ]] && create_bsp_desktop_package
+}
 
 	# skip image creation if exists. useful for CI when making a lot of images
 	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
@@ -117,20 +141,21 @@ do_default() {
 		exit
 	fi
 
+build_chroot() {
 	# build additional packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
+}
 
+build_bootstrap() {
 	if [[ $KERNEL_ONLY != yes ]]; then
 
 		[[ $BSP_BUILD != yes ]] && debootstrap_ng
 
-	else
-
-		display_alert "Kernel build done" "@host" "info"
-		display_alert "Target directory" "${DEB_STORAGE}/" "info"
-		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
-
 	fi
+}
+
+	display_alert "Build done" "@host" "info"
+	display_alert "Target directory" "${DEB_STORAGE}/" "info"
 
 	call_extension_method "run_after_build" << 'RUN_AFTER_BUILD'
 *hook for function to run after build, i.e. to change owner of `$SRC`*
