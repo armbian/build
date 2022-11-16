@@ -1,19 +1,3 @@
-do_default() {
-
-	start=$(date +%s)
-
-	# Check and install dependencies, directory structure and settings
-	# The OFFLINE_WORK variable inside the function
-	prepare_host
-
-	[[ "${JUST_INIT}" == "yes" ]] && exit 0
-
-	[[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
-
-	# fetch_from_repo <url> <dir> <ref> <subdir_flag>
-
-	# ignore updates help on building all images - for internal purposes
-	if [[ $IGNORE_UPDATES != yes ]]; then
 	build_get_boot_sources() {
 		if [[ -n $BOOTSOURCE ]]; then
 			display_alert "Downloading U-Boot sources" "" "info"
@@ -39,21 +23,6 @@ do_default() {
 			fi
 		fi
 	}
-
-		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
-			*fetch host-side sources needed for tools and build*
-			Run early to fetch_from_repo or otherwise obtain sources for needed tools.
-		FETCH_SOURCES_TOOLS
-
-		call_extension_method "build_host_tools" <<- 'BUILD_HOST_TOOLS'
-			*build needed tools for the build, host-side*
-			After sources are fetched, build host-side tools needed for the build.
-		BUILD_HOST_TOOLS
-
-		for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
-			[[ $option != sources ]] && cleaning "$option"
-		done
-	fi
 
 build_uboot() {
 	# Don't build at all if the BOOTCONFIG is 'none'.
@@ -124,8 +93,6 @@ build_armbian-firmware() {
 	fi
 }
 
-	overlayfs_wrapper "cleanup"
-
 build_armbian-bsp() {
 	# create board support package
 	[[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]] && create_board_package
@@ -135,12 +102,6 @@ build_armbian-bsp() {
 	[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-desktop* ]] && create_bsp_desktop_package
 }
 
-	# skip image creation if exists. useful for CI when making a lot of images
-	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
-		display_alert "Skipping image creation" "image already made - IMAGE_PRESENT is set" "wrn"
-		exit
-	fi
-
 build_chroot() {
 	# build additional packages
 	[[ $EXTERNAL_NEW == compile ]] && chroot_build_packages
@@ -148,14 +109,87 @@ build_chroot() {
 
 build_bootstrap() {
 	if [[ $KERNEL_ONLY != yes ]]; then
-
 		[[ $BSP_BUILD != yes ]] && debootstrap_ng
-
 	fi
 }
 
+#################################################################################################################################
+#
+# do_default()
+#
+# Builds all artifacts or the filtered ones only.
+# Ensures that any build pre-requisite is met.
+#
+# $1: optional comma separated list of artifacts to build only.
+#     If this list is empty or not set, then all build tasks will be performed.
+#     The following artifact names are supported for filtering build tasks:
+#       u-boot, kernel, armbian-config, armbian-zsh, plymouth-theme-armbian, armbian-firmware, armbian-bsp, chroot, bootstrap
+#
+do_default() {
+	local _buildOnly=$1
+
+	start=$(date +%s)
+
+	# Check and install dependencies, directory structure and settings
+	# The OFFLINE_WORK variable inside the function
+	prepare_host
+
+	[[ "${JUST_INIT}" == "yes" ]] && exit 0
+
+	[[ $CLEAN_LEVEL == *sources* ]] && cleaning "sources"
+
+	# fetch_from_repo <url> <dir> <ref> <subdir_flag>
+
+	# ignore updates help on building all images - for internal purposes
+	if [[ $IGNORE_UPDATES != yes ]]; then
+		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && build_get_boot_sources
+		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* || "${KERNEL_ONLY}" == "yes" ]] && build_get_kernel_sources
+
+		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
+			*fetch host-side sources needed for tools and build*
+			Run early to fetch_from_repo or otherwise obtain sources for needed tools.
+		FETCH_SOURCES_TOOLS
+
+		call_extension_method "build_host_tools" <<- 'BUILD_HOST_TOOLS'
+			*build needed tools for the build, host-side*
+			After sources are fetched, build host-side tools needed for the build.
+		BUILD_HOST_TOOLS
+
+		for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
+			[[ $option != sources ]] && cleaning "$option"
+		done
+	fi
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && build_uboot
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* ]] && build_kernel
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-config* ]] && build_armbian-config
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-zsh* ]] && build_armbian-zsh
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *plymouth-theme-armbian* ]] && build_plymouth-theme-armbian
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-firmware* ]] && build_armbian-firmware
+
+	overlayfs_wrapper "cleanup"
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-bsp* ]] && build_armbian-bsp
+
+	# skip image creation if exists. useful for CI when making a lot of images
+	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
+		display_alert "Skipping image creation" "image already made - IMAGE_PRESENT is set" "wrn"
+		exit
+	fi
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *chroot* ]] && build_chroot
+
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *bootstrap* ]] && build_bootstrap
+
 	display_alert "Build done" "@host" "info"
 	display_alert "Target directory" "${DEB_STORAGE}/" "info"
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && display_alert "U-Boot file name" "${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" "info"
+	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* ]] && display_alert "Kernel file name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 
 	call_extension_method "run_after_build" << 'RUN_AFTER_BUILD'
 *hook for function to run after build, i.e. to change owner of `$SRC`*
@@ -173,6 +207,7 @@ RUN_AFTER_BUILD
 $([[ -n $RELEASE ]] && echo "RELEASE=${RELEASE} ")\
 $([[ -n $BUILD_MINIMAL ]] && echo "BUILD_MINIMAL=${BUILD_MINIMAL} ")\
 $([[ -n $BUILD_DESKTOP ]] && echo "BUILD_DESKTOP=${BUILD_DESKTOP} ")\
+$([[ -n $BUILD_ONLY ]] && echo "BUILD_ONLY=${BUILD_ONLY} ")\
 $([[ -n $KERNEL_ONLY ]] && echo "KERNEL_ONLY=${KERNEL_ONLY} ")\
 $([[ -n $KERNEL_CONFIGURE ]] && echo "KERNEL_CONFIGURE=${KERNEL_CONFIGURE} ")\
 $([[ -n $DESKTOP_ENVIRONMENT ]] && echo "DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT} ")\
