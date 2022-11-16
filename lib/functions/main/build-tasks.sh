@@ -1,28 +1,28 @@
-	build_get_boot_sources() {
-		if [[ -n $BOOTSOURCE ]]; then
-			display_alert "Downloading U-Boot sources" "" "info"
-			fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
-		fi
-		if [[ -n $ATFSOURCE ]]; then
-			display_alert "Downloading ATF sources" "" "info"
-			fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
-		fi
-	}
+build_get_boot_sources() {
+	if [[ -n $BOOTSOURCE ]]; then
+		display_alert "Downloading U-Boot sources" "" "info"
+		fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
+	fi
+	if [[ -n $ATFSOURCE ]]; then
+		display_alert "Downloading ATF sources" "" "info"
+		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
+	fi
+}
 
-	build_get_kernel_sources() {
-		if [[ -n $KERNELSOURCE ]]; then
-			display_alert "Downloading Kernel sources" "" "info"
-			if $(declare -f var_origin_kernel > /dev/null); then
-				unset LINUXSOURCEDIR
-				LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
-				VAR_SHALLOW_ORIGINAL=var_origin_kernel
-				waiter_local_git "url=$KERNELSOURCE $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
-				unset VAR_SHALLOW_ORIGINAL
-			else
-				fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
-			fi
+build_get_kernel_sources() {
+	if [[ -n $KERNELSOURCE ]]; then
+		display_alert "Downloading Kernel sources" "" "info"
+		if $(declare -f var_origin_kernel > /dev/null); then
+			unset LINUXSOURCEDIR
+			LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
+			VAR_SHALLOW_ORIGINAL=var_origin_kernel
+			waiter_local_git "url=$KERNELSOURCE $KERNELSOURCENAME $KERNELBRANCH dir=$LINUXSOURCEDIR $KERNELSWITCHOBJ"
+			unset VAR_SHALLOW_ORIGINAL
+		else
+			fetch_from_repo "$KERNELSOURCE" "$KERNELDIR" "$KERNELBRANCH" "yes"
 		fi
-	}
+	fi
+}
 
 build_uboot() {
 	# Don't build at all if the BOOTCONFIG is 'none'.
@@ -115,7 +115,7 @@ build_bootstrap() {
 
 #################################################################################################################################
 #
-# do_default()
+# build_main()
 #
 # Builds all artifacts or the filtered ones only.
 # Ensures that any build pre-requisite is met.
@@ -125,7 +125,7 @@ build_bootstrap() {
 #     The following artifact names are supported for filtering build tasks:
 #       u-boot, kernel, armbian-config, armbian-zsh, plymouth-theme-armbian, armbian-firmware, armbian-bsp, chroot, bootstrap
 #
-do_default() {
+build_main() {
 	local _buildOnly=$1
 
 	start=$(date +%s)
@@ -217,4 +217,15 @@ $([[ -n $DESKTOP_APT_FLAGS_SELECTED ]] && echo "DESKTOP_APT_FLAGS_SELECTED=\"${D
 $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUTIMAGE} ")\
 " "ext"
 
+}
+
+################################################################
+#
+# do_default()
+#
+# @DEPRECATED - use build_main() instead
+# This function is still ther only for backward compatibility
+#
+do_default() {
+	build_main ""
 }
