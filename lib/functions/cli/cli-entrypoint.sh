@@ -105,7 +105,7 @@ function cli_entrypoint() {
 	prepare_and_config_main_build_single
 
 	if [[ -z $1 ]]; then
-		do_default
+		build_main "${BUILD_ONLY}"
 	else
 		eval "$@"
 	fi
