@@ -57,7 +57,11 @@ case $BRANCH in
 esac
 
 family_tweaks() {
-	:
+	case $BOARD in
+		onecloud)
+			cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
+			;;
+	esac
 }
 
 family_tweaks_bsp() {
