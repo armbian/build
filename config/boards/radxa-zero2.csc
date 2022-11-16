@@ -7,3 +7,7 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 ASOUND_STATE="asound.state.radxa-zero2"
 BOOT_FDT_FILE="amlogic/meson-g12b-radxa-zero2.dtb"
+
+# Newer u-boot for the Zero; Radxa's patches with new DT, Makefile and defconfig in v2022.10/board_radxa-zero2 dir
+BOOTBRANCH_BOARD="tag:v2022.10"
+BOOTPATCHDIR="v2022.10"

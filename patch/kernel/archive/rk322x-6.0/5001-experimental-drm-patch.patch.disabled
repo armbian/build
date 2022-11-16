@@ -1,0 +1,177 @@
+From 5d68f46388c9813efb1a722e52f6ec9c4be8c0ce Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Fri, 10 Sep 2021 14:18:08 +0000
+Subject: [PATCH] experimental drm patch
+
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 134 +++++++++++---------
+ 1 file changed, 72 insertions(+), 62 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+index b0832320e..a0fca8a20 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -997,25 +997,78 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 
+ 	spin_lock(&vop->reg_lock);
+ 
+-	if (rockchip_afbc(fb->modifier)) {
+-		int afbc_format = vop_convert_afbc_format(fb->format->format);
++	if (!(vop->win_enabled & BIT(win_index))) {
+ 
+-		VOP_AFBC_SET(vop, format, afbc_format | AFBC_TILE_16x16);
+-		VOP_AFBC_SET(vop, hreg_block_split, 0);
+-		VOP_AFBC_SET(vop, win_sel, VOP_WIN_TO_INDEX(vop_win));
+-		VOP_AFBC_SET(vop, hdr_ptr, dma_addr);
+-		VOP_AFBC_SET(vop, pic_size, act_info);
+-	}
++		if (rockchip_afbc(fb->modifier)) {
++			int afbc_format = vop_convert_afbc_format(fb->format->format);
+ 
+-	VOP_WIN_SET(vop, win, format, format);
+-	VOP_WIN_SET(vop, win, fmt_10, is_fmt_10(fb->format->format));
+-	VOP_WIN_SET(vop, win, yrgb_vir, DIV_ROUND_UP(fb->pitches[0], 4 >> skiplines));
+-	VOP_WIN_SET(vop, win, yrgb_mst, dma_addr);
+-	VOP_WIN_YUV2YUV_SET(vop, win_yuv2yuv, y2r_en, is_yuv);
+-	VOP_WIN_SET(vop, win, y_mir_en,
+-		    (new_state->rotation & DRM_MODE_REFLECT_Y) ? 1 : 0);
+-	VOP_WIN_SET(vop, win, x_mir_en,
+-		    (new_state->rotation & DRM_MODE_REFLECT_X) ? 1 : 0);
++			VOP_AFBC_SET(vop, format, afbc_format | AFBC_TILE_16x16);
++			VOP_AFBC_SET(vop, hreg_block_split, 0);
++			VOP_AFBC_SET(vop, win_sel, VOP_WIN_TO_INDEX(vop_win));
++			VOP_AFBC_SET(vop, hdr_ptr, dma_addr);
++			VOP_AFBC_SET(vop, pic_size, act_info);
++		}
++
++		VOP_WIN_SET(vop, win, format, format);
++		VOP_WIN_SET(vop, win, fmt_10, is_fmt_10(fb->format->format));
++		VOP_WIN_SET(vop, win, yrgb_vir, DIV_ROUND_UP(fb->pitches[0], 4 >> skiplines));
++
++		VOP_WIN_YUV2YUV_SET(vop, win_yuv2yuv, y2r_en, is_yuv);
++		VOP_WIN_SET(vop, win, y_mir_en,
++			(new_state->rotation & DRM_MODE_REFLECT_Y) ? 1 : 0);
++		VOP_WIN_SET(vop, win, x_mir_en,
++			(new_state->rotation & DRM_MODE_REFLECT_X) ? 1 : 0);
++
++		if (is_yuv) {
++
++			for (i = 0; i < NUM_YUV2YUV_COEFFICIENTS; i++) {
++				VOP_WIN_YUV2YUV_COEFFICIENT_SET(vop,
++								win_yuv2yuv,
++								y2r_coefficients[i],
++								bt601_yuv2rgb[i]);
++			}
++		}
++
++		if (win->phy->scl)
++			scl_vop_cal_scl_fac(vop, win, actual_w, actual_h,
++					drm_rect_width(dest), drm_rect_height(dest),
++					fb->format);
++
++		VOP_WIN_SET(vop, win, act_info, act_info);
++		VOP_WIN_SET(vop, win, dsp_info, dsp_info);
++
++		rb_swap = has_rb_swapped(fb->format->format);
++		VOP_WIN_SET(vop, win, rb_swap, rb_swap);
++
++		/*
++		* Blending win0 with the background color doesn't seem to work
++		* correctly. We only get the background color, no matter the contents
++		* of the win0 framebuffer.  However, blending pre-multiplied color
++		* with the default opaque black default background color is a no-op,
++		* so we can just disable blending to get the correct result.
++		*/
++		if (fb->format->has_alpha && win_index > 0) {
++			VOP_WIN_SET(vop, win, dst_alpha_ctl,
++				DST_FACTOR_M0(ALPHA_SRC_INVERSE));
++			val = SRC_ALPHA_EN(1) | SRC_COLOR_M0(ALPHA_SRC_PRE_MUL) |
++				SRC_ALPHA_M0(ALPHA_STRAIGHT) |
++				SRC_BLEND_M0(ALPHA_PER_PIX) |
++				SRC_ALPHA_CAL_M0(ALPHA_NO_SATURATION) |
++				SRC_FACTOR_M0(ALPHA_ONE);
++			VOP_WIN_SET(vop, win, src_alpha_ctl, val);
++
++			VOP_WIN_SET(vop, win, alpha_pre_mul, ALPHA_SRC_PRE_MUL);
++			VOP_WIN_SET(vop, win, alpha_mode, ALPHA_PER_PIX);
++			VOP_WIN_SET(vop, win, alpha_en, 1);
++		} else {
++			VOP_WIN_SET(vop, win, src_alpha_ctl, SRC_ALPHA_EN(0));
++			VOP_WIN_SET(vop, win, alpha_en, 0);
++		}
++
++		VOP_WIN_SET(vop, win, enable, 1);
++		vop->win_enabled |= BIT(win_index);
++
++	}
+ 
+ 	if (is_yuv) {
+ 		int hsub = fb->format->hsub;
+@@ -1027,7 +1080,7 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 
+ 		if (fb->format->block_w[1])
+ 			offset = (src->x1 >> 16) * bpp /
+-				 fb->format->block_w[1] / hsub;
++				fb->format->block_w[1] / hsub;
+ 		else
+ 			offset = (src->x1 >> 16) * bpp / hsub;
+ 		offset += (src->y1 >> 16) * fb->pitches[1] / vsub;
+@@ -1035,54 +1088,11 @@ static void vop_plane_atomic_update(struct drm_plane *plane,
+ 		dma_addr = rk_uv_obj->dma_addr + offset + fb->offsets[1];
+ 		VOP_WIN_SET(vop, win, uv_vir, DIV_ROUND_UP(fb->pitches[1], 4 >> skiplines));
+ 		VOP_WIN_SET(vop, win, uv_mst, dma_addr);
+-
+-		for (i = 0; i < NUM_YUV2YUV_COEFFICIENTS; i++) {
+-			VOP_WIN_YUV2YUV_COEFFICIENT_SET(vop,
+-							win_yuv2yuv,
+-							y2r_coefficients[i],
+-							bt601_yuv2rgb[i]);
+-		}
+ 	}
+ 
+-	if (win->phy->scl)
+-		scl_vop_cal_scl_fac(vop, win, actual_w, actual_h,
+-				    drm_rect_width(dest), drm_rect_height(dest),
+-				    fb->format);
+-
+-	VOP_WIN_SET(vop, win, act_info, act_info);
+-	VOP_WIN_SET(vop, win, dsp_info, dsp_info);
++	VOP_WIN_SET(vop, win, yrgb_mst, dma_addr);
+ 	VOP_WIN_SET(vop, win, dsp_st, dsp_st);
+ 
+-	rb_swap = has_rb_swapped(fb->format->format);
+-	VOP_WIN_SET(vop, win, rb_swap, rb_swap);
+-
+-	/*
+-	 * Blending win0 with the background color doesn't seem to work
+-	 * correctly. We only get the background color, no matter the contents
+-	 * of the win0 framebuffer.  However, blending pre-multiplied color
+-	 * with the default opaque black default background color is a no-op,
+-	 * so we can just disable blending to get the correct result.
+-	 */
+-	if (fb->format->has_alpha && win_index > 0) {
+-		VOP_WIN_SET(vop, win, dst_alpha_ctl,
+-			    DST_FACTOR_M0(ALPHA_SRC_INVERSE));
+-		val = SRC_ALPHA_EN(1) | SRC_COLOR_M0(ALPHA_SRC_PRE_MUL) |
+-			SRC_ALPHA_M0(ALPHA_STRAIGHT) |
+-			SRC_BLEND_M0(ALPHA_PER_PIX) |
+-			SRC_ALPHA_CAL_M0(ALPHA_NO_SATURATION) |
+-			SRC_FACTOR_M0(ALPHA_ONE);
+-		VOP_WIN_SET(vop, win, src_alpha_ctl, val);
+-
+-		VOP_WIN_SET(vop, win, alpha_pre_mul, ALPHA_SRC_PRE_MUL);
+-		VOP_WIN_SET(vop, win, alpha_mode, ALPHA_PER_PIX);
+-		VOP_WIN_SET(vop, win, alpha_en, 1);
+-	} else {
+-		VOP_WIN_SET(vop, win, src_alpha_ctl, SRC_ALPHA_EN(0));
+-		VOP_WIN_SET(vop, win, alpha_en, 0);
+-	}
+-
+-	VOP_WIN_SET(vop, win, enable, 1);
+-	vop->win_enabled |= BIT(win_index);
+ 	spin_unlock(&vop->reg_lock);
+ }
+ 
+-- 
+2.25.1
+
