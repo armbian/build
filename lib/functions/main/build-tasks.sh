@@ -1,17 +1,14 @@
 build_get_boot_sources() {
 	if [[ -n $BOOTSOURCE ]]; then
-		display_alert "Downloading U-Boot sources" "" "info"
 		fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
 	fi
 	if [[ -n $ATFSOURCE ]]; then
-		display_alert "Downloading ATF sources" "" "info"
 		fetch_from_repo "$ATFSOURCE" "$ATFDIR" "$ATFBRANCH" "yes"
 	fi
 }
 
 build_get_kernel_sources() {
 	if [[ -n $KERNELSOURCE ]]; then
-		display_alert "Downloading Kernel sources" "" "info"
 		if $(declare -f var_origin_kernel > /dev/null); then
 			unset LINUXSOURCEDIR
 			LINUXSOURCEDIR="linux-mainline/$KERNEL_VERSION_LEVEL"
