@@ -140,7 +140,7 @@ build_main() {
 	# ignore updates help on building all images - for internal purposes
 	if [[ $IGNORE_UPDATES != yes ]]; then
 		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && build_get_boot_sources
-		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* || "${KERNEL_ONLY}" == "yes" ]] && build_get_kernel_sources
+		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* ]] && build_get_kernel_sources
 
 		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
 			*fetch host-side sources needed for tools and build*
