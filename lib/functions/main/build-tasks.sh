@@ -220,8 +220,8 @@ $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUT
 #
 # do_default()
 #
-# @DEPRECATED - use build_main() instead
-# This function is still ther only for backward compatibility
+# @DEPRECATED - use build_main() instead.
+# This function is still there for backward compatibility only.
 #
 do_default() {
 	build_main ""
