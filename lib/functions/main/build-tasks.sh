@@ -198,8 +198,8 @@ Really one of the last hooks ever called. The build has ended. Congratulations.
 RUN_AFTER_BUILD
 
 	end=$(date +%s)
-	runtime=$(((end - start) / 60))
-	display_alert "Runtime" "$runtime min" "info"
+	runtime_secs=$((end - start))
+	display_alert "Runtime" "$(printf "%d:%02d min" $((runtime_secs / 60)) $((runtime_secs % 60)))" "info"
 
 	# Make it easy to repeat build by displaying build options used
 	[ "$(systemd-detect-virt)" == 'docker' ] && BUILD_CONFIG='docker'
