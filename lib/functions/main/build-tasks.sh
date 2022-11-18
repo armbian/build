@@ -105,6 +105,9 @@ build_chroot() {
 }
 
 build_bootstrap() {
+	# These two keys are necessary for backward compatibility with logic
+	# https://github.com/armbian/scripts/tree/master/.github/workflows scripts.
+	# They need to be removed when the need disappears there.
 	if [[ $KERNEL_ONLY != yes ]]; then
 		[[ $BSP_BUILD != yes ]] && debootstrap_ng
 	fi
@@ -124,8 +127,26 @@ build_bootstrap() {
 #
 build_main() {
 	local _buildOnly=$1
+	local _valid_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp"
 
 	start=$(date +%s)
+
+	# These checks are necessary for backward compatibility with logic
+	# https://github.com/armbian/scripts/tree/master /.github/workflows scripts.
+	# They need to be removed when the need disappears there.
+	[[ -n $KERNEL_ONLY ]] && {
+		display_alert "The KERNEL_ONLY key is no longer used." "KERNEL_ONLY=$KERNEL_ONLY" "wrn"
+		if [ "$KERNEL_ONLY" == "no" ]; then
+			display_alert "use an empty BUILD_ONLY variable" "" "info"
+			[[ -n "${_buildOnly}" ]] && {
+				_buildOnly=""
+				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${_buildOnly}" "wrn"
+			}
+		elif [ "$KERNEL_ONLY" == "yes" ]; then
+			display_alert "Instead, use BUILD_ONLY to select the build target." "$_valid_buildOnly" "wrn"
+			_buildOnly="$_valid_buildOnly"
+		fi
+	}
 
 	# Check and install dependencies, directory structure and settings
 	# The OFFLINE_WORK variable inside the function
