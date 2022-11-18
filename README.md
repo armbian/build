@@ -227,8 +227,8 @@ Thank you to all the people who already contributed Armbian!
 
 ## Armbian Partners
 
-Armbians partnership program helps to support Armbian and the Armbian community, check out our current Partners listed on our Partners Page:
-- [Visit our Partners page!](https://armbian.com/partners)
+Armbian's partnership program helps to support Armbian and the Armbian community! Please take a moment to familiarize your self with our Partners:
+- [Click here to visit our Partners page!](https://armbian.com/partners)
 - [How can I become a Partner?](https://forum.armbian.com/subscriptions)
 
 ## License
