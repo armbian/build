@@ -163,15 +163,17 @@ build_main() {
 		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && build_get_boot_sources
 		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* ]] && build_get_kernel_sources
 
-		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
-			*fetch host-side sources needed for tools and build*
-			Run early to fetch_from_repo or otherwise obtain sources for needed tools.
-		FETCH_SOURCES_TOOLS
+		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *host_tools* ]] && {
+			call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
+				*fetch host-side sources needed for tools and build*
+				Run early to fetch_from_repo or otherwise obtain sources for needed tools.
+			FETCH_SOURCES_TOOLS
 
-		call_extension_method "build_host_tools" <<- 'BUILD_HOST_TOOLS'
-			*build needed tools for the build, host-side*
-			After sources are fetched, build host-side tools needed for the build.
-		BUILD_HOST_TOOLS
+			call_extension_method "build_host_tools" <<- 'BUILD_HOST_TOOLS'
+				*build needed tools for the build, host-side*
+				After sources are fetched, build host-side tools needed for the build.
+			BUILD_HOST_TOOLS
+		}
 
 		for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 			[[ $option != sources ]] && cleaning "$option"
