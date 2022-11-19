@@ -200,7 +200,7 @@ build_main() {
 		exit
 	fi
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *chroot* ]] && chroot_build_packages "${_buildOnly#*chroot}"
+	[[ "$EXTERNAL_NEW" == "compile" || "${_buildOnly}" == *chroot* ]] && chroot_build_packages "${_buildOnly#*chroot}"
 
 	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *bootstrap* ]] && build_bootstrap
 
