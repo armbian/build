@@ -151,7 +151,7 @@ function interactive_config_ask_branch() {
 }
 
 function interactive_config_ask_release() {
-	if [[ -z "$BUILD_ONLY" && -z "$RELEASE" ]]; then
+	if [[ -z "$RELEASE" ]]; then
 
 		options=()
 
