@@ -20,21 +20,6 @@ function cli_entrypoint() {
 		exit $?
 	fi
 
-	if [ "$OFFLINE_WORK" == "yes" ]; then
-
-		echo -e "\n"
-		display_alert "* " "You are working offline."
-		display_alert "* " "Sources, time and host will not be checked"
-		echo -e "\n"
-		sleep 3s
-
-	else
-
-		# check and install the basic utilities here
-		prepare_host_basic
-
-	fi
-
 	handle_vagrant "$@"
 
 	# Purge Armbian Docker images
@@ -52,6 +37,22 @@ function cli_entrypoint() {
 		#shellcheck disable=SC2034
 		SHELL_ONLY=yes
 		set -- "docker" "$@"
+	fi
+
+	if [ "$OFFLINE_WORK" == "yes" ]; then
+
+		echo -e "\n"
+		display_alert "* " "You are working offline."
+		display_alert "* " "Sources, time and host will not be checked"
+		echo -e "\n"
+		sleep 3s
+
+	else
+
+		# check and install the basic utilities here
+		# don't to this for docker-based runs because it would install on the docker host rather than in the container
+		[[ "${1}" == docker ]] || prepare_host_basic
+
 	fi
 
 	handle_docker "$@"
