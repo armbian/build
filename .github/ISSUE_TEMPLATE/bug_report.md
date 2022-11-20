@@ -1,6 +1,6 @@
 ---
 name: Build issues
-about: Create a new issue if there is something wrong with building Armbian.
+about: Create a new issue if there is something wrong with building Armbian. Do **not** report if you used `EXPERT` switch.
 title: 'Problem found in ...'
 labels: '0.question'
 assignees: 'armbian/build-scripts'
