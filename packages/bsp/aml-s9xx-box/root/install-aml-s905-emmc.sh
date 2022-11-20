@@ -86,7 +86,7 @@ echo "done."
 
 mount -o rw $PART_BOOT $DIR_INSTALL
 
-echo -n "Cppying BOOT..."
+echo -n "Copying BOOT..."
 cp -r /boot/* $DIR_INSTALL && sync
 echo "done."
 
