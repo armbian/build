@@ -1,3 +1,29 @@
+# $1: _valid_all_buildOnly - a :comma: or :space: separated list of all supported build task names
+# $2: _buildOnly - a :comma: or :space: separated list of user configured build task names
+build_validate_buildOnly() {
+	# remove all "
+	local _all_valid_buildOnly=${1//\"/}
+	local _buildOnly=${2//\"/}
+	# relace all :comma: by :space:
+	_all_valid_buildOnly=${_all_valid_buildOnly//,/ }
+	_buildOnly=${_buildOnly//,/ }
+	[[ -z $_buildOnly ]] && return
+	local _countOfUnsupported=0
+	for _taskName in ${_buildOnly}; do
+		local _isFound=0
+		for _supportedTaskName in ${_all_valid_buildOnly}; do
+			[[ "$_taskName" == "$_supportedTaskName" ]] && _isFound=1 && break
+		done
+		if [[ $_isFound == 0 ]]; then
+			((_countOfUnsupported=_countOfUnsupported+1))
+			display_alert "BUILD_ONLY task name is not supported." "${_taskName}" "err"
+		fi
+	done
+	if [[ $_countOfUnsupported > 0 ]]; then
+		exit_with_error "BUILD_ONLY contains unsupported build task names."
+	fi
+}
+
 build_get_boot_sources() {
 	if [[ -n $BOOTSOURCE ]]; then
 		fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes"
@@ -122,12 +148,13 @@ build_bootstrap() {
 #
 # $1: optional comma separated list of artifacts to build only.
 #     If this list is empty or not set, then all build tasks will be performed.
-#     The following artifact names are supported for filtering build tasks:
+#     The following build task names are supported for filtering build tasks:
 #       u-boot, kernel, armbian-config, armbian-zsh, plymouth-theme-armbian, armbian-firmware, armbian-bsp, chroot, bootstrap
 #
 build_main() {
 	local _buildOnly=$1
-	local _valid_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp"
+	local _kernel_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp"
+	local _all_valid_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp chroot bootstrap"
 
 	start=$(date +%s)
 
@@ -139,14 +166,17 @@ build_main() {
 		if [ "$KERNEL_ONLY" == "no" ]; then
 			display_alert "use an empty BUILD_ONLY variable" "" "info"
 			[[ -n "${_buildOnly}" ]] && {
-				_buildOnly=""
 				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${_buildOnly}" "wrn"
+				_buildOnly=""
 			}
 		elif [ "$KERNEL_ONLY" == "yes" ]; then
-			display_alert "Instead, use BUILD_ONLY to select the build target." "$_valid_buildOnly" "wrn"
-			_buildOnly="$_valid_buildOnly"
+			display_alert "Instead, use BUILD_ONLY to select the build target." "$_kernel_buildOnly" "wrn"
+			_buildOnly="$_kernel_buildOnly"
 		fi
 	}
+
+	# Validate _buildOnly for valid build task names
+	build_validate_buildOnly "\"${_all_valid_buildOnly}\"" "\"${_buildOnly}\""
 
 	# Check and install dependencies, directory structure and settings
 	# The OFFLINE_WORK variable inside the function
