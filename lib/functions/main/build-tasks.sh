@@ -16,11 +16,11 @@ build_validate_buildOnly() {
 		done
 		if [[ $_isFound == 0 ]]; then
 			((_countOfUnsupported=_countOfUnsupported+1))
-			display_alert "BUILD_ONLY task name is not supported." "${_taskName}" "err"
+			display_alert "BUILD_ONLY task name is invalid:" "${_taskName}" "err"
 		fi
 	done
 	if [[ $_countOfUnsupported > 0 ]]; then
-		exit_with_error "BUILD_ONLY contains unsupported build task names."
+		exit_with_error "BUILD_ONLY has invalid task names - valid only:" "${_all_valid_buildOnly}"
 	fi
 }
 
