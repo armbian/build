@@ -1,31 +1,14 @@
 #!/usr/bin/env bash
 
 create_desktop_package() {
-	display_alert "bsp-desktop: PACKAGE_LIST_DESKTOP" "'${PACKAGE_LIST_DESKTOP}'" "debug"
-
-	# Remove leading and trailing spaces with some bash monstruosity
-	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
-	DEBIAN_RECOMMENDS="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
-	DEBIAN_RECOMMENDS="${DEBIAN_RECOMMENDS%"${DEBIAN_RECOMMENDS##*[![:space:]]}"}"
-	# Replace whitespace characters by commas
-	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS// /,}
-	# Remove others 'spacing characters' (like tabs)
-	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
-
-	display_alert "bsp-desktop: DEBIAN_RECOMMENDS" "'${DEBIAN_RECOMMENDS}'" "debug"
-
-	# Replace whitespace characters by commas
-	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,}
-	# Remove others 'spacing characters' (like tabs)
-	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
+	# produced by aggregation.py
+	display_alert "bsp-desktop: AGGREGATED_PACKAGES_DESKTOP_COMMA" "'${AGGREGATED_PACKAGES_DESKTOP_COMMA}'" "debug"
 
 	local destination tmp_dir
 	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	destination=${tmp_dir}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
-
-	display_alert "bsp-desktop: PACKAGE_LIST_PREDEPENDS" "'${PACKAGE_LIST_PREDEPENDS}'" "debug"
 
 	# set up control file
 	cat <<- EOF > "${destination}"/DEBIAN/control
@@ -36,52 +19,34 @@ create_desktop_package() {
 		Installed-Size: 1
 		Section: xorg
 		Priority: optional
-		Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}, armbian-bsp-desktop
+		Recommends: ${AGGREGATED_PACKAGES_DESKTOP_COMMA}, armbian-bsp-desktop
 		Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
 		Conflicts: gdm3
-		Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 		Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
 	# Recreating the DEBIAN/postinst file
-	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
-
-	local aggregated_content=""
-	aggregate_all_desktop "debian/postinst" $'\n'
-
-	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
+	echo "#!/bin/bash -e" > "${destination}/DEBIAN/postinst"
+	echo "${AGGREGATED_DESKTOP_POSTINST}" >> "${destination}/DEBIAN/postinst"
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
-
 	chmod 755 "${destination}"/DEBIAN/postinst
 
 	# Armbian create_desktop_package scripts
-
-	unset aggregated_content
-
 	mkdir -p "${destination}"/etc/armbian
-
-	local aggregated_content=""
-	aggregate_all_desktop "armbian/create_desktop_package.sh" $'\n'
-	eval "${aggregated_content}"
-	[[ $? -ne 0 ]] && display_alert "create_desktop_package.sh exec error" "" "wrn"
+	# @TODO: error information? This is very likely to explode....
+	eval "${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE}"
 
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	cd "${destination}"
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
 	cd ..
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
-
-	unset aggregated_content
-
 }
 
 create_bsp_desktop_package() {
-
 	display_alert "Creating board support package for desktop" "${package_name}" "info"
-
 	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
-
 	local destination tmp_dir
 	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 	destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
@@ -105,32 +70,18 @@ create_bsp_desktop_package() {
 	EOF
 
 	# Recreating the DEBIAN/postinst file
-	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
-
-	local aggregated_content=""
-	aggregate_all_desktop "debian/armbian-bsp-desktop/postinst" $'\n'
-
-	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
+	echo "#!/bin/bash -e" > "${destination}/DEBIAN/postinst"
+	echo "${AGGREGATED_DESKTOP_BSP_POSTINST}" >> "${destination}/DEBIAN/postinst"
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
-
 	chmod 755 "${destination}"/DEBIAN/postinst
 
 	# Armbian create_desktop_package scripts
-
-	unset aggregated_content
-
 	mkdir -p "${destination}"/etc/armbian
-
-	local aggregated_content=""
-	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
-	eval "${aggregated_content}"
-	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn" # @TODO: this is a fantasy, error would be thrown in line above
+	# @TODO: error information? This is very likely to explode....
+	eval "${AGGREGATED_DESKTOP_BSP_PREPARE}"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	cd "${destination}"
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
 	cd ..
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"
-
-	unset aggregated_content
-
 }

@@ -9,6 +9,10 @@ function chroot_sdcard_apt_get_install_download_only() {
 	chroot_sdcard_apt_get --no-install-recommends --download-only install "$@"
 }
 
+function chroot_sdcard_apt_get_install_dry_run() {
+	chroot_sdcard_apt_get --no-install-recommends --dry-run install "$@"
+}
+
 function chroot_sdcard_apt_get_remove() {
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get remove "$@"
 }
