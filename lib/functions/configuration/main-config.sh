@@ -11,6 +11,14 @@
 
 function do_main_configuration() {
 	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
+	
+	# Obsolete stuff, make sure not defined, then make readonly
+	declare -g -r DEBOOTSTRAP_LIST
+	declare -g -r PACKAGE_LIST
+	declare -g -r PACKAGE_LIST_BOARD
+	declare -g -r PACKAGE_LIST_ADDITIONAL
+	declare -g -r PACKAGE_LIST_EXTERNAL
+	declare -g -r PACKAGE_LIST_DESKTOP
 
 	# common options
 	# daily beta build contains date in subrevision
@@ -260,6 +268,10 @@ function do_main_configuration() {
 		allowing separate functions for different branches. You're welcome.
 	POST_FAMILY_CONFIG_PER_BRANCH
 
+	# Lets make some variables readonly.
+	# We don't want anything changing them, it's exclusively for family config.
+	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
+	declare -g -r PACKAGE_LIST_FAMILY_REMOVE="${PACKAGE_LIST_FAMILY_REMOVE}"
 
 	# A global killswitch for extlinux.
 	if [[ "${SRC_EXTLINUX}" == "yes" ]]; then
@@ -290,64 +302,64 @@ function do_main_configuration() {
 		DISTRIBUTION="Debian"
 	fi
 
-	CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
-	DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
-
-	AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
-${SRC}/config
-${SRC}/config/optional/_any_board/_config
-${SRC}/config/optional/architectures/${ARCH}/_config
-${SRC}/config/optional/families/${LINUXFAMILY}/_config
-${SRC}/config/optional/boards/${BOARD}/_config
-${USERPATCHES_PATH}
-"
-
-	DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
-cli/_all_distributions/debootstrap
-cli/${RELEASE}/debootstrap
-"
-
-	CLI_SEARCH_RELATIVE_DIRS="
-cli/_all_distributions/main
-cli/${RELEASE}/main
-"
-
-	PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
-${SRC}/packages
-${SRC}/config/optional/_any_board/_packages
-${SRC}/config/optional/architectures/${ARCH}/_packages
-${SRC}/config/optional/families/${LINUXFAMILY}/_packages
-${SRC}/config/optional/boards/${BOARD}/_packages
-"
-
-	DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
-desktop/_all_distributions/environments/_all_environments
-desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
-desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
-desktop/${RELEASE}/environments/_all_environments
-desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
-desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
-"
-
-	DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
-desktop/_all_distributions/appgroups
-desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
-desktop/${RELEASE}/appgroups
-desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
-"
-
-	DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages" " ")"
-	DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components" " ")"
-	DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
-	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
-	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
-	PACKAGE_LIST_EXTERNAL="$(one_line aggregate_all_cli "packages.external" " ")"
-
-	if [[ $BUILD_DESKTOP == "yes" ]]; then
-		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
-		# @TODO: desktop vs packages.external?
-		PACKAGE_LIST_DESKTOP+=" ${PACKAGE_LIST_EXTERNAL}" # external packages are only included in desktop builds
-	fi
+#	CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
+#	DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
+#
+#	AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
+#${SRC}/config
+#${SRC}/config/optional/_any_board/_config
+#${SRC}/config/optional/architectures/${ARCH}/_config
+#${SRC}/config/optional/families/${LINUXFAMILY}/_config
+#${SRC}/config/optional/boards/${BOARD}/_config
+#${USERPATCHES_PATH}
+#"
+#
+#	DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
+#cli/_all_distributions/debootstrap
+#cli/${RELEASE}/debootstrap
+#"
+#
+#	CLI_SEARCH_RELATIVE_DIRS="
+#cli/_all_distributions/main
+#cli/${RELEASE}/main
+#"
+#
+#	PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
+#${SRC}/packages
+#${SRC}/config/optional/_any_board/_packages
+#${SRC}/config/optional/architectures/${ARCH}/_packages
+#${SRC}/config/optional/families/${LINUXFAMILY}/_packages
+#${SRC}/config/optional/boards/${BOARD}/_packages
+#"
+#
+#	DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
+#desktop/_all_distributions/environments/_all_environments
+#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
+#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+#desktop/${RELEASE}/environments/_all_environments
+#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
+#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+#"
+#
+#	DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
+#desktop/_all_distributions/appgroups
+#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
+#desktop/${RELEASE}/appgroups
+#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
+#"
+#
+#	DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages" " ")"
+#	DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components" " ")"
+#	DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
+#	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
+#	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
+#	PACKAGE_LIST_EXTERNAL="$(one_line aggregate_all_cli "packages.external" " ")"
+#
+#	if [[ $BUILD_DESKTOP == "yes" ]]; then
+#		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
+#		# @TODO: desktop vs packages.external?
+#		PACKAGE_LIST_DESKTOP+=" ${PACKAGE_LIST_EXTERNAL}" # external packages are only included in desktop builds
+#	fi
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
 	DEBIAN_SECURTY='security.debian.org/'
@@ -421,51 +433,52 @@ desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
 
 	[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 
-	display_alert "Build final package list" "after possible override" "debug"
-	PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-	PACKAGE_MAIN_LIST="$(cleanup_list PACKAGE_LIST)"
+	# Time to calculate packages... or is it?
+	aggregate_all_packages
 
-	[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
-	# @TODO: what is the use of changing PACKAGE_LIST after PACKAGE_MAIN_LIST was set?
-	PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
+	# Now, supposedly PACKAGE_LIST_RM is complete by now.
 
-	# remove any packages defined in PACKAGE_LIST_RM in lib.config
-	aggregated_content="${PACKAGE_LIST_RM} "
-	aggregate_all_cli "packages.remove" " "
-	aggregate_all_desktop "packages.remove" " "
-	PACKAGE_LIST_RM="$(cleanup_list aggregated_content)"
-	unset aggregated_content
-
-	aggregated_content=""
-	aggregate_all_cli "packages.uninstall" " "
-	aggregate_all_desktop "packages.uninstall" " "
-	PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
-	unset aggregated_content
-
-	# @TODO: rpardini: this has to stop. refactor this into array or dict-based and stop the madness.
-	if [[ -n $PACKAGE_LIST_RM ]]; then
-		# Turns out that \b can be tricked by dashes.
-		# So if you remove mesa-utils but still want to install "mesa-utils-extra"
-		# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
-		# \W is not tricked by this but consumes the surrounding spaces, so we
-		# replace the occurence by one space, to avoid sticking the next word to
-		# the previous one after consuming the spaces.
-		DEBOOTSTRAP_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${DEBOOTSTRAP_LIST} ")
-		PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
-		PACKAGE_MAIN_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_MAIN_LIST} ")
-		if [[ $BUILD_DESKTOP == "yes" ]]; then
-			PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
-			# Removing double spaces... AGAIN, since we might have used a sed on them
-			# Do not quote the variables. This would defeat the trick.
-			PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
-		fi
-
-		# Removing double spaces... AGAIN, since we might have used a sed on them
-		# Do not quote the variables. This would defeat the trick.
-		DEBOOTSTRAP_LIST="$(echo ${DEBOOTSTRAP_LIST})"
-		PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
-		PACKAGE_MAIN_LIST="$(echo ${PACKAGE_MAIN_LIST})"
-	fi
+	#display_alert "Build final package list" "after possible override" "debug"
+	#PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
+#
+	#[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
+	#PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
+#
+	## remove any packages defined in PACKAGE_LIST_RM in lib.config
+	#aggregated_content="${PACKAGE_LIST_RM} "
+	#aggregate_all_cli "packages.remove" " "
+	#aggregate_all_desktop "packages.remove" " "
+	#PACKAGE_LIST_RM="$(cleanup_list aggregated_content)"
+	#unset aggregated_content
+#
+	#aggregated_content=""
+	#aggregate_all_cli "packages.uninstall" " "
+	#aggregate_all_desktop "packages.uninstall" " "
+	#PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
+	#unset aggregated_content
+#
+	## @TODO: rpardini: this has to stop. refactor this into array or dict-based and stop the madness.
+	#if [[ -n $PACKAGE_LIST_RM ]]; then
+	#	# Turns out that \b can be tricked by dashes.
+	#	# So if you remove mesa-utils but still want to install "mesa-utils-extra"
+	#	# a "\b(mesa-utils)\b" filter will convert "mesa-utils-extra" to "-extra".
+	#	# \W is not tricked by this but consumes the surrounding spaces, so we
+	#	# replace the occurence by one space, to avoid sticking the next word to
+	#	# the previous one after consuming the spaces.
+	#	DEBOOTSTRAP_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${DEBOOTSTRAP_LIST} ")
+	#	PACKAGE_LIST=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST} ")
+	#	if [[ $BUILD_DESKTOP == "yes" ]]; then
+	#		PACKAGE_LIST_DESKTOP=$(sed -r "s/\W($(tr ' ' '|' <<< ${PACKAGE_LIST_RM}))\W/ /g" <<< " ${PACKAGE_LIST_DESKTOP} ")
+	#		# Removing double spaces... AGAIN, since we might have used a sed on them
+	#		# Do not quote the variables. This would defeat the trick.
+	#		PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
+	#	fi
+#
+	#	# Removing double spaces... AGAIN, since we might have used a sed on them
+	#	# Do not quote the variables. This would defeat the trick.
+	#	DEBOOTSTRAP_LIST="$(echo ${DEBOOTSTRAP_LIST})"
+	#	PACKAGE_LIST="$(echo ${PACKAGE_LIST})"
+	#fi
 
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
