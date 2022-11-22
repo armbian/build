@@ -1,9 +1,8 @@
-# $1: _valid_all_buildOnly - a :comma: or :space: separated list of all supported build task names
-# $2: _buildOnly - a :comma: or :space: separated list of user configured build task names
+# $1: _all_valid_buildOnly - a :comma: or :space: separated list of all supported build task names
 build_validate_buildOnly() {
 	# remove all "
 	local _all_valid_buildOnly=${1//\"/}
-	local _buildOnly=${2//\"/}
+	local _buildOnly=${BUILD_ONLY//\"/}
 	# relace all :comma: by :space:
 	_all_valid_buildOnly=${_all_valid_buildOnly//,/ }
 	_buildOnly=${_buildOnly//,/ }
@@ -145,16 +144,17 @@ build_bootstrap() {
 #
 # build_main()
 #
-# Builds all artifacts or the filtered ones only.
+# Builds all artifacts or the filtered ones only based on BUILD_ONLY.
 # Ensures that any build pre-requisite is met.
 #
-# $1: optional comma separated list of artifacts to build only.
-#     If this list is empty or not set, then all build tasks will be performed.
-#     The following build task names are supported for filtering build tasks:
-#       u-boot, kernel, armbian-config, armbian-zsh, plymouth-theme-armbian, armbian-firmware, armbian-bsp, chroot, bootstrap
+# BUILD_ONLY: optional comma separated list of artifacts to build only.
+#             If this list is empty or not set, then all build tasks will be performed.
+#             The following build task names are supported for filtering build tasks:
+#               u-boot, kernel, armbian-config, armbian-zsh, plymouth-theme-armbian, armbian-firmware, armbian-bsp, chroot, bootstrap
+#
+# local _all_valid_buildOnly: This is supposed to be maintained as a constant in case of any future extension
 #
 build_main() {
-	local _buildOnly=$1
 	local _kernel_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp"
 	local _all_valid_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp chroot bootstrap"
 
@@ -166,19 +166,21 @@ build_main() {
 	[[ -n $KERNEL_ONLY ]] && {
 		display_alert "The KERNEL_ONLY key is no longer used." "KERNEL_ONLY=$KERNEL_ONLY" "wrn"
 		if [ "$KERNEL_ONLY" == "no" ]; then
-			display_alert "use an empty BUILD_ONLY variable" "" "info"
-			[[ -n "${_buildOnly}" ]] && {
-				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${_buildOnly}" "wrn"
-				_buildOnly=""
+			display_alert "Use an empty BUILD_ONLY variable instead" "" "info"
+			[[ -n "${BUILD_ONLY}" ]] && {
+				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${BUILD_ONLY}" "wrn"
+				BUILD_ONLY=""
+				display_alert "Enforced BUILD_ONLY to an empty string." "" "info"
 			}
 		elif [ "$KERNEL_ONLY" == "yes" ]; then
 			display_alert "Instead, use BUILD_ONLY to select the build target." "$_kernel_buildOnly" "wrn"
-			_buildOnly="$_kernel_buildOnly"
+			BUILD_ONLY="$_kernel_buildOnly"
+			display_alert "BUILD_ONLY enforced to:" "${BUILD_ONLY}" "info"
 		fi
 	}
 
-	# Validate _buildOnly for valid build task names
-	build_validate_buildOnly "\"${_all_valid_buildOnly}\"" "\"${_buildOnly}\""
+	# Validate BUILD_ONLY for valid build task names
+	build_validate_buildOnly "\"${_all_valid_buildOnly}\""
 
 	# Check and install dependencies, directory structure and settings
 	# The OFFLINE_WORK variable inside the function
@@ -192,8 +194,8 @@ build_main() {
 
 	# ignore updates help on building all images - for internal purposes
 	if [[ $IGNORE_UPDATES != yes ]]; then
-		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && build_get_boot_sources
-		[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* ]] && build_get_kernel_sources
+		[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *u-boot* ]] && build_get_boot_sources
+		[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *kernel* ]] && build_get_kernel_sources
 
 		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
 			*fetch host-side sources needed for tools and build*
@@ -210,21 +212,21 @@ build_main() {
 		done
 	fi
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && build_uboot
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *u-boot* ]] && build_uboot
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* ]] && build_kernel
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *kernel* ]] && build_kernel
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-config* ]] && build_armbian-config
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-config* ]] && build_armbian-config
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-zsh* ]] && build_armbian-zsh
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-zsh* ]] && build_armbian-zsh
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *plymouth-theme-armbian* ]] && build_plymouth-theme-armbian
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *plymouth-theme-armbian* ]] && build_plymouth-theme-armbian
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-firmware* ]] && build_armbian-firmware
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-firmware* ]] && build_armbian-firmware
 
 	overlayfs_wrapper "cleanup"
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *armbian-bsp* ]] && build_armbian-bsp
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-bsp* ]] && build_armbian-bsp
 
 	# skip image creation if exists. useful for CI when making a lot of images
 	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
@@ -232,14 +234,14 @@ build_main() {
 		exit
 	fi
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *chroot* ]] && build_chroot
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *chroot* ]] && build_chroot
 
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *bootstrap* ]] && build_bootstrap
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *bootstrap* ]] && build_bootstrap
 
 	display_alert "Build done" "@host" "info"
 	display_alert "Target directory" "${DEB_STORAGE}/" "info"
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *u-boot* ]] && display_alert "U-Boot file name" "${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" "info"
-	[[ "${_buildOnly}" == "" || "${_buildOnly}" == *kernel* ]] && display_alert "Kernel file name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *u-boot* ]] && display_alert "U-Boot file name" "${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" "info"
+	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *kernel* ]] && display_alert "Kernel file name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 
 	call_extension_method "run_after_build" << 'RUN_AFTER_BUILD'
 *hook for function to run after build, i.e. to change owner of `$SRC`*
