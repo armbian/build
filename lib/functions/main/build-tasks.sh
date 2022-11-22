@@ -8,19 +8,21 @@ build_validate_buildOnly() {
 	_all_valid_buildOnly=${_all_valid_buildOnly//,/ }
 	_buildOnly=${_buildOnly//,/ }
 	[[ -z $_buildOnly ]] && return
-	local _countOfUnsupported=0
+	local _invalidTaskNames=""
 	for _taskName in ${_buildOnly}; do
 		local _isFound=0
 		for _supportedTaskName in ${_all_valid_buildOnly}; do
 			[[ "$_taskName" == "$_supportedTaskName" ]] && _isFound=1 && break
 		done
 		if [[ $_isFound == 0 ]]; then
-			((_countOfUnsupported=_countOfUnsupported+1))
-			display_alert "BUILD_ONLY task name is invalid:" "${_taskName}" "err"
+			[[ -z $_invalidTaskNames ]] && _invalidTaskNames="${_taskName}" || _invalidTaskNames="${_invalidTaskNames} ${_taskName}"
 		fi
 	done
-	if [[ $_countOfUnsupported > 0 ]]; then
-		exit_with_error "BUILD_ONLY has invalid task names - valid only:" "${_all_valid_buildOnly}"
+	if [[ -n $_invalidTaskNames ]]; then
+		display_alert "BUILD_ONLY has invalid task name(s):" "${_invalidTaskNames}" "err"
+		display_alert "Use BUILD_ONLY valid task names only:" "${_all_valid_buildOnly}" "ext"
+		display_alert "Process aborted" "" "info"
+		exit 1
 	fi
 }
 
