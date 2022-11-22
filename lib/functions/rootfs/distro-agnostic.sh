@@ -257,26 +257,18 @@ function install_distribution_agnostic() {
 	display_alert "Updating" "apt package lists"
 	do_with_retries 3 chroot_sdcard_apt_get update
 
-	# install family packages
-	if [[ -n ${PACKAGE_LIST_FAMILY} ]]; then
-		_pkg_list=${PACKAGE_LIST_FAMILY}
-		display_alert "Installing PACKAGE_LIST_FAMILY packages" "${_pkg_list}"
-		# shellcheck disable=SC2086 # we need to expand here. retry 3 times download-only to counter apt-cacher-ng failures.
-		do_with_retries 3 chroot_sdcard_apt_get_install_download_only ${_pkg_list}
+	# install image packages; AGGREGATED_PACKAGES_IMAGE is produced by aggregation.py
+	# and includes the old PACKAGE_LIST_BOARD and PACKAGE_LIST_FAMILY
+	if [[ ${#AGGREGATED_PACKAGES_IMAGE[@]} -gt 0 ]]; then
+		display_alert "Installing AGGREGATED_PACKAGES_IMAGE packages" "${AGGREGATED_PACKAGES_IMAGE[*]}"
 
-		# shellcheck disable=SC2086 # we need to expand here.
-		chroot_sdcard_apt_get_install ${_pkg_list}
-	fi
+		# dry-run, make sure everything can be installed.
+		chroot_sdcard_apt_get_install_dry_run "${AGGREGATED_PACKAGES_IMAGE[@]}"
 
-	# install board packages
-	if [[ -n ${PACKAGE_LIST_BOARD} ]]; then
-		_pkg_list=${PACKAGE_LIST_BOARD}
-		display_alert "Installing PACKAGE_LIST_BOARD packages" "${_pkg_list}"
-		# shellcheck disable=SC2086 # we need to expand here. retry 3 times download-only to counter apt-cacher-ng failures.
-		do_with_retries 3 chroot_sdcard_apt_get_install_download_only ${_pkg_list}
+		# retry 3 times download-only to counter apt-cacher-ng failures.
+		do_with_retries 3 chroot_sdcard_apt_get_install_download_only "${AGGREGATED_PACKAGES_IMAGE[@]}"
 
-		# shellcheck disable=SC2086 # we need to expand.
-		chroot_sdcard_apt_get_install ${_pkg_list}
+		chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_IMAGE[@]}"
 	fi
 
 	# remove family packages
@@ -286,21 +278,22 @@ function install_distribution_agnostic() {
 		chroot_sdcard_apt_get_remove --auto-remove ${_pkg_list}
 	fi
 
-	# remove board packages. loop over the list to remove, check if they're actually installed, then remove individually.
-	if [[ -n ${PACKAGE_LIST_BOARD_REMOVE} ]]; then
-		_pkg_list=${PACKAGE_LIST_BOARD_REMOVE}
-		declare -a currently_installed_packages
-		# shellcheck disable=SC2207 # I wanna split, thanks.
-		currently_installed_packages=($(chroot_sdcard_with_stdout dpkg-query --show --showformat='${Package} '))
-		for PKG_REMOVE in ${_pkg_list}; do
-			# shellcheck disable=SC2076 # I wanna match literally, thanks.
-			if [[ " ${currently_installed_packages[*]} " =~ " ${PKG_REMOVE} " ]]; then
-				display_alert "Removing PACKAGE_LIST_BOARD_REMOVE package" "${PKG_REMOVE}"
-				chroot_sdcard_apt_get_remove --auto-remove "${PKG_REMOVE}"
-			fi
-		done
-		unset currently_installed_packages
-	fi
+	# @TODO check if this still necessary or not.
+	## remove board packages. loop over the list to remove, check if they're actually installed, then remove individually.
+	#if [[ -n ${PACKAGE_LIST_BOARD_REMOVE} ]]; then
+	#	_pkg_list=${PACKAGE_LIST_BOARD_REMOVE}
+	#	declare -a currently_installed_packages
+	#	# shellcheck disable=SC2207 # I wanna split, thanks.
+	#	currently_installed_packages=($(chroot_sdcard_with_stdout dpkg-query --show --showformat='${Package} '))
+	#	for PKG_REMOVE in ${_pkg_list}; do
+	#		# shellcheck disable=SC2076 # I wanna match literally, thanks.
+	#		if [[ " ${currently_installed_packages[*]} " =~ " ${PKG_REMOVE} " ]]; then
+	#			display_alert "Removing PACKAGE_LIST_BOARD_REMOVE package" "${PKG_REMOVE}"
+	#			chroot_sdcard_apt_get_remove --auto-remove "${PKG_REMOVE}"
+	#		fi
+	#	done
+	#	unset currently_installed_packages
+	#fi
 
 	# install u-boot
 	# @TODO: add install_bootloader() extension method, refactor into u-boot extension
