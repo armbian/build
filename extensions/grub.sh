@@ -61,7 +61,9 @@ function extension_prepare_config__prepare_flash_kernel() {
 		DISTRO_FIRMWARE_PACKAGES=""
 	fi
 
-	export PACKAGE_LIST_BOARD="${PACKAGE_LIST_BOARD} ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES}  ${uefi_packages}"
+	# @TODO: use actual arrays. Yeah...
+	# shellcheck disable=SC2086
+	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}
 
 	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }
