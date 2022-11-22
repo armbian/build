@@ -35,7 +35,9 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	DISTRO_KERNEL_PACKAGES=""
 	DISTRO_FIRMWARE_PACKAGES=""
 
-	export PACKAGE_LIST_BOARD="${PACKAGE_LIST_BOARD} ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}"
+	# @TODO: use actual arrays. Yeah...
+	# shellcheck disable=SC2086
+	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}
 
 	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }
@@ -72,6 +74,30 @@ pre_umount_final_image__install_grub() {
 	chroot "$chroot_target" /bin/bash -c "$install_grub_cmdline" >>"$DEST"/"${LOG_SUBPATH}"/install.log 2>&1 || {
 		exit_with_error "${install_grub_cmdline} failed!"
 	}
+
+	### Sanity check. The produced "/boot/grub/grub.cfg" should:
+	declare -i has_failed_sanity_check=0
+
+	# - NOT have any mention of `/dev` inside; otherwise something is going to fail
+	if grep -q '/dev' "${chroot_target}/boot/grub/grub.cfg"; then
+		display_alert "GRUB sanity check failed" "grub.cfg contains /dev" "err"
+		SHOW_LOG=yes run_host_command_logged grep '/dev' "${chroot_target}/boot/grub/grub.cfg" "||" true
+		has_failed_sanity_check=1
+	else
+		display_alert "GRUB config sanity check passed" "no '/dev' found in grub.cfg" "info"
+	fi
+
+	# - HAVE references to initrd, otherwise going to fail.
+	if ! grep -q 'initrd.img' "${chroot_target}/boot/grub/grub.cfg"; then
+		display_alert "GRUB config sanity check failed" "no initrd.img references found in /boot/grub/grub.cfg" "err"
+		has_failed_sanity_check=1
+	else
+		display_alert "GRUB config sanity check passed" "initrd.img references found OK in /boot/grub/grub.cfg" "debug"
+	fi
+
+	if [[ ${has_failed_sanity_check} -gt 0 ]]; then
+		exit_with_error "GRUB config sanity check failed, image will be unbootable; see above errors"
+	fi
 
 	# Remove host-side config.
 	rm -f "${MOUNT}"/etc/default/grub.d/99-armbian-host-side.cfg
