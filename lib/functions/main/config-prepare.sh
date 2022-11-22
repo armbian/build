@@ -58,6 +58,11 @@ function prepare_and_config_main_build_single() {
 	LINUXFAMILY="${BOARDFAMILY}" # @TODO: wtf? why? this is (100%?) rewritten by family config!
 	# this sourced the board config. do_main_configuration will source the family file.
 
+	# Lets make some variables readonly.
+	# We don't want anything changing them, it's exclusively for board config.
+	declare -g -r PACKAGE_LIST_BOARD="${PACKAGE_LIST_BOARD}"
+	declare -g -r PACKAGE_LIST_BOARD_REMOVE="${PACKAGE_LIST_BOARD_REMOVE}"
+
 	[[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
 
 	interactive_config_ask_branch

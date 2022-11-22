@@ -70,7 +70,6 @@ function desktop_environment_check_if_valid() {
 function interactive_desktop_main_configuration() {
 	[[ $BUILD_DESKTOP != "yes" ]] && return 0 # Only for desktops.
 
-	# Myy : Once we got a list of selected groups, parse the PACKAGE_LIST inside configuration.sh
 	DESKTOP_ELEMENTS_DIR="${SRC}/config/desktop/${RELEASE}"
 	DESKTOP_CONFIGS_DIR="${DESKTOP_ELEMENTS_DIR}/environments"
 	DESKTOP_CONFIG_PREFIX="config_"

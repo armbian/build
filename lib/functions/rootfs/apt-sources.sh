@@ -1,59 +1,22 @@
 #!/usr/bin/env bash
 
 add_apt_sources() {
-	local potential_paths=""
-	local sub_dirs_to_check=". "
-	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
-		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
-	fi
-
-	# @TODO: rpardini: The logic here is meant to be evolved over time. Originally, all of this only ran when BUILD_DESKTOP=yes.
-	#                  Igor had bumped it to run on all builds, but that adds external sources to cli and minimal.
-	# @TODO: attention: this only handles the apt-sources; the packages (names) themselves are aggregated somewhere else
-	[[ "${BUILD_DESKTOP}" == "yes" ]] && get_all_potential_paths "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
-	[[ "${BUILD_DESKTOP}" == "yes" ]] && get_all_potential_paths "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}" "sources/apt"
-	[[ "${BUILD_DESKTOP}" == "yes" ]] && get_all_potential_paths "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "." "sources/apt"
-	[[ "${BUILD_DESKTOP}" == "yes" ]] && get_all_potential_paths "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}" "sources/apt"
-
+	# AGGREGATED_APT_SOURCES and AGGREGATED_APT_SOURCES_DICT are pre-resolved by aggregation.py
 	display_alert "Adding additional apt sources" "add_apt_sources()" "debug"
+	mkdir -p "${SDCARD}"/usr/share/keyrings/
 
-	for apt_sources_dirpath in ${potential_paths}; do
-		if [[ -d "${apt_sources_dirpath}" ]]; then
-			for apt_source_filepath in "${apt_sources_dirpath}/"*.source; do
-				apt_source_filepath=$(echo "${apt_source_filepath}" | sed -re 's/(^.*[^/])\.[^./]*$/\1/')
-				local new_apt_source
-				local apt_source_gpg_filepath
-				local apt_source_gpg_filename
-				local apt_source_filename
+	for apt_source in "${AGGREGATED_APT_SOURCES[@]}"; do
+		apt_source_base="${AGGREGATED_APT_SOURCES_DICT["${apt_source}"]}"
+		apt_source_file="${SRC}/${apt_source_base}.source"
+		gpg_file="${SRC}/${apt_source_base}.gpg"
 
-				new_apt_source="$(cat "${apt_source_filepath}.source")"
-				apt_source_gpg_filepath="${apt_source_filepath}.gpg"
-				apt_source_gpg_filename="$(basename "${apt_source_gpg_filepath}")"
-				apt_source_filename="$(basename "${apt_source_filepath}").list"
-
-				display_alert "Adding APT Source" "${new_apt_source}" "info"
-
-				# @TODO: rpardini, why do PPAs get apt-key and others get keyrings GPG?
-
-				if [[ "${new_apt_source}" == ppa* ]]; then
-					# @TODO: needs software-properties-common installed.
-					chroot_sdcard add-apt-repository -y -n "${new_apt_source}" # -y -> Assume yes, -n -> no apt-get update
-					if [[ -f "${apt_source_gpg_filepath}" ]]; then
-						display_alert "Adding GPG Key" "via apt-key add (deprecated): ${apt_source_gpg_filename}"
-						run_host_command_logged cp -pv "${apt_source_gpg_filepath}" "${SDCARD}/tmp/${apt_source_gpg_filename}"
-						chroot_sdcard apt-key add "/tmp/${apt_source_gpg_filename}"
-					fi
-				else
-					# installation without software-common-properties, sources.list + key.gpg
-					echo "${new_apt_source}" > "${SDCARD}/etc/apt/sources.list.d/${apt_source_filename}"
-					if [[ -f "${apt_source_gpg_filepath}" ]]; then
-						display_alert "Adding GPG Key" "via keyrings: ${apt_source_gpg_filename}"
-						mkdir -p "${SDCARD}"/usr/share/keyrings/
-						run_host_command_logged cp -pv "${apt_source_gpg_filepath}" "${SDCARD}"/usr/share/keyrings/
-					fi
-				fi
-
-			done
+		display_alert "Adding APT Source" "${apt_source}" "info"
+		# installation without software-common-properties, sources.list + key.gpg
+		run_host_command_logged cp -pv "${apt_source_file}" "${SDCARD}/etc/apt/sources.list.d/${apt_source}.list"
+		if [[ -f "${gpg_file}" ]]; then
+			# @TODO good chance to test the key for expiration date, and WARN if < 60 days, and ERROR if < 30 days
+			display_alert "Adding GPG Key" "via keyrings: ${apt_source}.list"
+			run_host_command_logged cp -pv "${gpg_file}" "${SDCARD}/usr/share/keyrings/${apt_source}.gpg"
 		fi
 	done
 }
