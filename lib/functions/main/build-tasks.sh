@@ -1,7 +1,18 @@
-# $1: _all_valid_buildOnly - a :comma: or :space: separated list of all supported build task names
+###############################################################################
+#
+# build_validate_buildOnly()
+#
+# This function validates the list of task names defined by global
+# variable BUIDL_ONLY versus the locally defined constant
+# list __all_valid_buildOnly.
+#
+# In case of future extensions, please maintain the list of valid task names
+# only here.
+#
 build_validate_buildOnly() {
-	# remove all "
+	# constant list of all valid BUILD_ONLY task names - can be :comma: or :space: separated
 	local _all_valid_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp chroot bootstrap"
+	# remove all "
 	local _buildOnly=${BUILD_ONLY//\"/}
 	# relace all :comma: by :space:
 	_all_valid_buildOnly=${_all_valid_buildOnly//,/ }
@@ -25,8 +36,16 @@ build_validate_buildOnly() {
 	fi
 }
 
+###############################################################################
+#
+# backward_compatibility_build_only()
+#
+# This function propagates the deprecated KERNEL_ONLY configuration
+# to the appropriate content of the BUILD_ONLY configuration.
+# It exists for backward compatibility only.
+#
 backward_compatibility_build_only() {
-	local _kernel_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp"
+	local _kernel_buildOnly="u-boot,kernel,armbian-config,armbian-zsh,plymouth-theme-armbian,armbian-firmware,armbian-bsp"
 
 	# These checks are necessary for backward compatibility with logic
 	# https://github.com/armbian/scripts/tree/master /.github/workflows scripts.
@@ -179,7 +198,8 @@ build_bootstrap() {
 #             The following build task names are supported for filtering build tasks:
 #               u-boot, kernel, armbian-config, armbian-zsh, plymouth-theme-armbian, armbian-firmware, armbian-bsp, chroot, bootstrap
 #
-# local _all_valid_buildOnly: This is supposed to be maintained as a constant in case of any future extension
+# Note: The list of all valid BUILD_ONLY task names is to be maintained
+#       in function build_validate_buildOnly() above as local variable _all_valid_buildOnly.
 #
 build_main() {
 
@@ -282,5 +302,5 @@ $([[ -n $COMPRESS_OUTPUTIMAGE ]] && echo "COMPRESS_OUTPUTIMAGE=${COMPRESS_OUTPUT
 # This function is still there for backward compatibility only.
 #
 do_default() {
-	build_main ""
+	build_main
 }
