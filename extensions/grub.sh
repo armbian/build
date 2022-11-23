@@ -108,6 +108,19 @@ pre_umount_final_image__install_grub() {
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
 
+	# update-grub is secretly `grub-mkconfig` under wraps, but the actual work is done by /etc/grub.d/10-linux
+	# that decides based on 'test -e "/dev/disk/by-uuid/${GRUB_DEVICE_UUID}"' so that _must_ exist.
+	# If it does NOT exist, then a reference to a /dev/devYpX is used, and will fail to boot.
+	# Irony: let's use grub-probe to find out the UUID of the root partition, and then create a symlink to it.
+	# Another: on some systems (eg, not Docker) the thing might already exist due to udev actually working.
+	# shellcheck disable=SC2016 # some wierd escaping going on there.
+	chroot_custom "$chroot_target" mkdir -pv '/dev/disk/by-uuid/"$(grub-probe --target=fs_uuid /)"' "||" true
+
+	display_alert "Creating GRUB config..." "grub-mkconfig" ""
+	chroot_custom "$chroot_target" update-grub || {
+		exit_with_error "update-grub failed!"
+	}
+
 	if [[ "${UEFI_GRUB_TARGET_BIOS}" != "" ]]; then
 		display_alert "Installing GRUB BIOS..." "${UEFI_GRUB_TARGET_BIOS} device ${LOOP}" ""
 		chroot_custom "$chroot_target" grub-install --target=${UEFI_GRUB_TARGET_BIOS} "${LOOP}" || {
@@ -115,11 +128,35 @@ pre_umount_final_image__install_grub() {
 		}
 	fi
 
-	local install_grub_cmdline="update-grub && grub-install --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
+	local install_grub_cmdline="grub-install --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
 	display_alert "Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
 	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
 		exit_with_error "${install_grub_cmdline} failed!"
 	}
+
+	### Sanity check. The produced "/boot/grub/grub.cfg" should:
+	declare -i has_failed_sanity_check=0
+
+	# - NOT have any mention of `/dev` inside; otherwise something is going to fail
+	if grep -q '/dev' "${chroot_target}/boot/grub/grub.cfg"; then
+		display_alert "GRUB sanity check failed" "grub.cfg contains /dev" "err"
+		SHOW_LOG=yes run_host_command_logged grep '/dev' "${chroot_target}/boot/grub/grub.cfg" "||" true
+		has_failed_sanity_check=1
+	else
+		display_alert "GRUB config sanity check passed" "no '/dev' found in grub.cfg" "info"
+	fi
+
+	# - HAVE references to initrd, otherwise going to fail.
+	if ! grep -q 'initrd.img' "${chroot_target}/boot/grub/grub.cfg"; then
+		display_alert "GRUB config sanity check failed" "no initrd.img references found in /boot/grub/grub.cfg" "err"
+		has_failed_sanity_check=1
+	else
+		display_alert "GRUB config sanity check passed" "initrd.img references found OK in /boot/grub/grub.cfg" "debug"
+	fi
+
+	if [[ ${has_failed_sanity_check} -gt 0 ]]; then
+		exit_with_error "GRUB config sanity check failed, image will be unbootable; see above errors"
+	fi
 
 	# Remove host-side config.
 	rm -f "${MOUNT}"/etc/default/grub.d/99-armbian-host-side.cfg
