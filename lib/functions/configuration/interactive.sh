@@ -169,7 +169,7 @@ function interactive_config_ask_desktop_build() {
 	# don't show desktop option if we choose minimal build
 	if [[ $HAS_VIDEO_OUTPUT == no || $BUILD_MINIMAL == yes ]]; then
 		BUILD_DESKTOP=no
-	elif [[ -z "$BUILD_ONLY" || "$BUILD_ONLY" == *bootstrap* && -z "$BUILD_DESKTOP" ]]; then
+	elif [[ -z "$BUILD_DESKTOP" ]]; then
 
 		# read distribution support status which is written to the armbian-release file
 		set_distribution_status
@@ -190,7 +190,7 @@ function interactive_config_ask_desktop_build() {
 }
 
 function interactive_config_ask_standard_or_minimal() {
-	if [[ -z "$BUILD_ONLY" || "$BUILD_ONLY" == *bootstrap* && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
+	if [[ $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 
 		options=()
 		options+=("no" "Standard image with console interface")
