@@ -1,5 +1,79 @@
 ###############################################################################
 #
+# build_task_is_enabled()
+#
+# $1: _taskNameToCheck - a single task name to check for BUILD_ONLY enablement
+# return:
+#   0 - if BUILD_ONLY is empty or if the task name is listed by BUILD_ONLY
+#   1 - otherwise 
+#
+build_task_is_enabled() {
+	# remove all "
+	local _taskNameToCheck=${1//\"/}
+	local _buildOnly=${BUILD_ONLY//\"/}
+	# An empty _buildOnly allows any taskname
+	[[ -z $_buildOnly ]] && return 0
+	_buildOnly=${_buildOnly//,/ }
+	for _buildOnlyTaskName in ${_buildOnly}; do
+		[[ "$_taskNameToCheck" == "$_buildOnlyTaskName" ]] && return 0
+	done
+	return 1
+}
+
+###############################################################################
+#
+# build_task_one_of_is_enabled()
+#
+# $1: _taskNamesToCheck - a single task name or a :comma: or :space: separated list of multiple task names to check
+# return:
+#   0 - if BUILD_ONLY is empty or if at least one task name of _taskNamesToCheck is listed by BUILD_ONLY
+#   1 - otherwise 
+#
+build_task_one_of_is_enabled() {
+	# remove all "
+	local _taskNamesToCheck=${1//\"/}
+	local _buildOnly=${BUILD_ONLY//\"/}
+	# An empty _buildOnly allows any taskname
+	[[ -z $_buildOnly ]] && return 0
+	# relace all :comma: by :space:
+	_taskNamesToCheck=${_taskNamesToCheck//,/ }
+	_buildOnly=${_buildOnly//,/ }
+	for _taskNameToCheck in ${_taskNamesToCheck}; do
+		if build_task_is_enabled "$_taskNameToCheck"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+###############################################################################
+#
+# build_task_each_of_is_enabled()
+#
+# $1: _taskNamesToCheck - a single task name or a :comma: or :space: separated list of multiple task names to check
+# return:
+#   0 - if BUILD_ONLY is empty or if all _taskNamesToCheck are listed by BUILD_ONLY
+#   1 - otherwise 
+#
+build_task_each_of_is_enabled() {
+	# remove all "
+	local _taskNamesToCheck=${1//\"/}
+	local _buildOnly=${BUILD_ONLY//\"/}
+	# An empty _buildOnly allows any taskname
+	[[ -z $_buildOnly ]] && return 0
+	# relace all :comma: by :space:
+	_taskNamesToCheck=${_taskNamesToCheck//,/ }
+	_buildOnly=${_buildOnly//,/ }
+	for _taskNameToCheck in ${_taskNamesToCheck}; do
+		if ! build_task_is_enabled "$_taskNameToCheck"; then
+			return 1
+		fi
+	done
+	return 0
+}
+
+###############################################################################
+#
 # build_validate_buildOnly()
 #
 # This function validates the list of task names defined by global
@@ -217,8 +291,8 @@ build_main() {
 
 	# ignore updates help on building all images - for internal purposes
 	if [[ $IGNORE_UPDATES != yes ]]; then
-		[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *u-boot* ]] && build_get_boot_sources
-		[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *kernel* ]] && build_get_kernel_sources
+		build_task_is_enabled "u-boot" && build_get_boot_sources
+		build_task_is_enabled "kernel" && build_get_kernel_sources
 
 		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
 			*fetch host-side sources needed for tools and build*
@@ -235,21 +309,21 @@ build_main() {
 		done
 	fi
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *u-boot* ]] && build_uboot
+	build_task_is_enabled "u-boot" && build_uboot
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *kernel* ]] && build_kernel
+	build_task_is_enabled "kernel" && build_kernel
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-config* ]] && build_armbian-config
+	build_task_is_enabled "armbian-config" && build_armbian-config
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-zsh* ]] && build_armbian-zsh
+	build_task_is_enabled "armbian-zsh" && build_armbian-zsh
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *plymouth-theme-armbian* ]] && build_plymouth-theme-armbian
+	build_task_is_enabled "plymouth-theme-armbian" && build_plymouth-theme-armbian
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-firmware* ]] && build_armbian-firmware
+	build_task_is_enabled "armbian-firmware" && build_armbian-firmware
 
 	overlayfs_wrapper "cleanup"
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *armbian-bsp* ]] && build_armbian-bsp
+	build_task_is_enabled "armbian-bsp" && build_armbian-bsp
 
 	# skip image creation if exists. useful for CI when making a lot of images
 	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
@@ -257,14 +331,14 @@ build_main() {
 		exit
 	fi
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *chroot* ]] && build_chroot
+	build_task_is_enabled "chroot" && build_chroot
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *bootstrap* ]] && build_bootstrap
+	build_task_is_enabled "bootstrap" && build_bootstrap
 
 	display_alert "Build done" "@host" "info"
 	display_alert "Target directory" "${DEB_STORAGE}/" "info"
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *u-boot* ]] && display_alert "U-Boot file name" "${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" "info"
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *kernel* ]] && display_alert "Kernel file name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
+	build_task_is_enabled "u-boot" && display_alert "U-Boot file name" "${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb" "info"
+	build_task_is_enabled "kernel" && display_alert "Kernel file name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 
 	call_extension_method "run_after_build" << 'RUN_AFTER_BUILD'
 *hook for function to run after build, i.e. to change owner of `$SRC`*
