@@ -1,7 +1,7 @@
 # $1: _all_valid_buildOnly - a :comma: or :space: separated list of all supported build task names
 build_validate_buildOnly() {
 	# remove all "
-	local _all_valid_buildOnly=${1//\"/}
+	local _all_valid_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp chroot bootstrap"
 	local _buildOnly=${BUILD_ONLY//\"/}
 	# relace all :comma: by :space:
 	_all_valid_buildOnly=${_all_valid_buildOnly//,/ }
@@ -24,6 +24,33 @@ build_validate_buildOnly() {
 		exit 1
 	fi
 }
+
+backward_compatibility_build_only() {
+	local _kernel_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp"
+
+	# These checks are necessary for backward compatibility with logic
+	# https://github.com/armbian/scripts/tree/master /.github/workflows scripts.
+	# They need to be removed when the need disappears there.
+	[[ -n $KERNEL_ONLY ]] && {
+		display_alert "The KERNEL_ONLY key is no longer used." "KERNEL_ONLY=$KERNEL_ONLY" "wrn"
+		if [ "$KERNEL_ONLY" == "no" ]; then
+			display_alert "Use an empty BUILD_ONLY variable instead" "" "info"
+			[[ -n "${BUILD_ONLY}" ]] && {
+				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${BUILD_ONLY}" "wrn"
+				BUILD_ONLY=""
+				display_alert "Enforced BUILD_ONLY to an empty string." "" "info"
+			}
+		elif [ "$KERNEL_ONLY" == "yes" ]; then
+			display_alert "Instead, use BUILD_ONLY to select the build target." "$_kernel_buildOnly" "wrn"
+			BUILD_ONLY="$_kernel_buildOnly"
+			display_alert "BUILD_ONLY enforced to:" "${BUILD_ONLY}" "info"
+		fi
+	}
+
+	# Validate BUILD_ONLY for valid build task names
+	build_validate_buildOnly
+}
+
 
 build_get_boot_sources() {
 	if [[ -n $BOOTSOURCE ]]; then
@@ -155,32 +182,8 @@ build_bootstrap() {
 # local _all_valid_buildOnly: This is supposed to be maintained as a constant in case of any future extension
 #
 build_main() {
-	local _kernel_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp"
-	local _all_valid_buildOnly="u-boot kernel armbian-config armbian-zsh plymouth-theme-armbian armbian-firmware armbian-bsp chroot bootstrap"
 
 	start=$(date +%s)
-
-	# These checks are necessary for backward compatibility with logic
-	# https://github.com/armbian/scripts/tree/master /.github/workflows scripts.
-	# They need to be removed when the need disappears there.
-	[[ -n $KERNEL_ONLY ]] && {
-		display_alert "The KERNEL_ONLY key is no longer used." "KERNEL_ONLY=$KERNEL_ONLY" "wrn"
-		if [ "$KERNEL_ONLY" == "no" ]; then
-			display_alert "Use an empty BUILD_ONLY variable instead" "" "info"
-			[[ -n "${BUILD_ONLY}" ]] && {
-				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${BUILD_ONLY}" "wrn"
-				BUILD_ONLY=""
-				display_alert "Enforced BUILD_ONLY to an empty string." "" "info"
-			}
-		elif [ "$KERNEL_ONLY" == "yes" ]; then
-			display_alert "Instead, use BUILD_ONLY to select the build target." "$_kernel_buildOnly" "wrn"
-			BUILD_ONLY="$_kernel_buildOnly"
-			display_alert "BUILD_ONLY enforced to:" "${BUILD_ONLY}" "info"
-		fi
-	}
-
-	# Validate BUILD_ONLY for valid build task names
-	build_validate_buildOnly "\"${_all_valid_buildOnly}\""
 
 	# Check and install dependencies, directory structure and settings
 	# The OFFLINE_WORK variable inside the function
