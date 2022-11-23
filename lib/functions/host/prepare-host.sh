@@ -237,7 +237,7 @@ prepare_host() {
 	fi # check offline
 
 	# enable arm binary format so that the cross-architecture chroot environment will work
-	if [[ -z "$BUILD_ONLY" || "$BUILD_ONLY" == *bootstrap* ]]; then
+	if build_task_is_enabled "bootstrap"; then
 		modprobe -q binfmt_misc
 		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
 		if [[ "$(arch)" != "aarch64" ]]; then

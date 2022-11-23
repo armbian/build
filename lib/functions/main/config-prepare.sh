@@ -112,13 +112,13 @@ function prepare_and_config_main_build_single() {
 
 	interactive_config_ask_branch
 
-	[[ "${BUILD_ONLY}" == "" || "${BUILD_ONLY}" == *bootstrap* ]] && {
+	build_task_is_enabled "bootstrap" && {
 
-	interactive_config_ask_release
+		interactive_config_ask_release
 
-	interactive_config_ask_desktop_build
+		interactive_config_ask_desktop_build
 
-	interactive_config_ask_standard_or_minimal
+		interactive_config_ask_standard_or_minimal
 	}
 
 	#prevent conflicting setup
