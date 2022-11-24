@@ -5,7 +5,7 @@ BOOTDELAY=1
 
 BOOTPATCHDIR='u-boot-sunxi'
 BOOTENV_FILE='sunxi.txt'
-UBOOT_TARGET_MAP=';;u-boot-sunxi-with-spl.bin'
+UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-;;u-boot-sunxi-with-spl.bin}"
 BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 LINUXFAMILY=sunxi64
 
