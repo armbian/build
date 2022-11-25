@@ -22,58 +22,6 @@ build_task_is_enabled() {
 
 ###############################################################################
 #
-# build_task_one_of_is_enabled()
-#
-# $1: _taskNamesToCheck - a single task name or a :comma: or :space: separated list of multiple task names to check
-# return:
-#   0 - if BUILD_ONLY is empty or if at least one task name of _taskNamesToCheck is listed by BUILD_ONLY
-#   1 - otherwise 
-#
-build_task_one_of_is_enabled() {
-	# remove all "
-	local _taskNamesToCheck=${1//\"/}
-	local _buildOnly=${BUILD_ONLY//\"/}
-	# An empty _buildOnly allows any taskname
-	[[ -z $_buildOnly ]] && return 0
-	# relace all :comma: by :space:
-	_taskNamesToCheck=${_taskNamesToCheck//,/ }
-	_buildOnly=${_buildOnly//,/ }
-	for _taskNameToCheck in ${_taskNamesToCheck}; do
-		if build_task_is_enabled "$_taskNameToCheck"; then
-			return 0
-		fi
-	done
-	return 1
-}
-
-###############################################################################
-#
-# build_task_each_of_is_enabled()
-#
-# $1: _taskNamesToCheck - a single task name or a :comma: or :space: separated list of multiple task names to check
-# return:
-#   0 - if BUILD_ONLY is empty or if all _taskNamesToCheck are listed by BUILD_ONLY
-#   1 - otherwise 
-#
-build_task_each_of_is_enabled() {
-	# remove all "
-	local _taskNamesToCheck=${1//\"/}
-	local _buildOnly=${BUILD_ONLY//\"/}
-	# An empty _buildOnly allows any taskname
-	[[ -z $_buildOnly ]] && return 0
-	# relace all :comma: by :space:
-	_taskNamesToCheck=${_taskNamesToCheck//,/ }
-	_buildOnly=${_buildOnly//,/ }
-	for _taskNameToCheck in ${_taskNamesToCheck}; do
-		if ! build_task_is_enabled "$_taskNameToCheck"; then
-			return 1
-		fi
-	done
-	return 0
-}
-
-###############################################################################
-#
 # build_validate_buildOnly()
 #
 # This function validates the list of task names defined by global
