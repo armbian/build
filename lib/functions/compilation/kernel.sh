@@ -172,7 +172,7 @@ CUSTOM_KERNEL_CONFIG
 	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
 	rm -f linux-firmware-image-*.deb
 
-	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
+	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/${KERNEL_DISTRO_PATH}" || exit_with_error "Failed moving kernel DEBs"
 
 	# store git hash to the file and create a change log
 	HASHTARGET="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}"

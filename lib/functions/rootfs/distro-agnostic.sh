@@ -291,14 +291,14 @@ PRE_INSTALL_KERNEL_DEBS
 	# install kernel
 	[[ -n $KERNELSOURCE ]] && {
 		if [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
-			VER=$(dpkg --info "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | awk -F"-" '/Source:/{print $2}')
+			VER=$(dpkg --info "${DEB_STORAGE}/${KERNEL_DISTRO_PATH}${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" | awk -F"-" '/Source:/{print $2}')
 
-			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
-			if [[ -f ${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
-				install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
+			install_deb_chroot "${DEB_STORAGE}/${KERNEL_DISTRO_PATH}${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb"
+			if [[ -f ${DEB_STORAGE}/${KERNEL_DISTRO_PATH}${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb ]]; then
+				install_deb_chroot "${DEB_STORAGE}/${KERNEL_DISTRO_PATH}${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
 			fi
 			if [[ $INSTALL_HEADERS == yes ]]; then
-				install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
+				install_deb_chroot "${DEB_STORAGE}/${KERNEL_DISTRO_PATH}${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 			fi
 		else
 			install_deb_chroot "linux-image-${BRANCH}-${LINUXFAMILY}" "remote"
@@ -309,7 +309,7 @@ PRE_INSTALL_KERNEL_DEBS
 			if [[ "${ARCH}" != "amd64" && "${LINUXFAMILY}" != "media" && "${LINUXFAMILY}" != station* ]]; then # amd64 does not have dtb package, see packages/armbian/builddeb:355
 				install_deb_chroot "linux-dtb-${BRANCH}-${LINUXFAMILY}" "remote"
 			fi
-			[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
+			[[ $INSTALL_HEADERS == yes ]] && install_deb_chroot "${KERNEL_DISTRO_PATH}linux-headers-${BRANCH}-${LINUXFAMILY}" "remote"
 		fi
 	}
 
