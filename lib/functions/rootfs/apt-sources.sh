@@ -41,6 +41,7 @@ add_apt_sources() {
 				display_alert "Adding APT Source ${new_apt_source}"
 
 				if [[ "${new_apt_source}" == ppa* ]]; then
+					install_ppa_prerequisites
 					# ppa with software-common-properties
 					run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
 					# add list with apt-add
