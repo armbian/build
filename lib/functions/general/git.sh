@@ -100,11 +100,16 @@ fetch_from_repo() {
 
 	local expected_origin_url actual_origin_url
 	expected_origin_url="$(echo -n "${url}" | sed 's/^.*@//' | sed 's/^.*\/\///')"
+	local do_add_origin="no"
 
-	# Make sure the origin matches what is expected. If it doesn't, clean up and start again.
+	# Make sure the origin matches what is expected, if the repo already exists.
 	if [[ -d ".git" && "$(git rev-parse --git-dir)" == ".git" ]]; then
 		actual_origin_url="$(git config remote.origin.url | sed 's/^.*@//' | sed 's/^.*\/\///')"
-		if [[ "a${actual_origin_url}a" != "aa" && "${expected_origin_url}" != "${actual_origin_url}" ]]; then
+		if [[ "a${actual_origin_url}a" == "aa" ]]; then
+			display_alert "Repo's origin is empty, adding it" "${url}" "warn"
+			offline=false       # Force online, we'll need to fetch.
+			do_add_origin="yes" # Empty origin, we'll add it.
+		elif [[ "${expected_origin_url}" != "${actual_origin_url}" ]]; then
 			display_alert "Remote git URL does not match" "${git_work_dir} expected: '${expected_origin_url}' actual: '${actual_origin_url}'" "warn"
 			if [[ "${ALLOW_GIT_ORIGIN_CHANGE}" != "yes" ]]; then
 				exit_with_error "Would have deleted ${git_work_dir} to change origin URL, but ALLOW_GIT_ORIGIN_CHANGE is not set to 'yes'"
@@ -116,8 +121,6 @@ fetch_from_repo() {
 			cd "${git_work_dir}" || exit                                                                     #reset cwd
 		fi
 	fi
-
-	local do_add_origin="no"
 
 	if [[ ! -d ".git" || "$(git rev-parse --git-dir)" != ".git" ]]; then
 		# Dir is not a git working copy. Make it so;
