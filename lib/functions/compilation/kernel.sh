@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 compile_kernel() {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"

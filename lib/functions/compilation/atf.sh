@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 compile_atf() {
 	if [[ $CLEAN_LEVEL == *make* ]]; then
 		display_alert "Cleaning" "$ATFSOURCEDIR" "info"

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 function cli_entrypoint() {
 	if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 		set -T # inherit return/debug traps

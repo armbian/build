@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # unmount_on_exit
 #
 unmount_on_exit() {
