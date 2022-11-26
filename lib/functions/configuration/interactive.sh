@@ -12,7 +12,7 @@ function interactive_config_prepare_terminal() {
 }
 
 function interactive_config_ask_kernel() {
-	interactive_config_ask_kernel_only
+#	interactive_config_ask_kernel_only
 	interactive_config_ask_kernel_configure
 }
 
@@ -151,7 +151,7 @@ function interactive_config_ask_branch() {
 }
 
 function interactive_config_ask_release() {
-	if [[ $KERNEL_ONLY != yes && -z $RELEASE ]]; then
+	if [[ -z "$RELEASE" ]]; then
 
 		options=()
 
@@ -169,7 +169,7 @@ function interactive_config_ask_desktop_build() {
 	# don't show desktop option if we choose minimal build
 	if [[ $HAS_VIDEO_OUTPUT == no || $BUILD_MINIMAL == yes ]]; then
 		BUILD_DESKTOP=no
-	elif [[ $KERNEL_ONLY != yes && -z $BUILD_DESKTOP ]]; then
+	elif [[ -z "$BUILD_DESKTOP" ]]; then
 
 		# read distribution support status which is written to the armbian-release file
 		set_distribution_status
@@ -190,7 +190,7 @@ function interactive_config_ask_desktop_build() {
 }
 
 function interactive_config_ask_standard_or_minimal() {
-	if [[ $KERNEL_ONLY != yes && $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
+	if [[ $BUILD_DESKTOP == no && -z $BUILD_MINIMAL ]]; then
 
 		options=()
 		options+=("no" "Standard image with console interface")

@@ -86,6 +86,8 @@ function prepare_and_config_main_build_single() {
 
 	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
+	backward_compatibility_build_only
+
 	interactive_config_ask_kernel
 
 	interactive_config_ask_board_list
@@ -110,11 +112,14 @@ function prepare_and_config_main_build_single() {
 
 	interactive_config_ask_branch
 
-	interactive_config_ask_release
+	build_task_is_enabled "bootstrap" && {
 
-	interactive_config_ask_desktop_build
+		interactive_config_ask_release
 
-	interactive_config_ask_standard_or_minimal
+		interactive_config_ask_desktop_build
+
+		interactive_config_ask_standard_or_minimal
+	}
 
 	#prevent conflicting setup
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
