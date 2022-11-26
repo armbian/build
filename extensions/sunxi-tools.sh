@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 function fetch_sources_tools__sunxi_tools() {
 	fetch_from_repo "https://github.com/linux-sunxi/sunxi-tools" "sunxi-tools" "branch:master"
 }
