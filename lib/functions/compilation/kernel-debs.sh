@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 create_linux-source_package() {
 	ts=$(date +%s)
 	local sources_pkg_dir tmp_src_dir

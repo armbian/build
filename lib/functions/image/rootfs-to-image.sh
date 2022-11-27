@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # create_image
 #
 # finishes creation of image from cached rootfs

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 compilation_prepare() {
 
 	# Packaging patch for modern kernels should be one for all.

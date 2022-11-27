@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # check_loop_device <device_node>
 #
 check_loop_device() {

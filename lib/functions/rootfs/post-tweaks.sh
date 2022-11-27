@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 post_debootstrap_tweaks() {
 
 	# remove service start blockers and QEMU binary

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 while read -r file; do
 	# shellcheck source=/dev/null

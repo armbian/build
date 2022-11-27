@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 install_deb_chroot() {
 
 	local package=$1

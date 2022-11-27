@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #
 # This function retries Git operations to avoid failure in case remote is borked
 # If the git team needs to call a remote server, use this function.

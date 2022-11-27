@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Installing debian packages or package files in the armbian build system.
 # The function accepts four optional parameters:
 # autoupdate - If the installation list is not empty then update first.

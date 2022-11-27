@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # get_package_list_hash
 #
 # returns md5 hash for current package list and rootfs cache version

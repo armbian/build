@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 install_distribution_specific() {
 
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
