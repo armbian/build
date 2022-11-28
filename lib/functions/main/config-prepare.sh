@@ -87,9 +87,9 @@ function prepare_and_config_main_build_single() {
 
 	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
-	backward_compatibility_build_only
-
 	interactive_config_ask_kernel
+
+	backward_compatibility_build_only
 
 	interactive_config_ask_board_list
 

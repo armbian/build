@@ -13,12 +13,12 @@ function interactive_config_prepare_terminal() {
 }
 
 function interactive_config_ask_kernel() {
-#	interactive_config_ask_kernel_only
+	interactive_config_ask_kernel_only
 	interactive_config_ask_kernel_configure
 }
 
 function interactive_config_ask_kernel_only() {
-	if [[ -z $KERNEL_ONLY ]]; then
+	if [[ -z $KERNEL_ONLY ]] && [[ -z $BUILD_ONLY ]]; then
 
 		options+=("yes" "U-boot and kernel packages")
 		options+=("no" "Full OS image for flashing")
