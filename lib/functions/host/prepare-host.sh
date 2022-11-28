@@ -145,7 +145,7 @@ prepare_host() {
 	# ... and the host arch does not match the target arch ...
 	# ... we then require binfmt_misc to be enabled.
 	# "enable arm binary format so that the cross-architecture chroot environment will work"
-	if build_task_is_enabled "bootstrap"; then
+	if [[ $KERNEL_ONLY != yes ]]; then
 		if dpkg-architecture -e "${ARCH}"; then
 			display_alert "Native arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "cachehit"
 		else
