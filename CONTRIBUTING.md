@@ -138,5 +138,5 @@ For discussions around issues/bugs and features, you can use the [GitHub issues]
 * [Become a new board maintainer](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/)
 * [Apply for one of the position](https://forum.armbian.com/staffapplications/)
 * [Help us covering costs](https://forum.armbian.com/subscriptions/)
-* [Help community memebers in the Forum](https://forum.armbian.com/)
+* [Help community members in the Forum](https://forum.armbian.com/)
 * [Check forum announcements section for any requests for help from the community](https://forum.armbian.com/forum/37-announcements/)
