@@ -90,53 +90,34 @@ fetch_from_repo() {
 		git_work_dir="${SRC}/cache/sources/${GIT_FIXED_WORKDIR}"
 	fi
 
-	mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}"
-
-	cd "${git_work_dir}" || exit
-
 	display_alert "Git working dir" "${git_work_dir}" "git"
-
 	git_ensure_safe_directory "${git_work_dir}"
 
-	local expected_origin_url actual_origin_url
-	expected_origin_url="$(echo -n "${url}" | sed 's/^.*@//' | sed 's/^.*\/\///')"
-	local do_add_origin="no"
-
-	# Make sure the origin matches what is expected, if the repo already exists.
-	if [[ -d ".git" && "$(git rev-parse --git-dir)" == ".git" ]]; then
-		actual_origin_url="$(git config remote.origin.url | sed 's/^.*@//' | sed 's/^.*\/\///')"
-		if [[ "a${actual_origin_url}a" == "aa" ]]; then
-			display_alert "Repo's origin is empty, adding it" "${url}" "warn"
-			offline=false       # Force online, we'll need to fetch.
-			do_add_origin="yes" # Empty origin, we'll add it.
-		elif [[ "${expected_origin_url}" != "${actual_origin_url}" ]]; then
-			display_alert "Remote git URL does not match" "${git_work_dir} expected: '${expected_origin_url}' actual: '${actual_origin_url}'" "warn"
-			if [[ "${ALLOW_GIT_ORIGIN_CHANGE}" != "yes" ]]; then
-				exit_with_error "Would have deleted ${git_work_dir} to change origin URL, but ALLOW_GIT_ORIGIN_CHANGE is not set to 'yes'"
-			fi
-			display_alert "Remote git URL does not match, deleting working copy" "${git_work_dir} expected: '${expected_origin_url}' actual: '${actual_origin_url}'" "warn"
-			cd "${SRC}" || exit 3                                                                            # free up cwd
-			run_host_command_logged rm -rf "${git_work_dir}"                                                 # delete the dir
-			mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}" # recreate
-			cd "${git_work_dir}" || exit                                                                     #reset cwd
-		fi
-	fi
-
-	if [[ ! -d ".git" || "$(git rev-parse --git-dir)" != ".git" ]]; then
-		# Dir is not a git working copy. Make it so;
-		# If callback is defined, call it. Give it the dir as param. The rest it will read from environment.
-		# If not callback defined, do an init, and schedule a fetch.
-
-		if [[ $(type -t ${GIT_INIT_REPO_HOOK} || true) == function ]]; then
-			display_alert "Delegating to ${GIT_INIT_REPO_HOOK}()" "git init: $dir $ref_name" "debug"
-			${GIT_INIT_REPO_HOOK} "${git_work_dir}"
+	# Support using worktrees; needs GIT_BARE_REPO_FOR_WORKTREE set
+	if [[ "x${GIT_BARE_REPO_FOR_WORKTREE}x" != "xx" ]]; then
+		# If it is already a worktree...
+		if [[ -f "${git_work_dir}/.git" ]]; then
+			display_alert "Using existing worktree" "${git_work_dir}" "git"
 		else
+			if [[ -d "${git_work_dir}" ]]; then
+				display_alert "Removing previously half-checked-out tree" "${git_work_dir}" "warn"
+				cd "${SRC}" || exit_with_error "Could not cd to ${SRC}"
+				rm -rf "${git_work_dir}"
+			fi
+			display_alert "Creating new worktree" "${git_work_dir}" "git"
+			run_host_command_logged git -C "${GIT_BARE_REPO_FOR_WORKTREE}" worktree add "${git_work_dir}" "${GIT_BARE_REPO_INITIAL_BRANCH}" --no-checkout --force
+			cd "${git_work_dir}" || exit
+		fi
+		cd "${git_work_dir}" || exit
+	else
+		mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}"
+		cd "${git_work_dir}" || exit
+		if [[ ! -d ".git" || "$(git rev-parse --git-dir)" != ".git" ]]; then
+			# Dir is not a git working copy. Make it so;
 			display_alert "Initializing empty git local copy" "git init: $dir $ref_name"
 			regular_git init -q --initial-branch="armbian_unused_initial_branch" .
+			offline=false # Force online, we'll need to fetch.
 		fi
-
-		offline=false       # Force online, we'll need to fetch.
-		do_add_origin="yes" # Just created the repo, it needs an origin later.
 	fi
 
 	local changed=false
@@ -186,18 +167,14 @@ fetch_from_repo() {
 			${GIT_PRE_FETCH_HOOK} "${git_work_dir}" "${url}" "$ref_type" "$ref_name"
 		fi
 
-		if [[ "${do_add_origin}" == "yes" ]]; then
-			regular_git remote add origin "${url}"
-		fi
-
 		# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
-		display_alert "Fetching updates from origin" "$dir $ref_name"
+		display_alert "Fetching updates from remote repository" "$dir $ref_name"
 		case $ref_type in
-			branch | commit) improved_git_fetch --no-tags origin "${ref_name}" ;;
-			tag) improved_git_fetch --no-tags origin tags/"${ref_name}" ;;
-			head) improved_git_fetch --no-tags origin HEAD ;;
+			branch | commit) improved_git_fetch --no-tags "${url}" "${ref_name}" ;;
+			tag) improved_git_fetch --no-tags "${url}" tags/"${ref_name}" ;;
+			head) improved_git_fetch --no-tags "${url}" HEAD ;;
 		esac
-		display_alert "Origin fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "git"
+		display_alert "Remote repository fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "git"
 		checkout_from="FETCH_HEAD"
 	fi
 
