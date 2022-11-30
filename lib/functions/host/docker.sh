@@ -110,7 +110,7 @@ function docker_cli_prepare() {
 	# Prepare some dependencies; these will be used on the Dockerfile
 
 	enable_all_extensions_builtin_and_user
-	initialize_extension_manager  # initialize the extension manager.
+	initialize_extension_manager # initialize the extension manager.
 	declare -a -g host_dependencies=()
 	early_prepare_host_dependencies
 	display_alert "Pre-game dependencies" "${host_dependencies[*]}" "debug"
@@ -290,7 +290,7 @@ function docker_cli_prepare_launch() {
 
 		# Pass env var ARMBIAN_RUNNING_IN_CONTAINER to indicate we're running under Docker. This is also set in the Dockerfile; make sure.
 		"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"
-		
+
 		# This env var is used super early (in entrypoint.sh), so set it as an env to current value.
 		"--env" "ARMBIAN_ENABLE_CALL_TRACING=${DOCKER_ARMBIAN_ENABLE_CALL_TRACING:-no}"
 
@@ -416,6 +416,21 @@ function docker_cli_show_armbian_volumes_disk_usage_internal() {
 	else
 		return 1
 	fi
+}
+
+function docker_purge_deprecated_volumes() {
+	prepare_armbian_mountpoints_description_dict
+	local mountpoint=""
+	for mountpoint in "${ARMBIAN_MOUNTPOINTS_DEPRECATED[@]}"; do
+		local volume_id="armbian-${mountpoint//\//-}"
+		display_alert "Purging deprecated Docker volume" "${volume_id}" "info"
+		if docker volume inspect "${volume_id}" &> /dev/null; then
+			run_host_command_logged docker volume rm "${volume_id}"
+			display_alert "Purged deprecated Docker volume" "${volume_id} OK" "info"
+		else
+			display_alert "Deprecated Docker volume not found" "${volume_id} OK" "info"
+		fi
+	done
 }
 
 # Leftovers from original Dockerfile before rewrite

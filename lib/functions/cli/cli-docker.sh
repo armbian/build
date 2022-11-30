@@ -28,6 +28,22 @@ function cli_docker_run() {
 	declare -g SKIP_LOG_ARCHIVE=yes                                               # Don't archive logs in the parent instance either.
 
 	declare -g ARMBIAN_CLI_RELAUNCH_ARGS=()
-	produce_relaunch_parameters                         # produces ARMBIAN_CLI_RELAUNCH_ARGS
-	docker_cli_launch "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: this "re-launches" using the passed params.
+	produce_relaunch_parameters # produces ARMBIAN_CLI_RELAUNCH_ARGS
+
+	case "${DOCKER_SUBCMD}" in
+		shell)
+			display_alert "Launching Docker shell" "docker-shell" "info"
+			docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
+			;;
+
+		purge)
+			display_alert "Purging unused Docker volumes" "docker-purge" "info"
+			docker_purge_deprecated_volumes
+			;;
+
+		*)
+			docker_cli_launch "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: this "re-launches" using the passed params.
+			;;
+	esac
+
 }
