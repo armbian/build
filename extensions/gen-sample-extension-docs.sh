@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 ## Hooks
 function extension_metadata_ready__499_display_docs_generation_start_info() {
 	display_alert "Generating hook documentation and sample extension"

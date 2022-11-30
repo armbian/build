@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 function get_urls() {
 	local catalog=$1
 	local filename=$2

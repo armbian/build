@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # copy_all_packages_files_for <folder> to package
 #
 copy_all_packages_files_for() {

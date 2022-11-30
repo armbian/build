@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 install_ppa_prerequisites() {
 
 	# Myy : So... The whole idea is that, a good bunch of external sources

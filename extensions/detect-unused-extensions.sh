@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 ## Configuration
 export LOG_ALL_HOOK_TRACES=no # Should we log all hook function traces to stdout? (no, or level: wrn info)
 

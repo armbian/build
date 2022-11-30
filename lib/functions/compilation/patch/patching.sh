@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # advanced_patch <dest> <family> <board> <target> <branch> <description>
 #
 # parameters:
