@@ -233,7 +233,7 @@ function early_prepare_host_dependencies() {
 		pkg-config pv qemu-user-static rsync swig
 		u-boot-tools udev uuid-dev whiptail
 		zlib1g-dev busybox fdisk
-		
+
 		# distcc, experimental, optional; see cli-distcc.sh and kernel.sh
 		distcc
 
@@ -250,7 +250,7 @@ function early_prepare_host_dependencies() {
 		file ccze colorized-logs tree expect            # logging utilities; expect is needed for 'unbuffer' command
 		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
 		parted gdisk                                    # partition tools
-		aria2 curl wget                                 # downloaders et al
+		aria2 curl wget axel                            # downloaders et al
 		parallel                                        # do things in parallel
 		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
 		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
