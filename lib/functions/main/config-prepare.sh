@@ -114,7 +114,7 @@ function prepare_and_config_main_build_single() {
 		IMAGE_TYPE=user-built
 	fi
 
-	export BOOTSOURCEDIR="${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
+	export BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
 	[[ -n $ATFSOURCE ]] && export ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 
 	export BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"

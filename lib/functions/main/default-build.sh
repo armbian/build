@@ -92,6 +92,7 @@ function main_default_build_single() {
 				fi
 				# @TODO: refactor this construct. we use it too many times.
 				if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+					LOG_SECTION="uboot_prepare_git" do_with_logging_unless_user_terminal uboot_prepare_git
 					LOG_SECTION="compile_uboot" do_with_logging compile_uboot
 				fi
 			fi
