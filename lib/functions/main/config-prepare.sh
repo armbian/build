@@ -157,11 +157,11 @@ function prepare_and_config_main_build_single() {
 		fi
 
 		# Default LINUXSOURCEDIR:
-		export LINUXSOURCEDIR="linux-kernel/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}/${ARCH}"
+		export LINUXSOURCEDIR="linux-kernel-worktree/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}__${ARCH}"
 
 		# Allow adding to it with KERNEL_EXTRA_DIR
 		if [[ "${KERNEL_EXTRA_DIR}" != "" ]]; then
-			export LINUXSOURCEDIR="linux-kernel/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}_${KERNEL_EXTRA_DIR}/${ARCH}"
+			export LINUXSOURCEDIR="${LINUXSOURCEDIR}__${KERNEL_EXTRA_DIR}"
 			display_alert "Using kernel extra dir: '${KERNEL_EXTRA_DIR}'" "LINUXSOURCEDIR: ${LINUXSOURCEDIR}" "debug"
 		fi
 	else
