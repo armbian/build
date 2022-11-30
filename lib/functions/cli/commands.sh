@@ -1,12 +1,12 @@
 function armbian_register_commands() {
 	# More than one command can map to the same handler. In that case, use ARMBIAN_COMMANDS_TO_VARS_DICT for specific vars.
 	declare -g -A ARMBIAN_COMMANDS_TO_HANDLERS_DICT=(
-		["docker"]="docker"              # thus requires cli_docker_pre_run and cli_docker_run
-		["docker-purge"]="docker"        # idem @TODO unimplemented!!!
-		["dockerpurge"]="docker"         # idem @TODO unimplemented!!!
-		["docker-shell"]="docker"        # idem @TODO unimplemented!!!
-		["dockershell"]="docker"         # idem @TODO unimplemented!!!
-		["generate-dockerfile"]="docker" # idem
+		["docker"]="docker" # thus requires cli_docker_pre_run and cli_docker_run
+		["docker-purge"]="docker"
+		["dockerpurge"]="docker"
+		["docker-shell"]="docker"
+		["dockershell"]="docker"
+		["generate-dockerfile"]="docker"
 
 		["vagrant"]="vagrant" # thus requires cli_vagrant_pre_run and cli_vagrant_run
 
@@ -25,10 +25,10 @@ function armbian_register_commands() {
 
 	# Vars to be set for each command. Optional.
 	declare -g -A ARMBIAN_COMMANDS_TO_VARS_DICT=(
-		["docker-purge"]="DOCKER_SUBCMD='purge'" # @TODO unimplemented!
-		["dockerpurge"]="DOCKER_SUBCMD='purge'"  # @TODO unimplemented!
-		["docker-shell"]="DOCKER_SUBCMD='shell'" # @TODO unimplemented!
-		["dockershell"]="DOCKER_SUBCMD='shell'"  # @TODO unimplemented!
+		["docker-purge"]="DOCKER_SUBCMD='purge'"
+		["dockerpurge"]="DOCKER_SUBCMD='purge'"
+		["docker-shell"]="DOCKER_SUBCMD='shell'"
+		["dockershell"]="DOCKER_SUBCMD='shell'"
 
 		["generate-dockerfile"]="DOCKERFILE_GENERATE_ONLY='yes'"
 

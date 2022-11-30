@@ -28,6 +28,11 @@ function prepare_armbian_mountpoints_description_dict() {
 		["cache/sources/linux-kernel"]="docker_kind_linux=bind docker_kind_darwin=namedvolume" # working tree for kernel builds. huge. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/ccache"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"               # ccache object store. limited to 5gb by default. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 	)
+
+	# These, if found, will be removed on `dockerpurge` and other cleanups.
+	# They "used to be" used by the build system, but no longer.
+	declare -g -a ARMBIAN_MOUNTPOINTS_DEPRECATED=(
+	)
 }
 
 function loop_over_armbian_mountpoints() {
