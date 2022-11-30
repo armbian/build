@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # create_chroot <target_dir> <release> <arch>
 #
 create_chroot() {

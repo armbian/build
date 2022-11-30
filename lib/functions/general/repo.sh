@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 adding_packages() {
 	# add deb files to repository if they are not already there
 

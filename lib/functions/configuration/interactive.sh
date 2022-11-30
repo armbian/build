@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 function interactive_config_prepare_terminal() {
 	if [[ -z $ROOT_FS_CREATE_ONLY ]]; then
 		# override stty size

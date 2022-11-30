@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 install_common() {
 	display_alert "Applying common tweaks" "" "info"
 

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 function pre_install_kernel_debs__build_nvidia_kernel_module() {
 
 	export INSTALL_HEADERS="yes"

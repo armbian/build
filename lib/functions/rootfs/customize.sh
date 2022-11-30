@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 customize_image() {
 
 	# for users that need to prepare files at host

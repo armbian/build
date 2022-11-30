@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # prepare_partitions
 #
 # creates image file, partitions and fs

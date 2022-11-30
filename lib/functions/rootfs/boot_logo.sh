@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #--------------------------------------------------------------------------------------------------------------------------------
 # Create kernel boot logo from packages/blobs/splash/logo.png and packages/blobs/splash/spinner.gif (animated)
 # and place to the file /lib/firmware/bootsplash

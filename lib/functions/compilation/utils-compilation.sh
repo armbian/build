@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 grab_version() {
 	local ver=()
 	ver[0]=$(grep "^VERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+')

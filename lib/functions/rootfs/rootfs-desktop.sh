@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 desktop_postinstall() {
 
 	# disable display manager for the first run

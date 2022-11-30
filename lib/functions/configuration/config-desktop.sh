@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 desktop_element_available_for_arch() {
 	local desktop_element_path="${1}"
 	local targeted_arch="${2}"

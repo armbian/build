@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # prepare_host_basic
 #
 # * installs only basic packages

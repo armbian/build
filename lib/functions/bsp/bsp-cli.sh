@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 create_board_package() {
 	display_alert "Creating board support package for CLI" "$CHOSEN_ROOTFS" "info"
 

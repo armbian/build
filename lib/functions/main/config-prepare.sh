@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 DISTRIBUTIONS_DESC_DIR="config/distributions"
 
 function prepare_and_config_main_build_single() {

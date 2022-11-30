@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # prepare_host
 #
 # * checks and installs necessary packages

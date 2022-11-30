@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 compilation_prepare() {
 	
 	source ${SRC}/lib/functions/compilation/patch/drivers_network.sh
