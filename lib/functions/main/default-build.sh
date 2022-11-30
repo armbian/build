@@ -59,6 +59,21 @@ function main_default_build_single() {
 			LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
 		fi
 
+		# Cleaning of old, deprecated mountpoints; only done if not running under Docker.
+		# mountpoints under Docker manifest as volumes, and as such can't be cleaned this way.
+		if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" != "yes" ]]; then
+			prepare_armbian_mountpoints_description_dict
+			local mountpoint=""
+			for mountpoint in "${ARMBIAN_MOUNTPOINTS_DEPRECATED[@]}"; do
+				local mountpoint_dir="${SRC}/${mountpoint}"
+				display_alert "Considering cleaning deprecated mountpoint" "${mountpoint_dir}" "debug"
+				if [[ -d "${mountpoint_dir}" ]]; then
+					display_alert "Cleaning deprecated mountpoint" "${mountpoint_dir}" "info"
+					run_host_command_logged rm -rf "${mountpoint_dir}"
+				fi
+			done
+		fi
+
 		for cleaning_fragment in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
 			if [[ $cleaning_fragment != sources ]] && [[ $cleaning_fragment != none ]] && [[ $cleaning_fragment != make* ]]; then
 				LOG_SECTION="cleaning_${cleaning_fragment}" do_with_logging general_cleaning "${cleaning_fragment}"
