@@ -14,6 +14,7 @@ function prepare_armbian_mountpoints_description_dict() {
 		"cache/initrd"
 		"cache/sources"
 		"cache/sources/linux-kernel-worktree"
+		"cache/sources/u-boot-worktree"
 		"cache/ccache"
 	)
 
@@ -32,6 +33,7 @@ function prepare_armbian_mountpoints_description_dict() {
 		["cache/initrd"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                        # initrd.img cache, can be bind-mounted or a volume. On Darwin it's too slow to bind-mount, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/sources"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                       # operating directory. many things are cloned in here, and some are even built inside. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/sources/linux-kernel-worktree"]="docker_kind_linux=bind docker_kind_darwin=namedvolume" # working tree for kernel builds. huge. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/sources/u-boot-worktree"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"       # working tree for u-boot. large. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/ccache"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                        # ccache object store. limited to 5gb by default. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 	)
 
@@ -41,6 +43,7 @@ function prepare_armbian_mountpoints_description_dict() {
 		"cache/gitballs"
 		"cache/sources/kernel"
 		"cache/sources/linux-kernel"
+		"cache/sources/u-boot"
 	)
 }
 
