@@ -75,6 +75,7 @@ function finish_logging_section() {
 	else
 		display_alert "" "</${CURRENT_LOGGING_SECTION}> in $((SECONDS - CURRENT_LOGGING_SECTION_START))s" "group"
 	fi
+	unset CURRENT_LOGGING_SECTION # clear this var, so we can detect if we're in a section or not later.
 }
 
 function do_with_logging() {
@@ -113,6 +114,51 @@ function do_with_logging() {
 
 	finish_logging_section
 
+	return 0
+}
+
+function do_with_logging_unless_user_terminal() {
+	# Is user on a terminal? If so, don't log, just show on screen.
+	if [[ -t 1 ]]; then
+		display_alert "User is on a terminal, not logging output" "terminal" "debug"
+		"$@"
+	else
+		display_alert "User is not on a terminal, logging output" "terminal" "debug"
+		do_with_logging "$@"
+	fi
+}
+
+# usage example:
+# declare -a verbose_params=() && if_user_on_terminal_and_not_logging_add verbose_params "--verbose" "--progress"
+# echo "here is the verbose params: ${verbose_params[*]}"
+function if_user_on_terminal_and_not_logging_add() {
+	# Is user on a terminal? if not, do nothing.
+	if [[ ! -t 1 ]]; then
+		return 0
+	fi
+	# are we running under a logging section? if so, do nothing.
+	if [[ -n "${CURRENT_LOGGING_SECTION}" ]]; then
+		return 0
+	fi
+	# If we're here, we're on a terminal and not logging.
+	declare -n _add_to="$1" # nameref to an array; can't use '-a' here
+	shift
+	_add_to+=("$@")
+	return 0
+}
+
+function if_user_not_on_terminal_or_is_logging_add() {
+	# Is user on a terminal? if yes, do nothing.
+	if [[ -t 1 ]]; then
+		return 0
+	fi
+	# are we running under a logging section? if not, do nothing.
+	if [[ -z "${CURRENT_LOGGING_SECTION}" ]]; then
+		return 0
+	fi
+	declare -n _add_to_inverse="$1" # nameref to an array; can't use '-a' here
+	shift
+	_add_to_inverse+=("$@")
 	return 0
 }
 
