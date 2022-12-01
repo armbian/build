@@ -64,6 +64,13 @@ function compile_uboot_target() {
 		# atftempdir is under WORKDIR, so no cleanup necessary.
 	fi
 
+	# Hook time, for extra post-processing
+	call_extension_method "pre_config_uboot_target" <<- 'PRE_CONFIG_UBOOT_TARGET'
+		*allow extensions prepare before configuring and compiling an u-boot target*
+		Some u-boot targets require extra configuration or pre-processing before compiling.
+		For example, changing Python version can be done by replacing the `${BIN_WORK_DIR}/python` symlink.
+	PRE_CONFIG_UBOOT_TARGET
+
 	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
@@ -177,7 +184,6 @@ function compile_uboot_target() {
 	fi
 
 	# Hook time, for extra post-processing
-	display_alert "Extensions: post_uboot_custom_postprocess" "post_uboot_custom_postprocess" "debug"
 	call_extension_method "post_uboot_custom_postprocess" <<- 'POST_UBOOT_CUSTOM_POSTPROCESS'
 		*allow extensions to do extra u-boot postprocessing, after uboot_custom_postprocess*
 		For hacking at the produced binaries after u-boot is compiled and post-processed.
