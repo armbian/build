@@ -13,4 +13,8 @@ function post_build_image__900_convert_to_qcow2_img() {
 		display_alert "Resizing qcow2 image by '${QCOW2_RESIZE_AMOUNT}' " "${EXTENSION}" "info"
 		qemu-img resize "${QCOW2_IMAGE_FILE}" "${QCOW2_RESIZE_AMOUNT}"
 	fi
+	if [[ "${QCOW2_KEEP_IMG}" != "yes" ]]; then
+		display_alert "Discarding original .img image after" "conversion to qcow2" "info"
+		run_host_command_logged rm -vf "${DESTIMG}/${version}.img" "${DESTIMG}/${version}.img.txt"
+	fi
 }
