@@ -1,48 +1,44 @@
 #!/usr/bin/env bash
-# advanced_patch <dest> <family> <board> <target> <branch> <description>
+# advanced_patch <patch_kind> <{patch_dir}> <board> <target> <branch> <description>
 #
 # parameters:
-# <dest>: u-boot, kernel, atf
-# <family>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
+# <patch_kind>: u-boot, kernel, atf
+# <{patch_dir}>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
 # <board>: cubieboard, cubieboard2, cubietruck, ...
 # <target>: optional subdirectory
 # <description>: additional description text
-#
-# priority:
-# $USERPATCHES_PATH/<dest>/<family>/target_<target>
-# $USERPATCHES_PATH/<dest>/<family>/board_<board>
-# $USERPATCHES_PATH/<dest>/<family>/branch_<branch>
-# $USERPATCHES_PATH/<dest>/<family>
-# $SRC/patch/<dest>/<family>/target_<target>
-# $SRC/patch/<dest>/<family>/board_<board>
-# $SRC/patch/<dest>/<family>/branch_<branch>
-# $SRC/patch/<dest>/<family>
-#
-advanced_patch() {
-	local dest=$1
-	local family=$2
-	local board=$3
-	local target=$4
-	local branch=$5
-	local description=$6
 
-	display_alert "Started patching process for" "$dest $description" "info"
-	display_alert "Looking for user patches in" "userpatches/$dest/$family" "info"
+# calls:
+#                         ${patch_kind}  ${patch_dir}      $board   $target            $branch   $description
+# kernel: advanced_patch "kernel"       "$KERNELPATCHDIR" "$BOARD" ""                 "$BRANCH" "$LINUXFAMILY-$BRANCH"
+# u-boot: advanced_patch "u-boot"       "$BOOTPATCHDIR"   "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+function advanced_patch() {
+	local patch_kind="$1"
+	local patch_dir="$2"
+	local board="$3"
+	local target="$4"
+	local branch="$5"
+	local description="$6"
+
+	display_alert "Started patching process for" "${patch_kind} $description" "info"
+	display_alert "Looking for user patches in" "userpatches/${patch_kind}/${patch_dir}" "info"
 
 	local names=()
 	local dirs=(
-		"$USERPATCHES_PATH/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
-		"$USERPATCHES_PATH/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
-		"$USERPATCHES_PATH/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
-		"$USERPATCHES_PATH/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
-		"$SRC/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
-		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
-		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
-		"$SRC/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}:[\e[33mu\e[0m][\e[32mc\e[0m]"
+
+		"$SRC/patch/${patch_kind}/${patch_dir}/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]" # used for u-boot "spi" stuff
+		"$SRC/patch/${patch_kind}/${patch_dir}/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"   # used for u-boot board-specific stuff
+		"$SRC/patch/${patch_kind}/${patch_dir}/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]" # NOT used, I think.
+		"$SRC/patch/${patch_kind}/${patch_dir}:[\e[32ml\e[0m][\e[32mc\e[0m]"                  # used for everything
 	)
 	local links=()
 
 	# required for "for" command
+	# @TODO these shopts leak for the rest of the build script! either make global, or restore them after this function
 	shopt -s nullglob dotglob
 	# get patch file names
 	for dir in "${dirs[@]}"; do
@@ -56,6 +52,7 @@ advanced_patch() {
 			[[ -n $findlinks ]] && readarray -d '' links < <(find "${findlinks}" -maxdepth 1 -type f -follow -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
 		fi
 	done
+
 	# merge static and linked
 	names=("${names[@]}" "${links[@]}")
 	# remove duplicates
