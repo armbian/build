@@ -111,9 +111,11 @@ function docker_cli_prepare() {
 
 	enable_all_extensions_builtin_and_user
 	initialize_extension_manager # initialize the extension manager.
-	declare -a -g host_dependencies=()
+	declare -a -g host_dependencies=() python3_pip_dependencies=()
+	early_prepare_pip3_dependencies_for_python_tools
 	early_prepare_host_dependencies
-	display_alert "Pre-game dependencies" "${host_dependencies[*]}" "debug"
+	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
+	display_alert "Pre-game pip3 dependencies" "${python3_pip_dependencies[*]}" "debug"
 
 	#############################################################################################################
 	# Stop here if Docker can't be used at all.
@@ -210,6 +212,8 @@ function docker_cli_prepare() {
 		RUN echo "--> CACHE MISS IN DOCKERFILE: apt packages." && \
 			DEBIAN_FRONTEND=noninteractive apt-get -y update && \
 			DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${BASIC_DEPS[@]} ${host_dependencies[@]}
+		RUN echo "--> CACHE MISS IN DOCKERFILE: pip3 packages." && \
+			pip3 install ${python3_pip_dependencies[@]}
 		RUN sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 		RUN locale-gen
 		WORKDIR ${DOCKER_ARMBIAN_TARGET_PATH}

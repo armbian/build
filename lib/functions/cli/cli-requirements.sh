@@ -19,5 +19,6 @@ function cli_requirements_run() {
 	declare -a -g host_dependencies=()
 	early_prepare_host_dependencies
 	LOG_SECTION="install_host_dependencies" do_with_logging install_host_dependencies "for requirements command"
+	LOG_SECTION="prepare_pip_packages_for_python_tools" do_with_logging prepare_pip_packages_for_python_tools
 	display_alert "Done with" "@host dependencies" "cachehit"
 }
