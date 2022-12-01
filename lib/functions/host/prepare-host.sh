@@ -228,9 +228,12 @@ function early_prepare_host_dependencies() {
 
 		# python3 stuff (eg, for modern u-boot)
 		python3-dev python3-distutils python3-setuptools
+		# python3 pip (for Armbian's Python utilities) @TODO virtualenv?
+		python3-pip
 
 		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
-		python2 python2-dev python-setuptools
+		python2 python2-dev
+		# Attention: 'python-setuptools' (Python2's setuptools) does not exist in Debian Sid. Use Python3 instead.
 
 		# systemd-container brings in systemd-nspawn, which is used by the buildpkg functionality
 		# systemd-container # @TODO: bring this back eventually. I don't think trying to use those inside a container is a good idea.
