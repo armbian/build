@@ -1,70 +1,4 @@
 #!/usr/bin/env bash
-
-function run_kernel_make_internal() {
-	set -e
-	declare -a common_make_params_quoted common_make_envs full_command
-
-	# Prepare distcc, if enabled.
-	declare -a -g DISTCC_EXTRA_ENVS=()
-	declare -a -g DISTCC_CROSS_COMPILE_PREFIX=()
-	declare -a -g DISTCC_MAKE_J_PARALLEL=()
-	prepare_distcc_compilation_config
-
-	common_make_envs=(
-		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
-		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
-		"DPKG_COLORS=always"            # Use colors for dpkg @TODO no dpkg is done anymore, remove?
-		"XZ_OPT='--threads=0'"          # Use parallel XZ compression
-		"TERM='${TERM}'"                # Pass the terminal type, so that 'make menuconfig' can work.
-	)
-
-	# If CCACHE_DIR is set, pass it to the kernel build; Pass the ccache dir explicitly, since we'll run under "env -i"
-	if [[ -n "${CCACHE_DIR}" ]]; then
-		common_make_envs+=("CCACHE_DIR='${CCACHE_DIR}'")
-	fi
-
-	# Add the distcc envs, if any.
-	common_make_envs+=("${DISTCC_EXTRA_ENVS[@]}")
-
-	common_make_params_quoted=(
-		# @TODO: introduce O=path/to/binaries, so sources and bins are not in the same dir; this has high impact in headers packaging though.
-
-		"${DISTCC_MAKE_J_PARALLEL[@]}" # Parallel compile, "-j X" for X cpus; determined by distcc, or is just "$CTHREADS" if distcc is not enabled.
-
-		"ARCH=${ARCHITECTURE}"         # Key param. Everything depends on this.
-		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles # @TODO change to "localversion" file
-
-		"CROSS_COMPILE=${CCACHE} ${DISTCC_CROSS_COMPILE_PREFIX[@]} ${KERNEL_COMPILER}" # added as prefix to every compiler invocation by make
-		"KCFLAGS=-fdiagnostics-color=always -Wno-error=misleading-indentation"         # Force GCC colored messages, downgrade misleading indentation to warning
-
-		"SOURCE_DATE_EPOCH=${kernel_base_revision_ts}"        # https://reproducible-builds.org/docs/source-date-epoch/ and https://www.kernel.org/doc/html/latest/kbuild/reproducible-builds.html
-		"KBUILD_BUILD_TIMESTAMP=${kernel_base_revision_date}" # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-timestamp
-		"KBUILD_BUILD_USER=armbian"                           # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
-		"KBUILD_BUILD_HOST=next"                              # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
-
-		"KGZIP=pigz" "KBZIP2=pbzip2" # Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/
-	)
-
-	# last statement, so it passes the result to calling function. "env -i" is used for empty env
-	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "env" "-i" "${common_make_envs[@]}"
-		make "${common_make_params_quoted[@]@Q}" "$@" "${make_filter}")
-	"${full_command[@]}" # and exit with it's code, since it's the last statement
-}
-
-function run_kernel_make() {
-	KERNEL_MAKE_RUNNER="run_host_command_logged" KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@"
-}
-
-function run_kernel_make_dialog() {
-	KERNEL_MAKE_RUNNER="run_host_command_dialog" run_kernel_make_internal "$@"
-}
-
-function run_kernel_make_long_running() {
-	local seconds_start=${SECONDS} # Bash has a builtin SECONDS that is seconds since start of script
-	KERNEL_MAKE_RUNNER="run_host_command_logged_long_running" KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@"
-	display_alert "Kernel Make '$*' took" "$((SECONDS - seconds_start)) seconds" "debug"
-}
-
 function compile_kernel() {
 	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
 	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
@@ -76,54 +10,45 @@ function compile_kernel() {
 		`${kernel_work_dir}` is set, but not yet populated with kernel sources.
 	FETCH_SOURCES_FOR_KERNEL_DRIVER
 
-	# Prepare the git bare repo for the kernel.
+	# Prepare the git bare repo for the kernel; shared between all kernel builds
 	declare kernel_git_bare_tree
 	LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
 		kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
 
-	declare checked_out_revision_mtime="" checked_out_revision_ts="" # set by fetch_from_repo
+	# prepare the working copy; this is the actual kernel source tree for this build
+	declare checked_out_revision_mtime="" checked_out_revision_ts="" checked_out_revision="undetermined" # set by fetch_from_repo
 	LOG_SECTION="kernel_prepare_git" do_with_logging_unless_user_terminal do_with_hooks kernel_prepare_git
 
 	# Capture date variables set by fetch_from_repo; it's the date of the last kernel revision
+	declare kernel_git_revision="${checked_out_revision}"
+	display_alert "Using kernel revision SHA1" "${kernel_git_revision}"
 	declare kernel_base_revision_date
 	declare kernel_base_revision_mtime="${checked_out_revision_mtime}"
 	declare kernel_base_revision_ts="${checked_out_revision_ts}"
 	kernel_base_revision_date="$(LC_ALL=C date -d "@${kernel_base_revision_ts}")"
 
+	# Possibly 'make clean'.
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
+
+	# Patching.
 	local version hash pre_patch_version
-	LOG_SECTION="kernel_prepare_patching" do_with_logging do_with_hooks kernel_prepare_patching
-	LOG_SECTION="kernel_patching" do_with_logging do_with_hooks kernel_patching
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel" # create patch for manual source changes
-	local version
+	kernel_main_patching
+
 	local toolchain
+	kernel_config_maybe_interactive
 
-	# Check if we're gonna do some interactive configuration; if so, don't run kernel_config under logging manager.
-	if [[ $KERNEL_CONFIGURE != yes ]]; then
-		LOG_SECTION="kernel_config" do_with_logging do_with_hooks kernel_config
-	else
-		LOG_SECTION="kernel_config_interactive" do_with_hooks kernel_config
-	fi
-
+	# package the kernel-source .deb
 	LOG_SECTION="kernel_package_source" do_with_logging do_with_hooks kernel_package_source
 
-	# @TODO: might be interesting to package kernel-headers at this stage.
-	# @TODO: would allow us to have a "HEADERS_ONLY=yes" that can prepare arm64 headers on arm64 without building the whole kernel
-	# @TODO: also it makes sense, logically, to package headers after configuration, since that's all what's needed; it's the same
-	# @TODO: stage at which `dkms` would run (a configured, tool-built, kernel tree).
-
-	# @TODO: might also be interesting to do the same for DTBs.
-	# @TODO: those get packaged twice (once in linux-dtb and once in linux-image)
-	# @TODO: but for the u-boot bootloader, only the linux-dtb is what matters.
-	# @TODO: some users/maintainers do a lot of their work on "DTS/DTB only changes", which do require the kernel tree
-	# @TODO: but the only testable artifacts are the .dtb themselves. Allow for a `DTB_ONLY=yes` might be useful.
-
+	# build via make and package .debs; they're separate sub-steps
 	LOG_SECTION="kernel_build_and_package" do_with_logging do_with_hooks kernel_build_and_package
 
 	display_alert "Done with" "kernel compile" "debug"
 	cd "${kernel_work_dir}/.." || exit
+
 	rm -f linux-firmware-image-*.deb # remove firmware image packages here - easier than patching ~40 packaging scripts at once
 	run_host_command_logged rsync --remove-source-files -r ./*.deb "${DEB_STORAGE}/"
+
 	return 0
 }
 
@@ -131,199 +56,13 @@ function kernel_maybe_clean() {
 	if [[ $CLEAN_LEVEL == *make-kernel* ]]; then
 		display_alert "Cleaning Kernel tree - CLEAN_LEVEL contains 'make-kernel'" "$LINUXSOURCEDIR" "info"
 		(
-			cd "${kernel_work_dir}"
+			cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 			run_host_command_logged make ARCH="${ARCHITECTURE}" clean
 		)
 		fasthash_debug "post make clean"
 	else
 		display_alert "Not cleaning Kernel tree; use CLEAN_LEVEL=make-kernel if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
 	fi
-}
-
-function kernel_prepare_patching() {
-	if [[ $USE_OVERLAYFS == yes ]]; then # @TODO: when is this set to yes?
-		display_alert "Using overlayfs_wrapper" "kernel_${LINUXFAMILY}_${BRANCH}" "debug"
-		kernel_work_dir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
-	fi
-	cd "${kernel_work_dir}" || exit
-
-	# @TODO: why would we delete localversion?
-	# @TODO: it should be the opposite, writing localversion to disk, _instead_ of passing it via make.
-	# @TODO: if it turns out to be the case, do a commit with it... (possibly later, after patching?)
-	rm -f localversion
-
-	# read kernel version
-	version=$(grab_version "$kernel_work_dir")
-	pre_patch_version="${version}"
-	display_alert "Pre-patch kernel version" "${pre_patch_version}" "debug"
-
-	# read kernel git hash
-	hash=$(git --git-dir="$kernel_work_dir"/.git rev-parse HEAD)
-}
-
-function kernel_patching() {
-	## Start kernel patching process.
-	## There's a few objectives here:
-	## - (always) produce a fasthash: represents "what would be done" (eg: md5 of a patch, crc32 of description).
-	## - (optionally) execute modification against living tree (eg: apply a patch, copy a file, etc). only if `DO_MODIFY=yes`
-	## - (always) call mark_change_commit with the description of what was done and fasthash.
-	declare -i patch_minimum_target_mtime="${kernel_base_revision_mtime}"
-	declare -i series_conf_mtime="${patch_minimum_target_mtime}"
-	declare -i patch_dir_mtime="${patch_minimum_target_mtime}"
-	display_alert "patch_minimum_target_mtime:" "${patch_minimum_target_mtime}" "debug"
-
-	local patch_dir="${SRC}/patch/kernel/${KERNELPATCHDIR}"
-	local series_conf="${patch_dir}/series.conf"
-
-	# So the minimum date has to account for removed patches; if a patch was removed from disk, the only way to reflect that
-	# is by looking at the parent directory's mtime, which will have been bumped.
-	# So we take a look at the possible directories involved here (series.conf file, and ${KERNELPATCHDIR} dir itself)
-	# and bump up the minimum date if that is the case.
-	if [[ -f "${series_conf}" ]]; then
-		series_conf_mtime=$(get_file_modification_time "${series_conf}")
-		display_alert "series.conf mtime:" "${series_conf_mtime}" "debug"
-		patch_minimum_target_mtime=$((series_conf_mtime > patch_minimum_target_mtime ? series_conf_mtime : patch_minimum_target_mtime))
-		display_alert "patch_minimum_target_mtime after series.conf mtime:" "${patch_minimum_target_mtime}" "debug"
-	fi
-
-	if [[ -d "${patch_dir}" ]]; then
-		patch_dir_mtime=$(get_dir_modification_time "${patch_dir}")
-		display_alert "patch_dir mtime:" "${patch_dir_mtime}" "debug"
-		patch_minimum_target_mtime=$((patch_dir_mtime > patch_minimum_target_mtime ? patch_dir_mtime : patch_minimum_target_mtime))
-		display_alert "patch_minimum_target_mtime after patch_dir mtime:" "${patch_minimum_target_mtime}" "debug"
-	fi
-
-	initialize_fasthash "kernel" "${hash}" "${pre_patch_version}" "${kernel_work_dir}"
-	fasthash_debug "init"
-
-	# Apply a series of patches if a series file exists
-	if [[ -f "${series_conf}" ]]; then
-		display_alert "series.conf exists. Apply"
-		fasthash_branch "patches-${KERNELPATCHDIR}-series.conf"
-		apply_patch_series "${kernel_work_dir}" "${series_conf}" # applies a series of patches, read from a file. calls process_patch_file
-	fi
-
-	# applies a humongous amount of patches coming from github repos.
-	# it's mostly conditional, and very complex.
-	# @TODO: re-enable after finishing converting it with fasthash magic
-	# apply_kernel_patches_for_drivers  "${kernel_work_dir}" "${version}" # calls process_patch_file and other stuff. there is A LOT of it.
-
-	# Extension hook: patch_kernel_for_driver
-	call_extension_method "patch_kernel_for_driver" <<- 'PATCH_KERNEL_FOR_DRIVER'
-		*allow to add drivers/patch kernel for drivers before applying the family patches*
-		Patch *series* (not normal family patches) are already applied.
-		Useful for migrating EXTRAWIFI-related stuff to individual extensions.
-		Receives `${version}` and `${kernel_work_dir}` as environment variables.
-	PATCH_KERNEL_FOR_DRIVER
-
-	# applies a series of patches, in directory order, from multiple directories (default/"user" patches)
-	# @TODO: I believe using the $BOARD here is the most confusing thing in the whole of Armbian. It should be disabled.
-	# @TODO: Armbian built kernels dont't vary per-board, but only per "$ARCH-$LINUXFAMILY-$BRANCH"
-	# @TODO: allowing for board-specific kernel patches creates insanity. uboot is enough.
-	fasthash_branch "patches-${KERNELPATCHDIR}-$BRANCH"
-	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH" # calls process_patch_file, "target" is empty there
-
-	fasthash_debug "finish"
-	finish_fasthash "kernel" # this reports the final hash and creates git branch to build ID. All modifications commited.
-}
-
-function kernel_config() {
-	# re-read kernel version after patching
-	version=$(grab_version "$kernel_work_dir")
-
-	display_alert "Compiling $BRANCH kernel" "$version" "info"
-
-	# compare with the architecture of the current Debian node
-	# if it matches we use the system compiler
-	if dpkg-architecture -e "${ARCH}"; then
-		display_alert "Native compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
-	else
-		display_alert "Cross compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
-		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
-	fi
-
-	kernel_compiler_version="$(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpfullversion -dumpversion)"
-	display_alert "Compiler version" "${KERNEL_COMPILER}gcc ${kernel_compiler_version}" "info"
-
-	# copy kernel config
-	local COPY_CONFIG_BACK_TO=""
-
-	if [[ $KERNEL_KEEP_CONFIG == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
-		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
-		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" .config
-	else
-		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
-			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			run_host_command_logged cp -pv "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
-		elif [[ -f "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" ]]; then
-			display_alert "Using kernel config provided by user in config/kernel folder" "config/kernel/${LINUXCONFIG}.config" "info"
-			run_host_command_logged cp -pv "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" .config
-		else
-			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
-			run_host_command_logged cp -pv "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
-			COPY_CONFIG_BACK_TO="${SRC}/config/kernel/${LINUXCONFIG}.config"
-		fi
-	fi
-
-	# Store the .config modification date at this time, for restoring later. Otherwise rebuilds.
-	local kernel_config_mtime
-	kernel_config_mtime=$(get_file_modification_time ".config")
-
-	call_extension_method "custom_kernel_config" <<- 'CUSTOM_KERNEL_CONFIG'
-		*Kernel .config is in place, still clean from git version*
-		Called after ${LINUXCONFIG}.config is put in place (.config).
-		Before any olddefconfig any Kconfig make is called.
-		A good place to customize the .config directly.
-	CUSTOM_KERNEL_CONFIG
-
-	# hack for OdroidXU4. Copy firmare files
-	if [[ $BOARD == odroidxu4 ]]; then
-		mkdir -p "${kernel_work_dir}/firmware/edid"
-		cp -p "${SRC}"/packages/blobs/odroidxu4/*.bin "${kernel_work_dir}/firmware/edid"
-	fi
-
-	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
-
-	if [[ $KERNEL_CONFIGURE != yes ]]; then
-		run_kernel_make olddefconfig # @TODO: what is this? does it fuck up dates?
-	else
-		display_alert "Starting (non-interactive) kernel olddefconfig" "${LINUXCONFIG}" "debug"
-
-		run_kernel_make olddefconfig
-
-		# No logging for this. this is UI piece
-		display_alert "Starting (interactive) kernel ${KERNEL_MENUCONFIG:-menuconfig}" "${LINUXCONFIG}" "debug"
-		run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}"
-
-		# Capture new date. Otherwise changes not detected by make.
-		kernel_config_mtime=$(get_file_modification_time ".config")
-
-		# store kernel config in easily reachable place
-		mkdir -p "${DEST}"/config
-		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
-		run_host_command_logged cp -pv .config "${DEST}/config/${LINUXCONFIG}.config"
-
-		# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.
-		[[ "${COPY_CONFIG_BACK_TO}" != "" ]] && run_host_command_logged cp -pv .config "${COPY_CONFIG_BACK_TO}"
-
-		# export defconfig too if requested
-		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
-			run_kernel_make savedefconfig
-
-			[[ -f defconfig ]] && run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
-		fi
-	fi
-
-	call_extension_method "custom_kernel_config_post_defconfig" <<- 'CUSTOM_KERNEL_CONFIG_POST_DEFCONFIG'
-		*Kernel .config is in place, already processed by Armbian*
-		Called after ${LINUXCONFIG}.config is put in place (.config).
-		After all olddefconfig any Kconfig make is called.
-		A good place to customize the .config last-minute.
-	CUSTOM_KERNEL_CONFIG_POST_DEFCONFIG
-
-	# Restore the date of .config. Above delta is a pure function, theoretically.
-	set_files_modification_time "${kernel_config_mtime}" ".config"
 }
 
 function kernel_package_source() {
@@ -345,7 +84,7 @@ function kernel_package_source() {
 	run_host_command_logged cp -v COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
 
 	display_alert "Compressing sources for the linux-source package" "exporting from git" "info"
-	cd "${kernel_work_dir}"
+	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 
 	local tar_prefix="${version}/"
 	local output_tarball="${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.zst"
@@ -376,7 +115,7 @@ function kernel_package_source() {
 function kernel_build_and_package() {
 	local ts=${SECONDS}
 
-	cd "${kernel_work_dir}"
+	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 
 	local -a build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
 	declare kernel_dest_install_dir
@@ -413,7 +152,7 @@ function kernel_build_and_package() {
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}"
 	fasthash_debug "build"
 
-	cd "${kernel_work_dir}"
+	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 
 	display_alert "Kernel built and packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
