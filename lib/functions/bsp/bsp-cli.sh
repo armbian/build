@@ -275,7 +275,7 @@ create_board_package() {
 
 	# copy distribution support status
 	local releases=($(find ${SRC}/config/distributions -mindepth 1 -maxdepth 1 -type d))
-	for i in ${releases[@]}; do
+	for i in "${releases[@]}"; do
 		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)" >> "${destination}"/etc/armbian-distribution-status
 	done
 

@@ -30,7 +30,7 @@ function download_external_toolchains() {
 
 			USE_TORRENT_STATUS=${USE_TORRENT}
 			USE_TORRENT="no"
-			for toolchain in ${toolchains[@]}; do
+			for toolchain in "${toolchains[@]}"; do
 				local toolchain_zip="${SRC}/cache/toolchain/${toolchain}"
 				local toolchain_dir="${toolchain_zip%.tar.*}"
 				if [[ ! -f "${toolchain_dir}/.download-complete" ]]; then
@@ -53,9 +53,9 @@ function download_external_toolchains() {
 			USE_TORRENT=${USE_TORRENT_STATUS}
 
 			local existing_dirs=($(ls -1 "${SRC}"/cache/toolchain))
-			for dir in ${existing_dirs[@]}; do
+			for dir in "${existing_dirs[@]}"; do
 				local found=no
-				for toolchain in ${toolchains[@]}; do
+				for toolchain in "${toolchains[@]}"; do
 					[[ $dir == ${toolchain%.tar.*} ]] && found=yes
 				done
 				if [[ $found == no ]]; then
