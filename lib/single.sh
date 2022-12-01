@@ -29,5 +29,5 @@ fi
 
 # Libraries include. ONLY source files that contain ONLY functions here.
 
-# shellcheck source=library-functions.sh
+# shellcheck source=lib/library-functions.sh
 source "${SRC}"/lib/library-functions.sh
