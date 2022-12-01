@@ -230,15 +230,18 @@ function early_prepare_host_dependencies() {
 		libfl-dev liblz4-tool libncurses-dev libssl-dev
 		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
 		ntpdate patchutils
-		pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig
+		pkg-config pv qemu-user-static rsync swig
 		u-boot-tools udev uuid-dev whiptail
 		zlib1g-dev busybox fdisk
 		
 		# distcc, experimental, optional; see cli-distcc.sh and kernel.sh
 		distcc
 
+		# python3 stuff (eg, for modern u-boot)
+		python3-dev python3-distutils python3-setuptools
+
 		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
-		python2 python2-dev
+		python2 python2-dev python-setuptools
 
 		# systemd-container brings in systemd-nspawn, which is used by the buildpkg functionality
 		# systemd-container # @TODO: bring this back eventually. I don't think trying to use those inside a container is a good idea.
