@@ -1,5 +1,10 @@
 import fnmatch
+import logging
 import os
+
+from . import armbian_utils as armbian_utils
+
+log: logging.Logger = logging.getLogger("aggregation_utils")
 
 AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = []
 DEBOOTSTRAP_SEARCH_RELATIVE_DIRS = []
@@ -127,9 +132,9 @@ def remove_common_path_from_refs(merged):
 
 # Let's produce a list from the environment variables, complete with the references.
 def parse_env_for_list(env_name, fixed_ref=None):
-	env_list = parse_env_for_tokens(env_name)
+	env_list = armbian_utils.parse_env_for_tokens(env_name)
 	if fixed_ref is None:
-		refs = parse_env_for_tokens(env_name + "_REFS")
+		refs = armbian_utils.parse_env_for_tokens(env_name + "_REFS")
 		# Sanity check: the number of refs should be the same as the number of items in the list.
 		if len(env_list) != len(refs):
 			raise Exception(f"Expected {len(env_list)} refs for {env_name}, got {len(refs)}")
@@ -203,41 +208,6 @@ def aggregate_all_desktop(artifact, aggregation_function=aggregate_packages_from
 	return aggregation_function(process_common_path_for_potentials(potential_paths))
 
 
-def parse_env_for_tokens(env_name):
-	result = []
-	# Read the environment; if None, return an empty list.
-	val = os.environ.get(env_name, None)
-	if val is None:
-		return result
-	# tokenize val; split by whitespace, line breaks, commas, and semicolons.
-	# trim whitespace from tokens.
-	return [token for token in [token.strip() for token in (val.split())] if token != ""]
-
-
-def get_from_env(env_name):
-	value = os.environ.get(env_name, None)
-	if value is not None:
-		value = value.strip()
-	return value
-
-
-def get_from_env_or_bomb(env_name):
-	value = get_from_env(env_name)
-	if value is None:
-		raise Exception(f"{env_name} environment var not set")
-	if value == "":
-		raise Exception(f"{env_name} environment var is empty")
-	return value
-
-
-def yes_or_no_or_bomb(value):
-	if value == "yes":
-		return True
-	if value == "no":
-		return False
-	raise Exception(f"Expected yes or no, got {value}")
-
-
 def join_refs_for_bash_single_string(refs):
 	single_line_refs = []
 	for ref in refs:
@@ -252,7 +222,27 @@ def join_refs_for_bash_single_string(refs):
 	return " ".join(single_line_refs)
 
 
-def prepare_bash_output_array_for_list(output_array_name, merged_list, extra_dict_function=None):
+# @TODO this is shit make it less shit urgently
+def join_refs_for_markdown_single_string(refs):
+	single_line_refs = []
+	for ref in refs:
+		one_line = f"  - `"
+		if "operation" in ref and "line" in ref:
+			one_line += ref["operation"] + ":" + ref["path"] + ":" + str(ref["line"])
+		else:
+			one_line += ref["path"]
+		if "symlink_to" in ref:
+			if ref["symlink_to"] is not None:
+				one_line += ":symlink->" + ref["symlink_to"]
+		one_line += "`\n"
+		single_line_refs.append(one_line)
+	return "".join(single_line_refs)
+
+
+def prepare_bash_output_array_for_list(
+	bash_writer, md_writer, output_array_name, merged_list, extra_dict_function=None):
+	md_writer.write(f"### `{output_array_name}`\n")
+
 	values_list = []
 	explain_dict = {}
 	extra_dict = {}
@@ -260,8 +250,8 @@ def prepare_bash_output_array_for_list(output_array_name, merged_list, extra_dic
 		value = merged_list[key]
 		# print(f"key: {key}, value: {value}")
 		refs = value["refs"]
-		# join the refs with a comma
-		refs_str = join_refs_for_bash_single_string(refs)
+		md_writer.write(f"- `{key}`: *{value['status']}*\n" + join_refs_for_markdown_single_string(refs))
+		refs_str = join_refs_for_bash_single_string(refs)  # join the refs with a comma
 		explain_dict[key] = refs_str
 		if value["status"] != "remove":
 			values_list.append(key)
@@ -288,8 +278,10 @@ def prepare_bash_output_array_for_list(output_array_name, merged_list, extra_dic
 		extra_dict_decl = f"declare -r -g -A {output_array_name}_DICT=(\n{extra_list_bash}\n)\n"
 
 	final_value = actual_var + "\n" + extra_dict_decl + "\n" + comma_var + "\n" + explain_var
-	# print(final_value)
-	return final_value
+	bash_writer.write(final_value)
+
+	# return some statistics for the summary
+	return {"number_items": len(values_list)}
 
 
 def prepare_bash_output_single_string(output_array_name, merged_list):

@@ -30,11 +30,18 @@ function uboot_prepare_git() {
 
 		display_alert "Downloading sources" "u-boot; BOOTSOURCEDIR=${BOOTSOURCEDIR}" "git"
 
+		# This var will be set by fetch_from_repo().
+		declare checked_out_revision="undetermined"
+
 		GIT_FIXED_WORKDIR="${BOOTSOURCEDIR}" \
 			GIT_BARE_REPO_FOR_WORKTREE="${uboot_git_bare_tree}" \
 			GIT_BARE_REPO_INITIAL_BRANCH="master" \
 			GIT_SKIP_SUBMODULES="${UBOOT_GIT_SKIP_SUBMODULES}" \
 			fetch_from_repo "$BOOTSOURCE" "$BOOTDIR" "$BOOTBRANCH" "yes" # fetch_from_repo <url> <dir> <ref> <subdir_flag>
+
+		# Sets the outer scope variable
+		uboot_git_revision="${checked_out_revision}"
+		display_alert "Using u-boot revision SHA1" "${uboot_git_revision}"
 	fi
 	return 0
 }

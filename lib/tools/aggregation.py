@@ -7,37 +7,43 @@
 # -- rpardini, 23/11/2022
 
 import hashlib
+import logging
 import os
 
 import common.aggregation_utils as util
+import common.armbian_utils as armbian_utils
+from common.md_asset_log import SummarizedMarkdownWriter
+
+# Prepare logging
+armbian_utils.setup_logging()
+log: logging.Logger = logging.getLogger("aggregation")
 
 # Read SRC from the environment, treat it.
-armbian_build_directory = util.get_from_env_or_bomb("SRC")
+armbian_build_directory = armbian_utils.get_from_env_or_bomb("SRC")
 if not os.path.isdir(armbian_build_directory):
 	raise Exception("SRC is not a directory")
 
 # OUTPUT from the environment, treat it.
-output_file = util.get_from_env_or_bomb("OUTPUT")
-with open(output_file, "w") as out:
-	out.write("")
+output_file = armbian_utils.get_from_env_or_bomb("OUTPUT")
+with open(output_file, "w") as bash:
+	bash.write("")
 
-BUILD_DESKTOP = util.yes_or_no_or_bomb(util.get_from_env_or_bomb("BUILD_DESKTOP"))
+BUILD_DESKTOP = armbian_utils.yes_or_no_or_bomb(armbian_utils.get_from_env_or_bomb("BUILD_DESKTOP"))
 INCLUDE_EXTERNAL_PACKAGES = True
-ARCH = util.get_from_env_or_bomb("ARCH")
-DESKTOP_ENVIRONMENT = util.get_from_env("DESKTOP_ENVIRONMENT")
-DESKTOP_ENVIRONMENT_CONFIG_NAME = util.get_from_env("DESKTOP_ENVIRONMENT_CONFIG_NAME")
-RELEASE = util.get_from_env_or_bomb("RELEASE")  # "kinetic"
-LINUXFAMILY = util.get_from_env_or_bomb("LINUXFAMILY")
-BOARD = util.get_from_env_or_bomb("BOARD")
-USERPATCHES_PATH = util.get_from_env_or_bomb("USERPATCHES_PATH")
+ARCH = armbian_utils.get_from_env_or_bomb("ARCH")
+DESKTOP_ENVIRONMENT = armbian_utils.get_from_env("DESKTOP_ENVIRONMENT")
+DESKTOP_ENVIRONMENT_CONFIG_NAME = armbian_utils.get_from_env("DESKTOP_ENVIRONMENT_CONFIG_NAME")
+RELEASE = armbian_utils.get_from_env_or_bomb("RELEASE")  # "kinetic"
+LINUXFAMILY = armbian_utils.get_from_env_or_bomb("LINUXFAMILY")
+BOARD = armbian_utils.get_from_env_or_bomb("BOARD")
+USERPATCHES_PATH = armbian_utils.get_from_env_or_bomb("USERPATCHES_PATH")
 
 # Show the environment
-#print("Environment:")
-#for k, v in os.environ.items():
-#	print("{}={}".format(k, v))
+armbian_utils.show_incoming_environment()
 
-util.SELECTED_CONFIGURATION = util.get_from_env_or_bomb("SELECTED_CONFIGURATION")  # "cli_standard"
-util.DESKTOP_APPGROUPS_SELECTED = util.parse_env_for_tokens("DESKTOP_APPGROUPS_SELECTED")  # ["browsers", "chat"]
+util.SELECTED_CONFIGURATION = armbian_utils.get_from_env_or_bomb("SELECTED_CONFIGURATION")  # "cli_standard"
+util.DESKTOP_APPGROUPS_SELECTED = armbian_utils.parse_env_for_tokens(
+	"DESKTOP_APPGROUPS_SELECTED")  # ["browsers", "chat"]
 util.SRC = armbian_build_directory
 
 util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
@@ -152,43 +158,44 @@ if BUILD_DESKTOP:
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-with open(output_file, "w") as out:
-	# with sys.stdout as f:
-	out.write("#!/bin/env bash\n")
-	out.write(
-		util.prepare_bash_output_array_for_list(
-			"AGGREGATED_PACKAGES_DEBOOTSTRAP", AGGREGATED_PACKAGES_DEBOOTSTRAP))
-	out.write(util.prepare_bash_output_array_for_list(
-		"AGGREGATED_PACKAGES_ROOTFS", AGGREGATED_PACKAGES_ROOTFS))
-	out.write(util.prepare_bash_output_array_for_list(
-		"AGGREGATED_PACKAGES_IMAGE", AGGREGATED_PACKAGES_IMAGE))
-	out.write(util.prepare_bash_output_array_for_list(
-		"AGGREGATED_PACKAGES_DESKTOP", AGGREGATED_PACKAGES_DESKTOP))
+output_lists: list[tuple[str, str, object, object]] = [
+	("debootstrap", "AGGREGATED_PACKAGES_DEBOOTSTRAP", AGGREGATED_PACKAGES_DEBOOTSTRAP, None),
+	("rootfs", "AGGREGATED_PACKAGES_ROOTFS", AGGREGATED_PACKAGES_ROOTFS, None),
+	("image", "AGGREGATED_PACKAGES_IMAGE", AGGREGATED_PACKAGES_IMAGE, None),
+	("desktop", "AGGREGATED_PACKAGES_DESKTOP", AGGREGATED_PACKAGES_DESKTOP, None),
+	("apt-sources", "AGGREGATED_APT_SOURCES", AGGREGATED_APT_SOURCES, util.encode_source_base_path_extra)
+]
+
+with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", "Aggregation") as md:
+	bash.write("#!/bin/env bash\n")
+
+	# loop over the aggregated lists
+	for id, name, value, extra_func in output_lists:
+		stats = util.prepare_bash_output_array_for_list(bash, md, name, value, extra_func)
+		md.add_summary(f"{id}: {stats['number_items']}")
 
 	# The rootfs hash (md5) is used as a cache key.
-	out.write(f"declare -g -r AGGREGATED_ROOTFS_HASH='{AGGREGATED_ROOTFS_HASH}'\n")
+	bash.write(f"declare -g -r AGGREGATED_ROOTFS_HASH='{AGGREGATED_ROOTFS_HASH}'\n")
 
 	# Special case for components: debootstrap also wants a list of components, comma separated.
-	out.write(
+	bash.write(
 		f"declare -g -r AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA='{AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'\n")
 
 	# Single string stuff for desktop packages postinst's and preparation. @TODO use functions instead of eval.
-	out.write(util.prepare_bash_output_single_string(
+	bash.write(util.prepare_bash_output_single_string(
 		"AGGREGATED_DESKTOP_POSTINST", AGGREGATED_DESKTOP_POSTINST))
-	out.write(util.prepare_bash_output_single_string(
+	bash.write(util.prepare_bash_output_single_string(
 		"AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE", AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE))
-	out.write(util.prepare_bash_output_single_string(
+	bash.write(util.prepare_bash_output_single_string(
 		"AGGREGATED_DESKTOP_BSP_POSTINST", AGGREGATED_DESKTOP_BSP_POSTINST))
-	out.write(util.prepare_bash_output_single_string(
+	bash.write(util.prepare_bash_output_single_string(
 		"AGGREGATED_DESKTOP_BSP_PREPARE", AGGREGATED_DESKTOP_BSP_PREPARE))
 
-	# The apt sources.
-	out.write(util.prepare_bash_output_array_for_list(
-		"AGGREGATED_APT_SOURCES", AGGREGATED_APT_SOURCES, util.encode_source_base_path_extra))
+	# 2) @TODO: Some removals...
 
-# 2) @TODO: Some removals...
+	#    aggregate_all_cli "packages.uninstall" " "
+	#    aggregate_all_desktop "packages.uninstall" " "
+	#    PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
+	#    unset aggregated_content
 
-#    aggregate_all_cli "packages.uninstall" " "
-#    aggregate_all_desktop "packages.uninstall" " "
-#    PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
-#    unset aggregated_content
+	log.debug(f"Done. Output written to {output_file}")
