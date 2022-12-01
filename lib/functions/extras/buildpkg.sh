@@ -307,13 +307,13 @@ function chroot_build_packages() {
 	done
 	if [[ ${#built_ok[@]} -gt 0 ]]; then
 		display_alert "Following packages were built without errors" "" "info"
-		for p in ${built_ok[@]}; do
+		for p in "${built_ok[@]}"; do
 			display_alert "$p"
 		done
 	fi
 	if [[ ${#failed[@]} -gt 0 ]]; then
 		display_alert "Following packages failed to build" "" "wrn"
-		for p in ${failed[@]}; do
+		for p in "${failed[@]}"; do
 			display_alert "$p"
 		done
 	fi
