@@ -18,41 +18,19 @@ function compile_uboot_target() {
 	local uboot_work_dir=""
 	uboot_work_dir="$(pwd)"
 
-	# needed for multiple targets and for calling compile_uboot directly
-	display_alert "${uboot_prefix} Checking out to clean sources" "{$BOOTSOURCEDIR} for ${target_make}"
-	git checkout -f -q HEAD # @TODO: this assumes way too much. should call the wrapper again, not directly
+	declare -I uboot_git_revision # use outer scope variable value
+
+	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
+	git checkout -f -q "${uboot_git_revision}"
 
 	# grab the prepatch version from Makefile
 	local uboot_prepatch_version=""
 	uboot_prepatch_version=$(grab_version "${uboot_work_dir}")
 
-	# grab the mtime of the revision.
-	declare checked_out_revision_ts="" checked_out_revision_mtime=""
-	checked_out_revision_ts="$(git log -1 --pretty=%ct "HEAD")"                         # unix timestamp of the commit date
-	checked_out_revision_mtime="$(date +%Y%m%d%H%M%S -d "@${checked_out_revision_ts}")" # convert timestamp to local date/time
-	display_alert "u-boot: checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "git"
-
-	# mark the minimum mtime for uboot patches
-	declare -i patch_minimum_target_mtime="${checked_out_revision_mtime}"
-	declare -i patch_dir_mtime="${patch_minimum_target_mtime}"
-	local patch_dir="${SRC}/patch/u-boot/${BOOTPATCHDIR}"
-
-	if [[ -d "${patch_dir}" ]]; then
-		patch_dir_mtime=$(get_dir_modification_time "${patch_dir}")
-		display_alert "uboot: patch_dir mtime:" "${patch_dir_mtime}" "debug"
-		patch_minimum_target_mtime=$((patch_dir_mtime > patch_minimum_target_mtime ? patch_dir_mtime : patch_minimum_target_mtime))
-		display_alert "uboot: patch_minimum_target_mtime after patch_dir mtime:" "${patch_minimum_target_mtime}" "debug"
-	fi
-
-	# @TODO: for u-boot, there's also the BOARD patch directory, which should also be taken into account.
-
-	initialize_fasthash "u-boot-${uboot_target_counter}" "unknown-uboot-hash" "${uboot_prepatch_version}" "$(pwd)"
-	fasthash_debug "init"
-
 	maybe_make_clean_uboot
 
-	fasthash_branch "patches-${uboot_target_counter}-${BOOTPATCHDIR}-$BRANCH"
-	advanced_patch "u-boot" "$BOOTPATCHDIR" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+	# Python patching for u-boot!
+	do_with_hooks uboot_main_patching_python
 
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"

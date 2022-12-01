@@ -6,8 +6,10 @@ function aggregate_all_packages() {
 
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a aggregation_params_quoted=(
+		"LOG_DEBUG=${SHOW_DEBUG}" # Logging level for python.
 		"SRC=${SRC}"
 		"OUTPUT=${temp_file_for_aggregation}"
+		"ASSET_LOG_BASE=$(print_current_asset_log_base_file)" # base file name for the asset log; to write .md summaries.
 
 		# For the main packages, and others; main packages are not mixed with BOARD or DESKTOP packages.
 		# Results:
