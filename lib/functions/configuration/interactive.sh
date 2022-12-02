@@ -13,19 +13,20 @@ function interactive_config_prepare_terminal() {
 }
 
 function interactive_config_ask_kernel() {
-#	interactive_config_ask_kernel_only
+	interactive_config_ask_build_only
 	interactive_config_ask_kernel_configure
 }
 
-function interactive_config_ask_kernel_only() {
-	if [[ -z $KERNEL_ONLY ]]; then
+function interactive_config_ask_build_only() {
+	if [[ -z $BUILD_ONLY ]]; then
 
-		options+=("yes" "U-boot and kernel packages")
-		options+=("no" "Full OS image for flashing")
-		KERNEL_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
+		options+=("u-boot" "U-boot package only")
+		options+=("$(build_only_value_for_kernel_only_build)" "U-boot and kernel packages")
+		options+=("any" "Full OS image for flashing")
+		BUILD_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 			--menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		unset options
-		[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected"
+		[[ -z $BUILD_ONLY ]] && exit_with_error "No option selected"
 
 	fi
 }
