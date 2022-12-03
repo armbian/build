@@ -2,6 +2,20 @@
 
 ###############################################################################
 #
+# string_is_contain()
+# Check for the presence of a word in a string if the field separator is mixed.
+# IFS can be "," comma " " space or ", " both or "\n" the end of a line.
+# usage: if string_is_contain "word1 word2,word3" "word2"; then
+#
+string_is_contain() {
+	[[ -z "$@" ]] || [[ "$#" != 2 ]] && \
+	echo "err: ${FUNCNAME[0]}: Bud argument $@" >&2 && return 1
+	local list=${1// /\\n}
+	echo -e ${list//,/\\n} | grep -q "^$2$"
+}
+
+###############################################################################
+#
 # build_task_is_enabled()
 #
 # $1: _taskNameToCheck - a single task name to check for BUILD_ONLY enablement
