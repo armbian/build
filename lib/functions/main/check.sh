@@ -18,22 +18,13 @@ string_is_contain() {
 #
 # build_task_is_enabled()
 #
-# $1: _taskNameToCheck - a single task name to check for BUILD_ONLY enablement
+# $1 - a single task name to check for BUILD_ONLY enablement
 # return:
-#   0 - if BUILD_ONLY is empty or if the task name is listed by BUILD_ONLY
+#   0 - if BUILD_ONLY if the task name is listed by BUILD_ONLY
 #   1 - otherwise 
 #
 build_task_is_enabled() {
-	# remove all "
-	local _taskNameToCheck=${1//\"/}
-	local _buildOnly=${BUILD_ONLY//\"/}
-	# An empty _buildOnly allows any taskname
-	[[ -z $_buildOnly ]] && return 0
-	_buildOnly=${_buildOnly//,/ }
-	for _buildOnlyTaskName in ${_buildOnly}; do
-		[[ "$_taskNameToCheck" == "$_buildOnlyTaskName" ]] && return 0
-	done
-	return 1
+	string_is_contain "$BUILD_ONLY" "$1"
 }
 
 ###############################################################################
