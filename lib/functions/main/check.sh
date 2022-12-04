@@ -80,5 +80,7 @@ build_validate_buildOnly() {
 		display_alert "Process aborted" "" "info"
 		exit 1
 	fi
+	# Redefine BUILD_ONLY after changes.
+	BUILD_ONLY="$_buildOnly"
 }
 
