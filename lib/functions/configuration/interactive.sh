@@ -35,7 +35,7 @@ function interactive_config_ask_kernel_configure() {
 
 		options+=("no" "Do not change the kernel configuration")
 		options+=("yes" "Show a kernel configuration menu before compilation")
-		options+=("prebuilt" "Use precompiled packages from Armbian repository")
+		options+=("prebuilt" "Use precompiled packages (supported hardware only!)")
 		KERNEL_CONFIGURE=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 			--menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
 		unset options
