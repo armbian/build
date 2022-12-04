@@ -6,26 +6,32 @@
 #
 # This function propagates the deprecated KERNEL_ONLY configuration
 # to the appropriate content of the BUILD_ONLY configuration.
+# If KERNEL_ONLY="yes" it actually meant to build only packages using cross
+# compilation.
+# If KERNEL_ONLY="no" it added an image assembly.
+# We are adding a collective target "default"
+#
 # It exists for backward compatibility only.
 #
 backward_compatibility_build_only() {
-	local _kernel_buildOnly="u-boot,kernel,armbian-config,armbian-zsh,plymouth-theme-armbian,armbian-firmware,armbian-bsp"
+	local _build_packages="u-boot,kernel,armbian-config,armbian-zsh,plymouth-theme-armbian,armbian-firmware,armbian-bsp"
+	# build default = "$_build_packages bootstrap"
 
 	# These checks are necessary for backward compatibility with logic
-	# https://github.com/armbian/scripts/tree/master /.github/workflows scripts.
+	# https://github.com/armbian/scripts/tree/master/.github/workflows scripts.
 	# They need to be removed when the need disappears there.
 	[[ -n $KERNEL_ONLY ]] && {
 		display_alert "The KERNEL_ONLY key is no longer used." "KERNEL_ONLY=$KERNEL_ONLY" "wrn"
 		if [ "$KERNEL_ONLY" == "no" ]; then
-			display_alert "Use an empty BUILD_ONLY variable instead" "" "info"
+			display_alert "Use BUILD_ONLY variable instead" "default" "info"
 			[[ -n "${BUILD_ONLY}" ]] && {
 				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${BUILD_ONLY}" "wrn"
-				BUILD_ONLY=""
-				display_alert "Enforced BUILD_ONLY to an empty string." "" "info"
+				BUILD_ONLY="default"
+				display_alert "Enforced BUILD_ONLY to default target." "$BUILD_ONLY" "info"
 			}
 		elif [ "$KERNEL_ONLY" == "yes" ]; then
-			display_alert "Instead, use BUILD_ONLY to select the build target." "$_kernel_buildOnly" "wrn"
-			BUILD_ONLY="$_kernel_buildOnly"
+			display_alert "Instead, use BUILD_ONLY to select the build target." "$_build_packages" "wrn"
+			BUILD_ONLY="$_build_packages"
 			display_alert "BUILD_ONLY enforced to:" "${BUILD_ONLY}" "info"
 		fi
 	}
