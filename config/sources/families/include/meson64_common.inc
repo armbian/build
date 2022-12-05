@@ -25,7 +25,7 @@ case $BRANCH in
 
 	current)
 		KERNELBRANCH='branch:linux-5.19.y'
-		KERNELPATCHDIR='meson64-edge'
+		KERNELPATCHDIR='meson64-current'
 		;;
 
 	edge)
