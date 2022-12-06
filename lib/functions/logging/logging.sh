@@ -170,6 +170,11 @@ function do_with_log_asset() {
 	"$@" >> "${ASSET_LOGFILE}"
 }
 
+function print_current_asset_log_base_file() {
+	declare ASSET_LOGFILE_BASE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}."
+	echo -n "${ASSET_LOGFILE_BASE}"
+}
+
 function display_alert() {
 	# If asked, avoid any fancy ANSI escapes completely. For python-driven log collection. Formatting could be improved.
 	# If used, also does not write to logfile even if it exists.
@@ -368,6 +373,52 @@ function logging_echo_prefix_for_pv() {
 
 }
 
+# This only includes a header, and all the .md logfiles, nothing else.
+function export_markdown_logs() {
+	display_alert "Preparing Markdown log from" "${LOGDIR}" "debug"
+
+	cat <<- MARKDOWN_HEADER > "${target_file}"
+		<details><summary>Build: ${ARMBIAN_ORIGINAL_ARGV[*]}</summary>
+		<p>
+
+		### Armbian logs for ${ARMBIAN_BUILD_UUID}
+		#### Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
+		#### ARGs: \`${ARMBIAN_ORIGINAL_ARGV[@]@Q}\`
+	MARKDOWN_HEADER
+
+	if [[ -n "$(command -v git)" && -d "${SRC}/.git" ]]; then
+		display_alert "Gathering git info for logs" "Processing git information, please wait..." "debug"
+		cat <<- GIT_MARKDOWN_HEADER >> "${target_file}"
+			#### Last revision:
+			\`\`\`
+			$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --format=short --decorate)
+			\`\`\`
+			#### Git status:
+			\`\`\`
+			$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" status)
+			\`\`\`
+			#### Git changes:
+			\`\`\`
+			$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u)
+			\`\`\`
+		GIT_MARKDOWN_HEADER
+	fi
+
+	# Newlines are relevant here.
+	echo -e "\n\n</p></details>\n\n" >> "${target_file}"
+
+	display_alert "Preparing Markdown logs..." "Processing log files..." "debug"
+
+	# Find and sort the files there, store in array one per logfile
+	declare -a logfiles_array
+	mapfile -t logfiles_array < <(find "${LOGDIR}" -type f | grep "\.md\$" | LC_ALL=C sort -h)
+	for logfile_full in "${logfiles_array[@]}"; do
+		cat "${logfile_full}" >> "${target_file}"
+	done
+
+	return 0
+}
+
 # Export logs in plain format.
 function export_ansi_logs() {
 	display_alert "Preparing ANSI log from" "${LOGDIR}" "debug"
@@ -382,7 +433,7 @@ function export_ansi_logs() {
 
 	if [[ -n "$(command -v git)" && -d "${SRC}/.git" ]]; then
 		display_alert "Gathering git info for logs" "Processing git information, please wait..." "debug"
-		cat <<- GIT_ANSI_HEADER > "${target_file}"
+		cat <<- GIT_ANSI_HEADER >> "${target_file}"
 			----------------------------------------------------------------------------------------------------------------
 			# Last revision:
 			$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate)
@@ -533,6 +584,10 @@ function trap_handler_cleanup_logging() {
 	else
 		display_alert "Not archiving old logs." "CI=${CI:-false}, SKIP_LOG_ARCHIVE=${SKIP_LOG_ARCHIVE:-no}" "debug"
 	fi
+
+	# Export Markdown assets.
+	local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
+	export_markdown_logs
 
 	if [[ "${EXPORT_HTML_LOG}" == "yes" ]]; then
 		local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.html"
