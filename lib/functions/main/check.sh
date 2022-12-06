@@ -8,8 +8,9 @@
 # usage: if string_is_contain "word1 word2,word3" "word2"; then
 #
 string_is_contain() {
-	[[ -z "$@" ]] || [[ "$#" != 2 ]] && \
-	echo "err: ${FUNCNAME[0]}: Bud argument $@" >&2 && return 1
+	[[ -z "$@" ]] && echo "err: ${FUNCNAME[0]}: Empty argument" >&2 && return 1
+	[[ "$#" != 2 ]] && \
+	echo "err: ${FUNCNAME[0]}: Invalid count of arguments: [$@]" >&2 && return 1
 	local list=${1// /\\n}
 	echo -e ${list//,/\\n} | grep -q "^$2$"
 }
@@ -47,9 +48,13 @@ build_validate_buildOnly() {
 	local _build_default="$_build_packages bootstrap"
 	local _all_valid_buildOnly="$_build_default chroot"
 
+	# In this block we redefine the list of targets if a collective target
+	# has been detected
 	# collective target = "default"
 	if string_is_contain "$_buildOnly" "default"
 	then
+		display_alert "BUILD_ONLY has task name:" "default" "wrn"
+		display_alert "Redefine BUILD_ONLY to:" "$_build_default" "wrn"
 		_buildOnly="$_build_default"
 	fi
 
