@@ -133,13 +133,26 @@ build_armbian-firmware() {
 	fi
 }
 
-build_armbian-bsp() {
+build_armbian-bsp-cli() {
 	# create board support package
-	[[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]] && create_board_package
+	[[ -n "${RELEASE}" && \
+		! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && \
+		"${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]] && create_board_package
+}
 
+build_armbian-desktop() {
 	# create desktop package
-	[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb" && "${REPOSITORY_INSTALL}" != *armbian-desktop* ]] && create_desktop_package
-	[[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-desktop* ]] && create_bsp_desktop_package
+	[[ -n "${RELEASE}" && \
+		"${DESKTOP_ENVIRONMENT}" && \
+		! -f "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb" && \
+		"${REPOSITORY_INSTALL}" != *armbian-desktop* ]] && create_desktop_package
+}
+
+build_armbian-bsp-desktop() {
+	[[ -n "${RELEASE}" && \
+		"${DESKTOP_ENVIRONMENT}" && \
+		! -f "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb" && \
+		"${REPOSITORY_INSTALL}" != *armbian-bsp-desktop* ]] && create_bsp_desktop_package
 }
 
 build_chroot() {
@@ -190,15 +203,18 @@ build_main() {
 		build_task_is_enabled "u-boot" && build_get_boot_sources
 		build_task_is_enabled "kernel" && build_get_kernel_sources
 
-		call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
+		build_task_is_enabled "host-tools" && {
+
+			call_extension_method "fetch_sources_tools" <<- 'FETCH_SOURCES_TOOLS'
 			*fetch host-side sources needed for tools and build*
 			Run early to fetch_from_repo or otherwise obtain sources for needed tools.
-		FETCH_SOURCES_TOOLS
+			FETCH_SOURCES_TOOLS
 
-		call_extension_method "build_host_tools" <<- 'BUILD_HOST_TOOLS'
+			call_extension_method "build_host_tools" <<- 'BUILD_HOST_TOOLS'
 			*build needed tools for the build, host-side*
 			After sources are fetched, build host-side tools needed for the build.
-		BUILD_HOST_TOOLS
+			BUILD_HOST_TOOLS
+		}
 
 		for option in $(tr ',' ' ' <<< "$CLEAN_LEVEL"); do
 			[[ $option != sources ]] && cleaning "$option"
@@ -219,7 +235,11 @@ build_main() {
 
 	overlayfs_wrapper "cleanup"
 
-	build_task_is_enabled "armbian-bsp" && build_armbian-bsp
+	build_task_is_enabled "armbian-bsp-cli" && build_armbian-bsp-cli
+
+	build_task_is_enabled "armbian-desktop" && build_armbian-desktop
+
+	build_task_is_enabled "armbian-bsp-desktop" && build_armbian-bsp-desktop
 
 	# skip image creation if exists. useful for CI when making a lot of images
 	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then

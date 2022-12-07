@@ -321,7 +321,7 @@ If `KERNELSOURCE` is (still?) unset after this, Armbian-built firmware will not 
 POST_INSTALL_KERNEL_DEBS
 
 	# install board support packages
-	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
+	if [[ "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" | tee -a "${DEST}"/${LOG_SUBPATH}/install.log 2>&1
 	else
 		install_deb_chroot "${CHOSEN_ROOTFS}" "remote"
