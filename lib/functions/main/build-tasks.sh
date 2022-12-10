@@ -12,8 +12,8 @@ build_task_is_enabled() {
 	# remove all "
 	local _taskNameToCheck=${1//\"/}
 	local _buildOnly=${BUILD_ONLY//\"/}
-	# An empty _buildOnly allows any taskname
-	[[ -z $_buildOnly || "${_buildOnly}" == "any" ]] && return 0
+	# An empty _buildOnly allows default taskname
+	[[ -z $_buildOnly || "${_buildOnly}" == "default" ]] && return 0
 	_buildOnly=${_buildOnly//,/ }
 	for _buildOnlyTaskName in ${_buildOnly}; do
 		[[ "$_taskNameToCheck" == "$_buildOnlyTaskName" ]] && return 0
@@ -40,7 +40,7 @@ build_validate_buildOnly() {
 	# relace all :comma: by :space:
 	_all_valid_buildOnly=${_all_valid_buildOnly//,/ }
 	_buildOnly=${_buildOnly//,/ }
-	[[ -z $_buildOnly || "${_buildOnly}" == "any" ]] && return
+	[[ -z $_buildOnly || "${_buildOnly}" == "default" ]] && return
 	local _invalidTaskNames=""
 	for _taskName in ${_buildOnly}; do
 		local _isFound=0
@@ -52,8 +52,8 @@ build_validate_buildOnly() {
 		fi
 	done
 	if [[ -n $_invalidTaskNames ]]; then
-		if [[ "${_invalidTaskNames}" == "any" ]]; then
-			display_alert "BUILD_ONLY value \"any\" must be configured as a single value only and must not be listed with other task names." "${BUILD_ONLY}" "err"
+		if [[ "${_invalidTaskNames}" == "default" ]]; then
+			display_alert "BUILD_ONLY value \"default\" must be configured as a single value only and must not be listed with other task names." "${BUILD_ONLY}" "err"
 		else
 			display_alert "BUILD_ONLY has invalid task name(s):" "${_invalidTaskNames}" "err"
 			display_alert "Use BUILD_ONLY valid task names only:" "${_all_valid_buildOnly}" "ext"
@@ -93,11 +93,11 @@ backward_compatibility_build_only() {
 	[[ -n $KERNEL_ONLY ]] && {
 		display_alert "The KERNEL_ONLY key is no longer used." "KERNEL_ONLY=$KERNEL_ONLY" "wrn"
 		if [ "$KERNEL_ONLY" == "no" ]; then
-			display_alert "Use BUILD_ONLY=any instead" "" "info"
+			display_alert "Use BUILD_ONLY=default instead" "" "info"
 			[[ -n "${BUILD_ONLY}" ]] && {
 				display_alert "A contradiction. BUILD_ONLY contains a goal. Fix it." "${BUILD_ONLY}" "wrn"
 			}
-			BUILD_ONLY="any"
+			BUILD_ONLY="default"
 			display_alert "BUILD_ONLY enforced to:" "${BUILD_ONLY}" "info"
 		elif [ "$KERNEL_ONLY" == "yes" ]; then
 			display_alert "Instead, use BUILD_ONLY to select the build target." "$_kernel_buildOnly" "wrn"
