@@ -21,7 +21,7 @@ case "${BRANCH}" in
 	edge)
 		export DISTRO_GENERIC_KERNEL=no
 		export LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		export KERNELBRANCH="branch:linux-6.0.y"
+		export KERNELBRANCH='branch:linux-6.1.y'
 		export KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 		export KERNELDIR="linux-uefi-${LINUXFAMILY}"          # Avoid sharing a source tree with others, until we know it's safe.
 		;;
