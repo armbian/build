@@ -133,7 +133,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821()
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8812auver="commit:41532e3b16dcf27f06e6fe5a26314f3aa24d4f87"
+		local rtl8812auver="commit:450db78f7bd23f0c611553eb475fa5b5731d6497"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
@@ -214,15 +214,15 @@ driver_rtl8811CU_rtl8821C()
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:8c2226a74ae718439d56248bd2e44ccf717086d5"
+		local rtl8811cuver="commit:7b8c45a270454f05e2dbf3beeb4afcf817db65da"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/brektrou/rtl8821CU" "rtl8811cu" "${rtl8811cuver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210118" "rtl8811cu" "${rtl8811cuver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8811cu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8811cu/"
-		cp -R "${SRC}/cache/sources/rtl8811cu/${rtl8811cuver#*:}"/{core,hal,include,os_dep,platform,rtl8821c.mk} \
+		cp -R "${SRC}/cache/sources/rtl8811cu/${rtl8811cuver#*:}"/{core,hal,include,os_dep,platform,*.mk} \
 			"$kerneldir/drivers/net/wireless/rtl8811cu"
 
 		# Makefile
