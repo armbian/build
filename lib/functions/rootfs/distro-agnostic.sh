@@ -69,7 +69,7 @@ function install_distribution_agnostic() {
 
 	# configure MIN / MAX speed for cpufrequtils
 	cat <<- EOF > "${SDCARD}"/etc/default/cpufrequtils
-		ENABLE=true
+		ENABLE=${CPUFREQUTILS_ENABLE:-false}
 		MIN_SPEED=$CPUMIN
 		MAX_SPEED=$CPUMAX
 		GOVERNOR=$GOVERNOR
