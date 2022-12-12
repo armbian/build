@@ -20,8 +20,8 @@ function interactive_config_ask_kernel() {
 function interactive_config_ask_build_only() {
 	if [[ -z $BUILD_ONLY ]]; then
 
-		options+=("u-boot" "U-boot package only")
 		options+=("$(build_only_value_for_kernel_only_build)" "Kernel and U-boot packages only")
+		options+=("u-boot" "U-boot package only")
 		options+=("default" "Full OS image for flashing")
 		BUILD_ONLY=$(dialog --stdout --title "Choose an option" --backtitle "$backtitle" --no-tags \
 			--menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}")
