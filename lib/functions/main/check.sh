@@ -44,9 +44,9 @@ build_validate_buildOnly() {
 	local _buildOnly="${BUILD_ONLY}"
 
 	# constant list of all valid BUILD_ONLY task names - can be :comma: or :space: separated
-	local _build_packages="u-boot,kernel,armbian-config,armbian-zsh,plymouth-theme-armbian,armbian-firmware,armbian-bsp"
-	local _build_default="$_build_packages bootstrap"
-	local _all_valid_buildOnly="$_build_default chroot"
+	local _build_packages="$(list_of_main_packages)"
+	local _build_default="$(default_task_list)"
+	local _all_valid_buildOnly="$(default_task_list),$(list_of_bsp_desktop_packages)"
 
 	# In this block we redefine the list of targets if a collective target
 	# has been detected

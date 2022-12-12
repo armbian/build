@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 DISTRIBUTIONS_DESC_DIR="config/distributions"
 
+# Print a list of the main packages
+list_of_main_packages() {
+	echo "u-boot,kernel,armbian-zsh,armbian-config,armbian-firmware,plymouth-theme-armbian,armbian-bsp-cli"
+}
+
+# Print a list of armbian desktop board support packages
+list_of_bsp_desktop_packages() {
+	echo "armbian-bsp-desktop,armbian-desktop"
+}
+
+# Print the default task list
+default_task_list() {
+	echo "$(list_of_main_packages),host-tools,bootstrap,chroot"
+}
+
 function prepare_and_config_main_build_single() {
 	# default umask for root is 022 so parent directories won't be group writeable without this
 	# this is used instead of making the chmod in prepare_host() recursive
@@ -85,7 +100,8 @@ function prepare_and_config_main_build_single() {
 
 	fi
 
-	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
+	# if BUILD_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set,
+	# display selection menu
 
 	backward_compatibility_build_only
 
@@ -136,7 +152,7 @@ function prepare_and_config_main_build_single() {
 	fi
 
 	[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] &&
-		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
+		REPOSITORY_INSTALL="$(list_of_main_packages)${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
 
 	do_main_configuration
 
