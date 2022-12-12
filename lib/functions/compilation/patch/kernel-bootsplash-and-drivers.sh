@@ -184,6 +184,7 @@ compilation_prepare() {
 		if linux-version compare "${version}" ge 5.15.41 && linux-version compare "${version}" le 5.16; then aufstag="5.15.41"; fi
 		if linux-version compare "${version}" ge 5.17.3 && linux-version compare "${version}" le 5.18; then aufstag="5.17.3"; fi
 
+
 		# check if Mr. Okajima already made a branch for this version
 		improved_git ls-remote --exit-code --heads $GITHUB_SOURCE/sfjro/aufs5-standalone "aufs${aufstag}" > /dev/null
 
