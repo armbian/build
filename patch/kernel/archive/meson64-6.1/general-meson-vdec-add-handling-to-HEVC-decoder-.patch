@@ -1,0 +1,157 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: benjamin545 <benjamin545@gmail.com>
+Date: Mon, 2 Aug 2021 15:18:40 -0400
+Subject: WIP: drivers: meson: vdec: add handling to HEVC decoder to show
+ frames when ready
+
+..rather than when no longer referenced
+
+the HEVC decode driver would not show the next frame until it was no longer referenced,
+this would cause a backup of frames that were ready to render but held up by one or more
+frames that were still referenced. The decoded picture buffer would fill up and stall
+playback as no new frames could be placed in the decoded picture buffer.
+---
+ drivers/staging/media/meson/vdec/codec_hevc.c | 52 ++++++----
+ 1 file changed, 34 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/staging/media/meson/vdec/codec_hevc.c b/drivers/staging/media/meson/vdec/codec_hevc.c
+index 3a6fd04a2d33..01218efde99b 100644
+--- a/drivers/staging/media/meson/vdec/codec_hevc.c
++++ b/drivers/staging/media/meson/vdec/codec_hevc.c
+@@ -223,6 +223,7 @@ struct hevc_frame {
+ 	u32 poc;
+ 
+ 	int referenced;
++	int show;
+ 	u32 num_reorder_pic;
+ 
+ 	u32 cur_slice_idx;
+@@ -448,9 +449,11 @@ static void codec_hevc_update_referenced(struct codec_hevc *hevc)
+ 			       ((1 << (RPS_USED_BIT - 1)) - 1);
+ 			if (param->p.CUR_RPS[i] & (1 << (RPS_USED_BIT - 1))) {
+ 				poc_tmp = curr_poc -
+-					  ((1 << (RPS_USED_BIT - 1)) - delt);
+-			} else
++				      ((1 << (RPS_USED_BIT - 1)) - delt);
++			} else {
+ 				poc_tmp = curr_poc + delt;
++			}
++
+ 			if (poc_tmp == frame->poc) {
+ 				is_referenced = 1;
+ 				break;
+@@ -462,13 +465,13 @@ static void codec_hevc_update_referenced(struct codec_hevc *hevc)
+ }
+ 
+ static struct hevc_frame *
+-codec_hevc_get_lowest_poc_frame(struct codec_hevc *hevc)
++codec_hevc_get_next_ready_frame(struct codec_hevc *hevc)
+ {
+ 	struct hevc_frame *tmp, *ret = NULL;
+ 	u32 poc = INT_MAX;
+ 
+ 	list_for_each_entry(tmp, &hevc->ref_frames_list, list) {
+-		if (tmp->poc < poc) {
++		if ((tmp->poc < poc) && tmp->show) {
+ 			ret = tmp;
+ 			poc = tmp->poc;
+ 		}
+@@ -478,28 +481,35 @@ codec_hevc_get_lowest_poc_frame(struct codec_hevc *hevc)
+ }
+ 
+ /* Try to output as many frames as possible */
+-static void codec_hevc_output_frames(struct amvdec_session *sess)
++static void codec_hevc_show_frames(struct amvdec_session *sess)
+ {
+-	struct hevc_frame *tmp;
++	struct hevc_frame *tmp, *n;
+ 	struct codec_hevc *hevc = sess->priv;
+ 
+-	while ((tmp = codec_hevc_get_lowest_poc_frame(hevc))) {
++	while ((tmp = codec_hevc_get_next_ready_frame(hevc))) {
+ 		if (hevc->curr_poc &&
+-		    (tmp->referenced ||
+-		     tmp->num_reorder_pic >= hevc->frames_num))
++		   (hevc->frames_num <= tmp->num_reorder_pic))
+ 			break;
+ 
+ 		dev_dbg(sess->core->dev, "DONE frame poc %u; vbuf %u\n",
+ 			tmp->poc, tmp->vbuf->vb2_buf.index);
+ 		amvdec_dst_buf_done_offset(sess, tmp->vbuf, tmp->offset,
+ 					   V4L2_FIELD_NONE, false);
++
++		tmp->show = 0;
++		hevc->frames_num--;
++	}
++
++	/* clean output frame buffer */
++	list_for_each_entry_safe(tmp, n, &hevc->ref_frames_list, list) {
++		if (tmp->referenced || tmp->show)
++			continue;
++
+ 		list_del(&tmp->list);
+ 		kfree(tmp);
+-		hevc->frames_num--;
+ 	}
+ }
+ 
+-
+ static int
+ codec_hevc_setup_workspace(struct amvdec_session *sess,
+ 			   struct codec_hevc *hevc)
+@@ -650,14 +660,17 @@ static int codec_hevc_start(struct amvdec_session *sess)
+ static void codec_hevc_flush_output(struct amvdec_session *sess)
+ {
+ 	struct codec_hevc *hevc = sess->priv;
+-	struct hevc_frame *tmp;
++	struct hevc_frame *tmp, *n;
+ 
+-	while (!list_empty(&hevc->ref_frames_list)) {
+-		tmp = codec_hevc_get_lowest_poc_frame(hevc);
++	while ((tmp = codec_hevc_get_next_ready_frame(hevc))) {
+ 		amvdec_dst_buf_done(sess, tmp->vbuf, V4L2_FIELD_NONE);
++		tmp->show = 0;
++		hevc->frames_num--;
++	}
++
++	list_for_each_entry_safe(tmp, n, &hevc->ref_frames_list, list) {
+ 		list_del(&tmp->list);
+ 		kfree(tmp);
+-		hevc->frames_num--;
+ 	}
+ }
+ 
+@@ -719,6 +732,7 @@ codec_hevc_prepare_new_frame(struct amvdec_session *sess)
+ 
+ 	new_frame->vbuf = vbuf;
+ 	new_frame->referenced = 1;
++	new_frame->show = 1;
+ 	new_frame->poc = hevc->curr_poc;
+ 	new_frame->cur_slice_type = params->p.slice_type;
+ 	new_frame->num_reorder_pic = params->p.sps_num_reorder_pics_0;
+@@ -1267,7 +1281,7 @@ static int codec_hevc_process_segment(struct amvdec_session *sess)
+ 	/* First slice: new frame */
+ 	if (slice_segment_address == 0) {
+ 		codec_hevc_update_referenced(hevc);
+-		codec_hevc_output_frames(sess);
++		codec_hevc_show_frames(sess);
+ 
+ 		hevc->cur_frame = codec_hevc_prepare_new_frame(sess);
+ 		if (!hevc->cur_frame)
+@@ -1370,9 +1384,11 @@ static void codec_hevc_fetch_rpm(struct amvdec_session *sess)
+ 	u16 *rpm_vaddr = hevc->workspace_vaddr + RPM_OFFSET;
+ 	int i, j;
+ 
+-	for (i = 0; i < RPM_SIZE; i += 4)
++	for (i = 0; i < RPM_SIZE; i += 4) {
+ 		for (j = 0; j < 4; j++)
+-			hevc->rpm_param.l.data[i + j] = rpm_vaddr[i + 3 - j];
++			hevc->rpm_param.l.data[i + j] =
++				rpm_vaddr[i + 3 - j];
++	}
+ }
+ 
+ static void codec_hevc_resume(struct amvdec_session *sess)
+-- 
+Armbian
+
