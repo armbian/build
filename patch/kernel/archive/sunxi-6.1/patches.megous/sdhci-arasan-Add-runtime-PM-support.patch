@@ -1,0 +1,156 @@
+From c7ffec341f18fe3be68927de579d8a00bdc4a165 Mon Sep 17 00:00:00 2001
+From: Manish Narani <manish.narani@xilinx.com>
+Date: Tue, 18 Sep 2018 20:34:06 +0530
+Subject: [PATCH 292/389] sdhci: arasan: Add runtime PM support
+
+Add runtime PM support in Arasan SDHCI driver.
+
+Signed-off-by: Manish Narani <manish.narani@xilinx.com>
+---
+ drivers/mmc/host/sdhci-of-arasan.c | 88 +++++++++++++++++++++++++++++-
+ 1 file changed, 86 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mmc/host/sdhci-of-arasan.c b/drivers/mmc/host/sdhci-of-arasan.c
+index cfb891430174..77c04637690c 100644
+--- a/drivers/mmc/host/sdhci-of-arasan.c
++++ b/drivers/mmc/host/sdhci-of-arasan.c
+@@ -19,6 +19,7 @@
+ #include <linux/mfd/syscon.h>
+ #include <linux/module.h>
+ #include <linux/of_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/phy/phy.h>
+ #include <linux/regmap.h>
+ #include <linux/of.h>
+@@ -28,6 +29,7 @@
+ #include "sdhci-cqhci.h"
+ #include "sdhci-pltfm.h"
+ 
++#define SDHCI_ARASAN_AUTOSUSPEND_DELAY	2000 /* ms */
+ #define SDHCI_ARASAN_VENDOR_REGISTER	0x78
+ 
+ #define SDHCI_ARASAN_ITAPDLY_REGISTER	0xF0F8
+@@ -473,6 +475,70 @@ static const struct sdhci_pltfm_data sdhci_arasan_thunderbay_pdata = {
+ 		SDHCI_QUIRK2_CAPS_BIT63_FOR_HS400,
+ };
+ 
++#ifdef CONFIG_PM
++static int sdhci_arasan_runtime_suspend(struct device *dev)
++{
++	struct platform_device *pdev = to_platform_device(dev);
++	struct sdhci_host *host = platform_get_drvdata(pdev);
++	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
++	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
++	int ret;
++
++	if (sdhci_arasan->has_cqe) {
++		ret = cqhci_suspend(host->mmc);
++		if (ret)
++			return ret;
++	}
++
++	ret = sdhci_runtime_suspend_host(host);
++	if (ret)
++		return ret;
++
++	if (host->tuning_mode != SDHCI_TUNING_MODE_3)
++		mmc_retune_needed(host->mmc);
++
++	clk_disable(pltfm_host->clk);
++	clk_disable(sdhci_arasan->clk_ahb);
++
++	return 0;
++}
++
++static int sdhci_arasan_runtime_resume(struct device *dev)
++{
++	struct platform_device *pdev = to_platform_device(dev);
++	struct sdhci_host *host = platform_get_drvdata(pdev);
++	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
++	struct sdhci_arasan_data *sdhci_arasan = sdhci_pltfm_priv(pltfm_host);
++	int ret;
++
++	ret = clk_enable(sdhci_arasan->clk_ahb);
++	if (ret) {
++		dev_err(dev, "Cannot enable AHB clock.\n");
++		return ret;
++	}
++
++	ret = clk_enable(pltfm_host->clk);
++	if (ret) {
++		dev_err(dev, "Cannot enable SD clock.\n");
++		return ret;
++	}
++
++	ret = sdhci_runtime_resume_host(host, 0);
++	if (ret)
++		goto out;
++
++	if (sdhci_arasan->has_cqe)
++		return cqhci_resume(host->mmc);
++
++	return 0;
++out:
++	clk_disable(pltfm_host->clk);
++	clk_disable(sdhci_arasan->clk_ahb);
++
++	return ret;
++}
++#endif /* ! CONFIG_PM */
++
+ #ifdef CONFIG_PM_SLEEP
+ /**
+  * sdhci_arasan_suspend - Suspend method for the driver
+@@ -569,8 +635,10 @@ static int sdhci_arasan_resume(struct device *dev)
+ }
+ #endif /* ! CONFIG_PM_SLEEP */
+ 
+-static SIMPLE_DEV_PM_OPS(sdhci_arasan_dev_pm_ops, sdhci_arasan_suspend,
+-			 sdhci_arasan_resume);
++static const struct dev_pm_ops sdhci_arasan_dev_pm_ops = {
++	SET_SYSTEM_SLEEP_PM_OPS(sdhci_arasan_suspend, sdhci_arasan_resume)
++	SET_RUNTIME_PM_OPS(sdhci_arasan_runtime_suspend,
++			   sdhci_arasan_runtime_resume, NULL) };
+ 
+ /**
+  * sdhci_arasan_sdcardclk_recalc_rate - Return the card clock rate
+@@ -1712,13 +1780,25 @@ static int sdhci_arasan_probe(struct platform_device *pdev)
+ 			host->mmc->caps2 |= MMC_CAP2_CQE_DCMD;
+ 	}
+ 
++	pm_runtime_get_noresume(&pdev->dev);
++	pm_runtime_set_active(&pdev->dev);
++	pm_runtime_enable(&pdev->dev);
++	pm_runtime_set_autosuspend_delay(&pdev->dev,
++					 SDHCI_ARASAN_AUTOSUSPEND_DELAY);
++	pm_runtime_use_autosuspend(&pdev->dev);
++
+ 	ret = sdhci_arasan_add_host(sdhci_arasan);
+ 	if (ret)
+ 		goto err_add_host;
+ 
++	pm_runtime_put_autosuspend(&pdev->dev);
++
+ 	return 0;
+ 
+ err_add_host:
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_set_suspended(&pdev->dev);
++	pm_runtime_put_noidle(&pdev->dev);
+ 	if (!IS_ERR(sdhci_arasan->phy))
+ 		phy_exit(sdhci_arasan->phy);
+ unreg_clk:
+@@ -1745,6 +1825,10 @@ static int sdhci_arasan_remove(struct platform_device *pdev)
+ 		phy_exit(sdhci_arasan->phy);
+ 	}
+ 
++	pm_runtime_get_sync(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_put_noidle(&pdev->dev);
++
+ 	sdhci_arasan_unregister_sdclk(&pdev->dev);
+ 
+ 	sdhci_pltfm_unregister(pdev);
+-- 
+2.35.3
+

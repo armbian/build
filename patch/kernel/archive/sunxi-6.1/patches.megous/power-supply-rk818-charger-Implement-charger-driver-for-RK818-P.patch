@@ -1,0 +1,716 @@
+From f75c93e6046750645e275657f9637fcde6c07f16 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Sun, 7 Nov 2021 20:09:02 +0100
+Subject: [PATCH 309/389] power: supply: rk818-charger: Implement charger
+ driver for RK818 PMIC
+
+For now this driver is just meant to watch Type-C power supply
+and apply current limits to RK818, to not overload the Type-C
+partner.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/mfd/rk808.c                  |   1 +
+ drivers/power/supply/Kconfig         |   8 +
+ drivers/power/supply/Makefile        |   1 +
+ drivers/power/supply/rk818_charger.c | 650 +++++++++++++++++++++++++++
+ 4 files changed, 660 insertions(+)
+ create mode 100644 drivers/power/supply/rk818_charger.c
+
+diff --git a/drivers/mfd/rk808.c b/drivers/mfd/rk808.c
+index 6f6eaa8d7044..480736033005 100644
+--- a/drivers/mfd/rk808.c
++++ b/drivers/mfd/rk808.c
+@@ -221,6 +221,7 @@ static const struct mfd_cell rk818s[] = {
+ 	{ .name = "rk808-clkout", },
+ 	{ .name = "rk808-regulator", },
+ 	{ .name = "rk818-battery", .of_compatible = "rockchip,rk818-battery", },
++	{ .name = "rk818-charger", .of_compatible = "rockchip,rk818-charger", },
+ 	{
+ 		.name = "rk808-rtc",
+ 		.num_resources = ARRAY_SIZE(rtc_resources),
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index a138e81193a2..d3bdf262ae01 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -926,4 +926,12 @@ config BATTERY_RK818
+ 	  If you say yes here you will get support for the battery of RK818 PMIC.
+ 	  This driver can give support for Rk818 Battery Charge Interface.
+ 
++config CHARGER_RK818
++	bool "RK818 Charger driver"
++	depends on MFD_RK808
++	default n
++	help
++	  If you say yes here you will get support for the charger of RK818 PMIC.
++	  This driver can give support for Rk818 Charger Interface.
++
+ endif # POWER_SUPPLY
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index dcea0e755e7f..3b9ea8374538 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -111,3 +111,4 @@ obj-$(CONFIG_BATTERY_SURFACE)	+= surface_battery.o
+ obj-$(CONFIG_CHARGER_SURFACE)	+= surface_charger.o
+ obj-$(CONFIG_BATTERY_UG3105)	+= ug3105_battery.o
+ obj-$(CONFIG_BATTERY_RK818)	+= rk818_battery.o
++obj-$(CONFIG_CHARGER_RK818)	+= rk818_charger.o
+diff --git a/drivers/power/supply/rk818_charger.c b/drivers/power/supply/rk818_charger.c
+new file mode 100644
+index 000000000000..00fe5d8f4785
+--- /dev/null
++++ b/drivers/power/supply/rk818_charger.c
+@@ -0,0 +1,650 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * rk818 usb power driver
++ *
++ * Copyright (c) 2021 Ondřej Jirman <megi@xff.cz>
++ */
++#include <linux/delay.h>
++#include <linux/kernel.h>
++#include <linux/mfd/rk808.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/regmap.h>
++
++#define RK818_CHG_STS_MASK		(7u << 4) /* charger status */
++#define RK818_CHG_STS_NONE		(0u << 4)
++#define RK818_CHG_STS_WAKEUP_CUR	(1u << 4)
++#define RK818_CHG_STS_TRICKLE_CUR	(2u << 4)
++#define RK818_CHG_STS_CC_OR_CV		(3u << 4)
++#define RK818_CHG_STS_TERMINATED	(4u << 4)
++#define RK818_CHG_STS_USB_OV		(5u << 4)
++#define RK818_CHG_STS_BAT_TEMP_FAULT	(6u << 4)
++#define RK818_CHG_STS_TIMEOUT		(7u << 4)
++
++/* RK818_SUP_STS_REG */
++#define RK818_SUP_STS_USB_VLIM_EN	BIT(3) /* input voltage limit enable */
++#define RK818_SUP_STS_USB_ILIM_EN	BIT(2) /* input current limit enable */
++#define RK818_SUP_STS_USB_EXS		BIT(1) /* USB power connected */
++#define RK818_SUP_STS_USB_EFF		BIT(0) /* USB fault */
++
++/* RK818_USB_CTRL_REG */
++#define RK818_USB_CTRL_USB_ILIM_MASK		(0xfu)
++#define RK818_USB_CTRL_USB_CHG_SD_VSEL_OFFSET	4
++#define RK818_USB_CTRL_USB_CHG_SD_VSEL_MASK	(0x7u << 4)
++
++/* RK818_CHRG_CTRL_REG1 */
++#define RK818_CHRG_CTRL_REG1_CHRG_EN	BIT(7)
++#define RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_OFFSET 4
++#define RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_MASK	(0x7u << 4)
++#define RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_OFFSET 0
++#define RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK	(0xfu << 0)
++
++/* RK818_CHRG_CTRL_REG3 */
++#define RK818_CHRG_CTRL_REG3_CHRG_TERM_DIGITAL	BIT(5)
++
++struct rk818_charger {
++	struct device *dev;
++	struct rk808 *rk818;
++	struct regmap *regmap;
++
++	struct power_supply *usb_psy;
++	struct power_supply *charger_psy;
++};
++
++// {{{ USB supply
++
++static int rk818_usb_set_input_current_max(struct rk818_charger *cg,
++					   int val)
++{
++	int ret;
++	unsigned reg;
++
++	if (val < 450000)
++		reg = 1;
++	else if (val < 850000)
++		reg = 0;
++	else if (val < 1000000)
++		reg = 2;
++	else if (val < 3000000)
++		reg = 3 + (val - 1000000) / 250000;
++	else
++		reg = 11;
++
++	ret = regmap_update_bits(cg->regmap, RK818_USB_CTRL_REG,
++				 RK818_USB_CTRL_USB_ILIM_MASK, reg);
++	if (ret)
++		dev_err(cg->dev,
++			"USB input current limit setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_usb_get_input_current_max(struct rk818_charger *cg,
++					   int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(cg->regmap, RK818_USB_CTRL_REG, &reg);
++	if (ret) {
++		dev_err(cg->dev,
++			"USB input current limit getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_USB_CTRL_USB_ILIM_MASK;
++	if (reg == 0)
++		*val = 450000;
++	else if (reg == 1)
++		*val = 80000;
++	else if (reg == 2)
++		*val = 850000;
++	else if (reg < 11)
++		*val = 1000000 + (reg - 3) * 250000;
++	else
++		*val = 3000000;
++
++	return 0;
++}
++
++static int rk818_usb_set_input_voltage_min(struct rk818_charger *cg,
++					   int val)
++{
++	unsigned reg;
++	int ret;
++
++	if (val < 2780000)
++		reg = 0;
++	else if (val < 3270000)
++		reg = (val - 2780000) / 70000;
++	else
++		reg = 7;
++
++	ret = regmap_update_bits(cg->regmap, RK818_USB_CTRL_REG,
++				 RK818_USB_CTRL_USB_CHG_SD_VSEL_MASK,
++				 reg << RK818_USB_CTRL_USB_CHG_SD_VSEL_OFFSET);
++	if (ret)
++		dev_err(cg->dev,
++			"USB input voltage limit setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_usb_get_input_voltage_min(struct rk818_charger *cg,
++					   int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(cg->regmap, RK818_USB_CTRL_REG, &reg);
++	if (ret) {
++		dev_err(cg->dev,
++			"USB input voltage limit getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_USB_CTRL_USB_CHG_SD_VSEL_MASK;
++	reg >>= RK818_USB_CTRL_USB_CHG_SD_VSEL_OFFSET;
++
++	*val = 2780000 + (reg * 70000);
++
++	return 0;
++}
++
++static int rk818_usb_power_get_property(struct power_supply *psy,
++					enum power_supply_property psp,
++					union power_supply_propval *val)
++{
++	struct rk818_charger *cg = power_supply_get_drvdata(psy);
++	unsigned reg;
++	int ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_PRESENT:
++		ret = regmap_read(cg->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		val->intval = !!(reg & RK818_SUP_STS_USB_EXS);
++		break;
++
++	case POWER_SUPPLY_PROP_HEALTH:
++		ret = regmap_read(cg->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		if (!(reg & RK818_SUP_STS_USB_EXS)) {
++			val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
++		} else if (reg & RK818_SUP_STS_USB_EFF) {
++			val->intval = POWER_SUPPLY_HEALTH_GOOD;
++		} else {
++			val->intval = POWER_SUPPLY_HEALTH_UNSPEC_FAILURE;
++		}
++
++		break;
++
++	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
++                return rk818_usb_get_input_voltage_min(cg, &val->intval);
++
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++                return rk818_usb_get_input_current_max(cg, &val->intval);
++
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int rk818_usb_power_set_property(struct power_supply *psy,
++					enum power_supply_property psp,
++					const union power_supply_propval *val)
++{
++	struct rk818_charger *cg = power_supply_get_drvdata(psy);
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
++                return rk818_usb_set_input_voltage_min(cg, val->intval);
++
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++                return rk818_usb_set_input_current_max(cg, val->intval);
++
++	default:
++		return -EINVAL;
++	}
++}
++
++static int rk818_usb_power_prop_writeable(struct power_supply *psy,
++					  enum power_supply_property psp)
++{
++	switch (psp) {
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++	case POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT:
++		return 1;
++
++	default:
++		return 0;
++	}
++}
++
++/* Sync the input-current-limit with our parent supply (if we have one) */
++static void rk818_usb_power_external_power_changed(struct power_supply *psy)
++{
++        struct rk818_charger *cg = power_supply_get_drvdata(psy);
++	union power_supply_propval val;
++	int ret;
++
++	ret = power_supply_get_property_from_supplier(cg->usb_psy,
++						      POWER_SUPPLY_PROP_CURRENT_MAX,
++						      &val);
++	if (ret)
++		return;
++
++	if (val.intval < 500000)
++		val.intval = 500000;
++
++	rk818_usb_power_set_property(cg->usb_psy,
++				     POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++				     &val);
++}
++
++static enum power_supply_property rk818_usb_power_props[] = {
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++	POWER_SUPPLY_PROP_INPUT_VOLTAGE_LIMIT,
++};
++
++static const struct power_supply_desc rk818_usb_desc = {
++	.name			= "rk818-usb",
++	.type			= POWER_SUPPLY_TYPE_USB,
++	.properties		= rk818_usb_power_props,
++	.num_properties		= ARRAY_SIZE(rk818_usb_power_props),
++	.property_is_writeable	= rk818_usb_power_prop_writeable,
++	.get_property		= rk818_usb_power_get_property,
++	.set_property		= rk818_usb_power_set_property,
++	.external_power_changed	= rk818_usb_power_external_power_changed,
++};
++
++// }}}
++// {{{ Charger supply
++
++static int rk818_charger_set_current_max(struct rk818_charger *cg, int val)
++{
++	unsigned reg;
++	int ret;
++
++	if (val < 1000000)
++		reg = 0;
++	else if (val < 3000000)
++		reg = (val - 1000000) / 200000;
++	else
++		reg = 10;
++
++	ret = regmap_update_bits(cg->regmap, RK818_CHRG_CTRL_REG1,
++				 RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK,
++				 reg << RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_OFFSET);
++	if (ret)
++		dev_err(cg->dev,
++			"Charging max current setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_charger_get_current_max(struct rk818_charger *cg, int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(cg->regmap, RK818_CHRG_CTRL_REG1, &reg);
++	if (ret) {
++		dev_err(cg->dev,
++			"Charging max current getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_MASK;
++	reg >>= RK818_CHRG_CTRL_REG1_CHRG_CUR_SEL_OFFSET;
++
++	*val = 1000000 + reg * 200000;
++
++	return 0;
++}
++
++static int rk818_charger_set_voltage_max(struct rk818_charger *cg, int val)
++{
++	unsigned reg;
++	int ret;
++
++	if (val < 4050000)
++		reg = 0;
++	else if (val < 4350000)
++		reg = (val - 4050000) / 50000;
++	else
++		reg = 6;
++
++	ret = regmap_update_bits(cg->regmap, RK818_CHRG_CTRL_REG1,
++				 RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_MASK,
++				 reg << RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_OFFSET);
++	if (ret)
++		dev_err(cg->dev,
++			"Charging end voltage setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk818_charger_get_voltage_max(struct rk818_charger *cg, int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(cg->regmap, RK818_CHRG_CTRL_REG1, &reg);
++	if (ret) {
++		dev_err(cg->dev,
++			"Charging end voltage getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_MASK;
++	reg >>= RK818_CHRG_CTRL_REG1_CHRG_VOL_SEL_OFFSET;
++
++	*val = 4050000 + reg * 50000;
++
++	return 0;
++}
++
++static int rk818_charger_get_property(struct power_supply *psy,
++				      enum power_supply_property psp,
++				      union power_supply_propval *val)
++{
++	struct rk818_charger *cg = power_supply_get_drvdata(psy);
++	unsigned reg;
++	int ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_ONLINE:
++		ret = regmap_read(cg->regmap, RK818_CHRG_CTRL_REG1, &reg);
++		if (ret) {
++			dev_err(cg->dev, "failed to read the charger state (%d)\n", ret);
++			return ret;
++		}
++
++		val->intval = !!(reg & RK818_CHRG_CTRL_REG1_CHRG_EN);
++		break;
++
++	case POWER_SUPPLY_PROP_STATUS:
++		ret = regmap_read(cg->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		switch (reg & RK818_CHG_STS_MASK) {
++		case RK818_CHG_STS_WAKEUP_CUR:
++		case RK818_CHG_STS_TRICKLE_CUR:
++		case RK818_CHG_STS_CC_OR_CV:
++			val->intval = POWER_SUPPLY_STATUS_CHARGING;
++			break;
++		case RK818_CHG_STS_TERMINATED:
++		default:
++			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
++			break;
++		}
++
++		break;
++
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		ret = regmap_read(cg->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		switch (reg & RK818_CHG_STS_MASK) {
++		case RK818_CHG_STS_WAKEUP_CUR:
++		case RK818_CHG_STS_TRICKLE_CUR:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
++			break;
++		case RK818_CHG_STS_CC_OR_CV:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_FAST;
++			break;
++		case RK818_CHG_STS_TERMINATED:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_NONE;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_UNKNOWN;
++			break;
++		}
++
++		break;
++
++	case POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT:
++		ret = regmap_read(cg->regmap, RK818_CHRG_CTRL_REG2, &reg);
++		if (ret)
++			return ret;
++
++		val->intval = 100000 + ((reg >> 6) & 3) * 50000;
++		break;
++
++	case POWER_SUPPLY_PROP_HEALTH:
++		ret = regmap_read(cg->regmap, RK818_SUP_STS_REG, &reg);
++		if (ret)
++			return ret;
++
++		switch (reg & RK818_CHG_STS_MASK) {
++		case RK818_CHG_STS_USB_OV:
++			val->intval = POWER_SUPPLY_HEALTH_OVERVOLTAGE;
++			break;
++		case RK818_CHG_STS_BAT_TEMP_FAULT:
++			val->intval = POWER_SUPPLY_HEALTH_OVERHEAT;
++			break;
++		case RK818_CHG_STS_TIMEOUT:
++			val->intval = POWER_SUPPLY_HEALTH_SAFETY_TIMER_EXPIRE;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_HEALTH_GOOD;
++			break;
++		}
++
++		break;
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++                return rk818_charger_get_voltage_max(cg, &val->intval);
++
++	case POWER_SUPPLY_PROP_PRECHARGE_CURRENT:
++                ret = rk818_charger_get_current_max(cg, &val->intval);
++		val->intval /= 10;
++		return ret;
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++                return rk818_charger_get_current_max(cg, &val->intval);
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
++		val->intval = 4350000;
++		break;
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		val->intval = 3000000;
++		break;
++
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int rk818_charger_set_property(struct power_supply *psy,
++				      enum power_supply_property psp,
++				      const union power_supply_propval *val)
++{
++	struct rk818_charger *cg = power_supply_get_drvdata(psy);
++	int ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_ONLINE:
++		ret = regmap_update_bits(cg->regmap, RK818_CHRG_CTRL_REG1,
++					 RK818_CHRG_CTRL_REG1_CHRG_EN,
++					 val->intval ? RK818_CHRG_CTRL_REG1_CHRG_EN : 0);
++		if (ret)
++			dev_err(cg->dev, "failed to setup the charger (%d)\n", ret);
++
++		return ret;
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++                return rk818_charger_set_voltage_max(cg, val->intval);
++
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++                return rk818_charger_set_current_max(cg, val->intval);
++
++	default:
++		return -EINVAL;
++	}
++}
++
++static int rk818_charger_prop_writeable(struct power_supply *psy,
++					enum power_supply_property psp)
++{
++	switch (psp) {
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
++	case POWER_SUPPLY_PROP_ONLINE:
++		return 1;
++
++	default:
++		return 0;
++	}
++}
++
++static enum power_supply_property rk818_charger_props[] = {
++	POWER_SUPPLY_PROP_ONLINE,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_CHARGE_TYPE,
++	POWER_SUPPLY_PROP_CHARGE_TERM_CURRENT,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
++	POWER_SUPPLY_PROP_PRECHARGE_CURRENT,
++};
++
++/*
++ * TODO: This functionality should be in a battery driver/supply, but that one
++ * is such a mess, I don't want to touch it now. Let's have a separate supply
++ * for controlling the charger for now, and a prayer for the poor soul that
++ * will have to understand and clean up the battery driver.
++ */
++static const struct power_supply_desc rk818_charger_desc = {
++	.name			= "rk818-charger",
++	.type			= POWER_SUPPLY_TYPE_BATTERY,
++	.properties		= rk818_charger_props,
++	.num_properties		= ARRAY_SIZE(rk818_charger_props),
++	.property_is_writeable	= rk818_charger_prop_writeable,
++	.get_property		= rk818_charger_get_property,
++	.set_property		= rk818_charger_set_property,
++};
++
++// }}}
++
++static int rk818_charger_probe(struct platform_device *pdev)
++{
++	struct rk808 *rk818 = dev_get_drvdata(pdev->dev.parent);
++	struct power_supply_config psy_cfg = { };
++	struct device *dev = &pdev->dev;
++	struct rk818_charger *cg;
++	int ret;
++
++	cg = devm_kzalloc(dev, sizeof(*cg), GFP_KERNEL);
++	if (!cg)
++		return -ENOMEM;
++
++	cg->rk818 = rk818;
++	cg->dev = dev;
++	cg->regmap = rk818->regmap;
++	platform_set_drvdata(pdev, cg);
++
++	psy_cfg.drv_data = cg;
++	psy_cfg.of_node = dev->of_node;
++
++	cg->usb_psy = devm_power_supply_register(dev, &rk818_usb_desc,
++						 &psy_cfg);
++	if (IS_ERR(cg->usb_psy))
++		return dev_err_probe(dev, PTR_ERR(cg->usb_psy),
++				     "register usb power supply fail\n");
++
++	cg->charger_psy = devm_power_supply_register(dev, &rk818_charger_desc,
++						     &psy_cfg);
++	if (IS_ERR(cg->charger_psy))
++		return dev_err_probe(dev, PTR_ERR(cg->charger_psy),
++				     "register charger power supply fail\n");
++
++        /* disable voltage limit and enable input current limit */
++	ret = regmap_update_bits(cg->regmap, RK818_SUP_STS_REG,
++				 RK818_SUP_STS_USB_ILIM_EN | RK818_SUP_STS_USB_VLIM_EN,
++				 RK818_SUP_STS_USB_ILIM_EN);
++	if (ret)
++		dev_warn(cg->dev, "failed to enable input current limit (%d)\n", ret);
++
++        /* make sure analog control loop is enabled */
++	ret = regmap_update_bits(cg->regmap, RK818_CHRG_CTRL_REG3,
++				 RK818_CHRG_CTRL_REG3_CHRG_TERM_DIGITAL,
++				 0);
++	if (ret)
++		dev_warn(cg->dev, "failed to enable analog control loop (%d)\n", ret);
++
++        /* enable charger and set some reasonable limits on each boot */
++	ret = regmap_write(cg->regmap, RK818_CHRG_CTRL_REG1,
++			   RK818_CHRG_CTRL_REG1_CHRG_EN
++			   | (1) /* 1.2A */
++			   | (5 << 4) /* 4.3V */);
++	if (ret)
++		dev_warn(cg->dev, "failed to enable charger (%d)\n", ret);
++
++	rk818_usb_power_external_power_changed(cg->usb_psy);
++
++	return 0;
++}
++
++static int rk818_charger_remove(struct platform_device *pdev)
++{
++	//struct rk818_charger *cg = platform_get_drvdata(pdev);
++
++	return 0;
++}
++
++static void rk818_charger_shutdown(struct platform_device *pdev)
++{
++}
++
++static int rk818_charger_suspend(struct platform_device *pdev,
++				 pm_message_t state)
++{
++	return 0;
++}
++
++static int rk818_charger_resume(struct platform_device *pdev)
++{
++	return 0;
++}
++
++static const struct of_device_id rk818_charger_of_match[] = {
++	{ .compatible = "rockchip,rk818-charger", },
++	{ },
++};
++
++static struct platform_driver rk818_charger_driver = {
++	.probe = rk818_charger_probe,
++	.remove = rk818_charger_remove,
++	.suspend = rk818_charger_suspend,
++	.resume = rk818_charger_resume,
++	.shutdown = rk818_charger_shutdown,
++	.driver = {
++		.name	= "rk818-charger",
++		.of_match_table = rk818_charger_of_match,
++	},
++};
++
++module_platform_driver(rk818_charger_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("platform:rk818-charger");
++MODULE_AUTHOR("Ondřej Jirman <megi@xff.cz>");
+-- 
+2.35.3
+

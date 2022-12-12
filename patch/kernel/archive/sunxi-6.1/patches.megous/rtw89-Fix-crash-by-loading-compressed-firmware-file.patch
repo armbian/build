@@ -1,0 +1,76 @@
+From 033bb716674cc5ca4385d6c4152d27df2c21e28e Mon Sep 17 00:00:00 2001
+From: Takashi Iwai <tiwai@suse.de>
+Date: Fri, 5 Nov 2021 08:17:25 +0100
+Subject: [PATCH 182/389] rtw89: Fix crash by loading compressed firmware file
+
+When a firmware is loaded in the compressed format or via user-mode
+helper, it's mapped in read-only, and the rtw89 driver crashes at
+rtw89_fw_download() when it tries to modify some data.
+
+This patch is an attemp to avoid the crash by re-allocating the data
+via vmalloc() for the data modification.
+
+Buglink: https://bugzilla.opensuse.org/show_bug.cgi?id=1188303
+Signed-off-by: Takashi Iwai <tiwai@suse.de>
+---
+ drivers/net/wireless/realtek/rtw89/core.h |  3 ++-
+ drivers/net/wireless/realtek/rtw89/fw.c   | 15 ++++++++++-----
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/core.h b/drivers/net/wireless/realtek/rtw89/core.h
+index db041b32a8c2..8c80bb42138a 100644
+--- a/drivers/net/wireless/realtek/rtw89/core.h
++++ b/drivers/net/wireless/realtek/rtw89/core.h
+@@ -2807,7 +2807,8 @@ struct rtw89_fw_suit {
+ 			  GET_FW_HDR_SUBINDEX(fw_hdr))
+ 
+ struct rtw89_fw_info {
+-	const struct firmware *firmware;
++	const void *firmware;
++	size_t firmware_size;
+ 	struct rtw89_dev *rtwdev;
+ 	struct completion completion;
+ 	u8 h2c_seq;
+diff --git a/drivers/net/wireless/realtek/rtw89/fw.c b/drivers/net/wireless/realtek/rtw89/fw.c
+index d57e3610fb88..ae57898e4c01 100644
+--- a/drivers/net/wireless/realtek/rtw89/fw.c
++++ b/drivers/net/wireless/realtek/rtw89/fw.c
+@@ -126,8 +126,8 @@ int rtw89_mfw_recognize(struct rtw89_dev *rtwdev, enum rtw89_fw_type type,
+ 			struct rtw89_fw_suit *fw_suit)
+ {
+ 	struct rtw89_fw_info *fw_info = &rtwdev->fw;
+-	const u8 *mfw = fw_info->firmware->data;
+-	u32 mfw_len = fw_info->firmware->size;
++	const u8 *mfw = fw_info->firmware;
++	u32 mfw_len = fw_info->firmware_size;
+ 	const struct rtw89_mfw_hdr *mfw_hdr = (const struct rtw89_mfw_hdr *)mfw;
+ 	const struct rtw89_mfw_info *mfw_info;
+ 	int i;
+@@ -580,7 +580,10 @@ static void rtw89_load_firmware_cb(const struct firmware *firmware, void *contex
+ 		return;
+ 	}
+ 
+-	fw->firmware = firmware;
++	fw->firmware = vmalloc(firmware->size);
++	if (fw->firmware)
++		memcpy((void *)fw->firmware, firmware->data, firmware->size);
++	release_firmware(firmware);
+ 	complete_all(&fw->completion);
+ }
+ 
+@@ -609,8 +612,10 @@ void rtw89_unload_firmware(struct rtw89_dev *rtwdev)
+ 
+ 	rtw89_wait_firmware_completion(rtwdev);
+ 
+-	if (fw->firmware)
+-		release_firmware(fw->firmware);
++	if (fw->firmware) {
++		vfree(fw->firmware);
++		fw->firmware = NULL;
++	}
+ }
+ 
+ #define H2C_CAM_LEN 60
+-- 
+2.35.3
+
