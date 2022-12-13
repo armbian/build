@@ -179,16 +179,16 @@ fetch_from_repo() {
 	fi
 
 	# should be declared in outside scope, so can be read.
+	checked_out_revision="$(git rev-parse "${checkout_from}")" # Don't fail nor output anything if failure
+	display_alert "Checked out revision" "${checked_out_revision}" "debug" # @TODO change to git
 	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"             # unix timestamp of the commit date
 	checked_out_revision_mtime="$(date +%Y%m%d%H%M%S -d "@${checked_out_revision_ts}")" # convert timestamp to local date/time
 	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "git"
 
-	display_alert "Cleaning git dir" "$(git status -s 2> /dev/null | wc -l) files" # working directory is not clean, show it
+	display_alert "git checking out revision SHA" "${checked_out_revision}"
+	regular_git checkout -f -q "${checked_out_revision}" # Return the files that are tracked by git to the initial state.
 
-	#fasthash_debug "before git checkout of $dir $ref_name" # fasthash interested in this
-	regular_git checkout -f -q "${checkout_from}" # Return the files that are tracked by git to the initial state.
-
-	#fasthash_debug "before git clean of $dir $ref_name"
+	display_alert "git cleaning" "${checked_out_revision}" "git"
 	regular_git clean -q -d -f # Files that are not tracked by git and were added when the patch was applied must be removed.
 
 	if [[ -f .gitmodules ]]; then
