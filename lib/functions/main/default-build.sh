@@ -42,7 +42,7 @@ function main_default_build_single() {
 	elif [[ "${JUST_UBOOT}" == "yes" ]]; then
 		display_alert "JUST_KERNEL set to yes" "Building only kernel and exiting after that" "debug"
 		do_build_uboot="yes"
-		do_host_tools="yes" # rkbin, fips, etc.
+		do_host_tools="${INSTALL_HOST_TOOLS:-yes}" # rkbin, fips, etc.
 		exit_after_uboot_build="yes"
 	elif [[ "${JUST_KERNEL}" == "yes" ]]; then
 		display_alert "JUST_KERNEL set to yes" "Building only kernel and exiting after that" "debug"
