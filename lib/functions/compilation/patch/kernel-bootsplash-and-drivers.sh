@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 compilation_prepare() {
-	
+
 	source ${SRC}/lib/functions/compilation/patch/drivers_network.sh
 
 	# Packaging patch for modern kernels should be one for all.
@@ -106,7 +106,7 @@ compilation_prepare() {
 	# since plymouth introduction, boot scripts are not supporting this method anymore.
 	# In order to enable it, you need to use this: setenv consoleargs "bootsplash.bootfile=bootsplash.armbian ${consoleargs}"
 
-	if linux-version compare "${version}" ge 5.15 && [ "${SKIP_BOOTSPLASH}" != yes ]; then
+	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" lt 6.1 && [ "${SKIP_BOOTSPLASH}" != yes ]; then
 
 		display_alert "Adding" "Kernel splash file" "info"
 
