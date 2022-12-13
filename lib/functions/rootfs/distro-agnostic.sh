@@ -179,7 +179,7 @@ function install_distribution_agnostic() {
 	else # ... not extlinux ...
 
 		if [[ -n "${BOOTSCRIPT}" ]]; then # @TODO: && "${BOOTCONFIG}" != "none"
-			display_alert "Deploying boot script" "$bootscript_src" "warn"
+			display_alert "Deploying boot script" "$bootscript_src" "info"
 			if [ -f "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" ]; then
 				run_host_command_logged cp -pv "${USERPATCHES_PATH}/bootscripts/${bootscript_src}" "${SDCARD}/boot/${bootscript_dst}"
 			else
