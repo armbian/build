@@ -183,7 +183,6 @@ uboot_custom_postprocess() {
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
 	elif [[ $BOOT_SCENARIO == "spl-blobs" || $BOOT_SCENARIO == "tpl-blob-atf-mainline" ]]; then
-
 		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
 
 	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
@@ -200,7 +199,7 @@ uboot_custom_postprocess() {
 	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
-		if [[ $BOARD == "rock-3a" ]] || [[ $BOARD == "rock-5b" ]]; then
+		if [[ $BOARD == "rock-3a" ]] || [[ $BOARD == "rock-5b" ]] || [[ $BOARD == "orangepi5" ]]; then
 			dd if=/dev/zero of=rkspi_loader.img bs=1M count=0 seek=16
 			/sbin/parted -s rkspi_loader.img mklabel gpt
 			/sbin/parted -s rkspi_loader.img unit s mkpart idbloader 64 7167
