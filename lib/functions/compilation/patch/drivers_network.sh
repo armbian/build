@@ -157,9 +157,6 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# add support for 5.19.2
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-5.19.2.patch" "applying"
-
 	fi
 
 }
@@ -246,12 +243,6 @@ driver_rtl8811CU_rtl8821C()
 		echo "obj-\$(CONFIG_RTL8821CU) += rtl8811cu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# add support for 5.18.y
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu.patch" "applying"
-
-		# add support for 5.19.2
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-5.19.2.patch" "applying"
 
 	fi
 
