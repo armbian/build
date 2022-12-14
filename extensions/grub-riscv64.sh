@@ -3,13 +3,13 @@
 function extension_prepare_config__prepare_grub-riscv64() {
 	display_alert "Prepare config" "${EXTENSION}" "info"
 	# Extension configuration defaults.
-	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}                    # if yes, does not build our own kernel, instead, uses generic one from distro
-	export UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"            # 'serial' forces grub menu on serial console. empty to not include
-	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}"        # 'true' will disable os-probing, useful for SD cards.
-	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"             # Will be used on grub menu display
-	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                             # Small timeout by default
-	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-no}"               # Enable BIOS too if target is amd64
-	export UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"          # Export kernel and initrd for direct kernel boot "kexec"
+	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
+	export UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
+	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
+	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
+	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
+	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-no}"         # Enable BIOS too if target is amd64
+	export UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"   # Export kernel and initrd for direct kernel boot "kexec"
 	# User config overrides.
 	export BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
 	unset BOOTSOURCE                                                             # To try and convince lib/ to not build or install u-boot.
@@ -21,30 +21,20 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	export UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 	export UEFI_GRUB_TARGET="riscv64-efi"                                        # Default for x86_64
 
-	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
-	display_alert "Prepare config Ubuntu" "${EXTENSION}" "info"
-
-	local uefi_packages="efibootmgr efivar cloud-initramfs-growroot os-prober grub-efi-${ARCH}-bin grub-efi-${ARCH}"
-
-	elif [[ "${DISTRIBUTION}" == "Debian" && "${KERNEL_ONLY}" == "no" ]]; then
-
+	if [[ "${DISTRIBUTION}" == "Debian" && "${KERNEL_ONLY}" == "no" ]]; then
 		exit_with_error "${DISTRIBUTION} is not supported yet"
-
 	fi
 
-	DISTRO_KERNEL_PACKAGES=""
-	DISTRO_FIRMWARE_PACKAGES=""
+	declare uefi_packages="efibootmgr efivar cloud-initramfs-growroot os-prober grub-efi-${ARCH}-bin grub-efi-${ARCH}"
 
 	# @TODO: use actual arrays. Yeah...
 	# shellcheck disable=SC2086
-	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}
+	add_packages_to_image ${uefi_packages}
 
 	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }
 
 pre_umount_final_image__install_grub() {
-
-	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 
 	configure_grub
 	local chroot_target=$MOUNT
@@ -66,12 +56,11 @@ pre_umount_final_image__install_grub() {
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
 
-	sed -i 's,devicetree,echo,g' "$MOUNT"/etc/grub.d/10_linux >>"${DEST}"/"${LOG_SUBPATH}"/grub-n.log 2>&1
-	#cp -r $SRC/packages/blobs/jetson/boot.png "$MOUNT"/boot/grub
+	sed -i 's,devicetree,echo,g' "$MOUNT"/etc/grub.d/10_linux
 
 	local install_grub_cmdline="sudo apt-get update; sudo apt-get install --reinstall grub; update-grub && grub-install --verbose --target=${UEFI_GRUB_TARGET} --no-nvram --removable"
 	display_alert "Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
-	chroot "$chroot_target" /bin/bash -c "$install_grub_cmdline" >>"$DEST"/"${LOG_SUBPATH}"/install.log 2>&1 || {
+	chroot "$chroot_target" /bin/bash -c "$install_grub_cmdline" >> "$DEST"/"${LOG_SUBPATH}"/install.log 2>&1 || {
 		exit_with_error "${install_grub_cmdline} failed!"
 	}
 
@@ -106,8 +95,6 @@ pre_umount_final_image__install_grub() {
 	root_uuid=$(blkid -s UUID -o value "${LOOP}p2") # get the uuid of the root partition, this has been transposed
 
 	umount_chroot "$chroot_target/"
-
-fi
 
 }
 
