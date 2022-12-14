@@ -312,11 +312,11 @@ driver_rtl88x2bu()
 	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl88x2buver="commit:8bf3c489da36815b3789d053b49fcd0000209f03"
+		local rtl88x2buver="commit:2590672d717e2516dd2e96ed66f1037a6815bced"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/cilynx/rtl88x2bu" "rtl88x2bu" "${rtl88x2buver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/88x2bu-20210702" "rtl88x2bu" "${rtl88x2buver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2bu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2bu/"
