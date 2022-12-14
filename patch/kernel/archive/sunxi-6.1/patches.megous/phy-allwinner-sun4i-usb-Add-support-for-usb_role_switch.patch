@@ -1,0 +1,147 @@
+From 55d77e12d5e94388e0187dc15c32b29b0a99dac5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Mon, 8 Jun 2020 00:11:06 +0200
+Subject: [PATCH 204/389] phy: allwinner: sun4i-usb: Add support for
+ usb_role_switch
+
+This allow controlling the usb0 data role from a typec port driver.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/phy/allwinner/Kconfig         |  1 +
+ drivers/phy/allwinner/phy-sun4i-usb.c | 51 ++++++++++++++++++++++++++-
+ 2 files changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/phy/allwinner/Kconfig b/drivers/phy/allwinner/Kconfig
+index fb584518b2d0..e93a53139460 100644
+--- a/drivers/phy/allwinner/Kconfig
++++ b/drivers/phy/allwinner/Kconfig
+@@ -12,6 +12,7 @@ config PHY_SUN4I_USB
+ 	depends on USB_SUPPORT
+ 	select GENERIC_PHY
+ 	select USB_COMMON
++	select USB_ROLE_SWITCH
+ 	help
+ 	  Enable this to support the transceiver that is part of Allwinner
+ 	  sunxi SoCs.
+diff --git a/drivers/phy/allwinner/phy-sun4i-usb.c b/drivers/phy/allwinner/phy-sun4i-usb.c
+index 3a3831f6059a..747c64a8c5b0 100644
+--- a/drivers/phy/allwinner/phy-sun4i-usb.c
++++ b/drivers/phy/allwinner/phy-sun4i-usb.c
+@@ -34,6 +34,7 @@
+ #include <linux/reset.h>
+ #include <linux/spinlock.h>
+ #include <linux/usb/of.h>
++#include <linux/usb/role.h>
+ #include <linux/workqueue.h>
+ 
+ #define REG_ISCR			0x00
+@@ -152,6 +153,9 @@ struct sun4i_usb_phy_data {
+ 	int id_det;
+ 	int vbus_det;
+ 	struct delayed_work detect;
++	struct usb_role_switch_desc switch_desc;
++	struct usb_role_switch *role_switch;
++	int usb_role;
+ };
+ 
+ #define to_sun4i_usb_phy_data(phy) \
+@@ -364,6 +368,9 @@ static int sun4i_usb_phy_exit(struct phy *_phy)
+ 
+ static int sun4i_usb_phy0_get_id_det(struct sun4i_usb_phy_data *data)
+ {
++	if (data->usb_role >= 0)
++		return data->usb_role == USB_ROLE_HOST ? 0 : 1;
++
+ 	switch (data->dr_mode) {
+ 	case USB_DR_MODE_OTG:
+ 		if (data->id_det_gpio)
+@@ -380,6 +387,9 @@ static int sun4i_usb_phy0_get_id_det(struct sun4i_usb_phy_data *data)
+ 
+ static int sun4i_usb_phy0_get_vbus_det(struct sun4i_usb_phy_data *data)
+ {
++	if (data->usb_role >= 0)
++		return data->usb_role == USB_ROLE_NONE ? 0 : 1;
++
+ 	if (data->vbus_det_gpio)
+ 		return gpiod_get_value_cansleep(data->vbus_det_gpio);
+ 
+@@ -399,7 +409,7 @@ static int sun4i_usb_phy0_get_vbus_det(struct sun4i_usb_phy_data *data)
+ 
+ static bool sun4i_usb_phy0_have_vbus_det(struct sun4i_usb_phy_data *data)
+ {
+-	return data->vbus_det_gpio || data->vbus_power_supply;
++	return data->usb_role >= 0 || data->vbus_det_gpio || data->vbus_power_supply;
+ }
+ 
+ static bool sun4i_usb_phy0_poll(struct sun4i_usb_phy_data *data)
+@@ -659,6 +669,24 @@ static struct phy *sun4i_usb_phy_xlate(struct device *dev,
+ 	return data->phys[args->args[0]].phy;
+ }
+ 
++static int sun4i_usb_role_set(struct usb_role_switch *sw, enum usb_role role)
++{
++	struct sun4i_usb_phy_data *data = usb_role_switch_get_drvdata(sw);
++
++	data->usb_role = role;
++	queue_delayed_work(system_wq, &data->detect, 0);
++
++	return 0;
++}
++
++static enum usb_role sun4i_usb_role_get(struct usb_role_switch *sw)
++{
++	struct sun4i_usb_phy_data *data = usb_role_switch_get_drvdata(sw);
++	int role = sun4i_usb_phy0_get_id_det(data) ? USB_ROLE_DEVICE : USB_ROLE_HOST;
++
++	return data->usb_role >= 0 ? data->usb_role : role;
++}
++
+ static int sun4i_usb_phy_remove(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -673,6 +701,8 @@ static int sun4i_usb_phy_remove(struct platform_device *pdev)
+ 
+ 	cancel_delayed_work_sync(&data->detect);
+ 
++	usb_role_switch_unregister(data->role_switch);
++
+ 	return 0;
+ }
+ 
+@@ -701,6 +731,8 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 	if (!data->cfg)
+ 		return -EINVAL;
+ 
++	data->usb_role = -1;
++
+ 	data->base = devm_platform_ioremap_resource_byname(pdev, "phy_ctrl");
+ 	if (IS_ERR(data->base))
+ 		return PTR_ERR(data->base);
+@@ -854,6 +886,23 @@ static int sun4i_usb_phy_probe(struct platform_device *pdev)
+ 		return PTR_ERR(phy_provider);
+ 	}
+ 
++	/* setup role switcher */
++	data->switch_desc.name = "usb0";
++	data->switch_desc.fwnode = dev_fwnode(dev);
++	data->switch_desc.set = sun4i_usb_role_set;
++	data->switch_desc.get = sun4i_usb_role_get;
++	data->switch_desc.driver_data = data;
++
++	/*
++	 * Don't interfere with the default behavior of this driver until
++	 * the consumer of the role switch uses the switch for the first time.
++	 */
++	data->role_switch = usb_role_switch_register(dev, &data->switch_desc);
++	if (IS_ERR(data->role_switch)) {
++		dev_warn(dev, "Unable to register Role Switch\n");
++		data->role_switch = NULL;
++	}
++
+ 	dev_dbg(dev, "successfully loaded\n");
+ 
+ 	return 0;
+-- 
+2.35.3
+
