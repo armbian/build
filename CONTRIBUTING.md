@@ -22,19 +22,18 @@ This section describes how to start contributing to Armbian.
 
 ### Prepare your environment
 
-* Create an Ubuntu 22.04 VM with VirtualBox or any other suitable hypervisor. Then proceed with:
+* Create an Ubuntu 22.04 VM with VirtualBox or any other suitable hypervisor. 
+* Install [Github CLI tool](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)
+* Configure git:
 
 ```bash
-    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
-    sudo apt-add-repository https://cli.github.com/packages
-    sudo apt update
-    sudo apt -y install gh git
-      
-    # Configure git
     git config --global user.email "your@email.com"
     git config --global user.name "Your Name"
-      
-    # Generate gpg key
+```
+
+* Generate GPG key
+
+```bash
     gpg --generate-key
 ```
 
