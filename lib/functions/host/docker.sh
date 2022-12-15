@@ -151,7 +151,7 @@ function docker_cli_prepare() {
 	declare -g -a DOCKER_BUILDX_OR_BUILD=("build")
 	if [[ -n "${DOCKER_BUILDX_VERSION}" ]]; then
 		DOCKER_HAS_BUILDX=yes
-		DOCKER_BUILDX_OR_BUILD=("buildx" "build" "--progress=plain")
+		DOCKER_BUILDX_OR_BUILD=("buildx" "build" "--progress=plain" "--load")
 	fi
 	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
