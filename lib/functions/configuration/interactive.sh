@@ -15,15 +15,15 @@ function interactive_config_prepare_terminal() {
 }
 
 function interactive_config_ask_kernel() {
-#	interactive_config_ask_kernel_only
+	interactive_config_ask_kernel_only
 	interactive_config_ask_kernel_configure
 }
 
 function interactive_config_ask_kernel_only() {
 	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 	[[ -n ${KERNEL_ONLY} ]] && return 0
-	options+=("yes" "U-boot and kernel packages")
 	options+=("no" "Full OS image for flashing")
+	options+=("yes" "U-boot and kernel packages ONLY")
 	dialog_if_terminal_set_vars --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	KERNEL_ONLY="${DIALOG_RESULT}"
 	[[ "${DIALOG_EXIT_CODE}" != "0" ]] && exit_with_error "You cancelled interactive during KERNEL_ONLY selection: '${DIALOG_EXIT_CODE}'" "Build cancelled: ${DIALOG_EXIT_CODE}"
@@ -34,7 +34,7 @@ function interactive_config_ask_kernel_configure() {
 	[[ -n ${KERNEL_CONFIGURE} ]] && return 0
 	options+=("no" "Do not change the kernel configuration")
 	options+=("yes" "Show a kernel configuration menu before compilation")
-	options+=("prebuilt" "Use precompiled packages (maintained hardware only)")
+	#options+=("prebuilt" "Use precompiled packages (maintained hardware only)") # @TODO armbian-next does not support this, I think.
 	dialog_if_terminal_set_vars --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	KERNEL_CONFIGURE="${DIALOG_RESULT}"
 	[[ ${DIALOG_EXIT_CODE} != 0 ]] && exit_with_error "You cancelled interactive during kernel configuration" "Build cancelled"
@@ -58,6 +58,11 @@ function get_list_of_all_buildable_boards() {
 	local -n ref_dict_all_board_source_files="${4}"
 	[[ "${5}" != "" ]] && local -n ref_dict_all_board_descriptions="${5}" # optional
 
+	declare -i prepare_options=0
+	if [[ "${2}" != "" || "${5}" != "" ]]; then # only if second or fifth reference specified, otherwise too costly
+		prepare_options=1
+	fi
+
 	local board_file_path board_type full_board_file
 	for board_file_path in "${board_file_paths[@]}"; do
 		[[ ! -d "${board_file_path}" ]] && continue
@@ -68,16 +73,29 @@ function get_list_of_all_buildable_boards() {
 				board_name="$(basename "${full_board_file}" | cut -d'.' -f1)"
 				ref_dict_all_board_types["${board_name}"]="${board_type}"
 				ref_dict_all_board_source_files["${board_name}"]="${ref_dict_all_board_source_files["${board_name}"]} ${full_board_file}" # accumulate, will have extra space
-
-				if [[ "${2}" != "" || "${5}" != "" ]]; then # only if second or fifth reference specified, otherwise too costly
+				if [[ ${prepare_options} -gt 0 ]]; then
 					board_desc="$(head -1 "${full_board_file}" | cut -d'#' -f2)"
-					ref_arr_all_board_options+=("${board_name}" "\Z1(${board_type})\Zn ${board_desc}")
 					ref_dict_all_board_descriptions["${board_name}"]="${board_desc}"
 				fi
 			done
 		done
 	done
-	ref_arr_all_board_names=("${!ref_dict_all_board_types[@]}") # Expand the keys of one of the dicts, that's the list of boards.
+
+	if [[ ${prepare_options} -gt 0 ]]; then
+		# get a sorted list of boards across all types
+		declare ref_arr_all_board_names_unsorted=("${!ref_dict_all_board_types[@]}") # Expand the keys of one of the dicts, that's the list of boards (unsorted)
+		declare -a ref_arr_all_board_names_sorted=()
+		readarray -t ref_arr_all_board_names_sorted < <(printf '%s\n' "${ref_arr_all_board_names_unsorted[@]}" | sort -h)
+		ref_arr_all_board_names=("${ref_arr_all_board_names_sorted[@]}")
+
+		# prepare the options for the dialog menu; this is sorted the same order as the boards.
+		for board_name in "${ref_arr_all_board_names[@]}"; do
+			ref_arr_all_board_options+=("${board_name}" "\Z1(${ref_dict_all_board_types["${board_name}"]})\Zn ${ref_dict_all_board_descriptions["${board_name}"]}")
+		done
+	else
+		ref_arr_all_board_names=("${!ref_dict_all_board_types[@]}") # Expand the keys of one of the dicts, that's the list of boards (unsorted)
+	fi
+
 	return 0
 }
 
@@ -139,22 +157,21 @@ function interactive_config_ask_board_list() {
 function interactive_config_ask_branch() {
 	# if BRANCH not set, display selection menu
 	[[ -n $BRANCH ]] && return 0
-	options=()
-	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Come with best support")
-	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy")
-	[[ $KERNEL_TARGET == *edge* && $EXPERT = yes ]] && options+=("edge" "\Z1Bleeding edge from @kernel.org\Zn")
+	declare -a options=()
+	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Usually an LTS kernel")
+	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy / Vendor kernel")
+	[[ $KERNEL_TARGET == *edge* ]] && options+=("edge" "Bleeding edge / latest possible")
 
 	# do not display selection dialog if only one kernel branch is available
 	if [[ "${#options[@]}" == 2 ]]; then
 		BRANCH="${options[0]}"
 	else
 		dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
-			--menu "Select the target kernel branch\nExact kernel versions depend on selected board" \
+			--menu "Select the target kernel branch\nExact kernel versions depend on selected board and its family." \
 			$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 		BRANCH="${DIALOG_RESULT}"
 	fi
 	[[ -z ${BRANCH} ]] && exit_with_error "No kernel branch selected"
-	unset options
 	return 0
 }
 
@@ -162,12 +179,11 @@ function interactive_config_ask_release() {
 	[[ $KERNEL_ONLY == yes ]] && return 0 # Don't ask if building packages only.
 	[[ -n ${RELEASE} ]] && return 0
 
-	options=()
+	declare -a options=()
 	distros_options
 	dialog_if_terminal_set_vars --title "Choose a release package base" --backtitle "$backtitle" --menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	RELEASE="${DIALOG_RESULT}"
 	[[ -z ${RELEASE} ]] && exit_with_error "No release selected"
-	unset options
 }
 
 function interactive_config_ask_desktop_build() {
