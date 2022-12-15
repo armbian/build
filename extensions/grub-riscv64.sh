@@ -21,7 +21,7 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	export UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 	export UEFI_GRUB_TARGET="riscv64-efi"                                        # Default for x86_64
 
-	if [[ "${DISTRIBUTION}" == "Debian" && "${KERNEL_ONLY}" == "no" ]]; then
+	if [[ "${DISTRIBUTION}" != "Ubuntu" && "${KERNEL_ONLY}" == "no" ]]; then
 		exit_with_error "${DISTRIBUTION} is not supported yet"
 	fi
 
@@ -31,36 +31,50 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	# shellcheck disable=SC2086
 	add_packages_to_image ${uefi_packages}
 
-	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
+	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; target=${UEFI_GRUB_TARGET}" ""
 }
 
 pre_umount_final_image__install_grub() {
 
 	configure_grub
-	local chroot_target=$MOUNT
+	local chroot_target="${MOUNT}"
 	display_alert "Installing bootloader" "GRUB" "info"
 
-	# getting rid of the dtb package, if installed, is hard. for now just zap it, otherwise update-grub goes bananas
-	mkdir -p "$MOUNT"/boot/efi/dtb
-	cp -r "$MOUNT"/boot/dtb/* "$MOUNT"/boot/efi/dtb/
+	# RiscV64 specific: actually copy the DTBs to the ESP
+	display_alert "Copying DTBs to ESP" "${EXTENSION}" "info"
+	run_host_command_logged mkdir -pv "${chroot_target}"/boot/efi/dtb
+	run_host_command_logged cp -rpv "${chroot_target}"/boot/dtb/* "${chroot_target}"/boot/efi/dtb/
+	# RiscV64 specific: @TODO ??? what is this ??
+	sed -i 's,devicetree,echo,g' "${chroot_target}"/etc/grub.d/10_linux
 
 	# add config to disable os-prober, otherwise image will have the host's other OSes boot entries.
-	cat <<- grubCfgFragHostSide >> "${MOUNT}"/etc/default/grub.d/99-armbian-host-side.cfg
+	cat <<- grubCfgFragHostSide >> "${chroot_target}"/etc/default/grub.d/99-armbian-host-side.cfg
 		GRUB_DISABLE_OS_PROBER=true
 	grubCfgFragHostSide
 
 	# copy Armbian GRUB wallpaper
-	mkdir -p "${MOUNT}"/usr/share/images/grub/
-	cp "${SRC}"/packages/blobs/splash/grub.png "${MOUNT}"/usr/share/images/grub/wallpaper.png
+	run_host_command_logged mkdir -pv "${chroot_target}"/usr/share/images/grub/
+	run_host_command_logged cp -pv "${SRC}"/packages/blobs/splash/grub.png "${chroot_target}"/usr/share/images/grub/wallpaper.png
 
 	# Mount the chroot...
-	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
+	mount_chroot "${chroot_target}/" # this already handles /boot/efi which is required for it to work.
 
-	sed -i 's,devicetree,echo,g' "$MOUNT"/etc/grub.d/10_linux
+	# update-grub is secretly `grub-mkconfig` under wraps, but the actual work is done by /etc/grub.d/10-linux
+	# that decides based on 'test -e "/dev/disk/by-uuid/${GRUB_DEVICE_UUID}"' so that _must_ exist.
+	# If it does NOT exist, then a reference to a /dev/devYpX is used, and will fail to boot.
+	# Irony: let's use grub-probe to find out the UUID of the root partition, and then create a symlink to it.
+	# Another: on some systems (eg, not Docker) the thing might already exist due to udev actually working.
+	# shellcheck disable=SC2016 # some wierd escaping going on there.
+	chroot_custom "$chroot_target" mkdir -pv '/dev/disk/by-uuid/"$(grub-probe --target=fs_uuid /)"' "||" true
 
-	local install_grub_cmdline="sudo apt-get update; sudo apt-get install --reinstall grub; update-grub && grub-install --verbose --target=${UEFI_GRUB_TARGET} --no-nvram --removable"
-	display_alert "Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
-	chroot "$chroot_target" /bin/bash -c "$install_grub_cmdline" >> "$DEST"/"${LOG_SUBPATH}"/install.log 2>&1 || {
+	display_alert "Creating GRUB config..." "${EXTENSION}: grub-mkconfig / update-grub"
+	chroot_custom "$chroot_target" update-grub || {
+		exit_with_error "update-grub failed!"
+	}
+
+	local install_grub_cmdline="grub-install --verbose --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
+	display_alert "Installing GRUB EFI..." "${EXTENSION}: ${UEFI_GRUB_TARGET}"
+	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
 		exit_with_error "${install_grub_cmdline} failed!"
 	}
 
@@ -91,9 +105,6 @@ pre_umount_final_image__install_grub() {
 	# Remove host-side config.
 	rm -f "${MOUNT}"/etc/default/grub.d/99-armbian-host-side.cfg
 
-	local root_uuid
-	root_uuid=$(blkid -s UUID -o value "${LOOP}p2") # get the uuid of the root partition, this has been transposed
-
 	umount_chroot "$chroot_target/"
 
 }
@@ -103,8 +114,9 @@ pre_umount_final_image__900_export_kernel_and_initramfs() {
 		display_alert "Exporting Kernel and Initrd for" "kexec" "info"
 		# this writes to ${DESTIMG} directly, since debootstrap.sh will move them later.
 		# capture the $MOUNT/boot/vmlinuz and initrd and send it out ${DESTIMG}
-		cp "$MOUNT"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel"
-		cp "$MOUNT"/boot/initrd.img-* "${DESTIMG}/${version}.initrd"
+		run_host_command_logged ls -la "${MOUNT}"/boot/vmlinuz-* "${MOUNT}"/boot/initrd.img-* || true
+		run_host_command_logged cp -pv "${MOUNT}"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel"
+		run_host_command_logged cp -pv "${MOUNT}"/boot/initrd.img-* "${DESTIMG}/${version}.initrd"
 	fi
 }
 
