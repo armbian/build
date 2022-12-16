@@ -103,10 +103,15 @@ function interactive_config_ask_board_list() {
 	# if BOARD is not set, display selection menu, otherwise return success
 	[[ -n ${BOARD} ]] && return 0
 
-	WIP_STATE=supported
-	WIP_BUTTON='CSC/WIP/EOS/TVB'
-	STATE_DESCRIPTION=' - boards with high level of software maturity'
-	temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
+	declare WIP_STATE=supported
+	if [[ "${EXPERT}" == "yes" ]]; then
+		display_alert "Expert mode!" "You can select all boards" "info"
+		WIP_STATE=unsupported
+	fi
+
+	declare WIP_BUTTON='CSC/WIP/EOS/TVB'
+	declare STATE_DESCRIPTION=' - boards with high level of software maturity'
+	declare temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
 
 	while true; do
 		declare -a arr_all_board_names=() arr_all_board_options=()                                                                                              # arrays
@@ -129,7 +134,7 @@ function interactive_config_ask_board_list() {
 			--colors --extra-label "Show $WIP_BUTTON" --extra-button \
 			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${arr_all_board_options[@]}"
 		BOARD="${DIALOG_RESULT}"
-		STATUS=${DIALOG_EXIT_CODE}
+		declare STATUS=${DIALOG_EXIT_CODE}
 
 		if [[ $STATUS == 3 ]]; then
 			if [[ $WIP_STATE == supported ]]; then
@@ -156,21 +161,21 @@ function interactive_config_ask_board_list() {
 
 function interactive_config_ask_branch() {
 	# if BRANCH not set, display selection menu
-	[[ -n $BRANCH ]] && return 0
+	if [[ -n $BRANCH ]]; then
+		display_alert "Already set BRANCH, skipping interactive" "${BRANCH}" "info"
+		return 0
+	fi
 	declare -a options=()
 	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Usually an LTS kernel")
 	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy / Vendor kernel")
 	[[ $KERNEL_TARGET == *edge* ]] && options+=("edge" "Bleeding edge / latest possible")
 
-	# do not display selection dialog if only one kernel branch is available
-	if [[ "${#options[@]}" == 2 ]]; then
-		BRANCH="${options[0]}"
-	else
-		dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
-			--menu "Select the target kernel branch\nExact kernel versions depend on selected board and its family." \
-			$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
-		BRANCH="${DIALOG_RESULT}"
-	fi
+	dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
+		--menu "Select the target kernel branch.\nSelected BOARD='${BOARD}'\nExact kernel versions depend on selected board and its family." \
+		$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
+
+	BRANCH="${DIALOG_RESULT}"
+
 	[[ -z ${BRANCH} ]] && exit_with_error "No kernel branch selected"
 	return 0
 }
@@ -181,9 +186,11 @@ function interactive_config_ask_release() {
 
 	declare -a options=()
 	distros_options
-	dialog_if_terminal_set_vars --title "Choose a release package base" --backtitle "$backtitle" --menu "Select the target OS release package base" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
+	dialog_if_terminal_set_vars --title "Choose a release package base" --backtitle "$backtitle" --menu "Select the target OS release package base; selected BRANCH='${BRANCH}'" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 	RELEASE="${DIALOG_RESULT}"
 	[[ -z ${RELEASE} ]] && exit_with_error "No release selected"
+
+	return 0 # shortcircuit above!
 }
 
 function interactive_config_ask_desktop_build() {
@@ -227,4 +234,5 @@ function interactive_config_ask_standard_or_minimal() {
 	else
 		SELECTED_CONFIGURATION="cli_standard"
 	fi
+	return 0
 }
