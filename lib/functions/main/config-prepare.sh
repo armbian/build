@@ -65,7 +65,7 @@ function prepare_and_config_main_build_single() {
 
 	interactive_config_ask_branch
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected: BRANCH"
-	[[ ${KERNEL_TARGET} != *${BRANCH}* && ${BRANCH} != "ddk" ]] && display_alert "Kernel branch not defined for this board" "${BRANCH} for ${BOARD}" "warn"
+	[[ ${KERNEL_TARGET} != *${BRANCH}* && ${BRANCH} != "ddk" ]] && exit_with_error "Kernel branch not defined for this board: '${BRANCH}' for '${BOARD}'"
 
 	interactive_config_ask_release
 	[[ -z $RELEASE && ${KERNEL_ONLY} != yes ]] && exit_with_error "No release selected: RELEASE"
