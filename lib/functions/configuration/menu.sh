@@ -33,6 +33,9 @@ function dialog_if_terminal_set_vars() {
 	set -e          # back to normal
 	set -o errtrace # back to normal
 	set -o errexit  # back to normal
+	
+	# clear the screen after dialog exits; that way we can see the log output that comes after it?
+	clear
 
 	return 0 # always success, caller must check DIALOG_EXIT_CODE and DIALOG_RESULT
 }
