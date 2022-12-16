@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #--------------------------------------------------------------------------------------------------------------------------------
 # fingerprint_image <out_txt_file> [image_filename]
 # Saving build summary to the image

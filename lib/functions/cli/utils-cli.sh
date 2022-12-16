@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #  Add the variables needed at the beginning of the path
 check_args() {
 

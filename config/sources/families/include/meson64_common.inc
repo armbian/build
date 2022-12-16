@@ -24,12 +24,12 @@ GOVERNOR=${GOVERNOR:-ondemand}
 case $BRANCH in
 
 	current)
-		KERNELBRANCH='branch:linux-5.19.y'
-		KERNELPATCHDIR='meson64-edge'
+		KERNELBRANCH='branch:linux-6.0.y'
+		KERNELPATCHDIR='meson64-current'
 		;;
 
 	edge)
-		KERNELBRANCH='branch:linux-6.0.y'
+		KERNELBRANCH='branch:linux-6.1.y'
 		KERNELPATCHDIR='meson64-edge'
 		;;
 

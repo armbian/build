@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 function cli_entrypoint() {
 	if [[ "${ARMBIAN_ENABLE_CALL_TRACING}" == "yes" ]]; then
 		set -T # inherit return/debug traps
@@ -105,7 +106,7 @@ function cli_entrypoint() {
 	prepare_and_config_main_build_single
 
 	if [[ -z $1 ]]; then
-		do_default
+		build_main
 	else
 		eval "$@"
 	fi

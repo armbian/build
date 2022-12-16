@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 function fetch_sources_tools__rkbin_tools() {
 	fetch_from_repo "https://github.com/armbian/rkbin" "rkbin-tools" "branch:master"
 }
