@@ -31,8 +31,10 @@ prepare_host() {
 
 	export LC_ALL="en_US.UTF-8"
 
+	# armbian-next: Armbian mirrors and the download code is highly unstable; disable by default
+	# armbian-next: set `SKIP_ARMBIAN_ROOTFS_CACHE=no` to enable
 	# don't use mirrors that throws garbage on 404
-	if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+	if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" && "${SKIP_ARMBIAN_ROOTFS_CACHE:-"yes"}" != "yes" ]]; then
 		display_alert "Determining best Armbian mirror to use" "via redirector" "debug"
 		declare -i armbian_mirror_tries=1
 		while true; do
