@@ -93,13 +93,14 @@ function cli_entrypoint() {
 	display_alert "Build UUID:" "${ARMBIAN_BUILD_UUID}" "debug"
 
 	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this very early stage.
-	export WORKDIR="${SRC}/.tmp/work-${ARMBIAN_BUILD_UUID}" # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
-	export LOGDIR="${SRC}/.tmp/logs-${ARMBIAN_BUILD_UUID}"  # Will be initialized very soon, literally, below.
+	declare -g WORKDIR_BASE_TMP="${SRC}/.tmp"                       # a.k.a. ".tmp" dir.
+	export WORKDIR="${WORKDIR_BASE_TMP}/work-${ARMBIAN_BUILD_UUID}" # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
+	export LOGDIR="${WORKDIR_BASE_TMP}/logs-${ARMBIAN_BUILD_UUID}"  # Will be initialized very soon, literally, below.
 	# @TODO: These are used by actual build, move to its cli handler.
-	export SDCARD="${SRC}/.tmp/rootfs-${ARMBIAN_BUILD_UUID}"                        # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
-	export MOUNT="${SRC}/.tmp/mount-${ARMBIAN_BUILD_UUID}"                          # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
-	export EXTENSION_MANAGER_TMP_DIR="${SRC}/.tmp/extensions-${ARMBIAN_BUILD_UUID}" # EXTENSION_MANAGER_TMP_DIR used to store extension-composed functions
-	export DESTIMG="${SRC}/.tmp/image-${ARMBIAN_BUILD_UUID}"                        # DESTIMG is where the backing image (raw, huge, sparse file) is kept (not the final destination)
+	export SDCARD="${WORKDIR_BASE_TMP}/rootfs-${ARMBIAN_BUILD_UUID}"                        # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
+	export MOUNT="${WORKDIR_BASE_TMP}/mount-${ARMBIAN_BUILD_UUID}"                          # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
+	export EXTENSION_MANAGER_TMP_DIR="${WORKDIR_BASE_TMP}/extensions-${ARMBIAN_BUILD_UUID}" # EXTENSION_MANAGER_TMP_DIR used to store extension-composed functions
+	export DESTIMG="${WORKDIR_BASE_TMP}/image-${ARMBIAN_BUILD_UUID}"                        # DESTIMG is where the backing image (raw, huge, sparse file) is kept (not the final destination)
 
 	# Make sure ARMBIAN_LOG_CLI_ID is set, and unique.
 	# Pre-runs might change it, but if not set, default to ARMBIAN_COMMAND.

@@ -210,3 +210,23 @@ function reset_uid_owner() {
 		fi
 	done
 }
+
+# call: check_dir_for_mount_options "/path/to/dir" "main build dir description"
+function check_dir_for_mount_options() {
+	declare -r dir="${1}"
+	declare -r description="${2}"
+
+	declare src_mount_source="" src_mount_opts=""
+	src_mount_opts="$(findmnt -T "${dir}" --output OPTIONS --raw --notruncate --noheadings)"
+
+	# make sure $src_mount_opts does not contain noexec
+	if [[ "${src_mount_opts}" == *"noexec"* || "${src_mount_opts}" == *"nodev"* ]]; then
+		src_mount_source="$(findmnt -T "${dir}" --output SOURCE --raw --notruncate --noheadings)"
+		display_alert "Directory ${dir} (${description}) is mounted" "from '${src_mount_source}' with options '${src_mount_opts}'" "warn"
+		exit_with_error "Directory ${dir} (${description}) is mounted with the 'noexec' and/or 'nodev' options; this will cause rootfs build failures. Please correct this before trying again."
+	fi
+
+	display_alert "Checked directory OK for mount options" "${dir} ('${description}')" "info"
+
+	return 0
+}
