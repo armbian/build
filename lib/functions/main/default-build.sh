@@ -1,6 +1,13 @@
 # This does NOT run under the logging manager. We should invoke the do_with_logging wrapper for
 # strategic parts of this. Attention: rootfs does it's own logging, so just let that be.
 function main_default_build_single() {
+	# Check that WORKDIR_BASE_TMP exists; if not, create it.
+	if [[ ! -d "${WORKDIR_BASE_TMP}" ]]; then
+		mkdir -p "${WORKDIR_BASE_TMP}"
+	fi
+
+	# Check the sanity of WORKDIR_BASE_TMP regarding mount options.
+	check_dir_for_mount_options "${WORKDIR_BASE_TMP}" "main temporary dir"
 
 	# Starting work. Export TMPDIR, which will be picked up by all `mktemp` invocations hopefully.
 	# Runner functions in logging/runners.sh will explicitly unset TMPDIR before invoking chroot.
