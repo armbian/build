@@ -1,4 +1,4 @@
-# This is run under do_with_retries.
+# This is NOT run under do_with_retries.
 function download_git_kernel_bundle() {
 	# See https://mirrors.edge.kernel.org/pub/scm/.bundles/pub/scm/linux/kernel/git/
 
@@ -38,6 +38,44 @@ function download_git_kernel_bundle() {
 	return 0
 }
 
+function download_git_kernel_gitball_via_oras() {
+	declare git_bundles_dir="${SRC}/cache/git-bundles/kernel"
+	declare git_kernel_ball_fn="linux-complete.git.tar"
+
+	run_host_command_logged mkdir -p "${git_bundles_dir}"
+
+	# defines outer scope value
+	linux_kernel_clone_tar_file="${git_bundles_dir}/${git_kernel_ball_fn}"
+
+	# if the file already exists, do nothing
+	if [[ -f "${linux_kernel_clone_tar_file}" ]]; then
+		display_alert "Kernel git-tarball already exists" "${git_kernel_ball_fn}" "cachehit"
+		return 0
+	fi
+
+	#do_with_retries 5 xxx ?
+	oras_pull_artifact_file "ghcr.io/rpardini/armbian-git-shallow/kernel-git:latest" "${git_bundles_dir}" "${git_kernel_ball_fn}"
+
+	# sanity check
+	if [[ ! -f "${linux_kernel_clone_tar_file}" ]]; then
+		exit_with_error "Kernel git-tarball download failed ${linux_kernel_clone_tar_file}"
+	fi
+
+	return 0
+
+}
+
+function kernel_cleanup_bundle_artifacts() {
+	declare git_bundles_dir="${SRC}/cache/git-bundles/kernel"
+
+	if [[ -d "${git_bundles_dir}" ]]; then
+		display_alert "Cleaning up Kernel git bundle artifacts" "no longer needed" "cachehit"
+		run_host_command_logged rm -rf "${git_bundles_dir}"
+	fi
+
+	return 0
+}
+
 function kernel_download_bundle_with_axel() {
 	display_alert "Downloading Kernel bundle" "${bundle_type}; this might take a long time" "info"
 	declare -a verbose_params=()
@@ -45,6 +83,44 @@ function kernel_download_bundle_with_axel() {
 	if_user_not_on_terminal_or_is_logging_add verbose_params "--quiet"
 	run_host_command_logged axel "${verbose_params[@]}" "--output=${linux_kernel_clone_bundle_file_tmp}" \
 		"${linux_clone_bundle_url}"
+}
+
+function kernel_prepare_bare_repo_from_oras_gitball() {
+	kernel_git_bare_tree="${SRC}/cache/git-bare/kernel" # sets the outer scope variable
+	declare kernel_git_bare_tree_done_marker="${kernel_git_bare_tree}/.git/armbian-bare-tree-done"
+
+	if [[ ! -d "${kernel_git_bare_tree}" || ! -f "${kernel_git_bare_tree_done_marker}" ]]; then
+		display_alert "Preparing bare kernel git tree" "this might take a long time" "info"
+
+		if [[ -d "${kernel_git_bare_tree}" ]]; then
+			display_alert "Removing old kernel bare tree" "${kernel_git_bare_tree}" "info"
+			run_host_command_logged rm -rf "${kernel_git_bare_tree}"
+		fi
+
+		# now, make sure we've the bundle downloaded correctly...
+		# this defines linux_kernel_clone_bundle_file
+		declare linux_kernel_clone_tar_file
+		download_git_kernel_gitball_via_oras # sets linux_kernel_clone_tar_file or dies
+
+		# Just extract the tar_file into the "${kernel_git_bare_tree}" directory, no further work needed.
+		run_host_command_logged mkdir -p "${kernel_git_bare_tree}"
+		# @TODO chance of a pv thingy here?
+		run_host_command_logged tar -xf "${linux_kernel_clone_tar_file}" -C "${kernel_git_bare_tree}"
+
+		# sanity check
+		if [[ ! -d "${kernel_git_bare_tree}/.git" ]]; then
+			exit_with_error "Kernel bare tree is missing .git directory ${kernel_git_bare_tree}"
+		fi
+
+		# write the marker file
+		touch "${kernel_git_bare_tree_done_marker}"
+	else
+		display_alert "Kernel bare tree already exists" "${kernel_git_bare_tree}" "cachehit"
+	fi
+
+	git_ensure_safe_directory "${kernel_git_bare_tree}"
+
+	return 0
 }
 
 function kernel_prepare_bare_repo_from_bundle() {
@@ -82,6 +158,7 @@ function kernel_prepare_git_pre_fetch() {
 
 	# shellcheck disable=SC2154 # do_add_origin is defined in fetch_from_repo, and this is hook for it, so it's in context.
 	if [[ "${do_add_origin}" == "yes" ]]; then
+		# @TODO: let's not add remotes anymore please? it's unwieldy and unnecessary
 		display_alert "Fetching mainline stable tags" "${remote_name} tags: ${remote_tags_to_fetch}" "git"
 		regular_git remote add "${remote_name}" "${remote_url}" # Add the remote to the warmup source
 

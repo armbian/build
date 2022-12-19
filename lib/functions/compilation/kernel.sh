@@ -12,8 +12,10 @@ function compile_kernel() {
 
 	# Prepare the git bare repo for the kernel; shared between all kernel builds
 	declare kernel_git_bare_tree
-	LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
-		kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
+	# alternative # LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
+	# alternative # 	kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
+	LOG_SECTION="kernel_prepare_bare_repo_from_oras_gitball" do_with_logging_unless_user_terminal do_with_hooks \
+		kernel_prepare_bare_repo_from_oras_gitball # this sets kernel_git_bare_tree
 
 	# prepare the working copy; this is the actual kernel source tree for this build
 	declare checked_out_revision_mtime="" checked_out_revision_ts="" checked_out_revision="undetermined" # set by fetch_from_repo
@@ -48,6 +50,9 @@ function compile_kernel() {
 
 	rm -f linux-firmware-image-*.deb # remove firmware image packages here - easier than patching ~40 packaging scripts at once
 	run_host_command_logged rsync --remove-source-files -r ./*.deb "${DEB_STORAGE}/"
+	
+	# kernel build worked; let's clean up the git-bundle cache, since the git-bare cache is proven working.
+	kernel_cleanup_bundle_artifacts
 
 	return 0
 }
