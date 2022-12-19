@@ -8,8 +8,7 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
 	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
 	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
-	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-no}"         # Enable BIOS too if target is amd64
-	export UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"   # Export kernel and initrd for direct kernel boot "kexec"
+	export GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-""}" # Cmdline by default
 	# User config overrides.
 	export BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
 	unset BOOTSOURCE                                                             # To try and convince lib/ to not build or install u-boot.
@@ -18,18 +17,13 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	export BOOTSIZE=0                                                            # No separate /boot when using UEFI.
 	export CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
 	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
-	export UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 	export UEFI_GRUB_TARGET="riscv64-efi"                                        # Default for x86_64
 
 	if [[ "${DISTRIBUTION}" != "Ubuntu" && "${KERNEL_ONLY}" == "no" ]]; then
 		exit_with_error "${DISTRIBUTION} is not supported yet"
 	fi
 
-	declare uefi_packages="efibootmgr efivar cloud-initramfs-growroot os-prober grub-efi-${ARCH}-bin grub-efi-${ARCH}"
-
-	# @TODO: use actual arrays. Yeah...
-	# shellcheck disable=SC2086
-	add_packages_to_image ${uefi_packages}
+	add_packages_to_image efibootmgr efivar cloud-initramfs-growroot os-prober "grub-efi-${ARCH}-bin" "grub-efi-${ARCH}"
 
 	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; target=${UEFI_GRUB_TARGET}" ""
 }
@@ -109,17 +103,6 @@ pre_umount_final_image__install_grub() {
 
 }
 
-pre_umount_final_image__900_export_kernel_and_initramfs() {
-	if [[ "${UEFI_EXPORT_KERNEL_INITRD}" == "yes" ]]; then
-		display_alert "Exporting Kernel and Initrd for" "kexec" "info"
-		# this writes to ${DESTIMG} directly, since debootstrap.sh will move them later.
-		# capture the $MOUNT/boot/vmlinuz and initrd and send it out ${DESTIMG}
-		run_host_command_logged ls -la "${MOUNT}"/boot/vmlinuz-* "${MOUNT}"/boot/initrd.img-* || true
-		run_host_command_logged cp -pv "${MOUNT}"/boot/vmlinuz-* "${DESTIMG}/${version}.kernel"
-		run_host_command_logged cp -pv "${MOUNT}"/boot/initrd.img-* "${DESTIMG}/${version}.initrd"
-	fi
-}
-
 configure_grub() {
 	[[ -n "$SERIALCON" ]] &&
 		GRUB_CMDLINE_LINUX_DEFAULT+=" console=${SERIALCON}"
@@ -138,7 +121,7 @@ configure_grub() {
 		grubWallpaper
 	fi
 
-	display_alert "GRUB EFI kernel cmdline" "${GRUB_CMDLINE_LINUX_DEFAULT} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
+	display_alert "GRUB EFI kernel cmdline" "'${GRUB_CMDLINE_LINUX_DEFAULT}' distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
 	cat <<- grubCfgFrag >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 		GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT}"
 		GRUB_TIMEOUT_STYLE=menu                                  # Show the menu with Kernel options (Armbian or -generic)...
