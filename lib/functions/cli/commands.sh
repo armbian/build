@@ -16,6 +16,8 @@ function armbian_register_commands() {
 		["configdump"]="config_dump"  # idem
 
 		["json-info"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		
+		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run

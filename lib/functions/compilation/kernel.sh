@@ -36,6 +36,12 @@ function compile_kernel() {
 	local version hash pre_patch_version
 	kernel_main_patching
 
+	# Stop after patching;
+	if [[ "${PATCH_ONLY}" == yes ]]; then
+		display_alert "PATCH_ONLY is set, stopping." "PATCH_ONLY=yes and patching success" "cachehit"
+		return 0
+	fi
+
 	local toolchain
 	kernel_config_maybe_interactive
 
@@ -50,7 +56,7 @@ function compile_kernel() {
 
 	rm -f linux-firmware-image-*.deb # remove firmware image packages here - easier than patching ~40 packaging scripts at once
 	run_host_command_logged rsync --remove-source-files -r ./*.deb "${DEB_STORAGE}/"
-	
+
 	# kernel build worked; let's clean up the git-bundle cache, since the git-bare cache is proven working.
 	kernel_cleanup_bundle_artifacts
 
