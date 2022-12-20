@@ -47,3 +47,56 @@ class SummarizedMarkdownWriter:
 		if self.contents == "":
 			raise Exception("Markdown Contents not set")
 		return f"<details><summary>{self.title}: {'; '.join(self.summary)}</summary>\n<p>\n\n{self.contents}\n\n</p></details>\n"
+
+	def get_readme_markdown(self):
+		if len(self.title) == 0:
+			raise Exception("Markdown Summary Title not set")
+		if len(self.summary) == 0:
+			raise Exception("Markdown Summary not set")
+		if self.contents == "":
+			raise Exception("Markdown Contents not set")
+		return f"#### {self.title}: {'; '.join(self.summary)}\n\n{self.contents}\n\n"
+
+
+def get_gh_pages_workflow_script():
+	return """
+name: publish-ghpages
+
+on: push
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # Do NOT checkout this. It is a kernel tree and takes a long time, and it's not necessary.
+      - name: Grab README.md
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        run: |
+          curl -s https://raw.githubusercontent.com/${{ github.repository }}/${BRANCH_NAME}/README.md > README.md
+          ls -la README.md
+      
+      # install grip via pip, https://github.com/joeyespo/grip; rpardini's fork https://github.com/rpardini/grip
+      - name: Install grip
+        run: |
+          pip3 install https://github.com/rpardini/grip/archive/refs/heads/master.tar.gz
+
+      - name: Run grip to gen  ${{ github.head_ref || github.ref_name }}
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        run: |
+          mkdir -p public
+          grip README.md --context=${{ github.repository }} --title="${BRANCH_NAME}" --wide --user-content --export "public/${BRANCH_NAME}.html" || true
+          ls -la public/
+
+      - name: Deploy to GitHub Pages (gh-pages branch)
+        if: success()
+        uses: crazy-max/ghaction-github-pages@v3
+        with:
+          target_branch: gh-pages
+          build_dir: public
+          keep_history: true
+          jekyll: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+"""
