@@ -40,23 +40,37 @@ class PatchDir:
 	def __str__(self) -> str:
 		return "<PatchDir: full_dir:'" + str(self.full_dir) + "'>"
 
-	def find_patch_files(self):
+	def find_series_patch_files(self) -> list["PatchFileInDir"]:
 		# do nothing if the self.full_path is not a real, existing, directory
 		if not os.path.isdir(self.full_dir):
-			return
+			return []
 
 		# If the directory contains a series.conf file.
+		series_patches: list[PatchFileInDir] = []
 		series_conf_path = os.path.join(self.full_dir, "series.conf")
 		if os.path.isfile(series_conf_path):
+			counter = 0
 			patches_in_series = self.parse_series_conf(series_conf_path)
 			for patch_file_name in patches_in_series:
 				patch_file_path = os.path.join(self.full_dir, patch_file_name)
 				if os.path.isfile(patch_file_path):
+					counter += 1
 					patch_file = PatchFileInDir(patch_file_path, self)
-					self.patch_files.append(patch_file)
+					patch_file.from_series = True
+					patch_file.series_counter = counter
+					# Fix basename for patches in series.conf
+					relative_path = os.path.relpath(patch_file_path, self.full_dir)
+					patch_file.relative_dirs_and_base_file_name = os.path.splitext(relative_path)[0]
+					series_patches.append(patch_file)
 				else:
 					raise Exception(
 						f"series.conf file {series_conf_path} contains a patch file {patch_file_name} that does not exist")
+		return series_patches
+
+	def find_files_patch_files(self) -> list["PatchFileInDir"]:
+		# do nothing if the self.full_path is not a real, existing, directory
+		if not os.path.isdir(self.full_dir):
+			return []
 
 		# Find the files in self.full_dir that end in .patch; do not consider subdirectories.
 		# Add them to self.patch_files.
@@ -64,6 +78,7 @@ class PatchDir:
 			# noinspection PyTypeChecker
 			if file.endswith(".patch"):
 				self.patch_files.append(PatchFileInDir(file, self))
+		return self.patch_files
 
 	@staticmethod
 	def parse_series_conf(series_conf_path):
@@ -86,7 +101,10 @@ class PatchFileInDir:
 	def __init__(self, file_name, patch_dir: PatchDir):
 		self.file_name = file_name
 		self.patch_dir: PatchDir = patch_dir
-		self.file_base_name = os.path.splitext(self.file_name)[0]
+		self.relative_dirs_and_base_file_name = os.path.splitext(self.file_name)[0]
+		self.file_name_no_ext_no_dirs = os.path.basename(self.relative_dirs_and_base_file_name)
+		self.from_series = False
+		self.series_counter = None
 
 	def __str__(self) -> str:
 		desc: str = f"<PatchFileInDir: file_name:'{self.file_name}', dir:{self.patch_dir.__str__()} >"
@@ -279,7 +297,7 @@ class PatchInPatchFile:
 
 	def __str__(self) -> str:
 		desc: str = \
-			f"<{self.parent.file_base_name}(:{self.counter}):" + \
+			f"<{self.parent.relative_dirs_and_base_file_name}(:{self.counter}):" + \
 			f"{self.one_line_patch_stats()}: {self.from_email}: '{self.subject}' >"
 		return desc
 
@@ -317,6 +335,10 @@ class PatchInPatchFile:
 			log.warning(f"Patch {self} needs rebase: offset/fuzz used during apply.")
 			self.problems.append("needs_rebase")
 
+		if "can't find file to patch at input line" in stdout_output:
+			log.warning(f"Patch {self} needs review: can't find file to patch.")
+			self.problems.append("missing_file")
+
 		# Check if the exit code is not zero and bomb
 		if proc.returncode != 0:
 			# prefix each line of the stderr_output with "STDERR: ", then join again
@@ -324,12 +346,12 @@ class PatchInPatchFile:
 			stderr_output = "\n" + stderr_output if stderr_output != "" else stderr_output
 			stdout_output = "\n".join([f"STDOUT: {line}" for line in stdout_output.splitlines()])
 			stdout_output = "\n" + stdout_output if stdout_output != "" else stdout_output
-			self.problems.append("failed_to_apply")
+			self.problems.append("failed_apply")
 			raise Exception(
 				f"Failed to apply patch {self.parent.full_file_path()}:{stderr_output}{stdout_output}")
 
 	def commit_changes_to_git(self, repo: git.Repo, add_rebase_tags: bool):
-		log.info(f"Committing changes to git: {self.parent.file_base_name}")
+		log.info(f"Committing changes to git: {self.parent.relative_dirs_and_base_file_name}")
 		# add all the files that were touched by the patch
 		# if the patch failed to parse, this will be an empty list, so we'll just add all changes.
 		add_all_changes_in_git = False
@@ -339,6 +361,7 @@ class PatchInPatchFile:
 				raise Exception(
 					f"Patch {self} has no files touched, but is not marked as failed to parse.")
 			# add all files to git staging area
+			all_files_to_add: list[str] = []
 			for file_name in self.all_file_names_touched:
 				log.info(f"Adding file {file_name} to git")
 				full_path = os.path.join(repo.working_tree_dir, file_name)
@@ -347,14 +370,16 @@ class PatchInPatchFile:
 					log.error(f"File '{full_path}' does not exist, but is touched by {self}")
 					add_all_changes_in_git = True
 				else:
-					repo.git.add(file_name)
+					all_files_to_add.append(file_name)
+			if not add_all_changes_in_git:
+				repo.git.add("-f", all_files_to_add)
 
 		if self.failed_to_parse or add_all_changes_in_git:
 			log.warning(f"Rescue: adding all changed files to git for {self}")
 			repo.git.add(repo.working_tree_dir)
 
 		# commit the changes, using GitPython; show the produced commit hash
-		commit_message = f"{self.parent.file_base_name}(:{self.counter})\n\nOriginal-Subject: {self.subject}\n{self.desc}"
+		commit_message = f"{self.parent.relative_dirs_and_base_file_name}(:{self.counter})\n\nOriginal-Subject: {self.subject}\n{self.desc}"
 		if add_rebase_tags:
 			commit_message = f"{commit_message}\n{self.patch_rebase_tags_desc()}"
 		author: git.Actor = git.Actor(self.from_name, self.from_email)
@@ -377,7 +402,7 @@ class PatchInPatchFile:
 
 	def patch_rebase_tags_desc(self):
 		tags = {}
-		tags["Patch-File"] = self.parent.file_base_name
+		tags["Patch-File"] = self.parent.relative_dirs_and_base_file_name
 		tags["Patch-File-Counter"] = self.counter
 		tags["Patch-Rel-Directory"] = self.parent.patch_dir.rel_dir
 		tags["Patch-Type"] = self.parent.patch_dir.patch_root_dir.patch_type
@@ -396,15 +421,24 @@ class PatchInPatchFile:
 		return "❌"
 
 	def markdown_problems(self):
-		if len(self.problems) == 0:
-			return "✅"
 		ret = []
+		# if it's a patch in a series, add emoji
+		if self.parent.from_series:
+			ret.append(f" 📜 ")
+
+		if len(self.problems) == 0:
+			ret.append("✅ ")
+
 		for problem in self.problems:
 			if problem in ["not_mbox", "needs_rebase"]:
 				# warning emoji
-				ret.append(f"⚠️{problem}")  # normal
+				ret.append(f"⚠️`[{problem}]` ")
 			else:
-				ret.append(f"**❌{problem}**")  # bold
+				ret.append(f"❌`[{problem}]` ")
+
+		# if it's a user patch, add smiley
+		if self.parent.patch_dir.patch_root_dir.root_type == "user":
+			ret.append(" 🫠`[user]` ")
 
 		return " ".join(ret)
 
@@ -413,10 +447,10 @@ class PatchInPatchFile:
 
 	def markdown_files(self):
 		ret = []
-		max_files_shown = 5
+		max_files_shown = 15
 		# Use the keys of the patch_file_stats_dict which is already sorted by the larger files
 		file_names = list(self.patched_file_stats_dict.keys())
-		# if no files were touched, just return an interrobang
+		# if no files were touched, just return an ?
 		if len(file_names) == 0:
 			return "`?`"
 		for file_name in file_names[:max_files_shown]:
@@ -427,13 +461,29 @@ class PatchInPatchFile:
 
 	def markdown_author(self):
 		if self.from_name:
-			return f"{self.from_name}"
-		return "`?`"
+			return f"`{self.from_name.strip()}`"
+		return "`[no Author]`"
 
 	def markdown_subject(self):
 		if self.subject:
 			return f"_{self.subject}_"
-		return "`?`"
+		return "`[no Subject]`"
+
+	def markdown_link_to_patch(self):
+		if self.git_commit_hash is None:
+			return ""
+		return f"{self.git_commit_hash} "
+
+	def markdown_name(self):
+		ret = []
+		patch_name = self.parent.relative_dirs_and_base_file_name
+		# if the basename includes slashes, split after the last slash, the first part is the directory, second the file
+		if "/" in self.parent.relative_dirs_and_base_file_name:
+			dir_name, patch_name = self.parent.relative_dirs_and_base_file_name.rsplit("/", 1)
+			if dir_name is not None:
+				ret.append(f"`[{dir_name}/]`")
+		ret.append(f"`{patch_name}`")
+		return " ".join(ret)
 
 
 def fix_patch_subject(subject):
@@ -532,9 +582,9 @@ def read_file_as_utf8(file_name: str) -> tuple[str, list[str]]:
 # Extremely Armbian-specific.
 def perform_git_archeology(
 	base_armbian_src_dir: str, armbian_git_repo: git.Repo, patch: PatchInPatchFile,
-	bad_archeology_hexshas: list[str], fast: bool):
+	bad_archeology_hexshas: list[str], fast: bool) -> bool:
 	log.info(f"Trying to recover description for {patch.parent.file_name}:{patch.counter}")
-	patch_file_name = patch.parent.file_name
+	file_name_for_search = f"{patch.parent.file_name_no_ext_no_dirs}.patch"
 
 	patch_file_paths: list[str] = []
 	if fast:
@@ -545,12 +595,12 @@ def perform_git_archeology(
 		proc = subprocess.run(
 			[
 				"find", base_armbian_src_dir,
-				"-name", patch_file_name,
+				"-name", file_name_for_search,
 				"-type", "f"
 			],
 			cwd=base_armbian_src_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 		patch_file_paths = proc.stdout.decode("utf-8").splitlines()
-	log.info(f"Found {len(patch_file_paths)} files with name {patch_file_name}")
+	log.info(f"Found {len(patch_file_paths)} files with name {file_name_for_search}")
 	all_commits: list = []
 	for found_file in patch_file_paths:
 		relative_file_path = os.path.relpath(found_file, base_armbian_src_dir)
@@ -570,6 +620,10 @@ def perform_git_archeology(
 			unique_commits.append(commit)
 
 	unique_commits.sort(key=lambda c: c.committed_datetime)
+
+	if len(unique_commits) == 0:
+		log.warning(f"Could not find any commits for '{file_name_for_search}'.")
+		return False
 
 	main_suspect: git.Commit = unique_commits[0]
 	log.info(f"- Main suspect: {main_suspect}: {main_suspect.message.rstrip()} Author: {main_suspect.author}")
@@ -609,3 +663,4 @@ def perform_git_archeology(
 	if patch.from_name is None or patch.from_email is None:
 		patch.from_name, patch.from_email = downgrade_to_ascii(
 			main_suspect.author.name), main_suspect.author.email
+	return True

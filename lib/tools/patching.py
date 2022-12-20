@@ -1,12 +1,13 @@
 #! /bin/env python3
 import logging
+import os
 
 # Let's use GitPython to query and manipulate the git repo
-from git import Repo, GitCmdObjectDB, InvalidGitRepositoryError
+from git import Repo, GitCmdObjectDB, InvalidGitRepositoryError, Actor
 
 import common.armbian_utils as armbian_utils
 import common.patching_utils as patching_utils
-from common.md_asset_log import SummarizedMarkdownWriter
+from common.md_asset_log import SummarizedMarkdownWriter, get_gh_pages_workflow_script
 
 # Prepare logging
 armbian_utils.setup_logging()
@@ -44,8 +45,9 @@ CONST_PATCH_ROOT_DIRS = []
 for patch_dir_to_apply in PATCH_DIRS_TO_APPLY:
 	if USERPATCHES_PATH is not None:
 		CONST_PATCH_ROOT_DIRS.append(
-			patching_utils.PatchRootDir(f"{USERPATCHES_PATH}/{PATCH_TYPE}/{patch_dir_to_apply}", "user",
-						    PATCH_TYPE, USERPATCHES_PATH))
+			patching_utils.PatchRootDir(
+				f"{USERPATCHES_PATH}/{PATCH_TYPE}/{patch_dir_to_apply}", "user", PATCH_TYPE,
+				USERPATCHES_PATH))
 	CONST_PATCH_ROOT_DIRS.append(
 		patching_utils.PatchRootDir(f"{SRC}/patch/{PATCH_TYPE}/{patch_dir_to_apply}", "core", PATCH_TYPE, SRC))
 
@@ -58,14 +60,22 @@ if BOARD is not None:
 CONST_PATCH_SUB_DIRS.append(patching_utils.PatchSubDir("", "common"))
 
 # Prepare the full list of patch directories to apply
-ALL_DIRS = []
+ALL_DIRS: list[patching_utils.PatchDir] = []
 for patch_root_dir in CONST_PATCH_ROOT_DIRS:
 	for patch_sub_dir in CONST_PATCH_SUB_DIRS:
 		ALL_DIRS.append(patching_utils.PatchDir(patch_root_dir, patch_sub_dir, SRC))
 
+SERIES_PATCH_FILES: list[patching_utils.PatchFileInDir] = []
 # Now, loop over ALL_DIRS, and find the patch files in each directory
 for one_dir in ALL_DIRS:
-	one_dir.find_patch_files()
+	if one_dir.patch_sub_dir.sub_type == "common":
+		# Handle series; those are directly added to SERIES_PATCH_FILES which is not sorted.
+		series_patches = one_dir.find_series_patch_files()
+		if len(series_patches) > 0:
+			log.debug(f"Directory '{one_dir.full_dir}' contains a series.")
+			SERIES_PATCH_FILES.extend(series_patches)
+	# Regular file-based patch files. This adds to the internal list.
+	one_dir.find_files_patch_files()
 
 # Gather all the PatchFileInDir objects into a single list
 ALL_DIR_PATCH_FILES: list[patching_utils.PatchFileInDir] = []
@@ -75,12 +85,14 @@ for one_dir in ALL_DIRS:
 
 ALL_DIR_PATCH_FILES_BY_NAME: dict[(str, patching_utils.PatchFileInDir)] = {}
 for one_patch_file in ALL_DIR_PATCH_FILES:
-	# Hack: do a single one: DO NOT ENABLE THIS
-	# if one_patch_file.file_name == "board-pbp-add-dp-alt-mode.patch":
 	ALL_DIR_PATCH_FILES_BY_NAME[one_patch_file.file_name] = one_patch_file
 
 # sort the dict by the key (file_name, sans dir...)
-ALL_DIR_PATCH_FILES_BY_NAME = dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items()))
+# We need a final, ordered list of patch files to apply.
+# This reflects the order in which we want to apply the patches.
+# For series-based patches, we want to apply the serie'd patches first.
+# The other patches are separately sorted.
+ALL_PATCH_FILES_SORTED = SERIES_PATCH_FILES + list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
 
 # Now, actually read the patch files.
 # Patch files might be in mailbox format, and in that case contain more than one "patch".
@@ -89,8 +101,8 @@ ALL_DIR_PATCH_FILES_BY_NAME = dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items()))
 # If not, just use the whole file as a single patch.
 # We'll store the patches in a list of Patch objects.
 VALID_PATCHES: list[patching_utils.PatchInPatchFile] = []
-for key in ALL_DIR_PATCH_FILES_BY_NAME:
-	patch_file_in_dir: patching_utils.PatchFileInDir = ALL_DIR_PATCH_FILES_BY_NAME[key]
+patch_file_in_dir: patching_utils.PatchFileInDir
+for patch_file_in_dir in ALL_PATCH_FILES_SORTED:
 	try:
 		patches_from_file = patch_file_in_dir.split_patches_from_file()
 		VALID_PATCHES.extend(patches_from_file)
@@ -128,11 +140,14 @@ if apply_patches_to_git and git_archeology:
 		bad_archeology_hexshas = ["something"]
 
 		for patch in VALID_PATCHES:
-			if patch.desc is None:
-				patching_utils.perform_git_archeology(
+			if patch.subject is None:  # archeology only for patches without subject
+				archeology_ok = patching_utils.perform_git_archeology(
 					SRC, armbian_git_repo, patch, bad_archeology_hexshas, fast_archeology)
+				if not archeology_ok:
+					patch.problems.append("archeology_failed")
 
 # Now, we need to apply the patches.
+git_repo: "git.Repo | None" = None
 if apply_patches:
 	log.info("Cleaning target git directory...")
 	git_repo = Repo(GIT_WORK_DIR, odbt=GitCmdObjectDB)
@@ -191,6 +206,7 @@ if apply_patches:
 				f"it was not applied successfully.")
 
 # Create markdown about the patches
+readme_markdown: "str | None" = None
 with SummarizedMarkdownWriter(f"patching_{PATCH_TYPE}.md", f"{PATCH_TYPE} patching") as md:
 	patch_count = 0
 	patches_applied = 0
@@ -201,13 +217,13 @@ with SummarizedMarkdownWriter(f"patching_{PATCH_TYPE}.md", f"{PATCH_TYPE} patchi
 	else:
 		# Prepare the Markdown table header
 		md.write(
-			"| Applied? | Problems | Patch  | Diffstat Summary | Files patched | Author | Subject | Link to patch |\n")
+			"| Status | Patch  | Diffstat Summary | Files patched | Author / Subject |\n")
 		# Markdown table hyphen line and column alignment
-		md.write("| :---:    | :---:    | :---   | :---   | :---   | :---   | :--- | :--- |\n")
+		md.write("| :---:    | :---   | :---   | :---   | :---  |\n")
 	for one_patch in VALID_PATCHES:
 		# Markdown table row
 		md.write(
-			f"| {one_patch.markdown_applied()} | {one_patch.markdown_problems()} | `{one_patch.parent.file_base_name}` | {one_patch.markdown_diffstat()} | {one_patch.markdown_files()} | {one_patch.markdown_author()} | {one_patch.markdown_subject()} | {one_patch.git_commit_hash} |\n")
+			f"| {one_patch.markdown_problems()} | {one_patch.markdown_name()} | {one_patch.markdown_diffstat()} | {one_patch.markdown_link_to_patch()}{one_patch.markdown_files()} | {one_patch.markdown_author()} {one_patch.markdown_subject()} |\n")
 		patch_count += 1
 		if one_patch.applied_ok:
 			patches_applied += 1
@@ -222,3 +238,28 @@ with SummarizedMarkdownWriter(f"patching_{PATCH_TYPE}.md", f"{PATCH_TYPE} patchi
 	md.add_summary(f"{patches_with_problems} with problems")
 	for problem in problem_by_type:
 		md.add_summary(f"{problem_by_type[problem]} {problem}")
+	# capture the markdown
+	readme_markdown = md.get_readme_markdown()
+
+# Finally, write the README.md and the GH pages workflow file to the git dir, add them, and commit them.
+if apply_patches_to_git and readme_markdown is not None and git_repo is not None:
+	log.info("Writing README.md and .github/workflows/gh-pages.yml")
+	with open(os.path.join(GIT_WORK_DIR, "README.md"), 'w') as f:
+		f.write(readme_markdown)
+	git_repo.git.add("README.md")
+	github_workflows_dir = os.path.join(GIT_WORK_DIR, ".github", "workflows")
+	if not os.path.exists(github_workflows_dir):
+		os.makedirs(github_workflows_dir)
+	with open(os.path.join(github_workflows_dir, "publish-ghpages.yaml"), 'w') as f:
+		f.write(get_gh_pages_workflow_script())
+	log.info("Committing README.md and .github/workflows/gh-pages.yml")
+	git_repo.git.add("-f", [".github/workflows/publish-ghpages.yaml", "README.md"])
+	maintainer_actor: Actor = Actor("Armbian AutoPatcher", "patching@armbian.com")
+	commit = git_repo.index.commit(
+		message="Armbian patching summary README",
+		author=maintainer_actor,
+		committer=maintainer_actor,
+		skip_hooks=True
+	)
+	log.info(f"Committed changes to git: {commit.hexsha}")
+	log.info("Done with summary commit.")

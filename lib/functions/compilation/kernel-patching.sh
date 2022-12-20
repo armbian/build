@@ -3,10 +3,11 @@
 function kernel_main_patching_python() {
 	prepare_pip_packages_for_python_tools
 
-	temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
+	declare patch_debug="${SHOW_DEBUG:-${DEBUG_PATCHING:-"no"}}"
+	declare temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a params_quoted=(
-		"LOG_DEBUG=${SHOW_DEBUG}"                             # Logging level for python.
+		"LOG_DEBUG=${patch_debug}"                            # Logging level for python.
 		"SRC=${SRC}"                                          # Armbian root
 		"OUTPUT=${temp_file_for_output}"                      # Output file for the python script.
 		"ASSET_LOG_BASE=$(print_current_asset_log_base_file)" # base file name for the asset log; to write .md summaries.
@@ -24,7 +25,11 @@ function kernel_main_patching_python() {
 		"BASE_GIT_REVISION=${kernel_git_revision}"                       # The revision we're building/patching. Python will reset and clean to this.
 		"BRANCH_FOR_PATCHES=kernel-${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" # When applying patches-to-git, use this branch.
 		# Lenience: allow problematic patches to be applied.
-		"ALLOW_RECREATE_EXISTING_FILES=yes" # Allow patches to recreate files that already exist.
+		"ALLOW_RECREATE_EXISTING_FILES=yes"    # Allow patches to recreate files that already exist.
+		"GIT_ARCHEOLOGY=${GIT_ARCHEOLOGY:-no}" # Allow git to do some archaeology to find the original patch's owners
+		# Pass the maintainer info, used for commits.
+		"MAINTAINER_NAME=${MAINTAINER}"      # Name of the maintainer
+		"MAINTAINER_EMAIL=${MAINTAINERMAIL}" # Email of the maintainer
 	)
 	display_alert "Calling Python patching script" "for kernel" "info"
 	run_host_command_logged env -i "${params_quoted[@]@Q}" python3 "${SRC}/lib/tools/patching.py"
@@ -42,10 +47,9 @@ function kernel_main_patching() {
 	#LOG_SECTION="kernel_prepare_patching" do_with_logging do_with_hooks kernel_prepare_patching
 	#LOG_SECTION="kernel_patching" do_with_logging do_with_hooks kernel_patching
 
-	# HACK: STOP HERE, for development.
+	# STOP HERE, for cli support for patching tools.
 	if [[ "${PATCH_ONLY}" == "yes" ]]; then
-		display_alert "PATCH_ONLY is set, stopping here." "PATCH_ONLY=yes" "info"
-		exit 0
+		return 0
 	fi
 
 	# Interactive!!!
