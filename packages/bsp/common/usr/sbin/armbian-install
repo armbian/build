@@ -641,10 +641,29 @@ check_partitions()
 	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}'"
 	AvailablePartitions=$(eval $CMD)
 	if [[ -z $AvailablePartitions ]]; then
-		FREE_SPACE=$(parted /dev/$diskcheck unit GB print free | awk '/Free Space/{c++; sum += $3; print sum}' | tail -1)
-		dialog --yes-label "Proceed" --no-label 'Exit' --title "$title" --backtitle "$backtitle" --yesno "\nDestination $diskcheck has $FREE_SPACE Gb of available space. \n\nAutomated install will generate needed partitions!" 9 55
-		if [[ "${FREE_SPACE%.*}" -gt 4 && $? == 0 ]]; then
-			if [[ "$DEVICE_TYPE" == uefi && -z "$efi_partition" ]]; then
+		# Consider brand new devices or devices with a wiped partition table
+		if [[ -z $(blkid /dev/$diskcheck) ]]; then
+			# There is not yet any partition table on the disk device.
+			# => we have to calc the size in GB directly from the device.
+			FREE_SPACE=$(echo "scale=0; $(blockdev --getsize64 /dev/$diskcheck)/1024^3" | bc -l)
+		else
+			# The device has an initial partition table
+			FREE_SPACE=$(parted /dev/$diskcheck unit GB print free | awk '/Free Space/{c++; sum += $3; print sum}' | tail -1)
+		fi
+		# Logic for auto created partitions:
+		#  1. Check for a minimum free space of 4GB for a partition
+		#  2. Ask user to proceed with auto-created partition(s) or not
+		#  3. Distinguish between UEFI and non UEFI device
+		#  4. Create partition of full free size for a non UEFI device
+		#
+		if [[ "${FREE_SPACE%.*}" -lt 4 ]]; then
+			dialog --ok-label 'Exit' --title ' Warning ' --backtitle "$backtitle" --colors --no-collapse --msgbox "\n\Z1There is not enough free capacity on /dev/$diskcheck. Please check your device.\Zn" 7 52
+			exit 11
+		fi
+		dialog --yes-label "Proceed" --no-label 'Exit' --title "$title" --backtitle "$backtitle" --yesno "\nDestination $diskcheck has ${FREE_SPACE}GB of available space. \n\nAutomated install will generate needed partition(s)!" 9 55
+		[[ $? -ne 0 ]] && exit 11
+		if [[ "$DEVICE_TYPE" == uefi ]]; then
+			if [[ -z "$efi_partition" ]]; then
 				wipefs -aq /dev/$diskcheck
 				# create EFI partition
 				{
@@ -663,9 +682,12 @@ check_partitions()
 			# re-read
 			emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 			efi_partition=$(LC_ALL=C fdisk -l "/dev/$diskcheck" 2>/dev/null | grep "EFI" | awk '{print $1}')
-
 		else
-			exit 11
+			# Create new partition of max free size
+			{
+				echo n; echo ; echo ; echo ; echo
+				echo w
+			} | fdisk /dev/$diskcheck &> /dev/null || true
 		fi
 	fi
 	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
