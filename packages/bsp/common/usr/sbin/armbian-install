@@ -12,7 +12,13 @@
 # Import:
 # DIR: path to u-boot directory
 # write_uboot_platform: function to write u-boot to a block device
-# write_uboot_platform_mtd: function to write u-boot to a mtd (eg. SPI flash) device
+# write_uboot_platform_mtd:
+#   function to write u-boot to a mtd (eg. SPI flash) device
+#   $1 = u-boot files directory
+#   $2 = first MTD device path (e.g.: /dev/mtdblock0) - this is for backward compatibility before Armbian 23.nn
+#   $3 = Log file name
+#   $4 = :space: separated list of all MTD device names
+#        Note: MTD char device names are passed in format device_name:partition_label - e.g.: mtd0:SPL
 
 [[ -f /usr/lib/u-boot/platform_install.sh ]] && source /usr/lib/u-boot/platform_install.sh
 
@@ -41,11 +47,19 @@ root_partition_name=$(echo $root_partition | sed 's/\/dev\///g')
 root_partition_device_name=$(lsblk -ndo pkname $root_partition)
 root_partition_device=/dev/$root_partition_device_name
 
-# find targets: NAND, EMMC, SATA, SPI flash, NVMe
+# find targets: legacy SUNXI NAND, EMMC, SATA, NVMe, MTD block and/or MTD char driven flash
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
 diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme|^mmc' | grep -v "$root_partition_device_name" | grep -v boot)
-spicheck=$(grep 'mtd' /proc/partitions | awk '{print $NF}')
+# Start mtdcheck with probable MTD block device partitions:
+mtdcheck=$(grep 'mtdblock' /proc/partitions | awk '{print $NF}' | xargs)
+# Append mtdcheck with probable MTD char devices filtered for partition name(s)
+# containing "spl" or "boot" case insensitive,
+# since we are currently interested in MTD partitions for boot flashing only.
+# Note: The following statement will add matching MTD char device names
+#       combined with partition name (separated from devicename by a :colon:):
+#       mtd0:partition0_name mtd1:partition1_name ... mtdN:partitionN_name
+[[ -f /proc/mtd ]] && mtdcheck="$mtdcheck${mtdcheck:+ }$(grep -i -E '^mtd[0-9]+:.*(spl|boot).*' /proc/mtd | awk '{print $1$NF}' | sed 's/\"//g' | xargs)"
 
 # SD card boot part - to be considered more than one entry on various platforms
 # UUID=xxx...
@@ -94,7 +108,7 @@ create_armbian()
 		[[ -n $2 ]] && ( mount -o compress-force=zlib "$2" "${TempDir}"/rootfs 2> /dev/null || mount "$2" "${TempDir}"/rootfs )
 	else
 		[[ -n $2 ]] && ( mount -o compress-force=zlib "$2" "${TempDir}"/rootfs 2> /dev/null || mount "$2" "${TempDir}"/rootfs )
-		[[ -n $1 && $1 != "spi" ]] && mount "$1" "${TempDir}"/bootfs
+		[[ -n $1 && $1 != "mtd" ]] && mount "$1" "${TempDir}"/bootfs
 	fi
 	rm -rf "${TempDir}"/bootfs/* "${TempDir}"/rootfs/*
 
@@ -419,9 +433,9 @@ create_armbian()
 
 
 
-	# Boot from SPI, root = SATA / USB
+	# Boot from MTD flash, root = SATA / USB
 	#
-	if [[ $1 == *spi* ]]; then
+	if [[ $1 == *mtd* ]]; then
 		if [[ -f "${TempDir}"/rootfs/boot/armbianEnv.txt ]]; then
 			sed -e 's,rootdev=.*,rootdev='"$satauuid"',g' -i "${TempDir}"/rootfs/boot/armbianEnv.txt
 		fi
@@ -734,15 +748,23 @@ stop_running_services()
 	done
 }
 
-# show warning and write u-boot to SPI flash $1 = spi device name, $2 = u-boot files directory
-write_uboot_to_spi_flash()
+# show warning and write u-boot to MTD device(s)
+#  $1 = u-boot files directory
+#  $2 = space separated list of all MTD block and/or MTD char device partitions
+write_uboot_to_mtd_flash()
 {
-	local MTD_BLK="/dev/$1"
-	local DIR="$2"
-	local MESSAGE="This script will update the bootloader on SPI Flash $MTD_BLK. Continue?\nIt will take up to a few minutes."
-	dialog --title "$title" --backtitle "$backtitle" --cr-wrap --colors --yesno " \Z1$(toilet -W -f ascii9 ' WARNING')\Zn\n$MESSAGE" 16 67
+	local DIR="$1"
+	local MTD_ALL_DEVICE_PARTITIONS="$2"
+	# For backward compatibility to existing implementations of function write_uboot_platform_mtd
+	# we have to provide the first device as a dedicated device path:
+	local MTD_DEFAULT_DEVICE_PATH="/dev/${MTD_ALL_DEVICE_PARTITIONS%% *}"
+	# If the first device is a char device partition, it contains a :colon:
+	# -> so we have to take the part before the colon only
+	MTD_DEFAULT_DEVICE_PATH="${MTD_DEFAULT_DEVICE_PATH%%:*}"
+	local MESSAGE="This script will update the bootloader on one or multiple of these MTD devices:\n[ $MTD_ALL_DEVICE_PARTITIONS ]\n\nIt may take up to a few minutes - Continue?"
+	dialog --title "$title" --backtitle "$backtitle" --cr-wrap --colors --yesno " \Z1$(toilet -W -f ascii9 ' WARNING')\Zn\n$MESSAGE" 19 67
 	if [[ $? -eq 0 ]]; then
-		write_uboot_platform_mtd "$DIR" $MTD_BLK
+		write_uboot_platform_mtd "$DIR" "$MTD_DEFAULT_DEVICE_PATH" "$logfile" "$MTD_ALL_DEVICE_PARTITIONS"
 		update_bootscript
 		echo 'Done'
 	fi
@@ -768,7 +790,7 @@ main()
 		dest_boot=$emmccheck'p1'
 		dest_root=$emmccheck'p1'
 	else
-		ichip='NAND'
+		ichip='legacy SUNXI NAND'
 		dest_boot='/dev/nand1'
 		dest_root='/dev/nand2'
 	fi
@@ -785,13 +807,13 @@ main()
 		[[ -n $sduuid && -n $diskcheck ]]					&& options+=(1 'Boot from SD - system on SATA, USB or NVMe')
 		[[ -n $emmccheck ]] 						&& options+=(2 "Boot from $ichip - system on $ichip")
 		[[ -n $emmccheck && -n $diskcheck ]] 				&& options+=(3 "Boot from $ichip - system on SATA, USB or NVMe")
-		[[ -n $spicheck ]] 						&& options+=(4 'Boot from SPI  - system on SATA, USB or NVMe')
+		[[ -n $mtdcheck ]] 						&& options+=(4 'Boot from MTD Flash - system on SATA, USB or NVMe')
 		[[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]]	&& options+=(5 'Install/Update the bootloader on SD/eMMC')
 		[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* \
 		|| $LINUXFAMILY == mt7623 ) && \
 		( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]]		&& options+=(6 'Install/Update the bootloader on special eMMC partition')
-		[[ -n $spicheck && \
-		$(type -t write_uboot_platform_mtd) == function ]] 		&& options+=(7 'Install/Update the bootloader on SPI Flash')
+		[[ -n $mtdcheck && \
+		$(type -t write_uboot_platform_mtd) == function ]] 		&& options+=(7 'Install/Update the bootloader on MTD Flash')
 	fi
 
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
@@ -842,21 +864,21 @@ main()
 				;;
 			4)
 				# Espressobin has flash boot by default
-				title='SPI flash boot | USB/SATA/NVMe root install'
+				title='MTD Flash boot | USB/SATA/NVMe root install'
 				command='Power off'
 				# we need to copy boot
 				sed -i '/boot/d' $EX_LIST
 				check_partitions
 				show_warning "This script will erase your device $DISK_ROOT_PART. Continue?"
 				format_disk "$DISK_ROOT_PART"
-				create_armbian 'spi' "$DISK_ROOT_PART"
+				create_armbian 'mtd' "$DISK_ROOT_PART"
 
 				if [[ $(type -t write_uboot_platform_mtd) == function ]]; then
 					dialog --title "$title" --backtitle "$backtitle" --yesno \
-						"Do you want to write the bootloader to SPI flash?\n\nIt is required if you have not done it before or if you have some non-Armbian bootloader in SPI." 8 60
+						"Do you want to write the bootloader to MTD Flash?\n\nIt is required if you have not done it before or if you have some non-Armbian bootloader in this flash." 8 60
 
 					if [[ $? -eq 0 ]]; then
-						write_uboot_to_spi_flash $spicheck "$DIR"
+						write_uboot_to_mtd_flash "$DIR" "$mtdcheck"
 					fi
 				fi
 				;;
@@ -879,7 +901,7 @@ main()
 				return
 				;;
 			7)
-				write_uboot_to_spi_flash $spicheck "$DIR"
+				write_uboot_to_mtd_flash "$DIR" "$mtdcheck"
 				return
 				;;
 
