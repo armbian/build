@@ -61,30 +61,6 @@ function prepare_and_config_main_build_single() {
 
 	fi
 
-	if [[ -n $REPOSITORY_UPDATE ]]; then
-
-		# select stable/beta configuration
-		if [[ $BETA == yes ]]; then
-			DEB_STORAGE=$DEST/debs-beta
-			REPO_STORAGE=$DEST/repository-beta
-			REPO_CONFIG="aptly-beta.conf"
-		else
-			DEB_STORAGE=$DEST/debs
-			REPO_STORAGE=$DEST/repository
-			REPO_CONFIG="aptly.conf"
-		fi
-
-		# For user override
-		if [[ -f "${USERPATCHES_PATH}"/lib.config ]]; then
-			display_alert "Using user configuration override" "userpatches/lib.config" "info"
-			source "${USERPATCHES_PATH}"/lib.config
-		fi
-
-		repo-manipulate "$REPOSITORY_UPDATE"
-		exit
-
-	fi
-
 	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 	backward_compatibility_build_only
