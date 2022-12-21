@@ -47,11 +47,16 @@ function prepare_and_config_main_build_single() {
 	BOARD_TYPE="${dict_all_board_types["${BOARD}"]}"
 	BOARD_SOURCE_FILES="${dict_all_board_source_files["${BOARD}"]}"
 
+	declare -a sourced_board_configs=()
 	for BOARD_SOURCE_FILE in ${BOARD_SOURCE_FILES}; do # No quotes, so expand the space-delimited list
 		display_alert "Sourcing board configuration" "${BOARD_SOURCE_FILE}" "info"
 		# shellcheck source=/dev/null
 		source "${BOARD_SOURCE_FILE}"
+		sourced_board_configs+=("${BOARD_SOURCE_FILE}")
 	done
+	
+	# Sanity check: if no board config was sourced, then the board name is invalid
+	[[ ${#sourced_board_configs[@]} -eq 0 ]] && exit_with_error "No such BOARD '${BOARD}'; no board config file found."
 
 	LINUXFAMILY="${BOARDFAMILY}" # @TODO: wtf? why? this is (100%?) rewritten by family config!
 	# this sourced the board config. do_main_configuration will source the family file.
@@ -61,7 +66,7 @@ function prepare_and_config_main_build_single() {
 	declare -g -r PACKAGE_LIST_BOARD="${PACKAGE_LIST_BOARD}"
 	declare -g -r PACKAGE_LIST_BOARD_REMOVE="${PACKAGE_LIST_BOARD_REMOVE}"
 
-	[[ -z $KERNEL_TARGET ]] && exit_with_error "Board configuration does not define valid kernel config"
+	[[ -z $KERNEL_TARGET ]] && exit_with_error "Board ('${BOARD}') configuration does not define valid kernel config"
 
 	interactive_config_ask_branch
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected: BRANCH"
