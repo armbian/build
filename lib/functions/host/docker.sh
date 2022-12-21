@@ -109,8 +109,11 @@ function docker_cli_prepare() {
 	#############################################################################################################
 	# Prepare some dependencies; these will be used on the Dockerfile
 
-	enable_all_extensions_builtin_and_user
-	initialize_extension_manager # initialize the extension manager.
+	# initialize the extension manager; enable all extensions; only once..
+	if [[ "${docker_prepare_cli_skip_exts:-no}" != "yes" ]]; then
+		enable_all_extensions_builtin_and_user
+		initialize_extension_manager
+	fi
 	declare -a -g host_dependencies=() python3_pip_dependencies=()
 	early_prepare_pip3_dependencies_for_python_tools
 	early_prepare_host_dependencies
@@ -272,7 +275,7 @@ function docker_cli_build_dockerfile() {
 		display_alert "Base image not in local cache, building from scratch" "${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 		export DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE=no
 		export DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH}"
-		docker_cli_prepare
+		docker_prepare_cli_skip_exts="yes" docker_cli_prepare
 		display_alert "Re-created" "Dockerfile, proceeding, build from scratch" "debug"
 	fi
 
