@@ -14,7 +14,7 @@
 # It exists for backward compatibility only.
 #
 backward_compatibility_build_only() {
-	local _build_packages="u-boot,kernel,armbian-config,armbian-zsh,plymouth-theme-armbian,armbian-firmware,armbian-bsp"
+	local _build_packages=$(list_of_main_packages)
 	# build default = "$_build_packages bootstrap"
 
 	# These checks are necessary for backward compatibility with logic
