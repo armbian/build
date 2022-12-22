@@ -2,10 +2,10 @@
 #
 # Adding package
 #
-# @arg $1 string component.
-# @arg $2 string incoming folder.
-# @arg $3 int policy.
-# @arg $4 Input folder.
+# @arg $1 string component
+# @arg $2 string incoming folder
+# @arg $3 string description
+# @arg $4 input folder
 #
 adding_packages() {
 
@@ -32,15 +32,13 @@ adding_packages() {
 # $1: Input folder
 # $2: Output folder
 # $3: Command
-# $4: Build repository
-# $5: GPG password
-# $6: jammy,sid
+# $4: GPG password
+# $5: jammy,sid
 #
-
 addtorepo() {
 
 	# read comma delimited distros into array
-    IFS=', ' read -r -a DISTROS <<< "$6"
+    IFS=', ' read -r -a DISTROS <<< "$5"
 	local errors=0
 
 	for release in "${DISTROS[@]}"; do
@@ -69,14 +67,14 @@ addtorepo() {
 		if find "$1"/ -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			adding_packages "$release" "" "main" "$1"
 		else
-			aptly repo add -config="${CONFIG}" "${release}" "example.deb" > /dev/null 2>&1
+			aptly repo add -config="${CONFIG}" "${release}" "example.deb" > /dev/null
 		fi
 
 		local COMPONENTS="main"
 
-		# adding main distribution packages
+		# adding release-specific main
 		if find "${1}/${release}" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
-			adding_packages "${release}-utils" "/${release}" "release packages" "$1"
+			adding_packages "${release}" "/${release}" "release packages" "$1"
 		else
 			# workaround - add dummy package to not trigger error
 			aptly repo add -config="${CONFIG}" "${release}" "example.deb" > /dev/null
@@ -90,7 +88,7 @@ addtorepo() {
 		fi
 		COMPONENTS="${COMPONENTS} ${release}-utils"
 
-		# adding desktop
+		# adding release-specific desktop
 		if find "${1}/extra/${release}-desktop" -maxdepth 1 -type f -name "*.deb" 2> /dev/null | grep -q .; then
 			adding_packages "${release}-desktop" "/extra/${release}-desktop" "desktop" "$1"
 		else
@@ -110,7 +108,8 @@ addtorepo() {
 			echo "Publishing ${release}"
 			aptly publish \
 				-acquire-by-hash \
-				-passphrase="${5}" \
+				-architectures="armhf,arm64,amd64,all" \
+				-passphrase="${4}" \
 				-origin="Armbian" \
 				-label="Armbian" \
 				-config="${CONFIG}" \
@@ -118,7 +117,7 @@ addtorepo() {
 				-distribution="${release}" repo "${release}" ${COMPONENTS//main/} > /dev/null
 
 			if [[ $? -ne 0 ]]; then
-				display_alert "Publishing failed" "${release}" "err"
+				echo "Publishing failed ${release}"
 				errors=$((errors + 1))
 				exit 0
 			fi
@@ -148,25 +147,25 @@ addtorepo() {
 
 }
 
+
 #
 # $1: Input folder
 # $2: Output folder
 # $3: Command
-# $4: Build repository
-# $5: GPG password
-# $6: jammy,sid
+# $4: GPG password
+# $5: jammy,sid
 #
 repo-manipulate() {
 
 	# read comma delimited distros into array
-	IFS=', ' read -r -a DISTROS <<< "$6"
+	IFS=', ' read -r -a DISTROS <<< "$5"
 
 	case $3 in
 
 		serve)
 
 			sudo aptly serve -listen=$(ip -f inet addr | grep -Po 'inet \K[\d.]+' | grep -v 127.0.0.1 | head -1):80 -config="${CONFIG}"
-			exit 0
+			return 0
 
 			;;
 
@@ -174,13 +173,13 @@ repo-manipulate() {
 
 			for release in "${DISTROS[@]}"; do
 				echo "Displaying repository contents for $release"
-				if [[ -z "$(cat $4/config/distributions/${release}/support | grep "csc\|supported" 2> /dev/null)" ]]; then
-					continue
-				fi
 				aptly repo show -with-packages -config="${CONFIG}" "${release}" | tail -n +7
+				echo "Displaying repository contents for $release-utils"
+				aptly repo show -with-packages -config="${CONFIG}" "${release}-utils" | tail -n +7
+				echo "Displaying repository contents for $release-desktop"
 				aptly repo show -with-packages -config="${CONFIG}" "${release}-desktop" | tail -n +7
 			done
-			exit 0
+			return 0
 
 			;;
 
@@ -192,9 +191,9 @@ repo-manipulate() {
 				LIST=()
 				for release in "${DISTROS[@]}"; do
 					LIST+=($(aptly repo show -with-packages -config="${CONFIG}" "${release}" | tail -n +7))
+					LIST+=($(aptly repo show -with-packages -config="${CONFIG}" "${release}-utils" | tail -n +7))
 					LIST+=($(aptly repo show -with-packages -config="${CONFIG}" "${release}-desktop" | tail -n +7))
 				done
-				LIST+=($(aptly repo show -with-packages -config="${CONFIG}" utils | tail -n +7))
 				LIST=($(echo "${LIST[@]}" | tr ' ' '\n' | sort -u))
 				new_list=()
 				# create a human readable menu
@@ -205,17 +204,17 @@ repo-manipulate() {
 				LIST=("${new_list[@]}")
 				LIST_LENGTH=$((${#LIST[@]} / 2))
 				exec 3>&1
-				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9 + ${LIST_LENGTH})) 82 65 "${LIST[@]}" 2>&1 1>&3)
+				TARGET_VERSION=$(dialog --cancel-label "Cancel" --backtitle "BACKTITLE" --no-collapse --title "Remove packages from repositories" --clear --menu "Delete" $((9 + LIST_LENGTH)) 82 65 "${LIST[@]}" 2>&1 1>&3)
 				exitstatus=$?
 				exec 3>&-
 				if [[ $exitstatus -eq 0 ]]; then
 					for release in "${DISTROS[@]}"; do
 						aptly repo remove -config="${CONFIG}" "${release}" "$TARGET_VERSION"
+						aptly repo remove -config="${CONFIG}" "${release}-utils" "$TARGET_VERSION"
 						aptly repo remove -config="${CONFIG}" "${release}-desktop" "$TARGET_VERSION"
 					done
-					aptly repo remove -config="${CONFIG}" "utils" "$TARGET_VERSION"
 				else
-					exit 1
+					return 1
 				fi
 				aptly db cleanup -config="${CONFIG}" > /dev/null 2>&1
 			done
@@ -223,48 +222,106 @@ repo-manipulate() {
 
 		update)
 
-			addtorepo "$1" "$2" "$3" "$4" "$5" "$6"
-			exit 0
-
+			addtorepo "$1" "$2" "$3" "$4" "$5"
 			;;
 
 		*)
 
-			echo -e "Usage: repository show | serve | unique | update\n"
-			echo -e "\n show           = display repository content"
-			echo -e "\n serve          = publish your repositories on current server over HTTP"
-			echo -e "\n unique         = manually select which package should be removed from all repositories"
-			echo -e "\n update         = updating repository"
-			exit 0
+			echo -e "Unknown command"
+			return 1
 			;;
 
 	esac
-
 }
 
 
+# defaults
+input="input"
+output="output"
+command="show"
+releases="jammy,sid"
 
-sed -i "s/\"rootDir\": \".*\"/\"rootDir\": \"$2\"/g" aptly.conf
-CONFIG="aptly.conf"
+help()
+{
+echo "Armbian wrapper for Aptly v1.0
 
+(c) Igor Pecovnik, igor@armbian.com
 
-[[ -z "$1$2$3" ]] && exit 1
+License: (MIT) <https://mit-license.org/>
 
-# input output command
+Usage: $0 [ -short | --long ]
 
-# $1: Input folder
-# $2: Output folder
-# $3: Command
-	# "show" displays packages in each repository
-	# "serve" serve repository - useful for local diagnostics
-	# "unique" manually select which package should be removed from all repositories
-	# "update" search for new files in output/debs* to add them to repository
-# $4: Build repository
-# $5: GPG password
-# $6: jammy,sid
+-h --help displays this
+-i --input [input folder]
+-o --output [output folder]
+-p --password [GPG password]
+-r --repository [jammy,sid,bullseye,...]
+-c --command
 
-# Example
-# ./repo input output update "/home/igorp/Devel/build/" pwd sid,jammy,bullseye,focal
+          [show] displays packages in each repository
+          [serve] serve repository - useful for local diagnostics
+          [unique] manually select which package should be removed from all repositories
+          [update] search for packages in input folder
+	"
+    exit 2
+}
 
+SHORT=i:,o:,c:,p:,r:,h
+LONG=input:,output:,command:,password:,releases:,help
+OPTS=$(getopt -a -n repo --options $SHORT --longoptions $LONG -- "$@")
 
-repo-manipulate "$1" "$2" "$3" "$4" "$5" "$6"
+VALID_ARGUMENTS=$# # Returns the count of arguments that are in short or long options
+
+eval set -- "$OPTS"
+
+while :
+do
+  case "$1" in
+    -i | --input )
+      input="$2"
+      shift 2
+      ;;
+    -o | --output )
+      output="$2"
+      shift 2
+      ;;
+    -c | --command )
+      command="$2"
+      shift 2
+      ;;
+    -p | --password )
+      password="$2"
+      shift 2
+      ;;
+    -r | --releases )
+      releases="$2"
+      shift 2
+      ;;
+    -h | --help)
+      help
+      ;;
+    --)
+      shift;
+      break
+      ;;
+    *)
+      echo "Unexpected option: $1"
+      help
+      ;;
+  esac
+done
+
+# define job name
+[[ $(cat /var/run/repomanagement 2>/dev/null) == "$output" ]] && echo "Running. Try again later" && exit 0
+echo "${output}" | sudo tee /var/run/repomanagement &>/dev/null
+
+# redefine output folder in Aptly
+TempDir="$(mktemp -d || exit 1)"
+sed "s/\"rootDir\": \".*\"/\"rootDir\": \"$output\"/g" aptly.conf > "${TempDir}"/aptly.conf
+CONFIG="${TempDir}/aptly.conf"
+
+# main
+repo-manipulate "$input" "$output" "$command" "$password" "$releases"
+RETURN=$?
+sudo rm /var/run/repomanagement
+exit $RETURN
