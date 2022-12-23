@@ -42,6 +42,7 @@ function get_urls() {
 
 # Terrible idea, this runs download_and_verify_internal() with error handling disabled.
 function download_and_verify() {
+	display_alert "Using download_and_verify(), which" "is not correctly handled for armbian-next; expect problems" "warn"
 	download_and_verify_internal "${@}" || true
 }
 
@@ -154,16 +155,16 @@ function download_and_verify_internal() {
 
 			for key in "${keys[@]}"; do
 				gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
-					--list-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 ||
+					--list-keys "${key}" ||
 					gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
 						${http_proxy:+--keyserver-options http-proxy="${http_proxy}"} \
 						--keyserver "hkp://keyserver.ubuntu.com:80" \
-						--recv-keys "${key}" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1 ||
-					exit_with_error "Failed to recieve key" "${key}"
+						--recv-keys "${key}" ||
+					exit_with_error "Failed to receive key" "${key}"
 			done
 
 			gpg --homedir "${SRC}"/cache/.gpg --no-permission-warning --trust-model always \
-				-q --verify "${localdir}/${filename}.asc" >> "${DEST}/${LOG_SUBPATH}/output.log" 2>&1
+				-q --verify "${localdir}/${filename}.asc"
 			[[ ${PIPESTATUS[0]} -eq 0 ]] && verified=true && display_alert "Verified" "PGP" "info"
 
 		else
