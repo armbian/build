@@ -8,7 +8,6 @@ export BOOTENV_FILE='sunxi.txt'
 UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-;;u-boot-sunxi-with-spl.bin}"
 export BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 export LINUXFAMILY=sunxi64
-export KERNELPATCHDIR='sunxi-'$BRANCH
 
 case $BRANCH in
 
@@ -39,6 +38,7 @@ if [[ "$USE_MEGOUS" == "yes" ]]; then
 fi
 
 unset KERNELBRANCH_MEGOUS
+KERNELPATCHDIR="archive/sunxi-${KERNEL_MAJOR_MINOR}"
 
 family_tweaks() {
 	# execute specific tweaks function if present
