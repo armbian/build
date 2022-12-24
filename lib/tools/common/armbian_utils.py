@@ -54,9 +54,9 @@ def setup_logging():
 			level = "DEBUG"
 		format = "%(message)s"
 		styles = {
-			'trace': {'color': 'white', },
-			'debug': {'color': 'white'},
-			'info': {'color': 'white', 'bold': True},
+			'trace': {'color': 'white', 'bold': False},
+			'debug': {'color': 'white', 'bold': False},
+			'info': {'color': 'green', 'bold': True},
 			'warning': {'color': 'yellow', 'bold': True},
 			'error': {'color': 'red'},
 			'critical': {'bold': True, 'color': 'red'}
