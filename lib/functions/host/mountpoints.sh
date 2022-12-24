@@ -16,6 +16,7 @@ function prepare_armbian_mountpoints_description_dict() {
 		"cache/sources/linux-kernel-worktree"
 		"cache/sources/u-boot-worktree"
 		"cache/ccache"
+		"cache/patch"
 	)
 
 	declare -A -g ARMBIAN_MOUNTPOINTS_DESC_DICT=(
@@ -35,6 +36,7 @@ function prepare_armbian_mountpoints_description_dict() {
 		["cache/sources/linux-kernel-worktree"]="docker_kind_linux=bind docker_kind_darwin=namedvolume" # working tree for kernel builds. huge. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/sources/u-boot-worktree"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"       # working tree for u-boot. large. contains both sources and the built object files. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
 		["cache/ccache"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                        # ccache object store. limited to 5gb by default. needs to be local to the container, so it's a volume by default. On Linux, it's a bind-mount by default.
+		["cache/patch"]="docker_kind_linux=bind docker_kind_darwin=namedvolume"                         # auto-generated patches (for kernel drivers, etc); large patches so keep it as local as possible.
 	)
 
 	# These, if found, will be removed on `dockerpurge` and other cleanups.
