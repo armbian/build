@@ -16,6 +16,8 @@ log: logging.Logger = logging.getLogger("patching")
 # Show the environment variables we've been called with
 armbian_utils.show_incoming_environment()
 
+# @TODO: test that "patch --version" is >= 2.7.6 using a subprocess and parsing the output.
+
 # Let's start by reading environment variables.
 # Those are always needed, and we should bomb if they're not set.
 SRC = armbian_utils.get_from_env_or_bomb("SRC")
@@ -32,7 +34,10 @@ apply_patches_to_git = PATCHES_TO_GIT == "yes"
 git_archeology = GIT_ARCHEOLOGY == "yes"
 fast_archeology = FAST_ARCHEOLOGY == "yes"
 rewrite_patches_in_place = REWRITE_PATCHES == "yes"
-apply_options = {"allow_recreate_existing_files": (ALLOW_RECREATE_EXISTING_FILES == "yes")}
+apply_options = {
+	"allow_recreate_existing_files": (ALLOW_RECREATE_EXISTING_FILES == "yes"),
+	"set_patch_date": True,
+}
 
 # Those are optional.
 GIT_WORK_DIR = armbian_utils.get_from_env("GIT_WORK_DIR")
@@ -42,12 +47,15 @@ USERPATCHES_PATH = armbian_utils.get_from_env("USERPATCHES_PATH")
 
 # Some path possibilities
 CONST_PATCH_ROOT_DIRS = []
+
 for patch_dir_to_apply in PATCH_DIRS_TO_APPLY:
 	if USERPATCHES_PATH is not None:
 		CONST_PATCH_ROOT_DIRS.append(
 			patching_utils.PatchRootDir(
 				f"{USERPATCHES_PATH}/{PATCH_TYPE}/{patch_dir_to_apply}", "user", PATCH_TYPE,
 				USERPATCHES_PATH))
+
+	# regular patchset
 	CONST_PATCH_ROOT_DIRS.append(
 		patching_utils.PatchRootDir(f"{SRC}/patch/{PATCH_TYPE}/{patch_dir_to_apply}", "core", PATCH_TYPE, SRC))
 
@@ -64,6 +72,27 @@ ALL_DIRS: list[patching_utils.PatchDir] = []
 for patch_root_dir in CONST_PATCH_ROOT_DIRS:
 	for patch_sub_dir in CONST_PATCH_SUB_DIRS:
 		ALL_DIRS.append(patching_utils.PatchDir(patch_root_dir, patch_sub_dir, SRC))
+
+PATCH_FILES_FIRST: list[patching_utils.PatchFileInDir] = []
+EXTRA_PATCH_FILES_FIRST: list[str] = armbian_utils.parse_env_for_tokens("EXTRA_PATCH_FILES_FIRST")
+EXTRA_PATCH_HASHES_FIRST: list[str] = armbian_utils.parse_env_for_tokens("EXTRA_PATCH_HASHES_FIRST")
+
+for patch_file in EXTRA_PATCH_FILES_FIRST:
+	# if the file does not exist, bomb.
+	if not os.path.isfile(patch_file):
+		raise Exception(f"File {patch_file} does not exist.")
+
+	# get the directory name of the file path
+	patch_dir = os.path.dirname(patch_file)
+
+	# Fabricate fake dirs...
+	driver_root_dir = patching_utils.PatchRootDir(patch_dir, "extra-first", PATCH_TYPE, SRC)
+	driver_sub_dir = patching_utils.PatchSubDir("", "extra-first")
+	driver_dir = patching_utils.PatchDir(driver_root_dir, driver_sub_dir, SRC)
+	driver_dir.is_autogen_dir = True
+	PATCH_FILES_FIRST.append(patching_utils.PatchFileInDir(patch_file, driver_dir))
+
+log.info(f"Found {len(PATCH_FILES_FIRST)} kernel driver patches")
 
 SERIES_PATCH_FILES: list[patching_utils.PatchFileInDir] = []
 # Now, loop over ALL_DIRS, and find the patch files in each directory
@@ -92,7 +121,8 @@ for one_patch_file in ALL_DIR_PATCH_FILES:
 # This reflects the order in which we want to apply the patches.
 # For series-based patches, we want to apply the serie'd patches first.
 # The other patches are separately sorted.
-ALL_PATCH_FILES_SORTED = SERIES_PATCH_FILES + list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
+ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + \
+			 list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
 
 # Now, actually read the patch files.
 # Patch files might be in mailbox format, and in that case contain more than one "patch".
@@ -100,6 +130,7 @@ ALL_PATCH_FILES_SORTED = SERIES_PATCH_FILES + list(dict(sorted(ALL_DIR_PATCH_FIL
 # We need to read the file, and see if it's a mailbox file; if so, split into multiple patches.
 # If not, just use the whole file as a single patch.
 # We'll store the patches in a list of Patch objects.
+log.info("Splitting patch files into patches")
 VALID_PATCHES: list[patching_utils.PatchInPatchFile] = []
 patch_file_in_dir: patching_utils.PatchFileInDir
 for patch_file_in_dir in ALL_PATCH_FILES_SORTED:
@@ -112,10 +143,12 @@ for patch_file_in_dir in ALL_PATCH_FILES_SORTED:
 			f"Can't continue; please fix the patch file {patch_file_in_dir.full_file_path()} manually. Sorry."
 			, exc_info=True)
 		exit(1)
+log.info("Done splitting patch files into patches")
 
 # Now, some patches might not be mbox-formatted, or somehow else invalid. We can try and recover those.
 # That is only possible if we're applying patches to git.
 # Rebuilding description is only possible if we've the git repo where the patches themselves reside.
+log.info("Parsing patches...")
 for patch in VALID_PATCHES:
 	try:
 		patch.parse_patch()  # this handles diff-level parsing; modifies itself; throws exception if invalid
@@ -165,6 +198,10 @@ if apply_patches:
 
 	# Loop over the VALID_PATCHES, and apply them
 	log.info(f"- Applying {len(VALID_PATCHES)} patches...")
+	# Grab the date of the root Makefile; that is the minimum date for the patched files.
+	root_makefile = os.path.join(GIT_WORK_DIR, "Makefile")
+	apply_options["root_makefile_date"] = os.path.getmtime(root_makefile)
+	log.info(f"- Root Makefile '{root_makefile}' date: '{os.path.getmtime(root_makefile)}'")
 	for one_patch in VALID_PATCHES:
 		log.info(f"Applying patch {one_patch}")
 		one_patch.applied_ok = False
