@@ -3,13 +3,6 @@ function compile_kernel() {
 	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
 	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
 
-	# Extension hook: fetch_sources_for_kernel_driver
-	call_extension_method "fetch_sources_for_kernel_driver" <<- 'FETCH_SOURCES_FOR_KERNEL_DRIVER'
-		*fetch external drivers from source, before fetching kernel git sources*
-		Do your kernel driver fetching from external sources here.
-		`${kernel_work_dir}` is set, but not yet populated with kernel sources.
-	FETCH_SOURCES_FOR_KERNEL_DRIVER
-
 	# Prepare the git bare repo for the kernel; shared between all kernel builds
 	declare kernel_git_bare_tree
 	# alternative # LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
@@ -156,7 +149,7 @@ function kernel_build_and_package() {
 		install_make_params_quoted+=("${value}")
 	done
 
-	display_alert "Building kernel" "${LINUXCONFIG} ${build_targets[*]}" "info"
+	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets[*]}" "info"
 	fasthash_debug "build"
 	make_filter="| grep --line-buffered -v -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \
 		do_with_ccache_statistics \
@@ -164,6 +157,7 @@ function kernel_build_and_package() {
 	fasthash_debug "build"
 
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
+	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 
 	display_alert "Kernel built and packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
