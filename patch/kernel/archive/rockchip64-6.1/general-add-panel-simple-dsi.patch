@@ -1,19 +1,8 @@
-From 986b2200078643aa5c83a4be95334afc1c9e6be4 Mon Sep 17 00:00:00 2001
-From: iamdrq <iamdrq@qq.com>
-Date: Sun, 12 Sep 2021 13:22:29 +0800
-Subject: [PATCH] Add panel-simple-dsi
-
----
- drivers/gpu/drm/panel/Makefile           |   1 +
- drivers/gpu/drm/panel/panel-simple-dsi.c | 742 +++++++++++++++++++++++
- 2 files changed, 743 insertions(+)
- create mode 100644 drivers/gpu/drm/panel/panel-simple-dsi.c
-
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index cae4d976c..a2a5fb781 100644
+index 42a7ab542..822999710 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
-@@ -7,6 +7,7 @@ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
+@@ -8,6 +8,7 @@ obj-$(CONFIG_DRM_PANEL_BOE_TV101WUM_NL6) += panel-boe-tv101wum-nl6.o
  obj-$(CONFIG_DRM_PANEL_DSI_CM) += panel-dsi-cm.o
  obj-$(CONFIG_DRM_PANEL_LVDS) += panel-lvds.o
  obj-$(CONFIG_DRM_PANEL_SIMPLE) += panel-simple.o
@@ -23,10 +12,10 @@ index cae4d976c..a2a5fb781 100644
  obj-$(CONFIG_DRM_PANEL_FEIXIN_K101_IM2BA02) += panel-feixin-k101-im2ba02.o
 diff --git a/drivers/gpu/drm/panel/panel-simple-dsi.c b/drivers/gpu/drm/panel/panel-simple-dsi.c
 new file mode 100644
-index 000000000..0d434cea7
+index 000000000..906d40ebe
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-simple-dsi.c
-@@ -0,0 +1,742 @@
+@@ -0,0 +1,772 @@
 +/*
 + * Copyright (C) 2021
 + * This simple dsi driver porting from rock-chip panel-simple.c on linux-4.4
@@ -128,6 +117,9 @@ index 000000000..0d434cea7
 +	struct panel_cmds *on_cmds;
 +	struct panel_cmds *off_cmds;
 +	struct device_node *np_crtc;
++	
++	int reset_level;
++	enum drm_panel_orientation orientation;
 +};
 +
 +enum rockchip_cmd_type {
@@ -349,6 +341,12 @@ index 000000000..0d434cea7
 +
 +	drm_mode_probed_add(connector, mode);
 +
++	/*
++	 * TODO: Remove once all drm drivers call
++	 * drm_connector_set_orientation_from_panel()
++	 */
++	drm_connector_set_panel_orientation(connector, p->orientation);
++	
 +	return 1;
 +}
 +
@@ -425,7 +423,7 @@ index 000000000..0d434cea7
 +	}
 +
 +	if (p->reset_gpio)
-+		gpiod_direction_output(p->reset_gpio, 1);
++		gpiod_direction_output(p->reset_gpio, !p->reset_level);
 +
 +	if (p->enable_gpio)
 +		gpiod_direction_output(p->enable_gpio, 0);
@@ -461,13 +459,13 @@ index 000000000..0d434cea7
 +		panel_simple_sleep(p->desc->delay.prepare);
 +
 +	if (p->reset_gpio)
-+		gpiod_direction_output(p->reset_gpio, 0);
++		gpiod_direction_output(p->reset_gpio, !p->reset_level);
 +	
 +	if (p->desc && p->desc->delay.reset)
 +                panel_simple_sleep(p->desc->delay.reset);
 +
-+        if (p->reset_gpio)
-+                gpiod_direction_output(p->reset_gpio, 1);
++       if (p->reset_gpio)
++                gpiod_direction_output(p->reset_gpio, p->reset_level);
 +		
 +	if (p->desc && p->desc->delay.init)
 +		panel_simple_sleep(p->desc->delay.init);
@@ -520,12 +518,21 @@ index 000000000..0d434cea7
 +	return p->desc->num_timings;
 +}
 +
++static enum drm_panel_orientation panel_simple_get_orientation(struct drm_panel *panel)
++{
++	struct panel_simple *p = to_panel_simple(panel);
++
++	return p->orientation;
++}
++
++
 +static const struct drm_panel_funcs panel_simple_funcs = {
 +	.disable = panel_simple_disable,
 +	.unprepare = panel_simple_unprepare,
 +	.prepare = panel_simple_prepare,
 +	.enable = panel_simple_enable,
 +	.get_modes = panel_simple_get_modes,
++	.get_orientation = panel_simple_get_orientation,
 +	.get_timings = panel_simple_get_timings,
 +};
 +
@@ -594,6 +601,18 @@ index 000000000..0d434cea7
 +		dev_err(dev, "failed to request reset GPIO: %d\n", err);
 +		return err;
 +	}
++	
++	if (!of_property_read_u32(dev->of_node, "reset-level", &val)) {
++		panel->reset_level = val;
++	} else {
++		panel->reset_level = 0;
++	}
++	
++	err = of_drm_get_panel_orientation(dev->of_node, &panel->orientation);
++	if (err) {
++		dev_err(dev, "%pOF: failed to get orientation %d\n", dev->of_node, err);
++		return err;
++	}
 +
 +    	panel->cmd_type = CMD_TYPE_DEFAULT;
 +
@@ -637,7 +656,7 @@ index 000000000..0d434cea7
 +
 +	if (panel->prepared) {
 +		if (panel->reset_gpio)
-+			gpiod_direction_output(panel->reset_gpio, 1);
++			gpiod_direction_output(panel->reset_gpio, !panel->reset_level);
 +
 +		if (panel->enable_gpio)
 +			gpiod_direction_output(panel->enable_gpio, 0);
@@ -738,7 +757,7 @@ index 000000000..0d434cea7
 +	return mipi_dsi_attach(dsi);
 +}
 +
-+static int panel_simple_dsi_remove(struct mipi_dsi_device *dsi)
++static void panel_simple_dsi_remove(struct mipi_dsi_device *dsi)
 +{
 +	int err;
 +
@@ -746,7 +765,7 @@ index 000000000..0d434cea7
 +	if (err < 0)
 +		dev_err(&dsi->dev, "failed to detach from DSI host: %d\n", err);
 +
-+	return panel_simple_remove(&dsi->dev);
++	panel_simple_remove(&dsi->dev);
 +}
 +
 +static void panel_simple_dsi_shutdown(struct mipi_dsi_device *dsi)
@@ -769,6 +788,3 @@ index 000000000..0d434cea7
 +MODULE_AUTHOR("iamdrq <iamdrq@qq.com>");
 +MODULE_DESCRIPTION("DRM Driver for DSI Simple Panels");
 +MODULE_LICENSE("GPL");
--- 
-2.32.0
-
