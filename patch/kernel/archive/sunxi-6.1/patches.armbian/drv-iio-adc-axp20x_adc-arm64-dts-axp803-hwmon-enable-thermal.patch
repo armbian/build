@@ -1,0 +1,169 @@
+From 75743f8659ee0be3b9b7b5002b9bb6da00040927 Mon Sep 17 00:00:00 2001
+From: Mitko Gamishev <hehopmajieh@debian.bg>
+Date: Wed, 5 Feb 2020 14:57:10 +0200
+Subject: [PATCH 060/170] drv:iio:adc:axp20x_adc arm64:dts:axp803 hwmon enable
+ thermal
+
+---
+ arch/arm64/boot/dts/allwinner/axp803.dtsi |  1 +
+ drivers/iio/adc/axp20x_adc.c              | 89 ++++++++++++++++++++++-
+ 2 files changed, 89 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/allwinner/axp803.dtsi b/arch/arm64/boot/dts/allwinner/axp803.dtsi
+index 578ef368e..d0ccd55d8 100644
+--- a/arch/arm64/boot/dts/allwinner/axp803.dtsi
++++ b/arch/arm64/boot/dts/allwinner/axp803.dtsi
+@@ -19,6 +19,7 @@ ac_power_supply: ac-power {
+ 	axp_adc: adc {
+ 		compatible = "x-powers,axp803-adc", "x-powers,axp813-adc";
+ 		#io-channel-cells = <1>;
++		#thermal-sensor-cells = <0>;
+ 	};
+ 
+ 	axp_gpio: gpio {
+diff --git a/drivers/iio/adc/axp20x_adc.c b/drivers/iio/adc/axp20x_adc.c
+index 70136c0dd..28f21dcf8 100644
+--- a/drivers/iio/adc/axp20x_adc.c
++++ b/drivers/iio/adc/axp20x_adc.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/completion.h>
++#include <linux/hwmon.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
+@@ -616,6 +616,74 @@ static int axp813_adc_rate(struct axp20x_adc_iio *info, int rate)
+ 				 AXP813_ADC_RATE_HZ(rate));
+ }
+ 
++
++static umode_t axp813_adc_hwmon_is_visible(const void *data,
++					   enum hwmon_sensor_types type,
++					   u32 attr, int channel)
++{
++	return (type == hwmon_temp && attr == hwmon_temp_input) ? 0444 : 0;
++}
++
++static int axp813_adc_hwmon_read(struct device *dev,
++				 enum hwmon_sensor_types type,
++				 u32 attr, int channel, long *temp)
++{
++	struct axp20x_adc_iio *info = dev_get_drvdata(dev);
++	int ret;
++	int raw;
++
++	switch (attr) {
++		case hwmon_temp_input:
++		raw = axp20x_read_variable_width(info->regmap, AXP22X_PMIC_TEMP_H, 12);
++		*temp = (raw - 2667) * 100;
++		ret = 0;
++		break;
++	default:
++		ret = -EOPNOTSUPP;
++		break;
++	}
++
++	return ret;
++}
++
++static u32 axp813_adc_hwmon_chip_config[] = {
++	HWMON_C_REGISTER_TZ,
++	0
++};
++
++static const struct hwmon_channel_info axp813_adc_hwmon_chip = {
++	.type = hwmon_chip,
++	.config = axp813_adc_hwmon_chip_config,
++};
++
++static u32 axp813_adc_hwmon_temp_config[] = {
++	HWMON_T_INPUT,
++	0
++};
++
++
++static const struct hwmon_channel_info axp813_adc_hwmon_temp = {
++	.type = hwmon_temp,
++	.config = axp813_adc_hwmon_temp_config,
++};
++
++
++static const struct hwmon_channel_info *axp813_adc_hwmon_info[] = {
++	&axp813_adc_hwmon_chip,
++	&axp813_adc_hwmon_temp,
++	NULL
++};
++
++static const struct hwmon_ops axp813_adc_hwmon_hwmon_ops = {
++	.is_visible = axp813_adc_hwmon_is_visible,
++	.read = axp813_adc_hwmon_read,
++};
++
++static const struct hwmon_chip_info axp813_adc_hwmon_chip_info = {
++	.ops = &axp813_adc_hwmon_hwmon_ops,
++	.info = axp813_adc_hwmon_info,
++};
++
+ struct axp_data {
+ 	const struct iio_info		*iio_info;
+ 	int				num_channels;
+@@ -624,6 +692,7 @@ struct axp_data {
+ 	int				(*adc_rate)(struct axp20x_adc_iio *info,
+ 						    int rate);
+ 	bool				adc_en2;
++	bool				hwmon_en;
+ 	struct iio_map			*maps;
+ };
+ 
+@@ -634,6 +703,7 @@ static const struct axp_data axp20x_data = {
+ 	.adc_en1_mask = AXP20X_ADC_EN1_MASK,
+ 	.adc_rate = axp20x_adc_rate,
+ 	.adc_en2 = true,
++	.hwmon_en = false,
+ 	.maps = axp20x_maps,
+ };
+ 
+@@ -644,6 +714,7 @@ static const struct axp_data axp22x_data = {
+ 	.adc_en1_mask = AXP22X_ADC_EN1_MASK,
+ 	.adc_rate = axp22x_adc_rate,
+ 	.adc_en2 = false,
++	.hwmon_en = false,
+ 	.maps = axp22x_maps,
+ };
+ 
+@@ -654,6 +725,7 @@ static const struct axp_data axp813_data = {
+ 	.adc_en1_mask = AXP22X_ADC_EN1_MASK,
+ 	.adc_rate = axp813_adc_rate,
+ 	.adc_en2 = false,
++	.hwmon_en = true,
+ 	.maps = axp22x_maps,
+ };
+ 
+@@ -736,8 +808,23 @@ static int axp20x_probe(struct platform_device *pdev)
+ 		goto fail_register;
+ 	}
+ 
++	if (info->data->hwmon_en) {
++		/* Register hwmon device */
++		struct device *hwmon_dev;
++
++		hwmon_dev = devm_hwmon_device_register_with_info(&pdev->dev, "axp813_adc", info, &axp813_adc_hwmon_chip_info, NULL);
++		if (IS_ERR(hwmon_dev)) {
++			ret = PTR_ERR(hwmon_dev);
++			dev_err(&pdev->dev, "unable to register hwmon device %d\n", ret);
++			goto fail_hwmon;
++		}
++	}
++
+ 	return 0;
+ 
++fail_hwmon:
++	iio_device_unregister(indio_dev);
++
+ fail_register:
+ 	iio_map_array_unregister(indio_dev);
+ 
+-- 
+2.35.3
+
