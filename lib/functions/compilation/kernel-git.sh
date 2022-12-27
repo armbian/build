@@ -170,7 +170,6 @@ function kernel_prepare_git_pre_fetch() {
 
 function kernel_prepare_git() {
 	[[ -z $KERNELSOURCE ]] && return 0 # do nothing if no kernel source... but again, why were we called then?
-	[[ -d "${kernel_work_dir}" ]] && cd "${kernel_work_dir}" && fasthash_debug "pre git, existing tree"
 
 	display_alert "Downloading sources" "kernel" "git"
 
