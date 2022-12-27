@@ -326,9 +326,6 @@ function install_distribution_agnostic() {
 				install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/dtb}_${REVISION}_${ARCH}.deb"
 			fi
 			if [[ $INSTALL_HEADERS == yes ]]; then
-				chroot "${SDCARD}" /bin/bash -c "DEBIAN_FRONTEND=noninteractive \
-					apt-get ${APT_EXTRA_DIST_PARAMS} -yqq --no-install-recommends \
-					install build-essential kmod debhelper devscripts" >> "${DEST}"/${LOG_SUBPATH}/install.log
 				install_deb_chroot "${DEB_STORAGE}/${CHOSEN_KERNEL/image/headers}_${REVISION}_${ARCH}.deb"
 			fi
 		else
