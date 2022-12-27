@@ -91,7 +91,6 @@ fetch_from_repo() {
 	fi
 
 	display_alert "Git working dir" "${git_work_dir}" "git"
-	git_ensure_safe_directory "${git_work_dir}"
 
 	# Support using worktrees; needs GIT_BARE_REPO_FOR_WORKTREE set
 	if [[ "x${GIT_BARE_REPO_FOR_WORKTREE}x" != "xx" ]]; then
@@ -123,9 +122,12 @@ fetch_from_repo() {
 		echo "${git_work_dir}/.git" > "${bare_repo_wt_gitdir}"
 		display_alert "Modified bare repo gitdir: " "$(cat "${bare_repo_wt_gitdir}")" "git"
 
+		git_ensure_safe_directory "${git_work_dir}"
 	else
 		mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}"
 		cd "${git_work_dir}" || exit
+		git_ensure_safe_directory "${git_work_dir}"
+		
 		if [[ ! -d ".git" || "$(git rev-parse --git-dir)" != ".git" ]]; then
 			# Dir is not a git working copy. Make it so;
 			display_alert "Initializing empty git local copy" "git init: $dir $ref_name"
