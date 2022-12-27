@@ -109,6 +109,20 @@ fetch_from_repo() {
 			cd "${git_work_dir}" || exit
 		fi
 		cd "${git_work_dir}" || exit
+
+		# Fix the reference to the bare repo; this avoids errors when the bare repo is moved.
+		display_alert "Original gitdir: " "$(cat "${git_work_dir}/.git")" "git"
+		local git_work_dir_basename
+		git_work_dir_basename="$(basename "${git_work_dir}")"
+		echo "gitdir: ${GIT_BARE_REPO_FOR_WORKTREE}/.git/worktrees/${git_work_dir_basename}" > "${git_work_dir}/.git"
+		display_alert "Modified gitdir: " "$(cat "${git_work_dir}/.git")" "git"
+
+		# Fix the bare repo's reference to the working tree; this avoids errors when the working tree is moved.
+		local bare_repo_wt_gitdir="${GIT_BARE_REPO_FOR_WORKTREE}/.git/worktrees/${git_work_dir_basename}/gitdir"
+		display_alert "Original bare repo gitdir: " "$(cat "${bare_repo_wt_gitdir}")" "git"
+		echo "${git_work_dir}/.git" > "${bare_repo_wt_gitdir}"
+		display_alert "Modified bare repo gitdir: " "$(cat "${bare_repo_wt_gitdir}")" "git"
+
 	else
 		mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}"
 		cd "${git_work_dir}" || exit
@@ -179,8 +193,8 @@ fetch_from_repo() {
 	fi
 
 	# should be declared in outside scope, so can be read.
-	checked_out_revision="$(git rev-parse "${checkout_from}")" # Don't fail nor output anything if failure
-	display_alert "Checked out revision" "${checked_out_revision}" "debug" # @TODO change to git
+	checked_out_revision="$(git rev-parse "${checkout_from}")"                          # Don't fail nor output anything if failure
+	display_alert "Checked out revision" "${checked_out_revision}" "debug"              # @TODO change to git
 	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"             # unix timestamp of the commit date
 	checked_out_revision_mtime="$(date +%Y%m%d%H%M%S -d "@${checked_out_revision_ts}")" # convert timestamp to local date/time
 	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "git"
