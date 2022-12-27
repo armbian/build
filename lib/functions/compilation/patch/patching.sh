@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # advanced_patch <patch_kind> <{patch_dir}> <board> <target> <branch> <description>
 #
 # parameters:
@@ -84,64 +85,22 @@ process_patch_file() {
 	local -i patch_date
 	local relative_patch="${patch##"${SRC}"/}" # ${FOO##prefix} remove prefix from FOO
 
-	# report_fashtash_should_execute is report_fasthash returns true only if we're supposed to apply the patch on disk.
-	if report_fashtash_should_execute file "${patch}" "Apply patch ${relative_patch}"; then
+	# detect and remove files which patch will create
+	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
-		# get the modification date of the patch. make it not less than MIN_PATCH_AGE, if set.
-		patch_date=$(get_file_modification_time "${patch}")
-		# shellcheck disable=SC2154 # patch_minimum_target_mtime can be declared in outer scope
-		if [[ "${patch_minimum_target_mtime}" != "" ]]; then
-			if [[ ${patch_date} -lt ${patch_minimum_target_mtime} ]]; then
-				display_alert "Patch before minimum date" "${patch_date} -lt ${patch_minimum_target_mtime}" "timestamp"
-				patch_date=${patch_minimum_target_mtime}
-			fi
-		fi
-
-		# detect and remove files which patch will create
-		lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
-
-		# store an array of the files that patch will add or modify, we'll set their modification times after the fact
-		declare -a patched_files
-		mapfile -t patched_files < <(lsdiff -s --strip=1 "${patch}" | grep -e '^+' -e '^!' | awk '{print $2}')
-
-		# @TODO: try patching with `git am` first, so git contains the patch commit info/msg. -- For future git-based hashing.
-		# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
-		patch --batch -p1 -N --input="${patch}" --quiet --reject-file=- && { # "-" discards rejects
-			# Fix the dates on the patched files
-			set_files_modification_time "${patch_date}" "${patched_files[@]}"
-			display_alert "* $status ${relative_patch}" "" "info"
-		} || {
-			display_alert "* $status ${relative_patch}" "failed" "wrn"
-			[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
-		}
-		mark_fasthash_done # will do git commit, associate fasthash to real hash.
-	fi
+	# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
+	patch --batch -p1 -N --input="${patch}" --quiet --reject-file=- && { # "-" discards rejects
+		display_alert "* $status ${relative_patch}" "" "info"
+	} || {
+		display_alert "* $status ${relative_patch}" "failed" "wrn"
+		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
+	}
 
 	return 0 # short-circuit above, avoid exiting with error
 }
 
-# apply_patch_series <target dir> <full path to series_file_full_path file>
-apply_patch_series() {
-	local target_dir="${1}"
-	local series_file_full_path="${2}"
-	local included_list skip_list skip_count counter=1 base_dir
-	base_dir="$(dirname "${series_file_full_path}")"
-	included_list="$(awk '$0 !~ /^#.*|^-.*|^$/' "${series_file_full_path}")"
-	included_count=$(echo -n "${included_list}" | wc -w)
-	skip_list="$(awk '$0 ~ /^-.*/{print $NF}' "${series_file_full_path}")"
-	skip_count=$(echo -n "${skip_list}" | wc -w)
-	display_alert "apply a series of " "[$(echo -n "$included_list" | wc -w)] patches" "info"
-	[[ ${skip_count} -gt 0 ]] && display_alert "skipping" "[${skip_count}] patches" "warn"
-	cd "${target_dir}" || exit 1
-
-	for p in $included_list; do
-		process_patch_file "${base_dir}/${p}" "${counter}/${included_count}"
-		counter=$((counter + 1))
-	done
-	display_alert "done applying patch series " "[$(echo -n "$included_list" | wc -w)] patches" "info"
-}
-
 userpatch_create() {
+	display_alert "@TODO" "@TODO armbian-next" "warn"
 	# create commit to start from clean source
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"

@@ -134,9 +134,6 @@ function compile_uboot_target() {
 
 	fi
 
-	fasthash_debug "finish"
-	finish_fasthash "u-boot" # this reports the final hash and creates git branch to build ID. All modifications commited.
-
 	# workaround when two compilers are needed
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed

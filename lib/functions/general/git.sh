@@ -230,5 +230,4 @@ fetch_from_repo() {
 	fi
 
 	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "git"
-	#fasthash_debug "at the end of fetch_from_repo $dir $ref_name"
 }
