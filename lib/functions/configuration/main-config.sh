@@ -11,7 +11,7 @@
 
 function do_main_configuration() {
 	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
-	
+
 	# Obsolete stuff, make sure not defined, then make readonly
 	declare -g -r DEBOOTSTRAP_LIST
 	declare -g -r PACKAGE_LIST
@@ -56,8 +56,8 @@ function do_main_configuration() {
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 
 	if [[ -d "${SRC}/.git" ]]; then
-		BUILD_REPOSITORY_URL=$(git remote get-url "$(git remote | grep origin)")
-		BUILD_REPOSITORY_COMMIT=$(git describe --match=d_e_a_d_b_e_e_f --always --dirty)
+		BUILD_REPOSITORY_URL="$(git remote get-url "$(git remote | grep origin || true)" || true)" # ignore all errors
+		BUILD_REPOSITORY_COMMIT="$(git describe --match=d_e_a_d_b_e_e_f --always --dirty || true)" # ignore error
 	fi
 
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
@@ -302,64 +302,64 @@ function do_main_configuration() {
 		DISTRIBUTION="Debian"
 	fi
 
-#	CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
-#	DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
-#
-#	AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
-#${SRC}/config
-#${SRC}/config/optional/_any_board/_config
-#${SRC}/config/optional/architectures/${ARCH}/_config
-#${SRC}/config/optional/families/${LINUXFAMILY}/_config
-#${SRC}/config/optional/boards/${BOARD}/_config
-#${USERPATCHES_PATH}
-#"
-#
-#	DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
-#cli/_all_distributions/debootstrap
-#cli/${RELEASE}/debootstrap
-#"
-#
-#	CLI_SEARCH_RELATIVE_DIRS="
-#cli/_all_distributions/main
-#cli/${RELEASE}/main
-#"
-#
-#	PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
-#${SRC}/packages
-#${SRC}/config/optional/_any_board/_packages
-#${SRC}/config/optional/architectures/${ARCH}/_packages
-#${SRC}/config/optional/families/${LINUXFAMILY}/_packages
-#${SRC}/config/optional/boards/${BOARD}/_packages
-#"
-#
-#	DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
-#desktop/_all_distributions/environments/_all_environments
-#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
-#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
-#desktop/${RELEASE}/environments/_all_environments
-#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
-#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
-#"
-#
-#	DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
-#desktop/_all_distributions/appgroups
-#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
-#desktop/${RELEASE}/appgroups
-#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
-#"
-#
-#	DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages" " ")"
-#	DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components" " ")"
-#	DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
-#	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
-#	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
-#	PACKAGE_LIST_EXTERNAL="$(one_line aggregate_all_cli "packages.external" " ")"
-#
-#	if [[ $BUILD_DESKTOP == "yes" ]]; then
-#		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
-#		# @TODO: desktop vs packages.external?
-#		PACKAGE_LIST_DESKTOP+=" ${PACKAGE_LIST_EXTERNAL}" # external packages are only included in desktop builds
-#	fi
+	#	CLI_CONFIG_PATH="${SRC}/config/cli/${RELEASE}"
+	#	DEBOOTSTRAP_CONFIG_PATH="${CLI_CONFIG_PATH}/debootstrap"
+	#
+	#	AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS="
+	#${SRC}/config
+	#${SRC}/config/optional/_any_board/_config
+	#${SRC}/config/optional/architectures/${ARCH}/_config
+	#${SRC}/config/optional/families/${LINUXFAMILY}/_config
+	#${SRC}/config/optional/boards/${BOARD}/_config
+	#${USERPATCHES_PATH}
+	#"
+	#
+	#	DEBOOTSTRAP_SEARCH_RELATIVE_DIRS="
+	#cli/_all_distributions/debootstrap
+	#cli/${RELEASE}/debootstrap
+	#"
+	#
+	#	CLI_SEARCH_RELATIVE_DIRS="
+	#cli/_all_distributions/main
+	#cli/${RELEASE}/main
+	#"
+	#
+	#	PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS="
+	#${SRC}/packages
+	#${SRC}/config/optional/_any_board/_packages
+	#${SRC}/config/optional/architectures/${ARCH}/_packages
+	#${SRC}/config/optional/families/${LINUXFAMILY}/_packages
+	#${SRC}/config/optional/boards/${BOARD}/_packages
+	#"
+	#
+	#	DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS="
+	#desktop/_all_distributions/environments/_all_environments
+	#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}
+	#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+	#desktop/${RELEASE}/environments/_all_environments
+	#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}
+	#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}
+	#"
+	#
+	#	DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS="
+	#desktop/_all_distributions/appgroups
+	#desktop/_all_distributions/environments/${DESKTOP_ENVIRONMENT}/appgroups
+	#desktop/${RELEASE}/appgroups
+	#desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}/appgroups
+	#"
+	#
+	#	DEBOOTSTRAP_LIST="$(one_line aggregate_all_debootstrap "packages" " ")"
+	#	DEBOOTSTRAP_COMPONENTS="$(one_line aggregate_all_debootstrap "components" " ")"
+	#	DEBOOTSTRAP_COMPONENTS="${DEBOOTSTRAP_COMPONENTS// /,}"
+	#	PACKAGE_LIST="$(one_line aggregate_all_cli "packages" " ")"
+	#	PACKAGE_LIST_ADDITIONAL="$(one_line aggregate_all_cli "packages.additional" " ")"
+	#	PACKAGE_LIST_EXTERNAL="$(one_line aggregate_all_cli "packages.external" " ")"
+	#
+	#	if [[ $BUILD_DESKTOP == "yes" ]]; then
+	#		PACKAGE_LIST_DESKTOP+="$(one_line aggregate_all_desktop "packages" " ")"
+	#		# @TODO: desktop vs packages.external?
+	#		PACKAGE_LIST_DESKTOP+=" ${PACKAGE_LIST_EXTERNAL}" # external packages are only included in desktop builds
+	#	fi
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
 	DEBIAN_SECURTY='security.debian.org/'
@@ -440,23 +440,23 @@ function do_main_configuration() {
 
 	#display_alert "Build final package list" "after possible override" "debug"
 	#PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_RELEASE $PACKAGE_LIST_ADDITIONAL"
-#
+	#
 	#[[ $BUILD_DESKTOP == yes ]] && PACKAGE_LIST="$PACKAGE_LIST $PACKAGE_LIST_DESKTOP"
 	#PACKAGE_LIST="$(cleanup_list PACKAGE_LIST)"
-#
+	#
 	## remove any packages defined in PACKAGE_LIST_RM in lib.config
 	#aggregated_content="${PACKAGE_LIST_RM} "
 	#aggregate_all_cli "packages.remove" " "
 	#aggregate_all_desktop "packages.remove" " "
 	#PACKAGE_LIST_RM="$(cleanup_list aggregated_content)"
 	#unset aggregated_content
-#
+	#
 	#aggregated_content=""
 	#aggregate_all_cli "packages.uninstall" " "
 	#aggregate_all_desktop "packages.uninstall" " "
 	#PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 	#unset aggregated_content
-#
+	#
 	## @TODO: rpardini: this has to stop. refactor this into array or dict-based and stop the madness.
 	#if [[ -n $PACKAGE_LIST_RM ]]; then
 	#	# Turns out that \b can be tricked by dashes.
@@ -473,7 +473,7 @@ function do_main_configuration() {
 	#		# Do not quote the variables. This would defeat the trick.
 	#		PACKAGE_LIST_DESKTOP="$(echo ${PACKAGE_LIST_DESKTOP})"
 	#	fi
-#
+	#
 	#	# Removing double spaces... AGAIN, since we might have used a sed on them
 	#	# Do not quote the variables. This would defeat the trick.
 	#	DEBOOTSTRAP_LIST="$(echo ${DEBOOTSTRAP_LIST})"
