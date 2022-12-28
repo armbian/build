@@ -6,7 +6,7 @@ theme: league
   
 ---
 
-# `armbian-next`
+# `armbian-next`, 2/X
 
 > “Let me add `set -e` to `armbian/build`...”
 #### ...two years later...
@@ -102,9 +102,8 @@ theme: league
 - should build most stuff on **arm64** as well as amd64
 - uses **system toolchains by default** for everything
 - sets `CFLAGS` to turn some errors into warnings
-    - allowing old u-boots to build with newer gcc
-    - ancient stuff might need small Makefile fixes
-- _many more_
+- allowing old u-boots to build with newer gcc
+- ancient stuff might need small Makefile fixes
 
 
 ---
@@ -201,4 +200,39 @@ git pull --rebase # !!!we rebase!!! use --rebase
 ---
 
 ## Go try `armbian-next`
-# Thank you
+# Thank you!
+
+---
+
+#### Update Dec 21-28 - Fixes
+
+- `sunxi`/`sunxi64` patching (`series.conf`)
+- `git worktree` references with absolute paths
+    - switching between Docker and non-docker on Linux
+- small fixes for early stoppages (`origin` branch, etc)
+
+
+---
+
+#### Update Dec 21-28 - New
+
+- ORAS (via `ghcr.io`) kernel tree seeding (4gb -> 2gb)
+- Patch+hash generator for `EXTRAWIFI` kernel drivers
+    - Still WiP: `.config` auto `=m`; use `sha1` instead of `branch`
+- patched files modification time consistency (fast rebuilds)
+- `grub` fixes and sanity checks (sbc-media/jetson-nano, riscv64)
+    - workarounds for `grub-mkconfig` under Docker
+
+
+---
+
+#### Update Dec 21-28 `armbian-next` - Stuff that's not ready
+
+- `extras` `buildpkg`
+- ~~`repo` management~~ (moved away by Igor)
+- ~~`EXTRAWIFI=yes`~~ (experimental support, WiP)
+- `BUILD_ONLY=` (replaced with new CLI, needs impl)
+
+- rootfs hashes don't match
+- permissions problems when using sudo/Docker
+
