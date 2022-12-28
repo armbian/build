@@ -102,7 +102,7 @@ env_package_list_family = util.parse_env_for_list(
 env_package_list_board_remove = util.parse_env_for_list(
 	"PACKAGE_LIST_BOARD_REMOVE", {"function": "board_remove", "path": "board.conf", "line": 0})
 env_package_list_family_remove = util.parse_env_for_list(
-	"PACKAGE_LIST_BOARD_REMOVE", {"function": "family_remove", "path": "family.conf", "line": 0})
+	"PACKAGE_LIST_FAMILY_REMOVE", {"function": "family_remove", "path": "family.conf", "line": 0})
 
 # Now calculate the final lists.
 
@@ -117,10 +117,14 @@ AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA = ','.join(AGGREGATED_DEBOOTSTRAP_COMPON
 # The rootfs list; add the extras, and remove the removals.
 AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(rootfs_packages_all, env_list_extra_rootfs, "add")
 AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, rootfs_packages_remove, "remove")
+AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_package_list_board_remove, "remove")
+AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_package_list_family_remove, "remove")
 AGGREGATED_PACKAGES_ROOTFS = util.merge_lists(AGGREGATED_PACKAGES_ROOTFS, env_list_remove, "remove")
 
 # The desktop list.
 AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(desktop_packages_all, desktop_packages_remove, "remove")
+AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_package_list_board_remove, "remove")
+AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_package_list_family_remove, "remove")
 AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_list_remove, "remove")
 
 # the image list; this comes from env only; apply the removals.
