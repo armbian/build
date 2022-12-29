@@ -225,7 +225,9 @@ create_rootfs_cache() {
 
 		# stage: check md5 sum of installed packages. Just in case.
 		display_alert "Checking MD5 sum of installed packages" "debsums" "info"
+		chroot $SDCARD /bin/bash -e -c "apt-get -y install debsums"
 		chroot $SDCARD /bin/bash -e -c "debsums -s"
+		chroot $SDCARD /bin/bash -e -c "apt-get -y purge debsums"
 		[[ $? -ne 0 ]] && exit_with_error "MD5 sums check of installed packages failed"
 
 		# Remove packages from packages.uninstall
