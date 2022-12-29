@@ -225,16 +225,15 @@ create_rootfs_cache() {
 
 		# stage: check md5 sum of installed packages. Just in case.
 		display_alert "Checking MD5 sum of installed packages" "debsums" "info"
-		chroot $SDCARD /bin/bash -e -c "apt-get -y install debsums"
+		chroot $SDCARD /bin/bash -e -c "apt-get -y -qq install debsums libfile-fnmatch-perl"
 		chroot $SDCARD /bin/bash -e -c "debsums -s"
-		chroot $SDCARD /bin/bash -e -c "apt-get -y purge debsums"
 		[[ $? -ne 0 ]] && exit_with_error "MD5 sums check of installed packages failed"
 
-		# Remove packages from packages.uninstall
+		# Remove packages from packages.uninstall and two internal helpers
 
 		display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
 		eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -e -c "DEBIAN_FRONTEND=noninteractive apt-get -y -qq \
-			$apt_extra $apt_extra_progress purge $PACKAGE_LIST_UNINSTALL"' \
+			$apt_extra $apt_extra_progress purge $PACKAGE_LIST_UNINSTALL debsums libfile-fnmatch-perl"' \
 			${PROGRESS_LOG_TO_FILE:+' >> $DEST/${LOG_SUBPATH}/debootstrap.log'} \
 			${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Removing packages.uninstall packages..." $TTY_Y $TTY_X'} \
 			${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'} ';EVALPIPE=(${PIPESTATUS[@]})'
