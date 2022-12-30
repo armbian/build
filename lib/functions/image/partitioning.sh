@@ -28,7 +28,7 @@ prepare_partitions() {
 	# parttype[nfs] is empty
 
 	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|kinetic|sid ]]; then
+	if [[ $HOSTRELEASE =~ buster|bullseye|focal|jammy|kinetic|lunar|sid ]]; then
 		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum"
 	fi
 	# mkopts[fat] is empty
