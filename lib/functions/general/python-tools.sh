@@ -18,6 +18,8 @@ function early_prepare_pip3_dependencies_for_python_tools() {
 		"GitPython==3.1.30"   # for manipulating git repos
 		"unidecode==1.3.6"    # for converting strings to ascii
 		"coloredlogs==15.0.1" # for colored logging
+		"PyYAML==6.0"         # for parsing/writing YAML
+		"oras==0.1.17"        # for OCI stuff in mapper-oci-update
 	)
 	return 0
 }
