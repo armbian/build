@@ -23,8 +23,10 @@ function armbian_register_commands() {
 		["configdump"]="config_dump_json"       # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 		["config-dump-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["json-info-boards"]="json_info"               # implemented in cli_json_info_pre_run and cli_json_info_run
-		["write-all-boards-branches-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
+		["matrix"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
+		["workflow"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
