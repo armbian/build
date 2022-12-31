@@ -302,6 +302,13 @@ family_tweaks() {
 
 	fi
 
+	if [[ -f $SDCARD/lib/systemd/system/orangepi5-usb2-init.service ]]; then
+
+		# enable usb2 init service
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable orangepi5-usb2-init.service >/dev/null 2>&1"
+
+	fi
+
 	if [[ $BOARD == nanopim4* ]]; then
 
 		# enable fan support
