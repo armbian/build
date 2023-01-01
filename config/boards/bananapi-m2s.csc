@@ -7,3 +7,7 @@ FULL_DESKTOP="yes"
 SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="amlogic/meson-g12b-a311d-bananapi-m2s.dtb"
+
+# Newer u-boot; new DT, Makefile and defconfig in patch/u-boot/v2022.10/board_bananapi-m2s
+BOOTBRANCH_BOARD="tag:v2022.10"
+BOOTPATCHDIR="v2022.10"
