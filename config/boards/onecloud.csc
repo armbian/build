@@ -7,7 +7,11 @@ BOOTCONFIG="none"
 BOOTSCRIPT="boot-onecloud.cmd:boot.cmd"
 BOOTENV_FILE="onecloud.txt"
 
-BOOTSIZE="200"
+OFFSET="16"
+BOOTSIZE="256"
 BOOTFS_TYPE="fat"
+
+# ROOTFS_TYPE="f2fs"
+# FIXED_IMAGE_SIZE=7456
 
 BOOT_LOGO=desktop

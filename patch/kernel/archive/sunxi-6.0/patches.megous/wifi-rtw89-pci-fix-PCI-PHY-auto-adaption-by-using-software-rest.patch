@@ -1,0 +1,209 @@
+From 93c4837a4e6d60ecca636f7c6372d1f903e93f00 Mon Sep 17 00:00:00 2001
+From: Chia-Yuan Li <leo.li@realtek.com>
+Date: Fri, 19 Aug 2022 14:48:09 +0800
+Subject: [PATCH 427/484] wifi: rtw89: pci: fix PCI PHY auto adaption by using
+ software restore
+
+There is chance that PCI PHY auto adaption fail. When first time boot up,
+software restore the right adaption value and close PHY auto adaption
+mechanism.
+
+Signed-off-by: Chia-Yuan Li <leo.li@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Kalle Valo <kvalo@kernel.org>
+Link: https://lore.kernel.org/r/20220819064811.37700-4-pkshih@realtek.com
+---
+ drivers/net/wireless/realtek/rtw89/pci.c | 71 ++++++++++++++++++++++++
+ drivers/net/wireless/realtek/rtw89/pci.h | 29 +++++++++-
+ drivers/net/wireless/realtek/rtw89/reg.h | 12 ++++
+ 3 files changed, 110 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw89/pci.c b/drivers/net/wireless/realtek/rtw89/pci.c
+index 99ef17a31..73d32a86d 100644
+--- a/drivers/net/wireless/realtek/rtw89/pci.c
++++ b/drivers/net/wireless/realtek/rtw89/pci.c
+@@ -3224,6 +3224,76 @@ static void rtw89_pci_free_irq(struct rtw89_dev *rtwdev,
+ 	pci_free_irq_vectors(pdev);
+ }
+ 
++static u16 gray_code_to_bin(u16 gray_code, u32 bit_num)
++{
++	u16 bin = 0, gray_bit;
++	u32 bit_idx;
++
++	for (bit_idx = 0; bit_idx < bit_num; bit_idx++) {
++		gray_bit = (gray_code >> bit_idx) & 0x1;
++		if (bit_num - bit_idx > 1)
++			gray_bit ^= (gray_code >> (bit_idx + 1)) & 0x1;
++		bin |= (gray_bit << bit_idx);
++	}
++
++	return bin;
++}
++
++static int rtw89_pci_filter_out(struct rtw89_dev *rtwdev)
++{
++	struct rtw89_pci *rtwpci = (struct rtw89_pci *)rtwdev->priv;
++	struct pci_dev *pdev = rtwpci->pdev;
++	u16 val16, filter_out_val;
++	u32 val, phy_offset;
++	int ret;
++
++	if (rtwdev->chip->chip_id != RTL8852C)
++		return 0;
++
++	val = rtw89_read32_mask(rtwdev, R_AX_PCIE_MIX_CFG_V1, B_AX_ASPM_CTRL_MASK);
++	if (val == B_AX_ASPM_CTRL_L1)
++		return 0;
++
++	ret = pci_read_config_dword(pdev, RTW89_PCIE_L1_STS_V1, &val);
++	if (ret)
++		return ret;
++
++	val = FIELD_GET(RTW89_BCFG_LINK_SPEED_MASK, val);
++	if (val == RTW89_PCIE_GEN1_SPEED) {
++		phy_offset = R_RAC_DIRECT_OFFSET_G1;
++	} else if (val == RTW89_PCIE_GEN2_SPEED) {
++		phy_offset = R_RAC_DIRECT_OFFSET_G2;
++		val16 = rtw89_read16(rtwdev, phy_offset + RAC_ANA10 * RAC_MULT);
++		rtw89_write16_set(rtwdev, phy_offset + RAC_ANA10 * RAC_MULT,
++				  val16 | B_PCIE_BIT_PINOUT_DIS);
++		rtw89_write16_set(rtwdev, phy_offset + RAC_ANA19 * RAC_MULT,
++				  val16 & ~B_PCIE_BIT_RD_SEL);
++
++		val16 = rtw89_read16_mask(rtwdev,
++					  phy_offset + RAC_ANA1F * RAC_MULT,
++					  FILTER_OUT_EQ_MASK);
++		val16 = gray_code_to_bin(val16, hweight16(val16));
++		filter_out_val = rtw89_read16(rtwdev, phy_offset + RAC_ANA24 *
++					      RAC_MULT);
++		filter_out_val &= ~REG_FILTER_OUT_MASK;
++		filter_out_val |= FIELD_PREP(REG_FILTER_OUT_MASK, val16);
++
++		rtw89_write16(rtwdev, phy_offset + RAC_ANA24 * RAC_MULT,
++			      filter_out_val);
++		rtw89_write16_set(rtwdev, phy_offset + RAC_ANA0A * RAC_MULT,
++				  B_BAC_EQ_SEL);
++		rtw89_write16_set(rtwdev,
++				  R_RAC_DIRECT_OFFSET_G1 + RAC_ANA0C * RAC_MULT,
++				  B_PCIE_BIT_PSAVE);
++	} else {
++		return -EOPNOTSUPP;
++	}
++	rtw89_write16_set(rtwdev, phy_offset + RAC_ANA0C * RAC_MULT,
++			  B_PCIE_BIT_PSAVE);
++
++	return 0;
++}
++
+ static void rtw89_pci_clkreq_set(struct rtw89_dev *rtwdev, bool enable)
+ {
+ 	int ret;
+@@ -3668,6 +3738,7 @@ int rtw89_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 		goto err_clear_resource;
+ 	}
+ 
++	rtw89_pci_filter_out(rtwdev);
+ 	rtw89_pci_link_cfg(rtwdev);
+ 	rtw89_pci_l1ss_cfg(rtwdev);
+ 
+diff --git a/drivers/net/wireless/realtek/rtw89/pci.h b/drivers/net/wireless/realtek/rtw89/pci.h
+index a11864721..e80380271 100644
+--- a/drivers/net/wireless/realtek/rtw89/pci.h
++++ b/drivers/net/wireless/realtek/rtw89/pci.h
+@@ -11,11 +11,18 @@
+ #define MDIO_PG1_G1 1
+ #define MDIO_PG0_G2 2
+ #define MDIO_PG1_G2 3
++#define RAC_CTRL_PPR			0x00
++#define RAC_ANA0A			0x0A
++#define B_BAC_EQ_SEL			BIT(5)
++#define RAC_ANA0C			0x0C
++#define B_PCIE_BIT_PSAVE		BIT(15)
+ #define RAC_ANA10			0x10
++#define B_PCIE_BIT_PINOUT_DIS		BIT(3)
+ #define RAC_REG_REV2			0x1B
+ #define BAC_CMU_EN_DLY_MASK		GENMASK(15, 12)
+ #define PCIE_DPHY_DLY_25US		0x1
+ #define RAC_ANA19			0x19
++#define B_PCIE_BIT_RD_SEL		BIT(2)
+ #define RAC_ANA1F			0x1F
+ #define RAC_ANA24			0x24
+ #define B_AX_DEGLITCH			GENMASK(11, 8)
+@@ -45,6 +52,16 @@
+ #define B_AX_SEL_REQ_ENTR_L1		BIT(2)
+ #define B_AX_SEL_REQ_EXIT_L1		BIT(0)
+ 
++#define R_AX_PCIE_MIX_CFG_V1		0x300C
++#define B_AX_ASPM_CTRL_L1		BIT(17)
++#define B_AX_ASPM_CTRL_L0		BIT(16)
++#define B_AX_ASPM_CTRL_MASK		GENMASK(17, 16)
++#define B_AX_XFER_PENDING_FW		BIT(11)
++#define B_AX_XFER_PENDING		BIT(10)
++#define B_AX_REQ_EXIT_L1		BIT(9)
++#define B_AX_REQ_ENTR_L1		BIT(8)
++#define B_AX_L1SUB_DISABLE		BIT(0)
++
+ #define R_AX_PCIE_BG_CLR		0x303C
+ #define B_AX_BG_CLR_ASYNC_M3		BIT(4)
+ 
+@@ -88,7 +105,10 @@
+ #define B_AX_PCIE_WDT_TIMER_S1_MASK GENMASK(31, 0)
+ 
+ #define R_RAC_DIRECT_OFFSET_G1 0x3800
++#define FILTER_OUT_EQ_MASK GENMASK(14, 10)
+ #define R_RAC_DIRECT_OFFSET_G2 0x3880
++#define REG_FILTER_OUT_MASK GENMASK(6, 2)
++#define RAC_MULT 2
+ 
+ #define RTW89_PCI_WR_RETRY_CNT		20
+ 
+@@ -505,6 +525,12 @@
+ #define RTW89_PCI_MULTITAG		8
+ 
+ /* PCIE CFG register */
++#define RTW89_PCIE_L1_STS_V1		0x80
++#define RTW89_BCFG_LINK_SPEED_MASK	GENMASK(19, 16)
++#define RTW89_PCIE_GEN1_SPEED		0x01
++#define RTW89_PCIE_GEN2_SPEED		0x02
++#define RTW89_PCIE_PHY_RATE		0x82
++#define RTW89_PCIE_PHY_RATE_MASK	GENMASK(1, 0)
+ #define RTW89_PCIE_ASPM_CTRL		0x070F
+ #define RTW89_L1DLY_MASK		GENMASK(5, 3)
+ #define RTW89_L0DLY_MASK		GENMASK(2, 0)
+@@ -516,8 +542,7 @@
+ #define RTW89_PCIE_CLK_CTRL		0x0725
+ #define RTW89_PCIE_RST_MSTATE		0x0B48
+ #define RTW89_PCIE_BIT_CFG_RST_MSTATE	BIT(0)
+-#define RTW89_PCIE_PHY_RATE		0x82
+-#define RTW89_PCIE_PHY_RATE_MASK	GENMASK(1, 0)
++
+ #define INTF_INTGRA_MINREF_V1	90
+ #define INTF_INTGRA_HOSTREF_V1	100
+ 
+diff --git a/drivers/net/wireless/realtek/rtw89/reg.h b/drivers/net/wireless/realtek/rtw89/reg.h
+index ef1f31693..38139fff0 100644
+--- a/drivers/net/wireless/realtek/rtw89/reg.h
++++ b/drivers/net/wireless/realtek/rtw89/reg.h
+@@ -143,6 +143,18 @@
+ #define R_AX_PMC_DBG_CTRL2 0x00CC
+ #define B_AX_SYSON_DIS_PMCR_AX_WRMSK BIT(2)
+ 
++#define R_AX_PCIE_MIO_INTF 0x00E4
++#define B_AX_PCIE_MIO_ADDR_PAGE_V1_MASK GENMASK(20, 16)
++#define B_AX_PCIE_MIO_BYIOREG BIT(13)
++#define B_AX_PCIE_MIO_RE BIT(12)
++#define B_AX_PCIE_MIO_WE_MASK GENMASK(11, 8)
++#define MIO_WRITE_BYTE_ALL 0xF
++#define B_AX_PCIE_MIO_ADDR_MASK GENMASK(7, 0)
++#define MIO_ADDR_PAGE_MASK GENMASK(12, 8)
++
++#define R_AX_PCIE_MIO_INTD 0x00E8
++#define B_AX_PCIE_MIO_DATA_MASK GENMASK(31, 0)
++
+ #define R_AX_SYS_CFG1 0x00F0
+ #define B_AX_CHIP_VER_MASK GENMASK(15, 12)
+ 
+-- 
+2.35.3
+
