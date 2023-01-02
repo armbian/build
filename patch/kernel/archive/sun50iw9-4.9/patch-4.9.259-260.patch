@@ -1,0 +1,2408 @@
+diff --git a/Documentation/filesystems/sysfs.txt b/Documentation/filesystems/sysfs.txt
+index 24da7b32c489f..1218a5e2975ca 100644
+--- a/Documentation/filesystems/sysfs.txt
++++ b/Documentation/filesystems/sysfs.txt
+@@ -211,12 +211,10 @@ Other notes:
+   is 4096. 
+ 
+ - show() methods should return the number of bytes printed into the
+-  buffer. This is the return value of scnprintf().
++  buffer.
+ 
+-- show() must not use snprintf() when formatting the value to be
+-  returned to user space. If you can guarantee that an overflow
+-  will never happen you can use sprintf() otherwise you must use
+-  scnprintf().
++- show() should only use sysfs_emit() or sysfs_emit_at() when formatting
++  the value to be returned to user space.
+ 
+ - store() should return the number of bytes used from the buffer. If the
+   entire buffer has been used, just return the count argument.
+diff --git a/Makefile b/Makefile
+index cdc71bda92c4b..7a29676e2b2f9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 259
++SUBLEVEL = 260
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/probes/kprobes/core.c b/arch/arm/probes/kprobes/core.c
+index 3eb018fa1a1f5..c3362ddd6c4cb 100644
+--- a/arch/arm/probes/kprobes/core.c
++++ b/arch/arm/probes/kprobes/core.c
+@@ -270,6 +270,7 @@ void __kprobes kprobe_handler(struct pt_regs *regs)
+ 			switch (kcb->kprobe_status) {
+ 			case KPROBE_HIT_ACTIVE:
+ 			case KPROBE_HIT_SSDONE:
++			case KPROBE_HIT_SS:
+ 				/* A pre- or post-handler probe got us here. */
+ 				kprobes_inc_nmissed_count(p);
+ 				save_previous_kprobe(kcb);
+@@ -278,6 +279,11 @@ void __kprobes kprobe_handler(struct pt_regs *regs)
+ 				singlestep(p, regs, kcb);
+ 				restore_previous_kprobe(kcb);
+ 				break;
++			case KPROBE_REENTER:
++				/* A nested probe was hit in FIQ, it is a BUG */
++				pr_warn("Unrecoverable kprobe detected at %p.\n",
++					p->addr);
++				/* fall through */
+ 			default:
+ 				/* impossible cases */
+ 				BUG();
+diff --git a/arch/arm/xen/p2m.c b/arch/arm/xen/p2m.c
+index 02579e6569f0c..b4ec8d1b0befd 100644
+--- a/arch/arm/xen/p2m.c
++++ b/arch/arm/xen/p2m.c
+@@ -91,12 +91,39 @@ int set_foreign_p2m_mapping(struct gnttab_map_grant_ref *map_ops,
+ 	int i;
+ 
+ 	for (i = 0; i < count; i++) {
++		struct gnttab_unmap_grant_ref unmap;
++		int rc;
++
+ 		if (map_ops[i].status)
+ 			continue;
+-		if (unlikely(!set_phys_to_machine(map_ops[i].host_addr >> XEN_PAGE_SHIFT,
+-				    map_ops[i].dev_bus_addr >> XEN_PAGE_SHIFT))) {
+-			return -ENOMEM;
+-		}
++		if (likely(set_phys_to_machine(map_ops[i].host_addr >> XEN_PAGE_SHIFT,
++				    map_ops[i].dev_bus_addr >> XEN_PAGE_SHIFT)))
++			continue;
++
++		/*
++		 * Signal an error for this slot. This in turn requires
++		 * immediate unmapping.
++		 */
++		map_ops[i].status = GNTST_general_error;
++		unmap.host_addr = map_ops[i].host_addr,
++		unmap.handle = map_ops[i].handle;
++		map_ops[i].handle = ~0;
++		if (map_ops[i].flags & GNTMAP_device_map)
++			unmap.dev_bus_addr = map_ops[i].dev_bus_addr;
++		else
++			unmap.dev_bus_addr = 0;
++
++		/*
++		 * Pre-populate the status field, to be recognizable in
++		 * the log message below.
++		 */
++		unmap.status = 1;
++
++		rc = HYPERVISOR_grant_table_op(GNTTABOP_unmap_grant_ref,
++					       &unmap, 1);
++		if (rc || unmap.status != GNTST_okay)
++			pr_err_once("gnttab unmap failed: rc=%d st=%d\n",
++				    rc, unmap.status);
+ 	}
+ 
+ 	return 0;
+diff --git a/arch/arm64/include/asm/atomic_ll_sc.h b/arch/arm64/include/asm/atomic_ll_sc.h
+index f819fdcff1acc..1cc42441bc672 100644
+--- a/arch/arm64/include/asm/atomic_ll_sc.h
++++ b/arch/arm64/include/asm/atomic_ll_sc.h
+@@ -37,7 +37,7 @@
+  * (the optimize attribute silently ignores these options).
+  */
+ 
+-#define ATOMIC_OP(op, asm_op)						\
++#define ATOMIC_OP(op, asm_op, constraint)				\
+ __LL_SC_INLINE void							\
+ __LL_SC_PREFIX(atomic_##op(int i, atomic_t *v))				\
+ {									\
+@@ -51,11 +51,11 @@ __LL_SC_PREFIX(atomic_##op(int i, atomic_t *v))				\
+ "	stxr	%w1, %w0, %2\n"						\
+ "	cbnz	%w1, 1b"						\
+ 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)		\
+-	: "Ir" (i));							\
++	: #constraint "r" (i));						\
+ }									\
+ __LL_SC_EXPORT(atomic_##op);
+ 
+-#define ATOMIC_OP_RETURN(name, mb, acq, rel, cl, op, asm_op)		\
++#define ATOMIC_OP_RETURN(name, mb, acq, rel, cl, op, asm_op, constraint)\
+ __LL_SC_INLINE int							\
+ __LL_SC_PREFIX(atomic_##op##_return##name(int i, atomic_t *v))		\
+ {									\
+@@ -70,14 +70,14 @@ __LL_SC_PREFIX(atomic_##op##_return##name(int i, atomic_t *v))		\
+ "	cbnz	%w1, 1b\n"						\
+ "	" #mb								\
+ 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)		\
+-	: "Ir" (i)							\
++	: #constraint "r" (i)						\
+ 	: cl);								\
+ 									\
+ 	return result;							\
+ }									\
+ __LL_SC_EXPORT(atomic_##op##_return##name);
+ 
+-#define ATOMIC_FETCH_OP(name, mb, acq, rel, cl, op, asm_op)		\
++#define ATOMIC_FETCH_OP(name, mb, acq, rel, cl, op, asm_op, constraint)	\
+ __LL_SC_INLINE int							\
+ __LL_SC_PREFIX(atomic_fetch_##op##name(int i, atomic_t *v))		\
+ {									\
+@@ -92,7 +92,7 @@ __LL_SC_PREFIX(atomic_fetch_##op##name(int i, atomic_t *v))		\
+ "	cbnz	%w2, 1b\n"						\
+ "	" #mb								\
+ 	: "=&r" (result), "=&r" (val), "=&r" (tmp), "+Q" (v->counter)	\
+-	: "Ir" (i)							\
++	: #constraint "r" (i)						\
+ 	: cl);								\
+ 									\
+ 	return result;							\
+@@ -110,8 +110,8 @@ __LL_SC_EXPORT(atomic_fetch_##op##name);
+ 	ATOMIC_FETCH_OP (_acquire,        , a,  , "memory", __VA_ARGS__)\
+ 	ATOMIC_FETCH_OP (_release,        ,  , l, "memory", __VA_ARGS__)
+ 
+-ATOMIC_OPS(add, add)
+-ATOMIC_OPS(sub, sub)
++ATOMIC_OPS(add, add, I)
++ATOMIC_OPS(sub, sub, J)
+ 
+ #undef ATOMIC_OPS
+ #define ATOMIC_OPS(...)							\
+@@ -121,17 +121,17 @@ ATOMIC_OPS(sub, sub)
+ 	ATOMIC_FETCH_OP (_acquire,        , a,  , "memory", __VA_ARGS__)\
+ 	ATOMIC_FETCH_OP (_release,        ,  , l, "memory", __VA_ARGS__)
+ 
+-ATOMIC_OPS(and, and)
+-ATOMIC_OPS(andnot, bic)
+-ATOMIC_OPS(or, orr)
+-ATOMIC_OPS(xor, eor)
++ATOMIC_OPS(and, and, )
++ATOMIC_OPS(andnot, bic, )
++ATOMIC_OPS(or, orr, )
++ATOMIC_OPS(xor, eor, )
+ 
+ #undef ATOMIC_OPS
+ #undef ATOMIC_FETCH_OP
+ #undef ATOMIC_OP_RETURN
+ #undef ATOMIC_OP
+ 
+-#define ATOMIC64_OP(op, asm_op)						\
++#define ATOMIC64_OP(op, asm_op, constraint)				\
+ __LL_SC_INLINE void							\
+ __LL_SC_PREFIX(atomic64_##op(long i, atomic64_t *v))			\
+ {									\
+@@ -145,11 +145,11 @@ __LL_SC_PREFIX(atomic64_##op(long i, atomic64_t *v))			\
+ "	stxr	%w1, %0, %2\n"						\
+ "	cbnz	%w1, 1b"						\
+ 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)		\
+-	: "Ir" (i));							\
++	: #constraint "r" (i));						\
+ }									\
+ __LL_SC_EXPORT(atomic64_##op);
+ 
+-#define ATOMIC64_OP_RETURN(name, mb, acq, rel, cl, op, asm_op)		\
++#define ATOMIC64_OP_RETURN(name, mb, acq, rel, cl, op, asm_op, constraint)\
+ __LL_SC_INLINE long							\
+ __LL_SC_PREFIX(atomic64_##op##_return##name(long i, atomic64_t *v))	\
+ {									\
+@@ -164,14 +164,14 @@ __LL_SC_PREFIX(atomic64_##op##_return##name(long i, atomic64_t *v))	\
+ "	cbnz	%w1, 1b\n"						\
+ "	" #mb								\
+ 	: "=&r" (result), "=&r" (tmp), "+Q" (v->counter)		\
+-	: "Ir" (i)							\
++	: #constraint "r" (i)						\
+ 	: cl);								\
+ 									\
+ 	return result;							\
+ }									\
+ __LL_SC_EXPORT(atomic64_##op##_return##name);
+ 
+-#define ATOMIC64_FETCH_OP(name, mb, acq, rel, cl, op, asm_op)		\
++#define ATOMIC64_FETCH_OP(name, mb, acq, rel, cl, op, asm_op, constraint)\
+ __LL_SC_INLINE long							\
+ __LL_SC_PREFIX(atomic64_fetch_##op##name(long i, atomic64_t *v))	\
+ {									\
+@@ -186,7 +186,7 @@ __LL_SC_PREFIX(atomic64_fetch_##op##name(long i, atomic64_t *v))	\
+ "	cbnz	%w2, 1b\n"						\
+ "	" #mb								\
+ 	: "=&r" (result), "=&r" (val), "=&r" (tmp), "+Q" (v->counter)	\
+-	: "Ir" (i)							\
++	: #constraint "r" (i)						\
+ 	: cl);								\
+ 									\
+ 	return result;							\
+@@ -204,8 +204,8 @@ __LL_SC_EXPORT(atomic64_fetch_##op##name);
+ 	ATOMIC64_FETCH_OP (_acquire,, a,  , "memory", __VA_ARGS__)	\
+ 	ATOMIC64_FETCH_OP (_release,,  , l, "memory", __VA_ARGS__)
+ 
+-ATOMIC64_OPS(add, add)
+-ATOMIC64_OPS(sub, sub)
++ATOMIC64_OPS(add, add, I)
++ATOMIC64_OPS(sub, sub, J)
+ 
+ #undef ATOMIC64_OPS
+ #define ATOMIC64_OPS(...)						\
+@@ -215,10 +215,10 @@ ATOMIC64_OPS(sub, sub)
+ 	ATOMIC64_FETCH_OP (_acquire,, a,  , "memory", __VA_ARGS__)	\
+ 	ATOMIC64_FETCH_OP (_release,,  , l, "memory", __VA_ARGS__)
+ 
+-ATOMIC64_OPS(and, and)
+-ATOMIC64_OPS(andnot, bic)
+-ATOMIC64_OPS(or, orr)
+-ATOMIC64_OPS(xor, eor)
++ATOMIC64_OPS(and, and, L)
++ATOMIC64_OPS(andnot, bic, )
++ATOMIC64_OPS(or, orr, L)
++ATOMIC64_OPS(xor, eor, L)
+ 
+ #undef ATOMIC64_OPS
+ #undef ATOMIC64_FETCH_OP
+@@ -248,49 +248,54 @@ __LL_SC_PREFIX(atomic64_dec_if_positive(atomic64_t *v))
+ }
+ __LL_SC_EXPORT(atomic64_dec_if_positive);
+ 
+-#define __CMPXCHG_CASE(w, sz, name, mb, acq, rel, cl)			\
+-__LL_SC_INLINE unsigned long						\
+-__LL_SC_PREFIX(__cmpxchg_case_##name(volatile void *ptr,		\
+-				     unsigned long old,			\
+-				     unsigned long new))		\
++#define __CMPXCHG_CASE(w, sfx, name, sz, mb, acq, rel, cl, constraint)	\
++__LL_SC_INLINE u##sz							\
++__LL_SC_PREFIX(__cmpxchg_case_##name##sz(volatile void *ptr,		\
++					 unsigned long old,		\
++					 u##sz new))			\
+ {									\
+-	unsigned long tmp, oldval;					\
++	unsigned long tmp;						\
++	u##sz oldval;							\
+ 									\
+ 	asm volatile(							\
+ 	"	prfm	pstl1strm, %[v]\n"				\
+-	"1:	ld" #acq "xr" #sz "\t%" #w "[oldval], %[v]\n"		\
++	"1:	ld" #acq "xr" #sfx "\t%" #w "[oldval], %[v]\n"		\
+ 	"	eor	%" #w "[tmp], %" #w "[oldval], %" #w "[old]\n"	\
+ 	"	cbnz	%" #w "[tmp], 2f\n"				\
+-	"	st" #rel "xr" #sz "\t%w[tmp], %" #w "[new], %[v]\n"	\
++	"	st" #rel "xr" #sfx "\t%w[tmp], %" #w "[new], %[v]\n"	\
+ 	"	cbnz	%w[tmp], 1b\n"					\
+ 	"	" #mb "\n"						\
+-	"	mov	%" #w "[oldval], %" #w "[old]\n"		\
+ 	"2:"								\
+ 	: [tmp] "=&r" (tmp), [oldval] "=&r" (oldval),			\
+-	  [v] "+Q" (*(unsigned long *)ptr)				\
+-	: [old] "Lr" (old), [new] "r" (new)				\
++	  [v] "+Q" (*(u##sz *)ptr)					\
++	: [old] #constraint "r" (old), [new] "r" (new)			\
+ 	: cl);								\
+ 									\
+ 	return oldval;							\
+ }									\
+-__LL_SC_EXPORT(__cmpxchg_case_##name);
++__LL_SC_EXPORT(__cmpxchg_case_##name##sz);
+ 
+-__CMPXCHG_CASE(w, b,     1,        ,  ,  ,         )
+-__CMPXCHG_CASE(w, h,     2,        ,  ,  ,         )
+-__CMPXCHG_CASE(w,  ,     4,        ,  ,  ,         )
+-__CMPXCHG_CASE( ,  ,     8,        ,  ,  ,         )
+-__CMPXCHG_CASE(w, b, acq_1,        , a,  , "memory")
+-__CMPXCHG_CASE(w, h, acq_2,        , a,  , "memory")
+-__CMPXCHG_CASE(w,  , acq_4,        , a,  , "memory")
+-__CMPXCHG_CASE( ,  , acq_8,        , a,  , "memory")
+-__CMPXCHG_CASE(w, b, rel_1,        ,  , l, "memory")
+-__CMPXCHG_CASE(w, h, rel_2,        ,  , l, "memory")
+-__CMPXCHG_CASE(w,  , rel_4,        ,  , l, "memory")
+-__CMPXCHG_CASE( ,  , rel_8,        ,  , l, "memory")
+-__CMPXCHG_CASE(w, b,  mb_1, dmb ish,  , l, "memory")
+-__CMPXCHG_CASE(w, h,  mb_2, dmb ish,  , l, "memory")
+-__CMPXCHG_CASE(w,  ,  mb_4, dmb ish,  , l, "memory")
+-__CMPXCHG_CASE( ,  ,  mb_8, dmb ish,  , l, "memory")
++/*
++ * Earlier versions of GCC (no later than 8.1.0) appear to incorrectly
++ * handle the 'K' constraint for the value 4294967295 - thus we use no
++ * constraint for 32 bit operations.
++ */
++__CMPXCHG_CASE(w, b,     ,  8,        ,  ,  ,         , )
++__CMPXCHG_CASE(w, h,     , 16,        ,  ,  ,         , )
++__CMPXCHG_CASE(w,  ,     , 32,        ,  ,  ,         , )
++__CMPXCHG_CASE( ,  ,     , 64,        ,  ,  ,         , L)
++__CMPXCHG_CASE(w, b, acq_,  8,        , a,  , "memory", )
++__CMPXCHG_CASE(w, h, acq_, 16,        , a,  , "memory", )
++__CMPXCHG_CASE(w,  , acq_, 32,        , a,  , "memory", )
++__CMPXCHG_CASE( ,  , acq_, 64,        , a,  , "memory", L)
++__CMPXCHG_CASE(w, b, rel_,  8,        ,  , l, "memory", )
++__CMPXCHG_CASE(w, h, rel_, 16,        ,  , l, "memory", )
++__CMPXCHG_CASE(w,  , rel_, 32,        ,  , l, "memory", )
++__CMPXCHG_CASE( ,  , rel_, 64,        ,  , l, "memory", L)
++__CMPXCHG_CASE(w, b,  mb_,  8, dmb ish,  , l, "memory", )
++__CMPXCHG_CASE(w, h,  mb_, 16, dmb ish,  , l, "memory", )
++__CMPXCHG_CASE(w,  ,  mb_, 32, dmb ish,  , l, "memory", )
++__CMPXCHG_CASE( ,  ,  mb_, 64, dmb ish,  , l, "memory", L)
+ 
+ #undef __CMPXCHG_CASE
+ 
+diff --git a/arch/arm64/include/asm/atomic_lse.h b/arch/arm64/include/asm/atomic_lse.h
+index d32a0160c89f7..982fe05e50585 100644
+--- a/arch/arm64/include/asm/atomic_lse.h
++++ b/arch/arm64/include/asm/atomic_lse.h
+@@ -446,22 +446,22 @@ static inline long atomic64_dec_if_positive(atomic64_t *v)
+ 
+ #define __LL_SC_CMPXCHG(op)	__LL_SC_CALL(__cmpxchg_case_##op)
+ 
+-#define __CMPXCHG_CASE(w, sz, name, mb, cl...)				\
+-static inline unsigned long __cmpxchg_case_##name(volatile void *ptr,	\
+-						  unsigned long old,	\
+-						  unsigned long new)	\
++#define __CMPXCHG_CASE(w, sfx, name, sz, mb, cl...)			\
++static inline u##sz __cmpxchg_case_##name##sz(volatile void *ptr,	\
++					      unsigned long old,	\
++					      u##sz new)		\
+ {									\
+ 	register unsigned long x0 asm ("x0") = (unsigned long)ptr;	\
+ 	register unsigned long x1 asm ("x1") = old;			\
+-	register unsigned long x2 asm ("x2") = new;			\
++	register u##sz x2 asm ("x2") = new;				\
+ 									\
+ 	asm volatile(ARM64_LSE_ATOMIC_INSN(				\
+ 	/* LL/SC */							\
+-	__LL_SC_CMPXCHG(name)						\
++	__LL_SC_CMPXCHG(name##sz)					\
+ 	__nops(2),							\
+ 	/* LSE atomics */						\
+ 	"	mov	" #w "30, %" #w "[old]\n"			\
+-	"	cas" #mb #sz "\t" #w "30, %" #w "[new], %[v]\n"		\
++	"	cas" #mb #sfx "\t" #w "30, %" #w "[new], %[v]\n"	\
+ 	"	mov	%" #w "[ret], " #w "30")			\
+ 	: [ret] "+r" (x0), [v] "+Q" (*(unsigned long *)ptr)		\
+ 	: [old] "r" (x1), [new] "r" (x2)				\
+@@ -470,22 +470,22 @@ static inline unsigned long __cmpxchg_case_##name(volatile void *ptr,	\
+ 	return x0;							\
+ }
+ 
+-__CMPXCHG_CASE(w, b,     1,   )
+-__CMPXCHG_CASE(w, h,     2,   )
+-__CMPXCHG_CASE(w,  ,     4,   )
+-__CMPXCHG_CASE(x,  ,     8,   )
+-__CMPXCHG_CASE(w, b, acq_1,  a, "memory")
+-__CMPXCHG_CASE(w, h, acq_2,  a, "memory")
+-__CMPXCHG_CASE(w,  , acq_4,  a, "memory")
+-__CMPXCHG_CASE(x,  , acq_8,  a, "memory")
+-__CMPXCHG_CASE(w, b, rel_1,  l, "memory")
+-__CMPXCHG_CASE(w, h, rel_2,  l, "memory")
+-__CMPXCHG_CASE(w,  , rel_4,  l, "memory")
+-__CMPXCHG_CASE(x,  , rel_8,  l, "memory")
+-__CMPXCHG_CASE(w, b,  mb_1, al, "memory")
+-__CMPXCHG_CASE(w, h,  mb_2, al, "memory")
+-__CMPXCHG_CASE(w,  ,  mb_4, al, "memory")
+-__CMPXCHG_CASE(x,  ,  mb_8, al, "memory")
++__CMPXCHG_CASE(w, b,     ,  8,   )
++__CMPXCHG_CASE(w, h,     , 16,   )
++__CMPXCHG_CASE(w,  ,     , 32,   )
++__CMPXCHG_CASE(x,  ,     , 64,   )
++__CMPXCHG_CASE(w, b, acq_,  8,  a, "memory")
++__CMPXCHG_CASE(w, h, acq_, 16,  a, "memory")
++__CMPXCHG_CASE(w,  , acq_, 32,  a, "memory")
++__CMPXCHG_CASE(x,  , acq_, 64,  a, "memory")
++__CMPXCHG_CASE(w, b, rel_,  8,  l, "memory")
++__CMPXCHG_CASE(w, h, rel_, 16,  l, "memory")
++__CMPXCHG_CASE(w,  , rel_, 32,  l, "memory")
++__CMPXCHG_CASE(x,  , rel_, 64,  l, "memory")
++__CMPXCHG_CASE(w, b,  mb_,  8, al, "memory")
++__CMPXCHG_CASE(w, h,  mb_, 16, al, "memory")
++__CMPXCHG_CASE(w,  ,  mb_, 32, al, "memory")
++__CMPXCHG_CASE(x,  ,  mb_, 64, al, "memory")
+ 
+ #undef __LL_SC_CMPXCHG
+ #undef __CMPXCHG_CASE
+diff --git a/arch/arm64/include/asm/cmpxchg.h b/arch/arm64/include/asm/cmpxchg.h
+index 9b2e2e2e728ae..ed6a1aae6fbb9 100644
+--- a/arch/arm64/include/asm/cmpxchg.h
++++ b/arch/arm64/include/asm/cmpxchg.h
+@@ -29,46 +29,46 @@
+  * barrier case is generated as release+dmb for the former and
+  * acquire+release for the latter.
+  */
+-#define __XCHG_CASE(w, sz, name, mb, nop_lse, acq, acq_lse, rel, cl)	\
+-static inline unsigned long __xchg_case_##name(unsigned long x,		\
+-					       volatile void *ptr)	\
+-{									\
+-	unsigned long ret, tmp;						\
+-									\
+-	asm volatile(ARM64_LSE_ATOMIC_INSN(				\
+-	/* LL/SC */							\
+-	"	prfm	pstl1strm, %2\n"				\
+-	"1:	ld" #acq "xr" #sz "\t%" #w "0, %2\n"			\
+-	"	st" #rel "xr" #sz "\t%w1, %" #w "3, %2\n"		\
+-	"	cbnz	%w1, 1b\n"					\
+-	"	" #mb,							\
+-	/* LSE atomics */						\
+-	"	swp" #acq_lse #rel #sz "\t%" #w "3, %" #w "0, %2\n"	\
+-		__nops(3)						\
+-	"	" #nop_lse)						\
+-	: "=&r" (ret), "=&r" (tmp), "+Q" (*(unsigned long *)ptr)	\
+-	: "r" (x)							\
+-	: cl);								\
+-									\
+-	return ret;							\
++#define __XCHG_CASE(w, sfx, name, sz, mb, nop_lse, acq, acq_lse, rel, cl)	\
++static inline u##sz __xchg_case_##name##sz(u##sz x, volatile void *ptr)		\
++{										\
++	u##sz ret;								\
++	unsigned long tmp;							\
++										\
++	asm volatile(ARM64_LSE_ATOMIC_INSN(					\
++	/* LL/SC */								\
++	"	prfm	pstl1strm, %2\n"					\
++	"1:	ld" #acq "xr" #sfx "\t%" #w "0, %2\n"				\
++	"	st" #rel "xr" #sfx "\t%w1, %" #w "3, %2\n"			\
++	"	cbnz	%w1, 1b\n"						\
++	"	" #mb,								\
++	/* LSE atomics */							\
++	"	swp" #acq_lse #rel #sfx "\t%" #w "3, %" #w "0, %2\n"		\
++		__nops(3)							\
++	"	" #nop_lse)							\
++	: "=&r" (ret), "=&r" (tmp), "+Q" (*(u##sz *)ptr)			\
++	: "r" (x)								\
++	: cl);									\
++										\
++	return ret;								\
+ }
+ 
+-__XCHG_CASE(w, b,     1,        ,    ,  ,  ,  ,         )
+-__XCHG_CASE(w, h,     2,        ,    ,  ,  ,  ,         )
+-__XCHG_CASE(w,  ,     4,        ,    ,  ,  ,  ,         )
+-__XCHG_CASE( ,  ,     8,        ,    ,  ,  ,  ,         )
+-__XCHG_CASE(w, b, acq_1,        ,    , a, a,  , "memory")
+-__XCHG_CASE(w, h, acq_2,        ,    , a, a,  , "memory")
+-__XCHG_CASE(w,  , acq_4,        ,    , a, a,  , "memory")
+-__XCHG_CASE( ,  , acq_8,        ,    , a, a,  , "memory")
+-__XCHG_CASE(w, b, rel_1,        ,    ,  ,  , l, "memory")
+-__XCHG_CASE(w, h, rel_2,        ,    ,  ,  , l, "memory")
+-__XCHG_CASE(w,  , rel_4,        ,    ,  ,  , l, "memory")
+-__XCHG_CASE( ,  , rel_8,        ,    ,  ,  , l, "memory")
+-__XCHG_CASE(w, b,  mb_1, dmb ish, nop,  , a, l, "memory")
+-__XCHG_CASE(w, h,  mb_2, dmb ish, nop,  , a, l, "memory")
+-__XCHG_CASE(w,  ,  mb_4, dmb ish, nop,  , a, l, "memory")
+-__XCHG_CASE( ,  ,  mb_8, dmb ish, nop,  , a, l, "memory")
++__XCHG_CASE(w, b,     ,  8,        ,    ,  ,  ,  ,         )
++__XCHG_CASE(w, h,     , 16,        ,    ,  ,  ,  ,         )
++__XCHG_CASE(w,  ,     , 32,        ,    ,  ,  ,  ,         )
++__XCHG_CASE( ,  ,     , 64,        ,    ,  ,  ,  ,         )
++__XCHG_CASE(w, b, acq_,  8,        ,    , a, a,  , "memory")
++__XCHG_CASE(w, h, acq_, 16,        ,    , a, a,  , "memory")
++__XCHG_CASE(w,  , acq_, 32,        ,    , a, a,  , "memory")
++__XCHG_CASE( ,  , acq_, 64,        ,    , a, a,  , "memory")
++__XCHG_CASE(w, b, rel_,  8,        ,    ,  ,  , l, "memory")
++__XCHG_CASE(w, h, rel_, 16,        ,    ,  ,  , l, "memory")
++__XCHG_CASE(w,  , rel_, 32,        ,    ,  ,  , l, "memory")
++__XCHG_CASE( ,  , rel_, 64,        ,    ,  ,  , l, "memory")
++__XCHG_CASE(w, b,  mb_,  8, dmb ish, nop,  , a, l, "memory")
++__XCHG_CASE(w, h,  mb_, 16, dmb ish, nop,  , a, l, "memory")
++__XCHG_CASE(w,  ,  mb_, 32, dmb ish, nop,  , a, l, "memory")
++__XCHG_CASE( ,  ,  mb_, 64, dmb ish, nop,  , a, l, "memory")
+ 
+ #undef __XCHG_CASE
+ 
+@@ -79,13 +79,13 @@ static __always_inline  unsigned long __xchg##sfx(unsigned long x,	\
+ {									\
+ 	switch (size) {							\
+ 	case 1:								\
+-		return __xchg_case##sfx##_1(x, ptr);			\
++		return __xchg_case##sfx##_8(x, ptr);			\
+ 	case 2:								\
+-		return __xchg_case##sfx##_2(x, ptr);			\
++		return __xchg_case##sfx##_16(x, ptr);			\
+ 	case 4:								\
+-		return __xchg_case##sfx##_4(x, ptr);			\
++		return __xchg_case##sfx##_32(x, ptr);			\
+ 	case 8:								\
+-		return __xchg_case##sfx##_8(x, ptr);			\
++		return __xchg_case##sfx##_64(x, ptr);			\
+ 	default:							\
+ 		BUILD_BUG();						\
+ 	}								\
+@@ -122,13 +122,13 @@ static __always_inline unsigned long __cmpxchg##sfx(volatile void *ptr,	\
+ {									\
+ 	switch (size) {							\
+ 	case 1:								\
+-		return __cmpxchg_case##sfx##_1(ptr, (u8)old, new);	\
++		return __cmpxchg_case##sfx##_8(ptr, (u8)old, new);	\
+ 	case 2:								\
+-		return __cmpxchg_case##sfx##_2(ptr, (u16)old, new);	\
++		return __cmpxchg_case##sfx##_16(ptr, (u16)old, new);	\
+ 	case 4:								\
+-		return __cmpxchg_case##sfx##_4(ptr, old, new);		\
++		return __cmpxchg_case##sfx##_32(ptr, old, new);		\
+ 	case 8:								\
+-		return __cmpxchg_case##sfx##_8(ptr, old, new);		\
++		return __cmpxchg_case##sfx##_64(ptr, old, new);		\
+ 	default:							\
+ 		BUILD_BUG();						\
+ 	}								\
+@@ -222,16 +222,16 @@ __CMPXCHG_GEN(_mb)
+ 	__ret;								\
+ })
+ 
+-#define __CMPWAIT_CASE(w, sz, name)					\
+-static inline void __cmpwait_case_##name(volatile void *ptr,		\
+-					 unsigned long val)		\
++#define __CMPWAIT_CASE(w, sfx, sz)					\
++static inline void __cmpwait_case_##sz(volatile void *ptr,		\
++				       unsigned long val)		\
+ {									\
+ 	unsigned long tmp;						\
+ 									\
+ 	asm volatile(							\
+ 	"	sevl\n"							\
+ 	"	wfe\n"							\
+-	"	ldxr" #sz "\t%" #w "[tmp], %[v]\n"			\
++	"	ldxr" #sfx "\t%" #w "[tmp], %[v]\n"			\
+ 	"	eor	%" #w "[tmp], %" #w "[tmp], %" #w "[val]\n"	\
+ 	"	cbnz	%" #w "[tmp], 1f\n"				\
+ 	"	wfe\n"							\
+@@ -240,10 +240,10 @@ static inline void __cmpwait_case_##name(volatile void *ptr,		\
+ 	: [val] "r" (val));						\
+ }
+ 
+-__CMPWAIT_CASE(w, b, 1);
+-__CMPWAIT_CASE(w, h, 2);
+-__CMPWAIT_CASE(w,  , 4);
+-__CMPWAIT_CASE( ,  , 8);
++__CMPWAIT_CASE(w, b, 8);
++__CMPWAIT_CASE(w, h, 16);
++__CMPWAIT_CASE(w,  , 32);
++__CMPWAIT_CASE( ,  , 64);
+ 
+ #undef __CMPWAIT_CASE
+ 
+@@ -254,13 +254,13 @@ static __always_inline void __cmpwait##sfx(volatile void *ptr,		\
+ {									\
+ 	switch (size) {							\
+ 	case 1:								\
+-		return __cmpwait_case##sfx##_1(ptr, (u8)val);		\
++		return __cmpwait_case##sfx##_8(ptr, (u8)val);		\
+ 	case 2:								\
+-		return __cmpwait_case##sfx##_2(ptr, (u16)val);		\
++		return __cmpwait_case##sfx##_16(ptr, (u16)val);		\
+ 	case 4:								\
+-		return __cmpwait_case##sfx##_4(ptr, val);		\
++		return __cmpwait_case##sfx##_32(ptr, val);		\
+ 	case 8:								\
+-		return __cmpwait_case##sfx##_8(ptr, val);		\
++		return __cmpwait_case##sfx##_64(ptr, val);		\
+ 	default:							\
+ 		BUILD_BUG();						\
+ 	}								\
+diff --git a/arch/x86/kernel/module.c b/arch/x86/kernel/module.c
+index 19977d2f97fb7..3c09ca384199d 100644
+--- a/arch/x86/kernel/module.c
++++ b/arch/x86/kernel/module.c
+@@ -125,6 +125,7 @@ int apply_relocate(Elf32_Shdr *sechdrs,
+ 			*location += sym->st_value;
+ 			break;
+ 		case R_386_PC32:
++		case R_386_PLT32:
+ 			/* Add the value, subtract its position */
+ 			*location += sym->st_value - (uint32_t)location;
+ 			break;
+diff --git a/arch/x86/kernel/reboot.c b/arch/x86/kernel/reboot.c
+index 597ce32fa33f2..75a1fd8b0e903 100644
+--- a/arch/x86/kernel/reboot.c
++++ b/arch/x86/kernel/reboot.c
+@@ -478,6 +478,15 @@ static struct dmi_system_id __initdata reboot_dmi_table[] = {
+ 		},
+ 	},
+ 
++	{	/* PCIe Wifi card isn't detected after reboot otherwise */
++		.callback = set_pci_reboot,
++		.ident = "Zotac ZBOX CI327 nano",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "NA"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "ZBOX-CI327NANO-GS-01"),
++		},
++	},
++
+ 	/* Sony */
+ 	{	/* Handle problems with rebooting on Sony VGN-Z540N */
+ 		.callback = set_bios_reboot,
+diff --git a/arch/x86/tools/relocs.c b/arch/x86/tools/relocs.c
+index 5b6c8486a0bec..d1c3f82c78826 100644
+--- a/arch/x86/tools/relocs.c
++++ b/arch/x86/tools/relocs.c
+@@ -839,9 +839,11 @@ static int do_reloc32(struct section *sec, Elf_Rel *rel, Elf_Sym *sym,
+ 	case R_386_PC32:
+ 	case R_386_PC16:
+ 	case R_386_PC8:
++	case R_386_PLT32:
+ 		/*
+-		 * NONE can be ignored and PC relative relocations don't
+-		 * need to be adjusted.
++		 * NONE can be ignored and PC relative relocations don't need
++		 * to be adjusted. Because sym must be defined, R_386_PLT32 can
++		 * be treated the same way as R_386_PC32.
+ 		 */
+ 		break;
+ 
+@@ -882,9 +884,11 @@ static int do_reloc_real(struct section *sec, Elf_Rel *rel, Elf_Sym *sym,
+ 	case R_386_PC32:
+ 	case R_386_PC16:
+ 	case R_386_PC8:
++	case R_386_PLT32:
+ 		/*
+-		 * NONE can be ignored and PC relative relocations don't
+-		 * need to be adjusted.
++		 * NONE can be ignored and PC relative relocations don't need
++		 * to be adjusted. Because sym must be defined, R_386_PLT32 can
++		 * be treated the same way as R_386_PC32.
+ 		 */
+ 		break;
+ 
+diff --git a/arch/x86/xen/p2m.c b/arch/x86/xen/p2m.c
+index fbf8508e558ac..d6ed664c1e39d 100644
+--- a/arch/x86/xen/p2m.c
++++ b/arch/x86/xen/p2m.c
+@@ -723,6 +723,8 @@ int set_foreign_p2m_mapping(struct gnttab_map_grant_ref *map_ops,
+ 
+ 	for (i = 0; i < count; i++) {
+ 		unsigned long mfn, pfn;
++		struct gnttab_unmap_grant_ref unmap[2];
++		int rc;
+ 
+ 		/* Do not add to override if the map failed. */
+ 		if (map_ops[i].status != GNTST_okay ||
+@@ -740,10 +742,46 @@ int set_foreign_p2m_mapping(struct gnttab_map_grant_ref *map_ops,
+ 
+ 		WARN(pfn_to_mfn(pfn) != INVALID_P2M_ENTRY, "page must be ballooned");
+ 
+-		if (unlikely(!set_phys_to_machine(pfn, FOREIGN_FRAME(mfn)))) {
+-			ret = -ENOMEM;
+-			goto out;
++		if (likely(set_phys_to_machine(pfn, FOREIGN_FRAME(mfn))))
++			continue;
++
++		/*
++		 * Signal an error for this slot. This in turn requires
++		 * immediate unmapping.
++		 */
++		map_ops[i].status = GNTST_general_error;
++		unmap[0].host_addr = map_ops[i].host_addr,
++		unmap[0].handle = map_ops[i].handle;
++		map_ops[i].handle = ~0;
++		if (map_ops[i].flags & GNTMAP_device_map)
++			unmap[0].dev_bus_addr = map_ops[i].dev_bus_addr;
++		else
++			unmap[0].dev_bus_addr = 0;
++
++		if (kmap_ops) {
++			kmap_ops[i].status = GNTST_general_error;
++			unmap[1].host_addr = kmap_ops[i].host_addr,
++			unmap[1].handle = kmap_ops[i].handle;
++			kmap_ops[i].handle = ~0;
++			if (kmap_ops[i].flags & GNTMAP_device_map)
++				unmap[1].dev_bus_addr = kmap_ops[i].dev_bus_addr;
++			else
++				unmap[1].dev_bus_addr = 0;
+ 		}
++
++		/*
++		 * Pre-populate both status fields, to be recognizable in
++		 * the log message below.
++		 */
++		unmap[0].status = 1;
++		unmap[1].status = 1;
++
++		rc = HYPERVISOR_grant_table_op(GNTTABOP_unmap_grant_ref,
++					       unmap, 1 + !!kmap_ops);
++		if (rc || unmap[0].status != GNTST_okay ||
++		    unmap[1].status != GNTST_okay)
++			pr_err_once("gnttab unmap failed: rc=%d st0=%d st1=%d\n",
++				    rc, unmap[0].status, unmap[1].status);
+ 	}
+ 
+ out:
+diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
+index d64a53d3270a1..7ab4152150629 100644
+--- a/drivers/block/zram/zram_drv.c
++++ b/drivers/block/zram/zram_drv.c
+@@ -1065,7 +1065,7 @@ static ssize_t mm_stat_show(struct device *dev,
+ 			zram->limit_pages << PAGE_SHIFT,
+ 			max_used << PAGE_SHIFT,
+ 			(u64)atomic64_read(&zram->stats.same_pages),
+-			pool_stats.pages_compacted,
++			atomic_long_read(&pool_stats.pages_compacted),
+ 			(u64)atomic64_read(&zram->stats.huge_pages));
+ 	up_read(&zram->init_lock);
+ 
+diff --git a/drivers/media/usb/uvc/uvc_driver.c b/drivers/media/usb/uvc/uvc_driver.c
+index 9803135f2e593..96e9c25926e17 100644
+--- a/drivers/media/usb/uvc/uvc_driver.c
++++ b/drivers/media/usb/uvc/uvc_driver.c
+@@ -869,7 +869,10 @@ static struct uvc_entity *uvc_alloc_entity(u16 type, u8 id,
+ 	unsigned int i;
+ 
+ 	extra_size = roundup(extra_size, sizeof(*entity->pads));
+-	num_inputs = (type & UVC_TERM_OUTPUT) ? num_pads : num_pads - 1;
++	if (num_pads)
++		num_inputs = type & UVC_TERM_OUTPUT ? num_pads : num_pads - 1;
++	else
++		num_inputs = 0;
+ 	size = sizeof(*entity) + extra_size + sizeof(*entity->pads) * num_pads
+ 	     + num_inputs;
+ 	entity = kzalloc(size, GFP_KERNEL);
+@@ -885,7 +888,7 @@ static struct uvc_entity *uvc_alloc_entity(u16 type, u8 id,
+ 
+ 	for (i = 0; i < num_inputs; ++i)
+ 		entity->pads[i].flags = MEDIA_PAD_FL_SINK;
+-	if (!UVC_ENTITY_IS_OTERM(entity))
++	if (!UVC_ENTITY_IS_OTERM(entity) && num_pads)
+ 		entity->pads[num_pads-1].flags = MEDIA_PAD_FL_SOURCE;
+ 
+ 	entity->bNrInPins = num_inputs;
+diff --git a/drivers/media/v4l2-core/v4l2-ioctl.c b/drivers/media/v4l2-core/v4l2-ioctl.c
+index 699e5f8e0a710..2cdd6d84e5196 100644
+--- a/drivers/media/v4l2-core/v4l2-ioctl.c
++++ b/drivers/media/v4l2-core/v4l2-ioctl.c
+@@ -2804,7 +2804,7 @@ video_usercopy(struct file *file, unsigned int cmd, unsigned long arg,
+ 	       v4l2_kioctl func)
+ {
+ 	char	sbuf[128];
+-	void    *mbuf = NULL;
++	void    *mbuf = NULL, *array_buf = NULL;
+ 	void	*parg = (void *)arg;
+ 	long	err  = -EINVAL;
+ 	bool	has_array_args;
+@@ -2859,20 +2859,14 @@ video_usercopy(struct file *file, unsigned int cmd, unsigned long arg,
+ 	has_array_args = err;
+ 
+ 	if (has_array_args) {
+-		/*
+-		 * When adding new types of array args, make sure that the
+-		 * parent argument to ioctl (which contains the pointer to the
+-		 * array) fits into sbuf (so that mbuf will still remain
+-		 * unused up to here).
+-		 */
+-		mbuf = kmalloc(array_size, GFP_KERNEL);
++		array_buf = kmalloc(array_size, GFP_KERNEL);
+ 		err = -ENOMEM;
+-		if (NULL == mbuf)
++		if (array_buf == NULL)
+ 			goto out_array_args;
+ 		err = -EFAULT;
+-		if (copy_from_user(mbuf, user_ptr, array_size))
++		if (copy_from_user(array_buf, user_ptr, array_size))
+ 			goto out_array_args;
+-		*kernel_ptr = mbuf;
++		*kernel_ptr = array_buf;
+ 	}
+ 
+ 	/* Handles IOCTL */
+@@ -2891,7 +2885,7 @@ video_usercopy(struct file *file, unsigned int cmd, unsigned long arg,
+ 
+ 	if (has_array_args) {
+ 		*kernel_ptr = (void __force *)user_ptr;
+-		if (copy_to_user(user_ptr, mbuf, array_size))
++		if (copy_to_user(user_ptr, array_buf, array_size))
+ 			err = -EFAULT;
+ 		goto out_array_args;
+ 	}
+@@ -2911,6 +2905,7 @@ out_array_args:
+ 	}
+ 
+ out:
++	kfree(array_buf);
+ 	kfree(mbuf);
+ 	return err;
+ }
+diff --git a/drivers/net/usb/qmi_wwan.c b/drivers/net/usb/qmi_wwan.c
+index f9e57405b167b..a8c960152a357 100644
+--- a/drivers/net/usb/qmi_wwan.c
++++ b/drivers/net/usb/qmi_wwan.c
+@@ -881,6 +881,7 @@ static const struct usb_device_id products[] = {
+ 	{QMI_FIXED_INTF(0x19d2, 0x1255, 4)},
+ 	{QMI_FIXED_INTF(0x19d2, 0x1256, 4)},
+ 	{QMI_FIXED_INTF(0x19d2, 0x1270, 5)},	/* ZTE MF667 */
++	{QMI_FIXED_INTF(0x19d2, 0x1275, 3)},	/* ZTE P685M */
+ 	{QMI_FIXED_INTF(0x19d2, 0x1401, 2)},
+ 	{QMI_FIXED_INTF(0x19d2, 0x1402, 2)},	/* ZTE MF60 */
+ 	{QMI_FIXED_INTF(0x19d2, 0x1424, 2)},
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
+index 8b3fe88d1c4e7..564181bb0906a 100644
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -3452,23 +3452,16 @@ bool ath10k_mac_tx_frm_has_freq(struct ath10k *ar)
+ static int ath10k_mac_tx_wmi_mgmt(struct ath10k *ar, struct sk_buff *skb)
+ {
+ 	struct sk_buff_head *q = &ar->wmi_mgmt_tx_queue;
+-	int ret = 0;
+-
+-	spin_lock_bh(&ar->data_lock);
+ 
+-	if (skb_queue_len(q) == ATH10K_MAX_NUM_MGMT_PENDING) {
++	if (skb_queue_len_lockless(q) >= ATH10K_MAX_NUM_MGMT_PENDING) {
+ 		ath10k_warn(ar, "wmi mgmt tx queue is full\n");
+-		ret = -ENOSPC;
+-		goto unlock;
++		return -ENOSPC;
+ 	}
+ 
+-	__skb_queue_tail(q, skb);
++	skb_queue_tail(q, skb);
+ 	ieee80211_queue_work(ar->hw, &ar->wmi_mgmt_tx_work);
+ 
+-unlock:
+-	spin_unlock_bh(&ar->data_lock);
+-
+-	return ret;
++	return 0;
+ }
+ 
+ static enum ath10k_mac_tx_path
+diff --git a/drivers/net/wireless/ti/wl12xx/main.c b/drivers/net/wireless/ti/wl12xx/main.c
+index 22009e14a8fc1..9bd635ec7827b 100644
+--- a/drivers/net/wireless/ti/wl12xx/main.c
++++ b/drivers/net/wireless/ti/wl12xx/main.c
+@@ -648,7 +648,6 @@ static int wl12xx_identify_chip(struct wl1271 *wl)
+ 		wl->quirks |= WLCORE_QUIRK_LEGACY_NVS |
+ 			      WLCORE_QUIRK_DUAL_PROBE_TMPL |
+ 			      WLCORE_QUIRK_TKIP_HEADER_SPACE |
+-			      WLCORE_QUIRK_START_STA_FAILS |
+ 			      WLCORE_QUIRK_AP_ZERO_SESSION_ID;
+ 		wl->sr_fw_name = WL127X_FW_NAME_SINGLE;
+ 		wl->mr_fw_name = WL127X_FW_NAME_MULTI;
+@@ -672,7 +671,6 @@ static int wl12xx_identify_chip(struct wl1271 *wl)
+ 		wl->quirks |= WLCORE_QUIRK_LEGACY_NVS |
+ 			      WLCORE_QUIRK_DUAL_PROBE_TMPL |
+ 			      WLCORE_QUIRK_TKIP_HEADER_SPACE |
+-			      WLCORE_QUIRK_START_STA_FAILS |
+ 			      WLCORE_QUIRK_AP_ZERO_SESSION_ID;
+ 		wl->plt_fw_name = WL127X_PLT_FW_NAME;
+ 		wl->sr_fw_name = WL127X_FW_NAME_SINGLE;
+@@ -701,7 +699,6 @@ static int wl12xx_identify_chip(struct wl1271 *wl)
+ 		wl->quirks |= WLCORE_QUIRK_TX_BLOCKSIZE_ALIGN |
+ 			      WLCORE_QUIRK_DUAL_PROBE_TMPL |
+ 			      WLCORE_QUIRK_TKIP_HEADER_SPACE |
+-			      WLCORE_QUIRK_START_STA_FAILS |
+ 			      WLCORE_QUIRK_AP_ZERO_SESSION_ID;
+ 
+ 		wlcore_set_min_fw_ver(wl, WL128X_CHIP_VER,
+diff --git a/drivers/net/wireless/ti/wlcore/main.c b/drivers/net/wireless/ti/wlcore/main.c
+index 17d32ce5d16b6..a973dac456be4 100644
+--- a/drivers/net/wireless/ti/wlcore/main.c
++++ b/drivers/net/wireless/ti/wlcore/main.c
+@@ -2833,21 +2833,8 @@ static int wlcore_join(struct wl1271 *wl, struct wl12xx_vif *wlvif)
+ 
+ 	if (is_ibss)
+ 		ret = wl12xx_cmd_role_start_ibss(wl, wlvif);
+-	else {
+-		if (wl->quirks & WLCORE_QUIRK_START_STA_FAILS) {
+-			/*
+-			 * TODO: this is an ugly workaround for wl12xx fw
+-			 * bug - we are not able to tx/rx after the first
+-			 * start_sta, so make dummy start+stop calls,
+-			 * and then call start_sta again.
+-			 * this should be fixed in the fw.
+-			 */
+-			wl12xx_cmd_role_start_sta(wl, wlvif);
+-			wl12xx_cmd_role_stop_sta(wl, wlvif);
+-		}
+-
++	else
+ 		ret = wl12xx_cmd_role_start_sta(wl, wlvif);
+-	}
+ 
+ 	return ret;
+ }
+diff --git a/drivers/net/wireless/ti/wlcore/wlcore.h b/drivers/net/wireless/ti/wlcore/wlcore.h
+index 1827546ba8075..34f0ba17fac92 100644
+--- a/drivers/net/wireless/ti/wlcore/wlcore.h
++++ b/drivers/net/wireless/ti/wlcore/wlcore.h
+@@ -557,9 +557,6 @@ wlcore_set_min_fw_ver(struct wl1271 *wl, unsigned int chip,
+ /* Each RX/TX transaction requires an end-of-transaction transfer */
+ #define WLCORE_QUIRK_END_OF_TRANSACTION		BIT(0)
+ 
+-/* the first start_role(sta) sometimes doesn't work on wl12xx */
+-#define WLCORE_QUIRK_START_STA_FAILS		BIT(1)
+-
+ /* wl127x and SPI don't support SDIO block size alignment */
+ #define WLCORE_QUIRK_TX_BLOCKSIZE_ALIGN		BIT(2)
+ 
+diff --git a/drivers/net/xen-netback/netback.c b/drivers/net/xen-netback/netback.c
+index 0024200c30ce4..f7fd8b5a6a8cf 100644
+--- a/drivers/net/xen-netback/netback.c
++++ b/drivers/net/xen-netback/netback.c
+@@ -1328,11 +1328,21 @@ int xenvif_tx_action(struct xenvif_queue *queue, int budget)
+ 		return 0;
+ 
+ 	gnttab_batch_copy(queue->tx_copy_ops, nr_cops);
+-	if (nr_mops != 0)
++	if (nr_mops != 0) {
+ 		ret = gnttab_map_refs(queue->tx_map_ops,
+ 				      NULL,
+ 				      queue->pages_to_map,
+ 				      nr_mops);
++		if (ret) {
++			unsigned int i;
++
++			netdev_err(queue->vif->dev, "Map fail: nr %u ret %d\n",
++				   nr_mops, ret);
++			for (i = 0; i < nr_mops; ++i)
++				WARN_ON_ONCE(queue->tx_map_ops[i].status ==
++				             GNTST_okay);
++		}
++	}
+ 
+ 	work_done = xenvif_tx_submit(queue);
+ 
+diff --git a/drivers/scsi/libiscsi.c b/drivers/scsi/libiscsi.c
+index a84b473d4a08b..b9c924bb6e3dd 100644
+--- a/drivers/scsi/libiscsi.c
++++ b/drivers/scsi/libiscsi.c
+@@ -3368,125 +3368,125 @@ int iscsi_session_get_param(struct iscsi_cls_session *cls_session,
+ 
+ 	switch(param) {
+ 	case ISCSI_PARAM_FAST_ABORT:
+-		len = sprintf(buf, "%d\n", session->fast_abort);
++		len = sysfs_emit(buf, "%d\n", session->fast_abort);
+ 		break;
+ 	case ISCSI_PARAM_ABORT_TMO:
+-		len = sprintf(buf, "%d\n", session->abort_timeout);
++		len = sysfs_emit(buf, "%d\n", session->abort_timeout);
+ 		break;
+ 	case ISCSI_PARAM_LU_RESET_TMO:
+-		len = sprintf(buf, "%d\n", session->lu_reset_timeout);
++		len = sysfs_emit(buf, "%d\n", session->lu_reset_timeout);
+ 		break;
+ 	case ISCSI_PARAM_TGT_RESET_TMO:
+-		len = sprintf(buf, "%d\n", session->tgt_reset_timeout);
++		len = sysfs_emit(buf, "%d\n", session->tgt_reset_timeout);
+ 		break;
+ 	case ISCSI_PARAM_INITIAL_R2T_EN:
+-		len = sprintf(buf, "%d\n", session->initial_r2t_en);
++		len = sysfs_emit(buf, "%d\n", session->initial_r2t_en);
+ 		break;
+ 	case ISCSI_PARAM_MAX_R2T:
+-		len = sprintf(buf, "%hu\n", session->max_r2t);
++		len = sysfs_emit(buf, "%hu\n", session->max_r2t);
+ 		break;
+ 	case ISCSI_PARAM_IMM_DATA_EN:
+-		len = sprintf(buf, "%d\n", session->imm_data_en);
++		len = sysfs_emit(buf, "%d\n", session->imm_data_en);
+ 		break;
+ 	case ISCSI_PARAM_FIRST_BURST:
+-		len = sprintf(buf, "%u\n", session->first_burst);
++		len = sysfs_emit(buf, "%u\n", session->first_burst);
+ 		break;
+ 	case ISCSI_PARAM_MAX_BURST:
+-		len = sprintf(buf, "%u\n", session->max_burst);
++		len = sysfs_emit(buf, "%u\n", session->max_burst);
+ 		break;
+ 	case ISCSI_PARAM_PDU_INORDER_EN:
+-		len = sprintf(buf, "%d\n", session->pdu_inorder_en);
++		len = sysfs_emit(buf, "%d\n", session->pdu_inorder_en);
+ 		break;
+ 	case ISCSI_PARAM_DATASEQ_INORDER_EN:
+-		len = sprintf(buf, "%d\n", session->dataseq_inorder_en);
++		len = sysfs_emit(buf, "%d\n", session->dataseq_inorder_en);
+ 		break;
+ 	case ISCSI_PARAM_DEF_TASKMGMT_TMO:
+-		len = sprintf(buf, "%d\n", session->def_taskmgmt_tmo);
++		len = sysfs_emit(buf, "%d\n", session->def_taskmgmt_tmo);
+ 		break;
+ 	case ISCSI_PARAM_ERL:
+-		len = sprintf(buf, "%d\n", session->erl);
++		len = sysfs_emit(buf, "%d\n", session->erl);
+ 		break;
+ 	case ISCSI_PARAM_TARGET_NAME:
+-		len = sprintf(buf, "%s\n", session->targetname);
++		len = sysfs_emit(buf, "%s\n", session->targetname);
+ 		break;
+ 	case ISCSI_PARAM_TARGET_ALIAS:
+-		len = sprintf(buf, "%s\n", session->targetalias);
++		len = sysfs_emit(buf, "%s\n", session->targetalias);
+ 		break;
+ 	case ISCSI_PARAM_TPGT:
+-		len = sprintf(buf, "%d\n", session->tpgt);
++		len = sysfs_emit(buf, "%d\n", session->tpgt);
+ 		break;
+ 	case ISCSI_PARAM_USERNAME:
+-		len = sprintf(buf, "%s\n", session->username);
++		len = sysfs_emit(buf, "%s\n", session->username);
+ 		break;
+ 	case ISCSI_PARAM_USERNAME_IN:
+-		len = sprintf(buf, "%s\n", session->username_in);
++		len = sysfs_emit(buf, "%s\n", session->username_in);
+ 		break;
+ 	case ISCSI_PARAM_PASSWORD:
+-		len = sprintf(buf, "%s\n", session->password);
++		len = sysfs_emit(buf, "%s\n", session->password);
+ 		break;
+ 	case ISCSI_PARAM_PASSWORD_IN:
+-		len = sprintf(buf, "%s\n", session->password_in);
++		len = sysfs_emit(buf, "%s\n", session->password_in);
+ 		break;
+ 	case ISCSI_PARAM_IFACE_NAME:
+-		len = sprintf(buf, "%s\n", session->ifacename);
++		len = sysfs_emit(buf, "%s\n", session->ifacename);
+ 		break;
+ 	case ISCSI_PARAM_INITIATOR_NAME:
+-		len = sprintf(buf, "%s\n", session->initiatorname);
++		len = sysfs_emit(buf, "%s\n", session->initiatorname);
+ 		break;
+ 	case ISCSI_PARAM_BOOT_ROOT:
+-		len = sprintf(buf, "%s\n", session->boot_root);
++		len = sysfs_emit(buf, "%s\n", session->boot_root);
+ 		break;
+ 	case ISCSI_PARAM_BOOT_NIC:
+-		len = sprintf(buf, "%s\n", session->boot_nic);
++		len = sysfs_emit(buf, "%s\n", session->boot_nic);
+ 		break;
+ 	case ISCSI_PARAM_BOOT_TARGET:
+-		len = sprintf(buf, "%s\n", session->boot_target);
++		len = sysfs_emit(buf, "%s\n", session->boot_target);
+ 		break;
+ 	case ISCSI_PARAM_AUTO_SND_TGT_DISABLE:
+-		len = sprintf(buf, "%u\n", session->auto_snd_tgt_disable);
++		len = sysfs_emit(buf, "%u\n", session->auto_snd_tgt_disable);
+ 		break;
+ 	case ISCSI_PARAM_DISCOVERY_SESS:
+-		len = sprintf(buf, "%u\n", session->discovery_sess);
++		len = sysfs_emit(buf, "%u\n", session->discovery_sess);
+ 		break;
+ 	case ISCSI_PARAM_PORTAL_TYPE:
+-		len = sprintf(buf, "%s\n", session->portal_type);
++		len = sysfs_emit(buf, "%s\n", session->portal_type);
+ 		break;
+ 	case ISCSI_PARAM_CHAP_AUTH_EN:
+-		len = sprintf(buf, "%u\n", session->chap_auth_en);
++		len = sysfs_emit(buf, "%u\n", session->chap_auth_en);
+ 		break;
+ 	case ISCSI_PARAM_DISCOVERY_LOGOUT_EN:
+-		len = sprintf(buf, "%u\n", session->discovery_logout_en);
++		len = sysfs_emit(buf, "%u\n", session->discovery_logout_en);
+ 		break;
+ 	case ISCSI_PARAM_BIDI_CHAP_EN:
+-		len = sprintf(buf, "%u\n", session->bidi_chap_en);
++		len = sysfs_emit(buf, "%u\n", session->bidi_chap_en);
+ 		break;
+ 	case ISCSI_PARAM_DISCOVERY_AUTH_OPTIONAL:
+-		len = sprintf(buf, "%u\n", session->discovery_auth_optional);
++		len = sysfs_emit(buf, "%u\n", session->discovery_auth_optional);
+ 		break;
+ 	case ISCSI_PARAM_DEF_TIME2WAIT:
+-		len = sprintf(buf, "%d\n", session->time2wait);
++		len = sysfs_emit(buf, "%d\n", session->time2wait);
+ 		break;
+ 	case ISCSI_PARAM_DEF_TIME2RETAIN:
+-		len = sprintf(buf, "%d\n", session->time2retain);
++		len = sysfs_emit(buf, "%d\n", session->time2retain);
+ 		break;
+ 	case ISCSI_PARAM_TSID:
+-		len = sprintf(buf, "%u\n", session->tsid);
++		len = sysfs_emit(buf, "%u\n", session->tsid);
+ 		break;
+ 	case ISCSI_PARAM_ISID:
+-		len = sprintf(buf, "%02x%02x%02x%02x%02x%02x\n",
++		len = sysfs_emit(buf, "%02x%02x%02x%02x%02x%02x\n",
+ 			      session->isid[0], session->isid[1],
+ 			      session->isid[2], session->isid[3],
+ 			      session->isid[4], session->isid[5]);
+ 		break;
+ 	case ISCSI_PARAM_DISCOVERY_PARENT_IDX:
+-		len = sprintf(buf, "%u\n", session->discovery_parent_idx);
++		len = sysfs_emit(buf, "%u\n", session->discovery_parent_idx);
+ 		break;
+ 	case ISCSI_PARAM_DISCOVERY_PARENT_TYPE:
+ 		if (session->discovery_parent_type)
+-			len = sprintf(buf, "%s\n",
++			len = sysfs_emit(buf, "%s\n",
+ 				      session->discovery_parent_type);
+ 		else
+-			len = sprintf(buf, "\n");
++			len = sysfs_emit(buf, "\n");
+ 		break;
+ 	default:
+ 		return -ENOSYS;
+@@ -3518,16 +3518,16 @@ int iscsi_conn_get_addr_param(struct sockaddr_storage *addr,
+ 	case ISCSI_PARAM_CONN_ADDRESS:
+ 	case ISCSI_HOST_PARAM_IPADDRESS:
+ 		if (sin)
+-			len = sprintf(buf, "%pI4\n", &sin->sin_addr.s_addr);
++			len = sysfs_emit(buf, "%pI4\n", &sin->sin_addr.s_addr);
+ 		else
+-			len = sprintf(buf, "%pI6\n", &sin6->sin6_addr);
++			len = sysfs_emit(buf, "%pI6\n", &sin6->sin6_addr);
+ 		break;
+ 	case ISCSI_PARAM_CONN_PORT:
+ 	case ISCSI_PARAM_LOCAL_PORT:
+ 		if (sin)
+-			len = sprintf(buf, "%hu\n", be16_to_cpu(sin->sin_port));
++			len = sysfs_emit(buf, "%hu\n", be16_to_cpu(sin->sin_port));
+ 		else
+-			len = sprintf(buf, "%hu\n",
++			len = sysfs_emit(buf, "%hu\n",
+ 				      be16_to_cpu(sin6->sin6_port));
+ 		break;
+ 	default:
+@@ -3546,88 +3546,88 @@ int iscsi_conn_get_param(struct iscsi_cls_conn *cls_conn,
+ 
+ 	switch(param) {
+ 	case ISCSI_PARAM_PING_TMO:
+-		len = sprintf(buf, "%u\n", conn->ping_timeout);
++		len = sysfs_emit(buf, "%u\n", conn->ping_timeout);
+ 		break;
+ 	case ISCSI_PARAM_RECV_TMO:
+-		len = sprintf(buf, "%u\n", conn->recv_timeout);
++		len = sysfs_emit(buf, "%u\n", conn->recv_timeout);
+ 		break;
+ 	case ISCSI_PARAM_MAX_RECV_DLENGTH:
+-		len = sprintf(buf, "%u\n", conn->max_recv_dlength);
++		len = sysfs_emit(buf, "%u\n", conn->max_recv_dlength);
+ 		break;
+ 	case ISCSI_PARAM_MAX_XMIT_DLENGTH:
+-		len = sprintf(buf, "%u\n", conn->max_xmit_dlength);
++		len = sysfs_emit(buf, "%u\n", conn->max_xmit_dlength);
+ 		break;
+ 	case ISCSI_PARAM_HDRDGST_EN:
+-		len = sprintf(buf, "%d\n", conn->hdrdgst_en);
++		len = sysfs_emit(buf, "%d\n", conn->hdrdgst_en);
+ 		break;
+ 	case ISCSI_PARAM_DATADGST_EN:
+-		len = sprintf(buf, "%d\n", conn->datadgst_en);
++		len = sysfs_emit(buf, "%d\n", conn->datadgst_en);
+ 		break;
+ 	case ISCSI_PARAM_IFMARKER_EN:
+-		len = sprintf(buf, "%d\n", conn->ifmarker_en);
++		len = sysfs_emit(buf, "%d\n", conn->ifmarker_en);
+ 		break;
+ 	case ISCSI_PARAM_OFMARKER_EN:
+-		len = sprintf(buf, "%d\n", conn->ofmarker_en);
++		len = sysfs_emit(buf, "%d\n", conn->ofmarker_en);
+ 		break;
+ 	case ISCSI_PARAM_EXP_STATSN:
+-		len = sprintf(buf, "%u\n", conn->exp_statsn);
++		len = sysfs_emit(buf, "%u\n", conn->exp_statsn);
+ 		break;
+ 	case ISCSI_PARAM_PERSISTENT_PORT:
+-		len = sprintf(buf, "%d\n", conn->persistent_port);
++		len = sysfs_emit(buf, "%d\n", conn->persistent_port);
+ 		break;
+ 	case ISCSI_PARAM_PERSISTENT_ADDRESS:
+-		len = sprintf(buf, "%s\n", conn->persistent_address);
++		len = sysfs_emit(buf, "%s\n", conn->persistent_address);
+ 		break;
+ 	case ISCSI_PARAM_STATSN:
+-		len = sprintf(buf, "%u\n", conn->statsn);
++		len = sysfs_emit(buf, "%u\n", conn->statsn);
+ 		break;
+ 	case ISCSI_PARAM_MAX_SEGMENT_SIZE:
+-		len = sprintf(buf, "%u\n", conn->max_segment_size);
++		len = sysfs_emit(buf, "%u\n", conn->max_segment_size);
+ 		break;
+ 	case ISCSI_PARAM_KEEPALIVE_TMO:
+-		len = sprintf(buf, "%u\n", conn->keepalive_tmo);
++		len = sysfs_emit(buf, "%u\n", conn->keepalive_tmo);
+ 		break;
+ 	case ISCSI_PARAM_LOCAL_PORT:
+-		len = sprintf(buf, "%u\n", conn->local_port);
++		len = sysfs_emit(buf, "%u\n", conn->local_port);
+ 		break;
+ 	case ISCSI_PARAM_TCP_TIMESTAMP_STAT:
+-		len = sprintf(buf, "%u\n", conn->tcp_timestamp_stat);
++		len = sysfs_emit(buf, "%u\n", conn->tcp_timestamp_stat);
+ 		break;
+ 	case ISCSI_PARAM_TCP_NAGLE_DISABLE:
+-		len = sprintf(buf, "%u\n", conn->tcp_nagle_disable);
++		len = sysfs_emit(buf, "%u\n", conn->tcp_nagle_disable);
+ 		break;
+ 	case ISCSI_PARAM_TCP_WSF_DISABLE:
+-		len = sprintf(buf, "%u\n", conn->tcp_wsf_disable);
++		len = sysfs_emit(buf, "%u\n", conn->tcp_wsf_disable);
+ 		break;
+ 	case ISCSI_PARAM_TCP_TIMER_SCALE:
+-		len = sprintf(buf, "%u\n", conn->tcp_timer_scale);
++		len = sysfs_emit(buf, "%u\n", conn->tcp_timer_scale);
+ 		break;
+ 	case ISCSI_PARAM_TCP_TIMESTAMP_EN:
+-		len = sprintf(buf, "%u\n", conn->tcp_timestamp_en);
++		len = sysfs_emit(buf, "%u\n", conn->tcp_timestamp_en);
+ 		break;
+ 	case ISCSI_PARAM_IP_FRAGMENT_DISABLE:
+-		len = sprintf(buf, "%u\n", conn->fragment_disable);
++		len = sysfs_emit(buf, "%u\n", conn->fragment_disable);
+ 		break;
+ 	case ISCSI_PARAM_IPV4_TOS:
+-		len = sprintf(buf, "%u\n", conn->ipv4_tos);
++		len = sysfs_emit(buf, "%u\n", conn->ipv4_tos);
+ 		break;
+ 	case ISCSI_PARAM_IPV6_TC:
+-		len = sprintf(buf, "%u\n", conn->ipv6_traffic_class);
++		len = sysfs_emit(buf, "%u\n", conn->ipv6_traffic_class);
+ 		break;
+ 	case ISCSI_PARAM_IPV6_FLOW_LABEL:
+-		len = sprintf(buf, "%u\n", conn->ipv6_flow_label);
++		len = sysfs_emit(buf, "%u\n", conn->ipv6_flow_label);
+ 		break;
+ 	case ISCSI_PARAM_IS_FW_ASSIGNED_IPV6:
+-		len = sprintf(buf, "%u\n", conn->is_fw_assigned_ipv6);
++		len = sysfs_emit(buf, "%u\n", conn->is_fw_assigned_ipv6);
+ 		break;
+ 	case ISCSI_PARAM_TCP_XMIT_WSF:
+-		len = sprintf(buf, "%u\n", conn->tcp_xmit_wsf);
++		len = sysfs_emit(buf, "%u\n", conn->tcp_xmit_wsf);
+ 		break;
+ 	case ISCSI_PARAM_TCP_RECV_WSF:
+-		len = sprintf(buf, "%u\n", conn->tcp_recv_wsf);
++		len = sysfs_emit(buf, "%u\n", conn->tcp_recv_wsf);
+ 		break;
+ 	case ISCSI_PARAM_LOCAL_IPADDR:
+-		len = sprintf(buf, "%s\n", conn->local_ipaddr);
++		len = sysfs_emit(buf, "%s\n", conn->local_ipaddr);
+ 		break;
+ 	default:
+ 		return -ENOSYS;
+@@ -3645,13 +3645,13 @@ int iscsi_host_get_param(struct Scsi_Host *shost, enum iscsi_host_param param,
+ 
+ 	switch (param) {
+ 	case ISCSI_HOST_PARAM_NETDEV_NAME:
+-		len = sprintf(buf, "%s\n", ihost->netdev);
++		len = sysfs_emit(buf, "%s\n", ihost->netdev);
+ 		break;
+ 	case ISCSI_HOST_PARAM_HWADDRESS:
+-		len = sprintf(buf, "%s\n", ihost->hwaddress);
++		len = sysfs_emit(buf, "%s\n", ihost->hwaddress);
+ 		break;
+ 	case ISCSI_HOST_PARAM_INITIATOR_NAME:
+-		len = sprintf(buf, "%s\n", ihost->initiatorname);
++		len = sysfs_emit(buf, "%s\n", ihost->initiatorname);
+ 		break;
+ 	default:
+ 		return -ENOSYS;
+diff --git a/drivers/scsi/scsi_transport_iscsi.c b/drivers/scsi/scsi_transport_iscsi.c
+index c2bce3f6eaace..4f4d2d65a4a70 100644
+--- a/drivers/scsi/scsi_transport_iscsi.c
++++ b/drivers/scsi/scsi_transport_iscsi.c
+@@ -119,7 +119,11 @@ show_transport_handle(struct device *dev, struct device_attribute *attr,
+ 		      char *buf)
+ {
+ 	struct iscsi_internal *priv = dev_to_iscsi_internal(dev);
+-	return sprintf(buf, "%llu\n", (unsigned long long)iscsi_handle(priv->iscsi_transport));
++
++	if (!capable(CAP_SYS_ADMIN))
++		return -EACCES;
++	return sysfs_emit(buf, "%llu\n",
++		  (unsigned long long)iscsi_handle(priv->iscsi_transport));
+ }
+ static DEVICE_ATTR(handle, S_IRUGO, show_transport_handle, NULL);
+ 
+@@ -129,7 +133,7 @@ show_transport_##name(struct device *dev, 				\
+ 		      struct device_attribute *attr,char *buf)		\
+ {									\
+ 	struct iscsi_internal *priv = dev_to_iscsi_internal(dev);	\
+-	return sprintf(buf, format"\n", priv->iscsi_transport->name);	\
++	return sysfs_emit(buf, format"\n", priv->iscsi_transport->name);\
+ }									\
+ static DEVICE_ATTR(name, S_IRUGO, show_transport_##name, NULL);
+ 
+@@ -170,7 +174,7 @@ static ssize_t
+ show_ep_handle(struct device *dev, struct device_attribute *attr, char *buf)
+ {
+ 	struct iscsi_endpoint *ep = iscsi_dev_to_endpoint(dev);
+-	return sprintf(buf, "%llu\n", (unsigned long long) ep->id);
++	return sysfs_emit(buf, "%llu\n", (unsigned long long) ep->id);
+ }
+ static ISCSI_ATTR(ep, handle, S_IRUGO, show_ep_handle, NULL);
+ 
+@@ -2782,6 +2786,9 @@ iscsi_set_param(struct iscsi_transport *transport, struct iscsi_uevent *ev)
+ 	struct iscsi_cls_session *session;
+ 	int err = 0, value = 0;
+ 
++	if (ev->u.set_param.len > PAGE_SIZE)
++		return -EINVAL;
++
+ 	session = iscsi_session_lookup(ev->u.set_param.sid);
+ 	conn = iscsi_conn_lookup(ev->u.set_param.sid, ev->u.set_param.cid);
+ 	if (!conn || !session)
+@@ -2929,6 +2936,9 @@ iscsi_set_host_param(struct iscsi_transport *transport,
+ 	if (!transport->set_host_param)
+ 		return -ENOSYS;
+ 
++	if (ev->u.set_host_param.len > PAGE_SIZE)
++		return -EINVAL;
++
+ 	shost = scsi_host_lookup(ev->u.set_host_param.host_no);
+ 	if (!shost) {
+ 		printk(KERN_ERR "set_host_param could not find host no %u\n",
+@@ -3515,6 +3525,7 @@ static int
+ iscsi_if_recv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, uint32_t *group)
+ {
+ 	int err = 0;
++	u32 pdu_len;
+ 	struct iscsi_uevent *ev = nlmsg_data(nlh);
+ 	struct iscsi_transport *transport = NULL;
+ 	struct iscsi_internal *priv;
+@@ -3522,6 +3533,9 @@ iscsi_if_recv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, uint32_t *group)
+ 	struct iscsi_cls_conn *conn;
+ 	struct iscsi_endpoint *ep = NULL;
+ 
++	if (!netlink_capable(skb, CAP_SYS_ADMIN))
++		return -EPERM;
++
+ 	if (nlh->nlmsg_type == ISCSI_UEVENT_PATH_UPDATE)
+ 		*group = ISCSI_NL_GRP_UIP;
+ 	else
+@@ -3627,6 +3641,14 @@ iscsi_if_recv_msg(struct sk_buff *skb, struct nlmsghdr *nlh, uint32_t *group)
+ 			err = -EINVAL;
+ 		break;
+ 	case ISCSI_UEVENT_SEND_PDU:
++		pdu_len = nlh->nlmsg_len - sizeof(*nlh) - sizeof(*ev);
++
++		if ((ev->u.send_pdu.hdr_size > pdu_len) ||
++		    (ev->u.send_pdu.data_size > (pdu_len - ev->u.send_pdu.hdr_size))) {
++			err = -EINVAL;
++			break;
++		}
++
+ 		conn = iscsi_conn_lookup(ev->u.send_pdu.sid, ev->u.send_pdu.cid);
+ 		if (conn)
+ 			ev->r.retcode =	transport->send_pdu(conn,
+@@ -4031,7 +4053,7 @@ show_priv_session_state(struct device *dev, struct device_attribute *attr,
+ 			char *buf)
+ {
+ 	struct iscsi_cls_session *session = iscsi_dev_to_session(dev->parent);
+-	return sprintf(buf, "%s\n", iscsi_session_state_name(session->state));
++	return sysfs_emit(buf, "%s\n", iscsi_session_state_name(session->state));
+ }
+ static ISCSI_CLASS_ATTR(priv_sess, state, S_IRUGO, show_priv_session_state,
+ 			NULL);
+@@ -4040,7 +4062,7 @@ show_priv_session_creator(struct device *dev, struct device_attribute *attr,
+ 			char *buf)
+ {
+ 	struct iscsi_cls_session *session = iscsi_dev_to_session(dev->parent);
+-	return sprintf(buf, "%d\n", session->creator);
++	return sysfs_emit(buf, "%d\n", session->creator);
+ }
+ static ISCSI_CLASS_ATTR(priv_sess, creator, S_IRUGO, show_priv_session_creator,
+ 			NULL);
+@@ -4049,7 +4071,7 @@ show_priv_session_target_id(struct device *dev, struct device_attribute *attr,
+ 			    char *buf)
+ {
+ 	struct iscsi_cls_session *session = iscsi_dev_to_session(dev->parent);
+-	return sprintf(buf, "%d\n", session->target_id);
++	return sysfs_emit(buf, "%d\n", session->target_id);
+ }
+ static ISCSI_CLASS_ATTR(priv_sess, target_id, S_IRUGO,
+ 			show_priv_session_target_id, NULL);
+@@ -4062,8 +4084,8 @@ show_priv_session_##field(struct device *dev, 				\
+ 	struct iscsi_cls_session *session = 				\
+ 			iscsi_dev_to_session(dev->parent);		\
+ 	if (session->field == -1)					\
+-		return sprintf(buf, "off\n");				\
+-	return sprintf(buf, format"\n", session->field);		\
++		return sysfs_emit(buf, "off\n");			\
++	return sysfs_emit(buf, format"\n", session->field);		\
+ }
+ 
+ #define iscsi_priv_session_attr_store(field)				\
+diff --git a/drivers/staging/fwserial/fwserial.c b/drivers/staging/fwserial/fwserial.c
+index 49c718b91e55a..16f6f35954fb5 100644
+--- a/drivers/staging/fwserial/fwserial.c
++++ b/drivers/staging/fwserial/fwserial.c
+@@ -2255,6 +2255,7 @@ static int fwserial_create(struct fw_unit *unit)
+ 		err = fw_core_add_address_handler(&port->rx_handler,
+ 						  &fw_high_memory_region);
+ 		if (err) {
++			tty_port_destroy(&port->port);
+ 			kfree(port);
+ 			goto free_ports;
+ 		}
+@@ -2337,6 +2338,7 @@ unregister_ttys:
+ 
+ free_ports:
+ 	for (--i; i >= 0; --i) {
++		fw_core_remove_address_handler(&serial->ports[i]->rx_handler);
+ 		tty_port_destroy(&serial->ports[i]->port);
+ 		kfree(serial->ports[i]);
+ 	}
+diff --git a/drivers/staging/most/aim-sound/sound.c b/drivers/staging/most/aim-sound/sound.c
+index e4198e5e064b5..288c7bf129457 100644
+--- a/drivers/staging/most/aim-sound/sound.c
++++ b/drivers/staging/most/aim-sound/sound.c
+@@ -92,6 +92,8 @@ static void swap_copy24(u8 *dest, const u8 *source, unsigned int bytes)
+ {
+ 	unsigned int i = 0;
+ 
++	if (bytes < 2)
++		return;
+ 	while (i < bytes - 2) {
+ 		dest[i] = source[i + 2];
+ 		dest[i + 1] = source[i + 1];
+diff --git a/drivers/tty/vt/consolemap.c b/drivers/tty/vt/consolemap.c
+index 9d7ab7b66a8a1..3e668d7c4b57e 100644
+--- a/drivers/tty/vt/consolemap.c
++++ b/drivers/tty/vt/consolemap.c
+@@ -494,7 +494,7 @@ con_insert_unipair(struct uni_pagedir *p, u_short unicode, u_short fontpos)
+ 
+ 	p2[unicode & 0x3f] = fontpos;
+ 	
+-	p->sum += (fontpos << 20) + unicode;
++	p->sum += (fontpos << 20U) + unicode;
+ 
+ 	return 0;
+ }
+diff --git a/fs/jfs/jfs_filsys.h b/fs/jfs/jfs_filsys.h
+index b67d64671bb40..415bfa90607a2 100644
+--- a/fs/jfs/jfs_filsys.h
++++ b/fs/jfs/jfs_filsys.h
+@@ -281,5 +281,6 @@
+ 				 * fsck() must be run to repair
+ 				 */
+ #define	FM_EXTENDFS 0x00000008	/* file system extendfs() in progress */
++#define	FM_STATE_MAX 0x0000000f	/* max value of s_state */
+ 
+ #endif				/* _H_JFS_FILSYS */
+diff --git a/fs/jfs/jfs_mount.c b/fs/jfs/jfs_mount.c
+index 9895595fd2f24..103788ecc28c1 100644
+--- a/fs/jfs/jfs_mount.c
++++ b/fs/jfs/jfs_mount.c
+@@ -49,6 +49,7 @@
+ 
+ #include <linux/fs.h>
+ #include <linux/buffer_head.h>
++#include <linux/log2.h>
+ 
+ #include "jfs_incore.h"
+ #include "jfs_filsys.h"
+@@ -378,6 +379,15 @@ static int chkSuper(struct super_block *sb)
+ 	sbi->bsize = bsize;
+ 	sbi->l2bsize = le16_to_cpu(j_sb->s_l2bsize);
+ 
++	/* check some fields for possible corruption */
++	if (sbi->l2bsize != ilog2((u32)bsize) ||
++	    j_sb->pad != 0 ||
++	    le32_to_cpu(j_sb->s_state) > FM_STATE_MAX) {
++		rc = -EINVAL;
++		jfs_err("jfs_mount: Mount Failure: superblock is corrupt!");
++		goto out;
++	}
++
+ 	/*
+ 	 * For now, ignore s_pbsize, l2bfactor.  All I/O going through buffer
+ 	 * cache.
+diff --git a/fs/sysfs/file.c b/fs/sysfs/file.c
+index 666986b95c5d1..300cdbdc8494e 100644
+--- a/fs/sysfs/file.c
++++ b/fs/sysfs/file.c
+@@ -17,6 +17,7 @@
+ #include <linux/list.h>
+ #include <linux/mutex.h>
+ #include <linux/seq_file.h>
++#include <linux/mm.h>
+ 
+ #include "sysfs.h"
+ #include "../kernfs/kernfs-internal.h"
+@@ -549,3 +550,57 @@ void sysfs_remove_bin_file(struct kobject *kobj,
+ 	kernfs_remove_by_name(kobj->sd, attr->attr.name);
+ }
+ EXPORT_SYMBOL_GPL(sysfs_remove_bin_file);
++
++/**
++ *	sysfs_emit - scnprintf equivalent, aware of PAGE_SIZE buffer.
++ *	@buf:	start of PAGE_SIZE buffer.
++ *	@fmt:	format
++ *	@...:	optional arguments to @format
++ *
++ *
++ * Returns number of characters written to @buf.
++ */
++int sysfs_emit(char *buf, const char *fmt, ...)
++{
++	va_list args;
++	int len;
++
++	if (WARN(!buf || offset_in_page(buf),
++		 "invalid sysfs_emit: buf:%p\n", buf))
++		return 0;
++
++	va_start(args, fmt);
++	len = vscnprintf(buf, PAGE_SIZE, fmt, args);
++	va_end(args);
++
++	return len;
++}
++EXPORT_SYMBOL_GPL(sysfs_emit);
++
++/**
++ *	sysfs_emit_at - scnprintf equivalent, aware of PAGE_SIZE buffer.
++ *	@buf:	start of PAGE_SIZE buffer.
++ *	@at:	offset in @buf to start write in bytes
++ *		@at must be >= 0 && < PAGE_SIZE
++ *	@fmt:	format
++ *	@...:	optional arguments to @fmt
++ *
++ *
++ * Returns number of characters written starting at &@buf[@at].
++ */
++int sysfs_emit_at(char *buf, int at, const char *fmt, ...)
++{
++	va_list args;
++	int len;
++
++	if (WARN(!buf || offset_in_page(buf) || at < 0 || at >= PAGE_SIZE,
++		 "invalid sysfs_emit_at: buf:%p at:%d\n", buf, at))
++		return 0;
++
++	va_start(args, fmt);
++	len = vscnprintf(buf + at, PAGE_SIZE - at, fmt, args);
++	va_end(args);
++
++	return len;
++}
++EXPORT_SYMBOL_GPL(sysfs_emit_at);
+diff --git a/fs/xfs/xfs_iops.c b/fs/xfs/xfs_iops.c
+index 0d587657056d8..d5948fb386fa0 100644
+--- a/fs/xfs/xfs_iops.c
++++ b/fs/xfs/xfs_iops.c
+@@ -820,7 +820,7 @@ xfs_setattr_size(
+ 	ASSERT(xfs_isilocked(ip, XFS_MMAPLOCK_EXCL));
+ 	ASSERT(S_ISREG(inode->i_mode));
+ 	ASSERT((iattr->ia_valid & (ATTR_UID|ATTR_GID|ATTR_ATIME|ATTR_ATIME_SET|
+-		ATTR_MTIME_SET|ATTR_KILL_PRIV|ATTR_TIMES_SET)) == 0);
++		ATTR_MTIME_SET|ATTR_TIMES_SET)) == 0);
+ 
+ 	oldsize = inode->i_size;
+ 	newsize = iattr->ia_size;
+diff --git a/include/linux/sysfs.h b/include/linux/sysfs.h
+index d3c19f8c45649..a0cbc4836f366 100644
+--- a/include/linux/sysfs.h
++++ b/include/linux/sysfs.h
+@@ -300,6 +300,11 @@ static inline void sysfs_enable_ns(struct kernfs_node *kn)
+ 	return kernfs_enable_ns(kn);
+ }
+ 
++__printf(2, 3)
++int sysfs_emit(char *buf, const char *fmt, ...);
++__printf(3, 4)
++int sysfs_emit_at(char *buf, int at, const char *fmt, ...);
++
+ #else /* CONFIG_SYSFS */
+ 
+ static inline int sysfs_create_dir_ns(struct kobject *kobj, const void *ns)
+@@ -506,6 +511,17 @@ static inline void sysfs_enable_ns(struct kernfs_node *kn)
+ {
+ }
+ 
++__printf(2, 3)
++static inline int sysfs_emit(char *buf, const char *fmt, ...)
++{
++	return 0;
++}
++
++__printf(3, 4)
++static inline int sysfs_emit_at(char *buf, int at, const char *fmt, ...)
++{
++	return 0;
++}
+ #endif /* CONFIG_SYSFS */
+ 
+ static inline int __must_check sysfs_create_file(struct kobject *kobj,
+diff --git a/include/linux/zsmalloc.h b/include/linux/zsmalloc.h
+index 57a8e98f2708c..6c871102c2735 100644
+--- a/include/linux/zsmalloc.h
++++ b/include/linux/zsmalloc.h
+@@ -36,7 +36,7 @@ enum zs_mapmode {
+ 
+ struct zs_pool_stats {
+ 	/* How many pages were migrated (freed) */
+-	unsigned long pages_compacted;
++	atomic_long_t pages_compacted;
+ };
+ 
+ struct zs_pool;
+diff --git a/kernel/futex.c b/kernel/futex.c
+index 0b49a8e1e1bec..0015c14ac2c04 100644
+--- a/kernel/futex.c
++++ b/kernel/futex.c
+@@ -827,7 +827,7 @@ static int refill_pi_state_cache(void)
+ 	return 0;
+ }
+ 
+-static struct futex_pi_state * alloc_pi_state(void)
++static struct futex_pi_state *alloc_pi_state(void)
+ {
+ 	struct futex_pi_state *pi_state = current->pi_state_cache;
+ 
+@@ -860,11 +860,14 @@ static void pi_state_update_owner(struct futex_pi_state *pi_state,
+ 	}
+ }
+ 
++static void get_pi_state(struct futex_pi_state *pi_state)
++{
++	WARN_ON_ONCE(!atomic_inc_not_zero(&pi_state->refcount));
++}
++
+ /*
+  * Drops a reference to the pi_state object and frees or caches it
+  * when the last reference is gone.
+- *
+- * Must be called with the hb lock held.
+  */
+ static void put_pi_state(struct futex_pi_state *pi_state)
+ {
+@@ -879,13 +882,17 @@ static void put_pi_state(struct futex_pi_state *pi_state)
+ 	 * and has cleaned up the pi_state already
+ 	 */
+ 	if (pi_state->owner) {
++		unsigned long flags;
++
++		raw_spin_lock_irqsave(&pi_state->pi_mutex.wait_lock, flags);
+ 		pi_state_update_owner(pi_state, NULL);
+ 		rt_mutex_proxy_unlock(&pi_state->pi_mutex);
++		raw_spin_unlock_irqrestore(&pi_state->pi_mutex.wait_lock, flags);
+ 	}
+ 
+-	if (current->pi_state_cache)
++	if (current->pi_state_cache) {
+ 		kfree(pi_state);
+-	else {
++	} else {
+ 		/*
+ 		 * pi_state->list is already empty.
+ 		 * clear pi_state->owner.
+@@ -901,7 +908,7 @@ static void put_pi_state(struct futex_pi_state *pi_state)
+  * Look up the task based on what TID userspace gave us.
+  * We dont trust it.
+  */
+-static struct task_struct * futex_find_get_task(pid_t pid)
++static struct task_struct *futex_find_get_task(pid_t pid)
+ {
+ 	struct task_struct *p;
+ 
+@@ -936,22 +943,41 @@ static void exit_pi_state_list(struct task_struct *curr)
+ 	 */
+ 	raw_spin_lock_irq(&curr->pi_lock);
+ 	while (!list_empty(head)) {
+-
+ 		next = head->next;
+ 		pi_state = list_entry(next, struct futex_pi_state, list);
+ 		key = pi_state->key;
+ 		hb = hash_futex(&key);
++
++		/*
++		 * We can race against put_pi_state() removing itself from the
++		 * list (a waiter going away). put_pi_state() will first
++		 * decrement the reference count and then modify the list, so
++		 * its possible to see the list entry but fail this reference
++		 * acquire.
++		 *
++		 * In that case; drop the locks to let put_pi_state() make
++		 * progress and retry the loop.
++		 */
++		if (!atomic_inc_not_zero(&pi_state->refcount)) {
++			raw_spin_unlock_irq(&curr->pi_lock);
++			cpu_relax();
++			raw_spin_lock_irq(&curr->pi_lock);
++			continue;
++		}
+ 		raw_spin_unlock_irq(&curr->pi_lock);
+ 
+ 		spin_lock(&hb->lock);
+-
+-		raw_spin_lock_irq(&curr->pi_lock);
++		raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
++		raw_spin_lock(&curr->pi_lock);
+ 		/*
+ 		 * We dropped the pi-lock, so re-check whether this
+ 		 * task still owns the PI-state:
+ 		 */
+ 		if (head->next != next) {
++			/* retain curr->pi_lock for the loop invariant */
++			raw_spin_unlock(&pi_state->pi_mutex.wait_lock);
+ 			spin_unlock(&hb->lock);
++			put_pi_state(pi_state);
+ 			continue;
+ 		}
+ 
+@@ -959,12 +985,14 @@ static void exit_pi_state_list(struct task_struct *curr)
+ 		WARN_ON(list_empty(&pi_state->list));
+ 		list_del_init(&pi_state->list);
+ 		pi_state->owner = NULL;
+-		raw_spin_unlock_irq(&curr->pi_lock);
+-
+-		rt_mutex_futex_unlock(&pi_state->pi_mutex);
+ 
++		raw_spin_unlock(&curr->pi_lock);
++		raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+ 		spin_unlock(&hb->lock);
+ 
++		rt_mutex_futex_unlock(&pi_state->pi_mutex);
++		put_pi_state(pi_state);
++
+ 		raw_spin_lock_irq(&curr->pi_lock);
+ 	}
+ 	raw_spin_unlock_irq(&curr->pi_lock);
+@@ -1078,6 +1106,11 @@ static int attach_to_pi_state(u32 __user *uaddr, u32 uval,
+ 	 * has dropped the hb->lock in between queue_me() and unqueue_me_pi(),
+ 	 * which in turn means that futex_lock_pi() still has a reference on
+ 	 * our pi_state.
++	 *
++	 * The waiter holding a reference on @pi_state also protects against
++	 * the unlocked put_pi_state() in futex_unlock_pi(), futex_lock_pi()
++	 * and futex_wait_requeue_pi() as it cannot go to 0 and consequently
++	 * free pi_state before we can take a reference ourselves.
+ 	 */
+ 	WARN_ON(!atomic_read(&pi_state->refcount));
+ 
+@@ -1149,7 +1182,7 @@ static int attach_to_pi_state(u32 __user *uaddr, u32 uval,
+ 		goto out_einval;
+ 
+ out_attach:
+-	atomic_inc(&pi_state->refcount);
++	get_pi_state(pi_state);
+ 	raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+ 	*ps = pi_state;
+ 	return 0;
+@@ -1337,6 +1370,10 @@ static int attach_to_pi_owner(u32 __user *uaddr, u32 uval, union futex_key *key,
+ 
+ 	WARN_ON(!list_empty(&pi_state->list));
+ 	list_add(&pi_state->list, &p->pi_state_list);
++	/*
++	 * Assignment without holding pi_state->pi_mutex.wait_lock is safe
++	 * because there is no concurrency as the object is not published yet.
++	 */
+ 	pi_state->owner = p;
+ 	raw_spin_unlock_irq(&p->pi_lock);
+ 
+@@ -1352,14 +1389,14 @@ static int lookup_pi_state(u32 __user *uaddr, u32 uval,
+ 			   union futex_key *key, struct futex_pi_state **ps,
+ 			   struct task_struct **exiting)
+ {
+-	struct futex_q *match = futex_top_waiter(hb, key);
++	struct futex_q *top_waiter = futex_top_waiter(hb, key);
+ 
+ 	/*
+ 	 * If there is a waiter on that futex, validate it and
+ 	 * attach to the pi_state when the validation succeeds.
+ 	 */
+-	if (match)
+-		return attach_to_pi_state(uaddr, uval, match->pi_state, ps);
++	if (top_waiter)
++		return attach_to_pi_state(uaddr, uval, top_waiter->pi_state, ps);
+ 
+ 	/*
+ 	 * We are the first waiter - try to look up the owner based on
+@@ -1414,7 +1451,7 @@ static int futex_lock_pi_atomic(u32 __user *uaddr, struct futex_hash_bucket *hb,
+ 				int set_waiters)
+ {
+ 	u32 uval, newval, vpid = task_pid_vnr(task);
+-	struct futex_q *match;
++	struct futex_q *top_waiter;
+ 	int ret;
+ 
+ 	/*
+@@ -1440,9 +1477,9 @@ static int futex_lock_pi_atomic(u32 __user *uaddr, struct futex_hash_bucket *hb,
+ 	 * Lookup existing state first. If it exists, try to attach to
+ 	 * its pi_state.
+ 	 */
+-	match = futex_top_waiter(hb, key);
+-	if (match)
+-		return attach_to_pi_state(uaddr, uval, match->pi_state, ps);
++	top_waiter = futex_top_waiter(hb, key);
++	if (top_waiter)
++		return attach_to_pi_state(uaddr, uval, top_waiter->pi_state, ps);
+ 
+ 	/*
+ 	 * No waiter and user TID is 0. We are here because the
+@@ -1532,48 +1569,35 @@ static void mark_wake_futex(struct wake_q_head *wake_q, struct futex_q *q)
+ 	q->lock_ptr = NULL;
+ }
+ 
+-static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_q *this,
+-			 struct futex_hash_bucket *hb)
++/*
++ * Caller must hold a reference on @pi_state.
++ */
++static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_pi_state *pi_state)
+ {
+-	struct task_struct *new_owner;
+-	struct futex_pi_state *pi_state = this->pi_state;
+ 	u32 uninitialized_var(curval), newval;
++	struct task_struct *new_owner;
++	bool deboost = false;
+ 	WAKE_Q(wake_q);
+-	bool deboost;
+ 	int ret = 0;
+ 
+-	if (!pi_state)
+-		return -EINVAL;
+-
+-	/*
+-	 * If current does not own the pi_state then the futex is
+-	 * inconsistent and user space fiddled with the futex value.
+-	 */
+-	if (pi_state->owner != current)
+-		return -EINVAL;
+-
+-	raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
+ 	new_owner = rt_mutex_next_owner(&pi_state->pi_mutex);
+-
+-	/*
+-	 * When we interleave with futex_lock_pi() where it does
+-	 * rt_mutex_timed_futex_lock(), we might observe @this futex_q waiter,
+-	 * but the rt_mutex's wait_list can be empty (either still, or again,
+-	 * depending on which side we land).
+-	 *
+-	 * When this happens, give up our locks and try again, giving the
+-	 * futex_lock_pi() instance time to complete, either by waiting on the
+-	 * rtmutex or removing itself from the futex queue.
+-	 */
+-	if (!new_owner) {
+-		raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+-		return -EAGAIN;
++	if (WARN_ON_ONCE(!new_owner)) {
++		/*
++		 * As per the comment in futex_unlock_pi() this should not happen.
++		 *
++		 * When this happens, give up our locks and try again, giving
++		 * the futex_lock_pi() instance time to complete, either by
++		 * waiting on the rtmutex or removing itself from the futex
++		 * queue.
++		 */
++		ret = -EAGAIN;
++		goto out_unlock;
+ 	}
+ 
+ 	/*
+-	 * We pass it to the next owner. The WAITERS bit is always
+-	 * kept enabled while there is PI state around. We cleanup the
+-	 * owner died bit, because we are the owner.
++	 * We pass it to the next owner. The WAITERS bit is always kept
++	 * enabled while there is PI state around. We cleanup the owner
++	 * died bit, because we are the owner.
+ 	 */
+ 	newval = FUTEX_WAITERS | task_pid_vnr(new_owner);
+ 
+@@ -1606,15 +1630,15 @@ static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_q *this,
+ 		deboost = __rt_mutex_futex_unlock(&pi_state->pi_mutex, &wake_q);
+ 	}
+ 
++out_unlock:
+ 	raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+-	spin_unlock(&hb->lock);
+ 
+ 	if (deboost) {
+ 		wake_up_q(&wake_q);
+ 		rt_mutex_adjust_prio(current);
+ 	}
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ /*
+@@ -2210,7 +2234,7 @@ retry_private:
+ 			 * refcount on the pi_state and store the pointer in
+ 			 * the futex_q object of the waiter.
+ 			 */
+-			atomic_inc(&pi_state->refcount);
++			get_pi_state(pi_state);
+ 			this->pi_state = pi_state;
+ 			ret = rt_mutex_start_proxy_lock(&pi_state->pi_mutex,
+ 							this->rt_waiter,
+@@ -2488,7 +2512,7 @@ retry:
+ 	if (get_futex_value_locked(&uval, uaddr))
+ 		goto handle_fault;
+ 
+-	while (1) {
++	for (;;) {
+ 		newval = (uval & FUTEX_OWNER_DIED) | newtid;
+ 
+ 		if (cmpxchg_futex_value_locked(&curval, uaddr, uval, newval))
+@@ -2975,7 +2999,7 @@ static int futex_unlock_pi(u32 __user *uaddr, unsigned int flags)
+ 	u32 uninitialized_var(curval), uval, vpid = task_pid_vnr(current);
+ 	union futex_key key = FUTEX_KEY_INIT;
+ 	struct futex_hash_bucket *hb;
+-	struct futex_q *match;
++	struct futex_q *top_waiter;
+ 	int ret;
+ 
+ retry:
+@@ -2999,12 +3023,42 @@ retry:
+ 	 * all and we at least want to know if user space fiddled
+ 	 * with the futex value instead of blindly unlocking.
+ 	 */
+-	match = futex_top_waiter(hb, &key);
+-	if (match) {
+-		ret = wake_futex_pi(uaddr, uval, match, hb);
++	top_waiter = futex_top_waiter(hb, &key);
++	if (top_waiter) {
++		struct futex_pi_state *pi_state = top_waiter->pi_state;
++
++		ret = -EINVAL;
++		if (!pi_state)
++			goto out_unlock;
++
++		/*
++		 * If current does not own the pi_state then the futex is
++		 * inconsistent and user space fiddled with the futex value.
++		 */
++		if (pi_state->owner != current)
++			goto out_unlock;
++
++		get_pi_state(pi_state);
++		/*
++		 * Since modifying the wait_list is done while holding both
++		 * hb->lock and wait_lock, holding either is sufficient to
++		 * observe it.
++		 *
++		 * By taking wait_lock while still holding hb->lock, we ensure
++		 * there is no point where we hold neither; and therefore
++		 * wake_futex_pi() must observe a state consistent with what we
++		 * observed.
++		 */
++		raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
++		spin_unlock(&hb->lock);
++
++		/* drops pi_state->pi_mutex.wait_lock */
++		ret = wake_futex_pi(uaddr, uval, pi_state);
++
++		put_pi_state(pi_state);
++
+ 		/*
+-		 * In case of success wake_futex_pi dropped the hash
+-		 * bucket lock.
++		 * Success, we're done! No tricky corner cases.
+ 		 */
+ 		if (!ret)
+ 			goto out_putkey;
+@@ -3019,7 +3073,6 @@ retry:
+ 		 * setting the FUTEX_WAITERS bit. Try again.
+ 		 */
+ 		if (ret == -EAGAIN) {
+-			spin_unlock(&hb->lock);
+ 			put_futex_key(&key);
+ 			goto retry;
+ 		}
+@@ -3027,7 +3080,7 @@ retry:
+ 		 * wake_futex_pi has detected invalid state. Tell user
+ 		 * space.
+ 		 */
+-		goto out_unlock;
++		goto out_putkey;
+ 	}
+ 
+ 	/*
+@@ -3037,8 +3090,10 @@ retry:
+ 	 * preserve the WAITERS bit not the OWNER_DIED one. We are the
+ 	 * owner.
+ 	 */
+-	if (cmpxchg_futex_value_locked(&curval, uaddr, uval, 0))
++	if (cmpxchg_futex_value_locked(&curval, uaddr, uval, 0)) {
++		spin_unlock(&hb->lock);
+ 		goto pi_faulted;
++	}
+ 
+ 	/*
+ 	 * If uval has changed, let user space handle it.
+@@ -3052,7 +3107,6 @@ out_putkey:
+ 	return ret;
+ 
+ pi_faulted:
+-	spin_unlock(&hb->lock);
+ 	put_futex_key(&key);
+ 
+ 	ret = fault_in_user_writeable(uaddr);
+diff --git a/kernel/printk/nmi.c b/kernel/printk/nmi.c
+index 2c3e7f024c15c..7a50b405ad288 100644
+--- a/kernel/printk/nmi.c
++++ b/kernel/printk/nmi.c
+@@ -52,6 +52,8 @@ struct nmi_seq_buf {
+ };
+ static DEFINE_PER_CPU(struct nmi_seq_buf, nmi_print_seq);
+ 
++static DEFINE_RAW_SPINLOCK(nmi_read_lock);
++
+ /*
+  * Safe printk() for NMI context. It uses a per-CPU buffer to
+  * store the message. NMIs are not nested, so there is always only
+@@ -134,8 +136,6 @@ static void printk_nmi_flush_seq_line(struct nmi_seq_buf *s,
+  */
+ static void __printk_nmi_flush(struct irq_work *work)
+ {
+-	static raw_spinlock_t read_lock =
+-		__RAW_SPIN_LOCK_INITIALIZER(read_lock);
+ 	struct nmi_seq_buf *s = container_of(work, struct nmi_seq_buf, work);
+ 	unsigned long flags;
+ 	size_t len, size;
+@@ -148,7 +148,7 @@ static void __printk_nmi_flush(struct irq_work *work)
+ 	 * different CPUs. This is especially important when printing
+ 	 * a backtrace.
+ 	 */
+-	raw_spin_lock_irqsave(&read_lock, flags);
++	raw_spin_lock_irqsave(&nmi_read_lock, flags);
+ 
+ 	i = 0;
+ more:
+@@ -197,7 +197,7 @@ more:
+ 		goto more;
+ 
+ out:
+-	raw_spin_unlock_irqrestore(&read_lock, flags);
++	raw_spin_unlock_irqrestore(&nmi_read_lock, flags);
+ }
+ 
+ /**
+@@ -239,6 +239,14 @@ void printk_nmi_flush_on_panic(void)
+ 		raw_spin_lock_init(&logbuf_lock);
+ 	}
+ 
++	if (in_nmi() && raw_spin_is_locked(&nmi_read_lock)) {
++		if (num_online_cpus() > 1)
++			return;
++
++		debug_locks_off();
++		raw_spin_lock_init(&nmi_read_lock);
++	}
++
+ 	printk_nmi_flush();
+ }
+ 
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index e814cc1785354..e2b5e38e7a4b7 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -1185,14 +1185,16 @@ static inline int alloc_fresh_gigantic_page(struct hstate *h,
+ static void update_and_free_page(struct hstate *h, struct page *page)
+ {
+ 	int i;
++	struct page *subpage = page;
+ 
+ 	if (hstate_is_gigantic(h) && !gigantic_page_supported())
+ 		return;
+ 
+ 	h->nr_huge_pages--;
+ 	h->nr_huge_pages_node[page_to_nid(page)]--;
+-	for (i = 0; i < pages_per_huge_page(h); i++) {
+-		page[i].flags &= ~(1 << PG_locked | 1 << PG_error |
++	for (i = 0; i < pages_per_huge_page(h);
++	     i++, subpage = mem_map_next(subpage, page, i)) {
++		subpage->flags &= ~(1 << PG_locked | 1 << PG_error |
+ 				1 << PG_referenced | 1 << PG_dirty |
+ 				1 << PG_active | 1 << PG_private |
+ 				1 << PG_writeback);
+@@ -4434,21 +4436,23 @@ static bool vma_shareable(struct vm_area_struct *vma, unsigned long addr)
+ void adjust_range_if_pmd_sharing_possible(struct vm_area_struct *vma,
+ 				unsigned long *start, unsigned long *end)
+ {
+-	unsigned long a_start, a_end;
++	unsigned long v_start = ALIGN(vma->vm_start, PUD_SIZE),
++		v_end = ALIGN_DOWN(vma->vm_end, PUD_SIZE);
+ 
+-	if (!(vma->vm_flags & VM_MAYSHARE))
++	/*
++	 * vma need span at least one aligned PUD size and the start,end range
++	 * must at least partialy within it.
++	 */
++	if (!(vma->vm_flags & VM_MAYSHARE) || !(v_end > v_start) ||
++		(*end <= v_start) || (*start >= v_end))
+ 		return;
+ 
+ 	/* Extend the range to be PUD aligned for a worst case scenario */
+-	a_start = ALIGN_DOWN(*start, PUD_SIZE);
+-	a_end = ALIGN(*end, PUD_SIZE);
++	if (*start > v_start)
++		*start = ALIGN_DOWN(*start, PUD_SIZE);
+ 
+-	/*
+-	 * Intersect the range with the vma range, since pmd sharing won't be
+-	 * across vma after all
+-	 */
+-	*start = max(vma->vm_start, a_start);
+-	*end = min(vma->vm_end, a_end);
++	if (*end < v_end)
++		*end = ALIGN(*end, PUD_SIZE);
+ }
+ 
+ /*
+diff --git a/mm/page_io.c b/mm/page_io.c
+index a2651f58c86a2..ad0e0ce31090e 100644
+--- a/mm/page_io.c
++++ b/mm/page_io.c
+@@ -32,7 +32,6 @@ static struct bio *get_swap_bio(gfp_t gfp_flags,
+ 	bio = bio_alloc(gfp_flags, 1);
+ 	if (bio) {
+ 		bio->bi_iter.bi_sector = map_swap_page(page, &bio->bi_bdev);
+-		bio->bi_iter.bi_sector <<= PAGE_SHIFT - 9;
+ 		bio->bi_end_io = end_io;
+ 
+ 		bio_add_page(bio, page, PAGE_SIZE, 0);
+@@ -252,11 +251,6 @@ out:
+ 	return ret;
+ }
+ 
+-static sector_t swap_page_sector(struct page *page)
+-{
+-	return (sector_t)__page_file_index(page) << (PAGE_SHIFT - 9);
+-}
+-
+ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 		bio_end_io_t end_write_func)
+ {
+@@ -306,7 +300,8 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 		return ret;
+ 	}
+ 
+-	ret = bdev_write_page(sis->bdev, swap_page_sector(page), page, wbc);
++	ret = bdev_write_page(sis->bdev, map_swap_page(page, &sis->bdev),
++			      page, wbc);
+ 	if (!ret) {
+ 		count_vm_event(PSWPOUT);
+ 		return 0;
+@@ -357,7 +352,7 @@ int swap_readpage(struct page *page)
+ 		return ret;
+ 	}
+ 
+-	ret = bdev_read_page(sis->bdev, swap_page_sector(page), page);
++	ret = bdev_read_page(sis->bdev, map_swap_page(page, &sis->bdev), page);
+ 	if (!ret) {
+ 		if (trylock_page(page)) {
+ 			swap_slot_free_notify(page);
+diff --git a/mm/swapfile.c b/mm/swapfile.c
+index 855f62ab8c1b3..8a0d969a6ebd9 100644
+--- a/mm/swapfile.c
++++ b/mm/swapfile.c
+@@ -1666,7 +1666,7 @@ sector_t map_swap_page(struct page *page, struct block_device **bdev)
+ {
+ 	swp_entry_t entry;
+ 	entry.val = page_private(page);
+-	return map_swap_entry(entry, bdev);
++	return map_swap_entry(entry, bdev) << (PAGE_SHIFT - 9);
+ }
+ 
+ /*
+diff --git a/mm/zsmalloc.c b/mm/zsmalloc.c
+index e4cca3f5331ec..8db3c2b27a175 100644
+--- a/mm/zsmalloc.c
++++ b/mm/zsmalloc.c
+@@ -2332,11 +2332,13 @@ static unsigned long zs_can_compact(struct size_class *class)
+ 	return obj_wasted * class->pages_per_zspage;
+ }
+ 
+-static void __zs_compact(struct zs_pool *pool, struct size_class *class)
++static unsigned long __zs_compact(struct zs_pool *pool,
++				  struct size_class *class)
+ {
+ 	struct zs_compact_control cc;
+ 	struct zspage *src_zspage;
+ 	struct zspage *dst_zspage = NULL;
++	unsigned long pages_freed = 0;
+ 
+ 	spin_lock(&class->lock);
+ 	while ((src_zspage = isolate_zspage(class, true))) {
+@@ -2366,7 +2368,7 @@ static void __zs_compact(struct zs_pool *pool, struct size_class *class)
+ 		putback_zspage(class, dst_zspage);
+ 		if (putback_zspage(class, src_zspage) == ZS_EMPTY) {
+ 			free_zspage(pool, class, src_zspage);
+-			pool->stats.pages_compacted += class->pages_per_zspage;
++			pages_freed += class->pages_per_zspage;
+ 		}
+ 		spin_unlock(&class->lock);
+ 		cond_resched();
+@@ -2377,12 +2379,15 @@ static void __zs_compact(struct zs_pool *pool, struct size_class *class)
+ 		putback_zspage(class, src_zspage);
+ 
+ 	spin_unlock(&class->lock);
++
++	return pages_freed;
+ }
+ 
+ unsigned long zs_compact(struct zs_pool *pool)
+ {
+ 	int i;
+ 	struct size_class *class;
++	unsigned long pages_freed = 0;
+ 
+ 	for (i = zs_size_classes - 1; i >= 0; i--) {
+ 		class = pool->size_class[i];
+@@ -2390,10 +2395,11 @@ unsigned long zs_compact(struct zs_pool *pool)
+ 			continue;
+ 		if (class->index != i)
+ 			continue;
+-		__zs_compact(pool, class);
++		pages_freed += __zs_compact(pool, class);
+ 	}
++	atomic_long_add(pages_freed, &pool->stats.pages_compacted);
+ 
+-	return pool->stats.pages_compacted;
++	return pages_freed;
+ }
+ EXPORT_SYMBOL_GPL(zs_compact);
+ 
+@@ -2410,13 +2416,12 @@ static unsigned long zs_shrinker_scan(struct shrinker *shrinker,
+ 	struct zs_pool *pool = container_of(shrinker, struct zs_pool,
+ 			shrinker);
+ 
+-	pages_freed = pool->stats.pages_compacted;
+ 	/*
+ 	 * Compact classes and calculate compaction delta.
+ 	 * Can run concurrently with a manually triggered
+ 	 * (by user) compaction.
+ 	 */
+-	pages_freed = zs_compact(pool) - pages_freed;
++	pages_freed = zs_compact(pool);
+ 
+ 	return pages_freed ? pages_freed : SHRINK_STOP;
+ }
+diff --git a/net/bluetooth/amp.c b/net/bluetooth/amp.c
+index e32f341890079..b01b43ab6f834 100644
+--- a/net/bluetooth/amp.c
++++ b/net/bluetooth/amp.c
+@@ -305,6 +305,9 @@ void amp_read_loc_assoc_final_data(struct hci_dev *hdev,
+ 	struct hci_request req;
+ 	int err = 0;
+ 
++	if (!mgr)
++		return;
++
+ 	cp.phy_handle = hcon->handle;
+ 	cp.len_so_far = cpu_to_le16(0);
+ 	cp.max_len = cpu_to_le16(hdev->amp_assoc_size);
+diff --git a/net/core/pktgen.c b/net/core/pktgen.c
+index 433b26feb320c..8a72b984267a6 100644
+--- a/net/core/pktgen.c
++++ b/net/core/pktgen.c
+@@ -3555,7 +3555,7 @@ static int pktgen_thread_worker(void *arg)
+ 	struct pktgen_dev *pkt_dev = NULL;
+ 	int cpu = t->cpu;
+ 
+-	BUG_ON(smp_processor_id() != cpu);
++	WARN_ON(smp_processor_id() != cpu);
+ 
+ 	init_waitqueue_head(&t->queue);
+ 	complete(&t->start_done);
+diff --git a/net/core/skbuff.c b/net/core/skbuff.c
+index 79034fb861b52..076444dac96d1 100644
+--- a/net/core/skbuff.c
++++ b/net/core/skbuff.c
+@@ -2673,7 +2673,19 @@ EXPORT_SYMBOL(skb_split);
+  */
+ static int skb_prepare_for_shift(struct sk_buff *skb)
+ {
+-	return skb_cloned(skb) && pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
++	int ret = 0;
++
++	if (skb_cloned(skb)) {
++		/* Save and restore truesize: pskb_expand_head() may reallocate
++		 * memory where ksize(kmalloc(S)) != ksize(kmalloc(S)), but we
++		 * cannot change truesize at this point.
++		 */
++		unsigned int save_truesize = skb->truesize;
++
++		ret = pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
++		skb->truesize = save_truesize;
++	}
++	return ret;
+ }
+ 
+ /**
+diff --git a/scripts/Makefile b/scripts/Makefile
+index 1d80897a96442..9116feaacee2a 100644
+--- a/scripts/Makefile
++++ b/scripts/Makefile
+@@ -11,6 +11,9 @@
+ 
+ HOST_EXTRACFLAGS += -I$(srctree)/tools/include
+ 
++CRYPTO_LIBS = $(shell pkg-config --libs libcrypto 2> /dev/null || echo -lcrypto)
++CRYPTO_CFLAGS = $(shell pkg-config --cflags libcrypto 2> /dev/null)
++
+ hostprogs-$(CONFIG_KALLSYMS)     += kallsyms
+ hostprogs-$(CONFIG_LOGO)         += pnmtologo
+ hostprogs-$(CONFIG_VT)           += conmakehash
+@@ -23,8 +26,10 @@ hostprogs-$(CONFIG_SYSTEM_EXTRA_CERTIFICATE) += insert-sys-cert
+ 
+ HOSTCFLAGS_sortextable.o = -I$(srctree)/tools/include
+ HOSTCFLAGS_asn1_compiler.o = -I$(srctree)/include
+-HOSTLOADLIBES_sign-file = -lcrypto
+-HOSTLOADLIBES_extract-cert = -lcrypto
++HOSTCFLAGS_sign-file.o = $(CRYPTO_CFLAGS)
++HOSTLOADLIBES_sign-file = $(CRYPTO_LIBS)
++HOSTCFLAGS_extract-cert.o = $(CRYPTO_CFLAGS)
++HOSTLOADLIBES_extract-cert = $(CRYPTO_LIBS)
+ 
+ always		:= $(hostprogs-y) $(hostprogs-m)
+ 
+diff --git a/security/smack/smackfs.c b/security/smack/smackfs.c
+index 4aecdc8f74b2a..04a53cdb409fa 100644
+--- a/security/smack/smackfs.c
++++ b/security/smack/smackfs.c
+@@ -1186,7 +1186,7 @@ static ssize_t smk_write_net4addr(struct file *file, const char __user *buf,
+ 		return -EPERM;
+ 	if (*ppos != 0)
+ 		return -EINVAL;
+-	if (count < SMK_NETLBLADDRMIN)
++	if (count < SMK_NETLBLADDRMIN || count > PAGE_SIZE - 1)
+ 		return -EINVAL;
+ 
+ 	data = memdup_user_nul(buf, count);
+@@ -1446,7 +1446,7 @@ static ssize_t smk_write_net6addr(struct file *file, const char __user *buf,
+ 		return -EPERM;
+ 	if (*ppos != 0)
+ 		return -EINVAL;
+-	if (count < SMK_NETLBLADDRMIN)
++	if (count < SMK_NETLBLADDRMIN || count > PAGE_SIZE - 1)
+ 		return -EINVAL;
+ 
+ 	data = memdup_user_nul(buf, count);
+@@ -1853,6 +1853,10 @@ static ssize_t smk_write_ambient(struct file *file, const char __user *buf,
+ 	if (!smack_privileged(CAP_MAC_ADMIN))
+ 		return -EPERM;
+ 
++	/* Enough data must be present */
++	if (count == 0 || count > PAGE_SIZE)
++		return -EINVAL;
++
+ 	data = memdup_user_nul(buf, count);
+ 	if (IS_ERR(data))
+ 		return PTR_ERR(data);
+@@ -2024,6 +2028,9 @@ static ssize_t smk_write_onlycap(struct file *file, const char __user *buf,
+ 	if (!smack_privileged(CAP_MAC_ADMIN))
+ 		return -EPERM;
+ 
++	if (count > PAGE_SIZE)
++		return -EINVAL;
++
+ 	data = memdup_user_nul(buf, count);
+ 	if (IS_ERR(data))
+ 		return PTR_ERR(data);
+@@ -2111,6 +2118,9 @@ static ssize_t smk_write_unconfined(struct file *file, const char __user *buf,
+ 	if (!smack_privileged(CAP_MAC_ADMIN))
+ 		return -EPERM;
+ 
++	if (count > PAGE_SIZE)
++		return -EINVAL;
++
+ 	data = memdup_user_nul(buf, count);
+ 	if (IS_ERR(data))
+ 		return PTR_ERR(data);
+@@ -2664,6 +2674,10 @@ static ssize_t smk_write_syslog(struct file *file, const char __user *buf,
+ 	if (!smack_privileged(CAP_MAC_ADMIN))
+ 		return -EPERM;
+ 
++	/* Enough data must be present */
++	if (count == 0 || count > PAGE_SIZE)
++		return -EINVAL;
++
+ 	data = memdup_user_nul(buf, count);
+ 	if (IS_ERR(data))
+ 		return PTR_ERR(data);
+@@ -2756,10 +2770,13 @@ static ssize_t smk_write_relabel_self(struct file *file, const char __user *buf,
+ 		return -EPERM;
+ 
+ 	/*
++	 * No partial write.
+ 	 * Enough data must be present.
+ 	 */
+ 	if (*ppos != 0)
+ 		return -EINVAL;
++	if (count == 0 || count > PAGE_SIZE)
++		return -EINVAL;
+ 
+ 	data = memdup_user_nul(buf, count);
+ 	if (IS_ERR(data))
