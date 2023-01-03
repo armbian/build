@@ -223,6 +223,7 @@ fetch_from_repo() {
 					sref="head"
 				fi
 				display_alert "Updating submodule" "$i - $surl - $sref" "git"
+				git_ensure_safe_directory "$workdir/$i"
 				fetch_from_repo "$surl" "$workdir/$i" "$sref"
 			done
 		fi
