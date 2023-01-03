@@ -433,8 +433,10 @@ function do_main_configuration() {
 
 	[[ -n $APT_PROXY_ADDR ]] && display_alert "Using custom apt-cacher-ng address" "$APT_PROXY_ADDR" "info"
 
-	# Time to calculate packages... or is it?
-	aggregate_all_packages
+	# Time to calculate packages... or is it? @TODO move this to rootfs/image build stage
+	if [[ "${KERNEL_ONLY}" != "yes" ]]; then
+		aggregate_all_packages
+	fi
 
 	# Now, supposedly PACKAGE_LIST_RM is complete by now.
 
