@@ -12,6 +12,8 @@ function kernel_main_patching_python() {
 
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a params_quoted=(
+		"PYTHONUNBUFFERED=yes"                                # Python should not buffer output, so we can see it in real time.
+		"PYTHONPYCACHEPREFIX=${SRC}/cache/pycache"            # Python should not use its own cache, but use our own.
 		"LOG_DEBUG=${patch_debug}"                            # Logging level for python.
 		"SRC=${SRC}"                                          # Armbian root
 		"OUTPUT=${temp_file_for_output}"                      # Output file for the python script.
