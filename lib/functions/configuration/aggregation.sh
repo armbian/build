@@ -6,6 +6,9 @@ function aggregate_all_packages() {
 
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a aggregation_params_quoted=(
+		"PYTHONUNBUFFERED=yes"                     # Python should not buffer output, so we can see it in real time.
+		"PYTHONPYCACHEPREFIX=${SRC}/cache/pycache" # Python should not use its own cache, but use our own.
+
 		"LOG_DEBUG=${SHOW_DEBUG}" # Logging level for python.
 		"SRC=${SRC}"
 		"OUTPUT=${temp_file_for_aggregation}"

@@ -6,6 +6,8 @@ function uboot_main_patching_python() {
 	temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a params_quoted=(
+		"PYTHONUNBUFFERED=yes"                                # Python should not buffer output, so we can see it in real time.
+		"PYTHONPYCACHEPREFIX=${SRC}/cache/pycache"            # Python should not use its own cache, but use our own.
 		"LOG_DEBUG=${SHOW_DEBUG}"                             # Logging level for python.
 		"SRC=${SRC}"                                          # Armbian root
 		"OUTPUT=${temp_file_for_output}"                      # Output file for the python script.
