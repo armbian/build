@@ -162,7 +162,7 @@ function interactive_config_ask_board_list() {
 function interactive_config_ask_branch() {
 	# if BRANCH not set, display selection menu
 	if [[ -n $BRANCH ]]; then
-		display_alert "Already set BRANCH, skipping interactive" "${BRANCH}" "info"
+		display_alert "Already set BRANCH, skipping interactive" "${BRANCH}" "debug"
 		return 0
 	fi
 	declare -a options=()

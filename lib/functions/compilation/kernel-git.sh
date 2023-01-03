@@ -177,5 +177,6 @@ function kernel_prepare_git() {
 		GIT_PRE_FETCH_HOOK=kernel_prepare_git_pre_fetch_tags \
 		GIT_BARE_REPO_FOR_WORKTREE="${kernel_git_bare_tree}" \
 		GIT_BARE_REPO_INITIAL_BRANCH="master" \
-		fetch_from_repo "$KERNELSOURCE" "unused:set via GIT_FIXED_WORKDIR" "$KERNELBRANCH" "yes"
+		fetch_from_repo "$KERNELSOURCE" "kernel:${KERNEL_MAJOR_MINOR}" "$KERNELBRANCH" "yes"
+		# second parameter, "dir", is ignored, since we've passed GIT_FIXED_WORKDIR
 }
