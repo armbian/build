@@ -25,7 +25,7 @@ regular_git() {
 
 # avoid repeating myself too much
 function improved_git_fetch() {
-	improved_git fetch --progress --verbose --no-auto-maintenance "$@"
+	improved_git fetch --progress --verbose --no-auto-maintenance --recurse-submodules=no "$@"
 }
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
@@ -127,7 +127,7 @@ fetch_from_repo() {
 		mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}"
 		cd "${git_work_dir}" || exit
 		git_ensure_safe_directory "${git_work_dir}"
-		
+
 		if [[ ! -d ".git" || "$(git rev-parse --git-dir)" != ".git" ]]; then
 			# Dir is not a git working copy. Make it so;
 			display_alert "Initializing empty git local copy" "git init: $dir $ref_name"
@@ -190,7 +190,6 @@ fetch_from_repo() {
 			tag) improved_git_fetch --no-tags "${url}" tags/"${ref_name}" ;;
 			head) improved_git_fetch --no-tags "${url}" HEAD ;;
 		esac
-		display_alert "Remote repository fetch completed, working copy size" "$(du -h -s | awk '{print $1}')" "git"
 		checkout_from="FETCH_HEAD"
 	fi
 
@@ -223,11 +222,9 @@ fetch_from_repo() {
 				else
 					sref="head"
 				fi
-				# @TODO: in case of the bundle stuff this will fail terribly
+				display_alert "Updating submodule" "$i - $surl - $sref" "git"
 				fetch_from_repo "$surl" "$workdir/$i" "$sref"
 			done
 		fi
 	fi
-
-	display_alert "Final working copy size" "$(du -h -s | awk '{print $1}')" "git"
 }
