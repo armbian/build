@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # update_initramfs
 #
 # this should be invoked as late as possible for any modifications by

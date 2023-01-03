@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Expected variables
 # - aggregated_content
 # - potential_paths

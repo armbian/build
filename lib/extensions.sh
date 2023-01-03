@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # global variables managing the state of the extension manager. treat as private.
 declare -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
 declare -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?

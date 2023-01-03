@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 install_distribution_specific() {
 
 	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
@@ -12,7 +13,7 @@ install_distribution_specific() {
 
 	case $RELEASE in
 
-		focal | jammy | kinetic )
+		focal | jammy | kinetic | lunar )
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
@@ -87,7 +88,7 @@ install_distribution_specific() {
 
 # create_sources_list <release> <basedir>
 #
-# <release>: bullseye|focal|jammy|kinetic|sid
+# <release>: bullseye|focal|jammy|kinetic|lunar|sid
 # <basedir>: path to root directory
 #
 create_sources_list() {
@@ -135,7 +136,7 @@ create_sources_list() {
 			EOF
 			;;
 
-		focal | jammy | kinetic)
+		focal | jammy | kinetic | lunar)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse

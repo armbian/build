@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Myy : Menu configuration for choosing desktop configurations
 show_menu() {
 	provided_title=$1

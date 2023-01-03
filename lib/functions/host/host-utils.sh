@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # wait_for_package_manager
 #
 # * installation will break if we try to install when package manager is running

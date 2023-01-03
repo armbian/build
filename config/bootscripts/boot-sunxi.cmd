@@ -19,6 +19,7 @@ setenv earlycon "off"
 
 # Print boot source
 itest.b *0x28 == 0x00 && echo "U-boot loaded from SD"
+itest.b *0x28 == 0x01 && echo "U-boot loaded from NAND"
 itest.b *0x28 == 0x02 && echo "U-boot loaded from eMMC or secondary SD"
 itest.b *0x28 == 0x03 && echo "U-boot loaded from SPI"
 

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 install_ppa_prerequisites() {
 
 	# Myy : So... The whole idea is that, a good bunch of external sources
@@ -9,7 +10,7 @@ install_ppa_prerequisites() {
 
 	# Myy : TODO Try to find a way to install this package only when
 	# we encounter a PPA.
-	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt install -yqq software-properties-common"
+	run_on_sdcard "DEBIAN_FRONTEND=noninteractive apt-get -yqq update; apt-get install -yqq software-properties-common"
 
 }
 
@@ -41,6 +42,7 @@ add_apt_sources() {
 				display_alert "Adding APT Source ${new_apt_source}"
 
 				if [[ "${new_apt_source}" == ppa* ]]; then
+					install_ppa_prerequisites
 					# ppa with software-common-properties
 					run_on_sdcard "add-apt-repository -y -n \"${new_apt_source}\""
 					# add list with apt-add

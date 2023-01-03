@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # exit_with_error <message> <highlight>
 #
 # a way to terminate build process

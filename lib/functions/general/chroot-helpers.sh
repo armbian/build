@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # mount_chroot <target>
 #
 # helper to reduce code duplication

@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 create_desktop_package() {
 
 	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log

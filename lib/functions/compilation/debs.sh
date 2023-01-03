@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 compile_firmware() {
 	display_alert "Merging and packaging linux firmware" "@host" "info"
 
