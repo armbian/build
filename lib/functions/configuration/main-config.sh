@@ -47,8 +47,7 @@ function do_main_configuration() {
 	fi
 
 	USEALLCORES=yes # Use all CPU cores for compiling
-	HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
-	[[ -z $HOSTRELEASE ]] && HOSTRELEASE=$(cut -d'/' -f1 /etc/debian_version)
+
 	[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
 	[[ -z $HOST ]] && HOST="$BOARD"                         # set hostname to the board
 	cd "${SRC}" || exit
