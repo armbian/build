@@ -111,7 +111,6 @@ function add_cleanup_handler() {
 function execute_and_remove_cleanup_handler() {
 	local callback="$1"
 	display_alert "Execute and remove cleanup handler" "${callback}" "cleanup"
-	# @TODO implement! loop over the list of cleanups; run the one that matches the callback; remove it from the list.
 	local remaning_cleanups=()
 	for one_cleanup_handler in "${trap_manager_cleanup_handlers[@]}"; do
 		if [[ "${one_cleanup_handler}" != "${callback}" ]]; then
