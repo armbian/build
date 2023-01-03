@@ -11,7 +11,7 @@ function interactive_config_prepare_terminal() {
 		fi
 	fi
 	# We'll use this title on all menus
-	export backtitle="Armbian building script, https://www.armbian.com | https://docs.armbian.com | (c) 2013-2022 Igor Pecovnik "
+	export backtitle="Armbian building script, https://www.armbian.com | https://docs.armbian.com | (c) 2013-2023 Igor Pecovnik "
 }
 
 function interactive_config_ask_kernel() {
