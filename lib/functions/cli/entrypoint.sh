@@ -106,8 +106,9 @@ function cli_entrypoint() {
 	# Pre-runs might change it, but if not set, default to ARMBIAN_COMMAND.
 	declare -g ARMBIAN_LOG_CLI_ID="${ARMBIAN_LOG_CLI_ID:-${ARMBIAN_COMMAND}}"
 
-	LOG_SECTION="entrypoint" start_logging_section   # This creates LOGDIR. @TODO: also maybe causes a spurious group to be created in the log file
-	add_cleanup_handler trap_handler_cleanup_logging # cleanup handler for logs; it rolls it up from LOGDIR into DEST/logs @TODO: use the COMMAND in the filenames.
+	LOG_SECTION="entrypoint" start_logging_section      # This creates LOGDIR. @TODO: also maybe causes a spurious group to be created in the log file
+	add_cleanup_handler trap_handler_cleanup_logging    # cleanup handler for logs; it rolls it up from LOGDIR into DEST/logs
+	add_cleanup_handler trap_handler_reset_output_owner # make sure output folder is owned by pre-sudo user if that's the case
 
 	# @TODO: So gigantic contention point here about logging the basic deps installation.
 	if [[ "${ARMBIAN_COMMAND_REQUIRE_BASIC_DEPS}" == "yes" ]]; then
