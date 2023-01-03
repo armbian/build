@@ -366,17 +366,15 @@ function do_main_configuration() {
 	# Time to calculate packages... or is it? @TODO move this to rootfs/image build stage
 	if [[ "${KERNEL_ONLY}" != "yes" ]]; then
 		aggregate_all_packages
+		call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
+			*After all aggregations are done*
+			Called after aggregating all package lists.
+			Packages will still be installed after this is called. It is not possible to change anything, though.
+		POST_AGGREGATE_PACKAGES
 	fi
 
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
-
-	call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
-		*For final user override, using a function, after all aggregations are done*
-		Called after aggregating all package lists, before the end of `compilation.sh`.
-		Packages will still be installed after this is called, so it is the last chance
-		to confirm or change any packages.
-	POST_AGGREGATE_PACKAGES
 
 	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
 }
