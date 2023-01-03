@@ -63,6 +63,10 @@ prepare_host() {
 		exit_with_error "Running this tool on non x86_64 or arm64 build host is not supported"
 	fi
 
+	# obtain the host release either from os-release or debian_version
+	HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
+	[[ -z $HOSTRELEASE ]] && HOSTRELEASE=$(cut -d'/' -f1 /etc/debian_version)
+
 	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
 
 	# Ubuntu 21.04.x (Hirsute) x86_64 is the only fully supported host OS release
