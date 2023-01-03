@@ -51,18 +51,8 @@ function check_loop_device_internal() {
 	return 0
 }
 
-#
-# Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
-#
-# This file is licensed under the terms of the GNU General Public
-# License version 2. This program is licensed "as is" without any
-# warranty of any kind, whether express or implied.
-#
-# This file is a part of the Armbian build script
-# https://github.com/armbian/build/
-
-# write_uboot <loopdev>
-#
+# write_uboot_to_loop_image <loopdev>
+# @TODO: isnt this supposed to be u-boot related? why in loop.sh?
 write_uboot_to_loop_image() {
 
 	local loop=$1 revision
@@ -101,4 +91,15 @@ write_uboot_to_loop_image() {
 	#rm -rf ${TEMP_DIR}
 
 	return 0
+}
+
+# This exists to prevent silly failures; sometimes the user is inspecting the directory outside of build, etc.
+function free_loop_device_insistent() {
+	display_alert "Freeing loop device" "${1}"
+	do_with_retries 10 free_loop_device_retried "${1}"
+}
+
+function free_loop_device_retried() {
+	display_alert "Freeing loop device (try ${RETRY_RUNS})" "${1}"
+	losetup -d "${1}"
 }

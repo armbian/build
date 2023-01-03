@@ -88,8 +88,7 @@ create_image_from_sdcard_rootfs() {
 		Called after unmounting both `/root` and `/boot`.
 	POST_UMOUNT_FINAL_IMAGE
 
-	display_alert "Freeing loop device" "${LOOP}"
-	losetup -d "${LOOP}"
+	free_loop_device_insistent "${LOOP}"
 	unset LOOP # unset so cleanup handler does not try it again
 
 	# We're done with ${MOUNT} by now, remove it.
