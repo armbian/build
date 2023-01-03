@@ -273,16 +273,6 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
 	declare -g -r PACKAGE_LIST_FAMILY_REMOVE="${PACKAGE_LIST_FAMILY_REMOVE}"
 
-	# A global killswitch for extlinux.
-	if [[ "${SRC_EXTLINUX}" == "yes" ]]; then
-		if [[ "${ALLOW_EXTLINUX}" != "yes" ]]; then
-			display_alert "Disabling extlinux support" "extlinux global killswitch; set ALLOW_EXTLINUX=yes to avoid" "info"
-			export SRC_EXTLINUX=no
-		else
-			display_alert "Both SRC_EXTLINUX=yes and ALLOW_EXTLINUX=yes" "enabling extlinux, expect breakage" "warn"
-		fi
-	fi
-
 	interactive_desktop_main_configuration
 
 	[[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
