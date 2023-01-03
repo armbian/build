@@ -588,6 +588,7 @@ function trap_handler_cleanup_logging() {
 	# Export Markdown assets.
 	local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
 	export_markdown_logs
+	reset_uid_owner "${target_file}"
 
 	if [[ "${EXPORT_HTML_LOG}" == "yes" ]]; then
 		local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.html"
