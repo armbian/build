@@ -24,9 +24,9 @@ def get_all_boards_list_from_armbian(src_path):
 	return ret
 
 
-# replace occurences of path_to_compile_sh in value with "${SRC}"
 def armbian_value_parse_simple(value, armbian_src_path):
-	return value.replace(armbian_src_path, "${SRC}")
+	# return value.replace(armbian_src_path, "${SRC}")
+	return value
 
 
 def armbian_value_parse_list(item_value, delimiter, armbian_src_path):
@@ -171,7 +171,7 @@ def get_info_for_one_board(board_file, board_name, common_params, board_info):
 	# eprint("Running Armbian bash for board '{}'".format(board_name))
 	try:
 		parsed = run_armbian_compile_and_parse(compile_sh_full_path, armbian_src_path,
-						       common_params | {"BOARD": board_name})
+											   common_params | {"BOARD": board_name})
 		# print(json.dumps(parsed, indent=4, sort_keys=True))
 		return parsed | board_info
 	except BaseException as e:
@@ -203,7 +203,7 @@ if True:
 				all_params = common_compile_params | board_compile_params | {"BRANCH": possible_branch}
 				# eprint("Submitting future for board {} with BRANCH={}".format(board, possible_branch))
 				future = executor.submit(get_info_for_one_board, all_boards[board], board, all_params,
-							 board_info)
+										 board_info)
 				every_future.append(future)
 
 		eprint("Waiting for all futures...")
