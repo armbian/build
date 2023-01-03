@@ -16,9 +16,14 @@ function parse_cmdline_params() {
 			param_name=${arg%%=*}
 			param_value=${arg##*=}
 			param_value_desc="${param_value:-(empty)}"
-			ARMBIAN_PARSED_CMDLINE_PARAMS["${param_name}"]="${param_value}" # For current run.
-			ARMBIAN_CLI_RELAUNCH_PARAMS["${param_name}"]="${param_value}"   # For relaunch.
-			display_alert "Command line: parsed parameter '$param_name' to" "${param_value_desc}" "debug"
+			# Sanity check for the param name; it must be a valid bash variable name.
+			if [[ "${param_name}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+				ARMBIAN_PARSED_CMDLINE_PARAMS["${param_name}"]="${param_value}" # For current run.
+				ARMBIAN_CLI_RELAUNCH_PARAMS["${param_name}"]="${param_value}"   # For relaunch.
+				display_alert "Command line: parsed parameter '$param_name' to" "${param_value_desc}" "debug"
+			else
+				exit_with_error "Invalid cmdline param '${param_name}=${param_value_desc}'"
+			fi
 		elif [[ "x${arg}x" != "xx" ]]; then # not a param, not empty, store it in the non-param array for later usage
 			local non_param_value="${arg}"
 			local non_param_value_desc="${non_param_value:-(empty)}"
