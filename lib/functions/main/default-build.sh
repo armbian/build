@@ -88,6 +88,9 @@ function main_default_build_single() {
 		done
 	fi
 
+	# Prepare ccache, cthreads, etc for the build
+	prepare_compilation_vars
+
 	if [[ "${do_build_uboot}" == "yes" ]]; then
 		# Don't build u-boot at all if the BOOTCONFIG is 'none'.
 		if [[ "${BOOTCONFIG}" != "none" ]]; then

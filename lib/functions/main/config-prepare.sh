@@ -1,5 +1,34 @@
 #!/usr/bin/env bash
 
+function prepare_compilation_vars() {
+	#  moved from config: rpardini: ccache belongs in compilation, not config. I think.
+	if [[ $USE_CCACHE != no ]]; then
+		CCACHE=ccache
+		export PATH="/usr/lib/ccache:$PATH"
+		# private ccache directory to avoid permission issues when using build script with "sudo"
+		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
+		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
+	else
+		CCACHE=""
+	fi
+
+	# moved from config: this does not belong in configuration. it's a compilation thing.
+	# optimize build time with 100% CPU usage
+	CPUS=$(grep -c 'processor' /proc/cpuinfo)
+	if [[ $USEALLCORES != no ]]; then
+		CTHREADS="-j$((CPUS + CPUS / 2))"
+	else
+		CTHREADS="-j1"
+	fi
+
+	call_extension_method "post_determine_cthreads" "config_post_determine_cthreads" <<- 'POST_DETERMINE_CTHREADS'
+		*give config a chance modify CTHREADS programatically. A build server may work better with hyperthreads-1 for example.*
+		Called early, before any compilation work starts.
+	POST_DETERMINE_CTHREADS
+
+	return 0
+}
+
 function prepare_and_config_main_build_single() {
 	# default umask for root is 022 so parent directories won't be group writeable without this
 	# this is used instead of making the chmod in prepare_host() recursive
@@ -14,22 +43,6 @@ function prepare_and_config_main_build_single() {
 	export SHOW_WARNING=yes # If you try something that requires EXPERT=yes.
 
 	display_alert "Starting single build process" "${BOARD}" "info"
-
-	# @TODO: rpardini: ccache belongs in compilation, not config. I think.
-	if [[ $USE_CCACHE != no ]]; then
-		CCACHE=ccache
-		export PATH="/usr/lib/ccache:$PATH"
-		# private ccache directory to avoid permission issues when using build script with "sudo"
-		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
-		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
-		# Done elsewhere in a-n # # Check if /tmp is mounted as tmpfs make a temporary ccache folder there for faster operation.
-		# Done elsewhere in a-n # if [ "$(findmnt --noheadings --output FSTYPE --target "/tmp" --uniq)" == "tmpfs" ]; then
-		# Done elsewhere in a-n # 	export CCACHE_TEMPDIR="/tmp/ccache-tmp"
-		# Done elsewhere in a-n # fi
-
-	else
-		CCACHE=""
-	fi
 
 	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
@@ -96,20 +109,6 @@ function prepare_and_config_main_build_single() {
 		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
 
 	do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
-
-	# @TODO: this does not belong in configuration. it's a compilation thing. move there
-	# optimize build time with 100% CPU usage
-	CPUS=$(grep -c 'processor' /proc/cpuinfo)
-	if [[ $USEALLCORES != no ]]; then
-		CTHREADS="-j$((CPUS + CPUS / 2))"
-	else
-		CTHREADS="-j1"
-	fi
-
-	call_extension_method "post_determine_cthreads" "config_post_determine_cthreads" <<- 'POST_DETERMINE_CTHREADS'
-		*give config a chance modify CTHREADS programatically. A build server may work better with hyperthreads-1 for example.*
-		Called early, before any compilation work starts.
-	POST_DETERMINE_CTHREADS
 
 	if [[ "$BETA" == "yes" ]]; then
 		IMAGE_TYPE=nightly
