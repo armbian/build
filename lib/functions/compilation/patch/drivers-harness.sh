@@ -12,7 +12,6 @@ function calculate_hash_for_files() {
 function kernel_drivers_create_patches() {
 	declare kernel_work_dir="${1}"
 	declare kernel_git_revision="${2}"
-	display_alert "Creating patches for kernel drivers" "version: '${KERNEL_MAJOR_MINOR}' kernel_work_dir:'${kernel_work_dir}'" "info"
 
 	declare hash_files # any changes in these two files will trigger a cache miss.
 	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh"
@@ -36,6 +35,8 @@ function kernel_drivers_create_patches() {
 		display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "cachehit"
 		return
 	fi
+	
+	display_alert "Creating patches for kernel drivers" "version: '${KERNEL_MAJOR_MINOR}' family: '${LINUXFAMILY}'" "info"
 
 	# if it does _not_ exist, fist clear the base, so no old patches are left over
 	run_host_command_logged rm -fv "${cache_dir_base}/${cache_key_base}*"
@@ -48,7 +49,7 @@ function kernel_drivers_create_patches() {
 	kernel_driver_commit_date=$(git -C "$kernel_work_dir" show -s --format=%ci "$kernel_git_revision")
 	display_alert "Kernel driver commit date" "$kernel_driver_commit_date" "debug"
 
-	display_alert "Preparing patch for drivers" "version: ${KERNEL_MAJOR_MINOR} kernel_work_dir: ${kernel_work_dir}" "info"
+	display_alert "Preparing patch for drivers" "version: ${KERNEL_MAJOR_MINOR} kernel_work_dir: ${kernel_work_dir}" "debug"
 
 	kernel_drivers_prepare_harness "${kernel_work_dir}" "${kernel_git_revision}"
 }

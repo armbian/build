@@ -233,8 +233,8 @@ function check_dir_for_mount_options() {
 }
 
 function trap_handler_reset_output_owner() {
-	display_alert "Resetting output directory owner" "${SRC}/output" "info"
+	display_alert "Resetting output directory owner" "${SRC}/output" "debug"
 	reset_uid_owner "${SRC}/output"
-	display_alert "Resetting tmp directory owner" "${SRC}/.tmp" "info"
+	display_alert "Resetting tmp directory owner" "${SRC}/.tmp" "debug"
 	reset_uid_owner "${SRC}/.tmp"
 }

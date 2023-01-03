@@ -200,7 +200,7 @@ fetch_from_repo() {
 	checked_out_revision_mtime="$(date +%Y%m%d%H%M%S -d "@${checked_out_revision_ts}")" # convert timestamp to local date/time
 	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "git"
 
-	display_alert "git checking out revision SHA" "${checked_out_revision}"
+	display_alert "git checking out revision SHA" "${checked_out_revision}" "debug"
 	regular_git checkout -f -q "${checked_out_revision}" # Return the files that are tracked by git to the initial state.
 
 	display_alert "git cleaning" "${checked_out_revision}" "git"
