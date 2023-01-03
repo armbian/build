@@ -546,7 +546,7 @@ function install_distribution_agnostic() {
 	# enable PubkeyAuthentication
 	sed -i 's/#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' "${SDCARD}"/etc/ssh/sshd_config
 
-	if [ -f "${SDCARD}"/etc/NetworkManager/NetworkManager.conf ]; then
+	if [[ -f "${SDCARD}"/etc/NetworkManager/NetworkManager.conf ]]; then
 		# configure network manager
 		sed "s/managed=\(.*\)/managed=true/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
 
