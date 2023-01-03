@@ -129,7 +129,7 @@ function trap_handler_cleanup_rootfs_and_image() {
 	# shellcheck disable=SC2153 # global var.
 	if [[ -b "${LOOP}" ]]; then
 		display_alert "Freeing loop" "trap_handler_cleanup_rootfs_and_image ${LOOP}" "wrn"
-		losetup -d "${LOOP}" >&2 || true
+		free_loop_device_insistent "${LOOP}" || true
 	fi
 
 	[[ -d "${SDCARD}" ]] && rm -rf --one-file-system "${SDCARD}"
