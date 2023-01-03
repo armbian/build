@@ -7,7 +7,9 @@ function kernel_main_patching_python() {
 	declare -I kernel_drivers_patch_file kernel_drivers_patch_hash
 
 	declare patch_debug="${SHOW_DEBUG:-${DEBUG_PATCHING:-"no"}}"
-	declare temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
+	declare temp_file_for_output
+	temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
+
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a params_quoted=(
 		"LOG_DEBUG=${patch_debug}"                            # Logging level for python.
@@ -19,6 +21,9 @@ function kernel_main_patching_python() {
 		"USERPATCHES_PATH=${USERPATCHES_PATH}"                # Needed to find the userpatches.
 		#"BOARD="                                             # BOARD is needed for the patchset selection logic; mostly for u-boot. empty for kernel.
 		#"TARGET="                                            # TARGET is need for u-boot's SPI/SATA etc selection logic. empty for kernel
+		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.
+		"PATH=${PATH}"
+		"HOME=${HOME}"
 		# What to do?
 		"APPLY_PATCHES=yes"                      # Apply the patches to the filesystem. Does not imply git commiting. If no, still exports the hash.
 		"PATCHES_TO_GIT=${PATCHES_TO_GIT:-no}"   # Commit to git after applying the patches.
@@ -64,4 +69,3 @@ function kernel_main_patching() {
 
 	return 0 # there is a shortcircuit above
 }
-
