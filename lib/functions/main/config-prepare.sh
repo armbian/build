@@ -40,7 +40,7 @@ function prepare_and_config_main_build_single() {
 	[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"      # set to english if not set
 	[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8" # set console to UTF-8 if not set
 
-	export SHOW_WARNING=yes # If you try something that requires EXPERT=yes.
+	declare -g SHOW_WARNING=yes # If you try something that requires EXPERT=yes.
 
 	display_alert "Starting single build process" "${BOARD}" "info"
 
@@ -67,7 +67,7 @@ function prepare_and_config_main_build_single() {
 		source "${BOARD_SOURCE_FILE}"
 		sourced_board_configs+=("${BOARD_SOURCE_FILE}")
 	done
-	
+
 	# Sanity check: if no board config was sourced, then the board name is invalid
 	[[ ${#sourced_board_configs[@]} -eq 0 ]] && exit_with_error "No such BOARD '${BOARD}'; no board config file found."
 
@@ -118,20 +118,20 @@ function prepare_and_config_main_build_single() {
 		IMAGE_TYPE=user-built
 	fi
 
-	export BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
-	[[ -n $ATFSOURCE ]] && export ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
+	declare -g BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
+	[[ -n $ATFSOURCE ]] && declare -g ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 
-	export BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
-	export BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
-	export BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}${EXTRA_BSP_NAME}"
-	export BSP_DESKTOP_PACKAGE_FULLNAME="${BSP_DESKTOP_PACKAGE_NAME}_${REVISION}_${ARCH}"
+	declare -g BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
+	declare -g BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
+	declare -g BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}${EXTRA_BSP_NAME}"
+	declare -g BSP_DESKTOP_PACKAGE_FULLNAME="${BSP_DESKTOP_PACKAGE_NAME}_${REVISION}_${ARCH}"
 
-	export CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
-	export CHOSEN_KERNEL=linux-image-${BRANCH}-${LINUXFAMILY}
-	export CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
-	export CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
-	export CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
-	export CHOSEN_KERNEL_WITH_ARCH=${CHOSEN_KERNEL}-${ARCH} # Only for reporting purposes.
+	declare -g CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
+	declare -g CHOSEN_KERNEL=linux-image-${BRANCH}-${LINUXFAMILY}
+	declare -g CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
+	declare -g CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
+	declare -g CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
+	declare -g CHOSEN_KERNEL_WITH_ARCH=${CHOSEN_KERNEL}-${ARCH} # Only for reporting purposes.
 
 	# So for kernel full cached rebuilds.
 	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
@@ -142,46 +142,48 @@ function prepare_and_config_main_build_single() {
 	# So we gotta explictly know the major.minor to be able to do that scheme.
 	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
 	if [[ -n "${KERNELSOURCE}" ]]; then
-		export ARMBIAN_WILL_BUILD_KERNEL="${CHOSEN_KERNEL}-${ARCH}"
+		declare -g ARMBIAN_WILL_BUILD_KERNEL="${CHOSEN_KERNEL}-${ARCH}"
 		if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
 			exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
 		fi
-		export KERNEL_HAS_WORKING_HEADERS="no"             # assume the worst, and all surprises will be happy ones
-		export KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # assume the worst, and all surprises will be happy ones
+		# assume the worst, and all surprises will be happy ones
+		declare -g KERNEL_HAS_WORKING_HEADERS="no"
+		declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no"
+
 		# Parse/validate the the major, bail if no match
-		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge "5.4"; then # We support 5.x from 5.4
-			export KERNEL_HAS_WORKING_HEADERS="yes"                        # We can build working headers for 5.x even when cross compiling.
-			export KERNEL_MAJOR=5
-			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
-		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.19" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "5.0"; then
-			export KERNEL_MAJOR=4 # We support 4.19+ (less than 5.0) is supported, and headers via full source
-			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
-			export KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # full-source based headers. experimental. set to yes here to enable
-		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge "4.4" && linux-version compare "${KERNEL_MAJOR_MINOR}" lt "4.19"; then
-			export KERNEL_MAJOR=4 # We support 4.x from 4.4
-			export KERNEL_MAJOR_SHALLOW_TAG="v${KERNEL_MAJOR_MINOR}-rc1"
+		declare -i KERNEL_MAJOR_MINOR_MAJOR=${KERNEL_MAJOR_MINOR%%.*}
+		declare -i KERNEL_MAJOR_MINOR_MINOR=${KERNEL_MAJOR_MINOR#*.}
+
+		if [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -ge 6 ]] || [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -ge 5 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 4 ]]; then # We support 6.x, and 5.x from 5.4
+			declare -g KERNEL_HAS_WORKING_HEADERS="yes"
+			declare -g KERNEL_MAJOR="${KERNEL_MAJOR_MINOR_MAJOR}"
+		elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 19 ]]; then
+			declare -g KERNEL_MAJOR=4                              # We support 4.19+ (less than 5.0) is supported, and headers via full source
+			declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # full-source based headers. experimental. set to yes here to enable
+		elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 4 ]]; then
+			declare -g KERNEL_MAJOR=4 # We support 4.x from 4.4
 		else
 			# If you think you can patch packaging to support this, you're probably right. Is _worth_ it though?
 			exit_with_error "Kernel series unsupported" "'${KERNEL_MAJOR_MINOR}' is unsupported, or bad config"
 		fi
 
 		# Default LINUXSOURCEDIR:
-		export LINUXSOURCEDIR="linux-kernel-worktree/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}__${ARCH}"
+		declare -g LINUXSOURCEDIR="linux-kernel-worktree/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}__${ARCH}"
 
 		# Allow adding to it with KERNEL_EXTRA_DIR
 		if [[ "${KERNEL_EXTRA_DIR}" != "" ]]; then
-			export LINUXSOURCEDIR="${LINUXSOURCEDIR}__${KERNEL_EXTRA_DIR}"
+			declare -g LINUXSOURCEDIR="${LINUXSOURCEDIR}__${KERNEL_EXTRA_DIR}"
 			display_alert "Using kernel extra dir: '${KERNEL_EXTRA_DIR}'" "LINUXSOURCEDIR: ${LINUXSOURCEDIR}" "debug"
 		fi
 	else
-		export KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
-		export ARMBIAN_WILL_BUILD_KERNEL=no
+		declare -g KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
+		declare -g ARMBIAN_WILL_BUILD_KERNEL=no
 	fi
 
 	if [[ -n "${BOOTCONFIG}" ]] && [[ "${BOOTCONFIG}" != "none" ]]; then
-		export ARMBIAN_WILL_BUILD_UBOOT=yes
+		declare -g ARMBIAN_WILL_BUILD_UBOOT=yes
 	else
-		export ARMBIAN_WILL_BUILD_UBOOT=no
+		declare -g ARMBIAN_WILL_BUILD_UBOOT=no
 	fi
 
 	display_alert "Extensions: finish configuration" "extension_finish_config" "debug"
