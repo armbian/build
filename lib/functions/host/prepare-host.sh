@@ -93,20 +93,20 @@ prepare_host() {
 	if armbian_is_running_in_container; then
 		display_alert "Running in container" "Adding provisions for container building" "info"
 		declare -g CONTAINER_COMPAT=yes # this controls mknod usage for loop devices.
-		declare -g NO_APT_CACHER=yes # disable apt-cacher; we use local cache in Docker volumes.
-		
+		declare -g NO_APT_CACHER=yes    # disable apt-cacher; we use local cache in Docker volumes.
+
 		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
 		if [[ $EXTERNAL_NEW == compile ]]; then
 			display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
 			EXTERNAL_NEW=prebuilt
 		fi
-		
+
 		SYNC_CLOCK=no
 	else
 		display_alert "NOT running in container" "No special provisions for container building" "debug"
 	fi
 
-	# Skip verification if you are working offline
+	# If offline, do not try to install dependencies, manage acng, or sync the clock.
 	if ! $offline; then
 		install_host_dependencies "dependencies during prepare_release"
 
@@ -118,17 +118,19 @@ prepare_host() {
 			display_alert "Syncing clock" "host" "info"
 			run_host_command_logged ntpdate "${NTP_SERVER:-pool.ntp.org}"
 		fi
+	fi
 
-		# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
-		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
+	# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
+	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
 
-		# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
-		mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+	# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 
+	# If offline, do not try to download/install toolchains.
+	if ! $offline; then
 		# Mostly deprecated.
 		download_external_toolchains
-
-	fi # check offline
+	fi
 
 	# if we're building an image, not only packages...
 	# ... and the host arch does not match the target arch ...

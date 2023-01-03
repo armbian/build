@@ -201,7 +201,8 @@ function reset_uid_owner() {
 	for arg in "$@"; do
 		display_alert "reset_uid_owner: '${arg}' will be owner id '${SET_OWNER_TO_UID}'" "reset_uid_owner" "debug"
 		if [[ -d "${arg}" ]]; then
-			chown -R "${SET_OWNER_TO_UID}" "${arg}"
+			chown "${SET_OWNER_TO_UID}" "${arg}"
+			find "${arg}" -uid 0 -print0 | xargs --no-run-if-empty -0 chown "${SET_OWNER_TO_UID}"
 		elif [[ -f "${arg}" ]]; then
 			chown "${SET_OWNER_TO_UID}" "${arg}"
 		else
@@ -229,4 +230,11 @@ function check_dir_for_mount_options() {
 	display_alert "Checked directory OK for mount options" "${dir} ('${description}')" "info"
 
 	return 0
+}
+
+function trap_handler_reset_output_owner() {
+	display_alert "Resetting output directory owner" "${SRC}/output" "info"
+	reset_uid_owner "${SRC}/output"
+	display_alert "Resetting tmp directory owner" "${SRC}/.tmp" "info"
+	reset_uid_owner "${SRC}/.tmp"
 }
