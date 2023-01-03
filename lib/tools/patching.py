@@ -121,8 +121,7 @@ for one_patch_file in ALL_DIR_PATCH_FILES:
 # This reflects the order in which we want to apply the patches.
 # For series-based patches, we want to apply the serie'd patches first.
 # The other patches are separately sorted.
-ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + \
-			 list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
+ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
 
 # Now, actually read the patch files.
 # Patch files might be in mailbox format, and in that case contain more than one "patch".
@@ -184,6 +183,11 @@ git_repo: "git.Repo | None" = None
 if apply_patches:
 	log.info("Cleaning target git directory...")
 	git_repo = Repo(GIT_WORK_DIR, odbt=GitCmdObjectDB)
+
+	# Sanity check. It might be we fail to access the repo, or it's not a git repo, etc.
+	status = str(git_repo.git.status()).replace("\n", "; ")
+	log.info(f"Git status of '{GIT_WORK_DIR}': '{status}'.")
+
 	BRANCH_FOR_PATCHES = armbian_utils.get_from_env_or_bomb("BRANCH_FOR_PATCHES")
 	BASE_GIT_REVISION = armbian_utils.get_from_env("BASE_GIT_REVISION")
 	BASE_GIT_TAG = armbian_utils.get_from_env("BASE_GIT_TAG")

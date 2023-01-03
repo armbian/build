@@ -1,6 +1,8 @@
 function uboot_main_patching_python() {
 	prepare_pip_packages_for_python_tools
 
+	declare -I uboot_work_dir # outer scope variable
+
 	temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a params_quoted=(
@@ -13,6 +15,9 @@ function uboot_main_patching_python() {
 		"BOARD=${BOARD}"                                      # BOARD is needed for the patchset selection logic; mostly for u-boot.
 		"TARGET=${target_patchdir}"                           # TARGET is need for u-boot's SPI/SATA etc selection logic
 		"USERPATCHES_PATH=${USERPATCHES_PATH}"                # Needed to find the userpatches.
+		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.
+		"PATH=${PATH}"
+		"HOME=${HOME}"
 		# What to do?
 		"APPLY_PATCHES=yes"                      # Apply the patches to the filesystem. Does not imply git commiting. If no, still exports the hash.
 		"PATCHES_TO_GIT=${PATCHES_TO_GIT:-no}"   # Commit to git after applying the patches.
