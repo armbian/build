@@ -211,8 +211,9 @@ function cli_standard_relaunch_docker_or_sudo() {
 
 		display_alert "This script requires root privileges; Docker is unavailable" "trying to use sudo" "wrn"
 		declare -g ARMBIAN_CLI_RELAUNCH_ARGS=()
-		produce_relaunch_parameters                                               # produces ARMBIAN_CLI_RELAUNCH_ARGS
-		sudo --preserve-env "${SRC}/compile.sh" "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: relaunch done here!
+		produce_relaunch_parameters # produces ARMBIAN_CLI_RELAUNCH_ARGS
+		# shellcheck disable=SC2093 # re-launching under sudo: replace the current shell, and never return.
+		exec sudo --preserve-env "${SRC}/compile.sh" "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: relaunch done here!
 		display_alert "AFTER SUDO!!!" "AFTER SUDO!!!" "warn"
 	fi
 }
