@@ -35,7 +35,7 @@ function kernel_drivers_create_patches() {
 		display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "cachehit"
 		return
 	fi
-	
+
 	display_alert "Creating patches for kernel drivers" "version: '${KERNEL_MAJOR_MINOR}' family: '${LINUXFAMILY}'" "info"
 
 	# if it does _not_ exist, fist clear the base, so no old patches are left over
@@ -43,11 +43,6 @@ function kernel_drivers_create_patches() {
 
 	# since it does not exist, go create it. this requires working tree.
 	declare target_patch_file="${cache_target_file}"
-
-	# grab the date of the kernel kernel_git_revision into kernel_driver_commit_date, which will be used to commit later
-	declare kernel_driver_commit_date
-	kernel_driver_commit_date=$(git -C "$kernel_work_dir" show -s --format=%ci "$kernel_git_revision")
-	display_alert "Kernel driver commit date" "$kernel_driver_commit_date" "debug"
 
 	display_alert "Preparing patch for drivers" "version: ${KERNEL_MAJOR_MINOR} kernel_work_dir: ${kernel_work_dir}" "debug"
 
@@ -57,7 +52,7 @@ function kernel_drivers_create_patches() {
 function kernel_drivers_prepare_harness() {
 	declare kernel_work_dir="${1}"
 	declare kernel_git_revision="${2}"
-	declare -I kernel_driver_commit_date target_patch_file # outer scope variables
+	declare -I target_patch_file # outer scope variable
 
 	declare -a drivers=(
 		driver_rtl8152_rtl8153
@@ -116,17 +111,20 @@ function kernel_drivers_prepare_harness() {
 
 function export_changes_as_patch_via_git_format_patch() {
 	# git: add all modifications
-	run_host_command_logged git add . "&>/dev/null"
+	run_host_command_logged git add .
 
 	# git: commit the changes
 	declare -a commit_params=(
 		-m "drivers for ${LINUXFAMILY} version ${KERNEL_MAJOR_MINOR}"
-		--date="${kernel_driver_commit_date}"
 		--author="${MAINTAINER} <${MAINTAINERMAIL}>"
 	)
-	GIT_COMMITTER_NAME="${MAINTAINER}" GIT_COMMITTER_EMAIL="${MAINTAINERMAIL}" git commit "${commit_params[@]}" &> /dev/null
+	declare -a commit_envs=(
+		"GIT_COMMITTER_NAME=${MAINTAINER}"
+		"GIT_COMMITTER_EMAIL=${MAINTAINERMAIL}"
+	)
+	run_host_command_logged env -i "${commit_envs[@]@Q}" git commit "${commit_params[@]@Q}"
 
-	# export the commit as a patch; first to a temporary file, then move it to the target location if they're not the same
+	# export the commit as a patch
 	declare formatpatch_params=(
 		"-1" "--stdout"
 		"--unified=3"               # force 3 lines of diff context
@@ -137,5 +135,5 @@ function export_changes_as_patch_via_git_format_patch() {
 		'--stat-graph-width=10' # shorten the diffgraph graph part, it's too long
 		"--zero-commit"         # Output an all-zero hash in each patch’s From header instead of the hash of the commit.
 	)
-	git format-patch "${formatpatch_params[@]}" > "${target_patch_file}"
+	run_host_command_logged env -i git format-patch "${formatpatch_params[@]@Q}" > "${target_patch_file}"
 }
