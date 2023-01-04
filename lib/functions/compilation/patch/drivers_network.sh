@@ -1,5 +1,15 @@
 #!/bin/bash
 
+function driver_generic_bring_back_ipx() {
+	#
+	# Returning headers needed for some wireless drivers
+	#
+	if linux-version compare "${version}" ge 5.4 && [ $EXTRAWIFI == yes ]; then
+		display_alert "Reverting upstream-removed" "IPX stuff needed for Wireless Drivers" "info"
+		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
+	fi
+}
+
 driver_rtl8152_rtl8153()
 {
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
@@ -541,7 +551,8 @@ driver_uwe5622_allwinner()
 patch_drivers_network()
 {
 	display_alert "Patching network related drivers"
-
+	
+	driver_generic_bring_back_ipx
 	driver_rtl8152_rtl8153
 	driver_rtl8189ES
 	driver_rtl8189FS
