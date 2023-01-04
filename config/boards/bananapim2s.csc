@@ -1,5 +1,5 @@
 # Amlogic A311D 4GB RAM eMMC 2xGBE USB3
-BOARD_NAME="BPI M2S"
+BOARD_NAME="Banana Pi M2S"
 BOARDFAMILY="meson-g12b"
 BOOTCONFIG="bananapim2s_defconfig"
 KERNEL_TARGET="current,edge"
