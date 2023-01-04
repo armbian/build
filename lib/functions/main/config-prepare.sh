@@ -57,8 +57,9 @@ function prepare_and_config_main_build_single() {
 	declare -A dict_all_board_types=() dict_all_board_source_files=()                                           # dictionaries
 	get_list_of_all_buildable_boards arr_all_board_names "" dict_all_board_types dict_all_board_source_files "" # invoke
 
-	BOARD_TYPE="${dict_all_board_types["${BOARD}"]}"
-	BOARD_SOURCE_FILES="${dict_all_board_source_files["${BOARD}"]}"
+	declare BOARD_TYPE="${dict_all_board_types["${BOARD}"]}"
+	declare BOARD_SOURCE_FILES="${dict_all_board_source_files["${BOARD}"]}"
+	declare BOARD_SOURCE_FILE
 
 	declare -a sourced_board_configs=()
 	for BOARD_SOURCE_FILE in ${BOARD_SOURCE_FILES}; do # No quotes, so expand the space-delimited list
@@ -91,6 +92,8 @@ function prepare_and_config_main_build_single() {
 	interactive_config_ask_desktop_build
 
 	interactive_config_ask_standard_or_minimal
+
+	interactive_finish # cleans up vars
 
 	#prevent conflicting setup
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
