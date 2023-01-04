@@ -119,6 +119,7 @@ configure_grub() {
 			COLOR_NORMAL=white/black
 			COLOR_HIGHLIGHT=black/white
 		grubWallpaper
+		run_host_command_logged chmod -v +x "${MOUNT}"/usr/share/desktop-base/grub_background.sh
 	fi
 
 	display_alert "GRUB EFI kernel cmdline" "'${GRUB_CMDLINE_LINUX_DEFAULT}' distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
