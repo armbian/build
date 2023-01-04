@@ -204,12 +204,14 @@ configure_grub() {
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
+		display_alert "Enabling" "Armbian Wallpaper on GRUB" "info"
 		mkdir -p "${MOUNT}"/usr/share/desktop-base/
 		cat <<- grubWallpaper >> "${MOUNT}"/usr/share/desktop-base/grub_background.sh
 			WALLPAPER=/usr/share/images/grub/wallpaper.png
 			COLOR_NORMAL=white/black
 			COLOR_HIGHLIGHT=black/white
 		grubWallpaper
+		run_host_command_logged chmod -v +x "${MOUNT}"/usr/share/desktop-base/grub_background.sh
 	fi
 
 	display_alert "GRUB EFI kernel cmdline" "${GRUB_CMDLINE_LINUX_DEFAULT} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
