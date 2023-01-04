@@ -55,6 +55,7 @@ function kernel_drivers_prepare_harness() {
 	declare -I target_patch_file # outer scope variable
 
 	declare -a drivers=(
+		driver_generic_bring_back_ipx
 		driver_rtl8152_rtl8153
 		driver_rtl8189ES
 		driver_rtl8189FS
