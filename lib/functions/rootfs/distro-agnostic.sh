@@ -435,14 +435,14 @@ function install_distribution_agnostic() {
 	fi
 
 	# remove deb files
-	rm -f "${SDCARD}"/root/*.deb
+	run_host_command_logged rm -fv "${SDCARD}"/root/*.deb
 
 	# copy boot splash images
-	cp "${SRC}"/packages/blobs/splash/armbian-u-boot.bmp "${SDCARD}"/boot/boot.bmp
+	run_host_command_logged cp -v "${SRC}"/packages/blobs/splash/armbian-u-boot.bmp "${SDCARD}"/boot/boot.bmp
 
 	# execute $LINUXFAMILY-specific tweaks
 	if [[ $(type -t family_tweaks) == function ]]; then
-		display_alert "Running family_tweaks" "$BOARD :: $LINUXFAMILY" "debug"
+		display_alert "Applying family" " tweaks: $BOARD :: $LINUXFAMILY"
 		family_tweaks
 		display_alert "Done with family_tweaks" "$BOARD :: $LINUXFAMILY" "debug"
 	fi
@@ -465,17 +465,17 @@ function install_distribution_agnostic() {
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-led-state.service ]] && chroot_sdcard systemctl --no-reload enable armbian-led-state.service
 
 	# copy "first run automated config, optional user configured"
-	cp "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
+	run_host_command_logged cp -v "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
 	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723 @TODO: from ubuntu 15. maybe gone?
-	chroot "${SDCARD}" /bin/bash -c "chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
-	chroot "${SDCARD}" /bin/bash -c "chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper"
+	chroot_sdcard chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper
+	chroot_sdcard chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper
 
 	# disable samba NetBIOS over IP name service requests since it hangs when no network is present at boot
-	chroot "${SDCARD}" /bin/bash -c "systemctl --quiet disable nmbd 2> /dev/null"
+	chroot_sdcard systemctl --quiet disable nmbd
 
 	# disable low-level kernel messages for non betas
 	if [[ -z $BETA ]]; then
