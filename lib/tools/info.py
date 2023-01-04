@@ -69,12 +69,15 @@ def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_
 			stderr=subprocess.PIPE
 		)
 	except subprocess.CalledProcessError as e:
+		lines_stderr = e.stderr.split("\n")
 		eprint(
 			"Error calling Armbian: params: {}, return code: {}, stderr: {}".format(
-				compile_params, e.returncode, e.stderr.split("\n")[-1]
+				compile_params, e.returncode,
+				# the last 5 elements of lines_stderr, joined
+				"; ".join(lines_stderr[-5:])
 			)
 		)
-		return {"in": compile_params, "out": {}, "logs": e.stderr.split("\n"), "config_ok": False}
+		return {"in": compile_params, "out": {}, "logs": lines_stderr, "config_ok": False}
 
 	if result is not None:
 		if result.stderr:
@@ -102,7 +105,9 @@ def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_
 
 		all_keys[key] = value
 
-	return {"in": compile_params, "out": all_keys, "logs": logs, "config_ok": True}
+	info = {"in": compile_params, "out": all_keys, "config_ok": True}
+	# info["logs"] = logs
+	return info
 
 
 # Find the location of compile.sh, relative to this Python script.
@@ -120,16 +125,16 @@ if not os.path.exists(compile_sh_full_path):
 	raise Exception("Can't find compile.sh")
 
 common_compile_params = {
-	"KERNEL_ONLY": "no",
+	"KERNEL_ONLY": "yes",
 	"BUILD_MINIMAL": "no",
-	"DEB_COMPRESS": "none",
-	"CLOUD_IMAGE": "yes",
-	"CLEAN_LEVEL": "debs",
-	"SHOW_LOG": "yes",
-	"SKIP_EXTERNAL_TOOLCHAINS": "yes",
-	"CONFIG_DEFS_ONLY": "yes",
+	# "DEB_COMPRESS": "none",
+	# "CLOUD_IMAGE": "yes",
+	# "CLEAN_LEVEL": "debs",
+	# "SHOW_LOG": "yes",
+	# "SKIP_EXTERNAL_TOOLCHAINS": "yes",
+	# "CONFIG_DEFS_ONLY": "yes",
 	"KERNEL_CONFIGURE": "no",
-	"EXPERT": "yes"
+	# "EXPERT": "yes"
 }
 
 board_compile_params = {
@@ -161,12 +166,14 @@ def parse_board_file_for_static_info(board_file, board_id):
 	}
 
 
-def get_info_for_one_board(board_file, board_name, common_params, board_info):
+def get_info_for_one_board(board_file, board_name, common_params, board_info, branch):
 	# eprint(
 	#	"Getting info for board '{}' branch '{}' in file '{}'".format(
 	#		board_name, common_params["BRANCH"], board_file
 	#	)
 	# )
+
+	board_info = board_info | {"BOARD_DESC_ID": f"{board_name}-{branch}"}
 
 	# eprint("Running Armbian bash for board '{}'".format(board_name))
 	try:
@@ -203,7 +210,7 @@ if True:
 				all_params = common_compile_params | board_compile_params | {"BRANCH": possible_branch}
 				# eprint("Submitting future for board {} with BRANCH={}".format(board, possible_branch))
 				future = executor.submit(get_info_for_one_board, all_boards[board], board, all_params,
-										 board_info)
+										 board_info, possible_branch)
 				every_future.append(future)
 
 		eprint("Waiting for all futures...")
