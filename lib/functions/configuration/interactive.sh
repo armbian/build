@@ -14,6 +14,15 @@ function interactive_config_prepare_terminal() {
 	export backtitle="Armbian building script, https://www.armbian.com | https://docs.armbian.com | (c) 2013-2023 Igor Pecovnik "
 }
 
+function interactive_finish() {
+	unset TTY_X
+	unset TTY_Y
+	unset options
+	unset DIALOG_EXIT_CODE
+	unset WIP_STATE
+	unset SHOW_WARNING
+}
+
 function interactive_config_ask_kernel() {
 	interactive_config_ask_kernel_only
 	interactive_config_ask_kernel_configure

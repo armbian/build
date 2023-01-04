@@ -278,7 +278,7 @@ function do_main_configuration() {
 	[[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 	[[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
 
-	BOOTCONFIG_VAR_NAME=BOOTCONFIG_${BRANCH^^}
+	declare BOOTCONFIG_VAR_NAME="BOOTCONFIG_${BRANCH^^}"
 	[[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
 	[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 	[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
