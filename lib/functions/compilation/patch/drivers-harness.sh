@@ -140,9 +140,9 @@ function export_changes_as_patch_via_git_format_patch() {
 	# export the commit as a patch
 	declare formatpatch_params=(
 		"-1" "--stdout"
-		"--unified=3"               # force 3 lines of diff context
-		"--keep-subject"            # do not add a prefix to the subject "[PATCH] "
-		"--no-encode-email-headers" # do not encode email headers
+		"--unified=3"    # force 3 lines of diff context
+		"--keep-subject" # do not add a prefix to the subject "[PATCH] "
+		# "--no-encode-email-headers" # do not encode email headers - @TODO does not exist under focal, disable
 		'--signature' "Armbian generated patch from drivers for kernel ${version} and family ${LINUXFAMILY}"
 		'--stat=120'            # 'wider' stat output; default is 80
 		'--stat-graph-width=10' # shorten the diffgraph graph part, it's too long
