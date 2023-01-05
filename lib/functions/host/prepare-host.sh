@@ -63,25 +63,7 @@ prepare_host() {
 		exit_with_error "Running this tool on non x86_64 or arm64 build host is not supported"
 	fi
 
-	# obtain the host release either from os-release or debian_version
-	HOSTRELEASE=$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)
-	[[ -z $HOSTRELEASE ]] && HOSTRELEASE=$(cut -d'/' -f1 /etc/debian_version)
-
-	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
-
-	# Ubuntu 21.04.x (Hirsute) x86_64 is the only fully supported host OS release
-	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
-	#
-	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
-	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "buster bullseye focal impish hirsute jammy lunar kinetic debbie tricia ulyana ulyssa uma una vanessa vera" != *"$HOSTRELEASE"* ]]; then
-		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
-			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
-			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
-		else
-			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${HOSTRELEASE:-(unknown)}"
-		fi
-	fi
+	obtain_and_check_hostrelease # sets HOSTRELEASE and validates it for sanity
 
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
 		if [ -f /.dockerenv ]; then
@@ -213,7 +195,9 @@ prepare_host() {
 
 function early_prepare_host_dependencies() {
 	# packages list for host
-	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+	# NOTE: those are automatically included in Dockerfile generation.
+
+	# Common for all releases...
 	declare -a -g host_dependencies=(
 		# big bag of stuff from before
 		acl aptly bc binfmt-support bison btrfs-progs
@@ -227,27 +211,15 @@ function early_prepare_host_dependencies() {
 		ntpdate patchutils
 		pkg-config pv qemu-user-static rsync swig
 		u-boot-tools udev uuid-dev whiptail
-		zlib1g-dev busybox fdisk
+		zlib1g-dev busybox
 
-		# distcc, experimental, optional; see cli-distcc.sh and kernel.sh
-		distcc
-
-		# python3 stuff (eg, for modern u-boot)
-		python3-dev python3-distutils python3-setuptools
-		# python3 pip (for Armbian's Python utilities) @TODO virtualenv?
-		python3-pip
-
-		# python2, including headers, mostly used by some u-boot builds (2017 et al, odroidxu4 and others).
-		python2 python2-dev
-		# Attention: 'python-setuptools' (Python2's setuptools) does not exist in Debian Sid. Use Python3 instead.
-
-		# systemd-container brings in systemd-nspawn, which is used by the buildpkg functionality
-		# systemd-container # @TODO: bring this back eventually. I don't think trying to use those inside a container is a good idea.
+		distcc # distcc, experimental, optional; see cli-distcc.sh and kernel.sh
 
 		# non-mess below?
-		file ccze colorized-logs tree expect            # logging utilities; expect is needed for 'unbuffer' command
+		ccze colorized-logs                             # @TODO: drop those after removing usages
+		file tree expect                                # logging utilities; expect is needed for 'unbuffer' command
 		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
-		parted gdisk                                    # partition tools
+		parted gdisk fdisk                              # partition tools
 		aria2 curl wget axel                            # downloaders et al
 		parallel                                        # do things in parallel
 		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
@@ -257,6 +229,24 @@ function early_prepare_host_dependencies() {
 		gcc-riscv64-linux-gnu                                 # For RISC-V 64-bit, riscv64; crossbuild-essential-riscv64 is not available.
 		libc6-amd64-cross                                     # Support for running x86 binaries (under qemu on other arches)
 	)
+
+	# Now determine the HOSTRELEASE, if not passed-in.
+	if [[ "x${HOSTRELEASE}x" == "xx" ]]; then
+		obtain_and_check_hostrelease # Sets HOSTRELEASE & validates it for sanity
+	else
+		display_alert "Using passed-in HOSTRELEASE" "${HOSTRELEASE}" "warn"
+	fi
+
+	host_deps_add_extra_python # Focal-like hosts might need extra python3.9 packages.
+
+	# Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+
+	host_dependencies+=(
+		"python3-dev" "python3-distutils" "python3-setuptools" "python3-pip"
+	)
+
+	# Python2 -- required for some older u-boot builds
+	# Debian 'sid' does not carry python2 anymore.
+	host_dependencies+=("python2" "python2-dev")
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
@@ -298,7 +288,7 @@ function install_host_dependencies() {
 
 	run_host_command_logged update-ccache-symlinks
 
-	export FINAL_HOST_DEPS="${host_dependencies[*]}"
+	declare -g FINAL_HOST_DEPS="${host_dependencies[*]}"
 
 	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
 		*run after all host dependencies are installed*
@@ -306,4 +296,6 @@ function install_host_dependencies() {
 		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
 		are installed at this point. The system clock has not yet been synced.
 	HOST_DEPENDENCIES_READY
+
+	unset FINAL_HOST_DEPS # don't leak this after the hook is done
 }
