@@ -11,7 +11,6 @@ function cli_config_dump_run() {
 function config_and_remove_useless() {
 	do_logging=no prepare_and_config_main_build_single # avoid logging during configdump; it's useless
 	unset FINALDEST
-	unset FINAL_HOST_DEPS
 	unset HOOK_ORDER HOOK_POINT HOOK_POINT_TOTAL_FUNCS
 	unset REPO_CONFIG REPO_STORAGE
 	unset DEB_STORAGE

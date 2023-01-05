@@ -81,12 +81,16 @@ function docker_cli_prepare() {
 	# @TODO: Make sure we can access docker, on Linux; gotta be part of 'docker' group: grep -q "$(whoami)" <(getent group docker)
 
 	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:initial"
-	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}" # works Linux & Darwin
-	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"      # works Linux & Darwin
-	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}" # does NOT work under Darwin? loop problems.
-	#declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:kinetic"}" # works Linux & Darwin
-	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:jammy"}" # works Linux & Darwin
+	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}"
+	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"
+	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}"
+	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:focal"}"
+	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:kinetic"}"
+	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:jammy"}"
 	declare -g DOCKER_ARMBIAN_TARGET_PATH="${DOCKER_ARMBIAN_TARGET_PATH:-"/armbian"}"
+
+	declare wanted_os_tag="${DOCKER_ARMBIAN_BASE_IMAGE%%:*}"
+	declare wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
 
 	# Store the "from scratch" image. Will be used if Armbian image is not available, for a "from scratch" build.
 	declare -g DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH="${DOCKER_ARMBIAN_BASE_IMAGE}"
@@ -94,9 +98,6 @@ function docker_cli_prepare() {
 	# If we're NOT building the public, official image, then USE the public, official image as base.
 	# IMPORTANT: This has to match the naming scheme for tag the is used in the GitHub actions workflow.
 	if [[ "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" ]]; then
-		local wanted_os_tag="${DOCKER_ARMBIAN_BASE_IMAGE%%:*}"
-		local wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
-
 		# @TODO: this is rpardini's build. It's done in a different repo, so that's why the strange "armbian-release" name. It should be armbian/build:ubuntu-jammy-latest or something.
 		DOCKER_ARMBIAN_BASE_IMAGE="ghcr.io/rpardini/armbian-release:armbian-next-${wanted_os_tag}-${wanted_release_tag}-latest"
 
@@ -116,7 +117,7 @@ function docker_cli_prepare() {
 	fi
 	declare -a -g host_dependencies=() python3_pip_dependencies=()
 	early_prepare_pip3_dependencies_for_python_tools
-	early_prepare_host_dependencies
+	HOSTRELEASE="${wanted_release_tag}" early_prepare_host_dependencies
 	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
 	display_alert "Pre-game pip3 dependencies" "${python3_pip_dependencies[*]}" "debug"
 
