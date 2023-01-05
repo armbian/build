@@ -353,7 +353,7 @@ class PatchInPatchFile:
 
 		# create a temporary filename (don't create the file yet: patch will maybe create it)
 		rejects_file = tempfile.mktemp()
-		#log.debug(f"Rejects file is going to be '{rejects_file}'...")
+		# log.debug(f"Rejects file is going to be '{rejects_file}'...")
 
 		proc = subprocess.run(
 			["patch", "--batch", "-p1", "-N", f"--reject-file={rejects_file}", "--quoting-style=c"],
@@ -409,7 +409,7 @@ class PatchInPatchFile:
 		# add all the files that were touched by the patch
 		# if the patch failed to parse, this will be an empty list, so we'll just add all changes.
 		add_all_changes_in_git = False
-		if not self.failed_to_parse:
+		if (not self.failed_to_parse) and (not self.parent.patch_dir.is_autogen_dir):
 			# sanity check.
 			if len(self.all_file_names_touched) == 0:
 				raise Exception(
@@ -428,14 +428,16 @@ class PatchInPatchFile:
 			if not add_all_changes_in_git:
 				repo.git.add("-f", all_files_to_add)
 
-		if self.failed_to_parse or add_all_changes_in_git:
+		if self.failed_to_parse or self.parent.patch_dir.is_autogen_dir or add_all_changes_in_git:
 			log.warning(f"Rescue: adding all changed files to git for {self}")
 			repo.git.add(repo.working_tree_dir)
 
-		# commit the changes, using GitPython; show the produced commit hash
-		commit_message = f"{self.parent.relative_dirs_and_base_file_name}(:{self.counter})\n\nOriginal-Subject: {self.subject}\n{self.desc}"
+		commit_message = f"{self.subject}\n{self.desc}"
+
 		if add_rebase_tags:
+			commit_message = f"{self.parent.relative_dirs_and_base_file_name}(:{self.counter})\n\nOriginal-Subject: {self.subject}\n{self.desc}"
 			commit_message = f"{commit_message}\n{self.patch_rebase_tags_desc()}"
+
 		author: git.Actor = git.Actor(self.from_name, self.from_email)
 		committer: git.Actor = git.Actor("Armbian AutoPatcher", "patching@armbian.com")
 		commit = repo.index.commit(
