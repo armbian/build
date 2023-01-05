@@ -224,7 +224,6 @@ function logging_enrich_run_command_error_info() {
 		found_files+=("${sdcard_files[@]}") # add to result
 	done
 
-	display_alert "Error-related files found" "${found_files[*]}" "debug"
 	for found_file in "${found_files[@]}"; do
 		# Log to asset, so it's available in the HTML log
 		LOG_ASSET="chroot_error_context__$(basename "${found_file}")" do_with_log_asset cat "${found_file}"
