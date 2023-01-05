@@ -19,7 +19,10 @@ function prepare_pip_packages_for_python_tools() {
 
 	# @TODO: virtualenv? system-wide for now
 	display_alert "Installing required Python packages" "via pip3" "info"
-	run_host_command_logged pip3 install "${python3_pip_dependencies[@]}"
+	declare python3_binary_path
+	prepare_python3_binary_for_python_tools
+
+	run_host_command_logged "${python3_binary_path}" /usr/bin/pip3 install "${python3_pip_dependencies[@]}"
 
 	return 0
 }
