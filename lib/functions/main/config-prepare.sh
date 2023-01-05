@@ -1,58 +1,24 @@
 #!/usr/bin/env bash
 
-function prepare_compilation_vars() {
-	#  moved from config: rpardini: ccache belongs in compilation, not config. I think.
-	if [[ $USE_CCACHE != no ]]; then
-		CCACHE=ccache
-		export PATH="/usr/lib/ccache:$PATH"
-		# private ccache directory to avoid permission issues when using build script with "sudo"
-		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
-		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
-	else
-		CCACHE=""
-	fi
+function prepare_and_config_main_build_single() {
+	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
-	# moved from config: this does not belong in configuration. it's a compilation thing.
-	# optimize build time with 100% CPU usage
-	CPUS=$(grep -c 'processor' /proc/cpuinfo)
-	if [[ $USEALLCORES != no ]]; then
-		CTHREADS="-j$((CPUS + CPUS / 2))"
-	else
-		CTHREADS="-j1"
-	fi
+	# those are possibly interactive. interactive (dialog) and logging don't mix, for obvious reasons.
+	interactive_config_prepare_terminal # init vars used for interactive
+	config_possibly_interactive_kernel_board
 
-	call_extension_method "post_determine_cthreads" "config_post_determine_cthreads" <<- 'POST_DETERMINE_CTHREADS'
-		*give config a chance modify CTHREADS programatically. A build server may work better with hyperthreads-1 for example.*
-		Called early, before any compilation work starts.
-	POST_DETERMINE_CTHREADS
+	LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
 
-	return 0
+	config_possibly_interactive_branch_release_desktop_minimal
+	interactive_finish # cleans up vars used for interactive
+
+	LOG_SECTION="config_pre_main" do_with_conditional_logging config_pre_main
+	LOG_SECTION="do_main_configuration" do_with_conditional_logging do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
+	LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
+	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
 }
 
-function prepare_and_config_main_build_single() {
-	# default umask for root is 022 so parent directories won't be group writeable without this
-	# this is used instead of making the chmod in prepare_host() recursive
-	umask 002
-
-	interactive_config_prepare_terminal
-
-	# Warnings mitigation
-	[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"      # set to english if not set
-	[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8" # set console to UTF-8 if not set
-
-	declare -g SHOW_WARNING=yes # If you try something that requires EXPERT=yes.
-
-	display_alert "Starting single build process" "${BOARD}" "info"
-
-	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
-
-	interactive_config_ask_kernel
-	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected: KERNEL_ONLY"
-	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected: KERNEL_CONFIGURE"
-
-	interactive_config_ask_board_list # this uses get_list_of_all_buildable_boards too
-	[[ -z $BOARD ]] && exit_with_error "No board selected: BOARD"
-
+function config_source_board_file() {
 	declare -a arr_all_board_names=()                                                                           # arrays
 	declare -A dict_all_board_types=() dict_all_board_source_files=()                                           # dictionaries
 	get_list_of_all_buildable_boards arr_all_board_names "" dict_all_board_types dict_all_board_source_files "" # invoke
@@ -82,19 +48,27 @@ function prepare_and_config_main_build_single() {
 
 	[[ -z $KERNEL_TARGET ]] && exit_with_error "Board ('${BOARD}') configuration does not define valid kernel config"
 
-	interactive_config_ask_branch
-	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected: BRANCH"
-	[[ ${KERNEL_TARGET} != *${BRANCH}* && ${BRANCH} != "ddk" ]] && exit_with_error "Kernel branch not defined for this board: '${BRANCH}' for '${BOARD}'"
+	return 0 # shortcircuit above
+}
 
-	interactive_config_ask_release
-	[[ -z $RELEASE && ${KERNEL_ONLY} != yes ]] && exit_with_error "No release selected: RELEASE"
+function config_early_init() {
 
-	interactive_config_ask_desktop_build
+	# default umask for root is 022 so parent directories won't be group writeable without this
+	# this is used instead of making the chmod in prepare_host() recursive
+	umask 002
 
-	interactive_config_ask_standard_or_minimal
+	# Warnings mitigation
+	[[ -z $LANGUAGE ]] && export LANGUAGE="en_US:en"      # set to english if not set
+	[[ -z $CONSOLE_CHAR ]] && export CONSOLE_CHAR="UTF-8" # set console to UTF-8 if not set
 
-	interactive_finish # cleans up vars
+	declare -g SHOW_WARNING=yes # If you try something that requires EXPERT=yes.
 
+	display_alert "Starting single build process" "${BOARD:-"no BOARD set"}" "info"
+
+	return 0 # protect against eventual shortcircuit above
+}
+
+function config_pre_main() {
 	#prevent conflicting setup
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		BUILD_MINIMAL=no
@@ -111,8 +85,10 @@ function prepare_and_config_main_build_single() {
 	[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] &&
 		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
 
-	do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
+	return 0 # shortcircuit above
+}
 
+function config_post_main() {
 	if [[ "$BETA" == "yes" ]]; then
 		IMAGE_TYPE=nightly
 	elif [ "$BETA" == "no" ] || [ "$RC" == "yes" ]; then
@@ -197,7 +173,7 @@ function prepare_and_config_main_build_single() {
 		Don't change anything not coming from other variables or meant to be configured by the user.
 	EXTENSION_FINISH_CONFIG
 
-	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
+	return 0 # protect against eventual shortcircuit above
 }
 
 # cli-bsp also uses this
@@ -211,10 +187,11 @@ function set_distribution_status() {
 
 	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
 
-	return 0 # due to last stmt above being a shortcut conditional
+	return 0 # due to last stmt above being a shortcircuit conditional
 }
 
 # Some utility functions
-branch2dir() {
+function branch2dir() {
 	[[ "${1}" == "head" ]] && echo "HEAD" || echo "${1##*:}"
+	return 0
 }

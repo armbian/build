@@ -120,10 +120,21 @@ function do_with_logging() {
 function do_with_logging_unless_user_terminal() {
 	# Is user on a terminal? If so, don't log, just show on screen.
 	if [[ -t 1 ]]; then
-		display_alert "User is on a terminal, not logging output" "terminal" "debug"
+		display_alert "User is on a terminal, not logging output" "do_with_logging_unless_user_terminal" "debug"
 		"$@"
 	else
-		display_alert "User is not on a terminal, logging output" "terminal" "debug"
+		display_alert "User is not on a terminal, logging output" "do_with_logging_unless_user_terminal" "debug"
+		do_with_logging "$@"
+	fi
+}
+
+function do_with_conditional_logging() {
+	# if "do_logging=no", just run the command, otherwise, log it.
+	if [[ "${do_logging:-"yes"}" == "no" ]]; then
+		display_alert "do_logging=no, not starting logging section" "do_with_conditional_logging" "debug"
+		"$@"
+	else
+		display_alert "normally logging output" "do_with_conditional_logging" "debug"
 		do_with_logging "$@"
 	fi
 }
