@@ -18,7 +18,7 @@ function compile_uboot_target() {
 	local uboot_work_dir=""
 	uboot_work_dir="$(pwd)"
 
-	declare -I uboot_git_revision # use outer scope variable value
+	# outer scope variable: uboot_git_revision
 
 	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q "${uboot_git_revision}"

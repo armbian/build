@@ -58,7 +58,7 @@ function kernel_drivers_create_patches() {
 function kernel_drivers_prepare_harness() {
 	declare kernel_work_dir="${1}"
 	declare kernel_git_revision="${2}"
-	declare -I target_patch_file # outer scope variable
+	# outer scope variable: target_patch_file
 
 	declare -a drivers=(
 		driver_generic_bring_back_ipx
