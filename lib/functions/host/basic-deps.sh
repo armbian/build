@@ -3,7 +3,7 @@
 #
 # * installs only basic packages
 #
-prepare_host_basic() {
+function prepare_host_basic() {
 
 	# command:package1 package2 ...
 	# list of commands that are neeeded:packages where this command is

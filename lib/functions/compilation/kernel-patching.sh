@@ -45,7 +45,9 @@ function kernel_main_patching_python() {
 		"EXTRA_PATCH_HASHES_FIRST=${kernel_drivers_patch_hash}" # Is a space-separated list.
 	)
 	display_alert "Calling Python patching script" "for kernel" "info"
-	run_host_command_logged env -i "${params_quoted[@]@Q}" python3 "${SRC}/lib/tools/patching.py"
+	declare python3_binary_path
+	prepare_python3_binary_for_python_tools
+	run_host_command_logged env -i "${params_quoted[@]@Q}" "${python3_binary_path}" "${SRC}/lib/tools/patching.py"
 	run_host_command_logged cat "${temp_file_for_output}"
 	# shellcheck disable=SC1090
 	source "${temp_file_for_output}" # SOURCE IT!

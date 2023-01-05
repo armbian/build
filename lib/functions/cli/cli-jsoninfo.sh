@@ -11,9 +11,12 @@ function cli_json_info_run() {
 	# - python debian packages hostdeps? (-dev, -pip, virtualenv, etc)
 	# - run the virtualenv (messy?)
 
+	declare python3_binary_path
+	prepare_python3_binary_for_python_tools
+
 	# The info extractor itself...
-	run_host_command_logged python3 "${SRC}"/lib/tools/info.py ">" "${SRC}/output/info.json"
+	run_host_command_logged "${python3_binary_path}" "${SRC}"/lib/tools/info.py ">" "${SRC}/output/info.json"
 
 	# Also convert output to CSV for easy import into Google Sheets etc
-	run_host_command_logged python3 "${SRC}"/lib/tools/json2csv.py "<" "${SRC}/output/info.json" ">" "${SRC}/output/info.csv"
+	run_host_command_logged "${python3_binary_path}" "${SRC}"/lib/tools/json2csv.py "<" "${SRC}/output/info.json" ">" "${SRC}/output/info.csv"
 }
