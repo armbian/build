@@ -3,8 +3,7 @@
 function kernel_main_patching_python() {
 	prepare_pip_packages_for_python_tools
 
-	# outer scope variables
-	declare -I kernel_drivers_patch_file kernel_drivers_patch_hash
+	# outer scope variables: kernel_drivers_patch_file kernel_drivers_patch_hash
 
 	declare patch_debug="${SHOW_DEBUG:-${DEBUG_PATCHING:-"no"}}"
 	declare temp_file_for_output

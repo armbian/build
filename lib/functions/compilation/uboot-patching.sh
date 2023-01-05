@@ -1,7 +1,7 @@
 function uboot_main_patching_python() {
 	prepare_pip_packages_for_python_tools
 
-	declare -I uboot_work_dir # outer scope variable
+	# outer scope variable: uboot_work_dir
 
 	temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
