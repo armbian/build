@@ -25,7 +25,8 @@ regular_git() {
 
 # avoid repeating myself too much
 function improved_git_fetch() {
-	improved_git fetch --progress --verbose --no-auto-maintenance --recurse-submodules=no "$@"
+	# --no-auto-maintenance requires a recent git version, not available on focal-like host OSs
+	improved_git fetch --progress --verbose --recurse-submodules=no "$@"
 }
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
