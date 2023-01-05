@@ -32,8 +32,14 @@ function kernel_drivers_create_patches() {
 
 	# If the target file exists, we can skip the patch creation.
 	if [[ -f "${cache_target_file}" ]]; then
-		display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "cachehit"
-		return
+		# Make sure the file is larger than 512 bytes. Old versions of this code left small/empty files on failure.
+		if [[ $(stat -c%s "${cache_target_file}") -gt 512 ]]; then
+			display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "cachehit"
+			return
+		else
+			display_alert "Removing invalid/small cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "warn"
+			run_host_command_logged rm -fv "${cache_target_file}"
+		fi
 	fi
 
 	display_alert "Creating patches for kernel drivers" "version: '${KERNEL_MAJOR_MINOR}' family: '${LINUXFAMILY}'" "info"
@@ -121,6 +127,7 @@ function export_changes_as_patch_via_git_format_patch() {
 
 	# git: commit the changes
 	declare -a commit_params=(
+		"--quiet" # otherwise too much output
 		-m "drivers for ${LINUXFAMILY} version ${KERNEL_MAJOR_MINOR}"
 		--author="${MAINTAINER} <${MAINTAINERMAIL}>"
 	)
@@ -141,5 +148,11 @@ function export_changes_as_patch_via_git_format_patch() {
 		'--stat-graph-width=10' # shorten the diffgraph graph part, it's too long
 		"--zero-commit"         # Output an all-zero hash in each patch’s From header instead of the hash of the commit.
 	)
-	run_host_command_logged env -i "${common_envs[@]@Q}" git format-patch "${formatpatch_params[@]@Q}" > "${target_patch_file}"
+
+	declare target_patch_file_tmp="${target_patch_file}.tmp"
+	# The redirect ">" is escaped here, so it's run inside the subshell, not in the current shell.
+	run_host_command_logged env -i "${common_envs[@]@Q}" git format-patch "${formatpatch_params[@]@Q}" ">" "${target_patch_file_tmp}"
+
+	# move the tmp to final, if it worked.
+	run_host_command_logged mv -v "${target_patch_file_tmp}" "${target_patch_file}"
 }
