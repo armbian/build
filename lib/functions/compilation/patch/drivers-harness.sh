@@ -114,6 +114,11 @@ function export_changes_as_patch_via_git_format_patch() {
 	# git: add all modifications
 	run_host_command_logged git add .
 
+	declare -a common_envs=(
+		"HOME=${HOME}"
+		"PATH=${PATH}"
+	)
+
 	# git: commit the changes
 	declare -a commit_params=(
 		-m "drivers for ${LINUXFAMILY} version ${KERNEL_MAJOR_MINOR}"
@@ -123,7 +128,7 @@ function export_changes_as_patch_via_git_format_patch() {
 		"GIT_COMMITTER_NAME=${MAINTAINER}"
 		"GIT_COMMITTER_EMAIL=${MAINTAINERMAIL}"
 	)
-	run_host_command_logged env -i "${commit_envs[@]@Q}" git commit "${commit_params[@]@Q}"
+	run_host_command_logged env -i "${common_envs[@]@Q}" "${commit_envs[@]@Q}" git commit "${commit_params[@]@Q}"
 
 	# export the commit as a patch
 	declare formatpatch_params=(
@@ -136,5 +141,5 @@ function export_changes_as_patch_via_git_format_patch() {
 		'--stat-graph-width=10' # shorten the diffgraph graph part, it's too long
 		"--zero-commit"         # Output an all-zero hash in each patch’s From header instead of the hash of the commit.
 	)
-	run_host_command_logged env -i git format-patch "${formatpatch_params[@]@Q}" > "${target_patch_file}"
+	run_host_command_logged env -i "${common_envs[@]@Q}" git format-patch "${formatpatch_params[@]@Q}" > "${target_patch_file}"
 }
