@@ -132,7 +132,7 @@ fetch_from_repo() {
 		if [[ ! -d ".git" || "$(git rev-parse --git-dir)" != ".git" ]]; then
 			# Dir is not a git working copy. Make it so;
 			display_alert "Initializing empty git local copy" "git init: $dir $ref_name"
-			regular_git init -q --initial-branch="armbian_unused_initial_branch" .
+			regular_git init -q . # --initial-branch="armbian_unused_initial_branch" is not supported under focal
 			offline=false # Force online, we'll need to fetch.
 		fi
 	fi
