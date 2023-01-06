@@ -259,7 +259,7 @@ prepare_host() {
 	fi
 
 	# check free space (basic)
-	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null) # in bytes
+	local freespace=$(findmnt --target "${SRC}" -n -o AVAIL -b 2> /dev/null | tail -n1) # in bytes
 	if [[ -n $freespace && $(($freespace / 1073741824)) -lt 10 ]]; then
 		display_alert "Low free space left" "$(($freespace / 1073741824)) GiB" "wrn"
 		# pause here since dialog-based menu will hide this message otherwise
