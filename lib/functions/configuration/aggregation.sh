@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 
-function aggregate_all_packages() {
+# This used to be called from config (main-config), but now it's moved default-build, after prepare_host, so Python hostdeps are available.
+# So the aggregation results (hash, etc) are not available for config-dump.
+function aggregate_packages() {
+	if [[ "${KERNEL_ONLY}" != "yes" ]]; then
+		display_alert "Aggregating packages" "rootfs" "info"
+		aggregate_all_packages_python
+		call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
+			*After all aggregations are done*
+			Called after aggregating all package lists.
+			Packages will still be installed after this is called. It is not possible to change anything, though.
+		POST_AGGREGATE_PACKAGES
+	fi
+}
+
+function aggregate_all_packages_python() {
+	prepare_pip_packages_for_python_tools # although aggregation can run without any package, it does benefit
+
 	# Get a temporary file for the output. This is not WORKDIR yet, since we're still in configuration phase.
 	temp_file_for_aggregation="$(mktemp)"
 
