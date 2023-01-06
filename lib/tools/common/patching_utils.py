@@ -149,6 +149,15 @@ class PatchFileInDir:
 					f"File {self.full_file_path()} seems to be a valid mbox file, but it begins with"
 					f" '{first_line}', but in mbox the 1st line should be a valid From: header"
 					f" with the magic date.")
+			# Obtain how many times the magic marker date string is present in the contents
+			magic_marker_count = contents.count("Mon Sep 17 00:00:00 2001")
+			if magic_marker_count != len(mbox):
+				# is_invalid_mbox = True # we might try to recover from this is there's too many
+				# log.error(
+				raise Exception(
+					f"File {self.full_file_path()} seems to be a valid mbox file, but it contains"
+					f" {magic_marker_count} magic marker dates, while the mbox file has been parsed as"
+					f" {len(mbox)} patches. Check the file for mbox formatting errors.")
 
 		# if there is no emails, it's a diff-only patch file.
 		if is_invalid_mbox or len(mbox) == 0:
@@ -171,6 +180,12 @@ class PatchFileInDir:
 				log.warning(
 					f"WARNING: patch file {self.full_file_path()} fragment {counter} contains an empty patch")
 				continue
+
+			# Sanity check: if the patch_contents contains the magic marker, something is _very_ wrong, and we're gonna eat a patch.
+			if "Mon Sep 17 00:00:00 2001" in patch_contents:
+				raise Exception(
+					f"File {self.full_file_path()} fragment {counter} seems to be a valid mbox file, but it contains"
+					f" the magic date in the patch contents, shouldn't happen. Check the mbox formatting.")
 
 			patches.append(PatchInPatchFile(
 				self, counter, patch_contents, desc, msg['From'], msg['Subject'], msg['Date']))
