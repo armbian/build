@@ -26,6 +26,9 @@ function main_default_build_single() {
 	# Check and install dependencies, directory structure and settings
 	LOG_SECTION="prepare_host" do_with_logging prepare_host
 
+	# Aggregate packages, in its own logging section; this decides internally on KERNEL_ONLY=no
+	LOG_SECTION="aggregate_packages" do_with_logging aggregate_packages
+
 	# Create a directory inside WORKDIR with a "python" symlink to "/usr/bin/python2"; add it to PATH first.
 	BIN_WORK_DIR="${WORKDIR}/bin"
 	# No cleanup of this is necessary, since it's inside WORKDIR.
