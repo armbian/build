@@ -132,31 +132,40 @@ ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + list(dict(sort
 log.info("Splitting patch files into patches")
 VALID_PATCHES: list[patching_utils.PatchInPatchFile] = []
 patch_file_in_dir: patching_utils.PatchFileInDir
+has_critical_split_errors = False
 for patch_file_in_dir in ALL_PATCH_FILES_SORTED:
 	try:
 		patches_from_file = patch_file_in_dir.split_patches_from_file()
 		VALID_PATCHES.extend(patches_from_file)
 	except Exception as e:
+		has_critical_split_errors = True
 		log.critical(
 			f"Failed to read patch file {patch_file_in_dir.file_name}: {e}\n"
 			f"Can't continue; please fix the patch file {patch_file_in_dir.full_file_path()} manually. Sorry."
 			, exc_info=True)
-		exit(1)
+
+if has_critical_split_errors:
+	raise Exception("Critical errors found while splitting patches. Please fix the patch files manually.")
+
 log.info("Done splitting patch files into patches")
 
 # Now, some patches might not be mbox-formatted, or somehow else invalid. We can try and recover those.
 # That is only possible if we're applying patches to git.
 # Rebuilding description is only possible if we've the git repo where the patches themselves reside.
 log.info("Parsing patches...")
+has_critical_parse_errors = False
 for patch in VALID_PATCHES:
 	try:
 		patch.parse_patch()  # this handles diff-level parsing; modifies itself; throws exception if invalid
 	except Exception as invalid_exception:
+		has_critical_parse_errors = True
 		log.critical(f"Failed to parse {patch.parent.full_file_path()}(:{patch.counter}): {invalid_exception}")
 		log.critical(
 			f"Can't continue; please fix the patch file {patch.parent.full_file_path()} manually;"
 			f" check for possible double-mbox encoding. Sorry.")
-		exit(2)
+
+if has_critical_parse_errors:
+	raise Exception("Critical errors found while parsing patches. Please fix the patch files manually.")
 
 log.info(f"Parsed patches.")
 
