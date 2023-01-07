@@ -74,7 +74,9 @@ driver_rtl8189FS()
 			"$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" \
 			"branch:rtl8189fs"
 
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-p2p-go-advertising.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-and-enable-secondary-iface.patch" "applying"
+
 	fi
 
 }
