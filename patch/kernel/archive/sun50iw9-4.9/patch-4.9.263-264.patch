@@ -1,0 +1,1986 @@
+diff --git a/Makefile b/Makefile
+index 80b265a383bb6..2ae6f4b707dd9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 263
++SUBLEVEL = 264
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm64/boot/dts/freescale/fsl-ls1043a.dtsi b/arch/arm64/boot/dts/freescale/fsl-ls1043a.dtsi
+diff --git a/arch/x86/include/asm/tlbflush.h b/arch/x86/include/asm/tlbflush.h
+index f5ca15622dc9c..2bfa4deb8cae8 100644
+--- a/arch/x86/include/asm/tlbflush.h
++++ b/arch/x86/include/asm/tlbflush.h
+@@ -245,12 +245,15 @@ static inline void __native_flush_tlb_single(unsigned long addr)
+ 	 * ASID.  But, userspace flushes are probably much more
+ 	 * important performance-wise.
+ 	 *
+-	 * Make sure to do only a single invpcid when KAISER is
+-	 * disabled and we have only a single ASID.
++	 * In the KAISER disabled case, do an INVLPG to make sure
++	 * the mapping is flushed in case it is a global one.
+ 	 */
+-	if (kaiser_enabled)
++	if (kaiser_enabled) {
+ 		invpcid_flush_one(X86_CR3_PCID_ASID_USER, addr);
+-	invpcid_flush_one(X86_CR3_PCID_ASID_KERN, addr);
++		invpcid_flush_one(X86_CR3_PCID_ASID_KERN, addr);
++	} else {
++		asm volatile("invlpg (%0)" ::"r" (addr) : "memory");
++	}
+ }
+ 
+ static inline void __flush_tlb_all(void)
+diff --git a/drivers/acpi/internal.h b/drivers/acpi/internal.h
+index eae0b278d5172..56c429ea6aaf4 100644
+--- a/drivers/acpi/internal.h
++++ b/drivers/acpi/internal.h
+@@ -18,6 +18,8 @@
+ #ifndef _ACPI_INTERNAL_H_
+ #define _ACPI_INTERNAL_H_
+ 
++#include <linux/idr.h>
++
+ #define PREFIX "ACPI: "
+ 
+ int early_acpi_osi_init(void);
+@@ -97,9 +99,11 @@ void acpi_scan_table_handler(u32 event, void *table, void *context);
+ 
+ extern struct list_head acpi_bus_id_list;
+ 
++#define ACPI_MAX_DEVICE_INSTANCES	4096
++
+ struct acpi_device_bus_id {
+ 	const char *bus_id;
+-	unsigned int instance_no;
++	struct ida instance_ida;
+ 	struct list_head node;
+ };
+ 
+diff --git a/drivers/acpi/scan.c b/drivers/acpi/scan.c
+index 5aa4a01f698fe..d749fe20fbfc5 100644
+--- a/drivers/acpi/scan.c
++++ b/drivers/acpi/scan.c
+@@ -481,9 +481,8 @@ static void acpi_device_del(struct acpi_device *device)
+ 	list_for_each_entry(acpi_device_bus_id, &acpi_bus_id_list, node)
+ 		if (!strcmp(acpi_device_bus_id->bus_id,
+ 			    acpi_device_hid(device))) {
+-			if (acpi_device_bus_id->instance_no > 0)
+-				acpi_device_bus_id->instance_no--;
+-			else {
++			ida_simple_remove(&acpi_device_bus_id->instance_ida, device->pnp.instance_no);
++			if (ida_is_empty(&acpi_device_bus_id->instance_ida)) {
+ 				list_del(&acpi_device_bus_id->node);
+ 				kfree_const(acpi_device_bus_id->bus_id);
+ 				kfree(acpi_device_bus_id);
+@@ -622,12 +621,38 @@ void acpi_bus_put_acpi_device(struct acpi_device *adev)
+ 	put_device(&adev->dev);
+ }
+ 
++static struct acpi_device_bus_id *acpi_device_bus_id_match(const char *dev_id)
++{
++	struct acpi_device_bus_id *acpi_device_bus_id;
++
++	/* Find suitable bus_id and instance number in acpi_bus_id_list. */
++	list_for_each_entry(acpi_device_bus_id, &acpi_bus_id_list, node) {
++		if (!strcmp(acpi_device_bus_id->bus_id, dev_id))
++			return acpi_device_bus_id;
++	}
++	return NULL;
++}
++
++static int acpi_device_set_name(struct acpi_device *device,
++				struct acpi_device_bus_id *acpi_device_bus_id)
++{
++	struct ida *instance_ida = &acpi_device_bus_id->instance_ida;
++	int result;
++
++	result = ida_simple_get(instance_ida, 0, ACPI_MAX_DEVICE_INSTANCES, GFP_KERNEL);
++	if (result < 0)
++		return result;
++
++	device->pnp.instance_no = result;
++	dev_set_name(&device->dev, "%s:%02x", acpi_device_bus_id->bus_id, result);
++	return 0;
++}
++
+ int acpi_device_add(struct acpi_device *device,
+ 		    void (*release)(struct device *))
+ {
++	struct acpi_device_bus_id *acpi_device_bus_id;
+ 	int result;
+-	struct acpi_device_bus_id *acpi_device_bus_id, *new_bus_id;
+-	int found = 0;
+ 
+ 	if (device->handle) {
+ 		acpi_status status;
+@@ -653,41 +678,38 @@ int acpi_device_add(struct acpi_device *device,
+ 	INIT_LIST_HEAD(&device->del_list);
+ 	mutex_init(&device->physical_node_lock);
+ 
+-	new_bus_id = kzalloc(sizeof(struct acpi_device_bus_id), GFP_KERNEL);
+-	if (!new_bus_id) {
+-		pr_err(PREFIX "Memory allocation error\n");
+-		result = -ENOMEM;
+-		goto err_detach;
+-	}
+-
+ 	mutex_lock(&acpi_device_lock);
+-	/*
+-	 * Find suitable bus_id and instance number in acpi_bus_id_list
+-	 * If failed, create one and link it into acpi_bus_id_list
+-	 */
+-	list_for_each_entry(acpi_device_bus_id, &acpi_bus_id_list, node) {
+-		if (!strcmp(acpi_device_bus_id->bus_id,
+-			    acpi_device_hid(device))) {
+-			acpi_device_bus_id->instance_no++;
+-			found = 1;
+-			kfree(new_bus_id);
+-			break;
++
++	acpi_device_bus_id = acpi_device_bus_id_match(acpi_device_hid(device));
++	if (acpi_device_bus_id) {
++		result = acpi_device_set_name(device, acpi_device_bus_id);
++		if (result)
++			goto err_unlock;
++	} else {
++		acpi_device_bus_id = kzalloc(sizeof(*acpi_device_bus_id),
++					     GFP_KERNEL);
++		if (!acpi_device_bus_id) {
++			result = -ENOMEM;
++			goto err_unlock;
+ 		}
+-	}
+-	if (!found) {
+-		acpi_device_bus_id = new_bus_id;
+ 		acpi_device_bus_id->bus_id =
+ 			kstrdup_const(acpi_device_hid(device), GFP_KERNEL);
+ 		if (!acpi_device_bus_id->bus_id) {
+-			pr_err(PREFIX "Memory allocation error for bus id\n");
++			kfree(acpi_device_bus_id);
+ 			result = -ENOMEM;
+-			goto err_free_new_bus_id;
++			goto err_unlock;
++		}
++
++		ida_init(&acpi_device_bus_id->instance_ida);
++
++		result = acpi_device_set_name(device, acpi_device_bus_id);
++		if (result) {
++			kfree(acpi_device_bus_id);
++			goto err_unlock;
+ 		}
+ 
+-		acpi_device_bus_id->instance_no = 0;
+ 		list_add_tail(&acpi_device_bus_id->node, &acpi_bus_id_list);
+ 	}
+-	dev_set_name(&device->dev, "%s:%02x", acpi_device_bus_id->bus_id, acpi_device_bus_id->instance_no);
+ 
+ 	if (device->parent)
+ 		list_add_tail(&device->node, &device->parent->children);
+@@ -719,13 +741,9 @@ int acpi_device_add(struct acpi_device *device,
+ 		list_del(&device->node);
+ 	list_del(&device->wakeup_list);
+ 
+- err_free_new_bus_id:
+-	if (!found)
+-		kfree(new_bus_id);
+-
++ err_unlock:
+ 	mutex_unlock(&acpi_device_lock);
+ 
+- err_detach:
+ 	acpi_detach_data(device->handle, acpi_scan_drop_device);
+ 	return result;
+ }
+diff --git a/drivers/atm/eni.c b/drivers/atm/eni.c
+index 9d16743c49178..2b7786cd548f8 100644
+--- a/drivers/atm/eni.c
++++ b/drivers/atm/eni.c
+@@ -2279,7 +2279,8 @@ out:
+ 	return rc;
+ 
+ err_eni_release:
+-	eni_do_release(dev);
++	dev->phy = NULL;
++	iounmap(ENI_DEV(dev)->ioaddr);
+ err_unregister:
+ 	atm_dev_deregister(dev);
+ err_free_consistent:
+diff --git a/drivers/atm/idt77105.c b/drivers/atm/idt77105.c
+index feb023d7eebd6..40644670cff26 100644
+--- a/drivers/atm/idt77105.c
++++ b/drivers/atm/idt77105.c
+@@ -261,7 +261,7 @@ static int idt77105_start(struct atm_dev *dev)
+ {
+ 	unsigned long flags;
+ 
+-	if (!(dev->dev_data = kmalloc(sizeof(struct idt77105_priv),GFP_KERNEL)))
++	if (!(dev->phy_data = kmalloc(sizeof(struct idt77105_priv),GFP_KERNEL)))
+ 		return -ENOMEM;
+ 	PRIV(dev)->dev = dev;
+ 	spin_lock_irqsave(&idt77105_priv_lock, flags);
+@@ -338,7 +338,7 @@ static int idt77105_stop(struct atm_dev *dev)
+                 else
+                     idt77105_all = walk->next;
+ 	        dev->phy = NULL;
+-                dev->dev_data = NULL;
++                dev->phy_data = NULL;
+                 kfree(walk);
+                 break;
+             }
+diff --git a/drivers/atm/lanai.c b/drivers/atm/lanai.c
+index 445505d9ea071..dec6c68156ee5 100644
+--- a/drivers/atm/lanai.c
++++ b/drivers/atm/lanai.c
+@@ -2240,6 +2240,7 @@ static int lanai_dev_open(struct atm_dev *atmdev)
+ 	conf1_write(lanai);
+ #endif
+ 	iounmap(lanai->base);
++	lanai->base = NULL;
+     error_pci:
+ 	pci_disable_device(lanai->pci);
+     error:
+@@ -2252,6 +2253,8 @@ static int lanai_dev_open(struct atm_dev *atmdev)
+ static void lanai_dev_close(struct atm_dev *atmdev)
+ {
+ 	struct lanai_dev *lanai = (struct lanai_dev *) atmdev->dev_data;
++	if (lanai->base==NULL)
++		return;
+ 	printk(KERN_INFO DEV_LABEL "(itf %d): shutting down interface\n",
+ 	    lanai->number);
+ 	lanai_timed_poll_stop(lanai);
+@@ -2561,7 +2564,7 @@ static int lanai_init_one(struct pci_dev *pci,
+ 	struct atm_dev *atmdev;
+ 	int result;
+ 
+-	lanai = kmalloc(sizeof(*lanai), GFP_KERNEL);
++	lanai = kzalloc(sizeof(*lanai), GFP_KERNEL);
+ 	if (lanai == NULL) {
+ 		printk(KERN_ERR DEV_LABEL
+ 		       ": couldn't allocate dev_data structure!\n");
+diff --git a/drivers/atm/uPD98402.c b/drivers/atm/uPD98402.c
+index 5120a96b3a894..b2f4e8df15911 100644
+--- a/drivers/atm/uPD98402.c
++++ b/drivers/atm/uPD98402.c
+@@ -210,7 +210,7 @@ static void uPD98402_int(struct atm_dev *dev)
+ static int uPD98402_start(struct atm_dev *dev)
+ {
+ 	DPRINTK("phy_start\n");
+-	if (!(dev->dev_data = kmalloc(sizeof(struct uPD98402_priv),GFP_KERNEL)))
++	if (!(dev->phy_data = kmalloc(sizeof(struct uPD98402_priv),GFP_KERNEL)))
+ 		return -ENOMEM;
+ 	spin_lock_init(&PRIV(dev)->lock);
+ 	memset(&PRIV(dev)->sonet_stats,0,sizeof(struct k_sonet_stats));
+diff --git a/drivers/block/xen-blkback/blkback.c b/drivers/block/xen-blkback/blkback.c
+index 2b739ba841b1a..1a1ad0fdc039a 100644
+--- a/drivers/block/xen-blkback/blkback.c
++++ b/drivers/block/xen-blkback/blkback.c
+@@ -937,7 +937,7 @@ next:
+ out:
+ 	for (i = last_map; i < num; i++) {
+ 		/* Don't zap current batch's valid persistent grants. */
+-		if(i >= last_map + segs_to_map)
++		if(i >= map_until)
+ 			pages[i]->persistent_gnt = NULL;
+ 		pages[i]->handle = BLKBACK_INVALID_HANDLE;
+ 	}
+diff --git a/drivers/bus/omap_l3_noc.c b/drivers/bus/omap_l3_noc.c
+index 5012e3ad12256..624f74d03a83a 100644
+--- a/drivers/bus/omap_l3_noc.c
++++ b/drivers/bus/omap_l3_noc.c
+@@ -285,7 +285,7 @@ static int omap_l3_probe(struct platform_device *pdev)
+ 	 */
+ 	l3->debug_irq = platform_get_irq(pdev, 0);
+ 	ret = devm_request_irq(l3->dev, l3->debug_irq, l3_interrupt_handler,
+-			       0x0, "l3-dbg-irq", l3);
++			       IRQF_NO_THREAD, "l3-dbg-irq", l3);
+ 	if (ret) {
+ 		dev_err(l3->dev, "request_irq failed for %d\n",
+ 			l3->debug_irq);
+@@ -294,7 +294,7 @@ static int omap_l3_probe(struct platform_device *pdev)
+ 
+ 	l3->app_irq = platform_get_irq(pdev, 1);
+ 	ret = devm_request_irq(l3->dev, l3->app_irq, l3_interrupt_handler,
+-			       0x0, "l3-app-irq", l3);
++			       IRQF_NO_THREAD, "l3-app-irq", l3);
+ 	if (ret)
+ 		dev_err(l3->dev, "request_irq failed for %d\n", l3->app_irq);
+ 
+diff --git a/drivers/infiniband/hw/cxgb4/cm.c b/drivers/infiniband/hw/cxgb4/cm.c
+index a60e1c1b4b5e8..8bd062635399a 100644
+--- a/drivers/infiniband/hw/cxgb4/cm.c
++++ b/drivers/infiniband/hw/cxgb4/cm.c
+@@ -3472,13 +3472,13 @@ int c4iw_destroy_listen(struct iw_cm_id *cm_id)
+ 	    ep->com.local_addr.ss_family == AF_INET) {
+ 		err = cxgb4_remove_server_filter(
+ 			ep->com.dev->rdev.lldi.ports[0], ep->stid,
+-			ep->com.dev->rdev.lldi.rxq_ids[0], 0);
++			ep->com.dev->rdev.lldi.rxq_ids[0], false);
+ 	} else {
+ 		struct sockaddr_in6 *sin6;
+ 		c4iw_init_wr_wait(&ep->com.wr_wait);
+ 		err = cxgb4_remove_server(
+ 				ep->com.dev->rdev.lldi.ports[0], ep->stid,
+-				ep->com.dev->rdev.lldi.rxq_ids[0], 0);
++				ep->com.dev->rdev.lldi.rxq_ids[0], true);
+ 		if (err)
+ 			goto done;
+ 		err = c4iw_wait_for_reply(&ep->com.dev->rdev, &ep->com.wr_wait,
+diff --git a/drivers/net/can/c_can/c_can.c b/drivers/net/can/c_can/c_can.c
+index 4ead5a18b7940..c41ab2cb272e7 100644
+--- a/drivers/net/can/c_can/c_can.c
++++ b/drivers/net/can/c_can/c_can.c
+@@ -212,18 +212,6 @@ static const struct can_bittiming_const c_can_bittiming_const = {
+ 	.brp_inc = 1,
+ };
+ 
+-static inline void c_can_pm_runtime_enable(const struct c_can_priv *priv)
+-{
+-	if (priv->device)
+-		pm_runtime_enable(priv->device);
+-}
+-
+-static inline void c_can_pm_runtime_disable(const struct c_can_priv *priv)
+-{
+-	if (priv->device)
+-		pm_runtime_disable(priv->device);
+-}
+-
+ static inline void c_can_pm_runtime_get_sync(const struct c_can_priv *priv)
+ {
+ 	if (priv->device)
+@@ -1318,7 +1306,6 @@ static const struct net_device_ops c_can_netdev_ops = {
+ 
+ int register_c_can_dev(struct net_device *dev)
+ {
+-	struct c_can_priv *priv = netdev_priv(dev);
+ 	int err;
+ 
+ 	/* Deactivate pins to prevent DRA7 DCAN IP from being
+@@ -1328,28 +1315,19 @@ int register_c_can_dev(struct net_device *dev)
+ 	 */
+ 	pinctrl_pm_select_sleep_state(dev->dev.parent);
+ 
+-	c_can_pm_runtime_enable(priv);
+-
+ 	dev->flags |= IFF_ECHO;	/* we support local echo */
+ 	dev->netdev_ops = &c_can_netdev_ops;
+ 
+ 	err = register_candev(dev);
+-	if (err)
+-		c_can_pm_runtime_disable(priv);
+-	else
++	if (!err)
+ 		devm_can_led_init(dev);
+-
+ 	return err;
+ }
+ EXPORT_SYMBOL_GPL(register_c_can_dev);
+ 
+ void unregister_c_can_dev(struct net_device *dev)
+ {
+-	struct c_can_priv *priv = netdev_priv(dev);
+-
+ 	unregister_candev(dev);
+-
+-	c_can_pm_runtime_disable(priv);
+ }
+ EXPORT_SYMBOL_GPL(unregister_c_can_dev);
+ 
+diff --git a/drivers/net/can/c_can/c_can_pci.c b/drivers/net/can/c_can/c_can_pci.c
+index d065c0e2d18e6..f3e0b2124a376 100644
+--- a/drivers/net/can/c_can/c_can_pci.c
++++ b/drivers/net/can/c_can/c_can_pci.c
+@@ -239,12 +239,13 @@ static void c_can_pci_remove(struct pci_dev *pdev)
+ {
+ 	struct net_device *dev = pci_get_drvdata(pdev);
+ 	struct c_can_priv *priv = netdev_priv(dev);
++	void __iomem *addr = priv->base;
+ 
+ 	unregister_c_can_dev(dev);
+ 
+ 	free_c_can_dev(dev);
+ 
+-	pci_iounmap(pdev, priv->base);
++	pci_iounmap(pdev, addr);
+ 	pci_disable_msi(pdev);
+ 	pci_clear_master(pdev);
+ 	pci_release_regions(pdev);
+diff --git a/drivers/net/can/c_can/c_can_platform.c b/drivers/net/can/c_can/c_can_platform.c
+index 717530eac70c7..c6a03f565e3fc 100644
+--- a/drivers/net/can/c_can/c_can_platform.c
++++ b/drivers/net/can/c_can/c_can_platform.c
+@@ -29,6 +29,7 @@
+ #include <linux/list.h>
+ #include <linux/io.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
+ #include <linux/clk.h>
+ #include <linux/of.h>
+ #include <linux/of_device.h>
+@@ -385,6 +386,7 @@ static int c_can_plat_probe(struct platform_device *pdev)
+ 	platform_set_drvdata(pdev, dev);
+ 	SET_NETDEV_DEV(dev, &pdev->dev);
+ 
++	pm_runtime_enable(priv->device);
+ 	ret = register_c_can_dev(dev);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "registering %s failed (err=%d)\n",
+@@ -397,6 +399,7 @@ static int c_can_plat_probe(struct platform_device *pdev)
+ 	return 0;
+ 
+ exit_free_device:
++	pm_runtime_disable(priv->device);
+ 	free_c_can_dev(dev);
+ exit:
+ 	dev_err(&pdev->dev, "probe failed\n");
+@@ -407,9 +410,10 @@ exit:
+ static int c_can_plat_remove(struct platform_device *pdev)
+ {
+ 	struct net_device *dev = platform_get_drvdata(pdev);
++	struct c_can_priv *priv = netdev_priv(dev);
+ 
+ 	unregister_c_can_dev(dev);
+-
++	pm_runtime_disable(priv->device);
+ 	free_c_can_dev(dev);
+ 
+ 	return 0;
+diff --git a/drivers/net/can/dev.c b/drivers/net/can/dev.c
+index ea38b67d0b737..3d7bffd529feb 100644
+--- a/drivers/net/can/dev.c
++++ b/drivers/net/can/dev.c
+@@ -1084,6 +1084,7 @@ static void can_dellink(struct net_device *dev, struct list_head *head)
+ 
+ static struct rtnl_link_ops can_link_ops __read_mostly = {
+ 	.kind		= "can",
++	.netns_refund	= true,
+ 	.maxtype	= IFLA_CAN_MAX,
+ 	.policy		= can_policy,
+ 	.setup		= can_setup,
+diff --git a/drivers/net/can/m_can/m_can.c b/drivers/net/can/m_can/m_can.c
+index 0bd7e71647964..197c27d8f584b 100644
+--- a/drivers/net/can/m_can/m_can.c
++++ b/drivers/net/can/m_can/m_can.c
+@@ -428,9 +428,6 @@ static int m_can_do_rx_poll(struct net_device *dev, int quota)
+ 	}
+ 
+ 	while ((rxfs & RXFS_FFL_MASK) && (quota > 0)) {
+-		if (rxfs & RXFS_RFL)
+-			netdev_warn(dev, "Rx FIFO 0 Message Lost\n");
+-
+ 		m_can_read_fifo(dev, rxfs);
+ 
+ 		quota--;
+diff --git a/drivers/net/dsa/bcm_sf2.c b/drivers/net/dsa/bcm_sf2.c
+index 0c69d5858558a..40b3adf7ad998 100644
+--- a/drivers/net/dsa/bcm_sf2.c
++++ b/drivers/net/dsa/bcm_sf2.c
+@@ -588,8 +588,10 @@ static u32 bcm_sf2_sw_get_phy_flags(struct dsa_switch *ds, int port)
+ 	 * in bits 15:8 and the patch level in bits 7:0 which is exactly what
+ 	 * the REG_PHY_REVISION register layout is.
+ 	 */
+-
+-	return priv->hw_params.gphy_rev;
++	if (priv->int_phy_mask & BIT(port))
++		return priv->hw_params.gphy_rev;
++	else
++		return 0;
+ }
+ 
+ static void bcm_sf2_sw_adjust_link(struct dsa_switch *ds, int port,
+diff --git a/drivers/net/ethernet/freescale/fec_ptp.c b/drivers/net/ethernet/freescale/fec_ptp.c
+index f9e74461bdc0b..1231816125955 100644
+--- a/drivers/net/ethernet/freescale/fec_ptp.c
++++ b/drivers/net/ethernet/freescale/fec_ptp.c
+@@ -396,9 +396,16 @@ static int fec_ptp_gettime(struct ptp_clock_info *ptp, struct timespec64 *ts)
+ 	u64 ns;
+ 	unsigned long flags;
+ 
++	mutex_lock(&adapter->ptp_clk_mutex);
++	/* Check the ptp clock */
++	if (!adapter->ptp_clk_on) {
++		mutex_unlock(&adapter->ptp_clk_mutex);
++		return -EINVAL;
++	}
+ 	spin_lock_irqsave(&adapter->tmreg_lock, flags);
+ 	ns = timecounter_read(&adapter->tc);
+ 	spin_unlock_irqrestore(&adapter->tmreg_lock, flags);
++	mutex_unlock(&adapter->ptp_clk_mutex);
+ 
+ 	*ts = ns_to_timespec64(ns);
+ 
+diff --git a/drivers/net/ethernet/intel/e1000e/82571.c b/drivers/net/ethernet/intel/e1000e/82571.c
+index 6b03c8553e597..65deaf8f30047 100644
+--- a/drivers/net/ethernet/intel/e1000e/82571.c
++++ b/drivers/net/ethernet/intel/e1000e/82571.c
+@@ -917,6 +917,8 @@ static s32 e1000_set_d0_lplu_state_82571(struct e1000_hw *hw, bool active)
+ 	} else {
+ 		data &= ~IGP02E1000_PM_D0_LPLU;
+ 		ret_val = e1e_wphy(hw, IGP02E1000_PHY_POWER_MGMT, data);
++		if (ret_val)
++			return ret_val;
+ 		/* LPLU and SmartSpeed are mutually exclusive.  LPLU is used
+ 		 * during Dx states where the power conservation is most
+ 		 * important.  During driver activity we should enable
+diff --git a/drivers/net/ethernet/intel/e1000e/netdev.c b/drivers/net/ethernet/intel/e1000e/netdev.c
+index 3c01bc43889a2..46323019aa631 100644
+--- a/drivers/net/ethernet/intel/e1000e/netdev.c
++++ b/drivers/net/ethernet/intel/e1000e/netdev.c
+@@ -5920,15 +5920,19 @@ static void e1000_reset_task(struct work_struct *work)
+ 	struct e1000_adapter *adapter;
+ 	adapter = container_of(work, struct e1000_adapter, reset_task);
+ 
++	rtnl_lock();
+ 	/* don't run the task if already down */
+-	if (test_bit(__E1000_DOWN, &adapter->state))
++	if (test_bit(__E1000_DOWN, &adapter->state)) {
++		rtnl_unlock();
+ 		return;
++	}
+ 
+ 	if (!(adapter->flags & FLAG_RESTART_NOW)) {
+ 		e1000e_dump(adapter);
+ 		e_err("Reset adapter unexpectedly\n");
+ 	}
+ 	e1000e_reinit_locked(adapter);
++	rtnl_unlock();
+ }
+ 
+ /**
+diff --git a/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c b/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
+index 36d73bf32f4fb..8e2aaf774693f 100644
+--- a/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
++++ b/drivers/net/ethernet/intel/ixgbe/ixgbe_main.c
+@@ -8677,8 +8677,10 @@ static int ixgbe_configure_clsu32(struct ixgbe_adapter *adapter,
+ 	ixgbe_atr_compute_perfect_hash_82599(&input->filter, mask);
+ 	err = ixgbe_fdir_write_perfect_filter_82599(hw, &input->filter,
+ 						    input->sw_idx, queue);
+-	if (!err)
+-		ixgbe_update_ethtool_fdir_entry(adapter, input, input->sw_idx);
++	if (err)
++		goto err_out_w_lock;
++
++	ixgbe_update_ethtool_fdir_entry(adapter, input, input->sw_idx);
+ 	spin_unlock(&adapter->fdir_perfect_lock);
+ 
+ 	if ((uhtid != 0x800) && (adapter->jump_tables[uhtid]))
+diff --git a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_minidump.c b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_minidump.c
+index 5174e0bd75d1e..625336264a44b 100644
+--- a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_minidump.c
++++ b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_minidump.c
+@@ -1426,6 +1426,7 @@ void qlcnic_83xx_get_minidump_template(struct qlcnic_adapter *adapter)
+ 
+ 	if (fw_dump->tmpl_hdr == NULL || current_version > prev_version) {
+ 		vfree(fw_dump->tmpl_hdr);
++		fw_dump->tmpl_hdr = NULL;
+ 
+ 		if (qlcnic_83xx_md_check_extended_dump_capability(adapter))
+ 			extended = !qlcnic_83xx_extend_md_capab(adapter);
+@@ -1444,6 +1445,8 @@ void qlcnic_83xx_get_minidump_template(struct qlcnic_adapter *adapter)
+ 			struct qlcnic_83xx_dump_template_hdr *hdr;
+ 
+ 			hdr = fw_dump->tmpl_hdr;
++			if (!hdr)
++				return;
+ 			hdr->drv_cap_mask = 0x1f;
+ 			fw_dump->cap_mask = 0x1f;
+ 			dev_info(&pdev->dev,
+diff --git a/drivers/net/ethernet/sun/niu.c b/drivers/net/ethernet/sun/niu.c
+index fe5b0ac8c6319..5bf47279f9c1b 100644
+--- a/drivers/net/ethernet/sun/niu.c
++++ b/drivers/net/ethernet/sun/niu.c
+@@ -3948,8 +3948,6 @@ static void niu_xmac_interrupt(struct niu *np)
+ 		mp->rx_mcasts += RXMAC_MC_FRM_CNT_COUNT;
+ 	if (val & XRXMAC_STATUS_RXBCAST_CNT_EXP)
+ 		mp->rx_bcasts += RXMAC_BC_FRM_CNT_COUNT;
+-	if (val & XRXMAC_STATUS_RXBCAST_CNT_EXP)
+-		mp->rx_bcasts += RXMAC_BC_FRM_CNT_COUNT;
+ 	if (val & XRXMAC_STATUS_RXHIST1_CNT_EXP)
+ 		mp->rx_hist_cnt1 += RXMAC_HIST_CNT1_COUNT;
+ 	if (val & XRXMAC_STATUS_RXHIST2_CNT_EXP)
+diff --git a/drivers/net/ethernet/tehuti/tehuti.c b/drivers/net/ethernet/tehuti/tehuti.c
+index 7108c68f16d3e..6ee7f8d2f2d17 100644
+--- a/drivers/net/ethernet/tehuti/tehuti.c
++++ b/drivers/net/ethernet/tehuti/tehuti.c
+@@ -2062,6 +2062,7 @@ bdx_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 		/*bdx_hw_reset(priv); */
+ 		if (bdx_read_mac(priv)) {
+ 			pr_err("load MAC address failed\n");
++			err = -EFAULT;
+ 			goto err_out_iomap;
+ 		}
+ 		SET_NETDEV_DEV(ndev, &pdev->dev);
+diff --git a/drivers/net/usb/cdc-phonet.c b/drivers/net/usb/cdc-phonet.c
+index ff2270ead2e68..84e0e7f780297 100644
+--- a/drivers/net/usb/cdc-phonet.c
++++ b/drivers/net/usb/cdc-phonet.c
+@@ -406,6 +406,8 @@ static int usbpn_probe(struct usb_interface *intf, const struct usb_device_id *i
+ 
+ 	err = register_netdev(dev);
+ 	if (err) {
++		/* Set disconnected flag so that disconnect() returns early. */
++		pnd->disconnected = 1;
+ 		usb_driver_release_interface(&usbpn_driver, data_intf);
+ 		goto out;
+ 	}
+diff --git a/drivers/net/wan/fsl_ucc_hdlc.c b/drivers/net/wan/fsl_ucc_hdlc.c
+index 87bf05a81db50..fc7d28edee077 100644
+--- a/drivers/net/wan/fsl_ucc_hdlc.c
++++ b/drivers/net/wan/fsl_ucc_hdlc.c
+@@ -169,13 +169,17 @@ static int uhdlc_init(struct ucc_hdlc_private *priv)
+ 
+ 	priv->rx_skbuff = kzalloc(priv->rx_ring_size * sizeof(*priv->rx_skbuff),
+ 				  GFP_KERNEL);
+-	if (!priv->rx_skbuff)
++	if (!priv->rx_skbuff) {
++		ret = -ENOMEM;
+ 		goto free_ucc_pram;
++	}
+ 
+ 	priv->tx_skbuff = kzalloc(priv->tx_ring_size * sizeof(*priv->tx_skbuff),
+ 				  GFP_KERNEL);
+-	if (!priv->tx_skbuff)
++	if (!priv->tx_skbuff) {
++		ret = -ENOMEM;
+ 		goto free_rx_skbuff;
++	}
+ 
+ 	priv->skb_curtx = 0;
+ 	priv->skb_dirtytx = 0;
+diff --git a/drivers/usb/gadget/function/f_hid.c b/drivers/usb/gadget/function/f_hid.c
+index 8e83649f77ce1..42e5677d932d8 100644
+--- a/drivers/usb/gadget/function/f_hid.c
++++ b/drivers/usb/gadget/function/f_hid.c
+@@ -932,7 +932,7 @@ static void hidg_free_inst(struct usb_function_instance *f)
+ 	mutex_lock(&hidg_ida_lock);
+ 
+ 	hidg_put_minor(opts->minor);
+-	if (idr_is_empty(&hidg_ida.idr))
++	if (ida_is_empty(&hidg_ida))
+ 		ghid_cleanup();
+ 
+ 	mutex_unlock(&hidg_ida_lock);
+@@ -958,7 +958,7 @@ static struct usb_function_instance *hidg_alloc_inst(void)
+ 
+ 	mutex_lock(&hidg_ida_lock);
+ 
+-	if (idr_is_empty(&hidg_ida.idr)) {
++	if (ida_is_empty(&hidg_ida)) {
+ 		status = ghid_setup(NULL, HIDG_MINORS);
+ 		if (status)  {
+ 			ret = ERR_PTR(status);
+@@ -971,7 +971,7 @@ static struct usb_function_instance *hidg_alloc_inst(void)
+ 	if (opts->minor < 0) {
+ 		ret = ERR_PTR(opts->minor);
+ 		kfree(opts);
+-		if (idr_is_empty(&hidg_ida.idr))
++		if (ida_is_empty(&hidg_ida))
+ 			ghid_cleanup();
+ 		goto unlock;
+ 	}
+diff --git a/drivers/usb/gadget/function/f_printer.c b/drivers/usb/gadget/function/f_printer.c
+index b962f24b500bf..b3d036d06553c 100644
+--- a/drivers/usb/gadget/function/f_printer.c
++++ b/drivers/usb/gadget/function/f_printer.c
+@@ -1276,7 +1276,7 @@ static void gprinter_free_inst(struct usb_function_instance *f)
+ 	mutex_lock(&printer_ida_lock);
+ 
+ 	gprinter_put_minor(opts->minor);
+-	if (idr_is_empty(&printer_ida.idr))
++	if (ida_is_empty(&printer_ida))
+ 		gprinter_cleanup();
+ 
+ 	mutex_unlock(&printer_ida_lock);
+@@ -1300,7 +1300,7 @@ static struct usb_function_instance *gprinter_alloc_inst(void)
+ 
+ 	mutex_lock(&printer_ida_lock);
+ 
+-	if (idr_is_empty(&printer_ida.idr)) {
++	if (ida_is_empty(&printer_ida)) {
+ 		status = gprinter_setup(PRINTER_MINORS);
+ 		if (status) {
+ 			ret = ERR_PTR(status);
+@@ -1313,7 +1313,7 @@ static struct usb_function_instance *gprinter_alloc_inst(void)
+ 	if (opts->minor < 0) {
+ 		ret = ERR_PTR(opts->minor);
+ 		kfree(opts);
+-		if (idr_is_empty(&printer_ida.idr))
++		if (ida_is_empty(&printer_ida))
+ 			gprinter_cleanup();
+ 		goto unlock;
+ 	}
+diff --git a/fs/nfs/Kconfig b/fs/nfs/Kconfig
+index c3428767332c2..55ebf9f4a824e 100644
+--- a/fs/nfs/Kconfig
++++ b/fs/nfs/Kconfig
+@@ -132,7 +132,7 @@ config PNFS_OBJLAYOUT
+ config PNFS_FLEXFILE_LAYOUT
+ 	tristate
+ 	depends on NFS_V4_1 && NFS_V3
+-	default m
++	default NFS_V4
+ 
+ config NFS_V4_1_IMPLEMENTATION_ID_DOMAIN
+ 	string "NFSv4.1 Implementation ID Domain"
+diff --git a/fs/nfs/nfs3xdr.c b/fs/nfs/nfs3xdr.c
+index 267126d32ec0f..4a68837e92ea4 100644
+--- a/fs/nfs/nfs3xdr.c
++++ b/fs/nfs/nfs3xdr.c
+@@ -33,6 +33,7 @@
+  */
+ #define NFS3_fhandle_sz		(1+16)
+ #define NFS3_fh_sz		(NFS3_fhandle_sz)	/* shorthand */
++#define NFS3_post_op_fh_sz	(1+NFS3_fh_sz)
+ #define NFS3_sattr_sz		(15)
+ #define NFS3_filename_sz	(1+(NFS3_MAXNAMLEN>>2))
+ #define NFS3_path_sz		(1+(NFS3_MAXPATHLEN>>2))
+@@ -70,7 +71,7 @@
+ #define NFS3_readlinkres_sz	(1+NFS3_post_op_attr_sz+1)
+ #define NFS3_readres_sz		(1+NFS3_post_op_attr_sz+3)
+ #define NFS3_writeres_sz	(1+NFS3_wcc_data_sz+4)
+-#define NFS3_createres_sz	(1+NFS3_fh_sz+NFS3_post_op_attr_sz+NFS3_wcc_data_sz)
++#define NFS3_createres_sz	(1+NFS3_post_op_fh_sz+NFS3_post_op_attr_sz+NFS3_wcc_data_sz)
+ #define NFS3_renameres_sz	(1+(2 * NFS3_wcc_data_sz))
+ #define NFS3_linkres_sz		(1+NFS3_post_op_attr_sz+NFS3_wcc_data_sz)
+ #define NFS3_readdirres_sz	(1+NFS3_post_op_attr_sz+2)
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 0cebe0ca03b2a..94130588ebf52 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -5144,6 +5144,9 @@ static int __nfs4_proc_set_acl(struct inode *inode, const void *buf, size_t bufl
+ 	unsigned int npages = DIV_ROUND_UP(buflen, PAGE_SIZE);
+ 	int ret, i;
+ 
++	/* You can't remove system.nfs4_acl: */
++	if (buflen == 0)
++		return -EINVAL;
+ 	if (!nfs4_server_supports_acls(server))
+ 		return -EOPNOTSUPP;
+ 	if (npages > ARRAY_SIZE(pages))
+diff --git a/fs/squashfs/export.c b/fs/squashfs/export.c
+index d2a806416c3ab..1d406a2094a56 100644
+--- a/fs/squashfs/export.c
++++ b/fs/squashfs/export.c
+@@ -165,14 +165,18 @@ __le64 *squashfs_read_inode_lookup_table(struct super_block *sb,
+ 		start = le64_to_cpu(table[n]);
+ 		end = le64_to_cpu(table[n + 1]);
+ 
+-		if (start >= end || (end - start) > SQUASHFS_METADATA_SIZE) {
++		if (start >= end
++		    || (end - start) >
++		    (SQUASHFS_METADATA_SIZE + SQUASHFS_BLOCK_OFFSET)) {
+ 			kfree(table);
+ 			return ERR_PTR(-EINVAL);
+ 		}
+ 	}
+ 
+ 	start = le64_to_cpu(table[indexes - 1]);
+-	if (start >= lookup_table_start || (lookup_table_start - start) > SQUASHFS_METADATA_SIZE) {
++	if (start >= lookup_table_start ||
++	    (lookup_table_start - start) >
++	    (SQUASHFS_METADATA_SIZE + SQUASHFS_BLOCK_OFFSET)) {
+ 		kfree(table);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+diff --git a/fs/squashfs/id.c b/fs/squashfs/id.c
+index 8ccc0e3f6ea5a..d2e15baab5378 100644
+--- a/fs/squashfs/id.c
++++ b/fs/squashfs/id.c
+@@ -110,14 +110,16 @@ __le64 *squashfs_read_id_index_table(struct super_block *sb,
+ 		start = le64_to_cpu(table[n]);
+ 		end = le64_to_cpu(table[n + 1]);
+ 
+-		if (start >= end || (end - start) > SQUASHFS_METADATA_SIZE) {
++		if (start >= end || (end - start) >
++				(SQUASHFS_METADATA_SIZE + SQUASHFS_BLOCK_OFFSET)) {
+ 			kfree(table);
+ 			return ERR_PTR(-EINVAL);
+ 		}
+ 	}
+ 
+ 	start = le64_to_cpu(table[indexes - 1]);
+-	if (start >= id_table_start || (id_table_start - start) > SQUASHFS_METADATA_SIZE) {
++	if (start >= id_table_start || (id_table_start - start) >
++				(SQUASHFS_METADATA_SIZE + SQUASHFS_BLOCK_OFFSET)) {
+ 		kfree(table);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+diff --git a/fs/squashfs/squashfs_fs.h b/fs/squashfs/squashfs_fs.h
+index e66486366f025..2fd1262cc1bd4 100644
+--- a/fs/squashfs/squashfs_fs.h
++++ b/fs/squashfs/squashfs_fs.h
+@@ -30,6 +30,7 @@
+ 
+ /* size of metadata (inode and directory) blocks */
+ #define SQUASHFS_METADATA_SIZE		8192
++#define SQUASHFS_BLOCK_OFFSET		2
+ 
+ /* default size of block device I/O */
+ #ifdef CONFIG_SQUASHFS_4K_DEVBLK_SIZE
+diff --git a/fs/squashfs/xattr_id.c b/fs/squashfs/xattr_id.c
+index 3a655d879600c..7f718d2bf3579 100644
+--- a/fs/squashfs/xattr_id.c
++++ b/fs/squashfs/xattr_id.c
+@@ -122,14 +122,16 @@ __le64 *squashfs_read_xattr_id_table(struct super_block *sb, u64 table_start,
+ 		start = le64_to_cpu(table[n]);
+ 		end = le64_to_cpu(table[n + 1]);
+ 
+-		if (start >= end || (end - start) > SQUASHFS_METADATA_SIZE) {
++		if (start >= end || (end - start) >
++				(SQUASHFS_METADATA_SIZE + SQUASHFS_BLOCK_OFFSET)) {
+ 			kfree(table);
+ 			return ERR_PTR(-EINVAL);
+ 		}
+ 	}
+ 
+ 	start = le64_to_cpu(table[indexes - 1]);
+-	if (start >= table_start || (table_start - start) > SQUASHFS_METADATA_SIZE) {
++	if (start >= table_start || (table_start - start) >
++				(SQUASHFS_METADATA_SIZE + SQUASHFS_BLOCK_OFFSET)) {
+ 		kfree(table);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+diff --git a/include/acpi/acpi_bus.h b/include/acpi/acpi_bus.h
+index c1a524de67c5b..53b2a1f320f9f 100644
+--- a/include/acpi/acpi_bus.h
++++ b/include/acpi/acpi_bus.h
+@@ -241,6 +241,7 @@ struct acpi_pnp_type {
+ 
+ struct acpi_device_pnp {
+ 	acpi_bus_id bus_id;		/* Object name */
++	int instance_no;		/* Instance number of this object */
+ 	struct acpi_pnp_type type;	/* ID type */
+ 	acpi_bus_address bus_address;	/* _ADR */
+ 	char *unique_id;		/* _UID */
+diff --git a/include/linux/idr.h b/include/linux/idr.h
+index 083d61e927063..3639a28188c92 100644
+--- a/include/linux/idr.h
++++ b/include/linux/idr.h
+@@ -195,6 +195,11 @@ static inline int ida_get_new(struct ida *ida, int *p_id)
+ 	return ida_get_new_above(ida, 0, p_id);
+ }
+ 
++static inline bool ida_is_empty(struct ida *ida)
++{
++	return idr_is_empty(&ida->idr);
++}
++
+ void __init idr_init_cache(void);
+ 
+ #endif /* __IDR_H__ */
+diff --git a/include/linux/if_macvlan.h b/include/linux/if_macvlan.h
+index a4ccc3122f938..cfcbc49f4ddfa 100644
+--- a/include/linux/if_macvlan.h
++++ b/include/linux/if_macvlan.h
+@@ -70,13 +70,14 @@ static inline void macvlan_count_rx(const struct macvlan_dev *vlan,
+ 	if (likely(success)) {
+ 		struct vlan_pcpu_stats *pcpu_stats;
+ 
+-		pcpu_stats = this_cpu_ptr(vlan->pcpu_stats);
++		pcpu_stats = get_cpu_ptr(vlan->pcpu_stats);
+ 		u64_stats_update_begin(&pcpu_stats->syncp);
+ 		pcpu_stats->rx_packets++;
+ 		pcpu_stats->rx_bytes += len;
+ 		if (multicast)
+ 			pcpu_stats->rx_multicast++;
+ 		u64_stats_update_end(&pcpu_stats->syncp);
++		put_cpu_ptr(vlan->pcpu_stats);
+ 	} else {
+ 		this_cpu_inc(vlan->pcpu_stats->rx_errors);
+ 	}
+diff --git a/include/linux/u64_stats_sync.h b/include/linux/u64_stats_sync.h
+index 650f3dd6b800f..f604a8fe9d2e5 100644
+--- a/include/linux/u64_stats_sync.h
++++ b/include/linux/u64_stats_sync.h
+@@ -68,12 +68,13 @@ struct u64_stats_sync {
+ };
+ 
+ 
++#if BITS_PER_LONG == 32 && defined(CONFIG_SMP)
++#define u64_stats_init(syncp)	seqcount_init(&(syncp)->seq)
++#else
+ static inline void u64_stats_init(struct u64_stats_sync *syncp)
+ {
+-#if BITS_PER_LONG == 32 && defined(CONFIG_SMP)
+-	seqcount_init(&syncp->seq);
+-#endif
+ }
++#endif
+ 
+ static inline void u64_stats_update_begin(struct u64_stats_sync *syncp)
+ {
+diff --git a/include/net/red.h b/include/net/red.h
+index 17821f66de111..b3ab5c6bfa83f 100644
+--- a/include/net/red.h
++++ b/include/net/red.h
+@@ -167,7 +167,8 @@ static inline void red_set_vars(struct red_vars *v)
+ 	v->qcount	= -1;
+ }
+ 
+-static inline bool red_check_params(u32 qth_min, u32 qth_max, u8 Wlog, u8 Scell_log)
++static inline bool red_check_params(u32 qth_min, u32 qth_max, u8 Wlog,
++				    u8 Scell_log, u8 *stab)
+ {
+ 	if (fls(qth_min) + Wlog > 32)
+ 		return false;
+@@ -177,6 +178,13 @@ static inline bool red_check_params(u32 qth_min, u32 qth_max, u8 Wlog, u8 Scell_
+ 		return false;
+ 	if (qth_max < qth_min)
+ 		return false;
++	if (stab) {
++		int i;
++
++		for (i = 0; i < RED_STAB_SIZE; i++)
++			if (stab[i] >= 32)
++				return false;
++	}
+ 	return true;
+ }
+ 
+diff --git a/include/net/rtnetlink.h b/include/net/rtnetlink.h
+index 4113916cc1bb0..af0745f316fe3 100644
+--- a/include/net/rtnetlink.h
++++ b/include/net/rtnetlink.h
+@@ -28,6 +28,7 @@ static inline int rtnl_msg_family(const struct nlmsghdr *nlh)
+  *
+  *	@list: Used internally
+  *	@kind: Identifier
++ *	@netns_refund: Physical device, move to init_net on netns exit
+  *	@maxtype: Highest device specific netlink attribute number
+  *	@policy: Netlink policy for device specific attribute validation
+  *	@validate: Optional validation function for netlink/changelink parameters
+@@ -84,6 +85,7 @@ struct rtnl_link_ops {
+ 	unsigned int		(*get_num_tx_queues)(void);
+ 	unsigned int		(*get_num_rx_queues)(void);
+ 
++	bool			netns_refund;
+ 	int			slave_maxtype;
+ 	const struct nla_policy	*slave_policy;
+ 	int			(*slave_validate)(struct nlattr *tb[],
+diff --git a/kernel/futex.c b/kernel/futex.c
+index 796b1c8608397..468f39476476b 100644
+--- a/kernel/futex.c
++++ b/kernel/futex.c
+@@ -1407,13 +1407,15 @@ static int lookup_pi_state(u32 __user *uaddr, u32 uval,
+ 
+ static int lock_pi_update_atomic(u32 __user *uaddr, u32 uval, u32 newval)
+ {
++	int err;
+ 	u32 uninitialized_var(curval);
+ 
+ 	if (unlikely(should_fail_futex(true)))
+ 		return -EFAULT;
+ 
+-	if (unlikely(cmpxchg_futex_value_locked(&curval, uaddr, uval, newval)))
+-		return -EFAULT;
++	err = cmpxchg_futex_value_locked(&curval, uaddr, uval, newval);
++	if (unlikely(err))
++		return err;
+ 
+ 	/* If user space value changed, let the caller retry */
+ 	return curval != uval ? -EAGAIN : 0;
+@@ -1553,11 +1555,7 @@ static void mark_wake_futex(struct wake_q_head *wake_q, struct futex_q *q)
+ 	if (WARN(q->pi_state || q->rt_waiter, "refusing to wake PI futex\n"))
+ 		return;
+ 
+-	/*
+-	 * Queue the task for later wakeup for after we've released
+-	 * the hb->lock. wake_q_add() grabs reference to p.
+-	 */
+-	wake_q_add(wake_q, p);
++	get_task_struct(p);
+ 	__unqueue_futex(q);
+ 	/*
+ 	 * The waiting task can free the futex_q as soon as
+@@ -1565,8 +1563,14 @@ static void mark_wake_futex(struct wake_q_head *wake_q, struct futex_q *q)
+ 	 * memory barrier is required here to prevent the following
+ 	 * store to lock_ptr from getting ahead of the plist_del.
+ 	 */
+-	smp_wmb();
+-	q->lock_ptr = NULL;
++	smp_store_release(&q->lock_ptr, NULL);
++
++	/*
++	 * Queue the task for later wakeup for after we've released
++	 * the hb->lock. wake_q_add() grabs reference to p.
++	 */
++	wake_q_add(wake_q, p);
++	put_task_struct(p);
+ }
+ 
+ /*
+@@ -1601,13 +1605,13 @@ static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_pi_state *pi_
+ 	 */
+ 	newval = FUTEX_WAITERS | task_pid_vnr(new_owner);
+ 
+-	if (unlikely(should_fail_futex(true)))
+-		ret = -EFAULT;
+-
+-	if (cmpxchg_futex_value_locked(&curval, uaddr, uval, newval)) {
++	if (unlikely(should_fail_futex(true))) {
+ 		ret = -EFAULT;
++		goto out_unlock;
++	}
+ 
+-	} else if (curval != uval) {
++	ret = cmpxchg_futex_value_locked(&curval, uaddr, uval, newval);
++	if (!ret && (curval != uval)) {
+ 		/*
+ 		 * If a unconditional UNLOCK_PI operation (user space did not
+ 		 * try the TID->0 transition) raced with a waiter setting the
+@@ -1793,32 +1797,32 @@ retry_private:
+ 	double_lock_hb(hb1, hb2);
+ 	op_ret = futex_atomic_op_inuser(op, uaddr2);
+ 	if (unlikely(op_ret < 0)) {
+-
+ 		double_unlock_hb(hb1, hb2);
+ 
+-#ifndef CONFIG_MMU
+-		/*
+-		 * we don't get EFAULT from MMU faults if we don't have an MMU,
+-		 * but we might get them from range checking
+-		 */
+-		ret = op_ret;
+-		goto out_put_keys;
+-#endif
+-
+-		if (unlikely(op_ret != -EFAULT)) {
++		if (!IS_ENABLED(CONFIG_MMU) ||
++		    unlikely(op_ret != -EFAULT && op_ret != -EAGAIN)) {
++			/*
++			 * we don't get EFAULT from MMU faults if we don't have
++			 * an MMU, but we might get them from range checking
++			 */
+ 			ret = op_ret;
+ 			goto out_put_keys;
+ 		}
+ 
+-		ret = fault_in_user_writeable(uaddr2);
+-		if (ret)
+-			goto out_put_keys;
++		if (op_ret == -EFAULT) {
++			ret = fault_in_user_writeable(uaddr2);
++			if (ret)
++				goto out_put_keys;
++		}
+ 
+-		if (!(flags & FLAGS_SHARED))
++		if (!(flags & FLAGS_SHARED)) {
++			cond_resched();
+ 			goto retry_private;
++		}
+ 
+ 		put_futex_key(&key2);
+ 		put_futex_key(&key1);
++		cond_resched();
+ 		goto retry;
+ 	}
+ 
+@@ -2334,20 +2338,7 @@ queue_unlock(struct futex_hash_bucket *hb)
+ 	hb_waiters_dec(hb);
+ }
+ 
+-/**
+- * queue_me() - Enqueue the futex_q on the futex_hash_bucket
+- * @q:	The futex_q to enqueue
+- * @hb:	The destination hash bucket
+- *
+- * The hb->lock must be held by the caller, and is released here. A call to
+- * queue_me() is typically paired with exactly one call to unqueue_me().  The
+- * exceptions involve the PI related operations, which may use unqueue_me_pi()
+- * or nothing if the unqueue is done as part of the wake process and the unqueue
+- * state is implicit in the state of woken task (see futex_wait_requeue_pi() for
+- * an example).
+- */
+-static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
+-	__releases(&hb->lock)
++static inline void __queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
+ {
+ 	int prio;
+ 
+@@ -2364,6 +2355,24 @@ static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
+ 	plist_node_init(&q->list, prio);
+ 	plist_add(&q->list, &hb->chain);
+ 	q->task = current;
++}
++
++/**
++ * queue_me() - Enqueue the futex_q on the futex_hash_bucket
++ * @q:	The futex_q to enqueue
++ * @hb:	The destination hash bucket
++ *
++ * The hb->lock must be held by the caller, and is released here. A call to
++ * queue_me() is typically paired with exactly one call to unqueue_me().  The
++ * exceptions involve the PI related operations, which may use unqueue_me_pi()
++ * or nothing if the unqueue is done as part of the wake process and the unqueue
++ * state is implicit in the state of woken task (see futex_wait_requeue_pi() for
++ * an example).
++ */
++static inline void queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
++	__releases(&hb->lock)
++{
++	__queue_me(q, hb);
+ 	spin_unlock(&hb->lock);
+ }
+ 
+@@ -2488,10 +2497,22 @@ retry:
+ 		}
+ 
+ 		/*
+-		 * Since we just failed the trylock; there must be an owner.
++		 * The trylock just failed, so either there is an owner or
++		 * there is a higher priority waiter than this one.
+ 		 */
+ 		newowner = rt_mutex_owner(&pi_state->pi_mutex);
+-		BUG_ON(!newowner);
++		/*
++		 * If the higher priority waiter has not yet taken over the
++		 * rtmutex then newowner is NULL. We can't return here with
++		 * that state because it's inconsistent vs. the user space
++		 * state. So drop the locks and try again. It's a valid
++		 * situation and not any different from the other retry
++		 * conditions.
++		 */
++		if (unlikely(!newowner)) {
++			err = -EAGAIN;
++			goto handle_err;
++		}
+ 	} else {
+ 		WARN_ON_ONCE(argowner != current);
+ 		if (oldowner == current) {
+@@ -2509,14 +2530,17 @@ retry:
+ 	if (!pi_state->owner)
+ 		newtid |= FUTEX_OWNER_DIED;
+ 
+-	if (get_futex_value_locked(&uval, uaddr))
+-		goto handle_fault;
++	err = get_futex_value_locked(&uval, uaddr);
++	if (err)
++		goto handle_err;
+ 
+ 	for (;;) {
+ 		newval = (uval & FUTEX_OWNER_DIED) | newtid;
+ 
+-		if (cmpxchg_futex_value_locked(&curval, uaddr, uval, newval))
+-			goto handle_fault;
++		err = cmpxchg_futex_value_locked(&curval, uaddr, uval, newval);
++		if (err)
++			goto handle_err;
++
+ 		if (curval == uval)
+ 			break;
+ 		uval = curval;
+@@ -2531,23 +2555,36 @@ retry:
+ 	return argowner == current;
+ 
+ 	/*
+-	 * To handle the page fault we need to drop the locks here. That gives
+-	 * the other task (either the highest priority waiter itself or the
+-	 * task which stole the rtmutex) the chance to try the fixup of the
+-	 * pi_state. So once we are back from handling the fault we need to
+-	 * check the pi_state after reacquiring the locks and before trying to
+-	 * do another fixup. When the fixup has been done already we simply
+-	 * return.
++	 * In order to reschedule or handle a page fault, we need to drop the
++	 * locks here. In the case of a fault, this gives the other task
++	 * (either the highest priority waiter itself or the task which stole
++	 * the rtmutex) the chance to try the fixup of the pi_state. So once we
++	 * are back from handling the fault we need to check the pi_state after
++	 * reacquiring the locks and before trying to do another fixup. When
++	 * the fixup has been done already we simply return.
+ 	 *
+ 	 * Note: we hold both hb->lock and pi_mutex->wait_lock. We can safely
+ 	 * drop hb->lock since the caller owns the hb -> futex_q relation.
+ 	 * Dropping the pi_mutex->wait_lock requires the state revalidate.
+ 	 */
+-handle_fault:
++handle_err:
+ 	raw_spin_unlock_irq(&pi_state->pi_mutex.wait_lock);
+ 	spin_unlock(q->lock_ptr);
+ 
+-	err = fault_in_user_writeable(uaddr);
++	switch (err) {
++	case -EFAULT:
++		err = fault_in_user_writeable(uaddr);
++		break;
++
++	case -EAGAIN:
++		cond_resched();
++		err = 0;
++		break;
++
++	default:
++		WARN_ON_ONCE(1);
++		break;
++	}
+ 
+ 	spin_lock(q->lock_ptr);
+ 	raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
+@@ -2869,6 +2906,7 @@ static int futex_lock_pi(u32 __user *uaddr, unsigned int flags,
+ {
+ 	struct hrtimer_sleeper timeout, *to = NULL;
+ 	struct task_struct *exiting = NULL;
++	struct rt_mutex_waiter rt_waiter;
+ 	struct futex_hash_bucket *hb;
+ 	struct futex_q q = futex_q_init;
+ 	int res, ret;
+@@ -2929,24 +2967,71 @@ retry_private:
+ 		}
+ 	}
+ 
++	WARN_ON(!q.pi_state);
++
+ 	/*
+ 	 * Only actually queue now that the atomic ops are done:
+ 	 */
+-	queue_me(&q, hb);
++	__queue_me(&q, hb);
+ 
+-	WARN_ON(!q.pi_state);
+-	/*
+-	 * Block on the PI mutex:
+-	 */
+-	if (!trylock) {
+-		ret = rt_mutex_timed_futex_lock(&q.pi_state->pi_mutex, to);
+-	} else {
++	if (trylock) {
+ 		ret = rt_mutex_futex_trylock(&q.pi_state->pi_mutex);
+ 		/* Fixup the trylock return value: */
+ 		ret = ret ? 0 : -EWOULDBLOCK;
++		goto no_block;
+ 	}
+ 
++	rt_mutex_init_waiter(&rt_waiter);
++
++	/*
++	 * On PREEMPT_RT_FULL, when hb->lock becomes an rt_mutex, we must not
++	 * hold it while doing rt_mutex_start_proxy(), because then it will
++	 * include hb->lock in the blocking chain, even through we'll not in
++	 * fact hold it while blocking. This will lead it to report -EDEADLK
++	 * and BUG when futex_unlock_pi() interleaves with this.
++	 *
++	 * Therefore acquire wait_lock while holding hb->lock, but drop the
++	 * latter before calling __rt_mutex_start_proxy_lock(). This
++	 * interleaves with futex_unlock_pi() -- which does a similar lock
++	 * handoff -- such that the latter can observe the futex_q::pi_state
++	 * before __rt_mutex_start_proxy_lock() is done.
++	 */
++	raw_spin_lock_irq(&q.pi_state->pi_mutex.wait_lock);
++	spin_unlock(q.lock_ptr);
++	/*
++	 * __rt_mutex_start_proxy_lock() unconditionally enqueues the @rt_waiter
++	 * such that futex_unlock_pi() is guaranteed to observe the waiter when
++	 * it sees the futex_q::pi_state.
++	 */
++	ret = __rt_mutex_start_proxy_lock(&q.pi_state->pi_mutex, &rt_waiter, current);
++	raw_spin_unlock_irq(&q.pi_state->pi_mutex.wait_lock);
++
++	if (ret) {
++		if (ret == 1)
++			ret = 0;
++		goto cleanup;
++	}
++
++	if (unlikely(to))
++		hrtimer_start_expires(&to->timer, HRTIMER_MODE_ABS);
++
++	ret = rt_mutex_wait_proxy_lock(&q.pi_state->pi_mutex, to, &rt_waiter);
++
++cleanup:
+ 	spin_lock(q.lock_ptr);
++	/*
++	 * If we failed to acquire the lock (deadlock/signal/timeout), we must
++	 * first acquire the hb->lock before removing the lock from the
++	 * rt_mutex waitqueue, such that we can keep the hb and rt_mutex wait
++	 * lists consistent.
++	 *
++	 * In particular; it is important that futex_unlock_pi() can not
++	 * observe this inconsistency.
++	 */
++	if (ret && !rt_mutex_cleanup_proxy_lock(&q.pi_state->pi_mutex, &rt_waiter))
++		ret = 0;
++
++no_block:
+ 	/*
+ 	 * Fixup the pi_state owner and possibly acquire the lock if we
+ 	 * haven't already.
+@@ -2970,8 +3055,10 @@ out_unlock_put_key:
+ out_put_key:
+ 	put_futex_key(&q.key);
+ out:
+-	if (to)
++	if (to) {
++		hrtimer_cancel(&to->timer);
+ 		destroy_hrtimer_on_stack(&to->timer);
++	}
+ 	return ret != -EINTR ? ret : -ERESTARTNOINTR;
+ 
+ uaddr_faulted:
+@@ -3039,14 +3126,14 @@ retry:
+ 
+ 		get_pi_state(pi_state);
+ 		/*
+-		 * Since modifying the wait_list is done while holding both
+-		 * hb->lock and wait_lock, holding either is sufficient to
+-		 * observe it.
+-		 *
+ 		 * By taking wait_lock while still holding hb->lock, we ensure
+ 		 * there is no point where we hold neither; and therefore
+ 		 * wake_futex_pi() must observe a state consistent with what we
+ 		 * observed.
++		 *
++		 * In particular; this forces __rt_mutex_start_proxy() to
++		 * complete such that we're guaranteed to observe the
++		 * rt_waiter. Also see the WARN in wake_futex_pi().
+ 		 */
+ 		raw_spin_lock_irq(&pi_state->pi_mutex.wait_lock);
+ 		spin_unlock(&hb->lock);
+@@ -3071,10 +3158,8 @@ retry:
+ 		 * A unconditional UNLOCK_PI op raced against a waiter
+ 		 * setting the FUTEX_WAITERS bit. Try again.
+ 		 */
+-		if (ret == -EAGAIN) {
+-			put_futex_key(&key);
+-			goto retry;
+-		}
++		if (ret == -EAGAIN)
++			goto pi_retry;
+ 		/*
+ 		 * wake_futex_pi has detected invalid state. Tell user
+ 		 * space.
+@@ -3089,9 +3174,19 @@ retry:
+ 	 * preserve the WAITERS bit not the OWNER_DIED one. We are the
+ 	 * owner.
+ 	 */
+-	if (cmpxchg_futex_value_locked(&curval, uaddr, uval, 0)) {
++	if ((ret = cmpxchg_futex_value_locked(&curval, uaddr, uval, 0))) {
+ 		spin_unlock(&hb->lock);
+-		goto pi_faulted;
++		switch (ret) {
++		case -EFAULT:
++			goto pi_faulted;
++
++		case -EAGAIN:
++			goto pi_retry;
++
++		default:
++			WARN_ON_ONCE(1);
++			goto out_putkey;
++		}
+ 	}
+ 
+ 	/*
+@@ -3105,6 +3200,11 @@ out_putkey:
+ 	put_futex_key(&key);
+ 	return ret;
+ 
++pi_retry:
++	put_futex_key(&key);
++	cond_resched();
++	goto retry;
++
+ pi_faulted:
+ 	put_futex_key(&key);
+ 
+@@ -3235,10 +3335,7 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
+ 	 * The waiter is allocated on our stack, manipulated by the requeue
+ 	 * code while we sleep on uaddr.
+ 	 */
+-	debug_rt_mutex_init_waiter(&rt_waiter);
+-	RB_CLEAR_NODE(&rt_waiter.pi_tree_entry);
+-	RB_CLEAR_NODE(&rt_waiter.tree_entry);
+-	rt_waiter.task = NULL;
++	rt_mutex_init_waiter(&rt_waiter);
+ 
+ 	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, VERIFY_WRITE);
+ 	if (unlikely(ret != 0))
+@@ -3443,13 +3540,19 @@ err_unlock:
+ 	return ret;
+ }
+ 
++/* Constants for the pending_op argument of handle_futex_death */
++#define HANDLE_DEATH_PENDING	true
++#define HANDLE_DEATH_LIST	false
++
+ /*
+  * Process a futex-list entry, check whether it's owned by the
+  * dying task, and do notification if so:
+  */
+-static int handle_futex_death(u32 __user *uaddr, struct task_struct *curr, int pi)
++static int handle_futex_death(u32 __user *uaddr, struct task_struct *curr,
++			      bool pi, bool pending_op)
+ {
+ 	u32 uval, uninitialized_var(nval), mval;
++	int err;
+ 
+ 	/* Futex address must be 32bit aligned */
+ 	if ((((unsigned long)uaddr) % sizeof(*uaddr)) != 0)
+@@ -3459,42 +3562,93 @@ retry:
+ 	if (get_user(uval, uaddr))
+ 		return -1;
+ 
+-	if ((uval & FUTEX_TID_MASK) == task_pid_vnr(curr)) {
+-		/*
+-		 * Ok, this dying thread is truly holding a futex
+-		 * of interest. Set the OWNER_DIED bit atomically
+-		 * via cmpxchg, and if the value had FUTEX_WAITERS
+-		 * set, wake up a waiter (if any). (We have to do a
+-		 * futex_wake() even if OWNER_DIED is already set -
+-		 * to handle the rare but possible case of recursive
+-		 * thread-death.) The rest of the cleanup is done in
+-		 * userspace.
+-		 */
+-		mval = (uval & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
+-		/*
+-		 * We are not holding a lock here, but we want to have
+-		 * the pagefault_disable/enable() protection because
+-		 * we want to handle the fault gracefully. If the
+-		 * access fails we try to fault in the futex with R/W
+-		 * verification via get_user_pages. get_user() above
+-		 * does not guarantee R/W access. If that fails we
+-		 * give up and leave the futex locked.
+-		 */
+-		if (cmpxchg_futex_value_locked(&nval, uaddr, uval, mval)) {
++	/*
++	 * Special case for regular (non PI) futexes. The unlock path in
++	 * user space has two race scenarios:
++	 *
++	 * 1. The unlock path releases the user space futex value and
++	 *    before it can execute the futex() syscall to wake up
++	 *    waiters it is killed.
++	 *
++	 * 2. A woken up waiter is killed before it can acquire the
++	 *    futex in user space.
++	 *
++	 * In both cases the TID validation below prevents a wakeup of
++	 * potential waiters which can cause these waiters to block
++	 * forever.
++	 *
++	 * In both cases the following conditions are met:
++	 *
++	 *	1) task->robust_list->list_op_pending != NULL
++	 *	   @pending_op == true
++	 *	2) User space futex value == 0
++	 *	3) Regular futex: @pi == false
++	 *
++	 * If these conditions are met, it is safe to attempt waking up a
++	 * potential waiter without touching the user space futex value and
++	 * trying to set the OWNER_DIED bit. The user space futex value is
++	 * uncontended and the rest of the user space mutex state is
++	 * consistent, so a woken waiter will just take over the
++	 * uncontended futex. Setting the OWNER_DIED bit would create
++	 * inconsistent state and malfunction of the user space owner died
++	 * handling.
++	 */
++	if (pending_op && !pi && !uval) {
++		futex_wake(uaddr, 1, 1, FUTEX_BITSET_MATCH_ANY);
++		return 0;
++	}
++
++	if ((uval & FUTEX_TID_MASK) != task_pid_vnr(curr))
++		return 0;
++
++	/*
++	 * Ok, this dying thread is truly holding a futex
++	 * of interest. Set the OWNER_DIED bit atomically
++	 * via cmpxchg, and if the value had FUTEX_WAITERS
++	 * set, wake up a waiter (if any). (We have to do a
++	 * futex_wake() even if OWNER_DIED is already set -
++	 * to handle the rare but possible case of recursive
++	 * thread-death.) The rest of the cleanup is done in
++	 * userspace.
++	 */
++	mval = (uval & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
++
++	/*
++	 * We are not holding a lock here, but we want to have
++	 * the pagefault_disable/enable() protection because
++	 * we want to handle the fault gracefully. If the
++	 * access fails we try to fault in the futex with R/W
++	 * verification via get_user_pages. get_user() above
++	 * does not guarantee R/W access. If that fails we
++	 * give up and leave the futex locked.
++	 */
++	if ((err = cmpxchg_futex_value_locked(&nval, uaddr, uval, mval))) {
++		switch (err) {
++		case -EFAULT:
+ 			if (fault_in_user_writeable(uaddr))
+ 				return -1;
+ 			goto retry;
+-		}
+-		if (nval != uval)
++
++		case -EAGAIN:
++			cond_resched();
+ 			goto retry;
+ 
+-		/*
+-		 * Wake robust non-PI futexes here. The wakeup of
+-		 * PI futexes happens in exit_pi_state():
+-		 */
+-		if (!pi && (uval & FUTEX_WAITERS))
+-			futex_wake(uaddr, 1, 1, FUTEX_BITSET_MATCH_ANY);
++		default:
++			WARN_ON_ONCE(1);
++			return err;
++		}
+ 	}
++
++	if (nval != uval)
++		goto retry;
++
++	/*
++	 * Wake robust non-PI futexes here. The wakeup of
++	 * PI futexes happens in exit_pi_state():
++	 */
++	if (!pi && (uval & FUTEX_WAITERS))
++		futex_wake(uaddr, 1, 1, FUTEX_BITSET_MATCH_ANY);
++
+ 	return 0;
+ }
+ 
+@@ -3563,10 +3717,11 @@ static void exit_robust_list(struct task_struct *curr)
+ 		 * A pending lock might already be on the list, so
+ 		 * don't process it twice:
+ 		 */
+-		if (entry != pending)
++		if (entry != pending) {
+ 			if (handle_futex_death((void __user *)entry + futex_offset,
+-						curr, pi))
++						curr, pi, HANDLE_DEATH_LIST))
+ 				return;
++		}
+ 		if (rc)
+ 			return;
+ 		entry = next_entry;
+@@ -3580,9 +3735,10 @@ static void exit_robust_list(struct task_struct *curr)
+ 		cond_resched();
+ 	}
+ 
+-	if (pending)
++	if (pending) {
+ 		handle_futex_death((void __user *)pending + futex_offset,
+-				   curr, pip);
++				   curr, pip, HANDLE_DEATH_PENDING);
++	}
+ }
+ 
+ static void futex_cleanup(struct task_struct *tsk)
+@@ -3865,7 +4021,8 @@ void compat_exit_robust_list(struct task_struct *curr)
+ 		if (entry != pending) {
+ 			void __user *uaddr = futex_uaddr(entry, futex_offset);
+ 
+-			if (handle_futex_death(uaddr, curr, pi))
++			if (handle_futex_death(uaddr, curr, pi,
++					       HANDLE_DEATH_LIST))
+ 				return;
+ 		}
+ 		if (rc)
+@@ -3884,7 +4041,7 @@ void compat_exit_robust_list(struct task_struct *curr)
+ 	if (pending) {
+ 		void __user *uaddr = futex_uaddr(pending, futex_offset);
+ 
+-		handle_futex_death(uaddr, curr, pip);
++		handle_futex_death(uaddr, curr, pip, HANDLE_DEATH_PENDING);
+ 	}
+ }
+ 
+diff --git a/kernel/locking/rtmutex.c b/kernel/locking/rtmutex.c
+index 6ff4156b3929e..1589e131ee4b8 100644
+--- a/kernel/locking/rtmutex.c
++++ b/kernel/locking/rtmutex.c
+@@ -1176,6 +1176,14 @@ void rt_mutex_adjust_pi(struct task_struct *task)
+ 				   next_lock, NULL, task);
+ }
+ 
++void rt_mutex_init_waiter(struct rt_mutex_waiter *waiter)
++{
++	debug_rt_mutex_init_waiter(waiter);
++	RB_CLEAR_NODE(&waiter->pi_tree_entry);
++	RB_CLEAR_NODE(&waiter->tree_entry);
++	waiter->task = NULL;
++}
++
+ /**
+  * __rt_mutex_slowlock() - Perform the wait-wake-try-to-take loop
+  * @lock:		 the rt_mutex to take
+@@ -1258,9 +1266,7 @@ rt_mutex_slowlock(struct rt_mutex *lock, int state,
+ 	unsigned long flags;
+ 	int ret = 0;
+ 
+-	debug_rt_mutex_init_waiter(&waiter);
+-	RB_CLEAR_NODE(&waiter.pi_tree_entry);
+-	RB_CLEAR_NODE(&waiter.tree_entry);
++	rt_mutex_init_waiter(&waiter);
+ 
+ 	/*
+ 	 * Technically we could use raw_spin_[un]lock_irq() here, but this can
+@@ -1516,19 +1522,6 @@ int __sched rt_mutex_lock_interruptible(struct rt_mutex *lock)
+ }
+ EXPORT_SYMBOL_GPL(rt_mutex_lock_interruptible);
+ 
+-/*
+- * Futex variant with full deadlock detection.
+- * Futex variants must not use the fast-path, see __rt_mutex_futex_unlock().
+- */
+-int __sched rt_mutex_timed_futex_lock(struct rt_mutex *lock,
+-			      struct hrtimer_sleeper *timeout)
+-{
+-	might_sleep();
+-
+-	return rt_mutex_slowlock(lock, TASK_INTERRUPTIBLE,
+-				 timeout, RT_MUTEX_FULL_CHAINWALK);
+-}
+-
+ /*
+  * Futex variant, must not use fastpath.
+  */
+@@ -1703,30 +1696,34 @@ void rt_mutex_proxy_unlock(struct rt_mutex *lock)
+ }
+ 
+ /**
+- * rt_mutex_start_proxy_lock() - Start lock acquisition for another task
++ * __rt_mutex_start_proxy_lock() - Start lock acquisition for another task
+  * @lock:		the rt_mutex to take
+  * @waiter:		the pre-initialized rt_mutex_waiter
+  * @task:		the task to prepare
+  *
++ * Starts the rt_mutex acquire; it enqueues the @waiter and does deadlock
++ * detection. It does not wait, see rt_mutex_wait_proxy_lock() for that.
++ *
++ * NOTE: does _NOT_ remove the @waiter on failure; must either call
++ * rt_mutex_wait_proxy_lock() or rt_mutex_cleanup_proxy_lock() after this.
++ *
+  * Returns:
+  *  0 - task blocked on lock
+  *  1 - acquired the lock for task, caller should wake it up
+  * <0 - error
+  *
+- * Special API call for FUTEX_REQUEUE_PI support.
++ * Special API call for PI-futex support.
+  */
+-int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
++int __rt_mutex_start_proxy_lock(struct rt_mutex *lock,
+ 			      struct rt_mutex_waiter *waiter,
+ 			      struct task_struct *task)
+ {
+ 	int ret;
+ 
+-	raw_spin_lock_irq(&lock->wait_lock);
++	lockdep_assert_held(&lock->wait_lock);
+ 
+-	if (try_to_take_rt_mutex(lock, task, NULL)) {
+-		raw_spin_unlock_irq(&lock->wait_lock);
++	if (try_to_take_rt_mutex(lock, task, NULL))
+ 		return 1;
+-	}
+ 
+ 	/* We enforce deadlock detection for futexes */
+ 	ret = task_blocks_on_rt_mutex(lock, waiter, task,
+@@ -1742,13 +1739,42 @@ int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
+ 		ret = 0;
+ 	}
+ 
++	debug_rt_mutex_print_deadlock(waiter);
++
++	return ret;
++}
++
++/**
++ * rt_mutex_start_proxy_lock() - Start lock acquisition for another task
++ * @lock:		the rt_mutex to take
++ * @waiter:		the pre-initialized rt_mutex_waiter
++ * @task:		the task to prepare
++ *
++ * Starts the rt_mutex acquire; it enqueues the @waiter and does deadlock
++ * detection. It does not wait, see rt_mutex_wait_proxy_lock() for that.
++ *
++ * NOTE: unlike __rt_mutex_start_proxy_lock this _DOES_ remove the @waiter
++ * on failure.
++ *
++ * Returns:
++ *  0 - task blocked on lock
++ *  1 - acquired the lock for task, caller should wake it up
++ * <0 - error
++ *
++ * Special API call for PI-futex support.
++ */
++int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
++			      struct rt_mutex_waiter *waiter,
++			      struct task_struct *task)
++{
++	int ret;
++
++	raw_spin_lock_irq(&lock->wait_lock);
++	ret = __rt_mutex_start_proxy_lock(lock, waiter, task);
+ 	if (unlikely(ret))
+ 		remove_waiter(lock, waiter);
+-
+ 	raw_spin_unlock_irq(&lock->wait_lock);
+ 
+-	debug_rt_mutex_print_deadlock(waiter);
+-
+ 	return ret;
+ }
+ 
+@@ -1796,18 +1822,14 @@ int rt_mutex_wait_proxy_lock(struct rt_mutex *lock,
+ 	int ret;
+ 
+ 	raw_spin_lock_irq(&lock->wait_lock);
+-
+-	set_current_state(TASK_INTERRUPTIBLE);
+-
+ 	/* sleep on the mutex */
++	set_current_state(TASK_INTERRUPTIBLE);
+ 	ret = __rt_mutex_slowlock(lock, TASK_INTERRUPTIBLE, to, waiter);
+-
+ 	/*
+ 	 * try_to_take_rt_mutex() sets the waiter bit unconditionally. We might
+ 	 * have to fix that up.
+ 	 */
+ 	fixup_rt_mutex_waiters(lock);
+-
+ 	raw_spin_unlock_irq(&lock->wait_lock);
+ 
+ 	return ret;
+@@ -1818,7 +1840,8 @@ int rt_mutex_wait_proxy_lock(struct rt_mutex *lock,
+  * @lock:		the rt_mutex we were woken on
+  * @waiter:		the pre-initialized rt_mutex_waiter
+  *
+- * Attempt to clean up after a failed rt_mutex_wait_proxy_lock().
++ * Attempt to clean up after a failed __rt_mutex_start_proxy_lock() or
++ * rt_mutex_wait_proxy_lock().
+  *
+  * Unless we acquired the lock; we're still enqueued on the wait-list and can
+  * in fact still be granted ownership until we're removed. Therefore we can
+@@ -1838,15 +1861,32 @@ bool rt_mutex_cleanup_proxy_lock(struct rt_mutex *lock,
+ 	bool cleanup = false;
+ 
+ 	raw_spin_lock_irq(&lock->wait_lock);
++	/*
++	 * Do an unconditional try-lock, this deals with the lock stealing
++	 * state where __rt_mutex_futex_unlock() -> mark_wakeup_next_waiter()
++	 * sets a NULL owner.
++	 *
++	 * We're not interested in the return value, because the subsequent
++	 * test on rt_mutex_owner() will infer that. If the trylock succeeded,
++	 * we will own the lock and it will have removed the waiter. If we
++	 * failed the trylock, we're still not owner and we need to remove
++	 * ourselves.
++	 */
++	try_to_take_rt_mutex(lock, current, waiter);
+ 	/*
+ 	 * Unless we're the owner; we're still enqueued on the wait_list.
+ 	 * So check if we became owner, if not, take us off the wait_list.
+ 	 */
+ 	if (rt_mutex_owner(lock) != current) {
+ 		remove_waiter(lock, waiter);
+-		fixup_rt_mutex_waiters(lock);
+ 		cleanup = true;
+ 	}
++	/*
++	 * try_to_take_rt_mutex() sets the waiter bit unconditionally. We might
++	 * have to fix that up.
++	 */
++	fixup_rt_mutex_waiters(lock);
++
+ 	raw_spin_unlock_irq(&lock->wait_lock);
+ 
+ 	return cleanup;
+diff --git a/kernel/locking/rtmutex_common.h b/kernel/locking/rtmutex_common.h
+index bea5d677fe343..c5d3f577b2a7e 100644
+--- a/kernel/locking/rtmutex_common.h
++++ b/kernel/locking/rtmutex_common.h
+@@ -103,6 +103,10 @@ extern struct task_struct *rt_mutex_next_owner(struct rt_mutex *lock);
+ extern void rt_mutex_init_proxy_locked(struct rt_mutex *lock,
+ 				       struct task_struct *proxy_owner);
+ extern void rt_mutex_proxy_unlock(struct rt_mutex *lock);
++extern void rt_mutex_init_waiter(struct rt_mutex_waiter *waiter);
++extern int __rt_mutex_start_proxy_lock(struct rt_mutex *lock,
++				     struct rt_mutex_waiter *waiter,
++				     struct task_struct *task);
+ extern int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
+ 				     struct rt_mutex_waiter *waiter,
+ 				     struct task_struct *task);
+@@ -111,7 +115,6 @@ extern int rt_mutex_wait_proxy_lock(struct rt_mutex *lock,
+ 			       struct rt_mutex_waiter *waiter);
+ extern bool rt_mutex_cleanup_proxy_lock(struct rt_mutex *lock,
+ 				 struct rt_mutex_waiter *waiter);
+-extern int rt_mutex_timed_futex_lock(struct rt_mutex *l, struct hrtimer_sleeper *to);
+ extern int rt_mutex_futex_trylock(struct rt_mutex *l);
+ extern int __rt_mutex_futex_trylock(struct rt_mutex *l);
+ 
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 9ac591dd16d50..5b69a9a41dd50 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -8300,7 +8300,7 @@ static void __net_exit default_device_exit(struct net *net)
+ 			continue;
+ 
+ 		/* Leave virtual devices for the generic cleanup */
+-		if (dev->rtnl_link_ops)
++		if (dev->rtnl_link_ops && !dev->rtnl_link_ops->netns_refund)
+ 			continue;
+ 
+ 		/* Push remaining network devices to init_net */
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index 1a13715b9a591..f37fbc71fc1db 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -2681,14 +2681,14 @@ static int ieee80211_set_bitrate_mask(struct wiphy *wiphy,
+ 			continue;
+ 
+ 		for (j = 0; j < IEEE80211_HT_MCS_MASK_LEN; j++) {
+-			if (~sdata->rc_rateidx_mcs_mask[i][j]) {
++			if (sdata->rc_rateidx_mcs_mask[i][j] != 0xff) {
+ 				sdata->rc_has_mcs_mask[i] = true;
+ 				break;
+ 			}
+ 		}
+ 
+ 		for (j = 0; j < NL80211_VHT_NSS_MAX; j++) {
+-			if (~sdata->rc_rateidx_vht_mcs_mask[i][j]) {
++			if (sdata->rc_rateidx_vht_mcs_mask[i][j] != 0xffff) {
+ 				sdata->rc_has_vht_mcs_mask[i] = true;
+ 				break;
+ 			}
+diff --git a/net/mac80211/ibss.c b/net/mac80211/ibss.c
+index 0c0695eb2609a..3796c24defcb9 100644
+--- a/net/mac80211/ibss.c
++++ b/net/mac80211/ibss.c
+@@ -1862,6 +1862,8 @@ int ieee80211_ibss_leave(struct ieee80211_sub_if_data *sdata)
+ 
+ 	/* remove beacon */
+ 	kfree(sdata->u.ibss.ie);
++	sdata->u.ibss.ie = NULL;
++	sdata->u.ibss.ie_len = 0;
+ 
+ 	/* on the next join, re-program HT parameters */
+ 	memset(&ifibss->ht_capa, 0, sizeof(ifibss->ht_capa));
+diff --git a/net/qrtr/qrtr.c b/net/qrtr/qrtr.c
+index d62b7a7f65bb0..2cc5ced1cec94 100644
+--- a/net/qrtr/qrtr.c
++++ b/net/qrtr/qrtr.c
+@@ -728,6 +728,11 @@ static int qrtr_recvmsg(struct socket *sock, struct msghdr *msg,
+ 	rc = copied;
+ 
+ 	if (addr) {
++		/* There is an anonymous 2-byte hole after sq_family,
++		 * make sure to clear it.
++		 */
++		memset(addr, 0, sizeof(*addr));
++
+ 		addr->sq_family = AF_QIPCRTR;
+ 		addr->sq_node = le32_to_cpu(phdr->src_node_id);
+ 		addr->sq_port = le32_to_cpu(phdr->src_port_id);
+diff --git a/net/sched/sch_choke.c b/net/sched/sch_choke.c
+index 2fb79c245f3fc..1283c3bf401a5 100644
+--- a/net/sched/sch_choke.c
++++ b/net/sched/sch_choke.c
+@@ -409,6 +409,7 @@ static int choke_change(struct Qdisc *sch, struct nlattr *opt)
+ 	struct sk_buff **old = NULL;
+ 	unsigned int mask;
+ 	u32 max_P;
++	u8 *stab;
+ 
+ 	if (opt == NULL)
+ 		return -EINVAL;
+@@ -424,8 +425,8 @@ static int choke_change(struct Qdisc *sch, struct nlattr *opt)
+ 	max_P = tb[TCA_CHOKE_MAX_P] ? nla_get_u32(tb[TCA_CHOKE_MAX_P]) : 0;
+ 
+ 	ctl = nla_data(tb[TCA_CHOKE_PARMS]);
+-
+-	if (!red_check_params(ctl->qth_min, ctl->qth_max, ctl->Wlog, ctl->Scell_log))
++	stab = nla_data(tb[TCA_CHOKE_STAB]);
++	if (!red_check_params(ctl->qth_min, ctl->qth_max, ctl->Wlog, ctl->Scell_log, stab))
+ 		return -EINVAL;
+ 
+ 	if (ctl->limit > CHOKE_MAX_QUEUE)
+@@ -478,7 +479,7 @@ static int choke_change(struct Qdisc *sch, struct nlattr *opt)
+ 
+ 	red_set_parms(&q->parms, ctl->qth_min, ctl->qth_max, ctl->Wlog,
+ 		      ctl->Plog, ctl->Scell_log,
+-		      nla_data(tb[TCA_CHOKE_STAB]),
++		      stab,
+ 		      max_P);
+ 	red_set_vars(&q->vars);
+ 
+diff --git a/net/sched/sch_gred.c b/net/sched/sch_gred.c
+index d86a96313981b..745e8fae62b3e 100644
+--- a/net/sched/sch_gred.c
++++ b/net/sched/sch_gred.c
+@@ -356,7 +356,7 @@ static inline int gred_change_vq(struct Qdisc *sch, int dp,
+ 	struct gred_sched *table = qdisc_priv(sch);
+ 	struct gred_sched_data *q = table->tab[dp];
+ 
+-	if (!red_check_params(ctl->qth_min, ctl->qth_max, ctl->Wlog, ctl->Scell_log))
++	if (!red_check_params(ctl->qth_min, ctl->qth_max, ctl->Wlog, ctl->Scell_log, stab))
+ 		return -EINVAL;
+ 
+ 	if (!q) {
+diff --git a/net/sched/sch_red.c b/net/sched/sch_red.c
+index 797895bddcfda..d6abf5c5a5b82 100644
+--- a/net/sched/sch_red.c
++++ b/net/sched/sch_red.c
+@@ -169,6 +169,7 @@ static int red_change(struct Qdisc *sch, struct nlattr *opt)
+ 	struct Qdisc *child = NULL;
+ 	int err;
+ 	u32 max_P;
++	u8 *stab;
+ 
+ 	if (opt == NULL)
+ 		return -EINVAL;
+@@ -184,7 +185,9 @@ static int red_change(struct Qdisc *sch, struct nlattr *opt)
+ 	max_P = tb[TCA_RED_MAX_P] ? nla_get_u32(tb[TCA_RED_MAX_P]) : 0;
+ 
+ 	ctl = nla_data(tb[TCA_RED_PARMS]);
+-	if (!red_check_params(ctl->qth_min, ctl->qth_max, ctl->Wlog, ctl->Scell_log))
++	stab = nla_data(tb[TCA_RED_STAB]);
++	if (!red_check_params(ctl->qth_min, ctl->qth_max, ctl->Wlog,
++			      ctl->Scell_log, stab))
+ 		return -EINVAL;
+ 
+ 	if (ctl->limit > 0) {
+@@ -206,7 +209,7 @@ static int red_change(struct Qdisc *sch, struct nlattr *opt)
+ 	red_set_parms(&q->parms,
+ 		      ctl->qth_min, ctl->qth_max, ctl->Wlog,
+ 		      ctl->Plog, ctl->Scell_log,
+-		      nla_data(tb[TCA_RED_STAB]),
++		      stab,
+ 		      max_P);
+ 	red_set_vars(&q->vars);
+ 
+diff --git a/net/sched/sch_sfq.c b/net/sched/sch_sfq.c
+index 69a5fffed86c7..b2598a32b556e 100644
+--- a/net/sched/sch_sfq.c
++++ b/net/sched/sch_sfq.c
+@@ -645,7 +645,7 @@ static int sfq_change(struct Qdisc *sch, struct nlattr *opt)
+ 	}
+ 
+ 	if (ctl_v1 && !red_check_params(ctl_v1->qth_min, ctl_v1->qth_max,
+-					ctl_v1->Wlog, ctl_v1->Scell_log))
++					ctl_v1->Wlog, ctl_v1->Scell_log, NULL))
+ 		return -EINVAL;
+ 	if (ctl_v1 && ctl_v1->qth_min) {
+ 		p = kmalloc(sizeof(*p), GFP_KERNEL);
+diff --git a/tools/perf/util/auxtrace.c b/tools/perf/util/auxtrace.c
+index b87221efdf7e0..51fdec9273d72 100644
+--- a/tools/perf/util/auxtrace.c
++++ b/tools/perf/util/auxtrace.c
+@@ -248,10 +248,6 @@ static int auxtrace_queues__add_buffer(struct auxtrace_queues *queues,
+ 		queue->set = true;
+ 		queue->tid = buffer->tid;
+ 		queue->cpu = buffer->cpu;
+-	} else if (buffer->cpu != queue->cpu || buffer->tid != queue->tid) {
+-		pr_err("auxtrace queue conflict: cpu %d, tid %d vs cpu %d, tid %d\n",
+-		       queue->cpu, queue->tid, buffer->cpu, buffer->tid);
+-		return -EINVAL;
+ 	}
+ 
+ 	buffer->buffer_nr = queues->next_buffer_nr++;

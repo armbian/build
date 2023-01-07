@@ -1,0 +1,1285 @@
+diff --git a/Documentation/filesystems/mandatory-locking.txt b/Documentation/filesystems/mandatory-locking.txt
+index 0979d1d2ca8bb..a251ca33164ae 100644
+--- a/Documentation/filesystems/mandatory-locking.txt
++++ b/Documentation/filesystems/mandatory-locking.txt
+@@ -169,3 +169,13 @@ havoc if they lock crucial files. The way around it is to change the file
+ permissions (remove the setgid bit) before trying to read or write to it.
+ Of course, that might be a bit tricky if the system is hung :-(
+ 
++7. The "mand" mount option
++--------------------------
++Mandatory locking is disabled on all filesystems by default, and must be
++administratively enabled by mounting with "-o mand". That mount option
++is only allowed if the mounting task has the CAP_SYS_ADMIN capability.
++
++Since kernel v4.5, it is possible to disable mandatory locking
++altogether by setting CONFIG_MANDATORY_FILE_LOCKING to "n". A kernel
++with this disabled will reject attempts to mount filesystems with the
++"mand" mount option with the error status EPERM.
+diff --git a/Makefile b/Makefile
+index 7cd5634469b10..08bbebb4acbf1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 280
++SUBLEVEL = 281
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/boot/dts/am43x-epos-evm.dts b/arch/arm/boot/dts/am43x-epos-evm.dts
+index 21918807c9f6d..f42a923912894 100644
+--- a/arch/arm/boot/dts/am43x-epos-evm.dts
++++ b/arch/arm/boot/dts/am43x-epos-evm.dts
+@@ -411,7 +411,7 @@
+ 	status = "okay";
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&i2c0_pins>;
+-	clock-frequency = <400000>;
++	clock-frequency = <100000>;
+ 
+ 	tps65218: tps65218@24 {
+ 		reg = <0x24>;
+diff --git a/arch/arm/boot/dts/ste-nomadik-stn8815.dtsi b/arch/arm/boot/dts/ste-nomadik-stn8815.dtsi
+index 1077ceebb2d68..87494773f4097 100644
+--- a/arch/arm/boot/dts/ste-nomadik-stn8815.dtsi
++++ b/arch/arm/boot/dts/ste-nomadik-stn8815.dtsi
+@@ -755,14 +755,14 @@
+ 			status = "disabled";
+ 		};
+ 
+-		vica: intc@10140000 {
++		vica: interrupt-controller@10140000 {
+ 			compatible = "arm,versatile-vic";
+ 			interrupt-controller;
+ 			#interrupt-cells = <1>;
+ 			reg = <0x10140000 0x20>;
+ 		};
+ 
+-		vicb: intc@10140020 {
++		vicb: interrupt-controller@10140020 {
+ 			compatible = "arm,versatile-vic";
+ 			interrupt-controller;
+ 			#interrupt-cells = <1>;
+diff --git a/arch/x86/include/asm/fpu/internal.h b/arch/x86/include/asm/fpu/internal.h
+index ebda4718eb8f7..793c04cba0def 100644
+--- a/arch/x86/include/asm/fpu/internal.h
++++ b/arch/x86/include/asm/fpu/internal.h
+@@ -221,6 +221,14 @@ static inline void copy_fxregs_to_kernel(struct fpu *fpu)
+ 	}
+ }
+ 
++static inline void fxsave(struct fxregs_state *fx)
++{
++	if (IS_ENABLED(CONFIG_X86_32))
++		asm volatile( "fxsave %[fx]" : [fx] "=m" (*fx));
++	else
++		asm volatile("fxsaveq %[fx]" : [fx] "=m" (*fx));
++}
++
+ /* These macros all use (%edi)/(%rdi) as the single memory argument. */
+ #define XSAVE		".byte " REX_PREFIX "0x0f,0xae,0x27"
+ #define XSAVEOPT	".byte " REX_PREFIX "0x0f,0xae,0x37"
+@@ -294,28 +302,6 @@ static inline void copy_fxregs_to_kernel(struct fpu *fpu)
+ 		     : "D" (st), "m" (*st), "a" (lmask), "d" (hmask)	\
+ 		     : "memory")
+ 
+-/*
+- * This function is called only during boot time when x86 caps are not set
+- * up and alternative can not be used yet.
+- */
+-static inline void copy_xregs_to_kernel_booting(struct xregs_state *xstate)
+-{
+-	u64 mask = -1;
+-	u32 lmask = mask;
+-	u32 hmask = mask >> 32;
+-	int err;
+-
+-	WARN_ON(system_state != SYSTEM_BOOTING);
+-
+-	if (static_cpu_has(X86_FEATURE_XSAVES))
+-		XSTATE_OP(XSAVES, xstate, lmask, hmask, err);
+-	else
+-		XSTATE_OP(XSAVE, xstate, lmask, hmask, err);
+-
+-	/* We should never fault when copying to a kernel buffer: */
+-	WARN_ON_FPU(err);
+-}
+-
+ /*
+  * This function is called only during boot time when x86 caps are not set
+  * up and alternative can not be used yet.
+diff --git a/arch/x86/include/asm/svm.h b/arch/x86/include/asm/svm.h
+index 14824fc78f7e7..509b9f3307e43 100644
+--- a/arch/x86/include/asm/svm.h
++++ b/arch/x86/include/asm/svm.h
+@@ -113,6 +113,8 @@ struct __attribute__ ((__packed__)) vmcb_control_area {
+ #define V_IGN_TPR_SHIFT 20
+ #define V_IGN_TPR_MASK (1 << V_IGN_TPR_SHIFT)
+ 
++#define V_IRQ_INJECTION_BITS_MASK (V_IRQ_MASK | V_INTR_PRIO_MASK | V_IGN_TPR_MASK)
++
+ #define V_INTR_MASKING_SHIFT 24
+ #define V_INTR_MASKING_MASK (1 << V_INTR_MASKING_SHIFT)
+ 
+diff --git a/arch/x86/kernel/fpu/xstate.c b/arch/x86/kernel/fpu/xstate.c
+index dbd396c913488..02ad98ec51491 100644
+--- a/arch/x86/kernel/fpu/xstate.c
++++ b/arch/x86/kernel/fpu/xstate.c
+@@ -407,6 +407,24 @@ static void __init print_xstate_offset_size(void)
+ 	}
+ }
+ 
++/*
++ * All supported features have either init state all zeros or are
++ * handled in setup_init_fpu() individually. This is an explicit
++ * feature list and does not use XFEATURE_MASK*SUPPORTED to catch
++ * newly added supported features at build time and make people
++ * actually look at the init state for the new feature.
++ */
++#define XFEATURES_INIT_FPSTATE_HANDLED		\
++	(XFEATURE_MASK_FP |			\
++	 XFEATURE_MASK_SSE |			\
++	 XFEATURE_MASK_YMM |			\
++	 XFEATURE_MASK_OPMASK |			\
++	 XFEATURE_MASK_ZMM_Hi256 |		\
++	 XFEATURE_MASK_Hi16_ZMM	 |		\
++	 XFEATURE_MASK_PKRU |			\
++	 XFEATURE_MASK_BNDREGS |		\
++	 XFEATURE_MASK_BNDCSR)
++
+ /*
+  * setup the xstate image representing the init state
+  */
+@@ -414,6 +432,8 @@ static void __init setup_init_fpu_buf(void)
+ {
+ 	static int on_boot_cpu __initdata = 1;
+ 
++	BUILD_BUG_ON(XCNTXT_MASK != XFEATURES_INIT_FPSTATE_HANDLED);
++
+ 	WARN_ON_FPU(!on_boot_cpu);
+ 	on_boot_cpu = 0;
+ 
+@@ -432,10 +452,22 @@ static void __init setup_init_fpu_buf(void)
+ 	copy_kernel_to_xregs_booting(&init_fpstate.xsave);
+ 
+ 	/*
+-	 * Dump the init state again. This is to identify the init state
+-	 * of any feature which is not represented by all zero's.
++	 * All components are now in init state. Read the state back so
++	 * that init_fpstate contains all non-zero init state. This only
++	 * works with XSAVE, but not with XSAVEOPT and XSAVES because
++	 * those use the init optimization which skips writing data for
++	 * components in init state.
++	 *
++	 * XSAVE could be used, but that would require to reshuffle the
++	 * data when XSAVES is available because XSAVES uses xstate
++	 * compaction. But doing so is a pointless exercise because most
++	 * components have an all zeros init state except for the legacy
++	 * ones (FP and SSE). Those can be saved with FXSAVE into the
++	 * legacy area. Adding new features requires to ensure that init
++	 * state is all zeroes or if not to add the necessary handling
++	 * here.
+ 	 */
+-	copy_xregs_to_kernel_booting(&init_fpstate.xsave);
++	fxsave(&init_fpstate.fxsave);
+ }
+ 
+ static int xfeature_uncompacted_offset(int xfeature_nr)
+diff --git a/arch/x86/kvm/svm.c b/arch/x86/kvm/svm.c
+index cbc7f177bbd8e..03fdeab057d29 100644
+--- a/arch/x86/kvm/svm.c
++++ b/arch/x86/kvm/svm.c
+@@ -3048,7 +3048,11 @@ static bool nested_svm_vmrun(struct vcpu_svm *svm)
+ 	svm->nested.intercept            = nested_vmcb->control.intercept;
+ 
+ 	svm_flush_tlb(&svm->vcpu);
+-	svm->vmcb->control.int_ctl = nested_vmcb->control.int_ctl | V_INTR_MASKING_MASK;
++	svm->vmcb->control.int_ctl = nested_vmcb->control.int_ctl &
++			(V_TPR_MASK | V_IRQ_INJECTION_BITS_MASK);
++
++	svm->vmcb->control.int_ctl |= V_INTR_MASKING_MASK;
++
+ 	if (nested_vmcb->control.int_ctl & V_INTR_MASKING_MASK)
+ 		svm->vcpu.arch.hflags |= HF_VINTR_MASK;
+ 	else
+diff --git a/arch/x86/tools/chkobjdump.awk b/arch/x86/tools/chkobjdump.awk
+index fd1ab80be0dec..a4cf678cf5c80 100644
+--- a/arch/x86/tools/chkobjdump.awk
++++ b/arch/x86/tools/chkobjdump.awk
+@@ -10,6 +10,7 @@ BEGIN {
+ 
+ /^GNU objdump/ {
+ 	verstr = ""
++	gsub(/\(.*\)/, "");
+ 	for (i = 3; i <= NF; i++)
+ 		if (match($(i), "^[0-9]")) {
+ 			verstr = $(i);
+diff --git a/drivers/acpi/nfit/core.c b/drivers/acpi/nfit/core.c
+index b7fd8e00b346b..4dddf579560f3 100644
+--- a/drivers/acpi/nfit/core.c
++++ b/drivers/acpi/nfit/core.c
+@@ -2258,6 +2258,9 @@ static int acpi_nfit_register_region(struct acpi_nfit_desc *acpi_desc,
+ 		struct acpi_nfit_memory_map *memdev = nfit_memdev->memdev;
+ 		struct nd_mapping_desc *mapping;
+ 
++		/* range index 0 == unmapped in SPA or invalid-SPA */
++		if (memdev->range_index == 0 || spa->range_index == 0)
++			continue;
+ 		if (memdev->range_index != spa->range_index)
+ 			continue;
+ 		if (count >= ND_MAX_MAPPINGS) {
+diff --git a/drivers/base/core.c b/drivers/base/core.c
+index 3b8487e28c84f..e82a89325f3d6 100644
+--- a/drivers/base/core.c
++++ b/drivers/base/core.c
+@@ -710,6 +710,7 @@ void device_initialize(struct device *dev)
+ 	device_pm_init(dev);
+ 	set_dev_node(dev, -1);
+ #ifdef CONFIG_GENERIC_MSI_IRQ
++	raw_spin_lock_init(&dev->msi_lock);
+ 	INIT_LIST_HEAD(&dev->msi_list);
+ #endif
+ }
+diff --git a/drivers/dma/of-dma.c b/drivers/dma/of-dma.c
+index 757cf48c1c5ed..441f37b41abd5 100644
+--- a/drivers/dma/of-dma.c
++++ b/drivers/dma/of-dma.c
+@@ -68,8 +68,12 @@ static struct dma_chan *of_dma_router_xlate(struct of_phandle_args *dma_spec,
+ 		return NULL;
+ 
+ 	ofdma_target = of_dma_find_controller(&dma_spec_target);
+-	if (!ofdma_target)
+-		return NULL;
++	if (!ofdma_target) {
++		ofdma->dma_router->route_free(ofdma->dma_router->dev,
++					      route_data);
++		chan = ERR_PTR(-EPROBE_DEFER);
++		goto err;
++	}
+ 
+ 	chan = ofdma_target->of_dma_xlate(&dma_spec_target, ofdma_target);
+ 	if (IS_ERR_OR_NULL(chan)) {
+@@ -80,6 +84,7 @@ static struct dma_chan *of_dma_router_xlate(struct of_phandle_args *dma_spec,
+ 		chan->route_data = route_data;
+ 	}
+ 
++err:
+ 	/*
+ 	 * Need to put the node back since the ofdma->of_dma_route_allocate
+ 	 * has taken it for generating the new, translated dma_spec
+diff --git a/drivers/dma/sh/usb-dmac.c b/drivers/dma/sh/usb-dmac.c
+index 6682b3eec2b66..ec15ded640f61 100644
+--- a/drivers/dma/sh/usb-dmac.c
++++ b/drivers/dma/sh/usb-dmac.c
+@@ -861,8 +861,8 @@ static int usb_dmac_probe(struct platform_device *pdev)
+ 
+ error:
+ 	of_dma_controller_free(pdev->dev.of_node);
+-	pm_runtime_put(&pdev->dev);
+ error_pm:
++	pm_runtime_put(&pdev->dev);
+ 	pm_runtime_disable(&pdev->dev);
+ 	return ret;
+ }
+diff --git a/drivers/i2c/i2c-dev.c b/drivers/i2c/i2c-dev.c
+index c4066276eb7b9..b7f9fb00f695f 100644
+--- a/drivers/i2c/i2c-dev.c
++++ b/drivers/i2c/i2c-dev.c
+@@ -148,7 +148,7 @@ static ssize_t i2cdev_read(struct file *file, char __user *buf, size_t count,
+ 	if (count > 8192)
+ 		count = 8192;
+ 
+-	tmp = kmalloc(count, GFP_KERNEL);
++	tmp = kzalloc(count, GFP_KERNEL);
+ 	if (tmp == NULL)
+ 		return -ENOMEM;
+ 
+@@ -157,7 +157,8 @@ static ssize_t i2cdev_read(struct file *file, char __user *buf, size_t count,
+ 
+ 	ret = i2c_master_recv(client, tmp, count);
+ 	if (ret >= 0)
+-		ret = copy_to_user(buf, tmp, count) ? -EFAULT : ret;
++		if (copy_to_user(buf, tmp, ret))
++			ret = -EFAULT;
+ 	kfree(tmp);
+ 	return ret;
+ }
+diff --git a/drivers/iio/adc/palmas_gpadc.c b/drivers/iio/adc/palmas_gpadc.c
+index 7d61b566e148d..f5218461ae255 100644
+--- a/drivers/iio/adc/palmas_gpadc.c
++++ b/drivers/iio/adc/palmas_gpadc.c
+@@ -660,8 +660,8 @@ static int palmas_adc_wakeup_configure(struct palmas_gpadc *adc)
+ 
+ 	adc_period = adc->auto_conversion_period;
+ 	for (i = 0; i < 16; ++i) {
+-		if (((1000 * (1 << i)) / 32) < adc_period)
+-			continue;
++		if (((1000 * (1 << i)) / 32) >= adc_period)
++			break;
+ 	}
+ 	if (i > 0)
+ 		i--;
+diff --git a/drivers/ipack/carriers/tpci200.c b/drivers/ipack/carriers/tpci200.c
+index 7ba1a94497f5d..4294523bede5c 100644
+--- a/drivers/ipack/carriers/tpci200.c
++++ b/drivers/ipack/carriers/tpci200.c
+@@ -94,16 +94,13 @@ static void tpci200_unregister(struct tpci200_board *tpci200)
+ 	free_irq(tpci200->info->pdev->irq, (void *) tpci200);
+ 
+ 	pci_iounmap(tpci200->info->pdev, tpci200->info->interface_regs);
+-	pci_iounmap(tpci200->info->pdev, tpci200->info->cfg_regs);
+ 
+ 	pci_release_region(tpci200->info->pdev, TPCI200_IP_INTERFACE_BAR);
+ 	pci_release_region(tpci200->info->pdev, TPCI200_IO_ID_INT_SPACES_BAR);
+ 	pci_release_region(tpci200->info->pdev, TPCI200_MEM16_SPACE_BAR);
+ 	pci_release_region(tpci200->info->pdev, TPCI200_MEM8_SPACE_BAR);
+-	pci_release_region(tpci200->info->pdev, TPCI200_CFG_MEM_BAR);
+ 
+ 	pci_disable_device(tpci200->info->pdev);
+-	pci_dev_put(tpci200->info->pdev);
+ }
+ 
+ static void tpci200_enable_irq(struct tpci200_board *tpci200,
+@@ -524,7 +521,7 @@ static int tpci200_pci_probe(struct pci_dev *pdev,
+ 	tpci200->info = kzalloc(sizeof(struct tpci200_infos), GFP_KERNEL);
+ 	if (!tpci200->info) {
+ 		ret = -ENOMEM;
+-		goto out_err_info;
++		goto err_tpci200;
+ 	}
+ 
+ 	pci_dev_get(pdev);
+@@ -535,7 +532,7 @@ static int tpci200_pci_probe(struct pci_dev *pdev,
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "Failed to allocate PCI Configuration Memory");
+ 		ret = -EBUSY;
+-		goto out_err_pci_request;
++		goto err_tpci200_info;
+ 	}
+ 	tpci200->info->cfg_regs = ioremap_nocache(
+ 			pci_resource_start(pdev, TPCI200_CFG_MEM_BAR),
+@@ -543,7 +540,7 @@ static int tpci200_pci_probe(struct pci_dev *pdev,
+ 	if (!tpci200->info->cfg_regs) {
+ 		dev_err(&pdev->dev, "Failed to map PCI Configuration Memory");
+ 		ret = -EFAULT;
+-		goto out_err_ioremap;
++		goto err_request_region;
+ 	}
+ 
+ 	/* Disable byte swapping for 16 bit IP module access. This will ensure
+@@ -566,7 +563,7 @@ static int tpci200_pci_probe(struct pci_dev *pdev,
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "error during tpci200 install\n");
+ 		ret = -ENODEV;
+-		goto out_err_install;
++		goto err_cfg_regs;
+ 	}
+ 
+ 	/* Register the carrier in the industry pack bus driver */
+@@ -578,7 +575,7 @@ static int tpci200_pci_probe(struct pci_dev *pdev,
+ 		dev_err(&pdev->dev,
+ 			"error registering the carrier on ipack driver\n");
+ 		ret = -EFAULT;
+-		goto out_err_bus_register;
++		goto err_tpci200_install;
+ 	}
+ 
+ 	/* save the bus number given by ipack to logging purpose */
+@@ -589,19 +586,16 @@ static int tpci200_pci_probe(struct pci_dev *pdev,
+ 		tpci200_create_device(tpci200, i);
+ 	return 0;
+ 
+-out_err_bus_register:
++err_tpci200_install:
+ 	tpci200_uninstall(tpci200);
+-	/* tpci200->info->cfg_regs is unmapped in tpci200_uninstall */
+-	tpci200->info->cfg_regs = NULL;
+-out_err_install:
+-	if (tpci200->info->cfg_regs)
+-		iounmap(tpci200->info->cfg_regs);
+-out_err_ioremap:
++err_cfg_regs:
++	pci_iounmap(tpci200->info->pdev, tpci200->info->cfg_regs);
++err_request_region:
+ 	pci_release_region(pdev, TPCI200_CFG_MEM_BAR);
+-out_err_pci_request:
+-	pci_dev_put(pdev);
++err_tpci200_info:
+ 	kfree(tpci200->info);
+-out_err_info:
++	pci_dev_put(pdev);
++err_tpci200:
+ 	kfree(tpci200);
+ 	return ret;
+ }
+@@ -611,6 +605,12 @@ static void __tpci200_pci_remove(struct tpci200_board *tpci200)
+ 	ipack_bus_unregister(tpci200->info->ipack_bus);
+ 	tpci200_uninstall(tpci200);
+ 
++	pci_iounmap(tpci200->info->pdev, tpci200->info->cfg_regs);
++
++	pci_release_region(tpci200->info->pdev, TPCI200_CFG_MEM_BAR);
++
++	pci_dev_put(tpci200->info->pdev);
++
+ 	kfree(tpci200->info);
+ 	kfree(tpci200);
+ }
+diff --git a/drivers/mmc/host/dw_mmc.c b/drivers/mmc/host/dw_mmc.c
+index d9c7fd0cabafb..c6b91efaa9568 100644
+--- a/drivers/mmc/host/dw_mmc.c
++++ b/drivers/mmc/host/dw_mmc.c
+@@ -380,7 +380,7 @@ static void dw_mci_start_command(struct dw_mci *host,
+ 
+ static inline void send_stop_abort(struct dw_mci *host, struct mmc_data *data)
+ {
+-	struct mmc_command *stop = data->stop ? data->stop : &host->stop_abort;
++	struct mmc_command *stop = &host->stop_abort;
+ 
+ 	dw_mci_start_command(host, stop, host->stop_cmdr);
+ }
+@@ -1280,10 +1280,7 @@ static void __dw_mci_start_request(struct dw_mci *host,
+ 		spin_unlock_irqrestore(&host->irq_lock, irqflags);
+ 	}
+ 
+-	if (mrq->stop)
+-		host->stop_cmdr = dw_mci_prepare_command(slot->mmc, mrq->stop);
+-	else
+-		host->stop_cmdr = dw_mci_prep_stop_abort(host, cmd);
++	host->stop_cmdr = dw_mci_prep_stop_abort(host, cmd);
+ }
+ 
+ static void dw_mci_start_request(struct dw_mci *host,
+@@ -1869,8 +1866,8 @@ static void dw_mci_tasklet_func(unsigned long priv)
+ 					continue;
+ 				}
+ 
+-				dw_mci_stop_dma(host);
+ 				send_stop_abort(host, data);
++				dw_mci_stop_dma(host);
+ 				state = STATE_SENDING_STOP;
+ 				break;
+ 			}
+@@ -1894,11 +1891,10 @@ static void dw_mci_tasklet_func(unsigned long priv)
+ 			 */
+ 			if (test_and_clear_bit(EVENT_DATA_ERROR,
+ 					       &host->pending_events)) {
+-				dw_mci_stop_dma(host);
+-				if (data->stop ||
+-				    !(host->data_status & (SDMMC_INT_DRTO |
++				if (!(host->data_status & (SDMMC_INT_DRTO |
+ 							   SDMMC_INT_EBE)))
+ 					send_stop_abort(host, data);
++				dw_mci_stop_dma(host);
+ 				state = STATE_DATA_ERROR;
+ 				break;
+ 			}
+@@ -1931,11 +1927,10 @@ static void dw_mci_tasklet_func(unsigned long priv)
+ 			 */
+ 			if (test_and_clear_bit(EVENT_DATA_ERROR,
+ 					       &host->pending_events)) {
+-				dw_mci_stop_dma(host);
+-				if (data->stop ||
+-				    !(host->data_status & (SDMMC_INT_DRTO |
++				if (!(host->data_status & (SDMMC_INT_DRTO |
+ 							   SDMMC_INT_EBE)))
+ 					send_stop_abort(host, data);
++				dw_mci_stop_dma(host);
+ 				state = STATE_DATA_ERROR;
+ 				break;
+ 			}
+@@ -2009,7 +2004,7 @@ static void dw_mci_tasklet_func(unsigned long priv)
+ 			host->cmd = NULL;
+ 			host->data = NULL;
+ 
+-			if (mrq->stop)
++			if (!mrq->sbc && mrq->stop)
+ 				dw_mci_command_complete(host, mrq->stop);
+ 			else
+ 				host->cmd_status = 0;
+diff --git a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_83xx_hw.c b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_83xx_hw.c
+index 5d2de48b77a00..dce36e9e1879c 100644
+--- a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_83xx_hw.c
++++ b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_83xx_hw.c
+@@ -3157,8 +3157,10 @@ int qlcnic_83xx_flash_read32(struct qlcnic_adapter *adapter, u32 flash_addr,
+ 
+ 		indirect_addr = QLC_83XX_FLASH_DIRECT_DATA(addr);
+ 		ret = QLCRD32(adapter, indirect_addr, &err);
+-		if (err == -EIO)
++		if (err == -EIO) {
++			qlcnic_83xx_unlock_flash(adapter);
+ 			return err;
++		}
+ 
+ 		word = ret;
+ 		*(u32 *)p_data  = word;
+diff --git a/drivers/net/hamradio/6pack.c b/drivers/net/hamradio/6pack.c
+index 03c96a6cbafd8..e510dbda77e58 100644
+--- a/drivers/net/hamradio/6pack.c
++++ b/drivers/net/hamradio/6pack.c
+@@ -870,6 +870,12 @@ static void decode_data(struct sixpack *sp, unsigned char inbyte)
+ 		return;
+ 	}
+ 
++	if (sp->rx_count_cooked + 2 >= sizeof(sp->cooked_buf)) {
++		pr_err("6pack: cooked buffer overrun, data loss\n");
++		sp->rx_count = 0;
++		return;
++	}
++
+ 	buf = sp->raw_buf;
+ 	sp->cooked_buf[sp->rx_count_cooked++] =
+ 		buf[0] | ((buf[1] << 2) & 0xc0);
+diff --git a/drivers/net/ppp/ppp_generic.c b/drivers/net/ppp/ppp_generic.c
+index 5ba472691546b..0a29844676f92 100644
+--- a/drivers/net/ppp/ppp_generic.c
++++ b/drivers/net/ppp/ppp_generic.c
+@@ -1136,7 +1136,7 @@ static int ppp_nl_newlink(struct net *src_net, struct net_device *dev,
+ 	 * the PPP unit identifer as suffix (i.e. ppp<unit_id>). This allows
+ 	 * userspace to infer the device name using to the PPPIOCGUNIT ioctl.
+ 	 */
+-	if (!tb[IFLA_IFNAME])
++	if (!tb[IFLA_IFNAME] || !nla_len(tb[IFLA_IFNAME]) || !*(char *)nla_data(tb[IFLA_IFNAME]))
+ 		conf.ifname_is_set = false;
+ 
+ 	err = ppp_dev_configure(src_net, dev, &conf);
+diff --git a/drivers/pci/msi.c b/drivers/pci/msi.c
+index 55ca14fbdd2a2..77810f4240492 100644
+--- a/drivers/pci/msi.c
++++ b/drivers/pci/msi.c
+@@ -189,24 +189,25 @@ static inline __attribute_const__ u32 msi_mask(unsigned x)
+  * reliably as devices without an INTx disable bit will then generate a
+  * level IRQ which will never be cleared.
+  */
+-u32 __pci_msi_desc_mask_irq(struct msi_desc *desc, u32 mask, u32 flag)
++void __pci_msi_desc_mask_irq(struct msi_desc *desc, u32 mask, u32 flag)
+ {
+-	u32 mask_bits = desc->masked;
++	raw_spinlock_t *lock = &desc->dev->msi_lock;
++	unsigned long flags;
+ 
+ 	if (pci_msi_ignore_mask || !desc->msi_attrib.maskbit)
+-		return 0;
++		return;
+ 
+-	mask_bits &= ~mask;
+-	mask_bits |= flag;
++	raw_spin_lock_irqsave(lock, flags);
++	desc->masked &= ~mask;
++	desc->masked |= flag;
+ 	pci_write_config_dword(msi_desc_to_pci_dev(desc), desc->mask_pos,
+-			       mask_bits);
+-
+-	return mask_bits;
++			       desc->masked);
++	raw_spin_unlock_irqrestore(lock, flags);
+ }
+ 
+ static void msi_mask_irq(struct msi_desc *desc, u32 mask, u32 flag)
+ {
+-	desc->masked = __pci_msi_desc_mask_irq(desc, mask, flag);
++	__pci_msi_desc_mask_irq(desc, mask, flag);
+ }
+ 
+ static void __iomem *pci_msix_desc_addr(struct msi_desc *desc)
+@@ -321,10 +322,28 @@ void __pci_write_msi_msg(struct msi_desc *entry, struct msi_msg *msg)
+ 		/* Don't touch the hardware now */
+ 	} else if (entry->msi_attrib.is_msix) {
+ 		void __iomem *base = pci_msix_desc_addr(entry);
++		bool unmasked = !(entry->masked & PCI_MSIX_ENTRY_CTRL_MASKBIT);
++
++		/*
++		 * The specification mandates that the entry is masked
++		 * when the message is modified:
++		 *
++		 * "If software changes the Address or Data value of an
++		 * entry while the entry is unmasked, the result is
++		 * undefined."
++		 */
++		if (unmasked)
++			__pci_msix_desc_mask_irq(entry, PCI_MSIX_ENTRY_CTRL_MASKBIT);
+ 
+ 		writel(msg->address_lo, base + PCI_MSIX_ENTRY_LOWER_ADDR);
+ 		writel(msg->address_hi, base + PCI_MSIX_ENTRY_UPPER_ADDR);
+ 		writel(msg->data, base + PCI_MSIX_ENTRY_DATA);
++
++		if (unmasked)
++			__pci_msix_desc_mask_irq(entry, 0);
++
++		/* Ensure that the writes are visible in the device */
++		readl(base + PCI_MSIX_ENTRY_DATA);
+ 	} else {
+ 		int pos = dev->msi_cap;
+ 		u16 msgctl;
+@@ -345,6 +364,8 @@ void __pci_write_msi_msg(struct msi_desc *entry, struct msi_msg *msg)
+ 			pci_write_config_word(dev, pos + PCI_MSI_DATA_32,
+ 					      msg->data);
+ 		}
++		/* Ensure that the writes are visible in the device */
++		pci_read_config_word(dev, pos + PCI_MSI_FLAGS, &msgctl);
+ 	}
+ 	entry->msg = *msg;
+ }
+@@ -639,21 +660,21 @@ static int msi_capability_init(struct pci_dev *dev, int nvec, bool affinity)
+ 	/* Configure MSI capability structure */
+ 	ret = pci_msi_setup_msi_irqs(dev, nvec, PCI_CAP_ID_MSI);
+ 	if (ret) {
+-		msi_mask_irq(entry, mask, ~mask);
++		msi_mask_irq(entry, mask, 0);
+ 		free_msi_irqs(dev);
+ 		return ret;
+ 	}
+ 
+ 	ret = msi_verify_entries(dev);
+ 	if (ret) {
+-		msi_mask_irq(entry, mask, ~mask);
++		msi_mask_irq(entry, mask, 0);
+ 		free_msi_irqs(dev);
+ 		return ret;
+ 	}
+ 
+ 	ret = populate_msi_sysfs(dev);
+ 	if (ret) {
+-		msi_mask_irq(entry, mask, ~mask);
++		msi_mask_irq(entry, mask, 0);
+ 		free_msi_irqs(dev);
+ 		return ret;
+ 	}
+@@ -694,6 +715,7 @@ static int msix_setup_entries(struct pci_dev *dev, void __iomem *base,
+ {
+ 	struct cpumask *curmsk, *masks = NULL;
+ 	struct msi_desc *entry;
++	void __iomem *addr;
+ 	int ret, i;
+ 
+ 	if (affinity) {
+@@ -716,6 +738,7 @@ static int msix_setup_entries(struct pci_dev *dev, void __iomem *base,
+ 
+ 		entry->msi_attrib.is_msix	= 1;
+ 		entry->msi_attrib.is_64		= 1;
++
+ 		if (entries)
+ 			entry->msi_attrib.entry_nr = entries[i].entry;
+ 		else
+@@ -723,6 +746,10 @@ static int msix_setup_entries(struct pci_dev *dev, void __iomem *base,
+ 		entry->msi_attrib.default_irq	= dev->irq;
+ 		entry->mask_base		= base;
+ 
++		addr = pci_msix_desc_addr(entry);
++		if (addr)
++			entry->masked = readl(addr + PCI_MSIX_ENTRY_VECTOR_CTRL);
++
+ 		list_add_tail(&entry->list, dev_to_msi_list(&dev->dev));
+ 		if (masks)
+ 			curmsk++;
+@@ -733,21 +760,27 @@ out:
+ 	return ret;
+ }
+ 
+-static void msix_program_entries(struct pci_dev *dev,
+-				 struct msix_entry *entries)
++static void msix_update_entries(struct pci_dev *dev, struct msix_entry *entries)
+ {
+ 	struct msi_desc *entry;
+-	int i = 0;
+ 
+ 	for_each_pci_msi_entry(entry, dev) {
+-		if (entries)
+-			entries[i++].vector = entry->irq;
+-		entry->masked = readl(pci_msix_desc_addr(entry) +
+-				PCI_MSIX_ENTRY_VECTOR_CTRL);
+-		msix_mask_irq(entry, 1);
++		if (entries) {
++			entries->vector = entry->irq;
++			entries++;
++		}
+ 	}
+ }
+ 
++static void msix_mask_all(void __iomem *base, int tsize)
++{
++	u32 ctrl = PCI_MSIX_ENTRY_CTRL_MASKBIT;
++	int i;
++
++	for (i = 0; i < tsize; i++, base += PCI_MSIX_ENTRY_SIZE)
++		writel(ctrl, base + PCI_MSIX_ENTRY_VECTOR_CTRL);
++}
++
+ /**
+  * msix_capability_init - configure device's MSI-X capability
+  * @dev: pointer to the pci_dev data structure of MSI-X device function
+@@ -762,22 +795,34 @@ static void msix_program_entries(struct pci_dev *dev,
+ static int msix_capability_init(struct pci_dev *dev, struct msix_entry *entries,
+ 				int nvec, bool affinity)
+ {
+-	int ret;
+-	u16 control;
+ 	void __iomem *base;
++	int ret, tsize;
++	u16 control;
+ 
+-	/* Ensure MSI-X is disabled while it is set up */
+-	pci_msix_clear_and_set_ctrl(dev, PCI_MSIX_FLAGS_ENABLE, 0);
++	/*
++	 * Some devices require MSI-X to be enabled before the MSI-X
++	 * registers can be accessed.  Mask all the vectors to prevent
++	 * interrupts coming in before they're fully set up.
++	 */
++	pci_msix_clear_and_set_ctrl(dev, 0, PCI_MSIX_FLAGS_MASKALL |
++				    PCI_MSIX_FLAGS_ENABLE);
+ 
+ 	pci_read_config_word(dev, dev->msix_cap + PCI_MSIX_FLAGS, &control);
+ 	/* Request & Map MSI-X table region */
++	tsize = msix_table_size(control);
++	base = msix_map_region(dev, tsize);
+ 	base = msix_map_region(dev, msix_table_size(control));
+-	if (!base)
+-		return -ENOMEM;
++	if (!base) {
++		ret = -ENOMEM;
++		goto out_disable;
++	}
++
++	/* Ensure that all table entries are masked. */
++	msix_mask_all(base, tsize);
+ 
+ 	ret = msix_setup_entries(dev, base, entries, nvec, affinity);
+ 	if (ret)
+-		return ret;
++		goto out_disable;
+ 
+ 	ret = pci_msi_setup_msi_irqs(dev, nvec, PCI_CAP_ID_MSIX);
+ 	if (ret)
+@@ -788,15 +833,7 @@ static int msix_capability_init(struct pci_dev *dev, struct msix_entry *entries,
+ 	if (ret)
+ 		goto out_free;
+ 
+-	/*
+-	 * Some devices require MSI-X to be enabled before we can touch the
+-	 * MSI-X registers.  We need to mask all the vectors to prevent
+-	 * interrupts coming in before they're fully set up.
+-	 */
+-	pci_msix_clear_and_set_ctrl(dev, 0,
+-				PCI_MSIX_FLAGS_MASKALL | PCI_MSIX_FLAGS_ENABLE);
+-
+-	msix_program_entries(dev, entries);
++	msix_update_entries(dev, entries);
+ 
+ 	ret = populate_msi_sysfs(dev);
+ 	if (ret)
+@@ -830,6 +867,9 @@ out_avail:
+ out_free:
+ 	free_msi_irqs(dev);
+ 
++out_disable:
++	pci_msix_clear_and_set_ctrl(dev, PCI_MSIX_FLAGS_ENABLE, 0);
++
+ 	return ret;
+ }
+ 
+@@ -917,8 +957,7 @@ void pci_msi_shutdown(struct pci_dev *dev)
+ 
+ 	/* Return the device with MSI unmasked as initial states */
+ 	mask = msi_mask(desc->msi_attrib.multi_cap);
+-	/* Keep cached state to be restored */
+-	__pci_msi_desc_mask_irq(desc, mask, ~mask);
++	msi_mask_irq(desc, mask, 0);
+ 
+ 	/* Restore dev->irq to its default pin-assertion irq */
+ 	dev->irq = desc->msi_attrib.default_irq;
+@@ -1019,10 +1058,8 @@ void pci_msix_shutdown(struct pci_dev *dev)
+ 		return;
+ 
+ 	/* Return the device with MSI-X masked as initial states */
+-	for_each_pci_msi_entry(entry, dev) {
+-		/* Keep cached states to be restored */
++	for_each_pci_msi_entry(entry, dev)
+ 		__pci_msix_desc_mask_irq(entry, 1);
+-	}
+ 
+ 	pci_msix_clear_and_set_ctrl(dev, PCI_MSIX_FLAGS_ENABLE, 0);
+ 	pci_intx_for_msi(dev, 1);
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 06fbd0b0c68a3..6ddb3e9f21ba9 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -526,8 +526,8 @@ static int initialize_controller(struct scsi_device *sdev,
+ 		if (!h->ctlr)
+ 			err = SCSI_DH_RES_TEMP_UNAVAIL;
+ 		else {
+-			list_add_rcu(&h->node, &h->ctlr->dh_list);
+ 			h->sdev = sdev;
++			list_add_rcu(&h->node, &h->ctlr->dh_list);
+ 		}
+ 		spin_unlock(&list_lock);
+ 	}
+@@ -852,11 +852,11 @@ static void rdac_bus_detach( struct scsi_device *sdev )
+ 	spin_lock(&list_lock);
+ 	if (h->ctlr) {
+ 		list_del_rcu(&h->node);
+-		h->sdev = NULL;
+ 		kref_put(&h->ctlr->kref, release_controller);
+ 	}
+ 	spin_unlock(&list_lock);
+ 	sdev->handler_data = NULL;
++	synchronize_rcu();
+ 	kfree(h);
+ }
+ 
+diff --git a/drivers/scsi/megaraid/megaraid_mm.c b/drivers/scsi/megaraid/megaraid_mm.c
+index 4cf9ed96414f0..d61df49e4e1bb 100644
+--- a/drivers/scsi/megaraid/megaraid_mm.c
++++ b/drivers/scsi/megaraid/megaraid_mm.c
+@@ -250,7 +250,7 @@ mraid_mm_get_adapter(mimd_t __user *umimd, int *rval)
+ 	mimd_t		mimd;
+ 	uint32_t	adapno;
+ 	int		iterator;
+-
++	bool		is_found;
+ 
+ 	if (copy_from_user(&mimd, umimd, sizeof(mimd_t))) {
+ 		*rval = -EFAULT;
+@@ -266,12 +266,16 @@ mraid_mm_get_adapter(mimd_t __user *umimd, int *rval)
+ 
+ 	adapter = NULL;
+ 	iterator = 0;
++	is_found = false;
+ 
+ 	list_for_each_entry(adapter, &adapters_list_g, list) {
+-		if (iterator++ == adapno) break;
++		if (iterator++ == adapno) {
++			is_found = true;
++			break;
++		}
+ 	}
+ 
+-	if (!adapter) {
++	if (!is_found) {
+ 		*rval = -ENODEV;
+ 		return NULL;
+ 	}
+@@ -739,6 +743,7 @@ ioctl_done(uioc_t *kioc)
+ 	uint32_t	adapno;
+ 	int		iterator;
+ 	mraid_mmadp_t*	adapter;
++	bool		is_found;
+ 
+ 	/*
+ 	 * When the kioc returns from driver, make sure it still doesn't
+@@ -761,19 +766,23 @@ ioctl_done(uioc_t *kioc)
+ 		iterator	= 0;
+ 		adapter		= NULL;
+ 		adapno		= kioc->adapno;
++		is_found	= false;
+ 
+ 		con_log(CL_ANN, ( KERN_WARNING "megaraid cmm: completed "
+ 					"ioctl that was timedout before\n"));
+ 
+ 		list_for_each_entry(adapter, &adapters_list_g, list) {
+-			if (iterator++ == adapno) break;
++			if (iterator++ == adapno) {
++				is_found = true;
++				break;
++			}
+ 		}
+ 
+ 		kioc->timedout = 0;
+ 
+-		if (adapter) {
++		if (is_found)
+ 			mraid_mm_dealloc_kioc( adapter, kioc );
+-		}
++
+ 	}
+ 	else {
+ 		wake_up(&wait_q);
+diff --git a/drivers/scsi/scsi_scan.c b/drivers/scsi/scsi_scan.c
+index 397deb69c6595..e51819e3a508e 100644
+--- a/drivers/scsi/scsi_scan.c
++++ b/drivers/scsi/scsi_scan.c
+@@ -460,7 +460,8 @@ static struct scsi_target *scsi_alloc_target(struct device *parent,
+ 		error = shost->hostt->target_alloc(starget);
+ 
+ 		if(error) {
+-			dev_printk(KERN_ERR, dev, "target allocation failed, error %d\n", error);
++			if (error != -ENXIO)
++				dev_err(dev, "target allocation failed, error %d\n", error);
+ 			/* don't want scsi_target_reap to do the final
+ 			 * put because it will be under the host lock */
+ 			scsi_target_destroy(starget);
+diff --git a/drivers/vhost/vhost.c b/drivers/vhost/vhost.c
+index d2431afeda847..62c61a283b35d 100644
+--- a/drivers/vhost/vhost.c
++++ b/drivers/vhost/vhost.c
+@@ -675,10 +675,16 @@ static int log_access_ok(void __user *log_base, u64 addr, unsigned long sz)
+ 			 (sz + VHOST_PAGE_SIZE * 8 - 1) / VHOST_PAGE_SIZE / 8);
+ }
+ 
++/* Make sure 64 bit math will not overflow. */
+ static bool vhost_overflow(u64 uaddr, u64 size)
+ {
+-	/* Make sure 64 bit math will not overflow. */
+-	return uaddr > ULONG_MAX || size > ULONG_MAX || uaddr > ULONG_MAX - size;
++	if (uaddr > ULONG_MAX || size > ULONG_MAX)
++		return true;
++
++	if (!size)
++		return false;
++
++	return uaddr > ULONG_MAX - size + 1;
+ }
+ 
+ /* Caller should have vq mutex and device mutex. */
+diff --git a/drivers/xen/events/events_base.c b/drivers/xen/events/events_base.c
+index c6e6b7470cbf6..fbb6a4701ea3f 100644
+--- a/drivers/xen/events/events_base.c
++++ b/drivers/xen/events/events_base.c
+@@ -134,12 +134,12 @@ static void disable_dynirq(struct irq_data *data);
+ 
+ static DEFINE_PER_CPU(unsigned int, irq_epoch);
+ 
+-static void clear_evtchn_to_irq_row(unsigned row)
++static void clear_evtchn_to_irq_row(int *evtchn_row)
+ {
+ 	unsigned col;
+ 
+ 	for (col = 0; col < EVTCHN_PER_ROW; col++)
+-		WRITE_ONCE(evtchn_to_irq[row][col], -1);
++		WRITE_ONCE(evtchn_row[col], -1);
+ }
+ 
+ static void clear_evtchn_to_irq_all(void)
+@@ -149,7 +149,7 @@ static void clear_evtchn_to_irq_all(void)
+ 	for (row = 0; row < EVTCHN_ROW(xen_evtchn_max_channels()); row++) {
+ 		if (evtchn_to_irq[row] == NULL)
+ 			continue;
+-		clear_evtchn_to_irq_row(row);
++		clear_evtchn_to_irq_row(evtchn_to_irq[row]);
+ 	}
+ }
+ 
+@@ -157,6 +157,7 @@ static int set_evtchn_to_irq(unsigned evtchn, unsigned irq)
+ {
+ 	unsigned row;
+ 	unsigned col;
++	int *evtchn_row;
+ 
+ 	if (evtchn >= xen_evtchn_max_channels())
+ 		return -EINVAL;
+@@ -169,11 +170,18 @@ static int set_evtchn_to_irq(unsigned evtchn, unsigned irq)
+ 		if (irq == -1)
+ 			return 0;
+ 
+-		evtchn_to_irq[row] = (int *)get_zeroed_page(GFP_KERNEL);
+-		if (evtchn_to_irq[row] == NULL)
++		evtchn_row = (int *) __get_free_pages(GFP_KERNEL, 0);
++		if (evtchn_row == NULL)
+ 			return -ENOMEM;
+ 
+-		clear_evtchn_to_irq_row(row);
++		clear_evtchn_to_irq_row(evtchn_row);
++
++		/*
++		 * We've prepared an empty row for the mapping. If a different
++		 * thread was faster inserting it, we can drop ours.
++		 */
++		if (cmpxchg(&evtchn_to_irq[row], NULL, evtchn_row) != NULL)
++			free_page((unsigned long) evtchn_row);
+ 	}
+ 
+ 	WRITE_ONCE(evtchn_to_irq[row][col], irq);
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index a55d23a73cdbc..b744e7d33d87f 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -9632,8 +9632,14 @@ static int btrfs_rename_exchange(struct inode *old_dir,
+ 	bool root_log_pinned = false;
+ 	bool dest_log_pinned = false;
+ 
+-	/* we only allow rename subvolume link between subvolumes */
+-	if (old_ino != BTRFS_FIRST_FREE_OBJECTID && root != dest)
++	/*
++	 * For non-subvolumes allow exchange only within one subvolume, in the
++	 * same inode namespace. Two subvolumes (represented as directory) can
++	 * be exchanged as they're a logical link and have a fixed inode number.
++	 */
++	if (root != dest &&
++	    (old_ino != BTRFS_FIRST_FREE_OBJECTID ||
++	     new_ino != BTRFS_FIRST_FREE_OBJECTID))
+ 		return -EXDEV;
+ 
+ 	/* close the race window with snapshot create/destroy ioctl */
+diff --git a/fs/namespace.c b/fs/namespace.c
+index 9f2390c89b63b..b9e30a385c013 100644
+--- a/fs/namespace.c
++++ b/fs/namespace.c
+@@ -1669,13 +1669,22 @@ static inline bool may_mount(void)
+ 	return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
+ }
+ 
++#ifdef	CONFIG_MANDATORY_FILE_LOCKING
++static bool may_mandlock(void)
++{
++	pr_warn_once("======================================================\n"
++		     "WARNING: the mand mount option is being deprecated and\n"
++		     "         will be removed in v5.15!\n"
++		     "======================================================\n");
++	return capable(CAP_SYS_ADMIN);
++}
++#else
+ static inline bool may_mandlock(void)
+ {
+-#ifndef	CONFIG_MANDATORY_FILE_LOCKING
++	pr_warn("VFS: \"mand\" mount option not supported");
+ 	return false;
+-#endif
+-	return capable(CAP_SYS_ADMIN);
+ }
++#endif
+ 
+ /*
+  * Now umount can handle mount points as well as block devices.
+diff --git a/include/asm-generic/vmlinux.lds.h b/include/asm-generic/vmlinux.lds.h
+index 36198563fb8bc..8cff6d157e562 100644
+--- a/include/asm-generic/vmlinux.lds.h
++++ b/include/asm-generic/vmlinux.lds.h
+@@ -465,6 +465,7 @@
+ 		*(.text.unlikely .text.unlikely.*)			\
+ 		*(.text.unknown .text.unknown.*)			\
+ 		*(.ref.text)						\
++		*(.text.asan.* .text.tsan.*)				\
+ 	MEM_KEEP(init.text)						\
+ 	MEM_KEEP(exit.text)						\
+ 
+diff --git a/include/linux/device.h b/include/linux/device.h
+index eb865b461acc4..ca765188a9814 100644
+--- a/include/linux/device.h
++++ b/include/linux/device.h
+@@ -812,6 +812,7 @@ struct device {
+ 	struct dev_pin_info	*pins;
+ #endif
+ #ifdef CONFIG_GENERIC_MSI_IRQ
++	raw_spinlock_t		msi_lock;
+ 	struct list_head	msi_list;
+ #endif
+ 
+diff --git a/include/linux/msi.h b/include/linux/msi.h
+index debc8aa4ec197..601bff9fbbec2 100644
+--- a/include/linux/msi.h
++++ b/include/linux/msi.h
+@@ -133,7 +133,7 @@ void __pci_write_msi_msg(struct msi_desc *entry, struct msi_msg *msg);
+ void pci_write_msi_msg(unsigned int irq, struct msi_msg *msg);
+ 
+ u32 __pci_msix_desc_mask_irq(struct msi_desc *desc, u32 flag);
+-u32 __pci_msi_desc_mask_irq(struct msi_desc *desc, u32 mask, u32 flag);
++void __pci_msi_desc_mask_irq(struct msi_desc *desc, u32 mask, u32 flag);
+ void pci_msi_mask_irq(struct irq_data *data);
+ void pci_msi_unmask_irq(struct irq_data *data);
+ 
+diff --git a/net/bluetooth/hidp/core.c b/net/bluetooth/hidp/core.c
+index 552e00b07196e..9ec37c6c8c4aa 100644
+--- a/net/bluetooth/hidp/core.c
++++ b/net/bluetooth/hidp/core.c
+@@ -1282,7 +1282,7 @@ static int hidp_session_thread(void *arg)
+ 
+ 	/* cleanup runtime environment */
+ 	remove_wait_queue(sk_sleep(session->intr_sock->sk), &intr_wait);
+-	remove_wait_queue(sk_sleep(session->intr_sock->sk), &ctrl_wait);
++	remove_wait_queue(sk_sleep(session->ctrl_sock->sk), &ctrl_wait);
+ 	wake_up_interruptible(&session->report_queue);
+ 	hidp_del_timer(session);
+ 
+diff --git a/net/bridge/br_if.c b/net/bridge/br_if.c
+index 4718c528e1003..794fba20afbcd 100644
+--- a/net/bridge/br_if.c
++++ b/net/bridge/br_if.c
+@@ -520,6 +520,7 @@ int br_add_if(struct net_bridge *br, struct net_device *dev)
+ 
+ 	err = dev_set_allmulti(dev, 1);
+ 	if (err) {
++		br_multicast_del_port(p);
+ 		kfree(p);	/* kobject not yet init'd, manually free */
+ 		goto err1;
+ 	}
+@@ -624,6 +625,7 @@ err4:
+ err3:
+ 	sysfs_remove_link(br->ifobj, p->dev->name);
+ err2:
++	br_multicast_del_port(p);
+ 	kobject_put(&p->kobj);
+ 	dev_set_allmulti(dev, -1);
+ err1:
+diff --git a/net/dccp/dccp.h b/net/dccp/dccp.h
+index 0c55ffb859bf5..121aa71fcb5cc 100644
+--- a/net/dccp/dccp.h
++++ b/net/dccp/dccp.h
+@@ -44,9 +44,9 @@ extern bool dccp_debug;
+ #define dccp_pr_debug_cat(format, a...)   DCCP_PRINTK(dccp_debug, format, ##a)
+ #define dccp_debug(fmt, a...)		  dccp_pr_debug_cat(KERN_DEBUG fmt, ##a)
+ #else
+-#define dccp_pr_debug(format, a...)
+-#define dccp_pr_debug_cat(format, a...)
+-#define dccp_debug(format, a...)
++#define dccp_pr_debug(format, a...)	  do {} while (0)
++#define dccp_pr_debug_cat(format, a...)	  do {} while (0)
++#define dccp_debug(format, a...)	  do {} while (0)
+ #endif
+ 
+ extern struct inet_hashinfo dccp_hashinfo;
+diff --git a/net/ieee802154/socket.c b/net/ieee802154/socket.c
+index f66e4afb978a7..6383627b783e0 100644
+--- a/net/ieee802154/socket.c
++++ b/net/ieee802154/socket.c
+@@ -987,6 +987,11 @@ static const struct proto_ops ieee802154_dgram_ops = {
+ #endif
+ };
+ 
++static void ieee802154_sock_destruct(struct sock *sk)
++{
++	skb_queue_purge(&sk->sk_receive_queue);
++}
++
+ /* Create a socket. Initialise the socket, blank the addresses
+  * set the state.
+  */
+@@ -1027,7 +1032,7 @@ static int ieee802154_create(struct net *net, struct socket *sock,
+ 	sock->ops = ops;
+ 
+ 	sock_init_data(sock, sk);
+-	/* FIXME: sk->sk_destruct */
++	sk->sk_destruct = ieee802154_sock_destruct;
+ 	sk->sk_family = PF_IEEE802154;
+ 
+ 	/* Checksums on by default */
+diff --git a/net/ipv4/tcp_bbr.c b/net/ipv4/tcp_bbr.c
+index c22da42376fe9..47f40e1050445 100644
+--- a/net/ipv4/tcp_bbr.c
++++ b/net/ipv4/tcp_bbr.c
+@@ -811,7 +811,7 @@ static void bbr_init(struct sock *sk)
+ 	bbr->prior_cwnd = 0;
+ 	bbr->tso_segs_goal = 0;	 /* default segs per skb until first ACK */
+ 	bbr->rtt_cnt = 0;
+-	bbr->next_rtt_delivered = 0;
++	bbr->next_rtt_delivered = tp->delivered;
+ 	bbr->prev_ca_state = TCP_CA_Open;
+ 	bbr->packet_conservation = 0;
+ 
+diff --git a/net/mac80211/debugfs_sta.c b/net/mac80211/debugfs_sta.c
+index 14ec63a026693..91b94ac9a88a4 100644
+--- a/net/mac80211/debugfs_sta.c
++++ b/net/mac80211/debugfs_sta.c
+@@ -80,6 +80,7 @@ static const char * const sta_flag_names[] = {
+ 	FLAG(MPSP_OWNER),
+ 	FLAG(MPSP_RECIPIENT),
+ 	FLAG(PS_DELIVER),
++	FLAG(USES_ENCRYPTION),
+ #undef FLAG
+ };
+ 
+diff --git a/net/mac80211/key.c b/net/mac80211/key.c
+index 4e23f240f599e..a0d9507cb6a71 100644
+--- a/net/mac80211/key.c
++++ b/net/mac80211/key.c
+@@ -334,6 +334,7 @@ static void ieee80211_key_replace(struct ieee80211_sub_if_data *sdata,
+ 	if (sta) {
+ 		if (pairwise) {
+ 			rcu_assign_pointer(sta->ptk[idx], new);
++			set_sta_flag(sta, WLAN_STA_USES_ENCRYPTION);
+ 			sta->ptk_idx = idx;
+ 			ieee80211_check_fast_xmit(sta);
+ 		} else {
+diff --git a/net/mac80211/sta_info.h b/net/mac80211/sta_info.h
+index fd31c4db12821..0909332965bc8 100644
+--- a/net/mac80211/sta_info.h
++++ b/net/mac80211/sta_info.h
+@@ -100,6 +100,7 @@ enum ieee80211_sta_info_flags {
+ 	WLAN_STA_MPSP_OWNER,
+ 	WLAN_STA_MPSP_RECIPIENT,
+ 	WLAN_STA_PS_DELIVER,
++	WLAN_STA_USES_ENCRYPTION,
+ 
+ 	NUM_WLAN_STA_FLAGS,
+ };
+diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
+index eebbddccb47b7..48d0dd0beaa5f 100644
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -588,10 +588,13 @@ ieee80211_tx_h_select_key(struct ieee80211_tx_data *tx)
+ 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(tx->skb);
+ 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)tx->skb->data;
+ 
+-	if (unlikely(info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT))
++	if (unlikely(info->flags & IEEE80211_TX_INTFL_DONT_ENCRYPT)) {
+ 		tx->key = NULL;
+-	else if (tx->sta &&
+-		 (key = rcu_dereference(tx->sta->ptk[tx->sta->ptk_idx])))
++		return TX_CONTINUE;
++	}
++
++	if (tx->sta &&
++	    (key = rcu_dereference(tx->sta->ptk[tx->sta->ptk_idx])))
+ 		tx->key = key;
+ 	else if (ieee80211_is_group_privacy_action(tx->skb) &&
+ 		(key = rcu_dereference(tx->sdata->default_multicast_key)))
+@@ -652,6 +655,9 @@ ieee80211_tx_h_select_key(struct ieee80211_tx_data *tx)
+ 		if (!skip_hw && tx->key &&
+ 		    tx->key->flags & KEY_FLAG_UPLOADED_TO_HARDWARE)
+ 			info->control.hw_key = &tx->key->conf;
++	} else if (!ieee80211_is_mgmt(hdr->frame_control) && tx->sta &&
++		   test_sta_flag(tx->sta, WLAN_STA_USES_ENCRYPTION)) {
++		return TX_DROP;
+ 	}
+ 
+ 	return TX_CONTINUE;
+diff --git a/sound/pci/hda/hda_generic.c b/sound/pci/hda/hda_generic.c
+index 8d99ac931ff6b..c29f7ff5ccd2d 100644
+--- a/sound/pci/hda/hda_generic.c
++++ b/sound/pci/hda/hda_generic.c
+@@ -3421,7 +3421,7 @@ static int cap_put_caller(struct snd_kcontrol *kcontrol,
+ 	struct hda_gen_spec *spec = codec->spec;
+ 	const struct hda_input_mux *imux;
+ 	struct nid_path *path;
+-	int i, adc_idx, err = 0;
++	int i, adc_idx, ret, err = 0;
+ 
+ 	imux = &spec->input_mux;
+ 	adc_idx = kcontrol->id.index;
+@@ -3431,9 +3431,13 @@ static int cap_put_caller(struct snd_kcontrol *kcontrol,
+ 		if (!path || !path->ctls[type])
+ 			continue;
+ 		kcontrol->private_value = path->ctls[type];
+-		err = func(kcontrol, ucontrol);
+-		if (err < 0)
++		ret = func(kcontrol, ucontrol);
++		if (ret < 0) {
++			err = ret;
+ 			break;
++		}
++		if (ret > 0)
++			err = 1;
+ 	}
+ 	mutex_unlock(&codec->control_mutex);
+ 	if (err >= 0 && spec->cap_sync_hook)
+diff --git a/sound/soc/intel/atom/sst-mfld-platform-pcm.c b/sound/soc/intel/atom/sst-mfld-platform-pcm.c
+index d812cbf41b944..1b6dedfc33e3d 100644
+--- a/sound/soc/intel/atom/sst-mfld-platform-pcm.c
++++ b/sound/soc/intel/atom/sst-mfld-platform-pcm.c
+@@ -135,7 +135,7 @@ static void sst_fill_alloc_params(struct snd_pcm_substream *substream,
+ 	snd_pcm_uframes_t period_size;
+ 	ssize_t periodbytes;
+ 	ssize_t buffer_bytes = snd_pcm_lib_buffer_bytes(substream);
+-	u32 buffer_addr = virt_to_phys(substream->dma_buffer.area);
++	u32 buffer_addr = virt_to_phys(substream->runtime->dma_area);
+ 
+ 	channels = substream->runtime->channels;
+ 	period_size = substream->runtime->period_size;
+@@ -241,7 +241,6 @@ static int sst_platform_alloc_stream(struct snd_pcm_substream *substream,
+ 	/* set codec params and inform SST driver the same */
+ 	sst_fill_pcm_params(substream, &param);
+ 	sst_fill_alloc_params(substream, &alloc_params);
+-	substream->runtime->dma_area = substream->dma_buffer.area;
+ 	str_params.sparams = param;
+ 	str_params.aparams = alloc_params;
+ 	str_params.codec = SST_CODEC_TYPE_PCM;
