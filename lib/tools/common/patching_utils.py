@@ -707,7 +707,9 @@ def perform_git_archeology(
 		log.info(f"- Trying to recover description for {relative_file_path} from {len(hexshas)} commits")
 
 		# filter out hexshas that are in the known-bad archeology list
-		hexshas = [hexsha for hexsha in hexshas if hexsha not in bad_archeology_hexshas]
+		hexshas = [hexsha for hexsha in hexshas if hexsha.strip() != '' and hexsha not in bad_archeology_hexshas]
+
+		log.debug(f"hexshas: {hexshas}")
 
 		commits = [armbian_git_repo.rev_parse(c) for c in hexshas]
 		all_commits.extend(commits)
