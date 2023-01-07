@@ -1,0 +1,1683 @@
+diff --git a/Makefile b/Makefile
+index 560a7e2b5efc2..82fc1c7475926 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 277
++SUBLEVEL = 278
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/boot/dts/versatile-ab.dts b/arch/arm/boot/dts/versatile-ab.dts
+index 00d7d28e86f0b..4633b79bf5ea6 100644
+--- a/arch/arm/boot/dts/versatile-ab.dts
++++ b/arch/arm/boot/dts/versatile-ab.dts
+@@ -154,16 +154,15 @@
+ 		#size-cells = <1>;
+ 		ranges;
+ 
+-		vic: intc@10140000 {
++		vic: interrupt-controller@10140000 {
+ 			compatible = "arm,versatile-vic";
+ 			interrupt-controller;
+ 			#interrupt-cells = <1>;
+ 			reg = <0x10140000 0x1000>;
+-			clear-mask = <0xffffffff>;
+ 			valid-mask = <0xffffffff>;
+ 		};
+ 
+-		sic: intc@10003000 {
++		sic: interrupt-controller@10003000 {
+ 			compatible = "arm,versatile-sic";
+ 			interrupt-controller;
+ 			#interrupt-cells = <1>;
+diff --git a/arch/arm/boot/dts/versatile-pb.dts b/arch/arm/boot/dts/versatile-pb.dts
+index 33a8eb28374ea..3a23164c2c2d4 100644
+--- a/arch/arm/boot/dts/versatile-pb.dts
++++ b/arch/arm/boot/dts/versatile-pb.dts
+@@ -6,7 +6,7 @@
+ 
+ 	amba {
+ 		/* The Versatile PB is using more SIC IRQ lines than the AB */
+-		sic: intc@10003000 {
++		sic: interrupt-controller@10003000 {
+ 			clear-mask = <0xffffffff>;
+ 			/*
+ 			 * Valid interrupt lines mask according to
+diff --git a/arch/arm/kernel/signal.c b/arch/arm/kernel/signal.c
+index 0a066f03b5ec9..180c1782ad63d 100644
+--- a/arch/arm/kernel/signal.c
++++ b/arch/arm/kernel/signal.c
+@@ -625,18 +625,20 @@ struct page *get_signal_page(void)
+ 
+ 	addr = page_address(page);
+ 
++	/* Poison the entire page */
++	memset32(addr, __opcode_to_mem_arm(0xe7fddef1),
++		 PAGE_SIZE / sizeof(u32));
++
+ 	/* Give the signal return code some randomness */
+ 	offset = 0x200 + (get_random_int() & 0x7fc);
+ 	signal_return_offset = offset;
+ 
+-	/*
+-	 * Copy signal return handlers into the vector page, and
+-	 * set sigreturn to be a pointer to these.
+-	 */
++	/* Copy signal return handlers into the page */
+ 	memcpy(addr + offset, sigreturn_codes, sizeof(sigreturn_codes));
+ 
+-	ptr = (unsigned long)addr + offset;
+-	flush_icache_range(ptr, ptr + sizeof(sigreturn_codes));
++	/* Flush out all instructions in this page */
++	ptr = (unsigned long)addr;
++	flush_icache_range(ptr, ptr + PAGE_SIZE);
+ 
+ 	return page;
+ }
+diff --git a/arch/x86/include/asm/proto.h b/arch/x86/include/asm/proto.h
+index 9b9b30b194418..36a7a3f11839a 100644
+--- a/arch/x86/include/asm/proto.h
++++ b/arch/x86/include/asm/proto.h
+@@ -3,6 +3,8 @@
+ 
+ #include <asm/ldt.h>
+ 
++struct task_struct;
++
+ /* misc architecture specific prototypes */
+ 
+ void syscall_init(void);
+diff --git a/arch/x86/kvm/ioapic.c b/arch/x86/kvm/ioapic.c
+index aa34b16e62c24..a069d0dd3ded4 100644
+--- a/arch/x86/kvm/ioapic.c
++++ b/arch/x86/kvm/ioapic.c
+@@ -96,7 +96,7 @@ static unsigned long ioapic_read_indirect(struct kvm_ioapic *ioapic,
+ static void rtc_irq_eoi_tracking_reset(struct kvm_ioapic *ioapic)
+ {
+ 	ioapic->rtc_status.pending_eoi = 0;
+-	bitmap_zero(ioapic->rtc_status.dest_map.map, KVM_MAX_VCPU_ID);
++	bitmap_zero(ioapic->rtc_status.dest_map.map, KVM_MAX_VCPU_ID + 1);
+ }
+ 
+ static void kvm_rtc_eoi_tracking_restore_all(struct kvm_ioapic *ioapic);
+diff --git a/arch/x86/kvm/ioapic.h b/arch/x86/kvm/ioapic.h
+index 1cc6e54436dba..2f3df43489f22 100644
+--- a/arch/x86/kvm/ioapic.h
++++ b/arch/x86/kvm/ioapic.h
+@@ -42,13 +42,13 @@ struct kvm_vcpu;
+ 
+ struct dest_map {
+ 	/* vcpu bitmap where IRQ has been sent */
+-	DECLARE_BITMAP(map, KVM_MAX_VCPU_ID);
++	DECLARE_BITMAP(map, KVM_MAX_VCPU_ID + 1);
+ 
+ 	/*
+ 	 * Vector sent to a given vcpu, only valid when
+ 	 * the vcpu's bit in map is set
+ 	 */
+-	u8 vectors[KVM_MAX_VCPU_ID];
++	u8 vectors[KVM_MAX_VCPU_ID + 1];
+ };
+ 
+ 
+diff --git a/drivers/iommu/amd_iommu.c b/drivers/iommu/amd_iommu.c
+index 8377bd388d673..14e9b06829d54 100644
+--- a/drivers/iommu/amd_iommu.c
++++ b/drivers/iommu/amd_iommu.c
+@@ -1333,7 +1333,7 @@ static void increase_address_space(struct protection_domain *domain,
+ 
+ 	pte = (void *)get_zeroed_page(gfp);
+ 	if (!pte)
+-		goto out;
++		return;
+ 
+ 	spin_lock_irqsave(&domain->lock, flags);
+ 
+diff --git a/drivers/net/can/usb/ems_usb.c b/drivers/net/can/usb/ems_usb.c
+index 022a9b3c7d4e8..d62d61d734ea1 100644
+--- a/drivers/net/can/usb/ems_usb.c
++++ b/drivers/net/can/usb/ems_usb.c
+@@ -267,6 +267,8 @@ struct ems_usb {
+ 	unsigned int free_slots; /* remember number of available slots */
+ 
+ 	struct ems_cpc_msg active_params; /* active controller parameters */
++	void *rxbuf[MAX_RX_URBS];
++	dma_addr_t rxbuf_dma[MAX_RX_URBS];
+ };
+ 
+ static void ems_usb_read_interrupt_callback(struct urb *urb)
+@@ -598,6 +600,7 @@ static int ems_usb_start(struct ems_usb *dev)
+ 	for (i = 0; i < MAX_RX_URBS; i++) {
+ 		struct urb *urb = NULL;
+ 		u8 *buf = NULL;
++		dma_addr_t buf_dma;
+ 
+ 		/* create a URB, and a buffer for it */
+ 		urb = usb_alloc_urb(0, GFP_KERNEL);
+@@ -607,7 +610,7 @@ static int ems_usb_start(struct ems_usb *dev)
+ 		}
+ 
+ 		buf = usb_alloc_coherent(dev->udev, RX_BUFFER_SIZE, GFP_KERNEL,
+-					 &urb->transfer_dma);
++					 &buf_dma);
+ 		if (!buf) {
+ 			netdev_err(netdev, "No memory left for USB buffer\n");
+ 			usb_free_urb(urb);
+@@ -615,6 +618,8 @@ static int ems_usb_start(struct ems_usb *dev)
+ 			break;
+ 		}
+ 
++		urb->transfer_dma = buf_dma;
++
+ 		usb_fill_bulk_urb(urb, dev->udev, usb_rcvbulkpipe(dev->udev, 2),
+ 				  buf, RX_BUFFER_SIZE,
+ 				  ems_usb_read_bulk_callback, dev);
+@@ -630,6 +635,9 @@ static int ems_usb_start(struct ems_usb *dev)
+ 			break;
+ 		}
+ 
++		dev->rxbuf[i] = buf;
++		dev->rxbuf_dma[i] = buf_dma;
++
+ 		/* Drop reference, USB core will take care of freeing it */
+ 		usb_free_urb(urb);
+ 	}
+@@ -695,6 +703,10 @@ static void unlink_all_urbs(struct ems_usb *dev)
+ 
+ 	usb_kill_anchored_urbs(&dev->rx_submitted);
+ 
++	for (i = 0; i < MAX_RX_URBS; ++i)
++		usb_free_coherent(dev->udev, RX_BUFFER_SIZE,
++				  dev->rxbuf[i], dev->rxbuf_dma[i]);
++
+ 	usb_kill_anchored_urbs(&dev->tx_submitted);
+ 	atomic_set(&dev->active_tx_urbs, 0);
+ 
+diff --git a/drivers/net/can/usb/esd_usb2.c b/drivers/net/can/usb/esd_usb2.c
+index c6dcf93675c00..592c6e7f3dca4 100644
+--- a/drivers/net/can/usb/esd_usb2.c
++++ b/drivers/net/can/usb/esd_usb2.c
+@@ -207,6 +207,8 @@ struct esd_usb2 {
+ 	int net_count;
+ 	u32 version;
+ 	int rxinitdone;
++	void *rxbuf[MAX_RX_URBS];
++	dma_addr_t rxbuf_dma[MAX_RX_URBS];
+ };
+ 
+ struct esd_usb2_net_priv {
+@@ -556,6 +558,7 @@ static int esd_usb2_setup_rx_urbs(struct esd_usb2 *dev)
+ 	for (i = 0; i < MAX_RX_URBS; i++) {
+ 		struct urb *urb = NULL;
+ 		u8 *buf = NULL;
++		dma_addr_t buf_dma;
+ 
+ 		/* create a URB, and a buffer for it */
+ 		urb = usb_alloc_urb(0, GFP_KERNEL);
+@@ -565,7 +568,7 @@ static int esd_usb2_setup_rx_urbs(struct esd_usb2 *dev)
+ 		}
+ 
+ 		buf = usb_alloc_coherent(dev->udev, RX_BUFFER_SIZE, GFP_KERNEL,
+-					 &urb->transfer_dma);
++					 &buf_dma);
+ 		if (!buf) {
+ 			dev_warn(dev->udev->dev.parent,
+ 				 "No memory left for USB buffer\n");
+@@ -573,6 +576,8 @@ static int esd_usb2_setup_rx_urbs(struct esd_usb2 *dev)
+ 			goto freeurb;
+ 		}
+ 
++		urb->transfer_dma = buf_dma;
++
+ 		usb_fill_bulk_urb(urb, dev->udev,
+ 				  usb_rcvbulkpipe(dev->udev, 1),
+ 				  buf, RX_BUFFER_SIZE,
+@@ -585,8 +590,12 @@ static int esd_usb2_setup_rx_urbs(struct esd_usb2 *dev)
+ 			usb_unanchor_urb(urb);
+ 			usb_free_coherent(dev->udev, RX_BUFFER_SIZE, buf,
+ 					  urb->transfer_dma);
++			goto freeurb;
+ 		}
+ 
++		dev->rxbuf[i] = buf;
++		dev->rxbuf_dma[i] = buf_dma;
++
+ freeurb:
+ 		/* Drop reference, USB core will take care of freeing it */
+ 		usb_free_urb(urb);
+@@ -674,6 +683,11 @@ static void unlink_all_urbs(struct esd_usb2 *dev)
+ 	int i, j;
+ 
+ 	usb_kill_anchored_urbs(&dev->rx_submitted);
++
++	for (i = 0; i < MAX_RX_URBS; ++i)
++		usb_free_coherent(dev->udev, RX_BUFFER_SIZE,
++				  dev->rxbuf[i], dev->rxbuf_dma[i]);
++
+ 	for (i = 0; i < dev->net_count; i++) {
+ 		priv = dev->nets[i];
+ 		if (priv) {
+diff --git a/drivers/net/can/usb/usb_8dev.c b/drivers/net/can/usb/usb_8dev.c
+index 3e44164736079..df99354ec12aa 100644
+--- a/drivers/net/can/usb/usb_8dev.c
++++ b/drivers/net/can/usb/usb_8dev.c
+@@ -148,7 +148,8 @@ struct usb_8dev_priv {
+ 	u8 *cmd_msg_buffer;
+ 
+ 	struct mutex usb_8dev_cmd_lock;
+-
++	void *rxbuf[MAX_RX_URBS];
++	dma_addr_t rxbuf_dma[MAX_RX_URBS];
+ };
+ 
+ /* tx frame */
+@@ -744,6 +745,7 @@ static int usb_8dev_start(struct usb_8dev_priv *priv)
+ 	for (i = 0; i < MAX_RX_URBS; i++) {
+ 		struct urb *urb = NULL;
+ 		u8 *buf;
++		dma_addr_t buf_dma;
+ 
+ 		/* create a URB, and a buffer for it */
+ 		urb = usb_alloc_urb(0, GFP_KERNEL);
+@@ -753,7 +755,7 @@ static int usb_8dev_start(struct usb_8dev_priv *priv)
+ 		}
+ 
+ 		buf = usb_alloc_coherent(priv->udev, RX_BUFFER_SIZE, GFP_KERNEL,
+-					 &urb->transfer_dma);
++					 &buf_dma);
+ 		if (!buf) {
+ 			netdev_err(netdev, "No memory left for USB buffer\n");
+ 			usb_free_urb(urb);
+@@ -761,6 +763,8 @@ static int usb_8dev_start(struct usb_8dev_priv *priv)
+ 			break;
+ 		}
+ 
++		urb->transfer_dma = buf_dma;
++
+ 		usb_fill_bulk_urb(urb, priv->udev,
+ 				  usb_rcvbulkpipe(priv->udev,
+ 						  USB_8DEV_ENDP_DATA_RX),
+@@ -778,6 +782,9 @@ static int usb_8dev_start(struct usb_8dev_priv *priv)
+ 			break;
+ 		}
+ 
++		priv->rxbuf[i] = buf;
++		priv->rxbuf_dma[i] = buf_dma;
++
+ 		/* Drop reference, USB core will take care of freeing it */
+ 		usb_free_urb(urb);
+ 	}
+@@ -847,6 +854,10 @@ static void unlink_all_urbs(struct usb_8dev_priv *priv)
+ 
+ 	usb_kill_anchored_urbs(&priv->rx_submitted);
+ 
++	for (i = 0; i < MAX_RX_URBS; ++i)
++		usb_free_coherent(priv->udev, RX_BUFFER_SIZE,
++				  priv->rxbuf[i], priv->rxbuf_dma[i]);
++
+ 	usb_kill_anchored_urbs(&priv->tx_submitted);
+ 	atomic_set(&priv->active_tx_urbs, 0);
+ 
+diff --git a/drivers/net/ethernet/dec/tulip/winbond-840.c b/drivers/net/ethernet/dec/tulip/winbond-840.c
+index 1f62b94238510..31dfb695ededa 100644
+--- a/drivers/net/ethernet/dec/tulip/winbond-840.c
++++ b/drivers/net/ethernet/dec/tulip/winbond-840.c
+@@ -368,7 +368,7 @@ static int w840_probe1(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	int i, option = find_cnt < MAX_UNITS ? options[find_cnt] : 0;
+ 	void __iomem *ioaddr;
+ 
+-	i = pci_enable_device(pdev);
++	i = pcim_enable_device(pdev);
+ 	if (i) return i;
+ 
+ 	pci_set_master(pdev);
+@@ -390,7 +390,7 @@ static int w840_probe1(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 
+ 	ioaddr = pci_iomap(pdev, TULIP_BAR, netdev_res_size);
+ 	if (!ioaddr)
+-		goto err_out_free_res;
++		goto err_out_netdev;
+ 
+ 	for (i = 0; i < 3; i++)
+ 		((__le16 *)dev->dev_addr)[i] = cpu_to_le16(eeprom_read(ioaddr, i));
+@@ -469,8 +469,6 @@ static int w840_probe1(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 
+ err_out_cleardev:
+ 	pci_iounmap(pdev, ioaddr);
+-err_out_free_res:
+-	pci_release_regions(pdev);
+ err_out_netdev:
+ 	free_netdev (dev);
+ 	return -ENODEV;
+@@ -1537,7 +1535,6 @@ static void w840_remove1(struct pci_dev *pdev)
+ 	if (dev) {
+ 		struct netdev_private *np = netdev_priv(dev);
+ 		unregister_netdev(dev);
+-		pci_release_regions(pdev);
+ 		pci_iounmap(pdev, np->base_addr);
+ 		free_netdev(dev);
+ 	}
+diff --git a/drivers/net/ethernet/mellanox/mlx4/main.c b/drivers/net/ethernet/mellanox/mlx4/main.c
+index 9b6a96074df80..78b04f2713440 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/main.c
++++ b/drivers/net/ethernet/mellanox/mlx4/main.c
+@@ -3445,6 +3445,7 @@ slave_start:
+ 
+ 		if (!SRIOV_VALID_STATE(dev->flags)) {
+ 			mlx4_err(dev, "Invalid SRIOV state\n");
++			err = -EINVAL;
+ 			goto err_close;
+ 		}
+ 	}
+diff --git a/drivers/net/ethernet/mellanox/mlx5/core/fs_core.c b/drivers/net/ethernet/mellanox/mlx5/core/fs_core.c
+index 13dfc197bdd8d..6c092dc41c82e 100644
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fs_core.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fs_core.c
+@@ -701,17 +701,19 @@ static int connect_fwd_rules(struct mlx5_core_dev *dev,
+ static int connect_flow_table(struct mlx5_core_dev *dev, struct mlx5_flow_table *ft,
+ 			      struct fs_prio *prio)
+ {
+-	struct mlx5_flow_table *next_ft;
++	struct mlx5_flow_table *next_ft, *first_ft;
+ 	int err = 0;
+ 
+ 	/* Connect_prev_fts and update_root_ft_create are mutually exclusive */
+ 
+-	if (list_empty(&prio->node.children)) {
++	first_ft = list_first_entry_or_null(&prio->node.children,
++					    struct mlx5_flow_table, node.list);
++	if (!first_ft || first_ft->level > ft->level) {
+ 		err = connect_prev_fts(dev, ft, prio);
+ 		if (err)
+ 			return err;
+ 
+-		next_ft = find_next_chained_ft(prio);
++		next_ft = first_ft ? first_ft : find_next_chained_ft(prio);
+ 		err = connect_fwd_rules(dev, ft, next_ft);
+ 		if (err)
+ 			return err;
+@@ -1357,7 +1359,7 @@ static int disconnect_flow_table(struct mlx5_flow_table *ft)
+ 				node.list) == ft))
+ 		return 0;
+ 
+-	next_ft = find_next_chained_ft(prio);
++	next_ft = find_next_ft(ft);
+ 	err = connect_fwd_rules(dev, next_ft, ft);
+ 	if (err)
+ 		return err;
+diff --git a/drivers/net/ethernet/sis/sis900.c b/drivers/net/ethernet/sis/sis900.c
+index ae9b983e8e5c9..4a0e69a2d4f58 100644
+--- a/drivers/net/ethernet/sis/sis900.c
++++ b/drivers/net/ethernet/sis/sis900.c
+@@ -442,7 +442,7 @@ static int sis900_probe(struct pci_dev *pci_dev,
+ #endif
+ 
+ 	/* setup various bits in PCI command register */
+-	ret = pci_enable_device(pci_dev);
++	ret = pcim_enable_device(pci_dev);
+ 	if(ret) return ret;
+ 
+ 	i = pci_set_dma_mask(pci_dev, DMA_BIT_MASK(32));
+@@ -468,7 +468,7 @@ static int sis900_probe(struct pci_dev *pci_dev,
+ 	ioaddr = pci_iomap(pci_dev, 0, 0);
+ 	if (!ioaddr) {
+ 		ret = -ENOMEM;
+-		goto err_out_cleardev;
++		goto err_out;
+ 	}
+ 
+ 	sis_priv = netdev_priv(net_dev);
+@@ -576,8 +576,6 @@ err_unmap_tx:
+ 		sis_priv->tx_ring_dma);
+ err_out_unmap:
+ 	pci_iounmap(pci_dev, ioaddr);
+-err_out_cleardev:
+-	pci_release_regions(pci_dev);
+  err_out:
+ 	free_netdev(net_dev);
+ 	return ret;
+@@ -2425,7 +2423,6 @@ static void sis900_remove(struct pci_dev *pci_dev)
+ 		sis_priv->tx_ring_dma);
+ 	pci_iounmap(pci_dev, sis_priv->ioaddr);
+ 	free_netdev(net_dev);
+-	pci_release_regions(pci_dev);
+ }
+ 
+ #ifdef CONFIG_PM
+diff --git a/drivers/net/ethernet/sun/niu.c b/drivers/net/ethernet/sun/niu.c
+index 306d5d08141ee..f3aed26656a39 100644
+--- a/drivers/net/ethernet/sun/niu.c
++++ b/drivers/net/ethernet/sun/niu.c
+@@ -8213,8 +8213,9 @@ static int niu_pci_vpd_fetch(struct niu *np, u32 start)
+ 		err = niu_pci_vpd_scan_props(np, here, end);
+ 		if (err < 0)
+ 			return err;
++		/* ret == 1 is not an error */
+ 		if (err == 1)
+-			return -EINVAL;
++			return 0;
+ 	}
+ 	return 0;
+ }
+diff --git a/drivers/nfc/nfcsim.c b/drivers/nfc/nfcsim.c
+index a466e79784668..11aa6a04ff466 100644
+--- a/drivers/nfc/nfcsim.c
++++ b/drivers/nfc/nfcsim.c
+@@ -201,8 +201,7 @@ static void nfcsim_recv_wq(struct work_struct *work)
+ 
+ 		if (!IS_ERR(skb))
+ 			dev_kfree_skb(skb);
+-
+-		skb = ERR_PTR(-ENODEV);
++		return;
+ 	}
+ 
+ 	dev->cb(dev->nfc_digital_dev, dev->arg, skb);
+diff --git a/fs/hfs/bfind.c b/fs/hfs/bfind.c
+index de69d8a24f6d7..7f2ef95dcd055 100644
+--- a/fs/hfs/bfind.c
++++ b/fs/hfs/bfind.c
+@@ -24,7 +24,19 @@ int hfs_find_init(struct hfs_btree *tree, struct hfs_find_data *fd)
+ 	fd->key = ptr + tree->max_key_len + 2;
+ 	hfs_dbg(BNODE_REFS, "find_init: %d (%p)\n",
+ 		tree->cnid, __builtin_return_address(0));
+-	mutex_lock(&tree->tree_lock);
++	switch (tree->cnid) {
++	case HFS_CAT_CNID:
++		mutex_lock_nested(&tree->tree_lock, CATALOG_BTREE_MUTEX);
++		break;
++	case HFS_EXT_CNID:
++		mutex_lock_nested(&tree->tree_lock, EXTENTS_BTREE_MUTEX);
++		break;
++	case HFS_ATTR_CNID:
++		mutex_lock_nested(&tree->tree_lock, ATTR_BTREE_MUTEX);
++		break;
++	default:
++		return -EINVAL;
++	}
+ 	return 0;
+ }
+ 
+diff --git a/fs/hfs/bnode.c b/fs/hfs/bnode.c
+index d77d844b668b1..1ff979c9d0a36 100644
+--- a/fs/hfs/bnode.c
++++ b/fs/hfs/bnode.c
+@@ -14,16 +14,31 @@
+ 
+ #include "btree.h"
+ 
+-void hfs_bnode_read(struct hfs_bnode *node, void *buf,
+-		int off, int len)
++void hfs_bnode_read(struct hfs_bnode *node, void *buf, int off, int len)
+ {
+ 	struct page *page;
++	int pagenum;
++	int bytes_read;
++	int bytes_to_read;
++	void *vaddr;
+ 
+ 	off += node->page_offset;
+-	page = node->page[0];
++	pagenum = off >> PAGE_SHIFT;
++	off &= ~PAGE_MASK; /* compute page offset for the first page */
+ 
+-	memcpy(buf, kmap(page) + off, len);
+-	kunmap(page);
++	for (bytes_read = 0; bytes_read < len; bytes_read += bytes_to_read) {
++		if (pagenum >= node->tree->pages_per_bnode)
++			break;
++		page = node->page[pagenum];
++		bytes_to_read = min_t(int, len - bytes_read, PAGE_SIZE - off);
++
++		vaddr = kmap_atomic(page);
++		memcpy(buf + bytes_read, vaddr + off, bytes_to_read);
++		kunmap_atomic(vaddr);
++
++		pagenum++;
++		off = 0; /* page offset only applies to the first page */
++	}
+ }
+ 
+ u16 hfs_bnode_read_u16(struct hfs_bnode *node, int off)
+diff --git a/fs/hfs/btree.h b/fs/hfs/btree.h
+index 2715f416b5a80..308b5f1af65ba 100644
+--- a/fs/hfs/btree.h
++++ b/fs/hfs/btree.h
+@@ -12,6 +12,13 @@ typedef int (*btree_keycmp)(const btree_key *, const btree_key *);
+ 
+ #define NODE_HASH_SIZE  256
+ 
++/* B-tree mutex nested subclasses */
++enum hfs_btree_mutex_classes {
++	CATALOG_BTREE_MUTEX,
++	EXTENTS_BTREE_MUTEX,
++	ATTR_BTREE_MUTEX,
++};
++
+ /* A HFS BTree held in memory */
+ struct hfs_btree {
+ 	struct super_block *sb;
+diff --git a/fs/hfs/super.c b/fs/hfs/super.c
+index bf6304a350a6b..c2a5a0ca39486 100644
+--- a/fs/hfs/super.c
++++ b/fs/hfs/super.c
+@@ -427,14 +427,12 @@ static int hfs_fill_super(struct super_block *sb, void *data, int silent)
+ 	if (!res) {
+ 		if (fd.entrylength > sizeof(rec) || fd.entrylength < 0) {
+ 			res =  -EIO;
+-			goto bail;
++			goto bail_hfs_find;
+ 		}
+ 		hfs_bnode_read(fd.bnode, &rec, fd.entryoffset, fd.entrylength);
+ 	}
+-	if (res) {
+-		hfs_find_exit(&fd);
+-		goto bail_no_root;
+-	}
++	if (res)
++		goto bail_hfs_find;
+ 	res = -EINVAL;
+ 	root_inode = hfs_iget(sb, &fd.search_key->cat, &rec);
+ 	hfs_find_exit(&fd);
+@@ -450,6 +448,8 @@ static int hfs_fill_super(struct super_block *sb, void *data, int silent)
+ 	/* everything's okay */
+ 	return 0;
+ 
++bail_hfs_find:
++	hfs_find_exit(&fd);
+ bail_no_root:
+ 	pr_err("get root inode failed\n");
+ bail:
+diff --git a/fs/ocfs2/file.c b/fs/ocfs2/file.c
+index 3aa4441f5ab50..d526e86cf5bbe 100644
+--- a/fs/ocfs2/file.c
++++ b/fs/ocfs2/file.c
+@@ -1511,6 +1511,45 @@ static void ocfs2_truncate_cluster_pages(struct inode *inode, u64 byte_start,
+ 	}
+ }
+ 
++/*
++ * zero out partial blocks of one cluster.
++ *
++ * start: file offset where zero starts, will be made upper block aligned.
++ * len: it will be trimmed to the end of current cluster if "start + len"
++ *      is bigger than it.
++ */
++static int ocfs2_zeroout_partial_cluster(struct inode *inode,
++					u64 start, u64 len)
++{
++	int ret;
++	u64 start_block, end_block, nr_blocks;
++	u64 p_block, offset;
++	u32 cluster, p_cluster, nr_clusters;
++	struct super_block *sb = inode->i_sb;
++	u64 end = ocfs2_align_bytes_to_clusters(sb, start);
++
++	if (start + len < end)
++		end = start + len;
++
++	start_block = ocfs2_blocks_for_bytes(sb, start);
++	end_block = ocfs2_blocks_for_bytes(sb, end);
++	nr_blocks = end_block - start_block;
++	if (!nr_blocks)
++		return 0;
++
++	cluster = ocfs2_bytes_to_clusters(sb, start);
++	ret = ocfs2_get_clusters(inode, cluster, &p_cluster,
++				&nr_clusters, NULL);
++	if (ret)
++		return ret;
++	if (!p_cluster)
++		return 0;
++
++	offset = start_block - ocfs2_clusters_to_blocks(sb, cluster);
++	p_block = ocfs2_clusters_to_blocks(sb, p_cluster) + offset;
++	return sb_issue_zeroout(sb, p_block, nr_blocks, GFP_NOFS);
++}
++
+ static int ocfs2_zero_partial_clusters(struct inode *inode,
+ 				       u64 start, u64 len)
+ {
+@@ -1520,6 +1559,7 @@ static int ocfs2_zero_partial_clusters(struct inode *inode,
+ 	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
+ 	unsigned int csize = osb->s_clustersize;
+ 	handle_t *handle;
++	loff_t isize = i_size_read(inode);
+ 
+ 	/*
+ 	 * The "start" and "end" values are NOT necessarily part of
+@@ -1540,6 +1580,26 @@ static int ocfs2_zero_partial_clusters(struct inode *inode,
+ 	if ((start & (csize - 1)) == 0 && (end & (csize - 1)) == 0)
+ 		goto out;
+ 
++	/* No page cache for EOF blocks, issue zero out to disk. */
++	if (end > isize) {
++		/*
++		 * zeroout eof blocks in last cluster starting from
++		 * "isize" even "start" > "isize" because it is
++		 * complicated to zeroout just at "start" as "start"
++		 * may be not aligned with block size, buffer write
++		 * would be required to do that, but out of eof buffer
++		 * write is not supported.
++		 */
++		ret = ocfs2_zeroout_partial_cluster(inode, isize,
++					end - isize);
++		if (ret) {
++			mlog_errno(ret);
++			goto out;
++		}
++		if (start >= isize)
++			goto out;
++		end = isize;
++	}
+ 	handle = ocfs2_start_trans(osb, OCFS2_INODE_UPDATE_CREDITS);
+ 	if (IS_ERR(handle)) {
+ 		ret = PTR_ERR(handle);
+@@ -1838,45 +1898,6 @@ out:
+ 	return ret;
+ }
+ 
+-/*
+- * zero out partial blocks of one cluster.
+- *
+- * start: file offset where zero starts, will be made upper block aligned.
+- * len: it will be trimmed to the end of current cluster if "start + len"
+- *      is bigger than it.
+- */
+-static int ocfs2_zeroout_partial_cluster(struct inode *inode,
+-					u64 start, u64 len)
+-{
+-	int ret;
+-	u64 start_block, end_block, nr_blocks;
+-	u64 p_block, offset;
+-	u32 cluster, p_cluster, nr_clusters;
+-	struct super_block *sb = inode->i_sb;
+-	u64 end = ocfs2_align_bytes_to_clusters(sb, start);
+-
+-	if (start + len < end)
+-		end = start + len;
+-
+-	start_block = ocfs2_blocks_for_bytes(sb, start);
+-	end_block = ocfs2_blocks_for_bytes(sb, end);
+-	nr_blocks = end_block - start_block;
+-	if (!nr_blocks)
+-		return 0;
+-
+-	cluster = ocfs2_bytes_to_clusters(sb, start);
+-	ret = ocfs2_get_clusters(inode, cluster, &p_cluster,
+-				&nr_clusters, NULL);
+-	if (ret)
+-		return ret;
+-	if (!p_cluster)
+-		return 0;
+-
+-	offset = start_block - ocfs2_clusters_to_blocks(sb, cluster);
+-	p_block = ocfs2_clusters_to_blocks(sb, p_cluster) + offset;
+-	return sb_issue_zeroout(sb, p_block, nr_blocks, GFP_NOFS);
+-}
+-
+ /*
+  * Parts of this function taken from xfs_change_file_space()
+  */
+@@ -1918,7 +1939,6 @@ static int __ocfs2_change_file_space(struct file *file, struct inode *inode,
+ 		goto out_inode_unlock;
+ 	}
+ 
+-	orig_isize = i_size_read(inode);
+ 	switch (sr->l_whence) {
+ 	case 0: /*SEEK_SET*/
+ 		break;
+@@ -1926,7 +1946,7 @@ static int __ocfs2_change_file_space(struct file *file, struct inode *inode,
+ 		sr->l_start += f_pos;
+ 		break;
+ 	case 2: /*SEEK_END*/
+-		sr->l_start += orig_isize;
++		sr->l_start += i_size_read(inode);
+ 		break;
+ 	default:
+ 		ret = -EINVAL;
+@@ -1981,6 +2001,7 @@ static int __ocfs2_change_file_space(struct file *file, struct inode *inode,
+ 		ret = -EINVAL;
+ 	}
+ 
++	orig_isize = i_size_read(inode);
+ 	/* zeroout eof blocks in the cluster. */
+ 	if (!ret && change_size && orig_isize < size) {
+ 		ret = ocfs2_zeroout_partial_cluster(inode, orig_isize,
+diff --git a/include/linux/string.h b/include/linux/string.h
+index 66a91f5a34499..dd810d4739ee9 100644
+--- a/include/linux/string.h
++++ b/include/linux/string.h
+@@ -103,6 +103,36 @@ extern __kernel_size_t strcspn(const char *,const char *);
+ #ifndef __HAVE_ARCH_MEMSET
+ extern void * memset(void *,int,__kernel_size_t);
+ #endif
++
++#ifndef __HAVE_ARCH_MEMSET16
++extern void *memset16(uint16_t *, uint16_t, __kernel_size_t);
++#endif
++
++#ifndef __HAVE_ARCH_MEMSET32
++extern void *memset32(uint32_t *, uint32_t, __kernel_size_t);
++#endif
++
++#ifndef __HAVE_ARCH_MEMSET64
++extern void *memset64(uint64_t *, uint64_t, __kernel_size_t);
++#endif
++
++static inline void *memset_l(unsigned long *p, unsigned long v,
++		__kernel_size_t n)
++{
++	if (BITS_PER_LONG == 32)
++		return memset32((uint32_t *)p, v, n);
++	else
++		return memset64((uint64_t *)p, v, n);
++}
++
++static inline void *memset_p(void **p, void *v, __kernel_size_t n)
++{
++	if (BITS_PER_LONG == 32)
++		return memset32((uint32_t *)p, (uintptr_t)v, n);
++	else
++		return memset64((uint64_t *)p, (uintptr_t)v, n);
++}
++
+ #ifndef __HAVE_ARCH_MEMCPY
+ extern void * memcpy(void *,const void *,__kernel_size_t);
+ #endif
+diff --git a/include/net/af_unix.h b/include/net/af_unix.h
+index fd60eccb59a67..79f2e1ccfcfb8 100644
+--- a/include/net/af_unix.h
++++ b/include/net/af_unix.h
+@@ -8,6 +8,7 @@
+ 
+ void unix_inflight(struct user_struct *user, struct file *fp);
+ void unix_notinflight(struct user_struct *user, struct file *fp);
++void unix_destruct_scm(struct sk_buff *skb);
+ void unix_gc(void);
+ void wait_for_unix_gc(void);
+ struct sock *unix_get_socket(struct file *filp);
+diff --git a/include/net/llc_pdu.h b/include/net/llc_pdu.h
+index c0f0a13ed8183..49aa79c7b278a 100644
+--- a/include/net/llc_pdu.h
++++ b/include/net/llc_pdu.h
+@@ -15,9 +15,11 @@
+ #include <linux/if_ether.h>
+ 
+ /* Lengths of frame formats */
+-#define LLC_PDU_LEN_I	4       /* header and 2 control bytes */
+-#define LLC_PDU_LEN_S	4
+-#define LLC_PDU_LEN_U	3       /* header and 1 control byte */
++#define LLC_PDU_LEN_I		4       /* header and 2 control bytes */
++#define LLC_PDU_LEN_S		4
++#define LLC_PDU_LEN_U		3       /* header and 1 control byte */
++/* header and 1 control byte and XID info */
++#define LLC_PDU_LEN_U_XID	(LLC_PDU_LEN_U + sizeof(struct llc_xid_info))
+ /* Known SAP addresses */
+ #define LLC_GLOBAL_SAP	0xFF
+ #define LLC_NULL_SAP	0x00	/* not network-layer visible */
+@@ -50,9 +52,10 @@
+ #define LLC_PDU_TYPE_U_MASK    0x03	/* 8-bit control field */
+ #define LLC_PDU_TYPE_MASK      0x03
+ 
+-#define LLC_PDU_TYPE_I	0	/* first bit */
+-#define LLC_PDU_TYPE_S	1	/* first two bits */
+-#define LLC_PDU_TYPE_U	3	/* first two bits */
++#define LLC_PDU_TYPE_I		0	/* first bit */
++#define LLC_PDU_TYPE_S		1	/* first two bits */
++#define LLC_PDU_TYPE_U		3	/* first two bits */
++#define LLC_PDU_TYPE_U_XID	4	/* private type for detecting XID commands */
+ 
+ #define LLC_PDU_TYPE_IS_I(pdu) \
+ 	((!(pdu->ctrl_1 & LLC_PDU_TYPE_I_MASK)) ? 1 : 0)
+@@ -230,9 +233,18 @@ static inline struct llc_pdu_un *llc_pdu_un_hdr(struct sk_buff *skb)
+ static inline void llc_pdu_header_init(struct sk_buff *skb, u8 type,
+ 				       u8 ssap, u8 dsap, u8 cr)
+ {
+-	const int hlen = type == LLC_PDU_TYPE_U ? 3 : 4;
++	int hlen = 4; /* default value for I and S types */
+ 	struct llc_pdu_un *pdu;
+ 
++	switch (type) {
++	case LLC_PDU_TYPE_U:
++		hlen = 3;
++		break;
++	case LLC_PDU_TYPE_U_XID:
++		hlen = 6;
++		break;
++	}
++
+ 	skb_push(skb, hlen);
+ 	skb_reset_network_header(skb);
+ 	pdu = llc_pdu_un_hdr(skb);
+@@ -374,7 +386,10 @@ static inline void llc_pdu_init_as_xid_cmd(struct sk_buff *skb,
+ 	xid_info->fmt_id = LLC_XID_FMT_ID;	/* 0x81 */
+ 	xid_info->type	 = svcs_supported;
+ 	xid_info->rw	 = rx_window << 1;	/* size of receive window */
+-	skb_put(skb, sizeof(struct llc_xid_info));
++
++	/* no need to push/put since llc_pdu_header_init() has already
++	 * pushed 3 + 3 bytes
++	 */
+ }
+ 
+ /**
+diff --git a/include/net/sctp/constants.h b/include/net/sctp/constants.h
+index 8890fd66021dd..9799c300603a9 100644
+--- a/include/net/sctp/constants.h
++++ b/include/net/sctp/constants.h
+@@ -344,8 +344,7 @@ typedef enum {
+ } sctp_scope_policy_t;
+ 
+ /* Based on IPv4 scoping <draft-stewart-tsvwg-sctp-ipv4-00.txt>,
+- * SCTP IPv4 unusable addresses: 0.0.0.0/8, 224.0.0.0/4, 198.18.0.0/24,
+- * 192.88.99.0/24.
++ * SCTP IPv4 unusable addresses: 0.0.0.0/8, 224.0.0.0/4, 192.88.99.0/24.
+  * Also, RFC 8.4, non-unicast addresses are not considered valid SCTP
+  * addresses.
+  */
+@@ -353,7 +352,6 @@ typedef enum {
+ 	((htonl(INADDR_BROADCAST) == a) ||  \
+ 	 ipv4_is_multicast(a) ||	    \
+ 	 ipv4_is_zeronet(a) ||		    \
+-	 ipv4_is_test_198(a) ||		    \
+ 	 ipv4_is_anycast_6to4(a))
+ 
+ /* Flags used for the bind address copy functions.  */
+diff --git a/kernel/workqueue.c b/kernel/workqueue.c
+index a410d5827a73f..b3476a21a7b31 100644
+--- a/kernel/workqueue.c
++++ b/kernel/workqueue.c
+@@ -3397,15 +3397,21 @@ static void pwq_unbound_release_workfn(struct work_struct *work)
+ 						  unbound_release_work);
+ 	struct workqueue_struct *wq = pwq->wq;
+ 	struct worker_pool *pool = pwq->pool;
+-	bool is_last;
++	bool is_last = false;
+ 
+-	if (WARN_ON_ONCE(!(wq->flags & WQ_UNBOUND)))
+-		return;
++	/*
++	 * when @pwq is not linked, it doesn't hold any reference to the
++	 * @wq, and @wq is invalid to access.
++	 */
++	if (!list_empty(&pwq->pwqs_node)) {
++		if (WARN_ON_ONCE(!(wq->flags & WQ_UNBOUND)))
++			return;
+ 
+-	mutex_lock(&wq->mutex);
+-	list_del_rcu(&pwq->pwqs_node);
+-	is_last = list_empty(&wq->pwqs);
+-	mutex_unlock(&wq->mutex);
++		mutex_lock(&wq->mutex);
++		list_del_rcu(&pwq->pwqs_node);
++		is_last = list_empty(&wq->pwqs);
++		mutex_unlock(&wq->mutex);
++	}
+ 
+ 	mutex_lock(&wq_pool_mutex);
+ 	put_unbound_pool(pool);
+diff --git a/lib/string.c b/lib/string.c
+index 8fe13371aed7a..ec1ba61b358f2 100644
+--- a/lib/string.c
++++ b/lib/string.c
+@@ -754,6 +754,72 @@ void memzero_explicit(void *s, size_t count)
+ }
+ EXPORT_SYMBOL(memzero_explicit);
+ 
++#ifndef __HAVE_ARCH_MEMSET16
++/**
++ * memset16() - Fill a memory area with a uint16_t
++ * @s: Pointer to the start of the area.
++ * @v: The value to fill the area with
++ * @count: The number of values to store
++ *
++ * Differs from memset() in that it fills with a uint16_t instead
++ * of a byte.  Remember that @count is the number of uint16_ts to
++ * store, not the number of bytes.
++ */
++void *memset16(uint16_t *s, uint16_t v, size_t count)
++{
++	uint16_t *xs = s;
++
++	while (count--)
++		*xs++ = v;
++	return s;
++}
++EXPORT_SYMBOL(memset16);
++#endif
++
++#ifndef __HAVE_ARCH_MEMSET32
++/**
++ * memset32() - Fill a memory area with a uint32_t
++ * @s: Pointer to the start of the area.
++ * @v: The value to fill the area with
++ * @count: The number of values to store
++ *
++ * Differs from memset() in that it fills with a uint32_t instead
++ * of a byte.  Remember that @count is the number of uint32_ts to
++ * store, not the number of bytes.
++ */
++void *memset32(uint32_t *s, uint32_t v, size_t count)
++{
++	uint32_t *xs = s;
++
++	while (count--)
++		*xs++ = v;
++	return s;
++}
++EXPORT_SYMBOL(memset32);
++#endif
++
++#ifndef __HAVE_ARCH_MEMSET64
++/**
++ * memset64() - Fill a memory area with a uint64_t
++ * @s: Pointer to the start of the area.
++ * @v: The value to fill the area with
++ * @count: The number of values to store
++ *
++ * Differs from memset() in that it fills with a uint64_t instead
++ * of a byte.  Remember that @count is the number of uint64_ts to
++ * store, not the number of bytes.
++ */
++void *memset64(uint64_t *s, uint64_t v, size_t count)
++{
++	uint64_t *xs = s;
++
++	while (count--)
++		*xs++ = v;
++	return s;
++}
++EXPORT_SYMBOL(memset64);
++#endif
++
+ #ifndef __HAVE_ARCH_MEMCPY
+ /**
+  * memcpy - Copy one area of memory to another
+diff --git a/net/802/garp.c b/net/802/garp.c
+index b38ee6dcba45f..5239b8f244e75 100644
+--- a/net/802/garp.c
++++ b/net/802/garp.c
+@@ -206,6 +206,19 @@ static void garp_attr_destroy(struct garp_applicant *app, struct garp_attr *attr
+ 	kfree(attr);
+ }
+ 
++static void garp_attr_destroy_all(struct garp_applicant *app)
++{
++	struct rb_node *node, *next;
++	struct garp_attr *attr;
++
++	for (node = rb_first(&app->gid);
++	     next = node ? rb_next(node) : NULL, node != NULL;
++	     node = next) {
++		attr = rb_entry(node, struct garp_attr, node);
++		garp_attr_destroy(app, attr);
++	}
++}
++
+ static int garp_pdu_init(struct garp_applicant *app)
+ {
+ 	struct sk_buff *skb;
+@@ -612,6 +625,7 @@ void garp_uninit_applicant(struct net_device *dev, struct garp_application *appl
+ 
+ 	spin_lock_bh(&app->lock);
+ 	garp_gid_event(app, GARP_EVENT_TRANSMIT_PDU);
++	garp_attr_destroy_all(app);
+ 	garp_pdu_queue(app);
+ 	spin_unlock_bh(&app->lock);
+ 
+diff --git a/net/802/mrp.c b/net/802/mrp.c
+index 72db2785ef2c0..4ee3af3d400b1 100644
+--- a/net/802/mrp.c
++++ b/net/802/mrp.c
+@@ -295,6 +295,19 @@ static void mrp_attr_destroy(struct mrp_applicant *app, struct mrp_attr *attr)
+ 	kfree(attr);
+ }
+ 
++static void mrp_attr_destroy_all(struct mrp_applicant *app)
++{
++	struct rb_node *node, *next;
++	struct mrp_attr *attr;
++
++	for (node = rb_first(&app->mad);
++	     next = node ? rb_next(node) : NULL, node != NULL;
++	     node = next) {
++		attr = rb_entry(node, struct mrp_attr, node);
++		mrp_attr_destroy(app, attr);
++	}
++}
++
+ static int mrp_pdu_init(struct mrp_applicant *app)
+ {
+ 	struct sk_buff *skb;
+@@ -900,6 +913,7 @@ void mrp_uninit_applicant(struct net_device *dev, struct mrp_application *appl)
+ 
+ 	spin_lock_bh(&app->lock);
+ 	mrp_mad_event(app, MRP_EVENT_TX);
++	mrp_attr_destroy_all(app);
+ 	mrp_pdu_queue(app);
+ 	spin_unlock_bh(&app->lock);
+ 
+diff --git a/net/Makefile b/net/Makefile
+index 4cafaa2b4667e..1955d89de75bb 100644
+--- a/net/Makefile
++++ b/net/Makefile
+@@ -16,7 +16,7 @@ obj-$(CONFIG_NET)		+= ethernet/ 802/ sched/ netlink/
+ obj-$(CONFIG_NETFILTER)		+= netfilter/
+ obj-$(CONFIG_INET)		+= ipv4/
+ obj-$(CONFIG_XFRM)		+= xfrm/
+-obj-$(CONFIG_UNIX)		+= unix/
++obj-$(CONFIG_UNIX_SCM)		+= unix/
+ obj-$(CONFIG_NET)		+= ipv6/
+ obj-$(CONFIG_PACKET)		+= packet/
+ obj-$(CONFIG_NET_KEY)		+= key/
+diff --git a/net/llc/af_llc.c b/net/llc/af_llc.c
+index 1a77d0687d743..a8866455e8b2a 100644
+--- a/net/llc/af_llc.c
++++ b/net/llc/af_llc.c
+@@ -96,8 +96,16 @@ static inline u8 llc_ui_header_len(struct sock *sk, struct sockaddr_llc *addr)
+ {
+ 	u8 rc = LLC_PDU_LEN_U;
+ 
+-	if (addr->sllc_test || addr->sllc_xid)
++	if (addr->sllc_test)
+ 		rc = LLC_PDU_LEN_U;
++	else if (addr->sllc_xid)
++		/* We need to expand header to sizeof(struct llc_xid_info)
++		 * since llc_pdu_init_as_xid_cmd() sets 4,5,6 bytes of LLC header
++		 * as XID PDU. In llc_ui_sendmsg() we reserved header size and then
++		 * filled all other space with user data. If we won't reserve this
++		 * bytes, llc_pdu_init_as_xid_cmd() will overwrite user data
++		 */
++		rc = LLC_PDU_LEN_U_XID;
+ 	else if (sk->sk_type == SOCK_STREAM)
+ 		rc = LLC_PDU_LEN_I;
+ 	return rc;
+diff --git a/net/llc/llc_s_ac.c b/net/llc/llc_s_ac.c
+index 7ae4cc684d3ab..9fa3342c7a829 100644
+--- a/net/llc/llc_s_ac.c
++++ b/net/llc/llc_s_ac.c
+@@ -79,7 +79,7 @@ int llc_sap_action_send_xid_c(struct llc_sap *sap, struct sk_buff *skb)
+ 	struct llc_sap_state_ev *ev = llc_sap_ev(skb);
+ 	int rc;
+ 
+-	llc_pdu_header_init(skb, LLC_PDU_TYPE_U, ev->saddr.lsap,
++	llc_pdu_header_init(skb, LLC_PDU_TYPE_U_XID, ev->saddr.lsap,
+ 			    ev->daddr.lsap, LLC_PDU_CMD);
+ 	llc_pdu_init_as_xid_cmd(skb, LLC_XID_NULL_CLASS_2, 0);
+ 	rc = llc_mac_hdr_init(skb, ev->saddr.mac, ev->daddr.mac);
+diff --git a/net/netfilter/nf_conntrack_core.c b/net/netfilter/nf_conntrack_core.c
+index ddd90a3820d39..d03f067178445 100644
+--- a/net/netfilter/nf_conntrack_core.c
++++ b/net/netfilter/nf_conntrack_core.c
+@@ -491,8 +491,13 @@ bool nf_ct_delete(struct nf_conn *ct, u32 portid, int report)
+ 		return false;
+ 
+ 	tstamp = nf_conn_tstamp_find(ct);
+-	if (tstamp && tstamp->stop == 0)
++	if (tstamp) {
++		s32 timeout = ct->timeout - nfct_time_stamp;
++
+ 		tstamp->stop = ktime_get_real_ns();
++		if (timeout < 0)
++			tstamp->stop -= jiffies_to_nsecs(-timeout);
++	}
+ 
+ 	if (nf_conntrack_event_report(IPCT_DESTROY, ct,
+ 				    portid, report) < 0) {
+diff --git a/net/netfilter/nft_nat.c b/net/netfilter/nft_nat.c
+index d2510e432c183..d338d69a0e0bb 100644
+--- a/net/netfilter/nft_nat.c
++++ b/net/netfilter/nft_nat.c
+@@ -157,7 +157,9 @@ static int nft_nat_init(const struct nft_ctx *ctx, const struct nft_expr *expr,
+ 		alen = FIELD_SIZEOF(struct nf_nat_range, min_addr.ip6);
+ 		break;
+ 	default:
+-		return -EAFNOSUPPORT;
++		if (tb[NFTA_NAT_REG_ADDR_MIN])
++			return -EAFNOSUPPORT;
++		break;
+ 	}
+ 	priv->family = family;
+ 
+diff --git a/net/sctp/protocol.c b/net/sctp/protocol.c
+index b2c242facf1b9..b1932fd125dad 100644
+--- a/net/sctp/protocol.c
++++ b/net/sctp/protocol.c
+@@ -413,7 +413,8 @@ static sctp_scope_t sctp_v4_scope(union sctp_addr *addr)
+ 		retval = SCTP_SCOPE_LINK;
+ 	} else if (ipv4_is_private_10(addr->v4.sin_addr.s_addr) ||
+ 		   ipv4_is_private_172(addr->v4.sin_addr.s_addr) ||
+-		   ipv4_is_private_192(addr->v4.sin_addr.s_addr)) {
++		   ipv4_is_private_192(addr->v4.sin_addr.s_addr) ||
++		   ipv4_is_test_198(addr->v4.sin_addr.s_addr)) {
+ 		retval = SCTP_SCOPE_PRIVATE;
+ 	} else {
+ 		retval = SCTP_SCOPE_GLOBAL;
+diff --git a/net/tipc/link.c b/net/tipc/link.c
+index 06327f78f2032..6fc2fa75503d2 100644
+--- a/net/tipc/link.c
++++ b/net/tipc/link.c
+@@ -893,6 +893,7 @@ int tipc_link_xmit(struct tipc_link *l, struct sk_buff_head *list,
+ 	if (pkt_cnt <= 0)
+ 		return 0;
+ 
++	hdr = buf_msg(skb_peek(list));
+ 	imp = msg_importance(hdr);
+ 	/* Match msg importance against this and all higher backlog limits: */
+ 	if (!skb_queue_empty(backlogq)) {
+@@ -902,7 +903,6 @@ int tipc_link_xmit(struct tipc_link *l, struct sk_buff_head *list,
+ 		}
+ 	}
+ 
+-	hdr = buf_msg(skb_peek(list));
+ 	if (unlikely(msg_size(hdr) > mtu)) {
+ 		skb_queue_purge(list);
+ 		return -EMSGSIZE;
+diff --git a/net/tipc/socket.c b/net/tipc/socket.c
+index c1b9074f3325e..6077850774454 100644
+--- a/net/tipc/socket.c
++++ b/net/tipc/socket.c
+@@ -1985,7 +1985,7 @@ static int tipc_listen(struct socket *sock, int len)
+ static int tipc_wait_for_accept(struct socket *sock, long timeo)
+ {
+ 	struct sock *sk = sock->sk;
+-	DEFINE_WAIT(wait);
++	DEFINE_WAIT_FUNC(wait, woken_wake_function);
+ 	int err;
+ 
+ 	/* True wake-one mechanism for incoming connections: only
+@@ -1994,12 +1994,12 @@ static int tipc_wait_for_accept(struct socket *sock, long timeo)
+ 	 * anymore, the common case will execute the loop only once.
+ 	*/
+ 	for (;;) {
+-		prepare_to_wait_exclusive(sk_sleep(sk), &wait,
+-					  TASK_INTERRUPTIBLE);
+ 		if (timeo && skb_queue_empty(&sk->sk_receive_queue)) {
++			add_wait_queue(sk_sleep(sk), &wait);
+ 			release_sock(sk);
+-			timeo = schedule_timeout(timeo);
++			timeo = wait_woken(&wait, TASK_INTERRUPTIBLE, timeo);
+ 			lock_sock(sk);
++			remove_wait_queue(sk_sleep(sk), &wait);
+ 		}
+ 		err = 0;
+ 		if (!skb_queue_empty(&sk->sk_receive_queue))
+@@ -2014,7 +2014,6 @@ static int tipc_wait_for_accept(struct socket *sock, long timeo)
+ 		if (signal_pending(current))
+ 			break;
+ 	}
+-	finish_wait(sk_sleep(sk), &wait);
+ 	return err;
+ }
+ 
+diff --git a/net/unix/Kconfig b/net/unix/Kconfig
+index 8b31ab85d050f..3b9e450656a4d 100644
+--- a/net/unix/Kconfig
++++ b/net/unix/Kconfig
+@@ -19,6 +19,11 @@ config UNIX
+ 
+ 	  Say Y unless you know what you are doing.
+ 
++config UNIX_SCM
++	bool
++	depends on UNIX
++	default y
++
+ config UNIX_DIAG
+ 	tristate "UNIX: socket monitoring interface"
+ 	depends on UNIX
+diff --git a/net/unix/Makefile b/net/unix/Makefile
+index b663c607b1c61..dc686c6757fb5 100644
+--- a/net/unix/Makefile
++++ b/net/unix/Makefile
+@@ -9,3 +9,5 @@ unix-$(CONFIG_SYSCTL)	+= sysctl_net_unix.o
+ 
+ obj-$(CONFIG_UNIX_DIAG)	+= unix_diag.o
+ unix_diag-y		:= diag.o
++
++obj-$(CONFIG_UNIX_SCM)	+= scm.o
+diff --git a/net/unix/af_unix.c b/net/unix/af_unix.c
+index 8bbaa35937dd9..bfdfb958a37d6 100644
+--- a/net/unix/af_unix.c
++++ b/net/unix/af_unix.c
+@@ -118,6 +118,8 @@
+ #include <linux/security.h>
+ #include <linux/freezer.h>
+ 
++#include "scm.h"
++
+ struct hlist_head unix_socket_table[2 * UNIX_HASH_SIZE];
+ EXPORT_SYMBOL_GPL(unix_socket_table);
+ DEFINE_SPINLOCK(unix_table_lock);
+@@ -1505,78 +1507,51 @@ out:
+ 	return err;
+ }
+ 
+-static void unix_detach_fds(struct scm_cookie *scm, struct sk_buff *skb)
+-{
+-	int i;
+-
+-	scm->fp = UNIXCB(skb).fp;
+-	UNIXCB(skb).fp = NULL;
+-
+-	for (i = scm->fp->count-1; i >= 0; i--)
+-		unix_notinflight(scm->fp->user, scm->fp->fp[i]);
+-}
+-
+-static void unix_destruct_scm(struct sk_buff *skb)
+-{
+-	struct scm_cookie scm;
+-	memset(&scm, 0, sizeof(scm));
+-	scm.pid  = UNIXCB(skb).pid;
+-	if (UNIXCB(skb).fp)
+-		unix_detach_fds(&scm, skb);
+-
+-	/* Alas, it calls VFS */
+-	/* So fscking what? fput() had been SMP-safe since the last Summer */
+-	scm_destroy(&scm);
+-	sock_wfree(skb);
+-}
+-
+-/*
+- * The "user->unix_inflight" variable is protected by the garbage
+- * collection lock, and we just read it locklessly here. If you go
+- * over the limit, there might be a tiny race in actually noticing
+- * it across threads. Tough.
+- */
+-static inline bool too_many_unix_fds(struct task_struct *p)
+-{
+-	struct user_struct *user = current_user();
+-
+-	if (unlikely(user->unix_inflight > task_rlimit(p, RLIMIT_NOFILE)))
+-		return !capable(CAP_SYS_RESOURCE) && !capable(CAP_SYS_ADMIN);
+-	return false;
+-}
+-
+-#define MAX_RECURSION_LEVEL 4
+-
+-static int unix_attach_fds(struct scm_cookie *scm, struct sk_buff *skb)
++static void unix_peek_fds(struct scm_cookie *scm, struct sk_buff *skb)
+ {
+-	int i;
+-	unsigned char max_level = 0;
+-
+-	if (too_many_unix_fds(current))
+-		return -ETOOMANYREFS;
+-
+-	for (i = scm->fp->count - 1; i >= 0; i--) {
+-		struct sock *sk = unix_get_socket(scm->fp->fp[i]);
+-
+-		if (sk)
+-			max_level = max(max_level,
+-					unix_sk(sk)->recursion_level);
+-	}
+-	if (unlikely(max_level > MAX_RECURSION_LEVEL))
+-		return -ETOOMANYREFS;
++	scm->fp = scm_fp_dup(UNIXCB(skb).fp);
+ 
+ 	/*
+-	 * Need to duplicate file references for the sake of garbage
+-	 * collection.  Otherwise a socket in the fps might become a
+-	 * candidate for GC while the skb is not yet queued.
++	 * Garbage collection of unix sockets starts by selecting a set of
++	 * candidate sockets which have reference only from being in flight
++	 * (total_refs == inflight_refs).  This condition is checked once during
++	 * the candidate collection phase, and candidates are marked as such, so
++	 * that non-candidates can later be ignored.  While inflight_refs is
++	 * protected by unix_gc_lock, total_refs (file count) is not, hence this
++	 * is an instantaneous decision.
++	 *
++	 * Once a candidate, however, the socket must not be reinstalled into a
++	 * file descriptor while the garbage collection is in progress.
++	 *
++	 * If the above conditions are met, then the directed graph of
++	 * candidates (*) does not change while unix_gc_lock is held.
++	 *
++	 * Any operations that changes the file count through file descriptors
++	 * (dup, close, sendmsg) does not change the graph since candidates are
++	 * not installed in fds.
++	 *
++	 * Dequeing a candidate via recvmsg would install it into an fd, but
++	 * that takes unix_gc_lock to decrement the inflight count, so it's
++	 * serialized with garbage collection.
++	 *
++	 * MSG_PEEK is special in that it does not change the inflight count,
++	 * yet does install the socket into an fd.  The following lock/unlock
++	 * pair is to ensure serialization with garbage collection.  It must be
++	 * done between incrementing the file count and installing the file into
++	 * an fd.
++	 *
++	 * If garbage collection starts after the barrier provided by the
++	 * lock/unlock, then it will see the elevated refcount and not mark this
++	 * as a candidate.  If a garbage collection is already in progress
++	 * before the file count was incremented, then the lock/unlock pair will
++	 * ensure that garbage collection is finished before progressing to
++	 * installing the fd.
++	 *
++	 * (*) A -> B where B is on the queue of A or B is on the queue of C
++	 * which is on the queue of listening socket A.
+ 	 */
+-	UNIXCB(skb).fp = scm_fp_dup(scm->fp);
+-	if (!UNIXCB(skb).fp)
+-		return -ENOMEM;
+-
+-	for (i = scm->fp->count - 1; i >= 0; i--)
+-		unix_inflight(scm->fp->user, scm->fp->fp[i]);
+-	return max_level;
++	spin_lock(&unix_gc_lock);
++	spin_unlock(&unix_gc_lock);
+ }
+ 
+ static int unix_scm_to_skb(struct scm_cookie *scm, struct sk_buff *skb, bool send_fds)
+@@ -2212,7 +2187,7 @@ static int unix_dgram_recvmsg(struct socket *sock, struct msghdr *msg,
+ 		sk_peek_offset_fwd(sk, size);
+ 
+ 		if (UNIXCB(skb).fp)
+-			scm.fp = scm_fp_dup(UNIXCB(skb).fp);
++			unix_peek_fds(&scm, skb);
+ 	}
+ 	err = (flags & MSG_TRUNC) ? skb->len - skip : size;
+ 
+@@ -2457,7 +2432,7 @@ unlock:
+ 			/* It is questionable, see note in unix_dgram_recvmsg.
+ 			 */
+ 			if (UNIXCB(skb).fp)
+-				scm.fp = scm_fp_dup(UNIXCB(skb).fp);
++				unix_peek_fds(&scm, skb);
+ 
+ 			sk_peek_offset_fwd(sk, chunk);
+ 
+diff --git a/net/unix/garbage.c b/net/unix/garbage.c
+index c36757e728442..8bbe1b8e4ff7f 100644
+--- a/net/unix/garbage.c
++++ b/net/unix/garbage.c
+@@ -86,77 +86,13 @@
+ #include <net/scm.h>
+ #include <net/tcp_states.h>
+ 
++#include "scm.h"
++
+ /* Internal data structures and random procedures: */
+ 
+-static LIST_HEAD(gc_inflight_list);
+ static LIST_HEAD(gc_candidates);
+-static DEFINE_SPINLOCK(unix_gc_lock);
+ static DECLARE_WAIT_QUEUE_HEAD(unix_gc_wait);
+ 
+-unsigned int unix_tot_inflight;
+-
+-struct sock *unix_get_socket(struct file *filp)
+-{
+-	struct sock *u_sock = NULL;
+-	struct inode *inode = file_inode(filp);
+-
+-	/* Socket ? */
+-	if (S_ISSOCK(inode->i_mode) && !(filp->f_mode & FMODE_PATH)) {
+-		struct socket *sock = SOCKET_I(inode);
+-		struct sock *s = sock->sk;
+-
+-		/* PF_UNIX ? */
+-		if (s && sock->ops && sock->ops->family == PF_UNIX)
+-			u_sock = s;
+-	}
+-	return u_sock;
+-}
+-
+-/* Keep the number of times in flight count for the file
+- * descriptor if it is for an AF_UNIX socket.
+- */
+-
+-void unix_inflight(struct user_struct *user, struct file *fp)
+-{
+-	struct sock *s = unix_get_socket(fp);
+-
+-	spin_lock(&unix_gc_lock);
+-
+-	if (s) {
+-		struct unix_sock *u = unix_sk(s);
+-
+-		if (atomic_long_inc_return(&u->inflight) == 1) {
+-			BUG_ON(!list_empty(&u->link));
+-			list_add_tail(&u->link, &gc_inflight_list);
+-		} else {
+-			BUG_ON(list_empty(&u->link));
+-		}
+-		unix_tot_inflight++;
+-	}
+-	user->unix_inflight++;
+-	spin_unlock(&unix_gc_lock);
+-}
+-
+-void unix_notinflight(struct user_struct *user, struct file *fp)
+-{
+-	struct sock *s = unix_get_socket(fp);
+-
+-	spin_lock(&unix_gc_lock);
+-
+-	if (s) {
+-		struct unix_sock *u = unix_sk(s);
+-
+-		BUG_ON(!atomic_long_read(&u->inflight));
+-		BUG_ON(list_empty(&u->link));
+-
+-		if (atomic_long_dec_and_test(&u->inflight))
+-			list_del_init(&u->link);
+-		unix_tot_inflight--;
+-	}
+-	user->unix_inflight--;
+-	spin_unlock(&unix_gc_lock);
+-}
+-
+ static void scan_inflight(struct sock *x, void (*func)(struct unix_sock *),
+ 			  struct sk_buff_head *hitlist)
+ {
+diff --git a/net/unix/scm.c b/net/unix/scm.c
+new file mode 100644
+index 0000000000000..df8f636ab1d8c
+--- /dev/null
++++ b/net/unix/scm.c
+@@ -0,0 +1,161 @@
++// SPDX-License-Identifier: GPL-2.0
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/string.h>
++#include <linux/socket.h>
++#include <linux/net.h>
++#include <linux/fs.h>
++#include <net/af_unix.h>
++#include <net/scm.h>
++#include <linux/init.h>
++
++#include "scm.h"
++
++unsigned int unix_tot_inflight;
++EXPORT_SYMBOL(unix_tot_inflight);
++
++LIST_HEAD(gc_inflight_list);
++EXPORT_SYMBOL(gc_inflight_list);
++
++DEFINE_SPINLOCK(unix_gc_lock);
++EXPORT_SYMBOL(unix_gc_lock);
++
++struct sock *unix_get_socket(struct file *filp)
++{
++	struct sock *u_sock = NULL;
++	struct inode *inode = file_inode(filp);
++
++	/* Socket ? */
++	if (S_ISSOCK(inode->i_mode) && !(filp->f_mode & FMODE_PATH)) {
++		struct socket *sock = SOCKET_I(inode);
++		struct sock *s = sock->sk;
++
++		/* PF_UNIX ? */
++		if (s && sock->ops && sock->ops->family == PF_UNIX)
++			u_sock = s;
++	}
++	return u_sock;
++}
++EXPORT_SYMBOL(unix_get_socket);
++
++/* Keep the number of times in flight count for the file
++ * descriptor if it is for an AF_UNIX socket.
++ */
++void unix_inflight(struct user_struct *user, struct file *fp)
++{
++	struct sock *s = unix_get_socket(fp);
++
++	spin_lock(&unix_gc_lock);
++
++	if (s) {
++		struct unix_sock *u = unix_sk(s);
++
++		if (atomic_long_inc_return(&u->inflight) == 1) {
++			BUG_ON(!list_empty(&u->link));
++			list_add_tail(&u->link, &gc_inflight_list);
++		} else {
++			BUG_ON(list_empty(&u->link));
++		}
++		unix_tot_inflight++;
++	}
++	user->unix_inflight++;
++	spin_unlock(&unix_gc_lock);
++}
++
++void unix_notinflight(struct user_struct *user, struct file *fp)
++{
++	struct sock *s = unix_get_socket(fp);
++
++	spin_lock(&unix_gc_lock);
++
++	if (s) {
++		struct unix_sock *u = unix_sk(s);
++
++		BUG_ON(!atomic_long_read(&u->inflight));
++		BUG_ON(list_empty(&u->link));
++
++		if (atomic_long_dec_and_test(&u->inflight))
++			list_del_init(&u->link);
++		unix_tot_inflight--;
++	}
++	user->unix_inflight--;
++	spin_unlock(&unix_gc_lock);
++}
++
++/*
++ * The "user->unix_inflight" variable is protected by the garbage
++ * collection lock, and we just read it locklessly here. If you go
++ * over the limit, there might be a tiny race in actually noticing
++ * it across threads. Tough.
++ */
++static inline bool too_many_unix_fds(struct task_struct *p)
++{
++	struct user_struct *user = current_user();
++
++	if (unlikely(user->unix_inflight > task_rlimit(p, RLIMIT_NOFILE)))
++		return !capable(CAP_SYS_RESOURCE) && !capable(CAP_SYS_ADMIN);
++	return false;
++}
++
++#define MAX_RECURSION_LEVEL 4
++
++int unix_attach_fds(struct scm_cookie *scm, struct sk_buff *skb)
++{
++	int i;
++	unsigned char max_level = 0;
++
++	if (too_many_unix_fds(current))
++		return -ETOOMANYREFS;
++
++	for (i = scm->fp->count - 1; i >= 0; i--) {
++		struct sock *sk = unix_get_socket(scm->fp->fp[i]);
++
++		if (sk)
++			max_level = max(max_level,
++					unix_sk(sk)->recursion_level);
++	}
++	if (unlikely(max_level > MAX_RECURSION_LEVEL))
++		return -ETOOMANYREFS;
++
++	/*
++	 * Need to duplicate file references for the sake of garbage
++	 * collection.  Otherwise a socket in the fps might become a
++	 * candidate for GC while the skb is not yet queued.
++	 */
++	UNIXCB(skb).fp = scm_fp_dup(scm->fp);
++	if (!UNIXCB(skb).fp)
++		return -ENOMEM;
++
++	for (i = scm->fp->count - 1; i >= 0; i--)
++		unix_inflight(scm->fp->user, scm->fp->fp[i]);
++	return max_level;
++}
++EXPORT_SYMBOL(unix_attach_fds);
++
++void unix_detach_fds(struct scm_cookie *scm, struct sk_buff *skb)
++{
++	int i;
++
++	scm->fp = UNIXCB(skb).fp;
++	UNIXCB(skb).fp = NULL;
++
++	for (i = scm->fp->count-1; i >= 0; i--)
++		unix_notinflight(scm->fp->user, scm->fp->fp[i]);
++}
++EXPORT_SYMBOL(unix_detach_fds);
++
++void unix_destruct_scm(struct sk_buff *skb)
++{
++	struct scm_cookie scm;
++
++	memset(&scm, 0, sizeof(scm));
++	scm.pid  = UNIXCB(skb).pid;
++	if (UNIXCB(skb).fp)
++		unix_detach_fds(&scm, skb);
++
++	/* Alas, it calls VFS */
++	/* So fscking what? fput() had been SMP-safe since the last Summer */
++	scm_destroy(&scm);
++	sock_wfree(skb);
++}
++EXPORT_SYMBOL(unix_destruct_scm);
+diff --git a/net/unix/scm.h b/net/unix/scm.h
+new file mode 100644
+index 0000000000000..5a255a477f160
+--- /dev/null
++++ b/net/unix/scm.h
+@@ -0,0 +1,10 @@
++#ifndef NET_UNIX_SCM_H
++#define NET_UNIX_SCM_H
++
++extern struct list_head gc_inflight_list;
++extern spinlock_t unix_gc_lock;
++
++int unix_attach_fds(struct scm_cookie *scm, struct sk_buff *skb);
++void unix_detach_fds(struct scm_cookie *scm, struct sk_buff *skb);
++
++#endif
+diff --git a/net/wireless/scan.c b/net/wireless/scan.c
+index 71a8e6980e2fc..901a8742a28dc 100644
+--- a/net/wireless/scan.c
++++ b/net/wireless/scan.c
+@@ -949,16 +949,14 @@ cfg80211_bss_update(struct cfg80211_registered_device *rdev,
+ 			 * be grouped with this beacon for updates ...
+ 			 */
+ 			if (!cfg80211_combine_bsses(rdev, new)) {
+-				kfree(new);
++				bss_ref_put(rdev, new);
+ 				goto drop;
+ 			}
+ 		}
+ 
+ 		if (rdev->bss_entries >= bss_entries_limit &&
+ 		    !cfg80211_bss_expire_oldest(rdev)) {
+-			if (!list_empty(&new->hidden_list))
+-				list_del(&new->hidden_list);
+-			kfree(new);
++			bss_ref_put(rdev, new);
+ 			goto drop;
+ 		}
+ 

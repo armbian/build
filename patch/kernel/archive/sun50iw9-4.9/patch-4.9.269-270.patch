@@ -1,0 +1,951 @@
+diff --git a/Makefile b/Makefile
+index 94436a50dc9fb..e8313ffb8af98 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 269
++SUBLEVEL = 270
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/openrisc/kernel/setup.c b/arch/openrisc/kernel/setup.c
+index b4ed8b36e078d..e5f5b69a7b7bd 100644
+--- a/arch/openrisc/kernel/setup.c
++++ b/arch/openrisc/kernel/setup.c
+@@ -278,6 +278,8 @@ void calibrate_delay(void)
+ 	pr_cont("%lu.%02lu BogoMIPS (lpj=%lu)\n",
+ 		loops_per_jiffy / (500000 / HZ),
+ 		(loops_per_jiffy / (5000 / HZ)) % 100, loops_per_jiffy);
++
++	of_node_put(cpu);
+ }
+ 
+ void __init setup_arch(char **cmdline_p)
+diff --git a/drivers/cdrom/gdrom.c b/drivers/cdrom/gdrom.c
+index 1852d19d0d7b0..86110a2abf0f0 100644
+--- a/drivers/cdrom/gdrom.c
++++ b/drivers/cdrom/gdrom.c
+@@ -773,6 +773,13 @@ static int probe_gdrom_setupqueue(void)
+ static int probe_gdrom(struct platform_device *devptr)
+ {
+ 	int err;
++
++	/*
++	 * Ensure our "one" device is initialized properly in case of previous
++	 * usages of it
++	 */
++	memset(&gd, 0, sizeof(gd));
++
+ 	/* Start the device */
+ 	if (gdrom_execute_diagnostic() != 1) {
+ 		pr_warning("ATA Probe for GDROM failed\n");
+@@ -850,6 +857,8 @@ static int remove_gdrom(struct platform_device *devptr)
+ 	if (gdrom_major)
+ 		unregister_blkdev(gdrom_major, GDROM_DEV_NAME);
+ 	unregister_cdrom(gd.cd_info);
++	kfree(gd.cd_info);
++	kfree(gd.toc);
+ 
+ 	return 0;
+ }
+@@ -865,7 +874,7 @@ static struct platform_driver gdrom_driver = {
+ static int __init init_gdrom(void)
+ {
+ 	int rc;
+-	gd.toc = NULL;
++
+ 	rc = platform_driver_register(&gdrom_driver);
+ 	if (rc)
+ 		return rc;
+@@ -881,8 +890,6 @@ static void __exit exit_gdrom(void)
+ {
+ 	platform_device_unregister(pd);
+ 	platform_driver_unregister(&gdrom_driver);
+-	kfree(gd.toc);
+-	kfree(gd.cd_info);
+ }
+ 
+ module_init(init_gdrom);
+diff --git a/drivers/hwmon/lm80.c b/drivers/hwmon/lm80.c
+index be60bd5bab783..ee6d499edc1ba 100644
+--- a/drivers/hwmon/lm80.c
++++ b/drivers/hwmon/lm80.c
+@@ -630,7 +630,6 @@ static int lm80_probe(struct i2c_client *client,
+ 	struct device *dev = &client->dev;
+ 	struct device *hwmon_dev;
+ 	struct lm80_data *data;
+-	int rv;
+ 
+ 	data = devm_kzalloc(dev, sizeof(struct lm80_data), GFP_KERNEL);
+ 	if (!data)
+@@ -643,14 +642,8 @@ static int lm80_probe(struct i2c_client *client,
+ 	lm80_init_client(client);
+ 
+ 	/* A few vars need to be filled upon startup */
+-	rv = lm80_read_value(client, LM80_REG_FAN_MIN(1));
+-	if (rv < 0)
+-		return rv;
+-	data->fan[f_min][0] = rv;
+-	rv = lm80_read_value(client, LM80_REG_FAN_MIN(2));
+-	if (rv < 0)
+-		return rv;
+-	data->fan[f_min][1] = rv;
++	data->fan[f_min][0] = lm80_read_value(client, LM80_REG_FAN_MIN(1));
++	data->fan[f_min][1] = lm80_read_value(client, LM80_REG_FAN_MIN(2));
+ 
+ 	hwmon_dev = devm_hwmon_device_register_with_groups(dev, client->name,
+ 							   data, lm80_groups);
+diff --git a/drivers/infiniband/sw/rxe/rxe_qp.c b/drivers/infiniband/sw/rxe/rxe_qp.c
+index 186da467060cc..5fa1442fd4f11 100644
+--- a/drivers/infiniband/sw/rxe/rxe_qp.c
++++ b/drivers/infiniband/sw/rxe/rxe_qp.c
+@@ -258,6 +258,7 @@ static int rxe_qp_init_req(struct rxe_dev *rxe, struct rxe_qp *qp,
+ 	if (err) {
+ 		vfree(qp->sq.queue->buf);
+ 		kfree(qp->sq.queue);
++		qp->sq.queue = NULL;
+ 		return err;
+ 	}
+ 
+@@ -315,6 +316,7 @@ static int rxe_qp_init_resp(struct rxe_dev *rxe, struct rxe_qp *qp,
+ 		if (err) {
+ 			vfree(qp->rq.queue->buf);
+ 			kfree(qp->rq.queue);
++			qp->rq.queue = NULL;
+ 			return err;
+ 		}
+ 	}
+@@ -374,6 +376,11 @@ int rxe_qp_from_init(struct rxe_dev *rxe, struct rxe_qp *qp, struct rxe_pd *pd,
+ err2:
+ 	rxe_queue_cleanup(qp->sq.queue);
+ err1:
++	qp->pd = NULL;
++	qp->rcq = NULL;
++	qp->scq = NULL;
++	qp->srq = NULL;
++
+ 	if (srq)
+ 		rxe_drop_ref(srq);
+ 	rxe_drop_ref(scq);
+diff --git a/drivers/leds/leds-lp5523.c b/drivers/leds/leds-lp5523.c
+index 44ceed7ac3c5b..7cebcd458943e 100644
+--- a/drivers/leds/leds-lp5523.c
++++ b/drivers/leds/leds-lp5523.c
+@@ -320,7 +320,7 @@ static int lp5523_init_program_engine(struct lp55xx_chip *chip)
+ 	usleep_range(3000, 6000);
+ 	ret = lp55xx_read(chip, LP5523_REG_STATUS, &status);
+ 	if (ret)
+-		return ret;
++		goto out;
+ 	status &= LP5523_ENG_STATUS_MASK;
+ 
+ 	if (status != LP5523_ENG_STATUS_MASK) {
+diff --git a/drivers/md/dm-snap.c b/drivers/md/dm-snap.c
+index c04d9f22d1607..6acdbec05f702 100644
+--- a/drivers/md/dm-snap.c
++++ b/drivers/md/dm-snap.c
+@@ -1264,6 +1264,7 @@ static int snapshot_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+ 
+ 	if (!s->store->chunk_size) {
+ 		ti->error = "Chunk size not set";
++		r = -EINVAL;
+ 		goto bad_read_metadata;
+ 	}
+ 
+diff --git a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_ethtool.c b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_ethtool.c
+index 63ebc491057b6..99fc0121da93d 100644
+--- a/drivers/net/ethernet/qlogic/qlcnic/qlcnic_ethtool.c
++++ b/drivers/net/ethernet/qlogic/qlcnic/qlcnic_ethtool.c
+@@ -1039,7 +1039,7 @@ int qlcnic_do_lb_test(struct qlcnic_adapter *adapter, u8 mode)
+ 	for (i = 0; i < QLCNIC_NUM_ILB_PKT; i++) {
+ 		skb = netdev_alloc_skb(adapter->netdev, QLCNIC_ILB_PKT_SIZE);
+ 		if (!skb)
+-			break;
++			goto error;
+ 		qlcnic_create_loopback_buff(skb->data, adapter->mac_addr);
+ 		skb_put(skb, QLCNIC_ILB_PKT_SIZE);
+ 		adapter->ahw->diag_cnt = 0;
+@@ -1063,6 +1063,7 @@ int qlcnic_do_lb_test(struct qlcnic_adapter *adapter, u8 mode)
+ 			cnt++;
+ 	}
+ 	if (cnt != i) {
++error:
+ 		dev_err(&adapter->pdev->dev,
+ 			"LB Test: failed, TX[%d], RX[%d]\n", i, cnt);
+ 		if (mode != QLCNIC_ILB_MODE)
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-sunxi.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-sunxi.c
+index fc1fa0f9f3387..fe4128405bbb7 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/dwmac-sunxi.c
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-sunxi.c
+@@ -39,7 +39,7 @@ struct sunxi_priv_data {
+ static int sun7i_gmac_init(struct platform_device *pdev, void *priv)
+ {
+ 	struct sunxi_priv_data *gmac = priv;
+-	int ret;
++	int ret = 0;
+ 
+ 	if (gmac->regulator) {
+ 		ret = regulator_enable(gmac->regulator);
+@@ -60,11 +60,11 @@ static int sun7i_gmac_init(struct platform_device *pdev, void *priv)
+ 	} else {
+ 		clk_set_rate(gmac->tx_clk, SUN7I_GMAC_MII_RATE);
+ 		ret = clk_prepare(gmac->tx_clk);
+-		if (ret)
+-			return ret;
++		if (ret && gmac->regulator)
++			regulator_disable(gmac->regulator);
+ 	}
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static void sun7i_gmac_exit(struct platform_device *pdev, void *priv)
+diff --git a/drivers/net/ethernet/sun/niu.c b/drivers/net/ethernet/sun/niu.c
+index 5bf47279f9c1b..306d5d08141ee 100644
+--- a/drivers/net/ethernet/sun/niu.c
++++ b/drivers/net/ethernet/sun/niu.c
+@@ -8166,10 +8166,10 @@ static int niu_pci_vpd_scan_props(struct niu *np, u32 start, u32 end)
+ 				     "VPD_SCAN: Reading in property [%s] len[%d]\n",
+ 				     namebuf, prop_len);
+ 			for (i = 0; i < prop_len; i++) {
+-				err = niu_pci_eeprom_read(np, off + i);
+-				if (err >= 0)
+-					*prop_buf = err;
+-				++prop_buf;
++				err =  niu_pci_eeprom_read(np, off + i);
++				if (err < 0)
++					return err;
++				*prop_buf++ = err;
+ 			}
+ 		}
+ 
+@@ -8180,14 +8180,14 @@ static int niu_pci_vpd_scan_props(struct niu *np, u32 start, u32 end)
+ }
+ 
+ /* ESPC_PIO_EN_ENABLE must be set */
+-static void niu_pci_vpd_fetch(struct niu *np, u32 start)
++static int niu_pci_vpd_fetch(struct niu *np, u32 start)
+ {
+ 	u32 offset;
+ 	int err;
+ 
+ 	err = niu_pci_eeprom_read16_swp(np, start + 1);
+ 	if (err < 0)
+-		return;
++		return err;
+ 
+ 	offset = err + 3;
+ 
+@@ -8196,12 +8196,14 @@ static void niu_pci_vpd_fetch(struct niu *np, u32 start)
+ 		u32 end;
+ 
+ 		err = niu_pci_eeprom_read(np, here);
++		if (err < 0)
++			return err;
+ 		if (err != 0x90)
+-			return;
++			return -EINVAL;
+ 
+ 		err = niu_pci_eeprom_read16_swp(np, here + 1);
+ 		if (err < 0)
+-			return;
++			return err;
+ 
+ 		here = start + offset + 3;
+ 		end = start + offset + err;
+@@ -8209,9 +8211,12 @@ static void niu_pci_vpd_fetch(struct niu *np, u32 start)
+ 		offset += err;
+ 
+ 		err = niu_pci_vpd_scan_props(np, here, end);
+-		if (err < 0 || err == 1)
+-			return;
++		if (err < 0)
++			return err;
++		if (err == 1)
++			return -EINVAL;
+ 	}
++	return 0;
+ }
+ 
+ /* ESPC_PIO_EN_ENABLE must be set */
+@@ -9304,8 +9309,11 @@ static int niu_get_invariants(struct niu *np)
+ 		offset = niu_pci_vpd_offset(np);
+ 		netif_printk(np, probe, KERN_DEBUG, np->dev,
+ 			     "%s() VPD offset [%08x]\n", __func__, offset);
+-		if (offset)
+-			niu_pci_vpd_fetch(np, offset);
++		if (offset) {
++			err = niu_pci_vpd_fetch(np, offset);
++			if (err < 0)
++				return err;
++		}
+ 		nw64(ESPC_PIO_EN, 0);
+ 
+ 		if (np->flags & NIU_FLAGS_VPD_VALID) {
+diff --git a/drivers/net/wireless/realtek/rtlwifi/base.c b/drivers/net/wireless/realtek/rtlwifi/base.c
+index 7de18ed10db8e..e1992de500b0d 100644
+--- a/drivers/net/wireless/realtek/rtlwifi/base.c
++++ b/drivers/net/wireless/realtek/rtlwifi/base.c
+@@ -454,9 +454,14 @@ static void _rtl_init_mac80211(struct ieee80211_hw *hw)
+ 	}
+ }
+ 
+-static void _rtl_init_deferred_work(struct ieee80211_hw *hw)
++static int _rtl_init_deferred_work(struct ieee80211_hw *hw)
+ {
+ 	struct rtl_priv *rtlpriv = rtl_priv(hw);
++	struct workqueue_struct *wq;
++
++	wq = alloc_workqueue("%s", 0, 0, rtlpriv->cfg->name);
++	if (!wq)
++		return -ENOMEM;
+ 
+ 	/* <1> timer */
+ 	setup_timer(&rtlpriv->works.watchdog_timer,
+@@ -465,11 +470,7 @@ static void _rtl_init_deferred_work(struct ieee80211_hw *hw)
+ 		    rtl_easy_concurrent_retrytimer_callback, (unsigned long)hw);
+ 	/* <2> work queue */
+ 	rtlpriv->works.hw = hw;
+-	rtlpriv->works.rtl_wq = alloc_workqueue("%s", 0, 0, rtlpriv->cfg->name);
+-	if (unlikely(!rtlpriv->works.rtl_wq)) {
+-		pr_err("Failed to allocate work queue\n");
+-		return;
+-	}
++	rtlpriv->works.rtl_wq = wq;
+ 
+ 	INIT_DELAYED_WORK(&rtlpriv->works.watchdog_wq,
+ 			  (void *)rtl_watchdog_wq_callback);
+@@ -481,7 +482,7 @@ static void _rtl_init_deferred_work(struct ieee80211_hw *hw)
+ 			  (void *)rtl_swlps_rfon_wq_callback);
+ 	INIT_DELAYED_WORK(&rtlpriv->works.fwevt_wq,
+ 			  (void *)rtl_fwevt_wq_callback);
+-
++	return 0;
+ }
+ 
+ void rtl_deinit_deferred_work(struct ieee80211_hw *hw)
+@@ -573,9 +574,7 @@ int rtl_init_core(struct ieee80211_hw *hw)
+ 	rtlmac->link_state = MAC80211_NOLINK;
+ 
+ 	/* <6> init deferred work */
+-	_rtl_init_deferred_work(hw);
+-
+-	return 0;
++	return _rtl_init_deferred_work(hw);
+ }
+ EXPORT_SYMBOL_GPL(rtl_init_core);
+ 
+diff --git a/drivers/rapidio/rio_cm.c b/drivers/rapidio/rio_cm.c
+index b29fc258eeba4..ab57a1eb519fc 100644
+--- a/drivers/rapidio/rio_cm.c
++++ b/drivers/rapidio/rio_cm.c
+@@ -2136,6 +2136,14 @@ static int riocm_add_mport(struct device *dev,
+ 		return -ENODEV;
+ 	}
+ 
++	cm->rx_wq = create_workqueue(DRV_NAME "/rxq");
++	if (!cm->rx_wq) {
++		rio_release_inb_mbox(mport, cmbox);
++		rio_release_outb_mbox(mport, cmbox);
++		kfree(cm);
++		return -ENOMEM;
++	}
++
+ 	/*
+ 	 * Allocate and register inbound messaging buffers to be ready
+ 	 * to receive channel and system management requests
+@@ -2146,15 +2154,6 @@ static int riocm_add_mport(struct device *dev,
+ 	cm->rx_slots = RIOCM_RX_RING_SIZE;
+ 	mutex_init(&cm->rx_lock);
+ 	riocm_rx_fill(cm, RIOCM_RX_RING_SIZE);
+-	cm->rx_wq = create_workqueue(DRV_NAME "/rxq");
+-	if (!cm->rx_wq) {
+-		riocm_error("failed to allocate IBMBOX_%d on %s",
+-			    cmbox, mport->name);
+-		rio_release_outb_mbox(mport, cmbox);
+-		kfree(cm);
+-		return -ENOMEM;
+-	}
+-
+ 	INIT_WORK(&cm->rx_work, rio_ibmsg_handler);
+ 
+ 	cm->tx_slot = 0;
+diff --git a/drivers/scsi/qla2xxx/qla_nx.c b/drivers/scsi/qla2xxx/qla_nx.c
+index 104e13ae34288..9ec18463b4523 100644
+--- a/drivers/scsi/qla2xxx/qla_nx.c
++++ b/drivers/scsi/qla2xxx/qla_nx.c
+@@ -1102,7 +1102,8 @@ qla82xx_write_flash_dword(struct qla_hw_data *ha, uint32_t flashaddr,
+ 		return ret;
+ 	}
+ 
+-	if (qla82xx_flash_set_write_enable(ha))
++	ret = qla82xx_flash_set_write_enable(ha);
++	if (ret < 0)
+ 		goto done_write;
+ 
+ 	qla82xx_wr_32(ha, QLA82XX_ROMUSB_ROM_WDATA, data);
+diff --git a/drivers/staging/iio/light/tsl2583.c b/drivers/staging/iio/light/tsl2583.c
+index 08f1583ee34e9..fb3ec56d45b61 100644
+--- a/drivers/staging/iio/light/tsl2583.c
++++ b/drivers/staging/iio/light/tsl2583.c
+@@ -382,6 +382,15 @@ static int taos_als_calibrate(struct iio_dev *indio_dev)
+ 		dev_err(&chip->client->dev, "taos_als_calibrate failed to get lux\n");
+ 		return lux_val;
+ 	}
++
++	/* Avoid division by zero of lux_value later on */
++	if (lux_val == 0) {
++		dev_err(&chip->client->dev,
++			"%s: lux_val of 0 will produce out of range trim_value\n",
++			__func__);
++		return -ENODATA;
++	}
++
+ 	gain_trim_val = (unsigned int)(((chip->taos_settings.als_cal_target)
+ 			* chip->taos_settings.als_gain_trim) / lux_val);
+ 
+diff --git a/drivers/tty/vt/vt.c b/drivers/tty/vt/vt.c
+index 2fa7527b1230e..8c74d9ebfc502 100644
+--- a/drivers/tty/vt/vt.c
++++ b/drivers/tty/vt/vt.c
+@@ -838,7 +838,7 @@ static inline int resize_screen(struct vc_data *vc, int width, int height,
+ 	/* Resizes the resolution of the display adapater */
+ 	int err = 0;
+ 
+-	if (vc->vc_mode != KD_GRAPHICS && vc->vc_sw->con_resize)
++	if (vc->vc_sw->con_resize)
+ 		err = vc->vc_sw->con_resize(vc, width, height, user);
+ 
+ 	return err;
+diff --git a/drivers/tty/vt/vt_ioctl.c b/drivers/tty/vt/vt_ioctl.c
+index 275ec49b30b9f..9206fd2489353 100644
+--- a/drivers/tty/vt/vt_ioctl.c
++++ b/drivers/tty/vt/vt_ioctl.c
+@@ -898,17 +898,17 @@ int vt_ioctl(struct tty_struct *tty,
+ 			if (vcp) {
+ 				int ret;
+ 				int save_scan_lines = vcp->vc_scan_lines;
+-				int save_font_height = vcp->vc_font.height;
++				int save_cell_height = vcp->vc_cell_height;
+ 
+ 				if (v.v_vlin)
+ 					vcp->vc_scan_lines = v.v_vlin;
+ 				if (v.v_clin)
+-					vcp->vc_font.height = v.v_clin;
++					vcp->vc_cell_height = v.v_clin;
+ 				vcp->vc_resize_user = 1;
+ 				ret = vc_resize(vcp, v.v_cols, v.v_rows);
+ 				if (ret) {
+ 					vcp->vc_scan_lines = save_scan_lines;
+-					vcp->vc_font.height = save_font_height;
++					vcp->vc_cell_height = save_cell_height;
+ 					console_unlock();
+ 					return ret;
+ 				}
+diff --git a/drivers/video/console/fbcon.c b/drivers/video/console/fbcon.c
+index 44df6f6fd0636..510bc3f51dccf 100644
+--- a/drivers/video/console/fbcon.c
++++ b/drivers/video/console/fbcon.c
+@@ -1986,7 +1986,7 @@ static int fbcon_resize(struct vc_data *vc, unsigned int width,
+ 			return -EINVAL;
+ 
+ 		DPRINTK("resize now %ix%i\n", var.xres, var.yres);
+-		if (con_is_visible(vc)) {
++		if (con_is_visible(vc) && vc->vc_mode == KD_TEXT) {
+ 			var.activate = FB_ACTIVATE_NOW |
+ 				FB_ACTIVATE_FORCE;
+ 			fb_set_var(info, &var);
+diff --git a/drivers/video/console/vgacon.c b/drivers/video/console/vgacon.c
+index b38ee2354cbfa..cb9b879631293 100644
+--- a/drivers/video/console/vgacon.c
++++ b/drivers/video/console/vgacon.c
+@@ -434,7 +434,7 @@ static void vgacon_init(struct vc_data *c, int init)
+ 		vc_resize(c, vga_video_num_columns, vga_video_num_lines);
+ 
+ 	c->vc_scan_lines = vga_scan_lines;
+-	c->vc_font.height = vga_video_font_height;
++	c->vc_font.height = c->vc_cell_height = vga_video_font_height;
+ 	c->vc_complement_mask = 0x7700;
+ 	if (vga_512_chars)
+ 		c->vc_hi_font_mask = 0x0800;
+@@ -572,32 +572,32 @@ static void vgacon_cursor(struct vc_data *c, int mode)
+ 		switch (c->vc_cursor_type & 0x0f) {
+ 		case CUR_UNDERLINE:
+ 			vgacon_set_cursor_size(c->vc_x,
+-					       c->vc_font.height -
+-					       (c->vc_font.height <
++					       c->vc_cell_height -
++					       (c->vc_cell_height <
+ 						10 ? 2 : 3),
+-					       c->vc_font.height -
+-					       (c->vc_font.height <
++					       c->vc_cell_height -
++					       (c->vc_cell_height <
+ 						10 ? 1 : 2));
+ 			break;
+ 		case CUR_TWO_THIRDS:
+ 			vgacon_set_cursor_size(c->vc_x,
+-					       c->vc_font.height / 3,
+-					       c->vc_font.height -
+-					       (c->vc_font.height <
++					       c->vc_cell_height / 3,
++					       c->vc_cell_height -
++					       (c->vc_cell_height <
+ 						10 ? 1 : 2));
+ 			break;
+ 		case CUR_LOWER_THIRD:
+ 			vgacon_set_cursor_size(c->vc_x,
+-					       (c->vc_font.height * 2) / 3,
+-					       c->vc_font.height -
+-					       (c->vc_font.height <
++					       (c->vc_cell_height * 2) / 3,
++					       c->vc_cell_height -
++					       (c->vc_cell_height <
+ 						10 ? 1 : 2));
+ 			break;
+ 		case CUR_LOWER_HALF:
+ 			vgacon_set_cursor_size(c->vc_x,
+-					       c->vc_font.height / 2,
+-					       c->vc_font.height -
+-					       (c->vc_font.height <
++					       c->vc_cell_height / 2,
++					       c->vc_cell_height -
++					       (c->vc_cell_height <
+ 						10 ? 1 : 2));
+ 			break;
+ 		case CUR_NONE:
+@@ -608,7 +608,7 @@ static void vgacon_cursor(struct vc_data *c, int mode)
+ 			break;
+ 		default:
+ 			vgacon_set_cursor_size(c->vc_x, 1,
+-					       c->vc_font.height);
++					       c->vc_cell_height);
+ 			break;
+ 		}
+ 		break;
+@@ -619,13 +619,13 @@ static int vgacon_doresize(struct vc_data *c,
+ 		unsigned int width, unsigned int height)
+ {
+ 	unsigned long flags;
+-	unsigned int scanlines = height * c->vc_font.height;
++	unsigned int scanlines = height * c->vc_cell_height;
+ 	u8 scanlines_lo = 0, r7 = 0, vsync_end = 0, mode, max_scan;
+ 
+ 	raw_spin_lock_irqsave(&vga_lock, flags);
+ 
+ 	vgacon_xres = width * VGA_FONTWIDTH;
+-	vgacon_yres = height * c->vc_font.height;
++	vgacon_yres = height * c->vc_cell_height;
+ 	if (vga_video_type >= VIDEO_TYPE_VGAC) {
+ 		outb_p(VGA_CRTC_MAX_SCAN, vga_video_port_reg);
+ 		max_scan = inb_p(vga_video_port_val);
+@@ -680,9 +680,9 @@ static int vgacon_doresize(struct vc_data *c,
+ static int vgacon_switch(struct vc_data *c)
+ {
+ 	int x = c->vc_cols * VGA_FONTWIDTH;
+-	int y = c->vc_rows * c->vc_font.height;
++	int y = c->vc_rows * c->vc_cell_height;
+ 	int rows = screen_info.orig_video_lines * vga_default_font_height/
+-		c->vc_font.height;
++		c->vc_cell_height;
+ 	/*
+ 	 * We need to save screen size here as it's the only way
+ 	 * we can spot the screen has been resized and we need to
+@@ -1120,7 +1120,7 @@ static int vgacon_adjust_height(struct vc_data *vc, unsigned fontheight)
+ 				cursor_size_lastto = 0;
+ 				c->vc_sw->con_cursor(c, CM_DRAW);
+ 			}
+-			c->vc_font.height = fontheight;
++			c->vc_font.height = c->vc_cell_height = fontheight;
+ 			vc_resize(c, 0, rows);	/* Adjust console size */
+ 		}
+ 	}
+@@ -1174,12 +1174,20 @@ static int vgacon_resize(struct vc_data *c, unsigned int width,
+ 	if ((width << 1) * height > vga_vram_size)
+ 		return -EINVAL;
+ 
++	if (user) {
++		/*
++		 * Ho ho!  Someone (svgatextmode, eh?) may have reprogrammed
++		 * the video mode!  Set the new defaults then and go away.
++		 */
++		screen_info.orig_video_cols = width;
++		screen_info.orig_video_lines = height;
++		vga_default_font_height = c->vc_cell_height;
++		return 0;
++	}
+ 	if (width % 2 || width > screen_info.orig_video_cols ||
+ 	    height > (screen_info.orig_video_lines * vga_default_font_height)/
+-	    c->vc_font.height)
+-		/* let svgatextmode tinker with video timings and
+-		   return success */
+-		return (user) ? 0 : -EINVAL;
++	    c->vc_cell_height)
++		return -EINVAL;
+ 
+ 	if (con_is_visible(c) && !vga_is_gfx) /* who knows */
+ 		vgacon_doresize(c, width, height);
+diff --git a/drivers/video/fbdev/hgafb.c b/drivers/video/fbdev/hgafb.c
+index 59e1cae579481..03c0b1b8747b9 100644
+--- a/drivers/video/fbdev/hgafb.c
++++ b/drivers/video/fbdev/hgafb.c
+@@ -286,7 +286,7 @@ static int hga_card_detect(void)
+ 
+ 	hga_vram = ioremap(0xb0000, hga_vram_len);
+ 	if (!hga_vram)
+-		goto error;
++		return -ENOMEM;
+ 
+ 	if (request_region(0x3b0, 12, "hgafb"))
+ 		release_io_ports = 1;
+@@ -346,13 +346,18 @@ static int hga_card_detect(void)
+ 			hga_type_name = "Hercules";
+ 			break;
+ 	}
+-	return 1;
++	return 0;
+ error:
+ 	if (release_io_ports)
+ 		release_region(0x3b0, 12);
+ 	if (release_io_port)
+ 		release_region(0x3bf, 1);
+-	return 0;
++
++	iounmap(hga_vram);
++
++	pr_err("hgafb: HGA card not detected.\n");
++
++	return -EINVAL;
+ }
+ 
+ /**
+@@ -550,13 +555,11 @@ static struct fb_ops hgafb_ops = {
+ static int hgafb_probe(struct platform_device *pdev)
+ {
+ 	struct fb_info *info;
++	int ret;
+ 
+-	if (! hga_card_detect()) {
+-		printk(KERN_INFO "hgafb: HGA card not detected.\n");
+-		if (hga_vram)
+-			iounmap(hga_vram);
+-		return -EINVAL;
+-	}
++	ret = hga_card_detect();
++	if (ret)
++		return ret;
+ 
+ 	printk(KERN_INFO "hgafb: %s with %ldK of memory detected.\n",
+ 		hga_type_name, hga_vram_len/1024);
+diff --git a/drivers/video/fbdev/imsttfb.c b/drivers/video/fbdev/imsttfb.c
+index 4ef9dc94e8138..4363c64d74e8c 100644
+--- a/drivers/video/fbdev/imsttfb.c
++++ b/drivers/video/fbdev/imsttfb.c
+@@ -1516,11 +1516,6 @@ static int imsttfb_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	info->fix.smem_start = addr;
+ 	info->screen_base = (__u8 *)ioremap(addr, par->ramdac == IBM ?
+ 					    0x400000 : 0x800000);
+-	if (!info->screen_base) {
+-		release_mem_region(addr, size);
+-		framebuffer_release(info);
+-		return -ENOMEM;
+-	}
+ 	info->fix.mmio_start = addr + 0x800000;
+ 	par->dc_regs = ioremap(addr + 0x800000, 0x1000);
+ 	par->cmap_regs_phys = addr + 0x840000;
+diff --git a/drivers/xen/xen-pciback/xenbus.c b/drivers/xen/xen-pciback/xenbus.c
+index 36ec99cff507b..2912905331020 100644
+--- a/drivers/xen/xen-pciback/xenbus.c
++++ b/drivers/xen/xen-pciback/xenbus.c
+@@ -357,7 +357,8 @@ out:
+ 	return err;
+ }
+ 
+-static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev)
++static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev,
++				 enum xenbus_state state)
+ {
+ 	int err = 0;
+ 	int num_devs;
+@@ -371,9 +372,7 @@ static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev)
+ 	dev_dbg(&pdev->xdev->dev, "Reconfiguring device ...\n");
+ 
+ 	mutex_lock(&pdev->dev_lock);
+-	/* Make sure we only reconfigure once */
+-	if (xenbus_read_driver_state(pdev->xdev->nodename) !=
+-	    XenbusStateReconfiguring)
++	if (xenbus_read_driver_state(pdev->xdev->nodename) != state)
+ 		goto out;
+ 
+ 	err = xenbus_scanf(XBT_NIL, pdev->xdev->nodename, "num_devs", "%d",
+@@ -500,6 +499,10 @@ static int xen_pcibk_reconfigure(struct xen_pcibk_device *pdev)
+ 		}
+ 	}
+ 
++	if (state != XenbusStateReconfiguring)
++		/* Make sure we only reconfigure once. */
++		goto out;
++
+ 	err = xenbus_switch_state(pdev->xdev, XenbusStateReconfigured);
+ 	if (err) {
+ 		xenbus_dev_fatal(pdev->xdev, err,
+@@ -525,7 +528,7 @@ static void xen_pcibk_frontend_changed(struct xenbus_device *xdev,
+ 		break;
+ 
+ 	case XenbusStateReconfiguring:
+-		xen_pcibk_reconfigure(pdev);
++		xen_pcibk_reconfigure(pdev, XenbusStateReconfiguring);
+ 		break;
+ 
+ 	case XenbusStateConnected:
+@@ -664,6 +667,15 @@ static void xen_pcibk_be_watch(struct xenbus_watch *watch,
+ 		xen_pcibk_setup_backend(pdev);
+ 		break;
+ 
++	case XenbusStateInitialised:
++		/*
++		 * We typically move to Initialised when the first device was
++		 * added. Hence subsequent devices getting added may need
++		 * reconfiguring.
++		 */
++		xen_pcibk_reconfigure(pdev, XenbusStateInitialised);
++		break;
++
+ 	default:
+ 		break;
+ 	}
+diff --git a/fs/cifs/smb2ops.c b/fs/cifs/smb2ops.c
+index 67edd6e03f803..fffba1b1da2e4 100644
+--- a/fs/cifs/smb2ops.c
++++ b/fs/cifs/smb2ops.c
+@@ -629,6 +629,8 @@ smb2_clone_range(const unsigned int xid,
+ 			cpu_to_le32(min_t(u32, len, tcon->max_bytes_chunk));
+ 
+ 		/* Request server copy to target from src identified by key */
++		kfree(retbuf);
++		retbuf = NULL;
+ 		rc = SMB2_ioctl(xid, tcon, trgtfile->fid.persistent_fid,
+ 			trgtfile->fid.volatile_fid, FSCTL_SRV_COPYCHUNK_WRITE,
+ 			true /* is_fsctl */, (char *)pcchunk,
+diff --git a/fs/ecryptfs/crypto.c b/fs/ecryptfs/crypto.c
+index ff6cf23be8a21..cb77e7ee2c9f0 100644
+--- a/fs/ecryptfs/crypto.c
++++ b/fs/ecryptfs/crypto.c
+@@ -339,10 +339,8 @@ static int crypt_scatterlist(struct ecryptfs_crypt_stat *crypt_stat,
+ 	struct extent_crypt_result ecr;
+ 	int rc = 0;
+ 
+-	if (!crypt_stat || !crypt_stat->tfm
+-	       || !(crypt_stat->flags & ECRYPTFS_STRUCT_INITIALIZED))
+-		return -EINVAL;
+-
++	BUG_ON(!crypt_stat || !crypt_stat->tfm
++	       || !(crypt_stat->flags & ECRYPTFS_STRUCT_INITIALIZED));
+ 	if (unlikely(ecryptfs_verbosity > 0)) {
+ 		ecryptfs_printk(KERN_DEBUG, "Key size [%zd]; key:\n",
+ 				crypt_stat->key_size);
+diff --git a/include/linux/console_struct.h b/include/linux/console_struct.h
+index 6fd3c908a340d..a30112ba06e44 100644
+--- a/include/linux/console_struct.h
++++ b/include/linux/console_struct.h
+@@ -61,6 +61,7 @@ struct vc_data {
+ 	unsigned int	vc_rows;
+ 	unsigned int	vc_size_row;		/* Bytes per row */
+ 	unsigned int	vc_scan_lines;		/* # of scan lines */
++	unsigned int	vc_cell_height;		/* CRTC character cell height */
+ 	unsigned long	vc_origin;		/* [!] Start of real screen */
+ 	unsigned long	vc_scr_end;		/* [!] End of real screen */
+ 	unsigned long	vc_visible_origin;	/* [!] Top of visible window */
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index ea3370e205fb9..4f10223bc7b0f 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -159,6 +159,21 @@ void __ptrace_unlink(struct task_struct *child)
+ 	spin_unlock(&child->sighand->siglock);
+ }
+ 
++static bool looks_like_a_spurious_pid(struct task_struct *task)
++{
++	if (task->exit_code != ((PTRACE_EVENT_EXEC << 8) | SIGTRAP))
++		return false;
++
++	if (task_pid_vnr(task) == task->ptrace_message)
++		return false;
++	/*
++	 * The tracee changed its pid but the PTRACE_EVENT_EXEC event
++	 * was not wait()'ed, most probably debugger targets the old
++	 * leader which was destroyed in de_thread().
++	 */
++	return true;
++}
++
+ /* Ensure that nothing can wake it up, even SIGKILL */
+ static bool ptrace_freeze_traced(struct task_struct *task)
+ {
+@@ -169,7 +184,8 @@ static bool ptrace_freeze_traced(struct task_struct *task)
+ 		return ret;
+ 
+ 	spin_lock_irq(&task->sighand->siglock);
+-	if (task_is_traced(task) && !__fatal_signal_pending(task)) {
++	if (task_is_traced(task) && !looks_like_a_spurious_pid(task) &&
++	    !__fatal_signal_pending(task)) {
+ 		task->state = __TASK_TRACED;
+ 		ret = true;
+ 	}
+diff --git a/net/bluetooth/smp.c b/net/bluetooth/smp.c
+index 6670b7ffc2005..cedfce6f397ed 100644
+--- a/net/bluetooth/smp.c
++++ b/net/bluetooth/smp.c
+@@ -2636,6 +2636,15 @@ static int smp_cmd_public_key(struct l2cap_conn *conn, struct sk_buff *skb)
+ 	if (skb->len < sizeof(*key))
+ 		return SMP_INVALID_PARAMS;
+ 
++	/* Check if remote and local public keys are the same and debug key is
++	 * not in use.
++	 */
++	if (!test_bit(SMP_FLAG_DEBUG_KEY, &smp->flags) &&
++	    !crypto_memneq(key, smp->local_pk, 64)) {
++		bt_dev_err(hdev, "Remote and local public keys are identical");
++		return SMP_UNSPECIFIED;
++	}
++
+ 	memcpy(smp->remote_pk, key, 64);
+ 
+ 	if (test_bit(SMP_FLAG_REMOTE_OOB, &smp->flags)) {
+diff --git a/sound/firewire/Kconfig b/sound/firewire/Kconfig
+index 8557e54d26598..f7b8dcb578157 100644
+--- a/sound/firewire/Kconfig
++++ b/sound/firewire/Kconfig
+@@ -36,7 +36,7 @@ config SND_OXFW
+ 	   * Mackie(Loud) Onyx-i series (former models)
+ 	   * Mackie(Loud) Onyx Satellite
+ 	   * Mackie(Loud) Tapco Link.Firewire
+-	   * Mackie(Loud) d.2 pro/d.4 pro
++	   * Mackie(Loud) d.4 pro
+ 	   * Mackie(Loud) U.420/U.420d
+ 	   * TASCAM FireOne
+ 	   * Stanton Controllers & Systems 1 Deck/Mixer
+@@ -82,7 +82,7 @@ config SND_BEBOB
+ 	  * PreSonus FIREBOX/FIREPOD/FP10/Inspire1394
+ 	  * BridgeCo RDAudio1/Audio5
+ 	  * Mackie Onyx 1220/1620/1640 (FireWire I/O Card)
+-	  * Mackie d.2 (FireWire Option)
++	  * Mackie d.2 (FireWire Option) and d.2 Pro
+ 	  * Stanton FinalScratch 2 (ScratchAmp)
+ 	  * Tascam IF-FW/DM
+ 	  * Behringer XENIX UFX 1204/1604
+diff --git a/sound/firewire/bebob/bebob.c b/sound/firewire/bebob/bebob.c
+index a205b93fd9ac8..9d620a7c283f4 100644
+--- a/sound/firewire/bebob/bebob.c
++++ b/sound/firewire/bebob/bebob.c
+@@ -414,7 +414,7 @@ static const struct ieee1394_device_id bebob_id_table[] = {
+ 	SND_BEBOB_DEV_ENTRY(VEN_BRIDGECO, 0x00010049, &spec_normal),
+ 	/* Mackie, Onyx 1220/1620/1640 (Firewire I/O Card) */
+ 	SND_BEBOB_DEV_ENTRY(VEN_MACKIE2, 0x00010065, &spec_normal),
+-	/* Mackie, d.2 (Firewire Option) */
++	// Mackie, d.2 (Firewire option card) and d.2 Pro (the card is built-in).
+ 	SND_BEBOB_DEV_ENTRY(VEN_MACKIE1, 0x00010067, &spec_normal),
+ 	/* Stanton, ScratchAmp */
+ 	SND_BEBOB_DEV_ENTRY(VEN_STANTON, 0x00000001, &spec_normal),
+diff --git a/sound/firewire/oxfw/oxfw.c b/sound/firewire/oxfw/oxfw.c
+index a7ab34d5e7b08..44ecf2f5f65fd 100644
+--- a/sound/firewire/oxfw/oxfw.c
++++ b/sound/firewire/oxfw/oxfw.c
+@@ -405,7 +405,6 @@ static const struct ieee1394_device_id oxfw_id_table[] = {
+ 	 *  Onyx-i series (former models):	0x081216
+ 	 *  Mackie Onyx Satellite:		0x00200f
+ 	 *  Tapco LINK.firewire 4x6:		0x000460
+-	 *  d.2 pro:				Unknown
+ 	 *  d.4 pro:				Unknown
+ 	 *  U.420:				Unknown
+ 	 *  U.420d:				Unknown
+diff --git a/sound/isa/sb/sb8.c b/sound/isa/sb/sb8.c
+index e75bfc511e3e8..ad42d2364199f 100644
+--- a/sound/isa/sb/sb8.c
++++ b/sound/isa/sb/sb8.c
+@@ -111,10 +111,6 @@ static int snd_sb8_probe(struct device *pdev, unsigned int dev)
+ 
+ 	/* block the 0x388 port to avoid PnP conflicts */
+ 	acard->fm_res = request_region(0x388, 4, "SoundBlaster FM");
+-	if (!acard->fm_res) {
+-		err = -EBUSY;
+-		goto _err;
+-	}
+ 
+ 	if (port[dev] != SNDRV_AUTO_PORT) {
+ 		if ((err = snd_sbdsp_create(card, port[dev], irq[dev],
+diff --git a/sound/usb/line6/driver.c b/sound/usb/line6/driver.c
+index ea3a9bd05e687..0107bbfeb17d1 100644
+--- a/sound/usb/line6/driver.c
++++ b/sound/usb/line6/driver.c
+@@ -687,6 +687,10 @@ static int line6_init_cap_control(struct usb_line6 *line6)
+ 		line6->buffer_message = kmalloc(LINE6_MIDI_MESSAGE_MAXLEN, GFP_KERNEL);
+ 		if (!line6->buffer_message)
+ 			return -ENOMEM;
++
++		ret = line6_init_midi(line6);
++		if (ret < 0)
++			return ret;
+ 	} else {
+ 		ret = line6_hwdep_init(line6);
+ 		if (ret < 0)
+diff --git a/sound/usb/line6/pod.c b/sound/usb/line6/pod.c
+index 17aa616e61f53..aaa192aee883e 100644
+--- a/sound/usb/line6/pod.c
++++ b/sound/usb/line6/pod.c
+@@ -421,11 +421,6 @@ static int pod_init(struct usb_line6 *line6,
+ 	if (err < 0)
+ 		return err;
+ 
+-	/* initialize MIDI subsystem: */
+-	err = line6_init_midi(line6);
+-	if (err < 0)
+-		return err;
+-
+ 	/* initialize PCM subsystem: */
+ 	err = line6_init_pcm(line6, &pod_pcm_properties);
+ 	if (err < 0)
+diff --git a/sound/usb/line6/variax.c b/sound/usb/line6/variax.c
+index 0c4512d0382ea..a911cff0cec86 100644
+--- a/sound/usb/line6/variax.c
++++ b/sound/usb/line6/variax.c
+@@ -217,7 +217,6 @@ static int variax_init(struct usb_line6 *line6,
+ 		       const struct usb_device_id *id)
+ {
+ 	struct usb_line6_variax *variax = (struct usb_line6_variax *) line6;
+-	int err;
+ 
+ 	line6->process_message = line6_variax_process_message;
+ 	line6->disconnect = line6_variax_disconnect;
+@@ -233,11 +232,6 @@ static int variax_init(struct usb_line6 *line6,
+ 	if (variax->buffer_activate == NULL)
+ 		return -ENOMEM;
+ 
+-	/* initialize MIDI subsystem: */
+-	err = line6_init_midi(&variax->line6);
+-	if (err < 0)
+-		return err;
+-
+ 	/* initiate startup procedure: */
+ 	variax_startup1(variax);
+ 	return 0;
+diff --git a/sound/usb/midi.c b/sound/usb/midi.c
+index ea264727fdf7b..f0b41fee71304 100644
+--- a/sound/usb/midi.c
++++ b/sound/usb/midi.c
+@@ -1867,8 +1867,12 @@ static int snd_usbmidi_get_ms_info(struct snd_usb_midi *umidi,
+ 		ms_ep = find_usb_ms_endpoint_descriptor(hostep);
+ 		if (!ms_ep)
+ 			continue;
++		if (ms_ep->bLength <= sizeof(*ms_ep))
++			continue;
+ 		if (ms_ep->bNumEmbMIDIJack > 0x10)
+ 			continue;
++		if (ms_ep->bLength < sizeof(*ms_ep) + ms_ep->bNumEmbMIDIJack)
++			continue;
+ 		if (usb_endpoint_dir_out(ep)) {
+ 			if (endpoints[epidx].out_ep) {
+ 				if (++epidx >= MIDI_MAX_ENDPOINTS) {
