@@ -1,0 +1,303 @@
+diff --git a/Makefile b/Makefile
+index b5afdb8a75219..1ec880bcdb2d6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 295
++SUBLEVEL = 296
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/drivers/hid/Kconfig b/drivers/hid/Kconfig
+index 2d2422705ccf7..da9813f09d7d7 100644
+--- a/drivers/hid/Kconfig
++++ b/drivers/hid/Kconfig
+@@ -136,6 +136,7 @@ config HID_APPLEIR
+ 
+ config HID_ASUS
+ 	tristate "Asus"
++	depends on USB_HID
+ 	depends on I2C_HID
+ 	---help---
+ 	Support for Asus notebook built-in keyboard via i2c.
+diff --git a/drivers/input/joystick/spaceball.c b/drivers/input/joystick/spaceball.c
+index f4445a4e8d6a5..cfa1be4ad8689 100644
+--- a/drivers/input/joystick/spaceball.c
++++ b/drivers/input/joystick/spaceball.c
+@@ -35,6 +35,7 @@
+ #include <linux/module.h>
+ #include <linux/input.h>
+ #include <linux/serio.h>
++#include <asm/unaligned.h>
+ 
+ #define DRIVER_DESC	"SpaceTec SpaceBall 2003/3003/4000 FLX driver"
+ 
+@@ -91,9 +92,15 @@ static void spaceball_process_packet(struct spaceball* spaceball)
+ 
+ 		case 'D':					/* Ball data */
+ 			if (spaceball->idx != 15) return;
+-			for (i = 0; i < 6; i++)
++			/*
++			 * Skip first three bytes; read six axes worth of data.
++			 * Axis values are signed 16-bit big-endian.
++			 */
++			data += 3;
++			for (i = 0; i < ARRAY_SIZE(spaceball_axes); i++) {
+ 				input_report_abs(dev, spaceball_axes[i],
+-					(__s16)((data[2 * i + 3] << 8) | data[2 * i + 2]));
++					(__s16)get_unaligned_be16(&data[i * 2]));
++			}
+ 			break;
+ 
+ 		case 'K':					/* Button data */
+diff --git a/drivers/input/mouse/appletouch.c b/drivers/input/mouse/appletouch.c
+index ef234c9b2f2f5..11773838a34d4 100644
+--- a/drivers/input/mouse/appletouch.c
++++ b/drivers/input/mouse/appletouch.c
+@@ -929,6 +929,8 @@ static int atp_probe(struct usb_interface *iface,
+ 	set_bit(BTN_TOOL_TRIPLETAP, input_dev->keybit);
+ 	set_bit(BTN_LEFT, input_dev->keybit);
+ 
++	INIT_WORK(&dev->work, atp_reinit);
++
+ 	error = input_register_device(dev->input);
+ 	if (error)
+ 		goto err_free_buffer;
+@@ -936,8 +938,6 @@ static int atp_probe(struct usb_interface *iface,
+ 	/* save our data pointer in this interface device */
+ 	usb_set_intfdata(iface, dev);
+ 
+-	INIT_WORK(&dev->work, atp_reinit);
+-
+ 	return 0;
+ 
+  err_free_buffer:
+diff --git a/drivers/net/ethernet/freescale/fman/fman_port.c b/drivers/net/ethernet/freescale/fman/fman_port.c
+index 4986f6ba278a3..45ac5cf717ea8 100644
+--- a/drivers/net/ethernet/freescale/fman/fman_port.c
++++ b/drivers/net/ethernet/freescale/fman/fman_port.c
+@@ -1658,7 +1658,7 @@ static int fman_port_probe(struct platform_device *of_dev)
+ 	fman = dev_get_drvdata(&fm_pdev->dev);
+ 	if (!fman) {
+ 		err = -EINVAL;
+-		goto return_err;
++		goto put_device;
+ 	}
+ 
+ 	err = of_property_read_u32(port_node, "cell-index", &val);
+@@ -1666,7 +1666,7 @@ static int fman_port_probe(struct platform_device *of_dev)
+ 		dev_err(port->dev, "%s: reading cell-index for %s failed\n",
+ 			__func__, port_node->full_name);
+ 		err = -EINVAL;
+-		goto return_err;
++		goto put_device;
+ 	}
+ 	port_id = (u8)val;
+ 	port->dts_params.id = port_id;
+@@ -1700,7 +1700,7 @@ static int fman_port_probe(struct platform_device *of_dev)
+ 	}  else {
+ 		dev_err(port->dev, "%s: Illegal port type\n", __func__);
+ 		err = -EINVAL;
+-		goto return_err;
++		goto put_device;
+ 	}
+ 
+ 	port->dts_params.type = port_type;
+@@ -1714,7 +1714,7 @@ static int fman_port_probe(struct platform_device *of_dev)
+ 			dev_err(port->dev, "%s: incorrect qman-channel-id\n",
+ 				__func__);
+ 			err = -EINVAL;
+-			goto return_err;
++			goto put_device;
+ 		}
+ 		port->dts_params.qman_channel_id = qman_channel_id;
+ 	}
+@@ -1724,7 +1724,7 @@ static int fman_port_probe(struct platform_device *of_dev)
+ 		dev_err(port->dev, "%s: of_address_to_resource() failed\n",
+ 			__func__);
+ 		err = -ENOMEM;
+-		goto return_err;
++		goto put_device;
+ 	}
+ 
+ 	port->dts_params.fman = fman;
+@@ -1749,6 +1749,8 @@ static int fman_port_probe(struct platform_device *of_dev)
+ 
+ 	return 0;
+ 
++put_device:
++	put_device(&fm_pdev->dev);
+ return_err:
+ 	of_node_put(port_node);
+ free_port:
+diff --git a/drivers/platform/x86/apple-gmux.c b/drivers/platform/x86/apple-gmux.c
+index a66be137324c0..76f5703bc4f65 100644
+--- a/drivers/platform/x86/apple-gmux.c
++++ b/drivers/platform/x86/apple-gmux.c
+@@ -628,7 +628,7 @@ static int gmux_probe(struct pnp_dev *pnp, const struct pnp_device_id *id)
+ 	}
+ 
+ 	gmux_data->iostart = res->start;
+-	gmux_data->iolen = res->end - res->start;
++	gmux_data->iolen = resource_size(res);
+ 
+ 	if (gmux_data->iolen < GMUX_MIN_IO_LEN) {
+ 		pr_err("gmux I/O region too small (%lu < %u)\n",
+diff --git a/drivers/scsi/vmw_pvscsi.c b/drivers/scsi/vmw_pvscsi.c
+index 4d2172c115c6e..90057c31d01c6 100644
+--- a/drivers/scsi/vmw_pvscsi.c
++++ b/drivers/scsi/vmw_pvscsi.c
+@@ -581,9 +581,12 @@ static void pvscsi_complete_request(struct pvscsi_adapter *adapter,
+ 			 * Commands like INQUIRY may transfer less data than
+ 			 * requested by the initiator via bufflen. Set residual
+ 			 * count to make upper layer aware of the actual amount
+-			 * of data returned.
++			 * of data returned. There are cases when controller
++			 * returns zero dataLen with non zero data - do not set
++			 * residual count in that case.
+ 			 */
+-			scsi_set_resid(cmd, scsi_bufflen(cmd) - e->dataLen);
++			if (e->dataLen && (e->dataLen < scsi_bufflen(cmd)))
++				scsi_set_resid(cmd, scsi_bufflen(cmd) - e->dataLen);
+ 			cmd->result = (DID_OK << 16);
+ 			break;
+ 
+diff --git a/drivers/usb/gadget/function/f_fs.c b/drivers/usb/gadget/function/f_fs.c
+index bcb2daf81b05d..0336392686935 100644
+--- a/drivers/usb/gadget/function/f_fs.c
++++ b/drivers/usb/gadget/function/f_fs.c
+@@ -1667,11 +1667,15 @@ static void ffs_data_clear(struct ffs_data *ffs)
+ 
+ 	BUG_ON(ffs->gadget);
+ 
+-	if (ffs->epfiles)
++	if (ffs->epfiles) {
+ 		ffs_epfiles_destroy(ffs->epfiles, ffs->eps_count);
++		ffs->epfiles = NULL;
++	}
+ 
+-	if (ffs->ffs_eventfd)
++	if (ffs->ffs_eventfd) {
+ 		eventfd_ctx_put(ffs->ffs_eventfd);
++		ffs->ffs_eventfd = NULL;
++	}
+ 
+ 	kfree(ffs->raw_descs_data);
+ 	kfree(ffs->raw_strings);
+@@ -1684,7 +1688,6 @@ static void ffs_data_reset(struct ffs_data *ffs)
+ 
+ 	ffs_data_clear(ffs);
+ 
+-	ffs->epfiles = NULL;
+ 	ffs->raw_descs_data = NULL;
+ 	ffs->raw_descs = NULL;
+ 	ffs->raw_strings = NULL;
+diff --git a/drivers/usb/host/xhci-pci.c b/drivers/usb/host/xhci-pci.c
+index ae67f6383ca32..30c8eeed95074 100644
+--- a/drivers/usb/host/xhci-pci.c
++++ b/drivers/usb/host/xhci-pci.c
+@@ -92,7 +92,6 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
+ 	/* Look for vendor-specific quirks */
+ 	if (pdev->vendor == PCI_VENDOR_ID_FRESCO_LOGIC &&
+ 			(pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_PDK ||
+-			 pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1100 ||
+ 			 pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1400)) {
+ 		if (pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_PDK &&
+ 				pdev->revision == 0x0) {
+@@ -127,6 +126,10 @@ static void xhci_pci_quirks(struct device *dev, struct xhci_hcd *xhci)
+ 			pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1009)
+ 		xhci->quirks |= XHCI_BROKEN_STREAMS;
+ 
++	if (pdev->vendor == PCI_VENDOR_ID_FRESCO_LOGIC &&
++			pdev->device == PCI_DEVICE_ID_FRESCO_LOGIC_FL1100)
++		xhci->quirks |= XHCI_TRUST_TX_LENGTH;
++
+ 	if (pdev->vendor == PCI_VENDOR_ID_NEC)
+ 		xhci->quirks |= XHCI_NEC_HOST;
+ 
+diff --git a/include/uapi/linux/nfc.h b/include/uapi/linux/nfc.h
+index 399f39ff8048d..1b6d54a328bad 100644
+--- a/include/uapi/linux/nfc.h
++++ b/include/uapi/linux/nfc.h
+@@ -261,7 +261,7 @@ enum nfc_sdp_attr {
+ #define NFC_SE_ENABLED  0x1
+ 
+ struct sockaddr_nfc {
+-	sa_family_t sa_family;
++	__kernel_sa_family_t sa_family;
+ 	__u32 dev_idx;
+ 	__u32 target_idx;
+ 	__u32 nfc_protocol;
+@@ -269,14 +269,14 @@ struct sockaddr_nfc {
+ 
+ #define NFC_LLCP_MAX_SERVICE_NAME 63
+ struct sockaddr_nfc_llcp {
+-	sa_family_t sa_family;
++	__kernel_sa_family_t sa_family;
+ 	__u32 dev_idx;
+ 	__u32 target_idx;
+ 	__u32 nfc_protocol;
+ 	__u8 dsap; /* Destination SAP, if known */
+ 	__u8 ssap; /* Source SAP to be bound to */
+ 	char service_name[NFC_LLCP_MAX_SERVICE_NAME]; /* Service name URI */;
+-	size_t service_name_len;
++	__kernel_size_t service_name_len;
+ };
+ 
+ /* NFC socket protocols */
+diff --git a/net/ipv4/af_inet.c b/net/ipv4/af_inet.c
+index 689246d079ad4..a8563745980b4 100644
+--- a/net/ipv4/af_inet.c
++++ b/net/ipv4/af_inet.c
+@@ -1833,6 +1833,10 @@ static int __init inet_init(void)
+ 
+ 	tcp_v4_init();
+ 
++	/* Initialise per-cpu ipv4 mibs */
++	if (init_ipv4_mibs())
++		panic("%s: Cannot init ipv4 mibs\n", __func__);
++
+ 	/* Setup TCP slab cache for open requests. */
+ 	tcp_init();
+ 
+@@ -1861,12 +1865,6 @@ static int __init inet_init(void)
+ 
+ 	if (init_inet_pernet_ops())
+ 		pr_crit("%s: Cannot init ipv4 inet pernet ops\n", __func__);
+-	/*
+-	 *	Initialise per-cpu ipv4 mibs
+-	 */
+-
+-	if (init_ipv4_mibs())
+-		pr_crit("%s: Cannot init ipv4 mibs\n", __func__);
+ 
+ 	ipv4_proc_init();
+ 
+diff --git a/scripts/recordmcount.pl b/scripts/recordmcount.pl
+index 21da2831e05b4..796174fd90322 100755
+--- a/scripts/recordmcount.pl
++++ b/scripts/recordmcount.pl
+@@ -250,7 +250,7 @@ if ($arch eq "x86_64") {
+ 
+ } elsif ($arch eq "s390" && $bits == 64) {
+     if ($cc =~ /-DCC_USING_HOTPATCH/) {
+-	$mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*c0 04 00 00 00 00\\s*(bcrl\\s*0,|jgnop\\s*)[0-9a-f]+ <([^\+]*)>\$";
++	$mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*c0 04 00 00 00 00\\s*(brcl\\s*0,|jgnop\\s*)[0-9a-f]+ <([^\+]*)>\$";
+ 	$mcount_adjust = 0;
+     } else {
+ 	$mcount_regex = "^\\s*([0-9a-fA-F]+):\\s*R_390_(PC|PLT)32DBL\\s+_mcount\\+0x2\$";
+diff --git a/security/selinux/hooks.c b/security/selinux/hooks.c
+index 607c7fc4f24d3..eb9e2b4e81d92 100644
+--- a/security/selinux/hooks.c
++++ b/security/selinux/hooks.c
+@@ -5194,7 +5194,7 @@ static unsigned int selinux_ip_postroute_compat(struct sk_buff *skb,
+ 	struct common_audit_data ad;
+ 	struct lsm_network_audit net = {0,};
+ 	char *addrp;
+-	u8 proto;
++	u8 proto = 0;
+ 
+ 	if (sk == NULL)
+ 		return NF_ACCEPT;

@@ -112,11 +112,12 @@ compilation_prepare() {
 
 		if linux-version compare "${version}" ge 5.19.6 ||
 			(linux-version compare "${version}" ge 5.15.64 && linux-version compare "${version}" lt 5.16); then
-			process_patch_file "${SRC}/patch/misc/0001-Revert-fbdev-fbcon-Properly-revert-changes-when-vc_r.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.19.y-Revert-fbdev-fbcon-release-buffer-when-fbcon_do_set.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/bootsplash-5.19.y-Revert-fbdev-fbcon-Properly-revert-changes-when-vc_r.patch" "applying"
 		fi
 
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0000-Revert-fbcon-Avoid-cap-set-but-not-used-warning.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/0001-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-Revert-fbcon-Fix-accelerated-fbdev-scrolling-while-logo-is-still-shown.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0001-Revert-fbcon-Add-option-to-enable-legacy-hardware-ac.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0002-Revert-vgacon-drop-unused-vga_init_done.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/bootsplash-5.16.y-0003-Revert-vgacon-remove-software-scrollback-support.patch" "applying"
@@ -172,7 +173,7 @@ compilation_prepare() {
 	#
 	# Older versions have AUFS support with a patch
 
-	if linux-version compare "${version}" gt 5.11 && linux-version compare "${version}" lt 6.1 && [ "$AUFS" == yes ]; then
+	if linux-version compare "${version}" gt 5.11 && linux-version compare "${version}" lt 6.2 && [ "$AUFS" == yes ]; then
 
 		# attach to specifics tag or branch
 		local aufstag
