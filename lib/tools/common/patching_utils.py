@@ -419,7 +419,7 @@ class PatchInPatchFile:
 			raise Exception(
 				f"Failed to apply patch {self.parent.full_file_path()}:{stderr_output}{stdout_output}")
 
-	def commit_changes_to_git(self, repo: git.Repo, add_rebase_tags: bool):
+	def commit_changes_to_git(self, repo: git.Repo, add_rebase_tags: bool, split_patches: bool):
 		log.info(f"Committing changes to git: {self.parent.relative_dirs_and_base_file_name}")
 		# add all the files that were touched by the patch
 		# if the patch failed to parse, this will be an empty list, so we'll just add all changes.
@@ -440,6 +440,10 @@ class PatchInPatchFile:
 					add_all_changes_in_git = True
 				else:
 					all_files_to_add.append(file_name)
+
+			if split_patches:
+				return self.commit_changes_to_git_grouped(all_files_to_add, repo)
+
 			if not add_all_changes_in_git:
 				repo.git.add("-f", all_files_to_add)
 
@@ -470,6 +474,40 @@ class PatchInPatchFile:
 			raise Exception(
 				f"Commit {commit.hexsha} ended up empty; source patch is {self} at {self.parent.full_file_path()}(:{self.counter})")
 		return {"commit_hash": commit.hexsha, "patch": self}
+
+	def commit_changes_to_git_grouped(self, all_files_to_add: list[str], repo: git.Repo):
+		all_commits = []
+		prefix = "Feiteng "
+		grouped_files = {}
+		# group files by directory
+		for file_name in all_files_to_add:
+			dir_name = os.path.dirname(file_name)
+			if dir_name not in grouped_files:
+				grouped_files[dir_name] = []
+			grouped_files[dir_name].append(file_name)
+
+		for group_name, files in grouped_files.items():
+			for one_file in files:
+				repo.git.add(one_file)
+
+			commit_message = f"{prefix}{group_name}\n\n{prefix}{group_name}"
+			author: git.Actor = git.Actor("Ricardo Pardini", "ricardo@pardini.net")
+			commit = repo.index.commit(
+				message=commit_message,
+				author=author,
+				committer=author,
+				author_date=self.date,
+				commit_date=self.date,
+				skip_hooks=True
+			)
+			log.info(f"Committed changes to git: {commit.hexsha}")
+			# Make sure the commit is not empty
+			if commit.stats.total["files"] == 0:
+				self.problems.append("empty_commit")
+				raise Exception(
+					f"Commit {commit.hexsha} ended up empty; source patch is {self} at {self.parent.full_file_path()}(:{self.counter})")
+			all_commits.append({"commit_hash": commit.hexsha, "patch": self})
+		return all_commits
 
 	def patch_rebase_tags_desc(self):
 		tags = {}
