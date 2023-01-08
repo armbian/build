@@ -26,6 +26,7 @@ PATCH_DIRS_TO_APPLY = armbian_utils.parse_env_for_tokens("PATCH_DIRS_TO_APPLY")
 APPLY_PATCHES = armbian_utils.get_from_env("APPLY_PATCHES")
 PATCHES_TO_GIT = armbian_utils.get_from_env("PATCHES_TO_GIT")
 REWRITE_PATCHES = armbian_utils.get_from_env("REWRITE_PATCHES")
+SPLIT_PATCHES = armbian_utils.get_from_env("SPLIT_PATCHES")
 ALLOW_RECREATE_EXISTING_FILES = armbian_utils.get_from_env("ALLOW_RECREATE_EXISTING_FILES")
 GIT_ARCHEOLOGY = armbian_utils.get_from_env("GIT_ARCHEOLOGY")
 FAST_ARCHEOLOGY = armbian_utils.get_from_env("FAST_ARCHEOLOGY")
@@ -34,6 +35,7 @@ apply_patches_to_git = PATCHES_TO_GIT == "yes"
 git_archeology = GIT_ARCHEOLOGY == "yes"
 fast_archeology = FAST_ARCHEOLOGY == "yes"
 rewrite_patches_in_place = REWRITE_PATCHES == "yes"
+split_patches = SPLIT_PATCHES == "yes"
 apply_options = {
 	"allow_recreate_existing_files": (ALLOW_RECREATE_EXISTING_FILES == "yes"),
 	"set_patch_date": True,
@@ -225,13 +227,16 @@ if apply_patches:
 			log.error(f"Exception while applying patch {one_patch}: {e}", exc_info=True)
 
 		if one_patch.applied_ok and apply_patches_to_git:
-			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place))
-			commit_hash = committed['commit_hash']
-			one_patch.git_commit_hash = commit_hash
-			if rewrite_patches_in_place:
-				rewritten_patch = patching_utils.export_commit_as_patch(
-					git_repo, commit_hash)
-				one_patch.rewritten_patch = rewritten_patch
+			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches)
+
+			if not split_patches:
+				commit_hash = committed['commit_hash']
+				one_patch.git_commit_hash = commit_hash
+
+				if rewrite_patches_in_place:
+					rewritten_patch = patching_utils.export_commit_as_patch(
+						git_repo, commit_hash)
+					one_patch.rewritten_patch = rewritten_patch
 
 	if rewrite_patches_in_place:
 		# Now; we need to write the patches to files.
