@@ -33,12 +33,15 @@ function kernel_config() {
 		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
 		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" .config
 	else
+		# @TODO: rpardini: this is too contrived, make obvious, use an array and a loop and stop repeating itself
 		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
 			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
 			run_host_command_logged cp -pv "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
+			COPY_CONFIG_BACK_TO="${USERPATCHES_PATH}/${LINUXCONFIG}.config"
 		elif [[ -f "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" ]]; then
 			display_alert "Using kernel config provided by user in config/kernel folder" "config/kernel/${LINUXCONFIG}.config" "info"
 			run_host_command_logged cp -pv "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" .config
+			COPY_CONFIG_BACK_TO="${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config"
 		else
 			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
 			run_host_command_logged cp -pv "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
@@ -85,13 +88,14 @@ function kernel_config() {
 		run_host_command_logged cp -pv .config "${DEST}/config/${LINUXCONFIG}.config"
 
 		# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.
-		[[ "${COPY_CONFIG_BACK_TO}" != "" ]] && run_host_command_logged cp -pv .config "${COPY_CONFIG_BACK_TO}"
+		if [[ "${COPY_CONFIG_BACK_TO}" != "" ]]; then
+			display_alert "Exporting new kernel config - git commit pending" "${COPY_CONFIG_BACK_TO}" "info"
+			run_host_command_logged cp -pv .config "${COPY_CONFIG_BACK_TO}"
 
-		# export defconfig too if requested
-		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
+			# export defconfig
 			run_kernel_make savedefconfig
-
-			[[ -f defconfig ]] && run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
+			run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
+			run_host_command_logged cp -pv defconfig "${COPY_CONFIG_BACK_TO}.defconfig"
 		fi
 	fi
 
