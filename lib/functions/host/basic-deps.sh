@@ -33,8 +33,8 @@ function prepare_host_basic() {
 
 		local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
 		display_alert "Updating and installing basic packages on host" "${sudo_prefix}: ${install_pack}"
-		run_host_command_logged "${sudo_prefix}" apt-get -qq update
-		run_host_command_logged "${sudo_prefix}" apt-get install -qq -y --no-install-recommends $install_pack
+		run_host_command_logged "${sudo_prefix}" DEBIAN_FRONTEND=noninteractive apt-get -o "Dpkg::Use-Pty=0" -qq update
+		run_host_command_logged "${sudo_prefix}" DEBIAN_FRONTEND=noninteractive apt-get -o "Dpkg::Use-Pty=0" install -qq -y --no-install-recommends $install_pack
 	else
 		display_alert "basic-deps are already installed on host" "nothing to be done" "debug"
 	fi
