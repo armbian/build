@@ -27,19 +27,25 @@ function prepare_pip_packages_for_python_tools() {
 	return 0
 }
 
-# Called during early_prepare_host_dependencies(); when building a Dockerfile, HOSTRELEASE is set to the Docker image name.
+# Called during early_prepare_host_dependencies(); when building a Dockerfile, host_release is set to the Docker image name.
 function host_deps_add_extra_python() {
+	# check host_release is set, or bail.
+	[[ -z "${host_release}" ]] && exit_with_error "host_release is not set"
+
+	# host_release is from outer scope (
 	# Determine what version of python3;  focal-like OS's have Python 3.8, but we need 3.9.
-	if [[ "focal ulyana ulyssa uma una" == *"$HOSTRELEASE"* ]]; then
-		display_alert "Using Python 3.9 for" "'$HOSTRELEASE' has outdated python3, using python3.9" "warn"
-		host_dependencies+=("python3.9-dev" "python3.9-distutils")
+	if [[ "focal ulyana ulyssa uma una" == *"${host_release}"* ]]; then
+		display_alert "Using Python 3.9 for" "'${host_release}' has outdated python3, using python3.9" "warn"
+		host_dependencies+=("python3.9-dev")
 	else
-		display_alert "Using Python3 for" "'$HOSTRELEASE' has python3 >= 3.9" "debug"
+		display_alert "Using Python3 for" "'${host_release}' has python3 >= 3.9" "debug"
 	fi
 }
 
 # This sets the outer scope variable 'python3_binary_path' to /usr/bin/python3 or similar, depending on version.
 function prepare_python3_binary_for_python_tools() {
+	[[ -z "${HOSTRELEASE}" ]] && exit_with_error "HOSTRELEASE is not set"
+
 	python3_binary_path="/usr/bin/python3"
 	# Determine what version of python3;  focal-like OS's have Python 3.8, but we need 3.9.
 	if [[ "focal ulyana ulyssa uma una" == *"$HOSTRELEASE"* ]]; then
