@@ -126,6 +126,9 @@ function export_changes_as_patch_via_git_format_patch() {
 	)
 
 	# git: commit the changes
+	declare -a git_params=(
+		"-c" "commit.gpgsign=false" # force gpgsign off; the user might have it enabled and it will fail.
+	)
 	declare -a commit_params=(
 		"--quiet" # otherwise too much output
 		-m "drivers for ${LINUXFAMILY} version ${KERNEL_MAJOR_MINOR}"
@@ -135,7 +138,7 @@ function export_changes_as_patch_via_git_format_patch() {
 		"GIT_COMMITTER_NAME=${MAINTAINER}"
 		"GIT_COMMITTER_EMAIL=${MAINTAINERMAIL}"
 	)
-	run_host_command_logged env -i "${common_envs[@]@Q}" "${commit_envs[@]@Q}" git commit "${commit_params[@]@Q}"
+	run_host_command_logged env -i "${common_envs[@]@Q}" "${commit_envs[@]@Q}" git "${git_params[@]@Q}" commit "${commit_params[@]@Q}"
 
 	# export the commit as a patch
 	declare formatpatch_params=(
