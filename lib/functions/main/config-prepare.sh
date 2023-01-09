@@ -10,10 +10,16 @@ function prepare_and_config_main_build_single() {
 	LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
 
 	config_possibly_interactive_branch_release_desktop_minimal
-	interactive_finish # cleans up vars used for interactive
 
 	LOG_SECTION="config_pre_main" do_with_conditional_logging config_pre_main
+
 	LOG_SECTION="do_main_configuration" do_with_conditional_logging do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
+
+	interactive_desktop_main_configuration
+	interactive_finish # cleans up vars used for interactive
+
+	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
+
 	LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
 	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
 }
