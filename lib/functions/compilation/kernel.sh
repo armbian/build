@@ -61,7 +61,7 @@ function kernel_maybe_clean() {
 		display_alert "Cleaning Kernel tree - CLEAN_LEVEL contains 'make-kernel'" "$LINUXSOURCEDIR" "info"
 		(
 			cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
-			run_host_command_logged make ARCH="${ARCHITECTURE}" clean
+			run_host_command_logged git clean -xfdq # faster & more efficient than 'make clean'
 		)
 	else
 		display_alert "Not cleaning Kernel tree; use CLEAN_LEVEL=make-kernel if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
