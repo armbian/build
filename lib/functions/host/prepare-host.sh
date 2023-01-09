@@ -100,9 +100,14 @@ prepare_host() {
 		acng_configure_and_restart_acng
 
 		# sync clock
+		if [[ $SYNC_CLOCK != no && -f /var/run/ntpd.pid ]]; then
+			display_alert "ntpd is running, skipping" "SYNC_CLOCK=no" "debug"
+			SYNC_CLOCK=no
+		fi
+
 		if [[ $SYNC_CLOCK != no ]]; then
 			display_alert "Syncing clock" "host" "info"
-			run_host_command_logged ntpdate "${NTP_SERVER:-pool.ntp.org}"
+			run_host_command_logged ntpdate "${NTP_SERVER:-pool.ntp.org}" || true # allow failures
 		fi
 	fi
 
