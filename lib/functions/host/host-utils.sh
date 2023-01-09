@@ -45,10 +45,10 @@ function install_host_side_packages() {
 	missing_packages=()
 	# shellcheck disable=SC2207 # I wanna split, thanks.
 	currently_installed_packages=($(dpkg-query --show --showformat='${Package} '))
+
 	for PKG_TO_INSTALL in ${wanted_packages_string}; do
 		# shellcheck disable=SC2076 # I wanna match literally, thanks.
 		if [[ ! " ${currently_installed_packages[*]} " =~ " ${PKG_TO_INSTALL} " ]]; then
-			display_alert "Should install package" "${PKG_TO_INSTALL}"
 			missing_packages+=("${PKG_TO_INSTALL}")
 		fi
 	done
@@ -57,7 +57,7 @@ function install_host_side_packages() {
 		display_alert "Updating apt host-side for installing packages" "${#missing_packages[@]} packages" "info"
 		host_apt_get update
 		display_alert "Installing host-side packages" "${missing_packages[*]}" "info"
-		host_apt_get_install "${missing_packages[@]}"
+		host_apt_get_install "${missing_packages[@]}" || exit_with_error "Failed to install host packages; make sure you have a sane sources.list."
 	else
 		display_alert "All host-side dependencies/packages already installed." "Skipping host-hide install" "debug"
 	fi
