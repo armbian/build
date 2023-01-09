@@ -670,6 +670,7 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 		"--no-encode-email-headers",  # do not encode email headers
 		# "--signature=66666" # add a signature; this does not work and causes patch to not be emitted.
 		'--signature', "Armbian",
+		'--zero-commit',  # do not use the git revision, instead 000000...0000
 		'--stat=120',  # 'wider' stat output; default is 80
 		'--stat-graph-width=10',  # shorten the diffgraph graph part, it's too long
 		"-1", "--stdout", commit
@@ -686,11 +687,7 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 		raise Exception(f"Failed to export commit {commit} to patch: {stderr_output}")
 	if stdout_output == "":
 		raise Exception(f"Failed to export commit {commit} to patch: no output")
-	find = f"From {commit} Mon Sep 17 00:00:00 2001\n"
-	replace = "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n"
-	fixed_patch_zeros = stdout_output.replace(find, replace)
-	# Return the patch
-	return fixed_patch_zeros
+	return stdout_output
 
 
 # Hack
