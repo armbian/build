@@ -117,7 +117,7 @@ function docker_cli_prepare() {
 	fi
 	declare -a -g host_dependencies=() python3_pip_dependencies=()
 	early_prepare_pip3_dependencies_for_python_tools
-	HOSTRELEASE="${wanted_release_tag}" early_prepare_host_dependencies
+	host_release="${wanted_release_tag}" early_prepare_host_dependencies
 	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
 	display_alert "Pre-game pip3 dependencies" "${python3_pip_dependencies[*]}" "debug"
 
