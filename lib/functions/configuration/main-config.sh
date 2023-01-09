@@ -9,6 +9,8 @@
 # This file is a part of the Armbian build script
 # https://github.com/armbian/build/
 
+### Attention: we can't use any interactive programs, read from stdin, nor use non-coreutils utilities here.
+
 function do_main_configuration() {
 	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
 
@@ -272,8 +274,10 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
 	declare -g -r PACKAGE_LIST_FAMILY_REMOVE="${PACKAGE_LIST_FAMILY_REMOVE}"
 
-	interactive_desktop_main_configuration
+	display_alert "Done with do_main_configuration" "do_main_configuration" "debug"
+}
 
+function do_extra_configuration() {
 	[[ -n $ATFSOURCE && -z $ATF_USE_GCC ]] && exit_with_error "Error in configuration: ATF_USE_GCC is unset"
 	[[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 	[[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
@@ -368,7 +372,7 @@ function do_main_configuration() {
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
 
-	display_alert "Done with main-config.sh" "do_main_configuration" "debug"
+	display_alert "Done with do_extra_configuration" "do_extra_configuration" "debug"
 }
 
 # This is called by main_default_build_single() but declared here for 'convenience'
