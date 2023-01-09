@@ -53,17 +53,7 @@ prepare_host() {
 		done
 	fi
 
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-		:
-	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
-		:
-	else
-		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "https://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86_64 or arm64 build host is not supported"
-	fi
-
-	obtain_and_check_hostrelease # sets HOSTRELEASE and validates it for sanity
+	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
 
 	if grep -qE "(Microsoft|WSL)" /proc/version; then
 		if [ -f /.dockerenv ]; then
@@ -94,7 +84,9 @@ prepare_host() {
 
 	# If offline, do not try to install dependencies, manage acng, or sync the clock.
 	if ! $offline; then
-		install_host_dependencies "dependencies during prepare_release"
+		# Prepare the list of host dependencies; it requires the target arch, the host release and arch
+		late_prepare_host_dependencies
+		install_host_dependencies "late dependencies during prepare_release"
 
 		# Manage apt-cacher-ng
 		acng_configure_and_restart_acng
@@ -198,65 +190,126 @@ prepare_host() {
 	fi
 }
 
+# Early: we've possibly no idea what the host release or arch we're building on, or what the target arch is. All-deps.
+# Early: we've a best-guess indication of the host release, but not target. (eg: Dockerfile generate)
+# Early: we're certain about the host release and arch, but not anything about the target (eg: docker build of the Dockerfile, cli-requirements)
+# Late: we know everything; produce a list that is optimized for the host+target we're building. (eg: Oleg)
 function early_prepare_host_dependencies() {
-	# packages list for host
-	# NOTE: those are automatically included in Dockerfile generation.
+	if [[ "x${host_release:-}x" == "xx" ]]; then
+		display_alert "Host release unknown" "host_release not set on call to early_prepare_host_dependencies" "warn"
+	fi
+	if [[ "x${host_arch:-}x" == "xx" ]]; then
+		display_alert "Host arch unknown" "host_arch not set on call to early_prepare_host_dependencies" "debug"
+	fi
+	adaptative_prepare_host_dependencies
+}
 
-	# Common for all releases...
-	declare -a -g host_dependencies=(
-		# big bag of stuff from before
-		acl aptly bc binfmt-support bison btrfs-progs
-		build-essential ca-certificates ccache cpio cryptsetup
-		debian-archive-keyring debian-keyring debootstrap device-tree-compiler
-		dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk
-		gnupg gpg imagemagick jq kmod libbison-dev
-		libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev
-		libfl-dev liblz4-tool libncurses-dev libssl-dev
-		libusb-1.0-0-dev linux-base locales ncurses-base ncurses-term
-		ntpdate patchutils
-		pkg-config pv qemu-user-static rsync swig
-		u-boot-tools udev uuid-dev whiptail
-		zlib1g-dev busybox
+function late_prepare_host_dependencies() {
+	[[ -z "${ARCH}" ]] && exit_with_error "ARCH is not set"
+	[[ -z "${RELEASE}" ]] && exit_with_error "RELEASE is not set"
+	[[ -z "${HOSTRELEASE}" ]] && exit_with_error "HOSTRELEASE is not set"
+	[[ -z "${HOSTARCH}" ]] && exit_with_error "HOSTARCH is not set"
 
-		distcc # distcc, experimental, optional; see cli-distcc.sh and kernel.sh
+	target_arch="${ARCH}" host_release="${HOSTRELEASE}" \
+		host_arch="${HOSTARCH}" target_release="${RELEASE}" \
+		early_prepare_host_dependencies
+}
 
-		# non-mess below?
-		ccze colorized-logs                             # @TODO: drop those after removing usages
-		file tree expect                                # logging utilities; expect is needed for 'unbuffer' command
-		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
-		parted gdisk fdisk                              # partition tools
-		aria2 curl wget axel                            # downloaders et al
-		parallel                                        # do things in parallel
-		# toolchains. NEW: using metapackages, allow us to have same list of all arches; brings both C and C++ compilers
-		crossbuild-essential-armhf crossbuild-essential-armel # for ARM 32-bit, both HF and EL are needed in some cases.
-		crossbuild-essential-arm64                            # For ARM 64-bit, arm64.
-		crossbuild-essential-amd64                            # For AMD 64-bit, x86_64.
-		gcc-riscv64-linux-gnu                                 # For RISC-V 64-bit, riscv64; crossbuild-essential-riscv64 is not available.
-		libc6-amd64-cross                                     # Support for running x86 binaries (under qemu on other arches)
-	)
-
-	# Now determine the HOSTRELEASE, if not passed-in.
-	if [[ "x${HOSTRELEASE}x" == "xx" ]]; then
-		obtain_and_check_hostrelease # Sets HOSTRELEASE & validates it for sanity
+# Adaptive: used by both early & late.
+function adaptative_prepare_host_dependencies() {
+	if [[ "x${host_release:-"unknown"}x" == "xx" ]]; then
+		display_alert "No specified host_release" "preparing for all-hosts, all-targets deps" "debug"
 	else
-		display_alert "Using passed-in HOSTRELEASE" "${HOSTRELEASE}" "warn"
+		display_alert "Using passed-in host_release" "${host_release}" "debug"
 	fi
 
-	host_deps_add_extra_python # Focal-like hosts might need extra python3.9 packages.
+	if [[ "x${target_arch:-"unknown"}x" == "xx" ]]; then
+		display_alert "No specified target_arch" "preparing for all-hosts, all-targets deps" "debug"
+	else
+		display_alert "Using passed-in target_arch" "${target_arch}" "debug"
+	fi
 
-	# Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+
-	host_dependencies+=(
-		"python3-dev" "python3-distutils" "python3-setuptools" "python3-pip"
+	#### Common: for all releases, all host arches, and all target arches.
+	declare -a -g host_dependencies=(
+		# big bag of stuff from before; alpha ordering, one letter per line
+		acl aptly
+		bc binfmt-support bison btrfs-progs busybox
+		build-essential # @TODO: this includes parts of the toolchain for native builds. what if we're not doing native builds?
+		ca-certificates ccache cpio cryptsetup
+		debian-archive-keyring debian-keyring debootstrap device-tree-compiler dialog dirmngr dosfstools dwarves
+		f2fs-tools fakeroot flex
+		gawk gnupg gpg
+		imagemagick # @TODO: why? this is huge.
+		jq          # @TODO: why? what uses this?
+		kmod
+		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev liblz4-tool
+		libncurses-dev libssl-dev libusb-1.0-0-dev
+		linux-base locales
+		ncurses-base ncurses-term # why?
+		ntpdate
+		patchutils pkg-config pv
+		qemu-user-static
+		rsync
+		swig
+		u-boot-tools udev uuid-dev
+		whiptail # @TODO: why? we use dialog...
+		zlib1g-dev
+
+		# by-category below
+		file tree expect                                # logging utilities; expect is needed for 'unbuffer' command
+		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
+		parted gdisk fdisk                              # partition tools @TODO why so many?
+		aria2 curl wget axel                            # downloaders et al
+		parallel                                        # do things in parallel (used for fast md5 hashing in initrd cache)
 	)
 
+	# @TODO: distcc -- handle in extension?
+
+	### Python
+	host_deps_add_extra_python # See python-tools.sh::host_deps_add_extra_python()
+
+	# Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+
+	host_dependencies+=("python3-dev" "python3-distutils" "python3-setuptools" "python3-pip")
+
 	# Python2 -- required for some older u-boot builds
-	# Debian 'sid' does not carry python2 anymore.
-	host_dependencies+=("python2" "python2-dev")
+	# Debian 'sid' does not carry python2 anymore; in this case some u-boot's might fail to build.
+	if [[ "sid bookworm" == *"${host_release}"* ]]; then
+		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
+	else
+		host_dependencies+=("python2" "python2-dev")
+	fi
 
 	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
 	# set NO_APT_CACHER=yes to prevent installation errors in such case
+	# @TODO: invert this logic. MANAGE_ACNG=yes
 	if [[ $NO_APT_CACHER != yes ]]; then
 		host_dependencies+=("apt-cacher-ng")
+	fi
+
+	### ARCH
+	declare wanted_arch="${target_arch:-"all"}"
+
+	# @TODO: armbian-oleg: crossbuild-essential-xxxx is "too much junk"
+	# @TODO: rpardini: we do have usages of the C++ compiler, eg, JetHub. Turn those into extensions, with their own deps.
+
+	if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
+	fi
+
+	if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-aarch64-linux-gnu") # from crossbuild-essential-arm64
+	fi
+
+	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-arm-linux-gnueabihf" "gcc-arm-linux-gnueabi") # from crossbuild-essential-armhf crossbuild-essential-armel
+	fi
+
+	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64 is not even available "yet"
+	fi
+
+	if [[ "${wanted_arch}" != "amd64" ]]; then
+		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
 	fi
 
 	export EXTRA_BUILD_DEPS=""
