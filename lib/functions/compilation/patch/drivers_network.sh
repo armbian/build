@@ -168,25 +168,27 @@ driver_xradio_xr819()
 {
 
 	# Wireless drivers for Xradio XR819 chipsets
-	if linux-version compare "${version}" ge 4.19 && linux-version compare "${version}" le 5.19 &&
+	if linux-version compare "${version}" ge 4.19 && linux-version compare "${version}" le 6.2 &&
 		[[ "$LINUXFAMILY" == sunxi* ]] && [[ "$EXTRAWIFI" == yes ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/dbeinder/xradio" "xradio" "branch:karabek_rebase" "yes"
+		local xradiover="commit:005f28cfe9e20b7f2dfd9d32d38ee97060dc707f"
+
+		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradiover}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
-		cp "${SRC}"/cache/sources/xradio/karabek_rebase/*.{h,c} \
+		cp "${SRC}/cache/sources/xradio/${xradiover#*:}/"*.{h,c} \
 			"$kerneldir/drivers/net/wireless/xradio/"
 
 		# Makefile
-		cp "${SRC}/cache/sources/xradio/karabek_rebase/Makefile" \
+		cp "${SRC}/cache/sources/xradio/${xradiover#*:}/Makefile" \
 			"$kerneldir/drivers/net/wireless/xradio/Makefile"
 
 		# Kconfig
-		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig"
-		cp "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig" \
+		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/${xradiover#*:}/Kconfig"
+		cp "${SRC}/cache/sources/xradio/${xradiover#*:}/Kconfig" \
 			"$kerneldir/drivers/net/wireless/xradio/Kconfig"
 
 		# Add to section Makefile
@@ -194,14 +196,6 @@ driver_xradio_xr819()
 			>> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# add support for K5.13+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
-
-		# add support for aarch64
-		if [[ $ARCH == arm64 ]]; then
-			process_patch_file "${SRC}/patch/misc/wireless-xradio-aarch64.patch" "applying"
-		fi
 
 	fi
 
