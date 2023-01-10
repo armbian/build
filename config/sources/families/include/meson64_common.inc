@@ -29,7 +29,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		KERNELBRANCH='branch:linux-6.1.y'
+		KERNELBRANCH='tag:v6.2-rc3'     # @TODO: soon-to-be 'branch:linux-6.2.y' when it is released
 		KERNELPATCHDIR='meson64-edge'
 		;;
 
