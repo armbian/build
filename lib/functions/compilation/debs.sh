@@ -224,6 +224,8 @@ compile_plymouth_theme_armbian() {
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/DEBIAN/
 	chmod 755 "${tmp_dir}/${plymouth_theme_armbian_dir}"/DEBIAN/{postinst,prerm,postrm}
 
+	# this requires `imagemagick`
+
 	convert -resize 256x256 \
 		"${SRC}"/packages/plymouth-theme-armbian/armbian-logo.png \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/bgrt-fallback.png

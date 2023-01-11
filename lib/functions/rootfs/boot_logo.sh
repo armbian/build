@@ -4,6 +4,8 @@
 # and place to the file /lib/firmware/bootsplash
 #--------------------------------------------------------------------------------------------------------------------------------
 function boot_logo() {
+	# this requires `imagemagick`
+	
 	display_alert "Building kernel splash logo" "$RELEASE" "info"
 
 	LOGO=${SRC}/packages/blobs/splash/logo.png
