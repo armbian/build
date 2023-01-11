@@ -48,7 +48,7 @@ function run_tool_oras() {
 		display_alert "ORAS_BIN: ${ORAS_BIN}" "ORAS" "debug"
 
 		display_alert "Downloading required" "ORAS tooling" "info"
-		run_host_command_logged wget --progress=dot:giga -O "${ORAS_BIN}.tar.gz" "${DOWN_URL}"
+		run_host_command_logged wget --no-verbose --progress=dot:giga -O "${ORAS_BIN}.tar.gz" "${DOWN_URL}"
 		run_host_command_logged tar -xf "${ORAS_BIN}.tar.gz" -C "${DIR_ORAS}" "oras"
 		run_host_command_logged rm -rf "${ORAS_BIN}.tar.gz"
 		run_host_command_logged mv -v "${DIR_ORAS}/oras" "${ORAS_BIN}"
