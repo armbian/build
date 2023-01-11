@@ -2,7 +2,7 @@
 function get_urls() {
 	local catalog=$1
 	local filename=$2
-	
+
 	# this uses `jq` hostdep
 	case $catalog in
 		toolchain)
@@ -89,6 +89,12 @@ function download_and_verify_internal() {
 		--seed-time=0
 		--bt-stop-timeout=30
 	)
+
+	# try to avoid "[ERROR] Failed to open ServerStat file .../cache/.aria2/server_stats for read." on first run
+	if [[ ! -f "${SRC}/cache/.aria2/server_stats" ]]; then
+		mkdir -p "${SRC}/cache/.aria2"
+		touch "${SRC}/cache/.aria2/server_stats"
+	fi
 
 	# use local signature file
 	if [[ -f "${SRC}/config/torrents/${filename}.asc" ]]; then
