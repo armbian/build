@@ -2,7 +2,8 @@
 function get_urls() {
 	local catalog=$1
 	local filename=$2
-
+	
+	# this uses `jq` hostdep
 	case $catalog in
 		toolchain)
 			local CCODE=$(curl --silent --fail https://dl.armbian.com/geoip | jq '.continent.code' -r)
