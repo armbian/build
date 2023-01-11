@@ -21,10 +21,22 @@ function chroot_sdcard_apt_get() {
 	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
 
 	local -a apt_params=("-y")
-	[[ $NO_APT_CACHER != yes ]] && apt_params+=(
-		-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-localhost:3142}\""
-		-o "Acquire::http::Proxy::localhost=\"DIRECT\""
-	)
+	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
+		display_alert "Using managed apt-cacher-ng" "http://localhost:3142" "debug"
+		apt_params+=(
+			-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR:-"localhost:3142"}\""
+			-o "Acquire::http::Proxy::localhost=\"DIRECT\""
+		)
+	elif [[ -n "${APT_PROXY_ADDR}" ]]; then
+		display_alert "Using unmanaged apt mirror" "http://${APT_PROXY_ADDR}" "debug"
+		apt_params+=(
+			-o "Acquire::http::Proxy=\"http://${APT_PROXY_ADDR}\""
+			-o "Acquire::http::Proxy::localhost=\"DIRECT\""
+		)
+	else
+		display_alert "Not using apt-cacher-ng, nor proxy" "no proxy/acng" "debug"
+	fi
+
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
 
 	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
