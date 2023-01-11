@@ -25,8 +25,9 @@ regular_git() {
 
 # avoid repeating myself too much
 function improved_git_fetch() {
+	declare -a verbose_params=() && if_user_on_terminal_and_not_logging_add verbose_params "--verbose" "--progress"
 	# --no-auto-maintenance requires a recent git version, not available on focal-like host OSs
-	improved_git fetch --progress --verbose --recurse-submodules=no "$@"
+	improved_git fetch "${verbose_params[@]}" --recurse-submodules=no "$@"
 }
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
@@ -133,7 +134,7 @@ fetch_from_repo() {
 			# Dir is not a git working copy. Make it so;
 			display_alert "Initializing empty git local copy" "git init: $dir $ref_name"
 			regular_git init -q . # --initial-branch="armbian_unused_initial_branch" is not supported under focal
-			offline=false # Force online, we'll need to fetch.
+			offline=false         # Force online, we'll need to fetch.
 		fi
 	fi
 
@@ -187,9 +188,20 @@ fetch_from_repo() {
 		# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
 		display_alert "Fetching updates from remote repository" "$dir $ref_name"
 		case $ref_type in
-			branch | commit) improved_git_fetch --no-tags "${url}" "${ref_name}" ;;
-			tag) improved_git_fetch --no-tags "${url}" tags/"${ref_name}" ;;
-			head) improved_git_fetch --no-tags "${url}" HEAD ;;
+			branch)
+				improved_git_fetch --no-tags "${url}" "${ref_name}"
+				;;
+			commit)
+				# @TODO: if the local copy has the revision, skip the fetch -- would save us a lot of time
+				display_alert "Fetching a specific commit/sha1" "${ref_name}" "warn"
+				improved_git_fetch --no-tags "${url}" "${ref_name}"
+				;;
+			tag)
+				improved_git_fetch --no-tags "${url}" tags/"${ref_name}"
+				;;
+			head)
+				improved_git_fetch --no-tags "${url}" HEAD
+				;;
 		esac
 		checkout_from="FETCH_HEAD"
 	fi
