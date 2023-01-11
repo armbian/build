@@ -2,8 +2,7 @@
 
 function acng_configure_and_restart_acng() {
 	if ! armbian_is_host_running_systemd; then return 0; fi                   # do nothing if host is not running systemd
-	[[ $NO_APT_CACHER == yes ]] && return 0                                   # don't if told not to. NO_something=yes is very confusing, but kept for historical reasons
-	[[ "${APT_PROXY_ADDR:-localhost:3142}" != "localhost:3142" ]] && return 0 # also not if acng not local to builder machine
+	[[ "${MANAGE_ACNG}" != "yes" ]] && return 0                               # don't if told not to. NO_something=yes is very confusing, but kept for historical reasons
 
 	display_alert "Preparing acng configuration" "apt-cacher-ng" "info"
 
@@ -55,8 +54,7 @@ function acng_configure_and_restart_acng() {
 }
 
 function acng_check_status_or_restart() {
-	[[ $NO_APT_CACHER == yes ]] && return 0                                   # don't if told not to
-	[[ "${APT_PROXY_ADDR:-localhost:3142}" != "localhost:3142" ]] && return 0 # also not if acng not local to builder machine
+	[[ "${MANAGE_ACNG}" != "yes" ]] && return 0                               # don't if told not to
 
 	if ! systemctl -q is-active apt-cacher-ng.service; then
 		display_alert "ACNG systemd service is not active" "restarting apt-cacher-ng" "warn"

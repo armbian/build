@@ -98,11 +98,11 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 function create_new_rootfs_cache() {
 	# this is different between debootstrap and regular apt-get; here we use acng as a prefix to the real repo
 	local debootstrap_apt_mirror="http://${APT_MIRROR}"
-	if [[ $NO_APT_CACHER != yes ]]; then
-		local debootstrap_apt_mirror="http://${APT_PROXY_ADDR:-localhost:3142}/${APT_MIRROR}"
+	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
+		local debootstrap_apt_mirror="http://localhost:3142/${APT_MIRROR}"
 		acng_check_status_or_restart
 	fi
-	
+
 	# @TODO: one day: https://gitlab.mister-muffin.de/josch/mmdebstrap/src/branch/main/mmdebstrap
 
 	display_alert "Installing base system" "Stage 1/2" "info"

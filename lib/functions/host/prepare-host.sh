@@ -69,7 +69,11 @@ prepare_host() {
 	if armbian_is_running_in_container; then
 		display_alert "Running in container" "Adding provisions for container building" "info"
 		declare -g CONTAINER_COMPAT=yes # this controls mknod usage for loop devices.
-		declare -g NO_APT_CACHER=yes    # disable apt-cacher; we use local cache in Docker volumes.
+
+		if [[ "${MANAGE_ACNG}" == "yes" ]]; then
+			display_alert "Running in container" "Disabling ACNG - MANAGE_ACNG=yes not supported in containers" "warn"
+			declare -g MANAGE_ACNG=no
+		fi
 
 		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
 		if [[ $EXTERNAL_NEW == compile ]]; then
@@ -279,10 +283,8 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=("python2" "python2-dev")
 	fi
 
-	# warning: apt-cacher-ng will fail if installed and used both on host and in container/chroot environment with shared network
-	# set NO_APT_CACHER=yes to prevent installation errors in such case
-	# @TODO: invert this logic. MANAGE_ACNG=yes
-	if [[ $NO_APT_CACHER != yes ]]; then
+	# Only install acng if asked to.
+	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
 		host_dependencies+=("apt-cacher-ng")
 	fi
 
