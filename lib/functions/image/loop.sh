@@ -100,6 +100,8 @@ function free_loop_device_insistent() {
 }
 
 function free_loop_device_retried() {
-	display_alert "Freeing loop device (try ${RETRY_RUNS})" "${1}"
+	if [[ ${RETRY_RUNS} -gt 1 ]]; then
+		display_alert "Freeing loop device (try ${RETRY_RUNS})" "${1}"
+	fi
 	losetup -d "${1}"
 }
