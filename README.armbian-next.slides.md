@@ -6,9 +6,10 @@ theme: league
   
 ---
 
-# `armbian-next`, 2/X
+# `armbian-next`, 4/X
 
 > “Let me add `set -e` to `armbian/build`...”
+
 #### ...two years later...
 
 ---
@@ -82,7 +83,6 @@ theme: league
     - `debootstrap`, `cli`/`desktop`, `image`
 - `out`: Markdown docs: _"why is this package included, or not included?", "potential paths"_
 
-
 ---
 
 #### `armbian-next` - Patch handling in Python
@@ -105,7 +105,6 @@ theme: league
 - allowing old u-boots to build with newer gcc
 - ancient stuff might need small Makefile fixes
 
-
 ---
 
 #### `armbian-next` - Kernel Builds
@@ -118,7 +117,6 @@ theme: league
 - (mostly) working header packages when cross compiling
 - _finally_ no more `headers-byteshift.patch` :wink:
 
-
 ---
 
 #### `armbian-next` - u-boot Builds
@@ -127,7 +125,6 @@ theme: league
 - Handling Python2/Python3 requirements
 - Handling of x86-only tooling under qemu when building on arm64
 
-
 ---
 
 #### `armbian-next` - Image building
@@ -135,7 +132,6 @@ theme: league
 - *no more* `apt-cacher-ng` by default (still works)
 - local `.deb` caching, works in Docker too
 - Aggregation opens path for `mmdebstrap` migration later
-
 
 ---
 
@@ -200,6 +196,7 @@ git pull --rebase # !!!we rebase!!! use --rebase
 ---
 
 ## Go try `armbian-next`
+
 # Thank you!
 
 ---
@@ -211,7 +208,6 @@ git pull --rebase # !!!we rebase!!! use --rebase
     - switching between Docker and non-docker on Linux
 - small fixes for early stoppages (`origin` branch, etc)
 
-
 ---
 
 #### Update Dec 21-28 - New
@@ -222,7 +218,6 @@ git pull --rebase # !!!we rebase!!! use --rebase
 - patched files modification time consistency (fast rebuilds)
 - `grub` fixes and sanity checks (sbc-media/jetson-nano, riscv64)
     - workarounds for `grub-mkconfig` under Docker
-
 
 ---
 
@@ -236,3 +231,76 @@ git pull --rebase # !!!we rebase!!! use --rebase
 - rootfs hashes don't match
 - permissions problems when using sudo/Docker
 
+---
+
+#### Update Dec 28 - Jan 11 `armbian-next` - status
+
+- many fixes for early stoppages (`@schwar3kat` / `@atone`)
+    - many fixes for building under Focal (!)
+    - many fixes for extrawifi harness
+    - fixes for `.tmp` / `output` permissions when using `sudo`
+- fixes for malformed patches
+
+---
+
+#### Update Dec 28 - Jan 11 `armbian-next` - known problems
+
+- crazy when building desktops / desktop rootfs caching
+- ... ?
+
+---
+
+#### Update Dec 28 - Jan 11 `armbian-next` - patching
+
+- new patching system is stricter / complains more
+    - but helps us find hidden issues
+    - consolidated patching logic
+- logging is bad // not equivalent to `master`
+- let's fix the patches (PR to `master`)
+
+---
+
+#### Update Dec 28 - Jan 11 `armbian-next` - ongoing work
+
+- disable apt-cacher-ng by default (also out of Docker; use setting to enable again)
+- logging improvements
+    - logfile (.txt) is too big / confusing / too much
+    - screen log needs `SHOW_LOG=yes` by default
+    - patching log on screen/file - make useful
+
+---
+
+#### Update Dec 28 - Jan 11 `armbian-next` - ongoing work 2
+
+- reduce download footprint for native, non-Docker, builds
+- `BUILD_ONLY` vs different CLI commands
+- CI vs CLI
+- CI vs `config-dump` / `json-info`
+
+---
+
+#### Update Dec 28 - Jan 11 `armbian-next` - testing needed
+
+- testing using Docker
+- testing on other families
+- testing on other architectures (armhf, riscv64)
+- testing builds of very legacy stuff (4.x kernels, pre-2020 u-boot's)
+
+---
+
+#### Trying out `armbian-next`
+
+##### **do not share dir with `master`!!**
+
+``` bash
+cd ~ # clone to a new directory!
+git clone --branch=armbian-next \
+  https://github.com/armbian/build armbian-build-next
+
+cd ~/armbian-build-next
+./compile.sh # and off you go
+
+# Later, to update:
+cd ~/armbian-build-next
+git pull --rebase # !!!we rebase!!! use --rebase
+```
