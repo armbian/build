@@ -8,6 +8,7 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
 			display_alert "ROOTFSCACHE_VERSION not set, getting remotely" "Github API and armbian/mirror " "debug"
 			# rpardini: why 2 calls?
+			# this uses `jq` hostdep
 			ROOTFSCACHE_VERSION=$(curl https://api.github.com/repos/armbian/cache/releases/latest -s --fail | jq .tag_name -r || true)
 			# anonymous API access is very limited which is why we need a fallback
 			# rpardini: yeah but this is 404'ing
@@ -323,6 +324,7 @@ get_rootfs_cache_list() {
 	local cache_type=$1
 	local packages_hash=$2
 
+	# this uses `jq` hostdep
 	{
 		curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' ||
 			curl --silent --fail -L https://cache.armbian.com/rootfs/list
