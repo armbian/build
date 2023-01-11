@@ -233,19 +233,27 @@ function adaptative_prepare_host_dependencies() {
 		display_alert "Using passed-in target_arch" "${target_arch}" "debug"
 	fi
 
+	# @TODO: move to extensions:
+	# btrfs-progs # @TODO: only needed if doing brtfs // causes initramfs rebuild
+	# cryptsetup - @TODO: this causes host-side initrd rebuild; only required for encrypted root stuff -- move to extension?
+	# f2fs-tools # @TODO: this is un-necessary if not building a f2fs rootfs  // causes initramfs rebuild
+	# crossbuild-essential-arm64 @TODO: JetHub needs a c++ compiler, add "crossbuild-essential-arm64" there or ext
+
 	#### Common: for all releases, all host arches, and all target arches.
 	declare -a -g host_dependencies=(
-		# big bag of stuff from before; alpha ordering, one letter per line
-		acl aptly
-		bc binfmt-support bison btrfs-progs busybox
-		build-essential # @TODO: this includes parts of the toolchain for native builds. what if we're not doing native builds?
-		ca-certificates ccache cpio cryptsetup
-		debian-archive-keyring debian-keyring debootstrap device-tree-compiler dialog dirmngr dosfstools dwarves
-		f2fs-tools fakeroot flex
+		# big bag of stuff from before
+		bc binfmt-support
+		bison
+		### build-essential # Composed of: libc6-dev make dpkg-dev gcc g++, we don't need g++ (C++ compiler)
+		libc6-dev make dpkg-dev gcc # build-essential, without g++ 
+		ca-certificates ccache cpio
+		debootstrap device-tree-compiler dialog dirmngr dosfstools
+		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
+		fakeroot flex
 		gawk gnupg gpg
-		imagemagick # @TODO: why? this is huge.
-		jq          # @TODO: why? what uses this?
-		kmod
+		imagemagick # required for boot_logo, plymouth: converting images / spinners
+		jq          # required for parsing JSON, specially rootfs-caching related.
+		kmod        # this causes initramfs rebuild, but is usually pre-installed, so no harm done unless it's an upgrade
 		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev liblz4-tool
 		libncurses-dev libssl-dev libusb-1.0-0-dev
 		linux-base locales
@@ -254,9 +262,9 @@ function adaptative_prepare_host_dependencies() {
 		patchutils pkg-config pv
 		qemu-user-static
 		rsync
-		swig
-		u-boot-tools udev uuid-dev
-		whiptail # @TODO: why? we use dialog...
+		u-boot-tools
+		udev # causes initramfs rebuild, but is usually pre-installed.
+		uuid-dev
 		zlib1g-dev
 
 		# by-category below
@@ -290,9 +298,6 @@ function adaptative_prepare_host_dependencies() {
 
 	### ARCH
 	declare wanted_arch="${target_arch:-"all"}"
-
-	# @TODO: armbian-oleg: crossbuild-essential-xxxx is "too much junk"
-	# @TODO: rpardini: we do have usages of the C++ compiler, eg, JetHub. Turn those into extensions, with their own deps.
 
 	if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
 		host_dependencies+=("gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
@@ -335,7 +340,6 @@ function adaptative_prepare_host_dependencies() {
 }
 
 function install_host_dependencies() {
-	display_alert "Installing build dependencies"
 	display_alert "Installing build dependencies" "$*" "debug"
 
 	# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
