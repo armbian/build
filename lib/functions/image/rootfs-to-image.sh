@@ -117,6 +117,8 @@ create_image_from_sdcard_rootfs() {
 		It is the last possible chance to modify `$CARD_DEVICE`.
 	POST_BUILD_IMAGE
 
+	# @TODO: using rsync is slow, and only needed if the source & the target are on different devices/filesystems
+	# @TODO: detect if on the same FS, if so, just "mv" which is a gazillion times faster
 	display_alert "Moving artefacts from temporary directory to its final destination" "${version}" "info"
 	[[ -n $compression_type ]] && run_host_command_logged rm -v "${DESTIMG}/${version}.img"
 	run_host_command_logged rsync -av --no-owner --no-group --remove-source-files "${DESTIMG}/${version}"* "${FINALDEST}"
