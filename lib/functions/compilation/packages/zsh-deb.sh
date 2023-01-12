@@ -20,7 +20,7 @@ compile_armbian-zsh() {
 		Depends: zsh, tmux
 		Section: utils
 		Priority: optional
-		Description: Armbian improved ZShell
+		Description: Armbian improved ZShell (oh-my-zsh...)
 	END
 
 	# set up post install script
@@ -42,6 +42,10 @@ compile_armbian-zsh() {
 
 	cp -R "${SRC}"/cache/sources/oh-my-zsh "${tmp_dir}/${armbian_zsh_dir}"/etc/
 	cp -R "${SRC}"/cache/sources/evalcache "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins
+
+	# @TODO: do this properly (not-copy it to begin with)
+	rm -rf "${tmp_dir}/${armbian_zsh_dir}"/etc/.git "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/plugins/.git
+
 	cp "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/templates/zshrc.zsh-template "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
 	chmod -R g-w,o-w "${tmp_dir}/${armbian_zsh_dir}"/etc/oh-my-zsh/
