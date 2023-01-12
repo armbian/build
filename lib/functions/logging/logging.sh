@@ -1,21 +1,32 @@
 #!/usr/bin/env bash
 
 function logging_init() {
+	# defaults.
+	# if stdout is a terminal, then default SHOW_LOG to yes
+	[[ -t 1 ]] && declare -g SHOW_LOG="${SHOW_LOG:-"yes"}"
+
+	# if DEBUG=yes (via env only, at this point) is set then default both log & debug to yes
+	if [[ "${DEBUG}" == "yes" ]]; then
+		declare -g SHOW_LOG="${SHOW_LOG:-"yes"}"
+		declare -g SHOW_DEBUG="${SHOW_DEBUG:-"yes"}"
+	fi
+
 	# globals
-	export padding="" left_marker="[" right_marker="]"
-	export normal_color="\x1B[0m" gray_color="\e[1;30m" # "bright black", which is grey
-	declare -i logging_section_counter=0                # -i: integer
-	export logging_section_counter
-	export tool_color="${gray_color}" # default to gray... (should be ok on terminals)
-	if [[ "${CI}" == "true" ]]; then  # ... but that is too dark for Github Actions
-		export tool_color="${normal_color}"
+	declare -g padding="" left_marker="[" right_marker="]"
+	declare -g normal_color="\x1B[0m" gray_color="\e[1;30m" # "bright black", which is grey
+	declare -i logging_section_counter=0                    # -i: integer
+	declare -g logging_section_counter
+	declare -g tool_color="${gray_color}" # default to gray... (should be ok on terminals)
+	if [[ "${CI}" == "true" ]]; then      # ... but that is too dark for Github Actions
+		declare -g tool_color="${normal_color}"
+		declare -g SHOW_LOG="${SHOW_LOG:-"yes"}" # if in CI/GHA, default to showing log
 	fi
 	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then # if in container, add a cyan "whale emoji" to the left marker wrapped in dark gray brackets
 		local container_emoji="🐳"                                #  🐳 or 🐋
-		export left_marker="${gray_color}[${container_emoji}|${normal_color}"
+		declare -g left_marker="${gray_color}[${container_emoji}|${normal_color}"
 	elif [[ "$(uname -s)" == "Darwin" ]]; then # if on Mac, add a an apple emoji to the left marker wrapped in dark gray brackets
 		local mac_emoji="🍏"                       # 🍏 or 🍎
-		export left_marker="${gray_color}[${mac_emoji}|${normal_color}"
+		declare -g left_marker="${gray_color}[${mac_emoji}|${normal_color}"
 	fi
 }
 
@@ -32,13 +43,8 @@ function logging_error_show_log() {
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 		display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
 
-		if [[ -f /usr/bin/ccze ]]; then # use 'ccze' to colorize the log, making errors a lot more obvious.
-			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-			cat "${logfile_to_show}" | grep -v -e "^$" | /usr/bin/ccze -o nolookups -A | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
-		else
-			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-			cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
-		fi
+		# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
+		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 
 		display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
 	else
