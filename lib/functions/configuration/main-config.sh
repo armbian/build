@@ -387,7 +387,7 @@ function write_config_summary_output_file() {
 	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"
 
 	display_alert "Writing build config summary to" "debug log" "debug"
-	LOG_ASSET="build.summary.txt" do_with_log_asset run_host_command_logged cat <<- EOF
+	LOG_ASSET="build.summary.txt" do_with_log_asset cat <<- EOF
 		## BUILD SCRIPT ENVIRONMENT
 
 		Repository: $REPOSITORY_URL
