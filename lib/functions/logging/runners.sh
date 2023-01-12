@@ -183,7 +183,7 @@ function run_host_x86_binary_logged() {
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
 function run_host_command_logged() {
-	raw_command="$*" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
+	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
 }
 
 # for interactive, dialog-like host-side invocations. no redirections performed, but same bash usage and expansion, for consistency.
