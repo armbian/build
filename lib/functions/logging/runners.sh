@@ -23,7 +23,7 @@ function chroot_sdcard_apt_get_remove() {
 function chroot_sdcard_apt_get() {
 	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
 
-	local -a apt_params=("-y" "-q")
+	local -a apt_params=("-y" "-qq")
 	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
 		display_alert "Using managed apt-cacher-ng" "http://localhost:3142" "debug"
 		apt_params+=(
