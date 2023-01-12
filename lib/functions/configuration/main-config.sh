@@ -426,7 +426,7 @@ POST_AGGREGATE_PACKAGES
 
 		## Build script directories
 		Build directory is located on:
-		$(findmnt -o TARGET,SOURCE,FSTYPE,AVAIL -T "${SRC}")
+		$(findmnt --output TARGET,SOURCE,FSTYPE,AVAIL --target "${SRC}" --uniq)
 
 		Build directory permissions:
 		$(getfacl -p "${SRC}")
