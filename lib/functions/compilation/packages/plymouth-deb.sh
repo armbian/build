@@ -20,7 +20,7 @@ compile_plymouth_theme_armbian() {
 		Description: boot animation, logger and I/O multiplexer - Armbian theme
 	END
 
-	run_host_command_logged cp -v "${SRC}"/packages/plymouth-theme-armbian/debian/{postinst,prerm,postrm} \
+	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/debian/{postinst,prerm,postrm} \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/DEBIAN/
 	chmod 755 "${tmp_dir}/${plymouth_theme_armbian_dir}"/DEBIAN/{postinst,prerm,postrm}
 
@@ -34,13 +34,13 @@ compile_plymouth_theme_armbian() {
 		"${SRC}"/packages/plymouth-theme-armbian/spinner.gif \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/throbber-%04d.png
 
-	run_host_command_logged cp -v "${SRC}"/packages/plymouth-theme-armbian/watermark.png \
+	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/watermark.png \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
-	run_host_command_logged cp -v "${SRC}"/packages/plymouth-theme-armbian/{bullet,capslock,entry,keyboard,keymap-render,lock}.png \
+	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/{bullet,capslock,entry,keyboard,keymap-render,lock}.png \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
-	run_host_command_logged cp -v "${SRC}"/packages/plymouth-theme-armbian/armbian.plymouth \
+	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/armbian.plymouth \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${plymouth_theme_armbian_dir}"
