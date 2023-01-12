@@ -13,7 +13,11 @@ function chroot_sdcard_apt_get_install_download_only() {
 }
 
 function chroot_sdcard_apt_get_install_dry_run() {
-	chroot_sdcard_apt_get --no-install-recommends --dry-run install "$@"
+	local logging_filter=""
+	if [[ "${SHOW_DEBUG}" != "yes" ]]; then
+		logging_filter="2>&1 | { grep --line-buffered -v -e '^Conf ' -e '^Inst ' || true; }"
+	fi
+	chroot_sdcard_apt_get --no-install-recommends --dry-run install "$@" "${logging_filter}"
 }
 
 function chroot_sdcard_apt_get_remove() {
