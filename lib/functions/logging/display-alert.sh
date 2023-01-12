@@ -6,9 +6,10 @@ function display_alert() {
 		return 0
 	fi
 
-	local message="${1}" level="${3}"                                # params
-	local level_indicator="" inline_logs_color="" extra="" ci_log="" # this log
-	local skip_screen=0                                              # setting to 1 will write to logfile only
+	declare message="${1}" level="${3}"                                # params
+	declare level_indicator="" inline_logs_color="" extra="" ci_log="" # this log
+	declare -i skip_screen=0                                           # setting to 1 will not write to screen
+	declare -i skip_logfile=0                                          # setting to 1 will not write to logfile
 	case "${level}" in
 		err | error)
 			level_indicator="💥"
@@ -43,14 +44,16 @@ function display_alert() {
 			fi
 			level_indicator="🧽"
 			inline_logs_color="\e[1;33m"
+			skip_logfile=1
 			;;
 
-		debug | deprecation)
+		debug)
 			if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
 				skip_screen=1
 			fi
 			level_indicator="🐛"
 			inline_logs_color="\e[1;33m"
+			skip_logfile=1
 			;;
 
 		group)
@@ -59,6 +62,7 @@ function display_alert() {
 			fi
 			level_indicator="🦋"
 			inline_logs_color="\e[1;34m" # blue; 36 would be cyan
+			skip_logfile=1
 			;;
 
 		command)
@@ -75,6 +79,7 @@ function display_alert() {
 			fi
 			level_indicator="🐜"
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
+			skip_logfile=1
 			;;
 
 		extensions)
@@ -83,6 +88,7 @@ function display_alert() {
 			fi
 			level_indicator="🎣"          # fishing pole and "hook"
 			inline_logs_color="\e[0;36m" # a dim cyan
+			skip_logfile=1
 			;;
 
 		extensionstrace)
@@ -91,6 +97,7 @@ function display_alert() {
 			fi
 			level_indicator="🐾"
 			inline_logs_color="\e[0;36m" # a dim cyan
+			skip_logfile=1
 			;;
 
 		git)
@@ -99,6 +106,7 @@ function display_alert() {
 			fi
 			level_indicator="🔖"
 			inline_logs_color="${tool_color}" # either gray or normal, a bit subdued.
+			skip_logfile=1
 			;;
 
 		ccache)
@@ -107,14 +115,17 @@ function display_alert() {
 			fi
 			level_indicator="🙈"
 			inline_logs_color="\e[1;34m" # blue; 36 would be cyan
+			skip_logfile=1
 			;;
 
+		# @TODO this is dead I think
 		aggregation)
 			if [[ "${SHOW_AGGREGATION}" != "yes" ]]; then # aggregation (PACKAGE LISTS), very very verbose
 				skip_screen=1
 			fi
 			level_indicator="📦"
 			inline_logs_color="\e[0;32m"
+			skip_logfile=1
 			;;
 
 		*)
@@ -129,15 +140,18 @@ function display_alert() {
 		echo -e "${level}: ${1} [ ${2} ]" | sed 's/\x1b\[[0-9;]*m//g' | systemd-cat --identifier="${ARMBIAN_LOGS_JOURNAL_IDENTIFIER:-armbian}"
 	fi
 
-	# Now, log to file. This will be colorized later by ccze and such, so remove any colors it might already have.
-	# See also the stuff done in runners.sh for logging exact command lines and runtimes.
-	# the "echo" runs in a subshell due to the "sed" pipe (! important !), so we store BASHPID (current subshell) outside the scope
-	# BASHPID is the current subshell; $$ is parent's?; $_ is the current bashopts
 	local CALLER_PID="${BASHPID}"
+
+	# Attention: do not pipe the output before writing to the logfile.
+	# For example, to remove ansi colors.
+	# If you do that, "echo" runs in a subshell due to the "sed" pipe (! important !)
+	# for the future: BASHPID is the current subshell; $$ is parent's?; $_ is the current bashopts
+
 	if [[ -f "${CURRENT_LOGFILE}" ]]; then
-		# ANSI-less version
-		#echo -e "--> ${level_indicator} $(printf "%4s" "${SECONDS}"): $$ - ${CALLER_PID} - ${BASHPID}: $-: ${level}: ${1} [ ${2} ]" >> "${CURRENT_LOGFILE}" #  | sed 's/\x1b\[[0-9;]*m//g'
-		echo -e "--> ${level_indicator} $(printf "%4s" "${SECONDS}"): $$ - ${CALLER_PID} - ${BASHPID}: $-: ${level}: ${1} [ ${2} ]" >> "${CURRENT_LOGFILE}" #  | sed 's/\x1b\[[0-9;]*m//g'
+		# If not asked to skip, or debugging is enabled, log to file.
+		if [[ ${skip_logfile} -lt 1 || "${DEBUG}" == "yes" ]]; then
+			echo -e "--> (${SECONDS}) ${level^^}: ${1} [ ${2} ]" >> "${CURRENT_LOGFILE}" # bash ^^ is "to upper case"
+		fi
 	fi
 
 	if [[ ${skip_screen} -eq 1 ]]; then
@@ -159,12 +173,12 @@ function display_alert() {
 		bashopts_info="${tool_color}(${normal_color}$-${tool_color})" # $- is the currently active bashopts
 	fi
 
-	[[ -n $2 ]] && extra=" [${inline_logs_color} ${2} ${normal_color}]"
+	[[ -n ${2} ]] && extra=" [${inline_logs_color} ${2} ${normal_color}]"
 	echo -e "${normal_color}${left_marker}${padding}${level_indicator}${padding}${normal_color}${right_marker}${timing_info}${pids_info}${bashopts_info} ${normal_color}${message}${extra}${normal_color}" >&2
 
 	# Now write to CI, if we're running on it. Remove ANSI escapes which confuse GitHub Actions.
 	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]]; then
-		echo -e "::${ci_log} ::" "$@" | sed 's/\x1b\[[0-9;]*m//g' >&2
+		echo -e "::${ci_log} ::" "${1} ${2}" | sed 's/\x1b\[[0-9;]*m//g' >&2
 	fi
 
 	return 0 # make sure to exit with success, always
