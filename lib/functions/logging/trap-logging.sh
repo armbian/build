@@ -55,12 +55,6 @@ function trap_handler_cleanup_logging() {
 	export_markdown_logs
 	reset_uid_owner "${target_file}"
 
-	if [[ "${EXPORT_HTML_LOG}" == "yes" ]]; then
-		local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.html"
-		export_html_logs
-		reset_uid_owner "${target_file}"
-	fi
-
 	local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.ansitxt.log"
 	export_ansi_logs
 	reset_uid_owner "${target_file}"
