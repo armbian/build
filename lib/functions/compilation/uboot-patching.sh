@@ -32,7 +32,9 @@ function uboot_main_patching_python() {
 	display_alert "Calling Python patching script" "for u-boot target" "info"
 	declare python3_binary_path
 	prepare_python3_binary_for_python_tools
-	run_host_command_logged env -i "${params_quoted[@]@Q}" "${python3_binary_path}" "${SRC}/lib/tools/patching.py"
+	# "raw_command" is only for logging purposes.
+	raw_command="[...shortened u-boot...] ${python3_binary_path} ${SRC}/lib/tools/patching.py" \
+		run_host_command_logged env -i "${params_quoted[@]@Q}" "${python3_binary_path}" "${SRC}/lib/tools/patching.py"
 	run_host_command_logged cat "${temp_file_for_output}"
 	# shellcheck disable=SC1090
 	source "${temp_file_for_output}" # SOURCE IT!
