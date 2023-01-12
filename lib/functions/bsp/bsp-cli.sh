@@ -265,7 +265,7 @@ create_board_package() {
 	EOF
 
 	# copy common files from a premade directory structure
-	run_host_command_logged rsync -av ${SRC}/packages/bsp/common/* ${destination}
+	run_host_command_logged rsync -a ${SRC}/packages/bsp/common/* ${destination}
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
