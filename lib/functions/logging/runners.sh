@@ -210,12 +210,12 @@ function run_host_command_logged_raw() {
 	set -e
 
 	if [[ ${exit_code} != 0 ]]; then
-		if [[ -f "${CURRENT_LOGFILE}" ]]; then
-			echo "-->--> command failed with error code ${exit_code} after $((SECONDS - seconds_start)) seconds" >> "${CURRENT_LOGFILE}"
+		if [[ -f "${CURRENT_LOGFILE}" ]]; then # echo -e "\033[91mBright Red\033[0m"
+			echo -e "\033[91m-->--> command failed with error code ${exit_code} after $((SECONDS - seconds_start)) seconds${normal_color:-}" >> "${CURRENT_LOGFILE}"
 		fi
 		# This is very specific; remove CURRENT_LOGFILE's value when calling display_alert here otherwise logged twice.
 		CURRENT_LOGFILE="" display_alert "cmd exited with code ${exit_code}" "$*" "wrn"
-		CURRENT_LOGFILE="" display_alert "stacktrace for failed command" "$(show_caller_full)" "wrn"
+		CURRENT_LOGFILE="" display_alert "stacktrace for failed command" "$(show_caller_full)" "wrn" # @TODO logfile might be useless without this
 
 		# Obtain extra info about error, eg, log files produced, extra messages set by caller, etc.
 		logging_enrich_run_command_error_info
