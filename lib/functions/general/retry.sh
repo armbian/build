@@ -17,7 +17,7 @@ function do_with_retries() {
 			display_alert "Command failed, retrying in ${sleep_seconds}s" "$*" "warn"
 		fi
 		unset RETRY_RUNS
-		sleep ${sleep_seconds}
+		sleep "${sleep_seconds}"
 	done
 	display_alert "Command failed ${counter} times, giving up" "$*" "warn"
 	return 1
