@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# All those runner helper functions have a particular non-quoting style.
+# callers might need to force quote with bash's @Q modifier.
+
 # shortcut
 function chroot_sdcard_apt_get_install() {
 	chroot_sdcard_apt_get --no-install-recommends install "$@"
@@ -76,12 +79,14 @@ function chroot_sdcard_apt_get() {
 
 # please, please, unify around this function.
 function chroot_sdcard() {
-	TMPDIR="" run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_sdcard" TMPDIR="" \
+		run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -o pipefail -c "$*"
 }
 
 # please, please, unify around this function.
 function chroot_mount() {
-	TMPDIR="" run_host_command_logged_raw chroot "${MOUNT}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_mount" TMPDIR="" \
+		run_host_command_logged_raw chroot "${MOUNT}" /bin/bash -e -o pipefail -c "$*"
 }
 
 # This should be used if you need to capture the stdout produced by the command. It is NOT logged, and NOT run thru bash, and NOT quoted.
@@ -104,13 +109,13 @@ function chroot_custom_long_running() {
 	# fi
 	# return $_exit_code
 
-	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
 }
 
 function chroot_custom() {
 	local target=$1
 	shift
-	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
 }
 
 # for deb building.
@@ -136,7 +141,7 @@ function run_host_command_logged_long_running() {
 	#return $_exit_code
 
 	# Run simple and exit with it's code. Sorry.
-	run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
 }
 
 # For installing packages host-side. Not chroot!
@@ -178,7 +183,7 @@ function run_host_x86_binary_logged() {
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
 function run_host_command_logged() {
-	run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
 }
 
 # for interactive, dialog-like host-side invocations. no redirections performed, but same bash usage and expansion, for consistency.
@@ -189,7 +194,8 @@ function run_host_command_dialog() {
 # do NOT use directly, it does NOT expand the way it should (through bash)
 function run_host_command_logged_raw() {
 	# Log the command to the current logfile, so it has context of what was run.
-	display_alert "Command debug" "$*" "command" # A special 'command' level.
+	# The real command might be very long, so, if raw_command is defined, log that instead.
+	display_alert "${raw_command:-"$*"}" "" "command" # A special 'command' level.
 
 	# In this case I wanna KNOW exactly what failed, thus disable errexit, then re-enable immediately after running.
 	set +e
@@ -209,9 +215,6 @@ function run_host_command_logged_raw() {
 
 		# Obtain extra info about error, eg, log files produced, extra messages set by caller, etc.
 		logging_enrich_run_command_error_info
-
-	elif [[ -f "${CURRENT_LOGFILE}" ]]; then
-		echo "-->--> command run successfully after $((SECONDS - seconds_start)) seconds" >> "${CURRENT_LOGFILE}"
 	fi
 
 	logging_clear_run_command_error_info # clear the error info vars, always, otherwise they'll leak into the next invocation.
@@ -241,18 +244,11 @@ function logging_enrich_run_command_error_info() {
 		LOG_ASSET="chroot_error_context__$(basename "${found_file}")" do_with_log_asset cat "${found_file}"
 
 		display_alert "File contents for error context" "${found_file}" "err"
-		# shellcheck disable=SC2002 # cat is not useless, ccze _only_ takes stdin
-		cat "${found_file}" | ccze -A 1>&2 # to stderr
-		# @TODO: 3x repeated ccze invocation, lets refactor it later
+		cat "${found_file}" 1>&2 # to stderr
 	done
 
 	### if_error_detail_message, array: messages to display if the command failed.
 	if [[ -n ${if_error_detail_message} ]]; then
 		display_alert "Error context msg" "${if_error_detail_message}" "err"
 	fi
-}
-
-# @TODO: logging: used by desktop.sh exclusively. let's unify?
-run_on_sdcard() {
-	chroot_sdcard "${@}"
 }
