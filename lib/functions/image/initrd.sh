@@ -13,14 +13,20 @@
 # path instead of $SDCARD (which can be a tmpfs and breaks cryptsetup-initramfs).
 # see: https://github.com/armbian/build/issues/1584
 update_initramfs() {
-	local chroot_target=$1
-	local target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${VER}*")" # @TODO: rpardini: this will break when we add multi-kernel images
+	local chroot_target=$1 target_dir
+	target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${VER}*")" # @TODO: rpardini: this will break when we add multi-kernel images
 	local initrd_kern_ver initrd_file initrd_cache_key initrd_cache_file_path initrd_hash
 	local initrd_cache_current_manifest_filepath initrd_cache_last_manifest_filepath
+	local initrd_debug=""
+	local logging_filter=""
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		initrd_debug="v"
+		logging_filter="2>&1 | { grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' -e 'microcode bundle' -e ', pf_mask' || true ; }"
+	fi
 	if [ "$target_dir" != "" ]; then
 		initrd_kern_ver="$(basename "$target_dir")"
 		initrd_file="${chroot_target}/boot/initrd.img-${initrd_kern_ver}"
-		update_initramfs_cmd="TMPDIR=/tmp update-initramfs -uv -k ${initrd_kern_ver}" # @TODO: why? TMPDIR=/tmp
+		update_initramfs_cmd="TMPDIR=/tmp update-initramfs -u${initrd_debug} -k ${initrd_kern_ver}" # @TODO: why? TMPDIR=/tmp
 	else
 		display_alert "Can't find kernel for version, here's what is in /lib/modules" "VER: ${VER}" "wrn"
 		SHOW_LOG=yes run_host_command_logged find "${chroot_target}/lib/modules"/ -maxdepth 1
@@ -79,7 +85,6 @@ update_initramfs() {
 		fi
 
 		display_alert "Updating initramfs..." "$update_initramfs_cmd" ""
-		local logging_filter="2>&1 | grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' "
 		chroot_custom_long_running "$chroot_target" "$update_initramfs_cmd" "${logging_filter}"
 		display_alert "Updated initramfs." "${update_initramfs_cmd}" "info"
 
