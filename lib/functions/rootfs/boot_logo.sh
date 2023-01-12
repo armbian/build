@@ -5,19 +5,21 @@
 #--------------------------------------------------------------------------------------------------------------------------------
 function boot_logo() {
 	# this requires `imagemagick`
-	
+
 	display_alert "Building kernel splash logo" "$RELEASE" "info"
 
+	declare LOGO LOGO_WIDTH LOGO_HEIGHT THROBBER THROBBER_HEIGHT THROBBER_WIDTH
 	LOGO=${SRC}/packages/blobs/splash/logo.png
 	LOGO_WIDTH=$(identify $LOGO | cut -d " " -f 3 | cut -d x -f 1)
 	LOGO_HEIGHT=$(identify $LOGO | cut -d " " -f 3 | cut -d x -f 2)
 	THROBBER=${SRC}/packages/blobs/splash/spinner.gif
 	THROBBER_WIDTH=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 1)
 	THROBBER_HEIGHT=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 2)
-	convert -alpha remove -background "#000000" $LOGO "${SDCARD}"/tmp/logo.rgb
-	convert -alpha remove -background "#000000" $THROBBER "${SDCARD}"/tmp/throbber%02d.rgb
+	run_host_command_logged convert -alpha remove -background "'#000000'" "$LOGO" "${SDCARD}"/tmp/logo.rgb
+	run_host_command_logged convert -alpha remove -background "'#000000'" "$THROBBER" "${SDCARD}"/tmp/throbber%02d.rgb
 
-	run_host_x86_binary_logged "${SRC}/packages/blobs/splash/bootsplash-packer" \
+	raw_command="[...shortened...] bootsplash-packer" \
+		run_host_x86_binary_logged "${SRC}/packages/blobs/splash/bootsplash-packer" \
 		--bg_red 0x00 \
 		--bg_green 0x00 \
 		--bg_blue 0x00 \
@@ -110,7 +112,7 @@ function boot_logo() {
 		--blob "${SDCARD}"/tmp/throbber73.rgb \
 		--blob "${SDCARD}"/tmp/throbber74.rgb \
 		"${SDCARD}"/lib/firmware/bootsplash.armbian \
-		"| grep --line-buffered -v -e 'File header' -e 'Picture header' -e 'Blob header' -e 'length:'  -e 'type:' -e 'picture_id:' -e 'bg_' -e 'num_' -e '^$'"
+		"| { grep --line-buffered -v -e 'File header' -e 'Picture header' -e 'Blob header' -e 'length:'  -e 'type:' -e 'picture_id:' -e 'bg_' -e 'num_' -e '^$' || true; }"
 
 	if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
 		[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt &&
