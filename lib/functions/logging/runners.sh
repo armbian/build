@@ -23,7 +23,7 @@ function chroot_sdcard_apt_get_remove() {
 function chroot_sdcard_apt_get() {
 	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
 
-	local -a apt_params=("-y")
+	local -a apt_params=("-y" "-q")
 	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
 		display_alert "Using managed apt-cacher-ng" "http://localhost:3142" "debug"
 		apt_params+=(
@@ -151,7 +151,7 @@ function host_apt_get_install() {
 
 # For running apt-get stuff host-side. Not chroot!
 function host_apt_get() {
-	local -a apt_params=("-y")
+	local -a apt_params=("-y" "-qq")
 	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
 	run_host_command_logged DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@"
 }
