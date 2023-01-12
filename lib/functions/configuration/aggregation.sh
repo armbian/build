@@ -74,7 +74,9 @@ function aggregate_all_packages_python() {
 	)
 	declare python3_binary_path
 	prepare_python3_binary_for_python_tools
-	run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${python3_binary_path}" "${SRC}/lib/tools/aggregation.py"
+	# "raw_command" is only for logging purposes.
+	raw_command="[...shortened...] ${python3_binary_path} ${SRC}/lib/tools/aggregation.py" \
+		run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${python3_binary_path}" "${SRC}/lib/tools/aggregation.py"
 	#run_host_command_logged cat "${temp_file_for_aggregation}"
 	# shellcheck disable=SC1090
 	source "${temp_file_for_aggregation}" # SOURCE IT!
