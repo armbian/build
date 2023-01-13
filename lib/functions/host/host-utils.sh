@@ -39,22 +39,36 @@ wait_for_package_manager() {
 # It handles correctly the case where all wanted packages are already installed, and in that case does nothing.
 # If packages are to be installed, it does an apt-get update first.
 function install_host_side_packages() {
-	declare wanted_packages_string
-	declare -a currently_installed_packages missing_packages
+	declare wanted_packages_string PKG_TO_INSTALL
+	declare -a currently_installed_packages
+	declare -a missing_packages
+	declare -a currently_provided_packages
 	wanted_packages_string=${*}
 	missing_packages=()
+
+	# We need to jump through hoops to get the installed packages, due to the fact the "Provided" packages are a bit hidden.
+	# Case in point: "gcc-aarch64-linux-gnu" is provided by "gcc" on native iron
+	# If we don't do this, we keep on trying to apt install something that's already installed.
+
 	# shellcheck disable=SC2207 # I wanna split, thanks.
 	currently_installed_packages=($(dpkg-query --show --showformat='${Package} '))
+	# shellcheck disable=SC2207 # I wanna split, thanks.
+	currently_provided_packages=($(dpkg-query --show --showformat='${Provides}\n' | grep -v "^$" | sed -e 's/([^()]*)//g' | sed -e 's|,||g' | tr -s "\n" " "))
 
 	for PKG_TO_INSTALL in ${wanted_packages_string}; do
 		# shellcheck disable=SC2076 # I wanna match literally, thanks.
 		if [[ ! " ${currently_installed_packages[*]} " =~ " ${PKG_TO_INSTALL} " ]]; then
-			missing_packages+=("${PKG_TO_INSTALL}")
+			if [[ ! " ${currently_provided_packages[*]} " =~ " ${PKG_TO_INSTALL} " ]]; then
+				missing_packages+=("${PKG_TO_INSTALL}")
+			fi
 		fi
 	done
 
+	unset currently_installed_packages
+	unset currently_provided_packages
+
 	if [[ ${#missing_packages[@]} -gt 0 ]]; then
-		display_alert "Updating apt host-side for installing packages" "${#missing_packages[@]} packages" "info"
+		display_alert "Updating apt host-side for installing host-side packages" "${#missing_packages[@]} packages" "info"
 		host_apt_get update
 		display_alert "Installing host-side packages" "${missing_packages[*]}" "info"
 		host_apt_get_install "${missing_packages[@]}" || exit_with_error "Failed to install host packages; make sure you have a sane sources.list."
@@ -62,7 +76,6 @@ function install_host_side_packages() {
 		display_alert "All host-side dependencies/packages already installed." "Skipping host-hide install" "debug"
 	fi
 
-	unset currently_installed_packages
 	return 0
 }
 
