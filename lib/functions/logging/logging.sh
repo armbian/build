@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
+# This is called both early in compile.sh, but also after processing cmdline params in the cli entrypoint.sh 
 function logging_init() {
 	# defaults.
 	# if stdout is a terminal, then default SHOW_LOG to yes
 	[[ -t 1 ]] && declare -g SHOW_LOG="${SHOW_LOG:-"yes"}"
 
-	# if DEBUG=yes (via env only, at this point) is set then default both log & debug to yes
+	# if DEBUG=yes, is set then default both log & debug to yes
 	if [[ "${DEBUG}" == "yes" ]]; then
 		declare -g SHOW_LOG="${SHOW_LOG:-"yes"}"
 		declare -g SHOW_DEBUG="${SHOW_DEBUG:-"yes"}"
@@ -14,10 +15,9 @@ function logging_init() {
 	# globals
 	declare -g padding="" left_marker="[" right_marker="]"
 	declare -g normal_color="\x1B[0m" gray_color="\e[1;30m" # "bright black", which is grey
-	declare -i logging_section_counter=0                    # -i: integer
-	declare -g logging_section_counter
-	declare -g tool_color="${gray_color}" # default to gray... (should be ok on terminals)
-	if [[ "${CI}" == "true" ]]; then      # ... but that is too dark for Github Actions
+	declare -g -i logging_section_counter=0                 # -i: integer
+	declare -g tool_color="${gray_color}"                   # default to gray... (should be ok on terminals, @TODO: I've seen it too dark on a few random screenshots though
+	if [[ "${CI}" == "true" ]]; then                        # ... but that is too dark for Github Actions
 		declare -g tool_color="${normal_color}"
 		declare -g SHOW_LOG="${SHOW_LOG:-"yes"}" # if in CI/GHA, default to showing log
 	fi
