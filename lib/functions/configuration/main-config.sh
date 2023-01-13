@@ -83,27 +83,48 @@ function do_main_configuration() {
 		install -d "${FINALDEST}"
 	fi
 
-	# TODO: fixed name can't be used for parallel image building
-	ROOT_MAPPER="armbian-root"
-
+	# Prepare rootfs filesystem support
 	[[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
-	[[ "ext4 f2fs btrfs xfs nfs fel" != *$ROOTFS_TYPE* ]] && exit_with_error "Unknown rootfs type" "$ROOTFS_TYPE"
+	case "$ROOTFS_TYPE" in
+		ext4 | fel) # nothing extra here
+			;;
+		nfs)
+			FIXED_IMAGE_SIZE=256 # small SD card with kernel, boot script and .dtb/.bin files
+			;;
+		f2fs)
+			enable_extension "fs-f2fs-support"
+			# Fixed image size is in 1M dd blocks (MiB)
+			# to get size of block device /dev/sdX execute as root: echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
+			[[ -z $FIXED_IMAGE_SIZE ]] && exit_with_error "Please define FIXED_IMAGE_SIZE for use with f2fs"
+			;;
+		xfs)
+			enable_extension "fs-xfs-support"
+			;;
+		btrfs)
+			enable_extension "fs-btrfs-support"
+			[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
+			[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
+			;;
+		*)
+			exit_with_error "Unknown rootfs type: ROOTFS_TYPE='${ROOTFS_TYPE}'"
+			;;
+	esac
 
-	[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
-	[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
-
-	# Fixed image size is in 1M dd blocks (MiB)
-	# to get size of block device /dev/sdX execute as root:
-	# echo $(( $(blockdev --getsize64 /dev/sdX) / 1024 / 1024 ))
-	[[ "f2fs" == *$ROOTFS_TYPE* && -z $FIXED_IMAGE_SIZE ]] && exit_with_error "Please define FIXED_IMAGE_SIZE"
-
-	# a passphrase is mandatory if rootfs encryption is enabled
-	if [[ $CRYPTROOT_ENABLE == yes && -z $CRYPTROOT_PASSPHRASE ]]; then
-		exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE is not set"
+	# Support for LUKS / cryptroot
+	if [[ $CRYPTROOT_ENABLE == yes ]]; then
+		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
+		ROOT_MAPPER="armbian-root"              # TODO: fixed name can't be used for parallel image building (rpardini: ?)
+		if [[ -z $CRYPTROOT_PASSPHRASE ]]; then # a passphrase is mandatory if rootfs encryption is enabled
+			exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE is not set"
+		fi
+		[[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
+		[[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
+		# Default to pdkdf2, this used to be the default with cryptroot <= 2.0, however
+		# cryptroot 2.1 changed that to Argon2i. Argon2i is a memory intensive
+		# algorithm which doesn't play well with SBCs (need 1GiB RAM by default !)
+		# https://gitlab.com/cryptsetup/cryptsetup/-/issues/372
+		[[ -z $CRYPTROOT_PARAMETERS ]] && CRYPTROOT_PARAMETERS="--pbkdf pbkdf2"
 	fi
-
-	# small SD card with kernel, boot script and .dtb/.bin files
-	[[ $ROOTFS_TYPE == nfs ]] && FIXED_IMAGE_SIZE=256
 
 	# Since we are having too many options for mirror management,
 	# then here is yet another mirror related option.
@@ -181,13 +202,6 @@ function do_main_configuration() {
 	ARCH=armhf
 	KERNEL_IMAGE_TYPE=zImage
 	ATF_COMPILE=yes
-	[[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
-	[[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
-	# Default to pdkdf2, this used to be the default with cryptroot <= 2.0, however
-	# cryptroot 2.1 changed that to Argon2i. Argon2i is a memory intensive
-	# algorithm which doesn't play well with SBCs (need 1GiB RAM by default !)
-	# https://gitlab.com/cryptsetup/cryptsetup/-/issues/372
-	[[ -z $CRYPTROOT_PARAMETERS ]] && CRYPTROOT_PARAMETERS="--pbkdf pbkdf2"
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 	[[ -z $SKIP_BOOTSPLASH ]] && SKIP_BOOTSPLASH="no"
