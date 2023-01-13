@@ -16,11 +16,16 @@ function armbian_register_commands() {
 		["configdump"]="config_dump"  # idem
 
 		["json-info"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
-		
+
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
+
+		# shortcuts, see vars set below
+		["kernel"]="standard_build"
+		["u-boot"]="standard_build"
+		["uboot"]="standard_build"
 
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
@@ -37,6 +42,9 @@ function armbian_register_commands() {
 		["config-dump"]="CONFIG_DEFS_ONLY='yes'"
 		["configdump"]="CONFIG_DEFS_ONLY='yes'"
 
+		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes'"
+		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes'"
+		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes'"
 	)
 
 	# Override the LOG_CLI_ID to change the log file name.
