@@ -26,8 +26,8 @@ function compile_kernel() {
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
 
 	# Patching.
-	local version hash pre_patch_version
-	kernel_main_patching
+	declare hash pre_patch_version
+	kernel_main_patching # has it's own logging sections inside
 
 	# Stop after patching;
 	if [[ "${PATCH_ONLY}" == yes ]]; then
@@ -35,23 +35,30 @@ function compile_kernel() {
 		return 0
 	fi
 
-	local toolchain
-	kernel_config_maybe_interactive
+	# re-read kernel version after patching
+	declare version
+	version=$(grab_version "$kernel_work_dir")
+	display_alert "Compiling $BRANCH kernel" "$version" "info"
+
+	# determine the toolchain
+	declare toolchain
+	LOG_SECTION="kernel_determine_toolchain" do_with_logging do_with_hooks kernel_determine_toolchain
+
+	kernel_config # has it's own logging sections inside
 
 	# package the kernel-source .deb
 	LOG_SECTION="kernel_package_source" do_with_logging do_with_hooks kernel_package_source
 
 	# build via make and package .debs; they're separate sub-steps
-	LOG_SECTION="kernel_build_and_package" do_with_logging do_with_hooks kernel_build_and_package
+	kernel_prepare_build_and_package # has it's own logging sections inside
 
 	display_alert "Done with" "kernel compile" "debug"
-	cd "${kernel_work_dir}/.." || exit
 
-	rm -f linux-firmware-image-*.deb # remove firmware image packages here - easier than patching ~40 packaging scripts at once
-	run_host_command_logged rsync --remove-source-files -r ./*.deb "${DEB_STORAGE}/"
+	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
 
 	# kernel build worked; let's clean up the git-bundle cache, since the git-bare cache is proven working.
-	kernel_cleanup_bundle_artifacts
+	# @TODO: armbian-oleg: clean this earlier, so we save some 2gb on disk _during_ kernel compile, not after
+	LOG_SECTION="kernel_cleanup_bundle_artifacts" do_with_logging do_with_hooks kernel_cleanup_bundle_artifacts
 
 	return 0
 }
@@ -115,14 +122,14 @@ function kernel_package_source() {
 	display_alert "$(basename "${sources_pkg_dir}.deb" ".deb") packaged" "$((SECONDS - ts)) seconds, ${tarball_size} tarball, ${package_size} .deb" "info"
 }
 
-function kernel_build_and_package() {
-	local ts=${SECONDS}
-
-	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
-
-	local -a build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
+function kernel_prepare_build_and_package() {
+	declare -a build_targets
 	declare kernel_dest_install_dir
-	kernel_dest_install_dir=$(mktemp -d "${WORKDIR}/kernel.temp.install.target.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
+	declare -a install_make_params_quoted
+	declare -A kernel_install_dirs
+
+	build_targets=("all")                                              # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
+	kernel_dest_install_dir=$(mktemp -d "${WORKDIR}/kernel.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
 
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
@@ -139,7 +146,6 @@ function kernel_build_and_package() {
 	fi
 
 	# loop over the keys above, get the value, create param value in array; also mkdir the dir
-	declare -a install_make_params_quoted
 	local dir_key
 	for dir_key in "${!kernel_install_dirs[@]}"; do
 		local dir="${kernel_install_dirs["${dir_key}"]}"
@@ -148,14 +154,38 @@ function kernel_build_and_package() {
 		install_make_params_quoted+=("${value}")
 	done
 
+	# Fire off the build & package
+	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+
+	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
+}
+
+function kernel_build() {
+	local ts=${SECONDS}
+	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
+
 	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets[*]}" "info"
 	make_filter="| grep --line-buffered -v -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \
 		do_with_ccache_statistics \
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}"
 
+	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+}
+
+function kernel_package() {
+	local ts=${SECONDS}
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
+	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+}
 
-	display_alert "Kernel built and packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+function kernel_deploy_pkg() {
+	cd "${kernel_work_dir}/.." || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
+
+	# @TODO: rpardini: this is kept for historical reasons... wth?
+	# remove firmware image packages here - easier than patching ~40 packaging scripts at once
+	run_host_command_logged rm -fv "linux-firmware-image-*.deb"
+
+	run_host_command_logged rsync -v --remove-source-files -r ./*.deb "${DEB_STORAGE}/"
 }
