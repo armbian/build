@@ -233,19 +233,12 @@ function adaptative_prepare_host_dependencies() {
 		display_alert "Using passed-in target_arch" "${target_arch}" "debug"
 	fi
 
-	# @TODO: move to extensions:
-	# btrfs-progs # @TODO: only needed if doing brtfs // causes initramfs rebuild
-	# cryptsetup - @TODO: this causes host-side initrd rebuild; only required for encrypted root stuff -- move to extension?
-	# f2fs-tools # @TODO: this is un-necessary if not building a f2fs rootfs  // causes initramfs rebuild
-	# crossbuild-essential-arm64 @TODO: JetHub needs a c++ compiler, add "crossbuild-essential-arm64" there or ext
-
 	#### Common: for all releases, all host arches, and all target arches.
 	declare -a -g host_dependencies=(
 		# big bag of stuff from before
 		bc binfmt-support
 		bison
-		### build-essential # Composed of: libc6-dev make dpkg-dev gcc g++, we don't need g++ (C++ compiler)
-		libc6-dev make dpkg-dev gcc # build-essential, without g++ 
+		libc6-dev make dpkg-dev gcc # build-essential, without g++
 		ca-certificates ccache cpio
 		debootstrap device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
@@ -257,7 +250,7 @@ function adaptative_prepare_host_dependencies() {
 		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev liblz4-tool
 		libncurses-dev libssl-dev libusb-1.0-0-dev
 		linux-base locales
-		ncurses-base ncurses-term # why?
+		ncurses-base ncurses-term # for `make menuconfig`
 		ntpdate
 		patchutils pkg-config pv
 		qemu-user-static
