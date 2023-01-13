@@ -115,11 +115,9 @@ function docker_cli_prepare() {
 		enable_all_extensions_builtin_and_user
 		initialize_extension_manager
 	fi
-	declare -a -g host_dependencies=() python3_pip_dependencies=()
-	early_prepare_pip3_dependencies_for_python_tools
+	declare -a -g host_dependencies=() 
 	host_release="${wanted_release_tag}" early_prepare_host_dependencies
 	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
-	display_alert "Pre-game pip3 dependencies" "${python3_pip_dependencies[*]}" "debug"
 
 	#############################################################################################################
 	# Stop here if Docker can't be used at all.
@@ -129,7 +127,7 @@ function docker_cli_prepare() {
 	fi
 
 	#############################################################################################################
-	# Detect some docker info.
+	# Detect some docker info. @TODO: invoke "docker info" only once. really. it's very slow
 
 	DOCKER_SERVER_VERSION="$(docker info | grep -i -e "Server Version\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server version" "${DOCKER_SERVER_VERSION}" "debug"
@@ -222,8 +220,6 @@ function docker_cli_prepare() {
 		${c} RUN echo "--> CACHE MISS IN DOCKERFILE: apt packages." && \
 		${c}  DEBIAN_FRONTEND=noninteractive apt-get -y update && \
 		${c}  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${BASIC_DEPS[@]} ${host_dependencies[@]}
-		${c} RUN echo "--> CACHE MISS IN DOCKERFILE: pip3 packages." && \
-		${c}  pip3 install ${python3_pip_dependencies[@]}
 		${c} RUN sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 		${c} RUN locale-gen
 		WORKDIR ${DOCKER_ARMBIAN_TARGET_PATH}

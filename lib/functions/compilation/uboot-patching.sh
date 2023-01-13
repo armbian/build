@@ -1,13 +1,12 @@
 function uboot_main_patching_python() {
-	prepare_pip_packages_for_python_tools
+	prepare_python_and_pip
 
 	# outer scope variable: uboot_work_dir
 
 	temp_file_for_output="$(mktemp)" # Get a temporary file for the output.
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a params_quoted=(
-		"PYTHONUNBUFFERED=yes"                                # Python should not buffer output, so we can see it in real time.
-		"PYTHONPYCACHEPREFIX=${SRC}/cache/pycache"            # Python should not use its own cache, but use our own.
+		"${PYTHON3_VARS[@]}"                                  # Default vars, from prepare_python_and_pip
 		"LOG_DEBUG=${SHOW_DEBUG}"                             # Logging level for python.
 		"SRC=${SRC}"                                          # Armbian root
 		"OUTPUT=${temp_file_for_output}"                      # Output file for the python script.
@@ -30,11 +29,10 @@ function uboot_main_patching_python() {
 		"BRANCH_FOR_PATCHES=u-boot-${BRANCH}-${BOARD}" # When applying patches-to-git, use this branch.
 	)
 	display_alert "Calling Python patching script" "for u-boot target" "info"
-	declare python3_binary_path
-	prepare_python3_binary_for_python_tools
+
 	# "raw_command" is only for logging purposes.
-	raw_command="[...shortened u-boot...] ${python3_binary_path} ${SRC}/lib/tools/patching.py" \
-		run_host_command_logged env -i "${params_quoted[@]@Q}" "${python3_binary_path}" "${SRC}/lib/tools/patching.py"
+	raw_command="[...shortened u-boot patching...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/patching.py" \
+		run_host_command_logged env -i "${params_quoted[@]@Q}" "${PYTHON3_INFO[BIN]}" "${SRC}/lib/tools/patching.py"
 	run_host_command_logged cat "${temp_file_for_output}"
 	# shellcheck disable=SC1090
 	source "${temp_file_for_output}" # SOURCE IT!
