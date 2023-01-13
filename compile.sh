@@ -39,7 +39,7 @@ fi
 # shellcheck source=lib/single.sh
 source "${SRC}"/lib/single.sh
 
-# initialize logging variables.
+# initialize logging variables. (this does not consider parameters at this point, only environment variables)
 logging_init
 
 # initialize the traps
