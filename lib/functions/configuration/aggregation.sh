@@ -15,16 +15,14 @@ function aggregate_packages() {
 }
 
 function aggregate_all_packages_python() {
-	prepare_pip_packages_for_python_tools # although aggregation can run without any package, it does benefit
+	prepare_python_and_pip
 
 	# Get a temporary file for the output. This is not WORKDIR yet, since we're still in configuration phase.
 	temp_file_for_aggregation="$(mktemp)"
 
 	# array with all parameters; will be auto-quoted by bash's @Q modifier below
 	declare -a aggregation_params_quoted=(
-		"PYTHONUNBUFFERED=yes"                     # Python should not buffer output, so we can see it in real time.
-		"PYTHONPYCACHEPREFIX=${SRC}/cache/pycache" # Python should not use its own cache, but use our own.
-
+		"${PYTHON3_VARS[@]}"      # Default vars, from prepare_python_and_pip
 		"LOG_DEBUG=${SHOW_DEBUG}" # Logging level for python.
 		"SRC=${SRC}"
 		"OUTPUT=${temp_file_for_aggregation}"
@@ -72,13 +70,12 @@ function aggregate_all_packages_python() {
 		"PACKAGE_LIST_BOARD_REMOVE=${PACKAGE_LIST_BOARD_REMOVE}"
 		"PACKAGE_LIST_FAMILY_REMOVE=${PACKAGE_LIST_FAMILY_REMOVE}"
 	)
-	declare python3_binary_path
-	prepare_python3_binary_for_python_tools
+
 	# "raw_command" is only for logging purposes.
-	raw_command="[...shortened...] ${python3_binary_path} ${SRC}/lib/tools/aggregation.py" \
-		run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${python3_binary_path}" "${SRC}/lib/tools/aggregation.py"
+	raw_command="[...shortened...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/aggregation.py" \
+		run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${PYTHON3_INFO[BIN]}" "${SRC}/lib/tools/aggregation.py"
 	#run_host_command_logged cat "${temp_file_for_aggregation}"
 	# shellcheck disable=SC1090
 	source "${temp_file_for_aggregation}" # SOURCE IT!
-	run_host_command_logged rm "${temp_file_for_aggregation}"
+	run_host_command_logged rm -f "${temp_file_for_aggregation}"
 }
