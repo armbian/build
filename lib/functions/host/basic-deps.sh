@@ -11,7 +11,6 @@ function prepare_host_basic() {
 	local checklist=(
 		"dialog:dialog"
 		"fuser:psmisc"
-		"getfacl:acl"
 		"uuidgen:uuid-runtime"
 		"curl:curl"
 		"gpg:gnupg"
