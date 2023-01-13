@@ -60,12 +60,6 @@ function kernel_config() {
 		A good place to customize the .config directly.
 	CUSTOM_KERNEL_CONFIG
 
-	# hack for OdroidXU4. Copy firmare files
-	if [[ $BOARD == odroidxu4 ]]; then
-		mkdir -p "${kernel_work_dir}/firmware/edid"
-		cp -p "${SRC}"/packages/blobs/odroidxu4/*.bin "${kernel_work_dir}/firmware/edid"
-	fi
-
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 
 	if [[ $KERNEL_CONFIGURE != yes ]]; then
