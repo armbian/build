@@ -53,17 +53,20 @@ function prepare_kernel_packaging_debs() {
 	# display_alert "tmp_kernel_install_dirs INSTALL_DTBS_PATH:" "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "debug"
 
 	# package the linux-image (image, modules, dtbs (if present))
+	display_alert "Packaging linux-image" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 	create_kernel_deb "linux-image-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_image
 
 	# if dtbs present, package those too separately, for u-boot usage.
 	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
+		display_alert "Packaging linux-dtb" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 		create_kernel_deb "linux-dtb-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_dtb
 	fi
 
-	# Only recent kernels get linux-headers package; some tuning has to be done for 4.x
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" == "yes" ]]; then
+		display_alert "Packaging linux-headers" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
 	elif [[ "${KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE}" == "yes" ]]; then
+		display_alert "Packaging linux-headers (full source, experimental)" "${LINUXFAMILY} ${LINUXCONFIG}" "warn"
 		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers_full_source
 	else
 		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "warn"
@@ -166,9 +169,11 @@ function kernel_package_callback_linux_image() {
 	# Clean up symlinks in lib/modules/${kernel_version_family}/build and lib/modules/${kernel_version_family}/source; will be in the headers package
 	run_host_command_logged rm -v -f "${package_directory}/lib/modules/${kernel_version_family}/build" "${package_directory}/lib/modules/${kernel_version_family}/source"
 
+	display_alert "Showing contents of Kbuild produced modules" "linux-image" "debug"
+	run_host_command_logged tree -C --du -h -d -L 1 "${package_directory}/lib/modules/${kernel_version_family}/kernel" "|| true" # do not fail
+
 	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
-		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel
-		# /lib/firmware/${kernel_version_family}/device-tree/ would also be acceptable
+		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel, u-boot-menu, and other standard Debian/Ubuntu utilities
 
 		display_alert "DTBs present on kernel output" "DTBs ${package_name}: /usr/lib/linux-image-${kernel_version_family}" "debug"
 		mkdir -p "${package_directory}/usr/lib"
@@ -222,6 +227,9 @@ function kernel_package_callback_linux_image() {
 
 function kernel_package_callback_linux_dtb() {
 	display_alert "linux-dtb packaging" "${package_directory}" "debug"
+
+	display_alert "Showing tree of Kbuild produced DTBs" "linux-dtb" "debug"
+	run_host_command_logged tree -C --du -h -L 1 "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}"
 
 	mkdir -p "${package_directory}/boot/"
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${package_directory}/boot/dtb-${kernel_version_family}"
@@ -314,9 +322,14 @@ function kernel_package_callback_linux_headers() {
 	# ${temp_file_list} is left at WORKDIR for later debugging, will be removed by WORKDIR cleanup trap
 
 	# Now, make the script dirs clean.
-	# This is run in our _target_ dir, not the source tree, so we're free to make clean as we wish without invalidating the next build's cache.
-	run_host_command_logged cd "${headers_target_dir}" "&&" make -s "ARCH=${SRC_ARCH}" "M=scripts" clean
-	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make -s "ARCH=${SRC_ARCH}" clean
+	# This is run in our _target_ dir, NOT the source tree, so we're free to make clean as we wish without invalidating the next build's cache.
+	# Understand: I'm sending the logs of this to the bitbucket ON PURPOSE: "clean" tries to use clang, ALSA, etc, which are not available.
+	#             The logs produced during this step throw off developers casually looking at the logs.
+	#             Important: if the steps _fail_ here, you'll have to enable DEBUG=yes to see what's going on.
+	declare make_bitbucket="&> /dev/null"
+	[[ "${DEBUG}" == "yes" ]] && make_bitbucket=""
+	run_host_command_logged cd "${headers_target_dir}" "&&" make -s "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}"
+	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make -s "ARCH=${SRC_ARCH}" clean "${make_bitbucket}"
 
 	# Trim down on the tools dir a bit after cleaning.
 	rm -rf "${headers_target_dir}/tools/perf" "${headers_target_dir}/tools/testing"
@@ -326,13 +339,17 @@ function kernel_package_callback_linux_headers() {
 	[[ -f "${kernel_work_dir}/scripts/module.lds" ]] &&
 		run_host_command_logged cp -v "${kernel_work_dir}/scripts/module.lds" "${headers_target_dir}/scripts/module.lds"
 
-	# Check that no binaries are included by now. Expensive... @TODO: remove after me make sure.
-	(
-		cd "${headers_target_dir}" || exit 33
-		find . -type f | grep -v -e "include/config/" -e "\.h$" -e ".c$" -e "Makefile$" -e "Kconfig$" -e "Kbuild$" -e "\.cocci$" | xargs file | grep -v -e "ASCII" -e "script text" -e "empty" -e "Unicode text" -e "symbolic link" -e "CSV text" -e "SAS 7+" || true
-	)
+	if [[ "${DEBUG}" == "yes" ]]; then
+		# Check that no binaries are included by now. Expensive... @TODO: remove after me make sure.
+		display_alert "Checking for binaries in kernel headers" "${headers_target_dir}" "debug"
+		(
+			cd "${headers_target_dir}" || exit 33
+			find . -type f | grep -v -e "include/config/" -e "\.h$" -e ".c$" -e "Makefile$" -e "Kconfig$" -e "Kbuild$" -e "\.cocci$" | xargs file | grep -v -e "ASCII" -e "script text" -e "empty" -e "Unicode text" -e "symbolic link" -e "CSV text" -e "SAS 7+" || true
+		)
+	fi
 
 	# Generate a control file
+	# TODO: libssl-dev is only required if we're signing modules, which is a kernel .config option.
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
 		Version: ${package_version}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
