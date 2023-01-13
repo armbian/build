@@ -65,3 +65,17 @@ function run_kernel_make_long_running() {
 	display_alert "Kernel Make '$*' took" "$((SECONDS - seconds_start)) seconds" "debug"
 }
 
+function kernel_determine_toolchain() {
+	# compare with the architecture of the current Debian node
+	# if it matches we use the system compiler
+	if dpkg-architecture -e "${ARCH}"; then
+		display_alert "Native compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
+	else
+		display_alert "Cross compilation" "target ${ARCH} on host $(dpkg --print-architecture)"
+		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+	fi
+
+	kernel_compiler_version="$(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpfullversion -dumpversion)"
+	display_alert "Compiler version" "${KERNEL_COMPILER}gcc ${kernel_compiler_version}" "info"
+}
