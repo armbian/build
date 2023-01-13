@@ -370,7 +370,7 @@ function do_extra_configuration() {
 
 # This is called by main_default_build_single() but declared here for 'convenience'
 function write_config_summary_output_file() {
-	local debug_dpkg_arch debug_uname debug_virt debug_src_mount debug_src_perms debug_src_temp_perms
+	local debug_dpkg_arch debug_uname debug_virt debug_src_mount
 	debug_dpkg_arch="$(dpkg --print-architecture)"
 	debug_uname="$(uname -a)"
 	# We might not have systemd-detect-virt, specially inside docker. Docker images have no systemd...
@@ -379,8 +379,6 @@ function write_config_summary_output_file() {
 		debug_virt="$(systemd-detect-virt || true)"
 	fi
 	debug_src_mount="$(findmnt --output TARGET,SOURCE,FSTYPE,AVAIL --target "${SRC}" --uniq)"
-	debug_src_perms="$(getfacl -p "${SRC}")"
-	debug_src_temp_perms="$(getfacl -p "${SRC}"/.tmp 2> /dev/null)"
 
 	display_alert "Writing build config summary to" "debug log" "debug"
 	LOG_ASSET="build.summary.txt" do_with_log_asset cat <<- EOF
@@ -397,12 +395,6 @@ function write_config_summary_output_file() {
 		## Build script directories
 		Build directory is located on:
 		${debug_src_mount}
-
-		Build directory permissions:
-		${debug_src_perms}
-
-		Temp directory permissions:
-		${debug_src_temp_perms}
 
 		## BUILD CONFIGURATION
 
