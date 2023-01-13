@@ -201,7 +201,10 @@ function cli_standard_relaunch_docker_or_sudo() {
 		# 1) We could check if Docker is working, and do everything under Docker. Users who can use Docker, can "become" root inside a container.
 		# 2) We could ask for sudo (which _might_ require a password)...
 		# @TODO: GitHub actions can do both. Sudo without password _and_ Docker; should we prefer Docker? Might have unintended consequences...
-		if is_docker_ready_to_go; then
+		
+		get_docker_info_once # Get Docker info once, and cache it; calling "docker info" is expensive
+		
+		if [[ "${DOCKER_INFO_OK}" == "yes" ]]; then
 			display_alert "Trying to build, not root, but Docker is ready to go" "delegating to Docker" "debug"
 			ARMBIAN_CHANGE_COMMAND_TO="docker"
 			ARMBIAN_CLI_RELAUNCH_COMMAND="${ARMBIAN_COMMAND}" # add params when relaunched under docker
