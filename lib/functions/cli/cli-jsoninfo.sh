@@ -6,17 +6,12 @@ function cli_json_info_pre_run() {
 function cli_json_info_run() {
 	display_alert "Generating JSON info" "for all boards; wait" "info"
 
-	# So call a Python launcher.
-	# @TODO: this works without ti right now, since all the python stuff works with no external packages
-	# - python debian packages hostdeps? (-dev, -pip, virtualenv, etc)
-	# - run the virtualenv (messy?)
-
-	declare python3_binary_path
-	prepare_python3_binary_for_python_tools
+	obtain_and_check_host_release_and_arch # sets HOSTRELEASE
+	prepare_python_and_pip # requires HOSTRELEASE
 
 	# The info extractor itself...
-	run_host_command_logged "${python3_binary_path}" "${SRC}"/lib/tools/info.py ">" "${SRC}/output/info.json"
+	run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${SRC}"/lib/tools/info.py ">" "${SRC}/output/info.json"
 
 	# Also convert output to CSV for easy import into Google Sheets etc
-	run_host_command_logged "${python3_binary_path}" "${SRC}"/lib/tools/json2csv.py "<" "${SRC}/output/info.json" ">" "${SRC}/output/info.csv"
+	run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${SRC}"/lib/tools/json2csv.py "<" "${SRC}/output/info.json" ">" "${SRC}/output/info.csv"
 }
