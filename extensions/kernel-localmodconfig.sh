@@ -13,10 +13,9 @@ function extension_prepare_config__prepare_localmodconfig() {
 
 # This needs much more love than this. can be used to make "light" versions of kernels, that compile 3x-5x faster or more
 function custom_kernel_config_post_defconfig__apply_localmodconfig() {
-	display_alert "localmodconfig with lsmod" "${KERNEL_CONFIG_FROM_LSMOD}" "warn"
 	if [[ "a${KERNEL_CONFIG_FROM_LSMOD}a" != "aa" ]]; then
+		display_alert "localmodconfig with lsmod" "${KERNEL_CONFIG_FROM_LSMOD}" "warn"
 		local lsmod_file="${SRC}/userpatches/lsmod/${KERNEL_CONFIG_FROM_LSMOD}.lsmod"
-		run_kernel_make "LSMOD=${lsmod_file}" localmodconfig
-		kernel_config_mtime=$(get_file_modification_time ".config") # capture the mtime of the config file after the localmodconfig
+		run_kernel_make "LSMOD=${lsmod_file}" localmodconfig "> /dev/null" # hide output, it's way too long. stderr still shows
 	fi
 }
