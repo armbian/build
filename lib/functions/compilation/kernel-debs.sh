@@ -139,11 +139,11 @@ function kernel_package_hook_helper() {
 		#!/bin/bash
 		echo "Armbian '${package_name}' for '${kernel_version_family}': '${script}' starting."
 		set -e # Error control
-		set -x # Debugging
+		#set -x # Debugging - disabled
 
 		$(cat "${contents}")
 
-		set +x # Disable debugging
+		#set +x # Disable debugging - disabled
 		echo "Armbian '${package_name}' for '${kernel_version_family}': '${script}' finishing."
 		true
 	EOT
