@@ -26,8 +26,25 @@ function check_and_install_docker_daemon() {
 		"${SRC}/compile.sh" "$@"
 		exit $?
 	fi
-
 }
+
+# "docker info" is expensive to run, so cache it. output globals DOCKER_INFO and DOCKER_INFO_OK=yes/no
+function get_docker_info_once() {
+	if [[ -z "${DOCKER_INFO}" ]]; then
+		declare -g DOCKER_INFO
+		# Shenanigans to go around error control & capture output in the same effort.
+		DOCKER_INFO="$({ docker info 2> /dev/null && echo "DOCKER_INFO_OK"; } || true)"
+		declare -g -r DOCKER_INFO="${DOCKER_INFO}" # readonly
+
+		declare -g DOCKER_INFO_OK="no"
+		if [[ "${DOCKER_INFO}" =~ "DOCKER_INFO_OK" ]]; then
+			DOCKER_INFO_OK="yes"
+		fi
+		declare -g -r DOCKER_INFO_OK="${DOCKER_INFO_OK}" # readonly
+	fi
+	return 0
+}
+
 # Usage: if is_docker_ready_to_go; then ...; fi
 function is_docker_ready_to_go() {
 	# For either Linux or Darwin.
@@ -43,8 +60,11 @@ function is_docker_ready_to_go() {
 		display_alert "Can't use Docker" "docker command not found" "debug"
 		return 1
 	fi
-	if ! docker info > /dev/null 2>&1; then
-		display_alert "Can't use Docker" "docker info failed" "debug"
+
+	get_docker_info_once
+
+	if [[ "${DOCKER_INFO_OK}" != "yes" ]]; then
+		display_alert "Can't use Docker" "docker -- info failed" "debug"
 		return 1
 	fi
 
@@ -115,7 +135,7 @@ function docker_cli_prepare() {
 		enable_all_extensions_builtin_and_user
 		initialize_extension_manager
 	fi
-	declare -a -g host_dependencies=() 
+	declare -a -g host_dependencies=()
 	host_release="${wanted_release_tag}" early_prepare_host_dependencies
 	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
 
@@ -127,28 +147,29 @@ function docker_cli_prepare() {
 	fi
 
 	#############################################################################################################
-	# Detect some docker info. @TODO: invoke "docker info" only once. really. it's very slow
+	# Detect some docker info; use cached.
+	get_docker_info_once
 
-	DOCKER_SERVER_VERSION="$(docker info | grep -i -e "Server Version\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Server Version\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server version" "${DOCKER_SERVER_VERSION}" "debug"
 
-	DOCKER_SERVER_KERNEL_VERSION="$(docker info | grep -i -e "Kernel Version\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_KERNEL_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Kernel Version\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Kernel version" "${DOCKER_SERVER_KERNEL_VERSION}" "debug"
 
-	DOCKER_SERVER_TOTAL_RAM="$(docker info | grep -i -e "Total memory\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_TOTAL_RAM="$(echo "${DOCKER_INFO}" | grep -i -e "Total memory\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Total RAM" "${DOCKER_SERVER_TOTAL_RAM}" "debug"
 
-	DOCKER_SERVER_CPUS="$(docker info | grep -i -e "CPUs\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_CPUS="$(echo "${DOCKER_INFO}" | grep -i -e "CPUs\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server CPUs" "${DOCKER_SERVER_CPUS}" "debug"
 
-	DOCKER_SERVER_OS="$(docker info | grep -i -e "Operating System\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_OS="$(echo "${DOCKER_INFO}" | grep -i -e "Operating System\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server OS" "${DOCKER_SERVER_OS}" "debug"
 
 	declare -g DOCKER_ARMBIAN_HOST_OS_UNAME
 	DOCKER_ARMBIAN_HOST_OS_UNAME="$(uname)"
 	display_alert "Local uname" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 
-	DOCKER_BUILDX_VERSION="$(docker info | grep -i -e "buildx\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_BUILDX_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "buildx\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Buildx version" "${DOCKER_BUILDX_VERSION}" "debug"
 
 	declare -g DOCKER_HAS_BUILDX=no
@@ -159,7 +180,7 @@ function docker_cli_prepare() {
 	fi
 	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
-	DOCKER_SERVER_NAME_HOST="$(docker info | grep -i -e "name\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_NAME_HOST="$(echo "${DOCKER_INFO}" | grep -i -e "name\:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Hostname" "${DOCKER_SERVER_NAME_HOST}" "debug"
 
 	# Gymnastics: under Darwin, Docker Desktop and Rancher Desktop in dockerd mode behave differently.
