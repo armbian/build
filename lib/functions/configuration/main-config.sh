@@ -72,12 +72,8 @@ function do_main_configuration() {
 
 	if [[ $BETA == yes ]]; then
 		DEB_STORAGE=$DEST/debs-beta
-		REPO_STORAGE=$DEST/repository-beta
-		REPO_CONFIG="aptly-beta.conf"
 	else
 		DEB_STORAGE=$DEST/debs
-		REPO_STORAGE=$DEST/repository
-		REPO_CONFIG="aptly.conf"
 	fi
 
 	# image artefact destination with or without subfolder
