@@ -15,6 +15,9 @@ function install_distribution_agnostic() {
 
 	fi
 
+	# Bail if $ROOTFS_TYPE not set
+	[[ -z $ROOTFS_TYPE ]] && exit_with_error "ROOTFS_TYPE not set" "install_distribution_agnostic"
+
 	# add dummy fstab entry to make mkinitramfs happy
 	echo "/dev/mmcblk0p1 / $ROOTFS_TYPE defaults 0 1" >> "${SDCARD}"/etc/fstab
 	# required for initramfs-tools-core on Stretch since it ignores the / fstab entry
@@ -94,7 +97,7 @@ function install_distribution_agnostic() {
 		sed "s/^parport_pc/#parport_pc/" -i "${SDCARD}"/etc/modules-load.d/cups-filters.conf
 	fi
 
-	# console fix due to Debian bug
+	# console fix due to Debian bug # @TODO: rpardini: still needed?
 	sed -e 's/CHARMAP=".*"/CHARMAP="'$CONSOLE_CHAR'"/g' -i "${SDCARD}"/etc/default/console-setup
 
 	# add the /dev/urandom path to the rng config file
@@ -103,15 +106,14 @@ function install_distribution_agnostic() {
 	# @TODO: security problem?
 	# ping needs privileged action to be able to create raw network socket
 	# this is working properly but not with (at least) Debian Buster
-	chroot "${SDCARD}" /bin/bash -c "chmod u+s /bin/ping" 2>&1
+	chroot_sdcard chmod u+s /bin/ping
 
 	# change time zone data
 	echo "${TZDATA}" > "${SDCARD}"/etc/timezone
-	# @TODO: a more generic logging helper needed
-	chroot "${SDCARD}" /bin/bash -c "dpkg-reconfigure -f noninteractive tzdata" 2>&1
+	chroot_sdcard dpkg-reconfigure -f noninteractive tzdata
 
-	# set root password
-	chroot "${SDCARD}" /bin/bash -c "(echo $ROOTPWD;echo $ROOTPWD;) | passwd root >/dev/null 2>&1"
+	# set root password. it is written to the log, of course. Escuse the escaping needed here.
+	chroot_sdcard "(" echo "'${ROOTPWD}'" ";" echo "'${ROOTPWD}'" ";" ")" "|" passwd root
 
 	# enable automated login to console(s)
 	if [[ $CONSOLE_AUTOLOGIN == yes ]]; then
@@ -133,7 +135,7 @@ function install_distribution_agnostic() {
 	# change console welcome text
 	echo -e "${VENDOR} ${REVISION} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
 	echo "${VENDOR} ${REVISION} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
-	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION "${RELEASE^}"\"/" "${SDCARD}"/etc/os-release
+	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${RELEASE^}\"/" "${SDCARD}"/etc/os-release
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
@@ -303,7 +305,7 @@ function install_distribution_agnostic() {
 			install_deb_chroot "${DEB_STORAGE}/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb"
 		else
 			install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes" # @TODO: rpardini: this is completely different! "remote" "yes"
-			UBOOT_REPO_VERSION=$(dpkg-deb -f "${SDCARD}"/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb Version)
+			UBOOT_REPO_VERSION=$(dpkg-deb -f "${SDCARD}/var/cache/apt/archives/linux-u-boot-${BOARD}-${BRANCH}*_${ARCH}.deb" Version)
 		fi
 	}
 
@@ -430,8 +432,8 @@ function install_distribution_agnostic() {
 	# freeze armbian packages
 	if [[ $BSPFREEZE == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
-		chroot "${SDCARD}" /bin/bash -c "apt-mark hold ${CHOSEN_KERNEL} ${CHOSEN_KERNEL/image/headers} \
-		linux-u-boot-${BOARD}-${BRANCH} ${CHOSEN_KERNEL/image/dtb}" 2>&1
+		# @TODO: rpardini: this will probably fail if one or more packages are not installed
+		chroot_sdcard apt-mark hold "${CHOSEN_KERNEL}" "${CHOSEN_KERNEL/image/headers}" "linux-u-boot-${BOARD}-${BRANCH}" "${CHOSEN_KERNEL/image/dtb}"
 	fi
 
 	# remove deb files
@@ -475,7 +477,8 @@ function install_distribution_agnostic() {
 	chroot_sdcard chmod u+s /usr/lib/dbus-1.0/dbus-daemon-launch-helper
 
 	# disable samba NetBIOS over IP name service requests since it hangs when no network is present at boot
-	chroot_sdcard systemctl --quiet disable nmbd
+	# @TODO: rpardini: still needed? people might want working Samba
+	disable_systemd_service_sdcard nmbd
 
 	# disable low-level kernel messages for non betas
 	if [[ -z $BETA ]]; then
