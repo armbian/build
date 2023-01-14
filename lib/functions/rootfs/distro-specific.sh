@@ -1,28 +1,25 @@
 #!/usr/bin/env bash
-install_distribution_specific() {
-	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
 
-	# disable broken service
-	# the problem is in default misconfiguration
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartd.service >/dev/null 2>&1"
+function install_distribution_specific() {
+	display_alert "Applying distribution specific tweaks for" "${RELEASE:-}" "info"
 
-	# disable hostapd as it needs to be configured
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable hostapd.service  >/dev/null 2>&1"
+	# disable broken service, the problem is in default misconfiguration
+	# disable hostapd as it needs to be configured to start correctly
+	disable_systemd_service_sdcard smartmontools.service smartd.service hostapd.service
 
-	case $RELEASE in
+	case "${RELEASE}" in
 
-		focal | jammy | kinetic | lunar )
+		focal | jammy | kinetic | lunar)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
+			# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
-			run_host_command_logged rm -fv "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
+			run_host_command_logged rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
+			declare RENDERER=networkd
 			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
 				local RENDERER=NetworkManager
-			else
-				local RENDERER=networkd
 			fi
 
 			# DNS fix
@@ -44,7 +41,7 @@ install_distribution_specific() {
 			[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
 
 			# disable conflicting services
-			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
+			disable_systemd_service_sdcard ondemand.service
 			;;
 	esac
 
@@ -52,12 +49,11 @@ install_distribution_specific() {
 	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 		network:
 		  version: 2
-		  renderer: $RENDERER
+		  renderer: ${RENDERER}
 	EOF
 
 	# cleanup motd services and related files
-	chroot_sdcard systemctl disable motd-news.service
-	chroot_sdcard systemctl disable motd-news.timer
+	disable_systemd_service_sdcard motd-news.service motd-news.timer
 
 	# remove motd news from motd.ubuntu.com
 	[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
@@ -70,7 +66,7 @@ install_distribution_specific() {
 
 	# use list modules INITRAMFS
 	if [ -f "${SRC}"/config/modules/"${MODULES_INITRD}" ]; then
-		display_alert "Use file list modules INITRAMFS" "${MODULES_INITRD}"
+		display_alert "Use file list modules MODULES_INITRD" "${MODULES_INITRD}"
 		sed -i "s/^MODULES=.*/MODULES=list/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 		cat "${SRC}"/config/modules/"${MODULES_INITRD}" >> "${SDCARD}"/etc/initramfs-tools/modules
 	fi
@@ -81,9 +77,9 @@ install_distribution_specific() {
 # <release>: bullseye|focal|jammy|kinetic|lunar|sid
 # <basedir>: path to root directory
 #
-create_sources_list() {
+function create_sources_list() {
 	local release=$1
-	local basedir=$2
+	local basedir=$2 # @TODO: rpardini: this is SDCARD in all practical senses. Why not just use SDCARD?
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
@@ -154,7 +150,7 @@ create_sources_list() {
 		gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}"/usr/share/keyrings/armbian.gpg
 		SIGNED_BY="[signed-by=/usr/share/keyrings/armbian.gpg] "
 	else
-		# use old method for compatibility reasons
+		# use old method for compatibility reasons # @TODO: rpardini: not gonna fix this?
 		cp "${SRC}"/config/armbian.key "${basedir}"
 		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
 	fi
@@ -165,7 +161,7 @@ create_sources_list() {
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
 		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb ${SIGNED_BY}http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt")".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development
