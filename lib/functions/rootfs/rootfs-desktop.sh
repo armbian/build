@@ -4,12 +4,13 @@
 desktop_postinstall() {
 
 	# disable display manager for the first run
-	chroot_sdcard "systemctl --no-reload disable lightdm.service"
-	chroot_sdcard "systemctl --no-reload disable gdm3.service"
+	disable_systemd_service_sdcard lightdm.service
+	disable_systemd_service_sdcard gdm3.service
 
 	# update packages index
 	chroot_sdcard_apt_get "update"
 
+	# @TODO: rpardini: this is... missing from aggregation...?
 	# install per board packages
 	if [[ -n ${PACKAGE_LIST_DESKTOP_BOARD} ]]; then
 		chroot_sdcard_apt_get_install "$PACKAGE_LIST_DESKTOP_BOARD"
