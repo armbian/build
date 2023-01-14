@@ -158,8 +158,8 @@ function install_distribution_agnostic() {
 
 	# create extlinux config file @TODO: refactor into extensions u-boot, extlinux
 	if [[ $SRC_EXTLINUX == yes ]]; then
-		display_alert "Using extlinux, SRC_EXTLINUX: ${SRC_EXTLINUX}" "image will be incompatible with nand-sata-install" "warn"
-		mkdir -p $SDCARD/boot/extlinux
+		display_alert "Using extlinux, SRC_EXTLINUX: ${SRC_EXTLINUX}" "$NAME_KERNEL - $NAME_INITRD" "info"
+		mkdir -p "$SDCARD"/boot/extlinux
 		local bootpart_prefix
 		if [[ -n $BOOTFS_TYPE ]]; then
 			bootpart_prefix=/
