@@ -128,15 +128,13 @@ function create_new_rootfs_cache() {
 
 	# Debian does not carry riscv64 in their main repo, needs ports, which needs a specific keyring in the host.
 	# that's done in prepare-host.sh when by adding debian-ports-archive-keyring hostdep, but there's an if anyway.
+	# debian-ports-archive-keyring is also included in-image by: config/optional/architectures/riscv64/_config/cli/_all_distributions/main/packages
 	# Revise this after bookworm release.
 	# @TODO: rpardini: this clearly shows a need for hooks for debootstrap
 	if [[ "${ARCH}" == "riscv64" ]] && [[ $DISTRIBUTION == Debian ]]; then
 		if [[ -f /usr/share/keyrings/debian-ports-archive-keyring.gpg ]]; then
 			display_alert "Adding ports keyring for Debian debootstrap" "riscv64" "info"
-			deboostrap_arguments+=(
-				--keyring /usr/share/keyrings/debian-ports-archive-keyring.gpg
-				--include=debian-ports-archive-keyring
-			)
+			deboostrap_arguments+=("--keyring" "/usr/share/keyrings/debian-ports-archive-keyring.gpg")
 		else
 			exit_with_error "Debian debootstrap for riscv64 needs debian-ports-archive-keyring hostdep"
 		fi
