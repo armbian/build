@@ -829,6 +829,15 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 # shellcheck source=lib/functions/rootfs/rootfs-desktop.sh
 source "${SRC}"/lib/functions/rootfs/rootfs-desktop.sh
 
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/rootfs/systemd-utils.sh
+# shellcheck source=lib/functions/rootfs/systemd-utils.sh
+source "${SRC}"/lib/functions/rootfs/systemd-utils.sh
+
 
 # no errors tolerated. one last time for the win!
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"

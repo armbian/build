@@ -287,7 +287,7 @@ function create_new_rootfs_cache() {
 
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
 	# `armbian-first-run` will do the same thing later
-	chroot $SDCARD /bin/bash -c "systemctl mask systemd-firstboot.service >/dev/null 2>&1"
+	chroot_sdcard systemctl mask systemd-firstboot.service
 
 	# stage: make rootfs cache archive
 	display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
