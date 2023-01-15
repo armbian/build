@@ -56,7 +56,8 @@ function do_main_configuration() {
 
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 
-	if [[ -d "${SRC}/.git" ]]; then
+	if [[ -d "${SRC}/.git" && "${CONFIG_DEFS_ONLY}" != "yes" ]]; then # don't waste time if only gathering config defs
+		display_alert "Getting git info for repo" "${SRC}" "debug"
 		BUILD_REPOSITORY_URL="$(git remote get-url "$(git remote | grep origin || true)" || true)" # ignore all errors
 		BUILD_REPOSITORY_COMMIT="$(git describe --match=d_e_a_d_b_e_e_f --always --dirty || true)" # ignore error
 	fi
