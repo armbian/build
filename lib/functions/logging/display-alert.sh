@@ -2,7 +2,11 @@ function display_alert() {
 	# If asked, avoid any fancy ANSI escapes completely. For python-driven log collection. Formatting could be improved.
 	# If used, also does not write to logfile even if it exists.
 	if [[ "${ANSI_COLOR}" == "none" ]]; then
-		echo -e "${@}" | sed 's/\x1b\[[0-9;]*m//g' >&2
+		declare extra_profiler=""
+		if [[ "${POOR_MAN_PROFILER}" == "yes" ]]; then
+			poor_man_profiler
+		fi
+		echo -e "${extra_profiler}${*}" | sed 's/\x1b\[[0-9;]*m//g' >&2
 		return 0
 	fi
 
@@ -233,3 +237,37 @@ function logging_echo_prefix_for_pv() {
 ## Bright Cyan	echo -e "\033[96mBright Cyan\033[0m"
 ## White	echo -e "\033[37mWhite\033[0m"
 ## Bright White	echo -e "\033[97mBright White\033[0m"
+
+# this is slow, unsafe, incorrect, but does help a lot to find slow spots.
+# this sets the outer scope variable "extra_profiler"
+function poor_man_profiler() {
+	# replace commas with dots in EPOCHREALTIME
+	declare seconds_dot_micros="${EPOCHREALTIME//,/.}"
+	# Parse seconds and nanos from seconds_dot_micros, separated by "dot"
+	declare -i seconds="${seconds_dot_micros%.*}"
+	declare str_nanos="${seconds_dot_micros#*.}"
+	# remove all leading zeros, the worst way possible
+	str_nanos="${str_nanos##0}"
+	str_nanos="${str_nanos##0}"
+	str_nanos="${str_nanos##0}"
+	str_nanos="${str_nanos##0}"
+	declare -i nanos="${str_nanos}"
+
+	if [[ -z "${starting_seconds}" ]]; then # get an absolute starting point, once.
+		declare -g -r starting_seconds="${seconds}"
+	fi
+
+	declare -i seconds=$((seconds - starting_seconds)) # relative secs
+
+	# If we have a previous_seconds and previous_nanos, calculate the difference
+	if [[ -n "${previous_seconds}" && -n "${previous_nanos}" ]]; then
+		declare -i diff_seconds=$((seconds - previous_seconds))
+		declare -i diff_nanos=$((nanos - previous_nanos))
+		if [[ $diff_seconds -gt 0 ]]; then
+			diff_nanos=$(((diff_seconds * 1000 * 1000) + diff_nanos))
+		fi
+		extra_profiler="+(${diff_nanos} ns) " # sets the outer scope variable
+	fi
+	declare -g -i previous_seconds="${seconds}"
+	declare -g -i previous_nanos="${nanos}"
+}
