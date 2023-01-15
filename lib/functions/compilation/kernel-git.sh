@@ -151,23 +151,6 @@ function kernel_prepare_bare_repo_from_bundle() {
 	return 0
 }
 
-function kernel_prepare_git_pre_fetch() {
-	local remote_name="kernel-stable-${KERNEL_MAJOR_MINOR}"
-	local remote_url="${MAINLINE_KERNEL_SOURCE}"
-	local remote_tags_to_fetch="v${KERNEL_MAJOR_MINOR}*"
-
-	# shellcheck disable=SC2154 # do_add_origin is defined in fetch_from_repo, and this is hook for it, so it's in context.
-	if [[ "${do_add_origin}" == "yes" ]]; then
-		# @TODO: let's not add remotes anymore please? it's unwieldy and unnecessary
-		display_alert "Fetching mainline stable tags" "${remote_name} tags: ${remote_tags_to_fetch}" "git"
-		regular_git remote add "${remote_name}" "${remote_url}" # Add the remote to the warmup source
-
-		# Fetch the tags. This allows working -rcX versions of still-unreleased minor versions.
-		improved_git_fetch "${remote_name}" "'refs/tags/${remote_tags_to_fetch}:refs/tags/${remote_tags_to_fetch}'" || true # Fetch the remote branch tags
-		display_alert "After mainline stable tags, working copy size" "$(du -h -s | awk '{print $1}')" "git"                # Show size after bundle pull
-	fi
-}
-
 function kernel_prepare_git() {
 	[[ -z $KERNELSOURCE ]] && return 0 # do nothing if no kernel source... but again, why were we called then?
 
@@ -178,5 +161,5 @@ function kernel_prepare_git() {
 		GIT_BARE_REPO_FOR_WORKTREE="${kernel_git_bare_tree}" \
 		GIT_BARE_REPO_INITIAL_BRANCH="master" \
 		fetch_from_repo "$KERNELSOURCE" "kernel:${KERNEL_MAJOR_MINOR}" "$KERNELBRANCH" "yes"
-		# second parameter, "dir", is ignored, since we've passed GIT_FIXED_WORKDIR
+	# second parameter, "dir", is ignored, since we've passed GIT_FIXED_WORKDIR
 }
