@@ -99,12 +99,12 @@ function main_default_build_single() {
 		if [[ "${BOOTCONFIG}" != "none" ]]; then
 			# @TODO: refactor this. we use it very often
 			# Compile u-boot if packed .deb does not exist or use the one from repository
-			if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb ]]; then
+			if [[ ! -f "${DEB_STORAGE}"/${CHOSEN_UBOOT}_${REVISION}_${ARCH}.deb || "${UBOOT_IGNORE_DEB}" == "yes" ]]; then
 				if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" && "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
 					LOG_SECTION="compile_atf" do_with_logging compile_atf
 				fi
 				# @TODO: refactor this construct. we use it too many times.
-				if [[ "${REPOSITORY_INSTALL}" != *u-boot* ]]; then
+				if [[ "${REPOSITORY_INSTALL}" != *u-boot* || "${UBOOT_IGNORE_DEB}" == "yes" ]]; then
 					declare uboot_git_revision="not_determined_yet"
 					LOG_SECTION="uboot_prepare_git" do_with_logging_unless_user_terminal uboot_prepare_git
 					LOG_SECTION="compile_uboot" do_with_logging compile_uboot
@@ -119,8 +119,7 @@ function main_default_build_single() {
 
 	# Compile kernel if packed .deb does not exist or use the one from repository
 	if [[ "${do_build_kernel}" == "yes" ]]; then
-		if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb ]]; then
-			export KDEB_CHANGELOG_DIST=$RELEASE
+		if [[ ! -f ${DEB_STORAGE}/${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb || "${KERNEL_IGNORE_DEB}" == "yes" ]]; then
 			if [[ -n $KERNELSOURCE ]] && [[ "${REPOSITORY_INSTALL}" != *kernel* ]]; then
 				compile_kernel # This handles its own logging sections.
 			fi
