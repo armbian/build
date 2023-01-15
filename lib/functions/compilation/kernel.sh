@@ -5,9 +5,12 @@ function compile_kernel() {
 
 	# Prepare the git bare repo for the kernel; shared between all kernel builds
 	declare kernel_git_bare_tree
+
+	# Important: for the bundle version, gotta use "do_with_logging_unless_user_terminal" otherwise floods logs.
 	# alternative # LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
 	# alternative # 	kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
-	LOG_SECTION="kernel_prepare_bare_repo_from_oras_gitball" do_with_logging_unless_user_terminal do_with_hooks \
+
+	LOG_SECTION="kernel_prepare_bare_repo_from_oras_gitball" do_with_logging do_with_hooks \
 		kernel_prepare_bare_repo_from_oras_gitball # this sets kernel_git_bare_tree
 
 	# prepare the working copy; this is the actual kernel source tree for this build
