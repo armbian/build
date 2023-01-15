@@ -459,7 +459,8 @@ class PatchInPatchFile:
 			log.warning(f"Rescue: adding all changed files to git for {self}")
 			repo.git.add(repo.working_tree_dir)
 
-		commit_message = f"{self.subject}\n\n{self.desc}"
+		desc_no_none = self.desc if self.desc is not None else ""
+		commit_message = f"{self.subject}\n\n{desc_no_none}"
 
 		if add_rebase_tags:
 			commit_message = f"{self.parent.relative_dirs_and_base_file_name}(:{self.counter})\n\nOriginal-Subject: {self.subject}\n{self.desc}"
