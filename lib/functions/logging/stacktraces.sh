@@ -1,7 +1,8 @@
 # Helper function, to get clean "stack traces" that do not include the hook/extension infrastructure code.
 function get_extension_hook_stracktrace() {
-	local sources_str="$1" # Give this ${BASH_SOURCE[*]} - expanded
-	local lines_str="$2"   # And this # Give this ${BASH_LINENO[*]} - expanded
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # don't waste time here
+	local sources_str="$1"                           # Give this ${BASH_SOURCE[*]} - expanded
+	local lines_str="$2"                             # And this # Give this ${BASH_LINENO[*]} - expanded
 	local sources lines index final_stack=""
 	IFS=' ' read -r -a sources <<< "${sources_str}"
 	IFS=' ' read -r -a lines <<< "${lines_str}"
@@ -29,6 +30,7 @@ function get_extension_hook_stracktrace() {
 }
 
 function show_caller_full() {
+	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # don't waste time here
 	{
 		local i=1 # skip the first frame
 		local line_no
