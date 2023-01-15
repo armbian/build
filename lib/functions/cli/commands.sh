@@ -42,9 +42,11 @@ function armbian_register_commands() {
 		["config-dump"]="CONFIG_DEFS_ONLY='yes'"
 		["configdump"]="CONFIG_DEFS_ONLY='yes'"
 
-		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes'"
-		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes'"
-		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes'"
+		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes'"
+		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
+		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
+
+		["undecided"]="UNDECIDED='yes'"
 	)
 
 	# Override the LOG_CLI_ID to change the log file name.
