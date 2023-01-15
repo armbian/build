@@ -231,9 +231,10 @@ def shorten_patched_file_name_for_stats(path):
 
 def parse_patch_stdout_for_files(stdout_output: str):
 	# run the REGEX_PATCH_FILENAMES on the output; get the group 1 (the filename) for each match
+	# log.debug(f"Running regex on {stdout_output}")
 	ret: list[str] = re.findall(REGEX_PATCH_FILENAMES, stdout_output, re.MULTILINE)
 	# log.debug(f"Found {len(ret)} patched files in patch output: {','.join(ret)}.")
-	return ret
+	return ret  # warning: this includes files the patch *deleted* too
 
 
 class PatchInPatchFile:
@@ -267,6 +268,7 @@ class PatchInPatchFile:
 		self.files_renamed: int = 0
 		self.files_removed: int = 0
 		self.created_file_names = []
+		self.deleted_file_names = []
 		self.all_file_names_touched = []
 
 	def parse_from_name_email(self, from_str: str) -> tuple["str | None", "str | None"]:
@@ -317,6 +319,7 @@ class PatchInPatchFile:
 		self.files_added = len(patch.added_files)
 		self.files_removed = len(patch.removed_files)
 		self.created_file_names = [f.path for f in patch.added_files]
+		self.deleted_file_names = [f.path for f in patch.removed_files]
 		self.all_file_names_touched = \
 			[f.path for f in patch.added_files] + \
 			[f.path for f in patch.modified_files] + \
@@ -432,9 +435,14 @@ class PatchInPatchFile:
 			# add all files to git staging area
 			all_files_to_add: list[str] = []
 			for file_name in self.all_file_names_touched:
+				is_delete = False
+				# Check if deleted, don't complain if so.
+				if file_name in self.deleted_file_names:
+					is_delete = True
+
 				log.info(f"Adding file {file_name} to git")
 				full_path = os.path.join(repo.working_tree_dir, file_name)
-				if not os.path.exists(full_path):
+				if (not os.path.exists(full_path)) and (not is_delete):
 					self.problems.append("wrong_strip_level")
 					log.error(f"File '{full_path}' does not exist, but is touched by {self}")
 					add_all_changes_in_git = True
@@ -614,10 +622,19 @@ class PatchInPatchFile:
 			log.warn(
 				f"Root Makefile is newer than patch '{self.parent.full_file_path()}', using Makefile date")
 		# Apply the date to all files that were touched by the patch
-		for file_name in self.actually_patched_files:
+		# If the patch parsed OK, avoid trying to touch files the patch deleted.
+		files_to_touch = self.actually_patched_files
+		if not self.failed_to_parse:
+			# remove self.deleted_file_names files_to_touch
+			files_to_touch = [f for f in files_to_touch if f not in self.deleted_file_names]
+
+		for file_name in files_to_touch:
 			# log.debug(f"Setting mtime of '{file_name}' to '{final_mtime}'.")
 			file_path = os.path.join(working_dir, file_name)
-			os.utime(file_path, (final_mtime, final_mtime))
+			try:
+				os.utime(file_path, (final_mtime, final_mtime))
+			except FileNotFoundError:
+				log.error(f"File '{file_path}' not found in patch {self}, can't set mtime.")
 
 
 def fix_patch_subject(subject):
