@@ -275,6 +275,7 @@ class PatchInPatchFile:
 		self.files_removed: int = 0
 		self.created_file_names = []
 		self.deleted_file_names = []
+		self.renamed_file_names_source = []  # The original file names of renamed files
 		self.all_file_names_touched = []
 
 	def parse_from_name_email(self, from_str: str) -> tuple["str | None", "str | None"]:
@@ -326,6 +327,7 @@ class PatchInPatchFile:
 		self.files_removed = len(patch.removed_files)
 		self.created_file_names = [f.path for f in patch.added_files]
 		self.deleted_file_names = [f.path for f in patch.removed_files]
+		self.renamed_file_names_source = []  # computed below
 		self.all_file_names_touched = \
 			[f.path for f in patch.added_files] + \
 			[f.path for f in patch.modified_files] + \
@@ -338,6 +340,9 @@ class PatchInPatchFile:
 				self.patched_file_stats_dict[shorten_patched_file_name_for_stats(f.path)] = {
 					"abs_changed_lines": f.added + f.removed}
 			self.files_renamed = self.files_renamed + 1 if f.is_rename else self.files_renamed
+			if f.is_rename:
+				sans_prefix = f.source_file[2:] if f.source_file.startswith("a/") else f.source_file
+				self.renamed_file_names_source.append(sans_prefix)
 		# sort the self.patched_file_stats_dict by the abs_changed_lines, descending
 		self.patched_file_stats_dict = dict(sorted(
 			self.patched_file_stats_dict.items(),
@@ -454,6 +459,10 @@ class PatchInPatchFile:
 					add_all_changes_in_git = True
 				else:
 					all_files_to_add.append(file_name)
+
+			# Also add all source (pre-rename) files that were renamed, sans-checking, since they won't exist.
+			for file_name in self.renamed_file_names_source:
+				all_files_to_add.append(file_name)
 
 			if split_patches:
 				return self.commit_changes_to_git_grouped(all_files_to_add, repo)
