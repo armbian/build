@@ -277,10 +277,10 @@ class PatchInPatchFile:
 			self.problems.append("invalid_author")
 			log.warning(
 				f"Failed to parse name and email from: '{from_str}' while parsing patch {self.counter} in file {self.parent.full_file_path()}")
-			return downgrade_to_ascii(from_str), "unknown-email@domain.tld"
+			return downgrade_to_ascii(remove_quotes(from_str)), "unknown-email@domain.tld"
 		else:
 			# Return the name and email
-			return downgrade_to_ascii(m.group("name")), m.group("email")
+			return downgrade_to_ascii(remove_quotes(m.group("name"))), remove_quotes(m.group("email"))
 
 	def one_line_patch_stats(self) -> str:
 		files_desc = ", ".join(self.patched_file_stats_dict)
@@ -711,6 +711,10 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 # Hack
 def downgrade_to_ascii(utf8: str) -> str:
 	return unidecode(utf8)
+
+
+def remove_quotes(utf8: str) -> str:
+	return utf8.replace('"', '')
 
 
 # Try hard to read a possibly invalid utf-8 file
