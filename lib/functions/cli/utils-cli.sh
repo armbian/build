@@ -182,11 +182,13 @@ function produce_relaunch_parameters() {
 	for config in ${ARMBIAN_CLI_RELAUNCH_CONFIGS}; do
 		ARMBIAN_CLI_RELAUNCH_ARGS+=("${config}")
 	done
-	display_alert "Produced relaunch args:" "ARMBIAN_CLI_RELAUNCH_ARGS: ${ARMBIAN_CLI_RELAUNCH_ARGS[*]}" "debug"
 	# add the command; defaults to the last command, but can be changed by the last pre-run.
 	if [[ -n "${ARMBIAN_CLI_RELAUNCH_COMMAND}" ]]; then
 		ARMBIAN_CLI_RELAUNCH_ARGS+=("${ARMBIAN_CLI_RELAUNCH_COMMAND}")
+	else
+		ARMBIAN_CLI_RELAUNCH_ARGS+=("${ARMBIAN_COMMAND}")
 	fi
+	display_alert "Produced relaunch args:" "ARMBIAN_CLI_RELAUNCH_ARGS: ${ARMBIAN_CLI_RELAUNCH_ARGS[*]}" "debug"
 }
 
 function cli_standard_relaunch_docker_or_sudo() {
@@ -201,9 +203,9 @@ function cli_standard_relaunch_docker_or_sudo() {
 		# 1) We could check if Docker is working, and do everything under Docker. Users who can use Docker, can "become" root inside a container.
 		# 2) We could ask for sudo (which _might_ require a password)...
 		# @TODO: GitHub actions can do both. Sudo without password _and_ Docker; should we prefer Docker? Might have unintended consequences...
-		
+
 		get_docker_info_once # Get Docker info once, and cache it; calling "docker info" is expensive
-		
+
 		if [[ "${DOCKER_INFO_OK}" == "yes" ]]; then
 			display_alert "Trying to build, not root, but Docker is ready to go" "delegating to Docker" "debug"
 			ARMBIAN_CHANGE_COMMAND_TO="docker"
