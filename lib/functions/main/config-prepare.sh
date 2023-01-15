@@ -25,16 +25,26 @@ function prepare_and_config_main_build_single() {
 }
 
 function config_source_board_file() {
-	declare -a arr_all_board_names=()                                                                           # arrays
-	declare -A dict_all_board_types=() dict_all_board_source_files=()                                           # dictionaries
-	get_list_of_all_buildable_boards arr_all_board_names "" dict_all_board_types dict_all_board_source_files "" # invoke
-
-	declare BOARD_TYPE="${dict_all_board_types["${BOARD}"]}"
-	declare BOARD_SOURCE_FILES="${dict_all_board_source_files["${BOARD}"]}"
-	declare BOARD_SOURCE_FILE
+	declare -a BOARD_SOURCE_FILES=()
+	# This has to be syncronized with get_list_of_all_buildable_boards() in interactive.sh!
+	# I used to re-use that code here, but it's very slow, specially for CONFIG_DEFS_ONLY.
+	local -a board_types=("conf" "wip" "csc" "eos" "tvb")
+	local -a board_file_paths=("${SRC}/config/boards" "${USERPATCHES_PATH}/config/boards")
+	declare board_file_path board_type full_board_file
+	for board_file_path in "${board_file_paths[@]}"; do
+		[[ ! -d "${board_file_path}" ]] && continue
+		for board_type in "${board_types[@]}"; do
+			full_board_file="${board_file_path}/${BOARD}.${board_type}"
+			if [[ -f "${full_board_file}" ]]; then
+				BOARD_SOURCE_FILES+=("${full_board_file}")
+				break # only one board type considered, if found.
+			fi
+		done
+	done
 
 	declare -a sourced_board_configs=()
-	for BOARD_SOURCE_FILE in ${BOARD_SOURCE_FILES}; do # No quotes, so expand the space-delimited list
+	declare BOARD_SOURCE_FILE
+	for BOARD_SOURCE_FILE in "${BOARD_SOURCE_FILES[@]}"; do # No quotes, so expand the space-delimited list
 		display_alert "Sourcing board configuration" "${BOARD_SOURCE_FILE}" "info"
 		# shellcheck source=/dev/null
 		source "${BOARD_SOURCE_FILE}"
