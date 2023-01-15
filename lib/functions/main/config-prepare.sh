@@ -54,6 +54,10 @@ function prepare_and_config_main_build_single() {
 		# private ccache directory to avoid permission issues when using build script with "sudo"
 		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
 		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
+		# Check if /tmp is mounted as tmpfs make a temporary ccache folder there for faster operation.
+		if [ "$(findmnt --noheadings --output FSTYPE --target "/tmp" --uniq)" == "tmpfs" ]; then
+			export CCACHE_TEMPDIR="/tmp/ccache-tmp"
+		fi
 
 	else
 
