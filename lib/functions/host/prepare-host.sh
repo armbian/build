@@ -5,18 +5,25 @@
 # * creates directory structure
 # * changes system settings
 #
-prepare_host() {
+function prepare_host() {
+	# Those are not logged, and might be interactive.
+	display_alert "Checking" "host" "info"
+	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
+	check_host_has_enough_disk_space       # Checks disk space and exits if not enough
+	wait_for_package_manager               # wait until dpkg is not locked...
+
+	LOG_SECTION="prepare_host_noninteractive" do_with_logging prepare_host_noninteractive
+	return 0
+}
+
+function prepare_host_noninteractive() {
 	display_alert "Preparing" "host" "info"
 
 	# The 'offline' variable must always be set to 'true' or 'false'
+	declare offline=false
 	if [ "$OFFLINE_WORK" == "yes" ]; then
-		local offline=true
-	else
-		local offline=false
+		offline=true
 	fi
-
-	# wait until package manager finishes possible system maintanace
-	wait_for_package_manager
 
 	# fix for Locales settings, if locale-gen is installed, and /etc/locale.gen exists.
 	if [[ -n "$(command -v locale-gen)" && -f /etc/locale.gen ]]; then
@@ -51,16 +58,6 @@ prepare_host() {
 				exit_with_error "Unable to obtain ARMBIAN_MIRROR after ${armbian_mirror_tries} tries. Please set ARMBIAN_MIRROR to a valid mirror manually, or avoid the automatic mirror selection by setting SKIP_ARMBIAN_REPO=yes"
 			fi
 		done
-	fi
-
-	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
-
-	if grep -qE "(Microsoft|WSL)" /proc/version; then
-		if [ -f /.dockerenv ]; then
-			display_alert "Building images using Docker on WSL2 may fail" "" "wrn"
-		else
-			exit_with_error "Windows subsystem for Linux is not a supported build environment"
-		fi
 	fi
 
 	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
@@ -111,12 +108,11 @@ prepare_host() {
 	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
 
 	# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
-	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,rootfs} "${SRC}"/.tmp
 
 	# If offline, do not try to download/install toolchains.
 	if ! $offline; then
-		# Mostly deprecated.
-		download_external_toolchains
+		download_external_toolchains # Mostly deprecated, since SKIP_EXTERNAL_TOOLCHAINS=yes is the default
 	fi
 
 	# if we're building an image, not only packages...
@@ -163,18 +159,15 @@ prepare_host() {
 				test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
 				test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
 			fi
+
+			# @TODO: we could create a tiny loop here to test if the binfmt_misc is working, but this is before deps are installed.
 		fi
 	fi
 
 	# @TODO: rpardini: this does not belong here, instead with the other templates, pre-configuration.
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
 
-	# @TODO: what is this, and why?
-	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
-		rm -f "${USERPATCHES_PATH}"/readme.txt
-		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
-		echo 'https://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
-
+	if [[ -d "${USERPATCHES_PATH}" ]]; then
 		# create patches directory structure under USERPATCHES_PATH
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
 	fi
@@ -182,16 +175,7 @@ prepare_host() {
 	# Reset owner of userpatches if so required
 	reset_uid_owner "${USERPATCHES_PATH}" # Fix owner of files in the final destination
 
-	# @TODO: check every possible mount point. Not only one. People might have different mounts / Docker volumes...
-	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
-	declare -i free_space_bytes
-	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${SRC}" --uniq 2> /dev/null) # in bytes
-	if [[ -n "$free_space_bytes" && $((free_space_bytes / 1073741824)) -lt 10 ]]; then
-		display_alert "Low free space left" "$((free_space_bytes / 1073741824)) GiB" "wrn"
-		# pause here since dialog-based menu will hide this message otherwise
-		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-		read # @TODO: this fails if stdin is not a tty, or just hangs
-	fi
+	return 0
 }
 
 # Early: we've possibly no idea what the host release or arch we're building on, or what the target arch is. All-deps.
@@ -355,4 +339,15 @@ function install_host_dependencies() {
 	HOST_DEPENDENCIES_READY
 
 	unset FINAL_HOST_DEPS # don't leak this after the hook is done
+}
+
+function check_host_has_enough_disk_space() {
+	# @TODO: check every possible mount point. Not only one. People might have different mounts / Docker volumes...
+	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
+	declare -i free_space_bytes
+	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${SRC}" --uniq 2> /dev/null) # in bytes
+	if [[ -n "$free_space_bytes" && $((free_space_bytes / 1073741824)) -lt 10 ]]; then
+		display_alert "Low free space left" "$((free_space_bytes / 1073741824))GiB" "wrn"
+		exit_if_countdown_not_aborted 10 "Low free disk space left" # This pauses & exits if error if ENTER is not pressed in 10 seconds
+	fi
 }

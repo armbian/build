@@ -34,7 +34,7 @@ function cli_patch_kernel_run() {
 		"kernel-${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}:${target_branch}")
 
 	# Prepare the host and build kernel instead of main_default_build_single
-	LOG_SECTION="prepare_host" do_with_logging prepare_host
+	prepare_host # This handles its own logging sections, and is possibly interactive.
 	compile_kernel # This handles its own logging sections.
 
 	display_alert "Done patching kernel" "${BRANCH} - ${LINUXFAMILY} - ${KERNEL_MAJOR_MINOR}" "cachehit"
