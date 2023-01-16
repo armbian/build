@@ -204,7 +204,7 @@ function mkdir_recursive_and_set_uid_owner() {
 	done
 }
 
-# Call: reset_uid_owner "one/file" "some/directory" "another/file"
+# Call: reset_uid_owner "one/file" "some/directory" "another/file" - is recursive if dir given
 function reset_uid_owner() {
 	if [[ "x${SET_OWNER_TO_UID}x" == "xx" ]]; then
 		return 0 # Nothing to do.
@@ -220,6 +220,26 @@ function reset_uid_owner() {
 			chown "${SET_OWNER_TO_UID}" "${arg}"
 		else
 			display_alert "reset_uid_owner: '${arg}' is not a file or directory" "skipping" "debug"
+			return 1
+		fi
+	done
+}
+
+# Non recursive version of the above
+function reset_uid_owner_non_recursive() {
+	if [[ "x${SET_OWNER_TO_UID}x" == "xx" ]]; then
+		return 0 # Nothing to do.
+	fi
+	# Loop over args..
+	local arg
+	for arg in "$@"; do
+		display_alert "reset_uid_owner_non_recursive: '${arg}' will be owner id '${SET_OWNER_TO_UID}'" "reset_uid_owner_non_recursive" "debug"
+		if [[ -d "${arg}" ]]; then
+			chown "${SET_OWNER_TO_UID}" "${arg}"
+		elif [[ -f "${arg}" ]]; then
+			chown "${SET_OWNER_TO_UID}" "${arg}"
+		else
+			display_alert "reset_uid_owner_non_recursive: '${arg}' is not a file or directory" "skipping" "debug"
 			return 1
 		fi
 	done
@@ -248,6 +268,7 @@ function check_dir_for_mount_options() {
 function trap_handler_reset_output_owner() {
 	display_alert "Resetting output directory owner" "${SRC}/output" "debug"
 	reset_uid_owner "${SRC}/output"
+	# For .tmp: do NOT do it recursively. If another build is running in another process, this is destructive if recursive.
 	display_alert "Resetting tmp directory owner" "${SRC}/.tmp" "debug"
-	reset_uid_owner "${SRC}/.tmp"
+	reset_uid_owner_non_recursive "${SRC}/.tmp"
 }
