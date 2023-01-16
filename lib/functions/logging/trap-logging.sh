@@ -17,7 +17,7 @@ function trap_handler_cleanup_logging() {
 	fi
 
 	local target_path="${DEST}/logs"
-	mkdir_recursive_and_set_uid_owner "${target_path}"
+	mkdir_recursive_and_set_uid_owner "${target_path}" # @TODO: this might be full of logs and is slow
 
 	# Before writing new logfile, compress and move existing ones to archive folder.
 	# - Unless running under CI.
@@ -33,7 +33,7 @@ function trap_handler_cleanup_logging() {
 				continue
 			fi
 			display_alert "Archiving old logfile" "${old_logfile_fn}" "warn"
-			mkdir_recursive_and_set_uid_owner "${target_archive_path}"
+			mkdir_recursive_and_set_uid_owner "${target_archive_path}" # @TODO: slow
 
 			# Check if we have `zstdmt` at this stage; if not, use standard gzip
 			if [[ -n "$(command -v zstdmt)" ]]; then
