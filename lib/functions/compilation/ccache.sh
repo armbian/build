@@ -1,10 +1,12 @@
 function do_with_ccache_statistics() {
+
 	display_alert "Clearing ccache statistics" "ccache" "ccache"
 	run_host_command_logged ccache --zero-stats
 
 	if [[ "${SHOW_CCACHE}" == "yes" ]]; then
 		# show value of CCACHE_DIR
 		display_alert "CCACHE_DIR" "${CCACHE_DIR:-"unset"}" "ccache"
+		display_alert "CCACHE_TEMPDIR" "${CCACHE_TEMPDIR:-"unset"}" "ccache"
 
 		# determine what is the actual ccache_dir in use
 		local ccache_dir_actual
@@ -20,7 +22,8 @@ function do_with_ccache_statistics() {
 
 		# Show the ccache configuration
 		display_alert "ccache configuration" "ccache" "ccache"
-		run_host_command_logged ccache --show-config
+		run_host_command_logged ccache --show-config "&&" sync
+		sync
 	fi
 
 	display_alert "Running ccache'd build..." "ccache" "ccache"
@@ -44,4 +47,6 @@ function do_with_ccache_statistics() {
 		# display the difference
 		display_alert "ccache dir size change" "${ccache_dir_size_diff_human}" "ccache"
 	fi
+
+	return 0
 }
