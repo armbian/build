@@ -16,18 +16,18 @@ function main_default_build_single() {
 	LOG_SECTION="prepare_tmpfs_workdir" do_with_logging prepare_tmpfs_for "WORKDIR" "${WORKDIR}" # this adds its own cleanup handler, which deletes it if it was created
 	add_cleanup_handler trap_handler_cleanup_workdir                                             # this is for when it is NOT a tmpfs, for any reason; it does not delete the dir itself.
 
-	# '-x': export
+	# 'declare -g -x': global, export
 	declare -g -x TMPDIR="${WORKDIR}"                    # TMPDIR is default for a lot of stuff, but...
 	declare -g -x CCACHE_TEMPDIR="${WORKDIR}/ccache_tmp" # Export CCACHE_TEMPDIR, under Workdir, which is hopefully under tmpfs. Thanks @the-Going for this.
 	declare -g -x XDG_RUNTIME_DIR="${WORKDIR}/xdg_tmp"   # XDG_RUNTIME_DIR is used by the likes of systemd/freedesktop centric apps.
 
-	start=$(date +%s)
+	declare start=$(date +%s)
 
 	### Write config summary
 	LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
 
 	# Check and install dependencies, directory structure and settings
-	LOG_SECTION="prepare_host" do_with_logging prepare_host
+	prepare_host # this has its own logging sections, and is possibly interactive.
 
 	# Aggregate packages, in its own logging section; this decides internally on KERNEL_ONLY=no
 	LOG_SECTION="aggregate_packages" do_with_logging aggregate_packages
@@ -44,7 +44,8 @@ function main_default_build_single() {
 	fi
 
 	if [[ $CLEAN_LEVEL == *sources* ]]; then
-		general_cleaning "sources"
+		# early cleaning for sources, since fetch_and_build_host_tools() uses it.
+		LOG_SECTION="cleaning_early_sources" do_with_logging general_cleaning "sources"
 	fi
 
 	# Too many things being done. Allow doing only one thing. For core development, mostly.
@@ -72,20 +73,7 @@ function main_default_build_single() {
 			LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
 		fi
 
-		# Cleaning of old, deprecated mountpoints; only done if not running under Docker.
-		# mountpoints under Docker manifest as volumes, and as such can't be cleaned this way.
-		if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" != "yes" ]]; then
-			prepare_armbian_mountpoints_description_dict
-			local mountpoint=""
-			for mountpoint in "${ARMBIAN_MOUNTPOINTS_DEPRECATED[@]}"; do
-				local mountpoint_dir="${SRC}/${mountpoint}"
-				display_alert "Considering cleaning deprecated mountpoint" "${mountpoint_dir}" "debug"
-				if [[ -d "${mountpoint_dir}" ]]; then
-					display_alert "Cleaning deprecated mountpoint" "${mountpoint_dir}" "info"
-					run_host_command_logged rm -rf "${mountpoint_dir}"
-				fi
-			done
-		fi
+		LOG_SECTION="clean_deprecated_mountpoints" do_with_logging clean_deprecated_mountpoints
 
 		for cleaning_fragment in $(tr ',' ' ' <<< "${CLEAN_LEVEL}"); do
 			if [[ $cleaning_fragment != sources ]] && [[ $cleaning_fragment != none ]] && [[ $cleaning_fragment != make* ]]; then
@@ -95,7 +83,7 @@ function main_default_build_single() {
 	fi
 
 	# Prepare ccache, cthreads, etc for the build
-	prepare_compilation_vars
+	LOG_SECTION="prepare_compilation_vars" do_with_logging prepare_compilation_vars
 
 	if [[ "${do_build_uboot}" == "yes" ]]; then
 		# Don't build u-boot at all if the BOOTCONFIG is 'none'.
@@ -223,13 +211,14 @@ function main_default_build_single() {
 
 	end=$(date +%s)
 	runtime=$(((end - start) / 60))
-	display_alert "Runtime" "$runtime min" "info"
+	# display_alert in its own logging section.
+	LOG_SECTION="runtime_total" do_with_logging display_alert "Runtime" "$runtime min" "info"
 
 	if armbian_is_running_in_container; then
 		BUILD_CONFIG='docker' # @TODO: this is not true, depends on how we end up launching this.
 	fi
 
-	# Make it easy to repeat build by displaying build options used. Prepare array.
+	# Make it easy to repeat build by displaying build options used. Prepare array. @TODO this is inconsistent. Maybe something like the relaunch vars?
 	local -a repeat_args=("./compile.sh" "${BUILD_CONFIG}" " BRANCH=${BRANCH}")
 	[[ -n ${RELEASE} ]] && repeat_args+=("RELEASE=${RELEASE}")
 	[[ -n ${BUILD_MINIMAL} ]] && repeat_args+=("BUILD_MINIMAL=${BUILD_MINIMAL}")
