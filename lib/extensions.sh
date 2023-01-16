@@ -263,7 +263,7 @@ function cleanup_handler_extensions() {
 	if [[ -d "${EXTENSION_MANAGER_TMP_DIR}" ]]; then
 		rm -rf "${EXTENSION_MANAGER_TMP_DIR}"
 	fi
-	unset EXTENSION_MANAGER_TMP_DIR
+	# unset EXTENSION_MANAGER_TMP_DIR # -- no, it's readonly now.
 }
 
 # why not eat our own dog food?

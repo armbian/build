@@ -93,7 +93,7 @@ create_image_from_sdcard_rootfs() {
 
 	# We're done with ${MOUNT} by now, remove it.
 	rm -rf --one-file-system "${MOUNT}"
-	unset MOUNT
+	# unset MOUNT # don't unset, it's readonly now
 
 	mkdir -p "${DESTIMG}"
 	# @TODO: misterious cwd, who sets it?
