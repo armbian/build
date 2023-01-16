@@ -75,8 +75,8 @@ function cli_entrypoint() {
 	# Also form here, UUID will be generated, output created, logging enabled, etc.
 
 	# Init basic dirs.
-	declare -g DEST="${SRC}/output" USERPATCHES_PATH="${SRC}"/userpatches # DEST is the main output dir, and USERPATCHES_PATH is the userpatches dir.
-	mkdir -p "${DEST}" "${USERPATCHES_PATH}"                              # Create output and userpatches directory if not already there
+	declare -g -r DEST="${SRC}/output" USERPATCHES_PATH="${SRC}"/userpatches # DEST is the main output dir, and USERPATCHES_PATH is the userpatches dir. read-only.
+	mkdir -p "${DEST}" "${USERPATCHES_PATH}"                                 # Create output and userpatches directory if not already there
 	display_alert "Output directory created! DEST:" "${DEST}" "debug"
 
 	# set unique mounting directory for this execution.
@@ -93,21 +93,20 @@ function cli_entrypoint() {
 		fi
 		display_alert "Generated ARMBIAN_BUILD_UUID" "${ARMBIAN_BUILD_UUID}" "debug"
 	fi
+	declare -g -r ARMBIAN_BUILD_UUID="${ARMBIAN_BUILD_UUID}" # Make read-only
 	display_alert "Build UUID:" "${ARMBIAN_BUILD_UUID}" "debug"
 
-	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this very early stage.
-	declare -g WORKDIR_BASE_TMP="${SRC}/.tmp"                       # a.k.a. ".tmp" dir.
-	export WORKDIR="${WORKDIR_BASE_TMP}/work-${ARMBIAN_BUILD_UUID}" # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
-	export LOGDIR="${WORKDIR_BASE_TMP}/logs-${ARMBIAN_BUILD_UUID}"  # Will be initialized very soon, literally, below.
-	# @TODO: These are used by actual build, move to its cli handler.
-	export SDCARD="${WORKDIR_BASE_TMP}/rootfs-${ARMBIAN_BUILD_UUID}"                        # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
-	export MOUNT="${WORKDIR_BASE_TMP}/mount-${ARMBIAN_BUILD_UUID}"                          # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
-	export EXTENSION_MANAGER_TMP_DIR="${WORKDIR_BASE_TMP}/extensions-${ARMBIAN_BUILD_UUID}" # EXTENSION_MANAGER_TMP_DIR used to store extension-composed functions
-	export DESTIMG="${WORKDIR_BASE_TMP}/image-${ARMBIAN_BUILD_UUID}"                        # DESTIMG is where the backing image (raw, huge, sparse file) is kept (not the final destination)
+	# Super-global variables, used everywhere. The directories are NOT _created_ here, since this very early stage. They are all readonly, for sanity.
+	declare -g -r WORKDIR_BASE_TMP="${SRC}/.tmp" # a.k.a. ".tmp" dir. it is a shared base dir for all builds, but each build gets its own WORKDIR/TMPDIR.
 
-	# Make sure ARMBIAN_LOG_CLI_ID is set, and unique.
-	# Pre-runs might change it, but if not set, default to ARMBIAN_COMMAND.
-	declare -g ARMBIAN_LOG_CLI_ID="${ARMBIAN_LOG_CLI_ID:-${ARMBIAN_COMMAND}}"
+	declare -g -r WORKDIR="${WORKDIR_BASE_TMP}/work-${ARMBIAN_BUILD_UUID}"                         # WORKDIR at this stage. It will become TMPDIR later. It has special significance to `mktemp` and others!
+	declare -g -r LOGDIR="${WORKDIR_BASE_TMP}/logs-${ARMBIAN_BUILD_UUID}"                          # Will be initialized very soon, literally, below.
+	declare -g -r EXTENSION_MANAGER_TMP_DIR="${WORKDIR_BASE_TMP}/extensions-${ARMBIAN_BUILD_UUID}" # EXTENSION_MANAGER_TMP_DIR used to store extension-composed functions
+
+	# @TODO: These are used only by rootfs/image actual build, move there...
+	declare -g -r SDCARD="${WORKDIR_BASE_TMP}/rootfs-${ARMBIAN_BUILD_UUID}" # SDCARD (which is NOT an sdcard, but will be, maybe, one day) is where we work the rootfs before final imaging. "rootfs" stage.
+	declare -g -r MOUNT="${WORKDIR_BASE_TMP}/mount-${ARMBIAN_BUILD_UUID}"   # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
+	declare -g -r DESTIMG="${WORKDIR_BASE_TMP}/image-${ARMBIAN_BUILD_UUID}" # DESTIMG is where the backing image (raw, huge, sparse file) is kept (not the final destination)
 
 	LOG_SECTION="entrypoint" start_logging_section      # This creates LOGDIR. @TODO: also maybe causes a spurious group to be created in the log file
 	add_cleanup_handler trap_handler_cleanup_logging    # cleanup handler for logs; it rolls it up from LOGDIR into DEST/logs
