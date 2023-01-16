@@ -273,6 +273,8 @@ function prepare_partitions() {
 		run_host_command_logged mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
 	fi
+
+	display_alert "Writing /tmp as tmpfs in chroot fstab" "$SDCARD/etc/fstab" "debug"
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
 
 	call_extension_method "format_partitions" <<- 'FORMAT_PARTITIONS'
