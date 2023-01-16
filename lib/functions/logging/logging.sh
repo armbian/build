@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# This is called both early in compile.sh, but also after processing cmdline params in the cli entrypoint.sh 
+# This is called both early in compile.sh, but also after processing cmdline params in the cli entrypoint.sh
 function logging_init() {
 	# defaults.
 	# if stdout is a terminal, then default SHOW_LOG to yes
@@ -101,10 +101,10 @@ function print_current_asset_log_base_file() {
 }
 
 function discard_logs_tmp_dir() {
-	# Linux allows us to be more careful, but really, those are log files we're talking about.
+	# Do not delete the dir itself, since it might be a tmpfs mount.
 	if [[ "$(uname)" == "Linux" ]]; then
-		rm -rf --one-file-system "${LOGDIR}"
+		rm -rf --one-file-system "${LOGDIR:?}"/* # Note this is protected by :?
 	else
-		rm -rf "${LOGDIR}"
+		rm -rf "${LOGDIR:?}"/* # Note this is protected by :?
 	fi
 }
