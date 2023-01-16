@@ -7,16 +7,19 @@ function main_default_build_single() {
 	fi
 
 	# Check the sanity of WORKDIR_BASE_TMP regarding mount options.
-	check_dir_for_mount_options "${WORKDIR_BASE_TMP}" "main temporary dir"
+	LOG_SECTION="check_dir_for_mount_options" do_with_logging check_dir_for_mount_options "${WORKDIR_BASE_TMP}" "main temporary dir"
 
 	# Starting work. Export TMPDIR, which will be picked up by all `mktemp` invocations hopefully.
 	# Runner functions in logging/runners.sh will explicitly unset TMPDIR before invoking chroot.
 	# Invoking chroot directly will fail in subtle ways, so, please use the runner.sh functions.
 	display_alert "Starting single build, exporting TMPDIR" "${WORKDIR}" "debug"
-	mkdir -p "${WORKDIR}"
-	add_cleanup_handler trap_handler_cleanup_workdir
+	LOG_SECTION="prepare_tmpfs_workdir" do_with_logging prepare_tmpfs_for "WORKDIR" "${WORKDIR}" # this adds its own cleanup handler, which deletes it if it was created
+	add_cleanup_handler trap_handler_cleanup_workdir                                             # this is for when it is NOT a tmpfs, for any reason; it does not delete the dir itself.
 
-	export TMPDIR="${WORKDIR}"
+	# '-x': export
+	declare -g -x TMPDIR="${WORKDIR}"                    # TMPDIR is default for a lot of stuff, but...
+	declare -g -x CCACHE_TEMPDIR="${WORKDIR}/ccache_tmp" # Export CCACHE_TEMPDIR, under Workdir, which is hopefully under tmpfs. Thanks @the-Going for this.
+	declare -g -x XDG_RUNTIME_DIR="${WORKDIR}/xdg_tmp"   # XDG_RUNTIME_DIR is used by the likes of systemd/freedesktop centric apps.
 
 	start=$(date +%s)
 
@@ -247,10 +250,12 @@ function trap_handler_cleanup_workdir() {
 	unset TMPDIR
 	if [[ -d "${WORKDIR}" ]]; then
 		if [[ "${PRESERVE_WORKDIR}" != "yes" ]]; then
-			display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "debug"
-			rm -rf "${WORKDIR}"
+			display_alert "Cleaning up WORKDIR" "$(du -h -s "$WORKDIR")" "cleanup"
+			# Remove all files and directories in WORKDIR, but not WORKDIR itself.
+			rm -rf "${WORKDIR:?}"/* # Note this is protected by :?
 		else
 			display_alert "Preserving WORKDIR due to PRESERVE_WORKDIR=yes" "$(du -h -s "$WORKDIR")" "warn"
+			# @TODO: tmpfs might just be unmounted, though.
 		fi
 	fi
 }
