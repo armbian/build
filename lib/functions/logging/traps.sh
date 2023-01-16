@@ -93,16 +93,23 @@ function run_cleanup_handlers() {
 	# IMPORTANT: cleanups are added first to the list, so cleanups run in the reverse order they were added.
 	local one_cleanup_handler
 	for one_cleanup_handler in "${trap_manager_cleanup_handlers[@]}"; do
-		display_alert "Running cleanup handler" "${one_cleanup_handler}" "debug"
-		"${one_cleanup_handler}" || true
+		run_one_cleanup_handler "${one_cleanup_handler}"
 	done
 	# Clear the cleanup handler list, so they don't accidentally run again.
 	trap_manager_cleanup_handlers=()
 }
 
-# Adds a callback for trap types; first argument is function name; extra params are the types to add for.
+# Adds a callback for trap types; first and only argument is eval code to call during cleanup. If such, that needs proper quoting (@Q)
 function add_cleanup_handler() {
-	local callback="$1"
+	if [[ $# -gt 1 ]]; then
+		exit_with_error "add_cleanup_handler: too many params"
+	fi
+	local callback="$1" # simple function name or @Q quoted eval code
+	# validate
+	if [[ -z "${callback}" ]]; then
+		exit_with_error "add_cleanup_handler: no callback specified"
+	fi
+
 	display_alert "Add callback as cleanup handler" "${callback}" "cleanup"
 	# IMPORTANT: cleanups are added first to the list, so they're executed in reverse order.
 	trap_manager_cleanup_handlers=("${callback}" "${trap_manager_cleanup_handlers[@]}")
@@ -116,10 +123,19 @@ function execute_and_remove_cleanup_handler() {
 		if [[ "${one_cleanup_handler}" != "${callback}" ]]; then
 			remaning_cleanups+=("${one_cleanup_handler}")
 		else
-			"${one_cleanup_handler}" || true
+			run_one_cleanup_handler "${one_cleanup_handler}"
 		fi
 	done
 	trap_manager_cleanup_handlers=("${remaning_cleanups[@]}")
+}
+
+function run_one_cleanup_handler() {
+	declare one_cleanup_handler="$1"
+	display_alert "Running cleanup handler" "${one_cleanup_handler}" "cleanup"
+
+	eval "${one_cleanup_handler}" || {
+		display_alert "Cleanup handler failed, this is a severe bug in the build system or extensions" "${one_cleanup_handler}" "err"
+	}
 }
 
 function remove_all_trap_handlers() {
@@ -141,7 +157,7 @@ function exit_with_error() {
 	# @TODO: integrate both overlayfs and the FD locking with cleanup logic
 	display_alert "Build terminating... wait for cleanups..." "" "err"
 	overlayfs_wrapper "cleanup"
-	
+
 	## This does not really make sense. wtf?
 	## unlock loop device access in case of starvation # @TODO: hmm, say that again?
 	#exec {FD}> /var/lock/armbian-debootstrap-losetup
