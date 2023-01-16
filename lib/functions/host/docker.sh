@@ -248,7 +248,7 @@ function docker_cli_prepare() {
 		ENV ARMBIAN_RUNNING_IN_CONTAINER=yes
 		ADD . ${DOCKER_ARMBIAN_TARGET_PATH}/
 		${c}RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." && \\
-		${c} /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \\
+		${c} ARMBIAN_INSIDE_DOCKERFILE_BUILD="yes" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \\
 		${c} rm -rf "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache" 
 	INITIAL_DOCKERFILE
 
@@ -407,14 +407,14 @@ function docker_cli_launch() {
 	display_alert "Showing Docker cmdline" "Docker args: '${DOCKER_ARGS[*]}'" "debug"
 
 	display_alert "Relaunching in Docker" "${*}" "debug"
-	display_alert "Relaunching in Docker" "here comes the 🐳" "info"
+	display_alert "-----------------Relaunching in Docker-----------------------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result=1
 	if docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
-		display_alert "Docker Build finished" "successfully" "info"
+		display_alert "-------------Docker Build finished----------------------------------------" "successfully" "info"
 		docker_build_result=0
 	else
-		display_alert "Docker Build failed" "with errors" "err"
+		display_alert "-------------Docker Build failed-------------------------------------------" "with errors" "err"
 	fi
 
 	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
