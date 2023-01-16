@@ -11,11 +11,12 @@ function run_kernel_make_internal() {
 	prepare_distcc_compilation_config
 
 	common_make_envs=(
-		"CCACHE_BASEDIR=\"$(pwd)\""     # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
-		"PATH=\"${toolchain}:${PATH}\"" # Insert the toolchain first into the PATH.
-		"DPKG_COLORS=always"            # Use colors for dpkg @TODO no dpkg is done anymore, remove?
-		"XZ_OPT='--threads=0'"          # Use parallel XZ compression
-		"TERM='${TERM}'"                # Pass the terminal type, so that 'make menuconfig' can work.
+		"CCACHE_BASEDIR=\"$(pwd)\""              # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
+		"CCACHE_TEMPDIR=\"${CCACHE_TEMPDIR:?}\"" # Temporary directory for ccache, under WORKDIR
+		"PATH=\"${toolchain}:${PATH}\""          # Insert the toolchain first into the PATH.
+		"DPKG_COLORS=always"                     # Use colors for dpkg @TODO no dpkg is done anymore, remove?
+		"XZ_OPT='--threads=0'"                   # Use parallel XZ compression
+		"TERM='${TERM}'"                         # Pass the terminal type, so that 'make menuconfig' can work.
 	)
 
 	# If CCACHE_DIR is set, pass it to the kernel build; Pass the ccache dir explicitly, since we'll run under "env -i"
@@ -32,7 +33,7 @@ function run_kernel_make_internal() {
 		"${DISTCC_MAKE_J_PARALLEL[@]}" # Parallel compile, "-j X" for X cpus; determined by distcc, or is just "$CTHREADS" if distcc is not enabled.
 
 		"ARCH=${ARCHITECTURE}"         # Key param. Everything depends on this.
-		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles # @TODO change to "localversion" file
+		"LOCALVERSION=-${LINUXFAMILY}" # Change the internal kernel version to include the family. Changing this causes recompiles # @TODO change hack at .config; that might handles mtime better
 
 		"CROSS_COMPILE=${CCACHE} ${DISTCC_CROSS_COMPILE_PREFIX[@]} ${KERNEL_COMPILER}" # added as prefix to every compiler invocation by make
 		"KCFLAGS=-fdiagnostics-color=always -Wno-error=misleading-indentation"         # Force GCC colored messages, downgrade misleading indentation to warning
@@ -42,7 +43,7 @@ function run_kernel_make_internal() {
 		"KBUILD_BUILD_USER=armbian"                           # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
 		"KBUILD_BUILD_HOST=next"                              # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
 
-		"KGZIP=pigz" "KBZIP2=pbzip2" # Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/
+		"KGZIP=pigz" "KBZIP2=pbzip2" # Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/ # @TODO: what about XZ?
 	)
 
 	# last statement, so it passes the result to calling function. "env -i" is used for empty env
