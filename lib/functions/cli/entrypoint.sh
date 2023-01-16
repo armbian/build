@@ -108,9 +108,17 @@ function cli_entrypoint() {
 	declare -g -r MOUNT="${WORKDIR_BASE_TMP}/mount-${ARMBIAN_BUILD_UUID}"   # MOUNT ("mounted on the loop") is the mounted root on final image (via loop). "image" stage
 	declare -g -r DESTIMG="${WORKDIR_BASE_TMP}/image-${ARMBIAN_BUILD_UUID}" # DESTIMG is where the backing image (raw, huge, sparse file) is kept (not the final destination)
 
-	LOG_SECTION="entrypoint" start_logging_section      # This creates LOGDIR. @TODO: also maybe causes a spurious group to be created in the log file
+	# Make sure ARMBIAN_LOG_CLI_ID is set, and unique, and readonly.
+	# Pre-runs might change it before this, but if not set, default to ARMBIAN_COMMAND.
+	declare -r -g ARMBIAN_LOG_CLI_ID="${ARMBIAN_LOG_CLI_ID:-${ARMBIAN_COMMAND}}"
+
+	# If we're on Linux & root, mount tmpfs on LOGDIR. This has it's own cleanup handler.
+	# It also _creates_ the LOGDIR, and the cleanup handler will delete.
+	prepare_tmpfs_for "LOGDIR" "${LOGDIR}"
+
+	LOG_SECTION="entrypoint" start_logging_section      # This will create LOGDIR if it does not exist. @TODO: also maybe causes a spurious group to be created in the log file
 	add_cleanup_handler trap_handler_cleanup_logging    # cleanup handler for logs; it rolls it up from LOGDIR into DEST/logs
-	add_cleanup_handler trap_handler_reset_output_owner # make sure output folder is owned by pre-sudo user if that's the case
+	add_cleanup_handler trap_handler_reset_output_owner # make sure output folder is owned by pre-sudo/pre-Docker user if that's the case
 
 	# @TODO: So gigantic contention point here about logging the basic deps installation.
 	if [[ "${ARMBIAN_COMMAND_REQUIRE_BASIC_DEPS}" == "yes" ]]; then
