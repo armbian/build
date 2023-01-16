@@ -86,3 +86,21 @@ function general_cleaning() {
 
 	return 0 # a LOT of shortcircuits above; prevent spurious error messages
 }
+
+function clean_deprecated_mountpoints() {
+	# Cleaning of old, deprecated mountpoints; only done if not running under Docker.
+	# mountpoints under Docker manifest as volumes, and as such can't be cleaned this way.
+	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" != "yes" ]]; then
+		prepare_armbian_mountpoints_description_dict
+		local mountpoint=""
+		for mountpoint in "${ARMBIAN_MOUNTPOINTS_DEPRECATED[@]}"; do
+			local mountpoint_dir="${SRC}/${mountpoint}"
+			display_alert "Considering cleaning deprecated mountpoint" "${mountpoint_dir}" "debug"
+			if [[ -d "${mountpoint_dir}" ]]; then
+				display_alert "Cleaning deprecated mountpoint" "${mountpoint_dir}" "info"
+				run_host_command_logged rm -rf "${mountpoint_dir}"
+			fi
+		done
+	fi
+	return 0
+}
