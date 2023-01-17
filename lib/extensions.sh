@@ -243,7 +243,7 @@ initialize_extension_manager() {
 
 cleanup_extension_manager() {
 	if [[ -f "${fragment_manager_cleanup_file}" ]]; then
-		display_alert "Cleaning up" "extension manager" "info"
+		display_alert "Cleaning up" "extension manager" "debug"
 		# shellcheck disable=SC1090 # dynamic source, thanks, shellcheck
 		source "${fragment_manager_cleanup_file}" # this will unset all the functions.
 		rm -f "${fragment_manager_cleanup_file}"  # also remove the file.
