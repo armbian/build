@@ -181,7 +181,7 @@ function exit_if_countdown_not_aborted() {
 	fi
 
 	display_alert "Problem detected" "${reason}" "err"
-	display_alert "Exiting in ${loops} seconds" "Press \e[0;33m<Ctrl-C>\x1B[0m to abort, \e[0;33m<Enter>\x1B[0m to ignore and continue" "err"
+	display_alert "Exiting in ${loops} seconds" "Press <Ctrl-C> to abort, <Enter> to ignore and continue" "err"
 	echo -n "Counting down: "
 	for i in $(seq 1 "${loops}"); do
 		declare stop_waiting=0
@@ -191,8 +191,10 @@ function exit_if_countdown_not_aborted() {
 			display_alert "User pressed ENTER, continuing, albeit" "${reason}" "wrn"
 			return 0
 		fi
-		echo -n "$i... " >&2
+		echo -n "$((10 - i))... " >&2
 	done
+
+	echo "" >&2 # No newlines during countdown, so break one here
 
 	# Countdown finished, exit.
 	exit_with_error "Exiting due to '${reason}'"
