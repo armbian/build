@@ -49,6 +49,9 @@ function do_with_logging() {
 		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")" # spaces are significant
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 
+		# global var to store the pid of spawned logging process.
+		declare -g -i global_tee_pid=0
+
 		# Create a 13rd file descriptor sending it to sed. https://unix.stackexchange.com/questions/174849/redirecting-stdout-to-terminal-and-file-without-using-a-pipe
 		# Also terrible: don't hold a reference to cwd by changing to SRC always
 		# There's handling of this fd 13 in check_and_close_fd_13()
@@ -57,6 +60,9 @@ function do_with_logging() {
 			# First, log to file, then add prefix via sed for what goes to screen.
 			tee -a "${CURRENT_LOGFILE}" | sed -u -e "${prefix_sed_cmd}"
 		)
+		# get the pid of the spawned process, so we can kill it later.
+		global_tee_pid=$!
+
 		"$@" >&13
 		exec 13>&- # close the file descriptor, lest sed keeps running forever.
 	else
