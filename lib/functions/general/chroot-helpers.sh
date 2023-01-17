@@ -34,12 +34,13 @@ umount_chroot() {
 	done
 }
 
-# demented recursive version, for final umount.
+# demented recursive version, for final umount. call: umount_chroot_recursive /some/dir "DESCRIPTION"
 function umount_chroot_recursive() {
 	if [[ ! -d "${1}" ]]; then # only even try if target is a directory
 		return 0
 	fi
-	local target
+
+	local target description="${2:-"UNKNOWN"}"
 	target="$(realpath "$1")/" # normalize, make sure to have slash as last element
 
 	if [[ ! -d "${target}" ]]; then     # only even try if target is a directory
@@ -47,7 +48,7 @@ function umount_chroot_recursive() {
 	elif [[ "${target}" == "/" ]]; then # make sure we're not trying to umount root itself.
 		return 0
 	fi
-	display_alert "Unmounting recursively" "${target}" ""
+	display_alert "Unmounting recursively" "${description} - be patient" ""
 	sync # sync. coalesce I/O. wait for writes to flush to disk. it might take a second.
 	# First, try to umount some well-known dirs, in a certain order. for speed.
 	local -a well_known_list=("dev/pts" "dev" "proc" "sys" "boot/efi" "boot/firmware" "boot" "tmp" ".")
@@ -68,6 +69,9 @@ function umount_chroot_recursive() {
 		tries=$((tries + 1))
 	done
 
-	display_alert "Unmounted OK after ${tries} attempt(s)" "$target" "info"
+	# if more than one try..
+	if [[ $tries -gt 1 ]]; then
+		display_alert "Unmounted OK after ${tries} attempt(s)" "${description}" "info"
+	fi
 	return 0
 }
