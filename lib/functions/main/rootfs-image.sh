@@ -81,6 +81,16 @@ function build_rootfs_and_image() {
 	# clean up / prepare for making the image
 	umount_chroot "$SDCARD"
 
+	# obtain the size, in MiB, of "${SDCARD}" at this point.
+	declare -i rootfs_size_mib
+	rootfs_size_mib=$(du -sm "${SDCARD}" | awk '{print $1}')
+	display_alert "Actual rootfs size" "${rootfs_size_mib}MiB" ""
+
+	# warn if rootfs_size_mib is higher than the tmpfs_estimated_size
+	if [[ ${rootfs_size_mib} -gt ${tmpfs_estimated_size} ]]; then
+		display_alert "Rootfs actual size is larger than estimated tmpfs size" "${rootfs_size_mib}MiB > ${tmpfs_estimated_size}MiB" "wrn"
+	fi
+
 	# ------------------------------------ UP HERE IT's 'rootfs' stuff -------------------------------
 
 	#------------------------------------ DOWN HERE IT's 'image' stuff -------------------------------
@@ -113,6 +123,8 @@ function list_installed_packages() {
 
 function trap_handler_cleanup_rootfs_and_image() {
 	display_alert "Cleanup for rootfs and image" "trap_handler_cleanup_rootfs_and_image" "cleanup"
+
+	debug_tmpfs_show_usage "before cleanup of rootfs"
 
 	cd "${SRC}" || echo "Failed to cwd to ${SRC}" # Move pwd away, so unmounts work
 	# those will loop until they're unmounted.
