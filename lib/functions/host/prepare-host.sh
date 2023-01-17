@@ -6,15 +6,21 @@
 # * changes system settings
 #
 function prepare_host() {
-	# Those are not logged, and might be interactive.
-	display_alert "Checking" "host" "info"
-	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
-	check_windows_wsl2                     # checks if on Windows, on WSL2, (not 1) and exits if not supported
-	check_host_has_enough_disk_space       # Checks disk space and exits if not enough
-	wait_for_package_manager               # wait until dpkg is not locked...
+	# Now, if NOT interactive, do some basic checks. If interactive, those have already run back in prepare_and_config_main_build_single()
+	if [[ ! -t 1 ]]; then
+		LOG_SECTION="ni_check_basic_host" do_with_logging check_basic_host
+	fi
 
 	LOG_SECTION="prepare_host_noninteractive" do_with_logging prepare_host_noninteractive
 	return 0
+}
+
+function check_basic_host() {
+	display_alert "Checking" "basic host setup" "info"
+	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
+	check_host_has_enough_disk_space       # Checks disk space and exits if not enough
+	check_windows_wsl2                     # checks if on Windows, on WSL2, (not 1) and exits if not supported
+	wait_for_package_manager               # wait until dpkg is not locked...
 }
 
 function prepare_host_noninteractive() {
