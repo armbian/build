@@ -20,6 +20,10 @@ function chroot_sdcard_apt_get_install_dry_run() {
 	chroot_sdcard_apt_get --no-install-recommends --dry-run install "$@" "${logging_filter}"
 }
 
+function chroot_sdcard_apt_get_update() {
+	apt_logging="-q" chroot_sdcard_apt_get update
+}
+
 function chroot_sdcard_apt_get_remove() {
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get remove "$@"
 }
@@ -27,7 +31,7 @@ function chroot_sdcard_apt_get_remove() {
 function chroot_sdcard_apt_get() {
 	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
 
-	local -a apt_params=("-y" "-qq")
+	local -a apt_params=("-y" "${apt_logging:-"-qq"}") # super quiet by default, but can be tweaked up, for update for example
 	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
 		display_alert "Using managed apt-cacher-ng" "http://localhost:3142" "debug"
 		apt_params+=(
