@@ -102,14 +102,24 @@ function print_current_asset_log_base_file() {
 
 function check_and_close_fd_13() {
 	if [[ -e /proc/self/fd/13 ]]; then
-		display_alert "Closing fd 13" "log still open" "cleanup"
-		exec 13>&- || true # close the file descriptor, lest sed keeps running forever.
-		display_alert "Waiting for tee to finish" "if it's still running" "cleanup"
-		wait || true # wait for the tee process to finish
-		display_alert "Done waiting for tee/fd13" "it's gone" "cleanup"
+		sync                                                     # let the disk catch up
+		display_alert "Closing fd 13" "log still open" "cleanup" # no reason to be alarmed
+		exec 13>&- || true                                       # close the file descriptor, lest sed keeps running forever.
+		sync                                                     # make sure the file is written to disk
+		sleep 1                                                  # give it a second to die.
 	else
-		display_alert "fd 13 is not open" "nothing to do" "cleanup"
+		display_alert "Not closing fd 13" "log already closed" "cleanup"
 	fi
+
+	display_alert "Checking if global_tee_pid is set and running" "global_tee_pid: ${global_tee_pid}" "cleanup"
+	if [[ -n "${global_tee_pid}" && ${global_tee_pid} -gt 1 ]] && ps -p "${global_tee_pid}" > /dev/null; then
+		display_alert "Killing global_tee_pid" "${global_tee_pid}" "cleanup"
+		kill "${global_tee_pid}" && wait "${global_tee_pid}"
+		sync # wait for the disk to catch up
+	else
+		display_alert "Not killing global_tee_pid" "${global_tee_pid} not running" "cleanup"
+	fi
+
 }
 
 function discard_logs_tmp_dir() {
