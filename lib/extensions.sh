@@ -47,11 +47,11 @@ call_extension_method() {
 # to avoid hard coding the list of hook-points (eg: user_config, image_tweaks_pre_customize, etc) we use
 # a marker in the function names, namely "__" (two underscores) to determine the hook point.
 initialize_extension_manager() {
-	# before starting, auto-add extensions specified (eg, on the command-line) via the ENABLE_EXTENSIONS env var. Do it only once.
-	[[ ${initialize_extension_manager_counter} -lt 1 ]] && [[ "${ENABLE_EXTENSIONS}" != "" ]] && {
+	# before starting, auto-add extensions specified (eg, on the command-line) via the ENABLE_EXTENSIONS or EXT env var. Do it only once.
+	[[ ${initialize_extension_manager_counter} -lt 1 ]] && [[ "${ENABLE_EXTENSIONS:-"${EXT}"}" != "" ]] && {
 		local auto_extension
-		for auto_extension in $(echo "${ENABLE_EXTENSIONS}" | tr "," " "); do
-			ENABLE_EXTENSION_TRACE_HINT="ENABLE_EXTENSIONS -> " enable_extension "${auto_extension}"
+		for auto_extension in $(echo "${ENABLE_EXTENSIONS:-"${EXT}"}" | tr "," " "); do
+			ENABLE_EXTENSION_TRACE_HINT="ENABLE_EXTENSIONS/EXT -> " enable_extension "${auto_extension}"
 		done
 	}
 
