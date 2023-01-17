@@ -18,7 +18,7 @@ create_image_from_sdcard_rootfs() {
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
-		display_alert "Copying files via rsync to" "/ at ${MOUNT}"
+		display_alert "Copying files via rsync to" "/ (MOUNT root)"
 		run_host_command_logged rsync -aHWXh \
 			--exclude="/boot/*" \
 			--exclude="/dev/*" \
@@ -37,7 +37,7 @@ create_image_from_sdcard_rootfs() {
 	fi
 
 	# stage: rsync /boot
-	display_alert "Copying files to" "/boot at ${MOUNT}"
+	display_alert "Copying files to" "/boot (MOUNT /boot)"
 	if [[ $(findmnt --noheadings --output FSTYPE --target "$MOUNT/boot" --uniq) == vfat ]]; then
 		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # fat32
 	else
@@ -103,9 +103,8 @@ create_image_from_sdcard_rootfs() {
 	# custom post_build_image_modify hook to run before fingerprinting and compression
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
 
+	declare compression_type # set by image_compress_and_checksum
 	image_compress_and_checksum
-
-	display_alert "Done building" "${FINALDEST}/${version}.img" "info" # A bit predicting the future, since it's still in DESTIMG at this point.
 
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
 	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
@@ -117,16 +116,56 @@ create_image_from_sdcard_rootfs() {
 		It is the last possible chance to modify `$CARD_DEVICE`.
 	POST_BUILD_IMAGE
 
-	# @TODO: using rsync is slow, and only needed if the source & the target are on different devices/filesystems
-	# @TODO: detect if on the same FS, if so, just "mv" which is a gazillion times faster
-	display_alert "Moving artefacts from temporary directory to its final destination" "${version}" "info"
-	[[ -n $compression_type ]] && run_host_command_logged rm -v "${DESTIMG}/${version}.img"
-	run_host_command_logged rsync -av --no-owner --no-group --remove-source-files "${DESTIMG}/${version}"* "${FINALDEST}"
-	run_host_command_logged rm -rfv --one-file-system "${DESTIMG}"
+	# If we compressed the image, get rid of the original, and leave only the compressed one.
+	[[ -n $compression_type ]] && rm -f "${DESTIMG}/${version}.img"
+	if [[ -n $compression_type ]]; then
+		run_host_command_logged rm -v "${DESTIMG}/${version}.img"
+	fi
+
+	# Move all files matching the prefix from source to dest. Custom hooks might generate more than one img.
+	declare source_dir="${DESTIMG}"
+	declare destination_dir="${FINALDEST}"
+	declare source_files_prefix="${version}"
+	move_images_to_final_destination
+
+	display_alert "Done building" "${FINALDEST}/${version}.img" "info" # A bit predicting the future, since it's still in DESTIMG at this point.
 
 	# write image to SD card
 	write_image_to_device "${FINALDEST}/${version}.img" "${CARD_DEVICE}"
 
+	return 0
+}
+
+function move_images_to_final_destination() {
+	# validate that source_dir and destination_dir exist
+	[[ ! -d "${source_dir}" ]] && return 1
+	[[ ! -d "${destination_dir}" ]] && return 2
+
+	declare -a source_files=("${source_dir}/${source_files_prefix}."*)
+	if [[ ${#source_files[@]} -eq 0 ]]; then
+		display_alert "No files to deploy" "${source_dir}/${source_files_prefix}.*" "wrn"
+	fi
+
+	# if source_dir and destination_dir are on the same filesystem. use stat to get the device number
+	declare source_dir_device
+	declare destination_dir_device
+	source_dir_device=$(stat -c %d "${source_dir}")
+	destination_dir_device=$(stat -c %d "${destination_dir}")
+	display_alert "source_dir_device/destination_dir_device" "${source_dir_device}/${destination_dir_device}" "debug"
+	if [[ "${source_dir_device}" == "${destination_dir_device}" ]]; then
+		# loop over source_files, display the size of each file, and move it
+		for source_file in "${source_files[@]}"; do
+			declare base_name_source="${source_file##*/}" source_size_human=""
+			source_size_human=$(stat -c %s "${source_file}" | numfmt --to=iec-i --suffix=B --format="%.2f")
+			display_alert "Fast-moving file to output/images" "-> ${base_name_source} (${source_size_human})" "info"
+			run_host_command_logged mv "${source_file}" "${destination_dir}"
+		done
+	else
+		display_alert "Moving artefacts using rsync to final destination" "${version}" "info"
+		run_host_command_logged rsync -av --no-owner --no-group --remove-source-files "${DESTIMG}/${version}"* "${FINALDEST}"
+		run_host_command_logged rm -rfv --one-file-system "${DESTIMG}"
+	fi
+	return 0
 }
 
 function trap_handler_cleanup_destimg() {
