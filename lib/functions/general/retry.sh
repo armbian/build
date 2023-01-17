@@ -10,13 +10,22 @@ function do_with_retries() {
 	while [[ $counter -lt $retries ]]; do
 		counter=$((counter + 1))
 		declare -i RETRY_RUNS=${counter}
+		declare -i IS_A_RETRY=0
+		declare RETRY_FMT_MORE_THAN_ONCE=""
+		if [[ ${RETRY_RUNS} -gt 1 ]]; then
+			IS_A_RETRY=1
+			RETRY_FMT_MORE_THAN_ONCE=" (attempt ${RETRY_RUNS})"
+		fi
+
 		"$@" && return 0 # execute and return 0 if success; if not, let it loop;
 		if [[ "${silent_retry}" == "yes" ]]; then
 			: # do nothing
 		else
 			display_alert "Command failed, retrying in ${sleep_seconds}s" "$*" "warn"
 		fi
+		unset IS_A_RETRY
 		unset RETRY_RUNS
+		unset RETRY_FMT_MORE_THAN_ONCE
 		sleep "${sleep_seconds}"
 	done
 	display_alert "Command failed ${counter} times, giving up" "$*" "warn"
