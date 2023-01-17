@@ -95,7 +95,7 @@ function build_rootfs_and_image() {
 	fi
 
 	# Completely and recursively unmount the directory. This will remove the tmpfs mount too
-	umount_chroot_recursive "${SDCARD}" "SDCARD"
+	umount_chroot_recursive "${SDCARD}" "SDCARD rootfs finished"
 
 	# Remove the dir
 	[[ -d "${SDCARD}" ]] && rm -rf --one-file-system "${SDCARD}"
