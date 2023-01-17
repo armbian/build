@@ -49,15 +49,16 @@ function do_with_logging() {
 		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")" # spaces are significant
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
 
-		# This is sick. Create a 3rd file descriptor sending it to sed. https://unix.stackexchange.com/questions/174849/redirecting-stdout-to-terminal-and-file-without-using-a-pipe
+		# Create a 13rd file descriptor sending it to sed. https://unix.stackexchange.com/questions/174849/redirecting-stdout-to-terminal-and-file-without-using-a-pipe
 		# Also terrible: don't hold a reference to cwd by changing to SRC always
-		exec 3> >(
+		# There's handling of this fd 13 in check_and_close_fd_13()
+		exec 13> >(
 			cd "${SRC}" || exit 2
 			# First, log to file, then add prefix via sed for what goes to screen.
 			tee -a "${CURRENT_LOGFILE}" | sed -u -e "${prefix_sed_cmd}"
 		)
-		"$@" >&3
-		exec 3>&- # close the file descriptor, lest sed keeps running forever.
+		"$@" >&13
+		exec 13>&- # close the file descriptor, lest sed keeps running forever.
 	else
 		# If not showing the log, just send stdout to logfile. stderr will flow to screen.
 		"$@" >> "${CURRENT_LOGFILE}"
