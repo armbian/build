@@ -163,6 +163,9 @@ function exit_with_error() {
 	#exec {FD}> /var/lock/armbian-debootstrap-losetup
 	#flock -u "${FD}"
 
+	# let's try early to close tee/sed and fd 13 which might be opened if this happened in a logging section
+	check_and_close_fd_13
+
 	exit 43
 }
 
