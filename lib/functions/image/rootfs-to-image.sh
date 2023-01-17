@@ -3,7 +3,7 @@
 #
 # finishes creation of image from cached rootfs
 #
-create_image_from_sdcard_rootfs() {
+function create_image_from_sdcard_rootfs() {
 	# create DESTIMG, hooks might put stuff there early.
 	mkdir -p "${DESTIMG}"
 
