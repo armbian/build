@@ -122,12 +122,6 @@ function chroot_custom() {
 	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
 }
 
-# for deb building.
-function fakeroot_dpkg_deb_build() {
-	display_alert "Building .deb package" "$(basename "${3:-${2:-${1}}}" || true)" "debug"
-	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "$@"
-}
-
 # for long-running, host-side expanded bash invocations.
 # the user gets a pv-based spinner based on the number of lines that flows to stdout (log messages).
 # the raw version is already redirect stderr to stdout, and we'll be running under do_with_logging,
