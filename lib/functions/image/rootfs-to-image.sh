@@ -100,7 +100,7 @@ create_image_from_sdcard_rootfs() {
 	mkdir -p "${DESTIMG}"
 	# @TODO: misterious cwd, who sets it?
 
-	mv "${SDCARD}.raw" "${DESTIMG}/${version}.img"
+	run_host_command_logged mv -v "${SDCARD}.raw" "${DESTIMG}/${version}.img"
 
 	# custom post_build_image_modify hook to run before fingerprinting and compression
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"

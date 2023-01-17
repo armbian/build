@@ -22,20 +22,24 @@ function build_rootfs_and_image() {
 	# CLI needs ~2GiB, desktop ~5GiB
 	# vs 60% of available RAM (free + buffers + magic)
 	local available_physical_memory_mib=$(($(awk '/MemAvailable/ {print $2}' /proc/meminfo) * 6 / 1024 / 10)) # MiB
-	local tmpfs_estimated_size=2000                                                                           # MiB
-	[[ $BUILD_DESKTOP == yes ]] && tmpfs_estimated_size=5000                                                  # MiB
 
-	local use_tmpfs=no                        # by default
+	# @TODO: well those are very... arbitrary numbers.
+	# predicting the size of tmpfs is hard/impossible, so would be nice to show the used size at the end so we can tune.
+	local tmpfs_estimated_size=2000                          # MiB
+	[[ $BUILD_DESKTOP == yes ]] && tmpfs_estimated_size=5000 # MiB
+
+	declare use_tmpfs=no                      # by default
 	if [[ ${FORCE_USE_RAMDISK} == no ]]; then # do not use, even if it fits
-		:
+		display_alert "Not using tmpfs for rootfs" "due to FORCE_USE_RAMDISK=no" "info"
 	elif [[ ${FORCE_USE_RAMDISK} == yes || ${available_physical_memory_mib} -gt ${tmpfs_estimated_size} ]]; then # use, either force or fits
 		use_tmpfs=yes
-		display_alert "Using tmpfs for rootfs" "RAM available: ${available_physical_memory_mib}MiB > ${tmpfs_estimated_size}MiB estimated" "debug"
+		display_alert "Using tmpfs for rootfs build" "RAM available: ${available_physical_memory_mib}MiB > ${tmpfs_estimated_size}MiB estimated" "info"
 	else
-		display_alert "Not using tmpfs for rootfs" "RAM available: ${available_physical_memory_mib}MiB < ${tmpfs_estimated_size}MiB estimated" "debug"
+		display_alert "Not using tmpfs for rootfs" "RAM available: ${available_physical_memory_mib}MiB < ${tmpfs_estimated_size}MiB estimated" "info"
 	fi
 
 	if [[ $use_tmpfs == yes ]]; then
+		declare -g -r ROOTFS_IS_UNDER_TMPFS=yes
 		mount -t tmpfs tmpfs "${SDCARD}" # do not specify size; we've calculated above that it should fit, and Linux will try its best if it doesn't.
 	fi
 
@@ -117,7 +121,8 @@ function trap_handler_cleanup_rootfs_and_image() {
 	# unmount tmpfs mounted on SDCARD if it exists. #@TODO: move to new tmpfs-utils scheme
 	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
 
-	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain >&2 # @TODO: why does Igor uses lazy umounts? nfs?
+	# @TODO: rpardini: igor: why lazy umounts?
+	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain >&2
 	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs >&2
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}" >&2
 
@@ -134,6 +139,7 @@ function trap_handler_cleanup_rootfs_and_image() {
 
 	[[ -d "${SDCARD}" ]] && rm -rf --one-file-system "${SDCARD}"
 	[[ -d "${MOUNT}" ]] && rm -rf --one-file-system "${MOUNT}"
+	[[ -f "${SDCARD}".raw ]] && rm -f "${SDCARD}".raw
 
 	return 0 # short-circuit above, so exit clean here
 }
