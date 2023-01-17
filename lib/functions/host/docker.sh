@@ -472,14 +472,4 @@ function docker_purge_deprecated_volumes() {
 ## OLD DOCKERFILE ## RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/default/nfs-common \
 ## OLD DOCKERFILE ##     && sed -i 's/\(^RPCMOUNTDOPTS=\).*/\1"--port 32767"/' /etc/default/nfs-kernel-server
 ## OLD DOCKERFILE ##
-## OLD DOCKERFILE ## ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8' TERM=screen
-## OLD DOCKERFILE ## WORKDIR /root/armbian
-## OLD DOCKERFILE ## LABEL org.opencontainers.image.source="https://github.com/armbian/build/blob/master/config/templates/Dockerfile" \
-## OLD DOCKERFILE ##     org.opencontainers.image.url="https://github.com/armbian/build/pkgs/container/build"  \
-## OLD DOCKERFILE ##     org.opencontainers.image.vendor="armbian" \
-## OLD DOCKERFILE ##     org.opencontainers.image.title="Armbian build framework" \
-## OLD DOCKERFILE ##     org.opencontainers.image.description="Custom Linux build framework" \
-## OLD DOCKERFILE ##     org.opencontainers.image.documentation="https://docs.armbian.com" \
-## OLD DOCKERFILE ##     org.opencontainers.image.authors="Igor Pecovnik" \
-## OLD DOCKERFILE ##     org.opencontainers.image.licenses="GPL-2.0"
 ## OLD DOCKERFILE ## ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]
