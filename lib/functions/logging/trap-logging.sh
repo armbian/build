@@ -19,6 +19,9 @@ function trap_handler_cleanup_logging() {
 	local target_path="${DEST}/logs"
 	mkdir_recursive_and_set_uid_owner "${target_path}" # @TODO: this might be full of logs and is slow
 
+	# Check if fd 13 is still open; close it and wait for tee to die. This is done again in discard_logs_tmp_dir()
+	check_and_close_fd_13
+
 	# Before writing new logfile, compress and move existing ones to archive folder.
 	# - Unless running under CI.
 	# - Also not if signalled via SKIP_LOG_ARCHIVE=yes
@@ -29,10 +32,10 @@ function trap_handler_cleanup_logging() {
 		for one_old_logfile in "${existing_log_files_array[@]}"; do
 			old_logfile_fn="$(basename "${one_old_logfile}")"
 			if [[ "${old_logfile_fn}" == *${ARMBIAN_BUILD_UUID}* ]]; then
-				display_alert "Skipping archiving of current logfile" "${old_logfile_fn}" "warn"
+				display_alert "Skipping archiving of current logfile" "${old_logfile_fn}" "cleanup"
 				continue
 			fi
-			display_alert "Archiving old logfile" "${old_logfile_fn}" "warn"
+			display_alert "Archiving old logfile" "${old_logfile_fn}" "cleanup"
 			mkdir_recursive_and_set_uid_owner "${target_archive_path}" # @TODO: slow
 
 			# Check if we have `zstdmt` at this stage; if not, use standard gzip
