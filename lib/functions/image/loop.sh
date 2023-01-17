@@ -52,31 +52,31 @@ function check_loop_device_internal() {
 }
 
 # write_uboot_to_loop_image <loopdev>
-# @TODO: isnt this supposed to be u-boot related? why in loop.sh?
-write_uboot_to_loop_image() {
+function write_uboot_to_loop_image() {
 
-	local loop=$1 revision
-	display_alert "Preparing u-boot bootloader" "$loop" "info"
-	TEMP_DIR=$(mktemp -d) # set-e is in effect. no need to exit on errors explicitly
-	chmod 700 ${TEMP_DIR}
-	revision=${REVISION}
+	declare loop=$1
+	display_alert "Preparing u-boot bootloader" "LOOP=${loop} - ${CHOSEN_UBOOT}" "info"
+
+	declare TEMP_DIR revision="${REVISION}"
+	TEMP_DIR="$(mktemp -d)" # Subject to TMPDIR, so common trap applies
+	chmod 700 "${TEMP_DIR}"
 	if [[ -n $UBOOT_REPO_VERSION ]]; then
 		revision=${UBOOT_REPO_VERSION}
-		run_host_command_logged dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+		run_host_command_logged dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" "${TEMP_DIR}"/
 	else
-		run_host_command_logged dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" ${TEMP_DIR}/
+		run_host_command_logged dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" "${TEMP_DIR}"/
 	fi
 
 	if [[ ! -f "${TEMP_DIR}/usr/lib/u-boot/platform_install.sh" ]]; then
 		exit_with_error "Missing ${TEMP_DIR}/usr/lib/u-boot/platform_install.sh"
 	fi
 
-	display_alert "Sourcing u-boot install functions" "$loop" "info"
-	source ${TEMP_DIR}/usr/lib/u-boot/platform_install.sh
+	display_alert "Sourcing u-boot install functions" "${CHOSEN_UBOOT}" "info"
+	source "${TEMP_DIR}"/usr/lib/u-boot/platform_install.sh
 	set -e # make sure, we just included something that might disable it
 
 	display_alert "Writing u-boot bootloader" "$loop" "info"
-	write_uboot_platform "${TEMP_DIR}${DIR}" "$loop" # @TODO: rpardini: what is ${DIR} ?
+	write_uboot_platform "${TEMP_DIR}${DIR}" "$loop" # important: DIR is set in platform_install.sh sourced above.
 
 	export UBOOT_CHROOT_DIR="${TEMP_DIR}${DIR}"
 
@@ -88,7 +88,8 @@ write_uboot_to_loop_image() {
 		Consider that `write_uboot_platform()` is also called board-side, when updating uboot, eg: nand-sata-install.
 	POST_WRITE_UBOOT_PLATFORM
 
-	#rm -rf ${TEMP_DIR}
+	# cleanup
+	rm -rf "${TEMP_DIR}"
 
 	return 0
 }
