@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# @TODO: armbian-next: THIS IS DEAD CODE. no-one calls it. a JIRA for volunteers to fix it, or it will be removed. 
 
 function prepare_extra_kernel_drivers() {
 	
