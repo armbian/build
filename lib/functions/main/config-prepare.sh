@@ -3,6 +3,11 @@
 function prepare_and_config_main_build_single() {
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
+	# if interactive, call prepare-host.sh::check_basic_host() early, to avoid disappointments later.
+	if [[ -t 1 ]]; then
+		check_basic_host
+	fi
+
 	# those are possibly interactive. interactive (dialog) and logging don't mix, for obvious reasons.
 	interactive_config_prepare_terminal # init vars used for interactive
 	config_possibly_interactive_kernel_board
