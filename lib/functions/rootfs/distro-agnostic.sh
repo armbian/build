@@ -257,7 +257,7 @@ function install_distribution_agnostic() {
 	fi
 
 	display_alert "Updating" "apt package lists"
-	do_with_retries 3 chroot_sdcard_apt_get update
+	do_with_retries 3 chroot_sdcard_apt_get_update
 
 	# install image packages; AGGREGATED_PACKAGES_IMAGE is produced by aggregation.py
 	# and includes the old PACKAGE_LIST_BOARD and PACKAGE_LIST_FAMILY
