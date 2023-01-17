@@ -90,7 +90,7 @@ function build_rootfs_and_image() {
 	fi
 
 	# Completely and recursively unmount the directory. This will remove the tmpfs mount too
-	umount_chroot_recursive "${SDCARD}"
+	umount_chroot_recursive "${SDCARD}" "SDCARD"
 
 	# Remove the dir
 	[[ -d "${SDCARD}" ]] && rm -rf --one-file-system "${SDCARD}"
@@ -111,10 +111,10 @@ function trap_handler_cleanup_rootfs_and_image() {
 
 	cd "${SRC}" || echo "Failed to cwd to ${SRC}" # Move pwd away, so unmounts work
 	# those will loop until they're unmounted.
-	umount_chroot_recursive "${SDCARD}" || true
-	umount_chroot_recursive "${MOUNT}" || true
+	umount_chroot_recursive "${SDCARD}" "SDCARD" || true
+	umount_chroot_recursive "${MOUNT}" "MOUNT" || true
 
-	# unmount tmpfs mounted on SDCARD if it exists.
+	# unmount tmpfs mounted on SDCARD if it exists. #@TODO: move to new tmpfs-utils scheme
 	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
 
 	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain >&2 # @TODO: why does Igor uses lazy umounts? nfs?
