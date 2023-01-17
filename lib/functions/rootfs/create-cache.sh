@@ -206,7 +206,7 @@ function create_new_rootfs_cache() {
 
 	# stage: update packages list
 	display_alert "Updating package list" "$RELEASE" "info"
-	do_with_retries 3 chroot_sdcard_apt_get update
+	do_with_retries 3 chroot_sdcard_apt_get_update
 
 	# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
 	display_alert "Upgrading base packages" "Armbian" "info"
