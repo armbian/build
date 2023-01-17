@@ -188,6 +188,10 @@ function main_default_build_single() {
 		display_alert "Target directory" "${DEB_STORAGE}/" "info"
 		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 	fi
+	
+	# At this point, the WORKDIR should be clean. Add debug info.
+	debug_tmpfs_show_usage "AFTER ALL PKGS BUILT"
+	
 
 	# build rootfs, if not only kernel.
 	if [[ $KERNEL_ONLY != yes ]]; then
