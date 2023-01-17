@@ -19,13 +19,11 @@ function compile_firmware_light_and_possibly_full() {
 function compile_firmware() {
 	display_alert "Merging and packaging linux firmware" "@host --> firmware${FULL}" "info"
 
-	local firmwaretempdir fw_dir
+	declare cleanup_id="" fw_temp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "firmware${FULL}" cleanup_id fw_temp_dir # namerefs
 
-	firmwaretempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-	chmod 700 "${firmwaretempdir}"
-
-	fw_dir="armbian-firmware${FULL}"
-	mkdir -p "${firmwaretempdir}/${fw_dir}/lib/firmware"
+	declare fw_dir="armbian-firmware${FULL}"
+	mkdir -p "${fw_temp_dir}/${fw_dir}/lib/firmware"
 
 	local ARMBIAN_FIRMWARE_GIT_SOURCE="${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/firmware"}"
 	local ARMBIAN_FIRMWARE_GIT_BRANCH="${ARMBIAN_FIRMWARE_GIT_BRANCH:-"master"}"
@@ -39,18 +37,18 @@ function compile_firmware() {
 
 		# @TODO: rpardini: what is this thing with hardlinks? why?
 		# cp : create hardlinks
-		run_host_command_logged cp -af --reflink=auto "${SRC}/cache/sources/linux-firmware-git/*" "${firmwaretempdir}/${fw_dir}/lib/firmware/"
+		run_host_command_logged cp -af --reflink=auto "${SRC}/cache/sources/linux-firmware-git/*" "${fw_temp_dir}/${fw_dir}/lib/firmware/"
 		# cp : create hardlinks for ath11k WCN685x hw2.1 firmware since they are using the same firmware with hw2.0
-		run_host_command_logged cp -af --reflink=auto "${firmwaretempdir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.0/" "${firmwaretempdir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.1/"
+		run_host_command_logged cp -af --reflink=auto "${fw_temp_dir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.0/" "${fw_temp_dir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.1/"
 
-		rm -rf "${firmwaretempdir}/${fw_dir}"/lib/firmware/.git # @TODO: would have been better not to waste I/O putting in there to begin with.
+		rm -rf "${fw_temp_dir}/${fw_dir}"/lib/firmware/.git # @TODO: would have been better not to waste I/O putting in there to begin with.
 	fi
 
 	# overlay Armbian's firmware on top of the mainline firmware
-	run_host_command_logged cp -af --reflink=auto "${SRC}/cache/sources/armbian-firmware-git/*" "${firmwaretempdir}/${fw_dir}/lib/firmware/"
+	run_host_command_logged cp -af --reflink=auto "${SRC}/cache/sources/armbian-firmware-git/*" "${fw_temp_dir}/${fw_dir}/lib/firmware/"
 
-	rm -rf "${firmwaretempdir}/${fw_dir}"/lib/firmware/.git # @TODO: would have been better not to waste I/O putting in there to begin with.
-	cd "${firmwaretempdir}/${fw_dir}" || exit_with_error "can't change directory"
+	rm -rf "${fw_temp_dir}/${fw_dir}"/lib/firmware/.git # @TODO: would have been better not to waste I/O putting in there to begin with.
+	cd "${fw_temp_dir}/${fw_dir}" || exit_with_error "can't change directory"
 
 	# set up control file
 	mkdir -p DEBIAN
@@ -67,11 +65,15 @@ function compile_firmware() {
 		Description: Armbian - Linux firmware${FULL}
 	END
 
-	cd "${firmwaretempdir}" || exit_with_error "can't change directory"
-	# pack
-	mv "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
+	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
+
+	# package
+	run_host_command_logged mv -v "armbian-firmware${FULL}" "armbian-firmware${FULL}_${REVISION}_all"
 	display_alert "Building firmware package" "armbian-firmware${FULL}_${REVISION}_all" "info"
 	fakeroot_dpkg_deb_build "armbian-firmware${FULL}_${REVISION}_all"
-	mv "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
+
+	run_host_command_logged mv -v "armbian-firmware${FULL}_${REVISION}_all" "armbian-firmware${FULL}"
 	run_host_command_logged rsync -rq "armbian-firmware${FULL}_${REVISION}_all.deb" "${DEB_STORAGE}/"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early 
 }
