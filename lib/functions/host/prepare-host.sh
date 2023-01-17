@@ -35,6 +35,7 @@ function prepare_host_noninteractive() {
 	# fix for Locales settings, if locale-gen is installed, and /etc/locale.gen exists.
 	if [[ -n "$(command -v locale-gen)" && -f /etc/locale.gen ]]; then
 		if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+			# @TODO: rpardini: this is bull, we're always root here. we've been pre-sudo'd.
 			local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
 			${sudo_prefix} sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 			${sudo_prefix} locale-gen
@@ -43,7 +44,11 @@ function prepare_host_noninteractive() {
 		display_alert "locale-gen is not installed @host" "skipping locale-gen -- problems might arise" "warn"
 	fi
 
+	# Let's try and get all log output in English, overriding the builder's chosen or default language
+	export LANG="en_US.UTF-8"
+	export LANGUAGE="en_US.UTF-8"
 	export LC_ALL="en_US.UTF-8"
+	export LC_MESSAGES="en_US.UTF-8"
 
 	# armbian-next: Armbian mirrors and the download code is highly unstable; disable by default
 	# armbian-next: set `SKIP_ARMBIAN_ROOTFS_CACHE=no` to enable
