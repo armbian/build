@@ -38,6 +38,10 @@ function compile_kernel() {
 		return 0
 	fi
 
+	# patching worked, it's a good enough indication the git-bundle worked;
+	# let's clean up the git-bundle cache, since the git-bare cache is proven working.
+	LOG_SECTION="kernel_cleanup_bundle_artifacts" do_with_logging do_with_hooks kernel_cleanup_bundle_artifacts
+
 	# re-read kernel version after patching
 	declare version
 	version=$(grab_version "$kernel_work_dir")
@@ -58,10 +62,6 @@ function compile_kernel() {
 	display_alert "Done with" "kernel compile" "debug"
 
 	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
-
-	# kernel build worked; let's clean up the git-bundle cache, since the git-bare cache is proven working.
-	# @TODO: armbian-oleg: clean this earlier, so we save some 2gb on disk _during_ kernel compile, not after
-	LOG_SECTION="kernel_cleanup_bundle_artifacts" do_with_logging do_with_hooks kernel_cleanup_bundle_artifacts
 
 	return 0
 }
