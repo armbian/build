@@ -146,14 +146,7 @@ function main_default_build_single() {
 	if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
 
 		if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
-			if [[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]]; then # Build firmware by default.
-				# Build the light version of firmware package
-				FULL="" REPLACE="-full" LOG_SECTION="compile_firmware" do_with_logging compile_firmware
-
-				# Build the full version of firmware package
-				FULL="-full" REPLACE="" LOG_SECTION="compile_firmware_full" do_with_logging compile_firmware
-
-			fi
+			compile_firmware_light_and_possibly_full # this has its own logging sections
 		fi
 	fi
 
