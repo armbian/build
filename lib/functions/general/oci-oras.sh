@@ -42,17 +42,7 @@ function run_tool_oras() {
 	declare ACTUAL_VERSION
 
 	if [[ ! -f "${ORAS_BIN}" ]]; then
-		display_alert "Cache miss, downloading..."
-		display_alert "MACHINE: ${MACHINE}" "ORAS" "debug"
-		display_alert "Down URL: ${DOWN_URL}" "ORAS" "debug"
-		display_alert "ORAS_BIN: ${ORAS_BIN}" "ORAS" "debug"
-
-		display_alert "Downloading required" "ORAS tooling" "info"
-		run_host_command_logged wget --no-verbose --progress=dot:giga -O "${ORAS_BIN}.tar.gz" "${DOWN_URL}"
-		run_host_command_logged tar -xf "${ORAS_BIN}.tar.gz" -C "${DIR_ORAS}" "oras"
-		run_host_command_logged rm -rf "${ORAS_BIN}.tar.gz"
-		run_host_command_logged mv -v "${DIR_ORAS}/oras" "${ORAS_BIN}"
-		run_host_command_logged chmod -v +x "${ORAS_BIN}"
+		do_with_retries 5 try_download_oras_tooling
 	fi
 	ACTUAL_VERSION="$("${ORAS_BIN}" version | grep "^Version" | xargs echo -n)"
 	display_alert "Running ORAS ${ACTUAL_VERSION}" "ORAS" "debug"
@@ -60,6 +50,22 @@ function run_tool_oras() {
 	# Run oras with it
 	display_alert "Calling ORAS" "$*" "debug"
 	"${ORAS_BIN}" "$@"
+}
+
+function try_download_oras_tooling() {
+	display_alert "MACHINE: ${MACHINE}" "ORAS" "debug"
+	display_alert "Down URL: ${DOWN_URL}" "ORAS" "debug"
+	display_alert "ORAS_BIN: ${ORAS_BIN}" "ORAS" "debug"
+
+	display_alert "Downloading required" "ORAS tooling${RETRY_FMT_MORE_THAN_ONCE}" "info"
+	run_host_command_logged wget --no-verbose --progress=dot:giga -O "${ORAS_BIN}.tar.gz.tmp" "${DOWN_URL}" || {
+		return 1
+	}
+	run_host_command_logged mv "${ORAS_BIN}.tar.gz.tmp" "${ORAS_BIN}.tar.gz"
+	run_host_command_logged tar -xf "${ORAS_BIN}.tar.gz" -C "${DIR_ORAS}" "oras"
+	run_host_command_logged rm -rf "${ORAS_BIN}.tar.gz"
+	run_host_command_logged mv "${DIR_ORAS}/oras" "${ORAS_BIN}"
+	run_host_command_logged chmod +x "${ORAS_BIN}"
 }
 
 function oras_push_artifact_file() {
