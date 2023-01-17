@@ -133,7 +133,7 @@ function prepare_partitions() {
 
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "truncate: $sdsize MiB" "info"
-	run_host_command_logged truncate --size=${sdsize}M ${SDCARD}.raw # please provide EVIDENCE of problems with this; using dd is very slow
+	run_host_command_logged truncate "--size=${sdsize}M" "${SDCARD}".raw # please provide EVIDENCE of problems with this; using dd is very slow
 	run_host_command_logged sync
 
 	# stage: calculate boot partition size
@@ -145,7 +145,7 @@ function prepare_partitions() {
 	display_alert "Creating partitions" "${bootfs:+/boot: $bootfs }root: $ROOTFS_TYPE" "info"
 	if [[ "${USE_HOOK_FOR_PARTITION}" == "yes" ]]; then
 		{ [[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] && echo "label: dos" || echo "label: $IMAGE_PARTITION_TABLE"; } |
-			run_host_command_logged sfdisk ${SDCARD}.raw || exit_with_error "Create partition table fail"
+			run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Create partition table fail"
 
 		call_extension_method "create_partition_table" <<- 'CREATE_PARTITION_TABLE'
 			*only called when USE_HOOK_FOR_PARTITION=yes to create the complete partition table*
@@ -153,6 +153,7 @@ function prepare_partitions() {
 			yourself. Good luck.
 		CREATE_PARTITION_TABLE
 	else
+		# Create a script in a bracket shell, then pipe it to fdisk.
 		{
 			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] && echo "label: dos" || echo "label: $IMAGE_PARTITION_TABLE"
 
@@ -189,7 +190,7 @@ function prepare_partitions() {
 				echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
 			fi
 		} |
-			run_host_command_logged sfdisk ${SDCARD}.raw || exit_with_error "Partition fail."
+			run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partition fail."
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
@@ -207,16 +208,16 @@ function prepare_partitions() {
 
 	CHECK_LOOP_FOR_SIZE="no" check_loop_device "$LOOP" # initially loop is zero sized, ignore it.
 
-	run_host_command_logged losetup $LOOP ${SDCARD}.raw # @TODO: had a '-P- here, what was it?
+	run_host_command_logged losetup "${LOOP}" "${SDCARD}".raw # @TODO: had a '-P- here, what was it?
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
 
 	display_alert "Running partprobe" "${LOOP}" "debug"
-	run_host_command_logged partprobe $LOOP
+	run_host_command_logged partprobe "${LOOP}"
 
 	display_alert "Checking again after partprobe" "${LOOP}" "debug"
-	check_loop_device "$LOOP" # check again, now it has to have a size! otherwise wait.
+	check_loop_device "${LOOP}" # check again, now it has to have a size! otherwise wait.
 
 	# stage: create fs, mount partitions, create fstab
 	rm -f $SDCARD/etc/fstab
