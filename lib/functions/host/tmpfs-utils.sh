@@ -70,7 +70,13 @@ function cleanup_tmpfs_for() {
 	# umount tmpfs
 	if [[ "${umount_tmpfs}" == "umount_tmpfs" ]]; then
 		display_alert "cleanup_tmpfs_for: umount tmpfs" "${tmpfs_name}" "cleanup"
-		umount "${tmpfs_path}"
+		cd "${SRC}" || echo "cleanup_tmpfs_for: cd failed to ${SRC}" >&2 # avoid cwd in use error
+		umount "${tmpfs_path}" || {
+			display_alert "cleanup_tmpfs_for: umount failed" "${tmpfs_name} tmpfs umount failed" "err"
+			# Show last-resort what's in there / what's using it to stderr
+			ls -la "${tmpfs_path}" >&2 || echo "cleanup_tmpfs_for: ls failed" >&2
+			lsof "${tmpfs_path}" >&2 || echo "cleanup_tmpfs_for: lsof dir failed" >&2
+		}
 	else
 		display_alert "cleanup_tmpfs_for: not umounting tmpfs" "${tmpfs_name}" "cleanup"
 	fi
