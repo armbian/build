@@ -118,15 +118,15 @@ function add_cleanup_handler() {
 function execute_and_remove_cleanup_handler() {
 	local callback="$1"
 	display_alert "Execute and remove cleanup handler" "${callback}" "cleanup"
-	local remaning_cleanups=()
+	local remaining_cleanups=()
 	for one_cleanup_handler in "${trap_manager_cleanup_handlers[@]}"; do
 		if [[ "${one_cleanup_handler}" != "${callback}" ]]; then
-			remaning_cleanups+=("${one_cleanup_handler}")
+			remaining_cleanups+=("${one_cleanup_handler}")
 		else
 			run_one_cleanup_handler "${one_cleanup_handler}"
 		fi
 	done
-	trap_manager_cleanup_handlers=("${remaning_cleanups[@]}")
+	trap_manager_cleanup_handlers=("${remaining_cleanups[@]}")
 }
 
 function run_one_cleanup_handler() {

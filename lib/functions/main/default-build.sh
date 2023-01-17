@@ -144,7 +144,6 @@ function main_default_build_single() {
 
 	# Compile armbian-firmware if packed .deb does not exist or use the one from repository
 	if ! ls "${DEB_STORAGE}/armbian-firmware_${REVISION}_all.deb" 1> /dev/null 2>&1 || ! ls "${DEB_STORAGE}/armbian-firmware-full_${REVISION}_all.deb" 1> /dev/null 2>&1; then
-
 		if [[ "${REPOSITORY_INSTALL}" != *armbian-firmware* ]]; then
 			compile_firmware_light_and_possibly_full # this has its own logging sections
 		fi
@@ -165,18 +164,19 @@ function main_default_build_single() {
 		LOG_SECTION="create_bsp_desktop_package" do_with_logging create_bsp_desktop_package
 	fi
 
-	# skip image creation if exists. useful for CI when making a lot of images
+	# skip image creation if exists. useful for CI when making a lot of images @TODO: hmm?
 	if [ "$IMAGE_PRESENT" == yes ] && ls "${FINALDEST}/${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${VER/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"*.xz 1> /dev/null 2>&1; then
 		display_alert "Skipping image creation" "image already made - IMAGE_PRESENT is set" "wrn"
 		exit
 	fi
 
-	# build additional packages
-	if [[ $EXTERNAL_NEW == compile ]]; then
-		display_alert "Building external packages" "$EXTERNAL - WARNING: this has not been armbian-nextifed yet and will fail." "warn"
-		exit_with_error "buildpkg chroot_build_packages() nas not been ported to armbian-next yet, rpardini is a bum"
-		LOG_SECTION="chroot_build_packages" do_with_logging chroot_build_packages
-	fi
+	# @TODO: dead code, remove
+	## DEAD CODE IN ARMBIAN-NEXT ## # build additional packages
+	## DEAD CODE IN ARMBIAN-NEXT ## if [[ $EXTERNAL_NEW == compile ]]; then
+	## DEAD CODE IN ARMBIAN-NEXT ## 	display_alert "Building external packages" "$EXTERNAL - WARNING: this has not been armbian-nextifed yet and will fail." "warn"
+	## DEAD CODE IN ARMBIAN-NEXT ## 	exit_with_error "buildpkg chroot_build_packages() nas not been ported to armbian-next yet, rpardini is a bum"
+	## DEAD CODE IN ARMBIAN-NEXT ## 	LOG_SECTION="chroot_build_packages" do_with_logging chroot_build_packages
+	## DEAD CODE IN ARMBIAN-NEXT ## fi
 
 	# Reset owner of DEB_STORAGE, if needed. Might be a lot of packages there, but such is life.
 	# @TODO: might be needed also during 'cleanup': if some package fails, the previous package might be left owned by root.
