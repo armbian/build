@@ -100,7 +100,26 @@ function print_current_asset_log_base_file() {
 	echo -n "${ASSET_LOGFILE_BASE}"
 }
 
+function check_and_close_fd_13() {
+	if [[ -e /proc/self/fd/13 ]]; then
+		display_alert "Closing fd 13" "log still open" "cleanup"
+		exec 13>&- || true # close the file descriptor, lest sed keeps running forever.
+		display_alert "Waiting for tee to finish" "if it's still running" "cleanup"
+		wait || true # wait for the tee process to finish
+		display_alert "Done waiting for tee/fd13" "it's gone" "cleanup"
+	else
+		display_alert "fd 13 is not open" "nothing to do" "cleanup"
+	fi
+}
+
 function discard_logs_tmp_dir() {
+	# if we're in a logging section and logging to file when an error happened, and we're now cleaning up,
+	# the "tee" process created for fd 13 in do_with_logging() is still running, and holding a reference to the log file,
+	# which resides precisely in LOGDIR. So we need to kill it.
+
+	# Check if fd 13 is still open; close it and wait for tee to die.
+	check_and_close_fd_13
+	
 	# Do not delete the dir itself, since it might be a tmpfs mount.
 	if [[ "$(uname)" == "Linux" ]]; then
 		rm -rf --one-file-system "${LOGDIR:?}"/* # Note this is protected by :?
