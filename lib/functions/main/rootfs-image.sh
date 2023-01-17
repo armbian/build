@@ -20,12 +20,13 @@ function build_rootfs_and_image() {
 
 	# stage: verify tmpfs configuration and mount
 	# CLI needs ~2GiB, desktop ~5GiB
-	# vs 60% of available RAM (free + buffers + magic)
-	local available_physical_memory_mib=$(($(awk '/MemAvailable/ {print $2}' /proc/meminfo) * 6 / 1024 / 10)) # MiB
+	# vs 60% of "available" RAM (free + buffers + magic)
+	declare -i available_physical_memory_mib
+	available_physical_memory_mib=$(($(awk '/MemAvailable/ {print $2}' /proc/meminfo) * 6 / 1024 / 10)) # MiB
 
-	# @TODO: well those are very... arbitrary numbers.
+	# @TODO: well those are very... arbitrary numbers. At least when using cached rootfs, we can be more precise.
 	# predicting the size of tmpfs is hard/impossible, so would be nice to show the used size at the end so we can tune.
-	local tmpfs_estimated_size=2000                          # MiB
+	declare -i tmpfs_estimated_size=2000                     # MiB
 	[[ $BUILD_DESKTOP == yes ]] && tmpfs_estimated_size=5000 # MiB
 
 	declare use_tmpfs=no                      # by default
