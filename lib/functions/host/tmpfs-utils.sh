@@ -91,3 +91,13 @@ function cleanup_tmpfs_for() {
 
 	return 0
 }
+
+# Debugging utility.
+function debug_tmpfs_show_usage() {
+	if [[ "${SHOW_TMPFS}" == "yes" ]]; then
+		display_alert "TMPFS debugging:" "${CURRENT_LOGGING_SECTION:-none} $*" "debug"
+		run_host_command_logged df -h -t tmpfs "||" true
+		run_host_command_logged free -m "||" true
+	fi
+	return 0
+}
