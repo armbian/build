@@ -18,7 +18,7 @@ function cli_patch_kernel_run() {
 	declare -g KERNEL_CONFIGURE=no # no menuconfig
 	declare -g RELEASE=jammy       # or whatever, not relevant, just fool the configuration
 	declare -g SHOW_LOG=yes        # show the log
-	prepare_and_config_main_build_single
+	prep_conf_main_build_single
 
 	declare ymd vendor_lc target_repo_url summary_url
 	ymd="$(date +%Y%m%d)"
