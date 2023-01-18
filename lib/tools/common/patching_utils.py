@@ -290,8 +290,10 @@ class PatchInPatchFile:
 			return downgrade_to_ascii(remove_quotes(m.group("name"))), remove_quotes(m.group("email"))
 
 	def one_line_patch_stats(self) -> str:
-		files_desc = ", ".join(self.patched_file_stats_dict)
-		return f"{self.text_diffstats()} {{{files_desc}}}"
+		if (not self.failed_to_parse) and (not self.parent.patch_dir.is_autogen_dir):
+			files_desc = ", ".join(self.patched_file_stats_dict)
+			return f"{self.text_diffstats()} {{{files_desc}}}"
+		return ""
 
 	def text_diffstats(self) -> str:
 		operations: list[str] = []
@@ -315,8 +317,7 @@ class PatchInPatchFile:
 			except Exception as e:
 				self.problems.append("invalid_diff")
 				self.failed_to_parse = True
-				log.error(
-					f"Failed to parse unidiff for file {self.parent.full_file_path()}(:{self.counter}): {str(e).strip()}")
+				log.warning(f"Failed to parse unidiff for file {self.parent.full_file_path()}(:{self.counter}): '{str(e).strip()}'")
 				return  # no point in continuing; the patch is invalid; might be recovered during apply
 
 		self.total_additions = 0
@@ -359,11 +360,12 @@ class PatchInPatchFile:
 		return self.str_oneline_around("->", "<-")
 
 	def str_oneline_around(self, prefix, suffix):
-		extra_email = f"{self.from_email}" if self.from_email is not None else ""
-		extra_subject = f":'{self.subject}'" if self.subject is not None else ""
+		# extra_email = f"{self.from_email}" if self.from_email is not None else ""
+		# extra_subject = f":'{self.subject}'" if self.subject is not None else ""
+		# extra_author = f":{extra_email}{extra_subject}"
 		desc: str = \
-			f"{prefix}{self.parent.relative_dirs_and_base_file_name}(:{self.counter}):" + \
-			f"{self.one_line_patch_stats()}:{extra_email}{extra_subject}{suffix}"
+			f"{prefix}{self.parent.relative_dirs_and_base_file_name}(:{self.counter}) " + \
+			f"{self.one_line_patch_stats()}{suffix}"
 		return desc
 
 	def apply_patch(self, working_dir: str, options: dict[str, bool]):
@@ -438,8 +440,7 @@ class PatchInPatchFile:
 			stdout_output = "\n".join([f"STDOUT: {line}" for line in stdout_output.splitlines()])
 			stdout_output = "\n" + stdout_output if stdout_output != "" else stdout_output
 			self.problems.append("failed_apply")
-			raise Exception(
-				f"Failed to apply patch {self.parent.full_file_path()}:{stderr_output}{stdout_output}")
+			raise Exception(f"Failed to apply patch {self.parent.full_file_path()}:{stderr_output}{stdout_output}")
 
 	def commit_changes_to_git(self, repo: git.Repo, add_rebase_tags: bool, split_patches: bool):
 		log.info(f"Committing changes to git: {self.parent.relative_dirs_and_base_file_name}")

@@ -3,11 +3,15 @@ import logging
 import os
 
 # Let's use GitPython to query and manipulate the git repo
-from git import Repo, GitCmdObjectDB, InvalidGitRepositoryError, Actor
+from git import Actor
+from git import GitCmdObjectDB
+from git import InvalidGitRepositoryError
+from git import Repo
 
 import common.armbian_utils as armbian_utils
 import common.patching_utils as patching_utils
-from common.md_asset_log import SummarizedMarkdownWriter, get_gh_pages_workflow_script
+from common.md_asset_log import SummarizedMarkdownWriter
+from common.md_asset_log import get_gh_pages_workflow_script
 
 # Prepare logging
 armbian_utils.setup_logging()
@@ -154,7 +158,7 @@ for patch_file_in_dir in ALL_PATCH_FILES_SORTED:
 		log.critical(
 			f"Failed to read patch file {patch_file_in_dir.file_name}: {e}\n"
 			f"Can't continue; please fix the patch file {patch_file_in_dir.full_file_path()} manually. Sorry."
-			, exc_info=True)
+		)
 
 if has_critical_split_errors:
 	raise Exception("Critical errors found while splitting patches. Please fix the patch files manually.")
@@ -241,7 +245,7 @@ if apply_patches:
 			one_patch.apply_patch(GIT_WORK_DIR, apply_options)
 			one_patch.applied_ok = True
 		except Exception as e:
-			log.error(f"Problem with {one_patch}: {e}", exc_info=True)
+			log.error(f"Problem with {one_patch}: {e}")
 
 		if one_patch.applied_ok and apply_patches_to_git:
 			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches)
