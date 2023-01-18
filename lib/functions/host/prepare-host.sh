@@ -6,7 +6,7 @@
 # * changes system settings
 #
 function prepare_host() {
-	# Now, if NOT interactive, do some basic checks. If interactive, those have already run back in prepare_and_config_main_build_single()
+	# Now, if NOT interactive, do some basic checks. If interactive, those have already run back in prep_conf_main_build_single()
 	if [[ ! -t 1 ]]; then
 		LOG_SECTION="ni_check_basic_host" do_with_logging check_basic_host
 	fi

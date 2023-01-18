@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-function prepare_and_config_main_build_single() {
+function prep_conf_main_build_single() {
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
 	# if interactive, call prepare-host.sh::check_basic_host() early, to avoid disappointments later.
@@ -26,7 +26,7 @@ function prepare_and_config_main_build_single() {
 	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
 
 	LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
-	display_alert "Done with prepare_and_config_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
+	display_alert "Done with prep_conf_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
 }
 
 function config_source_board_file() {
