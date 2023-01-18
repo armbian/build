@@ -19,9 +19,6 @@ function trap_handler_cleanup_logging() {
 	local target_path="${DEST}/logs"
 	mkdir_recursive_and_set_uid_owner "${target_path}" # @TODO: this might be full of logs and is slow
 
-	# Check if fd 13 is still open; close it and wait for tee to die. This is done again in discard_logs_tmp_dir()
-	check_and_close_fd_13
-
 	# Before writing new logfile, compress and move existing ones to archive folder.
 	# - Unless running under CI.
 	# - Also not if signalled via SKIP_LOG_ARCHIVE=yes
@@ -52,6 +49,16 @@ function trap_handler_cleanup_logging() {
 	else
 		display_alert "Not archiving old logs." "CI=${CI:-false}, SKIP_LOG_ARCHIVE=${SKIP_LOG_ARCHIVE:-no}" "debug"
 	fi
+
+	## Here -- we need to definitely stop logging, cos we're gonna consolidate and delete the logs.
+	display_alert "End of logging" "STOP LOGGING: CURRENT_LOGFILE: ${CURRENT_LOGFILE}" "debug"
+
+	# Stop logging to file...
+	CURRENT_LOGFILE=""
+	unset CURRENT_LOGFILE
+
+	# Check if fd 13 is still open; close it and wait for tee to die. This is done again in discard_logs_tmp_dir()
+	check_and_close_fd_13
 
 	# Export Markdown assets.
 	local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"

@@ -1,11 +1,11 @@
 function start_logging_section() {
-	export logging_section_counter=$((logging_section_counter + 1)) # increment counter, used in filename
-	export CURRENT_LOGGING_COUNTER
+	declare -g logging_section_counter=$((logging_section_counter + 1)) # increment counter, used in filename
+	declare -g CURRENT_LOGGING_COUNTER
 	CURRENT_LOGGING_COUNTER="$(printf "%03d" "$logging_section_counter")"
-	export CURRENT_LOGGING_SECTION=${LOG_SECTION:-early} # default to "early", should be overwritten soon enough
-	export CURRENT_LOGGING_SECTION_START=${SECONDS}
-	export CURRENT_LOGGING_DIR="${LOGDIR}" # set in cli-entrypoint.sh
-	export CURRENT_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.000.${CURRENT_LOGGING_SECTION}.log"
+	declare -g CURRENT_LOGGING_SECTION=${LOG_SECTION:-early} # default to "early", should be overwritten soon enough
+	declare -g CURRENT_LOGGING_SECTION_START=${SECONDS}
+	declare -g CURRENT_LOGGING_DIR="${LOGDIR}" # set in cli-entrypoint.sh
+	declare -g CURRENT_LOGFILE="${CURRENT_LOGGING_DIR}/${CURRENT_LOGGING_COUNTER}.000.${CURRENT_LOGGING_SECTION}.log"
 	mkdir -p "${CURRENT_LOGGING_DIR}"
 	touch "${CURRENT_LOGFILE}" # Touch it, make sure it's writable.
 
@@ -44,13 +44,13 @@ function do_with_logging() {
 	# So whatever is being called, should prevent rogue stuff writing to stderr.
 	# this is mostly handled by redirecting stderr to stdout: 2>&1
 
+	# global var to store the pid of spawned logging process.
+	declare -g -i global_tee_pid=0
+
 	if [[ "${SHOW_LOG}" == "yes" ]]; then
 		local prefix_sed_contents
 		prefix_sed_contents="$(logging_echo_prefix_for_pv "tool")   $(echo -n -e "${tool_color}")" # spaces are significant
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
-
-		# global var to store the pid of spawned logging process.
-		declare -g -i global_tee_pid=0
 
 		# Create a 13rd file descriptor sending it to sed. https://unix.stackexchange.com/questions/174849/redirecting-stdout-to-terminal-and-file-without-using-a-pipe
 		# Also terrible: don't hold a reference to cwd by changing to SRC always
