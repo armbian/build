@@ -42,8 +42,20 @@ function cli_docker_run() {
 			;;
 
 		*)
+			# this does NOT exit with the same exit code as the docker instance.
+			# instead, it sets the docker_exit_code variable.
+			declare -i docker_exit_code docker_produced_logs=0
 			docker_cli_launch "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: this "re-launches" using the passed params.
+
+			# Set globals to avoid:
+			# 1) showing the controlling host's log; we only want to show a ref to the Docker logfile, unless it didn't produce one.
+			if [[ $docker_produced_logs -gt 0 ]]; then
+				declare -g show_message_after_export="skip" # handled by export_ansi_logs()
+			fi
+			# 2) actually exiting with the same error code as the docker instance, but without triggering an error.
+			declare -g -i global_final_exit_code=$docker_exit_code # handled by .... @TODO
 			;;
+
 	esac
 
 }
