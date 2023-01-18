@@ -9,7 +9,7 @@ function cli_config_dump_run() {
 }
 
 function config_and_remove_useless() {
-	do_logging=no prepare_and_config_main_build_single # avoid logging during configdump; it's useless
+	do_logging=no prep_conf_main_build_single # avoid logging during configdump; it's useless
 	unset FINALDEST
 	unset HOOK_ORDER HOOK_POINT HOOK_POINT_TOTAL_FUNCS
 	unset REPO_CONFIG REPO_STORAGE
