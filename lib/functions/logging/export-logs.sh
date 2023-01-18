@@ -52,10 +52,10 @@ function export_ansi_logs() {
 	dim_line_separator=$(echo -e -n "${gray_color:-}")------------------------------------------------------------------------------------------------------------$(echo -e -n "${normal_color:-}")
 
 	cat <<- ANSI_HEADER > "${target_file}"
-		# Armbian logs for ${ARMBIAN_BUILD_UUID}
-		# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
+		# Armbian ANSI build logs for ${ARMBIAN_BUILD_UUID} - use "less -SR" to view
+		$(echo -e -n "${bright_blue_color}")# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
 		${dim_line_separator}
-		# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}
+		$(echo -e -n "${bright_blue_color}")# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}
 		${dim_line_separator}
 	ANSI_HEADER
 
@@ -95,7 +95,7 @@ function export_ansi_logs() {
 		logfile_title="$(echo "${logfile_base}" | sed -e 's/^[^.]*\.[^.]*\.//')"
 
 		cat <<- ANSI_ONE_LOGFILE >> "${target_file}"
-			$(echo -e -n "\033[94m")### ${logfile_title} $(echo -e -n "${normal_color}")
+			$(echo -e -n "${bright_blue_color}")### ${logfile_title} $(echo -e -n "${normal_color}")
 			$(cat "${logfile_full}" | sed -e "${prefix_sed_cmd}")
 			${dim_line_separator}
 		ANSI_ONE_LOGFILE
@@ -107,6 +107,6 @@ function export_ansi_logs() {
 	if [[ "${show_message_after_export:-"yes"}" != "skip" ]]; then
 		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
 	fi
-	
+
 	return 0
 }
