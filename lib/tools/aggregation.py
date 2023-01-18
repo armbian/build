@@ -135,9 +135,19 @@ AGGREGATED_PACKAGES_IMAGE = util.merge_lists(AGGREGATED_PACKAGES_IMAGE, env_pack
 AGGREGATED_PACKAGES_IMAGE = util.merge_lists(AGGREGATED_PACKAGES_IMAGE, env_list_remove, "remove")
 
 # Calculate a md5 hash of the list of packages, so we can use it as a cache key.
-# Attention: ROOTFS does not include DESKTOP. @TODO have 2 hashes, one for cli, one for cli+desktop.
-AGGREGATED_ROOTFS_HASH = hashlib.md5(
-	(" ".join(AGGREGATED_PACKAGES_DEBOOTSTRAP) + " ".join(AGGREGATED_PACKAGES_ROOTFS)).encode("utf-8")).hexdigest()
+# This has to reflect perfectly what is done in create-cache.sh::create_new_rootfs_cache()
+all_packages_in_cache = []
+all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_DEBOOTSTRAP))
+all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_ROOTFS))
+all_packages_in_cache.extend(util.only_names_not_removed(AGGREGATED_PACKAGES_DESKTOP))
+all_packages_in_cache_unique_sorted = sorted(set(all_packages_in_cache))
+# @TODO: remove the package.uninstalls? (debsums case? also some gnome stuff)
+
+AGGREGATED_ROOTFS_HASH_TEXT = "\n".join([f"pkg: {pkg}" for pkg in all_packages_in_cache_unique_sorted])
+# @TODO: if apt sources changed, the hash should change too; add them (and their gpg keys too?) to the hash text with "apt: " prefix.
+log.debug(f"<AGGREGATED_ROOTFS_HASH_TEXT>\n{AGGREGATED_ROOTFS_HASH_TEXT}\n</AGGREGATED_ROOTFS_HASH_TEXT>")
+
+AGGREGATED_ROOTFS_HASH = hashlib.md5(AGGREGATED_ROOTFS_HASH_TEXT.encode("utf-8")).hexdigest()
 
 # We need to aggregate some desktop stuff, which are not package lists, postinst contents and such.
 # For this case just find the potentials, and for each found, take the whole contents and join via newlines.
@@ -179,7 +189,10 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 		md.add_summary(f"{id}: {stats['number_items']}")
 
 	# The rootfs hash (md5) is used as a cache key.
-	bash.write(f"declare -g -r AGGREGATED_ROOTFS_HASH='{AGGREGATED_ROOTFS_HASH}'\n")
+	bash.write(f"declare -g -r AGGREGATED_ROOTFS_HASH='{AGGREGATED_ROOTFS_HASH}'\n")  # (this done simply cos it has no newlines)
+	bash.write(util.bash_string_multiline("AGGREGATED_ROOTFS_HASH_TEXT", AGGREGATED_ROOTFS_HASH_TEXT))
+	# add_summary with the first 16 chars of the hash @TODO: unify the cropping of the hash vs bash
+	md.add_summary(f"hash: {AGGREGATED_ROOTFS_HASH[:16]}")
 
 	# Special case for components: debootstrap also wants a list of components, comma separated.
 	bash.write(
@@ -195,7 +208,7 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 	bash.write(util.prepare_bash_output_single_string(
 		"AGGREGATED_DESKTOP_BSP_PREPARE", AGGREGATED_DESKTOP_BSP_PREPARE))
 
-	# 2) @TODO: Some removals...
+	# 2) @TODO: Some removals... uninstall-inside-cache and such. (debsums case? also some gnome stuff)
 
 	#    aggregate_all_cli "packages.uninstall" " "
 	#    aggregate_all_desktop "packages.uninstall" " "
