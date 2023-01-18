@@ -12,33 +12,28 @@ function display_alert() {
 
 	declare message="${1}" level="${3}"                                              # params
 	declare level_indicator="" inline_logs_color="" extra="" extra_file="" ci_log="" # this log
-	declare -i skip_screen=0                                                         # setting to 1 will not write to screen
+	declare -i skip_screen=${display_alert_skip_screen:-0}                           # setting to 1 will not write to screen
 	declare -i skip_logfile=0                                                        # setting to 1 will not write to logfile
 	case "${level}" in
-		err | error)
-			level_indicator="💥"
-			inline_logs_color="\e[1;31m"
-			ci_log="error"
+		debug)
+			if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
+				skip_screen=1
+			fi
+			level_indicator="🐛"
+			inline_logs_color="\e[1;33m"
+			skip_logfile=1
 			;;
 
-		wrn | warn)
-			level_indicator="🚸"
-			inline_logs_color="\e[1;35m"
-			ci_log="warning"
-			;;
-
-		ext)
-			level_indicator="✨" # or ✅ ?
-			inline_logs_color="\e[1;32m"
+		command)
+			if [[ "${SHOW_COMMAND}" != "yes" ]]; then # enable to log all calls to external cmds
+				skip_screen=1
+			fi
+			level_indicator="🐸"
+			inline_logs_color="\e[0;36m" # a dim cyan
 			;;
 
 		info)
 			level_indicator="🌱"
-			inline_logs_color="\e[0;32m"
-			;;
-
-		cachehit)
-			level_indicator="💖"
 			inline_logs_color="\e[0;32m"
 			;;
 
@@ -51,15 +46,6 @@ function display_alert() {
 			skip_logfile=1
 			;;
 
-		debug)
-			if [[ "${SHOW_DEBUG}" != "yes" ]]; then # enable debug for many, many debugging msgs
-				skip_screen=1
-			fi
-			level_indicator="🐛"
-			inline_logs_color="\e[1;33m"
-			skip_logfile=1
-			;;
-
 		group)
 			if [[ "${SHOW_DEBUG}" != "yes" && "${SHOW_GROUPS}" != "yes" ]]; then # show when debugging, or when specifically requested
 				skip_screen=1
@@ -67,14 +53,6 @@ function display_alert() {
 			level_indicator="🦋"
 			inline_logs_color="\e[1;34m" # blue; 36 would be cyan
 			skip_logfile=1
-			;;
-
-		command)
-			if [[ "${SHOW_COMMAND}" != "yes" ]]; then # enable to log all calls to external cmds
-				skip_screen=1
-			fi
-			level_indicator="🐸"
-			inline_logs_color="\e[0;36m" # a dim cyan
 			;;
 
 		timestamp | fasthash)
@@ -122,6 +100,11 @@ function display_alert() {
 			skip_logfile=1
 			;;
 
+		cachehit)
+			level_indicator="💖"
+			inline_logs_color="\e[0;32m"
+			;;
+
 		# @TODO this is dead I think
 		aggregation)
 			if [[ "${SHOW_AGGREGATION}" != "yes" ]]; then # aggregation (PACKAGE LISTS), very very verbose
@@ -130,6 +113,25 @@ function display_alert() {
 			level_indicator="📦"
 			inline_logs_color="\e[0;32m"
 			skip_logfile=1
+			;;
+
+		err | error | critical)
+			level="error"
+			level_indicator="💥"
+			inline_logs_color="\e[1;31m"
+			ci_log="error"
+			;;
+
+		wrn | warn | warning)
+			level="warning"
+			level_indicator="🚸"
+			inline_logs_color="\e[1;35m"
+			ci_log="warning"
+			;;
+
+		ext)
+			level_indicator="✨" # or ✅ ?
+			inline_logs_color="\e[1;32m"
 			;;
 
 		*)
@@ -142,7 +144,7 @@ function display_alert() {
 	if [[ -n ${2} ]]; then
 		extra=" [${inline_logs_color} ${2} ${normal_color:-}]"
 		# extra_file=" [${inline_logs_color} ${2} ${normal_color}]" # too much color in logfile
-		extra_file=" [ ${2} ]"
+		extra_file=" [ ${inline_logs_color}${2}${normal_color} ]"
 	fi
 
 	# Log to journald, if asked to.
