@@ -77,6 +77,14 @@ function main_trap_handler() {
 
 			# Run the cleanup handlers, always.
 			run_cleanup_handlers || true
+
+			# If global_final_exit_code is set, use it as the exit code. (used by docker CLI handler)
+			if [[ -n "${global_final_exit_code}" ]]; then
+				display_alert "Final exit code" "Final exit code ${global_final_exit_code}" "debug"
+				# disable the trap, so we don't get called again.
+				trap - EXIT
+				exit "${global_final_exit_code}"
+			fi
 			;;
 		*)
 			display_alert "main_trap_handler" "Unknown trap type '${trap_type}'" "err"
