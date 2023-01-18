@@ -304,3 +304,10 @@ cd ~/armbian-build-next
 cd ~/armbian-build-next
 git pull --rebase # !!!we rebase!!! use --rebase
 ```
+---
+
+#### Update Jan 18 `armbian-next` - no slides this week
+
+- where are the slides?
+
+---
