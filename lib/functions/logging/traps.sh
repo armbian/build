@@ -78,6 +78,9 @@ function main_trap_handler() {
 			# Run the cleanup handlers, always.
 			run_cleanup_handlers || true
 			;;
+		*)
+			display_alert "main_trap_handler" "Unknown trap type '${trap_type}'" "err"
+			;;
 	esac
 }
 
@@ -163,8 +166,7 @@ function exit_with_error() {
 	#exec {FD}> /var/lock/armbian-debootstrap-losetup
 	#flock -u "${FD}"
 
-	# let's try early to close tee/sed and fd 13 which might be opened if this happened in a logging section
-	check_and_close_fd_13
+	# do NOT close the fd 13 here, otherwise the error will not be logged to logfile...
 
 	exit 43
 }
