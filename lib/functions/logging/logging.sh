@@ -30,17 +30,18 @@ function logging_init() {
 	else
 		declare wsl2_type
 		wsl2_detect_type
-		if [[ "${wsl2_type}" != "none" ]]; then 
-			local windows_emoji="💲"                # 💰 or 💲 for M$ -- get it?
+		if [[ "${wsl2_type}" != "none" ]]; then
+			local windows_emoji="💲" # 💰 or 💲 for M$ -- get it?
 			declare -g left_marker="${gray_color}[${windows_emoji}|${normal_color}"
 		fi
 	fi
 }
 
 function logging_error_show_log() {
+	[[ "${SHOW_LOG}" == "yes" ]] && return 0 # Do nothing if we're already showing the log on stderr.
+	# Do NOT unset CURRENT_LOGFILE here... it's used by traps.
+
 	local logfile_to_show="${CURRENT_LOGFILE}" # store current logfile in separate var
-	unset CURRENT_LOGFILE                      # stop logging, otherwise crazy
-	[[ "${SHOW_LOG}" == "yes" ]] && return 0   # Do nothing if we're already showing the log on stderr.
 	if [[ "${CI}" == "true" ]]; then           # Close opened CI group, even if there is none; errors would be buried otherwise.
 		echo "::endgroup::"
 	fi
@@ -48,14 +49,14 @@ function logging_error_show_log() {
 	if [[ -f "${logfile_to_show}" ]]; then
 		local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
 		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
-		display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
+		CURRENT_LOGFILE="" display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
 
 		# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
 		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 
-		display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
+		CURRENT_LOGFILE="" display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
 	else
-		display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
+		CURRENT_LOGFILE="" display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
 	fi
 	return 0
 }
@@ -108,25 +109,44 @@ function print_current_asset_log_base_file() {
 }
 
 function check_and_close_fd_13() {
+	sync # let the disk catch up
 	if [[ -e /proc/self/fd/13 ]]; then
-		sync                                                     # let the disk catch up
 		display_alert "Closing fd 13" "log still open" "cleanup" # no reason to be alarmed
 		exec 13>&- || true                                       # close the file descriptor, lest sed keeps running forever.
 		sync                                                     # make sure the file is written to disk
-		sleep 1                                                  # give it a second to die.
 	else
 		display_alert "Not closing fd 13" "log already closed" "cleanup"
 	fi
 
+	# "tee_pid" is a misnomer: it in reality is a shell pid with tee and sed children.
 	display_alert "Checking if global_tee_pid is set and running" "global_tee_pid: ${global_tee_pid}" "cleanup"
 	if [[ -n "${global_tee_pid}" && ${global_tee_pid} -gt 1 ]] && ps -p "${global_tee_pid}" > /dev/null; then
-		display_alert "Killing global_tee_pid" "${global_tee_pid}" "cleanup"
-		kill "${global_tee_pid}" && wait "${global_tee_pid}"
+		display_alert "Killing global_tee_pid's children" "global_tee_pid: ${global_tee_pid}" "cleanup"
+
+		declare -a descendants_of_pid_array_result=()
+		get_descendants_of_pid_array "${global_tee_pid}" || true
+		# loop over descendants_of_pid_array_result and kill'em'all
+		for descendant_pid in "${descendants_of_pid_array_result[@]}"; do
+			# check if PID is still alive before killing; it might have died already due to death of parent.
+			if ps -p "${descendant_pid}" > /dev/null; then
+				display_alert "Killing descendant pid" "${descendant_pid}" "cleanup"
+				{ kill "${descendant_pid}" && wait "${global_tee_pid}"; } || true
+			else
+				display_alert "Descendant PID already dead" "${descendant_pid}" "cleanup"
+			fi
+		done
+
+		# If the global_tee_pid is still alive, kill it.
+		if ps -p "${global_tee_pid}" > /dev/null; then
+			display_alert "Killing global_tee_pid" "${global_tee_pid}" "cleanup"
+			kill "${global_tee_pid}" && wait "${global_tee_pid}"
+		else
+			display_alert "global_tee_pid already dead after descendants killed" "${global_tee_pid}" "cleanup"
+		fi
 		sync # wait for the disk to catch up
 	else
 		display_alert "Not killing global_tee_pid" "${global_tee_pid} not running" "cleanup"
 	fi
-
 }
 
 function discard_logs_tmp_dir() {
