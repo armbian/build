@@ -239,6 +239,10 @@ def join_refs_for_markdown_single_string(refs):
 	return "".join(single_line_refs)
 
 
+def only_names_not_removed(merged_list):
+	return [key for key in merged_list if merged_list[key]["status"] != "remove"]
+
+
 def prepare_bash_output_array_for_list(
 	bash_writer, md_writer, output_array_name, merged_list, extra_dict_function=None):
 	md_writer.write(f"### `{output_array_name}`\n")
@@ -294,10 +298,14 @@ def prepare_bash_output_single_string(output_array_name, merged_list):
 			"contents"] + "\n" + "### END Source: " + refs_str + "\n\n")
 
 	values_list_bash = "\n".join(values_list)
-	return f"declare -g {output_array_name}" + "\n" + (
-		f"{output_array_name}=\"$(cat <<-'EOD_{output_array_name}_EOD'\n" +
-		f"{values_list_bash}\nEOD_{output_array_name}_EOD\n)\"\n" + "\n"
-	) + f"declare -r -g {output_array_name}" + "\n"
+	return bash_string_multiline(output_array_name, values_list_bash)
+
+
+def bash_string_multiline(var_name, contents):
+	return f"declare -g {var_name}" + "\n" + (
+		f"{var_name}=\"$(cat <<-'EOD_{var_name}_EOD'\n" +
+		f"{contents}\nEOD_{var_name}_EOD\n)\"\n" + "\n"
+	) + f"declare -r -g {var_name}" + "\n"
 
 
 def encode_source_base_path_extra(contents_dict):
