@@ -71,11 +71,24 @@ function cleanup_tmpfs_for() {
 	if [[ "${umount_tmpfs}" == "umount_tmpfs" ]]; then
 		display_alert "cleanup_tmpfs_for: umount tmpfs" "${tmpfs_name}" "cleanup"
 		cd "${SRC}" || echo "cleanup_tmpfs_for: cd failed to ${SRC}" >&2 # avoid cwd in use error
-		umount "${tmpfs_path}" || {
-			display_alert "cleanup_tmpfs_for: umount failed" "${tmpfs_name} tmpfs umount failed" "err"
+		sync                                                             # let disk coalesce
+		umount "${tmpfs_path}" &> /dev/null || {
+			display_alert "cleanup_tmpfs_for: umount failed" "${tmpfs_name} tmpfs umount failed, will try lazy" "cleanup"
+			# Do a lazy umount... last-resort...
+			sync
+			umount -l "${tmpfs_path}" &> /dev/null || display_alert "cleanup_tmpfs_for: lazy umount failed" "${tmpfs_name} tmpfs lazy umount also failed" "cleanup"
+			sync
+		}
+
+		# Check if the tmpfs is still mounted after all that trying, log error, show debug, and give up with error
+		mountpoint -q "${tmpfs_path}" && {
+			display_alert "cleanup_tmpfs_for: umount failed" "${tmpfs_name} tmpfs still mounted after retries/lazy umount" "err"
 			# Show last-resort what's in there / what's using it to stderr
 			ls -la "${tmpfs_path}" >&2 || echo "cleanup_tmpfs_for: ls failed" >&2
 			lsof "${tmpfs_path}" >&2 || echo "cleanup_tmpfs_for: lsof dir failed" >&2
+			return 1 # sorry, we tried.
+		} || {
+			display_alert "cleanup_tmpfs_for: umount success" "${tmpfs_name}" "cleanup"
 		}
 	else
 		display_alert "cleanup_tmpfs_for: not umounting tmpfs" "${tmpfs_name}" "cleanup"
