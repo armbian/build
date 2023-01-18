@@ -104,5 +104,9 @@ function export_ansi_logs() {
 	declare target_relative_to_src
 	target_relative_to_src="$(realpath --relative-to="${SRC}" "${target_file}")"
 
-	display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
+	if [[ "${show_message_after_export:-"yes"}" != "skip" ]]; then
+		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
+	fi
+	
+	return 0
 }
