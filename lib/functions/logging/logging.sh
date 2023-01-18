@@ -27,6 +27,13 @@ function logging_init() {
 	elif [[ "$(uname -s)" == "Darwin" ]]; then # if on Mac, add a an apple emoji to the left marker wrapped in dark gray brackets
 		local mac_emoji="🍏"                       # 🍏 or 🍎
 		declare -g left_marker="${gray_color}[${mac_emoji}|${normal_color}"
+	else
+		declare wsl2_type
+		wsl2_detect_type
+		if [[ "${wsl2_type}" != "none" ]]; then 
+			local windows_emoji="💲"                # 💰 or 💲 for M$ -- get it?
+			declare -g left_marker="${gray_color}[${windows_emoji}|${normal_color}"
+		fi
 	fi
 }
 
@@ -129,7 +136,7 @@ function discard_logs_tmp_dir() {
 
 	# Check if fd 13 is still open; close it and wait for tee to die.
 	check_and_close_fd_13
-	
+
 	# Do not delete the dir itself, since it might be a tmpfs mount.
 	if [[ "$(uname)" == "Linux" ]]; then
 		rm -rf --one-file-system "${LOGDIR:?}"/* # Note this is protected by :?
