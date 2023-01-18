@@ -15,6 +15,9 @@ function logging_init() {
 	# globals
 	declare -g padding="" left_marker="[" right_marker="]"
 	declare -g normal_color="\x1B[0m" gray_color="\e[1;30m" # "bright black", which is grey
+	declare -g bright_red_color="\e[1;31m" red_color="\e[0;31m"
+	declare -g bright_blue_color="\e[1;34m" blue_color="\e[0;34m"
+	declare -g bright_magenta_color="\e[1;35m" magenta_color="\e[0;35m"
 	declare -g -i logging_section_counter=0                 # -i: integer
 	declare -g tool_color="${gray_color}"                   # default to gray... (should be ok on terminals, @TODO: I've seen it too dark on a few random screenshots though
 	if [[ "${CI}" == "true" ]]; then                        # ... but that is too dark for Github Actions

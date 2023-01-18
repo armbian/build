@@ -5,9 +5,9 @@
 # This also implements the custom "cleanup" handlers, which always run at the end of build, or when exiting prematurely for any reason.
 function traps_init() {
 	# shellcheck disable=SC2034 # Array of cleanup handlers.
-	declare -a trap_manager_cleanup_handlers=()
+	declare -g -a trap_manager_cleanup_handlers=()
 	# shellcheck disable=SC2034 # Global to avoid doubly reporting ERR/EXIT pairs.
-	declare -i trap_manager_error_handled=0
+	declare -g -i trap_manager_error_handled=0
 	trap 'main_trap_handler "ERR" "$?"' ERR
 	trap 'main_trap_handler "EXIT" "$?"' EXIT
 	trap 'main_trap_handler "INT" "$?"' INT
@@ -49,12 +49,14 @@ function main_trap_handler() {
 			# BASHPID is the current subshell; $$ is parent shell pid
 			if [[ "${BASHPID}" == "${$}" ]]; then
 				# Not in subshell, dump the error, complete with log, and show the stack.
-				logging_error_show_log
-				display_alert "Error occurred in main shell" "code ${trap_exit_code} at ${short_stack}\n${stack_caller}\n" "err"
+				if [[ ! ${trap_manager_error_handled} -gt 0 ]]; then
+					logging_error_show_log
+					display_alert "Error ${trap_exit_code} occurred in main shell" "at ${short_stack}\n${stack_caller}\n" "err"
+				fi
 			else
 				# In a subshell. This trap will run again in the parent shell, so just output a message about it;
 				# When the parent shell trap runs, it will show the stack and log.
-				display_alert "Error occurred in SUBSHELL" "SUBSHELL: code ${trap_exit_code} at ${short_stack}" "err"
+				display_alert "Error  ${trap_exit_code} occurred in SUBSHELL" "SUBSHELL at ${short_stack}" "err"
 			fi
 			trap_manager_error_handled=1
 			return # Nothing else to do here, let the EXIT trap do the cleanups.
@@ -63,7 +65,7 @@ function main_trap_handler() {
 		EXIT)
 			if [[ ${trap_manager_error_handled} -lt 1 ]] && [[ ${trap_exit_code} -gt 0 ]]; then
 				logging_error_show_log
-				display_alert "Exit with error detected" "${trap_exit_code} at ${short_stack} -\n${stack_caller}\n" "err"
+				display_alert "Exiting with error ${trap_exit_code}" "at ${short_stack}\n${stack_caller}\n" "err"
 				trap_manager_error_handled=1
 			fi
 
@@ -75,8 +77,8 @@ function main_trap_handler() {
 				bash < /dev/tty >&2 || true
 			fi
 
-			# Run the cleanup handlers, always.
-			run_cleanup_handlers || true
+			# Run the cleanup handlers, always. pass it the exit code so it keep the red theme of errors in its messages.
+			cleanup_exit_code="${trap_exit_code}" run_cleanup_handlers || true
 
 			# If global_final_exit_code is set, use it as the exit code. (used by docker CLI handler)
 			if [[ -n "${global_final_exit_code}" ]]; then
@@ -98,7 +100,11 @@ function run_cleanup_handlers() {
 	if [[ ${#trap_manager_cleanup_handlers[@]} -lt 1 ]]; then
 		return 0 # No handlers set, just return.
 	else
-		display_alert "Cleaning up" "please wait for cleanups to finish" "debug"
+		if [[ ${cleanup_exit_code:-0} -gt 0 ]]; then
+			display_alert "Cleaning up" "please wait for cleanups to finish" "error"
+		else
+			display_alert "Cleaning up" "please wait for cleanups to finish" "info"
+		fi
 	fi
 	# Loop over the handlers, execute one by one. Ignore errors.
 	# IMPORTANT: cleanups are added first to the list, so cleanups run in the reverse order they were added.
@@ -162,11 +168,12 @@ function exit_with_error() {
 	local _function=${FUNCNAME[1]}
 	local _line="${BASH_LINENO[0]}"
 
-	display_alert "error: ${1}" "${2} in ${_function}() at ${_file}:${_line}" "err"
+	display_alert "error!" "${1} ${2}" "err"
+
+	#display_alert "Build terminating..." "please wait for cleanups to finish" "err"
 
 	# @TODO: move this into trap handler
 	# @TODO: integrate both overlayfs and the FD locking with cleanup logic
-	display_alert "Build terminating... wait for cleanups..." "" "err"
 	overlayfs_wrapper "cleanup"
 
 	## This does not really make sense. wtf?
