@@ -272,3 +272,24 @@ function trap_handler_reset_output_owner() {
 	display_alert "Resetting tmp directory owner" "${SRC}/.tmp" "debug"
 	reset_uid_owner_non_recursive "${SRC}/.tmp"
 }
+
+# Recursive function to find all descendant processes of a given PID. Writes to stdout.
+function list_descendants_of_pid() {
+	local children
+	children=$(ps -o "pid=" --ppid "$1" | xargs echo -n)
+
+	for pid in $children; do
+		list_descendants_of_pid "$pid"
+	done
+
+	echo -n "${children} "
+}
+
+function get_descendants_of_pid_array() {
+	local descendants
+	descendants="$(list_descendants_of_pid "$1")"
+	display_alert "Descendants of PID $1: ${descendants}" "string - get_descendants_of_pid_array" "debug"
+	# shellcheck disable=SC2206 # lets expand!
+	descendants_of_pid_array_result=(${descendants})
+	display_alert "Descendants of PID $1: ${descendants_of_pid_array_result[*]}" "array = get_descendants_of_pid_array" "debug"
+}
