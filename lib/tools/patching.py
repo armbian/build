@@ -94,7 +94,7 @@ for patch_file in EXTRA_PATCH_FILES_FIRST:
 	driver_dir.is_autogen_dir = True
 	PATCH_FILES_FIRST.append(patching_utils.PatchFileInDir(patch_file, driver_dir))
 
-log.info(f"Found {len(PATCH_FILES_FIRST)} kernel driver patches")
+log.debug(f"Found {len(PATCH_FILES_FIRST)} kernel driver patches.")
 
 SERIES_PATCH_FILES: list[patching_utils.PatchFileInDir] = []
 # Now, loop over ALL_DIRS, and find the patch files in each directory
@@ -123,7 +123,17 @@ for one_patch_file in ALL_DIR_PATCH_FILES:
 # This reflects the order in which we want to apply the patches.
 # For series-based patches, we want to apply the serie'd patches first.
 # The other patches are separately sorted.
-ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
+NORMAL_PATCH_FILES = list(dict(sorted(ALL_DIR_PATCH_FILES_BY_NAME.items())).values())
+ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + NORMAL_PATCH_FILES
+
+patch_counter_desc_arr = []
+if len(PATCH_FILES_FIRST) > 0:
+	patch_counter_desc_arr.append(f"{len(PATCH_FILES_FIRST)} driver patches")
+if len(SERIES_PATCH_FILES) > 0:
+	patch_counter_desc_arr.append(f"{len(SERIES_PATCH_FILES)} patches in series")
+if len(NORMAL_PATCH_FILES) > 0:
+	patch_counter_desc_arr.append(f"{len(NORMAL_PATCH_FILES)} patches in regular, sorted files")
+patch_file_desc = f"from {len(ALL_PATCH_FILES_SORTED)} files of which {', '.join(patch_counter_desc_arr)}"
 
 # Now, actually read the patch files.
 # Patch files might be in mailbox format, and in that case contain more than one "patch".
@@ -131,7 +141,7 @@ ALL_PATCH_FILES_SORTED = PATCH_FILES_FIRST + SERIES_PATCH_FILES + list(dict(sort
 # We need to read the file, and see if it's a mailbox file; if so, split into multiple patches.
 # If not, just use the whole file as a single patch.
 # We'll store the patches in a list of Patch objects.
-log.info("Splitting patch files into patches")
+log.debug("Splitting patch files into patches")
 VALID_PATCHES: list[patching_utils.PatchInPatchFile] = []
 patch_file_in_dir: patching_utils.PatchFileInDir
 has_critical_split_errors = False
@@ -149,12 +159,12 @@ for patch_file_in_dir in ALL_PATCH_FILES_SORTED:
 if has_critical_split_errors:
 	raise Exception("Critical errors found while splitting patches. Please fix the patch files manually.")
 
-log.info("Done splitting patch files into patches")
+log.debug("Done splitting patch files into patches")
 
 # Now, some patches might not be mbox-formatted, or somehow else invalid. We can try and recover those.
 # That is only possible if we're applying patches to git.
 # Rebuilding description is only possible if we've the git repo where the patches themselves reside.
-log.info("Parsing patches...")
+log.debug("Parsing patches...")
 has_critical_parse_errors = False
 for patch in VALID_PATCHES:
 	try:
@@ -169,7 +179,7 @@ for patch in VALID_PATCHES:
 if has_critical_parse_errors:
 	raise Exception("Critical errors found while parsing patches. Please fix the patch files manually.")
 
-log.info(f"Parsed patches.")
+log.debug(f"Parsed patches.")
 
 # Now, for patches missing description, try to recover descriptions from the Armbian repo.
 # It might be the SRC is not a git repo (say, when building in Docker), so we need to check.
@@ -191,13 +201,15 @@ if apply_patches_to_git and git_archeology:
 
 # Now, we need to apply the patches.
 git_repo: "git.Repo | None" = None
+total_patches = len(VALID_PATCHES)
 if apply_patches:
-	log.info("Cleaning target git directory...")
+	log.debug("Cleaning target git directory...")
 	git_repo = Repo(GIT_WORK_DIR, odbt=GitCmdObjectDB)
 
 	# Sanity check. It might be we fail to access the repo, or it's not a git repo, etc.
 	status = str(git_repo.git.status()).replace("\n", "; ")
-	log.info(f"Git status of '{GIT_WORK_DIR}': '{status}'.")
+	GIT_WORK_DIR_REL_SRC = os.path.relpath(GIT_WORK_DIR, SRC)
+	log.debug(f"Git status of '{GIT_WORK_DIR_REL_SRC}': '{status}'.")
 
 	BRANCH_FOR_PATCHES = armbian_utils.get_from_env_or_bomb("BRANCH_FOR_PATCHES")
 	BASE_GIT_REVISION = armbian_utils.get_from_env("BASE_GIT_REVISION")
@@ -212,19 +224,24 @@ if apply_patches:
 	patching_utils.prepare_clean_git_tree_for_patching(git_repo, BASE_GIT_REVISION, BRANCH_FOR_PATCHES)
 
 	# Loop over the VALID_PATCHES, and apply them
-	log.info(f"- Applying {len(VALID_PATCHES)} patches...")
+	log.info(f"Applying {total_patches} patches {patch_file_desc}...")
 	# Grab the date of the root Makefile; that is the minimum date for the patched files.
 	root_makefile = os.path.join(GIT_WORK_DIR, "Makefile")
 	apply_options["root_makefile_date"] = os.path.getmtime(root_makefile)
-	log.info(f"- Root Makefile '{root_makefile}' date: '{os.path.getmtime(root_makefile)}'")
+	log.debug(f"- Root Makefile '{root_makefile}' date: '{os.path.getmtime(root_makefile)}'")
+	chars_total = len(str(total_patches))
+	counter = 0
 	for one_patch in VALID_PATCHES:
-		log.info(f"Applying patch {one_patch}")
+		counter += 1
+		counter_str = str(counter).zfill(chars_total)
+
+		log.info(f"-> {counter_str}/{total_patches}: {one_patch.str_oneline_around('', '')}")
 		one_patch.applied_ok = False
 		try:
 			one_patch.apply_patch(GIT_WORK_DIR, apply_options)
 			one_patch.applied_ok = True
 		except Exception as e:
-			log.error(f"Exception while applying patch {one_patch}: {e}", exc_info=True)
+			log.error(f"Problem with {one_patch}: {e}", exc_info=True)
 
 		if one_patch.applied_ok and apply_patches_to_git:
 			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches)
@@ -244,7 +261,7 @@ if apply_patches:
 		patch_files_by_parent: dict[(patching_utils.PatchFileInDir, list[patching_utils.PatchInPatchFile])] = {}
 		for one_patch in VALID_PATCHES:
 			if not one_patch.applied_ok:
-				log.warning(f"Skipping patch {one_patch} because it was not applied successfully.")
+				log.warning(f"Skipping patch {one_patch} from rewrite because it was not applied successfully.")
 				continue
 
 			if one_patch.parent not in patch_files_by_parent:
@@ -267,7 +284,7 @@ with SummarizedMarkdownWriter(f"patching_{PATCH_TYPE}.md", f"{PATCH_TYPE} patchi
 	patches_applied = 0
 	patches_with_problems = 0
 	problem_by_type: dict[str, int] = {}
-	if len(VALID_PATCHES) == 0:
+	if total_patches == 0:
 		md.write(f"- No patches found.\n")
 	else:
 		# Prepare the Markdown table header
@@ -298,7 +315,7 @@ with SummarizedMarkdownWriter(f"patching_{PATCH_TYPE}.md", f"{PATCH_TYPE} patchi
 
 # Finally, write the README.md and the GH pages workflow file to the git dir, add them, and commit them.
 if apply_patches_to_git and readme_markdown is not None and git_repo is not None:
-	log.info("Writing README.md and .github/workflows/gh-pages.yml")
+	log.debug("Writing README.md and .github/workflows/gh-pages.yml")
 	with open(os.path.join(GIT_WORK_DIR, "README.md"), 'w') as f:
 		f.write(readme_markdown)
 	git_repo.git.add("README.md")
@@ -307,7 +324,7 @@ if apply_patches_to_git and readme_markdown is not None and git_repo is not None
 		os.makedirs(github_workflows_dir)
 	with open(os.path.join(github_workflows_dir, "publish-ghpages.yaml"), 'w') as f:
 		f.write(get_gh_pages_workflow_script())
-	log.info("Committing README.md and .github/workflows/gh-pages.yml")
+	log.debug("Committing README.md and .github/workflows/gh-pages.yml")
 	git_repo.git.add("-f", [".github/workflows/publish-ghpages.yaml", "README.md"])
 	maintainer_actor: Actor = Actor("Armbian AutoPatcher", "patching@armbian.com")
 	commit = git_repo.index.commit(
