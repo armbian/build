@@ -42,8 +42,11 @@ function show_caller_full() {
 			((i++))
 		done | while read -r line_no function_name file_name; do
 			padded_function_name="$(printf "%30s" "$function_name()")"
-			short_file_name="${file_name/"${SRC}/"/"./"}"
-			echo -e "$padded_function_name --> $short_file_name:$line_no"
+			short_file_name="${file_name/"${SRC}/"/""}"
+			if [[ "${short_file_name}" == *"extension_function_definition.sh" ]]; then
+				short_file_name="<extension_magic>"
+			fi
+			echo -e "${stack_color:-"${red_color}"}   $padded_function_name --> $short_file_name:$line_no"
 		done
 	} || true # always success
 }
