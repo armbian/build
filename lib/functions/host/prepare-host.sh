@@ -9,6 +9,7 @@ function prepare_host() {
 	# Those are not logged, and might be interactive.
 	display_alert "Checking" "host" "info"
 	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
+	check_windows_wsl2                     # checks if on Windows, on WSL2, (not 1) and exits if not supported
 	check_host_has_enough_disk_space       # Checks disk space and exits if not enough
 	wait_for_package_manager               # wait until dpkg is not locked...
 
