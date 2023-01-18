@@ -407,27 +407,37 @@ function docker_cli_launch() {
 	display_alert "Showing Docker cmdline" "Docker args: '${DOCKER_ARGS[*]}'" "debug"
 
 	display_alert "Relaunching in Docker" "${*}" "debug"
-	display_alert "-----------------Relaunching in Docker-----------------------------------" "here comes the 🐳" "info"
+	display_alert "-----------------Relaunching in Docker------------------------------------" "here comes the 🐳" "info"
 
-	local -i docker_build_result=1
+	local -i docker_build_result
 	if docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
-		display_alert "-------------Docker Build finished----------------------------------------" "successfully" "info"
-		docker_build_result=0
+		docker_build_result=$? # capture exit code of test done in the line above.
+		display_alert "-------------Docker run finished------------------------------------------" "successfully" "info"
 	else
-		display_alert "-------------Docker Build failed-------------------------------------------" "with errors" "err"
+		docker_build_result=$? # capture exit code of test done 4 lines above.
+		display_alert "-------------Docker run failed--------------------------------------------" "with errors" "err"
 	fi
 
 	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
 	local logs_path="${DEST}/logs" log_file
 	log_file="$(find "${logs_path}" -type f -name "*${ARMBIAN_BUILD_UUID}*.*" -print -quit)"
-	display_alert "Build log done inside Docker" "${log_file}" "info"
+	docker_produced_logs=0 # outer scope variable
+	if [[ -f "${log_file}" ]]; then
+		docker_produced_logs=1 # outer scope variable
+		display_alert "Build log done inside Docker" "${log_file}" "debug"
+	else
+		display_alert "Docker Log file for this run" "not found" "err"
+	fi
 
 	# Show and help user understand space usage in Docker volumes.
 	# This is done in a loop; `docker df` fails sometimes (for no good reason).
 	# @TODO: this is very, very slow when the volumes are full. disable.
 	# docker_cli_show_armbian_volumes_disk_usage
 
-	return ${docker_build_result}
+	docker_exit_code="${docker_build_result}" # set outer scope variable -- do NOT exit with error.
+
+	# return ${docker_build_result}
+	return 0 # always exit with success. caller (CLI) will handle the exit code
 }
 
 function docker_cli_show_armbian_volumes_disk_usage() {
