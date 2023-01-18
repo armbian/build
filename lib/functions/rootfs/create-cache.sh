@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # this gets from cache or produces a new rootfs, and leaves a mounted chroot "$SDCARD" at the end.
-get_or_create_rootfs_cache_chroot_sdcard() {
+function get_or_create_rootfs_cache_chroot_sdcard() {
 	# @TODO: this was moved from configuration to this stage, that way configuration can be offline
 	# if variable not provided, check which is current version in the cache storage in GitHub.
 	if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
@@ -19,21 +19,22 @@ get_or_create_rootfs_cache_chroot_sdcard() {
 		fi
 	fi
 
-	local packages_hash="${AGGREGATED_ROOTFS_HASH}" # Produced by aggregation.py
-	local packages_hash=${packages_hash:0:8}
+	local packages_hash="${AGGREGATED_ROOTFS_HASH}" # Produced by aggregation.py - currently only AGGREGATED_PACKAGES_DEBOOTSTRAP and AGGREGATED_PACKAGES_ROOTFS
+	local packages_hash=${packages_hash:0:16}       # it's an md5, which is 32 hex digits; used to be 8
 
 	local cache_type="cli"
-	[[ ${BUILD_DESKTOP} == yes ]] && local cache_type="xfce-desktop"
-	[[ -n ${DESKTOP_ENVIRONMENT} ]] && local cache_type="${DESKTOP_ENVIRONMENT}"
-	[[ ${BUILD_MINIMAL} == yes ]] && local cache_type="minimal"
+	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}"
+	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
 
 	# seek last cache, proceed to previous otherwise build it
 	local cache_list
 	readarray -t cache_list <<< "$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
+	declare ROOTFSCACHE_VERSION
 	for ROOTFSCACHE_VERSION in "${cache_list[@]}"; do
 
-		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst
-		local cache_fname=${SRC}/cache/rootfs/${cache_name}
+		local cache_name="${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst"
+		local cache_fname="${SRC}/cache/rootfs/${cache_name}"
 
 		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
 
@@ -106,14 +107,14 @@ function create_new_rootfs_cache() {
 
 	# @TODO: one day: https://gitlab.mister-muffin.de/josch/mmdebstrap/src/branch/main/mmdebstrap
 
-	display_alert "Installing base system" "Stage 1/2" "info"
+	display_alert "Installing base system with ${#AGGREGATED_PACKAGES_DEBOOTSTRAP[@]} packages" "Stage 1/2" "info"
 	cd "${SDCARD}" || exit_with_error "cray-cray about SDCARD" "${SDCARD}" # this will prevent error sh: 0: getcwd() failed
 
 	local -a deboostrap_arguments=(
 		"--variant=minbase"                                         # minimal base variant. go ask Debian about it.
 		"--arch=${ARCH}"                                            # the arch
 		"'--include=${AGGREGATED_PACKAGES_DEBOOTSTRAP_COMMA}'"      # from aggregation.py
-		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation?
+		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation.py
 	)
 
 	# Small detour for local apt caching option.
@@ -128,7 +129,7 @@ function create_new_rootfs_cache() {
 	deboostrap_arguments+=("--foreign" "${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # path and mirror
 
 	run_host_command_logged debootstrap "${deboostrap_arguments[@]}" || {
-		exit_with_error "Debootstrap first stage failed" "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
+		exit_with_error "Debootstrap first stage failed" "${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
 	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
 
@@ -137,7 +138,7 @@ function create_new_rootfs_cache() {
 	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks()
 
 	display_alert "Installing base system" "Stage 2/2" "info"
-	export if_error_detail_message="Debootstrap second stage failed ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
+	export if_error_detail_message="Debootstrap second stage failed ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"
 
@@ -173,8 +174,8 @@ function create_new_rootfs_cache() {
 	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS)
 	create_sources_list "$RELEASE" "$SDCARD/"
 
-	# add armhf arhitecture to arm64, unless configured not to do so.
-	if [[ "a${ARMHF_ARCH}" != "askip" ]]; then
+	# optionally add armhf arhitecture to arm64, if asked to do so.
+	if [[ "a${ARMHF_ARCH}" == "ayes" ]]; then
 		[[ $ARCH == arm64 ]] && chroot_sdcard LC_ALL=C LANG=C dpkg --add-architecture armhf
 	fi
 
@@ -199,7 +200,7 @@ function create_new_rootfs_cache() {
 
 	# stage: install additional packages
 	display_alert "Installing the main packages for" "Armbian" "info"
-	export if_error_detail_message="Installation of Armbian main packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+	export if_error_detail_message="Installation of Armbian main packages for ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 	# First, try to download-only up to 3 times, to work around network/proxy problems.
 	# AGGREGATED_PACKAGES_ROOTFS is generated by aggregation.py
 	chroot_sdcard_apt_get_install_dry_run "${AGGREGATED_PACKAGES_ROOTFS[@]}"
@@ -209,19 +210,8 @@ function create_new_rootfs_cache() {
 	chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_ROOTFS[@]}"
 
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
-		## This is not defined anywhere.... @TODO: remove?
-		#local apt_desktop_install_flags=""
-		#if [[ ! -z ${DESKTOP_APT_FLAGS_SELECTED+x} ]]; then
-		#	for flag in ${DESKTOP_APT_FLAGS_SELECTED}; do
-		#		apt_desktop_install_flags+=" --install-${flag}"
-		#	done
-		#else
-		#	# Myy : Using the previous default option, if the variable isn't defined
-		#	# And ONLY if it's not defined !
-		#	apt_desktop_install_flags+=" --no-install-recommends"
-		#fi
-
-		display_alert "Installing the desktop packages for" "Armbian" "info"
+		# how how many items in AGGREGATED_PACKAGES_DESKTOP array
+		display_alert "Installing ${#AGGREGATED_PACKAGES_DESKTOP[@]} desktop packages" "${RELEASE} ${DESKTOP_ENVIRONMENT}" "info"
 
 		# dry-run, make sure everything can be installed.
 		chroot_sdcard_apt_get_install_dry_run "${AGGREGATED_PACKAGES_DESKTOP[@]}"
@@ -230,26 +220,26 @@ function create_new_rootfs_cache() {
 		do_with_retries 3 chroot_sdcard_apt_get_install_download_only "${AGGREGATED_PACKAGES_DESKTOP[@]}"
 
 		# Then do the actual install.
-		export if_error_detail_message="Installation of Armbian desktop packages for ${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
+		export if_error_detail_message="Installation of Armbian desktop packages for ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
 		chroot_sdcard_apt_get install "${AGGREGATED_PACKAGES_DESKTOP[@]}"
 	fi
 
-	# stage: check md5 sum of installed packages. Just in case.
+	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
 	display_alert "Checking MD5 sum of installed packages" "debsums" "info"
 	export if_error_detail_message="Check MD5 sum of installed packages failed"
 	chroot_sdcard debsums --silent
 
-	# Remove packages from packages.uninstall
-	# @TODO: aggregation.py handling of this...
-	display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
-	# shellcheck disable=SC2086
-	chroot_sdcard_apt_get purge $PACKAGE_LIST_UNINSTALL
+	# # Remove packages from packages.uninstall
+	# # @TODO: aggregation.py handling of this... if we wanted it removed in rootfs cache, why did we install it in the first place?
+	# display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
+	# # shellcheck disable=SC2086
+	# DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get purge $PACKAGE_LIST_UNINSTALL
 
-	# @TODO: if we remove with --purge then this is not needed
-	# stage: purge residual packages
-	display_alert "Purging residual packages for" "Armbian" "info"
-	PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
-	chroot_sdcard_apt_get remove --purge $PURGINGPACKAGES
+	# # if we remove with --purge then this is not needed
+	# # stage: purge residual packages
+	# display_alert "Purging residual packages for" "Armbian" "info"
+	# PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
+	# DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get purge $PURGINGPACKAGES
 
 	# stage: remove packages that are installed, but not required anymore after other packages were installed/removed.
 	# don't touch the local cache.
@@ -262,28 +252,29 @@ function create_new_rootfs_cache() {
 	fi
 
 	# DEBUG: print free space
-	local freespace=$(LC_ALL=C df -h)
-	display_alert "Free SD cache" "$(echo -e "$freespace" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
-	[[ -d "${MOUNT}" ]] &&
-		display_alert "Mount point" "$(echo -e "$freespace" | awk -v mp="${MOUNT}" '$6==mp {print $5}')" "info"
+	local free_space
+	free_space=$(LC_ALL=C df -h)
+	display_alert "Free disk space on rootfs" "SDCARD: $(echo -e "${free_space}" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
 
 	# create list of installed packages for debug purposes - this captures it's own stdout.
+	# @TODO: sanity check, compare this with the source of the hash coming from aggregation
 	chroot_sdcard "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > "${cache_fname}.list"
+	echo "${AGGREGATED_ROOTFS_HASH_TEXT}" > "${cache_fname}.hash_text"
 
-	# creating xapian index that synaptic runs faster
+	# creating xapian index that synaptic runs faster # @TODO: yes, but better done board-side on first run
 	if [[ $BUILD_DESKTOP == yes ]]; then
 		display_alert "Recreating Synaptic search index" "Please wait" "info"
 		chroot_sdcard "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u || true"
 	fi
 
 	# this is needed for the build process later since resolvconf generated file in /run is not saved
-	rm $SDCARD/etc/resolv.conf
-	echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
+	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
 	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
 	# Note: This will mark machine `firstboot`
-	echo "uninitialized" > "${SDCARD}/etc/machine-id"
-	rm "${SDCARD}/var/lib/dbus/machine-id"
+	run_host_command_logged echo "uninitialized" ">" "${SDCARD}/etc/machine-id"
+	run_host_command_logged rm -v "${SDCARD}/var/lib/dbus/machine-id"
 
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
 	# `armbian-first-run` will do the same thing later
@@ -292,24 +283,29 @@ function create_new_rootfs_cache() {
 	# stage: make rootfs cache archive
 	display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
 	sync
-	# the only reason to unmount here is compression progress display
-	# based on rootfs size calculation
+
+	# the only reason to unmount here is compression progress display based on rootfs size calculation
+	# also, it doesn't make sense to copy stuff like "/dev" etc. those are filtered below anyway
 	umount_chroot "$SDCARD"
 
 	display_alert "zstd ball of rootfs" "$RELEASE:: $cache_name" "debug"
-	tar cp --xattrs --directory=$SDCARD/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb $SDCARD/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" | zstdmt -5 -c > "${cache_fname}"
+	tar cp --xattrs --directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
+		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" | zstdmt -5 -c > "${cache_fname}"
 
-	# sign rootfs cache archive that it can be used for web cache once. Internal purposes
+	# get the human readable size of the cache
+	local cache_size
+	cache_size=$(du -sh "${cache_fname}" | cut -f1)
+
+	# sign rootfs cache archive that it can be used for web cache once. Internal purposes @TODO: what does GPG_PASS have to do with SUDO_USER?
 	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
-		[[ -n ${SUDO_USER} ]] && sudo chown -R ${SUDO_USER}:${SUDO_USER} "${DEST}"/images/
-		echo "${GPG_PASS}" | sudo -H -u ${SUDO_USER} bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
+		[[ -n ${SUDO_USER} ]] && sudo chown -R "${SUDO_USER}:${SUDO_USER}" "${DEST}"/images/
+		echo "${GPG_PASS}" | sudo -H -u "${SUDO_USER}" bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
 	fi
 
-	# needed for backend to keep current only
-	echo "$cache_fname" > $cache_fname.current
+	# needed for backend to keep current only @TODO: say that again? what backend?
+	echo "$cache_fname" > "$cache_fname.current"
 
-	display_alert "Cache prepared" "$RELEASE:: $cache_fname" "debug"
+	display_alert "rootfs cache created" "$cache_fname [${cache_size}]" "info"
 
 	return 0 # protect against possible future short-circuiting above this
 }
@@ -317,16 +313,19 @@ function create_new_rootfs_cache() {
 # get_rootfs_cache_list <cache_type> <packages_hash>
 #
 # return a list of versions of all avaiable cache from remote and local.
-get_rootfs_cache_list() {
+function get_rootfs_cache_list() {
 	local cache_type=$1
 	local packages_hash=$2
 
 	# this uses `jq` hostdep
 	{
-		curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' ||
-			curl --silent --fail -L https://cache.armbian.com/rootfs/list
+		# Don't even try remote if we're told to skip.
+		if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+			curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' ||
+				curl --silent --fail -L https://cache.armbian.com/rootfs/list
+		fi
 
-		find ${SRC}/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" |
+		find "${SRC}"/cache/rootfs/ -mtime -7 -name "${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-*.tar.zst" |
 			sed -e 's#^.*/##' |
 			sed -e 's#\..*$##' |
 			awk -F'-' '{print $5}'
