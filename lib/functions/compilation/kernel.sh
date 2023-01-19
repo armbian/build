@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 function compile_kernel() {
-	local kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
+	declare kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
 	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
 
 	# Prepare the git bare repo for the kernel; shared between all kernel builds
 	declare kernel_git_bare_tree
+	declare git_bundles_dir="${SRC}/cache/git-bundles/kernel"
 
 	# @TODO: have a way to actually use this. It's inefficient, but might be the only way for people without ORAS/OCI for some reason.
 	# Important: for the bundle version, gotta use "do_with_logging_unless_user_terminal" otherwise floods logs.
 	# alternative # LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
 	# alternative # 	kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
+	
+	# @TODO: Decide which kind of gitball to use: shallow or full.
+	declare bare_tree_done_marker_file=".git/armbian-bare-tree-done"
+	declare git_bundles_dir
+	declare git_kernel_ball_fn
+	declare git_kernel_oras_ref
+	kernel_prepare_bare_repo_decide_shallow_or_full # sets kernel_git_bare_tree, git_bundles_dir, git_kernel_ball_fn, git_kernel_oras_ref
 
 	LOG_SECTION="kernel_prepare_bare_repo_from_oras_gitball" do_with_logging do_with_hooks \
 		kernel_prepare_bare_repo_from_oras_gitball # this sets kernel_git_bare_tree
