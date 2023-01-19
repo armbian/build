@@ -2,7 +2,7 @@
 #
 # This function retries Git operations to avoid failure in case remote is borked
 #
-improved_git() {
+function improved_git() {
 	local real_git
 	real_git="$(command -v git)"
 	local retries=3
@@ -19,7 +19,7 @@ improved_git() {
 }
 
 # Not improved, just regular, but logged "correctly".
-regular_git() {
+function regular_git() {
 	run_host_command_logged_raw git --no-pager "$@"
 }
 
@@ -54,7 +54,7 @@ function git_ensure_safe_directory() {
 #
 # <ref_subdir>: "yes" to create subdirectory for tag or branch name
 #
-fetch_from_repo() {
+function fetch_from_repo() {
 	display_alert "fetch_from_repo" "$*" "git"
 	local url=$1
 	local dir=$2
@@ -180,11 +180,6 @@ fetch_from_repo() {
 
 	if [[ "${changed}" == "true" ]]; then
 
-		if [[ $(type -t ${GIT_PRE_FETCH_HOOK} || true) == function ]]; then
-			display_alert "Delegating to ${GIT_PRE_FETCH_HOOK}()" "before git fetch" "debug"
-			${GIT_PRE_FETCH_HOOK} "${git_work_dir}" "${url}" "$ref_type" "$ref_name"
-		fi
-
 		# remote was updated, fetch and check out updates, but not tags; tags pull their respective commits too, making it a huge fetch.
 		display_alert "Fetching updates from remote repository" "$dir $ref_name"
 		case $ref_type in
@@ -212,8 +207,7 @@ fetch_from_repo() {
 	checked_out_revision="$(git rev-parse "${checkout_from}")"                          # Don't fail nor output anything if failure
 	display_alert "Checked out revision" "${checked_out_revision}" "debug"              # @TODO change to git
 	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"             # unix timestamp of the commit date
-	checked_out_revision_mtime="$(date +%Y%m%d%H%M%S -d "@${checked_out_revision_ts}")" # convert timestamp to local date/time
-	display_alert "checked_out_revision_mtime set!" "${checked_out_revision_mtime} - ${checked_out_revision_ts}" "git"
+	display_alert "checked_out_revision_ts set!" "${checked_out_revision_ts}" "git"
 
 	display_alert "git checking out revision SHA" "${checked_out_revision}" "debug"
 	regular_git checkout -f -q "${checked_out_revision}" # Return the files that are tracked by git to the initial state.
