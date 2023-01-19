@@ -53,12 +53,23 @@ compile_atf() {
 	# create patch for manual source changes
 	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
 
-	# ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF.
-	# Check: https://github.com/armbian/build/issues/1157
+	# - "--no-warn-rwx-segment" is *required* for binutils 2.39 - see https://developer.trustedfirmware.org/T996
+	#   - but *not supported* by 2.38, brilliant...
+	declare binutils_version binutils_flags_atf=""
+	binutils_version=$(env PATH="${toolchain}:${toolchain2}:${PATH}" aarch64-linux-gnu-ld.bfd --version | head -1 | cut -d ")" -f 2 | xargs echo -n)
+	display_alert "Binutils version for ATF" "${binutils_version}" "info"
+	if linux-version compare "${binutils_version}" ge "2.39"; then
+		display_alert "Binutils version for ATF" ">= 2.39, adding --no-warn-rwx-segment" "info"
+		binutils_flags_atf="--no-warn-rwx-segment"
+	fi
+
+	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
+		"TF_LDFLAGS='${binutils_flags_atf}'" \
 		make ENABLE_BACKTRACE="0" LOG_LEVEL="40" BUILD_STRING="armbian" $target_make "${CTHREADS}" "CROSS_COMPILE='$CCACHE $ATF_COMPILER'"
 
+	# @TODO: severely missing logging
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess 2>&1
 
 	atftempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
