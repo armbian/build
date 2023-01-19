@@ -102,8 +102,9 @@ function oras_pull_artifact_file() {
 	declare full_tmp_file_path="${full_temp_dir}/${target_fn}"
 	run_host_command_logged mkdir -p "${full_temp_dir}"
 
+	# @TODO: this needs retries...
 	pushd "${full_temp_dir}" &> /dev/null || exit_with_error "Failed to pushd to ${full_temp_dir} - ORAS download"
-	run_tool_oras pull --verbose "${image_full_oci}"
+	run_tool_oras pull --verbose "${image_full_oci}" 
 	popd &> /dev/null || exit_with_error "Failed to popd - ORAS download"
 
 	# sanity check; did we get the file we expected?
