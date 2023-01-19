@@ -26,7 +26,8 @@ function prep_conf_main_build_single() {
 	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
 
 	LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
-	display_alert "Done with prep_conf_main_build_single" "${BOARD}.${BOARD_TYPE}" "info"
+	
+	display_alert "Configuration prepared for build" "${BOARD}.${BOARD_TYPE}" "info"
 }
 
 function config_source_board_file() {
@@ -35,17 +36,21 @@ function config_source_board_file() {
 	# I used to re-use that code here, but it's very slow, specially for CONFIG_DEFS_ONLY.
 	local -a board_types=("conf" "wip" "csc" "eos" "tvb")
 	local -a board_file_paths=("${SRC}/config/boards" "${USERPATCHES_PATH}/config/boards")
-	declare board_file_path board_type full_board_file
+	declare board_file_path board_type full_board_file first_board_type_found
 	for board_file_path in "${board_file_paths[@]}"; do
 		[[ ! -d "${board_file_path}" ]] && continue
 		for board_type in "${board_types[@]}"; do
 			full_board_file="${board_file_path}/${BOARD}.${board_type}"
 			if [[ -f "${full_board_file}" ]]; then
 				BOARD_SOURCE_FILES+=("${full_board_file}")
-				break # only one board type considered, if found.
+				[[ -z "${first_board_type_found}" ]] && first_board_type_found="${board_type}"
+				break # only one board type considered, if found. @TODO: this might lead to confusion if both exist; detect and abort.
 			fi
 		done
 	done
+
+	# BOARD_TYPE is included in /etc/armbian-release and used for stuff board-side; make it global and readonly
+	declare -g -r BOARD_TYPE="${first_board_type_found}" # so userpatches can't change support status of existing boards
 
 	declare -a sourced_board_configs=()
 	declare BOARD_SOURCE_FILE
