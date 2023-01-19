@@ -4,7 +4,6 @@ function kernel_prepare_git() {
 	display_alert "Downloading sources" "kernel" "git"
 
 	GIT_FIXED_WORKDIR="${LINUXSOURCEDIR}" \
-		GIT_PRE_FETCH_HOOK=kernel_prepare_git_pre_fetch_tags \
 		GIT_BARE_REPO_FOR_WORKTREE="${kernel_git_bare_tree}" \
 		GIT_BARE_REPO_INITIAL_BRANCH="master" \
 		fetch_from_repo "$KERNELSOURCE" "kernel:${KERNEL_MAJOR_MINOR}" "$KERNELBRANCH" "yes"
