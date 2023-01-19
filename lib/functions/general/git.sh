@@ -199,7 +199,7 @@ function fetch_from_repo() {
 				;;
 		esac
 
-		display_alert "Fetches completed, checking out..." "$dir $ref_name" "info"
+		display_alert "Fetch from remote completed, checking out..." "$dir $ref_name" "info"
 		checkout_from="FETCH_HEAD"
 	fi
 
@@ -209,11 +209,11 @@ function fetch_from_repo() {
 	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"             # unix timestamp of the commit date
 	display_alert "checked_out_revision_ts set!" "${checked_out_revision_ts}" "git"
 
-	display_alert "git checking out revision SHA" "${checked_out_revision}" "debug"
+	display_alert "git checking out revision SHA" "${checked_out_revision}" "git"
 	regular_git checkout -f -q "${checked_out_revision}" # Return the files that are tracked by git to the initial state.
 
 	display_alert "git cleaning" "${checked_out_revision}" "git"
-	regular_git clean -q -d -f # Files that are not tracked by git and were added when the patch was applied must be removed.
+	regular_git clean -q -d -f # Removes files that are not tracked by git. Does not remove .gitignore'd files.
 
 	if [[ -f .gitmodules ]]; then
 		if [[ "${GIT_SKIP_SUBMODULES}" == "yes" ]]; then
