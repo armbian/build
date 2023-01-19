@@ -173,18 +173,19 @@ class PatchFileInDir:
 		patches: list[PatchInPatchFile] = []
 		msg: mailbox.mboxMessage
 		for msg in mbox:
+			problems: list[str] = []
 			patch: str
 			try:
 				patch = msg.get_payload(decode=True).decode("utf-8")
 			except UnicodeDecodeError as e:
-				log.error(f"Error decoding UTF-8 mbox payload in file {self.full_file_path()}(:{counter}): {e}")
-				patch = msg.get_payload()  # this will mangle valid utf-8
+				log.warning(f"Invalid UTF-8 mbox payload in file {self.full_file_path()}(:{counter}): {e}")
+				problems.append("invalid_utf8_mbox")
+				patch = msg.get_payload()  # this will mangle valid utf-8; go ahead and use that anyway
 
 			# split the patch itself and the description from the payload
 			desc, patch_contents = self.split_description_and_patch(patch)
 			if len(patch_contents) == 0:
-				log.warning(
-					f"WARNING: patch file {self.full_file_path()} fragment {counter} contains an empty patch")
+				log.warning(f"WARNING: patch file {self.full_file_path()} fragment {counter} contains an empty patch")
 				continue
 
 			# Sanity check: if the patch_contents contains the magic marker, something is _very_ wrong, and we're gonna eat a patch.
