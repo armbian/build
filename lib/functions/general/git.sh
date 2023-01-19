@@ -193,7 +193,7 @@ fetch_from_repo() {
 				;;
 			commit)
 				# @TODO: if the local copy has the revision, skip the fetch -- would save us a lot of time
-				display_alert "Fetching a specific commit/sha1" "${ref_name}" "warn"
+				display_alert "Fetching a specific commit/sha1" "${ref_name}" "debug"
 				improved_git_fetch --no-tags "${url}" "${ref_name}"
 				;;
 			tag)
@@ -203,6 +203,8 @@ fetch_from_repo() {
 				improved_git_fetch --no-tags "${url}" HEAD
 				;;
 		esac
+
+		display_alert "Fetches completed, checking out..." "$dir $ref_name" "info"
 		checkout_from="FETCH_HEAD"
 	fi
 
