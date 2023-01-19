@@ -6,6 +6,7 @@ function compile_kernel() {
 	# Prepare the git bare repo for the kernel; shared between all kernel builds
 	declare kernel_git_bare_tree
 
+	# @TODO: have a way to actually use this. It's inefficient, but might be the only way for people without ORAS/OCI for some reason.
 	# Important: for the bundle version, gotta use "do_with_logging_unless_user_terminal" otherwise floods logs.
 	# alternative # LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
 	# alternative # 	kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
@@ -14,16 +15,15 @@ function compile_kernel() {
 		kernel_prepare_bare_repo_from_oras_gitball # this sets kernel_git_bare_tree
 
 	# prepare the working copy; this is the actual kernel source tree for this build
-	declare checked_out_revision_mtime="" checked_out_revision_ts="" checked_out_revision="undetermined" # set by fetch_from_repo
+	declare checked_out_revision_ts="" checked_out_revision="undetermined" # set by fetch_from_repo
 	LOG_SECTION="kernel_prepare_git" do_with_logging_unless_user_terminal do_with_hooks kernel_prepare_git
 
 	# Capture date variables set by fetch_from_repo; it's the date of the last kernel revision
 	declare kernel_git_revision="${checked_out_revision}"
-	display_alert "Using kernel revision SHA1" "${kernel_git_revision}"
-	declare kernel_base_revision_date
-	declare kernel_base_revision_mtime="${checked_out_revision_mtime}"
 	declare kernel_base_revision_ts="${checked_out_revision_ts}"
+	declare kernel_base_revision_date # Used for KBUILD_BUILD_TIMESTAMP in make.
 	kernel_base_revision_date="$(LC_ALL=C date -d "@${kernel_base_revision_ts}")"
+	display_alert "Using Kernel git revision" "${kernel_git_revision} at '${kernel_base_revision_date}'"
 
 	# Possibly 'make clean'.
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
