@@ -134,7 +134,7 @@ function prepare_partitions() {
 	# stage: create blank image
 	display_alert "Creating blank image for rootfs" "truncate: $sdsize MiB" "info"
 	run_host_command_logged truncate "--size=${sdsize}M" "${SDCARD}".raw # please provide EVIDENCE of problems with this; using dd is very slow
-	run_host_command_logged sync
+	wait_for_disk_sync "after truncate SDCARD.raw"
 
 	# stage: calculate boot partition size
 	local bootstart=$(($OFFSET * 2048))
@@ -240,7 +240,7 @@ function prepare_partitions() {
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
 		fi
-		sync # force writes to be really flushed
+		wait_for_disk_sync "after mkfs" # force writes to be really flushed
 		display_alert "Mounting rootfs" "$rootdevice"
 		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry

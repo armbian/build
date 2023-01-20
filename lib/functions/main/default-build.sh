@@ -1,6 +1,8 @@
 # This does NOT run under the logging manager. We should invoke the do_with_logging wrapper for
 # strategic parts of this. Attention: rootfs does it's own logging, so just let that be.
 function main_default_build_single() {
+	wait_for_disk_sync "before starting build" # fsync, wait for disk to sync, and then continue. alert user if takes too long.
+
 	# Check that WORKDIR_BASE_TMP exists; if not, create it.
 	if [[ ! -d "${WORKDIR_BASE_TMP}" ]]; then
 		mkdir -p "${WORKDIR_BASE_TMP}"
@@ -21,7 +23,8 @@ function main_default_build_single() {
 	declare -g -x CCACHE_TEMPDIR="${WORKDIR}/ccache_tmp" # Export CCACHE_TEMPDIR, under Workdir, which is hopefully under tmpfs. Thanks @the-Going for this.
 	declare -g -x XDG_RUNTIME_DIR="${WORKDIR}/xdg_tmp"   # XDG_RUNTIME_DIR is used by the likes of systemd/freedesktop centric apps.
 
-	declare start=$(date +%s)
+	declare start
+	start=$(date +%s)
 
 	### Write config summary
 	LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
@@ -188,10 +191,9 @@ function main_default_build_single() {
 		display_alert "Target directory" "${DEB_STORAGE}/" "info"
 		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
 	fi
-	
+
 	# At this point, the WORKDIR should be clean. Add debug info.
 	debug_tmpfs_show_usage "AFTER ALL PKGS BUILT"
-	
 
 	# build rootfs, if not only kernel.
 	if [[ $KERNEL_ONLY != yes ]]; then

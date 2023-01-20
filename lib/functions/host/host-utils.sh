@@ -293,3 +293,31 @@ function get_descendants_of_pid_array() {
 	descendants_of_pid_array_result=(${descendants})
 	display_alert "Descendants of PID $1: ${descendants_of_pid_array_result[*]}" "array = get_descendants_of_pid_array" "debug"
 }
+
+# This essentially runs "sync". It's a bit more complicated than that, though.
+# If "sync" takes more than 5 seconds, we want to let the user know.
+# So run sync under "timeout" in a loop, until it completes successfully.
+# call: wait_for_disk_sync "after writing a huge file to disk"
+function wait_for_disk_sync() {
+	declare -i timeout_seconds=10
+	declare -i sync_worked=0
+	declare -i sync_timeout_count=0
+	declare -i total_wait=0
+
+	while [[ "${sync_worked}" -eq 0 ]]; do
+		declare -i sync_timeout=0
+		display_alert "wait_for_disk_sync: $*" "sync start, timeout_seconds:${timeout_seconds}" "debug"
+		# run a bash sending all to /dev/null, then send to /dev/null again, so we don't get "Killed" messages
+		bash -c "timeout --signal=9 ${timeout_seconds} sync &> /dev/null" &> /dev/null && sync_worked=1 || sync_timeout=1
+		display_alert "wait_for_disk_sync: $*" "sync done worked: ${sync_worked} sync_timeout: ${sync_timeout}" "debug"
+		if [[ "${sync_timeout}" -eq 1 ]]; then
+			total_wait=$((total_wait + timeout_seconds))
+			sync_timeout_count=$((sync_timeout_count + 1))
+			display_alert "Waiting sync to storage $*" "fsync taking more than ${total_wait}s - be patient" "warn"
+		else
+			if [[ "${sync_timeout_count}" -gt 0 ]]; then
+				display_alert "Sync to storage OK $*" "fsync took more than ${total_wait}s" "info"
+			fi
+		fi
+	done
+}

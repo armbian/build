@@ -71,13 +71,13 @@ function cleanup_tmpfs_for() {
 	if [[ "${umount_tmpfs}" == "umount_tmpfs" ]]; then
 		display_alert "cleanup_tmpfs_for: umount tmpfs" "${tmpfs_name}" "cleanup"
 		cd "${SRC}" || echo "cleanup_tmpfs_for: cd failed to ${SRC}" >&2 # avoid cwd in use error
-		sync                                                             # let disk coalesce
+		wait_for_disk_sync "before tmps cleanup ${tmpfs_name}"           # let disk coalesce
 		umount "${tmpfs_path}" &> /dev/null || {
 			display_alert "cleanup_tmpfs_for: umount failed" "${tmpfs_name} tmpfs umount failed, will try lazy" "cleanup"
 			# Do a lazy umount... last-resort...
-			sync
+			wait_for_disk_sync "before tmps cleanup ${tmpfs_name} lazy" # let disk coalesce
 			umount -l "${tmpfs_path}" &> /dev/null || display_alert "cleanup_tmpfs_for: lazy umount failed" "${tmpfs_name} tmpfs lazy umount also failed" "cleanup"
-			sync
+			wait_for_disk_sync "after tmps cleanup ${tmpfs_name} lazy" # let disk coalesce
 		}
 
 		# Check if the tmpfs is still mounted after all that trying, log error, show debug, and give up with error
