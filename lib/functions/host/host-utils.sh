@@ -286,11 +286,17 @@ function list_descendants_of_pid() {
 }
 
 function get_descendants_of_pid_array() {
+	descendants_of_pid_array_result=() # outer scope variable, reset
+	# if not on Linux, just return; "ps" shenanigans we use are not supported
+	if [[ "${OSTYPE}" != "linux-gnu" ]]; then
+		display_alert "get_descendants_of_pid_array: not on Linux, so not supported" "get_descendants_of_pid_array" "debug"
+		return 0
+	fi
 	local descendants
 	descendants="$(list_descendants_of_pid "$1")"
 	display_alert "Descendants of PID $1: ${descendants}" "string - get_descendants_of_pid_array" "debug"
 	# shellcheck disable=SC2206 # lets expand!
-	descendants_of_pid_array_result=(${descendants})
+	descendants_of_pid_array_result=(${descendants}) # outer scope variable
 	display_alert "Descendants of PID $1: ${descendants_of_pid_array_result[*]}" "array = get_descendants_of_pid_array" "debug"
 }
 
