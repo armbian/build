@@ -21,9 +21,9 @@ function do_with_ccache_statistics() {
 		display_alert "ccache dir size before" "${ccache_dir_size_before_human}" "ccache"
 
 		# Show the ccache configuration
+		wait_for_disk_sync "before ccache config"
 		display_alert "ccache configuration" "ccache" "ccache"
 		run_host_command_logged ccache --show-config "&&" sync
-		sync
 	fi
 
 	display_alert "Running ccache'd build..." "ccache" "ccache"

@@ -18,9 +18,9 @@ function logging_init() {
 	declare -g bright_red_color="\e[1;31m" red_color="\e[0;31m"
 	declare -g bright_blue_color="\e[1;34m" blue_color="\e[0;34m"
 	declare -g bright_magenta_color="\e[1;35m" magenta_color="\e[0;35m"
-	declare -g -i logging_section_counter=0                 # -i: integer
-	declare -g tool_color="${gray_color}"                   # default to gray... (should be ok on terminals, @TODO: I've seen it too dark on a few random screenshots though
-	if [[ "${CI}" == "true" ]]; then                        # ... but that is too dark for Github Actions
+	declare -g -i logging_section_counter=0 # -i: integer
+	declare -g tool_color="${gray_color}"   # default to gray... (should be ok on terminals, @TODO: I've seen it too dark on a few random screenshots though
+	if [[ "${CI}" == "true" ]]; then        # ... but that is too dark for Github Actions
 		declare -g tool_color="${normal_color}"
 		declare -g SHOW_LOG="${SHOW_LOG:-"yes"}" # if in CI/GHA, default to showing log
 	fi
@@ -112,11 +112,11 @@ function print_current_asset_log_base_file() {
 }
 
 function check_and_close_fd_13() {
-	sync # let the disk catch up
+	wait_for_disk_sync "before closing fd 13" # let the disk catch up
 	if [[ -e /proc/self/fd/13 ]]; then
 		display_alert "Closing fd 13" "log still open" "cleanup" # no reason to be alarmed
 		exec 13>&- || true                                       # close the file descriptor, lest sed keeps running forever.
-		sync                                                     # make sure the file is written to disk
+		wait_for_disk_sync "after fd 13 closure"                 # make sure the file is written to disk
 	else
 		display_alert "Not closing fd 13" "log already closed" "cleanup"
 	fi
@@ -146,7 +146,7 @@ function check_and_close_fd_13() {
 		else
 			display_alert "global_tee_pid already dead after descendants killed" "${global_tee_pid}" "cleanup"
 		fi
-		sync # wait for the disk to catch up
+		wait_for_disk_sync "after killing tee pid" # wait for the disk to catch up
 	else
 		display_alert "Not killing global_tee_pid" "${global_tee_pid} not running" "cleanup"
 	fi

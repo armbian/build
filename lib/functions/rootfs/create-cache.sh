@@ -297,7 +297,7 @@ function create_new_rootfs_cache() {
 
 	# stage: make rootfs cache archive
 	display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
-	sync
+	wait_for_disk_sync "before tar rootfs"
 
 	# the only reason to unmount here is compression progress display based on rootfs size calculation
 	# also, it doesn't make sense to copy stuff like "/dev" etc. those are filtered below anyway
