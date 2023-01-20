@@ -406,6 +406,15 @@ function docker_cli_prepare_launch() {
 function docker_cli_launch() {
 	display_alert "Showing Docker cmdline" "Docker args: '${DOCKER_ARGS[*]}'" "debug"
 
+	# Hack: if we're running on a Mac/Darwin, get rid of .DS_Store files in critical directories.
+	if [[ "${OSTYPE}" == "darwin"* ]]; then
+		display_alert "Removing .DS_Store files from source directories" "for Mac/Darwin compatibility" "debug"
+		run_host_command_logged find "${SRC}/config" -name ".DS_Store" -type f -delete "||" true
+		run_host_command_logged find "${SRC}/packages" -name ".DS_Store" -type f -delete "||" true
+		run_host_command_logged find "${SRC}/patch" -name ".DS_Store" -type f -delete "||" true
+		run_host_command_logged find "${SRC}/userpatches" -name ".DS_Store" -type f -delete "||" true
+	fi
+
 	display_alert "Relaunching in Docker" "${*}" "debug"
 	display_alert "-----------------Relaunching in Docker------------------------------------" "here comes the 🐳" "info"
 
