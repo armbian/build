@@ -19,9 +19,8 @@ function kernel_cleanup_bundle_artifacts() {
 	[[ -z "${git_bundles_dir}" ]] && exit_with_error "git_bundles_dir is not set"
 
 	if [[ -d "${git_bundles_dir}" ]]; then
-		display_alert "Cleaning up Kernel git bundle artifacts" "no longer needed" "cachehit"
-		display_alert "NOT CLEANING BUNDLES" "${git_bundles_dir}" "warn" # @TODO remove "soon"
-		#run_host_command_logged rm -rf "${git_bundles_dir}"
+		display_alert "Cleaning up Kernel git bundle artifacts" "no longer needed" "info"
+		run_host_command_logged rm -rf "${git_bundles_dir}"
 	fi
 
 	return 0
