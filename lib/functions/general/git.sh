@@ -119,11 +119,19 @@ function fetch_from_repo() {
 		display_alert "Modified gitdir: " "$(cat "${git_work_dir}/.git")" "git"
 
 		# Fix the bare repo's reference to the working tree; this avoids errors when the working tree is moved.
-		local bare_repo_wt_gitdir="${GIT_BARE_REPO_FOR_WORKTREE}/.git/worktrees/${git_work_dir_basename}/gitdir"
-		display_alert "Original bare repo gitdir: " "$(cat "${bare_repo_wt_gitdir}")" "git"
-		echo "${git_work_dir}/.git" > "${bare_repo_wt_gitdir}"
-		display_alert "Modified bare repo gitdir: " "$(cat "${bare_repo_wt_gitdir}")" "git"
-
+		local bare_repo_wt_path="${GIT_BARE_REPO_FOR_WORKTREE}/.git/worktrees/${git_work_dir_basename}"
+		local bare_repo_wt_gitdir="${bare_repo_wt_path}/gitdir"
+		if [[ -f "${bare_repo_wt_gitdir}" ]]; then
+			display_alert "Original bare repo gitdir: " "$(cat "${bare_repo_wt_gitdir}")" "git"
+			run_host_command_logged echo "${git_work_dir}/.git" ">" "${bare_repo_wt_gitdir}"
+			display_alert "Modified bare repo gitdir: " "$(cat "${bare_repo_wt_gitdir}")" "git"
+		else
+			display_alert "No bare repo worktree gitdir found" "${bare_repo_wt_gitdir}" "err"
+			display_alert "Did you shuffle worktrees around?" "Don't shuffle worktrees around" "err"
+			display_alert "Did you shuffle bare trees around?" "Don't shuffle bare trees around" "err"
+			display_alert "Did you NOT do anything of the sort?" "Open a bug report / reset your cache." "err"
+			exit_with_error "Bare repo worktree gitdir not found: ${bare_repo_wt_gitdir}"
+		fi
 		git_ensure_safe_directory "${git_work_dir}"
 	else
 		mkdir -p "${git_work_dir}" || exit_with_error "No path or no write permission" "${git_work_dir}"
@@ -204,9 +212,9 @@ function fetch_from_repo() {
 	fi
 
 	# should be declared in outside scope, so can be read.
-	checked_out_revision="$(git rev-parse "${checkout_from}")"                          # Don't fail nor output anything if failure
-	display_alert "Checked out revision" "${checked_out_revision}" "debug"              # @TODO change to git
-	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")"             # unix timestamp of the commit date
+	checked_out_revision="$(git rev-parse "${checkout_from}")"              # Don't fail nor output anything if failure
+	display_alert "Checked out revision" "${checked_out_revision}" "debug"  # @TODO change to git
+	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")" # unix timestamp of the commit date
 	display_alert "checked_out_revision_ts set!" "${checked_out_revision_ts}" "git"
 
 	display_alert "git checking out revision SHA" "${checked_out_revision}" "git"
