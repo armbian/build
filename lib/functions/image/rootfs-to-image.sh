@@ -80,7 +80,7 @@ function create_image_from_sdcard_rootfs() {
 		run_host_command_logged sfdisk -l "${LOOP}" # @TODO: use asset..
 	fi
 
-	run_host_command_logged sync
+	wait_for_disk_sync "before umount MOUNT"
 
 	umount_chroot_recursive "${MOUNT}" "MOUNT"
 	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "$ROOT_MAPPER"

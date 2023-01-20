@@ -7,7 +7,7 @@ mount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
-	mount -t tmpfs tmpfs "${target}/tmp"
+	mount -t tmpfs tmpfs "${target}/tmp" # @TODO: maybe /run/user/0 etc and XDG_RUNTIME_DIR
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
@@ -28,8 +28,8 @@ umount_chroot() {
 		umount --recursive "${target}"/dev || true
 		umount "${target}"/proc || true
 		umount "${target}"/sys || true
-		umount "${target}"/tmp || true
-		sync
+		umount "${target}"/tmp || true # @TODO: maybe /run/user/0 etc and XDG_RUNTIME_DIR
+		wait_for_disk_sync "after umount chroot"
 		run_host_command_logged grep -E "'${target}/(dev|proc|sys|tmp)'" /proc/mounts "||" true
 	done
 }
@@ -49,7 +49,7 @@ function umount_chroot_recursive() {
 		return 0
 	fi
 	display_alert "Unmounting recursively" "${description} - be patient" ""
-	sync # sync. coalesce I/O. wait for writes to flush to disk. it might take a second.
+	wait_for_disk_sync "before recursive umount ${description}" # sync. coalesce I/O. wait for writes to flush to disk. it might take a second.
 	# First, try to umount some well-known dirs, in a certain order. for speed.
 	local -a well_known_list=("dev/pts" "dev" "proc" "sys" "boot/efi" "boot/firmware" "boot" "tmp" ".")
 	for well_known in "${well_known_list[@]}"; do
@@ -64,7 +64,7 @@ function umount_chroot_recursive() {
 			display_alert "${#current_mount_list[@]} dirs still mounted after ${tries} tries:" "${current_mount_list[*]}" "wrn"
 		fi
 		cut -d " " -f 2 "/proc/mounts" | grep "^${target}" | xargs -n1 umount --recursive &> /dev/null || true # ignore errors
-		sync                                                                                                   # wait for fsync, then count again for next loop.
+		wait_for_disk_sync "during recursive umount ${description}"                                            # sync. coalesce I/O. wait for writes to flush to disk. it might take a second.
 		mapfile -t current_mount_list < <(cut -d " " -f 2 "/proc/mounts" | grep "^${target}")
 		tries=$((tries + 1))
 	done
