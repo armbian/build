@@ -1,0 +1,844 @@
+From 95ed80f8fda4be2cd6f3ece0f79e6106d56c9858 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Thu, 1 Sep 2022 17:36:53 +0200
+Subject: [PATCH 7/9] ASoC: AC200: Initial driver
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ sound/soc/codecs/Kconfig  |  10 +
+ sound/soc/codecs/Makefile |   2 +
+ sound/soc/codecs/ac200.c  | 774 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 786 insertions(+)
+ create mode 100644 sound/soc/codecs/ac200.c
+
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index 7022e6286e6c..49b90c83b485 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -17,6 +17,7 @@ config SND_SOC_ALL_CODECS
+ 	imply SND_SOC_88PM860X
+ 	imply SND_SOC_L3
+ 	imply SND_SOC_AB8500_CODEC
++	imply SND_SOC_AC200_CODEC
+ 	imply SND_SOC_AC97_CODEC
+ 	imply SND_SOC_AD1836
+ 	imply SND_SOC_AD193X_SPI
+@@ -369,6 +370,15 @@ config SND_SOC_AB8500_CODEC
+ 	tristate
+ 	depends on ABX500_CORE
+ 
++config SND_SOC_AC200_CODEC
++	tristate "AC200 Codec"
++	depends on MFD_AC200
++	help
++	  Enable support for X-Powers AC200 analog audio codec.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called snd-soc-ac200.
++
+ config SND_SOC_AC97_CODEC
+ 	tristate "Build generic ASoC AC97 CODEC driver"
+ 	select SND_AC97_CODEC
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index 9170ee1447dd..e6d44c2d2fd6 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ snd-soc-88pm860x-objs := 88pm860x-codec.o
+ snd-soc-ab8500-codec-objs := ab8500-codec.o
++snd-soc-ac200-objs := ac200.o
+ snd-soc-ac97-objs := ac97.o
+ snd-soc-ad1836-objs := ad1836.o
+ snd-soc-ad193x-objs := ad193x.o
+@@ -359,6 +360,7 @@ snd-soc-simple-mux-objs := simple-mux.o
+ 
+ obj-$(CONFIG_SND_SOC_88PM860X)	+= snd-soc-88pm860x.o
+ obj-$(CONFIG_SND_SOC_AB8500_CODEC)	+= snd-soc-ab8500-codec.o
++obj-$(CONFIG_SND_SOC_AC200_CODEC)	+= snd-soc-ac200.o
+ obj-$(CONFIG_SND_SOC_AC97_CODEC)	+= snd-soc-ac97.o
+ obj-$(CONFIG_SND_SOC_AD1836)	+= snd-soc-ad1836.o
+ obj-$(CONFIG_SND_SOC_AD193X)	+= snd-soc-ad193x.o
+diff --git a/sound/soc/codecs/ac200.c b/sound/soc/codecs/ac200.c
+new file mode 100644
+index 000000000000..113a45408116
+--- /dev/null
++++ b/sound/soc/codecs/ac200.c
+@@ -0,0 +1,774 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * X-Powers AC200 Codec Driver
++ *
++ * Copyright (C) 2022 Jernej Skrabec <jernej.skrabec@gmail.com>
++ */
++
++#include <linux/module.h>
++#include <linux/regmap.h>
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/tlv.h>
++
++#define AC200_CODEC_RATES (SNDRV_PCM_RATE_8000 | \
++			   SNDRV_PCM_RATE_11025 | \
++			   SNDRV_PCM_RATE_16000 | \
++			   SNDRV_PCM_RATE_22050 | \
++			   SNDRV_PCM_RATE_32000 | \
++			   SNDRV_PCM_RATE_44100 | \
++			   SNDRV_PCM_RATE_48000 | \
++			   SNDRV_PCM_RATE_96000 | \
++			   SNDRV_PCM_RATE_192000 | \
++			   SNDRV_PCM_RATE_KNOT)
++
++#define AC200_CODEC_FORMATS (SNDRV_PCM_FMTBIT_S8 | \
++			     SNDRV_PCM_FMTBIT_S16_LE | \
++			     SNDRV_PCM_FMTBIT_S20_LE | \
++			     SNDRV_PCM_FMTBIT_S24_LE | \
++			     SNDRV_PCM_FMTBIT_S32_LE)
++
++#define AC200_SYS_AUDIO_CTL0			0x0010
++#define AC200_SYS_AUDIO_CTL0_MCLK_GATING	BIT(1)
++#define AC200_SYS_AUDIO_CTL0_RST_INVALID	BIT(0)
++#define AC200_SYS_AUDIO_CTL1			0x0012
++#define AC200_SYS_AUDIO_CTL1_I2S_IO_EN		BIT(0)
++
++#define AC200_SYS_CLK_CTL			0x2000
++#define AC200_SYS_CLK_CTL_I2S			15
++#define AC200_SYS_CLK_CTL_ADC			3
++#define AC200_SYS_CLK_CTL_DAC			2
++#define AC200_SYS_MOD_RST			0x2002
++#define AC200_SYS_MOD_RST_I2S			15
++#define AC200_SYS_MOD_RST_ADC			3
++#define AC200_SYS_MOD_RST_DAC			2
++#define AC200_SYS_SR_CTL			0x2004
++#define AC200_SYS_SR_CTL_SR_MASK		GENMASK(3, 0)
++#define AC200_SYS_SR_CTL_SR(x)			(x)
++#define AC200_I2S_CTL				0x2100
++#define AC200_I2S_CTL_SDO_EN			3
++#define AC200_I2S_CTL_TX_EN			2
++#define AC200_I2S_CTL_RX_EN			1
++#define AC200_I2S_CTL_GEN			0
++#define AC200_I2S_CLK				0x2102
++#define AC200_I2S_CLK_BCLK_OUT			BIT(15)
++#define AC200_I2S_CLK_LRCK_OUT			BIT(14)
++#define AC200_I2S_CLK_BCLKDIV_MASK		GENMASK(13, 10)
++#define AC200_I2S_CLK_BCLKDIV(x)		((x) << 10)
++#define AC200_I2S_CLK_LRCK_MASK			GENMASK(9, 0)
++#define AC200_I2S_CLK_LRCK(x)			((x) - 1)
++#define AC200_I2S_FMT0				0x2104
++#define AC200_I2S_FMT0_MODE_MASK		GENMASK(15, 14)
++#define AC200_I2S_FMT0_MODE(x)			((x) << 14)
++#define AC200_I2S_FMT0_MODE_PCM			0
++#define AC200_I2S_FMT0_MODE_LEFT		1
++#define AC200_I2S_FMT0_MODE_RIGHT		2
++#define AC200_I2S_FMT0_TX_OFFSET_MASK		GENMASK(11, 10)
++#define AC200_I2S_FMT0_TX_OFFSET(x)		((x) << 10)
++#define AC200_I2S_FMT0_RX_OFFSET_MASK		GENMASK(9, 8)
++#define AC200_I2S_FMT0_RX_OFFSET(x)		((x) << 8)
++#define AC200_I2S_FMT0_SR_MASK			GENMASK(6, 4)
++#define AC200_I2S_FMT0_SR(x)			((x) << 4)
++#define AC200_I2S_FMT0_SW_MASK			GENMASK(3, 1)
++#define AC200_I2S_FMT0_SW(x)			((x) << 1)
++#define AC200_I2S_FMT1				0x2108
++#define AC200_I2S_FMT1_BCLK_POL_INVERT		BIT(15)
++#define AC200_I2S_FMT1_LRCK_POL_INVERT		BIT(14)
++#define AC200_I2S_MIX_SRC			0x2114
++#define AC200_I2S_MIX_SRC_LMIX_DAC		13
++#define AC200_I2S_MIX_SRC_LMIX_ADC		12
++#define AC200_I2S_MIX_SRC_RMIX_DAC		9
++#define AC200_I2S_MIX_SRC_RMIX_ADC		8
++#define AC200_I2S_MIX_GAIN			0x2116
++#define AC200_I2S_MIX_GAIN_LMIX_DAC		13
++#define AC200_I2S_MIX_GAIN_LMIX_ADC		12
++#define AC200_I2S_MIX_GAIN_RMIX_DAC		9
++#define AC200_I2S_MIX_GAIN_RMIX_ADC		8
++#define AC200_I2S_DAC_VOL			0x2118
++#define AC200_I2S_DAC_VOL_LEFT			8
++#define AC200_I2S_DAC_VOL_RIGHT			0
++#define AC200_I2S_ADC_VOL			0x211A
++#define AC200_I2S_ADC_VOL_LEFT			8
++#define AC200_I2S_ADC_VOL_RIGHT			0
++#define AC200_DAC_CTL				0x2200
++#define AC200_DAC_CTL_DAC_EN			15
++#define AC200_DAC_MIX_SRC			0x2202
++#define AC200_DAC_MIX_SRC_LMIX_DAC		13
++#define AC200_DAC_MIX_SRC_LMIX_ADC		12
++#define AC200_DAC_MIX_SRC_RMIX_DAC		9
++#define AC200_DAC_MIX_SRC_RMIX_ADC		8
++#define AC200_DAC_MIX_GAIN			0x2204
++#define AC200_DAC_MIX_GAIN_LMIX_DAC		13
++#define AC200_DAC_MIX_GAIN_LMIX_ADC		12
++#define AC200_DAC_MIX_GAIN_RMIX_DAC		9
++#define AC200_DAC_MIX_GAIN_RMIX_ADC		8
++#define AC200_OUT_MIX_CTL			0x2220
++#define AC200_OUT_MIX_CTL_RDAC_EN		15
++#define AC200_OUT_MIX_CTL_LDAC_EN		14
++#define AC200_OUT_MIX_CTL_RMIX_EN		13
++#define AC200_OUT_MIX_CTL_LMIX_EN		12
++#define AC200_OUT_MIX_CTL_MIC1_VOL		4
++#define AC200_OUT_MIX_CTL_MIC2_VOL		0
++#define AC200_OUT_MIX_SRC			0x2222
++#define AC200_OUT_MIX_SRC_RMIX_MIC1		14
++#define AC200_OUT_MIX_SRC_RMIX_MIC2		13
++#define AC200_OUT_MIX_SRC_RMIX_RDAC		9
++#define AC200_OUT_MIX_SRC_RMIX_LDAC		8
++#define AC200_OUT_MIX_SRC_LMIX_MIC1		6
++#define AC200_OUT_MIX_SRC_LMIX_MIC2		5
++#define AC200_OUT_MIX_SRC_LMIX_RDAC		1
++#define AC200_OUT_MIX_SRC_LMIX_LDAC		0
++#define AC200_LINEOUT_CTL			0x2224
++#define AC200_LINEOUT_CTL_EN			15
++#define AC200_LINEOUT_CTL_LEN			14
++#define AC200_LINEOUT_CTL_REN			13
++#define AC200_LINEOUT_CTL_LMONO			12
++#define AC200_LINEOUT_CTL_RMONO			11
++#define AC200_LINEOUT_CTL_VOL			0
++#define AC200_ADC_CTL				0x2300
++#define AC200_ADC_CTL_ADC_EN			15
++#define AC200_MBIAS_CTL				0x2310
++#define AC200_MBIAS_CTL_MBIAS_EN		15
++#define AC200_MBIAS_CTL_ADDA_BIAS_EN		3
++#define AC200_ADC_MIC_CTL			0x2320
++#define AC200_ADC_MIC_CTL_RADC_EN		15
++#define AC200_ADC_MIC_CTL_LADC_EN		14
++#define AC200_ADC_MIC_CTL_ADC_VOL		8
++#define AC200_ADC_MIC_CTL_MIC1_GAIN_EN		7
++#define AC200_ADC_MIC_CTL_MIC1_BOOST		4
++#define AC200_ADC_MIC_CTL_MIC2_GAIN_EN		3
++#define AC200_ADC_MIC_CTL_MIC2_BOOST		0
++#define AC200_ADC_MIX_SRC			0x2322
++#define AC200_ADC_MIX_SRC_RMIX_MIC1		14
++#define AC200_ADC_MIX_SRC_RMIX_MIC2		13
++#define AC200_ADC_MIX_SRC_RMIX_RMIX		9
++#define AC200_ADC_MIX_SRC_RMIX_LMIX		8
++#define AC200_ADC_MIX_SRC_LMIX_MIC1		6
++#define AC200_ADC_MIX_SRC_LMIX_MIC2		5
++#define AC200_ADC_MIX_SRC_LMIX_LMIX		1
++#define AC200_ADC_MIX_SRC_LMIX_RMIX		0
++
++struct ac200_codec {
++	struct regmap *regmap;
++	unsigned int format;
++};
++
++struct ac200_map {
++	int match;
++	int value;
++};
++
++static const SNDRV_CTL_TLVD_DECLARE_DB_SCALE(mixer_scale, -600, 600, 0);
++static const SNDRV_CTL_TLVD_DECLARE_DB_SCALE(gain_scale, -450, 150, 0);
++static const SNDRV_CTL_TLVD_DECLARE_DB_SCALE(lineout_scale, -4650, 150, 1);
++static const SNDRV_CTL_TLVD_DECLARE_DB_SCALE(codec_scale, -12000, 75, 1);
++static const unsigned int mic_scale[] = {
++	TLV_DB_RANGE_HEAD(2),
++	0, 0, TLV_DB_SCALE_ITEM(0, 0, 0),
++	1, 7, TLV_DB_SCALE_ITEM(2400, 300, 0),
++};
++
++static const struct snd_kcontrol_new ac200_codec_controls[] = {
++	SOC_DOUBLE_TLV("Master Playback Volume", AC200_I2S_DAC_VOL,
++		       AC200_I2S_DAC_VOL_LEFT, AC200_I2S_DAC_VOL_RIGHT,
++		       0xff, 0, codec_scale),
++	SOC_DOUBLE_TLV("Master Capture Volume", AC200_I2S_ADC_VOL,
++		       AC200_I2S_ADC_VOL_LEFT, AC200_I2S_ADC_VOL_RIGHT,
++		       0xff, 0, codec_scale),
++	SOC_DOUBLE_TLV("I2S ADC Capture Volume", AC200_I2S_MIX_GAIN,
++		       AC200_I2S_MIX_GAIN_LMIX_ADC, AC200_I2S_MIX_GAIN_RMIX_ADC,
++		       0x1, 1, mixer_scale),
++	SOC_DOUBLE_TLV("I2S DAC Capture Volume", AC200_I2S_MIX_GAIN,
++		       AC200_I2S_MIX_GAIN_LMIX_DAC, AC200_I2S_MIX_GAIN_RMIX_DAC,
++		       0x1, 1, mixer_scale),
++	SOC_DOUBLE_TLV("DAC I2S Playback Volume", AC200_DAC_MIX_GAIN,
++		       AC200_DAC_MIX_GAIN_LMIX_DAC, AC200_DAC_MIX_GAIN_RMIX_DAC,
++		       0x1, 1, mixer_scale),
++	SOC_DOUBLE_TLV("ADC Playback Volume", AC200_DAC_MIX_GAIN,
++		       AC200_DAC_MIX_GAIN_LMIX_ADC, AC200_DAC_MIX_GAIN_RMIX_ADC,
++		       0x1, 1, mixer_scale),
++	SOC_SINGLE_TLV("MIC1 Playback Volume", AC200_OUT_MIX_CTL,
++		       AC200_OUT_MIX_CTL_MIC1_VOL, 0x7, 0, gain_scale),
++	SOC_SINGLE_TLV("MIC2 Playback Volume", AC200_OUT_MIX_CTL,
++		       AC200_OUT_MIX_CTL_MIC2_VOL, 0x7, 0, gain_scale),
++	SOC_SINGLE_TLV("ADC Volume", AC200_ADC_MIC_CTL,
++		       AC200_ADC_MIC_CTL_ADC_VOL, 0x07, 0, gain_scale),
++	SOC_SINGLE_TLV("Line Out Playback Volume", AC200_LINEOUT_CTL,
++		       AC200_LINEOUT_CTL_VOL, 0x1f, 0, lineout_scale),
++	SOC_SINGLE_TLV("MIC1 Boost Volume", AC200_ADC_MIC_CTL,
++		       AC200_ADC_MIC_CTL_MIC1_BOOST, 0x07, 0, mic_scale),
++	SOC_SINGLE_TLV("MIC2 Boost Volume", AC200_ADC_MIC_CTL,
++		       AC200_ADC_MIC_CTL_MIC2_BOOST, 0x07, 0, mic_scale),
++	SOC_DOUBLE("Line Out Playback Switch", AC200_LINEOUT_CTL,
++		   AC200_LINEOUT_CTL_LEN, AC200_LINEOUT_CTL_REN, 1, 0),
++};
++
++static const struct snd_kcontrol_new i2s_mixer[] = {
++	SOC_DAPM_DOUBLE("I2S DAC Capture Switch", AC200_I2S_MIX_SRC,
++			AC200_I2S_MIX_SRC_LMIX_DAC,
++			AC200_I2S_MIX_SRC_RMIX_DAC, 1, 0),
++	SOC_DAPM_DOUBLE("I2S ADC Capture Switch", AC200_I2S_MIX_SRC,
++			AC200_I2S_MIX_SRC_LMIX_ADC,
++			AC200_I2S_MIX_SRC_RMIX_ADC, 1, 0),
++};
++
++static const struct snd_kcontrol_new dac_mixer[] = {
++	SOC_DAPM_DOUBLE("DAC I2S Playback Switch", AC200_DAC_MIX_SRC,
++			AC200_DAC_MIX_SRC_LMIX_DAC,
++			AC200_DAC_MIX_SRC_RMIX_DAC, 1, 0),
++	SOC_DAPM_DOUBLE("ADC Playback Switch", AC200_DAC_MIX_SRC,
++			AC200_DAC_MIX_SRC_LMIX_ADC,
++			AC200_DAC_MIX_SRC_RMIX_ADC, 1, 0),
++};
++
++static const struct snd_kcontrol_new output_mixer[] = {
++	SOC_DAPM_DOUBLE("MIC1 Playback Switch", AC200_OUT_MIX_SRC,
++			AC200_OUT_MIX_SRC_LMIX_MIC1,
++			AC200_OUT_MIX_SRC_RMIX_MIC1, 1, 0),
++	SOC_DAPM_DOUBLE("MIC2 Playback Switch", AC200_OUT_MIX_SRC,
++			AC200_OUT_MIX_SRC_LMIX_MIC2,
++			AC200_OUT_MIX_SRC_RMIX_MIC2, 1, 0),
++	SOC_DAPM_DOUBLE("DAC Playback Switch", AC200_OUT_MIX_SRC,
++			AC200_OUT_MIX_SRC_LMIX_LDAC,
++			AC200_OUT_MIX_SRC_RMIX_RDAC, 1, 0),
++	SOC_DAPM_DOUBLE("DAC Reversed Playback Switch", AC200_OUT_MIX_SRC,
++			AC200_OUT_MIX_SRC_LMIX_RDAC,
++			AC200_OUT_MIX_SRC_RMIX_LDAC, 1, 0),
++};
++
++static const struct snd_kcontrol_new input_mixer[] = {
++	SOC_DAPM_DOUBLE("MIC1 Capture Switch", AC200_ADC_MIX_SRC,
++			AC200_ADC_MIX_SRC_LMIX_MIC1,
++			AC200_ADC_MIX_SRC_RMIX_MIC1, 1, 0),
++	SOC_DAPM_DOUBLE("MIC2 Capture Switch", AC200_ADC_MIX_SRC,
++			AC200_ADC_MIX_SRC_LMIX_MIC2,
++			AC200_ADC_MIX_SRC_RMIX_MIC2, 1, 0),
++	SOC_DAPM_DOUBLE("Output Mixer Capture Switch", AC200_ADC_MIX_SRC,
++			AC200_ADC_MIX_SRC_LMIX_LMIX,
++			AC200_ADC_MIX_SRC_RMIX_RMIX, 1, 0),
++	SOC_DAPM_DOUBLE("Output Mixer Reverse Capture Switch",
++			AC200_ADC_MIX_SRC,
++			AC200_ADC_MIX_SRC_LMIX_RMIX,
++			AC200_ADC_MIX_SRC_RMIX_LMIX, 1, 0),
++};
++
++const char * const lineout_mux_enum_text[] = {
++	"Stereo", "Mono",
++};
++
++static SOC_ENUM_DOUBLE_DECL(lineout_mux_enum, AC200_LINEOUT_CTL,
++			    AC200_LINEOUT_CTL_LMONO, AC200_LINEOUT_CTL_RMONO,
++			    lineout_mux_enum_text);
++
++static const struct snd_kcontrol_new lineout_mux =
++	SOC_DAPM_ENUM("Line Out Source Playback Route", lineout_mux_enum);
++
++static const struct snd_soc_dapm_widget ac200_codec_dapm_widgets[] = {
++	/* Regulator */
++	SND_SOC_DAPM_REGULATOR_SUPPLY("avcc", 0, 0),
++
++	/* System clocks */
++	SND_SOC_DAPM_SUPPLY("CLK SYS I2S", AC200_SYS_CLK_CTL,
++			    AC200_SYS_CLK_CTL_I2S, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("CLK SYS DAC", AC200_SYS_CLK_CTL,
++			    AC200_SYS_CLK_CTL_DAC, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("CLK SYS ADC", AC200_SYS_CLK_CTL,
++			    AC200_SYS_CLK_CTL_ADC, 0, NULL, 0),
++
++	/* Module resets */
++	SND_SOC_DAPM_SUPPLY("RST SYS I2S", AC200_SYS_MOD_RST,
++			    AC200_SYS_MOD_RST_I2S, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("RST SYS DAC", AC200_SYS_MOD_RST,
++			    AC200_SYS_MOD_RST_DAC, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("RST SYS ADC", AC200_SYS_MOD_RST,
++			    AC200_SYS_MOD_RST_DAC, 0, NULL, 0),
++
++	/* I2S gates */
++	SND_SOC_DAPM_SUPPLY("CLK I2S GEN", AC200_I2S_CTL,
++			    AC200_I2S_CTL_GEN, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("CLK I2S SDO", AC200_I2S_CTL,
++			    AC200_I2S_CTL_SDO_EN, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("CLK I2S TX", AC200_I2S_CTL,
++			    AC200_I2S_CTL_TX_EN, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("CLK I2S RX", AC200_I2S_CTL,
++			    AC200_I2S_CTL_RX_EN, 0, NULL, 0),
++
++	/* Module supplies */
++	SND_SOC_DAPM_SUPPLY("ADC Enable", AC200_ADC_CTL,
++			    AC200_ADC_CTL_ADC_EN, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("DAC Enable", AC200_DAC_CTL,
++			    AC200_DAC_CTL_DAC_EN, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("Line Out Enable", AC200_LINEOUT_CTL,
++			    AC200_LINEOUT_CTL_EN, 0, NULL, 0),
++
++	/* Bias */
++	SND_SOC_DAPM_SUPPLY("MIC Bias", AC200_MBIAS_CTL,
++			    AC200_MBIAS_CTL_MBIAS_EN, 0, NULL, 0),
++	SND_SOC_DAPM_SUPPLY("ADDA Bias", AC200_MBIAS_CTL,
++			    AC200_MBIAS_CTL_ADDA_BIAS_EN, 0, NULL, 0),
++
++	/* DAC */
++	SND_SOC_DAPM_DAC("Left DAC", "Playback", AC200_OUT_MIX_CTL,
++			 AC200_OUT_MIX_CTL_LDAC_EN, 0),
++	SND_SOC_DAPM_DAC("Right DAC", "Playback", AC200_OUT_MIX_CTL,
++			 AC200_OUT_MIX_CTL_RDAC_EN, 0),
++
++	/* ADC */
++	SND_SOC_DAPM_ADC("Left ADC", "Capture", AC200_ADC_MIC_CTL,
++			 AC200_ADC_MIC_CTL_LADC_EN, 0),
++	SND_SOC_DAPM_ADC("Right ADC", "Capture", AC200_ADC_MIC_CTL,
++			 AC200_ADC_MIC_CTL_RADC_EN, 0),
++
++	/* Mixers */
++	SND_SOC_DAPM_MIXER("Left Output Mixer", AC200_OUT_MIX_CTL,
++			   AC200_OUT_MIX_CTL_LMIX_EN, 0,
++			   output_mixer, ARRAY_SIZE(output_mixer)),
++	SND_SOC_DAPM_MIXER("Right Output Mixer", AC200_OUT_MIX_CTL,
++			   AC200_OUT_MIX_CTL_RMIX_EN, 0,
++			   output_mixer, ARRAY_SIZE(output_mixer)),
++
++	SND_SOC_DAPM_MIXER("Left Input Mixer", SND_SOC_NOPM, 0, 0,
++			   input_mixer, ARRAY_SIZE(input_mixer)),
++	SND_SOC_DAPM_MIXER("Right Input Mixer", SND_SOC_NOPM, 0, 0,
++			   input_mixer, ARRAY_SIZE(input_mixer)),
++
++	SND_SOC_DAPM_MIXER("Left DAC Mixer", SND_SOC_NOPM, 0, 0,
++			   dac_mixer, ARRAY_SIZE(dac_mixer)),
++	SND_SOC_DAPM_MIXER("Right DAC Mixer", SND_SOC_NOPM, 0, 0,
++			   dac_mixer, ARRAY_SIZE(dac_mixer)),
++
++	SND_SOC_DAPM_MIXER("Left I2S Mixer", SND_SOC_NOPM, 0, 0,
++			   i2s_mixer, ARRAY_SIZE(i2s_mixer)),
++	SND_SOC_DAPM_MIXER("Right I2S Mixer", SND_SOC_NOPM, 0, 0,
++			   i2s_mixer, ARRAY_SIZE(i2s_mixer)),
++
++	/* Muxes */
++	SND_SOC_DAPM_MUX("Line Out Source Playback Route",
++			 SND_SOC_NOPM, 0, 0, &lineout_mux),
++
++	/* Gain/attenuation */
++	SND_SOC_DAPM_PGA("MIC1 Amplifier", AC200_ADC_MIC_CTL,
++			 AC200_ADC_MIC_CTL_MIC1_GAIN_EN, 0, NULL, 0),
++	SND_SOC_DAPM_PGA("MIC2 Amplifier", AC200_ADC_MIC_CTL,
++			 AC200_ADC_MIC_CTL_MIC2_GAIN_EN, 0, NULL, 0),
++
++	/* Inputs */
++	SND_SOC_DAPM_INPUT("MIC1"),
++	SND_SOC_DAPM_INPUT("MIC2"),
++
++	/* Outputs */
++	SND_SOC_DAPM_OUTPUT("LINEOUT"),
++};
++
++static const struct snd_soc_dapm_route ac200_codec_dapm_routes[] = {
++	{ "RST SYS I2S", NULL, "CLK SYS I2S" },
++	{ "RST SYS ADC", NULL, "CLK SYS ADC" },
++	{ "RST SYS DAC", NULL, "CLK SYS DAC" },
++
++	{ "CLK I2S GEN", NULL, "RST SYS I2S" },
++	{ "CLK I2S SDO", NULL, "CLK I2S GEN" },
++	{ "CLK I2S TX", NULL, "CLK I2S SDO" },
++	{ "CLK I2S RX", NULL, "CLK I2S SDO" },
++
++	{ "ADC Enable", NULL, "RST SYS ADC" },
++	{ "ADC Enable", NULL, "ADDA Bias" },
++	{ "ADC Enable", NULL, "avcc" },
++	{ "DAC Enable", NULL, "RST SYS DAC" },
++	{ "DAC Enable", NULL, "ADDA Bias" },
++	{ "DAC Enable", NULL, "avcc" },
++
++	{ "Left DAC", NULL,  "DAC Enable" },
++	{ "Left DAC", NULL,  "CLK I2S RX" },
++	{ "Right DAC", NULL,  "DAC Enable" },
++	{ "Right DAC", NULL,  "CLK I2S RX" },
++
++	{ "Left ADC", NULL,  "ADC Enable" },
++	{ "Left ADC", NULL,  "CLK I2S TX" },
++	{ "Right ADC", NULL,  "ADC Enable" },
++	{ "Right ADC", NULL,  "CLK I2S TX" },
++
++	{ "Left Output Mixer", "MIC1 Playback Switch", "MIC1 Amplifier" },
++	{ "Left Output Mixer", "MIC2 Playback Switch", "MIC2 Amplifier" },
++	{ "Left Output Mixer", "DAC Playback Switch", "Left DAC Mixer" },
++	{ "Left Output Mixer", "DAC Reversed Playback Switch", "Right DAC Mixer" },
++
++	{ "Right Output Mixer", "MIC1 Playback Switch", "MIC1 Amplifier" },
++	{ "Right Output Mixer", "MIC2 Playback Switch", "MIC2 Amplifier" },
++	{ "Right Output Mixer", "DAC Playback Switch", "Right DAC Mixer" },
++	{ "Right Output Mixer", "DAC Reversed Playback Switch", "Left DAC Mixer" },
++
++	{ "Left Input Mixer", "MIC1 Capture Switch", "MIC1 Amplifier" },
++	{ "Left Input Mixer", "MIC2 Capture Switch", "MIC2 Amplifier" },
++	{ "Left Input Mixer", "Output Mixer Capture Switch", "Left Output Mixer" },
++	{ "Left Input Mixer", "Output Mixer Reverse Capture Switch", "Right Output Mixer" },
++
++	{ "Right Input Mixer", "MIC1 Capture Switch", "MIC1 Amplifier" },
++	{ "Right Input Mixer", "MIC2 Capture Switch", "MIC2 Amplifier" },
++	{ "Right Input Mixer", "Output Mixer Capture Switch", "Right Output Mixer" },
++	{ "Right Input Mixer", "Output Mixer Reverse Capture Switch", "Left Output Mixer" },
++
++	{ "Left I2S Mixer", "I2S DAC Capture Switch", "Left DAC" },
++	{ "Left I2S Mixer", "I2S ADC Capture Switch", "Left Input Mixer" },
++	{ "Right I2S Mixer", "I2S DAC Capture Switch", "Right DAC" },
++	{ "Right I2S Mixer", "I2S ADC Capture Switch", "Right Input Mixer" },
++
++	{ "Left DAC Mixer", "DAC I2S Playback Switch", "Left DAC" },
++	{ "Left DAC Mixer", "ADC Playback Switch", "Left Input Mixer" },
++	{ "Right DAC Mixer", "DAC I2S Playback Switch", "Right DAC" },
++	{ "Right DAC Mixer", "ADC Playback Switch", "Right Input Mixer" },
++
++	{ "Line Out Source Playback Route", "Stereo", "Left Output Mixer" },
++	{ "Line Out Source Playback Route", "Stereo", "Right Output Mixer" },
++	{ "Line Out Source Playback Route", "Mono", "Right Output Mixer" },
++	{ "Line Out Source Playback Route", "Mono", "Left Output Mixer" },
++
++	{ "Left ADC", NULL, "Left I2S Mixer" },
++	{ "Right ADC", NULL, "Right I2S Mixer" },
++
++	{ "LINEOUT", NULL, "Line Out Enable", },
++	{ "LINEOUT", NULL, "Line Out Source Playback Route" },
++
++	{ "MIC1", NULL, "MIC Bias" },
++	{ "MIC2", NULL, "MIC Bias" },
++	{ "MIC1 Amplifier", NULL, "MIC1" },
++	{ "MIC2 Amplifier", NULL, "MIC2" },
++};
++
++static int ac200_get_sr_sw(unsigned int width)
++{
++	switch (width) {
++	case 8:
++		return 1;
++	case 12:
++		return 2;
++	case 16:
++		return 3;
++	case 20:
++		return 4;
++	case 24:
++		return 5;
++	case 28:
++		return 6;
++	case 32:
++		return 7;
++	}
++
++	return -EINVAL;
++}
++
++static const struct ac200_map ac200_bclk_div_map[] = {
++	{ .match = 1,	.value = 1 },
++	{ .match = 2,	.value = 2 },
++	{ .match = 4,	.value = 3 },
++	{ .match = 6,	.value = 4 },
++	{ .match = 8,	.value = 5 },
++	{ .match = 12,	.value = 6 },
++	{ .match = 16,	.value = 7 },
++	{ .match = 24,	.value = 8 },
++	{ .match = 32,	.value = 9 },
++	{ .match = 48,	.value = 10 },
++	{ .match = 64,	.value = 11 },
++	{ .match = 96,	.value = 12 },
++	{ .match = 128,	.value = 13 },
++	{ .match = 176,	.value = 14 },
++	{ .match = 192,	.value = 15 },
++};
++
++static int ac200_get_bclk_div(unsigned int sample_rate, unsigned int period)
++{
++	unsigned int sysclk_rate = (sample_rate % 4000) ? 22579200 : 24576000;
++	unsigned int div = sysclk_rate / sample_rate / period;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(ac200_bclk_div_map); i++) {
++		const struct ac200_map *bdiv = &ac200_bclk_div_map[i];
++
++		if (bdiv->match == div)
++			return bdiv->value;
++	}
++
++	return -EINVAL;
++}
++
++static const struct ac200_map ac200_ssr_map[] = {
++	{ .match = 8000,	.value = 0 },
++	{ .match = 11025,	.value = 1 },
++	{ .match = 12000,	.value = 2 },
++	{ .match = 16000,	.value = 3 },
++	{ .match = 22050,	.value = 4 },
++	{ .match = 24000,	.value = 5 },
++	{ .match = 32000,	.value = 6 },
++	{ .match = 44100,	.value = 7 },
++	{ .match = 48000,	.value = 8 },
++	{ .match = 96000,	.value = 9 },
++	{ .match = 192000,	.value = 10 },
++};
++
++static int ac200_get_ssr(unsigned int sample_rate)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(ac200_ssr_map); i++) {
++		const struct ac200_map *ssr = &ac200_ssr_map[i];
++
++		if (ssr->match == sample_rate)
++			return ssr->value;
++	}
++
++	return -EINVAL;
++}
++
++static int ac200_codec_hw_params(struct snd_pcm_substream *substream,
++				 struct snd_pcm_hw_params *params,
++				 struct snd_soc_dai *dai)
++{
++	struct ac200_codec *priv = snd_soc_dai_get_drvdata(dai);
++	unsigned int slot_width = params_physical_width(params);
++	unsigned int sample_rate = params_rate(params);
++	int sr, period, sw, bclkdiv, ssr;
++
++	sr = ac200_get_sr_sw(params_width(params));
++	if (sr < 0)
++		return sr;
++
++	sw = ac200_get_sr_sw(slot_width);
++	if (sw < 0)
++		return sw;
++
++	regmap_update_bits(priv->regmap, AC200_I2S_FMT0,
++			   AC200_I2S_FMT0_SR_MASK |
++			   AC200_I2S_FMT0_SW_MASK,
++			   AC200_I2S_FMT0_SR(sr) |
++			   AC200_I2S_FMT0_SW(sw));
++
++	switch (priv->format & SND_SOC_DAIFMT_FORMAT_MASK) {
++	case SND_SOC_DAIFMT_I2S:
++	case SND_SOC_DAIFMT_RIGHT_J:
++	case SND_SOC_DAIFMT_LEFT_J:
++		period = slot_width;
++		break;
++	case SND_SOC_DAIFMT_DSP_A:
++	case SND_SOC_DAIFMT_DSP_B:
++		period = slot_width * 2;
++		break;
++	}
++
++	bclkdiv = ac200_get_bclk_div(sample_rate, period);
++	if (bclkdiv < 0)
++		return bclkdiv;
++
++	regmap_update_bits(priv->regmap, AC200_I2S_CLK,
++			   AC200_I2S_CLK_LRCK_MASK |
++			   AC200_I2S_CLK_BCLKDIV_MASK,
++			   AC200_I2S_CLK_LRCK(period) |
++			   AC200_I2S_CLK_BCLKDIV(bclkdiv));
++
++	ssr = ac200_get_ssr(sample_rate);
++	if (ssr < 0)
++		return ssr;
++
++	regmap_update_bits(priv->regmap, AC200_SYS_SR_CTL,
++			   AC200_SYS_SR_CTL_SR_MASK,
++			   AC200_SYS_SR_CTL_SR(ssr));
++
++	return 0;
++}
++
++static int ac200_codec_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	struct ac200_codec *priv = snd_soc_dai_get_drvdata(dai);
++	unsigned long offset, mode, value;
++
++	priv->format = fmt;
++
++	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
++	case SND_SOC_DAIFMT_CBP_CFP:
++		value = AC200_I2S_CLK_BCLK_OUT | AC200_I2S_CLK_LRCK_OUT;
++		break;
++	case SND_SOC_DAIFMT_CBC_CFP:
++		value = AC200_I2S_CLK_LRCK_OUT;
++		break;
++	case SND_SOC_DAIFMT_CBP_CFC:
++		value = AC200_I2S_CLK_BCLK_OUT;
++		break;
++	case SND_SOC_DAIFMT_CBC_CFC:
++		value = 0;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	regmap_update_bits(priv->regmap, AC200_I2S_CLK,
++			   AC200_I2S_CLK_BCLK_OUT |
++			   AC200_I2S_CLK_LRCK_OUT, value);
++
++	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
++	case SND_SOC_DAIFMT_I2S:
++		mode = AC200_I2S_FMT0_MODE_LEFT;
++		offset = 1;
++		break;
++	case SND_SOC_DAIFMT_RIGHT_J:
++		mode = AC200_I2S_FMT0_MODE_RIGHT;
++		offset = 0;
++		break;
++	case SND_SOC_DAIFMT_LEFT_J:
++		mode = AC200_I2S_FMT0_MODE_LEFT;
++		offset = 0;
++		break;
++	case SND_SOC_DAIFMT_DSP_A:
++		mode = AC200_I2S_FMT0_MODE_PCM;
++		offset = 1;
++		break;
++	case SND_SOC_DAIFMT_DSP_B:
++		mode = AC200_I2S_FMT0_MODE_PCM;
++		offset = 0;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	regmap_update_bits(priv->regmap, AC200_I2S_FMT0,
++			   AC200_I2S_FMT0_MODE_MASK |
++			   AC200_I2S_FMT0_TX_OFFSET_MASK |
++			   AC200_I2S_FMT0_RX_OFFSET_MASK,
++			   AC200_I2S_FMT0_MODE(mode) |
++			   AC200_I2S_FMT0_TX_OFFSET(offset) |
++			   AC200_I2S_FMT0_RX_OFFSET(offset));
++
++	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
++	case SND_SOC_DAIFMT_NB_NF:
++		value = 0;
++		break;
++	case SND_SOC_DAIFMT_NB_IF:
++		value = AC200_I2S_FMT1_LRCK_POL_INVERT;
++		break;
++	case SND_SOC_DAIFMT_IB_NF:
++		value = AC200_I2S_FMT1_BCLK_POL_INVERT;
++		break;
++	case SND_SOC_DAIFMT_IB_IF:
++		value = AC200_I2S_FMT1_BCLK_POL_INVERT |
++			AC200_I2S_FMT1_LRCK_POL_INVERT;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	regmap_update_bits(priv->regmap, AC200_I2S_FMT1,
++			   AC200_I2S_FMT1_BCLK_POL_INVERT |
++			   AC200_I2S_FMT1_LRCK_POL_INVERT, value);
++
++
++	return 0;
++}
++
++static const struct snd_soc_dai_ops ac200_codec_dai_ops = {
++	.hw_params	= ac200_codec_hw_params,
++	.set_fmt	= ac200_codec_set_fmt,
++};
++
++static struct snd_soc_dai_driver ac200_codec_dai = {
++	.name = "ac200-dai",
++	.playback = {
++		.stream_name = "Playback",
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = AC200_CODEC_RATES,
++		.formats = AC200_CODEC_FORMATS,
++	},
++	.capture = {
++		.stream_name = "Capture",
++		.channels_min = 1,
++		.channels_max = 2,
++		.rates = AC200_CODEC_RATES,
++		.formats = AC200_CODEC_FORMATS,
++	},
++	.ops = &ac200_codec_dai_ops,
++	.symmetric_rate = 1,
++	.symmetric_sample_bits = 1,
++};
++
++static int ac200_codec_component_probe(struct snd_soc_component *component)
++{
++	struct ac200_codec *priv = snd_soc_component_get_drvdata(component);
++
++	snd_soc_component_init_regmap(component, priv->regmap);
++
++	return 0;
++}
++
++static struct snd_soc_component_driver ac200_soc_component = {
++	.controls		= ac200_codec_controls,
++	.num_controls		= ARRAY_SIZE(ac200_codec_controls),
++	.dapm_widgets		= ac200_codec_dapm_widgets,
++	.num_dapm_widgets	= ARRAY_SIZE(ac200_codec_dapm_widgets),
++	.dapm_routes		= ac200_codec_dapm_routes,
++	.num_dapm_routes	= ARRAY_SIZE(ac200_codec_dapm_routes),
++	.probe			= ac200_codec_component_probe,
++};
++
++static int ac200_codec_probe(struct platform_device *pdev)
++{
++	struct ac200_codec *priv;
++	int ret;
++
++	priv = devm_kzalloc(&pdev->dev, sizeof(struct ac200_codec), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->regmap = dev_get_regmap(pdev->dev.parent, NULL);
++	if (!priv->regmap)
++		return -EPROBE_DEFER;
++
++	platform_set_drvdata(pdev, priv);
++
++	ret = regmap_write(priv->regmap, AC200_SYS_AUDIO_CTL0,
++			   AC200_SYS_AUDIO_CTL0_RST_INVALID |
++			   AC200_SYS_AUDIO_CTL0_MCLK_GATING);
++	if (ret)
++		return ret;
++
++	ret = regmap_write(priv->regmap, AC200_SYS_AUDIO_CTL1,
++			   AC200_SYS_AUDIO_CTL1_I2S_IO_EN);
++	if (ret)
++		return ret;
++
++	ret = devm_snd_soc_register_component(&pdev->dev, &ac200_soc_component,
++					      &ac200_codec_dai, 1);
++
++	if (ret)
++		dev_err(&pdev->dev, "Failed to register codec: %d\n", ret);
++
++	return ret;
++}
++
++static int ac200_codec_remove(struct platform_device *pdev)
++{
++	struct ac200_codec *priv =  dev_get_drvdata(&pdev->dev);
++
++	regmap_write(priv->regmap, AC200_SYS_AUDIO_CTL0, 0);
++	regmap_write(priv->regmap, AC200_SYS_AUDIO_CTL1, 0);
++
++	return 0;
++}
++
++static const struct of_device_id ac200_codec_match[] = {
++	{ .compatible = "x-powers,ac200-codec" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ac200_codec_match);
++
++static struct platform_driver ac200_codec_driver = {
++	.driver = {
++		.name = "ac200-codec",
++		.of_match_table = ac200_codec_match,
++	},
++	.probe = ac200_codec_probe,
++	.remove = ac200_codec_remove,
++};
++module_platform_driver(ac200_codec_driver);
++
++MODULE_DESCRIPTION("X-Powers AC200 Codec Driver");
++MODULE_AUTHOR("Jernej Skrabec <jernej.skrabec@gmail.com>");
++MODULE_LICENSE("GPL");
+-- 
+2.34.1
+
