@@ -25,7 +25,6 @@ function cli_docker_run() {
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SET_OWNER_TO_UID"]="${EUID}")                 # fix the owner of files to our UID
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["ARMBIAN_BUILD_UUID"]="${ARMBIAN_BUILD_UUID}") # pass down our uuid to the docker instance
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SKIP_LOG_ARCHIVE"]="yes")                     # launched docker instance will not cleanup logs.
-	declare -g SKIP_LOG_ARCHIVE=yes                                               # Don't archive logs in the parent instance either.
 
 	declare -g ARMBIAN_CLI_RELAUNCH_ARGS=()
 	produce_relaunch_parameters # produces ARMBIAN_CLI_RELAUNCH_ARGS
@@ -49,6 +48,7 @@ function cli_docker_run() {
 
 			# Set globals to avoid:
 			# 1) showing the controlling host's log; we only want to show a ref to the Docker logfile, unless it didn't produce one.
+			#    If it did produce one, it's "link" is already shown above.
 			if [[ $docker_produced_logs -gt 0 ]]; then
 				declare -g show_message_after_export="skip" # handled by export_ansi_logs()
 			fi
