@@ -258,10 +258,21 @@ function docker_cli_build_dockerfile() {
 	local do_force_pull="no"
 	local local_image_sha
 
-	mkdir -p "${SRC}"/cache/docker
+	declare docker_marker_dir="${SRC}"/cache/docker
+
+	# If we can't write to cache dir...
+	if [[ ! -w "${SRC}"/cache ]]; then
+		display_alert "Cannot write to cache/docker" "probably trying to share a cache with 'sudo' version" "err"
+		display_alert "Sharing a cache directory between sudo and Docker is not tested." "Proceed at your own risk" "warn"
+		countdown_and_continue_if_not_aborted 10
+		# Use fake marker in .tmp, which should be writable always.
+		docker_marker_dir="${SRC}"/.tmp/docker
+	fi
+
+	run_host_command_logged mkdir -p "${docker_marker_dir}"
 
 	# Find files under "${SRC}"/cache/docker that are older than 1 day, and delete them.
-	EXPIRED_MARKER="$(find "${SRC}"/cache/docker -type f -mtime +1 -exec echo -n {} \;)"
+	EXPIRED_MARKER="$(find "${docker_marker_dir}" -type f -mtime +1 -exec echo -n {} \;)"
 	display_alert "Expired marker?" "${EXPIRED_MARKER}" "debug"
 
 	if [[ "x${EXPIRED_MARKER}x" != "xx" ]]; then
@@ -290,7 +301,7 @@ function docker_cli_build_dockerfile() {
 			local_image_sha="$(docker images --no-trunc --quiet "${DOCKER_ARMBIAN_BASE_IMAGE}")"
 			display_alert "New local image sha after pull" "local_image_sha: ${local_image_sha}" "debug"
 			# print current date and time in epoch format; touches mtime of file
-			echo "${DOCKER_ARMBIAN_BASE_IMAGE}|${local_image_sha}|$(date +%s)" >> "${SRC}"/cache/docker/last-pull
+			echo "${DOCKER_ARMBIAN_BASE_IMAGE}|${local_image_sha}|$(date +%s)" >> "${docker_marker_dir}"/last-pull
 		else
 			display_alert "Failed to pull" "${DOCKER_ARMBIAN_BASE_IMAGE}; will build from scratch instead" "wrn"
 		fi
