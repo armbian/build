@@ -45,22 +45,6 @@ function kernel_prepare_bare_repo_decide_shallow_or_full() {
 	free_space_mib="$(df -BM --output=avail "${cache_git_bare_dir}" | tail -n 1 | sed 's/M//')"
 	display_alert "Free space on ${cache_git_bare_dir}" "${free_space_mib} MiB" "git"
 
-	# simplest, via parameter/env var, something like KERNEL_GIT=shallow or KERNEL_GIT=full to force.
-	declare forced_decision="${KERNEL_GIT:-"none"}"
-	case "${forced_decision,,}" in # lowercase
-		shallow)
-			display_alert "Forced shallow via" "KERNEL_GIT=shallow" "git"
-			decision="shallow"
-			decision_why="forced by KERNEL_GIT=shallow"
-			;;
-
-		full)
-			display_alert "Forced full via" "KERNEL_GIT=full" "git"
-			decision="full"
-			decision_why="forced by KERNEL_GIT=full"
-			;;
-	esac
-
 	if [[ "${decision}" == "not_yet_decided" ]]; then
 		# First: if ${kernel_work_dir}/.git already exists, use whatever that used before, by reading its .git file.
 		if [[ -f "${kernel_work_dir}/.git" ]]; then
@@ -88,6 +72,27 @@ function kernel_prepare_bare_repo_decide_shallow_or_full() {
 		else
 			display_alert "Full version bare tree does NOT exist or is NOT ready to go" "${FULL_kernel_git_bare_tree}" "git"
 		fi
+	fi
+
+	# simplest, via parameter/env var, something like KERNEL_GIT=shallow or KERNEL_GIT=full to force.
+	declare forced_decision="${KERNEL_GIT:-"none"}"
+	if [[ "${decision}" == "not_yet_decided" ]]; then
+		case "${forced_decision,,}" in # lowercase
+			shallow)
+				display_alert "Forced shallow via" "KERNEL_GIT=shallow" "git"
+				decision="shallow"
+				decision_why="forced by KERNEL_GIT=shallow"
+				;;
+
+			full)
+				display_alert "Forced full via" "KERNEL_GIT=full" "git"
+				decision="full"
+				decision_why="forced by KERNEL_GIT=full"
+				;;
+		esac
+	elif [[ "${forced_decision}" != "none" && "${forced_decision}" != "${decision}" ]]; then
+		display_alert "Can't change Kernel git from '${decision}' to '${forced_decision}'" "${decision_why}" "warn"
+		countdown_and_continue_if_not_aborted 3
 	fi
 
 	# @TODO: using shallow for vendor kernels (eg rockchip-rk3588) is a bad idea. It's a mess and will cause fetches to unshallow.
