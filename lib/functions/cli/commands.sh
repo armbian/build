@@ -27,6 +27,8 @@ function armbian_register_commands() {
 		["u-boot"]="standard_build"
 		["uboot"]="standard_build"
 
+		["rootfs-cache"]="standard_build"
+
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
 
@@ -46,9 +48,10 @@ function armbian_register_commands() {
 		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
 		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
 
+		["rootfs-cache"]="ROOT_FS_CREATE_ONLY='yes' KERNEL_ONLY='no' KERNEL_CONFIGURE='prebuilt' BRANCH='current'"
+
 		["undecided"]="UNDECIDED='yes'"
 	)
-
 	# Override the LOG_CLI_ID to change the log file name.
 	# Will be set to ARMBIAN_COMMAND if not set after all pre-runs done.
 	declare -g ARMBIAN_LOG_CLI_ID
