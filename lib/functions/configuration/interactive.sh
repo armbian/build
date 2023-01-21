@@ -55,6 +55,7 @@ function interactive_config_ask_kernel_configure() {
 # declare -A dict_all_board_types=() dict_all_board_source_files=() dict_all_board_descriptions=()                                                        # dictionaries
 # get_list_of_all_buildable_boards arr_all_board_names arr_all_board_options dict_all_board_types dict_all_board_source_files dict_all_board_descriptions # invoke
 function get_list_of_all_buildable_boards() {
+	display_alert "Generating list of all available boards" "might take a while" ""
 	local -a board_types=("conf")
 	[[ "${WIP_STATE}" != "supported" ]] && board_types+=("wip" "csc" "eos" "tvb")
 	local -a board_file_paths=("${SRC}/config/boards" "${USERPATCHES_PATH}/config/boards")

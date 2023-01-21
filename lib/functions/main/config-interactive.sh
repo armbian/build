@@ -5,7 +5,7 @@ function config_possibly_interactive_kernel_board() {
 	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected: KERNEL_ONLY"
 	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected: KERNEL_CONFIGURE"
 
-	interactive_config_ask_board_list # this uses get_list_of_all_buildable_boards too
+	interactive_config_ask_board_list # this uses get_list_of_all_buildable_boards
 	[[ -z $BOARD ]] && exit_with_error "No board selected: BOARD"
 
 	return 0 # shortcircuit above
