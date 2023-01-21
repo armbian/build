@@ -1,4 +1,5 @@
 # Helper function, to get clean "stack traces" that do not include the hook/extension infrastructure code.
+# @TODO this in practice is only used... ?
 function get_extension_hook_stracktrace() {
 	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # don't waste time here
 	local sources_str="$1"                           # Give this ${BASH_SOURCE[*]} - expanded
@@ -10,8 +11,8 @@ function get_extension_hook_stracktrace() {
 		local source="${sources[index]}" line="${lines[((index - 1))]}"
 		# skip extension infrastructure sources, these only pollute the trace and add no insight to users
 		[[ ${source} == */extension_function_definition.sh ]] && continue
-		[[ ${source} == *lib/extensions.sh ]] && continue
-		[[ ${source} == *lib/functions/logging.sh ]] && continue
+		[[ ${source} == *lib/functions/general/extensions.sh ]] && continue
+		[[ ${source} == *lib/functions/logging.sh ]] && continue # @TODO this doesnt match for a looong time
 		[[ ${source} == */compile.sh ]] && continue
 		[[ ${line} -lt 1 ]] && continue
 		# relativize the source, otherwise too long to display

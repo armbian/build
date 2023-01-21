@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# global variables managing the state of the extension manager. treat as private.
-declare -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
-declare -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?
-declare -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
-declare -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
-declare -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
-declare fragment_manager_cleanup_file             # this is a file used to cleanup the manager's produced functions, for build_all_ng
+
+# The whole of this is Copyright (c) 2020-2023 Ricardo Pardini <ricardo@pardini.net>
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+function extension_manager_declare_globals() {
+	# global variables managing the state of the extension manager. treat as private.
+	declare -g -A extension_function_info                # maps a function name to a string with KEY=VALUEs information about the defining extension
+	declare -g -i initialize_extension_manager_counter=0 # how many times has the extension manager initialized?
+	declare -g -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
+	declare -g -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
+	declare -g -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
+	declare -g fragment_manager_cleanup_file             # this is a file used to cleanup the manager's produced functions, for build_all_ng
+	declare -g -i enable_extension_recurse_counter=0
+	declare -g -a enable_extension_recurse_stack
+}
 
 # This is a helper function for calling hooks.
 # It follows the pattern long used in the codebase for hook-like behaviour:
@@ -16,7 +26,7 @@ declare fragment_manager_cleanup_file             # this is a file used to clean
 # 2) it will read the stdin and assume it's (Markdown) documentation for the hook point.
 #    combined with heredoc in the call site, it allows for "inline" documentation about the hook
 # notice: this is not involved in how the hook functions came to be. read below for that.
-call_extension_method() {
+function call_extension_method() {
 	# First, consume the stdin and write metadata about the call.
 	write_hook_point_metadata "$@"
 
@@ -46,7 +56,7 @@ call_extension_method() {
 # it came to be. (although it is encouraged to call hook points via call_extension_method() above)
 # to avoid hard coding the list of hook-points (eg: user_config, image_tweaks_pre_customize, etc) we use
 # a marker in the function names, namely "__" (two underscores) to determine the hook point.
-initialize_extension_manager() {
+function initialize_extension_manager() {
 	# before starting, auto-add extensions specified (eg, on the command-line) via the ENABLE_EXTENSIONS or EXT env var. Do it only once.
 	[[ ${initialize_extension_manager_counter} -lt 1 ]] && [[ "${ENABLE_EXTENSIONS:-"${EXT}"}" != "" ]] && {
 		local auto_extension
@@ -241,7 +251,7 @@ initialize_extension_manager() {
 	return 0 # exit with success, short-circuit above.
 }
 
-cleanup_extension_manager() {
+function cleanup_extension_manager() {
 	if [[ -f "${fragment_manager_cleanup_file}" ]]; then
 		display_alert "Cleaning up" "extension manager" "debug"
 		# shellcheck disable=SC1090 # dynamic source, thanks, shellcheck
@@ -270,7 +280,7 @@ function cleanup_handler_extensions() {
 # process everything that happened during extension related activities
 # and write it to the log. also, move the log from the .tmp dir to its
 # final location. this will make run_after_build() "hot" (eg, emit warnings)
-run_after_build__999_finish_extension_manager() {
+function run_after_build__999_finish_extension_manager() {
 	# export these maps, so the hook can access them and produce useful stuff.
 	export defined_hook_point_functions hook_point_function_trace_sources
 
@@ -293,7 +303,7 @@ run_after_build__999_finish_extension_manager() {
 }
 
 # This is called by call_extension_method(). To say the truth, this should be in an extension. But then it gets too meta for anyone's head.
-write_hook_point_metadata() {
+function write_hook_point_metadata() {
 	# Dont do anything if told not to.
 	[[ "${WRITE_EXTENSIONS_METADATA:-yes}" == "no" ]] && return 0
 
@@ -315,9 +325,7 @@ write_hook_point_metadata() {
 # will look for it in /userpatches/extensions first.
 # if not found there will look in /extensions
 # if not found will exit 17
-declare -i enable_extension_recurse_counter=0
-declare -a enable_extension_recurse_stack
-enable_extension() {
+function enable_extension() {
 	local extension_name="$1"
 	local extension_dir extension_file extension_file_in_dir extension_floating_file
 	local stacktrace
