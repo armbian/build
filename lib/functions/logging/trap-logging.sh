@@ -22,9 +22,18 @@ function trap_handler_cleanup_logging() {
 	# Before writing new logfile, compress and move existing ones to archive folder.
 	# - Unless running under CI.
 	# - Also not if signalled via SKIP_LOG_ARCHIVE=yes
+
 	if [[ "${CI:-false}" != "true" && "${SKIP_LOG_ARCHIVE:-no}" != "yes" ]]; then
-		declare -a existing_log_files_array
-		mapfile -t existing_log_files_array < <(find "${target_path}" -maxdepth 1 -type f -name "armbian-*.*")
+		declare -a existing_log_files_array # array of existing log files: dash and dot in filename required.
+		mapfile -t existing_log_files_array < <(find "${target_path}" -maxdepth 1 -type f -name "*-*.*")
+
+		# if more than 7 log files, warn user...
+		if [[ "${#existing_log_files_array[@]}" -gt 7 ]]; then
+			# Hey, I fixed Docker archiving, so this should not happen again... heh.
+			display_alert "Archiving" "${#existing_log_files_array[@]} old log files - be patient & thanks for testing armbian-next! 👍" "wrn"
+			wait_for_disk_sync # for dramatic effect
+		fi
+
 		declare one_old_logfile old_logfile_fn target_archive_path="${target_path}"/archive
 		for one_old_logfile in "${existing_log_files_array[@]}"; do
 			old_logfile_fn="$(basename "${one_old_logfile}")"
