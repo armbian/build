@@ -156,7 +156,8 @@ function run_one_cleanup_handler() {
 }
 
 function remove_all_trap_handlers() {
-	display_alert "Will remove ALL trap handlers, for a clean exit..." "" "cleanup"
+	# @TODO find usages and kill
+	display_alert "calling obsolete method remove_all_trap_handlers()" "not doing anything" "warning"
 }
 
 # exit_with_error <message> <highlight>
