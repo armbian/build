@@ -395,6 +395,13 @@ function docker_cli_prepare_launch() {
 		display_alert "Skipping /dev/loop* hacks for" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 	fi
 
+	if [[ -t 0 ]]; then
+		display_alert "Running in a terminal" "passing through stdin" "debug"
+		DOCKER_ARGS+=("-it")
+	else
+		display_alert "Not running in a terminal" "not passing through stdin to Docker" "warn" # @TODO downgrade to debug after probe works
+	fi
+
 	# if DOCKER_EXTRA_ARGS is an array and has more than zero elements, add its contents to the DOCKER_ARGS array
 	if [[ "${DOCKER_EXTRA_ARGS[*]+isset}" == "isset" && "${#DOCKER_EXTRA_ARGS[@]}" -gt 0 ]]; then
 		display_alert "Adding extra Docker arguments" "${DOCKER_EXTRA_ARGS[*]}" "debug"
@@ -419,7 +426,7 @@ function docker_cli_launch() {
 	display_alert "-----------------Relaunching in Docker------------------------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result
-	if docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
+	if docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
 		docker_build_result=$? # capture exit code of test done in the line above.
 		display_alert "-------------Docker run finished------------------------------------------" "successfully" "info"
 	else
