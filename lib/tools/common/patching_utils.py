@@ -11,6 +11,9 @@ import git  # GitPython
 from unidecode import unidecode
 from unidiff import PatchSet
 
+MAGIC_MBOX_MARKER_STANDARD = "Mon Sep 17 00:00:00 2001"
+MAGIC_MBOX_MARKER_B4 = "git@z Thu Jan  1 00:00:00 1970"
+
 REGEX_PATCH_FILENAMES = r"^patching file \"(.+)\""
 log: logging.Logger = logging.getLogger("patching_utils")
 
@@ -142,7 +145,7 @@ class PatchFileInDir:
 		if len(mbox) > 0:
 			contents, contents_read_problems = read_file_as_utf8(self.full_file_path())
 			first_line = contents.splitlines()[0].strip()
-			if not first_line.startswith("From ") or "Mon Sep 17 00:00:00 2001" not in first_line:
+			if not first_line.startswith("From ") or ((MAGIC_MBOX_MARKER_STANDARD not in first_line) and (MAGIC_MBOX_MARKER_B4 not in first_line)):
 				# is_invalid_mbox = True # we might try to recover from this is there's too many
 				# log.error(
 				raise Exception(
@@ -150,7 +153,7 @@ class PatchFileInDir:
 					f" '{first_line}', but in mbox the 1st line should be a valid From: header"
 					f" with the magic date.")
 			# Obtain how many times the magic marker date string is present in the contents
-			magic_marker_count = contents.count("Mon Sep 17 00:00:00 2001")
+			magic_marker_count = contents.count(MAGIC_MBOX_MARKER_STANDARD) + contents.count(MAGIC_MBOX_MARKER_B4)
 			if magic_marker_count != len(mbox):
 				# is_invalid_mbox = True # we might try to recover from this is there's too many
 				# log.error(
@@ -189,7 +192,7 @@ class PatchFileInDir:
 				continue
 
 			# Sanity check: if the patch_contents contains the magic marker, something is _very_ wrong, and we're gonna eat a patch.
-			if "Mon Sep 17 00:00:00 2001" in patch_contents:
+			if (MAGIC_MBOX_MARKER_STANDARD in patch_contents) or (MAGIC_MBOX_MARKER_B4 in patch_contents):
 				raise Exception(
 					f"File {self.full_file_path()} fragment {counter} seems to be a valid mbox file, but it contains"
 					f" the magic date in the patch contents, shouldn't happen. Check the mbox formatting.")
