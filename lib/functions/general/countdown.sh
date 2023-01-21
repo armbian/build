@@ -8,7 +8,7 @@ function exit_if_countdown_not_aborted() {
 	[[ -z "${reason}" ]] && exit_with_error "countdown_to_exit_or_just_exit_if_noninteractive() called without a reason"
 
 	# If not interactive, just exit.
-	if [[ ! -t 1 ]]; then
+	if [[ ! -t 0 ]]; then
 		exit_with_error "Exiting due to '${reason}' - not interactive, exiting immediately."
 	fi
 
@@ -37,6 +37,12 @@ function countdown_and_continue_if_not_aborted() {
 	declare -i loops="${1}"
 	# validate
 	[[ -z "${loops}" ]] && exit_with_error "countdown_and_continue_if_not_aborted() called without a number of loops"
+
+	# If not interactive, just return 0.
+	if [[ ! -t 0 ]]; then
+		display_alert "not interactive" "continuing without countdown" "info"
+		return 0
+	fi
 
 	echo -n "Counting down: " >&2
 	for i in $(seq 1 "${loops}"); do
