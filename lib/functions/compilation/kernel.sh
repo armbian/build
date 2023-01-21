@@ -187,7 +187,7 @@ function kernel_build() {
 	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets[*]}" "info"
 	# make_filter="| grep --line-buffered -v -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \ # @TODO this will be summarised in the log file eventually, but shown in realtime in screen
 	do_with_ccache_statistics \
-		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}"
+		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
 	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
 }
