@@ -249,8 +249,9 @@ function docker_cli_prepare() {
 		ADD . ${DOCKER_ARMBIAN_TARGET_PATH}/
 		${c}RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." && \\
 		${c} ARMBIAN_INSIDE_DOCKERFILE_BUILD="yes" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \\
-		${c} rm -rf "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache" 
+		${c} rm -rf "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache"
 	INITIAL_DOCKERFILE
+	# For debugging: RUN rm -fv /usr/bin/pip3 # Remove pip3 symlink to make sure we're not depending on it; non-Dockers may not have it
 
 }
 function docker_cli_build_dockerfile() {
