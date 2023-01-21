@@ -11,7 +11,7 @@ function compile_kernel() {
 	# Important: for the bundle version, gotta use "do_with_logging_unless_user_terminal" otherwise floods logs.
 	# alternative # LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
 	# alternative # 	kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
-	
+
 	# @TODO: Decide which kind of gitball to use: shallow or full.
 	declare bare_tree_done_marker_file=".git/armbian-bare-tree-done"
 	declare git_bundles_dir
@@ -176,8 +176,8 @@ function kernel_build() {
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 
 	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets[*]}" "info"
-	make_filter="| grep --line-buffered -v -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \
-		do_with_ccache_statistics \
+	# make_filter="| grep --line-buffered -v -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \ # @TODO this will be summarised in the log file eventually, but shown in realtime in screen
+	do_with_ccache_statistics \
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}"
 
 	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
