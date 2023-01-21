@@ -131,10 +131,9 @@ function cli_entrypoint() {
 		fi
 	fi
 
-	# Source the extensions manager library at this point, before sourcing the config.
-	# This allows early calls to enable_extension(), but initialization proper is done later.
-	# shellcheck source=lib/extensions.sh
-	source "${SRC}"/lib/extensions.sh
+	# Legacy. We used to source the extension manager here, but now it's included in the library.
+	# @TODO: a quick check on the globals in extensions.sh would get rid of this.
+	extension_manager_declare_globals
 
 	# Loop over the ARMBIAN_CONFIG_FILES array and source each. The order is important.
 	for config_file in "${ARMBIAN_CONFIG_FILES[@]}"; do
