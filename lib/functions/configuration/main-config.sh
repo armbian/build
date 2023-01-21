@@ -110,6 +110,7 @@ function do_main_configuration() {
 			exit_with_error "Unknown rootfs type: ROOTFS_TYPE='${ROOTFS_TYPE}'"
 			;;
 	esac
+	
 
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
@@ -442,4 +443,6 @@ function source_family_config_and_arch() {
 	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
 	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
+	
+	return 0
 }

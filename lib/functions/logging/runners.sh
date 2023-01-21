@@ -21,12 +21,6 @@ function chroot_sdcard_apt_get_install_dry_run() {
 }
 
 function chroot_sdcard_apt_get_update() {
-	# --list-cleanup
-	#     This option is on by default; use --no-list-cleanup to turn it off. When it is on, apt-get will
-	#     automatically manage the contents of /var/lib/apt/lists to ensure that obsolete files are erased. The only
-	#     reason to turn it off is if you frequently change your sources list. Configuration Item:
-	#     APT::Get::List-Cleanup.
-
 	apt_logging="-q" chroot_sdcard_apt_get update
 }
 
@@ -54,8 +48,14 @@ function chroot_sdcard_apt_get() {
 		display_alert "Not using apt-cacher-ng, nor proxy" "no proxy/acng" "debug"
 	fi
 
-	apt_params+=(-o "Dpkg::Use-Pty=0")          # Please be quiet
-	apt_params+=(-o "APT::Get::List-Cleanup=0") # Don't cleanup package lists. We do it ourselves when needed.
+	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
+
+	# --list-cleanup
+	#     This option is on by default; use --no-list-cleanup to turn it off. When it is on, apt-get will
+	#     automatically manage the contents of /var/lib/apt/lists to ensure that obsolete files are erased. The only
+	#     reason to turn it off is if you frequently change your sources list. Configuration Item:
+	#     APT::Get::List-Cleanup.
+	apt_params+=(-o "APT::Get::List-Cleanup=0") # Armbian frequently changes ours sources list; it's dynamic via aggregation
 
 	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
 		# Configure Clean-Installed to off
@@ -111,21 +111,9 @@ function chroot_sdcard_with_stdout() {
 	TMPDIR="" chroot "${SDCARD}" "$@"
 }
 
-function chroot_custom_long_running() {
+function chroot_custom_long_running() { # any pipe causes the left-hand side to subshell and caos ensues. it's just like chroot_custom()
 	local target=$1
 	shift
-
-	# @TODO: disabled, the pipe causes the left-hand side to subshell and caos ensues.
-	# local _exit_code=1
-	# if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
-	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
-	# 	_exit_code=$?
-	# else
-	# 	TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")" --progress --timer --line-mode --force --cursor --delay-start 0 -i "0.5"
-	# 	_exit_code=$?
-	# fi
-	# return $_exit_code
-
 	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
 }
 
@@ -133,26 +121,6 @@ function chroot_custom() {
 	local target=$1
 	shift
 	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
-}
-
-# for long-running, host-side expanded bash invocations.
-# the user gets a pv-based spinner based on the number of lines that flows to stdout (log messages).
-# the raw version is already redirect stderr to stdout, and we'll be running under do_with_logging,
-# so: _the stdout must flow_!!!
-function run_host_command_logged_long_running() {
-	# @TODO: disabled. The Pipe used for "pv" causes the left-hand side to run in a subshell.
-	#local _exit_code=1
-	#if [[ "${SHOW_LOG}" == "yes" ]] || [[ "${CI}" == "true" ]]; then
-	#	run_host_command_logged_raw /bin/bash -e -o pipefail-c "$*"
-	#	_exit_code=$?
-	#else
-	#	run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*" | pv -N "$(logging_echo_prefix_for_pv "${INDICATOR:-compile}")  " --progress --timer --line-mode --force --cursor --delay-start 0 -i "2"
-	#	_exit_code=$?
-	#fi
-	#return $_exit_code
-
-	# Run simple and exit with it's code. Sorry.
-	raw_command="$*" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
 }
 
 # For installing packages host-side. Not chroot!
@@ -190,6 +158,11 @@ function run_host_x86_binary_logged() {
 		display_alert "Not using qemu for running x86 binary on $(uname -m)" "$1 (${target_bin_arch})" "debug"
 	fi
 	run_host_command_logged "${qemu_invocation[@]}" # Exit with this result code
+}
+
+# Run simple and exit with it's code. Exactly the same as run_host_command_logged(). Used to have pv pipe, but that causes chaos.
+function run_host_command_logged_long_running() {
+	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
 }
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
