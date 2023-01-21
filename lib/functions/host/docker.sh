@@ -329,9 +329,11 @@ function docker_cli_prepare_launch() {
 		# Change the ccache directory to the named volume or bind created.
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
-		# @TODO: if user on terminal, pass the TERM down to the container.
+		# Pass down the TERM
 		"--env" "TERM=${TERM}"
-		# @TODO: pass down the CI-related env vars.
+
+		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
+		"--env" "CI=${CI}"
 	)
 
 	# This will receive the mountpoint as $1 and the mountpoint vars in the environment.
