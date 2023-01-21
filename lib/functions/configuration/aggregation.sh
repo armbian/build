@@ -37,8 +37,8 @@ function aggregate_all_packages_python() {
 
 		"ARCH=${ARCH}"
 		"RELEASE=${RELEASE}"
-		"LINUXFAMILY=${LINUXFAMILY}"
-		"BOARD=${BOARD}"
+		"LINUXFAMILY=" # empty. Important: LINUXFAMILY is no longer considered for package aggregation.
+		"BOARD="       # empty. Important: BOARD is no longer considered for package aggregation
 		"USERPATCHES_PATH=${USERPATCHES_PATH}"
 		"SELECTED_CONFIGURATION=${SELECTED_CONFIGURATION}"
 

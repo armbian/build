@@ -2,7 +2,6 @@
 
 function build_rootfs_and_image() {
 	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
-	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming ${BOARD} ${BRANCH} kernel supports ${ROOTFS_TYPE}" "" "wrn"
 
 	LOG_SECTION="prepare_rootfs_build_params_and_trap" do_with_logging prepare_rootfs_build_params_and_trap
 

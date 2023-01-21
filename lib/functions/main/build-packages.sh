@@ -120,14 +120,6 @@ function main_default_build_packages() {
 		LOG_SECTION="create_bsp_desktop_package" do_with_logging create_bsp_desktop_package
 	fi
 
-	# @TODO: dead code, remove
-	## DEAD CODE IN ARMBIAN-NEXT ## # build additional packages
-	## DEAD CODE IN ARMBIAN-NEXT ## if [[ $EXTERNAL_NEW == compile ]]; then
-	## DEAD CODE IN ARMBIAN-NEXT ## 	display_alert "Building external packages" "$EXTERNAL - WARNING: this has not been armbian-nextifed yet and will fail." "warn"
-	## DEAD CODE IN ARMBIAN-NEXT ## 	exit_with_error "buildpkg chroot_build_packages() nas not been ported to armbian-next yet, rpardini is a bum"
-	## DEAD CODE IN ARMBIAN-NEXT ## 	LOG_SECTION="chroot_build_packages" do_with_logging chroot_build_packages
-	## DEAD CODE IN ARMBIAN-NEXT ## fi
-
 	# Reset owner of DEB_STORAGE, if needed. Might be a lot of packages there, but such is life.
 	# @TODO: might be needed also during 'cleanup': if some package fails, the previous package might be left owned by root.
 	reset_uid_owner "${DEB_STORAGE}"
