@@ -20,7 +20,7 @@ function compile_firmware() {
 	display_alert "Merging and packaging linux firmware" "@host --> firmware${FULL}" "info"
 
 	declare cleanup_id="" fw_temp_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "firmware${FULL}" cleanup_id fw_temp_dir # namerefs
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-firmware${FULL}" cleanup_id fw_temp_dir # namerefs
 
 	declare fw_dir="armbian-firmware${FULL}"
 	mkdir -p "${fw_temp_dir}/${fw_dir}/lib/firmware"
