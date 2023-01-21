@@ -70,13 +70,16 @@ function trap_handler_cleanup_logging() {
 	check_and_close_fd_13
 
 	# Export Markdown assets.
-	local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
+
+	local target_file="${target_path}/summary-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
 	export_markdown_logs
 	reset_uid_owner "${target_file}"
 
-	local target_file="${target_path}/armbian-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.ansitxt.log"
+	local target_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.log.ans"
 	export_ansi_logs
 	reset_uid_owner "${target_file}"
+
+	# @TODO: plain-text version? just sed...
 
 	discard_logs_tmp_dir
 }
