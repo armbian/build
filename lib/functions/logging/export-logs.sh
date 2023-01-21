@@ -106,6 +106,7 @@ function export_ansi_logs() {
 
 	if [[ "${show_message_after_export:-"yes"}" != "skip" ]]; then
 		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
+		display_alert "Share log (beta!)" "cat ${target_relative_to_src} | curl --data-binary @- https://paste.next.armbian.com/documents"
 	fi
 
 	return 0
