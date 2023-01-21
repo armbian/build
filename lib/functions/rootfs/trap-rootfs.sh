@@ -5,9 +5,9 @@ function prepare_rootfs_build_params_and_trap() {
 
 	# stage: clean and create directories
 	run_host_command_logged rm -rfv "${SDCARD}" "${MOUNT}"
-	run_host_command_logged mkdir -pv "${SDCARD}" "${MOUNT}" "${SRC}/cache/rootfs" "${DEST}/images" # @TODO images shouldn't be here up
+	run_host_command_logged mkdir -pv "${SDCARD}" "${MOUNT}" "${SRC}/cache/rootfs" "${DEST}/images" # @TODO images needs its own trap
 
-	# bind mount rootfs if defined # @TODO: is this used? it is never unmounted
+	# bind mount rootfs if defined # @TODO: is this used? Igor's NAS?
 	if [[ -d "${ARMBIAN_CACHE_ROOTFS_PATH}" ]]; then
 		display_alert "Warning, using untested code path" "ARMBIAN_CACHE_ROOTFS_PATH" "warn"
 		mountpoint -q "${SRC}"/cache/rootfs && umount "${SRC}"/cache/rootfs
