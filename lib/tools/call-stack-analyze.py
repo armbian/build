@@ -18,7 +18,7 @@ def get_group_from_filename(file):
 		return "extension_magic"
 	if file == "<START_HERE>":
 		return "start_here"
-	if file.startswith("lib/extensions.sh"):
+	if file.startswith("lib/functions/general/extensions.sh"):
 		return "extensions_infra"
 	if file.startswith("extensions/"):
 		return "core_extensions"
