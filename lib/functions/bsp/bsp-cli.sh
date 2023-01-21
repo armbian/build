@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-create_board_package() {
+function create_board_package() {
 	display_alert "Creating board support package for CLI" "$CHOSEN_ROOTFS" "info"
 
-	bsptempdir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-	chmod 700 ${bsptempdir}
+	declare cleanup_id="" bsptempdir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-bsp-cli" cleanup_id bsptempdir # namerefs
 
+	# "destination" is used a lot in hooks already. keep this name, even if only for compatibility.
 	local destination=${bsptempdir}/${BSP_CLI_PACKAGE_FULLNAME}
 	mkdir -p "${destination}"/DEBIAN
-	cd $destination
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
 
 	# copy general overlay from packages/bsp-cli
+	# in practice: packages/bsp-cli and variations of config/optional/...
 	copy_all_packages_files_for "bsp-cli"
 
 	# install copy of boot script & environment file
@@ -260,12 +262,13 @@ create_board_package() {
 	# TODO: Add proper handling for updated conffiles
 	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
 	# Keeping armbian-apt-updates as a configuration, solve the problem
-	cat <<-EOF > "${destination}"/DEBIAN/conffiles
-	/usr/lib/armbian/armbian-apt-updates
+	cat <<- EOF > "${destination}"/DEBIAN/conffiles
+		/usr/lib/armbian/armbian-apt-updates
 	EOF
 
 	# copy common files from a premade directory structure
-	run_host_command_logged rsync -a ${SRC}/packages/bsp/common/* ${destination}
+	# @TODO this includes systemd config, assumes things about serial console, etc, that need dynamism or just to not exist with modern systemd
+	run_host_command_logged rsync -a "${SRC}"/packages/bsp/common/* "${destination}"
 
 	# trigger uInitrd creation after installation, to apply
 	# /etc/initramfs/post-update.d/99-uboot
@@ -273,7 +276,7 @@ create_board_package() {
 		activate update-initramfs
 	EOF
 
-	# copy distribution support status
+	# copy distribution support status # @TODO: why? this changes over time and will be out of date
 	local releases=($(find ${SRC}/config/distributions -mindepth 1 -maxdepth 1 -type d))
 	for i in "${releases[@]}"; do
 		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)" >> "${destination}"/etc/armbian-distribution-status
@@ -311,7 +314,7 @@ create_board_package() {
 		This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
 	POST_FAMILY_TWEAKS_BSP
 
-	# add some summary to the image
+	# add some summary to the image # @TODO: another?
 	fingerprint_image "${destination}/etc/armbian.txt"
 
 	# fixing permissions (basic), reference: dh_fixperms
@@ -322,6 +325,8 @@ create_board_package() {
 	fakeroot_dpkg_deb_build "${destination}" "${destination}.deb"
 	mkdir -p "${DEB_STORAGE}/"
 	run_host_command_logged rsync --remove-source-files -r "${destination}.deb" "${DEB_STORAGE}/"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 	display_alert "Done building BSP CLI package" "${destination}" "debug"
 }
