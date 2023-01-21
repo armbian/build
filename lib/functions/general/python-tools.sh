@@ -26,7 +26,6 @@ function prepare_python_and_pip() {
 	fi
 
 	declare python3_binary_path="/usr/bin/python3"
-	declare python3_pip_bin_path="/usr/bin/pip3" # from hostdeps package python3-pip
 	# Determine what version of python3;  focal-like OS's have Python 3.8, but we need 3.9.
 	if [[ "focal ulyana ulyssa uma una" == *"$HOSTRELEASE"* ]]; then
 		python3_binary_path="/usr/bin/python3.9"
@@ -34,22 +33,26 @@ function prepare_python_and_pip() {
 	fi
 
 	# Check that the actual python3 --version is 3.9 at least
-	declare python3_version
-	python3_version="$("${python3_binary_path}" --version 2>&1 | cut -d' ' -f2)"
-	display_alert "Python3 version" "${python3_version}" "info"
+	declare python3_version python3_full_version
+	python3_full_version="$("${python3_binary_path}" --version)" # "cut" below masks errors, do it twice.
+	python3_version="$("${python3_binary_path}" --version | cut -d' ' -f2)"
+	display_alert "Python3 version" "${python3_version} - '${python3_full_version}'" "info"
 	if ! linux-version compare "${python3_version}" ge "3.9"; then
 		exit_with_error "Python3 version is too old (${python3_version}), need at least 3.9"
 	fi
 
 	# Check actual pip3 version
+	#   Note: we don't use "/usr/bin/pip3" at all, since it's commonly missing. instead "python -m pip"
+	#   The hostdep package python3-pip is still required, and other crazy might impact this.
+	#   We might need to install our own pip if it gets bad enough.
 	declare pip3_version
-	pip3_version="$("${python3_binary_path}" "${python3_pip_bin_path}" --version 2>&1 | cut -d' ' -f2)"
+	pip3_version="$("${python3_binary_path}" -m pip --version)"
 	display_alert "pip3 version" "${pip3_version}" "info"
 
 	# Hash the contents of the dependencies array + the Python version + the release
 	declare python3_pip_dependencies_hash
 	early_prepare_pip3_dependencies_for_python_tools
-	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${python3_pip_dependencies[*]}" | sha256sum | cut -d' ' -f1)"
+	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version}" "${python3_pip_dependencies[*]}" | sha256sum | cut -d' ' -f1)"
 
 	declare python_pip_cache="${SRC}/cache/pip"
 	declare python_hash_base="${python_pip_cache}/pip_pkg_hash"
@@ -77,7 +80,7 @@ function prepare_python_and_pip() {
 
 	# If the hash file exists, we're done.
 	if [[ -f "${python_hash_file}" ]]; then
-		display_alert "Using cached pip packages for Python tools" "${python3_pip_dependencies_hash}" "cachehit"
+		display_alert "Using cached pip packages for Python tools" "${python3_pip_dependencies_hash}" "info"
 	else
 		display_alert "Installing pip packages for Python tools" "${python3_pip_dependencies_hash:0:10}" "info"
 		# remove the old hashes matching base, don't leave junk behind
@@ -87,7 +90,7 @@ function prepare_python_and_pip() {
 		# WARNING: The directory '/home/human/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
 		# --root-user-action=ignore requires pip 22.1+
 
-		run_host_command_logged env -i "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" "${python3_pip_bin_path}" install \
+		run_host_command_logged env -i "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" -m pip install \
 			--no-warn-script-location --user "${python3_pip_dependencies[@]}"
 
 		# Create the hash file
