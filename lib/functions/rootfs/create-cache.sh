@@ -36,11 +36,15 @@ function calculate_rootfs_cache_id() {
 	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
 	declare -g -r cache_type="${cache_type}"
 
-	display_alert "calculate_rootfs_cache_id: done with packages-hash" "${packages_hash}" "warn"
+	display_alert "calculate_rootfs_cache_id: done with packages-hash" "${packages_hash}" "debug"
 }
 
 # this gets from cache or produces a basic new rootfs, ready, but not mounted, at "$SDCARD"
 function get_or_create_rootfs_cache_chroot_sdcard() {
+	if [[ "${ROOT_FS_CREATE_ONLY}" == yes ]]; then
+		exit_with_error "Using deprecated ROOT_FS_CREATE_ONLY=yes, that is not longer supported. use 'rootfs' CLI command."
+	fi
+
 	# validate "${SDCARD}" is set. it does not exist, yet...
 	if [[ -z "${SDCARD}" ]]; then
 		exit_with_error "SDCARD is not set at get_or_create_rootfs_cache_chroot_sdcard()"
@@ -71,7 +75,7 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 	# Make ROOTFSCACHE_VERSION global at this point, in case it was not.
 	declare -g ROOTFSCACHE_VERSION="${ROOTFSCACHE_VERSION}"
 
-	display_alert "ROOTFSCACHE_VERSION found online or preset" "${ROOTFSCACHE_VERSION}" "warn"
+	display_alert "ROOTFSCACHE_VERSION found online or preset" "${ROOTFSCACHE_VERSION}" "debug"
 
 	calculate_rootfs_cache_id # this sets packages_hash and cache_type
 
@@ -80,20 +84,15 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 	get_rootfs_cache_list_into_array_variable # sets cache_list
 
 	# Show the number of items in the cache_list array
-	display_alert "Found possible rootfs caches: " "${#cache_list[@]}" "warn"
+	display_alert "Found possible rootfs caches: " "${#cache_list[@]}" "debug"
 
-	display_alert "ROOTFSCACHE_VERSION after getting cache list" "${ROOTFSCACHE_VERSION}" "warn"
+	display_alert "ROOTFSCACHE_VERSION after getting cache list" "${ROOTFSCACHE_VERSION}" "debug"
 
 	declare possible_cached_version
 	for possible_cached_version in "${cache_list[@]}"; do
 		ROOTFSCACHE_VERSION="${possible_cached_version}" # global var
 		local cache_name="${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst"
 		local cache_fname="${SRC}/cache/rootfs/${cache_name}"
-
-		if [[ "$ROOT_FS_CREATE_ONLY" == yes ]]; then
-			display_alert "Using deprecated" "ROOT_FS_CREATE_ONLY=yes during search for existing cache" "warn"
-			break
-		fi
 
 		display_alert "Checking cache" "$cache_name" "info"
 
@@ -111,22 +110,27 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 		fi
 	done
 
-	display_alert "ROOTFSCACHE_VERSION after looping" "${ROOTFSCACHE_VERSION}" "warn"
+	display_alert "ROOTFSCACHE_VERSION after looping" "${ROOTFSCACHE_VERSION}" "debug"
 
-	# if not "only" creating rootfs and cache exists, extract it
+	# if cache found, extract it
 	# if aria2 file exists, download didn't succeeded, so skip it
-	# @TODO this could be named IGNORE_EXISTING_ROOTFS_CACHE=yes
-	if [[ "${ROOT_FS_CREATE_ONLY}" != "yes" && -f "${cache_fname}" && ! -f "${cache_fname}.aria2" ]]; then
+	# we can ignore existing cache with IGNORE_EXISTING_ROOTFS_CACHE=yes
+	if [[ "${IGNORE_EXISTING_ROOTFS_CACHE}" != "yes" && -f "${cache_fname}" && ! -f "${cache_fname}.aria2" ]]; then
 		# validate sanity
 		[[ "x${SDCARD}x" == "xx" ]] && exit_with_error "get_or_create_rootfs_cache_chroot_sdcard: extract: SDCARD: ${SDCARD} is not set"
 
 		local date_diff=$((($(date +%s) - $(stat -c %Y "${cache_fname}")) / 86400))
 		display_alert "Extracting $cache_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C "${SDCARD}"/
-		# @TODO: this never runs, since 'set -e' ("errexit") is in effect, and https://github.com/koalaman/shellcheck/wiki/SC2181
-		# [[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
 
-		#echo >&2 # newline to stderr after using pv?
+		declare -a pv_tar_zstdmt_pipe_status=("${PIPESTATUS[@]}") # capture and the pipe_status array from PIPESTATUS
+		declare one_pipe_status
+		for one_pipe_status in "${pv_tar_zstdmt_pipe_status[@]}"; do
+			if [[ "$one_pipe_status" != "0" ]]; then
+				exit_with_error "get_or_create_rootfs_cache_chroot_sdcard: extract: ${cache_fname} failed (${pv_tar_zstdmt_pipe_status[*]}) - corrupt cache?"
+			fi
+		done
+
 		wait_for_disk_sync "after restoring rootfs cache"
 
 		run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
@@ -136,13 +140,6 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 	else
 		display_alert "Creating rootfs" "cache miss" "info"
 		create_new_rootfs_cache
-	fi
-
-	# @TODO: remove after killing usages
-	#  used for internal purposes. Faster rootfs cache rebuilding
-	if [[ "${ROOT_FS_CREATE_ONLY}" == "yes" ]]; then
-		display_alert "Using, does nothing" "ROOT_FS_CREATE_ONLY=yes, late in get_or_create_rootfs_cache_chroot_sdcard" "warning"
-		# this used to try to disable traps, umount and exit. no longer. let the function finish
 	fi
 
 	return 0
@@ -167,7 +164,7 @@ function create_new_rootfs_cache() {
 
 	# needed for backend to keep current only @TODO: still needed?
 	echo "$cache_fname" > "${cache_fname}.current"
-	
+
 	# define a readonly global with the name of the cache
 	declare -g -r BUILT_ROOTFS_CACHE_NAME="${cache_name}"
 	declare -g -r BUILT_ROOTFS_CACHE_FILE="${cache_fname}"
@@ -200,10 +197,10 @@ function get_rootfs_cache_list_into_array_variable() {
 	} | sort | uniq | sort -r)"
 
 	# Show the contents
-	display_alert "Available cache versions number" "${#local_cache_list[*]}" "warn"
+	display_alert "Available cache versions number" "${#local_cache_list[*]}" "debug"
 	# Loop each and show
 	for cache_version in "${local_cache_list[@]}"; do
-		display_alert "One available cache version" "${cache_version}" "warn"
+		display_alert "One available cache version" "${cache_version}" "debug"
 	done
 
 	# return the list to outer scope

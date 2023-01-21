@@ -31,7 +31,7 @@ function prep_conf_main_build_single() {
 	display_alert "Configuration prepared for BOARD build" "${BOARD}.${BOARD_TYPE}" "info"
 }
 
-# Lean version, for building stuff that doesn't need BOARD/BOARDFAMILY; never interactive.
+# Lean version, for building rootfs, that doesn't need BOARD/BOARDFAMILY; never interactive.
 function prep_conf_main_only_rootfs() {
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 

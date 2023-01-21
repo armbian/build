@@ -62,7 +62,7 @@ function run_kernel_make_dialog() {
 
 function run_kernel_make_long_running() {
 	local seconds_start=${SECONDS} # Bash has a builtin SECONDS that is seconds since start of script
-	KERNEL_MAKE_RUNNER="run_host_command_logged_long_running" KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@"
+	KERNEL_MAKE_UNBUFFER="unbuffer" run_kernel_make_internal "$@"
 	display_alert "Kernel Make '$*' took" "$((SECONDS - seconds_start)) seconds" "debug"
 }
 
