@@ -49,13 +49,13 @@ function export_ansi_logs() {
 	display_alert "Preparing ANSI log from" "${LOGDIR}" "debug"
 
 	declare dim_line_separator
-	dim_line_separator=$(echo -e -n "${gray_color:-}")------------------------------------------------------------------------------------------------------------$(echo -e -n "${normal_color:-}")
+	dim_line_separator=$(echo -e -n "${gray_color:-}")------------------------------------------------------------------------------------------------------------$(echo -e -n "${ansi_reset_color:-}")
 
 	cat <<- ANSI_HEADER > "${target_file}"
 		# Armbian ANSI build logs for ${ARMBIAN_BUILD_UUID} - use "less -SR" to view
-		$(echo -e -n "${bright_blue_color}")# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
+		$(echo -e -n "${bright_blue_color:-}")# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)$(echo -e -n "${ansi_reset_color}")
 		${dim_line_separator}
-		$(echo -e -n "${bright_blue_color}")# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}
+		$(echo -e -n "${bright_blue_color}")# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}$(echo -e -n "${ansi_reset_color}")
 		${dim_line_separator}
 	ANSI_HEADER
 
@@ -80,7 +80,7 @@ function export_ansi_logs() {
 	declare -a logfiles_array
 	mapfile -t logfiles_array < <(find "${LOGDIR}" -type f | LC_ALL=C sort -h) # "human" sorting
 
-	prefix_sed_contents="   $(echo -n -e "${tool_color:-}")" # spaces are significant
+	prefix_sed_contents="   $(echo -n -e "${ansi_reset_color}${tool_color:-}")" # spaces are significant
 	declare prefix_sed_cmd="/^-->/!s/^/${prefix_sed_contents}/;"
 
 	declare logfile_full
@@ -95,7 +95,7 @@ function export_ansi_logs() {
 		logfile_title="$(echo "${logfile_base}" | sed -e 's/^[^.]*\.[^.]*\.//')"
 
 		cat <<- ANSI_ONE_LOGFILE >> "${target_file}"
-			$(echo -e -n "${bright_blue_color}")### ${logfile_title} $(echo -e -n "${normal_color}")
+			$(echo -e -n "${bright_blue_color}")### ${logfile_title} $(echo -e -n "${ansi_reset_color}")
 			$(cat "${logfile_full}" | sed -e "${prefix_sed_cmd}")
 			${dim_line_separator}
 		ANSI_ONE_LOGFILE
