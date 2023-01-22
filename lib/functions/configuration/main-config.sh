@@ -200,7 +200,7 @@ function do_main_configuration() {
 
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
-	ARCH=armhf
+	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything...
 	KERNEL_IMAGE_TYPE=zImage
 	ATF_COMPILE=yes
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
@@ -232,14 +232,11 @@ function do_main_configuration() {
 		family_sourced_ok=$((family_sourced_ok + 1))
 	done
 
-	[[ ${family_sourced_ok} -lt 1 ]] &&
-		exit_with_error "Sources configuration not found" "tried ${family_source_paths[*]}"
-
-	# This is for compatibility only; path above should suffice
-	if [[ -f $USERPATCHES_PATH/sources/families/$LINUXFAMILY.conf ]]; then
-		display_alert "Adding user provided $LINUXFAMILY overrides"
-		# shellcheck source=/dev/null
-		source "$USERPATCHES_PATH/sources/families/${LINUXFAMILY}.conf"
+	# If no families sourced (and not allowed by ext var), bail out
+	if [[ ${family_sourced_ok} -lt 1 ]]; then
+		if [[ "${allow_no_family:-"no"}" != "yes" ]]; then
+			exit_with_error "Sources configuration not found" "tried ${family_source_paths[*]}"
+		fi
 	fi
 
 	# load "all-around common arch defaults" common.conf
