@@ -96,6 +96,15 @@ source "${SRC}"/lib/functions/cli/cli-requirements.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/cli/cli-rootfs.sh
+# shellcheck source=lib/functions/cli/cli-rootfs.sh
+source "${SRC}"/lib/functions/cli/cli-rootfs.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/cli/cli-undecided.sh
 # shellcheck source=lib/functions/cli/cli-undecided.sh
 source "${SRC}"/lib/functions/cli/cli-undecided.sh
@@ -771,6 +780,15 @@ source "${SRC}"/lib/functions/logging/traps.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/main/build-packages.sh
+# shellcheck source=lib/functions/main/build-packages.sh
+source "${SRC}"/lib/functions/main/build-packages.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/main/config-interactive.sh
 # shellcheck source=lib/functions/main/config-interactive.sh
 source "${SRC}"/lib/functions/main/config-interactive.sh
@@ -801,6 +819,15 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/main/rootfs-image.sh
 # shellcheck source=lib/functions/main/rootfs-image.sh
 source "${SRC}"/lib/functions/main/rootfs-image.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/main/start-end.sh
+# shellcheck source=lib/functions/main/start-end.sh
+source "${SRC}"/lib/functions/main/start-end.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
@@ -888,6 +915,15 @@ source "${SRC}"/lib/functions/rootfs/qemu-static.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/rootfs/rootfs-create.sh
+# shellcheck source=lib/functions/rootfs/rootfs-create.sh
+source "${SRC}"/lib/functions/rootfs/rootfs-create.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/rootfs/rootfs-desktop.sh
 # shellcheck source=lib/functions/rootfs/rootfs-desktop.sh
 source "${SRC}"/lib/functions/rootfs/rootfs-desktop.sh
@@ -900,6 +936,15 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/rootfs/systemd-utils.sh
 # shellcheck source=lib/functions/rootfs/systemd-utils.sh
 source "${SRC}"/lib/functions/rootfs/systemd-utils.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/rootfs/trap-rootfs.sh
+# shellcheck source=lib/functions/rootfs/trap-rootfs.sh
+source "${SRC}"/lib/functions/rootfs/trap-rootfs.sh
 
 
 # no errors tolerated. one last time for the win!
