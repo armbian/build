@@ -50,30 +50,36 @@ function prepare_host_noninteractive() {
 	export LC_ALL="en_US.UTF-8"
 	export LC_MESSAGES="en_US.UTF-8"
 
-	# armbian-next: Armbian mirrors and the download code is highly unstable; disable by default
-	# armbian-next: set `SKIP_ARMBIAN_ROOTFS_CACHE=no` to enable
-	# don't use mirrors that throws garbage on 404
-	if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" && "${SKIP_ARMBIAN_ROOTFS_CACHE:-"yes"}" != "yes" ]]; then
-		display_alert "Determining best Armbian mirror to use" "via redirector" "debug"
-		declare -i armbian_mirror_tries=1
-		while true; do
-			display_alert "Obtaining Armbian mirror" "via https://redirect.armbian.com" "debug"
-			ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
-			if [[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]]; then # @TODO: hosthatch is not good enough. Why?
-				display_alert "Obtained Armbian mirror OK" "${ARMBIAN_MIRROR}" "debug"
-				break
-			else
-				display_alert "Obtained Armbian mirror is invalid, retrying..." "${ARMBIAN_MIRROR}" "debug"
-			fi
-			armbian_mirror_tries=$((armbian_mirror_tries + 1))
-			if [[ $armbian_mirror_tries -ge 5 ]]; then
-				exit_with_error "Unable to obtain ARMBIAN_MIRROR after ${armbian_mirror_tries} tries. Please set ARMBIAN_MIRROR to a valid mirror manually, or avoid the automatic mirror selection by setting SKIP_ARMBIAN_REPO=yes"
-			fi
-		done
-	fi
+	# @TODO kill this
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## # armbian-next: Armbian mirrors and the download code is highly unstable; disable by default
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## # armbian-next: set `SKIP_ARMBIAN_ROOTFS_CACHE=no` to enable
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## # don't use mirrors that throws garbage on 404
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## if [[ -z ${ARMBIAN_MIRROR} && "${SKIP_ARMBIAN_REPO}" != "yes" && "${SKIP_ARMBIAN_ROOTFS_CACHE:-"yes"}" != "yes" ]]; then
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 	display_alert "Determining best Armbian mirror to use" "via redirector" "debug"
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 	declare -i armbian_mirror_tries=1
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 	while true; do
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		display_alert "Obtaining Armbian mirror" "via https://redirect.armbian.com" "debug"
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		ARMBIAN_MIRROR=$(wget -SO- -T 1 -t 1 https://redirect.armbian.com 2>&1 | egrep -i "Location" | awk '{print $2}' | head -1)
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		if [[ ${ARMBIAN_MIRROR} != *armbian.hosthatch* ]]; then
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 			display_alert "Obtained Armbian mirror OK" "${ARMBIAN_MIRROR}" "debug"
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 			break
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		else
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 			display_alert "Obtained Armbian mirror is invalid, retrying..." "${ARMBIAN_MIRROR}" "debug"
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		fi
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		armbian_mirror_tries=$((armbian_mirror_tries + 1))
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		if [[ $armbian_mirror_tries -ge 5 ]]; then
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 			exit_with_error "Unable to obtain ARMBIAN_MIRROR after ${armbian_mirror_tries} tries. Please set ARMBIAN_MIRROR to a valid mirror manually, or avoid the automatic mirror selection by setting SKIP_ARMBIAN_REPO=yes"
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 		fi
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## 	done
+	## DEAD CODE? nothing uses ARMBIAN_MIRROR ## fi
 
 	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
 	display_alert "Using local apt cache?" "USE_LOCAL_APT_DEB_CACHE: ${USE_LOCAL_APT_DEB_CACHE}" "debug"
+
+	# if USE_LOCAL_APT_DEB_CACHE equals no, display_alert a warning, it's not a good idea.
+	if [[ "${USE_LOCAL_APT_DEB_CACHE}" == "no" ]]; then
+		display_alert "USE_LOCAL_APT_DEB_CACHE is set to 'no'" "not recommended" "wrn"
+	fi
 
 	if armbian_is_running_in_container; then
 		display_alert "Running in container" "Adding provisions for container building" "info"
