@@ -23,13 +23,13 @@ function armbian_register_commands() {
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
 
 		["rootfs"]="rootfs" # implemented in cli_rootfs_pre_run and cli_rootfs_run
+		["rootfs-cache"]="rootfs" # idem, alias
 
 		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
 		["kernel"]="standard_build"
 		["u-boot"]="standard_build"
 		["uboot"]="standard_build"
 
-		["rootfs-cache"]="standard_build"
 
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
@@ -49,8 +49,6 @@ function armbian_register_commands() {
 		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes'"
 		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
 		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
-
-		["rootfs-cache"]="ROOT_FS_CREATE_ONLY='yes' KERNEL_ONLY='no' KERNEL_CONFIGURE='prebuilt' BRANCH='current'"
 
 		["undecided"]="UNDECIDED='yes'"
 	)
