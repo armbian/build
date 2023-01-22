@@ -217,38 +217,9 @@ function do_main_configuration() {
 	#BOOTFS_TYPE=''
 
 	## ------ Sourcing family config ---------------------------
-
-	declare -a family_source_paths=("${SRC}/config/sources/families/${LINUXFAMILY}.conf" "${USERPATCHES_PATH}/config/sources/families/${LINUXFAMILY}.conf")
-	declare -i family_sourced_ok=0
-	for family_source_path in "${family_source_paths[@]}"; do
-		[[ ! -f "${family_source_path}" ]] && continue
-
-		display_alert "Sourcing family configuration" "${family_source_path}" "info"
-		# shellcheck source=/dev/null
-		source "${family_source_path}"
-
-		# @TODO: reset error handling, go figure what they do in there.
-
-		family_sourced_ok=$((family_sourced_ok + 1))
-	done
-
-	# If no families sourced (and not allowed by ext var), bail out
-	if [[ ${family_sourced_ok} -lt 1 ]]; then
-		if [[ "${allow_no_family:-"no"}" != "yes" ]]; then
-			exit_with_error "Sources configuration not found" "tried ${family_source_paths[*]}"
-		fi
-	fi
-
-	# load "all-around common arch defaults" common.conf
-	display_alert "Sourcing common arch configuration" "common.conf" "debug"
-	# shellcheck source=config/sources/common.conf
-	source "${SRC}/config/sources/common.conf"
-
-	# load architecture defaults
-	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
-	# shellcheck source=/dev/null
-	source "${SRC}/config/sources/${ARCH}.conf"
-
+	source_family_config_and_arch
+	
+	
 	if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
 		SKIP_BOOTSPLASH="yes"
 		PLYMOUTH="no"
@@ -438,4 +409,37 @@ function write_config_summary_output_file() {
 
 		CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
 	EOF
+}
+
+function source_family_config_and_arch() {
+	declare -a family_source_paths=("${SRC}/config/sources/families/${LINUXFAMILY}.conf" "${USERPATCHES_PATH}/config/sources/families/${LINUXFAMILY}.conf")
+	declare -i family_sourced_ok=0
+	for family_source_path in "${family_source_paths[@]}"; do
+		[[ ! -f "${family_source_path}" ]] && continue
+
+		display_alert "Sourcing family configuration" "${family_source_path}" "info"
+		# shellcheck source=/dev/null
+		source "${family_source_path}"
+
+		# @TODO: reset error handling, go figure what they do in there.
+
+		family_sourced_ok=$((family_sourced_ok + 1))
+	done
+
+	# If no families sourced (and not allowed by ext var), bail out
+	if [[ ${family_sourced_ok} -lt 1 ]]; then
+		if [[ "${allow_no_family:-"no"}" != "yes" ]]; then
+			exit_with_error "Sources configuration not found" "tried ${family_source_paths[*]}"
+		fi
+	fi
+
+	# load "all-around common arch defaults" common.conf
+	display_alert "Sourcing common arch configuration" "common.conf" "debug"
+	# shellcheck source=config/sources/common.conf
+	source "${SRC}/config/sources/common.conf"
+
+	# load architecture defaults
+	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
+	# shellcheck source=/dev/null
+	source "${SRC}/config/sources/${ARCH}.conf"
 }
