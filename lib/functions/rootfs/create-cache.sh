@@ -167,6 +167,10 @@ function create_new_rootfs_cache() {
 
 	# needed for backend to keep current only @TODO: still needed?
 	echo "$cache_fname" > "${cache_fname}.current"
+	
+	# define a readonly global with the name of the cache
+	declare -g -r BUILT_ROOTFS_CACHE_NAME="${cache_name}"
+	declare -g -r BUILT_ROOTFS_CACHE_FILE="${cache_fname}"
 
 	return 0 # protect against possible future short-circuiting above this
 }
