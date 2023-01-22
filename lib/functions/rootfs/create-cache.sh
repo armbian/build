@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
+# This is already run under logging, don't use do_with_logging under here.
 function build_rootfs_only() {
 	# validate that tmpfs_estimated_size is set and higher than zero, or exit_with_error
 	[[ -z ${tmpfs_estimated_size} ]] && exit_with_error "tmpfs_estimated_size is not set"
 	[[ ${tmpfs_estimated_size} -le 0 ]] && exit_with_error "tmpfs_estimated_size is not higher than zero"
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
-	LOG_SECTION="get_or_create_rootfs_cache_chroot_sdcard" do_with_logging get_or_create_rootfs_cache_chroot_sdcard
+	get_or_create_rootfs_cache_chroot_sdcard # only occurrence of this
 
 	# obtain the size, in MiB, of "${SDCARD}" at this point.
 	declare -i rootfs_size_mib
@@ -23,14 +24,19 @@ function calculate_rootfs_cache_id() {
 	# Validate that AGGREGATED_ROOTFS_HASH is set
 	[[ -z "${AGGREGATED_ROOTFS_HASH}" ]] && exit_with_error "AGGREGATED_ROOTFS_HASH is not set at calculate_rootfs_cache_id()"
 
-	declare -g packages_hash="${AGGREGATED_ROOTFS_HASH}" # Produced by aggregation.py - currently only AGGREGATED_PACKAGES_DEBOOTSTRAP and AGGREGATED_PACKAGES_ROOTFS
-	declare -g -r packages_hash=${packages_hash:0:16}    # it's an md5, which is 32 hex digits; used to be 8; make readonly
+	# If the vars are already set and not empty, exit_with_error
+	[[ "x${packages_hash}x" != "xx" ]] && exit_with_error "packages_hash is already set"
+	[[ "x${cache_type}x" != "xx" ]] && exit_with_error "cache_type is already set"
 
-	declare -g cache_type="cli"
+	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:16}" # Produced by aggregation.py - currently only AGGREGATED_PACKAGES_DEBOOTSTRAP and AGGREGATED_PACKAGES_ROOTFS
+
+	declare cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
 	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}"
 	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
 	declare -g -r cache_type="${cache_type}"
+
+	display_alert "calculate_rootfs_cache_id: done with packages-hash" "${packages_hash}" "warn"
 }
 
 # this gets from cache or produces a basic new rootfs, ready, but not mounted, at "$SDCARD"
@@ -68,19 +74,26 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 	display_alert "ROOTFSCACHE_VERSION found online or preset" "${ROOTFSCACHE_VERSION}" "warn"
 
 	calculate_rootfs_cache_id # this sets packages_hash and cache_type
+
 	# seek last cache, proceed to previous otherwise build it
-	local cache_list
-	readarray -t cache_list <<< "$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
+	local -a cache_list=()
+	get_rootfs_cache_list_into_array_variable # sets cache_list
+
+	# Show the number of items in the cache_list array
+	display_alert "Found possible rootfs caches: " "${#cache_list[@]}" "warn"
 
 	display_alert "ROOTFSCACHE_VERSION after getting cache list" "${ROOTFSCACHE_VERSION}" "warn"
 
-	declare possible_cached_version # @TODO: does this kill the above var?
+	declare possible_cached_version
 	for possible_cached_version in "${cache_list[@]}"; do
 		ROOTFSCACHE_VERSION="${possible_cached_version}" # global var
 		local cache_name="${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst"
 		local cache_fname="${SRC}/cache/rootfs/${cache_name}"
 
-		[[ "$ROOT_FS_CREATE_ONLY" == yes ]] && break
+		if [[ "$ROOT_FS_CREATE_ONLY" == yes ]]; then
+			display_alert "Using deprecated" "ROOT_FS_CREATE_ONLY=yes during search for existing cache" "warn"
+			break
+		fi
 
 		display_alert "Checking cache" "$cache_name" "info"
 
@@ -104,14 +117,17 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 	# if aria2 file exists, download didn't succeeded, so skip it
 	# @TODO this could be named IGNORE_EXISTING_ROOTFS_CACHE=yes
 	if [[ "${ROOT_FS_CREATE_ONLY}" != "yes" && -f "${cache_fname}" && ! -f "${cache_fname}.aria2" ]]; then
-		[[ ! -d "${SDCARD:?}" ]] || exit_with_error "get_or_create_rootfs_cache_chroot_sdcard: extract: ${SDCARD} is not a directory"
+		# validate sanity
+		[[ "x${SDCARD}x" == "xx" ]] && exit_with_error "get_or_create_rootfs_cache_chroot_sdcard: extract: SDCARD: ${SDCARD} is not set"
 
 		local date_diff=$((($(date +%s) - $(stat -c %Y "${cache_fname}")) / 86400))
 		display_alert "Extracting $cache_name" "$date_diff days old" "info"
 		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C "${SDCARD}"/
-
 		# @TODO: this never runs, since 'set -e' ("errexit") is in effect, and https://github.com/koalaman/shellcheck/wiki/SC2181
 		# [[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
+
+		#echo >&2 # newline to stderr after using pv?
+		wait_for_disk_sync "after restoring rootfs cache"
 
 		run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
 		run_host_command_logged echo "nameserver ${NAMESERVER}" ">" "${SDCARD}"/etc/resolv.conf
@@ -155,15 +171,18 @@ function create_new_rootfs_cache() {
 	return 0 # protect against possible future short-circuiting above this
 }
 
-# get_rootfs_cache_list <cache_type> <packages_hash>
-#
-# return a list of versions of all avaiable cache from remote and local.
-function get_rootfs_cache_list() {
-	local cache_type=$1
-	local packages_hash=$2
+# return a list of versions of all available cache from remote and local into outer scoe "cache_list" variable
+function get_rootfs_cache_list_into_array_variable() {
+	# If global vars are empty, exit_with_error
+	[[ "x${ARCH}x" == "xx" ]] && exit_with_error "ARCH is not set"
+	[[ "x${RELEASE}x" == "xx" ]] && exit_with_error "RELEASE is not set"
+	[[ "x${packages_hash}x" == "xx" ]] && exit_with_error "packages_hash is not set"
+	[[ "x${cache_type}x" == "xx" ]] && exit_with_error "cache_type is not set"
 
 	# this uses `jq` hostdep
-	{
+
+	declare -a local_cache_list=() # outer scope variable
+	readarray -t local_cache_list <<< "$({
 		# Don't even try remote if we're told to skip.
 		if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
 			curl --silent --fail -L "https://api.github.com/repos/armbian/cache/releases?per_page=3" | jq -r '.[].tag_name' ||
@@ -174,5 +193,15 @@ function get_rootfs_cache_list() {
 			sed -e 's#^.*/##' |
 			sed -e 's#\..*$##' |
 			awk -F'-' '{print $5}'
-	} | sort | uniq
+	} | sort | uniq | sort -r)"
+
+	# Show the contents
+	display_alert "Available cache versions number" "${#local_cache_list[*]}" "warn"
+	# Loop each and show
+	for cache_version in "${local_cache_list[@]}"; do
+		display_alert "One available cache version" "${cache_version}" "warn"
+	done
+
+	# return the list to outer scope
+	cache_list=("${local_cache_list[@]}")
 }

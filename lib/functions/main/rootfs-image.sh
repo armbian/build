@@ -4,11 +4,10 @@ function build_rootfs_and_image() {
 	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming ${BOARD} ${BRANCH} kernel supports ${ROOTFS_TYPE}" "" "wrn"
 
-	declare -i tmpfs_estimated_size # in MiB; set by prepare_rootfs_build_params_and_trap()
-	prepare_rootfs_build_params_and_trap
+	LOG_SECTION="prepare_rootfs_build_params_and_trap" do_with_logging prepare_rootfs_build_params_and_trap
 
 	# get a basic rootfs, either from cache or from scratch
-	build_rootfs_only
+	LOG_SECTION="build_rootfs_only" do_with_logging build_rootfs_only # only occurrence of this
 
 	# stage: with a basic rootfs available, we mount the chroot and work on it
 	mount_chroot "${SDCARD}"
@@ -86,4 +85,3 @@ function list_installed_packages() {
 	display_alert "Recording list of installed packages" "asset log" "debug"
 	LOG_ASSET="installed_packages.txt" do_with_log_asset chroot_sdcard dpkg --get-selections "| grep -v deinstall | awk '{print \$1}' | cut -f1 -d':'"
 }
-
