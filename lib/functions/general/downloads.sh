@@ -3,42 +3,49 @@ function get_urls() {
 	local catalog=$1
 	local filename=$2
 
+	display_alert "Looking up continent code for mirrors" "geoip" "debug"
+	local continent_code
+	continent_code=$(curl --silent --fail https://cache.armbian.com/geoip | jq '.continent.code' -r)
+	display_alert "Found continent code for mirrors" "${continent_code}" "info"
+
+	declare -a urls=()
+
 	# this uses `jq` hostdep
 	case $catalog in
 		toolchain)
-			local CCODE=$(curl --silent --fail https://dl.armbian.com/geoip | jq '.continent.code' -r)
-			local urls=(
-				# "https://dl.armbian.com/_toolchain/${filename}"
-
-				$(
-					curl --silent --fail "https://dl.armbian.com/mirrors" |
-						jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" |
-						sed "s#\$#/_toolchain/${filename}#"
-				)
-			)
+			# urls+=("https://dl.armbian.com/_toolchain/${filename}") # @TODO: rpardini: this was commented out when I found it
+			# shellcheck disable=SC2207 # yep old code, I know, gotta expand here
+			urls+=($(
+				curl --silent --fail "https://dl.armbian.com/mirrors" |
+					jq -r "(${continent_code:+.${continent_code} // } .default) | .[]" |
+					sed "s#\$#/_toolchain/${filename}#"
+			))
 			;;
 
 		rootfs)
-			local CCODE=$(curl --silent --fail https://cache.armbian.com/geoip | jq '.continent.code' -r)
-			local urls=(
-				# "https://cache.armbian.com/rootfs/${ROOTFSCACHE_VERSION}/${filename}"
-				"https://github.com/armbian/cache/releases/download/${ROOTFSCACHE_VERSION}/${filename}"
-
+			# urls+=("https://cache.armbian.com/rootfs/${ROOTFSCACHE_VERSION}/${filename}") # @TODO: rpardini: this was commented out when I found it
+			urls+=("https://github.com/armbian/cache/releases/download/${ROOTFSCACHE_VERSION}/${filename}")
+			urls+=(
 				$(
 					curl --silent --fail "https://cache.armbian.com/mirrors" |
-						jq -r "(${CCODE:+.${CCODE} // } .default) | .[]" |
+						jq -r "(${continent_code:+.${continent_code} // } .default) | .[]" |
 						sed "s#\$#/rootfs/${ROOTFSCACHE_VERSION}/${filename}#"
 				)
 			)
 			;;
 
 		*)
-			exit_with_error "Unknown catalog" "$catalog" >&2
-			return
+			exit_with_error "Unknown catalog '${catalog}'"
+			return 1
 			;;
 	esac
 
+	declare number_urls=${#urls[@]}
+	display_alert "Found ${number_urls} URLs for catalog" "${catalog}: ${urls[*]}" "info"
+
 	echo "${urls[@]}"
+	unset urls
+	return 0
 }
 
 # Terrible idea, this runs download_and_verify_internal() with error handling disabled.
