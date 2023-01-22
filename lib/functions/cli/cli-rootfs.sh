@@ -15,7 +15,6 @@ function cli_rootfs_run() {
 
 # This is run inside do_with_default_build(), above.
 function cli_rootfs_only_in_default_build() {
-	declare -i tmpfs_estimated_size # in MiB; set by prepare_rootfs_build_params_and_trap()
 	LOG_SECTION="prepare_rootfs_build_params_and_trap" do_with_logging prepare_rootfs_build_params_and_trap
 
 	LOG_SECTION="calculate_rootfs_cache_id" do_with_logging calculate_rootfs_cache_id
