@@ -388,7 +388,6 @@ function do_extra_configuration() {
 	display_alert "Done with do_extra_configuration" "do_extra_configuration" "debug"
 }
 
-# This is called by main_default_build_single() but declared here for 'convenience'
 function write_config_summary_output_file() {
 	local debug_dpkg_arch debug_uname debug_virt debug_src_mount
 	debug_dpkg_arch="$(dpkg --print-architecture)"
