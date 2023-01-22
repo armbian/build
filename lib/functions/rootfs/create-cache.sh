@@ -2,8 +2,15 @@
 
 # this gets from cache or produces a new rootfs, and leaves a mounted chroot "$SDCARD" at the end.
 function get_or_create_rootfs_cache_chroot_sdcard() {
-	# @TODO: this was moved from configuration to this stage, that way configuration can be offline
-	# if variable not provided, check which is current version in the cache storage in GitHub.
+	# validate "${SDCARD}" is set. it does not exist, yet...
+	if [[ -z "${SDCARD}" ]]; then
+		exit_with_error "SDCARD is not set at get_or_create_rootfs_cache_chroot_sdcard()"
+	fi
+	[[ ! -d "${SDCARD:?}" ]] && exit_with_error "create_new_rootfs_cache: ${SDCARD} is not a directory"
+
+	# this was moved from configuration to this stage, that way configuration can be offline
+	# if ROOTFSCACHE_VERSION not provided, check which is current version in the cache storage in GitHub.
+	#  - ROOTFSCACHE_VERSION is provided by external "build rootfs GHA script" in armbian/scripts
 	if [[ -z "${ROOTFSCACHE_VERSION}" ]]; then
 		if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
 			display_alert "ROOTFSCACHE_VERSION not set, getting remotely" "Github API and armbian/mirror " "debug"
@@ -16,8 +23,16 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 			display_alert "Remotely-obtained ROOTFSCACHE_VERSION" "${ROOTFSCACHE_VERSION}" "debug"
 		else
 			ROOTFSCACHE_VERSION=668 # The neighbour of the beast.
+			display_alert "Armbian mirror skipped, using fictional rootfs cache version" "${ROOTFSCACHE_VERSION}" "debug"
 		fi
+	else
+		display_alert "ROOTFSCACHE_VERSION is set externally" "${ROOTFSCACHE_VERSION}" "warn"
 	fi
+	
+	# Make ROOTFSCACHE_VERSION global at this point, in case it was not.
+	declare -g ROOTFSCACHE_VERSION="${ROOTFSCACHE_VERSION}"
+
+	display_alert "ROOTFSCACHE_VERSION found online or preset" "${ROOTFSCACHE_VERSION}" "warn"
 
 	local packages_hash="${AGGREGATED_ROOTFS_HASH}" # Produced by aggregation.py - currently only AGGREGATED_PACKAGES_DEBOOTSTRAP and AGGREGATED_PACKAGES_ROOTFS
 	local packages_hash=${packages_hash:0:16}       # it's an md5, which is 32 hex digits; used to be 8
@@ -30,9 +45,12 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 	# seek last cache, proceed to previous otherwise build it
 	local cache_list
 	readarray -t cache_list <<< "$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
-	declare ROOTFSCACHE_VERSION
-	for ROOTFSCACHE_VERSION in "${cache_list[@]}"; do
 
+	display_alert "ROOTFSCACHE_VERSION after getting cache list" "${ROOTFSCACHE_VERSION}" "warn"
+
+	declare possible_cached_version # @TODO: does this kill the above var?
+	for possible_cached_version in "${cache_list[@]}"; do
+		ROOTFSCACHE_VERSION="${possible_cached_version}" # global var
 		local cache_name="${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOTFSCACHE_VERSION}.tar.zst"
 		local cache_fname="${SRC}/cache/rootfs/${cache_name}"
 
@@ -43,284 +61,66 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 		# if aria2 file exists download didn't succeeded
 		if [[ ! -f $cache_fname || -f ${cache_fname}.aria2 ]]; then
 			if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
-				display_alert "Downloading from servers"
-				download_and_verify "rootfs" "$cache_name" ||
-					continue
+				display_alert "Downloading from servers" # download_rootfs_cache() requires ROOTFSCACHE_VERSION
+				download_and_verify "rootfs" "$cache_name" || continue
 			fi
 		fi
 
-		[[ -f $cache_fname && ! -f ${cache_fname}.aria2 ]] && break
+		if [[ -f $cache_fname && ! -f ${cache_fname}.aria2 ]]; then
+			display_alert "Cache found!" "$cache_name" "info"
+			break
+		fi
 	done
 
-	##PRESERVE## # check if cache exists and we want to make it
-	##PRESERVE## if [[ -f ${cache_fname} && "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-	##PRESERVE## 	display_alert "Checking cache integrity" "$display_name" "info"
-	##PRESERVE## 	zstd -tqq ${cache_fname} || {
-	##PRESERVE## 		rm $cache_fname
-	##PRESERVE## 		exit_with_error "Cache $cache_fname is corrupted and was deleted. Please restart!"
-	##PRESERVE## 	}
-	##PRESERVE## fi
+	display_alert "ROOTFSCACHE_VERSION after looping" "${ROOTFSCACHE_VERSION}" "warn"
 
-	# if aria2 file exists download didn't succeeded
-	if [[ "$ROOT_FS_CREATE_ONLY" != "yes" && -f $cache_fname && ! -f $cache_fname.aria2 ]]; then
+	# if not "only" creating rootfs and cache exists, extract it
+	# if aria2 file exists, download didn't succeeded, so skip it
+	# @TODO this could be named IGNORE_EXISTING_ROOTFS_CACHE=yes
+	if [[ "${ROOT_FS_CREATE_ONLY}" != "yes" && -f "${cache_fname}" && ! -f "${cache_fname}.aria2" ]]; then
+		[[ ! -d "${SDCARD:?}" ]] || exit_with_error "get_or_create_rootfs_cache_chroot_sdcard: extract: ${SDCARD} is not a directory"
 
-		local date_diff=$((($(date +%s) - $(stat -c %Y $cache_fname)) / 86400))
+		local date_diff=$((($(date +%s) - $(stat -c %Y "${cache_fname}")) / 86400))
 		display_alert "Extracting $cache_name" "$date_diff days old" "info"
-		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C $SDCARD/
-		[[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
-		rm $SDCARD/etc/resolv.conf
-		echo "nameserver $NAMESERVER" >> $SDCARD/etc/resolv.conf
-		create_sources_list "$RELEASE" "$SDCARD/"
+		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "extract_rootfs") $cache_name" "$cache_fname" | zstdmt -dc | tar xp --xattrs -C "${SDCARD}"/
+
+		# @TODO: this never runs, since 'set -e' ("errexit") is in effect, and https://github.com/koalaman/shellcheck/wiki/SC2181
+		# [[ $? -ne 0 ]] && rm $cache_fname && exit_with_error "Cache $cache_fname is corrupted and was deleted. Restart."
+
+		run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+		run_host_command_logged echo "nameserver ${NAMESERVER}" ">" "${SDCARD}"/etc/resolv.conf
+
+		create_sources_list "${RELEASE}" "${SDCARD}/"
 	else
-		local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc +"%Y%m%d")}
-		local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
-		local cache_fname=${SRC}/cache/rootfs/${cache_name}
-
-		display_alert "Creating new rootfs cache for" "$RELEASE" "info"
-
+		display_alert "Creating rootfs" "cache miss" "info"
 		create_new_rootfs_cache
-
-		# needed for backend to keep current only
-		echo "$cache_fname" > $cache_fname.current
-
 	fi
 
-	# used for internal purposes. Faster rootfs cache rebuilding
-	if [[ "$ROOT_FS_CREATE_ONLY" == "yes" ]]; then
-		umount --lazy "$SDCARD"
-		rm -rf $SDCARD
-		# remove exit trap
-		remove_all_trap_handlers INT TERM EXIT
-		exit
+	# @TODO: remove after killing usages
+	#  used for internal purposes. Faster rootfs cache rebuilding
+	if [[ "${ROOT_FS_CREATE_ONLY}" == "yes" ]]; then
+		display_alert "Using, does nothing" "ROOT_FS_CREATE_ONLY=yes, late in get_or_create_rootfs_cache_chroot_sdcard" "warning"
+		# this used to try to disable traps, umount and exit. no longer. let the function finish
 	fi
 
-	mount_chroot "${SDCARD}"
+	return 0
 }
 
 function create_new_rootfs_cache() {
-	# this is different between debootstrap and regular apt-get; here we use acng as a prefix to the real repo
-	local debootstrap_apt_mirror="http://${APT_MIRROR}"
-	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
-		local debootstrap_apt_mirror="http://localhost:3142/${APT_MIRROR}"
-		acng_check_status_or_restart
-	fi
+	[[ ! -d "${SDCARD:?}" ]] && exit_with_error "create_new_rootfs_cache: ${SDCARD} is not a directory"
 
-	# @TODO: one day: https://gitlab.mister-muffin.de/josch/mmdebstrap/src/branch/main/mmdebstrap
+	# This var ROOT_FS_CREATE_VERSION is only used here, afterwards it's all cache_name and cache_fname
+	local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc +"%Y%m%d")}
+	local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
+	local cache_fname=${SRC}/cache/rootfs/${cache_name}
 
-	display_alert "Installing base system with ${#AGGREGATED_PACKAGES_DEBOOTSTRAP[@]} packages" "Stage 1/2" "info"
-	cd "${SDCARD}" || exit_with_error "cray-cray about SDCARD" "${SDCARD}" # this will prevent error sh: 0: getcwd() failed
+	display_alert "Creating new rootfs cache for" "${RELEASE} ${ROOT_FS_CREATE_VERSION}" "info"
 
-	local -a deboostrap_arguments=(
-		"--variant=minbase"                                         # minimal base variant. go ask Debian about it.
-		"--arch=${ARCH}"                                            # the arch
-		"'--include=${AGGREGATED_PACKAGES_DEBOOTSTRAP_COMMA}'"      # from aggregation.py
-		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation.py
-	)
+	create_new_rootfs_cache_via_debootstrap # in rootfs-create.sh
+	create_new_rootfs_cache_tarball         # in rootfs-create.sh
 
-	# Small detour for local apt caching option.
-	local use_local_apt_cache apt_cache_host_dir
-	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "before debootstrap" # 2 namerefs + "when"
-	if [[ "${use_local_apt_cache}" == "yes" ]]; then
-		# Small difference for debootstrap, if compared to apt: we need to pass it the "/archives" subpath to share cache with apt.
-		deboostrap_arguments+=("--cache-dir=${apt_cache_host_dir}/archives") # cache .deb's used
-	fi
-
-	deboostrap_arguments+=("--foreign") # release name
-
-	# Debian does not carry riscv64 in their main repo, needs ports, which needs a specific keyring in the host.
-	# that's done in prepare-host.sh when by adding debian-ports-archive-keyring hostdep, but there's an if anyway.
-	# debian-ports-archive-keyring is also included in-image by: config/optional/architectures/riscv64/_config/cli/_all_distributions/main/packages
-	# Revise this after bookworm release.
-	# @TODO: rpardini: this clearly shows a need for hooks for debootstrap
-	if [[ "${ARCH}" == "riscv64" ]] && [[ $DISTRIBUTION == Debian ]]; then
-		if [[ -f /usr/share/keyrings/debian-ports-archive-keyring.gpg ]]; then
-			display_alert "Adding ports keyring for Debian debootstrap" "riscv64" "info"
-			deboostrap_arguments+=("--keyring" "/usr/share/keyrings/debian-ports-archive-keyring.gpg")
-		else
-			exit_with_error "Debian debootstrap for riscv64 needs debian-ports-archive-keyring hostdep"
-		fi
-	fi
-
-	deboostrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
-
-	run_host_command_logged debootstrap "${deboostrap_arguments[@]}" || {
-		exit_with_error "Debootstrap first stage failed" "${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
-	}
-	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
-
-	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "after debootstrap" # 2 namerefs + "when"
-
-	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks()
-
-	display_alert "Installing base system" "Stage 2/2" "info"
-	export if_error_detail_message="Debootstrap second stage failed ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
-	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
-	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"
-
-	mount_chroot "${SDCARD}"
-
-	display_alert "Diverting" "initctl/start-stop-daemon" "info"
-	# policy-rc.d script prevents starting or reloading services during image creation
-	printf '#!/bin/sh\nexit 101' > $SDCARD/usr/sbin/policy-rc.d
-	chroot_sdcard LC_ALL=C LANG=C dpkg-divert --quiet --local --rename --add /sbin/initctl
-	chroot_sdcard LC_ALL=C LANG=C dpkg-divert --quiet --local --rename --add /sbin/start-stop-daemon
-	printf '#!/bin/sh\necho "Warning: Fake start-stop-daemon called, doing nothing"' > "$SDCARD/sbin/start-stop-daemon"
-	printf '#!/bin/sh\necho "Warning: Fake initctl called, doing nothing"' > "$SDCARD/sbin/initctl"
-	chmod 755 "$SDCARD/usr/sbin/policy-rc.d"
-	chmod 755 "$SDCARD/sbin/initctl"
-	chmod 755 "$SDCARD/sbin/start-stop-daemon"
-
-	# stage: configure language and locales.
-	# this _requires_ DEST_LANG, otherwise, bomb: if it's not here _all_ locales will be generated which is very slow.
-	display_alert "Configuring locales" "DEST_LANG: ${DEST_LANG}" "info"
-	[[ "x${DEST_LANG}x" == "xx" ]] && exit_with_error "Bug: got to config locales without DEST_LANG set"
-
-	[[ -f $SDCARD/etc/locale.gen ]] && sed -i "s/^# ${DEST_LANG}/${DEST_LANG}/" $SDCARD/etc/locale.gen
-	chroot_sdcard LC_ALL=C LANG=C locale-gen "${DEST_LANG}"
-	chroot_sdcard LC_ALL=C LANG=C update-locale "LANG=${DEST_LANG}" "LANGUAGE=${DEST_LANG}" "LC_MESSAGES=${DEST_LANG}"
-
-	if [[ -f $SDCARD/etc/default/console-setup ]]; then
-		# @TODO: Should be configurable.
-		sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
-			-e 's/CODESET=.*/CODESET="guess"/' -i "$SDCARD/etc/default/console-setup"
-		chroot_sdcard LC_ALL=C LANG=C setupcon --save --force
-	fi
-
-	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS)
-	create_sources_list "$RELEASE" "$SDCARD/"
-
-	# optionally add armhf arhitecture to arm64, if asked to do so.
-	if [[ "a${ARMHF_ARCH}" == "ayes" ]]; then
-		[[ $ARCH == arm64 ]] && chroot_sdcard LC_ALL=C LANG=C dpkg --add-architecture armhf
-	fi
-
-	# this should fix resolvconf installation failure in some cases
-	chroot_sdcard 'echo "resolvconf resolvconf/linkify-resolvconf boolean false" | debconf-set-selections'
-
-	# Add external / PPAs to apt sources; decides internally based on minimal/cli/desktop dir/file structure
-	add_apt_sources
-
-	# @TODO: use asset logging for this; actually log contents of the files too
-	run_host_command_logged ls -l "${SDCARD}/usr/share/keyrings"
-	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
-	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"
-
-	# stage: update packages list
-	display_alert "Updating package list" "$RELEASE" "info"
-	do_with_retries 3 chroot_sdcard_apt_get_update
-
-	# stage: upgrade base packages from xxx-updates and xxx-backports repository branches
-	display_alert "Upgrading base packages" "Armbian" "info"
-	do_with_retries 3 chroot_sdcard_apt_get upgrade
-
-	# stage: install additional packages
-	display_alert "Installing the main packages for" "Armbian" "info"
-	export if_error_detail_message="Installation of Armbian main packages for ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
-	# First, try to download-only up to 3 times, to work around network/proxy problems.
-	# AGGREGATED_PACKAGES_ROOTFS is generated by aggregation.py
-	chroot_sdcard_apt_get_install_dry_run "${AGGREGATED_PACKAGES_ROOTFS[@]}"
-	do_with_retries 3 chroot_sdcard_apt_get_install_download_only "${AGGREGATED_PACKAGES_ROOTFS[@]}"
-
-	# Now do the install, all packages should have been downloaded by now
-	chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_ROOTFS[@]}"
-
-	if [[ $BUILD_DESKTOP == "yes" ]]; then
-		# how how many items in AGGREGATED_PACKAGES_DESKTOP array
-		display_alert "Installing ${#AGGREGATED_PACKAGES_DESKTOP[@]} desktop packages" "${RELEASE} ${DESKTOP_ENVIRONMENT}" "info"
-
-		# dry-run, make sure everything can be installed.
-		chroot_sdcard_apt_get_install_dry_run "${AGGREGATED_PACKAGES_DESKTOP[@]}"
-
-		# Retry download-only 3 times first.
-		do_with_retries 3 chroot_sdcard_apt_get_install_download_only "${AGGREGATED_PACKAGES_DESKTOP[@]}"
-
-		# Then do the actual install.
-		export if_error_detail_message="Installation of Armbian desktop packages for ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
-		chroot_sdcard_apt_get install "${AGGREGATED_PACKAGES_DESKTOP[@]}"
-	fi
-
-	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
-	display_alert "Checking MD5 sum of installed packages" "debsums" "info"
-	export if_error_detail_message="Check MD5 sum of installed packages failed"
-	chroot_sdcard debsums --silent
-
-	# # Remove packages from packages.uninstall
-	# # @TODO: aggregation.py handling of this... if we wanted it removed in rootfs cache, why did we install it in the first place?
-	# display_alert "Uninstall packages" "$PACKAGE_LIST_UNINSTALL" "info"
-	# # shellcheck disable=SC2086
-	# DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get purge $PACKAGE_LIST_UNINSTALL
-
-	# # if we remove with --purge then this is not needed
-	# # stage: purge residual packages
-	# display_alert "Purging residual packages for" "Armbian" "info"
-	# PURGINGPACKAGES=$(chroot $SDCARD /bin/bash -c "dpkg -l | grep \"^rc\" | awk '{print \$2}' | tr \"\n\" \" \"")
-	# DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get purge $PURGINGPACKAGES
-
-	# stage: remove packages that are installed, but not required anymore after other packages were installed/removed.
-	# don't touch the local cache.
-	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get autoremove
-
-	# Only clean if not using local cache. Otherwise it would be cleaning the cache, not the chroot.
-	if [[ "${USE_LOCAL_APT_DEB_CACHE}" != "yes" ]]; then
-		display_alert "Late Cleaning" "late: package lists and apt cache" "warn"
-		chroot_sdcard_apt_get clean
-	fi
-
-	# DEBUG: print free space
-	local free_space
-	free_space=$(LC_ALL=C df -h)
-	display_alert "Free disk space on rootfs" "SDCARD: $(echo -e "${free_space}" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
-
-	# create list of installed packages for debug purposes - this captures it's own stdout.
-	# @TODO: sanity check, compare this with the source of the hash coming from aggregation
-	chroot_sdcard "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > "${cache_fname}.list"
-	echo "${AGGREGATED_ROOTFS_HASH_TEXT}" > "${cache_fname}.hash_text"
-
-	# creating xapian index that synaptic runs faster # @TODO: yes, but better done board-side on first run
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		display_alert "Recreating Synaptic search index" "Please wait" "info"
-		chroot_sdcard "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u || true"
-	fi
-
-	# this is needed for the build process later since resolvconf generated file in /run is not saved
-	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
-	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
-
-	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
-	# Note: This will mark machine `firstboot`
-	run_host_command_logged echo "uninitialized" ">" "${SDCARD}/etc/machine-id"
-	run_host_command_logged rm -v "${SDCARD}/var/lib/dbus/machine-id"
-
-	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
-	# `armbian-first-run` will do the same thing later
-	chroot_sdcard systemctl mask systemd-firstboot.service
-
-	# stage: make rootfs cache archive
-	display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
-	wait_for_disk_sync "before tar rootfs"
-
-	# the only reason to unmount here is compression progress display based on rootfs size calculation
-	# also, it doesn't make sense to copy stuff like "/dev" etc. those are filtered below anyway
-	umount_chroot "$SDCARD"
-
-	display_alert "zstd ball of rootfs" "$RELEASE:: $cache_name" "debug"
-	tar cp --xattrs --directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-		--exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . | pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" | zstdmt -5 -c > "${cache_fname}"
-
-	# get the human readable size of the cache
-	local cache_size
-	cache_size=$(du -sh "${cache_fname}" | cut -f1)
-
-	# sign rootfs cache archive that it can be used for web cache once. Internal purposes @TODO: what does GPG_PASS have to do with SUDO_USER?
-	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
-		[[ -n ${SUDO_USER} ]] && sudo chown -R "${SUDO_USER}:${SUDO_USER}" "${DEST}"/images/
-		echo "${GPG_PASS}" | sudo -H -u "${SUDO_USER}" bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
-	fi
-
-	# needed for backend to keep current only @TODO: say that again? what backend?
-	echo "$cache_fname" > "$cache_fname.current"
-
-	display_alert "rootfs cache created" "$cache_fname [${cache_size}]" "info"
+	# needed for backend to keep current only @TODO: still needed?
+	echo "$cache_fname" > "${cache_fname}.current"
 
 	return 0 # protect against possible future short-circuiting above this
 }
