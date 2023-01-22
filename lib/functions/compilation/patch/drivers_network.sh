@@ -515,10 +515,28 @@ driver_rtl8822BS()
 
 }
 
+driver_uwe5622_allwinner()
+{
+	# Unisoc uwe5622 wireless Support
+	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 6.1 && [[ "$LINUXFAMILY" == sunxi* ]]; then
+		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
+
+		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
+
+                # Add to section Makefile
+                echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
+
+		if linux-version compare "${version}" lt 6.1; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bt-fix.patch" "applying"
+		fi
+	fi
+}
+
 patch_drivers_network()
 {
 	display_alert "Patching network related drivers"
-	
+
 	driver_rtl8152_rtl8153
 	driver_rtl8189ES
 	driver_rtl8189FS
@@ -533,6 +551,7 @@ patch_drivers_network()
 	driver_rtl8723DS
 	driver_rtl8723DU
 	driver_rtl8822BS
+	driver_uwe5622_allwinner
 
 	display_alert "Network related drivers patched" "" "info"
 }
