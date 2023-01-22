@@ -78,9 +78,8 @@ function create_kernel_deb() {
 	declare deb_output_dir="${2}"
 	declare callback_function="${3}"
 
-	declare package_directory
-	package_directory=$(mktemp -d "${WORKDIR}/${package_name}.XXXXXXXXX") # explicitly created in WORKDIR, so is protected by that cleanup trap already
-	#display_alert "package_directory" "${package_directory}" "debug"
+	declare cleanup_id="" package_directory=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-k-${package_name}" cleanup_id package_directory # namerefs
 
 	declare package_DEBIAN_dir="${package_directory}/DEBIAN" # DEBIAN dir
 	mkdir -p "${package_DEBIAN_dir}"                         # maintainer scripts et al
@@ -129,6 +128,8 @@ function create_kernel_deb() {
 	#run_host_command_logged tree -C -h -d --du "${package_directory}"
 
 	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${deb_output_dir}" # not KDEB compress, we're not under a Makefile
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
 function kernel_package_hook_helper() {

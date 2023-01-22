@@ -92,8 +92,9 @@ function kernel_package_source() {
 	display_alert "Creating kernel source package" "${LINUXCONFIG}" "info"
 
 	local ts=${SECONDS}
-	local sources_pkg_dir tmp_src_dir tarball_size package_size
-	tmp_src_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
+	local sources_pkg_dir tarball_size package_size
+	declare cleanup_id="" tmp_src_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "ksrc" cleanup_id tmp_src_dir # namerefs
 
 	sources_pkg_dir="${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all"
 
@@ -128,9 +129,14 @@ function kernel_package_source() {
 	EOF
 
 	fakeroot_dpkg_deb_build -Znone -z0 "${sources_pkg_dir}" "${sources_pkg_dir}.deb" # do not compress .deb, it already contains a zstd compressed tarball! ignores ${KDEB_COMPRESS} on purpose
+
 	package_size="$(du -h -s "${sources_pkg_dir}.deb" | awk '{print $1}')"
+
 	run_host_command_logged rsync --remove-source-files -r "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
+
 	display_alert "$(basename "${sources_pkg_dir}.deb" ".deb") packaged" "$((SECONDS - ts)) seconds, ${tarball_size} tarball, ${package_size} .deb" "info"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
 function kernel_prepare_build_and_package() {
@@ -139,8 +145,9 @@ function kernel_prepare_build_and_package() {
 	declare -a install_make_params_quoted
 	declare -A kernel_install_dirs
 
-	build_targets=("all")                                              # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
-	kernel_dest_install_dir=$(mktemp -d "${WORKDIR}/kernel.XXXXXXXXX") # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
+	build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
+	declare cleanup_id="" kernel_dest_install_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "k" cleanup_id kernel_dest_install_dir # namerefs
 
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
@@ -169,6 +176,8 @@ function kernel_prepare_build_and_package() {
 	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
 
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
 function kernel_build() {
