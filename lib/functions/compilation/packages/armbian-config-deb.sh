@@ -1,10 +1,9 @@
 compile_armbian-config() {
 
-	local tmp_dir armbian_config_dir
-	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-	chmod 700 "${tmp_dir}"
+	declare cleanup_id="" tmp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-armbian-config" cleanup_id tmp_dir # namerefs
 
-	armbian_config_dir=armbian-config_${REVISION}_all
+	declare armbian_config_dir="armbian-config_${REVISION}_all"
 	display_alert "Building deb" "armbian-config" "info"
 
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
@@ -48,5 +47,9 @@ compile_armbian-config() {
 	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_config_dir}"
+
 	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early 
+
 }

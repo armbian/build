@@ -1,9 +1,9 @@
 compile_plymouth_theme_armbian() {
 
-	local tmp_dir plymouth_theme_armbian_dir
-	tmp_dir=$(mktemp -d)
-	chmod 700 "${tmp_dir}"
-	plymouth_theme_armbian_dir=armbian-plymouth-theme_${REVISION}_all
+	declare cleanup_id="" tmp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-armbian-plymouth-theme" cleanup_id tmp_dir # namerefs
+
+	declare plymouth_theme_armbian_dir=armbian-plymouth-theme_${REVISION}_all
 	display_alert "Building deb" "armbian-plymouth-theme" "info"
 
 	run_host_command_logged mkdir -p "${tmp_dir}/${plymouth_theme_armbian_dir}"/{DEBIAN,usr/share/plymouth/themes/armbian}
@@ -44,7 +44,8 @@ compile_plymouth_theme_armbian() {
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${plymouth_theme_armbian_dir}"
+
 	run_host_command_logged rsync --remove-source-files -rq "${tmp_dir}/${plymouth_theme_armbian_dir}.deb" "${DEB_STORAGE}/"
 
-	# does not remove the tmpdir; it's under TMPDIR anyway
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
