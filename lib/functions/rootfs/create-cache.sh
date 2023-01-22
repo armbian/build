@@ -1,6 +1,39 @@
 #!/usr/bin/env bash
 
-# this gets from cache or produces a new rootfs, and leaves a mounted chroot "$SDCARD" at the end.
+function build_rootfs_only() {
+	# validate that tmpfs_estimated_size is set and higher than zero, or exit_with_error
+	[[ -z ${tmpfs_estimated_size} ]] && exit_with_error "tmpfs_estimated_size is not set"
+	[[ ${tmpfs_estimated_size} -le 0 ]] && exit_with_error "tmpfs_estimated_size is not higher than zero"
+
+	# stage: prepare basic rootfs: unpack cache or create from scratch
+	LOG_SECTION="get_or_create_rootfs_cache_chroot_sdcard" do_with_logging get_or_create_rootfs_cache_chroot_sdcard
+
+	# obtain the size, in MiB, of "${SDCARD}" at this point.
+	declare -i rootfs_size_mib
+	rootfs_size_mib=$(du -sm "${SDCARD}" | awk '{print $1}')
+	display_alert "Actual rootfs size" "${rootfs_size_mib}MiB after basic/cache" ""
+
+	# warn if rootfs_size_mib is higher than the tmpfs_estimated_size
+	if [[ ${rootfs_size_mib} -gt ${tmpfs_estimated_size} ]]; then
+		display_alert "Rootfs actual size is larger than estimated tmpfs size after basic/cache" "${rootfs_size_mib}MiB > ${tmpfs_estimated_size}MiB" "wrn"
+	fi
+}
+
+function calculate_rootfs_cache_id() {
+	# Validate that AGGREGATED_ROOTFS_HASH is set
+	[[ -z "${AGGREGATED_ROOTFS_HASH}" ]] && exit_with_error "AGGREGATED_ROOTFS_HASH is not set at calculate_rootfs_cache_id()"
+
+	declare -g packages_hash="${AGGREGATED_ROOTFS_HASH}" # Produced by aggregation.py - currently only AGGREGATED_PACKAGES_DEBOOTSTRAP and AGGREGATED_PACKAGES_ROOTFS
+	declare -g -r packages_hash=${packages_hash:0:16}    # it's an md5, which is 32 hex digits; used to be 8; make readonly
+
+	declare -g cache_type="cli"
+	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}"
+	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
+	declare -g -r cache_type="${cache_type}"
+}
+
+# this gets from cache or produces a basic new rootfs, ready, but not mounted, at "$SDCARD"
 function get_or_create_rootfs_cache_chroot_sdcard() {
 	# validate "${SDCARD}" is set. it does not exist, yet...
 	if [[ -z "${SDCARD}" ]]; then
@@ -28,20 +61,13 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 	else
 		display_alert "ROOTFSCACHE_VERSION is set externally" "${ROOTFSCACHE_VERSION}" "warn"
 	fi
-	
+
 	# Make ROOTFSCACHE_VERSION global at this point, in case it was not.
 	declare -g ROOTFSCACHE_VERSION="${ROOTFSCACHE_VERSION}"
 
 	display_alert "ROOTFSCACHE_VERSION found online or preset" "${ROOTFSCACHE_VERSION}" "warn"
 
-	local packages_hash="${AGGREGATED_ROOTFS_HASH}" # Produced by aggregation.py - currently only AGGREGATED_PACKAGES_DEBOOTSTRAP and AGGREGATED_PACKAGES_ROOTFS
-	local packages_hash=${packages_hash:0:16}       # it's an md5, which is 32 hex digits; used to be 8
-
-	local cache_type="cli"
-	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
-	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}"
-	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
-
+	calculate_rootfs_cache_id # this sets packages_hash and cache_type
 	# seek last cache, proceed to previous otherwise build it
 	local cache_list
 	readarray -t cache_list <<< "$(get_rootfs_cache_list "$cache_type" "$packages_hash" | sort -r)"
@@ -108,11 +134,15 @@ function get_or_create_rootfs_cache_chroot_sdcard() {
 
 function create_new_rootfs_cache() {
 	[[ ! -d "${SDCARD:?}" ]] && exit_with_error "create_new_rootfs_cache: ${SDCARD} is not a directory"
+	# validate cache_type is set
+	[[ -n "${cache_type}" ]] || exit_with_error "create_new_rootfs_cache: cache_type is not set"
+	# validate packages_hash is set
+	[[ -n "${packages_hash}" ]] || exit_with_error "create_new_rootfs_cache: packages_hash is not set"
 
 	# This var ROOT_FS_CREATE_VERSION is only used here, afterwards it's all cache_name and cache_fname
-	local ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION:-$(date --utc +"%Y%m%d")}
-	local cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
-	local cache_fname=${SRC}/cache/rootfs/${cache_name}
+	declare ROOT_FS_CREATE_VERSION="${ROOT_FS_CREATE_VERSION:-"$(date --utc +"%Y%m%d")"}"
+	declare cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
+	declare cache_fname=${SRC}/cache/rootfs/${cache_name}
 
 	display_alert "Creating new rootfs cache for" "${RELEASE} ${ROOT_FS_CREATE_VERSION}" "info"
 

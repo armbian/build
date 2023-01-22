@@ -1,4 +1,4 @@
-# Common start/end build functions. Used by main_default_build_single()
+# Common start/end build functions. Used by the default build and others
 
 function main_default_start_build() {
 	wait_for_disk_sync "before starting build" # fsync, wait for disk to sync, and then continue. alert user if takes too long.
