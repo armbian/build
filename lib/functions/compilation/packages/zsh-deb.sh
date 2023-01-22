@@ -1,9 +1,8 @@
 compile_armbian-zsh() {
-	local tmp_dir armbian_zsh_dir
-	tmp_dir=$(mktemp -d) # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-	chmod 700 "${tmp_dir}"
+	declare cleanup_id="" tmp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-zsh" cleanup_id tmp_dir # namerefs
 
-	armbian_zsh_dir=armbian-zsh_${REVISION}_all
+	declare armbian_zsh_dir="armbian-zsh_${REVISION}_all"
 	display_alert "Building deb" "armbian-zsh" "info"
 
 	fetch_from_repo "$GITHUB_SOURCE/ohmyzsh/ohmyzsh" "oh-my-zsh" "branch:master"
@@ -68,5 +67,8 @@ compile_armbian-zsh() {
 	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
 	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}"
+
 	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

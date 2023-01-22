@@ -57,9 +57,10 @@ function write_uboot_to_loop_image() {
 	declare loop=$1
 	display_alert "Preparing u-boot bootloader" "LOOP=${loop} - ${CHOSEN_UBOOT}" "info"
 
-	declare TEMP_DIR revision="${REVISION}"
-	TEMP_DIR="$(mktemp -d)" # Subject to TMPDIR, so common trap applies
-	chmod 700 "${TEMP_DIR}"
+	declare revision="${REVISION}"
+	declare cleanup_id="" TEMP_DIR=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "uboot-write" cleanup_id TEMP_DIR # namerefs
+
 	if [[ -n $UBOOT_REPO_VERSION ]]; then
 		revision=${UBOOT_REPO_VERSION}
 		run_host_command_logged dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" "${TEMP_DIR}"/
@@ -88,8 +89,7 @@ function write_uboot_to_loop_image() {
 		Consider that `write_uboot_platform()` is also called board-side, when updating uboot, eg: nand-sata-install.
 	POST_WRITE_UBOOT_PLATFORM
 
-	# cleanup
-	rm -rf "${TEMP_DIR}"
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 	return 0
 }
