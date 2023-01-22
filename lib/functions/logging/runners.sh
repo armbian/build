@@ -21,6 +21,12 @@ function chroot_sdcard_apt_get_install_dry_run() {
 }
 
 function chroot_sdcard_apt_get_update() {
+	# --list-cleanup
+	#     This option is on by default; use --no-list-cleanup to turn it off. When it is on, apt-get will
+	#     automatically manage the contents of /var/lib/apt/lists to ensure that obsolete files are erased. The only
+	#     reason to turn it off is if you frequently change your sources list. Configuration Item:
+	#     APT::Get::List-Cleanup.
+
 	apt_logging="-q" chroot_sdcard_apt_get update
 }
 
@@ -48,7 +54,8 @@ function chroot_sdcard_apt_get() {
 		display_alert "Not using apt-cacher-ng, nor proxy" "no proxy/acng" "debug"
 	fi
 
-	apt_params+=(-o "Dpkg::Use-Pty=0") # Please be quiet
+	apt_params+=(-o "Dpkg::Use-Pty=0")          # Please be quiet
+	apt_params+=(-o "APT::Get::List-Cleanup=0") # Don't cleanup package lists. We do it ourselves when needed.
 
 	if [[ "${DONT_MAINTAIN_APT_CACHE:-no}" == "yes" ]]; then
 		# Configure Clean-Installed to off
@@ -63,23 +70,25 @@ function chroot_sdcard_apt_get() {
 		prelude_clean_env=("env" "-i")
 	fi
 
-	local use_local_apt_cache apt_cache_host_dir
-	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "before 'apt-get $*'" # 2 namerefs + "when"
-	if [[ "${use_local_apt_cache}" == "yes" ]]; then
+	local_apt_deb_cache_prepare "before 'apt-get $*'" # sets LOCAL_APT_CACHE_INFO
+	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
 		# prepare and mount apt cache dir at /var/cache/apt/archives in the SDCARD.
-		local apt_cache_sdcard_dir="${SDCARD}/var/cache/apt"
-		run_host_command_logged mkdir -pv "${apt_cache_sdcard_dir}"
-		display_alert "Mounting local apt cache dir" "${apt_cache_sdcard_dir}" "debug"
-		run_host_command_logged mount --bind "${apt_cache_host_dir}" "${apt_cache_sdcard_dir}"
+		run_host_command_logged mkdir -pv "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
+		display_alert "Mounting local apt deb cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "debug"
+		run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}"
+		display_alert "Mounting local apt list cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}" "debug"
+		run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_LISTS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
 	fi
 
 	local chroot_apt_result=1
 	chroot_sdcard "${prelude_clean_env[@]}" DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
 
-	local_apt_deb_cache_prepare use_local_apt_cache apt_cache_host_dir "after 'apt-get $*'" # 2 namerefs + "when"
-	if [[ "${use_local_apt_cache}" == "yes" ]]; then
-		display_alert "Unmounting apt cache dir" "${apt_cache_sdcard_dir}" "debug"
-		run_host_command_logged umount "${apt_cache_sdcard_dir}"
+	local_apt_deb_cache_prepare "after 'apt-get $*'" # sets LOCAL_APT_CACHE_INFO
+	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
+		display_alert "Unmounting apt deb cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "debug"
+		run_host_command_logged umount "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}"
+		display_alert "Unmounting apt list cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}" "debug"
+		run_host_command_logged umount "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
 	fi
 
 	return $chroot_apt_result
