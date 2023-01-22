@@ -212,12 +212,12 @@ function early_prepare_host_dependencies() {
 
 function late_prepare_host_dependencies() {
 	[[ -z "${ARCH}" ]] && exit_with_error "ARCH is not set"
-	[[ -z "${RELEASE}" ]] && exit_with_error "RELEASE is not set"
 	[[ -z "${HOSTRELEASE}" ]] && exit_with_error "HOSTRELEASE is not set"
 	[[ -z "${HOSTARCH}" ]] && exit_with_error "HOSTARCH is not set"
+	[[ -z "${RELEASE}" ]] && display_alert "RELEASE is not set" "defaulting to host's '${HOSTRELEASE}'" "debug"
 
 	target_arch="${ARCH}" host_release="${HOSTRELEASE}" \
-		host_arch="${HOSTARCH}" target_release="${RELEASE}" \
+		host_arch="${HOSTARCH}" target_release="${RELEASE:-"${HOSTRELEASE}"}" \
 		early_prepare_host_dependencies
 }
 
