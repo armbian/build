@@ -46,6 +46,8 @@ function build_rootfs_and_image() {
 
 	# stage: prepare basic rootfs: unpack cache or create from scratch
 	LOG_SECTION="get_or_create_rootfs_cache_chroot_sdcard" do_with_logging get_or_create_rootfs_cache_chroot_sdcard
+	
+	mount_chroot "${SDCARD}" # this used to be inside get_or_create_rootfs_cache_chroot_sdcard().
 
 	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" <<- 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
 		*give config a chance to act before install_distribution_specific*
