@@ -83,7 +83,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	local_apt_deb_cache_prepare "after debootstrap" # just for size reference in logs
 
-	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks()
+	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks() @TODO: which is too late for a cache
 
 	display_alert "Installing base system" "Stage 2/2" "info"
 	export if_error_detail_message="Debootstrap second stage failed ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"

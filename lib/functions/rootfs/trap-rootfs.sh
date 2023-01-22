@@ -35,6 +35,10 @@ function prepare_rootfs_build_params_and_trap() {
 		display_alert "Not using tmpfs for rootfs" "RAM available: ${available_physical_memory_mib}MiB < ${tmpfs_estimated_size}MiB estimated" "info"
 	fi
 
+	# make global and readonly, for sanity
+	declare -g -r -i tmpfs_estimated_size="${tmpfs_estimated_size}"
+	declare -g -r -i available_physical_memory_mib="${available_physical_memory_mib}"
+
 	if [[ $use_tmpfs == yes ]]; then
 		declare -g -r ROOTFS_IS_UNDER_TMPFS=yes
 		mount -t tmpfs tmpfs "${SDCARD}" # do not specify size; we've calculated above that it should fit, and Linux will try its best if it doesn't.
