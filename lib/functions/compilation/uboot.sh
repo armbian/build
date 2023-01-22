@@ -263,8 +263,9 @@ function compile_uboot() {
 	local uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"
 
 	# create directory structure for the .deb package
-	uboottempdir="$(mktemp -d)" # subject to TMPDIR/WORKDIR, so is protected by single/common error trapmanager to clean-up.
-	chmod 700 "${uboottempdir}"
+	declare cleanup_id="" uboottempdir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "uboot" cleanup_id uboottempdir # namerefs
+
 	mkdir -p "$uboottempdir/$uboot_name/usr/lib/u-boot" "$uboottempdir/$uboot_name/usr/lib/$uboot_name" "$uboottempdir/$uboot_name/DEBIAN"
 
 	# Allow extension-based u-boot bulding. We call the hook, and if EXTENSION_BUILT_UBOOT="yes" afterwards, we skip our own compilation.
@@ -349,6 +350,8 @@ function compile_uboot() {
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 
 	run_host_command_logged rsync --remove-source-files -r "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 	display_alert "Built u-boot deb OK" "${uboot_name}.deb" "info"
 	return 0 # success
