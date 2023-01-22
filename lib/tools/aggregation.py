@@ -34,8 +34,6 @@ ARCH = armbian_utils.get_from_env_or_bomb("ARCH")
 DESKTOP_ENVIRONMENT = armbian_utils.get_from_env("DESKTOP_ENVIRONMENT")
 DESKTOP_ENVIRONMENT_CONFIG_NAME = armbian_utils.get_from_env("DESKTOP_ENVIRONMENT_CONFIG_NAME")
 RELEASE = armbian_utils.get_from_env_or_bomb("RELEASE")  # "kinetic"
-LINUXFAMILY = armbian_utils.get_from_env_or_bomb("LINUXFAMILY")
-BOARD = armbian_utils.get_from_env_or_bomb("BOARD")
 USERPATCHES_PATH = armbian_utils.get_from_env_or_bomb("USERPATCHES_PATH")
 
 # Show the environment
@@ -50,8 +48,6 @@ util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
 	f"{armbian_build_directory}/config",
 	f"{armbian_build_directory}/config/optional/_any_board/_config",
 	f"{armbian_build_directory}/config/optional/architectures/{ARCH}/_config",
-	f"{armbian_build_directory}/config/optional/families/{LINUXFAMILY}/_config",
-	f"{armbian_build_directory}/config/optional/boards/{BOARD}/_config",
 	f"{USERPATCHES_PATH}"
 ]
 
