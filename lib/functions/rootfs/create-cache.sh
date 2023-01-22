@@ -160,7 +160,7 @@ function create_new_rootfs_cache() {
 	declare cache_name=${ARCH}-${RELEASE}-${cache_type}-${packages_hash}-${ROOT_FS_CREATE_VERSION}.tar.zst
 	declare cache_fname=${SRC}/cache/rootfs/${cache_name}
 
-	display_alert "Creating new rootfs cache for" "${RELEASE} ${ROOT_FS_CREATE_VERSION}" "info"
+	display_alert "Creating new rootfs cache for" "'${RELEASE}' '${ARCH}' '${ROOT_FS_CREATE_VERSION}'" "info"
 
 	create_new_rootfs_cache_via_debootstrap # in rootfs-create.sh
 	create_new_rootfs_cache_tarball         # in rootfs-create.sh
