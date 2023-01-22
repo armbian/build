@@ -6,13 +6,27 @@ function cli_rootfs_pre_run() {
 }
 
 function cli_rootfs_run() {
-	declare -a vars_cant_be_set=("BOARD" "LINUXFAMILY" "BOARDFAMILY")
+	declare -a vars_cant_be_set=("LINUXFAMILY" "BOARDFAMILY")
 	# loop through all vars and check if they are set and bomb out
 	for var in "${vars_cant_be_set[@]}"; do
 		if [[ -n ${!var} ]]; then
 			exit_with_error "Param '${var}' is set ('${!var}') but can't be set for rootfs CLI; rootfs's are shared across boards and families."
 		fi
 	done
+
+	# If BOARD is set, use it to convert to an ARCH.
+	if [[ -n ${BOARD} ]]; then
+		display_alert "BOARD is set, converting to ARCH for rootfs building" "${BOARD}" "warn"
+		# Convert BOARD to ARCH; source the BOARD and FAMILY stuff
+
+
+		LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
+
+		LOG_SECTION="config_source_board_file" do_with_conditional_logging source_family_config_and_arch
+
+		display_alert "Done sourcing board file" "${BOARD} - arch: ${ARCH}" "warn"
+
+	fi
 
 	declare -a vars_need_to_be_set=("RELEASE" "ARCH") # Maybe the rootfs version?
 	# loop through all vars and check if they are not set and bomb out if so
