@@ -6,11 +6,35 @@ function cli_rootfs_pre_run() {
 }
 
 function cli_rootfs_run() {
-	# configuration etc - it initializes the extension manager; handles its own logging sections
-	prep_conf_main_build_single
+	declare -a vars_cant_be_set=("BOARD" "LINUXFAMILY" "BOARDFAMILY")
+	# loop through all vars and check if they are set and bomb out
+	for var in "${vars_cant_be_set[@]}"; do
+		if [[ -n ${!var} ]]; then
+			exit_with_error "Param '${var}' is set ('${!var}') but can't be set for rootfs CLI; rootfs's are shared across boards and families."
+		fi
+	done
+
+	declare -a vars_need_to_be_set=("RELEASE" "ARCH") # Maybe the rootfs version?
+	# loop through all vars and check if they are not set and bomb out if so
+	for var in "${vars_need_to_be_set[@]}"; do
+		if [[ -z ${!var} ]]; then
+			exit_with_error "Param '${var}' is not set but needs to be set for rootfs CLI."
+		fi
+	done
+
+	declare -r __wanted_rootfs_arch="${ARCH}"
+	declare -g -r RELEASE="${RELEASE}" # make readonly for finding who tries to change it
+
+	# configuration etc - it initializes the extension manager; handles its own logging sections.
+	prep_conf_main_only_rootfs < /dev/null # no stdin for this, so it bombs if tries to be interactive.
+
+	declare -g -r ARCH="${ARCH}" # make readonly for finding who tries to change it
+	if [[ "${ARCH}" != "${__wanted_rootfs_arch}" ]]; then
+		exit_with_error "Param 'ARCH' is set to '${ARCH}' after config, but different from wanted '${__wanted_rootfs_arch}'"
+	fi
 
 	# default build, but only invoke specific rootfs functions needed. It has its own logging sections.
-	do_with_default_build cli_rootfs_only_in_default_build
+	do_with_default_build cli_rootfs_only_in_default_build < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
 # This is run inside do_with_default_build(), above.

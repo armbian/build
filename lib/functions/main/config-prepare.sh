@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# Full version, for building a full image (with BOARD); possibly interactive.
 function prep_conf_main_build_single() {
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
@@ -26,8 +27,27 @@ function prep_conf_main_build_single() {
 	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
 
 	LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
-	
-	display_alert "Configuration prepared for build" "${BOARD}.${BOARD_TYPE}" "info"
+
+	display_alert "Configuration prepared for BOARD build" "${BOARD}.${BOARD_TYPE}" "info"
+}
+
+# Lean version, for building stuff that doesn't need BOARD/BOARDFAMILY; never interactive.
+function prep_conf_main_only_rootfs() {
+	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
+
+	check_basic_host
+
+	LOG_SECTION="config_pre_main" do_with_conditional_logging config_pre_main
+
+	allow_no_family="yes" \
+		LOG_SECTION="do_main_configuration" do_with_conditional_logging do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
+
+	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
+
+	skip_kernel="yes" \
+		LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
+
+	display_alert "Configuration prepared for non-BOARD build" "prep_conf_main_only_rootfs" "info"
 }
 
 function config_source_board_file() {
@@ -108,6 +128,7 @@ function config_pre_main() {
 		SELECTED_CONFIGURATION="cli_minimal"
 	fi
 
+	# @TODO: remove this?
 	[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] &&
 		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
 
@@ -123,8 +144,12 @@ function config_post_main() {
 		IMAGE_TYPE=user-built
 	fi
 
-	declare -g BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
-	[[ -n $ATFSOURCE ]] && declare -g ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
+	declare -g BOOTSOURCEDIR
+	BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
+	if [[ -n $ATFSOURCE ]]; then
+		declare -g ATFSOURCEDIR
+		ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
+	fi
 
 	declare -g BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
 	declare -g BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
@@ -146,43 +171,47 @@ function config_post_main() {
 	# <arch>-<major.minor>[-<family>]
 	# So we gotta explictly know the major.minor to be able to do that scheme.
 	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
-	if [[ -n "${KERNELSOURCE}" ]]; then
-		declare -g ARMBIAN_WILL_BUILD_KERNEL="${CHOSEN_KERNEL}-${ARCH}"
-		if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
-			exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
-		fi
-		# assume the worst, and all surprises will be happy ones
-		declare -g KERNEL_HAS_WORKING_HEADERS="no"
-		declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no"
+	if [[ "${skip_kernel:-"no"}" != "yes" ]]; then
+		if [[ -n "${KERNELSOURCE}" ]]; then
+			declare -g ARMBIAN_WILL_BUILD_KERNEL="${CHOSEN_KERNEL}-${ARCH}"
+			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
+				exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
+			fi
+			# assume the worst, and all surprises will be happy ones
+			declare -g KERNEL_HAS_WORKING_HEADERS="no"
+			declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no"
 
-		# Parse/validate the the major, bail if no match
-		declare -i KERNEL_MAJOR_MINOR_MAJOR=${KERNEL_MAJOR_MINOR%%.*}
-		declare -i KERNEL_MAJOR_MINOR_MINOR=${KERNEL_MAJOR_MINOR#*.}
+			# Parse/validate the the major, bail if no match
+			declare -i KERNEL_MAJOR_MINOR_MAJOR=${KERNEL_MAJOR_MINOR%%.*}
+			declare -i KERNEL_MAJOR_MINOR_MINOR=${KERNEL_MAJOR_MINOR#*.}
 
-		if [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -ge 6 ]] || [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -ge 5 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 4 ]]; then # We support 6.x, and 5.x from 5.4
-			declare -g KERNEL_HAS_WORKING_HEADERS="yes"
-			declare -g KERNEL_MAJOR="${KERNEL_MAJOR_MINOR_MAJOR}"
-		elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 19 ]]; then
-			declare -g KERNEL_MAJOR=4                              # We support 4.19+ (less than 5.0) is supported, and headers via full source
-			declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # full-source based headers. experimental. set to yes here to enable
-		elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 4 ]]; then
-			declare -g KERNEL_MAJOR=4 # We support 4.x from 4.4
+			if [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -ge 6 ]] || [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -ge 5 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 4 ]]; then # We support 6.x, and 5.x from 5.4
+				declare -g KERNEL_HAS_WORKING_HEADERS="yes"
+				declare -g KERNEL_MAJOR="${KERNEL_MAJOR_MINOR_MAJOR}"
+			elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 19 ]]; then
+				declare -g KERNEL_MAJOR=4                              # We support 4.19+ (less than 5.0) is supported, and headers via full source
+				declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # full-source based headers. experimental. set to yes here to enable
+			elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 4 ]]; then
+				declare -g KERNEL_MAJOR=4 # We support 4.x from 4.4
+			else
+				# If you think you can patch packaging to support this, you're probably right. Is _worth_ it though?
+				exit_with_error "Kernel series unsupported" "'${KERNEL_MAJOR_MINOR}' is unsupported, or bad config"
+			fi
+
+			# Default LINUXSOURCEDIR:
+			declare -g LINUXSOURCEDIR="linux-kernel-worktree/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}__${ARCH}"
+
+			# Allow adding to it with KERNEL_EXTRA_DIR
+			if [[ "${KERNEL_EXTRA_DIR}" != "" ]]; then
+				declare -g LINUXSOURCEDIR="${LINUXSOURCEDIR}__${KERNEL_EXTRA_DIR}"
+				display_alert "Using kernel extra dir: '${KERNEL_EXTRA_DIR}'" "LINUXSOURCEDIR: ${LINUXSOURCEDIR}" "debug"
+			fi
 		else
-			# If you think you can patch packaging to support this, you're probably right. Is _worth_ it though?
-			exit_with_error "Kernel series unsupported" "'${KERNEL_MAJOR_MINOR}' is unsupported, or bad config"
-		fi
-
-		# Default LINUXSOURCEDIR:
-		declare -g LINUXSOURCEDIR="linux-kernel-worktree/${KERNEL_MAJOR_MINOR}__${LINUXFAMILY}__${ARCH}"
-
-		# Allow adding to it with KERNEL_EXTRA_DIR
-		if [[ "${KERNEL_EXTRA_DIR}" != "" ]]; then
-			declare -g LINUXSOURCEDIR="${LINUXSOURCEDIR}__${KERNEL_EXTRA_DIR}"
-			display_alert "Using kernel extra dir: '${KERNEL_EXTRA_DIR}'" "LINUXSOURCEDIR: ${LINUXSOURCEDIR}" "debug"
+			declare -g KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
+			declare -g ARMBIAN_WILL_BUILD_KERNEL=no
 		fi
 	else
-		declare -g KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
-		declare -g ARMBIAN_WILL_BUILD_KERNEL=no
+		display_alert "Skipping kernel config" "skip_kernel=yes" "warn"
 	fi
 
 	if [[ -n "${BOOTCONFIG}" ]] && [[ "${BOOTCONFIG}" != "none" ]]; then
