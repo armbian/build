@@ -35,6 +35,11 @@ function cli_rootfs_run() {
 
 	# default build, but only invoke specific rootfs functions needed. It has its own logging sections.
 	do_with_default_build cli_rootfs_only_in_default_build < /dev/null # no stdin for this, so it bombs if tries to be interactive.
+
+	reset_uid_owner "${BUILT_ROOTFS_CACHE_FILE}"
+
+	display_alert "Rootfs build complete" "${BUILT_ROOTFS_CACHE_NAME}" "info"
+	display_alert "Rootfs build complete, file: " "${BUILT_ROOTFS_CACHE_FILE}" "info"
 }
 
 # This is run inside do_with_default_build(), above.
@@ -42,6 +47,8 @@ function cli_rootfs_only_in_default_build() {
 	LOG_SECTION="prepare_rootfs_build_params_and_trap" do_with_logging prepare_rootfs_build_params_and_trap
 
 	LOG_SECTION="calculate_rootfs_cache_id" do_with_logging calculate_rootfs_cache_id
+
+	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}'" "info"
 
 	# "rootfs" CLI skips over a lot goes straight to create the rootfs. It doesn't check cache etc.
 	LOG_SECTION="create_new_rootfs_cache" do_with_logging create_new_rootfs_cache
