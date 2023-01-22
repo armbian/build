@@ -33,7 +33,7 @@ function cli_patch_kernel_run() {
 		"${target_repo_url}"
 		"kernel-${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}:${target_branch}")
 
-	# Prepare the host and build kernel instead of main_default_build_single
+	# Prepare the host and build kernel; without using standard build
 	prepare_host # This handles its own logging sections, and is possibly interactive.
 	compile_kernel # This handles its own logging sections.
 

@@ -22,7 +22,9 @@ function armbian_register_commands() {
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
 
-		# shortcuts, see vars set below
+		["rootfs"]="rootfs" # implemented in cli_rootfs_pre_run and cli_rootfs_run
+
+		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
 		["kernel"]="standard_build"
 		["u-boot"]="standard_build"
 		["uboot"]="standard_build"
