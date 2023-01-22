@@ -1,0 +1,853 @@
+diff --git a/Makefile b/Makefile
+index bd2f7d437b439..308c848b01dc2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 304
++SUBLEVEL = 305
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/mm/mmu.c b/arch/arm/mm/mmu.c
+index 7edc6c3f4bd91..a99e7ebcd004d 100644
+--- a/arch/arm/mm/mmu.c
++++ b/arch/arm/mm/mmu.c
+@@ -228,12 +228,14 @@ early_param("ecc", early_ecc);
+ static int __init early_cachepolicy(char *p)
+ {
+ 	pr_warn("cachepolicy kernel parameter not supported without cp15\n");
++	return 0;
+ }
+ early_param("cachepolicy", early_cachepolicy);
+ 
+ static int __init noalign_setup(char *__unused)
+ {
+ 	pr_warn("noalign kernel parameter not supported without cp15\n");
++	return 1;
+ }
+ __setup("noalign", noalign_setup);
+ 
+diff --git a/drivers/ata/pata_hpt37x.c b/drivers/ata/pata_hpt37x.c
+index 821fc1f2324c8..44cc02afaa8bd 100644
+--- a/drivers/ata/pata_hpt37x.c
++++ b/drivers/ata/pata_hpt37x.c
+@@ -964,14 +964,14 @@ static int hpt37x_init_one(struct pci_dev *dev, const struct pci_device_id *id)
+ 
+ 	if ((freq >> 12) != 0xABCDE) {
+ 		int i;
+-		u8 sr;
++		u16 sr;
+ 		u32 total = 0;
+ 
+ 		pr_warn("BIOS has not set timing clocks\n");
+ 
+ 		/* This is the process the HPT371 BIOS is reported to use */
+ 		for (i = 0; i < 128; i++) {
+-			pci_read_config_byte(dev, 0x78, &sr);
++			pci_read_config_word(dev, 0x78, &sr);
+ 			total += sr & 0x1FF;
+ 			udelay(15);
+ 		}
+diff --git a/drivers/dma/sh/shdma-base.c b/drivers/dma/sh/shdma-base.c
+index 12fa48e380cf5..4f8dfe77da3c5 100644
+--- a/drivers/dma/sh/shdma-base.c
++++ b/drivers/dma/sh/shdma-base.c
+@@ -118,8 +118,10 @@ static dma_cookie_t shdma_tx_submit(struct dma_async_tx_descriptor *tx)
+ 		ret = pm_runtime_get(schan->dev);
+ 
+ 		spin_unlock_irq(&schan->chan_lock);
+-		if (ret < 0)
++		if (ret < 0) {
+ 			dev_err(schan->dev, "%s(): GET = %d\n", __func__, ret);
++			pm_runtime_put(schan->dev);
++		}
+ 
+ 		pm_runtime_barrier(schan->dev);
+ 
+diff --git a/drivers/firmware/efi/vars.c b/drivers/firmware/efi/vars.c
+index fceaafd67ec61..e619ced030d52 100644
+--- a/drivers/firmware/efi/vars.c
++++ b/drivers/firmware/efi/vars.c
+@@ -763,6 +763,7 @@ int efivar_entry_set_safe(efi_char16_t *name, efi_guid_t vendor, u32 attributes,
+ {
+ 	const struct efivar_operations *ops;
+ 	efi_status_t status;
++	unsigned long varsize;
+ 
+ 	if (!__efivars)
+ 		return -EINVAL;
+@@ -785,15 +786,17 @@ int efivar_entry_set_safe(efi_char16_t *name, efi_guid_t vendor, u32 attributes,
+ 		return efivar_entry_set_nonblocking(name, vendor, attributes,
+ 						    size, data);
+ 
++	varsize = size + ucs2_strsize(name, 1024);
+ 	if (!block) {
+ 		if (down_trylock(&efivars_lock))
+ 			return -EBUSY;
++		status = check_var_size_nonblocking(attributes, varsize);
+ 	} else {
+ 		if (down_interruptible(&efivars_lock))
+ 			return -EINTR;
++		status = check_var_size(attributes, varsize);
+ 	}
+ 
+-	status = check_var_size(attributes, size + ucs2_strsize(name, 1024));
+ 	if (status != EFI_SUCCESS) {
+ 		up(&efivars_lock);
+ 		return -ENOSPC;
+diff --git a/drivers/firmware/qemu_fw_cfg.c b/drivers/firmware/qemu_fw_cfg.c
+index 595bf12e76538..062d0eb50799b 100644
+--- a/drivers/firmware/qemu_fw_cfg.c
++++ b/drivers/firmware/qemu_fw_cfg.c
+@@ -462,12 +462,12 @@ static int fw_cfg_register_file(const struct fw_cfg_file *f)
+ 	err = kobject_init_and_add(&entry->kobj, &fw_cfg_sysfs_entry_ktype,
+ 				   fw_cfg_sel_ko, "%d", entry->f.select);
+ 	if (err)
+-		goto err_register;
++		goto err_put_entry;
+ 
+ 	/* add raw binary content access */
+ 	err = sysfs_create_bin_file(&entry->kobj, &fw_cfg_sysfs_attr_raw);
+ 	if (err)
+-		goto err_add_raw;
++		goto err_del_entry;
+ 
+ 	/* try adding "/sys/firmware/qemu_fw_cfg/by_name/" symlink */
+ 	fw_cfg_build_symlink(fw_cfg_fname_kset, &entry->kobj, entry->f.name);
+@@ -476,10 +476,10 @@ static int fw_cfg_register_file(const struct fw_cfg_file *f)
+ 	fw_cfg_sysfs_cache_enlist(entry);
+ 	return 0;
+ 
+-err_add_raw:
++err_del_entry:
+ 	kobject_del(&entry->kobj);
+-err_register:
+-	kfree(entry);
++err_put_entry:
++	kobject_put(&entry->kobj);
+ 	return err;
+ }
+ 
+diff --git a/drivers/hid/hid-debug.c b/drivers/hid/hid-debug.c
+index 3cafa1d28fedd..07dea71d41fc5 100644
+--- a/drivers/hid/hid-debug.c
++++ b/drivers/hid/hid-debug.c
+@@ -833,7 +833,9 @@ static const char *keys[KEY_MAX + 1] = {
+ 	[KEY_F22] = "F22",			[KEY_F23] = "F23",
+ 	[KEY_F24] = "F24",			[KEY_PLAYCD] = "PlayCD",
+ 	[KEY_PAUSECD] = "PauseCD",		[KEY_PROG3] = "Prog3",
+-	[KEY_PROG4] = "Prog4",			[KEY_SUSPEND] = "Suspend",
++	[KEY_PROG4] = "Prog4",
++	[KEY_ALL_APPLICATIONS] = "AllApplications",
++	[KEY_SUSPEND] = "Suspend",
+ 	[KEY_CLOSE] = "Close",			[KEY_PLAY] = "Play",
+ 	[KEY_FASTFORWARD] = "FastForward",	[KEY_BASSBOOST] = "BassBoost",
+ 	[KEY_PRINT] = "Print",			[KEY_HP] = "HP",
+diff --git a/drivers/hid/hid-input.c b/drivers/hid/hid-input.c
+index 5e1a51ba6500f..1dccc072da4af 100644
+--- a/drivers/hid/hid-input.c
++++ b/drivers/hid/hid-input.c
+@@ -937,6 +937,8 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
+ 		case 0x28b: map_key_clear(KEY_FORWARDMAIL);	break;
+ 		case 0x28c: map_key_clear(KEY_SEND);		break;
+ 
++		case 0x2a2: map_key_clear(KEY_ALL_APPLICATIONS);	break;
++
+ 		case 0x2c7: map_key_clear(KEY_KBDINPUTASSIST_PREV);		break;
+ 		case 0x2c8: map_key_clear(KEY_KBDINPUTASSIST_NEXT);		break;
+ 		case 0x2c9: map_key_clear(KEY_KBDINPUTASSIST_PREVGROUP);		break;
+diff --git a/drivers/i2c/busses/Kconfig b/drivers/i2c/busses/Kconfig
+index 759c621a860a9..be4b7b1ad39b6 100644
+--- a/drivers/i2c/busses/Kconfig
++++ b/drivers/i2c/busses/Kconfig
+@@ -783,7 +783,7 @@ config I2C_PXA_SLAVE
+ 
+ config I2C_QUP
+ 	tristate "Qualcomm QUP based I2C controller"
+-	depends on ARCH_QCOM
++	depends on ARCH_QCOM || COMPILE_TEST
+ 	help
+ 	  If you say yes to this option, support will be included for the
+ 	  built-in I2C interface on the Qualcomm SoCs.
+diff --git a/drivers/i2c/busses/i2c-bcm2835.c b/drivers/i2c/busses/i2c-bcm2835.c
+index 7ed09865cb4b9..4729c14b75017 100644
+--- a/drivers/i2c/busses/i2c-bcm2835.c
++++ b/drivers/i2c/busses/i2c-bcm2835.c
+@@ -28,6 +28,11 @@
+ #define BCM2835_I2C_FIFO	0x10
+ #define BCM2835_I2C_DIV		0x14
+ #define BCM2835_I2C_DEL		0x18
++/*
++ * 16-bit field for the number of SCL cycles to wait after rising SCL
++ * before deciding the slave is not responding. 0 disables the
++ * timeout detection.
++ */
+ #define BCM2835_I2C_CLKT	0x1c
+ 
+ #define BCM2835_I2C_C_READ	BIT(0)
+@@ -313,6 +318,12 @@ static int bcm2835_i2c_probe(struct platform_device *pdev)
+ 	adap->dev.of_node = pdev->dev.of_node;
+ 	adap->quirks = &bcm2835_i2c_quirks;
+ 
++	/*
++	 * Disable the hardware clock stretching timeout. SMBUS
++	 * specifies a limit for how long the device can stretch the
++	 * clock, but core I2C doesn't.
++	 */
++	bcm2835_i2c_writel(i2c_dev, BCM2835_I2C_CLKT, 0);
+ 	bcm2835_i2c_writel(i2c_dev, BCM2835_I2C_C, 0);
+ 
+ 	ret = i2c_add_adapter(adap);
+diff --git a/drivers/input/input.c b/drivers/input/input.c
+index 5d94fc3fce0bb..cb31236425a11 100644
+--- a/drivers/input/input.c
++++ b/drivers/input/input.c
+@@ -2112,6 +2112,12 @@ int input_register_device(struct input_dev *dev)
+ 	/* KEY_RESERVED is not supposed to be transmitted to userspace. */
+ 	__clear_bit(KEY_RESERVED, dev->keybit);
+ 
++	/* Buttonpads should not map BTN_RIGHT and/or BTN_MIDDLE. */
++	if (test_bit(INPUT_PROP_BUTTONPAD, dev->propbit)) {
++		__clear_bit(BTN_RIGHT, dev->keybit);
++		__clear_bit(BTN_MIDDLE, dev->keybit);
++	}
++
+ 	/* Make sure that bitmasks not mentioned in dev->evbit are clean. */
+ 	input_cleanse_bitmasks(dev);
+ 
+diff --git a/drivers/input/mouse/elan_i2c_core.c b/drivers/input/mouse/elan_i2c_core.c
+index 16f5d56600530..44015e6bd6a05 100644
+--- a/drivers/input/mouse/elan_i2c_core.c
++++ b/drivers/input/mouse/elan_i2c_core.c
+@@ -132,55 +132,21 @@ static int elan_get_fwinfo(u8 iap_version, u16 *validpage_count,
+ 	return 0;
+ }
+ 
+-static int elan_enable_power(struct elan_tp_data *data)
++static int elan_set_power(struct elan_tp_data *data, bool on)
+ {
+ 	int repeat = ETP_RETRY_COUNT;
+ 	int error;
+ 
+-	error = regulator_enable(data->vcc);
+-	if (error) {
+-		dev_err(&data->client->dev,
+-			"failed to enable regulator: %d\n", error);
+-		return error;
+-	}
+-
+ 	do {
+-		error = data->ops->power_control(data->client, true);
++		error = data->ops->power_control(data->client, on);
+ 		if (error >= 0)
+ 			return 0;
+ 
+ 		msleep(30);
+ 	} while (--repeat > 0);
+ 
+-	dev_err(&data->client->dev, "failed to enable power: %d\n", error);
+-	return error;
+-}
+-
+-static int elan_disable_power(struct elan_tp_data *data)
+-{
+-	int repeat = ETP_RETRY_COUNT;
+-	int error;
+-
+-	do {
+-		error = data->ops->power_control(data->client, false);
+-		if (!error) {
+-			error = regulator_disable(data->vcc);
+-			if (error) {
+-				dev_err(&data->client->dev,
+-					"failed to disable regulator: %d\n",
+-					error);
+-				/* Attempt to power the chip back up */
+-				data->ops->power_control(data->client, true);
+-				break;
+-			}
+-
+-			return 0;
+-		}
+-
+-		msleep(30);
+-	} while (--repeat > 0);
+-
+-	dev_err(&data->client->dev, "failed to disable power: %d\n", error);
++	dev_err(&data->client->dev, "failed to set power %s: %d\n",
++		on ? "on" : "off", error);
+ 	return error;
+ }
+ 
+@@ -1195,9 +1161,19 @@ static int __maybe_unused elan_suspend(struct device *dev)
+ 		/* Enable wake from IRQ */
+ 		data->irq_wake = (enable_irq_wake(client->irq) == 0);
+ 	} else {
+-		ret = elan_disable_power(data);
++		ret = elan_set_power(data, false);
++		if (ret)
++			goto err;
++
++		ret = regulator_disable(data->vcc);
++		if (ret) {
++			dev_err(dev, "error %d disabling regulator\n", ret);
++			/* Attempt to power the chip back up */
++			elan_set_power(data, true);
++		}
+ 	}
+ 
++err:
+ 	mutex_unlock(&data->sysfs_mutex);
+ 	return ret;
+ }
+@@ -1208,12 +1184,18 @@ static int __maybe_unused elan_resume(struct device *dev)
+ 	struct elan_tp_data *data = i2c_get_clientdata(client);
+ 	int error;
+ 
+-	if (device_may_wakeup(dev) && data->irq_wake) {
++	if (!device_may_wakeup(dev)) {
++		error = regulator_enable(data->vcc);
++		if (error) {
++			dev_err(dev, "error %d enabling regulator\n", error);
++			goto err;
++		}
++	} else if (data->irq_wake) {
+ 		disable_irq_wake(client->irq);
+ 		data->irq_wake = false;
+ 	}
+ 
+-	error = elan_enable_power(data);
++	error = elan_set_power(data, true);
+ 	if (error) {
+ 		dev_err(dev, "power up when resuming failed: %d\n", error);
+ 		goto err;
+diff --git a/drivers/net/arcnet/com20020-pci.c b/drivers/net/arcnet/com20020-pci.c
+index 239de38fbd6a5..1c9fff038569d 100644
+--- a/drivers/net/arcnet/com20020-pci.c
++++ b/drivers/net/arcnet/com20020-pci.c
+@@ -115,6 +115,9 @@ static int com20020pci_probe(struct pci_dev *pdev,
+ 		return -ENOMEM;
+ 
+ 	ci = (struct com20020_pci_card_info *)id->driver_data;
++	if (!ci)
++		return -EINVAL;
++
+ 	priv->ci = ci;
+ 	mm = &ci->misc_map;
+ 
+diff --git a/drivers/net/can/usb/gs_usb.c b/drivers/net/can/usb/gs_usb.c
+index 75399aa1ba951..6771c51f72c37 100644
+--- a/drivers/net/can/usb/gs_usb.c
++++ b/drivers/net/can/usb/gs_usb.c
+@@ -198,8 +198,8 @@ struct gs_can {
+ struct gs_usb {
+ 	struct gs_can *canch[GS_MAX_INTF];
+ 	struct usb_anchor rx_submitted;
+-	atomic_t active_channels;
+ 	struct usb_device *udev;
++	u8 active_channels;
+ };
+ 
+ /* 'allocate' a tx context.
+@@ -597,7 +597,7 @@ static int gs_can_open(struct net_device *netdev)
+ 	if (rc)
+ 		return rc;
+ 
+-	if (atomic_add_return(1, &parent->active_channels) == 1) {
++	if (!parent->active_channels) {
+ 		for (i = 0; i < GS_MAX_RX_URBS; i++) {
+ 			struct urb *urb;
+ 			u8 *buf;
+@@ -698,6 +698,7 @@ static int gs_can_open(struct net_device *netdev)
+ 
+ 	dev->can.state = CAN_STATE_ERROR_ACTIVE;
+ 
++	parent->active_channels++;
+ 	if (!(dev->can.ctrlmode & CAN_CTRLMODE_LISTENONLY))
+ 		netif_start_queue(netdev);
+ 
+@@ -713,7 +714,8 @@ static int gs_can_close(struct net_device *netdev)
+ 	netif_stop_queue(netdev);
+ 
+ 	/* Stop polling */
+-	if (atomic_dec_and_test(&parent->active_channels))
++	parent->active_channels--;
++	if (!parent->active_channels)
+ 		usb_kill_anchored_urbs(&parent->rx_submitted);
+ 
+ 	/* Stop sending URBs */
+@@ -992,8 +994,6 @@ static int gs_usb_probe(struct usb_interface *intf,
+ 
+ 	init_usb_anchor(&dev->rx_submitted);
+ 
+-	atomic_set(&dev->active_channels, 0);
+-
+ 	usb_set_intfdata(intf, dev);
+ 	dev->udev = interface_to_usbdev(intf);
+ 
+diff --git a/drivers/net/ethernet/chelsio/cxgb3/t3_hw.c b/drivers/net/ethernet/chelsio/cxgb3/t3_hw.c
+index a89721fad633e..29220141e4e46 100644
+--- a/drivers/net/ethernet/chelsio/cxgb3/t3_hw.c
++++ b/drivers/net/ethernet/chelsio/cxgb3/t3_hw.c
+@@ -3677,6 +3677,8 @@ int t3_prep_adapter(struct adapter *adapter, const struct adapter_info *ai,
+ 	    MAC_STATS_ACCUM_SECS : (MAC_STATS_ACCUM_SECS * 10);
+ 	adapter->params.pci.vpd_cap_addr =
+ 	    pci_find_capability(adapter->pdev, PCI_CAP_ID_VPD);
++	if (!adapter->params.pci.vpd_cap_addr)
++		return -ENODEV;
+ 	ret = get_vpd_params(adapter, &adapter->params.vpd);
+ 	if (ret < 0)
+ 		return ret;
+diff --git a/drivers/net/ethernet/samsung/sxgbe/sxgbe_main.c b/drivers/net/ethernet/samsung/sxgbe/sxgbe_main.c
+index 11dd7c8d576d6..ab1d01dd2eb3a 100644
+--- a/drivers/net/ethernet/samsung/sxgbe/sxgbe_main.c
++++ b/drivers/net/ethernet/samsung/sxgbe/sxgbe_main.c
+@@ -2311,18 +2311,18 @@ static int __init sxgbe_cmdline_opt(char *str)
+ 	char *opt;
+ 
+ 	if (!str || !*str)
+-		return -EINVAL;
++		return 1;
+ 	while ((opt = strsep(&str, ",")) != NULL) {
+ 		if (!strncmp(opt, "eee_timer:", 10)) {
+ 			if (kstrtoint(opt + 10, 0, &eee_timer))
+ 				goto err;
+ 		}
+ 	}
+-	return 0;
++	return 1;
+ 
+ err:
+ 	pr_err("%s: ERROR broken module parameter conversion\n", __func__);
+-	return -EINVAL;
++	return 1;
+ }
+ 
+ __setup("sxgbeeth=", sxgbe_cmdline_opt);
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+index 0a7ff854d1c34..bb44f8161ea94 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -3608,7 +3608,7 @@ static int __init stmmac_cmdline_opt(char *str)
+ 	char *opt;
+ 
+ 	if (!str || !*str)
+-		return -EINVAL;
++		return 1;
+ 	while ((opt = strsep(&str, ",")) != NULL) {
+ 		if (!strncmp(opt, "debug:", 6)) {
+ 			if (kstrtoint(opt + 6, 0, &debug))
+@@ -3639,11 +3639,11 @@ static int __init stmmac_cmdline_opt(char *str)
+ 				goto err;
+ 		}
+ 	}
+-	return 0;
++	return 1;
+ 
+ err:
+ 	pr_err("%s: ERROR broken module parameter conversion", __func__);
+-	return -EINVAL;
++	return 1;
+ }
+ 
+ __setup("stmmaceth=", stmmac_cmdline_opt);
+diff --git a/drivers/net/hamradio/mkiss.c b/drivers/net/hamradio/mkiss.c
+index 8d85cedb4bf5b..cbf959e7bbff7 100644
+--- a/drivers/net/hamradio/mkiss.c
++++ b/drivers/net/hamradio/mkiss.c
+@@ -41,6 +41,8 @@
+ 
+ #define AX_MTU		236
+ 
++/* some arch define END as assembly function ending, just undef it */
++#undef	END
+ /* SLIP/KISS protocol characters. */
+ #define END             0300		/* indicates end of frame	*/
+ #define ESC             0333		/* indicates byte stuffing	*/
+diff --git a/drivers/net/usb/cdc_mbim.c b/drivers/net/usb/cdc_mbim.c
+index d86132d41416d..95256765b3887 100644
+--- a/drivers/net/usb/cdc_mbim.c
++++ b/drivers/net/usb/cdc_mbim.c
+@@ -652,6 +652,11 @@ static const struct usb_device_id mbim_devs[] = {
+ 	  .driver_info = (unsigned long)&cdc_mbim_info_avoid_altsetting_toggle,
+ 	},
+ 
++	/* Telit FN990 */
++	{ USB_DEVICE_AND_INTERFACE_INFO(0x1bc7, 0x1071, USB_CLASS_COMM, USB_CDC_SUBCLASS_MBIM, USB_CDC_PROTO_NONE),
++	  .driver_info = (unsigned long)&cdc_mbim_info_avoid_altsetting_toggle,
++	},
++
+ 	/* default entry */
+ 	{ USB_INTERFACE_INFO(USB_CLASS_COMM, USB_CDC_SUBCLASS_MBIM, USB_CDC_PROTO_NONE),
+ 	  .driver_info = (unsigned long)&cdc_mbim_info_zlp,
+diff --git a/drivers/net/wireless/mac80211_hwsim.c b/drivers/net/wireless/mac80211_hwsim.c
+index dd6924d21b8a1..a34647efb5ea5 100644
+--- a/drivers/net/wireless/mac80211_hwsim.c
++++ b/drivers/net/wireless/mac80211_hwsim.c
+@@ -1987,6 +1987,15 @@ static void hw_scan_work(struct work_struct *work)
+ 				memcpy(skb_put(probe, req->ie_len), req->ie,
+ 				       req->ie_len);
+ 
++			if (!ieee80211_tx_prepare_skb(hwsim->hw,
++						      hwsim->hw_scan_vif,
++						      probe,
++						      hwsim->tmp_chan->band,
++						      NULL)) {
++				kfree_skb(probe);
++				continue;
++			}
++
+ 			local_bh_disable();
+ 			mac80211_hwsim_tx_frame(hwsim->hw, probe,
+ 						hwsim->tmp_chan);
+@@ -2919,6 +2928,10 @@ static int hwsim_tx_info_frame_received_nl(struct sk_buff *skb_2,
+ 		}
+ 		txi->flags |= IEEE80211_TX_STAT_ACK;
+ 	}
++
++	if (hwsim_flags & HWSIM_TX_CTL_NO_ACK)
++		txi->flags |= IEEE80211_TX_STAT_NOACK_TRANSMITTED;
++
+ 	ieee80211_tx_status_irqsafe(data2->hw, skb);
+ 	return 0;
+ out:
+diff --git a/drivers/soc/fsl/qe/qe_io.c b/drivers/soc/fsl/qe/qe_io.c
+index 7ae59abc78637..127a4a836e675 100644
+--- a/drivers/soc/fsl/qe/qe_io.c
++++ b/drivers/soc/fsl/qe/qe_io.c
+@@ -41,6 +41,8 @@ int par_io_init(struct device_node *np)
+ 	if (ret)
+ 		return ret;
+ 	par_io = ioremap(res.start, resource_size(&res));
++	if (!par_io)
++		return -ENOMEM;
+ 
+ 	num_ports = of_get_property(np, "num-ports", NULL);
+ 	if (num_ports)
+diff --git a/drivers/usb/gadget/legacy/inode.c b/drivers/usb/gadget/legacy/inode.c
+index 19eb954a7afa3..2b30b5a1b577e 100644
+--- a/drivers/usb/gadget/legacy/inode.c
++++ b/drivers/usb/gadget/legacy/inode.c
+@@ -1833,8 +1833,9 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
+ 	spin_lock_irq (&dev->lock);
+ 	value = -EINVAL;
+ 	if (dev->buf) {
++		spin_unlock_irq(&dev->lock);
+ 		kfree(kbuf);
+-		goto fail;
++		return value;
+ 	}
+ 	dev->buf = kbuf;
+ 
+@@ -1882,8 +1883,8 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
+ 
+ 	value = usb_gadget_probe_driver(&gadgetfs_driver);
+ 	if (value != 0) {
+-		kfree (dev->buf);
+-		dev->buf = NULL;
++		spin_lock_irq(&dev->lock);
++		goto fail;
+ 	} else {
+ 		/* at this point "good" hardware has for the first time
+ 		 * let the USB the host see us.  alternatively, if users
+@@ -1900,6 +1901,9 @@ dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
+ 	return value;
+ 
+ fail:
++	dev->config = NULL;
++	dev->hs_config = NULL;
++	dev->dev = NULL;
+ 	spin_unlock_irq (&dev->lock);
+ 	pr_debug ("%s: %s fail %Zd, %p\n", shortname, __func__, value, dev);
+ 	kfree (dev->buf);
+diff --git a/fs/cifs/cifsfs.c b/fs/cifs/cifsfs.c
+index 375ccd209206a..95e4f074b7665 100644
+--- a/fs/cifs/cifsfs.c
++++ b/fs/cifs/cifsfs.c
+@@ -746,6 +746,7 @@ cifs_do_mount(struct file_system_type *fs_type,
+ 
+ out_super:
+ 	deactivate_locked_super(sb);
++	return root;
+ out:
+ 	cifs_cleanup_volume_info(volume_info);
+ 	return root;
+diff --git a/include/net/netfilter/nf_queue.h b/include/net/netfilter/nf_queue.h
+index 2280cfe86c561..faa535defddd0 100644
+--- a/include/net/netfilter/nf_queue.h
++++ b/include/net/netfilter/nf_queue.h
+@@ -31,7 +31,7 @@ void nf_register_queue_handler(struct net *net, const struct nf_queue_handler *q
+ void nf_unregister_queue_handler(struct net *net);
+ void nf_reinject(struct nf_queue_entry *entry, unsigned int verdict);
+ 
+-void nf_queue_entry_get_refs(struct nf_queue_entry *entry);
++bool nf_queue_entry_get_refs(struct nf_queue_entry *entry);
+ void nf_queue_entry_release_refs(struct nf_queue_entry *entry);
+ 
+ static inline void init_hashrandom(u32 *jhash_initval)
+diff --git a/include/uapi/linux/input-event-codes.h b/include/uapi/linux/input-event-codes.h
+index b584868e1b26b..fd7cacbfc8c2c 100644
+--- a/include/uapi/linux/input-event-codes.h
++++ b/include/uapi/linux/input-event-codes.h
+@@ -277,7 +277,8 @@
+ #define KEY_PAUSECD		201
+ #define KEY_PROG3		202
+ #define KEY_PROG4		203
+-#define KEY_DASHBOARD		204	/* AL Dashboard */
++#define KEY_ALL_APPLICATIONS	204	/* AC Desktop Show All Applications */
++#define KEY_DASHBOARD		KEY_ALL_APPLICATIONS
+ #define KEY_SUSPEND		205
+ #define KEY_CLOSE		206	/* AC Close */
+ #define KEY_PLAY		207
+diff --git a/mm/shmem.c b/mm/shmem.c
+index 51aa13f596220..dffa36e6d1c45 100644
+--- a/mm/shmem.c
++++ b/mm/shmem.c
+@@ -2478,7 +2478,8 @@ static void shmem_tag_pins(struct address_space *mapping)
+ 				slot = radix_tree_iter_retry(&iter);
+ 				continue;
+ 			}
+-		} else if (page_count(page) - page_mapcount(page) > 1) {
++		} else if (!PageTail(page) && page_count(page) !=
++			   hpage_nr_pages(page) + total_mapcount(page)) {
+ 			radix_tree_tag_set(&mapping->page_tree, iter.index,
+ 					   SHMEM_TAG_PINNED);
+ 		}
+@@ -2538,8 +2539,8 @@ static int shmem_wait_for_pins(struct address_space *mapping)
+ 				page = NULL;
+ 			}
+ 
+-			if (page &&
+-			    page_count(page) - page_mapcount(page) != 1) {
++			if (page && page_count(page) !=
++			    hpage_nr_pages(page) + total_mapcount(page)) {
+ 				if (scan < LAST_SCAN)
+ 					goto continue_resched;
+ 
+diff --git a/net/dcb/dcbnl.c b/net/dcb/dcbnl.c
+index 2dbf5a0faad32..e32a520c3702b 100644
+--- a/net/dcb/dcbnl.c
++++ b/net/dcb/dcbnl.c
+@@ -1938,10 +1938,54 @@ int dcb_ieee_delapp(struct net_device *dev, struct dcb_app *del)
+ }
+ EXPORT_SYMBOL(dcb_ieee_delapp);
+ 
++static void dcbnl_flush_dev(struct net_device *dev)
++{
++	struct dcb_app_type *itr, *tmp;
++
++	spin_lock_bh(&dcb_lock);
++
++	list_for_each_entry_safe(itr, tmp, &dcb_app_list, list) {
++		if (itr->ifindex == dev->ifindex) {
++			list_del(&itr->list);
++			kfree(itr);
++		}
++	}
++
++	spin_unlock_bh(&dcb_lock);
++}
++
++static int dcbnl_netdevice_event(struct notifier_block *nb,
++				 unsigned long event, void *ptr)
++{
++	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
++
++	switch (event) {
++	case NETDEV_UNREGISTER:
++		if (!dev->dcbnl_ops)
++			return NOTIFY_DONE;
++
++		dcbnl_flush_dev(dev);
++
++		return NOTIFY_OK;
++	default:
++		return NOTIFY_DONE;
++	}
++}
++
++static struct notifier_block dcbnl_nb __read_mostly = {
++	.notifier_call  = dcbnl_netdevice_event,
++};
++
+ static int __init dcbnl_init(void)
+ {
++	int err;
++
+ 	INIT_LIST_HEAD(&dcb_app_list);
+ 
++	err = register_netdevice_notifier(&dcbnl_nb);
++	if (err)
++		return err;
++
+ 	rtnl_register(PF_UNSPEC, RTM_GETDCB, dcb_doit, NULL, NULL);
+ 	rtnl_register(PF_UNSPEC, RTM_SETDCB, dcb_doit, NULL, NULL);
+ 
+diff --git a/net/ipv6/ip6_output.c b/net/ipv6/ip6_output.c
+index d93a98dfe52df..55be18cae35ba 100644
+--- a/net/ipv6/ip6_output.c
++++ b/net/ipv6/ip6_output.c
+@@ -1274,8 +1274,6 @@ static int ip6_setup_cork(struct sock *sk, struct inet_cork_full *cork,
+ 		if (np->frag_size)
+ 			mtu = np->frag_size;
+ 	}
+-	if (mtu < IPV6_MIN_MTU)
+-		return -EINVAL;
+ 	cork->base.fragsize = mtu;
+ 	if (dst_allfrag(rt->dst.path))
+ 		cork->base.flags |= IPCORK_ALLFRAG;
+@@ -1324,8 +1322,6 @@ static int __ip6_append_data(struct sock *sk,
+ 
+ 	fragheaderlen = sizeof(struct ipv6hdr) + rt->rt6i_nfheader_len +
+ 			(opt ? opt->opt_nflen : 0);
+-	maxfraglen = ((mtu - fragheaderlen) & ~7) + fragheaderlen -
+-		     sizeof(struct frag_hdr);
+ 
+ 	headersize = sizeof(struct ipv6hdr) +
+ 		     (opt ? opt->opt_flen + opt->opt_nflen : 0) +
+@@ -1333,6 +1329,13 @@ static int __ip6_append_data(struct sock *sk,
+ 		      sizeof(struct frag_hdr) : 0) +
+ 		     rt->rt6i_nfheader_len;
+ 
++	if (mtu < fragheaderlen ||
++	    ((mtu - fragheaderlen) & ~7) + fragheaderlen < sizeof(struct frag_hdr))
++		goto emsgsize;
++
++	maxfraglen = ((mtu - fragheaderlen) & ~7) + fragheaderlen -
++		     sizeof(struct frag_hdr);
++
+ 	/* as per RFC 7112 section 5, the entire IPv6 Header Chain must fit
+ 	 * the first fragment
+ 	 */
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index 3dc370ad23bf6..41af02a70742e 100644
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -2607,13 +2607,13 @@ ieee80211_rx_h_mesh_fwding(struct ieee80211_rx_data *rx)
+ 	    ether_addr_equal(sdata->vif.addr, hdr->addr3))
+ 		return RX_CONTINUE;
+ 
+-	ac = ieee80211_select_queue_80211(sdata, skb, hdr);
++	ac = ieee802_1d_to_ac[skb->priority];
+ 	q = sdata->vif.hw_queue[ac];
+ 	if (ieee80211_queue_stopped(&local->hw, q)) {
+ 		IEEE80211_IFSTA_MESH_CTR_INC(ifmsh, dropped_frames_congestion);
+ 		return RX_DROP_MONITOR;
+ 	}
+-	skb_set_queue_mapping(skb, q);
++	skb_set_queue_mapping(skb, ac);
+ 
+ 	if (!--mesh_hdr->ttl) {
+ 		if (!is_multicast_ether_addr(hdr->addr1))
+diff --git a/net/netfilter/nf_queue.c b/net/netfilter/nf_queue.c
+index 8f08d759844a9..333ea23681017 100644
+--- a/net/netfilter/nf_queue.c
++++ b/net/netfilter/nf_queue.c
+@@ -44,6 +44,15 @@ void nf_unregister_queue_handler(struct net *net)
+ }
+ EXPORT_SYMBOL(nf_unregister_queue_handler);
+ 
++static void nf_queue_sock_put(struct sock *sk)
++{
++#ifdef CONFIG_INET
++	sock_gen_put(sk);
++#else
++	sock_put(sk);
++#endif
++}
++
+ void nf_queue_entry_release_refs(struct nf_queue_entry *entry)
+ {
+ 	struct nf_hook_state *state = &entry->state;
+@@ -54,7 +63,7 @@ void nf_queue_entry_release_refs(struct nf_queue_entry *entry)
+ 	if (state->out)
+ 		dev_put(state->out);
+ 	if (state->sk)
+-		sock_put(state->sk);
++		nf_queue_sock_put(state->sk);
+ #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+ 	if (entry->skb->nf_bridge) {
+ 		struct net_device *physdev;
+@@ -71,10 +80,13 @@ void nf_queue_entry_release_refs(struct nf_queue_entry *entry)
+ EXPORT_SYMBOL_GPL(nf_queue_entry_release_refs);
+ 
+ /* Bump dev refs so they don't vanish while packet is out */
+-void nf_queue_entry_get_refs(struct nf_queue_entry *entry)
++bool nf_queue_entry_get_refs(struct nf_queue_entry *entry)
+ {
+ 	struct nf_hook_state *state = &entry->state;
+ 
++	if (state->sk && !atomic_inc_not_zero(&state->sk->sk_refcnt))
++		return false;
++
+ 	if (state->in)
+ 		dev_hold(state->in);
+ 	if (state->out)
+@@ -93,6 +105,7 @@ void nf_queue_entry_get_refs(struct nf_queue_entry *entry)
+ 			dev_hold(physdev);
+ 	}
+ #endif
++	return true;
+ }
+ EXPORT_SYMBOL_GPL(nf_queue_entry_get_refs);
+ 
+@@ -139,7 +152,11 @@ static int __nf_queue(struct sk_buff *skb, const struct nf_hook_state *state,
+ 		.size	= sizeof(*entry) + afinfo->route_key_size,
+ 	};
+ 
+-	nf_queue_entry_get_refs(entry);
++	if (!nf_queue_entry_get_refs(entry)) {
++		kfree(entry);
++		return -ENOTCONN;
++	}
++
+ 	skb_dst_force(skb);
+ 	afinfo->saveroute(skb, entry);
+ 	status = qh->outfn(entry, queuenum);
+diff --git a/net/netfilter/nfnetlink_queue.c b/net/netfilter/nfnetlink_queue.c
+index a35510565d4d1..66814a9d030cc 100644
+--- a/net/netfilter/nfnetlink_queue.c
++++ b/net/netfilter/nfnetlink_queue.c
+@@ -673,9 +673,15 @@ static struct nf_queue_entry *
+ nf_queue_entry_dup(struct nf_queue_entry *e)
+ {
+ 	struct nf_queue_entry *entry = kmemdup(e, e->size, GFP_ATOMIC);
+-	if (entry)
+-		nf_queue_entry_get_refs(entry);
+-	return entry;
++
++	if (!entry)
++		return NULL;
++
++	if (nf_queue_entry_get_refs(entry))
++		return entry;
++
++	kfree(entry);
++	return NULL;
+ }
+ 
+ #if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+diff --git a/sound/soc/soc-ops.c b/sound/soc/soc-ops.c
+index e2c200c3c1353..74968ddee49fa 100644
+--- a/sound/soc/soc-ops.c
++++ b/sound/soc/soc-ops.c
+@@ -328,7 +328,7 @@ int snd_soc_put_volsw(struct snd_kcontrol *kcontrol,
+ 		mask = BIT(sign_bit + 1) - 1;
+ 
+ 	val = ucontrol->value.integer.value[0];
+-	if (mc->platform_max && val > mc->platform_max)
++	if (mc->platform_max && ((int)val + min) > mc->platform_max)
+ 		return -EINVAL;
+ 	if (val > max - min)
+ 		return -EINVAL;
+@@ -341,7 +341,7 @@ int snd_soc_put_volsw(struct snd_kcontrol *kcontrol,
+ 	val = val << shift;
+ 	if (snd_soc_volsw_is_stereo(mc)) {
+ 		val2 = ucontrol->value.integer.value[1];
+-		if (mc->platform_max && val2 > mc->platform_max)
++		if (mc->platform_max && ((int)val2 + min) > mc->platform_max)
+ 			return -EINVAL;
+ 		if (val2 > max - min)
+ 			return -EINVAL;

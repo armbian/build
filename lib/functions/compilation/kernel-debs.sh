@@ -25,7 +25,7 @@ create_linux-source_package() {
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Section: kernel
 		Priority: optional
-		Depends: binutils, coreutils
+		Depends: binutils, coreutils, linux-base
 		Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
 		Recommends: gcc, make
 		Description: This package provides the source code for the Linux kernel $version

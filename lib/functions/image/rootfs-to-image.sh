@@ -33,7 +33,7 @@ create_image() {
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot"
 	echo -e "\nCopying files to [/boot]" >> "${DEST}"/${LOG_SUBPATH}/install.log
-	if [[ $(findmnt --target $MOUNT/boot -o FSTYPE -n) == vfat ]]; then
+	if [[ $(findmnt --noheadings --output FSTYPE --target "$MOUNT/boot" --uniq) == vfat ]]; then
 		# fat32
 		rsync -rLtWh \
 			--info=progress0,stats1 \
@@ -58,8 +58,8 @@ PRE_UPDATE_INITRAMFS
 	# DEBUG: print free space
 	local freespace=$(LC_ALL=C df -h)
 	echo -e "$freespace" >> $DEST/${LOG_SUBPATH}/debootstrap.log
-	display_alert "Free SD cache" "$(echo -e "$freespace" | grep $SDCARD | awk '{print $5}')" "info"
-	display_alert "Mount point" "$(echo -e "$freespace" | grep $MOUNT | head -1 | awk '{print $5}')" "info"
+	display_alert "Free SD cache" "$(echo -e "$freespace" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
+	display_alert "Mount point" "$(echo -e "$freespace" | awk -v mp="${MOUNT}" '$6==mp {print $5}')" "info"
 
 	# stage: write u-boot, unless the deb is not there, which would happen if BOOTCONFIG=none
 	# exception: if we use the one from repository, install version which was downloaded from repo

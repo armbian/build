@@ -125,7 +125,7 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		KERNELBRANCH="branch:linux-6.0.y"
+		KERNELBRANCH="branch:linux-6.1.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
@@ -200,7 +200,7 @@ uboot_custom_postprocess() {
 	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
-		if [[ $BOARD == "rock-3a" ]] || [[ $BOARD == "rock-5b" ]]; then
+		if [[ $BOARD == "rock-3a" ]] || [[ $BOARD == "rock-5b" ]] || [[ $BOARD == "orangepi5" ]]; then
 			dd if=/dev/zero of=rkspi_loader.img bs=1M count=0 seek=16
 			/sbin/parted -s rkspi_loader.img mklabel gpt
 			/sbin/parted -s rkspi_loader.img unit s mkpart idbloader 64 7167
@@ -299,6 +299,13 @@ family_tweaks() {
 		# install and enable Bluetooth
 		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable sprd-bluetooth.service >/dev/null 2>&1"
+
+	fi
+
+	if [[ -f $SDCARD/lib/systemd/system/orangepi5-usb2-init.service ]]; then
+
+		# enable usb2 init service
+		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable orangepi5-usb2-init.service >/dev/null 2>&1"
 
 	fi
 

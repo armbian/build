@@ -1,0 +1,122 @@
+diff --git a/Makefile b/Makefile
+index 52e73f525a442..776408b6c56e7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 300
++SUBLEVEL = 301
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/drivers/mmc/host/moxart-mmc.c b/drivers/mmc/host/moxart-mmc.c
+index 41a5493cb68d8..a5b03fb7656d1 100644
+--- a/drivers/mmc/host/moxart-mmc.c
++++ b/drivers/mmc/host/moxart-mmc.c
+@@ -698,12 +698,12 @@ static int moxart_remove(struct platform_device *pdev)
+ 		if (!IS_ERR(host->dma_chan_rx))
+ 			dma_release_channel(host->dma_chan_rx);
+ 		mmc_remove_host(mmc);
+-		mmc_free_host(mmc);
+ 
+ 		writel(0, host->base + REG_INTERRUPT_MASK);
+ 		writel(0, host->base + REG_POWER_CONTROL);
+ 		writel(readl(host->base + REG_CLOCK_CONTROL) | CLK_OFF,
+ 		       host->base + REG_CLOCK_CONTROL);
++		mmc_free_host(mmc);
+ 	}
+ 	return 0;
+ }
+diff --git a/kernel/cgroup.c b/kernel/cgroup.c
+index 248b0bf5d6795..5702419c9f300 100644
+--- a/kernel/cgroup.c
++++ b/kernel/cgroup.c
+@@ -1854,6 +1854,7 @@ static int cgroup_remount(struct kernfs_root *kf_root, int *flags, char *data)
+ {
+ 	int ret = 0;
+ 	struct cgroup_root *root = cgroup_root_from_kf(kf_root);
++	struct cgroup_namespace *ns = current->nsproxy->cgroup_ns;
+ 	struct cgroup_sb_opts opts;
+ 	u16 added_mask, removed_mask;
+ 
+@@ -1873,6 +1874,13 @@ static int cgroup_remount(struct kernfs_root *kf_root, int *flags, char *data)
+ 		pr_warn("option changes via remount are deprecated (pid=%d comm=%s)\n",
+ 			task_tgid_nr(current), current->comm);
+ 
++	/* See cgroup_mount release_agent handling */
++	if (opts.release_agent &&
++	    ((ns->user_ns != &init_user_ns) || !capable(CAP_SYS_ADMIN))) {
++		ret = -EINVAL;
++		goto out_unlock;
++	}
++
+ 	added_mask = opts.subsys_mask & ~root->subsys_mask;
+ 	removed_mask = root->subsys_mask & ~opts.subsys_mask;
+ 
+@@ -2248,6 +2256,16 @@ static struct dentry *cgroup_mount(struct file_system_type *fs_type,
+ 		goto out_unlock;
+ 	}
+ 
++	/*
++	 * Release agent gets called with all capabilities,
++	 * require capabilities to set release agent.
++	 */
++	if (opts.release_agent &&
++	    ((ns->user_ns != &init_user_ns) || !capable(CAP_SYS_ADMIN))) {
++		ret = -EINVAL;
++		goto out_unlock;
++	}
++
+ 	root = kzalloc(sizeof(*root), GFP_KERNEL);
+ 	if (!root) {
+ 		ret = -ENOMEM;
+@@ -3026,6 +3044,14 @@ static ssize_t cgroup_release_agent_write(struct kernfs_open_file *of,
+ 
+ 	BUILD_BUG_ON(sizeof(cgrp->root->release_agent_path) < PATH_MAX);
+ 
++	/*
++	 * Release agent gets called with all capabilities,
++	 * require capabilities to set release agent.
++	 */
++	if ((of->file->f_cred->user_ns != &init_user_ns) ||
++	    !capable(CAP_SYS_ADMIN))
++		return -EPERM;
++
+ 	cgrp = cgroup_kn_lock_live(of->kn, false);
+ 	if (!cgrp)
+ 		return -ENODEV;
+diff --git a/net/tipc/link.c b/net/tipc/link.c
+index 6fc2fa75503d2..2c1350e811e2e 100644
+--- a/net/tipc/link.c
++++ b/net/tipc/link.c
+@@ -1441,12 +1441,15 @@ static int tipc_link_proto_rcv(struct tipc_link *l, struct sk_buff *skb,
+ 	u16 peers_tol = msg_link_tolerance(hdr);
+ 	u16 peers_prio = msg_linkprio(hdr);
+ 	u16 rcv_nxt = l->rcv_nxt;
+-	u16 dlen = msg_data_sz(hdr);
++	u32 dlen = msg_data_sz(hdr);
+ 	int mtyp = msg_type(hdr);
+ 	void *data;
+ 	char *if_name;
+ 	int rc = 0;
+ 
++	if (dlen > U16_MAX)
++		goto exit;
++
+ 	if (tipc_link_is_blocked(l) || !xmitq)
+ 		goto exit;
+ 
+diff --git a/net/tipc/monitor.c b/net/tipc/monitor.c
+index 0fcfb3916dcf2..e1f4538b16532 100644
+--- a/net/tipc/monitor.c
++++ b/net/tipc/monitor.c
+@@ -457,6 +457,8 @@ void tipc_mon_rcv(struct net *net, void *data, u16 dlen, u32 addr,
+ 	state->probing = false;
+ 
+ 	/* Sanity check received domain record */
++	if (new_member_cnt > MAX_MON_DOMAIN)
++		return;
+ 	if (dlen < dom_rec_len(arrv_dom, 0))
+ 		return;
+ 	if (dlen != dom_rec_len(arrv_dom, new_member_cnt))

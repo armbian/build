@@ -1,0 +1,652 @@
+diff --git a/Makefile b/Makefile
+index b849f2683ae68..24a0bb5416ff5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+ VERSION = 4
+ PATCHLEVEL = 9
+-SUBLEVEL = 315
++SUBLEVEL = 316
+ EXTRAVERSION =
+ NAME = Roaring Lionus
+ 
+diff --git a/arch/arm/kernel/entry-armv.S b/arch/arm/kernel/entry-armv.S
+index 77ec669fd5ee1..247229e69322d 100644
+--- a/arch/arm/kernel/entry-armv.S
++++ b/arch/arm/kernel/entry-armv.S
+@@ -1074,7 +1074,7 @@ vector_bhb_loop8_\name:
+ 
+ 	@ bhb workaround
+ 	mov	r0, #8
+-3:	b	. + 4
++3:	W(b)	. + 4
+ 	subs	r0, r0, #1
+ 	bne	3b
+ 	dsb
+diff --git a/arch/arm/kernel/stacktrace.c b/arch/arm/kernel/stacktrace.c
+index c10c1de244eba..83d0aa217bb25 100644
+--- a/arch/arm/kernel/stacktrace.c
++++ b/arch/arm/kernel/stacktrace.c
+@@ -50,17 +50,17 @@ int notrace unwind_frame(struct stackframe *frame)
+ 		return -EINVAL;
+ 
+ 	frame->sp = frame->fp;
+-	frame->fp = *(unsigned long *)(fp);
+-	frame->pc = *(unsigned long *)(fp + 4);
++	frame->fp = READ_ONCE_NOCHECK(*(unsigned long *)(fp));
++	frame->pc = READ_ONCE_NOCHECK(*(unsigned long *)(fp + 4));
+ #else
+ 	/* check current frame pointer is within bounds */
+ 	if (fp < low + 12 || fp > high - 4)
+ 		return -EINVAL;
+ 
+ 	/* restore the registers from the stack frame */
+-	frame->fp = *(unsigned long *)(fp - 12);
+-	frame->sp = *(unsigned long *)(fp - 8);
+-	frame->pc = *(unsigned long *)(fp - 4);
++	frame->fp = READ_ONCE_NOCHECK(*(unsigned long *)(fp - 12));
++	frame->sp = READ_ONCE_NOCHECK(*(unsigned long *)(fp - 8));
++	frame->pc = READ_ONCE_NOCHECK(*(unsigned long *)(fp - 4));
+ #endif
+ 
+ 	return 0;
+diff --git a/arch/arm/mm/proc-v7-bugs.c b/arch/arm/mm/proc-v7-bugs.c
+index 1b6e770bc1cd3..8b78694d56b88 100644
+--- a/arch/arm/mm/proc-v7-bugs.c
++++ b/arch/arm/mm/proc-v7-bugs.c
+@@ -297,6 +297,7 @@ void cpu_v7_ca15_ibe(void)
+ {
+ 	if (check_spectre_auxcr(this_cpu_ptr(&spectre_warned), BIT(0)))
+ 		cpu_v7_spectre_v2_init();
++	cpu_v7_spectre_bhb_init();
+ }
+ 
+ void cpu_v7_bugs_init(void)
+diff --git a/arch/mips/lantiq/falcon/sysctrl.c b/arch/mips/lantiq/falcon/sysctrl.c
+index 82bbd0e2e298f..714d926594897 100644
+--- a/arch/mips/lantiq/falcon/sysctrl.c
++++ b/arch/mips/lantiq/falcon/sysctrl.c
+@@ -169,6 +169,8 @@ static inline void clkdev_add_sys(const char *dev, unsigned int module,
+ {
+ 	struct clk *clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
+ 
++	if (!clk)
++		return;
+ 	clk->cl.dev_id = dev;
+ 	clk->cl.con_id = NULL;
+ 	clk->cl.clk = clk;
+diff --git a/arch/mips/lantiq/xway/gptu.c b/arch/mips/lantiq/xway/gptu.c
+index 0f1bbea1a8166..955d0d5cfbdb0 100644
+--- a/arch/mips/lantiq/xway/gptu.c
++++ b/arch/mips/lantiq/xway/gptu.c
+@@ -124,6 +124,8 @@ static inline void clkdev_add_gptu(struct device *dev, const char *con,
+ {
+ 	struct clk *clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
+ 
++	if (!clk)
++		return;
+ 	clk->cl.dev_id = dev_name(dev);
+ 	clk->cl.con_id = con;
+ 	clk->cl.clk = clk;
+diff --git a/arch/mips/lantiq/xway/sysctrl.c b/arch/mips/lantiq/xway/sysctrl.c
+index 95bec460b651f..dd7c36a193e30 100644
+--- a/arch/mips/lantiq/xway/sysctrl.c
++++ b/arch/mips/lantiq/xway/sysctrl.c
+@@ -331,6 +331,8 @@ static void clkdev_add_pmu(const char *dev, const char *con, bool deactivate,
+ {
+ 	struct clk *clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
+ 
++	if (!clk)
++		return;
+ 	clk->cl.dev_id = dev;
+ 	clk->cl.con_id = con;
+ 	clk->cl.clk = clk;
+@@ -354,6 +356,8 @@ static void clkdev_add_cgu(const char *dev, const char *con,
+ {
+ 	struct clk *clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
+ 
++	if (!clk)
++		return;
+ 	clk->cl.dev_id = dev;
+ 	clk->cl.con_id = con;
+ 	clk->cl.clk = clk;
+@@ -372,24 +376,28 @@ static void clkdev_add_pci(void)
+ 	struct clk *clk_ext = kzalloc(sizeof(struct clk), GFP_KERNEL);
+ 
+ 	/* main pci clock */
+-	clk->cl.dev_id = "17000000.pci";
+-	clk->cl.con_id = NULL;
+-	clk->cl.clk = clk;
+-	clk->rate = CLOCK_33M;
+-	clk->rates = valid_pci_rates;
+-	clk->enable = pci_enable;
+-	clk->disable = pmu_disable;
+-	clk->module = 0;
+-	clk->bits = PMU_PCI;
+-	clkdev_add(&clk->cl);
++	if (clk) {
++		clk->cl.dev_id = "17000000.pci";
++		clk->cl.con_id = NULL;
++		clk->cl.clk = clk;
++		clk->rate = CLOCK_33M;
++		clk->rates = valid_pci_rates;
++		clk->enable = pci_enable;
++		clk->disable = pmu_disable;
++		clk->module = 0;
++		clk->bits = PMU_PCI;
++		clkdev_add(&clk->cl);
++	}
+ 
+ 	/* use internal/external bus clock */
+-	clk_ext->cl.dev_id = "17000000.pci";
+-	clk_ext->cl.con_id = "external";
+-	clk_ext->cl.clk = clk_ext;
+-	clk_ext->enable = pci_ext_enable;
+-	clk_ext->disable = pci_ext_disable;
+-	clkdev_add(&clk_ext->cl);
++	if (clk_ext) {
++		clk_ext->cl.dev_id = "17000000.pci";
++		clk_ext->cl.con_id = "external";
++		clk_ext->cl.clk = clk_ext;
++		clk_ext->enable = pci_ext_enable;
++		clk_ext->disable = pci_ext_disable;
++		clkdev_add(&clk_ext->cl);
++	}
+ }
+ 
+ /* xway socs can generate clocks on gpio pins */
+@@ -409,9 +417,15 @@ static void clkdev_add_clkout(void)
+ 		char *name;
+ 
+ 		name = kzalloc(sizeof("clkout0"), GFP_KERNEL);
++		if (!name)
++			continue;
+ 		sprintf(name, "clkout%d", i);
+ 
+ 		clk = kzalloc(sizeof(struct clk), GFP_KERNEL);
++		if (!clk) {
++			kfree(name);
++			continue;
++		}
+ 		clk->cl.dev_id = "1f103000.cgu";
+ 		clk->cl.con_id = name;
+ 		clk->cl.clk = clk;
+diff --git a/arch/x86/um/shared/sysdep/syscalls_64.h b/arch/x86/um/shared/sysdep/syscalls_64.h
+index 8a7d5e1da98e5..1e6875b4ffd83 100644
+--- a/arch/x86/um/shared/sysdep/syscalls_64.h
++++ b/arch/x86/um/shared/sysdep/syscalls_64.h
+@@ -10,13 +10,12 @@
+ #include <linux/msg.h>
+ #include <linux/shm.h>
+ 
+-typedef long syscall_handler_t(void);
++typedef long syscall_handler_t(long, long, long, long, long, long);
+ 
+ extern syscall_handler_t *sys_call_table[];
+ 
+ #define EXECUTE_SYSCALL(syscall, regs) \
+-	(((long (*)(long, long, long, long, long, long)) \
+-	  (*sys_call_table[syscall]))(UPT_SYSCALL_ARG1(&regs->regs), \
++	(((*sys_call_table[syscall]))(UPT_SYSCALL_ARG1(&regs->regs), \
+ 		 		      UPT_SYSCALL_ARG2(&regs->regs), \
+ 				      UPT_SYSCALL_ARG3(&regs->regs), \
+ 				      UPT_SYSCALL_ARG4(&regs->regs), \
+diff --git a/drivers/block/drbd/drbd_main.c b/drivers/block/drbd/drbd_main.c
+index daa9cef96ec66..f4537a5eef024 100644
+--- a/drivers/block/drbd/drbd_main.c
++++ b/drivers/block/drbd/drbd_main.c
+@@ -193,7 +193,7 @@ void tl_release(struct drbd_connection *connection, unsigned int barrier_nr,
+ 		unsigned int set_size)
+ {
+ 	struct drbd_request *r;
+-	struct drbd_request *req = NULL;
++	struct drbd_request *req = NULL, *tmp = NULL;
+ 	int expect_epoch = 0;
+ 	int expect_size = 0;
+ 
+@@ -247,8 +247,11 @@ void tl_release(struct drbd_connection *connection, unsigned int barrier_nr,
+ 	 * to catch requests being barrier-acked "unexpectedly".
+ 	 * It usually should find the same req again, or some READ preceding it. */
+ 	list_for_each_entry(req, &connection->transfer_log, tl_requests)
+-		if (req->epoch == expect_epoch)
++		if (req->epoch == expect_epoch) {
++			tmp = req;
+ 			break;
++		}
++	req = list_prepare_entry(tmp, &connection->transfer_log, tl_requests);
+ 	list_for_each_entry_safe_from(req, r, &connection->transfer_log, tl_requests) {
+ 		if (req->epoch != expect_epoch)
+ 			break;
+diff --git a/drivers/block/floppy.c b/drivers/block/floppy.c
+index cfe1bfb3c20e9..216ee1057b12e 100644
+--- a/drivers/block/floppy.c
++++ b/drivers/block/floppy.c
+@@ -516,8 +516,8 @@ static unsigned long fdc_busy;
+ static DECLARE_WAIT_QUEUE_HEAD(fdc_wait);
+ static DECLARE_WAIT_QUEUE_HEAD(command_done);
+ 
+-/* Errors during formatting are counted here. */
+-static int format_errors;
++/* errors encountered on the current (or last) request */
++static int floppy_errors;
+ 
+ /* Format request descriptor. */
+ static struct format_descr format_req;
+@@ -537,7 +537,6 @@ static struct format_descr format_req;
+ static char *floppy_track_buffer;
+ static int max_buffer_sectors;
+ 
+-static int *errors;
+ typedef void (*done_f)(int);
+ static const struct cont_t {
+ 	void (*interrupt)(void);
+@@ -1426,7 +1425,7 @@ static int interpret_errors(void)
+ 			if (DP->flags & FTD_MSG)
+ 				DPRINT("Over/Underrun - retrying\n");
+ 			bad = 0;
+-		} else if (*errors >= DP->max_errors.reporting) {
++		} else if (floppy_errors >= DP->max_errors.reporting) {
+ 			print_errors();
+ 		}
+ 		if (ST2 & ST2_WC || ST2 & ST2_BC)
+@@ -2049,7 +2048,7 @@ static void bad_flp_intr(void)
+ 		if (!next_valid_format())
+ 			return;
+ 	}
+-	err_count = ++(*errors);
++	err_count = ++floppy_errors;
+ 	INFBOUND(DRWE->badness, err_count);
+ 	if (err_count > DP->max_errors.abort)
+ 		cont->done(0);
+@@ -2194,9 +2193,8 @@ static int do_format(int drive, struct format_descr *tmp_format_req)
+ 		return -EINVAL;
+ 	}
+ 	format_req = *tmp_format_req;
+-	format_errors = 0;
+ 	cont = &format_cont;
+-	errors = &format_errors;
++	floppy_errors = 0;
+ 	ret = wait_til_done(redo_format, true);
+ 	if (ret == -EINTR)
+ 		return -EINTR;
+@@ -2679,7 +2677,7 @@ static int make_raw_rw_request(void)
+ 		 */
+ 		if (!direct ||
+ 		    (indirect * 2 > direct * 3 &&
+-		     *errors < DP->max_errors.read_track &&
++		     floppy_errors < DP->max_errors.read_track &&
+ 		     ((!probing ||
+ 		       (DP->read_track & (1 << DRS->probed_format)))))) {
+ 			max_size = blk_rq_sectors(current_req);
+@@ -2812,8 +2810,10 @@ static int set_next_request(void)
+ 			fdc_queue = 0;
+ 		if (q) {
+ 			current_req = blk_fetch_request(q);
+-			if (current_req)
++			if (current_req) {
++				floppy_errors = 0;
+ 				break;
++			}
+ 		}
+ 	} while (fdc_queue != old_pos);
+ 
+@@ -2873,7 +2873,6 @@ do_request:
+ 		_floppy = floppy_type + DP->autodetect[DRS->probed_format];
+ 	} else
+ 		probing = 0;
+-	errors = &(current_req->errors);
+ 	tmp = make_raw_rw_request();
+ 	if (tmp < 2) {
+ 		request_done(tmp);
+diff --git a/drivers/gpu/drm/drm_dp_mst_topology.c b/drivers/gpu/drm/drm_dp_mst_topology.c
+index bb70c5272fe8e..efd3ac2acea5a 100644
+--- a/drivers/gpu/drm/drm_dp_mst_topology.c
++++ b/drivers/gpu/drm/drm_dp_mst_topology.c
+@@ -2830,6 +2830,7 @@ static void fetch_monitor_name(struct drm_dp_mst_topology_mgr *mgr,
+ 
+ 	mst_edid = drm_dp_mst_get_edid(port->connector, mgr, port);
+ 	drm_edid_get_monitor_name(mst_edid, name, namelen);
++	kfree(mst_edid);
+ }
+ 
+ /**
+diff --git a/drivers/input/input.c b/drivers/input/input.c
+index 5d94fc3fce0bb..378717d1b3b47 100644
+--- a/drivers/input/input.c
++++ b/drivers/input/input.c
+@@ -50,6 +50,17 @@ static DEFINE_MUTEX(input_mutex);
+ 
+ static const struct input_value input_value_sync = { EV_SYN, SYN_REPORT, 1 };
+ 
++static const unsigned int input_max_code[EV_CNT] = {
++	[EV_KEY] = KEY_MAX,
++	[EV_REL] = REL_MAX,
++	[EV_ABS] = ABS_MAX,
++	[EV_MSC] = MSC_MAX,
++	[EV_SW] = SW_MAX,
++	[EV_LED] = LED_MAX,
++	[EV_SND] = SND_MAX,
++	[EV_FF] = FF_MAX,
++};
++
+ static inline int is_event_supported(unsigned int code,
+ 				     unsigned long *bm, unsigned int max)
+ {
+@@ -1913,6 +1924,14 @@ EXPORT_SYMBOL(input_free_device);
+  */
+ void input_set_capability(struct input_dev *dev, unsigned int type, unsigned int code)
+ {
++	if (type < EV_CNT && input_max_code[type] &&
++	    code > input_max_code[type]) {
++		pr_err("%s: invalid code %u for type %u\n", __func__, code,
++		       type);
++		dump_stack();
++		return;
++	}
++
+ 	switch (type) {
+ 	case EV_KEY:
+ 		__set_bit(code, dev->keybit);
+diff --git a/drivers/mmc/card/block.c b/drivers/mmc/card/block.c
+index 709a872ed484a..7b8c72a07900a 100644
+--- a/drivers/mmc/card/block.c
++++ b/drivers/mmc/card/block.c
+@@ -1192,7 +1192,7 @@ retry:
+ 				 arg == MMC_TRIM_ARG ?
+ 				 INAND_CMD38_ARG_TRIM :
+ 				 INAND_CMD38_ARG_ERASE,
+-				 0);
++				 card->ext_csd.generic_cmd6_time);
+ 		if (err)
+ 			goto out;
+ 	}
+@@ -1235,7 +1235,7 @@ retry:
+ 				 arg == MMC_SECURE_TRIM1_ARG ?
+ 				 INAND_CMD38_ARG_SECTRIM1 :
+ 				 INAND_CMD38_ARG_SECERASE,
+-				 0);
++				 card->ext_csd.generic_cmd6_time);
+ 		if (err)
+ 			goto out_retry;
+ 	}
+@@ -1251,7 +1251,7 @@ retry:
+ 			err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+ 					 INAND_CMD38_ARG_EXT_CSD,
+ 					 INAND_CMD38_ARG_SECTRIM2,
+-					 0);
++					 card->ext_csd.generic_cmd6_time);
+ 			if (err)
+ 				goto out_retry;
+ 		}
+diff --git a/drivers/mmc/core/core.c b/drivers/mmc/core/core.c
+index f0fa6a799f7ce..dfe55e9d729f8 100644
+--- a/drivers/mmc/core/core.c
++++ b/drivers/mmc/core/core.c
+@@ -61,6 +61,8 @@
+ /* The max erase timeout, used when host->max_busy_timeout isn't specified */
+ #define MMC_ERASE_TIMEOUT_MS	(60 * 1000) /* 60 s */
+ 
++#define MMC_CACHE_FLUSH_TIMEOUT_MS     (30 * 1000) /* 30s */
++
+ static const unsigned freqs[] = { 400000, 300000, 200000, 100000 };
+ 
+ /*
+@@ -2936,7 +2938,8 @@ int mmc_flush_cache(struct mmc_card *card)
+ 			(card->ext_csd.cache_size > 0) &&
+ 			(card->ext_csd.cache_ctrl & 1)) {
+ 		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+-				EXT_CSD_FLUSH_CACHE, 1, 0);
++				EXT_CSD_FLUSH_CACHE, 1,
++				 MMC_CACHE_FLUSH_TIMEOUT_MS);
+ 		if (err)
+ 			pr_err("%s: cache flush error %d\n",
+ 					mmc_hostname(card->host), err);
+diff --git a/drivers/net/ethernet/dec/tulip/tulip_core.c b/drivers/net/ethernet/dec/tulip/tulip_core.c
+index bbde90bc74fe2..6224f9d222981 100644
+--- a/drivers/net/ethernet/dec/tulip/tulip_core.c
++++ b/drivers/net/ethernet/dec/tulip/tulip_core.c
+@@ -1412,8 +1412,10 @@ static int tulip_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 
+ 	/* alloc_etherdev ensures aligned and zeroed private structures */
+ 	dev = alloc_etherdev (sizeof (*tp));
+-	if (!dev)
++	if (!dev) {
++		pci_disable_device(pdev);
+ 		return -ENOMEM;
++	}
+ 
+ 	SET_NETDEV_DEV(dev, &pdev->dev);
+ 	if (pci_resource_len (pdev, 0) < tulip_tbl[chip_idx].io_size) {
+@@ -1792,6 +1794,7 @@ err_out_free_res:
+ 
+ err_out_free_netdev:
+ 	free_netdev (dev);
++	pci_disable_device(pdev);
+ 	return -ENODEV;
+ }
+ 
+diff --git a/drivers/net/ethernet/intel/igb/igb_main.c b/drivers/net/ethernet/intel/igb/igb_main.c
+index 6bede67744864..d825e527ec1ac 100644
+--- a/drivers/net/ethernet/intel/igb/igb_main.c
++++ b/drivers/net/ethernet/intel/igb/igb_main.c
+@@ -4546,7 +4546,8 @@ static void igb_watchdog_task(struct work_struct *work)
+ 				break;
+ 			}
+ 
+-			if (adapter->link_speed != SPEED_1000)
++			if (adapter->link_speed != SPEED_1000 ||
++			    !hw->phy.ops.read_reg)
+ 				goto no_wait;
+ 
+ 			/* wait for Remote receiver status OK */
+diff --git a/drivers/net/ethernet/qlogic/qla3xxx.c b/drivers/net/ethernet/qlogic/qla3xxx.c
+index 147effc16316f..e62e3a9d52490 100644
+--- a/drivers/net/ethernet/qlogic/qla3xxx.c
++++ b/drivers/net/ethernet/qlogic/qla3xxx.c
+@@ -3625,7 +3625,8 @@ static void ql_reset_work(struct work_struct *work)
+ 		qdev->mem_map_registers;
+ 	unsigned long hw_flags;
+ 
+-	if (test_bit((QL_RESET_PER_SCSI | QL_RESET_START), &qdev->flags)) {
++	if (test_bit(QL_RESET_PER_SCSI, &qdev->flags) ||
++	    test_bit(QL_RESET_START, &qdev->flags)) {
+ 		clear_bit(QL_LINK_MASTER, &qdev->flags);
+ 
+ 		/*
+diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_pci.c b/drivers/net/ethernet/stmicro/stmmac/stmmac_pci.c
+index 49eaede34eea6..9beb93479e282 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_pci.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_pci.c
+@@ -183,7 +183,7 @@ static int stmmac_pci_probe(struct pci_dev *pdev,
+ 		return -ENOMEM;
+ 
+ 	/* Enable pci device */
+-	ret = pci_enable_device(pdev);
++	ret = pcim_enable_device(pdev);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "%s: ERROR: failed to enable device\n",
+ 			__func__);
+@@ -241,8 +241,6 @@ static void stmmac_pci_remove(struct pci_dev *pdev)
+ 		pcim_iounmap_regions(pdev, BIT(i));
+ 		break;
+ 	}
+-
+-	pci_disable_device(pdev);
+ }
+ 
+ static int stmmac_pci_suspend(struct device *dev)
+diff --git a/drivers/net/vmxnet3/vmxnet3_drv.c b/drivers/net/vmxnet3/vmxnet3_drv.c
+index 56a8031b56b37..cce959f281b72 100644
+--- a/drivers/net/vmxnet3/vmxnet3_drv.c
++++ b/drivers/net/vmxnet3/vmxnet3_drv.c
+@@ -595,6 +595,7 @@ vmxnet3_rq_alloc_rx_buf(struct vmxnet3_rx_queue *rq, u32 ring_idx,
+ 				if (dma_mapping_error(&adapter->pdev->dev,
+ 						      rbi->dma_addr)) {
+ 					dev_kfree_skb_any(rbi->skb);
++					rbi->skb = NULL;
+ 					rq->stats.rx_buf_alloc_failure++;
+ 					break;
+ 				}
+@@ -619,6 +620,7 @@ vmxnet3_rq_alloc_rx_buf(struct vmxnet3_rx_queue *rq, u32 ring_idx,
+ 				if (dma_mapping_error(&adapter->pdev->dev,
+ 						      rbi->dma_addr)) {
+ 					put_page(rbi->page);
++					rbi->page = NULL;
+ 					rq->stats.rx_buf_alloc_failure++;
+ 					break;
+ 				}
+@@ -1571,6 +1573,10 @@ vmxnet3_rq_cleanup(struct vmxnet3_rx_queue *rq,
+ 	u32 i, ring_idx;
+ 	struct Vmxnet3_RxDesc *rxd;
+ 
++	/* ring has already been cleaned up */
++	if (!rq->rx_ring[0].base)
++		return;
++
+ 	for (ring_idx = 0; ring_idx < 2; ring_idx++) {
+ 		for (i = 0; i < rq->rx_ring[ring_idx].size; i++) {
+ #ifdef __BIG_ENDIAN_BITFIELD
+diff --git a/drivers/scsi/qla2xxx/qla_target.c b/drivers/scsi/qla2xxx/qla_target.c
+index 6ef7a094ee515..b4a21adb3e738 100644
+--- a/drivers/scsi/qla2xxx/qla_target.c
++++ b/drivers/scsi/qla2xxx/qla_target.c
+@@ -3286,6 +3286,9 @@ int qlt_abort_cmd(struct qla_tgt_cmd *cmd)
+ 
+ 	spin_lock_irqsave(&cmd->cmd_lock, flags);
+ 	if (cmd->aborted) {
++		if (cmd->sg_mapped)
++			qlt_unmap_sg(vha, cmd);
++
+ 		spin_unlock_irqrestore(&cmd->cmd_lock, flags);
+ 		/*
+ 		 * It's normal to see 2 calls in this path:
+diff --git a/kernel/events/core.c b/kernel/events/core.c
+index 396abd52962b8..2466e2ae54dc1 100644
+--- a/kernel/events/core.c
++++ b/kernel/events/core.c
+@@ -9903,6 +9903,9 @@ SYSCALL_DEFINE5(perf_event_open,
+ 		 * Do not allow to attach to a group in a different task
+ 		 * or CPU context. If we're moving SW events, we'll fix
+ 		 * this up later, so allow that.
++		 *
++		 * Racy, not holding group_leader->ctx->mutex, see comment with
++		 * perf_event_ctx_lock().
+ 		 */
+ 		if (!move_group && group_leader->ctx != ctx)
+ 			goto err_context;
+@@ -9952,11 +9955,22 @@ SYSCALL_DEFINE5(perf_event_open,
+ 			} else {
+ 				perf_event_ctx_unlock(group_leader, gctx);
+ 				move_group = 0;
++				goto not_move_group;
+ 			}
+ 		}
+ 	} else {
+ 		mutex_lock(&ctx->mutex);
++
++		/*
++		 * Now that we hold ctx->lock, (re)validate group_leader->ctx == ctx,
++		 * see the group_leader && !move_group test earlier.
++		 */
++		if (group_leader && group_leader->ctx != ctx) {
++			err = -EINVAL;
++			goto err_locked;
++		}
+ 	}
++not_move_group:
+ 
+ 	if (ctx->task == TASK_TOMBSTONE) {
+ 		err = -ESRCH;
+diff --git a/net/key/af_key.c b/net/key/af_key.c
+index c9cc9f75b0999..776f94ecbfe6d 100644
+--- a/net/key/af_key.c
++++ b/net/key/af_key.c
+@@ -2861,8 +2861,10 @@ static int pfkey_process(struct sock *sk, struct sk_buff *skb, const struct sadb
+ 	void *ext_hdrs[SADB_EXT_MAX];
+ 	int err;
+ 
+-	pfkey_broadcast(skb_clone(skb, GFP_KERNEL), GFP_KERNEL,
+-			BROADCAST_PROMISC_ONLY, NULL, sock_net(sk));
++	err = pfkey_broadcast(skb_clone(skb, GFP_KERNEL), GFP_KERNEL,
++			      BROADCAST_PROMISC_ONLY, NULL, sock_net(sk));
++	if (err)
++		return err;
+ 
+ 	memset(ext_hdrs, 0, sizeof(ext_hdrs));
+ 	err = parse_exthdrs(skb, hdr, ext_hdrs);
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index 41af02a70742e..02845bed07d74 100644
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -1179,8 +1179,7 @@ static void ieee80211_rx_reorder_ampdu(struct ieee80211_rx_data *rx,
+ 		goto dont_reorder;
+ 
+ 	/* not part of a BA session */
+-	if (ack_policy != IEEE80211_QOS_CTL_ACK_POLICY_BLOCKACK &&
+-	    ack_policy != IEEE80211_QOS_CTL_ACK_POLICY_NORMAL)
++	if (ack_policy == IEEE80211_QOS_CTL_ACK_POLICY_NOACK)
+ 		goto dont_reorder;
+ 
+ 	/* new, potentially un-ordered, ampdu frame - process it */
+diff --git a/net/nfc/nci/data.c b/net/nfc/nci/data.c
+index d203837797102..b8a295dd15d85 100644
+--- a/net/nfc/nci/data.c
++++ b/net/nfc/nci/data.c
+@@ -130,7 +130,7 @@ static int nci_queue_tx_data_frags(struct nci_dev *ndev,
+ 
+ 		skb_frag = nci_skb_alloc(ndev,
+ 					 (NCI_DATA_HDR_SIZE + frag_len),
+-					 GFP_KERNEL);
++					 GFP_ATOMIC);
+ 		if (skb_frag == NULL) {
+ 			rc = -ENOMEM;
+ 			goto free_exit;
+diff --git a/net/nfc/nci/hci.c b/net/nfc/nci/hci.c
+index 5fae3f064ad0a..9c37618f36c62 100644
+--- a/net/nfc/nci/hci.c
++++ b/net/nfc/nci/hci.c
+@@ -165,7 +165,7 @@ static int nci_hci_send_data(struct nci_dev *ndev, u8 pipe,
+ 
+ 	i = 0;
+ 	skb = nci_skb_alloc(ndev, conn_info->max_pkt_payload_len +
+-			    NCI_DATA_HDR_SIZE, GFP_KERNEL);
++			    NCI_DATA_HDR_SIZE, GFP_ATOMIC);
+ 	if (!skb)
+ 		return -ENOMEM;
+ 
+@@ -198,7 +198,7 @@ static int nci_hci_send_data(struct nci_dev *ndev, u8 pipe,
+ 		if (i < data_len) {
+ 			skb = nci_skb_alloc(ndev,
+ 					    conn_info->max_pkt_payload_len +
+-					    NCI_DATA_HDR_SIZE, GFP_KERNEL);
++					    NCI_DATA_HDR_SIZE, GFP_ATOMIC);
+ 			if (!skb)
+ 				return -ENOMEM;
+ 
+diff --git a/sound/isa/wavefront/wavefront_synth.c b/sound/isa/wavefront/wavefront_synth.c
+index 6c06d06457796..b205c12c60092 100644
+--- a/sound/isa/wavefront/wavefront_synth.c
++++ b/sound/isa/wavefront/wavefront_synth.c
+@@ -1091,7 +1091,8 @@ wavefront_send_sample (snd_wavefront_t *dev,
+ 
+ 			if (dataptr < data_end) {
+ 		
+-				__get_user (sample_short, dataptr);
++				if (get_user(sample_short, dataptr))
++					return -EFAULT;
+ 				dataptr += skip;
+ 		
+ 				if (data_is_unsigned) { /* GUS ? */
+diff --git a/tools/perf/bench/numa.c b/tools/perf/bench/numa.c
+index 7b364f2926d4f..901e9d6efcece 100644
+--- a/tools/perf/bench/numa.c
++++ b/tools/perf/bench/numa.c
+@@ -1626,7 +1626,7 @@ static int __bench_numa(const char *name)
+ 		"GB/sec,", "total-speed",	"GB/sec total speed");
+ 
+ 	if (g->p.show_details >= 2) {
+-		char tname[14 + 2 * 10 + 1];
++		char tname[14 + 2 * 11 + 1];
+ 		struct thread_data *td;
+ 		for (p = 0; p < g->p.nr_proc; p++) {
+ 			for (t = 0; t < g->p.nr_threads; t++) {

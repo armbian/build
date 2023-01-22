@@ -3,7 +3,7 @@
 driver_rtl8152_rtl8153()
 {
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
-	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ $LINUXFAMILY != mvebu64 ] && [ $LINUXFAMILY != rk322x ] && [ $LINUXFAMILY != odroidxu4 ] && [ $EXTRAWIFI == yes ]; then
+	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ "$LINUXFAMILY" != mvebu64 ] && [ "$LINUXFAMILY" != rk322x ] && [ "$LINUXFAMILY" != odroidxu4 ] && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl8152ver="branch:master"
@@ -48,6 +48,9 @@ driver_rtl8189ES()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189es\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-p2p-go-advertising.patch" "applying"
+
 	fi
 }
 
@@ -84,6 +87,9 @@ driver_rtl8189FS()
 		echo "obj-\$(CONFIG_RTL8189FS) += rtl8189fs/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8189fs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-p2p-go-advertising.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-and-enable-secondary-iface.patch" "applying"
 
 	fi
 
@@ -122,6 +128,7 @@ driver_rtl8192EU()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8192eu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-p2p-go-advertising.patch" "applying"
 	fi
 }
 
@@ -133,7 +140,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821()
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8812auver="commit:41532e3b16dcf27f06e6fe5a26314f3aa24d4f87"
+		local rtl8812auver="commit:450db78f7bd23f0c611553eb475fa5b5731d6497"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
@@ -156,9 +163,6 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821()
 		echo "obj-\$(CONFIG_88XXAU) += rtl8812au/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# add support for 5.19.2
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-5.19.2.patch" "applying"
 
 	fi
 
@@ -214,15 +218,15 @@ driver_rtl8811CU_rtl8821C()
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:8c2226a74ae718439d56248bd2e44ccf717086d5"
+		local rtl8811cuver="commit:7b8c45a270454f05e2dbf3beeb4afcf817db65da"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/brektrou/rtl8821CU" "rtl8811cu" "${rtl8811cuver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210118" "rtl8811cu" "${rtl8811cuver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8811cu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8811cu/"
-		cp -R "${SRC}/cache/sources/rtl8811cu/${rtl8811cuver#*:}"/{core,hal,include,os_dep,platform,rtl8821c.mk} \
+		cp -R "${SRC}/cache/sources/rtl8811cu/${rtl8811cuver#*:}"/{core,hal,include,os_dep,platform,*.mk} \
 			"$kerneldir/drivers/net/wireless/rtl8811cu"
 
 		# Makefile
@@ -247,12 +251,7 @@ driver_rtl8811CU_rtl8821C()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		# add support for 5.18.y
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8821cu.patch" "applying"
-
-		# add support for 5.19.2
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-5.19.2.patch" "applying"
-
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-p2p-go-advertising.patch" "applying"
 	fi
 
 }
@@ -297,9 +296,9 @@ driver_rtl8188EU_rtl8188ETV()
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu.patch" "applying"
-
-		# add support for K5.12+
 		process_patch_file "${SRC}/patch/misc/wireless-realtek-8188eu-5.12.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu-Fix-p2p-go-advertising.patch" "applying"
 
 	fi
 }
@@ -312,11 +311,11 @@ driver_rtl88x2bu()
 	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl88x2buver="commit:00f51d93fe8309b0e23782ad621a038c98c7f031"
+		local rtl88x2buver="commit:2590672d717e2516dd2e96ed66f1037a6815bced"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/cilynx/rtl88x2bu" "rtl88x2bu" "${rtl88x2buver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/88x2bu-20210702" "rtl88x2bu" "${rtl88x2buver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2bu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2bu/"
@@ -333,14 +332,15 @@ driver_rtl88x2bu()
 			"$kerneldir/drivers/net/wireless/rtl88x2bu/Kconfig"
 
 		# Adjust path
-		sed -i 's/include $(src)\/rtl8822b.mk /include $(TopDIR)\/drivers\/net\/wireless\/rtl88x2bu\/rtl8822b.mk/' \
+		sed -i "s/include \$(src)\/rtl8822b.mk /include \$(TopDIR)\/drivers\/net\/wireless\/rtl88x2bu\/rtl8822b.mk/" \
 			"$kerneldir/drivers/net/wireless/rtl88x2bu/Makefile"
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> "$kerneldir/drivers/net/wireless/Makefile"
-		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2bu\/Kconfig"' \
+		sed -i "/source \"drivers\/net\/wireless\/ti\/Kconfig\"/a source \"drivers\/net\/wireless\/rtl88x2bu\/Kconfig\"" \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-p2p-go-advertising.patch" "applying"
 	fi
 
 }
@@ -374,7 +374,7 @@ driver_rtl88x2cs()
 			"$kerneldir/drivers/net/wireless/rtl88x2cs/Kconfig"
 
 		# Adjust path
-		sed -i 's/include $(src)\/rtl8822c.mk/include $(TopDIR)\/drivers\/net\/wireless\/rtl88x2cs\/rtl8822c.mk/' \
+		sed -i "s/include \$(src)\/rtl8822c.mk/include \$(TopDIR)\/drivers\/net\/wireless\/rtl88x2cs\/rtl8822c.mk/" \
 			"$kerneldir/drivers/net/wireless/rtl88x2cs/Makefile"
 
 		# Disable debug
@@ -385,6 +385,8 @@ driver_rtl88x2cs()
 		echo "obj-\$(CONFIG_RTL8822CS) += rtl88x2cs/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2cs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2cs-Fix-p2p-go-advertising.patch" "applying"
 	fi
 }
 #_bt for blueteeth
@@ -438,6 +440,7 @@ driver_rtl8723DS()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723ds\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-p2p-go-advertising.patch" "applying"
 	fi
 }
 
@@ -446,7 +449,7 @@ driver_rtl8723DU()
 
 	# Wireless drivers for Realtek 8723DU chipsets
 
-	if linux-version compare $version ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 5.0 && [ "$EXTRAWIFI" == yes ]; then
 
 		local rtl8723duver="branch:master"
 
@@ -454,25 +457,28 @@ driver_rtl8723DU()
 
 		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes"
 		cd "$kerneldir" || exit
-		rm -rf $kerneldir/drivers/net/wireless/rtl8723du
-		mkdir -p $kerneldir/drivers/net/wireless/rtl8723du/
-		cp -R ${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}/{core,hal,include,os_dep,platform} \
-			$kerneldir/drivers/net/wireless/rtl8723du
+		rm -rf "$kerneldir/drivers/net/wireless/rtl8723du"
+		mkdir -p "$kerneldir/drivers/net/wireless/rtl8723du/"
+		cp -R "${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}"/{core,hal,include,os_dep,platform} \
+			"$kerneldir/drivers/net/wireless/rtl8723du"
 
 		# Makefile
-		cp ${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}/Makefile \
-			$kerneldir/drivers/net/wireless/rtl8723du/Makefile
+		cp "${SRC}/cache/sources/rtl8723du/${rtl8723duver#*:}"/Makefile \
+			"$kerneldir/drivers/net/wireless/rtl8723du/Makefile"
 
 		# Disable debug
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
-			$kerneldir/drivers/net/wireless/rtl8723du/Makefile
+			"$kerneldir/drivers/net/wireless/rtl8723du/Makefile"
 
 		# Add to section Makefile
-		echo "obj-\$(CONFIG_RTL8723DU) += rtl8723du/" >> $kerneldir/drivers/net/wireless/Makefile
+		echo "obj-\$(CONFIG_RTL8723DU) += rtl8723du/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8723du\/Kconfig"' \
-			$kerneldir/drivers/net/wireless/Kconfig
+			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-5.19.2.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-Fix-p2p-go-advertising.patch" "applying"
+
 	fi
 }
 
@@ -489,13 +495,13 @@ driver_rtl8822BS()
 		fetch_from_repo "$GITHUB_SOURCE/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8822bs"
-		mkdir -p $kerneldir/drivers/net/wireless/rtl8822bs/
+		mkdir -p "$kerneldir/drivers/net/wireless/rtl8822bs/"
 		cp -R "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}"/{core,hal,include,os_dep,platform,bluetooth,getAP,rtl8822b.mk} \
-			$kerneldir/drivers/net/wireless/rtl8822bs
+			"$kerneldir/drivers/net/wireless/rtl8822bs"
 
 		# Makefile
 		cp "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}/Makefile" \
-			$kerneldir/drivers/net/wireless/rtl8822bs/Makefile
+			"$kerneldir/drivers/net/wireless/rtl8822bs/Makefile"
 
 		# Kconfig
 		sed -i 's/---help---/help/g' "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}/Kconfig"
@@ -503,18 +509,39 @@ driver_rtl8822BS()
 			"$kerneldir/drivers/net/wireless/rtl8822bs/Kconfig"
 
 		# Add to section Makefile
-		echo "obj-\$(CONFIG_RTL8822BS) += rtl8822bs/" >> $kerneldir/drivers/net/wireless/Makefile
+		echo "obj-\$(CONFIG_RTL8822BS) += rtl8822bs/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8822bs\/Kconfig"' \
-			$kerneldir/drivers/net/wireless/Kconfig
+			"$kerneldir/drivers/net/wireless/Kconfig"
+
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs-Fix-p2p-go-advertising.patch" "applying"
 
 	fi
 
 }
 
+driver_uwe5622_allwinner()
+{
+	# Unisoc uwe5622 wireless Support
+	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 6.1 && [[ "$LINUXFAMILY" == sunxi* ]]; then
+		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
+
+		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
+
+                # Add to section Makefile
+                echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
+
+		if linux-version compare "${version}" lt 6.1; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bt-fix.patch" "applying"
+		fi
+	fi
+}
+
 patch_drivers_network()
 {
 	display_alert "Patching network related drivers"
-	
+
 	driver_rtl8152_rtl8153
 	driver_rtl8189ES
 	driver_rtl8189FS
@@ -529,6 +556,7 @@ patch_drivers_network()
 	driver_rtl8723DS
 	driver_rtl8723DU
 	driver_rtl8822BS
+	driver_uwe5622_allwinner
 
 	display_alert "Network related drivers patched" "" "info"
 }

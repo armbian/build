@@ -54,34 +54,14 @@ function prepare_and_config_main_build_single() {
 		# private ccache directory to avoid permission issues when using build script with "sudo"
 		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
 		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
+		# Check if /tmp is mounted as tmpfs make a temporary ccache folder there for faster operation.
+		if [ "$(findmnt --noheadings --output FSTYPE --target "/tmp" --uniq)" == "tmpfs" ]; then
+			export CCACHE_TEMPDIR="/tmp/ccache-tmp"
+		fi
 
 	else
 
 		CCACHE=""
-
-	fi
-
-	if [[ -n $REPOSITORY_UPDATE ]]; then
-
-		# select stable/beta configuration
-		if [[ $BETA == yes ]]; then
-			DEB_STORAGE=$DEST/debs-beta
-			REPO_STORAGE=$DEST/repository-beta
-			REPO_CONFIG="aptly-beta.conf"
-		else
-			DEB_STORAGE=$DEST/debs
-			REPO_STORAGE=$DEST/repository
-			REPO_CONFIG="aptly.conf"
-		fi
-
-		# For user override
-		if [[ -f "${USERPATCHES_PATH}"/lib.config ]]; then
-			display_alert "Using user configuration override" "userpatches/lib.config" "info"
-			source "${USERPATCHES_PATH}"/lib.config
-		fi
-
-		repo-manipulate "$REPOSITORY_UPDATE"
-		exit
 
 	fi
 

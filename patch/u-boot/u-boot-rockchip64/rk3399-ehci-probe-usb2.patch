@@ -1,0 +1,114 @@
+From ccfd8b3f8b001aab0a2469e43ce8768863cb454d Mon Sep 17 00:00:00 2001
+From: schwar3kat <61094841+schwar3kat@users.noreply.github.com>
+Date: Wed, 18 Jan 2023 15:46:39 +1300
+Subject: [PATCH] arm: dts: rockchip: rk3399: usb: ehci: Fix EHCI probe in rk3399 to access peripherals by USB 2.
+
+Commit message: Clean up mbox format in rk3399-ehci-probe-usb2.patch. No diff changes.
+
+arch/arm/dts/rk3399.dtsi has a node
+
+  usb_host0_ehci: usb@fe380000 {
+       compatible = "generic-ehci";
+
+with clocks:
+
+       clocks = <&cru HCLK_HOST0>, <&cru HCLK_HOST0_ARB>,
+                <&u2phy0>;
+
+The first 2 refer to nodes with class UCLASS_CLK, but &u2phy0
+has class UCLASS_PHY.
+
+  u2phy0: usb2phy@e450 {
+       compatible = "rockchip,rk3399-usb2phy";
+
+Since clk_get_bulk() only looks for devices with UCLASS_CLK,
+it fails with -ENODEV and then ehci_usb_probe() aborts.
+
+The consequence is peripherals connected to a USB 2 port (e.g. in a
+Rock Pi 4 the white port, nearer the edge) not being detected.
+They're detected if CONFIG_USB_OHCI_GENERIC is selected in Kconfig,
+because ohci_usb_probe() does not abort when one clk_get_by_index()
+fails, but then they work in USB 1 mode,.
+
+rk3399.dtsi comes from linux and the  u2phy0 was added[1] to the clock
+list in:
+
+    commit b5d1c57299734f5b54035ef2e61706b83041f20c
+    Author: William wu <wulf@rock-chips.com>
+    Date:   Wed Dec 21 18:41:05 2016 +0800
+
+    arm64: dts: rockchip: add u2phy clock for ehci and ohci of rk3399
+
+    We found that the suspend process was blocked when it run into
+    ehci/ohci module due to clk-480m of usb2-phy was disabled.
+    [...]
+
+Suspend concerns don't apply to U-Boot, and the problem with U-Boot
+failing to probe EHCI doesn't apply to linux, because in linux
+rockchip_usb2phy_clk480m_register makes u2phy0 a proper clock provider
+when called by rockchip_usb2phy_probe().
+
+So I can think of a few alternative solutions:
+
+1- Change ehci_usb_probe() to make it more similar to
+   ohci_usb_probe(), and survive failure to get one clock. Looks a
+   little harder, and I don't know whether it could break something if
+   it ignored a clock that was important for something else than
+   suspend.
+
+2- Change rk3399.dtsi effecttively reverting the linux commit
+   b5d1c57299734f5b54035ef2e61706b83041f20c. This dealigns the .dtsi
+   from linux and seems fragile at the next synchronisation.
+
+3- Change the clock list in rk3399-u-boot.dtsi or somewhere else.
+   This survives .dts* sync but may survive "too much" and miss some
+   change from linux that we might want.
+
+4- Enable CONFIG_USB_OHCI_GENERIC and use the ports in USB 1 mode.
+   This would need to be made for all boards using rk3399.  In a
+   simple test reading one file from USB storage it gave 769.5 KiB/s
+   instead of 20.5 MiB/s with solution 2.
+
+5- Trying to replicate linux and have usb2phy somehow provide a clk,
+   or have a separate clock device for usb2phy in addition to the phy
+   device. I just can't seem to imagine how to achieve this with the
+   U-Boot driver model, maybe because of my limited familiarity with
+   it.
+
+This patch is option 3. Looked like the simplest and most performant.
+But it might not be what's wanted, so comments wellcome.
+
+Link: [1] https://lkml.kernel.org/lkml/1731551.Q6cHK6n5ZM@phil/T/
+
+Cc: Simon Glass <sjg@chromium.org>
+Cc: Philipp Tomsich <philipp.tomsich@vrull.eu>
+Cc: Kever Yang <kever.yang@rock-chips.com>
+Cc: Lukasz Majewski <lukma@denx.de>
+Cc: Sean Anderson <seanga2@gmail.com>
+Cc: Marek Vasut <marex@denx.de>
+
+Signed-off-by: Xavier Drudis Ferran <xdrudis@tinet.cat>
+
+---
+ arch/arm/dts/rk3399-u-boot.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm/dts/rk3399-u-boot.dtsi b/arch/arm/dts/rk3399-u-boot.dtsi
+index 716b9a43..63c7b104 100644
+--- a/arch/arm/dts/rk3399-u-boot.dtsi
++++ b/arch/arm/dts/rk3399-u-boot.dtsi
+@@ -147,3 +147,11 @@
+ &vopl {
+ 	u-boot,dm-pre-reloc;
+ };
++
++&usb_host0_ehci {
++	clocks = <&cru HCLK_HOST0>, <&cru HCLK_HOST0_ARB>;
++};
++
++&usb_host1_ehci {
++	clocks = <&cru HCLK_HOST1>, <&cru HCLK_HOST1_ARB>;
++};
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+

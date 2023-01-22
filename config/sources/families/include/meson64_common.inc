@@ -24,12 +24,12 @@ GOVERNOR=${GOVERNOR:-ondemand}
 case $BRANCH in
 
 	current)
-		KERNELBRANCH='branch:linux-5.19.y'
+		KERNELBRANCH='branch:linux-6.1.y'
 		KERNELPATCHDIR='meson64-current'
 		;;
 
 	edge)
-		KERNELBRANCH='branch:linux-6.0.y'
+		KERNELBRANCH='tag:v6.2-rc3'     # @TODO: soon-to-be 'branch:linux-6.2.y' when it is released
 		KERNELPATCHDIR='meson64-edge'
 		;;
 
@@ -271,7 +271,7 @@ family_tweaks_bsp() {
 				EndSection
 			EOF
 			;;
-		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2")
+		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2" | "bananapi-m2s")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf
 				Section "Device"
 				    Identifier  "DRM Graphics Acclerated"
