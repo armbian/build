@@ -96,41 +96,67 @@ function is_root_or_sudo_prefix() {
 	return 0
 }
 
-# Usage: local_apt_deb_cache_prepare variable_for_use_yes_no variable_for_cache_dir "when you are using cache/before doing XX/after YY"
+#  usage: local_apt_deb_cache_prepare "using cache for xxx"; echo "${LOCAL_APT_CACHE_INFO[xyz]}"
 function local_apt_deb_cache_prepare() {
-	declare -n __my_use_yes_or_no=${1}      # nameref...
-	declare -n __my_apt_cache_host_dir=${2} # nameref...
-	declare when_used="${3}"
+	declare when_used="${1}"
 
-	__my_use_yes_or_no="no"
+	# validate $RELEASE and $ARCH are set before we start
+	if [[ -z "${RELEASE}" || -z "${ARCH}" ]]; then
+		exit_with_error "RELEASE(=${RELEASE}) and ARCH(=${ARCH}) must be set before calling local_apt_deb_cache_prepare"
+	fi
+
+	# validate SDCARD is set and valid before we start
+	if [[ -z "${SDCARD}" || ! -d "${SDCARD}" ]]; then
+		exit_with_error "SDCARD(=${SDCARD}) must be set and valid before calling local_apt_deb_cache_prepare"
+	fi
+
 	if [[ "${USE_LOCAL_APT_DEB_CACHE}" != "yes" ]]; then
 		# Not using the local cache, do nothing. Just return "no" in the first nameref.
 		return 0
 	fi
 
-	__my_use_yes_or_no="yes"
-	__my_apt_cache_host_dir="${SRC}/cache/aptcache/${RELEASE}-${ARCH}"
-	mkdir -p "${__my_apt_cache_host_dir}" "${__my_apt_cache_host_dir}/archives"
+	declare __my_use_yes_or_no="yes"
+	declare __my_apt_cache_host_debs_dir="${SRC}/cache/aptcache/${RELEASE}-${ARCH}"
+	declare __my_apt_cache_host_debs_dir_strap="${SRC}/cache/aptcache/${RELEASE}-${ARCH}/archives"
+	declare __my_apt_cache_host_lists_dir="${SRC}/cache/aptcache/lists/${RELEASE}-${ARCH}"
+	declare -a __my_all_dirs=("${__my_apt_cache_host_debs_dir}" "${__my_apt_cache_host_debs_dir_strap}" "${__my_apt_cache_host_lists_dir}")
 
-	# get the size, in bytes, of the cache directory, including subdirs
-	declare -i cache_size # heh, mark var as integer
-	cache_size=$(du -sb "${__my_apt_cache_host_dir}" | cut -f1)
+	mkdir -p "${__my_all_dirs[@]}"
 
-	display_alert "Size of apt/deb cache ${when_used}" "${cache_size} bytes" "debug"
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		# get the size, in bytes, of the cache directory, including subdirs
+		declare -i cache_size # heh, mark var as integer
+		cache_size=$(du -sb "${__my_apt_cache_host_debs_dir}" | cut -f1)
 
-	declare -g -i __previous_apt_cache_size
-	if [[ -z "${__previous_apt_cache_size}" ]]; then
-		# first time, set the size to 0
-		__previous_apt_cache_size=0
-	else
-		# not first time, check if the size has changed
-		if [[ "${cache_size}" -ne "${__previous_apt_cache_size}" ]]; then
-			display_alert "Local apt cache size changed ${when_used}" "from ${__previous_apt_cache_size} to ${cache_size} bytes" "debug"
+		display_alert "Size of apt/deb cache ${when_used}" "${cache_size} bytes" "debug"
+
+		declare -g -i __previous_apt_cache_size
+		if [[ -z "${__previous_apt_cache_size}" ]]; then
+			# first time, set the size to 0
+			__previous_apt_cache_size=0
 		else
-			display_alert "Local apt cache size unchanged ${when_used}" "at ${cache_size} bytes" "debug"
+			# not first time, check if the size has changed
+			if [[ "${cache_size}" -ne "${__previous_apt_cache_size}" ]]; then
+				display_alert "Local apt cache size changed ${when_used}" "from ${__previous_apt_cache_size} to ${cache_size} bytes" "debug"
+			else
+				display_alert "Local apt cache size unchanged ${when_used}" "at ${cache_size} bytes" "debug"
+			fi
 		fi
+		__previous_apt_cache_size=${cache_size}
 	fi
-	__previous_apt_cache_size=${cache_size}
+
+	# set a global dictionary for easy usage.
+	declare -g -A LOCAL_APT_CACHE_INFO=(
+		[USE]="${__my_use_yes_or_no}"
+
+		[HOST_DEBS_DIR]="${__my_apt_cache_host_debs_dir}"                    # Dir with debs
+		[HOST_DEBOOTSTRAP_CACHE_DIR]="${__my_apt_cache_host_debs_dir_strap}" # Small difference for debootstrap, if compared to apt: we need to pass it the "/archives" subpath to share cache with apt.
+		[HOST_LISTS_DIR]="${__my_apt_cache_host_lists_dir}"
+
+		[SDCARD_DEBS_DIR]="${SDCARD}/var/cache/apt"
+		[SDCARD_LISTS_DIR]="${SDCARD}/var/lib/apt/lists"
+		[LAST_USED]="${when_used}"
+	)
 
 	return 0
 }
