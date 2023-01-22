@@ -1,4 +1,10 @@
 function start_logging_section() {
+	# Sanity check: if this is called, but CURRENT_LOGGING_SECTION is not empty, then something is wrong.
+	if [[ -n "${CURRENT_LOGGING_SECTION}" && "${CURRENT_LOGGING_SECTION}" != "entrypoint" ]]; then
+		exit_with_error "ERROR: start_logging_section() called, but CURRENT_LOGGING_SECTION is not empty: current: '${CURRENT_LOGGING_SECTION}' trying to enter '${LOG_SECTION}'"
+		return 1
+	fi
+
 	declare -g logging_section_counter=$((logging_section_counter + 1)) # increment counter, used in filename
 	declare -g CURRENT_LOGGING_COUNTER
 	CURRENT_LOGGING_COUNTER="$(printf "%03d" "$logging_section_counter")"
