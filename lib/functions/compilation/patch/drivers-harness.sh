@@ -1,11 +1,6 @@
 function calculate_hash_for_files() {
-	declare -a hashes=()
-	for file in "$@"; do
-		hash="$(sha256sum "${file}" | cut -d' ' -f1)"
-		hashes+=("$hash")
-	done
-	hash_files="$(echo "${hashes[@]}" | sha256sum | cut -d' ' -f1)" # now, hash the hashes
-	hash_files="${hash_files:0:16}"                                 # shorten it to 16 characters
+	hash_files="$(sha256sum "${@}" | sha256sum | cut -d' ' -f1)" # hash of hashes
+	hash_files="${hash_files:0:16}"                              # shorten it to 16 characters
 	display_alert "Hash for files:" "$hash_files" "debug"
 }
 
@@ -13,8 +8,8 @@ function kernel_drivers_create_patches() {
 	declare kernel_work_dir="${1}"
 	declare kernel_git_revision="${2}"
 
-	declare hash_files # any changes in these two files will trigger a cache miss.
-	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh"
+	declare hash_files # any changes in these files will trigger a cache miss; also any changes in misc .patch with "wireless" at start or "wifi" anywhere in the name
+	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch "${SRC}"/patch/misc/*wifi*.patch
 
 	declare cache_key_base="${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}"
 	declare cache_key="${cache_key_base}_${hash_files}"
