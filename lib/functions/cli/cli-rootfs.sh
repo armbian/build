@@ -16,19 +16,14 @@ function cli_rootfs_run() {
 
 	# If BOARD is set, use it to convert to an ARCH.
 	if [[ -n ${BOARD} ]]; then
-		display_alert "BOARD is set, converting to ARCH for rootfs building" "${BOARD}" "warn"
+		display_alert "BOARD is set, converting to ARCH for rootfs building" "'BOARD=${BOARD}'" "warn"
 		# Convert BOARD to ARCH; source the BOARD and FAMILY stuff
-
-
 		LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
-
-		LOG_SECTION="config_source_board_file" do_with_conditional_logging source_family_config_and_arch
-
-		display_alert "Done sourcing board file" "${BOARD} - arch: ${ARCH}" "warn"
-
+		LOG_SECTION="source_family_config_and_arch" do_with_conditional_logging source_family_config_and_arch
+		display_alert "Done sourcing board file" "'${BOARD}' - arch: '${ARCH}'" "warn"
 	fi
 
-	declare -a vars_need_to_be_set=("RELEASE" "ARCH") # Maybe the rootfs version?
+	declare -a vars_need_to_be_set=("RELEASE" "ARCH")
 	# loop through all vars and check if they are not set and bomb out if so
 	for var in "${vars_need_to_be_set[@]}"; do
 		if [[ -z ${!var} ]]; then
@@ -38,6 +33,7 @@ function cli_rootfs_run() {
 
 	declare -r __wanted_rootfs_arch="${ARCH}"
 	declare -g -r RELEASE="${RELEASE}" # make readonly for finding who tries to change it
+	declare -g -r NEEDS_BINFMT="yes"   # make sure binfmts are installed during prepare_host_interactive
 
 	# configuration etc - it initializes the extension manager; handles its own logging sections.
 	prep_conf_main_only_rootfs < /dev/null # no stdin for this, so it bombs if tries to be interactive.
