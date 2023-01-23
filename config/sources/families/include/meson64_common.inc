@@ -31,7 +31,7 @@ case $BRANCH in
 
 	edge)
 		export KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel. For mainline caching.
-		KERNELBRANCH='tag:v6.2-rc3'     # @TODO: soon-to-be 'branch:linux-6.2.y' when it is released
+		KERNELBRANCH='tag:v6.2-rc5'     # @TODO: soon-to-be 'branch:linux-6.2.y' when it is released
 		KERNELPATCHDIR='meson64-edge'
 		;;
 
