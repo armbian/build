@@ -175,10 +175,10 @@ function kernel_package_callback_linux_image() {
 	declare image_name="Image"                                           # "Image" for arm64. or, "zImage" for arm, or "vmlinuz" for others.
 	# If NAME_KERNEL is set (usually in arch config file), warn and use that instead.
 	if [[ -n "${NAME_KERNEL}" ]]; then
-		display_alert "NAME_KERNEL is set" "using '${NAME_KERNEL}' instead of '${image_name}'" "warn"
+		display_alert "NAME_KERNEL is set" "using '${NAME_KERNEL}' instead of '${image_name}'" "debug"
 		image_name="${NAME_KERNEL}"
 	else
-		display_alert "NAME_KERNEL is not set" "using default '${image_name}'" "warn"
+		display_alert "NAME_KERNEL is not set" "using default '${image_name}'" "debug"
 	fi
 
 	display_alert "Showing contents of Kbuild produced /boot" "linux-image" "debug"
@@ -301,10 +301,10 @@ function kernel_package_callback_linux_headers() {
 	[[ "${SRC_ARCH}" == "amd64" ]] && SRC_ARCH="x86"
 	[[ "${SRC_ARCH}" == "armhf" ]] && SRC_ARCH="arm"
 	[[ "${SRC_ARCH}" == "riscv64" ]] && SRC_ARCH="riscv"
-	# @TODO: ok so this actually a duplicate from ARCH/ARCHITECTURE in config/sources/*.conf. We should use that instead.
+	# @TODO: added KERNEL_SRC_ARCH to each arch'es .config file; let's make sure they're sane. Just use KERNEL_SRC_ARCH after confirmed.
 	# Lets check and warn if it isn't. If warns don't popup over time we remove and just use ARCHITECTURE later.
-	if [[ "${SRC_ARCH}" != "${ARCHITECTURE}" ]]; then
-		display_alert "WARNING: ARCHITECTURE and SRC_ARCH don't match during kernel build." "ARCHITECTURE=${ARCHITECTURE} SRC_ARCH=${SRC_ARCH}" "wrn"
+	if [[ "${SRC_ARCH}" != "${KERNEL_SRC_ARCH}" ]]; then
+		display_alert "WARNING: KERNEL_SRC_ARCH and SRC_ARCH don't match during kernel build." "KERNEL_SRC_ARCH=${ARCHITECTURE} SRC_ARCH=${SRC_ARCH}" "wrn"
 	fi
 
 	# Create a list of files to include, path-relative to the kernel tree
