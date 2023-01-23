@@ -260,8 +260,8 @@ function docker_cli_build_dockerfile() {
 
 	declare docker_marker_dir="${SRC}"/cache/docker
 
-	# If we can't write to cache dir...
-	if [[ ! -w "${SRC}"/cache ]]; then
+	# If cache dir exists, but we can't write to cache dir...
+	if [[ -d "${SRC}"/cache ]] && [[ ! -w "${SRC}"/cache ]]; then
 		display_alert "Cannot write to cache/docker" "probably trying to share a cache with 'sudo' version" "err"
 		display_alert "Sharing a cache directory between sudo and Docker is not tested." "Proceed at your own risk" "warn"
 		countdown_and_continue_if_not_aborted 10
