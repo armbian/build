@@ -140,11 +140,11 @@ function kernel_package_hook_helper() {
 		#!/bin/bash
 		echo "Armbian '${package_name}' for '${kernel_version_family}': '${script}' starting."
 		set -e # Error control
-		#set -x # Debugging - disabled
+		set -x # Debugging
 
 		$(cat "${contents}")
 
-		#set +x # Disable debugging - disabled
+		set +x # Disable debugging
 		echo "Armbian '${package_name}' for '${kernel_version_family}': '${script}' finishing."
 		true
 	EOT
@@ -159,7 +159,14 @@ function kernel_package_callback_linux_image() {
 	display_alert "linux-image deb packaging" "${package_directory}" "debug"
 
 	declare installed_image_path="boot/vmlinuz-${kernel_version_family}" # using old mkdebian terminology here.
-	declare image_name="Image"                                           # for arm64. or, "zImage" for arm, or "vmlinuz" for others. Why? See where u-boot puts them.
+	declare image_name="Image"                                           # "Image" for arm64. or, "zImage" for arm, or "vmlinuz" for others.
+	# If NAME_KERNEL is set (usually in arch config file), warn and use that instead.
+	if [[ -n "${NAME_KERNEL}" ]]; then
+		display_alert "NAME_KERNEL is set" "using '${NAME_KERNEL}' instead of '${image_name}'" "warn"
+		image_name="${NAME_KERNEL}"
+	else
+		display_alert "NAME_KERNEL is not set" "using default '${image_name}'" "warn"
+	fi
 
 	display_alert "Showing contents of Kbuild produced /boot" "linux-image" "debug"
 	run_host_command_logged tree -C --du -h "${tmp_kernel_install_dirs[INSTALL_PATH]}"
@@ -216,8 +223,8 @@ function kernel_package_callback_linux_image() {
 			if [[ "${script}" == "postinst" ]]; then
 				if [[ "yes" == "yes" ]]; then
 					cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
-						echo "Armbian: update last-installed kernel symlink..."
-						ln -sf $(basename "${installed_image_path}") /boot/$image_name || mv /${installed_image_path} /boot/${image_name}
+						echo "Armbian: update last-installed kernel symlink to '$image_name'..."
+						ln -sfv $(basename "${installed_image_path}") /boot/$image_name || mv -v /${installed_image_path} /boot/${image_name}
 						touch /boot/.next
 					HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
 				fi
