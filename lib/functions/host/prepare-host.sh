@@ -114,7 +114,13 @@ function prepare_host_noninteractive() {
 	# ... and the host arch does not match the target arch ...
 	# ... we then require binfmt_misc to be enabled.
 	# "enable arm binary format so that the cross-architecture chroot environment will work"
-	if [[ $KERNEL_ONLY != yes ]]; then
+	if [[ "${KERNEL_ONLY}" != "yes" ]] || [[ "${NEEDS_BINFMT:-"no"}" == "yes" ]]; then
+
+		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+			display_alert "Debugging binfmt - early" "/proc/sys/fs/binfmt_misc/" "debug"
+			run_host_command_logged ls -la /proc/sys/fs/binfmt_misc/ || true
+		fi
+
 		if dpkg-architecture -e "${ARCH}"; then
 			display_alert "Native arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "cachehit"
 		else
@@ -149,14 +155,28 @@ function prepare_host_noninteractive() {
 				display_alert "binfmt_misc mounted" "binfmt_misc mounted" "debug"
 			fi
 
-			# @TODO: rpardini: Hmm, this is from long ago. Why? Is it needed? Why not for aarch64?
-			if [[ "$(arch)" != "aarch64" ]]; then
-				test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-				test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
-			fi
+			declare host_arch
+			host_arch="$(arch)"
+			local -a wanted_arches=("arm" "aarch64" "x86_64" "riscv64")
+			display_alert "Preparing binfmts for arch" "binfmts: host '${host_arch}', wanted arches '${wanted_arches[*]}'" "debug"
+			declare wanted_arch
+			for wanted_arch in "${wanted_arches[@]}"; do
+				if [[ "${host_arch}" != "${wanted_arch}" ]]; then
+					if [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" ]]; then
+						display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
+						run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err"
+					fi
+				fi
+			done
 
 			# @TODO: we could create a tiny loop here to test if the binfmt_misc is working, but this is before deps are installed.
 		fi
+
+		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+			display_alert "Debugging binfmt - late" "/proc/sys/fs/binfmt_misc/" "debug"
+			run_host_command_logged ls -la /proc/sys/fs/binfmt_misc/ || true
+		fi
+
 	fi
 
 	# @TODO: rpardini: this does not belong here, instead with the other templates, pre-configuration.
