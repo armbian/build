@@ -331,7 +331,7 @@ function get_descendants_of_pid_array() {
 # So run sync under "timeout" in a loop, until it completes successfully.
 # call: wait_for_disk_sync "after writing a huge file to disk"
 function wait_for_disk_sync() {
-	declare -i timeout_seconds=10
+	declare -i timeout_seconds=30
 	declare -i sync_worked=0
 	declare -i sync_timeout_count=0
 	declare -i total_wait=0
