@@ -23,5 +23,7 @@ function cli_requirements_run() {
 
 	LOG_SECTION="install_host_dependencies" do_with_logging install_host_dependencies "for requirements command"
 
+	# @TODO: get stuff like shellcheck, shfmt, and ORAS in here. Deploy them somewhere not-in-./cache, so it's baked into Docker image.
+
 	display_alert "Done with" "@host dependencies" "cachehit"
 }

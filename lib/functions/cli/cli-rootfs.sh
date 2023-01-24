@@ -43,6 +43,14 @@ function cli_rootfs_run() {
 		exit_with_error "Param 'ARCH' is set to '${ARCH}' after config, but different from wanted '${__wanted_rootfs_arch}'"
 	fi
 
+	declare -g ROOT_FS_CREATE_VERSION
+	if [[ -z ${ROOT_FS_CREATE_VERSION} ]]; then
+		ROOT_FS_CREATE_VERSION="$(date --utc +"%Y%m%d")"
+		display_alert "ROOT_FS_CREATE_VERSION is not set, defaulting to current date" "ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION}" "warn"
+	else
+		display_alert "ROOT_FS_CREATE_VERSION is set" "ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION}" "info"
+	fi
+
 	# default build, but only invoke specific rootfs functions needed. It has its own logging sections.
 	do_with_default_build cli_rootfs_only_in_default_build < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 
@@ -54,11 +62,16 @@ function cli_rootfs_run() {
 
 # This is run inside do_with_default_build(), above.
 function cli_rootfs_only_in_default_build() {
+	declare -g rootfs_cache_id="none_yet"
+
 	LOG_SECTION="prepare_rootfs_build_params_and_trap" do_with_logging prepare_rootfs_build_params_and_trap
 
-	LOG_SECTION="calculate_rootfs_cache_id" do_with_logging calculate_rootfs_cache_id
+	LOG_SECTION="calculate_rootfs_cache_id" do_with_logging calculate_rootfs_cache_id # sets rootfs_cache_id
 
-	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}'" "info"
+	# Set a GHA output variable for the cache ID, so it can be used in other steps.
+	github_actions_add_output rootfs_cache_id "${rootfs_cache_id}-${ROOT_FS_CREATE_VERSION}" # this is contrived... but it works.
+
+	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
 
 	# "rootfs" CLI skips over a lot goes straight to create the rootfs. It doesn't check cache etc.
 	LOG_SECTION="create_new_rootfs_cache" do_with_logging create_new_rootfs_cache
