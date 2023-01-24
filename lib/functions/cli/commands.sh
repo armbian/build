@@ -47,7 +47,7 @@ function armbian_register_commands() {
 		["config-dump"]="CONFIG_DEFS_ONLY='yes'"
 		["configdump"]="CONFIG_DEFS_ONLY='yes'"
 
-		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes'"
+		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes' KERNEL_CONFIGURE='no'"
 		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
 		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
 
