@@ -74,12 +74,19 @@ function trap_handler_cleanup_logging() {
 	local target_file="${target_path}/summary-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
 	export_markdown_logs
 	reset_uid_owner "${target_file}"
+	local markdown_log_file="${target_file}"
 
 	local target_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.log.ans"
 	export_ansi_logs
 	reset_uid_owner "${target_file}"
 
 	# @TODO: plain-text version? just sed...
+
+	# If running in Github Actions, cat the markdown file GITHUB_STEP_SUMMARY.
+	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
+		display_alert "Exporting Markdown logs to GitHub Actions" "GITHUB_STEP_SUMMARY: '${GITHUB_STEP_SUMMARY}'" "info"
+		cat "${markdown_log_file}" > "${GITHUB_STEP_SUMMARY}" || true
+	fi
 
 	discard_logs_tmp_dir
 }
