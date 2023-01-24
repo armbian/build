@@ -345,7 +345,30 @@ function docker_cli_prepare_launch() {
 		"--env" "TERM=${TERM}"
 
 		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
-		"--env" "CI=${CI}"
+		"--env" "CI=${CI}"                         # All CI's, hopefully
+		"--env" "GITHUB_ACTIONS=${GITHUB_ACTIONS}" # GHA
+		# All known valid Github Actions env vars
+		"--env" "GITHUB_ACTION=${GITHUB_ACTION}"
+		"--env" "GITHUB_ACTOR=${GITHUB_ACTOR}"
+		"--env" "GITHUB_API_URL=${GITHUB_API_URL}"
+		"--env" "GITHUB_BASE_REF=${GITHUB_BASE_REF}"
+		"--env" "GITHUB_ENV=${GITHUB_ENV}"
+		"--env" "GITHUB_EVENT_NAME=${GITHUB_EVENT_NAME}"
+		"--env" "GITHUB_EVENT_PATH=${GITHUB_EVENT_PATH}"
+		"--env" "GITHUB_GRAPHQL_URL=${GITHUB_GRAPHQL_URL}"
+		"--env" "GITHUB_HEAD_REF=${GITHUB_HEAD_REF}"
+		"--env" "GITHUB_JOB=${GITHUB_JOB}"
+		"--env" "GITHUB_PATH=${GITHUB_PATH}"
+		"--env" "GITHUB_REF=${GITHUB_REF}"
+		"--env" "GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
+		"--env" "GITHUB_REPOSITORY_OWNER=${GITHUB_REPOSITORY_OWNER}"
+		"--env" "GITHUB_RETENTION_DAYS=${GITHUB_RETENTION_DAYS}"
+		"--env" "GITHUB_RUN_ID=${GITHUB_RUN_ID}"
+		"--env" "GITHUB_RUN_NUMBER=${GITHUB_RUN_NUMBER}"
+		"--env" "GITHUB_SERVER_URL=${GITHUB_SERVER_URL}"
+		"--env" "GITHUB_SHA=${GITHUB_SHA}"
+		"--env" "GITHUB_WORKFLOW=${GITHUB_WORKFLOW}"
+		"--env" "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
 	)
 
 	# If running on GitHub Actions, mount & forward some paths, so they're accessible inside Docker.
@@ -424,7 +447,7 @@ function docker_cli_prepare_launch() {
 		display_alert "Running in a terminal" "passing through stdin" "debug"
 		DOCKER_ARGS+=("-it")
 	else
-		display_alert "Not running in a terminal" "not passing through stdin to Docker" "warn" # @TODO downgrade to debug after probe works
+		display_alert "Not running in a terminal" "not passing through stdin to Docker" "debug"
 	fi
 
 	# if DOCKER_EXTRA_ARGS is an array and has more than zero elements, add its contents to the DOCKER_ARGS array
