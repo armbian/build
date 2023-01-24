@@ -211,7 +211,7 @@ function config_post_main() {
 			declare -g ARMBIAN_WILL_BUILD_KERNEL=no
 		fi
 	else
-		display_alert "Skipping kernel config" "skip_kernel=yes" "warn"
+		display_alert "Skipping kernel config" "skip_kernel=yes" "debug"
 	fi
 
 	if [[ -n "${BOOTCONFIG}" ]] && [[ "${BOOTCONFIG}" != "none" ]]; then

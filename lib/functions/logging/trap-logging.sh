@@ -69,23 +69,29 @@ function trap_handler_cleanup_logging() {
 	# Check if fd 13 is still open; close it and wait for tee to die. This is done again in discard_logs_tmp_dir()
 	check_and_close_fd_13
 
-	# Export Markdown assets.
-
-	local target_file="${target_path}/summary-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
-	export_markdown_logs
-	reset_uid_owner "${target_file}"
-	local markdown_log_file="${target_file}"
-
+	# Export ANSI logs.
 	local target_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.log.ans"
 	export_ansi_logs
 	reset_uid_owner "${target_file}"
+	local ansi_log_file="${target_file}"
 
-	# @TODO: plain-text version? just sed...
+	# ASCII logs, via ansi2txt, if available.
+	local ascii_log_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.log"
+	if [[ -n "$(command -v ansi2txt)" ]]; then
+		# shellcheck disable=SC2002 # gotta pipe, man. I know.
+		cat "${ansi_log_file}" | ansi2txt >> "${ascii_log_file}"
+	fi
 
-	# If running in Github Actions, cat the markdown file GITHUB_STEP_SUMMARY.
+	# Export Markdown assets.
+	local target_file="${target_path}/summary-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
+	export_markdown_logs "${ascii_log_file}" # it might include the ASCII as well, if in GHA.
+	reset_uid_owner "${target_file}"
+	local markdown_log_file="${target_file}"
+
+	# If running in Github Actions, cat the markdown file to GITHUB_STEP_SUMMARY. It appends, docker and build logs will be together.
 	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
 		display_alert "Exporting Markdown logs to GitHub Actions" "GITHUB_STEP_SUMMARY: '${GITHUB_STEP_SUMMARY}'" "info"
-		cat "${markdown_log_file}" > "${GITHUB_STEP_SUMMARY}" || true
+		cat "${markdown_log_file}" >> "${GITHUB_STEP_SUMMARY}" || true
 	fi
 
 	discard_logs_tmp_dir

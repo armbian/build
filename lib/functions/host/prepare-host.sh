@@ -262,6 +262,7 @@ function adaptative_prepare_host_dependencies() {
 
 		# by-category below
 		file tree expect                                # logging utilities; expect is needed for 'unbuffer' command
+		colorized-logs                                  # for ansi2html, ansi2txt, pipetty
 		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
 		parted gdisk fdisk                              # partition tools @TODO why so many?
 		aria2 curl wget axel                            # downloaders et al
