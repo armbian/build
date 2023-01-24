@@ -15,6 +15,9 @@ SELECTED_CONFIGURATION = None
 DESKTOP_APPGROUPS_SELECTED = []
 SRC = None
 
+# Hack: this shouldn't be a global.
+ALL_POTENTIAL_PATHS_PACKAGES = []
+
 
 def calculate_potential_paths(root_dirs, relative_dirs, sub_dirs, artifact_file, initial_paths=None):
 	if initial_paths is None:
@@ -38,9 +41,17 @@ def process_common_path_for_potentials(potential_paths):
 	return potential_paths
 
 
+def get_all_potential_paths_packages():
+	# return ALL_POTENTIAL_PATHS_PACKAGES sorted alphabetically
+	return sorted(ALL_POTENTIAL_PATHS_PACKAGES)
+
+
 def aggregate_packages_from_potential(potential_paths):
 	aggregation_results = {}  # {"potential_paths": potential_paths}
 	for path in potential_paths["paths"]:
+		# Add to global, for listing all potential paths for packages:
+		ALL_POTENTIAL_PATHS_PACKAGES.append(path)
+
 		full_path = potential_paths["common_path"] + path
 		if not os.path.isfile(full_path):
 			# print(f"Skipping {path}, not a file")
