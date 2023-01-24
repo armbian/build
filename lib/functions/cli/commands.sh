@@ -22,7 +22,7 @@ function armbian_register_commands() {
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
 
-		["rootfs"]="rootfs" # implemented in cli_rootfs_pre_run and cli_rootfs_run
+		["rootfs"]="rootfs"       # implemented in cli_rootfs_pre_run and cli_rootfs_run
 		["rootfs-cache"]="rootfs" # idem, alias
 
 		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
@@ -30,6 +30,8 @@ function armbian_register_commands() {
 		["u-boot"]="standard_build"
 		["uboot"]="standard_build"
 
+		# external tooling, made easy.
+		["oras-upload"]="oras" # implemented in cli_oras_pre_run and cli_oras_run; up/down/info are the same, see vars below
 
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
@@ -49,6 +51,8 @@ function armbian_register_commands() {
 		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes'"
 		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
 		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
+
+		["oras-upload"]="ORAS_OPERATION='upload'"
 
 		["undecided"]="UNDECIDED='yes'"
 	)
