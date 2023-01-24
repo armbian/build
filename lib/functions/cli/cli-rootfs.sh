@@ -6,6 +6,8 @@ function cli_rootfs_pre_run() {
 }
 
 function cli_rootfs_run() {
+	declare -g ROOTFS_COMPRESSION_RATIO="${ROOTFS_COMPRESSION_RATIO:-"15"}" # default to Compress stronger when we make rootfs cache
+
 	declare -a vars_cant_be_set=("LINUXFAMILY" "BOARDFAMILY")
 	# loop through all vars and check if they are set and bomb out
 	for var in "${vars_cant_be_set[@]}"; do
