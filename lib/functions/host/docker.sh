@@ -348,6 +348,17 @@ function docker_cli_prepare_launch() {
 		"--env" "CI=${CI}"
 	)
 
+	# If running on GitHub Actions, mount & forward some paths, so they're accessible inside Docker.
+	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
+		display_alert "Passing down to Docker" "GITHUB_OUTPUT: '${GITHUB_OUTPUT}'" "info"
+		DOCKER_ARGS+=("--mount" "type=bind,source=${GITHUB_OUTPUT},target=${GITHUB_OUTPUT}")
+		DOCKER_ARGS+=("--env" "GITHUB_OUTPUT=${GITHUB_OUTPUT}")
+
+		display_alert "Passing down to Docker" "GITHUB_STEP_SUMMARY: '${GITHUB_STEP_SUMMARY}'" "info"
+		DOCKER_ARGS+=("--mount" "type=bind,source=${GITHUB_STEP_SUMMARY},target=${GITHUB_STEP_SUMMARY}")
+		DOCKER_ARGS+=("--env" "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY}")
+	fi
+
 	# This will receive the mountpoint as $1 and the mountpoint vars in the environment.
 	function prepare_docker_args_for_mountpoint() {
 		local MOUNT_DIR="$1"
