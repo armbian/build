@@ -8,24 +8,13 @@ function create_new_rootfs_cache_tarball() {
 	tar cp --xattrs --directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' \
 		--exclude='./tmp/*' --exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . |
 		pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" |
-		zstdmt -5 -c > "${cache_fname}"
+		zstdmt -"${ROOTFS_COMPRESSION_RATIO}" -c > "${cache_fname}"
 
 	wait_for_disk_sync "after zstd tarball rootfs"
 
 	# get the human readable size of the cache
 	local cache_size
 	cache_size=$(du -sh "${cache_fname}" | cut -f1)
-
-	# sign rootfs cache archive that it can be used for web cache once. Internal purposes
-	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
-		display_alert "Using, does nothing" "GPG_PASS and SUDO_USER" "warn"
-		# @TODO: rpardini: igor is this still needed? I see the GHA scripts does its own signing?
-		#[[ -n ${SUDO_USER} ]] && sudo chown -R "${SUDO_USER}:${SUDO_USER}" "${DEST}"/images/
-		#echo "${GPG_PASS}" | sudo -H -u "${SUDO_USER}" bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
-	fi
-
-	# needed for backend to keep current only @TODO: say that again? what backend?
-	echo "$cache_fname" > "${cache_fname}.current"
 
 	display_alert "rootfs cache created" "${cache_fname} [${cache_size}]" "info"
 }

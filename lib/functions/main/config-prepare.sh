@@ -9,6 +9,8 @@ function prep_conf_main_build_single() {
 		check_basic_host
 	fi
 
+	ROOTFS_COMPRESSION_RATIO="5"
+
 	# those are possibly interactive. interactive (dialog) and logging don't mix, for obvious reasons.
 	interactive_config_prepare_terminal # init vars used for interactive
 	config_possibly_interactive_kernel_board
@@ -33,9 +35,12 @@ function prep_conf_main_build_single() {
 
 # Lean version, for building rootfs, that doesn't need BOARD/BOARDFAMILY; never interactive.
 function prep_conf_main_only_rootfs() {
+
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
 	check_basic_host
+
+	ROOTFS_COMPRESSION_RATIO="15" # Compress stronger when we make rootfs cache
 
 	LOG_SECTION="config_pre_main" do_with_conditional_logging config_pre_main
 
