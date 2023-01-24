@@ -1,31 +1,37 @@
 function create_new_rootfs_cache_tarball() {
+	# validate cache_fname is set
+	[[ -n "${cache_fname}" ]] || exit_with_error "create_new_rootfs_cache_tarball: cache_fname is not set"
+	# validate SDCARD is set
+	[[ -n "${SDCARD}" ]] || exit_with_error "create_new_rootfs_cache_tarball: SDCARD is not set"
+	# validate cache_name is set
+	[[ -n "${cache_name}" ]] || exit_with_error "create_new_rootfs_cache_tarball: cache_name is not set"
+
 	# create list of installed packages for debug purposes - this captures it's own stdout.
 	# @TODO: sanity check, compare this with the source of the hash coming from aggregation
 	chroot_sdcard "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > "${cache_fname}.list"
 	echo "${AGGREGATED_ROOTFS_HASH_TEXT}" > "${cache_fname}.hash_text"
 
-	display_alert "zstd tarball of rootfs" "${RELEASE}:: ${cache_name}" "debug"
+	declare compression_ratio_rootfs="${ROOTFS_COMPRESSION_RATIO:-"5"}"
+
+	display_alert "zstd tarball of rootfs" "${RELEASE}:: ${cache_name} :: compression ${compression_ratio_rootfs}" "info"
 	tar cp --xattrs --directory="$SDCARD"/ --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' \
 		--exclude='./tmp/*' --exclude='./sys/*' --exclude='./home/*' --exclude='./root/*' . |
 		pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" -N "$(logging_echo_prefix_for_pv "store_rootfs") $cache_name" |
-		zstdmt -5 -c > "${cache_fname}"
+		zstdmt "-${compression_ratio_rootfs}" -c > "${cache_fname}"
+
+	declare -a pv_tar_zstdmt_pipe_status=("${PIPESTATUS[@]}") # capture and the pipe_status array from PIPESTATUS
+	declare one_pipe_status
+	for one_pipe_status in "${pv_tar_zstdmt_pipe_status[@]}"; do
+		if [[ "$one_pipe_status" != "0" ]]; then
+			exit_with_error "create_new_rootfs_cache_tarball: compress: ${cache_fname} failed (${pv_tar_zstdmt_pipe_status[*]}) - out of disk space?"
+		fi
+	done
 
 	wait_for_disk_sync "after zstd tarball rootfs"
 
 	# get the human readable size of the cache
 	local cache_size
 	cache_size=$(du -sh "${cache_fname}" | cut -f1)
-
-	# sign rootfs cache archive that it can be used for web cache once. Internal purposes
-	if [[ -n "${GPG_PASS}" && "${SUDO_USER}" ]]; then
-		display_alert "Using, does nothing" "GPG_PASS and SUDO_USER" "warn"
-		# @TODO: rpardini: igor is this still needed? I see the GHA scripts does its own signing?
-		#[[ -n ${SUDO_USER} ]] && sudo chown -R "${SUDO_USER}:${SUDO_USER}" "${DEST}"/images/
-		#echo "${GPG_PASS}" | sudo -H -u "${SUDO_USER}" bash -c "gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes ${cache_fname}" || exit 1
-	fi
-
-	# needed for backend to keep current only @TODO: say that again? what backend?
-	echo "$cache_fname" > "${cache_fname}.current"
 
 	display_alert "rootfs cache created" "${cache_fname} [${cache_size}]" "info"
 }
