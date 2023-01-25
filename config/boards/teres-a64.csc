@@ -5,3 +5,5 @@ BOOTCONFIG="teres_i_defconfig"
 KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
+
+CHIP="https://linux-sunxi.org/A64"
