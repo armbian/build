@@ -2,7 +2,7 @@
 |:--|:--|
 | # | Name of the board with specs displayed in the build menu |
 | BOARD_NAME | welcome text and hostname |
-| BOARDFAMILY | [sun8i, sun7i, rockchip64](../sources) |
+| BOARDFAMILY | Applies a board-specific configuration such as temperature sensors, LEDs, etc.. See [sources](../sources) for options |
 | BOOTCONFIG | name of u-boot config |
 | BOOTCONFIG_LEGACY | name of u-boot config for legacy branch |
 | BOOTCONFIG_CURRENT | name of u-boot config for current branch |
