@@ -311,3 +311,14 @@ git pull --rebase # !!!we rebase!!! use --rebase
 - where are the slides?
 
 ---
+
+#### Update Jan 25 `armbian-next` - GHA-focused week
+
+- thanks to everyone who tested either building or produced images!
+- many patching/formatting errors being corrected in master, super thanks
+- many fixes (`armhf` images work again; rootfs hashes make sense, etc)
+- new `rootfs` CLI command, with extra GHA-powers (outputs, etc)
+- auto-GHA Markdown logs
+- IgorPec's big packages cleanup; zstd compression ratio 15
+
+---
