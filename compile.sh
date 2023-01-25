@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Copyright (c) 2013-2021 Igor Pecovnik, igor.pecovnik@gma**.com
 #
