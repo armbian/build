@@ -88,7 +88,7 @@ install_distribution_specific() {
 
 # create_sources_list <release> <basedir>
 #
-# <release>: bullseye|focal|jammy|kinetic|lunar|sid
+# <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar
 # <basedir>: path to root directory
 #
 create_sources_list() {
