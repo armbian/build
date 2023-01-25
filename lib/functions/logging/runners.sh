@@ -17,7 +17,9 @@ function chroot_sdcard_apt_get_install_dry_run() {
 	if [[ "${SHOW_DEBUG}" != "yes" ]]; then
 		logging_filter="2>&1 | { grep --line-buffered -v -e '^Conf ' -e '^Inst ' || true; }"
 	fi
-	chroot_sdcard_apt_get --no-install-recommends --dry-run install "$@" "${logging_filter}"
+	# do it twice if it fails once; second time with more logging (default is "-qq")
+	chroot_sdcard_apt_get --no-install-recommends --dry-run install "$@" "${logging_filter}" ||
+		apt_logging="-q" chroot_sdcard_apt_get --no-install-recommends --dry-run install "$@" "${logging_filter}"
 }
 
 function chroot_sdcard_apt_get_update() {
