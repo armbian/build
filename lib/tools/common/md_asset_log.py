@@ -62,7 +62,11 @@ def get_gh_pages_workflow_script():
 	return """
 name: publish-ghpages
 
-on: push
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '*'
 
 jobs:
   publish:

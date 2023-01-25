@@ -475,6 +475,11 @@ class PatchInPatchFile:
 
 			# Also add all source (pre-rename) files that were renamed, sans-checking, since they won't exist.
 			for file_name in self.renamed_file_names_source:
+				# But, the file has to be at least inside the repo; it's not a real rename if it's outside (eg: bad /dev/null patches)
+				if file_name.startswith("/"):
+					log.warning(f"File {file_name} claims to be a renamed source file, but is outside the repo.")
+					continue
+				log.info(f"Adding file {file_name} (rename/source) to git")
 				all_files_to_add.append(file_name)
 
 			if split_patches:
@@ -787,7 +792,7 @@ def perform_git_archeology(
 	all_commits: list = []
 	for found_file in patch_file_paths:
 		relative_file_path = os.path.relpath(found_file, base_armbian_src_dir)
-		hexshas = armbian_git_repo.git.log('--pretty=%H', '--follow', '--', relative_file_path) \
+		hexshas = armbian_git_repo.git.log('--pretty=%H', '--follow', '--find-copies-harder', '--', relative_file_path) \
 			.split('\n')
 		log.info(f"- Trying to recover description for {relative_file_path} from {len(hexshas)} commits")
 
