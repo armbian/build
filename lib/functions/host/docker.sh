@@ -371,6 +371,20 @@ function docker_cli_prepare_launch() {
 		"--env" "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
 	)
 
+	if [[ "${DOCKER_PASS_SSH_AGENT}" == "yes" ]]; then
+		declare ssh_socket_path="${SSH_AUTH_SOCK}"
+		if [[ "${OSTYPE}" == "darwin"* ]]; then                     # but probably only Docker Inc, not Rancher...
+			declare ssh_socket_path="/run/host-services/ssh-auth.sock" # this doesn't exist on-disk, it's "magic" from Docker Desktop
+		fi
+		if [[ "${ssh_socket_path}" != "" ]]; then
+			display_alert "Socket ${ssh_socket_path}" "SSH agent forwarding into Docker" "info"
+			DOCKER_ARGS+=("--env" "SSH_AUTH_SOCK=${ssh_socket_path}")
+			DOCKER_ARGS+=("--volume" "${ssh_socket_path}:${ssh_socket_path}")
+		else
+			display_alert "SSH agent forwarding" "not possible, SSH_AUTH_SOCK is not set" "wrn"
+		fi
+	fi
+
 	# If running on GitHub Actions, mount & forward some paths, so they're accessible inside Docker.
 	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
 		display_alert "Passing down to Docker" "GITHUB_OUTPUT: '${GITHUB_OUTPUT}'" "info"

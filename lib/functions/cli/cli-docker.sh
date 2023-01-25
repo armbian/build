@@ -11,6 +11,12 @@ function cli_docker_pre_run() {
 }
 
 function cli_docker_run() {
+	case "${DOCKER_SUBCMD}" in
+		shell)
+			declare -g DOCKER_PASS_SSH_AGENT="yes" # Pass SSH agent to docker
+			;;
+	esac
+
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
 	if [[ "${DOCKERFILE_GENERATE_ONLY}" == "yes" ]]; then
