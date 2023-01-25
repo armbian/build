@@ -48,7 +48,7 @@ function cli_rootfs_run() {
 	declare -g ROOT_FS_CREATE_VERSION
 	if [[ -z ${ROOT_FS_CREATE_VERSION} ]]; then
 		ROOT_FS_CREATE_VERSION="$(date --utc +"%Y%m%d")"
-		display_alert "ROOT_FS_CREATE_VERSION is not set, defaulting to current date" "ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION}" "warn"
+		display_alert "ROOT_FS_CREATE_VERSION is not set, defaulting to current date" "ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION}" "info"
 	else
 		display_alert "ROOT_FS_CREATE_VERSION is set" "ROOT_FS_CREATE_VERSION=${ROOT_FS_CREATE_VERSION}" "info"
 	fi
@@ -71,7 +71,10 @@ function cli_rootfs_only_in_default_build() {
 	LOG_SECTION="calculate_rootfs_cache_id" do_with_logging calculate_rootfs_cache_id # sets rootfs_cache_id
 
 	# Set a GHA output variable for the cache ID, so it can be used in other steps.
-	github_actions_add_output rootfs_cache_id "${rootfs_cache_id}-${ROOT_FS_CREATE_VERSION}" # this is contrived... but it works.
+	github_actions_add_output rootfs_cache_id_version "${rootfs_cache_id}-${ROOT_FS_CREATE_VERSION}" # for real filename
+	github_actions_add_output rootfs_cache_id "${rootfs_cache_id}"                                   # for actual caching, sans date/version
+	# In GHA, prefer to reference this output variable, as it is more stable; I wanna move it to output/rootfs dir later.
+	github_actions_add_output rootfs_out_filename_relative "cache/rootfs/${ARCH}-${RELEASE}-${rootfs_cache_id}-${ROOT_FS_CREATE_VERSION}.tar.zst"
 
 	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
 
