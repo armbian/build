@@ -6,7 +6,7 @@ theme: league
   
 ---
 
-# `armbian-next`, 4/X
+# `armbian-next`, 5/X
 
 > “Let me add `set -e` to `armbian/build`...”
 
@@ -310,4 +310,33 @@ git pull --rebase # !!!we rebase!!! use --rebase
 
 - where are the slides?
 
+---
+
+#### Update Jan 25 `armbian-next` - GHA-focused week
+
+- thanks to everyone who tested either building or produced images!
+- many patching/formatting errors being corrected in master, super thanks
+- many fixes (`armhf` images work again; rootfs hashes make sense, etc)
+- new `rootfs` CLI command, with extra GHA-powers (outputs, etc)
+- auto-GHA Markdown logs
+- IgorPec's big packages cleanup; zstd compression ratio 15
+
+---
+
+#### Trying out `armbian-next`
+
+##### **do not share dir with `master`!!**
+
+``` bash
+cd ~ # clone to a new directory!
+git clone --branch=armbian-next \
+  https://github.com/armbian/build armbian-build-next
+
+cd ~/armbian-build-next
+./compile.sh # and off you go
+
+# Later, to update:
+cd ~/armbian-build-next
+git pull --rebase # !!!we rebase!!! use --rebase
+```
 ---
