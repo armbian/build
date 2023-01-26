@@ -202,6 +202,14 @@ function docker_cli_prepare() {
 		esac
 	fi
 
+	declare un_ignore_dot_git=""
+	declare include_dot_git_dir=""
+	if [[ "${DOCKER_PASS_GIT}" == "yes" ]]; then
+		display_alert "git/docker:" "adding static copy of .git to Dockerfile" "info"
+		un_ignore_dot_git="!.git"
+		include_dot_git_dir="COPY .git ${DOCKER_ARMBIAN_TARGET_PATH}/.git"
+	fi
+
 	# Info summary message. Thank you, GitHub Co-pilot!
 	display_alert "Docker info" "Docker ${DOCKER_SERVER_VERSION} Kernel:${DOCKER_SERVER_KERNEL_VERSION} RAM:${DOCKER_SERVER_TOTAL_RAM} CPUs:${DOCKER_SERVER_CPUS} OS:'${DOCKER_SERVER_OS}' hostname '${DOCKER_SERVER_NAME_HOST}' under '${DOCKER_ARMBIAN_HOST_OS_UNAME}' - buildx:${DOCKER_HAS_BUILDX} - loop-hacks:${DOCKER_SERVER_REQUIRES_LOOP_HACKS} static-loops:${DOCKER_SERVER_USE_STATIC_LOOPS}" "sysinfo"
 
@@ -212,7 +220,7 @@ function docker_cli_prepare() {
 		# Start by ignoring everything
 		*
 
-		# Include certain files and directories; mostly the build system, but not other parts.
+		# Include certain files and directories; mostly the build system, and some of the config. when run, those are bind-mounted in.
 		!/VERSION
 		!/LICENSE
 		!/compile.sh
@@ -220,6 +228,7 @@ function docker_cli_prepare() {
 		!/extensions
 		!/config/sources
 		!/config/templates
+		${un_ignore_dot_git}
 
 		# Ignore unnecessary files inside include directories
 		# This should go after the include directories
@@ -250,6 +259,7 @@ function docker_cli_prepare() {
 		${c}RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." && \\
 		${c} ARMBIAN_INSIDE_DOCKERFILE_BUILD="yes" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \\
 		${c} rm -rf "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache"
+		${include_dot_git_dir}
 	INITIAL_DOCKERFILE
 	# For debugging: RUN rm -fv /usr/bin/pip3 # Remove pip3 symlink to make sure we're not depending on it; non-Dockers may not have it
 
