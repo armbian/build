@@ -32,15 +32,15 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- ext2: Use the [Second Extended Filesystem](https://en.wikipedia.org/wiki/Ext2)
 		- fat: Use the [File Allocation Table 32](https://en.wikipedia.org/wiki/File_Allocation_Table#FAT32)
 	- Default: `ext4`
-- **DEFAULT_OVERLAYS** ( list of strings (space-separated) ): fixme
-	- Values:
-		- usbhost0: fixme
-		- usbhost2: fixme
-		- usbhost3: fixme
-		- cir: fixme
-		- analog-codec: fixme
-		- gpio-regulator-1.3v: fixme
-		- uart1: fixme
+- **DEFAULT_OVERLAYS** ( space-separated list list of dtb overlays ): defines dtb overlays that are enabled by default. There is a basic dtb for each family but they have different level of used SoC features. Board X might have four USB ports but others might not. Therefore other does not need to have those enabled while board X does.
+	- Examples:
+		- usbhost0
+		- usbhost2
+		- usbhost3
+		- cir
+		- analog-codec
+		- gpio-regulator-1.3v
+		- uart1
 - **DEFAULT_CONSOLE** ( string ): declares default console for the boot output
 	- Values:
 		- serial: Output boot messages to serial console
