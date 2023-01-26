@@ -1,6 +1,13 @@
 function cli_patch_kernel_pre_run() {
 	declare -g ARMBIAN_COMMAND_REQUIRE_BASIC_DEPS="yes" # Require prepare_host_basic to run before the command.
 	declare -g DOCKER_PASS_SSH_AGENT="yes"              # Pass SSH agent to docker
+	declare -g DOCKER_PASS_GIT="yes"                    # mount .git dir to docker; for archeology
+
+	# inside-function-function: a dynamic hook, only triggered if this CLI runs.
+	# install openssh-client, we'll need it to push the patched tree.
+	function add_host_dependencies__ssh_client_for_patch_pushing_over_ssh() {
+		export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} openssh-client"
+	}
 
 	# "gimme root on a Linux machine"
 	cli_standard_relaunch_docker_or_sudo
@@ -8,13 +15,14 @@ function cli_patch_kernel_pre_run() {
 
 function cli_patch_kernel_run() {
 	display_alert "Patching kernel" "$BRANCH" "info"
-	declare -g SYNC_CLOCK=no      # don't waste time syncing the clock
-	declare -g JUST_KERNEL=yes    # only for kernel.
-	declare -g KERNEL_ONLY=yes    # don't build images
-	declare -g PATCHES_TO_GIT=yes # commit to git.
-	declare -g PATCH_ONLY=yes     # stop after patching.
-	declare -g DEBUG_PATCHING=yes # debug patching.
-	declare -g GIT_ARCHEOLOGY=yes # do archeology
+	declare -g SYNC_CLOCK=no       # don't waste time syncing the clock
+	declare -g JUST_KERNEL=yes     # only for kernel.
+	declare -g KERNEL_ONLY=yes     # don't build images
+	declare -g PATCHES_TO_GIT=yes  # commit to git.
+	declare -g PATCH_ONLY=yes      # stop after patching.
+	declare -g DEBUG_PATCHING=yes  # debug patching.
+	declare -g GIT_ARCHEOLOGY=yes  # do archeology
+	declare -g FAST_ARCHEOLOGY=yes # do archeology, but only for the exact path we need.
 	#declare -g REWRITE_PATCHES=yes # rewrite the patches after git commiting. Very cheap compared to the rest.
 	declare -g KERNEL_CONFIGURE=no # no menuconfig
 	declare -g RELEASE=jammy       # or whatever, not relevant, just fool the configuration
