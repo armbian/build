@@ -59,7 +59,7 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 	- Values:
 		- yes: Enable video-related configuration
 		- no: Disable video-related configuration
-- **KERNEL_TARGET** ( comman-separated list of kernel releases or branches ): declares which kernels should be used for the build
+- **KERNEL_TARGET** ( comma-separated list of kernel releases or branches ): declares which kernels should be used for the build
 	- Values:
 		- legacy: Use legacy kernel
 		- current: Use current kernel
