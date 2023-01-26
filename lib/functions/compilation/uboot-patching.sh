@@ -27,6 +27,13 @@ function uboot_main_patching_python() {
 		"GIT_WORK_DIR=${uboot_work_dir}"               # "Where to apply patches?"
 		"BASE_GIT_REVISION=${uboot_git_revision}"      # The revision we're building/patching. Python will reset and clean to this.
 		"BRANCH_FOR_PATCHES=u-boot-${BRANCH}-${BOARD}" # When applying patches-to-git, use this branch.
+		# Lenience: allow problematic patches to be applied.
+		"ALLOW_RECREATE_EXISTING_FILES=yes"       # Allow patches to recreate files that already exist.
+		"GIT_ARCHEOLOGY=${GIT_ARCHEOLOGY:-no}"    # Allow git to do some archaeology to find the original patch's owners; used when patching to git/rewriting.
+		"FAST_ARCHEOLOGY=${FAST_ARCHEOLOGY:-yes}" # Does archeology even further by looking for history from other patch files with the same name
+		# Pass the maintainer info, used for commits.
+		"MAINTAINER_NAME=${MAINTAINER}"      # Name of the maintainer
+		"MAINTAINER_EMAIL=${MAINTAINERMAIL}" # Email of the maintainer
 	)
 	display_alert "Calling Python patching script" "for u-boot target" "info"
 
