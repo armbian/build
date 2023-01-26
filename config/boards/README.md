@@ -18,7 +18,7 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 - **BOOT_LOGO** ( string ): defines whether to use a eyecandy during bootloader phase
 	- Values:
 		- yes: Show the armbian boot logo
-		- desktop: Show the armbian boot logo
+		- desktop: Show the armbian boot logo when `BUILD_DESKTOP` is set to `yes`
 	- Default: `not set`
 - **IMAGE_PARTITION_TABLE** ( string ): defines which disklabel type to use
 	- Values:
