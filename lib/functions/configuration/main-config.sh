@@ -342,6 +342,11 @@ function do_extra_configuration() {
 		fi
 	fi
 
+	# Debian needs the ports repo when strapping riscv64 - revise after bookworm release
+	if [[ "${ARCH}" == "riscv64" ]] && [[ $DISTRIBUTION == Debian ]]; then
+		DEBIAN_MIRROR='deb.debian.org/debian-ports'
+	fi
+
 	# Control aria2c's usage of ipv6.
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
