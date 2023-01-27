@@ -194,55 +194,69 @@ function fetch_from_repo() {
 			branch)
 				improved_git_fetch --no-tags "${url}" "${ref_name}"
 				;;
-			commit)
-				# @TODO: if the local copy has the revision, skip the fetch -- would save us a lot of time
-				display_alert "Fetching a specific commit/sha1" "${ref_name}" "debug"
-				improved_git_fetch --no-tags "${url}" "${ref_name}"
-				;;
 			tag)
 				improved_git_fetch --no-tags "${url}" tags/"${ref_name}"
 				;;
 			head)
 				improved_git_fetch --no-tags "${url}" HEAD
 				;;
+			commit)
+				# @TODO: if the local copy has the revision, skip the fetch -- would save us a lot of time
+				display_alert "Fetching a specific commit/sha1" "${ref_name}" "debug"
+				improved_git_fetch --no-tags "${url}" "${ref_name}"
+				;;
 		esac
 
-		display_alert "Fetch from remote completed, checking out..." "$dir $ref_name" "info"
 		checkout_from="FETCH_HEAD"
 	fi
 
-	# should be declared in outside scope, so can be read.
-	checked_out_revision="$(git rev-parse "${checkout_from}")"              # Don't fail nor output anything if failure
-	display_alert "Checked out revision" "${checked_out_revision}" "debug"  # @TODO change to git
-	checked_out_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")" # unix timestamp of the commit date
-	display_alert "checked_out_revision_ts set!" "${checked_out_revision_ts}" "git"
+	# if the tree is shallow and big, this first rev-parse takes a while; use info to inform about what is done
+	display_alert "git: Fetch from remote completed, rev-parsing..." "'$dir' '$ref_name' '${checkout_from}'" "info"
 
-	display_alert "git checking out revision SHA" "${checked_out_revision}" "git"
-	regular_git checkout -f -q "${checked_out_revision}" # Return the files that are tracked by git to the initial state.
+	# should be declared in outer scope: fetched_revision fetched_revision_ts
+	fetched_revision="$(git rev-parse "${checkout_from}")"
+	fetched_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")" # unix timestamp of the commit date
+	display_alert "Fetched revision: fetched_revision:" "${fetched_revision}" "git"
+	display_alert "Fetched revision: fetched_revision_ts:" "${fetched_revision_ts}" "git"
 
-	display_alert "git cleaning" "${checked_out_revision}" "git"
-	regular_git clean -q -d -f # Removes files that are not tracked by git. Does not remove .gitignore'd files.
+	if [[ "${do_checkout:-"yes"}" == "yes" ]]; then
+		display_alert "git checking out revision SHA" "${fetched_revision}" "git"
+		regular_git checkout -f -q "${fetched_revision}" # Return the files that are tracked by git to the initial state.
 
-	if [[ -f .gitmodules ]]; then
-		if [[ "${GIT_SKIP_SUBMODULES}" == "yes" ]]; then
-			display_alert "Skipping submodules" "GIT_SKIP_SUBMODULES=yes" "debug"
-		else
-			display_alert "Updating submodules" "" "ext"
-			# FML: http://stackoverflow.com/a/17692710
-			for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
-				cd "${git_work_dir}" || exit
-				local surl sref
-				surl=$(git config -f .gitmodules --get "submodule.$i.url")
-				sref=$(git config -f .gitmodules --get "submodule.$i.branch" || true)
-				if [[ -n $sref ]]; then
-					sref="branch:$sref"
-				else
-					sref="head"
-				fi
-				display_alert "Updating submodule" "$i - $surl - $sref" "git"
-				git_ensure_safe_directory "$workdir/$i"
-				fetch_from_repo "$surl" "$workdir/$i" "$sref"
-			done
+		# should be declared in outer scope: checked_out_revision checked_out_revision_ts
+		checked_out_revision="${fetched_revision}"
+		checked_out_revision_ts="${fetched_revision_ts}"
+		display_alert "Fetched revision: checked_out_revision:" "${checked_out_revision}" "git"
+		display_alert "Fetched revision: checked_out_revision_ts:" "${checked_out_revision_ts}" "git"
+
+		display_alert "git cleaning" "${checked_out_revision}" "git"
+		regular_git clean -q -d -f # Removes files that are not tracked by git. Does not remove .gitignore'd files.
+
+		if [[ -f .gitmodules ]]; then
+			if [[ "${GIT_SKIP_SUBMODULES}" == "yes" ]]; then
+				display_alert "Skipping submodules" "GIT_SKIP_SUBMODULES=yes" "debug"
+			else
+				display_alert "Updating submodules" "" "ext"
+				# FML: http://stackoverflow.com/a/17692710
+				for i in $(git config -f .gitmodules --get-regexp path | awk '{ print $2 }'); do
+					cd "${git_work_dir}" || exit
+					local surl sref
+					surl=$(git config -f .gitmodules --get "submodule.$i.url")
+					sref=$(git config -f .gitmodules --get "submodule.$i.branch" || true)
+					if [[ -n $sref ]]; then
+						sref="branch:$sref"
+					else
+						sref="head"
+					fi
+					display_alert "Updating submodule" "$i - $surl - $sref" "git"
+					git_ensure_safe_directory "$workdir/$i"
+					fetch_from_repo "$surl" "$workdir/$i" "$sref"
+				done
+			fi
 		fi
+	else
+		display_alert "Skipping checkout" "$dir $ref_name ${checked_out_revision}" "warn"
 	fi
+
+	return 0
 }
