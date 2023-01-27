@@ -27,8 +27,8 @@ function trap_handler_cleanup_logging() {
 		declare -a existing_log_files_array # array of existing log files: dash and dot in filename required.
 		mapfile -t existing_log_files_array < <(find "${target_path}" -maxdepth 1 -type f -name "*-*.*")
 
-		# if more than 7 log files, warn user...
-		if [[ "${#existing_log_files_array[@]}" -gt 7 ]]; then
+		# if more than 14 log files, warn user...
+		if [[ "${#existing_log_files_array[@]}" -gt 14 ]]; then
 			# Hey, I fixed Docker archiving, so this should not happen again... heh.
 			display_alert "Archiving" "${#existing_log_files_array[@]} old log files - be patient & thanks for testing armbian-next! 👍" "wrn"
 			wait_for_disk_sync # for dramatic effect

@@ -5,7 +5,7 @@ function extension_finish_config__build_nvidia_kernel_module() {
 		return 0
 	fi
 	export INSTALL_HEADERS="yes"
-	declare -g NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-"510"}"
+	declare -g NVIDIA_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-"510"}" # @TODO: this might vary per-release and Debian/Ubuntu
 	display_alert "Forcing INSTALL_HEADERS=yes; using nVidia driver version ${NVIDIA_DRIVER_VERSION}" "${EXTENSION}" "debug"
 }
 
