@@ -64,6 +64,9 @@ function cli_rootfs_run() {
 
 # This is run inside do_with_default_build(), above.
 function cli_rootfs_only_in_default_build() {
+
+	assert_requires_aggregation # Bombs if aggregation has not run
+
 	declare -g rootfs_cache_id="none_yet"
 
 	LOG_SECTION="prepare_rootfs_build_params_and_trap" do_with_logging prepare_rootfs_build_params_and_trap
