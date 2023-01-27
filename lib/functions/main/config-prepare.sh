@@ -5,7 +5,7 @@ function prep_conf_main_build_single() {
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
 	# if interactive, call prepare-host.sh::check_basic_host() early, to avoid disappointments later.
-	if [[ -t 1 ]]; then
+	if [[ -t 0 ]]; then
 		check_basic_host
 	fi
 
@@ -27,6 +27,11 @@ function prep_conf_main_build_single() {
 	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
 
 	LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
+
+	# Now, if NOT interactive, do some basic checks. If interactive, it has been done 20 lines above.
+	if [[ ! -t 0 ]]; then
+		LOG_SECTION="ni_check_basic_host" do_with_logging check_basic_host
+	fi
 
 	aggregate_packages_in_logging_section
 
