@@ -196,7 +196,7 @@ function run_host_command_logged_raw() {
 			echo -e "${bright_red_color:-}-->--> command failed with error code ${exit_code} after $((SECONDS - seconds_start)) seconds${normal_color:-}" >> "${CURRENT_LOGFILE}"
 		fi
 
-		# @TODO: send these _ONLY_ to logfile. there's enough on screen already...
+		# send these _ONLY_ to logfile. there's enough on screen already...
 		display_alert_skip_screen=1 display_alert "stacktrace for failed command" "exit code ${exit_code}:$*\n$(stack_color="${magenta_color:-}" show_caller_full)" "wrn"
 
 		# Obtain extra info about error, eg, log files produced, extra messages set by caller, etc.
