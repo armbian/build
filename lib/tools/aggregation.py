@@ -215,4 +215,10 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 	#    PACKAGE_LIST_UNINSTALL="$(cleanup_list aggregated_content)"
 	#    unset aggregated_content
 
+	# Debug potential paths:
+	all_potentials = util.get_all_potential_paths_packages()
+	md.write(f"## Potential paths \n")
+	for potential in all_potentials:
+		md.write(f"- `{potential}`\n")
+
 	log.debug(f"Done. Output written to {output_file}")
