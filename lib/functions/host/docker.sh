@@ -281,8 +281,8 @@ function docker_cli_build_dockerfile() {
 
 	run_host_command_logged mkdir -p "${docker_marker_dir}"
 
-	# Find files under "${SRC}"/cache/docker that are older than 12 hours.
-	EXPIRED_MARKER="$(find "${docker_marker_dir}" -type f -mtime +12h -exec echo -n {} \;)"
+	# Find files under "${SRC}"/cache/docker that are older than a full 24-hour period.
+	EXPIRED_MARKER="$(find "${docker_marker_dir}" -type f -mtime +1 -exec echo -n {} \;)"
 	display_alert "Expired marker?" "${EXPIRED_MARKER}" "debug"
 
 	if [[ "x${EXPIRED_MARKER}x" != "xx" ]]; then
