@@ -7,7 +7,10 @@ mount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
-	mount -t tmpfs tmpfs "${target}/tmp" # @TODO: maybe /run/user/0 etc and XDG_RUNTIME_DIR
+	mkdir -p "${target}/run/user/0"
+	mount -t tmpfs tmpfs "${target}/tmp"
+	mount -t tmpfs tmpfs "${target}/var/tmp"
+	mount -t tmpfs tmpfs "${target}/run/user/0"
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
@@ -22,16 +25,19 @@ umount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
-	while grep -Eq "${target}\/(dev|proc|sys|tmp)" /proc/mounts; do
+	while grep -Eq "${target}\/(dev|proc|sys|tmp|var\/tmp|run\/user\/0)" /proc/mounts; do
 		display_alert "Unmounting..." "target: ${target}" "debug"
 		umount "${target}"/dev/pts || true
 		umount --recursive "${target}"/dev || true
 		umount "${target}"/proc || true
 		umount "${target}"/sys || true
-		umount "${target}"/tmp || true # @TODO: maybe /run/user/0 etc and XDG_RUNTIME_DIR
+		umount "${target}"/tmp || true
+		umount "${target}"/var/tmp || true
+		umount "${target}"/run/user/0 || true
 		wait_for_disk_sync "after umount chroot"
 		run_host_command_logged grep -E "'${target}/(dev|proc|sys|tmp)'" /proc/mounts "||" true
 	done
+	run_host_command_logged rm -rf "${target}"/run/user/0
 }
 
 # demented recursive version, for final umount. call: umount_chroot_recursive /some/dir "DESCRIPTION"
