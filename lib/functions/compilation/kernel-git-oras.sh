@@ -155,8 +155,7 @@ function kernel_prepare_bare_repo_decide_shallow_or_full() {
 	display_alert "git_kernel_oras_ref" "${git_kernel_oras_ref}" "git"
 	display_alert "estimated_dl_size_mib" "${estimated_dl_size_mib}" "git"
 
-	# if ask_for_user_confirmation -eq 1 and -t 1
-	if [[ ${ask_for_user_confirmation} -eq 1 && -t 1 ]]; then
+	if [[ ${ask_for_user_confirmation} -eq 1 && -t 0 ]]; then # -t 0 means stdin is a terminal
 		echo "--------------------------------------------------------------------------------------------------------------------" >&2
 		display_alert "Warning: no Kernel bare tree exists for version ${KERNEL_MAJOR_MINOR} - about to start downloading." "" "wrn"
 		display_alert "Armbian is going to use a '${decision}' git tree, which is around" "${estimated_dl_size_mib}MiB" ""
