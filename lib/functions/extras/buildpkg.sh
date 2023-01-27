@@ -11,12 +11,14 @@ function create_chroot() {
 	qemu_binary['arm64']='qemu-aarch64-static'
 	apt_mirror['buster']="$DEBIAN_MIRROR"
 	apt_mirror['bullseye']="$DEBIAN_MIRROR"
+	apt_mirror['bookworm']="$DEBIAN_MIRROR"
 	apt_mirror['focal']="$UBUNTU_MIRROR"
 	apt_mirror['jammy']="$UBUNTU_MIRROR"
 	apt_mirror['kinetic']="$UBUNTU_MIRROR"
-        apt_mirror['lunar']="$UBUNTU_MIRROR"
+	apt_mirror['lunar']="$UBUNTU_MIRROR"
 	components['buster']='main,contrib'
 	components['bullseye']='main,contrib'
+	components['bookworm']='main,contrib'
 	components['sid']='main,contrib'
 	components['focal']='main,universe,multiverse'
 	components['jammy']='main,universe,multiverse'
@@ -27,7 +29,7 @@ function create_chroot() {
 
 	# perhaps a temporally workaround
 	case $release in
-		bullseye | focal | jammy | sid | kinetic | lunar)
+		bullseye | bookworm | sid | focal | jammy | kinetic | lunar)
 			includes=${includes}",perl-openssl-defaults,libnet-ssleay-perl"
 			;;
 	esac
@@ -98,7 +100,7 @@ function create_chroot() {
 		-q -y --no-install-recommends debhelper devscripts"'
 
 	case $release in
-		bullseye | focal | hirsute | sid)
+		bullseye | bookworm | sid | focal | hirsute )
 			eval 'LC_ALL=C LANG=C chroot "${target_dir}" \
 			/bin/bash -c "apt-get install python-is-python3"'
 			;;
@@ -117,10 +119,11 @@ function chroot_prepare_distccd() {
 	declare -A gcc_version gcc_type
 	gcc_version['buster']='8.3'
 	gcc_version['bullseye']='9.2'
+	gcc_version['bookworm']='10.2'
+	gcc_version['sid']='10.2'
 	gcc_version['bionic']='5.4'
 	gcc_version['focal']='9.2'
 	gcc_version['hirsute']='10.2'
-	gcc_version['sid']='10.2'
 	gcc_version['jammy']='12'
 	gcc_version['kinetic']='12'
 	gcc_version['lunar']='12'
@@ -157,7 +160,7 @@ function chroot_build_packages() {
 		target_arch="${ARCH}"
 	else
 		# only make packages for recent releases. There are no changes on older
-		target_release="bullseye focal jammy lunar sid"
+		target_release="bullseye bookworm focal jammy lunar sid"
 		target_arch="armhf arm64 amd64"
 	fi
 
