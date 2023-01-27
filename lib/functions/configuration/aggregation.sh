@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
 
+function assert_requires_aggregation() {
+	if [[ ${aggregation_has_already_run:-0} -lt 1 ]]; then
+		exit_with_error "assert_requires_aggregation: Aggregation has not been run"
+	fi
+}
+
+function aggregate_packages_in_logging_section() {
+	# Aggregate packages, in its own logging section; this decides internally on KERNEL_ONLY=no
+	# We need aggregation to be able to build bsp packages, which contain scripts coming from the aggregation.
+	LOG_SECTION="aggregate_packages" do_with_logging aggregate_packages
+}
+
 # This used to be called from config (main-config), but now it's moved default-build, after prepare_host, so Python hostdeps are available.
 # So the aggregation results (hash, etc) are not available for config-dump.
 function aggregate_packages() {
-	if [[ "${KERNEL_ONLY}" != "yes" ]]; then
+	if [[ "${KERNEL_ONLY}" != "yes" ]]; then # @TODO: remove, this is not the right place to decide this.
+
+		if [[ ${aggregation_has_already_run:-0} -gt 0 ]]; then
+			exit_with_error "aggregate_packages: Aggregation has already run"
+		fi
+
 		display_alert "Aggregating packages" "rootfs" "info"
 		aggregate_all_packages_python
 		call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
@@ -11,6 +28,9 @@ function aggregate_packages() {
 			Called after aggregating all package lists.
 			Packages will still be installed after this is called. It is not possible to change anything, though.
 		POST_AGGREGATE_PACKAGES
+
+		declare -i -g -r aggregation_has_already_run=1 # global, readonly.
+
 	fi
 }
 
