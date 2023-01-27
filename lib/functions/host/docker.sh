@@ -281,12 +281,12 @@ function docker_cli_build_dockerfile() {
 
 	run_host_command_logged mkdir -p "${docker_marker_dir}"
 
-	# Find files under "${SRC}"/cache/docker that are older than 1 day, and delete them.
-	EXPIRED_MARKER="$(find "${docker_marker_dir}" -type f -mtime +1 -exec echo -n {} \;)"
+	# Find files under "${SRC}"/cache/docker that are older than 12 hours.
+	EXPIRED_MARKER="$(find "${docker_marker_dir}" -type f -mtime +12h -exec echo -n {} \;)"
 	display_alert "Expired marker?" "${EXPIRED_MARKER}" "debug"
 
 	if [[ "x${EXPIRED_MARKER}x" != "xx" ]]; then
-		display_alert "More than" "1 day since last pull, pulling again" "info"
+		display_alert "More than" "12 hours since last pull, pulling again" "info"
 		do_force_pull="yes"
 	fi
 
@@ -340,15 +340,12 @@ function docker_cli_prepare_launch() {
 		"--privileged"         # Running this container in privileged mode is a simple way to solve loop device access issues, required for USB FEL or when writing image directly to the block device, when CARD_DEVICE is defined
 		"--cap-add=SYS_ADMIN"  # add only required capabilities instead
 		"--cap-add=MKNOD"      # (though MKNOD should be already present)
-		"--cap-add=SYS_PTRACE" # CAP_SYS_PTRACE is required for systemd-detect-virt in some cases @TODO: rpardini: so lets eliminate it
+		"--cap-add=SYS_PTRACE" # CAP_SYS_PTRACE is required for systemd-detect-virt in some cases @TODO: rpardini: so lets eliminate it @TODO: rpardini maybe it's dead already?
 
 		# Pass env var ARMBIAN_RUNNING_IN_CONTAINER to indicate we're running under Docker. This is also set in the Dockerfile; make sure.
 		"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"
 
-		# This env var is used super early (in entrypoint.sh), so set it as an env to current value.
-		"--env" "ARMBIAN_ENABLE_CALL_TRACING=${DOCKER_ARMBIAN_ENABLE_CALL_TRACING:-no}"
-
-		# Change the ccache directory to the named volume or bind created.
+		# Change the ccache directory to the named volume or bind created. @TODO: this needs more love. it works for Docker, but not sudo
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
 		# Pass down the TERM
@@ -380,6 +377,11 @@ function docker_cli_prepare_launch() {
 		"--env" "GITHUB_WORKFLOW=${GITHUB_WORKFLOW}"
 		"--env" "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
 	)
+
+	# This env var is used super early (in entrypoint.sh), so set it as an env to current value.
+	if [[ "${DOCKER_ARMBIAN_ENABLE_CALL_TRACING:-no}" == "yes" ]]; then
+		DOCKER_ARGS+=("--env" "ARMBIAN_ENABLE_CALL_TRACING=yes")
+	fi
 
 	if [[ "${DOCKER_PASS_SSH_AGENT}" == "yes" ]]; then
 		declare ssh_socket_path="${SSH_AUTH_SOCK}"
