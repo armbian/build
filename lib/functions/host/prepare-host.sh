@@ -84,8 +84,8 @@ function prepare_host_noninteractive() {
 		late_prepare_host_dependencies
 		install_host_dependencies "late dependencies during prepare_release"
 
-		# Manage apt-cacher-ng
-		acng_configure_and_restart_acng
+		# Manage apt-cacher-ng, if such is the case
+		[[ "${MANAGE_ACNG}" == "yes" ]] && acng_configure_and_restart_acng
 
 		# sync clock
 		if [[ $SYNC_CLOCK != no && -f /var/run/ntpd.pid ]]; then
