@@ -28,6 +28,8 @@ function prep_conf_main_build_single() {
 
 	LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
 
+	aggregate_packages_in_logging_section
+
 	display_alert "Configuration prepared for BOARD build" "${BOARD}.${BOARD_TYPE}" "info"
 }
 
@@ -46,6 +48,8 @@ function prep_conf_main_only_rootfs() {
 
 	skip_kernel="yes" \
 		LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
+		
+	aggregate_packages_in_logging_section
 
 	display_alert "Configuration prepared for non-BOARD build" "prep_conf_main_only_rootfs" "info"
 }
