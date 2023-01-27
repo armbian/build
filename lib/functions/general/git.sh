@@ -255,7 +255,7 @@ function fetch_from_repo() {
 			fi
 		fi
 	else
-		display_alert "Skipping checkout" "$dir $ref_name ${checked_out_revision}" "warn"
+		display_alert "Skipping checkout" "$dir $ref_name ${checked_out_revision}" "info"
 	fi
 
 	return 0
