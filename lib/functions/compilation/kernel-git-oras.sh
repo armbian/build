@@ -8,6 +8,8 @@ function kernel_prepare_bare_repo_decide_shallow_or_full() {
 	declare SHALLOW_kernel_git_bare_tree="${cache_git_bare_dir}/shallow-kernel-${KERNEL_MAJOR_MINOR}" # for reuse below
 	git_bundles_dir="${SRC}/cache/git-bundles/kernel"                                                 # set outer scope variable
 
+	run_host_command_logged mkdir -p "${cache_git_bare_dir}"
+
 	# We've two options here.
 	# One is to use the full version, which is around 3gb. "linux-complete.git.tar" and _always_ useful
 	# The other is to use the shallow version, which is around 300mb. "linux-shallow-6.1.git.tar". Not always useful, might end up unshallowing it later in some fetch.
