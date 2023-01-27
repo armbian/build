@@ -32,10 +32,7 @@ function main_default_start_build() {
 	# Check and install dependencies, directory structure and settings
 	prepare_host # this has its own logging sections, and is possibly interactive.
 
-	# Aggregate packages, in its own logging section; this decides internally on KERNEL_ONLY=no
-	# We need aggregation to be able to build bsp packages, which contain scripts coming from the aggregation.
-	LOG_SECTION="aggregate_packages" do_with_logging aggregate_packages
-
+	# @TODO: what if there is no python2? bookworm/sid, currently. not long until more
 	# Create a directory inside WORKDIR with a "python" symlink to "/usr/bin/python2"; add it to PATH first.
 	BIN_WORK_DIR="${WORKDIR}/bin"
 	# No cleanup of this is necessary, since it's inside WORKDIR.
@@ -43,10 +40,7 @@ function main_default_start_build() {
 	ln -s "/usr/bin/python2" "${BIN_WORK_DIR}/python"
 	export PATH="${BIN_WORK_DIR}:${PATH}"
 
-	if [[ "${JUST_INIT}" == "yes" ]]; then
-		exit 0 # @TODO: is this used? if not, remove
-	fi
-
+	return 0
 }
 
 function main_default_end_build() {
@@ -64,7 +58,6 @@ function main_default_end_build() {
 
 	return 0
 }
-
 
 function trap_handler_cleanup_workdir() {
 	display_alert "Cleanup WORKDIR: $WORKDIR" "trap_handler_cleanup_workdir" "cleanup"

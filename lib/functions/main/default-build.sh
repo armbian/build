@@ -1,5 +1,8 @@
-# This does NOT run under the logging manager. 
+# This does NOT run under the logging manager.
 function full_build_packages_rootfs_and_image() {
+
+	assert_requires_aggregation # Bombs if aggregation has not run
+
 	main_default_build_packages # has its own logging sections # requires aggregation
 
 	# build rootfs, if not only kernel. Again, read "KERNEL_ONLY" as if it was "PACKAGES_ONLY"
