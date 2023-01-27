@@ -28,7 +28,6 @@ function produce_repeat_args_array() {
 	# @TODO: missing the config file name, if any.
 	# @TODO: missing the original cli command, if different from build/docker
 	[[ -n ${BOARD} ]] && repeat_args+=("BOARD=${BOARD}")
-	[[ -n ${BOARD} ]] && repeat_args+=("BOARD=${BOARD}")
 	[[ -n ${BRANCH} ]] && repeat_args+=("BRANCH=${BRANCH}")
 	[[ -n ${RELEASE} ]] && repeat_args+=("RELEASE=${RELEASE}")
 	[[ -n ${BUILD_MINIMAL} ]] && repeat_args+=("BUILD_MINIMAL=${BUILD_MINIMAL}")
