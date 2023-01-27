@@ -136,6 +136,12 @@ function config_pre_main() {
 }
 
 function config_post_main() {
+	if [[ $COMPRESS_OUTPUTIMAGE == "" || $COMPRESS_OUTPUTIMAGE == no ]]; then
+		COMPRESS_OUTPUTIMAGE="sha,img"
+	elif [[ $COMPRESS_OUTPUTIMAGE == yes ]]; then
+		COMPRESS_OUTPUTIMAGE="sha,7z"
+	fi
+
 	if [[ "$BETA" == "yes" ]]; then
 		IMAGE_TYPE=nightly
 	elif [ "$BETA" == "no" ] || [ "$RC" == "yes" ]; then
