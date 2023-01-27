@@ -37,8 +37,8 @@ function cli_rootfs_run() {
 	declare -g -r RELEASE="${RELEASE}" # make readonly for finding who tries to change it
 	declare -g -r NEEDS_BINFMT="yes"   # make sure binfmts are installed during prepare_host_interactive
 
-	# configuration etc - it initializes the extension manager; handles its own logging sections.
-	prep_conf_main_only_rootfs < /dev/null # no stdin for this, so it bombs if tries to be interactive.
+	# prep_conf_main_only_rootfs_ni is prep_conf_main_only_rootfs_ni() + aggregate_packages_in_logging_section() .
+	prep_conf_main_only_rootfs_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 
 	declare -g -r ARCH="${ARCH}" # make readonly for finding who tries to change it
 	if [[ "${ARCH}" != "${__wanted_rootfs_arch}" ]]; then

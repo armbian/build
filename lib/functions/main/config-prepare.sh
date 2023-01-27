@@ -33,25 +33,36 @@ function prep_conf_main_build_single() {
 	display_alert "Configuration prepared for BOARD build" "${BOARD}.${BOARD_TYPE}" "info"
 }
 
-# Lean version, for building rootfs, that doesn't need BOARD/BOARDFAMILY; never interactive.
-function prep_conf_main_only_rootfs() {
+# Minimal, non-interactive version.
+function prep_conf_main_minimal_ni() {
+	# needed
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
+	# needed
 	check_basic_host
 
+	# not needed, doesnt hurt; might be moved to aggregation
 	LOG_SECTION="config_pre_main" do_with_conditional_logging config_pre_main
 
-	allow_no_family="yes" \
+	# Required, but does stuff it maybe shouldn't
+	allow_no_family="${allow_no_family:-"yes"}" \
 		LOG_SECTION="do_main_configuration" do_with_conditional_logging do_main_configuration # This initializes the extension manager among a lot of other things, and call extension_prepare_config() hook
 
+	# Required: does a lot of stuff and extension_prepare_config() hook
 	LOG_SECTION="do_extra_configuration" do_with_conditional_logging do_extra_configuration
 
-	skip_kernel="yes" \
+	# Calculates CHOSEN_xxx's and optional kernel stuff; runs extension_finish_config() hook
+	skip_kernel="${skip_kernel:-"yes"}" \
 		LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
-		
-	aggregate_packages_in_logging_section
 
-	display_alert "Configuration prepared for non-BOARD build" "prep_conf_main_only_rootfs" "info"
+	display_alert "Minimal configuration prepared for build" "prep_conf_main_only_firmware" "info"
+}
+
+# Lean version, for building rootfs, that doesn't need BOARD/BOARDFAMILY; never interactive.
+function prep_conf_main_only_rootfs_ni() {
+	prep_conf_main_minimal_ni
+	aggregate_packages_in_logging_section
+	display_alert "Configuration prepared for minimal+rootfs" "prep_conf_main_only_rootfs_ni" "info"
 }
 
 function config_source_board_file() {
