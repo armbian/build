@@ -107,6 +107,9 @@ function main_default_build_packages() {
 
 	overlayfs_wrapper "cleanup"
 
+	# Further packages require aggregation (BSPs use aggregated stuff, etc)
+	assert_requires_aggregation # Bombs if aggregation has not run
+
 	# create board support package
 	if [[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]]; then
 		LOG_SECTION="create_board_package" do_with_logging create_board_package
