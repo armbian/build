@@ -32,6 +32,14 @@ function check_and_install_docker_daemon() {
 function get_docker_info_once() {
 	if [[ -z "${DOCKER_INFO}" ]]; then
 		declare -g DOCKER_INFO
+		declare -g DOCKER_IN_PATH="no"
+
+		# if "docker" is in the PATH...
+		if [[ -n "$(command -v docker)" ]]; then
+			display_alert "Docker is in the path" "Docker in PATH" "warn"
+			DOCKER_IN_PATH="yes"
+		fi
+
 		# Shenanigans to go around error control & capture output in the same effort.
 		DOCKER_INFO="$({ docker info 2> /dev/null && echo "DOCKER_INFO_OK"; } || true)"
 		declare -g -r DOCKER_INFO="${DOCKER_INFO}" # readonly
@@ -198,7 +206,6 @@ function docker_cli_prepare() {
 	# Info summary message. Thank you, GitHub Co-pilot!
 	display_alert "Docker info" "Docker ${DOCKER_SERVER_VERSION} Kernel:${DOCKER_SERVER_KERNEL_VERSION} RAM:${DOCKER_SERVER_TOTAL_RAM} CPUs:${DOCKER_SERVER_CPUS} OS:'${DOCKER_SERVER_OS}' hostname '${DOCKER_SERVER_NAME_HOST}' under '${DOCKER_ARMBIAN_HOST_OS_UNAME}' - buildx:${DOCKER_HAS_BUILDX} - loop-hacks:${DOCKER_SERVER_REQUIRES_LOOP_HACKS} static-loops:${DOCKER_SERVER_USE_STATIC_LOOPS}" "sysinfo"
 }
-
 
 function docker_cli_prepare_dockerfile() {
 	# @TODO: grab git info, add as labels et al to Docker... (already done in GHA workflow)
