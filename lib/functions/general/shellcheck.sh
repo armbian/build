@@ -1,3 +1,43 @@
+function shellcheck_debian_control_scripts() {
+	declare SEVERITY="${SEVERITY:-"critical"}"
+	declare -a params=(--check-sourced --color=always --external-sources --format=tty --shell=bash --wiki-link-count=0)
+	case "${SEVERITY}" in
+		important)
+			params+=("--severity=warning")
+			excludes+=(
+				"SC2034" # "appears unused" -- bad, but no-one will die of this
+			)
+			;;
+
+		critical)
+			params+=("--severity=warning")
+			excludes+=(
+				"SC2034" # "appears unused" -- bad, but no-one will die of this
+				"SC2207" # "prefer mapfile" -- bad expansion, can lead to trouble; a lot of legacy pre-next code hits this
+				"SC2046" # "quote this to prevent word splitting" -- bad expansion, variant 2, a lot of legacy pre-next code hits this
+				"SC2086" # "quote this to prevent word splitting" -- bad expansion, variant 3, a lot of legacy pre-next code hits this
+				"SC2206" # (warning): Quote to prevent word splitting/globbing, or split robustly with mapfile or read -a.
+			)
+			;;
+
+		*)
+			params=("--severity=${SEVERITY}")
+			;;
+	esac
+
+	for exclude in "${excludes[@]}"; do
+		params+=(--exclude="${exclude}")
+	done
+
+	if run_tool_shellcheck "${params[@]}" "${@}"; then
+		display_alert "Congrats, no ${SEVERITY}'s detected." "SHELLCHECK" "debug"
+		return 0
+	else
+		display_alert "SHELLCHECK found ${SEVERITY}'s." "SHELLCHECK" "debug"
+		return 1
+	fi
+}
+
 function run_tool_shellcheck() {
 	# Default version
 	SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.9.0} # https://github.com/koalaman/shellcheck/releases
