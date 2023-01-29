@@ -6,7 +6,7 @@ function cli_docker_pre_run() {
 
 	# make sure we're not _ALREADY_ running under docker... otherwise eternal loop?
 	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
-		exit_with_error "asking for docker... inside docker. how did this happen? so sorry."
+		exit_with_error "asking for docker... inside docker. how did this happen? Tip: you don't need 'docker' to run armbian-next inside Docker; it's automatically detected and used when appropriate."
 	fi
 }
 
