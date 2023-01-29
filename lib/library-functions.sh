@@ -6,6 +6,24 @@
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/artifacts/artifacts-registry.sh
+# shellcheck source=lib/functions/artifacts/artifacts-registry.sh
+source "${SRC}"/lib/functions/artifacts/artifacts-registry.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/artifacts/kernel.sh
+# shellcheck source=lib/functions/artifacts/kernel.sh
+source "${SRC}"/lib/functions/artifacts/kernel.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/bsp/bsp-cli.sh
 # shellcheck source=lib/functions/bsp/bsp-cli.sh
 source "${SRC}"/lib/functions/bsp/bsp-cli.sh
@@ -27,6 +45,15 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/bsp/utils-bsp.sh
 # shellcheck source=lib/functions/bsp/utils-bsp.sh
 source "${SRC}"/lib/functions/bsp/utils-bsp.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/cli/cli-artifact.sh
+# shellcheck source=lib/functions/cli/cli-artifact.sh
+source "${SRC}"/lib/functions/cli/cli-artifact.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
