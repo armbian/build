@@ -15,6 +15,7 @@ function early_prepare_pip3_dependencies_for_python_tools() {
 
 # call: prepare_python_and_pip # this defines global PYTHON3_INFO dict and PYTHON3_VARS array
 function prepare_python_and_pip() {
+	assert_prepared_host # this needs a prepared host to work; avoid fake errors about "python3-pip" not being installed
 	# First determine with python3 to use; requires knowing the HOSTRELEASE.
 	[[ -z "${HOSTRELEASE}" ]] && exit_with_error "HOSTRELEASE is not set"
 
