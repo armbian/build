@@ -38,9 +38,6 @@ function main_default_build_packages() {
 		done
 	fi
 
-	# Prepare ccache, cthreads, etc for the build
-	LOG_SECTION="prepare_compilation_vars" do_with_logging prepare_compilation_vars
-
 	if [[ "${do_build_uboot}" == "yes" ]]; then
 		# Don't build u-boot at all if the BOOTCONFIG is 'none'.
 		if [[ "${BOOTCONFIG}" != "none" ]]; then

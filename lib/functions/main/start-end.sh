@@ -26,7 +26,7 @@ function main_default_start_build() {
 	declare -g start_timestamp # global timestamp; read below by main_default_end_build()
 	start_timestamp=$(date +%s)
 
-	### Write config summary
+	### Write config summary # @TODO: or not? this is a bit useless
 	LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
 
 	# Check and install dependencies, directory structure and settings
@@ -39,6 +39,9 @@ function main_default_start_build() {
 	mkdir -p "${BIN_WORK_DIR}"
 	ln -s "/usr/bin/python2" "${BIN_WORK_DIR}/python"
 	export PATH="${BIN_WORK_DIR}:${PATH}"
+
+	# Prepare ccache, cthreads, etc for the build
+	LOG_SECTION="prepare_compilation_vars" do_with_logging prepare_compilation_vars
 
 	return 0
 }
