@@ -192,7 +192,14 @@ function produce_relaunch_parameters() {
 }
 
 function cli_standard_relaunch_docker_or_sudo() {
-	if [[ "${EUID}" == "0" && "${PREFER_DOCKER:-no}" != "yes" ]]; then # we're already root. Either running as real root, or already sudo'ed.
+	display_alert "Gonna relaunch" "EUID: ${EUID} -- PREFER_DOCKER:${PREFER_DOCKER}" "warn"
+	if [[ "${EUID}" == "0" ]]; then # we're already root. Either running as real root, or already sudo'ed.
+		if [[ "${ARMBIAN_RELAUNCHED}" != "yes" && "${ALLOW_ROOT}" != "yes" ]]; then
+			display_alert "PROBLEM: don't run ./compile.sh as root or with sudo" "PROBLEM: don't run ./compile.sh as root or with sudo" "err"
+			if [[ -t 0 ]]; then # so... non-interactive builds *can* run as root. It's not supported, you'll get an error, but we'll proceed.
+				exit_if_countdown_not_aborted 10 "directly called as root"
+			fi
+		fi
 		display_alert "Already running as root" "great, running '${ARMBIAN_COMMAND}' normally" "debug"
 	else # not root.
 		# add params when relaunched under docker or sudo
@@ -207,10 +214,14 @@ function cli_standard_relaunch_docker_or_sudo() {
 		get_docker_info_once # Get Docker info once, and cache it; calling "docker info" is expensive
 
 		if [[ "${DOCKER_INFO_OK}" == "yes" ]]; then
-			display_alert "Trying to build, not root, but Docker is ready to go" "delegating to Docker" "debug"
-			ARMBIAN_CHANGE_COMMAND_TO="docker"
-			ARMBIAN_CLI_RELAUNCH_COMMAND="${ARMBIAN_COMMAND}" # add params when relaunched under docker
-			return 0
+			if [[ "${PREFER_DOCKER:-yes}" == "yes" ]]; then
+				display_alert "Trying to build, not root, but Docker is ready to go" "delegating to Docker" "debug"
+				ARMBIAN_CHANGE_COMMAND_TO="docker"
+				ARMBIAN_CLI_RELAUNCH_COMMAND="${ARMBIAN_COMMAND}" # add params when relaunched under docker
+				return 0
+			else
+				display_alert "Trying to build, not root, but Docker is ready to go" "but PREFER_DOCKER is set to 'no', so can't use it" "warn"
+			fi
 		fi
 
 		# check if we're on Linux via uname. if not, refuse to do anything.
