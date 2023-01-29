@@ -1,12 +1,10 @@
-function calculate_hash_for_files() {
-	hash_files="$(sha256sum "${@}" | sha256sum | cut -d' ' -f1)" # hash of hashes
-	hash_files="${hash_files:0:16}"                              # shorten it to 16 characters
-	display_alert "Hash for files:" "$hash_files" "debug"
+function kernel_drivers_create_patches_hash_only() {
+	hash_only="yes" kernel_drivers_create_patches "${@}"
 }
 
 function kernel_drivers_create_patches() {
-	declare kernel_work_dir="${1}"
-	declare kernel_git_revision="${2}"
+	kernel_drivers_patch_hash="undetermined" # outer scope
+	kernel_drivers_patch_file="undetermined" # outer scope
 
 	declare hash_files # any changes in these files will trigger a cache miss; also any changes in misc .patch with "wireless" at start or "wifi" anywhere in the name
 	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch "${SRC}"/patch/misc/*wifi*.patch
@@ -22,8 +20,16 @@ function kernel_drivers_create_patches() {
 	declare cache_target_file="${cache_dir_base}/${cache_key}.patch"
 
 	# outer scope variables:
-	kernel_drivers_patch_file="${cache_target_file}"
-	kernel_drivers_patch_hash="${cache_key}"
+	kernel_drivers_patch_file="${cache_target_file}" # outer scope
+	kernel_drivers_patch_hash="${hash_files}"        # outer scope
+
+	if [[ "${hash_only:-"no"}" == "yes" ]]; then
+		display_alert "Hash-only kernel driver requested" "$kernel_drivers_patch_hash - returning" "warn"
+		return 0
+	fi
+
+	declare kernel_work_dir="${1}"
+	declare kernel_git_revision="${2}"
 
 	# If the target file exists, we can skip the patch creation.
 	if [[ -f "${cache_target_file}" ]]; then
