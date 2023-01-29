@@ -37,7 +37,7 @@ function cli_rootfs_run() {
 	declare -g -r RELEASE="${RELEASE}" # make readonly for finding who tries to change it
 	declare -g -r NEEDS_BINFMT="yes"   # make sure binfmts are installed during prepare_host_interactive
 
-	# prep_conf_main_only_rootfs_ni is prep_conf_main_only_rootfs_ni() + aggregate_packages_in_logging_section() .
+	# prep_conf_main_only_rootfs_ni is prep_conf_main_only_rootfs_ni() + mark_aggregation_required_in_default_build_start()
 	prep_conf_main_only_rootfs_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 
 	declare -g -r ARCH="${ARCH}" # make readonly for finding who tries to change it
