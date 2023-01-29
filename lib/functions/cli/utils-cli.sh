@@ -192,7 +192,7 @@ function produce_relaunch_parameters() {
 }
 
 function cli_standard_relaunch_docker_or_sudo() {
-	display_alert "Gonna relaunch" "EUID: ${EUID} -- PREFER_DOCKER:${PREFER_DOCKER}" "warn"
+	display_alert "Gonna relaunch" "EUID: ${EUID} -- PREFER_DOCKER:${PREFER_DOCKER}" "debug"
 	if [[ "${EUID}" == "0" ]]; then # we're already root. Either running as real root, or already sudo'ed.
 		if [[ "${ARMBIAN_RELAUNCHED}" != "yes" && "${ALLOW_ROOT}" != "yes" ]]; then
 			display_alert "PROBLEM: don't run ./compile.sh as root or with sudo" "PROBLEM: don't run ./compile.sh as root or with sudo" "err"
@@ -215,12 +215,21 @@ function cli_standard_relaunch_docker_or_sudo() {
 
 		if [[ "${DOCKER_INFO_OK}" == "yes" ]]; then
 			if [[ "${PREFER_DOCKER:-yes}" == "yes" ]]; then
-				display_alert "Trying to build, not root, but Docker is ready to go" "delegating to Docker" "debug"
+				display_alert "not root, but Docker is ready to go" "delegating to Docker" "debug"
 				ARMBIAN_CHANGE_COMMAND_TO="docker"
 				ARMBIAN_CLI_RELAUNCH_COMMAND="${ARMBIAN_COMMAND}" # add params when relaunched under docker
 				return 0
 			else
-				display_alert "Trying to build, not root, but Docker is ready to go" "but PREFER_DOCKER is set to 'no', so can't use it" "warn"
+				display_alert "not root, but Docker is ready to go" "but PREFER_DOCKER is set to 'no', so can't use it" "warn"
+			fi
+		else
+			if [[ "${DOCKER_IN_PATH:-no}" == "yes" ]]; then
+				if [[ "${PREFER_DOCKER:-yes}" == "no" ]]; then
+					: # congrats, don't have it, didn't wanna it.
+				else
+					display_alert "Docker is installed, but not usable" "can't use Docker; check your Docker config / groups / etc" "warn"
+					exit_if_countdown_not_aborted 10 "Docker installed but not usable"
+				fi
 			fi
 		fi
 
