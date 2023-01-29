@@ -6,8 +6,8 @@ function artifact_kernel_cli_adapter_pre_run() {
 }
 
 function artifact_kernel_cli_adapter_config_prep() {
+	declare KERNEL_ONLY="yes"                             # @TODO: this is a hack, for the board/family code's benefit...
 	use_board="yes" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
-
 }
 
 function artifact_kernel_prepare_version() {
@@ -37,89 +37,16 @@ function artifact_kernel_prepare_version() {
 	debug_var KERNEL_MAJOR_MINOR
 	debug_var KERNELPATCHDIR
 
-	# This has... everything: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?h=linux-6.1.y
-	# This has... everything: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?h=v6.2-rc5
-
-	# get the sha1 of the commit on tag or branch
-	# git ls-remote --exit-code --symref git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git v6.2-rc5
-	# git ls-remote --exit-code --symref git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git v6.2-rc5
-
-	# 93f875a8526a291005e7f38478079526c843cbec	refs/heads/linux-6.1.y
-	# 4cc398054ac8efe0ff832c82c7caacbdd992312a	refs/tags/v6.2-rc5
-
-	# https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/Makefile?h=linux-6.1.y
-	# plaintext: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=4cc398054ac8efe0ff832c82c7caacbdd992312a
-
-	function git_ref_to_info_memoized() {
-		declare ref_type ref_name
-		git_parse_ref "${KERNEL[GIT_REF]}"
-		KERNEL+=(["REF_TYPE"]="${ref_type}")
-		KERNEL+=(["REF_NAME"]="${ref_name}")
-
-		# Get the SHA1 of the commit
-		#declare sha1
-		#sha1="$(git ls-remote --exit-code "${KERNELSOURCE}" "${ref_name}" | cut -f1)"
-		#KERNEL+=(["SHA1"]="${sha1}")
-	}
-
-	function git_ref_input_hash() {
-		KERNEL+=(["MEMO_TYPE"]="git2sha1")
-		KERNEL+=(["MEMO_INPUT"]="${KERNEL[GIT_SOURCE]} ${KERNEL[GIT_REF]}")
-	}
-
-	function run_memoized() {
-		declare var_n="${1}"
-		declare hasher_func="${2}"
-		declare memoized_func="${3}"
-
-		${hasher_func} "${@}" # sets KERNEL["MEMO_INPUT"] and KERNEL["MEMO_TYPE"]
-		KERNEL+=(["MEMO_INPUT_HASH"]="$(echo "${var_n}-${KERNEL[MEMO_INPUT_HASH]}-$(declare -f "${hasher_func}")-$(declare -f "${memoized_func}")" | sha256sum | cut -f1 -d' ')")
-
-		declare disk_cache_dir="${SRC}/cache/memoize/${KERNEL[MEMO_TYPE]}"
-		mkdir -p "${disk_cache_dir}"
-		declare disk_cache_file="${disk_cache_dir}/${KERNEL[MEMO_INPUT_HASH]}"
-		if [[ -f "${disk_cache_file}" ]]; then
-			display_alert "Using memoized ${var_n} from ${disk_cache_file}" "${KERNEL[MEMO_INPUT]}" "info"
-			cat "${disk_cache_file}"
-			# shellcheck disable=SC1090 # yep, I'm sourcing the cache here. produced below.
-			source "${disk_cache_file}"
-			return 0
-		fi
-
-		display_alert "Memoizing ${var_n} to ${disk_cache_file}" "${KERNEL[MEMO_INPUT]}" "info"
-		# if cache miss, run the memoized_func...
-		${memoized_func} "${@}"
-
-		# ... and save the output to the cache
-		declare -p KERNEL > "${disk_cache_file}"
-	}
-
-	declare -A KERNEL=(
+	declare -A GIT_INFO=(
 		[GIT_SOURCE]="${KERNELSOURCE}"
 		[GIT_REF]="${KERNELBRANCH}"
 	)
 
-	display_alert "before"
-	debug_dict KERNEL
+	run_memoized GIT_INFO "git2info" memoized_git_ref_to_info "include_makefile_body"
 
-	run_memoized KERNEL git_ref_input_hash git_ref_to_info_memoized
+	debug_dict GIT_INFO
 
-	display_alert "after"
-	debug_dict KERNEL
-}
-
-function debug_dict() {
-	local dict_name="$1"
-	declare -n dict="${dict_name}"
-	for key in "${!dict[@]}"; do
-		debug_var "${dict_name}[${key}]"
-	done
-}
-
-function debug_var() {
-	local varname="$1"
-	local var_val="${!varname}"
-	display_alert "${varname}" "${var_val}" "warn"
+	return 0
 }
 
 function artifact_kernel_is_available_in_local_cache() {

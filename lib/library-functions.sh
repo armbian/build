@@ -528,6 +528,15 @@ source "${SRC}"/lib/functions/general/extensions.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/general/git-ref2info.sh
+# shellcheck source=lib/functions/general/git-ref2info.sh
+source "${SRC}"/lib/functions/general/git-ref2info.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/general/git.sh
 # shellcheck source=lib/functions/general/git.sh
 source "${SRC}"/lib/functions/general/git.sh
@@ -540,6 +549,15 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/general/github-actions.sh
 # shellcheck source=lib/functions/general/github-actions.sh
 source "${SRC}"/lib/functions/general/github-actions.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/general/memoize-cached.sh
+# shellcheck source=lib/functions/general/memoize-cached.sh
+source "${SRC}"/lib/functions/general/memoize-cached.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
@@ -747,6 +765,15 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/logging/capture.sh
 # shellcheck source=lib/functions/logging/capture.sh
 source "${SRC}"/lib/functions/logging/capture.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/logging/debug-dump.sh
+# shellcheck source=lib/functions/logging/debug-dump.sh
+source "${SRC}"/lib/functions/logging/debug-dump.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
