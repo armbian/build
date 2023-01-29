@@ -88,7 +88,7 @@ function memoized_git_ref_to_info() {
 			fi
 
 			# grab the codename while we're at it
-			makefile_codename="$(grep "^NAME\ =\ " <(echo "${makefile_body}") | head -1 | cut -d '=' -f 2 | xargs -0 echo -n || true)"
+			makefile_codename="$(grep "^NAME\ =\ " <(echo "${makefile_body}") | head -1 | cut -d '=' -f 2 | sed -e "s|'||g" | xargs echo -n || true)"
 			# remove any starting whitespace left
 			makefile_codename="${makefile_codename#"${makefile_codename%%[![:space:]]*}"}"
 			# remove any trailing whitespace left
