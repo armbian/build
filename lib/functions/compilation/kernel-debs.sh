@@ -41,6 +41,10 @@ function prepare_kernel_packaging_debs() {
 
 	# Some variables and settings used throughout the script
 	declare kernel_version_family="${kernel_version}-${LINUXFAMILY}"
+
+	# @TODO: on-hold
+	#[[ -z "${artifact_version}" ]] && exit_with_error "artifact_version not defined"
+	#declare package_version="${artifact_version}" # used to be ${REVISION}
 	declare package_version="${REVISION}"
 
 	# show incoming tree
