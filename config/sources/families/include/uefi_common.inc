@@ -21,8 +21,9 @@ case "${BRANCH}" in
 	edge)
 		declare -g DISTRO_GENERIC_KERNEL=no
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		declare -g KERNEL_MAJOR_MINOR="6.1"                       # Major and minor versions of this kernel. For mainline caching.
-		declare -g KERNELBRANCH="branch:linux-6.1.y"              # Branch or tag to build from. It should match MAJOR_MINOR
+		declare -g KERNEL_MAJOR_MINOR="6.2"    # Major and minor versions of this kernel. For mainline caching.
+		declare -g KERNELBRANCH='tag:v6.2-rc7' # @TODO: soon-to-be 'branch:linux-6.2.y' when it is released
+		#declare -g KERNELBRANCH="branch:linux-6.2.y"             # Branch or tag to build from. It should match MAJOR_MINOR
 		declare -g KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 		;;
 esac
@@ -34,8 +35,8 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 	declare -g ATF_COMPILE="no"
 	declare -g BOOTSCRIPT="boot-qemu-${LINUXFAMILY}.cmd:boot.cmd"
 	declare -g BOOTDIR="qemu-uboot-${LINUXFAMILY}"
-	declare -g BOOTSOURCE='https://source.denx.de/u-boot/u-boot.git'
-	declare -g BOOTBRANCH='tag:v2022.10'
+	declare -g BOOTBRANCH='tag:v2023.01'
+	declare -g BOOTSOURCE='https://github.com/u-boot/u-boot'        # Gotta set this again, it is unset by grub extension
 	declare -g UBOOT_TARGET_MAP="all;;u-boot.rom"                   # Can't find the target that produces 'u-boot.rom', so for now 'make all'
 	declare -g PACKAGE_LIST_FAMILY="spice-vdagent qemu-guest-agent" # Nice-to-have packages for running under qemu
 	declare -g BOOTCONFIG="${QEMU_UBOOT_BOOTCONFIG}"
