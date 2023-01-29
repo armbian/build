@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# defines the format for KERNELBRANCH, BOOTBRANCH, and arguments to fetch_from_repo.
+# branch:xxx, tag:yyyy, commit:zzzz, head.
+# sets: ref_type=branch|tag|commit, ref_name=xxx|yyyy|zzzz|HEAD
+function git_parse_ref() {
+	declare ref="$1"
+	[[ -z $ref || ($ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:*) ]] && exit_with_error "Error in configuration"
+	ref_type=${ref%%:*} # outer scope
+	ref_name=${ref##*:} # outer scope
+	if [[ $ref_type == head ]]; then
+		ref_name=HEAD
+	fi
+}
+
 #
 # This function retries Git operations to avoid failure in case remote is borked
 #
@@ -71,11 +84,8 @@ function fetch_from_repo() {
 		offline=true
 	fi
 
-	[[ -z $ref || ($ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:*) ]] && exit_with_error "Error in configuration"
-	local ref_type=${ref%%:*} ref_name=${ref##*:}
-	if [[ $ref_type == head ]]; then
-		ref_name=HEAD
-	fi
+	declare ref_type ref_name
+	git_parse_ref "$ref"
 
 	display_alert "Getting sources from Git" "$dir $ref_name" "info"
 
