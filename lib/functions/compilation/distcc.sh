@@ -45,6 +45,7 @@ function prepare_distcc_compilation_config() {
 		display_alert "DISTCC_TARGETS_SEGMENTS" "${DISTCC_TARGETS_SEGMENTS[*]}" "warn"
 	else
 		# If not using distcc, just add "$CTHREADS" to the DISTCC_MAKE_J_PARALLEL array.
+		[[ -z "${CTHREADS}" ]] && exit_with_error "CTHREADS is not set in prepare_distcc_compilation_config"
 		DISTCC_MAKE_J_PARALLEL=("${CTHREADS}")
 	fi
 
