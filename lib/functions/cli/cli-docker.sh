@@ -24,7 +24,11 @@ function cli_docker_run() {
 		exit 0
 	fi
 
-	LOG_SECTION="docker_cli_build_dockerfile" do_with_logging docker_cli_build_dockerfile
+	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
+	if [[ "${FAST_DOCKER:-"no"}" != "yes" ]]; then # "no, I want *slow* docker" -- no one, ever
+		LOG_SECTION="docker_cli_prepare_dockerfile" do_with_logging docker_cli_prepare_dockerfile
+		LOG_SECTION="docker_cli_build_dockerfile" do_with_logging docker_cli_build_dockerfile
+	fi
 
 	LOG_SECTION="docker_cli_prepare_launch" do_with_logging docker_cli_prepare_launch
 
