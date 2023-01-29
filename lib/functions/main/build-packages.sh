@@ -103,6 +103,17 @@ function main_default_build_packages() {
 	fi
 
 	overlayfs_wrapper "cleanup"
+	reset_uid_owner "${DEB_STORAGE}"
+
+	# end of kernel-only, so display what was built.
+	if [[ "${KERNEL_ONLY}" != "yes" ]]; then
+		display_alert "Kernel build done" "@host" "target-reached"
+		display_alert "Target directory" "${DEB_STORAGE}/" "info"
+		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
+	elif [[ "${KERNEL_ONLY}" == "yes" ]]; then
+		display_alert "using legacy option" "KERNEL_ONLY=yes; stopping build mid-packages" "warn"
+		return 0
+	fi
 
 	# Further packages require aggregation (BSPs use aggregated stuff, etc)
 	assert_requires_aggregation # Bombs if aggregation has not run
@@ -123,13 +134,6 @@ function main_default_build_packages() {
 	# Reset owner of DEB_STORAGE, if needed. Might be a lot of packages there, but such is life.
 	# @TODO: might be needed also during 'cleanup': if some package fails, the previous package might be left owned by root.
 	reset_uid_owner "${DEB_STORAGE}"
-
-	# end of kernel-only, so display what was built.
-	if [[ "${KERNEL_ONLY}" != "yes" ]]; then
-		display_alert "Kernel build done" "@host" "target-reached"
-		display_alert "Target directory" "${DEB_STORAGE}/" "info"
-		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
-	fi
 
 	# At this point, the WORKDIR should be clean. Add debug info.
 	debug_tmpfs_show_usage "AFTER ALL PKGS BUILT"

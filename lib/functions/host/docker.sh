@@ -36,7 +36,7 @@ function get_docker_info_once() {
 
 		# if "docker" is in the PATH...
 		if [[ -n "$(command -v docker)" ]]; then
-			display_alert "Docker is in the path" "Docker in PATH" "warn"
+			display_alert "Docker is in the path" "Docker in PATH" "debug"
 			DOCKER_IN_PATH="yes"
 		fi
 
