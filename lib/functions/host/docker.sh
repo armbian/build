@@ -124,21 +124,6 @@ function docker_cli_prepare() {
 		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
-	# @TODO: this might be unified with prepare_basic_deps
-	declare -g -a BASIC_DEPS=("bash" "git" "psmisc" "uuid-runtime")
-
-	#############################################################################################################
-	# Prepare some dependencies; these will be used on the Dockerfile
-
-	# initialize the extension manager; enable all extensions; only once..
-	if [[ "${docker_prepare_cli_skip_exts:-no}" != "yes" ]]; then
-		enable_all_extensions_builtin_and_user
-		initialize_extension_manager
-	fi
-	declare -a -g host_dependencies=()
-	host_release="${wanted_release_tag}" early_prepare_host_dependencies
-	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
-
 	#############################################################################################################
 	# Stop here if Docker can't be used at all.
 	if ! is_docker_ready_to_go; then
@@ -212,7 +197,10 @@ function docker_cli_prepare() {
 
 	# Info summary message. Thank you, GitHub Co-pilot!
 	display_alert "Docker info" "Docker ${DOCKER_SERVER_VERSION} Kernel:${DOCKER_SERVER_KERNEL_VERSION} RAM:${DOCKER_SERVER_TOTAL_RAM} CPUs:${DOCKER_SERVER_CPUS} OS:'${DOCKER_SERVER_OS}' hostname '${DOCKER_SERVER_NAME_HOST}' under '${DOCKER_ARMBIAN_HOST_OS_UNAME}' - buildx:${DOCKER_HAS_BUILDX} - loop-hacks:${DOCKER_SERVER_REQUIRES_LOOP_HACKS} static-loops:${DOCKER_SERVER_USE_STATIC_LOOPS}" "sysinfo"
+}
 
+
+function docker_cli_prepare_dockerfile() {
 	# @TODO: grab git info, add as labels et al to Docker... (already done in GHA workflow)
 
 	display_alert "Creating" ".dockerignore" "info"
@@ -236,6 +224,23 @@ function docker_cli_prepare() {
 		**/*.log
 		**/.DS_Store
 	DOCKERIGNORE
+
+	#############################################################################################################
+	# Prepare some dependencies; these will be used on the Dockerfile
+
+	# @TODO: this might be unified with prepare_basic_deps
+	declare -g -a BASIC_DEPS=("bash" "git" "psmisc" "uuid-runtime")
+
+	# initialize the extension manager; enable all extensions; only once..
+	if [[ "${docker_prepare_cli_skip_exts:-no}" != "yes" ]]; then
+		enable_all_extensions_builtin_and_user
+		initialize_extension_manager
+	fi
+	declare -a -g host_dependencies=()
+
+	declare wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
+	host_release="${wanted_release_tag}" early_prepare_host_dependencies
+	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
 
 	# This includes apt install equivalent to install_host_dependencies()
 	display_alert "Creating" "Dockerfile; FROM ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
@@ -262,8 +267,8 @@ function docker_cli_prepare() {
 		${include_dot_git_dir}
 	INITIAL_DOCKERFILE
 	# For debugging: RUN rm -fv /usr/bin/pip3 # Remove pip3 symlink to make sure we're not depending on it; non-Dockers may not have it
-
 }
+
 function docker_cli_build_dockerfile() {
 	local do_force_pull="no"
 	local local_image_sha
