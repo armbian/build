@@ -10,6 +10,12 @@ function prepare_host() {
 	return 0
 }
 
+function assert_prepared_host() {
+	if [[ ${prepare_host_has_already_run:-0} -lt 1 ]]; then
+		exit_with_error "assert_prepared_host: Host has not yet been prepared. This is a bug in armbian-next code. Please report!"
+	fi
+}
+
 function check_basic_host() {
 	display_alert "Checking" "basic host setup" "info"
 	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
@@ -184,6 +190,8 @@ function prepare_host_noninteractive() {
 
 	# Reset owner of userpatches if so required
 	reset_uid_owner "${USERPATCHES_PATH}" # Fix owner of files in the final destination
+
+	declare -i -g -r prepare_host_has_already_run=1 # global, readonly.
 
 	return 0
 }

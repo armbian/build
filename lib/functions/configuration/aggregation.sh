@@ -2,7 +2,7 @@
 
 function assert_requires_aggregation() {
 	if [[ ${aggregation_has_already_run:-0} -lt 1 ]]; then
-		exit_with_error "assert_requires_aggregation: Aggregation has not been run"
+		exit_with_error "assert_requires_aggregation: Aggregation has not been run. This is a bug in armbian-next code. Please report!"
 	fi
 }
 
