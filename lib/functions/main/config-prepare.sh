@@ -33,7 +33,8 @@ function prep_conf_main_build_single() {
 		LOG_SECTION="ni_check_basic_host" do_with_logging check_basic_host
 	fi
 
-	aggregate_packages_in_logging_section
+	# can't aggregate here, since it needs a prepared host... mark to do it later.
+	mark_aggregation_required_in_default_build_start
 
 	display_alert "Configuration prepared for BOARD build" "${BOARD}.${BOARD_TYPE}" "info"
 }
@@ -73,7 +74,10 @@ function prep_conf_main_minimal_ni() {
 # Lean version, for building rootfs, that doesn't need BOARD/BOARDFAMILY; never interactive.
 function prep_conf_main_only_rootfs_ni() {
 	prep_conf_main_minimal_ni
-	aggregate_packages_in_logging_section
+
+	# can't aggregate here, since it needs a prepared host... mark to do it later.
+	mark_aggregation_required_in_default_build_start
+
 	display_alert "Configuration prepared for minimal+rootfs" "prep_conf_main_only_rootfs_ni" "info"
 }
 

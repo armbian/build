@@ -6,6 +6,10 @@ function assert_requires_aggregation() {
 	fi
 }
 
+function mark_aggregation_required_in_default_build_start() {
+	declare -i -g -r aggregation_required_in_default_build_start=1 # global, readonly.
+}
+
 function aggregate_packages_in_logging_section() {
 	# Aggregate packages, in its own logging section; this decides internally on KERNEL_ONLY=no
 	# We need aggregation to be able to build bsp packages, which contain scripts coming from the aggregation.
