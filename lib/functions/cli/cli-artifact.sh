@@ -1,14 +1,16 @@
 function cli_artifact_pre_run() {
-	armbian_register_artifacts
-	declare -g chosen_artifact="${WHAT:-"kernel"}"
-	declare -g chosen_artifact_impl="${ARMBIAN_ARTIFACTS_TO_HANDLERS_DICT["${chosen_artifact}"]}"
-	[[ "x${chosen_artifact_impl}x" == "xx" ]] && exit_with_error "Unknown artifact '${chosen_artifact}'"
-	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "info"
-
-	create_artifact_functions
-
+	initialize_artifact "${WHAT:-"kernel"}"
 	# Run the pre run adapter
 	artifact_cli_adapter_pre_run
+}
+
+function cli_artifact_run() {
+	display_alert "artifact" "${chosen_artifact}" "warn"
+	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "warn"
+	artifact_cli_adapter_config_prep # only if in cli.
+
+	# only if in cli, if not just run it bare, since we'd be already inside do_with_default_build
+	do_with_default_build obtain_complete_artifact < /dev/null
 }
 
 function create_artifact_functions() {
@@ -41,24 +43,37 @@ function create_artifact_functions() {
 	done
 }
 
-function cli_artifact_run() {
-	display_alert "artifact" "${chosen_artifact}" "warn"
-	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "warn"
-	artifact_cli_adapter_config_prep # only if in cli.
+function initialize_artifact() {
+	declare -g chosen_artifact="${1}"
+	armbian_register_artifacts
+	declare -g chosen_artifact_impl="${ARMBIAN_ARTIFACTS_TO_HANDLERS_DICT["${chosen_artifact}"]}"
+	[[ "x${chosen_artifact_impl}x" == "xx" ]] && exit_with_error "Unknown artifact '${chosen_artifact}'"
+	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "info"
+	create_artifact_functions
+}
 
-	function obtain_complete_artifact() {
-		declare artifact_version="undetermined"
-		artifact_prepare_version
-		debug_var artifact_version
-		debug_var artifact_version_reason
-		
-		
-		artifact_is_available_in_local_cache
-		artifact_is_available_in_remote_cache
-		artifact_obtain_from_remote_cache
-		artifact_build_from_sources
-		artifact_deploy_to_remote_cache
-	}
-	# only if in cli, if not just run it bare, since we'd be already inside do_with_default_build
-	do_with_default_build obtain_complete_artifact < /dev/null
+function obtain_complete_artifact() {
+	declare -g artifact_version="undetermined"
+	declare -g artifact_version_reason="undetermined"
+	declare -A -g artifact_map_versions=()
+
+	artifact_prepare_version
+	debug_var artifact_version
+	debug_var artifact_version_reason
+	debug_dict artifact_map_versions
+
+	# @TODO the whole artifact upload/download dance
+	artifact_is_available_in_local_cache
+	artifact_is_available_in_remote_cache
+	artifact_obtain_from_remote_cache
+
+	artifact_build_from_sources
+
+	artifact_deploy_to_remote_cache
+}
+
+# This is meant to be run after config, inside default build.
+function build_artifact() {
+	initialize_artifact "${WHAT:-"kernel"}"
+	obtain_complete_artifact
 }
