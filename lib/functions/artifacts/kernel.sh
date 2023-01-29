@@ -30,8 +30,8 @@ function artifact_kernel_prepare_version() {
 	#    - extensions mechanism, have an array of hashes that is then hashed together.
 	# - Hash of the relevant lib/ bash sources involved, say compilation-kernel*.sh etc
 	# All those produce a version string like:
-	# v6.1.8-<4-digit-SHA1>_<4_digit_drivers>-<4_digit_patches>-<4_digit_config>-<4_digit_libs>
-	# v6.2-rc5-a0b1-c2d3-e4f5-g6h7-i8j9
+	# 6.1.8-<4-digit-SHA1>_<4_digit_drivers>-<4_digit_patches>-<4_digit_config>-<4_digit_libs>
+	# 6.2-rc5-a0b1-c2d3-e4f5-g6h7-i8j9
 
 	debug_var KERNELSOURCE
 	debug_var KERNELBRANCH
@@ -40,16 +40,18 @@ function artifact_kernel_prepare_version() {
 	debug_var KERNEL_MAJOR_MINOR
 	debug_var KERNELPATCHDIR
 
+	declare short_hash_size=16
+
 	declare -A GIT_INFO=([GIT_SOURCE]="${KERNELSOURCE}" [GIT_REF]="${KERNELBRANCH}")
 	run_memoized GIT_INFO "git2info" memoized_git_ref_to_info "include_makefile_body"
 	debug_dict GIT_INFO
 
-	declare short_sha1="${GIT_INFO[SHA1]:0:4}"
+	declare short_sha1="${GIT_INFO[SHA1]:0:${short_hash_size}}"
 
 	# get the drivers hash...
 	declare kernel_drivers_patch_hash
 	LOG_SECTION="kernel_drivers_create_patches_hash_only" do_with_logging do_with_hooks kernel_drivers_create_patches_hash_only
-	declare kernel_drivers_hash_short="${kernel_drivers_patch_hash:0:4}"
+	declare kernel_drivers_hash_short="${kernel_drivers_patch_hash:0:${short_hash_size}}"
 
 	# get the kernel patches hash...
 	# @TODO: why not just delegate this to the python patching, with some "dry-run" / hash-only option?
@@ -57,7 +59,7 @@ function artifact_kernel_prepare_version() {
 	declare hash_files="undetermined"
 	calculate_hash_for_all_files_in_dirs "${SRC}/patch/kernel/${KERNELPATCHDIR}" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
 	patches_hash="${hash_files}"
-	declare kernel_patches_hash_short="${patches_hash:0:4}"
+	declare kernel_patches_hash_short="${patches_hash:0:${short_hash_size}}"
 
 	# get the .config hash... also userpatches...
 	declare kernel_config_source_filename="" # which actual .config was used?
@@ -65,22 +67,38 @@ function artifact_kernel_prepare_version() {
 	declare hash_files="undetermined"
 	calculate_hash_for_files "${kernel_config_source_filename}"
 	config_hash="${hash_files}"
-	declare config_hash_short="${config_hash:0:4}"
+	declare config_hash_short="${config_hash:0:${short_hash_size}}"
 
 	# @TODO: get the extensions' .config modyfing hashes...
 
-	artifact_version="v${GIT_INFO[MAKEFILE_VERSION]}-${short_sha1}-${kernel_drivers_hash_short}-${kernel_patches_hash_short}-${config_hash_short}" # outer scope
+	# get the hashes of the lib/ bash sources involved...
+	declare hash_files="undetermined"
+	calculate_hash_for_files "${SRC}"/lib/functions/compilation/kernel*.sh # maybe also this file, "${SRC}"/lib/functions/artifacts/kernel.sh
+	declare bash_hash="${hash_files}"
+	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
+
+	# outer scope
+	artifact_version="${GIT_INFO[MAKEFILE_VERSION]}-s${short_sha1}-d${kernel_drivers_hash_short}-p${kernel_patches_hash_short}-c${config_hash_short}-b${bash_hash_short}"
+	# @TODO: validate it begins with a digit, and is at max X chars long.
 
 	declare -a reasons=(
-		"v${GIT_INFO[MAKEFILE_FULL_VERSION]}"
+		"version \"${GIT_INFO[MAKEFILE_FULL_VERSION]}\""
 		"git revision \"${GIT_INFO[SHA1]}\""
 		"codename \"${GIT_INFO[MAKEFILE_CODENAME]}\""
 		"drivers hash \"${kernel_drivers_patch_hash}\""
 		"patches hash \"${patches_hash}\""
 		".config hash \"${config_hash}\""
+		"framework bash hash \"${bash_hash}\""
 	)
 
 	artifact_version_reason="${reasons[*]}" # outer scope # @TODO better
+
+	# now, one for each file in the artifact... we've 3 packages produced, all the same version.
+	artifact_map_versions=(
+		["linux-image"]="${artifact_version}"
+		["linux-dtb"]="${artifact_version}"
+		["linux-headers"]="${artifact_version}"
+	)
 
 	return 0
 }
