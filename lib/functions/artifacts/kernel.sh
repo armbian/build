@@ -110,6 +110,7 @@ function artifact_kernel_obtain_from_remote_cache() {
 function artifact_kernel_build_from_sources() {
 	display_alert "artifact_kernel_XXXXXX" "artifact_kernel_XXXXXX" "warn"
 	# having failed all the cache obtaining, build it from sources.
+	compile_kernel
 }
 
 function artifact_kernel_deploy_to_remote_cache() {

@@ -24,6 +24,8 @@ function prepare_compilation_vars() {
 		Called early, before any compilation work starts.
 	POST_DETERMINE_CTHREADS
 
+	# readonly, global
+	declare -g -r CTHREADS="${CTHREADS}"
+
 	return 0
 }
-

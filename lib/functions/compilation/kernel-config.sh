@@ -37,6 +37,7 @@ function kernel_config() {
 
 function kernel_config_initialize() {
 	display_alert "Configuring kernel" "${LINUXCONFIG}" "info"
+	cd "${kernel_work_dir}" || exit_with_error "kernel_work_dir does not exist: ${kernel_work_dir}"
 
 	# If a `.config` already exists (from previous build), store it, preserving date.
 	# We will compare the result of the new configuration to it, and if the contents are the same, we'll restore the original date.
@@ -50,16 +51,17 @@ function kernel_config_initialize() {
 	# copy kernel config from configuration, userpatches
 	if [[ "${KERNEL_KEEP_CONFIG}" == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
 		display_alert "Using previously-exported kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
-		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" .config
+		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" "${kernel_work_dir}/.config"
 	else
 		prepare_kernel_config_core_or_userpatches
-		run_host_command_logged cp -pv "${kernel_config_source_filename}" .config
+		run_host_command_logged cp -pv "${kernel_config_source_filename}" "${kernel_work_dir}/.config"
 	fi
 
 	# Start by running olddefconfig -- always.
 	# It "updates" the config, using defaults from Kbuild files in the source tree.
 	# It is worthy noting that on the first run, it builds the tools, so the host-side compiler has to be working,
 	# regardless of the cross-build toolchain.
+	cd "${kernel_work_dir}" || exit_with_error "kernel_work_dir does not exist: ${kernel_work_dir}"
 	run_kernel_make olddefconfig
 
 	# Run the core-armbian config modifications here, built-in extensions:
