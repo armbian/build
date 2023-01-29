@@ -1,3 +1,19 @@
+function prepare_kernel_config_core_or_userpatches() {
+	# LINUXCONFIG is set or exit_with_error
+	[[ -z "${LINUXCONFIG}" ]] && exit_with_error "LINUXCONFIG not set: '${LINUXCONFIG}'"
+
+	if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
+		display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
+		kernel_config_source_filename="${USERPATCHES_PATH}/${LINUXCONFIG}.config"
+	elif [[ -f "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" ]]; then
+		display_alert "Using kernel config provided by user in config/kernel folder" "config/kernel/${LINUXCONFIG}.config" "info"
+		kernel_config_source_filename="${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config"
+	else
+		display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
+		kernel_config_source_filename="${SRC}/config/kernel/${LINUXCONFIG}.config"
+	fi
+}
+
 function kernel_config() {
 	# check $kernel_work_dir is set and exists, or bail
 	[[ -z "${kernel_work_dir}" ]] && exit_with_error "kernel_work_dir is not set"
@@ -36,20 +52,8 @@ function kernel_config_initialize() {
 		display_alert "Using previously-exported kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
 		run_host_command_logged cp -pv "${DEST}/config/${LINUXCONFIG}.config" .config
 	else
-		# @TODO: rpardini: this is too contrived
-		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
-			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			run_host_command_logged cp -pv "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
-			kernel_config_source_filename="${USERPATCHES_PATH}/${LINUXCONFIG}.config"
-		elif [[ -f "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" ]]; then
-			display_alert "Using kernel config provided by user in config/kernel folder" "config/kernel/${LINUXCONFIG}.config" "info"
-			run_host_command_logged cp -pv "${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config" .config
-			kernel_config_source_filename="${USERPATCHES_PATH}/config/kernel/${LINUXCONFIG}.config"
-		else
-			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
-			run_host_command_logged cp -pv "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
-			kernel_config_source_filename="${SRC}/config/kernel/${LINUXCONFIG}.config"
-		fi
+		prepare_kernel_config_core_or_userpatches
+		run_host_command_logged cp -pv "${kernel_config_source_filename}" .config
 	fi
 
 	# Start by running olddefconfig -- always.
