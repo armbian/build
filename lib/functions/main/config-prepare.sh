@@ -46,6 +46,13 @@ function prep_conf_main_minimal_ni() {
 	# needed
 	check_basic_host
 
+	# needed for BOARD= builds.
+	if [[ "${use_board:-"no"}" == "yes" ]]; then
+		LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
+		allow_no_family="no"
+		skip_kernel="no" # contentious: we could do u-boot without kernel...
+	fi
+
 	# not needed, doesnt hurt; might be moved to aggregation
 	LOG_SECTION="config_pre_main" do_with_conditional_logging config_pre_main
 
@@ -60,7 +67,7 @@ function prep_conf_main_minimal_ni() {
 	skip_kernel="${skip_kernel:-"yes"}" \
 		LOG_SECTION="config_post_main" do_with_conditional_logging config_post_main
 
-	display_alert "Minimal configuration prepared for build" "prep_conf_main_only_firmware" "info"
+	display_alert "Minimal configuration prepared for build" "prep_conf_main_minimal_ni" "info"
 }
 
 # Lean version, for building rootfs, that doesn't need BOARD/BOARDFAMILY; never interactive.
