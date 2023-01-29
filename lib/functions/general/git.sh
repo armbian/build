@@ -4,7 +4,7 @@
 # sets: ref_type=branch|tag|commit, ref_name=xxx|yyyy|zzzz|HEAD
 function git_parse_ref() {
 	declare ref="$1"
-	[[ -z $ref || ($ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:*) ]] && exit_with_error "Error in configuration"
+	[[ -z $ref || ($ref != tag:* && $ref != branch:* && $ref != head && $ref != commit:*) ]] && exit_with_error "Error in configuration; git_ref '${ref}' is not valid"
 	ref_type=${ref%%:*} # outer scope
 	ref_name=${ref##*:} # outer scope
 	if [[ $ref_type == head ]]; then
