@@ -151,6 +151,9 @@ function create_kernel_deb() {
 	#display_alert "Package dir" "for package ${package_name}" "debug"
 	#run_host_command_logged tree -C -h -d --du "${package_directory}"
 
+	# Run shellcheck on the produced DEBIAN/xxx scripts
+	dpkg_deb_run_shellcheck_on_scripts "${package_directory}"
+
 	# @TODO: hmm, why doesn't this use fakeroot_dpkg_deb_build() ?
 	declare final_deb_filename="${deb_output_dir}/${package_name}_${REVISION}_${ARCH}.deb"                                   # for compatibility with non-artifacts
 	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${final_deb_filename}" # not KDEB compress, we're not under a Makefile
