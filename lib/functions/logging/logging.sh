@@ -21,11 +21,18 @@ function logging_init() {
 	declare -g bright_yellow_color="\e[1;33m" yellow_color="\e[0;33m"
 	declare -g ansi_reset_color="\e[0m"
 	declare -g -i logging_section_counter=0 # -i: integer
-	declare -g tool_color="${gray_color}"   # default to gray... (should be ok on terminals, @TODO: I've seen it too dark on a few random screenshots though
-	if [[ "${CI}" == "true" ]]; then        # ... but that is too dark for Github Actions
+	declare -g tool_color="${gray_color}"   # default to gray... (should be ok on terminals)
+
+	# @TODO: more terminals might have a bit... impaired... default themes. correct.
+	if [[ "${TERM}" == "alacritty" ]]; then
+		declare -g tool_color="${normal_color}"
+	fi
+
+	if [[ "${CI}" == "true" ]]; then # ... but that is too dark for Github Actions
 		declare -g tool_color="${normal_color}"
 		declare -g SHOW_LOG="${SHOW_LOG:-"yes"}" # if in CI/GHA, default to showing log
 	fi
+
 	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then # if in container, add a cyan "whale emoji" to the left marker wrapped in dark gray brackets
 		local container_emoji="🐳"                                #  🐳 or 🐋
 		declare -g left_marker="${gray_color}[${container_emoji}|${normal_color}"
