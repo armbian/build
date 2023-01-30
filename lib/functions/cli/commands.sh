@@ -54,8 +54,8 @@ function armbian_register_commands() {
 
 		["kernel-config"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes' KERNEL_CONFIGURE='yes'"
 		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes' KERNEL_CONFIGURE='no'"
-		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
-		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes'"
+		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes' KERNEL_CONFIGURE='no'"
+		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes' KERNEL_CONFIGURE='no'"
 
 		["oras-upload"]="ORAS_OPERATION='upload'"
 
