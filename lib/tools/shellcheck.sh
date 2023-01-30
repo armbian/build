@@ -70,7 +70,6 @@ case "${SEVERITY}" in
 			"SC2046" # "quote this to prevent word splitting" -- bad expansion, variant 2, a lot of legacy pre-next code hits this
 			"SC2086" # "quote this to prevent word splitting" -- bad expansion, variant 3, a lot of legacy pre-next code hits this
 			"SC2206" # (warning): Quote to prevent word splitting/globbing, or split robustly with mapfile or read -a.
-			"SC2154" # "is referenced but not assigned." idem
 		)
 		;;
 
