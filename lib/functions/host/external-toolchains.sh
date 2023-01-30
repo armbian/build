@@ -56,6 +56,7 @@ function download_external_toolchains() {
 			for dir in "${existing_dirs[@]}"; do
 				local found=no
 				for toolchain in "${toolchains[@]}"; do
+					# shellcheck disable=SC2053 # legacy code, won't fix
 					[[ $dir == ${toolchain%.tar.*} ]] && found=yes
 				done
 				if [[ $found == no ]]; then

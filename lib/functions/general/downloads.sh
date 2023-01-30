@@ -189,7 +189,7 @@ function download_and_verify_internal() {
 		fi
 
 		if [[ $verified != true ]]; then
-			rm -rf "${localdir}/${filename}"* # We also delete asc file
+			rm -rf "${localdir:?}/${filename:?}"* # We also delete asc file
 			exit_with_error "verification failed"
 		fi
 
