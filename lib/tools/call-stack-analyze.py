@@ -158,9 +158,15 @@ for call in bare_calls:
 # Now go back to the bare_calls, and add the def_file and def_line to each stack member
 for call in bare_calls:
 	for stack_member in call["stack"]:
-		stack_member["def_file"] = function_to_file[stack_member["function"]]["def_file"]
-		stack_member["def_line"] = function_to_file[stack_member["function"]]["def_line"]
-		stack_member["group"] = function_to_file[stack_member["function"]]["group"]
+		func = stack_member["function"]
+		if function_to_file.get(func) is not None:
+			func2file = function_to_file[func]
+			stack_member["def_file"] = func2file["def_file"]
+			stack_member["def_line"] = func2file["def_line"]
+			stack_member["group"] = func2file["group"]
+		else:
+			eprint("Error: function not found in function_to_file: " + func)
+			raise Exception("Error: function not found in function_to_file: " + func)
 
 # Now recompute the calls, dropping from the stack the unwanted groups.
 calls = []
