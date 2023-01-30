@@ -145,7 +145,15 @@ function compile_uboot_target() {
 
 	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
 	# @TODO make configurable/expandable
-	local uboot_cflags="-fdiagnostics-color=always -Wno-error=maybe-uninitialized -Wno-error=misleading-indentation"
+	local -a uboot_cflags_array=(
+		"-fdiagnostics-color=always" # color messages
+		"-Wno-error=maybe-uninitialized"
+		"-Wno-error=misleading-indentation"   # patches have mismatching indentation
+		"-Wno-error=attributes"               # for very old-uboots
+		"-Wno-error=address-of-packed-member" # for very old-uboots
+		"-Wno-error=array-parameter="         # very old uboots
+	)
+	local uboot_cflags="${uboot_cflags_array[*]}"
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
