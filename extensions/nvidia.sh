@@ -15,6 +15,6 @@ function post_install_kernel_debs__build_nvidia_kernel_module() {
 	# chroot_sdcard_apt_get_install() is in lib/logging/runners.sh which handles "running" of stuff nicely.
 	# chroot_sdcard_apt_get_install() -> chroot_sdcard_apt_get() -> chroot_sdcard() -> run_host_command_logged_raw()
 	# it handles bash-specific quoting issues, apt proxies, logging, and errors.
-	declare -agx if_error_find_files_sdcard=("/var/lib/dkms/nvidia/*/build/make.log")
+	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/nvidia/*/build/make.log")
 	chroot_sdcard_apt_get_install "nvidia-dkms-${NVIDIA_DRIVER_VERSION}" "nvidia-driver-${NVIDIA_DRIVER_VERSION}" nvidia-settings
 }
