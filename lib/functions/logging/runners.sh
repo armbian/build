@@ -211,7 +211,7 @@ function run_host_command_logged_raw() {
 function logging_clear_run_command_error_info() {
 	# Unset those globals; they're only valid for the first invocation of a runner helper function after they're set.
 	unset if_error_detail_message
-	unset if_error_find_files_sdcard # remember, this is global.
+	declare -ag if_error_find_files_sdcard=() # declare as global, empty array
 }
 
 function logging_enrich_run_command_error_info() {

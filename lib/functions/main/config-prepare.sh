@@ -272,7 +272,7 @@ function config_post_main() {
 function set_distribution_status() {
 	local distro_support_desc_filepath="${SRC}/config/distributions/${RELEASE}/support"
 	if [[ ! -f "${distro_support_desc_filepath}" ]]; then
-		exit_with_error "Distribution ${distribution_name} does not exist"
+		exit_with_error "Distribution dir '${distro_support_desc_filepath}' does not exist"
 	else
 		DISTRIBUTION_STATUS="$(cat "${distro_support_desc_filepath}")"
 	fi
