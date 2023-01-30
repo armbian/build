@@ -51,7 +51,7 @@ for column in columns:
 	if len(set(values)) == 1:
 		columns_to_remove.append(column)
 
-eprint("columns with all-identical values: {}: '{}'".format(len(columns_to_remove), columns_to_remove))
+# eprint("columns with all-identical values: {}: '{}'".format(len(columns_to_remove), columns_to_remove))
 
 # Now actually filter columns, removing columns_to_remove
 columns = [column for column in columns if column not in columns_to_remove]
@@ -64,4 +64,4 @@ writer.writeheader()
 for obj in flat:
 	writer.writerow(obj)
 
-eprint("Done writing to stdout.")
+eprint("Done writing CSV to stdout.")

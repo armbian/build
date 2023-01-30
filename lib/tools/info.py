@@ -112,13 +112,13 @@ def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_
 
 # Find the location of compile.sh, relative to this Python script.
 this_script_full_path = os.path.realpath(__file__)
-eprint("Real path to this script", this_script_full_path)
+# eprint("Real path to this script", this_script_full_path)
 
 armbian_src_path = os.path.realpath(os.path.join(os.path.dirname(this_script_full_path), "..", ".."))
-eprint("Real path to Armbian SRC", armbian_src_path)
+# eprint("Real path to Armbian SRC", armbian_src_path)
 
 compile_sh_full_path = os.path.realpath(os.path.join(armbian_src_path, "compile.sh"))
-eprint("Real path to compile.sh", compile_sh_full_path)
+# eprint("Real path to compile.sh", compile_sh_full_path)
 
 # Make sure it exists
 if not os.path.exists(compile_sh_full_path):
@@ -213,7 +213,7 @@ if True:
 										 board_info, possible_branch)
 				every_future.append(future)
 
-		eprint("Waiting for all futures...")
+		eprint(f"Waiting for all {len(every_future)} configurations to be computed... this might take a long time.")
 		executor.shutdown(wait=True)
 		eprint("Done, all futures awaited")
 
