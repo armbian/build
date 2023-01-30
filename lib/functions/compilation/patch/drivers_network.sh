@@ -386,7 +386,6 @@ driver_rtl88x2cs()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2cs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2cs-Fix-p2p-go-advertising.patch" "applying"
 	fi
 }
 #_bt for blueteeth
