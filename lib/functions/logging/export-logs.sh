@@ -148,7 +148,8 @@ function export_ansi_logs() {
 
 	if [[ "${show_message_after_export:-"yes"}" != "skip" ]]; then
 		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
-		display_alert "Share log (beta!)" "cat ${target_relative_to_src} | curl --data-binary @- https://paste.next.armbian.com/documents"
+		display_alert "Share log (beta 2!)" "curl --data-binary @${target_relative_to_src} https://paste.next.armbian.com/log"
+		# @TODO: compress; have a CLI cmd to upload; also render Markdown logs, etc
 	fi
 
 	return 0
