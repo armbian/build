@@ -369,8 +369,8 @@ function compile_uboot() {
 	# This is set to `uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"` in outer scope...
 	display_alert "Building u-boot deb" "(version: ${package_version}) ${uboot_name}.deb"
 	fakeroot_dpkg_deb_build "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb"
-	rm -rf "$uboottempdir/${uboot_name}"
-	[[ -n $atftempdir ]] && rm -rf "${atftempdir}"
+	rm -rf "${uboottempdir:?}/${uboot_name:?}"
+	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}"
 
 	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
 

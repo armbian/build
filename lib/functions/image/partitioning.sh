@@ -102,7 +102,8 @@ function prepare_partitions() {
 	display_alert "calculated rootpart" "rootpart: ${rootpart}" "debug"
 
 	# stage: calculate rootfs size
-	export rootfs_size=$(du -sm $SDCARD/ | cut -f1) # MiB
+	declare -g -i rootfs_size
+	rootfs_size=$(du -sm "${SDCARD}"/ | cut -f1) # MiB
 	display_alert "Current rootfs size" "$rootfs_size MiB" "info"
 
 	call_extension_method "prepare_image_size" "config_prepare_image_size" <<- 'PREPARE_IMAGE_SIZE'
