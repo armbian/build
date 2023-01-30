@@ -19,27 +19,24 @@ find_toolchain() {
 	}
 	local compiler=$1
 	local expression=$2
-	local dist=10
 	local toolchain=""
-	# extract target major.minor version from expression
-	local target_ver
-	target_ver=$(grep -oE "[[:digit:]]+\.[[:digit:]]" <<< "$expression")
+	local version=0
 	for dir in "${SRC}"/cache/toolchain/*/; do
 		# check if is a toolchain for current $ARCH
 		[[ ! -f ${dir}bin/${compiler}gcc ]] && continue
+
 		# get toolchain major.minor version
 		local gcc_ver
 		gcc_ver=$("${dir}bin/${compiler}gcc" -dumpversion | grep -oE "^[[:digit:]]+\.[[:digit:]]")
+
 		# check if toolchain version satisfies requirement
-		awk "BEGIN{exit ! ($gcc_ver $expression)}" > /dev/null || continue
-		# check if found version is the closest to target
-		# may need different logic here with more than 1 digit minor version numbers
+		# FIXME: Unsupport more than 1 digit minor version numbers
 		# numbers: 3.9 > 3.10; versions: 3.9 < 3.10
-		# dpkg --compare-versions can be used here if operators are changed
-		local d
-		d=$(awk '{x = $1 - $2}{printf "%.1f\n", (x > 0) ? x : -x}' <<< "$target_ver $gcc_ver")
-		if awk "BEGIN{exit ! ($d < $dist)}" > /dev/null; then
-			dist=$d
+		awk "BEGIN{exit ! ($gcc_ver $expression)}" > /dev/null || continue
+
+		# Check if found version is newer
+		if linux-version compare $gcc_ver ge $version; then
+			version=$gcc_ver
 			toolchain=${dir}bin
 		fi
 	done
