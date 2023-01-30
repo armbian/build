@@ -295,7 +295,7 @@ function compile_uboot() {
 		display_alert "Extensions: custom uboot built by extension" "not building regular uboot" "debug"
 	fi
 
-	display_alert "Preparing u-boot general packaging. all_worked:${all_worked}  any_worked:${any_worked} " "${version} ${target_make}"
+	display_alert "Preparing u-boot general packaging" "${version} ${target_make}"
 
 	# set up postinstall script # @todo: extract into a tinkerboard extension
 	if [[ $BOARD == tinkerboard ]]; then

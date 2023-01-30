@@ -113,7 +113,7 @@ function interactive_desktop_main_configuration() {
 			options+=("${config_filename}" "${config_name} configuration")
 		done
 
-		dialog_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment.\nThese are sourced from ${desktop_environment_config_dir}" "${options[@]}"
+		dialog_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment." "${options[@]}"
 		DESKTOP_ENVIRONMENT_CONFIG_NAME="${DIALOG_MENU_RESULT}"
 		unset options
 
