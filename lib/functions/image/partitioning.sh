@@ -114,9 +114,10 @@ function prepare_partitions() {
 		Last chance to set `USE_HOOK_FOR_PARTITION`=yes and then implement create_partition_table hook_point.
 	PREPARE_IMAGE_SIZE
 
+	local sdsize
 	if [[ -n $FIXED_IMAGE_SIZE && $FIXED_IMAGE_SIZE =~ ^[0-9]+$ ]]; then
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
-		local sdsize=$FIXED_IMAGE_SIZE
+		sdsize=$FIXED_IMAGE_SIZE
 		# basic sanity check
 		if [[ $ROOTFS_TYPE != nfs && $sdsize -lt $rootfs_size ]]; then
 			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
@@ -126,9 +127,9 @@ function prepare_partitions() {
 		# Hardcoded overhead +25% is needed for desktop images,
 		# for CLI it could be lower. Align the size up to 4MiB
 		if [[ $BUILD_DESKTOP == yes ]]; then
-			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.35) / 1 + 0) / 4 + 1) * 4")
+			sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.35) / 1 + 0) / 4 + 1) * 4")
 		else
-			local sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
+			sdsize=$(bc -l <<< "scale=0; ((($imagesize * 1.30) / 1 + 0) / 4 + 1) * 4")
 		fi
 	fi
 
@@ -245,12 +246,13 @@ function prepare_partitions() {
 		display_alert "Mounting rootfs" "$rootdevice"
 		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
 		# create fstab (and crypttab) entry
+		local rootfs
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
 			echo "$ROOT_MAPPER UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}) none luks" >> $SDCARD/etc/crypttab
-			local rootfs=$rootdevice # used in fstab
+			rootfs=$rootdevice # used in fstab
 		else
-			local rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+			rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		fi
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 	else
@@ -313,7 +315,7 @@ function prepare_partitions() {
 		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			local rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+			rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
 			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='$rootpart':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
