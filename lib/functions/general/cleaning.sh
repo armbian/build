@@ -49,7 +49,7 @@ function general_cleaning() {
 			;;
 
 		alldebs) # delete output/debs
-			[[ -d "${DEB_STORAGE}" ]] && display_alert "Cleaning" "${DEB_STORAGE}" "info" && rm -rf "${DEB_STORAGE}"/*
+			[[ -d "${DEB_STORAGE}" ]] && display_alert "Cleaning" "${DEB_STORAGE}" "info" && rm -rf "${DEB_STORAGE:?}"/*
 			;;
 
 		cache) # delete output/cache

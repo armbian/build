@@ -154,9 +154,9 @@ function parse_each_cmdline_arg_as_command_param_or_config() {
 		exit_with_error "You cannot have a configuration file named '${config_file}'. '${argument}' is a command name and is reserved for internal Armbian usage. Sorry. Please rename your config file and pass its name it an argument, and I'll use it. PS: You don't need a config file for 'docker' anymore, Docker is all managed by Armbian now."
 	elif [[ "${is_config}" == "yes" ]]; then # we have a config only
 		display_alert "Adding config file to list" "${config_file}" "debug"
-		ARMBIAN_CONFIG_FILES+=("${config_file}")    # full path to be sourced
-		ARMBIAN_CLI_RELAUNCH_CONFIGS+="${argument}" # name reference to be relaunched
-	elif [[ "${is_command}" == "yes" ]]; then    # we have a command, only.
+		ARMBIAN_CONFIG_FILES+=("${config_file}")      # full path to be sourced
+		ARMBIAN_CLI_RELAUNCH_CONFIGS+=("${argument}") # name reference to be relaunched
+	elif [[ "${is_command}" == "yes" ]]; then      # we have a command, only.
 		# sanity check. we can't have more than one command. decide!
 		if [[ -n "${ARMBIAN_COMMAND}" ]]; then
 			exit_with_error "You cannot specify more than one command. You have '${ARMBIAN_COMMAND}' and '${argument}'. Please decide which one you want to run and pass only that one."
@@ -179,7 +179,7 @@ function produce_relaunch_parameters() {
 		ARMBIAN_CLI_RELAUNCH_ARGS+=("${param}=${ARMBIAN_CLI_RELAUNCH_PARAMS[${param}]}")
 	done
 	# add the running configs
-	for config in ${ARMBIAN_CLI_RELAUNCH_CONFIGS}; do
+	for config in "${ARMBIAN_CLI_RELAUNCH_CONFIGS[@]}"; do
 		ARMBIAN_CLI_RELAUNCH_ARGS+=("${config}")
 	done
 	# add the command; defaults to the last command, but can be changed by the last pre-run.
