@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.8.0} # https://github.com/koalaman/shellcheck/releases
+SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.9.0} # https://github.com/koalaman/shellcheck/releases
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
@@ -39,13 +39,11 @@ SHELLCHECK_FN_TARXZ="${SHELLCHECK_FN}.tar.xz"
 DOWN_URL="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
 SHELLCHECK_BIN="${DIR_SHELLCHECK}/${SHELLCHECK_FN}"
 
-echo "MACHINE: ${MACHINE}"
-echo "Down URL: ${DOWN_URL}"
-echo "SHELLCHECK_BIN: ${SHELLCHECK_BIN}"
-
 if [[ ! -f "${SHELLCHECK_BIN}" ]]; then
-	set -x
 	echo "Cache miss, downloading..."
+	echo "MACHINE: ${MACHINE}"
+	echo "Down URL: ${DOWN_URL}"
+	echo "SHELLCHECK_BIN: ${SHELLCHECK_BIN}"
 	wget -O "${SHELLCHECK_BIN}.tar.xz" "${DOWN_URL}"
 	tar -xf "${SHELLCHECK_BIN}.tar.xz" -C "${DIR_SHELLCHECK}" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
 	mv -v "${DIR_SHELLCHECK}/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" "${SHELLCHECK_BIN}"
@@ -53,9 +51,42 @@ if [[ ! -f "${SHELLCHECK_BIN}" ]]; then
 	chmod +x "${SHELLCHECK_BIN}"
 fi
 
+declare SEVERITY="${SEVERITY:-"critical"}"
+
+declare -a params=(--check-sourced --color=always --external-sources --format=tty --shell=bash)
+case "${SEVERITY}" in
+	important)
+		params+=("--severity=warning")
+		excludes+=(
+			"SC2034" # "appears unused" -- bad, but no-one will die of this
+		)
+		;;
+
+	critical)
+		params+=("--severity=warning")
+		excludes+=(
+			"SC2034" # "appears unused" -- bad, but no-one will die of this
+			"SC2207" # "prefer mapfile" -- bad expansion, can lead to trouble; a lot of legacy pre-next code hits this
+			"SC2046" # "quote this to prevent word splitting" -- bad expansion, variant 2, a lot of legacy pre-next code hits this
+			"SC2086" # "quote this to prevent word splitting" -- bad expansion, variant 3, a lot of legacy pre-next code hits this
+			"SC2206" # (warning): Quote to prevent word splitting/globbing, or split robustly with mapfile or read -a.
+			"SC2154" # "is referenced but not assigned." idem
+			"SC2155" # "Declare and assign separately to avoid masking return values." - pretty bad
+		)
+		;;
+
+	*)
+		params=("--severity=${SEVERITY}")
+		;;
+esac
+
+for exclude in "${excludes[@]}"; do
+	params+=(--exclude="${exclude}")
+done
 
 ACTUAL_VERSION="$("${SHELLCHECK_BIN}" --version | grep "^version")"
-echo "Running shellcheck ${ACTUAL_VERSION}"
+echo "Running shellcheck ${ACTUAL_VERSION} against 'compile.sh' -- lib/ checks, severity 'SEVERITY=${SEVERITY}', please wait..."
+echo "All params: " "${params[@]}"
 
 # formats:
 # checkstyle -- some XML format
@@ -64,5 +95,10 @@ echo "Running shellcheck ${ACTUAL_VERSION}"
 
 cd "${SRC}" || exit 3
 # "${SHELLCHECK_BIN}" --help
-"${SHELLCHECK_BIN}" --check-sourced --color=always --external-sources --shell=bash --severity=warning --format=tty compile.sh
-
+if "${SHELLCHECK_BIN}" "${params[@]}" compile.sh; then
+	echo "Congrats, no ${SEVERITY}'s detected."
+	exit 0
+else
+	echo "Ooops, ${SEVERITY}'s detected."
+	exit 1
+fi
