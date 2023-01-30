@@ -85,7 +85,7 @@ function download_and_verify_internal() {
 		--file-allocation=trunc
 
 		# Connection
-		--disable-ipv6=$DISABLE_IPV6
+		"--disable-ipv6=${DISABLE_IPV6}"
 		--connect-timeout=10
 		--timeout=10
 		--allow-piece-length-change=true
@@ -121,8 +121,10 @@ function download_and_verify_internal() {
 			return $rc
 		fi
 
-		[[ ${USE_TORRENT} == "yes" ]] &&
-			local torrent="$(get_urls "${catalog}" "${filename}.torrent")"
+		if [[ ${USE_TORRENT} == "yes" ]]; then
+			local torrent
+			torrent="$(get_urls "${catalog}" "${filename}.torrent")"
+		fi
 	fi
 
 	# download torrent first
@@ -135,7 +137,7 @@ function download_and_verify_internal() {
 			--dir="${localdir}" \
 			${torrent}
 
-		[[ $? -eq 0 ]] && direct=no
+		direct=no
 
 	fi
 
@@ -171,7 +173,7 @@ function download_and_verify_internal() {
 				gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
 					--list-keys "${key}" ||
 					gpg --homedir "${SRC}/cache/.gpg" --no-permission-warning \
-						${http_proxy:+--keyserver-options http-proxy="${http_proxy}"} \
+						${http_proxy:+--keyserver-options http-proxy="${http_proxy:-""}"} \
 						--keyserver "hkp://keyserver.ubuntu.com:80" \
 						--recv-keys "${key}" ||
 					exit_with_error "Failed to receive key" "${key}"

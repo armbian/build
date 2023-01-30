@@ -11,7 +11,7 @@ function interactive_config_prepare_terminal() {
 		fi
 	fi
 	# We'll use this title on all menus
-	export backtitle="Armbian building script, https://www.armbian.com | https://docs.armbian.com | (c) 2013-2023 Igor Pecovnik "
+	declare -g -r backtitle="Armbian building script, https://www.armbian.com | https://docs.armbian.com | (c) 2013-2023 Igor Pecovnik "
 }
 
 function interactive_finish() {
@@ -121,7 +121,8 @@ function interactive_config_ask_board_list() {
 
 	declare WIP_BUTTON='CSC/WIP/EOS/TVB'
 	declare STATE_DESCRIPTION=' - boards with high level of software maturity'
-	declare temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
+	declare temp_rc
+	temp_rc=$(mktemp) # @TODO: this is a _very_ early call to mktemp - no TMPDIR set yet - it needs to be cleaned-up somehow
 
 	while true; do
 		declare -a arr_all_board_names=() arr_all_board_options=()                                                                                              # arrays

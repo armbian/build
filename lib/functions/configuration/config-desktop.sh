@@ -17,7 +17,8 @@ function desktop_element_supported() {
 	local support_level_filepath="${desktop_element_path}/support"
 	export desktop_element_supported_result=0
 	if [[ -f "${support_level_filepath}" ]]; then
-		local support_level="$(cat "${support_level_filepath}")"
+		local support_level
+		support_level="$(cat "${support_level_filepath}")"
 		if [[ "${support_level}" != "supported" && "${EXPERT}" != "yes" ]]; then
 			desktop_element_supported_result=65
 			return 0

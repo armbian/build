@@ -33,7 +33,7 @@ function dialog_if_terminal_set_vars() {
 	set -e          # back to normal
 	set -o errtrace # back to normal
 	set -o errexit  # back to normal
-	
+
 	# clear the screen after dialog exits; that way we can see the log output that comes after it?
 	clear
 
@@ -92,12 +92,14 @@ function distro_menu() {
 	local distrib_dir="${1}"
 
 	if [[ -d "${distrib_dir}" && -f "${distrib_dir}/support" ]]; then
-		local support_level="$(cat "${distrib_dir}/support")"
+		local support_level
+		support_level="$(cat "${distrib_dir}/support")"
 		if [[ "${support_level}" != "supported" && $EXPERT != "yes" ]]; then
 			:
 		else
-			local distro_codename="$(basename "${distrib_dir}")"
-			local distro_fullname="$(cat "${distrib_dir}/name")"
+			local distro_codename distro_fullname
+			distro_codename="$(basename "${distrib_dir}")"
+			distro_fullname="$(cat "${distrib_dir}/name")"
 			local expert_infos=""
 			[[ $EXPERT == "yes" ]] && expert_infos="(${support_level})"
 			options+=("${distro_codename}" "${distro_fullname} ${expert_infos}")
