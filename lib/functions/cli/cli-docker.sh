@@ -4,6 +4,16 @@ function cli_docker_pre_run() {
 		return 0
 	fi
 
+	case "${DOCKER_SUBCMD}" in
+		shell)
+			# inside-function-function: a dynamic hook, only triggered if this CLI runs.
+			function add_host_dependencies__ssh_client_for_docker_shell_over_ssh() {
+				export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} openssh-client"
+			}
+			declare -g DOCKER_PASS_SSH_AGENT="yes" # Pass SSH agent to docker
+			;;
+	esac
+
 	# make sure we're not _ALREADY_ running under docker... otherwise eternal loop?
 	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
 		exit_with_error "asking for docker... inside docker. how did this happen? Tip: you don't need 'docker' to run armbian-next inside Docker; it's automatically detected and used when appropriate."
@@ -11,12 +21,6 @@ function cli_docker_pre_run() {
 }
 
 function cli_docker_run() {
-	case "${DOCKER_SUBCMD}" in
-		shell)
-			declare -g DOCKER_PASS_SSH_AGENT="yes" # Pass SSH agent to docker
-			;;
-	esac
-
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
