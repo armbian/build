@@ -522,17 +522,24 @@ driver_rtl8822BS()
 driver_uwe5622_allwinner()
 {
 	# Unisoc uwe5622 wireless Support
-	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 6.1 && [[ "$LINUXFAMILY" == sunxi* ]]; then
+	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 6.2 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
 		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-warnings.patch" "applying"
 
                 # Add to section Makefile
                 echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
 
 		if linux-version compare "${version}" lt 6.1; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-pre-v6.1.patch" "applying"
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bt-fix.patch" "applying"
+		fi
+		
+		if linux-version compare "${version}" ge 6.1; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-v6.1-post.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.1.patch" "applying"
 		fi
 	fi
 }
