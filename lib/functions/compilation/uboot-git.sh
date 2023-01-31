@@ -27,6 +27,7 @@ function uboot_prepare_git() {
 		# Prepare the git bare repo for u-boot.
 		declare uboot_git_bare_tree
 		uboot_prepare_bare_repo # this sets uboot_git_bare_tree
+		git_ensure_safe_directory "${uboot_git_bare_tree}"
 
 		display_alert "Downloading sources" "u-boot; BOOTSOURCEDIR=${BOOTSOURCEDIR}" "git"
 
