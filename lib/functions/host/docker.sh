@@ -409,6 +409,11 @@ function docker_cli_prepare_launch() {
 		fi
 	fi
 
+	if [[ "${CARD_DEVICE}" != "" && "${DOCKER_SKIP_CARD_DEVICE:-"no"}" != "yes" ]]; then
+		display_alert "Passing device down to Docker" "CARD_DEVICE: '${CARD_DEVICE}'" "warn"
+		DOCKER_ARGS+=("--device=${CARD_DEVICE}")
+	fi
+
 	# If running on GitHub Actions, mount & forward some paths, so they're accessible inside Docker.
 	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
 		display_alert "Passing down to Docker" "GITHUB_OUTPUT: '${GITHUB_OUTPUT}'" "info"
