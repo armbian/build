@@ -177,11 +177,11 @@ function do_main_configuration() {
 		gitee)
 			MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
 			;;
-		github)
-			MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
+		denx)
+			MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
 			;;
 		*)
-			MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
+			MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
 			;;
 	esac
 
