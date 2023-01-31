@@ -18,9 +18,16 @@ function memoized_git_ref_to_info() {
 	MEMO_DICT+=(["REF_TYPE"]="${ref_type}")
 	MEMO_DICT+=(["REF_NAME"]="${ref_name}")
 
+	# Small detour here; if it's a tag, ask for the dereferenced commit, to avoid the annotated tag's sha1, instead get the commit tag points to.
+	if [[ "${ref_type}" == "tag" ]]; then
+		ref_name="${ref_name}^{}" # dereference tag
+	fi
+
 	# Get the SHA1 of the commit
 	declare sha1
+	display_alert "Fetching SHA1 of ${ref_type} ${ref_name}" "${MEMO_DICT[GIT_SOURCE]}" "info"
 	sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
+	display_alert "SHA1 of ${ref_type} ${ref_name}" "${sha1}" "info"
 	MEMO_DICT+=(["SHA1"]="${sha1}")
 
 	if [[ "${2}" == "include_makefile_body" ]]; then
@@ -63,7 +70,7 @@ function memoized_git_ref_to_info() {
 
 			display_alert "Fetching Makefile via HTTP" "${url}" "warn"
 			makefile_url="${url}"
-			makefile_body="$(curl -sL "${url}")"
+			makefile_body="$(curl -sL --fail "${url}")"
 
 			parse_makefile_version "${makefile_body}"
 
@@ -82,6 +89,12 @@ function memoized_git_ref_to_info() {
 			ver[2]=$(grep "^SUBLEVEL" <(echo "${makefile_body}") | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+' || true)
 			ver[3]=$(grep "^EXTRAVERSION" <(echo "${makefile_body}") | head -1 | awk '{print $(NF)}' | grep -oE '^-rc[[:digit:]]+' || true)
 			makefile_version="${ver[0]:-0}${ver[1]:+.${ver[1]}}${ver[2]:+.${ver[2]}}${ver[3]}"
+
+			# validate sanity
+			if [[ "${makefile_version}" == "0" ]]; then
+				exit_with_error "Unable to parse Makefile version '${makefile_version}' from body '${makefile_body}'"
+			fi
+
 			makefile_full_version="${makefile_version}"
 			if [[ "${ver[3]}" == "-rc"* ]]; then # contentious:, if an "-rc" EXTRAVERSION, don't include the SUBLEVEL
 				makefile_version="${ver[0]:-0}${ver[1]:+.${ver[1]}}${ver[3]}"
