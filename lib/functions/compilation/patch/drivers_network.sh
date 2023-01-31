@@ -534,7 +534,6 @@ driver_uwe5622_allwinner()
 
 		if linux-version compare "${version}" lt 6.1; then
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-pre-v6.1.patch" "applying"
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bt-fix.patch" "applying"
 		fi
 		
 		if linux-version compare "${version}" ge 6.1; then
