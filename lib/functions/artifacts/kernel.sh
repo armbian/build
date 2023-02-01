@@ -33,6 +33,8 @@ function artifact_kernel_prepare_version() {
 	# 6.1.8-<4-digit-SHA1>_<4_digit_drivers>-<4_digit_patches>-<4_digit_config>-<4_digit_libs>
 	# 6.2-rc5-a0b1-c2d3-e4f5-g6h7-i8j9
 
+	debug_var BRANCH
+	debug_var REVISION
 	debug_var KERNELSOURCE
 	debug_var KERNELBRANCH
 	debug_var LINUXFAMILY
@@ -40,7 +42,7 @@ function artifact_kernel_prepare_version() {
 	debug_var KERNEL_MAJOR_MINOR
 	debug_var KERNELPATCHDIR
 
-	declare short_hash_size=16
+	declare short_hash_size=4
 
 	declare -A GIT_INFO=([GIT_SOURCE]="${KERNELSOURCE}" [GIT_REF]="${KERNELBRANCH}")
 	run_memoized GIT_INFO "git2info" memoized_git_ref_to_info "include_makefile_body"
@@ -70,6 +72,7 @@ function artifact_kernel_prepare_version() {
 	declare config_hash_short="${config_hash:0:${short_hash_size}}"
 
 	# @TODO: get the extensions' .config modyfing hashes...
+	# @TODO: include the compiler version? host release?
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
@@ -78,7 +81,7 @@ function artifact_kernel_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${GIT_INFO[MAKEFILE_VERSION]}-s${short_sha1}-d${kernel_drivers_hash_short}-p${kernel_patches_hash_short}-c${config_hash_short}-b${bash_hash_short}"
+	artifact_version="${GIT_INFO[MAKEFILE_VERSION]}-S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}-B${bash_hash_short}"
 	# @TODO: validate it begins with a digit, and is at max X chars long.
 
 	declare -a reasons=(
@@ -93,11 +96,18 @@ function artifact_kernel_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope # @TODO better
 
-	# now, one for each file in the artifact... we've 3 packages produced, all the same version.
+	# map what "compile_kernel()" will produce - legacy deb names and versions
+	artifact_map_versions_legacy=(
+		["linux-image-${BRANCH}-${LINUXFAMILY}"]="${REVISION}"
+		["linux-dtb-${BRANCH}-${LINUXFAMILY}"]="${REVISION}"
+		["linux-headers-${BRANCH}-${LINUXFAMILY}"]="${REVISION}"
+	)
+
+	# now, one for each file in the artifact... we've 3 packages produced, all the same version
 	artifact_map_versions=(
-		["linux-image"]="${artifact_version}"
-		["linux-dtb"]="${artifact_version}"
-		["linux-headers"]="${artifact_version}"
+		["linux-image-${BRANCH}-${LINUXFAMILY}"]="${artifact_version}"
+		["linux-dtb-${BRANCH}-${LINUXFAMILY}"]="${artifact_version}"
+		["linux-headers-${BRANCH}-${LINUXFAMILY}"]="${artifact_version}"
 	)
 
 	return 0
@@ -129,6 +139,8 @@ function artifact_kernel_build_from_sources() {
 	display_alert "artifact_kernel_XXXXXX" "artifact_kernel_XXXXXX" "warn"
 	# having failed all the cache obtaining, build it from sources.
 	compile_kernel
+
+	capture_rename_legacy_debs_into_artifacts
 }
 
 function artifact_kernel_deploy_to_remote_cache() {

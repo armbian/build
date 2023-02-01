@@ -42,10 +42,17 @@ function prepare_kernel_packaging_debs() {
 	# Some variables and settings used throughout the script
 	declare kernel_version_family="${kernel_version}-${LINUXFAMILY}"
 
-	# @TODO: on-hold
-	#[[ -z "${artifact_version}" ]] && exit_with_error "artifact_version not defined"
-	#declare package_version="${artifact_version}" # used to be ${REVISION}
-	declare package_version="${REVISION}"
+	# Package version. Affects users upgrading from repo!
+	declare package_version="${REVISION}" # default, "classic" Armbian non-version.
+	# If we're building an artifact, use the pre-determined artifact version.
+	if [[ "${artifact_version:-""}" != "" ]]; then
+		if [[ "${artifact_version}" == "undetermined" ]]; then
+			exit_with_error "Undetermined artifact version during kernel deb packaging. This is a bug, report it."
+		fi
+		display_alert "Using artifact version for kernel package version" "${artifact_version}" "info"
+		package_version="${artifact_version}"
+	fi
+	display_alert "Kernel .deb package version" "${package_version}" "info"
 
 	# show incoming tree
 	#display_alert "Kernel install dir" "incoming from KBUILD make" "debug"
@@ -144,7 +151,9 @@ function create_kernel_deb() {
 	#display_alert "Package dir" "for package ${package_name}" "debug"
 	#run_host_command_logged tree -C -h -d --du "${package_directory}"
 
-	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${deb_output_dir}" # not KDEB compress, we're not under a Makefile
+	# @TODO: hmm, why doesn't this use fakeroot_dpkg_deb_build() ?
+	declare final_deb_filename="${deb_output_dir}/${package_name}_${REVISION}_${ARCH}.deb"                                   # for compatibility with non-artifacts
+	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${final_deb_filename}" # not KDEB compress, we're not under a Makefile
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
@@ -214,7 +223,7 @@ function kernel_package_callback_linux_image() {
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
 		Provides: linux-image, linux-image-armbian, armbian-$BRANCH
-		Description: Linux kernel, armbian version $kernel_version_family $BRANCH
+		Description: Armbian Linux $BRANCH kernel image ${artifact_version_reason:-"${kernel_version_family}"}
 		 This package contains the Linux kernel, modules and corresponding other
 		 files, kernel_version_family: $kernel_version_family.
 	CONTROL_FILE
@@ -267,7 +276,7 @@ function kernel_package_callback_linux_dtb() {
 		Package: ${package_name}
 		Architecture: ${ARCH}
 		Provides: linux-dtb, linux-dtb-armbian, armbian-$BRANCH
-		Description: Armbian Linux DTB, version ${kernel_version_family} $BRANCH
+		Description: Armbian Linux $BRANCH DTBs ${artifact_version_reason:-"${kernel_version_family}"}
 		 This package contains device blobs from the Linux kernel, version ${kernel_version_family}
 	CONTROL_FILE
 
@@ -383,7 +392,7 @@ function kernel_package_callback_linux_headers() {
 		Architecture: ${ARCH}
 		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
 		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
-		Description: Linux kernel headers for ${kernel_version_family}
+		Description: Armbian Linux $BRANCH headers ${artifact_version_reason:-"${kernel_version_family}"}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .
 		 This is useful for DKMS and building of external modules.
@@ -458,7 +467,7 @@ function kernel_package_callback_linux_headers_full_source() {
 		Architecture: ${ARCH}
 		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
 		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
-		Description: Linux kernel headers for ${kernel_version_family} - based on full source
+		Description: Armbian Linux $BRANCH full-source headers ${artifact_version_reason:-"${kernel_version_family}"}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .
 		 This is useful for DKMS and building of external modules.

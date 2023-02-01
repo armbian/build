@@ -30,8 +30,9 @@ function artifact_uboot_prepare_version() {
 	debug_var BOOTSOURCE
 	debug_var BOOTBRANCH
 	debug_var BOOTPATCHDIR
+	debug_var BOARD
 
-	declare short_hash_size=16
+	declare short_hash_size=4
 
 	declare -A GIT_INFO=([GIT_SOURCE]="${BOOTSOURCE}" [GIT_REF]="${BOOTBRANCH}")
 	run_memoized GIT_INFO "git2info" memoized_git_ref_to_info "include_makefile_body"
@@ -55,7 +56,7 @@ function artifact_uboot_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${GIT_INFO[MAKEFILE_VERSION]}-s${short_sha1}-p${uboot_patches_hash_short}-b${bash_hash_short}"
+	artifact_version="${GIT_INFO[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-B${bash_hash_short}"
 	# @TODO: validate it begins with a digit, and is at max X chars long.
 
 	declare -a reasons=(
@@ -67,9 +68,19 @@ function artifact_uboot_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope # @TODO better
 
-	# now, one for each file in the artifact... 
+	# now, one for each file in the artifact...
 	artifact_map_versions=(
 		["u-boot"]="${artifact_version}"
+	)
+
+	# map what "compile_uboot()" will produce - legacy deb names and versions
+	artifact_map_versions_legacy=(
+		["linux-u-boot-${BRANCH}-${BOARD}"]="${REVISION}"
+	)
+
+	# now, one for each file in the artifact... single package, so just one entry
+	artifact_map_versions=(
+		["linux-u-boot-${BRANCH}-${BOARD}"]="${artifact_version}"
 	)
 
 	return 0
@@ -108,6 +119,8 @@ function artifact_uboot_build_from_sources() {
 	declare uboot_git_revision="not_determined_yet"
 	LOG_SECTION="uboot_prepare_git" do_with_logging_unless_user_terminal uboot_prepare_git
 	LOG_SECTION="compile_uboot" do_with_logging compile_uboot
+
+	capture_rename_legacy_debs_into_artifacts # has its own logging section
 }
 
 function artifact_uboot_deploy_to_remote_cache() {
