@@ -21,6 +21,11 @@ function cli_docker_pre_run() {
 }
 
 function cli_docker_run() {
+	# Docker won't have ${SRC}/.git, so precalculate the git-info header so it can be included in the inside-Docker logs.
+	# It's gonna be picked up by export_ansi_logs() and included in the final log, if it exists.
+	declare -g GIT_INFO_ANSI
+	GIT_INFO_ANSI="$(prepare_ansi_git_info_log_header)"
+
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
