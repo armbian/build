@@ -23,7 +23,6 @@ function create_artifact_functions() {
 	)
 	for func in "${funcs[@]}"; do
 		declare impl_func="artifact_${chosen_artifact_impl}_${func}"
-		#display_alert "artifact" "looking for function '${impl_func}'" "info"
 		if [[ $(type -t "${impl_func}") == function ]]; then
 			declare cmd
 			cmd="$(
@@ -34,8 +33,6 @@ function create_artifact_functions() {
 					}
 				ARTIFACT_DEFINITION
 			)"
-			#display_alert "Creating artifact function" "${func}()" "info"
-			#display_alert "Creating artifact function" "${cmd}" "info"
 			eval "${cmd}"
 		else
 			exit_with_error "Missing artifact implementation function '${impl_func}'"

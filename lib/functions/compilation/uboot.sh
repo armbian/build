@@ -18,7 +18,10 @@ function compile_uboot_target() {
 	local uboot_work_dir=""
 	uboot_work_dir="$(pwd)"
 
-	# outer scope variable: uboot_git_revision
+	# outer scope variable: uboot_git_revision, validate that it is set
+	if [[ -z "${uboot_git_revision}" ]]; then
+		exit_with_error "uboot_git_revision is not set"
+	fi
 
 	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q "${uboot_git_revision}"
@@ -319,10 +322,22 @@ function compile_uboot() {
 		$(declare -f setup_write_uboot_platform || true)
 	EOF
 
+	# Package version. Affects users upgrading from repo!
+	declare package_version="${REVISION}" # default, "classic" Armbian non-version.
+	# If we're building an artifact, use the pre-determined artifact version.
+	if [[ "${artifact_version:-""}" != "" ]]; then
+		if [[ "${artifact_version}" == "undetermined" ]]; then
+			exit_with_error "Undetermined artifact version during u-boot deb packaging. This is a bug, report it."
+		fi
+		display_alert "Using artifact version for u-boot package version" "${artifact_version}" "info"
+		package_version="${artifact_version}"
+	fi
+	display_alert "Das U-Boot .deb package version" "${package_version}" "info"
+
 	# set up control file
 	cat <<- EOF > "$uboottempdir/${uboot_name}/DEBIAN/control"
 		Package: linux-u-boot-${BOARD}-${BRANCH}
-		Version: $REVISION
+		Version: ${package_version}
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Installed-Size: 1
@@ -331,18 +346,20 @@ function compile_uboot() {
 		Provides: armbian-u-boot
 		Replaces: armbian-u-boot
 		Conflicts: armbian-u-boot, u-boot-sunxi
-		Description: Uboot loader $version
+		Description: Das U-Boot for ${BOARD} ${artifact_version_reason:-"${version}"}
 	EOF
 
 	# copy config file to the package
 	# useful for FEL boot with overlayfs_wrapper
-	[[ -f .config && -n $BOOTCONFIG ]] && cp .config "$uboottempdir/${uboot_name}/usr/lib/u-boot/${BOOTCONFIG}" 2>&1
+	[[ -f .config && -n $BOOTCONFIG ]] && run_host_command_logged cp .config "$uboottempdir/${uboot_name}/usr/lib/u-boot/${BOOTCONFIG}"
 	# copy license files from typical locations
-	[[ -f COPYING ]] && cp COPYING "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE" 2>&1
-	[[ -f Licenses/README ]] && cp Licenses/README "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE" 2>&1
-	[[ -n $atftempdir && -f $atftempdir/license.md ]] && cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf" 2>&1
+	[[ -f COPYING ]] && run_host_command_logged cp COPYING "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
+	[[ -f Licenses/README ]] && run_host_command_logged cp Licenses/README "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
+	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
 
-	display_alert "Building u-boot deb" "${uboot_name}.deb"
+	# Important: this forces the deb to have a specific name, and not be version-dependent...
+	# This is set to `uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"` in outer scope...
+	display_alert "Building u-boot deb" "(version: ${package_version}) ${uboot_name}.deb"
 	fakeroot_dpkg_deb_build "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb"
 	rm -rf "$uboottempdir/${uboot_name}"
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir}"

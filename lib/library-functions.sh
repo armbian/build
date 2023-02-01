@@ -24,6 +24,15 @@ source "${SRC}"/lib/functions/artifacts/kernel.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/artifacts/u-boot.sh
+# shellcheck source=lib/functions/artifacts/u-boot.sh
+source "${SRC}"/lib/functions/artifacts/u-boot.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/bsp/bsp-cli.sh
 # shellcheck source=lib/functions/bsp/bsp-cli.sh
 source "${SRC}"/lib/functions/bsp/bsp-cli.sh
