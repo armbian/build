@@ -1,4 +1,9 @@
 # This does many tricks. Beware.
+# Also, 'memoize' is a misnomer. It's more like 'cache'.
+# It works with bash dictionaries (associative arrays) and references to functions
+# It uses bash "declare -f" trick to obtain the function body as a string and use it as part of the caching hash.
+# So any changes to the memoized function automatically invalidate the cache.
+# It also uses a "cache_id" to allow for multiple caches to be used and to determine the directory name to cache under.
 # Call:
 # run_memoized VAR_NAME cache_id memoized_function_name [function_args]
 function run_memoized() {
@@ -28,25 +33,21 @@ function run_memoized() {
 	if [[ -f "${disk_cache_file}" ]]; then
 		# @TODO: check expiration;  some stuff might want different expiration times, eg, branch vs tag vs commit
 
-		display_alert "Using memoized ${var_n} from ${disk_cache_file}" "${MEMO_DICT[MEMO_INPUT]}" "info"
-		cat "${disk_cache_file}"
+		display_alert "Using memoized ${var_n} from ${disk_cache_file}" "${MEMO_DICT[MEMO_INPUT]}" "debug"
+		display_alert "Using cached" "${var_n}" "info"
+
 		# shellcheck disable=SC1090 # yep, I'm sourcing the cache here. produced below.
 		source "${disk_cache_file}"
-
-		#display_alert "after cache hit" "before" "info"
-		#debug_dict MEMO_DICT
 		return 0
 	fi
 
-	display_alert "Memoizing ${var_n} to ${disk_cache_file}" "${MEMO_DICT[MEMO_INPUT]}" "info"
 	# if cache miss, run the memoized_func...
+	display_alert "Memoizing ${var_n} to ${disk_cache_file}" "${MEMO_DICT[MEMO_INPUT]}" "debug"
+	display_alert "Producing new & caching" "${var_n}" "info"
 	${memoized_func} "${var_n}" "${extra_args[@]}"
 
 	# ... and save the output to the cache; twist declare -p's output due to the nameref
 	declare -p "${var_n}" | sed -e 's|^declare -A ||' > "${disk_cache_file}"
-
-	#display_alert "after cache miss" "before" "info"
-	#debug_dict MEMO_DICT
 
 	return 0
 }
