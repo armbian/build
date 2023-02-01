@@ -1,3 +1,20 @@
+function prepare_ansi_git_info_log_header() {
+	# writes to stdout, ANSI format
+
+	declare prefix_sed_cmd="/^-->/!s/^/   /;" # some spacing in front of git info
+	cat <<- GIT_ANSI_HEADER
+		$(echo -e -n "${bright_blue_color:-}")# GIT revision$(echo -e -n "${ansi_reset_color:-}")
+		$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate | sed -e "${prefix_sed_cmd}" || true)
+		${dim_line_separator}
+		$(echo -e -n "${bright_blue_color:-}")# GIT status$(echo -e -n "${ansi_reset_color:-}")
+		$(LC_ALL=C LANG=C git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status | sed -e "${prefix_sed_cmd}" || true)
+		${dim_line_separator}
+		$(echo -e -n "${bright_blue_color:-}")# GIT changes$(echo -e -n "${ansi_reset_color:-}")
+		$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color | sed -e "${prefix_sed_cmd}" || true)
+		${dim_line_separator}
+	GIT_ANSI_HEADER
+}
+
 # This only includes a header, and all the .md logfiles, nothing else.
 function export_markdown_logs() {
 	# check target_file variable is not empty
@@ -100,19 +117,13 @@ function export_ansi_logs() {
 		${dim_line_separator}
 	ANSI_HEADER
 
-	if [[ -n "$(command -v git)" && -d "${SRC}/.git" ]]; then
+	if [[ -n "${GIT_INFO_ANSI}" ]]; then
+		echo "${GIT_INFO_ANSI}" >> "${target_file}"
+	elif [[ -n "$(command -v git)" && -d "${SRC}/.git" ]]; then # we don't have .git inside Docker...
 		display_alert "Gathering git info for logs" "Processing git information, please wait..." "debug"
-		cat <<- GIT_ANSI_HEADER >> "${target_file}"
-			# Last revision:
-			$(LC_ALL=C LANG=C git --git-dir="${SRC}/.git" log -1 --color --format=short --decorate || true)
-			${dim_line_separator}
-			# Git status:
-			$(LC_ALL=C LANG=C git -c color.status=always --work-tree="${SRC}" --git-dir="${SRC}/.git" status || true)
-			${dim_line_separator}
-			# Git changes:
-			$(LC_ALL=C LANG=C git --work-tree="${SRC}" --git-dir="${SRC}/.git" diff -u --color || true)
-			${dim_line_separator}
-		GIT_ANSI_HEADER
+		prepare_ansi_git_info_log_header >> "${target_file}"
+	else
+		display_alert "Gathering git info for logs" "No git information available" "debug"
 	fi
 
 	display_alert "Preparing ANSI logs..." "Processing log files..." "debug"
@@ -121,6 +132,7 @@ function export_ansi_logs() {
 	declare -a logfiles_array
 	mapfile -t logfiles_array < <(find "${LOGDIR}" -type f | LC_ALL=C sort -h) # "human" sorting
 
+	declare prefix_sed_contents
 	prefix_sed_contents="   $(echo -n -e "${ansi_reset_color}${tool_color:-}")" # spaces are significant
 	declare prefix_sed_cmd="/^-->/!s/^/${prefix_sed_contents}/;"
 
