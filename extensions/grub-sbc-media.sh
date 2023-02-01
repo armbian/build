@@ -6,7 +6,8 @@
 	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}                    # if yes, does not build our own kernel, instead, uses generic one from distro
 	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}"        # 'true' will disable os-probing, useful for SD cards.
 	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"             # Will be used on grub menu display
-	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-5}                             # Small timeout by default
+	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3}                             # Small timeout by default
+	export UEFI_GRUB_RECORDFAIL_TIMEOUT=${UEFI_GRUB_RECORDFAIL_TIMEOUT:-3}
 	export GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-}"          # Cmdline by default
 	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-no}"               # Enable BIOS too if target is amd64
 	# User config overrides.
@@ -70,7 +71,6 @@ pre_umount_final_image__install_grub() {
 	fi
 
 	umount_chroot "$chroot_target/"
-
 }
 
 configure_grub() {
@@ -84,6 +84,7 @@ configure_grub() {
 		GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT}"
 		GRUB_TIMEOUT_STYLE=menu                                  # Show the menu with Kernel options (Armbian or -generic)...
 		GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT}                        # ... for ${UEFI_GRUB_TIMEOUT} seconds, then boot the Armbian default.
+		GRUB_RECORDFAIL_TIMEOUT=${UEFI_GRUB_RECORDFAIL_TIMEOUT}
 		GRUB_DISTRIBUTOR="${UEFI_GRUB_DISTRO_NAME}"              # On GRUB menu will show up as "Armbian GNU/Linux" (will show up in some UEFI BIOS boot menu (F8?) as "armbian", not on others)
 		GRUB_BACKGROUND="/boot/grub/grub.png"
 	grubCfgFrag
