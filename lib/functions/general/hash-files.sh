@@ -14,7 +14,7 @@ function calculate_hash_for_all_files_in_dirs() {
 			found_files="yes"
 		done
 		if [[ "${found_files}" == "no" ]]; then
-			display_alert "calculate_hash_for_all_files_in_dirs" "skipped empty dir \"${dir}\"" "warn"
+			display_alert "calculate_hash_for_all_files_in_dirs" "empty dir \"${dir}\"" "debug"
 		fi
 	done
 
@@ -45,6 +45,9 @@ function calculate_hash_for_files() {
 	full_hash="$(cd "${SRC}" && sha256sum "${files_to_hash_sorted[@]}")"
 	hash_files="$(echo "${full_hash}" | sha256sum | cut -d' ' -f1)" # hash of hashes
 	hash_files="${hash_files:0:16}"                                 # shorten it to 16 characters
-	display_alert "Hash for files:" "$hash_files" "warn"
-	display_alert "Full hash input for files:" "\n${full_hash}" "warn"
+
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "Hash for files:" "$hash_files" "debug"
+		display_alert "Full hash input for files:" "\n${full_hash}\n" "debug"
+	fi
 }
