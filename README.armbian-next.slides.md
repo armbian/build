@@ -6,7 +6,7 @@ theme: league
   
 ---
 
-# `armbian-next`, 5/X
+# `armbian-next`, 6/X
 
 > “Let me add `set -e` to `armbian/build`...”
 
@@ -339,4 +339,45 @@ cd ~/armbian-build-next
 cd ~/armbian-build-next
 git pull --rebase # !!!we rebase!!! use --rebase
 ```
+
 ---
+
+#### Update Feb 1st `armbian-next` - general changes
+
+- thanks to everyone who tested either building or produced images!
+- added `tmpfs` to chroot's `/var/tmp` and `/run/user/0`
+- fix "Repeat Build options"
+- pesters user to not run as `root` or under `sudo` (still can...)
+- ANSI-pastebin beta 2
+- fix shellcheck warnings, "raise the bar" (2x)
+- many enhancements for developers using Docker
+- reworded commits / killed WiPs (history rewritten)
+
+---
+
+#### Update Feb 1st `armbian-next` - "artifacts"
+
+- big WiP; producing isolated artifacts
+- artifacts have consistent versions
+- artifacts can be cached both locally and remotely (OCI/ORAS)
+- _not yet_ used for building images; will soon
+- will need testing, a lot of it
+
+---
+
+#### Trying out `armbian-next`
+
+##### **do not share dir with `master`!!**
+
+``` bash
+cd ~ # clone to a new directory!
+git clone --branch=armbian-next \
+  https://github.com/armbian/build armbian-build-next
+
+cd ~/armbian-build-next
+./compile.sh # and off you go
+
+# Later, to update:
+cd ~/armbian-build-next
+git pull --rebase # !!!we rebase!!! use --rebase
+```
