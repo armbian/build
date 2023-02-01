@@ -395,6 +395,12 @@ function docker_cli_prepare_launch() {
 		DOCKER_ARGS+=("--env" "ARMBIAN_ENABLE_CALL_TRACING=yes")
 	fi
 
+	# If set, pass down git_info_ansi as an env var
+	if [[ -n "${GIT_INFO_ANSI}" ]]; then
+		display_alert "Git info" "Passing down GIT_INFO_ANSI as an env var..." "debug"
+		DOCKER_ARGS+=("--env" "GIT_INFO_ANSI=${GIT_INFO_ANSI}")
+	fi
+
 	if [[ "${DOCKER_PASS_SSH_AGENT}" == "yes" ]]; then
 		declare ssh_socket_path="${SSH_AUTH_SOCK}"
 		if [[ "${OSTYPE}" == "darwin"* ]]; then                     # but probably only Docker Inc, not Rancher...
