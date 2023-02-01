@@ -55,6 +55,10 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 - **MODULES_BLACKLIST_EDGE** ( space-separated list of kernel modules ): appends modules to the kernel's blacklist/deny list for **edge** kernel
 - **SERIALCON** ( comma-separated list of terminal interfaces [:bandwidth] ): declares which serial console should be used on the system
 	- Example: `ttyS0:15000000,ttyGS1`
+- **SKIP_ARMBIAN_REPO** ( boolean ): Whether to include the armbian repository in the built image
+    - Values:
+        - yes: Include (default)
+        - no: Do NO include
 - **HAS_VIDEO_OUTPUT** ( boolean ): defines whether the system has video output such as eye candy, bootsplash, etc..
 	- Values:
 		- yes: Enable video-related configuration
