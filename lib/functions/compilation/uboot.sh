@@ -151,11 +151,17 @@ function compile_uboot_target() {
 		"-Wno-error=misleading-indentation"   # patches have mismatching indentation
 		"-Wno-error=attributes"               # for very old-uboots
 		"-Wno-error=address-of-packed-member" # for very old-uboots
-		"-Wno-error=array-parameter="         # very old uboots
+
 	)
+	if linux-version compare "${gcc_version_main}" ge "11.0"; then
+		uboot_cflags_array+=(
+			"-Wno-error=array-parameter" # very old uboots
+		)
+	fi
+
 	local uboot_cflags="${uboot_cflags_array[*]}"
 
-	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make}" "info"
+	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	export if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
 	do_with_ccache_statistics run_host_command_logged_long_running \
 		"CFLAGS='${uboot_cflags}'" "KCFLAGS='${uboot_cflags}'" \
@@ -268,7 +274,9 @@ function compile_uboot() {
 		# build aarch64
 	fi
 
-	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpfullversion -dumpversion)" "info"
+	declare gcc_version_main
+	gcc_version_main="$(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpfullversion -dumpversion)"
+	display_alert "Compiler version" "${UBOOT_COMPILER}gcc '${gcc_version_main}'" "info"
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpfullversion -dumpversion)" "info"
 
 	local uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"
