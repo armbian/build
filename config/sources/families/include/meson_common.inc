@@ -34,13 +34,6 @@ case $BOARD in
 esac
 
 case $BRANCH in
-	legacy)
-
-		KERNELBRANCH="branch:linux-5.10.y"
-		KERNELPATCHDIR='meson-'$BRANCH
-
-		;;
-
 	current)
 
 		KERNELBRANCH="branch:linux-5.15.y"
