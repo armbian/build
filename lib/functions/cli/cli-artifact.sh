@@ -53,10 +53,15 @@ function obtain_complete_artifact() {
 	declare -g artifact_version="undetermined"
 	declare -g artifact_version_reason="undetermined"
 	declare -A -g artifact_map_versions=()
+	declare -A -g artifact_map_versions_legacy=()
+
+	# Check if REVISION is set, otherwise exit_with_error
+	[[ "x${REVISION}x" == "xx" ]] && exit_with_error "REVISION is not set"
 
 	artifact_prepare_version
 	debug_var artifact_version
 	debug_var artifact_version_reason
+	debug_dict artifact_map_versions_legacy
 	debug_dict artifact_map_versions
 
 	# @TODO the whole artifact upload/download dance
@@ -73,4 +78,32 @@ function obtain_complete_artifact() {
 function build_artifact() {
 	initialize_artifact "${WHAT:-"kernel"}"
 	obtain_complete_artifact
+}
+
+function capture_rename_legacy_debs_into_artifacts() {
+	LOG_SECTION="capture_rename_legacy_debs_into_artifacts" do_with_logging capture_rename_legacy_debs_into_artifacts_logged
+}
+
+function capture_rename_legacy_debs_into_artifacts_logged() {
+	# So the deb-building code will consider the artifact_version in it's "Version: " field in the .debs.
+	# But it will produce .deb's with the legacy name. We gotta find and rename them.
+	# Loop over the artifact_map_versions, and rename the .debs.
+	debug_dict artifact_map_versions_legacy
+	debug_dict artifact_map_versions
+
+	declare deb_name_base deb_name_full new_name_full legacy_version legacy_base_version
+	for deb_name_base in "${!artifact_map_versions[@]}"; do
+		legacy_base_version="${artifact_map_versions_legacy[${deb_name_base}]}"
+		if [[ -z "${legacy_base_version}" ]]; then
+			exit_with_error "Legacy base version not found for artifact '${deb_name_base}'"
+		fi
+
+		display_alert "Legacy base version" "${legacy_base_version}" "info"
+		legacy_version="${legacy_base_version}_${ARCH}" # Arch-specific package; has ARCH at the end.
+		deb_name_full="${DEST}/debs/${deb_name_base}_${legacy_version}.deb"
+		new_name_full="${DEST}/debs/${deb_name_base}_${artifact_map_versions[${deb_name_base}]}_${ARCH}.deb"
+		display_alert "Full legacy deb name" "${deb_name_full}" "info"
+		display_alert "New artifact deb name" "${new_name_full}" "info"
+		run_host_command_logged mv -v "${deb_name_full}" "${new_name_full}"
+	done
 }
