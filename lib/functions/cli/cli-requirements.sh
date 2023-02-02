@@ -23,7 +23,15 @@ function cli_requirements_run() {
 
 	LOG_SECTION="install_host_dependencies" do_with_logging install_host_dependencies "for requirements command"
 
-	# @TODO: get stuff like shellcheck, shfmt, and ORAS in here. Deploy them somewhere not-in-./cache, so it's baked into Docker image.
+	if [[ "${ARMBIAN_INSIDE_DOCKERFILE_BUILD}" == "yes" ]]; then
+		# During the Dockerfile build, we want to pre-download ORAS/shellcheck/shfmt so it's included in the image.
+		# We need to change the deployment directory to something not in ./cache, so it's baked into the image.
+
+		deploy_to_non_cache_dir="yes" run_tool_oras # download-only, to non-cache dir.
+
+		# @TODO: shellcheck
+		# @TODO: shfmt
+	fi
 
 	display_alert "Done with" "@host dependencies" "cachehit"
 }

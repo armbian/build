@@ -2,13 +2,21 @@ function run_tool_oras() {
 	# Default version
 	ORAS_VERSION=${ORAS_VERSION:-0.16.0} # https://github.com/oras-project/oras/releases
 
+	declare non_cache_dir="/armbian-tools/oras" # To deploy/reuse cached ORAS in a Docker image.
+
 	if [[ -z "${DIR_ORAS}" ]]; then
 		display_alert "DIR_ORAS is not set, using default" "ORAS" "debug"
-		if [[ -n "${SRC}" ]]; then
-			DIR_ORAS="${SRC}/cache/tools/oras"
+
+		if [[ "${deploy_to_non_cache_dir:-"no"}" == "yes" ]]; then
+			DIR_ORAS="${non_cache_dir}" # root directory.
+			display_alert "Deploying ORAS to non-cache dir" "DIR_ORAS: ${DIR_ORAS}" "debug"
 		else
-			display_alert "Missing DIR_ORAS, or SRC fallback" "DIR_ORAS: ${DIR_ORAS}; SRC: ${SRC}" "ORAS" "err"
-			return 1
+			if [[ -n "${SRC}" ]]; then
+				DIR_ORAS="${SRC}/cache/tools/oras"
+			else
+				display_alert "Missing DIR_ORAS, or SRC fallback" "DIR_ORAS: ${DIR_ORAS}; SRC: ${SRC}" "ORAS" "err"
+				return 1
+			fi
 		fi
 	else
 		display_alert "DIR_ORAS is set to ${DIR_ORAS}" "ORAS" "debug"
@@ -35,6 +43,12 @@ function run_tool_oras() {
 			;;
 	esac
 
+	# Check if we have a cached version in a Docker image, and copy it over before possibly updating it.
+	if [[ "${deploy_to_non_cache_dir:-"no"}" != "yes" && -d "${non_cache_dir}" ]]; then
+		display_alert "Using cached ORAS from Docker image" "ORAS" "debug"
+		run_host_command_logged cp -v "${non_cache_dir}/"* "${DIR_ORAS}/"
+	fi
+
 	declare ORAS_FN="oras_${ORAS_VERSION}_${ORAS_OS}_${ORAS_ARCH}"
 	declare ORAS_FN_TARXZ="${ORAS_FN}.tar.gz"
 	declare DOWN_URL="https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/${ORAS_FN_TARXZ}"
@@ -46,6 +60,11 @@ function run_tool_oras() {
 	fi
 	ACTUAL_VERSION="$("${ORAS_BIN}" version | grep "^Version" | xargs echo -n)"
 	display_alert "Running ORAS ${ACTUAL_VERSION}" "ORAS" "debug"
+
+	if [[ "${deploy_to_non_cache_dir:-"no"}" == "yes" ]]; then
+		display_alert "Deployed ORAS to non-cache dir" "DIR_ORAS: ${DIR_ORAS}" "debug"
+		return 0 # don't actually execute.
+	fi
 
 	# Run oras with it
 	display_alert "Calling ORAS" "$*" "debug"
@@ -104,7 +123,7 @@ function oras_pull_artifact_file() {
 
 	# @TODO: this needs retries...
 	pushd "${full_temp_dir}" &> /dev/null || exit_with_error "Failed to pushd to ${full_temp_dir} - ORAS download"
-	run_tool_oras pull --verbose "${image_full_oci}" 
+	run_tool_oras pull --verbose "${image_full_oci}"
 	popd &> /dev/null || exit_with_error "Failed to popd - ORAS download"
 
 	# sanity check; did we get the file we expected?
