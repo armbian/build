@@ -47,8 +47,10 @@ function improved_git_fetch() {
 function git_ensure_safe_directory() {
 	if [[ -n "$(command -v git)" ]]; then
 		local git_dir="$1"
-		display_alert "git: Marking directory as safe" "$git_dir" "debug"
-		run_host_command_logged git config --global --add safe.directory "$git_dir"
+		display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
+		if ! grep -q "directory = \*" "${HOME}/.gitconfig" 2> /dev/null; then
+			git config --global --add safe.directory "*"
+		fi
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
 	fi
