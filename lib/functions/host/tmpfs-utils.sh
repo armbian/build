@@ -33,7 +33,7 @@ function prepare_tmpfs_for() {
 	else
 		display_alert "prepare_tmpfs_for: on Linux and root, MOUNTING TMPFS" "${tmpfs_name}" "cleanup"
 		# mount tmpfs on it
-		mount -t tmpfs tmpfs "${tmpfs_path}"
+		mount -t tmpfs -o "size=99%" tmpfs "${tmpfs_path}" # size=50% is the Linux default, but we need more.
 		cleanup_params+=("umount_tmpfs")
 
 		#cleanup_params+=("no_umount_tmpfs")
