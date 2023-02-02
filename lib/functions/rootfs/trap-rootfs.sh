@@ -41,7 +41,7 @@ function prepare_rootfs_build_params_and_trap() {
 
 	if [[ $use_tmpfs == yes ]]; then
 		declare -g -r ROOTFS_IS_UNDER_TMPFS=yes
-		mount -t tmpfs tmpfs "${SDCARD}" # do not specify size; we've calculated above that it should fit, and Linux will try its best if it doesn't.
+		mount -t tmpfs -o "size=99%" tmpfs "${SDCARD}" # size=50% is the Linux default, but we need more.
 	fi
 }
 
