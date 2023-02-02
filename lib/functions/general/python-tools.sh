@@ -55,11 +55,24 @@ function prepare_python_and_pip() {
 	early_prepare_pip3_dependencies_for_python_tools
 	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version}" "${python3_pip_dependencies[*]}" | sha256sum | cut -d' ' -f1)"
 
+	declare non_cache_dir="/armbian-pip"
 	declare python_pip_cache="${SRC}/cache/pip"
+
+	if [[ "${deploy_to_non_cache_dir:-"no"}" == "yes" ]]; then
+		display_alert "Using non-cache dir" "PIP: ${non_cache_dir}" "warn"
+		python_pip_cache="${non_cache_dir}"
+	else
+		# if the non-cache dir exists, copy it into place, if not already existing...
+		if [[ -d "${non_cache_dir}" && ! -d "${python_pip_cache}" ]]; then
+			display_alert "Deploying pip cache from Docker image" "${non_cache_dir} -> ${python_pip_cache}" "info"
+			run_host_command_logged cp -pr "${non_cache_dir}" "${python_pip_cache}"
+		fi
+	fi
+
 	declare python_hash_base="${python_pip_cache}/pip_pkg_hash"
 	declare python_hash_file="${python_hash_base}_${python3_pip_dependencies_hash}"
-	declare python3_user_base="${SRC}/cache/pip/base"
-	declare python3_pycache="${SRC}/cache/pip/pycache"
+	declare python3_user_base="${python_pip_cache}/base"
+	declare python3_pycache="${python_pip_cache}/pycache"
 
 	# declare a readonly global dict with all needed info for executing stuff using this setup
 	declare -r -g -A PYTHON3_INFO=(
