@@ -8,9 +8,11 @@ mount_chroot() {
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
 	mkdir -p "${target}/run/user/0"
-	mount -t tmpfs tmpfs "${target}/tmp"
-	mount -t tmpfs tmpfs "${target}/var/tmp"
-	mount -t tmpfs tmpfs "${target}/run/user/0"
+
+	# tmpfs size=50% is the Linux default, but we need more.
+	mount -t tmpfs -o "size=99%" tmpfs "${target}/tmp"
+	mount -t tmpfs -o "size=99%" tmpfs "${target}/var/tmp"
+	mount -t tmpfs -o "size=99%" tmpfs "${target}/run/user/0"
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
