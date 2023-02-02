@@ -160,8 +160,16 @@ function export_ansi_logs() {
 
 	if [[ "${show_message_after_export:-"yes"}" != "skip" && "${ARMBIAN_INSIDE_DOCKERFILE_BUILD:-"no"}" != "yes" ]]; then
 		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
-		display_alert "Share log (beta 2!)" "curl --data-binary @${target_relative_to_src} https://paste.next.armbian.com/log"
-		# @TODO: compress; have a CLI cmd to upload; also render Markdown logs, etc
+
+		# @TODO: compress...
+		if [[ "${SHARE_LOG:-"no"}" == "yes" ]]; then
+			display_alert "SHARE_LOG=yes, uploading log" "uploading logs" "info"
+			declare logs_url="undetermined"
+			logs_url=$(curl --silent --data-binary "@${target_relative_to_src}" "https://paste.next.armbian.com/log" | xargs echo -n || true) # don't fail
+			display_alert "Log uploaded, share URL:" "${logs_url}" ""
+		else
+			display_alert "Share log manually (or SHARE_LOG=yes):" "curl --data-binary @${target_relative_to_src} https://paste.next.armbian.com/log"
+		fi
 	fi
 
 	return 0
