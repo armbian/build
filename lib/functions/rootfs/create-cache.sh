@@ -28,7 +28,15 @@ function calculate_rootfs_cache_id() {
 	[[ "x${packages_hash}x" != "xx" ]] && exit_with_error "packages_hash is already set"
 	[[ "x${cache_type}x" != "xx" ]] && exit_with_error "cache_type is already set"
 
-	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:16}" # Produced by aggregation.py - currently only AGGREGATED_PACKAGES_DEBOOTSTRAP and AGGREGATED_PACKAGES_ROOTFS
+	# get the hashes of the lib/ bash sources involved...
+	declare hash_files="undetermined"
+	calculate_hash_for_files "${SRC}"/lib/functions/rootfs/*.sh # the whole dir
+	declare bash_hash="${hash_files}"
+	declare bash_hash_short="${bash_hash:0:6}"
+
+	# AGGREGATED_ROOTFS_HASH is produced by aggregation.py
+	# Don't use a dash here, dashes are significant to legacy rootfs cache id's
+	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:16}B${bash_hash_short}"
 
 	declare cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
