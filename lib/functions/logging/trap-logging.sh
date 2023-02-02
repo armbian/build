@@ -88,6 +88,13 @@ function trap_handler_cleanup_logging() {
 	reset_uid_owner "${target_file}"
 	local markdown_log_file="${target_file}"
 
+	# Export raw logs, in a tar. For development.
+	if [[ "${RAW_LOG:-no}" == "yes" ]]; then
+		local target_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.raw.tar"
+		export_raw_logs
+		reset_uid_owner "${target_file}"
+	fi
+
 	# If running in Github Actions, cat the markdown file to GITHUB_STEP_SUMMARY. It appends, docker and build logs will be together.
 	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
 		display_alert "Exporting Markdown logs to GitHub Actions" "GITHUB_STEP_SUMMARY: '${GITHUB_STEP_SUMMARY}'" "info"
