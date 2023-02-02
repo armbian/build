@@ -174,3 +174,14 @@ function export_ansi_logs() {
 
 	return 0
 }
+
+function export_raw_logs() {
+	display_alert "Exporting RAW logs from" "${LOGDIR}" "info"
+	if [[ -z "${target_file}" ]]; then
+		display_alert "No target file specified for export_raw_logs()" "${target_file}" "err"
+		return 0
+	fi
+	
+	# Just tar the logs directory into target_file
+	tar -C "${LOGDIR}" -cf "${target_file}" .
+}
