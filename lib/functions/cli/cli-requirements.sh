@@ -22,11 +22,14 @@ function cli_requirements_run() {
 	host_release="${HOSTRELEASE}" host_arch="${HOSTARCH}" early_prepare_host_dependencies
 
 	LOG_SECTION="install_host_dependencies" do_with_logging install_host_dependencies "for requirements command"
+	declare -i -g -r prepare_host_has_already_run=1 # global, readonly. fool the rest of the script into thinking we've already run prepare_host.
 
 	if [[ "${ARMBIAN_INSIDE_DOCKERFILE_BUILD}" == "yes" ]]; then
+		# Include python/pip packages in the Dockerfile build.
+		deploy_to_non_cache_dir="yes" prepare_python_and_pip
+
 		# During the Dockerfile build, we want to pre-download ORAS/shellcheck/shfmt so it's included in the image.
 		# We need to change the deployment directory to something not in ./cache, so it's baked into the image.
-
 		deploy_to_non_cache_dir="yes" run_tool_oras       # download-only, to non-cache dir.
 		deploy_to_non_cache_dir="yes" run_tool_shellcheck # download-only, to non-cache dir.
 
