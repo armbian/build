@@ -51,6 +51,8 @@ driver_rtl8189ES()
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-p2p-go-advertising.patch" "applying"
 
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-VFS-import.patch" "applying"
 	fi
 }
 
@@ -91,6 +93,8 @@ driver_rtl8189FS()
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-p2p-go-advertising.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-and-enable-secondary-iface.patch" "applying"
 
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-Fix-VFS-import.patch" "applying"
 	fi
 
 }
@@ -129,6 +133,9 @@ driver_rtl8192EU()
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-p2p-go-advertising.patch" "applying"
+
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-VFS-import.patch" "applying"
 	fi
 }
 
@@ -252,6 +259,9 @@ driver_rtl8811CU_rtl8821C()
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-p2p-go-advertising.patch" "applying"
+
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-VFS-import.patch" "applying"
 	fi
 
 }
@@ -300,6 +310,8 @@ driver_rtl8188EU_rtl8188ETV()
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu-Fix-p2p-go-advertising.patch" "applying"
 
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8188eu-Fix-VFS-import.patch" "applying"
 	fi
 }
 
@@ -341,6 +353,9 @@ driver_rtl88x2bu()
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-p2p-go-advertising.patch" "applying"
+
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-VFS-import.patch" "applying"
 	fi
 
 }
@@ -386,6 +401,8 @@ driver_rtl88x2cs()
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl88x2cs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2cs-Fix-VFS-import.patch" "applying"
 	fi
 }
 #_bt for blueteeth
@@ -440,6 +457,9 @@ driver_rtl8723DS()
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-p2p-go-advertising.patch" "applying"
+
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-VFS-import.patch" "applying"
 	fi
 }
 
@@ -478,6 +498,8 @@ driver_rtl8723DU()
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-Fix-p2p-go-advertising.patch" "applying"
 
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-Fix-VFS-import.patch" "applying"
 	fi
 }
 
@@ -515,6 +537,8 @@ driver_rtl8822BS()
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs-Fix-uninitialized-cfg80211-chan-def.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs-Fix-p2p-go-advertising.patch" "applying"
 
+		# fix compilation for kernels >= 5.4
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8822bs-Fix-VFS-import.patch" "applying"
 	fi
 
 }
