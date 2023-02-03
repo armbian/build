@@ -25,6 +25,10 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- msdos: Use dos/msdos disklabel
 		- gpt: Use GPT disklabel
 	- Default: msdos
+- **INSTALL_ARMBIAN_FIRMWARE** ( boolean ): whether to install `firmware-armbian` package with board-specific firmware
+    - Values:
+        - yes: install it
+        - no: don't install
 - **BOOTFS_TYPE** ( filesystem ): defines the expected filesystem for the boot file system
 	- Values:
 		- none: Uses /boot on the root filesystem
