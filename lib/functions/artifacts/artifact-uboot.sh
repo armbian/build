@@ -1,17 +1,4 @@
-function artifact_uboot_cli_adapter_pre_run() {
-	declare -g ARMBIAN_COMMAND_REQUIRE_BASIC_DEPS="yes" # Require prepare_host_basic to run before the command.
-
-	# "gimme root on a Linux machine"
-	cli_standard_relaunch_docker_or_sudo
-}
-
-function artifact_uboot_cli_adapter_config_prep() {
-	declare KERNEL_ONLY="yes"                             # @TODO: this is a hack, for the board/family code's benefit...
-	use_board="yes" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
-}
-
 function artifact_uboot_prepare_version() {
-	display_alert "artifact_uboot_XXXXXX" "artifact_uboot_XXXXXX" "warn"
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
 
@@ -31,6 +18,7 @@ function artifact_uboot_prepare_version() {
 	debug_var BOOTBRANCH
 	debug_var BOOTPATCHDIR
 	debug_var BOARD
+	debug_var BRANCH
 
 	declare short_hash_size=4
 
@@ -57,7 +45,6 @@ function artifact_uboot_prepare_version() {
 
 	# outer scope
 	artifact_version="${GIT_INFO[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-B${bash_hash_short}"
-	# @TODO: validate it begins with a digit, and is at max X chars long.
 
 	declare -a reasons=(
 		"version \"${GIT_INFO[MAKEFILE_FULL_VERSION]}\""
@@ -66,51 +53,26 @@ function artifact_uboot_prepare_version() {
 		"framework bash hash \"${bash_hash}\""
 	)
 
-	artifact_version_reason="${reasons[*]}" # outer scope # @TODO better
+	artifact_version_reason="${reasons[*]}" # outer scope
 
-	# now, one for each file in the artifact...
-	artifact_map_versions=(
-		["u-boot"]="${artifact_version}"
+	artifact_map_packages=(
+		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}"
 	)
 
-	# map what "compile_uboot()" will produce - legacy deb names and versions
-	artifact_map_versions_legacy=(
-		["linux-u-boot-${BRANCH}-${BOARD}"]="${REVISION}"
+	artifact_map_debs=(
+		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
 	)
 
-	# now, one for each file in the artifact... single package, so just one entry
-	artifact_map_versions=(
-		["linux-u-boot-${BRANCH}-${BOARD}"]="${artifact_version}"
-	)
+	artifact_name="uboot-${BOARD}-${BRANCH}"
+	artifact_type="deb"
+	artifact_base_dir="${DEB_STORAGE}"
+	artifact_final_file="${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
 
 	return 0
 }
 
-function artifact_uboot_is_available_in_local_cache() {
-	display_alert "artifact_uboot_XXXXXX" "artifact_uboot_XXXXXX" "warn"
-	# Check if the exact DEB exists on disk (output/debs), nothing else.
-	# This is more about composing the .deb filename than checking if it exists.
-}
-
-function artifact_uboot_is_available_in_remote_cache() {
-	display_alert "artifact_uboot_XXXXXX" "artifact_uboot_XXXXXX" "warn"
-	# Check if the DEB can be obtained remotely, eg:
-	# - in ghcr.io (via ORAS)
-	# - in an apt repo (via apt-get), eg, Armbian's repo.
-	# this is only about availability, not download. use HEAD requests / metadata-only pulls
-	# what about multiple possible OCI endpoints / URLs? try them all?
-}
-
-function artifact_uboot_obtain_from_remote_cache() {
-	display_alert "artifact_uboot_XXXXXX" "artifact_uboot_XXXXXX" "warn"
-	# Having confirmed it is available remotely, go download it into the local cache.
-	# is_available_in_local_cache() must return =yes after this.
-	# could be a good idea to transfer some SHA256 id from "is_available" to "obtain" to avoid overhead? or just do it together?
-}
-
 function artifact_uboot_build_from_sources() {
-	display_alert "artifact_uboot_XXXXXX" "artifact_uboot_XXXXXX" "warn"
-	# having failed all the cache obtaining, build it from sources.
+	LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
 
 	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
 		LOG_SECTION="compile_atf" do_with_logging compile_atf
@@ -119,12 +81,36 @@ function artifact_uboot_build_from_sources() {
 	declare uboot_git_revision="not_determined_yet"
 	LOG_SECTION="uboot_prepare_git" do_with_logging_unless_user_terminal uboot_prepare_git
 	LOG_SECTION="compile_uboot" do_with_logging compile_uboot
+}
 
-	capture_rename_legacy_debs_into_artifacts # has its own logging section
+function artifact_uboot_cli_adapter_pre_run() {
+	declare -g ARMBIAN_COMMAND_REQUIRE_BASIC_DEPS="yes" # Require prepare_host_basic to run before the command.
+
+	# "gimme root on a Linux machine"
+	cli_standard_relaunch_docker_or_sudo
+}
+
+function artifact_uboot_cli_adapter_config_prep() {
+	declare KERNEL_ONLY="yes"                             # @TODO: this is a hack, for the board/family code's benefit...
+	use_board="yes" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
+}
+
+function artifact_uboot_get_default_oci_target() {
+	artifact_oci_target_base="ghcr.io/rpardini/armbian-release/"
+}
+
+function artifact_uboot_is_available_in_local_cache() {
+	is_artifact_available_in_local_cache
+}
+
+function artifact_uboot_is_available_in_remote_cache() {
+	is_artifact_available_in_remote_cache
+}
+
+function artifact_uboot_obtain_from_remote_cache() {
+	obtain_artifact_from_remote_cache
 }
 
 function artifact_uboot_deploy_to_remote_cache() {
-	display_alert "artifact_uboot_XXXXXX" "artifact_uboot_XXXXXX" "warn"
-	# having built a new artifact, deploy it to the remote cache.
-	# consider multiple targets, retries, etc.
+	upload_artifact_to_oci
 }

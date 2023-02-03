@@ -1,4 +1,5 @@
 ## Prepare/cleanup pair @TODO needs to be split between SDCARD and MOUNT, no sense doing both in rootfs trap anymore
+# called by artifact-rootfs::artifact_rootfs_prepare_version()
 function prepare_rootfs_build_params_and_trap() {
 	# add handler to cleanup when done or if something fails or is interrupted.
 	add_cleanup_handler trap_handler_cleanup_rootfs_and_image
@@ -6,13 +7,6 @@ function prepare_rootfs_build_params_and_trap() {
 	# stage: clean and create directories
 	run_host_command_logged rm -rfv "${SDCARD}" "${MOUNT}"
 	run_host_command_logged mkdir -pv "${SDCARD}" "${MOUNT}" "${SRC}/cache/rootfs" "${DEST}/images" # @TODO images needs its own trap
-
-	# bind mount rootfs if defined # @TODO: is this used? Igor's NAS?
-	if [[ -d "${ARMBIAN_CACHE_ROOTFS_PATH}" ]]; then
-		display_alert "Warning, using untested code path" "ARMBIAN_CACHE_ROOTFS_PATH" "warn"
-		mountpoint -q "${SRC}"/cache/rootfs && umount "${SRC}"/cache/rootfs
-		mount --bind "${ARMBIAN_CACHE_ROOTFS_PATH}" "${SRC}/cache/rootfs"
-	fi
 
 	# stage: verify tmpfs configuration and mount
 	# CLI needs ~2GiB, desktop ~5GiB
@@ -35,13 +29,12 @@ function prepare_rootfs_build_params_and_trap() {
 		display_alert "Not using tmpfs for rootfs" "RAM available: ${available_physical_memory_mib}MiB < ${tmpfs_estimated_size}MiB estimated" "info"
 	fi
 
-	# make global and readonly, for sanity
-	declare -g -r -i tmpfs_estimated_size="${tmpfs_estimated_size}"
-	declare -g -r -i available_physical_memory_mib="${available_physical_memory_mib}"
+	declare -g -i tmpfs_estimated_size="${tmpfs_estimated_size}"
+	declare -g -i available_physical_memory_mib="${available_physical_memory_mib}"
 
 	if [[ $use_tmpfs == yes ]]; then
-		declare -g -r ROOTFS_IS_UNDER_TMPFS=yes
 		mount -t tmpfs -o "size=99%" tmpfs "${SDCARD}" # size=50% is the Linux default, but we need more.
+		# this cleaned up by trap_handler_cleanup_rootfs_and_image, configured above
 	fi
 }
 
@@ -58,10 +51,7 @@ function trap_handler_cleanup_rootfs_and_image() {
 	# unmount tmpfs mounted on SDCARD if it exists. #@TODO: move to new tmpfs-utils scheme
 	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
 
-	# @TODO: rpardini: igor: why lazy umounts?
-	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain >&2
-	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs >&2
-	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}" >&2
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
 
 	if [[ "${PRESERVE_SDCARD_MOUNT}" == "yes" ]]; then
 		display_alert "Preserving SD card mount" "trap_handler_cleanup_rootfs_and_image" "warn"

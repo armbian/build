@@ -12,10 +12,13 @@ function extension_prepare_config__prepare_localmodconfig() {
 }
 
 # This needs much more love than this. can be used to make "light" versions of kernels, that compile 3x-5x faster or more
-function custom_kernel_config_post_defconfig__apply_localmodconfig() {
+function custom_kernel_config__apply_localmodconfig() {
 	if [[ -f "${lsmod_file}" ]]; then
-		display_alert "${EXTENSION}: running localmodconfig on Kernel tree" "${LSMOD}" "warn"
-		run_kernel_make "LSMOD=${lsmod_file}" localmodconfig "> /dev/null" # quoted redirect to hide output even from logfile, it's way too long. stderr still shows
+		kernel_config_modifying_hashes+=("$(cat "${lsmod_file}")")
+		if [[ -f .config ]]; then
+			display_alert "${EXTENSION}: running localmodconfig on Kernel tree" "${LSMOD}" "warn"
+			run_kernel_make "LSMOD=${lsmod_file}" localmodconfig "> /dev/null" # quoted redirect to hide output even from logfile, it's way too long. stderr still shows
+		fi
 	else
 		display_alert "${EXTENSION}: lsmod file disappeared?" "${lsmod_file}" "err"
 		return 1 # exit with an error; this is not what the user expected

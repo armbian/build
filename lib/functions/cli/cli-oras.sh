@@ -19,7 +19,7 @@ function cli_oras_run() {
 				exit_with_error "File to upload not found '${UPLOAD_FILE}'"
 			fi
 			# This will download & install ORAS and run it.
-			oras_push_artifact_file "${OCI_TARGET}" "${UPLOAD_FILE}"
+			oras_push_artifact_file "${OCI_TARGET}" "${UPLOAD_FILE}" "uploaded from command line - this is NOT a Docker image"
 			;;
 
 		*)

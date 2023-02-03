@@ -14,7 +14,7 @@
 # see: https://github.com/armbian/build/issues/1584
 update_initramfs() {
 	local chroot_target=$1 target_dir
-	target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${VER}*")" # @TODO: rpardini: this will break when we add multi-kernel images
+	target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${IMAGE_INSTALLED_KERNEL_VERSION}*")" # @TODO: rpardini: this will break when we add multi-kernel images
 	local initrd_kern_ver initrd_file initrd_cache_key initrd_cache_file_path initrd_hash
 	local initrd_cache_current_manifest_filepath initrd_cache_last_manifest_filepath
 	local initrd_debug=""
@@ -28,9 +28,9 @@ update_initramfs() {
 		initrd_file="${chroot_target}/boot/initrd.img-${initrd_kern_ver}"
 		update_initramfs_cmd="TMPDIR=/tmp update-initramfs -u${initrd_debug} -k ${initrd_kern_ver}" # @TODO: why? TMPDIR=/tmp
 	else
-		display_alert "Can't find kernel for version, here's what is in /lib/modules" "VER: ${VER}" "wrn"
+		display_alert "Can't find kernel for version, here's what is in /lib/modules" "IMAGE_INSTALLED_KERNEL_VERSION: ${IMAGE_INSTALLED_KERNEL_VERSION}" "wrn"
 		SHOW_LOG=yes run_host_command_logged find "${chroot_target}/lib/modules"/ -maxdepth 1
-		exit_with_error "No kernel installed for the version" "${VER}"
+		exit_with_error "No kernel installed for the version" "${IMAGE_INSTALLED_KERNEL_VERSION}"
 	fi
 
 	# Caching.

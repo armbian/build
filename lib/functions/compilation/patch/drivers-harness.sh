@@ -24,7 +24,7 @@ function kernel_drivers_create_patches() {
 	kernel_drivers_patch_hash="${hash_files}"        # outer scope
 
 	if [[ "${hash_only:-"no"}" == "yes" ]]; then
-		display_alert "Hash-only kernel driver requested" "$kernel_drivers_patch_hash - returning" "warn"
+		display_alert "Hash-only kernel driver requested" "$kernel_drivers_patch_hash - returning" "debug"
 		return 0
 	fi
 

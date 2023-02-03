@@ -4,22 +4,16 @@ function calculate_hash_for_all_files_in_dirs() {
 	for dir in "${dirs_to_hash[@]}"; do
 		# skip if dir doesn't exist...
 		if [[ ! -d "${dir}" ]]; then
-			display_alert "calculate_hash_for_all_files_in_dirs" "skipping non-existent dir \"${dir}\"" "warn"
+			display_alert "calculate_hash_for_all_files_in_dirs" "skipping non-existent dir \"${dir}\"" "debug"
 			continue
 		fi
-		declare found_files="no"
-		# shellcheck disable=SC2044 # lets expand... # -L: follow symlinks
-		for file in $(find -L "${dir}" -type f); do
-			files_to_hash+=("${file}")
-			found_files="yes"
-		done
-		if [[ "${found_files}" == "no" ]]; then
+		mapfile -t files_in_dir < <(find -L "${dir}" -type f)
+		if [[ ${#files_in_dir[@]} -eq 0 ]]; then
 			display_alert "calculate_hash_for_all_files_in_dirs" "empty dir \"${dir}\"" "debug"
+			continue
 		fi
+		files_to_hash+=("${files_in_dir[@]}")
 	done
-
-	#display_alert "calculate_hash_for_all_files_in_dirs" "files_to_hash_sorted: ${#files_to_hash_sorted[@]}" "warn"
-	#display_alert "calculate_hash_for_all_files_in_dirs" "files_to_hash_sorted: ${files_to_hash_sorted[*]}" "warn"
 
 	calculate_hash_for_files "${files_to_hash[@]}"
 }

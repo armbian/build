@@ -197,7 +197,6 @@ function config_post_main() {
 	declare -g CHOSEN_KERNEL=linux-image-${BRANCH}-${LINUXFAMILY}
 	declare -g CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
 	declare -g CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
-	declare -g CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
 	declare -g CHOSEN_KERNEL_WITH_ARCH=${CHOSEN_KERNEL}-${ARCH} # Only for reporting purposes.
 
 	# So for kernel full cached rebuilds.
@@ -216,7 +215,6 @@ function config_post_main() {
 			fi
 			# assume the worst, and all surprises will be happy ones
 			declare -g KERNEL_HAS_WORKING_HEADERS="no"
-			declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no"
 
 			# Parse/validate the the major, bail if no match
 			declare -i KERNEL_MAJOR_MINOR_MAJOR=${KERNEL_MAJOR_MINOR%%.*}
@@ -226,8 +224,7 @@ function config_post_main() {
 				declare -g KERNEL_HAS_WORKING_HEADERS="yes"
 				declare -g KERNEL_MAJOR="${KERNEL_MAJOR_MINOR_MAJOR}"
 			elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 19 ]]; then
-				declare -g KERNEL_MAJOR=4                              # We support 4.19+ (less than 5.0) is supported, and headers via full source
-				declare -g KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE="no" # full-source based headers. experimental. set to yes here to enable
+				declare -g KERNEL_MAJOR=4 # We support 4.19+ (less than 5.0) is supported
 			elif [[ "${KERNEL_MAJOR_MINOR_MAJOR}" -eq 4 && "${KERNEL_MAJOR_MINOR_MINOR}" -ge 4 ]]; then
 				declare -g KERNEL_MAJOR=4 # We support 4.x from 4.4
 			else

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-apt_purge_unneeded_packages() {
+function apt_purge_unneeded_packages() {
 	# remove packages that are no longer needed. rootfs cache + uninstall might have leftovers.
 	display_alert "No longer needed packages" "purge" "info"
 	chroot_sdcard_apt_get autoremove
@@ -8,9 +8,7 @@ apt_purge_unneeded_packages() {
 
 # this is called:
 # 1) install_deb_chroot "${DEB_STORAGE}/somethingsomething.deb" (yes, it's always ${DEB_STORAGE})
-# 2) install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" (normal invocation, install from repo)
-# 3) install_deb_chroot "linux-u-boot-${BOARD}-${BRANCH}" "remote" "yes" (install from repo, then also copy the WHOLE CACHE back to DEB_STORAGE)
-install_deb_chroot() {
+function install_deb_chroot() {
 	local package="$1"
 	local variant="$2"
 	local transfer="$3"

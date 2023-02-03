@@ -33,6 +33,9 @@ if_enabled_echo() {
 }
 
 function prepare_kernel_packaging_debs() {
+	: "${artifact_version:?artifact_version is not set}"
+	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
+
 	declare kernel_work_dir="${1}"
 	declare kernel_dest_install_dir="${2}"
 	declare kernel_version="${3}"
@@ -43,16 +46,7 @@ function prepare_kernel_packaging_debs() {
 	declare kernel_version_family="${kernel_version}-${LINUXFAMILY}"
 
 	# Package version. Affects users upgrading from repo!
-	declare package_version="${REVISION}" # default, "classic" Armbian non-version.
-	# If we're building an artifact, use the pre-determined artifact version.
-	if [[ "${artifact_version:-""}" != "" ]]; then
-		if [[ "${artifact_version}" == "undetermined" ]]; then
-			exit_with_error "Undetermined artifact version during kernel deb packaging. This is a bug, report it."
-		fi
-		display_alert "Using artifact version for kernel package version" "${artifact_version}" "info"
-		package_version="${artifact_version}"
-	fi
-	display_alert "Kernel .deb package version" "${package_version}" "info"
+	display_alert "Kernel .deb package version" "${artifact_version}" "info"
 
 	# show incoming tree
 	#display_alert "Kernel install dir" "incoming from KBUILD make" "debug"
@@ -89,15 +83,13 @@ function prepare_kernel_packaging_debs() {
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" == "yes" ]]; then
 		display_alert "Packaging linux-headers" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
-	elif [[ "${KERNEL_HAS_WORKING_HEADERS_FULL_SOURCE}" == "yes" ]]; then
-		display_alert "Packaging linux-headers (full source, experimental)" "${LINUXFAMILY} ${LINUXCONFIG}" "warn"
-		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers_full_source
 	else
 		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "warn"
 	fi
 }
 
 function create_kernel_deb() {
+	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
 	declare package_name="${1}"
 	declare deb_output_dir="${2}"
 	declare callback_function="${3}"
@@ -151,12 +143,7 @@ function create_kernel_deb() {
 	#display_alert "Package dir" "for package ${package_name}" "debug"
 	#run_host_command_logged tree -C -h -d --du "${package_directory}"
 
-	# Run shellcheck on the produced DEBIAN/xxx scripts
-	dpkg_deb_run_shellcheck_on_scripts "${package_directory}"
-
-	# @TODO: hmm, why doesn't this use fakeroot_dpkg_deb_build() ?
-	declare final_deb_filename="${deb_output_dir}/${package_name}_${REVISION}_${ARCH}.deb"                                   # for compatibility with non-artifacts
-	run_host_command_logged dpkg-deb ${DEB_COMPRESS:+-Z$DEB_COMPRESS} --build "${package_directory}" "${final_deb_filename}" # not KDEB compress, we're not under a Makefile
+	fakeroot_dpkg_deb_build "${package_directory}" "${kernel_debs_temp_dir}/"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
@@ -220,7 +207,7 @@ function kernel_package_callback_linux_image() {
 	# Generate a control file
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
 		Package: ${package_name}
-		Version: ${package_version}
+		Version: ${artifact_version}
 		Source: linux-${kernel_version}
 		Architecture: ${ARCH}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
@@ -271,7 +258,7 @@ function kernel_package_callback_linux_dtb() {
 
 	# Generate a control file
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
-		Version: ${package_version}
+		Version: ${artifact_version}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
 		Package: ${package_name}
@@ -386,7 +373,7 @@ function kernel_package_callback_linux_headers() {
 	# Generate a control file
 	# TODO: libssl-dev is only required if we're signing modules, which is a kernel .config option.
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
-		Version: ${package_version}
+		Version: ${artifact_version}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: devel
 		Package: ${package_name}
@@ -429,81 +416,6 @@ function kernel_package_callback_linux_headers() {
 			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
 			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
 			make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool
-			echo "Done compiling kernel-headers tools (${kernel_version_family})."
-		EOT_POSTINST
-	)
-}
-
-function kernel_package_callback_linux_headers_full_source() {
-	display_alert "linux-headers packaging full source" "${package_directory}" "debug"
-
-	# targets.
-	local headers_target_dir="${package_directory}/usr/src/linux-headers-${kernel_version_family}" # headers/tools etc
-	local modules_target_dir="${package_directory}/lib/modules/${kernel_version_family}"           # symlink to above later
-
-	mkdir -p "${headers_target_dir}" "${modules_target_dir}"                                                         # create both dirs
-	run_host_command_logged ln -v -s "/usr/src/linux-headers-${kernel_version_family}" "${modules_target_dir}/build" # Symlink in modules so builds find the headers
-
-	# gather stuff from the linux source tree: ${kernel_work_dir} (NOT the make install destination)
-	# those can be source files or object (binary/compiled) stuff
-	# how to get SRCARCH? only from the makefile itself. ARCH=amd64 then SRCARCH=x86. How to we know? @TODO
-	local SRC_ARCH="${ARCH}"
-	[[ "${SRC_ARCH}" == "amd64" ]] && SRC_ARCH="x86"
-	[[ "${SRC_ARCH}" == "armhf" ]] && SRC_ARCH="arm"
-
-	# Export git tree to the target directory.
-	# @TODO: this is waay too heavy. add a zst tar ball, and extract during postinst.
-	git -C "${kernel_work_dir}" archive --format=tar HEAD | tar -x -C "${headers_target_dir}"
-
-	# @TODO: add Module.symvers if exists
-
-	run_host_command_logged cp -vp "${kernel_work_dir}"/.config "${headers_target_dir}"/.config # copy .config manually to be where it's expected to be
-
-	# Generate a control file
-	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
-		Version: ${package_version}
-		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
-		Section: devel
-		Package: ${package_name}
-		Architecture: ${ARCH}
-		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
-		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
-		Description: Armbian Linux $BRANCH full-source headers ${artifact_version_reason:-"${kernel_version_family}"}
-		 This package provides kernel header files for ${kernel_version_family}
-		 .
-		 This is useful for DKMS and building of external modules.
-	CONTROL_FILE
-
-	# Make sure the target dir is clean/not-existing before installing.
-	kernel_package_hook_helper "preinst" <(
-		cat <<- EOT_PREINST
-			if [[ -d "/usr/src/linux-headers-${kernel_version_family}" ]]; then
-				echo "Cleaning pre-existing directory /usr/src/linux-headers-${kernel_version_family} ..."
-				rm -rf "/usr/src/linux-headers-${kernel_version_family}"
-			fi
-		EOT_PREINST
-	)
-
-	# Make sure the target dir is removed before removing the package; that way we don't leave eventual compilation artifacts over there.
-	kernel_package_hook_helper "prerm" <(
-		cat <<- EOT_PRERM
-			if [[ -d "/usr/src/linux-headers-${kernel_version_family}" ]]; then
-				echo "Cleaning directory /usr/src/linux-headers-${kernel_version_family} ..."
-				rm -rf "/usr/src/linux-headers-${kernel_version_family}"
-			fi
-		EOT_PRERM
-	)
-
-	kernel_package_hook_helper "postinst" <(
-		cat <<- EOT_POSTINST
-			cd "/usr/src/linux-headers-${kernel_version_family}"
-			NCPU=\$(grep -c 'processor' /proc/cpuinfo)
-			echo "Compiling kernel-headers tools (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
-			yes "" | make ARCH="${SRC_ARCH}" oldconfig
-			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
-			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
-			make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool || echo "objtool failed, but thats okay"
-			# @TODO: modules_prepare -- should work with 4.19+
 			echo "Done compiling kernel-headers tools (${kernel_version_family})."
 		EOT_POSTINST
 	)

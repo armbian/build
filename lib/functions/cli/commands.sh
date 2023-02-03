@@ -20,23 +20,26 @@ function armbian_register_commands() {
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
 
-		["rootfs"]="rootfs"     # implemented in cli_rootfs_pre_run and cli_rootfs_run
-		["firmware"]="firmware" # yeah this is getting old. implemented in cli_firmware_pre_run and cli_firmware_run
-
-		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
-		["kernel"]="standard_build"
-		["kernel-config"]="standard_build"
-		["u-boot"]="standard_build"
-		["uboot"]="standard_build"
-
 		# external tooling, made easy.
 		["oras-upload"]="oras" # implemented in cli_oras_pre_run and cli_oras_run; up/down/info are the same, see vars below
-		
+
 		# all-around artifact wrapper
 		["artifact"]="artifact" # implemented in cli_artifact_pre_run and cli_artifact_run
 
+		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
+		["rootfs"]="artifact"
+		["firmware"]="artifact"
+		["firmware-full"]="artifact"
+		["kernel"]="artifact"
+		["kernel-config"]="artifact"
+		["u-boot"]="artifact"
+		["uboot"]="artifact"
+
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
+
+	# common for all CLI-based artifact shortcuts
+	declare common_cli_artifact_vars=""
 
 	# Vars to be set for each command. Optional.
 	declare -g -A ARMBIAN_COMMANDS_TO_VARS_DICT=(
@@ -50,10 +53,14 @@ function armbian_register_commands() {
 		["config-dump"]="CONFIG_DEFS_ONLY='yes'"
 		["configdump"]="CONFIG_DEFS_ONLY='yes'"
 
-		["kernel-config"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes' KERNEL_CONFIGURE='yes'"
-		["kernel"]="KERNEL_ONLY='yes' JUST_KERNEL='yes' KERNEL_IGNORE_DEB='yes' KERNEL_CONFIGURE='no'"
-		["u-boot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes' KERNEL_CONFIGURE='no'"
-		["uboot"]="KERNEL_ONLY='yes' JUST_UBOOT='yes' UBOOT_IGNORE_DEB='yes' KERNEL_CONFIGURE='no'"
+		# artifact shortcuts
+		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_BUILD_INTERACTIVE='yes' ${common_cli_artifact_vars}"
+		["kernel"]="WHAT='kernel' ${common_cli_artifact_vars}"
+		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"
+		["u-boot"]="WHAT='uboot' ${common_cli_artifact_vars}"
+		["firmware"]="WHAT='firmware' ${common_cli_artifact_vars}"
+		["firmware-full"]="WHAT='full_firmware' ${common_cli_artifact_vars}"
+		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
 
 		["oras-upload"]="ORAS_OPERATION='upload'"
 

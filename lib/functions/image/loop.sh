@@ -51,28 +51,28 @@ function check_loop_device_internal() {
 	return 0
 }
 
-# write_uboot_to_loop_image <loopdev>
+# write_uboot_to_loop_image <loopdev> <full_path_to_uboot_deb>
 function write_uboot_to_loop_image() {
 
 	declare loop=$1
-	display_alert "Preparing u-boot bootloader" "LOOP=${loop} - ${CHOSEN_UBOOT}" "info"
+	declare uboot_deb=$2
+	display_alert "Preparing u-boot bootloader" "LOOP=${loop} - ${uboot_deb}" "info"
 
-	declare revision="${REVISION}"
+	declare full_path_uboot_deb="${uboot_deb}"
+	if [[ ! -f "${full_path_uboot_deb}" ]]; then
+		exit_with_error "Missing ${full_path_uboot_deb}"
+	fi
+
 	declare cleanup_id="" TEMP_DIR=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "uboot-write" cleanup_id TEMP_DIR # namerefs
 
-	if [[ -n $UBOOT_REPO_VERSION ]]; then
-		revision=${UBOOT_REPO_VERSION}
-		run_host_command_logged dpkg -x "${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${revision}_${ARCH}.deb" "${TEMP_DIR}"/
-	else
-		run_host_command_logged dpkg -x "${DEB_STORAGE}/${CHOSEN_UBOOT}_${revision}_${ARCH}.deb" "${TEMP_DIR}"/
-	fi
+	run_host_command_logged dpkg -x "${full_path_uboot_deb}" "${TEMP_DIR}"/
 
 	if [[ ! -f "${TEMP_DIR}/usr/lib/u-boot/platform_install.sh" ]]; then
 		exit_with_error "Missing ${TEMP_DIR}/usr/lib/u-boot/platform_install.sh"
 	fi
 
-	display_alert "Sourcing u-boot install functions" "${CHOSEN_UBOOT}" "info"
+	display_alert "Sourcing u-boot install functions" "${uboot_deb}" "info"
 	source "${TEMP_DIR}"/usr/lib/u-boot/platform_install.sh
 	set -e # make sure, we just included something that might disable it
 

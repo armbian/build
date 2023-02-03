@@ -64,13 +64,20 @@ function kernel_config_initialize() {
 	cd "${kernel_work_dir}" || exit_with_error "kernel_work_dir does not exist: ${kernel_work_dir}"
 	run_kernel_make olddefconfig
 
+	# Call the extensions. This is _also_ done during the kernel artifact's prepare_version, for consistent caching.
+	call_extensions_kernel_config
+
+	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
+}
+
+function call_extensions_kernel_config() {
 	# Run the core-armbian config modifications here, built-in extensions:
-	# 1) Enable the options for the extrawifi/drivers; so we don't need to worry about them when updating configs
-	# 2) Disable: debug, version shenanigans, signing, and compression of modules, to ensure sanity
 	call_extension_method "armbian_kernel_config" <<- 'ARMBIAN_KERNEL_CONFIG'
 		*Armbian-core default hook point for pre-olddefconfig Kernel config modifications*
 		NOT for user consumption. Do NOT use this hook, this is internal to Armbian.
 		Instead, use `custom_kernel_config` which runs later and can undo anything done by this step.
+		Important: this hook might be run multiple times, and one of them might not have a .config in place.
+		Either way, the hook _must_ add representative changes to the `kernel_config_modifying_hashes` array, for kernel config hashing.
 	ARMBIAN_KERNEL_CONFIG
 
 	# Custom hooks receive a clean / updated config; depending on their modifications, they may need to run olddefconfig again.
@@ -79,20 +86,12 @@ function kernel_config_initialize() {
 		Called after ${LINUXCONFIG}.config is put in place (.config).
 		A good place to customize the .config directly.
 		Armbian default Kconfig modifications have already been applied and can be overriden.
+		Important: this hook might be run multiple times, and one of them might not have a .config in place.
+		Either way, the hook _must_ add representative changes to the `kernel_config_modifying_hashes` array, for kernel config hashing.
 	CUSTOM_KERNEL_CONFIG
-
-	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
-
 }
 
 function kernel_config_finalize() {
-	call_extension_method "custom_kernel_config_post_defconfig" <<- 'CUSTOM_KERNEL_CONFIG_POST_DEFCONFIG'
-		*Kernel .config is in place, already processed by Armbian*
-		Called after ${LINUXCONFIG}.config is put in place (.config).
-		After all olddefconfig any Kconfig make is called.
-		A good place to customize the .config last-minute.
-	CUSTOM_KERNEL_CONFIG_POST_DEFCONFIG
-
 	# Now, compare the .config with the previous one, and if they are the same, restore the original date.
 	# This way we avoid unnecessary recompilation of the kernel; even if the .config contents
 	# have not changed, the date will be different, and Kbuild will at least re-link everything.

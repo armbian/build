@@ -15,7 +15,7 @@ function extension_prepare_config__prepare_flash_kernel() {
 	export BOOTSIZE=0                                                           # No separate /boot, flash-kernel will "flash" the kernel+initrd to the firmware part.
 	export UEFI_MOUNT_POINT="/boot/firmware"                                    # mount uefi partition at /boot/firmware
 	export CLOUD_INIT_CONFIG_LOCATION="/boot/firmware"                          # use /boot/firmware for cloud-init as well
-	export VER="${FK__PUBLISHED_KERNEL_VERSION}"                                # For the VERSION
+	export IMAGE_INSTALLED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION}"                                # For the VERSION
 	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-fk${FK__PUBLISHED_KERNEL_VERSION}" # Unique bsp name.
 }
 

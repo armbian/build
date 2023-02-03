@@ -3,10 +3,8 @@
 function build_rootfs_and_image() {
 	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 
-	LOG_SECTION="prepare_rootfs_build_params_and_trap" do_with_logging prepare_rootfs_build_params_and_trap
-
 	# get a basic rootfs, either from cache or from scratch
-	LOG_SECTION="build_rootfs_only" do_with_logging build_rootfs_only # only occurrence of this
+	get_or_create_rootfs_cache_chroot_sdcard # only occurrence of this; has its own logging sections
 
 	# stage: with a basic rootfs available, we mount the chroot and work on it
 	mount_chroot "${SDCARD}"

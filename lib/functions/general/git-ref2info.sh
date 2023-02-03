@@ -1,16 +1,5 @@
-# This has... everything: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?h=linux-6.1.y
-# This has... everything: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit/?h=v6.2-rc5
-
-# get the sha1 of the commit on tag or branch
-# git ls-remote --exit-code --symref git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git v6.2-rc5
-# git ls-remote --exit-code --symref git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git v6.2-rc5
-
-# 93f875a8526a291005e7f38478079526c843cbec	refs/heads/linux-6.1.y
-# 4cc398054ac8efe0ff832c82c7caacbdd992312a	refs/tags/v6.2-rc5
-
-# https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/Makefile?h=linux-6.1.y
-# plaintext: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=4cc398054ac8efe0ff832c82c7caacbdd992312a
-
+# This works under memoize-cached.sh::run_memoized() -- which is full of tricks.
+# Nested functions are used because the source of the momoized function is used as part of the cache hash.
 function memoized_git_ref_to_info() {
 	declare -n MEMO_DICT="${1}" # nameref
 	declare ref_type ref_name
@@ -68,6 +57,7 @@ function memoized_git_ref_to_info() {
 					# parse org/repo from https://github.com/org/repo
 					declare org_and_repo=""
 					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
+					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
 					;;
 
@@ -89,7 +79,7 @@ function memoized_git_ref_to_info() {
 					;;
 			esac
 
-			display_alert "Fetching Makefile via HTTP" "${url}" "warn"
+			display_alert "Fetching Makefile via HTTP" "${url}" "debug"
 			makefile_url="${url}"
 			makefile_body="$(curl -sL --fail "${url}")" || exit_with_error "Failed to fetch Makefile from '${url}'"
 
@@ -131,7 +121,7 @@ function memoized_git_ref_to_info() {
 			return 0
 		}
 
-		display_alert "Fetching Makefile body" "${ref_name}" "warn"
+		display_alert "Fetching Makefile body" "${ref_name}" "debug"
 		declare makefile_body makefile_url
 		declare makefile_version makefile_codename makefile_full_version
 		obtain_makefile_body_from_git "${MEMO_DICT[GIT_SOURCE]}" "${sha1}"

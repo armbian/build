@@ -58,7 +58,7 @@ function extension_prepare_config__prepare_grub_standard() {
 	fi
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-		export VER="${DISTRO_KERNEL_VER}"
+		export IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}"
 		unset KERNELSOURCE                 # This should make Armbian skip most stuff. At least, I hacked it to.
 		export INSTALL_ARMBIAN_FIRMWARE=no # Should skip build and install of Armbian-firmware.
 	else
@@ -96,8 +96,8 @@ pre_umount_final_image__install_grub() {
 	if [[ "${UEFI_GRUB}" == "skip" ]]; then
 		display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
 		if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-			display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB} - calling update_initramfs directly with VER=${DISTRO_KERNEL_VER}" "debug"
-			VER="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
+			display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB} - calling update_initramfs directly with IMAGE_INSTALLED_KERNEL_VERSION=${DISTRO_KERNEL_VER}" "debug"
+			IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
 		fi
 		return 0
 	fi
@@ -119,8 +119,8 @@ pre_umount_final_image__install_grub() {
 	cp "${SRC}"/packages/blobs/splash/grub.png "${MOUNT}"/usr/share/images/grub/wallpaper.png
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-		display_alert "Using Distro Generic Kernel" "${EXTENSION}: update_initramfs with VER: ${DISTRO_KERNEL_VER}" "debug"
-		VER="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
+		display_alert "Using Distro Generic Kernel" "${EXTENSION}: update_initramfs with IMAGE_INSTALLED_KERNEL_VERSION: ${DISTRO_KERNEL_VER}" "debug"
+		IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
 	fi
 
 	# Mount the chroot...

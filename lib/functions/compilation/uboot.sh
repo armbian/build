@@ -230,6 +230,8 @@ function deploy_built_uboot_bins_for_one_target_to_packaging_area() {
 }
 
 function compile_uboot() {
+	: "${artifact_version:?artifact_version is not set}"
+
 	display_alert "Compiling u-boot" "BOOTSOURCE: ${BOOTSOURCE}" "debug"
 	if [[ -n $BOOTSOURCE ]] && [[ "${BOOTSOURCE}" != "none" ]]; then
 		display_alert "Extensions: fetch custom uboot" "fetch_custom_uboot" "debug"
@@ -279,7 +281,7 @@ function compile_uboot() {
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc '${gcc_version_main}'" "info"
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpfullversion -dumpversion)" "info"
 
-	local uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"
+	local uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}" # @TODO: get rid of CHOSEN_UBOOT
 
 	# create directory structure for the .deb package
 	declare cleanup_id="" uboottempdir=""
@@ -338,22 +340,12 @@ function compile_uboot() {
 		$(declare -f setup_write_uboot_platform || true)
 	EOF
 
-	# Package version. Affects users upgrading from repo!
-	declare package_version="${REVISION}" # default, "classic" Armbian non-version.
-	# If we're building an artifact, use the pre-determined artifact version.
-	if [[ "${artifact_version:-""}" != "" ]]; then
-		if [[ "${artifact_version}" == "undetermined" ]]; then
-			exit_with_error "Undetermined artifact version during u-boot deb packaging. This is a bug, report it."
-		fi
-		display_alert "Using artifact version for u-boot package version" "${artifact_version}" "info"
-		package_version="${artifact_version}"
-	fi
-	display_alert "Das U-Boot .deb package version" "${package_version}" "info"
+	display_alert "Das U-Boot .deb package version" "${artifact_version}" "info"
 
 	# set up control file
 	cat <<- EOF > "$uboottempdir/${uboot_name}/DEBIAN/control"
 		Package: linux-u-boot-${BOARD}-${BRANCH}
-		Version: ${package_version}
+		Version: ${artifact_version}
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Installed-Size: 1
@@ -371,16 +363,10 @@ function compile_uboot() {
 	[[ -f Licenses/README ]] && run_host_command_logged cp Licenses/README "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
 
-	# Important: this forces the deb to have a specific name, and not be version-dependent...
-	# This is set to `uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}"` in outer scope...
-	display_alert "Building u-boot deb" "(version: ${package_version}) ${uboot_name}.deb"
-	fakeroot_dpkg_deb_build "$uboottempdir/${uboot_name}" "$uboottempdir/${uboot_name}.deb"
-	rm -rf "${uboottempdir:?}/${uboot_name:?}"
-	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}"
+	display_alert "Building u-boot deb" "(version: ${artifact_version})"
+	fakeroot_dpkg_deb_build "$uboottempdir/${uboot_name}" "${DEB_STORAGE}"
 
-	[[ ! -f $uboottempdir/${uboot_name}.deb ]] && exit_with_error "Building u-boot package failed"
-
-	run_host_command_logged rsync --remove-source-files -r "$uboottempdir/${uboot_name}.deb" "${DEB_STORAGE}/"
+	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}" # @TODO: intricate cleanup; u-boot's pkg uses ATF's tempdir...
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 

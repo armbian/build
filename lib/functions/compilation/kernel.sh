@@ -61,15 +61,10 @@ function compile_kernel() {
 
 	kernel_config # has it's own logging sections inside
 
-	# package the kernel-source .deb
-	LOG_SECTION="kernel_package_source" do_with_logging do_with_hooks kernel_package_source
-
 	# build via make and package .debs; they're separate sub-steps
 	kernel_prepare_build_and_package # has it's own logging sections inside
 
 	display_alert "Done with" "kernel compile" "debug"
-
-	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
 
 	return 0
 }
@@ -84,59 +79,6 @@ function kernel_maybe_clean() {
 	else
 		display_alert "Not cleaning Kernel tree; use CLEAN_LEVEL=make-kernel if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
 	fi
-}
-
-function kernel_package_source() {
-	[[ "${BUILD_KSRC}" != "yes" ]] && return 0
-
-	display_alert "Creating kernel source package" "${LINUXCONFIG}" "info"
-
-	local ts=${SECONDS}
-	local sources_pkg_dir tarball_size package_size
-	declare cleanup_id="" tmp_src_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "ksrc" cleanup_id tmp_src_dir # namerefs
-
-	sources_pkg_dir="${tmp_src_dir}/${CHOSEN_KSRC}_${REVISION}_all"
-
-	mkdir -p "${sources_pkg_dir}"/usr/src/ \
-		"${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}" \
-		"${sources_pkg_dir}"/DEBIAN
-
-	run_host_command_logged cp -v "${SRC}/config/kernel/${LINUXCONFIG}.config" "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config"
-	run_host_command_logged cp -v COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
-
-	display_alert "Compressing sources for the linux-source package" "exporting from git" "info"
-	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
-
-	local tar_prefix="${version}/"
-	local output_tarball="${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.zst"
-
-	# export tar with `git archive`; we point it at HEAD, but could be anything else too
-	run_host_command_logged git archive "--prefix=${tar_prefix}" --format=tar HEAD "| zstdmt > '${output_tarball}'"
-	tarball_size="$(du -h -s "${output_tarball}" | awk '{print $1}')"
-
-	cat <<- EOF > "${sources_pkg_dir}"/DEBIAN/control
-		Package: linux-source-${BRANCH}-${LINUXFAMILY}
-		Version: ${version}-${BRANCH}-${LINUXFAMILY}+${REVISION}
-		Architecture: all
-		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
-		Section: kernel
-		Priority: optional
-		Depends: binutils, coreutils
-		Provides: linux-source, linux-source-${version}-${LINUXFAMILY}
-		Recommends: gcc, make
-		Description: This package provides the source code for the Linux kernel $version
-	EOF
-
-	fakeroot_dpkg_deb_build -Znone -z0 "${sources_pkg_dir}" "${sources_pkg_dir}.deb" # do not compress .deb, it already contains a zstd compressed tarball! ignores ${KDEB_COMPRESS} on purpose
-
-	package_size="$(du -h -s "${sources_pkg_dir}.deb" | awk '{print $1}')"
-
-	run_host_command_logged rsync --remove-source-files -r "${sources_pkg_dir}.deb" "${DEB_STORAGE}/"
-
-	display_alert "$(basename "${sources_pkg_dir}.deb" ".deb") packaged" "$((SECONDS - ts)) seconds, ${tarball_size} tarball, ${package_size} .deb" "info"
-
-	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
 function kernel_prepare_build_and_package() {
@@ -175,9 +117,17 @@ function kernel_prepare_build_and_package() {
 	# Fire off the build & package
 	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
 
+	# prepare a target dir for the shared, produced kernel .debs, across image/dtb/headers
+	declare cleanup_id_debs="" kernel_debs_temp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "kd" cleanup_id_debs kernel_debs_temp_dir # namerefs
+
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
-	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
+	# This deploys to DEB_STORAGE...
+	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
+
+	done_with_temp_dir "${cleanup_id_debs}" # changes cwd to "${SRC}" and fires the cleanup function early
+	done_with_temp_dir "${cleanup_id}"      # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
 function kernel_build() {
@@ -194,6 +144,7 @@ function kernel_build() {
 
 function kernel_package() {
 	local ts=${SECONDS}
+	cd "${kernel_debs_temp_dir}" || exit_with_error "Can't cd to kernel_debs_temp_dir: ${kernel_debs_temp_dir}"
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
@@ -201,11 +152,6 @@ function kernel_package() {
 }
 
 function kernel_deploy_pkg() {
-	cd "${kernel_work_dir}/.." || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
-
-	# @TODO: rpardini: this is kept for historical reasons... wth?
-	# remove firmware image packages here - easier than patching ~40 packaging scripts at once
-	run_host_command_logged rm -fv "linux-firmware-image-*.deb"
-
-	run_host_command_logged rsync -v --remove-source-files -r ./*.deb "${DEB_STORAGE}/"
+	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
+	run_host_command_logged rsync -v --remove-source-files -r "${kernel_debs_temp_dir}"/*.deb "${DEB_STORAGE}/"
 }
