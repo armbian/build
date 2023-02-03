@@ -99,7 +99,7 @@ function create_sources_list() {
 			EOF
 			;;
 
-		bullseye | bookworm | trixie)
+		bullseye | trixie)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -114,6 +114,23 @@ function create_sources_list() {
 				#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free
 			EOF
 			;;
+		
+		bookworm)
+			# non-free firmware in bookworm and later has moved from the non-free archive component to a new non-free-firmware component (alongside main/contrib/non-free). This was implemented on 2023-01-27, see also https://lists.debian.org/debian-boot/2023/01/msg00235.html
+            cat <<- EOF > "${basedir}"/etc/apt/sources.list
+                deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
+                #deb-src http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
+
+                deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free non-free-firmware
+                #deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free non-free-firmware
+
+                deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free non-free-firmware
+                #deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free non-free-firmware
+
+                deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free non-free-firmware
+                #deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free non-free-firmware
+            EOF
+            ;;
 
 		sid) # sid is permanent unstable development and has no such thing as updates or security
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
