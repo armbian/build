@@ -126,7 +126,7 @@ Function | Armbian | Yocto | Buildroot |
 │   ├── sources                          Kernel, u-boot and various drivers sources.
 │   ├── toolchains                       External cross compilers from Linaro™ or ARM™
 ├── config                               Packages repository configurations
-│   ├── targets.conf                     Board build target configuration
+│   ├── targets.conf                     Configuration of automated builds
 │   ├── boards                           Board configurations
 │   ├── bootenv                          Initial boot loaders environments per family
 │   ├── bootscripts                      Initial Boot loaders scripts per family
