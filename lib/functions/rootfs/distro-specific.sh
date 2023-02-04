@@ -7,20 +7,18 @@ function install_distribution_specific() {
 	# disable hostapd as it needs to be configured to start correctly
 	disable_systemd_service_sdcard smartmontools.service smartd.service hostapd.service
 
+	declare RENDERER="networkd"
+	[[ ! -d "${SDCARD}/etc/NetworkManager" ]] || local RENDERER="NetworkManager"
+
 	case "${RELEASE}" in
 
-		focal | jammy | kinetic | lunar)
+		"focal"|"jammy"|"kinetic"|"lunar")
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
 			run_host_command_logged rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
-
-			declare RENDERER=networkd
-			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
-				local RENDERER=NetworkManager
-			fi
 
 			# DNS fix
 			if [[ -n "$NAMESERVER" ]]; then
@@ -43,6 +41,11 @@ function install_distribution_specific() {
 			# disable conflicting services
 			disable_systemd_service_sdcard ondemand.service
 			;;
+		"bookworm"|"sid")
+			# wpasupplicant seems to be missing on bookworm+ causing connectivity issues on network manager https://github.com/armbian/build/pull/4807#discussion_r1096511763
+			[[ "$RENDERER" != "NetworkManager" ]] || chroot_sdcard_apt_get_install "wpasupplicant"
+			;;
+		*) true
 	esac
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
