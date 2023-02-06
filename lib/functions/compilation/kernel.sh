@@ -45,15 +45,6 @@ compile_kernel() {
 	# re-read kernel version after patching
 	local version
 	version=$(grab_version "$kerneldir")
-	
-	# Patch python2 path for legacy kernels running on newer Debian Bulleys / Ubuntu Kinetic
-	#    Debian has a deb package the symlinks /usr/bin/python3 to /usr/bin/python so better off to Patch older Kernels
-	if linux-version compare "${version}" ge 5.10; then
-		if linux-version compare "${version}" le 5.11; then
-			display_alert "Patching" "python2" "path"
-			process_patch_file "${SRC}/patch/misc/general-kernel-python2-5.10.y.patch" "applying"
-		fi
-	fi
 
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
