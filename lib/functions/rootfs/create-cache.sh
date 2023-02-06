@@ -30,7 +30,7 @@ function calculate_rootfs_cache_id() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/rootfs/*.sh # the whole dir
+	calculate_hash_for_files "${SRC}"/lib/functions/rootfs/create-cache.sh "${SRC}"/lib/functions/rootfs/rootfs-create.sh
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:6}"
 
