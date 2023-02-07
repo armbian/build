@@ -26,8 +26,16 @@ function memoized_git_ref_to_info() {
 	# Get the SHA1 of the commit
 	declare sha1
 	display_alert "Fetching SHA1 of ${ref_type} ${ref_name}" "${MEMO_DICT[GIT_SOURCE]}" "info"
-	sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
-	display_alert "SHA1 of ${ref_type} ${ref_name}" "${sha1}" "info"
+	case "${ref_type}" in
+		commit)
+			sha1="${ref_name}"
+			;;
+		*)
+			sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
+			;;
+	esac
+
+	display_alert "SHA1 of ${ref_type} ${ref_name}" "'${sha1}'" "info"
 	MEMO_DICT+=(["SHA1"]="${sha1}")
 
 	if [[ "${2}" == "include_makefile_body" ]]; then

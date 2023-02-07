@@ -164,18 +164,19 @@ function fetch_from_repo() {
 	local local_hash
 	local_hash=$(git rev-parse @ 2> /dev/null || true) # Don't fail nor output anything if failure
 
+	# remote hash; will be calculated depending on ref_type below
+	local remote_hash
+
 	# when we work offline we simply return the sources to their original state
 	if ! $offline; then
 
 		case $ref_type in
 			branch)
 				# TODO: grep refs/heads/$name
-				local remote_hash
 				remote_hash=$(git ls-remote -h "${url}" "$ref_name" | head -1 | cut -f1)
 				[[ -z $local_hash || "${local_hash}" != "a${remote_hash}" ]] && changed=true
 				;;
 			tag)
-				local remote_hash
 				remote_hash=$(git ls-remote -t "${url}" "$ref_name" | cut -f1)
 				if [[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]]; then
 					remote_hash=$(git ls-remote -t "${url}" "$ref_name^{}" | cut -f1)
@@ -183,12 +184,12 @@ function fetch_from_repo() {
 				fi
 				;;
 			head)
-				local remote_hash
 				remote_hash=$(git ls-remote "${url}" HEAD | cut -f1)
 				[[ -z $local_hash || "${local_hash}" != "${remote_hash}" ]] && changed=true
 				;;
 			commit)
-				[[ -z $local_hash || $local_hash == "@" ]] && changed=true
+				remote_hash="${ref_name}"
+				[[ -z $local_hash || $local_hash == "@" || "${local_hash}" != "${remote_hash}" ]] && changed=true
 				;;
 		esac
 
