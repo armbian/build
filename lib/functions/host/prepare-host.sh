@@ -165,7 +165,13 @@ function prepare_host_noninteractive() {
 				if [[ "${host_arch}" != "${wanted_arch}" ]]; then
 					if [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" ]]; then
 						display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-						run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err"
+						run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || {
+							if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
+								display_alert "Failed to update binfmts - this is expected: aarch64 does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
+							else
+								display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err"
+							fi
+						}
 					fi
 				fi
 			done
