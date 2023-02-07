@@ -246,7 +246,7 @@ function create_board_package() {
 			# Read release value
 			if [ -f /etc/lsb-release ]; then
 				RELEASE=\$(cat /etc/lsb-release | grep CODENAME | cut -d"=" -f2 | sed 's/.*/\u&/')
-				sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION "\${RELEASE}"\"/" /etc/os-release
+				sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${RELEASE}\"/" /etc/os-release
 				echo "${VENDOR} ${REVISION} \${RELEASE} \\l \n" > /etc/issue
 				echo "${VENDOR} ${REVISION} \${RELEASE}" > /etc/issue.net
 			fi
