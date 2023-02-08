@@ -36,6 +36,11 @@ function memoized_git_ref_to_info() {
 	esac
 
 	display_alert "SHA1 of ${ref_type} ${ref_name}" "'${sha1}'" "info"
+
+	if [[ -z "${sha1}" ]]; then
+		exit_with_error "Failed to fetch SHA1 of '${MEMO_DICT[GIT_SOURCE]}' '${ref_type}' '${ref_name}' - make sure it's correct"
+	fi
+
 	MEMO_DICT+=(["SHA1"]="${sha1}")
 
 	if [[ "${2}" == "include_makefile_body" ]]; then
@@ -66,6 +71,14 @@ function memoized_git_ref_to_info() {
 					url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
 					;;
 
+				"https://gitlab.com/"*)
+					# parse org/repo from https://gitlab.com/org/repoß
+					declare org_and_repo=""
+					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
+					org_and_repo="${org_and_repo%.git}" # remove .git if present
+					url="https://gitlab.com/${org_and_repo}/-/raw/${sha1}/Makefile"
+					;;
+
 				"https://source.codeaurora.org/external/imx/linux-imx")
 					# Random, bizarre stuff here, to keep compatibility with some old stuff
 					url="https://source.codeaurora.org/external/imx/linux-imx/plain/Makefile?h=${sha1}"
@@ -78,7 +91,7 @@ function memoized_git_ref_to_info() {
 
 			display_alert "Fetching Makefile via HTTP" "${url}" "warn"
 			makefile_url="${url}"
-			makefile_body="$(curl -sL --fail "${url}")"
+			makefile_body="$(curl -sL --fail "${url}")" || exit_with_error "Failed to fetch Makefile from '${url}'"
 
 			parse_makefile_version "${makefile_body}"
 
