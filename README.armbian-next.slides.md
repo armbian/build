@@ -6,11 +6,13 @@ theme: league
   
 ---
 
-# `armbian-next`, 6/X
+# `armbian-next`, 7/X
 
 > “Let me add `set -e` to `armbian/build`...”
 
 #### ...two years later...
+
+#### semi-consolidated version
 
 ---
 
@@ -18,7 +20,6 @@ theme: league
 
 - What? _whirlwind tour_
 - How to try out
-- Plans for merge
 
 ---
 
@@ -26,23 +27,24 @@ theme: league
 
 - `set -e` bash mode (no more `$?`, stops when things go wrong)
 - `stdout`/`stderr` separation
-- 100% new logging to `stderr`; levels; :deciduous_tree:
+- 100% new logging to `stderr`; levels; emoji :deciduous_tree:
 - trap/cleanup manager; managed `TMPDIR`
 - runner utility functions (for `chroot` & host)
-- 90% cleaner `shellcheck` in `lib/*.sh`
+- 95% cleaner `shellcheck` in `lib/*.sh`
 - _many more_
 
 ---
 
 #### `armbian-next` - Git stuff
 
-- no more shallow (`--depth=1`) fetches anywhere
+- no more shallow (`--depth=1`) **fetches** anywhere
 - using single, bare, Git repository for all kernels / u-boots
     - via `git worktree`
-- kernel tree seeding (~4gb):
-    - *fast* via GitHub actions / `ghcr.io`
-    - *slow* via `kernel.org` Git Bundles
-- be patient on first build
+- kernel tree seeding:
+    - *fast* + *full* via GitHub actions / `ghcr.io` (~3gb)
+    - *fast* + *pre-shallowed* via GitHub actions / `ghcr.io` (~300mb)
+- be patient on first build; use `KERNEL_GIT=shallow` to force shallow bundle
+- uses `git archive` for firmware, reduces disk usage 50%
 
 ---
 
@@ -51,19 +53,24 @@ theme: league
 - completely rewritten Docker support
 - prebuilt Docker images for arm64/amd64 for each of 4 "host" releases
 - Dockerfile is auto-generated & re-used
-- Using multiple Docker Volumes for `/cache` sub-folders
+- Using multiple Docker Volumes for `/cache` sub-folders (on Darwin)
 
 ---
 
 #### `armbian-next` - Docker (+Rancher), Apple M1
 
 - Supports
+    - Linux: `docker.io`, `docker-ce` (Docker Inc)
+    - Docker Desktop on Mac Intel **and M1**
+    - **Rancher** on Mac M1
+        - using `docker` mode, not `containerd`
 
-- Linux: `docker.io`, `docker-ce` (Docker Inc)
-- Docker Desktop on Mac Intel **and M1**
-- **Rancher** on Mac M1
-    - using `docker` mode, not `containerd`
-- _might just work on Windows with WSL2_
+---
+
+#### `armbian-next` - WSL2
+
+- WSL2 (sans-Docker) is supported
+- use Windows Terminal app for emoji glory
 
 ---
 
@@ -74,11 +81,6 @@ theme: league
 - `in`: configuration structure (`config` directories, `packages` files, `packages.additional` etc)
 - `in`: `RELEASE` and board info / extra packages etc
 - `in`: desktop configs, appgroups `DESKTOP_xxx`
-
----
-
-#### `armbian-next` - Packages Aggregation in Python
-
 - `out`: *arrays* and *dictionaries* of aggregated packages
     - `debootstrap`, `cli`/`desktop`, `image`
 - `out`: Markdown docs: _"why is this package included, or not included?", "potential paths"_
@@ -103,6 +105,7 @@ theme: league
 - uses **system toolchains by default** for everything
 - sets `CFLAGS` to turn some errors into warnings
 - allowing old u-boots to build with newer gcc
+- manages `python` symlinks for u-boot/kernel usage
 - ancient stuff might need small Makefile fixes
 
 ---
@@ -114,7 +117,7 @@ theme: league
 - no more `mkdebian` / `builddeb`
 - instead uses `make install` from Kbuild
 - packaging and headers handled in `lib/` code now
-- (mostly) working header packages when cross compiling
+- (mostly) working header packages when cross compiling (@TODO needs testing and fixes)
 - _finally_ no more `headers-byteshift.patch` :wink:
 
 ---
@@ -135,20 +138,53 @@ theme: league
 
 ---
 
-#### `armbian-next` - Other
+#### `armbian-next` - Other 1
 
-- New `CLI` infrastructure
-- `initrd` caching :smiley_cat:
-- ORAS-based storage foundation
-- ...
+- New `CLI` infrastructure; `./compile.sh <command> [NAME=VALUE]... <config_file>`
+- `initrd` caching
+- ORAS-based artifact caching
+- auto-GHA Markdown logs
+- pesters user to not run as `root` or under `sudo` (still can...)
 
 ---
 
-#### `armbian-next` - Stuff that's not ready :satisfied:
+#### `armbian-next` - Other 2
+
+- pesters user to not run as `root` or under `sudo` (still can...)
+- ANSI-pastebin beta 2 + `SHARE_LOG=yes`
+- `armbian-kernel` default .config changes, always applied
+- tooling (ORAS/shellcheck/etc) + pip packages pre-installed in Docker images
+- shellcheck is run on `DEBIAN/postinst` and such in all packages
+
+---
+
+#### `armbian-next` - Stuff that's dropped :satisfied:
 
 - `extras` `buildpkg`
 - `repo` management
-- `EXTRAWIFI=yes`
+- `FEL` boot support
+
+---
+
+#### TODO stuff
+
+- @TODO: kernel wifi drivers: `.config` auto `=m`; use `sha1` instead of `branch`
+- @TODO: patching: needs summary "table" on-screen
+- @TODO: patching: needs proper "rejects" log
+- @TODO: logging: summarize "make" output, `998 CCs, 500 LDs, 312 INSTALLs`
+- @TODO: `compile.sh` -> `armbian.sh`
+- @TODO: "minimal" images vs aggregation, probably wrong
+
+---
+
+#### Update 8th February `armbian-next` - "artifacts"
+
+- big WiP; producing isolated artifacts
+- artifacts have consistent versions
+- artifacts can be cached both locally and remotely (OCI/ORAS)
+- _not yet_ used for building images; will soon
+- `REPOSITORY_INSTALL` is no more
+- will need testing, a lot of it
 
 ---
 
@@ -173,211 +209,12 @@ git pull --rebase # !!!we rebase!!! use --rebase
 
 #### Trying out `armbian-next`, pt 2
 
-* If using Docker Desktop, turn up Resources (CPU/RAM/Disk), use `VirtIOFS` sharing and Virtualization framework
+* If using Docker or WSL2, turn up Resources (CPU/RAM/Disk)
+    * Mac: use `VirtIOFS` sharing and Virtualization framework
 * Turn up logging
-    * `SHOW_LOG=yes` shows output of runner commands
-    * `SHOW_DEBUG=yes` a lot of debugging info
+    * `DEBUG=yes` a lot of debugging info
     * `SHOW_COMMAND=yes` shows the runners commands cmdline
     * ...
-* Grab logs at `output/logs`
+* Grab logs at `output/logs`, use new paste / `SHARE_LOG=yes`
 
 ---
-
-#### `armbian-next` - Plans for merge
-
-- `200+` commits, `+75k -8k`
-- get developers trying it out
-- get Igor to try it out on CI
-- fix, fix, fix
-- documentation (you're looking at it)
-- single PR, ~20 commits, squashed by directory
-- use for next release (23.02?)
-
----
-
-## Go try `armbian-next`
-
-# Thank you!
-
----
-
-#### Update Dec 21-28 - Fixes
-
-- `sunxi`/`sunxi64` patching (`series.conf`)
-- `git worktree` references with absolute paths
-    - switching between Docker and non-docker on Linux
-- small fixes for early stoppages (`origin` branch, etc)
-
----
-
-#### Update Dec 21-28 - New
-
-- ORAS (via `ghcr.io`) kernel tree seeding (4gb -> 2gb)
-- Patch+hash generator for `EXTRAWIFI` kernel drivers
-    - Still WiP: `.config` auto `=m`; use `sha1` instead of `branch`
-- patched files modification time consistency (fast rebuilds)
-- `grub` fixes and sanity checks (sbc-media/jetson-nano, riscv64)
-    - workarounds for `grub-mkconfig` under Docker
-
----
-
-#### Update Dec 21-28 `armbian-next` - Stuff that's not ready
-
-- `extras` `buildpkg`
-- ~~`repo` management~~ (moved away by Igor)
-- ~~`EXTRAWIFI=yes`~~ (experimental support, WiP)
-- `BUILD_ONLY=` (replaced with new CLI, needs impl)
-
-- rootfs hashes don't match
-- permissions problems when using sudo/Docker
-
----
-
-#### Update Dec 28 - Jan 11 `armbian-next` - status
-
-- many fixes for early stoppages (`@schwar3kat` / `@atone`)
-    - many fixes for building under Focal (!)
-    - many fixes for extrawifi harness
-    - fixes for `.tmp` / `output` permissions when using `sudo`
-- fixes for malformed patches
-
----
-
-#### Update Dec 28 - Jan 11 `armbian-next` - known problems
-
-- crazy when building desktops / desktop rootfs caching
-- ... ?
-
----
-
-#### Update Dec 28 - Jan 11 `armbian-next` - patching
-
-- new patching system is stricter / complains more
-    - but helps us find hidden issues
-    - consolidated patching logic
-- logging is bad // not equivalent to `master`
-- let's fix the patches (PR to `master`)
-
----
-
-#### Update Dec 28 - Jan 11 `armbian-next` - ongoing work
-
-- disable apt-cacher-ng by default (also out of Docker; use setting to enable again)
-- logging improvements
-    - logfile (.txt) is too big / confusing / too much
-    - screen log needs `SHOW_LOG=yes` by default
-    - patching log on screen/file - make useful
-
----
-
-#### Update Dec 28 - Jan 11 `armbian-next` - ongoing work 2
-
-- reduce download footprint for native, non-Docker, builds
-- `BUILD_ONLY` vs different CLI commands
-- CI vs CLI
-- CI vs `config-dump` / `json-info`
-
----
-
-#### Update Dec 28 - Jan 11 `armbian-next` - testing needed
-
-- testing using Docker
-- testing on other families
-- testing on other architectures (armhf, riscv64)
-- testing builds of very legacy stuff (4.x kernels, pre-2020 u-boot's)
-
----
-
-#### Trying out `armbian-next`
-
-##### **do not share dir with `master`!!**
-
-``` bash
-cd ~ # clone to a new directory!
-git clone --branch=armbian-next \
-  https://github.com/armbian/build armbian-build-next
-
-cd ~/armbian-build-next
-./compile.sh # and off you go
-
-# Later, to update:
-cd ~/armbian-build-next
-git pull --rebase # !!!we rebase!!! use --rebase
-```
----
-
-#### Update Jan 18 `armbian-next` - no slides this week
-
-- where are the slides?
-
----
-
-#### Update Jan 25 `armbian-next` - GHA-focused week
-
-- thanks to everyone who tested either building or produced images!
-- many patching/formatting errors being corrected in master, super thanks
-- many fixes (`armhf` images work again; rootfs hashes make sense, etc)
-- new `rootfs` CLI command, with extra GHA-powers (outputs, etc)
-- auto-GHA Markdown logs
-- IgorPec's big packages cleanup; zstd compression ratio 15
-
----
-
-#### Trying out `armbian-next`
-
-##### **do not share dir with `master`!!**
-
-``` bash
-cd ~ # clone to a new directory!
-git clone --branch=armbian-next \
-  https://github.com/armbian/build armbian-build-next
-
-cd ~/armbian-build-next
-./compile.sh # and off you go
-
-# Later, to update:
-cd ~/armbian-build-next
-git pull --rebase # !!!we rebase!!! use --rebase
-```
-
----
-
-#### Update Feb 1st `armbian-next` - general changes
-
-- thanks to everyone who tested either building or produced images!
-- added `tmpfs` to chroot's `/var/tmp` and `/run/user/0`
-- fix "Repeat Build options"
-- pesters user to not run as `root` or under `sudo` (still can...)
-- ANSI-pastebin beta 2
-- fix shellcheck warnings, "raise the bar" (2x)
-- many enhancements for developers using Docker
-- reworded commits / killed WiPs (history rewritten)
-
----
-
-#### Update Feb 1st `armbian-next` - "artifacts"
-
-- big WiP; producing isolated artifacts
-- artifacts have consistent versions
-- artifacts can be cached both locally and remotely (OCI/ORAS)
-- _not yet_ used for building images; will soon
-- will need testing, a lot of it
-
----
-
-#### Trying out `armbian-next`
-
-##### **do not share dir with `master`!!**
-
-``` bash
-cd ~ # clone to a new directory!
-git clone --branch=armbian-next \
-  https://github.com/armbian/build armbian-build-next
-
-cd ~/armbian-build-next
-./compile.sh # and off you go
-
-# Later, to update:
-cd ~/armbian-build-next
-git pull --rebase # !!!we rebase!!! use --rebase
-```
