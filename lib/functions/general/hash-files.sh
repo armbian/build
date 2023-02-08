@@ -41,6 +41,14 @@ function calculate_hash_for_files() {
 	mapfile -t files_to_hash_sorted < <(for one in "${files_to_hash_relativized[@]}"; do echo "${one}"; done | LC_ALL=C sort -h) # "human" sorting
 
 	display_alert "calculate_hash_for_files:" "files_to_hash_sorted: ${files_to_hash_sorted[*]}" "debug"
+
+	# if the array is empty, then there is nothing to hash. return 16 zeros
+	if [[ ${#files_to_hash_sorted[@]} -eq 0 ]]; then
+		display_alert "calculate_hash_for_files:" "files_to_hash_sorted is empty" "debug"
+		hash_files="0000000000000000"
+		return 0
+	fi
+
 	declare full_hash
 	full_hash="$(cd "${SRC}" && sha256sum "${files_to_hash_sorted[@]}")"
 	hash_files="$(echo "${full_hash}" | sha256sum | cut -d' ' -f1)" # hash of hashes
