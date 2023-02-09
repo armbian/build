@@ -528,15 +528,15 @@ function docker_cli_launch() {
 	fi
 
 	display_alert "Relaunching in Docker" "${*}" "debug"
-	display_alert "-----------------Relaunching in Docker------------------------------------" "here comes the 🐳" "info"
+	display_alert "-----------------Relaunching in Docker after ${SECONDS}s------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result
 	if docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
 		docker_build_result=$? # capture exit code of test done in the line above.
-		display_alert "-------------Docker run finished------------------------------------------" "successfully" "info"
+		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successfull" "info"
 	else
 		docker_build_result=$? # capture exit code of test done 4 lines above.
-		display_alert "-------------Docker run failed--------------------------------------------" "with errors" "err"
+		display_alert "-------------Docker run failed after ${SECONDS}s--------------------------" "🐳 failed" "err"
 	fi
 
 	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
