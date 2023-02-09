@@ -365,10 +365,8 @@ function compile_uboot() {
 		Description: Das U-Boot for ${BOARD} ${artifact_version_reason:-"${version}"}
 	EOF
 
-	# copy config file to the package
-	# useful for FEL boot with overlayfs_wrapper
+	# copy license files, config, etc.
 	[[ -f .config && -n $BOOTCONFIG ]] && run_host_command_logged cp .config "$uboottempdir/${uboot_name}/usr/lib/u-boot/${BOOTCONFIG}"
-	# copy license files from typical locations
 	[[ -f COPYING ]] && run_host_command_logged cp COPYING "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
 	[[ -f Licenses/README ]] && run_host_command_logged cp Licenses/README "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf"

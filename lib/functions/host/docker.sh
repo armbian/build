@@ -357,7 +357,7 @@ function docker_cli_prepare_launch() {
 	declare -g -a DOCKER_ARGS=(
 		"--rm" # side effect - named volumes are considered not attached to anything and are removed on "docker volume prune", since container was removed.
 
-		"--privileged"         # Running this container in privileged mode is a simple way to solve loop device access issues, required for USB FEL or when writing image directly to the block device, when CARD_DEVICE is defined
+		"--privileged"         # Yep. Armbian needs /dev/loop access, device access, etc. Don't even bother trying without it.
 		"--cap-add=SYS_ADMIN"  # add only required capabilities instead
 		"--cap-add=MKNOD"      # (though MKNOD should be already present)
 		"--cap-add=SYS_PTRACE" # CAP_SYS_PTRACE is required for systemd-detect-virt in some cases @TODO: rpardini: so lets eliminate it @TODO: rpardini maybe it's dead already?
@@ -595,12 +595,3 @@ function docker_purge_deprecated_volumes() {
 		fi
 	done
 }
-
-# Leftovers from original Dockerfile before rewrite
-## OLD DOCKERFILE ## RUN locale-gen en_US.UTF-8
-## OLD DOCKERFILE ##
-## OLD DOCKERFILE ## # Static port for NFSv3 server used for USB FEL boot
-## OLD DOCKERFILE ## RUN sed -i 's/\(^STATDOPTS=\).*/\1"--port 32765 --outgoing-port 32766"/' /etc/default/nfs-common \
-## OLD DOCKERFILE ##     && sed -i 's/\(^RPCMOUNTDOPTS=\).*/\1"--port 32767"/' /etc/default/nfs-kernel-server
-## OLD DOCKERFILE ##
-## OLD DOCKERFILE ## ENTRYPOINT [ "/bin/bash", "/root/armbian/compile.sh" ]

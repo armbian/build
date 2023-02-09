@@ -8,8 +8,6 @@ function armbian_register_commands() {
 		["dockershell"]="docker"
 		["generate-dockerfile"]="docker"
 
-		["vagrant"]="vagrant" # thus requires cli_vagrant_pre_run and cli_vagrant_run
-
 		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run
 
 		["config-dump"]="config_dump" # implemented in cli_config_dump_pre_run and cli_config_dump_run

@@ -168,15 +168,6 @@ source "${SRC}"/lib/functions/cli/cli-undecided.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/cli/cli-vagrant.sh
-# shellcheck source=lib/functions/cli/cli-vagrant.sh
-source "${SRC}"/lib/functions/cli/cli-vagrant.sh
-
-# no errors tolerated. invoked before each sourced file to make sure.
-#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
-#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
-set -o errtrace # trace ERR through - enabled
-set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/cli/commands.sh
 # shellcheck source=lib/functions/cli/commands.sh
 source "${SRC}"/lib/functions/cli/commands.sh
@@ -492,15 +483,6 @@ source "${SRC}"/lib/functions/configuration/package-lists.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/extras/fel.sh
-# shellcheck source=lib/functions/extras/fel.sh
-source "${SRC}"/lib/functions/extras/fel.sh
-
-# no errors tolerated. invoked before each sourced file to make sure.
-#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
-#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
-set -o errtrace # trace ERR through - enabled
-set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/general/chroot-helpers.sh
 # shellcheck source=lib/functions/general/chroot-helpers.sh
 source "${SRC}"/lib/functions/general/chroot-helpers.sh
@@ -711,15 +693,6 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/host/tmpfs-utils.sh
 # shellcheck source=lib/functions/host/tmpfs-utils.sh
 source "${SRC}"/lib/functions/host/tmpfs-utils.sh
-
-# no errors tolerated. invoked before each sourced file to make sure.
-#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
-#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
-set -o errtrace # trace ERR through - enabled
-set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/host/vagrant.sh
-# shellcheck source=lib/functions/host/vagrant.sh
-source "${SRC}"/lib/functions/host/vagrant.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"

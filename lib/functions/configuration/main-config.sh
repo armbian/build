@@ -87,7 +87,7 @@ function do_main_configuration() {
 	# Prepare rootfs filesystem support
 	[[ -z $ROOTFS_TYPE ]] && ROOTFS_TYPE=ext4 # default rootfs type is ext4
 	case "$ROOTFS_TYPE" in
-		ext4 | fel) # nothing extra here
+		ext4) # nothing extra here
 			;;
 		nfs)
 			FIXED_IMAGE_SIZE=256 # small SD card with kernel, boot script and .dtb/.bin files
@@ -110,7 +110,6 @@ function do_main_configuration() {
 			exit_with_error "Unknown rootfs type: ROOTFS_TYPE='${ROOTFS_TYPE}'"
 			;;
 	esac
-	
 
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
@@ -219,8 +218,7 @@ function do_main_configuration() {
 
 	## ------ Sourcing family config ---------------------------
 	source_family_config_and_arch
-	
-	
+
 	if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
 		SKIP_BOOTSPLASH="yes"
 		PLYMOUTH="no"
@@ -443,6 +441,6 @@ function source_family_config_and_arch() {
 	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
 	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
-	
+
 	return 0
 }

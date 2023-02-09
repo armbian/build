@@ -59,14 +59,8 @@ function build_rootfs_and_image() {
 
 	#------------------------------------ DOWN HERE IT's 'image' stuff -------------------------------
 
-	if [[ $ROOTFS_TYPE == fel ]]; then
-		FEL_ROOTFS=$SDCARD/
-		display_alert "Starting FEL boot" "$BOARD" "info"
-		start_fel_boot
-	else
-		LOG_SECTION="prepare_partitions" do_with_logging prepare_partitions
-		LOG_SECTION="create_image_from_sdcard_rootfs" do_with_logging create_image_from_sdcard_rootfs
-	fi
+	LOG_SECTION="prepare_partitions" do_with_logging prepare_partitions
+	LOG_SECTION="create_image_from_sdcard_rootfs" do_with_logging create_image_from_sdcard_rootfs
 
 	# Completely and recursively unmount the directory. --> This will remove the tmpfs mount too <--
 	umount_chroot_recursive "${SDCARD}" "SDCARD rootfs finished"
