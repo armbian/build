@@ -136,6 +136,9 @@ function create_sources_list() {
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+				
+				deb http://${DEBIAN_MIRROR} unstable main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free
 			EOF
 			;;
 
