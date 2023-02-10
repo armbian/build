@@ -29,6 +29,7 @@ with open(output_file, "w") as bash:
 	bash.write("")
 
 BUILD_DESKTOP = armbian_utils.yes_or_no_or_bomb(armbian_utils.get_from_env_or_bomb("BUILD_DESKTOP"))
+BUILD_MINIMAL = armbian_utils.yes_or_no_or_bomb(armbian_utils.get_from_env_or_bomb("BUILD_MINIMAL"))
 INCLUDE_EXTERNAL_PACKAGES = True
 ARCH = armbian_utils.get_from_env_or_bomb("ARCH")
 DESKTOP_ENVIRONMENT = armbian_utils.get_from_env("DESKTOP_ENVIRONMENT")
@@ -74,11 +75,13 @@ debootstrap_packages_remove = util.aggregate_all_debootstrap("packages.remove")
 
 # both main and additional result in the same thing, just different filenames.
 rootfs_packages_main = util.aggregate_all_cli("packages")
-rootfs_packages_additional = util.aggregate_all_cli("packages.additional")
 rootfs_packages_external = util.aggregate_all_cli("packages.external")  # @TODO: enable/disable this
-rootfs_packages_all = util.merge_lists(rootfs_packages_main, rootfs_packages_additional, "add")
+rootfs_packages_all = rootfs_packages_main
 rootfs_packages_all = util.merge_lists(rootfs_packages_all, rootfs_packages_external, "add")
 rootfs_packages_remove = util.aggregate_all_cli("packages.remove")
+if not BUILD_MINIMAL:
+	rootfs_packages_additional = util.aggregate_all_cli("packages.additional")
+	rootfs_packages_all = util.merge_lists(rootfs_packages_all, rootfs_packages_additional, "add")
 
 # Desktop environment packages; packages + packages.external
 desktop_packages_main = util.aggregate_all_desktop("packages")

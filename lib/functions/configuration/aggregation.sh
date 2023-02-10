@@ -65,6 +65,7 @@ function aggregate_all_packages_python() {
 		"BOARD="       # empty. Important: BOARD is no longer considered for package aggregation
 		"USERPATCHES_PATH=${USERPATCHES_PATH}"
 		"SELECTED_CONFIGURATION=${SELECTED_CONFIGURATION}"
+		"BUILD_MINIMAL=${BUILD_MINIMAL}" # if yes, it does not include packages.additional, on top of differences of SELECTED_CONFIGURATION
 
 		# Removals. Will remove from all lists.
 		"REMOVE_PACKAGES=${REMOVE_PACKAGES[*]}"
