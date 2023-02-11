@@ -68,12 +68,6 @@ function prepare_host_noninteractive() {
 			declare -g MANAGE_ACNG=no
 		fi
 
-		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
-		if [[ $EXTERNAL_NEW == compile ]]; then
-			display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
-			EXTERNAL_NEW=prebuilt
-		fi
-
 		SYNC_CLOCK=no
 	else
 		display_alert "NOT running in container" "No special provisions for container building" "debug"
