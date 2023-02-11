@@ -7,7 +7,7 @@ function build_rootfs_and_image() {
 	get_or_create_rootfs_cache_chroot_sdcard # only occurrence of this; has its own logging sections
 
 	# stage: with a basic rootfs available, we mount the chroot and work on it
-	mount_chroot "${SDCARD}"
+	LOG_SECTION="mount_chroot_sdcard" do_with_logging mount_chroot "${SDCARD}"
 
 	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" <<- 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
 		*give config a chance to act before install_distribution_specific*
@@ -41,7 +41,7 @@ function build_rootfs_and_image() {
 	LOG_SECTION="post_debootstrap_tweaks" do_with_logging post_debootstrap_tweaks
 
 	# clean up / prepare for making the image
-	umount_chroot "$SDCARD"
+	LOG_SECTION="umount_chroot_sdcard" do_with_logging umount_chroot "${SDCARD}"
 
 	# obtain the size, in MiB, of "${SDCARD}" at this point.
 	declare -i rootfs_size_mib
