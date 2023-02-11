@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # mount_chroot <target>
-#
-# helper to reduce code duplication
-#
-mount_chroot() {
+function mount_chroot() {
+	if [[ "x${LOG_SECTION}x" == "xx" ]]; then
+		display_alert "mount_chroot called outside of logging section..." "mount_chroot '$1'\n$(stack_color="${magenta_color:-}" show_caller_full)" "warn"
+	fi
+
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
@@ -20,10 +21,10 @@ mount_chroot() {
 }
 
 # umount_chroot <target>
-#
-# helper to reduce code duplication
-#
-umount_chroot() {
+function umount_chroot() {
+	if [[ "x${LOG_SECTION}x" == "xx" ]]; then
+		display_alert "umount_chroot called outside of logging section..." "umount_chroot '$1'\n$(stack_color="${magenta_color:-}" show_caller_full)" "warn"
+	fi
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
