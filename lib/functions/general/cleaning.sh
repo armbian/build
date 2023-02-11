@@ -15,25 +15,22 @@
 # "oldcache" = remove old cached rootfs except for the newest 8 files
 
 function general_cleaning() {
-	display_alert "Cleaning" "general_cleaning '$1' - NOT" "warn"
-	return 0
-
 	case $1 in
 		debs) # delete ${DEB_STORAGE} for current branch and family
-			# @TODO: this is completely obsolete with artifacts?
 			if [[ -d "${DEB_STORAGE}" ]]; then
-				display_alert "Cleaning ${DEB_STORAGE} for" "$BOARD $BRANCH" "info"
+				display_alert "Cleaning" "general_cleaning '$1' - deprecated" "warn"
+				display_alert "(not) cleaning ${DEB_STORAGE} for" "$BOARD $BRANCH" "info"
 				# easier than dealing with variable expansion and escaping dashes in file names
-				find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
+				find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" #-delete
 				find "${DEB_STORAGE}" \( -name "${CHOSEN_KERNEL}_*.deb" -o \
 					-name "armbian-*.deb" -o \
 					-name "plymouth-theme-armbian_*.deb" -o \
 					-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
 					-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
 					-name "${CHOSEN_KERNEL/image/source}_*.deb" -o \
-					-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) -delete
-				[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/${CHOSEN_ROOTFS}"_*.deb
-				[[ -n $RELEASE ]] && rm -f "${DEB_STORAGE}/${RELEASE}/armbian-desktop-${RELEASE}"_*.deb
+					-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) #-delete
+				[[ -n $RELEASE ]] && ls -la "${DEB_STORAGE}/${RELEASE}/${CHOSEN_ROOTFS}"_*.deb || true
+				[[ -n $RELEASE ]] && ls -la "${DEB_STORAGE}/${RELEASE}/armbian-desktop-${RELEASE}"_*.deb || true
 			fi
 			;;
 
