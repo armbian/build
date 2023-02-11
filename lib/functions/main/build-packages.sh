@@ -34,7 +34,7 @@ function main_default_build_packages() {
 		fi
 	fi
 
-	display_alert "Artifacts to build:" "${artifacts_to_build[*]}" "warn"
+	display_alert "Artifacts to build:" "${artifacts_to_build[*]}" "debug"
 
 	# For each artifact, try to obtain them from the local cache, remote cache, or build them.
 	# Store info about all artifacts in the process, for later use (eg during package installation in distro-agnostic).
