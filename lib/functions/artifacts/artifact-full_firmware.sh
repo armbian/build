@@ -11,22 +11,22 @@ function artifact_full_firmware_prepare_version() {
 
 	declare short_hash_size=4
 
-	declare -A GIT_INFO=([GIT_SOURCE]="${ARMBIAN_FIRMWARE_SOURCE}" [GIT_REF]="${ARMBIAN_FIRMWARE_BRANCH}")
-	run_memoized GIT_INFO "git2info" memoized_git_ref_to_info
-	debug_dict GIT_INFO
+	declare -A GIT_INFO_ARMBIAN_FIRMWARE=([GIT_SOURCE]="${ARMBIAN_FIRMWARE_SOURCE}" [GIT_REF]="${ARMBIAN_FIRMWARE_BRANCH}")
+	run_memoized GIT_INFO_ARMBIAN_FIRMWARE "git2info" memoized_git_ref_to_info
+	debug_dict GIT_INFO_ARMBIAN_FIRMWARE
 
-	declare -A GIT_INFO_MAINLINE=([GIT_SOURCE]="${MAINLINE_FIRMWARE_SOURCE}" [GIT_REF]="branch:main")
-	run_memoized GIT_INFO_MAINLINE "git2info" memoized_git_ref_to_info
-	debug_dict GIT_INFO_MAINLINE
+	declare -A GIT_INFO_MAINLINE_FIRMWARE=([GIT_SOURCE]="${MAINLINE_FIRMWARE_SOURCE}" [GIT_REF]="branch:main")
+	run_memoized GIT_INFO_MAINLINE_FIRMWARE "git2info" memoized_git_ref_to_info
+	debug_dict GIT_INFO_MAINLINE_FIRMWARE
 
 	declare fake_unchanging_base_version="1"
 
-	declare short_sha1="${GIT_INFO[SHA1]:0:${short_hash_size}}"
-	declare short_sha1_mainline="${GIT_INFO_MAINLINE[SHA1]:0:${short_hash_size}}"
+	declare short_sha1="${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]:0:${short_hash_size}}"
+	declare short_sha1_mainline="${GIT_INFO_MAINLINE_FIRMWARE[SHA1]:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/packages/firmware-deb.sh "${SRC}"/lib/functions/artifacts/artifact-firmware.sh
+	calculate_hash_for_files "${SRC}"/lib/functions/compilation/packages/firmware-deb.sh
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
@@ -34,8 +34,8 @@ function artifact_full_firmware_prepare_version() {
 	artifact_version="${fake_unchanging_base_version}-SA${short_sha1}-SM${short_sha1_mainline}-B${bash_hash_short}"
 
 	declare -a reasons=(
-		"Armbian firmware git revision \"${GIT_INFO[SHA1]}\""
-		"Mainline firmware git revision \"${GIT_INFO_MAINLINE[SHA1]}\""
+		"Armbian firmware git revision \"${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}\""
+		"Mainline firmware git revision \"${GIT_INFO_MAINLINE_FIRMWARE[SHA1]}\""
 		"framework bash hash \"${bash_hash}\""
 	)
 

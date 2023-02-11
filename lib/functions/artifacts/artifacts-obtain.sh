@@ -151,7 +151,7 @@ function obtain_complete_artifact() {
 
 		# If available in local cache, we're done (except for deb-tar which needs unpacking...)
 		if [[ "${artifact_exists_in_local_cache}" == "yes" ]]; then
-			display_alert "artifact" "exists in local cache: ${artifact_name} ${artifact_version}" "cachehit"
+			display_alert "artifact" "exists in local cache: ${artifact_name} ${artifact_version}" "debug"
 			if [[ "${skip_unpack_if_found_in_caches:-"no"}" == "yes" ]]; then
 				display_alert "artifact" "skipping unpacking as requested" "info"
 			else
@@ -170,7 +170,7 @@ function obtain_complete_artifact() {
 		debug_var artifact_exists_in_remote_cache
 
 		if [[ "${artifact_exists_in_remote_cache}" == "yes" ]]; then
-			display_alert "artifact" "exists in remote cache: ${artifact_name} ${artifact_version}" "cachehit"
+			display_alert "artifact" "exists in remote cache: ${artifact_name} ${artifact_version}" "debug"
 			if [[ "${skip_unpack_if_found_in_caches:-"no"}" == "yes" ]]; then
 				display_alert "artifact" "skipping obtain from remote & unpacking as requested" "info"
 				return 0
@@ -194,7 +194,7 @@ function obtain_complete_artifact() {
 		if [[ ! -f "${artifact_final_file}" ]]; then
 			exit_with_error "Artifact file ${artifact_final_file} did not exist, after artifact_build_from_sources()."
 		else
-			display_alert "Artifact file exists" "${artifact_final_file} YESSS" "warn"
+			display_alert "Artifact file exists" "${artifact_final_file} YESSS" "debug"
 		fi
 	fi
 
@@ -224,7 +224,7 @@ function unpack_artifact_from_local_cache() {
 		for deb_name in "${artifact_map_debs[@]}"; do
 			declare new_name_full="${artifact_base_dir}/${deb_name}"
 			if [[ ! -f "${new_name_full}" ]]; then
-				display_alert "Unpacking artifact" "deb-tar: ${artifact_final_file_basename} missing: ${new_name_full}" "warn"
+				display_alert "Unpacking artifact" "deb-tar: ${artifact_final_file_basename} missing: ${new_name_full}" "debug"
 				any_missing="yes"
 			fi
 		done
@@ -238,7 +238,7 @@ function unpack_artifact_from_local_cache() {
 		for deb_name in "${artifact_map_debs[@]}"; do
 			declare new_name_full="${artifact_base_dir}/${deb_name}"
 			if [[ ! -f "${new_name_full}" ]]; then
-				display_alert "Unpacking artifact" "AFTER UNPACK! deb-tar: ${artifact_final_file_basename} missing: ${new_name_full}" "err"
+				display_alert "Unpacking artifact" "after unpack deb-tar: ${artifact_final_file_basename} missing: ${new_name_full}" "err"
 				any_missing="yes"
 			fi
 		done

@@ -22,11 +22,11 @@ function artifact_uboot_prepare_version() {
 
 	declare short_hash_size=4
 
-	declare -A GIT_INFO=([GIT_SOURCE]="${BOOTSOURCE}" [GIT_REF]="${BOOTBRANCH}")
-	run_memoized GIT_INFO "git2info" memoized_git_ref_to_info "include_makefile_body"
-	debug_dict GIT_INFO
+	declare -A GIT_INFO_UBOOT=([GIT_SOURCE]="${BOOTSOURCE}" [GIT_REF]="${BOOTBRANCH}")
+	run_memoized GIT_INFO_UBOOT "git2info" memoized_git_ref_to_info "include_makefile_body"
+	debug_dict GIT_INFO_UBOOT
 
-	declare short_sha1="${GIT_INFO[SHA1]:0:${short_hash_size}}"
+	declare short_sha1="${GIT_INFO_UBOOT[SHA1]:0:${short_hash_size}}"
 
 	# get the uboot patches hash...
 	# @TODO: why not just delegate this to the python patching, with some "dry-run" / hash-only option?
@@ -39,16 +39,16 @@ function artifact_uboot_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/uboot*.sh # maybe also this file, "${SRC}"/lib/functions/artifacts/u-boot.sh
+	calculate_hash_for_files "${SRC}"/lib/functions/compilation/uboot*.sh
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${GIT_INFO[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-B${bash_hash_short}"
+	artifact_version="${GIT_INFO_UBOOT[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
-		"version \"${GIT_INFO[MAKEFILE_FULL_VERSION]}\""
-		"git revision \"${GIT_INFO[SHA1]}\""
+		"version \"${GIT_INFO_UBOOT[MAKEFILE_FULL_VERSION]}\""
+		"git revision \"${GIT_INFO_UBOOT[SHA1]}\""
 		"patches hash \"${patches_hash}\""
 		"framework bash hash \"${bash_hash}\""
 	)

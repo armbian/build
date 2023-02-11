@@ -56,7 +56,7 @@ function artifact_rootfs_build_from_sources() {
 	if [[ ! -f "${artifact_final_file}" ]]; then
 		exit_with_error "Rootfs cache file '${artifact_final_file}' does not exist after create_new_rootfs_cache()."
 	else
-		display_alert "Rootfs cache file '${artifact_final_file}' exists after create_new_rootfs_cache()." "YESSS" "warn"
+		display_alert "Rootfs cache file '${artifact_final_file}' exists after create_new_rootfs_cache()." "YESSS" "debug"
 	fi
 
 	# obtain the size, in MiB, of "${SDCARD}" at this point.
