@@ -16,7 +16,7 @@ mount_chroot() {
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
 	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
-	mount -t devpts chpts "${target}"/dev/pts
+	mount -t devpts chpts "${target}"/dev/pts || mount --bind /dev/pts "${target}"/dev/pts
 }
 
 # umount_chroot <target>
