@@ -179,4 +179,5 @@ function post_build_image__920_create_utm_plist() {
 
 	display_alert "Done, cleaning up" "${EXTENSION}" "info"
 	rm -rf "${full_utm_dirname}"
+	return 0
 }

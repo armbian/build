@@ -5,6 +5,7 @@ function add_host_dependencies__qcow2_host_deps() {
 
 function post_build_image__900_convert_to_qcow2_img() {
 	[[ "${SKIP_QCOW2}" == "yes" ]] && return 0
+	[[ -z $version ]] && exit_with_error "version is not set"
 	display_alert "Converting image to qcow2" "${EXTENSION}" "info"
 	export QCOW2_IMAGE_FILE="${DESTIMG}/${version}.img.qcow2"
 	run_host_command_logged qemu-img convert -f raw -O qcow2 "${DESTIMG}/${version}.img" "${QCOW2_IMAGE_FILE}"
@@ -17,4 +18,5 @@ function post_build_image__900_convert_to_qcow2_img() {
 		display_alert "Discarding original .img image after" "conversion to qcow2" "info"
 		run_host_command_logged rm -vf "${DESTIMG}/${version}.img" "${DESTIMG}/${version}.img.txt"
 	fi
+	return 0
 }

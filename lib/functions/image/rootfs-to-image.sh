@@ -105,9 +105,6 @@ function create_image_from_sdcard_rootfs() {
 	# custom post_build_image_modify hook to run before fingerprinting and compression
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
 
-	declare compression_type # set by image_compress_and_checksum
-	image_compress_and_checksum
-
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
 	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
 	call_extension_method "post_build_image" <<- 'POST_BUILD_IMAGE'
@@ -118,22 +115,22 @@ function create_image_from_sdcard_rootfs() {
 		It is the last possible chance to modify `$CARD_DEVICE`.
 	POST_BUILD_IMAGE
 
-	# If we compressed the image, get rid of the original, and leave only the compressed one.
-	[[ -n $compression_type ]] && rm -f "${DESTIMG}/${version}.img"
-	if [[ -n $compression_type ]]; then
-		run_host_command_logged rm -v "${DESTIMG}/${version}.img"
+	# Before compressing or moving, write it to SD card if such was requested and image was produced.
+	if [[ -f "${DESTIMG}/${version}.img" ]]; then
+		display_alert "Done building" "${version}.img" "info"
+		fingerprint_image "${DESTIMG}/${version}.img.txt" "${version}"
+		# write image to SD card
+		write_image_to_device "${DESTIMG}/${version}.img" "${CARD_DEVICE}"
 	fi
+
+	declare compression_type                                    # set by image_compress_and_checksum
+	output_images_compress_and_checksum "${DESTIMG}/${version}" # this compressed on-disk, and removes the originals.
 
 	# Move all files matching the prefix from source to dest. Custom hooks might generate more than one img.
 	declare source_dir="${DESTIMG}"
 	declare destination_dir="${FINALDEST}"
 	declare source_files_prefix="${version}"
 	move_images_to_final_destination
-
-	display_alert "Done building" "${FINALDEST}/${version}.img" "info" # A bit predicting the future, since it's still in DESTIMG at this point.
-
-	# write image to SD card
-	write_image_to_device "${FINALDEST}/${version}.img" "${CARD_DEVICE}"
 
 	return 0
 }

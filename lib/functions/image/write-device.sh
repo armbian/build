@@ -20,11 +20,11 @@ function write_image_to_device() {
 		# write to SD card
 		pv -p -b -r -c -N "$(logging_echo_prefix_for_pv "write_device") dd" "${image_file}" | dd "of=${device}" bs=1M iflag=fullblock oflag=direct status=none
 
-		call_extension_method "post_write_sdcard" <<- 'POST_BUILD_IMAGE'
+		call_extension_method "post_write_sdcard" <<- 'POST_WRITE_SDCARD'
 			*run after writing img to sdcard*
 			After the image is written to `${device}`, but before verifying it.
 			You can still set SKIP_VERIFY=yes to skip verification.
-		POST_BUILD_IMAGE
+		POST_WRITE_SDCARD
 
 		if [[ "${SKIP_VERIFY}" != "yes" ]]; then
 			# read and compare

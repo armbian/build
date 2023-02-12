@@ -264,12 +264,12 @@ function adaptative_prepare_host_dependencies() {
 		zlib1g-dev
 
 		# by-category below
-		file tree expect                                # logging utilities; expect is needed for 'unbuffer' command
-		colorized-logs                                  # for ansi2html, ansi2txt, pipetty
-		unzip zip p7zip-full pigz pixz pbzip2 lzop zstd # compressors et al
-		parted gdisk fdisk                              # partition tools @TODO why so many?
-		aria2 curl wget axel                            # downloaders et al
-		parallel                                        # do things in parallel (used for fast md5 hashing in initrd cache)
+		file tree expect                     # logging utilities; expect is needed for 'unbuffer' command
+		colorized-logs                       # for ansi2html, ansi2txt, pipetty
+		unzip zip pigz pixz pbzip2 lzop zstd # compressors et al
+		parted gdisk fdisk                   # partition tools @TODO why so many?
+		aria2 curl wget axel                 # downloaders et al
+		parallel                             # do things in parallel (used for fast md5 hashing in initrd cache)
 	)
 
 	# @TODO: distcc -- handle in extension?

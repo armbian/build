@@ -113,4 +113,5 @@ function post_build_image__920_create_ovf() {
 
 	display_alert "Done, cleaning up" "${EXTENSION}" "info"
 	rm -rf "${full_vmware_dirname}"
+	return 0
 }
