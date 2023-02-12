@@ -36,12 +36,10 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 	declare -g BOOTSCRIPT="boot-qemu-${LINUXFAMILY}.cmd:boot.cmd"
 	declare -g BOOTDIR="qemu-uboot-${LINUXFAMILY}"
 	declare -g BOOTBRANCH='tag:v2023.01'
-	declare -g BOOTSOURCE='https://github.com/u-boot/u-boot'        # Gotta set this again, it is unset by grub extension
-	declare -g UBOOT_TARGET_MAP="all;;u-boot.rom"                   # Can't find the target that produces 'u-boot.rom', so for now 'make all'
-	declare -g PACKAGE_LIST_FAMILY="spice-vdagent qemu-guest-agent" # Nice-to-have packages for running under qemu
+	declare -g BOOTSOURCE='https://github.com/u-boot/u-boot' # Gotta set this again, it is unset by grub extension
+	declare -g UBOOT_TARGET_MAP="all;;u-boot.rom"            # Can't find the target that produces 'u-boot.rom', so for now 'make all'
 	declare -g BOOTCONFIG="${QEMU_UBOOT_BOOTCONFIG}"
-	declare -g PACKAGE_LIST_FAMILY_REMOVE="plymouth" # Nice-to-have packages for running under qemu
-	declare -g PLYMOUTH="no"                         # try with smaller initrd?
+	add_packages_to_image spice-vdagent qemu-guest-agent # Nice-to-have packages for running under qemu
 
 	# A patch to convert to `q35` machine type DTS (x86 only)
 	declare -g BOOTPATCHDIR="u-boot-qemu-${LINUXFAMILY}"

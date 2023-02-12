@@ -7,7 +7,7 @@ function get_caller_reference() {
 	declare -g caller_reference="${caller_ref}:${caller_file}:${caller_line}"
 }
 
-# Adds to the main package list.
+# Adds to the main package list. Using this causes an immediate miss on any cached/standard rootfs.
 function add_packages_to_rootfs() {
 	get_caller_reference
 	declare -g -a EXTRA_PACKAGES_ROOTFS=("${EXTRA_PACKAGES_ROOTFS[@]}")
@@ -32,6 +32,7 @@ function add_packages_to_image() {
 }
 
 # Removes a package from all lists: debootstrap, rootfs, desktop and image.
+# Using this causes an immediate miss on any cached/standard rootfs.
 function remove_packages() {
 	get_caller_reference
 	declare -g -a REMOVE_PACKAGES=("${REMOVE_PACKAGES[@]}")
