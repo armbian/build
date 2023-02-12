@@ -37,6 +37,7 @@ case $BRANCH in
 	current)
 
 		KERNELBRANCH="branch:linux-5.15.y"
+		KERNELBRANCH='commit:85d7786c66b69d3f07cc149ac2f78d8f330c7c11'
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
@@ -44,6 +45,7 @@ case $BRANCH in
 	edge)
 
 		KERNELBRANCH="branch:linux-6.1.y"
+		KERNELBRANCH='commit:d60c95efffe84428e3611431bf688f50bfc13f4e'
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
