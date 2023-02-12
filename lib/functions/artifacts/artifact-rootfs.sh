@@ -23,7 +23,7 @@ function artifact_rootfs_prepare_version() {
 	# outer scope
 	artifact_version="${rootfs_cache_id}"
 	artifact_version_reason="${reasons[*]}"
-	artifact_name="rootfs/rootfs-${ARCH}/rootfs-${ARCH}-${RELEASE}-${cache_type}"
+	artifact_name="rootfs-${ARCH}-${RELEASE}-${cache_type}"
 	artifact_type="tar.zst"
 	artifact_base_dir="${SRC}/cache/rootfs"
 	artifact_final_file="${SRC}/cache/rootfs/${ARCH}-${RELEASE}-${rootfs_cache_id}.tar.zst"
