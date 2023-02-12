@@ -27,7 +27,7 @@ function output_images_compress_and_checksum() {
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing with pixz" "${uncompressed_file_basename}.xz" "info"
-			pixz -7 "${uncompressed_file}" # "If pixz is provided with input but no output, it will delete the input"
+			pixz -1 "${uncompressed_file}" # "If pixz is provided with input but no output, it will delete the input"
 			compression_type=".xz"
 		fi
 
