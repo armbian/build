@@ -441,14 +441,13 @@ function docker_cli_prepare_launch() {
 		# For pushing/pulling from OCI/ghcr.io; if OCI_TARGET_BASE is set:
 		# - bind-mount the Docker config file (if it exists)
 		if [[ -n "${OCI_TARGET_BASE}" ]]; then
-			display_alert "Detected" "OCI_TARGET_BASE: '${OCI_TARGET_BASE}'" "warn"
-			# DOCKER_ARGS+=("--env" "OCI_TARGET_BASE=${OCI_TARGET_BASE}")
+			display_alert "Detected" "OCI_TARGET_BASE: '${OCI_TARGET_BASE}'" "debug"
 
 			# Mount the Docker config file (if it exists)
 			local docker_config_file_host="${HOME}/.docker/config.json"
 			local docker_config_file_docker="/root/.docker/config.json" # inside Docker
 			if [[ -f "${docker_config_file_host}" ]]; then
-				display_alert "Passing down to Docker" "Docker config file: '${docker_config_file_host}' -> '${docker_config_file_docker}'" "warn"
+				display_alert "Passing down to Docker" "Docker config file: '${docker_config_file_host}' -> '${docker_config_file_docker}'" "debug"
 				DOCKER_ARGS+=("--mount" "type=bind,source=${docker_config_file_host},target=${docker_config_file_docker}")
 			fi
 		fi
