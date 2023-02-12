@@ -67,9 +67,14 @@ function run_tool_oras() {
 		return 0 # don't actually execute.
 	fi
 
-	# Run oras with it
-	display_alert "Calling ORAS" "$*" "debug"
-	"${ORAS_BIN}" "$@"
+	# Run oras, possibly with retries...
+	if [[ "${retries:-1}" -gt 1 ]]; then
+		display_alert "Calling ORAS with retries ${retries}" "$*" "debug"
+		do_with_retries ${retries} "${ORAS_BIN}" "$@"
+	else
+		display_alert "Calling ORAS" "$*" "debug"
+		"${ORAS_BIN}" "$@"
+	fi
 }
 
 function try_download_oras_tooling() {
@@ -112,7 +117,7 @@ function oras_push_artifact_file() {
 	display_alert "upload_file_name: ${upload_file_name}" "ORAS upload" "debug"
 
 	pushd "${upload_file_base_path}" &> /dev/null || exit_with_error "Failed to pushd to ${upload_file_base_path} - ORAS upload"
-	run_tool_oras push "${extra_params[@]}" "${image_full_oci}" "${upload_file_name}:application/vnd.unknown.layer.v1+tar"
+	retries=5 run_tool_oras push "${extra_params[@]}" "${image_full_oci}" "${upload_file_name}:application/vnd.unknown.layer.v1+tar"
 	popd &> /dev/null || exit_with_error "Failed to popd" "ORAS upload"
 	return 0
 }
@@ -153,7 +158,7 @@ function oras_pull_artifact_file() {
 
 	# @TODO: this needs retries...
 	pushd "${full_temp_dir}" &> /dev/null || exit_with_error "Failed to pushd to ${full_temp_dir} - ORAS download"
-	run_tool_oras pull "${extra_params[@]}" "${image_full_oci}"
+	retries=3 run_tool_oras pull "${extra_params[@]}" "${image_full_oci}"
 	popd &> /dev/null || exit_with_error "Failed to popd - ORAS download"
 
 	# sanity check; did we get the file we expected?
