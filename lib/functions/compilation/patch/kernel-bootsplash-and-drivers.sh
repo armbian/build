@@ -9,6 +9,12 @@ compilation_prepare() {
 	# Temporally set for new "default->legacy,next->current" family naming
 
 	if linux-version compare "${version}" ge 5.10; then
+		if linux-version compare "${version}" le 5.11; then
+			# Patch python2 path for legacy kernels running on newer Debian Bulleys / Ubuntu Kinetic
+			#    Debian has a deb package the symlinks /usr/bin/python3 to /usr/bin/python so better off to Patch older Kernels
+			display_alert "Patching" "python" "info"
+			process_patch_file "${SRC}/patch/misc/general-kernel-python2-5.10.y.patch" "applying"
+		fi
 
 		if test -d ${kerneldir}/debian; then
 			rm -rf ${kerneldir}/debian/*
