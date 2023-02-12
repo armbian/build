@@ -31,14 +31,19 @@ function run_memoized() {
 	mkdir -p "${disk_cache_dir}"
 	declare disk_cache_file="${disk_cache_dir}/${MEMO_DICT[MEMO_INPUT_HASH]}"
 	if [[ -f "${disk_cache_file}" ]]; then
-		# @TODO: check expiration;  some stuff might want different expiration times, eg, branch vs tag vs commit
-
-		display_alert "Using memoized ${var_n} from ${disk_cache_file}" "${MEMO_DICT[MEMO_INPUT]}" "debug"
-		display_alert "Using cached" "${var_n}" "info"
-
-		# shellcheck disable=SC1090 # yep, I'm sourcing the cache here. produced below.
-		source "${disk_cache_file}"
-		return 0
+		declare disk_cache_file_mtime_seconds
+		disk_cache_file_mtime_seconds="$(stat -c %Y "${disk_cache_file}")"
+		# if disk_cache_file is older than 1 hour, delete it and continue.
+		if [[ "${disk_cache_file_mtime_seconds}" -lt "$(($(date +%s) - 3600))" ]]; then
+			display_alert "Deleting stale cache file" "${disk_cache_file}" "debug"
+			rm -f "${disk_cache_file}"
+		else
+			display_alert "Using memoized ${var_n} from ${disk_cache_file}" "${MEMO_DICT[MEMO_INPUT]}" "debug"
+			display_alert "Using cached" "${var_n}" "info"
+			# shellcheck disable=SC1090 # yep, I'm sourcing the cache here. produced below.
+			source "${disk_cache_file}"
+			return 0
+		fi
 	fi
 
 	# if cache miss, run the memoized_func...
