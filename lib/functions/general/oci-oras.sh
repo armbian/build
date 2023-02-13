@@ -130,9 +130,11 @@ function oras_get_artifact_manifest() {
 	declare extra_params=("--verbose")
 	oras_add_param_plain_http
 
+	oras_has_manifest="no"
 	# Gotta capture the output & if it failed...
-	oras_manifest_json="$(run_tool_oras manifest fetch "${extra_params[@]}" "${image_full_oci}" 2>&1)" && oras_has_manifest="yes" || oras_has_manifest="no"
-	display_alert "oras_manifest_json: ${oras_manifest_json}" "ORAS manifest" "debug"
+	oras_manifest_json="$(run_tool_oras manifest fetch "${extra_params[@]}" "${image_full_oci}")" && oras_has_manifest="yes" || oras_has_manifest="no"
+	display_alert "oras_has_manifest after: ${oras_has_manifest}" "ORAS manifest yes/no" "debug"
+	display_alert "oras_manifest_json after: ${oras_manifest_json}" "ORAS manifest json" "debug"
 
 	# if it worked, parse some basic info using jq
 	if [[ "${oras_has_manifest}" == "yes" ]]; then
