@@ -332,6 +332,12 @@ family_tweaks() {
 			echo "su -c '/usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS2 rtk_h5 &'" >> $SDCARD/etc/rc.local
 			echo "exit 0" >> $SDCARD/etc/rc.local
 		fi
+		if [[ $BRANCH == legacy && ($BOARD == station-m3) ]]; then
+			install -m 755 $SRC/packages/blobs/station/firefly_fan_control $SDCARD/usr/bin/firefly_fan_control
+			install -m 755 $SRC/packages/blobs/station/firefly-fan-init $SDCARD/usr/bin/firefly-fan-init
+			install -m 755 $SRC/packages/blobs/station/firefly-fan.service $SDCARD/usr/lib/systemd/system/firefly-fan.service
+			chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firefly-fan.service >/dev/null 2>&1"
+		fi
 
 	fi
 
