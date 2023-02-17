@@ -335,7 +335,7 @@ family_tweaks() {
 
 	fi
 
-	if [[ $BOARD == kedge2 ]]; then
+	if [[ $BOARD == khadas-edge2 ]]; then
 
 		cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
 
