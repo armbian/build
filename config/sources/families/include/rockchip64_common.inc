@@ -341,6 +341,12 @@ family_tweaks() {
 
 	fi
 
+	if [[ $BOARD == khadas-edge2 ]]; then
+
+		cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
+
+	fi
+
 	if [[ $BOARD == jetson-nano ]]; then
 		install -m 755 $SRC/packages/blobs/jetson/jetson.sh $SDCARD/etc/initramfs-tools/hooks/jetson.sh
 		if [[ $BRANCH == legacy ]]; then
