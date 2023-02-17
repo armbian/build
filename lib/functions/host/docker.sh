@@ -126,9 +126,7 @@ function docker_cli_prepare() {
 	# If we're NOT building the public, official image, then USE the public, official image as base.
 	# IMPORTANT: This has to match the naming scheme for tag the is used in the GitHub actions workflow.
 	if [[ "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" && "${DOCKER_SIMULATE_CLEAN}" != "yes" ]]; then
-		# @TODO: this is rpardini's build. It's done in a different repo, so that's why the strange "armbian-release" name. It should be armbian/build:ubuntu-jammy-latest or something.
-		DOCKER_ARMBIAN_BASE_IMAGE="ghcr.io/rpardini/armbian-release:armbian-next-${wanted_os_tag}-${wanted_release_tag}-latest"
-
+		DOCKER_ARMBIAN_BASE_IMAGE="ghcr.io/armbian/cache:armbian-${wanted_os_tag}-${wanted_release_tag}-latest"
 		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
