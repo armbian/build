@@ -48,7 +48,11 @@ function prepare_python_and_pip() {
 	#   We might need to install our own pip if it gets bad enough.
 	declare pip3_version
 	pip3_version="$("${python3_binary_path}" -m pip --version)"
-	display_alert "pip3 version" "${pip3_version}" "info"
+
+	# get the pip3 version number only (eg, "21.2.4" from "pip 21.2.4 from /usr/lib/python3/dist-packages/pip (python 3.9)")
+	declare pip3_version_number
+	pip3_version_number="$(echo "${pip3_version}" | cut -d' ' -f2)" # @TODO: brittle. how to do this better?
+	display_alert "pip3 version" "${pip3_version_number}: '${pip3_version}'" "info"
 
 	# Hash the contents of the dependencies array + the Python version + the release
 	declare python3_pip_dependencies_hash
@@ -67,6 +71,17 @@ function prepare_python_and_pip() {
 			display_alert "Deploying pip cache from Docker image" "${non_cache_dir} -> ${python_pip_cache}" "info"
 			run_host_command_logged cp -pr "${non_cache_dir}" "${python_pip_cache}"
 		fi
+	fi
+
+	declare -a pip3_extra_args=("--no-warn-script-location" "--user")
+	# if pip 23+, add "--break-system-packages" to pip3 invocations.
+	# See See PEP 668 -- System-wide package management with pip
+	# but the fact is that we're _not_ managing system-wide, instead --user
+	if linux-version compare "${pip3_version_number}" ge "23.0"; then
+		pip3_extra_args+=("--break-system-packages")
+	fi
+	if linux-version compare "${pip3_version_number}" ge "22.1"; then
+		pip3_extra_args+=("--root-user-action=ignore")
 	fi
 
 	declare python_hash_base="${python_pip_cache}/pip_pkg_hash"
@@ -100,12 +115,7 @@ function prepare_python_and_pip() {
 		# remove the old hashes matching base, don't leave junk behind
 		run_host_command_logged rm -fv "${python_hash_base}*"
 
-		# @TODO: when running with sudo:
-		# WARNING: The directory '/home/human/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
-		# --root-user-action=ignore requires pip 22.1+
-
-		run_host_command_logged env -i "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" -m pip install \
-			--no-warn-script-location --user "${python3_pip_dependencies[@]}"
+		run_host_command_logged env -i "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" -m pip install "${pip3_extra_args[@]}" "${python3_pip_dependencies[@]}"
 
 		# Create the hash file
 		run_host_command_logged touch "${python_hash_file}"
