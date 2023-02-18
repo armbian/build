@@ -74,7 +74,7 @@ function artifact_full_firmware_cli_adapter_config_prep() {
 }
 
 function artifact_full_firmware_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/rpardini/armbian-release/"
+	artifact_oci_target_base="ghcr.io/armbian/cache-firmware/"
 }
 
 function artifact_full_firmware_is_available_in_local_cache() {

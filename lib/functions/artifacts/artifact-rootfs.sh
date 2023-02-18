@@ -23,7 +23,7 @@ function artifact_rootfs_prepare_version() {
 	# outer scope
 	artifact_version="${rootfs_cache_id}"
 	artifact_version_reason="${reasons[*]}"
-	artifact_name="rootfs-${ARCH}-${RELEASE}-${cache_type}"
+	artifact_name="${ARCH}-${RELEASE}-${cache_type}"
 	artifact_type="tar.zst"
 	artifact_base_dir="${SRC}/cache/rootfs"
 	artifact_final_file="${SRC}/cache/rootfs/${ARCH}-${RELEASE}-${rootfs_cache_id}.tar.zst"
@@ -116,7 +116,7 @@ function artifact_rootfs_cli_adapter_config_prep() {
 }
 
 function artifact_rootfs_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/rootfs-cache/"
+	artifact_oci_target_base="ghcr.io/armbian/cache-root/"
 }
 
 function artifact_rootfs_is_available_in_local_cache() {

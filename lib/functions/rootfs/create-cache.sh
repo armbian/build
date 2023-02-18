@@ -17,7 +17,7 @@ function calculate_rootfs_cache_id() {
 
 	# AGGREGATED_ROOTFS_HASH is produced by aggregation.py
 	# Don't use a dash here, dashes are significant to legacy rootfs cache id's
-	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:16}B${bash_hash_short}"
+	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:12}B${bash_hash_short}"
 
 	declare cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
