@@ -36,14 +36,14 @@ esac
 case $BRANCH in
 	current)
 
-		KERNELBRANCH="branch:linux-5.15.y"
+		KERNELBRANCH="branch:linux-6.1.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
 
 	edge)
 
-		KERNELBRANCH="branch:linux-6.1.y"
+		KERNELBRANCH="branch:linux-6.2.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
