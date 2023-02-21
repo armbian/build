@@ -1,0 +1,235 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Emil Renner Berthing <kernel@esmil.dk>
+Date: Wed, 29 Sep 2021 20:50:22 +0200
+Subject: net: stmmac: Add glue layer for StarFive JH71x0 SoCs
+
+This adds a glue layer for the Synopsys DesignWare MAC IP core on the
+StarFive JH71x0 SoCs.
+
+Signed-off-by: Emil Renner Berthing <kernel@esmil.dk>
+---
+ MAINTAINERS                                          |   6 +
+ drivers/net/ethernet/stmicro/stmmac/Kconfig          |  12 +
+ drivers/net/ethernet/stmicro/stmmac/Makefile         |   1 +
+ drivers/net/ethernet/stmicro/stmmac/dwmac-starfive.c | 158 ++++++++++
+ 4 files changed, 177 insertions(+)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index c783fa9c9d85..0b5252d2d62a 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -19641,6 +19641,12 @@ M:	Emil Renner Berthing <kernel@esmil.dk>
+ S:	Maintained
+ F:	arch/riscv/boot/dts/starfive/
+ 
++STARFIVE DWMAC GLUE LAYER
++M:	Emil Renner Berthing <kernel@esmil.dk>
++S:	Maintained
++F:	Documentation/devicetree/bindings/net/dwmac-starfive.yaml
++F:	drivers/net/ethernet/stmicro/stmmac/dwmac-starfive.c
++
+ STARFIVE JH7100 CLOCK DRIVERS
+ M:	Emil Renner Berthing <kernel@esmil.dk>
+ S:	Maintained
+diff --git a/drivers/net/ethernet/stmicro/stmmac/Kconfig b/drivers/net/ethernet/stmicro/stmmac/Kconfig
+index 31ff35174034..afe5bb88962b 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/Kconfig
++++ b/drivers/net/ethernet/stmicro/stmmac/Kconfig
+@@ -165,6 +165,18 @@ config DWMAC_SOCFPGA
+ 	  for the stmmac device driver. This driver is used for
+ 	  arria5 and cyclone5 FPGA SoCs.
+ 
++config DWMAC_STARFIVE
++	tristate "StarFive DWMAC support"
++	default m if SOC_STARFIVE
++	depends on SOC_STARFIVE || COMPILE_TEST
++	select MFD_SYSCON
++	help
++	  Support for ethernet controller on StarFive SOCs.
++
++	  This selects StarFive SoC glue layer support for the stmmac device
++	  driver. This driver is used for the JH71x0 series GMAC ethernet
++	  controller.
++
+ config DWMAC_STI
+ 	tristate "STi GMAC support"
+ 	default ARCH_STI
+diff --git a/drivers/net/ethernet/stmicro/stmmac/Makefile b/drivers/net/ethernet/stmicro/stmmac/Makefile
+index d4e12e9ace4f..09e3c141c2a1 100644
+--- a/drivers/net/ethernet/stmicro/stmmac/Makefile
++++ b/drivers/net/ethernet/stmicro/stmmac/Makefile
+@@ -23,6 +23,7 @@ obj-$(CONFIG_DWMAC_OXNAS)	+= dwmac-oxnas.o
+ obj-$(CONFIG_DWMAC_QCOM_ETHQOS)	+= dwmac-qcom-ethqos.o
+ obj-$(CONFIG_DWMAC_ROCKCHIP)	+= dwmac-rk.o
+ obj-$(CONFIG_DWMAC_SOCFPGA)	+= dwmac-altr-socfpga.o
++obj-$(CONFIG_DWMAC_STARFIVE)	+= dwmac-starfive.o
+ obj-$(CONFIG_DWMAC_STI)		+= dwmac-sti.o
+ obj-$(CONFIG_DWMAC_STM32)	+= dwmac-stm32.o
+ obj-$(CONFIG_DWMAC_SUNXI)	+= dwmac-sunxi.o
+diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-starfive.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-starfive.c
+new file mode 100644
+index 000000000000..4e1a33940e02
+--- /dev/null
++++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-starfive.c
+@@ -0,0 +1,158 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * dwmac-starfive.c - DWMAC glue layer for StarFive SoCs
++ *
++ * Copyright (C) 2021 Emil Renner Berthing <kernel@esmil.dk>
++ */
++
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#include "stmmac.h"
++#include "stmmac_platform.h"
++
++#define JH7100_SYSMAIN_REGISTER28 0x70
++/* The value below is not a typo, just really bad naming by StarFive ¯\_(ツ)_/¯ */
++#define JH7100_SYSMAIN_REGISTER49 0xc8
++
++struct dwmac_starfive {
++	struct device *dev;
++	struct clk *gtxc;
++};
++
++static int dwmac_starfive_jh7100_syscon_init(struct device *dev)
++{
++	struct device_node *np = dev->of_node;
++	struct regmap *sysmain;
++	u32 gtxclk_dlychain;
++	int ret;
++
++	sysmain = syscon_regmap_lookup_by_phandle(np, "starfive,syscon");
++	if (IS_ERR(sysmain))
++		return dev_err_probe(dev, PTR_ERR(sysmain),
++				     "error getting sysmain registers\n");
++
++	/* Choose RGMII interface to the phy.
++	 * TODO: support other interfaces once we know the meaning of other
++	 * values in the register
++	 */
++	ret = regmap_update_bits(sysmain, JH7100_SYSMAIN_REGISTER28, 0x7, 1);
++	if (ret)
++		return dev_err_probe(dev, ret, "error selecting gmac interface\n");
++
++	if (!of_property_read_u32(np, "starfive,gtxclk-dlychain", &gtxclk_dlychain)) {
++		ret = regmap_write(sysmain, JH7100_SYSMAIN_REGISTER49, gtxclk_dlychain);
++		if (ret)
++			return dev_err_probe(dev, ret, "error selecting gtxclk delay chain\n");
++	}
++
++	return 0;
++}
++
++static void dwmac_starfive_fix_mac_speed(void *data, unsigned int speed)
++{
++	struct dwmac_starfive *dwmac = data;
++	unsigned long rate;
++	int ret;
++
++	switch (speed) {
++	case SPEED_1000:
++		rate = 125000000;
++		break;
++	case SPEED_100:
++		rate = 25000000;
++		break;
++	case SPEED_10:
++		rate = 2500000;
++		break;
++	default:
++		dev_warn(dwmac->dev, "unsupported link speed %u\n", speed);
++		return;
++	}
++
++	ret = clk_set_rate(dwmac->gtxc, rate);
++	if (ret)
++		dev_err(dwmac->dev, "error setting gtx clock rate: %d\n", ret);
++}
++
++static int dwmac_starfive_probe(struct platform_device *pdev)
++{
++	struct stmmac_resources stmmac_res;
++	struct plat_stmmacenet_data *plat;
++	struct dwmac_starfive *dwmac;
++	struct clk *txclk;
++	int (*syscon_init)(struct device *dev);
++	int ret;
++
++	dwmac = devm_kzalloc(&pdev->dev, sizeof(*dwmac), GFP_KERNEL);
++	if (!dwmac)
++		return -ENOMEM;
++
++	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
++	if (ret)
++		return ret;
++
++	syscon_init = of_device_get_match_data(&pdev->dev);
++	if (syscon_init) {
++		ret = syscon_init(&pdev->dev);
++		if (ret)
++			return ret;
++	}
++
++	dwmac->gtxc = devm_clk_get_enabled(&pdev->dev, "gtxc");
++	if (IS_ERR(dwmac->gtxc))
++		return dev_err_probe(&pdev->dev, PTR_ERR(dwmac->gtxc),
++				     "error getting/enabling gtxc clock\n");
++
++	txclk = devm_clk_get_enabled(&pdev->dev, "tx");
++	if (IS_ERR(txclk))
++		return dev_err_probe(&pdev->dev, PTR_ERR(txclk),
++				     "error getting/enabling tx clock\n");
++
++	plat = stmmac_probe_config_dt(pdev, stmmac_res.mac);
++	if (IS_ERR(plat))
++		return dev_err_probe(&pdev->dev, PTR_ERR(plat),
++				     "dt configuration failed\n");
++
++	dwmac->dev = &pdev->dev;
++	plat->bsp_priv = dwmac;
++	plat->fix_mac_speed = dwmac_starfive_fix_mac_speed;
++
++	ret = stmmac_dvr_probe(&pdev->dev, plat, &stmmac_res);
++	if (ret) {
++		stmmac_remove_config_dt(pdev, plat);
++		return ret;
++	}
++
++	return 0;
++}
++
++static const struct of_device_id dwmac_starfive_match[] = {
++	{
++		.compatible = "starfive,jh7100-gmac",
++		.data = dwmac_starfive_jh7100_syscon_init,
++	},
++	{
++		.compatible = "starfive,jh7110-gmac",
++	},
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, dwmac_starfive_match);
++
++static struct platform_driver dwmac_starfive_driver = {
++	.probe  = dwmac_starfive_probe,
++	.remove = stmmac_pltfr_remove,
++	.driver = {
++		.name           = "dwmac-starfive",
++		.pm		= &stmmac_pltfr_pm_ops,
++		.of_match_table = dwmac_starfive_match,
++	},
++};
++module_platform_driver(dwmac_starfive_driver);
++
++MODULE_AUTHOR("Emil Renner Berthing <kernel@esmil.dk>");
++MODULE_DESCRIPTION("StarFive DWMAC Glue Layer");
++MODULE_LICENSE("GPL");
+-- 
+Armbian
+
