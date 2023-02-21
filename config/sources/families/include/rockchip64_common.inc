@@ -32,7 +32,13 @@ RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
-BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*')}
+BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
+
+if [[ "a${BOOT_SOC}a" == "aa" ]]; then
+	display_alert "Could not determine BOOT_SOC from BOOTCONFIG" "BOOTCONFIG: '${BOOTCONFIG}'" "warning"
+else
+	display_alert "Determined BOOT_SOC from BOOTCONFIG" "BOOT_SOC: '${BOOT_SOC}'; BOOTCONFIG: '${BOOTCONFIG}'" "info"
+fi
 
 CPUMIN=${CPUMIN:="408000"}
 
@@ -88,8 +94,8 @@ elif [[ $BOOT_SOC == rk3566 ]]; then
 elif [[ $BOOT_SOC == rk3568 ]]; then
 
 	BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-	DDR_BLOB="${DDR_BLOB:=rk35/rk3568_ddr_1560MHz_v1.10.bin}"
-	BL31_BLOB='rk35/rk3568_bl31_v1.28.elf'
+	DDR_BLOB="${DDR_BLOB:=rk35/rk3568_ddr_1560MHz_v1.13.bin}"
+	BL31_BLOB='rk35/rk3568_bl31_v1.32.elf'
 
 elif [[ $BOOT_SOC == rk3588 ]]; then
 
@@ -116,6 +122,7 @@ case $BRANCH in
 
 	current)
 
+		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
@@ -125,6 +132,7 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
+		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-6.1.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
@@ -179,24 +187,29 @@ prepare_boot_configuration() {
 }
 
 uboot_custom_postprocess() {
+	[[ -z ${BOOT_SOC} ]] && exit_with_error "BOOT_SOC not defined for scenario '${BOOT_SCENARIO}' for BOARD'=${BOARD}' and BOOTCONFIG='${BOOTCONFIG}'"
 
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
 	elif [[ $BOOT_SCENARIO == "spl-blobs" || $BOOT_SCENARIO == "tpl-blob-atf-mainline" ]]; then
+		# Bomb if DDR_BLOB not defined or does not exist
+		declare SPL_BIN_PATH="${RKBIN_DIR}/${DDR_BLOB}"
+		[[ -z ${SPL_BIN_PATH} ]] && exit_with_error "DDR_BLOB not defined for scenario ${BOOT_SCENARIO}"
+		[[ ! -f "${SPL_BIN_PATH}" ]] && exit_with_error "DDR_BLOB ${SPL_BIN_PATH} does not exist for scenario ${BOOT_SCENARIO}"
 
-		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB:spl/u-boot-spl.bin idbloader.img
+		display_alert "mkimage for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
+		run_host_command_logged tools/mkimage -n "${BOOT_SOC}" -T rksd -d "${SPL_BIN_PATH}:spl/u-boot-spl.bin" idbloader.img
 
 	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
 
 		local tempfile=$(mktemp)
-		tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
+		run_host_command_logged tools/mkimage -n $BOOT_SOC -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
 		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
-		$PKG_PREFIX$RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
-		$PKG_PREFIX$RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
+		run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+		run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
 	else
-		echo "Unsupported u-boot processing configuration!"
-		exit 1
+		exit_with_error "Unsupported u-boot processing configuration!"
 	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
@@ -222,25 +235,22 @@ uboot_custom_postprocess() {
 }
 
 write_uboot_platform() {
+	# This is run board-side too, so account for the non-existance of run_host_command_logged
+	local logging_prelude=""
+	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
+
 	if [[ -f $1/rksd_loader.img ]]; then # legacy rk3399 loader
-
-		dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none
 	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob"
-
-		dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none
+		${logging_prelude} dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none
 	elif [[ -f $1/uboot.img ]]; then # $BOOT_SCENARIO == "only-blobs"
-
-		dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none > /dev/null 2>&1
-		dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none > /dev/null 2>&1
-
+		${logging_prelude} dd if=$1/idbloader.bin of=$2 seek=64 conv=notrunc status=none
+		${logging_prelude} dd if=$1/uboot.img of=$2 seek=16384 conv=notrunc status=none
+		${logging_prelude} dd if=$1/trust.bin of=$2 seek=24576 conv=notrunc status=none
 	else
 		echo "Unsupported u-boot processing configuration!"
 		exit 1
-
 	fi
 }
 
@@ -332,6 +342,18 @@ family_tweaks() {
 			echo "su -c '/usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS2 rtk_h5 &'" >> $SDCARD/etc/rc.local
 			echo "exit 0" >> $SDCARD/etc/rc.local
 		fi
+		if [[ $BRANCH == legacy && ($BOARD == station-m3) ]]; then
+			install -m 755 $SRC/packages/blobs/station/firefly_fan_control $SDCARD/usr/bin/firefly_fan_control
+			install -m 755 $SRC/packages/blobs/station/firefly-fan-init $SDCARD/usr/bin/firefly-fan-init
+			install -m 755 $SRC/packages/blobs/station/firefly-fan.service $SDCARD/usr/lib/systemd/system/firefly-fan.service
+			chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firefly-fan.service >/dev/null 2>&1"
+		fi
+
+	fi
+
+	if [[ $BOARD == khadas-edge2 ]]; then
+
+		cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
 
 	fi
 
@@ -472,11 +494,9 @@ family_tweaks_bsp() {
 	fi
 
 	if [[ $BOARD == rk3318-box ]]; then
-
 		# Optional board dtbo selection script
 		mkdir -p $destination/usr/local/bin
 		install -m 755 $SRC/packages/bsp/rk3318/rk3318-config $destination/usr/sbin
-
 	fi
 
 	if [[ $BOARD == pinebook-pro ]]; then
