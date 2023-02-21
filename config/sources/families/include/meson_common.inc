@@ -46,7 +46,7 @@ case $BRANCH in
 
 		export KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-6.2.y"
-    KERNELPATCHDIR='meson-'$BRANCH
+		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
 esac
