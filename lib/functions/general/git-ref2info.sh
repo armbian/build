@@ -62,11 +62,12 @@ function memoized_git_ref_to_info() {
 					;;
 
 				"https://gitlab.com/"*)
-					# parse org/repo from https://gitlab.com/org/repoß
-					declare org_and_repo=""
-					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
-					org_and_repo="${org_and_repo%.git}" # remove .git if present
-					url="https://gitlab.com/${org_and_repo}/-/raw/${sha1}/Makefile"
+					# GitLab is more complex than GitHub, there can be more levels.
+					# This code is incomplete... but it works for now.
+					# Example: input:  https://gitlab.com/rk3588_linux/rk/kernel.git
+					#          output: https://gitlab.com/rk3588_linux/rk/kernel/-/raw/linux-5.10/Makefile
+					declare gitlab_path="${git_source%.git}" # remove .git
+					url="${gitlab_path}/-/raw/${sha1}/Makefile"
 					;;
 
 				"https://source.codeaurora.org/external/imx/linux-imx")
