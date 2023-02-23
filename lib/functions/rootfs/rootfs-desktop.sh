@@ -7,7 +7,7 @@ function desktop_postinstall() {
 	disable_systemd_service_sdcard lightdm.service
 	disable_systemd_service_sdcard gdm3.service
 
-	# @TODO: why? 
+	# @TODO: why?
 	display_alert "Updating package lists" "for desktop" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
 

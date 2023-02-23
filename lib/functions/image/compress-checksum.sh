@@ -20,7 +20,7 @@ function output_images_compress_and_checksum() {
 		[[ -L "${uncompressed_file}" ]] && continue
 		# if image is not a file, skip it
 		[[ ! -f "${uncompressed_file}" ]] && continue
-		
+
 		# get just the filename, sans path
 		declare uncompressed_file_basename
 		uncompressed_file_basename=$(basename "${uncompressed_file}")
