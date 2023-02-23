@@ -86,7 +86,6 @@ More information:
 - [Building with Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) — how to build inside container;
 - [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
 
-
 ## Download prebuilt images
 
 - quarterly released **supported** builds —  <https://www.armbian.com/download>
@@ -138,7 +137,7 @@ Function | Armbian | Yocto | Buildroot |
 │   └── patch                            Created patches location
 ├── packages                             Support scripts, binary blobs, packages
 │   ├── blobs                            Wallpapers, various configs, closed source bootloaders
-│   ├── bsp-cli                          Automatically added to armbian-bsp-cli package 
+│   ├── bsp-cli                          Automatically added to armbian-bsp-cli package
 │   ├── bsp-desktop                      Automatically added to armbian-bsp-desktopo package
 │   ├── bsp                              Scripts and configs overlay for rootfs
 │   └── extras-buildpkgs                 Optional compilation and packaging engine
@@ -163,7 +162,8 @@ Function | Armbian | Yocto | Buildroot |
 
 ## 🙌 Contribution
 
-### You don't need to be a programmer to help! 
+### You don't need to be a programmer to help!
+
 - The easiest way to help is by "Starring" our repository - it helps more people find our code.
 - [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
 - [Seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/)
@@ -187,9 +187,10 @@ If you want to help with development, you should first review the [Development C
 ## Support
 
 Support is provided in one of two ways:
+
 - For commercial or prioritized assistance:
   - book a an hour of [professional consultation](https://calendly.com/armbian/consultation),
-  - consider becoming a project partner. Reach us out at https://armbian.com/contact,
+  - consider becoming a project partner. Reach us out at <https://armbian.com/contact>,
 - Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guaranteed solutions.
 
 ## Contact
@@ -219,8 +220,13 @@ Thank you to all the people who already contributed Armbian!
 ## Armbian Partners
 
 Armbian's partnership program helps to support Armbian and the Armbian community! Please take a moment to familiarize yourself with our Partners:
+
 - [Click here to visit our Partners page!](https://armbian.com/partners)
 - [How can I become a Partner?](https://forum.armbian.com/subscriptions)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=armbian/build&type=Date)](https://star-history.com/#armbian/build&Date)
 
 ## License
 
