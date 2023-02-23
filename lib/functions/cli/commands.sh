@@ -54,7 +54,7 @@ function armbian_register_commands() {
 		["configdump"]="CONFIG_DEFS_ONLY='yes'"
 
 		# artifact shortcuts
-		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_BUILD_INTERACTIVE='yes' ${common_cli_artifact_vars}"
+		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_BUILD_INTERACTIVE='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
 		["kernel"]="WHAT='kernel' ${common_cli_artifact_vars}"
 		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"
 		["u-boot"]="WHAT='uboot' ${common_cli_artifact_vars}"
