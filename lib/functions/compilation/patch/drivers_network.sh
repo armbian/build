@@ -10,8 +10,7 @@ function driver_generic_bring_back_ipx() {
 	fi
 }
 
-driver_rtl8152_rtl8153()
-{
+driver_rtl8152_rtl8153() {
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ "$LINUXFAMILY" != mvebu64 ] && [ "$LINUXFAMILY" != rk322x ] && [ "$LINUXFAMILY" != odroidxu4 ] && [ "$EXTRAWIFI" == yes ]; then
 
@@ -26,8 +25,7 @@ driver_rtl8152_rtl8153()
 	fi
 }
 
-driver_rtl8189ES()
-{
+driver_rtl8189ES() {
 	# Wireless drivers for Realtek 8189ES chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
@@ -66,9 +64,7 @@ driver_rtl8189ES()
 	fi
 }
 
-driver_rtl8189FS()
-{
-
+driver_rtl8189FS() {
 
 	# Wireless drivers for Realtek 8189FS chipsets
 
@@ -109,8 +105,7 @@ driver_rtl8189FS()
 
 }
 
-driver_rtl8192EU()
-{
+driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
@@ -149,8 +144,7 @@ driver_rtl8192EU()
 	fi
 }
 
-driver_rtl8811_rtl8812_rtl8814_rtl8821()
-{
+driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 
@@ -185,8 +179,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821()
 
 }
 
-driver_xradio_xr819()
-{
+driver_xradio_xr819() {
 
 	# Wireless drivers for Xradio XR819 chipsets
 	if linux-version compare "${version}" ge 4.19 && linux-version compare "${version}" le 5.19 &&
@@ -228,8 +221,7 @@ driver_xradio_xr819()
 
 }
 
-driver_rtl8811CU_rtl8821C()
-{
+driver_rtl8811CU_rtl8821C() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
@@ -276,8 +268,7 @@ driver_rtl8811CU_rtl8821C()
 
 }
 
-driver_rtl8188EU_rtl8188ETV()
-{
+driver_rtl8188EU_rtl8188ETV() {
 
 	# Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets
 
@@ -326,8 +317,7 @@ driver_rtl8188EU_rtl8188ETV()
 	fi
 }
 
-driver_rtl88x2bu()
-{
+driver_rtl88x2bu() {
 
 	# Wireless drivers for Realtek 88x2bu chipsets
 
@@ -371,12 +361,11 @@ driver_rtl88x2bu()
 
 }
 
-driver_rtl88x2cs()
-{
+driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
 
-	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ] ; then
+	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"
@@ -417,8 +406,7 @@ driver_rtl88x2cs()
 	fi
 }
 #_bt for blueteeth
-driver_rtl8822cs_bt()
-{
+driver_rtl8822cs_bt() {
 	# Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets
 	# For sunxi, these two patches are applied in a series.
 	if linux-version compare "${version}" ge 5.11 && [[ "$LINUXFAMILY" != sunxi* ]]; then
@@ -431,8 +419,7 @@ driver_rtl8822cs_bt()
 	fi
 }
 
-driver_rtl8723DS()
-{
+driver_rtl8723DS() {
 	# Wireless drivers for Realtek 8723DS chipsets
 
 	if linux-version compare "${version}" ge 5.0 && [[ "$EXTRAWIFI" == yes ]]; then
@@ -474,8 +461,7 @@ driver_rtl8723DS()
 	fi
 }
 
-driver_rtl8723DU()
-{
+driver_rtl8723DU() {
 
 	# Wireless drivers for Realtek 8723DU chipsets
 
@@ -514,8 +500,7 @@ driver_rtl8723DU()
 	fi
 }
 
-driver_rtl8822BS()
-{
+driver_rtl8822BS() {
 	# Wireless drivers for Realtek 8822BS chipsets
 
 	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16 && [ "$EXTRAWIFI" == yes ]; then
@@ -555,8 +540,7 @@ driver_rtl8822BS()
 
 }
 
-driver_uwe5622_allwinner()
-{
+driver_uwe5622_allwinner() {
 	# Unisoc uwe5622 wireless Support
 	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 6.2 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
@@ -565,13 +549,13 @@ driver_uwe5622_allwinner()
 		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-warnings.patch" "applying"
 
-                # Add to section Makefile
-                echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
 
 		if linux-version compare "${version}" lt 6.1; then
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-pre-v6.1.patch" "applying"
 		fi
-		
+
 		if linux-version compare "${version}" ge 6.1; then
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-v6.1-post.patch" "applying"
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.1.patch" "applying"
@@ -579,10 +563,9 @@ driver_uwe5622_allwinner()
 	fi
 }
 
-patch_drivers_network()
-{
+patch_drivers_network() {
 	display_alert "Patching network related drivers"
-	
+
 	driver_generic_bring_back_ipx
 	driver_rtl8152_rtl8153
 	driver_rtl8189ES

@@ -186,4 +186,3 @@ function exit_with_error() {
 
 	exit 43
 }
-

@@ -24,4 +24,3 @@ function config_possibly_interactive_branch_release_desktop_minimal() {
 
 	return 0 # protect against eventual shortcircuit above
 }
-

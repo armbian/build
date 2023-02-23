@@ -38,7 +38,6 @@ function download_git_kernel_bundle() {
 	return 0
 }
 
-
 function kernel_download_bundle_with_axel() {
 	display_alert "Downloading Kernel bundle" "${bundle_type}; this might take a long time" "info"
 	declare -a verbose_params=()

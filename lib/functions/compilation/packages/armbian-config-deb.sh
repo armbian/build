@@ -50,6 +50,6 @@ compile_armbian-config() {
 
 	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_config_dir}.deb" "${DEB_STORAGE}/"
 
-	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early 
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 }
