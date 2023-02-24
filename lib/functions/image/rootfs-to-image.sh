@@ -20,7 +20,7 @@ function create_image_from_sdcard_rootfs() {
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
 		run_host_command_logged rsync -aHWXh \
-			--exclude="/boot/*" \
+			--exclude="/boot" \
 			--exclude="/dev/*" \
 			--exclude="/proc/*" \
 			--exclude="/run/*" \
