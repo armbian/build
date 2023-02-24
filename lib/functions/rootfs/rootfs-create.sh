@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 function create_new_rootfs_cache_tarball() {
 	# validate cache_fname is set
 	[[ -n "${cache_fname}" ]] || exit_with_error "create_new_rootfs_cache_tarball: cache_fname is not set"
