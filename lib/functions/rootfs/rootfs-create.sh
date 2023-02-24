@@ -175,7 +175,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 		# Then do the actual install.
 		export if_error_detail_message="Installation of Armbian desktop packages for ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL} failed"
-		chroot_sdcard_apt_get install "${AGGREGATED_PACKAGES_DESKTOP[@]}"
+		chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_DESKTOP[@]}"
 	fi
 
 	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
