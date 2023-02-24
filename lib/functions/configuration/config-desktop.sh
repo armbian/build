@@ -3,7 +3,7 @@
 function desktop_element_available_for_arch() {
 	local desktop_element_path="${1}"
 	local targeted_arch="${2}"
-	local arch_limitation_file="${1}/only_for"
+	local arch_limitation_file="${1}/architectures"
 	if [[ -f "${arch_limitation_file}" ]]; then
 		if ! grep -- "${targeted_arch}" "${arch_limitation_file}" &> /dev/null; then
 			return 1
@@ -59,7 +59,7 @@ function desktop_environment_check_if_valid() {
 	elif [[ ${desktop_element_supported_result} == 66 ]]; then
 		error_msg+="The desktop environment \"${DESKTOP_ENVIRONMENT}\" has no packages for your targeted board architecture (BOARD=${BOARD} ARCH=${ARCH}). "
 		error_msg+="The supported boards architectures are : "
-		error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/only_for")"
+		error_msg+="$(cat "${DESKTOP_ENVIRONMENT_DIRPATH}/architectures")"
 	fi
 
 	# supress error when cache is rebuilding
