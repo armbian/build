@@ -449,6 +449,7 @@ function docker_cli_prepare_launch() {
 		# - bind-mount the Docker config file (if it exists)
 		if [[ -n "${OCI_TARGET_BASE}" ]]; then
 			display_alert "Detected" "OCI_TARGET_BASE: '${OCI_TARGET_BASE}'" "debug"
+			DOCKER_ARGS+=("--env" "OCI_TARGET_BASE=${OCI_TARGET_BASE}")
 
 			# Mount the Docker config file (if it exists)
 			local docker_config_file_host="${HOME}/.docker/config.json"
