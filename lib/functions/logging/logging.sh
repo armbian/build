@@ -23,8 +23,8 @@ function logging_init() {
 	declare -g -i logging_section_counter=0 # -i: integer
 	declare -g tool_color="${gray_color}"   # default to gray... (should be ok on terminals)
 
-	# @TODO: more terminals might have a bit... impaired... default themes. correct.
-	if [[ "${TERM}" == "alacritty" ]]; then
+	# @TODO: more terminals might have a bit... impaired... default themes. workaround...
+	if [[ "${TEXT_IS_TOO_DARK:-"no"}" == "yes" || "${TERM}" == "alacritty" ]]; then
 		declare -g tool_color="${normal_color}"
 	fi
 
