@@ -15,30 +15,19 @@ case $BRANCH in
 	legacy)
 		export KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
 		export KERNELBRANCH="tag:v5.10.138"
-		export KERNELBRANCH_MEGOUS="branch:orange-pi-5.10"
 		;;
 
 	current)
 		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
 		export KERNELBRANCH="tag:v5.15.93"
-		export KERNELBRANCH_MEGOUS="branch:orange-pi-5.15"
 		;;
 
 	edge)
 		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
 		export KERNELBRANCH="tag:v6.1.11"
-		export KERNELBRANCH_MEGOUS="branch:orange-pi-6.1"
 		;;
 esac
 
-# Hack for easily using megous for tests.
-if [[ "$USE_MEGOUS" == "yes" ]]; then
-	display_alert "Using megous/linux for kernel" "USE_MEGOUS: ${USE_MEGOUS}" "debug"
-	export KERNELSOURCE="https://github.com/megous/linux"
-	export KERNELBRANCH="${KERNELBRANCH_MEGOUS}"
-fi
-
-unset KERNELBRANCH_MEGOUS
 KERNELPATCHDIR="archive/sunxi-${KERNEL_MAJOR_MINOR}"
 
 family_tweaks() {
