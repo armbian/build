@@ -570,9 +570,10 @@ function install_distribution_agnostic() {
 		# Mask `NetworkManager.service` to avoid conflict
 		chroot_sdcard systemctl mask NetworkManager.service
 
-		if [ -e /etc/systemd/timesyncd.conf ]; then
+		if [ -e "${SDCARD}"/etc/systemd/timesyncd.conf ]; then
 			chroot_sdcard systemctl enable systemd-timesyncd.service
 		fi
+
 		umask 022
 		cat > "${SDCARD}"/etc/systemd/network/eth0.network <<- __EOF__
 			[Match]
