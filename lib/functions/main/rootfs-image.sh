@@ -45,7 +45,7 @@ function build_rootfs_and_image() {
 
 	# obtain the size, in MiB, of "${SDCARD}" at this point.
 	declare -i rootfs_size_mib
-	rootfs_size_mib=$(du -sm "${SDCARD}" | awk '{print $1}')
+	rootfs_size_mib=$(du --apparent-size -sm "${SDCARD}" | awk '{print $1}')
 	display_alert "Actual rootfs size" "${rootfs_size_mib}MiB" ""
 
 	# warn if rootfs_size_mib is higher than the tmpfs_estimated_size
