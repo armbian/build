@@ -40,7 +40,7 @@
 - x86_64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), container or bare metal installation
 - Ubuntu Jammy 22.04.x amd64 or aarch64 for native building or any Docker capable amd64 / aarch64 Linux for containerised
 - Superuser rights (configured sudo or root access).
-- Make sure all your system components are up to date. Outdated Docker binaries can make troubles.
+- Make sure all your system components are up-to-date. Outdated Docker binaries for example can cause troubles.
 
 ### Simply start with the build script
 
