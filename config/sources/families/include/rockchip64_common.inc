@@ -8,7 +8,6 @@
 #
 enable_extension "rkbin-tools"
 ARCH=arm64
-KERNEL_IMAGE_TYPE=Image
 OFFSET=16
 BOOTSCRIPT='boot-rockchip64.cmd:boot.cmd'
 BOOTENV_FILE='rockchip64.txt'

@@ -64,18 +64,8 @@ function prepare_kernel_packaging_debs() {
 	# display_alert "tmp_kernel_install_dirs INSTALL_HDR_PATH:" "${tmp_kernel_install_dirs[INSTALL_HDR_PATH]}" "debug"
 	# display_alert "tmp_kernel_install_dirs INSTALL_DTBS_PATH:" "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "debug"
 
-	# For armhf, kernel's "make install" gives us the wrong "vmlinuz-xx" file. We want the arch/arm/boot/zImage.
-	if [[ "${ARCH}" == "armhf" ]]; then # @TODO: if you know a better way? some kbuild var? send PR.
-		display_alert "armhf: using arch/arm/boot/zImage as vmlinuz" "armhf zImage" "info"
-		run_host_command_logged ls -la "${kernel_work_dir}/arch/arm/boot/zImage" || true
-		run_host_command_logged file "${kernel_work_dir}/arch/arm/boot/zImage" || true
-		run_host_command_logged ls -la "${tmp_kernel_install_dirs[INSTALL_PATH]}/vmlinuz-${kernel_version_family}" || true
-		run_host_command_logged file "${tmp_kernel_install_dirs[INSTALL_PATH]}/vmlinuz-${kernel_version_family}" || true
-		# Just overwrite it...
-		run_host_command_logged cp -v "${kernel_work_dir}/arch/arm/boot/zImage" "${tmp_kernel_install_dirs[INSTALL_PATH]}/vmlinuz-${kernel_version_family}"
-		run_host_command_logged file "${tmp_kernel_install_dirs[INSTALL_PATH]}/vmlinuz-${kernel_version_family}"
-		display_alert "armhf: using arch/arm/boot/zImage as vmlinuz" "done with armhf zImage" "debug"
-	fi
+	# Due to we call `make install` twice, we will get some `.old` files
+	run_host_command_logged rm -rf "${tmp_kernel_install_dirs[INSTALL_PATH]}/*.old" || true
 
 	# package the linux-image (image, modules, dtbs (if present))
 	display_alert "Packaging linux-image" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
