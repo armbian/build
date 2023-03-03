@@ -1,0 +1,299 @@
+From 8e962c88ed664a9863aadf797acfa050db6a49a1 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Tue, 21 Jun 2022 18:18:21 +0200
+Subject: [PATCH 297/391] spi: rockchip: Fix runtime PM and other issues
+
+The driver didn't bother with proper error handling, or clock resource
+management, leaing to warnings during suspend/resume.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/spi/spi-rockchip.c | 155 ++++++++++++++++++-------------------
+ 1 file changed, 75 insertions(+), 80 deletions(-)
+
+diff --git a/drivers/spi/spi-rockchip.c b/drivers/spi/spi-rockchip.c
+index 79242dc52..79b825348 100644
+--- a/drivers/spi/spi-rockchip.c
++++ b/drivers/spi/spi-rockchip.c
+@@ -199,6 +199,8 @@ struct rockchip_spi {
+ 	bool cs_high_supported; /* native CS supports active-high polarity */
+ 
+ 	struct spi_transfer *xfer; /* Store xfer temporarily */
++
++	bool clk_enabled;
+ };
+ 
+ static inline void spi_enable_chip(struct rockchip_spi *rs, bool enable)
+@@ -747,6 +749,35 @@ static int rockchip_spi_setup(struct spi_device *spi)
+ 	return 0;
+ }
+ 
++static int rockchip_spi_enable_clocks(struct rockchip_spi *rs, bool en)
++{
++	int ret;
++
++        if (!!en == rs->clk_enabled)
++		return 0;
++
++	if (en) {
++		ret = clk_prepare_enable(rs->apb_pclk);
++		if (ret < 0) {
++			dev_err(rs->dev, "Failed to enable apb_pclk\n");
++			return ret;
++		}
++
++		ret = clk_prepare_enable(rs->spiclk);
++		if (ret < 0) {
++			dev_err(rs->dev, "Failed to enable spiclk\n");
++			clk_disable_unprepare(rs->apb_pclk);
++			return ret;
++		}
++	} else {
++		clk_disable_unprepare(rs->spiclk);
++		clk_disable_unprepare(rs->apb_pclk);
++	}
++
++	rs->clk_enabled = en;
++	return 0;
++}
++
+ static int rockchip_spi_probe(struct platform_device *pdev)
+ {
+ 	int ret;
+@@ -760,10 +791,10 @@ static int rockchip_spi_probe(struct platform_device *pdev)
+ 	slave_mode = of_property_read_bool(np, "spi-slave");
+ 
+ 	if (slave_mode)
+-		ctlr = spi_alloc_slave(&pdev->dev,
++		ctlr = devm_spi_alloc_slave(&pdev->dev,
+ 				sizeof(struct rockchip_spi));
+ 	else
+-		ctlr = spi_alloc_master(&pdev->dev,
++		ctlr = devm_spi_alloc_master(&pdev->dev,
+ 				sizeof(struct rockchip_spi));
+ 
+ 	if (!ctlr)
+@@ -777,47 +808,33 @@ static int rockchip_spi_probe(struct platform_device *pdev)
+ 	/* Get basic io resource and map it */
+ 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	rs->regs = devm_ioremap_resource(&pdev->dev, mem);
+-	if (IS_ERR(rs->regs)) {
+-		ret =  PTR_ERR(rs->regs);
+-		goto err_put_ctlr;
+-	}
++	if (IS_ERR(rs->regs))
++		return PTR_ERR(rs->regs);
+ 
+ 	rs->apb_pclk = devm_clk_get(&pdev->dev, "apb_pclk");
+-	if (IS_ERR(rs->apb_pclk)) {
+-		dev_err(&pdev->dev, "Failed to get apb_pclk\n");
+-		ret = PTR_ERR(rs->apb_pclk);
+-		goto err_put_ctlr;
+-	}
++	if (IS_ERR(rs->apb_pclk))
++		return dev_err_probe(&pdev->dev, PTR_ERR(rs->apb_pclk),
++				     "Failed to get apb_pclk\n");
+ 
+ 	rs->spiclk = devm_clk_get(&pdev->dev, "spiclk");
+-	if (IS_ERR(rs->spiclk)) {
+-		dev_err(&pdev->dev, "Failed to get spi_pclk\n");
+-		ret = PTR_ERR(rs->spiclk);
+-		goto err_put_ctlr;
+-	}
+-
+-	ret = clk_prepare_enable(rs->apb_pclk);
+-	if (ret < 0) {
+-		dev_err(&pdev->dev, "Failed to enable apb_pclk\n");
+-		goto err_put_ctlr;
+-	}
++	if (IS_ERR(rs->spiclk))
++		return dev_err_probe(&pdev->dev, PTR_ERR(rs->spiclk),
++				     "Failed to get spi_pclk\n");
+ 
+-	ret = clk_prepare_enable(rs->spiclk);
+-	if (ret < 0) {
+-		dev_err(&pdev->dev, "Failed to enable spi_clk\n");
+-		goto err_disable_apbclk;
+-	}
++	ret = rockchip_spi_enable_clocks(rs, true);
++	if (ret < 0)
++		return ret;
+ 
+ 	spi_enable_chip(rs, false);
+ 
+ 	ret = platform_get_irq(pdev, 0);
+ 	if (ret < 0)
+-		goto err_disable_spiclk;
++		goto err_disable_clks;
+ 
+ 	ret = devm_request_threaded_irq(&pdev->dev, ret, rockchip_spi_isr, NULL,
+ 			IRQF_ONESHOT, dev_name(&pdev->dev), ctlr);
+ 	if (ret)
+-		goto err_disable_spiclk;
++		goto err_disable_clks;
+ 
+ 	rs->dev = &pdev->dev;
+ 	rs->freq = clk_get_rate(rs->spiclk);
+@@ -843,14 +860,9 @@ static int rockchip_spi_probe(struct platform_device *pdev)
+ 	if (!rs->fifo_len) {
+ 		dev_err(&pdev->dev, "Failed to get fifo length\n");
+ 		ret = -EINVAL;
+-		goto err_disable_spiclk;
++		goto err_disable_clks;
+ 	}
+ 
+-	pm_runtime_set_autosuspend_delay(&pdev->dev, ROCKCHIP_AUTOSUSPEND_TIMEOUT);
+-	pm_runtime_use_autosuspend(&pdev->dev);
+-	pm_runtime_set_active(&pdev->dev);
+-	pm_runtime_enable(&pdev->dev);
+-
+ 	ctlr->auto_runtime_pm = true;
+ 	ctlr->bus_num = pdev->id;
+ 	ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_LOOP | SPI_LSB_FIRST;
+@@ -885,7 +897,7 @@ static int rockchip_spi_probe(struct platform_device *pdev)
+ 		/* Check tx to see if we need defer probing driver */
+ 		if (PTR_ERR(ctlr->dma_tx) == -EPROBE_DEFER) {
+ 			ret = -EPROBE_DEFER;
+-			goto err_disable_pm_runtime;
++			goto err_disable_clks;
+ 		}
+ 		dev_warn(rs->dev, "Failed to request TX DMA channel\n");
+ 		ctlr->dma_tx = NULL;
+@@ -921,28 +933,29 @@ static int rockchip_spi_probe(struct platform_device *pdev)
+ 		break;
+ 	}
+ 
++	pm_runtime_set_autosuspend_delay(&pdev->dev, ROCKCHIP_AUTOSUSPEND_TIMEOUT);
++	pm_runtime_use_autosuspend(&pdev->dev);
++	pm_runtime_set_active(&pdev->dev);
++	pm_runtime_enable(&pdev->dev);
++
+ 	ret = devm_spi_register_controller(&pdev->dev, ctlr);
+ 	if (ret < 0) {
+ 		dev_err(&pdev->dev, "Failed to register controller\n");
+-		goto err_free_dma_rx;
++		goto err_pm_disable;
+ 	}
+ 
+ 	return 0;
+ 
+-err_free_dma_rx:
++err_pm_disable:
++	pm_runtime_dont_use_autosuspend(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
+ 	if (ctlr->dma_rx)
+ 		dma_release_channel(ctlr->dma_rx);
+ err_free_dma_tx:
+ 	if (ctlr->dma_tx)
+ 		dma_release_channel(ctlr->dma_tx);
+-err_disable_pm_runtime:
+-	pm_runtime_disable(&pdev->dev);
+-err_disable_spiclk:
+-	clk_disable_unprepare(rs->spiclk);
+-err_disable_apbclk:
+-	clk_disable_unprepare(rs->apb_pclk);
+-err_put_ctlr:
+-	spi_controller_put(ctlr);
++err_disable_clks:
++	rockchip_spi_enable_clocks(rs, false);
+ 
+ 	return ret;
+ }
+@@ -952,21 +965,15 @@ static int rockchip_spi_remove(struct platform_device *pdev)
+ 	struct spi_controller *ctlr = spi_controller_get(platform_get_drvdata(pdev));
+ 	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
+ 
+-	pm_runtime_get_sync(&pdev->dev);
+-
+-	clk_disable_unprepare(rs->spiclk);
+-	clk_disable_unprepare(rs->apb_pclk);
+-
+-	pm_runtime_put_noidle(&pdev->dev);
+-	pm_runtime_disable(&pdev->dev);
+-	pm_runtime_set_suspended(&pdev->dev);
+-
+ 	if (ctlr->dma_tx)
+ 		dma_release_channel(ctlr->dma_tx);
+ 	if (ctlr->dma_rx)
+ 		dma_release_channel(ctlr->dma_rx);
+ 
+-	spi_controller_put(ctlr);
++	pm_runtime_dont_use_autosuspend(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++
++	rockchip_spi_enable_clocks(rs, false);
+ 
+ 	return 0;
+ }
+@@ -982,8 +989,8 @@ static int rockchip_spi_suspend(struct device *dev)
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	clk_disable_unprepare(rs->spiclk);
+-	clk_disable_unprepare(rs->apb_pclk);
++	pm_runtime_disable(dev);
++	rockchip_spi_enable_clocks(rs, false);
+ 
+ 	pinctrl_pm_select_sleep_state(dev);
+ 
+@@ -998,19 +1005,17 @@ static int rockchip_spi_resume(struct device *dev)
+ 
+ 	pinctrl_pm_select_default_state(dev);
+ 
+-	ret = clk_prepare_enable(rs->apb_pclk);
+-	if (ret < 0)
+-		return ret;
++	if (!pm_runtime_status_suspended(dev)) {
++		ret = rockchip_spi_enable_clocks(rs, true);
++		if (ret < 0)
++			return ret;
++	}
+ 
+-	ret = clk_prepare_enable(rs->spiclk);
+-	if (ret < 0)
+-		clk_disable_unprepare(rs->apb_pclk);
++	pm_runtime_enable(dev);
+ 
+ 	ret = spi_controller_resume(ctlr);
+-	if (ret < 0) {
+-		clk_disable_unprepare(rs->spiclk);
+-		clk_disable_unprepare(rs->apb_pclk);
+-	}
++	if (ret < 0)
++		return ret;
+ 
+ 	return 0;
+ }
+@@ -1022,27 +1027,17 @@ static int rockchip_spi_runtime_suspend(struct device *dev)
+ 	struct spi_controller *ctlr = dev_get_drvdata(dev);
+ 	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
+ 
+-	clk_disable_unprepare(rs->spiclk);
+-	clk_disable_unprepare(rs->apb_pclk);
++	rockchip_spi_enable_clocks(rs, false);
+ 
+ 	return 0;
+ }
+ 
+ static int rockchip_spi_runtime_resume(struct device *dev)
+ {
+-	int ret;
+ 	struct spi_controller *ctlr = dev_get_drvdata(dev);
+ 	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
+ 
+-	ret = clk_prepare_enable(rs->apb_pclk);
+-	if (ret < 0)
+-		return ret;
+-
+-	ret = clk_prepare_enable(rs->spiclk);
+-	if (ret < 0)
+-		clk_disable_unprepare(rs->apb_pclk);
+-
+-	return 0;
++	return rockchip_spi_enable_clocks(rs, true);
+ }
+ #endif /* CONFIG_PM */
+ 
+-- 
+2.35.3
+

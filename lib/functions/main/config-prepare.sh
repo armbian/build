@@ -156,6 +156,7 @@ function config_pre_main() {
 		SELECTED_CONFIGURATION="cli_standard"
 	elif [[ $BUILD_MINIMAL == "yes" ]]; then
 		BUILD_DESKTOP=no
+		PLYMOUTH=no
 		SELECTED_CONFIGURATION="cli_minimal"
 	fi
 
