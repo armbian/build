@@ -5,265 +5,370 @@
 # * creates directory structure
 # * changes system settings
 #
-prepare_host() {
+function prepare_host() {
+	LOG_SECTION="prepare_host_noninteractive" do_with_logging prepare_host_noninteractive
+	return 0
+}
+
+function assert_prepared_host() {
+	if [[ ${prepare_host_has_already_run:-0} -lt 1 ]]; then
+		exit_with_error "assert_prepared_host: Host has not yet been prepared. This is a bug in armbian-next code. Please report!"
+	fi
+}
+
+function check_basic_host() {
+	display_alert "Checking" "basic host setup" "info"
+	obtain_and_check_host_release_and_arch # sets HOSTRELEASE and validates it for sanity; also HOSTARCH
+	check_host_has_enough_disk_space       # Checks disk space and exits if not enough
+	check_windows_wsl2                     # checks if on Windows, on WSL2, (not 1) and exits if not supported
+	wait_for_package_manager               # wait until dpkg is not locked...
+}
+
+function prepare_host_noninteractive() {
 	display_alert "Preparing" "host" "info"
 
 	# The 'offline' variable must always be set to 'true' or 'false'
+	declare offline=false
 	if [ "$OFFLINE_WORK" == "yes" ]; then
-		local offline=true
+		offline=true
+	fi
+
+	# fix for Locales settings, if locale-gen is installed, and /etc/locale.gen exists.
+	if [[ -n "$(command -v locale-gen)" && -f /etc/locale.gen ]]; then
+		if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
+			# @TODO: rpardini: this is bull, we're always root here. we've been pre-sudo'd.
+			local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
+			${sudo_prefix} sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+			${sudo_prefix} locale-gen
+		fi
 	else
-		local offline=false
+		display_alert "locale-gen is not installed @host" "skipping locale-gen -- problems might arise" "warn"
 	fi
 
-	# wait until package manager finishes possible system maintanace
-	wait_for_package_manager
-
-	# fix for Locales settings
-	if ! grep -q "^en_US.UTF-8 UTF-8" /etc/locale.gen; then
-		sudo sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
-		sudo locale-gen
-	fi
-
+	# Let's try and get all log output in English, overriding the builder's chosen or default language
+	export LANG="en_US.UTF-8"
+	export LANGUAGE="en_US.UTF-8"
 	export LC_ALL="en_US.UTF-8"
+	export LC_MESSAGES="en_US.UTF-8"
 
-	# packages list for host
-	# NOTE: please sync any changes here with the Dockerfile and Vagrantfile
+	declare -g USE_LOCAL_APT_DEB_CACHE=${USE_LOCAL_APT_DEB_CACHE:-yes} # Use SRC/cache/aptcache as local apt cache by default
+	display_alert "Using local apt cache?" "USE_LOCAL_APT_DEB_CACHE: ${USE_LOCAL_APT_DEB_CACHE}" "debug"
 
-	local hostdeps="acl aptly aria2 bc binfmt-support bison btrfs-progs       \
-	build-essential  ca-certificates ccache cpio cryptsetup curl              \
-	debian-archive-keyring debian-keyring debootstrap device-tree-compiler    \
-	dialog dirmngr dosfstools dwarves f2fs-tools fakeroot flex gawk           \
-	gcc-arm-linux-gnueabi gcc-aarch64-linux-gnu gdisk gpg busybox             \
-	imagemagick jq kmod libbison-dev libc6-dev-armhf-cross libcrypto++-dev    \
-	libelf-dev libfdt-dev libfile-fcntllock-perl parallel libmpc-dev          \
-	libfl-dev liblz4-tool libncurses-dev libpython2.7-dev libssl-dev          \
-	libusb-1.0-0-dev linux-base locales lzop ncurses-base ncurses-term        \
-	nfs-kernel-server ntpdate p7zip-full parted patchutils pigz pixz          \
-	pkg-config pv python3-dev python3-distutils qemu-user-static rsync swig   \
-	systemd-container u-boot-tools udev unzip uuid-dev wget whiptail zip      \
-	zlib1g-dev zstd fdisk"
-
-	if [[ $(dpkg --print-architecture) == amd64 ]]; then
-
-		hostdeps+=" distcc lib32ncurses-dev lib32stdc++6 libc6-i386"
-		grep -q i386 <(dpkg --print-foreign-architectures) || dpkg --add-architecture i386
-
-		if [[ $ARCH == "riscv64" ]]; then
-
-			hostdeps+=" gcc-riscv64-linux-gnu libncurses5-dev \
-			qtbase5-dev schedtool zstd debian-ports-archive-keyring"
-
-		fi
-
-	elif [[ $(dpkg --print-architecture) == arm64 ]]; then
-
-		hostdeps+=" gcc-arm-none-eabi libc6 libc6-amd64-cross qemu"
-
-	else
-
-		display_alert "Please read documentation to set up proper compilation environment"
-		display_alert "https://www.armbian.com/using-armbian-tools/"
-		exit_with_error "Running this tool on non x86_64 build host is not supported"
-
+	# if USE_LOCAL_APT_DEB_CACHE equals no, display_alert a warning, it's not a good idea.
+	if [[ "${USE_LOCAL_APT_DEB_CACHE}" == "no" ]]; then
+		display_alert "USE_LOCAL_APT_DEB_CACHE is set to 'no'" "not recommended" "wrn"
 	fi
 
-	# Add support for Ubuntu 20.04, 21.04 and Mint 20.x
-	if [[ $HOSTRELEASE =~ ^(focal|impish|hirsute|jammy|kinetic|lunar|ulyana|ulyssa|bullseye|bookworm|uma|una|vanessa|vera)$ ]]; then
-		hostdeps+=" python2 python3"
-		ln -fs /usr/bin/python2.7 /usr/bin/python2
-		ln -fs /usr/bin/python2.7 /usr/bin/python
-	else
-		hostdeps+=" python libpython-dev"
-	fi
+	if armbian_is_running_in_container; then
+		display_alert "Running in container" "Adding provisions for container building" "info"
+		declare -g CONTAINER_COMPAT=yes # this controls mknod usage for loop devices.
 
-	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
+		if [[ "${MANAGE_ACNG}" == "yes" ]]; then
+			display_alert "Running in container" "Disabling ACNG - MANAGE_ACNG=yes not supported in containers" "warn"
+			declare -g MANAGE_ACNG=no
+		fi
 
-	# Ubuntu 21.04.x (Hirsute) x86_64 is the only fully supported host OS release
-	# Using Docker/VirtualBox/Vagrant is the only supported way to run the build script on other Linux distributions
-	#
-	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
-	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "buster bullseye bookworm focal impish hirsute jammy lunar kinetic debbie tricia ulyana ulyssa uma una vanessa vera" != *"$HOSTRELEASE"* ]]; then
-		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
-			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
-			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
-		else
-			exit_with_error "It seems you ignore documentation and run an unsupported build system: ${HOSTRELEASE:-(unknown)}"
-		fi
-	fi
-
-	if grep -qE "(Microsoft|WSL)" /proc/version; then
-		if [ -f /.dockerenv ]; then
-			display_alert "Building images using Docker on WSL2 may fail" "" "wrn"
-		else
-			exit_with_error "Windows subsystem for Linux is not a supported build environment"
-		fi
-	fi
-
-	if systemd-detect-virt -q -c; then
-		display_alert "Running in container" "$(systemd-detect-virt)" "info"
-		# disable apt-cacher unless NO_APT_CACHER=no is not specified explicitly
-		if [[ $NO_APT_CACHER != no ]]; then
-			display_alert "apt-cacher is disabled in containers, set NO_APT_CACHER=no to override" "" "wrn"
-			NO_APT_CACHER=yes
-		fi
-		CONTAINER_COMPAT=yes
-		# trying to use nested containers is not a good idea, so don't permit EXTERNAL_NEW=compile
-		if [[ $EXTERNAL_NEW == compile ]]; then
-			display_alert "EXTERNAL_NEW=compile is not available when running in container, setting to prebuilt" "" "wrn"
-			EXTERNAL_NEW=prebuilt
-		fi
 		SYNC_CLOCK=no
+	else
+		display_alert "NOT running in container" "No special provisions for container building" "debug"
 	fi
 
-	# Skip verification if you are working offline
+	# If offline, do not try to install dependencies, manage acng, or sync the clock.
 	if ! $offline; then
+		# Prepare the list of host dependencies; it requires the target arch, the host release and arch
+		late_prepare_host_dependencies
+		install_host_dependencies "late dependencies during prepare_release"
 
-		# warning: apt-cacher-ng will fail if installed and used both on host and in
-		# container/chroot environment with shared network
-		# set NO_APT_CACHER=yes to prevent installation errors in such case
-		if [[ $NO_APT_CACHER != yes ]]; then hostdeps+=" apt-cacher-ng"; fi
-
-		export EXTRA_BUILD_DEPS=""
-		call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
-			*run before installing host dependencies*
-			you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
-		ADD_HOST_DEPENDENCIES
-
-		if [ -n "${EXTRA_BUILD_DEPS}" ]; then hostdeps+=" ${EXTRA_BUILD_DEPS}"; fi
-
-		display_alert "Installing build dependencies"
-		# don't prompt for apt cacher selection
-		sudo echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | sudo debconf-set-selections
-
-		LOG_OUTPUT_FILE="${DEST}"/${LOG_SUBPATH}/hostdeps.log
-		install_pkg_deb "autoupdate $hostdeps"
-		unset LOG_OUTPUT_FILE
-
-		update-ccache-symlinks
-
-		export FINAL_HOST_DEPS="$hostdeps ${EXTRA_BUILD_DEPS}"
-		call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
-			*run after all host dependencies are installed*
-			At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
-			All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
-			are installed at this point. The system clock has not yet been synced.
-		HOST_DEPENDENCIES_READY
+		# Manage apt-cacher-ng, if such is the case
+		[[ "${MANAGE_ACNG}" == "yes" ]] && acng_configure_and_restart_acng
 
 		# sync clock
+		if [[ $SYNC_CLOCK != no && -f /var/run/ntpd.pid ]]; then
+			display_alert "ntpd is running, skipping" "SYNC_CLOCK=no" "debug"
+			SYNC_CLOCK=no
+		fi
+
 		if [[ $SYNC_CLOCK != no ]]; then
 			display_alert "Syncing clock" "host" "info"
-			ntpdate -s "${NTP_SERVER:-pool.ntp.org}"
-		fi
-
-		# create directory structure
-		mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
-		if [[ -n $SUDO_USER ]]; then
-			chgrp --quiet sudo cache output "${USERPATCHES_PATH}"
-			# SGID bit on cache/sources breaks kernel dpkg packaging
-			chmod --quiet g+w,g+s output "${USERPATCHES_PATH}"
-			# fix existing permissions
-			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -group sudo -exec chgrp --quiet sudo {} \;
-			find "${SRC}"/output "${USERPATCHES_PATH}" -type d ! -perm -g+w,g+s -exec chmod --quiet g+w,g+s {} \;
-		fi
-		mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
-
-		# build aarch64
-		if [[ $(dpkg --print-architecture) == amd64 ]]; then
-			if [[ "${SKIP_EXTERNAL_TOOLCHAINS}" != "yes" ]]; then
-
-				# bind mount toolchain if defined
-				if [[ -d "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" ]]; then
-					mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
-					mount --bind "${ARMBIAN_CACHE_TOOLCHAIN_PATH}" "${SRC}"/cache/toolchain
-				fi
-
-				display_alert "Checking for external GCC compilers" "" "info"
-				# download external Linaro compiler and missing special dependencies since they are needed for certain sources
-
-				local toolchains=(
-					"gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-					"gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-					"gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
-					"gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
-					"gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
-					"gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"
-					"gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
-					"gcc-arm-9.2-2019.12-x86_64-arm-none-linux-gnueabihf.tar.xz"
-					"gcc-arm-9.2-2019.12-x86_64-aarch64-none-linux-gnu.tar.xz"
-					"gcc-arm-11.2-2022.02-x86_64-arm-none-linux-gnueabihf.tar.xz"
-					"gcc-arm-11.2-2022.02-x86_64-aarch64-none-linux-gnu.tar.xz"
-				)
-
-				USE_TORRENT_STATUS=${USE_TORRENT}
-				USE_TORRENT="no"
-				for toolchain in ${toolchains[@]}; do
-					local toolchain_zip="${SRC}/cache/toolchain/${toolchain}"
-					local toolchain_dir="${toolchain_zip%.tar.*}"
-					if [[ ! -f "${toolchain_dir}/.download-complete" ]]; then
-						download_and_verify "toolchain" "${toolchain}" ||
-							exit_with_error "Failed to download toolchain" "${toolchain}"
-
-						display_alert "decompressing"
-						pv -p -b -r -c -N "[ .... ] ${toolchain}" "${toolchain_zip}" |
-							xz -dc |
-							tar xp --xattrs --no-same-owner --overwrite -C "${SRC}/cache/toolchain/"
-						if [[ $? -ne 0 ]]; then
-							rm -rf "${toolchain_dir}"
-							exit_with_error "Failed to decompress toolchain" "${toolchain}"
-						fi
-
-						touch "${toolchain_dir}/.download-complete"
-						rm -rf "${toolchain_zip}"* # Also delete asc file
-					fi
-				done
-				USE_TORRENT=${USE_TORRENT_STATUS}
-
-				local existing_dirs=($(ls -1 "${SRC}"/cache/toolchain))
-				for dir in ${existing_dirs[@]}; do
-					local found=no
-					for toolchain in ${toolchains[@]}; do
-						[[ $dir == ${toolchain%.tar.*} ]] && found=yes
-					done
-					if [[ $found == no ]]; then
-						display_alert "Removing obsolete toolchain" "$dir"
-						rm -rf "${SRC}/cache/toolchain/${dir}"
-					fi
-				done
-			else
-				display_alert "Ignoring toolchains" "SKIP_EXTERNAL_TOOLCHAINS: ${SKIP_EXTERNAL_TOOLCHAINS}" "info"
-			fi
-		fi
-
-	fi # check offline
-
-	# enable arm binary format so that the cross-architecture chroot environment will work
-	if build_task_is_enabled "bootstrap"; then
-		modprobe -q binfmt_misc
-		mountpoint -q /proc/sys/fs/binfmt_misc/ || mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-		if [[ "$(arch)" != "aarch64" ]]; then
-			test -e /proc/sys/fs/binfmt_misc/qemu-arm || update-binfmts --enable qemu-arm
-			test -e /proc/sys/fs/binfmt_misc/qemu-aarch64 || update-binfmts --enable qemu-aarch64
+			run_host_command_logged ntpdate "${NTP_SERVER:-pool.ntp.org}" || true # allow failures
 		fi
 	fi
 
-	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && cp "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
+	# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
+	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
 
-	if [[ ! -f "${USERPATCHES_PATH}"/README ]]; then
-		rm -f "${USERPATCHES_PATH}"/readme.txt
-		echo 'Please read documentation about customizing build configuration' > "${USERPATCHES_PATH}"/README
-		echo 'https://www.armbian.com/using-armbian-tools/' >> "${USERPATCHES_PATH}"/README
+	# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
+	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,rootfs} "${SRC}"/.tmp
 
+	# If offline, do not try to download/install toolchains.
+	if ! $offline; then
+		download_external_toolchains # Mostly deprecated, since SKIP_EXTERNAL_TOOLCHAINS=yes is the default
+	fi
+
+	# if we're building an image, not only packages...
+	# ... and the host arch does not match the target arch ...
+	# ... we then require binfmt_misc to be enabled.
+	# "enable arm binary format so that the cross-architecture chroot environment will work"
+	if [[ "${KERNEL_ONLY}" != "yes" ]] || [[ "${NEEDS_BINFMT:-"no"}" == "yes" ]]; then
+
+		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+			display_alert "Debugging binfmt - early" "/proc/sys/fs/binfmt_misc/" "debug"
+			run_host_command_logged ls -la /proc/sys/fs/binfmt_misc/ || true
+		fi
+
+		if dpkg-architecture -e "${ARCH}"; then
+			display_alert "Native arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "cachehit"
+		else
+			local failed_binfmt_modprobe=0
+
+			display_alert "Cross arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "debug"
+
+			# Check if binfmt_misc is loaded; if not, try to load it, but don't fail: it might be built in.
+			if grep -q "^binfmt_misc" /proc/modules; then
+				display_alert "binfmt_misc is already loaded" "binfmt_misc already loaded" "debug"
+			else
+				display_alert "binfmt_misc is not loaded" "trying to load binfmt_misc" "debug"
+
+				# try to modprobe. if it fails, emit a warning later, but not here.
+				# this is for the in-container case, where the host already has the module, but won't let the container know about it.
+				modprobe -q binfmt_misc || failed_binfmt_modprobe=1
+			fi
+
+			# Now, /proc/sys/fs/binfmt_misc/ has to be mounted. Mount, or fail with a message
+			if mountpoint -q /proc/sys/fs/binfmt_misc/; then
+				display_alert "binfmt_misc is already mounted" "binfmt_misc already mounted" "debug"
+			else
+				display_alert "binfmt_misc is not mounted" "trying to mount binfmt_misc" "debug"
+				mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc/ || {
+					if [[ $failed_binfmt_modprobe == 1 ]]; then
+						display_alert "Failed to load binfmt_misc module" "modprobe binfmt_misc failed" "wrn"
+					fi
+					display_alert "Check your HOST kernel" "CONFIG_BINFMT_MISC=m is required in host kernel" "warn"
+					display_alert "Failed to mount" "binfmt_misc /proc/sys/fs/binfmt_misc/" "err"
+					exit_with_error "Failed to mount binfmt_misc"
+				}
+				display_alert "binfmt_misc mounted" "binfmt_misc mounted" "debug"
+			fi
+
+			declare host_arch
+			host_arch="$(arch)"
+			local -a wanted_arches=("arm" "aarch64" "x86_64" "riscv64")
+			display_alert "Preparing binfmts for arch" "binfmts: host '${host_arch}', wanted arches '${wanted_arches[*]}'" "debug"
+			declare wanted_arch
+			for wanted_arch in "${wanted_arches[@]}"; do
+				if [[ "${host_arch}" != "${wanted_arch}" ]]; then
+					if [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" ]]; then
+						display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
+						run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || {
+							if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
+								display_alert "Failed to update binfmts - this is expected: aarch64 does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
+							else
+								display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err"
+							fi
+						}
+					fi
+				fi
+			done
+
+			# @TODO: we could create a tiny loop here to test if the binfmt_misc is working, but this is before deps are installed.
+		fi
+
+		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+			display_alert "Debugging binfmt - late" "/proc/sys/fs/binfmt_misc/" "debug"
+			run_host_command_logged ls -la /proc/sys/fs/binfmt_misc/ || true
+		fi
+
+	fi
+
+	# @TODO: rpardini: this does not belong here, instead with the other templates, pre-configuration.
+	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
+
+	if [[ -d "${USERPATCHES_PATH}" ]]; then
 		# create patches directory structure under USERPATCHES_PATH
 		find "${SRC}"/patch -maxdepth 2 -type d ! -name . | sed "s%/.*patch%/$USERPATCHES_PATH%" | xargs mkdir -p
 	fi
 
-	# check free space (basic)
-	local freespace=$(findmnt --noheadings --output AVAIL --bytes --target "${SRC}" --uniq 2> /dev/null) # in bytes
-	if [ -n "$freespace" ] && [ "$((freespace / 1073741824))" -lt 10 ]; then
-		display_alert "Low free space left" "$(($freespace / 1073741824)) GiB" "wrn"
-		# pause here since dialog-based menu will hide this message otherwise
-		echo -e "Press \e[0;33m<Ctrl-C>\x1B[0m to abort compilation, \e[0;33m<Enter>\x1B[0m to ignore and continue"
-		read
+	# Reset owner of userpatches if so required
+	reset_uid_owner "${USERPATCHES_PATH}" # Fix owner of files in the final destination
+
+	declare -i -g -r prepare_host_has_already_run=1 # global, readonly.
+
+	return 0
+}
+
+# Early: we've possibly no idea what the host release or arch we're building on, or what the target arch is. All-deps.
+# Early: we've a best-guess indication of the host release, but not target. (eg: Dockerfile generate)
+# Early: we're certain about the host release and arch, but not anything about the target (eg: docker build of the Dockerfile, cli-requirements)
+# Late: we know everything; produce a list that is optimized for the host+target we're building. (eg: Oleg)
+function early_prepare_host_dependencies() {
+	if [[ "x${host_release:-}x" == "xx" ]]; then
+		display_alert "Host release unknown" "host_release not set on call to early_prepare_host_dependencies" "warn"
+	fi
+	if [[ "x${host_arch:-}x" == "xx" ]]; then
+		display_alert "Host arch unknown" "host_arch not set on call to early_prepare_host_dependencies" "debug"
+	fi
+	adaptative_prepare_host_dependencies
+}
+
+function late_prepare_host_dependencies() {
+	[[ -z "${ARCH}" ]] && exit_with_error "ARCH is not set"
+	[[ -z "${HOSTRELEASE}" ]] && exit_with_error "HOSTRELEASE is not set"
+	[[ -z "${HOSTARCH}" ]] && exit_with_error "HOSTARCH is not set"
+	[[ -z "${RELEASE}" ]] && display_alert "RELEASE is not set" "defaulting to host's '${HOSTRELEASE}'" "debug"
+
+	target_arch="${ARCH}" host_release="${HOSTRELEASE}" \
+		host_arch="${HOSTARCH}" target_release="${RELEASE:-"${HOSTRELEASE}"}" \
+		early_prepare_host_dependencies
+}
+
+# Adaptive: used by both early & late.
+function adaptative_prepare_host_dependencies() {
+	if [[ "x${host_release:-"unknown"}x" == "xx" ]]; then
+		display_alert "No specified host_release" "preparing for all-hosts, all-targets deps" "debug"
+	else
+		display_alert "Using passed-in host_release" "${host_release}" "debug"
+	fi
+
+	if [[ "x${target_arch:-"unknown"}x" == "xx" ]]; then
+		display_alert "No specified target_arch" "preparing for all-hosts, all-targets deps" "debug"
+	else
+		display_alert "Using passed-in target_arch" "${target_arch}" "debug"
+	fi
+
+	#### Common: for all releases, all host arches, and all target arches.
+	declare -a -g host_dependencies=(
+		# big bag of stuff from before
+		bc binfmt-support
+		bison
+		libc6-dev make dpkg-dev gcc # build-essential, without g++
+		ca-certificates ccache cpio
+		debootstrap device-tree-compiler dialog dirmngr dosfstools
+		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
+		fakeroot flex
+		gawk gnupg gpg
+		imagemagick # required for boot_logo, plymouth: converting images / spinners
+		jq          # required for parsing JSON, specially rootfs-caching related.
+		kmod        # this causes initramfs rebuild, but is usually pre-installed, so no harm done unless it's an upgrade
+		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev liblz4-tool
+		libncurses-dev libssl-dev libusb-1.0-0-dev
+		linux-base locales lsof
+		ncurses-base ncurses-term # for `make menuconfig`
+		ntpdate
+		patchutils pkg-config pv
+		qemu-user-static
+		rsync
+		swig # swig is needed for some u-boot's. example: "bananapi.conf"
+		u-boot-tools
+		udev # causes initramfs rebuild, but is usually pre-installed.
+		uuid-dev
+		zlib1g-dev
+
+		# by-category below
+		file tree expect                     # logging utilities; expect is needed for 'unbuffer' command
+		colorized-logs                       # for ansi2html, ansi2txt, pipetty
+		unzip zip pigz pixz pbzip2 lzop zstd # compressors et al
+		parted gdisk fdisk                   # partition tools @TODO why so many?
+		aria2 curl wget axel                 # downloaders et al
+		parallel                             # do things in parallel (used for fast md5 hashing in initrd cache)
+	)
+
+	# @TODO: distcc -- handle in extension?
+
+	### Python
+	host_deps_add_extra_python # See python-tools.sh::host_deps_add_extra_python()
+
+	# Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+
+	host_dependencies+=("python3-dev" "python3-distutils" "python3-setuptools" "python3-pip")
+
+	# Python2 -- required for some older u-boot builds
+	# Debian 'sid' does not carry python2 anymore; in this case some u-boot's might fail to build.
+	if [[ "sid bookworm" == *"${host_release}"* ]]; then
+		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
+	else
+		host_dependencies+=("python2" "python2-dev")
+	fi
+
+	# Only install acng if asked to.
+	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
+		host_dependencies+=("apt-cacher-ng")
+	fi
+
+	### ARCH
+	declare wanted_arch="${target_arch:-"all"}"
+
+	if [[ "${wanted_arch}" == "amd64" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-x86-64-linux-gnu") # from crossbuild-essential-amd64
+	fi
+
+	if [[ "${wanted_arch}" == "arm64" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-aarch64-linux-gnu") # from crossbuild-essential-arm64
+	fi
+
+	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-arm-linux-gnueabihf" "gcc-arm-linux-gnueabi") # from crossbuild-essential-armhf crossbuild-essential-armel
+	fi
+
+	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
+		host_dependencies+=("gcc-riscv64-linux-gnu")        # crossbuild-essential-riscv64 is not even available "yet"
+		host_dependencies+=("debian-ports-archive-keyring") # Debian Ports keyring needed, as riscv64 is not released yet
+	fi
+
+	if [[ "${wanted_arch}" != "amd64" ]]; then
+		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
+	fi
+
+	export EXTRA_BUILD_DEPS=""
+	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
+		*run before installing host dependencies*
+		you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
+	ADD_HOST_DEPENDENCIES
+
+	if [ -n "${EXTRA_BUILD_DEPS}" ]; then
+		# shellcheck disable=SC2206 # I wanna expand. @TODO: later will convert to proper array
+		host_dependencies+=(${EXTRA_BUILD_DEPS})
+	fi
+
+	export FINAL_HOST_DEPS="${host_dependencies[*]}"
+	call_extension_method "host_dependencies_known" <<- 'HOST_DEPENDENCIES_KNOWN'
+		*run after all host dependencies are known (but not installed)*
+		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+		are determined at this point, but not yet installed.
+	HOST_DEPENDENCIES_KNOWN
+}
+
+function install_host_dependencies() {
+	display_alert "Installing build dependencies" "$*" "debug"
+
+	# don't prompt for apt cacher selection. this is to skip the prompt only, since we'll manage acng config later.
+	local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix # nameref; "sudo_prefix" will be 'sudo' or ''
+	${sudo_prefix} echo "apt-cacher-ng    apt-cacher-ng/tunnelenable      boolean false" | ${sudo_prefix} debconf-set-selections
+
+	# This handles the wanted list in $host_dependencies, updates apt only if needed
+	# $host_dependencies is produced by early_prepare_host_dependencies()
+	install_host_side_packages "${host_dependencies[@]}"
+
+	run_host_command_logged update-ccache-symlinks
+
+	declare -g FINAL_HOST_DEPS="${host_dependencies[*]}"
+
+	call_extension_method "host_dependencies_ready" <<- 'HOST_DEPENDENCIES_READY'
+		*run after all host dependencies are installed*
+		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
+		All the dependencies, including the default/core deps and the ones added via `${EXTRA_BUILD_DEPS}`
+		are installed at this point. The system clock has not yet been synced.
+	HOST_DEPENDENCIES_READY
+
+	unset FINAL_HOST_DEPS # don't leak this after the hook is done
+}
+
+function check_host_has_enough_disk_space() {
+	# @TODO: check every possible mount point. Not only one. People might have different mounts / Docker volumes...
+	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
+	declare -i free_space_bytes
+	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${SRC}" --uniq 2> /dev/null) # in bytes
+	if [[ -n "$free_space_bytes" && $((free_space_bytes / 1073741824)) -lt 10 ]]; then
+		display_alert "Low free space left" "$((free_space_bytes / 1073741824))GiB" "wrn"
+		exit_if_countdown_not_aborted 10 "Low free disk space left" # This pauses & exits if error if ENTER is not pressed in 10 seconds
 	fi
 }

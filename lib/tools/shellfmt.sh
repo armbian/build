@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.5.1} # https://github.com/mvdan/sh/releases/
+SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.6.0} # https://github.com/mvdan/sh/releases/
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
