@@ -127,7 +127,7 @@ function fetch_from_repo() {
 		display_alert "Original gitdir: " "$(cat "${git_work_dir}/.git")" "git"
 		local git_work_dir_basename
 		git_work_dir_basename="$(basename "${git_work_dir}")"
-		echo "gitdir: ${GIT_BARE_REPO_FOR_WORKTREE}/.git/worktrees/${git_work_dir_basename}" > "${git_work_dir}/.git"
+		echo "gitdir: $(realpath --relative-to=${git_work_dir} ${GIT_BARE_REPO_FOR_WORKTREE}/.git/worktrees/${git_work_dir_basename})" > "${git_work_dir}/.git"
 		display_alert "Modified gitdir: " "$(cat "${git_work_dir}/.git")" "git"
 
 		# Fix the bare repo's reference to the working tree; this avoids errors when the working tree is moved.

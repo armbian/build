@@ -172,7 +172,7 @@ function create_sources_list() {
 	else
 		# use old method for compatibility reasons # @TODO: rpardini: not gonna fix this?
 		cp "${SRC}"/config/armbian.key "${basedir}"
-		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
+		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add -"
 	fi
 
 	# stage: add armbian repository and install key
