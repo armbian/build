@@ -12,18 +12,18 @@ export LINUXFAMILY=sunxi64
 case $BRANCH in
 
 	legacy)
-		export KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v5.10.138"
+		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
+		export KERNELBRANCH="tag:v5.15.98"
 		;;
 
 	current)
-		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v5.15.93"
+		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
+		export KERNELBRANCH="tag:v6.1.15"
 		;;
 
 	edge)
-		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v6.1.11"
+		export KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
+		export KERNELBRANCH="tag:v6.2.2"
 		;;
 esac
 
