@@ -70,7 +70,7 @@ function memoized_git_ref_to_info() {
 					url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
 					;;
 
-				"https://gitlab.com/"*)
+				"https://gitlab.com/"* | "https://gitlab.collabora.com/"*)
 					# GitLab is more complex than GitHub, there can be more levels.
 					# This code is incomplete... but it works for now.
 					# Example: input:  https://gitlab.com/rk3588_linux/rk/kernel.git
