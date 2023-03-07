@@ -78,6 +78,7 @@ function kernel_drivers_prepare_harness() {
 		driver_rtl8723DU
 		driver_rtl8822BS
 		driver_uwe5622_allwinner
+		driver_rtl8723cs
 	)
 
 	# change cwd to the kernel working dir
