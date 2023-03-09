@@ -460,6 +460,11 @@ function docker_cli_prepare_launch() {
 		fi
 	fi
 
+	# If set, pass down the Windows Terminal Session, so the existance of Windows Terminal can be detected later
+	if [[ -n "${WT_SESSION}" ]]; then
+		DOCKER_ARGS+=("--env" "WT_SESSION=${WT_SESSION}")
+	fi
+
 	# This will receive the mountpoint as $1 and the mountpoint vars in the environment.
 	function prepare_docker_args_for_mountpoint() {
 		local MOUNT_DIR="$1"
