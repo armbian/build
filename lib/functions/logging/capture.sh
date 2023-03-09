@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function do_capturing_defs() {
 	# make sure to local with a value, otherwise they will appear in the list...
 	local pre_exec_vars="" post_exec_vars="" new_vars_list="" onevar="" all_vars_array=()

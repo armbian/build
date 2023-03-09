@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
+#!/usr/bin/env bash
 
 # The whole of this is Copyright (c) 2020-2023 Ricardo Pardini <ricardo@pardini.net>
 # This file is licensed under the terms of the GNU General Public

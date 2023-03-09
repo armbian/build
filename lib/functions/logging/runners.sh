@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
 
 # All those runner helper functions have a particular non-quoting style.
 # callers might need to force quote with bash's @Q modifier.

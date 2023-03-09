@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # defines the format for KERNELBRANCH, BOOTBRANCH, and arguments to fetch_from_repo.
 # branch:xxx, tag:yyyy, commit:zzzz, head.
 # sets: ref_type=branch|tag|commit, ref_name=xxx|yyyy|zzzz|HEAD

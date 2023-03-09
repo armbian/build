@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # @TODO: armbian-next: THIS IS DEAD CODE. no-one calls it. a JIRA for volunteers to fix it, or it will be removed.
 
 function prepare_extra_kernel_drivers() {

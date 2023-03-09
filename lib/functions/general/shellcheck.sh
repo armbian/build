@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function shellcheck_debian_control_scripts() {
 	declare SEVERITY="${SEVERITY:-"critical"}"
 	declare -a params=(--check-sourced --color=always --external-sources --format=tty --shell=bash --wiki-link-count=0)

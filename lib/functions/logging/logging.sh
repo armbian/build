@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
 
 # This is called both early in compile.sh, but also after processing cmdline params in the cli entrypoint.sh
 function logging_init() {

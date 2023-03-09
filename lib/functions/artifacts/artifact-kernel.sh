@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # This is run in a logging section.
 # Prepare the version, "sans-repos": just the armbian/build repo contents are available.
 # It is OK to reach out to the internet for a curl or ls-remote, but not for a git clone, but

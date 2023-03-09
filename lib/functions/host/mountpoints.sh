@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function prepare_armbian_mountpoints_description_dict() {
 	# array for the generic armbian 'volumes' and their paths.
 	# bash dicts do NOT keep their insertion order, instead "hash order", which is a bit better than random for our purposes.

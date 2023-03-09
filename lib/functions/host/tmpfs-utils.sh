@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # Call: prepare_tmpfs_for "NAME_OF_TMPFS_DIR" "${PATH_TO_DIR}" # this adds its own cleanup handler
 function prepare_tmpfs_for() {
 	declare tmpfs_name="${1}"

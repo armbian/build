@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # This is NOT run under do_with_retries.
 function download_git_kernel_bundle() {
 	# See https://mirrors.edge.kernel.org/pub/scm/.bundles/pub/scm/linux/kernel/git/
