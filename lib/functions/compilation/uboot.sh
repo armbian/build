@@ -199,7 +199,27 @@ function loop_over_uboot_targets_and_do() {
 	# Sorry for the juggling with IFS.
 	local _old_ifs="${IFS}" _new_ifs=$'\n' uboot_target_counter=1
 	IFS="${_new_ifs}" # split on newlines only
+	display_alert "Looping over u-boot targets" "'${UBOOT_TARGET_MAP}'" "debug"
+
+	# save the current state of nullglob into a variable; don't fail
+	declare _old_nullglob
+	_old_nullglob="$(shopt -p nullglob || true)"
+	display_alert "previous state of nullglob" "'${_old_nullglob}'" "debug"
+
+	# disable nullglob; dont fail if already disabled
+	shopt -u nullglob || true
+
+	# store new state; don't fail
+	declare _new_nullglob
+	_new_nullglob="$(shopt -p nullglob || true)"
+	display_alert "new state of nullglob" "'${_new_nullglob}'" "debug"
+
 	for target in ${UBOOT_TARGET_MAP}; do
+		display_alert "Building u-boot target" "'${target}'" "debug"
+
+		# reset nullglob to _old_nullglob
+		eval "${_old_nullglob}"
+
 		IFS="${_old_ifs}" # restore for the body of loop
 		declare -g target uboot_name uboottempdir toolchain version
 		declare -g uboot_prefix="{u-boot:${uboot_target_counter}} "
@@ -213,7 +233,12 @@ function loop_over_uboot_targets_and_do() {
 		uboot_target_counter=$((uboot_target_counter + 1))
 		IFS="${_new_ifs}" # split on newlines only for rest of loop
 	done
+
 	IFS="${_old_ifs}"
+	# reset nullglob to _old_nullglob
+	eval "${_old_nullglob}"
+
+	return 0
 }
 
 function deploy_built_uboot_bins_for_one_target_to_packaging_area() {
