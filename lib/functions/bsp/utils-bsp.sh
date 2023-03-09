@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# copy_all_packages_files_for <folder> to package
 #
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
+# copy_all_packages_files_for <folder> to package
 copy_all_packages_files_for() {
 	local package_name="${1}"
 

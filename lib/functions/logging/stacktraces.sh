@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # Helper function, to get clean "stack traces" that do not include the hook/extension infrastructure code.
 # @TODO this in practice is only used... ?
 function get_extension_hook_stracktrace() {

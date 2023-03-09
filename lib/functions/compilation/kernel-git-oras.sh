@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # This is not run under logging section.
 function kernel_prepare_bare_repo_decide_shallow_or_full() {
 	declare decision="not_yet_decided" decision_why="unknown"

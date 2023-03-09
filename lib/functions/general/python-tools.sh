@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # This whole thing is a big "I refuse to use venv in a simple bash script" delusion.
 # If you know to tame it, teach me. I'd rather not know about PYTHONUSERBASE and such.
 # --rpardini
