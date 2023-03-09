@@ -563,6 +563,54 @@ driver_uwe5622_allwinner() {
 	fi
 }
 
+driver_rtl8723cs()
+{
+
+	# Realtek rtl8723cs wireless support. 
+	# Driver has been borrowed from sunxi 6.1 megous patch archive.
+	# Applies only from linux 6.1 onwards, so older kernel archives does not require to be altered
+	if linux-version compare "${version}" ge 6.1; then
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Add-a-new-driver-v5.12.2-7-g2de5ec386.20201013_beta.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Make-the-driver-compile-and-probe-drop-rockchip-platform.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Enable-OOB-interrupt.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Load-the-MAC-address-from-local-mac-address.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Modify-makefile-options-to-better-suit-PinePhone-Allwinn.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Enable-monitor-mode.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Disable-power-saving.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-aes_encrypt-aes_encrypt_128-to-avoid-symbol-name-conflic.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Enable-wifi-power-saving-mode.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Enable-TDLS-802.11z-support-direct-sta-sta-connection.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Disable-CONFIG_CONCURRENT_MODE.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Set-CONFIG_RTW_SDIO_PM_KEEP_POWER-n-to-fix-suspend-38.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Resume-wifi-in-a-workqueue.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-5.11.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Enable-WoWLAN.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-5.12.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Fix-misleading-indentation.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Disable-use-of-NAPI.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Fix-indentation.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Fix-compile-warnings.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-5.15.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Clear-wowlan_last_wake_reason-prior-to-suspend.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Forward-port-to-5.17.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-5.18.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Fix-some-compilation-warnings.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Adapt-to-API-changes-in-stable-5.19.2-and-6.0.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.0.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.1.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.1-rc1.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/dt-bindings-net-bluetooth-Add-rtl8723bs-bluetooth.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-btrtl-quirk-local-ext-features.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/Bluetooth-btrtl-add-support-for-the-RTL8723CS.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/Bluetooth-hci_h5-Add-support-for-binding-RTL8723CS-with-device-.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-h5-Don-t-re-initialize-rtl8723cs-on-resume.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-btrtl-add-rtl8703bs.patch" "applying"
+
+	fi
+
+
+}
+
 patch_drivers_network() {
 	display_alert "Patching network related drivers"
 
@@ -582,6 +630,7 @@ patch_drivers_network() {
 	driver_rtl8723DU
 	driver_rtl8822BS
 	driver_uwe5622_allwinner
+	driver_rtl8723cs
 
 	display_alert "Network related drivers patched" "" "info"
 }
