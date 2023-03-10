@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
 
 add_apt_sources() {
 	# AGGREGATED_APT_SOURCES and AGGREGATED_APT_SOURCES_DICT are pre-resolved by aggregation.py

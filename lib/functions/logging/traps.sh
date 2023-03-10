@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
 
 # Initialize and prepare the trap managers, one for each of ERR, INT, TERM and EXIT traps.
 # Bash goes insane regarding line numbers and other stuff if we try to overwrite the traps.

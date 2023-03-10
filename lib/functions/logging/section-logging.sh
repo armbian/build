@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function start_logging_section() {
 	# Sanity check: if this is called, but CURRENT_LOGGING_SECTION is not empty, then something is wrong.
 	if [[ -n "${CURRENT_LOGGING_SECTION}" && "${CURRENT_LOGGING_SECTION}" != "entrypoint" ]]; then

@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 #############################################################################################################
 # @TODO: called by no-one, yet.
 function check_and_install_docker_daemon() {
@@ -449,6 +458,11 @@ function docker_cli_prepare_launch() {
 				DOCKER_ARGS+=("--mount" "type=bind,source=${docker_config_file_host},target=${docker_config_file_docker}")
 			fi
 		fi
+	fi
+
+	# If set, pass down the Windows Terminal Session, so the existance of Windows Terminal can be detected later
+	if [[ -n "${WT_SESSION}" ]]; then
+		DOCKER_ARGS+=("--env" "WT_SESSION=${WT_SESSION}")
 	fi
 
 	# This will receive the mountpoint as $1 and the mountpoint vars in the environment.

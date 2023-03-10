@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function kernel_drivers_create_patches_hash_only() {
 	hash_only="yes" kernel_drivers_create_patches "${@}"
 }
@@ -78,6 +87,7 @@ function kernel_drivers_prepare_harness() {
 		driver_rtl8723DU
 		driver_rtl8822BS
 		driver_uwe5622_allwinner
+		driver_rtl8723cs
 	)
 
 	# change cwd to the kernel working dir
