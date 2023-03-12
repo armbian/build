@@ -39,8 +39,12 @@ function chroot_sdcard_apt_get_remove() {
 
 function chroot_sdcard_apt_get() {
 	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
+	declare default_apt_logging="-qq"
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		default_apt_logging=""
+	fi
 
-	local -a apt_params=("-y" "${apt_logging:-"-qq"}") # super quiet by default, but can be tweaked up, for update for example
+	local -a apt_params=("-y" "${apt_logging:-"$default_apt_logging"}") # super quiet by default, but can be tweaked up, for update for example
 	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
 		display_alert "Using managed apt-cacher-ng" "http://localhost:3142" "debug"
 		apt_params+=(
