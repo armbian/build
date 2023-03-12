@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function prepare_ansi_git_info_log_header() {
 	# writes to stdout, ANSI format
 
@@ -162,10 +171,10 @@ function export_ansi_logs() {
 		if [[ "${SHARE_LOG:-"no"}" == "yes" ]]; then
 			display_alert "SHARE_LOG=yes, uploading log" "uploading logs" "info"
 			declare logs_url="undetermined"
-			logs_url=$(curl --silent --data-binary "@${target_relative_to_src}" "https://paste.next.armbian.com/log" | xargs echo -n || true) # don't fail
+			logs_url=$(curl --silent --data-binary "@${target_relative_to_src}" "https://paste.armbian.com/log" | xargs echo -n || true) # don't fail
 			display_alert "Log uploaded, share URL:" "${logs_url}" ""
 		else
-			display_alert "Share log manually (or SHARE_LOG=yes):" "curl --data-binary @${target_relative_to_src} https://paste.next.armbian.com/log"
+			display_alert "Share log manually (or SHARE_LOG=yes):" "curl --data-binary @${target_relative_to_src} https://paste.armbian.com/log"
 		fi
 	fi
 

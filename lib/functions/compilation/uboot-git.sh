@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function uboot_prepare_bare_repo() {
 	uboot_git_bare_tree="${SRC}/cache/git-bare/u-boot" # sets the outer scope variable
 	declare uboot_git_bare_tree_done_marker="${uboot_git_bare_tree}/.git/armbian-bare-tree-done"

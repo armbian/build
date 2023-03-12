@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
 
 function create_new_rootfs_cache_tarball() {
 	# validate cache_fname is set

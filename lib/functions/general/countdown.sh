@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 # This exits, unless user presses ENTER. If not interactive, user will be unable to comply and the script will exit.
 function exit_if_countdown_not_aborted() {
 	# parse

@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 ## Prepare/cleanup pair @TODO needs to be split between SDCARD and MOUNT, no sense doing both in rootfs trap anymore
 # called by artifact-rootfs::artifact_rootfs_prepare_version()
 function prepare_rootfs_build_params_and_trap() {

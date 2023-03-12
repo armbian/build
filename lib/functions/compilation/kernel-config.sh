@@ -1,3 +1,12 @@
+#!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 function prepare_kernel_config_core_or_userpatches() {
 	# LINUXCONFIG is set or exit_with_error
 	[[ -z "${LINUXCONFIG}" ]] && exit_with_error "LINUXCONFIG not set: '${LINUXCONFIG}'"
