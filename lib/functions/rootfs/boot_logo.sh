@@ -1,20 +1,33 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 #--------------------------------------------------------------------------------------------------------------------------------
 # Create kernel boot logo from packages/blobs/splash/logo.png and packages/blobs/splash/spinner.gif (animated)
 # and place to the file /lib/firmware/bootsplash
 #--------------------------------------------------------------------------------------------------------------------------------
 function boot_logo() {
+	# this requires `imagemagick`
+
 	display_alert "Building kernel splash logo" "$RELEASE" "info"
 
+	declare LOGO LOGO_WIDTH LOGO_HEIGHT THROBBER THROBBER_HEIGHT THROBBER_WIDTH
 	LOGO=${SRC}/packages/blobs/splash/logo.png
 	LOGO_WIDTH=$(identify $LOGO | cut -d " " -f 3 | cut -d x -f 1)
 	LOGO_HEIGHT=$(identify $LOGO | cut -d " " -f 3 | cut -d x -f 2)
 	THROBBER=${SRC}/packages/blobs/splash/spinner.gif
 	THROBBER_WIDTH=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 1)
 	THROBBER_HEIGHT=$(identify $THROBBER | head -1 | cut -d " " -f 3 | cut -d x -f 2)
-	convert -alpha remove -background "#000000" $LOGO "${SDCARD}"/tmp/logo.rgb
-	convert -alpha remove -background "#000000" $THROBBER "${SDCARD}"/tmp/throbber%02d.rgb
-	$PKG_PREFIX${SRC}/packages/blobs/splash/bootsplash-packer \
+	run_host_command_logged convert -alpha remove -background "'#000000'" "$LOGO" "${SDCARD}"/tmp/logo.rgb
+	run_host_command_logged convert -alpha remove -background "'#000000'" "$THROBBER" "${SDCARD}"/tmp/throbber%02d.rgb
+
+	raw_command="[...shortened...] bootsplash-packer" \
+		run_host_x86_binary_logged "${SRC}/packages/blobs/splash/bootsplash-packer" \
 		--bg_red 0x00 \
 		--bg_green 0x00 \
 		--bg_blue 0x00 \
@@ -106,14 +119,18 @@ function boot_logo() {
 		--blob "${SDCARD}"/tmp/throbber72.rgb \
 		--blob "${SDCARD}"/tmp/throbber73.rgb \
 		--blob "${SDCARD}"/tmp/throbber74.rgb \
-		"${SDCARD}"/lib/firmware/bootsplash.armbian > /dev/null 2>&1
+		"${SDCARD}"/lib/firmware/bootsplash.armbian \
+		"| { grep --line-buffered -v -e 'File header' -e 'Picture header' -e 'Blob header' -e 'length:'  -e 'type:' -e 'picture_id:' -e 'bg_' -e 'num_' -e '^$' || true; }"
+
 	if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
 		[[ -f "${SDCARD}"/boot/armbianEnv.txt ]] && grep -q '^bootlogo' "${SDCARD}"/boot/armbianEnv.txt &&
 			sed -i 's/^bootlogo.*/bootlogo=true/' "${SDCARD}"/boot/armbianEnv.txt || echo 'bootlogo=true' >> "${SDCARD}"/boot/armbianEnv.txt
 		[[ -f "${SDCARD}"/boot/boot.ini ]] && sed -i 's/^setenv bootlogo.*/setenv bootlogo "true"/' "${SDCARD}"/boot/boot.ini
+
+		# enable additional services. @TODO: rpardini: really wonder where do these come from?
+		chroot_sdcard "systemctl --no-reload enable bootsplash-ask-password-console.path || true"
+		chroot_sdcard "systemctl --no-reload enable bootsplash-hide-when-booted.service || true"
+		chroot_sdcard "systemctl --no-reload enable bootsplash-show-on-shutdown.service || true"
 	fi
-	# enable additional services
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-ask-password-console.path >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-hide-when-booted.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload enable bootsplash-show-on-shutdown.service >/dev/null 2>&1"
+	return 0
 }

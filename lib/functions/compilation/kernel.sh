@@ -1,219 +1,165 @@
 #!/usr/bin/env bash
-compile_kernel() {
-	if [[ $CLEAN_LEVEL == *make* ]]; then
-		display_alert "Cleaning" "$LINUXSOURCEDIR" "info"
-		(
-			cd "${SRC}/cache/sources/${LINUXSOURCEDIR}"
-			make ARCH="${ARCHITECTURE}" clean > /dev/null 2>&1
-		)
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
+function compile_kernel() {
+	declare kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
+	display_alert "Kernel build starting" "${LINUXSOURCEDIR}" "info"
+
+	# Prepare the git bare repo for the kernel; shared between all kernel builds
+	declare kernel_git_bare_tree
+	declare git_bundles_dir="${SRC}/cache/git-bundles/kernel"
+
+	# @TODO: have a way to actually use this. It's inefficient, but might be the only way for people without ORAS/OCI for some reason.
+	# Important: for the bundle version, gotta use "do_with_logging_unless_user_terminal" otherwise floods logs.
+	# alternative # LOG_SECTION="kernel_prepare_bare_repo_from_bundle" do_with_logging_unless_user_terminal do_with_hooks \
+	# alternative # 	kernel_prepare_bare_repo_from_bundle # this sets kernel_git_bare_tree
+
+	# @TODO: Decide which kind of gitball to use: shallow or full.
+	declare bare_tree_done_marker_file=".git/armbian-bare-tree-done"
+	declare git_bundles_dir
+	declare git_kernel_ball_fn
+	declare git_kernel_oras_ref
+	kernel_prepare_bare_repo_decide_shallow_or_full # sets kernel_git_bare_tree, git_bundles_dir, git_kernel_ball_fn, git_kernel_oras_ref
+
+	LOG_SECTION="kernel_prepare_bare_repo_from_oras_gitball" do_with_logging do_with_hooks \
+		kernel_prepare_bare_repo_from_oras_gitball # this sets kernel_git_bare_tree
+
+	# prepare the working copy; this is the actual kernel source tree for this build
+	declare checked_out_revision_ts="" checked_out_revision="undetermined" # set by fetch_from_repo
+	LOG_SECTION="kernel_prepare_git" do_with_logging_unless_user_terminal do_with_hooks kernel_prepare_git
+
+	# Capture date variables set by fetch_from_repo; it's the date of the last kernel revision
+	declare kernel_git_revision="${checked_out_revision}"
+	declare kernel_base_revision_ts="${checked_out_revision_ts}"
+	declare kernel_base_revision_date # Used for KBUILD_BUILD_TIMESTAMP in make.
+	kernel_base_revision_date="$(LC_ALL=C date -d "@${kernel_base_revision_ts}")"
+	display_alert "Using Kernel git revision" "${kernel_git_revision} at '${kernel_base_revision_date}'"
+
+	# Possibly 'make clean'.
+	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
+
+	# Patching.
+	declare hash pre_patch_version
+	kernel_main_patching # has it's own logging sections inside
+
+	# Stop after patching;
+	if [[ "${PATCH_ONLY}" == yes ]]; then
+		display_alert "PATCH_ONLY is set, stopping." "PATCH_ONLY=yes and patching success" "cachehit"
+		return 0
 	fi
 
-	if [[ $USE_OVERLAYFS == yes ]]; then
-		local kerneldir
-		kerneldir=$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$LINUXSOURCEDIR" "kernel_${LINUXFAMILY}_${BRANCH}")
-	else
-		local kerneldir="$SRC/cache/sources/$LINUXSOURCEDIR"
-	fi
-	cd "${kerneldir}" || exit
-
-	rm -f localversion
-
-	# read kernel version
-	local version hash
-	version=$(grab_version "$kerneldir")
-
-	# read kernel git hash
-	hash=$(improved_git --git-dir="$kerneldir"/.git rev-parse HEAD)
-
-	# Apply a series of patches if a series file exists
-	if test -f "${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf; then
-		display_alert "series.conf file visible. Apply"
-		series_conf="${SRC}"/patch/kernel/${KERNELPATCHDIR}/series.conf
-
-		# apply_patch_series <target dir> <full path to series file>
-		apply_patch_series "${kerneldir}" "$series_conf"
-	fi
-
-	# build 3rd party drivers
-	compilation_prepare
-
-	advanced_patch "kernel" "$KERNELPATCHDIR" "$BOARD" "" "$BRANCH" "$LINUXFAMILY-$BRANCH"
-
-	# create patch for manual source changes in debug mode
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "kernel"
+	# patching worked, it's a good enough indication the git-bundle worked;
+	# let's clean up the git-bundle cache, since the git-bare cache is proven working.
+	LOG_SECTION="kernel_cleanup_bundle_artifacts" do_with_logging do_with_hooks kernel_cleanup_bundle_artifacts
 
 	# re-read kernel version after patching
-	local version
-	version=$(grab_version "$kerneldir")
-
+	declare version
+	version=$(grab_version "$kernel_work_dir")
 	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
-	# compare with the architecture of the current Debian node
-	# if it matches we use the system compiler
-	if $(dpkg-architecture -e "${ARCH}"); then
-		display_alert "Native compilation"
-	elif [[ $(dpkg --print-architecture) == amd64 ]]; then
-		local toolchain
-		toolchain=$(find_toolchain "$KERNEL_COMPILER" "$KERNEL_USE_GCC")
-		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${KERNEL_COMPILER}gcc $KERNEL_USE_GCC"
+	# determine the toolchain
+	declare toolchain
+	LOG_SECTION="kernel_determine_toolchain" do_with_logging do_with_hooks kernel_determine_toolchain
+
+	kernel_config # has it's own logging sections inside
+
+	# build via make and package .debs; they're separate sub-steps
+	kernel_prepare_build_and_package # has it's own logging sections inside
+
+	display_alert "Done with" "kernel compile" "debug"
+
+	return 0
+}
+
+function kernel_maybe_clean() {
+	if [[ $CLEAN_LEVEL == *make-kernel* ]]; then
+		display_alert "Cleaning Kernel tree - CLEAN_LEVEL contains 'make-kernel'" "$LINUXSOURCEDIR" "info"
+		(
+			cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
+			run_host_command_logged git clean -xfdq # faster & more efficient than 'make clean'
+		)
 	else
-		exit_with_error "Architecture [$ARCH] is not supported"
+		display_alert "Not cleaning Kernel tree; use CLEAN_LEVEL=make-kernel if needed" "CLEAN_LEVEL=${CLEAN_LEVEL}" "debug"
+	fi
+}
+
+function kernel_prepare_build_and_package() {
+	declare -a build_targets
+	declare kernel_dest_install_dir
+	declare -a install_make_params_quoted
+	declare -A kernel_install_dirs
+
+	build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
+	declare cleanup_id="" kernel_dest_install_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "k" cleanup_id kernel_dest_install_dir # namerefs
+
+	# define dict with vars passed and target directories
+	declare -A kernel_install_dirs=(
+		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"  # Used by `make install`
+		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules" # Used by `make modules_install`
+		#["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install` - disabled, only used for libc headers
+	)
+
+	build_targets+=(install modules_install) # headers_install disabled, only used for libc headers
+	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
+		display_alert "Kernel build will produce DTBs!" "DTBs YES" "debug"
+		build_targets+=("dtbs_install")
+		kernel_install_dirs+=(["INSTALL_DTBS_PATH"]="${kernel_dest_install_dir}/dtbs") # Used by `make dtbs_install`
 	fi
 
-	display_alert "Compiler version" "${KERNEL_COMPILER}gcc $(eval env PATH="${toolchain}:${PATH}" "${KERNEL_COMPILER}gcc" -dumpversion)" "info"
+	# loop over the keys above, get the value, create param value in array; also mkdir the dir
+	local dir_key
+	for dir_key in "${!kernel_install_dirs[@]}"; do
+		local dir="${kernel_install_dirs["${dir_key}"]}"
+		local value="${dir_key}=${dir}"
+		mkdir -p "${dir}"
+		install_make_params_quoted+=("${value}")
+	done
 
-	# copy kernel config
-	if [[ $KERNEL_KEEP_CONFIG == yes && -f "${DEST}"/config/$LINUXCONFIG.config ]]; then
-		display_alert "Using previous kernel config" "${DEST}/config/$LINUXCONFIG.config" "info"
-		cp -p "${DEST}/config/${LINUXCONFIG}.config" .config
-	else
-		if [[ -f $USERPATCHES_PATH/$LINUXCONFIG.config ]]; then
-			display_alert "Using kernel config provided by user" "userpatches/$LINUXCONFIG.config" "info"
-			cp -p "${USERPATCHES_PATH}/${LINUXCONFIG}.config" .config
-		else
-			display_alert "Using kernel config file" "config/kernel/$LINUXCONFIG.config" "info"
-			cp -p "${SRC}/config/kernel/${LINUXCONFIG}.config" .config
-		fi
-	fi
+	# Fire off the build & package
+	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
 
-	call_extension_method "custom_kernel_config" << 'CUSTOM_KERNEL_CONFIG'
-*Kernel .config is in place, still clean from git version*
-Called after ${LINUXCONFIG}.config is put in place (.config).
-Before any olddefconfig any Kconfig make is called.
-A good place to customize the .config directly.
-CUSTOM_KERNEL_CONFIG
+	# prepare a target dir for the shared, produced kernel .debs, across image/dtb/headers
+	declare cleanup_id_debs="" kernel_debs_temp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "kd" cleanup_id_debs kernel_debs_temp_dir # namerefs
 
-	# hack for OdroidXU4. Copy firmare files
-	if [[ $BOARD == odroidxu4 ]]; then
-		mkdir -p "${kerneldir}/firmware/edid"
-		cp "${SRC}"/packages/blobs/odroidxu4/*.bin "${kerneldir}/firmware/edid"
-	fi
+	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
-	# hack for deb builder. To pack what's missing in headers pack.
-	cp "${SRC}"/patch/misc/headers-debian-byteshift.patch /tmp
+	# This deploys to DEB_STORAGE...
+	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
 
-	if [[ $KERNEL_CONFIGURE != yes ]]; then
-		if [[ $BRANCH == default ]]; then
-			eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-				'make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" silentoldconfig'
-		else
-			# TODO: check if required
-			eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-				'make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" olddefconfig'
-		fi
-	else
-		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" oldconfig'
-		eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-			'make $CTHREADS ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" ${KERNEL_MENUCONFIG:-menuconfig}'
+	done_with_temp_dir "${cleanup_id_debs}" # changes cwd to "${SRC}" and fires the cleanup function early
+	done_with_temp_dir "${cleanup_id}"      # changes cwd to "${SRC}" and fires the cleanup function early
+}
 
-		[[ ${PIPESTATUS[0]} -ne 0 ]] && exit_with_error "Error kernel menuconfig failed"
+function kernel_build() {
+	local ts=${SECONDS}
+	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 
-		# store kernel config in easily reachable place
-		display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
-		cp .config "${DEST}/config/${LINUXCONFIG}.config"
-		# export defconfig too if requested
-		if [[ $KERNEL_EXPORT_DEFCONFIG == yes ]]; then
-			eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-				'make ARCH=$ARCHITECTURE CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" savedefconfig'
-			[[ -f defconfig ]] && cp defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
-		fi
-	fi
+	display_alert "Building kernel" "${LINUXFAMILY} ${LINUXCONFIG} ${build_targets[*]}" "info"
+	# make_filter="| grep --line-buffered -v -e 'LD' -e 'AR' -e 'INSTALL' -e 'SIGN' -e 'XZ' " \ # @TODO this will be summarised in the log file eventually, but shown in realtime in screen
+	do_with_ccache_statistics \
+		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
-	# create linux-source package - with already patched sources
-	# We will build this package first and clear the memory.
-	if [[ $BUILD_KSRC != no ]]; then
-		create_linux-source_package
-	fi
+	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+}
 
-	echo -e "\n\t== kernel ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
-	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-		'make $CTHREADS ARCH=$ARCHITECTURE \
-		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" \
-		$SRC_LOADADDR \
-		LOCALVERSION="-$LINUXFAMILY" \
-		$KERNEL_IMAGE_TYPE ${KERNEL_EXTRA_TARGETS:-modules dtbs} 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
-		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" \
-		--progressbox "Compiling kernel..." $TTY_Y $TTY_X'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
+function kernel_package() {
+	local ts=${SECONDS}
+	cd "${kernel_debs_temp_dir}" || exit_with_error "Can't cd to kernel_debs_temp_dir: ${kernel_debs_temp_dir}"
+	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
+	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
+	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
+	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+}
 
-	if [[ ${PIPESTATUS[0]} -ne 0 || ! -f arch/$ARCHITECTURE/boot/$KERNEL_IMAGE_TYPE ]]; then
-		grep -i error $DEST/${LOG_SUBPATH}/compilation.log
-		exit_with_error "Kernel was not built" "@host"
-	fi
-
-	# different packaging for 4.3+
-	if linux-version compare "${version}" ge 4.3; then
-		local kernel_packing="bindeb-pkg"
-	else
-		local kernel_packing="deb-pkg"
-	fi
-
-	display_alert "Creating packages"
-
-	# produce deb packages: image, headers, firmware, dtb
-	echo -e "\n\t== deb packages: image, headers, firmware, dtb ==\n" >> "${DEST}"/${LOG_SUBPATH}/compilation.log
-	eval CCACHE_BASEDIR="$(pwd)" env PATH="${toolchain}:${PATH}" \
-		'make $CTHREADS $kernel_packing \
-		KDEB_PKGVERSION=$REVISION \
-		KDEB_COMPRESS=${DEB_COMPRESS} \
-		BRANCH=$BRANCH \
-		LOCALVERSION="-${LINUXFAMILY}" \
-		KBUILD_DEBARCH=$ARCH \
-		ARCH=$ARCHITECTURE \
-		DEBFULLNAME="$MAINTAINER" \
-		DEBEMAIL="$MAINTAINERMAIL" \
-		CROSS_COMPILE="$CCACHE $KERNEL_COMPILER" 2>>$DEST/${LOG_SUBPATH}/compilation.log' \
-		${PROGRESS_LOG_TO_FILE:+' | tee -a $DEST/${LOG_SUBPATH}/compilation.log'} \
-		${OUTPUT_DIALOG:+' | dialog --backtitle "$backtitle" --progressbox "Creating kernel packages..." $TTY_Y $TTY_X'} \
-		${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-
-	cd .. || exit
-	# remove firmare image packages here - easier than patching ~40 packaging scripts at once
-	rm -f linux-firmware-image-*.deb
-
-	rsync --remove-source-files -rq ./*.deb "${DEB_STORAGE}/" || exit_with_error "Failed moving kernel DEBs"
-
-	# store git hash to the file and create a change log
-	HASHTARGET="${SRC}/cache/hash"$([[ ${BETA} == yes ]] && echo "-beta")"/linux-image-${BRANCH}-${LINUXFAMILY}"
-	OLDHASHTARGET=$(head -1 "${HASHTARGET}.githash" 2> /dev/null)
-
-	# check if OLDHASHTARGET commit exists otherwise use oldest
-	if [[ -z ${KERNEL_VERSION_LEVEL} ]]; then
-		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1
-		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} show HEAD~199 --pretty=format:"%H" --no-patch)
-	else
-		git -C ${kerneldir} cat-file -t ${OLDHASHTARGET} > /dev/null 2>&1
-		[[ $? -ne 0 ]] && OLDHASHTARGET=$(git -C ${kerneldir} rev-list --max-parents=0 HEAD)
-	fi
-
-	[[ -z ${KERNELPATCHDIR} ]] && KERNELPATCHDIR=$LINUXFAMILY-$BRANCH
-	[[ -z ${LINUXCONFIG} ]] && LINUXCONFIG=linux-$LINUXFAMILY-$BRANCH
-
-	# calculate URL
-	if [[ "$KERNELSOURCE" == *"github.com"* ]]; then
-		URL="${KERNELSOURCE/git:/https:}/commit/${HASH}"
-	elif [[ "$KERNELSOURCE" == *"kernel.org"* ]]; then
-		URL="${KERNELSOURCE/git:/https:}/commit/?h=$(echo $KERNELBRANCH | cut -d":" -f2)&id=${HASH}"
-	else
-		URL="${KERNELSOURCE}/+/$HASH"
-	fi
-
-	# create change log
-	git --no-pager -C ${kerneldir} log --abbrev-commit --oneline --no-patch --no-merges --date-order --date=format:'%Y-%m-%d %H:%M:%S' --pretty=format:'%C(black bold)%ad%Creset%C(auto) | %s | <%an> | <a href='$URL'%H>%H</a>' ${OLDHASHTARGET}..${hash} > "${HASHTARGET}.gitlog"
-
-	# hash origin
-	echo "${hash}" > "${HASHTARGET}.githash"
-
-	# hash_patches
-	CALC_PATCHES=$(git -C $SRC log --format="%H" -1 -- $(realpath --relative-base="$SRC" "${SRC}/patch/kernel/${KERNELPATCHDIR}"))
-	[[ -z "$CALC_PATCHES" ]] && CALC_PATCHES="null"
-	echo "$CALC_PATCHES" >> "${HASHTARGET}.githash"
-
-	# hash_kernel_config
-	CALC_CONFIG=$(git -C $SRC log --format="%H" -1 -- $(realpath --relative-base="$SRC" "${SRC}/config/kernel/${LINUXCONFIG}.config"))
-	[[ -z "$CALC_CONFIG" ]] && CALC_CONFIG="null"
-	echo "$CALC_CONFIG" >> "${HASHTARGET}.githash"
-
+function kernel_deploy_pkg() {
+	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
+	run_host_command_logged rsync -v --remove-source-files -r "${kernel_debs_temp_dir}"/*.deb "${DEB_STORAGE}/"
 }

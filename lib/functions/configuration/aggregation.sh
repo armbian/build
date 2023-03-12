@@ -1,112 +1,113 @@
 #!/usr/bin/env bash
-# Expected variables
-# - aggregated_content
-# - potential_paths
-# - separator
-# Write to variables :
-# - aggregated_content
-aggregate_content() {
-	LOG_OUTPUT_FILE="$SRC/output/${LOG_SUBPATH}/potential-paths.log"
-	echo -e "Potential paths :" >> "${LOG_OUTPUT_FILE}"
-	show_checklist_variables potential_paths
-	for filepath in ${potential_paths}; do
-		if [[ -f "${filepath}" ]]; then
-			echo -e "${filepath/"$SRC"\//} yes" >> "${LOG_OUTPUT_FILE}"
-			aggregated_content+=$(cat "${filepath}")
-			aggregated_content+="${separator}"
-			#		else
-			#			echo -e "${filepath/"$SRC"\//} no\n" >> "${LOG_OUTPUT_FILE}"
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
+function assert_requires_aggregation() {
+	if [[ ${aggregation_has_already_run:-0} -lt 1 ]]; then
+		exit_with_error "assert_requires_aggregation: Aggregation has not been run. This is a bug in armbian-next code. Please report!"
+	fi
+}
+
+function mark_aggregation_required_in_default_build_start() {
+	declare -i -g -r aggregation_required_in_default_build_start=1 # global, readonly.
+}
+
+function aggregate_packages_in_logging_section() {
+	# Aggregate packages, in its own logging section; this decides internally on KERNEL_ONLY=no
+	# We need aggregation to be able to build bsp packages, which contain scripts coming from the aggregation.
+	LOG_SECTION="aggregate_packages" do_with_logging aggregate_packages
+}
+
+# This used to be called from config (main-config), but now it's moved default-build, after prepare_host, so Python hostdeps are available.
+# So the aggregation results (hash, etc) are not available for config-dump.
+function aggregate_packages() {
+	if [[ "${KERNEL_ONLY}" != "yes" ]]; then # @TODO: remove, this is not the right place to decide this.
+
+		if [[ ${aggregation_has_already_run:-0} -gt 0 ]]; then
+			exit_with_error "aggregate_packages: Aggregation has already run"
 		fi
 
-	done
-	echo "" >> "${LOG_OUTPUT_FILE}"
-	unset LOG_OUTPUT_FILE
-}
+		display_alert "Aggregating packages" "rootfs" "info"
+		aggregate_all_packages_python
+		call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
+			*After all aggregations are done*
+			Called after aggregating all package lists.
+			Packages will still be installed after this is called. It is not possible to change anything, though.
+		POST_AGGREGATE_PACKAGES
 
-get_all_potential_paths() {
-	local root_dirs="${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}"
-	local rel_dirs="${1}"
-	local sub_dirs="${2}"
-	local looked_up_subpath="${3}"
-	for root_dir in ${root_dirs}; do
-		for rel_dir in ${rel_dirs}; do
-			for sub_dir in ${sub_dirs}; do
-				potential_paths+="${root_dir}/${rel_dir}/${sub_dir}/${looked_up_subpath} "
-			done
-		done
-	done
-	# for ppath in ${potential_paths}; do
-	#  	echo "Checking for ${ppath}"
-	#  	if [[ -f "${ppath}" ]]; then
-	#  		echo "OK !|"
-	#  	else
-	#  		echo "Nope|"
-	#  	fi
-	# done
-}
+		declare -i -g -r aggregation_has_already_run=1 # global, readonly.
 
-# Environment variables expected :
-# - aggregated_content
-# Arguments :
-# 1. File to look up in each directory
-# 2. The separator to add between each concatenated file
-# 3. Relative directories paths added to ${3}
-# 4. Relative directories paths added to ${4}
-#
-# The function will basically generate a list of potential paths by
-# generating all the potential paths combinations leading to the
-# looked up file
-# ${AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS}/${3}/${4}/${1}
-# Then it will concatenate the content of all the available files
-# into ${aggregated_content}
-#
-# TODO :
-# ${4} could be removed by just adding the appropriate paths to ${3}
-# dynamically for each case
-# (debootstrap, cli, desktop environments, desktop appgroups, ...)
-
-aggregate_all_root_rel_sub() {
-	local separator="${2}"
-
-	local potential_paths=""
-	get_all_potential_paths "${3}" "${4}" "${1}"
-
-	aggregate_content
-}
-
-aggregate_all_debootstrap() {
-	local sub_dirs_to_check=". "
-	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
-		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
 	fi
-	aggregate_all_root_rel_sub "${1}" "${2}" "${DEBOOTSTRAP_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
 }
 
-aggregate_all_cli() {
-	local sub_dirs_to_check=". "
-	if [[ ! -z "${SELECTED_CONFIGURATION+x}" ]]; then
-		sub_dirs_to_check+="config_${SELECTED_CONFIGURATION}"
-	fi
-	aggregate_all_root_rel_sub "${1}" "${2}" "${CLI_SEARCH_RELATIVE_DIRS}" "${sub_dirs_to_check}"
-}
+function aggregate_all_packages_python() {
+	prepare_python_and_pip
 
-aggregate_all_desktop() {
-	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS}" "."
-	aggregate_all_root_rel_sub "${1}" "${2}" "${DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS}" "${DESKTOP_APPGROUPS_SELECTED}"
-}
+	# Get a temporary file for the output. This is not WORKDIR yet, since we're still in configuration phase.
+	temp_file_for_aggregation="$(mktemp)"
 
-one_line() {
-	local aggregate_func_name="${1}"
-	local aggregated_content=""
-	shift 1
-	$aggregate_func_name "${@}"
-	cleanup_list aggregated_content
-}
+	# array with all parameters; will be auto-quoted by bash's @Q modifier below
+	declare -a aggregation_params_quoted=(
+		"${PYTHON3_VARS[@]}"      # Default vars, from prepare_python_and_pip
+		"LOG_DEBUG=${SHOW_DEBUG}" # Logging level for python.
+		"SRC=${SRC}"
+		"OUTPUT=${temp_file_for_aggregation}"
+		"ASSET_LOG_BASE=$(print_current_asset_log_base_file)" # base file name for the asset log; to write .md summaries.
 
-cleanup_list() {
-	local varname="${1}"
-	local list_to_clean="${!varname}"
-	list_to_clean="${list_to_clean#"${list_to_clean%%[![:space:]]*}"}"
-	list_to_clean="${list_to_clean%"${list_to_clean##*[![:space:]]}"}"
-	echo ${list_to_clean}
+		# For the main packages, and others; main packages are not mixed with BOARD or DESKTOP packages.
+		# Results:
+		# - AGGREGATED_DEBOOTSTRAP_COMPONENTS
+		# - AGGREGATED_PACKAGES_DEBOOTSTRAP
+		# - AGGREGATED_PACKAGES_ROOTFS
+		# - AGGREGATED_PACKAGES_IMAGE
+
+		"ARCH=${ARCH}"
+		"RELEASE=${RELEASE}"
+		"LINUXFAMILY=" # empty. Important: LINUXFAMILY is no longer considered for package aggregation.
+		"BOARD="       # empty. Important: BOARD is no longer considered for package aggregation
+		"USERPATCHES_PATH=${USERPATCHES_PATH}"
+		"SELECTED_CONFIGURATION=${SELECTED_CONFIGURATION}"
+		"BUILD_MINIMAL=${BUILD_MINIMAL}" # if yes, it does not include packages.additional, on top of differences of SELECTED_CONFIGURATION
+
+		# Removals. Will remove from all lists.
+		"REMOVE_PACKAGES=${REMOVE_PACKAGES[*]}"
+		"REMOVE_PACKAGES_REFS=${REMOVE_PACKAGES_REFS[*]}"
+
+		# Extra packages in rootfs (cached)
+		"EXTRA_PACKAGES_ROOTFS=${EXTRA_PACKAGES_ROOTFS[*]}"
+		"EXTRA_PACKAGES_ROOTFS_REFS=${EXTRA_PACKAGES_ROOTFS_REFS[*]}"
+
+		# Extra packages, in image (not cached)
+		"EXTRA_PACKAGES_IMAGE=${EXTRA_PACKAGES_IMAGE[*]}"
+		"EXTRA_PACKAGES_IMAGE_REFS=${EXTRA_PACKAGES_IMAGE_REFS[*]}"
+
+		# Desktop stuff; results are not mixed into main packages. Results in AGGREGATED_PACKAGES_DESKTOP.
+		"BUILD_DESKTOP=${BUILD_DESKTOP}"
+		"DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT}"
+		"DESKTOP_ENVIRONMENT_CONFIG_NAME=${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+		"DESKTOP_APPGROUPS_SELECTED=${DESKTOP_APPGROUPS_SELECTED}"
+
+		# Those are processed by Python, but not part of rootfs / main packages; results in AGGREGATED_PACKAGES_IMAGE_INSTALL
+		# These two vars are made readonly after sourcing the board / family config, so can't be used in extensions and such.
+		"PACKAGE_LIST_FAMILY=${PACKAGE_LIST_FAMILY}"
+		"PACKAGE_LIST_BOARD=${PACKAGE_LIST_BOARD}"
+
+		# Those are processed by Python, but not part of rootfs / main packages; results in AGGREGATED_PACKAGES_IMAGE_UNINSTALL
+		# These two vars are made readonly after sourcing the board / family config, so can't be used in extensions and such.
+		"PACKAGE_LIST_BOARD_REMOVE=${PACKAGE_LIST_BOARD_REMOVE}"
+		"PACKAGE_LIST_FAMILY_REMOVE=${PACKAGE_LIST_FAMILY_REMOVE}"
+	)
+
+	# "raw_command" is only for logging purposes.
+	raw_command="[...shortened...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/aggregation.py" \
+		run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${PYTHON3_INFO[BIN]}" "${SRC}/lib/tools/aggregation.py"
+	#run_host_command_logged cat "${temp_file_for_aggregation}"
+	# shellcheck disable=SC1090
+	source "${temp_file_for_aggregation}" # SOURCE IT!
+	run_host_command_logged rm -f "${temp_file_for_aggregation}"
 }

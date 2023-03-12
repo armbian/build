@@ -1,33 +1,22 @@
 #!/usr/bin/env bash
-create_desktop_package() {
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
 
-	echo "Showing PACKAGE_LIST_DESKTOP before postprocessing" >> "${DEST}"/${LOG_SUBPATH}/output.log
-	# Use quotes to show leading and trailing spaces
-	echo "\"$PACKAGE_LIST_DESKTOP\"" >> "${DEST}"/${LOG_SUBPATH}/output.log
+function create_desktop_package() {
+	# produced by aggregation.py
+	display_alert "bsp-desktop: AGGREGATED_PACKAGES_DESKTOP_COMMA" "'${AGGREGATED_PACKAGES_DESKTOP_COMMA}'" "debug"
 
-	# Remove leading and trailing spaces with some bash monstruosity
-	# https://stackoverflow.com/questions/369758/how-to-trim-whitespace-from-a-bash-variable#12973694
-	DEBIAN_RECOMMENDS="${PACKAGE_LIST_DESKTOP#"${PACKAGE_LIST_DESKTOP%%[![:space:]]*}"}"
-	DEBIAN_RECOMMENDS="${DEBIAN_RECOMMENDS%"${DEBIAN_RECOMMENDS##*[![:space:]]}"}"
-	# Replace whitespace characters by commas
-	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS// /,}
-	# Remove others 'spacing characters' (like tabs)
-	DEBIAN_RECOMMENDS=${DEBIAN_RECOMMENDS//[[:space:]]/}
+	declare cleanup_id="" tmp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "bsp-desktop" cleanup_id tmp_dir # namerefs
 
-	echo "DEBIAN_RECOMMENDS : ${DEBIAN_RECOMMENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
-
-	# Replace whitespace characters by commas
-	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS// /,}
-	# Remove others 'spacing characters' (like tabs)
-	PACKAGE_LIST_PREDEPENDS=${PACKAGE_LIST_PREDEPENDS//[[:space:]]/}
-
-	local destination tmp_dir
-	tmp_dir=$(mktemp -d)
-	destination=${tmp_dir}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all
+	declare destination="${tmp_dir}/${BOARD}/${CHOSEN_DESKTOP}_${REVISION}_all"
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
-
-	echo "${PACKAGE_LIST_PREDEPENDS}" >> "${DEST}"/${LOG_SUBPATH}/output.log
 
 	# set up control file
 	cat <<- EOF > "${destination}"/DEBIAN/control
@@ -38,61 +27,41 @@ create_desktop_package() {
 		Installed-Size: 1
 		Section: xorg
 		Priority: optional
-		Recommends: ${DEBIAN_RECOMMENDS//[:space:]+/,}, armbian-bsp-desktop
+		Recommends: ${AGGREGATED_PACKAGES_DESKTOP_COMMA}, armbian-bsp-desktop
 		Provides: ${CHOSEN_DESKTOP}, armbian-${RELEASE}-desktop
 		Conflicts: gdm3
-		Pre-Depends: ${PACKAGE_LIST_PREDEPENDS//[:space:]+/,}
 		Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE}
 	EOF
 
 	# Recreating the DEBIAN/postinst file
-	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
-
-	local aggregated_content=""
-	aggregate_all_desktop "debian/postinst" $'\n'
-
-	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
+	echo "#!/bin/bash -e" > "${destination}/DEBIAN/postinst"
+	echo "${AGGREGATED_DESKTOP_POSTINST}" >> "${destination}/DEBIAN/postinst"
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
-
 	chmod 755 "${destination}"/DEBIAN/postinst
 
-	#display_alert "Showing ${destination}/DEBIAN/postinst"
-	cat "${destination}/DEBIAN/postinst" >> "${DEST}"/${LOG_SUBPATH}/install.log
-
 	# Armbian create_desktop_package scripts
-
-	unset aggregated_content
-
 	mkdir -p "${destination}"/etc/armbian
-
-	local aggregated_content=""
-	aggregate_all_desktop "armbian/create_desktop_package.sh" $'\n'
-	eval "${aggregated_content}"
-	[[ $? -ne 0 ]] && display_alert "create_desktop_package.sh exec error" "" "wrn"
+	# @TODO: error information? This is very likely to explode....
+	eval "${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE}"
 
 	display_alert "Building desktop package" "${CHOSEN_DESKTOP}_${REVISION}_all" "info"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	cd "${destination}"
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
 	cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb" > /dev/null
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
 
-	# cleanup
-	rm -rf "${tmp_dir}"
-
-	unset aggregated_content
-
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
-create_bsp_desktop_package() {
-
+function create_bsp_desktop_package() {
 	display_alert "Creating board support package for desktop" "${package_name}" "info"
 
 	local package_name="${BSP_DESKTOP_PACKAGE_FULLNAME}"
+	declare cleanup_id="" tmp_dir=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "bsp-desktop2" cleanup_id tmp_dir # namerefs
 
-	local destination tmp_dir
-	tmp_dir=$(mktemp -d)
-	destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
+	local destination=${tmp_dir}/${BOARD}/${BSP_DESKTOP_PACKAGE_FULLNAME}
 	rm -rf "${destination}"
 	mkdir -p "${destination}"/DEBIAN
 
@@ -113,35 +82,20 @@ create_bsp_desktop_package() {
 	EOF
 
 	# Recreating the DEBIAN/postinst file
-	echo "#!/bin/sh -e" > "${destination}/DEBIAN/postinst"
-
-	local aggregated_content=""
-	aggregate_all_desktop "debian/armbian-bsp-desktop/postinst" $'\n'
-
-	echo "${aggregated_content}" >> "${destination}/DEBIAN/postinst"
+	echo "#!/bin/bash -e" > "${destination}/DEBIAN/postinst"
+	echo "${AGGREGATED_DESKTOP_BSP_POSTINST}" >> "${destination}/DEBIAN/postinst"
 	echo "exit 0" >> "${destination}/DEBIAN/postinst"
-
 	chmod 755 "${destination}"/DEBIAN/postinst
 
 	# Armbian create_desktop_package scripts
-
-	unset aggregated_content
-
 	mkdir -p "${destination}"/etc/armbian
-
-	local aggregated_content=""
-	aggregate_all_desktop "debian/armbian-bsp-desktop/prepare.sh" $'\n'
-	eval "${aggregated_content}"
-	[[ $? -ne 0 ]] && display_alert "prepare.sh exec error" "" "wrn"
+	# @TODO: error information? This is very likely to explode....
+	eval "${AGGREGATED_DESKTOP_BSP_PREPARE}"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	cd "${destination}"
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
 	cd ..
-	fakeroot dpkg-deb -b -Z${DEB_COMPRESS} "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb" > /dev/null
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}/${package_name}.deb"
 
-	# cleanup
-	rm -rf "${tmp_dir}"
-
-	unset aggregated_content
-
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

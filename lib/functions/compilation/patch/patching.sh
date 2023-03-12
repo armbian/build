@@ -1,48 +1,52 @@
 #!/usr/bin/env bash
-# advanced_patch <dest> <family> <board> <target> <branch> <description>
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
+# advanced_patch <patch_kind> <{patch_dir}> <board> <target> <branch> <description>
 #
 # parameters:
-# <dest>: u-boot, kernel, atf
-# <family>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
+# <patch_kind>: u-boot, kernel, atf
+# <{patch_dir}>: u-boot: u-boot, u-boot-neo; kernel: sun4i-default, sunxi-next, ...
 # <board>: cubieboard, cubieboard2, cubietruck, ...
 # <target>: optional subdirectory
 # <description>: additional description text
-#
-# priority:
-# $USERPATCHES_PATH/<dest>/<family>/target_<target>
-# $USERPATCHES_PATH/<dest>/<family>/board_<board>
-# $USERPATCHES_PATH/<dest>/<family>/branch_<branch>
-# $USERPATCHES_PATH/<dest>/<family>
-# $SRC/patch/<dest>/<family>/target_<target>
-# $SRC/patch/<dest>/<family>/board_<board>
-# $SRC/patch/<dest>/<family>/branch_<branch>
-# $SRC/patch/<dest>/<family>
-#
-advanced_patch() {
-	local dest=$1
-	local family=$2
-	local board=$3
-	local target=$4
-	local branch=$5
-	local description=$6
 
-	display_alert "Started patching process for" "$dest $description" "info"
-	display_alert "Looking for user patches in" "userpatches/$dest/$family" "info"
+# calls:
+#                         ${patch_kind}  ${patch_dir}      $board   $target            $branch   $description
+# kernel: advanced_patch "kernel"       "$KERNELPATCHDIR" "$BOARD" ""                 "$BRANCH" "$LINUXFAMILY-$BRANCH"
+# u-boot: advanced_patch "u-boot"       "$BOOTPATCHDIR"   "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
+function advanced_patch() {
+	local patch_kind="$1"
+	local patch_dir="$2"
+	local board="$3"
+	local target="$4"
+	local branch="$5"
+	local description="$6"
+
+	display_alert "Started patching process for" "${patch_kind} $description" "info"
+	display_alert "Looking for user patches in" "userpatches/${patch_kind}/${patch_dir}" "info"
 
 	local names=()
 	local dirs=(
-		"$USERPATCHES_PATH/$dest/$family/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
-		"$USERPATCHES_PATH/$dest/$family/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
-		"$USERPATCHES_PATH/$dest/$family/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
-		"$USERPATCHES_PATH/$dest/$family:[\e[33mu\e[0m][\e[32mc\e[0m]"
-		"$SRC/patch/$dest/$family/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]"
-		"$SRC/patch/$dest/$family/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"
-		"$SRC/patch/$dest/$family/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]"
-		"$SRC/patch/$dest/$family:[\e[32ml\e[0m][\e[32mc\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}/target_${target}:[\e[33mu\e[0m][\e[34mt\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}/board_${board}:[\e[33mu\e[0m][\e[35mb\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}/branch_${branch}:[\e[33mu\e[0m][\e[33mb\e[0m]"
+		"$USERPATCHES_PATH/${patch_kind}/${patch_dir}:[\e[33mu\e[0m][\e[32mc\e[0m]"
+
+		"$SRC/patch/${patch_kind}/${patch_dir}/target_${target}:[\e[32ml\e[0m][\e[34mt\e[0m]" # used for u-boot "spi" stuff
+		"$SRC/patch/${patch_kind}/${patch_dir}/board_${board}:[\e[32ml\e[0m][\e[35mb\e[0m]"   # used for u-boot board-specific stuff
+		"$SRC/patch/${patch_kind}/${patch_dir}/branch_${branch}:[\e[32ml\e[0m][\e[33mb\e[0m]" # NOT used, I think.
+		"$SRC/patch/${patch_kind}/${patch_dir}:[\e[32ml\e[0m][\e[32mc\e[0m]"                  # used for everything
 	)
 	local links=()
 
 	# required for "for" command
+	# @TODO these shopts leak for the rest of the build script! either make global, or restore them after this function
 	shopt -s nullglob dotglob
 	# get patch file names
 	for dir in "${dirs[@]}"; do
@@ -56,6 +60,7 @@ advanced_patch() {
 			[[ -n $findlinks ]] && readarray -d '' links < <(find "${findlinks}" -maxdepth 1 -type f -follow -print -iname "*.patch" -print | grep "\.patch$" | sed "s|${dir%%:*}/||g" 2>&1)
 		fi
 	done
+
 	# merge static and linked
 	names=("${names[@]}" "${links[@]}")
 	# remove duplicates
@@ -82,76 +87,32 @@ advanced_patch() {
 # <status>: additional status text
 #
 process_patch_file() {
-	local patch=$1
-	local status=$2
+	local patch="${1}"
+	local status="${2}"
+	local -i patch_date
+	local relative_patch="${patch##"${SRC}"/}" # ${FOO##prefix} remove prefix from FOO
 
 	# detect and remove files which patch will create
 	lsdiff -s --strip=1 "${patch}" | grep '^+' | awk '{print $2}' | xargs -I % sh -c 'rm -f %'
 
-	echo "Processing file $patch" >> "${DEST}"/${LOG_SUBPATH}/patching.log
-	patch --batch --silent -p1 -N < "${patch}" >> "${DEST}"/${LOG_SUBPATH}/patching.log 2>&1
-
-	if [[ $? -ne 0 ]]; then
-		display_alert "* $status $(basename "${patch}")" "failed" "wrn"
+	# shellcheck disable=SC2015 # noted, thanks. I need to handle exit code here.
+	patch --batch -p1 -N --input="${patch}" --quiet --reject-file=- && { # "-" discards rejects
+		display_alert "* $status ${relative_patch}" "" "info"
+	} || {
+		display_alert "* $status ${relative_patch}" "failed" "wrn"
 		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
-	else
-		display_alert "* $status $(basename "${patch}")" "" "info"
-	fi
-	echo >> "${DEST}"/${LOG_SUBPATH}/patching.log
-}
+	}
 
-# apply_patch_series <target dir> <full path to series file>
-apply_patch_series() {
-	local t_dir="${1}"
-	local series="${2}"
-	local bzdir="$(dirname $series)"
-	local flag
-	local err_pt=$(mktemp /tmp/apply_patch_series_XXXXX)
-
-	list=$(awk '$0 !~ /^#.*|^-.*|^$/' "${series}")
-	skiplist=$(awk '$0 ~ /^-.*/{print $NF}' "${series}")
-
-	display_alert "apply a series of " "[$(echo $list | wc -w)] patches"
-	display_alert "skip [$(echo $skiplist | wc -w)] patches"
-
-	cd "${t_dir}" || exit 1
-	for p in $list; do
-		# Detect and remove files as '*.patch' which patch will create.
-		# So we need to delete the file before applying the patch if it exists.
-		lsdiff -s --strip=1 "$bzdir/$p" |
-			awk '$0 ~ /^+.*patch$/{print $2}' |
-			xargs -I % sh -c 'rm -f %'
-
-		patch --batch --silent --no-backup-if-mismatch -p1 -N < $bzdir/"$p" >> $err_pt 2>&1
-		flag=$?
-
-		case $flag in
-			0)
-				printf "[\033[32m done \033[0m]    %s\n" "${p}"
-				printf "[ done ]    %s\n" "${p}" >> "${DEST}"/debug/patching.log
-				;;
-			1)
-				printf "[\033[33m FAILED \033[0m]  %s\n" "${p}"
-				echo -e "[ FAILED ]  For ${p} \t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
-				cat $err_pt >> "${DEST}"/debug/patching.log
-				;;
-			2)
-				printf "[\033[31m Patch wrong \033[0m] %s\n" "${p}"
-				echo -e "Patch wrong ${p}\t\tprocess exit [ $flag ]" >> "${DEST}"/debug/patching.log
-				cat $err_pt >> "${DEST}"/debug/patching.log
-				;;
-		esac
-		echo "" > $err_pt
-	done
-	echo "" >> "${DEST}"/debug/patching.log
-	rm $err_pt
+	return 0 # short-circuit above, avoid exiting with error
 }
 
 userpatch_create() {
+	display_alert "@TODO" "@TODO armbian-next" "warn"
 	# create commit to start from clean source
 	git add .
 	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
 
+	mkdir -p "${DEST}/patch"
 	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
 
 	# apply previous user debug mode created patches
@@ -178,7 +139,7 @@ userpatch_create() {
 			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
 			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
 			git commit -s -m "$COMMIT_MESSAGE"
-			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools $GITHUB_SOURCE/armbian/build" > "${patch}"
+			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
 			PATCHFILE=$(git format-patch -1 HEAD)
 			rm $PATCHFILE # delete the actual file
 			# create a symlink to have a nice name ready

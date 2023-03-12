@@ -1,122 +1,85 @@
 #!/usr/bin/env bash
-# unmount_on_exit
 #
-unmount_on_exit() {
-
-	trap - INT TERM EXIT
-	local stacktrace="$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
-	display_alert "unmount_on_exit() called!" "$stacktrace" "err"
-	if [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
-		ERROR_DEBUG_SHELL=no # dont do it twice
-		display_alert "MOUNT" "${MOUNT}" "err"
-		display_alert "SDCARD" "${SDCARD}" "err"
-		display_alert "ERROR_DEBUG_SHELL=yes, starting a shell." "ERROR_DEBUG_SHELL" "err"
-		bash < /dev/tty || true
-	fi
-
-	umount_chroot "${SDCARD}/"
-	mountpoint -q "${SRC}"/cache/toolchain && umount -l "${SRC}"/cache/toolchain
-	mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/rootfs
-	umount -l "${SDCARD}"/tmp > /dev/null 2>&1
-	umount -l "${SDCARD}" > /dev/null 2>&1
-	umount -l "${MOUNT}"/boot > /dev/null 2>&1
-	umount -l "${MOUNT}" > /dev/null 2>&1
-	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
-	losetup -d "${LOOP}" > /dev/null 2>&1
-	rm -rf --one-file-system "${SDCARD}"
-	exit_with_error "debootstrap-ng was interrupted" || true # don't trigger again
-
-}
-
-# debootstrap_ng
+# SPDX-License-Identifier: GPL-2.0
 #
-debootstrap_ng() {
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
+function build_rootfs_and_image() {
 	display_alert "Checking for rootfs cache" "$(echo "${BRANCH} ${BOARD} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}" | tr -s " ")" "info"
 
-	[[ $ROOTFS_TYPE != ext4 ]] && display_alert "Assuming $BOARD $BRANCH kernel supports $ROOTFS_TYPE" "" "wrn"
+	# get a basic rootfs, either from cache or from scratch
+	get_or_create_rootfs_cache_chroot_sdcard # only occurrence of this; has its own logging sections
 
-	# trap to unmount stuff in case of error/manual interruption
-	trap unmount_on_exit INT TERM EXIT
+	# stage: with a basic rootfs available, we mount the chroot and work on it
+	LOG_SECTION="mount_chroot_sdcard" do_with_logging mount_chroot "${SDCARD}"
 
-	# stage: clean and create directories
-	rm -rf $SDCARD $MOUNT
-	mkdir -p $SDCARD $MOUNT $DEST/images $SRC/cache/rootfs
-
-	# bind mount rootfs if defined
-	if [[ -d "${ARMBIAN_CACHE_ROOTFS_PATH}" ]]; then
-		mountpoint -q "${SRC}"/cache/rootfs && umount -l "${SRC}"/cache/toolchain
-		mount --bind "${ARMBIAN_CACHE_ROOTFS_PATH}" "${SRC}"/cache/rootfs
-	fi
-
-	# stage: verify tmpfs configuration and mount
-	# CLI needs ~1.5GiB, desktop - ~3.5GiB
-	# calculate and set tmpfs mount to use 9/10 of available RAM+SWAP
-	local phymem=$(((($(awk '/MemTotal/ {print $2}' /proc/meminfo) + $(awk '/SwapTotal/ {print $2}' /proc/meminfo))) / 1024 * 9 / 10)) # MiB
-	if [[ $BUILD_DESKTOP == yes ]]; then local tmpfs_max_size=3500; else local tmpfs_max_size=1500; fi                                 # MiB
-	if [[ $FORCE_USE_RAMDISK == no ]]; then
-		local use_tmpfs=no
-	elif [[ $FORCE_USE_RAMDISK == yes || $phymem -gt $tmpfs_max_size ]]; then
-		local use_tmpfs=yes
-	fi
-	[[ -n $FORCE_TMPFS_SIZE ]] && phymem=$FORCE_TMPFS_SIZE
-
-	[[ $use_tmpfs == yes ]] && mount -t tmpfs -o size=${phymem}M tmpfs $SDCARD
-
-	# stage: prepare basic rootfs: unpack cache or create from scratch
-	create_rootfs_cache
-
-	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" << 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
-*give config a chance to act before install_distribution_specific*
-Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
-PRE_INSTALL_DISTRIBUTION_SPECIFIC
+	call_extension_method "pre_install_distribution_specific" "config_pre_install_distribution_specific" <<- 'PRE_INSTALL_DISTRIBUTION_SPECIFIC'
+		*give config a chance to act before install_distribution_specific*
+		Called after `create_rootfs_cache` (_prepare basic rootfs: unpack cache or create from scratch_) but before `install_distribution_specific` (_install distribution and board specific applications_).
+	PRE_INSTALL_DISTRIBUTION_SPECIFIC
 
 	# stage: install kernel and u-boot packages
 	# install distribution and board specific applications
 
-	install_distribution_specific
-	install_common
+	LOG_SECTION="install_distribution_specific_${RELEASE}" do_with_logging install_distribution_specific
+	LOG_SECTION="install_distribution_agnostic" do_with_logging install_distribution_agnostic
 
-	# install locally built packages
-	[[ $EXTERNAL_NEW == compile ]] && chroot_installpackages_local
+	# install locally built packages  #  @TODO: armbian-nextify this eventually
+	#[[ $EXTERNAL_NEW == compile ]] && LOG_SECTION="packages_local" do_with_logging chroot_installpackages_local
+	[[ $EXTERNAL_NEW == compile ]] && display_alert "Not running" "NOT armbian-next ported yet: chroot_installpackages_local" "warn"
 
-	# install from apt.armbian.com
-	[[ $EXTERNAL_NEW == prebuilt ]] && chroot_installpackages "yes"
+	# install from apt.armbian.com  # @TODO: armbian-nextify this eventually
+	#[[ $EXTERNAL_NEW == prebuilt ]] && LOG_SECTION="packages_prebuilt" do_with_logging chroot_installpackages "yes"
+	[[ $EXTERNAL_NEW == prebuilt ]] && display_alert "Not running" "NOT armbian-next ported yet: chroot_installpackages 'yes'" "warn"
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
-	customize_image
+	LOG_SECTION="customize_image" do_with_logging customize_image
 
-	# remove packages that are no longer needed. Since we have intrudoced uninstall feature, we might want to clean things that are no longer needed
-	display_alert "No longer needed packages" "purge" "info"
-	chroot $SDCARD /bin/bash -c "apt-get autoremove -y" > /dev/null 2>&1
+	# remove packages that are no longer needed. rootfs cache + uninstall might have leftovers.
+	LOG_SECTION="apt_purge_unneeded_packages" do_with_logging apt_purge_unneeded_packages
 
-	# create list of all installed packages for debug purposes
-	chroot $SDCARD /bin/bash -c "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > $DEST/${LOG_SUBPATH}/installed-packages-${RELEASE}$([[ ${BUILD_MINIMAL} == yes ]] &&
-		echo "-minimal")$([[ ${BUILD_DESKTOP} == yes ]] && echo "-desktop").list 2>&1
+	# for reference, debugging / sanity checking
+	LOG_SECTION="list_installed_packages" do_with_logging list_installed_packages
+
+	LOG_SECTION="post_debootstrap_tweaks" do_with_logging post_debootstrap_tweaks
 
 	# clean up / prepare for making the image
-	umount_chroot "$SDCARD"
-	post_debootstrap_tweaks
+	LOG_SECTION="umount_chroot_sdcard" do_with_logging umount_chroot "${SDCARD}"
 
-	if [[ $ROOTFS_TYPE == fel ]]; then
-		FEL_ROOTFS=$SDCARD/
-		display_alert "Starting FEL boot" "$BOARD" "info"
-		start_fel_boot
-	else
-		prepare_partitions
-		create_image
+	# obtain the size, in MiB, of "${SDCARD}" at this point.
+	declare -i rootfs_size_mib
+	rootfs_size_mib=$(du --apparent-size -sm "${SDCARD}" | awk '{print $1}')
+	display_alert "Actual rootfs size" "${rootfs_size_mib}MiB" ""
+
+	# warn if rootfs_size_mib is higher than the tmpfs_estimated_size
+	if [[ ${rootfs_size_mib} -gt ${tmpfs_estimated_size} ]]; then
+		display_alert "Rootfs post-tweaks size is larger than estimated tmpfs size" "${rootfs_size_mib}MiB > ${tmpfs_estimated_size}MiB" "wrn"
 	fi
 
-	# stage: unmount tmpfs
-	umount $SDCARD 2>&1
-	if [[ $use_tmpfs = yes ]]; then
-		while grep -qs "$SDCARD" /proc/mounts; do
-			umount $SDCARD
-			sleep 5
-		done
-	fi
-	rm -rf $SDCARD
+	# ------------------------------------ UP HERE IT's 'rootfs' stuff -------------------------------
 
-	# remove exit trap
-	trap - INT TERM EXIT
+	#------------------------------------ DOWN HERE IT's 'image' stuff -------------------------------
+
+	LOG_SECTION="prepare_partitions" do_with_logging prepare_partitions
+	LOG_SECTION="create_image_from_sdcard_rootfs" do_with_logging create_image_from_sdcard_rootfs
+
+	# Completely and recursively unmount the directory. --> This will remove the tmpfs mount too <--
+	umount_chroot_recursive "${SDCARD}" "SDCARD rootfs finished"
+
+	# Remove the dir
+	[[ -d "${SDCARD}" ]] && rm -rf --one-file-system "${SDCARD}"
+
+	# Run the cleanup handler. @TODO: this already does the above, so can be simpler. @TODO: don't forget to split MOUNT/SDCARD trap
+	execute_and_remove_cleanup_handler trap_handler_cleanup_rootfs_and_image
+
+	return 0
+}
+
+function list_installed_packages() {
+	display_alert "Recording list of installed packages" "asset log" "debug"
+	LOG_ASSET="installed_packages.txt" do_with_log_asset chroot_sdcard dpkg --get-selections "| grep -v deinstall | awk '{print \$1}' | cut -f1 -d':'"
 }
