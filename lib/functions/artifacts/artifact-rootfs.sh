@@ -10,6 +10,7 @@
 function artifact_rootfs_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
+	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	assert_requires_aggregation # Bombs if aggregation has not run
 
@@ -30,7 +31,7 @@ function artifact_rootfs_prepare_version() {
 	# @TODO: gotta include the extensions rootfs-modifying id to cache_type...
 
 	# outer scope
-	artifact_version="${rootfs_cache_id}"
+	artifact_version="${artifact_prefix_version}${rootfs_cache_id}"
 	artifact_version_reason="${reasons[*]}"
 	artifact_name="${ARCH}-${RELEASE}-${cache_type}"
 	artifact_type="tar.zst"
