@@ -19,8 +19,9 @@ function create_image_from_sdcard_rootfs() {
 	add_cleanup_handler trap_handler_cleanup_destimg
 
 	# stage: create file name
-	# @TODO: rpardini: determine the image file name produced. a bit late in the game, since it uses IMAGE_INSTALLED_KERNEL_VERSION which is from the kernel package.
-	local version="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
+	# determine the image file name produced. a bit late in the game, since it uses IMAGE_INSTALLED_KERNEL_VERSION which is from the kernel package.
+	# If IMAGE_VERSION has something, use it, otherwise use REVISION
+	local version="${VENDOR}_${IMAGE_VERSION:-"${REVISION}"}_${BOARD^}_${RELEASE}_${BRANCH}_${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
