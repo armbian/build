@@ -23,11 +23,21 @@ function do_main_configuration() {
 	# common options
 	# daily beta build contains date in subrevision
 	#if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
+	declare revision_from="undetermined"
 	if [ -f $USERPATCHES_PATH/VERSION ]; then
 		REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)"$SUBREVISION" # all boards have same revision
+		revision_from="userpatches VERSION file"
 	else
 		REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
+		revision_from="main VERSION file"
 	fi
+
+	declare -g -r REVISION="${REVISION}"
+	display_alert "Using revision from" "${revision_from}: '${REVISION}" "info"
+
+	# This is the prefix used by all artifacts. Readonly. It's just $REVISION and a double dash.
+	declare -r -g artifact_prefix_version="${REVISION}--"
+
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
@@ -241,7 +251,7 @@ function do_main_configuration() {
 		*give the config a chance to override the family/arch defaults, per branch*
 		This hook is called after the family configuration (`sources/families/xxx.conf`) is sourced,
 		and after `post_family_config()` hook is already run.
-		The sole purpose of this is to avoid "case ... esac for $BRANCH" in the board configuration, 
+		The sole purpose of this is to avoid "case ... esac for $BRANCH" in the board configuration,
 		allowing separate functions for different branches. You're welcome.
 	POST_FAMILY_CONFIG_PER_BRANCH
 

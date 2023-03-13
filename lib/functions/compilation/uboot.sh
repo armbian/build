@@ -402,6 +402,6 @@ function compile_uboot() {
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
-	display_alert "Built u-boot deb OK" "${uboot_name}.deb" "info"
+	display_alert "Built u-boot deb OK" "linux-u-boot-${BOARD}-${BRANCH} ${artifact_version}" "info"
 	return 0 # success
 }
