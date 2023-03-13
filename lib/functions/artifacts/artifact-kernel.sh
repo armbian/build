@@ -18,7 +18,8 @@ function artifact_kernel_prepare_version() {
 
 	# - Given KERNELSOURCE and KERNELBRANCH, get:
 	#    - SHA1 of the commit (this is generic... and used for other pkgs)
-	#    - The first 10 lines of the root Makefile at that commit (cached lookup, same SHA1=same Makefile, http GET, not cloned)
+	#    - (unless KERNEL_SKIP_MAKEFILE_VERSION=yes) The first 10 lines of the root Makefile at that commit
+	#         (cached lookup, same SHA1=same Makefile, http GET, not cloned)
 	#      - This gives us the full version plus codename, plus catches "version shenanigans" possibly done by patches...
 	#    - @TODO: Make sure this is sane, ref KERNEL_MAJOR_MINOR; it's transitional, but we need to be sure it's sane.
 	# - Get the drivers patch hash (given LINUXFAMILY and the vX.Z.Y version) - the harness can do this by hashing patches and bash code
@@ -55,11 +56,18 @@ function artifact_kernel_prepare_version() {
 	debug_var KERNELBRANCH
 	debug_var LINUXFAMILY
 	debug_var KERNELPATCHDIR
+	debug_var KERNEL_SKIP_MAKEFILE_VERSION
 
 	declare short_hash_size=4
 
 	declare -A GIT_INFO_KERNEL=([GIT_SOURCE]="${KERNELSOURCE}" [GIT_REF]="${KERNELBRANCH}")
-	run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info "include_makefile_body"
+
+	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
+		display_alert "Skipping Makefile version for kernel" "due to KERNEL_SKIP_MAKEFILE_VERSION=yes" "info"
+		run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info
+	else
+		run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info "include_makefile_body"
+	fi
 	debug_dict GIT_INFO_KERNEL
 
 	declare short_sha1="${GIT_INFO_KERNEL[SHA1]:0:${short_hash_size}}"
@@ -101,9 +109,14 @@ function artifact_kernel_prepare_version() {
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
+	declare common_version_suffix="S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}H${kernel_config_modification_hash_short}-B${bash_hash_short}"
+
 	# outer scope
-	# @TODO: support NOT having the GIT_INFO_KERNEL, for families that patch the version or are private...
-	artifact_version="${artifact_prefix_version}${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}H${kernel_config_modification_hash_short}-B${bash_hash_short}"
+	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
+		artifact_version="${artifact_prefix_version}${common_version_suffix}"
+	else
+		artifact_version="${artifact_prefix_version}${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-${common_version_suffix}"
+	fi
 
 	declare -a reasons=(
 		"version \"${GIT_INFO_KERNEL[MAKEFILE_FULL_VERSION]}\""
