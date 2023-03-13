@@ -29,6 +29,8 @@ function output_images_compress_and_checksum() {
 		[[ -L "${uncompressed_file}" ]] && continue
 		# if image is not a file, skip it
 		[[ ! -f "${uncompressed_file}" ]] && continue
+		# if filename ends in .txt, skip it
+		[[ "${uncompressed_file}" == *.txt ]] && continue
 
 		# get just the filename, sans path
 		declare uncompressed_file_basename
