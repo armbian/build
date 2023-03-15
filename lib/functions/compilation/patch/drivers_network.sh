@@ -234,11 +234,11 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:7b8c45a270454f05e2dbf3beeb4afcf817db65da"
+		local rtl8811cuver="commit:69c903b75bde36293c66b25c051916a74dbadf58"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210118" "rtl8811cu" "${rtl8811cuver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210916" "rtl8811cu" "${rtl8811cuver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8811cu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8811cu/"
