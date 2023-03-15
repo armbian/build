@@ -83,7 +83,6 @@ More information:
 
 - [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
 - [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
-- [Building with Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) — how to build inside container;
 - [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
 
 ## Download prebuilt images
@@ -110,11 +109,23 @@ Function | Armbian | Yocto | Buildroot |
 
 ## Project structure
 
+<details><summary>Expand</summary>
+
 ```text
 ├── cache                                Work / cache directory
-│   ├── rootfs                           Compressed userspace packages cache
-│   ├── sources                          Kernel, u-boot and various drivers sources.
-│   ├── toolchains                       External cross compilers from Linaro™ or ARM™
+│   ├── aptcache                         Packages
+│   ├── ccache                           C/C++ compiler
+│   ├── docker                           Docker last pull
+│   ├── git-bare                         Minimal Git
+│   ├── git-bundles                      Full Git
+│   ├── initrd                           Ram disk
+│   ├── memoize                          Git status
+│   ├── patch                            Kernel drivers patch
+│   ├── pip                              Python
+│   ├── rootfs                           Compressed userspaces
+│   ├── sources                          Kernel, u-boot and other sources
+│   ├── tools                            Additional tools like ORAS
+│   └── utility
 ├── config                               Packages repository configurations
 │   ├── targets.conf                     Board build target configuration
 │   ├── boards                           Board configurations
@@ -127,8 +138,21 @@ Function | Armbian | Yocto | Buildroot |
 │   ├── sources                          Kernel and u-boot sources locations and scripts
 │   ├── templates                        User configuration templates which populate userpatches
 │   └── torrents                         External compiler and rootfs cache torrents
-├── extensions                           extend build system with specific functionality
+├── extensions                           Extend build system with specific functionality
 ├── lib                                  Main build framework libraries
+│   ├── functions
+│   │   ├── artifacts
+│   │   ├── bsp
+│   │   ├── cli
+│   │   ├── compilation
+│   │   ├── configuration
+│   │   ├── general
+│   │   ├── host
+│   │   ├── image
+│   │   ├── logging
+│   │   ├── main
+│   │   └── rootfs
+│   └── tools
 ├── output                               Build artifact
 │   └── deb                              Deb packages
 │   └── images                           Bootable images - RAW or compressed
@@ -159,6 +183,7 @@ Function | Armbian | Yocto | Buildroot |
     ├── misc                             User: various
     └── u-boot                           User: universal boot loader patches
 ```
+</details>
 
 ## 🙌 Contribution
 
@@ -197,7 +222,7 @@ Support is provided in one of two ways:
 
 - [Forums](https://forum.armbian.com) for Participate in Armbian
 - IRC: `#armbian` on Libera.chat
-- Discord: [http://discord.armbian.com](http://discord.armbian.com)
+- Discord: [https://discord.gg/armbian](https://discord.gg/armbian)
 - Follow [@armbian](https://twitter.com/armbian) on Twitter, [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
 - Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
