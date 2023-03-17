@@ -11,6 +11,11 @@
 function full_build_packages_rootfs_and_image() {
 	error_if_kernel_only_set
 
+	# Detour, warn the user about KERNEL_CONFIGURE=yes if it is set.
+	if [[ "${KERNEL_CONFIGURE}" == "yes" ]]; then
+		display_alert "KERNEL_CONFIGURE=yes during image build is deprecated." "It still works, but please prefer the new way. First, run './compile.sh BOARD=${BOARD} BRANCH=${BRANCH} kernel-config'; then commit your changes; then build the image as normal. This workflow ensures consistent hashing results." "wrn"
+	fi
+
 	main_default_build_packages # has its own logging sections # requires aggregation
 
 	# build rootfs and image
