@@ -219,6 +219,9 @@ function obtain_complete_artifact() {
 function build_artifact_for_image() {
 	initialize_artifact "${WHAT}"
 
+	# Make sure ORAS tooling is installed before starting.
+	run_tool_oras
+
 	# Detour: if building kernel, and KERNEL_CONFIGURE=yes, ignore artifact cache.
 	if [[ "${WHAT}" == "kernel" && "${KERNEL_CONFIGURE}" == "yes" ]]; then
 		display_alert "Ignoring artifact cache for kernel" "KERNEL_CONFIGURE=yes" "info"

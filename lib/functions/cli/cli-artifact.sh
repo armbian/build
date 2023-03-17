@@ -17,6 +17,9 @@ function cli_artifact_run() {
 	: "${chosen_artifact:?chosen_artifact is not set}"
 	: "${chosen_artifact_impl:?chosen_artifact_impl is not set}"
 
+	# Make sure ORAS tooling is installed before starting.
+	run_tool_oras
+
 	display_alert "artifact" "${chosen_artifact}" "debug"
 	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "debug"
 	artifact_cli_adapter_config_prep # only if in cli.
