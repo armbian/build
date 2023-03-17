@@ -81,6 +81,12 @@ function run_tool_oras() {
 		display_alert "Calling ORAS with retries ${retries}" "$*" "debug"
 		do_with_retries ${retries} "${ORAS_BIN}" "$@"
 	else
+		# If any parameters passed, call ORAS, otherwise exit. We call it this way (sans-parameters) early to prepare ORAS tooling.
+		if [[ $# -eq 0 ]]; then
+			display_alert "No parameters passed to ORAS" "ORAS" "debug"
+			return 0
+		fi
+
 		display_alert "Calling ORAS" "$*" "debug"
 		"${ORAS_BIN}" "$@"
 	fi
