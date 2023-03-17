@@ -218,7 +218,16 @@ function obtain_complete_artifact() {
 # This is meant to be run after config, inside default build.
 function build_artifact_for_image() {
 	initialize_artifact "${WHAT}"
-	obtain_complete_artifact
+
+	# Detour: if building kernel, and KERNEL_CONFIGURE=yes, ignore artifact cache.
+	if [[ "${WHAT}" == "kernel" && "${KERNEL_CONFIGURE}" == "yes" ]]; then
+		display_alert "Ignoring artifact cache for kernel" "KERNEL_CONFIGURE=yes" "info"
+		ARTIFACT_IGNORE_CACHE="yes" obtain_complete_artifact
+	else
+		obtain_complete_artifact
+	fi
+
+	return 0
 }
 
 function pack_artifact_to_local_cache() {

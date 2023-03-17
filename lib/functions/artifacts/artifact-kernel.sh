@@ -25,7 +25,7 @@ function artifact_kernel_prepare_version() {
 	# - Get the drivers patch hash (given LINUXFAMILY and the vX.Z.Y version) - the harness can do this by hashing patches and bash code
 	# - Get the kernel patches hash. (@TODO currently hashing files directly, use Python patching proper)
 	# - Get the kernel .config hash, composed of
-	#    - KERNELCONFIG .config hash (contents)
+	#    - KERNELCONFIG .config hash (contents); except if KERNEL_CONFIGURE=yes, then force "999999" (six-nines)
 	#    - extensions mechanism, each hook has an array of hashes that is then hashed together; see the hooks docs.
 	# - Hash of the relevant lib/ bash sources involved, say compilation/kernel*.sh etc
 	# All those produce a version string like:
@@ -57,6 +57,7 @@ function artifact_kernel_prepare_version() {
 	debug_var LINUXFAMILY
 	debug_var KERNELPATCHDIR
 	debug_var KERNEL_SKIP_MAKEFILE_VERSION
+	debug_var KERNEL_CONFIGURE
 
 	declare short_hash_size=4
 
@@ -92,6 +93,13 @@ function artifact_kernel_prepare_version() {
 	calculate_hash_for_files "${kernel_config_source_filename}"
 	config_hash="${hash_files}"
 	declare config_hash_short="${config_hash:0:${short_hash_size}}"
+
+	# detour: if KERNEL_CONFIGURE=yes, then force "999999" (six-nines)
+	if [[ "${KERNEL_CONFIGURE}" == "yes" ]]; then
+		display_alert "Forcing kernel config hash to 999999" "due to KERNEL_CONFIGURE=yes" "info"
+		config_hash="999999 (KERNEL_CONFIGURE=yes, unable to hash)"
+		config_hash_short="999999"
+	fi
 
 	# run the extensions. they _must_ behave, and not try to modify the .config, instead just fill kernel_config_modifying_hashes
 	declare kernel_config_modifying_hashes_hash="undetermined"
