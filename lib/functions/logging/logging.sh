@@ -31,8 +31,9 @@ function logging_init() {
 	declare -g tool_color="${normal_color}" # default to normal color.
 
 	# A few terminals, like iTerm2, are known to correctly display "bright black" as gray. Use that if available.
-	if [[ "${ITERM_SHELL_INTEGRATION_INSTALLED:-"No"}" == "Yes" ]]; then
-		declare -g tool_color="${gray_color}"
+	if [[ "${ITERM_SHELL_INTEGRATION_INSTALLED:-"No"}" == "Yes" ]] || \
+	   [[ "$TERM" =~ xterm-256color|linux|putty ]]; then
+			declare -g tool_color="${gray_color}"
 	fi
 
 	if [[ "${CI}" == "true" ]]; then # ... but that is too dark for Github Actions
