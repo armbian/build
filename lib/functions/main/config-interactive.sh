@@ -8,10 +8,9 @@
 # https://github.com/armbian/build/
 
 function config_possibly_interactive_kernel_board() {
-	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
+	# if KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
 
 	interactive_config_ask_kernel
-	[[ -z $KERNEL_ONLY ]] && exit_with_error "No option selected: KERNEL_ONLY"
 	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected: KERNEL_CONFIGURE"
 
 	interactive_config_ask_board_list # this uses get_list_of_all_buildable_boards
@@ -26,7 +25,8 @@ function config_possibly_interactive_branch_release_desktop_minimal() {
 	[[ ${KERNEL_TARGET} != *${BRANCH}* && ${BRANCH} != "ddk" ]] && exit_with_error "Kernel branch not defined for this board: '${BRANCH}' for '${BOARD}'"
 
 	interactive_config_ask_release
-	[[ -z $RELEASE && ${KERNEL_ONLY} != yes ]] && exit_with_error "No release selected: RELEASE"
+	# If building image or rootfs (and thus "NEEDS_BINFMT=yes"), then RELEASE must be set.
+	[[ -z $RELEASE && ${NEEDS_BINFMT} == yes ]] && exit_with_error "No release selected: RELEASE"
 
 	interactive_config_ask_desktop_build
 	interactive_config_ask_standard_or_minimal

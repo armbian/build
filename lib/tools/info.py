@@ -133,7 +133,6 @@ if not os.path.exists(compile_sh_full_path):
 	raise Exception("Can't find compile.sh")
 
 common_compile_params = {
-	"KERNEL_ONLY": "yes",
 	"BUILD_MINIMAL": "no",
 	# "DEB_COMPRESS": "none",
 	# "CLOUD_IMAGE": "yes",

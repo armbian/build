@@ -19,7 +19,7 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
 	export UEFI_GRUB_TARGET="riscv64-efi"                                        # Default for x86_64
 
-	if [[ "${DISTRIBUTION}" != "Ubuntu" && "${KERNEL_ONLY}" == "no" ]]; then
+	if [[ "${DISTRIBUTION}" != "Ubuntu" && "${BUILDING_IMAGE}" == "yes" ]]; then
 		exit_with_error "${DISTRIBUTION} is not supported yet"
 	fi
 
