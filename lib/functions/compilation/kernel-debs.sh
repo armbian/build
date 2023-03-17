@@ -435,7 +435,6 @@ function kernel_package_callback_linux_headers() {
 			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
 			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
 			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
-			make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool
 			echo "Done compiling kernel-headers tools (${kernel_version_family})."
 		EOT_POSTINST
 
