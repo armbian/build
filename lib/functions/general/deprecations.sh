@@ -5,3 +5,10 @@ function error_if_kernel_only_set() {
 		return 1
 	fi
 }
+
+function error_if_lib_tag_set() {
+	if [[ "x${LIB_TAG}x" != "xx" ]]; then
+		exit_with_error "LIB_TAG is set.This is not supported anymore. Please remove it, and manage the git branches manually."
+		return 1
+	fi
+}

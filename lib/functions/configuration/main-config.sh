@@ -347,6 +347,8 @@ function do_extra_configuration() {
 		This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 	EXTENSION_PREPARE_CONFIG
 
+	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore
+
 	# apt-cacher-ng mirror configurarion
 	APT_MIRROR=$DEBIAN_MIRROR
 	if [[ $DISTRIBUTION == Ubuntu ]]; then
