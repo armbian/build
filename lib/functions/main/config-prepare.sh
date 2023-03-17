@@ -167,10 +167,6 @@ function config_pre_main() {
 		SELECTED_CONFIGURATION="cli_minimal"
 	fi
 
-	# @TODO: remove this?
-	[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] &&
-		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
-
 	return 0 # shortcircuit above
 }
 
