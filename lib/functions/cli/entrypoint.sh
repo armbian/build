@@ -169,6 +169,9 @@ function cli_entrypoint() {
 		apply_cmdline_params_to_env "after config '${config_filename}'" # which uses ARMBIAN_PARSED_CMDLINE_PARAMS
 	done
 
+	# Early check for deprecations
+	error_if_lib_tag_set     # make sure users are not thrown off by using old parameter which does nothing anymore; explain
+
 	display_alert "Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
 	armbian_cli_run_command
 	display_alert "Done Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
