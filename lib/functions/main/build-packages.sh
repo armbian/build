@@ -94,16 +94,6 @@ function main_default_build_packages() {
 	overlayfs_wrapper "cleanup"
 	reset_uid_owner "${DEB_STORAGE}"
 
-	# end of kernel-only, so display what was built.
-	if [[ "${KERNEL_ONLY}" != "yes" ]]; then
-		display_alert "Kernel build done" "@host" "target-reached"
-		display_alert "Target directory" "${DEB_STORAGE}/" "info"
-		display_alert "File name" "${CHOSEN_KERNEL}_${REVISION}_${ARCH}.deb" "info"
-	elif [[ "${KERNEL_ONLY}" == "yes" ]]; then
-		display_alert "using legacy option" "KERNEL_ONLY=yes; stopping build mid-packages" "warn"
-		return 0
-	fi
-
 	# Further packages require aggregation (BSPs use aggregated stuff, etc)
 	assert_requires_aggregation # Bombs if aggregation has not run
 

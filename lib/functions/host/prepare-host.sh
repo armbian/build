@@ -113,11 +113,12 @@ function prepare_host_noninteractive() {
 		download_external_toolchains # Mostly deprecated, since SKIP_EXTERNAL_TOOLCHAINS=yes is the default
 	fi
 
-	# if we're building an image, not only packages...
+	# NEEDS_BINFMT=yes is set by default build and rootfs artifact build.
+	# if we're building an image, not only packages/artifacts...
 	# ... and the host arch does not match the target arch ...
 	# ... we then require binfmt_misc to be enabled.
 	# "enable arm binary format so that the cross-architecture chroot environment will work"
-	if [[ "${KERNEL_ONLY}" != "yes" ]] || [[ "${NEEDS_BINFMT:-"no"}" == "yes" ]]; then
+	if [[ "${NEEDS_BINFMT:-"no"}" == "yes" ]]; then
 
 		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 			display_alert "Debugging binfmt - early" "/proc/sys/fs/binfmt_misc/" "debug"

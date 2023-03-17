@@ -33,19 +33,7 @@ function interactive_finish() {
 }
 
 function interactive_config_ask_kernel() {
-	interactive_config_ask_kernel_only
 	interactive_config_ask_kernel_configure
-}
-
-function interactive_config_ask_kernel_only() {
-	# if KERNEL_ONLY, KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
-	[[ -n ${KERNEL_ONLY} ]] && return 0
-	options+=("no" "Full OS image for flashing")
-	options+=("yes" "U-boot and kernel packages ONLY")
-	dialog_if_terminal_set_vars --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select what to build" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
-	KERNEL_ONLY="${DIALOG_RESULT}"
-	[[ "${DIALOG_EXIT_CODE}" != "0" ]] && exit_with_error "You cancelled interactive during KERNEL_ONLY selection: '${DIALOG_EXIT_CODE}'" "Build cancelled: ${DIALOG_EXIT_CODE}"
-	unset options
 }
 
 function interactive_config_ask_kernel_configure() {
@@ -201,7 +189,6 @@ function interactive_config_ask_branch() {
 }
 
 function interactive_config_ask_release() {
-	[[ $KERNEL_ONLY == yes ]] && return 0 # Don't ask if building packages only.
 	[[ -n ${RELEASE} ]] && return 0
 
 	declare -a options=()
@@ -217,7 +204,6 @@ function interactive_config_ask_desktop_build() {
 	# don't show desktop option if we choose minimal build
 	[[ $HAS_VIDEO_OUTPUT == no || $BUILD_MINIMAL == yes ]] && BUILD_DESKTOP=no
 
-	[[ $KERNEL_ONLY == yes ]] && return 0
 	[[ -n ${BUILD_DESKTOP} ]] && return 0
 
 	# read distribution support status which is written to the armbian-release file
@@ -238,7 +224,7 @@ function interactive_config_ask_desktop_build() {
 }
 
 function interactive_config_ask_standard_or_minimal() {
-	[[ $KERNEL_ONLY == yes ]] && return 0
+	[[ "${BUILDING_IMAGE}" != "yes" ]] && return 0
 	[[ $BUILD_DESKTOP != no ]] && return 0
 	[[ -n $BUILD_MINIMAL ]] && return 0
 	options=()

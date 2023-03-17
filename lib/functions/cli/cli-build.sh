@@ -15,6 +15,9 @@ function cli_standard_build_pre_run() {
 }
 
 function cli_standard_build_run() {
+	declare -g -r BUILDING_IMAGE=yes # Marker; meaning "we are building an image, not just an artifact"
+	declare -g -r NEEDS_BINFMT="yes" # Marker; make sure binfmts are installed during prepare_host_interactive
+
 	# configuration etc - it initializes the extension manager; handles its own logging sections
 	prep_conf_main_build_single
 
@@ -41,7 +44,6 @@ function produce_repeat_args_array() {
 	[[ -n ${RELEASE} ]] && repeat_args+=("RELEASE=${RELEASE}")
 	[[ -n ${BUILD_MINIMAL} ]] && repeat_args+=("BUILD_MINIMAL=${BUILD_MINIMAL}")
 	[[ -n ${BUILD_DESKTOP} ]] && repeat_args+=("BUILD_DESKTOP=${BUILD_DESKTOP}")
-	[[ -n ${KERNEL_ONLY} ]] && repeat_args+=("KERNEL_ONLY=${KERNEL_ONLY}")
 	[[ -n ${KERNEL_CONFIGURE} ]] && repeat_args+=("KERNEL_CONFIGURE=${KERNEL_CONFIGURE}")
 	[[ -n ${DESKTOP_ENVIRONMENT} ]] && repeat_args+=("DESKTOP_ENVIRONMENT=${DESKTOP_ENVIRONMENT}")
 	[[ -n ${DESKTOP_ENVIRONMENT_CONFIG_NAME} ]] && repeat_args+=("DESKTOP_ENVIRONMENT_CONFIG_NAME=${DESKTOP_ENVIRONMENT_CONFIG_NAME}")

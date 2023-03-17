@@ -26,7 +26,6 @@ function cli_patch_kernel_run() {
 	display_alert "Patching kernel" "$BRANCH" "info"
 	declare -g SYNC_CLOCK=no       # don't waste time syncing the clock
 	declare -g JUST_KERNEL=yes     # only for kernel.
-	declare -g KERNEL_ONLY=yes     # don't build images
 	declare -g PATCHES_TO_GIT=yes  # commit to git.
 	declare -g PATCH_ONLY=yes      # stop after patching.
 	declare -g DEBUG_PATCHING=yes  # debug patching.

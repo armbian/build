@@ -71,7 +71,6 @@ function artifact_firmware_cli_adapter_pre_run() {
 }
 
 function artifact_firmware_cli_adapter_config_prep() {
-	declare KERNEL_ONLY="yes"                            # @TODO: this is a hack, for the board/family code's benefit...
 	use_board="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
