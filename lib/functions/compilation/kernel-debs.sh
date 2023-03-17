@@ -438,5 +438,17 @@ function kernel_package_callback_linux_headers() {
 			make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool
 			echo "Done compiling kernel-headers tools (${kernel_version_family})."
 		EOT_POSTINST
+
+		if [[ "${ARCH}" == "amd64" ]]; then # This really only works on x86/amd64; @TODO revisit later
+			cat <<- EOT_POSTINST_OBJTOOL
+				echo "Compiling kernel-header objtool (${kernel_version_family})."
+				make ARCH="${SRC_ARCH}" -j\$NCPU tools/objtool
+				echo "Done compiling kernel-header objtool (${kernel_version_family})."
+			EOT_POSTINST_OBJTOOL
+		fi
+
+		cat <<- EOT_POSTINST_FINISH
+			echo "Done compiling kernel-headers tools (${kernel_version_family})."
+		EOT_POSTINST_FINISH
 	)
 }
