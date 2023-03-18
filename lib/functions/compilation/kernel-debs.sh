@@ -245,7 +245,7 @@ function kernel_package_callback_linux_image() {
 			if [[ "${script}" == "preinst" ]]; then
 				cat <<- HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 					check_boot_dev (){
-						boot_partition=\$(findmnt -n -o SOURCE /boot)
+						boot_partition=\$(findmnt --nofsroot -n -o SOURCE /boot)
 						bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
 						if [ "\$bootfstype" = "vfat" ]; then
 							rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
