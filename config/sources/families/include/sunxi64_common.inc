@@ -21,17 +21,17 @@ case $BRANCH in
 
 	legacy)
 		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v5.15.98"
+		export KERNELBRANCH="tag:v5.15.103"
 		;;
 
 	current)
 		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v6.1.15"
+		export KERNELBRANCH="tag:v6.1.20"
 		;;
 
 	edge)
 		export KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v6.2.2"
+		export KERNELBRANCH="tag:v6.2.7"
 		;;
 esac
 
