@@ -8,21 +8,25 @@
 # https://github.com/armbian/build/
 
 compile_armbian-zsh() {
+	: "${artifact_version:?artifact_version is not set}"
+
 	declare cleanup_id="" tmp_dir=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-zsh" cleanup_id tmp_dir # namerefs
 
-	declare armbian_zsh_dir="armbian-zsh_${REVISION}_all"
-	display_alert "Building deb" "armbian-zsh" "info"
+	declare armbian_zsh_dir="armbian-zsh"
+	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"
 
 	fetch_from_repo "$GITHUB_SOURCE/ohmyzsh/ohmyzsh" "oh-my-zsh" "branch:master"
 	fetch_from_repo "$GITHUB_SOURCE/mroth/evalcache" "evalcache" "branch:master"
 
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}
 
+	cd "${tmp_dir}/${armbian_zsh_dir}" || exit_with_error "can't change directory"
+
 	# set up control file
-	cat <<- END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/control
+	cat <<- END > DEBIAN/control
 		Package: armbian-zsh
-		Version: $REVISION
+		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Depends: zsh, tmux
@@ -32,7 +36,7 @@ compile_armbian-zsh() {
 	END
 
 	# set up post install script
-	cat <<- END > "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
+	cat <<- END > DEBIAN/postinst
 		#!/bin/sh
 
 		# copy cache directory if not there yet
@@ -75,9 +79,7 @@ compile_armbian-zsh() {
 
 	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
-	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}"
-
-	run_host_command_logged rsync --remove-source-files -r "${tmp_dir}/${armbian_zsh_dir}.deb" "${DEB_STORAGE}/"
+	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}" "${DEB_STORAGE}"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

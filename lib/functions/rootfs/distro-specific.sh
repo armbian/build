@@ -49,7 +49,12 @@ function install_distribution_specific() {
 
 			# disable conflicting services
 			disable_systemd_service_sdcard ondemand.service
-			;;
+
+			# Remove Ubuntu APT spamming
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["fake_ubuntu_advantage_tools"]}"
+			truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
+
+	;;
 	esac
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system

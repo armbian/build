@@ -7,7 +7,12 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-function create_board_package() {
+function compile_armbian-bsp-cli() {
+	: "${artifact_version:?artifact_version is not set}"
+
+	declare -g BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
+	declare -g BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${artifact_version}_${ARCH}"
+
 	display_alert "Creating board support package for CLI" "$CHOSEN_ROOTFS" "info"
 
 	declare cleanup_id="" bsptempdir=""
@@ -63,7 +68,7 @@ function create_board_package() {
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
 	cat <<- EOF > "${destination}"/DEBIAN/control
 		Package: ${BSP_CLI_PACKAGE_NAME}
-		Version: $REVISION
+		Version: ${artifact_version}
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Installed-Size: 1
@@ -298,7 +303,7 @@ function create_board_package() {
 		BOARDFAMILY=${BOARDFAMILY}
 		BUILD_REPOSITORY_URL=${BUILD_REPOSITORY_URL}
 		BUILD_REPOSITORY_COMMIT=${BUILD_REPOSITORY_COMMIT}
-		VERSION=$REVISION
+		VERSION=${artifact_version}
 		LINUXFAMILY=$LINUXFAMILY
 		ARCH=$ARCHITECTURE
 		IMAGE_TYPE=$IMAGE_TYPE
@@ -330,9 +335,10 @@ function create_board_package() {
 	find "${destination}" ! -type l -print0 2> /dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
 
 	# create board DEB file
-	fakeroot_dpkg_deb_build "${destination}" "${destination}.deb"
-	mkdir -p "${DEB_STORAGE}/"
-	run_host_command_logged rsync --remove-source-files -r "${destination}.deb" "${DEB_STORAGE}/"
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}"
+#"${destination}.deb"
+#	mkdir -p "${DEB_STORAGE}/"
+#	run_host_command_logged rsync --remove-source-files -r "${destination}.deb" "${DEB_STORAGE}/"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
