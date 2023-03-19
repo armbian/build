@@ -361,61 +361,33 @@ function install_distribution_agnostic() {
 	fi
 
 	# install board support packages
-	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb"
-	else
-		install_deb_chroot "${CHOSEN_ROOTFS}" "remote" # @TODO: rpardini: err.... what?
-	fi
+	install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp"]}"
 
 	# install armbian-desktop
-	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
-			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb"
-			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-			desktop_postinstall
-		fi
-	else
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${CHOSEN_DESKTOP}" "remote"
-			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-			desktop_postinstall
-		fi
+	if [[ $BUILD_DESKTOP == yes ]]; then
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-desktop"]}"
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp-desktop"]}"
+		# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
+		desktop_postinstall
 	fi
 
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
-			fi
-		else
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "armbian-config" "remote"
-			fi
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-config"]}"
 		fi
 	fi
 
 	# install armbian-zsh
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]]; then
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb"
-			fi
-		else
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "armbian-zsh" "remote"
-			fi
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-config"]}"
 		fi
 	fi
 
-	# install plymouth-theme-armbian
+	# install armbian-plymouth-theme
 	if [[ $PLYMOUTH == yes ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-plymouth-theme_${REVISION}_all.deb"
-		else
-			install_deb_chroot "armbian-plymouth-theme" "remote"
-		fi
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-plymouth-theme"]}"
 	fi
 
 	# install wireguard tools
