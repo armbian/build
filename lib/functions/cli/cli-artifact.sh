@@ -43,6 +43,10 @@ function cli_artifact_run() {
 		ignore_local_cache="yes"
 		deploy_to_remote="yes"
 
+		if [[ "${FORCE_ARTIFACTS_DOWNLOAD}" == "yes" ]]; then
+			skip_unpack_if_found_in_caches="no"
+		fi
+
 		# Pass ARTIFACT_USE_CACHE=yes to actually use the cache versions, but don't deploy to remote.
 		# @TODO this is confusing. each op should be individually controlled...
 		# what we want is:
