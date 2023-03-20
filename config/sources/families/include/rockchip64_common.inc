@@ -326,7 +326,7 @@ family_tweaks() {
 			install -m 755 $SRC/packages/blobs/station/firefly-fan.service $SDCARD/usr/lib/systemd/system/firefly-fan.service
 			chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firefly-fan.service >/dev/null 2>&1"
 		fi
-
+	fi
 }
 
 family_tweaks_bsp() {
