@@ -72,9 +72,9 @@ function main_default_end_build() {
 
 	declare end_timestamp
 	end_timestamp=$(date +%s)
-	declare runtime=$(((end_timestamp - start_timestamp) / 60))
+	declare runtime_seconds=$((end_timestamp - start_timestamp))
 	# display_alert in its own logging section.
-	LOG_SECTION="runtime_total" do_with_logging display_alert "Runtime" "${runtime} min" "info"
+	LOG_SECTION="runtime_total" do_with_logging display_alert "Runtime" "$(printf "%d:%02d min" $((runtime_seconds / 60)) $((runtime_seconds % 60)))" "info"
 
 	return 0
 }
