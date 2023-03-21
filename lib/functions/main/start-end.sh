@@ -10,6 +10,11 @@
 # Common start/end build functions. Used by the default build and others
 
 function main_default_start_build() {
+	# 1x: show interactively-selected as soon as possible, after config
+	produce_repeat_args_array
+	display_alert "Repeat Build Options (early)" "${repeat_args[*]}" "ext"
+
+
 	if [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
 		prepare_host_init # this has its own logging sections, and is possibly interactive.
 	fi
@@ -82,6 +87,9 @@ function main_default_end_build() {
 	# display_alert in its own logging section.
 	LOG_SECTION="runtime_total" do_with_logging display_alert "Runtime" "$(printf "%d:%02d min" $((runtime_seconds / 60)) $((runtime_seconds % 60)))" "info"
 
+	produce_repeat_args_array
+	LOG_SECTION="repeat_build_options" do_with_logging display_alert "Repeat Build Options" "${repeat_args[*]}" "ext" # * = expand array, space delimited, single-word.
+
 	return 0
 }
 
@@ -100,4 +108,19 @@ function trap_handler_cleanup_workdir() {
 			# @TODO: tmpfs might just be unmounted, though.
 		fi
 	fi
+}
+
+function produce_repeat_args_array() {
+	# Make it easy to repeat build by displaying build options used. Prepare array.
+	declare -a -g repeat_args=("./compile.sh")
+	# @TODO: missing the config file name, if any.
+	repeat_args+=(${ARMBIAN_NON_PARAM_ARGS[*]})
+	for param_name in "${!ARMBIAN_PARSED_CMDLINE_PARAMS[@]}"; do
+		# Parameter values are quoted to be on the safe side.
+		repeat_args+=("${param_name}=${ARMBIAN_PARSED_CMDLINE_PARAMS[$param_name]@Q}")
+	done
+	for param_name in "${!ARMBIAN_INTERACTIVE_CONFIGS[@]}"; do
+		# Parameter values are quoted to be on the safe side.
+		repeat_args+=("${param_name}=${ARMBIAN_INTERACTIVE_CONFIGS[$param_name]@Q}")
+	done
 }

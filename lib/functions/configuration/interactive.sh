@@ -21,6 +21,15 @@ function interactive_config_prepare_terminal() {
 	fi
 	# We'll use this title on all menus
 	declare -g -r backtitle="Armbian building script, https://www.armbian.com | https://docs.armbian.com | (c) 2013-2023 Igor Pecovnik "
+	declare -A -g ARMBIAN_INTERACTIVE_CONFIGS=() # An associative array of all interactive configurations
+}
+
+# Set config variable and ARMBIAN_INTERACTIVE_CONFIGS in a consistent way
+# $1: variable name
+# $2: variable value
+function set_interactive_config_value() {
+	eval "$1"='$2'
+	eval "ARMBIAN_INTERACTIVE_CONFIGS[${1}]"='$2'
 }
 
 function interactive_finish() {
@@ -42,7 +51,7 @@ function interactive_config_ask_kernel_configure() {
 	options+=("yes" "Show a kernel configuration menu before compilation")
 	#options+=("prebuilt" "Use precompiled packages (maintained hardware only)") # @TODO armbian-next does not support this, I think.
 	dialog_if_terminal_set_vars --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
-	KERNEL_CONFIGURE="${DIALOG_RESULT}"
+	set_interactive_config_value KERNEL_CONFIGURE "${DIALOG_RESULT}"
 	[[ ${DIALOG_EXIT_CODE} != 0 ]] && exit_with_error "You cancelled interactive during kernel configuration" "Build cancelled"
 	unset options
 }
@@ -141,7 +150,7 @@ function interactive_config_ask_board_list() {
 			dialog_if_terminal_set_vars --title "Choose a board" --backtitle "$backtitle" --scrollbar \
 			--colors --extra-label "Show $WIP_BUTTON" --extra-button \
 			--menu "Select the target board. Displaying:\n$STATE_DESCRIPTION" $TTY_Y $TTY_X $((TTY_Y - 8)) "${arr_all_board_options[@]}"
-		BOARD="${DIALOG_RESULT}"
+		set_interactive_config_value BOARD "${DIALOG_RESULT}"
 		declare STATUS=${DIALOG_EXIT_CODE}
 
 		if [[ $STATUS == 3 ]]; then
@@ -182,7 +191,7 @@ function interactive_config_ask_branch() {
 		--menu "Select the target kernel branch.\nSelected BOARD='${BOARD}'\nExact kernel versions depend on selected board and its family." \
 		$TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
 
-	BRANCH="${DIALOG_RESULT}"
+	set_interactive_config_value BRANCH "${DIALOG_RESULT}"
 
 	[[ -z ${BRANCH} ]] && exit_with_error "No kernel branch selected"
 	return 0
@@ -194,7 +203,7 @@ function interactive_config_ask_release() {
 	declare -a options=()
 	distros_options
 	dialog_if_terminal_set_vars --title "Choose a release package base" --backtitle "$backtitle" --menu "Select the target OS release package base; selected BRANCH='${BRANCH}'" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
-	RELEASE="${DIALOG_RESULT}"
+	set_interactive_config_value RELEASE "${DIALOG_RESULT}"
 	[[ -z ${RELEASE} ]] && exit_with_error "No release selected"
 
 	return 0 # shortcircuit above!
@@ -213,11 +222,11 @@ function interactive_config_ask_desktop_build() {
 	options+=("yes" "Image with desktop environment")
 	dialog_if_terminal_set_vars --title "Choose image type" --backtitle "$backtitle" --no-tags \
 		--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
-	BUILD_DESKTOP="${DIALOG_RESULT}"
+	set_interactive_config_value BUILD_DESKTOP "${DIALOG_RESULT}"
 	unset options
 	[[ -z $BUILD_DESKTOP ]] && exit_with_error "No image type selected"
 	if [[ ${BUILD_DESKTOP} == "yes" ]]; then
-		BUILD_MINIMAL=no
+		set_interactive_config_value BUILD_MINIMAL no
 		SELECTED_CONFIGURATION="desktop"
 	fi
 	return 0
@@ -232,7 +241,7 @@ function interactive_config_ask_standard_or_minimal() {
 	options+=("yes" "Minimal image with console interface")
 	dialog_if_terminal_set_vars --title "Choose image type" --backtitle "$backtitle" --no-tags \
 		--menu "Select the target image type" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
-	BUILD_MINIMAL="${DIALOG_RESULT}"
+	set_interactive_config_value BUILD_MINIMAL "${DIALOG_RESULT}"
 	unset options
 	[[ -z $BUILD_MINIMAL ]] && exit_with_error "No standard/minimal selected"
 	if [[ $BUILD_MINIMAL == "yes" ]]; then
