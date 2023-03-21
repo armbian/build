@@ -292,11 +292,7 @@ setup_write_uboot_platform() {
 
 family_tweaks() {
 
-	if [[ $BOARD == z28pro ]]; then
-
-		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable z28pro-bluetooth.service >/dev/null 2>&1"
-
-	elif [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
+	if [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
 		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
@@ -310,23 +306,6 @@ family_tweaks() {
 
 	fi
 
-	if [[ $BOARD == station* ]]; then
-
-		cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
-		cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
-		if [[ $BRANCH == legacy && ($BOARD == station-m1) ]]; then
-			install -m 755 $SRC/packages/bsp/rk3328/m1/rtk_hciattach $SDCARD/usr/bin/rtk_hciattach
-			sed -e 's/exit 0//g' -i $SDCARD/etc/rc.local
-			echo "su -c '/usr/bin/rtk_hciattach -n -s 115200 /dev/ttyS2 rtk_h5 &'" >> $SDCARD/etc/rc.local
-			echo "exit 0" >> $SDCARD/etc/rc.local
-		fi
-		if [[ $BRANCH == legacy && ($BOARD == station-m3) ]]; then
-			install -m 755 $SRC/packages/blobs/station/firefly_fan_control $SDCARD/usr/bin/firefly_fan_control
-			install -m 755 $SRC/packages/blobs/station/firefly-fan-init $SDCARD/usr/bin/firefly-fan-init
-			install -m 755 $SRC/packages/blobs/station/firefly-fan.service $SDCARD/usr/lib/systemd/system/firefly-fan.service
-			chroot $SDCARD /bin/bash -c "systemctl --no-reload enable firefly-fan.service >/dev/null 2>&1"
-		fi
-	fi
 }
 
 family_tweaks_bsp() {
@@ -340,26 +319,6 @@ family_tweaks_bsp() {
 			         Driver "fbdev"
 			EndSection
 		EOF
-	fi
-
-	if [[ $BOARD == z28pro ]]; then
-
-		mkdir -p $destination/usr/local/bin
-
-		# Bluetooth for Z28 PRO
-		install -m 755 $SRC/packages/bsp/rk3328/z28pro/8822b_hciattach $destination/usr/bin
-		install -m 755 $SRC/packages/bsp/rk3328/z28pro/start_bt.sh $destination/usr/local/bin
-		cp $SRC/packages/bsp/rk3328/z28pro/z28pro-bluetooth.service $destination/lib/systemd/system/
-
-	elif [[ $BRANCH == legacy && ($BOARD == rockpi-4[bc] || $BOARD == nanop*4* || $BOARD == orangepi* || $BOARD == firefly*) ]]; then
-
-		# Bluetooth for most of others (custom patchram is needed only in legacy)
-		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
-		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
-
-		if [[ $BOARD == nanop*4* || $BOARD == firefly* || $BOARD == orangepi-rk3399 ]]; then
-			sed -i s%BCM4345C5%BCM4356A2%g $destination/lib/systemd/system/rk3399-bluetooth.service
-		fi
 	fi
 
 	# Graphics and media
