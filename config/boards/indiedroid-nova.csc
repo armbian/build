@@ -3,7 +3,7 @@ BOARD_NAME="Indiedroid Nova"
 BOARDFAMILY="rockchip-rk3588"
 BOOTCONFIG="indiedroid_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
-KERNEL_TARGET="legacy"
+KERNEL_TARGET="indiedroid"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-9tripod-linux.dtb"
@@ -20,3 +20,15 @@ function post_family_config__indiedroid-nova_use_stvhay_uboot() {
 	BOOTBRANCH='branch:rockchip-rk3588-unified'
 	BOOTPATCHDIR="legacy"
 }
+
+function post_family_config_branch_indiedroid__stvhay_kernel() {
+	declare -g EXTRAWIFI="no"
+	KERNELDIR='linux-rockchip64-rk3588-indiedroid'
+	KERNELSOURCE='https://github.com/stvhay/kernel'
+	declare -g KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
+#	KERNELBRANCH='branch:armbian-9tripod-patchset'
+	KERNELBRANCH='branch:batocera-rk3588-3.6'
+	KERNELPATCHDIR='rockchip-rk3588-indiedroid'
+	LINUXCONFIG='linux-rockchip-rk3588-indiedroid'
+
+	}
