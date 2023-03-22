@@ -15,6 +15,7 @@ SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
 BOOTFS_TYPE="fat"
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyS0,115200n8 console=tty1 console=both net.ifnames=0 rootflags=data=writeback"
+EXTRAWIFI="no"
 
 
 # Override family config for this board; let's avoid conditionals in family config.
@@ -25,12 +26,11 @@ function post_family_config__indiedroid-nova_use_stvhay_uboot() {
 }
 
 function post_family_config_branch_indiedroid__stvhay_kernel() {
-	declare -g EXTRAWIFI="no"
 	KERNELDIR='linux-rockchip64-rk3588-indiedroid'
 	KERNELSOURCE='https://github.com/stvhay/kernel'
 	declare -g KERNEL_MAJOR_MINOR="5.10" # Major and minor versions of this kernel.
-#	KERNELBRANCH='branch:armbian-9tripod-patchset'
-	KERNELBRANCH='branch:batocera-rk3588-3.6'
+	KERNELBRANCH='branch:armbian-9tripod-patchset'
+#	KERNELBRANCH='branch:batocera-rk3588-3.6'
 	KERNELPATCHDIR='rockchip-rk3588-indiedroid'
 	LINUXCONFIG='linux-rockchip-rk3588-indiedroid'
 
