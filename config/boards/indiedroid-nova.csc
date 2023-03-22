@@ -13,6 +13,7 @@ BOOT_SUPPORT_SPI="yes"
 IMAGE_PARTITION_TABLE="gpt"
 SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
 BOOTFS_TYPE="fat"
+SERIALCON="ttyS0,ttyS1"
 
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__indiedroid-nova_use_stvhay_uboot() {
