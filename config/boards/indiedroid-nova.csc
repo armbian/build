@@ -14,7 +14,7 @@ IMAGE_PARTITION_TABLE="gpt"
 SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
 BOOTFS_TYPE="fat"
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS0,115200n8 console=tty1"
+SRC_CMDLINE="console=ttyS0,115200n8 console=tty1 console=both net.ifnames=0 rootflags=data=writeback"
 
 
 # Override family config for this board; let's avoid conditionals in family config.
