@@ -55,13 +55,14 @@ function apply_cmdline_params_to_env() {
 		local param_value param_value_desc current_env_value
 		# get the current value from the environment
 		current_env_value="${!param_name}"
-		current_env_value_desc="${current_env_value:-(empty)}"
+		current_env_value_desc="${!param_name-(unset)}"
+		current_env_value_desc="${current_env_value_desc:-(empty)}"
 		# get the new value from the dictionary
 		param_value="${ARMBIAN_PARSED_CMDLINE_PARAMS[${param_name}]}"
 		param_value_desc="${param_value:-(empty)}"
 
 		# Compare, log, and apply.
-		if [[ "${current_env_value}" != "${param_value}" ]]; then
+		if [[ -z "${!param_name+x}" ]] || [[ "${current_env_value}" != "${param_value}" ]]; then
 			display_alert "Applying cmdline param" "'$param_name': '${current_env_value_desc}' --> '${param_value_desc}' ${__my_reason}" "cmdline"
 			# use `declare -g` to make it global, we're in a function.
 			eval "declare -g $param_name=\"$param_value\""
