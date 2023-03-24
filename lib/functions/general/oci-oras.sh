@@ -117,6 +117,7 @@ function oras_push_artifact_file() {
 
 	declare extra_params=("--verbose")
 	oras_add_param_plain_http
+	oras_add_param_insecure
 	extra_params+=("--annotation" "org.opencontainers.image.description=${description}")
 
 	# make sure file exists
@@ -144,6 +145,7 @@ function oras_get_artifact_manifest() {
 
 	declare extra_params=("--verbose")
 	oras_add_param_plain_http
+	oras_add_param_insecure
 
 	oras_has_manifest="no"
 	# Gotta capture the output & if it failed...
@@ -168,6 +170,7 @@ function oras_pull_artifact_file() {
 
 	declare extra_params=("--verbose")
 	oras_add_param_plain_http
+	oras_add_param_insecure
 
 	declare full_temp_dir="${target_dir}/${target_fn}.oras.pull.tmp"
 	declare full_tmp_file_path="${full_temp_dir}/${target_fn}"
@@ -196,5 +199,12 @@ function oras_add_param_plain_http() {
 	if [[ "${image_full_oci}" == *":5000/"* ]]; then
 		display_alert "Adding --plain-http to ORAS" "ORAS to insecure registry" "warn"
 		extra_params+=("--plain-http")
+	fi
+}
+
+function oras_add_param_insecure() {
+	if [[ ${IS_A_RETRY} -gt 0 ]]; then
+		display_alert "Retrying, adding --insecure to ORAS" "ORAS to insecure registry on retry" "warn"
+		extra_params+=("--insecure")
 	fi
 }
