@@ -43,6 +43,8 @@ function main_default_build_packages() {
 		fi
 	fi
 
+	artifacts_to_build+=("armbian-config")
+
 	display_alert "Artifacts to build:" "${artifacts_to_build[*]}" "debug"
 
 	# For each artifact, try to obtain them from the local cache, remote cache, or build them.
@@ -69,13 +71,6 @@ function main_default_build_packages() {
 	debug_dict image_artifacts_debs
 
 	### OLD / Legacy / Needs conversion to new artifact system @TODO
-
-	# Compile armbian-config if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
-			LOG_SECTION="compile_armbian-config" do_with_logging compile_armbian-config
-		fi
-	fi
 
 	# Compile armbian-zsh if packed .deb does not exist or use the one from repository
 	if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then

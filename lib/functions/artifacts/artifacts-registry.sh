@@ -18,6 +18,7 @@ function armbian_register_artifacts() {
 		["uboot"]="uboot"
 		["firmware"]="firmware"
 		["full_firmware"]="full_firmware"
+		["armbian-config"]="armbian-config"
 
 		# tar.zst
 		["rootfs"]="rootfs"

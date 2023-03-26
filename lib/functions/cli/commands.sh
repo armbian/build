@@ -39,6 +39,7 @@ function armbian_register_commands() {
 		["rootfs"]="artifact"
 		["firmware"]="artifact"
 		["firmware-full"]="artifact"
+		["armbian-config"]="artifact"
 		["kernel"]="artifact"
 		["kernel-config"]="artifact"
 		["u-boot"]="artifact"
