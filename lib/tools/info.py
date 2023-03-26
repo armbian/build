@@ -10,6 +10,7 @@
 import concurrent.futures
 import glob
 import json
+import multiprocessing
 import os
 import re
 import subprocess
@@ -32,27 +33,6 @@ def get_all_boards_list_from_armbian(src_path):
 	return ret
 
 
-def armbian_value_parse_simple(value, armbian_src_path):
-	# return value.replace(armbian_src_path, "${SRC}")
-	return value
-
-
-def armbian_value_parse_list(item_value, delimiter, armbian_src_path):
-	# return map(lambda x: armbian_value_parse_simple(x, armbian_src_path), item_value.split())
-	ret = []
-	for item in item_value.split(delimiter):
-		ret.append(armbian_value_parse_simple(item, armbian_src_path))
-	return ret
-
-
-def armbian_value_parse_newline_map(item_value, armbian_src_path):
-	lines = item_value.split("\n")
-	ret = []
-	for line in lines:
-		ret.append(armbian_value_parse_list(line, ":", armbian_src_path))
-	return ret
-
-
 def map_to_armbian_params(map_params):
 	ret = []
 	for param in map_params:
@@ -61,59 +41,42 @@ def map_to_armbian_params(map_params):
 
 
 def run_armbian_compile_and_parse(path_to_compile_sh, armbian_src_path, compile_params):
-	exec_cmd = ([path_to_compile_sh] + ["config-dump"] + map_to_armbian_params(compile_params))
+	exec_cmd = ([path_to_compile_sh] + ["config-dump-json"] + map_to_armbian_params(compile_params))
 	# eprint("Running command: '{}' ", exec_cmd)
 	result = None
 	logs = ["Not available"]
 	try:
 		result = subprocess.run(
 			exec_cmd,
-			stdout=subprocess.PIPE, check=True, universal_newlines=True,
+			stdout=subprocess.PIPE,
+			check=True,
+			universal_newlines=False,  # universal_newlines messes up bash encoding, don't use, instead decode utf8 manually;
+			bufsize=-1,  # full buffering
+			# Early (pre-param-parsing) optimizations for those in Armbian bash code, so use an ENV (not PARAM)
 			env={
 				"CONFIG_DEFS_ONLY": "yes",  # Dont do anything. Just output vars.
-				"ANSI_COLOR": "none",  # Do not use ANSI colors in logging output
+				"ANSI_COLOR": "none",  # Do not use ANSI colors in logging output, don't write to log files
 				"WRITE_EXTENSIONS_METADATA": "no"  # Not interested in ext meta here
 			},
 			stderr=subprocess.PIPE
 		)
 	except subprocess.CalledProcessError as e:
-		lines_stderr = e.stderr.split("\n")
-		eprint(
-			"Error calling Armbian: params: {}, return code: {}, stderr: {}".format(
-				compile_params, e.returncode,
-				# the last 5 elements of lines_stderr, joined
-				"; ".join(lines_stderr[-5:])
-			)
-		)
+		# decode utf8 manually, universal_newlines messes up bash encoding
+		lines_stderr = e.stderr.decode("utf8").split("\n")
+		eprint("Error calling Armbian: params: {}, return code: {}, stderr: {}".format(compile_params, e.returncode, "; ".join(lines_stderr[-5:])))
 		return {"in": compile_params, "out": {}, "logs": lines_stderr, "config_ok": False}
 
 	if result is not None:
 		if result.stderr:
-			# parse list, split by newline, remove armbian_src_path
-			logs = armbian_value_parse_list(result.stderr, "\n", armbian_src_path)
+			# parse list, split by newline
+			lines = result.stderr.decode("utf8").split("\n")
+			# trim lines, remove empty ones
+			logs = [line.strip() for line in lines if line.strip()]
 
-	# Now parse it with regex-power!
-	# regex = r"^declare (..) (.*?)=\"(.*?)\"$" # old multiline version
-	regex = r"declare (..) (.*?)=\"(.*?)\""
-	test_str = result.stdout
-	matches = re.finditer(regex, test_str, re.DOTALL | re.MULTILINE)
-	all_keys = {}
+	# parse the result.stdout as json
+	parsed = json.loads(result.stdout.decode("utf8"))
 
-	for matchNum, match in enumerate(matches, start=1):
-		flags = match.group(1)
-		key = match.group(2)
-		value = match.group(3)
-
-		if ("_LIST" in key) or ("_DIRS" in key):
-			value = armbian_value_parse_list(value, " ", armbian_src_path)
-		elif "_TARGET_MAP" in key:
-			value = armbian_value_parse_newline_map(value, armbian_src_path)
-		else:
-			value = armbian_value_parse_simple(value, armbian_src_path)
-
-		all_keys[key] = value
-
-	info = {"in": compile_params, "out": all_keys, "config_ok": True}
+	info = {"in": compile_params, "out": parsed, "config_ok": True}
 	# info["logs"] = logs
 	return info
 
@@ -133,20 +96,9 @@ if not os.path.exists(compile_sh_full_path):
 	raise Exception("Can't find compile.sh")
 
 common_compile_params = {
-	"BUILD_MINIMAL": "no",
-	# "DEB_COMPRESS": "none",
-	# "CLOUD_IMAGE": "yes",
-	# "CLEAN_LEVEL": "debs",
-	# "SHOW_LOG": "yes",
-	# "SKIP_EXTERNAL_TOOLCHAINS": "yes",
-	# "CONFIG_DEFS_ONLY": "yes",
-	"KERNEL_CONFIGURE": "no",
-	# "EXPERT": "yes"
 }
 
 board_compile_params = {
-	"RELEASE": "jammy",
-	"BUILD_DESKTOP": "no"
 }
 
 
@@ -184,9 +136,7 @@ def get_info_for_one_board(board_file, board_name, common_params, board_info, br
 
 	# eprint("Running Armbian bash for board '{}'".format(board_name))
 	try:
-		parsed = run_armbian_compile_and_parse(compile_sh_full_path, armbian_src_path,
-											   common_params | {"BOARD": board_name})
-		# print(json.dumps(parsed, indent=4, sort_keys=True))
+		parsed = run_armbian_compile_and_parse(compile_sh_full_path, armbian_src_path, common_params | {"BOARD": board_name})
 		return parsed | board_info
 	except BaseException as e:
 		eprint("Failed get info for board '{}': '{}'".format(board_name, e))
@@ -209,15 +159,17 @@ if True:
 			raise e
 	# now loop over gathered infos
 	every_info = []
-	with concurrent.futures.ProcessPoolExecutor() as executor:  # max_workers=32
+	# get the number of processor cores on this machine
+	max_workers = multiprocessing.cpu_count() * 2  # use double the number of cpu cores, that's the sweet spot
+	eprint(f"Using {max_workers} workers for parallel processing.")
+	with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
 		every_future = []
 		for board in all_boards.keys():
 			board_info = info_for_board[board]
 			for possible_branch in board_info["BOARD_POSSIBLE_BRANCHES"]:
 				all_params = common_compile_params | board_compile_params | {"BRANCH": possible_branch}
 				# eprint("Submitting future for board {} with BRANCH={}".format(board, possible_branch))
-				future = executor.submit(get_info_for_one_board, all_boards[board], board, all_params,
-										 board_info, possible_branch)
+				future = executor.submit(get_info_for_one_board, all_boards[board], board, all_params, board_info, possible_branch)
 				every_future.append(future)
 
 		eprint(f"Waiting for all {len(every_future)} configurations to be computed... this might take a long time.")

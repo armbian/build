@@ -51,8 +51,10 @@ function prep_conf_main_minimal_ni() {
 	# needed
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
-	# needed
-	check_basic_host
+	# needed for most stuff, but not for configdump
+	if [[ "${skip_host_config:-"no"}" != "yes" ]]; then
+		check_basic_host
+	fi
 
 	# needed for BOARD= builds.
 	if [[ "${use_board:-"no"}" == "yes" ]]; then
@@ -122,11 +124,18 @@ function config_source_board_file() {
 	# Sanity check: if no board config was sourced, then the board name is invalid
 	[[ ${#sourced_board_configs[@]} -eq 0 ]] && exit_with_error "No such BOARD '${BOARD}'; no board config file found."
 
-	LINUXFAMILY="${BOARDFAMILY}" # @TODO: wtf? why? this is (100%?) rewritten by family config!
-	# this sourced the board config. do_main_configuration will source the family file.
+	# Otherwise publish it as readonly global
+	declare -g -r SOURCED_BOARD_CONFIGS_FILENAME_LIST="${sourced_board_configs[*]}"
 
-	# Lets make some variables readonly.
+	# this is (100%?) rewritten by family config!
+	# answer: this defaults LINUXFAMILY to BOARDFAMILY. that... shouldn't happen, extensions might change it too.
+	# @TODO: better to check for empty after sourcing family config and running extensions, *warning about it*, and only then default to BOARDFAMILY.
+	# this sourced the board config. do_main_configuration will source the (BOARDFAMILY) family file.
+	LINUXFAMILY="${BOARDFAMILY}"
+
+	# Lets make some variables readonly after sourcing the board file.
 	# We don't want anything changing them, it's exclusively for board config.
+	# @TODO: ok but then we need some way to add packages simply via command line or config. ADD_PACKAGES_IMAGE="foo,bar"?
 	declare -g -r PACKAGE_LIST_BOARD="${PACKAGE_LIST_BOARD}"
 	declare -g -r PACKAGE_LIST_BOARD_REMOVE="${PACKAGE_LIST_BOARD_REMOVE}"
 
