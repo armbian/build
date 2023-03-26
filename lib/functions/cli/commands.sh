@@ -19,10 +19,12 @@ function armbian_register_commands() {
 
 		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run
 
-		["config-dump"]="config_dump" # implemented in cli_config_dump_pre_run and cli_config_dump_run
-		["configdump"]="config_dump"  # idem
+		# Given a board/config/exts, dump out the (non-userspace) JSON of configuration
+		["configdump"]="config_dump_json"              # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump-json"]="config_dump_json"        # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["json-info"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["json-info-boards"]="json_info"               # implemented in cli_json_info_pre_run and cli_json_info_run
+		["write-all-boards-branches-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
@@ -66,9 +68,6 @@ function armbian_register_commands() {
 		["dockershell"]="DOCKER_SUBCMD='shell'"
 
 		["generate-dockerfile"]="DOCKERFILE_GENERATE_ONLY='yes'"
-
-		["config-dump"]="CONFIG_DEFS_ONLY='yes'"
-		["configdump"]="CONFIG_DEFS_ONLY='yes'"
 
 		# artifact shortcuts
 		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_BUILD_INTERACTIVE='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
