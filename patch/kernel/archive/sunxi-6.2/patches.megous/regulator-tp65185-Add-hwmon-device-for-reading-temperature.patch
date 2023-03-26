@@ -1,0 +1,233 @@
+From 25d4247b6cdedeeb57169f15ff39960c730b4572 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Thu, 17 Oct 2019 23:23:17 +0200
+Subject: [PATCH 079/391] regulator: tp65185: Add hwmon device for reading
+ temperature
+
+Temperature for the display waveforms compensation is read
+via a special NTC measurement hardware inside the tp65185x.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/regulator/tp65185x.c | 131 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 126 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/regulator/tp65185x.c b/drivers/regulator/tp65185x.c
+index 8b57a11ff..05cea918a 100644
+--- a/drivers/regulator/tp65185x.c
++++ b/drivers/regulator/tp65185x.c
+@@ -7,10 +7,12 @@
+ #include <linux/err.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/driver.h>
+ #include <linux/regulator/of_regulator.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/hwmon.h>
+ #include <linux/delay.h>
+ 
+ #define REG_TMST_VALUE    0x00
+@@ -31,6 +33,9 @@
+ #define REG_PG            0x0F
+ #define REG_REVID         0x10
+ 
++#define REG_TMST1_READ_THERM	0x80
++#define REG_TMST1_CONV_END	0x20
++
+ struct tp65185x {
+ 	struct device* dev;
+ 	struct gpio_desc* wakeup_gpio;
+@@ -39,6 +44,8 @@ struct tp65185x {
+ 	struct gpio_desc* powergood_gpio;
+ 	struct regmap *regmap;
+ 	bool is_enabled;
++	struct mutex wakeup_mutex;
++	int wake_refs;
+ 	int vcom;
+ };
+ 
+@@ -192,6 +199,30 @@ static int wait_for_power_good(struct tp65185x *tp)
+ 	return -ETIMEDOUT;
+ }
+ 
++static void wakeup_regulator(struct tp65185x *tp, int wake)
++{
++	mutex_lock(&tp->wakeup_mutex);
++
++	if (wake) {
++		tp->wake_refs++;
++		if (tp->wake_refs > 1)
++			goto out_unlock;
++
++		gpiod_set_value(tp->wakeup_gpio, 1);
++		usleep_range(3000, 4000);
++	} else {
++		tp->wake_refs--;
++		if (tp->wake_refs > 0)
++			goto out_unlock;
++
++		gpiod_set_value(tp->wakeup_gpio, 0);
++		usleep_range(100, 200);
++	}
++
++out_unlock:
++	mutex_unlock(&tp->wakeup_mutex);
++}
++
+ static int enable_supply(struct regulator_dev *rdev)
+ {
+ 	struct tp65185x* tp = rdev_get_drvdata(rdev);
+@@ -200,9 +231,7 @@ static int enable_supply(struct regulator_dev *rdev)
+ 	if (tp->is_enabled)
+ 		return 0;
+ 
+-	// wake up the regulator
+-	gpiod_set_value(tp->wakeup_gpio, 1);
+-	usleep_range(3000, 4000);
++	wakeup_regulator(tp, 1);
+ 
+ 	ret = apply_voltage(tp, tp->vcom);
+ 	if (ret) {
+@@ -247,7 +276,7 @@ static int enable_supply(struct regulator_dev *rdev)
+ 	usleep_range(2000, 3000);
+ 	gpiod_set_value(tp->powerup_gpio, 0);
+ 	msleep(100);
+-	gpiod_set_value(tp->wakeup_gpio, 0);
++	wakeup_regulator(tp, 0);
+ 	return ret;
+ }
+ 
+@@ -273,7 +302,7 @@ static int disable_supply(struct regulator_dev *rdev)
+ 	show_power_status(tp, "power down");
+ 
+ 	// this will power down the V3P3 switch too
+-	gpiod_set_value(tp->wakeup_gpio, 0);
++	wakeup_regulator(tp, 0);
+ 
+ 	tp->is_enabled = false;
+ 
+@@ -309,6 +338,84 @@ static const struct regulator_desc tp65185x_reg = {
+ 	.owner = THIS_MODULE,
+ };
+ 
++static int tp65185x_ntc_read_temperature(struct tp65185x* tp, long *val)
++{
++	int ret;
++	unsigned int reg;
++
++	wakeup_regulator(tp, 1);
++
++	ret = regmap_update_bits(tp->regmap, REG_TMST1,
++				 REG_TMST1_READ_THERM,
++				 REG_TMST1_READ_THERM);
++	if (ret)
++		goto err_sleep;
++
++	ret = regmap_read_poll_timeout(tp->regmap, REG_TMST1, reg,
++				       reg & REG_TMST1_CONV_END,
++				       2000, 100000);
++	if (ret)
++		goto err_sleep;
++
++	ret = regmap_read(tp->regmap, REG_TMST_VALUE, &reg);
++	if (ret)
++		goto err_sleep;
++
++	*val = (s8)(u8)reg;
++
++err_sleep:
++	wakeup_regulator(tp, 0);
++	return ret;
++}
++
++static int tp65185x_ntc_read(struct device *dev, enum hwmon_sensor_types type,
++			     u32 attr, int channel, long *val)
++{
++	struct tp65185x *tp = dev_get_drvdata(dev);
++
++	if (type == hwmon_temp && attr == hwmon_temp_input) {
++		return tp65185x_ntc_read_temperature(tp, val);
++	} else if (type == hwmon_temp && attr == hwmon_temp_type) {
++		*val = 4;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static umode_t tp65185x_ntc_is_visible(const void *data,
++				       enum hwmon_sensor_types type,
++				       u32 attr, int channel)
++{
++	if (type == hwmon_temp) {
++		switch (attr) {
++		case hwmon_temp_input:
++		case hwmon_temp_type:
++			return 0444;
++		default:
++			break;
++		}
++	}
++
++	return 0;
++}
++
++static const struct hwmon_channel_info *tp65185x_ntc_info[] = {
++	HWMON_CHANNEL_INFO(chip, HWMON_C_REGISTER_TZ),
++	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT | HWMON_T_TYPE),
++	NULL
++};
++
++static const struct hwmon_ops tp65185x_ntc_hwmon_ops = {
++	.is_visible = tp65185x_ntc_is_visible,
++	.read = tp65185x_ntc_read,
++};
++
++static const struct hwmon_chip_info tp65185x_ntc_chip_info = {
++	.ops = &tp65185x_ntc_hwmon_ops,
++	.info = tp65185x_ntc_info,
++};
++
+ static int tp65185x_i2c_probe(struct i2c_client *i2c,
+ 			      const struct i2c_device_id *id)
+ {
+@@ -318,6 +425,7 @@ static int tp65185x_i2c_probe(struct i2c_client *i2c,
+ 	unsigned int reg;
+ 	struct tp65185x* tp;
+ 	const char* rev = NULL;
++	struct device *hwmon_dev;
+ 	int ret;
+ 
+ 	tp = devm_kzalloc(dev, sizeof(*tp), GFP_KERNEL);
+@@ -325,6 +433,7 @@ static int tp65185x_i2c_probe(struct i2c_client *i2c,
+ 		return -ENOMEM;
+ 
+ 	tp->dev = dev;
++	mutex_init(&tp->wakeup_mutex);
+ 
+ 	tp->powergood_gpio = devm_gpiod_get(dev, "powergood", GPIOD_IN);
+ 	if (IS_ERR(tp->powergood_gpio)) {
+@@ -404,6 +513,18 @@ static int tp65185x_i2c_probe(struct i2c_client *i2c,
+ 		return ret;
+ 	}
+ 
++	hwmon_dev = devm_hwmon_device_register_with_info(&i2c->dev,
++							 "tps65185",
++							 tp,
++							 &tp65185x_ntc_chip_info,
++							 NULL);
++        if (IS_ERR(hwmon_dev)) {
++		ret = PTR_ERR(hwmon_dev);
++                dev_err(dev, "unable to register tmst as hwmon device (%d)\n",
++			ret);
++                return ret;
++        }
++
+ 	return 0;
+ }
+ 
+-- 
+2.35.3
+

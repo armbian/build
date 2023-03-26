@@ -1,34 +1,41 @@
 #!/usr/bin/env bash
-install_distribution_specific() {
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
 
-	display_alert "Applying distribution specific tweaks for" "$RELEASE" "info"
+function install_distribution_specific() {
+	display_alert "Applying distribution specific tweaks for" "${RELEASE:-}" "info"
 
-	# disable broken service
-	# the problem is in default misconfiguration
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartmontools.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable smartd.service >/dev/null 2>&1"
+	# disable broken service, the problem is in default misconfiguration
+	# disable hostapd as it needs to be configured to start correctly
+	disable_systemd_service_sdcard smartmontools.service smartd.service hostapd.service
 
-	# disable hostapd as it needs to be configured
-	chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload disable hostapd.service  >/dev/null 2>&1"
+	case "${RELEASE}" in
 
-	case $RELEASE in
-
-		focal | jammy | kinetic | lunar )
+		focal | jammy | kinetic | lunar)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
+			# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
-			rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
+			run_host_command_logged rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
+			declare RENDERER=networkd
 			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
 				local RENDERER=NetworkManager
-			else
-				local RENDERER=networkd
 			fi
 
 			# DNS fix
-			if [ -n "$NAMESERVER" ]; then
-				sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
+			if [[ -n "$NAMESERVER" ]]; then
+				if [[ -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
+					sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
+				else
+					display_alert "DNS fix" "/etc/systemd/resolved.conf not found: ${DISTRIBUTION} ${RELEASE}" "wrn"
+				fi
 			fi
 
 			# Journal service adjustements
@@ -38,36 +45,22 @@ install_distribution_specific() {
 			sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" "${SDCARD}"/etc/systemd/journald.conf
 
 			# Chrony temporal fix https://bugs.launchpad.net/ubuntu/+source/chrony/+bug/1878005
-			sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
+			[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
 
 			# disable conflicting services
-			chroot "${SDCARD}" /bin/bash -c "systemctl --no-reload mask ondemand.service >/dev/null 2>&1"
-
+			disable_systemd_service_sdcard ondemand.service
 			;;
-
 	esac
-
-	# configure language and locales
-	display_alert "Configuring locales" "$DEST_LANG" "info"
-	if [[ -f $SDCARD/etc/locale.gen ]]; then
-		[ -n "$DEST_LANG" ] && sed -i "s/^# $DEST_LANG/$DEST_LANG/" $SDCARD/etc/locale.gen
-		sed -i '/ C.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-		sed -i '/en_US.UTF-8/s/^# //g' $SDCARD/etc/locale.gen
-	fi
-	eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c "locale-gen"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
-	[ -n "$DEST_LANG" ] && eval 'LC_ALL=C LANG=C chroot $SDCARD /bin/bash -c \
-	"update-locale --reset LANG=$DEST_LANG LANGUAGE=$DEST_LANG LC_ALL=$DEST_LANG"' ${OUTPUT_VERYSILENT:+' >/dev/null 2>/dev/null'}
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
 	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 		network:
-			  version: 2
-			  renderer: $RENDERER
+		  version: 2
+		  renderer: ${RENDERER}
 	EOF
 
 	# cleanup motd services and related files
-	chroot "${SDCARD}" /bin/bash -c "systemctl disable motd-news.service >/dev/null 2>&1"
-	chroot "${SDCARD}" /bin/bash -c "systemctl disable motd-news.timer >/dev/null 2>&1"
+	disable_systemd_service_sdcard motd-news.service motd-news.timer
 
 	# remove motd news from motd.ubuntu.com
 	[[ -f "${SDCARD}"/etc/default/motd-news ]] && sed -i "s/^ENABLED=.*/ENABLED=0/" "${SDCARD}"/etc/default/motd-news
@@ -80,7 +73,7 @@ install_distribution_specific() {
 
 	# use list modules INITRAMFS
 	if [ -f "${SRC}"/config/modules/"${MODULES_INITRD}" ]; then
-		display_alert "Use file list modules INITRAMFS" "${MODULES_INITRD}"
+		display_alert "Use file list modules MODULES_INITRD" "${MODULES_INITRD}"
 		sed -i "s/^MODULES=.*/MODULES=list/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 		cat "${SRC}"/config/modules/"${MODULES_INITRD}" >> "${SDCARD}"/etc/initramfs-tools/modules
 	fi
@@ -91,9 +84,9 @@ install_distribution_specific() {
 # <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar
 # <basedir>: path to root directory
 #
-create_sources_list() {
+function create_sources_list() {
 	local release=$1
-	local basedir=$2
+	local basedir=$2 # @TODO: rpardini: this is SDCARD in all practical senses. Why not just use SDCARD?
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
 
 	case $release in
@@ -113,7 +106,7 @@ create_sources_list() {
 			EOF
 			;;
 
-		bullseye | bookworm | trixie)
+		bullseye | trixie)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -129,10 +122,30 @@ create_sources_list() {
 			EOF
 			;;
 
+		bookworm)
+			# non-free firmware in bookworm and later has moved from the non-free archive component to a new non-free-firmware component (alongside main/contrib/non-free). This was implemented on 2023-01-27, see also https://lists.debian.org/debian-boot/2023/01/msg00235.html
+			cat <<- EOF > "${basedir}"/etc/apt/sources.list
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
+
+				deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free non-free-firmware
+
+				deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free non-free-firmware
+
+				deb http://${DEBIAN_SECURTY} ${release}-security main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_SECURTY} ${release}-security main contrib non-free non-free-firmware
+			EOF
+			;;
+
 		sid) # sid is permanent unstable development and has no such thing as updates or security
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+
+				deb http://${DEBIAN_MIRROR} unstable main contrib non-free
+				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free
 			EOF
 			;;
 
@@ -164,9 +177,9 @@ create_sources_list() {
 		gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}"/usr/share/keyrings/armbian.gpg
 		SIGNED_BY="[signed-by=/usr/share/keyrings/armbian.gpg] "
 	else
-		# use old method for compatibility reasons
+		# use old method for compatibility reasons # @TODO: rpardini: not gonna fix this?
 		cp "${SRC}"/config/armbian.key "${basedir}"
-		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
+		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add -"
 	fi
 
 	# stage: add armbian repository and install key
@@ -175,7 +188,7 @@ create_sources_list() {
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
 		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb ${SIGNED_BY}http://"$([[ $BETA == yes ]] && echo "beta" || echo "apt")".armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development
@@ -183,7 +196,7 @@ create_sources_list() {
 
 	# disable repo if SKIP_ARMBIAN_REPO=yes
 	if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
-		display_alert "Disabling armbian repo" "${ARCH}-${RELEASE}" "wrn"
+		display_alert "Disabling Armbian repo due to SKIP_ARMBIAN_REPO=yes" "${ARCH}-${RELEASE}" "info"
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
 

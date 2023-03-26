@@ -1,3 +1,11 @@
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+#
 ARCH=armhf
 LINUXFAMILY=meson
 KERNEL_IMAGE_TYPE=uImage
@@ -36,14 +44,16 @@ esac
 case $BRANCH in
 	current)
 
-		KERNELBRANCH="branch:linux-5.15.y"
+		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-6.1.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;
 
 	edge)
 
-		KERNELBRANCH="branch:linux-6.1.y"
+		export KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-6.2.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;

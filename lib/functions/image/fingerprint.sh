@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
+#
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+#
+# This file is a part of the Armbian Build Framework
+# https://github.com/armbian/build/
+
 #--------------------------------------------------------------------------------------------------------------------------------
 # fingerprint_image <out_txt_file> [image_filename]
 # Saving build summary to the image
 #--------------------------------------------------------------------------------------------------------------------------------
-fingerprint_image() {
+function fingerprint_image() {
 	cat <<- EOF > "${1}"
 		--------------------------------------------------------------------------------
-		Title:           ${VENDOR} $REVISION ${BOARD^} $BRANCH
-		Kernel:          Linux $VER
+		Title:          ${VENDOR} $REVISION ${BOARD^} $BRANCH
+		Kernel:         Linux ${IMAGE_INSTALLED_KERNEL_VERSION}
 		Build date:     $(date +'%d.%m.%Y')
-		Builder rev:    $BUILD_REPOSITORY_COMMIT
+		Builder rev:    ${BUILD_REPOSITORY_COMMIT}
 		Maintainer:     $MAINTAINER <$MAINTAINERMAIL>
 		Authors:        https://www.armbian.com/authors
 		Sources:        https://github.com/armbian/
 		Support:        https://forum.armbian.com/
 		Changelog:      https://www.armbian.com/logbook/
-		Documantation:  https://docs.armbian.com/
+		Documentation:  https://docs.armbian.com/
 	EOF
 
 	if [ -n "$2" ]; then

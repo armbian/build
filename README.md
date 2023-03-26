@@ -6,19 +6,15 @@
   <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
   </a><br>
   <strong>Armbian Linux Build Framework</strong><br>
-<br>
-<a href=https://github.com/armbian/build/actions/workflows/build-train.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/armbian/build/build-train.yml?logo=githubactions&label=Kernel%20compile&logoColor=white&style=for-the-badge&branch=master"></a>
-<a href=https://github.com/armbian/build/actions/workflows/build-all-desktops.yml><img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/armbian/build/build-all-desktops.yml?logo=githubactions&logoColor=white&label=Images%20assembly&style=for-the-badge&branch=master"></a>
-<a href=https://github.com/armbian/build/actions/workflows/smoke-tests.yml><img alt="Smoke test success ratio" src="https://img.shields.io/badge/dynamic/json?logo=speedtest&label=Smoke%20tests%20success&query=SMOKE&color=44cc11&cacheSeconds=600&style=for-the-badge&url=https%3A%2F%2Fgithub.com%2Farmbian%2Fscripts%2Freleases%2Fdownload%2Fstatus%2Frunners_capacity.json"></a>
- <br>
-
-<br>
-<a href=https://fosstodon.org/@armbian><img alt="Mastodon Follow" src="https://img.shields.io/mastodon/follow/109365956768424870?domain=https%3A%2F%2Ffosstodon.org&logo=mastodon&style=flat-square"></a>
-<a href=http://discord.armbian.com/><img alt="Discord" src="https://img.shields.io/discord/854735915313659944?label=Discord&logo=discord&style=flat-square"></a>
-<a href=https://liberapay.com/armbian><img alt="Liberapay patrons" src="https://img.shields.io/liberapay/patrons/armbian?logo=liberapay&style=flat-square"></a>
+  <h1 align=center>NEXT GENERATION</h1>
+<p align="center">
+<a href=https://github.com/armbian/os/releases/latest><img alt="Armbian OS" src="https://img.shields.io/github/actions/workflow/status/armbian/os/build-images.yml?logo=githubactions&label=Build%20Nighlty%20Images&style=for-the-badge&branch=main"></a><br>
+( Classic build framework remains on master branch, frozen and unmaintained )<br> <br>
 </p>
 
-
+- in case of troubles, keep using master/v23.02 branch
+- PR's are going to <b>main</b> branch, optional to master/v23.02
+- do not use master and main in the same folder
 
 ## Table of contents
 
@@ -36,7 +32,7 @@
 
 ## What this project does?
 
-- Builds custom kernel, image or a distribution optimized for low resource HW such as single board computers,
+- Builds custom kernel, image or a distribution optimized for low resource hardware,
 - Include filesystem generation, low-level control software, kernel image and bootloader compilation,
 - Provides a consistent user experience by keeping system standards across different platforms.
 
@@ -44,15 +40,16 @@
 
 ### Basic requirements
 
-- x86_64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, container or bare metal installation
-- Ubuntu Jammy 22.04.x amd64 or aarch64 for native building or any [Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) capable amd64 / aarch64 Linux for containerised
+- x86_64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), container or bare metal installation
+- Ubuntu Jammy 22.04.x amd64 or aarch64 for native building or any Docker capable amd64 / aarch64 Linux for containerised
 - Superuser rights (configured sudo or root access).
+- Make sure all your system components are up-to-date. Outdated Docker binaries for example can cause troubles.
 
 ### Simply start with the build script
 
 ```bash
 apt-get -y install git
-git clone --depth=1 --branch=master https://github.com/armbian/build
+git clone --depth=1 --branch=main https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
@@ -69,12 +66,6 @@ Show work in progress areas in interactive mode:
 
 ```bash
 ./compile.sh EXPERT="yes"
-```
-
-Run build framework inside Docker container:
-
-```bash
-./compile.sh docker
 ```
 
 Build minimal CLI Armbian Focal image for Orangepi Zero. Use modern kernel and write image to the SD card:
@@ -95,9 +86,7 @@ More information:
 
 - [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
 - [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
-- [Building with Docker](https://docs.armbian.com/Developer-Guide_Building-with-Docker/) — how to build inside container;
 - [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
-
 
 ## Download prebuilt images
 
@@ -123,11 +112,23 @@ Function | Armbian | Yocto | Buildroot |
 
 ## Project structure
 
+<details><summary>Expand</summary>
+
 ```text
 ├── cache                                Work / cache directory
-│   ├── rootfs                           Compressed userspace packages cache
-│   ├── sources                          Kernel, u-boot and various drivers sources.
-│   ├── toolchains                       External cross compilers from Linaro™ or ARM™
+│   ├── aptcache                         Packages
+│   ├── ccache                           C/C++ compiler
+│   ├── docker                           Docker last pull
+│   ├── git-bare                         Minimal Git
+│   ├── git-bundles                      Full Git
+│   ├── initrd                           Ram disk
+│   ├── memoize                          Git status
+│   ├── patch                            Kernel drivers patch
+│   ├── pip                              Python
+│   ├── rootfs                           Compressed userspaces
+│   ├── sources                          Kernel, u-boot and other sources
+│   ├── tools                            Additional tools like ORAS
+│   └── utility
 ├── config                               Packages repository configurations
 │   ├── targets.conf                     Board build target configuration
 │   ├── boards                           Board configurations
@@ -140,8 +141,21 @@ Function | Armbian | Yocto | Buildroot |
 │   ├── sources                          Kernel and u-boot sources locations and scripts
 │   ├── templates                        User configuration templates which populate userpatches
 │   └── torrents                         External compiler and rootfs cache torrents
-├── extensions                           extend build system with specific functionality
+├── extensions                           Extend build system with specific functionality
 ├── lib                                  Main build framework libraries
+│   ├── functions
+│   │   ├── artifacts
+│   │   ├── bsp
+│   │   ├── cli
+│   │   ├── compilation
+│   │   ├── configuration
+│   │   ├── general
+│   │   ├── host
+│   │   ├── image
+│   │   ├── logging
+│   │   ├── main
+│   │   └── rootfs
+│   └── tools
 ├── output                               Build artifact
 │   └── deb                              Deb packages
 │   └── images                           Bootable images - RAW or compressed
@@ -150,7 +164,7 @@ Function | Armbian | Yocto | Buildroot |
 │   └── patch                            Created patches location
 ├── packages                             Support scripts, binary blobs, packages
 │   ├── blobs                            Wallpapers, various configs, closed source bootloaders
-│   ├── bsp-cli                          Automatically added to armbian-bsp-cli package 
+│   ├── bsp-cli                          Automatically added to armbian-bsp-cli package
 │   ├── bsp-desktop                      Automatically added to armbian-bsp-desktopo package
 │   ├── bsp                              Scripts and configs overlay for rootfs
 │   └── extras-buildpkgs                 Optional compilation and packaging engine
@@ -172,10 +186,12 @@ Function | Armbian | Yocto | Buildroot |
     ├── misc                             User: various
     └── u-boot                           User: universal boot loader patches
 ```
+</details>
 
 ## 🙌 Contribution
 
-### You don't need to be a programmer to help! 
+### You don't need to be a programmer to help!
+
 - The easiest way to help is by "Starring" our repository - it helps more people find our code.
 - [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
 - [Seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/)
@@ -199,16 +215,17 @@ If you want to help with development, you should first review the [Development C
 ## Support
 
 Support is provided in one of two ways:
+
 - For commercial or prioritized assistance:
   - book a an hour of [professional consultation](https://calendly.com/armbian/consultation),
-  - consider becoming a project partner. Reach us out at https://armbian.com/contact,
+  - consider becoming a project partner. Reach us out at <https://armbian.com/contact>,
 - Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guaranteed solutions.
 
 ## Contact
 
 - [Forums](https://forum.armbian.com) for Participate in Armbian
 - IRC: `#armbian` on Libera.chat
-- Discord: [http://discord.armbian.com](http://discord.armbian.com)
+- Discord: [https://discord.gg/armbian](https://discord.gg/armbian)
 - Follow [@armbian](https://twitter.com/armbian) on Twitter, [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
 - Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
@@ -231,8 +248,13 @@ Thank you to all the people who already contributed Armbian!
 ## Armbian Partners
 
 Armbian's partnership program helps to support Armbian and the Armbian community! Please take a moment to familiarize yourself with our Partners:
+
 - [Click here to visit our Partners page!](https://armbian.com/partners)
 - [How can I become a Partner?](https://forum.armbian.com/subscriptions)
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=armbian/build&type=Date)](https://star-history.com/#armbian/build&Date)
 
 ## License
 
