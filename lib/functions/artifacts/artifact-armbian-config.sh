@@ -7,6 +7,10 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_armbian-config_config_dump() {
+	artifact_input_variables[BUILD_MINIMAL]="${BUILD_MINIMAL}"
+}
+
 function artifact_armbian-config_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope

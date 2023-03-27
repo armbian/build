@@ -7,6 +7,16 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_kernel_config_dump() {
+	# BOARD is NOT included. See explanation below.
+	artifact_input_variables[LINUXFAMILY]="${LINUXFAMILY}"
+	artifact_input_variables[BRANCH]="${BRANCH}"
+	artifact_input_variables[KERNEL_MAJOR_MINOR]="${KERNEL_MAJOR_MINOR}"
+	artifact_input_variables[KERNELSOURCE]="${KERNELSOURCE}"
+	artifact_input_variables[KERNELBRANCH]="${KERNELBRANCH}"
+	artifact_input_variables[KERNELPATCHDIR]="${KERNELPATCHDIR}"
+}
+
 # This is run in a logging section.
 # Prepare the version, "sans-repos": just the armbian/build repo contents are available.
 # It is OK to reach out to the internet for a curl or ls-remote, but not for a git clone, but
