@@ -24,8 +24,8 @@ source "${SRC}"/lib/functions/artifacts/artifact-full_firmware.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/artifacts/artifact-full_firmware.sh
-# shellcheck source=lib/functions/artifacts/artifact-full_firmware.sh
+### lib/functions/artifacts/artifact-armbian-config.sh
+# shellcheck source=lib/functions/artifacts/artifact-armbian-config.sh
 source "${SRC}"/lib/functions/artifacts/artifact-armbian-config.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
@@ -42,8 +42,8 @@ source "${SRC}"/lib/functions/artifacts/artifact-armbian-zsh.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/artifacts/artifact-plymouth-theme-armbian.sh
-# shellcheck source=lib/functions/artifacts/artifact-plymouth-theme-armbian.sh
+### lib/functions/artifacts/artifact-armbian-plymouth-theme.sh
+# shellcheck source=lib/functions/artifacts/artifact-armbian-plymouth-theme.sh
 source "${SRC}"/lib/functions/artifacts/artifact-armbian-plymouth-theme.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
@@ -366,8 +366,8 @@ source "${SRC}"/lib/functions/compilation/packages/firmware-deb.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/compilation/packages/plymouth-theme-armbian-deb.sh
-# shellcheck source=lib/functions/compilation/packages/plymouth-theme-armbian-deb.sh
+### lib/functions/compilation/packages/armbian-plymouth-theme-deb.sh
+# shellcheck source=lib/functions/compilation/packages/armbian-plymouth-theme-deb.sh
 source "${SRC}"/lib/functions/compilation/packages/armbian-plymouth-theme-deb.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
@@ -384,8 +384,8 @@ source "${SRC}"/lib/functions/compilation/packages/utils-dpkgdeb.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
-### lib/functions/compilation/packages/zsh-deb.sh
-# shellcheck source=lib/functions/compilation/packages/zsh-deb.sh
+### lib/functions/compilation/packages/armbian-zsh-deb.sh
+# shellcheck source=lib/functions/compilation/packages/armbian-zsh-deb.sh
 source "${SRC}"/lib/functions/compilation/packages/armbian-zsh-deb.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
