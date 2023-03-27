@@ -423,6 +423,7 @@ function write_config_summary_output_file() {
 function source_family_config_and_arch() {
 	declare -a family_source_paths=("${SRC}/config/sources/families/${LINUXFAMILY}.conf" "${USERPATCHES_PATH}/config/sources/families/${LINUXFAMILY}.conf")
 	declare -i family_sourced_ok=0
+	declare family_source_path
 	for family_source_path in "${family_source_paths[@]}"; do
 		[[ ! -f "${family_source_path}" ]] && continue
 
