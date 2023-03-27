@@ -21,7 +21,7 @@ function extension_manager_declare_globals() {
 	declare -g -A defined_hook_point_functions           # keeps a map of hook point functions that were defined and their extension info
 	declare -g -A hook_point_function_trace_sources      # keeps a map of hook point functions that were actually called and their source
 	declare -g -A hook_point_function_trace_lines        # keeps a map of hook point functions that were actually called and their source
-	declare -g fragment_manager_cleanup_file             # this is a file used to cleanup the manager's produced functions, for build_all_ng
+	declare -g extension_manager_cleanup_file            # this is a file used to cleanup the manager's produced functions, for build_all_ng
 	declare -g -i enable_extension_recurse_counter=0
 	declare -g -a enable_extension_recurse_stack
 }
@@ -50,6 +50,7 @@ function call_extension_method() {
 	display_alert "Extension Method '${1}' being called from" "$(get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")" "extensions"
 
 	# Then call the hooks, if they are defined.
+	declare hook_name
 	for hook_name in "$@"; do
 		display_alert "Extension Method being called: ${hook_name}" "hook: ${hook_name}" "extensions"
 		if [[ $(type -t ${hook_name} || true) == function ]]; then
@@ -102,8 +103,8 @@ function initialize_extension_manager() {
 	declare -i hook_points_counter=0 hook_functions_counter=0 hook_point_functions_counter=0
 
 	# initialize the cleanups file.
-	fragment_manager_cleanup_file="${EXTENSION_MANAGER_TMP_DIR}/extension_function_cleanup.sh"
-	echo "# cleanups: " > "${fragment_manager_cleanup_file}"
+	extension_manager_cleanup_file="${EXTENSION_MANAGER_TMP_DIR}/extension_function_cleanup.sh"
+	echo "# cleanups: " > "${extension_manager_cleanup_file}"
 
 	local FUNCTION_SORT_OPTIONS="--general-numeric-sort --ignore-case" #  --random-sort could be used to introduce chaos
 	local hook_point=""
@@ -147,6 +148,7 @@ function initialize_extension_manager() {
 		# keep a reference from the new names to the old names (we'll sort on the new, but invoke the old)
 		declare -A hook_point_functions_sortname_to_realname
 		declare -A hook_point_functions_realname_to_sortname
+		declare hook_point_function_realname
 		for hook_point_function_realname in ${hook_point_functions_pre_sort}; do
 			local sort_id="${hook_point_function_realname}"
 			[[ ! $sort_id =~ ^[0-9] ]] && sort_id="500_${sort_id}"
@@ -161,6 +163,7 @@ function initialize_extension_manager() {
 
 		# then map back to the real names, keeping the order..
 		hook_point_functions=""
+		declare hook_point_function_sortname
 		for hook_point_function_sortname in ${hook_point_functions_sorted_by_sort_id}; do
 			hook_point_functions="${hook_point_functions} ${hook_point_functions_sortname_to_realname[${hook_point_function_sortname}]}"
 		done
@@ -177,6 +180,7 @@ function initialize_extension_manager() {
 		local common_function_vars="HOOK_POINT=\"${hook_point}\""
 
 		# loop over the functions for this hook_point (keep a total for the hook point and a grand running total)
+		declare hook_point_function
 		for hook_point_function in ${hook_point_functions}; do
 			hook_point_functions_counter=$((hook_point_functions_counter + 1))
 			hook_functions_counter=$((hook_functions_counter + 1))
@@ -186,10 +190,10 @@ function initialize_extension_manager() {
 		display_alert "Extensions hook_point: ${hook_point} will run ${hook_point_functions_counter} functions" "${hook_point_functions_counter}" "extensions"
 		local temp_source_file_for_hook_point="${EXTENSION_MANAGER_TMP_DIR}/extension_function_definition.sh"
 
-		hook_point_functions_loop_counter=0
+		declare hook_point_functions_loop_counter=0
 
 		# prepare the cleanup for the function, so we can remove our mess at the end of the build.
-		cat <<- FUNCTION_CLEANUP_FOR_HOOK_POINT >> "${fragment_manager_cleanup_file}"
+		cat <<- FUNCTION_CLEANUP_FOR_HOOK_POINT >> "${extension_manager_cleanup_file}"
 			unset ${hook_point}
 		FUNCTION_CLEANUP_FOR_HOOK_POINT
 
@@ -230,12 +234,12 @@ function initialize_extension_manager() {
 			FUNCTION_DEFINITION_CALLSITE
 
 			# output the cleanup for the implementation as well.
-			cat <<- FUNCTION_CLEANUP_FOR_HOOK_POINT_IMPLEMENTATION >> "${fragment_manager_cleanup_file}"
+			cat <<- FUNCTION_CLEANUP_FOR_HOOK_POINT_IMPLEMENTATION >> "${extension_manager_cleanup_file}"
 				unset ${hook_point}${hook_extension_delimiter}${hook_point_function}
 			FUNCTION_CLEANUP_FOR_HOOK_POINT_IMPLEMENTATION
 
 			# unset extension vars for the next loop.
-			unset EXTENSION EXTENSION_DIR EXTENSION_FILE EXTENSION_ADDED_BY
+			unset EXTENSION EXTENSION_DIR EXTENSION_FILE EXTENSION_ADDED_BY HOOK_ORDER HOOK_POINT_TOTAL_FUNCS HOOK_POINT
 		done
 
 		cat <<- FUNCTION_DEFINITION_FOOTER >> "${temp_source_file_for_hook_point}"
@@ -261,17 +265,17 @@ function initialize_extension_manager() {
 }
 
 function cleanup_extension_manager() {
-	if [[ -f "${fragment_manager_cleanup_file}" ]]; then
+	if [[ -f "${extension_manager_cleanup_file}" ]]; then
 		display_alert "Cleaning up" "extension manager" "debug"
 		# shellcheck disable=SC1090 # dynamic source, thanks, shellcheck
-		source "${fragment_manager_cleanup_file}" # this will unset all the functions.
-		rm -f "${fragment_manager_cleanup_file}"  # also remove the file.
-		unset fragment_manager_cleanup_file       # and unset the var.
+		source "${extension_manager_cleanup_file}" # this will unset all the functions.
+		rm -f "${extension_manager_cleanup_file}"  # also remove the file.
+		unset extension_manager_cleanup_file       # and unset the var.
 	fi
 
 	# reset/unset the variables used
 	initialize_extension_manager_counter=0
-	unset extension_function_info defined_hook_point_functions hook_point_function_trace_sources hook_point_function_trace_lines fragment_manager_cleanup_file
+	unset extension_function_info defined_hook_point_functions hook_point_function_trace_sources hook_point_function_trace_lines extension_manager_cleanup_file
 }
 
 function cleanup_handler_extensions() {
