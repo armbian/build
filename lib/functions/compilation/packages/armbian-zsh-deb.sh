@@ -13,7 +13,7 @@ compile_armbian-zsh() {
 	declare cleanup_id="" tmp_dir=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-zsh" cleanup_id tmp_dir # namerefs
 
-	declare armbian_config_dir="armbian-zsh"
+	declare armbian_zsh_dir="armbian-zsh"
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"
 
 	fetch_from_repo "$GITHUB_SOURCE/ohmyzsh/ohmyzsh" "oh-my-zsh" "branch:master"
