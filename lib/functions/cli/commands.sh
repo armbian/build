@@ -40,6 +40,8 @@ function armbian_register_commands() {
 		["firmware"]="artifact"
 		["firmware-full"]="artifact"
 		["armbian-config"]="artifact"
+		["armbian-zsh"]="artifact"
+		["plymouth-theme-armbian"]="artifact"
 		["kernel"]="artifact"
 		["kernel-config"]="artifact"
 		["u-boot"]="artifact"
