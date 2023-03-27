@@ -7,6 +7,11 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_armbian-plymouth-theme_config_dump() {
+	# artifact_input_variables: None, for armbian-plymouth-theme.
+	:
+}
+
 function artifact_armbian-plymouth-theme_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope

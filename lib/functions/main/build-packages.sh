@@ -6,9 +6,56 @@
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
+function determine_artifacts_to_build_for_image() {
+	# outer scope: declare -a artifacts_to_build=()
+	if [[ "${BOOTCONFIG}" != "none" ]]; then
+		artifacts_to_build+=("uboot")
+	fi
+	if [[ -n $KERNELSOURCE ]]; then
+		artifacts_to_build+=("kernel")
+	fi
+
+	if [[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]]; then
+		if [[ ${BOARD_FIRMWARE_INSTALL:-""} == "-full" ]]; then
+			artifacts_to_build+=("full_firmware")
+		else
+			artifacts_to_build+=("firmware")
+		fi
+	fi
+
+	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+		artifacts_to_build+=("fake_ubuntu_advantage_tools")
+	fi
+
+	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			artifacts_to_build+=("armbian-config")
+		fi
+	fi
+
+	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			artifacts_to_build+=("armbian-zsh")
+		fi
+	fi
+
+	if [[ $PLYMOUTH == yes ]]; then
+		artifacts_to_build+=("armbian-plymouth-theme")
+	fi
+
+	if [[ -n "${RELEASE}" ]]; then
+		# Further packages require aggregation
+		assert_requires_aggregation
+
+			artifacts_to_build+=("armbian-bsp-cli")
+			if [[ -n "${DESKTOP_ENVIRONMENT}" ]]; then
+				artifacts_to_build+=("armbian-desktop")
+				artifacts_to_build+=("armbian-bsp-desktop")
+			fi
+	fi
+}
 
 function main_default_build_packages() {
-
 	# early cleaning for sources, since fetch_and_build_host_tools() uses it.
 	if [[ "${CLEAN_LEVEL}" == *sources* ]]; then
 		LOG_SECTION="cleaning_early_sources" do_with_logging general_cleaning "sources"
@@ -27,38 +74,7 @@ function main_default_build_packages() {
 
 	# determine which artifacts to build.
 	declare -a artifacts_to_build=()
-	if [[ "${BOOTCONFIG}" != "none" ]]; then
-		artifacts_to_build+=("uboot")
-	fi
-	if [[ -n $KERNELSOURCE ]]; then
-		artifacts_to_build+=("kernel")
-	fi
-
-	if [[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]]; then
-		if [[ ${BOARD_FIRMWARE_INSTALL:-""} == "-full" ]]; then
-			artifacts_to_build+=("full_firmware")
-		else
-			artifacts_to_build+=("firmware")
-		fi
-	fi
-
-	artifacts_to_build+=("fake_ubuntu_advantage_tools")
-
-	artifacts_to_build+=("armbian-config")
-	artifacts_to_build+=("armbian-zsh")
-	artifacts_to_build+=("armbian-plymouth-theme")
-
-	if [[ -n "${RELEASE}" ]]; then
-		# Further packages require aggregation
-		assert_requires_aggregation
-
-			artifacts_to_build+=("armbian-bsp-cli")
-			if [[ -n "${DESKTOP_ENVIRONMENT}" ]]; then
-				artifacts_to_build+=("armbian-desktop")
-				artifacts_to_build+=("armbian-bsp-desktop")
-			fi
-	fi
-
+	determine_artifacts_to_build_for_image
 	display_alert "Artifacts to build:" "${artifacts_to_build[*]}" "debug"
 
 	# For each artifact, try to obtain them from the local cache, remote cache, or build them.
