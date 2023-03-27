@@ -45,7 +45,7 @@ function main_default_build_packages() {
 
 	artifacts_to_build+=("armbian-config")
 	artifacts_to_build+=("armbian-zsh")
-	artifacts_to_build+=("plymouth-theme-armbian")
+	artifacts_to_build+=("armbian-plymouth-theme")
 
 	display_alert "Artifacts to build:" "${artifacts_to_build[*]}" "debug"
 

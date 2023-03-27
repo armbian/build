@@ -20,7 +20,7 @@ function armbian_register_artifacts() {
 		["full_firmware"]="full_firmware"
 		["armbian-config"]="armbian-config"
 		["armbian-zsh"]="armbian-zsh"
-		["plymouth-theme-armbian"]="plymouth-theme-armbian"
+		["armbian-plymouth-theme"]="armbian-plymouth-theme"
 
 		# tar.zst
 		["rootfs"]="rootfs"

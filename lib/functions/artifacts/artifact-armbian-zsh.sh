@@ -60,7 +60,7 @@ function artifact_armbian-zsh_prepare_version() {
 }
 
 function artifact_armbian-zsh_build_from_sources() {
-	FULL="" REPLACE="-full" LOG_SECTION="compile_armbian-zsh" do_with_logging compile_armbian-zsh
+	LOG_SECTION="compile_armbian-zsh" do_with_logging compile_armbian-zsh
 }
 
 function artifact_armbian-zsh_cli_adapter_pre_run() {
@@ -75,7 +75,7 @@ function artifact_armbian-zsh_cli_adapter_config_prep() {
 }
 
 function artifact_armbian-zsh_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-armbian-zsh/"
+	artifact_oci_target_base="ghcr.io/armbian/cache-firmware/"
 }
 
 function artifact_armbian-zsh_is_available_in_local_cache() {

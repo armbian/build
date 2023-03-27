@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-compile_plymouth-theme-armbian() {
+compile_armbian-plymouth-theme() {
 	: "${artifact_version:?artifact_version is not set}"
 
 	declare cleanup_id="" tmp_dir=""
@@ -55,7 +55,7 @@ compile_plymouth-theme-armbian() {
 	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/armbian.plymouth \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
-	fakeroot_dpkg_deb_build "${tmp_dir}/${plymouth_theme_armbian_dir}" "${DEB_STORAGE}/"
+	fakeroot_dpkg_deb_build "${tmp_dir}/${plymouth_theme_armbian_dir}" "${DEB_STORAGE}"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

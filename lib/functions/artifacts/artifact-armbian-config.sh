@@ -60,7 +60,7 @@ function artifact_armbian-config_prepare_version() {
 }
 
 function artifact_armbian-config_build_from_sources() {
-	FULL="" REPLACE="-full" LOG_SECTION="compile_armbian-config" do_with_logging compile_armbian-config
+	LOG_SECTION="compile_armbian-config" do_with_logging compile_armbian-config
 }
 
 function artifact_armbian-config_cli_adapter_pre_run() {
@@ -75,7 +75,7 @@ function artifact_armbian-config_cli_adapter_config_prep() {
 }
 
 function artifact_armbian-config_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-armbian-config/"
+	artifact_oci_target_base="ghcr.io/armbian/cache-firmware/"
 }
 
 function artifact_armbian-config_is_available_in_local_cache() {

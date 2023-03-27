@@ -385,37 +385,21 @@ function install_distribution_agnostic() {
 
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
-			fi
-		else
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "armbian-config" "remote"
-			fi
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-config"]}"
 		fi
 	fi
 
 	# install armbian-zsh
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]]; then
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb"
-			fi
-		else
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "armbian-zsh" "remote"
-			fi
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-config"]}"
 		fi
 	fi
 
-	# install plymouth-theme-armbian
+	# install armbian-plymouth-theme
 	if [[ $PLYMOUTH == yes ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-plymouth-theme_${REVISION}_all.deb"
-		else
-			install_deb_chroot "armbian-plymouth-theme" "remote"
-		fi
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-plymouth-theme"]}"
 	fi
 
 	# install wireguard tools

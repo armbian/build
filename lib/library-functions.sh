@@ -44,7 +44,7 @@ set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/artifacts/artifact-plymouth-theme-armbian.sh
 # shellcheck source=lib/functions/artifacts/artifact-plymouth-theme-armbian.sh
-source "${SRC}"/lib/functions/artifacts/artifact-plymouth-theme-armbian.sh
+source "${SRC}"/lib/functions/artifacts/artifact-armbian-plymouth-theme.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
@@ -368,7 +368,7 @@ set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/compilation/packages/plymouth-theme-armbian-deb.sh
 # shellcheck source=lib/functions/compilation/packages/plymouth-theme-armbian-deb.sh
-source "${SRC}"/lib/functions/compilation/packages/plymouth-theme-armbian-deb.sh
+source "${SRC}"/lib/functions/compilation/packages/armbian-plymouth-theme-deb.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
