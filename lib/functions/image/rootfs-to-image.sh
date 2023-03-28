@@ -115,7 +115,7 @@ function create_image_from_sdcard_rootfs() {
 	[[ $(type -t post_build_image_modify) == function ]] && display_alert "Custom Hook Detected" "post_build_image_modify" "info" && post_build_image_modify "${DESTIMG}/${version}.img"
 
 	# Previously, post_build_image passed the .img path as an argument to the hook. Now its an ENV var.
-	export FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
+	declare -g FINAL_IMAGE_FILE="${DESTIMG}/${version}.img"
 	call_extension_method "post_build_image" <<- 'POST_BUILD_IMAGE'
 		*custom post build hook*
 		Called after the final .img file is built, before it is (possibly) written to an SD writer.

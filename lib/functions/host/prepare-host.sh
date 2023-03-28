@@ -326,7 +326,7 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
 	fi
 
-	export EXTRA_BUILD_DEPS=""
+	declare -g EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 		*run before installing host dependencies*
 		you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
@@ -337,7 +337,7 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=(${EXTRA_BUILD_DEPS})
 	fi
 
-	export FINAL_HOST_DEPS="${host_dependencies[*]}"
+	declare -g FINAL_HOST_DEPS="${host_dependencies[*]}"
 	call_extension_method "host_dependencies_known" <<- 'HOST_DEPENDENCIES_KNOWN'
 		*run after all host dependencies are known (but not installed)*
 		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
