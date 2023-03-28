@@ -92,17 +92,17 @@ function run_tool_shellcheck() {
 			;;
 	esac
 
-	# Check if we have a cached version in a Docker image, and copy it over before possibly updating it.
-	if [[ "${deploy_to_non_cache_dir:-"no"}" != "yes" && -d "${non_cache_dir}" ]]; then
-		display_alert "Using cached SHELLCHECK from Docker image" "SHELLCHECK" "debug"
-		run_host_command_logged cp -v "${non_cache_dir}/"* "${DIR_SHELLCHECK}/"
-	fi
-
 	declare SHELLCHECK_FN="shellcheck-v${SHELLCHECK_VERSION}.${SHELLCHECK_OS}.${SHELLCHECK_ARCH}"
 	declare SHELLCHECK_FN_TARXZ="${SHELLCHECK_FN}.tar.xz"
 	declare DOWN_URL="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
 	declare SHELLCHECK_BIN="${DIR_SHELLCHECK}/${SHELLCHECK_FN}"
 	declare ACTUAL_VERSION
+
+	# Check if we have a cached version in a Docker image, and copy it over before possibly updating it.
+	if [[ "${deploy_to_non_cache_dir:-"no"}" != "yes" && -d "${non_cache_dir}" && ! -f "${SHELLCHECK_BIN}" ]]; then
+		display_alert "Using cached SHELLCHECK from Docker image" "SHELLCHECK" "debug"
+		run_host_command_logged cp -v "${non_cache_dir}/"* "${DIR_SHELLCHECK}/"
+	fi
 
 	if [[ ! -f "${SHELLCHECK_BIN}" ]]; then
 		do_with_retries 5 try_download_shellcheck_tooling
