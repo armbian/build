@@ -135,7 +135,7 @@ function docker_cli_prepare() {
 	# If we're NOT building the public, official image, then USE the public, official image as base.
 	# IMPORTANT: This has to match the naming scheme for tag the is used in the GitHub actions workflow.
 	if [[ "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" && "${DOCKER_SIMULATE_CLEAN}" != "yes" ]]; then
-		DOCKER_ARMBIAN_BASE_IMAGE="ghcr.io/armbian/docker-armbian-build:armbian-${wanted_os_tag}-${wanted_release_tag}-latest"
+		DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX:-"ghcr.io/armbian/docker-armbian-build:armbian-"}${wanted_os_tag}-${wanted_release_tag}-latest"
 		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
