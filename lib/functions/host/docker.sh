@@ -262,7 +262,10 @@ function docker_cli_prepare_dockerfile() {
 	declare c="" # Nothing; commands will run.
 	if [[ "${DOCKER_SIMULATE_CLEAN}" == "yes" ]]; then
 		display_alert "Simulating" "clean build, due to DOCKER_SIMULATE_CLEAN=yes -- this is wasteful and slow and only for debugging" "warn"
-		c="## " # Add comment to simulate clean env
+		c="## Disabled by DOCKER_SIMULATE_CLEAN #" # Add comment to simulate clean env
+	elif [[ "${DOCKER_SKIP_UPDATE}" == "yes" && "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" ]]; then
+		display_alert "Skipping Docker updates" "make sure base image '${DOCKER_ARMBIAN_BASE_IMAGE}' is up-to-date" "" "info"
+		c="## Disabled by DOCKER_SKIP_UPDATE # " # Add comment to simulate clean env
 	fi
 
 	declare c_req="# " # Nothing; commands will run.
