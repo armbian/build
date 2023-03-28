@@ -18,6 +18,7 @@ function armbian_register_artifacts() {
 		["uboot"]="uboot"
 		["firmware"]="firmware"
 		["full_firmware"]="full_firmware"
+		["fake_ubuntu_advantage_tools"]="fake_ubuntu_advantage_tools"
 
 		# tar.zst
 		["rootfs"]="rootfs"

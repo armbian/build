@@ -44,6 +44,8 @@ function armbian_register_commands() {
 		["u-boot"]="artifact"
 		["uboot"]="artifact"
 
+		["fake_ubuntu_advantage_tools"]="fake_ubuntu_advantage_tools"
+
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
 
@@ -69,6 +71,7 @@ function armbian_register_commands() {
 		["u-boot"]="WHAT='uboot' ${common_cli_artifact_vars}"
 		["firmware"]="WHAT='firmware' ${common_cli_artifact_vars}"
 		["firmware-full"]="WHAT='full_firmware' ${common_cli_artifact_vars}"
+		["fake-ubuntu-advantage-tools"]="WHAT='fake-ubuntu-advantage-tools' ${common_cli_artifact_vars}"
 		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
 
 		["oras-upload"]="ORAS_OPERATION='upload'"
