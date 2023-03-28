@@ -7,32 +7,32 @@
 # https://github.com/armbian/build/
 #
 enable_extension "sunxi-tools"
-export ARCH=armhf
-export BOOTDELAY=1
-export BOOTPATCHDIR='u-boot-sunxi'
+declare -g ARCH=armhf
+declare -g BOOTDELAY=1
+declare -g BOOTPATCHDIR='u-boot-sunxi'
 UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-;;u-boot-sunxi-with-spl.bin}"
-export BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
-export BOOTENV_FILE='sunxi.txt'
-export LINUXFAMILY=sunxi
-export UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
-export ASOUND_STATE='asound.state.sunxi-next'
-export GOVERNOR=ondemand
+declare -g BOOTSCRIPT="boot-sunxi.cmd:boot.cmd"
+declare -g BOOTENV_FILE='sunxi.txt'
+declare -g LINUXFAMILY=sunxi
+declare -g UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
+declare -g ASOUND_STATE='asound.state.sunxi-next'
+declare -g GOVERNOR=ondemand
 
 case $BRANCH in
 
 	legacy)
-		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v5.15.104"
+		declare -g KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v5.15.104"
 		;;
 
 	current)
-		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v6.1.21"
+		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.1.21"
 		;;
 
 	edge)
-		export KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v6.2.8"
+		declare -g KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.2.8"
 		;;
 esac
 
