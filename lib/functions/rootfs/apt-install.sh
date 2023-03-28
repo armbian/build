@@ -42,7 +42,7 @@ function install_deb_chroot() {
 	fi
 
 	# install in chroot via apt-get, not dpkg, so dependencies are also installed from repo if needed.
-	export if_error_detail_message="Installation of $install_target failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
+	declare -g if_error_detail_message="Installation of $install_target failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends install "${install_target}" # don't auto-maintain apt cache when installing from packages.
 
 	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?

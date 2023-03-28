@@ -212,7 +212,7 @@ function prepare_partitions() {
 	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -x $FD
 
-	export LOOP
+	declare -g LOOP
 	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
 	display_alert "Allocated loop device" "LOOP=${LOOP}"
 

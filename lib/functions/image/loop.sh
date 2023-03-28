@@ -88,7 +88,7 @@ function write_uboot_to_loop_image() {
 	display_alert "Writing u-boot bootloader" "$loop" "info"
 	write_uboot_platform "${TEMP_DIR}${DIR}" "$loop" # important: DIR is set in platform_install.sh sourced above.
 
-	export UBOOT_CHROOT_DIR="${TEMP_DIR}${DIR}"
+	declare -g UBOOT_CHROOT_DIR="${TEMP_DIR}${DIR}"
 
 	call_extension_method "post_write_uboot_platform" <<- 'POST_WRITE_UBOOT_PLATFORM'
 		*allow custom writing of uboot -- only during image build*

@@ -76,7 +76,7 @@ function initialize_extension_manager() {
 	}
 
 	# This marks the manager as initialized, no more extensions are allowed to load after this.
-	export initialize_extension_manager_counter=$((initialize_extension_manager_counter + 1))
+	declare -g initialize_extension_manager_counter=$((initialize_extension_manager_counter + 1))
 
 	# Extensions has its own work/tmp directory, defined by do_main_configuration, with build UUID. We just create it here, unless told not to.
 	display_alert "Initializing EXTENSION_MANAGER_TMP_DIR" "${EXTENSION_MANAGER_TMP_DIR}" "debug"
@@ -295,7 +295,7 @@ function cleanup_handler_extensions() {
 # final location. this will make run_after_build() "hot" (eg, emit warnings)
 function run_after_build__999_finish_extension_manager() {
 	# export these maps, so the hook can access them and produce useful stuff.
-	export defined_hook_point_functions hook_point_function_trace_sources
+	declare -g defined_hook_point_functions hook_point_function_trace_sources
 
 	# eat our own dog food, pt2.
 	call_extension_method "extension_metadata_ready" <<- 'EXTENSION_METADATA_READY'

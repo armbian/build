@@ -350,8 +350,8 @@ function docker_cli_build_dockerfile() {
 	# If we get here without a local_image_sha, we need to build from scratch, so we need to re-create the Dockerfile.
 	if [[ -z "${local_image_sha}" ]]; then
 		display_alert "Base image not in local cache, building from scratch" "${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
-		export DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE=no
-		export DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH}"
+		declare -g DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE=no
+		declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH}"
 		docker_prepare_cli_skip_exts="yes" docker_cli_prepare
 		display_alert "Re-created" "Dockerfile, proceeding, build from scratch" "debug"
 	fi

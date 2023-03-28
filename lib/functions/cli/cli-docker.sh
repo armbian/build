@@ -17,7 +17,7 @@ function cli_docker_pre_run() {
 		shell)
 			# inside-function-function: a dynamic hook, only triggered if this CLI runs.
 			function add_host_dependencies__ssh_client_for_docker_shell_over_ssh() {
-				export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} openssh-client"
+				declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} openssh-client"
 			}
 			declare -g DOCKER_PASS_SSH_AGENT="yes" # Pass SSH agent to docker
 			;;

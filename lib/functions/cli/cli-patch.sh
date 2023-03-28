@@ -15,7 +15,7 @@ function cli_patch_kernel_pre_run() {
 	# inside-function-function: a dynamic hook, only triggered if this CLI runs.
 	# install openssh-client, we'll need it to push the patched tree.
 	function add_host_dependencies__ssh_client_for_patch_pushing_over_ssh() {
-		export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} openssh-client"
+		declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} openssh-client"
 	}
 
 	# "gimme root on a Linux machine"
