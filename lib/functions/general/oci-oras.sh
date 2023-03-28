@@ -53,17 +53,17 @@ function run_tool_oras() {
 			;;
 	esac
 
-	# Check if we have a cached version in a Docker image, and copy it over before possibly updating it.
-	if [[ "${deploy_to_non_cache_dir:-"no"}" != "yes" && -d "${non_cache_dir}" && ! -f "${ORAS_BIN}" ]]; then
-		display_alert "Using cached ORAS from Docker image" "ORAS" "debug"
-		run_host_command_logged cp "${non_cache_dir}/"* "${DIR_ORAS}/"
-	fi
-
 	declare ORAS_FN="oras_${ORAS_VERSION}_${ORAS_OS}_${ORAS_ARCH}"
 	declare ORAS_FN_TARXZ="${ORAS_FN}.tar.gz"
 	declare DOWN_URL="https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/${ORAS_FN_TARXZ}"
 	declare ORAS_BIN="${DIR_ORAS}/${ORAS_FN}"
 	declare ACTUAL_VERSION
+
+	# Check if we have a cached version in a Docker image, and copy it over before possibly updating it.
+	if [[ "${deploy_to_non_cache_dir:-"no"}" != "yes" && -d "${non_cache_dir}" && ! -f "${ORAS_BIN}" ]]; then
+		display_alert "Using cached ORAS from Docker image" "ORAS" "debug"
+		run_host_command_logged cp -r "${non_cache_dir}/"* "${DIR_ORAS}/"
+	fi
 
 	if [[ ! -f "${ORAS_BIN}" ]]; then
 		do_with_retries 5 try_download_oras_tooling
