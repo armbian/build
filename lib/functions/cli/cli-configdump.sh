@@ -16,6 +16,7 @@ function cli_config_dump_json_run() {
 	do_capturing_defs config_board_and_remove_useless < /dev/null # this sets CAPTURED_VARS_NAMES and CAPTURED_VARS_ARRAY; the < /dev/null is take away the terminal from stdin
 
 	# convert to JSON, using python helper; each var is passed via a command line argument; that way we avoid newline/nul-char separation issues
+	display_alert "Dumping JSON" "for ${#CAPTURED_VARS_ARRAY[@]} variables" "ext"
 	python3 "${SRC}/lib/tools/configdump2json.py" "--args" "${CAPTURED_VARS_ARRAY[@]}" # to stdout
 
 	return 0
