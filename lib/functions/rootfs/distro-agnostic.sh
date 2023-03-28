@@ -125,6 +125,7 @@ function install_distribution_agnostic() {
 	chroot_sdcard dpkg-reconfigure -f noninteractive tzdata
 
 	# set root password. it is written to the log, of course. Escuse the escaping needed here.
+	display_alert "Setting root password" "" "info"
 	chroot_sdcard "(" echo "'${ROOTPWD}'" ";" echo "'${ROOTPWD}'" ";" ")" "|" passwd root
 
 	# enable automated login to console(s)
@@ -387,7 +388,7 @@ function install_distribution_agnostic() {
 
 	# install armbian-plymouth-theme
 	if [[ $PLYMOUTH == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-plymouth-theme"]}"
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-plymouth-theme"]}"
 	fi
 
 	# install wireguard tools
