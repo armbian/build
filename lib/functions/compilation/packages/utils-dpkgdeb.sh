@@ -24,11 +24,19 @@ function fakeroot_dpkg_deb_build() {
 		exit_with_error "fakeroot_dpkg_deb_build: can't find source package directory: ${first_arg}"
 	fi
 
+	# Get the basename of the dir
+	declare pkg_name
+	pkg_name=$(basename "${first_arg}")
+
 	# Show the total human size of the source package directory.
 	display_alert "Source package size" "${first_arg}: $(du -sh "${first_arg}" | cut -f1)" "debug"
 
 	# find the DEBIAN scripts (postinst, prerm, etc) and run shellcheck on them.
 	dpkg_deb_run_shellcheck_on_scripts "${first_arg}"
+
+	# Dump the CONTROL file to the log.
+	display_alert "Showing DEBIAN/control file" "${pkg_name}/DEBIAN/control" "info"
+	run_tool_batcat --file-name "${pkg_name}/DEBIAN/control" "${first_arg}/DEBIAN/control"
 
 	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "${orig_args[@]}"
 }
