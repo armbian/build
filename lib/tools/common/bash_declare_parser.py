@@ -14,6 +14,8 @@ log: logging.Logger = logging.getLogger("bash_declare_parser")
 
 REGEX_BASH_DECLARE_DOUBLE_QUOTE = r"declare (-[-xr]) (.*?)=\"(.*)\""
 REGEX_BASH_DECLARE_SINGLE_QUOTE = r"declare (-[-xr]) (.*?)=\$'(.*)'"
+REGEX_BASH_DECLARE_ASSOCIATIVE_ARRAY = r"declare (-[A]) (.*?)=\((.*)\)"
+REGEX_BASH_DECLARE_SIMPLE_ARRAY = r"declare (-[a]) (.*?)=\((.*)\)"
 
 
 class BashDeclareParser:
@@ -36,6 +38,18 @@ class BashDeclareParser:
 				count_matches += 1
 				value = self.parse_dequoted_value(match.group(2), self.armbian_value_parse_single_quoted(match.group(3)))
 				all_keys[match.group(2)] = value
+
+		if count_matches == 0:
+			# try for the (A)ssociative Array version
+			for matchNum, match in enumerate(re.finditer(REGEX_BASH_DECLARE_ASSOCIATIVE_ARRAY, one_declare, re.DOTALL), start=1):
+				count_matches += 1
+				all_keys[match.group(2)] = ["@TODO", "bash associative arrays aka dictionaries are not supported yet", match.group(3)]
+
+		if count_matches == 0:
+			# try for the simple (a)rray version
+			for matchNum, match in enumerate(re.finditer(REGEX_BASH_DECLARE_SIMPLE_ARRAY, one_declare, re.DOTALL), start=1):
+				count_matches += 1
+				all_keys[match.group(2)] = ["@TODO", "bash simple-arrays are not supported yet", match.group(3)]
 
 		if count_matches == 0:
 			log.error(f"** No matches found for Bash declare regex (origin: {self.origin}), line ==>{one_declare}<==")
