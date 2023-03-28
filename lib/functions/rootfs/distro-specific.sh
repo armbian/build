@@ -55,7 +55,7 @@ function install_distribution_specific() {
 			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["fake-ubuntu-advantage-tools"]}"
 			truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
 
-	;;
+			;;
 	esac
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system

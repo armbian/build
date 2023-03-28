@@ -570,10 +570,8 @@ driver_uwe5622_allwinner() {
 	fi
 }
 
-driver_rtl8723cs()
-{
-
-	# Realtek rtl8723cs wireless support. 
+driver_rtl8723cs() {
+	# Realtek rtl8723cs wireless support.
 	# Driver has been borrowed from sunxi 6.1 megous patch archive.
 	# Applies only from linux 6.1 onwards, so older kernel archives does not require to be altered
 	if linux-version compare "${version}" ge 6.1; then
@@ -614,8 +612,6 @@ driver_rtl8723cs()
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-btrtl-add-rtl8703bs.patch" "applying"
 
 	fi
-
-
 }
 
 patch_drivers_network() {
