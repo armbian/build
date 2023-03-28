@@ -361,7 +361,7 @@ function install_distribution_agnostic() {
 	fi
 
 	# install board support packages
-	install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp"]}"
+	install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp-cli"]}"
 
 	# install armbian-desktop
 	if [[ $BUILD_DESKTOP == yes ]]; then

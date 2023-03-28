@@ -43,15 +43,15 @@ function determine_artifacts_to_build_for_image() {
 		artifacts_to_build+=("armbian-plymouth-theme")
 	fi
 
-	if [[ -n "${RELEASE}" ]]; then
-		# Further packages require aggregation
-		assert_requires_aggregation
+	# Userspace, BOARD+BRANCH specific (not RELEASE)
+	artifacts_to_build+=("armbian-bsp-cli")
 
-			artifacts_to_build+=("armbian-bsp-cli")
-			if [[ -n "${DESKTOP_ENVIRONMENT}" ]]; then
-				artifacts_to_build+=("armbian-desktop")
-				artifacts_to_build+=("armbian-bsp-desktop")
-			fi
+	# Userspace, RELEASE-specific artifacts.
+	if [[ -n "${RELEASE}" ]]; then
+		if [[ -n "${DESKTOP_ENVIRONMENT}" ]]; then
+			artifacts_to_build+=("armbian-desktop")
+			artifacts_to_build+=("armbian-bsp-desktop")
+		fi
 	fi
 }
 

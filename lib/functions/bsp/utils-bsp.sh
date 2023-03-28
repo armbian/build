@@ -9,6 +9,8 @@
 
 # copy_all_packages_files_for <folder> to package
 copy_all_packages_files_for() {
+	: "${destination:?destination is not set}"
+
 	local package_name="${1}"
 
 	# @TODO: rpardini: this was recovered after being assassinated by some insane person who rewrote aggregation in Python

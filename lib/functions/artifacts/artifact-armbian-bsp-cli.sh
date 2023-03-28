@@ -7,13 +7,52 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_armbian-bsp-cli_config_dump() {
+	artifact_input_variables[BOARD]="${BOARD}"
+	artifact_input_variables[BRANCH]="${BRANCH}"
+	artifact_input_variables[EXTRA_BSP_NAME]="${EXTRA_BSP_NAME}"
+}
+
 function artifact_armbian-bsp-cli_prepare_version() {
+	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
+	: "${BRANCH:?BRANCH is not set}"
+	: "${BOARD:?BOARD is not set}"
+
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
 
 	declare short_hash_size=4
 
 	declare fake_unchanging_base_version="1"
+	# @TODO: hash the contents of family_tweaks_bsp old-style hooks
+	# @TODO: hash the contents of post_family_tweaks_bsp extension hooks
+
+	# Hash variables/bootscripts that affect the contents of bsp-cli package
+	get_bootscript_info # get bootscript info, that is included in bsp-cli, hash it
+	declare -a vars_to_hash=(
+		"${bootscript_info[bootscript_file_contents]}"
+		"${bootscript_info[bootenv_file_contents]}"
+		"${bootscript_info[has_bootscript]}"
+		"${bootscript_info[has_extlinux]}"
+		"${UBOOT_FW_ENV}" # not included in bootscript
+	)
+	declare hash_vars="undetermined"
+	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
+	vars_config_hash="${hash_vars}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
+
+	declare -a dirs_to_hash=(
+		"${SRC}/packages/bsp/common" # common stuff
+		"${SRC}/packages/bsp-cli"
+		"${SRC}/config/optional/_any_board/_packages/bsp-cli"
+		"${SRC}/config/optional/architectures/${ARCH}/_packages/bsp-cli"
+		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
+		"${SRC}/config/optional/boards/${BOARD}/_packages/bsp-cli"
+	)
+	declare hash_files="undetermined"
+	calculate_hash_for_all_files_in_dirs "${dirs_to_hash[@]}"
+	packages_config_hash="${hash_files}"
+	declare packages_config_hash_short="${packages_config_hash:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
@@ -22,27 +61,32 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-B${bash_hash_short}"
+	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
-		"Armbian armbian-bsp-cli"
+		"Armbian package armbian-bsp-cli"
+		"BOARD \"${BOARD}\""
+		"BRANCH \"${BRANCH}\""
+		"EXTRA_BSP_NAME \"${EXTRA_BSP_NAME}\""
+		"Packages and config files hash \"${packages_config_hash}\""
+		"Variables/bootscripts hash \"${vars_config_hash}\""
 		"framework bash hash \"${bash_hash}\""
 	)
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
+	artifact_name="armbian-bsp-cli-${BOARD}-${BRANCH}${EXTRA_BSP_NAME}"
+	artifact_type="deb"
+	artifact_base_dir="${DEB_STORAGE}"
+	artifact_final_file="${DEB_STORAGE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
+
 	artifact_map_packages=(
-		["armbian-bsp-cli"]="armbian-bsp-cli"
+		["armbian-bsp-cli"]="${artifact_name}"
 	)
 
 	artifact_map_debs=(
-		["armbian-bsp-cli"]="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}_${artifact_version}_${ARCH}.deb"
+		["armbian-bsp-cli"]="${artifact_name}_${artifact_version}_${ARCH}.deb"
 	)
-
-	artifact_name="armbian-bsp-cli"
-	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}_${artifact_version}_${ARCH}.deb"
 
 	return 0
 }
@@ -59,7 +103,8 @@ function artifact_armbian-bsp-cli_cli_adapter_pre_run() {
 }
 
 function artifact_armbian-bsp-cli_cli_adapter_config_prep() {
-	use_board="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
+	# there is no need for aggregation here.
+	use_board="yes" allow_no_family="no" skip_kernel="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
 function artifact_armbian-bsp-cli_get_default_oci_target() {

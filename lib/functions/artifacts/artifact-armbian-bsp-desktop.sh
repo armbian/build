@@ -7,13 +7,34 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_armbian-bsp-desktop_config_dump() {
+	artifact_input_variables[RELEASE]="${RELEASE}"
+	artifact_input_variables[BOARD]="${BOARD}"
+	artifact_input_variables[BRANCH]="${BRANCH}"
+
+	# @TODO: this should not be true... but is.
+	artifact_input_variables[DESKTOP_ENVIRONMENT]="${DESKTOP_ENVIRONMENT}"
+	artifact_input_variables[DESKTOP_ENVIRONMENT_CONFIG_NAME]="${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+}
+
 function artifact_armbian-bsp-desktop_prepare_version() {
+	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
+	: "${BRANCH:?BRANCH is not set}"
+	: "${BOARD:?BOARD is not set}"
+	: "${RELEASE:?RELEASE is not set}"
+
+	# @TODO: this should not be true... but is.
+	: "${DESKTOP_ENVIRONMENT:?DESKTOP_ENVIRONMENT is not set}"
+	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}"
+
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
 
 	declare short_hash_size=4
 
 	declare fake_unchanging_base_version="1"
+
+	# @TODO: hash copy_all_packages_files_for "bsp-desktop"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
@@ -31,18 +52,18 @@ function artifact_armbian-bsp-desktop_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
+	artifact_name="armbian-bsp-desktop-${BOARD}-${BRANCH}"
+	artifact_type="deb"
+	artifact_base_dir="${DEB_STORAGE}"
+	artifact_final_file="${DEB_STORAGE}/${RELEASE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
+
 	artifact_map_packages=(
-		["armbian-bsp-desktop"]="armbian-bsp-desktop"
+		["armbian-bsp-desktop"]="${artifact_name}"
 	)
 
 	artifact_map_debs=(
-		["armbian-bsp-desktop"]="armbian-bsp-desktop-${BOARD}_${artifact_version}_${ARCH}.deb"
+		["armbian-bsp-desktop"]="${RELEASE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
 	)
-
-	artifact_name="armbian-bsp-desktop"
-	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/${RELEASE}/armbian-bsp-desktop-${BOARD}_${artifact_version}_${ARCH}.deb"
 
 	return 0
 }
@@ -59,7 +80,15 @@ function artifact_armbian-bsp-desktop_cli_adapter_pre_run() {
 }
 
 function artifact_armbian-bsp-desktop_cli_adapter_config_prep() {
-	use_board="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
+	: "${RELEASE:?RELEASE is not set}"
+	: "${BOARD:?BOARD is not set}"
+
+	# @TODO: this should not be true... but is.
+	: "${DESKTOP_ENVIRONMENT:?DESKTOP_ENVIRONMENT is not set}"
+	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}"
+
+	# this requires aggregation, and thus RELEASE, but also everything else.
+	use_board="yes" allow_no_family="no" skip_kernel="no" prep_conf_main_only_rootfs_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
 function artifact_armbian-bsp-desktop_get_default_oci_target() {
