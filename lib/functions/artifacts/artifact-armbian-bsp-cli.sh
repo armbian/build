@@ -63,7 +63,7 @@ function artifact_armbian-bsp-cli_cli_adapter_config_prep() {
 }
 
 function artifact_armbian-bsp-cli_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-firmware/"
+	artifact_oci_target_base="ghcr.io/armbian/cache-packages/"
 }
 
 function artifact_armbian-bsp-cli_is_available_in_local_cache() {
