@@ -214,6 +214,7 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 		"AGGREGATED_DESKTOP_BSP_POSTINST", AGGREGATED_DESKTOP_BSP_POSTINST))
 	bash.write(util.prepare_bash_output_single_string(
 		"AGGREGATED_DESKTOP_BSP_PREPARE", AGGREGATED_DESKTOP_BSP_PREPARE))
+	bash.write("\n## End of aggregation output\n");
 
 	# 2) @TODO: Some removals... uninstall-inside-cache and such. (debsums case? also some gnome stuff)
 
