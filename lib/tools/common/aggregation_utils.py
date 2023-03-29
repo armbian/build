@@ -318,14 +318,13 @@ def prepare_bash_output_single_string(output_array_name, merged_list):
 			"contents"] + "\n" + "### END Source: " + refs_str + "\n\n")
 
 	values_list_bash = "\n".join(values_list)
+	if (len(values_list_bash) == 0):
+		values_list_bash = "### NO sources found during aggregation.\n"
 	return bash_string_multiline(output_array_name, values_list_bash)
 
 
 def bash_string_multiline(var_name, contents):
-	return f"declare -g {var_name}" + "\n" + (
-		f"{var_name}=\"$(cat <<-'EOD_{var_name}_EOD'\n" +
-		f"{contents}\nEOD_{var_name}_EOD\n)\"\n" + "\n"
-	) + f"declare -r -g {var_name}" + "\n"
+	return f"declare -g {var_name}\n{var_name}=\"$(cat <<-'EOD_{var_name}_EOD'\n{contents}\nEOD_{var_name}_EOD\n)\"\n\n"
 
 
 def encode_source_base_path_extra(contents_dict):
