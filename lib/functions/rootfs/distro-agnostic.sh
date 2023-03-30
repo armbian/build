@@ -382,7 +382,7 @@ function install_distribution_agnostic() {
 	# install armbian-zsh
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
 		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-config"]}"
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-zsh"]}"
 		fi
 	fi
 
