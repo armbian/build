@@ -24,8 +24,16 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	declare short_hash_size=4
 
 	declare fake_unchanging_base_version="1"
-	# @TODO: hash the contents of family_tweaks_bsp old-style hooks
-	# @TODO: hash the contents of post_family_tweaks_bsp extension hooks
+
+	# hash the contents of "post_family_tweaks_bsp" extension hooks (always) - use framework helper
+	# hash the contents of family_tweaks_bsp old-style hooks (if it exists)
+	declare -a hooks_to_hash=("$(dump_extension_method_sources_functions "post_family_tweaks_bsp")")
+	if [[ $(type -t family_tweaks_bsp) == function ]]; then
+		hooks_to_hash+=("$(declare -f "family_tweaks_bsp")")
+	fi
+	declare hash_hooks="undetermined"
+	hash_hooks="$(echo "${hooks_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
+	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
 	# Hash variables/bootscripts that affect the contents of bsp-cli package
 	get_bootscript_info # get bootscript info, that is included in bsp-cli, hash it
@@ -61,7 +69,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-B${bash_hash_short}"
+	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-H${hash_hooks_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian package armbian-bsp-cli"
@@ -69,6 +77,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"BRANCH \"${BRANCH}\""
 		"EXTRA_BSP_NAME \"${EXTRA_BSP_NAME}\""
 		"Packages and config files hash \"${packages_config_hash}\""
+		"Hooks hash \"${hash_hooks}\""
 		"Variables/bootscripts hash \"${vars_config_hash}\""
 		"framework bash hash \"${bash_hash}\""
 	)
