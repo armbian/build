@@ -59,6 +59,60 @@ function call_extension_method() {
 	done
 }
 
+function dump_extension_method_sources_functions() {
+	declare hook_name="${1}"
+	declare dump_source_hook_function="dump_custom_sources_extension_hooks_${hook_name}"
+
+	function dump_function_declaration_and_braces() {
+		declare function_name="${1}"
+		echo -e "\t# Begin of function declaration '${function_name}'"
+		declare -f "${function_name}" | sed -e '2d' -e '1d' -e '$d'
+		echo -e "\t# End of function declaration '${function_name}'"
+		echo ""
+	}
+
+	display_alert "Extension Method source custom dump: ${hook_name}" "hook: ${hook_name} via dump_function_declaration_and_braces" "extensions"
+	if [[ $(type -t ${dump_source_hook_function} || true) == function ]]; then
+		display_alert "Dumping extensions hooks with function declaration and braces" "${dump_source_hook_function}" "debug"
+		echo "# Begin of all custom functions for hook '${hook_name}'"
+		"${dump_source_hook_function}" dump_function_declaration_and_braces
+		echo "# End of all custom functions for hook '${hook_name}'"
+		echo ""
+	else
+		display_alert "Extension Method source custom dump: ${hook_name}" "not found hook: ${dump_source_hook_function}: '$(type -t ${dump_source_hook_function} || true)'" "debug"
+	fi
+
+	unset dump_body_sans_function_header_or_trailer
+	return 0 # always success
+}
+
+function dump_extension_method_sources_body() {
+	declare hook_name="${1}"
+	declare dump_source_hook_function="dump_custom_sources_extension_hooks_${hook_name}"
+
+	function dump_body_sans_function_header_or_trailer() {
+		declare function_name="${1}"
+		echo -e "\t# Begin of function body '${function_name}'"
+		declare -f "${function_name}" | sed -e '2d' -e '1d' -e '$d'
+		echo -e "\t# End of function body '${function_name}'"
+		echo ""
+	}
+
+	display_alert "Extension Method source custom dump: ${hook_name}" "hook: ${hook_name} via dump_body_sans_function_header_or_trailer" "extensions"
+	if [[ $(type -t ${dump_source_hook_function} || true) == function ]]; then
+		display_alert "Dumping extension source via custom method" "${dump_source_hook_function}" "debug"
+		echo "# Begin of all custom sources for '${hook_name}'"
+		"${dump_source_hook_function}" dump_body_sans_function_header_or_trailer
+		echo "# End of all custom sources for '${hook_name}'"
+		echo ""
+	else
+		display_alert "Extension Method source custom dump: ${hook_name}" "not found hook: ${dump_source_hook_function}: '$(type -t ${dump_source_hook_function} || true)'" "debug"
+	fi
+
+	unset dump_body_sans_function_header_or_trailer
+	return 0 # always success
+}
+
 # what this does is a lot of bash mumbo-jumbo to find all board-,family-,config- or user-defined hook points.
 # the meat of this is 'compgen -A function', which is bash builtin that lists all defined functions.
 # it will then compose a full hook point (function) that calls all the implementing hooks.
@@ -102,10 +156,16 @@ function initialize_extension_manager() {
 
 	declare -i hook_points_counter=0 hook_functions_counter=0 hook_point_functions_counter=0
 
+	# initialize the function declarations(init) file.
+	local temp_source_file_for_hook_point="${EXTENSION_MANAGER_TMP_DIR}/extension_function_definition.sh"
+	echo "# extension function definitions: " > "${temp_source_file_for_hook_point}"
+
 	# initialize the cleanups file.
 	extension_manager_cleanup_file="${EXTENSION_MANAGER_TMP_DIR}/extension_function_cleanup.sh"
 	echo "# cleanups: " > "${extension_manager_cleanup_file}"
 
+	local tab="	" newline=""                                           # for indentation/readability...
+	newline=$'\n'                                                      # ... of generated code
 	local FUNCTION_SORT_OPTIONS="--general-numeric-sort --ignore-case" #  --random-sort could be used to introduce chaos
 	local hook_point=""
 	# now loop over the hook_points.
@@ -188,7 +248,6 @@ function initialize_extension_manager() {
 		common_function_vars="${common_function_vars} HOOK_POINT_TOTAL_FUNCS=\"${hook_point_functions_counter}\""
 
 		display_alert "Extensions hook_point: ${hook_point} will run ${hook_point_functions_counter} functions" "${hook_point_functions_counter}" "extensions"
-		local temp_source_file_for_hook_point="${EXTENSION_MANAGER_TMP_DIR}/extension_function_definition.sh"
 
 		declare hook_point_functions_loop_counter=0
 
@@ -201,10 +260,13 @@ function initialize_extension_manager() {
 		# theres a lot of opportunities here, but for now I keep it simple:
 		# - execute functions in the order defined by ${hook_point_functions} above
 		# - define call-specific environment variables, to help extension authors to write portable extensions (eg: EXTENSION_DIR)
-		cat <<- FUNCTION_DEFINITION_HEADER > "${temp_source_file_for_hook_point}"
-			${hook_point}() {
-				display_alert "Extension-managed hook starting '${hook_point}': will run ${hook_point_functions_counter} functions" "${hook_point_functions}" "extensionstrace"
+		cat <<- FUNCTION_DEFINITION_HEADER >> "${temp_source_file_for_hook_point}"
+			function ${hook_point}() {
+			${tab}display_alert "Extension-managed hook starting '${hook_point}': will run ${hook_point_functions_counter} functions" "${hook_point_functions}" "extensionstrace"
 		FUNCTION_DEFINITION_HEADER
+
+		# keep a list of the called functions. we'll use it to generate the source-dumping function, below.
+		declare -a list_of_called_functions=()
 
 		for hook_point_function in ${hook_point_functions}; do
 			hook_point_functions_loop_counter=$((hook_point_functions_loop_counter + 1))
@@ -225,17 +287,20 @@ function initialize_extension_manager() {
 			# output the call, passing arguments, and also logging the output to the extensions log.
 			# attention: don't pipe here (eg, capture output), otherwise hook function cant modify the environment (which is mostly the point)
 			cat <<- FUNCTION_DEFINITION_CALLSITE >> "${temp_source_file_for_hook_point}"
-				hook_point_function_trace_sources["${hook_point}${hook_extension_delimiter}${hook_point_function}"]="\${BASH_SOURCE[*]}"
-				hook_point_function_trace_lines["${hook_point}${hook_extension_delimiter}${hook_point_function}"]="\${BASH_LINENO[*]}"
-				display_alert "Extension Method ${hook_point}" "${hook_point_functions_loop_counter}/${hook_point_functions_counter} (ext:${EXTENSION:-built-in}) ${hook_point_function}" "extensionstrace"
-				display_alert "Extension-managed hook starting ${hook_point_functions_loop_counter}/${hook_point_functions_counter}" "${hook_point}${hook_extension_delimiter}${hook_point_function}" "extensionstrace"
-				${hook_point_function_variables} ${hook_point}${hook_extension_delimiter}${hook_point_function} "\$@"
-				display_alert "Extension-managed hook finished ${hook_point_functions_loop_counter}/${hook_point_functions_counter}" "${hook_point}${hook_extension_delimiter}${hook_point_function}" "extensionstrace"
+				${tab}hook_point_function_trace_sources["${hook_point}${hook_extension_delimiter}${hook_point_function}"]="\${BASH_SOURCE[*]}"
+				${tab}hook_point_function_trace_lines["${hook_point}${hook_extension_delimiter}${hook_point_function}"]="\${BASH_LINENO[*]}"
+				${tab}display_alert "Extension Method ${hook_point}" "${hook_point_functions_loop_counter}/${hook_point_functions_counter} (ext:${EXTENSION:-built-in}) ${hook_point_function}" "extensionstrace"
+				${tab}display_alert "Extension-managed hook starting ${hook_point_functions_loop_counter}/${hook_point_functions_counter}" "${hook_point}${hook_extension_delimiter}${hook_point_function}" "extensionstrace"
+				${tab}${hook_point_function_variables} ${hook_point}${hook_extension_delimiter}${hook_point_function} "\$@"
+				${tab}display_alert "Extension-managed hook finished ${hook_point_functions_loop_counter}/${hook_point_functions_counter}" "${hook_point}${hook_extension_delimiter}${hook_point_function}" "extensionstrace"
 			FUNCTION_DEFINITION_CALLSITE
+
+			# feed the list of called functions for the source-dumping function.
+			list_of_called_functions+=("${hook_point}${hook_extension_delimiter}${hook_point_function}")
 
 			# output the cleanup for the implementation as well.
 			cat <<- FUNCTION_CLEANUP_FOR_HOOK_POINT_IMPLEMENTATION >> "${extension_manager_cleanup_file}"
-				unset ${hook_point}${hook_extension_delimiter}${hook_point_function}
+				${tab}unset ${hook_point}${hook_extension_delimiter}${hook_point_function}
 			FUNCTION_CLEANUP_FOR_HOOK_POINT_IMPLEMENTATION
 
 			# unset extension vars for the next loop.
@@ -243,19 +308,44 @@ function initialize_extension_manager() {
 		done
 
 		cat <<- FUNCTION_DEFINITION_FOOTER >> "${temp_source_file_for_hook_point}"
-			display_alert "Extension-managed hook ending '${hook_point}': completed" "${hook_point}" "extensionstrace"
-			} # end ${hook_point}() function
+			${tab}display_alert "Extension-managed hook ending '${hook_point}': completed" "${hook_point}" "extensionstrace"
+			} # end ${hook_point}() function${newline}
 		FUNCTION_DEFINITION_FOOTER
 
+		# Extra function, running over the implementations and calling the arguments passed with each as parameter.
+		# Useful for getting the source code of the implementations, for example, or the list of called functions
+		# in a given hook. See dump_extension_method_sources_body() and dump_extension_method_sources_functions().
+		cat <<- FUNCTION_DUMP_SOURCE_CUSTOM_START >> "${temp_source_file_for_hook_point}"
+			function dump_custom_sources_extension_hooks_${hook_point}() {
+		FUNCTION_DUMP_SOURCE_CUSTOM_START
+
+		declare function_name
+		for function_name in "${list_of_called_functions[@]}"; do
+			# call the arguments as function, passing the function name as argument
+			echo "${tab}\"\${@}\" \"${function_name}\" " >> "${temp_source_file_for_hook_point}"
+		done
+
+		cat <<- FUNCTION_DUMP_SOURCE_CUSTOM_END >> "${temp_source_file_for_hook_point}"
+			} # end dump_source_extension_hooks_${hook_point}() function${newline}
+		FUNCTION_DUMP_SOURCE_CUSTOM_END
+
 		# unsets, lest the next loop inherits them
-		unset hook_point_functions hook_point_functions_sortname_to_realname hook_point_functions_realname_to_sortname
-
-		# source the generated function.
-		# shellcheck disable=SC1090
-		source "${temp_source_file_for_hook_point}"
-
-		rm -f "${temp_source_file_for_hook_point}"
+		unset hook_point_functions hook_point_functions_sortname_to_realname hook_point_functions_realname_to_sortname list_of_called_functions
 	done
+
+	# Extra debug, show the generated source and cleanup.
+	if [[ "${SHOW_EXTENSIONS}" == "yes" ]]; then
+		display_alert "Showing" "extensions initialization generated code" "info"
+		run_tool_batcat --file-name "extensions_initialize.sh" "${temp_source_file_for_hook_point}"
+		display_alert "Showing" "extensions cleanup generated code" "info"
+		run_tool_batcat --file-name "extensions_cleanup.sh" "${extension_manager_cleanup_file}"
+	fi
+
+	# source the generated function.
+	# shellcheck disable=SC1090
+	source "${temp_source_file_for_hook_point}"
+
+	rm -f "${temp_source_file_for_hook_point}"
 
 	# Dont show any output until we have more than 1 hook function (we implement one already, below)
 	[[ ${hook_functions_counter} -gt 0 ]] &&
