@@ -199,14 +199,7 @@ function config_post_main() {
 		ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 	fi
 
-	declare -g BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}${EXTRA_BSP_NAME}"
-	declare -g BSP_DESKTOP_PACKAGE_FULLNAME="${BSP_DESKTOP_PACKAGE_NAME}_${REVISION}_${ARCH}"
-
 	declare -g CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
-	declare -g CHOSEN_KERNEL=linux-image-${BRANCH}-${LINUXFAMILY}
-	declare -g CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
-	declare -g CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
-	declare -g CHOSEN_KERNEL_WITH_ARCH=${CHOSEN_KERNEL}-${ARCH} # Only for reporting purposes.
 
 	# So for kernel full cached rebuilds.
 	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
@@ -218,7 +211,6 @@ function config_post_main() {
 	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
 	if [[ "${skip_kernel:-"no"}" != "yes" ]]; then
 		if [[ -n "${KERNELSOURCE}" ]]; then
-			declare -g ARMBIAN_WILL_BUILD_KERNEL="${CHOSEN_KERNEL}-${ARCH}"
 			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
 				exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
 			fi
@@ -251,7 +243,6 @@ function config_post_main() {
 			fi
 		else
 			declare -g KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
-			declare -g ARMBIAN_WILL_BUILD_KERNEL=no
 		fi
 	else
 		display_alert "Skipping kernel config" "skip_kernel=yes" "debug"
