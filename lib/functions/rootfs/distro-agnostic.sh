@@ -396,6 +396,17 @@ function install_distribution_agnostic() {
 		install_deb_chroot "wireguard-tools" "remote"
 	fi
 
+	# freeze armbian packages
+	if [[ "${BSPFREEZE:-"no"}" == yes ]]; then
+		display_alert "Freezing Armbian packages" "$BOARD" "info"
+		chroot_sdcard apt-mark hold "${image_artifacts_packages["armbian-plymouth-theme"]}" "${image_artifacts_packages["armbian-zsh"]}" \
+		"${image_artifacts_packages["armbian-config"]}" "${image_artifacts_packages["armbian-bsp-desktop"]}" \
+		"${image_artifacts_packages["armbian-desktop"]}" "${image_artifacts_packages["armbian-bsp-cli"]}" \
+		"${image_artifacts_packages["armbian-firmware"]}" "${image_artifacts_packages["armbian-firmware-full"]}" \
+		"${image_artifacts_packages["linux-headers"]}" "${image_artifacts_packages["linux-dtb"]}" \
+		"${image_artifacts_packages["linux-image"]}" "${image_artifacts_packages["uboot"]}" || true
+	fi
+
 	# remove deb files
 	run_host_command_logged rm -fv "${SDCARD}"/root/*.deb
 
