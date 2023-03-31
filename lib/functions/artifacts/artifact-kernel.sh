@@ -119,6 +119,19 @@ function artifact_kernel_prepare_version() {
 	kernel_config_modification_hash="${kernel_config_modification_hash:0:16}" # "long hash"
 	declare kernel_config_modification_hash_short="${kernel_config_modification_hash:0:${short_hash_size}}"
 
+	# Hash variables that affect the packaging of the kernel
+	declare -a vars_to_hash=(
+		"${KERNEL_INSTALL_TYPE}"
+		"${KERNEL_IMAGE_TYPE}"
+		"${KERNEL_EXTRA_TARGETS}"
+		"${NAME_KERNEL}"
+		"${SRC_LOADADDR}"
+	)
+	declare hash_vars="undetermined"
+	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
+	vars_config_hash="${hash_vars}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
+
 	# @TODO: include the compiler version? host release?
 
 	# get the hashes of the lib/ bash sources involved...
@@ -127,7 +140,7 @@ function artifact_kernel_prepare_version() {
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
-	declare common_version_suffix="S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}H${kernel_config_modification_hash_short}-B${bash_hash_short}"
+	declare common_version_suffix="S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}H${kernel_config_modification_hash_short}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	# outer scope
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
@@ -144,6 +157,7 @@ function artifact_kernel_prepare_version() {
 		"patches hash \"${patches_hash}\""
 		".config hash \"${config_hash}\""
 		".config hook hash \"${kernel_config_modification_hash}\""
+		"variables hash \"${vars_config_hash}\""
 		"framework bash hash \"${bash_hash}\""
 	)
 
