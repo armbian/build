@@ -230,6 +230,7 @@ if apply_patches:
 		if BASE_GIT_TAG is None:
 			raise Exception("BASE_GIT_REVISION or BASE_GIT_TAG must be set")
 		else:
+			log.debug(f"Getting revision of BASE_GIT_TAG={BASE_GIT_TAG}")
 			BASE_GIT_REVISION = git_repo.tags[BASE_GIT_TAG].commit.hexsha
 			log.debug(f"Found BASE_GIT_REVISION={BASE_GIT_REVISION} for BASE_GIT_TAG={BASE_GIT_TAG}")
 
