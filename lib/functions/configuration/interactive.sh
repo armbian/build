@@ -15,8 +15,8 @@ function interactive_config_prepare_terminal() {
 			# override stty size, if stdin is a terminal.
 			[[ -n $COLUMNS ]] && stty cols $COLUMNS
 			[[ -n $LINES ]] && stty rows $LINES
-			export TTY_X=$(($(stty size | awk '{print $2}') - 6)) # determine terminal width
-			export TTY_Y=$(($(stty size | awk '{print $1}') - 6)) # determine terminal height
+			declare -g TTY_X=$(($(stty size | awk '{print $2}') - 6)) # determine terminal width
+			declare -g TTY_Y=$(($(stty size | awk '{print $1}') - 6)) # determine terminal height
 		fi
 	fi
 	# We'll use this title on all menus

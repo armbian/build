@@ -22,7 +22,7 @@ function desktop_element_available_for_arch() {
 function desktop_element_supported() {
 	local desktop_element_path="${1}"
 	local support_level_filepath="${desktop_element_path}/support"
-	export desktop_element_supported_result=0
+	declare -g desktop_element_supported_result=0
 	if [[ -f "${support_level_filepath}" ]]; then
 		local support_level
 		support_level="$(cat "${support_level_filepath}")"
@@ -130,8 +130,8 @@ function interactive_desktop_main_configuration() {
 	fi
 	display_alert "desktop-config" "DESKTOP_ENVIRONMENT_CONFIG_NAME exit: ${DESKTOP_ENVIRONMENT_CONFIG_NAME}" "debug"
 
-	export DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
-	export DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
+	declare -g DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH="${DESKTOP_ENVIRONMENT_DIRPATH}/${DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+	declare -g DESKTOP_ENVIRONMENT_PACKAGE_LIST_FILEPATH="${DESKTOP_ENVIRONMENT_PACKAGE_LIST_DIRPATH}/packages"
 
 	display_alert "desktop-config" "DESKTOP_APPGROUPS_SELECTED+x entry: ${DESKTOP_APPGROUPS_SELECTED+x}" "debug"
 	# "-z ${VAR+x}" allows to check for unset variable

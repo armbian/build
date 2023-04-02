@@ -10,6 +10,7 @@
 function create_artifact_functions() {
 	declare -a funcs=(
 		"cli_adapter_pre_run" "cli_adapter_config_prep"
+		"config_dump"
 		"prepare_version"
 		"get_default_oci_target"
 		"is_available_in_local_cache" "is_available_in_remote_cache" "obtain_from_remote_cache"
@@ -213,6 +214,27 @@ function obtain_complete_artifact() {
 	if [[ "${deploy_to_remote:-"no"}" == "yes" ]]; then
 		LOG_SECTION="artifact_deploy_to_remote_cache" do_with_logging artifact_deploy_to_remote_cache
 	fi
+}
+
+function dump_artifact_config() {
+	initialize_artifact "${WHAT}"
+
+	declare -A -g artifact_input_variables=()
+	debug_dict artifact_input_variables
+
+	artifact_config_dump
+
+	debug_dict artifact_input_variables
+
+	# loop over the keys
+	declare -a concat
+	for key in "${!artifact_input_variables[@]}"; do
+		# echo the key and its value
+		concat+=("${key}=${artifact_input_variables[${key}]}")
+	done
+
+	declare -g artifact_input_vars="${concat[*]@Q}" # @Q to quote
+
 }
 
 # This is meant to be run after config, inside default build.

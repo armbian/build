@@ -104,7 +104,12 @@ function aggregate_all_packages_python() {
 	# "raw_command" is only for logging purposes.
 	raw_command="[...shortened...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/aggregation.py" \
 		run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${PYTHON3_INFO[BIN]}" "${SRC}/lib/tools/aggregation.py"
-	#run_host_command_logged cat "${temp_file_for_aggregation}"
+
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "Showing aggregation results" "below" "debug"
+		run_tool_batcat --file-name "aggregation_results/aggregation_results.sh" "${temp_file_for_aggregation}"
+	fi
+
 	# shellcheck disable=SC1090
 	source "${temp_file_for_aggregation}" # SOURCE IT!
 	run_host_command_logged rm -f "${temp_file_for_aggregation}"

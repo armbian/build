@@ -27,17 +27,22 @@ function install_deb_chroot() {
 	# For the local case.
 	if [[ "${variant}" != "remote" ]]; then
 		log_extra=""
+	fi
+	display_alert "Installing${log_extra}: ${package}" "${package_filename}" "debinstall" # This needs its own level
+
+	if [[ "${variant}" != "remote" ]]; then
 		# @TODO: this can be sped up significantly by mounting debs readonly directly in chroot /root/debs and installing from there
 		# also won't require cleanup later
 
 		install_target="/root/${package_filename}"
-		[[ ! -f "${SDCARD}${install_target}" ]] && run_host_command_logged cp -pv "${package}" "${SDCARD}${install_target}"
+		if [[ ! -f "${SDCARD}${install_target}" ]]; then
+			display_alert "Copying ${package_filename}" "'${package}' -> '${SDCARD}${install_target}'" "debug"
+			run_host_command_logged cp -pv "${package}" "${SDCARD}${install_target}"
+		fi
 	fi
 
-	display_alert "Installing${log_extra}" "${package_filename}" "debinstall" # This needs its own level
-
 	# install in chroot via apt-get, not dpkg, so dependencies are also installed from repo if needed.
-	export if_error_detail_message="Installation of $install_target failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
+	declare -g if_error_detail_message="Installation of $install_target failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends install "${install_target}" # don't auto-maintain apt cache when installing from packages.
 
 	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?

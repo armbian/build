@@ -129,7 +129,7 @@ case $BRANCH in
 
 	current)
 
-		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
+		declare -g KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-5.15.y"
 		KERNELPATCHDIR='rockchip64-'$BRANCH
 		LINUXFAMILY=rockchip64
@@ -139,7 +139,7 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
+		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
 		KERNELBRANCH="branch:linux-6.1.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH

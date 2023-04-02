@@ -77,7 +77,7 @@ function main_trap_handler() {
 			fi
 
 			if [[ ${trap_exit_code} -gt 0 ]] && [[ "${ERROR_DEBUG_SHELL}" == "yes" ]]; then
-				export ERROR_DEBUG_SHELL=no # dont do it twice
+				declare -g ERROR_DEBUG_SHELL=no # dont do it twice
 				display_alert "MOUNT" "${MOUNT}" "debug"
 				display_alert "SDCARD" "${SDCARD}" "debug"
 				display_alert "ERROR_DEBUG_SHELL=yes, starting a shell." "ERROR_DEBUG_SHELL; exit to cleanup." "debug"

@@ -7,6 +7,12 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_rootfs_config_dump() {
+	artifact_input_variables[ARCH]="${ARCH}"
+	artifact_input_variables[RELEASE]="${RELEASE}"
+	artifact_input_variables[CACHE_TYPE]="${cache_type:-"no_cache_type_yet"}"
+}
+
 function artifact_rootfs_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope

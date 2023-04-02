@@ -170,7 +170,7 @@ function cli_entrypoint() {
 	done
 
 	# Early check for deprecations
-	error_if_lib_tag_set     # make sure users are not thrown off by using old parameter which does nothing anymore; explain
+	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore; explain
 
 	display_alert "Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
 	armbian_cli_run_command

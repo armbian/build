@@ -7,6 +7,14 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_uboot_config_dump() {
+	artifact_input_variables[BOOTSOURCE]="${BOOTSOURCE}"
+	artifact_input_variables[BOOTBRANCH]="${BOOTBRANCH}"
+	artifact_input_variables[BOOTPATCHDIR]="${BOOTPATCHDIR}"
+	artifact_input_variables[BOARD]="${BOARD}"
+	artifact_input_variables[BRANCH]="${BRANCH}"
+}
+
 function artifact_uboot_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope

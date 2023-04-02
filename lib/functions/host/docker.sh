@@ -135,7 +135,7 @@ function docker_cli_prepare() {
 	# If we're NOT building the public, official image, then USE the public, official image as base.
 	# IMPORTANT: This has to match the naming scheme for tag the is used in the GitHub actions workflow.
 	if [[ "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" && "${DOCKER_SIMULATE_CLEAN}" != "yes" ]]; then
-		DOCKER_ARMBIAN_BASE_IMAGE="ghcr.io/armbian/docker-armbian-build:armbian-${wanted_os_tag}-${wanted_release_tag}-latest"
+		DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX:-"ghcr.io/armbian/docker-armbian-build:armbian-"}${wanted_os_tag}-${wanted_release_tag}-latest"
 		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
@@ -262,7 +262,10 @@ function docker_cli_prepare_dockerfile() {
 	declare c="" # Nothing; commands will run.
 	if [[ "${DOCKER_SIMULATE_CLEAN}" == "yes" ]]; then
 		display_alert "Simulating" "clean build, due to DOCKER_SIMULATE_CLEAN=yes -- this is wasteful and slow and only for debugging" "warn"
-		c="## " # Add comment to simulate clean env
+		c="## Disabled by DOCKER_SIMULATE_CLEAN #" # Add comment to simulate clean env
+	elif [[ "${DOCKER_SKIP_UPDATE}" == "yes" && "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" ]]; then
+		display_alert "Skipping Docker updates" "make sure base image '${DOCKER_ARMBIAN_BASE_IMAGE}' is up-to-date" "" "info"
+		c="## Disabled by DOCKER_SKIP_UPDATE # " # Add comment to simulate clean env
 	fi
 
 	declare c_req="# " # Nothing; commands will run.
@@ -347,8 +350,8 @@ function docker_cli_build_dockerfile() {
 	# If we get here without a local_image_sha, we need to build from scratch, so we need to re-create the Dockerfile.
 	if [[ -z "${local_image_sha}" ]]; then
 		display_alert "Base image not in local cache, building from scratch" "${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
-		export DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE=no
-		export DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH}"
+		declare -g DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE=no
+		declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH}"
 		docker_prepare_cli_skip_exts="yes" docker_cli_prepare
 		display_alert "Re-created" "Dockerfile, proceeding, build from scratch" "debug"
 	fi

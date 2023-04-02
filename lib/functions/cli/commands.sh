@@ -19,10 +19,12 @@ function armbian_register_commands() {
 
 		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run
 
-		["config-dump"]="config_dump" # implemented in cli_config_dump_pre_run and cli_config_dump_run
-		["configdump"]="config_dump"  # idem
+		# Given a board/config/exts, dump out the (non-userspace) JSON of configuration
+		["configdump"]="config_dump_json"       # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["json-info"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["json-info-boards"]="json_info"               # implemented in cli_json_info_pre_run and cli_json_info_run
+		["write-all-boards-branches-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
@@ -37,12 +39,23 @@ function armbian_register_commands() {
 
 		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
 		["rootfs"]="artifact"
-		["firmware"]="artifact"
-		["firmware-full"]="artifact"
+
 		["kernel"]="artifact"
 		["kernel-config"]="artifact"
+
 		["u-boot"]="artifact"
 		["uboot"]="artifact"
+
+		["firmware"]="artifact"
+		["firmware-full"]="artifact"
+		["armbian-config"]="artifact"
+		["armbian-zsh"]="artifact"
+		["armbian-plymouth-theme"]="artifact"
+		["fake-ubuntu-advantage-tools"]="artifact"
+
+		["armbian-bsp-cli"]="artifact"
+		["armbian-bsp-desktop"]="artifact"
+		["armbian-desktop"]="artifact"
 
 		["undecided"]="undecided" # implemented in cli_undecided_pre_run and cli_undecided_run - relaunches either build or docker
 	)
@@ -59,17 +72,25 @@ function armbian_register_commands() {
 
 		["generate-dockerfile"]="DOCKERFILE_GENERATE_ONLY='yes'"
 
-		["config-dump"]="CONFIG_DEFS_ONLY='yes'"
-		["configdump"]="CONFIG_DEFS_ONLY='yes'"
-
 		# artifact shortcuts
+		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
+
 		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_BUILD_INTERACTIVE='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
 		["kernel"]="WHAT='kernel' ${common_cli_artifact_vars}"
+
 		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"
 		["u-boot"]="WHAT='uboot' ${common_cli_artifact_vars}"
+
 		["firmware"]="WHAT='firmware' ${common_cli_artifact_vars}"
 		["firmware-full"]="WHAT='full_firmware' ${common_cli_artifact_vars}"
-		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
+		["armbian-config"]="WHAT='armbian-config' ${common_cli_artifact_vars}"
+		["armbian-zsh"]="WHAT='armbian-zsh' ${common_cli_artifact_vars}"
+		["armbian-plymouth-theme"]="WHAT='armbian-plymouth-theme' ${common_cli_artifact_vars}"
+		["fake-ubuntu-advantage-tools"]="WHAT='fake_ubuntu_advantage_tools' ${common_cli_artifact_vars}"
+
+		["armbian-bsp-cli"]="WHAT='armbian-bsp-cli' ${common_cli_artifact_vars}"
+		["armbian-bsp-desktop"]="WHAT='armbian-bsp-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"
+		["armbian-desktop"]="WHAT='armbian-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"
 
 		["oras-upload"]="ORAS_OPERATION='upload'"
 

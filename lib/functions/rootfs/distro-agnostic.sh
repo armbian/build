@@ -125,6 +125,7 @@ function install_distribution_agnostic() {
 	chroot_sdcard dpkg-reconfigure -f noninteractive tzdata
 
 	# set root password. it is written to the log, of course. Escuse the escaping needed here.
+	display_alert "Setting root password" "" "info"
 	chroot_sdcard "(" echo "'${ROOTPWD}'" ";" echo "'${ROOTPWD}'" ";" ")" "|" passwd root
 
 	# enable automated login to console(s)
@@ -361,61 +362,33 @@ function install_distribution_agnostic() {
 	fi
 
 	# install board support packages
-	if [[ "${REPOSITORY_INSTALL}" != *bsp* ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb"
-	else
-		install_deb_chroot "${CHOSEN_ROOTFS}" "remote" # @TODO: rpardini: err.... what?
-	fi
+	install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp-cli"]}"
 
 	# install armbian-desktop
-	if [[ "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${CHOSEN_DESKTOP}_${REVISION}_all.deb"
-			install_deb_chroot "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb"
-			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-			desktop_postinstall
-		fi
-	else
-		if [[ $BUILD_DESKTOP == yes ]]; then
-			install_deb_chroot "${CHOSEN_DESKTOP}" "remote"
-			# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
-			desktop_postinstall
-		fi
+	if [[ $BUILD_DESKTOP == yes ]]; then
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-desktop"]}"
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp-desktop"]}"
+		# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
+		desktop_postinstall
 	fi
 
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "${DEB_STORAGE}/armbian-config_${REVISION}_all.deb"
-			fi
-		else
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "armbian-config" "remote"
-			fi
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-config"]}"
 		fi
 	fi
 
 	# install armbian-zsh
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]]; then
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb"
-			fi
-		else
-			if [[ $BUILD_MINIMAL != yes ]]; then
-				install_deb_chroot "armbian-zsh" "remote"
-			fi
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-zsh"]}"
 		fi
 	fi
 
-	# install plymouth-theme-armbian
+	# install armbian-plymouth-theme
 	if [[ $PLYMOUTH == yes ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
-			install_deb_chroot "${DEB_STORAGE}/armbian-plymouth-theme_${REVISION}_all.deb"
-		else
-			install_deb_chroot "armbian-plymouth-theme" "remote"
-		fi
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-plymouth-theme"]}"
 	fi
 
 	# install wireguard tools
@@ -424,10 +397,14 @@ function install_distribution_agnostic() {
 	fi
 
 	# freeze armbian packages
-	if [[ $BSPFREEZE == yes ]]; then
+	if [[ "${BSPFREEZE:-"no"}" == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
-		# @TODO: rpardini: this will probably fail if one or more packages are not installed
-		chroot_sdcard apt-mark hold "${CHOSEN_KERNEL}" "${CHOSEN_KERNEL/image/headers}" "linux-u-boot-${BOARD}-${BRANCH}" "${CHOSEN_KERNEL/image/dtb}"
+		chroot_sdcard apt-mark hold "${image_artifacts_packages["armbian-plymouth-theme"]}" "${image_artifacts_packages["armbian-zsh"]}" \
+		"${image_artifacts_packages["armbian-config"]}" "${image_artifacts_packages["armbian-bsp-desktop"]}" \
+		"${image_artifacts_packages["armbian-desktop"]}" "${image_artifacts_packages["armbian-bsp-cli"]}" \
+		"${image_artifacts_packages["armbian-firmware"]}" "${image_artifacts_packages["armbian-firmware-full"]}" \
+		"${image_artifacts_packages["linux-headers"]}" "${image_artifacts_packages["linux-dtb"]}" \
+		"${image_artifacts_packages["linux-image"]}" "${image_artifacts_packages["uboot"]}" || true
 	fi
 
 	# remove deb files

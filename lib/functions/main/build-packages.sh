@@ -6,6 +6,54 @@
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
+function determine_artifacts_to_build_for_image() {
+	# outer scope: declare -a artifacts_to_build=()
+	if [[ "${BOOTCONFIG}" != "none" ]]; then
+		artifacts_to_build+=("uboot")
+	fi
+	if [[ -n $KERNELSOURCE ]]; then
+		artifacts_to_build+=("kernel")
+	fi
+
+	if [[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]]; then
+		if [[ ${BOARD_FIRMWARE_INSTALL:-""} == "-full" ]]; then
+			artifacts_to_build+=("full_firmware")
+		else
+			artifacts_to_build+=("firmware")
+		fi
+	fi
+
+	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+		artifacts_to_build+=("fake_ubuntu_advantage_tools")
+	fi
+
+	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			artifacts_to_build+=("armbian-config")
+		fi
+	fi
+
+	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
+		if [[ $BUILD_MINIMAL != yes ]]; then
+			artifacts_to_build+=("armbian-zsh")
+		fi
+	fi
+
+	if [[ $PLYMOUTH == yes ]]; then
+		artifacts_to_build+=("armbian-plymouth-theme")
+	fi
+
+	# Userspace, BOARD+BRANCH specific (not RELEASE)
+	artifacts_to_build+=("armbian-bsp-cli")
+
+	# Userspace, RELEASE-specific artifacts.
+	if [[ -n "${RELEASE}" ]]; then
+		if [[ -n "${DESKTOP_ENVIRONMENT}" ]]; then
+			artifacts_to_build+=("armbian-desktop")
+			artifacts_to_build+=("armbian-bsp-desktop")
+		fi
+	fi
+}
 
 function main_default_build_packages() {
 	# early cleaning for sources, since fetch_and_build_host_tools() uses it.
@@ -24,25 +72,9 @@ function main_default_build_packages() {
 		done
 	fi
 
-	### NEW / Artifact system
-
-	# Determine which artifacts to build.
+	# determine which artifacts to build.
 	declare -a artifacts_to_build=()
-	if [[ "${BOOTCONFIG}" != "none" ]]; then
-		artifacts_to_build+=("uboot")
-	fi
-	if [[ -n $KERNELSOURCE ]]; then
-		artifacts_to_build+=("kernel")
-	fi
-
-	if [[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]]; then
-		if [[ ${BOARD_FIRMWARE_INSTALL:-""} == "-full" ]]; then
-			artifacts_to_build+=("full_firmware")
-		else
-			artifacts_to_build+=("firmware")
-		fi
-	fi
-
+	determine_artifacts_to_build_for_image
 	display_alert "Artifacts to build:" "${artifacts_to_build[*]}" "debug"
 
 	# For each artifact, try to obtain them from the local cache, remote cache, or build them.
@@ -68,50 +100,7 @@ function main_default_build_packages() {
 	debug_dict image_artifacts_packages
 	debug_dict image_artifacts_debs
 
-	### OLD / Legacy / Needs conversion to new artifact system @TODO
-
-	# Compile armbian-config if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/armbian-config_${REVISION}_all.deb ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-config* ]]; then
-			LOG_SECTION="compile_armbian-config" do_with_logging compile_armbian-config
-		fi
-	fi
-
-	# Compile armbian-zsh if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/armbian-zsh_${REVISION}_all.deb ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *armbian-zsh* ]]; then
-			LOG_SECTION="compile_armbian-zsh" do_with_logging compile_armbian-zsh
-		fi
-	fi
-
-	# Compile plymouth-theme-armbian if packed .deb does not exist or use the one from repository
-	if [[ ! -f ${DEB_STORAGE}/plymouth-theme-armbian_${REVISION}_all.deb ]]; then
-		if [[ "${REPOSITORY_INSTALL}" != *plymouth-theme-armbian* ]]; then
-			LOG_SECTION="compile_plymouth_theme_armbian" do_with_logging compile_plymouth_theme_armbian
-		fi
-	fi
-
 	overlayfs_wrapper "cleanup"
-	reset_uid_owner "${DEB_STORAGE}"
-
-	# Further packages require aggregation (BSPs use aggregated stuff, etc)
-	assert_requires_aggregation # Bombs if aggregation has not run
-
-	# create board support package
-	if [[ -n "${RELEASE}" && ! -f "${DEB_STORAGE}/${BSP_CLI_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-cli* ]]; then
-		LOG_SECTION="create_board_package" do_with_logging create_board_package
-	fi
-
-	# create desktop package
-	if [[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/$RELEASE/${CHOSEN_DESKTOP}_${REVISION}_all.deb" && "${REPOSITORY_INSTALL}" != *armbian-desktop* ]]; then
-		LOG_SECTION="create_desktop_package" do_with_logging create_desktop_package
-	fi
-	if [[ -n "${RELEASE}" && "${DESKTOP_ENVIRONMENT}" && ! -f "${DEB_STORAGE}/${RELEASE}/${BSP_DESKTOP_PACKAGE_FULLNAME}.deb" && "${REPOSITORY_INSTALL}" != *armbian-bsp-desktop* ]]; then
-		LOG_SECTION="create_bsp_desktop_package" do_with_logging create_bsp_desktop_package
-	fi
-
-	# Reset owner of DEB_STORAGE, if needed. Might be a lot of packages there, but such is life.
-	# @TODO: might be needed also during 'cleanup': if some package fails, the previous package might be left owned by root.
 	reset_uid_owner "${DEB_STORAGE}"
 
 	# At this point, the WORKDIR should be clean. Add debug info.

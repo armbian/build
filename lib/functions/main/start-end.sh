@@ -47,7 +47,7 @@ function main_default_start_build() {
 	# No cleanup of this is necessary, since it's inside WORKDIR.
 	mkdir -p "${BIN_WORK_DIR}"
 	ln -s "/usr/bin/python2" "${BIN_WORK_DIR}/python"
-	export PATH="${BIN_WORK_DIR}:${PATH}"
+	declare -g PATH="${BIN_WORK_DIR}:${PATH}"
 
 	# Prepare ccache, cthreads, etc for the build
 	LOG_SECTION="prepare_compilation_vars" do_with_logging prepare_compilation_vars

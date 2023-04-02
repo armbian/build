@@ -31,8 +31,8 @@ case "${BRANCH}" in
 
 		declare -g DISTRO_GENERIC_KERNEL=no
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		declare -g KERNEL_MAJOR_MINOR="6.1"                      # Major and minor versions of this kernel. For mainline caching.
-		declare -g KERNELBRANCH="branch:linux-6.1.y"             # Branch or tag to build from. It should match MAJOR_MINOR
+		declare -g KERNEL_MAJOR_MINOR="6.1"                       # Major and minor versions of this kernel. For mainline caching.
+		declare -g KERNELBRANCH="branch:linux-6.1.y"              # Branch or tag to build from. It should match MAJOR_MINOR
 		declare -g KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 		;;
 
@@ -40,8 +40,8 @@ case "${BRANCH}" in
 
 		declare -g DISTRO_GENERIC_KERNEL=no
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		declare -g KERNEL_MAJOR_MINOR="6.2"    # Major and minor versions of this kernel. For mainline caching.
-		declare -g KERNELBRANCH="branch:linux-6.2.y"             # Branch or tag to build from. It should match MAJOR_MINOR
+		declare -g KERNEL_MAJOR_MINOR="6.2"                       # Major and minor versions of this kernel. For mainline caching.
+		declare -g KERNELBRANCH="branch:linux-6.2.y"              # Branch or tag to build from. It should match MAJOR_MINOR
 		declare -g KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 		;;
 esac

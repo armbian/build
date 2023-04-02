@@ -49,6 +49,12 @@ function install_distribution_specific() {
 
 			# disable conflicting services
 			disable_systemd_service_sdcard ondemand.service
+
+			# Remove Ubuntu APT spamming
+			declare -g -A image_artifacts_debs
+			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["fake-ubuntu-advantage-tools"]}"
+			truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
+
 			;;
 	esac
 
@@ -141,11 +147,11 @@ function create_sources_list() {
 
 		sid) # sid is permanent unstable development and has no such thing as updates or security
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
-				deb http://${DEBIAN_MIRROR} $release main contrib non-free
-				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
 
-				deb http://${DEBIAN_MIRROR} unstable main contrib non-free
-				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free
+				deb http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 			EOF
 			;;
 
