@@ -129,7 +129,15 @@ function artifact_uboot_build_from_sources() {
 
 	declare uboot_git_revision="not_determined_yet"
 	LOG_SECTION="uboot_prepare_git" do_with_logging_unless_user_terminal uboot_prepare_git
-	LOG_SECTION="compile_uboot" do_with_logging compile_uboot
+
+	# Hack, if UBOOT_CONFIGURE=yes, don't run under logging manager. Emit a warning about it.
+	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
+		display_alert "Warning" "UBOOT_CONFIGURE=yes, so we're not logging the build process of u-boot so it can be interactive." "wrn"
+		compile_uboot
+		display_alert "Warning" "UBOOT_CONFIGURE=yes, so we've not logged the build process of u-boot so it could be interactive." "wrn"
+	else
+		LOG_SECTION="compile_uboot" do_with_logging compile_uboot
+	fi
 }
 
 function artifact_uboot_cli_adapter_pre_run() {

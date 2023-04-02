@@ -144,6 +144,14 @@ function compile_uboot_target() {
 
 	fi
 
+	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
+		display_alert "Configuring u-boot" "UBOOT_CONFIGURE=yes; experimental" "warn"
+		run_host_command_dialog make menuconfig
+		display_alert "Exporting saved config" "UBOOT_CONFIGURE=yes; experimental" "warn"
+		run_host_command_logged make savedefconfig
+		run_host_command_logged cp -v defconfig "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}"
+	fi
+
 	# workaround when two compilers are needed
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
