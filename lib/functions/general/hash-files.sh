@@ -62,3 +62,22 @@ function calculate_hash_for_files() {
 		display_alert "Full hash input for files:" "\n${full_hash}\n" "debug"
 	fi
 }
+
+# helper, not strictly about files, but about functions. still hashing, though. outer scope: declare hash_functions="undetermined"
+function calculate_hash_for_function_bodies() {
+	declare -a function_bodies=()
+	for func in "$@"; do
+		# skip if function doesn't exist...
+		if [[ $(type -t "${func}") != function ]]; then
+			continue
+		fi
+		function_bodies+=("$(declare -f "${func}")")
+	done
+
+	if [[ ${#function_bodies[@]} -eq 0 ]]; then
+		hash_functions="0000000000000000"
+	else
+		hash_functions="$(echo "${function_bodies[@]}" | sha256sum | cut -d' ' -f1)"
+	fi
+	return 0
+}
