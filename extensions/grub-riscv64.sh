@@ -3,21 +3,21 @@
 function extension_prepare_config__prepare_grub-riscv64() {
 	display_alert "Prepare config" "${EXTENSION}" "info"
 	# Extension configuration defaults.
-	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
-	export UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
-	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
-	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
-	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
-	export GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-""}" # Cmdline by default
+	declare -g DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
+	declare -g UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
+	declare -g UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
+	declare -g UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
+	declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
+	declare -g GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-""}" # Cmdline by default
 	# User config overrides.
-	export BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
-	unset BOOTSOURCE                                                             # To try and convince lib/ to not build or install u-boot.
-	export IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-	export UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-	export BOOTSIZE=0                                                            # No separate /boot when using UEFI.
-	export CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
-	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
-	export UEFI_GRUB_TARGET="riscv64-efi"                                        # Default for x86_64
+	declare -g BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
+	unset BOOTSOURCE                                                                 # To try and convince lib/ to not build or install u-boot.
+	declare -g IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
+	declare -g UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+	declare -g BOOTSIZE=0                                                            # No separate /boot when using UEFI.
+	declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
+	declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
+	declare -g UEFI_GRUB_TARGET="riscv64-efi"                                        # Default for x86_64
 
 	if [[ "${DISTRIBUTION}" != "Ubuntu" && "${BUILDING_IMAGE}" == "yes" ]]; then
 		exit_with_error "${DISTRIBUTION} is not supported yet"

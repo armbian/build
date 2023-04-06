@@ -3,25 +3,25 @@
 function extension_prepare_config__prepare_grub-sbc-media() {
 	display_alert "Prepare config" "${EXTENSION}" "info"
 	# Extension configuration defaults.
-	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
-	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
-	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
-	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3}                      # Small timeout by default
-	export UEFI_GRUB_RECORDFAIL_TIMEOUT=${UEFI_GRUB_RECORDFAIL_TIMEOUT:-3}
-	export GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-}" # Cmdline by default
-	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-no}"       # Enable BIOS too if target is amd64
+	declare -g DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
+	declare -g UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
+	declare -g UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
+	declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3}                      # Small timeout by default
+	declare -g UEFI_GRUB_RECORDFAIL_TIMEOUT=${UEFI_GRUB_RECORDFAIL_TIMEOUT:-3}
+	declare -g GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-}" # Cmdline by default
+	declare -g UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-no}"       # Enable BIOS too if target is amd64
 	# User config overrides.
-	export IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-	export UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-	export BOOTSIZE=0                                                            # No separate /boot when using UEFI.
-	export CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
-	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
-	export UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
-	local uefi_packages="efibootmgr efivar"                                      # Use growroot, add some efi-related packages
-	uefi_packages="os-prober grub-efi-${ARCH}-bin ${uefi_packages}"              # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
+	declare -g IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
+	declare -g UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+	declare -g BOOTSIZE=0                                                            # No separate /boot when using UEFI.
+	declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
+	declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
+	declare -g UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
+	local uefi_packages="efibootmgr efivar"                                          # Use growroot, add some efi-related packages
+	uefi_packages="os-prober grub-efi-${ARCH}-bin ${uefi_packages}"                  # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
 
-	[[ "${ARCH}" == "arm64" ]] && export uefi_packages="${uefi_packages} grub-efi-${ARCH}"
-	[[ "${ARCH}" == "arm64" ]] && export UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+	[[ "${ARCH}" == "arm64" ]] && declare -g uefi_packages="${uefi_packages} grub-efi-${ARCH}"
+	[[ "${ARCH}" == "arm64" ]] && declare -g UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
 
 	DISTRO_KERNEL_PACKAGES=""
 	DISTRO_FIRMWARE_PACKAGES=""
