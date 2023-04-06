@@ -2,15 +2,15 @@ enable_extension "image-output-qcow2"
 
 #### *run before installing host dependencies*
 function add_host_dependencies__ovf_host_deps() {
-	export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} qemu-utils"
+	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} qemu-utils"
 }
 
 #### *allow extensions to prepare their own config, after user config is done*
 function extension_prepare_config__prepare_ovf_config() {
-	export OVF_VM_CPUS="${OVF_VM_CPUS:-4}"        # Number of CPUs
-	export OVF_VM_RAM_GB="${OVF_VM_RAM_GB:-4}"    # RAM in Gigabytes
-	export OVF_KEEP_QCOW2="${OVF_KEEP_QCOW2:-no}" # keep the qcow2 image after conversion to OVF
-	export OVF_KEEP_IMG="${OVF_KEEP_IMG:-no}"     # keep the .img image after conversion to OVF
+	declare -g OVF_VM_CPUS="${OVF_VM_CPUS:-4}"        # Number of CPUs
+	declare -g OVF_VM_RAM_GB="${OVF_VM_RAM_GB:-4}"    # RAM in Gigabytes
+	declare -g OVF_KEEP_QCOW2="${OVF_KEEP_QCOW2:-no}" # keep the qcow2 image after conversion to OVF
+	declare -g OVF_KEEP_IMG="${OVF_KEEP_IMG:-no}"     # keep the .img image after conversion to OVF
 }
 
 #### *custom post build hook*
