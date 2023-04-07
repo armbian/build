@@ -11,6 +11,9 @@ function extension_prepare_config__prepare_grub_standard() {
 	declare -g UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-yes}"        # Enable BIOS too if target is amd64
 	declare -g UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"   # export kernel and initrd for direct kernel boot "kexec"
 
+	# local
+	declare -a packages=()
+
 	if [[ "${UEFI_GRUB}" != "skip" ]]; then
 		# User config overrides for GRUB.
 		declare -g BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
@@ -21,25 +24,26 @@ function extension_prepare_config__prepare_grub_standard() {
 		declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
 		declare -g UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
-		local uefi_packages=""                                                           # Use growroot, add some efi-related packages
 
-		uefi_packages="efibootmgr efivar cloud-initramfs-growroot"      # Use growroot, add some efi-related packages
-		uefi_packages="os-prober grub-efi-${ARCH}-bin ${uefi_packages}" # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
+		packages+=(efibootmgr efivar cloud-initramfs-growroot) # Use growroot, add some efi-related packages
+		packages+=(os-prober "grub-efi-${ARCH}-bin")           # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
 
 		# BIOS-compatibility for amd64
 		if [[ "${ARCH}" == "amd64" ]]; then
 			declare -g UEFI_GRUB_TARGET="x86_64-efi" # Default for x86_64
 			if [[ "${UEFI_ENABLE_BIOS_AMD64}" == "yes" ]]; then
-				declare -g uefi_packages="${uefi_packages} grub-pc-bin grub-pc"
+				packages+=(grub-pc-bin grub-pc)
 				declare -g UEFI_GRUB_TARGET_BIOS="i386-pc"
 				declare -g BIOSSIZE=4 # 4 MiB BIOS partition
 			else
-				declare -g uefi_packages="${uefi_packages} grub-efi-${ARCH}"
+				packages+=("grub-efi-${ARCH}")
 			fi
 		fi
 
-		[[ "${ARCH}" == "arm64" ]] && declare -g uefi_packages="${uefi_packages} grub-efi-${ARCH}"
-		[[ "${ARCH}" == "arm64" ]] && declare -g UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+		if [[ "${ARCH}" == "arm64" ]]; then
+			packages+=("grub-efi-${ARCH}")
+			declare -g UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+		fi
 	fi
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
@@ -70,7 +74,7 @@ function extension_prepare_config__prepare_grub_standard() {
 
 	# @TODO: use actual arrays. Yeah...
 	# shellcheck disable=SC2086
-	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}
+	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} "${packages[@]}"
 
 	display_alert "${UEFI_GRUB} activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }

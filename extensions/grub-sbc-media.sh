@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# @TODO: rpardini: there's no good reason for this ("grub-sbc-media") to exist. "grub" could be refactored to allow configuration to do the same.
+
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 function extension_prepare_config__prepare_grub-sbc-media() {
 	display_alert "Prepare config" "${EXTENSION}" "info"
@@ -17,19 +20,18 @@ function extension_prepare_config__prepare_grub-sbc-media() {
 	declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
 	declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
 	declare -g UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
-	local uefi_packages="efibootmgr efivar"                                          # Use growroot, add some efi-related packages
-	uefi_packages="os-prober grub-efi-${ARCH}-bin ${uefi_packages}"                  # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
 
-	[[ "${ARCH}" == "arm64" ]] && declare -g uefi_packages="${uefi_packages} grub-efi-${ARCH}"
-	[[ "${ARCH}" == "arm64" ]] && declare -g UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+	# local
+	declare -a packages=()
 
-	DISTRO_KERNEL_PACKAGES=""
-	DISTRO_FIRMWARE_PACKAGES=""
+	packages+=(efibootmgr efivar os-prober "grub-efi-${ARCH}-bin")
 
-	# @TODO: use actual arrays. Yeah...
-	# shellcheck disable=SC2086
-	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}
+	if [[ "${ARCH}" == "arm64" ]]; then
+		packages+=("grub-efi-${ARCH}")
+		declare -g UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+	fi
 
+	add_packages_to_image "${packages[@]}"
 }
 
 pre_umount_final_image__install_grub() {
