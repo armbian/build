@@ -132,6 +132,13 @@ function artifact_kernel_prepare_version() {
 	vars_config_hash="${hash_vars}"
 	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
+	# Hash the extension hooks
+	declare -a extension_hooks_to_hash=("pre_package_kernel_image")
+	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
+	declare hash_hooks="undetermined"
+	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
+	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
+
 	# @TODO: include the compiler version? host release?
 
 	# get the hashes of the lib/ bash sources involved...
@@ -140,7 +147,7 @@ function artifact_kernel_prepare_version() {
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
-	declare common_version_suffix="S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}H${kernel_config_modification_hash_short}-V${var_config_hash_short}-B${bash_hash_short}"
+	declare common_version_suffix="S${short_sha1}-D${kernel_drivers_hash_short}-P${kernel_patches_hash_short}-C${config_hash_short}H${kernel_config_modification_hash_short}-HK${hash_hooks_short}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	# outer scope
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
