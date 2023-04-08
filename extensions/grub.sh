@@ -25,8 +25,8 @@ function extension_prepare_config__prepare_grub_standard() {
 		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
 		declare -g UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 
-		packages+=(efibootmgr efivar cloud-initramfs-growroot) # Use growroot, add some efi-related packages
-		packages+=(os-prober "grub-efi-${ARCH}-bin")           # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
+		packages+=(efibootmgr efivar cloud-initramfs-growroot busybox) # Use growroot(+busybox for it to work on Bookworm), add some efi-related packages
+		packages+=(os-prober "grub-efi-${ARCH}-bin")                   # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
 
 		# BIOS-compatibility for amd64
 		if [[ "${ARCH}" == "amd64" ]]; then
