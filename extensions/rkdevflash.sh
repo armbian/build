@@ -7,7 +7,7 @@
 # This adds the required host-side dependencies, clones and builds rkdeveloptool.
 # When build is done, it enters a loop to wait for the device to be connected.
 # When the device is connected, it check if device is in Maskrom or Loader mode.
-# If in Markrom mode: @TODO, we need a loader bin to flash.
+# If in Markrom mode: use the ROCKUSB_BLOB to init Loader mode.
 # If in Loader mode: it flashes the device with the produced image.
 # It then resets the device via rkdeveloptool rd.
 
@@ -152,12 +152,15 @@ function list_devices_rkdeveloptool() {
 
 function build_rkdeveloptool() {
 	# Clone rkdeveloptool
-	fetch_from_repo "https://github.com/rockchip-linux/rkdeveloptool" "rkdeveloptool" "branch:master"
+	#fetch_from_repo "https://github.com/rockchip-linux/rkdeveloptool" "rkdeveloptool" "branch:master" # pristine rk
+	fetch_from_repo "https://github.com/radxa/rkdeveloptool.git" "rkdeveloptool" "branch:master" # Radxa's fork has fixes
 
 	# Build rkdeveloptool
 	pushd "${rkdeveloptool_dir}" &> /dev/null || exit_with_error "Fail to cd to rkdeveloptool: ${rkdeveloptool_dir}"
+
 	# Patch `-Werror` out of Makefile so it builds with a warning. It still works.
-	sed -i -e 's/-Werror //' Makefile.am || exit_with_error "Fail to patch Makefile.am"
+	# sed -i -e 's/-Werror //' Makefile.am || exit_with_error "Fail to patch Makefile.am" # Not needed with Radxa's fork
+
 	run_host_command_logged pipetty aclocal
 	run_host_command_logged pipetty autoreconf -i
 	run_host_command_logged pipetty autoheader
@@ -165,6 +168,7 @@ function build_rkdeveloptool() {
 	run_host_command_logged pipetty ./configure
 	run_host_command_logged pipetty make -j$(nproc)
 	run_host_command_logged pipetty ls -la "${rkdeveloptool_bin_path}"
+
 	popd &> /dev/null || exit_with_error "Fail to cd back to armbian-build"
 }
 
