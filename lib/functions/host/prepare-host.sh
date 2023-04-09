@@ -19,6 +19,10 @@ function prepare_host() {
 }
 
 function assert_prepared_host() {
+	if [[ "${PRE_PREPARED_HOST:-"no"}" == "yes" ]]; then
+		return 0
+	fi
+
 	if [[ ${prepare_host_has_already_run:-0} -lt 1 ]]; then
 		exit_with_error "assert_prepared_host: Host has not yet been prepared. This is a bug in armbian-next code. Please report!"
 	fi

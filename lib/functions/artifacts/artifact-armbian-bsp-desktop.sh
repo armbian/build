@@ -88,6 +88,7 @@ function artifact_armbian-bsp-desktop_cli_adapter_config_prep() {
 	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}"
 
 	# this requires aggregation, and thus RELEASE, but also everything else.
+	declare -g artifact_version_requires_aggregation="yes"
 	use_board="yes" allow_no_family="no" skip_kernel="no" prep_conf_main_only_rootfs_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
