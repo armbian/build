@@ -8,11 +8,8 @@
 # https://github.com/armbian/build/
 
 function obtain_and_check_host_release_and_arch() {
-	# obtain the host release either from os-release or debian_version
-	declare -g HOSTRELEASE
-	HOSTRELEASE="$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)"
-	[[ -z $HOSTRELEASE ]] && HOSTRELEASE="$(cut -d'/' -f1 /etc/debian_version)"
-	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
+
+	obtain_hostrelease_only
 
 	# obtain the host arch, from dpkg
 	declare -g HOSTARCH
@@ -44,4 +41,12 @@ function obtain_and_check_host_release_and_arch() {
 			exit_with_error "Unsupported build system: '${HOSTRELEASE:-(unknown)}'"
 		fi
 	fi
+}
+
+function obtain_hostrelease_only() {
+	# obtain the host release either from os-release or debian_version
+	declare -g HOSTRELEASE
+	HOSTRELEASE="$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)"
+	[[ -z $HOSTRELEASE ]] && HOSTRELEASE="$(cut -d'/' -f1 /etc/debian_version)"
+	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
 }

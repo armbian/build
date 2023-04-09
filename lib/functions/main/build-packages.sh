@@ -53,6 +53,13 @@ function determine_artifacts_to_build_for_image() {
 			artifacts_to_build+=("armbian-bsp-desktop")
 		fi
 	fi
+
+	# If we're only dumping the config, include the rootfs artifact.
+	# In a "real" build, this artifact is built/consumed by get_or_create_rootfs_cache_chroot_sdcard(), not here.
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
+		artifacts_to_build+=("rootfs")
+	fi
+
 }
 
 function main_default_build_packages() {

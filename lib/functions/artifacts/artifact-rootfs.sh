@@ -99,6 +99,7 @@ function artifact_rootfs_cli_adapter_pre_run() {
 }
 
 function artifact_rootfs_cli_adapter_config_prep() {
+	declare -g artifact_version_requires_aggregation="yes"
 	declare -g ROOTFS_COMPRESSION_RATIO="${ROOTFS_COMPRESSION_RATIO:-"15"}" # default to Compress stronger when we make rootfs cache
 
 	# If BOARD is set, use it to convert to an ARCH.

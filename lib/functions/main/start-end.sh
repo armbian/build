@@ -10,6 +10,25 @@
 # Common start/end build functions. Used by the default build and others
 
 function main_default_start_build() {
+	if [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
+		prepare_host_init # this has its own logging sections, and is possibly interactive.
+	fi
+
+	# Prepare ccache, cthreads, etc for the build
+	LOG_SECTION="prepare_compilation_vars" do_with_logging prepare_compilation_vars
+
+	# from mark_aggregation_required_in_default_build_start() possibly marked during config
+	if [[ ${aggregation_required_in_default_build_start:-0} -gt 0 ]]; then
+		display_alert "Configuration requires aggregation" "running aggregation now" "debug"
+		aggregate_packages_in_logging_section
+	else
+		display_alert "Configuration does not require aggregation" "skipping aggregation" "debug"
+	fi
+
+	return 0
+}
+
+function prepare_host_init() {
 	wait_for_disk_sync "before starting build" # fsync, wait for disk to sync, and then continue. alert user if takes too long.
 
 	# Check that WORKDIR_BASE_TMP exists; if not, create it.
@@ -48,19 +67,6 @@ function main_default_start_build() {
 	mkdir -p "${BIN_WORK_DIR}"
 	ln -s "/usr/bin/python2" "${BIN_WORK_DIR}/python"
 	declare -g PATH="${BIN_WORK_DIR}:${PATH}"
-
-	# Prepare ccache, cthreads, etc for the build
-	LOG_SECTION="prepare_compilation_vars" do_with_logging prepare_compilation_vars
-
-	# from mark_aggregation_required_in_default_build_start() possibly marked during config
-	if [[ ${aggregation_required_in_default_build_start:-0} -gt 0 ]]; then
-		display_alert "Configuration requires aggregation" "running aggregation now" "debug"
-		aggregate_packages_in_logging_section
-	else
-		display_alert "Configuration does not require aggregation" "skipping aggregation" "debug"
-	fi
-
-	return 0
 }
 
 function main_default_end_build() {
