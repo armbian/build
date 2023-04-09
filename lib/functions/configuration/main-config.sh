@@ -209,7 +209,6 @@ function do_main_configuration() {
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
 	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything...
-	KERNEL_IMAGE_TYPE=zImage
 	ATF_COMPILE=yes
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
