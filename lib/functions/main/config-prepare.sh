@@ -53,7 +53,9 @@ function prep_conf_main_minimal_ni() {
 
 	# needed for most stuff, but not for configdump
 	if [[ "${skip_host_config:-"no"}" != "yes" ]]; then
-		check_basic_host
+		if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
+			check_basic_host
+		fi
 	fi
 
 	# needed for BOARD= builds.

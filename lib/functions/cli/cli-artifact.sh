@@ -17,8 +17,10 @@ function cli_artifact_run() {
 	: "${chosen_artifact:?chosen_artifact is not set}"
 	: "${chosen_artifact_impl:?chosen_artifact_impl is not set}"
 
-	# Make sure ORAS tooling is installed before starting.
-	run_tool_oras
+	if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
+		# Make sure ORAS tooling is installed before starting.
+		run_tool_oras
+	fi
 
 	display_alert "artifact" "${chosen_artifact}" "debug"
 	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "debug"
@@ -62,5 +64,9 @@ function cli_artifact_run() {
 		skip_unpack_if_found_in_caches="no"
 	fi
 
-	do_with_default_build obtain_complete_artifact # @TODO: < /dev/null -- but what about kernel configure?
+	if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
+		do_with_default_build obtain_complete_artifact # @TODO: < /dev/null -- but what about kernel configure?
+	else
+		obtain_complete_artifact
+	fi
 }
