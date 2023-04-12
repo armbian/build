@@ -15,7 +15,7 @@ function display_alert() {
 		if [[ "${POOR_MAN_PROFILER}" == "yes" ]]; then
 			poor_man_profiler
 		fi
-		echo -e "${extra_profiler}${*}" | sed 's/\x1b\[[0-9;]*m//g' >&2
+		echo -e "${extra_profiler}${3}::${1} ${2}" | sed 's/\x1b\[[0-9;]*m//g' >&2
 		return 0
 	fi
 
