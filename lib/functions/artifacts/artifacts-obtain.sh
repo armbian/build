@@ -181,7 +181,6 @@ function obtain_complete_artifact() {
 		exit 0
 	fi
 
-
 	declare -g artifact_exists_in_local_cache="undetermined"
 	declare -g artifact_exists_in_remote_cache="undetermined"
 
@@ -369,5 +368,13 @@ function is_artifact_available_in_remote_cache() {
 function obtain_artifact_from_remote_cache() {
 	display_alert "Obtaining artifact from remote cache" "${artifact_full_oci_target} into ${artifact_final_file_basename}" "info"
 	oras_pull_artifact_file "${artifact_full_oci_target}" "${artifact_base_dir}" "${artifact_final_file_basename}"
+
+	# sanity check: after obtaining remotely, is it available locally? it should, otherwise there's some inconsistency.
+	declare artifact_exists_in_local_cache="not-yet-after-obtaining-remotely"
+	is_artifact_available_in_local_cache
+	if [[ "${artifact_exists_in_local_cache}" == "no" ]]; then
+		exit_with_error "Artifact is not available in local cache after obtaining remotely: ${artifact_full_oci_target} into '${artifact_base_dir}' file '${artifact_final_file_basename}'"
+	fi
+
 	return 0
 }
