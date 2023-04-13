@@ -19,12 +19,15 @@ function create_image_from_sdcard_rootfs() {
 	add_cleanup_handler trap_handler_cleanup_destimg
 
 	# stage: create file name
-	# determine the image file name produced. a bit late in the game, since it uses IMAGE_INSTALLED_KERNEL_VERSION which is from the kernel package.
-	# If IMAGE_VERSION has something, use it, otherwise use REVISION
-	local version="${VENDOR}_${IMAGE_VERSION:-"${REVISION}"}_${BOARD^}_${RELEASE}_${BRANCH}_${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
+	# determine the image file name produced. a bit late in the game, since it uses IMAGE_INSTALLED_KERNEL_VERSION which is set in distro-agnostic.sh.
+	# If IMAGE_VERSION has something, use it, otherwise use REVISION.
+	# EXTRA_IMAGE_SUFFIX is composed at the end of main-config from extensions that add to EXTRA_IMAGE_SUFFIXES array.
+	# legacy: the "version" local variable is used elsewhere, take care changing it.
+	declare -g version="${VENDOR}_${IMAGE_VERSION:-"${REVISION}"}_${BOARD^}_${RELEASE}_${BRANCH}_${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}${EXTRA_IMAGE_SUFFIX}"
 	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
 	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
 	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
+	declare -r -g version="${version}" # global readonly from here
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
