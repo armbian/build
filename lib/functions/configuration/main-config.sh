@@ -324,6 +324,7 @@ function do_extra_configuration() {
 	# Control aria2c's usage of ipv6.
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
+	# @TODO this is _very legacy_ and should be removed. Old-time users might have a lib.config lying around and it will mess up things.
 	# For (late) user override.
 	# Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.
 	#         in case the user tries to use them in lib.config, hopefully they'll be detected as "wishful hooking" and the user will be wrn'ed.
@@ -331,6 +332,10 @@ function do_extra_configuration() {
 		display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
 		source "$USERPATCHES_PATH"/lib.config
 	fi
+
+	# Prepare array for extensions to fill in.
+	display_alert "Main config" "initting EXTRA_IMAGE_SUFFIXES" "debug"
+	declare -g -a EXTRA_IMAGE_SUFFIXES=()
 
 	call_extension_method "user_config" <<- 'USER_CONFIG'
 		*Invoke function with user override*
@@ -360,6 +365,16 @@ function do_extra_configuration() {
 
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
+
+	# Consolidate the extra image suffix. loop and add.
+	declare EXTRA_IMAGE_SUFFIX=""
+	for suffix in "${EXTRA_IMAGE_SUFFIXES[@]}"; do
+		display_alert "Adding extra image suffix" "'${suffix}'" "debug"
+		EXTRA_IMAGE_SUFFIX="${EXTRA_IMAGE_SUFFIX}${suffix}"
+	done
+	declare -g -r EXTRA_IMAGE_SUFFIX="${EXTRA_IMAGE_SUFFIX}"
+	display_alert "Extra image suffix" "'${EXTRA_IMAGE_SUFFIX}'" "debug"
+	unset EXTRA_IMAGE_SUFFIXES # get rid of this, no longer used
 
 	display_alert "Done with do_extra_configuration" "do_extra_configuration" "debug"
 }
