@@ -376,6 +376,17 @@ function do_extra_configuration() {
 	display_alert "Extra image suffix" "'${EXTRA_IMAGE_SUFFIX}'" "debug"
 	unset EXTRA_IMAGE_SUFFIXES # get rid of this, no longer used
 
+	# Lets estimate the image name, based on the configuration. The real image name depends on _actual_ kernel version.
+	# Here we do a gross estimate with the KERNEL_MAJOR_MINOR + ".y" version, or "generic" if not set (ddks etc).
+	declare calculated_image_version="undetermined"
+	declare predicted_kernel_version="generic"
+	if [[ -n "${KERNEL_MAJOR_MINOR}" ]]; then
+		predicted_kernel_version="${KERNEL_MAJOR_MINOR}.y"
+	fi
+	IMAGE_INSTALLED_KERNEL_VERSION="${predicted_kernel_version}" include_vendor_version="no" calculate_image_version
+
+	declare -r -g IMAGE_FILE_ID="${calculated_image_version}" # Global, readonly.
+
 	display_alert "Done with do_extra_configuration" "do_extra_configuration" "debug"
 }
 

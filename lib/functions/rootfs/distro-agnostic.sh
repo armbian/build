@@ -331,7 +331,7 @@ function install_distribution_agnostic() {
 	PRE_INSTALL_KERNEL_DEBS
 
 	# default IMAGE_INSTALLED_KERNEL_VERSION, will be parsed from Kernel version in the installed deb package.
-	IMAGE_INSTALLED_KERNEL_VERSION="linux"
+	IMAGE_INSTALLED_KERNEL_VERSION="generic"
 
 	# install kernel: image/dtb/headers
 	if [[ -n $KERNELSOURCE ]]; then

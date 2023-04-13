@@ -7,10 +7,22 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-# create_image
-#
-# finishes creation of image from cached rootfs
-#
+function calculate_image_version() {
+	declare kernel_version_for_image="unknown"
+	kernel_version_for_image="${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}"
+
+	declare vendor_version_prelude="${VENDOR}_${IMAGE_VERSION:-"${REVISION}"}_"
+	if [[ "${include_vendor_version:-"yes"}" == "no" ]]; then
+		vendor_version_prelude=""
+	fi
+
+	calculated_image_version="${vendor_version_prelude}${BOARD^}_${RELEASE}_${BRANCH}_${kernel_version_for_image}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}${EXTRA_IMAGE_SUFFIX}"
+	[[ $BUILD_DESKTOP == yes ]] && calculated_image_version=${calculated_image_version}_desktop
+	[[ $BUILD_MINIMAL == yes ]] && calculated_image_version=${calculated_image_version}_minimal
+	[[ $ROOTFS_TYPE == nfs ]] && calculated_image_version=${calculated_image_version}_nfsboot
+	display_alert "Calculated image version" "${calculated_image_version}" "debug"
+}
+
 function create_image_from_sdcard_rootfs() {
 	# create DESTIMG, hooks might put stuff there early.
 	mkdir -p "${DESTIMG}"
@@ -18,16 +30,10 @@ function create_image_from_sdcard_rootfs() {
 	# add a cleanup trap hook do make sure we don't leak it if stuff fails
 	add_cleanup_handler trap_handler_cleanup_destimg
 
-	# stage: create file name
-	# determine the image file name produced. a bit late in the game, since it uses IMAGE_INSTALLED_KERNEL_VERSION which is set in distro-agnostic.sh.
-	# If IMAGE_VERSION has something, use it, otherwise use REVISION.
-	# EXTRA_IMAGE_SUFFIX is composed at the end of main-config from extensions that add to EXTRA_IMAGE_SUFFIXES array.
-	# legacy: the "version" local variable is used elsewhere, take care changing it.
-	declare -g version="${VENDOR}_${IMAGE_VERSION:-"${REVISION}"}_${BOARD^}_${RELEASE}_${BRANCH}_${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}${EXTRA_IMAGE_SUFFIX}"
-	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
-	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
-	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
-	declare -r -g version="${version}" # global readonly from here
+	# calculate image filename, and store it in readonly global variable "version", for legacy reasons.
+	declare calculated_image_version="undetermined"
+	calculate_image_version
+	declare -r -g version="${calculated_image_version}" # global readonly from here
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
