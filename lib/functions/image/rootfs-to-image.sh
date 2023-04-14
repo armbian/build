@@ -137,8 +137,8 @@ function create_image_from_sdcard_rootfs() {
 	if [[ -f "${DESTIMG}/${version}.img" ]]; then
 		display_alert "Done building" "${version}.img" "info"
 		fingerprint_image "${DESTIMG}/${version}.img.txt" "${version}"
-		# write image to SD card
-		write_image_to_device "${DESTIMG}/${version}.img" "${CARD_DEVICE}"
+
+		write_image_to_device_and_run_hooks "${DESTIMG}/${version}.img"
 	fi
 
 	declare compression_type                                    # set by image_compress_and_checksum
@@ -151,6 +151,25 @@ function create_image_from_sdcard_rootfs() {
 	move_images_to_final_destination
 
 	return 0
+}
+
+function write_image_to_device_and_run_hooks() {
+	if [[ ! -f "${1}" ]]; then
+		exit_with_error "Image file not found '${1}'"
+	fi
+	declare built_image_file="${1}"
+
+	# write image to SD card
+	write_image_to_device "${built_image_file}" "${CARD_DEVICE}"
+
+	# Hook: post_build_image_write
+	call_extension_method "post_build_image_write" <<- 'POST_BUILD_IMAGE_WRITE'
+		*custom post build hook*
+		Called after the final .img file is ready, and possibly written to an SD card.
+		The full path to the image is available in `${built_image_file}`.
+	POST_BUILD_IMAGE_WRITE
+
+	unset built_image_file
 }
 
 function move_images_to_final_destination() {
