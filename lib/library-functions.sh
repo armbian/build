@@ -204,6 +204,15 @@ source "${SRC}"/lib/functions/cli/cli-docker.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/cli/cli-flash.sh
+# shellcheck source=lib/functions/cli/cli-flash.sh
+source "${SRC}"/lib/functions/cli/cli-flash.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/cli/cli-jsoninfo.sh
 # shellcheck source=lib/functions/cli/cli-jsoninfo.sh
 source "${SRC}"/lib/functions/cli/cli-jsoninfo.sh
@@ -1143,6 +1152,7 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/rootfs/trap-rootfs.sh
 # shellcheck source=lib/functions/rootfs/trap-rootfs.sh
 source "${SRC}"/lib/functions/rootfs/trap-rootfs.sh
+
 
 # no errors tolerated. one last time for the win!
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
