@@ -30,7 +30,7 @@ function armbian_register_commands() {
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
-		["flash"]="flash"      # implemented in cli_flash_pre_run and cli_flash_run
+		["flash"]="flash"          # implemented in cli_flash_pre_run and cli_flash_run
 
 		# external tooling, made easy.
 		["oras-upload"]="oras" # implemented in cli_oras_pre_run and cli_oras_run; up/down/info are the same, see vars below

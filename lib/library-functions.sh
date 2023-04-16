@@ -1153,7 +1153,6 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 # shellcheck source=lib/functions/rootfs/trap-rootfs.sh
 source "${SRC}"/lib/functions/rootfs/trap-rootfs.sh
 
-
 # no errors tolerated. one last time for the win!
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
