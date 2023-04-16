@@ -39,6 +39,12 @@ function run_memoized() {
 	declare disk_cache_dir="${SRC}/cache/memoize/${MEMO_DICT[MEMO_TYPE]}"
 	mkdir -p "${disk_cache_dir}"
 	declare disk_cache_file="${disk_cache_dir}/${MEMO_DICT[MEMO_INPUT_HASH]}"
+
+	# Lock...
+	exec {lock_fd}> "${disk_cache_file}.lock" || exit_with_error "failed to lock"
+	flock "${lock_fd}" || exit_with_error "flock() failed"
+	display_alert "Lock obtained" "${disk_cache_file}.lock" "debug"
+
 	if [[ -f "${disk_cache_file}" ]]; then
 		declare disk_cache_file_mtime_seconds
 		disk_cache_file_mtime_seconds="$(stat -c %Y "${disk_cache_file}")"
@@ -62,6 +68,9 @@ function run_memoized() {
 
 	# ... and save the output to the cache; twist declare -p's output due to the nameref
 	declare -p "${var_n}" | sed -e 's|^declare -A ||' > "${disk_cache_file}"
+
+	# ... unlock.
+	flock -u "${lock_fd}"
 
 	return 0
 }
