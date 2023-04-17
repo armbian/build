@@ -11,9 +11,6 @@ function apt_purge_unneeded_packages() {
 	# remove packages that are no longer needed. rootfs cache + uninstall might have leftovers.
 	display_alert "No longer needed packages" "purge" "info"
 	chroot_sdcard_apt_get autoremove
-	# clean apt cache
-	display_alert "No longer needed apt cache" "purge" "info"
-	chroot_sdcard_apt_get clean
 }
 
 # this is called:
