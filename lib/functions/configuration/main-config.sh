@@ -209,6 +209,15 @@ function do_main_configuration() {
 			;;
 	esac
 
+	case $GHCR_MIRROR in
+		dockerproxy)
+			GHCR_SOURCE='ghcr.dockerproxy.com'
+			;;
+		*)
+			GHCR_SOURCE='ghcr.io'
+			;;
+	esac
+
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
 	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything...
