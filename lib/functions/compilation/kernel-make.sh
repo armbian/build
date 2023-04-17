@@ -53,8 +53,8 @@ function run_kernel_make_internal() {
 		"KGZIP=pigz" "KBZIP2=pbzip2" # Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/ # @TODO: what about XZ?
 	)
 
-	# last statement, so it passes the result to calling function. "env -i" is used for empty env. "pipetty" helps to get color logs.
-	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "pipetty" "env" "-i" "${common_make_envs[@]}"
+	# last statement, so it passes the result to calling function. "env -i" is used for empty env
+	full_command=("${KERNEL_MAKE_RUNNER:-run_host_command_logged}" "env" "-i" "${common_make_envs[@]}"
 		make "${common_make_params_quoted[@]@Q}" "$@" "${make_filter}")
 	"${full_command[@]}" # and exit with it's code, since it's the last statement
 }
