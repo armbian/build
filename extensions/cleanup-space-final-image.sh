@@ -3,8 +3,7 @@ function add_host_dependencies__cleanup_space_final_image_zerofree() {
 }
 
 function post_customize_image__998_cleanup_apt_stuff() {
-	display_alert "Cleaning up apt package lists and cache" "${EXTENSION}" "info"
-	chroot_sdcard "apt-get clean && rm -rf /var/lib/apt/lists"
+	# This used to clean apt caches, but no longer; we do that in the core now.
 
 	declare -a too_big_firmware=("netronome" "qcom" "mrv" "qed" "mellanox") # maybe: "amdgpu" "radeon" but I have an AMD GPU.
 	for big_firm in "${too_big_firmware[@]}"; do
