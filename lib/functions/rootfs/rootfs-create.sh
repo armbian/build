@@ -20,6 +20,11 @@ function create_new_rootfs_cache_tarball() {
 	chroot_sdcard "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > "${cache_fname}.list"
 	echo "${AGGREGATED_ROOTFS_HASH_TEXT}" > "${cache_fname}.hash_text"
 
+	# Show the disk space usage of the rootfs
+	display_alert "Disk space usage of rootfs" "${RELEASE}:: ${cache_name}" "info"
+	run_host_command_logged "cd ${SDCARD} && " du -h -d 4 -x "." "| sort -h | tail -20"
+	wait_for_disk_sync "after disk-space usage report of rootfs"
+
 	declare compression_ratio_rootfs="${ROOTFS_COMPRESSION_RATIO:-"5"}"
 
 	display_alert "zstd tarball of rootfs" "${RELEASE}:: ${cache_name} :: compression ${compression_ratio_rootfs}" "info"
@@ -96,7 +101,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	}
 	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
 
-	local_apt_deb_cache_prepare "after debootstrap" # just for size reference in logs
+	skip_target_check="yes" local_apt_deb_cache_prepare "after debootstrap first stage" # just for size reference in logs; skip the target check: debootstrap uses it for second stage.
 
 	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks() @TODO: which is too late for a cache
 
@@ -104,6 +109,12 @@ function create_new_rootfs_cache_via_debootstrap() {
 	declare -g if_error_detail_message="Debootstrap second stage failed ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"
+
+	# Done with debootstrap. Clean-up it's litterbox.
+	display_alert "Cleaning up after debootstrap" "debootstrap cleanup" "info"
+	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt" "${SDCARD}/var/lib/apt/lists"
+
+	local_apt_deb_cache_prepare "after debootstrap second stage" # just for size reference in logs
 
 	mount_chroot "${SDCARD}" # we mount the chroot here... it's un-mounted below when all is done, or by cleanup handler '' @TODO
 
@@ -208,11 +219,8 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# don't touch the local cache.
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get autoremove
 
-	# Only clean if not using local cache. Otherwise it would be cleaning the cache, not the chroot.
-	if [[ "${USE_LOCAL_APT_DEB_CACHE}" != "yes" ]]; then
-		display_alert "Late Cleaning" "late: package lists and apt cache" "warn"
-		chroot_sdcard_apt_get clean
-	fi
+	# Purge/clean apt cache in the target. It should _not_ have been used, but if it was, warn & clean.
+	apt_purge_unneeded_packages_and_clean_apt_caches
 
 	# DEBUG: print free space
 	local free_space
