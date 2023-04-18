@@ -1,5 +1,5 @@
 function add_host_dependencies__cleanup_space_final_image_zerofree() {
-	export EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} zerofree"
+	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} zerofree"
 }
 
 function post_customize_image__998_cleanup_apt_stuff() {

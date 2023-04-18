@@ -56,7 +56,7 @@ function artifact_armbian-desktop_prepare_version() {
 
 	artifact_name="armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
+	artifact_base_dir="${DEB_STORAGE}/${RELEASE}"
 	artifact_final_file="${DEB_STORAGE}/${RELEASE}/${artifact_name}_${artifact_version}_all.deb"
 
 	artifact_map_packages=(
@@ -87,6 +87,7 @@ function artifact_armbian-desktop_cli_adapter_config_prep() {
 	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}"
 
 	# this requires aggregation, and thus RELEASE, but also everything else.
+	declare -g artifact_version_requires_aggregation="yes"
 	use_board="yes" allow_no_family="no" skip_kernel="no" prep_conf_main_only_rootfs_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 

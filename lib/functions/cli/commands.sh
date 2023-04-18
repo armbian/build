@@ -30,12 +30,14 @@ function armbian_register_commands() {
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
+		["flash"]="flash"      # implemented in cli_flash_pre_run and cli_flash_run
 
 		# external tooling, made easy.
 		["oras-upload"]="oras" # implemented in cli_oras_pre_run and cli_oras_run; up/down/info are the same, see vars below
 
 		# all-around artifact wrapper
-		["artifact"]="artifact" # implemented in cli_artifact_pre_run and cli_artifact_run
+		["artifact"]="artifact"                  # implemented in cli_artifact_pre_run and cli_artifact_run
+		["artifact-config-dump-json"]="artifact" # implemented in cli_artifact_pre_run and cli_artifact_run
 
 		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
 		["rootfs"]="artifact"
@@ -71,6 +73,8 @@ function armbian_register_commands() {
 		["dockershell"]="DOCKER_SUBCMD='shell'"
 
 		["generate-dockerfile"]="DOCKERFILE_GENERATE_ONLY='yes'"
+
+		["artifact-config-dump-json"]='CONFIG_DEFS_ONLY="yes"'
 
 		# artifact shortcuts
 		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"

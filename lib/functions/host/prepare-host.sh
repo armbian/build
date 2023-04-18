@@ -19,6 +19,10 @@ function prepare_host() {
 }
 
 function assert_prepared_host() {
+	if [[ "${PRE_PREPARED_HOST:-"no"}" == "yes" ]]; then
+		return 0
+	fi
+
 	if [[ ${prepare_host_has_already_run:-0} -lt 1 ]]; then
 		exit_with_error "assert_prepared_host: Host has not yet been prepared. This is a bug in armbian-next code. Please report!"
 	fi
@@ -290,8 +294,8 @@ function adaptative_prepare_host_dependencies() {
 	host_dependencies+=("python3-dev" "python3-distutils" "python3-setuptools" "python3-pip")
 
 	# Python2 -- required for some older u-boot builds
-	# Debian 'sid' does not carry python2 anymore; in this case some u-boot's might fail to build.
-	if [[ "sid bookworm" == *"${host_release}"* ]]; then
+	# Debian 'sid'/'bookworm' and Ubuntu 'lunar' does not carry python2 anymore; in this case some u-boot's might fail to build.
+	if [[ "sid bookworm lunar" == *"${host_release}"* ]]; then
 		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
 	else
 		host_dependencies+=("python2" "python2-dev")

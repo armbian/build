@@ -2,44 +2,48 @@
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the u ser.
 function extension_prepare_config__prepare_grub_standard() {
 	# Extension configuration defaults.
-	export DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
-	export UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
-	export UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
-	export UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
-	export UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
-	export GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-}"   # Cmdline by default
-	export UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-yes}"        # Enable BIOS too if target is amd64
-	export UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"   # Export kernel and initrd for direct kernel boot "kexec"
+	declare -g DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
+	declare -g UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
+	declare -g UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
+	declare -g UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
+	declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
+	declare -g GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT:-}"   # Cmdline by default
+	declare -g UEFI_ENABLE_BIOS_AMD64="${UEFI_ENABLE_BIOS_AMD64:-yes}"        # Enable BIOS too if target is amd64
+	declare -g UEFI_EXPORT_KERNEL_INITRD="${UEFI_EXPORT_KERNEL_INITRD:-no}"   # export kernel and initrd for direct kernel boot "kexec"
+
+	# local
+	declare -a packages=()
 
 	if [[ "${UEFI_GRUB}" != "skip" ]]; then
 		# User config overrides for GRUB.
-		export BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
-		unset BOOTSOURCE                                                             # To try and convince lib/ to not build or install u-boot.
-		export IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
-		export UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
-		export BOOTSIZE=0                                                            # No separate /boot when using UEFI.
-		export CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
-		export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
-		export UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
-		local uefi_packages=""                                                       # Use growroot, add some efi-related packages
+		declare -g BOOTCONFIG="none"                                                     # To try and convince lib/ to not build or install u-boot.
+		unset BOOTSOURCE                                                                 # To try and convince lib/ to not build or install u-boot.
+		declare -g IMAGE_PARTITION_TABLE="gpt"                                           # GPT partition table is essential for many UEFI-like implementations, eg Apple+Intel stuff.
+		declare -g UEFISIZE=256                                                          # in MiB - grub EFI is tiny - but some EFI BIOSes ignore small too small EFI partitions
+		declare -g BOOTSIZE=0                                                            # No separate /boot when using UEFI.
+		declare -g CLOUD_INIT_CONFIG_LOCATION="${CLOUD_INIT_CONFIG_LOCATION:-/boot/efi}" # use /boot/efi for cloud-init as default when using Grub.
+		declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-grub"                               # Unique bsp name.
+		declare -g UEFI_GRUB_TARGET_BIOS=""                                              # Target for BIOS GRUB install, set to i386-pc when UEFI_ENABLE_BIOS_AMD64=yes and target is amd64
 
-		uefi_packages="efibootmgr efivar cloud-initramfs-growroot"      # Use growroot, add some efi-related packages
-		uefi_packages="os-prober grub-efi-${ARCH}-bin ${uefi_packages}" # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
+		packages+=(efibootmgr efivar cloud-initramfs-growroot) # Use growroot, add some efi-related packages
+		packages+=(os-prober "grub-efi-${ARCH}-bin")           # This works for Ubuntu and Debian, by sheer luck; common for EFI and BIOS
 
 		# BIOS-compatibility for amd64
 		if [[ "${ARCH}" == "amd64" ]]; then
-			export UEFI_GRUB_TARGET="x86_64-efi" # Default for x86_64
+			declare -g UEFI_GRUB_TARGET="x86_64-efi" # Default for x86_64
 			if [[ "${UEFI_ENABLE_BIOS_AMD64}" == "yes" ]]; then
-				export uefi_packages="${uefi_packages} grub-pc-bin grub-pc"
-				export UEFI_GRUB_TARGET_BIOS="i386-pc"
-				export BIOSSIZE=4 # 4 MiB BIOS partition
+				packages+=(grub-pc-bin grub-pc)
+				declare -g UEFI_GRUB_TARGET_BIOS="i386-pc"
+				declare -g BIOSSIZE=4 # 4 MiB BIOS partition
 			else
-				export uefi_packages="${uefi_packages} grub-efi-${ARCH}"
+				packages+=("grub-efi-${ARCH}")
 			fi
 		fi
 
-		[[ "${ARCH}" == "arm64" ]] && export uefi_packages="${uefi_packages} grub-efi-${ARCH}"
-		[[ "${ARCH}" == "arm64" ]] && export UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+		if [[ "${ARCH}" == "arm64" ]]; then
+			packages+=("grub-efi-${ARCH}")
+			declare -g UEFI_GRUB_TARGET="arm64-efi" # Default for arm64-efi
+		fi
 	fi
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
@@ -53,16 +57,16 @@ function extension_prepare_config__prepare_grub_standard() {
 		# Debian's prebuilt kernels dont support hvc0, hack.
 		if [[ "${SERIALCON}" == "hvc0" ]]; then
 			display_alert "Debian's kernels don't support hvc0, changing to ttyS0" "${DISTRIBUTION}" "wrn"
-			export SERIALCON="ttyS0"
+			declare -g SERIALCON="ttyS0"
 		fi
 	fi
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-		export IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}"
-		unset KERNELSOURCE                 # This should make Armbian skip most stuff. At least, I hacked it to.
-		export INSTALL_ARMBIAN_FIRMWARE=no # Should skip build and install of Armbian-firmware.
+		declare -g IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}"
+		unset KERNELSOURCE                     # This should make Armbian skip most stuff. At least, I hacked it to.
+		declare -g INSTALL_ARMBIAN_FIRMWARE=no # Should skip build and install of Armbian-firmware.
 	else
-		export KERNELDIR="linux-uefi-${LINUXFAMILY}" # Avoid sharing a source tree with others, until we know it's safe.
+		declare -g KERNELDIR="linux-uefi-${LINUXFAMILY}" # Avoid sharing a source tree with others, until we know it's safe.
 		# Don't install anything. Armbian handles everything.
 		DISTRO_KERNEL_PACKAGES=""
 		DISTRO_FIRMWARE_PACKAGES=""
@@ -70,7 +74,7 @@ function extension_prepare_config__prepare_grub_standard() {
 
 	# @TODO: use actual arrays. Yeah...
 	# shellcheck disable=SC2086
-	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} ${uefi_packages}
+	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} "${packages[@]}"
 
 	display_alert "${UEFI_GRUB} activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }

@@ -17,23 +17,23 @@ function extension_metadata_ready__docs_sample_extension() {
 
 ### Common stuff
 function read_common_data() {
-	export HOOK_POINT_CALLS_COUNT=$(wc -l < "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt")
-	export HOOK_POINT_CALLS_UNIQUE_COUNT=$(sort < "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt" | uniq | wc -l)
-	export HOOK_POINTS_WITH_MULTIPLE_CALLS=""
+	declare -g HOOK_POINT_CALLS_COUNT=$(wc -l < "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt")
+	declare -g HOOK_POINT_CALLS_UNIQUE_COUNT=$(sort < "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt" | uniq | wc -l)
+	declare -g HOOK_POINTS_WITH_MULTIPLE_CALLS=""
 
 	# Read the hook_points (main, official names) from the hook point ordering file.
-	export ALL_HOOK_POINT_CALLS=$(xargs echo -n < "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt")
+	declare -g ALL_HOOK_POINT_CALLS=$(xargs echo -n < "${EXTENSION_MANAGER_TMP_DIR}/hook_point_calls.txt")
 }
 
 function loop_over_hook_points_and_call() {
 	local callback="$1"
 	HOOK_POINT_COUNTER=0
 	for one_hook_point in ${ALL_HOOK_POINT_CALLS}; do
-		export HOOK_POINT_COUNTER=$((HOOK_POINT_COUNTER + 1))
-		export HOOK_POINT="${one_hook_point}"
-		export MARKDOWN_HEAD="$(head -1 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
-		export MARKDOWN_BODY="$(tail -n +2 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
-		export COMPATIBILITY_NAMES="$(xargs echo -n < "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.compat")"
+		declare -g HOOK_POINT_COUNTER=$((HOOK_POINT_COUNTER + 1))
+		declare -g HOOK_POINT="${one_hook_point}"
+		declare -g MARKDOWN_HEAD="$(head -1 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
+		declare -g MARKDOWN_BODY="$(tail -n +2 "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.orig.md")"
+		declare -g COMPATIBILITY_NAMES="$(xargs echo -n < "${EXTENSION_MANAGER_TMP_DIR}/${one_hook_point}.compat")"
 		${callback}
 	done
 }

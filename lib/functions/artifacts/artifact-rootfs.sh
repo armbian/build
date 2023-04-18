@@ -10,7 +10,15 @@
 function artifact_rootfs_config_dump() {
 	artifact_input_variables[ARCH]="${ARCH}"
 	artifact_input_variables[RELEASE]="${RELEASE}"
-	artifact_input_variables[CACHE_TYPE]="${cache_type:-"no_cache_type_yet"}"
+	artifact_input_variables[SELECTED_CONFIGURATION]="${SELECTED_CONFIGURATION}" # should be represented below anyway
+	artifact_input_variables[BUILD_MINIMAL]="${BUILD_MINIMAL}"
+	artifact_input_variables[DESKTOP_ENVIRONMENT]="${DESKTOP_ENVIRONMENT:-"no_DESKTOP_ENVIRONMENT_set"}"
+	artifact_input_variables[DESKTOP_ENVIRONMENT_CONFIG_NAME]="${DESKTOP_ENVIRONMENT_CONFIG_NAME:-"no_DESKTOP_ENVIRONMENT_CONFIG_NAME_set"}"
+	artifact_input_variables[DESKTOP_APPGROUPS_SELECTED]="${DESKTOP_APPGROUPS_SELECTED:-"no_DESKTOP_APPGROUPS_SELECTED_set"}"
+	# Hash of the packages added/removed by extensions
+	declare pkgs_hash="undetermined"
+	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${REMOVE_PACKAGES_REFS[*]}" | sha256sum | cut -d' ' -f1)"
+	artifact_input_variables[EXTRA_PKG_ADD_REMOVE_HASH]="${pkgs_hash}"
 }
 
 function artifact_rootfs_prepare_version() {
@@ -99,6 +107,7 @@ function artifact_rootfs_cli_adapter_pre_run() {
 }
 
 function artifact_rootfs_cli_adapter_config_prep() {
+	declare -g artifact_version_requires_aggregation="yes"
 	declare -g ROOTFS_COMPRESSION_RATIO="${ROOTFS_COMPRESSION_RATIO:-"15"}" # default to Compress stronger when we make rootfs cache
 
 	# If BOARD is set, use it to convert to an ARCH.

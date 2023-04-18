@@ -29,7 +29,21 @@ function memoized_git_ref_to_info() {
 			sha1="${ref_name}"
 			;;
 		*)
-			sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
+			case "${GITHUB_MIRROR}" in
+				"ghproxy")
+					case "${MEMO_DICT[GIT_SOURCE]}" in
+						"https://github.com/"*)
+							sha1="$(git ls-remote --exit-code "https://ghproxy.com/${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
+							;;
+						*)
+							sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
+							;;
+					esac
+					;;
+				*)
+					sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
+					;;
+			esac
 			;;
 	esac
 
@@ -67,7 +81,14 @@ function memoized_git_ref_to_info() {
 					declare org_and_repo=""
 					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
-					url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+					case "${GITHUB_MIRROR}" in
+						"ghproxy")
+							url="https://ghproxy.com/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+							;;
+						*)
+							url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+							;;
+					esac
 					;;
 
 				"https://gitlab.com/"*)

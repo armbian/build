@@ -108,6 +108,13 @@ function compile_armbian-bsp-cli() {
 		postinst_functions+=(board_side_bsp_cli_postinst_update_uboot_bootscript)
 	fi
 
+	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
+		# add to postinst, to change PRETTY_NAME to Armbian's
+		postinst_functions+=(board_side_bsp_cli_postinst_os_release_armbian)
+	else
+		display_alert "bsp-cli: KEEP_ORIGINAL_OS_RELEASE" "Keeping original /etc/os-release's PRETTY_NAME as original" "info"
+	fi
+
 	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
 	if [[ -n $UBOOT_FW_ENV ]]; then
 		UBOOT_FW_ENV=($(tr ',' ' ' <<< "$UBOOT_FW_ENV"))
@@ -321,10 +328,11 @@ function board_side_bsp_cli_postinst_base() {
 	# Source the armbian-release information file
 	[ -f /etc/armbian-release ] && . /etc/armbian-release
 
-	# Read release value from lsb-release, so deploying a bsp-cli package on top of "X" makes it "Armbian X"
+	# Read release value from lsb-release and set it separately as ARMBIAN_PRETTY_NAME
+	# More is done, actually taking over PRETTY_NAME, in separate board_side_bsp_cli_postinst_os_release_armbian()
 	if [ -f /etc/lsb-release ]; then
 		ORIGINAL_DISTRO_RELEASE="$(cat /etc/lsb-release | grep CODENAME | cut -d"=" -f2 | sed 's/.*/\u&/')"
-		sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${ORIGINAL_DISTRO_RELEASE}\"/" /etc/os-release
+		echo "ARMBIAN_PRETTY_NAME=\"${VENDOR} ${REVISION} ${ORIGINAL_DISTRO_RELEASE}\"" >> /etc/os-release
 		echo -e "${VENDOR} ${REVISION} ${ORIGINAL_DISTRO_RELEASE} \\l \n" > /etc/issue
 		echo -e "${VENDOR} ${REVISION} ${ORIGINAL_DISTRO_RELEASE}" > /etc/issue.net
 	fi
@@ -342,6 +350,17 @@ function board_side_bsp_cli_postinst_base() {
 		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
 			echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
 		fi
+	fi
+}
+
+function board_side_bsp_cli_postinst_os_release_armbian() {
+	# Source the armbian-release information file
+	[ -f /etc/armbian-release ] && . /etc/armbian-release
+
+	# Read release value from lsb-release, so deploying a bsp-cli package on top of "X" makes it "Armbian X"
+	if [ -f /etc/lsb-release ]; then
+		ORIGINAL_DISTRO_RELEASE="$(cat /etc/lsb-release | grep CODENAME | cut -d"=" -f2 | sed 's/.*/\u&/')"
+		sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${ORIGINAL_DISTRO_RELEASE}\"/" /etc/os-release
 	fi
 }
 
