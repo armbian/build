@@ -14,7 +14,6 @@ function main_default_start_build() {
 	produce_repeat_args_array
 	display_alert "Repeat Build Options (early)" "${repeat_args[*]}" "ext"
 
-
 	if [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
 		prepare_host_init # this has its own logging sections, and is possibly interactive.
 	fi
@@ -113,14 +112,35 @@ function trap_handler_cleanup_workdir() {
 function produce_repeat_args_array() {
 	# Make it easy to repeat build by displaying build options used. Prepare array.
 	declare -a -g repeat_args=("./compile.sh")
-	# @TODO: missing the config file name, if any.
-	repeat_args+=(${ARMBIAN_NON_PARAM_ARGS[*]})
+
+	# Parse ARMBIAN_HIDE_REPEAT_PARAMS which is a space separated list of parameters to hide.
+	# It is created by produce_relaunch_parameters() in utils-cli.sh
+	declare -a params_to_hide=()
+	if [[ -n "${ARMBIAN_HIDE_REPEAT_PARAMS}" ]]; then
+		IFS=' ' read -r -a params_to_hide <<< "${ARMBIAN_HIDE_REPEAT_PARAMS}"
+	fi
+	display_alert "Hiding parameters from repeat build options" "${params_to_hide[*]}" "debug"
+
+	# Add all non-param arguments to repeat_args. This already includes any config files passed.
+	repeat_args+=("${ARMBIAN_NON_PARAM_ARGS[@]}")
+
 	for param_name in "${!ARMBIAN_PARSED_CMDLINE_PARAMS[@]}"; do
+		# if param_name is in params_to_hide, skip it. Test by looping through params_to_hide.
+		for param_to_hide in "${params_to_hide[@]}"; do
+			if [[ "${param_name}" == "${param_to_hide}" ]]; then
+				display_alert "Skipping repeat parameter" "${param_name}" "debug"
+				continue 2 # continue outer (!) loop
+			fi
+		done
+
 		# Parameter values are quoted to be on the safe side.
 		repeat_args+=("${param_name}=${ARMBIAN_PARSED_CMDLINE_PARAMS[$param_name]@Q}")
+		display_alert "Added repeat parameter" "'${param_name}'" "debug"
 	done
+
 	for param_name in "${!ARMBIAN_INTERACTIVE_CONFIGS[@]}"; do
 		# Parameter values are quoted to be on the safe side.
 		repeat_args+=("${param_name}=${ARMBIAN_INTERACTIVE_CONFIGS[$param_name]@Q}")
+		display_alert "Added repeat parameter from interactive config" "'${param_name}'" "debug"
 	done
 }
