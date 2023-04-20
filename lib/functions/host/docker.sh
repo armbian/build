@@ -247,6 +247,7 @@ function docker_cli_prepare_dockerfile() {
 
 	# initialize the extension manager; enable all extensions; only once..
 	if [[ "${docker_prepare_cli_skip_exts:-no}" != "yes" ]]; then
+		display_alert "Docker launcher" "enabling all extensions looking for Docker dependencies" "info"
 		enable_all_extensions_builtin_and_user
 		initialize_extension_manager
 	fi
@@ -546,7 +547,8 @@ function docker_cli_prepare_launch() {
 }
 
 function docker_cli_launch() {
-	display_alert "Showing Docker cmdline" "Docker args: '${DOCKER_ARGS[*]}'" "debug"
+	# rpardini: This debug, although useful, might include very long/multiline strings, which make it very confusing.
+	# display_alert "Showing Docker cmdline" "Docker args: '${DOCKER_ARGS[*]}'" "debug"
 
 	# Hack: if we're running on a Mac/Darwin, get rid of .DS_Store files in critical directories.
 	if [[ "${OSTYPE}" == "darwin"* ]]; then
@@ -557,11 +559,21 @@ function docker_cli_launch() {
 		run_host_command_logged find "${SRC}/userpatches" -name ".DS_Store" -type f -delete "||" true
 	fi
 
-	display_alert "Relaunching in Docker" "${*}" "debug"
+	# Produce the re-launch params.
+	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
+	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
+	produce_relaunch_parameters # produces ARMBIAN_CLI_FINAL_RELAUNCH_ARGS and ARMBIAN_CLI_FINAL_RELAUNCH_ENVS
+
+	# Add the relaunch envs to DOCKER_ARGS.
+	for env in "${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[@]}"; do
+		display_alert "Adding Docker env" "${env}" "debug"
+		DOCKER_ARGS+=("--env" "${env}")
+	done
+
 	display_alert "-----------------Relaunching in Docker after ${SECONDS}s------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result
-	if docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "$@"; then
+	if docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}"; then
 		docker_build_result=$? # capture exit code of test done in the line above.
 		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successfull" "info"
 	else

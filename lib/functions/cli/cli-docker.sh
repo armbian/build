@@ -55,9 +55,6 @@ function cli_docker_run() {
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["ARMBIAN_BUILD_UUID"]="${ARMBIAN_BUILD_UUID}") # pass down our uuid to the docker instance
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SKIP_LOG_ARCHIVE"]="yes")                     # launched docker instance will not cleanup logs.
 
-	declare -g ARMBIAN_CLI_RELAUNCH_ARGS=()
-	produce_relaunch_parameters # produces ARMBIAN_CLI_RELAUNCH_ARGS
-
 	case "${DOCKER_SUBCMD}" in
 		shell)
 			display_alert "Launching Docker shell" "docker-shell" "info"
@@ -73,7 +70,7 @@ function cli_docker_run() {
 			# this does NOT exit with the same exit code as the docker instance.
 			# instead, it sets the docker_exit_code variable.
 			declare -i docker_exit_code docker_produced_logs=0
-			docker_cli_launch "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: this "re-launches" using the passed params.
+			docker_cli_launch # MARK: this "re-launches"
 
 			# Set globals to avoid:
 			# 1) showing the controlling host's log; we only want to show a ref to the Docker logfile, unless it didn't produce one.
