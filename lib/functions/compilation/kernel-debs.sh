@@ -279,8 +279,9 @@ function kernel_package_callback_linux_image() {
 				cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL # image_name="${NAME_KERNEL}", above
 					touch /boot/.next
 					if is_boot_dev_vfat; then
-						echo "Armbian: FAT32 /boot: move last-installed kernel to '$image_name'..."
-						mv -v /${installed_image_path} /boot/${image_name}
+						echo "Armbian: FAT32 /boot: copy last-installed kernel to '$image_name'..."
+						cp -vf "/${installed_image_path}" "/boot/${image_name}.new"
+						mv -vf "/boot/${image_name}.new" "/boot/${image_name}"
 					else
 						echo "Armbian: update last-installed kernel symlink to '$image_name'..."
 						ln -sfv $(basename "${installed_image_path}") /boot/$image_name
@@ -338,8 +339,10 @@ function kernel_package_callback_linux_dtb() {
 				echo "Armbian: DTB: symlinking /boot/dtb to /boot/dtb-${kernel_version_family}..."
 				ln -sfTv "dtb-${kernel_version_family}" dtb
 			else
-				echo "Armbian: DTB: FAT32: moving /boot/dtb-${kernel_version_family} to /boot/dtb ..."
-				mv -v "dtb-${kernel_version_family}" dtb
+				echo "Armbian: DTB: FAT32: copying /boot/dtb-${kernel_version_family} to /boot/dtb ..."
+				rm -rf "dtb.new"
+				cp -r "dtb-${kernel_version_family}" "dtb.new"
+				mv "dtb.new" "dtb"
 			fi
 		EOT
 	)
