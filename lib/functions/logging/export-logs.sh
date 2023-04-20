@@ -38,6 +38,7 @@ function export_markdown_logs() {
 
 		### Armbian logs for ${ARMBIAN_BUILD_UUID}
 		#### Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
+		#### Repeat build: ${repeat_args_string:-""}
 		#### ARGs: \`${ARMBIAN_ORIGINAL_ARGV[@]@Q}\`
 	MARKDOWN_HEADER
 
@@ -119,6 +120,7 @@ function export_ansi_logs() {
 		# Armbian ANSI build logs for ${ARMBIAN_BUILD_UUID} - use "less -SR" to view
 		$(echo -e -n "${bright_blue_color:-}")# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)$(echo -e -n "${ansi_reset_color}")
 		${dim_line_separator}
+		$(echo -e -n "${bright_blue_color}")# Repeat build: ${repeat_args_string:-""}$(echo -e -n "${ansi_reset_color}")
 		$(echo -e -n "${bright_blue_color}")# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}$(echo -e -n "${ansi_reset_color}")
 		${dim_line_separator}
 	ANSI_HEADER
