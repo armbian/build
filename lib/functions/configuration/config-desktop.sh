@@ -94,7 +94,7 @@ function interactive_desktop_main_configuration() {
 
 		display_alert "Desktops available" "${options[*]}" "debug"
 		dialog_menu "Choose a desktop environment" "$backtitle" "Select the default desktop environment to bundle with this image" "${options[@]}"
-		DESKTOP_ENVIRONMENT="${DIALOG_MENU_RESULT}"
+		set_interactive_config_value DESKTOP_ENVIRONMENT "${DIALOG_MENU_RESULT}"
 
 		unset options
 		if [[ -z "${DESKTOP_ENVIRONMENT}" ]]; then
@@ -121,7 +121,7 @@ function interactive_desktop_main_configuration() {
 		done
 
 		dialog_menu "Choose the desktop environment config" "$backtitle" "Select the configuration for this environment." "${options[@]}"
-		DESKTOP_ENVIRONMENT_CONFIG_NAME="${DIALOG_MENU_RESULT}"
+		set_interactive_config_value DESKTOP_ENVIRONMENT_CONFIG_NAME "${DIALOG_MENU_RESULT}"
 		unset options
 
 		if [[ -z $DESKTOP_ENVIRONMENT_CONFIG_NAME ]]; then
@@ -145,7 +145,7 @@ function interactive_desktop_main_configuration() {
 		done
 
 		dialog_checklist "Choose desktop softwares to add" "$backtitle" "Select which kind of softwares you'd like to add to your build" "${options[@]}"
-		DESKTOP_APPGROUPS_SELECTED="${DIALOG_CHECKLIST_RESULT}"
+		set_interactive_config_value DESKTOP_APPGROUPS_SELECTED "${DIALOG_CHECKLIST_RESULT}"
 		unset options
 	fi
 	display_alert "desktop-config" "DESKTOP_APPGROUPS_SELECTED exit: ${DESKTOP_APPGROUPS_SELECTED}" "debug"
