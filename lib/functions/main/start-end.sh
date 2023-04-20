@@ -121,10 +121,10 @@ function produce_repeat_args_array() {
 	fi
 	display_alert "Hiding parameters from repeat build options" "${params_to_hide[*]}" "debug"
 
-	# Add all non-param arguments to repeat_args. This already includes any config files passed.
-	repeat_args+=("${ARMBIAN_NON_PARAM_ARGS[@]}")
+	repeat_args+=("${ARMBIAN_NON_PARAM_ARGS[@]}") # Add all non-param arguments to repeat_args. This already includes any config files passed.
+	declare -A repeat_params=()                   # Dict to store param values.
 
-	for param_name in "${!ARMBIAN_PARSED_CMDLINE_PARAMS[@]}"; do
+	for param_name in "${!ARMBIAN_PARSED_CMDLINE_PARAMS[@]}"; do # original params, but skip the hidden; those were automatically added by re-launcher
 		# if param_name is in params_to_hide, skip it. Test by looping through params_to_hide.
 		for param_to_hide in "${params_to_hide[@]}"; do
 			if [[ "${param_name}" == "${param_to_hide}" ]]; then
@@ -133,14 +133,21 @@ function produce_repeat_args_array() {
 			fi
 		done
 
-		# Parameter values are quoted to be on the safe side.
-		repeat_args+=("${param_name}=${ARMBIAN_PARSED_CMDLINE_PARAMS[$param_name]@Q}")
+		repeat_params+=(["${param_name}"]="${ARMBIAN_PARSED_CMDLINE_PARAMS[${param_name}]}")
 		display_alert "Added repeat parameter" "'${param_name}'" "debug"
 	done
 
-	for param_name in "${!ARMBIAN_INTERACTIVE_CONFIGS[@]}"; do
-		# Parameter values are quoted to be on the safe side.
-		repeat_args+=("${param_name}=${ARMBIAN_INTERACTIVE_CONFIGS[$param_name]@Q}")
+	for param_name in "${!ARMBIAN_INTERACTIVE_CONFIGS[@]}"; do # add params produced during interactive configuration
+		repeat_params+=(["${param_name}"]="${ARMBIAN_INTERACTIVE_CONFIGS[${param_name}]}")
 		display_alert "Added repeat parameter from interactive config" "'${param_name}'" "debug"
 	done
+
+	# get the sorted keys of the repeat_params associative array into an array
+	declare -a repeat_params_keys_sorted=($(printf '%s\0' "${!repeat_params[@]}" | sort -z | xargs -0 -n 1 printf '%s\n'))
+
+	for param_name in "${repeat_params_keys_sorted[@]}"; do         # add sorted repeat_params to repeat_args
+		repeat_args+=("${param_name}=${repeat_params[${param_name}]}") # could add @Q here, but it's not necessary
+	done
+
+	return 0
 }
