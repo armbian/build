@@ -24,6 +24,8 @@ compile_armbian-config() {
 	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
 	# this is also not getting any updates
 	fetch_from_repo "https://github.com/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
+	# allows usage of https://github.com/eidottermihi/rpicheck
+	fetch_from_repo "https://github.com/clach04/fake_vcgencmd" "vcgencmd" "commit:4397150b29b1838608d6ae04e35c87a52676731b"
 
 	# Fetch Armbian config from git.
 	declare fetched_revision
@@ -56,6 +58,7 @@ compile_armbian-config() {
 	cd "${tmp_dir}/${armbian_config_dir}"/usr/bin/ || exit_with_error "Failed to cd to ${tmp_dir}/${armbian_config_dir}/usr/bin/"
 	process_patch_file "${SRC}/patch/misc/add-armbian-neofetch.patch" "applying"
 
+	install -m 755 "${SRC}"/cache/sources/vcgencmd/vcgencmd "${tmp_dir}/${armbian_config_dir}"/usr/bin/vcgencmd #TODO Skip for all Rpi builds (boards/rpi*.conf) otherwise biuld error https://pastebin.com/VyDVTLLk
 	install -m 755 "${SRC}"/cache/sources/wireguard-manager/wireguard-manager.sh "${tmp_dir}/${armbian_config_dir}"/usr/bin/wireguard-manager
 	install -m 755 "${SRC}"/cache/sources/armbian-config/scripts/tv_grab_file "${tmp_dir}/${armbian_config_dir}"/usr/bin/tv_grab_file
 	install -m 755 "${SRC}"/cache/sources/armbian-config/debian-config "${tmp_dir}/${armbian_config_dir}"/usr/sbin/armbian-config
