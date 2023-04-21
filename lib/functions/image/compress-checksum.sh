@@ -42,6 +42,12 @@ function output_images_compress_and_checksum() {
 			compression_type=".xz"
 		fi
 
+		if [[ $COMPRESS_OUTPUTIMAGE == *gz* ]]; then
+			display_alert "Compressing to gzip" "${uncompressed_file_basename}.gz" "info"
+			pigz "${uncompressed_file}"
+			compression_type=".gz"
+		fi
+
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
 			display_alert "SHA256 calculating" "${uncompressed_file_basename}${compression_type}" "info"
 			sha256sum -b "${uncompressed_file}${compression_type}" > "${uncompressed_file}${compression_type}".sha
