@@ -330,11 +330,15 @@ function install_distribution_agnostic() {
 
 	# install kernel: image/dtb/headers
 	if [[ -n $KERNELSOURCE ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["linux-image"]}"
-
 		if [[ "${KERNEL_BUILD_DTBS:-"yes"}" == "yes" ]]; then
 			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["linux-dtb"]}"
+			# @TODO: Use `aptly` to create a local apt repo and install from it.
+			#        So we don't need to install these packages manually and then
+			#        mark them as automatically installed.
+			chroot_sdcard apt-mark auto "${image_artifacts_packages["linux-dtb"]}"
 		fi
+
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["linux-image"]}"
 
 		if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
 			if [[ $INSTALL_HEADERS == yes ]]; then # @TODO remove? might be a good idea to always install headers.
