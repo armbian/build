@@ -54,7 +54,7 @@ function artifact_armbian-bsp-desktop_prepare_version() {
 
 	artifact_name="armbian-bsp-desktop-${BOARD}-${BRANCH}"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
+	artifact_base_dir="${DEB_STORAGE}/${RELEASE}"
 	artifact_final_file="${DEB_STORAGE}/${RELEASE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
 
 	artifact_map_packages=(
@@ -88,11 +88,12 @@ function artifact_armbian-bsp-desktop_cli_adapter_config_prep() {
 	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}"
 
 	# this requires aggregation, and thus RELEASE, but also everything else.
+	declare -g artifact_version_requires_aggregation="yes"
 	use_board="yes" allow_no_family="no" skip_kernel="no" prep_conf_main_only_rootfs_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
 function artifact_armbian-bsp-desktop_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-packages/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-packages/"
 }
 
 function artifact_armbian-bsp-desktop_is_available_in_local_cache() {

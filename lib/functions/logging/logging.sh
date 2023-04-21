@@ -65,17 +65,19 @@ function logging_error_show_log() {
 		echo "::endgroup::"
 	fi
 
-	if [[ -f "${logfile_to_show}" ]]; then
-		local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
-		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
-		CURRENT_LOGFILE="" display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
+	if [[ "${ANSI_COLOR}" != "none" ]]; then
+		if [[ -f "${logfile_to_show}" ]]; then
+			local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
+			local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
+			CURRENT_LOGFILE="" display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
 
-		# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
+			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
+			cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 
-		CURRENT_LOGFILE="" display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
-	else
-		CURRENT_LOGFILE="" display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
+			CURRENT_LOGFILE="" display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
+		else
+			CURRENT_LOGFILE="" display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
+		fi
 	fi
 	return 0
 }

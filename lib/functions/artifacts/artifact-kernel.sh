@@ -81,6 +81,9 @@ function artifact_kernel_prepare_version() {
 	fi
 	debug_dict GIT_INFO_KERNEL
 
+	# Sanity check, the SHA1 gotta be sane.
+	[[ "${GIT_INFO_KERNEL[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_KERNEL[SHA1]}'"
+
 	declare short_sha1="${GIT_INFO_KERNEL[SHA1]:0:${short_hash_size}}"
 
 	# get the drivers hash...
@@ -213,7 +216,7 @@ function artifact_kernel_cli_adapter_config_prep() {
 }
 
 function artifact_kernel_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-kernel/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-kernel/"
 }
 
 function artifact_kernel_is_available_in_local_cache() {

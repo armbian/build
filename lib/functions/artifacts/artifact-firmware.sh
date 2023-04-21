@@ -28,6 +28,9 @@ function artifact_firmware_prepare_version() {
 	run_memoized GIT_INFO_ARMBIAN_FIRMWARE "git2info" memoized_git_ref_to_info
 	debug_dict GIT_INFO_ARMBIAN_FIRMWARE
 
+	# Sanity check, the SHA1 gotta be sane.
+	[[ "${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}'"
+
 	declare fake_unchanging_base_version="1"
 
 	declare short_sha1="${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]:0:${short_hash_size}}"
@@ -80,7 +83,7 @@ function artifact_firmware_cli_adapter_config_prep() {
 }
 
 function artifact_firmware_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-firmware/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-firmware/"
 }
 
 function artifact_firmware_is_available_in_local_cache() {

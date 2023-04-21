@@ -2,25 +2,25 @@
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 function extension_prepare_config__prepare_flash_kernel() {
 	# Configuration defaults, or lack thereof.
-	export FK__TOOL_PACKAGE="${FK__TOOL_PACKAGE:-flash-kernel}"
-	export FK__PUBLISHED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION:-undefined-flash-kernel-version}"
-	export FK__EXTRA_PACKAGES="${FK__EXTRA_PACKAGES:-undefined-flash-kernel-kernel-package}"
-	export FK__KERNEL_PACKAGES="${FK__KERNEL_PACKAGES:-}"
-	export FK__MACHINE_MODEL="${FK__MACHINE_MODEL:-Undefined Flash-Kernel Machine}"
+	declare -g FK__TOOL_PACKAGE="${FK__TOOL_PACKAGE:-flash-kernel}"
+	declare -g FK__PUBLISHED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION:-undefined-flash-kernel-version}"
+	declare -g FK__EXTRA_PACKAGES="${FK__EXTRA_PACKAGES:-undefined-flash-kernel-kernel-package}"
+	declare -g FK__KERNEL_PACKAGES="${FK__KERNEL_PACKAGES:-}"
+	declare -g FK__MACHINE_MODEL="${FK__MACHINE_MODEL:-Undefined Flash-Kernel Machine}"
 
 	# Override certain variables. A case of "this extension knows better and modifies user configurable stuff".
-	export BOOTCONFIG="none"                                                    # To try and convince lib/ to not build or install u-boot.
-	unset BOOTSOURCE                                                            # To try and convince lib/ to not build or install u-boot.
-	export UEFISIZE=256                                                         # in MiB. Not really UEFI, but partition layout is the same.
-	export BOOTSIZE=0                                                           # No separate /boot, flash-kernel will "flash" the kernel+initrd to the firmware part.
-	export UEFI_MOUNT_POINT="/boot/firmware"                                    # mount uefi partition at /boot/firmware
-	export CLOUD_INIT_CONFIG_LOCATION="/boot/firmware"                          # use /boot/firmware for cloud-init as well
-	export IMAGE_INSTALLED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION}"     # For the VERSION
-	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-fk${FK__PUBLISHED_KERNEL_VERSION}" # Unique bsp name.
+	declare -g BOOTCONFIG="none"                                                    # To try and convince lib/ to not build or install u-boot.
+	unset BOOTSOURCE                                                                # To try and convince lib/ to not build or install u-boot.
+	declare -g UEFISIZE=256                                                         # in MiB. Not really UEFI, but partition layout is the same.
+	declare -g BOOTSIZE=0                                                           # No separate /boot, flash-kernel will "flash" the kernel+initrd to the firmware part.
+	declare -g UEFI_MOUNT_POINT="/boot/firmware"                                    # mount uefi partition at /boot/firmware
+	declare -g CLOUD_INIT_CONFIG_LOCATION="/boot/firmware"                          # use /boot/firmware for cloud-init as well
+	declare -g IMAGE_INSTALLED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION}"     # For the VERSION
+	declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-fk${FK__PUBLISHED_KERNEL_VERSION}" # Unique bsp name.
 }
 
 function post_install_kernel_debs__install_kernel_and_flash_packages() {
-	export INSTALL_ARMBIAN_FIRMWARE="no" # Disable Armbian-firmware install, which would happen after this method.
+	declare -g INSTALL_ARMBIAN_FIRMWARE="no" # Disable Armbian-firmware install, which would happen after this method.
 
 	if [[ "${FK__EXTRA_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel extra packages" "${FK__EXTRA_PACKAGES}"
@@ -80,7 +80,7 @@ function pre_update_initramfs__setup_flash_kernel() {
 	chroot_custom "$chroot_target" chmod -v -x "/etc/kernel/postinst.d/initramfs-tools"
 	chroot_custom "$chroot_target" chmod -v -x "/etc/initramfs/post-update.d/flash-kernel"
 
-	export FIRMWARE_DIR="${MOUNT}"/boot/firmware
+	declare -g FIRMWARE_DIR="${MOUNT}"/boot/firmware
 	call_extension_method "pre_initramfs_flash_kernel" <<- 'PRE_INITRAMFS_FLASH_KERNEL'
 		*prepare to update-initramfs before flashing kernel via flash_kernel*
 		A good spot to write firmware config to ${FIRMWARE_DIR} (/boot/firmware) before flash-kernel actually runs.

@@ -42,14 +42,15 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"${bootscript_info[bootenv_file_contents]}"
 		"${bootscript_info[has_bootscript]}"
 		"${bootscript_info[has_extlinux]}"
-		"${UBOOT_FW_ENV}"      # not included in bootscript
-		"${BOARDFAMILY}"       # /etc/armbian-release
-		"${LINUXFAMILY}"       # /etc/armbian-release
-		"${IMAGE_TYPE}"        # /etc/armbian-release
-		"${BOARD_TYPE}"        # /etc/armbian-release
-		"${INITRD_ARCH}"       # /etc/armbian-release
-		"${KERNEL_IMAGE_TYPE}" # /etc/armbian-release
-		"${VENDOR}"            # /etc/armbian-release
+		"${UBOOT_FW_ENV}"                   # not included in bootscript
+		"${KEEP_ORIGINAL_OS_RELEASE:-"no"}" # /etc/os-release
+		"${BOARDFAMILY}"                    # /etc/armbian-release
+		"${LINUXFAMILY}"                    # /etc/armbian-release
+		"${IMAGE_TYPE}"                     # /etc/armbian-release
+		"${BOARD_TYPE}"                     # /etc/armbian-release
+		"${INITRD_ARCH}"                    # /etc/armbian-release
+		"${KERNEL_IMAGE_TYPE}"              # /etc/armbian-release
+		"${VENDOR}"                         # /etc/armbian-release
 	)
 	declare hash_vars="undetermined"
 	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
@@ -124,7 +125,7 @@ function artifact_armbian-bsp-cli_cli_adapter_config_prep() {
 }
 
 function artifact_armbian-bsp-cli_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-packages/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-packages/"
 }
 
 function artifact_armbian-bsp-cli_is_available_in_local_cache() {

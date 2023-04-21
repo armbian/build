@@ -148,7 +148,13 @@ function install_distribution_agnostic() {
 	# change console welcome text
 	echo -e "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
 	echo "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
-	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}\"/" "${SDCARD}"/etc/os-release
+
+	# Keep, or change to Armbian's PRETTY_NAME in /etc/os-release (this is also done in the bsp-cli postinst)
+	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
+		sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}\"/" "${SDCARD}"/etc/os-release
+	else
+		display_alert "distro-agnostic: KEEP_ORIGINAL_OS_RELEASE" "Keeping original /etc/os-release's PRETTY_NAME as original" "warn"
+	fi
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
@@ -325,7 +331,7 @@ function install_distribution_agnostic() {
 	PRE_INSTALL_KERNEL_DEBS
 
 	# default IMAGE_INSTALLED_KERNEL_VERSION, will be parsed from Kernel version in the installed deb package.
-	IMAGE_INSTALLED_KERNEL_VERSION="linux"
+	IMAGE_INSTALLED_KERNEL_VERSION="generic"
 
 	# install kernel: image/dtb/headers
 	if [[ -n $KERNELSOURCE ]]; then
@@ -400,11 +406,11 @@ function install_distribution_agnostic() {
 	if [[ "${BSPFREEZE:-"no"}" == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
 		chroot_sdcard apt-mark hold "${image_artifacts_packages["armbian-plymouth-theme"]}" "${image_artifacts_packages["armbian-zsh"]}" \
-		"${image_artifacts_packages["armbian-config"]}" "${image_artifacts_packages["armbian-bsp-desktop"]}" \
-		"${image_artifacts_packages["armbian-desktop"]}" "${image_artifacts_packages["armbian-bsp-cli"]}" \
-		"${image_artifacts_packages["armbian-firmware"]}" "${image_artifacts_packages["armbian-firmware-full"]}" \
-		"${image_artifacts_packages["linux-headers"]}" "${image_artifacts_packages["linux-dtb"]}" \
-		"${image_artifacts_packages["linux-image"]}" "${image_artifacts_packages["uboot"]}" || true
+			"${image_artifacts_packages["armbian-config"]}" "${image_artifacts_packages["armbian-bsp-desktop"]}" \
+			"${image_artifacts_packages["armbian-desktop"]}" "${image_artifacts_packages["armbian-bsp-cli"]}" \
+			"${image_artifacts_packages["armbian-firmware"]}" "${image_artifacts_packages["armbian-firmware-full"]}" \
+			"${image_artifacts_packages["linux-headers"]}" "${image_artifacts_packages["linux-dtb"]}" \
+			"${image_artifacts_packages["linux-image"]}" "${image_artifacts_packages["uboot"]}" || true
 	fi
 
 	# remove deb files

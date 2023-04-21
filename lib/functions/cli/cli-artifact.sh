@@ -17,12 +17,20 @@ function cli_artifact_run() {
 	: "${chosen_artifact:?chosen_artifact is not set}"
 	: "${chosen_artifact_impl:?chosen_artifact_impl is not set}"
 
-	# Make sure ORAS tooling is installed before starting.
-	run_tool_oras
+	if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
+		# Make sure ORAS tooling is installed before starting.
+		run_tool_oras
+	fi
 
 	display_alert "artifact" "${chosen_artifact}" "debug"
 	display_alert "artifact" "${chosen_artifact} :: ${chosen_artifact_impl}()" "debug"
-	artifact_cli_adapter_config_prep # only if in cli.
+	declare -g artifact_version_requires_aggregation="no" # marker
+	artifact_cli_adapter_config_prep                      # only if in cli.
+
+	# if asked by _config_prep to aggregate, and HOSTRELEASE is not set, obtain it.
+	if [[ "${artifact_version_requires_aggregation}" == "yes" ]] && [[ -z "${HOSTRELEASE}" ]]; then
+		obtain_hostrelease_only # Sets HOSTRELEASE
+	fi
 
 	# When run in GHA, assume we're checking/updating the remote cache only.
 	# Local cache is ignored, and if found, it's not unpacked, either from local or remote.

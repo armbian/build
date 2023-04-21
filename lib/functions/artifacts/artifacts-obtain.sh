@@ -141,8 +141,6 @@ function obtain_complete_artifact() {
 	debug_var artifact_final_file_basename
 	debug_var artifact_file_relative
 
-	# @TODO: possibly stop here if only for up-to-date-checking
-
 	# Determine OCI coordinates. OCI_TARGET_BASE overrides the default proposed by the artifact.
 	declare artifact_oci_target_base="undetermined"
 	if [[ -n "${OCI_TARGET_BASE}" ]]; then
@@ -154,6 +152,34 @@ function obtain_complete_artifact() {
 	[[ -z "${artifact_oci_target_base}" ]] && exit_with_error "No artifact_oci_target_base defined."
 
 	declare -g artifact_full_oci_target="${artifact_oci_target_base}${artifact_name}:${artifact_version}"
+
+	# if CONFIG_DEFS_ONLY, dump JSON and exit
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
+		display_alert "artifact" "CONFIG_DEFS_ONLY is set, skipping artifact creation" "warn"
+
+		declare -a wanted_vars=(
+			artifact_name
+			artifact_type
+			artifact_version
+			artifact_version_reason
+			artifact_base_dir
+			artifact_final_file
+			artifact_final_file_basename
+			artifact_file_relative
+			artifact_full_oci_target
+		)
+
+		declare -A ARTIFACTS_VAR_DICT=()
+
+		for var in "${wanted_vars[@]}"; do
+			ARTIFACTS_VAR_DICT["${var}"]="$(declare -p "${var}")"
+		done
+
+		display_alert "Dumping JSON" "for ${#ARTIFACTS_VAR_DICT[@]} variables" "ext"
+		python3 "${SRC}/lib/tools/configdump2json.py" "--args" "${ARTIFACTS_VAR_DICT[@]}" # to stdout
+
+		exit 0
+	fi
 
 	declare -g artifact_exists_in_local_cache="undetermined"
 	declare -g artifact_exists_in_remote_cache="undetermined"
@@ -342,5 +368,13 @@ function is_artifact_available_in_remote_cache() {
 function obtain_artifact_from_remote_cache() {
 	display_alert "Obtaining artifact from remote cache" "${artifact_full_oci_target} into ${artifact_final_file_basename}" "info"
 	oras_pull_artifact_file "${artifact_full_oci_target}" "${artifact_base_dir}" "${artifact_final_file_basename}"
+
+	# sanity check: after obtaining remotely, is it available locally? it should, otherwise there's some inconsistency.
+	declare artifact_exists_in_local_cache="not-yet-after-obtaining-remotely"
+	is_artifact_available_in_local_cache
+	if [[ "${artifact_exists_in_local_cache}" == "no" ]]; then
+		exit_with_error "Artifact is not available in local cache after obtaining remotely: ${artifact_full_oci_target} into '${artifact_base_dir}' file '${artifact_final_file_basename}'"
+	fi
+
 	return 0
 }

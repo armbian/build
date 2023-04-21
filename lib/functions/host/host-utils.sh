@@ -165,6 +165,32 @@ function local_apt_deb_cache_prepare() {
 		[LAST_USED]="${when_used}"
 	)
 
+	if [[ "${skip_target_check:-"no"}" != "yes" ]]; then
+		# Lets take the chance here and _warn_ if the _target_ cache is not empty. Skip if dir doesn't exist or is a mountpoint.
+		declare sdcard_var_cache_apt_dir="${SDCARD}/var/cache/apt"
+		if [[ -d "${sdcard_var_cache_apt_dir}" ]]; then
+			if ! mountpoint -q "${sdcard_var_cache_apt_dir}"; then
+				declare -i sdcard_var_cache_apt_size_mb
+				sdcard_var_cache_apt_size_mb=$(du -sm "${sdcard_var_cache_apt_dir}" | cut -f1)
+				if [[ "${sdcard_var_cache_apt_size_mb}" -gt 0 ]]; then
+					display_alert "WARNING: SDCARD /var/cache/apt dir is not empty" "${when_used} :: ${sdcard_var_cache_apt_dir} (${sdcard_var_cache_apt_size_mb} MB)" "wrn"
+				fi
+			fi
+		fi
+
+		# Same, but for /var/lib/apt/lists
+		declare sdcard_var_lib_apt_lists_dir="${SDCARD}/var/lib/apt/lists"
+		if [[ -d "${sdcard_var_lib_apt_lists_dir}" ]]; then
+			if ! mountpoint -q "${sdcard_var_lib_apt_lists_dir}"; then
+				declare -i sdcard_var_lib_apt_lists_size_mb
+				sdcard_var_lib_apt_lists_size_mb=$(du -sm "${sdcard_var_lib_apt_lists_dir}" | cut -f1)
+				if [[ "${sdcard_var_lib_apt_lists_size_mb}" -gt 0 ]]; then
+					display_alert "WARNING: SDCARD /var/lib/apt/lists dir is not empty" "${when_used} :: ${sdcard_var_lib_apt_lists_dir} (${sdcard_var_lib_apt_lists_size_mb} MB)" "wrn"
+				fi
+			fi
+		fi
+	fi
+
 	return 0
 }
 

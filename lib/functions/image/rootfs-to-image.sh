@@ -7,10 +7,22 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-# create_image
-#
-# finishes creation of image from cached rootfs
-#
+function calculate_image_version() {
+	declare kernel_version_for_image="unknown"
+	kernel_version_for_image="${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}"
+
+	declare vendor_version_prelude="${VENDOR}_${IMAGE_VERSION:-"${REVISION}"}_"
+	if [[ "${include_vendor_version:-"yes"}" == "no" ]]; then
+		vendor_version_prelude=""
+	fi
+
+	calculated_image_version="${vendor_version_prelude}${BOARD^}_${RELEASE}_${BRANCH}_${kernel_version_for_image}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}${EXTRA_IMAGE_SUFFIX}"
+	[[ $BUILD_DESKTOP == yes ]] && calculated_image_version=${calculated_image_version}_desktop
+	[[ $BUILD_MINIMAL == yes ]] && calculated_image_version=${calculated_image_version}_minimal
+	[[ $ROOTFS_TYPE == nfs ]] && calculated_image_version=${calculated_image_version}_nfsboot
+	display_alert "Calculated image version" "${calculated_image_version}" "debug"
+}
+
 function create_image_from_sdcard_rootfs() {
 	# create DESTIMG, hooks might put stuff there early.
 	mkdir -p "${DESTIMG}"
@@ -18,13 +30,10 @@ function create_image_from_sdcard_rootfs() {
 	# add a cleanup trap hook do make sure we don't leak it if stuff fails
 	add_cleanup_handler trap_handler_cleanup_destimg
 
-	# stage: create file name
-	# determine the image file name produced. a bit late in the game, since it uses IMAGE_INSTALLED_KERNEL_VERSION which is from the kernel package.
-	# If IMAGE_VERSION has something, use it, otherwise use REVISION
-	local version="${VENDOR}_${IMAGE_VERSION:-"${REVISION}"}_${BOARD^}_${RELEASE}_${BRANCH}_${IMAGE_INSTALLED_KERNEL_VERSION/-$LINUXFAMILY/}${DESKTOP_ENVIRONMENT:+_$DESKTOP_ENVIRONMENT}"
-	[[ $BUILD_DESKTOP == yes ]] && version=${version}_desktop
-	[[ $BUILD_MINIMAL == yes ]] && version=${version}_minimal
-	[[ $ROOTFS_TYPE == nfs ]] && version=${version}_nfsboot
+	# calculate image filename, and store it in readonly global variable "version", for legacy reasons.
+	declare calculated_image_version="undetermined"
+	calculate_image_version
+	declare -r -g version="${calculated_image_version}" # global readonly from here
 
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
@@ -128,8 +137,8 @@ function create_image_from_sdcard_rootfs() {
 	if [[ -f "${DESTIMG}/${version}.img" ]]; then
 		display_alert "Done building" "${version}.img" "info"
 		fingerprint_image "${DESTIMG}/${version}.img.txt" "${version}"
-		# write image to SD card
-		write_image_to_device "${DESTIMG}/${version}.img" "${CARD_DEVICE}"
+
+		write_image_to_device_and_run_hooks "${DESTIMG}/${version}.img"
 	fi
 
 	declare compression_type                                    # set by image_compress_and_checksum
@@ -142,6 +151,25 @@ function create_image_from_sdcard_rootfs() {
 	move_images_to_final_destination
 
 	return 0
+}
+
+function write_image_to_device_and_run_hooks() {
+	if [[ ! -f "${1}" ]]; then
+		exit_with_error "Image file not found '${1}'"
+	fi
+	declare built_image_file="${1}"
+
+	# write image to SD card
+	write_image_to_device "${built_image_file}" "${CARD_DEVICE}"
+
+	# Hook: post_build_image_write
+	call_extension_method "post_build_image_write" <<- 'POST_BUILD_IMAGE_WRITE'
+		*custom post build hook*
+		Called after the final .img file is ready, and possibly written to an SD card.
+		The full path to the image is available in `${built_image_file}`.
+	POST_BUILD_IMAGE_WRITE
+
+	unset built_image_file
 }
 
 function move_images_to_final_destination() {
