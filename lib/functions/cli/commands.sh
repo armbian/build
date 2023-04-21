@@ -106,6 +106,7 @@ function armbian_register_commands() {
 
 	# Keep a running dict of params/variables. Can't repeat stuff here. Dict.
 	declare -g -A ARMBIAN_CLI_RELAUNCH_PARAMS=(["ARMBIAN_RELAUNCHED"]="yes")
+	declare -g -A ARMBIAN_CLI_RELAUNCH_ENVS=(["ARMBIAN_RELAUNCHED"]="yes")
 
 	# Keep a running array of config files needed for relaunch.
 	declare -g -a ARMBIAN_CLI_RELAUNCH_CONFIGS=()

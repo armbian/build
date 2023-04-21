@@ -86,7 +86,7 @@ function fetch_from_repo() {
 	local git_work_dir
 
 	# Set GitHub mirror before anything else touches $url
-	url=${url//'https://github.com/'/$GITHUB_SOURCE'/'}
+	url="$(echo "$url" | sed "s|^https://github.com/|${GITHUB_SOURCE}/|")"
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	local offline=false

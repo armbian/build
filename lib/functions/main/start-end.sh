@@ -10,6 +10,10 @@
 # Common start/end build functions. Used by the default build and others
 
 function main_default_start_build() {
+	# 1x: show interactively-selected as soon as possible, after config
+	produce_repeat_args_array
+	display_alert "Repeat Build Options (early)" "${repeat_args[*]}" "ext"
+
 	if [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
 		prepare_host_init # this has its own logging sections, and is possibly interactive.
 	fi
@@ -82,6 +86,9 @@ function main_default_end_build() {
 	# display_alert in its own logging section.
 	LOG_SECTION="runtime_total" do_with_logging display_alert "Runtime" "$(printf "%d:%02d min" $((runtime_seconds / 60)) $((runtime_seconds % 60)))" "info"
 
+	produce_repeat_args_array
+	LOG_SECTION="repeat_build_options" do_with_logging display_alert "Repeat Build Options" "${repeat_args[*]}" "ext" # * = expand array, space delimited, single-word.
+
 	return 0
 }
 
@@ -100,4 +107,47 @@ function trap_handler_cleanup_workdir() {
 			# @TODO: tmpfs might just be unmounted, though.
 		fi
 	fi
+}
+
+function produce_repeat_args_array() {
+	# Make it easy to repeat build by displaying build options used. Prepare array.
+	declare -a -g repeat_args=("./compile.sh")
+
+	# Parse ARMBIAN_HIDE_REPEAT_PARAMS which is a space separated list of parameters to hide.
+	# It is created by produce_relaunch_parameters() in utils-cli.sh
+	declare -a params_to_hide=()
+	if [[ -n "${ARMBIAN_HIDE_REPEAT_PARAMS}" ]]; then
+		IFS=' ' read -r -a params_to_hide <<< "${ARMBIAN_HIDE_REPEAT_PARAMS}"
+	fi
+	display_alert "Hiding parameters from repeat build options" "${params_to_hide[*]}" "debug"
+
+	repeat_args+=("${ARMBIAN_NON_PARAM_ARGS[@]}") # Add all non-param arguments to repeat_args. This already includes any config files passed.
+	declare -A repeat_params=()                   # Dict to store param values.
+
+	for param_name in "${!ARMBIAN_PARSED_CMDLINE_PARAMS[@]}"; do # original params, but skip the hidden; those were automatically added by re-launcher
+		# if param_name is in params_to_hide, skip it. Test by looping through params_to_hide.
+		for param_to_hide in "${params_to_hide[@]}"; do
+			if [[ "${param_name}" == "${param_to_hide}" ]]; then
+				display_alert "Skipping repeat parameter" "${param_name}" "debug"
+				continue 2 # continue outer (!) loop
+			fi
+		done
+
+		repeat_params+=(["${param_name}"]="${ARMBIAN_PARSED_CMDLINE_PARAMS[${param_name}]}")
+		display_alert "Added repeat parameter" "'${param_name}'" "debug"
+	done
+
+	for param_name in "${!ARMBIAN_INTERACTIVE_CONFIGS[@]}"; do # add params produced during interactive configuration
+		repeat_params+=(["${param_name}"]="${ARMBIAN_INTERACTIVE_CONFIGS[${param_name}]}")
+		display_alert "Added repeat parameter from interactive config" "'${param_name}'" "debug"
+	done
+
+	# get the sorted keys of the repeat_params associative array into an array
+	declare -a repeat_params_keys_sorted=($(printf '%s\0' "${!repeat_params[@]}" | sort -z | xargs -0 -n 1 printf '%s\n'))
+
+	for param_name in "${repeat_params_keys_sorted[@]}"; do         # add sorted repeat_params to repeat_args
+		repeat_args+=("${param_name}=${repeat_params[${param_name}]}") # could add @Q here, but it's not necessary
+	done
+
+	return 0
 }

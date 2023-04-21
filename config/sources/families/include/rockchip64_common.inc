@@ -294,13 +294,13 @@ family_tweaks() {
 	if [[ -f $SDCARD/lib/systemd/system/rk3399-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
-		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
+		chroot_sdcard_apt_get_install rfkill bluetooth bluez bluez-tools
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable rk3399-bluetooth.service >/dev/null 2>&1"
 
 	elif [[ -f $SDCARD/lib/systemd/system/sprd-bluetooth.service ]]; then
 
 		# install and enable Bluetooth
-		chroot $SDCARD /bin/bash -c "apt-get -y -qq install rfkill bluetooth bluez bluez-tools"
+		chroot_sdcard_apt_get_install rfkill bluetooth bluez bluez-tools
 		chroot $SDCARD /bin/bash -c "systemctl --no-reload enable sprd-bluetooth.service >/dev/null 2>&1"
 
 	fi

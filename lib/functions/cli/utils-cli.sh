@@ -181,24 +181,44 @@ function parse_each_cmdline_arg_as_command_param_or_config() {
 }
 
 # Produce relaunch parameters. Add the running configs, arguments, and command.
-# Declare and use ARMBIAN_CLI_RELAUNCH_ARGS as "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}"
+# Declare and use ARMBIAN_CLI_FINAL_RELAUNCH_ARGS as "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}"
+# Also ARMBIAN_CLI_FINAL_RELAUNCH_ENVS as "${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[@]}"
 function produce_relaunch_parameters() {
-	declare -g -a ARMBIAN_CLI_RELAUNCH_ARGS=()
+	declare -g -a ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
+	declare -g -a ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
+
+	declare hide_repeat_params=()
+
 	# add the running parameters from ARMBIAN_CLI_RELAUNCH_PARAMS dict
 	for param in "${!ARMBIAN_CLI_RELAUNCH_PARAMS[@]}"; do
-		ARMBIAN_CLI_RELAUNCH_ARGS+=("${param}=${ARMBIAN_CLI_RELAUNCH_PARAMS[${param}]}")
+		ARMBIAN_CLI_FINAL_RELAUNCH_ARGS+=("${param}=${ARMBIAN_CLI_RELAUNCH_PARAMS[${param}]}")
+		# If the param is not a key of ARMBIAN_PARSED_CMDLINE_PARAMS (eg was added for re-launching), add it to the hide list
+		if [[ -z "${ARMBIAN_PARSED_CMDLINE_PARAMS[${param}]}" ]]; then
+			hide_repeat_params+=("${param}")
+		fi
 	done
 	# add the running configs
 	for config in "${ARMBIAN_CLI_RELAUNCH_CONFIGS[@]}"; do
-		ARMBIAN_CLI_RELAUNCH_ARGS+=("${config}")
+		ARMBIAN_CLI_FINAL_RELAUNCH_ARGS+=("${config}")
 	done
 	# add the command; defaults to the last command, but can be changed by the last pre-run.
 	if [[ -n "${ARMBIAN_CLI_RELAUNCH_COMMAND}" ]]; then
-		ARMBIAN_CLI_RELAUNCH_ARGS+=("${ARMBIAN_CLI_RELAUNCH_COMMAND}")
+		ARMBIAN_CLI_FINAL_RELAUNCH_ARGS+=("${ARMBIAN_CLI_RELAUNCH_COMMAND}")
 	else
-		ARMBIAN_CLI_RELAUNCH_ARGS+=("${ARMBIAN_COMMAND}")
+		ARMBIAN_CLI_FINAL_RELAUNCH_ARGS+=("${ARMBIAN_COMMAND}")
 	fi
-	display_alert "Produced relaunch args:" "ARMBIAN_CLI_RELAUNCH_ARGS: ${ARMBIAN_CLI_RELAUNCH_ARGS[*]}" "debug"
+
+	# These two envs are always included.
+	ARMBIAN_CLI_FINAL_RELAUNCH_ENVS+=("ARMBIAN_ORIGINAL_BUILD_UUID=${ARMBIAN_BUILD_UUID}")
+	ARMBIAN_CLI_FINAL_RELAUNCH_ENVS+=("ARMBIAN_HIDE_REPEAT_PARAMS=${hide_repeat_params[*]}")
+
+	# Add all values from ARMBIAN_CLI_RELAUNCH_ENVS dict
+	for env in "${!ARMBIAN_CLI_RELAUNCH_ENVS[@]}"; do
+		ARMBIAN_CLI_FINAL_RELAUNCH_ENVS+=("${env}=${ARMBIAN_CLI_RELAUNCH_ENVS[${env}]}")
+	done
+
+	display_alert "Produced relaunch args:" "ARMBIAN_CLI_FINAL_RELAUNCH_ARGS: ${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[*]}" "debug"
+	display_alert "Produced relaunch envs:" "ARMBIAN_CLI_FINAL_RELAUNCH_ENVS: ${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[*]}" "debug"
 }
 
 function cli_standard_relaunch_docker_or_sudo() {
@@ -250,10 +270,11 @@ function cli_standard_relaunch_docker_or_sudo() {
 		fi
 
 		display_alert "This script requires root privileges; Docker is unavailable" "trying to use sudo" "wrn"
-		declare -g ARMBIAN_CLI_RELAUNCH_ARGS=()
-		produce_relaunch_parameters # produces ARMBIAN_CLI_RELAUNCH_ARGS
+		declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
+		declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
+		produce_relaunch_parameters # produces ARMBIAN_CLI_FINAL_RELAUNCH_ARGS and ARMBIAN_CLI_FINAL_RELAUNCH_ENVS
 		# shellcheck disable=SC2093 # re-launching under sudo: replace the current shell, and never return.
-		exec sudo --preserve-env "${SRC}/compile.sh" "${ARMBIAN_CLI_RELAUNCH_ARGS[@]}" # MARK: relaunch done here!
-		display_alert "AFTER SUDO!!!" "AFTER SUDO!!!" "warn"
+		exec sudo --preserve-env "${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[@]}" bash "${SRC}/compile.sh" "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}" # MARK: relaunch done here!
+		display_alert "AFTER SUDO!!!" "AFTER SUDO!!!" "warn"                                                                              # This should _never_ happen
 	fi
 }
