@@ -116,6 +116,9 @@ function compile_armbian-bsp-cli() {
 
 	mkdir -p "${destination}"/usr/share/armbian/
 
+	# Refresh bootconfig
+	postinst_functions+=(board_side_bsp_cli_postinst_update_bootconfig)
+
 	# get bootscript information.
 	declare -A bootscript_info=()
 	get_bootscript_info
@@ -226,6 +229,7 @@ function reversion_armbian-bsp-cli_deb_contents() {
 
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
 	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
+	# Depends: file is needed for /usr/bin/armbian-bootconfig
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
 	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
 	declare depends_base_files=", base-files (>= ${REVISION})"
@@ -233,7 +237,7 @@ function reversion_armbian-bsp-cli_deb_contents() {
 		depends_base_files=""
 	fi
 	cat <<- EOF >> "${control_file_new}"
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
+		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, file, fping${depends_base_files}
 		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 	EOF
@@ -254,6 +258,10 @@ function reversion_armbian-bsp-cli_deb_contents() {
 	artifact_deb_reversion_repack_data_deb
 
 	return 0
+}
+
+function board_side_bsp_cli_postinst_update_bootconfig() {
+	/usr/bin/armbian-bootconfig scan
 }
 
 function get_bootscript_info() {
