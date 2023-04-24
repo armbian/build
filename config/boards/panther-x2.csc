@@ -1,0 +1,13 @@
+# Rockchip RK3566 quad core 4GB RAM SoC WIFI/BT eMMC USB2
+BOARD_NAME="panther-x2"
+BOARDFAMILY="rk35xx"
+BOOT_SOC="rk3568"
+BOOTCONFIG="radxa-e23-rk3566_defconfig"
+KERNEL_TARGET="edge"
+FULL_DESKTOP="yes"
+BOOT_LOGO="desktop"
+BOOT_FDT_FILE="rockchip/rk3566-panther-x2.dtb"
+IMAGE_PARTITION_TABLE="gpt"
+BOOT_SCENARIO="spl-blobs"
+WIREGUARD="no"
+BOOTFS_TYPE="fat"
