@@ -56,10 +56,18 @@ setenv bootargs "${bootargs} root=${rootdev} rootwait rw"
 setenv bootargs "${bootargs} ${consoleargs}"
 setenv bootargs "${bootargs} ${extraargs}"
 
+# Read bootconfig
+fatload ${bootdev} 0x20800000 /bootconfig || exit 1
+env import -t 0x20800000 ${filesize}
+
+# Use default bootconfig
+test -n "${ARMBIAN_BOOTMENU_TITLE[0]}" || exit 1
+run "ARMBIAN_BOOTMENU_COMMAND[0]"
+
 # Booting
-fatload ${bootdev} 0x20800000 /uImage || exit 1
-fatload ${bootdev} 0x22000000 /uInitrd || exit 1
-fatload ${bootdev} 0x21800000 /dtb/meson8b-onecloud.dtb || exit 1
+fatload ${bootdev} 0x20800000 "/${KERNEL_NAME}" || exit 1
+fatload ${bootdev} 0x22000000 "/${INITRD_NAME}" || exit 1
+fatload ${bootdev} 0x21800000 "/${DTB_NAME}/meson8b-onecloud.dtb" || exit 1
 
 bootm 0x20800000 0x22000000 0x21800000
 
