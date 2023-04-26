@@ -271,6 +271,10 @@ driver_rtl8811CU_rtl8821C() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 6.3
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-6.3.patch" "applying"
+
 	fi
 
 }
