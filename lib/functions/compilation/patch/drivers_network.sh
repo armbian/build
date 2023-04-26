@@ -372,6 +372,10 @@ driver_rtl88x2bu() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 6.3
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-6.3.0.patch" "applying"
+
 	fi
 
 }
