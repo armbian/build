@@ -508,6 +508,10 @@ driver_rtl8723DU() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 6.3
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723du-6.3.patch" "applying"
+
 	fi
 }
 
