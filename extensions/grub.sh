@@ -81,7 +81,12 @@ function extension_prepare_config__prepare_grub_standard() {
 
 # @TODO: extract u-boot into an extension, so that core bsps don't have this stuff in there to begin with.
 # @TODO: this code is duplicated in flash-kernel.sh extension, so another reason to refactor the root of the evil
-post_family_tweaks_bsp__remove_uboot_grub() {
+function post_family_tweaks_bsp__remove_uboot_grub() {
+	if [[ "${UEFI_GRUB}" == "skip" ]]; then
+		display_alert "Skipping remove uboot from BSP" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
+		return 0
+	fi
+
 	display_alert "Removing uboot from BSP" "${EXTENSION}" "info"
 	# Simply remove everything with 'uboot' or 'u-boot' in their filenames from the BSP package.
 	# shellcheck disable=SC2154 # $destination is the target dir of the bsp building function
@@ -90,7 +95,12 @@ post_family_tweaks_bsp__remove_uboot_grub() {
 	popd
 }
 
-pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
+function pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
+	if [[ "${UEFI_GRUB}" == "skip" ]]; then
+		display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
+		return 0
+	fi
+
 	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
 	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot
 	return 0 # shortcircuit above
