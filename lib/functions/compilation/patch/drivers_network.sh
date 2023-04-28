@@ -422,6 +422,9 @@ driver_rtl88x2cs() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2cs-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 6.3
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2cs-6.3.0.patch" "applying"
 	fi
 }
 #_bt for blueteeth
@@ -631,7 +634,7 @@ driver_rtl8723cs() {
 	if linux-version compare "${version}" ge 6.3; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.3.patch" "applying"
 	fi
-	
+
 }
 
 patch_drivers_network() {
