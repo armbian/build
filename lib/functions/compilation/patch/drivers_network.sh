@@ -578,7 +578,8 @@ driver_uwe5622_allwinner() {
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
 
-		if linux-version compare "${version}" lt 6.1; then
+		# Don't add this to legacy (<5.0) kernels.
+		if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 6.1; then
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-pre-v6.1.patch" "applying"
 		fi
 
