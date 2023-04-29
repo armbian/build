@@ -153,6 +153,27 @@ function kernel_package_hook_helper() {
 		#!/bin/bash
 		echo "Armbian '${package_name}' for '${kernel_version_family}': '${script}' starting."
 		set -e # Error control
+
+		function is_boot_dev_vfat() {
+			# When installing these packages during image build, /boot is not mounted, and will most definitely not be vfat.
+			# Use an environment variable to signal that it _will_ be a fat32, so symlinks are not created.
+			# This is passed by install_deb_chroot() explicitly via the runners.
+			if [[ "\${ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE:-"unknown"}" == "fat" ]]; then
+				echo "Armbian: ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE: '\${ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE:-"not set"}'"
+				return 0
+			fi
+			if ! mountpoint -q /boot; then
+				return 1
+			fi
+			local boot_partition bootfstype
+			boot_partition=\$(findmnt --nofsroot -n -o SOURCE /boot)
+			bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
+			if [[ "\$bootfstype" == "vfat" ]]; then
+				return 0
+			fi
+			return 1
+		}
+
 		set -x # Debugging
 
 		$(cat "${contents}")
@@ -244,6 +265,7 @@ function kernel_package_callback_linux_image() {
 		mkdir -p "${package_directory}${debian_kernel_hook_dir}/${script}.d" # create kernel hook dir, make sure.
 
 		kernel_package_hook_helper "${script}" <(
+			# Common for all of postinst/postrm/preinst/prerm
 			cat <<- KERNEL_HOOK_DELEGATION # Reference: linux-image-6.1.0-7-amd64.postinst from Debian
 				export DEB_MAINT_PARAMS="\$*" # Pass maintainer script parameters to hook scripts
 				export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No) # Tell initramfs builder whether it's wanted
@@ -253,31 +275,34 @@ function kernel_package_callback_linux_image() {
 
 			if [[ "${script}" == "preinst" ]]; then
 				cat <<- HOOK_FOR_REMOVE_VFAT_BOOT_FILES
-					check_boot_dev (){
-						boot_partition=\$(findmnt --nofsroot -n -o SOURCE /boot)
-						bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
-						if [ "\$bootfstype" = "vfat" ]; then
-							rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
-						fi
-					}
-					mountpoint -q /boot && check_boot_dev
+					if is_boot_dev_vfat; then
+						rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
+					fi
 				HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 			fi
 
 			# @TODO: only if u-boot, only for postinst. Gotta find a hook scheme for these...
 			if [[ "${script}" == "postinst" ]]; then
 				cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL # image_name="${NAME_KERNEL}", above
-					echo "Armbian: update last-installed kernel symlink to '$image_name'..."
-					ln -sfv $(basename "${installed_image_path}") /boot/$image_name || mv -v /${installed_image_path} /boot/${image_name}
 					touch /boot/.next
+					if is_boot_dev_vfat; then
+						echo "Armbian: FAT32 /boot: move last-installed kernel to '$image_name'..."
+						mv -v /${installed_image_path} /boot/${image_name}
+					else
+						echo "Armbian: update last-installed kernel symlink to '$image_name'..."
+						ln -sfv $(basename "${installed_image_path}") /boot/$image_name
+					fi
 				HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
 
 				# Reference: linux-image-6.1.0-7-amd64.postinst from Debian
 				cat <<- HOOK_FOR_DEBIAN_COMPAT_SYMLINK
-					echo "Armbian: Debian compat: linux-update-symlinks install ${kernel_version_family} ${installed_image_path}"
 					# call debian helper, for compatibility. this symlinks things according to /etc/kernel-img.conf
 					# "install" or "upgrade" are decided in a very contrived way by Debian (".fresh-install" file)
-					linux-update-symlinks install ${kernel_version_family} ${installed_image_path} || true
+					# do NOT do this if /boot is a vfat, though.
+					if ! is_boot_dev_vfat; then
+						echo "Armbian: Debian compat: linux-update-symlinks install ${kernel_version_family} ${installed_image_path}"
+						linux-update-symlinks install "${kernel_version_family}" "${installed_image_path}" || true
+					fi
 				HOOK_FOR_DEBIAN_COMPAT_SYMLINK
 			fi
 		)
@@ -301,7 +326,7 @@ function kernel_package_callback_linux_dtb() {
 		Package: ${package_name}
 		Architecture: ${ARCH}
 		Provides: linux-dtb, linux-dtb-armbian, armbian-$BRANCH
-		Description: Armbian Linux $BRANCH DTBs ${artifact_version_reason:-"${kernel_version_family}"}
+		Description: Armbian Linux $BRANCH DTBs ${artifact_version_reason:-"${kernel_version_family}"} in /boot/dtb-${kernel_version_family}
 		 This package contains device blobs from the Linux kernel, version ${kernel_version_family}
 	CONTROL_FILE
 
@@ -315,7 +340,13 @@ function kernel_package_callback_linux_dtb() {
 	kernel_package_hook_helper "postinst" <(
 		cat <<- EOT
 			cd /boot
-			ln -sfT dtb-${kernel_version_family} dtb || mv dtb-${kernel_version_family} dtb
+			if ! is_boot_dev_vfat; then
+				echo "Armbian: DTB: symlinking /boot/dtb to /boot/dtb-${kernel_version_family}..."
+				ln -sfTv "dtb-${kernel_version_family}" dtb
+			else
+				echo "Armbian: DTB: FAT32: moving /boot/dtb-${kernel_version_family} to /boot/dtb ..."
+				mv -v "dtb-${kernel_version_family}" dtb
+			fi
 		EOT
 	)
 
@@ -384,7 +415,7 @@ function kernel_package_callback_linux_headers() {
 	#               the tools/vm dir was renamed to tools/mm. Unfortunately tools/Makefile still expects it to exist,
 	#               and "make clean" in the "/tools" dir fails. Drop in a fake Makefile there to work around this.
 	if [[ ! -f "${headers_target_dir}/tools/vm/Makefile" ]]; then
-		display_alert "Creating fake tools/vm/Makefile" "6.3+ hackfix" "warn"
+		display_alert "Creating fake tools/vm/Makefile" "6.3+ hackfix" "debug"
 		mkdir -p "${headers_target_dir}/tools/vm"
 		echo -e "clean:\n\techo fake clean for tools/vm" > "${headers_target_dir}/tools/vm/Makefile"
 	fi

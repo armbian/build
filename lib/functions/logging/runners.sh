@@ -93,8 +93,18 @@ function chroot_sdcard_apt_get() {
 		skip_error_info="yes" run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_LISTS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
 	fi
 
+	declare -a extra_envs=("DEBIAN_FRONTEND=noninteractive")
+	# shellcheck disable=SC2154 # extra_apt_envs is defined in the caller
+	if [[ "${#extra_apt_envs[@]}" -gt 0 ]]; then
+		extra_envs+=("${extra_apt_envs[@]}")
+	else
+		display_alert "No extra envs for apt" "none" "debug"
+	fi
+
+	display_alert "Extra envs for apt:" "${extra_envs[*]@Q}" "debug"
+
 	local chroot_apt_result=1
-	chroot_sdcard "${prelude_clean_env[@]}" DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
+	chroot_sdcard "${prelude_clean_env[@]}" "${extra_envs[@]}" apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
 
 	local_apt_deb_cache_prepare "after 'apt-get $*'" # sets LOCAL_APT_CACHE_INFO
 	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
