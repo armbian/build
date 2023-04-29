@@ -79,7 +79,7 @@ function artifact_uboot_prepare_version() {
 
 	# Hash variables that affect the build and package of u-boot
 	declare -a vars_to_hash=(
-		"${BOOTDELAY}" "${UBOOT_DEBUGGING}"
+		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}"
 	)
 	declare hash_vars="undetermined"
 	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
