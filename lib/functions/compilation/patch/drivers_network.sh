@@ -185,7 +185,6 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 		# fix compilation for kernels >= 6.3
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-6.3.patch" "applying"
 
-
 	fi
 
 }
@@ -541,6 +540,9 @@ driver_rtl8822BS() {
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8822bs/"
 		cp -R "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}"/{core,hal,include,os_dep,platform,bluetooth,getAP,rtl8822b.mk} \
 			"$kerneldir/drivers/net/wireless/rtl8822bs"
+
+		# Remove some leftover binary files that shouldn't be there. firmware?
+		rm -fv "$kerneldir/drivers/net/wireless/rtl8822bs/bluetooth/rtl8822b_config.bin" "$kerneldir/drivers/net/wireless/rtl8822bs/bluetooth/rtl8822b_fw.bin"
 
 		# Makefile
 		cp "${SRC}/cache/sources/rtl8822bs/${rtl8822bsver#*:}/Makefile" \
