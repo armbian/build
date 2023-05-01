@@ -54,6 +54,12 @@ function compile_kernel() {
 		return 0
 	fi
 
+	# Stop after creating patches.
+	if [[ "${CREATE_PATCHES}" == yes ]]; then
+		display_alert "Stopping after creating kernel patch" "" "cachehit"
+		return 0
+	fi
+
 	# patching worked, it's a good enough indication the git-bundle worked;
 	# let's clean up the git-bundle cache, since the git-bare cache is proven working.
 	LOG_SECTION="kernel_cleanup_bundle_artifacts" do_with_logging do_with_hooks kernel_cleanup_bundle_artifacts
@@ -68,6 +74,12 @@ function compile_kernel() {
 	LOG_SECTION="kernel_determine_toolchain" do_with_logging do_with_hooks kernel_determine_toolchain
 
 	kernel_config # has it's own logging sections inside
+
+	# Stop after configuring kernel.
+	if [[ "${KERNEL_CONFIGURE}" == yes ]]; then
+		display_alert "Stopping after configuring kernel" "" "cachehit"
+		return 0
+	fi
 
 	# build via make and package .debs; they're separate sub-steps
 	kernel_prepare_build_and_package # has it's own logging sections inside

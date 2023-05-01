@@ -226,6 +226,12 @@ function obtain_complete_artifact() {
 		# @TODO: if deploying to remote cache, force high compression, DEB_COMPRESS="xz"
 		artifact_build_from_sources # definitely will end up having its own logging sections
 
+		# For cases like CREATE_PATCHES=yes or KERNEL_CONFIGURE=yes, we wanna stop here. No artifact file will be created.
+		if [[ "${ARTIFACT_WILL_NOT_BUILD}" == "yes" ]]; then
+			display_alert "artifact" "ARTIFACT_WILL_NOT_BUILD is set, stopping after non-build." "debug"
+			return 0
+		fi
+
 		# pack the artifact to local cache (eg: for deb-tar)
 		LOG_SECTION="pack_artifact_to_local_cache" do_with_logging pack_artifact_to_local_cache
 
@@ -270,13 +276,7 @@ function build_artifact_for_image() {
 	# Make sure ORAS tooling is installed before starting.
 	run_tool_oras
 
-	# Detour: if building kernel, and KERNEL_CONFIGURE=yes, ignore artifact cache.
-	if [[ "${WHAT}" == "kernel" && "${KERNEL_CONFIGURE}" == "yes" ]]; then
-		display_alert "Ignoring artifact cache for kernel" "KERNEL_CONFIGURE=yes" "info"
-		ARTIFACT_IGNORE_CACHE="yes" obtain_complete_artifact
-	else
-		obtain_complete_artifact
-	fi
+	obtain_complete_artifact
 
 	return 0
 }
