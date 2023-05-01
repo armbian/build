@@ -244,7 +244,7 @@ function kernel_package_callback_linux_image() {
 		mkdir -p "${package_directory}${debian_kernel_hook_dir}/${script}.d" # create kernel hook dir, make sure.
 
 		kernel_package_hook_helper "${script}" <(
-			cat <<- KERNEL_HOOK_DELEGATION
+			cat <<- KERNEL_HOOK_DELEGATION # Reference: linux-image-6.1.0-7-amd64.postinst from Debian
 				export DEB_MAINT_PARAMS="\$*" # Pass maintainer script parameters to hook scripts
 				export INITRD=$(if_enabled_echo CONFIG_BLK_DEV_INITRD Yes No) # Tell initramfs builder whether it's wanted
 				# Run the same hooks Debian/Ubuntu would for their kernel packages.
@@ -266,11 +266,19 @@ function kernel_package_callback_linux_image() {
 
 			# @TODO: only if u-boot, only for postinst. Gotta find a hook scheme for these...
 			if [[ "${script}" == "postinst" ]]; then
-				cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
+				cat <<- HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL # image_name="${NAME_KERNEL}", above
 					echo "Armbian: update last-installed kernel symlink to '$image_name'..."
 					ln -sfv $(basename "${installed_image_path}") /boot/$image_name || mv -v /${installed_image_path} /boot/${image_name}
 					touch /boot/.next
 				HOOK_FOR_LINK_TO_LAST_INSTALLED_KERNEL
+
+				# Reference: linux-image-6.1.0-7-amd64.postinst from Debian
+				cat <<- HOOK_FOR_DEBIAN_COMPAT_SYMLINK
+					echo "Armbian: Debian compat: linux-update-symlinks install ${kernel_version_family} ${installed_image_path}"
+					# call debian helper, for compatibility. this symlinks things according to /etc/kernel-img.conf
+					# "install" or "upgrade" are decided in a very contrived way by Debian (".fresh-install" file)
+					linux-update-symlinks install ${kernel_version_family} ${installed_image_path} || true
+				HOOK_FOR_DEBIAN_COMPAT_SYMLINK
 			fi
 		)
 	done

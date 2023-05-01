@@ -12,44 +12,66 @@
 function memoized_git_ref_to_info() {
 	declare -n MEMO_DICT="${1}" # nameref
 	declare ref_type ref_name
+	declare -a refs_to_try=()
+
 	git_parse_ref "${MEMO_DICT[GIT_REF]}"
 	MEMO_DICT+=(["REF_TYPE"]="${ref_type}")
 	MEMO_DICT+=(["REF_NAME"]="${ref_name}")
 
 	# Small detour here; if it's a tag, ask for the dereferenced commit, to avoid the annotated tag's sha1, instead get the commit tag points to.
+	# Also, try 'refs/heads/xxx' first. Some repos have Gerrit-style "refs/for/xxx" refs, which are not what we want.
 	if [[ "${ref_type}" == "tag" ]]; then
-		ref_name="${ref_name}^{}" # dereference tag
+		refs_to_try+=("refs/heads/${ref_name}^{}" "refs/heads/${ref_name}" "${ref_name}^{}" "${ref_name}") # try first with a tag dereference, then just the tag. for annotated tags support.
+	elif [[ "${ref_type}" == "branch" ]]; then
+		refs_to_try+=("refs/heads/${ref_name}" "${ref_name}")
+	else
+		refs_to_try+=("${ref_name}")
 	fi
 
 	# Get the SHA1 of the commit
 	declare sha1
-	display_alert "Fetching SHA1 of ${ref_type} ${ref_name}" "${MEMO_DICT[GIT_SOURCE]}" "info"
-	case "${ref_type}" in
-		commit)
-			sha1="${ref_name}"
-			;;
-		*)
-			case "${GITHUB_MIRROR}" in
-				"ghproxy")
-					case "${MEMO_DICT[GIT_SOURCE]}" in
-						"https://github.com/"*)
-							sha1="$(git ls-remote --exit-code "https://ghproxy.com/${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
-							;;
-						*)
-							sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
-							;;
-					esac
-					;;
-				*)
-					sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${ref_name}" | cut -f1)"
-					;;
-			esac
-			;;
-	esac
 
-	display_alert "SHA1 of ${ref_type} ${ref_name}" "'${sha1}'" "info"
+	# Enter loop. The first that resolves to a valid sha1 wins.
+	declare to_try
+	for to_try in "${refs_to_try[@]}"; do
+		display_alert "Fetching SHA1 of '${ref_type}' '${to_try}'" "${MEMO_DICT[GIT_SOURCE]}" "info"
+		case "${ref_type}" in
+			commit)
+				sha1="${to_try}"
+				;;
+			*)
+				case "${GITHUB_MIRROR}" in
+					"ghproxy")
+						case "${MEMO_DICT[GIT_SOURCE]}" in
+							"https://github.com/"*)
+								sha1="$(git ls-remote --exit-code "https://ghproxy.com/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
+								;;
+							*)
+								sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
+								;;
+						esac
+						;;
+					*)
+						sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
+						;;
+				esac
+				;;
+		esac
 
-	if [[ -z "${sha1}" ]]; then
+		display_alert "SHA1 of ${ref_type} ${to_try}" "'${sha1}'" "info"
+
+		# Test if sha1 is valid, using a regex
+		if [[ "${sha1}" =~ ^[0-9a-f]{40}$ ]]; then
+			# sha1 is valid, break out of the loop
+			break
+		else
+			# sha1 is invalid, try the next one
+			display_alert "Failed to fetch SHA1 of '${ref_type}' '${to_try}'" "${MEMO_DICT[GIT_SOURCE]}" "info"
+		fi
+	done
+
+	# Test again for sanity out of the loop.
+	if [[ ! "${sha1}" =~ ^[0-9a-f]{40}$ ]]; then
 		exit_with_error "Failed to fetch SHA1 of '${MEMO_DICT[GIT_SOURCE]}' '${ref_type}' '${ref_name}' - make sure it's correct"
 	fi
 
@@ -98,11 +120,6 @@ function memoized_git_ref_to_info() {
 					#          output: https://gitlab.com/rk3588_linux/rk/kernel/-/raw/linux-5.10/Makefile
 					declare gitlab_path="${git_source%.git}" # remove .git
 					url="${gitlab_path}/-/raw/${sha1}/Makefile"
-					;;
-
-				"https://source.codeaurora.org/external/imx/linux-imx")
-					# Random, bizarre stuff here, to keep compatibility with some old stuff
-					url="https://source.codeaurora.org/external/imx/linux-imx/plain/Makefile?h=${sha1}"
 					;;
 
 				*)
