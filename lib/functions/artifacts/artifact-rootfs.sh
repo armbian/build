@@ -41,16 +41,18 @@ function artifact_rootfs_prepare_version() {
 		"cache_id \"${rootfs_cache_id}\""
 	)
 
-	# @TODO: "rootfs_cache_id" contains "cache_type", split so we don't repeat ourselves
-	# @TODO: gotta include the extensions rootfs-modifying id to cache_type...
+	# rootfs does NOT include ${artifact_prefix_version} -- there's no reason to, since rootfs is not in an apt repo
+	# instead, we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
+	declare yyyymm="undetermined"
+	yyyymm="$(date +%Y%m)"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${rootfs_cache_id}"
+	artifact_version="${yyyymm}-${rootfs_cache_id}"
 	artifact_version_reason="${reasons[*]}"
-	artifact_name="${ARCH}-${RELEASE}-${cache_type}"
+	artifact_name="rootfs-${ARCH}-${RELEASE}-${cache_type}"
 	artifact_type="tar.zst"
 	artifact_base_dir="${SRC}/cache/rootfs"
-	artifact_final_file="${SRC}/cache/rootfs/${ARCH}-${RELEASE}-${rootfs_cache_id}.tar.zst"
+	artifact_final_file="${SRC}/cache/rootfs/${artifact_name}_${artifact_version}.tar.zst"
 
 	return 0
 }
