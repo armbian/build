@@ -190,7 +190,7 @@ for image_id in info["images"]:
 
 	desc = f"{image['image_file_id']} {image_id}"
 
-	runs_on = "ubuntu-latest"
+	runs_on = "fast"
 	image_arch = image['out']['ARCH']
 	if image_arch in ["arm64"]:  # , "armhf"
 		runs_on = ["self-hosted", "Linux", 'armbian', f"image-{image_arch}"]

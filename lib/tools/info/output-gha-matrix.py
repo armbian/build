@@ -66,7 +66,7 @@ def generate_matrix_artifacts(info):
 		desc = f"{artifact['out']['artifact_final_file_basename']}"
 
 		# runs_in = ["self-hosted", "Linux", 'armbian', f"artifact-{artifact_name}"]
-		runs_on = "ubuntu-latest"
+		runs_on = "fast"
 
 		# @TODO: externalize this logic.
 
@@ -78,7 +78,7 @@ def generate_matrix_artifacts(info):
 
 		# all kernels are built on self-hosted runners.
 		if artifact_name in ["kernel"]:
-			runs_on = ["self-hosted", "Linux", 'armbian', f"artifact-{artifact_name}"]
+			runs_on = ["self-hosted", "Linux", 'alfa']
 
 		inputs = artifact['in']['original_inputs']
 		cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])
