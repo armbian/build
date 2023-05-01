@@ -129,10 +129,22 @@ function memoized_git_ref_to_info() {
 
 			display_alert "Fetching Makefile via HTTP" "${url}" "debug"
 			makefile_url="${url}"
-			makefile_body="$(curl -sL --fail "${url}")" || exit_with_error "Failed to fetch Makefile from '${url}'"
+
+			# Lets do a retry loop here, because GitHub/others are unreliable...
+			declare makefile_body="undetermined"
+			do_with_retries 5 obtain_makefile_body_from_url "${url}"
 
 			parse_makefile_version "${makefile_body}"
 
+			return 0
+		}
+
+		function obtain_makefile_body_from_url() {
+			makefile_body="$(curl -sL --fail "${1}")" || {
+				display_alert "Failed to fetch Makefile from URL" "${1}" "warn"
+				return 1
+			}
+			display_alert "Fetched Makefile from URL" "${1}" "debug"
 			return 0
 		}
 
