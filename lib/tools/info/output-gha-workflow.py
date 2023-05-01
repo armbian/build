@@ -139,7 +139,7 @@ for artifact_id in info["artifacts"]:
 	desc = f"{artifact['out']['artifact_name']}"
 
 	# runs_in = ["self-hosted", "Linux", 'armbian', f"artifact-{artifact_name}"]
-	runs_on = "ubuntu-latest"
+	runs_on = "fast"
 
 	# @TODO: externalize this logic.
 
@@ -151,7 +151,7 @@ for artifact_id in info["artifacts"]:
 
 	# all kernels are built on self-hosted runners.
 	if artifact_name in ["kernel"]:
-		runs_on = ["self-hosted", "Linux", 'armbian', f"artifact-{artifact_name}"]
+		runs_on = ["self-hosted", "Linux", "alfa"]
 
 	inputs = artifact['in']['original_inputs']
 	cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])
