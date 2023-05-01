@@ -127,17 +127,25 @@ function artifact_uboot_build_from_sources() {
 	LOG_SECTION="fetch_and_build_host_tools" do_with_logging fetch_and_build_host_tools
 
 	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
-		LOG_SECTION="compile_atf" do_with_logging compile_atf
+		if [[ "${ARTIFACT_BUILD_INTERACTIVE:-"no"}" == "yes" ]]; then
+			display_alert "Running ATF build in interactive mode" "log file will be incomplete" "info"
+			compile_atf
+
+			if [[ "${CREATE_PATCHES_ATF:-"no"}" == "yes" ]]; then
+				return 0 # stop here, otherwise it would build u-boot below...
+			fi
+		else
+			LOG_SECTION="compile_atf" do_with_logging compile_atf
+		fi
 	fi
 
 	declare uboot_git_revision="not_determined_yet"
 	LOG_SECTION="uboot_prepare_git" do_with_logging_unless_user_terminal uboot_prepare_git
 
-	# Hack, if UBOOT_CONFIGURE=yes, don't run under logging manager. Emit a warning about it.
-	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
-		display_alert "Warning" "UBOOT_CONFIGURE=yes, so we're not logging the build process of u-boot so it can be interactive." "wrn"
+	# Hack, if ARTIFACT_BUILD_INTERACTIVE=yes, don't run under logging manager. Emit a warning about it.
+	if [[ "${ARTIFACT_BUILD_INTERACTIVE:-"no"}" == "yes" ]]; then
+		display_alert "Running uboot build in interactive mode" "log file will be incomplete" "info"
 		compile_uboot
-		display_alert "Warning" "UBOOT_CONFIGURE=yes, so we've not logged the build process of u-boot so it could be interactive." "wrn"
 	else
 		LOG_SECTION="compile_uboot" do_with_logging compile_uboot
 	fi
@@ -151,6 +159,16 @@ function artifact_uboot_cli_adapter_pre_run() {
 }
 
 function artifact_uboot_cli_adapter_config_prep() {
+	# Sanity check / cattle guard
+	# If UBOOT_CONFIGURE=yes, or CREATE_PATCHES=yes, user must have used the correct CLI commands, and only add those params.
+	if [[ "${UBOOT_CONFIGURE}" == "yes" && ("${ARMBIAN_COMMAND}" != "uboot-config") ]]; then
+		exit_with_error "UBOOT_CONFIGURE=yes is not supported anymore. Please use the new 'uboot-config' CLI command. Current command: '${ARMBIAN_COMMAND}'"
+	fi
+
+	if [[ "${CREATE_PATCHES}" == "yes" && "${ARMBIAN_COMMAND}" != "uboot-patch" ]]; then
+		exit_with_error "CREATE_PATCHES=yes is not supported anymore. Please use the new 'uboot-patch' CLI command. Current command: '${ARMBIAN_COMMAND}'"
+	fi
+
 	use_board="yes" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 

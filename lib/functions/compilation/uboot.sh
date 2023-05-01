@@ -43,7 +43,10 @@ function compile_uboot_target() {
 	do_with_hooks uboot_main_patching_python
 
 	# create patch for manual source changes
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "u-boot"
+	if [[ $CREATE_PATCHES == yes ]]; then
+		userpatch_create "u-boot"
+		return 0 # exit after this.
+	fi
 
 	# atftempdir comes from atf.sh's compile_atf()
 	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
@@ -150,6 +153,7 @@ function compile_uboot_target() {
 		display_alert "Exporting saved config" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_logged make savedefconfig
 		run_host_command_logged cp -v defconfig "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}"
+		return 0 # exit after this
 	fi
 
 	# workaround when two compilers are needed
@@ -343,6 +347,11 @@ function compile_uboot() {
 		loop_over_uboot_targets_and_do compile_uboot_target
 	else
 		display_alert "Extensions: custom uboot built by extension" "not building regular uboot" "debug"
+	fi
+
+	if [[ "${ARTIFACT_WILL_NOT_BUILD:-"no"}" == "yes" ]]; then
+		display_alert "Extensions: artifact will not build" "not building regular uboot" "debug"
+		return 0
 	fi
 
 	display_alert "Preparing u-boot general packaging" "${version} ${target_make}"
