@@ -28,16 +28,17 @@ function calculate_rootfs_cache_id() {
 
 	declare cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
-	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}" # @TODO: this is missing "-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}-desktop"
 	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
 
-	# @TODO: rpardini: allow extensions to modify cache_type, eg, "-cloud-mluc". *think* before doing this
+	# allow extensions to modify cache_type, since they may have used add_packages_to_rootfs() or remove_packages()
+	cache_type="${cache_type}${EXTRA_ROOTFS_NAME:-""}"
 
 	declare -g -r cache_type="${cache_type}"
 
-	declare -g -r rootfs_cache_id="${cache_type}-${packages_hash}"
+	declare -g -r rootfs_cache_id="${packages_hash}"
 
-	display_alert "calculate_rootfs_cache_id: done." "rootfs_cache_id: '${rootfs_cache_id}'" "debug"
+	display_alert "calculate_rootfs_cache_id: done." "cache_type: '${cache_type}' - rootfs_cache_id: '${rootfs_cache_id}'" "debug"
 }
 
 # called by artifact-rootfs::artifact_rootfs_build_from_sources()

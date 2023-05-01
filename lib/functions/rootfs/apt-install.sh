@@ -80,7 +80,10 @@ function install_deb_chroot() {
 
 	# install in chroot via apt-get, not dpkg, so dependencies are also installed from repo if needed.
 	declare -g if_error_detail_message="Installation of $install_target failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
+	declare -a extra_apt_envs=()
+	extra_apt_envs+=("ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE=${BOOTFS_TYPE:-"unset"}") # used by package postinst scripts to bevahe
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends install "${install_target}" # don't auto-maintain apt cache when installing from packages.
+	unset extra_apt_envs
 
 	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?
 	# this is some contrived way to get the uboot.deb when installing from repo; image builder needs the deb to be able to deploy uboot  later, even though it is already installed inside the chroot, it needs deb to be in host to reuse code later

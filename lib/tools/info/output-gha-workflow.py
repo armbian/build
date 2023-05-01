@@ -110,7 +110,7 @@ wfFactory: gha.WorkflowFactory = gha.WorkflowFactory()
 
 # Create prepare job
 pJob: PrepareJob = PrepareJob(f"prepare", f"prepare all")
-pJob.set_runs_on(["self-hosted", "Linux", 'armbian', "matrix-prepare"])  # @TODO: de-hardcode?
+pJob.set_runs_on(["self-hosted", "Linux", "matrix-prepare"])  # @TODO: de-hardcode?
 pJob.add_initial_checkout()
 pJob.add_cache_restore_step()
 
@@ -147,7 +147,7 @@ for artifact_id in info["artifacts"]:
 	if artifact_name in ["rootfs"]:
 		rootfs_arch = artifact['in']['inputs']['ARCH']  # @TODO we should resolve arch _much_ ealier in the pipeline and make it standard
 		if rootfs_arch in ["arm64"]:  # (future: add armhf)
-			runs_on = ["self-hosted", "Linux", 'armbian', f"rootfs-{rootfs_arch}"]
+			runs_on = ["self-hosted", "Linux", f"rootfs-{rootfs_arch}"]
 
 	# all kernels are built on self-hosted runners.
 	if artifact_name in ["kernel"]:
@@ -189,11 +189,10 @@ for image_id in info["images"]:
 	#	continue
 
 	desc = f"{image['image_file_id']} {image_id}"
-
 	runs_on = "fast"
 	image_arch = image['out']['ARCH']
 	if image_arch in ["arm64"]:  # , "armhf"
-		runs_on = ["self-hosted", "Linux", 'armbian', f"image-{image_arch}"]
+		runs_on = ["self-hosted", "Linux", f"image-{image_arch}"]
 
 	inputs = image['in']
 	cmds = (armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])  # image build is "build" command, omitted here

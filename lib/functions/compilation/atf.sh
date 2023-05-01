@@ -59,7 +59,10 @@ compile_atf() {
 	advanced_patch "atf" "${ATFPATCHDIR}" "$BOARD" "$target_patchdir" "$BRANCH" "${LINUXFAMILY}-${BOARD}-${BRANCH}"
 
 	# create patch for manual source changes
-	[[ $CREATE_PATCHES == yes ]] && userpatch_create "atf"
+	if [[ $CREATE_PATCHES_ATF == yes ]]; then
+		userpatch_create "atf"
+		return 0
+	fi
 
 	# - "--no-warn-rwx-segment" is *required* for binutils 2.39 - see https://developer.trustedfirmware.org/T996
 	#   - but *not supported* by 2.38, brilliant...
