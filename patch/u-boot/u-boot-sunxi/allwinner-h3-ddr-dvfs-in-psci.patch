@@ -1,0 +1,405 @@
+From 711748bf17e1fe024dd51d0bae3c06b916120d5f Mon Sep 17 00:00:00 2001
+From: Kirill Zhumarin <kirill.zhumarin@gmail.com>
+Date: Thu, 5 Jan 2023 17:19:25 +0200
+Subject: [PATCH 1/2] arm: psci: add custom PSCI tables
+
+This will be needed for implementing platform-specific PSCI commands.
+---
+ arch/arm/cpu/armv7/psci.S | 32 ++++++++++++++++++++++++++++----
+ 1 file changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/cpu/armv7/psci.S b/arch/arm/cpu/armv7/psci.S
+index 983cd9044295..07305caa576b 100644
+--- a/arch/arm/cpu/armv7/psci.S
++++ b/arch/arm/cpu/armv7/psci.S
+@@ -151,6 +151,16 @@ _psci_table:
+ 	.word	0
+ 	.word	0
+ 
++@ This table can be overriden in the platform specific code
++psci_platform_table:
++	.word	0
++	.word	0
++.weak psci_platform_table
++
++@ Actual pointer of platform-specific psci table
++_psci_platform_table_ptr:
++	.word psci_platform_table
++
+ _smc_psci:
+ 	push	{r4-r7,lr}
+ 
+@@ -160,20 +170,34 @@ _smc_psci:
+ 	mcr	p15, 0, r4, c1, c1, 0
+ 	isb
+ 
++	@ Search PSCI function in the main table
+ 	adr	r4, _psci_table
+ 1:	ldr	r5, [r4]		@ Load PSCI function ID
+ 	ldr	r6, [r4, #4]		@ Load target PC
+-	cmp	r5, #0			@ If reach the end, bail out
+-	moveq	r0, #ARM_PSCI_RET_INVAL	@ Return -2 (Invalid)
++	cmp	r5, #0			@ If reach the end, try platform table
+ 	beq	2f
+ 	cmp	r0, r5			@ If not matching, try next entry
+ 	addne	r4, r4, #8
+ 	bne	1b
+ 
+-	blx	r6			@ Execute PSCI function
++	b 4f				@ Jump to execute PSCI function
++
++	@ Search PSCI function in the platform table
++2:	adr	r4, _psci_platform_table_ptr
++	ldr	r4, [r4]
++3:	ldr	r5, [r4]		@ Load PSCI function ID
++	ldr	r6, [r4, #4]		@ Load target PC
++	cmp	r5, #0			@ If reach the end, bail out
++	moveq	r0, #ARM_PSCI_RET_INVAL	@ Return -2 (Invalid)
++	beq	5f
++	cmp	r0, r5			@ If not matching, try next entry
++	addne	r4, r4, #8
++	bne	3b
++
++4:	blx	r6			@ Execute PSCI function
+ 
+ 	@ Switch back to non-secure
+-2:	mcr	p15, 0, r7, c1, c1, 0
++5:	mcr	p15, 0, r7, c1, c1, 0
+ 
+ 	pop	{r4-r7, lr}
+ 	movs	pc, lr			@ Return to the kernel
+
+From 20014d2fb52e4df095836c4e6dfec2e131a24325 Mon Sep 17 00:00:00 2001
+From: Kirill Zhumarin <kirill.zhumarin@gmail.com>
+Date: Thu, 5 Jan 2023 17:25:24 +0200
+Subject: [PATCH 2/2] sunxi: psci: Implement H3 DRAM DVFS
+
+Since H3 have broken MSFS hardware, only possible way for change DDR freq is a standalone application in the SRAM.
+
+Now we have new platform-specific PSCI command SUNXI_PSCI_DRAM_DVFS_REQ, which called from sun8i_a33_mbus driver.
+
+This code based on proof-of-concept implementation by Samuel Holland: https://github.com/smaeul/u-boot/tree/patch/h3-dram-devfreq
+---
+ arch/arm/cpu/armv7/sunxi/Makefile             |  1 +
+ arch/arm/cpu/armv7/sunxi/psci-table.S         | 25 +++++
+ arch/arm/cpu/armv7/sunxi/psci.c               | 98 +++++++++++++++++++
+ .../include/asm/arch-sunxi/dram_sunxi_dw.h    | 16 +++
+ arch/arm/include/asm/arch-sunxi/psci.h        | 26 +++++
+ 5 files changed, 166 insertions(+)
+ create mode 100644 arch/arm/cpu/armv7/sunxi/psci-table.S
+ create mode 100644 arch/arm/include/asm/arch-sunxi/psci.h
+
+diff --git a/arch/arm/cpu/armv7/sunxi/Makefile b/arch/arm/cpu/armv7/sunxi/Makefile
+index 3e975b366c43..19eb8ae5342f 100644
+--- a/arch/arm/cpu/armv7/sunxi/Makefile
++++ b/arch/arm/cpu/armv7/sunxi/Makefile
+@@ -14,6 +14,7 @@ obj-$(CONFIG_MACH_SUN8I)	+= sram.o
+ 
+ ifndef CONFIG_SPL_BUILD
+ obj-$(CONFIG_ARMV7_PSCI)	+= psci.o
++obj-$(CONFIG_ARMV7_PSCI)	+= psci-table.o
+ endif
+ 
+ ifdef CONFIG_SPL_BUILD
+diff --git a/arch/arm/cpu/armv7/sunxi/psci-table.S b/arch/arm/cpu/armv7/sunxi/psci-table.S
+new file mode 100644
+index 000000000000..f87b77a89359
+--- /dev/null
++++ b/arch/arm/cpu/armv7/sunxi/psci-table.S
+@@ -0,0 +1,25 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2023 Kirill Zhumarin <kirill.zhumarin@gmail.com>
++ */
++
++#include <config.h>
++#include <linux/linkage.h>
++#include <asm/macro.h>
++#include <asm/psci.h>
++#include <asm/arch/psci.h>
++
++	.pushsection ._secure.text, "ax"
++
++	.arch_extension	sec
++
++	.align	5
++
++psci_platform_table:
++	.word	SUNXI_PSCI_DRAM_DVFS_REQ
++	.word	sunxi_dram_dvfs_req
++	.word	0
++	.word	0
++.global psci_platform_table
++
++	.popsection
+diff --git a/arch/arm/cpu/armv7/sunxi/psci.c b/arch/arm/cpu/armv7/sunxi/psci.c
+index e1d3638b5ca1..692046bf9ace 100644
+--- a/arch/arm/cpu/armv7/sunxi/psci.c
++++ b/arch/arm/cpu/armv7/sunxi/psci.c
+@@ -13,6 +13,8 @@
+ #include <asm/arch/cpu.h>
+ #include <asm/arch/cpucfg.h>
+ #include <asm/arch/prcm.h>
++#include <asm/arch/clock.h>
++#include <asm/arch/dram.h>
+ #include <asm/armv7.h>
+ #include <asm/gic.h>
+ #include <asm/io.h>
+@@ -58,6 +60,24 @@ static u32 __secure cp15_read_cntp_ctl(void)
+ }
+ 
+ #define ONE_MS (CONFIG_COUNTER_FREQUENCY / 1000)
++#define ONE_US (CONFIG_COUNTER_FREQUENCY / 1000000)
++
++static void __secure __udelay(u32 us)
++{
++	u32 reg = ONE_US * us;
++
++	cp15_write_cntp_tval(reg);
++	isb();
++	cp15_write_cntp_ctl(3);
++
++	do {
++		isb();
++		reg = cp15_read_cntp_ctl();
++	} while (!(reg & BIT(2)));
++
++	cp15_write_cntp_ctl(0);
++	isb();
++}
+ 
+ static void __secure __mdelay(u32 ms)
+ {
+@@ -311,3 +331,81 @@ void __secure psci_arch_init(void)
+ 	reg &= ~BIT(0); /* Secure mode */
+ 	cp15_write_scr(reg);
+ }
++
++#define DRAM_DVFS_FLAG_ODT				BIT(0)
++#define DRAM_DVFS_FLAG_SELF_REFRESH		BIT(1)
++
++#if defined(CONFIG_MACH_SUN8I_H3)
++s32 __secure sunxi_dram_dvfs_req(u32 __always_unused function_id,
++				 u32 __always_unused freq, u32 flags)
++{
++	u32 dual_rank, odtmap, dxodt, i;
++
++	struct sunxi_mctl_com_reg * const mctl_com =
++			(struct sunxi_mctl_com_reg *)SUNXI_DRAM_COM_BASE;
++	struct sunxi_mctl_ctl_reg * const mctl_ctl =
++			(struct sunxi_mctl_ctl_reg *)SUNXI_DRAM_CTL0_BASE;
++	struct sunxi_ccm_reg * const ccm =
++			(struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
++
++	dual_rank = readl(&mctl_com->cr) & MCTL_CR_DUAL_RANK;
++	odtmap = dual_rank ? 0x00000303 : 0x00000201;
++
++	/* 1. Enable self-refresh and disable DRAM port */
++	psci_v7_flush_dcache_all(); /* Make sure no DRAM access after PORT_DIS */
++	setbits_le32(&mctl_ctl->pwrctl, PWRCTL_SELFREF_EN | PWRCTL_PORT_DIS);
++	__udelay(1);
++
++	/* 2. Make sure enter self-refresh */
++	while ((readl(&mctl_ctl->statr) & STATR_OP_MODE) != STATR_OP_MODE_SELFREF);
++
++	/* 3. Update PLL setting and wait PLL lock */
++	setbits_le32(&ccm->pll5_cfg, CCM_PLL5_CTRL_UPD);
++	__udelay(1000);
++
++	/* 4. Set PIR register issue phy reset and DDL calibration */
++	clrsetbits_le32(&mctl_ctl->dtcr, (0x3 << 24), ((dual_rank ? 0x3 : 0x1) << 24));
++
++	/* 5. Trigger phy reset and DDL calibration */
++	writel(PIR_ZCALBYP | PIR_PHYRST | PIR_DCAL | PIR_INIT, &mctl_ctl->pir);
++	__udelay(1);
++
++	/* 6. Wait for DLL Lock */
++	while (!(readl(&mctl_ctl->pgsr[0]) & PGSR_INIT_DONE));
++
++	/* 7. Turn ON or OFF ODT */
++	if ((flags & DRAM_DVFS_FLAG_ODT)) {
++		dxodt = DX_GCR_ODT_DYNAMIC;
++		writel(odtmap, &mctl_ctl->odtmap);
++	} else {
++		dxodt = DX_GCR_ODT_DISABLED;
++		writel(0, &mctl_ctl->odtmap);
++	}
++	for (i = 0; i < 4; i++)
++		clrsetbits_le32(&mctl_ctl->dx[i].gcr, DX_GCR_ODT_MASK, dxodt);
++
++	/* 8. Exit self-refresh (if not needed) and enable DRAM port */
++	if ((flags & DRAM_DVFS_FLAG_SELF_REFRESH)) {
++		clrbits_le32(&mctl_ctl->pwrctl, PWRCTL_PORT_DIS);
++		__udelay(1);
++
++		/* 9. Make sure still in self-refresh */
++		while ((readl(&mctl_ctl->statr) & STATR_OP_MODE) != STATR_OP_MODE_SELFREF);
++	} else {
++		clrbits_le32(&mctl_ctl->pwrctl, PWRCTL_PORT_DIS | PWRCTL_SELFREF_EN);
++		__udelay(1);
++
++		/* 9. Make sure exit self-refresh */
++		while ((readl(&mctl_ctl->statr) & STATR_OP_MODE) != STATR_OP_MODE_NORMAL);
++	}
++
++	return 0;
++}
++#else
++s32 __secure sunxi_dram_dvfs_req(u32 __always_unused function_id,
++				 u32 __always_unused freq, u32 __always_unused flags)
++{
++	// Not supported for this CPU
++	return ARM_PSCI_RET_INVAL;
++}
++#endif
+diff --git a/arch/arm/include/asm/arch-sunxi/dram_sunxi_dw.h b/arch/arm/include/asm/arch-sunxi/dram_sunxi_dw.h
+index e843c14202bd..911de728b73a 100644
+--- a/arch/arm/include/asm/arch-sunxi/dram_sunxi_dw.h
++++ b/arch/arm/include/asm/arch-sunxi/dram_sunxi_dw.h
+@@ -182,6 +182,7 @@ struct sunxi_mctl_ctl_reg {
+ #define RFSHTMG_TREFI(x)	((x) << 16)
+ #define RFSHTMG_TRFC(x)		((x) <<  0)
+ 
++#define PIR_ZCALBYP	(0x1 << 30) /* Impedance Calibration Bypass */
+ #define PIR_CLRSR	(0x1 << 27)	/* clear status registers */
+ #define PIR_QSGATE	(0x1 << 10)	/* Read DQS gate training */
+ #define PIR_DRAMINIT	(0x1 << 8)	/* DRAM initialization */
+@@ -198,6 +199,14 @@ struct sunxi_mctl_ctl_reg {
+ 
+ #define ACBDLR_WRITE_DELAY(x)	((x) << 8)
+ 
++/* These are more guessed based on some Allwinner code. */
++#define DX_GCR_ODT_MASK			(0x3 << 4)
++#define DX_GCR_ODT_DISABLED		(0x0 << 4)
++#define DX_GCR_ODT_DYNAMIC		(0x0 << 4)
++#define DX_GCR_ODT_ALWAYS_ON	(0x1 << 4)
++#define DX_GCR_ODT_OFF			(0x2 << 4)
++#define DX_GCR_EN				(0x1 << 0)
++
+ #define DXBDLR_DQ(x)	(x)		/* DQ0-7 BDLR index */
+ #define DXBDLR_DM	8		/* DM BDLR index */
+ #define DXBDLR_DQS	9		/* DQS BDLR index */
+@@ -206,6 +215,13 @@ struct sunxi_mctl_ctl_reg {
+ #define DXBDLR_WRITE_DELAY(x)	((x) << 8)
+ #define DXBDLR_READ_DELAY(x)	((x) << 0)
+ 
++#define PWRCTL_SELFREF_EN		(0x1 << 0)
++#define PWRCTL_PORT_DIS			(0x1 << 8)
++
++#define STATR_OP_MODE			(0x7 << 0)
++#define STATR_OP_MODE_NORMAL	(0x1 << 0)
++#define STATR_OP_MODE_SELFREF	(0x3 << 0)
++
+ /*
+  * The delay parameters below allow to allegedly specify delay times of some
+  * unknown unit for each individual bit trace in each of the four data bytes
+diff --git a/arch/arm/include/asm/arch-sunxi/psci.h b/arch/arm/include/asm/arch-sunxi/psci.h
+new file mode 100644
+index 000000000000..5986ba4acdda
+--- /dev/null
++++ b/arch/arm/include/asm/arch-sunxi/psci.h
+@@ -0,0 +1,26 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * (C) Copyright 2023 Kirill Zhumarin <kirill.zhumarin@gmail.com>
++ */
++
++#ifndef __SUNXI_ARM_PSCI_H__
++#define __SUNXI_ARM_PSCI_H__
++
++#include <asm/psci.h>
++
++#ifndef __ASSEMBLY__
++#include <linux/bitops.h>
++#endif
++
++/* SUNXI PSCI interface */
++#define SUNXI_PSCI_FN_BASE			0x83000000
++#define SUNXI_PSCI_FN(n)			(SUNXI_PSCI_FN_BASE + (n))
++
++#define SUNXI_PSCI_DRAM_DVFS_REQ	SUNXI_PSCI_FN(0x33)
++
++#ifndef __ASSEMBLY__
++#include <asm/types.h>
++#include <linux/bitops.h>
++#endif /* ! __ASSEMBLY__ */
++
++#endif /* __SUNXI_ARM_PSCI_H__ */
+
+From df630bb0f18c05b83cfd64ba656c5d36d6aacd39 Mon Sep 17 00:00:00 2001
+From: Kirill Zhumarin <kirill.zhumarin@gmail.com>
+Date: Fri, 6 Jan 2023 13:58:46 +0200
+Subject: [PATCH] API for locking CPUs in the monitor mode
+
+---
+ arch/arm/cpu/armv7/sunxi/psci.c | 38 ++++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/cpu/armv7/sunxi/psci.c b/arch/arm/cpu/armv7/sunxi/psci.c
+index 692046bf9ac..89e2bfbb7b4 100644
+--- a/arch/arm/cpu/armv7/sunxi/psci.c
++++ b/arch/arm/cpu/armv7/sunxi/psci.c
+@@ -332,14 +332,19 @@ void __secure psci_arch_init(void)
+ 	cp15_write_scr(reg);
+ }
+ 
+-#define DRAM_DVFS_FLAG_ODT				BIT(0)
+-#define DRAM_DVFS_FLAG_SELF_REFRESH		BIT(1)
+-
+ #if defined(CONFIG_MACH_SUN8I_H3)
++
++#define DRAM_DVFS_FLAG_ODT					BIT(0)
++#define DRAM_DVFS_FLAG_SELF_REFRESH			BIT(1)
++#define DRAM_DVFS_FLAG_ENABLE_LOCKING		BIT(8)
++#define DRAM_DVFS_FLAG_LOCK_CPU_IN_SRAM		BIT(9)
++#define DRAM_DVFS_FLAG_DISABLE_LOCKING		BIT(10)
++
+ s32 __secure sunxi_dram_dvfs_req(u32 __always_unused function_id,
+ 				 u32 __always_unused freq, u32 flags)
+ {
+ 	u32 dual_rank, odtmap, dxodt, i;
++	static volatile bool lock_secondary_cpus __secure_data = false;
+ 
+ 	struct sunxi_mctl_com_reg * const mctl_com =
+ 			(struct sunxi_mctl_com_reg *)SUNXI_DRAM_COM_BASE;
+@@ -348,6 +353,29 @@ s32 __secure sunxi_dram_dvfs_req(u32 __always_unused function_id,
+ 	struct sunxi_ccm_reg * const ccm =
+ 			(struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
+ 
++	/* Enable locking */
++	if ((flags & DRAM_DVFS_FLAG_ENABLE_LOCKING)) {
++		lock_secondary_cpus = true;
++		psci_v7_flush_dcache_all();
++		return 0;
++	}
++
++	/* Lock core */
++	if ((flags & DRAM_DVFS_FLAG_LOCK_CPU_IN_SRAM)) {
++		psci_v7_flush_dcache_all();
++		while (lock_secondary_cpus) {
++			psci_v7_flush_dcache_all();
++		}
++		return 0;
++	}
++
++	/* Cancel locking */
++	if ((flags & DRAM_DVFS_FLAG_DISABLE_LOCKING)) {
++		lock_secondary_cpus = false;
++		psci_v7_flush_dcache_all();
++		return 0;
++	}
++
+ 	dual_rank = readl(&mctl_com->cr) & MCTL_CR_DUAL_RANK;
+ 	odtmap = dual_rank ? 0x00000303 : 0x00000201;
+ 
+@@ -399,6 +427,10 @@ s32 __secure sunxi_dram_dvfs_req(u32 __always_unused function_id,
+ 		while ((readl(&mctl_ctl->statr) & STATR_OP_MODE) != STATR_OP_MODE_NORMAL);
+ 	}
+ 
++	/* Changing freq done, unlock CPU's */
++	lock_secondary_cpus = false;
++	psci_v7_flush_dcache_all();
++
+ 	return 0;
+ }
+ #else
