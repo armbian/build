@@ -59,6 +59,10 @@ invocations_dict: list[dict] = []
 for target_name in targets["targets"]:
 	target_obj = targets["targets"][target_name]
 
+	if "enabled" in target_obj and not target_obj["enabled"]:
+		log.warning(f"Skipping disabled target '{target_name}'...")
+		continue
+
 	all_items = []
 	all_expansions = []
 
