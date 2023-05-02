@@ -154,6 +154,19 @@ function cli_json_info_run() {
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py images "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_IMAGE_CHUNKS}" ">" "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}"
 			fi
 			github_actions_add_output "image-matrix" "$(cat "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}")"
+
+			# If we have userpatches/gha/chunks, run the workflow template utility
+			declare user_gha_dir="${USERPATCHES_PATH}/gha"
+			declare wf_template_dir="${user_gha_dir}/chunks"
+			if [[ -d "${wf_template_dir}" ]]; then
+				display_alert "Generating GHA workflow template" "output-gha-workflow-template :: ${wf_template_dir}" "info"
+				declare GHA_WORKFLOW_TEMPLATE_OUT_FILE="${BASE_INFO_OUTPUT_DIR}/artifact-image-complete-matrix.yml"
+				declare GHA_CONFIG_YAML_FILE="${user_gha_dir}/gha_config.yaml"
+				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-workflow-template.py "${GHA_WORKFLOW_TEMPLATE_OUT_FILE}" "${GHA_CONFIG_YAML_FILE}" "${wf_template_dir}" "${MATRIX_ARTIFACT_CHUNKS:-"10"}" "${MATRIX_IMAGE_CHUNKS:-"10"}"
+			else
+				display_alert "Skipping GHA workflow template" "output-gha-workflow-template :: no ${wf_template_dir}" "info"
+			fi
+
 		fi
 
 		### a secondary stage, which only makes sense to be run inside GHA, and as such should be split in a different CLI or under a flag.
