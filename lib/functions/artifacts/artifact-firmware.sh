@@ -83,7 +83,7 @@ function artifact_firmware_cli_adapter_config_prep() {
 }
 
 function artifact_firmware_get_default_oci_target() {
-	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-firmware/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
 }
 
 function artifact_firmware_is_available_in_local_cache() {

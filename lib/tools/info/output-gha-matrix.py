@@ -41,7 +41,7 @@ def generate_matrix_images(info) -> list[dict]:
 		runs_on = "ubuntu-latest"
 		image_arch = image['out']['ARCH']
 		if image_arch in ["arm64"]:  # , "armhf"
-			runs_on = ["self-hosted", "Linux", 'armbian', f"image-{image_arch}"]
+			runs_on = ["self-hosted", "Linux", f"image-{image_arch}"]
 
 		inputs = image['in']
 		cmds = (armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])  # image build is "build" command, omitted here
@@ -66,7 +66,7 @@ def generate_matrix_artifacts(info):
 		desc = f"{artifact['out']['artifact_final_file_basename']}"
 
 		# runs_in = ["self-hosted", "Linux", 'armbian', f"artifact-{artifact_name}"]
-		runs_on = "ubuntu-latest"
+		runs_on = "fast"
 
 		# @TODO: externalize this logic.
 
@@ -74,11 +74,11 @@ def generate_matrix_artifacts(info):
 		if artifact_name in ["rootfs"]:
 			rootfs_arch = artifact['in']['inputs']['ARCH']  # @TODO we should resolve arch _much_ ealier in the pipeline and make it standard
 			if rootfs_arch in ["arm64"]:  # (future: add armhf)
-				runs_on = ["self-hosted", "Linux", 'armbian', f"rootfs-{rootfs_arch}"]
+				runs_on = ["self-hosted", "Linux", f"rootfs-{rootfs_arch}"]
 
 		# all kernels are built on self-hosted runners.
 		if artifact_name in ["kernel"]:
-			runs_on = ["self-hosted", "Linux", 'armbian', f"artifact-{artifact_name}"]
+			runs_on = ["self-hosted", "Linux", 'alfa']
 
 		inputs = artifact['in']['original_inputs']
 		cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])
