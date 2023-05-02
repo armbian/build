@@ -13,6 +13,7 @@ function artifact_uboot_config_dump() {
 	artifact_input_variables[BOOTPATCHDIR]="${BOOTPATCHDIR}"
 	artifact_input_variables[BOARD]="${BOARD}"
 	artifact_input_variables[BRANCH]="${BRANCH}"
+	artifact_input_variables[ARCH]="${ARCH}"
 }
 
 function artifact_uboot_prepare_version() {

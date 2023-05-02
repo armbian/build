@@ -15,6 +15,7 @@ function artifact_kernel_config_dump() {
 	artifact_input_variables[KERNELSOURCE]="${KERNELSOURCE}"
 	artifact_input_variables[KERNELBRANCH]="${KERNELBRANCH}"
 	artifact_input_variables[KERNELPATCHDIR]="${KERNELPATCHDIR}"
+	artifact_input_variables[ARCH]="${ARCH}"
 }
 
 # This is run in a logging section.
