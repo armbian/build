@@ -20,6 +20,7 @@ function early_prepare_pip3_dependencies_for_python_tools() {
 		"coloredlogs==15.0.1" # for colored logging
 		"PyYAML==6.0"         # for parsing/writing YAML
 		"oras==0.1.17"        # for OCI stuff in mapper-oci-update
+		"Jinja2==3.1.2"       # for templating
 	)
 	return 0
 }
