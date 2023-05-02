@@ -14,6 +14,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common import armbian_utils
+from common import gha
 
 # Prepare logging
 armbian_utils.setup_logging()
@@ -175,7 +176,13 @@ for i, chunk in enumerate(chunks):
 		log.error(f"Chunk '{i + 1}' is too big: {len(chunk)}")
 		sys.exit(1)
 
-	# Ensure matrix is sane...
+	# Directly set outputs for _each_ GHA chunk here. (code below is for all the chunks)
+	gha.set_gha_output(f"{type_gen}-chunk-json-{i + 1}", json.dumps({"include": chunk}))
+	# An output that is used to test for empty matrix.
+	gha.set_gha_output(f"{type_gen}-chunk-not-empty-{i + 1}", "yes" if len(chunk) > 0 else "no")
+	gha.set_gha_output(f"{type_gen}-chunk-size-{i + 1}", len(chunk))
+
+	# For the full matrix, we can't have empty chunks; use a "really" field to indicate a fake entry added to make it non-empty.
 	if len(chunk) == 0:
 		log.warning(f"Chunk '{i + 1}' for '{type_gen}' is empty, adding fake invocation.")
 		chunks[i] = [{"desc": "Fake matrix element so matrix is not empty", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no"}]
