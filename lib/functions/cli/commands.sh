@@ -25,8 +25,9 @@ function armbian_register_commands() {
 
 		["inventory"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 		["targets"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
-		["matrix"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
-		["workflow"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-matrix"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-workflow"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-template"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 

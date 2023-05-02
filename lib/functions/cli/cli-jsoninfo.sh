@@ -40,6 +40,34 @@ function cli_json_info_run() {
 
 		mkdir -p "${BASE_INFO_OUTPUT_DIR}"
 
+		# `gha-template` does not depend on the rest of the info-gatherer, so we can run it first and return.
+		if [[ "${ARMBIAN_COMMAND}" == "gha-template" ]]; then
+			# If we have userpatches/gha/chunks, run the workflow template utility
+			declare user_gha_dir="${USERPATCHES_PATH}/gha"
+			declare wf_template_dir="${user_gha_dir}/chunks"
+			declare GHA_CONFIG_YAML_FILE="${user_gha_dir}/gha_config.yaml"
+			if [[ ! -d "${wf_template_dir}" ]]; then
+				exit_with_error "output-gha-workflow-template :: no ${wf_template_dir} directory found"
+			fi
+			if [[ ! -f "${GHA_CONFIG_YAML_FILE}" ]]; then
+				exit_with_error "output-gha-workflow-template :: no ${GHA_CONFIG_YAML_FILE} file found"
+			fi
+
+			display_alert "Generating GHA workflow template" "output-gha-workflow-template :: ${wf_template_dir}" "info"
+			declare GHA_WORKFLOW_TEMPLATE_OUT_FILE_default="${BASE_INFO_OUTPUT_DIR}/artifact-image-complete-matrix.yml"
+			declare GHA_WORKFLOW_TEMPLATE_OUT_FILE="${GHA_WORKFLOW_TEMPLATE_OUT_FILE:-"${GHA_WORKFLOW_TEMPLATE_OUT_FILE_default}"}"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-workflow-template.py "${GHA_WORKFLOW_TEMPLATE_OUT_FILE}" "${GHA_CONFIG_YAML_FILE}" "${wf_template_dir}" "${MATRIX_ARTIFACT_CHUNKS:-"17"}" "${MATRIX_IMAGE_CHUNKS:-"16"}"
+
+			display_alert "Done with" "gha-template" "info"
+			run_tool_batcat "${GHA_WORKFLOW_TEMPLATE_OUT_FILE}"
+
+			display_alert "Templated workflow file" "${GHA_WORKFLOW_TEMPLATE_OUT_FILE}" "ext"
+
+			return 0 # stop here.
+		fi
+
+		### --- inventory --- ###
+
 		declare ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE="${BASE_INFO_OUTPUT_DIR}/all_boards_all_branches.json"
 		declare TARGETS_OUTPUT_FILE="${BASE_INFO_OUTPUT_DIR}/all-targets.json"
 		declare IMAGE_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/image-info.json"
@@ -61,6 +89,11 @@ function cli_json_info_run() {
 		# Then just use the same info-gatherer-image to get the image info.
 		# This will be used as database for the targets-compositor, for example to get "all boards+branches that have kernel < 5.0" or "all boards+branches of meson64 family" etc.
 		# @TODO: this is a bit heavy; only do it if out-of-date (compared to config/, lib/, extensions/, userpatches/ file mtimes...)
+
+		if [[ "${ARMBIAN_COMMAND}" == "inventory" ]]; then
+			display_alert "Done with" "inventory" "info"
+			return 0
+		fi
 
 		# if TARGETS_FILE does not exist, one will be provided for you, from a template.
 		if [[ ! -f "${TARGETS_FILE}" ]]; then
@@ -128,6 +161,11 @@ function cli_json_info_run() {
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/outdated-artifact-image-reducer.py "${ARTIFACTS_INFO_UPTODATE_FILE}" "${IMAGE_INFO_FILE}" ">" "${OUTDATED_ARTIFACTS_IMAGES_FILE}"
 		fi
 
+		if [[ "${ARMBIAN_COMMAND}" == "targets" ]]; then
+			display_alert "Done with" "targets" "info"
+			return 0
+		fi
+
 		### CI/CD Outputs.
 
 		# Output stage: GHA simplest possible two-matrix worflow.
@@ -135,7 +173,7 @@ function cli_json_info_run() {
 		# One for artifacts. One for images.
 		# If the image or artifact is up-to-date, it is still included in matrix, but the job is skipped.
 		# If any of the matrixes is bigger than 255 items, an error is generated.
-		if [[ "${ARMBIAN_COMMAND}" == "matrix" ]]; then
+		if [[ "${ARMBIAN_COMMAND}" == "gha-matrix" ]]; then
 			if [[ "${CLEAN_MATRIX}" == "yes" ]]; then
 				display_alert "Cleaning GHA matrix output" "clean-matrix" "info"
 				run_host_command_logged rm -fv "${BASE_INFO_OUTPUT_DIR}"/gha-*-matrix.json
@@ -154,23 +192,10 @@ function cli_json_info_run() {
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py images "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_IMAGE_CHUNKS}" ">" "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}"
 			fi
 			github_actions_add_output "image-matrix" "$(cat "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}")"
-
-			# If we have userpatches/gha/chunks, run the workflow template utility
-			declare user_gha_dir="${USERPATCHES_PATH}/gha"
-			declare wf_template_dir="${user_gha_dir}/chunks"
-			if [[ -d "${wf_template_dir}" ]]; then
-				display_alert "Generating GHA workflow template" "output-gha-workflow-template :: ${wf_template_dir}" "info"
-				declare GHA_WORKFLOW_TEMPLATE_OUT_FILE="${BASE_INFO_OUTPUT_DIR}/artifact-image-complete-matrix.yml"
-				declare GHA_CONFIG_YAML_FILE="${user_gha_dir}/gha_config.yaml"
-				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-workflow-template.py "${GHA_WORKFLOW_TEMPLATE_OUT_FILE}" "${GHA_CONFIG_YAML_FILE}" "${wf_template_dir}" "${MATRIX_ARTIFACT_CHUNKS:-"10"}" "${MATRIX_IMAGE_CHUNKS:-"10"}"
-			else
-				display_alert "Skipping GHA workflow template" "output-gha-workflow-template :: no ${wf_template_dir}" "info"
-			fi
-
 		fi
 
 		### a secondary stage, which only makes sense to be run inside GHA, and as such should be split in a different CLI or under a flag.
-		if [[ "${ARMBIAN_COMMAND}" == "workflow" ]]; then
+		if [[ "${ARMBIAN_COMMAND}" == "gha-workflow" ]]; then
 			# GHA Workflow output. A delusion. Maybe.
 			display_alert "Generating GHA workflow" "output-gha-workflow :: complete" "info"
 			declare GHA_WORKFLOW_FILE="${BASE_INFO_OUTPUT_DIR}/gha-workflow.yaml"
