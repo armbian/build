@@ -20,6 +20,54 @@ armbian_utils.setup_logging()
 log: logging.Logger = logging.getLogger("output-gha-matrix")
 
 
+def resolve_gha_runner_tags_via_pipeline_gha_config(input: dict, artifact_name: str, artifact_arch: str):
+	log.debug(f"Resolving GHA runner tags for artifact/image '{artifact_name}' '{artifact_arch}'")
+
+	# if no config, default to "ubuntu-latest" as a last-resort
+	ret = "ubuntu-latest"
+
+	if not "pipeline" in input:
+		log.warning(f"No 'pipeline' config in input, defaulting to '{ret}'")
+		return ret
+
+	pipeline = input["pipeline"]
+
+	if not "gha" in pipeline:
+		log.warning(f"No 'gha' config in input.pipeline, defaulting to '{ret}'")
+		return ret
+
+	gha = pipeline["gha"]
+
+	if (gha is None) or (not "runners" in gha):
+		log.warning(f"No 'runners' config in input.pipeline.gha, defaulting to '{ret}'")
+		return ret
+
+	runners = gha["runners"]
+
+	if "default" in runners:
+		ret = runners["default"]
+		log.debug(f"Found 'default' config in input.pipeline.gha.runners, defaulting to '{ret}'")
+
+	# Now, 'by-name' first.
+	if "by-name" in runners:
+		by_names = runners["by-name"]
+		if artifact_name in by_names:
+			ret = by_names[artifact_name]
+			log.debug(f"Found 'by-name' value '{artifact_name}' config in input.pipeline.gha.runners, using '{ret}'")
+
+	# Now, 'by-name-and-arch' second.
+	artifact_name_and_arch = f"{artifact_name}{f'-{artifact_arch}' if artifact_arch is not None else ''}"
+	if "by-name-and-arch" in runners:
+		by_names_and_archs = runners["by-name-and-arch"]
+		if artifact_name_and_arch in by_names_and_archs:
+			ret = by_names_and_archs[artifact_name_and_arch]
+			log.debug(f"Found 'by-name-and-arch' value '{artifact_name_and_arch}' config in input.pipeline.gha.runners, using '{ret}'")
+
+	log.info(f"Resolved GHA runs_on for name:'{artifact_name}' arch:'{artifact_arch}' to runs_on:'{ret}'")
+
+	return ret
+
+
 def generate_matrix_images(info) -> list[dict]:
 	# each image
 	matrix = []
@@ -38,12 +86,11 @@ def generate_matrix_images(info) -> list[dict]:
 
 		desc = f"{image['image_file_id']} {image_id}"
 
-		runs_on = "ubuntu-latest"
-		image_arch = image['out']['ARCH']
-		if image_arch in ["arm64"]:  # , "armhf"
-			runs_on = ["self-hosted", "Linux", f"image-{image_arch}"]
-
 		inputs = image['in']
+
+		image_arch = image['out']['ARCH']
+		runs_on = resolve_gha_runner_tags_via_pipeline_gha_config(inputs, "image", image_arch)
+
 		cmds = (armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])  # image build is "build" command, omitted here
 		invocation = " ".join(cmds)
 
@@ -65,22 +112,16 @@ def generate_matrix_artifacts(info):
 
 		desc = f"{artifact['out']['artifact_final_file_basename']}"
 
-		# runs_in = ["self-hosted", "Linux", 'armbian', f"artifact-{artifact_name}"]
-		runs_on = "fast"
-
-		# @TODO: externalize this logic.
-
-		# rootfs's fo arm64 are built on self-hosted runners tagged with "rootfs-<arch>"
-		if artifact_name in ["rootfs"]:
-			rootfs_arch = artifact['in']['inputs']['ARCH']  # @TODO we should resolve arch _much_ ealier in the pipeline and make it standard
-			if rootfs_arch in ["arm64"]:  # (future: add armhf)
-				runs_on = ["self-hosted", "Linux", f"rootfs-{rootfs_arch}"]
-
-		# all kernels are built on self-hosted runners.
-		if artifact_name in ["kernel"]:
-			runs_on = ["self-hosted", "Linux", 'alfa']
-
 		inputs = artifact['in']['original_inputs']
+
+		artifact_arch = None
+		# Try via the inputs to artifact...
+		if "inputs" in artifact['in']:
+			if "ARCH" in artifact['in']['inputs']:
+				artifact_arch = artifact['in']['inputs']['ARCH']
+
+		runs_on = resolve_gha_runner_tags_via_pipeline_gha_config(inputs, artifact_name, artifact_arch)
+
 		cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])
 		invocation = " ".join(cmds)
 
