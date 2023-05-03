@@ -7,11 +7,8 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-function config_possibly_interactive_kernel_board() {
-	# if KERNEL_CONFIGURE, BOARD, BRANCH or RELEASE are not set, display selection menu
-
-	interactive_config_ask_kernel
-	[[ -z $KERNEL_CONFIGURE ]] && exit_with_error "No option selected: KERNEL_CONFIGURE"
+function config_possibly_interactive_board() {
+	# if BOARD is not set, display selection menu
 
 	interactive_config_ask_board_list # this uses get_list_of_all_buildable_boards
 	[[ -z $BOARD ]] && exit_with_error "No board selected: BOARD"
