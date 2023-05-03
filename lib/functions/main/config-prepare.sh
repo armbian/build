@@ -18,7 +18,7 @@ function prep_conf_main_build_single() {
 
 	# those are possibly interactive. interactive (dialog) and logging don't mix, for obvious reasons.
 	interactive_config_prepare_terminal # init vars used for interactive
-	config_possibly_interactive_kernel_board
+	config_possibly_interactive_board
 
 	LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
 

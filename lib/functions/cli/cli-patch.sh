@@ -32,7 +32,6 @@ function cli_patch_kernel_run() {
 	declare -g GIT_ARCHEOLOGY=yes  # do archeology
 	declare -g FAST_ARCHEOLOGY=yes # do archeology, but only for the exact path we need.
 	#declare -g REWRITE_PATCHES=yes # rewrite the patches after git commiting. Very cheap compared to the rest.
-	declare -g KERNEL_CONFIGURE=no # no menuconfig
 	declare -g RELEASE=jammy       # or whatever, not relevant, just fool the configuration
 	declare -g SHOW_LOG=yes        # show the log
 	prep_conf_main_build_single

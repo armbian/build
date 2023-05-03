@@ -41,21 +41,6 @@ function interactive_finish() {
 	unset SHOW_WARNING
 }
 
-function interactive_config_ask_kernel() {
-	interactive_config_ask_kernel_configure
-}
-
-function interactive_config_ask_kernel_configure() {
-	[[ -n ${KERNEL_CONFIGURE} ]] && return 0
-	options+=("no" "Do not change the kernel configuration")
-	options+=("yes" "Show a kernel configuration menu before compilation")
-	#options+=("prebuilt" "Use precompiled packages (maintained hardware only)") # @TODO armbian-next does not support this, I think.
-	dialog_if_terminal_set_vars --title "Choose an option" --backtitle "$backtitle" --no-tags --menu "Select the kernel configuration" $TTY_Y $TTY_X $((TTY_Y - 8)) "${options[@]}"
-	set_interactive_config_value KERNEL_CONFIGURE "${DIALOG_RESULT}"
-	[[ ${DIALOG_EXIT_CODE} != 0 ]] && exit_with_error "You cancelled interactive during kernel configuration" "Build cancelled"
-	unset options
-}
-
 # Required usage:
 # declare -a arr_all_board_names=() arr_all_board_options=()                                                                                              # arrays
 # declare -A dict_all_board_types=() dict_all_board_source_files=() dict_all_board_descriptions=()                                                        # dictionaries
