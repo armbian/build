@@ -230,7 +230,7 @@ function obtain_complete_artifact() {
 		# @TODO: if deploying to remote cache, force high compression, DEB_COMPRESS="xz"
 		artifact_build_from_sources # definitely will end up having its own logging sections
 
-		# For cases like CREATE_PATCHES=yes or KERNEL_CONFIGURE=yes, we wanna stop here. No artifact file will be created.
+		# For interactive stuff like patching or configuring, we wanna stop here. No artifact file will be created.
 		if [[ "${ARTIFACT_WILL_NOT_BUILD}" == "yes" ]]; then
 			display_alert "artifact" "ARTIFACT_WILL_NOT_BUILD is set, stopping after non-build." "debug"
 			return 0
