@@ -1,0 +1,172 @@
+diff --git a/include/linux/pinctrl/pinconf-generic.h b/include/linux/pinctrl/pinconf-generic.h
+index 2422211d6..a8b9b6c2b 100644
+--- a/include/linux/pinctrl/pinconf-generic.h
++++ b/include/linux/pinctrl/pinconf-generic.h
+@@ -137,6 +137,7 @@ enum pin_config_param {
+ 	PIN_CONFIG_SKEW_DELAY,
+ 	PIN_CONFIG_SLEEP_HARDWARE_STATE,
+ 	PIN_CONFIG_SLEW_RATE,
++	PIN_CONFIG_MUX,
+ 	PIN_CONFIG_END = 0x7F,
+ 	PIN_CONFIG_MAX = 0xFF,
+ };
+diff --git a/drivers/pinctrl/pinconf-generic.c b/drivers/pinctrl/pinconf-generic.c
+index 415d1df8f..45ca3505f 100644
+--- a/drivers/pinctrl/pinconf-generic.c
++++ b/drivers/pinctrl/pinconf-generic.c
+@@ -51,6 +51,7 @@ static const struct pin_config_item conf_items[] = {
+ 	PCONFDUMP(PIN_CONFIG_SLEEP_HARDWARE_STATE, "sleep hardware state", NULL, false),
+ 	PCONFDUMP(PIN_CONFIG_SLEW_RATE, "slew rate", NULL, true),
+ 	PCONFDUMP(PIN_CONFIG_SKEW_DELAY, "skew delay", NULL, true),
++	PCONFDUMP(PIN_CONFIG_MUX, "mux", NULL, true),
+ };
+ 
+ static void pinconf_generic_dump_one(struct pinctrl_dev *pctldev,
+diff --git a/drivers/pinctrl/pinctrl-rockchip.c b/drivers/pinctrl/pinctrl-rockchip.c
+index 32e41395f..f1fed12c4 100644
+--- a/drivers/pinctrl/pinctrl-rockchip.c
++++ b/drivers/pinctrl/pinctrl-rockchip.c
+@@ -2213,6 +2213,26 @@ static int rockchip_set_pull(struct rockchip_pin_bank *bank,
+ 	return ret;
+ }
+ 
++#define RK3308_SLEW_PINS_PER_REG	8
++#define RK3308_SLEW_BANK_STRIDE		16
++#define RK3308_SLEW_GRF_OFFSET		0x150
++
++static int rk3308_calc_slew_reg_and_bit(struct rockchip_pin_bank *bank,
++				    int pin_num, struct regmap **regmap,
++				    int *reg, u8 *bit)
++{
++	struct rockchip_pinctrl *info = bank->drvdata;
++
++	*regmap = info->regmap_base;
++	*reg = RK3308_SLEW_GRF_OFFSET;
++
++	*reg += bank->bank_num * RK3308_SLEW_BANK_STRIDE;
++	*reg += ((pin_num / RK3308_SLEW_PINS_PER_REG) * 4);
++	*bit = pin_num % RK3308_SLEW_PINS_PER_REG;
++
++	return 0;
++}
++
+ #define RK3328_SCHMITT_BITS_PER_PIN		1
+ #define RK3328_SCHMITT_PINS_PER_REG		16
+ #define RK3328_SCHMITT_BANK_STRIDE		8
+@@ -2326,6 +2346,51 @@ static int rockchip_set_schmitt(struct rockchip_pin_bank *bank,
+ 	return regmap_update_bits(regmap, reg, rmask, data);
+ }
+ 
++static int rockchip_get_slew_rate(struct rockchip_pin_bank *bank, int pin_num)
++{
++	struct rockchip_pinctrl *info = bank->drvdata;
++	struct rockchip_pin_ctrl *ctrl = info->ctrl;
++	struct regmap *regmap;
++	int reg, ret;
++	u8 bit;
++	u32 data;
++
++	ret = ctrl->slew_rate_calc_reg(bank, pin_num, &regmap, &reg, &bit);
++	if (ret)
++		return ret;
++
++	ret = regmap_read(regmap, reg, &data);
++	if (ret)
++		return ret;
++
++	data >>= bit;
++	return data & 0x1;
++}
++
++static int rockchip_set_slew_rate(struct rockchip_pin_bank *bank,
++				  int pin_num, int speed)
++{
++	struct rockchip_pinctrl *info = bank->drvdata;
++	struct rockchip_pin_ctrl *ctrl = info->ctrl;
++	struct regmap *regmap;
++	int reg, ret;
++	u8 bit;
++	u32 data, rmask;
++
++	dev_dbg(info->dev, "setting slew rate of GPIO%d-%d to %d\n",
++		bank->bank_num, pin_num, speed);
++
++	ret = ctrl->slew_rate_calc_reg(bank, pin_num, &regmap, &reg, &bit);
++	if (ret)
++		return ret;
++
++	/* enable the write to the equivalent lower bits */
++	data = BIT(bit + 16) | (speed << bit);
++	rmask = BIT(bit + 16) | BIT(bit);
++
++	return regmap_update_bits(regmap, reg, rmask, data);
++}
++
+ /*
+  * Pinmux_ops handling
+  */
+@@ -2544,6 +2609,15 @@ static int rockchip_pinconf_set(struct pinctrl_dev *pctldev, unsigned int pin,
+ 			if (rc < 0)
+ 				return rc;
+ 			break;
++		case PIN_CONFIG_SLEW_RATE:
++			if (!info->ctrl->slew_rate_calc_reg)
++				return -ENOTSUPP;
++
++			rc = rockchip_set_slew_rate(bank,
++						    pin - bank->pin_base, arg);
++			if (rc < 0)
++				return rc;
++			break;
+ 		default:
+ 			return -ENOTSUPP;
+ 			break;
+@@ -2618,6 +2692,26 @@ static int rockchip_pinconf_get(struct pinctrl_dev *pctldev, unsigned int pin,
+ 		if (rc < 0)
+ 			return rc;
+ 
++		arg = rc;
++		break;
++	case PIN_CONFIG_SLEW_RATE:
++		if (!info->ctrl->slew_rate_calc_reg)
++			return -ENOTSUPP;
++
++		rc = rockchip_get_slew_rate(bank, pin - bank->pin_base);
++		if (rc < 0)
++			return rc;
++
++		arg = rc;
++		break;
++	case PIN_CONFIG_MUX:
++		if (!info->ctrl->schmitt_calc_reg)
++			return -ENOTSUPP;
++
++		rc = rockchip_get_mux(bank, pin - bank->pin_base);
++		if (rc < 0)
++			return rc;
++
+ 		arg = rc;
+ 		break;
+ 	default:
+@@ -3380,6 +3474,7 @@ static struct rockchip_pin_ctrl rk3308_pin_ctrl = {
+ 		.pull_calc_reg		= rk3308_calc_pull_reg_and_bit,
+ 		.drv_calc_reg		= rk3308_calc_drv_reg_and_bit,
+ 		.schmitt_calc_reg	= rk3308_calc_schmitt_reg_and_bit,
++		.slew_rate_calc_reg	= rk3308_calc_slew_reg_and_bit,
+ };
+ 
+ static struct rockchip_pin_bank rk3328_pin_banks[] = {
+diff --git a/drivers/pinctrl/pinctrl-rockchip.h b/drivers/pinctrl/pinctrl-rockchip.h
+index ec46f8815..890c1b09e 100644
+--- a/drivers/pinctrl/pinctrl-rockchip.h
++++ b/drivers/pinctrl/pinctrl-rockchip.h
+@@ -405,6 +405,9 @@ struct rockchip_pin_ctrl {
+ 	int	(*schmitt_calc_reg)(struct rockchip_pin_bank *bank,
+ 				    int pin_num, struct regmap **regmap,
+ 				    int *reg, u8 *bit);
++	int	(*slew_rate_calc_reg)(struct rockchip_pin_bank *bank,
++				      int pin_num, struct regmap **regmap,
++				      int *reg, u8 *bit);
+ };
+ 
+ struct rockchip_pin_config {
