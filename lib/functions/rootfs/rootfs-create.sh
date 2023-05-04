@@ -112,7 +112,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	# Done with debootstrap. Clean-up it's litterbox.
 	display_alert "Cleaning up after debootstrap" "debootstrap cleanup" "info"
-	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt" "${SDCARD}/var/lib/apt/lists"
+	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt"
 
 	local_apt_deb_cache_prepare "after debootstrap second stage" # just for size reference in logs
 
