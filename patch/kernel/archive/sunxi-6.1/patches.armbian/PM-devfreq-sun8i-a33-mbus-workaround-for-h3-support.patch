@@ -1,0 +1,203 @@
+From de52712a4152b4218ea9f30d5acc68ab649557bb Mon Sep 17 00:00:00 2001
+From: Kirill Zhumarin <kirill.zhumarin@gmail.com>
+Date: Mon, 1 May 2023 20:38:14 +0300
+Subject: [PATCH] sun8i-a33-mbus: workaround for h3 support
+
+Signed-off-by: Kirill Zhumarin <kirill.zhumarin@gmail.com>
+---
+ drivers/devfreq/sun8i-a33-mbus.c | 128 ++++++++++++++++++++++++++++---
+ 1 file changed, 118 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/devfreq/sun8i-a33-mbus.c b/drivers/devfreq/sun8i-a33-mbus.c
+index 48a590f15..569697a49 100644
+--- a/drivers/devfreq/sun8i-a33-mbus.c
++++ b/drivers/devfreq/sun8i-a33-mbus.c
+@@ -3,8 +3,12 @@
+ // Copyright (C) 2020-2021 Samuel Holland <samuel@sholland.org>
+ //
+ 
++// #define DEBUG
++
+ #include <linux/arm-smccc.h>
+ #include <linux/clk.h>
++#include <linux/cpu.h>
++#include <linux/cpumask.h>
+ #include <linux/debugfs.h>
+ #include <linux/devfreq.h>
+ #include <linux/err.h>
+@@ -71,6 +75,14 @@
+ #define DRAM_DXnGCR0_DXODT_DISABLED	(0x2 << 4)
+ #define DRAM_DXnGCR0_DXEN		(0x1 << 0)
+ 
++#define SUNXI_PSCI_DRAM_DVFS_REQ		ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32, ARM_SMCCC_OWNER_OEM, 0x33)
++
++#define DRAM_DVFS_FLAG_ODT					BIT(0)
++#define DRAM_DVFS_FLAG_SELF_REFRESH			BIT(1)
++#define DRAM_DVFS_FLAG_ENABLE_LOCKING		BIT(8)
++#define DRAM_DVFS_FLAG_LOCK_CPU_IN_SRAM		BIT(9)
++#define DRAM_DVFS_FLAG_DISABLE_LOCKING		BIT(10)
++
+ struct sun8i_a33_mbus;
+ 
+ struct sun8i_a33_mbus_pmu_master {
+@@ -89,6 +101,12 @@ struct sun8i_a33_mbus_variant {
+ 
+ struct sun8i_a33_mbus {
+ 	const struct sun8i_a33_mbus_variant	*variant;
++
++	struct delayed_work			work;
++	struct semaphore			work_sem;
++	struct semaphore			cpus_sleep_sem;
++	struct semaphore			cpus_wake_sem;
++
+ 	void __iomem				*reg_dram;
+ 	void __iomem				*reg_mbus;
+ 	struct clk				*clk_bus;
+@@ -97,6 +115,8 @@ struct sun8i_a33_mbus {
+ 	struct devfreq				*devfreq_dram;
+ 	struct devfreq_simple_ondemand_data	gov_data;
+ 	struct devfreq_dev_profile		profile;
++	u32					next_freq;
++	u32					smc_result;
+ 	u32					data_width;
+ 	u32					nominal_bw;
+ 	u32					odtmap;
+@@ -218,24 +238,104 @@ static int sun8i_a33_mbus_set_dram_freq_mdfs(struct sun8i_a33_mbus *priv,
+ 	return 0;
+ }
+ 
+-static int sun8i_a33_mbus_set_dram_freq_smc(struct sun8i_a33_mbus *priv,
+-					    unsigned long freq)
+-{
+-	u32  ddr_freq_mhz = freq / USEC_PER_SEC; /* DDR */
+-	u32 dram_freq_mhz =    ddr_freq_mhz / 2; /* SDR */
++static void sun8i_a33_mbus_smp_cpu_lock_callback(void *info) {
++	struct sun8i_a33_mbus *priv = info;
++	struct arm_smccc_res res;
++
++	up(&priv->cpus_sleep_sem);
++	arm_smccc_smc(SUNXI_PSCI_DRAM_DVFS_REQ, 0, DRAM_DVFS_FLAG_LOCK_CPU_IN_SRAM, 0, 0, 0, 0, 0, &res);
++	if (res.a0) {
++		dev_warn(priv->devfreq_dram->dev.parent,
++			"DRAM_DVFS_FLAG_ENABLE_LOCKING failed for CPU%d, ret=%ld\n", smp_processor_id(), res.a0);
++	}
++	up(&priv->cpus_wake_sem);
++}
++
++static int sun8i_a33_mbus_suspend_secondary_cpus(struct sun8i_a33_mbus *priv) {
++	int i;
+ 	struct arm_smccc_res res;
++
++	/* Lock CPU hotplug */
++	cpus_read_lock();
++
++	/* Reset locking flag */
++	arm_smccc_smc(SUNXI_PSCI_DRAM_DVFS_REQ, 0, DRAM_DVFS_FLAG_ENABLE_LOCKING, 0, 0, 0, 0, 0, &res);
++
++	if (res.a0 == 0) {
++		/* Requesting each CPU to locking in the SRAM */
++		smp_call_function(sun8i_a33_mbus_smp_cpu_lock_callback, priv, false);
++		
++		/* Waiting until all CPUS are locked */
++		for (i = 0; i < num_online_cpus() - 1; i++)
++			down(&priv->cpus_sleep_sem);
++		
++		return 0;
++	}
++
++	dev_warn(priv->devfreq_dram->dev.parent,
++		"DRAM_DVFS_FLAG_ENABLE_LOCKING failed, ret=%ld\n", res.a0);
++
++	/* Unlock CPU hotplug */
++	cpus_read_unlock();
++
++	return -EBUSY;
++}
++
++static int sun8i_a33_mbus_resume_secondary_cpus(struct sun8i_a33_mbus *priv) {
++	int i;
++
++	/* Waiting until all CPUS are unlocked */
++	for (i = 0; i < num_online_cpus() - 1; i++)
++		down(&priv->cpus_wake_sem);
++
++	/* Unlock CPU hotplug */
++	cpus_read_unlock();
++
++	return 0;
++}
++
++static void sun8i_a33_mbus_set_dram_freq_smc_delayed(struct work_struct *_work) {
++	struct sun8i_a33_mbus *priv = container_of(_work, struct sun8i_a33_mbus, work.work);
++
++	u32 ddr_freq_mhz = priv->next_freq / USEC_PER_SEC; /* DDR */
++	u32 dram_freq_mhz = ddr_freq_mhz / 2; /* SDR */
+ 	unsigned long flags = 0;
++	struct arm_smccc_res res;
+ 
+ 	if (priv->odtmap && dram_freq_mhz > priv->variant->odt_freq_mhz)
+ 		flags |= BIT(0);
+-	if (freq == priv->freq_table[0])
++	if (priv->next_freq == priv->freq_table[0])
+ 		flags |= BIT(1);
+ 
+-	arm_smccc_smc(ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32,
+-					 ARM_SMCCC_OWNER_OEM, 0x33),
+-		      dram_freq_mhz, flags, 0, 0, 0, 0, 0, &res);
++	dev_dbg(priv->devfreq_dram->dev.parent,
++		"Setting DRAM to %u MHz, ODT=%s, SELF-REFRESH=%s (SMC)\n",
++		ddr_freq_mhz,
++		(flags & BIT(0)) ? "dynamic" : "disabled",
++		(flags & BIT(1)) ? "enabled" : "disabled");
++
++	if (sun8i_a33_mbus_suspend_secondary_cpus(priv) == 0) {
++		arm_smccc_smc(SUNXI_PSCI_DRAM_DVFS_REQ, ddr_freq_mhz, flags, 0, 0, 0, 0, 0, &res);
++		priv->smc_result = res.a0;
++		sun8i_a33_mbus_resume_secondary_cpus(priv);
++	} else {
++		priv->smc_result = -EBUSY;
++	}
++
++	up(&priv->work_sem);
++}
++
++static int sun8i_a33_mbus_set_dram_freq_smc(struct sun8i_a33_mbus *priv,
++					    unsigned long freq)
++{
++	priv->next_freq = freq;
++
++	/* Run on CPU0 */
++	schedule_delayed_work_on(0, &priv->work, msecs_to_jiffies(0));
++
++	/* Wait for delayed work done */
++	down(&priv->work_sem);
+ 
+-	return res.a0;
++	return priv->smc_result;
+ }
+ 
+ static int sun8i_a33_mbus_set_dram_target(struct device *dev,
+@@ -410,6 +510,12 @@ static int sun8i_a33_mbus_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, priv);
+ 
++	sema_init(&priv->work_sem, 0);
++	sema_init(&priv->cpus_sleep_sem, 0);
++	sema_init(&priv->cpus_wake_sem, 0);
++
++	INIT_DELAYED_WORK(&priv->work, sun8i_a33_mbus_set_dram_freq_smc_delayed);
++
+ 	priv->variant = variant;
+ 
+ 	priv->reg_dram = devm_platform_ioremap_resource_byname(pdev, "dram");
+@@ -534,6 +640,8 @@ static int sun8i_a33_mbus_remove(struct platform_device *pdev)
+ 	if (ret)
+ 		dev_warn(dev, "failed to restore DRAM frequency: %d\n", ret);
+ 
++	debugfs_lookup_and_remove("sun8i-mbus", NULL);
++
+ 	dev_pm_opp_remove_all_dynamic(dev);
+ 	clk_rate_exclusive_put(priv->clk_mbus);
+ 	clk_rate_exclusive_put(priv->clk_dram);
+-- 
+Created with Armbian build tools https://github.com/armbian/build
