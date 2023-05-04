@@ -205,10 +205,12 @@ def armbian_get_all_boards_inventory():
 	return info_for_board
 
 
-def map_to_armbian_params(map_params):
+def map_to_armbian_params(map_params, quote_params=False) -> list[str]:
 	ret = []
 	for param in map_params:
 		ret.append(param + "=" + map_params[param])
+	if quote_params:
+		ret = ["'" + param + "'" for param in ret]  # single-quote each param...
 	return ret
 
 
