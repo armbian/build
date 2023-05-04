@@ -154,7 +154,7 @@ for artifact_id in info["artifacts"]:
 		runs_on = ["self-hosted", "Linux", "alfa"]
 
 	inputs = artifact['in']['original_inputs']
-	cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])
+	cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"], True) + inputs["configs"])
 	invocation = " ".join(cmds)
 
 	item = {"desc": desc, "runs_on": runs_on, "invocation": invocation}
@@ -195,7 +195,7 @@ for image_id in info["images"]:
 		runs_on = ["self-hosted", "Linux", f"image-{image_arch}"]
 
 	inputs = image['in']
-	cmds = (armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])  # image build is "build" command, omitted here
+	cmds = (armbian_utils.map_to_armbian_params(inputs["vars"], True) + inputs["configs"])  # image build is "build" command, omitted here
 	invocation = " ".join(cmds)
 
 	iJob: ImageJob = ImageJob(f"image-{image_id}", f"{desc}")
