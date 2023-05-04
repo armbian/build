@@ -145,8 +145,14 @@ function produce_repeat_args_array() {
 	# get the sorted keys of the repeat_params associative array into an array
 	declare -a repeat_params_keys_sorted=($(printf '%s\0' "${!repeat_params[@]}" | sort -z | xargs -0 -n 1 printf '%s\n'))
 
-	for param_name in "${repeat_params_keys_sorted[@]}"; do         # add sorted repeat_params to repeat_args
-		repeat_args+=("${param_name}=${repeat_params[${param_name}]}") # could add @Q here, but it's not necessary
+	for param_name in "${repeat_params_keys_sorted[@]}"; do # add sorted repeat_params to repeat_args
+		declare repeat_value="${repeat_params[${param_name}]}"
+		# does it contain spaces? if so, quote it.
+		if [[ "${repeat_value}" =~ [[:space:]] ]]; then
+			repeat_args+=("${param_name}=${repeat_value@Q}") # quote
+		else
+			repeat_args+=("${param_name}=${repeat_value}")
+		fi
 	done
 
 	return 0
