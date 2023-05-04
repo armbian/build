@@ -2,17 +2,10 @@
   <a href="#build-framework">
   <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
   </a><br>
-  <strong>Armbian Linux Build Framework</strong><br>
-  <h1 align=center>NEXT GENERATION</h1>
-<p align="center">
-<a href=https://github.com/armbian/os/releases/latest><img alt="Armbian OS" src="https://img.shields.io/github/actions/workflow/status/armbian/os/build-images.yml?logo=githubactions&label=Build%20Nighlty%20Images&style=for-the-badge&branch=main"></a><br>
-( Classic build framework remains on master branch, frozen and unmaintained )<br> <br>
-</p>
-
-- in case of troubles, keep using master/v23.02 branch
-- PR's are going to <b>main</b> branch, optional to master/v23.02
-- do not use master and main in the same folder
-
+  <strong>Armbian Linux Build Framework</strong><br><h3>
+ $${\color{black}NEXT\space \color{red}gen}$$
+ </h3> 
+ 
 ## Table of contents
 
 - [What this project does?](#what-this-project-does)
@@ -24,7 +17,7 @@
 - [Support](#support)
 - [Contact](#contact)
 - [Contributors](#contributors)
-- [Sponsors](#sponsors)
+- [Partners](#armbian-partners)
 - [License](#license)
 
 ## What this project does?
