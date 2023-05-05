@@ -112,7 +112,7 @@ def generate_matrix_artifacts(info):
 
 		artifact_name = artifact['in']['artifact_name']
 
-		desc = f"{artifact['out']['artifact_final_file_basename']}"
+		desc = f"{artifact['out']['artifact_name']}={artifact['out']['artifact_version']}"
 
 		inputs = artifact['in']['original_inputs']
 
