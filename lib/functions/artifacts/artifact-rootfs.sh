@@ -41,6 +41,13 @@ function artifact_rootfs_prepare_version() {
 		"cache_id \"${rootfs_cache_id}\""
 	)
 
+	# add more reasons for desktop stuff
+	if [[ "${DESKTOP_ENVIRONMENT}" != "" ]]; then
+		reasons+=("desktop_environment \"${DESKTOP_ENVIRONMENT}\"")
+		reasons+=("desktop_environment_config_name \"${DESKTOP_ENVIRONMENT_CONFIG_NAME}\"")
+		reasons+=("desktop_appgroups_selected \"${DESKTOP_APPGROUPS_SELECTED}\"")
+	fi
+
 	# rootfs does NOT include ${artifact_prefix_version} -- there's no reason to, since rootfs is not in an apt repo
 	# instead, we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
 	declare yyyymm="undetermined"

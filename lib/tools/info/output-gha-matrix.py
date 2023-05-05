@@ -92,7 +92,7 @@ def generate_matrix_images(info) -> list[dict]:
 		image_arch = image['out']['ARCH']
 		runs_on = resolve_gha_runner_tags_via_pipeline_gha_config(inputs, "image", image_arch)
 
-		cmds = (armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])  # image build is "build" command, omitted here
+		cmds = (armbian_utils.map_to_armbian_params(inputs["vars"], True) + inputs["configs"])  # image build is "build" command, omitted here
 		invocation = " ".join(cmds)
 
 		item = {"desc": desc, "runs_on": runs_on, "invocation": invocation}
@@ -123,7 +123,7 @@ def generate_matrix_artifacts(info):
 
 		runs_on = resolve_gha_runner_tags_via_pipeline_gha_config(inputs, artifact_name, artifact_arch)
 
-		cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"]) + inputs["configs"])
+		cmds = (["artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"], True) + inputs["configs"])
 		invocation = " ".join(cmds)
 
 		item = {"desc": desc, "runs_on": runs_on, "invocation": invocation}

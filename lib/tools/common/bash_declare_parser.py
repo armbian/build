@@ -16,6 +16,7 @@ REGEX_BASH_DECLARE_DOUBLE_QUOTE = r"declare (-[-xr]) (.*?)=\"(.*)\""
 REGEX_BASH_DECLARE_SINGLE_QUOTE = r"declare (-[-xr]) (.*?)=\$'(.*)'"
 REGEX_BASH_DECLARE_ASSOCIATIVE_ARRAY = r"declare (-[A]) (.*?)=\((.*)\)"
 REGEX_BASH_DECLARE_SIMPLE_ARRAY = r"declare (-[a]) (.*?)=\((.*)\)"
+REGEX_SINGLE_QUOTED_SPLIT = r"'[^']+'|\S+"
 
 
 class BashDeclareParser:
@@ -58,7 +59,7 @@ class BashDeclareParser:
 
 	def parse_dequoted_value(self, key, value):
 		if ("_LIST" in key) or ("_DIRS" in key) or ("_ARRAY" in key):
-			value = self.armbian_value_parse_list(value, " ")
+			value = self.armbian_value_parse_list(key, value, " ")
 		return value
 
 	def armbian_value_parse_double_quoted(self, value: str):
@@ -75,19 +76,13 @@ class BashDeclareParser:
 		value = value.replace('\t', "\t")
 		return value
 
-	def armbian_value_parse_list(self, item_value, delimiter):
+	def armbian_value_parse_list(self, key, item_value, delimiter):
 		ret = []
-		for item in item_value.split(delimiter):
-			ret.append((item))
+		good = re.findall(REGEX_SINGLE_QUOTED_SPLIT, item_value)
+		for item in good:
+			ret.append(item)
 		# trim whitespace out of every value
 		ret = list(map(str.strip, ret))
 		# filter out empty strings
 		ret = list(filter(None, ret))
-		return ret
-
-	def armbian_value_parse_newline_map(self, item_value):
-		lines = item_value.split("\n")
-		ret = []
-		for line in lines:
-			ret.append(self.armbian_value_parse_list(line, ":"))
 		return ret

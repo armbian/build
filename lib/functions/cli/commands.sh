@@ -20,14 +20,16 @@ function armbian_register_commands() {
 		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run
 
 		# Given a board/config/exts, dump out the (non-userspace) JSON of configuration
-		["configdump"]="config_dump_json"       # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
-		["config-dump-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["configdump"]="config_dump_json"          # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump"]="config_dump_json"         # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump-json"]="config_dump_json"    # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump-no-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["inventory"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
-		["targets"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-matrix"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-workflow"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-template"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-matrix"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-workflow"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-template"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 

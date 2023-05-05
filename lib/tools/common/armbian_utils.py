@@ -16,9 +16,10 @@ import multiprocessing
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
-import sys
+REGEX_WHITESPACE_LINEBREAK_COMMA_SEMICOLON = r"[\s,;\n]+"
 
 ARMBIAN_CONFIG_REGEX_KERNEL_TARGET = r"^([export |declare -g]+)?KERNEL_TARGET=\"(.*)\""
 
@@ -32,8 +33,9 @@ def parse_env_for_tokens(env_name):
 	if val is None:
 		return result
 	# tokenize val; split by whitespace, line breaks, commas, and semicolons.
+	tokens = re.split(REGEX_WHITESPACE_LINEBREAK_COMMA_SEMICOLON, val)
 	# trim whitespace from tokens.
-	return [token for token in [token.strip() for token in (val.split())] if token != ""]
+	return [token for token in [token.strip() for token in (tokens)] if token != ""]
 
 
 def get_from_env(env_name):
@@ -203,10 +205,12 @@ def armbian_get_all_boards_inventory():
 	return info_for_board
 
 
-def map_to_armbian_params(map_params):
+def map_to_armbian_params(map_params, quote_params=False) -> list[str]:
 	ret = []
 	for param in map_params:
 		ret.append(param + "=" + map_params[param])
+	if quote_params:
+		ret = ["'" + param + "'" for param in ret]  # single-quote each param...
 	return ret
 
 
