@@ -189,6 +189,9 @@ function cli_json_info_run() {
 			display_alert "Generating GHA matrix for images" "output-gha-matrix :: images" "info"
 			declare GHA_ALL_IMAGES_JSON_MATRIX_FILE="${BASE_INFO_OUTPUT_DIR}/gha-all-images-matrix.json"
 			if [[ ! -f "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}" ]]; then
+				# export env vars used by the Python script.
+				export SKIP_IMAGES="${SKIP_IMAGES:-"no"}"
+				export IMAGES_ONLY_OUTDATED_ARTIFACTS="${IMAGES_ONLY_OUTDATED_ARTIFACTS:-"no"}"
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py images "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_IMAGE_CHUNKS}" ">" "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}"
 			fi
 			github_actions_add_output "image-matrix" "$(cat "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}")"
