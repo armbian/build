@@ -76,9 +76,10 @@ def generate_matrix_images(info) -> list[dict]:
 		image = info["images"][image_id]
 
 		if armbian_utils.get_from_env("IMAGES_ONLY_OUTDATED_ARTIFACTS") == "yes":
+			log.info(f"IMAGES_ONLY_OUTDATED_ARTIFACTS is set: outdated artifacts: {image['outdated_artifacts_count']} for image {image_id}")
 			skip = image["outdated_artifacts_count"] == 0
 			if skip:
-				log.info(f"Skipping image {image_id} because it has no outdated artifacts")
+				log.warning(f"Skipping image {image_id} because it has no outdated artifacts")
 				continue
 
 		if armbian_utils.get_from_env("SKIP_IMAGES") == "yes":
