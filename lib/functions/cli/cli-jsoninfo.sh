@@ -66,6 +66,42 @@ function cli_json_info_run() {
 			return 0 # stop here.
 		fi
 
+		# debs-to-repo-download is also isolated from the rest. It does depend on the debs-to-repo-info, but that's prepared beforehand in a standard pipeline run.
+		if [[ "${ARMBIAN_COMMAND}" == "debs-to-repo-download" ]]; then
+			display_alert "Downloading debs" "debs-to-repo-download" "info"
+			declare DEBS_TO_REPO_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/debs-to-repo-info.json"
+			if [[ ! -f "${DEBS_TO_REPO_INFO_FILE}" ]]; then
+				exit_with_error "debs-to-repo-download :: no ${DEBS_TO_REPO_INFO_FILE} file found; did you restore the pipeline artifacts correctly?"
+			fi
+			declare DEBS_OUTPUT_DIR="${DEST}/debs"
+			run_host_command_logged mkdir -pv "${DEBS_OUTPUT_DIR}"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/download-debs.py "${DEBS_TO_REPO_INFO_FILE}" "${DEBS_OUTPUT_DIR}"
+
+			display_alert "Done with" "debs-to-repo-download" "ext"
+
+			return 0 # stop here.
+		fi
+
+		# debs-to-repo-download is also isolated from the rest. It does depend on the debs-to-repo-info, but that's prepared beforehand in a standard pipeline run.
+		if [[ "${ARMBIAN_COMMAND}" == "debs-to-repo-reprepro" ]]; then
+			display_alert "Generating rerepro publishing script" "debs-to-repo-reprepro" "info"
+			declare DEBS_TO_REPO_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/debs-to-repo-info.json"
+			if [[ ! -f "${DEBS_TO_REPO_INFO_FILE}" ]]; then
+				exit_with_error "debs-to-repo-reprepro :: no ${DEBS_TO_REPO_INFO_FILE} file found; did you restore the pipeline artifacts correctly?"
+			fi
+			declare OUTPUT_INFO_REPREPRO_DIR="${BASE_INFO_OUTPUT_DIR}/reprepro"
+			declare OUTPUT_INFO_REPREPRO_CONF_DIR="${OUTPUT_INFO_REPREPRO_DIR}/conf"
+			run_host_command_logged mkdir -pv "${OUTPUT_INFO_REPREPRO_DIR}" "${OUTPUT_INFO_REPREPRO_CONF_DIR}"
+
+			# Export params so Python can see them
+			export REPO_GPG_KEYID="${REPO_GPG_KEYID}"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/repo-reprepro.py "${DEBS_TO_REPO_INFO_FILE}" "${OUTPUT_INFO_REPREPRO_DIR}" "${OUTPUT_INFO_REPREPRO_CONF_DIR}"
+
+			display_alert "Done with" "debs-to-repo-reprepro" "ext"
+
+			return 0 # stop here.
+		fi
+
 		### --- inventory --- ###
 
 		declare ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE="${BASE_INFO_OUTPUT_DIR}/all_boards_all_branches.json"
@@ -167,6 +203,17 @@ function cli_json_info_run() {
 		fi
 
 		### CI/CD Outputs.
+
+		# output stage: deploy debs to repo.
+		# Artifacts-to-repo output. Takes all artifacts, and produces info necessary for:
+		# 1) getting the artifact from OCI only (not build it)
+		# 2) getting the list of .deb's to be published to the repo for that artifact
+		display_alert "Generating deb-to-repo JSON output" "output-debs-to-repo-json" "info"
+		run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-debs-to-repo-json.py "${BASE_INFO_OUTPUT_DIR}" "${OUTDATED_ARTIFACTS_IMAGES_FILE}"
+		if [[ "${ARMBIAN_COMMAND}" == "debs-to-repo-json" ]]; then
+			display_alert "Done with" "output-debs-to-repo-json" "ext"
+			return 0
+		fi
 
 		# Output stage: GHA simplest possible two-matrix worflow.
 		# A prepare job running this, prepares two matrixes:

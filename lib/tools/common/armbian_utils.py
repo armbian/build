@@ -218,6 +218,7 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 	result = None
 	logs = []
 	try:
+		log.debug(f"Start calling Armbian command: {' '.join(exec_cmd)}")
 		result = subprocess.run(
 			exec_cmd,
 			stdout=subprocess.PIPE,
