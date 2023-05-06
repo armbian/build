@@ -289,6 +289,8 @@ class PatchInPatchFile:
 		self.deleted_file_names = []
 		self.renamed_file_names_source = []  # The original file names of renamed files
 		self.all_file_names_touched = []
+		self.rejects: str | None = None
+		self.patch_output: str | None = None
 
 	def parse_from_name_email(self, from_str: str) -> tuple["str | None", "str | None"]:
 		m = re.match(r'(?P<name>.*)\s*<\s*(?P<email>.*)\s*>', from_str)
@@ -426,7 +428,6 @@ class PatchInPatchFile:
 			with open(rejects_file, "r") as f:
 				reject_contents = f.read()
 				self.rejects = reject_contents
-				log.debug(f"Rejects file contents: {reject_contents}")
 			# delete it
 			os.remove(rejects_file)
 
@@ -444,15 +445,16 @@ class PatchInPatchFile:
 			self.actually_patched_files = parse_patch_stdout_for_files(stdout_output)
 			self.apply_patch_date_to_files(working_dir, options)
 
+		# Store the stdout and stderr output
+		patch_output = ""
+		patch_output += f"{stdout_output}\n" if stdout_output != "" else ""
+		patch_output += f"{stderr_output}\n" if stderr_output != "" else ""
+		self.patch_output = f"{patch_output}"
+
 		# Check if the exit code is not zero and bomb
 		if proc.returncode != 0:
-			# prefix each line of the stderr_output with "STDERR: ", then join again
-			stderr_output = "\n".join([f"STDERR: {line}" for line in stderr_output.splitlines()])
-			stderr_output = "\n" + stderr_output if stderr_output != "" else stderr_output
-			stdout_output = "\n".join([f"STDOUT: {line}" for line in stdout_output.splitlines()])
-			stdout_output = "\n" + stdout_output if stdout_output != "" else stdout_output
 			self.problems.append("failed_apply")
-			raise Exception(f"Failed to apply patch {self.parent.full_file_path()}:{stderr_output}{stdout_output}")
+			raise Exception(f"Failed to apply patch {self.parent.full_file_path()}")
 
 	def commit_changes_to_git(self, repo: git.Repo, add_rebase_tags: bool, split_patches: bool):
 		log.info(f"Committing changes to git: {self.parent.relative_dirs_and_base_file_name}")
@@ -609,6 +611,18 @@ class PatchInPatchFile:
 	def markdown_diffstat(self):
 		return f"`{self.text_diffstats()}`"
 
+	def text_files(self):
+		ret = []
+		max_files_shown = 15
+		file_names = list(self.patched_file_stats_dict.keys())
+		if len(file_names) == 0:
+			return "?"
+		for file_name in file_names[:max_files_shown]:
+			ret.append(f"{file_name}")
+		if len(file_names) > max_files_shown:
+			ret.append(f"and {len(file_names) - max_files_shown} more")
+		return ", ".join(ret)
+
 	def markdown_files(self):
 		ret = []
 		max_files_shown = 15
@@ -623,6 +637,11 @@ class PatchInPatchFile:
 			ret.append(f"_and {len(file_names) - max_files_shown} more_")
 		return ", ".join(ret)
 
+	def text_author(self):
+		if self.from_name:
+			return f"{self.from_name.strip()}"
+		return "[no Author]"
+
 	def markdown_author(self):
 		if self.from_name:
 			return f"`{self.from_name.strip()}`"
@@ -633,21 +652,52 @@ class PatchInPatchFile:
 			return f"_{self.subject}_"
 		return "`[no Subject]`"
 
+	def text_subject(self):
+		if self.subject:
+			return f"{self.subject}"
+		return "[no Subject]"
+
 	def markdown_link_to_patch(self):
 		if self.git_commit_hash is None:
 			return ""
 		return f"{self.git_commit_hash} "
 
-	def markdown_name(self):
+	def markdown_name(self, skip_markdown=False):
 		ret = []
+		escape = "`" if not skip_markdown else ""
 		patch_name = self.parent.relative_dirs_and_base_file_name
 		# if the basename includes slashes, split after the last slash, the first part is the directory, second the file
 		if "/" in self.parent.relative_dirs_and_base_file_name:
 			dir_name, patch_name = self.parent.relative_dirs_and_base_file_name.rsplit("/", 1)
 			if dir_name is not None:
-				ret.append(f"`[{dir_name}/]`")
-		ret.append(f"`{patch_name}`")
+				# get only the last part of the dir_name
+				dir_name = dir_name.split("/")[-1]
+				ret.append(f"{escape}[{dir_name}/]{escape}")
+		ret.append(f"{escape}{patch_name}{escape}")
 		return " ".join(ret)
+
+	def rich_name_status(self):
+		color = "green"
+		for problem in self.problems:
+			if problem in ["not_mbox", "needs_rebase"]:
+				color = "yellow"
+			else:
+				color = "red"
+		# @TODO: once our ansi-haste supports it, use [link url=file://blaaa]
+		return f"[bold {color}]{self.markdown_name(skip_markdown=True)}"
+
+	def rich_patch_output(self):
+		ret = self.patch_output
+		color_tags = {
+			'green': ['Reversed (or previously applied) patch detected!'],
+			'yellow': ['with fuzz', 'offset ', ' hunks ignored', ' hunk ignored'],
+			'red': ['hunk FAILED', 'hunks FAILED']
+		}
+		# use Rich's syntax highlighting to highlight with color
+		for color in color_tags:
+			for tag in color_tags[color]:
+				ret = ret.replace(tag, f"[bold {color}]{tag}[/bold {color}]")
+		return ret
 
 	def apply_patch_date_to_files(self, working_dir, options):
 		# The date applied to the patched files is:
