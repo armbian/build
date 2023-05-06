@@ -7,3 +7,4 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3399pro-rock-pi-n10.dtb"
 BOOT_SUPPORT_SPI=yes
+BOOT_SCENARIO="tpl-spl-blob"
