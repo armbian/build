@@ -47,23 +47,21 @@ class SummarizedMarkdownWriter:
 	def write(self, text):
 		self.contents += text
 
-	# see https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/organizing-information-with-collapsed-sections
-	def get_summarized_markdown(self):
+	def validate(self):
 		if len(self.title) == 0:
 			raise Exception("Markdown Summary Title not set")
 		if len(self.summary) == 0:
 			raise Exception("Markdown Summary not set")
 		if self.contents == "":
 			raise Exception("Markdown Contents not set")
+
+	# see https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/organizing-information-with-collapsed-sections
+	def get_summarized_markdown(self):
+		self.validate()
 		return f"<details><summary>{self.title}: {'; '.join(self.summary)}</summary>\n<p>\n\n{self.contents}\n\n</p></details>\n"
 
 	def get_readme_markdown(self):
-		if len(self.title) == 0:
-			raise Exception("Markdown Summary Title not set")
-		if len(self.summary) == 0:
-			raise Exception("Markdown Summary not set")
-		if self.contents == "":
-			raise Exception("Markdown Contents not set")
+		self.validate()
 		return f"#### {self.title}: {'; '.join(self.summary)}\n\n{self.contents}\n\n"
 
 
@@ -88,7 +86,7 @@ jobs:
         run: |
           curl -s https://raw.githubusercontent.com/${{ github.repository }}/${BRANCH_NAME}/README.md > README.md
           ls -la README.md
-      
+
       # install grip via pip, https://github.com/joeyespo/grip; rpardini's fork https://github.com/rpardini/grip
       - name: Install grip
         run: |
