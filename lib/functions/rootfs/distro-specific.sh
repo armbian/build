@@ -34,7 +34,7 @@ function install_distribution_specific() {
 				if [[ -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
 					sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
 				else
-					display_alert "DNS fix" "/etc/systemd/resolved.conf not found: ${DISTRIBUTION} ${RELEASE}" "wrn"
+					display_alert "DNS fix" "/etc/systemd/resolved.conf not found: ${DISTRIBUTION} ${RELEASE}" "info"
 				fi
 			fi
 
