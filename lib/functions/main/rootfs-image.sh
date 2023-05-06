@@ -42,6 +42,16 @@ function build_rootfs_and_image() {
 	# remove packages that are no longer needed. rootfs cache + uninstall might have leftovers.
 	LOG_SECTION="apt_purge_unneeded_packages_and_clean_apt_caches" do_with_logging apt_purge_unneeded_packages_and_clean_apt_caches
 
+	# for IMAGES (not the rootfs cache!), we wanna ship a valid /var/lib/apt/lists.
+	# copy it over from the host-side cache into the image, and run a final apt-get update+clean, to clean off what is not needed for this specific image.
+	LOG_SECTION="apt_lists_copy_from_host_to_image_and_update" do_with_logging apt_lists_copy_from_host_to_image_and_update
+
+	# creating xapian index that synaptic runs faster
+	if [[ "${BUILD_DESKTOP}" == yes ]]; then
+		display_alert "Recreating Synaptic search index" "Please wait - updating Xapian index for image" "info"
+		chroot_sdcard "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u"
+	fi
+
 	# for reference, debugging / sanity checking
 	LOG_SECTION="list_installed_packages" do_with_logging list_installed_packages
 

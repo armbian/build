@@ -112,7 +112,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	# Done with debootstrap. Clean-up it's litterbox.
 	display_alert "Cleaning up after debootstrap" "debootstrap cleanup" "info"
-	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt"
+	run_host_command_logged rm -rf "${SDCARD}/var/cache/apt" "${SDCARD}/var/lib/apt/lists"
 
 	local_apt_deb_cache_prepare "after debootstrap second stage" # just for size reference in logs
 
@@ -226,12 +226,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	local free_space
 	free_space=$(LC_ALL=C df -h)
 	display_alert "Free disk space on rootfs" "SDCARD: $(echo -e "${free_space}" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
-
-	# creating xapian index that synaptic runs faster # @TODO: yes, but better done board-side on first run
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		display_alert "Recreating Synaptic search index" "Please wait" "info"
-		chroot_sdcard "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u || true"
-	fi
 
 	# this is needed for the build process later since resolvconf generated file in /run is not saved
 	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
