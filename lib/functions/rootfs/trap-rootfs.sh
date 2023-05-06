@@ -25,7 +25,7 @@ function prepare_rootfs_build_params_and_trap() {
 
 	# @TODO: well those are very... arbitrary numbers. At least when using cached rootfs, we can be more precise.
 	# predicting the size of tmpfs is hard/impossible, so would be nice to show the used size at the end so we can tune.
-	declare -i tmpfs_estimated_size=2000                     # MiB
+	declare -i tmpfs_estimated_size=2300                     # MiB - bumped from 2000, empirically
 	[[ $BUILD_DESKTOP == yes ]] && tmpfs_estimated_size=5000 # MiB
 
 	declare use_tmpfs=no                      # by default
