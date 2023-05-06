@@ -174,6 +174,7 @@ function local_apt_deb_cache_prepare() {
 				sdcard_var_cache_apt_size_mb=$(du -sm "${sdcard_var_cache_apt_dir}" | cut -f1)
 				if [[ "${sdcard_var_cache_apt_size_mb}" -gt 0 ]]; then
 					display_alert "WARNING: SDCARD /var/cache/apt dir is not empty" "${when_used} :: ${sdcard_var_cache_apt_dir} (${sdcard_var_cache_apt_size_mb} MB)" "wrn"
+					run_host_command_logged ls -lahtR "${sdcard_var_cache_apt_dir}" # list the contents so we can try and identify what is polluting it
 				fi
 			fi
 		fi
@@ -186,6 +187,7 @@ function local_apt_deb_cache_prepare() {
 				sdcard_var_lib_apt_lists_size_mb=$(du -sm "${sdcard_var_lib_apt_lists_dir}" | cut -f1)
 				if [[ "${sdcard_var_lib_apt_lists_size_mb}" -gt 0 ]]; then
 					display_alert "WARNING: SDCARD /var/lib/apt/lists dir is not empty" "${when_used} :: ${sdcard_var_lib_apt_lists_dir} (${sdcard_var_lib_apt_lists_size_mb} MB)" "wrn"
+					run_host_command_logged ls -lahtR "${sdcard_var_lib_apt_lists_dir}" # list the contents so we can try and identify what is polluting it
 				fi
 			fi
 		fi
