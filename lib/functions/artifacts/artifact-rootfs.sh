@@ -121,11 +121,11 @@ function artifact_rootfs_cli_adapter_config_prep() {
 
 	# If BOARD is set, use it to convert to an ARCH.
 	if [[ -n ${BOARD} ]]; then
-		display_alert "BOARD is set, converting to ARCH for rootfs building" "'BOARD=${BOARD}'" "warn"
+		display_alert "BOARD is set, converting to ARCH for rootfs building" "'BOARD=${BOARD}'" "info"
 		# Convert BOARD to ARCH; source the BOARD and FAMILY stuff
 		LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
 		LOG_SECTION="source_family_config_and_arch" do_with_conditional_logging source_family_config_and_arch
-		display_alert "Done sourcing board file" "'${BOARD}' - arch: '${ARCH}'" "warn"
+		display_alert "Done sourcing board file" "'${BOARD}' - arch: '${ARCH}'" "info"
 	fi
 
 	declare -a vars_need_to_be_set=("RELEASE" "ARCH")
