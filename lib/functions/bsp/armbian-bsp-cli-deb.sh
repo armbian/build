@@ -218,7 +218,7 @@ function get_bootscript_info() {
 		fi
 	elif [[ $SRC_EXTLINUX == yes ]]; then
 		bootscript_info[has_extlinux]="yes"
-		display_alert "Using extlinux, regular bootscripts ignored" "SRC_EXTLINUX=${SRC_EXTLINUX}" "warn"
+		display_alert "Using extlinux, regular bootscripts ignored" "SRC_EXTLINUX=${SRC_EXTLINUX}" "info"
 	fi
 
 	debug_dict bootscript_info
