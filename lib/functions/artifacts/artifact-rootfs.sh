@@ -17,7 +17,7 @@ function artifact_rootfs_config_dump() {
 	artifact_input_variables[DESKTOP_APPGROUPS_SELECTED]="${DESKTOP_APPGROUPS_SELECTED:-"no_DESKTOP_APPGROUPS_SELECTED_set"}"
 	# Hash of the packages added/removed by extensions
 	declare pkgs_hash="undetermined"
-	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]}" | sha256sum | cut -d' ' -f1)"
+	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]} ${PACKAGE_LIST_BOARD_REMOVE} ${PACKAGE_LIST_FAMILY_REMOVE}" | sha256sum | cut -d' ' -f1)"
 	artifact_input_variables[EXTRA_PKG_ADD_REMOVE_HASH]="${pkgs_hash}"
 }
 
