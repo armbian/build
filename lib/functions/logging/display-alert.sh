@@ -198,7 +198,7 @@ function display_alert() {
 	echo -e "${normal_color}${left_marker:-}${padding:-}${level_indicator}${padding}${normal_color}${right_marker:-}${timing_info}${pids_info}${bashopts_info} ${normal_color}${message}${extra}${normal_color}" >&2
 
 	# Now write to CI, if we're running on it. Remove ANSI escapes which confuse GitHub Actions.
-	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]]; then
+	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]] && [[ "${skip_ci_special:-"no"}" != "yes" ]]; then
 		echo -e "::${ci_log} ::" "${1} ${2}" | sed 's/\x1b\[[0-9;]*m//g' >&2
 	fi
 
