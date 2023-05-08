@@ -6,4 +6,5 @@ KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_SUPPORT_SPI=yes
+BOOT_SCENARIO="tpl-spl-blob"
 ASOUND_STATE="asound.state.rk3399"
