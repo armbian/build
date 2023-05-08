@@ -11,10 +11,9 @@
 function full_build_packages_rootfs_and_image() {
 	error_if_kernel_only_set
 
-	# Detour, stop if KERNEL_CONFIGURE=yes
+	# Detour, warn the user about KERNEL_CONFIGURE=yes if it is set.
 	if [[ "${KERNEL_CONFIGURE}" == "yes" ]]; then
-		display_alert "KERNEL_CONFIGURE=yes during image build is not supported anymore." "First, run './compile.sh BOARD=${BOARD} BRANCH=${BRANCH} kernel-config'; then commit your changes; then build the image as normal. This workflow ensures consistent hashing results." "wrn"
-		exit_with_error "KERNEL_CONFIGURE=yes during image build is not supported anymore. Please use the new 'kernel-config' CLI command."
+		display_alert "KERNEL_CONFIGURE=yes during image build is deprecated." "It still works, but please prefer the new way. First, run './compile.sh BOARD=${BOARD} BRANCH=${BRANCH} kernel-config'; then commit your changes; then build the image as normal. This workflow ensures consistent hashing results." "wrn"
 	fi
 
 	# Detour, stop if UBOOT_CONFIGURE=yes
