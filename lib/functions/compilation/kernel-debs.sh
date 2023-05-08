@@ -81,7 +81,7 @@ function prepare_kernel_packaging_debs() {
 		display_alert "Packaging linux-headers" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
 	else
-		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "warn"
+		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "info"
 	fi
 }
 
