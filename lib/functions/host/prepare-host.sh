@@ -174,7 +174,7 @@ function prepare_host_noninteractive() {
 						display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
 						if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
 							display_alert "Trying to update binfmts - aarch64 (sometimes) does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "||" "true" # don't fail.
+							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "&>" "/dev/null" "||" "true" # don't fail nor produce output, which can be misleading.
 						else
 							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err" # log & continue on failure
 						fi
