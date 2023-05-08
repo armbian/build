@@ -578,7 +578,8 @@ function docker_cli_launch() {
 		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successfull" "info"
 	else
 		docker_build_result=$? # capture exit code of test done 4 lines above.
-		display_alert "-------------Docker run failed after ${SECONDS}s--------------------------" "🐳 failed" "err"
+		# No use polluting GHA/CI with notices about Docker failure (real failure, inside Docker, generated enough errors already) skip_ci_special="yes"
+		skip_ci_special="yes" display_alert "-------------Docker run failed after ${SECONDS}s--------------------------" "🐳 failed" "err"
 	fi
 
 	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
