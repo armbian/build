@@ -172,13 +172,12 @@ function prepare_host_noninteractive() {
 				if [[ "${host_arch}" != "${wanted_arch}" ]]; then
 					if [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" ]]; then
 						display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-						run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || {
-							if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
-								display_alert "Failed to update binfmts - this is expected: aarch64 does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-							else
-								display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err"
-							fi
-						}
+						if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
+							display_alert "Trying to update binfmts - aarch64 (sometimes) does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
+							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "||" "true" # don't fail.
+						else
+							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err" # log & continue on failure
+						fi
 					fi
 				fi
 			done
@@ -277,12 +276,12 @@ function adaptative_prepare_host_dependencies() {
 		zlib1g-dev
 
 		# by-category below
-		file tree expect                           # logging utilities; expect is needed for 'unbuffer' command
-		colorized-logs                             # for ansi2html, ansi2txt, pipetty
-		unzip zip pigz xz-utils pbzip2 lzop zstd   # compressors et al
-		parted gdisk fdisk                         # partition tools @TODO why so many?
-		aria2 curl wget axel                       # downloaders et al
-		parallel                                   # do things in parallel (used for fast md5 hashing in initrd cache)
+		file tree expect                         # logging utilities; expect is needed for 'unbuffer' command
+		colorized-logs                           # for ansi2html, ansi2txt, pipetty
+		unzip zip pigz xz-utils pbzip2 lzop zstd # compressors et al
+		parted gdisk fdisk                       # partition tools @TODO why so many?
+		aria2 curl wget axel                     # downloaders et al
+		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
 	)
 
 	# @TODO: distcc -- handle in extension?
