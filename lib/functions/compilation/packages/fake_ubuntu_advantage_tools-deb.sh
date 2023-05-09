@@ -31,6 +31,8 @@ function compile_fake_ubuntu_advantage_tools() {
 		Conflicts: ubuntu-advantage-tools
 		Breaks: ubuntu-advantage-tools
 		Provides: ubuntu-advantage-tools (= 65535)
+		Priority: optional
+		Section: admin
 		Description: Ban ubuntu-advantage-tools while satisfying ubuntu-minimal dependency
 	END
 
