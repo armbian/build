@@ -43,6 +43,7 @@ function armbian_register_commands() {
 		# all-around artifact wrapper
 		["artifact"]="artifact"                  # implemented in cli_artifact_pre_run and cli_artifact_run
 		["artifact-config-dump-json"]="artifact" # implemented in cli_artifact_pre_run and cli_artifact_run
+		["download-artifact"]="artifact"         # implemented in cli_artifact_pre_run and cli_artifact_run
 
 		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
 		["rootfs"]="artifact"
