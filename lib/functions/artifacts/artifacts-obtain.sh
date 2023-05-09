@@ -350,6 +350,8 @@ function unpack_artifact_from_local_cache() {
 		if [[ "${any_missing}" == "yes" ]]; then
 			display_alert "Files missing from deb-tar" "this is a bug, please report it. artifact_name: '${artifact_name}' artifact_version: '${artifact_version}'" "err"
 		fi
+		# either way, get rid of the .tar now.
+		run_host_command_logged rm -fv "${artifact_final_file}"
 	fi
 	return 0
 }
@@ -366,6 +368,24 @@ function upload_artifact_to_oci() {
 
 function is_artifact_available_in_local_cache() {
 	artifact_exists_in_local_cache="no" # outer scope
+
+	if [[ "${artifact_type}" == "deb-tar" ]]; then
+		declare any_missing="no"
+		declare deb_name
+		for deb_name in "${artifact_map_debs[@]}"; do
+			declare new_name_full="${artifact_base_dir}/${deb_name}"
+			if [[ ! -f "${new_name_full}" ]]; then
+				display_alert "Checking local cache" "deb-tar: ${artifact_final_file_basename} missing: ${new_name_full}" "debug"
+				any_missing="yes"
+			fi
+		done
+		if [[ "${any_missing}" == "no" ]]; then
+			display_alert "Checking local cache" "deb-tar: ${artifact_final_file_basename} nothing missing" "debug"
+			artifact_exists_in_local_cache="yes" # outer scope
+			return 0
+		fi
+	fi
+
 	if [[ -f "${artifact_final_file}" ]]; then
 		artifact_exists_in_local_cache="yes" # outer scope
 	fi
