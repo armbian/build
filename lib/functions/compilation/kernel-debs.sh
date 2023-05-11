@@ -47,12 +47,9 @@ function prepare_kernel_packaging_debs() {
 	declare kernel_dest_install_dir="${2}"
 	# This needs to use the `kernelrelease` make command instead of grab_version so that localversion
 	# files introduced by kernel patches in the patching step are honored
-	declare kernel_version="${3}"
+	declare kernel_version_family="${3}"
 	declare -n tmp_kernel_install_dirs="${4}" # nameref to 	declare -n kernel_install_dirs dictionary
 	declare debs_target_dir="${kernel_work_dir}/.."
-
-	# Some variables and settings used throughout the script
-	declare kernel_version_family="${kernel_version}"
 
 	# Package version. Affects users upgrading from repo!
 	display_alert "Kernel .deb package version" "${artifact_version}" "info"
@@ -247,7 +244,7 @@ function kernel_package_callback_linux_image() {
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
 		Package: ${package_name}
 		Version: ${artifact_version}
-		Source: linux-${kernel_version}
+		Source: linux-${kernel_version_family}
 		Architecture: ${ARCH}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
