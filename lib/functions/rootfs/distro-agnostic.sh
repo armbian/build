@@ -153,7 +153,7 @@ function install_distribution_agnostic() {
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
 		sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}\"/" "${SDCARD}"/etc/os-release
 	else
-		display_alert "distro-agnostic: KEEP_ORIGINAL_OS_RELEASE" "Keeping original /etc/os-release's PRETTY_NAME as original" "warn"
+		display_alert "distro-agnostic: KEEP_ORIGINAL_OS_RELEASE" "Keeping original /etc/os-release's PRETTY_NAME as original" "info"
 	fi
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even

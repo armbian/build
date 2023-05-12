@@ -68,6 +68,8 @@ function initialize_artifact() {
 }
 
 function obtain_complete_artifact() {
+	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
+
 	declare -g artifact_name="undetermined"
 	declare -g artifact_type="undetermined"
 	declare -g artifact_version="undetermined"
@@ -102,8 +104,10 @@ function obtain_complete_artifact() {
 	[[ "x${artifact_base_dir}x" == "xx" || "${artifact_base_dir}" == "undetermined" ]] && exit_with_error "artifact_base_dir is not set after artifact_prepare_version"
 	[[ "x${artifact_final_file}x" == "xx" || "${artifact_final_file}" == "undetermined" ]] && exit_with_error "artifact_final_file is not set after artifact_prepare_version"
 
-	# validate artifact_version begins with artifact_prefix_version
-	[[ "${artifact_version}" =~ ^${artifact_prefix_version} ]] || exit_with_error "artifact_version '${artifact_version}' does not begin with artifact_prefix_version '${artifact_prefix_version}'"
+	# validate artifact_version begins with artifact_prefix_version when building deb packages (or deb-tar)
+	if [[ "${artifact_type}" != "tar.zst" ]]; then
+		[[ "${artifact_version}" =~ ^${artifact_prefix_version} ]] || exit_with_error "artifact_version '${artifact_version}' does not begin with artifact_prefix_version '${artifact_prefix_version}'"
+	fi
 
 	# validate artifact_type... it must be one of the supported types
 	case "${artifact_type}" in
@@ -225,6 +229,12 @@ function obtain_complete_artifact() {
 		# Not found in any cache, so we need to build it.
 		# @TODO: if deploying to remote cache, force high compression, DEB_COMPRESS="xz"
 		artifact_build_from_sources # definitely will end up having its own logging sections
+
+		# For interactive stuff like patching or configuring, we wanna stop here. No artifact file will be created.
+		if [[ "${ARTIFACT_WILL_NOT_BUILD}" == "yes" ]]; then
+			display_alert "artifact" "ARTIFACT_WILL_NOT_BUILD is set, stopping after non-build." "debug"
+			return 0
+		fi
 
 		# pack the artifact to local cache (eg: for deb-tar)
 		LOG_SECTION="pack_artifact_to_local_cache" do_with_logging pack_artifact_to_local_cache

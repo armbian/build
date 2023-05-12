@@ -58,6 +58,8 @@ function create_image_from_sdcard_rootfs() {
 	display_alert "Copying files to" "/boot (MOUNT /boot)"
 	if [[ $(findmnt --noheadings --output FSTYPE --target "$MOUNT/boot" --uniq) == vfat ]]; then
 		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # fat32
+		# @TODO: -L causes symlinks to be replaced with copies, but what if they don't exist?
+		# Also: what's the sense in replacing symlinks with copies?
 	else
 		run_host_command_logged rsync -aHWXh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # ext4
 	fi

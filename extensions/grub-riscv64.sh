@@ -23,7 +23,7 @@ function extension_prepare_config__prepare_grub-riscv64() {
 		exit_with_error "${DISTRIBUTION} is not supported yet"
 	fi
 
-	add_packages_to_image efibootmgr efivar cloud-initramfs-growroot os-prober "grub-efi-${ARCH}-bin" "grub-efi-${ARCH}"
+	add_packages_to_image efibootmgr efivar cloud-initramfs-growroot busybox os-prober "grub-efi-${ARCH}-bin" "grub-efi-${ARCH}"
 
 	display_alert "Activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; target=${UEFI_GRUB_TARGET}" ""
 }

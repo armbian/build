@@ -70,5 +70,10 @@ function cli_artifact_run() {
 		skip_unpack_if_found_in_caches="no"
 	fi
 
-	do_with_default_build obtain_complete_artifact # @TODO: < /dev/null -- but what about kernel configure?
+	if [[ "${ARTIFACT_BUILD_INTERACTIVE}" == "yes" ]]; then # Set by `kernel-config`, `kernel-patch`, `uboot-config`, `uboot-patch`, etc.
+		display_alert "Running artifact build in interactive mode" "log file will be incomplete" "info"
+		do_with_default_build obtain_complete_artifact
+	else
+		do_with_default_build obtain_complete_artifact < /dev/null
+	fi
 }

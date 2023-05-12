@@ -106,52 +106,123 @@ process_patch_file() {
 	return 0 # short-circuit above, avoid exiting with error
 }
 
-userpatch_create() {
-	display_alert "@TODO" "@TODO armbian-next" "warn"
-	# create commit to start from clean source
-	git add .
-	git -c user.name='Armbian User' -c user.email='user@example.org' commit -q -m "Cleaning working copy"
+function userpatch_create() {
+	declare patch_type="${1}"
+
+	declare -a common_git_params=(
+		"-c" "commit.gpgsign=false"
+		"-c" "user.name='${MAINTAINER}'"
+		"-c" "user.email='${MAINTAINERMAIL}'"
+	)
+
+	# export the commit as a patch
+	declare formatpatch_params=(
+		"-1" "HEAD" "--stdout"
+		"--unified=5"    # force 5 lines of diff context
+		"--keep-subject" # do not add a prefix to the subject "[PATCH] "
+		'--signature' "'Created with Armbian build tools https://github.com/armbian/build'"
+		'--stat=120'            # 'wider' stat output; default is 80
+		'--stat-graph-width=10' # shorten the diffgraph graph part, it's too long
+		"--zero-commit"         # Output an all-zero hash in each patch’s From header instead of the hash of the commit.
+	)
+
+	# if stdin is not a terminal, bail out
+	[[ -t 0 ]] || exit_with_error "patching: stdin is not a terminal"
+	[[ -t 1 ]] || exit_with_error "patching: stdout is not a terminal"
+
+	# Display a header with instructions about MAINTAINER and MAINTAINERMAIL
+	display_alert "Starting" "interactive patching process for ${patch_type}" "ext"
+
+	# create commit to start from clean source; don't fail.
+	display_alert "Creating commit to start from clean source" "" "info"
+	run_host_command_logged git "${common_git_params[@]}" add . "||" true
+	run_host_command_logged git "${common_git_params[@]}" commit -q -m "'Previous changes made by Armbian'" "||" true
+
+	display_alert "Patches will be created" "with the following maintainer information" "info"
+	display_alert "MAINTAINER (Real name): " "${MAINTAINER}" "info"
+	display_alert "MAINTAINERMAIL (Email): " "${MAINTAINERMAIL}" "info"
+	display_alert "If those are not correct, set them in your environment, command line, or config file and restart the process" "" ""
 
 	mkdir -p "${DEST}/patch"
-	local patch="$DEST/patch/$1-$LINUXFAMILY-$BRANCH.patch"
-
-	# apply previous user debug mode created patches
-	if [[ -f $patch ]]; then
-		display_alert "Applying existing $1 patch" "$patch" "wrn" && patch --batch --silent -p1 -N < "${patch}"
-		# read title of a patch in case Git is configured
-		if [[ -n $(git config user.email) ]]; then
-			COMMIT_MESSAGE=$(cat "${patch}" | grep Subject | sed -n -e '0,/PATCH/s/.*PATCH]//p' | xargs)
-			display_alert "Patch name extracted" "$COMMIT_MESSAGE" "wrn"
-		fi
-	fi
+	declare patch="${DEST}/patch/${patch_type}-${LINUXFAMILY}-${BRANCH}.patch"
 
 	# prompt to alter source
 	display_alert "Make your changes in this directory:" "$(pwd)" "wrn"
-	display_alert "Press <Enter> after you are done" "waiting" "wrn"
-	read -r < /dev/tty
-	tput cuu1
-	git add .
-	# create patch out of changes
-	if ! git diff-index --quiet --cached HEAD; then
-		# If Git is configured, create proper patch and ask for a name
-		if [[ -n $(git config user.email) ]]; then
-			display_alert "Add / change patch name" "$COMMIT_MESSAGE" "wrn"
-			read -e -p "Patch description: " -i "$COMMIT_MESSAGE" COMMIT_MESSAGE
-			[[ -z "$COMMIT_MESSAGE" ]] && COMMIT_MESSAGE="Patching something"
-			git commit -s -m "$COMMIT_MESSAGE"
-			git format-patch -1 HEAD --stdout --signature="Created with Armbian build tools https://github.com/armbian/build" > "${patch}"
-			PATCHFILE=$(git format-patch -1 HEAD)
-			rm $PATCHFILE # delete the actual file
-			# create a symlink to have a nice name ready
-			find $DEST/patch/ -type l -delete # delete any existing
-			ln -sf $patch $DEST/patch/$PATCHFILE
-		else
-			git diff --staged > "${patch}"
-		fi
-		display_alert "You will find your patch here:" "$patch" "info"
-	else
-		display_alert "No changes found, skipping patch creation" "" "wrn"
+	if [[ "${ARMBIAN_RUNNING_IN_CONTAINER}" == "yes" ]]; then
+		display_alert "You are running in a container" "Path shown above might not match host system, be aware." "wrn"
 	fi
-	git reset --soft HEAD~
-	for i in {3..1..1}; do echo -n "$i." && sleep 1; done
+
+	# If the ${patch} file already exists, offer to apply it before continuing patching.
+	if [[ -f "${patch}" ]]; then
+		display_alert "A previously-created patch file already exists!" "${patch}" "wrn"
+		declare apply_patch
+		read -r -e -p "Do you want to apply it before continuing? [y/N] " apply_patch
+		if [[ "${apply_patch}" == "y" ]]; then
+			display_alert "Applying patch" "${patch}" "info"
+			run_host_command_logged git "${common_git_params[@]}" apply "${patch}" || display_alert "Patch failed to apply, continuing..." "${patch}" "wrn"
+		fi
+	fi
+
+	# Enter a loop, waiting for ENTER, then showing the git diff, and have the user confirm he is happy with patch
+	declare user_happy="no"
+	while [[ "${user_happy}" != "yes" ]]; do
+		display_alert "Press <ENTER> after you are done" "editing files in $(pwd)" "wrn"
+		# Wait for user to press ENTER
+		declare stop_patching
+		read -r -e -p "Press ENTER to show a preview of your patch, or type 'stop' to stop patching..." stop_patching
+		[[ "${stop_patching}" == "stop" ]] && exit_with_error "Aborting due to" "user request"
+
+		# Detect if there are any changes done to the working tree
+		declare -i changes_in_working_tree
+		changes_in_working_tree=$(git "${common_git_params[@]}" status --porcelain | wc -l)
+		if [[ ${changes_in_working_tree} -lt 1 ]]; then
+			display_alert "No changes detected!" "No changes in the working tree, please edit files and try again" "wrn"
+			continue # no changes, loop again
+		fi
+
+		display_alert "OK, here's how your diff looks like" "showing patch diff" "info"
+		git "${common_git_params[@]}" diff | run_tool_batcat --file-name "${patch}" -
+
+		# Prompt the user if he is happy with the patch
+		display_alert "Are you happy with this patch?" "Type 'yes' to accept, 'stop' to stop patching, or anything else to keep patching" "wrn"
+
+		# Wait for user to type yes or no
+		read -r -e -p "Are you happy with the diff above? Type 'y' or 'yes' to accept, 'stop' to stop patching, anything else to keep patching: " -i "" user_happy
+
+		declare first_uppercase_character_of_user_happy="${user_happy:0:1}"
+		first_uppercase_character_of_user_happy="${first_uppercase_character_of_user_happy^^}"
+		[[ "${first_uppercase_character_of_user_happy}" == "Y" ]] && break
+
+		[[ "${first_uppercase_character_of_user_happy}" == "S" ]] && exit_with_error "Aborting due to user request"
+
+		display_alert "Not happy? No problem!" "just keep on editing the files..." "wrn"
+	done
+
+	display_alert "OK, user is happy with diff" "proceeding with patch creation" "ext"
+
+	run_host_command_logged git add .
+
+	# create patch out of changes
+	if ! git "${common_git_params[@]}" diff-index --quiet --cached HEAD; then
+
+		# Default the patch_commit_message.
+		# Get a list of all the filenames in the git diff into a bash array...
+		declare -a changed_filenames=($(git "${common_git_params[@]}" diff-index --cached --name-only HEAD))
+		display_alert "Names of the changed files" "${changed_filenames[*]@Q}" "info"
+		declare patch_commit_message="Patching ${patch_type} ${LINUXFAMILY} files ${changed_filenames[*]@Q}"
+
+		# If Git is configured, create proper patch and ask for a name
+		display_alert "Add / change patch name" "${patch_commit_message}" "wrn"
+		read -e -p "Patch Subject: " -i "${patch_commit_message}" patch_commit_message
+		[[ -z "${patch_commit_message}" ]] && patch_commit_message="Patching something unknown and mysterious"
+		run_host_command_logged git "${common_git_params[@]}" commit -s -m "'${patch_commit_message}'"
+		run_host_command_logged git "${common_git_params[@]}" format-patch "${formatpatch_params[@]}" ">" "${patch}"
+
+		display_alert "You will find your patch here:" "${patch}" "info"
+		run_tool_batcat --file-name "${patch}" "${patch}"
+		display_alert "You will find your patch here:" "${patch}" "info"
+		display_alert "Now you can manually move the produced patch to your userpatches or core patches to have it included in the next build" "${patch}" "ext"
+	else
+		display_alert "No changes found, skipping patch creation" "" "err"
+	fi
 }

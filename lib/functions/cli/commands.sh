@@ -20,11 +20,16 @@ function armbian_register_commands() {
 		["requirements"]="requirements" # implemented in cli_requirements_pre_run and cli_requirements_run
 
 		# Given a board/config/exts, dump out the (non-userspace) JSON of configuration
-		["configdump"]="config_dump_json"       # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
-		["config-dump-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["configdump"]="config_dump_json"          # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump"]="config_dump_json"         # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump-json"]="config_dump_json"    # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
+		["config-dump-no-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["json-info-boards"]="json_info"               # implemented in cli_json_info_pre_run and cli_json_info_run
-		["write-all-boards-branches-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-matrix"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-workflow"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-template"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
@@ -43,10 +48,13 @@ function armbian_register_commands() {
 		["rootfs"]="artifact"
 
 		["kernel"]="artifact"
+		["kernel-patch"]="artifact"
 		["kernel-config"]="artifact"
 
-		["u-boot"]="artifact"
 		["uboot"]="artifact"
+		["uboot-patch"]="artifact"
+		["atf-patch"]="artifact"
+		["uboot-config"]="artifact"
 
 		["firmware"]="artifact"
 		["firmware-full"]="artifact"
@@ -65,6 +73,9 @@ function armbian_register_commands() {
 	# common for all CLI-based artifact shortcuts
 	declare common_cli_artifact_vars=""
 
+	# common for interactive artifact shortcuts (configure, patch, etc)
+	declare common_cli_artifact_interactive_vars="ARTIFACT_WILL_NOT_BUILD='yes' ARTIFACT_BUILD_INTERACTIVE='yes' ARTIFACT_IGNORE_CACHE='yes'"
+
 	# Vars to be set for each command. Optional.
 	declare -g -A ARMBIAN_COMMANDS_TO_VARS_DICT=(
 		["docker-purge"]="DOCKER_SUBCMD='purge'"
@@ -79,11 +90,14 @@ function armbian_register_commands() {
 		# artifact shortcuts
 		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
 
-		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_BUILD_INTERACTIVE='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
 		["kernel"]="WHAT='kernel' ${common_cli_artifact_vars}"
+		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
+		["kernel-patch"]="WHAT='kernel' CREATE_PATCHES='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 
 		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"
-		["u-boot"]="WHAT='uboot' ${common_cli_artifact_vars}"
+		["uboot-config"]="WHAT='uboot' UBOOT_CONFIGURE='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
+		["uboot-patch"]="WHAT='uboot' CREATE_PATCHES='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
+		["atf-patch"]="WHAT='uboot' CREATE_PATCHES_ATF='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 
 		["firmware"]="WHAT='firmware' ${common_cli_artifact_vars}"
 		["firmware-full"]="WHAT='full_firmware' ${common_cli_artifact_vars}"

@@ -68,7 +68,7 @@ function artifact_armbian-plymouth-theme_cli_adapter_config_prep() {
 }
 
 function artifact_armbian-plymouth-theme_get_default_oci_target() {
-	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-packages/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
 }
 
 function artifact_armbian-plymouth-theme_is_available_in_local_cache() {

@@ -15,6 +15,7 @@ function artifact_kernel_config_dump() {
 	artifact_input_variables[KERNELSOURCE]="${KERNELSOURCE}"
 	artifact_input_variables[KERNELBRANCH]="${KERNELBRANCH}"
 	artifact_input_variables[KERNELPATCHDIR]="${KERNELPATCHDIR}"
+	artifact_input_variables[ARCH]="${ARCH}"
 }
 
 # This is run in a logging section.
@@ -98,6 +99,13 @@ function artifact_kernel_prepare_version() {
 	calculate_hash_for_all_files_in_dirs "${SRC}/patch/kernel/${KERNELPATCHDIR}" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
 	patches_hash="${hash_files}"
 	declare kernel_patches_hash_short="${patches_hash:0:${short_hash_size}}"
+
+	# detour: if CREATE_PATCHES=yes, then force "999999" (six-nines)
+	if [[ "${CREATE_PATCHES}" == "yes" ]]; then
+		display_alert "Forcing kernel patches hash to 999999" "due to CREATE_PATCHES=yes" "info"
+		patches_hash="999999 (CREATE_PATCHES=yes, unable to hash)"
+		kernel_patches_hash_short="999999"
+	fi
 
 	# get the .config hash... also userpatches...
 	declare kernel_config_source_filename="" # which actual .config was used?
@@ -201,7 +209,10 @@ function artifact_kernel_prepare_version() {
 
 function artifact_kernel_build_from_sources() {
 	compile_kernel
-	display_alert "Kernel build finished" "${artifact_version_reason}" "info"
+
+	if [[ "${ARTIFACT_WILL_NOT_BUILD}" != "yes" ]]; then # true if kernel-patch, kernel-config, etc.
+		display_alert "Kernel build finished" "${artifact_version_reason}" "info"
+	fi
 }
 
 function artifact_kernel_cli_adapter_pre_run() {
@@ -212,11 +223,21 @@ function artifact_kernel_cli_adapter_pre_run() {
 }
 
 function artifact_kernel_cli_adapter_config_prep() {
+	# Sanity check / cattle guard
+	# If KERNEL_CONFIGURE=yes, or CREATE_PATCHES=yes, user must have used the correct CLI commands, and only add those params.
+	if [[ "${KERNEL_CONFIGURE}" == "yes" && "${ARMBIAN_COMMAND}" != "kernel-config" ]]; then
+		exit_with_error "KERNEL_CONFIGURE=yes is not supported anymore. Please use the new 'kernel-config' CLI command. Current command: '${ARMBIAN_COMMAND}'"
+	fi
+
+	if [[ "${CREATE_PATCHES}" == "yes" && "${ARMBIAN_COMMAND}" != "kernel-patch" ]]; then
+		exit_with_error "CREATE_PATCHES=yes is not supported anymore. Please use the new 'kernel-patch' CLI command. Current command: '${ARMBIAN_COMMAND}'"
+	fi
+
 	use_board="yes" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
 function artifact_kernel_get_default_oci_target() {
-	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-kernel/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
 }
 
 function artifact_kernel_is_available_in_local_cache() {

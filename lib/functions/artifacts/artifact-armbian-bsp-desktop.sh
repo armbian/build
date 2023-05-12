@@ -93,7 +93,7 @@ function artifact_armbian-bsp-desktop_cli_adapter_config_prep() {
 }
 
 function artifact_armbian-bsp-desktop_get_default_oci_target() {
-	artifact_oci_target_base="${GHCR_SOURCE}/armbian/cache-packages/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
 }
 
 function artifact_armbian-bsp-desktop_is_available_in_local_cache() {

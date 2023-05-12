@@ -49,8 +49,7 @@ USERPATCHES_PATH = armbian_utils.get_from_env_or_bomb("USERPATCHES_PATH")
 armbian_utils.show_incoming_environment()
 
 util.SELECTED_CONFIGURATION = armbian_utils.get_from_env_or_bomb("SELECTED_CONFIGURATION")  # "cli_standard"
-util.DESKTOP_APPGROUPS_SELECTED = armbian_utils.parse_env_for_tokens(
-	"DESKTOP_APPGROUPS_SELECTED")  # ["browsers", "chat"]
+util.DESKTOP_APPGROUPS_SELECTED = armbian_utils.parse_env_for_tokens("DESKTOP_APPGROUPS_SELECTED")  # ["browsers", "chat"]
 util.SRC = armbian_build_directory
 
 util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
@@ -194,6 +193,10 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 	for id, name, value, extra_func in output_lists:
 		stats = util.prepare_bash_output_array_for_list(bash, md, name, value, extra_func)
 		md.add_summary(f"{id}: {stats['number_items']}")
+
+	# extra: if DESKTOP, add number of DESKTOP_APPGROUPS_SELECTED to the summary
+	if BUILD_DESKTOP:
+		md.add_summary(f"desktop_appgroups: {len(util.DESKTOP_APPGROUPS_SELECTED)}")
 
 	# The rootfs hash (md5) is used as a cache key.
 	bash.write(f"declare -g -r AGGREGATED_ROOTFS_HASH='{AGGREGATED_ROOTFS_HASH}'\n")  # (this done simply cos it has no newlines)

@@ -454,14 +454,14 @@ function docker_cli_prepare_launch() {
 		if [[ -n "${OCI_TARGET_BASE}" ]]; then
 			display_alert "Detected" "OCI_TARGET_BASE: '${OCI_TARGET_BASE}'" "debug"
 			DOCKER_ARGS+=("--env" "OCI_TARGET_BASE=${OCI_TARGET_BASE}")
+		fi
 
-			# Mount the Docker config file (if it exists)
-			local docker_config_file_host="${HOME}/.docker/config.json"
-			local docker_config_file_docker="/root/.docker/config.json" # inside Docker
-			if [[ -f "${docker_config_file_host}" ]]; then
-				display_alert "Passing down to Docker" "Docker config file: '${docker_config_file_host}' -> '${docker_config_file_docker}'" "debug"
-				DOCKER_ARGS+=("--mount" "type=bind,source=${docker_config_file_host},target=${docker_config_file_docker}")
-			fi
+		# Mount the Docker config file (if it exists) -- always, even if OCI_TARGET_BASE is not set; @TODO: why only in GitHub actions?
+		local docker_config_file_host="${HOME}/.docker/config.json"
+		local docker_config_file_docker="/root/.docker/config.json" # inside Docker
+		if [[ -f "${docker_config_file_host}" ]]; then
+			display_alert "Passing down to Docker" "Docker config file: '${docker_config_file_host}' -> '${docker_config_file_docker}'" "debug"
+			DOCKER_ARGS+=("--mount" "type=bind,source=${docker_config_file_host},target=${docker_config_file_docker}")
 		fi
 	fi
 

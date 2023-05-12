@@ -227,12 +227,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	free_space=$(LC_ALL=C df -h)
 	display_alert "Free disk space on rootfs" "SDCARD: $(echo -e "${free_space}" | awk -v mp="${SDCARD}" '$6==mp {print $5}')" "info"
 
-	# creating xapian index that synaptic runs faster # @TODO: yes, but better done board-side on first run
-	if [[ $BUILD_DESKTOP == yes ]]; then
-		display_alert "Recreating Synaptic search index" "Please wait" "info"
-		chroot_sdcard "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u || true"
-	fi
-
 	# this is needed for the build process later since resolvconf generated file in /run is not saved
 	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
