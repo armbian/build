@@ -69,6 +69,7 @@ function armbian_register_commands() {
 		["armbian-plymouth-theme"]="artifact"
 		["fake-ubuntu-advantage-tools"]="artifact"
 
+		["armbian-base-files"]="artifact"
 		["armbian-bsp-cli"]="artifact"
 		["armbian-bsp-desktop"]="artifact"
 		["armbian-desktop"]="artifact"
@@ -112,6 +113,7 @@ function armbian_register_commands() {
 		["armbian-plymouth-theme"]="WHAT='armbian-plymouth-theme' ${common_cli_artifact_vars}"
 		["fake-ubuntu-advantage-tools"]="WHAT='fake_ubuntu_advantage_tools' ${common_cli_artifact_vars}"
 
+		["armbian-base-files"]="WHAT='armbian-base-files' ${common_cli_artifact_vars}"
 		["armbian-bsp-cli"]="WHAT='armbian-bsp-cli' ${common_cli_artifact_vars}"
 		["armbian-bsp-desktop"]="WHAT='armbian-bsp-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"
 		["armbian-desktop"]="WHAT='armbian-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"
