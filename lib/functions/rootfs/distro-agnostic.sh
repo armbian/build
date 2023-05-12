@@ -149,12 +149,7 @@ function install_distribution_agnostic() {
 	echo -e "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
 	echo "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
 
-	# Keep, or change to Armbian's PRETTY_NAME in /etc/os-release (this is also done in the bsp-cli postinst)
-	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
-		sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}\"/" "${SDCARD}"/etc/os-release
-	else
-		display_alert "distro-agnostic: KEEP_ORIGINAL_OS_RELEASE" "Keeping original /etc/os-release's PRETTY_NAME as original" "info"
-	fi
+	# PRETTY_NAME changing in os-release is now done in armbian-base-files directly.
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc

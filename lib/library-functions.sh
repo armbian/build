@@ -6,6 +6,15 @@
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/artifacts/artifact-armbian-base-files.sh
+# shellcheck source=lib/functions/artifacts/artifact-armbian-base-files.sh
+source "${SRC}"/lib/functions/artifacts/artifact-armbian-base-files.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/artifacts/artifact-armbian-bsp-cli.sh
 # shellcheck source=lib/functions/artifacts/artifact-armbian-bsp-cli.sh
 source "${SRC}"/lib/functions/artifacts/artifact-armbian-bsp-cli.sh
@@ -585,6 +594,15 @@ set -o errexit  ## set -e : exit the script if any statement returns a non-true 
 ### lib/functions/configuration/package-lists.sh
 # shellcheck source=lib/functions/configuration/package-lists.sh
 source "${SRC}"/lib/functions/configuration/package-lists.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/general/apt-utils.sh
+# shellcheck source=lib/functions/general/apt-utils.sh
+source "${SRC}"/lib/functions/general/apt-utils.sh
 
 # no errors tolerated. invoked before each sourced file to make sure.
 #set -o pipefail  # trace ERR through pipes - will be enabled "soon"

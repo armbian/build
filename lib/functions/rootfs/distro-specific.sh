@@ -58,6 +58,11 @@ function install_distribution_specific() {
 			;;
 	esac
 
+	# install our base-files package (this replaces the original from Debian/Ubuntu)
+	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
+		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-base-files"]}"
+	fi
+
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
 	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 		network:

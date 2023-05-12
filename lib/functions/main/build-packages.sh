@@ -23,6 +23,10 @@ function determine_artifacts_to_build_for_image() {
 		fi
 	fi
 
+	# Userspace, RELEASE+ARCH specific, replaces the original distro's base-files
+	# This is always built, but only installed if KEEP_ORIGINAL_OS_RELEASE!=yes.
+	artifacts_to_build+=("armbian-base-files")
+
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 		artifacts_to_build+=("fake_ubuntu_advantage_tools")
 	fi
