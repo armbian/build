@@ -27,6 +27,24 @@ function calculate_hash_for_all_files_in_dirs() {
 	calculate_hash_for_files "${files_to_hash[@]}"
 }
 
+# helper for artifacts that use "bash hash", eg, most of them.
+function calculate_hash_for_bash_deb_artifact() {
+	# the same as calculate_hash_for_files, but:
+	# - each param is automatically prefixed with "${SRC}/lib/functions" if it does not start with a slash
+	# - "compilation/packages/utils-dpkgdeb.sh" is automatically added
+	declare -a deb_bash_arr=()
+	for one in "$@"; do
+		# if the param does not start with a slash, prefix it with "${SRC}/lib/functions", for convenience
+		if [[ "${one}" != /* ]]; then
+			one="${SRC}/lib/functions/${one}"
+		fi
+		deb_bash_arr+=("${one}")
+	done
+	deb_bash_arr+=("${SRC}/lib/functions/compilation/packages/utils-dpkgdeb.sh")
+	calculate_hash_for_files "${deb_bash_arr[@]}"
+	return 0
+}
+
 function calculate_hash_for_files() {
 	hash_files="undetermined" # outer scope
 
