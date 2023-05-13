@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-# for deb building.
+# for RAW deb building. does a bunch of magic to "DEBIAN" directory.
 function fakeroot_dpkg_deb_build() {
 	# check artifact_name is set otherwise exit_with_error
 	[[ -z "${artifact_name}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_name is not set"
@@ -33,6 +33,20 @@ function fakeroot_dpkg_deb_build() {
 
 	# Show the total human size of the source package directory.
 	display_alert "Source package size" "${first_arg}: $(du -sh "${first_arg}" | cut -f1)" "debug"
+
+	# Lets fix all packages with Installed-Size:
+	# get the size of the package in bytes
+	declare -i pkg_size_bytes
+	pkg_size_bytes=$(du -s -b "${first_arg}" | cut -f1)
+	# edit DEBIAN/control, removed any Installed-Size: line
+	sed -i '/^Installed-Size:/d' "${first_arg}/DEBIAN/control"
+	# add the new Installed-Size: line. The disk space is given as the integer value of the estimated installed size in bytes, divided by 1024 and rounded up.
+	declare -i installed_size
+	installed_size=$(((pkg_size_bytes + 1023) / 1024))
+	echo "Installed-Size: ${installed_size}" >> "${first_arg}/DEBIAN/control"
+
+	# Lets create DEBIAN/md5sums
+	find "${first_arg}" -type f -print0 | xargs -0 md5sum > "${first_arg}/DEBIAN/md5sums"
 
 	# find the DEBIAN scripts (postinst, prerm, etc) and run shellcheck on them.
 	dpkg_deb_run_shellcheck_on_scripts "${first_arg}"
