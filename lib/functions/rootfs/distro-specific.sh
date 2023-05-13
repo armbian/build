@@ -85,15 +85,17 @@ function install_distribution_specific() {
 	fi
 }
 
-# create_sources_list <release> <basedir>
+# create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
+# <when>: rootfs|image
 # <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar
 # <basedir>: path to root directory
 #
-function create_sources_list() {
-	local release=$1
-	local basedir=$2 # @TODO: rpardini: this is SDCARD in all practical senses. Why not just use SDCARD?
-	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
+function create_sources_list_and_deploy_repo_key() {
+	declare when="${1}"
+	declare release="${2}"
+	declare basedir="${3}" # @TODO: rpardini: this is SDCARD in all practical senses. Why not just use SDCARD?
+	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list_and_deploy_repo_key"
 
 	case $release in
 		buster)
@@ -172,7 +174,7 @@ function create_sources_list() {
 			;;
 	esac
 
-	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
+	display_alert "Adding Armbian repository and authentication key" "${when} :: /etc/apt/sources.list.d/armbian.list" "info"
 
 	# apt-key add is getting deprecated
 	APT_VERSION=$(chroot "${basedir}" /bin/bash -c "apt --version | cut -d\" \" -f2")
@@ -188,17 +190,24 @@ function create_sources_list() {
 		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add -"
 	fi
 
+	declare -a components=()
+	if [[ "${when}" == "image" ]]; then # only include the 'main' component when deploying to image
+		components+=("main")
+	fi
+	components+=("${RELEASE}-utils")   # utils contains packages Igor picks from other repos
+	components+=("${RELEASE}-desktop") # desktop contains packages Igor picks from other repos
+
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
-		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
-		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development
-	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
 	# disable repo if SKIP_ARMBIAN_REPO=yes
 	if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
@@ -206,4 +215,19 @@ function create_sources_list() {
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
 
+	declare CUSTOM_REPO_WHEN="${when}"
+
+	# Let user customize
+	call_extension_method "custom_apt_repo" <<- 'CUSTOM_APT_REPO'
+		*customize apt sources.list.d and/or deploy repo keys*
+		Called after core Armbian has finished setting up SDCARD's sources.list and sources.list.d/armbian.list.
+		If SKIP_ARMBIAN_REPO=yes, armbian.list.disabled is present instead.
+		The global Armbian GPG key has been deployed to SDCARD's /usr/share/keyrings/armbian.gpg, de-armored.
+		You can implement this hook to add, remove, or modify sources.list.d entries, and/or deploy additional GPG keys.
+		Important: honor $CUSTOM_REPO_WHEN; if it's ==rootfs, don't add repos/components that carry the .debs produced by armbian/build.
+	CUSTOM_APT_REPO
+
+	unset CUSTOM_REPO_WHEN
+
+	return 0
 }

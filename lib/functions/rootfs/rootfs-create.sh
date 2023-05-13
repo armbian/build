@@ -145,8 +145,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 		chroot_sdcard LC_ALL=C LANG=C setupcon --save --force
 	fi
 
-	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS)
-	create_sources_list "$RELEASE" "$SDCARD/"
+	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS).
+	# for the Armbian repo, only the components which are _not_ produced by armbian/build are included (-desktop and -utils)
+	create_sources_list_and_deploy_repo_key "root" "$RELEASE" "$SDCARD/"
 
 	# optionally add armhf arhitecture to arm64, if asked to do so.
 	if [[ "a${ARMHF_ARCH}" == "ayes" ]]; then

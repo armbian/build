@@ -16,15 +16,23 @@ function calculate_rootfs_cache_id() {
 	[[ "x${packages_hash}x" != "xx" ]] && exit_with_error "packages_hash is already set"
 	[[ "x${cache_type}x" != "xx" ]] && exit_with_error "cache_type is already set"
 
+	declare -i short_hash_size=6
+
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
 	calculate_hash_for_files "${SRC}"/lib/functions/rootfs/create-cache.sh "${SRC}"/lib/functions/rootfs/rootfs-create.sh
 	declare bash_hash="${hash_files}"
-	declare bash_hash_short="${bash_hash:0:6}"
+	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
+
+	# hash hooks that affect the rootfs
+	declare -a extension_hooks_to_hash=("custom_apt_repo")
+	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
+	declare hash_hooks="undetermined"
+	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
+	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
 	# AGGREGATED_ROOTFS_HASH is produced by aggregation.py
-	# Don't use a dash here, dashes are significant to legacy rootfs cache id's
-	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:12}B${bash_hash_short}"
+	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:12}-H${hash_hooks_short}-B${bash_hash_short}"
 
 	declare cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
@@ -116,7 +124,9 @@ function extract_rootfs_artifact() {
 	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver ${NAMESERVER}" ">" "${SDCARD}"/etc/resolv.conf
 
-	create_sources_list "${RELEASE}" "${SDCARD}/"
+	# all sources etc.
+	# armbian repo is fully included, inclusive the components that have debs produced by armbian/build.
+	create_sources_list_and_deploy_repo_key "image" "${RELEASE}" "${SDCARD}/"
 
 	return 0
 }

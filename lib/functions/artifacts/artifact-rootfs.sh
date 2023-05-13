@@ -32,7 +32,7 @@ function artifact_rootfs_prepare_version() {
 
 	calculate_rootfs_cache_id # sets rootfs_cache_id
 
-	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
+	display_alert "rootfs version" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
 
 	declare -a reasons=(
 		"arch \"${ARCH}\""
