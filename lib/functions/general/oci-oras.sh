@@ -79,7 +79,7 @@ function run_tool_oras() {
 	# Run oras, possibly with retries...
 	if [[ "${retries:-1}" -gt 1 ]]; then
 		display_alert "Calling ORAS with retries ${retries}" "$*" "debug"
-		do_with_retries ${retries} "${ORAS_BIN}" "$@"
+		sleep_seconds="30" do_with_retries "${retries}" "${ORAS_BIN}" "$@"
 	else
 		# If any parameters passed, call ORAS, otherwise exit. We call it this way (sans-parameters) early to prepare ORAS tooling.
 		if [[ $# -eq 0 ]]; then
@@ -133,7 +133,7 @@ function oras_push_artifact_file() {
 	display_alert "upload_file_name: ${upload_file_name}" "ORAS upload" "debug"
 
 	pushd "${upload_file_base_path}" &> /dev/null || exit_with_error "Failed to pushd to ${upload_file_base_path} - ORAS upload"
-	retries=5 run_tool_oras push "${extra_params[@]}" "${image_full_oci}" "${upload_file_name}:application/vnd.unknown.layer.v1+tar"
+	retries=10 run_tool_oras push "${extra_params[@]}" "${image_full_oci}" "${upload_file_name}:application/vnd.unknown.layer.v1+tar"
 	popd &> /dev/null || exit_with_error "Failed to popd" "ORAS upload"
 	return 0
 }
