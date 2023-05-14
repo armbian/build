@@ -175,6 +175,8 @@ function export_ansi_logs() {
 			declare logs_url="undetermined"
 			logs_url=$(curl --silent --data-binary "@${target_relative_to_src}" "https://paste.next.armbian.com/log" | xargs echo -n || true) # don't fail
 			display_alert "Log uploaded, share URL:" "${logs_url}" ""
+			# set output for GitHub Actions
+			github_actions_add_output logs_url "${logs_url}"
 		else
 			display_alert "Share log manually (or SHARE_LOG=yes):" "curl --data-binary @${target_relative_to_src} https://paste.next.armbian.com/log"
 		fi
