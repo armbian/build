@@ -114,6 +114,9 @@ function do_main_configuration() {
 			[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
 			[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
 			;;
+		nilfs2)
+			enable_extension "fs-nilfs2-support"
+			;;
 		*)
 			exit_with_error "Unknown rootfs type: ROOTFS_TYPE='${ROOTFS_TYPE}'"
 			;;

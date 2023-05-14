@@ -20,7 +20,7 @@ function prepare_partitions() {
 
 	# possible partition combinations
 	# /boot: none, ext4, ext2, fat (BOOTFS_TYPE)
-	# root: ext4, btrfs, f2fs, nfs (ROOTFS_TYPE)
+	# root: ext4, btrfs, f2fs, nilfs2, nfs (ROOTFS_TYPE)
 
 	# declare makes local variables by default if used inside a function
 	# NOTE: mountopts string should always start with comma if not empty
@@ -34,6 +34,7 @@ function prepare_partitions() {
 	parttype[fat]=fat16
 	parttype[f2fs]=ext4 # not a copy-paste error
 	parttype[btrfs]=btrfs
+	parttype[nilfs2]=nilfs2
 	parttype[xfs]=xfs
 	# parttype[nfs] is empty
 
@@ -45,6 +46,7 @@ function prepare_partitions() {
 	mkopts[ext2]=''
 	# mkopts[f2fs] is empty
 	mkopts[btrfs]='-m dup'
+	# mkopts[nilfs2] is empty
 	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
 
@@ -53,6 +55,7 @@ function prepare_partitions() {
 	mkopts_label[fat]='-n '
 	mkopts_label[f2fs]='-l '
 	mkopts_label[btrfs]='-L '
+	mkopts_label[nilfs2]='-L '
 	mkopts_label[xfs]='-L '
 	# mkopts_label[nfs] is empty
 
@@ -61,6 +64,7 @@ function prepare_partitions() {
 	mkfs[fat]=vfat
 	mkfs[f2fs]=f2fs
 	mkfs[btrfs]=btrfs
+	mkfs[nilfs2]=nilfs2
 	mkfs[xfs]=xfs
 	# mkfs[nfs] is empty
 
@@ -69,6 +73,7 @@ function prepare_partitions() {
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
 	mountopts[btrfs]=',commit=600'
+	# mountopts[nilfs2] is empty
 	# mountopts[xfs] is empty
 	# mountopts[nfs] is empty
 

@@ -34,10 +34,12 @@ function create_image_from_sdcard_rootfs() {
 	declare calculated_image_version="undetermined"
 	calculate_image_version
 	declare -r -g version="${calculated_image_version}" # global readonly from here
-
+	declare rsync_ea=" -X "
+	# nilfs2 fs does not have extended attributes support, and have to be ignored on copy
+	if [[ $ROOTFS_TYPE == nilfs2 ]]; then rsync_ea=""; fi
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
-		run_host_command_logged rsync -aHWXh \
+		run_host_command_logged rsync -aHWh $rsync_ea \
 			--exclude="/boot" \
 			--exclude="/dev/*" \
 			--exclude="/proc/*" \
