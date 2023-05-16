@@ -191,11 +191,12 @@ function create_sources_list_and_deploy_repo_key() {
 	fi
 
 	declare -a components=()
-	if [[ "${when}" == "image" ]]; then # only include the 'main' component when deploying to image
-		components+=("main")
-	fi
-	components+=("${RELEASE}-utils")   # utils contains packages Igor picks from other repos
-	components+=("${RELEASE}-desktop") # desktop contains packages Igor picks from other repos
+	components+=("main")
+	components+=("${RELEASE}-utils")
+	components+=("${RELEASE}-desktop")
+	# @TODO: adding all components of the repo to the rootfs .list causes chicken-egg problems.
+	# @TODO: ideally, only external packages should be included, not the ones produced by armbian/build itself.
+	# @TODO: after repo is cleaned up, this should be revisited, and main only added if [[ "${when}" == "image" ]]
 
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
