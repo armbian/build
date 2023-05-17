@@ -126,10 +126,34 @@ function compile_armbian-base-files() {
 
 	# Change the PRETTY_NAME and add ARMBIAN_PRETTY_NAME in os-release, and change issue, issue.net
 	declare orig_distro_release="${RELEASE}"
+	cat <<- EOD >> "${destination}/etc/dpkg/origins/armbian"
+		Vendor: ${VENDOR}
+		Vendor-URL: ${VENDORURL}
+		Bugs: ${VENDORBUGS}
+		Parent: ${DISTRIBUTION}
+	EOD
 	echo "ARMBIAN_PRETTY_NAME=\"${VENDOR} ${REVISION} ${orig_distro_release}\"" >> "${destination}"/etc/os-release
 	echo -e "${VENDOR} ${REVISION} ${orig_distro_release} \\l \n" > "${destination}"/etc/issue
 	echo -e "${VENDOR} ${REVISION} ${orig_distro_release}" > "${destination}"/etc/issue.net
 	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${orig_distro_release}\"/" "${destination}"/etc/os-release
+	sed -i "s|^HOME_URL=.*|HOME_URL=\"${VENDORURL}\"|" "${destination}"/etc/os-release
+	sed -i "s|^SUPPORT_URL=.*|SUPPORT_URL=\"${VENDORSUPPORT}\"|" "${destination}"/etc/os-release
+	sed -i "s|^BUG_REPORT_URL=.*|BUG_REPORT_URL=\"${VENDORBUGS}\"|" "${destination}"/etc/os-release
+	sed -i "s|^PRIVACY_POLICY_URL=.*|PRIVACY_POLICY_URL=\"${VENDORPRIVACY}\"|" "${destination}"/etc/os-release
+	sed -i "s|^LOGO=.*|LOGO=\"${VENDORLOGO}\"|" "${destination}"/etc/os-release
+
+	# Remove content from motd: Ubuntu header, welcome text and news. We have our own
+	[[ -f "${destination}"/etc/update-motd.d/00-header ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/00-header
+	[[ -f "${destination}"/etc/update-motd.d/10-help-text ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/10-help-text
+	[[ -f "${destination}"/etc/update-motd.d/10-uname ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/10-uname
+	[[ -f "${destination}"/etc/update-motd.d/50-motd-news ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/50-motd-news
+
+	# Remove Ubuntu default services
+	[[ -f "${destination}"/lib/systemd/motd-news.service ]] && rm "${destination}"/lib/systemd/motd-news.service
+	[[ -f "${destination}"/lib/systemd/motd-news.timer ]] && rm "${destination}"/lib/systemd/motd-news.timer
+
+	# Adjust legal disclaimer
+	[[ -f "${destination}"/etc/legal ]] && sed -i "s/${DISTRIBUTION}/${VENDOR}/g" "${destination}"/etc/legal
 
 	# Remove /etc/issue and /etc/issue.net from the DEBIAN/conffiles file
 	sed -i '/^\/etc\/issue$/d' "${destination}"/DEBIAN/conffiles
