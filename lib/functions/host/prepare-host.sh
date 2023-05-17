@@ -375,12 +375,21 @@ function install_host_dependencies() {
 }
 
 function check_host_has_enough_disk_space() {
-	# @TODO: check every possible mount point. Not only one. People might have different mounts / Docker volumes...
-	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
+	declare -a dirs_to_check=("${DEST}" "${SRC}/cache")
+	for dir in "${dirs_to_check[@]}"; do
+		check_dir_has_enough_disk_space "${dir}" 10 || exit_if_countdown_not_aborted 10 "Low free disk space left in '${dir}'"
+	done
+}
+
+function check_dir_has_enough_disk_space() {
+	declare target="${1}"
+	declare -i min_free_space_gib="${2:-10}"
 	declare -i free_space_bytes
-	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${SRC}" --uniq 2> /dev/null) # in bytes
-	if [[ -n "$free_space_bytes" && $((free_space_bytes / 1073741824)) -lt 10 ]]; then
-		display_alert "Low free space left" "$((free_space_bytes / 1073741824))GiB" "wrn"
-		exit_if_countdown_not_aborted 10 "Low free disk space left" # This pauses & exits if error if ENTER is not pressed in 10 seconds
+	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${target}" --uniq 2> /dev/null) # in bytes
+	if [[ -n "$free_space_bytes" && $((free_space_bytes / 1073741824)) -lt $min_free_space_gib ]]; then
+		display_alert "Low free space left" "${target}: $((free_space_bytes / 1073741824))GiB free, ${min_free_space_gib} GiB required" "wrn"
+		return 1
 	fi
+	display_alert "Free space left" "${target}: $((free_space_bytes / 1073741824))GiB" "debug"
+	return 0
 }
