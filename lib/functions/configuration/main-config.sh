@@ -39,6 +39,11 @@ function do_main_configuration() {
 	declare -r -g artifact_prefix_version="${REVISION}--"
 
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
+	[[ -z $VENDORURL ]] && VENDORURL="https://www.armbian.com"
+	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://forum.armbian.com"
+	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://www.armbian.com"
+	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://www.armbian.com/bugs"
+	[[ -z $VENDORLOGO ]] && VENDORLOGO="armbian-logo"
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
