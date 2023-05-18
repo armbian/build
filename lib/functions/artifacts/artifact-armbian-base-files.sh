@@ -143,10 +143,14 @@ function compile_armbian-base-files() {
 	sed -i "s|^LOGO=.*|LOGO=\"${VENDORLOGO}\"|" "${destination}"/etc/os-release
 
 	# Remove content from motd: Ubuntu header, welcome text and news. We have our own
-	[[ -f "${destination}"/etc/update-motd.d/00-header ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/00-header
-	[[ -f "${destination}"/etc/update-motd.d/10-help-text ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/10-help-text
-	[[ -f "${destination}"/etc/update-motd.d/10-uname ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/10-uname
-	[[ -f "${destination}"/etc/update-motd.d/50-motd-news ]] && echo "# placeholder" > "${destination}"/etc/update-motd.d/50-motd-news
+	rm -f "${destination}"/etc/update-motd.d/00-header
+	sed -i "\/etc\/update-motd.d\/00-header/d" "${destination}/DEBIAN/conffiles"
+	rm -f "${destination}"/etc/update-motd.d/10-help-text
+	sed -i "\/etc\/update-motd.d\/10-help-text/d" "${destination}/DEBIAN/conffiles"
+	rm -f "${destination}"/etc/update-motd.d/10-uname
+	sed -i "\/etc\/update-motd.d\/10-uname/d" "${destination}/DEBIAN/conffiles"
+	rm -f "${destination}"/etc/update-motd.d/50-motd-news
+	sed -i "\/etc\/update-motd.d\/50-motd-news/d" "${destination}/DEBIAN/conffiles"
 
 	# Remove Ubuntu default services
 	[[ -f "${destination}"/lib/systemd/motd-news.service ]] && rm "${destination}"/lib/systemd/motd-news.service
