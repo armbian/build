@@ -181,6 +181,9 @@ function do_main_configuration() {
 	# load architecture defaults
 	source "${SRC}/config/sources/${ARCH}.conf"
 
+	# load board config again to allow overwrite family config
+	source "${SRC}/config/boards/${BOARD}.${BOARD_TYPE}"
+
 	if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
 		SKIP_BOOTSPLASH="yes"
 		PLYMOUTH="no"

@@ -15,3 +15,7 @@ BOOTFS_TYPE="fat"
 # FIXED_IMAGE_SIZE=7456
 
 BOOT_LOGO=desktop
+
+family_tweaks() {
+    cp $SRC/packages/blobs/splash/armbian-u-boot-24.bmp $SDCARD/boot/boot.bmp
+}
