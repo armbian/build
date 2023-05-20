@@ -174,7 +174,7 @@ function kernel_package_hook_helper() {
 			return 1
 		}
 
-		set -x # Debugging
+		#set -x # Debugging
 
 		$(cat "${contents}")
 

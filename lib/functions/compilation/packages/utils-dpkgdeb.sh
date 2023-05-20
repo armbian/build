@@ -132,7 +132,7 @@ function generic_artifact_package_hook_helper() {
 		#!/bin/bash
 		echo "Armbian '${artifact_name:?}' for '${artifact_version:?}': '${script}' starting."
 		set +e # NO ERROR CONTROL, for compatibility with legacy Armbian scripts.
-		set -x # Debugging
+		#set -e # Debugging
 
 		$(echo "${contents}")
 
