@@ -45,15 +45,15 @@ function fakeroot_dpkg_deb_build() {
 	installed_size=$(((pkg_size_bytes + 1023) / 1024))
 	echo "Installed-Size: ${installed_size}" >> "${first_arg}/DEBIAN/control"
 
-	# Lets create DEBIAN/md5sums
-	find "${first_arg}" -type f -print0 | xargs -0 md5sum > "${first_arg}/DEBIAN/md5sums"
+	# Lets create DEBIAN/md5sums, for all the files in ${first_arg}. Do not include the paths in the md5sums file. Don't include the DEBIAN/* files.
+	find "${first_arg}" -type f -not -path "${first_arg}/DEBIAN/*" -print0 | xargs -0 md5sum | sed "s|${first_arg}/||g" > "${first_arg}/DEBIAN/md5sums"
 
 	# find the DEBIAN scripts (postinst, prerm, etc) and run shellcheck on them.
 	dpkg_deb_run_shellcheck_on_scripts "${first_arg}"
 
 	# Debug, dump the generated postrm/preinst/postinst
 	if [[ "${SHOW_DEBUG}" == "yes" || "${SHOW_DEBIAN}" == "yes" ]]; then
-		# Dump the CONTROL file to the log (always, @TODO later under debugging)
+		# Dump the CONTROL file to the log
 		run_tool_batcat --file-name "${artifact_name}/DEBIAN/control" "${first_arg}/DEBIAN/control"
 
 		if [[ -f "${first_arg}/DEBIAN/changelog" ]]; then
@@ -71,6 +71,8 @@ function fakeroot_dpkg_deb_build() {
 		if [[ -f "${first_arg}/DEBIAN/postinst" ]]; then
 			run_tool_batcat --file-name "${artifact_name}/DEBIAN/postinst.sh" "${first_arg}/DEBIAN/postinst"
 		fi
+
+		run_tool_batcat --file-name "${artifact_name}/DEBIAN/md5sums" "${first_arg}/DEBIAN/md5sums"
 	fi
 
 	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "${orig_args[@]}"
