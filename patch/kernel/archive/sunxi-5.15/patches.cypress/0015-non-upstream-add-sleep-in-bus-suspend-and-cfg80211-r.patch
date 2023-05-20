@@ -1,0 +1,262 @@
+From cac47a7fb2ced35fd58ff3854a7559caf38aa434 Mon Sep 17 00:00:00 2001
+From: Wright Feng <wright.feng@cypress.com>
+Date: Thu, 7 Mar 2019 01:37:27 -0600
+Subject: [PATCH 015/179] non-upstream: add sleep in bus suspend and cfg80211
+ resume functions
+
+With asynchronous suspend/resume feature, suspend and resume callbacks to
+be executed in parallel with each other. It makes bus changes the state to
+BRCMF_BUS_DOWN before all brcmf_cfg80211_suspend IOVAR executions.
+The same situation also happens in resume procedure and causes PM mode
+keeps in PM_MAX after resume. In order to fix the race condition, We add
+one second sleep in bus suspend and cfg80211 resume function.
+
+Signed-off-by: Wright Feng <wright.feng@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@cypress.com>
+---
+ .../broadcom/brcm80211/brcmfmac/bcmsdh.c      | 19 ++++++++++++--
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 25 ++++++++++++++++++-
+ .../broadcom/brcm80211/brcmfmac/cfg80211.h    | 10 ++++++++
+ .../broadcom/brcm80211/brcmfmac/pcie.c        | 12 +++++++++
+ .../broadcom/brcm80211/brcmfmac/usb.c         | 15 +++++++++++
+ 5 files changed, 78 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bcmsdh.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bcmsdh.c
+index ac02244a6fdf..48f1198a617c 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bcmsdh.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bcmsdh.c
+@@ -36,6 +36,7 @@
+ #include "sdio.h"
+ #include "core.h"
+ #include "common.h"
++#include "cfg80211.h"
+ 
+ #define SDIOH_API_ACCESS_RETRY_LIMIT	2
+ 
+@@ -1061,6 +1062,7 @@ static int brcmf_ops_sdio_probe(struct sdio_func *func,
+ 	dev_set_drvdata(&func->dev, bus_if);
+ 	dev_set_drvdata(&sdiodev->func1->dev, bus_if);
+ 	sdiodev->dev = &sdiodev->func1->dev;
++	dev_set_drvdata(&sdiodev->func2->dev, bus_if);
+ 
+ 	brcmf_sdiod_change_state(sdiodev, BRCMF_SDIOD_DOWN);
+ 
+@@ -1077,6 +1079,7 @@ static int brcmf_ops_sdio_probe(struct sdio_func *func,
+ fail:
+ 	dev_set_drvdata(&func->dev, NULL);
+ 	dev_set_drvdata(&sdiodev->func1->dev, NULL);
++	dev_set_drvdata(&sdiodev->func2->dev, NULL);
+ 	kfree(sdiodev);
+ 	kfree(bus_if);
+ 	return err;
+@@ -1131,15 +1134,27 @@ static int brcmf_ops_sdio_suspend(struct device *dev)
+ 	struct brcmf_bus *bus_if;
+ 	struct brcmf_sdio_dev *sdiodev;
+ 	mmc_pm_flag_t pm_caps, sdio_flags;
++	struct brcmf_cfg80211_info *config;
++	int retry = BRCMF_PM_WAIT_MAXRETRY;
+ 	int ret = 0;
+ 
+ 	func = container_of(dev, struct sdio_func, dev);
++	bus_if = dev_get_drvdata(dev);
++	config = bus_if->drvr->config;
++
+ 	brcmf_dbg(SDIO, "Enter: F%d\n", func->num);
++
++	while (retry &&
++	       config->pm_state == BRCMF_CFG80211_PM_STATE_SUSPENDING) {
++		usleep_range(10000, 20000);
++		retry--;
++	}
++	if (!retry && config->pm_state == BRCMF_CFG80211_PM_STATE_SUSPENDING)
++		brcmf_err("timed out wait for cfg80211 suspended\n");
++
+ 	if (func->num != 1)
+ 		return 0;
+ 
+-
+-	bus_if = dev_get_drvdata(dev);
+ 	sdiodev = bus_if->bus_priv.sdio;
+ 
+ 	pm_caps = sdio_get_host_pm_caps(func);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 2ed7cf1c939d..0026040be597 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -3822,10 +3822,24 @@ static s32 brcmf_cfg80211_resume(struct wiphy *wiphy)
+ 	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+ 	struct net_device *ndev = cfg_to_ndev(cfg);
+ 	struct brcmf_if *ifp = netdev_priv(ndev);
++	struct brcmf_pub *drvr = ifp->drvr;
++	struct brcmf_bus *bus_if = drvr->bus_if;
++	struct brcmf_cfg80211_info *config = drvr->config;
++	int retry = BRCMF_PM_WAIT_MAXRETRY;
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+ 
++	config->pm_state = BRCMF_CFG80211_PM_STATE_RESUMING;
++
+ 	if (cfg->wowl.active) {
++		/* wait for bus resumed */
++		while (retry && bus_if->state != BRCMF_BUS_UP) {
++			usleep_range(10000, 20000);
++			retry--;
++		}
++		if (!retry && bus_if->state != BRCMF_BUS_UP)
++			brcmf_err("timed out wait for bus resume\n");
++
+ 		brcmf_report_wowl_wakeind(wiphy, ifp);
+ 		brcmf_fil_iovar_int_set(ifp, "wowl_clear", 0);
+ 		brcmf_config_wowl_pattern(ifp, "clr", NULL, 0, NULL, 0);
+@@ -3846,6 +3860,7 @@ static s32 brcmf_cfg80211_resume(struct wiphy *wiphy)
+ 		brcmf_pktfilter_enable(ifp->ndev, false);
+ 
+ 	}
++	config->pm_state = BRCMF_CFG80211_PM_STATE_RESUMED;
+ 	return 0;
+ }
+ 
+@@ -3915,9 +3930,12 @@ static s32 brcmf_cfg80211_suspend(struct wiphy *wiphy,
+ 	struct net_device *ndev = cfg_to_ndev(cfg);
+ 	struct brcmf_if *ifp = netdev_priv(ndev);
+ 	struct brcmf_cfg80211_vif *vif;
++	struct brcmf_cfg80211_info *config = ifp->drvr->config;
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+ 
++	config->pm_state = BRCMF_CFG80211_PM_STATE_SUSPENDING;
++
+ 	/* if the primary net_device is not READY there is nothing
+ 	 * we can do but pray resume goes smoothly.
+ 	 */
+@@ -3959,9 +3977,13 @@ static s32 brcmf_cfg80211_suspend(struct wiphy *wiphy,
+ 	}
+ 
+ exit:
+-	brcmf_dbg(TRACE, "Exit\n");
++	/* set cfg80211 pm state to cfg80211 suspended state */
++	config->pm_state = BRCMF_CFG80211_PM_STATE_SUSPENDED;
++
+ 	/* clear any scanning activity */
+ 	cfg->scan_status = 0;
++
++	brcmf_dbg(TRACE, "Exit\n");
+ 	return 0;
+ }
+ 
+@@ -7661,6 +7683,7 @@ struct brcmf_cfg80211_info *brcmf_cfg80211_attach(struct brcmf_pub *drvr,
+ 
+ 	cfg->wiphy = wiphy;
+ 	cfg->pub = drvr;
++	cfg->pm_state = BRCMF_CFG80211_PM_STATE_RESUMED;
+ 	init_vif_event(&cfg->vif_event);
+ 	INIT_LIST_HEAD(&cfg->vif_list);
+ 
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+index 2bdefdaeca12..b9ee137bb3ad 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+@@ -92,6 +92,8 @@
+ 
+ #define BRCMF_VIF_EVENT_TIMEOUT		msecs_to_jiffies(1500)
+ 
++#define BRCMF_PM_WAIT_MAXRETRY			100
++
+ /* cfg80211 wowlan definitions */
+ #define WL_WOWLAN_MAX_PATTERNS			8
+ #define WL_WOWLAN_MIN_PATTERN_LEN		1
+@@ -185,6 +187,13 @@ enum brcmf_vif_status {
+ 	BRCMF_VIF_STATUS_ASSOC_SUCCESS,
+ };
+ 
++enum brcmf_cfg80211_pm_state {
++	BRCMF_CFG80211_PM_STATE_RESUMED,
++	BRCMF_CFG80211_PM_STATE_RESUMING,
++	BRCMF_CFG80211_PM_STATE_SUSPENDED,
++	BRCMF_CFG80211_PM_STATE_SUSPENDING,
++};
++
+ /**
+  * struct vif_saved_ie - holds saved IEs for a virtual interface.
+  *
+@@ -378,6 +387,7 @@ struct brcmf_cfg80211_info {
+ 	struct brcmf_cfg80211_wowl wowl;
+ 	struct brcmf_pno_info *pno;
+ 	u8 ac_priority[MAX_8021D_PRIO];
++	u8 pm_state;
+ };
+ 
+ /**
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+index 3ff4997e1c97..a4826e53ac38 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -39,6 +39,7 @@
+ #include "chip.h"
+ #include "core.h"
+ #include "common.h"
++#include "cfg80211.h"
+ 
+ 
+ enum brcmf_pcie_state {
+@@ -1995,11 +1996,22 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
+ {
+ 	struct brcmf_pciedev_info *devinfo;
+ 	struct brcmf_bus *bus;
++	struct brcmf_cfg80211_info *config;
++	int retry = BRCMF_PM_WAIT_MAXRETRY;
+ 
+ 	brcmf_dbg(PCIE, "Enter\n");
+ 
+ 	bus = dev_get_drvdata(dev);
+ 	devinfo = bus->bus_priv.pcie->devinfo;
++	config = bus->drvr->config;
++
++	while (retry &&
++	       config->pm_state == BRCMF_CFG80211_PM_STATE_SUSPENDING) {
++		usleep_range(10000, 20000);
++		retry--;
++	}
++	if (!retry && config->pm_state == BRCMF_CFG80211_PM_STATE_SUSPENDING)
++		brcmf_err(bus, "timed out wait for cfg80211 suspended\n");
+ 
+ 	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
+ 
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c
+index 2e2280e76e70..d540f8664288 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c
+@@ -19,6 +19,7 @@
+ #include "core.h"
+ #include "common.h"
+ #include "bcdc.h"
++#include "cfg80211.h"
+ 
+ 
+ #define IOCTL_RESP_TIMEOUT		msecs_to_jiffies(2000)
+@@ -1481,8 +1482,22 @@ static int brcmf_usb_suspend(struct usb_interface *intf, pm_message_t state)
+ {
+ 	struct usb_device *usb = interface_to_usbdev(intf);
+ 	struct brcmf_usbdev_info *devinfo = brcmf_usb_get_businfo(&usb->dev);
++	struct brcmf_bus *bus;
++	struct brcmf_cfg80211_info *config;
++	int retry = BRCMF_PM_WAIT_MAXRETRY;
+ 
+ 	brcmf_dbg(USB, "Enter\n");
++
++	bus = devinfo->bus_pub.bus;
++	config = bus->drvr->config;
++	while (retry &&
++	       config->pm_state == BRCMF_CFG80211_PM_STATE_SUSPENDING) {
++		usleep_range(10000, 20000);
++		retry--;
++	}
++	if (!retry && config->pm_state == BRCMF_CFG80211_PM_STATE_SUSPENDING)
++		brcmf_err("timed out wait for cfg80211 suspended\n");
++
+ 	devinfo->bus_pub.state = BRCMFMAC_USB_STATE_SLEEP;
+ 	brcmf_cancel_all_urbs(devinfo);
+ 	device_set_wakeup_enable(devinfo->dev, true);
+-- 
+2.17.1
+

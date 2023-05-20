@@ -1,0 +1,193 @@
+From 85ad35189b57ebe05de3b87a05d170f9bb613ab3 Mon Sep 17 00:00:00 2001
+From: Wright Feng <wright.feng@cypress.com>
+Date: Tue, 26 Jun 2018 22:19:31 -0500
+Subject: [PATCH 064/179] brcmfmac: add creating station interface support
+
+With RSDB device, it is able to control two station interfaces
+concurrently. So we add creating station interface support and
+allow user to create it via cfg80211.
+
+Signed-off-by: Wright Feng <wright.feng@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 80 ++++++++++++++++---
+ .../broadcom/brcm80211/brcmfmac/core.h        |  1 +
+ 2 files changed, 69 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 32d0f194a1af..a0d9454664e2 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -269,6 +269,19 @@ struct parsed_vndr_ies {
+ #define WLC_E_IF_ROLE_STA		0	/* Infra STA */
+ #define WLC_E_IF_ROLE_AP		1	/* Access Point */
+ 
++#define WL_INTERFACE_MAC_DONT_USE	0x0
++#define WL_INTERFACE_MAC_USE		0x2
++
++#define WL_INTERFACE_CREATE_STA		0x0
++#define WL_INTERFACE_CREATE_AP		0x1
++
++struct wl_interface_create {
++	u16	ver;
++	u32	flags;
++	u8	mac_addr[ETH_ALEN];
++	u8	pad[13];
++};
++
+ static u8 nl80211_band_to_fwil(enum nl80211_band band)
+ {
+ 	switch (band) {
+@@ -556,6 +569,42 @@ static int brcmf_get_first_free_bsscfgidx(struct brcmf_pub *drvr)
+ 	return -ENOMEM;
+ }
+ 
++static void brcmf_set_sta_iface_macaddr(struct brcmf_if *ifp,
++					struct wl_interface_create *iface)
++{
++	u8 mac_idx = ifp->drvr->sta_mac_idx;
++
++	/* set difference MAC address with locally administered bit */
++	iface->flags |= WL_INTERFACE_MAC_USE;
++	memcpy(iface->mac_addr, ifp->mac_addr, ETH_ALEN);
++	iface->mac_addr[0] |= 0x02;
++	iface->mac_addr[3] ^= mac_idx ? 0xC0 : 0xA0;
++	mac_idx++;
++	mac_idx = mac_idx % 2;
++	ifp->drvr->sta_mac_idx = mac_idx;
++}
++
++static int brcmf_cfg80211_request_sta_if(struct brcmf_if *ifp, u8 *macaddr)
++{
++	struct wl_interface_create iface;
++	int err;
++
++	memset(&iface, 0, sizeof(iface));
++
++	iface.ver = 0;
++	iface.flags = WL_INTERFACE_CREATE_STA;
++	if (!is_zero_ether_addr(macaddr)) {
++		/* set MAC address in cfg80211 params */
++		memcpy(iface.mac_addr, macaddr, ETH_ALEN);
++	} else {
++		brcmf_set_sta_iface_macaddr(ifp, &iface);
++	}
++
++	err = brcmf_fil_iovar_data_get(ifp, "interface_create", &iface,
++				       sizeof(iface));
++	return err;
++}
++
+ static int brcmf_cfg80211_request_ap_if(struct brcmf_if *ifp)
+ {
+ 	struct brcmf_pub *drvr = ifp->drvr;
+@@ -581,15 +630,16 @@ static int brcmf_cfg80211_request_ap_if(struct brcmf_if *ifp)
+ }
+ 
+ /**
+- * brcmf_ap_add_vif() - create a new AP virtual interface for multiple BSS
++ * brcmf_ap_add_vif() - create a new AP or STA virtual interface
+  *
+  * @wiphy: wiphy device of new interface.
+  * @name: name of the new interface.
+- * @params: contains mac address for AP device.
++ * @params: contains mac address for AP or STA device.
+  */
+ static
+-struct wireless_dev *brcmf_ap_add_vif(struct wiphy *wiphy, const char *name,
+-				      struct vif_params *params)
++struct wireless_dev *brcmf_apsta_add_vif(struct wiphy *wiphy, const char *name,
++					 struct vif_params *params,
++					 enum nl80211_iftype type)
+ {
+ 	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+ 	struct brcmf_if *ifp = netdev_priv(cfg_to_ndev(cfg));
+@@ -597,18 +647,24 @@ struct wireless_dev *brcmf_ap_add_vif(struct wiphy *wiphy, const char *name,
+ 	struct brcmf_cfg80211_vif *vif;
+ 	int err;
+ 
++	if (type != NL80211_IFTYPE_STATION && type != NL80211_IFTYPE_AP)
++		return ERR_PTR(-EINVAL);
++
+ 	if (brcmf_cfg80211_vif_event_armed(cfg))
+ 		return ERR_PTR(-EBUSY);
+ 
+ 	brcmf_dbg(INFO, "Adding vif \"%s\"\n", name);
+ 
+-	vif = brcmf_alloc_vif(cfg, NL80211_IFTYPE_AP);
++	vif = brcmf_alloc_vif(cfg, type);
+ 	if (IS_ERR(vif))
+ 		return (struct wireless_dev *)vif;
+ 
+ 	brcmf_cfg80211_arm_vif_event(cfg, vif);
+ 
+-	err = brcmf_cfg80211_request_ap_if(ifp);
++	if (type == NL80211_IFTYPE_STATION)
++		err = brcmf_cfg80211_request_sta_if(ifp, params->macaddr);
++	else
++		err = brcmf_cfg80211_request_ap_if(ifp);
+ 	if (err) {
+ 		brcmf_cfg80211_arm_vif_event(cfg, NULL);
+ 		goto fail;
+@@ -755,15 +811,15 @@ static struct wireless_dev *brcmf_cfg80211_add_iface(struct wiphy *wiphy,
+ 	}
+ 	switch (type) {
+ 	case NL80211_IFTYPE_ADHOC:
+-	case NL80211_IFTYPE_STATION:
+ 	case NL80211_IFTYPE_AP_VLAN:
+ 	case NL80211_IFTYPE_WDS:
+ 	case NL80211_IFTYPE_MESH_POINT:
+ 		return ERR_PTR(-EOPNOTSUPP);
+ 	case NL80211_IFTYPE_MONITOR:
+ 		return brcmf_mon_add_vif(wiphy, name);
++	case NL80211_IFTYPE_STATION:
+ 	case NL80211_IFTYPE_AP:
+-		wdev = brcmf_ap_add_vif(wiphy, name, params);
++		wdev = brcmf_apsta_add_vif(wiphy, name, params, type);
+ 		break;
+ 	case NL80211_IFTYPE_P2P_CLIENT:
+ 	case NL80211_IFTYPE_P2P_GO:
+@@ -898,8 +954,8 @@ s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
+ 	return err;
+ }
+ 
+-static int brcmf_cfg80211_del_ap_iface(struct wiphy *wiphy,
+-				       struct wireless_dev *wdev)
++static int brcmf_cfg80211_del_apsta_iface(struct wiphy *wiphy,
++					  struct wireless_dev *wdev)
+ {
+ 	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+ 	struct net_device *ndev = wdev->netdev;
+@@ -956,15 +1012,15 @@ int brcmf_cfg80211_del_iface(struct wiphy *wiphy, struct wireless_dev *wdev)
+ 
+ 	switch (wdev->iftype) {
+ 	case NL80211_IFTYPE_ADHOC:
+-	case NL80211_IFTYPE_STATION:
+ 	case NL80211_IFTYPE_AP_VLAN:
+ 	case NL80211_IFTYPE_WDS:
+ 	case NL80211_IFTYPE_MESH_POINT:
+ 		return -EOPNOTSUPP;
+ 	case NL80211_IFTYPE_MONITOR:
+ 		return brcmf_mon_del_vif(wiphy, wdev);
++	case NL80211_IFTYPE_STATION:
+ 	case NL80211_IFTYPE_AP:
+-		return brcmf_cfg80211_del_ap_iface(wiphy, wdev);
++		return brcmf_cfg80211_del_apsta_iface(wiphy, wdev);
+ 	case NL80211_IFTYPE_P2P_CLIENT:
+ 	case NL80211_IFTYPE_P2P_GO:
+ 	case NL80211_IFTYPE_P2P_DEVICE:
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h
+index c29ae6be1eaf..c0e35ce686f1 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h
+@@ -138,6 +138,7 @@ struct brcmf_pub {
+ 
+ 	u8 clmver[BRCMF_DCMD_SMLEN];
+ 	struct brcmf_pkt_filter_enable_le pkt_filter[MAX_PKT_FILTER_COUNT];
++	u8 sta_mac_idx;
+ 
+ };
+ 
+-- 
+2.17.1
+

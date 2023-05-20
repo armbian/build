@@ -1,0 +1,822 @@
+From 1f27834146b57065ee5d91f4e3f5f1523b951d0d Mon Sep 17 00:00:00 2001
+From: Chung-Hsien Hsu <stanley.hsu@cypress.com>
+Date: Wed, 13 May 2020 14:18:02 -0500
+Subject: [PATCH 103/179] brcmfmac: add support for CYW55560 PCIe chipset
+
+CYW55560 is a 2x2 dual-band 802.11a/b/g/n/ac/ax chipset with 20/40/80MHz
+channel support. It's a WLAN+BT combo device with WLAN secure boot
+support.
+
+Signed-off-by: Chung-Hsien Hsu <chung-hsien.hsu@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/chip.c        | 195 +++++++++++++++++-
+ .../broadcom/brcm80211/brcmfmac/chip.h        |  34 +++
+ .../broadcom/brcm80211/brcmfmac/firmware.c    |  15 +-
+ .../broadcom/brcm80211/brcmfmac/firmware.h    |   8 +-
+ .../broadcom/brcm80211/brcmfmac/pcie.c        | 191 ++++++++++++++++-
+ .../broadcom/brcm80211/include/brcm_hw_ids.h  |   4 +-
+ .../broadcom/brcm80211/include/brcmu_utils.h  |  13 ++
+ 7 files changed, 444 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.c
+index 186b5bee33b4..d055cd43ddeb 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.c
+@@ -233,6 +233,32 @@ struct sbsocramregs {
+ /* Minimum PMU resource mask for 4373 */
+ #define CY_4373_PMU_MIN_RES_MASK       0xFCAFF7F
+ 
++/* CYW55560 dedicated space and RAM base */
++#define CYW55560_TCAM_SIZE	0x800
++#define CYW55560_TRXHDR_SIZE	0x2b4
++#define CYW55560_RAM_BASE	(0x370000 + \
++				 CYW55560_TCAM_SIZE + CYW55560_TRXHDR_SIZE)
++
++#define BRCMF_BLHS_POLL_INTERVAL			10	/* msec */
++#define BRCMF_BLHS_D2H_READY_TIMEOUT			100	/* msec */
++#define BRCMF_BLHS_D2H_TRXHDR_PARSE_DONE_TIMEOUT	50	/* msec */
++#define BRCMF_BLHS_D2H_VALDN_DONE_TIMEOUT		250	/* msec */
++
++/* Bootloader handshake flags - dongle to host */
++#define BRCMF_BLHS_D2H_START			BIT(0)
++#define BRCMF_BLHS_D2H_READY			BIT(1)
++#define BRCMF_BLHS_D2H_STEADY			BIT(2)
++#define BRCMF_BLHS_D2H_TRXHDR_PARSE_DONE	BIT(3)
++#define BRCMF_BLHS_D2H_VALDN_START		BIT(4)
++#define BRCMF_BLHS_D2H_VALDN_RESULT		BIT(5)
++#define BRCMF_BLHS_D2H_VALDN_DONE		BIT(6)
++
++/* Bootloader handshake flags - host to dongle */
++#define BRCMF_BLHS_H2D_DL_FW_START		BIT(0)
++#define BRCMF_BLHS_H2D_DL_FW_DONE		BIT(1)
++#define BRCMF_BLHS_H2D_DL_NVRAM_DONE		BIT(2)
++#define BRCMF_BLHS_H2D_BL_RESET_ON_ERROR	BIT(3)
++
+ struct brcmf_core_priv {
+ 	struct brcmf_core pub;
+ 	u32 wrapbase;
+@@ -752,6 +778,8 @@ static u32 brcmf_chip_tcm_rambase(struct brcmf_chip_priv *ci)
+ 		return 0x170000;
+ 	case CY_CC_89459_CHIP_ID:
+ 		return ((ci->pub.chiprev < 9) ? 0x180000 : 0x160000);
++	case CY_CC_55560_CHIP_ID:
++		return CYW55560_RAM_BASE;
+ 	default:
+ 		brcmf_err("unknown chip: %s\n", ci->pub.name);
+ 		break;
+@@ -770,6 +798,9 @@ int brcmf_chip_get_raminfo(struct brcmf_chip *pub)
+ 	if (mem) {
+ 		mem_core = container_of(mem, struct brcmf_core_priv, pub);
+ 		ci->pub.ramsize = brcmf_chip_tcm_ramsize(mem_core);
++		if (ci->pub.chip == CY_CC_55560_CHIP_ID)
++			ci->pub.ramsize -= (CYW55560_TCAM_SIZE +
++					    CYW55560_TRXHDR_SIZE);
+ 		ci->pub.rambase = brcmf_chip_tcm_rambase(ci);
+ 		if (ci->pub.rambase == INVALID_RAMBASE) {
+ 			brcmf_err("RAM base not provided with ARM CR4 core\n");
+@@ -973,6 +1004,144 @@ u32 brcmf_chip_enum_base(u16 devid)
+ 	return SI_ENUM_BASE_DEFAULT;
+ }
+ 
++static void brcmf_blhs_init(struct brcmf_chip *pub)
++{
++	struct brcmf_chip_priv *chip;
++	u32 addr;
++
++	chip = container_of(pub, struct brcmf_chip_priv, pub);
++	addr = pub->blhs->h2d;
++	pub->blhs->write(chip->ctx, addr, 0);
++}
++
++static int brcmf_blhs_is_bootloader_ready(struct brcmf_chip_priv *chip)
++{
++	u32 regdata;
++	u32 addr;
++
++	addr = chip->pub.blhs->d2h;
++	SPINWAIT_MS((chip->pub.blhs->read(chip->ctx, addr) &
++		     BRCMF_BLHS_D2H_READY) == 0,
++		    BRCMF_BLHS_D2H_READY_TIMEOUT, BRCMF_BLHS_POLL_INTERVAL);
++
++	regdata = chip->pub.blhs->read(chip->ctx, addr);
++	if (!(regdata & BRCMF_BLHS_D2H_READY)) {
++		brcmf_err("Timeout waiting for bootloader ready\n");
++		return -EPERM;
++	}
++
++	return 0;
++}
++
++static int brcmf_blhs_prep_fw_download(struct brcmf_chip *pub)
++{
++	struct brcmf_chip_priv *chip;
++	u32 addr;
++	int err;
++
++	/* Host indication for bootloader to start the init */
++	brcmf_blhs_init(pub);
++
++	chip = container_of(pub, struct brcmf_chip_priv, pub);
++	err = brcmf_blhs_is_bootloader_ready(chip);
++	if (err)
++		return err;
++
++	/* Host notification about FW download start */
++	addr = pub->blhs->h2d;
++	pub->blhs->write(chip->ctx, addr, BRCMF_BLHS_H2D_DL_FW_START);
++
++	return 0;
++}
++
++static int brcmf_blhs_post_fw_download(struct brcmf_chip *pub)
++{
++	struct brcmf_chip_priv *chip;
++	u32 addr;
++	u32 regdata;
++
++	chip = container_of(pub, struct brcmf_chip_priv, pub);
++	addr = pub->blhs->h2d;
++	pub->blhs->write(chip->ctx, addr, BRCMF_BLHS_H2D_DL_FW_DONE);
++	addr = pub->blhs->d2h;
++	SPINWAIT_MS((pub->blhs->read(chip->ctx, addr) &
++		     BRCMF_BLHS_D2H_TRXHDR_PARSE_DONE) == 0,
++		    BRCMF_BLHS_D2H_TRXHDR_PARSE_DONE_TIMEOUT,
++		    BRCMF_BLHS_POLL_INTERVAL);
++
++	regdata = pub->blhs->read(chip->ctx, addr);
++	if (!(regdata & BRCMF_BLHS_D2H_TRXHDR_PARSE_DONE)) {
++		brcmf_err("TRX header parsing failed\n");
++
++		/* Host indication for bootloader to get reset on error */
++		addr = pub->blhs->h2d;
++		regdata = pub->blhs->read(chip->ctx, addr);
++		regdata |= BRCMF_BLHS_H2D_BL_RESET_ON_ERROR;
++		pub->blhs->write(chip->ctx, addr, regdata);
++
++		return -EPERM;
++	}
++
++	return 0;
++}
++
++static void brcmf_blhs_post_nvram_download(struct brcmf_chip *pub)
++{
++	struct brcmf_chip_priv *chip;
++	u32 addr;
++	u32 regdata;
++
++	chip = container_of(pub, struct brcmf_chip_priv, pub);
++	addr = pub->blhs->h2d;
++	regdata = pub->blhs->read(chip->ctx, addr);
++	regdata |= BRCMF_BLHS_H2D_DL_NVRAM_DONE;
++	pub->blhs->write(chip->ctx, addr, regdata);
++}
++
++static int brcmf_blhs_chk_validation(struct brcmf_chip *pub)
++{
++	struct brcmf_chip_priv *chip;
++	u32 addr;
++	u32 regdata;
++
++	chip = container_of(pub, struct brcmf_chip_priv, pub);
++	addr = pub->blhs->d2h;
++	SPINWAIT_MS((pub->blhs->read(chip->ctx, addr) &
++		     BRCMF_BLHS_D2H_VALDN_DONE) == 0,
++		    BRCMF_BLHS_D2H_VALDN_DONE_TIMEOUT,
++		    BRCMF_BLHS_POLL_INTERVAL);
++
++	regdata = pub->blhs->read(chip->ctx, addr);
++	if (!(regdata & BRCMF_BLHS_D2H_VALDN_DONE) ||
++	    !(regdata & BRCMF_BLHS_D2H_VALDN_RESULT)) {
++		brcmf_err("TRX image validation check failed\n");
++
++		/* Host notification for bootloader to get reset on error */
++		addr = pub->blhs->h2d;
++		regdata = pub->blhs->read(chip->ctx, addr);
++		regdata |= BRCMF_BLHS_H2D_BL_RESET_ON_ERROR;
++		pub->blhs->write(chip->ctx, addr, regdata);
++
++		return -EPERM;
++	}
++
++	return 0;
++}
++
++static int brcmf_blhs_post_watchdog_reset(struct brcmf_chip *pub)
++{
++	struct brcmf_chip_priv *chip;
++	int err;
++
++	/* Host indication for bootloader to start the init */
++	brcmf_blhs_init(pub);
++
++	chip = container_of(pub, struct brcmf_chip_priv, pub);
++	err = brcmf_blhs_is_bootloader_ready(chip);
++
++	return err;
++}
++
+ static int brcmf_chip_recognition(struct brcmf_chip_priv *ci)
+ {
+ 	struct brcmf_core *core;
+@@ -1124,6 +1293,7 @@ struct brcmf_chip *brcmf_chip_attach(void *ctx, u16 devid,
+ 				     const struct brcmf_buscore_ops *ops)
+ {
+ 	struct brcmf_chip_priv *chip;
++	struct brcmf_blhs *blhs;
+ 	int err = 0;
+ 
+ 	if (WARN_ON(!ops->read32))
+@@ -1151,6 +1321,26 @@ struct brcmf_chip *brcmf_chip_attach(void *ctx, u16 devid,
+ 	if (err < 0)
+ 		goto fail;
+ 
++	blhs = NULL;
++	if (chip->ops->blhs_attach) {
++		err = chip->ops->blhs_attach(chip->ctx, &blhs,
++					     BRCMF_BLHS_D2H_READY,
++					     BRCMF_BLHS_D2H_READY_TIMEOUT,
++					     BRCMF_BLHS_POLL_INTERVAL);
++		if (err < 0)
++			goto fail;
++
++		if (blhs) {
++			blhs->init = brcmf_blhs_init;
++			blhs->prep_fwdl = brcmf_blhs_prep_fw_download;
++			blhs->post_fwdl = brcmf_blhs_post_fw_download;
++			blhs->post_nvramdl = brcmf_blhs_post_nvram_download;
++			blhs->chk_validation = brcmf_blhs_chk_validation;
++			blhs->post_wdreset = brcmf_blhs_post_watchdog_reset;
++		}
++	}
++	chip->pub.blhs = blhs;
++
+ 	err = brcmf_chip_recognition(chip);
+ 	if (err < 0)
+ 		goto fail;
+@@ -1177,6 +1367,7 @@ void brcmf_chip_detach(struct brcmf_chip *pub)
+ 		list_del(&core->list);
+ 		kfree(core);
+ 	}
++	kfree(pub->blhs);
+ 	kfree(chip);
+ }
+ 
+@@ -1317,7 +1508,8 @@ brcmf_chip_cr4_set_passive(struct brcmf_chip_priv *chip)
+ {
+ 	struct brcmf_core *core;
+ 
+-	brcmf_chip_disable_arm(chip, BCMA_CORE_ARM_CR4);
++	if (!chip->pub.blhs)
++		brcmf_chip_disable_arm(chip, BCMA_CORE_ARM_CR4);
+ 
+ 	core = brcmf_chip_get_core(&chip->pub, BCMA_CORE_80211);
+ 	brcmf_chip_resetcore(core, D11_BCMA_IOCTL_PHYRESET |
+@@ -1620,4 +1812,3 @@ void brcmf_chip_reset_watchdog(struct brcmf_chip *pub)
+ 		break;
+ 	}
+ }
+-
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.h
+index 2ba72ec12675..4629201de715 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/chip.h
+@@ -13,6 +13,8 @@
+ #define CORE_GCI_REG(base, field) \
+ 		((base) + offsetof(struct chipgciregs, field))
+ 
++struct brcmf_blhs;
++
+ /**
+  * struct brcmf_chip - chip level information.
+  *
+@@ -27,6 +29,7 @@
+  * @ramsize: amount of RAM on chip including retention.
+  * @srsize: amount of retention RAM on chip.
+  * @name: string representation of the chip identifier.
++ * @blhs: bootlooder handshake handle.
+  */
+ struct brcmf_chip {
+ 	u32 chip;
+@@ -40,6 +43,7 @@ struct brcmf_chip {
+ 	u32 ramsize;
+ 	u32 srsize;
+ 	char name[12];
++	struct brcmf_blhs *blhs;
+ };
+ 
+ /**
+@@ -64,6 +68,7 @@ struct brcmf_core {
+  * @setup: bus-specific core setup.
+  * @active: chip becomes active.
+  *	The callback should use the provided @rstvec when non-zero.
++ * @blhs_attach: attach bootloader handshake handle
+  */
+ struct brcmf_buscore_ops {
+ 	u32 (*read32)(void *ctx, u32 addr);
+@@ -72,6 +77,35 @@ struct brcmf_buscore_ops {
+ 	int (*reset)(void *ctx, struct brcmf_chip *chip);
+ 	int (*setup)(void *ctx, struct brcmf_chip *chip);
+ 	void (*activate)(void *ctx, struct brcmf_chip *chip, u32 rstvec);
++	int (*blhs_attach)(void *ctx, struct brcmf_blhs **blhs, u32 flag,
++			   uint timeout, uint interval);
++};
++
++/**
++ * struct brcmf_blhs - bootloader handshake handle related information.
++ *
++ * @d2h: offset of dongle to host register for the handshake.
++ * @h2d: offset of host to dongle register for the handshake.
++ * @init: bootloader handshake initialization.
++ * @prep_fwdl: handshake before firmware download.
++ * @post_fwdl: handshake after firmware download.
++ * @post_nvramdl: handshake after nvram download.
++ * @chk_validation: handshake for firmware validation check.
++ * @post_wdreset: handshake after watchdog reset.
++ * @read: read value with register offset for the handshake.
++ * @write: write value with register offset for the handshake.
++ */
++struct brcmf_blhs {
++	u32 d2h;
++	u32 h2d;
++	void (*init)(struct brcmf_chip *pub);
++	int (*prep_fwdl)(struct brcmf_chip *pub);
++	int (*post_fwdl)(struct brcmf_chip *pub);
++	void (*post_nvramdl)(struct brcmf_chip *pub);
++	int (*chk_validation)(struct brcmf_chip *pub);
++	int (*post_wdreset)(struct brcmf_chip *pub);
++	u32 (*read)(void *ctx, u32 addr);
++	void (*write)(void *ctx, u32 addr, u32 value);
+ };
+ 
+ int brcmf_chip_get_raminfo(struct brcmf_chip *pub);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.c
+index a9d122abf444..db951ef79088 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.c
+@@ -508,7 +508,8 @@ static void brcmf_fw_free_request(struct brcmf_fw_request *req)
+ 	int i;
+ 
+ 	for (i = 0, item = &req->items[0]; i < req->n_items; i++, item++) {
+-		if (item->type == BRCMF_FW_TYPE_BINARY)
++		if (item->type == BRCMF_FW_TYPE_BINARY ||
++		    item->type == BRCMF_FW_TYPE_TRXSE)
+ 			release_firmware(item->binary);
+ 		else if (item->type == BRCMF_FW_TYPE_NVRAM)
+ 			brcmf_fw_nvram_free(item->nv_data.data);
+@@ -579,6 +580,7 @@ static int brcmf_fw_complete_request(const struct firmware *fw,
+ 		ret = brcmf_fw_request_nvram_done(fw, fwctx);
+ 		break;
+ 	case BRCMF_FW_TYPE_BINARY:
++	case BRCMF_FW_TYPE_TRXSE:
+ 		if (fw)
+ 			cur->binary = fw;
+ 		else
+@@ -644,8 +646,19 @@ static int brcmf_fw_request_firmware(const struct firmware **fw,
+ static void brcmf_fw_request_done(const struct firmware *fw, void *ctx)
+ {
+ 	struct brcmf_fw *fwctx = ctx;
++	struct brcmf_fw_item *cur = &fwctx->req->items[fwctx->curpos];
++	char alt_path[BRCMF_FW_NAME_LEN];
+ 	int ret;
+ 
++	if (!fw && cur->type == BRCMF_FW_TYPE_TRXSE) {
++		strlcpy(alt_path, cur->path, BRCMF_FW_NAME_LEN);
++		/* strip 'se' from .trxse at the end */
++		alt_path[strlen(alt_path) - 2] = 0;
++		ret = request_firmware(&fw, alt_path, fwctx->dev);
++		if (!ret)
++			cur->path = alt_path;
++	}
++
+ 	ret = brcmf_fw_complete_request(fw, fwctx);
+ 
+ 	while (ret == 0 && ++fwctx->curpos < fwctx->req->n_items) {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.h
+index f0748500b345..ee6d5429ea16 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.h
+@@ -46,6 +46,11 @@ static const char BRCM_ ## fw_name ## _FIRMWARE_BASENAME[] = \
+ 	CY_FW_DEFAULT_PATH fw_base; \
+ MODULE_FIRMWARE(CY_FW_DEFAULT_PATH fw_base ".bin")
+ 
++#define CY_FW_TRXSE_DEF(fw_name, fw_base) \
++static const char BRCM_ ## fw_name ## _FIRMWARE_BASENAME[] = \
++	CY_FW_DEFAULT_PATH fw_base; \
++MODULE_FIRMWARE(CY_FW_DEFAULT_PATH fw_base ".trxse")
++
+ #define BRCMF_FW_ENTRY(chipid, mask, name) \
+ 	{ chipid, mask, BRCM_ ## name ## _FIRMWARE_BASENAME }
+ 
+@@ -53,7 +58,8 @@ void brcmf_fw_nvram_free(void *nvram);
+ 
+ enum brcmf_fw_type {
+ 	BRCMF_FW_TYPE_BINARY,
+-	BRCMF_FW_TYPE_NVRAM
++	BRCMF_FW_TYPE_NVRAM,
++	BRCMF_FW_TYPE_TRXSE
+ };
+ 
+ struct brcmf_fw_item {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+index 71cc14ca0909..8048a48cdb93 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -64,6 +64,7 @@ BRCMF_FW_DEF(4366B, "brcmfmac4366b-pcie");
+ BRCMF_FW_DEF(4366C, "brcmfmac4366c-pcie");
+ BRCMF_FW_DEF(4371, "brcmfmac4371-pcie");
+ CY_FW_DEF(4355, "cyfmac54591-pcie");
++CY_FW_TRXSE_DEF(55560, "cyfmac55560-pcie");
+ 
+ /* firmware config files */
+ MODULE_FIRMWARE(BRCMF_FW_DEFAULT_PATH "brcmfmac*-pcie.txt");
+@@ -93,6 +94,7 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
+ 	BRCMF_FW_ENTRY(BRCM_CC_43666_CHIP_ID, 0xFFFFFFF0, 4366C),
+ 	BRCMF_FW_ENTRY(BRCM_CC_4371_CHIP_ID, 0xFFFFFFFF, 4371),
+ 	BRCMF_FW_ENTRY(CY_CC_89459_CHIP_ID, 0xFFFFFFFF, 4355),
++	BRCMF_FW_ENTRY(CY_CC_55560_CHIP_ID, 0xFFFFFFFF, 55560),
+ };
+ 
+ #define BRCMF_PCIE_REV_GE64(dev)	(brcmf_chip_get_core((dev)->ci, \
+@@ -108,7 +110,8 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
+ #define	BRCMF_PCIE_BAR0_WRAPPERBASE		0x70
+ 
+ #define BRCMF_PCIE_BAR0_WRAPBASE_DMP_OFFSET	0x1000
+-#define BRCMF_PCIE_BARO_PCIE_ENUM_OFFSET	0x2000
++#define BRCMF_PCIE_BAR0_PCIE_ENUM_OFFSET	0x2000
++#define BRCMF_CYW55560_PCIE_BAR0_PCIE_ENUM_OFFSET	0x3000
+ 
+ #define BRCMF_PCIE_ARMCR4REG_BANKIDX		0x40
+ #define BRCMF_PCIE_ARMCR4REG_BANKPDA		0x4C
+@@ -128,6 +131,8 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
+ #define BRCMF_PCIE_PCIE2REG_CONFIGDATA		0x124
+ #define BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_0	0x140
+ #define BRCMF_PCIE_PCIE2REG_H2D_MAILBOX_1	0x144
++#define BRCMF_PCIE_PCIE2REG_DAR_D2H_MSG_0	0xA80
++#define BRCMF_PCIE_PCIE2REG_DAR_H2D_MSG_0	0xA90
+ 
+ #define BRCMF_PCIE2_INTA			0x01
+ #define BRCMF_PCIE2_INTB			0x02
+@@ -260,18 +265,32 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
+ #define BRCMF_PCIE_CFGREG_MSI_ADDR_L		0x5C
+ #define BRCMF_PCIE_CFGREG_MSI_ADDR_H		0x60
+ #define BRCMF_PCIE_CFGREG_MSI_DATA		0x64
++#define BRCMF_PCIE_CFGREG_REVID			0x6C
+ #define BRCMF_PCIE_CFGREG_LINK_STATUS_CTRL	0xBC
+ #define BRCMF_PCIE_CFGREG_LINK_STATUS_CTRL2	0xDC
+ #define BRCMF_PCIE_CFGREG_RBAR_CTRL		0x228
+ #define BRCMF_PCIE_CFGREG_PML1_SUB_CTRL1	0x248
+ #define BRCMF_PCIE_CFGREG_REG_BAR2_CONFIG	0x4E0
+ #define BRCMF_PCIE_CFGREG_REG_BAR3_CONFIG	0x4F4
++#define BRCMF_PCIE_CFGREG_REVID_SECURE_MODE	BIT(31)
+ #define BRCMF_PCIE_LINK_STATUS_CTRL_ASPM_ENAB	3
+ 
+ /* Magic number at a magic location to find RAM size */
+ #define BRCMF_RAMSIZE_MAGIC			0x534d4152	/* SMAR */
+ #define BRCMF_RAMSIZE_OFFSET			0x6c
+ 
++#define BRCMF_ENTROPY_SEED_LEN		64u
++#define BRCMF_ENTROPY_NONCE_LEN		16u
++#define BRCMF_ENTROPY_HOST_LEN		(BRCMF_ENTROPY_SEED_LEN + \
++					 BRCMF_ENTROPY_NONCE_LEN)
++#define BRCMF_NVRAM_OFFSET_TCM		4u
++#define BRCMF_NVRAM_COMPRS_FACTOR	4u
++#define BRCMF_NVRAM_RNG_SIGNATURE	0xFEEDC0DEu
++
++struct brcmf_rand_metadata {
++	u32 signature;
++	u32 count;
++};
+ 
+ struct brcmf_pcie_console {
+ 	u32 base_addr;
+@@ -879,9 +898,15 @@ static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
+ 			       val);
+ 
+ 	/* Watchdog reset */
++	if (devinfo->ci->blhs)
++		devinfo->ci->blhs->init(devinfo->ci);
+ 	brcmf_pcie_select_core(devinfo, BCMA_CORE_CHIPCOMMON);
+ 	WRITECC32(devinfo, watchdog, 4);
+ 	msleep(100);
++	if (devinfo->ci->blhs)
++		if (devinfo->ci->blhs->post_wdreset(devinfo->ci))
++			return;
++
+ 
+ 	/* Restore ASPM */
+ 	brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
+@@ -922,6 +947,9 @@ static void brcmf_pcie_attach(struct brcmf_pciedev_info *devinfo)
+ 
+ static int brcmf_pcie_enter_download_state(struct brcmf_pciedev_info *devinfo)
+ {
++	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
++	int err = 0;
++
+ 	if (devinfo->ci->chip == BRCM_CC_43602_CHIP_ID) {
+ 		brcmf_pcie_select_core(devinfo, BCMA_CORE_ARM_CR4);
+ 		brcmf_pcie_write_reg32(devinfo, BRCMF_PCIE_ARMCR4REG_BANKIDX,
+@@ -933,7 +961,14 @@ static int brcmf_pcie_enter_download_state(struct brcmf_pciedev_info *devinfo)
+ 		brcmf_pcie_write_reg32(devinfo, BRCMF_PCIE_ARMCR4REG_BANKPDA,
+ 				       0);
+ 	}
+-	return 0;
++
++	if (devinfo->ci->blhs) {
++		err = devinfo->ci->blhs->prep_fwdl(devinfo->ci);
++		if (err)
++			brcmf_err(bus, "FW download preparation failed");
++	}
++
++	return err;
+ }
+ 
+ 
+@@ -947,8 +982,13 @@ static int brcmf_pcie_exit_download_state(struct brcmf_pciedev_info *devinfo,
+ 		brcmf_chip_resetcore(core, 0, 0, 0);
+ 	}
+ 
+-	if (!brcmf_chip_set_active(devinfo->ci, resetintr))
+-		return -EINVAL;
++	if (devinfo->ci->blhs) {
++		devinfo->ci->blhs->post_nvramdl(devinfo->ci);
++	} else {
++		if (!brcmf_chip_set_active(devinfo->ci, resetintr))
++			return -EINVAL;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1846,6 +1886,28 @@ brcmf_pcie_adjust_ramsize(struct brcmf_pciedev_info *devinfo, u8 *data,
+ }
+ 
+ 
++static void
++brcmf_pcie_write_rand(struct brcmf_pciedev_info *devinfo, u32 nvram_csm)
++{
++	struct brcmf_rand_metadata rand_data;
++	u8 rand_buf[BRCMF_ENTROPY_HOST_LEN];
++	u32 count = BRCMF_ENTROPY_HOST_LEN;
++	u32 address;
++
++	address = devinfo->ci->rambase +
++		  (devinfo->ci->ramsize - BRCMF_NVRAM_OFFSET_TCM) -
++		  ((nvram_csm & 0xffff) * BRCMF_NVRAM_COMPRS_FACTOR) -
++		  sizeof(rand_data);
++	memset(rand_buf, 0, BRCMF_ENTROPY_HOST_LEN);
++	rand_data.signature = cpu_to_le32(BRCMF_NVRAM_RNG_SIGNATURE);
++	rand_data.count = cpu_to_le32(count);
++	brcmf_pcie_copy_mem_todev(devinfo, address, &rand_data,
++				  sizeof(rand_data));
++	address -= count;
++	get_random_bytes(rand_buf, count);
++	brcmf_pcie_copy_mem_todev(devinfo, address, rand_buf, count);
++}
++
+ static int
+ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
+ 			       u32 sharedram_addr)
+@@ -1935,6 +1997,8 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
+ 	int err;
+ 	u32 address;
+ 	u32 resetintr;
++	u32 nvram_lenw;
++	u32 nvram_csm;
+ 
+ 	brcmf_dbg(PCIE, "Halt ARM.\n");
+ 	err = brcmf_pcie_enter_download_state(devinfo);
+@@ -1953,22 +2017,53 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
+ 	resetintr = get_unaligned_le32(fw->data);
+ 	release_firmware(fw);
+ 
+-	/* reset last 4 bytes of RAM address. to be used for shared
+-	 * area. This identifies when FW is running
+-	 */
+-	brcmf_pcie_write_ram32(devinfo, devinfo->ci->ramsize - 4, 0);
++	if (devinfo->ci->blhs) {
++		err = devinfo->ci->blhs->post_fwdl(devinfo->ci);
++		if (err) {
++			brcmf_err(bus, "FW download failed, err=%d\n", err);
++			return err;
++		}
++
++		err = devinfo->ci->blhs->chk_validation(devinfo->ci);
++		if (err) {
++			brcmf_err(bus, "FW valication failed, err=%d\n", err);
++			return err;
++		}
++	} else {
++		/* reset last 4 bytes of RAM address. to be used for shared
++		 * area. This identifies when FW is running
++		 */
++		brcmf_pcie_write_ram32(devinfo, devinfo->ci->ramsize - 4, 0);
++	}
+ 
+ 	if (nvram) {
+ 		brcmf_dbg(PCIE, "Download NVRAM %s\n", devinfo->nvram_name);
+ 		address = devinfo->ci->rambase + devinfo->ci->ramsize -
+ 			  nvram_len;
+-		memcpy_toio(devinfo->tcm + address, nvram, nvram_len);
++
++		if (devinfo->ci->blhs)
++			address -= 4;
++		brcmf_pcie_copy_mem_todev(devinfo, address, nvram, nvram_len);
++
++		/* Convert nvram_len to words to determine the length token */
++		nvram_lenw = nvram_len / 4;
++		nvram_csm = (~nvram_lenw << 16) | (nvram_lenw & 0x0000FFFF);
+ 		brcmf_fw_nvram_free(nvram);
+ 	} else {
++		nvram_csm = 0;
+ 		brcmf_dbg(PCIE, "No matching NVRAM file found %s\n",
+ 			  devinfo->nvram_name);
+ 	}
+ 
++	if (devinfo->ci->chip == CY_CC_55560_CHIP_ID) {
++		/* Write the length token to the last word of RAM address */
++		brcmf_pcie_write_ram32(devinfo, devinfo->ci->ramsize - 4,
++				       cpu_to_le32(nvram_csm));
++
++		/* Write random numbers to TCM for randomizing heap address */
++		brcmf_pcie_write_rand(devinfo, nvram_csm);
++	}
++
+ 	sharedram_addr_written = brcmf_pcie_read_ram32(devinfo,
+ 						       devinfo->ci->ramsize -
+ 						       4);
+@@ -2062,6 +2157,21 @@ static void brcmf_pcie_release_resource(struct brcmf_pciedev_info *devinfo)
+ 	pci_disable_device(devinfo->pdev);
+ }
+ 
++static u32 brcmf_pcie_buscore_blhs_read(void *ctx, u32 reg_offset)
++{
++	struct brcmf_pciedev_info *devinfo = (struct brcmf_pciedev_info *)ctx;
++
++	brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
++	return brcmf_pcie_read_reg32(devinfo, reg_offset);
++}
++
++static void brcmf_pcie_buscore_blhs_write(void *ctx, u32 reg_offset, u32 value)
++{
++	struct brcmf_pciedev_info *devinfo = (struct brcmf_pciedev_info *)ctx;
++
++	brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
++	brcmf_pcie_write_reg32(devinfo, reg_offset, value);
++}
+ 
+ static u32 brcmf_pcie_buscore_prep_addr(const struct pci_dev *pdev, u32 addr)
+ {
+@@ -2127,12 +2237,63 @@ static void brcmf_pcie_buscore_activate(void *ctx, struct brcmf_chip *chip,
+ }
+ 
+ 
++static int brcmf_pcie_buscore_blhs_attach(void *ctx, struct brcmf_blhs **blhs,
++					  u32 flag, uint timeout, uint interval)
++{
++	struct brcmf_pciedev_info *devinfo = (struct brcmf_pciedev_info *)ctx;
++	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
++	struct brcmf_blhs *blhsh;
++	u32 regdata;
++	u32 pcie_enum;
++	u32 addr;
++
++	if (devinfo->pdev->vendor != CY_PCIE_VENDOR_ID_CYPRESS)
++		return 0;
++
++	pci_read_config_dword(devinfo->pdev, BRCMF_PCIE_CFGREG_REVID, &regdata);
++	if (regdata & BRCMF_PCIE_CFGREG_REVID_SECURE_MODE) {
++		blhsh = kzalloc(sizeof(*blhsh), GFP_KERNEL);
++		if (!blhsh)
++			return -ENOMEM;
++
++		blhsh->d2h = BRCMF_PCIE_PCIE2REG_DAR_D2H_MSG_0;
++		blhsh->h2d = BRCMF_PCIE_PCIE2REG_DAR_H2D_MSG_0;
++		blhsh->read = brcmf_pcie_buscore_blhs_read;
++		blhsh->write = brcmf_pcie_buscore_blhs_write;
++
++		/* Host indication for bootloarder to start the init */
++		if (devinfo->pdev->device == CY_PCIE_55560_DEVICE_ID)
++			pcie_enum = BRCMF_CYW55560_PCIE_BAR0_PCIE_ENUM_OFFSET;
++		else
++			pcie_enum = BRCMF_PCIE_BAR0_PCIE_ENUM_OFFSET;
++
++		pci_read_config_dword(devinfo->pdev, PCI_BASE_ADDRESS_0,
++				      &regdata);
++		addr = regdata + pcie_enum + blhsh->h2d;
++		brcmf_pcie_buscore_write32(ctx, addr, 0);
++
++		addr = regdata + pcie_enum + blhsh->d2h;
++		SPINWAIT_MS((brcmf_pcie_buscore_read32(ctx, addr) & flag) == 0,
++			    timeout, interval);
++		regdata = brcmf_pcie_buscore_read32(ctx, addr);
++		if (!(regdata & flag)) {
++			brcmf_err(bus, "Timeout waiting for bootloader ready\n");
++			kfree(blhsh);
++			return -EPERM;
++		}
++		*blhs = blhsh;
++	}
++
++	return 0;
++}
++
+ static const struct brcmf_buscore_ops brcmf_pcie_buscore_ops = {
+ 	.prepare = brcmf_pcie_buscoreprep,
+ 	.reset = brcmf_pcie_buscore_reset,
+ 	.activate = brcmf_pcie_buscore_activate,
+ 	.read32 = brcmf_pcie_buscore_read32,
+ 	.write32 = brcmf_pcie_buscore_write32,
++	.blhs_attach = brcmf_pcie_buscore_blhs_attach,
+ };
+ 
+ #define BRCMF_PCIE_FW_CODE	0
+@@ -2245,6 +2406,9 @@ brcmf_pcie_prepare_fw_request(struct brcmf_pciedev_info *devinfo)
+ 	};
+ 	u32 chip;
+ 
++	if (devinfo->ci->blhs)
++		fwnames[BRCMF_PCIE_FW_CODE].extension = ".trxse";
++
+ 	chip = devinfo->ci->chip;
+ 	fwreq = brcmf_fw_alloc_request(chip, devinfo->ci->chiprev,
+ 				       brcmf_pcie_fwnames,
+@@ -2253,7 +2417,10 @@ brcmf_pcie_prepare_fw_request(struct brcmf_pciedev_info *devinfo)
+ 	if (!fwreq)
+ 		return NULL;
+ 
+-	fwreq->items[BRCMF_PCIE_FW_CODE].type = BRCMF_FW_TYPE_BINARY;
++	if (devinfo->ci->blhs)
++		fwreq->items[BRCMF_PCIE_FW_CODE].type = BRCMF_FW_TYPE_TRXSE;
++	else
++		fwreq->items[BRCMF_PCIE_FW_CODE].type = BRCMF_FW_TYPE_BINARY;
+ 	fwreq->items[BRCMF_PCIE_FW_NVRAM].type = BRCMF_FW_TYPE_NVRAM;
+ 	fwreq->items[BRCMF_PCIE_FW_NVRAM].flags = BRCMF_FW_REQF_OPTIONAL;
+ 	fwreq->board_type = devinfo->settings->board_type;
+@@ -2625,6 +2792,9 @@ static const struct dev_pm_ops brcmf_pciedrvr_pm = {
+ 	BRCM_PCIE_VENDOR_ID_BROADCOM, dev_id,\
+ 	subvend, subdev, PCI_CLASS_NETWORK_OTHER << 8, 0xffff00, 0 }
+ 
++#define BRCMF_PCIE_DEVICE_CY(dev_id)	{ CY_PCIE_VENDOR_ID_CYPRESS, dev_id,\
++	PCI_ANY_ID, PCI_ANY_ID, PCI_CLASS_NETWORK_OTHER << 8, 0xffff00, 0 }
++
+ static const struct pci_device_id brcmf_pcie_devid_table[] = {
+ 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4350_DEVICE_ID),
+ 	BRCMF_PCIE_DEVICE_SUB(0x4355, BRCM_PCIE_VENDOR_ID_BROADCOM, 0x4355),
+@@ -2653,6 +2823,7 @@ static const struct pci_device_id brcmf_pcie_devid_table[] = {
+ 	BRCMF_PCIE_DEVICE(CY_PCIE_54591_DEVICE_ID),
+ 	BRCMF_PCIE_DEVICE(CY_PCIE_54590_DEVICE_ID),
+ 	BRCMF_PCIE_DEVICE(CY_PCIE_54594_DEVICE_ID),
++	BRCMF_PCIE_DEVICE_CY(CY_PCIE_55560_DEVICE_ID),
+ 	{ /* end: all zeroes */ }
+ };
+ 
+diff --git a/drivers/net/wireless/broadcom/brcm80211/include/brcm_hw_ids.h b/drivers/net/wireless/broadcom/brcm80211/include/brcm_hw_ids.h
+index 61ae748d9125..518661d4f7a1 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/include/brcm_hw_ids.h
++++ b/drivers/net/wireless/broadcom/brcm80211/include/brcm_hw_ids.h
+@@ -57,8 +57,7 @@
+ #define CY_CC_43012_CHIP_ID		43012
+ #define CY_CC_43752_CHIP_ID		43752
+ #define CY_CC_89459_CHIP_ID		0x4355
+-#define CY_CC_89459_CHIP_ID		0x4355
+-
++#define CY_CC_55560_CHIP_ID		0xd908
+ 
+ /* USB Device IDs */
+ #define BRCM_USB_43143_DEVICE_ID	0xbd1e
+@@ -97,6 +96,7 @@
+ #define CY_PCIE_54591_DEVICE_ID         0x4417
+ #define CY_PCIE_54590_DEVICE_ID		0x4416
+ #define CY_PCIE_54594_DEVICE_ID		0x441a
++#define CY_PCIE_55560_DEVICE_ID		0xbd31
+ 
+ /* brcmsmac IDs */
+ #define BCM4313_D11N2G_ID	0x4727	/* 4313 802.11n 2.4G device */
+diff --git a/drivers/net/wireless/broadcom/brcm80211/include/brcmu_utils.h b/drivers/net/wireless/broadcom/brcm80211/include/brcmu_utils.h
+index 946532328667..48791ac87496 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/include/brcmu_utils.h
++++ b/drivers/net/wireless/broadcom/brcm80211/include/brcmu_utils.h
+@@ -21,6 +21,19 @@
+ 	} \
+ }
+ 
++/* Spin at most 'ms' milliseconds with polling interval 'interval' milliseconds
++ * while 'exp' is true. Caller should explicitly test 'exp' when this completes
++ * and take appropriate error action if 'exp' is still true.
++ */
++#define SPINWAIT_MS(exp, ms, interval) { \
++	typeof(interval) interval_ = (interval); \
++	uint countdown = (ms) + (interval_ - 1U); \
++	while ((exp) && (countdown >= interval_)) { \
++		msleep(interval_); \
++		countdown -= interval_; \
++	} \
++}
++
+ /* osl multi-precedence packet queue */
+ #define PKTQ_LEN_DEFAULT        128	/* Max 128 packets */
+ #define PKTQ_MAX_PREC           16	/* Maximum precedence levels */
+-- 
+2.17.1
+

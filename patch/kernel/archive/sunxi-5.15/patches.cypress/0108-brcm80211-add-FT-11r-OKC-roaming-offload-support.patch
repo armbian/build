@@ -1,0 +1,142 @@
+From 1895aa97bbcb983e7e412a9741946ef4c03bed44 Mon Sep 17 00:00:00 2001
+From: Carella Chen <carella.chen@infineon.com>
+Date: Thu, 18 Nov 2021 03:31:46 -0600
+Subject: [PATCH 108/179] brcm80211: add FT(11r) / OKC roaming offload support
+
+Add roaming offload support for FT and OKC scenarios.
+
+Signed-off-by: Carella Chen <carella.chen@infineon.com>
+
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 23 +++++++++++++++----
+ .../broadcom/brcm80211/brcmfmac/cfg80211.h    |  3 ++-
+ .../broadcom/brcm80211/brcmfmac/feature.c     |  2 ++
+ .../broadcom/brcm80211/brcmfmac/feature.h     |  4 +++-
+ 4 files changed, 26 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index adbc5212c4f4..c078fabed5bd 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -2077,6 +2077,8 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 			val = WPA_AUTH_UNSPECIFIED;
+ 			if (sme->want_1x)
+ 				profile->use_fwsup = BRCMF_PROFILE_FWSUP_1X;
++			else
++				profile->use_fwsup = BRCMF_PROFILE_FWSUP_ROAM;
+ 			break;
+ 		case WLAN_AKM_SUITE_PSK:
+ 			val = WPA_AUTH_PSK;
+@@ -2092,11 +2094,15 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 			val = WPA2_AUTH_UNSPECIFIED;
+ 			if (sme->want_1x)
+ 				profile->use_fwsup = BRCMF_PROFILE_FWSUP_1X;
++			else
++				profile->use_fwsup = BRCMF_PROFILE_FWSUP_ROAM;
+ 			break;
+ 		case WLAN_AKM_SUITE_8021X_SHA256:
+ 			val = WPA2_AUTH_1X_SHA256;
+ 			if (sme->want_1x)
+ 				profile->use_fwsup = BRCMF_PROFILE_FWSUP_1X;
++			else
++				profile->use_fwsup = BRCMF_PROFILE_FWSUP_ROAM;
+ 			break;
+ 		case WLAN_AKM_SUITE_PSK_SHA256:
+ 			val = WPA2_AUTH_PSK_SHA256;
+@@ -2109,6 +2115,8 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 			profile->is_ft = true;
+ 			if (sme->want_1x)
+ 				profile->use_fwsup = BRCMF_PROFILE_FWSUP_1X;
++			else
++				profile->use_fwsup = BRCMF_PROFILE_FWSUP_ROAM;
+ 			break;
+ 		case WLAN_AKM_SUITE_FT_PSK:
+ 			val = WPA2_AUTH_PSK | WPA2_AUTH_FT;
+@@ -2147,7 +2155,8 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 		}
+ 	}
+ 
+-	if (profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X) {
++	if ((profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X) ||
++	    (profile->use_fwsup == BRCMF_PROFILE_FWSUP_ROAM)) {
+ 		brcmf_dbg(INFO, "using 1X offload\n");
+ 		err = brcmf_fil_bsscfg_int_get(netdev_priv(ndev), "okc_enable",
+ 					       &okc_enable);
+@@ -5989,7 +5998,9 @@ static int brcmf_cfg80211_set_pmk(struct wiphy *wiphy, struct net_device *dev,
+ 	/* expect using firmware supplicant for 1X */
+ 	ifp = netdev_priv(dev);
+ 	drvr = ifp->drvr;
+-	if (WARN_ON(ifp->vif->profile.use_fwsup != BRCMF_PROFILE_FWSUP_1X))
++	if (WARN_ON((ifp->vif->profile.use_fwsup != BRCMF_PROFILE_FWSUP_1X) &&
++			(ifp->vif->profile.is_ft != true) &&
++			(ifp->vif->profile.is_okc != true)))
+ 		return -EINVAL;
+ 
+ 	if (conf->pmk_len > BRCMF_WSEC_MAX_PSK_LEN)
+@@ -6607,7 +6618,8 @@ brcmf_bss_roaming_done(struct brcmf_cfg80211_info *cfg,
+ 	roam_info.resp_ie = conn_info->resp_ie;
+ 	roam_info.resp_ie_len = conn_info->resp_ie_len;
+ 
+-	if (profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X &&
++	if ((profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X ||
++	    profile->use_fwsup == BRCMF_PROFILE_FWSUP_ROAM) &&
+ 	    (brcmf_has_pmkid(roam_info.req_ie, roam_info.req_ie_len) ||
+ 	     profile->is_ft || profile->is_okc))
+ 		roam_info.authorized = true;
+@@ -8033,7 +8045,10 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ 		wiphy_ext_feature_set(wiphy,
+ 				      NL80211_EXT_FEATURE_AP_PMKSA_CACHING);
+ 	}
+-
++	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_FBT) ||
++	    brcmf_feat_is_enabled(ifp, BRCMF_FEAT_OKC))
++		wiphy_ext_feature_set(wiphy,
++					NL80211_EXT_FEATURE_ROAM_OFFLOAD);
+ 	wiphy->mgmt_stypes = brcmf_txrx_stypes;
+ 	wiphy->max_remain_on_channel_duration = 5000;
+ 	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_PNO)) {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+index cb1455059d84..95713e78f2f7 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+@@ -134,7 +134,8 @@ enum brcmf_profile_fwsup {
+ 	BRCMF_PROFILE_FWSUP_NONE,
+ 	BRCMF_PROFILE_FWSUP_PSK,
+ 	BRCMF_PROFILE_FWSUP_1X,
+-	BRCMF_PROFILE_FWSUP_SAE
++	BRCMF_PROFILE_FWSUP_SAE,
++	BRCMF_PROFILE_FWSUP_ROAM
+ };
+ 
+ /**
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+index f0c603ba64b8..f6e1f664c595 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+@@ -43,6 +43,8 @@ static const struct brcmf_feat_fwcap brcmf_fwcap_map[] = {
+ 	{ BRCMF_FEAT_SAE, "sae " },
+ 	{ BRCMF_FEAT_FWAUTH, "idauth" },
+ 	{ BRCMF_FEAT_SAE_EXT, "sae_ext " },
++	{ BRCMF_FEAT_FBT, "fbt " },
++	{ BRCMF_FEAT_OKC, "okc" },
+ };
+ 
+ #ifdef DEBUG
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.h
+index bc6753e928f4..6f9f9e0b60b5 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.h
+@@ -55,7 +55,9 @@
+ 	BRCMF_FEAT_DEF(SAE) \
+ 	BRCMF_FEAT_DEF(FWAUTH) \
+ 	BRCMF_FEAT_DEF(DUMP_OBSS) \
+-	BRCMF_FEAT_DEF(SAE_EXT)
++	BRCMF_FEAT_DEF(SAE_EXT) \
++	BRCMF_FEAT_DEF(FBT) \
++	BRCMF_FEAT_DEF(OKC)
+ 
+ /*
+  * Quirks:
+-- 
+2.17.1
+

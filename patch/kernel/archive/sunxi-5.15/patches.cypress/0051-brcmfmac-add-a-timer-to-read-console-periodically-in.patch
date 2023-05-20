@@ -1,0 +1,260 @@
+From 33cb664bde0b2ef35384720bcd3e018d98175d37 Mon Sep 17 00:00:00 2001
+From: Wright Feng <wright.feng@cypress.com>
+Date: Fri, 10 Jul 2020 04:37:31 -0500
+Subject: [PATCH 051/179] brcmfmac: add a timer to read console periodically in
+ PCIE bus
+
+Currently, host only reads console buffer when receiving mailbox data or
+hit crash with PCIE bus. Therefore, we add timer in PCIE code to read
+console buffer periodically to help developer and user check firmware
+message when there is no data transmission between host and dongle.
+
+Signed-off-by: Wright Feng <wright.feng@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@cypress.com>
+---
+ .../broadcom/brcm80211/brcmfmac/bus.h         |   6 +
+ .../broadcom/brcm80211/brcmfmac/pcie.c        | 127 ++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/sdio.c        |   2 -
+ 3 files changed, 133 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
+index d78c2613d6f0..18e3a4286a5d 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
+@@ -23,6 +23,12 @@
+ #define BRCMF_NROF_COMMON_MSGRINGS	(BRCMF_NROF_H2D_COMMON_MSGRINGS + \
+ 					 BRCMF_NROF_D2H_COMMON_MSGRINGS)
+ 
++/* The interval to poll console */
++#define BRCMF_CONSOLE	10
++
++/* The maximum console interval value (5 mins) */
++#define MAX_CONSOLE_INTERVAL	(5 * 60)
++
+ /* The level of bus communication with the dongle */
+ enum brcmf_bus_state {
+ 	BRCMF_BUS_DOWN,		/* Not ready for frame transfers */
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+index ff03c282ea8f..c392914f6057 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -13,6 +13,8 @@
+ #include <linux/bcma/bcma.h>
+ #include <linux/sched.h>
+ #include <linux/io.h>
++#include <linux/sched/signal.h>
++#include <linux/kthread.h>
+ #include <asm/unaligned.h>
+ 
+ #include <soc.h>
+@@ -288,6 +290,11 @@ struct brcmf_pciedev_info {
+ #ifdef CONFIG_BRCMFMAC_PCIE_BARWIN_SZ
+ 	ulong bar1_size;
+ #endif /* CONFIG_BRCMFMAC_PCIE_BARWIN_SZ */
++#ifdef DEBUG
++	u32 console_interval;
++	bool console_active;
++	struct timer_list timer;
++#endif
+ };
+ 
+ struct brcmf_pcie_ringbuf {
+@@ -359,6 +366,10 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
+ static struct brcmf_fw_request *
+ brcmf_pcie_prepare_fw_request(struct brcmf_pciedev_info *devinfo);
+ 
++static void
++brcmf_pcie_fwcon_timer(struct brcmf_pciedev_info *devinfo, bool active);
++static void brcmf_pcie_debugfs_create(struct device *dev);
++
+ #ifdef CONFIG_BRCMFMAC_PCIE_BARWIN_SZ
+ DEFINE_RAW_SPINLOCK(pcie_lock);
+ #endif /* CONFIG_BRCMFMAC_PCIE_BARWIN_SZ */
+@@ -1586,6 +1597,11 @@ static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
+ 
+ static void brcmf_pcie_down(struct device *dev)
+ {
++	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
++	struct brcmf_pciedev *pcie_bus_dev = bus_if->bus_priv.pcie;
++	struct brcmf_pciedev_info *devinfo = pcie_bus_dev->devinfo;
++
++	brcmf_pcie_fwcon_timer(devinfo, false);
+ }
+ 
+ static int brcmf_pcie_preinit(struct device *dev)
+@@ -1727,6 +1743,7 @@ static const struct brcmf_bus_ops brcmf_pcie_bus_ops = {
+ 	.get_memdump = brcmf_pcie_get_memdump,
+ 	.get_fwname = brcmf_pcie_get_fwname,
+ 	.reset = brcmf_pcie_reset,
++	.debugfs_create = brcmf_pcie_debugfs_create,
+ };
+ 
+ 
+@@ -2099,6 +2116,8 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
+ 
+ 	brcmf_pcie_bus_console_read(devinfo, false);
+ 
++	brcmf_pcie_fwcon_timer(devinfo, true);
++
+ 	return;
+ 
+ fail:
+@@ -2138,6 +2157,105 @@ brcmf_pcie_prepare_fw_request(struct brcmf_pciedev_info *devinfo)
+ 	return fwreq;
+ }
+ 
++#ifdef DEBUG
++static void
++brcmf_pcie_fwcon_timer(struct brcmf_pciedev_info *devinfo, bool active)
++{
++	if (!active) {
++		if (devinfo->console_active) {
++			del_timer_sync(&devinfo->timer);
++			devinfo->console_active = false;
++		}
++		return;
++	}
++
++	/* don't start the timer */
++	if (devinfo->state != BRCMFMAC_PCIE_STATE_UP ||
++	    !devinfo->console_interval || !BRCMF_FWCON_ON())
++		return;
++
++	if (!devinfo->console_active) {
++		devinfo->timer.expires = jiffies + devinfo->console_interval;
++		add_timer(&devinfo->timer);
++		devinfo->console_active = true;
++	} else {
++		/* Reschedule the timer */
++		mod_timer(&devinfo->timer, jiffies + devinfo->console_interval);
++	}
++}
++
++static void
++brcmf_pcie_fwcon(struct timer_list *t)
++{
++	struct brcmf_pciedev_info *devinfo = from_timer(devinfo, t, timer);
++
++	if (!devinfo->console_active)
++		return;
++
++	brcmf_pcie_bus_console_read(devinfo, false);
++
++	/* Reschedule the timer if console interval is not zero */
++	mod_timer(&devinfo->timer, jiffies + devinfo->console_interval);
++}
++
++static int brcmf_pcie_console_interval_get(void *data, u64 *val)
++{
++	struct brcmf_pciedev_info *devinfo = data;
++
++	*val = devinfo->console_interval;
++
++	return 0;
++}
++
++static int brcmf_pcie_console_interval_set(void *data, u64 val)
++{
++	struct brcmf_pciedev_info *devinfo = data;
++
++	if (val > MAX_CONSOLE_INTERVAL)
++		return -EINVAL;
++
++	devinfo->console_interval = val;
++
++	if (!val && devinfo->console_active)
++		brcmf_pcie_fwcon_timer(devinfo, false);
++	else if (val)
++		brcmf_pcie_fwcon_timer(devinfo, true);
++
++	return 0;
++}
++
++DEFINE_SIMPLE_ATTRIBUTE(brcmf_pcie_console_interval_fops,
++			brcmf_pcie_console_interval_get,
++			brcmf_pcie_console_interval_set,
++			"%llu\n");
++
++static void brcmf_pcie_debugfs_create(struct device *dev)
++{
++	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
++	struct brcmf_pub *drvr = bus_if->drvr;
++	struct brcmf_pciedev *pcie_bus_dev = bus_if->bus_priv.pcie;
++	struct brcmf_pciedev_info *devinfo = pcie_bus_dev->devinfo;
++	struct dentry *dentry = brcmf_debugfs_get_devdir(drvr);
++
++	if (IS_ERR_OR_NULL(dentry))
++		return;
++
++	devinfo->console_interval = BRCMF_CONSOLE;
++
++	debugfs_create_file("console_interval", 0644, dentry, devinfo,
++			    &brcmf_pcie_console_interval_fops);
++}
++
++#else
++void brcmf_pcie_fwcon_timer(struct brcmf_pciedev_info *devinfo, bool active)
++{
++}
++
++static void brcmf_pcie_debugfs_create(struct device *dev)
++{
++}
++#endif
++
+ static int
+ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ {
+@@ -2206,6 +2324,10 @@ brcmf_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	if (ret)
+ 		goto fail_bus;
+ 
++#ifdef DEBUG
++	/* Set up the fwcon timer */
++	timer_setup(&devinfo->timer, brcmf_pcie_fwcon, 0);
++#endif
+ 	fwreq = brcmf_pcie_prepare_fw_request(devinfo);
+ 	if (!fwreq) {
+ 		ret = -ENOMEM;
+@@ -2251,6 +2373,8 @@ brcmf_pcie_remove(struct pci_dev *pdev)
+ 
+ 	devinfo = bus->bus_priv.pcie->devinfo;
+ 
++	brcmf_pcie_fwcon_timer(devinfo, false);
++
+ 	devinfo->state = BRCMFMAC_PCIE_STATE_DOWN;
+ 	if (devinfo->ci)
+ 		brcmf_pcie_intr_disable(devinfo);
+@@ -2303,6 +2427,8 @@ static int brcmf_pcie_pm_enter_D3(struct device *dev)
+ 	if (!retry && config->pm_state == BRCMF_CFG80211_PM_STATE_SUSPENDING)
+ 		brcmf_err(bus, "timed out wait for cfg80211 suspended\n");
+ 
++	brcmf_pcie_fwcon_timer(devinfo, false);
++
+ 	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
+ 
+ 	devinfo->mbdata_completed = false;
+@@ -2346,6 +2472,7 @@ static int brcmf_pcie_pm_leave_D3(struct device *dev)
+ 		brcmf_bus_change_state(bus, BRCMF_BUS_UP);
+ 		brcmf_pcie_intr_enable(devinfo);
+ 		brcmf_pcie_hostready(devinfo);
++		brcmf_pcie_fwcon_timer(devinfo, true);
+ 		return 0;
+ 	}
+ 
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
+index 0cf906af03f6..6731159cd235 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
+@@ -139,8 +139,6 @@ struct rte_console {
+ 
+ #define BRCMF_FIRSTREAD	(1 << 6)
+ 
+-#define BRCMF_CONSOLE	10	/* watchdog interval to poll console */
+-
+ /* SBSDIO_DEVICE_CTL */
+ 
+ /* 1: device will assert busy signal when receiving CMD53 */
+-- 
+2.17.1
+

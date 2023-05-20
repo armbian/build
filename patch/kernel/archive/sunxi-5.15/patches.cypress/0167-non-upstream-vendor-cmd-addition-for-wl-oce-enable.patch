@@ -1,0 +1,164 @@
+From 5e15eaed0b521726950e0c9394f88e401cfbb11b Mon Sep 17 00:00:00 2001
+From: JasonHuang <Jason.Huang2@infineon.com>
+Date: Mon, 21 Nov 2022 02:41:14 -0600
+Subject: [PATCH 167/179] non-upstream: vendor cmd addition for "wl oce enable"
+
+User can set/get oce enable through iw vendor subcmd 0xf.
+
+Signed-off-by: JasonHuang <Jason.Huang2@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/vendor.c      |  7 +++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.c  | 49 +++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.h  | 40 ++++++++++++++-
+ 3 files changed, 95 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+index 79b4e8742f42..21964c80e963 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+@@ -283,6 +283,13 @@ const struct wiphy_vendor_command brcmf_vendor_cmds[] = {
+ 			   ifx_cfg80211_vndr_cmds_twt),
+ 		.maxattr = IFX_VENDOR_ATTR_TWT_MAX
+ 	},
++	{
++		IFX_SUBCMD(OCE_ENABLE,
++			   (WIPHY_VENDOR_CMD_NEED_WDEV |
++				WIPHY_VENDOR_CMD_NEED_NETDEV),
++			VENDOR_CMD_RAW_DATA,
++			ifx_cfg80211_vndr_cmds_oce_enable)
++	},
+ 	{
+ 		IFX_SUBCMD(BSSCOLOR,
+ 			   (WIPHY_VENDOR_CMD_NEED_WDEV |
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+index c9aa4f61694f..bf49a750408e 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+@@ -519,3 +519,52 @@ int ifx_cfg80211_vndr_cmds_ldpc_cap(struct wiphy *wiphy,
+ 
+ 	return ret;
+ }
++
++int ifx_cfg80211_vndr_cmds_oce_enable(struct wiphy *wiphy,
++				      struct wireless_dev *wdev,
++				      const void *data, int len)
++{
++	int ret = 0;
++	struct brcmf_cfg80211_vif *vif;
++	struct brcmf_if *ifp;
++	struct bcm_iov_buf *oce_iov;
++	struct bcm_xtlv *oce_xtlv;
++	u8 val = *(u8 *)data;
++	u8 param[16] = {0};
++
++	vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
++	ifp = vif->ifp;
++	oce_iov = (struct bcm_iov_buf *)param;
++	oce_iov->version = cpu_to_le16(IFX_OCE_IOV_VERSION);
++	oce_iov->id = cpu_to_le16(IFX_OCE_CMD_ENABLE);
++	oce_xtlv = (struct bcm_xtlv *)oce_iov->data;
++
++	if (val == 0xa) {
++		/* To get fw iovars of the form "wl oce enable"
++		 * using iw, call the parent iovar "oce" with the subcmd
++		 * filled and passed along
++		 * ./iw dev wlan0 vendor recv 0x000319 0xf 0xa
++		 */
++		ret = brcmf_fil_iovar_data_get(ifp, "oce",
++					       param, sizeof(param));
++		if (ret) {
++			brcmf_err("get oce enable error:%d\n", ret);
++		} else {
++			brcmf_dbg(INFO,
++				  "get oce enable: %d\n", oce_xtlv->data[0]);
++			ifx_cfg80211_vndr_send_cmd_reply(wiphy, oce_xtlv->data,
++							 sizeof(int));
++		}
++	} else {
++		oce_iov->len = cpu_to_le16(8);
++		oce_xtlv->id = cpu_to_le16(IFX_OCE_XTLV_ENABLE);
++		oce_xtlv->len = cpu_to_le16(1);
++		oce_xtlv->data[0] = val;
++		ret = brcmf_fil_iovar_data_set(ifp, "oce",
++					       param, sizeof(param));
++		if (ret)
++			brcmf_err("set oce enable error:%d\n", ret);
++	}
++
++	return ret;
++}
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+index c18afdfb29f3..e32deb5338ce 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+@@ -60,6 +60,13 @@
+ 	.policy = (_POLICY),	\
+ 	.doit = (_FN)
+ 
++struct bcm_iov_buf {
++	u16	version;
++	u16	len;
++	u16	id;
++	u16	data[1];
++};
++
+ enum ifx_nl80211_vendor_subcmds {
+ 	/* TODO: IFX Vendor subcmd enum IDs between 2-15 are reserved
+ 	 * to be filled later with BRCM Vendor subcmds that are
+@@ -85,7 +92,7 @@ enum ifx_nl80211_vendor_subcmds {
+ 	SCMD(LDPC_CAP)		= 12,
+ 	SCMD(AMSDU)		= 13,
+ 	SCMD(TWT)		= 14,
+-	SCMD(RSV15)		= 15,
++	SCMD(OCE_ENABLE)	= 15,
+ 	SCMD(BSSCOLOR)		= 16,
+ 	SCMD(MAX)		= 17
+ };
+@@ -354,6 +361,34 @@ enum {
+ 	IFX_HE_CMD_LAST
+ };
+ 
++#define IFX_OCE_IOV_MAJOR_VER 1
++#define IFX_OCE_IOV_MINOR_VER 1
++#define IFX_OCE_IOV_MAJOR_VER_SHIFT 8
++#define IFX_OCE_IOV_VERSION \
++	((IFX_OCE_IOV_MAJOR_VER << IFX_OCE_IOV_MAJOR_VER_SHIFT) | \
++	IFX_OCE_IOV_MINOR_VER)
++
++enum {
++	IFX_OCE_CMD_ENABLE = 1,
++	IFX_OCE_CMD_PROBE_DEF_TIME = 2,
++	IFX_OCE_CMD_FD_TX_PERIOD = 3,
++	IFX_OCE_CMD_FD_TX_DURATION = 4,
++	IFX_OCE_CMD_RSSI_TH = 5,
++	IFX_OCE_CMD_RWAN_LINKS = 6,
++	IFX_OCE_CMD_CU_TRIGGER = 7,
++	IFX_OCE_CMD_LAST
++};
++
++enum {
++	IFX_OCE_XTLV_ENABLE  = 0x1,
++	IFX_OCE_XTLV_PROBE_DEF_TIME  = 0x2,
++	IFX_OCE_XTLV_FD_TX_PERIOD    = 0x3,
++	IFX_OCE_XTLV_FD_TX_DURATION  = 0x4,
++	IFX_OCE_XTLV_RSSI_TH = 0x5,
++	IFX_OCE_XTLV_RWAN_LINKS = 0x6,
++	IFX_OCE_XTLV_CU_TRIGGER = 0x7
++};
++
+ static const struct nla_policy
+ ifx_vendor_attr_twt_param_policy[IFX_VENDOR_ATTR_TWT_PARAM_MAX + 1] = {
+ 	[IFX_VENDOR_ATTR_TWT_PARAM_UNSPEC] = {.type = NLA_U8},
+@@ -486,6 +521,9 @@ int ifx_cfg80211_vndr_cmds_amsdu(struct wiphy *wiphy,
+ int ifx_cfg80211_vndr_cmds_ldpc_cap(struct wiphy *wiphy,
+ 				    struct wireless_dev *wdev,
+ 				    const void *data, int len);
++int ifx_cfg80211_vndr_cmds_oce_enable(struct wiphy *wiphy,
++				      struct wireless_dev *wdev,
++				      const void *data, int len);
+ 
+ #endif /* IFX_VENDOR_H */
+ 
+-- 
+2.17.1
+

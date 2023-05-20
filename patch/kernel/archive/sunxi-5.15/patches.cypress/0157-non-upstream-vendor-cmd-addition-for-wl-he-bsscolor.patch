@@ -1,0 +1,232 @@
+From 1d8a90b83afb143644172476ef4c5019633731e7 Mon Sep 17 00:00:00 2001
+From: JasonHuang <Jason.Huang2@infineon.com>
+Date: Tue, 1 Nov 2022 04:16:58 -0500
+Subject: [PATCH 157/179] non-upstream: vendor cmd addition for "wl he
+ bsscolor"
+
+User can get HE bsscolor through iw vendor subcmd 0x10.
+
+Signed-off-by: JasonHuang <Jason.Huang2@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 10 +---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.h    |  6 +++
+ .../broadcom/brcm80211/brcmfmac/vendor.c      | 10 +++-
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.c  | 50 +++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.h  | 41 ++++++++++++++-
+ 5 files changed, 106 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 62674335bb7e..f8b58aa8dcd1 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -30,6 +30,7 @@
+ #include "fwil.h"
+ #include "proto.h"
+ #include "vendor.h"
++#include "vendor_ifx.h"
+ #include "bus.h"
+ #include "common.h"
+ 
+@@ -141,7 +142,6 @@ struct cca_msrmnt_query {
+ /* start enum value for BSS properties */
+ #define WL_WSEC_INFO_BSS_BASE 0x0100
+ #define WL_WSEC_INFO_BSS_ALGOS (WL_WSEC_INFO_BSS_BASE + 6)
+-#define WL_HE_CMD_BSSCOLOR 5
+ 
+ static bool check_vif_up(struct brcmf_cfg80211_vif *vif)
+ {
+@@ -409,12 +409,6 @@ struct wl_wsec_info {
+ 	struct wl_wsec_info_tlv tlvs[1]; /* tlv data follows */
+ };
+ 
+-struct bcm_xtlv {
+-	u16	id;
+-	u16	len;
+-	u8	data[1];
+-};
+-
+ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg);
+ static bool
+ wl_cfgoce_has_ie(const u8 *ie, const u8 **tlvs, u32 *tlvs_len,
+@@ -5890,7 +5884,7 @@ brcmf_cfg80211_start_ap(struct wiphy *wiphy, struct net_device *ndev,
+ 		u8 param[8] = {0};
+ 
+ 		he_tlv = (struct bcm_xtlv *)param;
+-		he_tlv->id = cpu_to_le16(WL_HE_CMD_BSSCOLOR);
++		he_tlv->id = cpu_to_le16(IFX_HE_CMD_BSSCOLOR);
+ 		he_tlv->len = cpu_to_le16(1);
+ 		memcpy(he_tlv->data, &settings->he_bss_color.color, sizeof(u8));
+ 		err = brcmf_fil_iovar_data_set(ifp, "he", param, sizeof(param));
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+index e115d5d852e5..d9fd3cf9c3f2 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+@@ -438,6 +438,12 @@ struct brcmf_tlv {
+ 	u8 data[1];
+ };
+ 
++struct bcm_xtlv {
++	u16	id;
++	u16	len;
++	u8	data[1];
++};
++
+ static inline struct wiphy *cfg_to_wiphy(struct brcmf_cfg80211_info *cfg)
+ {
+ 	return cfg->wiphy;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+index e85a99280604..8b8f41f294d4 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+@@ -261,8 +261,14 @@ const struct wiphy_vendor_command brcmf_vendor_cmds[] = {
+ 			   ifx_vendor_attr_twt_policy,
+ 			   ifx_cfg80211_vndr_cmds_twt),
+ 		.maxattr = IFX_VENDOR_ATTR_TWT_MAX
+-	},
+-
++	},
++	{
++		IFX_SUBCMD(BSSCOLOR,
++			   (WIPHY_VENDOR_CMD_NEED_WDEV |
++				WIPHY_VENDOR_CMD_NEED_NETDEV),
++			VENDOR_CMD_RAW_DATA,
++			ifx_cfg80211_vndr_cmds_bsscolor)
++	},
+ };
+ 
+ const struct nl80211_vendor_cmd_info brcmf_vendor_events[] = {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+index 3e04a7dfe7cd..01b0139bcc0d 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+@@ -37,6 +37,23 @@
+ #include "fwil.h"
+ #include "vendor_ifx.h"
+ 
++static int ifx_cfg80211_vndr_send_cmd_reply(struct wiphy *wiphy,
++					    const void  *data, int len)
++{
++	struct sk_buff *skb;
++
++	/* Alloc the SKB for vendor_event */
++	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, len);
++	if (unlikely(!skb)) {
++		brcmf_err("skb alloc failed\n");
++		return -ENOMEM;
++	}
++
++	/* Push the data to the skb */
++	nla_put_nohdr(skb, len, data);
++	return cfg80211_vendor_cmd_reply(skb);
++}
++
+ /*
+  * Wake Duration derivation from Nominal Minimum Wake Duration
+  */
+@@ -370,4 +387,37 @@ int ifx_cfg80211_vndr_cmds_twt(struct wiphy *wiphy,
+ 	return ifx_twt_oper(wdev, twt);
+ }
+ 
++int ifx_cfg80211_vndr_cmds_bsscolor(struct wiphy *wiphy,
++				    struct wireless_dev *wdev,
++				    const void *data, int len)
++{
++	int ret = 0;
++	struct brcmf_cfg80211_vif *vif;
++	struct brcmf_if *ifp;
++	struct bcm_xtlv *he_tlv;
++	u8 val = *(u8 *)data;
++	u8 param[8] = {0};
+ 
++	vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
++	ifp = vif->ifp;
++	he_tlv = (struct bcm_xtlv *)param;
++	he_tlv->id = cpu_to_le16(IFX_HE_CMD_BSSCOLOR);
++
++	if (val == 0xa) {
++		/* To get fw iovars of the form "wl he bsscolor" using iw,
++		 * call the parent iovar "he" with the subcmd filled and
++		 * passed along ./iw dev wlan0 vendor recv 0x000319 0x10 0xa
++		 */
++		ret = brcmf_fil_iovar_data_get(ifp, "he", param, sizeof(param));
++		if (ret) {
++			brcmf_err("get he bss_color error:%d\n", ret);
++		} else {
++			brcmf_dbg(INFO, "get he bss_color: %d\n", *param);
++			ifx_cfg80211_vndr_send_cmd_reply(wiphy, param, 1);
++		}
++	} else {
++		brcmf_dbg(INFO, "not support set bsscolor during runtime!\n");
++	}
++
++	return ret;
++}
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+index 92bf53d26bce..5d9a5099f230 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+@@ -85,7 +85,8 @@ enum ifx_nl80211_vendor_subcmds {
+ 	SCMD(RSV13)		= 13,
+ 	SCMD(TWT)		= 14,
+ 	SCMD(RSV15)		= 15,
+-	SCMD(MAX)		= 16
++	SCMD(BSSCOLOR)		= 16,
++	SCMD(MAX)		= 17
+ };
+ 
+ /* enum ifx_vendor_attr - IFX nl80211 vendor attributes
+@@ -321,6 +322,41 @@ enum {
+ 	IFX_TWT_CMD_LAST
+ };
+ 
++/**
++ * HE top level command IDs
++ */
++enum {
++	IFX_HE_CMD_ENAB = 0,
++	IFX_HE_CMD_FEATURES = 1,
++	IFX_HE_CMD_TWT_SETUP = 2,
++	IFX_HE_CMD_TWT_TEARDOWN = 3,
++	IFX_HE_CMD_TWT_INFO = 4,
++	IFX_HE_CMD_BSSCOLOR = 5,
++	IFX_HE_CMD_PARTIAL_BSSCOLOR = 6,
++	IFX_HE_CMD_CAP = 7,
++	IFX_HE_CMD_STAID = 8,
++	IFX_HE_CMD_RTSDURTHRESH = 10,
++	IFX_HE_CMD_PEDURATION = 11,
++	IFX_HE_CMD_TESTBED_MODE = 12,
++	IFX_HE_CMD_OMI = 13,
++	IFX_HE_CMD_MAC_PAD_DUR = 14,
++	IFX_HE_CMD_MUEDCA = 15,
++	IFX_HE_CMD_MACCAP = 16,
++	IFX_HE_CMD_PHYCAP = 17,
++	IFX_HE_CMD_DISPLAY = 18,
++	IFX_HE_CMD_ACTION = 19,
++	IFX_HE_CMD_OFDMATX = 20,
++	IFX_HE_CMD_20IN80_MODE = 21,
++	IFX_HE_CMD_SMPS = 22,
++	IFX_HE_CMD_PPETHRESH = 23,
++	IFX_HE_CMD_HTC_OMI_EN = 24,
++	IFX_HE_CMD_ERSU_EN = 25,
++	IFX_HE_CMD_PREPUNCRX_EN = 26,
++	IFX_HE_CMD_MIMOCAP_EN = 27,
++	IFX_HE_CMD_MUEDCA_OPT = 28,
++	IFX_HE_CMD_LAST
++};
++
+ static const struct nla_policy
+ ifx_vendor_attr_twt_param_policy[IFX_VENDOR_ATTR_TWT_PARAM_MAX + 1] = {
+ 	[IFX_VENDOR_ATTR_TWT_PARAM_UNSPEC] = {.type = NLA_U8},
+@@ -442,6 +478,9 @@ typedef struct ifx_twt_teardown {
+ 
+ int ifx_cfg80211_vndr_cmds_twt(struct wiphy *wiphy, 
+ 	struct wireless_dev *wdev, const void  *data, int len);
++int ifx_cfg80211_vndr_cmds_bsscolor(struct wiphy *wiphy,
++				    struct wireless_dev *wdev,
++				    const void *data, int len);
+ 
+ #endif /* IFX_VENDOR_H */
+ 
+-- 
+2.17.1
+

@@ -1,0 +1,357 @@
+From 03127bc701a0be551e6999ef2b1e3049b3993163 Mon Sep 17 00:00:00 2001
+From: Carter Chen <carter.chen@infineon.com>
+Date: Tue, 29 Nov 2022 00:22:07 -0600
+Subject: [PATCH 174/179] non-upstream: Supporting IFX_vendor commands of MBO
+
+User can use wpa_cli mbo commands to replace wl mbo commands
+
+Fixes: SWLINUX-3020
+Signed-off-by: Carter Chen <carter.chen@infineon.com>
+
+
+
+---
+ .../broadcom/brcm80211/brcmfmac/vendor.c      |   8 +
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.c  | 139 ++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.h  |  97 +++++++++++-
+ .../broadcom/brcm80211/brcmfmac/xtlv.c        |  19 +++
+ .../broadcom/brcm80211/brcmfmac/xtlv.h        |   2 +
+ 5 files changed, 264 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+index af7ab86cf27c..9d6fc7ca70ce 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+@@ -306,6 +306,14 @@ const struct wiphy_vendor_command brcmf_vendor_cmds[] = {
+ 			VENDOR_CMD_RAW_DATA,
+ 			ifx_cfg80211_vndr_cmds_randmac)
+ 	},
++	{
++		IFX_SUBCMD(MBO,
++			   (WIPHY_VENDOR_CMD_NEED_WDEV |
++				WIPHY_VENDOR_CMD_NEED_NETDEV),
++			ifx_vendor_attr_mbo_policy,
++			ifx_cfg80211_vndr_cmds_mbo),
++		.maxattr = IFX_VENDOR_ATTR_MBO_MAX
++	},
+ };
+ 
+ const struct nl80211_vendor_cmd_info brcmf_vendor_events[] = {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+index da050dfe0377..f9d70e398e07 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+@@ -35,6 +35,7 @@
+ #include "debug.h"
+ #include "fwil.h"
+ #include "vendor_ifx.h"
++#include "xtlv.h"
+ 
+ static int ifx_cfg80211_vndr_send_cmd_reply(struct wiphy *wiphy,
+ 					    const void  *data, int len)
+@@ -621,3 +622,141 @@ int ifx_cfg80211_vndr_cmds_randmac(struct wiphy *wiphy,
+ 	return ret;
+ }
+ 
++int ifx_cfg80211_vndr_cmds_mbo(struct wiphy *wiphy,
++			       struct wireless_dev *wdev,
++			       const void *data, int len)
++{
++	int ret = 0;
++	int tmp, attr_type, mbo_param;
++	const struct nlattr *attr_iter, *mbo_param_iter;
++
++	struct brcmf_cfg80211_vif *vif;
++	struct brcmf_if *ifp;
++	struct bcm_iov_buf *mbo_iov;
++	struct bcm_xtlv *mbo_xtlv;
++	u8 param[64] = {0};
++	u16 buf_len = 0, buf_len_start = 0;
++
++	vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
++	ifp = vif->ifp;
++	mbo_iov = (struct bcm_iov_buf *)param;
++	mbo_iov->version = cpu_to_le16(IFX_MBO_IOV_VERSION);
++	mbo_xtlv = (struct bcm_xtlv *)mbo_iov->data;
++	buf_len_start = sizeof(param) - sizeof(struct bcm_iov_buf);
++	buf_len = buf_len_start;
++
++	nla_for_each_attr(attr_iter, data, len, tmp) {
++		attr_type = nla_type(attr_iter);
++
++		switch (attr_type) {
++		case IFX_VENDOR_ATTR_MBO_CMD:
++			mbo_iov->id = cpu_to_le16(nla_get_u8(attr_iter));
++			break;
++		case IFX_VENDOR_ATTR_MBO_PARAMS:
++			nla_for_each_nested(mbo_param_iter, attr_iter, tmp) {
++				mbo_param = nla_type(mbo_param_iter);
++
++				switch (mbo_param) {
++				case IFX_VENDOR_ATTR_MBO_PARAM_OPCLASS:
++				{
++					u8 op_class;
++
++					op_class = nla_get_u8(mbo_param_iter);
++					brcmf_pack_xtlv(IFX_VENDOR_ATTR_MBO_PARAM_OPCLASS,
++							&op_class, sizeof(op_class),
++							(char **)&mbo_xtlv, &buf_len);
++				}
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_CHAN:
++				{
++					u8 chan;
++
++					chan = nla_get_u8(mbo_param_iter);
++					brcmf_pack_xtlv(IFX_VENDOR_ATTR_MBO_PARAM_CHAN,
++							&chan, sizeof(chan),
++							(char **)&mbo_xtlv, &buf_len);
++				}
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_PREFERENCE:
++				{
++					u8 pref;
++
++					pref = nla_get_u8(mbo_param_iter);
++					brcmf_pack_xtlv(IFX_VENDOR_ATTR_MBO_PARAM_PREFERENCE,
++							&pref, sizeof(pref),
++							(char **)&mbo_xtlv, &buf_len);
++				}
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_REASON_CODE:
++				{
++					u8 reason;
++
++					reason = nla_get_u8(mbo_param_iter);
++					brcmf_pack_xtlv(IFX_VENDOR_ATTR_MBO_PARAM_REASON_CODE,
++							&reason, sizeof(reason),
++							(char **)&mbo_xtlv, &buf_len);
++				}
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_CELL_DATA_CAP:
++				{
++					u8 cell_data_cap;
++
++					cell_data_cap = nla_get_u8(mbo_param_iter);
++					brcmf_pack_xtlv(IFX_VENDOR_ATTR_MBO_PARAM_CELL_DATA_CAP,
++							&cell_data_cap, sizeof(cell_data_cap),
++							(char **)&mbo_xtlv, &buf_len);
++				}
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_COUNTERS:
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_ENABLE:
++				{
++					u8 enable;
++
++					enable = nla_get_u8(mbo_param_iter);
++					brcmf_pack_xtlv(IFX_VENDOR_ATTR_MBO_PARAM_ENABLE,
++							&enable, sizeof(enable),
++							(char **)&mbo_xtlv, &buf_len);
++				}
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_SUB_ELEM_TYPE:
++				{
++					u8 type;
++
++					type = nla_get_u8(mbo_param_iter);
++					brcmf_pack_xtlv(IFX_VENDOR_ATTR_MBO_PARAM_SUB_ELEM_TYPE,
++							&type, sizeof(type),
++							(char **)&mbo_xtlv, &buf_len);
++				}
++					break;
++				case IFX_VENDOR_ATTR_MBO_PARAM_BTQ_TRIG_START_OFFSET:
++				case IFX_VENDOR_ATTR_MBO_PARAM_BTQ_TRIG_RSSI_DELTA:
++				case IFX_VENDOR_ATTR_MBO_PARAM_ANQP_CELL_SUPP:
++				case IFX_VENDOR_ATTR_MBO_PARAM_BIT_MASK:
++				case IFX_VENDOR_ATTR_MBO_PARAM_ASSOC_DISALLOWED:
++				case IFX_VENDOR_ATTR_MBO_PARAM_CELLULAR_DATA_PREF:
++					return -EOPNOTSUPP;
++				default:
++					brcmf_err("unknown mbo param attr:%d\n", mbo_param);
++					return -EINVAL;
++				}
++			}
++			break;
++		default:
++			brcmf_err("Unknown MBO attribute %d, skipping\n",
++				  attr_type);
++			return -EINVAL;
++		}
++	}
++
++	buf_len = buf_len_start - buf_len;
++	mbo_xtlv->len = cpu_to_le16(buf_len);
++	mbo_iov->len = cpu_to_le16(buf_len);
++	buf_len += sizeof(struct bcm_iov_buf);
++	ret = brcmf_fil_iovar_data_set(ifp, "mbo", param, buf_len);
++
++	if (ret)
++		brcmf_err("set mbo enable error:%d\n", ret);
++
++	return ret;
++}
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+index b0864f5eb504..353d7d7a4624 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+@@ -93,7 +93,8 @@ enum ifx_nl80211_vendor_subcmds {
+ 	SCMD(OCE_ENABLE)	= 15,
+ 	SCMD(BSSCOLOR)		= 16,
+ 	SCMD(RANDMAC)		= 17,
+-	SCMD(MAX)		= 18
++	SCMD(MBO)		= 18,
++	SCMD(MAX)		= 19
+ };
+ 
+ /* enum ifx_vendor_attr - IFX nl80211 vendor attributes
+@@ -113,6 +114,97 @@ enum ifx_vendor_attr {
+ 	IFX_VENDOR_ATTR_MAX		= 11
+ };
+ 
++#define IFX_MBO_IOV_MAJOR_VER 1
++#define IFX_MBO_IOV_MINOR_VER 1
++#define IFX_MBO_IOV_MAJOR_VER_SHIFT 8
++#define IFX_MBO_IOV_VERSION \
++	((IFX_MBO_IOV_MAJOR_VER << IFX_MBO_IOV_MAJOR_VER_SHIFT) | \
++	  IFX_MBO_IOV_MINOR_VER)
++
++enum ifx_vendor_attr_mbo_param {
++	IFX_VENDOR_ATTR_MBO_PARAM_UNSPEC = 0,
++	IFX_VENDOR_ATTR_MBO_PARAM_OPCLASS = 1,
++	IFX_VENDOR_ATTR_MBO_PARAM_CHAN = 2,
++	IFX_VENDOR_ATTR_MBO_PARAM_PREFERENCE = 3,
++	IFX_VENDOR_ATTR_MBO_PARAM_REASON_CODE = 4,
++	IFX_VENDOR_ATTR_MBO_PARAM_CELL_DATA_CAP = 5,
++	IFX_VENDOR_ATTR_MBO_PARAM_COUNTERS = 6,
++	IFX_VENDOR_ATTR_MBO_PARAM_ENABLE = 7,
++	IFX_VENDOR_ATTR_MBO_PARAM_SUB_ELEM_TYPE = 8,
++	IFX_VENDOR_ATTR_MBO_PARAM_BTQ_TRIG_START_OFFSET = 9,
++	IFX_VENDOR_ATTR_MBO_PARAM_BTQ_TRIG_RSSI_DELTA = 10,
++	IFX_VENDOR_ATTR_MBO_PARAM_ANQP_CELL_SUPP = 11,
++	IFX_VENDOR_ATTR_MBO_PARAM_BIT_MASK = 12,
++	IFX_VENDOR_ATTR_MBO_PARAM_ASSOC_DISALLOWED = 13,
++	IFX_VENDOR_ATTR_MBO_PARAM_CELLULAR_DATA_PREF = 14,
++	IFX_VENDOR_ATTR_MBO_PARAM_MAX = 15
++};
++
++static const struct nla_policy
++ifx_vendor_attr_mbo_param_policy[IFX_VENDOR_ATTR_MBO_PARAM_MAX + 1] = {
++	[IFX_VENDOR_ATTR_MBO_PARAM_UNSPEC] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_OPCLASS] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_CHAN] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_PREFERENCE] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_REASON_CODE] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_CELL_DATA_CAP] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_COUNTERS] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_ENABLE] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_SUB_ELEM_TYPE] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_BTQ_TRIG_START_OFFSET] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_BTQ_TRIG_RSSI_DELTA] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_ANQP_CELL_SUPP] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_BIT_MASK] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_ASSOC_DISALLOWED] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_CELLULAR_DATA_PREF] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAM_MAX] = {.type = NLA_U8},
++};
++
++enum ifx_vendor_attr_mbo {
++	IFX_VENDOR_ATTR_MBO_UNSPEC,
++	IFX_VENDOR_ATTR_MBO_CMD,
++	IFX_VENDOR_ATTR_MBO_PARAMS,
++	IFX_VENDOR_ATTR_MBO_MAX
++};
++
++static const struct nla_policy ifx_vendor_attr_mbo_policy[IFX_VENDOR_ATTR_MBO_MAX + 1] = {
++	[IFX_VENDOR_ATTR_MBO_UNSPEC] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_CMD] = {.type = NLA_U8},
++	[IFX_VENDOR_ATTR_MBO_PARAMS] =
++		NLA_POLICY_NESTED(ifx_vendor_attr_mbo_param_policy),
++	[IFX_VENDOR_ATTR_MBO_MAX] = {.type = NLA_U8},
++};
++
++enum {
++	IFX_MBO_CMD_ADD_CHAN_PREF = 1,
++	IFX_MBO_CMD_DEL_CHAN_PREF = 2,
++	IFX_MBO_CMD_LIST_CHAN_PREF = 3,
++	IFX_MBO_CMD_CELLULAR_DATA_CAP = 4,
++	IFX_MBO_CMD_DUMP_COUNTERS = 5,
++	IFX_MBO_CMD_CLEAR_COUNTERS = 6,
++	IFX_MBO_CMD_FORCE_ASSOC = 7,
++	IFX_MBO_CMD_BSSTRANS_REJECT = 8,
++	IFX_MBO_CMD_SEND_NOTIF = 9,
++	IFX_MBO_CMD_LAST
++};
++
++enum {
++	IFX_MBO_XTLV_OPCLASS            = 0x1,
++	IFX_MBO_XTLV_CHAN               = 0x2,
++	IFX_MBO_XTLV_PREFERENCE         = 0x3,
++	IFX_MBO_XTLV_REASON_CODE        = 0x4,
++	IFX_MBO_XTLV_CELL_DATA_CAP      = 0x5,
++	IFX_MBO_XTLV_COUNTERS           = 0x6,
++	IFX_MBO_XTLV_ENABLE             = 0x7,
++	IFX_MBO_XTLV_SUB_ELEM_TYPE      = 0x8,
++	IFX_MBO_XTLV_BTQ_TRIG_START_OFFSET = 0x9,
++	IFX_MBO_XTLV_BTQ_TRIG_RSSI_DELTA = 0xa,
++	IFX_MBO_XTLV_ANQP_CELL_SUPP      = 0xb,
++	IFX_MBO_XTLV_BIT_MASK		= 0xc,
++	IFX_MBO_XTLV_ASSOC_DISALLOWED	= 0xd,
++	IFX_MBO_XTLV_CELLULAR_DATA_PREF = 0xe
++};
++
+ /* TWT define/enum/struct
+  */
+ /* TWT cmd version*/
+@@ -550,6 +642,9 @@ int ifx_cfg80211_vndr_cmds_oce_enable(struct wiphy *wiphy,
+ int ifx_cfg80211_vndr_cmds_randmac(struct wiphy *wiphy,
+ 				   struct wireless_dev *wdev,
+ 				   const void *data, int len);
++int ifx_cfg80211_vndr_cmds_mbo(struct wiphy *wiphy,
++			       struct wireless_dev *wdev,
++			       const void *data, int len);
+ 
+ #endif /* IFX_VENDOR_H */
+ 
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.c
+index 2f3c451148db..03192de92e37 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.c
+@@ -80,3 +80,22 @@ void brcmf_xtlv_pack_header(struct brcmf_xtlv *xtlv, u16 id, u16 len,
+ 		memcpy(data_buf, data, len);
+ }
+ 
++u32 brcmf_pack_xtlv(u16 id, char *data, u32 len,
++		    char **buf, u16 *buflen)
++{
++	u32 iolen;
++
++	iolen = brcmf_xtlv_data_size(len, BRCMF_XTLV_OPTION_ALIGN32);
++
++	if (iolen > *buflen) {
++		WARN(true, "xtlv buffer is too short");
++		return 0;
++	}
++
++	brcmf_xtlv_pack_header((void *)*buf, id, len, data,
++			       BRCMF_XTLV_OPTION_ALIGN32);
++
++	*buf = *buf + iolen;
++	*buflen -= iolen;
++	return iolen;
++}
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.h
+index e1930ce1b642..d460a7a3c774 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/xtlv.h
+@@ -27,5 +27,7 @@ enum brcmf_xtlv_option {
+ int brcmf_xtlv_data_size(int dlen, u16 opts);
+ void brcmf_xtlv_pack_header(struct brcmf_xtlv *xtlv, u16 id, u16 len,
+ 			    const u8 *data, u16 opts);
++u32 brcmf_pack_xtlv(u16 id, char *data, u32 len,
++		    char **buf, u16 *buflen);
+ 
+ #endif /* __BRCMF_XTLV_H */
+-- 
+2.17.1
+

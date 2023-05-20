@@ -1,0 +1,230 @@
+From 4e01b7ded601728934963c032e6cf61d22c75ca6 Mon Sep 17 00:00:00 2001
+From: Carter Chen <carter.chen@infineon.com>
+Date: Fri, 29 Jul 2022 05:31:55 -0500
+Subject: [PATCH 134/179] brcmfmac: update BIP setting and wsec_info for GMAC
+ and GCMP
+
+update BIP setting to firmware by parsing connect information
+update wsec_info for GCMP and GMAC
+
+
+Signed-off-by: Carter Chen <carter.chen@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 113 ++++++++++++++++++
+ 1 file changed, 113 insertions(+)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 259252945ca5..45d1aae0731b 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -127,6 +127,15 @@ struct cca_msrmnt_query {
+ 	u32 time_req;
+ };
+ 
++/* algo bit vector */
++#define KEY_ALGO_MASK(_algo)	(1 << (_algo))
++/* version of the wl_wsec_info structure */
++#define WL_WSEC_INFO_VERSION 0x01
++
++/* start enum value for BSS properties */
++#define WL_WSEC_INFO_BSS_BASE 0x0100
++#define WL_WSEC_INFO_BSS_ALGOS (WL_WSEC_INFO_BSS_BASE + 6)
++
+ static bool check_vif_up(struct brcmf_cfg80211_vif *vif)
+ {
+ 	if (!test_bit(BRCMF_VIF_STATUS_READY, &vif->sme_state)) {
+@@ -355,6 +364,27 @@ struct wl_interface_create_v3 {
+ 	u8 data[];			/* Optional for specific data */
+ };
+ 
++/* tlv used to return wl_wsec_info properties */
++struct wl_wsec_info_tlv {
++	u16 type;
++	u16 len;	/* data length */
++	u8 data[1];	/* data follows */
++};
++
++/* input/output data type for wsec_info iovar */
++struct wl_wsec_info {
++	u8 version; /* structure version */
++	u8 pad[2];
++	u8 num_tlvs;
++	struct wl_wsec_info_tlv tlvs[1]; /* tlv data follows */
++};
++
++struct bcm_xtlv {
++	u16	id;
++	u16	len;
++	u8	data[1];
++};
++
+ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg);
+ static bool
+ wl_cfgoce_has_ie(const u8 *ie, const u8 **tlvs, u32 *tlvs_len,
+@@ -365,6 +395,50 @@ wl_cfgoce_has_ie(const u8 *ie, const u8 **tlvs, u32 *tlvs_len,
+ 	wl_cfgoce_has_ie(ie, tlvs, len,		\
+ 			 (const u8 *)WFA_OUI, TLV_OUI_LEN, WFA_OUI_TYPE_MBO_OCE)
+ 
++static s32
++wl_set_wsec_info_algos(struct brcmf_if *ifp, u32 algos, u32 mask)
++{
++	struct brcmf_pub *drvr = ifp->drvr;
++	s32 err = 0;
++	struct wl_wsec_info *wsec_info;
++	struct bcm_xtlv *wsec_info_tlv;
++	u16 tlv_data_len;
++	u8 tlv_data[8];
++	u32 param_len;
++	u8 *buf;
++
++	brcmf_dbg(TRACE, "Enter\n");
++
++	buf = kzalloc(sizeof(struct wl_wsec_info) + sizeof(tlv_data), GFP_KERNEL);
++	if (!buf) {
++		bphy_err(drvr, "unable to allocate.\n");
++		return -ENOMEM;
++	}
++
++	wsec_info = (struct wl_wsec_info *)buf;
++	wsec_info->version = WL_WSEC_INFO_VERSION;
++	wsec_info_tlv = (struct bcm_xtlv *)(buf + offsetof(struct wl_wsec_info, tlvs));
++
++	wsec_info->num_tlvs++;
++	tlv_data_len = sizeof(tlv_data);
++	memcpy(tlv_data, &algos, sizeof(algos));
++	memcpy(tlv_data + sizeof(algos), &mask, sizeof(mask));
++
++	wsec_info_tlv->id = cpu_to_le16(WL_WSEC_INFO_BSS_ALGOS);
++	wsec_info_tlv->len = cpu_to_le16(tlv_data_len);
++	memcpy(wsec_info_tlv->data, tlv_data, tlv_data_len);
++
++	param_len = offsetof(struct wl_wsec_info, tlvs) +
++		    offsetof(struct wl_wsec_info_tlv, data) + tlv_data_len;
++
++	err = brcmf_fil_bsscfg_data_set(ifp, "wsec_info", buf, param_len);
++	if (err)
++		brcmf_err("set wsec_info_error:%d\n", err);
++
++	kfree(buf);
++	return err;
++}
++
+ /* Is any of the tlvs the expected entry? If
+  * not update the tlvs buffer pointer/length.
+  */
+@@ -2074,6 +2148,8 @@ brcmf_set_wsec_mode(struct net_device *ndev,
+ 	s32 gval = 0;
+ 	s32 wsec;
+ 	s32 err = 0;
++	u32 algos = 0, mask = 0;
++
+ 
+ 	if (sme->crypto.n_ciphers_pairwise) {
+ 		switch (sme->crypto.ciphers_pairwise[0]) {
+@@ -2092,6 +2168,8 @@ brcmf_set_wsec_mode(struct net_device *ndev,
+ 			break;
+ 		case WLAN_CIPHER_SUITE_GCMP_256:
+ 			pval = AES_ENABLED;
++			algos = KEY_ALGO_MASK(CRYPTO_ALGO_AES_GCM256);
++			mask = algos | KEY_ALGO_MASK(CRYPTO_ALGO_AES_CCM);
+ 			break;
+ 		default:
+ 			bphy_err(drvr, "invalid cipher pairwise (%d)\n",
+@@ -2116,6 +2194,8 @@ brcmf_set_wsec_mode(struct net_device *ndev,
+ 			break;
+ 		case WLAN_CIPHER_SUITE_GCMP_256:
+ 			gval = AES_ENABLED;
++			algos = KEY_ALGO_MASK(CRYPTO_ALGO_AES_GCM256);
++			mask = algos | KEY_ALGO_MASK(CRYPTO_ALGO_AES_CCM);
+ 			break;
+ 		default:
+ 			bphy_err(drvr, "invalid cipher group (%d)\n",
+@@ -2125,6 +2205,7 @@ brcmf_set_wsec_mode(struct net_device *ndev,
+ 	}
+ 
+ 	brcmf_dbg(CONN, "pval (%d) gval (%d)\n", pval, gval);
++	brcmf_dbg(CONN, "algos (0x%x) mask (0x%x)\n", algos, mask);
+ 	/* In case of privacy, but no security and WPS then simulate */
+ 	/* setting AES. WPS-2.0 allows no security                   */
+ 	if (brcmf_find_wpsie(sme->ie, sme->ie_len) && !pval && !gval &&
+@@ -2138,6 +2219,12 @@ brcmf_set_wsec_mode(struct net_device *ndev,
+ 		return err;
+ 	}
+ 
++	err = wl_set_wsec_info_algos(ifp, algos, mask);
++	if (err) {
++		bphy_err(drvr, "set wsec_info error (%d)\n", err);
++		return err;
++	}
++
+ 	sec = &profile->sec;
+ 	sec->cipher_pairwise = sme->crypto.ciphers_pairwise[0];
+ 	sec->cipher_group = sme->crypto.cipher_group;
+@@ -2161,6 +2248,8 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 	u16 rsn_cap;
+ 	u32 mfp;
+ 	u16 count;
++	u16 pmkid_count;
++	const u8 *group_mgmt_cs = NULL;
+ 
+ 	profile->use_fwsup = BRCMF_PROFILE_FWSUP_NONE;
+ 	profile->is_ft = false;
+@@ -2327,6 +2416,20 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 		mfp = BRCMF_MFP_CAPABLE;
+ 	brcmf_fil_bsscfg_int_set(netdev_priv(ndev), "mfp", mfp);
+ 
++	offset += RSN_CAP_LEN;
++	if (mfp && (ie_len - offset >= RSN_PMKID_COUNT_LEN)) {
++		pmkid_count = ie[offset] + (ie[offset + 1] << 8);
++		offset += RSN_PMKID_COUNT_LEN + (pmkid_count * WLAN_PMKID_LEN);
++		if (ie_len - offset >= WPA_IE_MIN_OUI_LEN) {
++			group_mgmt_cs = &ie[offset];
++			if (memcmp(group_mgmt_cs, RSN_OUI, TLV_OUI_LEN) == 0) {
++				brcmf_fil_bsscfg_data_set(ifp, "bip",
++							  (void *)group_mgmt_cs,
++							  WPA_IE_MIN_OUI_LEN);
++			}
++		}
++	}
++
+ skip_mfp_config:
+ 	brcmf_dbg(CONN, "setting wpa_auth to 0x%0x\n", val);
+ 	err = brcmf_fil_bsscfg_int_set(netdev_priv(ndev), "wpa_auth", val);
+@@ -2957,6 +3060,7 @@ brcmf_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
+ 	s32 err;
+ 	u8 keybuf[8];
+ 	bool ext_key;
++	u32 algos = 0, mask = 0;
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+ 	brcmf_dbg(CONN, "key index (%d)\n", key_idx);
+@@ -3042,10 +3146,14 @@ brcmf_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
+ 		key->algo = CRYPTO_ALGO_AES_GCM256;
+ 		val = AES_ENABLED;
+ 		brcmf_dbg(CONN, "WLAN_CIPHER_SUITE_GCMP_256\n");
++		algos = KEY_ALGO_MASK(CRYPTO_ALGO_AES_GCM256);
++		mask = algos | KEY_ALGO_MASK(CRYPTO_ALGO_AES_CCM);
+ 		break;
+ 	case WLAN_CIPHER_SUITE_BIP_GMAC_256:
+ 		key->algo = CRYPTO_ALGO_BIP_GMAC256;
+ 		val = AES_ENABLED;
++		algos = KEY_ALGO_MASK(CRYPTO_ALGO_BIP_GMAC256);
++		mask = algos | KEY_ALGO_MASK(CRYPTO_ALGO_AES_CCM);
+ 		brcmf_dbg(CONN, "WLAN_CIPHER_SUITE_BIP_GMAC_256\n");
+ 		break;
+ 	default:
+@@ -3070,6 +3178,11 @@ brcmf_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
+ 		goto done;
+ 	}
+ 
++	brcmf_dbg(CONN, "algos (0x%x) mask (0x%x)\n", algos, mask);
++	err = wl_set_wsec_info_algos(ifp, algos, mask);
++	if (err)
++		bphy_err(drvr, "set wsec_info error (%d)\n", err);
++
+ done:
+ 	brcmf_dbg(TRACE, "Exit\n");
+ 	return err;
+-- 
+2.17.1
+

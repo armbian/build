@@ -1,0 +1,622 @@
+From 1421a6cf03dec762a6aa45955b77087838e3388f Mon Sep 17 00:00:00 2001
+From: Wright Feng <wright.feng@cypress.com>
+Date: Wed, 15 Apr 2020 01:25:45 -0500
+Subject: [PATCH 082/179] brcmfmac: add BT shared SDIO support
+
+This feature is about sharing the SDIO bus interface between BT host
+driver and FMAC WiFi host driver. To enable this feature, it needs to
+set CONFIG_BRCMFMAC_BT_SHRAED_SDIO=y in kernel configuration.
+
+Verified: BTSDIO driver loopback test
+
+Signed-off-by: Wright Feng <wright.feng@cypress.com>
+Signed-off-by: Ian Lin <ian.lin-ee@infineon.com>
+
+---
+ .../net/wireless/broadcom/brcm80211/Kconfig   |   9 +
+ .../broadcom/brcm80211/brcmfmac/Kconfig       |   7 +
+ .../broadcom/brcm80211/brcmfmac/Makefile      |   2 +
+ .../brcm80211/brcmfmac/bt_shared_sdio.c       | 326 ++++++++++++++++++
+ .../brcm80211/brcmfmac/bt_shared_sdio.h       |  43 +++
+ .../broadcom/brcm80211/brcmfmac/bus.h         |  17 +
+ .../broadcom/brcm80211/brcmfmac/sdio.c        |  68 +++-
+ 7 files changed, 471 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.c
+ create mode 100644 drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.h
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/Kconfig b/drivers/net/wireless/broadcom/brcm80211/Kconfig
+index 5b801ff6b904..5dbc1e2a83fc 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/Kconfig
++++ b/drivers/net/wireless/broadcom/brcm80211/Kconfig
+@@ -48,3 +48,12 @@ config BRCMFMAC_PCIE_BARWIN_SZ
+ 	  window size. Say Y to allow developers to use custom PCIE
+ 	  BAR window size when HOST PCIE IP can support less then 4MB
+ 	  BAR window.
++
++config BRCMFMAC_BT_SHARED_SDIO
++	bool "FMAC shares SDIO bus to Bluetooth"
++	depends on BRCMFMAC
++	depends on BRCMFMAC_SDIO
++	default n
++	help
++	  Selecting this to enables sharing the SDIO bus interface between
++	  Cypress BT and WiFi host drivers.
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Kconfig b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Kconfig
+index 32794c1eca23..48b5bccd5474 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Kconfig
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Kconfig
+@@ -48,3 +48,10 @@ config BRCMFMAC_PCIE
+ 	  IEEE802.11ac embedded FullMAC WLAN driver. Say Y if you want to
+ 	  use the driver for an PCIE wireless card.
+ 
++config BRCMFMAC_BT_SHARED_SDIO
++	bool "FMAC shares SDIO bus to Bluetooth"
++	depends on BRCMFMAC_SDIO
++	default n
++	help
++	  This option enables the feautre of sharing the SDIO bus interface
++	  between Cypress BT and WiFi host drivers.
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Makefile b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Makefile
+index 13c13504a6e8..baf713279532 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Makefile
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/Makefile
+@@ -47,3 +47,5 @@ brcmfmac-$(CONFIG_OF) += \
+ 		of.o
+ brcmfmac-$(CONFIG_DMI) += \
+ 		dmi.o
++brcmfmac-${CONFIG_BRCMFMAC_BT_SHARED_SDIO} += \
++		bt_shared_sdio.o
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.c
+new file mode 100644
+index 000000000000..ef6283622697
+--- /dev/null
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.c
+@@ -0,0 +1,326 @@
++// SPDX-License-Identifier: ISC
++
++/* Copyright 2019, Cypress Semiconductor Corporation or a subsidiary of
++ * Cypress Semiconductor Corporation. All rights reserved.
++ * This software, including source code, documentation and related
++ * materials ("Software"), is owned by Cypress Semiconductor
++ * Corporation or one of its subsidiaries ("Cypress") and is protected by
++ * and subject to worldwide patent protection (United States and foreign),
++ * United States copyright laws and international treaty provisions.
++ * Therefore, you may use this Software only as provided in the license
++ * agreement accompanying the software package from which you
++ * obtained this Software ("EULA"). If no EULA applies, Cypress hereby grants
++ * you a personal, nonexclusive, non-transferable license to copy, modify,
++ * and compile the Software source code solely for use in connection with
++ * Cypress's integrated circuit products. Any reproduction, modification,
++ * translation, compilation, or representation of this Software except as
++ * specified above is prohibited without the express written permission of
++ * Cypress.
++ * Disclaimer: THIS SOFTWARE IS PROVIDED AS-IS, WITH NO WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, NONINFRINGEMENT, IMPLIED
++ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. Cypress
++ * reserves the right to make changes to the Software without notice. Cypress
++ * does not assume any liability arising out of the application or use of the
++ * Software or any product or circuit described in the Software. Cypress does
++ * not authorize its products for use in any products where a malfunction or
++ * failure of the Cypress product may reasonably be expected to result in
++ * significant property damage, injury or death ("High Risk Product"). By
++ * including Cypress's product in a High Risk Product, the manufacturer
++ * of such system or application assumes all risk of such use and in doing
++ * so agrees to indemnify Cypress against all liability.
++ */
++
++#include <linux/types.h>
++#include <linux/atomic.h>
++#include <linux/kernel.h>
++#include <linux/mmc/sdio_func.h>
++#include <linux/mmc/card.h>
++#include "bus.h"
++#include "chipcommon.h"
++#include "core.h"
++#include "sdio.h"
++#include "soc.h"
++#include "fwil.h"
++
++#define SDIOD_ADDR_BOUND		0x1000
++#define SDIOD_ADDR_BOUND_MASK		0xfff
++
++struct brcmf_bus *g_bus_if;
++
++enum bus_owner {
++	WLAN_MODULE = 0,
++	BT_MODULE
++};
++
++struct btsdio_info {
++	u32 bt_buf_reg_addr;
++	u32 host_ctrl_reg_addr;
++	u32 bt_ctrl_reg_addr;
++	u32 bt_buf_addr;
++	u32 wlan_buf_addr;
++};
++
++void brcmf_btsdio_int_handler(struct brcmf_bus *bus_if)
++{
++	struct brcmf_bt_dev *btdev = bus_if->bt_dev;
++
++	if (btdev && btdev->bt_sdio_int_cb)
++		btdev->bt_sdio_int_cb(btdev->bt_data);
++}
++
++int brcmf_btsdio_init(struct brcmf_bus *bus_if)
++{
++	if (!bus_if)
++		return -EINVAL;
++
++	g_bus_if = bus_if;
++	return 0;
++}
++
++int brcmf_btsdio_attach(struct brcmf_bus *bus_if, void *btdata,
++			void (*bt_int_fun)(void *data))
++{
++	struct brcmf_bt_dev *btdev;
++
++	/* Allocate bt dev */
++	btdev = kzalloc(sizeof(*btdev), GFP_ATOMIC);
++	if (!btdev)
++		return -ENOMEM;
++
++	btdev->bt_data = btdata;
++	btdev->bt_sdio_int_cb = bt_int_fun;
++	bus_if->bt_dev = btdev;
++
++	return 0;
++}
++
++void brcmf_btsdio_detach(struct brcmf_bus *bus_if)
++{
++	struct brcmf_bt_dev *btdev = bus_if->bt_dev;
++
++	if (!btdev)
++		return;
++
++	if (btdev->bt_data)
++		btdev->bt_data = NULL;
++	if (btdev->bt_sdio_int_cb)
++		btdev->bt_sdio_int_cb = NULL;
++	if (bus_if->bt_dev) {
++		bus_if->bt_dev = NULL;
++		kfree(btdev);
++	}
++}
++
++u8 brcmf_btsdio_bus_count(struct brcmf_bus *bus_if)
++{
++	struct brcmf_bt_dev *btdev = bus_if->bt_dev;
++
++	if (!btdev)
++		return 0;
++
++	return btdev->use_count;
++}
++
++void *brcmf_bt_sdio_attach(void *btdata, void (*bt_int_fun)(void *data))
++{
++	int err;
++
++	if (!g_bus_if) {
++		brcmf_err("BTSDIO is not initialized\n");
++		return NULL;
++	}
++
++	err = brcmf_btsdio_attach(g_bus_if, btdata, bt_int_fun);
++	if (err) {
++		brcmf_err("BTSDIO attach failed, err=%d\n", err);
++		return NULL;
++	}
++
++	return (void *)g_bus_if;
++}
++EXPORT_SYMBOL(brcmf_bt_sdio_attach);
++
++int brcmf_get_wlan_info(struct brcmf_bus *bus_if, struct btsdio_info *bs_info)
++{
++	struct brcmf_if *ifp;
++
++	if (!bus_if || !bs_info)
++		return -EINVAL;
++
++	ifp = bus_if->drvr->iflist[0];
++
++	bs_info->bt_buf_reg_addr = SI_ENUM_BASE_DEFAULT + 0xC00 +
++				     CHIPGCIREGOFFS(gci_input[6]);
++	bs_info->host_ctrl_reg_addr = SI_ENUM_BASE_DEFAULT + 0xC00 +
++				      CHIPGCIREGOFFS(gci_output[3]);
++	bs_info->bt_ctrl_reg_addr = SI_ENUM_BASE_DEFAULT + 0xC00 +
++				    CHIPGCIREGOFFS(gci_input[7]);
++	brcmf_dbg(INFO, "BT buf reg addr: 0x%x\n",
++		  bs_info->bt_buf_reg_addr);
++	brcmf_dbg(INFO, "HOST ctrl reg addr: 0x%x\n",
++		  bs_info->host_ctrl_reg_addr);
++	brcmf_dbg(INFO, "BT ctrl reg addr: 0x%x\n",
++		  bs_info->bt_ctrl_reg_addr);
++	return 0;
++}
++EXPORT_SYMBOL(brcmf_get_wlan_info);
++
++u32 brcmf_bus_reg_read(struct brcmf_bus *bus_if, u32 addr)
++{
++	struct brcmf_sdio_dev *sdiodev;
++	int err = 0;
++	u32 val;
++
++	if (!bus_if)
++		return -EINVAL;
++
++	sdiodev = bus_if->bus_priv.sdio;
++
++	sdio_claim_host(sdiodev->func1);
++	val = brcmf_sdiod_readl(sdiodev, addr, &err);
++	if (err) {
++		brcmf_err("sdio reg read failed, err=%d\n", err);
++		sdio_release_host(sdiodev->func1);
++		return err;
++	}
++	sdio_release_host(sdiodev->func1);
++
++	return val;
++}
++EXPORT_SYMBOL(brcmf_bus_reg_read);
++
++void brcmf_bus_reg_write(struct brcmf_bus *bus_if, u32 addr, u32 val)
++{
++	struct brcmf_sdio_dev *sdiodev;
++	int err = 0;
++
++	if (!bus_if)
++		return;
++
++	sdiodev = bus_if->bus_priv.sdio;
++
++	sdio_claim_host(sdiodev->func1);
++	brcmf_sdiod_writel(sdiodev, addr, val, &err);
++	if (err)
++		brcmf_err("sdio reg write failed, err=%d\n", err);
++	sdio_release_host(sdiodev->func1);
++}
++EXPORT_SYMBOL(brcmf_bus_reg_write);
++
++int brcmf_membytes(struct brcmf_bus *bus_if, bool set, u32 address, u8 *data,
++		   unsigned int size)
++{
++	struct brcmf_sdio_dev *sdiodev;
++	int err = 0;
++	u32 block1_offset;
++	u32 block2_addr;
++	u16 block1_size;
++	u16 block2_size;
++	u8 *block2_data;
++
++	if (!bus_if || !data)
++		return -EINVAL;
++
++	sdiodev = bus_if->bus_priv.sdio;
++	/* To avoid SDIO access crosses AXI 4k address boundaries crossing */
++	if (((address & SDIOD_ADDR_BOUND_MASK) + size) > SDIOD_ADDR_BOUND) {
++		brcmf_dbg(SDIO, "data cross 4K boundary\n");
++		/* The 1st 4k packet */
++		block1_offset = address & SDIOD_ADDR_BOUND_MASK;
++		block1_size = (SDIOD_ADDR_BOUND - block1_offset);
++		sdio_claim_host(sdiodev->func1);
++		err = brcmf_sdiod_ramrw(sdiodev, set, address,
++					data, block1_size);
++		if (err) {
++			brcmf_err("sdio memory access failed, err=%d\n", err);
++			sdio_release_host(sdiodev->func1);
++			return err;
++		}
++		/* The 2nd 4k packet */
++		block2_addr = address + block1_size;
++		block2_size = size - block1_size;
++		block2_data = data + block1_size;
++		err = brcmf_sdiod_ramrw(sdiodev, set, block2_addr,
++					block2_data, block2_size);
++		if (err)
++			brcmf_err("sdio memory access failed, err=%d\n", err);
++		sdio_release_host(sdiodev->func1);
++	} else {
++		sdio_claim_host(sdiodev->func1);
++		err = brcmf_sdiod_ramrw(sdiodev, set, address, data, size);
++		if (err)
++			brcmf_err("sdio memory access failed, err=%d\n", err);
++		sdio_release_host(sdiodev->func1);
++	}
++	return err;
++}
++EXPORT_SYMBOL(brcmf_membytes);
++
++/* Function to enable the Bus Clock
++ * This function is not callable from non-sleepable context
++ */
++int brcmf_bus_clk_enable(struct brcmf_bus *bus_if, enum bus_owner owner)
++{
++	struct brcmf_sdio_dev *sdiodev;
++	struct brcmf_bt_dev *btdev;
++	int err = 0;
++
++	if (!bus_if)
++		return -EINVAL;
++
++	btdev = bus_if->bt_dev;
++	sdiodev = bus_if->bus_priv.sdio;
++
++	sdio_claim_host(sdiodev->func1);
++	btdev->use_count++;
++	sdio_release_host(sdiodev->func1);
++	err = brcmf_sdio_sleep(sdiodev->bus, false);
++
++	return err;
++}
++EXPORT_SYMBOL(brcmf_bus_clk_enable);
++
++/* Function to disable the Bus Clock
++ * This function is not callable from non-sleepable context
++ */
++int brcmf_bus_clk_disable(struct brcmf_bus *bus_if, enum bus_owner owner)
++{
++	struct brcmf_sdio_dev *sdiodev;
++	struct brcmf_bt_dev *btdev;
++	int err = 0;
++
++	if (!bus_if)
++		return -EINVAL;
++
++	btdev = bus_if->bt_dev;
++	sdiodev = bus_if->bus_priv.sdio;
++
++	sdio_claim_host(sdiodev->func1);
++	if (btdev->use_count != 0)
++		btdev->use_count--;
++	sdio_release_host(sdiodev->func1);
++	err = brcmf_sdio_sleep(sdiodev->bus, true);
++
++	return err;
++}
++EXPORT_SYMBOL(brcmf_bus_clk_disable);
++
++/* Function to reset bt_use_count counter to zero.
++ * This function is not callable from non-sleepable context
++ */
++void brcmf_bus_reset_bt_use_count(struct brcmf_bus *bus_if)
++{
++	struct brcmf_sdio_dev *sdiodev;
++	struct brcmf_bt_dev *btdev;
++
++	if (!bus_if)
++		return;
++
++	btdev = bus_if->bt_dev;
++	sdiodev = bus_if->bus_priv.sdio;
++
++	sdio_claim_host(sdiodev->func1);
++	btdev->use_count = 0;
++	sdio_release_host(sdiodev->func1);
++}
++EXPORT_SYMBOL(brcmf_bus_reset_bt_use_count);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.h
+new file mode 100644
+index 000000000000..f0e6b38cf77f
+--- /dev/null
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bt_shared_sdio.h
+@@ -0,0 +1,43 @@
++/* SPDX-License-Identifier: ISC */
++/* Copyright 2019, Cypress Semiconductor Corporation or a subsidiary of
++ * Cypress Semiconductor Corporation. All rights reserved.
++ * This software, including source code, documentation and related
++ * materials ("Software"), is owned by Cypress Semiconductor
++ * Corporation or one of its subsidiaries ("Cypress") and is protected by
++ * and subject to worldwide patent protection (United States and foreign),
++ * United States copyright laws and international treaty provisions.
++ * Therefore, you may use this Software only as provided in the license
++ * agreement accompanying the software package from which you
++ * obtained this Software ("EULA"). If no EULA applies, Cypress hereby grants
++ * you a personal, nonexclusive, non-transferable license to copy, modify,
++ * and compile the Software source code solely for use in connection with
++ * Cypress's integrated circuit products. Any reproduction, modification,
++ * translation, compilation, or representation of this Software except as
++ * specified above is prohibited without the express written permission of
++ * Cypress.
++ * Disclaimer: THIS SOFTWARE IS PROVIDED AS-IS, WITH NO WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, NONINFRINGEMENT, IMPLIED
++ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. Cypress
++ * reserves the right to make changes to the Software without notice. Cypress
++ * does not assume any liability arising out of the application or use of the
++ * Software or any product or circuit described in the Software. Cypress does
++ * not authorize its products for use in any products where a malfunction or
++ * failure of the Cypress product may reasonably be expected to result in
++ * significant property damage, injury or death ("High Risk Product"). By
++ * including Cypress's product in a High Risk Product, the manufacturer
++ * of such system or application assumes all risk of such use and in doing
++ * so agrees to indemnify Cypress against all liability.
++ */
++
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++int brcmf_btsdio_init(struct brcmf_bus *bus_if);
++void brcmf_btsdio_detach(struct brcmf_bus *bus_if);
++void brcmf_btsdio_int_handler(struct brcmf_bus *bus_if);
++u8 brcmf_btsdio_bus_count(struct brcmf_bus *bus_if);
++#else
++static inline
++u8 brcmf_btsdio_bus_count(struct brcmf_bus *bus_if)
++{
++	return 0;
++}
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
+index 18e3a4286a5d..09d733812c98 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
+@@ -124,6 +124,19 @@ struct brcmf_bus_stats {
+ 	atomic_t pktcow_failed;
+ };
+ 
++/**
++ * struct brcmf_bt_dev - bt shared SDIO device.
++ *
++ * @ bt_data: bt internal structure data
++ * @ bt_sdio_int_cb: bt registered interrupt callback function
++ * @ bt_use_count: Counter that tracks whether BT is using the bus
++ */
++struct brcmf_bt_dev {
++	void	*bt_data;
++	void	(*bt_sdio_int_cb)(void *data);
++	u32	use_count; /* Counter for tracking if BT is using the bus */
++};
++
+ /**
+  * struct brcmf_bus - interface structure between common and bus layer
+  *
+@@ -139,6 +152,7 @@ struct brcmf_bus_stats {
+  * @wowl_supported: is wowl supported by bus driver.
+  * @chiprev: revision of the dongle chip.
+  * @msgbuf: msgbuf protocol parameters provided by bus layer.
++ * @bt_dev: bt shared SDIO device
+  */
+ struct brcmf_bus {
+ 	union {
+@@ -162,6 +176,9 @@ struct brcmf_bus {
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 16, 0))
+ 	bool allow_skborphan;
+ #endif
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++	struct brcmf_bt_dev *bt_dev;
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
+ };
+ 
+ /*
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
+index 21221afb54cc..c1fb3fedf037 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
+@@ -38,6 +38,7 @@
+ #include "common.h"
+ #include "bcdc.h"
+ #include "fwil.h"
++#include "bt_shared_sdio.h"
+ 
+ #define DCMD_RESP_TIMEOUT	msecs_to_jiffies(2500)
+ #define CTL_DONE_TIMEOUT	msecs_to_jiffies(2500)
+@@ -950,6 +951,20 @@ static int brcmf_sdio_clkctl(struct brcmf_sdio *bus, uint target, bool pendok)
+ 		break;
+ 
+ 	case CLK_SDONLY:
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++		/* If the request is to switch off backplane clock,
++		 * confirm that BT is inactive before doing so.
++		 * If this call had come from Non Watchdog context any way
++		 * the Watchdog would switch off the clock again when
++		 * nothing is to be done & BT has finished using the bus.
++		 */
++		if (brcmf_btsdio_bus_count(bus->sdiodev->bus_if)) {
++			brcmf_dbg(SDIO, "BT is active, not switching off\n");
++			brcmf_sdio_wd_timer(bus, true);
++			break;
++		}
++
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
+ 		/* Remove HT request, or bring up SD clock */
+ 		if (bus->clkstate == CLK_NONE)
+ 			brcmf_sdio_sdclk(bus, true);
+@@ -961,6 +976,19 @@ static int brcmf_sdio_clkctl(struct brcmf_sdio *bus, uint target, bool pendok)
+ 		break;
+ 
+ 	case CLK_NONE:
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++		/* If the request is to switch off backplane clock,
++		 * confirm that BT is inactive before doing so.
++		 * If this call had come from non-watchdog context any way
++		 * the watchdog would switch off the clock again when
++		 * nothing is to be done & BT has finished using the bus.
++		 */
++		if (brcmf_btsdio_bus_count(bus->sdiodev->bus_if)) {
++			brcmf_dbg(SDIO, "BT is active, not switching off\n");
++			break;
++		}
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
++
+ 		/* Make sure to remove HT request */
+ 		if (bus->clkstate == CLK_AVAIL)
+ 			brcmf_sdio_htclk(bus, false, false);
+@@ -985,6 +1013,29 @@ brcmf_sdio_bus_sleep(struct brcmf_sdio *bus, bool sleep, bool pendok)
+ 		  (sleep ? "SLEEP" : "WAKE"),
+ 		  (bus->sleeping ? "SLEEP" : "WAKE"));
+ 
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++	/* The following is the assumption based on which the hook is placed.
++	 * From WLAN driver, either from the active contexts OR from the
++	 * watchdog contexts, we will be attempting to go to sleep. At that
++	 * moment if we see that BT is still actively using the bus, we will
++	 * return -EBUSY from here, and the bus sleep state would not have
++	 * changed, so the caller can then schedule the watchdog again
++	 * which will come and attempt to sleep at a later point.
++	 *
++	 * In case if BT is the only one and is the last user, we don't switch
++	 * off the clock immediately, we allow the WLAN to decide when to sleep
++	 * i.e from the watchdog.
++	 * Now if the watchdog becomes active and attempts to switch off the
++	 * clock and if another WLAN context is active they are any way
++	 * serialized with sdlock.
++	 */
++	if (brcmf_btsdio_bus_count(bus->sdiodev->bus_if)) {
++		brcmf_dbg(SDIO, "Cannot sleep when BT is active\n");
++		err = -EBUSY;
++		goto done;
++	}
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
++
+ 	/* If SR is enabled control bus state with KSO */
+ 	if (bus->sr_enabled) {
+ 		/* Done if we're already in the requested state */
+@@ -2843,6 +2894,9 @@ static void brcmf_sdio_dpc(struct brcmf_sdio *bus)
+ 		atomic_set(&bus->fcstate,
+ 			   !!(newstatus & (I_HMB_FC_STATE | I_HMB_FC_CHANGE)));
+ 		intstatus |= (newstatus & bus->hostintmask);
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++		brcmf_btsdio_int_handler(bus->sdiodev->bus_if);
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
+ 	}
+ 
+ 	/* Handle host mailbox indication */
+@@ -3935,7 +3989,8 @@ static void brcmf_sdio_bus_watchdog(struct brcmf_sdio *bus)
+ #endif				/* DEBUG */
+ 
+ 	/* On idle timeout clear activity flag and/or turn off clock */
+-	if (!bus->dpc_triggered) {
++	if (!bus->dpc_triggered &&
++	    brcmf_btsdio_bus_count(bus->sdiodev->bus_if) == 0) {
+ 		rmb();
+ 		if ((!bus->dpc_running) && (bus->idletime > 0) &&
+ 		    (bus->clkstate == CLK_AVAIL)) {
+@@ -4596,6 +4651,14 @@ static void brcmf_sdio_firmware_callback(struct device *dev, int err,
+ 		goto claim;
+ 	}
+ 
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++	err = brcmf_btsdio_init(bus_if);
++	if (err) {
++		brcmf_err("brcmf_btsdio_init failed\n");
++		goto free;
++	}
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
++
+ 	/* Attach to the common layer, reserve hdr space */
+ 	err = brcmf_attach(sdiod->dev, !bus->sdiodev->ulp);
+ 	if (err != 0) {
+@@ -4822,6 +4885,9 @@ void brcmf_sdio_remove(struct brcmf_sdio *bus)
+ 		}
+ 		if (bus->sdiodev->settings)
+ 			brcmf_release_module_param(bus->sdiodev->settings);
++#ifdef CONFIG_BRCMFMAC_BT_SHARED_SDIO
++		brcmf_btsdio_detach(bus->sdiodev->bus_if);
++#endif /* CONFIG_BRCMFMAC_BT_SHARED_SDIO */
+ 
+ 		kfree(bus->rxbuf);
+ 		kfree(bus->hdrbuf);
+-- 
+2.17.1
+

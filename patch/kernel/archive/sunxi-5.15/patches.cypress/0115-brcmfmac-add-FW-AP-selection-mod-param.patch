@@ -1,0 +1,193 @@
+From 2e7a5f62fa1ea2c06e7b5b39f675a344cc82832e Mon Sep 17 00:00:00 2001
+From: Suresh Sanaboina <Suresh.Sanaboina@infineon.com>
+Date: Fri, 11 Feb 2022 07:25:48 -0600
+Subject: [PATCH 115/179] brcmfmac: add FW AP selection mod param
+
+wpa_supplicant provides bssid_hint & freq_hint which can be used
+by the firmware. fw_ap_select variable determines whether FW selects
+the AP or the user space selects the target AP within the given ESS.
+
+
+Signed-off-by: Suresh Sanaboina <Suresh.Sanaboina@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 90 +++++++++++++++++--
+ .../broadcom/brcm80211/brcmfmac/common.c      |  5 ++
+ .../broadcom/brcm80211/brcmfmac/common.h      |  2 +
+ 3 files changed, 92 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 9bc23fbc3c92..028873bfee04 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -39,6 +39,7 @@
+ #define RSN_OUI				"\x00\x0F\xAC"	/* RSN OUI */
+ #define	WME_OUI_TYPE			2
+ #define WPS_OUI_TYPE			4
++#define WFA_OUI_TYPE_MBO_OCE		0x16
+ 
+ #define VS_IE_FIXED_HDR_LEN		6
+ #define WPA_IE_VERSION_LEN		2
+@@ -314,6 +315,41 @@ struct wl_interface_create_v3 {
+ 	u8 data[];			/* Optional for specific data */
+ };
+ 
++static bool
++wl_cfgoce_has_ie(const u8 *ie, const u8 **tlvs, u32 *tlvs_len,
++		 const u8 *oui, u32 oui_len, u8 type);
++
++/* Check whether the given IE looks like WFA OCE IE. */
++#define wl_cfgoce_is_oce_ie(ie, tlvs, len)	\
++	wl_cfgoce_has_ie(ie, tlvs, len,		\
++			 (const u8 *)WFA_OUI, TLV_OUI_LEN, WFA_OUI_TYPE_MBO_OCE)
++
++/* Is any of the tlvs the expected entry? If
++ * not update the tlvs buffer pointer/length.
++ */
++static bool
++wl_cfgoce_has_ie(const u8 *ie, const u8 **tlvs, u32 *tlvs_len,
++		 const u8 *oui, u32 oui_len, u8 type)
++{
++	/* If the contents match the OUI and the type */
++	if (ie[TLV_LEN_OFF] >= oui_len + 1 &&
++	    !memcmp(&ie[TLV_BODY_OFF], oui, oui_len) &&
++	    type == ie[TLV_BODY_OFF + oui_len]) {
++		return true;
++	}
++
++	if (!tlvs)
++		return false;
++	/* point to the next ie */
++	ie += ie[TLV_LEN_OFF] + TLV_HDR_LEN;
++	/* calculate the length of the rest of the buffer */
++	*tlvs_len -= (int)(ie - *tlvs);
++	/* update the pointer to the start of the buffer */
++	*tlvs = ie;
++
++	return false;
++}
++
+ static u8 nl80211_band_to_fwil(enum nl80211_band band)
+ {
+ 	switch (band) {
+@@ -2353,6 +2389,43 @@ static void brcmf_set_join_pref(struct brcmf_if *ifp,
+ 		bphy_err(drvr, "Set join_pref error (%d)\n", err);
+ }
+ 
++static bool
++wl_cfg80211_is_oce_ap(struct brcmf_if *ifp,
++		      struct wiphy *wiphy, const u8 *bssid_hint)
++{
++	struct brcmf_pub *drvr = ifp->drvr;
++	const struct brcmf_tlv *ie;
++	const struct cfg80211_bss_ies *ies;
++	struct cfg80211_bss *bss;
++	const u8 *parse = NULL;
++	u32 len;
++
++	bss = cfg80211_get_bss(wiphy, NULL, bssid_hint, 0, 0,
++			       IEEE80211_BSS_TYPE_ANY, IEEE80211_PRIVACY_ANY);
++	if (!bss) {
++		bphy_err(drvr, "Unable to find AP in the cache");
++		return false;
++	}
++
++	if (rcu_access_pointer(bss->ies)) {
++		ies = rcu_access_pointer(bss->ies);
++		parse = ies->data;
++		len = ies->len;
++	} else {
++		bphy_err(drvr, "ies is NULL");
++		return false;
++	}
++
++	while ((ie = brcmf_parse_tlvs(parse, len, WLAN_EID_VENDOR_SPECIFIC))) {
++		if (wl_cfgoce_is_oce_ie((const u8 *)ie,
++					(u8 const **)&parse, &len) == true) {
++			return true;
++		}
++	}
++	brcmf_dbg(TRACE, "OCE IE NOT found");
++	return false;
++}
++
+ static s32
+ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
+ 		       struct cfg80211_connect_params *sme)
+@@ -2372,6 +2445,7 @@ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
+ 	u16 chanspec;
+ 	s32 err = 0;
+ 	u32 ssid_len;
++	bool skip_hints = ifp->drvr->settings->fw_ap_select;
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+ 	if (!check_vif_up(ifp->vif))
+@@ -2382,12 +2456,18 @@ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
+ 		return -EOPNOTSUPP;
+ 	}
+ 
+-	if (sme->channel_hint) {
+-		chan = sme->channel_hint;
+-	}
++	/* override bssid_hint for oce networks */
++	skip_hints = (skip_hints &&
++			wl_cfg80211_is_oce_ap(ifp, wiphy, sme->bssid_hint));
++	if (skip_hints) {
++		/* Let fw choose the best AP */
++		brcmf_dbg(TRACE, "Skipping bssid & channel hint\n");
++	} else {
++		if (sme->channel_hint)
++			chan = sme->channel_hint;
+ 
+-	if (sme->bssid_hint) {
+-		sme->bssid = sme->bssid_hint;
++		if (sme->bssid_hint)
++			sme->bssid = sme->bssid_hint;
+ 	}
+ 
+ 	if (ifp->vif == cfg->p2p.bss_idx[P2PAPI_BSSCFG_PRIMARY].vif) {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
+index 32b67f20fb67..dc45e2a7cf92 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
+@@ -85,6 +85,10 @@ module_param_named(ignore_probe_fail, brcmf_ignore_probe_fail, int, 0);
+ MODULE_PARM_DESC(ignore_probe_fail, "always succeed probe for debugging");
+ #endif
+ 
++static int brcmf_fw_ap_select;
++module_param_named(fw_ap_select, brcmf_fw_ap_select, int, 0400);
++MODULE_PARM_DESC(fw_ap_select, "Allow FW for AP selection");
++
+ static struct brcmfmac_platform_data *brcmfmac_pdata;
+ struct brcmf_mp_global_t brcmf_mp_global;
+ 
+@@ -485,6 +489,7 @@ struct brcmf_mp_device *brcmf_get_module_param(struct device *dev,
+ #ifdef DEBUG
+ 	settings->ignore_probe_fail = !!brcmf_ignore_probe_fail;
+ #endif
++	settings->fw_ap_select = !!brcmf_fw_ap_select;
+ 
+ 	if (bus_type == BRCMF_BUSTYPE_SDIO)
+ 		settings->bus.sdio.txglomsz = brcmf_sdiod_txglomsz;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h
+index a86d23acd207..d9f740a3e4e7 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h
+@@ -40,6 +40,7 @@ extern struct brcmf_mp_global_t brcmf_mp_global;
+  * @eap_restrict: Not allow data tx/rx until 802.1X auth succeeds
+  * @default_pm: default power management (PM) mode.
+  * @ignore_probe_fail: Ignore probe failure.
++ * @fw_ap_select: Allow FW to select AP.
+  * @country_codes: If available, pointer to struct for translating country codes
+  * @bus: Bus specific platform data. Only SDIO at the mmoment.
+  */
+@@ -52,6 +53,7 @@ struct brcmf_mp_device {
+ 	bool		eap_restrict;
+ 	int		default_pm;
+ 	bool		ignore_probe_fail;
++	bool		fw_ap_select;
+ 	struct brcmfmac_pd_cc *country_codes;
+ 	const char	*board_type;
+ 	union {
+-- 
+2.17.1
+

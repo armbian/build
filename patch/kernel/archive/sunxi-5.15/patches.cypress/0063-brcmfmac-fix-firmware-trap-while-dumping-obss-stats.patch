@@ -1,0 +1,138 @@
+From f1ba291a15f975f33a8079c9048e37ddd1938e5d Mon Sep 17 00:00:00 2001
+From: Wright Feng <wright.feng@cypress.com>
+Date: Fri, 23 Oct 2020 03:27:49 -0500
+Subject: [PATCH 063/179] brcmfmac: fix firmware trap while dumping obss stats
+
+When doing dump_survey, host will call "dump_obss" iovar to firmware
+side. Host need to make sure the HW clock in dongle is on, or there is
+high probability that firmware gets trap because register or shared
+memory access failed. To fix this, we disable mpc when doing dump obss
+and set it back after that.
+
+[28350.512799] brcmfmac: brcmf_dump_obss: dump_obss error (-52)
+[28743.402314] ieee80211 phy0: brcmf_fw_crashed: Firmware has halted or
+crashed
+[28745.869430] brcmfmac: brcmf_sdio_bus_rxctl: resumed on timeout
+[28745.877546] brcmfmac: brcmf_sdio_checkdied: firmware trap in dongle
+
+Signed-off-by: Wright Feng <wright.feng@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 49 ++++++++-----------
+ 1 file changed, 21 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index b1b875b2a935..32d0f194a1af 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -7878,16 +7878,15 @@ brcmf_dump_obss(struct brcmf_if *ifp, struct cca_msrmnt_query req,
+ 	int err;
+ 
+ 	buf = kzalloc(sizeof(char) * BRCMF_DCMD_MEDLEN, GFP_KERNEL);
+-	if (unlikely(!buf)) {
+-		brcmf_err("%s: buf alloc failed\n", __func__);
++	if (!buf)
+ 		return -ENOMEM;
+-	}
+ 
+ 	memcpy(buf, &req, sizeof(struct cca_msrmnt_query));
+ 	err = brcmf_fil_iovar_data_get(ifp, "dump_obss",
+ 				       buf, BRCMF_DCMD_MEDLEN);
+-	if (err < 0) {
++	if (err) {
+ 		brcmf_err("dump_obss error (%d)\n", err);
++		err = -EINVAL;
+ 		goto exit;
+ 	}
+ 	results = (struct cca_stats_n_flags *)(buf);
+@@ -7895,11 +7894,9 @@ brcmf_dump_obss(struct brcmf_if *ifp, struct cca_msrmnt_query req,
+ 	if (req.msrmnt_query)
+ 		brcmf_parse_dump_obss(results->buf, survey);
+ 
+-	kfree(buf);
+-	return 0;
+ exit:
+ 	kfree(buf);
+-	return -EINVAL;
++	return err;
+ }
+ 
+ static s32
+@@ -7936,7 +7933,7 @@ brcmf_cfg80211_dump_survey(struct wiphy *wiphy, struct net_device *ndev,
+ 	struct ieee80211_supported_band *band;
+ 	struct ieee80211_channel *chan;
+ 	struct cca_msrmnt_query req;
+-	u32 val, noise;
++	u32 noise;
+ 	int err;
+ 
+ 	brcmf_dbg(TRACE, "Enter: channel idx=%d\n", idx);
+@@ -7962,31 +7959,27 @@ brcmf_cfg80211_dump_survey(struct wiphy *wiphy, struct net_device *ndev,
+ 		return 0;
+ 	}
+ 
+-	if (!idx) {
+-		/* Disable mpc */
+-		val = 0;
+-		brcmf_set_mpc(ifp, val);
+-		/* Set interface up, explicitly. */
+-		val = 1;
+-		err = brcmf_fil_cmd_int_set(ifp, BRCMF_C_UP, val);
+-		if (err) {
+-			brcmf_err("BRCMF_C_UP error (%d)\n", err);
+-			return -EIO;
+-		}
++	survey = kzalloc(sizeof(*survey), GFP_KERNEL);
++	if (!survey)
++		return -ENOMEM;
++
++	/* Disable mpc */
++	brcmf_set_mpc(ifp, 0);
++
++	/* Set interface up, explicitly. */
++	err = brcmf_fil_cmd_int_set(ifp, BRCMF_C_UP, 1);
++	if (err) {
++		brcmf_err("set interface up failed, err = %d\n", err);
++		goto exit;
+ 	}
+ 
+ 	/* Get noise value */
+ 	err = brcmf_fil_cmd_int_get(ifp, BRCMF_C_GET_PHY_NOISE, &noise);
+ 	if (err) {
+-		brcmf_err("Get Phy Noise failed, error = %d\n", err);
++		brcmf_err("Get Phy Noise failed, use dummy value\n");
+ 		noise = CHAN_NOISE_DUMMY;
+ 	}
+ 
+-	survey = kzalloc(sizeof(*survey), GFP_KERNEL);
+-	if (unlikely(!survey)) {
+-		brcmf_err("%s: alloc failed\n", __func__);
+-		return -ENOMEM;
+-	}
+ 
+ 	/* Start Measurement for obss stats on current channel */
+ 	req.msrmnt_query = 0;
+@@ -8001,7 +7994,7 @@ brcmf_cfg80211_dump_survey(struct wiphy *wiphy, struct net_device *ndev,
+ 	/* Issue IOVAR to collect measurement results */
+ 	req.msrmnt_query = 1;
+ 	err = brcmf_dump_obss(ifp, req, survey);
+-	if (err < 0)
++	if (err)
+ 		goto exit;
+ 
+ 	info->channel = chan;
+@@ -8021,9 +8014,9 @@ brcmf_cfg80211_dump_survey(struct wiphy *wiphy, struct net_device *ndev,
+ 	brcmf_dbg(INFO, "noise(%d) busy(%llu) rx(%llu) tx(%llu)\n",
+ 		  info->noise, info->time_busy, info->time_rx, info->time_tx);
+ 
+-	kfree(survey);
+-	return 0;
+ exit:
++	if (!brcmf_is_apmode(ifp->vif))
++		brcmf_set_mpc(ifp, 1);
+ 	kfree(survey);
+ 	return err;
+ }
+-- 
+2.17.1
+

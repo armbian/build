@@ -1,0 +1,180 @@
+From 806187583bf02d23b736b2440c71ab559a0264a4 Mon Sep 17 00:00:00 2001
+From: Robert Trask <robert.trask@cypress.com>
+Date: Thu, 20 Dec 2018 11:55:30 -0600
+Subject: [PATCH 013/179] non-upstream: Enable, Process, and forward PHY_TEMP
+ event
+
+New code enables PHY_TEMP event in firmware, receives it, processes
+into cfg80211 vendor specific event, and forwards to waiting host.
+
+-1- Enable rx PHY_TEMP event from underlying hardware
+-2- Process PHY_TEMP event into vendor specific event
+-3- Forward vendor specific event to host layer
+
+Signed-off-by: Robert Trask <robert.trask@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@cypress.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    |  5 ++
+ .../broadcom/brcm80211/brcmfmac/fweh.h        |  1 +
+ .../broadcom/brcm80211/brcmfmac/vendor.c      | 57 +++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/vendor.h      | 19 +++++++
+ 4 files changed, 82 insertions(+)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 5d249d5c9a9f..2ed7cf1c939d 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -7200,6 +7200,7 @@ static void brcmf_wiphy_wowl_params(struct wiphy *wiphy, struct brcmf_if *ifp)
+ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ {
+ 	struct brcmf_pub *drvr = ifp->drvr;
++	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+ 	const struct ieee80211_iface_combination *combo;
+ 	struct ieee80211_supported_band *band;
+ 	u16 max_interfaces = 0;
+@@ -7277,6 +7278,10 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ 	/* vendor commands/events support */
+ 	wiphy->vendor_commands = brcmf_vendor_cmds;
+ 	wiphy->n_vendor_commands = BRCMF_VNDR_CMDS_LAST - 1;
++	wiphy->vendor_events = brcmf_vendor_events;
++	wiphy->n_vendor_events = BRCMF_VNDR_EVTS_LAST;
++	brcmf_fweh_register(cfg->pub, BRCMF_E_PHY_TEMP,
++			    brcmf_wiphy_phy_temp_evt_handler);
+ 
+ 	brcmf_wiphy_wowl_params(wiphy, ifp);
+ 	err = brcmf_fil_cmd_data_get(ifp, BRCMF_C_GET_BANDLIST, &bandlist,
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.h
+index 48414e8b9389..f692933e2348 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.h
+@@ -90,6 +90,7 @@ struct brcmf_cfg80211_info;
+ 	BRCMF_ENUM_DEF(FIFO_CREDIT_MAP, 74) \
+ 	BRCMF_ENUM_DEF(ACTION_FRAME_RX, 75) \
+ 	BRCMF_ENUM_DEF(TDLS_PEER_EVENT, 92) \
++	BRCMF_ENUM_DEF(PHY_TEMP, 111) \
+ 	BRCMF_ENUM_DEF(BCMC_CREDIT_SUPPORT, 127)
+ 
+ #define BRCMF_ENUM_DEF(id, val) \
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+index d07e7c7355d9..4ed3287522cb 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+@@ -104,6 +104,56 @@ static int brcmf_cfg80211_vndr_cmds_dcmd_handler(struct wiphy *wiphy,
+ 	return ret;
+ }
+ 
++s32
++brcmf_wiphy_phy_temp_evt_handler(struct brcmf_if *ifp,
++				 const struct brcmf_event_msg *e, void *data)
++
++{
++	struct brcmf_cfg80211_info *cfg = ifp->drvr->config;
++	struct wiphy *wiphy = cfg_to_wiphy(cfg);
++	struct sk_buff *skb;
++	struct nlattr *phy_temp_data;
++	u32 version, temp, tempdelta;
++	struct brcmf_phy_temp_evt *phy_temp_evt;
++
++	phy_temp_evt = (struct brcmf_phy_temp_evt *)data;
++
++	version = le32_to_cpu(phy_temp_evt->version);
++	temp = le32_to_cpu(phy_temp_evt->temp);
++	tempdelta = le32_to_cpu(phy_temp_evt->tempdelta);
++
++	skb = cfg80211_vendor_event_alloc(wiphy, NULL,
++					  sizeof(*phy_temp_evt),
++					  BRCMF_VNDR_EVTS_PHY_TEMP,
++					  GFP_KERNEL);
++
++	if (!skb) {
++		brcmf_dbg(EVENT, "NO MEM: can't allocate skb for vendor PHY_TEMP_EVENT\n");
++		return -ENOMEM;
++	}
++
++	phy_temp_data = nla_nest_start(skb, NL80211_ATTR_VENDOR_EVENTS);
++	if (!phy_temp_data) {
++		nla_nest_cancel(skb, phy_temp_data);
++		kfree_skb(skb);
++		brcmf_dbg(EVENT, "skb could not nest vendor attributes\n");
++		return -EMSGSIZE;
++	}
++
++	if (nla_put_u32(skb, BRCMF_NLATTR_VERS, version) ||
++	    nla_put_u32(skb, BRCMF_NLATTR_PHY_TEMP, temp) ||
++	    nla_put_u32(skb, BRCMF_NLATTR_PHY_TEMPDELTA, tempdelta)) {
++		kfree_skb(skb);
++		brcmf_dbg(EVENT, "NO ROOM in skb for vendor PHY_TEMP_EVENT\n");
++		return -EMSGSIZE;
++	}
++
++	nla_nest_end(skb, phy_temp_data);
++
++	cfg80211_vendor_event(skb, GFP_KERNEL);
++	return 0;
++}
++
+ const struct wiphy_vendor_command brcmf_vendor_cmds[] = {
+ 	{
+ 		{
+@@ -116,3 +166,10 @@ const struct wiphy_vendor_command brcmf_vendor_cmds[] = {
+ 		.doit = brcmf_cfg80211_vndr_cmds_dcmd_handler
+ 	},
+ };
++
++const struct nl80211_vendor_cmd_info brcmf_vendor_events[] = {
++	{
++		.vendor_id = BROADCOM_OUI,
++		.subcmd = BRCMF_VNDR_EVTS_PHY_TEMP,
++	},
++};
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.h
+index 418f33ea6fd3..3bdf47369788 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.h
+@@ -14,6 +14,11 @@ enum brcmf_vndr_cmds {
+ 	BRCMF_VNDR_CMDS_LAST
+ };
+ 
++enum brcmf_vndr_evts {
++	BRCMF_VNDR_EVTS_PHY_TEMP,
++	BRCMF_VNDR_EVTS_LAST
++};
++
+ /**
+  * enum brcmf_nlattrs - nl80211 message attributes
+  *
+@@ -25,11 +30,21 @@ enum brcmf_nlattrs {
+ 
+ 	BRCMF_NLATTR_LEN,
+ 	BRCMF_NLATTR_DATA,
++	BRCMF_NLATTR_VERS,
++	BRCMF_NLATTR_PHY_TEMP,
++	BRCMF_NLATTR_PHY_TEMPDELTA,
+ 
+ 	__BRCMF_NLATTR_AFTER_LAST,
+ 	BRCMF_NLATTR_MAX = __BRCMF_NLATTR_AFTER_LAST - 1
+ };
+ 
++/* structure of event sent up by firmware: is this the right place for it? */
++struct brcmf_phy_temp_evt {
++	__le32 version;
++	__le32 temp;
++	__le32 tempdelta;
++} __packed;
++
+ /**
+  * struct brcmf_vndr_dcmd_hdr - message header for cfg80211 vendor command dcmd
+  *				support
+@@ -49,5 +64,9 @@ struct brcmf_vndr_dcmd_hdr {
+ };
+ 
+ extern const struct wiphy_vendor_command brcmf_vendor_cmds[];
++extern const struct nl80211_vendor_cmd_info brcmf_vendor_events[];
++s32 brcmf_wiphy_phy_temp_evt_handler(struct brcmf_if *ifp,
++				     const struct brcmf_event_msg *e,
++				     void *data);
+ 
+ #endif /* _vendor_h_ */
+-- 
+2.17.1
+

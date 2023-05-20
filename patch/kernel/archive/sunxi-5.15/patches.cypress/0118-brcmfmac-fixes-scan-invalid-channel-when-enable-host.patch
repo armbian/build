@@ -1,0 +1,121 @@
+From 4cd7f6e641e7e840caed63238486bc4aa745164d Mon Sep 17 00:00:00 2001
+From: JasonHuang <Jason.Huang-EE@infineon.com>
+Date: Fri, 25 Mar 2022 02:28:15 -0500
+Subject: [PATCH 118/179] brcmfmac: fixes scan invalid channel, when enable
+ hostapd
+
+The channels setting is restored unexpectedly cause by cfg80211
+regulatory restore mechanism. Remove disabled channels and make
+sure the wiphybands is set during the interface up can solved the
+issue.
+
+Signed-off-by: JasonHuang <Jason.Huang-EE@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 41 ++++++++++++++++++-
+ .../broadcom/brcm80211/brcmfmac/common.c      |  4 +-
+ 2 files changed, 42 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 6a5fd621182a..46cb5c146f30 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -313,6 +313,7 @@ struct wl_interface_create_v3 {
+ 	u8 data[];			/* Optional for specific data */
+ };
+ 
++static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg);
+ static bool
+ wl_cfgoce_has_ie(const u8 *ie, const u8 **tlvs, u32 *tlvs_len,
+ 		 const u8 *oui, u32 oui_len, u8 type);
+@@ -1348,6 +1349,7 @@ brcmf_cfg80211_change_iface(struct wiphy *wiphy, struct net_device *ndev,
+ 	ndev->ieee80211_ptr->iftype = type;
+ 
+ 	brcmf_cfg80211_update_proto_addr_mode(&vif->wdev);
++	brcmf_setup_wiphybands(cfg);
+ 
+ done:
+ 	brcmf_dbg(TRACE, "Exit\n");
+@@ -7411,14 +7413,14 @@ static int brcmf_construct_chaninfo(struct brcmf_cfg80211_info *cfg,
+ 	struct brcmf_pub *drvr = cfg->pub;
+ 	struct brcmf_if *ifp = brcmf_get_ifp(drvr, 0);
+ 	struct ieee80211_supported_band *band;
+-	struct ieee80211_channel *channel;
++	struct ieee80211_channel *channel, *cur, *next;
+ 	struct brcmf_chanspec_list *list;
+ 	struct brcmu_chan ch;
+ 	int err;
+ 	u8 *pbuf;
+ 	u32 i, j;
+ 	u32 total;
+-	u32 chaninfo;
++	u32 chaninfo, n_2g = 0, n_5g = 0;
+ 
+ 	pbuf = kzalloc(BRCMF_DCMD_MEDLEN, GFP_KERNEL);
+ 
+@@ -7527,6 +7529,40 @@ static int brcmf_construct_chaninfo(struct brcmf_cfg80211_info *cfg,
+ 		}
+ 	}
+ 
++	/* Remove disabled channels to avoid unexpected restore. */
++	band = wiphy->bands[NL80211_BAND_2GHZ];
++	if (band) {
++		n_2g = band->n_channels;
++		for (i = 0; i < band->n_channels; i++) {
++			cur = &band->channels[i];
++			if (cur->flags == IEEE80211_CHAN_DISABLED) {
++				for (j = i; j < n_2g - 1; j++) {
++					cur = &band->channels[j];
++					next = &band->channels[j + 1];
++					memcpy(cur, next, sizeof(*cur));
++				}
++				n_2g--;
++			}
++		}
++		wiphy->bands[NL80211_BAND_2GHZ]->n_channels = n_2g;
++	}
++	band = wiphy->bands[NL80211_BAND_5GHZ];
++	if (band) {
++		n_5g = band->n_channels;
++		for (i = 0; i < band->n_channels; i++) {
++			cur = &band->channels[i];
++			if (cur->flags == IEEE80211_CHAN_DISABLED) {
++				for (j = i; j < n_5g - 1; j++) {
++					cur = &band->channels[j];
++					next = &band->channels[j + 1];
++					memcpy(cur, next, sizeof(*cur));
++				}
++				n_5g--;
++			}
++		}
++		wiphy->bands[NL80211_BAND_5GHZ]->n_channels = n_5g;
++	}
++
+ fail_pbuf:
+ 	kfree(pbuf);
+ 	return err;
+@@ -8291,6 +8327,7 @@ static s32 __brcmf_cfg80211_down(struct brcmf_if *ifp)
+ 		   the state fw and WPA_Supplicant state consistent
+ 		 */
+ 		brcmf_delay(500);
++		cfg->dongle_up = false;
+ 	}
+ 
+ 	brcmf_abort_scanning(cfg);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
+index dc45e2a7cf92..6e4a1d12b06e 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
+@@ -395,7 +395,9 @@ int brcmf_c_preinit_dcmds(struct brcmf_if *ifp)
+ 
+ 	/* Enable tx beamforming, errors can be ignored (not supported) */
+ 	(void)brcmf_fil_iovar_int_set(ifp, "txbf", 1);
+-
++	err = brcmf_fil_iovar_int_set(ifp, "chanspec", 0x1001);
++	if (err < 0)
++		bphy_err(drvr, "Initial Channel failed %d\n", err);
+ 	/* add unicast packet filter */
+ 	err = brcmf_pktfilter_add_remove(ifp->ndev,
+ 					 BRCMF_UNICAST_FILTER_NUM, true);
+-- 
+2.17.1
+

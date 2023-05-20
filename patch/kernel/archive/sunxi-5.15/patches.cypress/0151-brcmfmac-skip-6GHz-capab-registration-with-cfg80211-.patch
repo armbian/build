@@ -1,0 +1,109 @@
+From 448f489f602e491115f664530db4a0b58d74a26f Mon Sep 17 00:00:00 2001
+From: Gokul Sivakumar <gokulkumar.sivakumar@infineon.com>
+Date: Thu, 13 Oct 2022 05:23:54 -0500
+Subject: [PATCH 151/179] brcmfmac: skip 6GHz capab registration with cfg80211
+ based on module param
+
+When the kernel module param "disable_6ghz" is enabled, avoid handling the
+6GHz channel capab advertised by FW during module load and skip registering
+them with cfg80211. This helps with restricting the device from initiating
+a scan as a STA and beacon as an AP on a 6GHz channel whenever it needs to
+be avoided.
+
+
+Signed-off-by: Gokul Sivakumar <gokulkumar.sivakumar@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 34 +++++++++++++------
+ 1 file changed, 24 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index d99fd7f0ab03..617467881892 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -7927,8 +7927,14 @@ static int brcmf_construct_chaninfo(struct brcmf_cfg80211_info *cfg,
+ 			band = wiphy->bands[NL80211_BAND_2GHZ];
+ 		} else if (ch.band == BRCMU_CHAN_BAND_5G) {
+ 			band = wiphy->bands[NL80211_BAND_5GHZ];
+-		} else if (ch.band == BRCMU_CHAN_BAND_6G) {
+-			band = wiphy->bands[NL80211_BAND_6GHZ];
++		} else if ((ch.band == BRCMU_CHAN_BAND_6G)) {
++			if (brcmf_feat_is_6ghz_enabled(ifp)) {
++				band = wiphy->bands[NL80211_BAND_6GHZ];
++			} else {
++				brcmf_dbg(INFO, "Disabled channel Spec. 0x%x.\n",
++					  ch.chspec);
++				continue;
++			}
+ 		} else {
+ 			bphy_err(drvr, "Invalid channel Spec. 0x%x.\n",
+ 				 ch.chspec);
+@@ -8157,6 +8163,10 @@ static void brcmf_get_bwcap(struct brcmf_if *ifp, u32 bw_cap[])
+ 		err = brcmf_fil_iovar_int_get(ifp, "bw_cap", &band);
+ 		if (!err) {
+ 			bw_cap[NL80211_BAND_5GHZ] = band;
++
++			if (!brcmf_feat_is_6ghz_enabled(ifp))
++				return;
++
+ 			band = WLC_BAND_6G;
+ 			err = brcmf_fil_iovar_int_get(ifp, "bw_cap", &band);
+ 			if (!err) {
+@@ -8364,9 +8374,9 @@ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg)
+ 	u32 nmode = 0;
+ 	u32 vhtmode = 0;
+ 	u32 bw_cap[4] = { WLC_BW_20MHZ_BIT,  /* 2GHz  */
+-					  WLC_BW_20MHZ_BIT,  /* 5GHz  */
+-					  0,                 /* 60GHz */
+-					  WLC_BW_20MHZ_BIT };/* 6GHz  */
++			  WLC_BW_20MHZ_BIT,  /* 5GHz  */
++			  0,                 /* 60GHz */
++			  0 };		     /* 6GHz  */
+ 	u32 rxchain;
+ 	u32 nchain;
+ 	int err;
+@@ -8386,9 +8396,9 @@ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg)
+ 	}
+ 	(void)brcmf_fil_iovar_data_get(ifp, "he", he, sizeof(he));
+ 
+-	brcmf_dbg(INFO, "nmode=%d, vhtmode=%d, he=%d, bw_cap=(%d, %d)\n",
++	brcmf_dbg(INFO, "nmode=%d, vhtmode=%d, he=%d, bw_cap=(%d, %d, %d)\n",
+ 		  nmode, vhtmode, he[0], bw_cap[NL80211_BAND_2GHZ],
+-		  bw_cap[NL80211_BAND_5GHZ]);
++		  bw_cap[NL80211_BAND_5GHZ], bw_cap[NL80211_BAND_6GHZ]);
+ 
+ 	err = brcmf_fil_iovar_int_get(ifp, "rxchain", &rxchain);
+ 	if (err) {
+@@ -8424,6 +8434,10 @@ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg)
+ 		if (band == NULL)
+ 			continue;
+ 
++		if ((band->band == NL80211_BAND_6GHZ) &&
++		    !brcmf_feat_is_6ghz_enabled(ifp))
++			continue;
++
+ 		if (nmode)
+ 			brcmf_update_ht_cap(band, bw_cap, nchain);
+ 		if (vhtmode)
+@@ -8749,8 +8763,7 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ 			WIPHY_FLAG_PS_ON_BY_DEFAULT |
+ 			WIPHY_FLAG_HAVE_AP_SME |
+ 			WIPHY_FLAG_OFFCHAN_TX |
+-			WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL |
+-			WIPHY_FLAG_SPLIT_SCAN_6GHZ;
++			WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL;
+ 	if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_TDLS))
+ 		wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS;
+ 	if (!ifp->drvr->settings->roamoff)
+@@ -8840,7 +8853,8 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ 			band->n_channels = ARRAY_SIZE(__wl_5ghz_channels);
+ 			wiphy->bands[NL80211_BAND_5GHZ] = band;
+ 		}
+-		if (bandlist[i] == cpu_to_le32(WLC_BAND_6G)) {
++		if (bandlist[i] == cpu_to_le32(WLC_BAND_6G) &&
++		    brcmf_feat_is_6ghz_enabled(ifp)) {
+ 			band = kmemdup(&__wl_band_6ghz, sizeof(__wl_band_6ghz),
+ 					   GFP_KERNEL);
+ 			if (!band)
+-- 
+2.17.1
+

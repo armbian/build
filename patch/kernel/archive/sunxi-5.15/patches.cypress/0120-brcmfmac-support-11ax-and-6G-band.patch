@@ -1,0 +1,904 @@
+From 740654442edccfa7a86218656d92e6ff028661e3 Mon Sep 17 00:00:00 2001
+From: "Lin Ian (CSSITB CSS ICW SW WFS)" <ian.lin@infineon.com>
+Date: Mon, 25 Apr 2022 02:40:06 +0000
+Subject: [PATCH 120/179] brcmfmac: support 11ax and 6G band
+
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 244 +++++++++++++-----
+ .../broadcom/brcm80211/brcmfmac/p2p.c         | 104 ++++----
+ .../broadcom/brcm80211/brcmfmac/p2p.h         |   5 +-
+ .../broadcom/brcm80211/brcmutil/d11.c         |  19 +-
+ .../broadcom/brcm80211/include/brcmu_d11.h    |  13 +-
+ .../broadcom/brcm80211/include/brcmu_wifi.h   |   3 +-
+ 6 files changed, 263 insertions(+), 125 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index d0318ae360bf..107509118bc1 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -79,8 +79,10 @@
+ #define	DOT11_MGMT_HDR_LEN		24	/* d11 management header len */
+ #define	DOT11_BCN_PRB_FIXED_LEN		12	/* beacon/probe fixed length */
+ 
+-#define BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS	320
+-#define BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS	400
++#define BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS		320
++#define BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS		400
++#define BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS_6E		80
++#define BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS_6E	130
+ #define BRCMF_SCAN_JOIN_PROBE_INTERVAL_MS	20
+ 
+ #define BRCMF_SCAN_CHANNEL_TIME		40
+@@ -179,6 +181,14 @@ static struct ieee80211_rate __wl_rates[] = {
+ 	.max_power		= 30,				\
+ }
+ 
++#define CHAN6G(_channel) {				\
++	.band			= NL80211_BAND_6GHZ,		\
++	.center_freq		= 5950 + (5 * (_channel)),	\
++	.hw_value		= (_channel),			\
++	.max_antenna_gain	= 0,				\
++	.max_power		= 30,				\
++}
++
+ static struct ieee80211_channel __wl_2ghz_channels[] = {
+ 	CHAN2G(1, 2412), CHAN2G(2, 2417), CHAN2G(3, 2422), CHAN2G(4, 2427),
+ 	CHAN2G(5, 2432), CHAN2G(6, 2437), CHAN2G(7, 2442), CHAN2G(8, 2447),
+@@ -195,6 +205,23 @@ static struct ieee80211_channel __wl_5ghz_channels[] = {
+ 	CHAN5G(153), CHAN5G(157), CHAN5G(161), CHAN5G(165)
+ };
+ 
++static struct ieee80211_channel __wl_6ghz_channels[] = {
++	CHAN6G(1), CHAN6G(5), CHAN6G(9), CHAN6G(13), CHAN6G(17),
++	CHAN6G(21), CHAN6G(25), CHAN6G(29), CHAN6G(33), CHAN6G(37),
++	CHAN6G(41), CHAN6G(45), CHAN6G(49), CHAN6G(53),	CHAN6G(57),
++	CHAN6G(61), CHAN6G(65), CHAN6G(69), CHAN6G(73), CHAN6G(77),
++	CHAN6G(81), CHAN6G(85), CHAN6G(89), CHAN6G(93), CHAN6G(97),
++	CHAN6G(101), CHAN6G(105), CHAN6G(109), CHAN6G(113), CHAN6G(117),
++	CHAN6G(121), CHAN6G(125), CHAN6G(129), CHAN6G(133), CHAN6G(137),
++	CHAN6G(141), CHAN6G(145), CHAN6G(149), CHAN6G(153), CHAN6G(157),
++	CHAN6G(161), CHAN6G(165), CHAN6G(169), CHAN6G(173), CHAN6G(177),
++	CHAN6G(181), CHAN6G(185), CHAN6G(189), CHAN6G(193), CHAN6G(197),
++	CHAN6G(201), CHAN6G(205), CHAN6G(209), CHAN6G(213), CHAN6G(217),
++	CHAN6G(221), CHAN6G(225), CHAN6G(229), CHAN6G(233)
++};
++
++struct ieee80211_sband_iftype_data sdata[NUM_NL80211_BANDS];
++
+ /* Band templates duplicated per wiphy. The channel info
+  * above is added to the band during setup.
+  */
+@@ -210,6 +237,12 @@ static const struct ieee80211_supported_band __wl_band_5ghz = {
+ 	.n_bitrates = wl_a_rates_size,
+ };
+ 
++static struct ieee80211_supported_band __wl_band_6ghz = {
++	.band = NL80211_BAND_6GHZ,
++	.bitrates = wl_a_rates,
++	.n_bitrates = wl_a_rates_size,
++};
++
+ /* This is to override regulatory domains defined in cfg80211 module (reg.c)
+  * By default world regulatory domain defined in reg.c puts the flags
+  * NL80211_RRF_NO_IR for 5GHz channels (for * 36..48 and 149..165).
+@@ -218,7 +251,7 @@ static const struct ieee80211_supported_band __wl_band_5ghz = {
+  * domain are to be done here.
+  */
+ static const struct ieee80211_regdomain brcmf_regdom = {
+-	.n_reg_rules = 4,
++	.n_reg_rules = 5,
+ 	.alpha2 =  "99",
+ 	.reg_rules = {
+ 		/* IEEE 802.11b/g, channels 1..11 */
+@@ -231,7 +264,10 @@ static const struct ieee80211_regdomain brcmf_regdom = {
+ 		/* IEEE 802.11a, channel 36..64 */
+ 		REG_RULE(5150-10, 5350+10, 160, 6, 20, 0),
+ 		/* IEEE 802.11a, channel 100..165 */
+-		REG_RULE(5470-10, 5850+10, 160, 6, 20, 0), }
++		REG_RULE(5470-10, 5850+10, 160, 6, 20, 0),
++		/* IEEE 802.11ax, 6E */
++		REG_RULE(5935-10, 7115+10, 160, 6, 20, 0),
++	}
+ };
+ 
+ /* Note: brcmf_cipher_suites is an array of int defining which cipher suites
+@@ -356,6 +392,8 @@ static u8 nl80211_band_to_fwil(enum nl80211_band band)
+ 		return WLC_BAND_2G;
+ 	case NL80211_BAND_5GHZ:
+ 		return WLC_BAND_5G;
++	case NL80211_BAND_6GHZ:
++		return WLC_BAND_6G;
+ 	default:
+ 		WARN_ON(1);
+ 		break;
+@@ -429,6 +467,9 @@ static u16 chandef_to_chanspec(struct brcmu_d11inf *d11inf,
+ 	case NL80211_BAND_5GHZ:
+ 		ch_inf.band = BRCMU_CHAN_BAND_5G;
+ 		break;
++	case NL80211_BAND_6GHZ:
++		ch_inf.band = BRCMU_CHAN_BAND_6G;
++		break;
+ 	case NL80211_BAND_60GHZ:
+ 	default:
+ 		WARN_ON_ONCE(1);
+@@ -444,6 +485,20 @@ u16 channel_to_chanspec(struct brcmu_d11inf *d11inf,
+ {
+ 	struct brcmu_chan ch_inf;
+ 
++	switch (ch->band) {
++	case NL80211_BAND_2GHZ:
++		ch_inf.band = BRCMU_CHAN_BAND_2G;
++		break;
++	case NL80211_BAND_5GHZ:
++		ch_inf.band = BRCMU_CHAN_BAND_5G;
++		break;
++	case NL80211_BAND_6GHZ:
++		ch_inf.band = BRCMU_CHAN_BAND_6G;
++		break;
++	case NL80211_BAND_60GHZ:
++	default:
++		WARN_ON_ONCE(1);
++	}
+ 	ch_inf.chnum = ieee80211_frequency_to_channel(ch->center_freq);
+ 	ch_inf.bw = BRCMU_CHAN_BW_20;
+ 	d11inf->encchspec(&ch_inf);
+@@ -2619,17 +2674,25 @@ brcmf_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
+ 
+ 	if (cfg->channel) {
+ 		ext_join_params->assoc_le.chanspec_num = cpu_to_le32(1);
+-
+ 		ext_join_params->assoc_le.chanspec_list[0] =
+ 			cpu_to_le16(chanspec);
++
+ 		/* Increase dwell time to receive probe response or detect
+ 		 * beacon from target AP at a noisy air only during connect
+ 		 * command.
+ 		 */
+-		ext_join_params->scan_le.active_time =
+-			cpu_to_le32(BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS);
+-		ext_join_params->scan_le.passive_time =
+-			cpu_to_le32(BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS);
++		if (BRCMU_CHSPEC_IS6G(chanspec)) {
++			ext_join_params->scan_le.active_time =
++				cpu_to_le32(BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS_6E);
++			ext_join_params->scan_le.passive_time =
++				cpu_to_le32(BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS_6E);
++		} else {
++			ext_join_params->scan_le.active_time =
++				cpu_to_le32(BRCMF_SCAN_JOIN_ACTIVE_DWELL_TIME_MS);
++			ext_join_params->scan_le.passive_time =
++				cpu_to_le32(BRCMF_SCAN_JOIN_PASSIVE_DWELL_TIME_MS);
++		}
++
+ 		/* To sync with presence period of VSDB GO send probe request
+ 		 * more frequently. Probe request will be stopped when it gets
+ 		 * probe response from target AP/GO.
+@@ -3425,18 +3488,13 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (!bi->ctl_ch) {
+-		ch.chspec = le16_to_cpu(bi->chanspec);
+-		cfg->d11inf.decchspec(&ch);
++	ch.chspec = le16_to_cpu(bi->chanspec);
++	cfg->d11inf.decchspec(&ch);
++	if (!bi->ctl_ch)
+ 		bi->ctl_ch = ch.control_ch_num;
+-	}
+-	channel = bi->ctl_ch;
+-
+-	if (channel <= CH_MAX_2G_CHANNEL)
+-		band = NL80211_BAND_2GHZ;
+-	else
+-		band = NL80211_BAND_5GHZ;
+ 
++	channel = bi->ctl_ch;
++	band = BRCMU_CHAN_BAND_TO_NL80211(ch.band);
+ 	freq = ieee80211_channel_to_frequency(channel, band);
+ 	bss_data.chan = ieee80211_get_channel(wiphy, freq);
+ 	bss_data.scan_width = NL80211_BSS_CHAN_WIDTH_20;
+@@ -3550,11 +3608,7 @@ static s32 brcmf_inform_ibss(struct brcmf_cfg80211_info *cfg,
+ 	ch.chspec = le16_to_cpu(bi->chanspec);
+ 	cfg->d11inf.decchspec(&ch);
+ 
+-	if (ch.band == BRCMU_CHAN_BAND_2G)
+-		band = wiphy->bands[NL80211_BAND_2GHZ];
+-	else
+-		band = wiphy->bands[NL80211_BAND_5GHZ];
+-
++	band = wiphy->bands[BRCMU_CHAN_BAND_TO_NL80211(ch.band)];
+ 	freq = ieee80211_channel_to_frequency(ch.control_ch_num, band->band);
+ 	cfg->channel = freq;
+ 	notify_channel = ieee80211_get_channel(wiphy, freq);
+@@ -3745,14 +3799,6 @@ brcmf_cfg80211_escan_handler(struct brcmf_if *ifp,
+ 		}
+ 		bss_info_le = &escan_result_le->bss_info_le;
+ 
+-		/* WAR to skip 6G scan results before 6E support is complete in host */
+-		if ((bss_info_le->chanspec & BRCMU_CHSPEC_D11AC_BND_MASK) ==
+-			BRCMU_CHSPEC_D11AC_BND_6G) {
+-			bphy_err(drvr, "Currently skip 6G scan, chanspec 0x%04x\n",
+-				 bss_info_le->chanspec);
+-			goto exit;
+-		}
+-
+ 		if (brcmf_p2p_scan_finding_common_channel(cfg, bss_info_le))
+ 			goto exit;
+ 
+@@ -5706,7 +5752,7 @@ brcmf_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 			  *cookie, le16_to_cpu(action_frame->len), freq);
+ 
+ 		ack = brcmf_p2p_send_action_frame(cfg, cfg_to_ndev(cfg),
+-						  af_params, vif);
++						  af_params, vif, chan);
+ 
+ 		cfg80211_mgmt_tx_status(wdev, *cookie, buf, len, ack,
+ 					GFP_KERNEL);
+@@ -5878,15 +5924,7 @@ static int brcmf_cfg80211_get_channel(struct wiphy *wiphy,
+ 
+ 	ch.chspec = chanspec;
+ 	cfg->d11inf.decchspec(&ch);
+-
+-	switch (ch.band) {
+-	case BRCMU_CHAN_BAND_2G:
+-		band = NL80211_BAND_2GHZ;
+-		break;
+-	case BRCMU_CHAN_BAND_5G:
+-		band = NL80211_BAND_5GHZ;
+-		break;
+-	}
++	band = BRCMU_CHAN_BAND_TO_NL80211(ch.band);
+ 
+ 	switch (ch.bw) {
+ 	case BRCMU_CHAN_BW_80:
+@@ -6684,11 +6722,7 @@ brcmf_bss_roaming_done(struct brcmf_cfg80211_info *cfg,
+ 	ch.chspec = le16_to_cpu(bi->chanspec);
+ 	cfg->d11inf.decchspec(&ch);
+ 
+-	if (ch.band == BRCMU_CHAN_BAND_2G)
+-		band = wiphy->bands[NL80211_BAND_2GHZ];
+-	else
+-		band = wiphy->bands[NL80211_BAND_5GHZ];
+-
++	band = wiphy->bands[BRCMU_CHAN_BAND_TO_NL80211(ch.band)];
+ 	freq = ieee80211_channel_to_frequency(ch.control_ch_num, band->band);
+ 	notify_channel = ieee80211_get_channel(wiphy, freq);
+ 
+@@ -7130,9 +7164,7 @@ brcmf_notify_auth_frame_rx(struct brcmf_if *ifp,
+ 	       mgmt_frame_len - offsetof(struct ieee80211_mgmt, u));
+ 
+ 	freq = ieee80211_channel_to_frequency(ch.control_ch_num,
+-					      ch.band == BRCMU_CHAN_BAND_2G ?
+-					      NL80211_BAND_2GHZ :
+-					      NL80211_BAND_5GHZ);
++			BRCMU_CHAN_BAND_TO_NL80211(ch.band));
+ 
+ 	cfg80211_rx_mgmt(wdev, freq, 0, (u8 *)mgmt_frame, mgmt_frame_len,
+ 			 NL80211_RXMGMT_FLAG_EXTERNAL_AUTH);
+@@ -7686,6 +7718,10 @@ static void brcmf_get_bwcap(struct brcmf_if *ifp, u32 bw_cap[])
+ static void brcmf_update_ht_cap(struct ieee80211_supported_band *band,
+ 				u32 bw_cap[2], u32 nchain)
+ {
++	/* not allowed in 6G band */
++	if (band->band == NL80211_BAND_6GHZ)
++		return;
++
+ 	band->ht_cap.ht_supported = true;
+ 	if (bw_cap[band->band] & WLC_BW_40MHZ_BIT) {
+ 		band->ht_cap.cap |= IEEE80211_HT_CAP_SGI_40;
+@@ -7716,8 +7752,8 @@ static void brcmf_update_vht_cap(struct ieee80211_supported_band *band,
+ {
+ 	__le16 mcs_map;
+ 
+-	/* not allowed in 2.4G band */
+-	if (band->band == NL80211_BAND_2GHZ)
++	/* not allowed in 2.4G & 6G band */
++	if (band->band == NL80211_BAND_2GHZ || band->band == NL80211_BAND_6GHZ)
+ 		return;
+ 
+ 	band->vht_cap.vht_supported = true;
+@@ -7752,6 +7788,64 @@ static void brcmf_update_vht_cap(struct ieee80211_supported_band *band,
+ 	}
+ }
+ 
++static void brcmf_update_he_cap(struct ieee80211_supported_band *band,
++				struct ieee80211_sband_iftype_data *data)
++{
++	int idx = 1;
++	struct ieee80211_sta_he_cap *he_cap = &data->he_cap;
++	struct ieee80211_he_cap_elem *he_cap_elem = &he_cap->he_cap_elem;
++	struct ieee80211_he_mcs_nss_supp *he_mcs = &he_cap->he_mcs_nss_supp;
++
++	if (data == NULL) {
++		brcmf_dbg(INFO, "failed to allco mem\n");
++		return;
++	}
++
++	data->types_mask = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_AP);
++	he_cap->has_he = true;
++	he_cap_elem->mac_cap_info[0] = IEEE80211_HE_MAC_CAP0_HTC_HE;
++	if (band->band == NL80211_BAND_5GHZ) {
++		he_cap_elem->phy_cap_info[0] =
++			IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_40MHZ_80MHZ_IN_5G |
++			IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_160MHZ_IN_5G |
++			IEEE80211_HE_PHY_CAP0_CHANNEL_WIDTH_SET_80PLUS80_MHZ_IN_5G;
++	}
++	he_cap_elem->phy_cap_info[1] =
++		IEEE80211_HE_PHY_CAP1_LDPC_CODING_IN_PAYLOAD;
++	he_cap_elem->phy_cap_info[2] =
++		IEEE80211_HE_PHY_CAP2_NDP_4x_LTF_AND_3_2US;
++	he_cap_elem->phy_cap_info[3] =
++		IEEE80211_HE_PHY_CAP3_SU_BEAMFORMER;
++	he_cap_elem->phy_cap_info[4] =
++		IEEE80211_HE_PHY_CAP4_SU_BEAMFORMEE |
++		IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_UNDER_80MHZ_MASK |
++		IEEE80211_HE_PHY_CAP4_BEAMFORMEE_MAX_STS_ABOVE_80MHZ_4;
++	he_cap_elem->phy_cap_info[5] =
++		IEEE80211_HE_PHY_CAP5_BEAMFORMEE_NUM_SND_DIM_UNDER_80MHZ_2;
++	he_cap_elem->phy_cap_info[6] =
++		IEEE80211_HE_PHY_CAP6_CODEBOOK_SIZE_42_SU |
++		IEEE80211_HE_PHY_CAP6_CODEBOOK_SIZE_75_MU |
++		IEEE80211_HE_PHY_CAP6_TRIG_SU_BEAMFORMING_FB |
++		IEEE80211_HE_PHY_CAP6_TRIG_MU_BEAMFORMING_PARTIAL_BW_FB |
++		IEEE80211_HE_PHY_CAP6_TRIG_CQI_FB |
++		IEEE80211_HE_PHY_CAP6_PPE_THRESHOLD_PRESENT;
++	he_cap_elem->phy_cap_info[7] =
++		IEEE80211_HE_PHY_CAP7_MAX_NC_1;
++	he_cap_elem->phy_cap_info[8] =
++		IEEE80211_HE_PHY_CAP8_20MHZ_IN_160MHZ_HE_PPDU |
++		IEEE80211_HE_PHY_CAP8_80MHZ_IN_160MHZ_HE_PPDU;
++	he_cap_elem->phy_cap_info[9] =
++		IEEE80211_HE_PHY_CAP9_TX_1024_QAM_LESS_THAN_242_TONE_RU |
++		IEEE80211_HE_PHY_CAP9_RX_1024_QAM_LESS_THAN_242_TONE_RU;
++	he_mcs->rx_mcs_80 = cpu_to_le16(0xfffa);
++	he_mcs->tx_mcs_80 = cpu_to_le16(0xfffa);
++	he_mcs->rx_mcs_160 = cpu_to_le16((0xfffa));
++	he_mcs->tx_mcs_160 = cpu_to_le16((0xfffa));
++
++	band->n_iftype_data = idx;
++	band->iftype_data = data;
++}
++
+ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg)
+ {
+ 	struct brcmf_pub *drvr = cfg->pub;
+@@ -7768,6 +7862,7 @@ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg)
+ 	u32 txstreams = 0;
+ 	u32 txbf_bfe_cap = 0;
+ 	u32 txbf_bfr_cap = 0;
++	u32 he[2] = {0, 0};
+ 
+ 	(void)brcmf_fil_iovar_int_get(ifp, "vhtmode", &vhtmode);
+ 	err = brcmf_fil_iovar_int_get(ifp, "nmode", &nmode);
+@@ -7776,8 +7871,10 @@ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg)
+ 	} else {
+ 		brcmf_get_bwcap(ifp, bw_cap);
+ 	}
+-	brcmf_dbg(INFO, "nmode=%d, vhtmode=%d, bw_cap=(%d, %d)\n",
+-		  nmode, vhtmode, bw_cap[NL80211_BAND_2GHZ],
++	(void)brcmf_fil_iovar_data_get(ifp, "he", he, sizeof(he));
++
++	brcmf_dbg(INFO, "nmode=%d, vhtmode=%d, he=%d, bw_cap=(%d, %d)\n",
++		  nmode, vhtmode, he[0], bw_cap[NL80211_BAND_2GHZ],
+ 		  bw_cap[NL80211_BAND_5GHZ]);
+ 
+ 	err = brcmf_fil_iovar_int_get(ifp, "rxchain", &rxchain);
+@@ -7819,6 +7916,8 @@ static int brcmf_setup_wiphybands(struct brcmf_cfg80211_info *cfg)
+ 		if (vhtmode)
+ 			brcmf_update_vht_cap(band, bw_cap, nchain, txstreams,
+ 					     txbf_bfe_cap, txbf_bfr_cap);
++		if (he[0])
++			brcmf_update_he_cap(band, &sdata[band->band]);
+ 	}
+ 
+ 	return 0;
+@@ -8094,7 +8193,7 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ 	struct ieee80211_supported_band *band;
+ 	u16 max_interfaces = 0;
+ 	bool gscan;
+-	__le32 bandlist[3];
++	__le32 bandlist[4];
+ 	u32 n_bands;
+ 	int err, i;
+ 
+@@ -8225,6 +8324,23 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ 			band->n_channels = ARRAY_SIZE(__wl_5ghz_channels);
+ 			wiphy->bands[NL80211_BAND_5GHZ] = band;
+ 		}
++		if (bandlist[i] == cpu_to_le32(WLC_BAND_6G)) {
++			band = kmemdup(&__wl_band_6ghz, sizeof(__wl_band_6ghz),
++					   GFP_KERNEL);
++			if (!band)
++				return -ENOMEM;
++
++			band->channels = kmemdup(&__wl_6ghz_channels,
++						 sizeof(__wl_6ghz_channels),
++						 GFP_KERNEL);
++			if (!band->channels) {
++				kfree(band);
++				return -ENOMEM;
++			}
++
++			band->n_channels = ARRAY_SIZE(__wl_6ghz_channels);
++			wiphy->bands[NL80211_BAND_6GHZ] = band;
++		}
+ 	}
+ 
+ 	if (wiphy->bands[NL80211_BAND_5GHZ] &&
+@@ -8235,7 +8351,6 @@ static int brcmf_setup_wiphy(struct wiphy *wiphy, struct brcmf_if *ifp)
+ 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
+ 
+ 	wiphy_read_of_freq_limits(wiphy);
+-
+ 	return 0;
+ }
+ 
+@@ -8751,6 +8866,11 @@ static void brcmf_free_wiphy(struct wiphy *wiphy)
+ 		kfree(wiphy->bands[NL80211_BAND_5GHZ]->channels);
+ 		kfree(wiphy->bands[NL80211_BAND_5GHZ]);
+ 	}
++	if (wiphy->bands[NL80211_BAND_6GHZ]) {
++		kfree(wiphy->bands[NL80211_BAND_6GHZ]->channels);
++		kfree(wiphy->bands[NL80211_BAND_6GHZ]);
++	}
++
+ #if IS_ENABLED(CONFIG_PM)
+ 	if (wiphy->wowlan != &brcmf_wowlan_support)
+ 		kfree(wiphy->wowlan);
+@@ -8846,18 +8966,18 @@ struct brcmf_cfg80211_info *brcmf_cfg80211_attach(struct brcmf_pub *drvr,
+ 	else
+ 		ops->dump_survey = NULL;
+ 
+-	err = wiphy_register(wiphy);
+-	if (err < 0) {
+-		bphy_err(drvr, "Could not register wiphy device (%d)\n", err);
+-		goto priv_out;
+-	}
+-
+ 	err = brcmf_setup_wiphybands(cfg);
+ 	if (err) {
+ 		bphy_err(drvr, "Setting wiphy bands failed (%d)\n", err);
+ 		goto wiphy_unreg_out;
+ 	}
+ 
++	err = wiphy_register(wiphy);
++	if (err < 0) {
++		bphy_err(drvr, "Could not register wiphy device (%d)\n", err);
++		goto priv_out;
++	}
++
+ 	/* If cfg80211 didn't disable 40MHz HT CAP in wiphy_register(),
+ 	 * setup 40MHz in 2GHz band and enable OBSS scanning.
+ 	 */
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+index 783d4d776dc8..fe1d8d323fa7 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.c
+@@ -63,6 +63,7 @@
+ #define P2P_AF_TX_MAX_RETRY		5
+ #define P2P_AF_MAX_WAIT_TIME		msecs_to_jiffies(2000)
+ #define P2P_INVALID_CHANNEL		-1
++#define P2P_INVALID_CHANSPEC		0
+ #define P2P_CHANNEL_SYNC_RETRY		5
+ #define P2P_AF_FRM_SCAN_MAX_WAIT	msecs_to_jiffies(450)
+ #define P2P_DEFAULT_SLEEP_TIME_VSDB	200
+@@ -923,6 +924,7 @@ int brcmf_p2p_scan_prep(struct wiphy *wiphy,
+ 	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+ 	struct brcmf_p2p_info *p2p = &cfg->p2p;
+ 	int err = 0;
++	struct brcmu_chan ch;
+ 
+ 	if (brcmf_p2p_scan_is_p2p_request(request)) {
+ 		/* find my listen channel */
+@@ -931,7 +933,12 @@ int brcmf_p2p_scan_prep(struct wiphy *wiphy,
+ 		if (err < 0)
+ 			return err;
+ 
+-		p2p->afx_hdl.my_listen_chan = err;
++		ch.band = BRCMU_CHAN_BAND_2G;
++		ch.bw = BRCMU_CHAN_BW_20;
++		ch.sb = BRCMU_CHAN_SB_NONE;
++		ch.chnum = err;
++		p2p->cfg->d11inf.encchspec(&ch);
++		p2p->afx_hdl.my_listen_chan = ch.chspec;
+ 
+ 		clear_bit(BRCMF_P2P_STATUS_GO_NEG_PHASE, &p2p->status);
+ 		brcmf_dbg(INFO, "P2P: GO_NEG_PHASE status cleared\n");
+@@ -955,16 +962,15 @@ int brcmf_p2p_scan_prep(struct wiphy *wiphy,
+  * brcmf_p2p_discover_listen() - set firmware to discover listen state.
+  *
+  * @p2p: p2p device.
+- * @channel: channel nr for discover listen.
++ * @chspec: chspec for discover listen.
+  * @duration: time in ms to stay on channel.
+  *
+  */
+ static s32
+-brcmf_p2p_discover_listen(struct brcmf_p2p_info *p2p, u16 channel, u32 duration)
++brcmf_p2p_discover_listen(struct brcmf_p2p_info *p2p, u16 chspec, u32 duration)
+ {
+ 	struct brcmf_pub *drvr = p2p->cfg->pub;
+ 	struct brcmf_cfg80211_vif *vif;
+-	struct brcmu_chan ch;
+ 	s32 err = 0;
+ 
+ 	vif = p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif;
+@@ -980,11 +986,8 @@ brcmf_p2p_discover_listen(struct brcmf_p2p_info *p2p, u16 channel, u32 duration)
+ 		goto exit;
+ 	}
+ 
+-	ch.chnum = channel;
+-	ch.bw = BRCMU_CHAN_BW_20;
+-	p2p->cfg->d11inf.encchspec(&ch);
+ 	err = brcmf_p2p_set_discover_state(vif->ifp, WL_P2P_DISC_ST_LISTEN,
+-					   ch.chspec, (u16)duration);
++					   chspec, (u16)duration);
+ 	if (!err) {
+ 		set_bit(BRCMF_P2P_STATUS_DISCOVER_LISTEN, &p2p->status);
+ 		p2p->remain_on_channel_cookie++;
+@@ -1010,16 +1013,12 @@ int brcmf_p2p_remain_on_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+ 	struct brcmf_p2p_info *p2p = &cfg->p2p;
+ 	s32 err;
+-	u16 channel_nr;
+-
+-	channel_nr = ieee80211_frequency_to_channel(channel->center_freq);
+-	brcmf_dbg(TRACE, "Enter, channel: %d, duration ms (%d)\n", channel_nr,
+-		  duration);
+ 
+ 	err = brcmf_p2p_enable_discovery(p2p);
+ 	if (err)
+ 		goto exit;
+-	err = brcmf_p2p_discover_listen(p2p, channel_nr, duration);
++	err = brcmf_p2p_discover_listen(p2p,
++			channel_to_chanspec(&cfg->d11inf, channel), duration);
+ 	if (err)
+ 		goto exit;
+ 
+@@ -1095,12 +1094,12 @@ void brcmf_p2p_cancel_remain_on_channel(struct brcmf_if *ifp)
+  * brcmf_p2p_act_frm_search() - search function for action frame.
+  *
+  * @p2p: p2p device.
+- * @channel: channel on which action frame is to be trasmitted.
++ * @chspec: chspec on which action frame is to be trasmitted.
+  *
+  * search function to reach at common channel to send action frame. When
+  * channel is 0 then all social channels will be used to send af
+  */
+-static s32 brcmf_p2p_act_frm_search(struct brcmf_p2p_info *p2p, u16 channel)
++static s32 brcmf_p2p_act_frm_search(struct brcmf_p2p_info *p2p, u16 chspec)
+ {
+ 	struct brcmf_pub *drvr = p2p->cfg->pub;
+ 	s32 err;
+@@ -1111,7 +1110,7 @@ static s32 brcmf_p2p_act_frm_search(struct brcmf_p2p_info *p2p, u16 channel)
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+ 
+-	if (channel)
++	if (chspec)
+ 		channel_cnt = AF_PEER_SEARCH_CNT;
+ 	else
+ 		channel_cnt = SOCIAL_CHAN_CNT;
+@@ -1122,14 +1121,13 @@ static s32 brcmf_p2p_act_frm_search(struct brcmf_p2p_info *p2p, u16 channel)
+ 		err = -ENOMEM;
+ 		goto exit;
+ 	}
+-	ch.bw = BRCMU_CHAN_BW_20;
+-	if (channel) {
+-		ch.chnum = channel;
+-		p2p->cfg->d11inf.encchspec(&ch);
+-		/* insert same channel to the chan_list */
++
++	if (chspec) {
+ 		for (i = 0; i < channel_cnt; i++)
+-			default_chan_list[i] = ch.chspec;
++			default_chan_list[i] = chspec;
+ 	} else {
++		ch.band = BRCMU_CHAN_BAND_2G;
++		ch.bw = BRCMU_CHAN_BW_20;
+ 		ch.chnum = SOCIAL_CHAN_1;
+ 		p2p->cfg->d11inf.encchspec(&ch);
+ 		default_chan_list[0] = ch.chspec;
+@@ -1188,7 +1186,7 @@ static void brcmf_p2p_afx_handler(struct work_struct *work)
+  * @p2p: p2p device info struct.
+  *
+  */
+-static s32 brcmf_p2p_af_searching_channel(struct brcmf_p2p_info *p2p)
++static u16 brcmf_p2p_af_searching_channel(struct brcmf_p2p_info *p2p)
+ {
+ 	struct afx_hdl *afx_hdl = &p2p->afx_hdl;
+ 	struct brcmf_cfg80211_vif *pri_vif;
+@@ -1201,14 +1199,14 @@ static s32 brcmf_p2p_af_searching_channel(struct brcmf_p2p_info *p2p)
+ 	reinit_completion(&afx_hdl->act_frm_scan);
+ 	set_bit(BRCMF_P2P_STATUS_FINDING_COMMON_CHANNEL, &p2p->status);
+ 	afx_hdl->is_active = true;
+-	afx_hdl->peer_chan = P2P_INVALID_CHANNEL;
++	afx_hdl->peer_chan = P2P_INVALID_CHANSPEC;
+ 
+ 	/* Loop to wait until we find a peer's channel or the
+ 	 * pending action frame tx is cancelled.
+ 	 */
+ 	retry = 0;
+ 	while ((retry < P2P_CHANNEL_SYNC_RETRY) &&
+-	       (afx_hdl->peer_chan == P2P_INVALID_CHANNEL)) {
++	       (afx_hdl->peer_chan == P2P_INVALID_CHANSPEC)) {
+ 		afx_hdl->is_listen = false;
+ 		brcmf_dbg(TRACE, "Scheduling action frame for sending.. (%d)\n",
+ 			  retry);
+@@ -1216,13 +1214,13 @@ static s32 brcmf_p2p_af_searching_channel(struct brcmf_p2p_info *p2p)
+ 		schedule_work(&afx_hdl->afx_work);
+ 		wait_for_completion_timeout(&afx_hdl->act_frm_scan,
+ 					    P2P_AF_FRM_SCAN_MAX_WAIT);
+-		if ((afx_hdl->peer_chan != P2P_INVALID_CHANNEL) ||
++		if ((afx_hdl->peer_chan != P2P_INVALID_CHANSPEC) ||
+ 		    (!test_bit(BRCMF_P2P_STATUS_FINDING_COMMON_CHANNEL,
+ 			       &p2p->status)))
+ 			break;
+ 
+ 		if (afx_hdl->my_listen_chan) {
+-			brcmf_dbg(TRACE, "Scheduling listen peer, channel=%d\n",
++			brcmf_dbg(TRACE, "Scheduling listen peer, chanspec=0x%04x\n",
+ 				  afx_hdl->my_listen_chan);
+ 			/* listen on my listen channel */
+ 			afx_hdl->is_listen = true;
+@@ -1230,7 +1228,7 @@ static s32 brcmf_p2p_af_searching_channel(struct brcmf_p2p_info *p2p)
+ 			wait_for_completion_timeout(&afx_hdl->act_frm_scan,
+ 						    P2P_AF_FRM_SCAN_MAX_WAIT);
+ 		}
+-		if ((afx_hdl->peer_chan != P2P_INVALID_CHANNEL) ||
++		if ((afx_hdl->peer_chan != P2P_INVALID_CHANSPEC) ||
+ 		    (!test_bit(BRCMF_P2P_STATUS_FINDING_COMMON_CHANNEL,
+ 			       &p2p->status)))
+ 			break;
+@@ -1244,7 +1242,7 @@ static s32 brcmf_p2p_af_searching_channel(struct brcmf_p2p_info *p2p)
+ 			msleep(P2P_DEFAULT_SLEEP_TIME_VSDB);
+ 	}
+ 
+-	brcmf_dbg(TRACE, "Completed search/listen peer_chan=%d\n",
++	brcmf_dbg(TRACE, "Completed search/listen peer_chan=0x%4x\n",
+ 		  afx_hdl->peer_chan);
+ 	afx_hdl->is_active = false;
+ 
+@@ -1277,7 +1275,7 @@ bool brcmf_p2p_scan_finding_common_channel(struct brcmf_cfg80211_info *cfg,
+ 
+ 	if (bi == NULL) {
+ 		brcmf_dbg(TRACE, "ACTION FRAME SCAN Done\n");
+-		if (afx_hdl->peer_chan == P2P_INVALID_CHANNEL)
++		if (afx_hdl->peer_chan == P2P_INVALID_CHANSPEC)
+ 			complete(&afx_hdl->act_frm_scan);
+ 		return true;
+ 	}
+@@ -1293,13 +1291,8 @@ bool brcmf_p2p_scan_finding_common_channel(struct brcmf_cfg80211_info *cfg,
+ 					    p2p_dev_addr, sizeof(p2p_dev_addr));
+ 	if ((err >= 0) &&
+ 	    (ether_addr_equal(p2p_dev_addr, afx_hdl->tx_dst_addr))) {
+-		if (!bi->ctl_ch) {
+-			ch.chspec = le16_to_cpu(bi->chanspec);
+-			cfg->d11inf.decchspec(&ch);
+-			bi->ctl_ch = ch.control_ch_num;
+-		}
+-		afx_hdl->peer_chan = bi->ctl_ch;
+-		brcmf_dbg(TRACE, "ACTION FRAME SCAN : Peer %pM found, channel : %d\n",
++		afx_hdl->peer_chan = le16_to_cpu(bi->chanspec);
++		brcmf_dbg(TRACE, "ACTION FRAME SCAN : Peer %pM found, chanspec : 0x%04x\n",
+ 			  afx_hdl->tx_dst_addr, afx_hdl->peer_chan);
+ 		complete(&afx_hdl->act_frm_scan);
+ 	}
+@@ -1471,8 +1464,8 @@ int brcmf_p2p_notify_action_frame_rx(struct brcmf_if *ifp,
+ 			if (test_bit(BRCMF_P2P_STATUS_FINDING_COMMON_CHANNEL,
+ 				     &p2p->status) &&
+ 			    (ether_addr_equal(afx_hdl->tx_dst_addr, e->addr))) {
+-				afx_hdl->peer_chan = ch.control_ch_num;
+-				brcmf_dbg(INFO, "GON request: Peer found, channel=%d\n",
++				afx_hdl->peer_chan = be16_to_cpu(rxframe->chanspec);
++				brcmf_dbg(INFO, "GON request: Peer found, chanspec=0x%04x\n",
+ 					  afx_hdl->peer_chan);
+ 				complete(&afx_hdl->act_frm_scan);
+ 			}
+@@ -1515,9 +1508,7 @@ int brcmf_p2p_notify_action_frame_rx(struct brcmf_if *ifp,
+ 	mgmt_frame_len += offsetof(struct ieee80211_mgmt, u);
+ 
+ 	freq = ieee80211_channel_to_frequency(ch.control_ch_num,
+-					      ch.band == BRCMU_CHAN_BAND_2G ?
+-					      NL80211_BAND_2GHZ :
+-					      NL80211_BAND_5GHZ);
++					BRCMU_CHAN_BAND_TO_NL80211(ch.band));
+ 
+ 	wdev = &ifp->vif->wdev;
+ 	cfg80211_rx_mgmt(wdev, freq, 0, (u8 *)mgmt_frame, mgmt_frame_len, 0);
+@@ -1763,7 +1754,8 @@ static bool brcmf_p2p_check_dwell_overflow(u32 requested_dwell,
+ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
+ 				 struct net_device *ndev,
+ 				 struct brcmf_fil_af_params_le *af_params,
+-				 struct brcmf_cfg80211_vif *vif
++				 struct brcmf_cfg80211_vif *vif,
++				 struct ieee80211_channel *peer_listen_chan
+ 				 )
+ {
+ 	struct brcmf_p2p_info *p2p = &cfg->p2p;
+@@ -1772,6 +1764,7 @@ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
+ 	struct brcmf_config_af_params config_af_params;
+ 	struct afx_hdl *afx_hdl = &p2p->afx_hdl;
+ 	struct brcmf_pub *drvr = cfg->pub;
++	struct brcmu_chan ch;
+ 	u16 action_frame_len;
+ 	bool ack = false;
+ 	u8 category;
+@@ -1878,10 +1871,10 @@ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
+ 	    p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif &&
+ 	    p2p->bss_idx[P2PAPI_BSSCFG_DEVICE].vif->saved_ie.probe_req_ie_len) {
+ 		afx_hdl = &p2p->afx_hdl;
+-		afx_hdl->peer_listen_chan = le32_to_cpu(af_params->channel);
++		afx_hdl->peer_listen_chan = channel_to_chanspec(&cfg->d11inf, peer_listen_chan);
+ 
+ 		if (brcmf_p2p_af_searching_channel(p2p) ==
+-							P2P_INVALID_CHANNEL) {
++							P2P_INVALID_CHANSPEC) {
+ 			bphy_err(drvr, "Couldn't find peer's channel.\n");
+ 			goto exit;
+ 		}
+@@ -1894,7 +1887,9 @@ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
+ 		brcmf_notify_escan_complete(cfg, ifp, true, true);
+ 
+ 		/* update channel */
+-		af_params->channel = cpu_to_le32(afx_hdl->peer_chan);
++		ch.chspec = afx_hdl->peer_chan;
++		cfg->d11inf.decchspec(&ch);
++		af_params->channel = cpu_to_le32(ch.control_ch_num);
+ 	}
+ 	dwell_jiffies = jiffies;
+ 	dwell_overflow = brcmf_p2p_check_dwell_overflow(requested_dwell,
+@@ -1926,9 +1921,11 @@ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
+ 	 * not keep the dwell time, go to listen state again to get next action
+ 	 * response frame.
+ 	 */
++	ch.chspec = afx_hdl->my_listen_chan;
++	cfg->d11inf.decchspec(&ch);
+ 	if (ack && config_af_params.extra_listen && !p2p->block_gon_req_tx &&
+ 	    test_bit(BRCMF_P2P_STATUS_WAITING_NEXT_ACT_FRAME, &p2p->status) &&
+-	    p2p->af_sent_channel == afx_hdl->my_listen_chan) {
++	    p2p->af_sent_channel == ch.control_ch_num) {
+ 		delta_ms = jiffies_to_msecs(jiffies - p2p->af_tx_sent_jiffies);
+ 		if (le32_to_cpu(af_params->dwell_time) > delta_ms)
+ 			extra_listen_time = le32_to_cpu(af_params->dwell_time) -
+@@ -1943,7 +1940,7 @@ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
+ 				  extra_listen_time);
+ 			extra_listen_time += 100;
+ 			if (!brcmf_p2p_discover_listen(p2p,
+-						       p2p->af_sent_channel,
++						       afx_hdl->my_listen_chan,
+ 						       extra_listen_time)) {
+ 				unsigned long duration;
+ 
+@@ -2008,8 +2005,8 @@ s32 brcmf_p2p_notify_rx_mgmt_p2p_probereq(struct brcmf_if *ifp,
+ 
+ 	if (test_bit(BRCMF_P2P_STATUS_FINDING_COMMON_CHANNEL, &p2p->status) &&
+ 	    (ether_addr_equal(afx_hdl->tx_dst_addr, e->addr))) {
+-		afx_hdl->peer_chan = ch.control_ch_num;
+-		brcmf_dbg(INFO, "PROBE REQUEST: Peer found, channel=%d\n",
++		afx_hdl->peer_chan = be16_to_cpu(rxframe->chanspec);
++		brcmf_dbg(INFO, "PROBE REQUEST: Peer found, chanspec=0x%04x\n",
+ 			  afx_hdl->peer_chan);
+ 		complete(&afx_hdl->act_frm_scan);
+ 	}
+@@ -2034,9 +2031,7 @@ s32 brcmf_p2p_notify_rx_mgmt_p2p_probereq(struct brcmf_if *ifp,
+ 	mgmt_frame = (u8 *)(rxframe + 1);
+ 	mgmt_frame_len = e->datalen - sizeof(*rxframe);
+ 	freq = ieee80211_channel_to_frequency(ch.control_ch_num,
+-					      ch.band == BRCMU_CHAN_BAND_2G ?
+-					      NL80211_BAND_2GHZ :
+-					      NL80211_BAND_5GHZ);
++						BRCMU_CHAN_BAND_TO_NL80211(ch.band));
+ 
+ 	cfg80211_rx_mgmt(&vif->wdev, freq, 0, mgmt_frame, mgmt_frame_len, 0);
+ 
+@@ -2080,6 +2075,7 @@ static void brcmf_p2p_get_current_chanspec(struct brcmf_p2p_info *p2p,
+ 		}
+ 	}
+ 	/* Use default channel for P2P */
++	ch.band = BRCMU_CHAN_BAND_2G;
+ 	ch.chnum = BRCMF_P2P_TEMP_CHAN;
+ 	ch.bw = BRCMU_CHAN_BW_20;
+ 	p2p->cfg->d11inf.encchspec(&ch);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.h
+index bbc455238707..d71709aae7ab 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/p2p.h
+@@ -87,7 +87,7 @@ struct afx_hdl {
+ 	struct work_struct afx_work;
+ 	struct completion act_frm_scan;
+ 	bool is_active;
+-	s32 peer_chan;
++	u16 peer_chan;
+ 	bool is_listen;
+ 	u16 my_listen_chan;
+ 	u16 peer_listen_chan;
+@@ -172,7 +172,8 @@ int brcmf_p2p_notify_action_tx_complete(struct brcmf_if *ifp,
+ bool brcmf_p2p_send_action_frame(struct brcmf_cfg80211_info *cfg,
+ 				 struct net_device *ndev,
+ 				 struct brcmf_fil_af_params_le *af_params,
+-				 struct brcmf_cfg80211_vif *vif);
++				 struct brcmf_cfg80211_vif *vif,
++				 struct ieee80211_channel *peer_listen_chan);
+ bool brcmf_p2p_scan_finding_common_channel(struct brcmf_cfg80211_info *cfg,
+ 					   struct brcmf_bss_info_le *bi);
+ s32 brcmf_p2p_notify_rx_mgmt_p2p_probereq(struct brcmf_if *ifp,
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmutil/d11.c b/drivers/net/wireless/broadcom/brcm80211/brcmutil/d11.c
+index 1e2b1e487eb7..5effa27542e9 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmutil/d11.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmutil/d11.c
+@@ -87,10 +87,20 @@ static void brcmu_d11ac_encchspec(struct brcmu_chan *ch)
+ 			0, d11ac_bw(ch->bw));
+ 
+ 	ch->chspec &= ~BRCMU_CHSPEC_D11AC_BND_MASK;
+-	if (ch->chnum <= CH_MAX_2G_CHANNEL)
+-		ch->chspec |= BRCMU_CHSPEC_D11AC_BND_2G;
+-	else
++	switch (ch->band) {
++	case BRCMU_CHAN_BAND_6G:
++		ch->chspec |= BRCMU_CHSPEC_D11AC_BND_6G;
++		break;
++	case BRCMU_CHAN_BAND_5G:
+ 		ch->chspec |= BRCMU_CHSPEC_D11AC_BND_5G;
++		break;
++	case BRCMU_CHAN_BAND_2G:
++		ch->chspec |= BRCMU_CHSPEC_D11AC_BND_2G;
++		break;
++	default:
++		WARN_ONCE(1, "Invalid band 0x%04x\n", ch->band);
++		break;
++	}
+ }
+ 
+ static void brcmu_d11n_decchspec(struct brcmu_chan *ch)
+@@ -222,6 +232,9 @@ static void brcmu_d11ac_decchspec(struct brcmu_chan *ch)
+ 	}
+ 
+ 	switch (ch->chspec & BRCMU_CHSPEC_D11AC_BND_MASK) {
++	case BRCMU_CHSPEC_D11AC_BND_6G:
++		ch->band = BRCMU_CHAN_BAND_6G;
++		break;
+ 	case BRCMU_CHSPEC_D11AC_BND_5G:
+ 		ch->band = BRCMU_CHAN_BAND_5G;
+ 		break;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/include/brcmu_d11.h b/drivers/net/wireless/broadcom/brcm80211/include/brcmu_d11.h
+index 9a54a046a795..3d7655c9c058 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/include/brcmu_d11.h
++++ b/drivers/net/wireless/broadcom/brcm80211/include/brcmu_d11.h
+@@ -84,9 +84,16 @@
+ #define  BRCMU_CHSPEC_D11AC_BND_3G	0x4000
+ #define  BRCMU_CHSPEC_D11AC_BND_6G	0x8000
+ #define  BRCMU_CHSPEC_D11AC_BND_5G	0xc000
+-
+-#define BRCMU_CHAN_BAND_2G		0
+-#define BRCMU_CHAN_BAND_5G		1
++#define BRCMU_CHSPEC_IS5G(chspec) \
++	(((chspec) & BRCMU_CHSPEC_D11AC_BND_MASK) == BRCMU_CHSPEC_D11AC_BND_5G)
++#define BRCMU_CHSPEC_IS6G(chspec) \
++	(((chspec) & BRCMU_CHSPEC_D11AC_BND_MASK) == BRCMU_CHSPEC_D11AC_BND_6G)
++#define BRCMU_CHAN_BAND_2G		1
++#define BRCMU_CHAN_BAND_5G		2
++#define BRCMU_CHAN_BAND_6G		3
++#define BRCMU_CHAN_BAND_TO_NL80211(band) \
++	((band) == BRCMU_CHAN_BAND_2G ? NL80211_BAND_2GHZ : \
++	((band) == BRCMU_CHAN_BAND_5G ? NL80211_BAND_5GHZ : NL80211_BAND_6GHZ))
+ 
+ enum brcmu_chan_bw {
+ 	BRCMU_CHAN_BW_20,
+diff --git a/drivers/net/wireless/broadcom/brcm80211/include/brcmu_wifi.h b/drivers/net/wireless/broadcom/brcm80211/include/brcmu_wifi.h
+index 3a9cad3730b8..38b0b35e602c 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/include/brcmu_wifi.h
++++ b/drivers/net/wireless/broadcom/brcm80211/include/brcmu_wifi.h
+@@ -92,7 +92,8 @@
+ #define	WLC_BAND_AUTO			0	/* auto-select */
+ #define	WLC_BAND_5G			1	/* 5 Ghz */
+ #define	WLC_BAND_2G			2	/* 2.4 Ghz */
+-#define	WLC_BAND_ALL			3	/* all bands */
++#define	WLC_BAND_6G			3	/* 6 Ghz */
++#define	WLC_BAND_ALL			4	/* all bands */
+ 
+ #define CHSPEC_CHANNEL(chspec)	((u8)((chspec) & WL_CHANSPEC_CHAN_MASK))
+ #define CHSPEC_BAND(chspec)	((chspec) & WL_CHANSPEC_BAND_MASK)
+-- 
+2.17.1
+

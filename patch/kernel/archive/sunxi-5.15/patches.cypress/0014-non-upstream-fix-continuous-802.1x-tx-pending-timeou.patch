@@ -1,0 +1,90 @@
+From e93069267e235b26c023fbbc09218329e28ff382 Mon Sep 17 00:00:00 2001
+From: Wright Feng <wright.feng@cypress.com>
+Date: Wed, 27 Feb 2019 02:06:18 -0600
+Subject: [PATCH 014/179] non-upstream: fix continuous 802.1x tx pending
+ timeout error
+
+The race condition in brcmf_msgbuf_txflow and brcmf_msgbuf_delete_flowring
+makes tx_msghdr writing after brcmf_msgbuf_remove_flowring. Host
+driver should delete flowring after txflow complete and all txstatus back,
+or pend_8021x_cnt will never be zero and cause every connection 950
+milliseconds(MAX_WAIT_FOR_8021X_TX) delay.
+
+Signed-off-by: Wright Feng <wright.feng@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@cypress.com>
+---
+ .../broadcom/brcm80211/brcmfmac/core.c        |  4 +++-
+ .../broadcom/brcm80211/brcmfmac/msgbuf.c      | 23 ++++++++++++++++++-
+ 2 files changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+index f4a7e23e5667..e2dfe888f1a9 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+@@ -1490,8 +1490,10 @@ int brcmf_netdev_wait_pend8021x(struct brcmf_if *ifp)
+ 				 !brcmf_get_pend_8021x_cnt(ifp),
+ 				 MAX_WAIT_FOR_8021X_TX);
+ 
+-	if (!err)
++	if (!err) {
+ 		bphy_err(drvr, "Timed out waiting for no pending 802.1x packets\n");
++		atomic_set(&ifp->pend_8021x_cnt, 0);
++	}
+ 
+ 	return !err;
+ }
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
+index 7c8e08ee8f0f..c1c43ef3039d 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
+@@ -71,6 +71,7 @@
+ #define BRCMF_MSGBUF_TRICKLE_TXWORKER_THRS	32
+ #define BRCMF_MSGBUF_UPDATE_RX_PTR_THRS		48
+ 
++#define BRCMF_MAX_TXSTATUS_WAIT_RETRIES		10
+ 
+ struct msgbuf_common_hdr {
+ 	u8				msgtype;
+@@ -807,8 +808,12 @@ static int brcmf_msgbuf_tx_queue_data(struct brcmf_pub *drvr, int ifidx,
+ 	flowid = brcmf_flowring_lookup(flow, eh->h_dest, skb->priority, ifidx);
+ 	if (flowid == BRCMF_FLOWRING_INVALID_ID) {
+ 		flowid = brcmf_msgbuf_flowring_create(msgbuf, ifidx, skb);
+-		if (flowid == BRCMF_FLOWRING_INVALID_ID)
++		if (flowid == BRCMF_FLOWRING_INVALID_ID) {
+ 			return -ENOMEM;
++		} else {
++			brcmf_flowring_enqueue(flow, flowid, skb);
++			return 0;
++		}
+ 	}
+ 	queue_count = brcmf_flowring_enqueue(flow, flowid, skb);
+ 	force = ((queue_count % BRCMF_MSGBUF_TRICKLE_TXWORKER_THRS) == 0);
+@@ -1396,9 +1401,25 @@ void brcmf_msgbuf_delete_flowring(struct brcmf_pub *drvr, u16 flowid)
+ 	struct brcmf_msgbuf *msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
+ 	struct msgbuf_tx_flowring_delete_req *delete;
+ 	struct brcmf_commonring *commonring;
++	struct brcmf_commonring *commonring_del;
++
+ 	void *ret_ptr;
+ 	u8 ifidx;
+ 	int err;
++	int retry = BRCMF_MAX_TXSTATUS_WAIT_RETRIES;
++
++	/* wait for commonring txflow finished */
++	commonring_del = msgbuf->flowrings[flowid];
++	brcmf_commonring_lock(commonring_del);
++	while (retry && atomic_read(&commonring_del->outstanding_tx)) {
++		usleep_range(5000, 10000);
++		retry--;
++	}
++	brcmf_commonring_unlock(commonring_del);
++	if (!retry && atomic_read(&commonring_del->outstanding_tx)) {
++		brcmf_err("timed out waiting for txstatus\n");
++		atomic_set(&commonring_del->outstanding_tx, 0);
++	}
+ 
+ 	/* no need to submit if firmware can not be reached */
+ 	if (drvr->bus_if->state != BRCMF_BUS_UP) {
+-- 
+2.17.1
+

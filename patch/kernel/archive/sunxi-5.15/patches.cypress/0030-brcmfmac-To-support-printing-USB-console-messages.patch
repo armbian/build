@@ -1,0 +1,241 @@
+From 6b4c0c369438ca0dac0c68611f69d84984c9f704 Mon Sep 17 00:00:00 2001
+From: Raveendran Somu <raveendran.somu@cypress.com>
+Date: Wed, 7 Nov 2018 16:59:03 -0600
+Subject: [PATCH 030/179] brcmfmac: To support printing USB console messages
+
+This change is to add support for printing the firmware
+console messges of a USB interface chip to the host.
+To enable this feature, build option '-msgtrace' should be
+enabled in the firmware. And in the host, debug=0x100000
+should be provided as a module parameter.
+
+Signed-off-by: Raveendran Somu <raveendran.somu@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@cypress.com>
+---
+ .../broadcom/brcm80211/brcmfmac/bus.h         |  1 +
+ .../broadcom/brcm80211/brcmfmac/core.c        |  9 ++
+ .../broadcom/brcm80211/brcmfmac/debug.c       | 83 +++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/debug.h       | 24 ++++++
+ .../broadcom/brcm80211/brcmfmac/usb.c         | 14 ++++
+ 5 files changed, 131 insertions(+)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
+index 3f5da3bb6aa5..968d3e75147d 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
+@@ -272,6 +272,7 @@ void brcmf_bus_change_state(struct brcmf_bus *bus, enum brcmf_bus_state state);
+ 
+ s32 brcmf_iovar_data_set(struct device *dev, char *name, void *data, u32 len);
+ void brcmf_bus_add_txhdrlen(struct device *dev, uint len);
++int brcmf_fwlog_attach(struct device *dev);
+ 
+ #ifdef CONFIG_BRCMFMAC_SDIO
+ void brcmf_sdio_exit(void);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+index e2dfe888f1a9..ff47d393fa4e 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+@@ -1135,6 +1135,15 @@ static int brcmf_inet6addr_changed(struct notifier_block *nb,
+ }
+ #endif
+ 
++
++int brcmf_fwlog_attach(struct device *dev)
++{
++	struct brcmf_bus *bus_if = dev_get_drvdata(dev);
++	struct brcmf_pub *drvr = bus_if->drvr;
++
++	return brcmf_debug_fwlog_init(drvr);
++}
++
+ static int brcmf_revinfo_read(struct seq_file *s, void *data)
+ {
+ 	struct brcmf_bus *bus_if = dev_get_drvdata(s->private);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.c
+index eecf8a38d94a..f5da560bfc12 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.c
+@@ -14,6 +14,82 @@
+ #include "fweh.h"
+ #include "debug.h"
+ 
++static int
++brcmf_debug_msgtrace_seqchk(u32 *prev, u32 cur)
++{
++	if ((cur == 0 && *prev == 0xFFFFFFFF) || ((cur - *prev) == 1)) {
++		goto done;
++	} else if (cur == *prev) {
++		brcmf_dbg(FWCON, "duplicate trace\n");
++		return -1;
++	} else if (cur > *prev) {
++		brcmf_dbg(FWCON, "lost %d packets\n", cur - *prev);
++	} else {
++		brcmf_dbg(FWCON, "seq out of order, host %d, dongle %d\n",
++			  *prev, cur);
++	}
++done:
++	*prev = cur;
++	return 0;
++}
++
++static int
++brcmf_debug_msg_parser(void *event_data)
++{
++	int err = 0;
++	struct msgtrace_hdr *hdr;
++	char *data, *s;
++	static u32 seqnum_prev;
++
++	hdr = (struct msgtrace_hdr *)event_data;
++	data = (char *)event_data + MSGTRACE_HDRLEN;
++
++	/* There are 2 bytes available at the end of data */
++	data[ntohs(hdr->len)] = '\0';
++
++	if (ntohl(hdr->discarded_bytes) || ntohl(hdr->discarded_printf)) {
++		brcmf_dbg(FWCON, "Discarded_bytes %d discarded_printf %d\n",
++			  ntohl(hdr->discarded_bytes),
++				ntohl(hdr->discarded_printf));
++	}
++
++	err = brcmf_debug_msgtrace_seqchk(&seqnum_prev, ntohl(hdr->seqnum));
++	if (err)
++		return err;
++
++	while (*data != '\0' && (s = strstr(data, "\n")) != NULL) {
++		*s = '\0';
++		brcmf_dbg(FWCON, "CONSOLE: %s\n", data);
++		data = s + 1;
++	}
++	if (*data)
++		brcmf_dbg(FWCON, "CONSOLE: %s", data);
++
++	return err;
++}
++
++static int
++brcmf_debug_trace_parser(struct brcmf_if *ifp,
++			 const struct brcmf_event_msg *evtmsg,
++			 void *event_data)
++{
++	int err = 0;
++	struct msgtrace_hdr *hdr;
++
++	hdr = (struct msgtrace_hdr *)event_data;
++	if (hdr->version != MSGTRACE_VERSION) {
++		brcmf_dbg(FWCON, "trace version mismatch host %d dngl %d\n",
++			  MSGTRACE_VERSION, hdr->version);
++		err = -EPROTO;
++		return err;
++	}
++
++	if (hdr->trace_type == MSGTRACE_HDR_TYPE_MSG)
++		err = brcmf_debug_msg_parser(event_data);
++
++	return err;
++}
++
+ int brcmf_debug_create_memdump(struct brcmf_bus *bus, const void *data,
+ 			       size_t len)
+ {
+@@ -42,6 +118,13 @@ int brcmf_debug_create_memdump(struct brcmf_bus *bus, const void *data,
+ 	return 0;
+ }
+ 
++
++int brcmf_debug_fwlog_init(struct brcmf_pub *drvr)
++{
++	return brcmf_fweh_register(drvr, BRCMF_E_TRACE,
++				brcmf_debug_trace_parser);
++}
++
+ struct dentry *brcmf_debugfs_get_devdir(struct brcmf_pub *drvr)
+ {
+ 	return drvr->wiphy->debugfsdir;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.h
+index 9bb5f709d41a..169222d52fa0 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/debug.h
+@@ -107,6 +107,10 @@ do {								\
+ 
+ #endif /* defined(DEBUG) || defined(CONFIG_BRCM_TRACING) */
+ 
++#define MSGTRACE_VERSION 1
++#define MSGTRACE_HDR_TYPE_MSG 0
++#define MSGTRACE_HDR_TYPE_LOG 1
++
+ #define brcmf_dbg_hex_dump(test, data, len, fmt, ...)			\
+ do {									\
+ 	trace_brcmf_hexdump((void *)data, len);				\
+@@ -123,6 +127,7 @@ void brcmf_debugfs_add_entry(struct brcmf_pub *drvr, const char *fn,
+ 			     int (*read_fn)(struct seq_file *seq, void *data));
+ int brcmf_debug_create_memdump(struct brcmf_bus *bus, const void *data,
+ 			       size_t len);
++int brcmf_debug_fwlog_init(struct brcmf_pub *drvr);
+ #else
+ static inline struct dentry *brcmf_debugfs_get_devdir(struct brcmf_pub *drvr)
+ {
+@@ -138,6 +143,25 @@ int brcmf_debug_create_memdump(struct brcmf_bus *bus, const void *data,
+ {
+ 	return 0;
+ }
++
++static inline
++int brcmf_debug_fwlog_init(struct brcmf_pub *drvr)
++{
++	return 0;
++}
+ #endif
+ 
++/* Message trace header */
++struct msgtrace_hdr {
++	u8	version;
++	u8	trace_type;
++	u16	len;    /* Len of the trace */
++	u32	seqnum; /* Sequence number of message */
++	/* Number of discarded bytes because of trace overflow  */
++	u32	discarded_bytes;
++	/* Number of discarded printf because of trace overflow */
++	u32	discarded_printf;
++};
++
++#define MSGTRACE_HDRLEN		sizeof(struct msgtrace_hdr)
+ #endif /* BRCMFMAC_DEBUG_H */
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c
+index d540f8664288..5aa6b43f0c53 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/usb.c
+@@ -1221,6 +1221,12 @@ static void brcmf_usb_probe_phase2(struct device *dev, int ret,
+ 	if (ret)
+ 		goto error;
+ 
++	if (BRCMF_FWCON_ON()) {
++		ret = brcmf_fwlog_attach(devinfo->dev);
++		if (ret)
++			goto error;
++	}
++
+ 	/* Attach to the common driver interface */
+ 	ret = brcmf_attach(devinfo->dev);
+ 	if (ret)
+@@ -1297,9 +1303,17 @@ static int brcmf_usb_probe_cb(struct brcmf_usbdev_info *devinfo)
+ 		ret = brcmf_alloc(devinfo->dev, devinfo->settings);
+ 		if (ret)
+ 			goto fail;
++
++		if (BRCMF_FWCON_ON()) {
++			ret = brcmf_fwlog_attach(devinfo->dev);
++			if (ret)
++				goto fail;
++		}
++
+ 		ret = brcmf_attach(devinfo->dev);
+ 		if (ret)
+ 			goto fail;
++
+ 		/* we are done */
+ 		complete(&devinfo->dev_init_done);
+ 		return 0;
+-- 
+2.17.1
+

@@ -1,0 +1,107 @@
+From e31bda91b203333903b66d82a308d07e275e03bd Mon Sep 17 00:00:00 2001
+From: Divya Madhyan <Divya.Madhyan@infineon.com>
+Date: Sun, 4 Apr 2021 14:49:12 -0500
+Subject: [PATCH 076/179] brcmfmac: disable mpc when power_save is disabled
+
+These set of changes intend to integrate the PM and mpc commands,
+implying that whenever power save is off, mpc is also turned off
+and when PM is on again, mpc takes the corresponding appropriate value.
+
+Signed-off-by: Divya Madhyan <Divya.Madhyan@infineon.com>
+Signed-off-by: Chung-Hsien Hsu <chung-hsien.hsu@infineon.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 21 ++++++++++++++++---
+ .../broadcom/brcm80211/brcmfmac/core.c        |  1 +
+ .../broadcom/brcm80211/brcmfmac/core.h        |  1 +
+ 3 files changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index bf121ce39fc4..3105eb32cc4b 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -950,9 +950,16 @@ void brcmf_set_mpc(struct brcmf_if *ifp, int mpc)
+ {
+ 	struct brcmf_pub *drvr = ifp->drvr;
+ 	s32 err = 0;
++	struct brcmf_cfg80211_info *cfg = ifp->drvr->config;
+ 
++	ifp->drvr->req_mpc = mpc;
+ 	if (check_vif_up(ifp->vif)) {
+-		err = brcmf_fil_iovar_int_set(ifp, "mpc", mpc);
++		if (cfg->pwr_save)
++			err = brcmf_fil_iovar_int_set(ifp, "mpc",
++						      ifp->drvr->req_mpc);
++		else
++			err = brcmf_fil_iovar_int_set(ifp, "mpc", 0);
++
+ 		if (err) {
+ 			bphy_err(drvr, "fail to set mpc\n");
+ 			return;
+@@ -3186,6 +3193,12 @@ brcmf_cfg80211_set_power_mgmt(struct wiphy *wiphy, struct net_device *ndev,
+ 		brcmf_dbg(INFO, "Do not enable power save for P2P clients\n");
+ 		pm = PM_OFF;
+ 	}
++
++	if (cfg->pwr_save)
++		brcmf_set_mpc(ifp, ifp->drvr->req_mpc);
++	else
++		brcmf_set_mpc(ifp, 0);
++
+ 	brcmf_dbg(INFO, "power save %s\n", (pm ? "enabled" : "disabled"));
+ 
+ 	err = brcmf_fil_cmd_int_set(ifp, BRCMF_C_SET_PM, pm);
+@@ -4042,6 +4055,9 @@ static s32 brcmf_cfg80211_resume(struct wiphy *wiphy)
+ 	struct brcmf_bus *bus_if = drvr->bus_if;
+ 	struct brcmf_cfg80211_info *config = drvr->config;
+ 	int retry = BRCMF_PM_WAIT_MAXRETRY;
++	s32 power_mode;
++
++	power_mode = cfg->pwr_save ? ifp->drvr->settings->default_pm : PM_OFF;
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+ 
+@@ -4062,7 +4078,7 @@ static s32 brcmf_cfg80211_resume(struct wiphy *wiphy)
+ 		if (!brcmf_feat_is_enabled(ifp, BRCMF_FEAT_WOWL_ARP_ND))
+ 			brcmf_configure_arp_nd_offload(ifp, true);
+ 		brcmf_fil_cmd_int_set(ifp, BRCMF_C_SET_PM,
+-				      cfg->wowl.pre_pmmode);
++				      power_mode);
+ 		cfg->wowl.active = false;
+ 		if (cfg->wowl.nd_enabled) {
+ 			brcmf_cfg80211_sched_scan_stop(cfg->wiphy, ifp->ndev, 0);
+@@ -4092,7 +4108,6 @@ static void brcmf_configure_wowl(struct brcmf_cfg80211_info *cfg,
+ 
+ 	if (!brcmf_feat_is_enabled(ifp, BRCMF_FEAT_WOWL_ARP_ND))
+ 		brcmf_configure_arp_nd_offload(ifp, false);
+-	brcmf_fil_cmd_int_get(ifp, BRCMF_C_GET_PM, &cfg->wowl.pre_pmmode);
+ 	brcmf_fil_cmd_int_set(ifp, BRCMF_C_SET_PM, PM_MAX);
+ 
+ 	wowl_config = 0;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+index 3be50e0dcb26..920056a2aec8 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+@@ -1367,6 +1367,7 @@ int brcmf_attach(struct device *dev, bool start_bus)
+ 	/* Link to bus module */
+ 	drvr->hdrlen = 0;
+ 
++	drvr->req_mpc = 1;
+ 	/* Attach and link in the protocol */
+ 	ret = brcmf_proto_attach(drvr);
+ 	if (ret != 0) {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h
+index c0e35ce686f1..0b2938a09c5a 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.h
+@@ -124,6 +124,7 @@ struct brcmf_pub {
+ 
+ 	u32 feat_flags;
+ 	u32 chip_quirks;
++	int req_mpc;
+ 
+ 	struct brcmf_rev_info revinfo;
+ #ifdef DEBUG
+-- 
+2.17.1
+

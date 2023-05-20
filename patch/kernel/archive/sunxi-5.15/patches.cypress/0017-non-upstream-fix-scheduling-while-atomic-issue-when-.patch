@@ -1,0 +1,80 @@
+From 3d94471b71ece64a341b9a4b8b7b10c96699a982 Mon Sep 17 00:00:00 2001
+From: Wright Feng <wright.feng@cypress.com>
+Date: Tue, 5 Nov 2019 19:54:22 -0600
+Subject: [PATCH 017/179] non-upstream: fix scheduling while atomic issue when
+ deleting flowring
+
+We should not sleep while holding the spin lock. It makes
+'scheduling while atomic' in brcmf_msgbuf_delete_flowring.
+And to avoid race condition between deleting flowring and txflow,
+we only hold spin lock when seting flowring status to RING_CLOSING.
+
+Signed-off-by: Wright Feng <wright.feng@cypress.com>
+Signed-off-by: Chi-Hsien Lin <chi-hsien.lin@cypress.com>
+---
+ .../broadcom/brcm80211/brcmfmac/flowring.c         |  5 +----
+ .../wireless/broadcom/brcm80211/brcmfmac/msgbuf.c  | 14 ++++++++------
+ 2 files changed, 9 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/flowring.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/flowring.c
+index 096f6b969dd8..e1127d7e086d 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/flowring.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/flowring.c
+@@ -419,7 +419,6 @@ void brcmf_flowring_configure_addr_mode(struct brcmf_flowring *flow, int ifidx,
+ 				flowid = flow->hash[i].flowid;
+ 				if (flow->rings[flowid]->status != RING_OPEN)
+ 					continue;
+-				flow->rings[flowid]->status = RING_CLOSING;
+ 				brcmf_msgbuf_delete_flowring(drvr, flowid);
+ 			}
+ 		}
+@@ -458,10 +457,8 @@ void brcmf_flowring_delete_peer(struct brcmf_flowring *flow, int ifidx,
+ 		if ((sta || (memcmp(hash[i].mac, peer, ETH_ALEN) == 0)) &&
+ 		    (hash[i].ifidx == ifidx)) {
+ 			flowid = flow->hash[i].flowid;
+-			if (flow->rings[flowid]->status == RING_OPEN) {
+-				flow->rings[flowid]->status = RING_CLOSING;
++			if (flow->rings[flowid]->status == RING_OPEN)
+ 				brcmf_msgbuf_delete_flowring(drvr, flowid);
+-			}
+ 		}
+ 	}
+ 
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
+index c1c43ef3039d..e856964cd048 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
+@@ -1401,22 +1401,24 @@ void brcmf_msgbuf_delete_flowring(struct brcmf_pub *drvr, u16 flowid)
+ 	struct brcmf_msgbuf *msgbuf = (struct brcmf_msgbuf *)drvr->proto->pd;
+ 	struct msgbuf_tx_flowring_delete_req *delete;
+ 	struct brcmf_commonring *commonring;
+-	struct brcmf_commonring *commonring_del;
+-
++	struct brcmf_commonring *commonring_del = msgbuf->flowrings[flowid];
++	struct brcmf_flowring *flow = msgbuf->flow;
+ 	void *ret_ptr;
+ 	u8 ifidx;
+ 	int err;
+ 	int retry = BRCMF_MAX_TXSTATUS_WAIT_RETRIES;
+ 
+-	/* wait for commonring txflow finished */
+-	commonring_del = msgbuf->flowrings[flowid];
++	/* make sure it is not in txflow */
+ 	brcmf_commonring_lock(commonring_del);
++	flow->rings[flowid]->status = RING_CLOSING;
++	brcmf_commonring_unlock(commonring_del);
++
++	/* wait for commonring txflow finished */
+ 	while (retry && atomic_read(&commonring_del->outstanding_tx)) {
+ 		usleep_range(5000, 10000);
+ 		retry--;
+ 	}
+-	brcmf_commonring_unlock(commonring_del);
+-	if (!retry && atomic_read(&commonring_del->outstanding_tx)) {
++	if (!retry) {
+ 		brcmf_err("timed out waiting for txstatus\n");
+ 		atomic_set(&commonring_del->outstanding_tx, 0);
+ 	}
+-- 
+2.17.1
+

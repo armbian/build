@@ -1,0 +1,108 @@
+From d0771ea001c37e2b4a3c490b0b93cfcdb8802646 Mon Sep 17 00:00:00 2001
+From: Chung-Hsien Hsu <stanley.hsu@cypress.com>
+Date: Tue, 28 May 2019 04:20:20 -0500
+Subject: [PATCH 029/179] brcmfmac: add support for Opportunistic Key Caching
+
+The firmware may have OKC management. This is detected by the driver and
+supported via providing the PMK. The authorized flag in ROAM event
+should be set for a successful roaming with OKC.
+
+Signed-off-by: Darren Li <hsin-hung.li@cypress.com>
+Signed-off-by: Chung-Hsien Hsu <stanley.hsu@cypress.com>
+Signed-off-by: Chi-hsien Lin <chi-hsien.lin@cypress.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 25 +++++++++++++++++--
+ .../broadcom/brcm80211/brcmfmac/cfg80211.h    |  1 +
+ 2 files changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 274d7e982b2a..afb936150eaa 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -1756,6 +1756,7 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 	struct brcmf_pub *drvr = ifp->drvr;
+ 	s32 val;
+ 	s32 err;
++	s32 okc_enable;
+ 	const struct brcmf_tlv *rsn_ie;
+ 	const u8 *ie;
+ 	u32 ie_len;
+@@ -1766,6 +1767,7 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 
+ 	profile->use_fwsup = BRCMF_PROFILE_FWSUP_NONE;
+ 	profile->is_ft = false;
++	profile->is_okc = false;
+ 
+ 	if (!sme->crypto.n_akm_suites)
+ 		return 0;
+@@ -1847,8 +1849,17 @@ brcmf_set_key_mgmt(struct net_device *ndev, struct cfg80211_connect_params *sme)
+ 		}
+ 	}
+ 
+-	if (profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X)
++	if (profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X) {
+ 		brcmf_dbg(INFO, "using 1X offload\n");
++		err = brcmf_fil_bsscfg_int_get(netdev_priv(ndev), "okc_enable",
++					       &okc_enable);
++		if (err) {
++			bphy_err(drvr, "get okc_enable failed (%d)\n", err);
++		} else {
++			brcmf_dbg(INFO, "get okc_enable (%d)\n", okc_enable);
++			profile->is_okc = okc_enable;
++		}
++	}
+ 
+ 	if (!brcmf_feat_is_enabled(ifp, BRCMF_FEAT_MFP))
+ 		goto skip_mfp_config;
+@@ -5559,17 +5570,27 @@ static int brcmf_cfg80211_set_pmk(struct wiphy *wiphy, struct net_device *dev,
+ 				  const struct cfg80211_pmk_conf *conf)
+ {
+ 	struct brcmf_if *ifp;
++	struct brcmf_pub *drvr;
++	int ret;
+ 
+ 	brcmf_dbg(TRACE, "enter\n");
+ 
+ 	/* expect using firmware supplicant for 1X */
+ 	ifp = netdev_priv(dev);
++	drvr = ifp->drvr;
+ 	if (WARN_ON(ifp->vif->profile.use_fwsup != BRCMF_PROFILE_FWSUP_1X))
+ 		return -EINVAL;
+ 
+ 	if (conf->pmk_len > BRCMF_WSEC_MAX_PSK_LEN)
+ 		return -ERANGE;
+ 
++	if (ifp->vif->profile.is_okc) {
++		ret = brcmf_fil_iovar_data_set(ifp, "okc_info_pmk", conf->pmk,
++					       conf->pmk_len);
++		if (ret < 0)
++			bphy_err(drvr, "okc_info_pmk iovar failed: ret=%d\n", ret);
++	}
++
+ 	return brcmf_set_pmk(ifp, conf->pmk, conf->pmk_len);
+ }
+ 
+@@ -6127,7 +6148,7 @@ brcmf_bss_roaming_done(struct brcmf_cfg80211_info *cfg,
+ 
+ 	if (profile->use_fwsup == BRCMF_PROFILE_FWSUP_1X &&
+ 	    (brcmf_has_pmkid(roam_info.req_ie, roam_info.req_ie_len) ||
+-	     profile->is_ft))
++	     profile->is_ft || profile->is_okc))
+ 		roam_info.authorized = true;
+ 
+ 	cfg80211_roamed(ndev, &roam_info, GFP_KERNEL);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+index 917a1a6bb318..118a47e1dd7f 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.h
+@@ -164,6 +164,7 @@ struct brcmf_cfg80211_profile {
+ 	enum brcmf_profile_fwsup use_fwsup;
+ 	u16 use_fwauth;
+ 	bool is_ft;
++	bool is_okc;
+ };
+ 
+ /**
+-- 
+2.17.1
+

@@ -1,0 +1,173 @@
+From 0a76959421c318aa90be942332982e1c3f0652a7 Mon Sep 17 00:00:00 2001
+From: Carter Chen <carter.chen@infineon.com>
+Date: Mon, 6 Feb 2023 01:33:51 -0600
+Subject: [PATCH 176/179] non-upstream: isolate power_save off and mpc 0
+
+while using iw power_save off command to call power_mgmt.
+make it don't set mpc together.
+
+add a vendor command to support set/get mpc value via IFX OUI
+iw dev wlan0 vendor send 0x000319 0x13 0x1
+iw dev wlan0 vendor recv 0x000319 0x13 0x10
+
+Fixes: SWLINUX-3178
+
+Signed-off-by: Carter Chen <carter.chen@infineon.com>
+Signed-off-by: Shelley Yang <shelley.yang@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/cfg80211.c    | 12 ++-----
+ .../broadcom/brcm80211/brcmfmac/vendor.c      |  7 +++++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.c  | 31 +++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.h  | 30 +++++++++++++++++-
+ 4 files changed, 70 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+index 5be678c972d8..b7e3f4fc5f97 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/cfg80211.c
+@@ -1226,16 +1226,12 @@ void brcmf_set_mpc(struct brcmf_if *ifp, int mpc)
+ {
+ 	struct brcmf_pub *drvr = ifp->drvr;
+ 	s32 err = 0;
+-	struct brcmf_cfg80211_info *cfg = ifp->drvr->config;
+ 
+ 	ifp->drvr->req_mpc = mpc;
+ 	if (check_vif_up(ifp->vif)) {
+-		if (cfg->pwr_save)
+-			err = brcmf_fil_iovar_int_set(ifp, "mpc",
+-						      ifp->drvr->req_mpc);
+-		else
+-			err = brcmf_fil_iovar_int_set(ifp, "mpc", 0);
+-
++		err = brcmf_fil_iovar_int_set(ifp,
++					      "mpc",
++					      ifp->drvr->req_mpc);
+ 		if (err) {
+ 			bphy_err(drvr, "fail to set mpc\n");
+ 			return;
+@@ -3679,8 +3675,6 @@ brcmf_cfg80211_set_power_mgmt(struct wiphy *wiphy, struct net_device *ndev,
+ 		pm = PM_OFF;
+ 	}
+ 
+-	brcmf_set_mpc(ifp, ifp->drvr->req_mpc);
+-
+ 	brcmf_dbg(INFO, "power save %s\n", (pm ? "enabled" : "disabled"));
+ 
+ 	err = brcmf_fil_cmd_int_set(ifp, BRCMF_C_SET_PM, pm);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+index 9d6fc7ca70ce..efe9368bb5f1 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+@@ -314,6 +314,13 @@ const struct wiphy_vendor_command brcmf_vendor_cmds[] = {
+ 			ifx_cfg80211_vndr_cmds_mbo),
+ 		.maxattr = IFX_VENDOR_ATTR_MBO_MAX
+ 	},
++	{
++		IFX_SUBCMD(MPC,
++			   (WIPHY_VENDOR_CMD_NEED_WDEV |
++			    WIPHY_VENDOR_CMD_NEED_NETDEV),
++			   VENDOR_CMD_RAW_DATA,
++			   ifx_cfg80211_vndr_cmds_mpc)
++	},
+ };
+ 
+ const struct nl80211_vendor_cmd_info brcmf_vendor_events[] = {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+index f9d70e398e07..1840abe15cab 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+@@ -760,3 +760,34 @@ int ifx_cfg80211_vndr_cmds_mbo(struct wiphy *wiphy,
+ 
+ 	return ret;
+ }
++
++int ifx_cfg80211_vndr_cmds_mpc(struct wiphy *wiphy,
++			       struct wireless_dev *wdev,
++			       const void *data, int len)
++{
++	int ret = 0;
++	struct brcmf_cfg80211_vif *vif;
++	struct brcmf_if *ifp;
++	int val = *(s32 *)data;
++	s32 buf = 0;
++
++	vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
++	ifp = vif->ifp;
++
++	if (val == 0xa) {
++		ret = brcmf_fil_iovar_int_get(ifp, "mpc", &buf);
++		if (ret) {
++			brcmf_err("get mpc error:%d\n", ret);
++			return ret;
++		}
++
++		brcmf_dbg(INFO, "get mpc: %d\n", buf);
++		ifx_cfg80211_vndr_send_cmd_reply(wiphy, &buf, sizeof(int));
++	} else {
++		ret = brcmf_fil_iovar_int_set(ifp, "mpc", val);
++		if (ret)
++			brcmf_err("set mpc error:%d\n", ret);
++	}
++
++	return ret;
++}
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+index 353d7d7a4624..a83ad615135f 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+@@ -73,8 +73,32 @@ enum ifx_nl80211_vendor_subcmds {
+ 	 * @IFX_VENDOR_SCMD_DCMD: equivilent to SCMD_PRIV_STR in DHD.
+ 	 *
+ 	 * @IFX_VENDOR_SCMD_FRAMEBURST: align ID to DHD.
++	 *
++	 * @IFX_VENDOR_SCMD_MUEDCA_OPT_ENABLE: Vendor command to enable/disable HE MU-EDCA opt.
++	 *
++	 * @IFX_VENDOR_SCMD_LDPC_CAP: Vendor command enable/disable LDPC Capability.
++	 *
++	 * @IFX_VENDOR_SCMD_AMSDU: Vendor command to enable/disable AMSDU on all the TID queues.
++	 *
++	 * @IFX_VENDOR_SCMD_TWT: Vendor subcommand to configure TWT.
++	 *	Uses attributes defined in enum ifx_vendor_attr_twt.
++	 *
++	 * @IFX_VENDOR_SCMD_OCE_ENABLE: Vendor command to enable/disable OCE Capability.
++	 *
++	 * @IFX_VENDOR_SCMD_BSS_COLOR: Vendor command to get BSSCOLOR value.
++	 *
++	 * @IFX_VENDOR_SCMD_RANDMAC: Vendor command to enable/disable RANDMAC Capability.
++	 *
++	 * @IFX_VENDOR_SCMD_MBO: Vendor subcommand to configure MBO.
++	 *      Uses attributes defined in enum ifx_vendor_attr_mbo.
++	 *
++	 * @IFX_VENDOR_SCMD_MPC: Vendor command to set/get MPC setting.
++	 *
++	 * @IFX_VENDOR_SCMD_MAX: This acts as a the tail of cmds list.
++	 *      Make sure it located at the end of the list.
+ 	 */
+ 	/* Reserved 2-5 */
++
+ 	SCMD(UNSPEC)		= 0,
+ 	SCMD(DCMD)		= 1,
+ 	SCMD(RSV2)		= 2,
+@@ -94,7 +118,8 @@ enum ifx_nl80211_vendor_subcmds {
+ 	SCMD(BSSCOLOR)		= 16,
+ 	SCMD(RANDMAC)		= 17,
+ 	SCMD(MBO)		= 18,
+-	SCMD(MAX)		= 19
++	SCMD(MPC)		= 19,
++	SCMD(MAX)		= 20
+ };
+ 
+ /* enum ifx_vendor_attr - IFX nl80211 vendor attributes
+@@ -645,6 +670,9 @@ int ifx_cfg80211_vndr_cmds_randmac(struct wiphy *wiphy,
+ int ifx_cfg80211_vndr_cmds_mbo(struct wiphy *wiphy,
+ 			       struct wireless_dev *wdev,
+ 			       const void *data, int len);
++int ifx_cfg80211_vndr_cmds_mpc(struct wiphy *wiphy,
++			       struct wireless_dev *wdev,
++			       const void *data, int len);
+ 
+ #endif /* IFX_VENDOR_H */
+ 
+-- 
+2.17.1
+

@@ -1,0 +1,143 @@
+From 1334e07200e20b878312e19f5210b2960a07b10f Mon Sep 17 00:00:00 2001
+From: Chung-Hsien Hsu <stanley.hsu@cypress.com>
+Date: Tue, 28 Apr 2020 21:20:06 -0500
+Subject: [PATCH 101/179] brcmfmac: add support for TRX firmware download
+
+Add support to download TRX firmware for PCIe and SDIO.
+
+Signed-off-by: Chung-Hsien Hsu <chung-hsien.hsu@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/pcie.c        | 12 +++++-
+ .../broadcom/brcm80211/brcmfmac/sdio.c        | 20 +++++++---
+ .../broadcom/brcm80211/brcmfmac/trxhdr.h      | 38 +++++++++++++++++++
+ 3 files changed, 63 insertions(+), 7 deletions(-)
+ create mode 100644 drivers/net/wireless/broadcom/brcm80211/brcmfmac/trxhdr.h
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+index de9788c68231..71cc14ca0909 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -42,6 +42,7 @@
+ #include "core.h"
+ #include "common.h"
+ #include "cfg80211.h"
++#include "trxhdr.h"
+ 
+ 
+ enum brcmf_pcie_state {
+@@ -1926,6 +1927,8 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
+ 					u32 nvram_len)
+ {
+ 	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
++	struct trx_header_le *trx = (struct trx_header_le *)fw->data;
++	u32 fw_size;
+ 	u32 sharedram_addr;
+ 	u32 sharedram_addr_written;
+ 	u32 loop_counter;
+@@ -1939,8 +1942,13 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
+ 		return err;
+ 
+ 	brcmf_dbg(PCIE, "Download FW %s\n", devinfo->fw_name);
+-	memcpy_toio(devinfo->tcm + devinfo->ci->rambase,
+-		    (void *)fw->data, fw->size);
++	address = devinfo->ci->rambase;
++	fw_size = fw->size;
++	if (trx->magic == cpu_to_le32(TRX_MAGIC)) {
++		address -= sizeof(struct trx_header_le);
++		fw_size = le32_to_cpu(trx->len);
++	}
++	brcmf_pcie_copy_mem_todev(devinfo, address, (void *)fw->data, fw_size);
+ 
+ 	resetintr = get_unaligned_le32(fw->data);
+ 	release_firmware(fw);
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
+index da273eff93d2..406569b0bea4 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/sdio.c
+@@ -39,6 +39,7 @@
+ #include "bcdc.h"
+ #include "fwil.h"
+ #include "bt_shared_sdio.h"
++#include "trxhdr.h"
+ 
+ #define DCMD_RESP_TIMEOUT	msecs_to_jiffies(2500)
+ #define CTL_DONE_TIMEOUT	msecs_to_jiffies(2500)
+@@ -3617,17 +3618,26 @@ brcmf_sdio_verifymemory(struct brcmf_sdio_dev *sdiodev, u32 ram_addr,
+ static int brcmf_sdio_download_code_file(struct brcmf_sdio *bus,
+ 					 const struct firmware *fw)
+ {
++	struct trx_header_le *trx = (struct trx_header_le *)fw->data;
++	u32 fw_size;
++	u32 address;
+ 	int err;
+ 
+ 	brcmf_dbg(TRACE, "Enter\n");
+ 
+-	err = brcmf_sdiod_ramrw(bus->sdiodev, true, bus->ci->rambase,
+-				(u8 *)fw->data, fw->size);
++	address = bus->ci->rambase;
++	fw_size = fw->size;
++	if (trx->magic == cpu_to_le32(TRX_MAGIC)) {
++		address -= sizeof(struct trx_header_le);
++		fw_size = le32_to_cpu(trx->len);
++	}
++	err = brcmf_sdiod_ramrw(bus->sdiodev, true, address,
++				(u8 *)fw->data, fw_size);
+ 	if (err)
+ 		brcmf_err("error %d on writing %d membytes at 0x%08x\n",
+-			  err, (int)fw->size, bus->ci->rambase);
+-	else if (!brcmf_sdio_verifymemory(bus->sdiodev, bus->ci->rambase,
+-					  (u8 *)fw->data, fw->size))
++			  err, (int)fw_size, address);
++	else if (!brcmf_sdio_verifymemory(bus->sdiodev, address,
++					  (u8 *)fw->data, fw_size))
+ 		err = -EIO;
+ 
+ 	return err;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/trxhdr.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/trxhdr.h
+new file mode 100644
+index 000000000000..0411c7c7ffb9
+--- /dev/null
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/trxhdr.h
+@@ -0,0 +1,38 @@
++/* SPDX-License-Identifier: ISC */
++/* Copyright (c) 2020 Cypress Semiconductor Corporation */
++
++#ifndef BRCMFMAC_TRXHDR_H
++#define BRCMFMAC_TRXHDR_H
++
++/* Bootloader makes special use of trx header "offsets" array */
++enum {
++	TRX_OFFSET_SIGN_INFO_IDX		= 0,
++	TRX_OFFSET_DATA_FOR_SIGN1_IDX		= 1,
++	TRX_OFFSET_DATA_FOR_SIGN2_IDX		= 2,
++	TRX_OFFSET_ROOT_MODULUS_IDX		= 3,
++	TRX_OFFSET_ROOT_EXPONENT_IDX		= 67,
++	TRX_OFFSET_CONT_MODULUS_IDX		= 68,
++	TRX_OFFSET_CONT_EXPONENT_IDX		= 132,
++	TRX_OFFSET_HASH_FW_IDX			= 133,
++	TRX_OFFSET_FW_LEN_IDX			= 149,
++	TRX_OFFSET_TR_RST_IDX			= 150,
++	TRX_OFFSET_FW_VER_FOR_ANTIROOLBACK_IDX	= 151,
++	TRX_OFFSET_IV_IDX			= 152,
++	TRX_OFFSET_NONCE_IDX			= 160,
++	TRX_OFFSET_SIGN_INFO2_IDX		= 168,
++	TRX_OFFSET_MAX_IDX
++};
++
++#define TRX_MAGIC	0x30524448		/* "HDR0" */
++#define TRX_VERSION	4			/* Version 4 */
++#define TRX_MAX_OFFSET	TRX_OFFSET_MAX_IDX	/* Max number of file offsets */
++
++struct trx_header_le {
++	__le32 magic;		/* "HDR0" */
++	__le32 len;		/* Length of file including header */
++	__le32 crc32;		/* CRC from flag_version to end of file */
++	__le32 flag_version;	/* 0:15 flags, 16:31 version */
++	__le32 offsets[TRX_MAX_OFFSET];	/* Offsets of partitions */
++};
++
++#endif /* BRCMFMAC_TRXHDR_H */
+-- 
+2.17.1
+

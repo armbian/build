@@ -1,0 +1,154 @@
+From 87f4e3fe8b5928c8c2bfd51f7dbbd59a7bd74872 Mon Sep 17 00:00:00 2001
+From: Ian Lin <ian.lin@infineon.com>
+Date: Wed, 23 Nov 2022 22:48:13 -0600
+Subject: [PATCH 168/179] non-upstream: vendor cmd addition for "wl randmac"
+
+User can set/get randmc through iw vendor subcmd 0x11
+
+
+Signed-off-by: Ian Lin <ian.lin@infineon.com>
+---
+ .../broadcom/brcm80211/brcmfmac/vendor.c      |  7 +++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.c  | 55 +++++++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/vendor_ifx.h  | 30 +++++++++-
+ 3 files changed, 91 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+index 21964c80e963..2beda60c95ad 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor.c
+@@ -297,6 +297,13 @@ const struct wiphy_vendor_command brcmf_vendor_cmds[] = {
+ 			VENDOR_CMD_RAW_DATA,
+ 			ifx_cfg80211_vndr_cmds_bsscolor)
+ 	},
++	{
++		IFX_SUBCMD(RANDMAC,
++			   (WIPHY_VENDOR_CMD_NEED_WDEV |
++				WIPHY_VENDOR_CMD_NEED_NETDEV),
++			VENDOR_CMD_RAW_DATA,
++			ifx_cfg80211_vndr_cmds_randmac)
++	},
+ };
+ 
+ const struct nl80211_vendor_cmd_info brcmf_vendor_events[] = {
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+index bf49a750408e..c2bd8662362f 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.c
+@@ -568,3 +568,58 @@ int ifx_cfg80211_vndr_cmds_oce_enable(struct wiphy *wiphy,
+ 
+ 	return ret;
+ }
++
++int ifx_cfg80211_vndr_cmds_randmac(struct wiphy *wiphy,
++				   struct wireless_dev *wdev, const void *data, int len)
++{
++	int ret = 0;
++	struct ifx_randmac iov_buf = {0};
++	u8 val = *(u8 *)data;
++	struct brcmf_cfg80211_vif *vif;
++	struct brcmf_if *ifp;
++
++	vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
++	ifp = vif->ifp;
++	iov_buf.version = WL_RANDMAC_API_VERSION;
++	iov_buf.subcmd_id = WL_RANDMAC_SUBCMD_ENABLE;
++	iov_buf.len = offsetof(struct ifx_randmac, data);
++
++	if (val == 0x1) {
++		/* To set fw iovars of the form "wl randmac enable" using iw, call the
++		 * parent iovar "randmac" with the subcmd filled and passed along
++		 * ./iw dev wlan0 vendor send 0x000319 0x11 0x1
++		 */
++		ret = brcmf_fil_bsscfg_data_set(ifp, "randmac", (void *)&iov_buf, iov_buf.len);
++		if (ret)
++			brcmf_err("Failed to set randmac enable: %d\n", ret);
++	} else if (val == 0x0) {
++		iov_buf.subcmd_id = WL_RANDMAC_SUBCMD_DISABLE;
++		/* To set fw iovars of the form "wl randmac disable" using iw, call the
++		 * parent iovar "randmac" with the subcmd filled and passed along
++		 * ./iw dev wlan0 vendor send 0x000319 0x11 0x0
++		 */
++		ret = brcmf_fil_bsscfg_data_set(ifp, "randmac", (void *)&iov_buf, iov_buf.len);
++		if (ret)
++			brcmf_err("Failed to set randmac disable: %d\n", ret);
++	} else if (val == 0xa) {
++		int result_data = 0;
++		struct ifx_randmac *iov_resp = NULL;
++		u8 buf[64] = {0};
++		/* To get fw iovars of the form "wl randmac" using iw, call the
++		 * parent iovar "randmac" with the subcmd filled and passed along
++		 * ./iw dev wlan0 vendor recv 0x000319 0x11 0xa
++		 */
++		memcpy(buf, (void *)&iov_buf, iov_buf.len);
++		ret = brcmf_fil_iovar_data_get(ifp, "randmac", (void *)buf, sizeof(buf));
++		if (ret) {
++			brcmf_err("Failed to get randmac enable or disable: %d\n", ret);
++		} else {
++			iov_resp = (struct ifx_randmac *)buf;
++			if (iov_resp->subcmd_id == WL_RANDMAC_SUBCMD_ENABLE)
++				result_data = 1;
++			ifx_cfg80211_vndr_send_cmd_reply(wiphy, &result_data, sizeof(int));
++		}
++	}
++	return ret;
++}
++
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+index e32deb5338ce..e8c25cde3d4f 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/vendor_ifx.h
+@@ -94,7 +94,8 @@ enum ifx_nl80211_vendor_subcmds {
+ 	SCMD(TWT)		= 14,
+ 	SCMD(OCE_ENABLE)	= 15,
+ 	SCMD(BSSCOLOR)		= 16,
+-	SCMD(MAX)		= 17
++	SCMD(RANDMAC)		= 17,
++	SCMD(MAX)		= 18
+ };
+ 
+ /* enum ifx_vendor_attr - IFX nl80211 vendor attributes
+@@ -507,6 +508,30 @@ struct ifx_twt_teardown {
+ 	struct ifx_twt_teardesc teardesc;	/* Teardown descriptor */
+ };
+ 
++/* randmac define/enum/struct
++ */
++#define WL_RANDMAC_API_VERSION		0x0100 /**< version 1.0 */
++#define WL_RANDMAC_API_MIN_VERSION	0x0100 /**< version 1.0 */
++
++/** subcommands that can apply to randmac */
++enum {
++	WL_RANDMAC_SUBCMD_NONE				= 0,
++	WL_RANDMAC_SUBCMD_GET_VERSION			= 1,
++	WL_RANDMAC_SUBCMD_ENABLE			= 2,
++	WL_RANDMAC_SUBCMD_DISABLE			= 3,
++	WL_RANDMAC_SUBCMD_CONFIG			= 4,
++	WL_RANDMAC_SUBCMD_STATS				= 5,
++	WL_RANDMAC_SUBCMD_CLEAR_STATS			= 6,
++	WL_RANDMAC_SUBCMD_MAX
++};
++
++struct ifx_randmac {
++	u16 version;
++	u16 len;			/* total length */
++	u16 subcmd_id;	/* subcommand id */
++	u8 data[0];			/* subcommand data */
++};
++
+ int ifx_cfg80211_vndr_cmds_twt(struct wiphy *wiphy,
+ 			       struct wireless_dev *wdev, const void  *data, int len);
+ int ifx_cfg80211_vndr_cmds_bsscolor(struct wiphy *wiphy,
+@@ -524,6 +549,9 @@ int ifx_cfg80211_vndr_cmds_ldpc_cap(struct wiphy *wiphy,
+ int ifx_cfg80211_vndr_cmds_oce_enable(struct wiphy *wiphy,
+ 				      struct wireless_dev *wdev,
+ 				      const void *data, int len);
++int ifx_cfg80211_vndr_cmds_randmac(struct wiphy *wiphy,
++				   struct wireless_dev *wdev,
++				   const void *data, int len);
+ 
+ #endif /* IFX_VENDOR_H */
+ 
+-- 
+2.17.1
+
