@@ -156,7 +156,8 @@ function compile_armbian-base-files() {
 	[[ -f "${destination}"/lib/systemd/motd-news.service ]] && rm "${destination}"/lib/systemd/motd-news.service
 	[[ -f "${destination}"/lib/systemd/motd-news.timer ]] && rm "${destination}"/lib/systemd/motd-news.timer
 
-	# Adjust legal disclaimer
+	# Adjust legal disclaimer and remove from conf files
+	sed -i "\/etc\/legal/d" "${destination}/DEBIAN/conffiles"
 	[[ -f "${destination}"/etc/legal ]] && sed -i "s/${DISTRIBUTION}/${VENDOR}/g" "${destination}"/etc/legal
 
 	# Remove /etc/issue and /etc/issue.net from the DEBIAN/conffiles file
