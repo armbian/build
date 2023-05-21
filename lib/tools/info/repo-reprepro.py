@@ -78,7 +78,6 @@ log.info(f"Wrote {reprepro_conf_distributions_fn}")
 
 options: list[str] = []
 options.append("verbose")
-# options.append(f"basedir /armbian/output/repos/single-dir")
 
 # create the reprerepo options file for the target
 with open(reprepro_conf_options_fn, "w") as f:
@@ -89,13 +88,17 @@ log.info(f"Wrote {reprepro_conf_options_fn}")
 # Prepare the reprepro-invoking bash script
 bash_lines = [
 	"#!/bin/bash",
-	"set",
-	'ls -laR "${INCOMING_DEBS_DIR}"'
+	'mkdir -p "${REPO_CONF_LOCATION}"',
+	'cp -rv "${REPREPRO_INFO_DIR}/conf"/* "${REPO_CONF_LOCATION}"/',
+	# run clearvanished
+	'echo "reprepro clearvanished..."',
+	'reprepro -b "${REPO_LOCATION}" --delete clearvanished || echo "clearvanished failed"',
+	# run reprepro check
+	'echo "reprepro initial check..."',
+	'reprepro -b "${REPO_LOCATION}" check || echo "initial check failed"'
 ]
 
 # Copy the config files to the repo dir (from REPREPRO_INFO_DIR/conf to REPO_CONF_LOCATION script-side)
-bash_lines.append('mkdir -p "${REPO_CONF_LOCATION}"')
-bash_lines.append('cp -rv "${REPREPRO_INFO_DIR}/conf"/* "${REPO_CONF_LOCATION}"/')
 
 for one_repo_target in repo_targets:
 	artifacts = repo_targets[one_repo_target]
