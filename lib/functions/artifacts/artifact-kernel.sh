@@ -138,10 +138,9 @@ function artifact_kernel_prepare_version() {
 		"${NAME_KERNEL}"
 		"${SRC_LOADADDR}"
 	)
-	declare hash_vars="undetermined"
-	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
-	vars_config_hash="${hash_vars}"
-	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
+	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
+	calculate_hash_for_variables "${vars_to_hash[@]}"
+	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
 
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=("pre_package_kernel_image")
