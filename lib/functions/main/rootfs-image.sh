@@ -92,4 +92,22 @@ function build_rootfs_and_image() {
 function list_installed_packages() {
 	display_alert "Recording list of installed packages" "asset log" "debug"
 	LOG_ASSET="installed_packages.txt" do_with_log_asset chroot_sdcard dpkg --get-selections "| grep -v deinstall | awk '{print \$1}' | cut -f1 -d':'"
+
+	# Loop over dict image_artifacts_packages_version (package_name -> package version), and warn if any installed versions don't match.
+	# This is a sanity check, to make sure that the packages we installed are the ones we expected to install.
+	# Things that might disrupt this: apt repos containing random versions that are then apt upgraded, forced install, crazy customize, wrong pinning, etc.
+	declare -g -A image_artifacts_packages_version # global scope, set in main_default_build_packages()
+	declare pkg_name pkg_wanted_version
+	for pkg_name in "${!image_artifacts_packages_version[@]}"; do
+		[[ "${pkg_name}" =~ ^linux-headers ]] && continue # linux-headers is a special case, since its always built with kernel, but not always installed (deb-tar)
+		pkg_wanted_version="${image_artifacts_packages_version[${pkg_name}]}"
+		display_alert "Checking installed version of package" "${pkg_name}=${pkg_wanted_version}" "debug"
+		declare actual_version
+		actual_version=$(chroot "${SDCARD}" dpkg-query -W -f='${Status} ${Package} ${Version}\n' "${pkg_name}" | grep "install ok installed" | cut -d " " -f 5)
+		if [[ "${actual_version}" != "${pkg_wanted_version}" ]]; then
+			display_alert "Installed version of package does not match wanted version. Check for inconsistent repo, customize.sh/hooks, extensions, or upgrades installing wrong version" "${pkg_name} :: actual:'${actual_version}' wanted:'${pkg_wanted_version}'" "warn"
+		else
+			display_alert "Image installed package version" "✅ ${pkg_name} = ${actual_version}" "info"
+		fi
+	done
 }
