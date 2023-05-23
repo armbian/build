@@ -39,6 +39,9 @@ function build_rootfs_and_image() {
 	# NOTE: installing too many packages may fill tmpfs mount
 	LOG_SECTION="customize_image" do_with_logging customize_image
 
+	# Deploy the full apt lists, including the Armbian repo.
+	create_sources_list_and_deploy_repo_key "image-late" "${RELEASE}" "${SDCARD}/"
+
 	# remove packages that are no longer needed. rootfs cache + uninstall might have leftovers.
 	LOG_SECTION="apt_purge_unneeded_packages_and_clean_apt_caches" do_with_logging apt_purge_unneeded_packages_and_clean_apt_caches
 
