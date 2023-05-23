@@ -196,7 +196,7 @@ function create_sources_list_and_deploy_repo_key() {
 	fi
 
 	declare -a components=()
-	if [[ "${when}" == "image" ]]; then # only include the 'main' component when deploying to image
+	if [[ "${when}" == "image"* ]]; then # only include the 'main' component when deploying to image (early or late)
 		components+=("main")
 	fi
 	components+=("${RELEASE}-utils")   # utils contains packages Igor picks from other repos
@@ -214,9 +214,9 @@ function create_sources_list_and_deploy_repo_key() {
 	# replace local package server if defined. Suitable for development
 	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
-	# disable repo if SKIP_ARMBIAN_REPO=yes
-	if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
-		display_alert "Disabling Armbian repo due to SKIP_ARMBIAN_REPO=yes" "${ARCH}-${RELEASE}" "info"
+	# disable repo if SKIP_ARMBIAN_REPO==yes, or if when==image-early.
+	if [[ "${when}" == "image-early" || "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
+		display_alert "Disabling Armbian repo" "${ARCH}-${RELEASE} :: skip:${SKIP_ARMBIAN_REPO:-"no"} when:${when}" "info"
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
 
@@ -230,6 +230,8 @@ function create_sources_list_and_deploy_repo_key() {
 		The global Armbian GPG key has been deployed to SDCARD's /usr/share/keyrings/armbian.gpg, de-armored.
 		You can implement this hook to add, remove, or modify sources.list.d entries, and/or deploy additional GPG keys.
 		Important: honor $CUSTOM_REPO_WHEN; if it's ==rootfs, don't add repos/components that carry the .debs produced by armbian/build.
+		Ideally, also don't add any possibly-conflicting repo if `$CUSTOM_REPO_WHEN==image-early`.
+		`$CUSTOM_APT_REPO==image-late` is passed during the very final stages of image building, after all packages were installed/upgraded.
 	CUSTOM_APT_REPO
 
 	unset CUSTOM_REPO_WHEN
