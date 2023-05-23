@@ -35,14 +35,14 @@ function create_artifact_functions() {
 		fi
 	done
 
-	# If ${chosen_artifact} is in ${DONT_BUILD_ARTIFACTS}, override the build function with an error.
-	if [[ "${DONT_BUILD_ARTIFACTS}" = *"${chosen_artifact}"* ]]; then
+	# If ${chosen_artifact} is in ${DONT_BUILD_ARTIFACTS}, or if DONT_BUILD_ARTIFACTS contains 'any', override the build function with an error.
+	if [[ "${DONT_BUILD_ARTIFACTS}" = *"${chosen_artifact}"* || "${DONT_BUILD_ARTIFACTS}" = *any* ]]; then
 		display_alert "Artifact '${chosen_artifact}' is in DONT_BUILD_ARTIFACTS, overriding build function with error" "DONT_BUILD_ARTIFACTS=${chosen_artifact}" "debug"
 		declare cmd
 		cmd="$(
 			cat <<- ARTIFACT_DEFINITION
 				function artifact_build_from_sources() {
-					exit_with_error "Artifact '${chosen_artifact}' is in DONT_BUILD_ARTIFACTS."
+					exit_with_error "Artifact '${chosen_artifact}' is in DONT_BUILD_ARTIFACTS. This usually means that the artifact cache is not being hit because it is outdated."
 				}
 			ARTIFACT_DEFINITION
 		)"
