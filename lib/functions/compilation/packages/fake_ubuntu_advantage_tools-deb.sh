@@ -42,7 +42,7 @@ function compile_fake_ubuntu_advantage_tools() {
 		rm -f /var/lib/ubuntu-advantage/messages/motd-esm-announce 2> /dev/null
 		exit 0
 	END
-
+	chmod 755 DEBIAN/postinst
 
 	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
 
