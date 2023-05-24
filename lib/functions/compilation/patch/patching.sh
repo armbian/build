@@ -99,8 +99,8 @@ process_patch_file() {
 	patch --batch -p1 -N --input="${patch}" --quiet --reject-file=- && { # "-" discards rejects
 		display_alert "* $status ${relative_patch}" "" "info"
 	} || {
-		display_alert "* $status ${relative_patch}" "failed" "wrn"
-		[[ $EXIT_PATCHING_ERROR == yes ]] && exit_with_error "Aborting due to" "EXIT_PATCHING_ERROR"
+		display_alert "* $status ${relative_patch}" "failed" "err"
+		exit_with_error "Patching error, exiting."
 	}
 
 	return 0 # short-circuit above, avoid exiting with error

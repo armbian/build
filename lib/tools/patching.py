@@ -244,6 +244,8 @@ if apply_patches:
 	log.debug(f"- Root Makefile '{root_makefile}' date: '{os.path.getmtime(root_makefile)}'")
 	chars_total = len(str(total_patches))
 	counter = 0
+	any_failed_to_apply = False
+	failed_to_apply_list = []
 	for one_patch in VALID_PATCHES:
 		counter += 1
 		counter_str = str(counter).zfill(chars_total)
@@ -255,6 +257,8 @@ if apply_patches:
 			one_patch.applied_ok = True
 		except Exception as e:
 			log.error(f"Problem with {one_patch}: {e}")
+			any_failed_to_apply = True
+			failed_to_apply_list.append(one_patch)
 
 		if one_patch.applied_ok and apply_patches_to_git:
 			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches)
@@ -267,6 +271,11 @@ if apply_patches:
 					rewritten_patch = patching_utils.export_commit_as_patch(
 						git_repo, commit_hash)
 					one_patch.rewritten_patch = rewritten_patch
+
+	if (not apply_patches_to_git) and (not rewrite_patches_in_place) and any_failed_to_apply:
+		log.error(
+			f"Failed to apply {len(failed_to_apply_list)} patches: {','.join([failed_patch.__str__() for failed_patch in failed_to_apply_list])}")
+		raise Exception(f"Failed to apply {len(failed_to_apply_list)} patches.")
 
 	if rewrite_patches_in_place:
 		# Now; we need to write the patches to files.
