@@ -673,7 +673,7 @@ patch_drivers_network() {
 	driver_rtl8723DU
 	driver_rtl8822BS
 	driver_uwe5622_allwinner
-	driver_rtl8723cs
+#	driver_rtl8723cs
 
 	display_alert "Network related drivers patched" "" "info"
 }
