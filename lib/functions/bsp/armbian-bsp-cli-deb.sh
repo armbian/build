@@ -179,6 +179,10 @@ function compile_armbian-bsp-cli() {
 	find "${destination}" -print0 2> /dev/null | xargs -0r chown --no-dereference 0:0
 	find "${destination}" ! -type l -print0 2> /dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
 
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		run_tool_batcat --file-name "/etc/armbian-release.sh" "${destination}"/etc/armbian-release
+	fi
+
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/"
 

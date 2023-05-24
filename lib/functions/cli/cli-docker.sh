@@ -35,6 +35,11 @@ function cli_docker_run() {
 	declare -g GIT_INFO_ANSI
 	GIT_INFO_ANSI="$(prepare_ansi_git_info_log_header)"
 
+	# Same stuff for BUILD_REPOSITORY_URL and BUILD_REPOSITORY_COMMIT.
+	if [[ -d "${SRC}/.git" && "${CONFIG_DEFS_ONLY}" != "yes" ]]; then # don't waste time if only gathering config defs
+		set_git_build_repo_url_and_commit_vars "docker launcher"
+	fi
+
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.

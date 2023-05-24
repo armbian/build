@@ -70,9 +70,10 @@ function do_main_configuration() {
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 
 	if [[ -d "${SRC}/.git" && "${CONFIG_DEFS_ONLY}" != "yes" ]]; then # don't waste time if only gathering config defs
-		display_alert "Getting git info for repo" "${SRC}" "debug"
-		BUILD_REPOSITORY_URL="$(git remote get-url "$(git remote | grep origin || true)" || true)" # ignore all errors
-		BUILD_REPOSITORY_COMMIT="$(git describe --match=d_e_a_d_b_e_e_f --always --dirty || true)" # ignore error
+		# The docker launcher will have passed these as environment variables. If not, try again here.
+		if [[ -z "${BUILD_REPOSITORY_URL}" || -z "${BUILD_REPOSITORY_COMMIT}" ]]; then
+			set_git_build_repo_url_and_commit_vars "main configuration"
+		fi
 	fi
 
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
@@ -498,5 +499,15 @@ function source_family_config_and_arch() {
 	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
 
+	return 0
+}
+
+function set_git_build_repo_url_and_commit_vars() {
+	display_alert "Getting git info for repo, during ${1}..." "${SRC}" "debug"
+	declare -g BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT
+	BUILD_REPOSITORY_URL="$(git -C "${SRC}" remote get-url "$(git -C "${SRC}" remote | grep origin || true)" || true)" # ignore all errors
+	BUILD_REPOSITORY_COMMIT="$(git -C "${SRC}" describe --match=d_e_a_d_b_e_e_f --always --dirty || true)"             # ignore error
+	display_alert "BUILD_REPOSITORY_URL set during ${1}" "${BUILD_REPOSITORY_URL}" "debug"
+	display_alert "BUILD_REPOSITORY_COMMIT set during ${1}" "${BUILD_REPOSITORY_COMMIT}" "debug"
 	return 0
 }

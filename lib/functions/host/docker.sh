@@ -420,6 +420,16 @@ function docker_cli_prepare_launch() {
 		DOCKER_ARGS+=("--env" "GIT_INFO_ANSI=${GIT_INFO_ANSI}")
 	fi
 
+	if [[ -n "${BUILD_REPOSITORY_URL}" ]]; then
+		display_alert "Git info" "Passing down BUILD_REPOSITORY_URL as an env var..." "debug"
+		DOCKER_ARGS+=("--env" "BUILD_REPOSITORY_URL=${BUILD_REPOSITORY_URL}")
+	fi
+
+	if [[ -n "${BUILD_REPOSITORY_COMMIT}" ]]; then
+		display_alert "Git info" "Passing down BUILD_REPOSITORY_COMMIT as an env var..." "debug"
+		DOCKER_ARGS+=("--env" "BUILD_REPOSITORY_COMMIT=${BUILD_REPOSITORY_COMMIT}")
+	fi
+
 	if [[ "${DOCKER_PASS_SSH_AGENT}" == "yes" ]]; then
 		declare ssh_socket_path="${SSH_AUTH_SOCK}"
 		if [[ "${OSTYPE}" == "darwin"* ]]; then                     # but probably only Docker Inc, not Rancher...
