@@ -73,7 +73,7 @@ function cli_json_info_run() {
 			if [[ ! -f "${DEBS_TO_REPO_INFO_FILE}" ]]; then
 				exit_with_error "debs-to-repo-download :: no ${DEBS_TO_REPO_INFO_FILE} file found; did you restore the pipeline artifacts correctly?"
 			fi
-			declare DEBS_OUTPUT_DIR="${DEST}/debs"
+			declare DEBS_OUTPUT_DIR="${DEST}/debs" # @TODO: this is wrong if BETA=yes!!!
 			run_host_command_logged mkdir -pv "${DEBS_OUTPUT_DIR}"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/download-debs.py "${DEBS_TO_REPO_INFO_FILE}" "${DEBS_OUTPUT_DIR}"
 

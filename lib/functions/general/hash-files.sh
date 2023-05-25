@@ -108,12 +108,18 @@ function calculate_hash_for_variables() {
 	declare -a values_to_hash=("$@")
 
 	declare all_values="${values_to_hash[*]}" # expand...
+	declare all_values_pre_normalize="${all_values}"
 	if [[ "${do_normalize_src_path:-"yes"}" == "yes" ]]; then
 		all_values="${all_values//${SRC}/}" # remove all occurences of ${SRC} from all_values
 	fi
 
 	hash_variables="$(echo "${all_values}" | sha256sum | cut -d' ' -f1)" # outer scope
-	display_alert "calculate_hash_for_variables normalized" "${all_values}" "debug"
+	display_alert "calculate_hash_for_variables all_values_pre_normalize" "${all_values_pre_normalize}" "debug"
+	if [[ "${do_normalize_src_path:-"yes"}" == "yes" ]]; then
+		display_alert "calculate_hash_for_variables               normalized" "${all_values}" "debug"
+	else
+		display_alert "calculate_hash_for_variables               normalized?" "no" "debug"
+	fi
 	display_alert "calculate_hash_for_variables hashed" "${hash_variables}" "debug"
 
 	return 0

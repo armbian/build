@@ -35,22 +35,33 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	hash_hooks="$(echo "${hooks_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
 	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
-	# Hash variables/bootscripts that affect the contents of bsp-cli package
-	get_bootscript_info # get bootscript info, that is included in bsp-cli, hash it
+	# get the bootscript info...
+	declare -A bootscript_info=()
+	get_bootscript_info # fills in bootscript_info array
+
+	# Hash variables/bootscripts that affect the contents of bsp-cli package.
+	# Those contain /armbian a lot, so don't normalize them.
+	declare -a vars_to_hash_no_normalize=(
+		"bootscript_file_contents: ${bootscript_info[bootscript_file_contents]}"
+		"bootenv_file_contents: ${bootscript_info[bootenv_file_contents]}"
+	)
+	declare hash_variables="undetermined"                                                     # will be set by calculate_hash_for_variables(), but without normalization
+	do_normalize_src_path="no" calculate_hash_for_variables "${vars_to_hash_no_normalize[@]}" # don't normalize
+	declare hash_vars_no_normalize="${hash_variables}"
+
 	declare -a vars_to_hash=(
-		"${bootscript_info[bootscript_file_contents]}"
-		"${bootscript_info[bootenv_file_contents]}"
-		"${bootscript_info[has_bootscript]}"
-		"${bootscript_info[has_extlinux]}"
-		"${UBOOT_FW_ENV}"                   # not included in bootscript
-		"${KEEP_ORIGINAL_OS_RELEASE:-"no"}" # /etc/os-release
-		"${BOARDFAMILY}"                    # /etc/armbian-release
-		"${LINUXFAMILY}"                    # /etc/armbian-release
-		"${IMAGE_TYPE}"                     # /etc/armbian-release
-		"${BOARD_TYPE}"                     # /etc/armbian-release
-		"${INITRD_ARCH}"                    # /etc/armbian-release
-		"${KERNEL_IMAGE_TYPE}"              # /etc/armbian-release
-		"${VENDOR}"                         # /etc/armbian-release
+		"has_bootscript: ${bootscript_info[has_bootscript]}"
+		"has_extlinux: ${bootscript_info[has_extlinux]}"
+		"UBOOT_FW_ENV: ${UBOOT_FW_ENV}"                               # not included in bootscript
+		"KEEP_ORIGINAL_OS_RELEASE: ${KEEP_ORIGINAL_OS_RELEASE:-"no"}" # /etc/os-release
+		"BOARDFAMILY: ${BOARDFAMILY}"                                 # /etc/armbian-release
+		"LINUXFAMILY: ${LINUXFAMILY}"                                 # /etc/armbian-release
+		"IMAGE_TYPE: ${IMAGE_TYPE}"                                   # /etc/armbian-release
+		"BOARD_TYPE: ${BOARD_TYPE}"                                   # /etc/armbian-release
+		"INITRD_ARCH: ${INITRD_ARCH}"                                 # /etc/armbian-release
+		"KERNEL_IMAGE_TYPE: ${KERNEL_IMAGE_TYPE}"                     # /etc/armbian-release
+		"VENDOR: ${VENDOR}"                                           # /etc/armbian-release
+		"hash_vars_no_normalize: ${hash_vars_no_normalize}"           # The non-normalized part, above
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
