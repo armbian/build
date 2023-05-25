@@ -187,10 +187,13 @@ function config_post_main() {
 	fi
 
 	if [[ "$BETA" == "yes" ]]; then
+		display_alert "BETA" "BETA==yes, nightly image" "debug"
 		IMAGE_TYPE=nightly
-	elif [ "$BETA" == "no" ] || [ "$RC" == "yes" ]; then
+	elif [[ "$BETA" == "no" ]]; then
+		display_alert "BETA" "BETA==no, stable image" "debug"
 		IMAGE_TYPE=stable
 	else
+		display_alert "BETA" "Not yes nor no, user-built" "debug"
 		IMAGE_TYPE=user-built
 	fi
 
