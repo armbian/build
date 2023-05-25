@@ -150,7 +150,7 @@ for target in targets:
 
 	oci_target = target["out"]["artifact_full_oci_target"]
 	if oci_target in oci_target_map:
-		log.warning("Duplicate oci_target: {oci_target}")
+		log.warning(f"Duplicate oci_target: {oci_target}")
 		continue
 
 	oci_target_map[oci_target] = target
