@@ -109,6 +109,8 @@ for target_name in targets["targets"]:
 			one_invocation_vars = {}
 			one_invocation_vars.update(one_expansion["vars"])
 			one_invocation_vars.update(item)
+			# Special case for BETA, read this from TARGETS_BETA environment and force it.
+			one_invocation_vars.update({"BETA": os.environ.get("TARGETS_BETA", "")})
 			expanded = {"vars": one_invocation_vars, "configs": one_expansion["configs"], "pipeline": one_expansion["pipeline"]}
 			invocations_dict.append(expanded)
 

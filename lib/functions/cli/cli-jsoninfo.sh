@@ -73,7 +73,8 @@ function cli_json_info_run() {
 			if [[ ! -f "${DEBS_TO_REPO_INFO_FILE}" ]]; then
 				exit_with_error "debs-to-repo-download :: no ${DEBS_TO_REPO_INFO_FILE} file found; did you restore the pipeline artifacts correctly?"
 			fi
-			declare DEBS_OUTPUT_DIR="${DEST}/debs" # @TODO: this is wrong if BETA=yes!!!
+			declare DEBS_OUTPUT_DIR="${DEB_STORAGE}" # this is different depending if BETA=yes (output/debs-beta) or not (output/debs)
+			display_alert "Downloading debs to" "${DEBS_OUTPUT_DIR}" "info"
 			run_host_command_logged mkdir -pv "${DEBS_OUTPUT_DIR}"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/download-debs.py "${DEBS_TO_REPO_INFO_FILE}" "${DEBS_OUTPUT_DIR}"
 
@@ -142,7 +143,9 @@ function cli_json_info_run() {
 
 		if [[ ! -f "${TARGETS_OUTPUT_FILE}" ]]; then
 			display_alert "Generating targets inventory" "targets-compositor" "info"
+			export TARGETS_BETA="${BETA}" # Read by the Python script, and injected into every target as "BETA=" param.
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/targets-compositor.py "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" "not_yet_releases.json" "${TARGETS_FILE}" ">" "${TARGETS_OUTPUT_FILE}"
+			unset TARGETS_BETA
 		fi
 
 		### Images.
