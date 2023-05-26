@@ -387,27 +387,11 @@ driver_rtl88x2bu() {
 
 }
 
-driver_rtw88() {
-	# Upstream wireless RTW88 drivers
-	if linux-version compare "${version}" ge 6.1 && [ $EXTRAWIFI == yes ]; then
-		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/001-rtw88-linux-next-backport.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/002-rtw88-fix-rcu-lock.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/003-rtw88-rfc.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/004-rtw88-usb-fixes.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/005-rtw88-mac-c-fix.patch" "applying"
-	fi
-	if linux-version compare "${version}" ge 6.3 && [ $EXTRAWIFI == yes ]; then
-		display_alert "Adding" "Upstream wireless drivers for RTW88" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.3/001-rtw88-sdio-rfc.patch" "applying"
-	fi
-}
-
 driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
 
-	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == no ]; then
+	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ]; then
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"
@@ -688,7 +672,6 @@ patch_drivers_network() {
 	driver_rtl8811CU_rtl8821C
 	driver_rtl8188EU_rtl8188ETV
 	driver_rtl88x2bu
-	driver_rtw88
 	driver_rtl88x2cs
 	driver_rtl8822cs_bt
 	driver_rtl8723DS
