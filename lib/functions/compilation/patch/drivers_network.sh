@@ -627,7 +627,7 @@ driver_rtl8723cs() {
 	# Driver has been borrowed from sunxi 6.1 megous patch archive.
 	# Applies only from linux 6.1 onwards, so older kernel archives does not require to be altered
 	# It was disabled from bcm2711 as that kernel is not fully in sync with mainline and as its probably not needed there anyway
-	if linux-version compare "${version}" ge 6.1 && [[ "$LINUXFAMILY" != bcm2711 ]]; then
+	if linux-version compare "${version}" ge 6.1 && [[ "$LINUXFAMILY" != bcm2711 ]] && [[ "$LINUXFAMILY" != d1 ]]; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Add-a-new-driver-v5.12.2-7-g2de5ec386.20201013_beta.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Make-the-driver-compile-and-probe-drop-rockchip-platform.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Enable-OOB-interrupt.patch" "applying"
