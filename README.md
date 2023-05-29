@@ -8,9 +8,9 @@
  
 ## Table of contents
 
-- [What this project does?](#what-this-project-does)
+- [What does this project do?](#what-does-this-project-do)
 - [Getting started](#getting-started)
-- [Compare with industry standards](#compare-with-industry-standards)
+- [Compared with industry standards](#compared-with-industry-standards)
 - [Download prebuilt images](#download-prebuilt-images)
 - [Project structure](#project-structure)
 - [Contribution](#contribution)
@@ -20,9 +20,9 @@
 - [Partners](#armbian-partners)
 - [License](#license)
 
-## What this project does?
+## What does this project do?
 
-- Builds custom kernel, image or a distribution optimized for low resource hardware,
+- Builds custom kernel, image or a distribution optimized for low-resource hardware,
 - Include filesystem generation, low-level control software, kernel image and bootloader compilation,
 - Provides a consistent user experience by keeping system standards across different platforms.
 
@@ -33,9 +33,9 @@
 - x86_64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), container or bare metal installation
 - Ubuntu Jammy 22.04.x amd64 or aarch64 for native building or any Docker capable amd64 / aarch64 Linux for containerised
 - Superuser rights (configured sudo or root access).
-- Make sure all your system components are up-to-date. Outdated Docker binaries for example can cause troubles.
+- Make sure all your system components are up-to-date. Outdated Docker binaries, for example, can cause trouble.
 
-### Simply start with the build script
+### Start with the build script
 
 ```bash
 apt-get -y install git
@@ -47,12 +47,12 @@ cd build
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
 - Interactive graphical interface.
-- The workspace will be prepared by installing the necessary dependencies and sources.
-- It guides the entire process until a kernel package or ready-to-use image of the SD card is created.
+- Prepares the workspace by installing the necessary dependencies and sources.
+- It guides the entire process and creates a kernel package or a ready-to-use SD card image.
 
 ### Build parameter examples
 
-Show work in progress areas in interactive mode:
+Show work-in-progress areas in interactive mode:
 
 ```bash
 ./compile.sh EXPERT="yes"
@@ -76,7 +76,7 @@ More information:
 
 - [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
 - [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
-- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches and override sources config;
+- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches, and override sources config;
 
 ## Download prebuilt images
 
@@ -84,9 +84,9 @@ More information:
 - weekly released **unsupported** community builds —  <https://github.com/armbian/community>
 - upon code change **unsupported** development builds —  <https://github.com/armbian/build/releases>
 
-## Compare with industry standards
+## Compared with industry standards
 
-Check similarity, advantages and disadvantages compared with leading industry standard build software.
+Check similarities, advantages and disadvantages compared with leading industry standard build software.
 
 Function | Armbian | Yocto | Buildroot |
 |:--|:--|:--|:--|
@@ -178,7 +178,7 @@ Function | Armbian | Yocto | Buildroot |
 ```
 </details>
 
-## 🙌 Contribution
+## Contribution
 
 ### You don't need to be a programmer to help!
 
@@ -191,25 +191,22 @@ Function | Armbian | Yocto | Buildroot |
 
 ### Want to become a maintainer?
 
-Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/) and if you can meet the requirements as well as find a board on the [Board Maintainers](https://docs.armbian.com/Release_Board-Maintainers/) list which has less than 2 maintainers, then please apply using the linked form.
+Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/), and if you can meet the requirements and find a board on the [Board Maintainers](https://docs.armbian.com/Release_Board-Maintainers/) list with less than two maintainers, then please apply using the linked form.
 
 ### Want to become a developer?
 
-If you want to help with development, you should first review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/) and then you can review the pre-made Jira dashboards and additional resources provided below to find open tasks and how you can assist:
+To help with development, you should first review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/). Then you can review the pre-made Jira dashboards and additional resources provided below to find open tasks and how you can assist:
 
-- [pull requests that needs a review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired)
+- [pull requests that need a review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired)
 - dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
 - [documentation](https://docs.armbian.com/)
 - [continuous integration](https://docs.armbian.com/Process_CI/)
 
 ## Support
 
-Support is provided in one of two ways:
-
-- For commercial or prioritized assistance:
-  - book a an hour of [professional consultation](https://calendly.com/armbian/consultation),
-  - consider becoming a project partner. Reach us out at <https://armbian.com/contact>,
-- Alternatively free support is provided via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Keep in mind this is mostly provided by our awesome community members in a **best effort** manner and therefore there are no guaranteed solutions.
+For commercial or prioritized assistance:
+ - Book an hour of [professional consultation](https://calendly.com/armbian/consultation)
+ - Consider becoming a project partner. Reach us at <https://armbian.com/contact>. Alternatively, find free support via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Remember that our awesome community members mainly provide this in a **best-effort** manner, so there are no guaranteed solutions.
 
 ## Contact
 
@@ -222,7 +219,7 @@ Support is provided in one of two ways:
 
 ## Contributors
 
-Thank you to all the people who already contributed Armbian!
+Thank you to all the people who already contributed to Armbian!
 
 <a href="https://github.com/armbian/build/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=armbian/build" />
@@ -233,7 +230,7 @@ Thank you to all the people who already contributed Armbian!
 - [Current and past contributors](https://github.com/armbian/build/graphs/contributors), our families and friends.
 - [Support staff](https://forum.armbian.com/members/2-moderators/) that keeps forums usable.
 - [Friends and individuals](https://armbian.com/authors) who support us with resources and their time.
-- [The Armbian Community](https://forum.armbian.com/) that helps with their ideas, reports and [donations](https://www.armbian.com/donate).
+- [The Armbian Community](https://forum.armbian.com/) helps with their ideas, reports and [donations](https://www.armbian.com/donate).
 
 ## Armbian Partners
 
