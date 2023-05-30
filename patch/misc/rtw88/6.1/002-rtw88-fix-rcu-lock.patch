@@ -1,0 +1,302 @@
+From:   Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+To:     linux-wireless@vger.kernel.org
+Cc:     tony0620emma@gmail.com, kvalo@kernel.org, pkshih@realtek.com,
+        s.hauer@pengutronix.de, netdev@vger.kernel.org,
+        linux-kernel@vger.kernel.org,
+        Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Subject: [PATCH v3 0/3] wifi: rtw88: Three locking fixes for existing code
+Date:   Sun,  8 Jan 2023 22:13:21 +0100
+Message-Id: <20230108211324.442823-1-martin.blumenstingl@googlemail.com>
+X-Mailer: git-send-email 2.39.0
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Precedence: bulk
+List-ID: <linux-wireless.vger.kernel.org>
+X-Mailing-List: linux-wireless@vger.kernel.org
+
+This series consists of three patches which are fixing existing
+behavior (meaning: it either affects PCIe or USB or both) in the rtw88
+driver.
+We previously had discussed patches for these locking issues while
+working on SDIO support, but the problem never ocurred while testing
+USB cards. It turns out that these are still needed and I think that
+they also fix the same problems for USB users (it's not clear how often
+it happens there though) - and possibly even PCIe card users.
+
+The issue fixed by the second and third patches have been spotted by a
+user who tested rtw88 SDIO support. Everything is working fine for him
+but there are warnings [1] and [2] in the kernel log stating "Voluntary
+context switch within RCU read-side critical section!".
+
+The solution in the third and fourth patch was actually suggested by
+Ping-Ke in [3]. Thanks again!
+
+These fixes are indepdent of my other series adding SDIO support to the
+rtw88 driver, meaning they can be added to the wireless driver tree on
+top of Linux 6.2-rc1 or linux-next.
+
+
+Changes since v1 at [4]:
+- Keep the u8 bitfields in patch 1 but split the res2 field into res2_1
+  and res2_2 as suggested by Ping-Ke
+- Added Ping-Ke's reviewed-by to patches 2-4 - thank you!
+- Added a paragraph in the cover-letter to avoid confusion whether
+  these patches depend on the rtw88 SDIO support series
+
+Changes since v2 at [5]:
+- Added Ping-Ke's Reviewed-by and Sascha's Tested-by (thanks to both of
+  you!)
+- Dropped patch 1/4 "rtw88: Add packed attribute to the eFuse structs"
+  This requires more discussion. I'll send a separate patch for this.
+- Updated cover letter title so it's clear that this is independent of
+  SDIO support code
+
+
+[0] https://lore.kernel.org/linux-wireless/695c976e02ed44a2b2345a3ceb226fc4@realtek.com/
+[1] https://github.com/LibreELEC/LibreELEC.tv/pull/7301#issuecomment-1366421445
+[2] https://github.com/LibreELEC/LibreELEC.tv/pull/7301#issuecomment-1366610249
+[3] https://lore.kernel.org/lkml/e0aa1ba4336ab130712e1fcb425e6fd0adca4145.camel@realtek.com/
+[4] https://lore.kernel.org/linux-wireless/20221228133547.633797-1-martin.blumenstingl@googlemail.com/
+[5] https://lore.kernel.org/linux-wireless/20221229124845.1155429-1-martin.blumenstingl@googlemail.com/
+
+
+Martin Blumenstingl (3):
+  wifi: rtw88: Move register access from rtw_bf_assoc() outside the RCU
+  wifi: rtw88: Use rtw_iterate_vifs() for rtw_vif_watch_dog_iter()
+  wifi: rtw88: Use non-atomic sta iterator in rtw_ra_mask_info_update()
+
+ drivers/net/wireless/realtek/rtw88/bf.c       | 13 +++++++------
+ drivers/net/wireless/realtek/rtw88/mac80211.c |  4 +++-
+ drivers/net/wireless/realtek/rtw88/main.c     |  6 ++++--
+ 3 files changed, 14 insertions(+), 9 deletions(-)
+
+-- 
+2.39.0
+
+From:   Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+To:     linux-wireless@vger.kernel.org
+Cc:     tony0620emma@gmail.com, kvalo@kernel.org, pkshih@realtek.com,
+        s.hauer@pengutronix.de, netdev@vger.kernel.org,
+        linux-kernel@vger.kernel.org,
+        Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Subject: [PATCH v3 1/3] wifi: rtw88: Move register access from rtw_bf_assoc() outside the RCU
+Date:   Sun,  8 Jan 2023 22:13:22 +0100
+Message-Id: <20230108211324.442823-2-martin.blumenstingl@googlemail.com>
+X-Mailer: git-send-email 2.39.0
+In-Reply-To: <20230108211324.442823-1-martin.blumenstingl@googlemail.com>
+References: <20230108211324.442823-1-martin.blumenstingl@googlemail.com>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Precedence: bulk
+List-ID: <linux-wireless.vger.kernel.org>
+X-Mailing-List: linux-wireless@vger.kernel.org
+
+USB and (upcoming) SDIO support may sleep in the read/write handlers.
+Shrink the RCU critical section so it only cover the call to
+ieee80211_find_sta() and finding the ic_vht_cap/vht_cap based on the
+found station. This moves the chip's BFEE configuration outside the
+rcu_read_lock section and thus prevent "scheduling while atomic" or
+"Voluntary context switch within RCU read-side critical section!"
+warnings when accessing the registers using an SDIO card (which is
+where this issue has been spotted in the real world - but it also
+affects USB cards).
+
+Reviewed-by: Ping-Ke Shih <pkshih@realtek.com>
+Tested-by: Sascha Hauer <s.hauer@pengutronix.de>
+Signed-off-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+---
+v1 -> v2:
+- Added Ping-Ke's Reviewed-by (thank you!)
+
+v2 -> v3:
+- Added Sascha's Tested-by (thank you!)
+- added "wifi" prefix to the subject and reworded the title accordingly
+
+
+ drivers/net/wireless/realtek/rtw88/bf.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/bf.c b/drivers/net/wireless/realtek/rtw88/bf.c
+index 038a30b170ef..c827c4a2814b 100644
+--- a/drivers/net/wireless/realtek/rtw88/bf.c
++++ b/drivers/net/wireless/realtek/rtw88/bf.c
+@@ -49,19 +49,23 @@ void rtw_bf_assoc(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 
+ 	sta = ieee80211_find_sta(vif, bssid);
+ 	if (!sta) {
++		rcu_read_unlock();
++
+ 		rtw_warn(rtwdev, "failed to find station entry for bss %pM\n",
+ 			 bssid);
+-		goto out_unlock;
++		return;
+ 	}
+ 
+ 	ic_vht_cap = &hw->wiphy->bands[NL80211_BAND_5GHZ]->vht_cap;
+ 	vht_cap = &sta->deflink.vht_cap;
+ 
++	rcu_read_unlock();
++
+ 	if ((ic_vht_cap->cap & IEEE80211_VHT_CAP_MU_BEAMFORMEE_CAPABLE) &&
+ 	    (vht_cap->cap & IEEE80211_VHT_CAP_MU_BEAMFORMER_CAPABLE)) {
+ 		if (bfinfo->bfer_mu_cnt >= chip->bfer_mu_max_num) {
+ 			rtw_dbg(rtwdev, RTW_DBG_BF, "mu bfer number over limit\n");
+-			goto out_unlock;
++			return;
+ 		}
+ 
+ 		ether_addr_copy(bfee->mac_addr, bssid);
+@@ -75,7 +79,7 @@ void rtw_bf_assoc(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 		   (vht_cap->cap & IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE)) {
+ 		if (bfinfo->bfer_su_cnt >= chip->bfer_su_max_num) {
+ 			rtw_dbg(rtwdev, RTW_DBG_BF, "su bfer number over limit\n");
+-			goto out_unlock;
++			return;
+ 		}
+ 
+ 		sound_dim = vht_cap->cap &
+@@ -98,9 +102,6 @@ void rtw_bf_assoc(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 
+ 		rtw_chip_config_bfee(rtwdev, rtwvif, bfee, true);
+ 	}
+-
+-out_unlock:
+-	rcu_read_unlock();
+ }
+ 
+ void rtw_bf_init_bfer_entry_mu(struct rtw_dev *rtwdev,
+-- 
+2.39.0
+
+From:   Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+To:     linux-wireless@vger.kernel.org
+Cc:     tony0620emma@gmail.com, kvalo@kernel.org, pkshih@realtek.com,
+        s.hauer@pengutronix.de, netdev@vger.kernel.org,
+        linux-kernel@vger.kernel.org,
+        Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Subject: [PATCH v3 2/3] wifi: rtw88: Use rtw_iterate_vifs() for rtw_vif_watch_dog_iter()
+Date:   Sun,  8 Jan 2023 22:13:23 +0100
+Message-Id: <20230108211324.442823-3-martin.blumenstingl@googlemail.com>
+X-Mailer: git-send-email 2.39.0
+In-Reply-To: <20230108211324.442823-1-martin.blumenstingl@googlemail.com>
+References: <20230108211324.442823-1-martin.blumenstingl@googlemail.com>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Precedence: bulk
+List-ID: <linux-wireless.vger.kernel.org>
+X-Mailing-List: linux-wireless@vger.kernel.org
+
+USB and (upcoming) SDIO support may sleep in the read/write handlers.
+Make rtw_watch_dog_work() use rtw_iterate_vifs() to prevent "scheduling
+while atomic" or "Voluntary context switch within RCU read-side
+critical section!" warnings when accessing the registers using an SDIO
+card (which is where this issue has been spotted in the real world but
+it also affects USB cards).
+
+Fixes: 78d5bf925f30 ("wifi: rtw88: iterate over vif/sta list non-atomically")
+Suggested-by: Ping-Ke Shih <pkshih@realtek.com>
+Reviewed-by: Ping-Ke Shih <pkshih@realtek.com>
+Tested-by: Sascha Hauer <s.hauer@pengutronix.de>
+Signed-off-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+---
+v1 -> v2:
+- no change
+
+v2 -> v3:
+- Added Ping-Ke's Reviewed-by (thank you!)
+- Added Sascha's Tested-by (thank you!)
+- added "wifi" prefix to the subject and reworded the title accordingly
+
+
+ drivers/net/wireless/realtek/rtw88/main.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index 888427cf3bdf..b2e78737bd5d 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -241,8 +241,10 @@ static void rtw_watch_dog_work(struct work_struct *work)
+ 	rtw_phy_dynamic_mechanism(rtwdev);
+ 
+ 	data.rtwdev = rtwdev;
+-	/* use atomic version to avoid taking local->iflist_mtx mutex */
+-	rtw_iterate_vifs_atomic(rtwdev, rtw_vif_watch_dog_iter, &data);
++	/* rtw_iterate_vifs internally uses an atomic iterator which is needed
++	 * to avoid taking local->iflist_mtx mutex
++	 */
++	rtw_iterate_vifs(rtwdev, rtw_vif_watch_dog_iter, &data);
+ 
+ 	/* fw supports only one station associated to enter lps, if there are
+ 	 * more than two stations associated to the AP, then we can not enter
+-- 
+2.39.0
+
+From:   Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+To:     linux-wireless@vger.kernel.org
+Cc:     tony0620emma@gmail.com, kvalo@kernel.org, pkshih@realtek.com,
+        s.hauer@pengutronix.de, netdev@vger.kernel.org,
+        linux-kernel@vger.kernel.org,
+        Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Subject: [PATCH v3 3/3] wifi: rtw88: Use non-atomic sta iterator in rtw_ra_mask_info_update()
+Date:   Sun,  8 Jan 2023 22:13:24 +0100
+Message-Id: <20230108211324.442823-4-martin.blumenstingl@googlemail.com>
+X-Mailer: git-send-email 2.39.0
+In-Reply-To: <20230108211324.442823-1-martin.blumenstingl@googlemail.com>
+References: <20230108211324.442823-1-martin.blumenstingl@googlemail.com>
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Precedence: bulk
+List-ID: <linux-wireless.vger.kernel.org>
+X-Mailing-List: linux-wireless@vger.kernel.org
+
+USB and (upcoming) SDIO support may sleep in the read/write handlers.
+Use non-atomic rtw_iterate_stas() in rtw_ra_mask_info_update() because
+the iterator function rtw_ra_mask_info_update_iter() needs to read and
+write registers from within rtw_update_sta_info(). Using the non-atomic
+iterator ensures that we can sleep during USB and SDIO register reads
+and writes. This fixes "scheduling while atomic" or "Voluntary context
+switch within RCU read-side critical section!" warnings as seen by SDIO
+card users (but it also affects USB cards).
+
+Fixes: 78d5bf925f30 ("wifi: rtw88: iterate over vif/sta list non-atomically")
+Suggested-by: Ping-Ke Shih <pkshih@realtek.com>
+Reviewed-by: Ping-Ke Shih <pkshih@realtek.com>
+Tested-by: Sascha Hauer <s.hauer@pengutronix.de>
+Signed-off-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+---
+v1 -> v2:
+- Added Ping-Ke's Reviewed-by (thank you!)
+
+v2 -> v3:
+- Added Sascha's Tested-by (thank you!)
+- added "wifi" prefix to the subject and reworded the title accordingly
+
+
+ drivers/net/wireless/realtek/rtw88/mac80211.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/mac80211.c b/drivers/net/wireless/realtek/rtw88/mac80211.c
+index 776a9a9884b5..3b92ac611d3f 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac80211.c
++++ b/drivers/net/wireless/realtek/rtw88/mac80211.c
+@@ -737,7 +737,7 @@ static void rtw_ra_mask_info_update(struct rtw_dev *rtwdev,
+ 	br_data.rtwdev = rtwdev;
+ 	br_data.vif = vif;
+ 	br_data.mask = mask;
+-	rtw_iterate_stas_atomic(rtwdev, rtw_ra_mask_info_update_iter, &br_data);
++	rtw_iterate_stas(rtwdev, rtw_ra_mask_info_update_iter, &br_data);
+ }
+ 
+ static int rtw_ops_set_bitrate_mask(struct ieee80211_hw *hw,
+@@ -746,7 +746,9 @@ static int rtw_ops_set_bitrate_mask(struct ieee80211_hw *hw,
+ {
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 
++	mutex_lock(&rtwdev->mutex);
+ 	rtw_ra_mask_info_update(rtwdev, vif, mask);
++	mutex_unlock(&rtwdev->mutex);
+ 
+ 	return 0;
+ }
+-- 
+2.39.0
