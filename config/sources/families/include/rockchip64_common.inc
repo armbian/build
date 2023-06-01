@@ -200,8 +200,8 @@ prepare_boot_configuration() {
 
 	if [[ "$BOARD" == "rock-5a" ]];then
 		UBOOT_TARGET_MAP="
-		BL31=$RKBIN_DIR/$BL31_BLOB rock-5a-spi-rk3588s_defconfig spl/u-boot-spl.bin u-boot.itb;;rkspi_loader.img
-		BL31=$RKBIN_DIR/$BL31_BLOB rock-5a-rk3588s_defconfig spl/u-boot-spl.bin u-boot.itb;;idbloader.img u-boot.itb
+		BL31=$RKBIN_DIR/$BL31_BLOB rock-5a-spi-rk3588s_defconfig spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;rkspi_loader.img
+		BL31=$RKBIN_DIR/$BL31_BLOB rock-5a-rk3588s_defconfig spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb
 		"
 	fi
 }
