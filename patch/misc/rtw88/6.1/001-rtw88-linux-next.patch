@@ -1,0 +1,1686 @@
+diff -Naur a/drivers/net/wireless/realtek/rtw88/bf.c b/drivers/net/wireless/realtek/rtw88/bf.c
+--- a/drivers/net/wireless/realtek/rtw88/bf.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/bf.c	2023-05-26 05:23:16.030633884 -0400
+@@ -49,19 +49,23 @@
+ 
+ 	sta = ieee80211_find_sta(vif, bssid);
+ 	if (!sta) {
++		rcu_read_unlock();
++
+ 		rtw_warn(rtwdev, "failed to find station entry for bss %pM\n",
+ 			 bssid);
+-		goto out_unlock;
++		return;
+ 	}
+ 
+ 	ic_vht_cap = &hw->wiphy->bands[NL80211_BAND_5GHZ]->vht_cap;
+ 	vht_cap = &sta->deflink.vht_cap;
+ 
++	rcu_read_unlock();
++
+ 	if ((ic_vht_cap->cap & IEEE80211_VHT_CAP_MU_BEAMFORMEE_CAPABLE) &&
+ 	    (vht_cap->cap & IEEE80211_VHT_CAP_MU_BEAMFORMER_CAPABLE)) {
+ 		if (bfinfo->bfer_mu_cnt >= chip->bfer_mu_max_num) {
+ 			rtw_dbg(rtwdev, RTW_DBG_BF, "mu bfer number over limit\n");
+-			goto out_unlock;
++			return;
+ 		}
+ 
+ 		ether_addr_copy(bfee->mac_addr, bssid);
+@@ -75,7 +79,7 @@
+ 		   (vht_cap->cap & IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE)) {
+ 		if (bfinfo->bfer_su_cnt >= chip->bfer_su_max_num) {
+ 			rtw_dbg(rtwdev, RTW_DBG_BF, "su bfer number over limit\n");
+-			goto out_unlock;
++			return;
+ 		}
+ 
+ 		sound_dim = vht_cap->cap &
+@@ -98,9 +102,6 @@
+ 
+ 		rtw_chip_config_bfee(rtwdev, rtwvif, bfee, true);
+ 	}
+-
+-out_unlock:
+-	rcu_read_unlock();
+ }
+ 
+ void rtw_bf_init_bfer_entry_mu(struct rtw_dev *rtwdev,
+diff -Naur a/drivers/net/wireless/realtek/rtw88/coex.c b/drivers/net/wireless/realtek/rtw88/coex.c
+--- a/drivers/net/wireless/realtek/rtw88/coex.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/coex.c	2023-05-26 05:23:16.010634200 -0400
+@@ -633,7 +633,7 @@
+ 	struct rtw_coex *coex = &rtwdev->coex;
+ 	struct sk_buff *skb_resp = NULL;
+ 
+-	mutex_lock(&coex->mutex);
++	lockdep_assert_held(&rtwdev->mutex);
+ 
+ 	rtw_fw_query_bt_mp_info(rtwdev, req);
+ 
+@@ -650,7 +650,6 @@
+ 	}
+ 
+ out:
+-	mutex_unlock(&coex->mutex);
+ 	return skb_resp;
+ }
+ 
+diff -Naur a/drivers/net/wireless/realtek/rtw88/debug.c b/drivers/net/wireless/realtek/rtw88/debug.c
+--- a/drivers/net/wireless/realtek/rtw88/debug.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/debug.c	2023-05-26 05:23:16.011634184 -0400
+@@ -144,7 +144,9 @@
+ 	addr = debugfs_priv->rf_addr;
+ 	mask = debugfs_priv->rf_mask;
+ 
++	mutex_lock(&rtwdev->mutex);
+ 	val = rtw_read_rf(rtwdev, path, addr, mask);
++	mutex_unlock(&rtwdev->mutex);
+ 
+ 	seq_printf(m, "rf_read path:%d addr:0x%08x mask:0x%08x val=0x%08x\n",
+ 		   path, addr, mask, val);
+@@ -390,7 +392,9 @@
+ 		return -EINVAL;
+ 	}
+ 
++	mutex_lock(&rtwdev->mutex);
+ 	rtw_fw_h2c_cmd_dbg(rtwdev, param);
++	mutex_unlock(&rtwdev->mutex);
+ 
+ 	return count;
+ }
+@@ -414,7 +418,9 @@
+ 		return count;
+ 	}
+ 
++	mutex_lock(&rtwdev->mutex);
+ 	rtw_write_rf(rtwdev, path, addr, mask, val);
++	mutex_unlock(&rtwdev->mutex);
+ 	rtw_dbg(rtwdev, RTW_DBG_DEBUGFS,
+ 		"write_rf path:%d addr:0x%08x mask:0x%08x, val:0x%08x\n",
+ 		path, addr, mask, val);
+@@ -519,6 +525,8 @@
+ 	u32 addr, offset, data;
+ 	u8 path;
+ 
++	mutex_lock(&rtwdev->mutex);
++
+ 	for (path = 0; path < rtwdev->hal.rf_path_num; path++) {
+ 		seq_printf(m, "RF path:%d\n", path);
+ 		for (addr = 0; addr < 0x100; addr += 4) {
+@@ -533,6 +541,8 @@
+ 		seq_puts(m, "\n");
+ 	}
+ 
++	mutex_unlock(&rtwdev->mutex);
++
+ 	return 0;
+ }
+ 
+@@ -831,7 +841,9 @@
+ 	struct rtw_debugfs_priv *debugfs_priv = m->private;
+ 	struct rtw_dev *rtwdev = debugfs_priv->rtwdev;
+ 
++	mutex_lock(&rtwdev->mutex);
+ 	rtw_coex_display_coex_info(rtwdev, m);
++	mutex_unlock(&rtwdev->mutex);
+ 
+ 	return 0;
+ }
+@@ -1026,6 +1038,8 @@
+ 		   dm_info->dm_flags & BIT(RTW_DM_CAP_TXGAPK) ? '-' : '+',
+ 		   rtw_dm_cap_strs[RTW_DM_CAP_TXGAPK]);
+ 
++	mutex_lock(&rtwdev->mutex);
++
+ 	for (path = 0; path < rtwdev->hal.rf_path_num; path++) {
+ 		val = rtw_read_rf(rtwdev, path, RF_GAINTX, RFREG_MASK);
+ 		seq_printf(m, "path %d:\n0x%x = 0x%x\n", path, RF_GAINTX, val);
+@@ -1035,6 +1049,7 @@
+ 				   txgapk->rf3f_fs[path][i], i);
+ 		seq_puts(m, "\n");
+ 	}
++	mutex_unlock(&rtwdev->mutex);
+ }
+ 
+ static int rtw_debugfs_get_dm_cap(struct seq_file *m, void *v)
+diff -Naur a/drivers/net/wireless/realtek/rtw88/debug.h b/drivers/net/wireless/realtek/rtw88/debug.h
+--- a/drivers/net/wireless/realtek/rtw88/debug.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/debug.h	2023-05-26 05:23:16.041633711 -0400
+@@ -24,6 +24,7 @@
+ 	RTW_DBG_ADAPTIVITY	= 0x00008000,
+ 	RTW_DBG_HW_SCAN		= 0x00010000,
+ 	RTW_DBG_STATE		= 0x00020000,
++	RTW_DBG_SDIO		= 0x00040000,
+ 
+ 	RTW_DBG_ALL		= 0xffffffff
+ };
+diff -Naur a/drivers/net/wireless/realtek/rtw88/fw.c b/drivers/net/wireless/realtek/rtw88/fw.c
+--- a/drivers/net/wireless/realtek/rtw88/fw.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/fw.c	2023-05-26 05:23:16.006634263 -0400
+@@ -311,10 +311,10 @@
+ static void rtw_fw_send_h2c_command(struct rtw_dev *rtwdev,
+ 				    u8 *h2c)
+ {
++	struct rtw_h2c_cmd *h2c_cmd = (struct rtw_h2c_cmd *)h2c;
+ 	u8 box;
+ 	u8 box_state;
+ 	u32 box_reg, box_ex_reg;
+-	int idx;
+ 	int ret;
+ 
+ 	rtw_dbg(rtwdev, RTW_DBG_FW,
+@@ -322,7 +322,7 @@
+ 		h2c[3], h2c[2], h2c[1], h2c[0],
+ 		h2c[7], h2c[6], h2c[5], h2c[4]);
+ 
+-	spin_lock(&rtwdev->h2c.lock);
++	lockdep_assert_held(&rtwdev->mutex);
+ 
+ 	box = rtwdev->h2c.last_box_num;
+ 	switch (box) {
+@@ -344,7 +344,7 @@
+ 		break;
+ 	default:
+ 		WARN(1, "invalid h2c mail box number\n");
+-		goto out;
++		return;
+ 	}
+ 
+ 	ret = read_poll_timeout_atomic(rtw_read8, box_state,
+@@ -353,19 +353,14 @@
+ 
+ 	if (ret) {
+ 		rtw_err(rtwdev, "failed to send h2c command\n");
+-		goto out;
++		return;
+ 	}
+ 
+-	for (idx = 0; idx < 4; idx++)
+-		rtw_write8(rtwdev, box_reg + idx, h2c[idx]);
+-	for (idx = 0; idx < 4; idx++)
+-		rtw_write8(rtwdev, box_ex_reg + idx, h2c[idx + 4]);
++	rtw_write32(rtwdev, box_ex_reg, le32_to_cpu(h2c_cmd->msg_ext));
++	rtw_write32(rtwdev, box_reg, le32_to_cpu(h2c_cmd->msg));
+ 
+ 	if (++rtwdev->h2c.last_box_num >= 4)
+ 		rtwdev->h2c.last_box_num = 0;
+-
+-out:
+-	spin_unlock(&rtwdev->h2c.lock);
+ }
+ 
+ void rtw_fw_h2c_cmd_dbg(struct rtw_dev *rtwdev, u8 *h2c)
+@@ -377,15 +372,13 @@
+ {
+ 	int ret;
+ 
+-	spin_lock(&rtwdev->h2c.lock);
++	lockdep_assert_held(&rtwdev->mutex);
+ 
+ 	FW_OFFLOAD_H2C_SET_SEQ_NUM(h2c_pkt, rtwdev->h2c.seq);
+ 	ret = rtw_hci_write_data_h2c(rtwdev, h2c_pkt, H2C_PKT_SIZE);
+ 	if (ret)
+ 		rtw_err(rtwdev, "failed to send h2c packet\n");
+ 	rtwdev->h2c.seq++;
+-
+-	spin_unlock(&rtwdev->h2c.lock);
+ }
+ 
+ void
+diff -Naur a/drivers/net/wireless/realtek/rtw88/fw.h b/drivers/net/wireless/realtek/rtw88/fw.h
+--- a/drivers/net/wireless/realtek/rtw88/fw.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/fw.h	2023-05-26 05:23:16.001634342 -0400
+@@ -81,6 +81,11 @@
+ 	u8 option;
+ } __packed;
+ 
++struct rtw_h2c_cmd {
++	__le32 msg;
++	__le32 msg_ext;
++} __packed;
++
+ enum rtw_rsvd_packet_type {
+ 	RSVD_BEACON,
+ 	RSVD_DUMMY,
+diff -Naur a/drivers/net/wireless/realtek/rtw88/hci.h b/drivers/net/wireless/realtek/rtw88/hci.h
+--- a/drivers/net/wireless/realtek/rtw88/hci.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/hci.h	2023-05-26 05:23:16.041633711 -0400
+@@ -22,6 +22,8 @@
+ 	int (*write_data_rsvd_page)(struct rtw_dev *rtwdev, u8 *buf, u32 size);
+ 	int (*write_data_h2c)(struct rtw_dev *rtwdev, u8 *buf, u32 size);
+ 
++	void (*power_switch)(struct rtw_dev *rtwdev, bool on);
++
+ 	u8 (*read8)(struct rtw_dev *rtwdev, u32 addr);
+ 	u16 (*read16)(struct rtw_dev *rtwdev, u32 addr);
+ 	u32 (*read32)(struct rtw_dev *rtwdev, u32 addr);
+@@ -84,6 +86,12 @@
+ 	return rtwdev->hci.ops->write_data_h2c(rtwdev, buf, size);
+ }
+ 
++static inline void rtw_hci_power_switch(struct rtw_dev *rtwdev, bool on)
++{
++	if (rtwdev->hci.ops->power_switch)
++		rtwdev->hci.ops->power_switch(rtwdev, on);
++}
++
+ static inline u8 rtw_read8(struct rtw_dev *rtwdev, u32 addr)
+ {
+ 	return rtwdev->hci.ops->read8(rtwdev, addr);
+@@ -166,12 +174,11 @@
+ rtw_read_rf(struct rtw_dev *rtwdev, enum rtw_rf_path rf_path,
+ 	    u32 addr, u32 mask)
+ {
+-	unsigned long flags;
+ 	u32 val;
+ 
+-	spin_lock_irqsave(&rtwdev->rf_lock, flags);
++	lockdep_assert_held(&rtwdev->mutex);
++
+ 	val = rtwdev->chip->ops->read_rf(rtwdev, rf_path, addr, mask);
+-	spin_unlock_irqrestore(&rtwdev->rf_lock, flags);
+ 
+ 	return val;
+ }
+@@ -180,11 +187,9 @@
+ rtw_write_rf(struct rtw_dev *rtwdev, enum rtw_rf_path rf_path,
+ 	     u32 addr, u32 mask, u32 data)
+ {
+-	unsigned long flags;
++	lockdep_assert_held(&rtwdev->mutex);
+ 
+-	spin_lock_irqsave(&rtwdev->rf_lock, flags);
+ 	rtwdev->chip->ops->write_rf(rtwdev, rf_path, addr, mask, data);
+-	spin_unlock_irqrestore(&rtwdev->rf_lock, flags);
+ }
+ 
+ static inline u32
+diff -Naur a/drivers/net/wireless/realtek/rtw88/Kconfig b/drivers/net/wireless/realtek/rtw88/Kconfig
+--- a/drivers/net/wireless/realtek/rtw88/Kconfig	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/Kconfig	2023-05-26 05:23:16.051633553 -0400
+@@ -16,6 +16,12 @@
+ config RTW88_PCI
+ 	tristate
+ 
++config RTW88_SDIO
++	tristate
++
++config RTW88_USB
++	tristate
++
+ config RTW88_8822B
+ 	tristate
+ 
+@@ -39,6 +45,28 @@
+ 
+ 	  802.11ac PCIe wireless network adapter
+ 
++config RTW88_8822BS
++	tristate "Realtek 8822BS SDIO wireless network adapter"
++	depends on MMC
++	select RTW88_CORE
++	select RTW88_SDIO
++	select RTW88_8822B
++	help
++	  Select this option will enable support for 8822BS chipset
++
++	  802.11ac SDIO wireless network adapter
++
++config RTW88_8822BU
++	tristate "Realtek 8822BU USB wireless network adapter"
++	depends on USB
++	select RTW88_CORE
++	select RTW88_USB
++	select RTW88_8822B
++	help
++	  Select this option will enable support for 8822BU chipset
++
++	  802.11ac USB wireless network adapter
++
+ config RTW88_8822CE
+ 	tristate "Realtek 8822CE PCI wireless network adapter"
+ 	depends on PCI
+@@ -50,6 +78,28 @@
+ 
+ 	  802.11ac PCIe wireless network adapter
+ 
++config RTW88_8822CS
++	tristate "Realtek 8822CS SDIO wireless network adapter"
++	depends on MMC
++	select RTW88_CORE
++	select RTW88_SDIO
++	select RTW88_8822C
++	help
++	  Select this option will enable support for 8822CS chipset
++
++	  802.11ac SDIO wireless network adapter
++
++config RTW88_8822CU
++	tristate "Realtek 8822CU USB wireless network adapter"
++	depends on USB
++	select RTW88_CORE
++	select RTW88_USB
++	select RTW88_8822C
++	help
++	  Select this option will enable support for 8822CU chipset
++
++	  802.11ac USB wireless network adapter
++
+ config RTW88_8723DE
+ 	tristate "Realtek 8723DE PCI wireless network adapter"
+ 	depends on PCI
+@@ -61,6 +111,17 @@
+ 
+ 	  802.11n PCIe wireless network adapter
+ 
++config RTW88_8723DU
++	tristate "Realtek 8723DU USB wireless network adapter"
++	depends on USB
++	select RTW88_CORE
++	select RTW88_USB
++	select RTW88_8723D
++	help
++	  Select this option will enable support for 8723DU chipset
++
++	  802.11n USB wireless network adapter
++
+ config RTW88_8821CE
+ 	tristate "Realtek 8821CE PCI wireless network adapter"
+ 	depends on PCI
+@@ -72,6 +133,28 @@
+ 
+ 	  802.11ac PCIe wireless network adapter
+ 
++config RTW88_8821CS
++	tristate "Realtek 8821CS SDIO wireless network adapter"
++	depends on MMC
++	select RTW88_CORE
++	select RTW88_SDIO
++	select RTW88_8821C
++	help
++	  Select this option will enable support for 8821CS chipset
++
++	  802.11ac SDIO wireless network adapter
++
++config RTW88_8821CU
++	tristate "Realtek 8821CU USB wireless network adapter"
++	depends on USB
++	select RTW88_CORE
++	select RTW88_USB
++	select RTW88_8821C
++	help
++	  Select this option will enable support for 8821CU chipset
++
++	  802.11ac USB wireless network adapter
++
+ config RTW88_DEBUG
+ 	bool "Realtek rtw88 debug support"
+ 	depends on RTW88_CORE
+diff -Naur a/drivers/net/wireless/realtek/rtw88/mac80211.c b/drivers/net/wireless/realtek/rtw88/mac80211.c
+--- a/drivers/net/wireless/realtek/rtw88/mac80211.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/mac80211.c	2023-05-26 05:23:16.031633868 -0400
+@@ -487,8 +487,8 @@
+ {
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 
+-	rtw_fw_beacon_filter_config(rtwdev, false, vif);
+ 	mutex_lock(&rtwdev->mutex);
++	rtw_fw_beacon_filter_config(rtwdev, false, vif);
+ 	rtw_sta_remove(rtwdev, sta, true);
+ 	mutex_unlock(&rtwdev->mutex);
+ 
+@@ -737,7 +737,7 @@
+ 	br_data.rtwdev = rtwdev;
+ 	br_data.vif = vif;
+ 	br_data.mask = mask;
+-	rtw_iterate_stas_atomic(rtwdev, rtw_ra_mask_info_update_iter, &br_data);
++	rtw_iterate_stas(rtwdev, rtw_ra_mask_info_update_iter, &br_data);
+ }
+ 
+ static int rtw_ops_set_bitrate_mask(struct ieee80211_hw *hw,
+@@ -746,7 +746,9 @@
+ {
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 
++	mutex_lock(&rtwdev->mutex);
+ 	rtw_ra_mask_info_update(rtwdev, vif, mask);
++	mutex_unlock(&rtwdev->mutex);
+ 
+ 	return 0;
+ }
+diff -Naur a/drivers/net/wireless/realtek/rtw88/mac.c b/drivers/net/wireless/realtek/rtw88/mac.c
+--- a/drivers/net/wireless/realtek/rtw88/mac.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/mac.c	2023-05-26 05:23:16.060633411 -0400
+@@ -7,6 +7,7 @@
+ #include "reg.h"
+ #include "fw.h"
+ #include "debug.h"
++#include "sdio.h"
+ 
+ void rtw_set_channel_mac(struct rtw_dev *rtwdev, u8 channel, u8 bw,
+ 			 u8 primary_ch_idx)
+@@ -60,6 +61,7 @@
+ 
+ static int rtw_mac_pre_system_cfg(struct rtw_dev *rtwdev)
+ {
++	unsigned int retry;
+ 	u32 value32;
+ 	u8 value8;
+ 
+@@ -77,6 +79,26 @@
+ 	case RTW_HCI_TYPE_PCIE:
+ 		rtw_write32_set(rtwdev, REG_HCI_OPT_CTRL, BIT_USB_SUS_DIS);
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		rtw_write8_clr(rtwdev, REG_SDIO_HSUS_CTRL, BIT(0));
++
++		for (retry = 0; retry < RTW_PWR_POLLING_CNT; retry++) {
++			if (rtw_read8(rtwdev, REG_SDIO_HSUS_CTRL) & BIT(1))
++				break;
++
++			usleep_range(10, 50);
++		}
++
++		if (retry == RTW_PWR_POLLING_CNT) {
++			rtw_err(rtwdev, "failed to poll REG_SDIO_HSUS_CTRL[1]");
++			return -ETIMEDOUT;
++		}
++
++		if (rtw_sdio_is_sdio30_supported(rtwdev))
++			rtw_write8_set(rtwdev, REG_HCI_OPT_CTRL + 2, BIT(2));
++		else
++			rtw_write8_clr(rtwdev, REG_HCI_OPT_CTRL + 2, BIT(2));
++		break;
+ 	case RTW_HCI_TYPE_USB:
+ 		break;
+ 	default:
+@@ -217,10 +239,13 @@
+ 	cut_mask = cut_version_to_mask(cut);
+ 	switch (rtw_hci_type(rtwdev)) {
+ 	case RTW_HCI_TYPE_PCIE:
+-		intf_mask = BIT(2);
++		intf_mask = RTW_PWR_INTF_PCI_MSK;
+ 		break;
+ 	case RTW_HCI_TYPE_USB:
+-		intf_mask = BIT(1);
++		intf_mask = RTW_PWR_INTF_USB_MSK;
++		break;
++	case RTW_HCI_TYPE_SDIO:
++		intf_mask = RTW_PWR_INTF_SDIO_MSK;
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -245,6 +270,7 @@
+ {
+ 	const struct rtw_chip_info *chip = rtwdev->chip;
+ 	const struct rtw_pwr_seq_cmd **pwr_seq;
++	u32 imr;
+ 	u8 rpwm;
+ 	bool cur_pwr;
+ 	int ret;
+@@ -270,16 +296,28 @@
+ 	if (pwr_on == cur_pwr)
+ 		return -EALREADY;
+ 
++	/* Always signal power off before power sequence. This way
++	 * read/write functions will take path which works in both
++	 * states. State will change in the middle of the sequence.
++	 */
++	rtw_hci_power_switch(rtwdev, false);
++
++	imr = rtw_read32(rtwdev, REG_SDIO_HIMR);
++	rtw_write32(rtwdev, REG_SDIO_HIMR, 0);
++
+ 	pwr_seq = pwr_on ? chip->pwr_on_seq : chip->pwr_off_seq;
+-	ret = rtw_pwr_seq_parser(rtwdev, pwr_seq);
+-	if (ret)
+-		return ret;
++	if (rtw_pwr_seq_parser(rtwdev, pwr_seq)) {
++		rtw_write32(rtwdev, REG_SDIO_HIMR, imr);
++ 		return -EINVAL;
++	}
+ 
+ 	if (pwr_on)
+ 		set_bit(RTW_FLAG_POWERON, rtwdev->flags);
+ 	else
+ 		clear_bit(RTW_FLAG_POWERON, rtwdev->flags);
+ 
++	rtw_hci_power_switch(rtwdev, pwr_on);
++
+ 	return 0;
+ }
+ 
+@@ -451,6 +489,9 @@
+ 	rtw_write16(rtwdev, REG_FIFOPAGE_INFO_1, 0x200);
+ 	rtw_write32(rtwdev, REG_RQPN_CTRL_2, bckp[bckp_idx - 1].val);
+ 
++	if (rtw_hci_type(rtwdev) == RTW_HCI_TYPE_SDIO)
++		rtw_read32(rtwdev, REG_SDIO_FREE_TXPG);
++
+ 	/* Disable beacon related functions */
+ 	tmp = rtw_read8(rtwdev, REG_BCN_CTRL);
+ 	bckp[bckp_idx].len = 1;
+@@ -1026,6 +1067,9 @@
+ 		else
+ 			return -EINVAL;
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		rqpn = &chip->rqpn_table[0];
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -1044,6 +1088,16 @@
+ 	if (rtw_chip_wcpu_11ac(rtwdev))
+ 		rtw_write32(rtwdev, REG_H2CQ_CSR, BIT_H2CQ_FULL);
+ 
++	if (rtw_hci_type(rtwdev) == RTW_HCI_TYPE_USB)
++		rtw_write8_set(rtwdev, REG_TXDMA_PQ_MAP, BIT_RXDMA_ARBBW_EN);
++
++	if (rtw_hci_type(rtwdev) == RTW_HCI_TYPE_SDIO) {
++		rtw_read32(rtwdev, REG_SDIO_FREE_TXPG);
++		rtw_write32(rtwdev, REG_SDIO_TX_CTRL, 0);
++	} else if (rtw_hci_type(rtwdev) == RTW_HCI_TYPE_USB) {
++		rtw_write8_set(rtwdev, REG_TXDMA_PQ_MAP, BIT_RXDMA_ARBBW_EN);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1185,6 +1239,9 @@
+ 		else
+ 			return -EINVAL;
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		pg_tbl = &chip->page_table[0];
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+diff -Naur a/drivers/net/wireless/realtek/rtw88/mac.h b/drivers/net/wireless/realtek/rtw88/mac.h
+--- a/drivers/net/wireless/realtek/rtw88/mac.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/mac.h	2023-05-26 05:23:16.041633711 -0400
+@@ -7,7 +7,6 @@
+ 
+ #define RTW_HW_PORT_NUM		5
+ #define cut_version_to_mask(cut) (0x1 << ((cut) + 1))
+-#define SDIO_LOCAL_OFFSET	0x10250000
+ #define DDMA_POLLING_COUNT	1000
+ #define C2H_PKT_BUF		256
+ #define REPORT_BUF		128
+diff -Naur a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+--- a/drivers/net/wireless/realtek/rtw88/main.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/main.c	2023-05-26 05:40:07.697049796 -0400
+@@ -18,6 +18,7 @@
+ #include "debug.h"
+ #include "bf.h"
+ #include "sar.h"
++#include "sdio.h"
+ 
+ bool rtw_disable_lps_deep_mode;
+ EXPORT_SYMBOL(rtw_disable_lps_deep_mode);
+@@ -102,6 +103,26 @@
+ 	{.bitrate = 540, .hw_value = 0x0b,},
+ };
+ 
++static const struct ieee80211_iface_limit rtw_iface_limits[] = {
++	{
++		.max = 1,
++		.types = BIT(NL80211_IFTYPE_STATION),
++	},
++	{
++		.max = 1,
++		.types = BIT(NL80211_IFTYPE_AP),
++	}
++};
++
++static const struct ieee80211_iface_combination rtw_iface_combs[] = {
++	{
++		.limits = rtw_iface_limits,
++		.n_limits = ARRAY_SIZE(rtw_iface_limits),
++		.max_interfaces = 2,
++		.num_different_channels = 1,
++	}
++};
++
+ u16 rtw_desc_to_bitrate(u8 desc_rate)
+ {
+ 	struct ieee80211_rate rate;
+@@ -241,8 +262,10 @@
+ 	rtw_phy_dynamic_mechanism(rtwdev);
+ 
+ 	data.rtwdev = rtwdev;
+-	/* use atomic version to avoid taking local->iflist_mtx mutex */
+-	rtw_iterate_vifs_atomic(rtwdev, rtw_vif_watch_dog_iter, &data);
++	/* rtw_iterate_vifs internally uses an atomic iterator which is needed
++	 * to avoid taking local->iflist_mtx mutex
++	 */
++	rtw_iterate_vifs(rtwdev, rtw_vif_watch_dog_iter, &data);
+ 
+ 	/* fw supports only one station associated to enter lps, if there are
+ 	 * more than two stations associated to the AP, then we can not enter
+@@ -1746,7 +1769,8 @@
+ 	update_firmware_info(rtwdev, fw);
+ 	complete_all(&fw->completion);
+ 
+-	rtw_info(rtwdev, "Firmware version %u.%u.%u, H2C version %u\n",
++	rtw_info(rtwdev, "%sFirmware version %u.%u.%u, H2C version %u\n",
++		 fw->type == RTW_WOWLAN_FW ? "WOW " : "",
+ 		 fw->version, fw->sub_version, fw->sub_index, fw->h2c_version);
+ }
+ 
+@@ -1772,6 +1796,7 @@
+ 		return -ENOENT;
+ 	}
+ 
++	fw->type = type;
+ 	fw->rtwdev = rtwdev;
+ 	init_completion(&fw->completion);
+ 
+@@ -1796,6 +1821,14 @@
+ 		rtwdev->hci.rpwm_addr = 0x03d9;
+ 		rtwdev->hci.cpwm_addr = 0x03da;
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		rtwdev->hci.rpwm_addr = REG_SDIO_HRPWM1;
++		rtwdev->hci.cpwm_addr = REG_SDIO_HCPWM1_V2;
++		break;
++	case RTW_HCI_TYPE_USB:
++		rtwdev->hci.rpwm_addr = 0xfe58;
++		rtwdev->hci.cpwm_addr = 0xfe57;
++		break;
+ 	default:
+ 		rtw_err(rtwdev, "unsupported hci type\n");
+ 		return -EINVAL;
+@@ -2080,13 +2113,10 @@
+ 	skb_queue_head_init(&rtwdev->coex.queue);
+ 	skb_queue_head_init(&rtwdev->tx_report.queue);
+ 
+-	spin_lock_init(&rtwdev->rf_lock);
+-	spin_lock_init(&rtwdev->h2c.lock);
+ 	spin_lock_init(&rtwdev->txq_lock);
+ 	spin_lock_init(&rtwdev->tx_report.q_lock);
+ 
+ 	mutex_init(&rtwdev->mutex);
+-	mutex_init(&rtwdev->coex.mutex);
+ 	mutex_init(&rtwdev->hal.tx_power_mutex);
+ 
+ 	init_waitqueue_head(&rtwdev->coex.wait);
+@@ -2158,7 +2188,6 @@
+ 	}
+ 
+ 	mutex_destroy(&rtwdev->mutex);
+-	mutex_destroy(&rtwdev->coex.mutex);
+ 	mutex_destroy(&rtwdev->hal.tx_power_mutex);
+ }
+ EXPORT_SYMBOL(rtw_core_deinit);
+@@ -2169,9 +2198,11 @@
+ 	int max_tx_headroom = 0;
+ 	int ret;
+ 
+-	/* TODO: USB & SDIO may need extra room? */
+ 	max_tx_headroom = rtwdev->chip->tx_pkt_desc_sz;
+ 
++	if (rtw_hci_type(rtwdev) == RTW_HCI_TYPE_SDIO)
++		max_tx_headroom += RTW_SDIO_DATA_PTR_ALIGN;
++
+ 	hw->extra_tx_headroom = max_tx_headroom;
+ 	hw->queues = IEEE80211_NUM_ACS;
+ 	hw->txq_data_size = sizeof(struct rtw_txq);
+@@ -2205,6 +2236,11 @@
+ 	hw->wiphy->max_scan_ssids = RTW_SCAN_MAX_SSIDS;
+ 	hw->wiphy->max_scan_ie_len = rtw_get_max_scan_ie_len(rtwdev);
+ 
++	if (rtwdev->chip->id == RTW_CHIP_TYPE_8822C) {
++		hw->wiphy->iface_combinations = rtw_iface_combs;
++		hw->wiphy->n_iface_combinations = ARRAY_SIZE(rtw_iface_combs);
++	}
++
+ 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CAN_REPLACE_PTK0);
+ 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_SCAN_RANDOM_SN);
+ 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_SET_SCAN_DWELL);
+diff -Naur a/drivers/net/wireless/realtek/rtw88/main.h b/drivers/net/wireless/realtek/rtw88/main.h
+--- a/drivers/net/wireless/realtek/rtw88/main.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/main.h	2023-05-26 05:23:16.016634105 -0400
+@@ -874,6 +874,10 @@
+ 			       bool is_tx2_path);
+ 	void (*config_txrx_mode)(struct rtw_dev *rtwdev, u8 tx_path,
+ 				 u8 rx_path, bool is_tx2_path);
++	/* for USB/SDIO only */
++	void (*fill_txdesc_checksum)(struct rtw_dev *rtwdev,
++				     struct rtw_tx_pkt_info *pkt_info,
++				     u8 *txdesc);
+ 
+ 	/* for coex */
+ 	void (*coex_set_init)(struct rtw_dev *rtwdev);
+@@ -1504,8 +1508,6 @@
+ };
+ 
+ struct rtw_coex {
+-	/* protects coex info request section */
+-	struct mutex mutex;
+ 	struct sk_buff_head queue;
+ 	wait_queue_head_t wait;
+ 
+@@ -1854,6 +1856,7 @@
+ 	u16 h2c_version;
+ 	u32 feature;
+ 	u32 feature_ext;
++	enum rtw_fw_type type;
+ };
+ 
+ enum rtw_sar_sources {
+@@ -1997,9 +2000,6 @@
+ 	/* ensures exclusive access from mac80211 callbacks */
+ 	struct mutex mutex;
+ 
+-	/* read/write rf register */
+-	spinlock_t rf_lock;
+-
+ 	/* watch dog every 2 sec */
+ 	struct delayed_work watch_dog_work;
+ 	u32 watch_dog_cnt;
+@@ -2025,8 +2025,6 @@
+ 	struct {
+ 		/* incicate the mail box to use with fw */
+ 		u8 last_box_num;
+-		/* protect to send h2c to fw */
+-		spinlock_t lock;
+ 		u32 seq;
+ 	} h2c;
+ 
+diff -Naur a/drivers/net/wireless/realtek/rtw88/Makefile b/drivers/net/wireless/realtek/rtw88/Makefile
+--- a/drivers/net/wireless/realtek/rtw88/Makefile	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/Makefile	2023-05-26 05:23:16.051633553 -0400
+@@ -26,23 +26,50 @@
+ obj-$(CONFIG_RTW88_8822BE)	+= rtw88_8822be.o
+ rtw88_8822be-objs		:= rtw8822be.o
+ 
++obj-$(CONFIG_RTW88_8822BS)	+= rtw88_8822bs.o
++rtw88_8822bs-objs		:= rtw8822bs.o
++
++obj-$(CONFIG_RTW88_8822BU)	+= rtw88_8822bu.o
++rtw88_8822bu-objs		:= rtw8822bu.o
++
+ obj-$(CONFIG_RTW88_8822C)	+= rtw88_8822c.o
+ rtw88_8822c-objs		:= rtw8822c.o rtw8822c_table.o
+ 
+ obj-$(CONFIG_RTW88_8822CE)	+= rtw88_8822ce.o
+ rtw88_8822ce-objs		:= rtw8822ce.o
+ 
++obj-$(CONFIG_RTW88_8822CS)	+= rtw88_8822cs.o
++rtw88_8822cs-objs		:= rtw8822cs.o
++
++obj-$(CONFIG_RTW88_8822CU)	+= rtw88_8822cu.o
++rtw88_8822cu-objs		:= rtw8822cu.o
++
+ obj-$(CONFIG_RTW88_8723D)	+= rtw88_8723d.o
+ rtw88_8723d-objs		:= rtw8723d.o rtw8723d_table.o
+ 
+ obj-$(CONFIG_RTW88_8723DE)	+= rtw88_8723de.o
+ rtw88_8723de-objs		:= rtw8723de.o
+ 
++obj-$(CONFIG_RTW88_8723DU)	+= rtw88_8723du.o
++rtw88_8723du-objs		:= rtw8723du.o
++
+ obj-$(CONFIG_RTW88_8821C)	+= rtw88_8821c.o
+ rtw88_8821c-objs		:= rtw8821c.o rtw8821c_table.o
+ 
+ obj-$(CONFIG_RTW88_8821CE)	+= rtw88_8821ce.o
+ rtw88_8821ce-objs		:= rtw8821ce.o
+ 
++obj-$(CONFIG_RTW88_8821CS)	+= rtw88_8821cs.o
++rtw88_8821cs-objs		:= rtw8821cs.o
++
++obj-$(CONFIG_RTW88_8821CU)	+= rtw88_8821cu.o
++rtw88_8821cu-objs		:= rtw8821cu.o
++
+ obj-$(CONFIG_RTW88_PCI)		+= rtw88_pci.o
+ rtw88_pci-objs			:= pci.o
++
++obj-$(CONFIG_RTW88_SDIO)	+= rtw88_sdio.o
++rtw88_sdio-objs			:= sdio.o
++
++obj-$(CONFIG_RTW88_USB)		+= rtw88_usb.o
++rtw88_usb-objs			:= usb.o
+diff -Naur a/drivers/net/wireless/realtek/rtw88/pci.c b/drivers/net/wireless/realtek/rtw88/pci.c
+--- a/drivers/net/wireless/realtek/rtw88/pci.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/pci.c	2023-05-26 05:23:16.038633758 -0400
+@@ -30,7 +30,8 @@
+ 	[RTW_TX_QUEUE_H2C]	= RTK_PCI_TXBD_IDX_H2CQ,
+ };
+ 
+-static u8 rtw_pci_get_tx_qsel(struct sk_buff *skb, u8 queue)
++static u8 rtw_pci_get_tx_qsel(struct sk_buff *skb,
++			      enum rtw_tx_queue_type queue)
+ {
+ 	switch (queue) {
+ 	case RTW_TX_QUEUE_BCN:
+@@ -542,7 +543,7 @@
+ static void rtw_pci_dma_release(struct rtw_dev *rtwdev, struct rtw_pci *rtwpci)
+ {
+ 	struct rtw_pci_tx_ring *tx_ring;
+-	u8 queue;
++	enum rtw_tx_queue_type queue;
+ 
+ 	rtw_pci_reset_trx_ring(rtwdev);
+ 	for (queue = 0; queue < RTK_MAX_TX_QUEUE_NUM; queue++) {
+@@ -608,8 +609,8 @@
+ {
+ 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
+ 	struct rtw_pci_tx_ring *tx_ring;
++	enum rtw_tx_queue_type queue;
+ 	bool tx_empty = true;
+-	u8 queue;
+ 
+ 	if (rtw_fw_feature_check(&rtwdev->fw, FW_FEATURE_TX_WAKE))
+ 		goto enter_deep_ps;
+@@ -669,37 +670,6 @@
+ 	spin_unlock_bh(&rtwpci->irq_lock);
+ }
+ 
+-static u8 ac_to_hwq[] = {
+-	[IEEE80211_AC_VO] = RTW_TX_QUEUE_VO,
+-	[IEEE80211_AC_VI] = RTW_TX_QUEUE_VI,
+-	[IEEE80211_AC_BE] = RTW_TX_QUEUE_BE,
+-	[IEEE80211_AC_BK] = RTW_TX_QUEUE_BK,
+-};
+-
+-static_assert(ARRAY_SIZE(ac_to_hwq) == IEEE80211_NUM_ACS);
+-
+-static u8 rtw_hw_queue_mapping(struct sk_buff *skb)
+-{
+-	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
+-	__le16 fc = hdr->frame_control;
+-	u8 q_mapping = skb_get_queue_mapping(skb);
+-	u8 queue;
+-
+-	if (unlikely(ieee80211_is_beacon(fc)))
+-		queue = RTW_TX_QUEUE_BCN;
+-	else if (unlikely(ieee80211_is_mgmt(fc) || ieee80211_is_ctl(fc)))
+-		queue = RTW_TX_QUEUE_MGMT;
+-	else if (is_broadcast_ether_addr(hdr->addr1) ||
+-		 is_multicast_ether_addr(hdr->addr1))
+-		queue = RTW_TX_QUEUE_HI0;
+-	else if (WARN_ON_ONCE(q_mapping >= ARRAY_SIZE(ac_to_hwq)))
+-		queue = ac_to_hwq[IEEE80211_AC_BE];
+-	else
+-		queue = ac_to_hwq[q_mapping];
+-
+-	return queue;
+-}
+-
+ static void rtw_pci_release_rsvd_page(struct rtw_pci *rtwpci,
+ 				      struct rtw_pci_tx_ring *ring)
+ {
+@@ -797,13 +767,14 @@
+ 	} else {
+ 		for (i = 0; i < rtwdev->hw->queues; i++)
+ 			if (queues & BIT(i))
+-				pci_queues |= BIT(ac_to_hwq[i]);
++				pci_queues |= BIT(rtw_tx_ac_to_hwq(i));
+ 	}
+ 
+ 	__rtw_pci_flush_queues(rtwdev, pci_queues, drop);
+ }
+ 
+-static void rtw_pci_tx_kick_off_queue(struct rtw_dev *rtwdev, u8 queue)
++static void rtw_pci_tx_kick_off_queue(struct rtw_dev *rtwdev,
++				      enum rtw_tx_queue_type queue)
+ {
+ 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
+ 	struct rtw_pci_tx_ring *ring;
+@@ -822,7 +793,7 @@
+ static void rtw_pci_tx_kick_off(struct rtw_dev *rtwdev)
+ {
+ 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
+-	u8 queue;
++	enum rtw_tx_queue_type queue;
+ 
+ 	for (queue = 0; queue < RTK_MAX_TX_QUEUE_NUM; queue++)
+ 		if (test_and_clear_bit(queue, rtwpci->tx_queued))
+@@ -831,7 +802,8 @@
+ 
+ static int rtw_pci_tx_write_data(struct rtw_dev *rtwdev,
+ 				 struct rtw_tx_pkt_info *pkt_info,
+-				 struct sk_buff *skb, u8 queue)
++				 struct sk_buff *skb,
++				 enum rtw_tx_queue_type queue)
+ {
+ 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
+ 	const struct rtw_chip_info *chip = rtwdev->chip;
+@@ -949,9 +921,9 @@
+ 			    struct rtw_tx_pkt_info *pkt_info,
+ 			    struct sk_buff *skb)
+ {
++	enum rtw_tx_queue_type queue = rtw_tx_queue_mapping(skb);
+ 	struct rtw_pci *rtwpci = (struct rtw_pci *)rtwdev->priv;
+ 	struct rtw_pci_tx_ring *ring;
+-	u8 queue = rtw_hw_queue_mapping(skb);
+ 	int ret;
+ 
+ 	ret = rtw_pci_tx_write_data(rtwdev, pkt_info, skb, queue);
+diff -Naur a/drivers/net/wireless/realtek/rtw88/phy.c b/drivers/net/wireless/realtek/rtw88/phy.c
+--- a/drivers/net/wireless/realtek/rtw88/phy.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/phy.c	2023-05-26 05:23:16.012634168 -0400
+@@ -300,7 +300,7 @@
+ 
+ 	data.rtwdev = rtwdev;
+ 	data.min_rssi = U8_MAX;
+-	rtw_iterate_stas_atomic(rtwdev, rtw_phy_stat_rssi_iter, &data);
++	rtw_iterate_stas(rtwdev, rtw_phy_stat_rssi_iter, &data);
+ 
+ 	dm_info->pre_min_rssi = dm_info->min_rssi;
+ 	dm_info->min_rssi = data.min_rssi;
+@@ -544,7 +544,7 @@
+ 	if (rtwdev->watch_dog_cnt & 0x3)
+ 		return;
+ 
+-	rtw_iterate_stas_atomic(rtwdev, rtw_phy_ra_info_update_iter, rtwdev);
++	rtw_iterate_stas(rtwdev, rtw_phy_ra_info_update_iter, rtwdev);
+ }
+ 
+ static u32 rtw_phy_get_rrsr_mask(struct rtw_dev *rtwdev, u8 rate_idx)
+@@ -597,7 +597,7 @@
+ 	struct rtw_dm_info *dm_info = &rtwdev->dm_info;
+ 
+ 	dm_info->rrsr_mask_min = RRSR_RATE_ORDER_MAX;
+-	rtw_iterate_stas_atomic(rtwdev, rtw_phy_rrsr_mask_min_iter, rtwdev);
++	rtw_iterate_stas(rtwdev, rtw_phy_rrsr_mask_min_iter, rtwdev);
+ 	rtw_write32(rtwdev, REG_RRSR, dm_info->rrsr_val_init & dm_info->rrsr_mask_min);
+ }
+ 
+diff -Naur a/drivers/net/wireless/realtek/rtw88/ps.c b/drivers/net/wireless/realtek/rtw88/ps.c
+--- a/drivers/net/wireless/realtek/rtw88/ps.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/ps.c	2023-05-26 05:23:16.013634152 -0400
+@@ -61,7 +61,7 @@
+ 		return ret;
+ 	}
+ 
+-	rtw_iterate_vifs_atomic(rtwdev, rtw_restore_port_cfg_iter, rtwdev);
++	rtw_iterate_vifs(rtwdev, rtw_restore_port_cfg_iter, rtwdev);
+ 
+ 	rtw_coex_ips_notify(rtwdev, COEX_IPS_LEAVE);
+ 
+diff -Naur a/drivers/net/wireless/realtek/rtw88/ps.h b/drivers/net/wireless/realtek/rtw88/ps.h
+--- a/drivers/net/wireless/realtek/rtw88/ps.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/ps.h	2023-05-26 05:23:16.049633585 -0400
+@@ -12,7 +12,7 @@
+ #define POWER_TX_WAKE		BIT(1)
+ #define POWER_MODE_LCLK		BIT(0)
+ 
+-#define LEAVE_LPS_TRY_CNT	5
++#define LEAVE_LPS_TRY_CNT	10
+ #define LEAVE_LPS_TIMEOUT	msecs_to_jiffies(100)
+ 
+ int rtw_enter_ips(struct rtw_dev *rtwdev);
+diff -Naur a/drivers/net/wireless/realtek/rtw88/reg.h b/drivers/net/wireless/realtek/rtw88/reg.h
+--- a/drivers/net/wireless/realtek/rtw88/reg.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/reg.h	2023-05-26 05:23:16.042633695 -0400
+@@ -184,6 +184,10 @@
+ #define BIT_TXDMA_VIQ_MAP(x)                                                   \
+ 	(((x) & BIT_MASK_TXDMA_VIQ_MAP) << BIT_SHIFT_TXDMA_VIQ_MAP)
+ #define REG_TXDMA_PQ_MAP	0x010C
++#define BIT_RXDMA_ARBBW_EN	BIT(0)
++#define BIT_RXSHFT_EN		BIT(1)
++#define BIT_RXDMA_AGG_EN	BIT(2)
++#define BIT_TXDMA_BW_EN		BIT(3)
+ #define BIT_SHIFT_TXDMA_BEQ_MAP	8
+ #define BIT_MASK_TXDMA_BEQ_MAP	0x3
+ #define BIT_TXDMA_BEQ_MAP(x)                                                   \
+@@ -282,10 +286,17 @@
+ #define REG_H2C_TAIL		0x0248
+ #define REG_H2C_READ_ADDR	0x024C
+ #define REG_H2C_INFO		0x0254
++#define REG_RXDMA_AGG_PG_TH	0x0280
++#define BIT_SHIFT_DMA_AGG_TO_V1	8
++#define BIT_EN_PRE_CALC		BIT(29)
+ #define REG_RXPKT_NUM		0x0284
+ #define BIT_RXDMA_REQ		BIT(19)
+ #define BIT_RW_RELEASE		BIT(18)
+ #define BIT_RXDMA_IDLE		BIT(17)
++#define REG_RXDMA_STATUS	0x0288
++#define REG_RXDMA_DPR		0x028C
++#define REG_RXDMA_MODE		0x0290
++#define BIT_DMA_MODE		BIT(1)
+ #define REG_RXPKTNUM		0x02B0
+ 
+ #define REG_INT_MIG		0x0304
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8723d.c b/drivers/net/wireless/realtek/rtw88/rtw8723d.c
+--- a/drivers/net/wireless/realtek/rtw88/rtw8723d.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8723d.c	2023-05-26 05:23:16.027633932 -0400
+@@ -210,6 +210,12 @@
+ 	ether_addr_copy(efuse->addr, map->e.mac_addr);
+ }
+ 
++static void rtw8723du_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8723d_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->u.mac_addr);
++}
++
+ static int rtw8723d_read_efuse(struct rtw_dev *rtwdev, u8 *log_map)
+ {
+ 	struct rtw_efuse *efuse = &rtwdev->efuse;
+@@ -239,6 +245,9 @@
+ 	case RTW_HCI_TYPE_PCIE:
+ 		rtw8723de_efuse_parsing(efuse, map);
+ 		break;
++	case RTW_HCI_TYPE_USB:
++		rtw8723du_efuse_parsing(efuse, map);
++		break;
+ 	default:
+ 		/* unsupported now */
+ 		return -ENOTSUPP;
+@@ -1945,6 +1954,24 @@
+ 	dm_info->pwr_trk_triggered = false;
+ }
+ 
++static void rtw8723d_fill_txdesc_checksum(struct rtw_dev *rtwdev,
++					  struct rtw_tx_pkt_info *pkt_info,
++					  u8 *txdesc)
++{
++	size_t words = 32 / 2; /* calculate the first 32 bytes (16 words) */
++	__le16 chksum = 0;
++	__le16 *data = (__le16 *)(txdesc);
++
++	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, 0x0000);
++
++	while (words--)
++		chksum ^= *data++;
++
++	chksum = ~chksum;
++
++	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, __le16_to_cpu(chksum));
++}
++
+ static struct rtw_chip_ops rtw8723d_ops = {
+ 	.phy_set_param		= rtw8723d_phy_set_param,
+ 	.read_efuse		= rtw8723d_read_efuse,
+@@ -1965,6 +1992,7 @@
+ 	.config_bfee		= NULL,
+ 	.set_gid_table		= NULL,
+ 	.cfg_csi_rate		= NULL,
++	.fill_txdesc_checksum	= rtw8723d_fill_txdesc_checksum,
+ 
+ 	.coex_set_init		= rtw8723d_coex_cfg_init,
+ 	.coex_set_ant_switch	= NULL,
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8723d.h b/drivers/net/wireless/realtek/rtw88/rtw8723d.h
+--- a/drivers/net/wireless/realtek/rtw88/rtw8723d.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8723d.h	2023-05-26 05:23:16.027633932 -0400
+@@ -41,6 +41,14 @@
+ 	u8 sub_device_id[2];
+ };
+ 
++struct rtw8723du_efuse {
++	u8 res4[48];                    /* 0xd0 */
++	u8 vender_id[2];                /* 0x100 */
++	u8 product_id[2];               /* 0x102 */
++	u8 usb_option;                  /* 0x104 */
++	u8 mac_addr[ETH_ALEN];          /* 0x107 */
++};
++
+ struct rtw8723d_efuse {
+ 	__le16 rtl_id;
+ 	u8 rsvd[2];
+@@ -69,7 +77,10 @@
+ 	u8 rfe_option;
+ 	u8 country_code[2];
+ 	u8 res[3];
+-	struct rtw8723de_efuse e;
++	union {
++		struct rtw8723de_efuse e;
++		struct rtw8723du_efuse u;
++	};
+ };
+ 
+ extern const struct rtw_chip_info rtw8723d_hw_spec;
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8821c.c b/drivers/net/wireless/realtek/rtw88/rtw8821c.c
+--- a/drivers/net/wireless/realtek/rtw88/rtw8821c.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8821c.c	2023-05-26 05:23:16.038633758 -0400
+@@ -26,6 +26,18 @@
+ 	ether_addr_copy(efuse->addr, map->e.mac_addr);
+ }
+ 
++static void rtw8821cs_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8821c_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->s.mac_addr);
++}
++
++static void rtw8821cu_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8821c_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->u.mac_addr);
++}
++
+ enum rtw8821ce_rf_set {
+ 	SWITCH_TO_BTG,
+ 	SWITCH_TO_WLG,
+@@ -68,6 +80,12 @@
+ 	case RTW_HCI_TYPE_PCIE:
+ 		rtw8821ce_efuse_parsing(efuse, map);
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		rtw8821cs_efuse_parsing(efuse, map);
++		break;
++	case RTW_HCI_TYPE_USB:
++		rtw8821cu_efuse_parsing(efuse, map);
++		break;
+ 	default:
+ 		/* unsupported now */
+ 		return -ENOTSUPP;
+@@ -1148,6 +1166,13 @@
+ 			 dm_info->cck_pd_default + new_lvl * 2);
+ }
+ 
++static void rtw8821c_fill_txdesc_checksum(struct rtw_dev *rtwdev,
++					  struct rtw_tx_pkt_info *pkt_info,
++					  u8 *txdesc)
++{
++	fill_txdesc_checksum_common(txdesc, 16);
++}
++
+ static struct rtw_pwr_seq_cmd trans_carddis_to_cardemu_8821c[] = {
+ 	{0x0086,
+ 	 RTW_PWR_CUT_ALL_MSK,
+@@ -1521,6 +1546,7 @@
+ 	[2] = RTW_DEF_RFE_EXT(8821c, 0, 0, 2),
+ 	[4] = RTW_DEF_RFE_EXT(8821c, 0, 0, 2),
+ 	[6] = RTW_DEF_RFE(8821c, 0, 0),
++	[34] = RTW_DEF_RFE(8821c, 0, 0),
+ };
+ 
+ static struct rtw_hw_reg rtw8821c_dig[] = {
+@@ -1595,6 +1621,7 @@
+ 	.config_bfee		= rtw8821c_bf_config_bfee,
+ 	.set_gid_table		= rtw_bf_set_gid_table,
+ 	.cfg_csi_rate		= rtw_bf_cfg_csi_rate,
++	.fill_txdesc_checksum	= rtw8821c_fill_txdesc_checksum,
+ 
+ 	.coex_set_init		= rtw8821c_coex_cfg_init,
+ 	.coex_set_ant_switch	= rtw8821c_coex_cfg_ant_switch,
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8821c.h b/drivers/net/wireless/realtek/rtw88/rtw8821c.h
+--- a/drivers/net/wireless/realtek/rtw88/rtw8821c.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8821c.h	2023-05-26 05:23:16.039633742 -0400
+@@ -9,6 +9,26 @@
+ 
+ #define RCR_VHT_ACK		BIT(26)
+ 
++struct rtw8821cu_efuse {
++	u8 res4[4];			/* 0xd0 */
++	u8 usb_optional_function;
++	u8 res5[0x1e];
++	u8 res6[2];
++	u8 serial[0x0b];		/* 0xf5 */
++	u8 vid;				/* 0x100 */
++	u8 res7;
++	u8 pid;
++	u8 res8[4];
++	u8 mac_addr[ETH_ALEN];		/* 0x107 */
++	u8 res9[2];
++	u8 vendor_name[0x07];
++	u8 res10[2];
++	u8 device_name[0x14];
++	u8 res11[0xcf];
++	u8 package_type;		/* 0x1fb */
++	u8 res12[0x4];
++};
++
+ struct rtw8821ce_efuse {
+ 	u8 mac_addr[ETH_ALEN];		/* 0xd0 */
+ 	u8 vender_id[2];
+@@ -45,6 +65,11 @@
+ 	u8 res7;
+ };
+ 
++struct rtw8821cs_efuse {
++	u8 res4[0x4a];			/* 0xd0 */
++	u8 mac_addr[ETH_ALEN];		/* 0x11a */
++};
++
+ struct rtw8821c_efuse {
+ 	__le16 rtl_id;
+ 	u8 res0[0x0e];
+@@ -73,6 +98,8 @@
+ 	u8 res[3];
+ 	union {
+ 		struct rtw8821ce_efuse e;
++		struct rtw8821cs_efuse s;
++		struct rtw8821cu_efuse u;
+ 	};
+ };
+ 
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8822b.c b/drivers/net/wireless/realtek/rtw88/rtw8822b.c
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822b.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822b.c	2023-05-26 05:23:16.039633742 -0400
+@@ -26,6 +26,19 @@
+ 	ether_addr_copy(efuse->addr, map->e.mac_addr);
+ }
+ 
++static void rtw8822bs_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8822b_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->s.mac_addr);
++}
++
++static void rtw8822bu_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8822b_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->u.mac_addr);
++
++}
++
+ static int rtw8822b_read_efuse(struct rtw_dev *rtwdev, u8 *log_map)
+ {
+ 	struct rtw_efuse *efuse = &rtwdev->efuse;
+@@ -56,6 +69,12 @@
+ 	case RTW_HCI_TYPE_PCIE:
+ 		rtw8822be_efuse_parsing(efuse, map);
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		rtw8822bs_efuse_parsing(efuse, map);
++		break;
++	case RTW_HCI_TYPE_USB:
++		rtw8822bu_efuse_parsing(efuse, map);
++		break;
+ 	default:
+ 		/* unsupported now */
+ 		return -ENOTSUPP;
+@@ -1588,6 +1607,15 @@
+ 	rtw_phy_set_edcca_th(rtwdev, l2h, h2l);
+ }
+ 
++static void rtw8822b_fill_txdesc_checksum(struct rtw_dev *rtwdev,
++					  struct rtw_tx_pkt_info *pkt_info,
++					  u8 *txdesc)
++{
++	size_t words = 32 / 2; /* calculate the first 32 bytes (16 words) */
++
++	fill_txdesc_checksum_common(txdesc, words);
++}
++
+ static const struct rtw_pwr_seq_cmd trans_carddis_to_cardemu_8822b[] = {
+ 	{0x0086,
+ 	 RTW_PWR_CUT_ALL_MSK,
+@@ -2163,6 +2191,7 @@
+ 	.cfg_csi_rate		= rtw_bf_cfg_csi_rate,
+ 	.adaptivity_init	= rtw8822b_adaptivity_init,
+ 	.adaptivity		= rtw8822b_adaptivity,
++	.fill_txdesc_checksum	= rtw8822b_fill_txdesc_checksum,
+ 
+ 	.coex_set_init		= rtw8822b_coex_cfg_init,
+ 	.coex_set_ant_switch	= rtw8822b_coex_cfg_ant_switch,
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8822b.h b/drivers/net/wireless/realtek/rtw88/rtw8822b.h
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822b.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822b.h	2023-05-26 05:23:16.039633742 -0400
+@@ -65,6 +65,11 @@
+ 	u8 res7;
+ };
+ 
++struct rtw8822bs_efuse {
++	u8 res4[0x4a];			/* 0xd0 */
++	u8 mac_addr[ETH_ALEN];		/* 0x11a */
++};
++
+ struct rtw8822b_efuse {
+ 	__le16 rtl_id;
+ 	u8 res0[0x0e];
+@@ -94,6 +99,7 @@
+ 	union {
+ 		struct rtw8822bu_efuse u;
+ 		struct rtw8822be_efuse e;
++		struct rtw8822bs_efuse s;
+ 	};
+ };
+ 
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8822c.c b/drivers/net/wireless/realtek/rtw88/rtw8822c.c
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822c.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822c.c	2023-05-26 05:23:16.040633727 -0400
+@@ -29,6 +29,18 @@
+ 	ether_addr_copy(efuse->addr, map->e.mac_addr);
+ }
+ 
++static void rtw8822cs_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8822c_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->s.mac_addr);
++}
++
++static void rtw8822cu_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8822c_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->u.mac_addr);
++}
++
+ static int rtw8822c_read_efuse(struct rtw_dev *rtwdev, u8 *log_map)
+ {
+ 	struct rtw_efuse *efuse = &rtwdev->efuse;
+@@ -58,6 +70,12 @@
+ 	case RTW_HCI_TYPE_PCIE:
+ 		rtw8822ce_efuse_parsing(efuse, map);
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		rtw8822cs_efuse_parsing(efuse, map);
++		break;
++	case RTW_HCI_TYPE_USB:
++		rtw8822cu_efuse_parsing(efuse, map);
++		break;
+ 	default:
+ 		/* unsupported now */
+ 		return -ENOTSUPP;
+@@ -4557,6 +4575,18 @@
+ 	rtw_phy_set_edcca_th(rtwdev, l2h, h2l);
+ }
+ 
++static void rtw8822c_fill_txdesc_checksum(struct rtw_dev *rtwdev,
++					  struct rtw_tx_pkt_info *pkt_info,
++					  u8 *txdesc)
++{
++	const struct rtw_chip_info *chip = rtwdev->chip;
++	size_t words;
++
++	words = (pkt_info->pkt_offset * 8 + chip->tx_pkt_desc_sz) / 2;
++
++	fill_txdesc_checksum_common(txdesc, words);
++}
++
+ static const struct rtw_pwr_seq_cmd trans_carddis_to_cardemu_8822c[] = {
+ 	{0x0086,
+ 	 RTW_PWR_CUT_ALL_MSK,
+@@ -4895,6 +4925,8 @@
+ 	[0] = RTW_DEF_RFE(8822c, 0, 0),
+ 	[1] = RTW_DEF_RFE(8822c, 0, 0),
+ 	[2] = RTW_DEF_RFE(8822c, 0, 0),
++	[3] = RTW_DEF_RFE(8822c, 0, 0),
++	[4] = RTW_DEF_RFE(8822c, 0, 0),
+ 	[5] = RTW_DEF_RFE(8822c, 0, 5),
+ 	[6] = RTW_DEF_RFE(8822c, 0, 0),
+ };
+@@ -4978,6 +5010,7 @@
+ 	.cfo_track		= rtw8822c_cfo_track,
+ 	.config_tx_path		= rtw8822c_config_tx_path,
+ 	.config_txrx_mode	= rtw8822c_config_trx_mode,
++	.fill_txdesc_checksum	= rtw8822c_fill_txdesc_checksum,
+ 
+ 	.coex_set_init		= rtw8822c_coex_cfg_init,
+ 	.coex_set_ant_switch	= NULL,
+diff -Naur a/drivers/net/wireless/realtek/rtw88/rtw8822c.h b/drivers/net/wireless/realtek/rtw88/rtw8822c.h
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822c.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822c.h	2023-05-26 05:23:16.041633711 -0400
+@@ -16,6 +16,11 @@
+ 	u8 res2[0x3d];
+ };
+ 
++struct rtw8822cs_efuse {
++	u8 res0[0x4a];			/* 0x120 */
++	u8 mac_addr[ETH_ALEN];		/* 0x16a */
++};
++
+ struct rtw8822ce_efuse {
+ 	u8 mac_addr[ETH_ALEN];		/* 0x120 */
+ 	u8 vender_id[2];
+@@ -92,6 +97,7 @@
+ 	u8 res10[0x42];
+ 	union {
+ 		struct rtw8822cu_efuse u;
++		struct rtw8822cs_efuse s;
+ 		struct rtw8822ce_efuse e;
+ 	};
+ };
+diff -Naur a/drivers/net/wireless/realtek/rtw88/tx.c b/drivers/net/wireless/realtek/rtw88/tx.c
+--- a/drivers/net/wireless/realtek/rtw88/tx.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/tx.c	2023-05-26 05:23:16.038633758 -0400
+@@ -682,3 +682,44 @@
+ 		list_del_init(&rtwtxq->list);
+ 	spin_unlock_bh(&rtwdev->txq_lock);
+ }
++
++static const enum rtw_tx_queue_type ac_to_hwq[] = {
++	[IEEE80211_AC_VO] = RTW_TX_QUEUE_VO,
++	[IEEE80211_AC_VI] = RTW_TX_QUEUE_VI,
++	[IEEE80211_AC_BE] = RTW_TX_QUEUE_BE,
++	[IEEE80211_AC_BK] = RTW_TX_QUEUE_BK,
++};
++
++static_assert(ARRAY_SIZE(ac_to_hwq) == IEEE80211_NUM_ACS);
++
++enum rtw_tx_queue_type rtw_tx_ac_to_hwq(enum ieee80211_ac_numbers ac)
++{
++	if (WARN_ON(unlikely(ac >= IEEE80211_NUM_ACS)))
++		return RTW_TX_QUEUE_BE;
++
++	return ac_to_hwq[ac];
++}
++EXPORT_SYMBOL(rtw_tx_ac_to_hwq);
++
++enum rtw_tx_queue_type rtw_tx_queue_mapping(struct sk_buff *skb)
++{
++	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
++	__le16 fc = hdr->frame_control;
++	u8 q_mapping = skb_get_queue_mapping(skb);
++	enum rtw_tx_queue_type queue;
++
++	if (unlikely(ieee80211_is_beacon(fc)))
++		queue = RTW_TX_QUEUE_BCN;
++	else if (unlikely(ieee80211_is_mgmt(fc) || ieee80211_is_ctl(fc)))
++		queue = RTW_TX_QUEUE_MGMT;
++	else if (is_broadcast_ether_addr(hdr->addr1) ||
++		 is_multicast_ether_addr(hdr->addr1))
++		queue = RTW_TX_QUEUE_HI0;
++	else if (WARN_ON_ONCE(q_mapping >= ARRAY_SIZE(ac_to_hwq)))
++		queue = ac_to_hwq[IEEE80211_AC_BE];
++	else
++		queue = ac_to_hwq[q_mapping];
++
++	return queue;
++}
++EXPORT_SYMBOL(rtw_tx_queue_mapping);
+diff -Naur a/drivers/net/wireless/realtek/rtw88/tx.h b/drivers/net/wireless/realtek/rtw88/tx.h
+--- a/drivers/net/wireless/realtek/rtw88/tx.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/tx.h	2023-05-26 05:23:16.038633758 -0400
+@@ -71,6 +71,14 @@
+ 	le32p_replace_bits((__le32 *)(txdesc) + 0x03, value, BIT(15))
+ #define SET_TX_DESC_BT_NULL(txdesc, value)				       \
+ 	le32p_replace_bits((__le32 *)(txdesc) + 0x02, value, BIT(23))
++#define SET_TX_DESC_TXDESC_CHECKSUM(txdesc, value)				\
++	le32p_replace_bits((__le32 *)(txdesc) + 0x07, value, GENMASK(15, 0))
++#define SET_TX_DESC_DMA_TXAGG_NUM(txdesc, value)				\
++	le32p_replace_bits((__le32 *)(txdesc) + 0x07, value, GENMASK(31, 24))
++#define GET_TX_DESC_PKT_OFFSET(txdesc)						\
++	le32_get_bits(*((__le32 *)(txdesc) + 0x01), GENMASK(28, 24))
++#define GET_TX_DESC_QSEL(txdesc)						\
++	le32_get_bits(*((__le32 *)(txdesc) + 0x01), GENMASK(12, 8))
+ 
+ enum rtw_tx_desc_queue_select {
+ 	TX_DESC_QSEL_TID0	= 0,
+@@ -123,4 +131,30 @@
+ 			  struct rtw_tx_pkt_info *pkt_info,
+ 			  u8 *buf, u32 size);
+ 
++enum rtw_tx_queue_type rtw_tx_ac_to_hwq(enum ieee80211_ac_numbers ac);
++enum rtw_tx_queue_type rtw_tx_queue_mapping(struct sk_buff *skb);
++
++static inline
++void fill_txdesc_checksum_common(u8 *txdesc, size_t words)
++{
++	__le16 chksum = 0;
++	__le16 *data = (__le16 *)(txdesc);
++
++	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, 0x0000);
++
++	while (words--)
++		chksum ^= *data++;
++
++	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, __le16_to_cpu(chksum));
++}
++
++static inline void rtw_tx_fill_txdesc_checksum(struct rtw_dev *rtwdev,
++					       struct rtw_tx_pkt_info *pkt_info,
++					       u8 *txdesc)
++{
++	const struct rtw_chip_info *chip = rtwdev->chip;
++
++	chip->ops->fill_txdesc_checksum(rtwdev, pkt_info, txdesc);
++}
++
+ #endif
+diff -Naur a/drivers/net/wireless/realtek/rtw88/util.c b/drivers/net/wireless/realtek/rtw88/util.c
+--- a/drivers/net/wireless/realtek/rtw88/util.c	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/util.c	2023-05-26 05:23:16.013634152 -0400
+@@ -105,3 +105,106 @@
+ 		*mcs = rate - DESC_RATEMCS0;
+ 	}
+ }
++
++struct rtw_stas_entry {
++	struct list_head list;
++	struct ieee80211_sta *sta;
++};
++
++struct rtw_iter_stas_data {
++	struct rtw_dev *rtwdev;
++	struct list_head list;
++};
++
++static void rtw_collect_sta_iter(void *data, struct ieee80211_sta *sta)
++{
++	struct rtw_iter_stas_data *iter_stas = data;
++	struct rtw_stas_entry *stas_entry;
++
++	stas_entry = kmalloc(sizeof(*stas_entry), GFP_ATOMIC);
++	if (!stas_entry)
++		return;
++
++	stas_entry->sta = sta;
++	list_add_tail(&stas_entry->list, &iter_stas->list);
++}
++
++void rtw_iterate_stas(struct rtw_dev *rtwdev,
++		      void (*iterator)(void *data,
++				       struct ieee80211_sta *sta),
++		      void *data)
++{
++	struct rtw_iter_stas_data iter_data;
++	struct rtw_stas_entry *sta_entry, *tmp;
++
++	/* &rtwdev->mutex makes sure no stations can be removed between
++	 * collecting the stations and iterating over them.
++	 */
++	lockdep_assert_held(&rtwdev->mutex);
++
++	iter_data.rtwdev = rtwdev;
++	INIT_LIST_HEAD(&iter_data.list);
++
++	ieee80211_iterate_stations_atomic(rtwdev->hw, rtw_collect_sta_iter,
++					  &iter_data);
++
++	list_for_each_entry_safe(sta_entry, tmp, &iter_data.list,
++				 list) {
++		list_del_init(&sta_entry->list);
++		iterator(data, sta_entry->sta);
++		kfree(sta_entry);
++	}
++}
++
++struct rtw_vifs_entry {
++	struct list_head list;
++	struct ieee80211_vif *vif;
++	u8 mac[ETH_ALEN];
++};
++
++struct rtw_iter_vifs_data {
++	struct rtw_dev *rtwdev;
++	struct list_head list;
++};
++
++static void rtw_collect_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
++{
++	struct rtw_iter_vifs_data *iter_stas = data;
++	struct rtw_vifs_entry *vifs_entry;
++
++	vifs_entry = kmalloc(sizeof(*vifs_entry), GFP_ATOMIC);
++	if (!vifs_entry)
++		return;
++
++	vifs_entry->vif = vif;
++	ether_addr_copy(vifs_entry->mac, mac);
++	list_add_tail(&vifs_entry->list, &iter_stas->list);
++}
++
++void rtw_iterate_vifs(struct rtw_dev *rtwdev,
++		      void (*iterator)(void *data, u8 *mac,
++				       struct ieee80211_vif *vif),
++		      void *data)
++{
++	struct rtw_iter_vifs_data iter_data;
++	struct rtw_vifs_entry *vif_entry, *tmp;
++
++	/* &rtwdev->mutex makes sure no interfaces can be removed between
++	 * collecting the interfaces and iterating over them.
++	 */
++	lockdep_assert_held(&rtwdev->mutex);
++
++	iter_data.rtwdev = rtwdev;
++	INIT_LIST_HEAD(&iter_data.list);
++
++	ieee80211_iterate_active_interfaces_atomic(rtwdev->hw,
++						   IEEE80211_IFACE_ITER_NORMAL,
++						   rtw_collect_vif_iter, &iter_data);
++
++	list_for_each_entry_safe(vif_entry, tmp, &iter_data.list,
++				 list) {
++		list_del_init(&vif_entry->list);
++		iterator(data, vif_entry->mac, vif_entry->vif);
++		kfree(vif_entry);
++	}
++}
+diff -Naur a/drivers/net/wireless/realtek/rtw88/util.h b/drivers/net/wireless/realtek/rtw88/util.h
+--- a/drivers/net/wireless/realtek/rtw88/util.h	2023-05-24 12:32:53.000000000 -0400
++++ b/drivers/net/wireless/realtek/rtw88/util.h	2023-05-26 05:23:16.013634152 -0400
+@@ -7,9 +7,6 @@
+ 
+ struct rtw_dev;
+ 
+-#define rtw_iterate_vifs(rtwdev, iterator, data)                               \
+-	ieee80211_iterate_active_interfaces(rtwdev->hw,                        \
+-			IEEE80211_IFACE_ITER_NORMAL, iterator, data)
+ #define rtw_iterate_vifs_atomic(rtwdev, iterator, data)                        \
+ 	ieee80211_iterate_active_interfaces_atomic(rtwdev->hw,                 \
+ 			IEEE80211_IFACE_ITER_NORMAL, iterator, data)
+@@ -20,6 +17,15 @@
+ #define rtw_iterate_keys_rcu(rtwdev, vif, iterator, data)		       \
+ 	ieee80211_iter_keys_rcu((rtwdev)->hw, vif, iterator, data)
+ 
++void rtw_iterate_vifs(struct rtw_dev *rtwdev,
++		      void (*iterator)(void *data, u8 *mac,
++				       struct ieee80211_vif *vif),
++		      void *data);
++void rtw_iterate_stas(struct rtw_dev *rtwdev,
++		      void (*iterator)(void *data,
++				       struct ieee80211_sta *sta),
++				       void *data);
++
+ static inline u8 *get_hdr_bssid(struct ieee80211_hdr *hdr)
+ {
+ 	__le16 fc = hdr->frame_control;
+diff -Naur a/include/linux/mmc/sdio_ids.h b/include/linux/mmc/sdio_ids.h
+--- a/include/linux/mmc/sdio_ids.h	2023-05-24 12:32:53.000000000 -0400
++++ b/include/linux/mmc/sdio_ids.h	2023-05-26 05:23:16.036633790 -0400
+@@ -111,6 +111,15 @@
+ #define SDIO_VENDOR_ID_MICROCHIP_WILC		0x0296
+ #define SDIO_DEVICE_ID_MICROCHIP_WILC1000	0x5347
+ 
++#define SDIO_VENDOR_ID_REALTEK			0x024c
++#define SDIO_DEVICE_ID_REALTEK_RTW8723BS	0xb723
++#define SDIO_DEVICE_ID_REALTEK_RTW8723DS	0xd723
++#define SDIO_DEVICE_ID_REALTEK_RTW8821BS	0xb821
++#define SDIO_DEVICE_ID_REALTEK_RTW8821CS	0xc821
++#define SDIO_DEVICE_ID_REALTEK_RTW8821DS	0xd821
++#define SDIO_DEVICE_ID_REALTEK_RTW8822BS	0xb822
++#define SDIO_DEVICE_ID_REALTEK_RTW8822CS	0xc822
++
+ #define SDIO_VENDOR_ID_SIANO			0x039a
+ #define SDIO_DEVICE_ID_SIANO_NOVA_B0		0x0201
+ #define SDIO_DEVICE_ID_SIANO_NICE		0x0202
