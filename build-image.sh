@@ -1,0 +1,9 @@
+./compile.sh KERNEL_CONFIGURE="no" \
+            BOARD="lepotato" \
+            KERNEL_TARGET="current" \
+            BRANCH="current" \
+            BUILD_DESKTOP="yes" \
+            DESKTOP_ENVIRONMENT="xfce" \
+            RELEASE="jammy" \
+            DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base \
+            DESKTOP_APPGROUPS_SELECTED="browsers"
