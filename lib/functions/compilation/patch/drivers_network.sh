@@ -389,17 +389,19 @@ driver_rtl88x2bu() {
 
 driver_rtw88() {
 	# Upstream wireless RTW88 drivers
-	if linux-version compare "${version}" ge 6.1 && [ $EXTRAWIFI == yes ]; then
+
+	# Only for 6.1, 6.2 already has those...
+	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.2 && [ $EXTRAWIFI == yes ]; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
 		process_patch_file "${SRC}/patch/misc/rtw88/6.1/001-rtw88-linux-next-backport.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/6.1/002-rtw88-fix-rcu-lock.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/003-rtw88-rfc.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/6.1/004-rtw88-usb-fixes.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/005-rtw88-mac-c-fix.patch" "applying"
 	fi
-	if linux-version compare "${version}" ge 6.3 && [ $EXTRAWIFI == yes ]; then
-		display_alert "Adding" "Upstream wireless drivers for RTW88" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.3/001-rtw88-sdio-rfc.patch" "applying"
+
+	# Both 6.1 and 6.2 need those... but not 6.3
+	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.3 && [ $EXTRAWIFI == yes ]; then
+		process_patch_file "${SRC}/patch/misc/rtw88/6.1/003-rtw88-rfc.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/6.1/005-rtw88-mac-c-fix.patch" "applying"
 	fi
 }
 
