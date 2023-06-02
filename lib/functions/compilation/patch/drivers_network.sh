@@ -389,20 +389,10 @@ driver_rtl88x2bu() {
 
 driver_rtw88() {
 	# Upstream wireless RTW88 drivers
-	if [[ "${version}" == "6.1" ]] && [ $EXTRAWIFI == yes ]; then
+	if [[ "$version" == "6.1" || "$version" == "6.2" || "$version" == "6.3" ]] && [ $EXTRAWIFI == yes ]; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/001-rtw88-linux-next.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.1/002-rtw88-linux-next.patch" "applying"
-	fi
-	if [[ "${version}" == "6.2" ]] && [ $EXTRAWIFI == yes ]; then
-		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.2/001-rtw88-linux-next.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.2/002-rtw88-linux-next.patch" "applying"
-	fi
-	if [[ "${version}" == "6.3" ]] && [ $EXTRAWIFI == yes ]; then
-		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.3/001-rtw88-linux-next.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/6.3/002-rtw88-linux-next.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-rtw88-linux-next.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-rtw88-linux-next.patch" "applying"
 	fi
 }
 
