@@ -58,7 +58,6 @@ InstallOpenMediaVault() {
 	echo root:openmediavault | chpasswd
 	rm /root/.not_logged_in_yet
 	. /etc/default/cpufrequtils
-	export LANG=C LC_ALL="en_US.UTF-8"
 	export DEBIAN_FRONTEND=noninteractive
 	export APT_LISTCHANGES_FRONTEND=none
 
@@ -271,7 +270,6 @@ InstallHtcDisplay()
 	done
 
 	# Default settings
-	export LANG=C LC_ALL="en_AU.UTF-8"
 	export DEBIAN_FRONTEND=noninteractive
 	export APT_LISTCHANGES_FRONTEND=none
 
@@ -283,22 +281,21 @@ InstallHtcDisplay()
 	export DESKTOP_BG_DIR="/usr/share/backgrounds/armbian"
 	export AUTOSTART_DIR="/home/htc/.config/autostart"
 
-	export SOURCE_DIR="/tmp/overlay/"
+	export SOURCE_DIR="/tmp/overlay"
 	export APP_DIR="$SOURCE_DIR/htc"
 	export BG_DIR="$SOURCE_DIR/backgrounds"
 	export AUTOSTART_SOURCE_DIR="$SOURCE_DIR/autostart"
 
 	# Create directory for our scripts and copy them over
-	mkdir -p $HTCDISPLAY_INSTALL_DIR
 	yes | cp -rfa $APP_DIR $HTCDISPLAY_INSTALL_DIR
 
 	# Copy any custom backgrounds to the desktop background directory
 	mkdir -p $DESKTOP_BG_DIR
-	yes | cp -rfa $BG_DIR $DESKTOP_BG_DIR	
+	yes | cp -rfa $BG_DIR/* $DESKTOP_BG_DIR	
 
-	# Copy any custom backgrounds to the desktop background directory
+	# Copy any autostarts to the desktop autostart directory
 	mkdir -p $AUTOSTART_DIR
-	yes | cp -rfa $AUTOSTART_SOURCE_DIR $AUTOSTART_DIR		
+	yes | cp -rfa $AUTOSTART_SOURCE_DIR/* $AUTOSTART_DIR		
 
 	# Install nodejs 19.x sources for npm
 	curl -fsSL https://deb.nodesource.com/setup_19.x | bash - &&\
@@ -314,16 +311,20 @@ InstallHtcDisplay()
 	apt-get install -yy xdotool
 	apt-get install -yy chromium-browser	
 	apt-get install -yy unclutter
+	apt-get install -yy xfconf
 
 	# Install all required dependencies
 	npm install --prefix $HTCDISPLAY_INSTALL_DIR
 
 	# Configure auto-login for htc user and standard shell
-	echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR" | sudo tee -a /home/htc/.profile
-	echo "export DISPLAY_URL=$DISPLAY_URL" | sudo tee -a /home/htc/.profile
+	echo -e "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR\n" | sudo tee -a /home/htc/.profile
+	echo -e "export DISPLAY_URL=$DISPLAY_URL" | sudo tee -a /home/htc/.profile
 		
 	# Configure auto-login for htc user and standard shell
-	echo 'autologin-user=htc' | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
+	echo -e "autologin-user=htc" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
+
+	# Configure power management to never turn off
+	#xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/presentation-mode -T
 
 	# Update the device's host name so it is unique
 	# and restart so it takes effect
