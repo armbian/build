@@ -288,6 +288,7 @@ InstallHtcDisplay()
 
 	# Create directory for our scripts and copy them over
 	yes | cp -rfa $APP_DIR $HTCDISPLAY_INSTALL_DIR
+	chmod 755 $HTCDISPLAY_INSTALL_DIR/*.sh
 
 	# Copy any custom backgrounds to the desktop background directory
 	mkdir -p $DESKTOP_BG_DIR
@@ -318,10 +319,10 @@ InstallHtcDisplay()
 
 	# Configure auto-login for htc user and standard shell
 	echo -e "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR\n" | sudo tee -a /home/htc/.profile
-	echo -e "export DISPLAY_URL=$DISPLAY_URL" | sudo tee -a /home/htc/.profile
+	echo -e "export DISPLAY_URL=$DISPLAY_URL\n" | sudo tee -a /home/htc/.profile
 		
 	# Configure auto-login for htc user and standard shell
-	echo -e "autologin-user=htc" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
+	echo -e "autologin-user=htc\n" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
 
 	# Configure power management to never turn off
 	#xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/presentation-mode -T
