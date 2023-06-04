@@ -326,7 +326,7 @@ InstallHtcDisplay()
 	} >> /home/htc/.config/autostart/browser.desktop
 	{
 		echo "[Desktop Entry]"
-		echo "unclutter -idle 2"
+		echo "Exec=unclutter -idle 2"
 	} >> /home/htc/.config/autostart/unclutter.desktop
 
 	# Configure auto-login for htc user and standard shell
