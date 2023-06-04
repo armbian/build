@@ -337,9 +337,6 @@ InstallHtcDisplay()
 	# Configure auto-login for htc user and standard shell
 	echo -e "autologin-user=htc" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
 
-	# Configure power management to never turn off
-	xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/presentation-mode -T
-
 	# Update the device's host name so it is unique
 	# and restart so it takes effect
 	#$HOST_NAME="HTC-$(head /dev/random | tr -cd 'A-Za-z0-9' | head -c 10 ; echo '')"
