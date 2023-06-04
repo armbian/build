@@ -318,11 +318,6 @@ InstallHtcDisplay()
 		echo "export DISPLAY_URL=$DISPLAY_URL"	
 		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"
 	} >> /home/htc/.bashrc
-	{
-		echo ""
-		echo "export DISPLAY_URL=$DISPLAY_URL"
-		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"	
-	} >> /home/htc/.xsessionrc
 
 	# Configure autostart profiles for kiosk operation
 	{
