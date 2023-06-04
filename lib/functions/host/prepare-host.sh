@@ -377,6 +377,10 @@ function install_host_dependencies() {
 function check_host_has_enough_disk_space() {
 	declare -a dirs_to_check=("${DEST}" "${SRC}/cache")
 	for dir in "${dirs_to_check[@]}"; do
+		if [[ ! -d "${dir}" ]]; then
+			display_alert "Directory not found" "Skipping disk space check for '${dir}'" "debug"
+			continue
+		fi
 		check_dir_has_enough_disk_space "${dir}" 10 || exit_if_countdown_not_aborted 10 "Low free disk space left in '${dir}'"
 	done
 }
