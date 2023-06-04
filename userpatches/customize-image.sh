@@ -284,7 +284,6 @@ InstallHtcDisplay()
 	export SOURCE_DIR="/tmp/overlay"
 	export APP_DIR="$SOURCE_DIR/htc"
 	export BG_DIR="$SOURCE_DIR/backgrounds"
-	export AUTOSTART_SOURCE_DIR="$SOURCE_DIR/autostart"
 
 	# Create directory for our scripts and copy them over
 	yes | cp -rfa $APP_DIR $HTCDISPLAY_INSTALL_DIR
@@ -293,10 +292,6 @@ InstallHtcDisplay()
 	# Copy any custom backgrounds to the desktop background directory
 	mkdir -p $DESKTOP_BG_DIR
 	yes | cp -rfa $BG_DIR/* $DESKTOP_BG_DIR	
-
-	# Copy any autostarts to the desktop autostart directory
-	mkdir -p $AUTOSTART_DIR
-	yes | cp -rfa $AUTOSTART_SOURCE_DIR/* $AUTOSTART_DIR		
 
 	# Install nodejs 19.x sources for npm
 	curl -fsSL https://deb.nodesource.com/setup_19.x | bash - &&\
@@ -319,19 +314,31 @@ InstallHtcDisplay()
 
 	# Configure default environment variables
 	{
+		echo ""
 		echo "export DISPLAY_URL=$DISPLAY_URL"	
 		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"
 	} >> /home/htc/.bashrc
 	{
+		echo ""
 		echo "export DISPLAY_URL=$DISPLAY_URL"
 		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"	
 	} >> /home/htc/.xsessionrc
+
+	# Configure autostart profiles for kiosk operation
+	{
+		echo "[Desktop Entry]"
+		echo "Exec=$HTCDISPLAY_INSTALL_DIR/run-chromium.sh"
+	} >> /home/htc/.config/autostart/browser.desktop
+	{
+		echo "[Desktop Entry]"
+		echo "unclutter -idle 2"
+	} >> /home/htc/.config/autostart/unclutter.desktop
 
 	# Configure auto-login for htc user and standard shell
 	echo -e "autologin-user=htc" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
 
 	# Configure power management to never turn off
-	#xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/presentation-mode -T
+	xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/presentation-mode -T
 
 	# Update the device's host name so it is unique
 	# and restart so it takes effect
