@@ -317,12 +317,18 @@ InstallHtcDisplay()
 	# Install all required dependencies
 	npm install --prefix $HTCDISPLAY_INSTALL_DIR
 
+	# Configure default environment variables
+	{
+		echo "export DISPLAY_URL=$DISPLAY_URL"	
+		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"
+	} >> /home/htc/.bashrc
+	{
+		echo "export DISPLAY_URL=$DISPLAY_URL"
+		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"	
+	} >> /home/htc/.xsessionrc
+
 	# Configure auto-login for htc user and standard shell
-	echo -e "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR\n" | sudo tee -a /home/htc/.profile
-	echo -e "export DISPLAY_URL=$DISPLAY_URL\n" | sudo tee -a /home/htc/.profile
-		
-	# Configure auto-login for htc user and standard shell
-	echo -e "autologin-user=htc\n" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
+	echo -e "autologin-user=htc" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
 
 	# Configure power management to never turn off
 	#xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/presentation-mode -T
