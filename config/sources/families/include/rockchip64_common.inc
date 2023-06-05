@@ -197,6 +197,7 @@ prepare_boot_configuration() {
 		fi
 
 	fi
+
 }
 
 uboot_custom_postprocess() {

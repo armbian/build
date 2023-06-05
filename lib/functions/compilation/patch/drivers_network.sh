@@ -387,11 +387,20 @@ driver_rtl88x2bu() {
 
 }
 
+driver_rtw88() {
+	# Upstream wireless RTW88 drivers
+	if [[ "$version" == "6.1" || "$version" == "6.2" || "$version" == "6.3" ]] && [ $EXTRAWIFI == yes ]; then
+		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-rtw88-linux-next.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-rtw88-linux-next.patch" "applying"
+	fi
+}
+
 driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
 
-	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == yes ]; then
+	if linux-version compare "${version}" ge 5.9 && [ "$EXTRAWIFI" == no ]; then
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"
@@ -610,8 +619,13 @@ driver_rtl8723cs() {
 	# Realtek rtl8723cs wireless support.
 	# Driver has been borrowed from sunxi 6.1 megous patch archive.
 	# Applies only from linux 6.1 onwards, so older kernel archives does not require to be altered
-	# It was disabled from bcm2711 as that kernel is not fully in sync with mainline and as its probably not needed there anyway
-	if linux-version compare "${version}" ge 6.1 && [[ "$LINUXFAMILY" != bcm2711 ]] && [[ "$LINUXFAMILY" != d1 ]]; then
+
+	# It was disabled from d1/bcm2711 as that kernel is not fully in sync with mainline and as its probably not needed there anyway
+	if [[ "$LINUXFAMILY" == bcm2711 || "$LINUXFAMILY" == d1 ]]; then
+		return 0
+	fi
+
+	if linux-version compare "${version}" ge 6.1; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Add-a-new-driver-v5.12.2-7-g2de5ec386.20201013_beta.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Make-the-driver-compile-and-probe-drop-rockchip-platform.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Enable-OOB-interrupt.patch" "applying"
@@ -672,6 +686,7 @@ patch_drivers_network() {
 	driver_rtl8811CU_rtl8821C
 	driver_rtl8188EU_rtl8188ETV
 	driver_rtl88x2bu
+	driver_rtw88
 	driver_rtl88x2cs
 	driver_rtl8822cs_bt
 	driver_rtl8723DS

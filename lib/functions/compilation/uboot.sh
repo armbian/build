@@ -147,6 +147,13 @@ function compile_uboot_target() {
 
 	fi
 
+	# Hook time, for extra post-processing
+	call_extension_method "post_config_uboot_target" <<- 'POST_CONFIG_UBOOT_TARGET'
+		*allow extensions prepare after configuring but before compiling an u-boot target*
+		Some u-boot targets require extra configuration or pre-processing before compiling.
+		Last chance to change .config for u-boot before compiling.
+	POST_CONFIG_UBOOT_TARGET
+
 	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
 		display_alert "Configuring u-boot" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_dialog make menuconfig
