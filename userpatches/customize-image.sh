@@ -274,15 +274,19 @@ InstallHtcDisplay()
 	export APT_LISTCHANGES_FRONTEND=none
 
 	# Default directories
+	export HOME_DIR="/home/htc"
 	export BIN_DIR="/usr/local/bin"
 	export HTCDISPLAY_INSTALL_DIR="$BIN_DIR/htc"	
 
 	export DESKTOP_BG_DIR="/usr/share/backgrounds/armbian"
-	export AUTOSTART_DIR="/home/htc/.config/autostart"
+	export AUTOSTART_DIR="$HOME_DIR/.config/autostart"
 
 	export SOURCE_DIR="/tmp/overlay"
 	export APP_DIR="$SOURCE_DIR/htc"
 	export BG_DIR="$SOURCE_DIR/backgrounds"
+
+	# Copy .bash_profile color scripts
+	yes | cp -rfa "$SOURCE_DIR/.bash_profile__colors" $HOME_DIR
 
 	# Create directory for our scripts and copy them over
 	yes | cp -rfa $APP_DIR $HTCDISPLAY_INSTALL_DIR
@@ -313,6 +317,9 @@ InstallHtcDisplay()
 
 	# Configure default environment variables
 	{
+		# Color functions for console
+		[[ -r "$(dirname "$BASH_SOURCE")/.bash_profile__colors" ]] && source "$(dirname "$BASH_SOURCE")/.bash_profile__colors"
+
 		echo "# Get the aliases and functions"
 		echo "if [ -f ~/.bashrc ]; then"
 		echo "	. ~/.bashrc"
@@ -321,17 +328,17 @@ InstallHtcDisplay()
 		echo ""
 		echo "#HTC Display Environment Variables"
 		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"
-	} >> /home/htc/.bash_profile
+	} >> $HOME_DIR/.bash_profile
 
 	# Configure autostart profiles for kiosk operation
 	{
 		echo "[Desktop Entry]"
 		echo "Exec=bash -c \". $HTCDISPLAY_INSTALL_DIR/run-chromium.sh\""
-	} >> /home/htc/.config/autostart/browser.desktop
+	} >> $HOME_DIR/.config/autostart/browser.desktop
 	{
 		echo "[Desktop Entry]"
 		echo "Exec=unclutter -idle 2"
-	} >> /home/htc/.config/autostart/unclutter.desktop
+	} >> $HOME_DIR/.config/autostart/unclutter.desktop
 
 	# Configure auto-login for htc user and standard shell
 	echo -e "autologin-user=htc" | sudo tee -a /etc/lightdm/lightdm.conf.d/11-armbian.conf
