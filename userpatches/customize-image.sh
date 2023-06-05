@@ -276,7 +276,6 @@ InstallHtcDisplay()
 	# Default directories
 	export BIN_DIR="/usr/local/bin"
 	export HTCDISPLAY_INSTALL_DIR="$BIN_DIR/htc"	
-	export DISPLAY_URL="http://192.168.0.230:3000"	
 
 	export DESKTOP_BG_DIR="/usr/share/backgrounds/armbian"
 	export AUTOSTART_DIR="/home/htc/.config/autostart"
@@ -314,15 +313,20 @@ InstallHtcDisplay()
 
 	# Configure default environment variables
 	{
+		echo "# Get the aliases and functions"
+		echo "if [ -f ~/.bashrc ]; then"
+		echo "	. ~/.bashrc"
+		echo "fi"
+
 		echo ""
-		echo "export DISPLAY_URL=$DISPLAY_URL"	
+		echo "#HTC Display Environment Variables"
 		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"
-	} >> /home/htc/.bashrc
+	} >> /home/htc/.bash_profile
 
 	# Configure autostart profiles for kiosk operation
 	{
 		echo "[Desktop Entry]"
-		echo "Exec=$HTCDISPLAY_INSTALL_DIR/run-chromium.sh"
+		echo "Exec=bash -c \". $HTCDISPLAY_INSTALL_DIR/run-chromium.sh\""
 	} >> /home/htc/.config/autostart/browser.desktop
 	{
 		echo "[Desktop Entry]"
