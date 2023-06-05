@@ -275,14 +275,16 @@ InstallHtcDisplay()
 
 	# Default directories
 	export HOME_DIR="/home/htc"
-	export BIN_DIR="/usr/local/bin"
-	export HTCDISPLAY_INSTALL_DIR="$BIN_DIR/htc"	
+	export USR_BIN_DIR="/usr/local/bin"
+	export HTCDISPLAY_INSTALL_DIR="$USR_BIN_DIR/htc"	
 
 	export DESKTOP_BG_DIR="/usr/share/backgrounds/armbian"
 	export AUTOSTART_DIR="$HOME_DIR/.config/autostart"
+	export LOCAL_FONTS_DIR="$HOME_DIR/.local/share/fonts"
 
 	export SOURCE_DIR="/tmp/overlay"
 	export APP_DIR="$SOURCE_DIR/htc"
+	export FONTS_DIR="$SOURCE_DIR/fonts"
 	export BG_DIR="$SOURCE_DIR/backgrounds"
 
 	# Copy .bash_profile color scripts
@@ -294,7 +296,14 @@ InstallHtcDisplay()
 
 	# Copy any custom backgrounds to the desktop background directory
 	mkdir -p $DESKTOP_BG_DIR
-	yes | cp -rfa $BG_DIR/* $DESKTOP_BG_DIR	
+	yes | cp -rfa $BG_DIR/* $DESKTOP_BG_DIR
+
+	# Copy custom fonts to the local fonts directory
+	mkdir -p $LOCAL_FONTS_DIR
+	yes | cp -rfa $FONTS_DIR/* $LOCAL_FONTS_DIR
+
+	# Rebuild font cache
+	fc-cache -f -v	
 
 	# Install nodejs 19.x sources for npm
 	curl -fsSL https://deb.nodesource.com/setup_19.x | bash - &&\
