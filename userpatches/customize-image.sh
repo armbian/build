@@ -324,7 +324,7 @@ InstallHtcDisplay()
 	# Configure autostart profiles for kiosk operation
 	{
 		echo "[Desktop Entry]"
-		echo "Exec=bash -c \". $HOME_DIR/.bash_profile && $HTCDISPLAY_INSTALL_DIR/run-chromium.sh\""
+		echo "Exec=/bin/bash -c \". $HOME_DIR/htc.env && $HTCDISPLAY_INSTALL_DIR/run-chromium.sh\""
 	} >> $HOME_DIR/.config/autostart/browser.desktop
 	{
 		echo "[Desktop Entry]"
