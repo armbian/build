@@ -280,11 +280,10 @@ InstallHtcDisplay()
 
 	export DESKTOP_BG_DIR="/usr/share/backgrounds/armbian"
 	export AUTOSTART_DIR="$HOME_DIR/.config/autostart"
-	export LOCAL_FONTS_DIR="$HOME_DIR/.local/share/fonts"
+
 
 	export SOURCE_DIR="/tmp/overlay"
 	export APP_DIR="$SOURCE_DIR/htc"
-	export FONTS_DIR="$SOURCE_DIR/fonts"
 	export BG_DIR="$SOURCE_DIR/backgrounds"
 
 	# Copy .bash_profile color scripts
@@ -298,12 +297,6 @@ InstallHtcDisplay()
 	mkdir -p $DESKTOP_BG_DIR
 	yes | cp -rfa $BG_DIR/* $DESKTOP_BG_DIR
 
-	# Copy custom fonts to the local fonts directory
-	mkdir -p $LOCAL_FONTS_DIR
-	yes | cp -rfa $FONTS_DIR/* $LOCAL_FONTS_DIR
-
-	# Rebuild font cache
-	fc-cache -f -v	
 
 	# Install nodejs 19.x sources for npm
 	curl -fsSL https://deb.nodesource.com/setup_19.x | bash - &&\
@@ -324,25 +317,19 @@ InstallHtcDisplay()
 	# Install all required dependencies
 	npm install --prefix $HTCDISPLAY_INSTALL_DIR
 
-	# Configure default environment variables
+	# Configure default .bash_profile
 	{
-		# Color functions for console
-		[[ -r "$(dirname "$BASH_SOURCE")/.bash_profile__colors" ]] && source "$(dirname "$BASH_SOURCE")/.bash_profile__colors"
 
 		echo "# Get the aliases and functions"
 		echo "if [ -f ~/.bashrc ]; then"
 		echo "	. ~/.bashrc"
 		echo "fi"
-
-		echo ""
-		echo "#HTC Display Environment Variables"
-		echo "export HTCDISPLAY_INSTALL_DIR=$HTCDISPLAY_INSTALL_DIR"
 	} >> $HOME_DIR/.bash_profile
 
 	# Configure autostart profiles for kiosk operation
 	{
 		echo "[Desktop Entry]"
-		echo "Exec=bash -c \". $HTCDISPLAY_INSTALL_DIR/run-chromium.sh\""
+		echo "Exec=bash -c \". $HOME_DIR/.bash_profile && $HTCDISPLAY_INSTALL_DIR/run-chromium.sh\""
 	} >> $HOME_DIR/.config/autostart/browser.desktop
 	{
 		echo "[Desktop Entry]"

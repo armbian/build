@@ -22,11 +22,18 @@
 
 ## What does this project do?
 
-- Builds custom kernel, image or a distribution optimized for low-resource hardware,
-- Include filesystem generation, low-level control software, kernel image and bootloader compilation,
-- Provides a consistent user experience by keeping system standards across different platforms.
+- Includes a set of scripts to build a custom kernel, Debian or Ubuntu based rootfs, U-boot bootloader and a set of scripts to create a bootable SD card image,
+- Provides a user experience to set up the running system, install additional packages, remove unwanted software, configure the system, and more,
+- Configured to work as a client to the HTC Display system which provides alert notification in medical facilities,
 
-## Getting started
+
+## Releases
+
+Check out Releases to obtain already built and tested images.
+
+## Building the image
+
+### Supported boards
 
 ### Basic requirements
 
