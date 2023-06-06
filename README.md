@@ -1,97 +1,47 @@
 <p align="center">
   <a href="#build-framework">
-  <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
+  <img src=".github/htc_wallpaper_logo.png" alt="Armbian logo" width="500">
   </a><br>
-  <strong>Armbian Linux Build Framework</strong><br><h3>
- $${\color{black}NEXT\space \color{red}gen}$$
+  <strong>HTC Display - Le Potato Image</strong><br><h3>
  </h3> 
  
 ## Table of contents
 
 - [What does this project do?](#what-does-this-project-do)
-- [Getting started](#getting-started)
-- [Compared with industry standards](#compared-with-industry-standards)
 - [Download prebuilt images](#download-prebuilt-images)
+- [Building the image](#building-the-image)
+- [Customised Components](#customised-components)
 - [Project structure](#project-structure)
-- [Contribution](#contribution)
 - [Support](#support)
 - [Contact](#contact)
-- [Contributors](#contributors)
-- [Partners](#armbian-partners)
 - [License](#license)
 
 ## What does this project do?
 
-- Includes a set of scripts to build a custom kernel, Debian or Ubuntu based rootfs, U-boot bootloader and a set of scripts to create a bootable SD card image,
-- Provides a user experience to set up the running system, install additional packages, remove unwanted software, configure the system, and more,
 - Configured to work as a client to the HTC Display system which provides alert notification in medical facilities,
-
-
-## Releases
-
-Check out Releases to obtain already built and tested images.
-
-## Building the image
-
-### Supported boards
-
-### Basic requirements
-
-- x86_64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), container or bare metal installation
-- Ubuntu Jammy 22.04.x amd64 or aarch64 for native building or any Docker capable amd64 / aarch64 Linux for containerised
-- Superuser rights (configured sudo or root access).
-- Make sure all your system components are up-to-date. Outdated Docker binaries, for example, can cause trouble.
-
-### Start with the build script
-
-```bash
-apt-get -y install git
-git clone --depth=1 --branch=main https://github.com/armbian/build
-cd build
-./compile.sh
-```
-
-<a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
-
-- Interactive graphical interface.
-- Prepares the workspace by installing the necessary dependencies and sources.
-- It guides the entire process and creates a kernel package or a ready-to-use SD card image.
-
-### Build parameter examples
-
-Show work-in-progress areas in interactive mode:
-
-```bash
-./compile.sh EXPERT="yes"
-```
-
-Build minimal CLI Armbian Focal image for Orangepi Zero. Use modern kernel and write image to the SD card:
-
-```bash
-./compile.sh \
-BOARD=orangepizero \
-BRANCH=current \
-RELEASE=focal \
-BUILD_MINIMAL=yes \
-BUILD_DESKTOP=no \
-KERNEL_ONLY=no \
-KERNEL_CONFIGURE=no \
-CARD_DEVICE="/dev/sdX"
-```
-
-More information:
-
-- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
-- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
-- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches, and override sources config;
+- Provides a user experience to set up the running system, install additional packages, remove unwanted software, configure the system, and more,
+- Includes a set of scripts to build a custom kernel, Debian or Ubuntu based rootfs, U-boot bootloader and a set of scripts to create a bootable SD card image,
 
 ## Download prebuilt images
 
-- quarterly released **supported** builds —  <https://www.armbian.com/download>
-- weekly released **unsupported** community builds —  <https://github.com/armbian/community>
-- upon code change **unsupported** development builds —  <https://github.com/armbian/build/releases>
+### Supported boards
 
-## Compared with industry standards
+Libre Computer - [AML-S905X-CC (Le Potato)](https://libre.computer/products/aml-s905x-cc/)
+
+### Releases
+
+- released **supported** builds —  <https://github.com/slamb2k/build/releases>
+- upon code change **unsupported** development builds —  <https://github.com/slamb2k/build/releases>
+
+
+<br/>
+
+## Building the image
+
+As this is a customised version of Armbian, the build process is the same as for Armbian. Please refer to the [Armbian build documentation](https://github.com/armbian/build) for more information.
+
+
+## Customised Components
 
 Check similarities, advantages and disadvantages compared with leading industry standard build software.
 
@@ -185,30 +135,6 @@ Function | Armbian | Yocto | Buildroot |
 ```
 </details>
 
-## Contribution
-
-### You don't need to be a programmer to help!
-
-- The easiest way to help is by "Starring" our repository - it helps more people find our code.
-- [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
-- [Seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/)
-- Help with [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/)
-- [Project administration](https://forum.armbian.com/forum/39-armbian-project-administration/)
-- [Donate](https://www.armbian.com/donate).
-
-### Want to become a maintainer?
-
-Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/), and if you can meet the requirements and find a board on the [Board Maintainers](https://docs.armbian.com/Release_Board-Maintainers/) list with less than two maintainers, then please apply using the linked form.
-
-### Want to become a developer?
-
-To help with development, you should first review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/). Then you can review the pre-made Jira dashboards and additional resources provided below to find open tasks and how you can assist:
-
-- [pull requests that need a review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired)
-- dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
-- [documentation](https://docs.armbian.com/)
-- [continuous integration](https://docs.armbian.com/Process_CI/)
-
 ## Support
 
 For commercial or prioritized assistance:
@@ -217,39 +143,8 @@ For commercial or prioritized assistance:
 
 ## Contact
 
-- [Forums](https://forum.armbian.com) for Participate in Armbian
-- IRC: `#armbian` on Libera.chat
-- Discord: [https://discord.gg/armbian](https://discord.gg/armbian)
-- Follow [@armbian](https://twitter.com/armbian) on Twitter, [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
-- Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
-- Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
-
-## Contributors
-
-Thank you to all the people who already contributed to Armbian!
-
-<a href="https://github.com/armbian/build/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=armbian/build" />
-</a>
-
-### Also
-
-- [Current and past contributors](https://github.com/armbian/build/graphs/contributors), our families and friends.
-- [Support staff](https://forum.armbian.com/members/2-moderators/) that keeps forums usable.
-- [Friends and individuals](https://armbian.com/authors) who support us with resources and their time.
-- [The Armbian Community](https://forum.armbian.com/) helps with their ideas, reports and [donations](https://www.armbian.com/donate).
-
-## Armbian Partners
-
-Armbian's partnership program helps to support Armbian and the Armbian community! Please take a moment to familiarize yourself with our Partners:
-
-- [Click here to visit our Partners page!](https://armbian.com/partners)
-- [How can I become a Partner?](https://forum.armbian.com/subscriptions)
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=armbian/build&type=Date)](https://star-history.com/#armbian/build&Date)
+Add contact details here.
 
 ## License
 
-This software is published under the GPL-2.0 License license.
+Add license information here.
