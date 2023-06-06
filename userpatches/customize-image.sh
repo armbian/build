@@ -286,9 +286,6 @@ InstallHtcDisplay()
 	export APP_DIR="$SOURCE_DIR/htc"
 	export BG_DIR="$SOURCE_DIR/backgrounds"
 
-	# Copy .bash_profile color scripts
-	yes | cp -rfa "$SOURCE_DIR/.bash_profile__colors" $HOME_DIR
-
 	# Create directory for our scripts and copy them over
 	yes | cp -rfa $APP_DIR $HTCDISPLAY_INSTALL_DIR
 	chmod 755 $HTCDISPLAY_INSTALL_DIR/*.sh
@@ -296,7 +293,6 @@ InstallHtcDisplay()
 	# Copy any custom backgrounds to the desktop background directory
 	mkdir -p $DESKTOP_BG_DIR
 	yes | cp -rfa $BG_DIR/* $DESKTOP_BG_DIR
-
 
 	# Install nodejs 19.x sources for npm
 	curl -fsSL https://deb.nodesource.com/setup_19.x | bash - &&\
@@ -319,7 +315,6 @@ InstallHtcDisplay()
 
 	# Configure default .bash_profile
 	{
-
 		echo "# Get the aliases and functions"
 		echo "if [ -f ~/.bashrc ]; then"
 		echo "	. ~/.bashrc"
