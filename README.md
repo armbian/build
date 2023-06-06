@@ -2,8 +2,7 @@
   <a href="#build-framework">
   <img src=".github/htc_wallpaper_logo.png" alt="Armbian logo" width="500">
   </a><br>
-  <strong>HTC Display - Le Potato Image</strong><br><h3>
- </h3> 
+  <strong><font size="4">HTC Display - Le Potato Image</font></strong><br><br><br>
  
 ## Table of contents
 
@@ -45,17 +44,16 @@ As this is a customised version of Armbian, the build process is the same as for
 
 Check similarities, advantages and disadvantages compared with leading industry standard build software.
 
-Function | Armbian | Yocto | Buildroot |
-|:--|:--|:--|:--|
-| Target | general purpose | embedded | embedded / IOT |
-| U-boot and kernel | compiled from sources | compiled from sources | compiled from sources |
-| Board support maintenance &nbsp; | complete | outside | outside |
-| Root file system | Debian or Ubuntu based| custom | custom |
-| Package manager | APT | any | none |
-| Configurability | limited | large | large |
-| Initramfs support | yes | yes | yes |
-| Getting started | quick | very slow | slow |
-| Cross compilation | yes | yes | yes |
+Component | Description
+|:--|:--
+| Target | general 
+| Target | general
+| Target | general
+| Target | general
+| Target | general
+| Target | general
+| Target | general
+| Target | general
 
 ## Project structure
 
@@ -110,7 +108,7 @@ Function | Armbian | Yocto | Buildroot |
 │   └── config                           Kernel configuration export location
 │   └── patch                            Created patches location
 ├── packages                             Support scripts, binary blobs, packages
-│   ├── blobs                            Wallpapers, various configs, closed source bootloaders
+│   ├── blobs (UPDATED)                  Wallpapers, various configs, closed source bootloaders
 │   ├── bsp-cli                          Automatically added to armbian-bsp-cli package
 │   ├── bsp-desktop                      Automatically added to armbian-bsp-desktopo package
 │   ├── bsp                              Scripts and configs overlay for rootfs
@@ -131,7 +129,9 @@ Function | Armbian | Yocto | Buildroot |
     ├── atf                              User: ARM trusted firmware
     ├── kernel                           User: Linux kernel per kernel family
     ├── misc                             User: various
-    └── u-boot                           User: universal boot loader patches
+    ├── u-boot                           User: universal boot loader patches
+    └── overlay (UPDATED)                User: additional files and customisations
+
 ```
 </details>
 
