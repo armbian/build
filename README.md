@@ -1,8 +1,10 @@
 <p align="center">
   <a href="#build-framework">
   <img src=".github/htc_wallpaper_logo.png" alt="Armbian logo" width="500">
-  </a><br>
-  <strong><font size="4">HTC Display - Le Potato Image</font></strong><br><br><br>
+  </a><br><br>
+  <strong><font size="7">HTC DISPLAY</font></strong><br>
+  <font size="4"> for AML-S905X-CC (Le Potato)</font><br>
+<br><br>
  
 ## Table of contents
 
