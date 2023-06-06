@@ -46,14 +46,17 @@ Check similarities, advantages and disadvantages compared with leading industry 
 
 Component | Description
 |:--|:--
-| Target | general 
+| User Creation | Automatic creation of user `htc`
+| Auto-login | Automatic login to desktop as user `htc`
+| Startup Wizard | - Allows specification of `root` password<br>- Allows specification of `htc` password
+| Auto-start | - Automatic start of browser in kiosk mode<br>- Automatic hide of mouse cursor after 2 second idle time.
+| Auto-start | general
+| Backgrounds | HTC background for desktop
 | Target | general
 | Target | general
 | Target | general
 | Target | general
-| Target | general
-| Target | general
-| Target | general
+| Pre-installed Dependencies | NodeJS 19.x<br>Curl<br>unzip<br>nodejs<br>xdotool<br>chromium-browser<br>unclutter<br>xfconf
 
 ## Project structure
 
