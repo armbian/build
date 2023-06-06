@@ -96,6 +96,7 @@ function artifact_kernel_prepare_version() {
 	# @TODO: why not just delegate this to the python patching, with some "dry-run" / hash-only option?
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
+	display_alert "User patches directory for kernel" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}" "info"
 	calculate_hash_for_all_files_in_dirs "${SRC}/patch/kernel/${KERNELPATCHDIR}" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
 	patches_hash="${hash_files}"
 	declare kernel_patches_hash_short="${patches_hash:0:${short_hash_size}}"
