@@ -41,6 +41,9 @@ Libre Computer - [AML-S905X-CC (Le Potato)](https://libre.computer/products/aml-
 
 As this is a customised version of Armbian, the build process is the same as for Armbian. Please refer to the [Armbian build documentation](https://github.com/armbian/build) for more information.
 
+## Installation and usage
+
+Coming soon.
 
 ## Customised Components
 
@@ -139,12 +142,12 @@ The Armbian build system folder structure is shown below and any directories or 
 
 ## Support
 
-To be added.
+Coming soon.
 
 ## Contact
 
-To be added.
+Coming soon.
 
 ## License
 
-To be added.
+Coming soon.
