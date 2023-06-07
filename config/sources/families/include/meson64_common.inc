@@ -45,8 +45,8 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel. For mainline caching.
-		KERNELBRANCH='branch:linux-6.2.y'
+		declare -g KERNEL_MAJOR_MINOR="6.4" # Major and minor versions of this kernel. For mainline caching.
+		KERNELBRANCH='tag:v6.4-rc5'
 		KERNELPATCHDIR='meson64-edge'
 		;;
 
