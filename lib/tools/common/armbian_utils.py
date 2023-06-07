@@ -38,8 +38,8 @@ def parse_env_for_tokens(env_name):
 	return [token for token in [token.strip() for token in (tokens)] if token != ""]
 
 
-def get_from_env(env_name):
-	value = os.environ.get(env_name, None)
+def get_from_env(env_name, default=None):
+	value = os.environ.get(env_name, default)
 	if value is not None:
 		value = value.strip()
 	return value
