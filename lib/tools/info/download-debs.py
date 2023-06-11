@@ -90,7 +90,7 @@ log.info(f"Missing invocations: {len(missing_invocations)}")
 # only actually invoke anything if we're in a container
 # run ./compile.sh <invocation> for each missing invocation
 for invocation in missing_invocations:
-	cmds = ["/armbian/compile.sh"] + invocation
+	cmds = [(armbian_utils.find_armbian_src_path()["compile_sh_full_path"])] + invocation
 	log.info(f"Running: {' '.join(cmds)}")
 	if armbian_utils.get_from_env("ARMBIAN_RUNNING_IN_CONTAINER") == "yes":
 		dl_info = download_using_armbian(cmds, {"missing": "deb"})
