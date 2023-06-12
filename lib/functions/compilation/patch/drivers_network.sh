@@ -411,6 +411,20 @@ driver_rtw88() {
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
 		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-rtw88-linux-next.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-rtw88-linux-next.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/003-rtw88-add-missing-unwind-goto-for_rtw_download_firmware.patch" "applying"
+		if [[ "$BOARD" == "bananapicm4io" ]]; then
+			display_alert "Adding" "SDIO RX Aggregation Limiting" "info"
+			process_patch_file "${SRC}/patch/misc/rtw88/${version}/HACK/001-rtw88-SDIO-RX-aggregation-limiting.patch" "applying"
+		fi
+	fi
+	if [[ "$version" == "6.4" ]] && [ $EXTRAWIFI == yes ]; then
+		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-rtw88-add-support-for-the-RTL8723DS-SDIO-wifi-chip.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-rtw88-add-missing-unwind-goto-for_rtw_download_firmware.patch" "applying"
+		if [[ "$BOARD" == "bananapicm4io" ]]; then
+			display_alert "Adding" "SDIO RX Aggregation Limiting" "info"
+			process_patch_file "${SRC}/patch/misc/rtw88/${version}/HACK/001-rtw88-SDIO-RX-aggregation-limiting.patch" "applying"
+		fi
 	fi
 }
 
