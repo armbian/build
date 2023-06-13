@@ -688,28 +688,3 @@ driver_rtl8723cs() {
 	fi
 
 }
-
-patch_drivers_network() {
-	display_alert "Patching network related drivers"
-
-	driver_generic_bring_back_ipx
-	driver_rtl8152_rtl8153
-	driver_rtl8189ES
-	driver_rtl8189FS
-	driver_rtl8192EU
-	driver_rtl8811_rtl8812_rtl8814_rtl8821
-	driver_xradio_xr819
-	driver_rtl8811CU_rtl8821C
-	driver_rtl8188EU_rtl8188ETV
-	driver_rtl88x2bu
-	driver_rtw88
-	driver_rtl88x2cs
-	driver_rtl8822cs_bt
-	driver_rtl8723DS
-	driver_rtl8723DU
-	driver_rtl8822BS
-	driver_uwe5622_allwinner
-	driver_rtl8723cs
-
-	display_alert "Network related drivers patched" "" "info"
-}

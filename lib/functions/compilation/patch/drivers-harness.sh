@@ -16,7 +16,7 @@ function kernel_drivers_create_patches() {
 	kernel_drivers_patch_file="undetermined" # outer scope
 
 	declare hash_files # any changes in these files will trigger a cache miss; also any changes in misc .patch with "wireless" at start or "wifi" anywhere in the name
-	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch "${SRC}"/patch/misc/*wifi*.patch
+	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch
 
 	declare cache_key_base="${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}"
 	declare cache_key="${cache_key_base}_${hash_files}"
