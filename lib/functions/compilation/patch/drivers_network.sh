@@ -388,6 +388,10 @@ driver_rtl88x2bu() {
 }
 
 driver_rtw88() {
+	if [[ "$LINUXFAMILY" == d1 ]]; then # "D1" is using an old 6.1 which can't take this.
+		return 0
+	fi
+
 	# Upstream wireless RTW88 drivers
 	if [[ "$version" == "6.1" || "$version" == "6.2" || "$version" == "6.3" ]] && [ $EXTRAWIFI == yes ]; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
