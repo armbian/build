@@ -60,6 +60,7 @@ function armbian_register_commands() {
 		["uboot"]="artifact"
 		["uboot-patch"]="artifact"
 		["atf-patch"]="artifact"
+		["crust-patch"]="artifact"
 		["uboot-config"]="artifact"
 
 		["firmware"]="artifact"
@@ -105,6 +106,7 @@ function armbian_register_commands() {
 		["uboot-config"]="WHAT='uboot' UBOOT_CONFIGURE='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 		["uboot-patch"]="WHAT='uboot' CREATE_PATCHES='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 		["atf-patch"]="WHAT='uboot' CREATE_PATCHES_ATF='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
+		["crust-patch"]="WHAT='uboot' CREATE_PATCHES_CRUST='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 
 		["firmware"]="WHAT='firmware' ${common_cli_artifact_vars}"
 		["firmware-full"]="WHAT='full_firmware' ${common_cli_artifact_vars}"

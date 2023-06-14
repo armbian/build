@@ -204,6 +204,11 @@ function config_post_main() {
 		ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 	fi
 
+	if [[ -n $CRUSTSOURCE ]]; then
+		declare -g CRUSTSOURCEDIR
+		CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
+	fi
+
 	declare -g CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
 
 	# So for kernel full cached rebuilds.

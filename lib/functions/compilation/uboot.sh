@@ -55,6 +55,12 @@ function compile_uboot_target() {
 		# atftempdir is under WORKDIR, so no cleanup necessary.
 	fi
 
+	# crusttempdir comes from crust.sh's compile_crust()
+	if [[ -n $CRUSTSOURCE && -d "${crusttempdir}" ]]; then
+		display_alert "Copying over bin/elf's from crusttempdir" "${crusttempdir}" "debug"
+		run_host_command_logged cp -pv "${crusttempdir}"/*.bin "${crusttempdir}"/*.elf ./ # only works due to nullglob
+	fi
+
 	# Hook time, for extra post-processing
 	call_extension_method "pre_config_uboot_target" <<- 'PRE_CONFIG_UBOOT_TARGET'
 		*allow extensions prepare before configuring and compiling an u-boot target*

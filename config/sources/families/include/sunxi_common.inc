@@ -18,6 +18,13 @@ declare -g LINUXFAMILY=sunxi
 declare -g UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env size
 declare -g ASOUND_STATE='asound.state.sunxi-next'
 declare -g GOVERNOR=ondemand
+declare -g CRUST_TARGET_MAP="scp;;build/scp/scp.bin"
+
+[[ -n "${CRUSTCONFIG}" && -z $CRUSTSOURCE ]] && CRUSTSOURCE='https://github.com/crust-firmware/crust'
+[[ -n "${CRUSTCONFIG}" && -z $CRUSTDIR ]] && CRUSTDIR='crust-sunxi-mainline'
+[[ -n "${CRUSTCONFIG}" && -z $CRUSTBRANCH ]] && CRUSTBRANCH='commit:c308a504853e7fdb47169796c9a832796410ece8'
+[[ -n "${CRUSTCONFIG}" && -z $CRUST_USE_GCC ]] && CRUST_USE_GCC='> 9.1.0'
+[[ -n "${CRUSTCONFIG}" && -z $CRUST_COMPILER ]] && CRUST_COMPILER='or1k-elf-'
 
 case $BRANCH in
 
