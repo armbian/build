@@ -172,7 +172,19 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes"
 		cd "$kerneldir" || exit
-		rm -rf "$kerneldir/drivers/net/wireless/rtl8812au"
+
+		# Brief detour. Turns out that HardKernel's vendor odroidxu4 kernel already has this driver
+		# "slipstreamed" into it, complete with a bunch of PDF files and other junk.
+		# See https://github.com/hardkernel/linux/tree/odroid-5.4.y/drivers/net/wireless/rtl8812au
+		# If we remove them here, the resulting patch will contain binary diffs which are unsupported by patch(1).
+		# So if building for the odroidxu4/current, we'll leave the original files in place, and just overwrite
+		# the possibly-updated source files (not PDFs and such). Thanks, HardKernel.
+		if [[ "${LINUXFAMILY}/${BRANCH}" == "odroidxu4/current" ]]; then
+			display_alert "Skipping" "Removing rtl8812au files from odroidxu4 kernel" "info"
+		else
+			rm -rf "$kerneldir/drivers/net/wireless/rtl8812au"
+		fi
+
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8812au/"
 		cp -R "${SRC}/cache/sources/rtl8812au/${rtl8812auver#*:}"/{core,hal,include,os_dep,platform} \
 			"$kerneldir/drivers/net/wireless/rtl8812au"
