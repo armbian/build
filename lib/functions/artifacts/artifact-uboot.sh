@@ -84,6 +84,7 @@ function artifact_uboot_prepare_version() {
 		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}" # general for all families
 		"${BOOT_SCENARIO}" "${BOOT_SUPPORT_SPI}" "${BOOT_SOC}"    # rockchip stuff, sorry.
 		"${ATF_COMPILE}" "${ATFBRANCH}" "${ATFPATCHDIR}"          # arm-trusted-firmware stuff
+		"${CRUSTCONFIG}" "${CRUSTBRANCH}" "${CRUSTPATCHDIR}"	  # crust stuff
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
@@ -139,6 +140,19 @@ function artifact_uboot_build_from_sources() {
 			fi
 		else
 			LOG_SECTION="compile_atf" do_with_logging compile_atf
+		fi
+	fi
+
+	if [[ -n "${CRUSTCONFIG}" ]]; then
+		if [[ "${ARTIFACT_BUILD_INTERACTIVE:-"no"}" == "yes" ]]; then
+			display_alert "Running crust build in interactive mode" "log file will be incomplete" "info"
+			compile_crust
+
+			if [[ "${CREATE_PATCHES_CRUST:-"no"}" == "yes" ]]; then
+				return 0 # stop here, otherwise it would build u-boot below...
+			fi
+		else
+			LOG_SECTION="compile_crust" do_with_logging compile_crust
 		fi
 	fi
 
