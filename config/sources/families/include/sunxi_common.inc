@@ -26,6 +26,9 @@ declare -g CRUST_TARGET_MAP="scp;;build/scp/scp.bin"
 [[ -n "${CRUSTCONFIG}" && -z $CRUST_USE_GCC ]] && CRUST_USE_GCC='> 9.1.0'
 [[ -n "${CRUSTCONFIG}" && -z $CRUST_COMPILER ]] && CRUST_COMPILER='or1k-elf-'
 
+# Apply crust patches if crust is enabled
+[[ -n "${CRUSTCONFIG}" ]] && BOOTPATCHDIR="${BOOTPATCHDIR} u-boot-sunxi-crust"
+
 case $BRANCH in
 
 	legacy)
