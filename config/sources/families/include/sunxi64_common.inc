@@ -10,8 +10,8 @@ enable_extension "sunxi-tools"
 declare -g ARCH=arm64
 declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 declare -g BOOTDELAY=1
-declare -g BOOTBRANCH="tag:v2022.10"
-declare -g BOOTPATCHDIR='u-boot-sunxi'
+declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-sunxi"}"
+declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2022.10"}"
 declare -g BOOTENV_FILE='sunxi.txt'
 UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-;;u-boot-sunxi-with-spl.bin}"
 declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
