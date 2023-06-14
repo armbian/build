@@ -1,0 +1,270 @@
+From 65f27e406c018bb02e5c44c17010bb10aa0d105b Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Sun, 29 Nov 2020 06:06:58 +0100
+Subject: [PATCH 338/478] usb: typec: anx7688: Prepare to handle messages from
+ the FW better
+
+Parse and print everything relevant in more detail for easier observation
+of the FW behavior via dmesg.
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/usb/typec/anx7688.c | 214 ++++++++++++++++++++++++++++++++++--
+ 1 file changed, 203 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/usb/typec/anx7688.c b/drivers/usb/typec/anx7688.c
+index be41481b648b..0b3dd40e6c6d 100644
+--- a/drivers/usb/typec/anx7688.c
++++ b/drivers/usb/typec/anx7688.c
+@@ -185,6 +185,7 @@ struct anx7688 {
+ 
+         struct mutex lock;
+         bool vbus_on, vconn_on;
++	bool pd_capable;
+ 
+         struct typec_port *port;
+         struct typec_partner *partner;
+@@ -554,6 +555,8 @@ static void anx7688_disconnect(struct anx7688 *anx7688)
+ 
+         anx7688_power_disable(anx7688);
+ 
++	anx7688->pd_capable = false;
++
+ 	typec_unregister_partner(anx7688->partner);
+         anx7688->partner = NULL;
+ 
+@@ -629,31 +632,220 @@ static irqreturn_t anx7688_irq_plug_handler(int irq, void *data)
+         return IRQ_HANDLED;
+ }
+ 
++enum {
++	CMD_SUCCESS,
++	CMD_REJECT,
++	CMD_FAIL,
++	CMD_BUSY,
++};
++
++static const char* anx7688_cmd_statuses[] = {
++	"SUCCESS",
++	"REJECT",
++	"FAIL",
++	"BUSY",
++};
++
++static int anx7688_handle_pd_message_response(struct anx7688* anx7688,
++					      u8 to_cmd, u8 resp)
++{
++        const char* status = resp <= CMD_BUSY ? anx7688_cmd_statuses[resp] : "UNKNOWN";
++
++	switch (to_cmd) {
++		case ANX7688_OCM_MSG_PSWAP_REQ:
++			dev_info(anx7688->dev, "received response to PSWAP_REQ (%s)\n", status);
++			break;
++
++		case ANX7688_OCM_MSG_DSWAP_REQ:
++			dev_info(anx7688->dev, "received response to DSWAP_REQ (%s)\n", status);
++			break;
++
++		case ANX7688_OCM_MSG_VCONN_SWAP_REQ:
++			dev_info(anx7688->dev, "received response to VCONN_SWAP_REQ (%s)\n", status);
++			break;
++
++		case ANX7688_OCM_MSG_PWR_OBJ_REQ:
++			dev_info(anx7688->dev, "received response to PWR_OBJ_REQ (%s)\n", status);
++			break;
++
++		default:
++			dev_info(anx7688->dev, "received response to unknown request (%s)\n", status);
++			break;
++	}
++
++	return 0;
++}
++
+ static int anx7688_handle_pd_message(struct anx7688* anx7688,
+ 				     u8 cmd, u8* msg, unsigned len)
+ {
++	uint32_t* pdos = (uint32_t*)msg;
++	uint32_t pdo, rdo;
++        int ret, i;
++
+ 	switch (cmd) {
+ 	case ANX7688_OCM_MSG_PWR_SRC_CAP:
++		dev_info(anx7688->dev, "received SRC_CAP\n");
++
++		anx7688->pd_capable = true;
++
++                if (len % 4 != 0) {
++			dev_warn(anx7688->dev, "received invalid sized PDO array\n");
++			break;
++		}
++
++		for (i = 0; i < len / 4; i++) {
++			pdo = le32_to_cpu(pdos[i]);
++
++			if (pdo_type(pdo) == PDO_TYPE_FIXED) {
++				unsigned voltage = pdo_fixed_voltage(pdo);
++				unsigned max_curr = pdo_max_current(pdo);
++
++				dev_info(anx7688->dev, "SRC_CAP PDO_FIXED (%umV %umA)\n", voltage, max_curr);
++			} else {
++				dev_info(anx7688->dev, "SNK_CAP PDO_OTHER (0x%08X)\n", pdo);
++			}
++		}
++
++		//TODO: we should go through PDOs and decide which one
++		//to request, build a RDO with a proper index of the
++		//selected PDO and send it via PWR_OBJ_REQ message to FW
++		//but we're using auto_pd, so FW does this for us
++		//
++		//rdo = cpu_to_le32(RDO_FIXED(0, 1500, 1500, RDO_USB_COMM));
++		//ret = anx7688_send_ocm_message(anx7688, ANX7688_OCM_MSG_PWR_OBJ_REQ, &rdo, 4);
++
++		break;
++
+ 	case ANX7688_OCM_MSG_PWR_SNK_CAP:
+-	case ANX7688_OCM_MSG_DP_SNK_IDENTITY:
+-	case ANX7688_OCM_MSG_SVID:
+-	case ANX7688_OCM_MSG_GET_DP_SNK_CAP:
++		dev_info(anx7688->dev, "received SNK_CAP\n");
++
++                if (len % 4 != 0) {
++			dev_warn(anx7688->dev, "received invalid sized PDO array\n");
++			break;
++		}
++
++		for (i = 0; i < len / 4; i++) {
++			pdo = le32_to_cpu(pdos[i]);
++
++			if (pdo_type(pdo) == PDO_TYPE_FIXED) {
++				unsigned voltage = pdo_fixed_voltage(pdo);
++				unsigned max_curr = pdo_max_current(pdo);
++
++				dev_info(anx7688->dev, "SNK_CAP PDO_FIXED (%umV %umA)\n", voltage, max_curr);
++			} else {
++				dev_info(anx7688->dev, "SNK_CAP PDO_OTHER (0x%08X)\n", pdo);
++			}
++		}
++
++		break;
++
++	case ANX7688_OCM_MSG_PWR_OBJ_REQ:
++		dev_info(anx7688->dev, "received PWR_OBJ_REQ\n");
++
++		anx7688->pd_capable = true;
++
++                if (len != 4) {
++			dev_warn(anx7688->dev, "received invalid sized RDO\n");
++			break;
++		}
++
++		rdo = le32_to_cpu(pdos[0]);
++
++		if (rdo_index(rdo) >= 1 && rdo_index(rdo) <= anx7688->n_src_caps) {
++			unsigned rdo_op_curr = rdo_op_current(rdo);
++			unsigned rdo_max_curr = rdo_max_current(rdo);
++			unsigned rdo_idx = rdo_index(rdo) - 1;
++                        unsigned pdo_volt, pdo_max_curr;
++
++			pdo = anx7688->src_caps[rdo_idx];
++			pdo_volt = pdo_fixed_voltage(pdo);
++			pdo_max_curr = pdo_max_current(pdo);
++
++			dev_info(anx7688->dev, "RDO (idx=%d op=%umA max=%umA)\n",
++				 rdo_idx, rdo_op_curr, rdo_max_curr);
++
++			dev_info(anx7688->dev, "PDO_FIXED (%umV %umA)\n",
++				 pdo_volt, pdo_max_curr);
++
++			//TODO: we should check the req and respond with accept/reject
++			// but we're using auto_pd feature, so the FW will do
++			// this for us
++			if (rdo_op_curr > pdo_max_curr || rdo_max_curr > pdo_max_curr) {
++				//ret = anx7688_send_ocm_message(anx7688, ANX7688_OCM_MSG_REJECT, 0, 0);
++			} else {
++				//ret = anx7688_send_ocm_message(anx7688, ANX7688_OCM_MSG_ACCEPT, 0, 0);
++			}
++		} else {
++			dev_info(anx7688->dev, "PWR_OBJ RDO index out of range (RDO = 0x%08X)\n", rdo);
++		}
++
++		break;
++
+ 	case ANX7688_OCM_MSG_ACCEPT:
++		dev_info(anx7688->dev, "received ACCEPT\n");
++		break;
++
+ 	case ANX7688_OCM_MSG_REJECT:
++		dev_info(anx7688->dev, "received REJECT\n");
++		break;
++
++	case ANX7688_OCM_MSG_RESPONSE_TO_REQ:
++		if (len < 2) {
++			dev_warn(anx7688->dev, "received short RESPONSE_TO_REQ\n");
++			break;
++		}
++
++		anx7688_handle_pd_message_response(anx7688, msg[0], msg[1]);
++		break;
++
++	case ANX7688_OCM_MSG_SOFT_RST:
++		dev_info(anx7688->dev, "received SOFT_RST\n");
++		break;
++
++	case ANX7688_OCM_MSG_HARD_RST:
++		dev_info(anx7688->dev, "received HARD_RST\n");
++		break;
++
++	case ANX7688_OCM_MSG_RESTART:
++		dev_info(anx7688->dev, "received RESTART\n");
++		break;
++
+ 	case ANX7688_OCM_MSG_PSWAP_REQ:
++		dev_info(anx7688->dev, "received PSWAP_REQ\n");
++		break;
++
+ 	case ANX7688_OCM_MSG_DSWAP_REQ:
+-	case ANX7688_OCM_MSG_GOTO_MIN_REQ:
++		dev_info(anx7688->dev, "received DSWAP_REQ\n");
++		break;
++
+ 	case ANX7688_OCM_MSG_VCONN_SWAP_REQ:
++		dev_info(anx7688->dev, "received VCONN_SWAP_REQ\n");
++		break;
++
++	case ANX7688_OCM_MSG_DP_ALT_ENTER:
++		dev_info(anx7688->dev, "received DP_ALT_ENTER\n");
++		break;
++
++	case ANX7688_OCM_MSG_DP_ALT_EXIT:
++		dev_info(anx7688->dev, "received DP_ALT_EXIT\n");
++		break;
++
++	case ANX7688_OCM_MSG_DP_SNK_IDENTITY:
++		dev_info(anx7688->dev, "received DP_SNK_IDENTITY\n");
++		break;
++
++	case ANX7688_OCM_MSG_SVID:
++		dev_info(anx7688->dev, "received SVID\n");
++		break;
++
++	case ANX7688_OCM_MSG_GET_DP_SNK_CAP:
++	case ANX7688_OCM_MSG_GOTO_MIN_REQ:
+ 	case ANX7688_OCM_MSG_VDM:
+ 	case ANX7688_OCM_MSG_DP_SNK_CFG:
+-	case ANX7688_OCM_MSG_PWR_OBJ_REQ:
+ 	case ANX7688_OCM_MSG_PD_STATUS_REQ:
+-	case ANX7688_OCM_MSG_DP_ALT_ENTER:
+-	case ANX7688_OCM_MSG_DP_ALT_EXIT:
+-	case ANX7688_OCM_MSG_RESPONSE_TO_REQ:
+-	case ANX7688_OCM_MSG_SOFT_RST:
+-	case ANX7688_OCM_MSG_HARD_RST:
+-	case ANX7688_OCM_MSG_RESTART:
++	default:
++		dev_info(anx7688->dev, "received unknown message 0x%02x\n", cmd);
+ 		break;
+ 	}
+ 
+-- 
+2.35.3
+

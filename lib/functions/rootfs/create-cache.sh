@@ -125,8 +125,8 @@ function extract_rootfs_artifact() {
 	run_host_command_logged echo "nameserver ${NAMESERVER}" ">" "${SDCARD}"/etc/resolv.conf
 
 	# all sources etc.
-	# armbian repo is fully included, inclusive the components that have debs produced by armbian/build.
-	create_sources_list_and_deploy_repo_key "image" "${RELEASE}" "${SDCARD}/"
+	# armbian repo is NOT yet included here, since we'll be building the image, and don't want the repo interferring.
+	create_sources_list_and_deploy_repo_key "image-early" "${RELEASE}" "${SDCARD}/"
 
 	return 0
 }
