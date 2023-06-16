@@ -644,15 +644,22 @@ format_disk()
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\nFormating $1 to $FilesystemChoosen ... please wait." 5 60
 	mkfs.${FilesystemChoosen} ${mkopts[$FilesystemChoosen]} "$1" >> $logfile 2>&1
 }
-### formatting MTD partition, examples: /dev/mtd0 or /dev/mtdblock0
-#
-format_mtd()
+
+erase_mtd()
 {
-ls /tmp/boot
-	# Warning mesage formating removes all data
+	# Check if dependancy are insatlled
+    local packages=("mtd-utils" "dialog")
+    for package in "${packages[@]}"; do
+        dpkg-query -W --showformat='${Status}\n' "$package" 2>/dev/null | grep -q "ok installed" || { echo "$package is not installed"; exit 1; }
+    done
+
+	# Check for MTD
+    [[ ! -e /dev/mtd0 ]] && echo "MTD not found" exit 1;
+
+	# Warning mesage, removes all data
 	dialog --title "Warning" --yesno "Proceed with caution: \
-	any data on target will be permanently deleted \
-	Are you sure you want to continue?" 7 60
+		any data on target will be permanently deleted \
+		Are you sure you want to continue?" 7 60
 
 	# Get the exit status of the dialog command
 	response=$?
@@ -660,17 +667,10 @@ ls /tmp/boot
 	# Exit if no is pressed, otherwise continue
     [[ ! $response -eq 0 ]] && echo -e "User canseled" && exit 1;
 
-    # Find the MTD partition that contains the SPI boot loader
+		# unmount MTD befor erasing block otherwise continue
+        umount $(mount | grep /dev/mtdblock0 | awk '{print $3}') 2>/dev/null || true
 
-    if [[ ! -e /dev/mtd0 ]]; then
-        echo "MTD not found"
-        return 1
-
-    else
-		# unmount MTD befor formating
-        umount $(mount | grep /dev/mtdblock0 | awk '{print $3}')
-
-		# Erase the MTD and display a progress dialog
+	# Erase the MTD and display a progress dialog
         flash_erase /dev/mtd0 0 0 2>&1 | {
 
 			# Read the output of the flash_erase command line by line
@@ -686,22 +686,17 @@ ls /tmp/boot
                 echo "XXX"
             done
 
-			# unnessary progress guage
+			# progress complete message
         } | dialog --title "Erasing MTD partition" --gauge "Erasing MTD partition: 0% complete" 10 70 0
 
-		# ENd dialog
-        dialog --title "MTD Erased" --msgbox "The MTD partition has been erased." 10 70
-        rows=$(stty size | cut -d ' ' -f 1)
-		# put the cureser at the end of terminal
-        tput cup $rows 0
-
-    fi
+	# End dialog
+	dialog --title "MTD Erased" --msgbox "The MTD partition has been erased." 10 70
 
 
-	echo ""
-	ls /tmp/boot
+# put the cureser at the end of terminal
+rows=$(stty size | cut -d ' ' -f 1)
+tput cup $rows 0 && echo ""
 }
-
 
 # choose target SATA/USB/NVMe partition.
 check_partitions()
@@ -864,13 +859,14 @@ main()
 		[[ -n $sduuid && -n $diskcheck ]]					&& options+=(1 'Boot from SD - system on SATA, USB or NVMe')
 		[[ -n $emmccheck ]] 						&& options+=(2 "Boot from $ichip - system on $ichip")
 		[[ -n $emmccheck && -n $diskcheck ]] 				&& options+=(3 "Boot from $ichip - system on SATA, USB or NVMe")
-		[[ -n $mtdcheck ]] 						&& options+=(4 'Boot from MTD Flash - system on SATA, USB or NVMe')
+		[[ -n $mtdcheck ]] && options+=(4 'Boot from MTD Flash - system on SATA, USB or NVMe') && [[ -n $mtdcheck ]]
 		[[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]]	&& options+=(5 'Install/Update the bootloader on SD/eMMC')
 		[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* \
 		|| $LINUXFAMILY == mt7623 ) && \
 		( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]]		&& options+=(6 'Install/Update the bootloader on special eMMC partition')
 		[[ -n $mtdcheck && \
 		$(type -t write_uboot_platform_mtd) == function ]] 		&& options+=(7 'Install/Update the bootloader on MTD Flash')
+        [[ -n $mtdcheck ]] && options+=(8 'Erase - MTD Flash ')
 	fi
 
 	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] && \
@@ -962,10 +958,9 @@ main()
 				return
 				;;
 			8)
-                		title='Format  | MTD Flash'
-                		#show_warning "This script will erase your device $DISK_ROOT_PART. Continue?"
-                		format_mtd
+				erase_mtd
 				return
+
 				;;
 
 			*)
