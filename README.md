@@ -67,7 +67,6 @@ BRANCH=current \
 RELEASE=focal \
 BUILD_MINIMAL=yes \
 BUILD_DESKTOP=no \
-KERNEL_ONLY=no \
 KERNEL_CONFIGURE=no \
 CARD_DEVICE="/dev/sdX"
 ```
