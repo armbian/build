@@ -63,6 +63,7 @@ function artifact_uboot_prepare_version() {
 	declare -a extension_hooks_to_hash=(
 		"post_uboot_custom_postprocess" "fetch_custom_uboot" "build_custom_uboot"
 		"pre_config_uboot_target" "post_uboot_custom_postprocess" "post_uboot_custom_postprocess"
+		"post_config_uboot_target"
 	)
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
@@ -80,16 +81,17 @@ function artifact_uboot_prepare_version() {
 
 	# Hash variables that affect the build and package of u-boot
 	declare -a vars_to_hash=(
-		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}"
+		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}" # general for all families
+		"${BOOT_SCENARIO}" "${BOOT_SUPPORT_SPI}" "${BOOT_SOC}"    # rockchip stuff, sorry.
+		"${ATF_COMPILE}" "${ATFBRANCH}" "${ATFPATCHDIR}"          # arm-trusted-firmware stuff
 	)
-	declare hash_vars="undetermined"
-	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
-	declare vars_config_hash="${hash_vars}"
-	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
+	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
+	calculate_hash_for_variables "${vars_to_hash[@]}"
+	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/uboot*.sh
+	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/uboot*.sh # expansion
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 

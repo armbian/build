@@ -47,7 +47,7 @@ function artifact_full_firmware_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/packages/firmware-deb.sh
+	calculate_hash_for_bash_deb_artifact "compilation/packages/firmware-deb.sh"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 

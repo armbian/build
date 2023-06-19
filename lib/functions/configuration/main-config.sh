@@ -21,24 +21,27 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_DESKTOP
 
 	# common options
-	# daily beta build contains date in subrevision
-	#if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
 	declare revision_from="undetermined"
-	if [ -f $USERPATCHES_PATH/VERSION ]; then
-		REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)"$SUBREVISION" # all boards have same revision
+	if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
+		REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
 		revision_from="userpatches VERSION file"
 	else
-		REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
+		REVISION=$(cat "${SRC}"/VERSION)
 		revision_from="main VERSION file"
 	fi
 
 	declare -g -r REVISION="${REVISION}"
-	display_alert "Using revision from" "${revision_from}: '${REVISION}" "info"
+	display_alert "Using revision from" "${revision_from}: '${REVISION}'" "info"
 
 	# This is the prefix used by all artifacts. Readonly. It's just $REVISION and a double dash.
 	declare -r -g artifact_prefix_version="${REVISION}--"
 
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
+	[[ -z $VENDORURL ]] && VENDORURL="https://www.armbian.com"
+	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://forum.armbian.com"
+	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://www.armbian.com"
+	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://www.armbian.com/bugs"
+	[[ -z $VENDORLOGO ]] && VENDORLOGO="armbian-logo"
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
@@ -65,9 +68,10 @@ function do_main_configuration() {
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 
 	if [[ -d "${SRC}/.git" && "${CONFIG_DEFS_ONLY}" != "yes" ]]; then # don't waste time if only gathering config defs
-		display_alert "Getting git info for repo" "${SRC}" "debug"
-		BUILD_REPOSITORY_URL="$(git remote get-url "$(git remote | grep origin || true)" || true)" # ignore all errors
-		BUILD_REPOSITORY_COMMIT="$(git describe --match=d_e_a_d_b_e_e_f --always --dirty || true)" # ignore error
+		# The docker launcher will have passed these as environment variables. If not, try again here.
+		if [[ -z "${BUILD_REPOSITORY_URL}" || -z "${BUILD_REPOSITORY_COMMIT}" ]]; then
+			set_git_build_repo_url_and_commit_vars "main configuration"
+		fi
 	fi
 
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
@@ -113,6 +117,9 @@ function do_main_configuration() {
 			enable_extension "fs-btrfs-support"
 			[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
 			[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
+			;;
+		nilfs2)
+			enable_extension "fs-nilfs2-support"
 			;;
 		*)
 			exit_with_error "Unknown rootfs type: ROOTFS_TYPE='${ROOTFS_TYPE}'"
@@ -171,8 +178,8 @@ function do_main_configuration() {
 			MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
 			;;
 		*)
-			MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
-			MAINLINE_FIRMWARE_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+			MAINLINE_KERNEL_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
+			MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 	esac
 
@@ -490,5 +497,15 @@ function source_family_config_and_arch() {
 	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
 
+	return 0
+}
+
+function set_git_build_repo_url_and_commit_vars() {
+	display_alert "Getting git info for repo, during ${1}..." "${SRC}" "debug"
+	declare -g BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT
+	BUILD_REPOSITORY_URL="$(git -C "${SRC}" remote get-url "$(git -C "${SRC}" remote | grep origin || true)" || true)" # ignore all errors
+	BUILD_REPOSITORY_COMMIT="$(git -C "${SRC}" describe --match=d_e_a_d_b_e_e_f --always --dirty || true)"             # ignore error
+	display_alert "BUILD_REPOSITORY_URL set during ${1}" "${BUILD_REPOSITORY_URL}" "debug"
+	display_alert "BUILD_REPOSITORY_COMMIT set during ${1}" "${BUILD_REPOSITORY_COMMIT}" "debug"
 	return 0
 }

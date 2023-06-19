@@ -71,7 +71,7 @@ update_initramfs() {
 
 	if [[ -f "${initrd_cache_file_path}" ]]; then
 		display_alert "initrd cache hit" "${initrd_cache_key}" "cachehit"
-		run_host_command_logged cp -pv "${initrd_cache_file_path}" "${initrd_file}"
+		run_host_command_logged cp -v "${initrd_cache_file_path}" "${initrd_file}" # don't (-p)reserve, otherwise fat32 /boot gags
 		touch "${initrd_cache_file_path}" # touch cached file timestamp; LRU bump.
 		if [[ -f "${initrd_cache_last_manifest_filepath}" ]]; then
 			touch "${initrd_cache_last_manifest_filepath}" # touch the manifest file timestamp; LRU bump.

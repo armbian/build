@@ -9,6 +9,7 @@
 
 compile_armbian-zsh() {
 	: "${artifact_version:?artifact_version is not set}"
+	: "${ARMBIAN_ZSH_BRANCH:?ARMBIAN_ZSH_BRANCH is not set}"
 
 	declare cleanup_id="" tmp_dir=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-zsh" cleanup_id tmp_dir # namerefs
@@ -16,7 +17,7 @@ compile_armbian-zsh() {
 	declare armbian_zsh_dir="armbian-zsh"
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"
 
-	fetch_from_repo "$GITHUB_SOURCE/ohmyzsh/ohmyzsh" "oh-my-zsh" "branch:master"
+	fetch_from_repo "$GITHUB_SOURCE/ohmyzsh/ohmyzsh" "oh-my-zsh" "${ARMBIAN_ZSH_BRANCH}"
 	fetch_from_repo "$GITHUB_SOURCE/mroth/evalcache" "evalcache" "branch:master"
 
 	mkdir -p "${tmp_dir}/${armbian_zsh_dir}"/{DEBIAN,etc/skel/,etc/oh-my-zsh/,/etc/skel/.oh-my-zsh/cache}

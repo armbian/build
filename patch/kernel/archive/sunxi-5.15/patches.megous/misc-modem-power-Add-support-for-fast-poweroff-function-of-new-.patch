@@ -1,0 +1,138 @@
+From b82cfdf6d4babcd90648e041be545283236fa8a0 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megous@megous.com>
+Date: Tue, 8 Sep 2020 11:47:15 +0200
+Subject: [PATCH 265/478] misc: modem-power: Add support for fast/poweroff
+ function of new firmware
+
+Signed-off-by: Ondrej Jirman <megous@megous.com>
+---
+ drivers/misc/modem-power.c | 40 +++++++++++++++++++++-----------------
+ 1 file changed, 22 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/misc/modem-power.c b/drivers/misc/modem-power.c
+index 1bd0c4e16530..62c986b0a1fa 100644
+--- a/drivers/misc/modem-power.c
++++ b/drivers/misc/modem-power.c
+@@ -312,6 +312,9 @@ static const struct mpwr_eg25_qcfg mpwr_eg25_qcfgs[] = {
+ 	{ "apready",            "0,0,500", },
+ 
+ 	{ "airplanecontrol",    "1",   mpwr_eg25_qcfg_airplanecontrol_is_ok },
++
++	// available since firmware R07A08_01.002.01.002
++	{ "fast/poweroff", "1" },
+ };
+ 
+ static char* mpwr_serdev_get_response_value(struct mpwr_dev *mpwr,
+@@ -603,7 +606,6 @@ static int mpwr_eg25_power_down_finish(struct mpwr_dev* mpwr)
+ {
+ 	struct gpio_desc *pwrkey_gpio = mpwr_eg25_get_pwrkey_gpio(mpwr);
+ 	ktime_t start = ktime_get();
+-	unsigned safety_delay = 30000;
+ 	int ret;
+ 
+ 	serdev_device_close(mpwr->serdev);
+@@ -611,6 +613,10 @@ static int mpwr_eg25_power_down_finish(struct mpwr_dev* mpwr)
+ 	/*
+ 	 * This function is called right after POWERED DOWN message is received.
+ 	 *
++	 * In case of fast/poweroff == 1, no POWERED DOWN message is sent.
++	 * Fast power off times are around 1s since the end of 800ms
++	 * POK pulse.
++	 *
+ 	 * When the modem powers down RI (wakeup) goes low and STATUS goes
+ 	 * high at the same time. Status is not connected on some boards.
+ 	 * RI should be inactive during poweroff, but we don't know for sure.
+@@ -618,9 +624,7 @@ static int mpwr_eg25_power_down_finish(struct mpwr_dev* mpwr)
+ 	 * Therfore:
+ 	 * - wait for STATUS going low
+ 	 * - in case that's not available wait for RI going low
+-	 *   - if wakeup seems to go low too soon (< 10s since POWERED DOWN
+-	 *      message), make sure we wait at least 30s in total, which
+-	 *      is the manufacturer's safety delay
++	 * - in case timings seem off, warn the user
+ 	 *
+ 	 * In addition, some boards have PWRKEY multiplexed with STATUS signal.
+ 	 * In that case we need to switch STATUS to output high level, as soon
+@@ -629,10 +633,10 @@ static int mpwr_eg25_power_down_finish(struct mpwr_dev* mpwr)
+ 	 */
+ 
+ 	if (mpwr->status_gpio) {
+-		/* wait up to 30s for status */
++		/* wait up to 30s for status going high */
+ 		while (ktime_ms_delta(ktime_get(), start) < 30000) {
+ 			if (gpiod_get_value(mpwr->status_gpio)) {
+-				if (ktime_ms_delta(ktime_get(), start) < 5000)
++				if (ktime_ms_delta(ktime_get(), start) < 500)
+ 					dev_warn(mpwr->dev,
+ 						 "STATUS signal is high too soon during powerdown. Modem is already off?\n");
+ 				goto powerdown;
+@@ -646,31 +650,28 @@ static int mpwr_eg25_power_down_finish(struct mpwr_dev* mpwr)
+ 		goto force_powerdown;
+ 	} else {
+ 		clear_bit(MPWR_F_GOT_WAKEUP, mpwr->flags);
++
+ 		if (!gpiod_get_value(mpwr->wakeup_gpio)) {
+ 			dev_warn(mpwr->dev,
+-				 "RI signal is low too soon during powerdown, falling back to a fixed safety delay (%d s)\n",
+-				 safety_delay / 1000);
+-			msleep(safety_delay);
++				 "RI signal is low too soon during powerdown. Modem is already off, or spurious wakeup?\n");
++			msleep(2000);
+ 			goto powerdown;
+ 		}
+ 
+ 		ret = wait_event_timeout(mpwr->wait,
+ 					 test_bit(MPWR_F_GOT_WAKEUP, mpwr->flags),
+-					 msecs_to_jiffies(safety_delay));
++					 msecs_to_jiffies(30000));
+ 		if (ret <= 0) {
+ 			dev_warn(mpwr->dev,
+ 				 "RI signal didn't go low during shutdown, is modem really powering down?\n");
+ 			goto force_powerdown;
+ 		}
+ 
+-		/* 12s safety check */
+-		if (ktime_ms_delta(ktime_get(), start) < 12000) {
+-			unsigned extra_delay = safety_delay - ktime_ms_delta(ktime_get(), start);
+-
++		if (ktime_ms_delta(ktime_get(), start) < 500) {
+ 			dev_warn(mpwr->dev,
+-				 "RI signal did go low surprisingly early during shutdown, adding a safety delay (%d s)\n",
+-				 extra_delay / 1000);
+-			msleep(extra_delay);
++				 "RI signal is low too soon during powerdown. Modem is already off, or spurious wakeup?\n");
++			msleep(2000);
++			goto powerdown;
+ 		}
+ 	}
+ 
+@@ -705,8 +706,9 @@ static int mpwr_eg25_power_down(struct mpwr_dev* mpwr)
+ 	/* Switch status key to input, in case it's multiplexed with pwrkey. */
+ 	gpiod_direction_input(mpwr->status_gpio);
+ 
+-	msleep(50);
++	msleep(20);
+ 
++#if 0
+ 	// wait for POWERED DOWN message
+ 	clear_bit(MPWR_F_GOT_PDN, mpwr->flags);
+ 	ret = wait_event_timeout(mpwr->wait,
+@@ -715,6 +717,7 @@ static int mpwr_eg25_power_down(struct mpwr_dev* mpwr)
+ 	if (ret <= 0)
+ 		dev_warn(mpwr->dev,
+ 			 "POWERED DOWN message not received, is modem really powering down?\n");
++#endif
+ 
+ 	return mpwr_eg25_power_down_finish(mpwr);
+ }
+@@ -743,6 +746,7 @@ static void mpwr_eg25_receive_msg(struct mpwr_dev *mpwr, const char *msg)
+ 	unsigned int msg_len;
+ 
+ 	if (!strcmp(msg, "POWERED DOWN")) {
++		// system is powering down
+                 set_bit(MPWR_F_GOT_PDN, mpwr->flags);
+ 		wake_up(&mpwr->wait);
+ 
+-- 
+2.35.3
+

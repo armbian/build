@@ -25,11 +25,16 @@ function armbian_register_commands() {
 		["config-dump-json"]="config_dump_json"    # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 		["config-dump-no-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["inventory"]="json_info"    # implemented in cli_json_info_pre_run and cli_json_info_run
-		["targets"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-matrix"]="json_info"   # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-workflow"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-template"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory"]="json_info"             # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets"]="json_info"               # implemented in cli_json_info_pre_run and cli_json_info_run
+		["debs-to-repo-json"]="json_info"     # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-matrix"]="json_info"            # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-workflow"]="json_info"          # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-template"]="json_info"          # implemented in cli_json_info_pre_run and cli_json_info_run
+
+		# These probably should be in their own separate CLI commands file, but for now they're together in jsoninfo.
+		["debs-to-repo-download"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["debs-to-repo-reprepro"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
@@ -43,6 +48,7 @@ function armbian_register_commands() {
 		# all-around artifact wrapper
 		["artifact"]="artifact"                  # implemented in cli_artifact_pre_run and cli_artifact_run
 		["artifact-config-dump-json"]="artifact" # implemented in cli_artifact_pre_run and cli_artifact_run
+		["download-artifact"]="artifact"         # implemented in cli_artifact_pre_run and cli_artifact_run
 
 		# shortcuts, see vars set below. the use legacy single build, and try to control it via variables
 		["rootfs"]="artifact"
@@ -63,6 +69,7 @@ function armbian_register_commands() {
 		["armbian-plymouth-theme"]="artifact"
 		["fake-ubuntu-advantage-tools"]="artifact"
 
+		["armbian-base-files"]="artifact"
 		["armbian-bsp-cli"]="artifact"
 		["armbian-bsp-desktop"]="artifact"
 		["armbian-desktop"]="artifact"
@@ -106,6 +113,7 @@ function armbian_register_commands() {
 		["armbian-plymouth-theme"]="WHAT='armbian-plymouth-theme' ${common_cli_artifact_vars}"
 		["fake-ubuntu-advantage-tools"]="WHAT='fake_ubuntu_advantage_tools' ${common_cli_artifact_vars}"
 
+		["armbian-base-files"]="WHAT='armbian-base-files' ${common_cli_artifact_vars}"
 		["armbian-bsp-cli"]="WHAT='armbian-bsp-cli' ${common_cli_artifact_vars}"
 		["armbian-bsp-desktop"]="WHAT='armbian-bsp-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"
 		["armbian-desktop"]="WHAT='armbian-desktop' BUILD_DESKTOP='yes' ${common_cli_artifact_vars}"

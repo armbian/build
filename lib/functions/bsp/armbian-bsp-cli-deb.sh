@@ -31,6 +31,11 @@ function compile_armbian-bsp-cli() {
 	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
 	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
+	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
+	declare depends_base_files=", base-files (>= ${REVISION})"
+	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
+		depends_base_files=""
+	fi
 	cat <<- EOF > "${destination}"/DEBIAN/control
 		Package: ${artifact_name}
 		Version: ${artifact_version}
@@ -39,7 +44,7 @@ function compile_armbian-bsp-cli() {
 		Installed-Size: 1
 		Section: kernel
 		Priority: optional
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping
+		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
 		Suggests: armbian-config
 		Replaces: zram-config, base-files
 		Recommends: bsdutils, parted, util-linux, toilet
@@ -108,12 +113,7 @@ function compile_armbian-bsp-cli() {
 		postinst_functions+=(board_side_bsp_cli_postinst_update_uboot_bootscript)
 	fi
 
-	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
-		# add to postinst, to change PRETTY_NAME to Armbian's
-		postinst_functions+=(board_side_bsp_cli_postinst_os_release_armbian)
-	else
-		display_alert "bsp-cli: KEEP_ORIGINAL_OS_RELEASE" "Keeping original /etc/os-release's PRETTY_NAME as original" "info"
-	fi
+	# PRETTY_NAME stuff is now done in armbian-base-files artifact
 
 	# add configuration for setting uboot environment from userspace with: fw_setenv fw_printenv
 	if [[ -n $UBOOT_FW_ENV ]]; then
@@ -179,6 +179,10 @@ function compile_armbian-bsp-cli() {
 	find "${destination}" -print0 2> /dev/null | xargs -0r chown --no-dereference 0:0
 	find "${destination}" ! -type l -print0 2> /dev/null | xargs -0r chmod 'go=rX,u+rw,a-s'
 
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		run_tool_batcat --file-name "/etc/armbian-release.sh" "${destination}"/etc/armbian-release
+	fi
+
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/"
 
@@ -218,7 +222,7 @@ function get_bootscript_info() {
 		fi
 	elif [[ $SRC_EXTLINUX == yes ]]; then
 		bootscript_info[has_extlinux]="yes"
-		display_alert "Using extlinux, regular bootscripts ignored" "SRC_EXTLINUX=${SRC_EXTLINUX}" "warn"
+		display_alert "Using extlinux, regular bootscripts ignored" "SRC_EXTLINUX=${SRC_EXTLINUX}" "info"
 	fi
 
 	debug_dict bootscript_info
@@ -328,14 +332,7 @@ function board_side_bsp_cli_postinst_base() {
 	# Source the armbian-release information file
 	[ -f /etc/armbian-release ] && . /etc/armbian-release
 
-	# Read release value from lsb-release and set it separately as ARMBIAN_PRETTY_NAME
-	# More is done, actually taking over PRETTY_NAME, in separate board_side_bsp_cli_postinst_os_release_armbian()
-	if [ -f /etc/lsb-release ]; then
-		ORIGINAL_DISTRO_RELEASE="$(cat /etc/lsb-release | grep CODENAME | cut -d"=" -f2 | sed 's/.*/\u&/')"
-		echo "ARMBIAN_PRETTY_NAME=\"${VENDOR} ${REVISION} ${ORIGINAL_DISTRO_RELEASE}\"" >> /etc/os-release
-		echo -e "${VENDOR} ${REVISION} ${ORIGINAL_DISTRO_RELEASE} \\l \n" > /etc/issue
-		echo -e "${VENDOR} ${REVISION} ${ORIGINAL_DISTRO_RELEASE}" > /etc/issue.net
-	fi
+	# ARMBIAN_PRETTY_NAME is now set in armbian-base-files.
 
 	# Force ramlog to be enabled if it exists. @TODO: why?
 	[ -f /etc/lib/systemd/system/armbian-ramlog.service ] && systemctl --no-reload enable armbian-ramlog.service
@@ -350,17 +347,6 @@ function board_side_bsp_cli_postinst_base() {
 		if ! grep --quiet "RESUME=none" /etc/initramfs-tools/initramfs.conf; then
 			echo "RESUME=none" >> /etc/initramfs-tools/initramfs.conf
 		fi
-	fi
-}
-
-function board_side_bsp_cli_postinst_os_release_armbian() {
-	# Source the armbian-release information file
-	[ -f /etc/armbian-release ] && . /etc/armbian-release
-
-	# Read release value from lsb-release, so deploying a bsp-cli package on top of "X" makes it "Armbian X"
-	if [ -f /etc/lsb-release ]; then
-		ORIGINAL_DISTRO_RELEASE="$(cat /etc/lsb-release | grep CODENAME | cut -d"=" -f2 | sed 's/.*/\u&/')"
-		sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${ORIGINAL_DISTRO_RELEASE}\"/" /etc/os-release
 	fi
 }
 

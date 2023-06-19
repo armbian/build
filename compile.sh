@@ -44,7 +44,7 @@ logging_init
 traps_init
 
 # make sure git considers our build system dir as a safe dir (only if actually building)
-[[ "${CONFIG_DEFS_ONLY}" != "yes" ]] && git_ensure_safe_directory "${SRC}"
+[[ "${CONFIG_DEFS_ONLY}" != "yes" && "${PRE_PREPARED_HOST}" != "yes" ]] && git_ensure_safe_directory "${SRC}"
 
 # Execute the main CLI entrypoint.
 cli_entrypoint "$@"

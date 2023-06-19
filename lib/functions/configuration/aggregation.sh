@@ -96,6 +96,7 @@ function aggregate_all_packages_python() {
 		"PACKAGE_LIST_BOARD=${PACKAGE_LIST_BOARD}"
 
 		# Those are processed by Python, but not part of rootfs / main packages; results in AGGREGATED_PACKAGES_IMAGE_UNINSTALL
+		# TODO: rpardini: the above statement is untrue; those result in removal _from the rootfs_ and not the image. See also artifact_rootfs_config_dump()
 		# These two vars are made readonly after sourcing the board / family config, so can't be used in extensions and such.
 		"PACKAGE_LIST_BOARD_REMOVE=${PACKAGE_LIST_BOARD_REMOVE}"
 		"PACKAGE_LIST_FAMILY_REMOVE=${PACKAGE_LIST_FAMILY_REMOVE}"

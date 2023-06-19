@@ -379,8 +379,9 @@ function docker_cli_prepare_launch() {
 		# Change the ccache directory to the named volume or bind created. @TODO: this needs more love. it works for Docker, but not sudo
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
-		# Pass down the TERM
+		# Pass down the TERM and the COLUMNS
 		"--env" "TERM=${TERM}"
+		"--env" "COLUMNS=${COLUMNS}"
 
 		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
 		"--env" "CI=${CI}"                         # All CI's, hopefully
@@ -418,6 +419,16 @@ function docker_cli_prepare_launch() {
 	if [[ -n "${GIT_INFO_ANSI}" ]]; then
 		display_alert "Git info" "Passing down GIT_INFO_ANSI as an env var..." "debug"
 		DOCKER_ARGS+=("--env" "GIT_INFO_ANSI=${GIT_INFO_ANSI}")
+	fi
+
+	if [[ -n "${BUILD_REPOSITORY_URL}" ]]; then
+		display_alert "Git info" "Passing down BUILD_REPOSITORY_URL as an env var..." "debug"
+		DOCKER_ARGS+=("--env" "BUILD_REPOSITORY_URL=${BUILD_REPOSITORY_URL}")
+	fi
+
+	if [[ -n "${BUILD_REPOSITORY_COMMIT}" ]]; then
+		display_alert "Git info" "Passing down BUILD_REPOSITORY_COMMIT as an env var..." "debug"
+		DOCKER_ARGS+=("--env" "BUILD_REPOSITORY_COMMIT=${BUILD_REPOSITORY_COMMIT}")
 	fi
 
 	if [[ "${DOCKER_PASS_SSH_AGENT}" == "yes" ]]; then
@@ -578,7 +589,8 @@ function docker_cli_launch() {
 		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successfull" "info"
 	else
 		docker_build_result=$? # capture exit code of test done 4 lines above.
-		display_alert "-------------Docker run failed after ${SECONDS}s--------------------------" "🐳 failed" "err"
+		# No use polluting GHA/CI with notices about Docker failure (real failure, inside Docker, generated enough errors already) skip_ci_special="yes"
+		skip_ci_special="yes" display_alert "-------------Docker run failed after ${SECONDS}s--------------------------" "🐳 failed" "err"
 	fi
 
 	# Find and show the path to the log file for the ARMBIAN_BUILD_UUID.
@@ -592,35 +604,10 @@ function docker_cli_launch() {
 		display_alert "Docker Log file for this run" "not found" "err"
 	fi
 
-	# Show and help user understand space usage in Docker volumes.
-	# This is done in a loop; `docker df` fails sometimes (for no good reason).
-	# @TODO: this is very, very slow when the volumes are full. disable.
-	# docker_cli_show_armbian_volumes_disk_usage
-
 	docker_exit_code="${docker_build_result}" # set outer scope variable -- do NOT exit with error.
 
 	# return ${docker_build_result}
 	return 0 # always exit with success. caller (CLI) will handle the exit code
-}
-
-function docker_cli_show_armbian_volumes_disk_usage() {
-	display_alert "Gathering docker volumes disk usage" "docker system df, wait..." "debug"
-	sleep_seconds="1" silent_retry="yes" do_with_retries 5 docker_cli_show_armbian_volumes_disk_usage_internal || {
-		display_alert "Could not get Docker volumes disk usage" "docker failed to report disk usage" "warn"
-		return 0 # not really a problem, just move on.
-	}
-	local docker_volume_usage
-	docker_volume_usage="$(docker system df -v | grep -e "^armbian-" | grep -v "\b0B" | tr -s " " | cut -d " " -f 1,3 | tr " " ":" | xargs echo || true)"
-	display_alert "Docker Armbian volume usage" "${docker_volume_usage}" "info"
-}
-
-function docker_cli_show_armbian_volumes_disk_usage_internal() {
-	# This fails sometimes, for no reason. Test it.
-	if docker system df -v &> /dev/null; then
-		return 0
-	else
-		return 1
-	fi
 }
 
 function docker_purge_deprecated_volumes() {

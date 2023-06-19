@@ -81,7 +81,7 @@ function prepare_kernel_packaging_debs() {
 		display_alert "Packaging linux-headers" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
 	else
-		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "warn"
+		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "info"
 	fi
 }
 
@@ -174,7 +174,7 @@ function kernel_package_hook_helper() {
 			return 1
 		}
 
-		set -x # Debugging
+		#set -x # Debugging
 
 		$(cat "${contents}")
 
@@ -249,6 +249,7 @@ function kernel_package_callback_linux_image() {
 		Architecture: ${ARCH}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
+		Priority: optional
 		Provides: linux-image, linux-image-armbian, armbian-$BRANCH
 		Description: Armbian Linux $BRANCH kernel image ${artifact_version_reason:-"${kernel_version_family}"}
 		 This package contains the Linux kernel, modules and corresponding other
@@ -325,6 +326,7 @@ function kernel_package_callback_linux_dtb() {
 		Section: kernel
 		Package: ${package_name}
 		Architecture: ${ARCH}
+		Priority: optional
 		Provides: linux-dtb, linux-dtb-armbian, armbian-$BRANCH
 		Description: Armbian Linux $BRANCH DTBs ${artifact_version_reason:-"${kernel_version_family}"} in /boot/dtb-${kernel_version_family}
 		 This package contains device blobs from the Linux kernel, version ${kernel_version_family}
@@ -455,6 +457,7 @@ function kernel_package_callback_linux_headers() {
 		Section: devel
 		Package: ${package_name}
 		Architecture: ${ARCH}
+		Priority: optional
 		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
 		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
 		Description: Armbian Linux $BRANCH headers ${artifact_version_reason:-"${kernel_version_family}"}

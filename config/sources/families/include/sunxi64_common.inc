@@ -10,8 +10,8 @@ enable_extension "sunxi-tools"
 declare -g ARCH=arm64
 declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 declare -g BOOTDELAY=1
-
-declare -g BOOTPATCHDIR='u-boot-sunxi'
+declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-sunxi"}"
+declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2022.10"}"
 declare -g BOOTENV_FILE='sunxi.txt'
 UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-;;u-boot-sunxi-with-spl.bin}"
 declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
@@ -21,17 +21,17 @@ case $BRANCH in
 
 	legacy)
 		declare -g KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v5.15.108"
+		declare -g KERNELBRANCH="tag:v5.15.113"
 		;;
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.1.26"
+		declare -g KERNELBRANCH="tag:v6.1.33"
 		;;
 
 	edge)
 		declare -g KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.2.13"
+		declare -g KERNELBRANCH="tag:v6.2.16"
 		;;
 esac
 

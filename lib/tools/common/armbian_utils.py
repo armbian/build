@@ -38,8 +38,8 @@ def parse_env_for_tokens(env_name):
 	return [token for token in [token.strip() for token in (tokens)] if token != ""]
 
 
-def get_from_env(env_name):
-	value = os.environ.get(env_name, None)
+def get_from_env(env_name, default=None):
+	value = os.environ.get(env_name, default)
 	if value is not None:
 		value = value.strip()
 	return value
@@ -218,6 +218,7 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 	result = None
 	logs = []
 	try:
+		log.debug(f"Start calling Armbian command: {' '.join(exec_cmd)}")
 		result = subprocess.run(
 			exec_cmd,
 			stdout=subprocess.PIPE,

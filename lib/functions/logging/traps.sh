@@ -108,7 +108,8 @@ function run_cleanup_handlers() {
 		return 0 # No handlers set, just return.
 	else
 		if [[ ${cleanup_exit_code:-0} -gt 0 ]]; then
-			display_alert "Cleaning up" "please wait for cleanups to finish" "error"
+			# No use polluting GHA/CI with notices about cleanup, if we're already failing. skip_ci_special="yes"
+			skip_ci_special="yes" display_alert "Cleaning up" "please wait for cleanups to finish" "error"
 		else
 			display_alert "Cleaning up" "please wait for cleanups to finish" "info"
 		fi

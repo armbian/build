@@ -18,7 +18,7 @@ function prep_conf_main_build_single() {
 
 	# those are possibly interactive. interactive (dialog) and logging don't mix, for obvious reasons.
 	interactive_config_prepare_terminal # init vars used for interactive
-	config_possibly_interactive_board
+	config_possibly_interactive_kernel_board
 
 	LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
 
@@ -187,10 +187,13 @@ function config_post_main() {
 	fi
 
 	if [[ "$BETA" == "yes" ]]; then
+		display_alert "BETA" "BETA==yes, nightly image" "debug"
 		IMAGE_TYPE=nightly
-	elif [ "$BETA" == "no" ] || [ "$RC" == "yes" ]; then
+	elif [[ "$BETA" == "no" ]]; then
+		display_alert "BETA" "BETA==no, stable image" "debug"
 		IMAGE_TYPE=stable
 	else
+		display_alert "BETA" "Not yes nor no, user-built" "debug"
 		IMAGE_TYPE=user-built
 	fi
 
@@ -214,7 +217,17 @@ function config_post_main() {
 	if [[ "${skip_kernel:-"no"}" != "yes" ]]; then
 		if [[ -n "${KERNELSOURCE}" ]]; then
 			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
-				exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
+				display_alert "Problem: after configuration, there's not enough kernel info" "Might happen if you used the wrong BRANCH. Make sure 'BRANCH=${BRANCH}' is valid." "err"
+				# if we have KERNEL_TARGET set.
+				if [[ -n "${KERNEL_TARGET}" ]]; then
+					# Split KERNEL_TARGET by commas, and display each one.
+					declare -a KERNEL_TARGET_ARRAY=()
+					IFS=',' read -ra KERNEL_TARGET_ARRAY <<< "${KERNEL_TARGET}"
+					for i in "${KERNEL_TARGET_ARRAY[@]}"; do
+						display_alert "Valid branches for current board" "BOARD=${BOARD} BRANCH=${i}" "info"
+					done
+				fi
+				exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR; check BOARD and BRANCH combination" "err"
 			fi
 			# assume the worst, and all surprises will be happy ones
 			declare -g KERNEL_HAS_WORKING_HEADERS="no"

@@ -17,7 +17,7 @@ function artifact_rootfs_config_dump() {
 	artifact_input_variables[DESKTOP_APPGROUPS_SELECTED]="${DESKTOP_APPGROUPS_SELECTED:-"no_DESKTOP_APPGROUPS_SELECTED_set"}"
 	# Hash of the packages added/removed by extensions
 	declare pkgs_hash="undetermined"
-	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]}" | sha256sum | cut -d' ' -f1)"
+	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]} ${PACKAGE_LIST_BOARD_REMOVE} ${PACKAGE_LIST_FAMILY_REMOVE}" | sha256sum | cut -d' ' -f1)"
 	artifact_input_variables[EXTRA_PKG_ADD_REMOVE_HASH]="${pkgs_hash}"
 }
 
@@ -32,7 +32,7 @@ function artifact_rootfs_prepare_version() {
 
 	calculate_rootfs_cache_id # sets rootfs_cache_id
 
-	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
+	display_alert "rootfs version" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
 
 	declare -a reasons=(
 		"arch \"${ARCH}\""
@@ -121,11 +121,11 @@ function artifact_rootfs_cli_adapter_config_prep() {
 
 	# If BOARD is set, use it to convert to an ARCH.
 	if [[ -n ${BOARD} ]]; then
-		display_alert "BOARD is set, converting to ARCH for rootfs building" "'BOARD=${BOARD}'" "warn"
+		display_alert "BOARD is set, converting to ARCH for rootfs building" "'BOARD=${BOARD}'" "info"
 		# Convert BOARD to ARCH; source the BOARD and FAMILY stuff
 		LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
 		LOG_SECTION="source_family_config_and_arch" do_with_conditional_logging source_family_config_and_arch
-		display_alert "Done sourcing board file" "'${BOARD}' - arch: '${ARCH}'" "warn"
+		display_alert "Done sourcing board file" "'${BOARD}' - arch: '${ARCH}'" "info"
 	fi
 
 	declare -a vars_need_to_be_set=("RELEASE" "ARCH")

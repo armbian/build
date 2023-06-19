@@ -96,6 +96,7 @@ function artifact_kernel_prepare_version() {
 	# @TODO: why not just delegate this to the python patching, with some "dry-run" / hash-only option?
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
+	display_alert "User patches directory for kernel" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}" "info"
 	calculate_hash_for_all_files_in_dirs "${SRC}/patch/kernel/${KERNELPATCHDIR}" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
 	patches_hash="${hash_files}"
 	declare kernel_patches_hash_short="${patches_hash:0:${short_hash_size}}"
@@ -138,10 +139,9 @@ function artifact_kernel_prepare_version() {
 		"${NAME_KERNEL}"
 		"${SRC_LOADADDR}"
 	)
-	declare hash_vars="undetermined"
-	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
-	vars_config_hash="${hash_vars}"
-	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
+	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
+	calculate_hash_for_variables "${vars_to_hash[@]}"
+	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
 
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=("pre_package_kernel_image")
@@ -154,7 +154,7 @@ function artifact_kernel_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/kernel*.sh
+	calculate_hash_for_bash_deb_artifact "${SRC}"/lib/functions/compilation/kernel*.sh # expansion
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 

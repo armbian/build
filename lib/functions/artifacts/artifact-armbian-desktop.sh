@@ -10,6 +10,11 @@
 function artifact_armbian-desktop_config_dump() {
 	artifact_input_variables[RELEASE]="${RELEASE}"
 	artifact_input_variables[DESKTOP_ENVIRONMENT]="${DESKTOP_ENVIRONMENT}"
+
+	# Include a hash of the results of aggregation.
+	declare aggregation_hash="undetermined"
+	aggregation_hash="$(echo "${AGGREGATED_DESKTOP_POSTINST} ${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE} ${AGGREGATED_PACKAGES_DESKTOP_COMMA}" | sha256sum | cut -d' ' -f1)"
+	artifact_input_variables[DESKTOP_AGGREGATION_RESULTS]="${aggregation_hash}"
 }
 
 function artifact_armbian-desktop_prepare_version() {
@@ -32,14 +37,13 @@ function artifact_armbian-desktop_prepare_version() {
 		"${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE}"
 		"${AGGREGATED_PACKAGES_DESKTOP_COMMA}"
 	)
-	declare hash_vars="undetermined"
-	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
-	vars_config_hash="${hash_vars}"
-	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
+	declare hash_variables="undetermined"                                        # will be set by calculate_hash_for_variables()...
+	do_normalize_src_path="no" calculate_hash_for_variables "${vars_to_hash[@]}" # ... where do_normalize_src_path="yes" is the default
+	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/packages/armbian-desktop-deb.sh
+	calculate_hash_for_bash_deb_artifact "compilation/packages/armbian-desktop-deb.sh"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 

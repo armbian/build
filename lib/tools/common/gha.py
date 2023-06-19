@@ -11,7 +11,7 @@ def wrap_with_gha_expression(value):
 
 def set_gha_output(name, value):
 	if os.environ.get('GITHUB_OUTPUT') is None:
-		log.warning(f"Environment variable GITHUB_OUTPUT is not set. Cannot set output '{name}' to '{value}'")
+		log.debug(f"Environment variable GITHUB_OUTPUT is not set. Cannot set output '{name}' to '{value}'")
 		return
 
 	with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:

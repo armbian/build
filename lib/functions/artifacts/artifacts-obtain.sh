@@ -35,14 +35,14 @@ function create_artifact_functions() {
 		fi
 	done
 
-	# If ${chosen_artifact} is in ${DONT_BUILD_ARTIFACTS}, override the build function with an error.
-	if [[ "${DONT_BUILD_ARTIFACTS}" = *"${chosen_artifact}"* ]]; then
+	# If ${chosen_artifact} is in ${DONT_BUILD_ARTIFACTS}, or if DONT_BUILD_ARTIFACTS contains 'any', override the build function with an error.
+	if [[ "${DONT_BUILD_ARTIFACTS}" = *"${chosen_artifact}"* || "${DONT_BUILD_ARTIFACTS}" = *any* ]]; then
 		display_alert "Artifact '${chosen_artifact}' is in DONT_BUILD_ARTIFACTS, overriding build function with error" "DONT_BUILD_ARTIFACTS=${chosen_artifact}" "debug"
 		declare cmd
 		cmd="$(
 			cat <<- ARTIFACT_DEFINITION
 				function artifact_build_from_sources() {
-					exit_with_error "Artifact '${chosen_artifact}' is in DONT_BUILD_ARTIFACTS."
+					exit_with_error "Artifact '${chosen_artifact}' is in DONT_BUILD_ARTIFACTS. This usually means that the artifact cache is not being hit because it is outdated."
 				}
 			ARTIFACT_DEFINITION
 		)"
@@ -109,11 +109,20 @@ function obtain_complete_artifact() {
 		[[ "${artifact_version}" =~ ^${artifact_prefix_version} ]] || exit_with_error "artifact_version '${artifact_version}' does not begin with artifact_prefix_version '${artifact_prefix_version}'"
 	fi
 
+	declare -a artifact_map_debs_values=() artifact_map_packages_values=() artifact_map_debs_keys=() artifact_map_packages_keys=()
+
 	# validate artifact_type... it must be one of the supported types
 	case "${artifact_type}" in
 		deb | deb-tar)
 			# validate artifact_version begins with a digit
 			[[ "${artifact_version}" =~ ^[0-9] ]] || exit_with_error "${artifact_type}: artifact_version '${artifact_version}' does not begin with a digit"
+
+			# grab the the deb maps, and add them to plain arrays.
+			artifact_map_debs_keys=("${!artifact_map_debs[@]}")
+			artifact_map_debs_values=("${artifact_map_debs[@]}")
+			artifact_map_packages_keys=("${!artifact_map_packages[@]}")
+			artifact_map_packages_values=("${artifact_map_packages[@]}")
+
 			;;
 		tar.zst)
 			: # valid, no restrictions on tar.zst versioning
@@ -171,12 +180,26 @@ function obtain_complete_artifact() {
 			artifact_final_file_basename
 			artifact_file_relative
 			artifact_full_oci_target
+
+			# arrays
+			artifact_map_debs_keys
+			artifact_map_debs_values
+			artifact_map_packages_keys
+			artifact_map_packages_values
 		)
 
 		declare -A ARTIFACTS_VAR_DICT=()
 
 		for var in "${wanted_vars[@]}"; do
-			ARTIFACTS_VAR_DICT["${var}"]="$(declare -p "${var}")"
+			declare declaration=""
+			declaration="$(declare -p "${var}")"
+			# Special handling for arrays. Syntax is not pretty, but works.
+			if [[ "${declaration}" =~ "declare -a" ]]; then
+				eval "declare ${var}_ARRAY=\"\${${var}[*]}\""
+				ARTIFACTS_VAR_DICT["${var}_ARRAY"]="$(declare -p "${var}_ARRAY")"
+			else
+				ARTIFACTS_VAR_DICT["${var}"]="${declaration}"
+			fi
 		done
 
 		display_alert "Dumping JSON" "for ${#ARTIFACTS_VAR_DICT[@]} variables" "ext"
@@ -280,7 +303,13 @@ function build_artifact_for_image() {
 	# Make sure ORAS tooling is installed before starting.
 	run_tool_oras
 
-	obtain_complete_artifact
+	# Detour: if building kernel, and KERNEL_CONFIGURE=yes, ignore artifact cache.
+	if [[ "${WHAT}" == "kernel" && "${KERNEL_CONFIGURE}" == "yes" ]]; then
+		display_alert "Ignoring artifact cache for kernel" "KERNEL_CONFIGURE=yes" "info"
+		ARTIFACT_IGNORE_CACHE="yes" obtain_complete_artifact
+	else
+		obtain_complete_artifact
+	fi
 
 	return 0
 }
@@ -321,6 +350,8 @@ function unpack_artifact_from_local_cache() {
 		if [[ "${any_missing}" == "yes" ]]; then
 			display_alert "Files missing from deb-tar" "this is a bug, please report it. artifact_name: '${artifact_name}' artifact_version: '${artifact_version}'" "err"
 		fi
+		# either way, get rid of the .tar now.
+		run_host_command_logged rm -fv "${artifact_final_file}"
 	fi
 	return 0
 }
@@ -337,6 +368,24 @@ function upload_artifact_to_oci() {
 
 function is_artifact_available_in_local_cache() {
 	artifact_exists_in_local_cache="no" # outer scope
+
+	if [[ "${artifact_type}" == "deb-tar" ]]; then
+		declare any_missing="no"
+		declare deb_name
+		for deb_name in "${artifact_map_debs[@]}"; do
+			declare new_name_full="${artifact_base_dir}/${deb_name}"
+			if [[ ! -f "${new_name_full}" ]]; then
+				display_alert "Checking local cache" "deb-tar: ${artifact_final_file_basename} missing: ${new_name_full}" "debug"
+				any_missing="yes"
+			fi
+		done
+		if [[ "${any_missing}" == "no" ]]; then
+			display_alert "Checking local cache" "deb-tar: ${artifact_final_file_basename} nothing missing" "debug"
+			artifact_exists_in_local_cache="yes" # outer scope
+			return 0
+		fi
+	fi
+
 	if [[ -f "${artifact_final_file}" ]]; then
 		artifact_exists_in_local_cache="yes" # outer scope
 	fi

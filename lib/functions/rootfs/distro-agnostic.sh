@@ -149,12 +149,7 @@ function install_distribution_agnostic() {
 	echo -e "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
 	echo "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
 
-	# Keep, or change to Armbian's PRETTY_NAME in /etc/os-release (this is also done in the bsp-cli postinst)
-	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
-		sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}\"/" "${SDCARD}"/etc/os-release
-	else
-		display_alert "distro-agnostic: KEEP_ORIGINAL_OS_RELEASE" "Keeping original /etc/os-release's PRETTY_NAME as original" "warn"
-	fi
+	# PRETTY_NAME changing in os-release is now done in armbian-base-files directly.
 
 	# enable few bash aliases enabled in Ubuntu by default to make it even
 	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
@@ -447,7 +442,9 @@ function install_distribution_agnostic() {
 	run_host_command_logged cp -v "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
-	[[ $IMAGE_TYPE == nightly ]] && sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	if [[ $IMAGE_TYPE == nightly && -f "${SDCARD}"/etc/apt/sources.list.d/armbian.list ]]; then
+		sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	fi
 
 	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723 @TODO: from ubuntu 15. maybe gone?
 	chroot_sdcard chown root:messagebus /usr/lib/dbus-1.0/dbus-daemon-launch-helper

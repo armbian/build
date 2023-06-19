@@ -90,7 +90,7 @@ function memoized_git_ref_to_info() {
 			declare url="undetermined"
 			case "${git_source}" in
 
-				"git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git")
+				"https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git")
 					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
 					;;
 
@@ -113,7 +113,7 @@ function memoized_git_ref_to_info() {
 					esac
 					;;
 
-				"https://gitlab.com/"*)
+				"https://gitlab.com/"* | "https://source.denx.de/"*)
 					# GitLab is more complex than GitHub, there can be more levels.
 					# This code is incomplete... but it works for now.
 					# Example: input:  https://gitlab.com/rk3588_linux/rk/kernel.git

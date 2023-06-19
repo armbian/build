@@ -31,8 +31,18 @@ function compile_fake_ubuntu_advantage_tools() {
 		Conflicts: ubuntu-advantage-tools
 		Breaks: ubuntu-advantage-tools
 		Provides: ubuntu-advantage-tools (= 65535)
+		Priority: optional
+		Section: admin
 		Description: Ban ubuntu-advantage-tools while satisfying ubuntu-minimal dependency
 	END
+
+	# set up post install script
+	cat <<- END > DEBIAN/postinst
+		#!/bin/sh
+		rm -f /var/lib/ubuntu-advantage/messages/motd-esm-announce 2> /dev/null
+		exit 0
+	END
+	chmod 755 DEBIAN/postinst
 
 	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
 
