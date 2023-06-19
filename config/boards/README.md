@@ -9,6 +9,7 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 - **BOARDFAMILY** ( board-family ): defines the family of the board to apply board-specific configuration during build time such as adjustments for the temperature, LED behavior, etc..
 	- Refer to [sources table](https://github.com/armbian/build/blob/master/config/sources/README.md)
 	- Example: `sun50iw1`
+- **BOARD_MAINTAINER** ( space-separated list of Github login ): Declares the maintainer of the board
 - **BOOTCONFIG** ( u-boot identifier ): declares the name of the u-boot configuration for the build without the '\_defconifig' suffix
 	- Refer to the [u-boot source tree](https://github.com/u-boot/u-boot/tree/master/configs) to find configuration for the board
 	- Example: `teres-i`

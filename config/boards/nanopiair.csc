@@ -1,6 +1,7 @@
 # Allwinner H3 quad core 512MB RAM SoC headless WiFi/BT eMMC
 BOARD_NAME="NanoPi Air"
 BOARDFAMILY="sun8i"
+BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi_neo_air_defconfig"
 MODULES="g_serial"
 MODULES_BLACKLIST="lima"

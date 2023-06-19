@@ -1,6 +1,7 @@
 # Rockchip RK3399 hexa core 4GB RAM SoC GBE eMMC USB3 USB-C WiFi/BT
 BOARD_NAME="NanoPi M4V2"
 BOARDFAMILY="rk3399"
+BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi-m4v2-rk3399_defconfig"
 KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
