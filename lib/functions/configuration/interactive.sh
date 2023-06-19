@@ -186,6 +186,7 @@ function interactive_config_ask_branch() {
 	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Usually an LTS kernel")
 	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy / Vendor kernel")
 	[[ $KERNEL_TARGET == *edge* ]] && options+=("edge" "Bleeding edge / latest possible")
+	[[ $KERNEL_TARGET == *midstream* ]] && options+=("midstream" "Hybrid of edge and vendor kernel")
 
 	dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
 		--menu "Select the target kernel branch.\nSelected BOARD='${BOARD}'\nExact kernel versions depend on selected board and its family." \
