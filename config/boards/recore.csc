@@ -5,6 +5,7 @@ BOOTCONFIG="recore_defconfig"
 KERNEL_TARGET="legacy,current"
 MODULES="g_serial"
 BOOT_LOGO="yes"
+BOARD_MAINTAINER="eliasbakken"
 
 function post_family_config__shrink_atf() {
     echo "🍰Shrink ATF"
