@@ -400,7 +400,7 @@ driver_rtl88x2bu() {
 }
 
 driver_rtw88() {
-	if [[ "$LINUXFAMILY" == d1 || "$BRANCH" == midstream ]]; then
+	if [[ "$LINUXFAMILY" == d1 || "$BRANCH" == midstream || "$LINUXFAMILY" == sun50iw9-btt ]]; then
 		# "D1" is using an old 6.1 which can't take this.
 		# "midstream" a half monster kernel, a cross between sre mainline and downstream rk kernel
 		return 0
