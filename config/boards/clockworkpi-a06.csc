@@ -1,6 +1,7 @@
 # Rockchip RK3399 hexa core 4GB RAM SoC WiFi/BT
 BOARD_NAME="Clockworkpi A06"
 BOARDFAMILY="rockchip64"
+BOARD_MAINTAINER=""
 BOOTCONFIG="clockworkpi-a06-rk3399_defconfig"
 KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
