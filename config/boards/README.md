@@ -21,6 +21,9 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- yes: Show the armbian boot logo
 		- desktop: Show the armbian boot logo when `BUILD_DESKTOP` is set to `yes`
 	- Default: `not set`
+- **CRUSTCONFIG** ( crust identifier ): declares the name of the crust defconfig configuration for the build. Specify only if the board has Allwinner CPU with AR100 coprocessor and SOC is supported by [crust firmware](https://github.com/crust-firmware/crust).
+	- Refer to the [crust source tree](https://github.com/crust-firmware/crust/tree/master/configs) to find configuration for the board
+	- Example: `nanopi_m1_defconfig`
 - **IMAGE_PARTITION_TABLE** ( string ): defines which disklabel type to use
 	- Values:
 		- msdos: Use dos/msdos disklabel
