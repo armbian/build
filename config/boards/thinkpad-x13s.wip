@@ -1,0 +1,92 @@
+# Qualcomm Snapdragon 8cx Gen 3 Adreno 690 Qualcomm WCN685x Wi-Fi 6E Qualcomm Snapdragon X55 5G Bluetooth 5.1
+declare -g BOARD_NAME="ThinkPad X13s"
+declare -g BOARDFAMILY="uefi-arm64"
+declare -g KERNEL_TARGET="sc8280xp"
+
+declare -g BOOT_LOGO=desktop
+
+# This board boots via EFI/Grub, but requires a DTB to be passed, from Grub, to the Kernel.
+declare -g GRUB_CMDLINE_LINUX_DEFAULT="efi=noruntime clk_ignore_unused pd_ignore_unused"
+declare -g BOOT_FDT_FILE="qcom/sc8280xp-lenovo-thinkpad-x13s.dtb"
+enable_extension "grub-with-dtb" # important, puts the whole DTB handling in place.
+
+# use Armbian's Full firmware, already set in common uefi include: BOARD_FIRMWARE_INSTALL="-full"
+function post_family_config_branch_sc8280xp__doit() {
+	display_alert "Setting up steev's kernel for" "${BOARD}" "warn"
+	declare -g KERNEL_MAJOR_MINOR="6.3" # Major and minor versions of this kernel.
+	declare -g KERNELBRANCH='branch:lenovo-x13s-linux-6.3.y'
+	declare -g KERNELSOURCE='https://github.com/steev/linux.git'
+}
+
+# @TODO: drop this when https://github.com/armbian/firmware/pull/54 lands
+function post_family_config_branch_sc8280xp__custom_firmware() {
+	display_alert "Setting up custom firmware for" "${BOARD}" "warn"
+	declare -g ARMBIAN_FIRMWARE_GIT_SOURCE="https://github.com/rpardini/armbian-firmware.git"
+	declare -g ARMBIAN_FIRMWARE_GIT_BRANCH="add-thinkpad-x13s-firmware"
+}
+
+function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
+	display_alert "Adding x13s" "firmware in initrd" "warn"
+	mkdir -p "${SDCARD}/etc/initramfs-tools/hooks"
+	local script_file_dst="${SDCARD}/etc/initramfs-tools/hooks/x13s-firmware"
+	cat <<- 'FIRMWARE_HOOK' > "${script_file_dst}"
+		#!/bin/bash
+		[[ "$1" == "prereqs" ]] && exit 0
+		. /usr/share/initramfs-tools/hook-functions
+		for f in /lib/firmware/qcom/sc8280xp/LENOVO/21BX/* ; do
+			add_firmware "${f#/lib/firmware/}"
+		done
+		add_firmware "qcom/a660_sqe.fw" # extra one for dpu
+	FIRMWARE_HOOK
+
+	run_host_command_logged chmod -v +x "${script_file_dst}"
+
+	# Modules, required to boot, add them to initrd
+	cat <<- EXTRA_MODULES >> "${SDCARD}"/etc/initramfs-tools/modules
+		pwm_bl
+		pcie_qcom
+		phy_qcom
+		qmp_pcie
+		phy_qcom_qmp_combo
+		qrtr
+		phy_qcom_edp
+		gpio_sbu_mux
+		pmic_glink_altmode
+		leds_qcom_lpg
+		qcom_q6v5_pas  # This module loads a lot of FW blobs
+		panel_edp
+		msm
+		nvme
+		usb_storage
+		uas
+	EXTRA_MODULES
+
+	return 0
+}
+
+function pre_customize_image__add_ubuntu_concept_x13s_packages_if_ubuntu_lunar() {
+	# Ubuntu has a "x13s Concept" PPA, with needed userspace packages for Lunar (only).
+	# https://launchpad.net/~ubuntu-concept/+archive/ubuntu/x13s
+	# These will enable:
+	# - battery charging/control
+	# - audio via ALSA
+	# It is only available for Lunar, though, so skip it if we're building for anything else.
+	# We add the PPA, install the required packages, and then remove it, otherwise apt-upgrades will bring in junk.
+	if [[ "${RELEASE}" != "lunar" ]]; then
+		display_alert "Skipping Ubuntu Concept PPA for ${BOARD}" "for ${RELEASE} :: only available for lunar" "info"
+		return 0
+	fi
+
+	display_alert "Adding Ubuntu Concept x13s PPA" "${BOARD}" "info"
+	do_with_retries 3 chroot_sdcard add-apt-repository ppa:ubuntu-concept/x13s --yes --no-update
+	display_alert "Updating sources list, after Ubuntu Concept x13s PPAs" "${BOARD}" "info"
+	do_with_retries 3 chroot_sdcard_apt_get_update
+	display_alert "Installing Ubuntu Concept x13s packages" "${BOARD}" "info"
+	do_with_retries 3 chroot_sdcard_apt_get_install alsa-ucm-conf protection-domain-mapper qrtr-tools
+	display_alert "Removing Ubuntu Concept x13s PPA" "${BOARD}" "info"
+	add-apt-repository ppa:ubuntu-concept/x13s --yes --no-update --remove
+	display_alert "Updating sources list, after removing Ubuntu Concept x13s PPAs" "${BOARD}" "info"
+	do_with_retries 3 chroot_sdcard_apt_get_update
+
+	return 0
+}
