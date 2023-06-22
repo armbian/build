@@ -3,7 +3,7 @@
 function extension_prepare_config__prepare_grub_standard() {
 	# Extension configuration defaults.
 	declare -g DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
-	declare -g UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
+	declare -g UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-"serial console"}"   # 'serial' forces grub menu on serial console. empty to not include
 	declare -g UEFI_GRUB_DISABLE_OS_PROBER="${UEFI_GRUB_DISABLE_OS_PROBER:-}" # 'true' will disable os-probing, useful for SD cards.
 	declare -g UEFI_GRUB_DISTRO_NAME="${UEFI_GRUB_DISTRO_NAME:-Armbian}"      # Will be used on grub menu display
 	declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-0}                      # Small timeout by default
@@ -120,8 +120,18 @@ pre_umount_final_image__install_grub() {
 	local chroot_target="${MOUNT}"
 	display_alert "Installing bootloader" "GRUB" "info"
 
-	# getting rid of the dtb package, if installed, is hard. for now just zap it, otherwise update-grub goes bananas
-	rm -rf "$MOUNT"/boot/dtb* || true
+	# Ubuntu's grub (10_linux) will look for /boot/dtb, /boot/dtb-<version> ...
+	# ... unfortunately it does not account for the fact those might be a directories (as in Armbian's linux-dtb case).
+	# Zap everything out of there, the hook below will have a chance to put them back, as symlinks.
+	# Kernel hooks should maintain the link for apt upgrades (same as done for initrd).
+	rm -rf "${MOUNT}"/boot/dtb* || true
+
+	# Call a hook, allowing for early configuration of GRUB.
+	call_extension_method "grub_early_config" <<- 'GRUB_EARLY_CONFIG'
+		Allow for early GRUB configuration.
+		This is called after `configure_grub`, and zapping /boot/dtb*.
+		chroot ($MOUNT) is *not* mounted yet.
+	GRUB_EARLY_CONFIG
 
 	# add config to disable os-prober, otherwise image will have the host's other OSes boot entries.
 	cat <<- grubCfgFragHostSide >> "${MOUNT}"/etc/default/grub.d/99-armbian-host-side.cfg
@@ -139,6 +149,11 @@ pre_umount_final_image__install_grub() {
 
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
+
+	call_extension_method "grub_pre_install" <<- 'GRUB_PRE_INSTALL'
+		Last-minute hook for GRUB tweaks before actually installing GRUB and running update-grub.
+		The chroot ($MOUNT) is mounted.
+	GRUB_PRE_INSTALL
 
 	if [[ "${UEFI_GRUB_TARGET_BIOS}" != "" ]]; then
 		display_alert "Installing GRUB BIOS..." "${UEFI_GRUB_TARGET_BIOS} device ${LOOP}" ""
@@ -166,6 +181,12 @@ pre_umount_final_image__install_grub() {
 		exit_with_error "update-grub failed!"
 	}
 
+	call_extension_method "grub_late_config" <<- 'GRUB_LATE_CONFIG'
+		Allow for late GRUB configuration.
+		This is called after grub-install and update-grub.
+		chroot ($MOUNT) is mounted. sanity checks are going to be performed.
+	GRUB_LATE_CONFIG
+
 	### Sanity check. The produced "/boot/grub/grub.cfg" should:
 	declare -i has_failed_sanity_check=0
 
@@ -190,11 +211,15 @@ pre_umount_final_image__install_grub() {
 		exit_with_error "GRUB config sanity check failed, image will be unbootable; see above errors"
 	fi
 
-	# Check and warn if the wallpaper was not picked up by grub-mkconfig.
-	if ! grep -q "background_image" "${chroot_target}/boot/grub/grub.cfg"; then
-		display_alert "GRUB mkconfig problem" "no wallpaper detected in generated grub.cfg" "warn"
+	# Check and warn if the wallpaper was not picked up by grub-mkconfig, if UEFI_GRUB_TERMINAL==gfxterm
+	if [[ "${UEFI_GRUB_TERMINAL}" == "gfxterm" ]]; then
+		if ! grep -q "background_image" "${chroot_target}/boot/grub/grub.cfg"; then
+			display_alert "GRUB mkconfig problem" "no wallpaper detected in generated grub.cfg" "warn"
+		else
+			display_alert "GRUB config sanity check passed" "wallpaper setup" "debug"
+		fi
 	else
-		display_alert "GRUB config sanity check passed" "wallpaper setup" "debug"
+		display_alert "GRUB config sanity check passed" "UEFI_GRUB_TERMINAL!=gfxterm, skipping wallpaper check" "debug"
 	fi
 
 	# Remove host-side config.
@@ -243,7 +268,7 @@ configure_grub() {
 		GRUB_DISTRIBUTOR="${UEFI_GRUB_DISTRO_NAME}"              # On GRUB menu will show up as "Armbian GNU/Linux" (will show up in some UEFI BIOS boot menu (F8?) as "armbian", not on others)
 		GRUB_DISABLE_SUBMENU=y                                   # Do not put all kernel options into a submenu, instead, list them all on the main menu.
 		GRUB_DISABLE_OS_PROBER=false                             # Have to be explicit about enabling os-prober
-		GRUB_GFXMODE=1024x768
+		GRUB_FONT="/usr/share/grub/unicode.pf2"                  # Be explicit about the font to use so Ubuntu does not freak out and mess gfxterm
 		GRUB_GFXPAYLOAD=keep
 	grubCfgFrag
 
