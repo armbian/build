@@ -11,9 +11,9 @@ declare -g ARCH=arm64
 declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
 declare -g BOOTDELAY=1
 declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-sunxi"}"
-declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2022.10"}"
+declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2023.01"}"
 declare -g BOOTENV_FILE='sunxi.txt'
-UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-;;u-boot-sunxi-with-spl.bin}"
+UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-BINMAN_ALLOW_MISSING=1;;u-boot-sunxi-with-spl.bin}"
 declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 declare -g LINUXFAMILY=sunxi64
 declare -g CRUST_TARGET_MAP="scp;;build/scp/scp.bin"
