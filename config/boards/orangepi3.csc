@@ -6,6 +6,7 @@ BOOTCONFIG="orangepi_3_defconfig"
 KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
 ATFBRANCH="tag:v2.2"
+CRUSTCONFIG="h6_defconfig"
 
 function post_family_tweaks_bsp__orangepi3_BSP() {
     display_alert "Installing BSP firmware and fixups"

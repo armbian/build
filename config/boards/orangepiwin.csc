@@ -4,6 +4,7 @@ BOARDFAMILY="sun50iw1"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_win_defconfig"
 KERNEL_TARGET="legacy,current,edge"
+CRUSTCONFIG="a64_defconfig"
 
 function post_family_tweaks_bsp__orangepiwin_BSP() {
     display_alert "Installing BSP firmware and fixups"

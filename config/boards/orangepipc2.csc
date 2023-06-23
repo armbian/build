@@ -5,6 +5,7 @@ BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_pc2_defconfig"
 KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
+CRUSTCONFIG="h5_defconfig"
 
 function post_family_tweaks_bsp__orangepipc2_BSP() {
     display_alert "Installing BSP firmware and fixups"

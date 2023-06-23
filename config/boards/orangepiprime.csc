@@ -6,6 +6,7 @@ BOOTCONFIG="orangepi_prime_defconfig"
 DEFAULT_OVERLAYS="analog-codec"
 KERNEL_TARGET="legacy,current,edge"
 FULL_DESKTOP="yes"
+CRUSTCONFIG="h5_defconfig"
 
 function post_family_tweaks_bsp__orangepiprime_BSP() {
     display_alert "Installing BSP firmware and fixups"
