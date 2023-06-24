@@ -6,7 +6,6 @@ BOOTCONFIG="orangepi_3_lts_defconfig"
 KERNEL_TARGET="current,edge"
 MODULES="sprdbt_tty sprdwl_ng"
 MODULES_BLACKLIST_LEGACY="bcmdhd"
-ATFBRANCH="tag:v2.2"
 CRUSTCONFIG="h6_defconfig"
 
 function post_family_tweaks_bsp__orangepi3-lts_BSP() {
