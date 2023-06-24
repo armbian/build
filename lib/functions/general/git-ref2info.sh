@@ -90,8 +90,8 @@ function memoized_git_ref_to_info() {
 			declare url="undetermined"
 			case "${git_source}" in
 
-				"https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git")
-					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
+				"https://git.kernel.org/pub/scm/linux/kernel/"*)
+					url="${git_source}/plain/Makefile?h=${sha1}"
 					;;
 
 					# @TODO: urgently add support for Google Mirror
