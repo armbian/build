@@ -17,6 +17,9 @@ declare -g CRUST_TARGET_MAP="scp;;build/scp/scp.bin"
 # Apply crust patches if crust is enabled
 [[ -n "${CRUSTCONFIG}" ]] && BOOTPATCHDIR="${BOOTPATCHDIR} u-boot-sunxi-crust"
 
+# Use a different BOOTDIR so that we don't leave scp.bin behind for non crust builds
+[[ -n "${CRUSTCONFIG}" ]] && BOOTDIR="u-boot-crust"
+
 # complain about system not being supported for building crust image
 function add_host_dependencies__dont_try_to_build_crust_on_unsupported_systems() {
     if [[ -n "${CRUSTCONFIG}" ]] ; then
