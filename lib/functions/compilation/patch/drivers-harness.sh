@@ -18,8 +18,12 @@ function kernel_drivers_create_patches() {
 	declare hash_files # any changes in these files will trigger a cache miss; also any changes in misc .patch with "wireless" at start or "wifi" anywhere in the name
 	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch
 
+	declare hash_variables="undetermined"
+	do_normalize_src_path="no" calculate_hash_for_variables "${KERNEL_DRIVERS_SKIP[*]}"
+	declare hash_variables_short="${hash_variables:0:8}"
+
 	declare cache_key_base="${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}"
-	declare cache_key="${cache_key_base}_${hash_files}"
+	declare cache_key="${cache_key_base}_${hash_files}-${hash_variables_short}"
 	display_alert "Cache key base:" "$cache_key_base" "debug"
 	display_alert "Cache key:" "$cache_key" "debug"
 
@@ -70,7 +74,7 @@ function kernel_drivers_prepare_harness() {
 	declare kernel_git_revision="${2}"
 	# outer scope variable: target_patch_file
 
-	declare -a drivers=(
+	declare -a all_drivers=(
 		driver_generic_bring_back_ipx
 		driver_rtl8152_rtl8153
 		driver_rtl8189ES
@@ -90,6 +94,20 @@ function kernel_drivers_prepare_harness() {
 		driver_uwe5622_allwinner
 		driver_rtl8723cs
 	)
+
+	declare -a skip_drivers=("${KERNEL_DRIVERS_SKIP[@]}")
+	declare -a drivers=()
+
+	# Produce 'drivers' array by removing any drivers in 'skip_drivers' from 'all_drivers'
+	for driver in "${all_drivers[@]}"; do
+		for skip in "${skip_drivers[@]}"; do
+			if [[ "${driver}" == "${skip}" ]]; then
+				display_alert "Skipping kernel driver as instructed by KERNEL_DRIVERS_SKIP" "${driver}" "info"
+				continue 2 # 2: continue the _outer_ loop
+			fi
+		done
+		drivers+=("${driver}")
+	done
 
 	# change cwd to the kernel working dir
 	cd "${kernel_work_dir}" || exit_with_error "Failed to change directory to ${kernel_work_dir}"
