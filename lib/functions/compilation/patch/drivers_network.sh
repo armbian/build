@@ -400,11 +400,7 @@ driver_rtl88x2bu() {
 }
 
 driver_rtw88() {
-	if [[ "$LINUXFAMILY" == d1 || "$BRANCH" == midstream || "$LINUXFAMILY" == sun50iw9-btt ]]; then
-		# "D1" is using an old 6.1 which can't take this.
-		# "midstream" a half monster kernel, a cross between sre mainline and downstream rk kernel
-		return 0
-	fi
+	# Quite a few kernel families have KERNEL_DRIVERS_SKIP listing this driver. If so, this won't even be called.
 
 	# Upstream wireless RTW88 drivers (wireless-next-2023-06-22)
 	if [[ "$version" == "6.1" || "$version" == "6.2" || "$version" == "6.3" || "$version" == "6.4" ]] && [ $EXTRAWIFI == yes ]; then

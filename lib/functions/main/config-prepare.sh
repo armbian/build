@@ -160,6 +160,8 @@ function config_early_init() {
 
 	display_alert "Starting single build process" "${BOARD:-"no BOARD set"}" "info"
 
+	declare -g -a KERNEL_DRIVERS_SKIP=() # Prepare array to be filled in by board/family/extensions
+
 	return 0 # protect against eventual shortcircuit above
 }
 
