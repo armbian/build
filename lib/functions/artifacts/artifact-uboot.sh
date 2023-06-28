@@ -83,8 +83,9 @@ function artifact_uboot_prepare_version() {
 	declare -a vars_to_hash=(
 		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}" # general for all families
 		"${BOOT_SCENARIO}" "${BOOT_SUPPORT_SPI}" "${BOOT_SOC}"    # rockchip stuff, sorry.
+		"${DDR_BLOB}" "${BL31_BLOB}" "${MINILOADER_BLOB}"         # More rockchip stuff, even more sorry.
 		"${ATF_COMPILE}" "${ATFBRANCH}" "${ATFPATCHDIR}"          # arm-trusted-firmware stuff
-		"${CRUSTCONFIG}" "${CRUSTBRANCH}" "${CRUSTPATCHDIR}"	  # crust stuff
+		"${CRUSTCONFIG}" "${CRUSTBRANCH}" "${CRUSTPATCHDIR}"      # crust stuff
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
