@@ -1,0 +1,88 @@
+From 8c3c3bf95578257dcb88c78334d9f51d50aa0933 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 22 Aug 2022 13:34:31 +0200
+Subject: [PATCH 376/469] drm: rockchip: Don't require MIPI DSI device when
+ it's used for ISP
+
+On RK3399 one MIPI DSI device can be alternatively used with the ISP1,
+to provide RX DPHY. When this is the case (ISP1 is enabled in device
+tree), probe success of DRM is tied to probe success of ISP1 connected
+camera sensor. This can fail if the user is able to killswitch the camera
+power, like on Pinephone Pro.
+
+Detect use of MIPI DSI controller by ISP, and don't include it in
+component match list in that case.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_drv.c | 47 +++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_drv.c b/drivers/gpu/drm/rockchip/rockchip_drm_drv.c
+index 6e0788d14c10..9c2c39143e96 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_drv.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_drv.c
+@@ -356,6 +356,43 @@ static void rockchip_drm_match_remove(struct device *dev)
+ 		device_link_del(link);
+ }
+ 
++/*
++ * Check if ISP block linked to a mipi-dsi device via phys phandle is
++ * enabled in device tree.
++ */
++static bool rockchip_drm_is_mipi1_and_used_by_isp(struct device *dev)
++{
++	struct device_node *np = NULL, *phy_np;
++
++	if (!of_device_is_compatible(dev->of_node, "rockchip,rk3399-mipi-dsi"))
++		return false;
++
++	while (true) {
++		np = of_find_compatible_node(np, NULL, "rockchip,rk3399-cif-isp");
++		if (!np)
++			break;
++
++		if (!of_device_is_available(np)) {
++			of_node_put(np);
++			continue;
++		}
++
++		phy_np = of_parse_phandle(np, "phys", 0);
++		if (!phy_np) {
++			of_node_put(np);
++			continue;
++		}
++
++		of_node_put(phy_np);
++		of_node_put(np);
++
++		if (phy_np == dev->of_node)
++			return true;
++	}
++
++	return false;
++}
++
+ static struct component_match *rockchip_drm_match_add(struct device *dev)
+ {
+ 	struct component_match *match = NULL;
+@@ -373,6 +410,16 @@ static struct component_match *rockchip_drm_match_add(struct device *dev)
+ 			if (!d)
+ 				break;
+ 
++			/*
++			 * If mipi1 is connected to ISP, we don't want to wait for mipi1 component,
++			 * because it will not be used by DRM anyway, to not tie success of camera
++			 * driver probe to display pipeline initialization.
++			 */
++			if (rockchip_drm_is_mipi1_and_used_by_isp(d)) {
++				dev_info(d, "used by ISP1, skipping from DRM\n");
++				continue;
++			}
++
+ 			device_link_add(dev, d, DL_FLAG_STATELESS);
+ 			component_match_add(dev, &match, component_compare_dev, d);
+ 		} while (true);
+-- 
+2.34.1
+
