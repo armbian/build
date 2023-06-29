@@ -1,0 +1,167 @@
+From 41a62ded7645594461338877b553dd3780d82398 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Fri, 6 Jan 2023 11:25:09 +0100
+Subject: [PATCH 058/469] media: sun6i-csi: Add multicamera support for
+ parallel bus
+
+Multiple cameras may be connected to parallel bus eg. in a tablet.
+Allow to register multiple parallel bus subdevices and switch between
+them by enabling/disabling media graph links.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../sunxi/sun6i-csi/sun6i_csi_bridge.c        | 51 +++++++++++--------
+ .../sunxi/sun6i-csi/sun6i_csi_bridge.h        |  4 +-
+ 2 files changed, 33 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+index d3a8b18ff348..73c17284f09b 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.c
+@@ -207,12 +207,12 @@ static void sun6i_csi_bridge_disable(struct sun6i_csi_device *csi_dev)
+ 
+ static void
+ sun6i_csi_bridge_configure_parallel(struct sun6i_csi_device *csi_dev,
+-				    struct v4l2_subdev_state *state)
++				    struct v4l2_subdev_state *state,
++				    struct sun6i_csi_bridge_source *source)
+ {
+ 	struct device *dev = csi_dev->dev;
+ 	struct regmap *regmap = csi_dev->regmap;
+-	struct v4l2_fwnode_endpoint *endpoint =
+-		&csi_dev->bridge.source_parallel.endpoint;
++	struct v4l2_fwnode_endpoint *endpoint = &source->endpoint;
+ 	unsigned char bus_width = endpoint->bus.parallel.bus_width;
+ 	unsigned int flags = endpoint->bus.parallel.flags;
+ 	const struct v4l2_mbus_framefmt *sink_format;
+@@ -380,10 +380,8 @@ static void sun6i_csi_bridge_configure(struct sun6i_csi_device *csi_dev,
+ 				       struct sun6i_csi_bridge_source *source,
+ 				       struct v4l2_subdev_state *state)
+ {
+-	struct sun6i_csi_bridge *bridge = &csi_dev->bridge;
+-
+-	if (source == &bridge->source_parallel)
+-		sun6i_csi_bridge_configure_parallel(csi_dev, state);
++	if (source->endpoint.bus_type == V4L2_MBUS_PARALLEL)
++		sun6i_csi_bridge_configure_parallel(csi_dev, state, source);
+ 	else
+ 		sun6i_csi_bridge_configure_mipi_csi2(csi_dev, state);
+ 
+@@ -399,11 +397,11 @@ static int sun6i_csi_bridge_s_stream(struct v4l2_subdev *subdev, int on)
+ 	struct media_pad *local_pad = &bridge->pads[SUN6I_CSI_BRIDGE_PAD_SINK];
+ 	bool capture_streaming = csi_dev->capture.state.streaming;
+ 	struct device *dev = csi_dev->dev;
+-	struct sun6i_csi_bridge_source *source;
++	struct sun6i_csi_bridge_source *source = NULL;
+ 	struct v4l2_subdev *source_subdev;
+ 	struct media_pad *remote_pad;
+ 	struct v4l2_subdev_state *state;
+-	int ret;
++	int ret, i;
+ 
+ 	/* Source */
+ 
+@@ -416,10 +414,20 @@ static int sun6i_csi_bridge_s_stream(struct v4l2_subdev *subdev, int on)
+ 
+ 	source_subdev = media_entity_to_v4l2_subdev(remote_pad->entity);
+ 
+-	if (source_subdev == bridge->source_parallel.subdev)
+-		source = &bridge->source_parallel;
+-	else
++	if (source_subdev == bridge->source_mipi_csi2.subdev) {
+ 		source = &bridge->source_mipi_csi2;
++	} else {
++		for (i = 0; i < SUN6I_CSI_SOURCE_PARALLEL_MAX; i++) {
++			if (source_subdev == bridge->source_parallel[i].subdev) {
++				source = &bridge->source_parallel[i];
++				break;
++			}
++		}
++	}
++	if (!source) {
++		dev_err(dev, "bridge source not found\n");
++		return -ENODEV;
++	}
+ 
+ 	if (!on) {
+ 		v4l2_subdev_call(source_subdev, video, s_stream, 0);
+@@ -635,10 +643,10 @@ sun6i_csi_bridge_notifier_bound(struct v4l2_async_notifier *notifier,
+ 
+ 	switch (source->endpoint.base.port) {
+ 	case SUN6I_CSI_PORT_PARALLEL:
+-		enabled = true;
++		enabled = source->endpoint.base.id == 0;
+ 		break;
+ 	case SUN6I_CSI_PORT_MIPI_CSI2:
+-		enabled = !bridge->source_parallel.expected;
++		enabled = !bridge->source_parallel[0].expected;
+ 		break;
+ 	default:
+ 		return -EINVAL;
+@@ -684,7 +692,7 @@ sun6i_csi_bridge_notifier_ops = {
+ 
+ static int sun6i_csi_bridge_source_setup(struct sun6i_csi_device *csi_dev,
+ 					 struct sun6i_csi_bridge_source *source,
+-					 u32 port,
++					 u32 port, u32 ep,
+ 					 enum v4l2_mbus_type *bus_types)
+ {
+ 	struct device *dev = csi_dev->dev;
+@@ -694,7 +702,7 @@ static int sun6i_csi_bridge_source_setup(struct sun6i_csi_device *csi_dev,
+ 	struct fwnode_handle *handle;
+ 	int ret;
+ 
+-	handle = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), port, 0, 0);
++	handle = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), port, ep, 0);
+ 	if (!handle)
+ 		return -ENODEV;
+ 
+@@ -753,7 +761,7 @@ int sun6i_csi_bridge_setup(struct sun6i_csi_device *csi_dev)
+ 		V4L2_MBUS_BT656,
+ 		V4L2_MBUS_INVALID
+ 	};
+-	int ret;
++	int ret, i;
+ 
+ 	/* V4L2 Subdev */
+ 
+@@ -801,11 +809,12 @@ int sun6i_csi_bridge_setup(struct sun6i_csi_device *csi_dev)
+ 	v4l2_async_nf_init(notifier);
+ 	notifier->ops = &sun6i_csi_bridge_notifier_ops;
+ 
+-	sun6i_csi_bridge_source_setup(csi_dev, &bridge->source_parallel,
+-				      SUN6I_CSI_PORT_PARALLEL,
+-				      parallel_mbus_types);
++	for (i = 0; i < SUN6I_CSI_SOURCE_PARALLEL_MAX; i++)
++		sun6i_csi_bridge_source_setup(csi_dev, &bridge->source_parallel[i],
++					      SUN6I_CSI_PORT_PARALLEL, i,
++					      parallel_mbus_types);
+ 	sun6i_csi_bridge_source_setup(csi_dev, &bridge->source_mipi_csi2,
+-				      SUN6I_CSI_PORT_MIPI_CSI2, NULL);
++				      SUN6I_CSI_PORT_MIPI_CSI2, 0, NULL);
+ 
+ 	if (csi_dev->isp_available)
+ 		ret = v4l2_async_subdev_nf_register(subdev, notifier);
+diff --git a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+index 7754eaaab743..94f080568480 100644
+--- a/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
++++ b/drivers/media/platform/sunxi/sun6i-csi/sun6i_csi_bridge.h
+@@ -38,12 +38,14 @@ struct sun6i_csi_bridge_async_subdev {
+ 	struct sun6i_csi_bridge_source	*source;
+ };
+ 
++#define SUN6I_CSI_SOURCE_PARALLEL_MAX 2
++
+ struct sun6i_csi_bridge {
+ 	struct v4l2_subdev		subdev;
+ 	struct v4l2_async_notifier	notifier;
+ 	struct media_pad		pads[2];
+ 
+-	struct sun6i_csi_bridge_source	source_parallel;
++	struct sun6i_csi_bridge_source	source_parallel[SUN6I_CSI_SOURCE_PARALLEL_MAX];
+ 	struct sun6i_csi_bridge_source	source_mipi_csi2;
+ };
+ 
+-- 
+2.34.1
+

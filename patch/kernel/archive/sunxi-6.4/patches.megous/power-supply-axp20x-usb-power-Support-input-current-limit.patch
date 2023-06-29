@@ -1,0 +1,188 @@
+From 7e1962d508b45fee2c600926fc7441bbd8e07c8c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Jirman?= <megi@xff.cz>
+Date: Tue, 14 Nov 2017 02:09:43 +0100
+Subject: [PATCH 212/469] power: supply: axp20x-usb-power: Support input
+ current limit
+
+Allow to set input current limit directly when autodetection fails
+on incorrectly wired tablets, like TBS A711, that don't have
+D+/D- pins connected, and can't detect the usb power supply type.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/power/supply/axp20x_usb_power.c | 104 +++++++++++++++++++++++-
+ include/linux/mfd/axp20x.h              |   1 +
+ 2 files changed, 104 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/axp20x_usb_power.c b/drivers/power/supply/axp20x_usb_power.c
+index a1e6d1d44808..ec3262478081 100644
+--- a/drivers/power/supply/axp20x_usb_power.c
++++ b/drivers/power/supply/axp20x_usb_power.c
+@@ -52,6 +52,8 @@
+ #define AXP20X_ADC_EN1_VBUS_VOLT	BIT(3)
+ 
+ #define AXP20X_VBUS_MON_VBUS_VALID	BIT(3)
++#define AXP813_CHRG_CTRL3_VBUS_CUR_LIMIT_MASK GENMASK(7, 4)
++#define AXP813_CHRG_CTRL3_VBUS_CUR_LIMIT_OFFSET 4
+ 
+ #define AXP813_BC_EN		BIT(0)
+ 
+@@ -175,6 +177,50 @@ static int axp813_get_current_max(struct axp20x_usb_power *power, int *val)
+ 	return 0;
+ }
+ 
++static int
++axp813_usb_power_get_input_current_limit(struct axp20x_usb_power *power,
++					 int *intval)
++{
++	unsigned int v;
++	int ret = regmap_read(power->regmap, AXP813_CHRG_CTRL3, &v);
++
++	if (ret)
++		return ret;
++
++	v &= AXP813_CHRG_CTRL3_VBUS_CUR_LIMIT_MASK;
++	v >>= AXP813_CHRG_CTRL3_VBUS_CUR_LIMIT_OFFSET;
++
++	switch (v) {
++	case 0:
++		*intval = 100000;
++		return 0;
++	case 1:
++		*intval = 500000;
++		return 0;
++	case 2:
++		*intval = 900000;
++		return 0;
++	case 3:
++		*intval = 1500000;
++		return 0;
++	case 4:
++		*intval = 2000000;
++		return 0;
++	case 5:
++		*intval = 2500000;
++		return 0;
++	case 6:
++		*intval = 3000000;
++		return 0;
++	case 7:
++		*intval = 3500000;
++		return 0;
++	default:
++		*intval = 4000000;
++		return 0;
++	}
++}
++
+ static int axp20x_usb_power_get_property(struct power_supply *psy,
+ 	enum power_supply_property psp, union power_supply_propval *val)
+ {
+@@ -273,6 +319,11 @@ static int axp20x_usb_power_get_property(struct power_supply *psy,
+ 	case POWER_SUPPLY_PROP_ONLINE:
+ 		val->intval = !!(input & AXP20X_PWR_STATUS_VBUS_USED);
+ 		break;
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		if (power->axp20x_id == AXP813_ID)
++			return axp813_usb_power_get_input_current_limit(power,
++								&val->intval);
++		fallthrough;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -316,6 +367,50 @@ static int axp20x_usb_power_set_voltage_min(struct axp20x_usb_power *power,
+ 	return -EINVAL;
+ }
+ 
++static int
++axp813_usb_power_set_input_current_limit(struct axp20x_usb_power *power,
++					 int intval)
++{
++	unsigned int reg;
++
++	switch (intval) {
++	case 100000:
++		reg = 0;
++		break;
++	case 500000:
++		reg = 1;
++		break;
++	case 900000:
++		reg = 2;
++		break;
++	case 1500000:
++		reg = 3;
++		break;
++	case 2000000:
++		reg = 4;
++		break;
++	case 2500000:
++		reg = 5;
++		break;
++	case 3000000:
++		reg = 6;
++		break;
++	case 3500000:
++		reg = 7;
++		break;
++	case 4000000:
++		reg = 8;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return regmap_update_bits(power->regmap,
++				  AXP813_CHRG_CTRL3,
++				  AXP813_CHRG_CTRL3_VBUS_CUR_LIMIT_MASK,
++				  reg << AXP813_CHRG_CTRL3_VBUS_CUR_LIMIT_OFFSET);
++}
++
+ static int axp813_usb_power_set_current_max(struct axp20x_usb_power *power,
+ 					    int intval)
+ {
+@@ -385,6 +480,11 @@ static int axp20x_usb_power_set_property(struct power_supply *psy,
+ 								val->intval);
+ 		return axp20x_usb_power_set_current_max(power, val->intval);
+ 
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		if (power->axp20x_id == AXP813_ID)
++			return axp813_usb_power_set_input_current_limit(power,
++								val->intval);
++		/* fallthrough */
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -408,7 +508,8 @@ static int axp20x_usb_power_prop_writeable(struct power_supply *psy,
+ 		return power->axp20x_id == AXP813_ID;
+ 
+ 	return psp == POWER_SUPPLY_PROP_VOLTAGE_MIN ||
+-	       psp == POWER_SUPPLY_PROP_CURRENT_MAX;
++	       psp == POWER_SUPPLY_PROP_CURRENT_MAX ||
++	       psp == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT;
+ }
+ 
+ static enum power_supply_property axp20x_usb_power_properties[] = {
+@@ -427,6 +528,7 @@ static enum power_supply_property axp22x_usb_power_properties[] = {
+ 	POWER_SUPPLY_PROP_ONLINE,
+ 	POWER_SUPPLY_PROP_VOLTAGE_MIN,
+ 	POWER_SUPPLY_PROP_CURRENT_MAX,
++	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+ };
+ 
+ static const struct power_supply_desc axp20x_usb_power_desc = {
+diff --git a/include/linux/mfd/axp20x.h b/include/linux/mfd/axp20x.h
+index beb3f44f85c5..e9c45e3c65c9 100644
+--- a/include/linux/mfd/axp20x.h
++++ b/include/linux/mfd/axp20x.h
+@@ -131,6 +131,7 @@ enum axp20x_variants {
+ 
+ /* Other DCDC regulator control registers are the same as AXP803 */
+ #define AXP813_DCDC7_V_OUT		0x26
++#define AXP813_CHRG_CTRL3		0x35
+ 
+ #define AXP15060_STARTUP_SRC		0x00
+ #define AXP15060_PWR_OUT_CTRL1		0x10
+-- 
+2.34.1
+
