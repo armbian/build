@@ -68,7 +68,7 @@ function compile_uboot_target() {
 		For example, changing Python version can be done by replacing the `${BIN_WORK_DIR}/python` symlink.
 	PRE_CONFIG_UBOOT_TARGET
 
-	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"
+	display_alert "${uboot_prefix}Preparing u-boot config '${BOOTCONFIG}'" "${version} ${target_make}" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		"KCFLAGS=-fdiagnostics-color=always" \
