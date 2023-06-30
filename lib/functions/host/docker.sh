@@ -381,7 +381,7 @@ function docker_cli_prepare_launch() {
 
 		# Pass down the TERM and the COLUMNS
 		"--env" "TERM=${TERM}"
-		"--env" "COLUMNS=${COLUMNS}"
+		"--env" "COLUMNS=${COLUMNS:-"160"}"
 
 		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
 		"--env" "CI=${CI}"                         # All CI's, hopefully
