@@ -55,7 +55,20 @@ function artifact_uboot_prepare_version() {
 	# @TODO: this is even more grave in case of u-boot: v2022.10 has patches for many boards inside, gotta resolve.
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
-	calculate_hash_for_all_files_in_dirs "${SRC}/patch/u-boot/${BOOTPATCHDIR}" "${USERPATCHES_PATH}/u-boot/${BOOTPATCHDIR}"
+	declare -a uboot_patch_dirs=()
+	for patch_dir in ${BOOTPATCHDIR} ; do
+		uboot_patch_dirs+=( "${SRC}/patch/u-boot/${patch_dir}" "${USERPATCHES_PATH}/u-boot/${patch_dir}" )
+	done
+
+	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
+		uboot_patch_dirs+=( "${SRC}/patch/atf/${ATFPATCHDIR}" "${USERPATCHES_PATH}/atf/${ATFPATCHDIR}" )
+	fi
+
+	if [[ -n "${CRUSTCONFIG}" ]]; then
+		uboot_patch_dirs+=( "${SRC}/patch/crust/${CRUSTPATCHDIR}" "${USERPATCHES_PATH}/crust/${CRUSTPATCHDIR}" )
+	fi
+
+	calculate_hash_for_all_files_in_dirs "${uboot_patch_dirs[@]}"
 	patches_hash="${hash_files}"
 	declare uboot_patches_hash_short="${patches_hash:0:${short_hash_size}}"
 

@@ -97,7 +97,11 @@ function artifact_kernel_prepare_version() {
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
 	display_alert "User patches directory for kernel" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}" "info"
-	calculate_hash_for_all_files_in_dirs "${SRC}/patch/kernel/${KERNELPATCHDIR}" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
+	declare -a kernel_patch_dirs=()
+	for patch_dir in ${KERNELPATCHDIR} ; do
+		kernel_patch_dirs+=( "${SRC}/patch/kernel/${patch_dir}" "${USERPATCHES_PATH}/kernel/${patch_dir}" )
+	done
+	calculate_hash_for_all_files_in_dirs "${kernel_patch_dirs[@]}"
 	patches_hash="${hash_files}"
 	declare kernel_patches_hash_short="${patches_hash:0:${short_hash_size}}"
 
