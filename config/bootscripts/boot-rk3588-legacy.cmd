@@ -16,9 +16,14 @@ setenv earlycon "off"
 
 echo "Boot script loaded from ${devtype} ${devnum}"
 
+echo "Testing for existence ${devtype} ${devnum} ${prefix}armbianEnv.txt ..."
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
+	echo "Found ${devtype} ${devnum} ${prefix}armbianEnv.txt - loading ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt ..."
 	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt
+	echo "Loaded environment from ${devtype} ${devnum} ${prefix}armbianEnv.txt into ${load_addr} filesize ${filesize}..."
+	echo "Importing into environment ..."
 	env import -t ${load_addr} ${filesize}
+	echo "armbianEnv.txt imported into environment"
 fi
 
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
