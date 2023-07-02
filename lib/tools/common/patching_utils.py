@@ -238,7 +238,7 @@ class PatchFileInDir:
 		# The original file is overwritten.
 		output_file = self.full_file_path()
 		log.info(f"Rewriting {output_file} with new patches...")
-		with open(output_file, "w") as f:
+		with open(output_file, "wb") as f:
 			for patch in patches:
 				log.info(f"Writing patch {patch.counter} to {output_file}...")
 				f.write(patch.rewritten_patch)
@@ -797,7 +797,7 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 		stderr=subprocess.PIPE,
 		check=False)
 	# read the output of the patch command
-	stdout_output = proc.stdout.decode("utf-8")
+	stdout_output = proc.stdout
 	stderr_output = proc.stderr.decode("utf-8")
 	# Check if the exit code is not zero and bomb
 	if proc.returncode != 0:
