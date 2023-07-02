@@ -22,7 +22,7 @@ function kernel_drivers_create_patches() {
 	do_normalize_src_path="no" calculate_hash_for_variables "${KERNEL_DRIVERS_SKIP[*]}"
 	declare hash_variables_short="${hash_variables:0:8}"
 
-	declare cache_key_base="${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}"
+	declare cache_key_base="${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}_${BRANCH}"
 	declare cache_key="${cache_key_base}_${hash_files}-${hash_variables_short}"
 	display_alert "Cache key base:" "$cache_key_base" "debug"
 	display_alert "Cache key:" "$cache_key" "debug"
