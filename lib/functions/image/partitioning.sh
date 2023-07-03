@@ -310,12 +310,6 @@ function prepare_partitions() {
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
 	elif [[ $rootpart != 1 ]] && [[ $SRC_EXTLINUX != yes ]]; then
 		echo "rootfstype=$ROOTFS_TYPE" >> "${SDCARD}/boot/armbianEnv.txt"
-
-		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
-			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
-			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
-		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
-
 	elif [[ $rootpart != 1 && $SRC_EXTLINUX != yes && -f "${SDCARD}/boot/${bootscript_dst}" ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
@@ -371,6 +365,13 @@ function prepare_partitions() {
 		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
 		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "info"
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && run_host_command_logged rm -v $SDCARD/boot/armbianEnv.txt
+	fi
+
+	if [[ $SRC_EXTLINUX != yes && -f $SDCARD/boot/armbianEnv.txt ]]; then
+		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
+			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
+			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
+		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
 	fi
 
 	return 0 # there is a shortcircuit above! very tricky btw!
