@@ -256,8 +256,13 @@ function prepare_partitions() {
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
 		fi
 		wait_for_disk_sync "after mkfs" # force writes to be really flushed
-		display_alert "Mounting rootfs" "$rootdevice"
+
+		# store in readonly global for usage in later hooks
+		declare -g -r ROOT_PART_UUID="$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+
+		display_alert "Mounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
 		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
+
 		# create fstab (and crypttab) entry
 		local rootfs
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
