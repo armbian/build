@@ -20,3 +20,8 @@ declare -g BOOT_SCENARIO="spl-blobs"                    # so we don't depend on 
 declare -g BOOT_SOC="rk3588"                            # so we don't depend on defconfig naming convention
 declare -g BOOTCONFIG="rk3588_meko_defconfig" # generic ebv plus distro dtb hacks
 declare -g IMAGE_PARTITION_TABLE="gpt"
+
+# newer blobs from rockchip. tested to work.
+# set as variables, early, so they're picked up by `prepare_boot_configuration()`
+declare -g DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
+declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
