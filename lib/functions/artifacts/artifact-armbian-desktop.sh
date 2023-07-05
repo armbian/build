@@ -8,13 +8,9 @@
 # https://github.com/armbian/build/
 
 function artifact_armbian-desktop_config_dump() {
+	# Those are what keys the package name.
 	artifact_input_variables[RELEASE]="${RELEASE}"
 	artifact_input_variables[DESKTOP_ENVIRONMENT]="${DESKTOP_ENVIRONMENT}"
-
-	# Include a hash of the results of aggregation.
-	declare aggregation_hash="undetermined"
-	aggregation_hash="$(echo "${AGGREGATED_DESKTOP_POSTINST} ${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE} ${AGGREGATED_PACKAGES_DESKTOP_COMMA}" | sha256sum | cut -d' ' -f1)"
-	artifact_input_variables[DESKTOP_AGGREGATION_RESULTS]="${aggregation_hash}"
 }
 
 function artifact_armbian-desktop_prepare_version() {
@@ -22,7 +18,6 @@ function artifact_armbian-desktop_prepare_version() {
 	: "${RELEASE:?RELEASE is not set}"
 
 	: "${DESKTOP_ENVIRONMENT:?DESKTOP_ENVIRONMENT is not set}"
-	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}" # Not keyed, but required.
 
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
@@ -33,9 +28,9 @@ function artifact_armbian-desktop_prepare_version() {
 
 	# Hash variables that affect the contents of desktop package
 	declare -a vars_to_hash=(
-		"${AGGREGATED_DESKTOP_POSTINST}"
-		"${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE}"
-		"${AGGREGATED_PACKAGES_DESKTOP_COMMA}"
+		"${AGGREGATED_DESKTOP_COMMON_POSTINST}"
+		"${AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE}"
+		"${AGGREGATED_PACKAGES_DESKTOP_COMMON_COMMA}"
 	)
 	declare hash_variables="undetermined"                                        # will be set by calculate_hash_for_variables()...
 	do_normalize_src_path="no" calculate_hash_for_variables "${vars_to_hash[@]}" # ... where do_normalize_src_path="yes" is the default
@@ -52,7 +47,7 @@ function artifact_armbian-desktop_prepare_version() {
 
 	declare -a reasons=(
 		"Armbian armbian-desktop"
-		"vars hash \"${vars_config_hash}\""
+		"vars hash \"${hash_variables}\""
 		"framework bash hash \"${bash_hash}\""
 	)
 
@@ -88,7 +83,6 @@ function artifact_armbian-desktop_cli_adapter_pre_run() {
 function artifact_armbian-desktop_cli_adapter_config_prep() {
 	: "${RELEASE:?RELEASE is not set}"
 	: "${DESKTOP_ENVIRONMENT:?DESKTOP_ENVIRONMENT is not set}"
-	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}"
 
 	# this requires aggregation, and thus RELEASE, but also everything else.
 	declare -g artifact_version_requires_aggregation="yes"
