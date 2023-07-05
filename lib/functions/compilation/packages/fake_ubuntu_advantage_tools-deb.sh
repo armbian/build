@@ -27,7 +27,6 @@ function compile_fake_ubuntu_advantage_tools() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Conflicts: ubuntu-advantage-tools
 		Breaks: ubuntu-advantage-tools
 		Provides: ubuntu-advantage-tools (= 65535)
