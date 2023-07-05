@@ -410,7 +410,6 @@ function compile_uboot() {
 		Version: ${artifact_version}
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Section: kernel
 		Priority: optional
 		Provides: armbian-u-boot
