@@ -7,6 +7,50 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function compile_armbian-bsp-cli-transitional() {
+	: "${artifact_version:?artifact_version is not set}"
+	: "${artifact_name:?artifact_name is not set}"
+	: "${BOARD:?BOARD is not set}"
+	: "${BRANCH:?BRANCH is not set}"
+
+	display_alert "Creating bsp-cli transitional package on board '${BOARD}' branch '${BRANCH}'" "armbian-bsp-cli-${BOARD} :: ${artifact_version}" "info"
+
+	# "destination" is used a lot in hooks already. keep this name, even if only for compatibility.
+	declare cleanup_id="" destination=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-bsp-cli" cleanup_id destination # namerefs
+
+	mkdir -p "${destination}"/DEBIAN
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
+
+	# Add transitional package
+	cat <<- EOF > "${destination}"/DEBIAN/control
+		Package: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}
+		Version: ${artifact_version}
+		Architecture: $ARCH
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Section: oldlibs
+		Priority: optional
+		Depends: ${artifact_name} (= ${artifact_version})
+		Description: Armbian CLI BSP for board '${BOARD}' - transitional package
+	EOF
+
+	# generate minimal DEBIAN/changelog
+	cat <<- EOF > "${destination}"/DEBIAN/changelog
+		armbian-bsp-cli-${BOARD} (${artifact_version}) armbian-repo-name; urgency=low
+
+		  * A fake changelog entry.
+
+		 -- $MAINTAINER <$MAINTAINERMAIL>  $(date -R)
+	EOF
+
+	# Build / close the package. This will run shellcheck / show the generated files if debugging
+	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
+
+	display_alert "Done building BSP CLI transitional package" "${destination}" "debug"
+}
+
 function compile_armbian-bsp-cli() {
 	: "${artifact_version:?artifact_version is not set}"
 	: "${artifact_name:?artifact_name is not set}"
@@ -45,7 +89,8 @@ function compile_armbian-bsp-cli() {
 		Priority: optional
 		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
 		Suggests: armbian-config
-		Replaces: zram-config, base-files
+		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${artifact_version})
+		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${artifact_version})
 		Recommends: bsdutils, parted, util-linux, toilet
 		Description: Armbian CLI BSP for board '${BOARD}' branch '${BRANCH}' ${extra_description[@]}
 	EOF
