@@ -460,8 +460,8 @@ driver_rtl88x2cs() {
 #_bt for blueteeth
 driver_rtl8822cs_bt() {
 	# Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets
-	# For sunxi, these two patches are applied in a series.
-	if linux-version compare "${version}" ge 5.11 && [[ "$LINUXFAMILY" != sunxi* ]]; then
+	# both of these patches were upstreamed in 5.18
+	if linux-version compare "${version}" ge 5.11 && linux-version compare "${version}" lt 5.18 ; then
 
 		display_alert "Adding" "Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets" "info"
 
