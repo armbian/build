@@ -418,9 +418,13 @@ function kernel_package_callback_linux_headers() {
 	#               and "make clean" in the "/tools" dir fails. Drop in a fake Makefile there to work around this.
 	if [[ ! -f "${headers_target_dir}/tools/vm/Makefile" ]]; then
 		display_alert "Creating fake tools/vm/Makefile" "6.3+ hackfix" "debug"
-		mkdir -p "${headers_target_dir}/tools/vm"
+		run_host_command_logged mkdir -p "${headers_target_dir}/tools/vm"
 		echo -e "clean:\n\techo fake clean for tools/vm" > "${headers_target_dir}/tools/vm/Makefile"
 	fi
+
+	# Hack for 6.5-rc1: create include/linux dir so the 'clean' step below doesn't fail. I've reported upstream...
+	display_alert "Creating fake counter/include/linux" "6.5-rc1 hackfix" "debug"
+	run_host_command_logged mkdir -p "${headers_target_dir}/tools/counter/include/linux"
 
 	# Now, make the script dirs clean.
 	# This is run in our _target_ dir, NOT the source tree, so we're free to make clean as we wish without invalidating the next build's cache.
@@ -429,8 +433,8 @@ function kernel_package_callback_linux_headers() {
 	#             Important: if the steps _fail_ here, you'll have to enable DEBUG=yes to see what's going on.
 	declare make_bitbucket="&> /dev/null"
 	[[ "${DEBUG}" == "yes" ]] && make_bitbucket=""
-	run_host_command_logged cd "${headers_target_dir}" "&&" make -s "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}"
-	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make -s "ARCH=${SRC_ARCH}" clean "${make_bitbucket}"
+	run_host_command_logged cd "${headers_target_dir}" "&&" make "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}"
+	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" clean "${make_bitbucket}"
 
 	# Trim down on the tools dir a bit after cleaning.
 	rm -rf "${headers_target_dir}/tools/perf" "${headers_target_dir}/tools/testing"
