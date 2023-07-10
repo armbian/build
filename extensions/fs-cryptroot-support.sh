@@ -4,5 +4,5 @@
 
 function add_host_dependencies__add_cryptroot_tooling() {
 	display_alert "Adding cryptroot to host dependencies" "cryptsetup LUKS" "debug"
-	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} cryptsetup" # @TODO: convert to array later
+	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} cryptsetup openssh-client" # @TODO: convert to array later
 }

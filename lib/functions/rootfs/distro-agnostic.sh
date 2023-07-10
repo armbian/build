@@ -390,6 +390,8 @@ function install_distribution_agnostic() {
 	# install armbian-plymouth-theme
 	if [[ $PLYMOUTH == yes ]]; then
 		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-plymouth-theme"]}"
+	else
+		chroot_sdcard_apt_get_remove --auto-remove plymouth
 	fi
 
 	# install wireguard tools
