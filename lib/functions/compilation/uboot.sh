@@ -153,11 +153,27 @@ function compile_uboot_target() {
 
 	fi
 
+	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
+	# boards/families/extensions can customize this via the hook below
+	local -a uboot_cflags_array=(
+		"-fdiagnostics-color=always" # color messages
+		"-Wno-error=maybe-uninitialized"
+		"-Wno-error=misleading-indentation"   # patches have mismatching indentation
+		"-Wno-error=attributes"               # for very old-uboots
+		"-Wno-error=address-of-packed-member" # for very old-uboots
+	)
+	if linux-version compare "${gcc_version_main}" ge "11.0"; then
+		uboot_cflags_array+=(
+			"-Wno-error=array-parameter" # very old uboots
+		)
+	fi
+
 	# Hook time, for extra post-processing
 	call_extension_method "post_config_uboot_target" <<- 'POST_CONFIG_UBOOT_TARGET'
 		*allow extensions prepare after configuring but before compiling an u-boot target*
 		Some u-boot targets require extra configuration or pre-processing before compiling.
 		Last chance to change .config for u-boot before compiling.
+		Also the only chance to change the (local) array `uboot_cflags_array`.
 	POST_CONFIG_UBOOT_TARGET
 
 	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
@@ -173,25 +189,8 @@ function compile_uboot_target() {
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
-	local ts=${SECONDS}
-
-	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
-	# @TODO make configurable/expandable
-	local -a uboot_cflags_array=(
-		"-fdiagnostics-color=always" # color messages
-		"-Wno-error=maybe-uninitialized"
-		"-Wno-error=misleading-indentation"   # patches have mismatching indentation
-		"-Wno-error=attributes"               # for very old-uboots
-		"-Wno-error=address-of-packed-member" # for very old-uboots
-
-	)
-	if linux-version compare "${gcc_version_main}" ge "11.0"; then
-		uboot_cflags_array+=(
-			"-Wno-error=array-parameter" # very old uboots
-		)
-	fi
-
 	local uboot_cflags="${uboot_cflags_array[*]}"
+	local ts=${SECONDS}
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
