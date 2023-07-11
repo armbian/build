@@ -11,11 +11,11 @@ declare -g GRUB_CMDLINE_LINUX_DEFAULT="efi=noruntime clk_ignore_unused pd_ignore
 declare -g BOOT_FDT_FILE="qcom/sc8280xp-lenovo-thinkpad-x13s.dtb"
 enable_extension "grub-with-dtb" # important, puts the whole DTB handling in place.
 
-# use Armbian's Full firmware, already set in common uefi include: BOARD_FIRMWARE_INSTALL="-full"
-function post_family_config_branch_sc8280xp__doit() {
+# The 6.4 branch is incompatible with x13s Concept's alsa-ucm-conf package, so keep it at 6.3.y for now.
+function post_family_config_branch_sc8280xp__steevs_63y_kernel() {
 	display_alert "Setting up steev's kernel for" "${BOARD}" "warn"
-	declare -g KERNEL_MAJOR_MINOR="6.4" # Major and minor versions of this kernel.
-	declare -g KERNELBRANCH='branch:lenovo-x13s-linux-6.4.y'
+	declare -g KERNEL_MAJOR_MINOR="6.3" # Major and minor versions of this kernel.
+	declare -g KERNELBRANCH='branch:lenovo-x13s-linux-6.3.y'
 	declare -g KERNELSOURCE='https://github.com/steev/linux.git'
 }
 
@@ -31,6 +31,7 @@ function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
 			add_firmware "${f#/lib/firmware/}"
 		done
 		add_firmware "qcom/a660_sqe.fw" # extra one for dpu
+		add_firmware "qcom/a690_gmu.bin" # extra one for gpu
 	FIRMWARE_HOOK
 
 	run_host_command_logged chmod -v +x "${script_file_dst}"
@@ -38,6 +39,7 @@ function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
 	# Modules, required to boot, add them to initrd
 	cat <<- EXTRA_MODULES >> "${SDCARD}"/etc/initramfs-tools/modules
 		pwm_bl
+		phy_qcom_qmp_pcie
 		pcie_qcom
 		phy_qcom
 		qmp_pcie
@@ -45,10 +47,13 @@ function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
 		qrtr
 		phy_qcom_edp
 		gpio_sbu_mux
+		i2c_hid_of
+		i2c_qcom_geni
 		pmic_glink_altmode
 		leds_qcom_lpg
 		qcom_q6v5_pas  # This module loads a lot of FW blobs
 		panel_edp
+		panel-edp
 		msm
 		nvme
 		usb_storage
@@ -58,6 +63,31 @@ function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
 	return 0
 }
 
+# armbian-firstrun waits for systemd to be ready, but snapd.seeded might cause it to hang due to wrong clock.
+function pre_customize_image__disable_snapd_seeded() {
+	[[ "${DISTRIBUTION}" != "Ubuntu" ]] && return 0 # only needed for Ubuntu
+	display_alert "Disabling snapd.seeded" "${BOARD}" "info"
+	chroot_sdcard systemctl disable snapd.seeded.service "||" true
+}
+
+# The bluetooth does not have a public MAC address set in DT, and BT won't start without one.
+# Create a systemd service to set it at boot, and enable it; use the same address used by Ubuntu's x13s Concept project.
+function pre_customize_image__initialize_bluetooth_address() {
+	cat <<- 'EOD' > "${SDCARD}/etc/systemd/system/set-bluetooth-address.service"
+		[Unit]
+		Description=Set Bluetooth Address
+		After=bluetooth.target
+
+		[Service]
+		Type=oneshot
+		ExecStart=/usr/bin/btmgmt public-addr AD:5A:00:F0:FD:8C
+
+		[Install]
+		WantedBy=multi-user.target
+	EOD
+	chroot_sdcard systemctl enable set-bluetooth-address.service
+}
+
 function pre_customize_image__add_ubuntu_concept_x13s_packages_if_ubuntu_lunar() {
 	# Ubuntu has a "x13s Concept" PPA, with needed userspace packages for Lunar (only).
 	# https://launchpad.net/~ubuntu-concept/+archive/ubuntu/x13s
@@ -65,7 +95,8 @@ function pre_customize_image__add_ubuntu_concept_x13s_packages_if_ubuntu_lunar()
 	# - battery charging/control
 	# - audio via ALSA
 	# It is only available for Lunar, though, so skip it if we're building for anything else.
-	# We add the PPA, install the required packages, and then remove it, otherwise apt-upgrades will bring in junk.
+	# We add the PPA & pin it in apt conf, so regular Ubuntu updates don't get rid of them.
+
 	if [[ "${RELEASE}" != "lunar" ]]; then
 		display_alert "Skipping Ubuntu Concept PPA for ${BOARD}" "for ${RELEASE} :: only available for lunar" "info"
 		return 0
@@ -73,14 +104,24 @@ function pre_customize_image__add_ubuntu_concept_x13s_packages_if_ubuntu_lunar()
 
 	display_alert "Adding Ubuntu Concept x13s PPA" "${BOARD}" "info"
 	do_with_retries 3 chroot_sdcard add-apt-repository ppa:ubuntu-concept/x13s --yes --no-update
+
+	# Pin all packages from the PPA to a high priority, so they don't get overwritten by Ubuntu updates.
+	# This is important for alsa-ucm-conf and the mesa packages, which are lagging in x13s but already updated in regular Lunar.
+	display_alert "Pinning Ubuntu Concept x132 PPA" "${BOARD}" "info"
+	cat <<- 'EOF' > "${SDCARD}/etc/apt/preferences.d/ubuntu-concept-x13s"
+		Package: *
+		Pin: release o=LP-PPA-ubuntu-concept-x13s
+		Pin-Priority: 1337
+	EOF
+
 	display_alert "Updating sources list, after Ubuntu Concept x13s PPAs" "${BOARD}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
-	display_alert "Installing Ubuntu Concept x13s packages" "${BOARD}" "info"
+
+	display_alert "Upgrading/downgrading packages, after Ubuntu Concept x13s PPAs" "${BOARD}" "info"
+	do_with_retries 3 chroot_sdcard_apt_get full-upgrade --allow-downgrades # allow downgrades, to get the pinned Ubuntu Concept x13s packages
+
+	display_alert "Installing new Ubuntu Concept x13s packages" "${BOARD}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_install alsa-ucm-conf protection-domain-mapper qrtr-tools
-	display_alert "Removing Ubuntu Concept x13s PPA" "${BOARD}" "info"
-	chroot_sdcard add-apt-repository ppa:ubuntu-concept/x13s --yes --no-update --remove
-	display_alert "Updating sources list, after removing Ubuntu Concept x13s PPAs" "${BOARD}" "info"
-	do_with_retries 3 chroot_sdcard_apt_get_update
 
 	return 0
 }
