@@ -62,7 +62,6 @@ function compile_firmware() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Conflicts: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}${extra_conflicts_comma}
 		Provides: linux-firmware, firmware-brcm80211, firmware-ralink, firmware-samsung, firmware-realtek, armbian-firmware${REPLACE}${extra_conflicts_comma}
 		Section: kernel

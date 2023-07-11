@@ -45,7 +45,6 @@ function compile_armbian-bsp-desktop() {
 		Version: ${artifact_version}
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Section: xorg
 		Priority: optional
 		Provides: armbian-bsp-desktop, armbian-bsp-desktop-${BOARD}

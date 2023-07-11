@@ -42,7 +42,6 @@ function compile_armbian-desktop() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Section: xorg
 		Priority: optional
 		Recommends: ${AGGREGATED_PACKAGES_DESKTOP_COMMA}, armbian-bsp-desktop

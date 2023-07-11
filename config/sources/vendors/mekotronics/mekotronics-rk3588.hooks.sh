@@ -4,13 +4,6 @@
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/
 #
 
-# Newer, tested-to-work rkbins.
-function post_family_config__blobs_mekotronics() {
-	display_alert "$BOARD" "Configuring Mekotronics ($BOARD) blobs" "info"
-	declare -g DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
-	declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
-}
-
 # Vendor u-boot, standard rockchip, plus patches.
 function post_family_config__uboot_mekotronics() {
 	display_alert "$BOARD" "Configuring Mekotronics R58 ($BOARD) u-boot" "info"

@@ -103,9 +103,9 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	artifact_version_reason="${reasons[*]}" # outer scope
 
 	artifact_name="armbian-bsp-cli-${BOARD}-${BRANCH}${EXTRA_BSP_NAME}"
-	artifact_type="deb"
+	artifact_type="deb-tar"
 	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
+	artifact_final_file="${DEB_STORAGE}/${artifact_name}_${artifact_version}_${ARCH}.tar"
 
 	artifact_map_packages=(
 		["armbian-bsp-cli"]="${artifact_name}"
@@ -115,10 +115,20 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		["armbian-bsp-cli"]="${artifact_name}_${artifact_version}_${ARCH}.deb"
 	)
 
+	if artifact_armbian-bsp-cli_needs_transitional_package ; then
+		artifact_map_packages+=(["armbian-bsp-cli-transitional"]="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}")
+		artifact_map_debs+=(["armbian-bsp-cli-transitional"]="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}_${artifact_version}_${ARCH}.deb")
+	fi
+
 	return 0
 }
 
 function artifact_armbian-bsp-cli_build_from_sources() {
+	# Generate transitional package when needed. 
+	if artifact_armbian-bsp-cli_needs_transitional_package ; then
+		LOG_SECTION="compile_armbian-bsp-cli" do_with_logging compile_armbian-bsp-cli-transitional
+	fi
+
 	LOG_SECTION="compile_armbian-bsp-cli" do_with_logging compile_armbian-bsp-cli
 }
 
@@ -152,4 +162,16 @@ function artifact_armbian-bsp-cli_obtain_from_remote_cache() {
 
 function artifact_armbian-bsp-cli_deploy_to_remote_cache() {
 	upload_artifact_to_oci
+}
+
+function artifact_armbian-bsp-cli_needs_transitional_package() {
+	if [[ "${KERNEL_TARGET}" == "${BRANCH}" ]] ; then
+		return 0
+	elif [[ "${BRANCH}" == "current" ]] ; then
+		return 0
+	elif [[ "${KERNEL_TARGET}" != *current* && "${BRANCH}" == "legacy" ]] ; then
+		return 0
+	else
+		return 1
+	fi
 }

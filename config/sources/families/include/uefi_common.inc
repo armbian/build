@@ -40,8 +40,8 @@ case "${BRANCH}" in
 
 		declare -g DISTRO_GENERIC_KERNEL=no
 		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
-		declare -g KERNEL_MAJOR_MINOR="6.3" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH='branch:linux-6.3.y'
+		declare -g KERNEL_MAJOR_MINOR="6.4" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH='branch:linux-6.4.y'
 		declare -g KERNELPATCHDIR="uefi-${LINUXFAMILY}-${BRANCH}" # Might be empty.
 		;;
 esac
