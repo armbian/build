@@ -32,7 +32,8 @@ function pre_umount_final_image__configure_uboot_menu() {
 		U_BOOT_PARAMETERS="${SRC_CMDLINE:-"loglevel=7 console=ttyS0"}"
 	UBOOT_MENU_CONFIGURATION_CMDLINE
 
-	if [[ "${NAME_INITRD}" == "uInitrd" ]]; then
+	# Set EXTLINUX_UINITRD=no force usage of normal initrd even when NAME_INITRD is uInitrd
+	if [[ "${NAME_INITRD}" == "uInitrd" && "${EXTLINUX_UINITRD:-"yes"}" == "yes" ]]; then
 		cat <<- UBOOT_MENU_CONFIGURATION_INITRD >> "${MOUNT}/etc/default/u-boot"
 			U_BOOT_INITRD="uInitrd" # Force usage of /boot/uInitrd-<version> as initrd
 		UBOOT_MENU_CONFIGURATION_INITRD

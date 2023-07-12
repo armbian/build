@@ -183,10 +183,24 @@ function interactive_config_ask_branch() {
 		return 0
 	fi
 	declare -a options=()
-	[[ $KERNEL_TARGET == *current* ]] && options+=("current" "Recommended. Usually an LTS kernel")
-	[[ $KERNEL_TARGET == *legacy* ]] && options+=("legacy" "Old stable / Legacy / Vendor kernel")
-	[[ $KERNEL_TARGET == *edge* ]] && options+=("edge" "Bleeding edge / latest possible")
-	[[ $KERNEL_TARGET == *midstream* ]] && options+=("midstream" "Hybrid of edge and vendor kernel")
+	# Loop over the kernel targets and add them to the options array. They're comma separated.
+	declare one_kernel_target
+	for one_kernel_target in $(echo "${KERNEL_TARGET}" | tr "," "\n"); do
+		case $one_kernel_target in
+			"current")
+				options+=("current" "Recommended. Usually an LTS kernel")
+				;;
+			"legacy")
+				options+=("legacy" "Old stable / Legacy / Vendor kernel")
+				;;
+			"edge")
+				options+=("edge" "Bleeding edge / latest possible")
+				;;
+			*)
+				options+=("${one_kernel_target}" "Experimental ${one_kernel_target} kernel / for Developers")
+				;;
+		esac
+	done
 
 	dialog_if_terminal_set_vars --title "Choose a kernel" --backtitle "$backtitle" --colors \
 		--menu "Select the target kernel branch.\nSelected BOARD='${BOARD}'\nExact kernel versions depend on selected board and its family." \
