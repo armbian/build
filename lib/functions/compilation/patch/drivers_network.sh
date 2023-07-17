@@ -395,6 +395,9 @@ driver_rtl88x2bu() {
 		# fix compilation for kernels >= 6.3
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-6.3.0.patch" "applying"
 
+		# fix compilation for kernels >= 6.3.13 < 6.4 and >= 6.5
+		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-wireless-ignore-stale-kickoff-removal.patch" "applying"
+
 	fi
 
 }
