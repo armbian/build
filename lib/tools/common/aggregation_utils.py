@@ -16,9 +16,11 @@ from . import armbian_utils as armbian_utils
 log: logging.Logger = logging.getLogger("aggregation_utils")
 
 AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = []
+AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS_COMMON = []
 DEBOOTSTRAP_SEARCH_RELATIVE_DIRS = []
 CLI_SEARCH_RELATIVE_DIRS = []
 DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS = []
+DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS_COMMON = []
 DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS = []
 SELECTED_CONFIGURATION = None
 DESKTOP_APPGROUPS_SELECTED = []
@@ -225,6 +227,13 @@ def aggregate_all_desktop(artifact, aggregation_function=aggregate_packages_from
 	potential_paths = calculate_potential_paths(
 		AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS, DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS,
 		DESKTOP_APPGROUPS_SELECTED, artifact, potential_paths)
+	return aggregation_function(process_common_path_for_potentials(potential_paths))
+
+
+# 'common' version for desktops: does not include any arch or appgroups; config_name is always 'config_base'
+def aggregate_all_desktop_common(artifact, aggregation_function=aggregate_packages_from_potential):
+	potential_paths = calculate_potential_paths(
+		AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS_COMMON, DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS_COMMON, ["."], artifact)
 	return aggregation_function(process_common_path_for_potentials(potential_paths))
 
 

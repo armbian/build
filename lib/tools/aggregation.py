@@ -48,10 +48,13 @@ USERPATCHES_PATH = armbian_utils.get_from_env_or_bomb("USERPATCHES_PATH")
 # Show the environment
 armbian_utils.show_incoming_environment()
 
+COMMON_FIXED_DESKTOP_ENVIRONMENT_CONFIG_NAME = "config_base"
+
 util.SELECTED_CONFIGURATION = armbian_utils.get_from_env_or_bomb("SELECTED_CONFIGURATION")  # "cli_standard"
 util.DESKTOP_APPGROUPS_SELECTED = armbian_utils.parse_env_for_tokens("DESKTOP_APPGROUPS_SELECTED")  # ["browsers", "chat"]
 util.SRC = armbian_build_directory
 
+# All the search roots, including ARCH-varying ones.
 util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
 	f"{armbian_build_directory}/config",
 	f"{armbian_build_directory}/config/optional/_any_board/_config",
@@ -59,9 +62,17 @@ util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS = [
 	f"{USERPATCHES_PATH}"
 ]
 
+# Only the common, non-arch-varying search roots.
+util.AGGREGATION_SEARCH_ROOT_ABSOLUTE_DIRS_COMMON = [
+	f"{armbian_build_directory}/config",
+	f"{armbian_build_directory}/config/optional/_any_board/_config",
+	f"{USERPATCHES_PATH}"
+]
+
 util.DEBOOTSTRAP_SEARCH_RELATIVE_DIRS = ["cli/_all_distributions/debootstrap", f"cli/{RELEASE}/debootstrap"]
 util.CLI_SEARCH_RELATIVE_DIRS = ["cli/_all_distributions/main", f"cli/{RELEASE}/main"]
 
+# The complete, arch/config_name varying desktop relative directories.
 util.DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS = [
 	f"desktop/_all_distributions/environments/_all_environments",
 	f"desktop/_all_distributions/environments/{DESKTOP_ENVIRONMENT}",
@@ -70,6 +81,18 @@ util.DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS = [
 	f"desktop/{RELEASE}/environments/{DESKTOP_ENVIRONMENT}",
 	f"desktop/{RELEASE}/environments/{DESKTOP_ENVIRONMENT}/{DESKTOP_ENVIRONMENT_CONFIG_NAME}"]
 
+# Only the common, non-arch, fixed-config-name desktop relative directories.
+util.DESKTOP_ENVIRONMENTS_SEARCH_RELATIVE_DIRS_COMMON = [
+	f"desktop/_all_distributions/environments/_all_environments",
+	f"desktop/_all_distributions/environments/{DESKTOP_ENVIRONMENT}",
+	f"desktop/_all_distributions/environments/{DESKTOP_ENVIRONMENT}/{DESKTOP_ENVIRONMENT_CONFIG_NAME}",
+	f"desktop/{RELEASE}/environments/_all_environments",
+	f"desktop/{RELEASE}/environments/{DESKTOP_ENVIRONMENT}",
+	f"desktop/{RELEASE}/environments/{DESKTOP_ENVIRONMENT}/{COMMON_FIXED_DESKTOP_ENVIRONMENT_CONFIG_NAME}"
+	# Attention: fixed "config_base" for common version
+]
+
+# This will _not_ be included in the common version.
 util.DESKTOP_APPGROUPS_SEARCH_RELATIVE_DIRS = [
 	f"desktop/_all_distributions/appgroups",
 	f"desktop/_all_distributions/environments/{DESKTOP_ENVIRONMENT}/appgroups",
@@ -90,13 +113,21 @@ if not BUILD_MINIMAL:
 	rootfs_packages_additional = util.aggregate_all_cli("packages.additional")
 	rootfs_packages_all = util.merge_lists(rootfs_packages_all, rootfs_packages_additional, "add")
 
-# Desktop environment packages; packages + packages.external
+# Desktop environment packages; packages + packages.external (varying per arch, config_name, and appgroups)
 desktop_packages_main = util.aggregate_all_desktop("packages")
 desktop_packages_external = util.aggregate_all_desktop("packages.external")
 desktop_packages_additional = util.aggregate_all_desktop("packages.additional")
 desktop_packages_all = util.merge_lists(desktop_packages_main, desktop_packages_external, "add")
 desktop_packages_all = util.merge_lists(desktop_packages_all, desktop_packages_additional, "add")
 desktop_packages_remove = util.aggregate_all_desktop("packages.remove")
+
+# Common desktop environment packages; packages + packages.external (non-arch, fixed config_name, and non-appgroups)
+desktop_common_packages_main = util.aggregate_all_desktop_common("packages")
+desktop_common_packages_external = util.aggregate_all_desktop_common("packages.external")
+desktop_common_packages_additional = util.aggregate_all_desktop_common("packages.additional")
+desktop_common_packages_all = util.merge_lists(desktop_common_packages_main, desktop_common_packages_external, "add")
+desktop_common_packages_all = util.merge_lists(desktop_common_packages_all, desktop_common_packages_additional, "add")
+desktop_common_packages_remove = util.aggregate_all_desktop_common("packages.remove")
 
 env_list_remove = util.parse_env_for_list("REMOVE_PACKAGES")
 env_list_extra_rootfs = util.parse_env_for_list("EXTRA_PACKAGES_ROOTFS")
@@ -133,6 +164,9 @@ AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_
 AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_package_list_family_remove, "remove")
 AGGREGATED_PACKAGES_DESKTOP = util.merge_lists(AGGREGATED_PACKAGES_DESKTOP, env_list_remove, "remove")
 
+# The desktop (common: non-arch, non-appgroups, fixed config_name) list. This is NOT affected by env's.
+AGGREGATED_PACKAGES_DESKTOP_COMMON = util.merge_lists(desktop_common_packages_all, desktop_common_packages_remove, "remove")
+
 # the image list; this comes from env only; apply the removals.
 AGGREGATED_PACKAGES_IMAGE = util.merge_lists(env_list_extra_image, env_package_list_board, "add")
 AGGREGATED_PACKAGES_IMAGE = util.merge_lists(AGGREGATED_PACKAGES_IMAGE, env_package_list_family, "add")
@@ -157,14 +191,22 @@ AGGREGATED_ROOTFS_HASH = hashlib.md5(AGGREGATED_ROOTFS_HASH_TEXT.encode("utf-8")
 
 # We need to aggregate some desktop stuff, which are not package lists, postinst contents and such.
 # For this case just find the potentials, and for each found, take the whole contents and join via newlines.
-AGGREGATED_DESKTOP_POSTINST = util.aggregate_all_desktop(
-	"debian/postinst", util.aggregate_simple_contents_potential)
-AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE = util.aggregate_all_desktop(
-	"armbian/create_desktop_package.sh", util.aggregate_simple_contents_potential)
-AGGREGATED_DESKTOP_BSP_POSTINST = util.aggregate_all_desktop(
-	"debian/armbian-bsp-desktop/postinst", util.aggregate_simple_contents_potential)
-AGGREGATED_DESKTOP_BSP_PREPARE = util.aggregate_all_desktop(
-	"debian/armbian-bsp-desktop/prepare.sh", util.aggregate_simple_contents_potential)
+AGGREGATED_DESKTOP_POSTINST = util.aggregate_all_desktop("debian/postinst", util.aggregate_simple_contents_potential)
+AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE = util.aggregate_all_desktop("armbian/create_desktop_package.sh", util.aggregate_simple_contents_potential)
+AGGREGATED_DESKTOP_BSP_POSTINST = util.aggregate_all_desktop("debian/armbian-bsp-desktop/postinst", util.aggregate_simple_contents_potential)
+AGGREGATED_DESKTOP_BSP_PREPARE = util.aggregate_all_desktop("debian/armbian-bsp-desktop/prepare.sh", util.aggregate_simple_contents_potential)
+
+# Common (non-arch, non-appgroups, fixed config_name) version of the above.
+AGGREGATED_DESKTOP_COMMON_POSTINST = util.aggregate_all_desktop_common("debian/postinst", util.aggregate_simple_contents_potential)
+AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE = util.aggregate_all_desktop_common(
+	"armbian/create_desktop_package.sh",
+	util.aggregate_simple_contents_potential)
+AGGREGATED_DESKTOP_COMMON_BSP_POSTINST = util.aggregate_all_desktop_common(
+	"debian/armbian-bsp-desktop/postinst",
+	util.aggregate_simple_contents_potential)
+AGGREGATED_DESKTOP_COMMON_BSP_PREPARE = util.aggregate_all_desktop_common(
+	"debian/armbian-bsp-desktop/prepare.sh",
+	util.aggregate_simple_contents_potential)
 
 # Aggregate the apt-sources; only done if BUILD_DESKTOP is True, otherwise empty.
 AGGREGATED_APT_SOURCES = {}
@@ -183,6 +225,7 @@ output_lists: list[tuple[str, str, object, object]] = [
 	("rootfs", "AGGREGATED_PACKAGES_ROOTFS", AGGREGATED_PACKAGES_ROOTFS, None),
 	("image", "AGGREGATED_PACKAGES_IMAGE", AGGREGATED_PACKAGES_IMAGE, None),
 	("desktop", "AGGREGATED_PACKAGES_DESKTOP", AGGREGATED_PACKAGES_DESKTOP, None),
+	("desktop-common", "AGGREGATED_PACKAGES_DESKTOP_COMMON", AGGREGATED_PACKAGES_DESKTOP_COMMON, None),
 	("apt-sources", "AGGREGATED_APT_SOURCES", AGGREGATED_APT_SOURCES, util.encode_source_base_path_extra)
 ]
 
@@ -209,15 +252,21 @@ with open(output_file, "w") as bash, SummarizedMarkdownWriter("aggregation.md", 
 		f"declare -g -r AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA='{AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'\n")
 
 	# Single string stuff for desktop packages postinst's and preparation. @TODO use functions instead of eval.
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_POSTINST", AGGREGATED_DESKTOP_POSTINST))
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE", AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE))
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_BSP_POSTINST", AGGREGATED_DESKTOP_BSP_POSTINST))
-	bash.write(util.prepare_bash_output_single_string(
-		"AGGREGATED_DESKTOP_BSP_PREPARE", AGGREGATED_DESKTOP_BSP_PREPARE))
-	bash.write("\n## End of aggregation output\n");
+	bash.write(util.prepare_bash_output_single_string("AGGREGATED_DESKTOP_POSTINST", AGGREGATED_DESKTOP_POSTINST))
+	bash.write(util.prepare_bash_output_single_string("AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE", AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE))
+	bash.write(util.prepare_bash_output_single_string("AGGREGATED_DESKTOP_BSP_POSTINST", AGGREGATED_DESKTOP_BSP_POSTINST))
+	bash.write(util.prepare_bash_output_single_string("AGGREGATED_DESKTOP_BSP_PREPARE", AGGREGATED_DESKTOP_BSP_PREPARE))
+
+	# Common version (non-arch, non-appgroups, fixed config_name) of the above.
+	bash.write(util.prepare_bash_output_single_string("AGGREGATED_DESKTOP_COMMON_POSTINST", AGGREGATED_DESKTOP_COMMON_POSTINST))
+	bash.write(
+		util.prepare_bash_output_single_string(
+			"AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE",
+			AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE))
+	bash.write(util.prepare_bash_output_single_string("AGGREGATED_DESKTOP_COMMON_BSP_POSTINST", AGGREGATED_DESKTOP_COMMON_BSP_POSTINST))
+	bash.write(util.prepare_bash_output_single_string("AGGREGATED_DESKTOP_COMMON_BSP_PREPARE", AGGREGATED_DESKTOP_COMMON_BSP_PREPARE))
+
+	bash.write("\n## End of aggregation output\n")
 
 	# 2) @TODO: Some removals... uninstall-inside-cache and such. (debsums case? also some gnome stuff)
 

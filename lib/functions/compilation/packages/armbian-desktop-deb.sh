@@ -17,16 +17,15 @@ function compile_armbian-desktop() {
 	: "${RELEASE:?RELEASE is not set}"
 	: "${DISTRIBUTION:?DISTRIBUTION is not set}"
 	: "${DESKTOP_ENVIRONMENT:?DESKTOP_ENVIRONMENT is not set}"
-	: "${DESKTOP_ENVIRONMENT_CONFIG_NAME:?DESKTOP_ENVIRONMENT_CONFIG_NAME is not set}"
 
 	assert_requires_aggregation # this requires aggregation to have been run
-	: "${AGGREGATED_DESKTOP_POSTINST:?AGGREGATED_DESKTOP_POSTINST is not set}"
-	: "${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE:?AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE is not set}"
-	: "${AGGREGATED_PACKAGES_DESKTOP_COMMA:?AGGREGATED_PACKAGES_DESKTOP_COMMA is not set}"
+	# We use the "DESKTOP_COMMON" aggregation results: it does not vary per-arch, nor per-appgroups, and config is always config_base.
+	: "${AGGREGATED_DESKTOP_COMMON_POSTINST:?AGGREGATED_DESKTOP_COMMON_POSTINST is not set}"
+	: "${AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE:?AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE is not set}"
+	: "${AGGREGATED_PACKAGES_DESKTOP_COMMON_COMMA:?AGGREGATED_PACKAGES_DESKTOP_COMMON_COMMA is not set}"
 
 	# produced by aggregation.py
-	display_alert "bsp-desktop: AGGREGATED_PACKAGES_DESKTOP_COMMA" "'${AGGREGATED_PACKAGES_DESKTOP_COMMA}'" "debug"
-	# @TODO: AGGREGATED_PACKAGES_DESKTOP_COMMA includes appgroups, which can vary.
+	display_alert "bsp-desktop: AGGREGATED_PACKAGES_DESKTOP_COMMON_COMMA" "'${AGGREGATED_PACKAGES_DESKTOP_COMMON_COMMA}'" "debug"
 
 	display_alert "Creating common package for '${DESKTOP_ENVIRONMENT}' desktops" "${artifact_name} :: ${artifact_version}" "info"
 
@@ -44,19 +43,19 @@ function compile_armbian-desktop() {
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Section: xorg
 		Priority: optional
-		Recommends: ${AGGREGATED_PACKAGES_DESKTOP_COMMA}, armbian-bsp-desktop
+		Recommends: ${AGGREGATED_PACKAGES_DESKTOP_COMMON_COMMA}, armbian-bsp-desktop
 		Provides: armbian-${RELEASE}-desktop
 		Conflicts: gdm3
 		Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE} ${DESKTOP_ENVIRONMENT}
 	EOF
 
 	# postinst. generated script, gathered from scripts in files in configuration. # @TODO: extensions could do this much better
-	generic_artifact_package_hook_helper "postinst" "${AGGREGATED_DESKTOP_POSTINST}"
+	generic_artifact_package_hook_helper "postinst" "${AGGREGATED_DESKTOP_COMMON_POSTINST}"
 
 	# @TODO: error information? This is very likely to explode, and a bad implementation of extensibility.
-	display_alert "Running desktop-specific aggregated prepare script" "AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE" "debug"
-	eval "${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE}"
-	display_alert "Running desktop-specific aggregated prepare script" "AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE" "debug"
+	display_alert "Running desktop-specific aggregated prepare script" "AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE" "debug"
+	eval "${AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE}"
+	display_alert "Running desktop-specific aggregated prepare script" "AGGREGATED_DESKTOP_COMMON_CREATE_DESKTOP_PACKAGE" "debug"
 
 	mkdir -p "${DEB_STORAGE}/${RELEASE}"
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}"
