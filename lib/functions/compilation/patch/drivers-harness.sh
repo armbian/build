@@ -12,6 +12,11 @@ function kernel_drivers_create_patches_hash_only() {
 }
 
 function kernel_drivers_create_patches() {
+	if [[ "${EXTRAWIFI}" == "no" ]] ; then
+		display_alert "Skipping driver harness as requested" "EXTRAWIFI = ${EXTRAWIFI} - returning" "debug"
+		return 0
+	fi
+
 	kernel_drivers_patch_hash="undetermined" # outer scope
 	kernel_drivers_patch_file="undetermined" # outer scope
 
@@ -126,7 +131,6 @@ function kernel_drivers_prepare_harness() {
 		declare kernel_git_revision="${2}"
 		# for compatibility with `master`-based code
 		declare kerneldir="${kernel_work_dir}"
-		declare EXTRAWIFI="yes" # forced! @TODO not really?
 
 		# change cwd to the kernel working dir
 		cd "${kernel_work_dir}" || exit_with_error "Failed to change directory to ${kernel_work_dir}"
