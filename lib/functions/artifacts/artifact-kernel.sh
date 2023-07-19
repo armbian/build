@@ -16,6 +16,7 @@ function artifact_kernel_config_dump() {
 	artifact_input_variables[KERNELBRANCH]="${KERNELBRANCH}"
 	artifact_input_variables[KERNELPATCHDIR]="${KERNELPATCHDIR}"
 	artifact_input_variables[ARCH]="${ARCH}"
+	artifact_input_variables[EXTRAWIFI]="${EXTRAWIFI:-"yes"}"
 }
 
 # This is run in a logging section.
@@ -87,9 +88,14 @@ function artifact_kernel_prepare_version() {
 
 	declare short_sha1="${GIT_INFO_KERNEL[SHA1]:0:${short_hash_size}}"
 
-	# get the drivers hash...
-	declare kernel_drivers_patch_hash
-	do_with_hooks kernel_drivers_create_patches_hash_only
+	# get the drivers hash... or "0000000000000000" if EXTRAWIFI=no
+	if [[ "${EXTRAWIFI:-"yes"}" == "no" ]]; then
+		display_alert "Skipping drivers patch hash for kernel" "due to EXTRAWIFI=no" "info"
+		declare kernel_drivers_patch_hash="0000000000000000"
+	else
+		declare kernel_drivers_patch_hash
+		do_with_hooks kernel_drivers_create_patches_hash_only
+	fi
 	declare kernel_drivers_hash_short="${kernel_drivers_patch_hash:0:${short_hash_size}}"
 
 	# get the kernel patches hash...
@@ -98,8 +104,8 @@ function artifact_kernel_prepare_version() {
 	declare hash_files="undetermined"
 	display_alert "User patches directory for kernel" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}" "info"
 	declare -a kernel_patch_dirs=()
-	for patch_dir in ${KERNELPATCHDIR} ; do
-		kernel_patch_dirs+=( "${SRC}/patch/kernel/${patch_dir}" "${USERPATCHES_PATH}/kernel/${patch_dir}" )
+	for patch_dir in ${KERNELPATCHDIR}; do
+		kernel_patch_dirs+=("${SRC}/patch/kernel/${patch_dir}" "${USERPATCHES_PATH}/kernel/${patch_dir}")
 	done
 	calculate_hash_for_all_files_in_dirs "${kernel_patch_dirs[@]}"
 	patches_hash="${hash_files}"
