@@ -8,7 +8,7 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-indiedroid-nova.dtb"
 BOOT_SCENARIO="spl-blobs"
-BOOT_SUPPORT_SPI="yes"
+BOOT_SUPPORT_SPI="no"
 IMAGE_PARTITION_TABLE="gpt"
 SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
 BOOTFS_TYPE="fat"
