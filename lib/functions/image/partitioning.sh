@@ -243,6 +243,7 @@ function prepare_partitions() {
 		local rootdevice="${LOOP}p${rootpart}"
 
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			check_loop_device "$rootdevice"
 			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
