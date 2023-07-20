@@ -24,7 +24,7 @@ update_initramfs() {
 	local chroot_target=$1 target_dir
 	target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${IMAGE_INSTALLED_KERNEL_VERSION}*")" # @TODO: rpardini: this will break when we add multi-kernel images
 	local initrd_kern_ver initrd_file initrd_cache_key initrd_cache_file_path initrd_hash
-	local initrd_cache_current_manifest_filepath initrd_cache_last_manifest_filepath
+	local initrd_cache_current_manifest_filepath initrd_cache_last_manifest_filepath initrd_files_to_hash
 	local initrd_debug=""
 	local logging_filter=""
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
@@ -52,10 +52,17 @@ update_initramfs() {
 	mkdir -p "${SRC}/cache/initrd"
 	initrd_cache_current_manifest_filepath="${WORKDIR}/initrd.img-${initrd_kern_ver}.${ARMBIAN_BUILD_UUID}.manifest"
 	initrd_cache_last_manifest_filepath="${SRC}/cache/initrd/initrd.manifest-${initrd_kern_ver}.last.manifest"
+	initrd_files_to_hash=( "${chroot_target}/usr/bin/bash" "${chroot_target}/etc/initramfs" )
+	initrd_files_to_hash+=( "${chroot_target}/etc/initramfs-tools" "${chroot_target}/usr/share/initramfs-tools/" )
+
+	if [[ $CRYPTROOT_ENABLE == yes ]]; then
+		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
+			initrd_files_to_hash+=( "${chroot_target}/etc/dropbear-initramfs/" )
+		fi
+	fi
 
 	# Find all the affected files; parallel md5sum sum them; invert hash and path, and remove chroot prefix.
-	find "${target_dir}" "${chroot_target}/usr/bin/bash" "${chroot_target}/etc/initramfs" \
-		"${chroot_target}/etc/initramfs-tools" -type f | parallel -X md5sum |
+	find "${target_dir}" "${initrd_files_to_hash[@]}" -type f | parallel -X md5sum |
 		awk '{print $2 " - " $1}' |
 		sed -e "s|^${chroot_target}||g" | LC_ALL=C sort > "${initrd_cache_current_manifest_filepath}"
 
