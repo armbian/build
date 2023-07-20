@@ -1,34 +1,36 @@
 # Rockchip RK3588S octa core 4/8/16GB RAM SoC eMMC USB3 USB-C GbE
-BOARD_NAME="Indiedroid Nova"
-BOARDFAMILY="rockchip-rk3588"
-BOOTCONFIG="indiedroid_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
-BOOT_SOC="rk3588"
-KERNEL_TARGET="legacy,collabora,edge"
-FULL_DESKTOP="yes"
-BOOT_LOGO="desktop"
-BOOT_FDT_FILE="rockchip/rk3588s-indiedroid-nova.dtb"
-BOOT_SCENARIO="spl-blobs"
-BOOT_SUPPORT_SPI="yes"
-IMAGE_PARTITION_TABLE="gpt"
-SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
-BOOTFS_TYPE="fat"
-SRC_EXTLINUX="no"     # going back to standard uboot for now
+declare -g BOARD_NAME="Indiedroid Nova"
+declare -g BOARDFAMILY="rockchip-rk3588"
+declare -g BOOTCONFIG="indiedroid_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
+declare -g BOOT_SOC="rk3588"
+declare -g KERNEL_TARGET="legacy,collabora,edge"
+declare -g FULL_DESKTOP="yes"
+declare -g BOOT_LOGO="desktop"
+declare -g BOOT_FDT_FILE="rockchip/rk3588s-indiedroid-nova.dtb"
+declare -g BOOT_SCENARIO="spl-blobs"
+declare -g BOOT_SUPPORT_SPI="no"
+declare -g IMAGE_PARTITION_TABLE="gpt"
+declare -g SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
+declare -g BOOTFS_TYPE="fat"
+declare -g SRC_EXTLINUX="no"     # going back to standard uboot for now
+declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
+declare -g DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
 
 ## only applies to extlinux so not used
-SRC_CMDLINE="console=ttyS0,115200n8 console=tty1 console=both net.ifnames=0 rootflags=data=writeback"
+declare -g SRC_CMDLINE="console=ttyS0,115200n8 console=tty1 console=both net.ifnames=0 rootflags=data=writeback"
 
 
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__indiedroid-nova_use_stvhay_uboot() {
-	BOOTSOURCE='https://github.com/stvhay/u-boot.git'
-	BOOTBRANCH='branch:rockchip-rk3588-unified'
-	BOOTPATCHDIR="legacy"
+	declare -g BOOTSOURCE='https://github.com/stvhay/u-boot.git'
+	declare -g BOOTBRANCH='branch:rockchip-rk3588-unified'
+	declare -g BOOTPATCHDIR="legacy"
 }
 
 # BSP kernel uses device name from contract manufacturer rather than production name in mainline
 function post_family_config_branch_legacy__use_9tripod_dtb() {
 
-    declare -g BOOT_FDT_FILE="rockchip/rk3588s-9tripod-linux.dtb"
+        declare -g BOOT_FDT_FILE="rockchip/rk3588s-9tripod-linux.dtb"
 
 }
 
