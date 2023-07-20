@@ -13,6 +13,8 @@ IMAGE_PARTITION_TABLE="gpt"
 SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
 BOOTFS_TYPE="fat"
 SRC_EXTLINUX="no"     # going back to standard uboot for now
+declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
+declare -g DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
 
 ## only applies to extlinux so not used
 SRC_CMDLINE="console=ttyS0,115200n8 console=tty1 console=both net.ifnames=0 rootflags=data=writeback"
