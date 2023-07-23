@@ -407,8 +407,8 @@ driver_rtw88() {
 	# Upstream wireless RTW88 drivers (wireless-next-2023-06-22)
 	if [[ "$version" == "6.1" || "$version" == "6.2" || "$version" == "6.3" || "$version" == "6.4" ]] ; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-rtw88-linux-next.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-rtw88-linux-next.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
 		#process_patch_file "${SRC}/patch/misc/rtw88/hack/001-revert-rtw88-sdio-size-and-timout-to-rfc-v1.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/002-rtw88-usb-make-work-queues-high-priority.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/003-rtw88-decrease-the-log-level-of-tx-report.patch" "applying"
