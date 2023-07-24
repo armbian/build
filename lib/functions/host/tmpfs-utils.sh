@@ -39,6 +39,9 @@ function prepare_tmpfs_for() {
 	elif [[ "${ARMBIAN_INSIDE_DOCKERFILE_BUILD}" == "yes" ]]; then
 		display_alert "prepare_tmpfs_for: inside Dockerfile build, skipping" "${tmpfs_name}" "cleanup"
 		cleanup_params+=("no_umount_tmpfs")
+	elif [[ "${USE_TMPFS}" == "no" ]]; then
+		display_alert "prepare_tmpfs_for:" "USE_TMPFS=no, skipping: '${tmpfs_name}'" "warning"
+		cleanup_params+=("no_umount_tmpfs")
 	else
 		display_alert "prepare_tmpfs_for: on Linux and root, MOUNTING TMPFS" "${tmpfs_name}" "cleanup"
 		# mount tmpfs on it
