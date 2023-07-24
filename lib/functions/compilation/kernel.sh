@@ -111,7 +111,7 @@ function kernel_prepare_build_and_package() {
 	build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
 	build_targets+=("${KERNEL_IMAGE_TYPE}")
 	declare cleanup_id="" kernel_dest_install_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "k" cleanup_id kernel_dest_install_dir # namerefs
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "kernel_dest_install_dir" cleanup_id kernel_dest_install_dir # namerefs
 
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
@@ -146,7 +146,7 @@ function kernel_prepare_build_and_package() {
 
 	# prepare a target dir for the shared, produced kernel .debs, across image/dtb/headers
 	declare cleanup_id_debs="" kernel_debs_temp_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "kd" cleanup_id_debs kernel_debs_temp_dir # namerefs
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "kernel_debs_temp_dir" cleanup_id_debs kernel_debs_temp_dir # namerefs
 
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
