@@ -29,11 +29,11 @@ function cli_json_info_run() {
 		display_alert "Here we go" "generating JSON info :: ${ARMBIAN_COMMAND} " "info"
 
 		# Targets inventory. Will do all-by-all if no targets file is provided.
-		declare TARGETS_FILE="${TARGETS_FILE-"${USERPATCHES_PATH}/${TARGETS_FILENAME:-"targets.yaml"}"}" # @TODO: return to targets.yaml one day
+		declare TARGETS_FILE="${TARGETS_FILE-"${USERPATCHES_PATH}/${TARGETS_FILENAME:-"targets.yaml"}"}"
 
 		declare BASE_INFO_OUTPUT_DIR="${SRC}/output/info" # Output dir for info
 
-		if [[ "${CLEAN_INFO}" == "yes" ]]; then
+		if [[ "${CLEAN_INFO:-"yes"}" != "no" ]]; then
 			display_alert "Cleaning info output dir" "${BASE_INFO_OUTPUT_DIR}" "info"
 			rm -rf "${BASE_INFO_OUTPUT_DIR}"
 		fi
@@ -134,16 +134,17 @@ function cli_json_info_run() {
 
 		# if TARGETS_FILE does not exist, one will be provided for you, from a template.
 		if [[ ! -f "${TARGETS_FILE}" ]]; then
-			declare TARGETS_TEMPLATE="${TARGETS_TEMPLATE:-"targets-all-cli.yaml"}"
-			display_alert "No targets file found" "using default targets template ${TARGETS_TEMPLATE}" "info"
+			declare TARGETS_TEMPLATE="${TARGETS_TEMPLATE:-"targets-default.yaml"}"
+			display_alert "No targets file found" "using default targets template ${TARGETS_TEMPLATE}" "warn"
 			TARGETS_FILE="${SRC}/config/templates/${TARGETS_TEMPLATE}"
 		else
-			display_alert "Using targets file" "${TARGETS_FILE}" "info"
+			display_alert "Using targets file" "${TARGETS_FILE}" "warn"
 		fi
 
 		if [[ ! -f "${TARGETS_OUTPUT_FILE}" ]]; then
 			display_alert "Generating targets inventory" "targets-compositor" "info"
-			export TARGETS_BETA="${BETA}" # Read by the Python script, and injected into every target as "BETA=" param.
+			export TARGETS_BETA="${BETA}"                             # Read by the Python script, and injected into every target as "BETA=" param.
+			export TARGETS_FILTER_INCLUDE="${TARGETS_FILTER_INCLUDE}" # Read by the Python script; used to "only include" targets that match the given string.
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/targets-compositor.py "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" "not_yet_releases.json" "${TARGETS_FILE}" ">" "${TARGETS_OUTPUT_FILE}"
 			unset TARGETS_BETA
 		fi
@@ -154,22 +155,25 @@ function cli_json_info_run() {
 		if [[ ! -f "${IMAGE_INFO_FILE}" ]]; then
 			display_alert "Generating image info" "info-gatherer-image" "info"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/info-gatherer-image.py "${TARGETS_OUTPUT_FILE}" ">" "${IMAGE_INFO_FILE}"
-			# if stdin is a terminal...
-			if [ -t 0 ]; then
-				display_alert "To load the OpenSearch dashboards:" "
-					pip3 install opensearch-py # install needed lib to talk to OS
-					docker-compose --file tools/dashboards/docker-compose-opensearch.yaml up -d # start up OS in docker-compose
-					python3 lib/tools/index-opensearch.py < output/info/image-info.json # index the JSON into OS
-					# go check out http://localhost:5601
-					docker-compose --file tools/dashboards/docker-compose-opensearch.yaml down # shut down OS when you're done
-				" "info"
-			fi
 		fi
 
 		# convert image info output to CSV for easy import into Google Sheets etc
 		if [[ ! -f "${IMAGE_INFO_CSV_FILE}" ]]; then
 			display_alert "Generating CSV info" "info.csv" "info"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/json2csv.py "<" "${IMAGE_INFO_FILE}" ">" ${IMAGE_INFO_CSV_FILE}
+		fi
+
+		if [[ "${ARMBIAN_COMMAND}" == "targets-dashboard" ]]; then
+			display_alert "To load the OpenSearch dashboards:" "
+				pip3 install opensearch-py # install needed lib to talk to OpenSearch
+				sysctl -w vm.max_map_count=262144 # raise limited needed by OpenSearch
+				docker-compose --file tools/dashboards/docker-compose-opensearch.yaml up -d # start up OS in docker-compose
+				python3 lib/tools/index-opensearch.py < output/info/image-info.json # index the JSON into OpenSearch
+				# go check out http://localhost:5601
+				docker-compose --file tools/dashboards/docker-compose-opensearch.yaml down # shut down OpenSearch when you're done
+				" "info"
+			display_alert "Done with" "targets-dashboard" "info"
+			return 0
 		fi
 
 		### Artifacts.
@@ -224,7 +228,7 @@ function cli_json_info_run() {
 		# If the image or artifact is up-to-date, it is still included in matrix, but the job is skipped.
 		# If any of the matrixes is bigger than 255 items, an error is generated.
 		if [[ "${ARMBIAN_COMMAND}" == "gha-matrix" ]]; then
-			if [[ "${CLEAN_MATRIX}" == "yes" ]]; then
+			if [[ "${CLEAN_MATRIX:-"yes"}" != "no" ]]; then
 				display_alert "Cleaning GHA matrix output" "clean-matrix" "info"
 				run_host_command_logged rm -fv "${BASE_INFO_OUTPUT_DIR}"/gha-*-matrix.json
 			fi

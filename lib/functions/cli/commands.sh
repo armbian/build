@@ -25,12 +25,13 @@ function armbian_register_commands() {
 		["config-dump-json"]="config_dump_json"    # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 		["config-dump-no-json"]="config_dump_json" # implemented in cli_config_dump_json_pre_run and cli_config_dump_json_run
 
-		["inventory"]="json_info"             # implemented in cli_json_info_pre_run and cli_json_info_run
-		["targets"]="json_info"               # implemented in cli_json_info_pre_run and cli_json_info_run
-		["debs-to-repo-json"]="json_info"     # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-matrix"]="json_info"            # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-workflow"]="json_info"          # implemented in cli_json_info_pre_run and cli_json_info_run
-		["gha-template"]="json_info"          # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory"]="json_info"         # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets"]="json_info"           # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets-dashboard"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["debs-to-repo-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-matrix"]="json_info"        # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-workflow"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
+		["gha-template"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		# These probably should be in their own separate CLI commands file, but for now they're together in jsoninfo.
 		["debs-to-repo-download"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
@@ -94,6 +95,10 @@ function armbian_register_commands() {
 		["generate-dockerfile"]="DOCKERFILE_GENERATE_ONLY='yes'"
 
 		["artifact-config-dump-json"]='CONFIG_DEFS_ONLY="yes"'
+
+		# repo pipeline stuff is usually run on saved/restored artifacts for output/info, so don't clean them by default
+		["debs-to-repo-download"]="CLEAN_MATRIX='no' CLEAN_INFO='no'"
+		["debs-to-repo-reprepro"]="CLEAN_MATRIX='no' CLEAN_INFO='no'"
 
 		# artifact shortcuts
 		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"

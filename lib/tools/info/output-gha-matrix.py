@@ -64,7 +64,7 @@ def resolve_gha_runner_tags_via_pipeline_gha_config(input: dict, artifact_name: 
 			ret = by_names_and_archs[artifact_name_and_arch]
 			log.debug(f"Found 'by-name-and-arch' value '{artifact_name_and_arch}' config in input.pipeline.gha.runners, using '{ret}'")
 
-	log.info(f"Resolved GHA runs_on for name:'{artifact_name}' arch:'{artifact_arch}' to runs_on:'{ret}'")
+	log.debug(f"Resolved GHA runs_on for name:'{artifact_name}' arch:'{artifact_arch}' to runs_on:'{ret}'")
 
 	return ret
 

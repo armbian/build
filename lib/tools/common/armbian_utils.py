@@ -16,12 +16,13 @@ import multiprocessing
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
+
+import sys
 
 REGEX_WHITESPACE_LINEBREAK_COMMA_SEMICOLON = r"[\s,;\n]+"
 
-ARMBIAN_CONFIG_REGEX_KERNEL_TARGET = r"^([export |declare -g]+)?KERNEL_TARGET=\"(.*)\""
+ARMBIAN_BOARD_CONFIG_REGEX_GENERIC = r"^(?!\s)(?:[export |declare \-g]?)+([A-Z0-9_]+)=(?:'|\")(.*)(?:'|\")"
 
 log: logging.Logger = logging.getLogger("armbian_utils")
 
@@ -107,28 +108,66 @@ def to_yaml(gha_workflow):
 
 # I've to read the first line from the board file, that's the hardware description in a pound comment.
 # Also, 'KERNEL_TARGET="legacy,current,edge"' which we need to parse.
-def armbian_parse_board_file_for_static_info(board_file, board_id):
+def armbian_parse_board_file_for_static_info(board_file, board_id, core_or_userpatched):
 	file_handle = open(board_file, 'r')
 	file_lines = file_handle.readlines()
 	file_handle.close()
 
 	file_lines.reverse()
 	hw_desc_line = file_lines.pop()
+	file_lines.reverse()
 	hw_desc_clean = None
 	if hw_desc_line.startswith("# "):
 		hw_desc_clean = hw_desc_line.strip("# ").strip("\n")
 
-	# Parse KERNEL_TARGET line.
-	kernel_targets = None
-	kernel_target_matches = re.findall(ARMBIAN_CONFIG_REGEX_KERNEL_TARGET, "\n".join(file_lines), re.MULTILINE)
-	if len(kernel_target_matches) == 1:
-		kernel_targets = kernel_target_matches[0][1].split(",")
+	# Parse generic bash vars, with a horrendous regex.
+	generic_vars = {}
+	generic_var_matches = re.findall(ARMBIAN_BOARD_CONFIG_REGEX_GENERIC, "\n".join(file_lines), re.MULTILINE)
+	for generic_var_match in generic_var_matches:
+		generic_vars[generic_var_match[0]] = generic_var_match[1]
 
-	ret = {"BOARD": board_id, "BOARD_SUPPORT_LEVEL": (Path(board_file).suffix)[1:]}
-	if hw_desc_clean is not None:
-		ret["BOARD_FILE_HARDWARE_DESC"] = hw_desc_clean
-	if kernel_targets is not None:
-		ret["BOARD_POSSIBLE_BRANCHES"] = kernel_targets
+	kernel_targets = []
+	if "KERNEL_TARGET" in generic_vars:
+		kernel_targets = generic_vars["KERNEL_TARGET"].split(",")
+	if (len(kernel_targets) == 0) or (kernel_targets[0] == ""):
+		log.warning(f"KERNEL_TARGET not found in '{board_file}', syntax error?, missing quotes? stray comma?")
+
+	maintainers = []
+	if "BOARD_MAINTAINER" in generic_vars:
+		maintainers = generic_vars["BOARD_MAINTAINER"].split(" ")
+		maintainers = list(filter(None, maintainers))
+	else:
+		if core_or_userpatched == "core":
+			log.warning(f"BOARD_MAINTAINER not found in '{board_file}', syntax error?, missing quotes? stray space? missing info?")
+
+	board_has_video = True
+	if "HAS_VIDEO_OUTPUT" in generic_vars:
+		if generic_vars["HAS_VIDEO_OUTPUT"] == "no":
+			board_has_video = False
+
+	if "BOARDFAMILY" not in generic_vars:
+		log.warning(f"BOARDFAMILY not found in '{board_file}', syntax error?, missing quotes?")
+
+	# Add some more vars that are not in the board file, so we've a complete BOARD_TOP_LEVEL_VARS as well as first-level
+	extras: list[dict[str, any]] = [
+		{"name": "BOARD", "value": board_id},
+		{"name": "BOARD_SUPPORT_LEVEL", "value": (Path(board_file).suffix)[1:]},
+		{"name": "BOARD_FILE_HARDWARE_DESC", "value": hw_desc_clean},
+		{"name": "BOARD_POSSIBLE_BRANCHES", "value": kernel_targets},
+		{"name": "BOARD_MAINTAINERS", "value": maintainers},
+		{"name": "BOARD_HAS_VIDEO", "value": board_has_video},
+		{"name": "BOARD_CORE_OR_USERPATCHED", "value": core_or_userpatched}
+	]
+
+	# Append the extras to the generic_vars dict.
+	for extra in extras:
+		generic_vars[extra["name"]] = extra["value"]
+
+	ret = {"BOARD_TOP_LEVEL_VARS": generic_vars}
+	# Append the extras to the top-level.
+	for extra in extras:
+		ret[extra["name"]] = extra["value"]
+
 	return ret
 
 
@@ -178,8 +217,7 @@ def armbian_get_all_boards_inventory():
 	# first, gather the board_info for every core board. if any fail, stop.
 	info_for_board = {}
 	for board in core_boards.keys():
-		board_info = armbian_parse_board_file_for_static_info(core_boards[board], board)
-		board_info["BOARD_CORE_OR_USERPATCHED"] = "core"
+		board_info = armbian_parse_board_file_for_static_info(core_boards[board], board, "core")
 		# Core boards must have the KERNEL_TARGET defined.
 		if "BOARD_POSSIBLE_BRANCHES" not in board_info:
 			raise Exception(f"Core board '{board}' must have KERNEL_TARGET defined")
@@ -189,8 +227,7 @@ def armbian_get_all_boards_inventory():
 	if armbian_paths["has_userpatches_path"]:
 		userpatched_boards = armbian_get_all_boards_list(armbian_paths["userpatches_boards_path"])
 		for uboard_name in userpatched_boards.keys():
-			uboard = armbian_parse_board_file_for_static_info(userpatched_boards[uboard_name], uboard_name)
-			uboard["BOARD_CORE_OR_USERPATCHED"] = "userpatched"
+			uboard = armbian_parse_board_file_for_static_info(userpatched_boards[uboard_name], uboard_name, "userpatched")
 			is_new_board = not (uboard_name in info_for_board)
 			if is_new_board:
 				log.debug(f"Userpatched Board {uboard_name} is new")
