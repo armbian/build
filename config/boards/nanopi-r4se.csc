@@ -1,6 +1,6 @@
 # Rockchip RK3399 hexa core 4GB RAM SoC 2 x GBE 32GB eMMC USB3 USB-C
 BOARD_NAME="NanoPi R4SE"
-BOARDFAMILY="rk3399"
+BOARDFAMILY="rockchip64" # Used to be rk3399
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi-r4se-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
