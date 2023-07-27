@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-
 # ‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
 #  SPDX-License-Identifier: GPL-2.0
 #  Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>
 #  This file is a part of the Armbian Build Framework https://github.com/armbian/build/
 # ‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹‹
+import concurrent.futures
 import json
 import logging
+import multiprocessing
 import os
 import subprocess
 
@@ -21,7 +22,7 @@ armbian_utils.setup_logging()
 log: logging.Logger = logging.getLogger("download-debs")
 
 
-def download_using_armbian(exec_cmd: list[str], params: dict):
+def download_using_armbian(exec_cmd: list[str], params: dict, counter: int, total: int):
 	result = None
 	logs = []
 	try:
@@ -36,21 +37,25 @@ def download_using_armbian(exec_cmd: list[str], params: dict):
 			env={
 				"ANSI_COLOR": "none",  # Do not use ANSI colors in logging output, don't write to log files
 				"WRITE_EXTENSIONS_METADATA": "no",  # Not interested in ext meta here
-				"ALLOW_ROOT": "yes",  # We're gonna be calling it as root, so allow it @TODO not the best option
-				"PRE_PREPARED_HOST": "yes"  # We're gonna be calling it as root, so allow it @TODO not the best option
+				"ALLOW_ROOT": "yes",  # We're gonna be calling it as root, so allow it
+				"PRE_PREPARED_HOST": "yes",  # We're gonna be calling it as root, so allow it
+				"SKIP_LOG_ARCHIVE": "yes"  # Don't waste time and conflicts trying to archive logs at this point
 			},
 			stderr=subprocess.PIPE
 		)
 	except subprocess.CalledProcessError as e:
 		# decode utf8 manually, universal_newlines messes up bash encoding
 		logs = armbian_utils.parse_log_lines_from_stderr(e.stderr)
-		log.error(f"Error calling Armbian command: {' '.join(exec_cmd)}")
-		log.error(f"Error details: params: {params} - return code: {e.returncode} - stderr: {'; '.join(logs)}")
+		log.error(
+			f"Error calling Armbian command: {' '.join(exec_cmd)} Error details: params: {params} - return code: {e.returncode} - stderr: {'; '.join(logs)}")
 		return {"in": params, "logs": logs, "download_ok": False}
 
 	if result is not None:
 		if result.stderr:
 			logs = armbian_utils.parse_log_lines_from_stderr(result.stderr)
+
+	if counter % 10 == 0:
+		log.info(f"Processed {counter} / {total} download invocations.")
 
 	info = {"in": params, "download_ok": True}
 	info["logs"] = logs
@@ -66,6 +71,16 @@ debs_output_dir = sys.argv[2]
 # read the json file
 with open(debs_info_json_path) as f:
 	artifact_debs = json.load(f)
+
+if armbian_utils.get_from_env("ARMBIAN_RUNNING_IN_CONTAINER") == "yes":
+	log.warning("Not running in a container. download-debs might fail. Run this in a Docker-capable machine.")
+
+# use double the number of cpu cores, but not more than 16
+max_workers = 16 if ((multiprocessing.cpu_count() * 2) > 16) else (multiprocessing.cpu_count() * 2)
+# allow overriding from  PARALLEL_DOWNLOADS_WORKERS env var
+if "PARALLEL_DOWNLOADS_WORKERS" in os.environ and os.environ["PARALLEL_DOWNLOADS_WORKERS"]:
+	max_workers = int(os.environ["PARALLEL_DOWNLOADS_WORKERS"])
+log.info(f"Using {max_workers} workers for parallel processing")
 
 log.info("Downloading debs...")
 # loop over the debs. if we're missing any, download them.
@@ -87,11 +102,23 @@ for artifact in artifact_debs:
 log.info(f"Missing debs: {len(missing_debs)}")
 log.info(f"Missing invocations: {len(missing_invocations)}")
 
-# only actually invoke anything if we're in a container
-# run ./compile.sh <invocation> for each missing invocation
-for invocation in missing_invocations:
-	cmds = [(armbian_utils.find_armbian_src_path()["compile_sh_full_path"])] + invocation
-	log.info(f"Running: {' '.join(cmds)}")
-	if armbian_utils.get_from_env("ARMBIAN_RUNNING_IN_CONTAINER") == "yes":
-		dl_info = download_using_armbian(cmds, {"missing": "deb"})
-		log.info(f"Download info: {dl_info}")
+counter = 0
+total = len(missing_invocations)
+# get the number of processor cores on this machine
+log.info(f"Using {max_workers} workers for parallel download processing.")
+with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+	every_future = []
+	for invocation in missing_invocations:
+		counter += 1
+		cmds = [(armbian_utils.find_armbian_src_path()["compile_sh_full_path"])] + invocation
+		future = executor.submit(download_using_armbian, cmds, {"i": invocation}, counter, total)
+		every_future.append(future)
+
+	log.info(f"Submitted {len(every_future)} download jobs to the parallel executor. Waiting for them to finish...")
+	executor.shutdown(wait=True)
+	log.info(f"All download jobs finished!")
+
+	for future in every_future:
+		info = future.result()
+		if info is not None:
+			log.info(f"Download future info: {info}")
