@@ -12,7 +12,7 @@ function kernel_drivers_create_patches_hash_only() {
 }
 
 function kernel_drivers_create_patches() {
-	if [[ "${EXTRAWIFI}" == "no" ]] ; then
+	if [[ "${EXTRAWIFI}" == "no" ]]; then
 		display_alert "Skipping driver harness as requested" "EXTRAWIFI = ${EXTRAWIFI} - returning" "debug"
 		return 0
 	fi
@@ -27,7 +27,10 @@ function kernel_drivers_create_patches() {
 	do_normalize_src_path="no" calculate_hash_for_variables "${KERNEL_DRIVERS_SKIP[*]}"
 	declare hash_variables_short="${hash_variables:0:8}"
 
-	declare cache_key_base="${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}_${BRANCH}"
+	# Sanity check, the KERNEL_GIT_SHA1 gotta be sane.
+	[[ "${KERNEL_GIT_SHA1}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "KERNEL_GIT_SHA1 is not sane: '${KERNEL_GIT_SHA1}'"
+
+	declare cache_key_base="sha1_${KERNEL_GIT_SHA1}_${LINUXFAMILY}_${BRANCH}"
 	declare cache_key="${cache_key_base}_${hash_files}-${hash_variables_short}"
 	display_alert "Cache key base:" "$cache_key_base" "debug"
 	display_alert "Cache key:" "$cache_key" "debug"
@@ -53,23 +56,25 @@ function kernel_drivers_create_patches() {
 	if [[ -f "${cache_target_file}" ]]; then
 		# Make sure the file is larger than 512 bytes. Old versions of this code left small/empty files on failure.
 		if [[ $(stat -c%s "${cache_target_file}") -gt 512 ]]; then
-			display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "cachehit"
+			display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${BRANCH}" "${cache_key}" "cachehit"
 			return
 		else
-			display_alert "Removing invalid/small cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "warn"
+			display_alert "Removing invalid/small cached drivers patch file for ${LINUXFAMILY}-${BRANCH}" "${cache_key}" "warn"
 			run_host_command_logged rm -fv "${cache_target_file}"
 		fi
 	fi
 
-	display_alert "Creating patches for kernel drivers" "version: '${KERNEL_MAJOR_MINOR}' family: '${LINUXFAMILY}'" "info"
+	display_alert "Creating patches for kernel drivers" "version: 'sha1_${KERNEL_GIT_SHA1}' family: '${LINUXFAMILY}-${BRANCH}'" "info"
 
 	# if it does _not_ exist, fist clear the base, so no old patches are left over
-	run_host_command_logged rm -fv "${cache_dir_base}/${cache_key_base}*"
+	run_host_command_logged rm -fv "${cache_dir_base}/*_${LINUXFAMILY}_${BRANCH}*"
+	# also clean up old-style cache base, used before we introduced KERNEL_GIT_SHA1
+	run_host_command_logged rm -fv "${cache_dir_base}/${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}*"
 
 	# since it does not exist, go create it. this requires working tree.
 	declare target_patch_file="${cache_target_file}"
 
-	display_alert "Preparing patch for drivers" "version: ${KERNEL_MAJOR_MINOR} kernel_work_dir: ${kernel_work_dir}" "debug"
+	display_alert "Preparing patch for drivers" "version: sha1_${KERNEL_GIT_SHA1} kernel_work_dir: ${kernel_work_dir}" "debug"
 
 	kernel_drivers_prepare_harness "${kernel_work_dir}" "${kernel_git_revision}"
 }
@@ -166,7 +171,7 @@ function export_changes_as_patch_via_git_format_patch() {
 	)
 	declare -a commit_params=(
 		"--quiet" # otherwise too much output
-		-m "drivers for ${LINUXFAMILY} version ${KERNEL_MAJOR_MINOR}"
+		-m "drivers for ${LINUXFAMILY}-${BRANCH} version ${KERNEL_MAJOR_MINOR} git sha1 ${KERNEL_GIT_SHA1}"
 		--author="${MAINTAINER} <${MAINTAINERMAIL}>"
 	)
 	declare -a commit_envs=(
