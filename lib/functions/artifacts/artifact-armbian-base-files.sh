@@ -46,6 +46,7 @@ function artifact_armbian-base-files_prepare_version() {
 
 	# outer scope
 	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-B${bash_hash_short}"
+	artifact_oci_strip_prefix="no"	# don't strip artifact_prefix_version from oci tag
 
 	declare -a reasons=("Armbian armbian-base-files" "original ${RELEASE} version \"${base_files_wanted_upstream_version}\"" "framework bash hash \"${bash_hash}\"")
 

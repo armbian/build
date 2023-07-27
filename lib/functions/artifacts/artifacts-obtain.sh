@@ -78,6 +78,7 @@ function obtain_complete_artifact() {
 	declare -g artifact_final_file="undetermined"
 	declare -g artifact_final_file_basename="undetermined"
 	declare -g artifact_full_oci_target="undetermined"
+	declare -g artifact_oci_strip_prefix="yes"
 	declare -A -g artifact_map_packages=()
 	declare -A -g artifact_map_debs=()
 
@@ -87,9 +88,19 @@ function obtain_complete_artifact() {
 	# Contentious; it might be that prepare_version is complex enough to warrant more than 1 logging section.
 	LOG_SECTION="artifact_prepare_version" do_with_logging artifact_prepare_version
 
+	declare -g artifact_oci_version="${artifact_version}"
+
+	if [[ "${artifact_oci_strip_prefix}" == "yes" ]] ; then
+		# Strip artifact_version_prefix from artifact_oci_version to reduce cache hits
+		display_alert "artifact" "Stripping artifact_prefix_version from artifact_oci_version" "debug"
+		artifact_oci_version="${artifact_oci_version#*$artifact_prefix_version}"
+	fi
+
 	debug_var artifact_name
 	debug_var artifact_type
 	debug_var artifact_version
+	debug_var artifact_oci_version
+	debug_var artifact_oci_strip_prefix
 	debug_var artifact_version_reason
 	debug_var artifact_base_dir
 	debug_var artifact_final_file
@@ -164,7 +175,7 @@ function obtain_complete_artifact() {
 
 	[[ -z "${artifact_oci_target_base}" ]] && exit_with_error "No artifact_oci_target_base defined."
 
-	declare -g artifact_full_oci_target="${artifact_oci_target_base}${artifact_name}:${artifact_version}"
+	declare -g artifact_full_oci_target="${artifact_oci_target_base}${artifact_name}:${artifact_oci_version}"
 
 	# if CONFIG_DEFS_ONLY, dump JSON and exit
 	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
@@ -232,17 +243,62 @@ function obtain_complete_artifact() {
 			fi
 		fi
 
+		declare -g artifact_remote_filename="undetermined"
 		LOG_SECTION="artifact_is_available_in_remote_cache" do_with_logging artifact_is_available_in_remote_cache
 		debug_var artifact_exists_in_remote_cache
+		debug_var artifact_remote_filename
+
+		declare artifact_rename_files="no"
+		declare remote_file_revision_prefix="undetermined"
+		declare -A artifact_map_debs_backup=()
+		declare artifact_final_file_basename_backup="${artifact_final_file_basename}"
+		declare artifact_final_file_backup="${artifact_final_file}"
+
 
 		if [[ "${artifact_exists_in_remote_cache}" == "yes" ]]; then
-			display_alert "artifact" "exists in remote cache: ${artifact_name} ${artifact_version}" "debug"
+			display_alert "artifact" "exists in remote cache: ${artifact_name} ${artifact_oci_version}" "debug"
 			if [[ "${skip_unpack_if_found_in_caches:-"no"}" == "yes" ]]; then
 				display_alert "artifact" "skipping obtain from remote & unpacking as requested" "info"
 				return 0
 			fi
+
+			if [[ "${artifact_final_file_basename}" != "${artifact_remote_filename}" ]] ; then
+				display_alert "artifact" "remote cache filename is different then expected filename" "info"
+				display_alert "artifact" "file will be renamed after download" "info"
+				artifact_rename_files="yes"
+				remote_file_revision_prefix="${artifact_remote_filename#*_}"
+				remote_file_revision_prefix="${remote_file_revision_prefix%--*}--"
+
+				# Remote cache filename is different. We have to adjust the variables in order to download
+				# and use them. we will restore them after renaming the files to the expected names
+				artifact_final_file_basename="${artifact_final_file_basename//$artifact_prefix_version/$remote_file_revision_prefix}"
+				artifact_final_file="${artifact_final_file//$artifact_prefix_version/$remote_file_revision_prefix}"
+				for key in "${!artifact_map_debs[@]}" ; do
+					artifact_map_debs_backup[$key]=${artifact_map_debs[$key]}
+					artifact_map_debs[$key]=${artifact_map_debs[$key]//$artifact_prefix_version/$remote_file_revision_prefix}
+				done
+
+				debug_var artifact_rename_files
+				debug_var remote_file_revision_prefix
+				debug_var artifact_final_file_basename
+				debug_var artifact_final_file
+			fi
+
 			LOG_SECTION="artifact_obtain_from_remote_cache" do_with_logging artifact_obtain_from_remote_cache
 			LOG_SECTION="unpack_artifact_from_local_cache" do_with_logging unpack_artifact_from_local_cache
+
+			if [[ ${artifact_rename_files} == yes ]] ; then
+				# we need to rename files and restore expected values
+				for key in "${!artifact_map_debs[@]}" ; do
+					display_alert "artifact" "renaming file ${artifact_map_debs[$key]} to ${artifact_map_debs_backup[$key]}" "info"
+					run_host_command_logged cp ${artifact_base_dir}/${artifact_map_debs[$key]} ${artifact_base_dir}/${artifact_map_debs_backup[$key]}
+					artifact_map_debs[$key]=${artifact_map_debs_backup[$key]}
+				done
+
+				artifact_final_file_basename=${artifact_final_file_basename_backup}
+				artifact_final_file=${artifact_final_file_backup}
+			fi
+
 			display_alert "artifact" "obtained from remote cache: ${artifact_name} ${artifact_version}" "cachehit"
 			return 0
 		fi
@@ -363,7 +419,7 @@ function upload_artifact_to_oci() {
 	fi
 
 	display_alert "Pushing to OCI" "'${artifact_final_file}' -> '${artifact_full_oci_target}'" "info"
-	oras_push_artifact_file "${artifact_full_oci_target}" "${artifact_final_file}" "${artifact_name} - ${artifact_version} - ${artifact_version_reason} - type: ${artifact_type}"
+	oras_push_artifact_file "${artifact_full_oci_target}" "${artifact_final_file}" "${artifact_name} - ${artifact_oci_version} - ${artifact_version_reason} - type: ${artifact_type}"
 }
 
 function is_artifact_available_in_local_cache() {
@@ -410,6 +466,7 @@ function is_artifact_available_in_remote_cache() {
 	if [[ "${oras_has_manifest}" == "yes" ]]; then
 		display_alert "Artifact is available in remote cache" "${artifact_full_oci_target} - '${oras_manifest_description}'" "info"
 		artifact_exists_in_remote_cache="yes"
+		artifact_remote_filename=$(echo ${oras_manifest_json} | jq -r '.layers[0].annotations."org.opencontainers.image.title"')
 	else
 		display_alert "Artifact is not available in remote cache" "${artifact_full_oci_target}" "info"
 		artifact_exists_in_remote_cache="no"
