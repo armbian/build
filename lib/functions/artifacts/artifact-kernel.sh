@@ -86,6 +86,9 @@ function artifact_kernel_prepare_version() {
 	# Sanity check, the SHA1 gotta be sane.
 	[[ "${GIT_INFO_KERNEL[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_KERNEL[SHA1]}'"
 
+	# Set a readonly global with the kernel SHA1. Will be used later for the drivers cache_key.
+	declare -g -r KERNEL_GIT_SHA1="${GIT_INFO_KERNEL[SHA1]}"
+
 	declare short_sha1="${GIT_INFO_KERNEL[SHA1]:0:${short_hash_size}}"
 
 	# get the drivers hash... or "0000000000000000" if EXTRAWIFI=no
