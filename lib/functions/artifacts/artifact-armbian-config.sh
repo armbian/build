@@ -41,7 +41,7 @@ function artifact_armbian-config_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-SA${short_sha1}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-SA${short_sha1}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian armbian-config git revision \"${GIT_INFO_ARMBIAN_CONFIG[SHA1]}\""

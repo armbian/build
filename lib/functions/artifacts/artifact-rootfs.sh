@@ -24,7 +24,6 @@ function artifact_rootfs_config_dump() {
 function artifact_rootfs_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	assert_requires_aggregation # Bombs if aggregation has not run
 
@@ -48,8 +47,7 @@ function artifact_rootfs_prepare_version() {
 		reasons+=("desktop_appgroups_selected \"${DESKTOP_APPGROUPS_SELECTED}\"")
 	fi
 
-	# rootfs does NOT include ${artifact_prefix_version} -- there's no reason to, since rootfs is not in an apt repo
-	# instead, we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
+	# we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
 	declare yyyymm="undetermined"
 	yyyymm="$(date +%Y%m)"
 

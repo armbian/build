@@ -27,7 +27,7 @@ function artifact_armbian-plymouth-theme_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian armbian-plymouth-theme"
