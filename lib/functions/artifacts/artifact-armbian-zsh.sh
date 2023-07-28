@@ -61,8 +61,8 @@ function artifact_armbian-zsh_prepare_version() {
 
 	artifact_name="armbian-zsh"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-zsh_${artifact_version}_all.deb"
+	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
+	artifact_final_file="${PACKAGES_HASHED_STORAGE}/armbian-zsh_${artifact_version}_all.deb"
 
 	return 0
 }

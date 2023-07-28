@@ -150,7 +150,6 @@ function kernel_prepare_build_and_package() {
 
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
-	# This deploys to DEB_STORAGE...
 	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
 
 	done_with_temp_dir "${cleanup_id_debs}" # changes cwd to "${SRC}" and fires the cleanup function early
@@ -180,5 +179,5 @@ function kernel_package() {
 
 function kernel_deploy_pkg() {
 	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
-	run_host_command_logged rsync -v --remove-source-files -r "${kernel_debs_temp_dir}"/*.deb "${DEB_STORAGE}/"
+	run_host_command_logged rsync -v --remove-source-files -r "${kernel_debs_temp_dir}"/*.deb "${DEB_STORAGE}/" # @TODO this stuff... shouldn't it be directly where they should?
 }

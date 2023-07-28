@@ -134,8 +134,8 @@ function artifact_uboot_prepare_version() {
 
 	artifact_name="uboot-${BOARD}-${BRANCH}"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
+	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
+	artifact_final_file="${PACKAGES_HASHED_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
 
 	return 0
 }

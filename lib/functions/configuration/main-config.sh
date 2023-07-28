@@ -80,6 +80,7 @@ function do_main_configuration() {
 	fi
 	display_alert ".deb compression" "DEB_COMPRESS=${DEB_COMPRESS}" "debug"
 
+	declare -g -r PACKAGES_HASHED_STORAGE="${DEST}/packages-hashed"
 	if [[ $BETA == yes ]]; then
 		DEB_STORAGE=$DEST/debs-beta
 	else
