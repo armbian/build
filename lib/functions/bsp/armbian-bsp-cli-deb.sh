@@ -34,15 +34,6 @@ function compile_armbian-bsp-cli-transitional() {
 		Description: Armbian CLI BSP for board '${BOARD}' - transitional package
 	EOF
 
-	# generate minimal DEBIAN/changelog
-	cat <<- EOF > "${destination}"/DEBIAN/changelog
-		armbian-bsp-cli-${BOARD} (${artifact_version}) armbian-repo-name; urgency=low
-
-		  * A fake changelog entry.
-
-		 -- $MAINTAINER <$MAINTAINERMAIL>  $(date -R)
-	EOF
-
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
 	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/"
 
@@ -93,15 +84,6 @@ function compile_armbian-bsp-cli() {
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${artifact_version})
 		Recommends: bsdutils, parted, util-linux, toilet
 		Description: Armbian CLI BSP for board '${BOARD}' branch '${BRANCH}' ${extra_description[@]}
-	EOF
-
-	# generate minimal DEBIAN/changelog
-	cat <<- EOF > "${destination}"/DEBIAN/changelog
-		${artifact_name} (${artifact_version}) armbian-repo-name; urgency=low
-
-		  * A fake changelog entry.
-
-		 -- $MAINTAINER <$MAINTAINERMAIL>  $(date -R)
 	EOF
 
 	# armhwinfo, firstrun, armbianmonitor, etc. config file; also sourced in postinst
