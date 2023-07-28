@@ -41,7 +41,6 @@ if_enabled_echo() {
 
 function prepare_kernel_packaging_debs() {
 	: "${artifact_version:?artifact_version is not set}"
-	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
 
 	declare kernel_work_dir="${1}"
 	declare kernel_dest_install_dir="${2}"
@@ -86,7 +85,6 @@ function prepare_kernel_packaging_debs() {
 }
 
 function create_kernel_deb() {
-	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
 	declare package_name="${1}"
 	declare deb_output_dir="${2}"
 	declare callback_function="${3}"
@@ -140,7 +138,7 @@ function create_kernel_deb() {
 	#display_alert "Package dir" "for package ${package_name}" "debug"
 	#run_host_command_logged tree -C -h -d --du "${package_directory}"
 
-	fakeroot_dpkg_deb_build "${package_directory}" "${kernel_debs_temp_dir}/"
+	fakeroot_dpkg_deb_build "${package_directory}"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
