@@ -60,8 +60,8 @@ function artifact_armbian-config_prepare_version() {
 
 	artifact_name="armbian-config"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-config_${artifact_version}_all.deb"
+	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
+	artifact_final_file="${PACKAGES_HASHED_STORAGE}/armbian-config_${artifact_version}_all.deb"
 
 	return 0
 }

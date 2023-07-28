@@ -61,8 +61,8 @@ function artifact_firmware_prepare_version() {
 
 	artifact_name="armbian-firmware"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-firmware_${artifact_version}_all.deb"
+	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
+	artifact_final_file="${PACKAGES_HASHED_STORAGE}/armbian-firmware_${artifact_version}_all.deb"
 
 	return 0
 }

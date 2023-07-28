@@ -45,9 +45,7 @@ function compile_fake_ubuntu_advantage_tools() {
 
 	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
 
-	# package, directly to DEB_STORAGE; full version might be very big for tmpfs.
-	display_alert "Building fake Ubuntu advantage tools package" "fake_ubuntu_advantage_tools" "info"
-	fakeroot_dpkg_deb_build "fake_ubuntu_advantage_tools" "${DEB_STORAGE}"
+	fakeroot_dpkg_deb_build "fake_ubuntu_advantage_tools"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
