@@ -364,6 +364,12 @@ function upload_artifact_to_oci() {
 
 	display_alert "Pushing to OCI" "'${artifact_final_file}' -> '${artifact_full_oci_target}'" "info"
 	oras_push_artifact_file "${artifact_full_oci_target}" "${artifact_final_file}" "${artifact_name} - ${artifact_version} - ${artifact_version_reason} - type: ${artifact_type}"
+
+	# If this is a deb-tar, delete the .tar after the upload. We won't ever need it again.
+	if [[ "${artifact_type}" == "deb-tar" ]]; then
+		display_alert "Deleting deb-tar after OCI deploy" "deb-tar: ${artifact_final_file_basename}" "warn" # @TODO
+		run_host_command_logged rm -fv "${artifact_final_file}"
+	fi
 }
 
 function is_artifact_available_in_local_cache() {
