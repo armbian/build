@@ -68,8 +68,6 @@ function initialize_artifact() {
 }
 
 function obtain_complete_artifact() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
-
 	declare -g artifact_name="undetermined"
 	declare -g artifact_type="undetermined"
 	declare -g artifact_version="undetermined"
@@ -80,9 +78,6 @@ function obtain_complete_artifact() {
 	declare -g artifact_full_oci_target="undetermined"
 	declare -A -g artifact_map_packages=()
 	declare -A -g artifact_map_debs=()
-
-	# Check if REVISION is set, otherwise exit_with_error
-	[[ "x${REVISION}x" == "xx" ]] && exit_with_error "REVISION is not set"
 
 	# Contentious; it might be that prepare_version is complex enough to warrant more than 1 logging section.
 	LOG_SECTION="artifact_prepare_version" do_with_logging artifact_prepare_version
@@ -104,9 +99,9 @@ function obtain_complete_artifact() {
 	[[ "x${artifact_base_dir}x" == "xx" || "${artifact_base_dir}" == "undetermined" ]] && exit_with_error "artifact_base_dir is not set after artifact_prepare_version"
 	[[ "x${artifact_final_file}x" == "xx" || "${artifact_final_file}" == "undetermined" ]] && exit_with_error "artifact_final_file is not set after artifact_prepare_version"
 
-	# validate artifact_version begins with artifact_prefix_version when building deb packages (or deb-tar)
+	# validate artifact_version begins with a digit when building deb packages (or deb-tar); dpkg requires it
 	if [[ "${artifact_type}" != "tar.zst" ]]; then
-		[[ "${artifact_version}" =~ ^${artifact_prefix_version} ]] || exit_with_error "artifact_version '${artifact_version}' does not begin with artifact_prefix_version '${artifact_prefix_version}'"
+		[[ "${artifact_version}" =~ ^[0-9] ]] || exit_with_error "${artifact_type}: artifact_version '${artifact_version}' does not begin with a digit"
 	fi
 
 	declare -a artifact_map_debs_values=() artifact_map_packages_values=() artifact_map_debs_keys=() artifact_map_packages_keys=()

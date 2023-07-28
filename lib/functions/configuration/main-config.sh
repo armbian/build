@@ -33,9 +33,6 @@ function do_main_configuration() {
 	declare -g -r REVISION="${REVISION}"
 	display_alert "Using revision from" "${revision_from}: '${REVISION}'" "info"
 
-	# This is the prefix used by all artifacts. Readonly. It's just $REVISION and a double dash.
-	declare -r -g artifact_prefix_version="${REVISION}--"
-
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
 	[[ -z $VENDORURL ]] && VENDORURL="https://www.armbian.com"
 	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://forum.armbian.com"
