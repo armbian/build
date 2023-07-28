@@ -75,6 +75,7 @@ function cli_json_info_run() {
 			fi
 			declare DEBS_OUTPUT_DIR="${DEB_STORAGE}" # this is different depending if BETA=yes (output/debs-beta) or not (output/debs)
 			display_alert "Downloading debs to" "${DEBS_OUTPUT_DIR}" "info"
+			export PARALLEL_DOWNLOADS_WORKERS="${PARALLEL_DOWNLOADS_WORKERS}"
 			run_host_command_logged mkdir -pv "${DEBS_OUTPUT_DIR}"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/download-debs.py "${DEBS_TO_REPO_INFO_FILE}" "${DEBS_OUTPUT_DIR}"
 
