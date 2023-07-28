@@ -211,8 +211,6 @@ function config_post_main() {
 		CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
 	fi
 
-	declare -g CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
-
 	# So for kernel full cached rebuilds.
 	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
 	# That is the "default" layout; there will be as many source dirs as there are built kernel debs.
