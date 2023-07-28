@@ -7,22 +7,16 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-# for RAW deb building. does a bunch of magic to "DEBIAN" directory.
+# for RAW deb building. does a bunch of magic to "DEBIAN" directory. Argument is the open package directory. Target is always artifact_base_dir
 function fakeroot_dpkg_deb_build() {
 	# check artifact_name and artifact_version is set otherwise exit_with_error
 	[[ -z "${artifact_name}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_name is not set"
 	[[ -z "${artifact_version}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_version is not set"
+	[[ -z "${artifact_base_dir}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_base_dir is not set"
 
 	display_alert "Building .deb package" "${artifact_name}: $*" "debug"
 
-	declare -a orig_args=("$@")
-	# find the first non-option argument
-	declare first_arg
-	for first_arg in "${orig_args[@]}"; do
-		if [[ "${first_arg}" != -* ]]; then
-			break
-		fi
-	done
+	declare first_arg="${1}"
 
 	if [[ ! -d "${first_arg}" ]]; then
 		exit_with_error "fakeroot_dpkg_deb_build: can't find source package directory: ${first_arg}"
@@ -93,7 +87,8 @@ function fakeroot_dpkg_deb_build() {
 		run_tool_batcat --file-name "${artifact_name}/DEBIAN/md5sums" "${first_arg}/DEBIAN/md5sums"
 	fi
 
-	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "${orig_args[@]}"
+	mkdir -p "${artifact_base_dir}"
+	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "${first_arg}" "${artifact_base_dir}/"
 }
 
 function dpkg_deb_run_shellcheck_on_scripts() {

@@ -103,8 +103,8 @@ function artifact_armbian-bsp-cli_prepare_version() {
 
 	artifact_name="armbian-bsp-cli-${BOARD}-${BRANCH}${EXTRA_BSP_NAME}"
 	artifact_type="deb-tar"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/${artifact_name}_${artifact_version}_${ARCH}.tar"
+	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
+	artifact_final_file="${PACKAGES_HASHED_STORAGE}/${artifact_name}_${artifact_version}_${ARCH}.tar"
 
 	artifact_map_packages=(
 		["armbian-bsp-cli"]="${artifact_name}"

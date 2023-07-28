@@ -106,13 +106,6 @@ function install_deb_chroot() {
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends install "${install_target}" # don't auto-maintain apt cache when installing from packages.
 	unset extra_apt_envs
 
-	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?
-	# this is some contrived way to get the uboot.deb when installing from repo; image builder needs the deb to be able to deploy uboot  later, even though it is already installed inside the chroot, it needs deb to be in host to reuse code later
-	if [[ ${variant} == remote && ${transfer} == yes ]]; then
-		display_alert "install_deb_chroot called with" "transfer=yes, copy WHOLE CACHE back to DEB_STORAGE, this is probably a bug" "warn"
-		run_host_command_logged rsync -r "${SDCARD}"/var/cache/apt/archives/*.deb "${DEB_STORAGE}"/
-	fi
-
 	# IMPORTANT! Do not use short-circuit above as last statement in a function, since it determines the result of the function.
 	return 0
 }

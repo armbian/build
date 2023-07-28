@@ -53,8 +53,8 @@ function artifact_armbian-base-files_prepare_version() {
 	artifact_name="armbian-base-files-${RELEASE}-${ARCH}"
 	declare deb_name="base-files" # the artifact_name is only Armbian's reference; the deb_name is still base_files
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}/${RELEASE}"
-	artifact_final_file="${DEB_STORAGE}/${RELEASE}/${deb_name}_${artifact_version}_${ARCH}.deb"
+	artifact_base_dir="${PACKAGES_HASHED_STORAGE}/${RELEASE}"
+	artifact_final_file="${PACKAGES_HASHED_STORAGE}/${RELEASE}/${deb_name}_${artifact_version}_${ARCH}.deb"
 
 	artifact_map_packages=(["armbian-base-files"]="${deb_name}")
 
@@ -181,8 +181,7 @@ function compile_armbian-base-files() {
 	rm -f "${destination}"/etc/os-release.orig "${destination}"/etc/issue.orig "${destination}"/etc/issue.net.orig "${destination}"/DEBIAN/conffiles.orig
 
 	# Done, pack it.
-	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}"
+	fakeroot_dpkg_deb_build "${destination}"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
