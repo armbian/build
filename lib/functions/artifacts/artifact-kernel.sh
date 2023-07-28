@@ -26,7 +26,6 @@ function artifact_kernel_config_dump() {
 function artifact_kernel_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	# - Given KERNELSOURCE and KERNELBRANCH, get:
 	#    - SHA1 of the commit (this is generic... and used for other pkgs)
@@ -63,7 +62,6 @@ function artifact_kernel_prepare_version() {
 	debug_var BOARDFAMILY        # Heh.
 	debug_var KERNEL_MAJOR_MINOR # Double heh. transitional stuff, from when armbian-next began. 🤣
 	debug_var BRANCH
-	debug_var REVISION
 	debug_var KERNELSOURCE
 	debug_var KERNELBRANCH
 	debug_var LINUXFAMILY
@@ -175,9 +173,9 @@ function artifact_kernel_prepare_version() {
 
 	# outer scope
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
-		artifact_version="${artifact_prefix_version}${common_version_suffix}"
+		artifact_version="${common_version_suffix}"
 	else
-		artifact_version="${artifact_prefix_version}${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-${common_version_suffix}"
+		artifact_version="${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-${common_version_suffix}"
 	fi
 
 	declare -a reasons=(

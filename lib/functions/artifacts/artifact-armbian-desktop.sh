@@ -18,7 +18,6 @@ function artifact_armbian-desktop_config_dump() {
 }
 
 function artifact_armbian-desktop_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${RELEASE:?RELEASE is not set}"
 
 	: "${DESKTOP_ENVIRONMENT:?DESKTOP_ENVIRONMENT is not set}"
@@ -48,7 +47,7 @@ function artifact_armbian-desktop_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-V${var_config_hash_short}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian armbian-desktop"

@@ -17,7 +17,6 @@ function artifact_armbian-base-files_config_dump() {
 }
 
 function artifact_armbian-base-files_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${RELEASE:?RELEASE is not set}"
 	: "${ARCH:?ARCH is not set}"
 
@@ -25,7 +24,7 @@ function artifact_armbian-base-files_prepare_version() {
 	artifact_version_reason="undetermined" # outer scope
 
 	declare short_hash_size=4
-	declare fake_unchanging_base_version="${RELEASE}-1armbian1"
+	declare fake_unchanging_base_version="1-${RELEASE}-1armbian1"
 
 	declare found_package_version="undetermined" found_package_filename="undetermined" found_package_down_url="undetermined"
 	sleep_seconds="15" do_with_retries 10 apt_find_upstream_package_version_and_download_url "base-files"
@@ -45,7 +44,7 @@ function artifact_armbian-base-files_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-B${bash_hash_short}"
 
 	declare -a reasons=("Armbian armbian-base-files" "original ${RELEASE} version \"${base_files_wanted_upstream_version}\"" "framework bash hash \"${bash_hash}\"")
 

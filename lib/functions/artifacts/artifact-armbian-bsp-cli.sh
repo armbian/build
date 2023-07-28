@@ -14,7 +14,6 @@ function artifact_armbian-bsp-cli_config_dump() {
 }
 
 function artifact_armbian-bsp-cli_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${BRANCH:?BRANCH is not set}"
 	: "${BOARD:?BOARD is not set}"
 
@@ -87,7 +86,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-H${hash_hooks_short}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-H${hash_hooks_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian package armbian-bsp-cli"
@@ -124,7 +123,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 }
 
 function artifact_armbian-bsp-cli_build_from_sources() {
-	# Generate transitional package when needed. 
+	# Generate transitional package when needed.
 	if artifact_armbian-bsp-cli_needs_transitional_package ; then
 		LOG_SECTION="compile_armbian-bsp-cli" do_with_logging compile_armbian-bsp-cli-transitional
 	fi
