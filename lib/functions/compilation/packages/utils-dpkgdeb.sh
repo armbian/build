@@ -9,8 +9,9 @@
 
 # for RAW deb building. does a bunch of magic to "DEBIAN" directory.
 function fakeroot_dpkg_deb_build() {
-	# check artifact_name is set otherwise exit_with_error
+	# check artifact_name and artifact_version is set otherwise exit_with_error
 	[[ -z "${artifact_name}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_name is not set"
+	[[ -z "${artifact_version}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_version is not set"
 
 	display_alert "Building .deb package" "${artifact_name}: $*" "debug"
 
@@ -47,6 +48,23 @@ function fakeroot_dpkg_deb_build() {
 
 	# Lets create DEBIAN/md5sums, for all the files in ${first_arg}. Do not include the paths in the md5sums file. Don't include the DEBIAN/* files.
 	find "${first_arg}" -type f -not -path "${first_arg}/DEBIAN/*" -print0 | xargs -0 md5sum | sed "s|${first_arg}/||g" > "${first_arg}/DEBIAN/md5sums"
+
+	# Parse the DEBIAN/control and get the real package name...
+	declare control_package_name
+	control_package_name=$(grep -E "^Package:" "${first_arg}/DEBIAN/control" | cut -d' ' -f2)
+
+	# generate minimal DEBIAN/changelog
+	cat <<- EOF > "${first_arg}"/DEBIAN/changelog
+		${control_package_name} (${artifact_version}) armbian-repo-name; urgency=low
+
+		  * Initial changelog entry for ${control_package_name} package hash ${artifact_version}
+
+		 -- $MAINTAINER <$MAINTAINERMAIL>  $(date -R)
+	EOF
+
+	# Also a usr/share/doc/${control_package_name}/changelog.gz
+	mkdir -p "${first_arg}/usr/share/doc/${control_package_name}"
+	gzip -9 -c "${first_arg}/DEBIAN/changelog" > "${first_arg}/usr/share/doc/${control_package_name}/changelog.gz"
 
 	# find the DEBIAN scripts (postinst, prerm, etc) and run shellcheck on them.
 	dpkg_deb_run_shellcheck_on_scripts "${first_arg}"
