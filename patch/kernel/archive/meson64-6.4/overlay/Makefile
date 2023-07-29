@@ -9,8 +9,7 @@ dtbo-$(CONFIG_ARCH_MESON) += \
 	meson-g12-gxl-cma-pool-896MB.dtbo \
 	meson-g12a-radxa-zero-gpio-8-led.dtbo \
 	meson-g12a-radxa-zero-gpio-10-led.dtbo \
-	meson-g12b-odroid-n2-spi.dtbo
-	
+	meson-g12b-odroid-n2-spi.dtbo	
 
 scr-$(CONFIG_ARCH_MESON) += \
        meson-fixup.scr
