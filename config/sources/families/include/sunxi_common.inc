@@ -30,7 +30,7 @@ case $BRANCH in
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.1.40"
+		declare -g KERNELBRANCH="tag:v6.1.42"
 		;;
 
 	edge)
