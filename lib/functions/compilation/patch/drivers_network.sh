@@ -72,6 +72,9 @@ driver_rtl8189ES() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 5.4.251
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-5.4.251-kernel.patch" "applying"
 	fi
 }
 
@@ -116,6 +119,9 @@ driver_rtl8189FS() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 5.4.251
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-Fix-building-on-5.4.251-kernel.patch" "applying"
 	fi
 
 }
@@ -156,6 +162,9 @@ driver_rtl8192EU() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 5.4.251
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-5.4.251-kernel.patch" "applying"
 	fi
 }
 
