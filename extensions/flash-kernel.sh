@@ -74,8 +74,6 @@ function pre_update_initramfs__setup_flash_kernel() {
 	local chroot_target=$MOUNT
 	deploy_qemu_binary_to_chroot "${chroot_target}"
 	mount_chroot "$chroot_target/" # this already handles /boot/firmware which is required for it to work.
-	# hack, umount the chroot's /sys, otherwise flash-kernel tries to EFI flash due to the build host (!) being EFI
-	umount "$chroot_target/sys"
 
 	chroot_custom "$chroot_target" chmod -v -x "/etc/kernel/postinst.d/initramfs-tools"
 	chroot_custom "$chroot_target" chmod -v -x "/etc/initramfs/post-update.d/flash-kernel"
@@ -92,6 +90,9 @@ function pre_update_initramfs__setup_flash_kernel() {
 		display_alert "Failed to run '$update_initramfs_cmd'" "Check logs" "err"
 		exit 29
 	}
+
+	# hack, umount the chroot's /sys, otherwise flash-kernel tries to EFI flash due to the build host (!) being EFI
+	umount "$chroot_target/sys"
 
 	call_extension_method "pre_flash_kernel" <<- 'PRE_FLASH_KERNEL'
 		*run before running flash-kernel*

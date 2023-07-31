@@ -57,7 +57,8 @@ update_initramfs() {
 
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
-			initrd_files_to_hash+=( "${chroot_target}/etc/dropbear-initramfs/" )
+			[[ -d "${chroot_target}/etc/dropbear-initramfs/" ]] && initrd_files_to_hash+=( "${chroot_target}/etc/dropbear-initramfs/" )
+			[[ -d "${chroot_target}/etc/dropbear/initramfs/" ]] && initrd_files_to_hash+=( "${chroot_target}/etc/dropbear/initramfs/" )
 		fi
 	fi
 
