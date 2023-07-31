@@ -231,7 +231,9 @@ function kernel_package_callback_linux_image() {
 	run_host_command_logged rm -v -f "${package_directory}/lib/modules/${kernel_version_family}/build" "${package_directory}/lib/modules/${kernel_version_family}/source"
 
 	display_alert "Showing contents of Kbuild produced modules" "linux-image" "debug"
-	run_host_command_logged tree -C --du -h -d -L 1 "${package_directory}/lib/modules/${kernel_version_family}/kernel" "|| true" # do not fail
+	if [[ -d "${package_directory}/lib/modules/${kernel_version_family}/kernel" ]]; then
+		run_host_command_logged tree -C --du -h -d -L 1 "${package_directory}/lib/modules/${kernel_version_family}/kernel" "|| true" # do not fail
+	fi
 
 	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
 		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel, u-boot-menu, and other standard Debian/Ubuntu utilities
