@@ -43,9 +43,7 @@ function compile_fake_ubuntu_advantage_tools() {
 	END
 	chmod 755 DEBIAN/postinst
 
-	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
-
-	fakeroot_dpkg_deb_build "fake_ubuntu_advantage_tools"
+	fakeroot_dpkg_deb_build "${fw_temp_dir}/${fw_dir}" "fake-ubuntu-advantage-tools"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

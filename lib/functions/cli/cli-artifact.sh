@@ -84,7 +84,7 @@ function cli_artifact_run() {
 	esac
 
 	# Force artifacts download we need to populate repository
-	if [[ "${FORCE_ARTIFACTS_DOWNLOAD}" == "yes" ]]; then
+	if [[ "${FORCE_ARTIFACTS_DOWNLOAD}" == "yes" ]]; then # @TODO should we remove this, Igor?
 		skip_unpack_if_found_in_caches="no"
 	fi
 
@@ -93,8 +93,13 @@ function cli_artifact_run() {
 
 	if [[ "${ARTIFACT_BUILD_INTERACTIVE}" == "yes" ]]; then # Set by `kernel-config`, `kernel-patch`, `uboot-config`, `uboot-patch`, etc.
 		display_alert "Running artifact build in interactive mode" "log file will be incomplete" "info"
-		do_with_default_build obtain_complete_artifact
+		do_with_default_build cli_obtain_complete_artifact
 	else
-		do_with_default_build obtain_complete_artifact < /dev/null
+		do_with_default_build cli_obtain_complete_artifact < /dev/null
 	fi
+}
+
+function cli_obtain_complete_artifact() {
+	obtain_complete_artifact
+	artifact_reversion_for_deployment
 }

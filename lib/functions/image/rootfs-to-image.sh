@@ -93,9 +93,9 @@ function create_image_from_sdcard_rootfs() {
 	display_alert "Mount point" "$(echo -e "$freespace" | awk -v mp="${MOUNT}" '$6==mp {print $5}')" "info"
 
 	# stage: write u-boot, unless BOOTCONFIG=none
-	declare -g -A image_artifacts_debs
+	declare -g -A image_artifacts_debs_reversioned
 	if [[ "${BOOTCONFIG}" != "none" ]]; then
-		write_uboot_to_loop_image "${LOOP}" "${DEB_STORAGE}/${image_artifacts_debs["uboot"]}"
+		write_uboot_to_loop_image "${LOOP}" "${DEB_STORAGE}/${image_artifacts_debs_reversioned["uboot"]}"
 	fi
 
 	# fix wrong / permissions

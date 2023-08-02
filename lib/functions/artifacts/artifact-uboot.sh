@@ -55,16 +55,16 @@ function artifact_uboot_prepare_version() {
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
 	declare -a uboot_patch_dirs=()
-	for patch_dir in ${BOOTPATCHDIR} ; do
-		uboot_patch_dirs+=( "${SRC}/patch/u-boot/${patch_dir}" "${USERPATCHES_PATH}/u-boot/${patch_dir}" )
+	for patch_dir in ${BOOTPATCHDIR}; do
+		uboot_patch_dirs+=("${SRC}/patch/u-boot/${patch_dir}" "${USERPATCHES_PATH}/u-boot/${patch_dir}")
 	done
 
 	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
-		uboot_patch_dirs+=( "${SRC}/patch/atf/${ATFPATCHDIR}" "${USERPATCHES_PATH}/atf/${ATFPATCHDIR}" )
+		uboot_patch_dirs+=("${SRC}/patch/atf/${ATFPATCHDIR}" "${USERPATCHES_PATH}/atf/${ATFPATCHDIR}")
 	fi
 
 	if [[ -n "${CRUSTCONFIG}" ]]; then
-		uboot_patch_dirs+=( "${SRC}/patch/crust/${CRUSTPATCHDIR}" "${USERPATCHES_PATH}/crust/${CRUSTPATCHDIR}" )
+		uboot_patch_dirs+=("${SRC}/patch/crust/${CRUSTPATCHDIR}" "${USERPATCHES_PATH}/crust/${CRUSTPATCHDIR}")
 	fi
 
 	calculate_hash_for_all_files_in_dirs "${uboot_patch_dirs[@]}"
@@ -122,20 +122,12 @@ function artifact_uboot_prepare_version() {
 		"framework bash hash \"${bash_hash}\""
 	)
 
+	artifact_deb_repo="global"
+	artifact_deb_arch="${ARCH}"
 	artifact_version_reason="${reasons[*]}" # outer scope
-
-	artifact_map_packages=(
-		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}"
-	)
-
-	artifact_map_debs=(
-		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
-	)
-
+	artifact_map_packages=(["uboot"]="linux-u-boot-${BOARD}-${BRANCH}")
 	artifact_name="uboot-${BOARD}-${BRANCH}"
 	artifact_type="deb"
-	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
-	artifact_final_file="${PACKAGES_HASHED_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
 
 	return 0
 }

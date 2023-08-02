@@ -36,18 +36,12 @@ function artifact_fake_ubuntu_advantage_tools_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
-	artifact_map_packages=(
-		["fake-ubuntu-advantage-tools"]="fake-ubuntu-advantage-tools"
-	)
-
-	artifact_map_debs=(
-		["fake-ubuntu-advantage-tools"]="fake-ubuntu-advantage-tools_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["fake-ubuntu-advantage-tools"]="fake-ubuntu-advantage-tools")
 
 	artifact_name="fake-ubuntu-advantage-tools"
 	artifact_type="deb"
-	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
-	artifact_final_file="${PACKAGES_HASHED_STORAGE}/fake-ubuntu-advantage-tools_${artifact_version}_all.deb"
+	artifact_deb_repo="global"
+	artifact_deb_arch="all"
 
 	return 0
 }
