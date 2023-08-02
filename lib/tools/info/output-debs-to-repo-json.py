@@ -46,14 +46,17 @@ def generate_deb_summary(info):
 		artifact_map_debs_values = out["artifact_map_debs_values_ARRAY"]
 		artifact_map_packages_keys = out["artifact_map_packages_keys_ARRAY"]
 		artifact_map_packages_values = out["artifact_map_packages_values_ARRAY"]
+		artifact_map_debs_reversioned_keys = out["artifact_map_debs_reversioned_keys_ARRAY"]
+		artifact_map_debs_reversioned_values = out["artifact_map_debs_reversioned_values_ARRAY"]
 
 		# Sanity check: all those array should have the same amount of elements.
-		if not (len(artifact_map_debs_keys) == len(artifact_map_debs_values) == len(artifact_map_packages_keys) == len(artifact_map_packages_values)):
+		if not (len(artifact_map_debs_keys) == len(artifact_map_debs_values) == len(artifact_map_packages_keys) ==
+				len(artifact_map_packages_values) == len(artifact_map_debs_reversioned_keys) == len(artifact_map_debs_reversioned_values)):
 			log.error(f"Error: artifact {artifact_id} has different amount of keys and values in the map: {artifact}")
 			continue
 
-		# Sanity check: artifact_map_debs_keys and artifact_map_packages_keys should be the same
-		if not (artifact_map_debs_keys == artifact_map_packages_keys):
+		# Sanity check: all keys should be the same
+		if not (artifact_map_debs_keys == artifact_map_packages_keys == artifact_map_debs_reversioned_keys):
 			log.error(f"Error: artifact {artifact_id} has different keys in the map: {artifact}")
 			continue
 
@@ -64,12 +67,11 @@ def generate_deb_summary(info):
 				log.error(f"Error: artifact {artifact_id} has duplicated key {key} in the map: {artifact}")
 				continue
 
-			relative_deb_path = artifact_map_debs_values[i]
-			repo_target = "armbian"
-			# if the relative_deb_path has a slash "/"...
-			if "/" in relative_deb_path:
-				# ...then it's a repo target
-				first_part = relative_deb_path.split("/")[0]
+			relative_deb_path = artifact_map_debs_reversioned_values[i]
+			first_part = relative_deb_path.split("/")[1]  # 0 = $REVISION, 1 = repo_target, 2 = artifact_name, 3 = hash, 4 = filename
+			if first_part == "global":
+				repo_target = "armbian"
+			else:
 				repo_target = f'armbian-{first_part}'
 			all_debs[key] = {"relative_deb_path": relative_deb_path, "package_name": (artifact_map_packages_values[i]), "repo_target": repo_target}
 
