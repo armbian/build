@@ -53,16 +53,10 @@ function artifact_armbian-bsp-desktop_prepare_version() {
 
 	artifact_name="armbian-bsp-desktop-${BOARD}-${BRANCH}"
 	artifact_type="deb"
-	artifact_base_dir="${PACKAGES_HASHED_STORAGE}/${RELEASE}"
-	artifact_final_file="${PACKAGES_HASHED_STORAGE}/${RELEASE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
+	artifact_deb_repo="${RELEASE}"
+	artifact_deb_arch="${ARCH}"
 
-	artifact_map_packages=(
-		["armbian-bsp-desktop"]="${artifact_name}"
-	)
-
-	artifact_map_debs=(
-		["armbian-bsp-desktop"]="${RELEASE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
-	)
+	artifact_map_packages=(["armbian-bsp-desktop"]="${artifact_name}")
 
 	return 0
 }

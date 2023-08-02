@@ -58,7 +58,7 @@ function compile_armbian-desktop() {
 	eval "${AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE}"
 	display_alert "Running desktop-specific aggregated prepare script" "AGGREGATED_DESKTOP_CREATE_DESKTOP_PACKAGE" "debug"
 
-	fakeroot_dpkg_deb_build "${destination}"
+	fakeroot_dpkg_deb_build "${destination}" "armbian-desktop"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

@@ -196,24 +196,21 @@ function artifact_kernel_prepare_version() {
 
 	# linux-image is always produced...
 	artifact_map_packages=(["linux-image"]="linux-image-${BRANCH}-${LINUXFAMILY}")
-	artifact_map_debs=(["linux-image"]="linux-image-${BRANCH}-${LINUXFAMILY}_${artifact_version}_${ARCH}.deb")
 
 	# some/most kernels have also working headers...
 	if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
 		artifact_map_packages+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}")
-		artifact_map_debs+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}_${artifact_version}_${ARCH}.deb")
 	fi
 
 	# x86, specially, does not have working dtbs...
 	if [[ "${KERNEL_BUILD_DTBS:-"yes"}" == "yes" ]]; then
 		artifact_map_packages+=(["linux-dtb"]="linux-dtb-${BRANCH}-${LINUXFAMILY}")
-		artifact_map_debs+=(["linux-dtb"]="linux-dtb-${BRANCH}-${LINUXFAMILY}_${artifact_version}_${ARCH}.deb")
 	fi
 
 	artifact_name="kernel-${LINUXFAMILY}-${BRANCH}"
 	artifact_type="deb-tar" # this triggers processing of .deb files in the maps to produce a tarball
-	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
-	artifact_final_file="${PACKAGES_HASHED_STORAGE}/kernel-${LINUXFAMILY}-${BRANCH}_${artifact_version}.tar"
+	artifact_deb_repo="global"
+	artifact_deb_arch="${ARCH}"
 
 	return 0
 }
@@ -222,7 +219,7 @@ function artifact_kernel_build_from_sources() {
 	compile_kernel
 
 	if [[ "${ARTIFACT_WILL_NOT_BUILD}" != "yes" ]]; then # true if kernel-patch, kernel-config, etc.
-		display_alert "Kernel build finished" "${artifact_version_reason}" "info"
+		display_alert "Kernel build finished" "${artifact_version}" "info"
 	fi
 }
 
