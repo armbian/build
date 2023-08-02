@@ -102,15 +102,15 @@ function list_installed_packages() {
 	declare -g -A image_artifacts_packages_version # global scope, set in main_default_build_packages()
 	declare pkg_name pkg_wanted_version
 	for pkg_name in "${!image_artifacts_packages_version[@]}"; do
-		[[ "${pkg_name}" =~ ^linux-headers ]] && continue # linux-headers is a special case, since its always built with kernel, but not always installed (deb-tar)
-		pkg_wanted_version="${image_artifacts_packages_version[${pkg_name}]}"
+		[[ "${pkg_name}" =~ ^linux-headers ]] && continue                     # linux-headers is a special case, since its always built with kernel, but not always installed (deb-tar)
+		pkg_wanted_version="${image_artifacts_packages_version[${pkg_name}]}" # this is the hash-version
 		display_alert "Checking installed version of package" "${pkg_name}=${pkg_wanted_version}" "debug"
 		declare actual_version
-		actual_version=$(chroot "${SDCARD}" dpkg-query -W -f='${Status} ${Package} ${Version}\n' "${pkg_name}" | grep "install ok installed" | cut -d " " -f 5)
+		actual_version=$(chroot "${SDCARD}" dpkg-query -W -f='${Status} ${Package} ${Armbian-Original-Hash}\n' "${pkg_name}" | grep "install ok installed" | cut -d " " -f 5)
 		if [[ "${actual_version}" != "${pkg_wanted_version}" ]]; then
-			display_alert "Installed version of package does not match wanted version. Check for inconsistent repo, customize.sh/hooks, extensions, or upgrades installing wrong version" "${pkg_name} :: actual:'${actual_version}' wanted:'${pkg_wanted_version}'" "warn"
+			display_alert "Installed hash of package does not match wanted hash. Check for inconsistent repo, customize.sh/hooks, extensions, or upgrades installing wrong version" "${pkg_name} :: actual:'${actual_version}' wanted:'${pkg_wanted_version}'" "warn"
 		else
-			display_alert "Image installed package version" "✅ ${pkg_name} = ${actual_version}" "info"
+			display_alert "Image installed package hash" "✅ ${pkg_name} = ${actual_version}" "info"
 		fi
 	done
 }

@@ -414,7 +414,8 @@ function compile_uboot() {
 		Provides: armbian-u-boot
 		Replaces: armbian-u-boot
 		Conflicts: armbian-u-boot, u-boot-sunxi
-		Description: Das U-Boot for ${BOARD} ${artifact_version_reason:-"${version}"}
+		Description: Das U-Boot for ${BOARD}
+		 ${artifact_version_reason:-"${version}"}
 	EOF
 
 	# copy license files, config, etc.
@@ -424,7 +425,7 @@ function compile_uboot() {
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building u-boot deb" "(version: ${artifact_version})"
-	fakeroot_dpkg_deb_build "$uboottempdir"
+	fakeroot_dpkg_deb_build "$uboottempdir" "uboot"
 
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}" # @TODO: intricate cleanup; u-boot's pkg uses ATF's tempdir...
 

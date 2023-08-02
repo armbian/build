@@ -72,12 +72,17 @@ function obtain_complete_artifact() {
 	declare -g artifact_type="undetermined"
 	declare -g artifact_version="undetermined"
 	declare -g artifact_version_reason="undetermined"
+	declare -g artifact_final_version_reversioned="${REVISION}" # by default
 	declare -g artifact_base_dir="undetermined"
 	declare -g artifact_final_file="undetermined"
 	declare -g artifact_final_file_basename="undetermined"
 	declare -g artifact_full_oci_target="undetermined"
+	declare -g artifact_deb_repo="undetermined"
+	declare -g artifact_deb_arch="undetermined"
 	declare -A -g artifact_map_packages=()
 	declare -A -g artifact_map_debs=()
+	declare -A -g artifact_map_debs_reversioned=()
+	declare -a -g artifact_debs_reversion_functions=()
 
 	# Contentious; it might be that prepare_version is complex enough to warrant more than 1 logging section.
 	LOG_SECTION="artifact_prepare_version" do_with_logging artifact_prepare_version
@@ -86,46 +91,97 @@ function obtain_complete_artifact() {
 	debug_var artifact_type
 	debug_var artifact_version
 	debug_var artifact_version_reason
-	debug_var artifact_base_dir
-	debug_var artifact_final_file
-	debug_dict artifact_map_packages
-	debug_dict artifact_map_debs
 
 	# sanity checks. artifact_version/artifact_version_reason/artifact_final_file *must* be set
 	[[ "x${artifact_name}x" == "xx" || "${artifact_name}" == "undetermined" ]] && exit_with_error "artifact_name is not set after artifact_prepare_version"
 	[[ "x${artifact_type}x" == "xx" || "${artifact_type}" == "undetermined" ]] && exit_with_error "artifact_type is not set after artifact_prepare_version"
 	[[ "x${artifact_version}x" == "xx" || "${artifact_version}" == "undetermined" ]] && exit_with_error "artifact_version is not set after artifact_prepare_version"
 	[[ "x${artifact_version_reason}x" == "xx" || "${artifact_version_reason}" == "undetermined" ]] && exit_with_error "artifact_version_reason is not set after artifact_prepare_version"
-	[[ "x${artifact_base_dir}x" == "xx" || "${artifact_base_dir}" == "undetermined" ]] && exit_with_error "artifact_base_dir is not set after artifact_prepare_version"
-	[[ "x${artifact_final_file}x" == "xx" || "${artifact_final_file}" == "undetermined" ]] && exit_with_error "artifact_final_file is not set after artifact_prepare_version"
 
-	# validate artifact_version begins with a digit when building deb packages (or deb-tar); dpkg requires it
-	if [[ "${artifact_type}" != "tar.zst" ]]; then
-		[[ "${artifact_version}" =~ ^[0-9] ]] || exit_with_error "${artifact_type}: artifact_version '${artifact_version}' does not begin with a digit"
-	fi
-
-	declare -a artifact_map_debs_values=() artifact_map_packages_values=() artifact_map_debs_keys=() artifact_map_packages_keys=()
+	declare -a artifact_map_debs_values=()
+	declare -a artifact_map_packages_values=()
+	declare -a artifact_map_debs_keys=()
+	declare -a artifact_map_packages_keys=()
+	declare -a artifact_map_debs_reversioned_keys=()
+	declare -a artifact_map_debs_reversioned_values=()
 
 	# validate artifact_type... it must be one of the supported types
 	case "${artifact_type}" in
 		deb | deb-tar)
-			# validate artifact_version begins with a digit
+			# check artifact_base_dir and artifact_base_dir are 'undetermined', or bomb; deb/deb-tar shouldn't set those anymore
+			[[ "${artifact_base_dir}" != "undetermined" ]] && exit_with_error "artifact ${artifact_name} is setting artifact_base_dir, legacy code, remove."
+			[[ "${artifact_final_file}" != "undetermined" ]] && exit_with_error "artifact ${artifact_name} is setting artifact_final_file, legacy code, remove."
+
+			# validate artifact_version begins with a digit when building deb packages; dpkg requires it
 			[[ "${artifact_version}" =~ ^[0-9] ]] || exit_with_error "${artifact_type}: artifact_version '${artifact_version}' does not begin with a digit"
+			# since it's a deb or deb-tar, validate deb-specific variables
+			[[ "x${artifact_deb_repo}x" == "xx" || "${artifact_deb_repo}" == "undetermined" ]] && exit_with_error "artifact_deb_repo is not set after artifact_prepare_version"
+			[[ "x${artifact_deb_arch}x" == "xx" || "${artifact_deb_arch}" == "undetermined" ]] && exit_with_error "artifact_deb_arch is not set after artifact_prepare_version"
+			# validate there's at least one item in artifact_map_packages
+			[[ "${#artifact_map_packages[@]}" -eq 0 ]] && exit_with_error "artifact_map_packages is empty after artifact_prepare_version"
+
+			# Add the reversioning hash to the artifact_version
+			declare artifact_reversioning_hash="undetermined"
+			artifact_calculate_reversioning_hash
+			declare artifact_reversioning_hash_short="${artifact_reversioning_hash:0:4}"
+			artifact_version="${artifact_version}-R${artifact_reversioning_hash_short}"
+			display_alert "Final artifact_version with reversioning hash" "${artifact_version}" "debug"
+
+			debug_dict artifact_map_packages
+			debug_dict artifact_map_debs
+			debug_dict artifact_map_debs_reversioned
+
+			# produce the mapped/reversioned deb info given the debs.
+			declare one_artifact_deb_id one_artifact_deb_package
+			declare -i debs_counter=0
+			declare single_deb_hashed_rel_path
+			for one_artifact_deb_id in "${!artifact_map_packages[@]}"; do
+				one_artifact_deb_package="${artifact_map_packages["${one_artifact_deb_id}"]}"
+				# @TODO: might be "${artifact_name}/${artifact_version}/" in the middle can be beneficial for cleaning, later?
+				single_deb_hashed_rel_path="${artifact_deb_repo}/${one_artifact_deb_package}_${artifact_version}_${artifact_deb_arch}.deb"
+				artifact_map_debs+=(["${one_artifact_deb_id}"]="${single_deb_hashed_rel_path}")
+				artifact_map_debs_reversioned+=(["${one_artifact_deb_id}"]="${REVISION}/${artifact_deb_repo}/${artifact_name}/${artifact_version}/${one_artifact_deb_package}_${artifact_final_version_reversioned}_${artifact_deb_arch}.deb")
+				debs_counter+=1
+			done
+
+			# moved from each artifact:
+			# deb-tar:
+			if [[ "${artifact_type}" == "deb-tar" ]]; then
+				artifact_base_dir="${PACKAGES_HASHED_STORAGE}" # deb-tar's always at the root. they're temporary anyway
+				artifact_final_file="${artifact_base_dir}/${artifact_name}_${artifact_version}_${artifact_deb_arch}.tar"
+			else # deb, single-deb
+				# bomb if we have more than one...
+				[[ "${debs_counter}" -gt 1 ]] && exit_with_error "artifact_type '${artifact_type}' has more than one deb file. This is not supported."
+				# just use the single deb rel path
+				artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
+				artifact_final_file="${artifact_base_dir}/${single_deb_hashed_rel_path}"
+			fi
+
+			debug_dict artifact_map_packages
+			debug_dict artifact_map_debs
+			debug_dict artifact_map_debs_reversioned
 
 			# grab the the deb maps, and add them to plain arrays.
 			artifact_map_debs_keys=("${!artifact_map_debs[@]}")
 			artifact_map_debs_values=("${artifact_map_debs[@]}")
 			artifact_map_packages_keys=("${!artifact_map_packages[@]}")
 			artifact_map_packages_values=("${artifact_map_packages[@]}")
+			artifact_map_debs_reversioned_keys=("${!artifact_map_debs_reversioned[@]}")
+			artifact_map_debs_reversioned_values=("${artifact_map_debs_reversioned[@]}")
 
 			;;
 		tar.zst)
-			: # valid, no restrictions on tar.zst versioning
+			# tar.zst (rootfs) must specify the directories directly, since we can't determine from deb info.
+			[[ "x${artifact_base_dir}x" == "xx" || "${artifact_base_dir}" == "undetermined" ]] && exit_with_error "artifact_base_dir is not set after artifact_prepare_version"
+			[[ "x${artifact_final_file}x" == "xx" || "${artifact_final_file}" == "undetermined" ]] && exit_with_error "artifact_final_file is not set after artifact_prepare_version"
 			;;
 		*)
 			exit_with_error "artifact_type '${artifact_type}' is not supported"
 			;;
 	esac
+
+	debug_var artifact_base_dir
+	debug_var artifact_final_file
 
 	# set those as outputs for GHA
 	github_actions_add_output artifact_name "${artifact_name}"
@@ -168,8 +224,11 @@ function obtain_complete_artifact() {
 		declare -a wanted_vars=(
 			artifact_name
 			artifact_type
+			artifact_deb_repo
+			artifact_deb_arch
 			artifact_version
 			artifact_version_reason
+			artifact_final_version_reversioned
 			artifact_base_dir
 			artifact_final_file
 			artifact_final_file_basename
@@ -181,6 +240,8 @@ function obtain_complete_artifact() {
 			artifact_map_debs_values
 			artifact_map_packages_keys
 			artifact_map_packages_values
+			artifact_map_debs_reversioned_keys
+			artifact_map_debs_reversioned_values
 		)
 
 		declare -A ARTIFACTS_VAR_DICT=()
@@ -232,10 +293,11 @@ function obtain_complete_artifact() {
 
 		if [[ "${artifact_exists_in_remote_cache}" == "yes" ]]; then
 			display_alert "artifact" "exists in remote cache: ${artifact_name} ${artifact_version}" "debug"
-			if [[ "${skip_unpack_if_found_in_caches:-"no"}" == "yes" ]]; then
-				display_alert "artifact" "skipping obtain from remote & unpacking as requested" "info"
-				return 0
-			fi
+			# @TODO: rpardini: WHY THE HELL WE HAD THIS? there's no point in this at all?
+			#if [[ "${skip_unpack_if_found_in_caches:-"no"}" == "yes" ]]; then
+			#	display_alert "artifact" "skipping obtain from remote & unpacking as requested" "info"
+			#	return 0
+			#fi
 			LOG_SECTION="artifact_obtain_from_remote_cache" do_with_logging artifact_obtain_from_remote_cache
 			LOG_SECTION="unpack_artifact_from_local_cache" do_with_logging unpack_artifact_from_local_cache
 			display_alert "artifact" "obtained from remote cache: ${artifact_name} ${artifact_version}" "cachehit"
@@ -306,13 +368,16 @@ function build_artifact_for_image() {
 		obtain_complete_artifact
 	fi
 
+	artifact_reversion_for_deployment
+	debug_dict artifact_map_debs_reversioned
+
 	return 0
 }
 
 function pack_artifact_to_local_cache() {
 	if [[ "${artifact_type}" == "deb-tar" ]]; then
 		declare -a files_to_tar=()
-		run_host_command_logged tar -C "${artifact_base_dir}" -cvf "${artifact_final_file}" "${artifact_map_debs[@]}"
+		run_host_command_logged tar -C "${artifact_base_dir}" -cf "${artifact_final_file}" "${artifact_map_debs[@]}"
 		display_alert "Created deb-tar artifact" "deb-tar: ${artifact_final_file}" "info"
 	fi
 }
@@ -362,7 +427,7 @@ function upload_artifact_to_oci() {
 
 	# If this is a deb-tar, delete the .tar after the upload. We won't ever need it again.
 	if [[ "${artifact_type}" == "deb-tar" ]]; then
-		display_alert "Deleting deb-tar after OCI deploy" "deb-tar: ${artifact_final_file_basename}" "warn" # @TODO
+		display_alert "Deleting deb-tar after OCI deploy" "deb-tar: ${artifact_final_file_basename}" "debug"
 		run_host_command_logged rm -fv "${artifact_final_file}"
 	fi
 }
@@ -422,6 +487,15 @@ function is_artifact_available_in_remote_cache() {
 function obtain_artifact_from_remote_cache() {
 	display_alert "Obtaining artifact from remote cache" "${artifact_full_oci_target} into ${artifact_final_file_basename}" "info"
 	oras_pull_artifact_file "${artifact_full_oci_target}" "${artifact_base_dir}" "${artifact_final_file_basename}"
+
+	# if this is a 'deb', (not deb-tar, not tar.zst), OCI hasn't kept the directory structure, so move it into place.
+	if [[ "${artifact_type}" == "deb" ]]; then
+		declare final_file_dirname
+		final_file_dirname="$(dirname "${artifact_final_file}")"
+		mkdir -p "${final_file_dirname}"
+		display_alert "Moving deb into place" "deb: ${artifact_final_file_basename}" "debug"
+		run_host_command_logged mv "${artifact_base_dir}/${artifact_final_file_basename}" "${artifact_final_file}"
+	fi
 
 	# sanity check: after obtaining remotely, is it available locally? it should, otherwise there's some inconsistency.
 	declare artifact_exists_in_local_cache="not-yet-after-obtaining-remotely"

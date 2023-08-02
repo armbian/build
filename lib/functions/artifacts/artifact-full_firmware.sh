@@ -61,18 +61,12 @@ function artifact_full_firmware_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
-	artifact_map_packages=(
-		["armbian-firmware-full"]="armbian-firmware-full"
-	)
-
-	artifact_map_debs=(
-		["armbian-firmware-full"]="armbian-firmware-full_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["armbian-firmware-full"]="armbian-firmware-full")
 
 	artifact_name="armbian-firmware-full"
 	artifact_type="deb"
-	artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
-	artifact_final_file="${PACKAGES_HASHED_STORAGE}/armbian-firmware-full_${artifact_version}_all.deb"
+	artifact_deb_repo="global"
+	artifact_deb_arch="all"
 
 	return 0
 }
