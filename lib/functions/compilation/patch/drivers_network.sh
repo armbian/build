@@ -622,6 +622,11 @@ driver_uwe5622_allwinner() {
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner.patch" "applying"
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
 		fi
+
+		if linux-version compare "${version}" ge 6.4; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.4-post.patch" "applying"
+		fi
+
 		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-warnings.patch" "applying"
 
 		# Add to section Makefile
