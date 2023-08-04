@@ -74,6 +74,7 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- edge: Use edge kernel
 		- [branch]: Use specified [branch] kernel
 		- [none]: Exits with error
+- **KERNEL_TEST_TARGET** ( comma-separated list of kernel releases or branches ): if test targets are different for testings (internal switch)
 - **FULL_DESKTOP** ( boolean ): defines whether to install desktop stack of applications such as office, thunderbird, etc..
 	- Values:
 		- yes: install desktop stack
