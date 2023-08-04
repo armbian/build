@@ -612,7 +612,7 @@ driver_rtl8822BS() {
 
 driver_uwe5622_allwinner() {
 	# Unisoc uwe5622 wireless Support
-	if linux-version compare "${version}" ge 6.0 && linux-version compare "${version}" le 6.3 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
+	if linux-version compare "${version}" ge 6.0 && linux-version compare "${version}" le 6.4 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
 		if linux-version compare "${version}" ge 6.3; then
@@ -622,6 +622,11 @@ driver_uwe5622_allwinner() {
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner.patch" "applying"
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
 		fi
+
+		if linux-version compare "${version}" ge 6.4; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.4-post.patch" "applying"
+		fi
+
 		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-warnings.patch" "applying"
 
 		# Add to section Makefile

@@ -141,8 +141,8 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		declare -g KERNEL_MAJOR_MINOR="6.3" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-6.3.y"
+		declare -g KERNEL_MAJOR_MINOR="6.4" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-6.4.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 
