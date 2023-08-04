@@ -21,17 +21,22 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_DESKTOP
 
 	# common options
-	declare revision_from="undetermined"
-	if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
-		REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
-		revision_from="userpatches VERSION file"
-	else
-		REVISION=$(cat "${SRC}"/VERSION)
-		revision_from="main VERSION file"
+	declare revision_from="set in env or command-line parameter"
+	if [[ "${REVISION}" == "" ]]; then
+		if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
+			REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
+			revision_from="userpatches VERSION file"
+		else
+			REVISION=$(cat "${SRC}"/VERSION)
+			revision_from="main VERSION file"
+		fi
 	fi
 
 	declare -g -r REVISION="${REVISION}"
-	display_alert "Using revision from" "${revision_from}: '${REVISION}'" "info"
+	display_alert "Using REVISION from" "${revision_from}: '${REVISION}'" "info"
+	if [[ ! "${REVISION}" =~ ^[0-9] ]]; then
+		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
+	fi
 
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
 	[[ -z $VENDORURL ]] && VENDORURL="https://www.armbian.com"
