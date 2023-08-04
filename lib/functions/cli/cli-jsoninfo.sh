@@ -145,9 +145,12 @@ function cli_json_info_run() {
 		if [[ ! -f "${TARGETS_OUTPUT_FILE}" ]]; then
 			display_alert "Generating targets inventory" "targets-compositor" "info"
 			export TARGETS_BETA="${BETA}"                             # Read by the Python script, and injected into every target as "BETA=" param.
+			export TARGETS_REVISION="${REVISION}"                     # Read by the Python script, and injected into every target as "REVISION=" param.
 			export TARGETS_FILTER_INCLUDE="${TARGETS_FILTER_INCLUDE}" # Read by the Python script; used to "only include" targets that match the given string.
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/targets-compositor.py "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" "not_yet_releases.json" "${TARGETS_FILE}" ">" "${TARGETS_OUTPUT_FILE}"
 			unset TARGETS_BETA
+			unset TARGETS_REVISION
+			unset TARGETS_FILTER_INCLUDE
 		fi
 
 		### Images.
@@ -217,6 +220,7 @@ function cli_json_info_run() {
 		# 1) getting the artifact from OCI only (not build it)
 		# 2) getting the list of .deb's to be published to the repo for that artifact
 		display_alert "Generating deb-to-repo JSON output" "output-debs-to-repo-json" "info"
+		# This produces debs-to-repo-info.json
 		run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-debs-to-repo-json.py "${BASE_INFO_OUTPUT_DIR}" "${OUTDATED_ARTIFACTS_IMAGES_FILE}"
 		if [[ "${ARMBIAN_COMMAND}" == "debs-to-repo-json" ]]; then
 			display_alert "Done with" "output-debs-to-repo-json" "ext"
