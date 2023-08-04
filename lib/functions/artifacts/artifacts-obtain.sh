@@ -137,10 +137,14 @@ function obtain_complete_artifact() {
 			declare single_deb_hashed_rel_path
 			for one_artifact_deb_id in "${!artifact_map_packages[@]}"; do
 				one_artifact_deb_package="${artifact_map_packages["${one_artifact_deb_id}"]}"
-				# @TODO: might be "${artifact_name}/${artifact_version}/" in the middle can be beneficial for cleaning, later?
+
 				single_deb_hashed_rel_path="${artifact_deb_repo}/${one_artifact_deb_package}_${artifact_version}_${artifact_deb_arch}.deb"
 				artifact_map_debs+=(["${one_artifact_deb_id}"]="${single_deb_hashed_rel_path}")
-				artifact_map_debs_reversioned+=(["${one_artifact_deb_id}"]="${REVISION}/${artifact_deb_repo}/${artifact_name}/${artifact_version}/${one_artifact_deb_package}_${artifact_final_version_reversioned}_${artifact_deb_arch}.deb")
+
+				declare artifact_deb_repo_prefix=""
+				[[ "${artifact_deb_repo}" != "global" ]] && artifact_deb_repo_prefix="${artifact_deb_repo}/"
+
+				artifact_map_debs_reversioned+=(["${one_artifact_deb_id}"]="${artifact_deb_repo_prefix}${one_artifact_deb_package}_${artifact_final_version_reversioned}_${artifact_deb_arch}__${artifact_version}.deb")
 				debs_counter+=1
 			done
 
