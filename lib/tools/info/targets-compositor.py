@@ -119,6 +119,8 @@ for target_name in targets["targets"]:
 			one_invocation_vars.update(item)
 			# Special case for BETA, read this from TARGETS_BETA environment and force it.
 			one_invocation_vars.update({"BETA": os.environ.get("TARGETS_BETA", "")})
+			# Special case for REVISION, read this from TARGETS_REVISION environment and force it.
+			one_invocation_vars.update({"REVISION": os.environ.get("TARGETS_REVISION", "")})
 			expanded = {"vars": one_invocation_vars, "configs": one_expansion["configs"], "pipeline": one_expansion["pipeline"]}
 			invocations_dict.append(expanded)
 
