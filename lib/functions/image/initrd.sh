@@ -25,7 +25,7 @@ update_initramfs() {
 	target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${IMAGE_INSTALLED_KERNEL_VERSION}*")" # @TODO: rpardini: this will break when we add multi-kernel images
 	local initrd_kern_ver initrd_file initrd_cache_key initrd_cache_file_path initrd_hash
 	local initrd_cache_current_manifest_filepath initrd_cache_last_manifest_filepath initrd_files_to_hash
-	local initrd_debug=""
+	local initrd_debug="" update_initramfs_cmd
 	local logging_filter=""
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		initrd_debug="v"
