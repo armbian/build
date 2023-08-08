@@ -22,7 +22,7 @@ function pre_umount_final_image__configure_uboot_menu() {
 		U_BOOT_FDT_DIR="/usr/lib/linux-image-"
 	UBOOT_MENU_CONFIGURATION_COMMON
 
-	if [[ "${BOOT_FDT_FILE}" != "" ]]; then
+	if [[ "${BOOT_FDT_FILE}" != "" && "${EXTLINUX_SPECIFIC_FDT:-"yes"}" != "no" ]]; then
 		cat <<- UBOOT_MENU_CONFIGURATION_DTB >> "${MOUNT}/etc/default/u-boot"
 			U_BOOT_FDT="${BOOT_FDT_FILE}"
 		UBOOT_MENU_CONFIGURATION_DTB
