@@ -1,7 +1,219 @@
-From 983b4443be14f1b62f2f0e5ccf3e7d3894f71081 Mon Sep 17 00:00:00 2001
+From 66ec39c995b0058005c94abdeef9b8cc98f3a045 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 20 Jul 2023 18:05:56 +0200
+Subject: [PATCH 1/9] dt-bindings: usb: add rk3588 compatible to rockchip,dwc3
+
+RK3588 has three DWC3 controllers. Two of them are fully functional in
+host, device and OTG mode including USB2 support. They are connected to
+dedicated PHYs, that also support USB-C's DisplayPort alternate mode.
+
+The third controller is connected to one of the combphy's shared
+with PCIe and SATA. It can only be used in host mode and does not
+support USB2. Compared to the other controllers this one needs
+some extra clocks.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+---
+ .../devicetree/bindings/usb/rockchip,dwc3.yaml        | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/usb/rockchip,dwc3.yaml b/Documentation/devicetree/bindings/usb/rockchip,dwc3.yaml
+index 291844c8f3e1..cbc3e55e05e1 100644
+--- a/Documentation/devicetree/bindings/usb/rockchip,dwc3.yaml
++++ b/Documentation/devicetree/bindings/usb/rockchip,dwc3.yaml
+@@ -30,6 +30,7 @@ select:
+         enum:
+           - rockchip,rk3328-dwc3
+           - rockchip,rk3568-dwc3
++          - rockchip,rk3588-dwc3
+   required:
+     - compatible
+ 
+@@ -39,6 +40,7 @@ properties:
+       - enum:
+           - rockchip,rk3328-dwc3
+           - rockchip,rk3568-dwc3
++          - rockchip,rk3588-dwc3
+       - const: snps,dwc3
+ 
+   reg:
+@@ -58,7 +60,9 @@ properties:
+           Master/Core clock, must to be >= 62.5 MHz for SS
+           operation and >= 30MHz for HS operation
+       - description:
+-          Controller grf clock
++          Controller grf clock OR UTMI clock
++      - description:
++          PIPE clock
+ 
+   clock-names:
+     minItems: 3
+@@ -66,7 +70,10 @@ properties:
+       - const: ref_clk
+       - const: suspend_clk
+       - const: bus_clk
+-      - const: grf_clk
++      - enum:
++          - grf_clk
++          - utmi
++      - const: pipe
+ 
+   power-domains:
+     maxItems: 1
+-- 
+2.41.0
+
+
+From 4085e92d3e3980fcd074c0aee47ab14ed2b534a5 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Thu, 20 Jul 2023 18:59:37 +0200
+Subject: [PATCH 2/9] usb: dwc3: add optional PHY interface clocks
+
+On Rockchip RK3588 one of the DWC3 cores is integrated weirdly and
+requires two extra clocks to be enabled. Without these extra clocks
+hot-plugging USB devices is broken.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+---
+ drivers/usb/dwc3/core.c | 26 ++++++++++++++++++++++++++
+ drivers/usb/dwc3/core.h |  4 ++++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index f6689b731718..0618fcc4d0af 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -817,8 +817,20 @@ static int dwc3_clk_enable(struct dwc3 *dwc)
+ 	if (ret)
+ 		goto disable_ref_clk;
+ 
++	ret = clk_prepare_enable(dwc->utmi_clk);
++	if (ret)
++		goto disable_susp_clk;
++
++	ret = clk_prepare_enable(dwc->pipe_clk);
++	if (ret)
++		goto disable_utmi_clk;
++
+ 	return 0;
+ 
++disable_utmi_clk:
++	clk_disable_unprepare(dwc->utmi_clk);
++disable_susp_clk:
++	clk_disable_unprepare(dwc->susp_clk);
+ disable_ref_clk:
+ 	clk_disable_unprepare(dwc->ref_clk);
+ disable_bus_clk:
+@@ -828,6 +840,8 @@ static int dwc3_clk_enable(struct dwc3 *dwc)
+ 
+ static void dwc3_clk_disable(struct dwc3 *dwc)
+ {
++	clk_disable_unprepare(dwc->pipe_clk);
++	clk_disable_unprepare(dwc->utmi_clk);
+ 	clk_disable_unprepare(dwc->susp_clk);
+ 	clk_disable_unprepare(dwc->ref_clk);
+ 	clk_disable_unprepare(dwc->bus_clk);
+@@ -1764,6 +1778,18 @@ static int dwc3_get_clocks(struct dwc3 *dwc)
+ 		}
+ 	}
+ 
++	dwc->utmi_clk = devm_clk_get_optional(dev, "utmi");
++	if (IS_ERR(dwc->utmi_clk)) {
++		return dev_err_probe(dev, PTR_ERR(dwc->utmi_clk),
++				"could not get utmi clock\n");
++	}
++
++	dwc->pipe_clk = devm_clk_get_optional(dev, "pipe");
++	if (IS_ERR(dwc->pipe_clk)) {
++		return dev_err_probe(dev, PTR_ERR(dwc->pipe_clk),
++				"could not get pipe clock\n");
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/usb/dwc3/core.h b/drivers/usb/dwc3/core.h
+index 8b1295e4dcdd..fa49a87025cf 100644
+--- a/drivers/usb/dwc3/core.h
++++ b/drivers/usb/dwc3/core.h
+@@ -994,6 +994,8 @@ struct dwc3_scratchpad_array {
+  * @bus_clk: clock for accessing the registers
+  * @ref_clk: reference clock
+  * @susp_clk: clock used when the SS phy is in low power (S3) state
++ * @utmi_clk: clock used for USB2 PHY communication
++ * @pipe_clk: clock used for USB3 PHY communication
+  * @reset: reset control
+  * @regs: base address for our registers
+  * @regs_size: address space size
+@@ -1159,6 +1161,8 @@ struct dwc3 {
+ 	struct clk		*bus_clk;
+ 	struct clk		*ref_clk;
+ 	struct clk		*susp_clk;
++	struct clk		*utmi_clk;
++	struct clk		*pipe_clk;
+ 
+ 	struct reset_control	*reset;
+ 
+-- 
+2.41.0
+
+
+From 3d9edd8eba42f0e738503ddce51b3e49a4d9f99e Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Tue, 18 Jul 2023 18:57:15 +0200
+Subject: [PATCH 3/9] arm64: dts: rockchip: rk3588s: Add USB3 host controller
+
+RK3588 has three USB3 controllers. This adds the host-only controller,
+which is using the naneng-combphy shared with PCIe and SATA.
+
+The other two are dual-role and using a different PHY that is not yet
+supported upstream.
+
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3588s.dtsi | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588s.dtsi b/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
+index 38be80dd7ded..2dfd6b40a5a6 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
+@@ -885,6 +885,27 @@ usb_host1_ohci: usb@fc8c0000 {
+ 		status = "disabled";
+ 	};
+ 
++	usb_host2_xhci: usb@fcd00000 {
++		compatible = "rockchip,rk3588-dwc3", "snps,dwc3";
++		reg = <0x0 0xfcd00000 0x0 0x400000>;
++		interrupts = <GIC_SPI 222 IRQ_TYPE_LEVEL_HIGH 0>;
++		clocks = <&cru REF_CLK_USB3OTG2>, <&cru SUSPEND_CLK_USB3OTG2>,
++			 <&cru ACLK_USB3OTG2>, <&cru CLK_UTMI_OTG2>,
++			 <&cru CLK_PIPEPHY2_PIPE_U3_G>;
++		clock-names = "ref_clk", "suspend_clk", "bus_clk", "utmi", "pipe";
++		dr_mode = "host";
++		phys = <&combphy2_psu PHY_TYPE_USB3>;
++		phy-names = "usb3-phy";
++		phy_type = "utmi_wide";
++		resets = <&cru SRST_A_USB3OTG2>;
++		snps,dis_enblslpm_quirk;
++		snps,dis-u2-freeclk-exists-quirk;
++		snps,dis-del-phy-power-chg-quirk;
++		snps,dis-tx-ipgap-linecheck-quirk;
++		snps,dis_rxdet_inp3_quirk;
++		status = "disabled";
++	};
++
+ 	sys_grf: syscon@fd58c000 {
+ 		compatible = "rockchip,rk3588-sys-grf", "syscon";
+ 		reg = <0x0 0xfd58c000 0x0 0x1000>;
+-- 
+2.41.0
+
+
+From 74b7b627481b7fcd662f170d493dc80658d89f70 Mon Sep 17 00:00:00 2001
 From: Sebastian Reichel <sebastian.reichel@collabora.com>
 Date: Tue, 25 Apr 2023 17:38:57 +0200
-Subject: [PATCH 1/6] dt-bindings: phy: add rockchip usbdp combo phy document
+Subject: [PATCH 4/9] dt-bindings: phy: add rockchip usbdp combo phy document
 
 Add device tree binding document for Rockchip USBDP Combo PHY
 with Samsung IP block.
@@ -190,171 +402,10 @@ index 000000000000..dcca84d57e99
 2.41.0
 
 
-From 98c5c2cdd1efd0d775f78af54f7b690b0f634e37 Mon Sep 17 00:00:00 2001
-From: Sebastian Reichel <sebastian.reichel@collabora.com>
-Date: Tue, 30 May 2023 16:40:02 +0200
-Subject: [PATCH 2/6] dt-bindings: usb: rockchip,dwc3: Add RK3588 binding
-
-RK3588 contains three DWC3 cores. Two of them are connected to
-dedicated USBDP PHY and can be used in dual-role. The third is
-connected to one of the shared combo PHYs used for PCIe/SATA/USB3
-and can only be used in host mode. Since the binding is all about
-the PHY glueing and involved clocks, separate compatible values
-have been created for these two types.
-
-Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
----
- .../bindings/usb/rockchip,rk3399-dwc3.yaml    | 107 ++++++++++++++----
- 1 file changed, 85 insertions(+), 22 deletions(-)
-
-diff --git a/Documentation/devicetree/bindings/usb/rockchip,rk3399-dwc3.yaml b/Documentation/devicetree/bindings/usb/rockchip,rk3399-dwc3.yaml
-index 3159f9a6a0f7..0db4dc86e506 100644
---- a/Documentation/devicetree/bindings/usb/rockchip,rk3399-dwc3.yaml
-+++ b/Documentation/devicetree/bindings/usb/rockchip,rk3399-dwc3.yaml
-@@ -11,7 +11,13 @@ maintainers:
- 
- properties:
-   compatible:
--    const: rockchip,rk3399-dwc3
-+    oneOf:
-+      - items:
-+          - enum:
-+              - rockchip,rk3588-dwc3-otg
-+              - rockchip,rk3588-dwc3-host
-+          - const: rockchip,rk3399-dwc3
-+      - const: rockchip,rk3399-dwc3
- 
-   '#address-cells':
-     const: 2
-@@ -22,35 +28,37 @@ properties:
-   ranges: true
- 
-   clocks:
--    items:
--      - description:
--          Controller reference clock, must to be 24 MHz
--      - description:
--          Controller suspend clock, must to be 24 MHz or 32 KHz
--      - description:
--          Master/Core clock, must to be >= 62.5 MHz for SS
--          operation and >= 30MHz for HS operation
--      - description:
--          USB3 aclk peri
--      - description:
--          USB3 aclk
--      - description:
--          Controller grf clock
-+    minItems: 3
-+    maxItems: 6
- 
-   clock-names:
-     items:
--      - const: ref_clk
--      - const: suspend_clk
--      - const: bus_clk
--      - const: aclk_usb3_rksoc_axi_perf
--      - const: aclk_usb3
--      - const: grf_clk
-+      oneOf:
-+        - enum:
-+            - ref
-+            - ref_clk
-+        - enum:
-+            - suspend
-+            - suspend_clk
-+        - enum:
-+            - bus
-+            - bus_clk
-+        - const: aclk_usb3_rksoc_axi_perf
-+        - const: aclk_usb3
-+        - const: grf_clk
-+        - const: utmi
-+        - const: php
-+        - const: pipe
-+    minItems: 3
-+    maxItems: 6
- 
-   resets:
-     maxItems: 1
- 
-   reset-names:
--    const: usb3-otg
-+    enum:
-+      - usb3-host
-+      - usb3-otg
- 
- patternProperties:
-   '^usb@':
-@@ -68,6 +76,61 @@ required:
-   - resets
-   - reset-names
- 
-+allOf:
-+  - if:
-+      properties:
-+        compatible:
-+          const: rockchip,rk3399-dwc3
-+    then:
-+      properties:
-+        clocks:
-+          minItems: 6
-+        clock-names:
-+          items:
-+            - const: ref_clk
-+            - const: suspend_clk
-+            - const: bus_clk
-+            - const: aclk_usb3_rksoc_axi_perf
-+            - const: aclk_usb3
-+            - const: grf_clk
-+        reset-names:
-+          const: usb3-otg
-+  - if:
-+      properties:
-+        compatible:
-+          contains:
-+            const: rockchip,rk3588-dwc3-otg
-+    then:
-+      properties:
-+        clocks:
-+          maxItems: 3
-+        clock-names:
-+          items:
-+            - const: ref
-+            - const: suspend
-+            - const: bus
-+        reset-names:
-+          const: usb3-otg
-+  - if:
-+      properties:
-+        compatible:
-+          contains:
-+            const: rockchip,rk3588-dwc3-host
-+    then:
-+      properties:
-+        clocks:
-+          minItems: 6
-+        clock-names:
-+          items:
-+            - const: ref
-+            - const: suspend
-+            - const: bus
-+            - const: utmi
-+            - const: php
-+            - const: pipe
-+        reset-names:
-+          const: usb3-host
-+
- examples:
-   - |
-     #include <dt-bindings/clock/rk3399-cru.h>
--- 
-2.41.0
-
-
-From 099abe585ba9ed6376355d75bc0b79bd9b6cac94 Mon Sep 17 00:00:00 2001
+From 5c99443bc11d4853e4cf83274c51286da83f63d0 Mon Sep 17 00:00:00 2001
 From: Sebastian Reichel <sebastian.reichel@collabora.com>
 Date: Tue, 30 May 2023 18:49:48 +0200
-Subject: [PATCH 3/6] dt-bindings: soc: rockchip: add rk3588 USB3 syscon
+Subject: [PATCH 5/9] dt-bindings: soc: rockchip: add rk3588 USB3 syscon
 
 RK3588 USB3 support requires the GRF for USB, USBDP PHY and VO.
 
@@ -414,10 +465,10 @@ index e4fa6a07b4fa..ce1fd5b0d669 100644
 2.41.0
 
 
-From 76dce9a4e101c5f961f91a3ddef99660081cadd5 Mon Sep 17 00:00:00 2001
+From 7c7a44487d20f8c2a90eafec4d4f399b5c6518de Mon Sep 17 00:00:00 2001
 From: Frank Wang <frank.wang@rock-chips.com>
 Date: Tue, 25 Apr 2023 15:55:54 +0200
-Subject: [PATCH 4/6] phy: rockchip: add usbdp combo phy driver
+Subject: [PATCH 6/9] phy: rockchip: add usbdp combo phy driver
 
 This adds a new USBDP combo PHY with Samsung IP block driver.
 
@@ -2207,24 +2258,24 @@ index 000000000000..414081b1247d
 2.41.0
 
 
-From 15e8ed9380726e7f27c886faa43df7be484f61e8 Mon Sep 17 00:00:00 2001
+From 42b75ff827afe22965425ce3f11812ab281c67ca Mon Sep 17 00:00:00 2001
 From: Sebastian Reichel <sebastian.reichel@collabora.com>
 Date: Tue, 25 Apr 2023 17:49:04 +0200
-Subject: [PATCH 5/6] arm64: dts: rockchip: rk3588s: Add USBDP phy nodes
+Subject: [PATCH 7/9] arm64: dts: rockchip: rk3588s: Add USBDP phy nodes
 
 Add both USB3-Displayport PHYs from RK3588.
 
 Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
 ---
- arch/arm64/boot/dts/rockchip/rk3588.dtsi  | 63 +++++++++++++++++++
- arch/arm64/boot/dts/rockchip/rk3588s.dtsi | 74 +++++++++++++++++++++++
- 2 files changed, 137 insertions(+)
+ arch/arm64/boot/dts/rockchip/rk3588.dtsi  | 62 +++++++++++++++++++
+ arch/arm64/boot/dts/rockchip/rk3588s.dtsi | 73 +++++++++++++++++++++++
+ 2 files changed, 135 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/rockchip/rk3588.dtsi b/arch/arm64/boot/dts/rockchip/rk3588.dtsi
-index 5c61cce52a21..1add38695816 100644
+index 8f210f002fac..b18fb5dc793e 100644
 --- a/arch/arm64/boot/dts/rockchip/rk3588.dtsi
 +++ b/arch/arm64/boot/dts/rockchip/rk3588.dtsi
-@@ -12,6 +12,38 @@ pipe_phy1_grf: syscon@fd5c0000 {
+@@ -17,6 +17,37 @@ pipe_phy1_grf: syscon@fd5c0000 {
  		reg = <0x0 0xfd5c0000 0x0 0x100>;
  	};
  
@@ -2250,7 +2301,6 @@ index 5c61cce52a21..1add38695816 100644
 +			clock-names = "phyclk";
 +			clock-output-names = "usb480m_phy1";
 +			#clock-cells = <0>;
-+			rockchip,usbctrl-grf = <&usb_grf>;
 +			status = "disabled";
 +
 +			u2phy1_otg: otg-port {
@@ -2263,7 +2313,7 @@ index 5c61cce52a21..1add38695816 100644
  	i2s8_8ch: i2s@fddc8000 {
  		compatible = "rockchip,rk3588-i2s-tdm";
  		reg = <0x0 0xfddc8000 0x0 0x1000>;
-@@ -206,6 +238,37 @@ sata-port@0 {
+@@ -310,6 +341,37 @@ sata-port@0 {
  		};
  	};
  
@@ -2302,13 +2352,18 @@ index 5c61cce52a21..1add38695816 100644
  		compatible = "rockchip,rk3588-naneng-combphy";
  		reg = <0x0 0xfee10000 0x0 0x100>;
 diff --git a/arch/arm64/boot/dts/rockchip/rk3588s.dtsi b/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
-index a009c4414256..598cc3500e1f 100644
+index 2dfd6b40a5a6..1cf090a75221 100644
 --- a/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
 +++ b/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
-@@ -890,6 +890,33 @@ sys_grf: syscon@fd58c000 {
- 		reg = <0x0 0xfd58c000 0x0 0x1000>;
+@@ -936,6 +936,37 @@ pipe_phy2_grf: syscon@fd5c4000 {
+ 		reg = <0x0 0xfd5c4000 0x0 0x100>;
  	};
  
++	usbdpphy0_grf: syscon@fd5c8000 {
++		compatible = "rockchip,rk3588-usbdpphy-grf", "syscon";
++		reg = <0x0 0xfd5c8000 0x0 0x4000>;
++	};
++
 +	usb2phy0_grf: syscon@fd5d0000 {
 +		compatible = "rockchip,rk3588-usb2phy-grf", "syscon",
 +			     "simple-mfd";
@@ -2326,7 +2381,6 @@ index a009c4414256..598cc3500e1f 100644
 +			clock-names = "phyclk";
 +			clock-output-names = "usb480m_phy0";
 +			#clock-cells = <0>;
-+			rockchip,usbctrl-grf = <&usb_grf>;
 +			status = "disabled";
 +
 +			u2phy0_otg: otg-port {
@@ -2339,7 +2393,7 @@ index a009c4414256..598cc3500e1f 100644
  	usb2phy2_grf: syscon@fd5d8000 {
  		compatible = "rockchip,rk3588-usb2phy-grf", "syscon", "simple-mfd";
  		reg = <0x0 0xfd5d8000 0x0 0x4000>;
-@@ -915,6 +942,17 @@ u2phy2_host: host-port {
+@@ -961,6 +992,17 @@ u2phy2_host: host-port {
  		};
  	};
  
@@ -2357,19 +2411,7 @@ index a009c4414256..598cc3500e1f 100644
  	usb2phy3_grf: syscon@fd5dc000 {
  		compatible = "rockchip,rk3588-usb2phy-grf", "syscon", "simple-mfd";
  		reg = <0x0 0xfd5dc000 0x0 0x4000>;
-@@ -965,6 +1003,11 @@ pipe_phy2_grf: syscon@fd5c4000 {
- 		reg = <0x0 0xfd5c4000 0x0 0x100>;
- 	};
- 
-+	usbdpphy0_grf: syscon@fd5c8000 {
-+		compatible = "rockchip,rk3588-usbdpphy-grf", "syscon";
-+		reg = <0x0 0xfd5c8000 0x0 0x4000>;
-+	};
-+
- 	ioc: syscon@fd5f0000 {
- 		compatible = "rockchip,rk3588-ioc", "syscon";
- 		reg = <0x0 0xfd5f0000 0x0 0x10000>;
-@@ -2655,6 +2698,37 @@ dmac2: dma-controller@fed10000 {
+@@ -2670,6 +2712,37 @@ dmac2: dma-controller@fed10000 {
  		#dma-cells = <1>;
  	};
  
@@ -2411,151 +2453,131 @@ index a009c4414256..598cc3500e1f 100644
 2.41.0
 
 
-From c062260a0e652da798f7130ec25c6452957456d5 Mon Sep 17 00:00:00 2001
+From 5747a511fa71d43d504bfd9c6a14cd93fb9122c6 Mon Sep 17 00:00:00 2001
 From: Sebastian Reichel <sebastian.reichel@collabora.com>
-Date: Tue, 25 Apr 2023 18:17:19 +0200
-Subject: [PATCH 6/6] arm64: dts: rockchip: rk3588s: Add USB3 controllers
+Date: Tue, 18 Jul 2023 19:05:38 +0200
+Subject: [PATCH 8/9] arm64: dts: rockchip: rk3588s: Add USB3 DRD controllers
 
-Add all USB3 controllers.
+Add both USB3 dual-role controllers to the RK3588 devicetree.
 
 Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
 ---
- arch/arm64/boot/dts/rockchip/rk3588.dtsi  | 29 ++++++++++-
- arch/arm64/boot/dts/rockchip/rk3588s.dtsi | 60 ++++++++++++++++++++++-
- 2 files changed, 87 insertions(+), 2 deletions(-)
+ arch/arm64/boot/dts/rockchip/rk3588.dtsi  | 20 ++++++++++++++++++++
+ arch/arm64/boot/dts/rockchip/rk3588s.dtsi | 22 ++++++++++++++++++++++
+ 2 files changed, 42 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/rockchip/rk3588.dtsi b/arch/arm64/boot/dts/rockchip/rk3588.dtsi
-index 1add38695816..7b7891771438 100644
+index b18fb5dc793e..01778f609f98 100644
 --- a/arch/arm64/boot/dts/rockchip/rk3588.dtsi
 +++ b/arch/arm64/boot/dts/rockchip/rk3588.dtsi
-@@ -7,6 +7,34 @@
+@@ -7,6 +7,26 @@
  #include "rk3588-pinctrl.dtsi"
  
  / {
-+	usbdrd3_1: usb@fc400000 {
-+		compatible = "rockchip,rk3588-dwc3-otg", "rockchip,rk3399-dwc3";
++	usb_host1_xhci: usb@fc400000 {
++		compatible = "rockchip,rk3588-dwc3", "snps,dwc3";
++		reg = <0x0 0xfc400000 0x0 0x400000>;
++		interrupts = <GIC_SPI 221 IRQ_TYPE_LEVEL_HIGH 0>;
 +		clocks = <&cru REF_CLK_USB3OTG1>, <&cru SUSPEND_CLK_USB3OTG1>,
 +			 <&cru ACLK_USB3OTG1>;
-+		clock-names = "ref", "suspend", "bus";
-+		ranges;
++		clock-names = "ref_clk", "suspend_clk", "bus_clk";
++		dr_mode = "host";
++		phys = <&u2phy1_otg>, <&usbdp_phy1_u3>;
++		phy-names = "usb2-phy", "usb3-phy";
++		phy_type = "utmi_wide";
++		power-domains = <&power RK3588_PD_USB>;
 +		resets = <&cru SRST_A_USB3OTG1>;
-+		reset-names = "usb3-otg";
-+		#address-cells = <2>;
-+		#size-cells = <2>;
++		snps,dis_enblslpm_quirk;
++		snps,dis-u2-freeclk-exists-quirk;
++		snps,dis-del-phy-power-chg-quirk;
++		snps,dis-tx-ipgap-linecheck-quirk;
 +		status = "disabled";
-+
-+		usbdrd_dwc3_1: usb@fc400000 {
-+			compatible = "snps,dwc3";
-+			reg = <0x0 0xfc400000 0x0 0x400000>;
-+			interrupts = <GIC_SPI 221 IRQ_TYPE_LEVEL_HIGH 0>;
-+			power-domains = <&power RK3588_PD_USB>;
-+			dr_mode = "host";
-+			phys = <&u2phy1_otg>, <&usbdp_phy1_u3>;
-+			phy-names = "usb2-phy", "usb3-phy";
-+			phy_type = "utmi_wide";
-+			snps,dis_enblslpm_quirk;
-+			snps,dis-u2-freeclk-exists-quirk;
-+			snps,dis-del-phy-power-chg-quirk;
-+			snps,dis-tx-ipgap-linecheck-quirk;
-+		};
 +	};
 +
- 	pipe_phy1_grf: syscon@fd5c0000 {
- 		compatible = "rockchip,rk3588-pipe-phy-grf", "syscon";
- 		reg = <0x0 0xfd5c0000 0x0 0x100>;
-@@ -34,7 +62,6 @@ u2phy1: usb2-phy@4000 {
- 			clock-names = "phyclk";
- 			clock-output-names = "usb480m_phy1";
- 			#clock-cells = <0>;
--			rockchip,usbctrl-grf = <&usb_grf>;
- 			status = "disabled";
- 
- 			u2phy1_otg: otg-port {
+ 	pcie30_phy_grf: syscon@fd5b8000 {
+ 		compatible = "rockchip,rk3588-pcie3-phy-grf", "syscon";
+ 		reg = <0x0 0xfd5b8000 0x0 0x10000>;
 diff --git a/arch/arm64/boot/dts/rockchip/rk3588s.dtsi b/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
-index 598cc3500e1f..5a2469d05356 100644
+index 1cf090a75221..5dde719c9cd7 100644
 --- a/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
 +++ b/arch/arm64/boot/dts/rockchip/rk3588s.dtsi
-@@ -841,6 +841,36 @@ scmi_shmem: sram@0 {
+@@ -841,6 +841,28 @@ scmi_shmem: sram@0 {
  		};
  	};
  
-+	usbdrd3_0: usb@fc000000 {
-+		compatible = "rockchip,rk3588-dwc3-otg", "rockchip,rk3399-dwc3";
++	usb_host0_xhci: usb@fc000000 {
++		compatible = "rockchip,rk3588-dwc3", "snps,dwc3";
++		reg = <0x0 0xfc000000 0x0 0x400000>;
++		interrupts = <GIC_SPI 220 IRQ_TYPE_LEVEL_HIGH 0>;
 +		clocks = <&cru REF_CLK_USB3OTG0>, <&cru SUSPEND_CLK_USB3OTG0>,
 +			 <&cru ACLK_USB3OTG0>;
-+		clock-names = "ref", "suspend", "bus";
-+		ranges;
++		clock-names = "ref_clk", "suspend_clk", "bus_clk";
++		dr_mode = "otg";
++		phys = <&u2phy0_otg>, <&usbdp_phy0_u3>;
++		phy-names = "usb2-phy", "usb3-phy";
++		phy_type = "utmi_wide";
++		power-domains = <&power RK3588_PD_USB>;
 +		resets = <&cru SRST_A_USB3OTG0>;
-+		reset-names = "usb3-otg";
-+		#address-cells = <2>;
-+		#size-cells = <2>;
++		snps,dis_enblslpm_quirk;
++		snps,dis-u1-entry-quirk;
++		snps,dis-u2-entry-quirk;
++		snps,dis-u2-freeclk-exists-quirk;
++		snps,dis-del-phy-power-chg-quirk;
++		snps,dis-tx-ipgap-linecheck-quirk;
 +		status = "disabled";
-+
-+		usbdrd_dwc3_0: usb@fc000000 {
-+			compatible = "snps,dwc3";
-+			reg = <0x0 0xfc000000 0x0 0x400000>;
-+			interrupts = <GIC_SPI 220 IRQ_TYPE_LEVEL_HIGH 0>;
-+			power-domains = <&power RK3588_PD_USB>;
-+			dr_mode = "otg";
-+			phys = <&u2phy0_otg>, <&usbdp_phy0_u3>;
-+			phy-names = "usb2-phy", "usb3-phy";
-+			phy_type = "utmi_wide";
-+			snps,dis_enblslpm_quirk;
-+			snps,dis-u1-entry-quirk;
-+			snps,dis-u2-entry-quirk;
-+			snps,dis-u2-freeclk-exists-quirk;
-+			snps,dis-del-phy-power-chg-quirk;
-+			snps,dis-tx-ipgap-linecheck-quirk;
-+		};
 +	};
 +
  	usb_host0_ehci: usb@fc800000 {
  		compatible = "rockchip,rk3588-ehci", "generic-ehci";
  		reg = <0x0 0xfc800000 0x0 0x40000>;
-@@ -885,6 +915,35 @@ usb_host1_ohci: usb@fc8c0000 {
- 		status = "disabled";
- 	};
+-- 
+2.41.0
+
+
+From 979d640533724306d8e8992ce2f97d9d1b5d6cb5 Mon Sep 17 00:00:00 2001
+From: Sebastian Reichel <sebastian.reichel@collabora.com>
+Date: Fri, 28 Jul 2023 16:43:16 +0200
+Subject: [PATCH 9/9] usb: typec: tcpm: avoid graph warning
+
+When using a devicetree as described in commit d56de8c9a17d ("usb:
+typec: tcpm: try to get role switch from tcpc fwnode"), the kernel
+will print an error when probing the TCPM driver, which looks
+similar to this:
+
+OF: graph: no port node found in /i2c@feac0000/usb-typec@22
+
+This is a false positive, since the code first tries to find a ports
+node for the device and only then checks the fwnode. Fix this by
+swapping the order.
+
+Note, that this will now generate a error message for devicetrees with
+a role-switch ports node directly in the TCPM node instead of in the
+connectors sub-node, before falling back to the legacy behaviour. These
+devicetrees generate warnings when being checked against the bindings,
+and should be fixed.
+
+Fixes: d56de8c9a17d ("usb: typec: tcpm: try to get role switch from tcpc fwnode")
+Signed-off-by: Sebastian Reichel <sebastian.reichel@collabora.com>
+---
+ drivers/usb/typec/tcpm/tcpm.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 829d75ebab42..6f505f45d33f 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -6615,9 +6615,9 @@ struct tcpm_port *tcpm_register_port(struct device *dev, struct tcpc_dev *tcpc)
+ 	port->partner_desc.identity = &port->partner_ident;
+ 	port->port_type = port->typec_caps.type;
  
-+	usbhost3_0: usb@fcd00000 {
-+		compatible = "rockchip,rk3588-dwc3-host", "rockchip,rk3399-dwc3";
-+		clocks = <&cru REF_CLK_USB3OTG2>, <&cru SUSPEND_CLK_USB3OTG2>,
-+			 <&cru ACLK_USB3OTG2>, <&cru CLK_UTMI_OTG2>,
-+			 <&cru PCLK_PHP_ROOT>, <&cru CLK_PIPEPHY2_PIPE_U3_G>;
-+		clock-names = "ref", "suspend", "bus", "utmi", "php", "pipe";
-+		ranges;
-+		resets = <&cru SRST_A_USB3OTG2>;
-+		reset-names = "usb3-host";
-+		#address-cells = <2>;
-+		#size-cells = <2>;
-+		status = "disabled";
-+
-+		usbhost_dwc3_0: usb@fcd00000 {
-+			compatible = "snps,dwc3";
-+			reg = <0x0 0xfcd00000 0x0 0x400000>;
-+			interrupts = <GIC_SPI 222 IRQ_TYPE_LEVEL_HIGH 0>;
-+			dr_mode = "host";
-+			phys = <&combphy2_psu PHY_TYPE_USB3>;
-+			phy-names = "usb3-phy";
-+			phy_type = "utmi_wide";
-+			snps,dis_enblslpm_quirk;
-+			snps,dis-u2-freeclk-exists-quirk;
-+			snps,dis-del-phy-power-chg-quirk;
-+			snps,dis-tx-ipgap-linecheck-quirk;
-+			snps,dis_rxdet_inp3_quirk;
-+		};
-+	};
-+
- 	sys_grf: syscon@fd58c000 {
- 		compatible = "rockchip,rk3588-sys-grf", "syscon";
- 		reg = <0x0 0xfd58c000 0x0 0x1000>;
-@@ -907,7 +966,6 @@ u2phy0: usb2-phy@0 {
- 			clock-names = "phyclk";
- 			clock-output-names = "usb480m_phy0";
- 			#clock-cells = <0>;
--			rockchip,usbctrl-grf = <&usb_grf>;
- 			status = "disabled";
- 
- 			u2phy0_otg: otg-port {
+-	port->role_sw = usb_role_switch_get(port->dev);
++	port->role_sw = fwnode_usb_role_switch_get(tcpc->fwnode);
+ 	if (!port->role_sw)
+-		port->role_sw = fwnode_usb_role_switch_get(tcpc->fwnode);
++		port->role_sw = usb_role_switch_get(port->dev);
+ 	if (IS_ERR(port->role_sw)) {
+ 		err = PTR_ERR(port->role_sw);
+ 		goto out_destroy_wq;
 -- 
 2.41.0
 
