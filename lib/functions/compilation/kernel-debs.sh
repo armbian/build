@@ -50,7 +50,7 @@ function prepare_kernel_packaging_debs() {
 	declare debs_target_dir="${kernel_work_dir}/.."
 
 	# Some variables and settings used throughout the script
-	declare kernel_version_family="${kernel_version}-${LINUXFAMILY}"
+	declare kernel_version_family="${kernel_version}-${BRANCH}-${LINUXFAMILY}"
 
 	# Package version. Affects users upgrading from repo!
 	display_alert "Kernel .deb package version" "${artifact_version}" "info"
