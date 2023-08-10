@@ -41,20 +41,19 @@ function pre_umount_final_image__configure_uboot_menu() {
 }
 
 # Run it, very late in the game, so all kernels all already installed.
-# @TODO: we need a hook that runs before umount_chroot in the core, so we don't need to do it ourselves. what is it?
 function pre_umount_final_image__995_run_uboot_update() {
 	local chroot_target="${MOUNT}"
 
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
 
-	display_alert "Creating u-boot-menu..." "u-boot-update" "warn"
+	display_alert "Creating u-boot-menu..." "u-boot-update" "info"
 	chroot_custom "$chroot_target" u-boot-update || {
 		exit_with_error "u-boot-update failed!"
 	}
 
 	# Let's show the produced /boot/extlinux/extlinux.conf
-	display_alert "u-boot-menu configuration" "extlinux.conf" "warn"
+	display_alert "u-boot-menu configuration" "extlinux.conf" "info"
 	run_tool_batcat --file-name "/boot/extlinux/extlinux.conf" "${MOUNT}/boot/extlinux/extlinux.conf"
 
 	umount_chroot "$chroot_target/"
