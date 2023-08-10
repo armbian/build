@@ -354,12 +354,19 @@ function install_distribution_agnostic() {
 	# freeze armbian packages
 	if [[ "${BSPFREEZE:-"no"}" == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
-		chroot_sdcard apt-mark hold "${image_artifacts_packages["armbian-plymouth-theme"]}" "${image_artifacts_packages["armbian-zsh"]}" \
-			"${image_artifacts_packages["armbian-config"]}" "${image_artifacts_packages["armbian-bsp-desktop"]}" \
-			"${image_artifacts_packages["armbian-desktop"]}" "${image_artifacts_packages["armbian-bsp-cli"]}" \
-			"${image_artifacts_packages["armbian-firmware"]}" "${image_artifacts_packages["armbian-firmware-full"]}" \
-			"${image_artifacts_packages["linux-headers"]}" "${image_artifacts_packages["linux-dtb"]}" \
-			"${image_artifacts_packages["linux-image"]}" "${image_artifacts_packages["uboot"]}" || true
+		declare -g -A image_artifacts_debs_installed # global scope, set in main_default_build_packages()
+		declare -g -A image_artifacts_packages       # global scope, set in main_default_build_packages()
+		declare -a package_names_to_hold=()
+		declare artifact_deb_id pkg_name pkg_wanted_version
+		for artifact_deb_id in "${!image_artifacts_debs_installed[@]}"; do
+			declare deb_is_installed_in_image="${image_artifacts_debs_installed["${artifact_deb_id}"]}"
+			if [[ "${deb_is_installed_in_image}" != "yes" ]]; then
+				continue
+			fi
+			pkg_name="${image_artifacts_packages["${artifact_deb_id}"]}"
+			package_names_to_hold+=("${pkg_name}")
+		done
+		chroot_sdcard apt-mark hold "${package_names_to_hold[@]}"
 	fi
 
 	# remove deb files

@@ -119,4 +119,9 @@ function install_artifact_deb_chroot() {
 	fi
 	display_alert "Installing artifact deb" "${deb_name} :: ${revisioned_deb_rel_path}" "debug"
 	install_deb_chroot "${DEB_STORAGE}/${revisioned_deb_rel_path}"
+
+	# Mark the deb as installed in the global associative array.
+	declare -A -g image_artifacts_debs_installed
+	image_artifacts_debs_installed["${deb_name}"]="yes"
+	debug_dict image_artifacts_debs_installed
 }
