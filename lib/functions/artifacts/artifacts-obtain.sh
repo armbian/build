@@ -148,16 +148,15 @@ function obtain_complete_artifact() {
 				debs_counter+=1
 			done
 
-			# moved from each artifact:
+			artifact_base_dir="${PACKAGES_HASHED_STORAGE}" # deb and deb-tar always use packages-hashed as the base dir
 			# deb-tar:
 			if [[ "${artifact_type}" == "deb-tar" ]]; then
-				artifact_base_dir="${PACKAGES_HASHED_STORAGE}" # deb-tar's always at the root. they're temporary anyway
+				# fill in the artifact_final_file for deb-tar.
 				artifact_final_file="${artifact_base_dir}/${artifact_name}_${artifact_version}_${artifact_deb_arch}.tar"
 			else # deb, single-deb
 				# bomb if we have more than one...
 				[[ "${debs_counter}" -gt 1 ]] && exit_with_error "artifact_type '${artifact_type}' has more than one deb file. This is not supported."
 				# just use the single deb rel path
-				artifact_base_dir="${PACKAGES_HASHED_STORAGE}"
 				artifact_final_file="${artifact_base_dir}/${single_deb_hashed_rel_path}"
 			fi
 
@@ -210,6 +209,7 @@ function obtain_complete_artifact() {
 	debug_var artifact_file_relative
 
 	# Determine OCI coordinates. OCI_TARGET_BASE overrides the default proposed by the artifact.
+	# @TODO, store both, so we can check a custom one first, and then the default, one day.
 	declare artifact_oci_target_base="undetermined"
 	if [[ -n "${OCI_TARGET_BASE}" ]]; then
 		artifact_oci_target_base="${OCI_TARGET_BASE}"
@@ -224,95 +224,60 @@ function obtain_complete_artifact() {
 	# if CONFIG_DEFS_ONLY, dump JSON and exit
 	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
 		display_alert "artifact" "CONFIG_DEFS_ONLY is set, skipping artifact creation" "warn"
-
-		declare -a wanted_vars=(
-			artifact_name
-			artifact_type
-			artifact_deb_repo
-			artifact_deb_arch
-			artifact_version
-			artifact_version_reason
-			artifact_final_version_reversioned
-			artifact_base_dir
-			artifact_final_file
-			artifact_final_file_basename
-			artifact_file_relative
-			artifact_full_oci_target
-
-			# arrays
-			artifact_map_debs_keys
-			artifact_map_debs_values
-			artifact_map_packages_keys
-			artifact_map_packages_values
-			artifact_map_debs_reversioned_keys
-			artifact_map_debs_reversioned_values
-		)
-
-		declare -A ARTIFACTS_VAR_DICT=()
-
-		for var in "${wanted_vars[@]}"; do
-			declare declaration=""
-			declaration="$(declare -p "${var}")"
-			# Special handling for arrays. Syntax is not pretty, but works.
-			if [[ "${declaration}" =~ "declare -a" ]]; then
-				eval "declare ${var}_ARRAY=\"\${${var}[*]}\""
-				ARTIFACTS_VAR_DICT["${var}_ARRAY"]="$(declare -p "${var}_ARRAY")"
-			else
-				ARTIFACTS_VAR_DICT["${var}"]="${declaration}"
-			fi
-		done
-
-		display_alert "Dumping JSON" "for ${#ARTIFACTS_VAR_DICT[@]} variables" "ext"
-		python3 "${SRC}/lib/tools/configdump2json.py" "--args" "${ARTIFACTS_VAR_DICT[@]}" # to stdout
-
+		artifact_dump_json_info
 		exit 0
 	fi
 
 	declare -g artifact_exists_in_local_cache="undetermined"
+	declare -g artifact_exists_in_local_reversioned_cache="undetermined"
 	declare -g artifact_exists_in_remote_cache="undetermined"
 
-	if [[ "${ARTIFACT_IGNORE_CACHE}" != "yes" ]]; then
-		LOG_SECTION="artifact_is_available_in_local_cache" do_with_logging artifact_is_available_in_local_cache
-		debug_var artifact_exists_in_local_cache
+	# Ignore both local and remote cache if we're deploying to remote or if ARTIFACT_IGNORE_CACHE=yes
+	if [[ "${ARTIFACT_IGNORE_CACHE}" != "yes" && "${deploy_to_remote:-"no"}" != "yes" ]]; then
 
-		# If available in local cache, we're done (except for deb-tar which needs unpacking...)
-		if [[ "${artifact_exists_in_local_cache}" == "yes" ]]; then
-			display_alert "artifact" "exists in local cache: ${artifact_name} ${artifact_version}" "debug"
-			if [[ "${skip_unpack_if_found_in_caches:-"no"}" == "yes" ]]; then
-				display_alert "artifact" "skipping unpacking as requested" "info"
-			else
+		# If NOT deploying to remote, check if the reversioned artifact exists in local cache.
+		if [[ "${deploy_to_remote:-"no"}" != "yes" ]]; then
+			LOG_SECTION="artifact_is_available_in_revisioned_local_cache" do_with_logging artifact_is_available_in_revisioned_local_cache
+			debug_var artifact_exists_in_local_reversioned_cache
+		fi
+
+		# If it's not already reversioned in local cache, check if the artifact exists in local hashed cache and remote.
+		if [[ "${artifact_exists_in_local_reversioned_cache}" != "yes" ]]; then
+
+			LOG_SECTION="artifact_is_available_in_local_cache" do_with_logging artifact_is_available_in_local_cache
+			debug_var artifact_exists_in_local_cache
+
+			# If available in local cache, we're done (except for deb-tar which needs unpacking...)
+			if [[ "${artifact_exists_in_local_cache}" == "yes" ]]; then
+				display_alert "artifact" "exists in local cache: ${artifact_name} ${artifact_version}" "debug"
 				LOG_SECTION="unpack_artifact_from_local_cache" do_with_logging unpack_artifact_from_local_cache
-			fi
-
-			if [[ "${ignore_local_cache:-"no"}" == "yes" ]]; then
-				display_alert "artifact" "ignoring local cache as requested" "info"
 			else
-				display_alert "artifact" "present in local cache: ${artifact_name} ${artifact_version}" "cachehit"
-				return 0
+				# If not available in local cache, check remote cache.
+				LOG_SECTION="artifact_is_available_in_remote_cache" do_with_logging artifact_is_available_in_remote_cache
+				debug_var artifact_exists_in_remote_cache
+
+				if [[ "${artifact_exists_in_remote_cache}" == "yes" ]]; then
+					display_alert "artifact" "exists in remote cache: ${artifact_name} ${artifact_version}" "debug"
+					LOG_SECTION="artifact_obtain_from_remote_cache" do_with_logging artifact_obtain_from_remote_cache
+					LOG_SECTION="unpack_artifact_from_local_cache" do_with_logging unpack_artifact_from_local_cache
+					display_alert "artifact" "obtained from remote cache: ${artifact_name} ${artifact_version}" "cachehit"
+				fi
 			fi
-		fi
+		fi # endif artifact_exists_in_local_reversioned_cache!=yes
+	fi  # endif ARTIFACT_IGNORE_CACHE!=yes
 
-		LOG_SECTION="artifact_is_available_in_remote_cache" do_with_logging artifact_is_available_in_remote_cache
-		debug_var artifact_exists_in_remote_cache
-
-		if [[ "${artifact_exists_in_remote_cache}" == "yes" ]]; then
-			display_alert "artifact" "exists in remote cache: ${artifact_name} ${artifact_version}" "debug"
-			# @TODO: rpardini: WHY THE HELL WE HAD THIS? there's no point in this at all?
-			#if [[ "${skip_unpack_if_found_in_caches:-"no"}" == "yes" ]]; then
-			#	display_alert "artifact" "skipping obtain from remote & unpacking as requested" "info"
-			#	return 0
-			#fi
-			LOG_SECTION="artifact_obtain_from_remote_cache" do_with_logging artifact_obtain_from_remote_cache
-			LOG_SECTION="unpack_artifact_from_local_cache" do_with_logging unpack_artifact_from_local_cache
-			display_alert "artifact" "obtained from remote cache: ${artifact_name} ${artifact_version}" "cachehit"
-			return 0
-		fi
-	fi
-
-	if [[ "${artifact_exists_in_local_cache}" != "yes" && "${artifact_exists_in_remote_cache}" != "yes" ]]; then
+	# If it's not in any of the caches, build it.
+	if [[ "${artifact_exists_in_local_cache}" != "yes" && "${artifact_exists_in_remote_cache}" != "yes" &&
+		"${artifact_exists_in_local_reversioned_cache}" != "yes" ]]; then
 		# Not found in any cache, so we need to build it.
-		# @TODO: if deploying to remote cache, force high compression, DEB_COMPRESS="xz"
-		artifact_build_from_sources # definitely will end up having its own logging sections
+
+		# Force high compression if deploying to remote...
+		if [[ "${deploy_to_remote:-"no"}" == "yes" ]]; then
+			declare -g DEB_COMPRESS="xz"
+		fi
+
+		# build the artifact from sources. has its own logging sections.
+		artifact_build_from_sources
 
 		# For interactive stuff like patching or configuring, we wanna stop here. No artifact file will be created.
 		if [[ "${ARTIFACT_WILL_NOT_BUILD}" == "yes" ]]; then
@@ -332,8 +297,63 @@ function obtain_complete_artifact() {
 	fi
 
 	if [[ "${deploy_to_remote:-"no"}" == "yes" ]]; then
+		# deploying to remote cache: do the deploy and don't reversion, and remove the base dir
 		LOG_SECTION="artifact_deploy_to_remote_cache" do_with_logging artifact_deploy_to_remote_cache
+
+		# get rid of the artifact_base_dir so build machines don't gather trash over time.
+		if [[ "${artifact_base_dir}" != "" && -d "${artifact_base_dir}" ]]; then
+			display_alert "artifact uploaded to remote OK" "removing artifact_base_dir: '${artifact_base_dir}'" "info"
+			# ignore errors; they might occur if the base dir is mounted (eg cache/rootfs), but are harmless.
+			LOG_SECTION="artifact_remove_base_dir" do_with_logging run_host_command_logged rm -rvf "${artifact_base_dir}" "||" true
+		fi
+	else
+		# not deploying to remote cache. reversion the artifact, unless that was found in caches.
+		# reversioning removes the original in packages-hashed.
+		debug_dict artifact_map_debs_reversioned
+		LOG_SECTION="artifact_reversion_for_deployment" do_with_logging artifact_reversion_for_deployment
 	fi
+}
+
+function artifact_dump_json_info() {
+	declare -a wanted_vars=(
+		artifact_name
+		artifact_type
+		artifact_deb_repo
+		artifact_deb_arch
+		artifact_version
+		artifact_version_reason
+		artifact_final_version_reversioned
+		artifact_base_dir
+		artifact_final_file
+		artifact_final_file_basename
+		artifact_file_relative
+		artifact_full_oci_target
+
+		# arrays
+		artifact_map_debs_keys
+		artifact_map_debs_values
+		artifact_map_packages_keys
+		artifact_map_packages_values
+		artifact_map_debs_reversioned_keys
+		artifact_map_debs_reversioned_values
+	)
+
+	declare -A ARTIFACTS_VAR_DICT=()
+
+	for var in "${wanted_vars[@]}"; do
+		declare declaration=""
+		declaration="$(declare -p "${var}")"
+		# Special handling for arrays. Syntax is not pretty, but works.
+		if [[ "${declaration}" =~ "declare -a" ]]; then
+			eval "declare ${var}_ARRAY=\"\${${var}[*]}\""
+			ARTIFACTS_VAR_DICT["${var}_ARRAY"]="$(declare -p "${var}_ARRAY")"
+		else
+			ARTIFACTS_VAR_DICT["${var}"]="${declaration}"
+		fi
+	done
+
+	display_alert "Dumping JSON" "for ${#ARTIFACTS_VAR_DICT[@]} variables" "ext"
+	python3 "${SRC}/lib/tools/configdump2json.py" "--args" "${ARTIFACTS_VAR_DICT[@]}" # to stdout
 }
 
 function dump_artifact_config() {
@@ -371,9 +391,6 @@ function build_artifact_for_image() {
 	else
 		obtain_complete_artifact
 	fi
-
-	artifact_reversion_for_deployment
-	debug_dict artifact_map_debs_reversioned
 
 	return 0
 }
@@ -434,6 +451,38 @@ function upload_artifact_to_oci() {
 		display_alert "Deleting deb-tar after OCI deploy" "deb-tar: ${artifact_final_file_basename}" "debug"
 		run_host_command_logged rm -fv "${artifact_final_file}"
 	fi
+}
+
+function artifact_is_available_in_revisioned_local_cache() {
+	artifact_exists_in_local_reversioned_cache="not_checked" # outer scope
+
+	# only deb's and deb-tar's are reversioned.
+	if [[ "${artifact_type}" != "deb-tar" && "${artifact_type}" != "deb" ]]; then
+		return 0
+	fi
+
+	artifact_exists_in_local_reversioned_cache="no" # outer scope
+
+	declare any_missing="no"
+	declare one_artifact_deb_package
+	for one_artifact_deb_package in "${!artifact_map_packages[@]}"; do
+		# find the target dir and full path to the reversioned file
+		declare deb_versioned_rel_path="${artifact_map_debs_reversioned["${one_artifact_deb_package}"]}"
+		declare deb_versioned_full_path="${DEB_STORAGE}/${deb_versioned_rel_path}"
+		if [[ ! -f "${deb_versioned_full_path}" ]]; then
+			display_alert "Checking revisioned cache MISS" "deb pkg: ${one_artifact_deb_package} missing: ${deb_versioned_full_path}" "debug"
+			any_missing="yes"
+		else
+			display_alert "Found reversioned deb HIT" "${deb_versioned_full_path}" "debug"
+		fi
+	done
+	if [[ "${any_missing}" == "no" ]]; then
+		display_alert "Checking revisioned cache" "deb-tar: ${artifact_final_file_basename} nothing missing" "debug"
+		artifact_exists_in_local_reversioned_cache="yes" # outer scope
+		return 0
+	fi
+
+	return 0
 }
 
 function is_artifact_available_in_local_cache() {

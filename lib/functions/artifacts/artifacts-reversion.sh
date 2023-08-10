@@ -23,14 +23,6 @@ function standard_artifact_reversion_for_deployment() {
 
 	declare artifact_mapped_deb one_artifact_deb_package
 	for one_artifact_deb_package in "${!artifact_map_packages[@]}"; do
-		declare artifact_mapped_deb="${artifact_map_debs["${one_artifact_deb_package}"]}"
-		declare hashed_storage_deb_full_path="${PACKAGES_HASHED_STORAGE}/${artifact_mapped_deb}"
-		if [[ ! -f "${hashed_storage_deb_full_path}" ]]; then
-			exit_with_error "hashed storage does not have ${hashed_storage_deb_full_path}"
-		fi
-
-		display_alert "Found hashed storage file" "'${artifact_mapped_deb}': ${hashed_storage_deb_full_path}" "debug"
-
 		# find the target dir and full path to the reversioned file
 		declare deb_versioned_rel_path="${artifact_map_debs_reversioned["${one_artifact_deb_package}"]}"
 		declare deb_versioned_full_path="${DEB_STORAGE}/${deb_versioned_rel_path}"
@@ -41,10 +33,21 @@ function standard_artifact_reversion_for_deployment() {
 
 		# since the full versioned path includes the original hash, if the file already exists, we can trust
 		# it's the correct one, and skip reversioning.
+		# do touch the file, so mtime reflects it is wanted, and later delete old files to keep junk under control
 		if [[ -f "${deb_versioned_full_path}" ]]; then
 			display_alert "Skipping reversioning" "deb: ${deb_versioned_full_path} already exists" "debug"
+			run_host_command_logged touch "${deb_versioned_full_path}"
 			continue
 		fi
+
+		declare artifact_mapped_deb="${artifact_map_debs["${one_artifact_deb_package}"]}"
+		declare hashed_storage_deb_full_path="${PACKAGES_HASHED_STORAGE}/${artifact_mapped_deb}"
+
+		if [[ ! -f "${hashed_storage_deb_full_path}" ]]; then
+			exit_with_error "hashed storage does not have ${hashed_storage_deb_full_path}"
+		fi
+
+		display_alert "Found hashed storage file" "'${artifact_mapped_deb}': ${hashed_storage_deb_full_path}" "debug"
 
 		# call function for each deb, pass parameters
 		standard_artifact_reversion_for_deployment_one_deb "${@}"
@@ -52,6 +55,16 @@ function standard_artifact_reversion_for_deployment() {
 		# make sure reversioning produced the expected file
 		if [[ ! -f "${deb_versioned_full_path}" ]]; then
 			exit_with_error "reversioning did not produce the expected file: ${deb_versioned_full_path}"
+		fi
+
+		# Unless KEEP_HASHED_DEB_ARTIFACTS=yes, get rid of the original packages-hashed file, since we don't need it anymore.
+		# KEEP_HASHED_DEB_ARTIFACTS=yes is set by 'download-artifact' CLI command.
+		if [[ "${KEEP_HASHED_DEB_ARTIFACTS}" != "yes" ]]; then
+			run_host_command_logged rm -fv "${hashed_storage_deb_full_path}"
+		else
+			display_alert "Keeping and touching hashed storage file" "KEEP_HASHED_DEB_ARTIFACTS=yes: ${hashed_storage_deb_full_path}" "info"
+			# touch it so that it's timestamp is updated. we can later delete old files from packages-hashed to keep junk under control
+			run_host_command_logged touch "${hashed_storage_deb_full_path}"
 		fi
 	done
 
