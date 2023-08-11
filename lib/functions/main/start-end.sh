@@ -64,6 +64,25 @@ function prepare_host_init() {
 		prepare_host # this has its own logging sections, and is possibly interactive.
 	fi
 
+	# Create a directory inside WORKDIR with a "python" symlink to "/usr/bin/python2"; add it to PATH first.
+	# -> what if there is no python2? bookworm/sid, currently. not long until more
+	# ---> just try to use python3 and hope it works. it probably won't.
+	BIN_WORK_DIR="${WORKDIR}/bin"
+	# No cleanup of this is necessary, since it's inside WORKDIR.
+	mkdir -p "${BIN_WORK_DIR}"
+	if [[ -f "/usr/bin/python2" ]]; then
+		display_alert "Found python2" "symlinking to ${BIN_WORK_DIR}/python" "debug"
+		ln -s "/usr/bin/python2" "${BIN_WORK_DIR}/python"
+	elif [[ -f "/usr/bin/python3" ]]; then
+		display_alert "Found python3" "symlinking to ${BIN_WORK_DIR}/python and ${BIN_WORK_DIR}/python2" "debug"
+		ln -s "/usr/bin/python3" "${BIN_WORK_DIR}/python"
+		ln -s "/usr/bin/python3" "${BIN_WORK_DIR}/python2"
+	else
+		display_alert "No python2 or python3 found" "this is a problem" "error"
+	fi
+	declare -g PATH="${BIN_WORK_DIR}:${PATH}"
+
+	return 0
 }
 
 function main_default_end_build() {
