@@ -64,7 +64,8 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
-	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
+	declare vars_config_hash="${hash_variables}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	declare -a dirs_to_hash=(
 		"${SRC}/packages/bsp/common" # common stuff

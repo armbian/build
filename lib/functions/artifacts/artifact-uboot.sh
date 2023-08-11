@@ -101,7 +101,8 @@ function artifact_uboot_prepare_version() {
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
-	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
+	declare vars_config_hash="${hash_variables}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
