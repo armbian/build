@@ -173,7 +173,7 @@ function artifact_kernel_prepare_version() {
 
 	# outer scope
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
-		artifact_version="${common_version_suffix}"
+		artifact_version="1-${common_version_suffix}" # "1-" prefix, since we need to start with a digit
 	else
 		artifact_version="${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-${common_version_suffix}"
 	fi
