@@ -64,14 +64,17 @@ function compile_kernel() {
 	# let's clean up the git-bundle cache, since the git-bare cache is proven working.
 	LOG_SECTION="kernel_cleanup_bundle_artifacts" do_with_logging do_with_hooks kernel_cleanup_bundle_artifacts
 
-	# re-read kernel version after patching
-	declare version
-	version=$(grab_version "$kernel_work_dir")
-	display_alert "Compiling $BRANCH kernel" "$version" "info"
-
 	# determine the toolchain
 	declare toolchain
 	LOG_SECTION="kernel_determine_toolchain" do_with_logging do_with_hooks kernel_determine_toolchain
+
+	# re-read kernel version after patching
+	declare version
+	version=$(run_kernel_make_internal "kernelrelease")
+	# Since version is grabbed from make (and we set LOCALVERSION=-${LINUXFAMILY} in kernel-make.sh)
+	# it will now include LINUXFAMILY and not need it appended on later
+	# If any patches added a localversion-* file, this will capture those too
+	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 	kernel_config # has it's own logging sections inside
 
@@ -166,7 +169,7 @@ function kernel_build() {
 	do_with_ccache_statistics \
 		run_kernel_make_long_running "${install_make_params_quoted[@]@Q}" "${build_targets[@]}" # "V=1" # "-s" silent mode, "V=1" verbose mode
 
-	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+	display_alert "Kernel built in" "$((SECONDS - ts)) seconds - ${version}" "info"
 }
 
 function kernel_package() {
@@ -175,7 +178,7 @@ function kernel_package() {
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
-	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
+	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}" "info"
 }
 
 function kernel_deploy_pkg() {
