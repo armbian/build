@@ -80,7 +80,7 @@ compile_armbian-zsh() {
 
 	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
-	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}" "${DEB_STORAGE}"
+	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}" "armbian-zsh"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

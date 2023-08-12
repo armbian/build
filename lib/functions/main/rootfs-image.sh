@@ -100,17 +100,26 @@ function list_installed_packages() {
 	# This is a sanity check, to make sure that the packages we installed are the ones we expected to install.
 	# Things that might disrupt this: apt repos containing random versions that are then apt upgraded, forced install, crazy customize, wrong pinning, etc.
 	declare -g -A image_artifacts_packages_version # global scope, set in main_default_build_packages()
-	declare pkg_name pkg_wanted_version
-	for pkg_name in "${!image_artifacts_packages_version[@]}"; do
-		[[ "${pkg_name}" =~ ^linux-headers ]] && continue # linux-headers is a special case, since its always built with kernel, but not always installed (deb-tar)
-		pkg_wanted_version="${image_artifacts_packages_version[${pkg_name}]}"
+	declare -g -A image_artifacts_debs_installed   # global scope, set in main_default_build_packages()
+	declare -g -A image_artifacts_packages         # global scope, set in main_default_build_packages()
+
+	declare artifact_deb_id pkg_name pkg_wanted_version
+	for artifact_deb_id in "${!image_artifacts_debs_installed[@]}"; do
+		declare deb_is_installed_in_image="${image_artifacts_debs_installed["${artifact_deb_id}"]}"
+		if [[ "${deb_is_installed_in_image}" != "yes" ]]; then
+			continue # skip packages that are not actually installed (eg: kernel-headers, transitional bsp-cli, etc)
+		fi
+		pkg_name="${image_artifacts_packages["${artifact_deb_id}"]}"
+		pkg_wanted_version="${image_artifacts_packages_version[${pkg_name}]}" # this is the hash-version
 		display_alert "Checking installed version of package" "${pkg_name}=${pkg_wanted_version}" "debug"
 		declare actual_version
-		actual_version=$(chroot "${SDCARD}" dpkg-query -W -f='${Status} ${Package} ${Version}\n' "${pkg_name}" | grep "install ok installed" | cut -d " " -f 5)
+		actual_version=$(chroot "${SDCARD}" dpkg-query -W -f='${Status} ${Package} ${Armbian-Original-Hash}\n' "${pkg_name}" | grep " ok installed" | cut -d " " -f 5)
 		if [[ "${actual_version}" != "${pkg_wanted_version}" ]]; then
-			display_alert "Installed version of package does not match wanted version. Check for inconsistent repo, customize.sh/hooks, extensions, or upgrades installing wrong version" "${pkg_name} :: actual:'${actual_version}' wanted:'${pkg_wanted_version}'" "warn"
+			declare dpkg_status
+			dpkg_status=$(chroot "${SDCARD}" dpkg-query -W -f='${Status} ${Package} ${Armbian-Original-Hash}\n' "${pkg_name}" || true)
+			display_alert "Installed hash of package does not match wanted hash. Check for inconsistent repo, customize.sh/hooks, extensions, or upgrades installing wrong version" "${pkg_name} :: actual:'${actual_version}' wanted:'${pkg_wanted_version}'; status: '${dpkg_status}'" "warn"
 		else
-			display_alert "Image installed package version" "✅ ${pkg_name} = ${actual_version}" "info"
+			display_alert "Image installed package hash" "✅ ${pkg_name} = ${actual_version}" "info"
 		fi
 	done
 }

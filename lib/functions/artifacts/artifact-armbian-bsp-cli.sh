@@ -14,7 +14,6 @@ function artifact_armbian-bsp-cli_config_dump() {
 }
 
 function artifact_armbian-bsp-cli_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${BRANCH:?BRANCH is not set}"
 	: "${BOARD:?BOARD is not set}"
 
@@ -65,7 +64,8 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
-	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
+	declare vars_config_hash="${hash_variables}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	declare -a dirs_to_hash=(
 		"${SRC}/packages/bsp/common" # common stuff
@@ -87,7 +87,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-H${hash_hooks_short}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-H${hash_hooks_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian package armbian-bsp-cli"
@@ -102,30 +102,28 @@ function artifact_armbian-bsp-cli_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
+	artifact_deb_repo="global"  # "global" meaning: release-independent repo. could be '${RELEASE}' for a release-specific package.
+	artifact_deb_arch="${ARCH}" # arch-specific package, or 'all' for arch-independent package.
 	artifact_name="armbian-bsp-cli-${BOARD}-${BRANCH}${EXTRA_BSP_NAME}"
 	artifact_type="deb-tar"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/${artifact_name}_${artifact_version}_${ARCH}.tar"
 
-	artifact_map_packages=(
-		["armbian-bsp-cli"]="${artifact_name}"
-	)
+	artifact_map_packages=(["armbian-bsp-cli"]="${artifact_name}")
 
-	artifact_map_debs=(
-		["armbian-bsp-cli"]="${artifact_name}_${artifact_version}_${ARCH}.deb"
-	)
+	# Register the function used to re-version the _contents_ of the bsp-cli deb file (non-transitional)
+	artifact_debs_reversion_functions+=("reversion_armbian-bsp-cli_deb_contents")
 
-	if artifact_armbian-bsp-cli_needs_transitional_package ; then
+	if artifact_armbian-bsp-cli_needs_transitional_package; then
 		artifact_map_packages+=(["armbian-bsp-cli-transitional"]="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}")
-		artifact_map_debs+=(["armbian-bsp-cli-transitional"]="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}_${artifact_version}_${ARCH}.deb")
+		# Register the function used to re-version the _contents_ of the bsp-cli deb file (transitional)
+		artifact_debs_reversion_functions+=("reversion_armbian-bsp-cli-transitional_deb_contents")
 	fi
 
 	return 0
 }
 
 function artifact_armbian-bsp-cli_build_from_sources() {
-	# Generate transitional package when needed. 
-	if artifact_armbian-bsp-cli_needs_transitional_package ; then
+	# Generate transitional package when needed.
+	if artifact_armbian-bsp-cli_needs_transitional_package; then
 		LOG_SECTION="compile_armbian-bsp-cli" do_with_logging compile_armbian-bsp-cli-transitional
 	fi
 
@@ -165,11 +163,11 @@ function artifact_armbian-bsp-cli_deploy_to_remote_cache() {
 }
 
 function artifact_armbian-bsp-cli_needs_transitional_package() {
-	if [[ "${KERNEL_TARGET}" == "${BRANCH}" ]] ; then
+	if [[ "${KERNEL_TARGET}" == "${BRANCH}" ]]; then
 		return 0
-	elif [[ "${BRANCH}" == "current" ]] ; then
+	elif [[ "${BRANCH}" == "current" ]]; then
 		return 0
-	elif [[ "${KERNEL_TARGET}" != *current* && "${BRANCH}" == "legacy" ]] ; then
+	elif [[ "${KERNEL_TARGET}" != *current* && "${BRANCH}" == "legacy" ]]; then
 		return 0
 	else
 		return 1

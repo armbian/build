@@ -93,11 +93,16 @@ function main_default_build_packages() {
 	declare -g -a image_artifacts_all=()
 	declare -g -A image_artifacts_packages=()
 	declare -g -A image_artifacts_packages_version=()
+	declare -g -A image_artifacts_packages_version_reversioned=()
 	declare -g -A image_artifacts_debs=()
+	declare -g -A image_artifacts_debs_reversioned=()
+	declare -A -g image_artifacts_debs_installed=()
+
 	declare one_artifact one_artifact_package
 	for one_artifact in "${artifacts_to_build[@]}"; do
 		declare -A artifact_map_packages=()
 		declare -A artifact_map_debs=()
+		declare -A artifact_map_debs_reversioned=()
 		declare artifact_version
 
 		WHAT="${one_artifact}" build_artifact_for_image
@@ -107,13 +112,17 @@ function main_default_build_packages() {
 			image_artifacts_all+=("${one_artifact_package}")
 			image_artifacts_packages["${one_artifact_package}"]="${artifact_map_packages[${one_artifact_package}]}"
 			image_artifacts_debs["${one_artifact_package}"]="${artifact_map_debs[${one_artifact_package}]}"
+			image_artifacts_debs_reversioned["${one_artifact_package}"]="${artifact_map_debs_reversioned[${one_artifact_package}]}"
 			image_artifacts_packages_version["${artifact_map_packages[${one_artifact_package}]}"]="${artifact_version}"
+			image_artifacts_packages_version_reversioned["${artifact_map_packages[${one_artifact_package}]}"]="${artifact_final_version_reversioned}"
+			image_artifacts_debs_installed["${one_artifact_package}"]="no" # initialize, install_artifact_deb_chroot() will set to "yes" when installed.
 		done
 	done
 
 	debug_dict image_artifacts_packages
 	debug_dict image_artifacts_debs
 	debug_dict image_artifacts_packages_version
+	debug_dict image_artifacts_debs_installed
 
 	overlayfs_wrapper "cleanup"
 	reset_uid_owner "${DEB_STORAGE}"

@@ -42,7 +42,7 @@ function artifact_armbian-zsh_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-SA${short_sha1}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-SA${short_sha1}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian armbian-zsh git revision \"${GIT_INFO_ARMBIAN_ZSH[SHA1]}\""
@@ -51,18 +51,12 @@ function artifact_armbian-zsh_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
-	artifact_map_packages=(
-		["armbian-zsh"]="armbian-zsh"
-	)
-
-	artifact_map_debs=(
-		["armbian-zsh"]="armbian-zsh_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["armbian-zsh"]="armbian-zsh")
 
 	artifact_name="armbian-zsh"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-zsh_${artifact_version}_all.deb"
+	artifact_deb_repo="global"
+	artifact_deb_arch="all"
 
 	return 0
 }

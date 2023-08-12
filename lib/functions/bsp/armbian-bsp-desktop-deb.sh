@@ -59,8 +59,7 @@ function compile_armbian-bsp-desktop() {
 	eval "${AGGREGATED_DESKTOP_BSP_PREPARE}"
 	display_alert "Done with bsp-desktop -specific aggregated prepare script" "AGGREGATED_DESKTOP_BSP_PREPARE" "debug"
 
-	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}"
+	fakeroot_dpkg_deb_build "${destination}" "armbian-bsp-desktop"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

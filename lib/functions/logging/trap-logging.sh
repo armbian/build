@@ -18,9 +18,9 @@ function trap_handler_cleanup_logging() {
 	# `pwd` might not even be valid anymore. Move back to ${SRC}
 	cd "${SRC}" || exit_with_error "cray-cray about SRC: ${SRC}"
 
-	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode.
-	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
-		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY}" "debug"
+	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode, or if ANSI_COLOR is "none".
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" || "${ANSI_COLOR}" == "none" ]]; then
+		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY};ANSI_COLOR=${ANSI_COLOR}" "debug"
 		discard_logs_tmp_dir
 		return 0
 	fi

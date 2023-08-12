@@ -71,9 +71,7 @@ function compile_firmware() {
 
 	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
 
-	# package, directly to DEB_STORAGE; full version might be very big for tmpfs.
-	display_alert "Building firmware package" "armbian-firmware${FULL}" "info"
-	fakeroot_dpkg_deb_build "armbian-firmware${FULL}" "${DEB_STORAGE}"
+	fakeroot_dpkg_deb_build "armbian-firmware${FULL}" "armbian-firmware${FULL}"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

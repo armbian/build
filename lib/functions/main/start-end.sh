@@ -14,9 +14,7 @@ function main_default_start_build() {
 	produce_repeat_args_array
 	display_alert "Repeat Build Options (early)" "${repeat_args[*]}" "ext"
 
-	if [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
-		prepare_host_init # this has its own logging sections, and is possibly interactive.
-	fi
+	prepare_host_init # this has its own logging sections, and is possibly interactive.
 
 	# Prepare ccache, cthreads, etc for the build
 	LOG_SECTION="prepare_compilation_vars" do_with_logging prepare_compilation_vars
@@ -33,6 +31,9 @@ function main_default_start_build() {
 }
 
 function prepare_host_init() {
+	declare -g start_timestamp # global timestamp; read below by main_default_end_build()
+	start_timestamp=$(date +%s)
+
 	wait_for_disk_sync "before starting build" # fsync, wait for disk to sync, and then continue. alert user if takes too long.
 
 	# Check that WORKDIR_BASE_TMP exists; if not, create it.
@@ -55,14 +56,13 @@ function prepare_host_init() {
 	declare -g -x CCACHE_TEMPDIR="${WORKDIR}/ccache_tmp" # Export CCACHE_TEMPDIR, under Workdir, which is hopefully under tmpfs. Thanks @the-Going for this.
 	declare -g -x XDG_RUNTIME_DIR="${WORKDIR}/xdg_tmp"   # XDG_RUNTIME_DIR is used by the likes of systemd/freedesktop centric apps.
 
-	declare -g start_timestamp # global timestamp; read below by main_default_end_build()
-	start_timestamp=$(date +%s)
+	if [[ "${PRE_PREPARED_HOST:-"no"}" != "yes" ]]; then
+		### Write config summary # @TODO: or not? this is a bit useless
+		LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
 
-	### Write config summary # @TODO: or not? this is a bit useless
-	LOG_SECTION="config_summary" do_with_logging write_config_summary_output_file
-
-	# Check and install dependencies, directory structure and settings
-	prepare_host # this has its own logging sections, and is possibly interactive.
+		# Check and install dependencies, directory structure and settings
+		prepare_host # this has its own logging sections, and is possibly interactive.
+	fi
 
 	# Create a directory inside WORKDIR with a "python" symlink to "/usr/bin/python2"; add it to PATH first.
 	# -> what if there is no python2? bookworm/sid, currently. not long until more
@@ -81,6 +81,8 @@ function prepare_host_init() {
 		display_alert "No python2 or python3 found" "this is a problem" "error"
 	fi
 	declare -g PATH="${BIN_WORK_DIR}:${PATH}"
+
+	return 0
 }
 
 function main_default_end_build() {

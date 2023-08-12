@@ -51,8 +51,7 @@ function install_distribution_specific() {
 			disable_systemd_service_sdcard ondemand.service
 
 			# Remove Ubuntu APT spamming
-			declare -g -A image_artifacts_debs
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["fake-ubuntu-advantage-tools"]}"
+			install_artifact_deb_chroot "fake-ubuntu-advantage-tools"
 			truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
 
 			;;
@@ -60,7 +59,7 @@ function install_distribution_specific() {
 
 	# install our base-files package (this replaces the original from Debian/Ubuntu)
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-base-files"]}"
+		install_artifact_deb_chroot "armbian-base-files"
 	fi
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system

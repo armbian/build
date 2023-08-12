@@ -265,11 +265,11 @@ function install_distribution_agnostic() {
 
 	# install u-boot
 	# @TODO: add install_bootloader() extension method, refactor into u-boot extension
-	declare -g image_artifacts_packages image_artifacts_debs
+	declare -g image_artifacts_packages image_artifacts_debs_reversioned
 	debug_dict image_artifacts_packages
-	debug_dict image_artifacts_debs
+	debug_dict image_artifacts_debs_reversioned
 	if [[ "${BOOTCONFIG}" != "none" ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["uboot"]}"
+		install_artifact_deb_chroot "uboot"
 	fi
 
 	call_extension_method "pre_install_kernel_debs" <<- 'PRE_INSTALL_KERNEL_DEBS'
@@ -282,20 +282,20 @@ function install_distribution_agnostic() {
 
 	# install kernel: image/dtb/headers
 	if [[ -n $KERNELSOURCE ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["linux-image"]}"
+		install_artifact_deb_chroot "linux-image"
 
 		if [[ "${KERNEL_BUILD_DTBS:-"yes"}" == "yes" ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["linux-dtb"]}"
+			install_artifact_deb_chroot "linux-dtb"
 		fi
 
 		if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
 			if [[ $INSTALL_HEADERS == yes ]]; then # @TODO remove? might be a good idea to always install headers.
-				install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["linux-headers"]}"
+				install_artifact_deb_chroot "linux-headers"
 			fi
 		fi
 
 		# Determine "IMAGE_INSTALLED_KERNEL_VERSION" for compatiblity with legacy update-initramfs code. @TODO get rid of this one day
-		IMAGE_INSTALLED_KERNEL_VERSION=$(dpkg --info "${DEB_STORAGE}/${image_artifacts_debs["linux-image"]}" | grep "^ Source:" | sed -e 's/ Source: linux-//')
+		IMAGE_INSTALLED_KERNEL_VERSION=$(dpkg --info "${DEB_STORAGE}/${image_artifacts_debs_reversioned["linux-image"]}" | grep "^ Source:" | sed -e 's/ Source: linux-//')
 		display_alert "Parsed kernel version from local package" "${IMAGE_INSTALLED_KERNEL_VERSION}" "debug"
 
 	fi
@@ -308,19 +308,19 @@ function install_distribution_agnostic() {
 	# install armbian-firmware by default. Set BOARD_FIRMWARE_INSTALL="-full" to install full firmware variant
 	if [[ "${INSTALL_ARMBIAN_FIRMWARE:-yes}" == "yes" ]]; then
 		if [[ ${BOARD_FIRMWARE_INSTALL:-""} == "-full" ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-firmware-full"]}"
+			install_artifact_deb_chroot "armbian-firmware-full"
 		else
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-firmware"]}"
+			install_artifact_deb_chroot "armbian-firmware"
 		fi
 	fi
 
 	# install board support packages
-	install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp-cli"]}"
+	install_artifact_deb_chroot "armbian-bsp-cli"
 
 	# install armbian-desktop
 	if [[ $BUILD_DESKTOP == yes ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-desktop"]}"
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-bsp-desktop"]}"
+		install_artifact_deb_chroot "armbian-desktop"
+		install_artifact_deb_chroot "armbian-bsp-desktop"
 		# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 		desktop_postinstall
 	fi
@@ -328,38 +328,45 @@ function install_distribution_agnostic() {
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
 		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-config"]}"
+			install_artifact_deb_chroot "armbian-config"
 		fi
 	fi
 
 	# install armbian-zsh
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
 		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-zsh"]}"
+			install_artifact_deb_chroot "armbian-zsh"
 		fi
 	fi
 
 	# install armbian-plymouth-theme
 	if [[ $PLYMOUTH == yes ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-plymouth-theme"]}"
+		install_artifact_deb_chroot "armbian-plymouth-theme"
 	else
 		chroot_sdcard_apt_get_remove --auto-remove plymouth
 	fi
 
 	# install wireguard tools
 	if [[ $WIREGUARD == yes ]]; then
-		install_deb_chroot "wireguard-tools" "remote"
+		install_deb_chroot "wireguard-tools" "remote" # @TODO: move this to some image pkg list in config
 	fi
 
 	# freeze armbian packages
 	if [[ "${BSPFREEZE:-"no"}" == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
-		chroot_sdcard apt-mark hold "${image_artifacts_packages["armbian-plymouth-theme"]}" "${image_artifacts_packages["armbian-zsh"]}" \
-			"${image_artifacts_packages["armbian-config"]}" "${image_artifacts_packages["armbian-bsp-desktop"]}" \
-			"${image_artifacts_packages["armbian-desktop"]}" "${image_artifacts_packages["armbian-bsp-cli"]}" \
-			"${image_artifacts_packages["armbian-firmware"]}" "${image_artifacts_packages["armbian-firmware-full"]}" \
-			"${image_artifacts_packages["linux-headers"]}" "${image_artifacts_packages["linux-dtb"]}" \
-			"${image_artifacts_packages["linux-image"]}" "${image_artifacts_packages["uboot"]}" || true
+		declare -g -A image_artifacts_debs_installed # global scope, set in main_default_build_packages()
+		declare -g -A image_artifacts_packages       # global scope, set in main_default_build_packages()
+		declare -a package_names_to_hold=()
+		declare artifact_deb_id pkg_name pkg_wanted_version
+		for artifact_deb_id in "${!image_artifacts_debs_installed[@]}"; do
+			declare deb_is_installed_in_image="${image_artifacts_debs_installed["${artifact_deb_id}"]}"
+			if [[ "${deb_is_installed_in_image}" != "yes" ]]; then
+				continue
+			fi
+			pkg_name="${image_artifacts_packages["${artifact_deb_id}"]}"
+			package_names_to_hold+=("${pkg_name}")
+		done
+		chroot_sdcard apt-mark hold "${package_names_to_hold[@]}"
 	fi
 
 	# remove deb files

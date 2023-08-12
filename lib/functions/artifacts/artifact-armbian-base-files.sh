@@ -8,8 +8,7 @@
 # We find what is the latest version of the original distro's base-files.
 # Then we download it, and we modify it to suit our needs.
 # The artifact is named "armbian-base-files".
-# But the package is still named "base-files"; its version is bumped to ${REVISION}
-# This is similar to what Linux Mint does for the same purpose.
+# But the package is still named "base-files", this is similar to what Linux Mint does for the same purpose.
 
 function artifact_armbian-base-files_config_dump() {
 	artifact_input_variables[RELEASE]="${RELEASE}"
@@ -17,7 +16,6 @@ function artifact_armbian-base-files_config_dump() {
 }
 
 function artifact_armbian-base-files_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${RELEASE:?RELEASE is not set}"
 	: "${ARCH:?ARCH is not set}"
 
@@ -25,7 +23,7 @@ function artifact_armbian-base-files_prepare_version() {
 	artifact_version_reason="undetermined" # outer scope
 
 	declare short_hash_size=4
-	declare fake_unchanging_base_version="${RELEASE}-1armbian1"
+	declare fake_unchanging_base_version="1-${RELEASE}-1armbian1"
 
 	declare found_package_version="undetermined" found_package_filename="undetermined" found_package_down_url="undetermined"
 	sleep_seconds="15" do_with_retries 10 apt_find_upstream_package_version_and_download_url "base-files"
@@ -45,21 +43,24 @@ function artifact_armbian-base-files_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-B${bash_hash_short}"
 
 	declare -a reasons=("Armbian armbian-base-files" "original ${RELEASE} version \"${base_files_wanted_upstream_version}\"" "framework bash hash \"${bash_hash}\"")
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
 	artifact_name="armbian-base-files-${RELEASE}-${ARCH}"
-	declare deb_name="base-files" # the artifact_name is only Armbian's reference; the deb_name is still base_files
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}/${RELEASE}"
-	artifact_final_file="${DEB_STORAGE}/${RELEASE}/${deb_name}_${artifact_version}_${ARCH}.deb"
+	artifact_deb_repo="${RELEASE}" # release-specific repo (jammy etc)
+	artifact_deb_arch="${ARCH}"    # arch-specific packages (arm64 etc)
+	artifact_map_packages=(["armbian-base-files"]="base-files")
 
-	artifact_map_packages=(["armbian-base-files"]="${deb_name}")
+	# Important. Force the final reversioned version to contain the release name.
+	# Otherwise, when publishing to a repo, pool/main/b/base-files/base-files_${REVISION}.deb will be the same across releases.
+	artifact_final_version_reversioned="${REVISION}-${RELEASE}"
 
-	artifact_map_debs=(["armbian-base-files"]="${RELEASE}/${deb_name}_${artifact_version}_${ARCH}.deb")
+	# Register the function used to re-version the _contents_ of the base-files deb file.
+	artifact_debs_reversion_functions+=("reversion_armbian-base-files_deb_contents")
 
 	return 0
 }
@@ -124,18 +125,14 @@ function compile_armbian-base-files() {
 	cp "${destination}"/etc/issue.net "${destination}"/etc/issue.net.orig
 	cp "${destination}"/DEBIAN/conffiles "${destination}"/DEBIAN/conffiles.orig
 
-	# Change the PRETTY_NAME and add ARMBIAN_PRETTY_NAME in os-release, and change issue, issue.net
-	declare orig_distro_release="${RELEASE}"
+	# Attention: this is just a few base changes that don't involve "$REVISION".
+	# More are done in reversion_armbian-base-files_deb_contents()
 	cat <<- EOD >> "${destination}/etc/dpkg/origins/armbian"
 		Vendor: ${VENDOR}
 		Vendor-URL: ${VENDORURL}
 		Bugs: ${VENDORBUGS}
 		Parent: ${DISTRIBUTION}
 	EOD
-	echo "ARMBIAN_PRETTY_NAME=\"${VENDOR} ${REVISION} ${orig_distro_release}\"" >> "${destination}"/etc/os-release
-	echo -e "${VENDOR} ${REVISION} ${orig_distro_release} \\l \n" > "${destination}"/etc/issue
-	echo -e "${VENDOR} ${REVISION} ${orig_distro_release}" > "${destination}"/etc/issue.net
-	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${orig_distro_release}\"/" "${destination}"/etc/os-release
 	sed -i "s|^HOME_URL=.*|HOME_URL=\"${VENDORURL}\"|" "${destination}"/etc/os-release
 	sed -i "s|^SUPPORT_URL=.*|SUPPORT_URL=\"${VENDORSUPPORT}\"|" "${destination}"/etc/os-release
 	sed -i "s|^BUG_REPORT_URL=.*|BUG_REPORT_URL=\"${VENDORBUGS}\"|" "${destination}"/etc/os-release
@@ -182,10 +179,36 @@ function compile_armbian-base-files() {
 	rm -f "${destination}"/etc/os-release.orig "${destination}"/etc/issue.orig "${destination}"/etc/issue.net.orig "${destination}"/DEBIAN/conffiles.orig
 
 	# Done, pack it.
-	mkdir -p "${DEB_STORAGE}/${RELEASE}"
-	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/${RELEASE}"
+	fakeroot_dpkg_deb_build "${destination}" "armbian-base-files"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
+}
+
+# Used to reversion the artifact contents.
+function reversion_armbian-base-files_deb_contents() {
+	display_alert "Reversioning" "reversioning base-files CONTENTS: '$*'" "debug"
+
+	declare orig_distro_release="${RELEASE}"
+
+	artifact_deb_reversion_unpack_data_deb
+	: "${data_dir:?data_dir is not set}"
+
+	# Change the PRETTY_NAME and add ARMBIAN_PRETTY_NAME in os-release, and change issue, issue.net
+	echo "ARMBIAN_PRETTY_NAME=\"${VENDOR} ${REVISION} ${orig_distro_release}\"" >> "${data_dir}"/etc/os-release
+	echo -e "${VENDOR} ${REVISION} ${orig_distro_release} \\l \n" > "${data_dir}"/etc/issue
+	echo -e "${VENDOR} ${REVISION} ${orig_distro_release}" > "${data_dir}"/etc/issue.net
+	sed -i "s/^PRETTY_NAME=.*/PRETTY_NAME=\"${VENDOR} $REVISION ${orig_distro_release}\"/" "${data_dir}"/etc/os-release
+
+	# Show results if debugging
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		run_tool_batcat --file-name "/etc/os-release.sh" "${data_dir}"/etc/os-release
+		run_tool_batcat --file-name "/etc/issue" "${data_dir}"/etc/issue
+		run_tool_batcat --file-name "/etc/issue.net" "${data_dir}"/etc/issue.net
+	fi
+
+	artifact_deb_reversion_repack_data_deb
+
+	return 0
 }
 
 function artifact_armbian-base-files_cli_adapter_pre_run() {

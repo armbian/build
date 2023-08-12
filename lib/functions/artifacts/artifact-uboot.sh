@@ -19,7 +19,6 @@ function artifact_uboot_config_dump() {
 function artifact_uboot_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	# Prepare the version, "sans-repos": just the armbian/build repo contents are available.
 	# It is OK to reach out to the internet for a curl or ls-remote, but not for a git clone/fetch.
@@ -56,16 +55,16 @@ function artifact_uboot_prepare_version() {
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
 	declare -a uboot_patch_dirs=()
-	for patch_dir in ${BOOTPATCHDIR} ; do
-		uboot_patch_dirs+=( "${SRC}/patch/u-boot/${patch_dir}" "${USERPATCHES_PATH}/u-boot/${patch_dir}" )
+	for patch_dir in ${BOOTPATCHDIR}; do
+		uboot_patch_dirs+=("${SRC}/patch/u-boot/${patch_dir}" "${USERPATCHES_PATH}/u-boot/${patch_dir}")
 	done
 
 	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
-		uboot_patch_dirs+=( "${SRC}/patch/atf/${ATFPATCHDIR}" "${USERPATCHES_PATH}/atf/${ATFPATCHDIR}" )
+		uboot_patch_dirs+=("${SRC}/patch/atf/${ATFPATCHDIR}" "${USERPATCHES_PATH}/atf/${ATFPATCHDIR}")
 	fi
 
 	if [[ -n "${CRUSTCONFIG}" ]]; then
-		uboot_patch_dirs+=( "${SRC}/patch/crust/${CRUSTPATCHDIR}" "${USERPATCHES_PATH}/crust/${CRUSTPATCHDIR}" )
+		uboot_patch_dirs+=("${SRC}/patch/crust/${CRUSTPATCHDIR}" "${USERPATCHES_PATH}/crust/${CRUSTPATCHDIR}")
 	fi
 
 	calculate_hash_for_all_files_in_dirs "${uboot_patch_dirs[@]}"
@@ -102,7 +101,8 @@ function artifact_uboot_prepare_version() {
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
-	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
+	declare vars_config_hash="${hash_variables}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
@@ -111,7 +111,7 @@ function artifact_uboot_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${GIT_INFO_UBOOT[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-H${hash_hooks_and_functions_short}-V${var_config_hash_short}-B${bash_hash_short}"
+	artifact_version="${GIT_INFO_UBOOT[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-H${hash_hooks_and_functions_short}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"version \"${GIT_INFO_UBOOT[MAKEFILE_FULL_VERSION]}\""
@@ -123,20 +123,12 @@ function artifact_uboot_prepare_version() {
 		"framework bash hash \"${bash_hash}\""
 	)
 
+	artifact_deb_repo="global"
+	artifact_deb_arch="${ARCH}"
 	artifact_version_reason="${reasons[*]}" # outer scope
-
-	artifact_map_packages=(
-		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}"
-	)
-
-	artifact_map_debs=(
-		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
-	)
-
+	artifact_map_packages=(["uboot"]="linux-u-boot-${BOARD}-${BRANCH}")
 	artifact_name="uboot-${BOARD}-${BRANCH}"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
 
 	return 0
 }

@@ -30,25 +30,28 @@ function compile_armbian-bsp-cli-transitional() {
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Section: oldlibs
 		Priority: optional
-		Depends: ${artifact_name} (= ${artifact_version})
 		Description: Armbian CLI BSP for board '${BOARD}' - transitional package
 	EOF
 
-	# generate minimal DEBIAN/changelog
-	cat <<- EOF > "${destination}"/DEBIAN/changelog
-		armbian-bsp-cli-${BOARD} (${artifact_version}) armbian-repo-name; urgency=low
-
-		  * A fake changelog entry.
-
-		 -- $MAINTAINER <$MAINTAINERMAIL>  $(date -R)
-	EOF
-
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
-	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/"
+	fakeroot_dpkg_deb_build "${destination}" "armbian-bsp-cli-transitional"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 	display_alert "Done building BSP CLI transitional package" "${destination}" "debug"
+}
+
+function reversion_armbian-bsp-cli-transitional_deb_contents() {
+	if [[ "${1}" != "armbian-bsp-cli-transitional" ]]; then
+		return 0 # Not our deb, nothing to do.
+	fi
+	display_alert "Reversion" "reversion_armbian-bsp-cli-transitional_deb_contents: '$*'" "debug"
+
+	# Depends on the new package
+	cat <<- EOF >> "${control_file_new}"
+		Depends: ${artifact_name} (= ${REVISION})
+	EOF
+
 }
 
 function compile_armbian-bsp-cli() {
@@ -72,14 +75,6 @@ function compile_armbian-bsp-cli() {
 	declare -a extra_description=()
 	[[ "${EXTRA_BSP_NAME}" != "" ]] && extra_description+=("(variant '${EXTRA_BSP_NAME}')")
 
-	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
-	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
-	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
-	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
-	declare depends_base_files=", base-files (>= ${REVISION})"
-	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
-		depends_base_files=""
-	fi
 	cat <<- EOF > "${destination}"/DEBIAN/control
 		Package: ${artifact_name}
 		Version: ${artifact_version}
@@ -87,21 +82,9 @@ function compile_armbian-bsp-cli() {
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
 		Section: kernel
 		Priority: optional
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
 		Suggests: armbian-config
-		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${artifact_version})
-		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${artifact_version})
 		Recommends: bsdutils, parted, util-linux, toilet
 		Description: Armbian CLI BSP for board '${BOARD}' branch '${BRANCH}' ${extra_description[@]}
-	EOF
-
-	# generate minimal DEBIAN/changelog
-	cat <<- EOF > "${destination}"/DEBIAN/changelog
-		${artifact_name} (${artifact_version}) armbian-repo-name; urgency=low
-
-		  * A fake changelog entry.
-
-		 -- $MAINTAINER <$MAINTAINERMAIL>  $(date -R)
 	EOF
 
 	# armhwinfo, firstrun, armbianmonitor, etc. config file; also sourced in postinst
@@ -113,7 +96,6 @@ function compile_armbian-bsp-cli() {
 		BOARDFAMILY=${BOARDFAMILY}
 		BUILD_REPOSITORY_URL=${BUILD_REPOSITORY_URL}
 		BUILD_REPOSITORY_COMMIT=${BUILD_REPOSITORY_COMMIT}
-		VERSION=${REVISION}
 		LINUXFAMILY=$LINUXFAMILY
 		ARCH=$ARCHITECTURE
 		IMAGE_TYPE=$IMAGE_TYPE
@@ -122,7 +104,6 @@ function compile_armbian-bsp-cli() {
 		KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 		FORCE_BOOTSCRIPT_UPDATE=$FORCE_BOOTSCRIPT_UPDATE
 		VENDOR=$VENDOR
-		REVISION=$REVISION
 	EOF
 
 	# copy general overlay from packages/bsp-cli
@@ -228,11 +209,51 @@ function compile_armbian-bsp-cli() {
 	fi
 
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
-	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/"
+	fakeroot_dpkg_deb_build "${destination}" "armbian-bsp-cli"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 	display_alert "Done building BSP CLI package" "${destination}" "debug"
+}
+
+# Reversion function is called with the following parameters:
+# ${1} == deb_id
+function reversion_armbian-bsp-cli_deb_contents() {
+	if [[ "${1}" != "armbian-bsp-cli" ]]; then
+		return 0 # Not our deb, nothing to do.
+	fi
+	display_alert "Reversion" "reversion_armbian-bsp-cli_deb_contents: '$*'" "debug"
+
+	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
+	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
+	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
+	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
+	declare depends_base_files=", base-files (>= ${REVISION})"
+	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
+		depends_base_files=""
+	fi
+	cat <<- EOF >> "${control_file_new}"
+		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
+		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+	EOF
+
+	artifact_deb_reversion_unpack_data_deb
+	: "${data_dir:?data_dir is not set}"
+
+	cat <<- EOF >> "${data_dir}"/etc/armbian-release
+		VERSION=${REVISION}
+		REVISION=$REVISION
+	EOF
+
+	# Show results if debugging
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		run_tool_batcat --file-name "armbian-release.sh" "${data_dir}"/etc/armbian-release
+	fi
+
+	artifact_deb_reversion_repack_data_deb
+
+	return 0
 }
 
 function get_bootscript_info() {

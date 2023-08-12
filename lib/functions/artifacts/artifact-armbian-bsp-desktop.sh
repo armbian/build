@@ -18,7 +18,6 @@ function artifact_armbian-bsp-desktop_config_dump() {
 }
 
 function artifact_armbian-bsp-desktop_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${BRANCH:?BRANCH is not set}"
 	: "${BOARD:?BOARD is not set}"
 	: "${RELEASE:?RELEASE is not set}"
@@ -43,7 +42,7 @@ function artifact_armbian-bsp-desktop_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian armbian-bsp-desktop"
@@ -54,16 +53,10 @@ function artifact_armbian-bsp-desktop_prepare_version() {
 
 	artifact_name="armbian-bsp-desktop-${BOARD}-${BRANCH}"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}/${RELEASE}"
-	artifact_final_file="${DEB_STORAGE}/${RELEASE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
+	artifact_deb_repo="${RELEASE}"
+	artifact_deb_arch="${ARCH}"
 
-	artifact_map_packages=(
-		["armbian-bsp-desktop"]="${artifact_name}"
-	)
-
-	artifact_map_debs=(
-		["armbian-bsp-desktop"]="${RELEASE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
-	)
+	artifact_map_packages=(["armbian-bsp-desktop"]="${artifact_name}")
 
 	return 0
 }

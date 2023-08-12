@@ -18,7 +18,6 @@ function artifact_armbian-desktop_config_dump() {
 }
 
 function artifact_armbian-desktop_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${RELEASE:?RELEASE is not set}"
 
 	: "${DESKTOP_ENVIRONMENT:?DESKTOP_ENVIRONMENT is not set}"
@@ -48,7 +47,7 @@ function artifact_armbian-desktop_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-V${var_config_hash_short}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian armbian-desktop"
@@ -60,16 +59,10 @@ function artifact_armbian-desktop_prepare_version() {
 
 	artifact_name="armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}/${RELEASE}"
-	artifact_final_file="${DEB_STORAGE}/${RELEASE}/${artifact_name}_${artifact_version}_all.deb"
+	artifact_deb_repo="${RELEASE}"
+	artifact_deb_arch="all"
 
-	artifact_map_packages=(
-		["armbian-desktop"]="${artifact_name}"
-	)
-
-	artifact_map_debs=(
-		["armbian-desktop"]="${RELEASE}/${artifact_name}_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["armbian-desktop"]="${artifact_name}")
 
 	return 0
 }
