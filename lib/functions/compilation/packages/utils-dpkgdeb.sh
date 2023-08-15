@@ -110,6 +110,7 @@ function fakeroot_dpkg_deb_build() {
 	deb_final_dir=$(dirname "${deb_final_filename}")
 
 	mkdir -p "${deb_final_dir}"
+	display_alert "Compressing package directories, this make take some time.."
 	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "${package_directory}" "${deb_final_filename}"
 }
 
