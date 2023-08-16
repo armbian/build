@@ -159,6 +159,12 @@ function create_sources_list_and_deploy_repo_key() {
 				deb http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 			EOF
+
+				# Exception: with riscv64 not everything was moved from ports
+				# https://lists.debian.org/debian-riscv/2023/07/msg00053.html
+				if [[ "${ARCH}" == riscv64 ]]; then
+					echo "deb http://deb.debian.org/debian-ports/ sid main " >> "${basedir}"/etc/apt/sources.list
+				fi
 			;;
 
 		focal | jammy | kinetic | lunar)
