@@ -322,7 +322,7 @@ function adaptative_prepare_host_dependencies() {
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
 		host_dependencies+=("gcc-riscv64-linux-gnu")        # crossbuild-essential-riscv64 is not even available "yet"
-		host_dependencies+=("debian-ports-archive-keyring") # Debian Ports keyring needed, as riscv64 is not released yet
+		host_dependencies+=("debian-archive-keyring")
 	fi
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
