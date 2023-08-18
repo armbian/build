@@ -17,6 +17,14 @@ function driver_generic_bring_back_ipx() {
 	fi
 }
 
+driver_mt7921u_add_pids() {
+	# Add two popular cheap USB devices to the table
+	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.2; then
+                display_alert "Mediatek MT7921u" "Add Comfast CF952A and Netgear AXE3000" "info"
+                process_patch_file "${SRC}/patch/misc/wireless-mt7921u-add-pids.patch" "applying"
+        fi
+}
+
 driver_rtl8152_rtl8153() {
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
 	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ "$LINUXFAMILY" != mvebu64 ] && [ "$LINUXFAMILY" != rk322x ] && [ "$LINUXFAMILY" != odroidxu4 ] ; then
