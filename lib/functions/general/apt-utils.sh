@@ -12,7 +12,6 @@ function apt_find_upstream_package_version_and_download_url() {
 	declare -a package_info_download_urls=()
 	declare first_letter_of_sought_package_name="${sought_package_name:0:1}"
 	declare mirror_with_slash="undetermined/"
-	declare pool_name_extension=""
 
 	case "${DISTRIBUTION}" in
 		Ubuntu) # try both the jammy-updates and jammy repos, use whatever returns first
@@ -24,7 +23,6 @@ function apt_find_upstream_package_version_and_download_url() {
 		Debian)
 			package_info_download_urls+=("https://packages.debian.org/${RELEASE}/${ARCH}/${sought_package_name}/download")
 			mirror_with_slash="${DEBIAN_MIRROR}"
-			[[ "${ARCH}" == riscv64 ]] && pool_name_extension="-riscv64"
 			;;
 
 		*)
@@ -37,10 +35,7 @@ function apt_find_upstream_package_version_and_download_url() {
 		mirror_with_slash="${mirror_with_slash}/"
 	fi
 
-	# riscv64 under Debian needs exception
-
-
-	declare base_down_url="http://${mirror_with_slash}pool${pool_name_extension}/main/${first_letter_of_sought_package_name}/${sought_package_name}"
+	declare base_down_url="http://${mirror_with_slash}pool/main/${first_letter_of_sought_package_name}/${sought_package_name}"
 
 	declare index package_info_download_url
 	# loop over the package_info_download_urls with index and value
