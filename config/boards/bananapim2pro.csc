@@ -10,3 +10,11 @@ SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"
 BOOTBRANCH_BOARD="tag:v2023.07.02"
 BOOTPATCHDIR="v2023.07.02"
+
+function fetch_sources_tools__libreelec_amlogic_fip_pre_m2-pro_blob_update() {
+        fetch_from_repo "https://github.com/Dangku/amlogic-boot-fip" "amlogic-boot-fip" "branch:master"
+}
+
+function post_uboot_custom_postprocess__bpi-m2-pro() {
+	uboot_g12_postprocess "$SRC"/cache/sources/amlogic-boot-fip/bananapi-m2-pro g12a
+}
