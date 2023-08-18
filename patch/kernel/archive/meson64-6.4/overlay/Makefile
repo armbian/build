@@ -10,6 +10,7 @@ dtbo-$(CONFIG_ARCH_MESON) += \
 	meson-g12a-radxa-zero-gpio-8-led.dtbo \
 	meson-g12a-radxa-zero-gpio-10-led.dtbo \
 	meson-g12b-odroid-n2-spi.dtbo \
+	meson-sm1-bananapi-rtl8822cs.dtbo \
 	meson-sm1-bananapi-uartA.dtbo \
 	meson-sm1-bananapi-uartAO_B.dtbo \
 	meson-sm1-bananapi-uartB.dtbo
