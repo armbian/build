@@ -73,19 +73,18 @@ family_tweaks_bsp() {
 		tr ' ' '\n' <<< "$MODULES_LEGACY" > "${destination}"/etc/modules
 	fi
 
-	## Postinst
-	# Remove exit 0 on end of file
-	sed -i '$ s/^exit 0//g' "${destination}"/DEBIAN/postinst
-
-	cat <<- 'EOF' >> "${destination}"/DEBIAN/postinst
+	display_alert "Adding to bsp-cli" "${BOARD}: postinst for bluetooth service" "info"
+	# Define a function to be run board-side during postinst of the BSP
+	postinst_functions+=("board_side_helios4_bsp_cli_postinst_mdadm") # add to the postinst function list
+	function board_side_helios4_bsp_cli_postinst_mdadm() {
 		### Mdadm tweaks
 		MDADM_CONF=/etc/mdadm/mdadm.conf
 		MDADM_HOOK=/usr/share/initramfs-tools/hooks/mdadm
 		grep -q "PROGRAM" $MDADM_CONF
 		if [ "$?" -ne 0 ]; then
-			cat <<-EOS >> $MDADM_CONF
-			# Trigger Fault Led script when an event is detected
-			PROGRAM /usr/sbin/mdadm-fault-led.sh
+			cat <<- EOS >> $MDADM_CONF
+				# Trigger Fault Led script when an event is detected
+				PROGRAM /usr/sbin/mdadm-fault-led.sh
 			EOS
 		fi
 
@@ -98,8 +97,7 @@ family_tweaks_bsp() {
 		fi
 
 		# enable helios4-wol.service
-		systemctl --no-reload enable helios4-wol.service >/dev/null 2>&1
+		systemctl --no-reload enable helios4-wol.service
+	}
 
-		exit 0
-	EOF
 }
