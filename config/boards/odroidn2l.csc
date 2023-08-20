@@ -1,26 +1,17 @@
 # Amlogic S922X hexa core 2GB/4GB RAM SoC 1.8-2.4Ghz eMMC GBE USB3 SPI RTC
-BOARD_NAME="Odroid N2"
+BOARD_NAME="Odroid N2L"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 FORCE_BOOTSCRIPT_UPDATE="yes"
 BOOT_LOGO="desktop"
-BOOTCONFIG="odroid-n2_defconfig"
+BOOTCONFIG="odroid-n2l_defconfig"
 BOOTBRANCH_BOARD="tag:v2023.07.02"
 BOOTPATCHDIR="v2023.07.02"
-PACKAGE_LIST_BOARD="mtd-utils whiptail"
+PACKAGE_LIST_BOARD="whiptail"
 
-# Enable writing u-boot to SPI on the N2(+) for current and edge
-# @TODO: replace this with an overlay, after meson64 overlay revamp
-# To enable the SPI NOR the -spi .dtb is required, because eMMC shares a pin with SPI on the N2(+). To use it:
-# fdtfile=amlogic/meson-g12b-odroid-n2-plus-spi.dtb # in armbianEnv.txt and reboot, then run nand-sata-install
-UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin.sd.bin:u-boot.bin u-boot-dtb.img u-boot.bin:u-boot-spi.bin"
-write_uboot_platform_mtd() {
-	dd if=$1/u-boot-spi.bin of=/dev/mtdblock0
-}
-
-# MAX might be different for N2/N2+, for now use N2+'s
+# MAX might be different for N2/N2+/N2L, for now use N2+'s
 # @TODO: remove? cpufreq is not used anymore, instead DT should be patched
 CPUMIN=1000000
 CPUMAX=2400000
@@ -31,7 +22,7 @@ GOVERNOR=performance # some people recommend performance to avoid random hangs a
 # Unfortunately it uses n2_plus instead of n2-plus as the Kernel expects it.
 #    So there is a hack at and around config/bootscripts/boot-meson64.cmd L90
 # If needed (eg for extlinux) you can specify the N2/N2+/ DTB in BOOT_FDT_FILE, example for the N2+:
-# BOOT_FDT_FILE="amlogic/meson-g12b-odroid-n2-plus.dtb"
+# BOOT_FDT_FILE="amlogic/meson-g12b-odroid-n2l.dtb"
 
 function pre_customize_image__initialize_odroidn2_fanctrl_service() {
 if [[ -f "$SRC/packages/bsp/odroid/fanctrl" ]]; then
