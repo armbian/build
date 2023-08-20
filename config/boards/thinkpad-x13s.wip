@@ -19,11 +19,43 @@ function post_family_config_branch_sc8280xp__steevs_63y_kernel() {
 	declare -g KERNELSOURCE='https://github.com/steev/linux.git'
 }
 
-function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
-	display_alert "Adding x13s" "firmware in initrd" "warn"
-	mkdir -p "${SDCARD}/etc/initramfs-tools/hooks"
-	local script_file_dst="${SDCARD}/etc/initramfs-tools/hooks/x13s-firmware"
-	cat <<- 'FIRMWARE_HOOK' > "${script_file_dst}"
+function post_family_tweaks_bsp__thinkpad_x13s_bsp_stuff() {
+	### The bluetooth does not have a public MAC address set in DT, and BT won't start without one.
+	### Create a systemd service to set it at boot, and enable it; use the same address used by Ubuntu's x13s Concept project.
+	display_alert "Adding to bsp-cli" "${BOARD}: systemd service for bluetooth public address init" "info"
+	add_file_from_stdin_to_bsp_destination "/etc/systemd/system/set-bluetooth-address.service" <<- 'EOD'
+		[Unit]
+		Description=Set Bluetooth Address for x13s
+		After=bluetooth.target
+
+		[Service]
+		Type=oneshot
+		ExecStart=/usr/bin/btmgmt public-addr AD:5A:00:F0:FD:8C
+
+		[Install]
+		WantedBy=multi-user.target
+	EOD
+
+	display_alert "Adding to bsp-cli" "${BOARD}: postinst for bluetooth service" "info"
+	# Define a function to be run board-side during postinst of the BSP
+	postinst_functions+=("board_side_x13s_bsp_cli_enable_set_bluetooth_address_service") # add to the postinst function list
+	function board_side_x13s_bsp_cli_enable_set_bluetooth_address_service() {
+		systemctl --no-reload enable set-bluetooth-address.service
+	}
+
+	## WAIT FOR 6.5.y ## ## Hack in udev so touchscreen can work - from https://github.com/ironrobin/x13s-alarm/tree/trunk/x13s-touchscreen-udev
+	## WAIT FOR 6.5.y ## display_alert "Adding to bsp-cli" "${BOARD}: udev for touchscreen bind" "info"
+	## WAIT FOR 6.5.y ## add_file_from_stdin_to_bsp_destination "/usr/lib/udev/rules.d/72-x13s-touchscreen.rules" <<- 'EOD'
+	## WAIT FOR 6.5.y ## 	ACTION=="add" \
+	## WAIT FOR 6.5.y ## 	, RUN+="/bin/bash -c 'echo 4-0010 > /sys/bus/i2c/drivers/i2c_hid_of/bind'"
+	## WAIT FOR 6.5.y ## EOD
+
+	##
+	## Include certain firmware in the initrd
+	##
+	display_alert "Adding to bsp-cli" "${BOARD}: firmware in initrd" "info"
+	declare file_added_to_bsp_destination # will be filled in by add_file_from_stdin_to_bsp_destination
+	add_file_from_stdin_to_bsp_destination "/etc/initramfs-tools/hooks/x13s-firmware" <<- 'FIRMWARE_HOOK'
 		#!/bin/bash
 		[[ "$1" == "prereqs" ]] && exit 0
 		. /usr/share/initramfs-tools/hook-functions
@@ -33,11 +65,11 @@ function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
 		add_firmware "qcom/a660_sqe.fw" # extra one for dpu
 		add_firmware "qcom/a690_gmu.bin" # extra one for gpu
 	FIRMWARE_HOOK
+	run_host_command_logged chmod -v +x "${file_added_to_bsp_destination}"
 
-	run_host_command_logged chmod -v +x "${script_file_dst}"
-
-	# Modules, required to boot, add them to initrd
-	cat <<- EXTRA_MODULES >> "${SDCARD}"/etc/initramfs-tools/modules
+	## Modules, required to boot, add them to initrd; might need to be done in '.d/x13s-modules' instead
+	display_alert "Adding to bsp-cli" "${BOARD}: modules in initrd" "info"
+	add_file_from_stdin_to_bsp_destination "/etc/initramfs-tools/modules" <<- 'EXTRA_MODULES'
 		pwm_bl
 		phy_qcom_qmp_pcie
 		pcie_qcom
@@ -60,7 +92,6 @@ function pre_customize_image__add_x13s_firmware_and_modules_to_initrd() {
 		uas
 	EXTRA_MODULES
 
-	return 0
 }
 
 # armbian-firstrun waits for systemd to be ready, but snapd.seeded might cause it to hang due to wrong clock.
@@ -70,30 +101,13 @@ function pre_customize_image__disable_snapd_seeded() {
 	chroot_sdcard systemctl disable snapd.seeded.service "||" true
 }
 
-# The bluetooth does not have a public MAC address set in DT, and BT won't start without one.
-# Create a systemd service to set it at boot, and enable it; use the same address used by Ubuntu's x13s Concept project.
-function pre_customize_image__initialize_bluetooth_address() {
-	cat <<- 'EOD' > "${SDCARD}/etc/systemd/system/set-bluetooth-address.service"
-		[Unit]
-		Description=Set Bluetooth Address
-		After=bluetooth.target
-
-		[Service]
-		Type=oneshot
-		ExecStart=/usr/bin/btmgmt public-addr AD:5A:00:F0:FD:8C
-
-		[Install]
-		WantedBy=multi-user.target
-	EOD
-	chroot_sdcard systemctl enable set-bluetooth-address.service
-}
-
 function pre_customize_image__add_ubuntu_concept_x13s_packages_if_ubuntu_lunar() {
 	# Ubuntu has a "x13s Concept" PPA, with needed userspace packages for Lunar (only).
 	# https://launchpad.net/~ubuntu-concept/+archive/ubuntu/x13s
 	# These will enable:
 	# - battery charging/control
 	# - audio via ALSA
+	# - patched 23.0 mesa, for GPU (trixie/sid and mantic already has upstream 23.1 mesa which fully supports it)
 	# It is only available for Lunar, though, so skip it if we're building for anything else.
 	# We add the PPA & pin it in apt conf, so regular Ubuntu updates don't get rid of them.
 
