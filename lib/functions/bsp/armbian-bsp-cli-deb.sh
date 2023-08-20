@@ -147,21 +147,6 @@ function compile_armbian-bsp-cli() {
 		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> "${destination}"/etc/fw_env.config
 	fi
 
-	# set up pre install script; use inline functions
-	# This is never run in build context; instead, it's source code is dumped inside a file that is packaged.
-	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
-	### preinst
-	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst
-	unset board_side_bsp_cli_preinst
-
-	### postrm
-	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm
-	unset board_side_bsp_cli_postrm
-
-	### postinst -- a bit more complex
-	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_cli_postinst_base "${postinst_functions[@]}" board_side_bsp_cli_postinst_finish
-	unset board_side_bsp_cli_postinst_base board_side_bsp_cli_postinst_update_uboot_bootscript board_side_bsp_cli_postinst_finish
-
 	# won't recreate files if they were removed by user
 	# TODO: Add proper handling for updated conffiles
 	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
@@ -195,7 +180,25 @@ function compile_armbian-bsp-cli() {
 	call_extension_method "post_family_tweaks_bsp" <<- 'POST_FAMILY_TWEAKS_BSP'
 		*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
 		This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
+		You can write to `$destination` here and it will be packaged.
+		You can also append to the `postinst_functions` array, and the _content_ of those functions will be added to the postinst script.
 	POST_FAMILY_TWEAKS_BSP
+
+	# Render the postinst/postrm/etc
+	# set up pre install script; use inline functions
+	# This is never run in build context; instead, it's source code is dumped inside a file that is packaged.
+	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
+	### preinst
+	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst
+	unset board_side_bsp_cli_preinst
+
+	### postrm
+	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm
+	unset board_side_bsp_cli_postrm
+
+	### postinst -- a bit more complex, extendable via postinst_functions which can be customized in hook above
+	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_cli_postinst_base "${postinst_functions[@]}" board_side_bsp_cli_postinst_finish
+	unset board_side_bsp_cli_postinst_base board_side_bsp_cli_postinst_update_uboot_bootscript board_side_bsp_cli_postinst_finish
 
 	# add some summary to the image # @TODO: another?
 	fingerprint_image "${destination}/etc/armbian.txt"
@@ -224,7 +227,7 @@ function reversion_armbian-bsp-cli_deb_contents() {
 	fi
 	display_alert "Reversion" "reversion_armbian-bsp-cli_deb_contents: '$*'" "debug"
 
-	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
+	# Replaces: base-files is needed to replace the distro's base-files
 	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
 	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
 	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
@@ -436,4 +439,21 @@ function board_side_bsp_cli_postinst_finish() {
 
 	# Reload services
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service > /dev/null 2>&1
+}
+
+# Helper to add files, from stdin, to the bsp-cli package.
+# First and only argument is the destination path, relative to the root of the package -- do NOT include $destination -- it is already included.
+# Containing directory, if any, is created automatically.
+# The full path (including $destination) is set in $file_added_to_bsp_destination, declare in outer scope to get it.
+function add_file_from_stdin_to_bsp_destination() {
+	declare dest_file="${1}"
+	declare dest_dir
+	dest_dir="$(dirname "${dest_file}")"
+	declare dest_dir_fullpath="${destination}/${dest_dir}"
+	declare dest_file_fullpath="${destination}/${dest_file}"
+	display_alert "add_file_from_stdin_to_bsp_destination" "dest_file='${dest_file}' dest_dir='${dest_dir}'" "debug"
+	mkdir -p "${dest_dir_fullpath}"
+	cat - > "${dest_file_fullpath}"
+	file_added_to_bsp_destination="${dest_file_fullpath}" # outer scope
+	return 0
 }
