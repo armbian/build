@@ -38,10 +38,7 @@ function prepare_partitions() {
 	parttype[xfs]=xfs
 	# parttype[nfs] is empty
 
-	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $HOSTRELEASE =~ buster|bullseye|bookworm|sid|focal|impish|hirsute|jammy|kinetic|lunar|ulyana|ulyssa|uma|una|vanessa|vera ]]; then
-		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum"
-	fi
+	mkopts[ext4]="-q -m 2" # for a long time we had '-O ^64bit,^metadata_csum' here
 	# mkopts[fat] is empty
 	mkopts[ext2]=''
 	# mkopts[f2fs] is empty
