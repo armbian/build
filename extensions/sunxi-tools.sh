@@ -9,10 +9,8 @@ function add_host_dependencies__sunxi_add_32_bit_c_compiler() {
 
 # Install gcc-or1k-elf for crust compilation
 function add_host_dependencies__sunxi_add_or1k_c_compiler() {
-        if [[ -n "$HOSTRELEASE" && "bookworm sid jammy kinetic lunar vanessa vera" == *"$HOSTRELEASE"* ]] ; then
-                display_alert "Adding or1k C compiler to host dependencies" "for sunxi bootloader compile" "debug"
-                declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} gcc-or1k-elf"
-        fi
+	display_alert "Adding or1k C compiler to host dependencies" "for sunxi bootloader compile" "debug"
+	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} gcc-or1k-elf"
 }
 
 function fetch_sources_tools__sunxi_tools() {
