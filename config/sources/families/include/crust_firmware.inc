@@ -19,17 +19,3 @@ declare -g CRUST_TARGET_MAP="scp;;build/scp/scp.bin"
 
 # Use a different BOOTDIR so that we don't leave scp.bin behind for non crust builds
 [[ -n "${CRUSTCONFIG}" ]] && BOOTDIR="u-boot-crust"
-
-# complain about system not being supported for building crust image
-function add_host_dependencies__dont_try_to_build_crust_on_unsupported_systems() {
-    if [[ -n "${CRUSTCONFIG}" ]] ; then
-        if [[ -z $HOSTRELEASE || "bookworm sid jammy kinetic lunar vanessa vera" != *"$HOSTRELEASE"* ]] ; then
-            if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
-                display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
-                display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
-            else
-                exit_with_error "Unsupported build system for images with crust-firmware: '${HOSTRELEASE:-(unknown)}'"
-            fi
-        fi
-    fi
-}
