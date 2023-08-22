@@ -146,7 +146,7 @@ function kernel_prepare_build_and_package() {
 
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
-	done_with_temp_dir "${cleanup_id}"      # changes cwd to "${SRC}" and fires the cleanup function early
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
 function kernel_build() {
@@ -168,4 +168,3 @@ function kernel_package() {
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
 }
-
