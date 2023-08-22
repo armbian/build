@@ -11,7 +11,7 @@ function driver_generic_bring_back_ipx() {
 	#
 	# Returning headers needed for some wireless drivers
 	#
-	if linux-version compare "${version}" ge 5.4 ; then
+	if linux-version compare "${version}" ge 5.4; then
 		display_alert "Reverting upstream-removed" "IPX stuff needed for Wireless Drivers" "info"
 		process_patch_file "${SRC}/patch/misc/wireless-bring-back-headers.patch" "applying"
 	fi
@@ -20,14 +20,14 @@ function driver_generic_bring_back_ipx() {
 driver_mt7921u_add_pids() {
 	# Add two popular cheap USB devices to the table
 	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.2; then
-                display_alert "Mediatek MT7921u" "Add Comfast CF952A and Netgear AXE3000" "info"
-                process_patch_file "${SRC}/patch/misc/wireless-mt7921u-add-pids.patch" "applying"
-        fi
+		display_alert "Mediatek MT7921u" "Add Comfast CF952A and Netgear AXE3000" "info"
+		process_patch_file "${SRC}/patch/misc/wireless-mt7921u-add-pids.patch" "applying"
+	fi
 }
 
 driver_rtl8152_rtl8153() {
 	# Updated USB network drivers for RTL8152/RTL8153 based dongles that also support 2.5Gbs variants
-	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ "$LINUXFAMILY" != mvebu64 ] && [ "$LINUXFAMILY" != rk322x ] && [ "$LINUXFAMILY" != odroidxu4 ] ; then
+	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ "$LINUXFAMILY" != mvebu64 ] && [ "$LINUXFAMILY" != rk322x ] && [ "$LINUXFAMILY" != odroidxu4 ]; then
 
 		# attach to specifics tag or branch
 		local rtl8152ver="branch:master"
@@ -43,7 +43,7 @@ driver_rtl8152_rtl8153() {
 driver_rtl8189ES() {
 	# Wireless drivers for Realtek 8189ES chipsets
 
-	if linux-version compare "${version}" ge 3.14 ; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
 		local rtl8189esver="branch:master"
@@ -90,7 +90,7 @@ driver_rtl8189FS() {
 
 	# Wireless drivers for Realtek 8189FS chipsets
 
-	if linux-version compare "${version}" ge 3.14 ; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
 		local rtl8189fsver="branch:rtl8189fs"
@@ -138,7 +138,7 @@ driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
-	if linux-version compare "${version}" ge 3.14 ; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
 		local rtl8192euver="branch:realtek-4.4.x"
@@ -180,7 +180,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 
-	if linux-version compare "${version}" ge 3.14 ; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
 		local rtl8812auver="commit:450db78f7bd23f0c611553eb475fa5b5731d6497"
@@ -230,7 +230,7 @@ driver_xradio_xr819() {
 
 	# Wireless drivers for Xradio XR819 chipsets
 	if linux-version compare "${version}" ge 4.19 && linux-version compare "${version}" le 5.19 &&
-		[[ "$LINUXFAMILY" == sunxi* ]] ; then
+		[[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
@@ -271,7 +271,7 @@ driver_xradio_xr819() {
 driver_rtl8811CU_rtl8821C() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
-	if linux-version compare "${version}" ge 3.14 ; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
 		local rtl8811cuver="commit:69c903b75bde36293c66b25c051916a74dbadf58"
@@ -324,7 +324,7 @@ driver_rtl8188EU_rtl8188ETV() {
 	# Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets
 
 	if linux-version compare "${version}" ge 3.14 &&
-		linux-version compare "${version}" lt 5.15 ; then
+		linux-version compare "${version}" lt 5.15; then
 
 		# attach to specifics tag or branch
 		local rtl8188euver="branch:v5.7.6.1"
@@ -371,7 +371,7 @@ driver_rtl88x2bu() {
 
 	# Wireless drivers for Realtek 88x2bu chipsets
 
-	if linux-version compare "${version}" ge 5.0 ; then
+	if linux-version compare "${version}" ge 5.0; then
 
 		# attach to specifics tag or branch
 		local rtl88x2buver="commit:2590672d717e2516dd2e96ed66f1037a6815bced"
@@ -422,7 +422,7 @@ driver_rtw88() {
 	# Quite a few kernel families have KERNEL_DRIVERS_SKIP listing this driver. If so, this won't even be called.
 
 	# Upstream wireless RTW88 drivers (wireless-next-2023-06-22)
-	if [[ "$version" == "6.1" || "$version" == "6.2" || "$version" == "6.3" || "$version" == "6.4" ]] ; then
+	if [[ "$version" == "6.1" || "$version" == "6.2" || "$version" == "6.3" || "$version" == "6.4" ]]; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
 		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
@@ -436,7 +436,7 @@ driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
 
-	if linux-version compare "${version}" ge 5.9 && linux-version compare "${version}" lt 6.1 ; then
+	if linux-version compare "${version}" ge 5.9 && linux-version compare "${version}" lt 6.1; then
 
 		# attach to specifics tag or branch
 		local rtl88x2csver="branch:tune_for_jethub"
@@ -480,7 +480,7 @@ driver_rtl88x2cs() {
 driver_rtl8822cs_bt() {
 	# Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets
 	# both of these patches were upstreamed in 5.18
-	if linux-version compare "${version}" ge 5.11 && linux-version compare "${version}" lt 5.18 ; then
+	if linux-version compare "${version}" ge 5.11 && linux-version compare "${version}" lt 5.18; then
 
 		display_alert "Adding" "Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets" "info"
 
@@ -493,7 +493,7 @@ driver_rtl8822cs_bt() {
 driver_rtl8723DS() {
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0 ; then
+	if linux-version compare "${version}" ge 5.0; then
 
 		# attach to specifics tag or branch
 		local rtl8723dsver="branch:master"
@@ -536,7 +536,7 @@ driver_rtl8723DU() {
 
 	# Wireless drivers for Realtek 8723DU chipsets
 
-	if linux-version compare "${version}" ge 5.0 ; then
+	if linux-version compare "${version}" ge 5.0; then
 
 		local rtl8723duver="branch:master"
 
@@ -578,7 +578,7 @@ driver_rtl8723DU() {
 driver_rtl8822BS() {
 	# Wireless drivers for Realtek 8822BS chipsets
 
-	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16 ; then
+	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16; then
 
 		# attach to specifics tag or branch
 		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
