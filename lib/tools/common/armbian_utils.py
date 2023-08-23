@@ -426,7 +426,7 @@ def gather_json_output_from_armbian(command: str, targets: list[dict]):
 		counter = 0
 		total = len(targets)
 		# get the number of processor cores on this machine
-		max_workers = multiprocessing.cpu_count() * 2  # use double the number of cpu cores, that's the sweet spot
+		max_workers = multiprocessing.cpu_count() * 4  # use four times the number of cpu cores, that's the sweet spot
 		log.info(f"Using {max_workers} workers for parallel processing.")
 		with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
 			every_future = []
