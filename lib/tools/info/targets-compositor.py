@@ -52,6 +52,10 @@ for board in board_inventory:
 			if board_inventory[board]["BOARD_HAS_VIDEO"]:
 				not_eos_with_video_boards_all_branches.append(data_from_inventory)
 
+userspace_inventory_file = sys.argv[2]
+with open(userspace_inventory_file, 'r') as f:
+	userspace_inventory = json.load(f)
+
 # get the third argv, which is the targets.yaml file.
 targets_yaml_file = sys.argv[3]
 # read it as yaml, modern way
@@ -60,6 +64,103 @@ with open(targets_yaml_file, 'r') as f:
 
 # Keep a running of all the invocations we want to make.
 invocations_dict: list[dict] = []
+
+
+# userspace inventory is a bit more complex, here's a function
+def get_userspace_inventory(opts: dict):
+	ret = []
+	log.info("Processing userspace inventory...")
+	log.debug(f"Processing userspace inventory options: {opts}")
+
+	# set default opts if not present
+	if opts is None:
+		opts = {}
+	if "arches" not in opts:
+		opts["arches"] = {"arm64": [{"BOARD": "uefi-arm64", "BRANCH": "current"}]}  # default is arm64 only
+	if "minimal" not in opts:
+		opts["minimal"] = False
+	if "cli" not in opts:
+		opts["cli"] = True  # default on, only for CLI
+	if "cloud" not in opts:
+		opts["cloud"] = False
+	if "desktops" not in opts:
+		opts["desktops"] = False
+	if "desktop_variations" not in opts:
+		opts["desktop_variations"] = [[]]
+
+	# loop over the userspace inventory
+	for userspace in userspace_inventory:
+		if userspace["support"] == "eos":
+			log.debug(f"Skipping userspace inventory entry: '{userspace['id']}' has support '{userspace['support']}'")
+			continue
+
+		if "skip-releases" in opts and userspace["id"] in opts["skip-releases"]:
+			log.info(f"Skipping userspace inventory entry: '{userspace['id']}' is in skip-releases list.")
+			continue
+
+		if "only-releases" in opts and userspace["id"] not in opts["only-releases"]:
+			log.info(f"Skipping userspace inventory entry: '{userspace['id']}' is not in only-releases list.")
+			continue
+
+		log.info(f"Processing userspace inventory for distro: {userspace['id']}")
+
+		# loop over the wanted wanted_arch'es
+		for wanted_arch in opts["arches"]:
+			wanted_bbs_for_arch = opts["arches"][wanted_arch]
+			log.debug(f"Processing wanted userspace inventory wanted_arch: '{wanted_arch}' - '{wanted_bbs_for_arch}'")
+			# if the wanted_arch is not in the userspace, skip it completely.
+			if wanted_arch not in userspace["arches"]:
+				log.debug(f"Skipping userspace inventory entry: '{userspace['id']}' does not support wanted_arch '{wanted_arch}'")
+				continue
+
+			if opts["cli"]:
+				for bb in wanted_bbs_for_arch:
+					ret.append({**bb, **{"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "no", "BUILD_DESKTOP": "no"}})
+
+			if opts["minimal"]:
+				for bb in wanted_bbs_for_arch:
+					ret.append({**bb, **{"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "yes", "BUILD_DESKTOP": "no"}})
+
+			if opts["cloud"]:  # rpardini's cloud images.
+				for bb in wanted_bbs_for_arch:
+					ret.append({**bb, **{
+						"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "no", "BUILD_DESKTOP": "no", "CLOUD_IMAGE": "yes"
+					}})
+
+			if opts["desktops"]:
+				# loop over the desktops in userspace; skip any that are eos, or that don't have the wanted arch
+				for desktop in userspace["desktops"]:
+					if desktop["support"] == "eos":
+						log.warning(
+							f"Skipping userspace inventory desktop: '{desktop['id']}' has support '{desktop['support']} for userspace '{userspace['id']}'")
+						continue
+
+					if "skip-desktops" in opts and desktop["id"] in opts["skip-desktops"]:
+						log.info(f"Skipping userspace inventory desktop: '{desktop['id']}' is in skip-desktops list.")
+						continue
+
+					if "only-desktops" in opts and desktop["id"] not in opts["only-desktops"]:
+						log.info(f"Skipping userspace inventory desktop: '{desktop['id']}' is not in only-desktops list.")
+						continue
+
+					if wanted_arch not in desktop["arches"]:
+						log.debug(
+							f"Skipping userspace inventory desktop: '{desktop['id']}' does not support wanted_arch '{wanted_arch}' for userspace '{userspace['id']}'")
+						continue
+
+					# loop over the variants... desktop_variations is a list of lists
+					for variant in opts["desktop_variations"]:
+						appgroups_comma = ",".join(variant)
+
+						for bb in wanted_bbs_for_arch:
+							ret.append({**bb, **{
+								"RELEASE": userspace["id"], "USERSPACE_ARCH": wanted_arch, "BUILD_MINIMAL": "no", "BUILD_DESKTOP": "yes",
+								"DESKTOP_ENVIRONMENT_CONFIG_NAME": "config_base",  # yeah, config_base is hardcoded.
+								"DESKTOP_APPGROUPS_SELECTED": appgroups_comma,  # hopefully empty works
+								"DESKTOP_ENVIRONMENT": desktop["id"]}})
+
+	return ret
+
 
 # Loop over targets
 for target_name in targets["targets"]:
@@ -97,10 +198,12 @@ for target_name in targets["targets"]:
 
 	# Now add to all_items by resolving the "items-from-inventory" key
 	if "items-from-inventory" in target_obj:
-		# loop over the keys
+		# loop over the keys, for regular board vs branches inventory
 		for key in target_obj["items-from-inventory"]:
 			to_add = []
-			if key == "all":
+			if key == "userspace":
+				to_add.extend(get_userspace_inventory(target_obj["items-from-inventory"][key]))
+			elif key == "all":
 				to_add.extend(all_boards_all_branches)
 			elif key == "not-eos":
 				to_add.extend(not_eos_boards_all_branches)
