@@ -94,9 +94,10 @@ function memoized_git_ref_to_info() {
 					url="${git_source}/plain/Makefile?h=${sha1}"
 					;;
 
-					# @TODO: urgently add support for Google Mirror
-					# @TODO: china mirror etc.
-					# @TODO: mirrors might need to be resolved before/during/after this, refactor
+				"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable" | "https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git" | "https://mirrors.bfsu.edu.cn/git/linux-stable.git")
+					# for mainline kernel source, only the origin source support curl
+					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
+					;;
 
 				"https://github.com/"*)
 					# parse org/repo from https://github.com/org/repo
