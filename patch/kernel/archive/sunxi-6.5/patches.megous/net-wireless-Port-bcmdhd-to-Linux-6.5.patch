@@ -1,0 +1,820 @@
+From 1aed8f08f6d0a220eee651fb246225d579a235c1 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 24 Jul 2023 01:35:00 +0200
+Subject: [PATCH 461/464] net: wireless: Port bcmdhd to Linux 6.5
+
+This makes it compile and not crash the kernel. Not working, yet.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/net/wireless/broadcom/Kconfig         |   1 +
+ drivers/net/wireless/broadcom/Makefile        |   2 +
+ drivers/net/wireless/broadcom/bcmdhd/Kconfig  |   3 +-
+ drivers/net/wireless/broadcom/bcmdhd/Makefile |  38 +---
+ .../wireless/broadcom/bcmdhd/bcm_app_utils.c  |   4 +-
+ .../broadcom/bcmdhd/bcmwifi_channels.c        |   6 +-
+ .../net/wireless/broadcom/bcmdhd/dhd_gpio.c   | 173 ++----------------
+ .../net/wireless/broadcom/bcmdhd/dhd_linux.c  |  16 +-
+ .../wireless/broadcom/bcmdhd/dhd_pcie_linux.c |   4 +-
+ .../net/wireless/broadcom/bcmdhd/linux_osl.c  |   1 +
+ .../broadcom/bcmdhd/rk_dhd_pcie_linux.h       |   4 +-
+ .../net/wireless/broadcom/bcmdhd/wl_android.c |   6 +-
+ .../wireless/broadcom/bcmdhd/wl_android_ext.c |   2 +-
+ .../wireless/broadcom/bcmdhd/wl_cfg80211.c    |  12 +-
+ .../net/wireless/broadcom/bcmdhd/wl_cfgscan.c |   1 +
+ .../wireless/broadcom/bcmdhd/wl_cfgvendor.c   |   1 +
+ .../net/wireless/broadcom/bcmdhd/wl_cfgvif.c  |  13 +-
+ .../net/wireless/broadcom/bcmdhd/wl_cfgvif.h  |   4 +-
+ drivers/net/wireless/broadcom/bcmdhd/wl_iw.h  |   2 +-
+ 19 files changed, 69 insertions(+), 224 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/Kconfig b/drivers/net/wireless/broadcom/Kconfig
+index f74333366a90..13e31496e0ec 100644
+--- a/drivers/net/wireless/broadcom/Kconfig
++++ b/drivers/net/wireless/broadcom/Kconfig
+@@ -15,5 +15,6 @@ if WLAN_VENDOR_BROADCOM
+ source "drivers/net/wireless/broadcom/b43/Kconfig"
+ source "drivers/net/wireless/broadcom/b43legacy/Kconfig"
+ source "drivers/net/wireless/broadcom/brcm80211/Kconfig"
++source "drivers/net/wireless/broadcom/bcmdhd/Kconfig"
+ 
+ endif # WLAN_VENDOR_BROADCOM
+diff --git a/drivers/net/wireless/broadcom/Makefile b/drivers/net/wireless/broadcom/Makefile
+index 1a8384daed2c..38b4358ef48f 100644
+--- a/drivers/net/wireless/broadcom/Makefile
++++ b/drivers/net/wireless/broadcom/Makefile
+@@ -4,3 +4,5 @@ obj-$(CONFIG_B43LEGACY)		+= b43legacy/
+ 
+ obj-$(CONFIG_BRCMFMAC)	+= brcm80211/
+ obj-$(CONFIG_BRCMSMAC)	+= brcm80211/
++
++#obj-$(CONFIG_BCMDHD)	+= bcmdhd/
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/Kconfig b/drivers/net/wireless/broadcom/bcmdhd/Kconfig
+index ec992ef39eaf..900fdb1e659d 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/Kconfig
++++ b/drivers/net/wireless/broadcom/bcmdhd/Kconfig
+@@ -1,5 +1,5 @@
+ config BCMDHD
+-	tristate "Broadcom FullMAC wireless cards support"
++	tristate "BCMDHD - Broadcom FullMAC wireless cards support"
+ 	help
+ 	  This module adds support for wireless adapters based on
+ 	  Broadcom FullMAC chipset.
+@@ -50,7 +50,6 @@ choice
+ config BCMDHD_OOB
+ 	depends on BCMDHD && BCMDHD_SDIO
+ 	bool "Out-of-Band Interrupt"
+-	default y
+ 	help
+ 		Interrupt from WL_HOST_WAKE.
+ config BCMDHD_SDIO_IRQ
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/Makefile b/drivers/net/wireless/broadcom/bcmdhd/Makefile
+index f48764851554..cf19c21e9025 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/Makefile
++++ b/drivers/net/wireless/broadcom/bcmdhd/Makefile
+@@ -6,10 +6,10 @@ MODULE_NAME := bcmdhd
+ else
+ MODULE_NAME := bcmdhd_pcie
+ endif
+-CONFIG_BCMDHD = m
++CONFIG_BCMDHD = y
+ 
+ #CONFIG_BCMDHD_SDIO := y
+-#CONFIG_BCMDHD_PCIE := y
++CONFIG_BCMDHD_PCIE := y
+ #CONFIG_BCMDHD_USB := y
+ 
+ CONFIG_BCMDHD_OOB := y
+@@ -38,7 +38,6 @@ CONFIG_MACH_PLATFORM := y
+ 
+ DHDCFLAGS = -Wall -Wstrict-prototypes -Wno-date-time                      \
+ 	-Wno-implicit-fallthrough -Wno-declaration-after-statement            \
+-	-Wno-fortify-source                                                   \
+ 	-Dlinux -DLINUX -DBCMDRIVER                                           \
+ 	-DBCMDONGLEHOST -DBCMDMA32 -DBCMFILEIMAGE                             \
+ 	-DDHDTHREAD -DDHD_DEBUG -DSHOW_EVENTS -DGET_OTP_MAC_ENABLE            \
+@@ -51,6 +50,7 @@ DHDCFLAGS = -Wall -Wstrict-prototypes -Wno-date-time                      \
+ 	-DUSE_NEW_RSPEC_DEFS                                                  \
+ 	-DWL_EXT_IAPSTA -DWL_ESCAN -DCCODE_LIST -DSUSPEND_EVENT               \
+ 	-DKEY_INSTALL_CHECK                                                   \
++	-DCFG80211_BKPORT_MLO                                                 \
+ 	-DENABLE_INSMOD_NO_FW_LOAD
+ 
+ DHDOFILES = aiutils.o siutils.o sbutils.o                                 \
+@@ -301,7 +301,7 @@ ifneq ($(CONFIG_BCMDHD_SDIO),)
+ endif
+ ifneq ($(CONFIG_BCMDHD_PCIE),)
+ 	DHDCFLAGS += -DDHD_LB_TXP_DEFAULT_ENAB
+-	DHDCFLAGS += -DSET_RPS_CPUS -DSET_XPS_CPUS
++#	DHDCFLAGS += -DSET_RPS_CPUS -DSET_XPS_CPUS
+ 	DHDCFLAGS += -DDHD_LB_PRIMARY_CPUS=0xF0 -DDHD_LB_SECONDARY_CPUS=0x0E
+ endif
+ endif
+@@ -386,7 +386,7 @@ ifeq  ($(CONFIG_BCMDHD_STATIC_BUF_IN_DHD),y)
+ 	DHDOFILES += dhd_static_buf.o
+ 	DHDCFLAGS += -DDHD_STATIC_IN_DRIVER
+ else
+-	obj-m += dhd_static_buf.o
++	obj-y += dhd_static_buf.o
+ endif
+ 	DHDCFLAGS += -DSTATIC_WL_PRIV_STRUCT -DENHANCED_STATIC_BUF
+ 	DHDCFLAGS += -DCONFIG_DHD_USE_STATIC_BUF
+@@ -396,34 +396,12 @@ ifneq ($(CONFIG_BCMDHD_PCIE),)
+ endif
+ endif
+ 
+-ARCH ?= arm64
+-BCMDHD_ROOT = $(src)
+-#$(warning "BCMDHD_ROOT=$(BCMDHD_ROOT)")
++BCMDHD_ROOT = $(srctree)/$(src)
++$(warning "BCMDHD_ROOT=$(BCMDHD_ROOT)")
+ EXTRA_CFLAGS = $(DHDCFLAGS)
+ EXTRA_CFLAGS += -DDHD_COMPILED=\"$(BCMDHD_ROOT)\"
+ EXTRA_CFLAGS += -I$(BCMDHD_ROOT)/include/ -I$(BCMDHD_ROOT)/
+-ifeq ($(CONFIG_BCMDHD),m)
+-EXTRA_LDFLAGS += --strip-debug
+-endif
+ 
+-obj-m += $(MODULE_NAME).o
++obj-y += $(MODULE_NAME).o
+ $(MODULE_NAME)-objs += $(DHDOFILES)
+ ccflags-y := $(EXTRA_CFLAGS)
+-
+-all: bcmdhd_pcie bcmdhd_sdio bcmdhd_usb
+-
+-bcmdhd_pcie:
+-	$(warning "building BCMDHD_PCIE..........")
+-	$(MAKE) -C $(LINUXDIR) M=$(PWD) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules CONFIG_BCMDHD=m CONFIG_BCMDHD_PCIE=y
+-
+-bcmdhd_sdio:
+-	$(warning "building BCMDHD_SDIO..........")
+-	$(MAKE) -C $(LINUXDIR) M=$(PWD) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules CONFIG_BCMDHD=m CONFIG_BCMDHD_SDIO=y
+-
+-bcmdhd_usb:
+-	$(warning "building BCMDHD_USB..........")
+-	$(MAKE) -C $(LINUXDIR) M=$(PWD) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules CONFIG_BCMDHD=m CONFIG_BCMDHD_USB=y
+-
+-clean:
+-	rm -rf *.o *.ko *.mod.c *~ .*.cmd *.o.cmd .*.o.cmd *.mod \
+-	Module.symvers modules.order .tmp_versions modules.builtin
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/bcm_app_utils.c b/drivers/net/wireless/broadcom/bcmdhd/bcm_app_utils.c
+index 62d050739ea8..c50573f313bb 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/bcm_app_utils.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/bcm_app_utils.c
+@@ -27,8 +27,8 @@
+ 
+ #ifdef BCMDRIVER
+ #include <osl.h>
+-#define strtoul(nptr, endptr, base) bcm_strtoul((nptr), (endptr), (base))
+-#define tolower(c) (bcm_isupper((c)) ? ((c) + 'a' - 'A') : (c))
++//#define strtoul(nptr, endptr, base) bcm_strtoul((nptr), (endptr), (base))
++//#define tolower(c) (bcm_isupper((c)) ? ((c) + 'a' - 'A') : (c))
+ #else /* BCMDRIVER */
+ #include <stdio.h>
+ #include <string.h>
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/bcmwifi_channels.c b/drivers/net/wireless/broadcom/bcmdhd/bcmwifi_channels.c
+index 938720710a2b..70dac773deff 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/bcmwifi_channels.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/bcmwifi_channels.c
+@@ -28,8 +28,8 @@
+ 
+ #ifdef BCMDRIVER
+ #include <osl.h>
+-#define strtoul(nptr, endptr, base) bcm_strtoul((nptr), (endptr), (base))
+-#define tolower(c) (bcm_isupper((c)) ? ((c) + 'a' - 'A') : (c))
++//#define strtoul(nptr, endptr, base) bcm_strtoul((nptr), (endptr), (base))
++//#define tolower(c) (bcm_isupper((c)) ? ((c) + 'a' - 'A') : (c))
+ #else
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -568,7 +568,7 @@ read_uint(const char **p, unsigned int *num)
+ 	unsigned long val;
+ 	char *endp = NULL;
+ 
+-	val = strtoul(*p, &endp, 10);
++	val = bcm_strtoul(*p, &endp, 10);
+ 	/* if endp is the initial pointer value, then a number was not read */
+ 	if (endp == *p)
+ 		return 0;
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/dhd_gpio.c b/drivers/net/wireless/broadcom/bcmdhd/dhd_gpio.c
+index 40490bdf7982..5f08b8f0fc2e 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/dhd_gpio.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/dhd_gpio.c
+@@ -2,22 +2,10 @@
+ #include <osl.h>
+ #include <dhd_linux.h>
+ #include <linux/gpio.h>
+-#ifdef BCMDHD_DTS
+ #include <linux/of_gpio.h>
+-#endif
+ #ifdef BCMDHD_PLATDEV
+ #include <linux/platform_device.h>
+ #endif
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-#include <linux/rfkill-wlan.h>
+-#endif
+-
+-#if defined(BUS_POWER_RESTORE) && defined(BCMSDIO)
+-#include <linux/mmc/core.h>
+-#include <linux/mmc/card.h>
+-#include <linux/mmc/host.h>
+-#include <linux/mmc/sdio_func.h>
+-#endif /* defined(BUS_POWER_RESTORE) && defined(BCMSDIO) */
+ 
+ #ifdef CONFIG_DHD_USE_STATIC_BUF
+ #ifdef DHD_STATIC_IN_DRIVER
+@@ -31,13 +19,7 @@ extern void *dhd_wlan_mem_prealloc(uint bus_type, int index,
+ extern void *dhd_wlan_mem_prealloc(int section, unsigned long size);
+ #endif
+ #endif /* CONFIG_DHD_USE_STATIC_BUF */
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-#ifdef BCMPCIE
+-//extern void rk_pcie_power_on_atu_fixup(void);
+-#endif
+-#endif
+ 
+-#ifdef BCMDHD_DTS
+ /* This is sample code in dts file.
+ bcmdhd_wlan {
+ 	compatible = "android,bcmdhd_wlan";
+@@ -48,7 +30,6 @@ bcmdhd_wlan {
+ #define DHD_DT_COMPAT_ENTRY		"android,bcmdhd_wlan"
+ #define GPIO_WL_REG_ON_PROPNAME		"gpio_wl_reg_on"
+ #define GPIO_WL_HOST_WAKE_PROPNAME	"gpio_wl_host_wake"
+-#endif
+ 
+ static int
+ dhd_wlan_set_power(int on, wifi_adapter_info_t *adapter)
+@@ -56,6 +37,8 @@ dhd_wlan_set_power(int on, wifi_adapter_info_t *adapter)
+ 	int gpio_wl_reg_on = adapter->gpio_wl_reg_on;
+ 	int err = 0;
+ 
++	return 0;
++
+ 	if (on) {
+ 		printf("======== PULL WL_REG_ON(%d) HIGH! ========\n", gpio_wl_reg_on);
+ 		if (gpio_wl_reg_on >= 0) {
+@@ -65,22 +48,9 @@ dhd_wlan_set_power(int on, wifi_adapter_info_t *adapter)
+ 				return -EIO;
+ 			}
+ 		}
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-		rockchip_wifi_power(1);
+-#ifdef BCMPCIE
+ 		//rk_pcie_power_on_atu_fixup();
+-#endif
+-#endif
++
+ #ifdef BUS_POWER_RESTORE
+-#ifdef BCMSDIO
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 32) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+-		if (adapter->sdio_func && adapter->sdio_func->card && adapter->sdio_func->card->host) {
+-			mdelay(100);
+-			printf("======== mmc_power_restore_host! ========\n");
+-			mmc_power_restore_host(adapter->sdio_func->card->host);
+-		}
+-#endif
+-#elif defined(BCMPCIE)
+ 		if (adapter->pci_dev) {
+ 			mdelay(100);
+ 			printf("======== pci_set_power_state PCI_D0! ========\n");
+@@ -93,20 +63,11 @@ dhd_wlan_set_power(int on, wifi_adapter_info_t *adapter)
+ 				printf("%s: PCI enable device failed", __FUNCTION__);
+ 			pci_set_master(adapter->pci_dev);
+ 		}
+-#endif /* BCMPCIE */
+ #endif /* BUS_POWER_RESTORE */
+ 		/* Lets customer power to get stable */
+ 		mdelay(100);
+ 	} else {
+ #ifdef BUS_POWER_RESTORE
+-#ifdef BCMSDIO
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 32) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+-		if (adapter->sdio_func && adapter->sdio_func->card && adapter->sdio_func->card->host) {
+-			printf("======== mmc_power_save_host! ========\n");
+-			mmc_power_save_host(adapter->sdio_func->card->host);
+-		}
+-#endif
+-#elif defined(BCMPCIE)
+ 		if (adapter->pci_dev) {
+ 			printf("======== pci_set_power_state PCI_D3hot! ========\n");
+ 			pci_save_state(adapter->pci_dev);
+@@ -115,7 +76,6 @@ dhd_wlan_set_power(int on, wifi_adapter_info_t *adapter)
+ 				pci_disable_device(adapter->pci_dev);
+ 			pci_set_power_state(adapter->pci_dev, PCI_D3hot);
+ 		}
+-#endif /* BCMPCIE */
+ #endif /* BUS_POWER_RESTORE */
+ 		printf("======== PULL WL_REG_ON(%d) LOW! ========\n", gpio_wl_reg_on);
+ 		if (gpio_wl_reg_on >= 0) {
+@@ -125,9 +85,6 @@ dhd_wlan_set_power(int on, wifi_adapter_info_t *adapter)
+ 				return -EIO;
+ 			}
+ 		}
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-		rockchip_wifi_power(0);
+-#endif
+ 	}
+ 
+ 	return err;
+@@ -146,29 +103,9 @@ dhd_wlan_set_carddetect(int present)
+ 
+ #if !defined(BUS_POWER_RESTORE)
+ 	if (present) {
+-#if defined(BCMSDIO)
+-		printf("======== Card detection to detect SDIO card! ========\n");
+-#ifdef CUSTOMER_HW_PLATFORM
+-		err = sdhci_force_presence_change(&sdmmc_channel, 1);
+-#endif /* CUSTOMER_HW_PLATFORM */
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-		rockchip_wifi_set_carddetect(1);
+-#endif
+-#elif defined(BCMPCIE)
+ 		printf("======== Card detection to detect PCIE card! ========\n");
+-#endif
+ 	} else {
+-#if defined(BCMSDIO)
+-		printf("======== Card detection to remove SDIO card! ========\n");
+-#ifdef CUSTOMER_HW_PLATFORM
+-		err = sdhci_force_presence_change(&sdmmc_channel, 0);
+-#endif /* CUSTOMER_HW_PLATFORM */
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-		rockchip_wifi_set_carddetect(0);
+-#endif
+-#elif defined(BCMPCIE)
+ 		printf("======== Card detection to remove PCIE card! ========\n");
+-#endif
+ 	}
+ #endif /* BUS_POWER_RESTORE */
+ 
+@@ -178,41 +115,16 @@ dhd_wlan_set_carddetect(int present)
+ static int
+ dhd_wlan_get_mac_addr(unsigned char *buf, int ifidx)
+ {
+-	int err = 0;
+-
+ 	if (ifidx == 1) {
+-#ifdef EXAMPLE_GET_MAC
+ 		struct ether_addr ea_example = {{0x00, 0x11, 0x22, 0x33, 0x44, 0xFF}};
+ 		bcopy((char *)&ea_example, buf, sizeof(struct ether_addr));
+-#endif /* EXAMPLE_GET_MAC */
+ 	} else {
+-#ifdef EXAMPLE_GET_MAC
+ 		struct ether_addr ea_example = {{0x02, 0x11, 0x22, 0x33, 0x44, 0x55}};
+ 		bcopy((char *)&ea_example, buf, sizeof(struct ether_addr));
+-#endif /* EXAMPLE_GET_MAC */
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-		err = rockchip_wifi_mac_addr(buf);
+-#endif
++		//err = rockchip_wifi_mac_addr(buf);
+ 	}
+ 
+-#ifdef EXAMPLE_GET_MAC_VER2
+-	/* EXAMPLE code */
+-	{
+-		char macpad[56]= {
+-		0x00,0xaa,0x9c,0x84,0xc7,0xbc,0x9b,0xf6,
+-		0x02,0x33,0xa9,0x4d,0x5c,0xb4,0x0a,0x5d,
+-		0xa8,0xef,0xb0,0xcf,0x8e,0xbf,0x24,0x8a,
+-		0x87,0x0f,0x6f,0x0d,0xeb,0x83,0x6a,0x70,
+-		0x4a,0xeb,0xf6,0xe6,0x3c,0xe7,0x5f,0xfc,
+-		0x0e,0xa7,0xb3,0x0f,0x00,0xe4,0x4a,0xaf,
+-		0x87,0x08,0x16,0x6d,0x3a,0xe3,0xc7,0x80};
+-		bcopy(macpad, buf+6, sizeof(macpad));
+-	}
+-#endif /* EXAMPLE_GET_MAC_VER2 */
+-
+-	printf("======== %s err=%d ========\n", __FUNCTION__, err);
+-
+-	return err;
++	return 0;
+ }
+ 
+ static struct cntry_locales_custom brcm_wlan_translate_custom_table[] = {
+@@ -277,10 +189,8 @@ struct wifi_platform_data dhd_wlan_control = {
+ static int
+ dhd_wlan_init_gpio(wifi_adapter_info_t *adapter)
+ {
+-#ifdef BCMDHD_DTS
+ 	char wlan_node[32];
+ 	struct device_node *root_node = NULL;
+-#endif
+ 	int err = 0;
+ 	int gpio_wl_reg_on = -1;
+ #ifdef CUSTOMER_OOB
+@@ -297,32 +207,16 @@ dhd_wlan_init_gpio(wifi_adapter_info_t *adapter)
+ 	/* Please check your schematic and fill right GPIO number which connected to
+ 	* WL_REG_ON and WL_HOST_WAKE.
+ 	*/
+-#ifdef BCMDHD_DTS
+-#ifdef BCMDHD_PLATDEV
+-	if (adapter->pdev) {
+-		root_node = adapter->pdev->dev.of_node;
+-		strcpy(wlan_node, root_node->name);
+-	} else {
+-		printf("%s: adapter->pdev is NULL\n", __FUNCTION__);
+-		return -1;
+-	}
+-#else
+ 	strcpy(wlan_node, DHD_DT_COMPAT_ENTRY);
+ 	root_node = of_find_compatible_node(NULL, NULL, wlan_node);
+-#endif
++
+ 	printf("======== Get GPIO from DTS(%s) ========\n", wlan_node);
+ 	if (root_node) {
+ 		gpio_wl_reg_on = of_get_named_gpio(root_node, GPIO_WL_REG_ON_PROPNAME, 0);
+-#ifdef CUSTOMER_OOB
+ 		gpio_wl_host_wake = of_get_named_gpio(root_node, GPIO_WL_HOST_WAKE_PROPNAME, 0);
+-#endif
+-	} else
+-#endif
+-	{
++	} else {
+ 		gpio_wl_reg_on = -1;
+-#ifdef CUSTOMER_OOB
+ 		gpio_wl_host_wake = -1;
+-#endif
+ 	}
+ 
+ 	if (gpio_wl_reg_on >= 0) {
+@@ -359,9 +253,6 @@ dhd_wlan_init_gpio(wifi_adapter_info_t *adapter)
+ 			return -1;
+ 		}
+ 	}
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-	host_oob_irq = rockchip_wifi_get_oob_irq();
+-#endif
+ 
+ #ifdef HW_OOB
+ #ifdef HW_OOB_LOW_LEVEL
+@@ -369,16 +260,6 @@ dhd_wlan_init_gpio(wifi_adapter_info_t *adapter)
+ #else
+ 	host_oob_irq_flags = IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHLEVEL | IORESOURCE_IRQ_SHAREABLE;
+ #endif
+-#ifdef CUSTOMER_HW_ROCKCHIP
+-	host_oob_irq_flags = IORESOURCE_IRQ | IORESOURCE_IRQ_SHAREABLE;
+-	irq_flags = rockchip_wifi_get_oob_irq_flag();
+-	if (irq_flags == 1)
+-		host_oob_irq_flags |= IORESOURCE_IRQ_HIGHLEVEL;
+-	else if (irq_flags == 0)
+-		host_oob_irq_flags |= IORESOURCE_IRQ_LOWLEVEL;
+-	else
+-		pr_warn("%s: unknown oob irqflags !\n", __func__);
+-#endif
+ #else
+ 	host_oob_irq_flags = IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE | IORESOURCE_IRQ_SHAREABLE;
+ #endif
+@@ -420,37 +301,13 @@ dhd_wlan_deinit_gpio(wifi_adapter_info_t *adapter)
+ static void
+ dhd_wlan_init_adapter(wifi_adapter_info_t *adapter)
+ {
+-#ifdef ADAPTER_IDX
+-	if (ADAPTER_IDX == 0) {
+-		adapter->bus_num = 1;
+-		adapter->slot_num = 1;
+-	} else if (ADAPTER_IDX == 1) {
+-		adapter->bus_num = 2;
+-		adapter->slot_num = 1;
+-	}
+-	adapter->index = ADAPTER_IDX;
+-#ifdef BCMSDIO
+-	adapter->bus_type = SDIO_BUS;
+-#elif defined(BCMPCIE)
++	adapter->bus_num = 1;
++	adapter->slot_num = 1;
++	adapter->index = 0;
+ 	adapter->bus_type = PCI_BUS;
+-#elif defined(BCMDBUS)
+-	adapter->bus_type = USB_BUS;
+-#endif
++
+ 	printf("bus_type=%d, bus_num=%d, slot_num=%d\n",
+ 		adapter->bus_type, adapter->bus_num, adapter->slot_num);
+-#endif /* ADAPTER_IDX */
+-
+-#ifdef DHD_STATIC_IN_DRIVER
+-	adapter->index = 0;
+-#elif !defined(ADAPTER_IDX)
+-#ifdef BCMSDIO
+-	adapter->index = 0;
+-#elif defined(BCMPCIE)
+-	adapter->index = 1;
+-#elif defined(BCMDBUS)
+-	adapter->index = 2;
+-#endif
+-#endif /* DHD_STATIC_IN_DRIVER */
+ }
+ #endif /* BCMDHD_MDRIVER */
+ 
+@@ -463,9 +320,9 @@ dhd_wlan_init_plat_data(wifi_adapter_info_t *adapter)
+ 	dhd_wlan_init_adapter(adapter);
+ #endif /* BCMDHD_MDRIVER */
+ 
+-	err = dhd_wlan_init_gpio(adapter);
+-	if (err)
+-		goto exit;
++	//err = dhd_wlan_init_gpio(adapter);
++	//if (err)
++		//goto exit;
+ 
+ #ifdef DHD_STATIC_IN_DRIVER
+ 	err = dhd_static_buf_init();
+@@ -481,5 +338,5 @@ dhd_wlan_deinit_plat_data(wifi_adapter_info_t *adapter)
+ #ifdef DHD_STATIC_IN_DRIVER
+ 	dhd_static_buf_exit();
+ #endif
+-	dhd_wlan_deinit_gpio(adapter);
++	//dhd_wlan_deinit_gpio(adapter);
+ }
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/dhd_linux.c b/drivers/net/wireless/broadcom/bcmdhd/dhd_linux.c
+index 1dccb0e74d8a..3b66ed0fd2ce 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/dhd_linux.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/dhd_linux.c
+@@ -32,6 +32,8 @@
+ #include <event_log.h>
+ #endif /* SHOW_LOGTRACE */
+ 
++#include <linux/sched/clock.h>
++
+ #if defined(PCIE_FULL_DONGLE) || defined(SHOW_LOGTRACE)
+ #include <bcmmsgbuf.h>
+ #endif /* PCIE_FULL_DONGLE */
+@@ -793,8 +795,6 @@ module_param(instance_base, int, 0644);
+  *
+  * Device drivers are strongly advised to not use bigger value than NAPI_POLL_WEIGHT
+  */
+-static int dhd_napi_weight = NAPI_POLL_WEIGHT;
+-module_param(dhd_napi_weight, int, 0644);
+ #endif /* DHD_LB_RXP && PCIE_FULL_DONGLE */
+ 
+ #ifdef PCIE_FULL_DONGLE
+@@ -3062,7 +3062,7 @@ _dhd_set_multicast_list(dhd_info_t *dhd, int ifidx)
+ }
+ 
+ int
+-_dhd_set_mac_address(dhd_info_t *dhd, int ifidx, uint8 *addr, bool skip_stop)
++_dhd_set_mac_address(dhd_info_t *dhd, int ifidx, const uint8 *addr, bool skip_stop)
+ {
+ 	int ret;
+ 
+@@ -9472,10 +9472,10 @@ dhd_open(struct net_device *net)
+ 			dhd->rx_napi_netdev = dhd->iflist[ifidx]->net;
+ 			memset(&dhd->rx_napi_struct, 0, sizeof(struct napi_struct));
+ 			netif_napi_add(dhd->rx_napi_netdev, &dhd->rx_napi_struct,
+-				dhd_napi_poll, dhd_napi_weight);
+-			DHD_INFO(("%s napi<%p> enabled ifp->net<%p,%s> dhd_napi_weight: %d\n",
++				dhd_napi_poll);
++			DHD_INFO(("%s napi<%p> enabled ifp->net<%p,%s>\n",
+ 				__FUNCTION__, &dhd->rx_napi_struct, net,
+-				net->name, dhd_napi_weight));
++				net->name));
+ 			napi_enable(&dhd->rx_napi_struct);
+ 			DHD_INFO(("%s load balance init rx_napi_struct\n", __FUNCTION__));
+ 			skb_queue_head_init(&dhd->rx_napi_queue);
+@@ -12779,8 +12779,8 @@ dhd_bus_start(dhd_pub_t *dhdp)
+ #endif /* BT_OVER_PCIE */
+ 
+ #if defined(CUSTOMER_HW_ROCKCHIP) && defined(BCMPCIE)
+-	if (IS_ENABLED(CONFIG_PCIEASPM_ROCKCHIP_WIFI_EXTENSION))
+-		rk_dhd_bus_l1ss_enable_rc_ep(dhdp->bus, TRUE);
++	//if (IS_ENABLED(CONFIG_PCIEASPM_ROCKCHIP_WIFI_EXTENSION))
++		//rk_dhd_bus_l1ss_enable_rc_ep(dhdp->bus, TRUE);
+ #endif /* CUSTOMER_HW_ROCKCHIP && BCMPCIE */
+ 
+ #if defined(CONFIG_ARCH_EXYNOS) && defined(BCMPCIE)
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/dhd_pcie_linux.c b/drivers/net/wireless/broadcom/bcmdhd/dhd_pcie_linux.c
+index 6a5ec4db66e7..00713a40ce78 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/dhd_pcie_linux.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/dhd_pcie_linux.c
+@@ -621,8 +621,8 @@ dhd_bus_is_rc_ep_l1ss_capable(dhd_bus_t *bus)
+ 	uint32 ep_l1ss_cap;
+ 
+ #ifdef CUSTOMER_HW_ROCKCHIP
+-	if (IS_ENABLED(CONFIG_PCIEASPM_ROCKCHIP_WIFI_EXTENSION))
+-		return rk_dhd_bus_is_rc_ep_l1ss_capable(bus);
++	//if (IS_ENABLED(CONFIG_PCIEASPM_ROCKCHIP_WIFI_EXTENSION))
++		//return rk_dhd_bus_is_rc_ep_l1ss_capable(bus);
+ #endif
+ 	/* RC Extendend Capacility */
+ 	rc_l1ss_cap = dhdpcie_access_cap(bus->rc_dev, PCIE_EXTCAP_ID_L1SS,
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/linux_osl.c b/drivers/net/wireless/broadcom/bcmdhd/linux_osl.c
+index 2dd9b384e51f..488fc54045a6 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/linux_osl.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/linux_osl.c
+@@ -33,6 +33,7 @@
+ #endif /* __ARM_ARCH_7A__ && !DHD_USE_COHERENT_MEM_FOR_RING */
+ 
+ #include <linux/random.h>
++#include <linux/sched/clock.h>
+ 
+ #include <osl.h>
+ #include <bcmutils.h>
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/rk_dhd_pcie_linux.h b/drivers/net/wireless/broadcom/bcmdhd/rk_dhd_pcie_linux.h
+index c6fedf9fb78b..e0836f729cad 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/rk_dhd_pcie_linux.h
++++ b/drivers/net/wireless/broadcom/bcmdhd/rk_dhd_pcie_linux.h
+@@ -12,8 +12,9 @@
+ #include <sbchipc.h>
+ #include <pcie_core.h>
+ #include <dhd_pcie.h>
+-#include <linux/aspm_ext.h>
++//#include <linux/aspm_ext.h>
+ 
++#if 0
+ static inline void
+ rk_dhd_bus_l1ss_enable_rc_ep(dhd_bus_t *bus, bool enable)
+ {
+@@ -32,5 +33,6 @@ rk_dhd_bus_is_rc_ep_l1ss_capable(dhd_bus_t *bus)
+ {
+ 	return pcie_aspm_ext_is_rc_ep_l1ss_capable(bus->dev, bus->rc_dev);
+ }
++#endif
+ 
+ #endif /* __RK_DHD_PCIE_LINUX_H__ */
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_android.c b/drivers/net/wireless/broadcom/bcmdhd/wl_android.c
+index ec37154b69f4..dfcd00181ab4 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_android.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_android.c
+@@ -450,8 +450,8 @@ typedef struct android_wifi_af_params {
+ #define BUFSZ 8
+ #define BUFSZN	BUFSZ + 1
+ 
+-#define _S(x) #x
+-#define S(x) _S(x)
++#define _SS(x) #x
++#define S(x) _SS(x)
+ 
+ #define  MAXBANDS    2  /**< Maximum #of bands */
+ #define BAND_2G_INDEX      1
+@@ -12209,7 +12209,7 @@ wl_handle_private_cmd(struct net_device *net, char *command, u32 cmd_len)
+ 		if ((rev_info_delim) &&
+ 			(strnicmp(rev_info_delim, CMD_COUNTRY_DELIMITER,
+ 			strlen(CMD_COUNTRY_DELIMITER)) == 0) &&
+-			(rev_info_delim + 1)) {
++			*(rev_info_delim + 1)) {
+ 			revinfo  = bcm_atoi(rev_info_delim + 1);
+ 		} else {
+ 			revinfo = 0;
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_android_ext.c b/drivers/net/wireless/broadcom/bcmdhd/wl_android_ext.c
+index 75aacebf118d..7b120af2b1e1 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_android_ext.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_android_ext.c
+@@ -2592,7 +2592,7 @@ wl_ext_get_country(struct net_device *dev, char *data, char *command,
+ 		char *rev_info_delim = country_code + 2; /* 2 bytes of country code */
+ 		int revinfo = 0;
+ 		if ((rev_info_delim) &&
+-			(strnicmp(rev_info_delim, "/", strlen("/")) == 0) && (rev_info_delim + 1)) {
++			(strnicmp(rev_info_delim, "/", strlen("/")) == 0) && *(rev_info_delim + 1)) {
+ 			revinfo  = bcm_atoi(rev_info_delim + 1);
+ 		}
+ #ifdef WL_CFG80211
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_cfg80211.c b/drivers/net/wireless/broadcom/bcmdhd/wl_cfg80211.c
+index a1cb125967b8..0e53a9d51d9f 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_cfg80211.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_cfg80211.c
+@@ -1241,8 +1241,8 @@ static const rsn_akm_wpa_auth_entry_t rsn_akm_wpa_auth_lookup_tbl[] = {
+ #define BUFSZ 8
+ #define BUFSZN	BUFSZ + 1
+ 
+-#define _S(x) #x
+-#define S(x) _S(x)
++//#define _S(x) #x
++//#define S(x) _S(x)
+ 
+ #define SOFT_AP_IF_NAME         "swlan0"
+ 
+@@ -10736,17 +10736,13 @@ void wl_config_custom_regulatory(struct wiphy *wiphy)
+ 
+ #if defined(WL_SELF_MANAGED_REGDOM) && (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0))
+ 	/* Use self managed regulatory domain */
+-	wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED |
+-			REGULATORY_IGNORE_STALE_KICKOFF;
++	wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;
+ 	WL_DBG(("Self managed regdom\n"));
+ 	return;
+ #else /* WL_SELF_MANAGED_REGDOM && KERNEL >= 4.0 */
+ 
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+ 	wiphy->regulatory_flags |=
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0))
+-		REGULATORY_IGNORE_STALE_KICKOFF |
+-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) */
+ 		REGULATORY_CUSTOM_REG;
+ #else /* KERNEL VER >= 3.14 */
+ 	wiphy->flags |= WIPHY_FLAG_CUSTOM_REGULATORY;
+@@ -21739,7 +21735,7 @@ wl_cfg80211_sup_event_handler(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0))
+ 		/* NL80211_CMD_PORT_AUTHORIZED supported above >= 4.15 */
+ 		cfg80211_port_authorized(ndev, (u8 *)wl_read_prof(cfg, ndev, WL_PROF_BSSID),
+-			GFP_KERNEL);
++					 NULL, 0, GFP_KERNEL);
+ 		WL_INFORM_MEM(("4way HS finished. port authorized event sent\n"));
+ #elif ((LINUX_VERSION_CODE > KERNEL_VERSION(3, 14, 0)) || defined(WL_VENDOR_EXT_SUPPORT))
+ 		err = wl_cfgvendor_send_async_event(bcmcfg_to_wiphy(cfg), ndev,
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgscan.c b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgscan.c
+index 606f32767ce8..85b09a860ffc 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgscan.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgscan.c
+@@ -25,6 +25,7 @@
+ #include <linuxver.h>
+ #include <osl.h>
+ #include <linux/kernel.h>
++#include <linux/sched/clock.h>
+ 
+ #include <bcmutils.h>
+ #include <bcmstdlib_s.h>
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvendor.c b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvendor.c
+index 480dc1faf0a0..8b5f9c9e56b2 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvendor.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvendor.c
+@@ -31,6 +31,7 @@
+ #include <osl.h>
+ #include <linux/kernel.h>
+ #include <linux/vmalloc.h>
++#include <linux/sched/clock.h>
+ 
+ #include <bcmutils.h>
+ #include <bcmwifi_channels.h>
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.c b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.c
+index e94dcaba1096..06df99f7be6e 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.c
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.c
+@@ -875,7 +875,7 @@ wl_cfg80211_handle_if_role_conflict(struct bcm_cfg80211 *cfg,
+ #endif /* WL_IFACE_MGMT */
+ 
+ s32
+-wl_release_vif_macaddr(struct bcm_cfg80211 *cfg, u8 *mac_addr, u16 wl_iftype)
++wl_release_vif_macaddr(struct bcm_cfg80211 *cfg, const u8 *mac_addr, u16 wl_iftype)
+ {
+ 	struct net_device *ndev =  bcmcfg_to_prmry_ndev(cfg);
+ 	u16 org_toggle_bytes;
+@@ -4792,6 +4792,13 @@ static void wl_tdls_enable(struct bcm_cfg80211 *cfg)
+ 
+ #endif  /* WLTDLS */
+ 
++
++
++	int	(*tdls_mgmt)(struct wiphy *wiphy, struct net_device *dev,
++			     const u8 *peer, u8 action_code,  u8 dialog_token,
++			     u16 status_code, u32 peer_capability,
++			     bool initiator, const u8 *buf, size_t len);
++
+ #if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 2, 0)) || \
+ 	defined(WL_COMPAT_WIRELESS)
+ s32
+@@ -4807,7 +4814,7 @@ wl_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev,
+ 	u32 peer_capability, const u8 *buf, size_t len)
+ #elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
+ wl_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev,
+-       const u8 *peer, u8 action_code, u8 dialog_token, u16 status_code,
++       const u8 *peer, int link_id, u8 action_code, u8 dialog_token, u16 status_code,
+        u32 peer_capability, bool initiator, const u8 *buf, size_t len)
+ #else /* CONFIG_ARCH_MSM && TDLS_MGMT_VERSION2 */
+ wl_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev,
+@@ -5249,7 +5256,7 @@ wl_cfg80211_ch_switch_notify(struct net_device *dev, uint16 chanspec, struct wip
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION (3, 8, 0))
+ 	freq = chandef.chan ? chandef.chan->center_freq : chandef.center_freq1;
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 2) || defined(CFG80211_BKPORT_MLO)
+-	cfg80211_ch_switch_notify(dev, &chandef, 0);
++	cfg80211_ch_switch_notify(dev, &chandef, 0, 0);
+ #else
+ 	cfg80211_ch_switch_notify(dev, &chandef);
+ #endif
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.h b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.h
+index e7daeec18374..bd3cc705fe98 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.h
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_cfgvif.h
+@@ -126,7 +126,7 @@ extern wl_iftype_t wl_cfg80211_get_sec_iface(struct bcm_cfg80211 *cfg);
+ #endif /* WL_IFACE_MGMT */
+ 
+ extern s32 wl_get_vif_macaddr(struct bcm_cfg80211 *cfg, u16 wl_iftype, u8 *mac_addr);
+-extern s32 wl_release_vif_macaddr(struct bcm_cfg80211 *cfg, u8 *mac_addr, u16 wl_iftype);
++extern s32 wl_release_vif_macaddr(struct bcm_cfg80211 *cfg, const u8 *mac_addr, u16 wl_iftype);
+ 
+ int wl_cfg80211_set_he_mode(struct net_device *dev, struct bcm_cfg80211 *cfg,
+ 		s32 bssidx, u32 interface_type, bool set);
+@@ -159,7 +159,7 @@ extern s32 wl_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev,
+ 	u32 peer_capability, const u8 *buf, size_t len);
+ #elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
+ extern s32 wl_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev,
+-       const u8 *peer, u8 action_code, u8 dialog_token, u16 status_code,
++       const u8 *peer, int link_id, u8 action_code, u8 dialog_token, u16 status_code,
+        u32 peer_capability, bool initiator, const u8 *buf, size_t len);
+ #else /* CONFIG_ARCH_MSM && TDLS_MGMT_VERSION2 */
+ extern s32 wl_cfg80211_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev,
+diff --git a/drivers/net/wireless/broadcom/bcmdhd/wl_iw.h b/drivers/net/wireless/broadcom/bcmdhd/wl_iw.h
+index e161006a2bd6..f7bd60ca25c6 100644
+--- a/drivers/net/wireless/broadcom/bcmdhd/wl_iw.h
++++ b/drivers/net/wireless/broadcom/bcmdhd/wl_iw.h
+@@ -83,7 +83,7 @@ typedef struct wl_iw_extra_params {
+ #define	WL_IW_RSSI_INVALID	 0	/* invalid RSSI value */
+ #define MAX_WX_STRING 80
+ #define SSID_FMT_BUF_LEN	((4 * 32) + 1)
+-#define isprint(c) bcm_isprint(c)
++//#define isprint(c) bcm_isprint(c)
+ #define WL_IW_SET_ACTIVE_SCAN	(SIOCIWFIRSTPRIV+1)
+ #define WL_IW_GET_RSSI			(SIOCIWFIRSTPRIV+3)
+ #define WL_IW_SET_PASSIVE_SCAN	(SIOCIWFIRSTPRIV+5)
+-- 
+2.34.1
+

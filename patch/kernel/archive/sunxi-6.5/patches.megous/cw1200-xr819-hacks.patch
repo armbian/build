@@ -1,0 +1,391 @@
+From 623947c85005d76dab4021f33b3b3fdadee9dac4 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sat, 3 Jul 2021 08:59:21 +0200
+Subject: [PATCH 417/464] cw1200: xr819 hacks
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/net/wireless/st/cw1200/cw1200.h      |  7 ++-
+ drivers/net/wireless/st/cw1200/cw1200_sdio.c | 59 ++++++++++++++++++--
+ drivers/net/wireless/st/cw1200/cw1200_spi.c  |  3 +-
+ drivers/net/wireless/st/cw1200/fwio.c        | 20 +++++--
+ drivers/net/wireless/st/cw1200/fwio.h        |  3 +
+ drivers/net/wireless/st/cw1200/main.c        |  9 ++-
+ drivers/net/wireless/st/cw1200/queue.h       |  7 ++-
+ drivers/net/wireless/st/cw1200/sta.c         | 46 ++++++++-------
+ drivers/net/wireless/st/cw1200/wsm.c         |  9 +++
+ 9 files changed, 128 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/net/wireless/st/cw1200/cw1200.h b/drivers/net/wireless/st/cw1200/cw1200.h
+index 48f808cdc1cb..22bf12ea2859 100644
+--- a/drivers/net/wireless/st/cw1200/cw1200.h
++++ b/drivers/net/wireless/st/cw1200/cw1200.h
+@@ -117,6 +117,10 @@ struct cw1200_common {
+ 		CW1200_HW_REV_CUT22 = 22,
+ 		CW1X60_HW_REV       = 40,
+ 	} hw_revision;
++	enum cw1200_fw_api {
++		CW1200_FW_API_ORIGINAL = 0,
++		CW1200_FW_API_XRADIO,
++	} fw_api;
+ 	int                             hw_refclk;
+ 	bool				hw_have_5ghz;
+ 	const struct firmware		*sdd;
+@@ -292,7 +296,8 @@ int cw1200_core_probe(const struct hwbus_ops *hwbus_ops,
+ 		      struct device *pdev,
+ 		      struct cw1200_common **pself,
+ 		      int ref_clk, const u8 *macaddr,
+-		      const char *sdd_path, bool have_5ghz);
++		      const char *sdd_path, bool have_5ghz,
++		      unsigned int fw_api);
+ void cw1200_core_release(struct cw1200_common *self);
+ 
+ #define FWLOAD_BLOCK_SIZE (1024)
+diff --git a/drivers/net/wireless/st/cw1200/cw1200_sdio.c b/drivers/net/wireless/st/cw1200/cw1200_sdio.c
+index 4c30b5772ce0..dd0c76c16398 100644
+--- a/drivers/net/wireless/st/cw1200/cw1200_sdio.c
++++ b/drivers/net/wireless/st/cw1200/cw1200_sdio.c
+@@ -15,6 +15,9 @@
+ #include <linux/mmc/card.h>
+ #include <linux/mmc/sdio.h>
+ #include <linux/mmc/sdio_ids.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/of_net.h>
+ #include <net/mac80211.h>
+ 
+ #include "cw1200.h"
+@@ -30,9 +33,7 @@ MODULE_LICENSE("GPL");
+ 
+ /* Default platform data for Sagrad modules */
+ static struct cw1200_platform_data_sdio sagrad_109x_evk_platform_data = {
+-	.ref_clk = 38400,
+-	.have_5ghz = false,
+-	.sdd_file = "sdd_sagrad_1091_1098.bin",
++	.ref_clk = 24000,
+ };
+ 
+ /* Allow platform data to be overridden */
+@@ -50,8 +51,15 @@ struct hwbus_priv {
+ };
+ 
+ static const struct sdio_device_id cw1200_sdio_ids[] = {
+-	{ SDIO_DEVICE(SDIO_VENDOR_ID_STE, SDIO_DEVICE_ID_STE_CW1200) },
+-	{ /* end: all zeroes */			},
++	{
++		SDIO_DEVICE(SDIO_VENDOR_ID_STE, SDIO_DEVICE_ID_STE_CW1200),
++		.driver_data = CW1200_FW_API_ORIGINAL
++	},
++	{
++		SDIO_DEVICE(SDIO_VENDOR_ID_STE, 0x2281),
++		.driver_data = CW1200_FW_API_XRADIO
++	},
++	{ /* end: all zeroes */ },
+ };
+ MODULE_DEVICE_TABLE(sdio, cw1200_sdio_ids);
+ 
+@@ -266,6 +274,41 @@ static const struct hwbus_ops cw1200_sdio_hwbus_ops = {
+ 	.power_mgmt		= cw1200_sdio_pm,
+ };
+ 
++static const struct of_device_id xradio_sdio_of_match_table[] = {
++	{ .compatible = "xradio,xr819" },
++	{ }
++};
++
++static int cw1200_probe_of(struct sdio_func *func)
++{
++	struct device *dev = &func->dev;
++	struct device_node *np = dev->of_node;
++	const struct of_device_id *of_id;
++	u8 *macaddr;
++	int irq;
++
++	of_id = of_match_node(xradio_sdio_of_match_table, np);
++	if (!of_id)
++		return -ENODEV;
++
++	irq = irq_of_parse_and_map(np, 0);
++	if (!irq) {
++		pr_err("SDIO: No irq in platform data\n");
++		return -EINVAL;
++	}
++
++	global_plat_data->irq = irq;
++
++	macaddr = devm_kmalloc(dev, ETH_ALEN, GFP_KERNEL);
++	if (!macaddr)
++		return -ENOMEM;
++
++	if (!of_get_mac_address(np, macaddr))
++		global_plat_data->macaddr = macaddr;
++
++	return 0;
++}
++
+ /* Probe Function to be called by SDIO stack when device is discovered */
+ static int cw1200_sdio_probe(struct sdio_func *func,
+ 			     const struct sdio_device_id *id)
+@@ -279,6 +322,8 @@ static int cw1200_sdio_probe(struct sdio_func *func,
+ 	if (func->num != 0x01)
+ 		return -ENODEV;
+ 
++	cw1200_probe_of(func);
++
+ 	self = kzalloc(sizeof(*self), GFP_KERNEL);
+ 	if (!self) {
+ 		pr_err("Can't allocate SDIO hwbus_priv.\n");
+@@ -286,6 +331,7 @@ static int cw1200_sdio_probe(struct sdio_func *func,
+ 	}
+ 
+ 	func->card->quirks |= MMC_QUIRK_LENIENT_FN0;
++	func->card->quirks |= MMC_QUIRK_BROKEN_BYTE_MODE_512;
+ 
+ 	self->pdata = global_plat_data; /* FIXME */
+ 	self->func = func;
+@@ -301,7 +347,8 @@ static int cw1200_sdio_probe(struct sdio_func *func,
+ 				   self->pdata->ref_clk,
+ 				   self->pdata->macaddr,
+ 				   self->pdata->sdd_file,
+-				   self->pdata->have_5ghz);
++				   self->pdata->have_5ghz,
++				   id->driver_data);
+ 	if (status) {
+ 		cw1200_sdio_irq_unsubscribe(self);
+ 		sdio_claim_host(func);
+diff --git a/drivers/net/wireless/st/cw1200/cw1200_spi.c b/drivers/net/wireless/st/cw1200/cw1200_spi.c
+index c82c0688b549..51a13673c726 100644
+--- a/drivers/net/wireless/st/cw1200/cw1200_spi.c
++++ b/drivers/net/wireless/st/cw1200/cw1200_spi.c
+@@ -412,7 +412,8 @@ static int cw1200_spi_probe(struct spi_device *func)
+ 				   self->pdata->ref_clk,
+ 				   self->pdata->macaddr,
+ 				   self->pdata->sdd_file,
+-				   self->pdata->have_5ghz);
++				   self->pdata->have_5ghz,
++				   CW1200_FW_API_ORIGINAL);
+ 
+ 	if (status) {
+ 		cw1200_spi_irq_unsubscribe(self);
+diff --git a/drivers/net/wireless/st/cw1200/fwio.c b/drivers/net/wireless/st/cw1200/fwio.c
+index a71e90fff616..55cd897a9d4d 100644
+--- a/drivers/net/wireless/st/cw1200/fwio.c
++++ b/drivers/net/wireless/st/cw1200/fwio.c
+@@ -51,10 +51,15 @@ static int cw1200_get_hw_type(u32 config_reg_val, int *major_revision)
+ static int cw1200_load_bootloader(struct cw1200_common *priv)
+ {
+ 	const struct firmware *bootloader = NULL;
+-	const char *bl_path = BOOTLOADER_CW1X60;
+ 	u32 *data, i, addr = AHB_MEMORY_ADDRESS;
++	const char *bl_path;
+ 	int ret;
+ 
++	if (priv->fw_api == CW1200_FW_API_XRADIO)
++		bl_path = BOOTLOADER_XRADIO;
++	else
++		bl_path = BOOTLOADER_CW1X60;
++
+ 	ret = request_firmware(&bootloader, bl_path, priv->pdev);
+ 	if (ret) {
+ 		pr_err("Can't load bootloader file %s.\n", bl_path);
+@@ -145,9 +150,16 @@ static int cw1200_load_firmware_cw1200(struct cw1200_common *priv)
+ 			priv->sdd_path = SDD_FILE_22;
+ 		break;
+ 	case CW1X60_HW_REV:
+-		fw_path = FIRMWARE_CW1X60;
+-		if (!priv->sdd_path)
+-			priv->sdd_path = SDD_FILE_CW1X60;
++		if (priv->fw_api == CW1200_FW_API_XRADIO)
++			fw_path = FIRMWARE_XRADIO;
++		else
++			fw_path = FIRMWARE_CW1X60;
++		if (!priv->sdd_path) {
++			if (priv->fw_api == CW1200_FW_API_XRADIO)
++				priv->sdd_path = SDD_FILE_XRADIO;
++			else
++				priv->sdd_path = SDD_FILE_CW1X60;
++		}
+ 		break;
+ 	default:
+ 		pr_err("Invalid silicon revision %d.\n", priv->hw_revision);
+diff --git a/drivers/net/wireless/st/cw1200/fwio.h b/drivers/net/wireless/st/cw1200/fwio.h
+index c287160a492e..e18f7628cf4c 100644
+--- a/drivers/net/wireless/st/cw1200/fwio.h
++++ b/drivers/net/wireless/st/cw1200/fwio.h
+@@ -15,12 +15,15 @@
+ #define FWIO_H_INCLUDED
+ 
+ #define BOOTLOADER_CW1X60       "boot_cw1x60.bin"
++#define BOOTLOADER_XRADIO	"boot_xr819.bin"
+ #define FIRMWARE_CW1X60		"wsm_cw1x60.bin"
++#define FIRMWARE_XRADIO		"fw_xr819.bin"
+ #define FIRMWARE_CUT22		"wsm_22.bin"
+ #define FIRMWARE_CUT20		"wsm_20.bin"
+ #define FIRMWARE_CUT11		"wsm_11.bin"
+ #define FIRMWARE_CUT10		"wsm_10.bin"
+ #define SDD_FILE_CW1X60		"sdd_cw1x60.bin"
++#define SDD_FILE_XRADIO		"sdd_xr819.bin"
+ #define SDD_FILE_22		"sdd_22.bin"
+ #define SDD_FILE_20		"sdd_20.bin"
+ #define SDD_FILE_11		"sdd_11.bin"
+diff --git a/drivers/net/wireless/st/cw1200/main.c b/drivers/net/wireless/st/cw1200/main.c
+index 381013e0db63..bb8aa291e055 100644
+--- a/drivers/net/wireless/st/cw1200/main.c
++++ b/drivers/net/wireless/st/cw1200/main.c
+@@ -251,7 +251,8 @@ static const struct wiphy_wowlan_support cw1200_wowlan_support = {
+ 
+ 
+ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
+-						const bool have_5ghz)
++					       const bool have_5ghz,
++					       unsigned int fw_api)
+ {
+ 	int i, band;
+ 	struct ieee80211_hw *hw;
+@@ -267,6 +268,7 @@ static struct ieee80211_hw *cw1200_init_common(const u8 *macaddr,
+ 	priv->mode = NL80211_IFTYPE_UNSPECIFIED;
+ 	priv->rates = cw1200_rates; /* TODO: fetch from FW */
+ 	priv->mcs_rates = cw1200_n_rates;
++	priv->fw_api = fw_api;
+ 	if (cw1200_ba_rx_tids != -1)
+ 		priv->ba_rx_tid_mask = cw1200_ba_rx_tids;
+ 	else
+@@ -518,7 +520,8 @@ int cw1200_core_probe(const struct hwbus_ops *hwbus_ops,
+ 		      struct device *pdev,
+ 		      struct cw1200_common **core,
+ 		      int ref_clk, const u8 *macaddr,
+-		      const char *sdd_path, bool have_5ghz)
++		      const char *sdd_path, bool have_5ghz,
++		      unsigned int fw_api)
+ {
+ 	int err = -EINVAL;
+ 	struct ieee80211_hw *dev;
+@@ -528,7 +531,7 @@ int cw1200_core_probe(const struct hwbus_ops *hwbus_ops,
+ 		.disable_more_flag_usage = true,
+ 	};
+ 
+-	dev = cw1200_init_common(macaddr, have_5ghz);
++	dev = cw1200_init_common(macaddr, have_5ghz, fw_api);
+ 	if (!dev)
+ 		goto err;
+ 
+diff --git a/drivers/net/wireless/st/cw1200/queue.h b/drivers/net/wireless/st/cw1200/queue.h
+index 96ac69ae97de..103b56d81b9e 100644
+--- a/drivers/net/wireless/st/cw1200/queue.h
++++ b/drivers/net/wireless/st/cw1200/queue.h
+@@ -102,7 +102,12 @@ bool cw1200_queue_stats_is_empty(struct cw1200_queue_stats *stats,
+ 
+ static inline u8 cw1200_queue_get_queue_id(u32 packet_id)
+ {
+-	return (packet_id >> 16) & 0xFF;
++	return (packet_id >> 16) & 0xF;
++}
++
++static inline u8 cw1200_queue_get_link_id(u32 packet_id)
++{
++	return (packet_id >> 24) & 0xF;
+ }
+ 
+ static inline u8 cw1200_queue_get_generation(u32 packet_id)
+diff --git a/drivers/net/wireless/st/cw1200/sta.c b/drivers/net/wireless/st/cw1200/sta.c
+index 8ef1d06b9bbd..209216fcd4c3 100644
+--- a/drivers/net/wireless/st/cw1200/sta.c
++++ b/drivers/net/wireless/st/cw1200/sta.c
+@@ -343,28 +343,34 @@ int cw1200_config(struct ieee80211_hw *dev, u32 changed)
+ 	if ((changed & IEEE80211_CONF_CHANGE_CHANNEL) &&
+ 	    (priv->channel != conf->chandef.chan)) {
+ 		struct ieee80211_channel *ch = conf->chandef.chan;
+-		struct wsm_switch_channel channel = {
+-			.channel_number = ch->hw_value,
+-		};
++
+ 		pr_debug("[STA] Freq %d (wsm ch: %d).\n",
+ 			 ch->center_freq, ch->hw_value);
+ 
+-		/* __cw1200_flush() implicitly locks tx, if successful */
+-		if (!__cw1200_flush(priv, false)) {
+-			if (!wsm_switch_channel(priv, &channel)) {
+-				ret = wait_event_timeout(priv->channel_switch_done,
+-							 !priv->channel_switch_in_progress,
+-							 3 * HZ);
+-				if (ret) {
+-					/* Already unlocks if successful */
+-					priv->channel = ch;
+-					ret = 0;
++		if (priv->fw_api == CW1200_FW_API_XRADIO) {
++			priv->channel = ch;
++		} else {
++			struct wsm_switch_channel channel = {
++				.channel_number = ch->hw_value,
++			};
++
++			/* __cw1200_flush() implicitly locks tx, if successful */
++			if (!__cw1200_flush(priv, false)) {
++				if (!wsm_switch_channel(priv, &channel)) {
++					ret = wait_event_timeout(priv->channel_switch_done,
++								!priv->channel_switch_in_progress,
++								3 * HZ);
++					if (ret) {
++						/* Already unlocks if successful */
++						priv->channel = ch;
++						ret = 0;
++					} else {
++						ret = -ETIMEDOUT;
++					}
+ 				} else {
+-					ret = -ETIMEDOUT;
++					/* Unlock if switch channel fails */
++					wsm_unlock_tx(priv);
+ 				}
+-			} else {
+-				/* Unlock if switch channel fails */
+-				wsm_unlock_tx(priv);
+ 			}
+ 		}
+ 	}
+@@ -1303,7 +1309,7 @@ static void cw1200_do_join(struct cw1200_common *priv)
+ 	}
+ 
+ 	/* Enable asynchronous join calls */
+-	if (!priv->vif->cfg.ibss_joined) {
++	if (priv->fw_api != CW1200_FW_API_XRADIO && !priv->vif->cfg.ibss_joined) {
+ 		join.flags |= WSM_JOIN_FLAGS_FORCE;
+ 		join.flags |= WSM_JOIN_FLAGS_FORCE_WITH_COMPLETE_IND;
+ 	}
+@@ -1743,7 +1749,9 @@ void cw1200_set_cts_work(struct work_struct *work)
+ 
+ 	wsm_write_mib(priv, WSM_MIB_ID_NON_ERP_PROTECTION,
+ 		      &use_cts_prot, sizeof(use_cts_prot));
+-	wsm_update_ie(priv, &update_ie);
++	if (priv->fw_api != CW1200_FW_API_XRADIO ||
++	    priv->mode != NL80211_IFTYPE_STATION)
++		wsm_update_ie(priv, &update_ie);
+ 
+ 	return;
+ }
+diff --git a/drivers/net/wireless/st/cw1200/wsm.c b/drivers/net/wireless/st/cw1200/wsm.c
+index 4a9e4b5d3547..ee378265aee5 100644
+--- a/drivers/net/wireless/st/cw1200/wsm.c
++++ b/drivers/net/wireless/st/cw1200/wsm.c
+@@ -360,9 +360,18 @@ static int wsm_tx_confirm(struct cw1200_common *priv,
+ 	tx_confirm.tx_rate = WSM_GET8(buf);
+ 	tx_confirm.ack_failures = WSM_GET8(buf);
+ 	tx_confirm.flags = WSM_GET16(buf);
++	if (priv->fw_api == CW1200_FW_API_XRADIO) {
++		/* rate_try[3] */
++		WSM_GET32(buf);
++		WSM_GET32(buf);
++		WSM_GET32(buf);
++	}
+ 	tx_confirm.media_delay = WSM_GET32(buf);
+ 	tx_confirm.tx_queue_delay = WSM_GET32(buf);
+ 
++	if (priv->fw_api == CW1200_FW_API_XRADIO)
++		link_id = cw1200_queue_get_link_id(tx_confirm.packet_id);
++
+ 	cw1200_tx_confirm_cb(priv, link_id, &tx_confirm);
+ 	return 0;
+ 
+-- 
+2.34.1
+

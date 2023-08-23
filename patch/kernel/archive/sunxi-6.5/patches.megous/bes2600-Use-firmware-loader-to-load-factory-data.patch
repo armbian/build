@@ -1,0 +1,122 @@
+From d2729217f274de08358fb3575301a0e2baea5fcc Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 29 Jul 2023 23:42:40 +0200
+Subject: [PATCH 411/464] bes2600: Use firmware loader to load factory data
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/bes2600/bes2600_factory.c | 49 ++++++++++++++++++++++-
+ drivers/staging/bes2600/bes2600_factory.h |  1 +
+ drivers/staging/bes2600/bes_fw.c          |  5 +++
+ 3 files changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/bes2600/bes2600_factory.c b/drivers/staging/bes2600/bes2600_factory.c
+index f1a7a84027c2..ed0027a3d2fa 100644
+--- a/drivers/staging/bes2600/bes2600_factory.c
++++ b/drivers/staging/bes2600/bes2600_factory.c
+@@ -13,6 +13,7 @@
+ #include <linux/sched.h>
+ #include <linux/fs.h>
+ #include <linux/slab.h>
++#include <linux/firmware.h>
+ #include <linux/mutex.h>
+ #include <linux/crc32.h>
+ #include <linux/version.h>
+@@ -208,7 +209,7 @@ static int factory_section_write_file(char *path, void *buffer, int size)
+ 	return ret;
+ }
+ 
+-static inline int factory_parse(uint8_t *source_buf, struct factory_t *factory)
++static inline int factory_parse(const uint8_t *source_buf, struct factory_t *factory)
+ {
+ 	int ret = 0;
+ 
+@@ -471,6 +472,52 @@ u8* bes2600_get_factory_cali_data(u8 *file_buffer, u32 *data_len, char *path)
+ 	return ret_p;
+ }
+ 
++int bes2600_get_factory_cali_data_fwloader(u8 **data, u32 *data_len)
++{
++	const struct firmware *fw_bin;
++	int ret;
++
++	factory_p = NULL;
++
++	ret = request_firmware(&fw_bin, "bes2600/bes2600_factory.txt", NULL);
++	if (ret) {
++		bes2600_err(BES2600_DBG_FACTORY, "request firmware err:%d\n", ret);
++		return ret;
++	}
++
++	if (fw_bin->size > FACTORY_MAX_SIZE) {
++		bes2600_err(BES2600_DBG_FACTORY,
++			    "bes2600_factory.txt size check failed, read_size: %zu max_size: %d\n",
++			    fw_bin->size, FACTORY_MAX_SIZE);
++		return -E2BIG;
++	}
++
++	memset(&factory_cali_data, 0, sizeof(struct factory_t));
++
++	ret = factory_parse(fw_bin->data, &factory_cali_data);
++	if (ret < 0)
++		return ret;
++
++	ret = bes2600_factory_head_info_check(&factory_cali_data);
++	if (ret < 0)
++		return ret;
++
++	ret = bes2600_factory_crc_check(&factory_cali_data);
++	if (ret < 0)
++		return ret;
++
++	bes2600_info(BES2600_DBG_FACTORY, "open wifi factory section success");
++
++	if (data_len)
++		*data_len = sizeof(struct factory_t);
++	if (data)
++		*data = (u8 *)&factory_cali_data;
++
++	factory_p = &factory_cali_data;
++
++	return 0;
++}
++
+ /**
+  * When the calibration file does not exist, a new file is automatically created when
+  * the calibration value is written. After writing, update factory_p, if the update is successful,
+diff --git a/drivers/staging/bes2600/bes2600_factory.h b/drivers/staging/bes2600/bes2600_factory.h
+index 3835b0d9c96c..8f7a95a7a74e 100644
+--- a/drivers/staging/bes2600/bes2600_factory.h
++++ b/drivers/staging/bes2600/bes2600_factory.h
+@@ -201,6 +201,7 @@ enum factory_cali_status {
+ 
+ /* read wifi & bt factory cali value*/
+ u8* bes2600_get_factory_cali_data(u8 *file_buffer, u32 *data_len, char *path);
++int bes2600_get_factory_cali_data_fwloader(u8 **data, u32 *data_len);
+ void factory_little_endian_cvrt(u8 *data);
+ void bes2600_factory_data_check(u8* data);
+ void bes2600_factory_lock(void);
+diff --git a/drivers/staging/bes2600/bes_fw.c b/drivers/staging/bes2600/bes_fw.c
+index b32d514c0ec9..b6a420945966 100644
+--- a/drivers/staging/bes2600/bes_fw.c
++++ b/drivers/staging/bes2600/bes_fw.c
+@@ -1125,11 +1125,16 @@ int bes2600_load_firmware_sdio(struct sbus_ops *ops, struct sbus_priv *priv)
+ 		return -ENOMEM;
+ 
+ 	bes2600_factory_lock();
++#ifdef CONFIG_FW_LOADER
++	ret = bes2600_get_factory_cali_data_fwloader(&factory_data, &factory_data_len);
++	if (ret) {
++#else
+ #ifdef FACTORY_SAVE_MULTI_PATH
+ 	if (!(factory_data = bes2600_get_factory_cali_data(file_buffer, &factory_data_len, FACTORY_PATH)) &&
+ 		!(factory_data = bes2600_get_factory_cali_data(file_buffer, &factory_data_len, FACTORY_DEFAULT_PATH))) {
+ #else
+ 	if (!(factory_data = bes2600_get_factory_cali_data(file_buffer, &factory_data_len, FACTORY_PATH))) {
++#endif
+ #endif
+ 		bes2600_warn(BES2600_DBG_DOWNLOAD, "factory cali data get failed.\n");
+ 	} else {
+-- 
+2.34.1
+
