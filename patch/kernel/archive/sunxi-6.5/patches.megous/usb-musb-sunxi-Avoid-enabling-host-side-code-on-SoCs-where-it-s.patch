@@ -1,0 +1,107 @@
+From 7267720c1091e43a6115a2d1b5c353a773061f15 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 6 Mar 2023 01:19:52 +0100
+Subject: [PATCH 110/464] usb: musb: sunxi: Avoid enabling host side code on
+ SoCs where it's not used
+
+For some sunxi SoCs host side code is active but unused, because
+phy re-routes USB handling to a regular EHCI/OHCI driver.
+
+When host side code of musb is left initialized it sometimes
+interferes with suspend to RAM. Disabling the host side code
+on SoCs that re-route host mode to a regular *HCI hardware
+block fixes the issue.
+
+Issue: https://gitlab.com/postmarketOS/pmaports/-/issues/1478
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/musb/musb_core.c | 10 ++++++++++
+ drivers/usb/musb/sunxi.c     | 30 +++++++++++++++++++++++-------
+ 2 files changed, 33 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/usb/musb/musb_core.c b/drivers/usb/musb/musb_core.c
+index ecbd3784bec3..52aa9fd55d51 100644
+--- a/drivers/usb/musb/musb_core.c
++++ b/drivers/usb/musb/musb_core.c
+@@ -975,6 +975,16 @@ static void musb_handle_intr_disconnect(struct musb *musb, u8 devctl)
+ 	case OTG_STATE_B_IDLE:
+ 		musb_g_disconnect(musb);
+ 		break;
++	case OTG_STATE_A_WAIT_VRISE:
++		/*
++		 * For sunxi use case, where host side of the musb driver
++		 * is not used for host mode, we want to ignore
++		 * OTG_STATE_A_WAIT_VRISE state set in sunxi glue code
++		 * when transitioning to host mode on disconnect, in
++		 * order to not confuse the dmesg reader about possible
++		 * issues.
++		 */
++		break;
+ 	default:
+ 		WARNING("unhandled DISCONNECT transition (%s)\n",
+ 			musb_otg_state_string(musb));
+diff --git a/drivers/usb/musb/sunxi.c b/drivers/usb/musb/sunxi.c
+index c5c6c4e09300..1f753cbdcea0 100644
+--- a/drivers/usb/musb/sunxi.c
++++ b/drivers/usb/musb/sunxi.c
+@@ -353,12 +353,6 @@ static int sunxi_musb_set_mode(struct musb *musb, u8 mode)
+ 	if (glue->phy_mode == new_mode)
+ 		return 0;
+ 
+-	if (musb->port_mode != MUSB_OTG) {
+-		dev_err(musb->controller->parent,
+-			"Error changing modes is only supported in dual role mode\n");
+-		return -EINVAL;
+-	}
+-
+ 	if (musb->port1_status & USB_PORT_STAT_ENABLE)
+ 		musb_root_disconnect(musb);
+ 
+@@ -677,13 +671,22 @@ static const struct musb_hdrc_config sunxi_musb_hdrc_config_4eps = {
+ 	.ram_bits	= SUNXI_MUSB_RAM_BITS,
+ };
+ 
++static const char * const sunxi_musb_host_rerouted_phys[] = {
++	"allwinner,sun8i-h3-usb-phy",
++	"allwinner,sun8i-r40-usb-phy",
++	"allwinner,sun8i-v3s-usb-phy",
++	"allwinner,sun50i-a64-usb-phy",
++	"allwinner,sun50i-h6-usb-phy",
++	NULL,
++};
++
+ static int sunxi_musb_probe(struct platform_device *pdev)
+ {
+ 	struct musb_hdrc_platform_data	pdata;
+ 	struct platform_device_info	pinfo;
+ 	struct sunxi_glue		*glue;
+-	struct device_node		*np = pdev->dev.of_node;
+ 	const struct sunxi_musb_cfg	*cfg;
++	struct device_node		*np = pdev->dev.of_node, *phy_np;
+ 	int ret;
+ 
+ 	if (!np) {
+@@ -764,6 +767,19 @@ static int sunxi_musb_probe(struct platform_device *pdev)
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(glue->phy),
+ 				     "Error getting phy\n");
+ 
++	/*
++	 * Host mode is handled outside of the musb driver on some allwinner
++	 * SoCs. We don't need musb host side code to be enabled at all.
++	 * In fact it causes occasional issues with suspend to ram, when
++	 * the host side code is enabled and unused (due to phy being re-routed
++	 * to a different *HCI controller).
++	 */
++	phy_np = glue->phy->dev.of_node;
++	if (of_device_compatible_match(phy_np, sunxi_musb_host_rerouted_phys)) {
++		dev_info(&pdev->dev, "Disabling musb host side code due to re-routed phy\n");
++		pdata.mode = MUSB_PERIPHERAL;
++	}
++
+ 	glue->usb_phy = usb_phy_generic_register();
+ 	if (IS_ERR(glue->usb_phy)) {
+ 		dev_err(&pdev->dev, "Error registering usb-phy %ld\n",
+-- 
+2.34.1
+

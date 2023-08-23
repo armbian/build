@@ -1,0 +1,278 @@
+From 41a8983a6d1362aa5f62b57112d8e303f70fd032 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Tue, 22 Jun 2021 22:12:12 +0200
+Subject: [PATCH 418/464] cw1200: use kmalloc() allocation instead of stack
+
+It turns out that if CONFIG_VMAP_STACK is enabled and src or dst is
+memory allocated on stack, SDIO operations fail due to invalid memory
+address conversion.
+
+Fix that by using kmalloc() allocated memory for read/write 16/32
+funtions.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+---
+ drivers/net/wireless/st/cw1200/bh.c   | 11 +++-
+ drivers/net/wireless/st/cw1200/hwio.c | 52 ++++++++++++---
+ drivers/net/wireless/st/cw1200/hwio.h | 93 +++++++++++++++++++++------
+ 3 files changed, 126 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/net/wireless/st/cw1200/bh.c b/drivers/net/wireless/st/cw1200/bh.c
+index 3b4ded2ac801..ad90549f2e8b 100644
+--- a/drivers/net/wireless/st/cw1200/bh.c
++++ b/drivers/net/wireless/st/cw1200/bh.c
+@@ -415,9 +415,13 @@ static int cw1200_bh(void *arg)
+ 	int pending_tx = 0;
+ 	int tx_burst;
+ 	long status;
+-	u32 dummy;
++	u32 *dummy;
+ 	int ret;
+ 
++	dummy = kmalloc(sizeof(*dummy), GFP_KERNEL);
++	if (!dummy)
++		return -ENOMEM;
++
+ 	for (;;) {
+ 		if (!priv->hw_bufs_used &&
+ 		    priv->powersave_enabled &&
+@@ -439,7 +443,7 @@ static int cw1200_bh(void *arg)
+ 		    (atomic_read(&priv->bh_rx) == 0) &&
+ 		    (atomic_read(&priv->bh_tx) == 0))
+ 			cw1200_reg_read(priv, ST90TDS_CONFIG_REG_ID,
+-					&dummy, sizeof(dummy));
++					dummy, sizeof(*dummy));
+ 
+ 		pr_debug("[BH] waiting ...\n");
+ 		status = wait_event_interruptible_timeout(priv->bh_wq, ({
+@@ -601,5 +605,8 @@ static int cw1200_bh(void *arg)
+ 		priv->bh_error = 1;
+ 		/* TODO: schedule_work(recovery) */
+ 	}
++
++	kfree(dummy);
++
+ 	return 0;
+ }
+diff --git a/drivers/net/wireless/st/cw1200/hwio.c b/drivers/net/wireless/st/cw1200/hwio.c
+index 3ba462de8e91..5521cb7f2233 100644
+--- a/drivers/net/wireless/st/cw1200/hwio.c
++++ b/drivers/net/wireless/st/cw1200/hwio.c
+@@ -66,33 +66,65 @@ static int __cw1200_reg_write(struct cw1200_common *priv, u16 addr,
+ static inline int __cw1200_reg_read_32(struct cw1200_common *priv,
+ 					u16 addr, u32 *val)
+ {
+-	__le32 tmp;
+-	int i = __cw1200_reg_read(priv, addr, &tmp, sizeof(tmp), 0);
+-	*val = le32_to_cpu(tmp);
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	i = __cw1200_reg_read(priv, addr, tmp, sizeof(*tmp), 0);
++	*val = le32_to_cpu(*tmp);
++	kfree(tmp);
+ 	return i;
+ }
+ 
+ static inline int __cw1200_reg_write_32(struct cw1200_common *priv,
+ 					u16 addr, u32 val)
+ {
+-	__le32 tmp = cpu_to_le32(val);
+-	return __cw1200_reg_write(priv, addr, &tmp, sizeof(tmp), 0);
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	*tmp = cpu_to_le32(val);
++	i = __cw1200_reg_write(priv, addr, tmp, sizeof(*tmp), 0);
++	kfree(tmp);
++	return i;
+ }
+ 
+ static inline int __cw1200_reg_read_16(struct cw1200_common *priv,
+ 					u16 addr, u16 *val)
+ {
+-	__le16 tmp;
+-	int i = __cw1200_reg_read(priv, addr, &tmp, sizeof(tmp), 0);
+-	*val = le16_to_cpu(tmp);
++	__le16 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	i = __cw1200_reg_read(priv, addr, tmp, sizeof(*tmp), 0);
++	*val = le16_to_cpu(*tmp);
++	kfree(tmp);
+ 	return i;
+ }
+ 
+ static inline int __cw1200_reg_write_16(struct cw1200_common *priv,
+ 					u16 addr, u16 val)
+ {
+-	__le16 tmp = cpu_to_le16(val);
+-	return __cw1200_reg_write(priv, addr, &tmp, sizeof(tmp), 0);
++	__le16 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	*tmp = cpu_to_le16(val);
++	i = __cw1200_reg_write(priv, addr, tmp, sizeof(*tmp), 0);
++	kfree(tmp);
++	return i;
+ }
+ 
+ int cw1200_reg_read(struct cw1200_common *priv, u16 addr, void *buf,
+diff --git a/drivers/net/wireless/st/cw1200/hwio.h b/drivers/net/wireless/st/cw1200/hwio.h
+index e2d0fb2d02ef..49387f43e37b 100644
+--- a/drivers/net/wireless/st/cw1200/hwio.h
++++ b/drivers/net/wireless/st/cw1200/hwio.h
+@@ -167,34 +167,65 @@ int cw1200_reg_write(struct cw1200_common *priv, u16 addr,
+ static inline int cw1200_reg_read_16(struct cw1200_common *priv,
+ 				     u16 addr, u16 *val)
+ {
+-	__le32 tmp;
++	__le32 *tmp;
+ 	int i;
+-	i = cw1200_reg_read(priv, addr, &tmp, sizeof(tmp));
+-	*val = le32_to_cpu(tmp) & 0xfffff;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	i = cw1200_reg_read(priv, addr, tmp, sizeof(*tmp));
++	*val = le32_to_cpu(*tmp) & 0xfffff;
++	kfree(tmp);
+ 	return i;
+ }
+ 
+ static inline int cw1200_reg_write_16(struct cw1200_common *priv,
+ 				      u16 addr, u16 val)
+ {
+-	__le32 tmp = cpu_to_le32((u32)val);
+-	return cw1200_reg_write(priv, addr, &tmp, sizeof(tmp));
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	*tmp = cpu_to_le32((u32)val);
++	i = cw1200_reg_write(priv, addr, tmp, sizeof(*tmp));
++	kfree(tmp);
++	return i;
+ }
+ 
+ static inline int cw1200_reg_read_32(struct cw1200_common *priv,
+ 				     u16 addr, u32 *val)
+ {
+-	__le32 tmp;
+-	int i = cw1200_reg_read(priv, addr, &tmp, sizeof(tmp));
+-	*val = le32_to_cpu(tmp);
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	i = cw1200_reg_read(priv, addr, tmp, sizeof(*tmp));
++	*val = le32_to_cpu(*tmp);
++	kfree(tmp);
+ 	return i;
+ }
+ 
+ static inline int cw1200_reg_write_32(struct cw1200_common *priv,
+ 				      u16 addr, u32 val)
+ {
+-	__le32 tmp = cpu_to_le32(val);
+-	return cw1200_reg_write(priv, addr, &tmp, sizeof(val));
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	*tmp = cpu_to_le32(val);
++	i = cw1200_reg_write(priv, addr, tmp, sizeof(val));
++	kfree(tmp);
++	return i;
+ }
+ 
+ int cw1200_indirect_read(struct cw1200_common *priv, u32 addr, void *buf,
+@@ -221,24 +252,50 @@ static inline int cw1200_ahb_read(struct cw1200_common *priv, u32 addr,
+ static inline int cw1200_apb_read_32(struct cw1200_common *priv,
+ 				     u32 addr, u32 *val)
+ {
+-	__le32 tmp;
+-	int i = cw1200_apb_read(priv, addr, &tmp, sizeof(tmp));
+-	*val = le32_to_cpu(tmp);
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	i = cw1200_apb_read(priv, addr, tmp, sizeof(*tmp));
++	*val = le32_to_cpu(*tmp);
++	kfree(tmp);
++
+ 	return i;
+ }
+ 
+ static inline int cw1200_apb_write_32(struct cw1200_common *priv,
+ 				      u32 addr, u32 val)
+ {
+-	__le32 tmp = cpu_to_le32(val);
+-	return cw1200_apb_write(priv, addr, &tmp, sizeof(val));
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	*tmp = cpu_to_le32(val);
++	i = cw1200_apb_write(priv, addr, tmp, sizeof(*tmp));
++	kfree(tmp);
++
++	return i;
+ }
+ static inline int cw1200_ahb_read_32(struct cw1200_common *priv,
+ 				     u32 addr, u32 *val)
+ {
+-	__le32 tmp;
+-	int i = cw1200_ahb_read(priv, addr, &tmp, sizeof(tmp));
+-	*val = le32_to_cpu(tmp);
++	__le32 *tmp;
++	int i;
++
++	tmp = kmalloc(sizeof(*tmp), GFP_KERNEL);
++	if (!tmp)
++		return -ENOMEM;
++
++	i = cw1200_ahb_read(priv, addr, tmp, sizeof(*tmp));
++	*val = le32_to_cpu(*tmp);
++	kfree(tmp);
++
+ 	return i;
+ }
+ 
+-- 
+2.34.1
+

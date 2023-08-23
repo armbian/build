@@ -1,0 +1,141 @@
+From 5834adecf1fdc733a7abd014f670e49d75236a59 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 19 Oct 2022 02:54:20 +0200
+Subject: [PATCH 313/464] drm: panel: hx8394: Add mode/init sequence update via
+ firmware load
+
+This is useful for trying various modes/init sequences quickly from
+userspace.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/gpu/drm/panel/panel-himax-hx8394.c | 78 +++++++++++++++++++++-
+ 1 file changed, 77 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-himax-hx8394.c b/drivers/gpu/drm/panel/panel-himax-hx8394.c
+index d4fb5d1b295b..b7422118c791 100644
+--- a/drivers/gpu/drm/panel/panel-himax-hx8394.c
++++ b/drivers/gpu/drm/panel/panel-himax-hx8394.c
+@@ -15,6 +15,7 @@
+ #include <linux/media-bus-format.h>
+ #include <linux/mod_devicetable.h>
+ #include <linux/module.h>
++#include <linux/firmware.h>
+ #include <linux/of_device.h>
+ #include <linux/regulator/consumer.h>
+ 
+@@ -71,6 +72,9 @@ struct hx8394 {
+ 	bool prepared;
+ 
+ 	const struct hx8394_panel_desc *desc;
++	
++	u8* init_seq;
++	int init_seq_size;
+ };
+ 
+ struct hx8394_panel_desc {
+@@ -89,6 +93,21 @@ static inline struct hx8394 *panel_to_hx8394(struct drm_panel *panel)
+ static int hsd060bhw4_init_sequence(struct hx8394 *ctx)
+ {
+ 	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
++	u8* s = ctx->init_seq;
++	u8* e = ctx->init_seq + ctx->init_seq_size;
++	int ret;
++
++	if (s) {
++		while (s < e) {
++			ret = mipi_dsi_dcs_write(dsi, s[0], s + 2, s[1]);
++			if (ret < 0)
++				return ret;
++
++			s += s[1] + 2;
++		}
++
++		return 0;
++	}
+ 
+ 	/* 5.19.8 SETEXTC: Set extension command (B9h) */
+ 	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETEXTC,
+@@ -180,7 +199,7 @@ static int hsd060bhw4_init_sequence(struct hx8394 *ctx)
+ 	return 0;
+ }
+ 
+-static const struct drm_display_mode hsd060bhw4_mode = {
++static struct drm_display_mode hsd060bhw4_mode = {
+ 	.hdisplay    = 720,
+ 	.hsync_start = 720 + 40,
+ 	.hsync_end   = 720 + 40 + 46,
+@@ -343,6 +362,61 @@ static const struct drm_panel_funcs hx8394_drm_funcs = {
+ 	.get_modes = hx8394_get_modes,
+ };
+ 
++struct drm_display_mode_head {
++	int clock;		/* in kHz */
++	u16 hdisplay;
++	u16 hsync_start;
++	u16 hsync_end;
++	u16 htotal;
++	u16 hskew;
++	u16 vdisplay;
++	u16 vsync_start;
++	u16 vsync_end;
++	u16 vtotal;
++	u16 vscan;
++};
++
++static void hx8394_load_mode(struct hx8394 *ctx)
++{
++        const char* fw_name = "hx8394-mode.bin";
++        const struct firmware *fw;
++        struct drm_display_mode_head h;
++        int ret;
++
++        ret = request_firmware(&fw, fw_name, ctx->dev);
++        if (ret < 0)
++                return;
++
++	if (fw->size < sizeof(h))
++		goto out_free;
++
++	memcpy(&h, fw->data, sizeof(h));
++
++	hsd060bhw4_mode.hdisplay = h.hdisplay;
++	hsd060bhw4_mode.hsync_start = h.hsync_start;
++	hsd060bhw4_mode.hsync_end = h.hsync_end;
++	hsd060bhw4_mode.htotal = h.htotal;
++	hsd060bhw4_mode.vdisplay = h.vdisplay;
++	hsd060bhw4_mode.vsync_start = h.vsync_start;
++	hsd060bhw4_mode.vsync_end = h.vsync_end;
++	hsd060bhw4_mode.vtotal = h.vtotal;
++	hsd060bhw4_mode.clock = h.clock;
++	//hsd060bhw4_mode.flags = h.flags;
++
++	if (fw->size <= sizeof(h))
++		goto out_free;
++
++	ctx->init_seq_size = fw->size - sizeof(h);
++	ctx->init_seq = devm_kzalloc(ctx->dev, ctx->init_seq_size, GFP_KERNEL);
++	if (ctx->init_seq == NULL)
++		goto out_free;
++
++	memcpy(ctx->init_seq, fw->data + sizeof(h), ctx->init_seq_size);
++
++out_free:
++        release_firmware(fw);
++}
++
+ static int hx8394_probe(struct mipi_dsi_device *dsi)
+ {
+ 	struct device *dev = &dsi->dev;
+@@ -363,6 +437,8 @@ static int hx8394_probe(struct mipi_dsi_device *dsi)
+ 	ctx->dev = dev;
+ 	ctx->desc = of_device_get_match_data(dev);
+ 
++	hx8394_load_mode(ctx);
++
+ 	dsi->mode_flags = ctx->desc->mode_flags;
+ 	dsi->format = ctx->desc->format;
+ 	dsi->lanes = ctx->desc->lanes;
+-- 
+2.34.1
+

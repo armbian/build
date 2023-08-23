@@ -1,0 +1,122 @@
+From 6c709d8a9108bf2664fa4a7f0f04a641b7e757f9 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 6 Mar 2023 01:12:27 +0100
+Subject: [PATCH 043/464] media: ov5640: Don't powerup the sensor during driver
+ probe
+
+It causes autofocus clicking during boot on some devices, and
+it's enough to do it when turning on the sensor power by media
+pipeline via s_power callback, later on.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/media/i2c/ov5640.c | 56 +++++++++-----------------------------
+ 1 file changed, 13 insertions(+), 43 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5640.c b/drivers/media/i2c/ov5640.c
+index 3d2f2f65d5cf..f8297c0f604c 100644
+--- a/drivers/media/i2c/ov5640.c
++++ b/drivers/media/i2c/ov5640.c
+@@ -2500,6 +2500,7 @@ static void ov5640_powerup_sequence(struct ov5640_dev *sensor)
+ static int ov5640_set_power_on(struct ov5640_dev *sensor)
+ {
+ 	struct i2c_client *client = sensor->i2c_client;
++	u16 chip_id;
+ 	int ret;
+ 
+ 	ret = clk_prepare_enable(sensor->xclk);
+@@ -2523,6 +2524,13 @@ static int ov5640_set_power_on(struct ov5640_dev *sensor)
+ 	if (ret)
+ 		goto power_off;
+ 
++	ret = ov5640_read_reg16(sensor, OV5640_REG_CHIP_ID, &chip_id);
++	if (ret) {
++		dev_err(&client->dev, "%s: failed to read chip identifier\n",
++			__func__);
++		goto power_off;
++	}
++
+ 	return 0;
+ 
+ power_off:
+@@ -3817,28 +3825,6 @@ static int ov5640_get_regulators(struct ov5640_dev *sensor)
+ 				       sensor->supplies);
+ }
+ 
+-static int ov5640_check_chip_id(struct ov5640_dev *sensor)
+-{
+-	struct i2c_client *client = sensor->i2c_client;
+-	int ret = 0;
+-	u16 chip_id;
+-
+-	ret = ov5640_read_reg16(sensor, OV5640_REG_CHIP_ID, &chip_id);
+-	if (ret) {
+-		dev_err(&client->dev, "%s: failed to read chip identifier\n",
+-			__func__);
+-		return ret;
+-	}
+-
+-	if (chip_id != 0x5640) {
+-		dev_err(&client->dev, "%s: wrong chip identifier, expected 0x5640, got 0x%x\n",
+-			__func__, chip_id);
+-		return -ENXIO;
+-	}
+-
+-	return 0;
+-}
+-
+ static int ov5640_probe(struct i2c_client *client)
+ {
+ 	struct device *dev = &client->dev;
+@@ -3938,36 +3924,18 @@ static int ov5640_probe(struct i2c_client *client)
+ 	if (ret)
+ 		goto entity_cleanup;
+ 
+-	ret = ov5640_sensor_resume(dev);
+-	if (ret) {
+-		dev_err(dev, "failed to power on\n");
+-		goto entity_cleanup;
+-	}
+-
+-	pm_runtime_set_active(dev);
+-	pm_runtime_get_noresume(dev);
+-	pm_runtime_enable(dev);
+-
+-	ret = ov5640_check_chip_id(sensor);
+-	if (ret)
+-		goto err_pm_runtime;
+-
+ 	ret = v4l2_async_register_subdev_sensor(&sensor->sd);
+ 	if (ret)
+-		goto err_pm_runtime;
++		goto err_controls;
+ 
++	pm_runtime_enable(dev);
+ 	pm_runtime_set_autosuspend_delay(dev, 1000);
+ 	pm_runtime_use_autosuspend(dev);
+-	pm_runtime_mark_last_busy(dev);
+-	pm_runtime_put_autosuspend(dev);
+ 
+ 	return 0;
+ 
+-err_pm_runtime:
+-	pm_runtime_put_noidle(dev);
+-	pm_runtime_disable(dev);
++err_controls:
+ 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+-	ov5640_sensor_suspend(dev);
+ entity_cleanup:
+ 	media_entity_cleanup(&sensor->sd.entity);
+ 	mutex_destroy(&sensor->lock);
+@@ -3980,6 +3948,8 @@ static void ov5640_remove(struct i2c_client *client)
+ 	struct ov5640_dev *sensor = to_ov5640_dev(sd);
+ 	struct device *dev = &client->dev;
+ 
++	pm_runtime_dont_use_autosuspend(dev);
++
+ 	pm_runtime_disable(dev);
+ 	if (!pm_runtime_status_suspended(dev))
+ 		ov5640_sensor_suspend(dev);
+-- 
+2.34.1
+
