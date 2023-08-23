@@ -363,9 +363,16 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 	except subprocess.CalledProcessError as e:
 		# decode utf8 manually, universal_newlines messes up bash encoding
 		logs = parse_log_lines_from_stderr(e.stderr)
-		log.error(f"Error calling Armbian command: {' '.join(exec_cmd)}")
-		log.error(f"Error details: params: {params} - return code: {e.returncode} - stderr: {'; '.join(logs[-5:])}")
-		return {"in": params, "out": {}, "logs": logs, "config_ok": False}
+		if e.returncode == 44:
+			# special handling for exit_with_target_not_supported_error() in armbian core.
+			log.warning(f"Skipped target: {' '.join(exec_cmd)}")
+			log.warning(f"Skipped target details 1: {'; '.join(logs[-5:])}")
+			return {"in": params, "out": {}, "logs": logs, "config_ok": False, "target_not_supported": True}
+		else:
+			log.error(f"Error calling Armbian command: {' '.join(exec_cmd)}")
+			log.error(f"Error details 1: params: {params}")
+			log.error(f"Error details 2: code: {e.returncode} - {'; '.join(logs[-5:])}")
+			return {"in": params, "out": {}, "logs": logs, "config_ok": False}
 
 	if result is not None:
 		if result.stderr:

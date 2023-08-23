@@ -57,7 +57,7 @@ for oci_name in tags_by_oci_name:
 	if len(tags) > 1:
 		list_tags_escaped_quoted = ', '.join([f"'{tag}'" for tag in tags])
 		log.warning(
-			f"Artifact '{oci_name}' has {len(tags)} different tags: {list_tags_escaped_quoted} - this is certainly a problem, go fix the artifact.")
+			f"Artifact '{oci_name}' has {len(tags)} different tags: {list_tags_escaped_quoted}")
 
 # map images to in.target_id
 images_by_target_id = {}
@@ -107,10 +107,10 @@ for target_id, image in images_by_target_id.items():
 	if "pipeline" in image["in"]:
 		if "build-image" in image["in"]["pipeline"]:
 			if not image["in"]["pipeline"]["build-image"]:
-				log.warning(f"Image {image['in']['target_id']} has a pipeline build-image false, skipping")
+				log.debug(f"Image {image['in']['target_id']} has a pipeline build-image false, skipping")
 				continue
 			else:
-				log.warning(f"Image {image['in']['target_id']} has a pipeline build-image true, processing")
+				log.debug(f"Image {image['in']['target_id']} has a pipeline build-image true, processing")
 
 	if target_id not in artifacts_by_target_id:
 		continue
