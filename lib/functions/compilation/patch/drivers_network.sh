@@ -274,7 +274,7 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:69c903b75bde36293c66b25c051916a74dbadf58"
+		local rtl8811cuver="commit:9e2772540f66a69170f43864a6560d0d190d97b1"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -311,9 +311,6 @@ driver_rtl8811CU_rtl8821C() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-VFS-import.patch" "applying"
-
-		# fix compilation for kernels >= 6.3
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-6.3.patch" "applying"
 
 	fi
 
@@ -706,10 +703,15 @@ driver_rtl8723cs() {
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/Bluetooth-hci_h5-Add-support-for-binding-RTL8723CS-with-device-.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-h5-Don-t-re-initialize-rtl8723cs-on-resume.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/bluetooth-btrtl-add-rtl8703bs.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Fix-symbol-conflicts-with-rtw88-driver.patch" "applying"
 	fi
 
 	if linux-version compare "${version}" ge 6.3; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.3.patch" "applying"
+	fi
+
+	if linux-version compare "${version}" ge 6.5; then
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.5.patch" "applying"
 	fi
 
 }
