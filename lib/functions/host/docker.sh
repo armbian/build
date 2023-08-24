@@ -149,26 +149,26 @@ function docker_cli_prepare() {
 	# Detect some docker info; use cached.
 	get_docker_info_once
 
-	DOCKER_SERVER_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Server Version\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Server Version:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server version" "${DOCKER_SERVER_VERSION}" "debug"
 
-	DOCKER_SERVER_KERNEL_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Kernel Version\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_KERNEL_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Kernel Version:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Kernel version" "${DOCKER_SERVER_KERNEL_VERSION}" "debug"
 
-	DOCKER_SERVER_TOTAL_RAM="$(echo "${DOCKER_INFO}" | grep -i -e "Total memory\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_TOTAL_RAM="$(echo "${DOCKER_INFO}" | grep -i -e "Total memory:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Total RAM" "${DOCKER_SERVER_TOTAL_RAM}" "debug"
 
-	DOCKER_SERVER_CPUS="$(echo "${DOCKER_INFO}" | grep -i -e "CPUs\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_CPUS="$(echo "${DOCKER_INFO}" | grep -i -e "CPUs:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server CPUs" "${DOCKER_SERVER_CPUS}" "debug"
 
-	DOCKER_SERVER_OS="$(echo "${DOCKER_INFO}" | grep -i -e "Operating System\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_OS="$(echo "${DOCKER_INFO}" | grep -i -e "Operating System:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server OS" "${DOCKER_SERVER_OS}" "debug"
 
 	declare -g DOCKER_ARMBIAN_HOST_OS_UNAME
 	DOCKER_ARMBIAN_HOST_OS_UNAME="$(uname)"
 	display_alert "Local uname" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 
-	DOCKER_BUILDX_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "buildx\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_BUILDX_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "buildx:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Buildx version" "${DOCKER_BUILDX_VERSION}" "debug"
 
 	declare -g DOCKER_HAS_BUILDX=no
@@ -179,7 +179,7 @@ function docker_cli_prepare() {
 	fi
 	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
-	DOCKER_SERVER_NAME_HOST="$(echo "${DOCKER_INFO}" | grep -i -e "name\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_NAME_HOST="$(echo "${DOCKER_INFO}" | grep -i -e "name:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Hostname" "${DOCKER_SERVER_NAME_HOST}" "debug"
 
 	# Gymnastics: under Darwin, Docker Desktop and Rancher Desktop in dockerd mode behave differently.
