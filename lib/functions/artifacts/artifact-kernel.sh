@@ -73,11 +73,17 @@ function artifact_kernel_prepare_version() {
 
 	declare -A GIT_INFO_KERNEL=([GIT_SOURCE]="${KERNELSOURCE}" [GIT_REF]="${KERNELBRANCH}")
 
+	declare -i kernel_git_cache_ttl_seconds=3600 # by default
+	if [[ "${KERNEL_GIT_CACHE_TTL}" != "" ]]; then
+		kernel_git_cache_ttl_seconds="${KERNEL_GIT_CACHE_TTL}"
+		display_alert "Setting kernel git cache TTL to" "${kernel_git_cache_ttl_seconds}" "warn" # @TODO: info?
+	fi
+
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
 		display_alert "Skipping Makefile version for kernel" "due to KERNEL_SKIP_MAKEFILE_VERSION=yes" "info"
-		run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info
+		memoize_cache_ttl=$kernel_git_cache_ttl_seconds run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info
 	else
-		run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info "include_makefile_body"
+		memoize_cache_ttl=$kernel_git_cache_ttl_seconds run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info "include_makefile_body"
 	fi
 	debug_dict GIT_INFO_KERNEL
 
