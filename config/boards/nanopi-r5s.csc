@@ -17,6 +17,8 @@ BOOTPATCHDIR="v2023.10"
 BOOTCONFIG="nanopi-r5s-rk3568_defconfig"
 BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 
+DEFAULT_OVERLAYS="nanopi-r5s-leds"
+
 # Newer blobs...
 RKBIN_GIT_URL="https://github.com/rpardini/armbian-rkbin.git"
 RKBIN_GIT_BRANCH="update-3568-blobs"
@@ -33,3 +35,14 @@ function add_host_dependencies__new_uboot_wants_python3() {
 	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
 }
 
+function post_family_tweaks__nanopir5s_udev_network_interfaces() {
+	display_alert "$BOARD" "Renaming interfaces WAN LAN1 LAN2" "info"
+
+	mkdir -p $SDCARD/etc/udev/rules.d/
+	cat << EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="wan"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="0000:01:00.0", NAME:="lan1"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan2"
+EOF
+
+}
