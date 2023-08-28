@@ -79,3 +79,13 @@ function pre_customize_image__indiedroid_add_bluetooth() {
 	EOD
 	chroot_sdcard systemctl enable bluetooth-rtl8821cs.service
 }
+function post_family_tweaks__indiedroid_naming_audios() {
+	display_alert "$BOARD" "Renaming indiedroid audios" "info"
+
+	mkdir -p $SDCARD/etc/udev/rules.d/
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-dp0-sound", ENV{SOUND_DESCRIPTION}="DP0 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8388-sound", ENV{SOUND_DESCRIPTION}="ES8388 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+
+	return 0
+}
