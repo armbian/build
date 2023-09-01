@@ -35,7 +35,9 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} no_console_suspend loglevel=${verbosity} mac=${eth_mac} khadas.serial=${usid} partition_type=generic ${extraargs} ${extraboardargs}"
+setenv displayargs "logo=${display_layer},loaded,${fb_addr} vout=${outputmode},${vout_init} panel_type=${panel_type} hdmitx=${cecconfig},${colorattribute} hdmimode=${hdmimode} hdmichecksum=${hdmichecksum} dolby_vision_on=${dolby_vision_on} hdr_policy=${hdr_policy} hdr_priority=${hdr_priority} frac_rate_policy=${frac_rate_policy} hdmi_read_edid=${hdmi_read_edid} cvbsmode=${cvbsmode} osd_reverse=${osd_reverse} video_reverse=${video_reverse}"
+
+setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} no_console_suspend ${displayargs} loglevel=${verbosity} mac=${eth_mac} khadas.serial=${usid} partition_type=generic ${extraargs} ${extraboardargs}"
 
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
