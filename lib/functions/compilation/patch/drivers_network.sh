@@ -229,8 +229,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 driver_xradio_xr819() {
 
 	# Wireless drivers for Xradio XR819 chipsets
-	if linux-version compare "${version}" ge 4.19 && linux-version compare "${version}" le 5.19 &&
-		[[ "$LINUXFAMILY" == sunxi* ]]; then
+	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 
@@ -258,6 +257,27 @@ driver_xradio_xr819() {
 
 		# add support for K5.13+
 		process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
+
+		# add support for K5.19+
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-code-cleanup.patch" "applying"
+
+		# add support for K5.19+
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-insmod-rmmod-fx.patch" "applying"
+
+		# add support for K5.19+
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-5.19.patch" "applying"
+
+		# add support for K6.0+
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-6.0.patch" "applying"
+
+		# add support for K6.1+
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-6.1.patch" "applying"
+
+		# add support for K6.2+
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-6.2.patch" "applying"
+
+		# vmmaped stack memory access fix
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-vmmaped-stack-fix.patch" "applying"
 
 		# add support for aarch64
 		if [[ $ARCH == arm64 ]]; then
