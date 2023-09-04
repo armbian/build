@@ -14,6 +14,11 @@ BOOT_SPI_RKSPI_LOADER="yes"
 MODULES="sprdbt_tty sprdwl_ng"
 MODULES_BLACKLIST_LEGACY="bcmdhd"
 
+# Newer blobs. Tested to work with opi3b
+DDR_BLOB="rk35/rk3566_ddr_1056MHz_v1.18.bin"
+BL31_BLOB="rk35/rk3568_bl31_v1.43.elf"
+ROCKUSB_BLOB="rk35/rk3566_spl_loader_1.14.bin" # For `EXT=rkdevflash` flashing
+
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__orangepi3b_use_vendor_uboot() {
 	BOOTSOURCE='https://github.com/orangepi-xunlong/u-boot-orangepi.git'
