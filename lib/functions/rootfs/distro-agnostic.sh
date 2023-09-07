@@ -134,8 +134,8 @@ function install_distribution_agnostic() {
 		fi
 		cat <<- EOF > "$SDCARD/boot/extlinux/extlinux.conf"
 			label ${VENDOR}
-			  kernel ${bootpart_prefix}$NAME_KERNEL
-			  initrd ${bootpart_prefix}$NAME_INITRD
+				kernel ${bootpart_prefix}$NAME_KERNEL
+				initrd ${bootpart_prefix}$NAME_INITRD
 		EOF
 		if [[ -n $BOOT_FDT_FILE ]]; then
 			if [[ $BOOT_FDT_FILE != "none" ]]; then
