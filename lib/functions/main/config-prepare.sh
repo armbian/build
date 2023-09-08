@@ -206,6 +206,11 @@ function config_post_main() {
 		ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 	fi
 
+	if [[ -n $OPENSBISOURCE ]]; then
+		declare -g OPENSBISOURCEDIR
+		OPENSBISOURCEDIR="${OPENSBIDIR}/$(branch2dir "${OPENSBIBRANCH}")"
+	fi
+
 	if [[ -n $CRUSTSOURCE ]]; then
 		declare -g CRUSTSOURCEDIR
 		CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
