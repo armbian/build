@@ -327,7 +327,8 @@ function compile_uboot() {
 	# Configure for compiling on the host
 
 	## Find the first toolchain
-	local toolchain="$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")"
+	local toolchain
+	toolchain="$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")"
 
 	## Verify that the toolchain is set
 	[ -n "$toolchain" ] || exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER:-"MISSING-"}gcc ${UBOOT_USE_GCC:-"NOT_SET"}"
