@@ -25,25 +25,27 @@ compile_opensbi() {
 	esac
 
 	# Handle overlays
+	local opensbidir
 	case "$USE_OVERLAYFS" in
 		"yes")
-			local opensbidir="$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$OPENSBISOURCEDIR" "opensbi_${LINUXFAMILY}_${BRANCH}")"
+			opensbidir="$(overlayfs_wrapper "wrap" "$SRC/cache/sources/$OPENSBISOURCEDIR" "opensbi_${LINUXFAMILY}_${BRANCH}")"
 			;;
 		*)
-			local opensbidir="$SRC/cache/sources/$OPENSBISOURCEDIR"
+			opensbidir="$SRC/cache/sources/$OPENSBISOURCEDIR"
 	esac
 
 	cd "$opensbidir" || exit
 
 	display_alert "Compiling OpenSBI" "" "info"
 
-	# build riscv64
+	# Manage toolchain
+	local toolchain
 	systemarch="$(dpkg --print-architecture)"
 	case "$systemarch" in
 		"amd64")
-			local toolchain="$(find_toolchain "$OPENSBI_COMPILER" "$OPENSBI_USE_GCC")"
+			toolchain="$(find_toolchain "$OPENSBI_COMPILER" "$OPENSBI_USE_GCC")"
 
-			[ -n $toolchain ] || exit_with_error "Could not find required toolchain" "${OPENSBI_COMPILER}gcc $OPENSBI_USE_GCC"
+			[ -n "$toolchain" ] || exit_with_error "Could not find required toolchain" "${OPENSBI_COMPILER}gcc $OPENSBI_USE_GCC"
 			;;
 		*) exit_with_error "This architecture '$systemarch' is not implemented to build OpenSBI for board '$BOARD', fixme?"
 	esac
@@ -53,6 +55,7 @@ compile_opensbi() {
 
 	# Patch handling
 	local target_make target_patchdir target_files
+	# shellcheck disable=SC2034 # Unsure if we need that or not
 	target_make="$(cut -d';' -f1 <<< "$OPENSBI_TARGET_MAP")"
 	target_patchdir="$(cut -d';' -f2 <<< "$OPENSBI_TARGET_MAP")"
 	target_files="$(cut -d';' -f3 <<< "$OPENSBI_TARGET_MAP")"
