@@ -1,8 +1,12 @@
-# RISC-V LicheePi 4A
-BOARD_MAINTAINER="chainsx kreyren"
+# shellcheck shell=bash
+# shellcheck disable=SC2034 # FIXME-QA(Krey): Define source directive for shellcheck
+
+# Provide common configuration for the SiPeed LicheePi 4A
+
+# NOTE(chainsx): Based on feedback, compiling U-Boot, OpenSBI, and the kernel using the GNU GCC compiler instead of the Thead-optimized compilation toolchain can lead to occasional issues in areas such as audio.
 
 # Metadata
-BOARD_NAME="LicheePi 4A"
+BOARD_NAME="SiPeed LicheePi 4A"
 BOARDFAMILY="thead"
 
 # OpenSBI
@@ -24,8 +28,25 @@ case "$BRANCH" in
 		BOOTSOURCE='https://github.com/chainsx/thead-u-boot'
 		BOOTBRANCH='branch:extlinux'
 		BOOTPATCHDIR="legacy"
-		BOOT_FDT_FILE="thead/light-lpi4a.dtb"
-		BOOTCONFIG="light_lpi4a_defconfig"
+
+		case "$LICHEEPI4A_VARIANT" in
+			"8")
+				# https://github.com/chainsx/thead-u-boot/blob/extlinux/configs/light_lpi4a_defconfig
+				BOOTCONFIG="light_lpi4a_defconfig"
+
+				# https://github.com/revyos/thead-kernel/blob/lpi4a/arch/riscv/boot/dts/thead/light-lpi4a.dts
+				BOOT_FDT_FILE="thead/light-lpi4a.dtb"
+				;;
+			"16")
+				# https://github.com/chainsx/thead-u-boot/blob/extlinux/configs/light_lpi4a_16g_defconfig
+				BOOTCONFIG="light_lpi4a_16g_defconfig"
+
+				# https://github.com/revyos/thead-kernel/blob/lpi4a/arch/riscv/boot/dts/thead/light-lpi4a-16gb.dts
+				BOOT_FDT_FILE="thead/light-lpi4a-16gb.dtb"
+				;;
+			*) exit_with_error "The SiPeed LicheePi 4A Variant '$LICHEEPI4A_VARIANT' is not implemented, fixme? bug?"
+		esac
+
 		BOOTFS_TYPE="ext4"
 		UBOOT_TARGET_MAP=";;u-boot-with-spl.bin"
 		;;
@@ -34,19 +55,22 @@ case "$BRANCH" in
 esac
 
 # Kernel
+# FIXME(Krey): Implement current and edge
 KERNEL_TARGET="legacy"
 
-KERNELSOURCE='https://github.com/revyos/thead-kernel'
-KERNELBRANCH="branch:lpi4a"
-declare -g KERNEL_MAJOR_MINOR="5.10"
+case "$BRANCH" in
+	"legacy")
+		KERNELSOURCE='https://github.com/revyos/thead-kernel'
+		KERNELBRANCH="branch:lpi4a"
+		declare -g KERNEL_MAJOR_MINOR="5.10"
+	;;
+	*) display_alert "Building kernel for the board '$BOARD' is not implemented for branch '$BRANCH, success is not guaranteed" warn
+esac
 
 SERIALCON="ttyS0:115200"
 
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="rootwait rw earlycon clk_ignore_unused loglevel=7 eth=\$ethaddr rootrwoptions=rw,noatime rootrwreset=yes"
-
-# Misc
-SKIP_BOOTSPLASH="yes"
 
 # Additionals
 function post_family_tweaks__licheepi4a() {
