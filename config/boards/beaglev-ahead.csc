@@ -8,8 +8,8 @@ BOARD_NAME="BeagleV-Ahead"
 BOARDFAMILY="thead"
 
 # OpenSBI
-OPENSBISOURCE="https://gitee.com/thead-yocto/opensbi"
-OPENSBIBRANCH="branch:master"
+OPENSBISOURCE="https://github.com/riscv-software-src/opensbi"
+OPENSBIBRANCH="branch:th1520-v1.3.1"
 
 # Bootloader
 BOOTSOURCE='https://github.com/chainsx/thead-u-boot'
