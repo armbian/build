@@ -442,8 +442,6 @@ driver_rtw88() {
 	if linux-version compare "${version}" ge 6.1; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
 		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/rtw88/${version}/002-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
-		#process_patch_file "${SRC}/patch/misc/rtw88/hack/001-revert-rtw88-sdio-size-and-timout-to-rfc-v1.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/002-rtw88-usb-make-work-queues-high-priority.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/003-rtw88-decrease-the-log-level-of-tx-report.patch" "applying"
 	fi
