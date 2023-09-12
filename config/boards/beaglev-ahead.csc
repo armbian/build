@@ -8,7 +8,7 @@ BOARD_NAME="BeagleV-Ahead"
 BOARDFAMILY="thead"
 
 # OpenSBI
-OPENSBISOURCE="https://github.com/riscv-software-src/opensbi"
+OPENSBISOURCE="https://github.com/revyos/opensbi"
 OPENSBIBRANCH="branch:th1520-v1.3.1"
 
 # Bootloader
@@ -20,6 +20,7 @@ BOOT_FDT_FILE="thead/light-beagle.dtb"
 BOOTCONFIG="light_beagle_defconfig"
 
 # Kernel
+# FIXME(Krey): Pull this on top of 6.5.2 (has over 2 months of riscv changes)
 KERNELSOURCE="https://github.com/beagleboard/linux"
 KERNELBRANCH="branch:v6.5-rc1-BeagleV-Ahead"
 declare -g KERNEL_MAJOR_MINOR="6.5"
