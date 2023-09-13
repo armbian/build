@@ -153,6 +153,7 @@ function compile_armbian-bsp-cli() {
 	# Keeping armbian-apt-updates as a configuration, solve the problem
 	cat <<- EOF > "${destination}"/DEBIAN/conffiles
 		/usr/lib/armbian/armbian-apt-updates
+		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
 	EOF
 
 	# trigger uInitrd creation after installation, to apply
