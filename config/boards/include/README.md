@@ -1,1 +1,0 @@
-Storing common configuration for the same boards

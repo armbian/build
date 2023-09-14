@@ -55,12 +55,6 @@ function compile_uboot_target() {
 		# atftempdir is under WORKDIR, so no cleanup necessary.
 	fi
 
-	# opensbitempdir comes from opensbi.sh's compile_opensbi()
-	if [[ -n $OPENSBISOURCE && -d "${opensbitempdir}" ]]; then
-		display_alert "Copying over bin/elf's from opensbitempdir" "$opensbitempdir" "debug"
-		run_host_command_logged cp -pv "${opensbitempdir}"/*.bin "${opensbitempdir}"/*.elf ./ # only works due to nullglob
-	fi
-
 	# crusttempdir comes from crust.sh's compile_crust()
 	if [[ -n $CRUSTSOURCE && -d "${crusttempdir}" ]]; then
 		display_alert "Copying over bin/elf's from crusttempdir" "${crusttempdir}" "debug"
@@ -200,10 +194,9 @@ function compile_uboot_target() {
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
-	# FIXME-QA(Krey): I don't like the handling of OPENSBI here
 	do_with_ccache_statistics run_host_command_logged_long_running \
 		"CFLAGS='${uboot_cflags}'" "KCFLAGS='${uboot_cflags}'" \
-		CCACHE_BASEDIR="$(pwd)" OPENSBI="$([ -z "$OPENSBISOURCE" ] || echo "$SRC/cache/sources/opensbi/fw_dynamic.bin")" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		unbuffer make "$target_make" "$CTHREADS" "${cross_compile}"
 
 	display_alert "${uboot_prefix}built u-boot target" "${version} in $((SECONDS - ts)) seconds" "info"
@@ -293,7 +286,6 @@ function deploy_built_uboot_bins_for_one_target_to_packaging_area() {
 }
 
 function compile_uboot() {
-	# FIXME-DOCS(Krey): Missing explanation
 	: "${artifact_version:?artifact_version is not set}"
 
 	display_alert "Compiling u-boot" "BOOTSOURCE: ${BOOTSOURCE}" "debug"
@@ -319,33 +311,31 @@ function compile_uboot() {
 
 	# read uboot version
 	local version hash
-	version="$(grab_version "$ubootdir")"
-	hash="$(git --git-dir="$ubootdir"/.git rev-parse HEAD)"
+	version=$(grab_version "$ubootdir")
+	hash=$(git --git-dir="$ubootdir"/.git rev-parse HEAD)
 
 	display_alert "Compiling u-boot" "$version ${ubootdir}" "info"
 
-	# Configure for compiling on the host
+	# build aarch64
+	if [[ $(dpkg --print-architecture) == amd64 ]]; then
+		local toolchain
+		toolchain=$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")
+		[[ -z $toolchain ]] && exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER}gcc $UBOOT_USE_GCC"
 
-	## Find the first toolchain
-	local toolchain
-	toolchain="$(find_toolchain "$UBOOT_COMPILER" "$UBOOT_USE_GCC")"
+		if [[ -n $UBOOT_TOOLCHAIN2 ]]; then
+			local toolchain2_type toolchain2_ver toolchain2
+			toolchain2_type=$(cut -d':' -f1 <<< "${UBOOT_TOOLCHAIN2}")
+			toolchain2_ver=$(cut -d':' -f2 <<< "${UBOOT_TOOLCHAIN2}")
+			toolchain2=$(find_toolchain "$toolchain2_type" "$toolchain2_ver")
+			[[ -z $toolchain2 ]] && exit_with_error "Could not find required toolchain" "${toolchain2_type}gcc $toolchain2_ver"
+		fi
+		# build aarch64
+	fi
 
-	## Verify that the toolchain is set
-	[ -n "$toolchain" ] || exit_with_error "Could not find required toolchain" "${UBOOT_COMPILER:-"MISSING-"}gcc ${UBOOT_USE_GCC:-"NOT_SET"}"
-
-	## Second toolchain
-
-	[ -z "$UBOOT_TOOLCHAIN2" ] || {
-		local toolchain2_type toolchain2_ver toolchain2
-		toolchain2="$(find_toolchain "$toolchain2_type" "$toolchain2_ver")"
-
-		[ -n "$toolchain2" ] || exit_with_error "Could not find second toolchain" "${toolchain2_type-"MISSING"}gcc ${toolchain2_ver:-"UNKNOWN-VERSION"}"
-	}
-
-	## Inform about the used compiler
-	### FIXME-QA(Krey): Eval is dangerous, verify that it's sane to use here or attempt to sanitize
-	display_alert "Compiler version" "${UBOOT_COMPILER}gcc $(eval env
-	PATH="$toolchain:$toolchain2:$PATH" "${UBOOT_COMPILER}gcc" -dumpversion)" "info"
+	declare gcc_version_main
+	gcc_version_main="$(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${UBOOT_COMPILER}gcc" -dumpfullversion -dumpversion)"
+	display_alert "Compiler version" "${UBOOT_COMPILER}gcc '${gcc_version_main}'" "info"
+	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpfullversion -dumpversion)" "info"
 
 	local uboot_name="linux-u-boot-${BRANCH}-${BOARD}"
 
@@ -353,12 +343,7 @@ function compile_uboot() {
 	declare cleanup_id="" uboottempdir=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "uboot" cleanup_id uboottempdir # namerefs
 
-	mkdir -p \
-		"$uboottempdir/usr/lib/u-boot" \
-		"$uboottempdir/usr/lib/$uboot_name" \
-		"$uboottempdir/DEBIAN"
-
-
+	mkdir -p "$uboottempdir/usr/lib/u-boot" "$uboottempdir/usr/lib/$uboot_name" "$uboottempdir/DEBIAN"
 
 	# Allow extension-based u-boot bulding. We call the hook, and if EXTENSION_BUILT_UBOOT="yes" afterwards, we skip our own compilation.
 	# This is to make it easy to build vendor/downstream uboot with their own quirks.
@@ -437,20 +422,12 @@ function compile_uboot() {
 	[[ -f .config && -n $BOOTCONFIG ]] && run_host_command_logged cp .config "$uboottempdir/usr/lib/u-boot/${BOOTCONFIG}"
 	[[ -f COPYING ]] && run_host_command_logged cp COPYING "$uboottempdir/usr/lib/u-boot/LICENSE"
 	[[ -f Licenses/README ]] && run_host_command_logged cp Licenses/README "$uboottempdir/usr/lib/u-boot/LICENSE"
-
-	[[ -z $atftempdir ]] || {
-		rm -rf "${atftempdir:?}" # @TODO: intricate cleanup; u-boot's pkg uses ATF's tempdir...
-		[[ ! -f $atftempdir/license.md ]] || run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/usr/lib/u-boot/LICENSE.atf"
-	}
-
-	[[ -z $opensbitempdir ]] || {
-		rm -rf "$opensbitempdir" # @TODO: intricate cleanup; u-boot's pkg uses OpenSBI's tempdir...
-		[[ ! -f "$opensbitempdir/license.md" ]] || cp -v "$opensbitempdir/license.md" "$uboottempdir/$uboot_name/usr/lib/u-boot/LICENSE.atf"
-	}
+	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building u-boot deb" "(version: ${artifact_version})"
-
 	fakeroot_dpkg_deb_build "$uboottempdir" "uboot"
+
+	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}" # @TODO: intricate cleanup; u-boot's pkg uses ATF's tempdir...
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
