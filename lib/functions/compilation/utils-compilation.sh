@@ -10,7 +10,6 @@
 # Functions:
 
 # compile_atf
-# compile_opensbi
 # compile_uboot
 # compile_kernel
 # compile_firmware
