@@ -8,7 +8,7 @@
 # https://github.com/armbian/build/
 #
 
-# Generic configuration for the riscv64 architecture
+# Generic configuration for the thead family
 
 ARCH="riscv64"
 
