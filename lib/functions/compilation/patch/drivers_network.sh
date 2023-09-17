@@ -641,6 +641,7 @@ driver_uwe5622_allwinner() {
 		if linux-version compare "${version}" ge 6.3; then
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-v6.3.patch" "applying"
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix-v6.3.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-v6.3-compilation-fix.patch" "applying"
 		else
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner.patch" "applying"
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
