@@ -53,14 +53,23 @@ function improved_git_fetch() {
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
 function git_ensure_safe_directory() {
-	if [[ -n "$(command -v git)" ]]; then
-		local git_dir="$1"
-		display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
-		if ! grep -q "directory = \*" "${HOME}/.gitconfig" 2> /dev/null; then
-			git config --global --add safe.directory "*"
-		fi
-	else
+	local git_dir="$1"
+
+	command -v git 1>/dev/null || {
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
+		return 1
+	}
+
+	if [[ "$(git config --get safe.directory | grep -o "$git_dir")" != "$git_dir" || "$(git config --get safe.directory | grep -o "$git_dir")" != "$git_dir" ]]; then
+		printf "%s\n" \
+			"To avoid git-induced failures with safe directories caused by CVE-2022-24765 you need to manually add directory '$git_dir' as 'safe.directory' in your git configuration" \
+			"To do that locally invoke: git config --add safe.directory \"$git_dir\"" \
+			"To do that globally invoke: git config --global --add safe.directory \"$git_dir\""
+		exit_with_error "Exitting for safety due to misconfigured safe.directory in git.."
+
+	else
+		display_alert "The directory '$git_dir' is set as a safe directory in git"
+		return 0
 	fi
 }
 
