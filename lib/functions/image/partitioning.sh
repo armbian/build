@@ -317,6 +317,10 @@ function prepare_partitions() {
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
 			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/$bootscript_dst
 	fi
+	
+	sudo cp -rf $SRC/lib/functions/rootfs/self_checking.sh     $SDCARD/usr
+	sudo cp -rf $SRC/lib/functions/rootfs/system.cfg           $SDCARD/boot
+	sudo cp -rf $SRC/lib/functions/rootfs/armbianEnv.txt       $SDCARD/boot
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
