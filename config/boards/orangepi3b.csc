@@ -55,3 +55,20 @@ function post_family_config__orangepi3b_use_mainline_uboot() {
 function add_host_dependencies__new_uboot_wants_python3_orangepi3b() {
 	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
 }
+
+function post_family_tweaks_bsp__orangepi3b() {
+	display_alert "$BOARD" "Installing sprd-bluetooth.service" "info"
+
+	# Bluetooth on orangepi3b board is handled by a Spreadtrum (sprd) chip and requires
+	# a custom hciattach_opi binary, plus a systemd service to run it at boot time
+	install -m 755 $SRC/packages/bsp/rk3399/hciattach_opi $destination/usr/bin
+	cp $SRC/packages/bsp/rk3399/sprd-bluetooth.service $destination/lib/systemd/system/
+
+	return 0
+}
+
+function post_family_tweaks__orangepi3b_enable_services() {
+	display_alert "$BOARD" "Enabling sprd-bluetooth.service" "info"
+	chroot_sdcard systemctl enable sprd-bluetooth.service
+	return 0
+}
