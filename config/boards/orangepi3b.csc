@@ -25,9 +25,9 @@ function post_family_config__orangepi3b_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline u-boot overrides" "info"
 
 	BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git"
-	BOOTBRANCH="commit:a821e84f39ed32f150cb8c6aeced836a2cdfee0a" # specific commit, from "branch:rk3568-2023.10"
+	BOOTBRANCH="commit:63073b4af636146d26a7f0f258610eed060c8f34" # specific commit, from "branch:rk3568-2023.10"
 	BOOTDIR="u-boot-${BOARD}"                                    # do not share u-boot directory
-	BOOTPATCHDIR="v2023.10"                                      # has SPI NOR ID, defconfig & DT patches in "board_orangepi3b" subdir
+	BOOTPATCHDIR="v2023.10-orangepi3b"                           # empty, patches are already in Kwiboo's branch:rk3568-2023.10
 
 	BOOTDELAY=1 # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot.itb idbloader.img idbloader-spi.img"
