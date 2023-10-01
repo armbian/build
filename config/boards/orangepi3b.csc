@@ -25,9 +25,9 @@ function post_family_config__orangepi3b_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline u-boot overrides" "info"
 
 	BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git"
-	BOOTBRANCH="commit:a821e84f39ed32f150cb8c6aeced836a2cdfee0a" # specific commit, from "branch:rk3568-2023.10"
+	BOOTBRANCH="commit:63073b4af636146d26a7f0f258610eed060c8f34" # specific commit, from "branch:rk3568-2023.10"
 	BOOTDIR="u-boot-${BOARD}"                                    # do not share u-boot directory
-	BOOTPATCHDIR="v2023.10"                                      # has SPI NOR ID, defconfig & DT patches in "board_orangepi3b" subdir
+	BOOTPATCHDIR="v2023.10-orangepi3b"                           # empty, patches are already in Kwiboo's branch:rk3568-2023.10
 
 	BOOTDELAY=1 # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot.itb idbloader.img idbloader-spi.img"
@@ -54,4 +54,21 @@ function post_family_config__orangepi3b_use_mainline_uboot() {
 
 function add_host_dependencies__new_uboot_wants_python3_orangepi3b() {
 	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
+}
+
+function post_family_tweaks_bsp__orangepi3b() {
+	display_alert "$BOARD" "Installing sprd-bluetooth.service" "info"
+
+	# Bluetooth on orangepi3b board is handled by a Spreadtrum (sprd) chip and requires
+	# a custom hciattach_opi binary, plus a systemd service to run it at boot time
+	install -m 755 $SRC/packages/bsp/rk3399/hciattach_opi $destination/usr/bin
+	cp $SRC/packages/bsp/rk3399/sprd-bluetooth.service $destination/lib/systemd/system/
+
+	return 0
+}
+
+function post_family_tweaks__orangepi3b_enable_services() {
+	display_alert "$BOARD" "Enabling sprd-bluetooth.service" "info"
+	chroot_sdcard systemctl enable sprd-bluetooth.service
+	return 0
 }

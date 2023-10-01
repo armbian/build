@@ -240,8 +240,11 @@ class PatchFileInDir:
 		log.info(f"Rewriting {output_file} with new patches...")
 		with open(output_file, "w") as f:
 			for patch in patches:
-				log.info(f"Writing patch {patch.counter} to {output_file}...")
-				f.write(patch.rewritten_patch)
+				if patch.parent.patch_dir.is_autogen_dir:
+					log.debug(f"Skipping autogen patch {patch.counter} in file {output_file}...")
+				else:
+					log.info(f"Writing patch {patch.counter} to {output_file}...")
+					f.write(patch.rewritten_patch)
 
 
 # Placeholder for future manual work
