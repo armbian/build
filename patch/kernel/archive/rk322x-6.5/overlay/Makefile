@@ -14,6 +14,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk322x-led-conf5.dtbo   \
 	rk322x-led-conf6.dtbo	\
 	rk322x-led-conf7.dtbo	\
+	rk322x-led-conf8.dtbo   \
 	rk322x-cpu-hs.dtbo	\
 	rk322x-cpu-hs-lv.dtbo	\
 	rk322x-wlan-alt-wiring.dtbo \
