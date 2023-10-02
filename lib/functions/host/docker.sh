@@ -201,12 +201,12 @@ function docker_cli_prepare() {
 		esac
 	fi
 
-	declare un_ignore_dot_git=""
-	declare include_dot_git_dir=""
+	declare -g docker_un_ignore_dot_git=""
+	declare -g docker_include_dot_git_dir=""
 	if [[ "${DOCKER_PASS_GIT}" == "yes" ]]; then
 		display_alert "git/docker:" "adding static copy of .git to Dockerfile" "info"
-		un_ignore_dot_git="!.git"
-		include_dot_git_dir="COPY .git ${DOCKER_ARMBIAN_TARGET_PATH}/.git"
+		docker_un_ignore_dot_git="!.git"
+		docker_include_dot_git_dir="COPY .git ${DOCKER_ARMBIAN_TARGET_PATH}/.git"
 	fi
 
 	# Info summary message. Thank you, GitHub Co-pilot!
@@ -229,7 +229,7 @@ function docker_cli_prepare_dockerfile() {
 		!/extensions
 		!/config/sources
 		!/config/templates
-		${un_ignore_dot_git}
+		${docker_un_ignore_dot_git}
 
 		# Ignore unnecessary files inside include directories
 		# This should go after the include directories
@@ -289,7 +289,7 @@ function docker_cli_prepare_dockerfile() {
 		${c}${c_req}RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." && \\
 		${c}${c_req} ARMBIAN_INSIDE_DOCKERFILE_BUILD="yes" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \\
 		${c}${c_req} rm -rf "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache"
-		${include_dot_git_dir}
+		${docker_include_dot_git_dir}
 	INITIAL_DOCKERFILE
 	# For debugging: RUN rm -fv /usr/bin/pip3 # Remove pip3 symlink to make sure we're not depending on it; non-Dockers may not have it
 }
