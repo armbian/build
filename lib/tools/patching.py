@@ -315,7 +315,7 @@ if apply_patches:
 				commit_hash = committed['commit_hash']
 				one_patch.git_commit_hash = commit_hash
 
-				if rewrite_patches_in_place:
+				if rewrite_patches_in_place and not (one_patch.parent.patch_dir.is_autogen_dir):
 					rewritten_patch = patching_utils.export_commit_as_patch(git_repo, commit_hash)
 					one_patch.rewritten_patch = rewritten_patch
 
