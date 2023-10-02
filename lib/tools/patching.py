@@ -249,6 +249,8 @@ total_patches = len(VALID_PATCHES)
 any_failed_to_apply = False
 failed_to_apply_list = []
 
+autopatcher_descriptions: list[dt_makefile_patcher.AutomaticPatchDescription] = []
+
 if apply_patches:
 	log.debug("Cleaning target git directory...")
 	git_repo = Repo(GIT_WORK_DIR, odbt=GitCmdObjectDB)
@@ -326,15 +328,15 @@ if apply_patches:
 
 	# Include the dts/dtsi marked dts-directories in the config
 	if pconfig.has_dts_directories:
-		dt_makefile_patcher.copy_bare_files(autopatcher_params, "dt")
+		autopatcher_descriptions.extend(dt_makefile_patcher.copy_bare_files(autopatcher_params, "dt"))
 
 	# Include the overlay stuff
 	if pconfig.has_dts_directories:
-		dt_makefile_patcher.copy_bare_files(autopatcher_params, "overlay")
+		autopatcher_descriptions.extend(dt_makefile_patcher.copy_bare_files(autopatcher_params, "overlay"))
 
 	# Autopatch the Makefile(s) according to the config
 	if pconfig.has_autopatch_makefile_dt_configs:
-		dt_makefile_patcher.auto_patch_all_dt_makefiles(autopatcher_params)
+		autopatcher_descriptions.extend(dt_makefile_patcher.auto_patch_all_dt_makefiles(autopatcher_params))
 
 	if rewrite_patches_in_place:
 		# Now; we need to write the patches to files.
@@ -429,15 +431,22 @@ console = Console(color_system="standard", width=console_width, highlight=False)
 # Use Rich to print a summary of the patches
 if True:
 	summary_table = Table(title=f"Summary of {PATCH_TYPE} patches", show_header=True, show_lines=True, box=rich.box.ROUNDED)
-	summary_table.add_column("Patch / Status", overflow="fold", min_width=25, max_width=35)
+	summary_table.add_column("Patch / Status", overflow="fold", min_width=25)
 	summary_table.add_column("Diffstat / files", max_width=35)
-	summary_table.add_column("Author / Subject", overflow="ellipsis")
+	summary_table.add_column("Author / Subject", overflow="ellipsis", min_width=25, max_width=40)
 	for one_patch in VALID_PATCHES:
 		summary_table.add_row(
 			# (one_patch.markdown_name(skip_markdown=True)),  # + " " + one_patch.markdown_problems()
 			one_patch.rich_name_status(),
 			(one_patch.text_diffstats() + " " + one_patch.text_files()),
 			(one_patch.text_author() + ": " + one_patch.text_subject())
+		)
+	# Extra items for auto-patched stuff
+	for autopatcher_description in autopatcher_descriptions:
+		summary_table.add_row(
+			autopatcher_description.rich_name_status(),
+			autopatcher_description.rich_diffstats(),
+			autopatcher_description.rich_subject()
 		)
 	console.print(summary_table)
 
