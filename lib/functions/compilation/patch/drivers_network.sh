@@ -669,6 +669,10 @@ driver_uwe5622_allwinner() {
 			fi
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.1.patch" "applying"
 		fi
+
+		if linux-version compare "${version}" ge 6.6; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.6-fix-tty-sdio.patch" "applying"
+		fi
 	fi
 }
 
