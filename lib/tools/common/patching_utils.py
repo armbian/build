@@ -121,6 +121,7 @@ class PatchFileInDir:
 		self.file_name_no_ext_no_dirs = os.path.basename(self.relative_dirs_and_base_file_name)
 		self.from_series = False
 		self.series_counter = None
+		self.multiple_patches_in_file = False
 
 	def __str__(self) -> str:
 		desc: str = f"<PatchFileInDir: file_name:'{self.file_name}', dir:{self.patch_dir.__str__()} >"
@@ -215,6 +216,10 @@ class PatchFileInDir:
 		# sanity check, throw exception if there are no patches
 		if len(patches) == 0:
 			raise Exception("No valid patches found in file " + self.full_file_path())
+
+		if (len(patches) > 1):
+			self.multiple_patches_in_file = True
+
 		return patches
 
 	@staticmethod
@@ -695,7 +700,10 @@ class PatchInPatchFile:
 			else:
 				color = "red"
 		# @TODO: once our ansi-haste supports it, use [link url=file://blaaa]
-		return f"[bold {color}]{self.markdown_name(skip_markdown=True)}"
+		if self.parent.multiple_patches_in_file:
+			return f"[bold][{color}]{self.markdown_name(skip_markdown=True)}[/bold](:{self.counter})"
+		else:
+			return f"[bold {color}]{self.markdown_name(skip_markdown=True)}"
 
 	def rich_patch_output(self):
 		ret = self.patch_output

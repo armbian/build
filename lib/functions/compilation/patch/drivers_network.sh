@@ -635,7 +635,7 @@ driver_rtl8822BS() {
 
 driver_uwe5622_allwinner() {
 	# Unisoc uwe5622 wireless Support
-	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" le 6.5 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
+	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" le 6.6 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
 		if linux-version compare "${version}" ge 6.3; then
@@ -668,6 +668,10 @@ driver_uwe5622_allwinner() {
 				process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-v6.1-post.patch" "applying"
 			fi
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.1.patch" "applying"
+		fi
+
+		if linux-version compare "${version}" ge 6.6; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.6-fix-tty-sdio.patch" "applying"
 		fi
 	fi
 }
