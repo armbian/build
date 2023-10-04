@@ -28,6 +28,7 @@ function armbian_register_commands() {
 		["inventory"]="json_info"         # implemented in cli_json_info_pre_run and cli_json_info_run
 		["targets"]="json_info"           # implemented in cli_json_info_pre_run and cli_json_info_run
 		["targets-dashboard"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["inventory-boards"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
 		["targets-composed"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
 		["debs-to-repo-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 		["gha-matrix"]="json_info"        # implemented in cli_json_info_pre_run and cli_json_info_run
@@ -102,6 +103,9 @@ function armbian_register_commands() {
 		# repo pipeline stuff is usually run on saved/restored artifacts for output/info, so don't clean them by default
 		["debs-to-repo-download"]="CLEAN_MATRIX='no' CLEAN_INFO='no'"
 		["debs-to-repo-reprepro"]="CLEAN_MATRIX='no' CLEAN_INFO='no'"
+
+		# inventory
+		["inventory-boards"]="TARGETS_FILE='something_that_does_not_exist_so_defaults_are_used'"
 
 		# patching
 		["rewrite-kernel-patches"]="REWRITE_PATCHES=yes" # rewrite the patches after round-tripping to git: "rebase patches"
