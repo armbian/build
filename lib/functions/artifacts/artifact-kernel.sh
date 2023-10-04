@@ -208,7 +208,7 @@ function obtain_kernel_git_info_and_makefile() {
 	declare -i kernel_git_cache_ttl_seconds=3600 # by default
 	if [[ "${KERNEL_GIT_CACHE_TTL}" != "" ]]; then
 		kernel_git_cache_ttl_seconds="${KERNEL_GIT_CACHE_TTL}"
-		display_alert "Setting kernel git cache TTL to" "${kernel_git_cache_ttl_seconds}" "warn" # @TODO: info?
+		display_alert "Setting kernel git cache TTL to" "${kernel_git_cache_ttl_seconds}" "info"
 	fi
 
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
