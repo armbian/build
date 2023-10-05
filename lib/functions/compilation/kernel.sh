@@ -77,7 +77,7 @@ function compile_kernel() {
 
 	# Stop after configuring kernel, but only if using a specific CLI command ("kernel-config").
 	# Normal "KERNEL_CONFIGURE=yes" (during image build) is still allowed.
-	if [[ "${KERNEL_CONFIGURE}" == yes && "${ARMBIAN_COMMAND}" == "kernel-config" ]]; then
+	if [[ "${KERNEL_CONFIGURE}" == yes && "${ARMBIAN_COMMAND}" == *kernel-config ]]; then
 		display_alert "Stopping after configuring kernel" "" "cachehit"
 		return 0
 	fi
