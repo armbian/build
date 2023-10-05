@@ -244,7 +244,7 @@ function artifact_kernel_cli_adapter_pre_run() {
 function artifact_kernel_cli_adapter_config_prep() {
 	# Sanity check / cattle guard
 	# If KERNEL_CONFIGURE=yes, or CREATE_PATCHES=yes, user must have used the correct CLI commands, and only add those params.
-	if [[ "${KERNEL_CONFIGURE}" == "yes" && "${ARMBIAN_COMMAND}" != "kernel-config" ]]; then
+	if [[ "${KERNEL_CONFIGURE}" == "yes" && "${ARMBIAN_COMMAND}" != *kernel-config ]]; then
 		exit_with_error "KERNEL_CONFIGURE=yes is not supported anymore. Please use the new 'kernel-config' CLI command. Current command: '${ARMBIAN_COMMAND}'"
 	fi
 
