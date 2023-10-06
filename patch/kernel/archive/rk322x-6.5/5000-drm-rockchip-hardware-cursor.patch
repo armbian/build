@@ -1,0 +1,333 @@
+From ff9a0ab9d920d4a855b4be9912a57ac65e8906e2 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Fri, 10 Sep 2021 14:10:18 +0000
+Subject: [PATCH] drm rockchip hardware cursor
+
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.c | 218 +++++++++++++++++++-
+ drivers/gpu/drm/rockchip/rockchip_drm_vop.h |   3 +
+ drivers/gpu/drm/rockchip/rockchip_vop_reg.c |  19 +-
+ 3 files changed, 238 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+index 83a926c0a..b0832320e 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.c
+@@ -1160,6 +1160,207 @@ static void vop_plane_atomic_async_update(struct drm_plane *plane,
+ 	}
+ }
+ 
++static void vop_cursor_atomic_update(struct drm_plane *plane,
++		struct drm_atomic_state *state)
++{
++
++	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
++									   plane);
++	struct drm_crtc *crtc = new_state->crtc;
++	struct vop_win *vop_win = to_vop_win(plane);
++	const struct vop_win_data *win = vop_win->data;
++	struct vop *vop = to_vop(new_state->crtc);
++	struct drm_framebuffer *fb = new_state->fb;
++	unsigned int actual_w, actual_h;
++	unsigned int dsp_stx, dsp_sty;
++	uint32_t dsp_st;
++	struct drm_rect *src = &new_state->src;
++	struct drm_rect *dest = &new_state->dst;
++	struct drm_gem_object *obj;
++	struct rockchip_gem_object *rk_obj;
++	dma_addr_t dma_addr;
++	uint32_t val;
++	bool rb_swap;
++	int win_index = VOP_WIN_TO_INDEX(vop_win);
++	int format;
++
++	/*
++	 * can't update plane when vop is disabled.
++	 */
++	if (WARN_ON(!crtc))
++		return;
++
++	if (WARN_ON(!vop->is_enabled))
++		return;
++
++	if (!new_state->visible) {
++		vop_plane_atomic_disable(plane, state);
++		return;
++	}
++
++	obj = fb->obj[0];
++	rk_obj = to_rockchip_obj(obj);
++
++// 	actual_w = drm_rect_width(src) >> 16;
++// 	actual_h = drm_rect_height(src) >> 16;
++
++	dsp_stx = dest->x1 + crtc->mode.htotal - crtc->mode.hsync_start;
++	dsp_sty = dest->y1 + crtc->mode.vtotal - crtc->mode.vsync_start;
++	dsp_st = dsp_sty << 16 | (dsp_stx & 0xffff);
++
++	dma_addr = rk_obj->dma_addr;
++
++	/*
++	 * For y-mirroring we need to move address
++	 * to the beginning of the last line.
++	 */
++// 	if (new_state->rotation & DRM_MODE_REFLECT_Y)
++// 		dma_addr += (actual_h - 1) * fb->pitches[0];
++
++	spin_lock(&vop->reg_lock);
++
++	if (!(vop->win_enabled & BIT(win_index))) {
++
++		format = vop_convert_format(fb->format->format);
++
++		VOP_WIN_SET(vop, win, format, format);
++
++// 		if (win->phy->scl)
++// 			scl_vop_cal_scl_fac(vop, win, actual_w, actual_h,
++// 					drm_rect_width(dest), drm_rect_height(dest),
++// 					fb->format);
++
++		rb_swap = has_rb_swapped(fb->format->format);
++		VOP_WIN_SET(vop, win, rb_swap, rb_swap);
++
++		/*
++		* Blending win0 with the background color doesn't seem to work
++		* correctly. We only get the background color, no matter the contents
++		* of the win0 framebuffer.  However, blending pre-multiplied color
++		* with the default opaque black default background color is a no-op,
++		* so we can just disable blending to get the correct result.
++		*/
++		if (fb->format->has_alpha && win_index > 0) {
++			VOP_WIN_SET(vop, win, dst_alpha_ctl,
++				DST_FACTOR_M0(ALPHA_SRC_INVERSE));
++			val = SRC_ALPHA_EN(1) | SRC_COLOR_M0(ALPHA_SRC_PRE_MUL) |
++				SRC_ALPHA_M0(ALPHA_STRAIGHT) |
++				SRC_BLEND_M0(ALPHA_PER_PIX) |
++				SRC_ALPHA_CAL_M0(ALPHA_NO_SATURATION) |
++				SRC_FACTOR_M0(ALPHA_ONE);
++			VOP_WIN_SET(vop, win, src_alpha_ctl, val);
++
++			VOP_WIN_SET(vop, win, alpha_pre_mul, ALPHA_SRC_PRE_MUL);
++			VOP_WIN_SET(vop, win, alpha_mode, ALPHA_PER_PIX);
++			VOP_WIN_SET(vop, win, alpha_en, 1);
++		} else {
++			VOP_WIN_SET(vop, win, src_alpha_ctl, SRC_ALPHA_EN(0));
++			VOP_WIN_SET(vop, win, alpha_en, 0);
++		}
++
++		// 32x32 = 0, 64x64 = 1, 96x96 = 2, 128x128 = 3
++		VOP_WIN_SET(vop, win, hwc_size, (new_state->crtc_w >> 5) - 1);
++
++		VOP_WIN_SET(vop, win, enable, 1);
++		vop->win_enabled |= BIT(win_index);
++
++	}
++
++	VOP_WIN_SET(vop, win, yrgb_mst, dma_addr);
++	VOP_WIN_SET(vop, win, dsp_st, dsp_st);
++
++	spin_unlock(&vop->reg_lock);
++
++}
++
++static void vop_cursor_atomic_async_update(struct drm_plane *plane,
++					  struct drm_atomic_state *state)
++{
++
++	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
++									   plane);
++	struct vop *vop = to_vop(plane->state->crtc);
++	struct drm_framebuffer *old_fb = plane->state->fb;
++
++	plane->state->crtc_x = new_state->crtc_x;
++	plane->state->crtc_y = new_state->crtc_y;
++	plane->state->crtc_h = new_state->crtc_h;
++	plane->state->crtc_w = new_state->crtc_w;
++	plane->state->src_x = new_state->src_x;
++	plane->state->src_y = new_state->src_y;
++	plane->state->src_h = new_state->src_h;
++	plane->state->src_w = new_state->src_w;
++	swap(plane->state->fb, new_state->fb);
++
++	if (vop->is_enabled) {
++		vop_cursor_atomic_update(plane, state);
++		spin_lock(&vop->reg_lock);
++		vop_cfg_done(vop);
++		spin_unlock(&vop->reg_lock);
++
++		/*
++		 * A scanout can still be occurring, so we can't drop the
++		 * reference to the old framebuffer. To solve this we get a
++		 * reference to old_fb and set a worker to release it later.
++		 * FIXME: if we perform 500 async_update calls before the
++		 * vblank, then we can have 500 different framebuffers waiting
++		 * to be released.
++		 */
++		if (old_fb && plane->state->fb != old_fb) {
++			drm_framebuffer_get(old_fb);
++			WARN_ON(drm_crtc_vblank_get(plane->state->crtc) != 0);
++			drm_flip_work_queue(&vop->fb_unref_work, old_fb);
++			set_bit(VOP_PENDING_FB_UNREF, &vop->pending);
++		}
++	}
++
++}
++
++static int vop_cursor_atomic_check(struct drm_plane *plane,
++			   struct drm_atomic_state *state)
++{
++	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
++										 plane);
++	struct drm_crtc *crtc = new_plane_state->crtc;
++	struct drm_crtc_state *crtc_state;
++	struct drm_framebuffer *fb = new_plane_state->fb;
++	int ret;
++
++	if (!crtc || WARN_ON(!fb))
++		return 0;
++
++	crtc_state = drm_atomic_get_existing_crtc_state(state, crtc);
++	if (WARN_ON(!crtc_state))
++		return -EINVAL;
++
++	ret = drm_atomic_helper_check_plane_state(new_plane_state, crtc_state,
++						  DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
++						  true, true);
++
++	if (ret)
++		return ret;
++
++	if (!new_plane_state->visible)
++		return 0;
++
++	ret = vop_convert_format(fb->format->format);
++	if (ret < 0)
++		return ret;
++
++	if (new_plane_state->crtc_w != new_plane_state->crtc_h)
++		return -EINVAL;
++
++	if (new_plane_state->crtc_w != 0 &&
++	    new_plane_state->crtc_w != 32 &&
++	    new_plane_state->crtc_w != 64 &&
++	    new_plane_state->crtc_w != 96 &&
++	    new_plane_state->crtc_w != 128)
++		return -EINVAL;
++
++	return 0;
++
++}
++
+ static const struct drm_plane_helper_funcs plane_helper_funcs = {
+ 	.atomic_check = vop_plane_atomic_check,
+ 	.atomic_update = vop_plane_atomic_update,
+@@ -1169,6 +1370,15 @@ static const struct drm_plane_helper_funcs plane_helper_funcs = {
+ 	.prepare_fb = drm_gem_plane_helper_prepare_fb,
+ };
+ 
++static const struct drm_plane_helper_funcs cursor_plane_helper_funcs = {
++	.atomic_check = vop_cursor_atomic_check,
++	.atomic_update = vop_cursor_atomic_update,
++	.atomic_disable = vop_plane_atomic_disable,
++	.atomic_async_check = vop_plane_atomic_async_check,
++	.atomic_async_update = vop_cursor_atomic_async_update,
++	.prepare_fb = drm_gem_plane_helper_prepare_fb,
++};
++
+ static const struct drm_plane_funcs vop_plane_funcs = {
+ 	.update_plane	= drm_atomic_helper_update_plane,
+ 	.disable_plane	= drm_atomic_helper_disable_plane,
+@@ -1956,6 +2166,7 @@ static int vop_create_crtc(struct vop *vop)
+ 	struct drm_plane *primary = NULL, *cursor = NULL, *plane, *tmp;
+ 	struct drm_crtc *crtc = &vop->crtc;
+ 	struct device_node *port;
++	const struct drm_plane_helper_funcs *helper_funcs;
+ 	int ret;
+ 	int i;
+ 
+@@ -1976,7 +2187,12 @@ static int vop_create_crtc(struct vop *vop)
+ 		}
+ 
+ 		plane = &vop_win->base;
+-		drm_plane_helper_add(plane, &plane_helper_funcs);
++		helper_funcs = &plane_helper_funcs;
++
++		if ((plane->type == DRM_PLANE_TYPE_CURSOR) && (vop_data->feature & VOP_FEATURE_SPECIAL_CURSOR_PLANE))
++			helper_funcs = &cursor_plane_helper_funcs;
++
++		drm_plane_helper_add(plane, helper_funcs);
+ 		vop_plane_add_properties(plane, i, win_data, vop_data);
+ 		if (plane->type == DRM_PLANE_TYPE_PRIMARY)
+ 			primary = plane;
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+index a997578e1..42dc299d9 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop.h
+@@ -190,6 +190,8 @@ struct vop_win_phy {
+ 	struct vop_reg alpha_mode;
+ 	struct vop_reg alpha_en;
+ 	struct vop_reg channel;
++
++	struct vop_reg hwc_size;
+ };
+ 
+ struct vop_win_yuv2yuv_data {
+@@ -225,6 +227,7 @@ struct vop_data {
+ 
+ #define VOP_FEATURE_OUTPUT_RGB10	BIT(0)
+ #define VOP_FEATURE_INTERNAL_RGB	BIT(1)
++#define VOP_FEATURE_SPECIAL_CURSOR_PLANE BIT(2)
+ 	u64 feature;
+ };
+ 
+diff --git a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+index ab0a78097..70930b410 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
++++ b/drivers/gpu/drm/rockchip/rockchip_vop_reg.c
+@@ -665,6 +665,19 @@ static const struct vop_win_phy rk3288_win23_data = {
+ 	.dst_alpha_ctl = VOP_REG(RK3288_WIN2_DST_ALPHA_CTRL, 0xff, 0),
+ };
+ 
++static const struct vop_win_phy rk3288_cursor_data = {
++	.data_formats = formats_win_lite,
++	.nformats = ARRAY_SIZE(formats_win_lite),
++	.enable = VOP_REG(RK3288_HWC_CTRL0, 0x1, 0),
++	.format = VOP_REG(RK3288_HWC_CTRL0, 0x7, 1),
++	.rb_swap = VOP_REG(RK3288_HWC_CTRL0, 0x1, 12),
++	.dsp_st = VOP_REG(RK3288_HWC_DSP_ST, 0x1fff1fff, 0),
++	.yrgb_mst = VOP_REG(RK3288_HWC_MST, 0xffffffff, 0),
++	.src_alpha_ctl = VOP_REG(RK3288_HWC_SRC_ALPHA_CTRL, 0xff, 0),
++	.dst_alpha_ctl = VOP_REG(RK3288_HWC_DST_ALPHA_CTRL, 0xff, 0),
++	.hwc_size = VOP_REG(RK3288_HWC_CTRL0, 0x3, 5),
++};
++
+ static const struct vop_modeset rk3288_modeset = {
+ 	.htotal_pw = VOP_REG(RK3288_DSP_HTOTAL_HS_END, 0x1fff1fff, 0),
+ 	.hact_st_end = VOP_REG(RK3288_DSP_HACT_ST_END, 0x1fff1fff, 0),
+@@ -756,6 +769,8 @@ static const struct vop_win_data rk3288_vop_win_data[] = {
+ 	{ .base = 0x00, .phy = &rk3288_win23_data,
+ 	  .type = DRM_PLANE_TYPE_OVERLAY },
+ 	{ .base = 0x50, .phy = &rk3288_win23_data,
++	  .type = DRM_PLANE_TYPE_OVERLAY },
++	{ .base = 0x00, .phy = &rk3288_cursor_data,
+ 	  .type = DRM_PLANE_TYPE_CURSOR },
+ };
+ 
+@@ -1132,11 +1132,13 @@ static const struct vop_win_data rk3228_vop_win_data[] = {
+ 	  .type = DRM_PLANE_TYPE_PRIMARY },
+ 	{ .base = 0x40, .phy = &rk3228_win1_data,
+ 	  .type = DRM_PLANE_TYPE_OVERLAY },
++	{ .base = 0x00, .phy = &rk3288_cursor_data,
++	  .type = DRM_PLANE_TYPE_CURSOR },
+ };
+ 
+ static const struct vop_data rk3228_vop = {
+ 	.version = VOP_VERSION(3, 7),
+-	.feature = VOP_FEATURE_OUTPUT_RGB10,
++	.feature = VOP_FEATURE_OUTPUT_RGB10 | VOP_FEATURE_SPECIAL_CURSOR_PLANE,
+ 	.intr = &rk3366_vop_intr,
+ 	.common = &rk3288_common,
+ 	.modeset = &rk3288_modeset,
+-- 
+2.25.1
+
