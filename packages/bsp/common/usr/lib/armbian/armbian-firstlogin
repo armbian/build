@@ -213,6 +213,10 @@ set_timezone_and_locales() {
 }
 
 add_profile_sync_settings() {
+	if [[ ! -f /usr/bin/psd ]]; then
+		return 0
+	fi
+
 	/usr/bin/psd > /dev/null 2>&1
 	config_file="${HOME}/.config/psd/psd.conf"
 	if [ -f "${config_file}" ]; then
@@ -311,12 +315,22 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
 	systemctl daemon-reload
 
-	# detect display manager
-	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2> /dev/null)
-	desktop_gdm3=$(dpkg-query -W -f='${db:Status-Abbrev}\n' gdm3 2> /dev/null)
+	declare desktop_dm="none"
+	declare -i desktop_is_sddm=0 desktop_is_lightdm=0 desktop_is_gdm3=0
+	if [[ -f /usr/bin/sddm ]]; then
+		desktop_dm="sddm"
+		desktop_is_sddm=1
+	fi
+	if [[ -f /usr/sbin/lightdm ]]; then
+		desktop_dm="lightdm"
+		desktop_is_lightdm=1
+	fi
+	if [[ -f /usr/sbin/gdm3 ]]; then
+		desktop_dm="gdm3"
+		desktop_is_gdm3=1
+	fi
 
 	echo -e "\nWaiting for system to finish booting ..."
-
 	systemctl is-system-running --wait > /dev/null
 
 	# enable hiDPI support
@@ -325,6 +339,8 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		[[ -f /etc/lightdm/slick-greeter.conf ]] && echo "enable-hidpi = on" >> /etc/lightdm/slick-greeter.conf
 		# xfce
 		[[ -f /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml ]] && sed -i 's|<property name="WindowScalingFactor" type="int" value=".*|<property name="WindowScalingFactor" type="int" value="2">|g' /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+
+		# framebuffer console larger font
 		setfont /usr/share/consolefonts/Uni3-TerminusBold32x16.psf.gz
 	fi
 
@@ -401,7 +417,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
-		[ -n "$desktop_lightdm" ] && echo -e "\n\e[0;31mDesktop environment will not be enabled if you abort the new user creation\x1B[0m"
+		[[ "${desktop_dm}" != "none" ]] && echo -e "\n\e[0;31mDesktop environment will not be enabled if you abort the new user creation\x1B[0m"
 		add_user
 	done
 	trap - INT TERM EXIT
@@ -415,8 +431,8 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		printf "\nYou selected \e[0;91mZSH\x1B[0m as your default shell. If you want to use it right away, please logout and login! \n\n"
 	fi
 
-	# check whether desktop environment has to be considered
-	if [ -n "$desktop_lightdm" ] && [ -n "$RealName" ]; then
+	# rpardini: hacks per-dm, very much legacy stuff that works by a miracle
+	if [[ "${desktop_dm}" == "lightdm" ]] && [ -n "$RealName" ]; then
 
 		# 1st run goes without login
 		mkdir -p /etc/lightdm/lightdm.conf.d
@@ -428,6 +444,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		EOF
 
 		# select gnome session (has to be first or it breaks budgie/cinnamon desktop autologin and user-session)
+		# @TODO: remove this, gnome should use gdm3, not lightdm
 		[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
 		[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
@@ -467,7 +484,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
 		[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-		# select plasma wayland session
+		# select plasma wayland session # @TODO: rpardini: dead code? kde-plasma desktop should use sddm, not lightdm.
 		[[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
 		[[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
@@ -499,7 +516,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 			who -la | grep root | grep -q tty1 && exit 1
 		fi
 
-	elif [ -n "$desktop_gdm3" ] && [ -n "$RealName" ]; then
+	elif [[ "${desktop_dm}" == "gdm3" ]] && [ -n "$RealName" ]; then
 		# 1st run goes without login
 		mkdir -p /etc/gdm3
 		cat <<- EOF > /etc/gdm3/custom.conf
@@ -529,15 +546,16 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 			# logout if logged at console
 			who -la | grep root | grep -q tty1 && exit 1
 		fi
-
+	elif [[ "${desktop_dm}" == "sddm" ]] && [ -n "$RealName" ]; then
+		# No hacks for sddm. User will have to input password again, and have  chance to choose session wayland
+		echo -e "\n\e[1m\e[39mNow starting desktop environment via ${desktop_dm}...\x1B[0m\n"
+		systemctl enable --now sddm
 	else
-
+		# no display manager detected
 		# Display reboot recommendation if necessary
 		if [[ -f /var/run/resize2fs-reboot ]]; then
 			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
 			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
 		fi
-
 	fi
-
 fi
