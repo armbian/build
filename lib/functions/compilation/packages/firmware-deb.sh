@@ -71,7 +71,7 @@ function compile_firmware() {
 
 	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
 
-	fakeroot_dpkg_deb_build "armbian-firmware${FULL}" "armbian-firmware${FULL}"
+	dpkg_deb_build "armbian-firmware${FULL}" "armbian-firmware${FULL}"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
