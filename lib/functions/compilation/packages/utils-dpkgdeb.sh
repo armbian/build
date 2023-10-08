@@ -111,7 +111,7 @@ function fakeroot_dpkg_deb_build() {
 
 	mkdir -p "${deb_final_dir}"
 	display_alert "Building package, this might take a while.." "${deb_final_filename/*\//}" info
-	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "${package_directory}" "${deb_final_filename}"
+	run_host_command_logged_raw dpkg-deb -b "-Z${DEB_COMPRESS}" "${package_directory}" "${deb_final_filename}"
 }
 
 function dpkg_deb_run_shellcheck_on_scripts() {

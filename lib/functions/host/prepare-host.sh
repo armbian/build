@@ -256,7 +256,7 @@ function adaptative_prepare_host_dependencies() {
 		ca-certificates ccache cpio
 		debootstrap device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
-		fakeroot flex
+		flex
 		gawk gnupg gpg
 		imagemagick # required for boot_logo, plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
