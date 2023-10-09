@@ -46,7 +46,6 @@ function compile_armbian-desktop() {
 		Priority: optional
 		Recommends: ${AGGREGATED_PACKAGES_DESKTOP_COMMA}, armbian-bsp-desktop
 		Provides: armbian-${RELEASE}-desktop
-		Conflicts: gdm3
 		Description: Armbian desktop for ${DISTRIBUTION} ${RELEASE} ${DESKTOP_ENVIRONMENT}
 	EOF
 
