@@ -9,6 +9,8 @@ setenv verbosity "1"
 setenv earlycon "off"
 setenv bootlogo "false"
 setenv earlyconuart "0xfe078000"
+setenv displaymode "1080p60hz"
+setenv force_16x9_display "false"
 
 if test "${board_name}" = "kvim1s"; then setenv earlyconuart "0xfe07a000"; fi
 
@@ -35,7 +37,21 @@ else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
-setenv displayargs "logo=${display_layer},loaded,${fb_addr} vout=${outputmode},${vout_init} panel_type=${panel_type} hdmitx=${cecconfig},${colorattribute} hdmimode=${hdmimode} hdmichecksum=${hdmichecksum} dolby_vision_on=${dolby_vision_on} hdr_policy=${hdr_policy} hdr_priority=${hdr_priority} frac_rate_policy=${frac_rate_policy} hdmi_read_edid=${hdmi_read_edid} cvbsmode=${cvbsmode} osd_reverse=${osd_reverse} video_reverse=${video_reverse}"
+if test -n "${hdmimode}" ; then
+	if test ${display_height} -ge 2160 ; then
+		setenv displaymode "2160p60hz"
+	elif test ${display_height} -ge 1080 ; then
+		setenv displaymode "1080p60hz"
+	else
+		setenv displaymode "720p60hz"
+	fi
+fi
+
+if test "${force_16x9_display}" = "true"; then
+	setenv hdmimode ${displaymode}
+fi
+
+setenv displayargs "logo=${display_layer},loaded,${fb_addr} vout=${hdmimode},${vout_init} panel_type=${panel_type} hdmitx=${cecconfig},${colorattribute} hdmimode=${hdmimode} hdmichecksum=${hdmichecksum} dolby_vision_on=${dolby_vision_on} hdr_policy=${hdr_policy} hdr_priority=${hdr_priority} frac_rate_policy=${frac_rate_policy} hdmi_read_edid=${hdmi_read_edid} cvbsmode=${cvbsmode} osd_reverse=${osd_reverse} video_reverse=${video_reverse}"
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} no_console_suspend ${displayargs} loglevel=${verbosity} mac=${eth_mac} khadas.serial=${usid} partition_type=generic ${extraargs} ${extraboardargs}"
 
