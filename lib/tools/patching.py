@@ -276,7 +276,14 @@ if apply_patches:
 				try:
 					BASE_GIT_REVISION = git_repo.branches[BASE_GIT_TAG].commit.hexsha
 				except IndexError:
-					raise Exception(f"BASE_GIT_TAG={BASE_GIT_TAG} is neither a tag nor a branch")
+					# not a branch either, try as a hexsha:
+					try:
+						# see if the sha1 exists in the repo
+						commit = git_repo.commit(BASE_GIT_TAG)
+						log.debug(f"Found commit '{commit}' for BASE_GIT_TAG={BASE_GIT_TAG}")
+						BASE_GIT_REVISION = BASE_GIT_TAG
+					except:
+						raise Exception(f"BASE_GIT_TAG={BASE_GIT_TAG} is neither a tag nor a branch nor a SHA1")
 
 			log.debug(f"Found BASE_GIT_REVISION={BASE_GIT_REVISION} for BASE_GIT_TAG={BASE_GIT_TAG}")
 
