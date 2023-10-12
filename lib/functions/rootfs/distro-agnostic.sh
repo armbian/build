@@ -626,7 +626,7 @@ install_rclocal() {
 		# bits.
 		#
 		# By default this script does nothing.
-
+		insmod /usr/lib/modules/4.19.232-bigtree-cb2/kernel/drivers/input/touchscreen/raspits_ft5426.ko
 		exit 0
 	EOF
 	chmod +x "${SDCARD}"/etc/rc.local
