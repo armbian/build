@@ -248,7 +248,9 @@ function cli_json_info_run() {
 			if [[ ! -f "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}" ]]; then
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py artifacts "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_ARTIFACT_CHUNKS}" ">" "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}"
 			fi
-			github_actions_add_output "artifact-matrix" "$(cat "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}")"
+
+			# rpardini: disabled; we're using a chunked version now, and the GH output is directly set by the Python script, not here.
+			# github_actions_add_output "artifact-matrix" "$(cat "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}")"
 
 			display_alert "Generating GHA matrix for images" "output-gha-matrix :: images" "info"
 			declare GHA_ALL_IMAGES_JSON_MATRIX_FILE="${BASE_INFO_OUTPUT_DIR}/gha-all-images-matrix.json"
@@ -258,7 +260,9 @@ function cli_json_info_run() {
 				export IMAGES_ONLY_OUTDATED_ARTIFACTS="${IMAGES_ONLY_OUTDATED_ARTIFACTS:-"no"}"
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py images "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_IMAGE_CHUNKS}" ">" "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}"
 			fi
-			github_actions_add_output "image-matrix" "$(cat "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}")"
+
+			# rpardini: disabled; we're using a chunked version now, and the GH output is directly set by the Python script, not here.
+			# github_actions_add_output "image-matrix" "$(cat "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}")"
 		fi
 
 		### a secondary stage, which only makes sense to be run inside GHA, and as such should be split in a different CLI or under a flag.
