@@ -17,7 +17,7 @@ def set_gha_output(name, value):
 	with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
 		print(f'{name}={value}', file=fh)
 
-	log.info(f"Set GHA output '{name}' to '{value}'")
+	log.info(f"Set GHA output '{name}' to ({len(value)} bytes) '{value}'")
 
 
 def set_multiline_gha_output(name, value):
