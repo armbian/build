@@ -22,6 +22,8 @@ PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
+# rockchip64 (used mainly for RK3399) legacy kernel 4.4 is dead code
+
 # Common variables:
 # BOOT_SCENARIO - determines which tpl (ddrbin), spl and ATF combination to use
 #
