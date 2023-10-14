@@ -14,11 +14,12 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk322x-led-conf5.dtbo   \
 	rk322x-led-conf6.dtbo	\
 	rk322x-led-conf7.dtbo	\
-	rk322x-led-conf8.dtbo   \
+	rk322x-led-conf8.dtbo	\
 	rk322x-cpu-hs.dtbo	\
 	rk322x-cpu-hs-lv.dtbo	\
 	rk322x-wlan-alt-wiring.dtbo \
 	rk322x-cpu-stability.dtbo \
+	rk322x-ir-wakeup.dtbo \
 	rk322x-ddr3-330.dtbo \
 	rk322x-ddr3-528.dtbo \
 	rk322x-ddr3-660.dtbo \

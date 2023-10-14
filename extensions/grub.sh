@@ -178,6 +178,14 @@ pre_umount_final_image__install_grub() {
 
 	display_alert "Creating GRUB config..." "grub-mkconfig" ""
 	chroot_custom "$chroot_target" update-grub || {
+		display_alert "GRUB grub-mkconfig failed" "update-grub failed; dumping full config" "err"
+
+		declare -a mkconfig_input_files=()
+		mkconfig_input_files+=("${MOUNT}/etc/default/grub")
+		mkconfig_input_files+=("${MOUNT}/etc/default/grub.d/"*) # expands!
+		mkconfig_input_files+=("${MOUNT}/etc/grub.d/"*)         # same for /etc/grub.d; expands!
+		run_tool_batcat "${mkconfig_input_files[@]}"
+
 		exit_with_error "update-grub failed!"
 	}
 

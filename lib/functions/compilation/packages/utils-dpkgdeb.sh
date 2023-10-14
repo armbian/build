@@ -8,11 +8,11 @@
 # https://github.com/armbian/build/
 
 # for RAW deb building. does a bunch of magic to "DEBIAN" directory. Arguments are the open package directory and the artifact_deb_id
-function fakeroot_dpkg_deb_build() {
+function dpkg_deb_build() {
 	# check artifact_name and artifact_version is set otherwise exit_with_error
-	[[ -z "${artifact_name}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_name is not set"
-	[[ -z "${artifact_version}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_version is not set"
-	[[ -z "${artifact_deb_repo}" ]] && exit_with_error "fakeroot_dpkg_deb_build: artifact_deb_repo is not set"
+	[[ -z "${artifact_name}" ]] && exit_with_error "dpkg_deb_build: artifact_name is not set"
+	[[ -z "${artifact_version}" ]] && exit_with_error "dpkg_deb_build: artifact_version is not set"
+	[[ -z "${artifact_deb_repo}" ]] && exit_with_error "dpkg_deb_build: artifact_deb_repo is not set"
 
 	display_alert "Building .deb package" "${artifact_name}: $*" "debug"
 
@@ -20,12 +20,12 @@ function fakeroot_dpkg_deb_build() {
 	declare artifact_deb_id="${2}"
 
 	if [[ ! -d "${package_directory}" ]]; then
-		exit_with_error "fakeroot_dpkg_deb_build: can't find source package directory: ${package_directory}"
+		exit_with_error "dpkg_deb_build: can't find source package directory: ${package_directory}"
 	fi
 
 	# Check artifact_deb_id is set and not empty
 	if [[ -z "${artifact_deb_id}" ]]; then
-		exit_with_error "fakeroot_dpkg_deb_build: artifact_deb_id (2nd parameter) is not set, called with package_directory: '${package_directory}'"
+		exit_with_error "dpkg_deb_build: artifact_deb_id (2nd parameter) is not set, called with package_directory: '${package_directory}'"
 	fi
 
 	# Obtain from the globals
@@ -38,10 +38,10 @@ function fakeroot_dpkg_deb_build() {
 
 	# If either is empty, bomb
 	if [[ -z "${artifact_deb_package}" ]]; then
-		exit_with_error "fakeroot_dpkg_deb_build: artifact_deb_package (artifact_map_packages) is not set or found for '${artifact_deb_id}'"
+		exit_with_error "dpkg_deb_build: artifact_deb_package (artifact_map_packages) is not set or found for '${artifact_deb_id}'"
 	fi
 	if [[ -z "${artifact_deb_rel_path}" ]]; then
-		exit_with_error "fakeroot_dpkg_deb_build: artifact_deb_rel_path (artifact_map_debs) is not set or found for '${artifact_deb_id}'"
+		exit_with_error "dpkg_deb_build: artifact_deb_rel_path (artifact_map_debs) is not set or found for '${artifact_deb_id}'"
 	fi
 
 	# Show the total human size of the source package directory.
@@ -111,7 +111,7 @@ function fakeroot_dpkg_deb_build() {
 
 	mkdir -p "${deb_final_dir}"
 	display_alert "Building package, this might take a while.." "${deb_final_filename/*\//}" info
-	run_host_command_logged_raw fakeroot dpkg-deb -b "-Z${DEB_COMPRESS}" "${package_directory}" "${deb_final_filename}"
+	run_host_command_logged_raw dpkg-deb -b "-Z${DEB_COMPRESS}" "${package_directory}" "${deb_final_filename}"
 }
 
 function dpkg_deb_run_shellcheck_on_scripts() {
