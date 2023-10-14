@@ -28,7 +28,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3399-spi-jedec-nor.dtbo \
 	rockchip-rk3399-spi-spidev.dtbo \
 	rockchip-rk3399-uart4.dtbo \
-	rockchip-rk3399-w1-gpio.dtbo
+	rockchip-rk3399-w1-gpio.dtbo \
+	rockchip-rk3566-sata2.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr
