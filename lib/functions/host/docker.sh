@@ -126,7 +126,7 @@ function docker_cli_prepare() {
 	declare -g DOCKER_ARMBIAN_TARGET_PATH="${DOCKER_ARMBIAN_TARGET_PATH:-"/armbian"}"
 
 	declare wanted_os_tag="${DOCKER_ARMBIAN_BASE_IMAGE%%:*}"
-	declare wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
+	declare -g DOCKER_WANTED_RELEASE="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
 
 	# Store the "from scratch" image. Will be used if Armbian image is not available, for a "from scratch" build.
 	declare -g DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH="${DOCKER_ARMBIAN_BASE_IMAGE}"
@@ -134,8 +134,8 @@ function docker_cli_prepare() {
 	# If we're NOT building the public, official image, then USE the public, official image as base.
 	# IMPORTANT: This has to match the naming scheme for tag the is used in the GitHub actions workflow.
 	if [[ "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" && "${DOCKER_SIMULATE_CLEAN}" != "yes" ]]; then
-		DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX:-"ghcr.io/armbian/docker-armbian-build:armbian-"}${wanted_os_tag}-${wanted_release_tag}-latest"
-		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
+		DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX:-"ghcr.io/armbian/docker-armbian-build:armbian-"}${wanted_os_tag}-${DOCKER_WANTED_RELEASE}-latest"
+		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${DOCKER_WANTED_RELEASE}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
 	#############################################################################################################
@@ -252,9 +252,8 @@ function docker_cli_prepare_dockerfile() {
 	fi
 	declare -a -g host_dependencies=()
 
-	declare wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
-	host_release="${wanted_release_tag}" early_prepare_host_dependencies
-	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
+	host_release="${DOCKER_WANTED_RELEASE}" early_prepare_host_dependencies
+	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}'" "${host_dependencies[*]}" "debug"
 
 	# This includes apt install equivalent to install_host_dependencies()
 	display_alert "Creating" "Dockerfile; FROM ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
