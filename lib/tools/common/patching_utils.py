@@ -512,6 +512,10 @@ class PatchInPatchFile:
 				final_files_to_add = [f for f in all_files_to_add if f not in do_not_commit_files]
 				final_files_to_add = [f for f in final_files_to_add if not any(re.match(r, f) for r in do_not_commit_regexes)]
 				log.debug(f"Adding (post-config) {len(final_files_to_add)} files to git: {' '.join(final_files_to_add)}")
+				if len(final_files_to_add) == 0:
+					log.warning(f"There are 0 files to commit post-config. The whole patch should be removed.")
+					self.problems.append("no_files_to_commit_after_config")
+					return None
 				repo.git.add("-f", final_files_to_add)
 
 		if self.failed_to_parse or self.parent.patch_dir.is_autogen_dir or add_all_changes_in_git:
