@@ -3,8 +3,8 @@ function post_build_image__900_convert_to_abl_img() {
 
 	display_alert "Converting image $version to rootfs" "${EXTENSION}" "info"
 	declare -g ROOTFS_IMAGE_FILE="${DESTIMG}/${version}.rootfs.img"
-	rootfs_start_sector=$(gdisk -l ${DESTIMG}/${version}.img|grep rootfs|awk '{print $2}')
-	rootfs_end_sector=$(gdisk -l ${DESTIMG}/${version}.img|grep rootfs|awk '{print $3}')
+	rootfs_start_sector=$(gdisk -l ${DESTIMG}/${version}.img | grep rootfs | awk '{print $2}')
+	rootfs_end_sector=$(gdisk -l ${DESTIMG}/${version}.img | grep rootfs | awk '{print $3}')
 	dd if=${DESTIMG}/${version}.img skip=${rootfs_start_sector} count=$((${rootfs_end_sector} - ${rootfs_start_sector})) of=${DESTIMG}/rootfs.img
 	rm ${DESTIMG}/${version}.img
 	old_rootfs_image_uuid=$(blkid -s UUID -o value ${DESTIMG}/rootfs.img)
@@ -22,11 +22,10 @@ function post_build_image__900_convert_to_abl_img() {
 	display_alert "Replace root partition uuid from ${old_rootfs_image_uuid} to ${new_rootfs_image_uuid} in /etc/fstab" "${EXTENSION}" "info"
 	sed -i "s|${old_rootfs_image_uuid}|${new_rootfs_image_uuid}|g" ${new_rootfs_image_mount_dir}/etc/fstab
 
-	if [ ${#ABL_DTB_LIST[@]} -ne 0 ];then
-	display_alert "Going to create abl kernel boot image" "${EXTENSION}" "info"
-	gzip -c ${new_rootfs_image_mount_dir}/boot/vmlinuz-*-* > ${DESTIMG}/Image.gz
-		for dtb_name in ${ABL_DTB_LIST[@]}
-		do
+	if [ ${#ABL_DTB_LIST[@]} -ne 0 ]; then
+		display_alert "Going to create abl kernel boot image" "${EXTENSION}" "info"
+		gzip -c ${new_rootfs_image_mount_dir}/boot/vmlinuz-*-* > ${DESTIMG}/Image.gz
+		for dtb_name in ${ABL_DTB_LIST[@]}; do
 			display_alert "Creatng abl kernel boot image with dtb ${dtb_name}" "${EXTENSION}" "info"
 			cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
 			${new_rootfs_image_mount_dir}/usr/local/bin/mkbootimg.py \

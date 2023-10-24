@@ -25,7 +25,7 @@ setup_usb_network_configfs() {
 	echo "  Setting up an USB gadget through configfs"
 	# Create an usb gadet configuration
 	mkdir $CONFIGFS/g1 || echo "  Couldn't create $CONFIGFS/g1"
-	echo "$usb_idVendor"  > "$CONFIGFS/g1/idVendor"
+	echo "$usb_idVendor" > "$CONFIGFS/g1/idVendor"
 	echo "$usb_idProduct" > "$CONFIGFS/g1/idProduct"
 
 	# Create english (0x409) strings
@@ -33,25 +33,25 @@ setup_usb_network_configfs() {
 
 	# shellcheck disable=SC2154
 	echo "$deviceinfo_manufacturer" > "$CONFIGFS/g1/strings/0x409/manufacturer"
-	echo "$usb_serialnumber"        > "$CONFIGFS/g1/strings/0x409/serialnumber"
+	echo "$usb_serialnumber" > "$CONFIGFS/g1/strings/0x409/serialnumber"
 	# shellcheck disable=SC2154
-	echo "$deviceinfo_name"         > "$CONFIGFS/g1/strings/0x409/product"
+	echo "$deviceinfo_name" > "$CONFIGFS/g1/strings/0x409/product"
 
 	# Create network function.
-	mkdir $CONFIGFS/g1/functions/"$usb_network_function" \
-		|| echo "  Couldn't create $CONFIGFS/g1/functions/$usb_network_function"
+	mkdir $CONFIGFS/g1/functions/"$usb_network_function" ||
+		echo "  Couldn't create $CONFIGFS/g1/functions/$usb_network_function"
 
 	# Create configuration instance for the gadget
-	mkdir $CONFIGFS/g1/configs/c.1 \
-		|| echo "  Couldn't create $CONFIGFS/g1/configs/c.1"
-	mkdir $CONFIGFS/g1/configs/c.1/strings/0x409 \
-		|| echo "  Couldn't create $CONFIGFS/g1/configs/c.1/strings/0x409"
-	echo "USB network" > $CONFIGFS/g1/configs/c.1/strings/0x409/configuration \
-		|| echo "  Couldn't write configration name"
+	mkdir $CONFIGFS/g1/configs/c.1 ||
+		echo "  Couldn't create $CONFIGFS/g1/configs/c.1"
+	mkdir $CONFIGFS/g1/configs/c.1/strings/0x409 ||
+		echo "  Couldn't create $CONFIGFS/g1/configs/c.1/strings/0x409"
+	echo "USB network" > $CONFIGFS/g1/configs/c.1/strings/0x409/configuration ||
+		echo "  Couldn't write configration name"
 
 	# Link the network instance to the configuration
-	ln -s $CONFIGFS/g1/functions/"$usb_network_function" $CONFIGFS/g1/configs/c.1 \
-		|| echo "  Couldn't symlink $usb_network_function"
+	ln -s $CONFIGFS/g1/functions/"$usb_network_function" $CONFIGFS/g1/configs/c.1 ||
+		echo "  Couldn't symlink $usb_network_function"
 
 	# Check if there's an USB Device Controller
 	if [ -z "$(ls /sys/class/udc)" ]; then
@@ -71,12 +71,12 @@ set_usbgadget_ipaddress() {
 	echo "Starting dnsmasq with server ip $host_ip, client ip: $client_ip"
 	# Get usb interface
 	INTERFACE=""
-	ip a add "${host_ip}/255.255.0.0" dev rndis0 2>/dev/null && ip link set rndis0 up && INTERFACE=rndis0
+	ip a add "${host_ip}/255.255.0.0" dev rndis0 2> /dev/null && ip link set rndis0 up && INTERFACE=rndis0
 	if [ -z $INTERFACE ]; then
-		ip a add "${host_ip}/255.255.0.0" dev usb0 2>/dev/null && ip link set usb0 up && INTERFACE=usb0
+		ip a add "${host_ip}/255.255.0.0" dev usb0 2> /dev/null && ip link set usb0 up && INTERFACE=usb0
 	fi
 	if [ -z $INTERFACE ]; then
-		ip a add "${host_ip}/255.255.0.0" dev eth0 2>/dev/null && eth0 && INTERFACE=eth0
+		ip a add "${host_ip}/255.255.0.0" dev eth0 2> /dev/null && eth0 && INTERFACE=eth0
 	fi
 
 	if [ -z $INTERFACE ]; then
