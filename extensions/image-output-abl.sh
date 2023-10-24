@@ -25,7 +25,7 @@ function post_build_image__900_convert_to_abl_img() {
 	if [ ${#ABL_DTB_LIST[@]} -ne 0 ]; then
 		display_alert "Going to create abl kernel boot image" "${EXTENSION}" "info"
 		gzip -c ${new_rootfs_image_mount_dir}/boot/vmlinuz-*-* > ${DESTIMG}/Image.gz
-		for dtb_name in ${ABL_DTB_LIST[@]}; do
+		for dtb_name in "${ABL_DTB_LIST[@]}"; do
 			display_alert "Creatng abl kernel boot image with dtb ${dtb_name}" "${EXTENSION}" "info"
 			cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
 			${new_rootfs_image_mount_dir}/usr/local/bin/mkbootimg.py \
