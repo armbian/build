@@ -38,16 +38,16 @@ function do_main_configuration() {
 		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
 	fi
 
-	[[ -z $VENDOR ]] && VENDOR="Armbian"
-	[[ -z $VENDORURL ]] && VENDORURL="https://www.armbian.com"
-	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://forum.armbian.com"
-	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://www.armbian.com"
-	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://www.armbian.com/bugs"
+	[[ -z $VENDOR ]] && VENDOR="Armbian-unofficial"
+	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
+	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://duckduckgo.com/"
+	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
+	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://duckduckgo.com/"
 	[[ -z $VENDORLOGO ]] && VENDORLOGO="armbian-logo"
-	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
-	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
-	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                              # en_US.UTF-8 is default locale for target
+	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                    # Must be changed @first login
+	[[ -z $MAINTAINER ]] && MAINTAINER="John Doe"                          # deb signature
+	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="john.doe@somewhere.planet" # deb signature
+	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                                # en_US.UTF-8 is default locale for target
 	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
 
 	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
