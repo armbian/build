@@ -1,0 +1,194 @@
+From 6dc91e8bc2d871f99e7a77aeafa064d604187c7d Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sun, 6 Aug 2023 02:55:22 +0200
+Subject: [PATCH 415/464] power: supply: rk817-charger: Add input current limit
+ setting
+
+This is useful for proper USB input current limiting.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/power/supply/rk817_charger.c | 112 +++++++++++++++++++++++----
+ 1 file changed, 99 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/power/supply/rk817_charger.c b/drivers/power/supply/rk817_charger.c
+index cae9064b2be0..1af39b4c9bb8 100644
+--- a/drivers/power/supply/rk817_charger.c
++++ b/drivers/power/supply/rk817_charger.c
+@@ -556,11 +556,72 @@ static int rk817_bat_get_prop(struct power_supply *ps,
+ 	return 0;
+ }
+ 
++static const int rk817_usb_input_current_limits[] = {
++	1, 80000,
++	0, 450000,
++	2, 850000,
++	3, 1500000,
++	4, 1750000,
++	5, 2000000,
++	6, 2500000,
++	7, 3000000,
++};
++
++static int rk817_usb_set_input_current_max(struct rk817_charger *cg,
++					   int val)
++{
++	int ret, i;
++	
++	for (i = ARRAY_SIZE(rk817_usb_input_current_limits) / 2 - 1; i > 0; i--) {
++		if (val >= rk817_usb_input_current_limits[2 * i + 1])
++			break;
++	}
++
++	dev_info(cg->dev, "applying input current limit %d mA\n",
++		 rk817_usb_input_current_limits[2 * i + 1] / 1000);
++
++	ret = regmap_write_bits(cg->rk808->regmap, RK817_PMIC_CHRG_IN,
++			        RK817_USB_ILIM_SEL,
++			        rk817_usb_input_current_limits[2 * i]);
++	if (ret)
++		dev_err(cg->dev,
++			"USB input current limit setting failed (%d)\n", ret);
++
++	return ret;
++}
++
++static int rk817_usb_get_input_current_max(struct rk817_charger *cg,
++					   int *val)
++{
++	unsigned reg;
++	int ret;
++
++	ret = regmap_read(cg->rk808->regmap, RK817_PMIC_CHRG_IN, &reg);
++	if (ret) {
++		dev_err(cg->dev,
++			"USB input current limit getting failed (%d)\n", ret);
++		return ret;
++	}
++
++	reg &= RK817_USB_ILIM_SEL;
++
++	for (int i = 0; i < ARRAY_SIZE(rk817_usb_input_current_limits) / 2; i++) {
++		int r = rk817_usb_input_current_limits[2 * i];
++		if (r == reg) {
++			*val = rk817_usb_input_current_limits[2 * i + 1];
++			break;
++		}
++	}
++
++	return 0;
++}
++
+ static int rk817_chg_get_prop(struct power_supply *ps,
+ 			      enum power_supply_property prop,
+ 			      union power_supply_propval *val)
+ {
+ 	struct rk817_charger *charger = power_supply_get_drvdata(ps);
++	int ret;
+ 
+ 	switch (prop) {
+ 	case POWER_SUPPLY_PROP_ONLINE:
+@@ -577,6 +638,11 @@ static int rk817_chg_get_prop(struct power_supply *ps,
+ 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
+ 		val->intval = charger->charger_input_volt_avg_uv;
+ 		break;
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		ret = rk817_usb_get_input_current_max(charger, &val->intval);
++		if (ret)
++			return ret;
++		break;
+ 	/*
+ 	 * While it's possible that other implementations could use different
+ 	 * USB types, the current implementation for this PMIC (the Odroid Go
+@@ -589,6 +655,25 @@ static int rk817_chg_get_prop(struct power_supply *ps,
+ 		return -EINVAL;
+ 	}
+ 	return 0;
++}
++
++static int rk817_chg_set_prop(struct power_supply *ps,
++			      enum power_supply_property prop,
++			      const union power_supply_propval *val)
++{
++	struct rk817_charger *charger = power_supply_get_drvdata(ps);
++	int ret;
++
++	switch (prop) {
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		ret = rk817_usb_set_input_current_max(charger, val->intval);
++		if (ret)
++			return ret;
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
+ 
+ }
+ 
+@@ -632,15 +717,6 @@ static irqreturn_t rk817_plug_out_isr(int irq, void *cg)
+ 	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_VLIM_EN,
+ 			  (0x01 << 7));
+ 
+-	/*
+-	 * Set average USB input current limit to 1.5A and enable USB current
+-	 * input limit.
+-	 */
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN,
+-			  RK817_USB_ILIM_SEL, 0x03);
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_ILIM_EN,
+-			  (0x01 << 3));
+-
+ 	rk817_read_props(charger);
+ 
+ 	dev_dbg(charger->dev, "Power Cord Removed\n");
+@@ -648,6 +724,17 @@ static irqreturn_t rk817_plug_out_isr(int irq, void *cg)
+ 	return IRQ_HANDLED;
+ }
+ 
++static int rk817_charger_prop_writeable(struct power_supply *psy,
++					enum power_supply_property psp)
++{
++	switch (psp) {
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		return 1;
++	default:
++		return 0;
++	}
++}
++
+ static enum power_supply_property rk817_bat_props[] = {
+ 	POWER_SUPPLY_PROP_PRESENT,
+ 	POWER_SUPPLY_PROP_STATUS,
+@@ -671,6 +758,7 @@ static enum power_supply_property rk817_chg_props[] = {
+ 	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
+ 	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
+ 	POWER_SUPPLY_PROP_VOLTAGE_AVG,
++	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
+ };
+ 
+ static enum power_supply_usb_type rk817_usb_type[] = {
+@@ -693,7 +781,9 @@ static const struct power_supply_desc rk817_chg_desc = {
+ 	.num_usb_types = ARRAY_SIZE(rk817_usb_type),
+ 	.properties = rk817_chg_props,
+ 	.num_properties = ARRAY_SIZE(rk817_chg_props),
++	.property_is_writeable	= rk817_charger_prop_writeable,
+ 	.get_property = rk817_chg_get_prop,
++	.set_property = rk817_chg_set_prop,
+ };
+ 
+ static int rk817_read_battery_nvram_values(struct rk817_charger *charger)
+@@ -1025,10 +1115,6 @@ static int rk817_battery_init(struct rk817_charger *charger,
+ 	 * Set average USB input current limit to 1.5A and enable USB current
+ 	 * input limit.
+ 	 */
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN,
+-			  RK817_USB_ILIM_SEL, 0x03);
+-	regmap_write_bits(rk808->regmap, RK817_PMIC_CHRG_IN, RK817_USB_ILIM_EN,
+-			  (0x01 << 3));
+ 
+ 	return 0;
+ }
+-- 
+2.34.1
+

@@ -11,7 +11,7 @@ declare -g CRUST_TARGET_MAP="scp;;build/scp/scp.bin"
 if [[ -n "${CRUSTCONFIG}" ]]; then
     [[ -z $CRUSTSOURCE ]] && CRUSTSOURCE='https://github.com/crust-firmware/crust'
     [[ -z $CRUSTDIR ]] && CRUSTDIR='crust-sunxi-mainline'
-    [[ -z $CRUSTBRANCH ]] && CRUSTBRANCH='commit:c308a504853e7fdb47169796c9a832796410ece8'
+    [[ -z $CRUSTBRANCH ]] && CRUSTBRANCH='tag:v0.6'
     [[ -z $CRUST_USE_GCC ]] && CRUST_USE_GCC='> 9.1.0'
     [[ -z $CRUST_COMPILER ]] && CRUST_COMPILER='or1k-elf-'
 
