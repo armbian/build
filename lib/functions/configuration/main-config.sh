@@ -37,6 +37,7 @@ function do_main_configuration() {
 	if [[ ! "${REVISION}" =~ ^[0-9] ]]; then
 		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
 	fi
+
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
 	[[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]] && VENDOR+="-unofficial"
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
@@ -280,6 +281,8 @@ function do_main_configuration() {
 	# We don't want anything changing them, it's exclusively for family config.
 	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
 	declare -g -r PACKAGE_LIST_FAMILY_REMOVE="${PACKAGE_LIST_FAMILY_REMOVE}"
+
+	if [[ $RELEASE == trixie || $ARCH == riscv64 ]]; then remove_packages "cpufrequtils"; fi # this will remove from rootfs as well
 
 	display_alert "Done with do_main_configuration" "do_main_configuration" "debug"
 }
