@@ -626,7 +626,12 @@ install_rclocal() {
 		# bits.
 		#
 		# By default this script does nothing.
+		echo default-on > /sys/class/leds/bttcb3:green:work/trigger
+		echo none > /sys/class/leds/bttcb3:blue:power/trigger
 		insmod /usr/lib/modules/4.19.232-bigtree-cb2/kernel/drivers/input/touchscreen/raspits_ft5426.ko
+		sudo chmod +x /usr/self_checking.sh
+		sudo /usr/self_checking.sh
+		
 		exit 0
 	EOF
 	chmod +x "${SDCARD}"/etc/rc.local

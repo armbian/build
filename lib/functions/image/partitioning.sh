@@ -325,7 +325,7 @@ function prepare_partitions() {
 	fi
 	
 	echo "######hdmi display config######" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "overlays=hdmi dsi" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "overlays=hdmi" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	
 	echo "######i2c1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
@@ -390,9 +390,12 @@ function prepare_partitions() {
 	echo "#overlays=pwm15" >> "${SDCARD}/boot/armbianEnv.txt"
 	
 	sudo cp -rf $SRC/lib/functions/rootfs/self_checking.sh     $SDCARD/usr
+	sudo cp -rf $SRC/lib/functions/rootfs/bluetooth_check.sh     $SDCARD/usr
+	sudo cp -rf $SRC/lib/functions/rootfs/1.wav     $SDCARD/usr
 	#sudo cp -rf $SRC/lib/functions/rootfs/BCM4345C5.hcd 	   $SDCARD/usr/lib
 	#sudo cp -rf $SRC/lib/functions/rootfs/brcm_patchram_plus1  $SDCARD/usr/lib
 	sudo cp -rf $SRC/lib/functions/rootfs/system.cfg           $SDCARD/boot
+	sudo cp -rf $SRC/lib/functions/rootfs/profile           $SDCARD/etc
 	
 
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled

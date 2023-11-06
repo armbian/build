@@ -16,13 +16,17 @@ wifi_status="$red ERROR! $clear"
 phy_status="$red ERROR! $clear"
 ram_status="$red ERROR! $clear"
 emmc_status="$red ERROR! $clear"
-
+bt_status="$red ERROR! $clear"
+count=0 
+flag=0		#0 
 cfg_file=/boot/system.cfg
 log_file=/etc/scripts/wifi.log
 IFS=\"
+IFS=$'\n'
 
 wifi_path="/etc/NetworkManager/system-connections/"
 source "/boot/armbianEnv.txt"
+#source /usr/bluetooth_check.sh
 function connect_wifi() {
     # whether there is configured wifi in the history
     if [[ `sudo nmcli c s | grep wifi |  awk '{ for(i=NF-2; i<=NF; i++){ $i="" }; print $0 }'` =~ "${WIFI_SSID}" ]] ; then
@@ -72,6 +76,126 @@ function tab_format(){
     [ $# == 1 ] && echo "$(printf "%-$1s" "")"
     [ $# == 2 ] && echo "$(printf "%-$2s" "$f_name")"
     unset f_name
+}
+
+function Connect_BTDevice() {
+	echo -e "$yellow ==== Checking Bluetooth... ====$clear"
+	BTCL() {
+	$(type -P bluetoothctl) "$@"
+	}
+ 	if [[ $(hciconfig) == "" ]]
+	then
+    echo -e "$red ==== Our board's Bluetooth is not working properly... ====$clear"
+    echo -e "Bluetooth:$bt_status"
+		return 0
+	fi 
+	BT.Connect.Status() { 
+	if [[ $(BTCL info | grep -i "Connected: yes") == "" ]] && ! BTCL info 
+		then
+		flag=1
+		
+		else
+		flag=0
+		bt_status="$green OK! $clear"
+	fi	
+	}
+	BTCL remove "$deviceID"
+ 
+	rfkill block bluetooth
+	sleep 3s
+	rfkill unblock bluetooth
+	pulseaudio -k
+	pulseaudio --start
+	BTCL --timeout 10 scan on
+	while true
+	do
+		local deviceInfo=$(BTCL devices)
+		for i in $deviceInfo
+		do
+		local deviceID=$(echo $i | awk '{print $2}')
+		if [ "$deviceID" == "$BT_MAC" ]
+			then
+				echo -e "\n"'Discovered Bluetooth Device: '$BT_MAC
+		echo -e "\n"
+		echo -e "$yellow===================================================$clear"
+		echo -e "$yellow=== Checking Bluetooth device connection status ===$clear"
+		echo -e "$yellow===================================================$clear"
+		
+		if ! BTCL info 
+		then 
+			echo "Abnormal Bluetooth device connection"
+		echo -e "\n……Pairing and connecting Bluetooth device……\n"
+		BTCL pair "$deviceID"
+		BTCL trust "$deviceID"
+		BTCL connect "$deviceID"
+		echo -e "\nRechecking bluetooth device connection status\n"
+		BT.Connect.Status
+		break
+		else
+		if  [[ $(BTCL info | grep -i "Connected: yes") != "" ]]
+			then
+			echo "Although successfully connected,but bluetooth device seem to work abnormally"
+			echo -e "\n……Removing problematic device: Bluetooth Bluetooth device……\n"
+			BTCL remove "$deviceID"
+			rfkill block bluetooth
+			sleep 3s
+			rfkill unblock bluetooth
+			pulseaudio -k
+			pulseaudio --start
+			sleep 5s
+			echo -e "\n"'Rescanning Bluetooth devices'"\n"
+			BTCL --timeout 15 scan on
+			echo -e "\n……Pairing and connecting Bluetooth device again……\n"
+			BTCL pair "$deviceID"
+			BTCL trust "$deviceID"
+			BTCL connect "$deviceID"
+			echo -e "\nRechecking bluetooth device connection status\n"
+			BT.Connect.Status
+			break
+			else
+			flag=0
+				break 
+		fi
+		fi
+			else 
+	flag=2
+		fi
+		done
+		if [ ${flag} -eq 0 ]
+		then
+	echo -e "\nBluetooth headset successfully connected\n"
+	bt_status="$green OK! $clear"
+	echo -e "Bluetooth:$bt_status"
+	return 0 
+		elif [ ${flag} -eq 2 ]
+		then
+	echo -e "\nBluetooth headset not found, Retrying\n"
+	echo -e "Bluetooth:$bt_status"
+		else
+		echo -e "\nBluetooth headset connection failed, retrying\n"
+		echo -e "Bluetooth:$bt_status"
+		fi
+		count=$[ ${count} + 1 ]
+		if [ $count -ge 6 ]
+		then
+			echo -e "\nBluetooth headset not found \n"
+	return 0 
+		fi
+		echo -e "$yellow===========================================================================$clear"
+		echo -e "$yellow=====    Starting the $count times reconnection of Bluetooth device   =====$clear"
+		echo -e "$yellow================           ……Please waitting……             ================$clear"
+		echo -e "$yellow===========================================================================$clear"
+		echo -e "$yellow================  Reconnect Bluetooth device in 3 seconds  ================$clear"
+		BTCL remove "$deviceID"
+	rfkill block bluetooth
+	sleep 3s
+	rfkill unblock bluetooth
+	pulseaudio -k
+	pulseaudio --start
+	sleep 5s
+		BTCL --timeout 10 scan on	
+	deviceInfo=$(BTCL devices)
+	done
 }
 
 function check_hdmi() {
@@ -235,6 +359,7 @@ check_hdmi
 check_ov5647
 check_usb
 check_wlan0
+Connect_BTDevice
 check_eth0
 check_ram
 check_emmc
@@ -248,11 +373,16 @@ echo ""
 
 echo -e "/=========== Self-checking Results ============\\"
 echo -e "       HDMI   ---> $hdmi_status                  "
-echo -e "       OV5647 ---> $ov5647_status                "
+echo -e "     OV5647   ---> $ov5647_status                "
 echo -e "  Manta USB   ---> $manta_usb_status             "
 echo -e " USB Device   ---> $ext_usb_status               "
 echo -e "       WIFI   ---> $wifi_status                  "
+echo -e "  BT Device   ---> $bt_status                  "
 echo -e "       Eth0   ---> $phy_status                   "
 echo -e "        RAM   ---> $ram_status                   "
 echo -e "       eMMC   ---> $emmc_status				  "
 echo -e "\==============================================/"
+echo -e "\n"
+echo -e "$yellow ==== play music ==== $clear"
+aplay /usr/1.wav &
+echo -e "\n"
