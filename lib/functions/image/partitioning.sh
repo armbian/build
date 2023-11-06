@@ -390,7 +390,7 @@ function prepare_partitions() {
 	echo "#overlays=pwm15" >> "${SDCARD}/boot/armbianEnv.txt"
 	
 	sudo cp -rf $SRC/lib/functions/rootfs/self_checking.sh     $SDCARD/usr
-	sudo cp -rf $SRC/lib/functions/rootfs/bluetooth_check.sh     $SDCARD/usr
+	#sudo cp -rf $SRC/lib/functions/rootfs/bluetooth_check.sh     $SDCARD/usr
 	sudo cp -rf $SRC/lib/functions/rootfs/1.wav     $SDCARD/usr
 	#sudo cp -rf $SRC/lib/functions/rootfs/BCM4345C5.hcd 	   $SDCARD/usr/lib
 	#sudo cp -rf $SRC/lib/functions/rootfs/brcm_patchram_plus1  $SDCARD/usr/lib
