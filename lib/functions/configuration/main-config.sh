@@ -37,8 +37,8 @@ function do_main_configuration() {
 	if [[ ! "${REVISION}" =~ ^[0-9] ]]; then
 		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
 	fi
-
-	[[ -z $VENDOR ]] && VENDOR="Armbian-unofficial"
+	[[ -z $VENDOR ]] && VENDOR="Armbian"
+	[[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]] && VENDOR+="-unofficial"
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
 	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://duckduckgo.com/"
 	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
