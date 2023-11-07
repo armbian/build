@@ -71,7 +71,11 @@ else
 		source ${load_addr}
 	fi
 fi
-kaslrseed
+if command -v kaslrseed > /dev/null 2>&1; then
+	kaslrseed
+else
+	echo "kaslrseed command not found, skipping..."
+fi
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
