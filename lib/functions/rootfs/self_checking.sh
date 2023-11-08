@@ -168,22 +168,22 @@ function Connect_BTDevice() {
 		done
 		if [ ${flag} -eq 0 ]
 		then
-	echo -e "\nBluetooth headset successfully connected\n"
+	echo -e "\nBluetooth device successfully connected\n"
 	bt_devstatus="$green OK! $clear"
-	echo -e "Bluetooth:$bt_devstatus"
+	echo -e "BluetoothDev:$bt_devstatus"
 	return 0 
 		elif [ ${flag} -eq 2 ]
 		then
-	echo -e "\nBluetooth headset not found, Retrying\n"
-	echo -e "Bluetooth:$bt_devstatus"
+	echo -e "\nBluetooth device not found, Retrying\n"
+	echo -e "BluetoothDev:$bt_devstatus"
 		else
-		echo -e "\nBluetooth headset connection failed, retrying\n"
-		echo -e "Bluetooth:$bt_devstatus"
+		echo -e "\nBluetooth device connection failed, retrying\n"
+		echo -e "BluetoothDev:$bt_devstatus"
 		fi
 		count=$[ ${count} + 1 ]
 		if [ $count -ge 6 ]
 		then
-			echo -e "\nBluetooth headset not found \n"
+			echo -e "\nBluetooth device not found \n"
 	return 0 
 		fi
 		echo -e "$yellow===========================================================================$clear"
