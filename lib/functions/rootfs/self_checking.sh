@@ -360,6 +360,7 @@ function check_emmc() {
     echo -e "eMMC:$emmc_status"
 }
 
+
 check_hdmi
 check_ov5647
 check_usb
@@ -389,6 +390,10 @@ echo -e "        RAM   ---> $ram_status                   "
 echo -e "       eMMC   ---> $emmc_status				  "
 echo -e "\==============================================/"
 echo -e "\n"
-echo -e "$yellow ==== play music ==== $clear"
-aplay /usr/1.wav &
-echo -e "\n"
+if [ ${flag} -eq 0 ];then
+	echo -e "$yellow ==== play music ==== $clear"
+	aplay /usr/1.wav &
+	echo -e "\n"
+else 
+	echo -e "\n"
+fi
