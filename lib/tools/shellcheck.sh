@@ -43,7 +43,7 @@ esac
 
 SHELLCHECK_FN="shellcheck-v${SHELLCHECK_VERSION}.${SHELLCHECK_OS}.${SHELLCHECK_ARCH}"
 SHELLCHECK_FN_TARXZ="${SHELLCHECK_FN}.tar.xz"
-DOWN_URL="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
+DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
 SHELLCHECK_BIN="${DIR_SHELLCHECK}/${SHELLCHECK_FN}"
 
 if [[ ! -f "${SHELLCHECK_BIN}" ]]; then

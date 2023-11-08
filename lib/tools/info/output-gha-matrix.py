@@ -161,6 +161,12 @@ else:
 	num_chunks = int(len(matrix) / ideal_chunk_size) + 1
 	log.warning(f"Number of chunks: {num_chunks}")
 
+matrix_hard_limit = 17 * 30  # @TODO: maybe 17*50 later
+# if over the limit, just slice to the limit, add warning about lost jobs
+if len(matrix) > matrix_hard_limit:
+	log.warning(f"Matrix size is over the hard limit of {matrix_hard_limit}, slicing to that limit. Matrix is incomplete.")
+	matrix = matrix[:matrix_hard_limit]
+
 # distribute the matrix items equally along the chunks. try to keep every chunk the same size.
 chunks = []
 for i in range(num_chunks):

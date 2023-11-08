@@ -33,7 +33,7 @@ function kernel_config() {
 	LOG_SECTION="kernel_config_initialize" do_with_logging do_with_hooks kernel_config_initialize
 
 	if [[ "${KERNEL_CONFIGURE}" == "yes" ]]; then
-		if [[ "${ARMBIAN_COMMAND}" == "kernel-config" ]]; then
+		if [[ "${ARMBIAN_COMMAND}" != "rewrite-kernel-config" ]]; then
 			# This piece is interactive, no logging
 			display_alert "Starting (interactive) kernel ${KERNEL_MENUCONFIG:-menuconfig}" "${LINUXCONFIG}" "debug"
 			run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}"

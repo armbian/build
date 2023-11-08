@@ -183,7 +183,7 @@ function compile_armbian-base-files() {
 	rm -f "${destination}"/etc/os-release.orig "${destination}"/etc/issue.orig "${destination}"/etc/issue.net.orig "${destination}"/DEBIAN/conffiles.orig
 
 	# Done, pack it.
-	fakeroot_dpkg_deb_build "${destination}" "armbian-base-files"
+	dpkg_deb_build "${destination}" "armbian-base-files"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

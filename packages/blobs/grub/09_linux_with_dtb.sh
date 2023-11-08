@@ -34,6 +34,65 @@ vt_handoff="0"
 
 . "$pkgdatadir/grub-mkconfig_lib"
 
+### <functions from grub-mkconfig_lib that were removed recently, add them back for compatibility>
+version_test_numeric() {
+	version_test_numeric_a="$1"
+	version_test_numeric_cmp="$2"
+	version_test_numeric_b="$3"
+	if [ "$version_test_numeric_a" = "$version_test_numeric_b" ]; then
+		case "$version_test_numeric_cmp" in
+			ge | eq | le) return 0 ;;
+			gt | lt) return 1 ;;
+		esac
+	fi
+	if [ "$version_test_numeric_cmp" = "lt" ]; then
+		version_test_numeric_c="$version_test_numeric_a"
+		version_test_numeric_a="$version_test_numeric_b"
+		version_test_numeric_b="$version_test_numeric_c"
+	fi
+	if (
+		echo "$version_test_numeric_a"
+		echo "$version_test_numeric_b"
+	) | version_sort | head -n 1 | grep -qx "$version_test_numeric_b"; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+version_test_gt() {
+	version_test_gt_a="$(echo "$1" | sed -e "s/[^-]*-//")"
+	version_test_gt_b="$(echo "$2" | sed -e "s/[^-]*-//")"
+	version_test_gt_cmp=gt
+	if [ "x$version_test_gt_b" = "x" ]; then
+		return 0
+	fi
+	case "$version_test_gt_a:$version_test_gt_b" in
+		*.old:*.old) ;;
+		*.old:*)
+			version_test_gt_a="$(echo "$version_test_gt_a" | sed -e 's/\.old$//')"
+			version_test_gt_cmp=gt
+			;;
+		*:*.old)
+			version_test_gt_b="$(echo "$version_test_gt_b" | sed -e 's/\.old$//')"
+			version_test_gt_cmp=ge
+			;;
+	esac
+	version_test_numeric "$version_test_gt_a" "$version_test_gt_cmp" "$version_test_gt_b"
+	return "$?"
+}
+
+version_find_latest() {
+	version_find_latest_a=""
+	for i in "$@"; do
+		if version_test_gt "$i" "$version_find_latest_a"; then
+			version_find_latest_a="$i"
+		fi
+	done
+	echo "$version_find_latest_a"
+}
+### </functions from grub-mkconfig_lib that were removed recently, add them back for compatibility>
+
 export TEXTDOMAIN=grub
 export TEXTDOMAINDIR="${datarootdir}/locale"
 

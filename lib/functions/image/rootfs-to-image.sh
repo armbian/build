@@ -46,11 +46,12 @@ function create_image_from_sdcard_rootfs() {
 			--exclude="/run/*" \
 			--exclude="/tmp/*" \
 			--exclude="/sys/*" \
+			--exclude="/home/*" \
 			--info=progress0,stats1 $SDCARD/ $MOUNT/
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . |
+			--exclude='./sys/*' --exclude="/home/*" . |
 			pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" \
 				-N "$(logging_echo_prefix_for_pv "create_rootfs_archive") rootfs.tgz" |
 			gzip -c > "$DEST/images/${version}-rootfs.tgz"
