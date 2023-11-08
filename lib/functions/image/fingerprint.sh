@@ -22,7 +22,6 @@ function fingerprint_image() {
 		Sources:        ${BUILD_REPOSITORY_URL}
 		Sources rev:    ${BUILD_REPOSITORY_COMMIT}
 		Authors:        https://www.armbian.com/authors
-		Origin:         https://github.com/armbian/
 		Maintainer:     ${MAINTAINER} <$MAINTAINERMAIL>
 		Support:        ${VENDORSUPPORT}
 	EOF
