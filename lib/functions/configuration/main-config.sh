@@ -39,7 +39,13 @@ function do_main_configuration() {
 	fi
 
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
-	[[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]] && VENDOR+="-unofficial"
+
+	# set defaults for Armbian, unset all values for unsupported Armbian
+	if [[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]]; then
+		VENDOR+="-unofficial"
+		unset VENDORURL,VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
+	fi
+
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
 	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://duckduckgo.com/"
 	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
