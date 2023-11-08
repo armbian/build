@@ -17,6 +17,7 @@ phy_status="$red ERROR! $clear"
 ram_status="$red ERROR! $clear"
 emmc_status="$red ERROR! $clear"
 bt_status="$red ERROR! $clear"
+bt_devstatus="$red ERROR! $clear"
 count=0 
 flag=0		#0 
 cfg_file=/boot/system.cfg
@@ -88,6 +89,10 @@ function Connect_BTDevice() {
     echo -e "$red ==== Our board's Bluetooth is not working properly... ====$clear"
     echo -e "Bluetooth:$bt_status"
 		return 0
+	else
+	echo -e "$green ==== Our board's Bluetooth is working properly... ====$clear"
+	bt_status="$green OK! $clear"
+	echo -e "Bluetooth:$bt_status"
 	fi 
 	BT.Connect.Status() { 
 	if [[ $(BTCL info | grep -i "Connected: yes") == "" ]] && ! BTCL info 
@@ -96,7 +101,7 @@ function Connect_BTDevice() {
 		
 		else
 		flag=0
-		bt_status="$green OK! $clear"
+		bt_devstatus="$green OK! $clear"
 	fi	
 	}
 	BTCL remove "$deviceID"
@@ -164,16 +169,16 @@ function Connect_BTDevice() {
 		if [ ${flag} -eq 0 ]
 		then
 	echo -e "\nBluetooth headset successfully connected\n"
-	bt_status="$green OK! $clear"
-	echo -e "Bluetooth:$bt_status"
+	bt_devstatus="$green OK! $clear"
+	echo -e "Bluetooth:$bt_devstatus"
 	return 0 
 		elif [ ${flag} -eq 2 ]
 		then
 	echo -e "\nBluetooth headset not found, Retrying\n"
-	echo -e "Bluetooth:$bt_status"
+	echo -e "Bluetooth:$bt_devstatus"
 		else
 		echo -e "\nBluetooth headset connection failed, retrying\n"
-		echo -e "Bluetooth:$bt_status"
+		echo -e "Bluetooth:$bt_devstatus"
 		fi
 		count=$[ ${count} + 1 ]
 		if [ $count -ge 6 ]
@@ -377,7 +382,8 @@ echo -e "     OV5647   ---> $ov5647_status                "
 echo -e "  Manta USB   ---> $manta_usb_status             "
 echo -e " USB Device   ---> $ext_usb_status               "
 echo -e "       WIFI   ---> $wifi_status                  "
-echo -e "  BT Device   ---> $bt_status                  "
+echo -e "  Bluetooth   ---> $bt_status                    "
+echo -e "  BT Device   ---> $bt_devstatus                 "
 echo -e "       Eth0   ---> $phy_status                   "
 echo -e "        RAM   ---> $ram_status                   "
 echo -e "       eMMC   ---> $emmc_status				  "
