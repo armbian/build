@@ -276,7 +276,14 @@ if apply_patches:
 				try:
 					BASE_GIT_REVISION = git_repo.branches[BASE_GIT_TAG].commit.hexsha
 				except IndexError:
-					raise Exception(f"BASE_GIT_TAG={BASE_GIT_TAG} is neither a tag nor a branch")
+					# not a branch either, try as a hexsha:
+					try:
+						# see if the sha1 exists in the repo
+						commit = git_repo.commit(BASE_GIT_TAG)
+						log.debug(f"Found commit '{commit}' for BASE_GIT_TAG={BASE_GIT_TAG}")
+						BASE_GIT_REVISION = BASE_GIT_TAG
+					except:
+						raise Exception(f"BASE_GIT_TAG={BASE_GIT_TAG} is neither a tag nor a branch nor a SHA1")
 
 			log.debug(f"Found BASE_GIT_REVISION={BASE_GIT_REVISION} for BASE_GIT_TAG={BASE_GIT_TAG}")
 
@@ -313,7 +320,7 @@ if apply_patches:
 		if one_patch.applied_ok and apply_patches_to_git:
 			committed = one_patch.commit_changes_to_git(git_repo, (not rewrite_patches_in_place), split_patches, pconfig)
 
-			if not split_patches:
+			if not split_patches and (committed is not None):
 				commit_hash = committed['commit_hash']
 				one_patch.git_commit_hash = commit_hash
 
@@ -347,6 +354,10 @@ if apply_patches:
 				log.warning(f"Skipping patch {one_patch} from rewrite because it was not applied successfully.")
 				continue
 
+			if one_patch.rewritten_patch is None:
+				log.warning(f"Skipping patch {one_patch} from rewrite because it was not rewritten.")
+				continue
+
 			if one_patch.parent not in patch_files_by_parent:
 				patch_files_by_parent[one_patch.parent] = []
 			patch_files_by_parent[one_patch.parent].append(one_patch)
@@ -354,7 +365,7 @@ if apply_patches:
 		for parent in patch_files_by_parent:
 			patches = patch_files_by_parent[parent]
 			parent.rewrite_patch_file(patches)
-		UNAPPLIED_PATCHES = [one_patch for one_patch in VALID_PATCHES if not one_patch.applied_ok]
+		UNAPPLIED_PATCHES = [one_patch for one_patch in VALID_PATCHES if (not one_patch.applied_ok) or (one_patch.rewritten_patch is None)]
 		for failed_patch in UNAPPLIED_PATCHES:
 			log.info(
 				f"Consider removing {failed_patch.parent.full_file_path()}(:{failed_patch.counter}); "

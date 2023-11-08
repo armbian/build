@@ -59,6 +59,7 @@ function armbian_register_commands() {
 		["kernel"]="artifact"
 		["kernel-patch"]="artifact"
 		["kernel-config"]="artifact"
+		["rewrite-kernel-config"]="artifact"
 
 		["uboot"]="artifact"
 		["uboot-patch"]="artifact"
@@ -110,6 +111,7 @@ function armbian_register_commands() {
 
 		["kernel"]="WHAT='kernel' ${common_cli_artifact_vars}"
 		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
+		["rewrite-kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_WILL_NOT_BUILD='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
 		["kernel-patch"]="WHAT='kernel' CREATE_PATCHES='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 
 		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"

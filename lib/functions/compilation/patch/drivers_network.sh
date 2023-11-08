@@ -673,6 +673,10 @@ driver_uwe5622_allwinner() {
 		if linux-version compare "${version}" ge 6.6; then
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.6-fix-tty-sdio.patch" "applying"
 		fi
+
+		if [[ "$LINUXFAMILY" == sunxi* ]]; then
+			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-fix-setting-mac-address-for-netdev.patch" "applying"
+		fi
 	fi
 }
 
