@@ -11,7 +11,7 @@ clear
 system_language=$LANG
 
 #system_language="de_DE.UTF-8" # Replace with the language code you want to test
-system_language="es_" # Replace with the language code you want to test
+#system_language="es_" # Replace with the language code you want to test
 
 # More than one command can map to the same handler. In that case, use ARMBIAN_COMMANDS_TO_VARS_DICT for specific vars.
 declare -g -A ARMBIAN_COMMANDS_TO_HANDLERS_DICT=(
@@ -108,7 +108,7 @@ case $system_language in
         ;;
     "es"*)
         COMMAND_DESCRIPTIONS=("${COMMAND_DESCRIPTIONS_ES[@]}")
-        echo "${COMMAND_DESCRIPTIONS[@]}"
+        # echo "${COMMAND_DESCRIPTIONS[@]}"
         ;;
     "en"*)
         COMMAND_DESCRIPTIONS=("${COMMAND_DESCRIPTIONS_EN[@]}")
@@ -128,7 +128,7 @@ generate_descriptions() {
     local description
 
     for command in "${!ARMBIAN_COMMANDS_TO_HANDLERS_DICT[@]}"; do
-        description="${COMMAND_DESCRIPTIONS_EN[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
+        description="${COMMAND_DESCRIPTIONS[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
         handler="${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}"
         printf '%d %s  - %s\n    ["%s"]="%s"\n' "$i" "$command" "$description" "$command" "$handler"
         ((i++))
@@ -144,7 +144,7 @@ generate_json_py() {
     json_output="["
 
     for command in "${!ARMBIAN_COMMANDS_TO_HANDLERS_DICT[@]}"; do
-        description="${COMMAND_DESCRIPTIONS_EN[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
+        description="${COMMAND_DESCRIPTIONS[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
         handler="${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}"
 
         if [[ $i -gt 1 ]]; then
@@ -173,7 +173,7 @@ generate_json() {
     json_output="["
 
     for command in "${!ARMBIAN_COMMANDS_TO_HANDLERS_DICT[@]}"; do
-        description="${COMMAND_DESCRIPTIONS_EN[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
+        description="${COMMAND_DESCRIPTIONS[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
         handler="${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}"
 
         if [[ $i -gt 1 ]]; then
@@ -199,7 +199,7 @@ generate_message() {
     local description
 
     for command in "${!ARMBIAN_COMMANDS_TO_HANDLERS_DICT[@]}"; do
-        description="${COMMAND_DESCRIPTIONS_EN[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
+        description="${COMMAND_DESCRIPTIONS[${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}]}"
         handler="${ARMBIAN_COMMANDS_TO_HANDLERS_DICT[$command]}"
         printf '%s  - %s\n    ["%s"]="%s"\n\n' "$command" "$description" "$command" "$handler"
         ((i++))
