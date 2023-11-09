@@ -11,7 +11,7 @@ clear
 system_language=$LANG
 
 #system_language="de_DE.UTF-8" # Replace with the language code you want to test
-system_language="es_" # Replace with the language code you want to test
+#system_language="es_" # Replace with the language code you want to test
 
 # More than one command can map to the same handler. In that case, use ARMBIAN_COMMANDS_TO_VARS_DICT for specific vars.
 declare -g -A ARMBIAN_COMMANDS_TO_HANDLERS_DICT=(
