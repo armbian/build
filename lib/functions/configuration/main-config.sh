@@ -40,6 +40,8 @@ function do_main_configuration() {
 
 	[[ -z $VENDOR ]] && VENDOR="Armbian"
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
+	[[ -z $USR_NAME ]] && USR_NAME="biqu"
+	[[ -z $USRPWD ]] && USRPWD="biqu"
 	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
 	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
 	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                              # en_US.UTF-8 is default locale for target

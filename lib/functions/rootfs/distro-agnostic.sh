@@ -127,7 +127,27 @@ function install_distribution_agnostic() {
 	# set root password. it is written to the log, of course. Escuse the escaping needed here.
 	display_alert "Setting root password" "" "info"
 	chroot_sdcard "(" echo "'${ROOTPWD}'" ";" echo "'${ROOTPWD}'" ";" ")" "|" passwd root
-
+	#chroot_sdcard useradd -d "${SDCARD}"/home -s "${SDCARD}"/bin/bash biqu
+	mkdir -p "${SDCARD}"/home/biqu   #${USER_NAME}	
+	chroot "${SDCARD}" /bin/bash -c "useradd -d /home/biqu  -s /bin/bash  biqu"
+	chroot_sdcard "(" echo "'${USRPWD}'" ";" echo "'${USRPWD}'" ";" ")" "|" passwd biqu
+#	mkdir -p "${SDCARD}"/home/${USER_NAME}   #${USER_NAME}	
+#	chroot "${SDCARD}" /bin/bash -c "useradd -d /home/${USER_NAME}  -s /bin/bash  '${USER_NAME}'"
+#	chroot_sdcard "(" echo "'${USRPWD}'" ";" echo "'${USRPWD}'" ";" ")" "|" passwd '${USER_NAME}'
+	
+	##chroot_sdcard usermod -d "${SDCARD}"/home/biqu  biqu
+	##chroot_sdcard usermod -d "${SDCARD}"/home/biqu biqu 
+	#chroot_sdcard  git clone  https://github.com/dw-0/kiauh.git "${SDCARD}"/home/biqu/kiauh
+##	mkdir -p "${SDCARD}"/home/biqu/kiauh
+##	#git clone  https://github.com/dw-0/kiauh.git "${SDCARD}"/home/biqu/kiauh 
+##	 git clone  https://github.com/dw-0/kiauh.git "${SDCARD}"/home/biqu/kiauh
+##	chmod 775  "${SDCARD}"/home/biqu/kiauh  -R 
+##	chmod +x  "${SDCARD}"/home/biqu/kiauh -R
+##	chown  biqu:biqu "${SDCARD}"/home/biqu/kiauh -R
+##	local CRTDIR
+	chroot_sdcard  CRTDIR=$(pwd)
+	echo "dir =$CRTDIR----------------------------------"
+	#chroot "${SDCARD}" /bin/bash -c "git clone  https://github.com/dw-0/kiauh.git /home/biqu/kiauh"
 	# enable automated login to console(s)
 	if [[ $CONSOLE_AUTOLOGIN == yes ]]; then
 		mkdir -p "${SDCARD}"/etc/systemd/system/getty@.service.d/
@@ -248,6 +268,9 @@ function install_distribution_agnostic() {
 	date -u '+%Y-%m-%d %H:%M:%S' > "${SDCARD}"/etc/fake-hwclock.data
 
 	echo "${HOST}" > "${SDCARD}"/etc/hostname
+	
+	
+	
 
 	# set hostname in hosts file
 	cat <<- EOF > "${SDCARD}"/etc/hosts
