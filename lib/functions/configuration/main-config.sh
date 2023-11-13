@@ -47,9 +47,10 @@ function do_main_configuration() {
 	fi
 
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
-	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://duckduckgo.com/"
+	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
 	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
-	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://duckduckgo.com/"
+	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://armbian.atlassian.net/"
+	[[ -z $VENDORDOCS ]] && VENDORDOCS="https://docs.armbian.com/"
 	[[ -z $VENDORLOGO ]] && VENDORLOGO="armbian-logo"
 	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                    # Must be changed @first login
 	[[ -z $MAINTAINER ]] && MAINTAINER="John Doe"                          # deb signature
