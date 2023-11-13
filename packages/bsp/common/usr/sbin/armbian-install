@@ -22,22 +22,26 @@
 
 [[ -f /usr/lib/u-boot/platform_install.sh ]] && source /usr/lib/u-boot/platform_install.sh
 
-# script configuration
-CWD="/usr/lib/nand-sata-install"
+# ORIGINAL_SCRIPT_NAME: Must be either armbian-install or nand-sata-install
+ORIGINAL_SCRIPT_NAME=$(basename $0)
+# script configuration - derive from ORIGINAL_SCRIPT_NAME
+CWD="/usr/lib/${ORIGINAL_SCRIPT_NAME}"
 EX_LIST="${CWD}/exclude.txt"
+[ ! -f ${EX_LIST} ] && echo -e "### Board installation issue: File ${EX_LIST} does not exist or is not accessible!\n" && exit 1
 [ -f /etc/default/openmediavault ] && echo '/srv/*' >> "${EX_LIST}"
-logfile="/var/log/nand-sata-install.log"
+logfile="/var/log/${ORIGINAL_SCRIPT_NAME}.log"
 
 # read in board info
 [[ -f /etc/armbian-release ]] && source /etc/armbian-release
 backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
-title="Armbian installer beta v${VERSION}"
+title="Armbian installer v${VERSION}"
 
 # exceptions
 if grep -q 'sun4i' /proc/cpuinfo; then DEVICE_TYPE="a10";
 elif grep -q 'sun5i' /proc/cpuinfo; then DEVICE_TYPE="a13";
 else DEVICE_TYPE="a20"; fi
 BOOTLOADER="${CWD}/${DEVICE_TYPE}/bootloader"
+[ ! -d ${BOOTLOADER} ] && echo -e "### Board installation issue: Directory ${BOOTLOADER} does not exist or is not accessible!\n" && exit 1
 FIRSTSECTOR=32768
 
 #recognize_root
@@ -63,12 +67,14 @@ mtdcheck=$(grep 'mtdblock' /proc/partitions | awk '{print $NF}' | xargs)
 
 # SD card boot part - to be considered more than one entry on various platforms
 # UUID=xxx...
-# 1 - Lookup mmc devices excluding the mmc device probably providing the current root partition:
-sdblkid=$(blkid -o full /dev/mmcblk*p1 | grep -v "$root_partition_device")
-# 2 - If there is nothing, then lookup any mmc partition matching /dev/mmcblk*p1:
-[[ -z $sdblkid ]] && sdblkid=$(blkid -o full /dev/mmcblk*p1)
-# 3 - Extract the UUID from $sdblkid via regex:
-sduuid=$(echo "$sdblkid" | sed -nE 's/^.*[[:space:]]UUID="([0-9a-zA-Z-]*)".*/\1/p')
+# 1 - Lookup mmc devices excluding the mmc device probably providing the current root partition as well as a probable emmc device found above:
+[[ -z $emmccheck ]] && sdblkid=$(blkid -o full /dev/mmcblk*p1 | grep -v "$root_partition_device")
+[[ -n $emmccheck ]] && sdblkid=$(blkid -o full /dev/mmcblk*p1 | grep -v "$root_partition_device" | grep -v "$emmccheck")
+# 2 - If there is nothing, then lookup any mmc partition matching /dev/mmcblk*p1 excluding probable emmc device found above
+[[ -z $sdblkid && -z $emmccheck ]] && sdblkid=$(blkid -o full /dev/mmcblk*p1)
+[[ -z $sdblkid && -n $emmccheck ]] && sdblkid=$(blkid -o full /dev/mmcblk*p1 | grep -v "$emmccheck")
+# 3 - Extract the UUID=<uuid> from $sdblkid via regex without " - as e.g.: UUID=2e1d1509-a8fc-4f8b-8a51-88fb8593f8d6
+sduuid=$(echo "$sdblkid" | sed -nE 's/^.*[[:space:]](UUID="[0-9a-zA-Z-]*").*/\1/p' | tr -d '"')
 
 #recognize EFI
 [[ -d /sys/firmware/efi ]] && DEVICE_TYPE="uefi"
@@ -385,11 +391,9 @@ create_armbian()
 
 		# but no more then 16Gb
 		[[ ${MEM_TOTAL} -gt 16107868 ]] && MEM_TOTAL=16107868
-		dd if=/dev/zero of="${TempDir}"/rootfs/swapfile bs=${MEM_TOTAL} count=1024 conv=notrunc
+		dd if=/dev/zero of="${TempDir}"/rootfs/swapfile bs=${MEM_TOTAL} count=1024 conv=notrunc >> $logfile
 
-		# create swap file size of your memory so we can use it for S4
-		dd if=/dev/zero of="${TempDir}"/rootfs/swapfile bs=$(cat /proc/meminfo | awk '/MemTotal/ {print $2}') count=1024 conv=notrunc
-		mkswap "${TempDir}"/rootfs/swapfile
+		mkswap "${TempDir}"/rootfs/swapfile >> $logfile
 		chmod 0600 "${TempDir}"/rootfs/swapfile
 		sed -i "/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/\"$/ resume=UUID=$(findmnt -no UUID -T "${TempDir}"/rootfs/swapfile) resume_offset=$(filefrag -v "${TempDir}"/rootfs/swapfile |grep " 0:"| awk '{print $4}' | cut -d"." -f1)\"/" "${TempDir}"/rootfs/etc/default/grub.d/98-armbian.cfg
 
@@ -568,7 +572,7 @@ format_emmc()
 		fi
 
 		# default boot partition size, in MiB
-		DEFAULT_BOOTSIZE=256
+		DEFAULT_BOOTSIZE=512
 
 		# (convert to sectors for partitioning)
 		DEFAULT_BOOTSIZE_SECTORS=$(((${DEFAULT_BOOTSIZE} * 1024 * 1024) / 512))
@@ -854,7 +858,7 @@ main()
 				if [[ -n $emmccheck ]]; then
 					umount_device "$emmccheck"
 					format_emmc "$emmccheck"
-					else
+				else
 					umount_device '/dev/nand'
 					format_nand
 				fi

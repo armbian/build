@@ -12,14 +12,26 @@ function kernel_drivers_create_patches_hash_only() {
 }
 
 function kernel_drivers_create_patches() {
+	if [[ "${EXTRAWIFI}" == "no" ]]; then
+		display_alert "Skipping driver harness as requested" "EXTRAWIFI = ${EXTRAWIFI} - returning" "debug"
+		return 0
+	fi
+
 	kernel_drivers_patch_hash="undetermined" # outer scope
 	kernel_drivers_patch_file="undetermined" # outer scope
 
 	declare hash_files # any changes in these files will trigger a cache miss; also any changes in misc .patch with "wireless" at start or "wifi" anywhere in the name
-	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch "${SRC}"/patch/misc/*wifi*.patch
+	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch
 
-	declare cache_key_base="${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}"
-	declare cache_key="${cache_key_base}_${hash_files}"
+	declare hash_variables="undetermined"
+	do_normalize_src_path="no" calculate_hash_for_variables "${KERNEL_DRIVERS_SKIP[*]}"
+	declare hash_variables_short="${hash_variables:0:8}"
+
+	# Sanity check, the KERNEL_GIT_SHA1 gotta be sane.
+	[[ "${KERNEL_GIT_SHA1}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "KERNEL_GIT_SHA1 is not sane: '${KERNEL_GIT_SHA1}'"
+
+	declare cache_key_base="sha1_${KERNEL_GIT_SHA1}_${LINUXFAMILY}_${BRANCH}"
+	declare cache_key="${cache_key_base}_${hash_files}-${hash_variables_short}"
 	display_alert "Cache key base:" "$cache_key_base" "debug"
 	display_alert "Cache key:" "$cache_key" "debug"
 
@@ -44,23 +56,25 @@ function kernel_drivers_create_patches() {
 	if [[ -f "${cache_target_file}" ]]; then
 		# Make sure the file is larger than 512 bytes. Old versions of this code left small/empty files on failure.
 		if [[ $(stat -c%s "${cache_target_file}") -gt 512 ]]; then
-			display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "cachehit"
+			display_alert "Using cached drivers patch file for ${LINUXFAMILY}-${BRANCH}" "${cache_key}" "cachehit"
 			return
 		else
-			display_alert "Removing invalid/small cached drivers patch file for ${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" "${cache_key}" "warn"
+			display_alert "Removing invalid/small cached drivers patch file for ${LINUXFAMILY}-${BRANCH}" "${cache_key}" "warn"
 			run_host_command_logged rm -fv "${cache_target_file}"
 		fi
 	fi
 
-	display_alert "Creating patches for kernel drivers" "version: '${KERNEL_MAJOR_MINOR}' family: '${LINUXFAMILY}'" "info"
+	display_alert "Creating patches for kernel drivers" "version: 'sha1_${KERNEL_GIT_SHA1}' family: '${LINUXFAMILY}-${BRANCH}'" "info"
 
 	# if it does _not_ exist, fist clear the base, so no old patches are left over
-	run_host_command_logged rm -fv "${cache_dir_base}/${cache_key_base}*"
+	run_host_command_logged rm -fv "${cache_dir_base}/*_${LINUXFAMILY}_${BRANCH}*"
+	# also clean up old-style cache base, used before we introduced KERNEL_GIT_SHA1
+	run_host_command_logged rm -fv "${cache_dir_base}/${KERNEL_MAJOR_MINOR}_${LINUXFAMILY}*"
 
 	# since it does not exist, go create it. this requires working tree.
 	declare target_patch_file="${cache_target_file}"
 
-	display_alert "Preparing patch for drivers" "version: ${KERNEL_MAJOR_MINOR} kernel_work_dir: ${kernel_work_dir}" "debug"
+	display_alert "Preparing patch for drivers" "version: sha1_${KERNEL_GIT_SHA1} kernel_work_dir: ${kernel_work_dir}" "debug"
 
 	kernel_drivers_prepare_harness "${kernel_work_dir}" "${kernel_git_revision}"
 }
@@ -70,8 +84,9 @@ function kernel_drivers_prepare_harness() {
 	declare kernel_git_revision="${2}"
 	# outer scope variable: target_patch_file
 
-	declare -a drivers=(
+	declare -a all_drivers=(
 		driver_generic_bring_back_ipx
+		driver_mt7921u_add_pids
 		driver_rtl8152_rtl8153
 		driver_rtl8189ES
 		driver_rtl8189FS
@@ -81,6 +96,7 @@ function kernel_drivers_prepare_harness() {
 		driver_rtl8811CU_rtl8821C
 		driver_rtl8188EU_rtl8188ETV
 		driver_rtl88x2bu
+		driver_rtw88
 		driver_rtl88x2cs
 		driver_rtl8822cs_bt
 		driver_rtl8723DS
@@ -89,6 +105,20 @@ function kernel_drivers_prepare_harness() {
 		driver_uwe5622_allwinner
 		driver_rtl8723cs
 	)
+
+	declare -a skip_drivers=("${KERNEL_DRIVERS_SKIP[@]}")
+	declare -a drivers=()
+
+	# Produce 'drivers' array by removing any drivers in 'skip_drivers' from 'all_drivers'
+	for driver in "${all_drivers[@]}"; do
+		for skip in "${skip_drivers[@]}"; do
+			if [[ "${driver}" == "${skip}" ]]; then
+				display_alert "Skipping kernel driver as instructed by KERNEL_DRIVERS_SKIP" "${driver}" "info"
+				continue 2 # 2: continue the _outer_ loop
+			fi
+		done
+		drivers+=("${driver}")
+	done
 
 	# change cwd to the kernel working dir
 	cd "${kernel_work_dir}" || exit_with_error "Failed to change directory to ${kernel_work_dir}"
@@ -107,7 +137,6 @@ function kernel_drivers_prepare_harness() {
 		declare kernel_git_revision="${2}"
 		# for compatibility with `master`-based code
 		declare kerneldir="${kernel_work_dir}"
-		declare EXTRAWIFI="yes" # forced! @TODO not really?
 
 		# change cwd to the kernel working dir
 		cd "${kernel_work_dir}" || exit_with_error "Failed to change directory to ${kernel_work_dir}"
@@ -143,7 +172,7 @@ function export_changes_as_patch_via_git_format_patch() {
 	)
 	declare -a commit_params=(
 		"--quiet" # otherwise too much output
-		-m "drivers for ${LINUXFAMILY} version ${KERNEL_MAJOR_MINOR}"
+		-m "drivers for ${LINUXFAMILY}-${BRANCH} version ${KERNEL_MAJOR_MINOR} git sha1 ${KERNEL_GIT_SHA1}"
 		--author="${MAINTAINER} <${MAINTAINERMAIL}>"
 	)
 	declare -a commit_envs=(

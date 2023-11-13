@@ -16,28 +16,37 @@ function calculate_rootfs_cache_id() {
 	[[ "x${packages_hash}x" != "xx" ]] && exit_with_error "packages_hash is already set"
 	[[ "x${cache_type}x" != "xx" ]] && exit_with_error "cache_type is already set"
 
+	declare -i short_hash_size=6
+
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
 	calculate_hash_for_files "${SRC}"/lib/functions/rootfs/create-cache.sh "${SRC}"/lib/functions/rootfs/rootfs-create.sh
 	declare bash_hash="${hash_files}"
-	declare bash_hash_short="${bash_hash:0:6}"
+	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
+
+	# hash hooks that affect the rootfs
+	declare -a extension_hooks_to_hash=("custom_apt_repo")
+	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
+	declare hash_hooks="undetermined"
+	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"
+	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
 	# AGGREGATED_ROOTFS_HASH is produced by aggregation.py
-	# Don't use a dash here, dashes are significant to legacy rootfs cache id's
-	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:12}B${bash_hash_short}"
+	declare -g -r packages_hash="${AGGREGATED_ROOTFS_HASH:0:12}-H${hash_hooks_short}-B${bash_hash_short}"
 
 	declare cache_type="cli"
 	[[ ${BUILD_DESKTOP} == yes ]] && cache_type="xfce-desktop"
-	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}" # @TODO: this is missing "-desktop"
+	[[ -n ${DESKTOP_ENVIRONMENT} ]] && cache_type="${DESKTOP_ENVIRONMENT}-desktop"
 	[[ ${BUILD_MINIMAL} == yes ]] && cache_type="minimal"
 
-	# @TODO: rpardini: allow extensions to modify cache_type, eg, "-cloud-mluc". *think* before doing this
+	# allow extensions to modify cache_type, since they may have used add_packages_to_rootfs() or remove_packages()
+	cache_type="${cache_type}${EXTRA_ROOTFS_NAME:-""}"
 
 	declare -g -r cache_type="${cache_type}"
 
-	declare -g -r rootfs_cache_id="${cache_type}-${packages_hash}"
+	declare -g -r rootfs_cache_id="${packages_hash}"
 
-	display_alert "calculate_rootfs_cache_id: done." "rootfs_cache_id: '${rootfs_cache_id}'" "debug"
+	display_alert "calculate_rootfs_cache_id: done." "cache_type: '${cache_type}' - rootfs_cache_id: '${rootfs_cache_id}'" "debug"
 }
 
 # called by artifact-rootfs::artifact_rootfs_build_from_sources()
@@ -115,7 +124,9 @@ function extract_rootfs_artifact() {
 	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
 	run_host_command_logged echo "nameserver ${NAMESERVER}" ">" "${SDCARD}"/etc/resolv.conf
 
-	create_sources_list "${RELEASE}" "${SDCARD}/"
+	# all sources etc.
+	# armbian repo is NOT yet included here, since we'll be building the image, and don't want the repo interferring.
+	create_sources_list_and_deploy_repo_key "image-early" "${RELEASE}" "${SDCARD}/"
 
 	return 0
 }

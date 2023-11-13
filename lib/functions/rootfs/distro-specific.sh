@@ -16,7 +16,7 @@ function install_distribution_specific() {
 
 	case "${RELEASE}" in
 
-		focal | jammy | kinetic | lunar)
+		focal | jammy | kinetic | lunar | mantic)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
@@ -34,7 +34,7 @@ function install_distribution_specific() {
 				if [[ -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
 					sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
 				else
-					display_alert "DNS fix" "/etc/systemd/resolved.conf not found: ${DISTRIBUTION} ${RELEASE}" "wrn"
+					display_alert "DNS fix" "/etc/systemd/resolved.conf not found: ${DISTRIBUTION} ${RELEASE}" "info"
 				fi
 			fi
 
@@ -49,8 +49,18 @@ function install_distribution_specific() {
 
 			# disable conflicting services
 			disable_systemd_service_sdcard ondemand.service
+
+			# Remove Ubuntu APT spamming
+			install_artifact_deb_chroot "fake-ubuntu-advantage-tools"
+			truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
+
 			;;
 	esac
+
+	# install our base-files package (this replaces the original from Debian/Ubuntu)
+	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
+		install_artifact_deb_chroot "armbian-base-files"
+	fi
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
 	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
@@ -79,15 +89,17 @@ function install_distribution_specific() {
 	fi
 }
 
-# create_sources_list <release> <basedir>
+# create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
-# <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar
+# <when>: rootfs|image
+# <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar|mantic
 # <basedir>: path to root directory
 #
-function create_sources_list() {
-	local release=$1
-	local basedir=$2 # @TODO: rpardini: this is SDCARD in all practical senses. Why not just use SDCARD?
-	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list"
+function create_sources_list_and_deploy_repo_key() {
+	declare when="${1}"
+	declare release="${2}"
+	declare basedir="${3}" # @TODO: rpardini: this is SDCARD in all practical senses. Why not just use SDCARD?
+	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list_and_deploy_repo_key"
 
 	case $release in
 		buster)
@@ -106,7 +118,7 @@ function create_sources_list() {
 			EOF
 			;;
 
-		bullseye | trixie)
+		bullseye)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -122,7 +134,7 @@ function create_sources_list() {
 			EOF
 			;;
 
-		bookworm)
+		bookworm | trixie)
 			# non-free firmware in bookworm and later has moved from the non-free archive component to a new non-free-firmware component (alongside main/contrib/non-free). This was implemented on 2023-01-27, see also https://lists.debian.org/debian-boot/2023/01/msg00235.html
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
@@ -141,15 +153,21 @@ function create_sources_list() {
 
 		sid) # sid is permanent unstable development and has no such thing as updates or security
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
-				deb http://${DEBIAN_MIRROR} $release main contrib non-free
-				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
+				deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
 
-				deb http://${DEBIAN_MIRROR} unstable main contrib non-free
-				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free
+				deb http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
+				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 			EOF
+
+			# Exception: with riscv64 not everything was moved from ports
+			# https://lists.debian.org/debian-riscv/2023/07/msg00053.html
+			if [[ "${ARCH}" == riscv64 ]]; then
+				echo "deb http://deb.debian.org/debian-ports/ sid main " >> "${basedir}"/etc/apt/sources.list
+			fi
 			;;
 
-		focal | jammy | kinetic | lunar)
+		focal | jammy | kinetic | lunar | mantic)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
@@ -166,7 +184,7 @@ function create_sources_list() {
 			;;
 	esac
 
-	display_alert "Adding Armbian repository and authentication key" "/etc/apt/sources.list.d/armbian.list" "info"
+	display_alert "Adding Armbian repository and authentication key" "${when} :: /etc/apt/sources.list.d/armbian.list" "info"
 
 	# apt-key add is getting deprecated
 	APT_VERSION=$(chroot "${basedir}" /bin/bash -c "apt --version | cut -d\" \" -f2")
@@ -182,22 +200,46 @@ function create_sources_list() {
 		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add -"
 	fi
 
+	declare -a components=()
+	if [[ "${when}" == "image"* ]]; then # only include the 'main' component when deploying to image (early or late)
+		components+=("main")
+	fi
+	components+=("${RELEASE}-utils")   # utils contains packages Igor picks from other repos
+	components+=("${RELEASE}-desktop") # desktop contains packages Igor picks from other repos
+
 	# stage: add armbian repository and install key
 	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
-		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
-		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	else
-		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
 	# replace local package server if defined. Suitable for development
-	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE main ${RELEASE}-utils ${RELEASE}-desktop" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
-	# disable repo if SKIP_ARMBIAN_REPO=yes
-	if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
-		display_alert "Disabling Armbian repo due to SKIP_ARMBIAN_REPO=yes" "${ARCH}-${RELEASE}" "info"
+	# disable repo if SKIP_ARMBIAN_REPO==yes, or if when==image-early.
+	if [[ "${when}" == "image-early" || "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
+		display_alert "Disabling Armbian repo" "${ARCH}-${RELEASE} :: skip:${SKIP_ARMBIAN_REPO:-"no"} when:${when}" "info"
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
 
+	declare CUSTOM_REPO_WHEN="${when}"
+
+	# Let user customize
+	call_extension_method "custom_apt_repo" <<- 'CUSTOM_APT_REPO'
+		*customize apt sources.list.d and/or deploy repo keys*
+		Called after core Armbian has finished setting up SDCARD's sources.list and sources.list.d/armbian.list.
+		If SKIP_ARMBIAN_REPO=yes, armbian.list.disabled is present instead.
+		The global Armbian GPG key has been deployed to SDCARD's /usr/share/keyrings/armbian.gpg, de-armored.
+		You can implement this hook to add, remove, or modify sources.list.d entries, and/or deploy additional GPG keys.
+		Important: honor $CUSTOM_REPO_WHEN; if it's ==rootfs, don't add repos/components that carry the .debs produced by armbian/build.
+		Ideally, also don't add any possibly-conflicting repo if `$CUSTOM_REPO_WHEN==image-early`.
+		`$CUSTOM_APT_REPO==image-late` is passed during the very final stages of image building, after all packages were installed/upgraded.
+	CUSTOM_APT_REPO
+
+	unset CUSTOM_REPO_WHEN
+
+	return 0
 }

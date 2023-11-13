@@ -94,7 +94,7 @@ function cli_entrypoint() {
 	if [[ "${ARMBIAN_BUILD_UUID}" != "" ]]; then
 		display_alert "Using passed-in ARMBIAN_BUILD_UUID" "${ARMBIAN_BUILD_UUID}" "debug"
 	else
-		if [[ -f /usr/bin/uuidgen ]]; then
+		if command -v uuidgen 1> /dev/null; then
 			ARMBIAN_BUILD_UUID="$(uuidgen)"
 		else
 			display_alert "uuidgen not found" "uuidgen not installed yet" "info"
@@ -170,7 +170,7 @@ function cli_entrypoint() {
 	done
 
 	# Early check for deprecations
-	error_if_lib_tag_set     # make sure users are not thrown off by using old parameter which does nothing anymore; explain
+	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore; explain
 
 	display_alert "Executing final CLI command" "${ARMBIAN_COMMAND}" "debug"
 	armbian_cli_run_command

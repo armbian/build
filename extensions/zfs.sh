@@ -3,7 +3,7 @@ function extension_finish_config__build_zfs_kernel_module() {
 		display_alert "Kernel version has no working headers package" "skipping ZFS for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
 	fi
-	export INSTALL_HEADERS="yes"
+	declare -g INSTALL_HEADERS="yes"
 	display_alert "Forcing INSTALL_HEADERS=yes; for use with ZFS" "${EXTENSION}" "debug"
 }
 

@@ -15,8 +15,7 @@
 # "make-kernel" = make clean for kernel, if it is built. very slow.
 # *important*: "make" by itself has disabled, since Armbian knows how to handle Make timestamping now.
 
-# "debs" = delete packages in "./output/debs" for current branch and family. causes rebuilds, hopefully cached.
-# "ubootdebs" - delete output/debs for uboot&board&branch
+# "debs" = delete all packages in "./output/debs"
 # "alldebs" = delete all packages in "./output/debs"
 # "images" = delete "./output/images"
 # "cache" = delete "./output/cache"
@@ -25,41 +24,11 @@
 
 function general_cleaning() {
 	case $1 in
-		debs) # delete ${DEB_STORAGE} for current branch and family
+		debs | alldebs) # delete ${DEB_STORAGE} completely
 			if [[ -d "${DEB_STORAGE}" ]]; then
-				display_alert "Cleaning" "general_cleaning '$1' - deprecated" "warn"
-				display_alert "(not) cleaning ${DEB_STORAGE} for" "$BOARD $BRANCH" "info"
-				# easier than dealing with variable expansion and escaping dashes in file names
-				find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" #-delete
-				find "${DEB_STORAGE}" \( -name "${CHOSEN_KERNEL}_*.deb" -o \
-					-name "armbian-*.deb" -o \
-					-name "plymouth-theme-armbian_*.deb" -o \
-					-name "${CHOSEN_KERNEL/image/dtb}_*.deb" -o \
-					-name "${CHOSEN_KERNEL/image/headers}_*.deb" -o \
-					-name "${CHOSEN_KERNEL/image/source}_*.deb" -o \
-					-name "${CHOSEN_KERNEL/image/firmware-image}_*.deb" \) #-delete
-				[[ -n $RELEASE ]] && ls -la "${DEB_STORAGE}/${RELEASE}/${CHOSEN_ROOTFS}"_*.deb || true
-				[[ -n $RELEASE ]] && ls -la "${DEB_STORAGE}/${RELEASE}/armbian-desktop-${RELEASE}"_*.deb || true
+				display_alert "Cleaning" "general_cleaning '$1' - removing all .deb's" "warn"
+				find "${DEB_STORAGE:?}" -name "*.deb" -delete
 			fi
-			;;
-
-		ubootdebs) # delete ${DEB_STORAGE} for uboot, current branch and family
-			if [[ -d "${DEB_STORAGE}" ]]; then
-				display_alert "Cleaning ${DEB_STORAGE} for u-boot" "$BOARD $BRANCH" "info"
-				# easier than dealing with variable expansion and escaping dashes in file names
-				find "${DEB_STORAGE}" -name "${CHOSEN_UBOOT}_*.deb" -delete
-			fi
-			;;
-
-		extras) # delete ${DEB_STORAGE}/extra/$RELEASE for all architectures
-			if [[ -n $RELEASE && -d ${DEB_STORAGE}/extra/$RELEASE ]]; then
-				display_alert "Cleaning ${DEB_STORAGE}/extra for" "$RELEASE" "info"
-				rm -rf "${DEB_STORAGE}/extra/${RELEASE}"
-			fi
-			;;
-
-		alldebs) # delete output/debs
-			[[ -d "${DEB_STORAGE}" ]] && display_alert "Cleaning" "${DEB_STORAGE}" "info" && rm -rf "${DEB_STORAGE:?}"/*
 			;;
 
 		cache) # delete output/cache

@@ -18,9 +18,9 @@ function trap_handler_cleanup_logging() {
 	# `pwd` might not even be valid anymore. Move back to ${SRC}
 	cd "${SRC}" || exit_with_error "cray-cray about SRC: ${SRC}"
 
-	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode.
-	if [[ "${CONFIG_DEFS_ONLY}" == "yes" ]]; then
-		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY}" "debug"
+	# Just delete LOGDIR if in CONFIG_DEFS_ONLY mode, or if ANSI_COLOR is "none".
+	if [[ "${CONFIG_DEFS_ONLY}" == "yes" || "${ANSI_COLOR}" == "none" ]]; then
+		display_alert "Discarding logs" "CONFIG_DEFS_ONLY=${CONFIG_DEFS_ONLY};ANSI_COLOR=${ANSI_COLOR}" "debug"
 		discard_logs_tmp_dir
 		return 0
 	fi
@@ -68,6 +68,11 @@ function trap_handler_cleanup_logging() {
 		display_alert "Not archiving old logs." "CI=${CI:-false}, SKIP_LOG_ARCHIVE=${SKIP_LOG_ARCHIVE:-no}" "debug"
 	fi
 
+	# Gather repeat build args, included in the logs.
+	declare -g repeat_args=()
+	produce_repeat_args_array # produces repeat_args
+	declare repeat_args_string="${repeat_args[*]}"
+
 	## Here -- we need to definitely stop logging, cos we're gonna consolidate and delete the logs.
 	display_alert "End of logging" "STOP LOGGING: CURRENT_LOGFILE: ${CURRENT_LOGFILE}" "debug"
 
@@ -91,11 +96,16 @@ function trap_handler_cleanup_logging() {
 		cat "${ansi_log_file}" | ansi2txt >> "${ascii_log_file}"
 	fi
 
-	# Export Markdown assets.
-	local target_file="${target_path}/summary-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
-	export_markdown_logs "${ascii_log_file}" # it might include the ASCII as well, if in GHA.
-	reset_uid_owner "${target_file}"
-	local markdown_log_file="${target_file}"
+	# Export Markdown assets, but not if in GHA and GHA_EXPORT_MD_SUMMARY != yes
+	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]] && [[ "${GHA_EXPORT_MD_SUMMARY:-no}" != "yes" ]]; then
+		display_alert "Not exporting Markdown logs to GitHub Actions" "GITHUB_ACTIONS: '${GITHUB_ACTIONS}', GHA_EXPORT_MD_SUMMARY: '${GHA_EXPORT_MD_SUMMARY}'" "debug"
+	else
+		# Export Markdown logs.
+		local target_file="${target_path}/summary-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.md"
+		export_markdown_logs "${ascii_log_file}" # it might include the ASCII as well, if in GHA.
+		reset_uid_owner "${target_file}"
+		local markdown_log_file="${target_file}"
+	fi
 
 	# Export raw logs, in a tar. For development.
 	if [[ "${RAW_LOG:-no}" == "yes" ]]; then
@@ -104,11 +114,13 @@ function trap_handler_cleanup_logging() {
 		reset_uid_owner "${target_file}"
 	fi
 
-	# If running in Github Actions, cat the markdown file to GITHUB_STEP_SUMMARY. It appends, docker and build logs will be together.
-	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
+	# If running in Github Actions, and GHA_EXPORT_MD_SUMMARY=yes, cat the markdown file to GITHUB_STEP_SUMMARY. It appends, docker and build logs will be together.
+	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]] && [[ "${GHA_EXPORT_MD_SUMMARY:-no}" == "yes" ]]; then
 		display_alert "Exporting Markdown logs to GitHub Actions" "GITHUB_STEP_SUMMARY: '${GITHUB_STEP_SUMMARY}'" "info"
 		cat "${markdown_log_file}" >> "${GITHUB_STEP_SUMMARY}" || true
 	fi
+
+	unset repeat_args_string
 
 	discard_logs_tmp_dir
 }

@@ -38,6 +38,7 @@ function export_markdown_logs() {
 
 		### Armbian logs for ${ARMBIAN_BUILD_UUID}
 		#### Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)
+		#### Repeat build: ${repeat_args_string:-""}
 		#### ARGs: \`${ARMBIAN_ORIGINAL_ARGV[@]@Q}\`
 	MARKDOWN_HEADER
 
@@ -119,6 +120,7 @@ function export_ansi_logs() {
 		# Armbian ANSI build logs for ${ARMBIAN_BUILD_UUID} - use "less -SR" to view
 		$(echo -e -n "${bright_blue_color:-}")# Armbian build at $(LC_ALL=C LANG=C date) on $(hostname || true)$(echo -e -n "${ansi_reset_color}")
 		${dim_line_separator}
+		$(echo -e -n "${bright_blue_color}")# Repeat build: ${repeat_args_string:-""}$(echo -e -n "${ansi_reset_color}")
 		$(echo -e -n "${bright_blue_color}")# ARGs: ${ARMBIAN_ORIGINAL_ARGV[@]@Q}$(echo -e -n "${ansi_reset_color}")
 		${dim_line_separator}
 	ANSI_HEADER
@@ -168,13 +170,16 @@ function export_ansi_logs() {
 		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
 
 		# @TODO: compress...
+		declare paste_url="${PASTE_URL:-"https://paste.next.armbian.com/log"}"
 		if [[ "${SHARE_LOG:-"no"}" == "yes" ]]; then
 			display_alert "SHARE_LOG=yes, uploading log" "uploading logs" "info"
 			declare logs_url="undetermined"
-			logs_url=$(curl --silent --data-binary "@${target_relative_to_src}" "https://paste.next.armbian.com/log" | xargs echo -n || true) # don't fail
+			logs_url=$(curl --silent --data-binary "@${target_relative_to_src}" "${paste_url}" | xargs echo -n || true) # don't fail
 			display_alert "Log uploaded, share URL:" "${logs_url}" ""
+			# set output for GitHub Actions
+			github_actions_add_output logs_url "${logs_url}"
 		else
-			display_alert "Share log manually (or SHARE_LOG=yes):" "curl --data-binary @${target_relative_to_src} https://paste.next.armbian.com/log"
+			display_alert "Share log manually (or SHARE_LOG=yes):" "curl --data-binary @${target_relative_to_src} ${paste_url}"
 		fi
 	fi
 

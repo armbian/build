@@ -10,6 +10,9 @@
 function post_debootstrap_tweaks() {
 	display_alert "Applying post-tweaks" "post_debootstrap_tweaks" "debug"
 
+	# adjust tzselect to improve political correctness
+	sed -i "s/Please select a country/Please select a country or a region/g" "${SDCARD}"/usr/bin/tzselect
+
 	# activate systemd-resolved, if not using NetworkManager
 	if [[ ! -f "${SDCARD}"/etc/NetworkManager/NetworkManager.conf ]]; then
 		if [[ -d "${SDCARD}"/etc/systemd/network ]]; then

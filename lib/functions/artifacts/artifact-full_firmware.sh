@@ -7,10 +7,14 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_full_firmware_config_dump() {
+	# artifact_input_variables: None, for firmware.
+	:
+}
+
 function artifact_full_firmware_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	local ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/firmware"}"
 	local ARMBIAN_FIRMWARE_BRANCH="branch:${ARMBIAN_FIRMWARE_GIT_BRANCH:-"master"}"
@@ -25,9 +29,15 @@ function artifact_full_firmware_prepare_version() {
 	run_memoized GIT_INFO_ARMBIAN_FIRMWARE "git2info" memoized_git_ref_to_info
 	debug_dict GIT_INFO_ARMBIAN_FIRMWARE
 
+	# Sanity check, the SHA1 gotta be sane.
+	[[ "${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}'"
+
 	declare -A GIT_INFO_MAINLINE_FIRMWARE=([GIT_SOURCE]="${MAINLINE_FIRMWARE_SOURCE}" [GIT_REF]="branch:main")
 	run_memoized GIT_INFO_MAINLINE_FIRMWARE "git2info" memoized_git_ref_to_info
 	debug_dict GIT_INFO_MAINLINE_FIRMWARE
+
+	# Sanity check, the SHA1 gotta be sane.
+	[[ "${GIT_INFO_MAINLINE_FIRMWARE[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_MAINLINE_FIRMWARE[SHA1]}'"
 
 	declare fake_unchanging_base_version="1"
 
@@ -36,12 +46,12 @@ function artifact_full_firmware_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/packages/firmware-deb.sh
+	calculate_hash_for_bash_deb_artifact "compilation/packages/firmware-deb.sh"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-SA${short_sha1}-SM${short_sha1_mainline}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-SA${short_sha1}-SM${short_sha1_mainline}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian firmware git revision \"${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}\""
@@ -51,18 +61,12 @@ function artifact_full_firmware_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
-	artifact_map_packages=(
-		["armbian-firmware-full"]="armbian-firmware-full"
-	)
-
-	artifact_map_debs=(
-		["armbian-firmware-full"]="armbian-firmware-full_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["armbian-firmware-full"]="armbian-firmware-full")
 
 	artifact_name="armbian-firmware-full"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-firmware-full_${artifact_version}_all.deb"
+	artifact_deb_repo="global"
+	artifact_deb_arch="all"
 
 	return 0
 }
@@ -83,7 +87,7 @@ function artifact_full_firmware_cli_adapter_config_prep() {
 }
 
 function artifact_full_firmware_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-firmware/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
 }
 
 function artifact_full_firmware_is_available_in_local_cache() {

@@ -7,31 +7,34 @@
 # https://github.com/armbian/build/
 #
 enable_extension "sunxi-tools"
-export ARCH=arm64
-export ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
-export BOOTDELAY=1
+declare -g ARCH=arm64
+declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
+declare -g ATFBRANCH="tag:v2.9.0"
+declare -g BOOTDELAY=1
+declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-sunxi"}"
+declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2023.10"}"
+declare -g BOOTENV_FILE='sunxi.txt'
+UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-BINMAN_ALLOW_MISSING=1;;u-boot-sunxi-with-spl.bin}"
+declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
+declare -g LINUXFAMILY=sunxi64
 
-export BOOTPATCHDIR='u-boot-sunxi'
-export BOOTENV_FILE='sunxi.txt'
-UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-;;u-boot-sunxi-with-spl.bin}"
-export BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
-export LINUXFAMILY=sunxi64
+source "${BASH_SOURCE%/*}/crust_firmware.inc"
 
 case $BRANCH in
 
 	legacy)
-		export KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v5.15.98"
+		declare -g KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v5.15.137"
 		;;
 
 	current)
-		export KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v6.1.15"
+		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.1.62"
 		;;
 
 	edge)
-		export KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel.
-		export KERNELBRANCH="tag:v6.2.2"
+		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.6.1"
 		;;
 esac
 
