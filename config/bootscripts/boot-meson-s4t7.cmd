@@ -88,8 +88,15 @@ else
 	fi
 fi
 
-load ${devtype} ${devnum} ${kernel_addr_r} /vmlinuz
-load ${devtype} ${devnum} ${ramdisk_addr_r} /initrd.img
+# The symlinks for kernel and initrd.img are at different locations in debian and ubuntu
+# Check and load from a location that exists
+if test -e ${devtype} ${devnum} /vmlinuz; then
+	load ${devtype} ${devnum} ${kernel_addr_r} /vmlinuz
+	load ${devtype} ${devnum} ${ramdisk_addr_r} /initrd.img
+else
+	load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}vmlinuz
+	load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}initrd.img
+fi
 booti ${kernel_addr_r} ${ramdisk_addr_r}:${filesize} ${fdt_addr_r}
 
 # Recompile with:
