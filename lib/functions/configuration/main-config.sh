@@ -38,13 +38,8 @@ function do_main_configuration() {
 		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
 	fi
 
-	[[ -z $VENDOR ]] && VENDOR="Armbian"
-
-	# set defaults for Armbian, unset all values for unsupported Armbian
-	if [[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]]; then
-		VENDOR+="-unofficial"
-		unset VENDORURL,VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
-	fi
+	# Armbian image is set as unofficial if build manually or without declaring from outside
+	[[ -z $VENDOR ]] && VENDOR="Armbian-unofficial"
 
 	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
 	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
