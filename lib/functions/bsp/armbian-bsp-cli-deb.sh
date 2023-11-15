@@ -108,7 +108,6 @@ function compile_armbian-bsp-cli() {
 		VENDORURL="$VENDORURL"
 		VENDORSUPPORT="$VENDORSUPPORT"
 		VENDORBUGS="$VENDORBUGS"
-
 	EOF
 
 	# copy general overlay from packages/bsp-cli
