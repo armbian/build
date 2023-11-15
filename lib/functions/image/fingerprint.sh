@@ -14,9 +14,9 @@
 function fingerprint_image() {
 	cat <<- EOF > "${1}"
 		---------------------------------------------------------------------------
-		Generated with Armbian(tm) Build Framework https://github.com/armbian/build
+		Generated with Armbian(tm) build framework https://github.com/armbian/build
 		---------------------------------------------------------------------------
-		Title:          ${VENDOR}
+		Vendor:         ${VENDOR}
 		Revision:       $REVISION
 		Board:          ${BOARD^}
 		Kernel:         Linux ${IMAGE_INSTALLED_KERNEL_VERSION} ($BRANCH)
@@ -30,13 +30,13 @@ function fingerprint_image() {
 
 	if [ -n "$2" ]; then
 		cat <<- EOF >> "${1}"
-			--------------------------------------------------------------------------------
+			---------------------------------------------------------------------------
 			Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
 			Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
 			Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
 
 			CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
-			--------------------------------------------------------------------------------
+			---------------------------------------------------------------------------
 			Verify GPG signature:
 			gpg --verify $2.img.xz.asc
 
@@ -52,8 +52,7 @@ function fingerprint_image() {
 	fi
 
 	cat <<- EOF >> "${1}"
-		--------------------------------------------------------------------------------
+		---------------------------------------------------------------------------
 		$(cat "${SRC}"/LICENSE)
-		--------------------------------------------------------------------------------
 	EOF
 }
