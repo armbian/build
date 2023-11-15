@@ -20,28 +20,28 @@ Please be sure to review the [Development Code Review Procedures and Guidelines]
 
 * Require at least Triage users permission on repository. [Request access](https://github.com/armbian/build#contact)
 
-Color | Description | Section |
-|:--|:--|:--|
-|![Winter release](https://placehold.co/15x15/76B4D9/76B4D9.png)|Winter release|milestone|
-|![Winter release](https://placehold.co/15x15/AADB79/AADB79.png)|Spring release|milestone|
-|![Winter release](https://placehold.co/15x15/4B649F/4B649F.png)|Summer release|milestone|
-|![Winter release](https://placehold.co/15x15/D58125/D58125.png)|Autumn release|milestone|
-|![Winter release](https://placehold.co/15x15/d4c5f9/d4c5f9.png)|Backlog|Stalled work that needs to be completed|Status|
-|![Winter release](https://placehold.co/15x15/f4bd13/f4bd13.png)|Breaking change|Can potentially break core functionality|Status|
-|![Winter release](https://placehold.co/15x15/F92C01/F92C01.png)|Bug|Something isn't working well|Status|
-|![Winter release](https://placehold.co/15x15/F92C01/F92C01.png)|Bugfix|PR is fixing a bug|Status|
-|![Winter release](https://placehold.co/15x15/1d76db/1d76db.png)|Build|Executing build train|Command|
-|![Winter release](https://placehold.co/15x15/5319e7/5319e7.png)|Can be closed?|Ping developers on stalled issues / PR|Tool|
-|![Winter release](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Desktop|Graphical user interface|Status|
-|![Winter release](https://placehold.co/15x15/33B478/33B478.png)|Discussion|Issue is being discussed. Undetermined|Status|
-|![Winter release](https://placehold.co/15x15/1d7136/1d7136.png)|Done|Reviewed, tested and ready for merge|Status|
-|![Winter release](https://placehold.co/15x15/f4bd13/f4bd13.png)|Duplicate|Issue is already present|Status|
-|![Winter release](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Hardware|Hardware related - kernel, u-boot, patches|Status|
-|![Winter release](https://placehold.co/15x15/EA1BCE/EA1BCE.png)|Help needed|We need your involvement|Status|
-|![Winter release](https://placehold.co/15x15/AEE054/AEE054.png)|Needs review|Seeking for review|Status|
-|![Winter release](https://placehold.co/15x15/CD456C/CD456C.png)|Not our bug|Bug in 3rd party component|Status|
-|![Winter release](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Software|Framework components|Status|
-|![Winter release](https://placehold.co/15x15/29E414/29E414.png)|Work in progress|Unfinished / work in progress|Status|
+Color | Label | Description | Section |
+|:--:|:--|:--|:--|
+|![](https://placehold.co/15x15/76B4D9/76B4D9.png)|02|Winter release|milestone|
+|![](https://placehold.co/15x15/AADB79/AADB79.png)|05|Spring release|milestone|
+|![](https://placehold.co/15x15/4B649F/4B649F.png)|08|Summer release|milestone|
+|![](https://placehold.co/15x15/D58125/D58125.png)|11|Autumn release|milestone|
+|![](https://placehold.co/15x15/d4c5f9/d4c5f9.png)|Backlog|Stalled work that needs to be completed|Status|
+|![](https://placehold.co/15x15/f4bd13/f4bd13.png)|Breaking change|Can potentially break core functionality|Status|
+|![](https://placehold.co/15x15/F92C01/F92C01.png)|Bug|Something isn't working well|Status|
+|![](https://placehold.co/15x15/F92C01/F92C01.png)|Bugfix|PR is fixing a bug|Status|
+|![](https://placehold.co/15x15/5319e7/5319e7.png)|Can be closed?|Ping developers on stalled issues / PR|Tool|
+|![](https://placehold.co/15x15/33B478/33B478.png)|Discussion|Issue is being discussed. Undetermined|Status|
+|![](https://placehold.co/15x15/1d7136/1d7136.png)|Done|Reviewed, tested and ready for merge|Status|
+|![](https://placehold.co/15x15/f4bd13/f4bd13.png)|Duplicate|Issue is already present|Status|
+|![](https://placehold.co/15x15/EA1BCE/EA1BCE.png)|Help needed|We need your involvement|Status|
+|![](https://placehold.co/15x15/AEE054/AEE054.png)|Needs review|Seeking for review|Status|
+|![](https://placehold.co/15x15/CD456C/CD456C.png)|Not our bug|Bug in 3rd party component|Status|
+|![](https://placehold.co/15x15/29E414/29E414.png)|Work in progress|Unfinished / work in progress|Status|
+|![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Desktop|Graphical user interface|Status / automatic|
+|![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Hardware|Hardware related - kernel, u-boot, patches|Status / automatic|
+|![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Software|Framework components|Status / automatic|
+|![](https://placehold.co/15x15/1d76db/1d76db.png)|Build|Executing build train|Command|
 
 ## Contributing
 
