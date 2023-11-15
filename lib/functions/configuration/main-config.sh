@@ -41,7 +41,7 @@ function do_main_configuration() {
 	# Armbian image is set as unofficial if build manually or without declaring from outside
 	[[ -z $VENDOR ]] && VENDOR="Armbian-unofficial"
 
-	# Use framework defaults for community Armbian images
+	# Use framework defaults for community Armbian images and unsupported distribution when building Armbian distribution
 	if [[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]]; then
 		VENDORURL="https://www.armbian.com/"
 		unset VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
