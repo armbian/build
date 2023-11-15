@@ -33,6 +33,9 @@ Color | Label | Description | Section |
 |![](https://placehold.co/15x15/33B478/33B478.png)|Discussion|Issue is being discussed. Undetermined|Indicator|
 |![](https://placehold.co/15x15/f4bd13/f4bd13.png)|Duplicate|Issue is already present|Indicator|
 |![](https://placehold.co/15x15/CD456C/CD456C.png)|Not our bug|Bug in 3rd party component|Indicator|
+|![](https://placehold.co/15x15/ededed/ededed.png)|size/small|PR with less then 50 lines|Indicator / automatic|
+|![](https://placehold.co/15x15/ededed/ededed.png)|size/medium|PR with more then 50 and less then 250 lines|Indicator / automatic|
+|![](https://placehold.co/15x15/ededed/ededed.png)|size/large|PR with 250 lines or more|Indicator / automatic|
 |![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Desktop|Graphical user interface|Indicator / automatic|
 |![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Hardware|Hardware related - kernel, u-boot, patches|Indicator / automatic|
 |![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Software|Framework components|Indicator / automatic|
