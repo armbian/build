@@ -55,6 +55,7 @@ update_initramfs() {
 	initrd_cache_last_manifest_filepath="${SRC}/cache/initrd/initrd.manifest-${initrd_kern_ver}.last.manifest"
 	initrd_files_to_hash=("${chroot_target}/usr/bin/bash" "${chroot_target}/etc/initramfs")
 	initrd_files_to_hash+=("${chroot_target}/etc/initramfs-tools" "${chroot_target}/usr/share/initramfs-tools/")
+	initrd_files_to_hash+=("${chroot_target}/etc/modprobe.d") # for MODULES_BLACKLIST
 
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
