@@ -33,6 +33,7 @@ Color | Label | Description | Section |
 |![](https://placehold.co/15x15/33B478/33B478.png)|Discussion|Issue is being discussed. Undetermined|Indicator|
 |![](https://placehold.co/15x15/f4bd13/f4bd13.png)|Duplicate|Issue is already present|Indicator|
 |![](https://placehold.co/15x15/CD456C/CD456C.png)|Not our bug|Bug in 3rd party component|Indicator|
+|![](https://placehold.co/15x15/CD456C/CD456C.png)|User error|A mistake that is made by the user|Indicator|
 |![](https://placehold.co/15x15/ededed/ededed.png)|size/small|PR with less then 50 lines|Indicator / automatic|
 |![](https://placehold.co/15x15/ededed/ededed.png)|size/medium|PR with more then 50 and less then 250 lines|Indicator / automatic|
 |![](https://placehold.co/15x15/ededed/ededed.png)|size/large|PR with 250 lines or more|Indicator / automatic|
@@ -40,7 +41,7 @@ Color | Label | Description | Section |
 |![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Hardware|Hardware related - kernel, u-boot, patches|Indicator / automatic|
 |![](https://placehold.co/15x15/bfd4f2/bfd4f2.png)|Software|Framework components|Indicator / automatic|
 |![](https://placehold.co/15x15/29E414/29E414.png)|Work in progress|Unfinished / work in progress|Status|
-|![](https://placehold.co/15x15/1d7136/1d7136.png)|Done|Reviewed, tested and ready for merge|Status|
+|![](https://placehold.co/15x15/1d7136/1d7136.png)|Ready to merge|Reviewed, tested and ready for merge|Status|
 |![](https://placehold.co/15x15/EA1BCE/EA1BCE.png)|Help needed|We need your involvement|Status|
 |![](https://placehold.co/15x15/AEE054/AEE054.png)|Needs review|Seeking for review|Status|
 |![](https://placehold.co/15x15/5319e7/5319e7.png)|Can be closed?|Ping developers on stalled issues / PR|Command|
