@@ -53,9 +53,6 @@ function install_distribution_agnostic() {
 	# remove Ubuntu's legal text
 	[[ -f "${SDCARD}"/etc/legal ]] && rm "${SDCARD}"/etc/legal
 
-	# Armbian framework fingerprint
-	touch "${SDCARD}"/etc/.naibmra
-
 	# Prevent loading paralel printer port drivers which we don't need here.
 	# Suppress boot error if kernel modules are absent
 	if [[ -f "${SDCARD}"/etc/modules-load.d/cups-filters.conf ]]; then
