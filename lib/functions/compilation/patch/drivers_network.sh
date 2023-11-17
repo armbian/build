@@ -511,7 +511,7 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# attach to specifics tag or branch
-		local rtl8723dsver="commit:d89bde02d0d10d1d6b264392d99a3ea65d7b132c"
+		local rtl8723dsver="branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
@@ -544,8 +544,6 @@ driver_rtl8723DS() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-VFS-import.patch" "applying"
-		# fix compilation for kernels >= 6.7
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-6.7.patch" "applying"
 	fi
 }
 
