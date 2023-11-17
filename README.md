@@ -2,10 +2,11 @@
   <a href="#build-framework">
   <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
   </a><br>
-  <strong>Armbian Linux Build Framework</strong><br><h3>
- $${\color{black}NEXT\space \color{red}gen}$$
- </h3> 
- 
+  <strong>Armbian Linux Build Framework</strong><br>
+<br>
+<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=githubactions&label=Build&style=for-the-badge&branch=main&logoColor=white"></a>
+</p>
+
 ## Table of contents
 
 - [What does this project do?](#what-does-this-project-do)
@@ -58,13 +59,13 @@ Show work-in-progress areas in interactive mode:
 ./compile.sh EXPERT="yes"
 ```
 
-Build minimal CLI Armbian Focal image for Orangepi Zero. Use modern kernel and write image to the SD card:
+Build minimal CLI Armbian Jammy image for Orangepi Zero. Use `current` kernel and write image to the SD card:
 
 ```bash
 ./compile.sh \
 BOARD=orangepizero \
 BRANCH=current \
-RELEASE=focal \
+RELEASE=jammy \
 BUILD_MINIMAL=yes \
 BUILD_DESKTOP=no \
 KERNEL_CONFIGURE=no \
@@ -212,7 +213,7 @@ For commercial or prioritized assistance:
 - [Forums](https://forum.armbian.com) for Participate in Armbian
 - IRC: `#armbian` on Libera.chat
 - Discord: [https://discord.gg/armbian](https://discord.gg/armbian)
-- Follow [@armbian](https://twitter.com/armbian) on Twitter, [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
+- Follow [@armbian](https://twitter.com/armbian) on X (formerly known as Twitter), [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
 - Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
 
