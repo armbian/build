@@ -18,24 +18,24 @@ Please be sure to review the [Development Code Review Procedures and Guidelines]
 
 ## PR and issues labeling
 
-Labels are defined in [.github/labels.yml](.github/labels.yml) YAML file. They are automatically recreated upon change. Require at least Triage users permission on repository. [Request access](https://github.com/armbian/build#contact) if you can't change labels!
+Labels are defined in [.github/labels.yml](.github/labels.yml) YAML file. They are automatically recreated upon change. Require at least `Triage` users permission on repository. [Request access](https://github.com/armbian/build#contact) if you cannot change labels!
 
 Most of labels are self explanoritary but here are short instructions on how to use them:
 
 Automated on PR:
-- `size/small`, `size/medium`, `size/large` is determined automatically depending on the PR size
+- `size/small`, `size/medium`, `size/large` is determined automatically from the size of the PR
 - `desktop`, `hardware` and `software` is determined automatically depending on location of the changes
 
 Manual on PR:
-- `02` `05` `08` `11` milestone - determine into which release we should PR go
+- `02` `05` `08` `11` milestone - determine into which release the PR should go
 - `work in progress` - when you are still working on
 - `needs review` - when you are done and seeking for attention
 - `ready to merge` - when you are done
-- `help needed` - when you are desperate and can't move on
+- `help needed` - when you are desperate and cannot move on
 
-Labelling Issues:
-- `bug` when its clear its our bug, `not our bug` if its clear its not ours, `duplicate` if issue already exists
-- `discussion`, when that is needed, `user error` when we know its a problem on the other side
+Labeling Issues:
+- `bug` when it is clear that it is our bug, `not our bug` if its clearly not ours, `duplicate` if issue already exists
+- `discussion`, when needed, `user error` when we know it is a problem on the other side
 - `can be closed` for stalled issues
 
 
