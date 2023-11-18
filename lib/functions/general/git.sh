@@ -240,6 +240,18 @@ function fetch_from_repo() {
 	display_alert "Fetched revision: fetched_revision:" "${fetched_revision}" "git"
 	display_alert "Fetched revision: fetched_revision_ts:" "${fetched_revision_ts}" "git"
 
+	# if FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE is set, and the ref is not a sha1, invoke that callback.
+	if [[ "${FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE:-"none"}" != "none" ]]; then
+		case $ref_type in
+			tag | commit) # do nothing
+				;;
+			*) # Complain
+				display_alert "FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE is set, and the ref is not a sha1" "${url} ${ref_type} ${ref_name} - should be commit:${fetched_revision}" "debug"
+				"${FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE}" "${url}" "${ref_type}" "${ref_name}" "${fetched_revision}"
+				;;
+		esac
+	fi
+
 	if [[ "${do_checkout:-"yes"}" == "yes" ]]; then
 		display_alert "git checking out revision SHA" "${fetched_revision}" "git"
 		regular_git checkout -f -q "${fetched_revision}" # Return the files that are tracked by git to the initial state.
