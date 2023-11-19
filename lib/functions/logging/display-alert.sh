@@ -16,7 +16,7 @@ function display_alert() {
 			poor_man_profiler
 		fi
 		echo -e "${extra_profiler}${3}::${1} ${2}" | sed 's/\x1b\[[0-9;]*m//g' | sed -z 's|\n|\\n|g' >&2 # remove ANSI colors and newlines
-		echo "" >&2                                                                                       # newline
+		echo "" >&2                                                                                      # newline
 		return 0
 	fi
 

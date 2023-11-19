@@ -2,7 +2,7 @@
 BOARD_NAME="NanoPi R1"
 BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
-BOOTCONFIG="nanopi_neo_defconfig"
+BOOTCONFIG="nanopi_r1_defconfig"
 MODULES="g_serial"
 MODULES_BLACKLIST="lima"
 DEFAULT_OVERLAYS="usbhost0 usbhost1 uart1"

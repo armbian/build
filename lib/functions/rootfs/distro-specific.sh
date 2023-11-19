@@ -16,7 +16,7 @@ function install_distribution_specific() {
 
 	case "${RELEASE}" in
 
-		focal | jammy | kinetic | lunar)
+		focal | jammy | kinetic | lunar | mantic)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
@@ -92,7 +92,7 @@ function install_distribution_specific() {
 # create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
 # <when>: rootfs|image
-# <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar
+# <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar|mantic
 # <basedir>: path to root directory
 #
 function create_sources_list_and_deploy_repo_key() {
@@ -118,7 +118,7 @@ function create_sources_list_and_deploy_repo_key() {
 			EOF
 			;;
 
-		bullseye | trixie)
+		bullseye)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -134,7 +134,7 @@ function create_sources_list_and_deploy_repo_key() {
 			EOF
 			;;
 
-		bookworm)
+		bookworm | trixie)
 			# non-free firmware in bookworm and later has moved from the non-free archive component to a new non-free-firmware component (alongside main/contrib/non-free). This was implemented on 2023-01-27, see also https://lists.debian.org/debian-boot/2023/01/msg00235.html
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
@@ -160,14 +160,14 @@ function create_sources_list_and_deploy_repo_key() {
 				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 			EOF
 
-				# Exception: with riscv64 not everything was moved from ports
-				# https://lists.debian.org/debian-riscv/2023/07/msg00053.html
-				if [[ "${ARCH}" == riscv64 ]]; then
-					echo "deb http://deb.debian.org/debian-ports/ sid main " >> "${basedir}"/etc/apt/sources.list
-				fi
+			# Exception: with riscv64 not everything was moved from ports
+			# https://lists.debian.org/debian-riscv/2023/07/msg00053.html
+			if [[ "${ARCH}" == riscv64 ]]; then
+				echo "deb http://deb.debian.org/debian-ports/ sid main " >> "${basedir}"/etc/apt/sources.list
+			fi
 			;;
 
-		focal | jammy | kinetic | lunar)
+		focal | jammy | kinetic | lunar | mantic)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse

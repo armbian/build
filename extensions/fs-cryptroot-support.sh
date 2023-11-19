@@ -22,7 +22,7 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 		declare dropbear_dir="${SDCARD}/etc/dropbear-initramfs"
 		declare dropbear_config="config"
 
-		if [[ -d "${SDCARD}/etc/dropbear/initramfs" ]] ; then
+		if [[ -d "${SDCARD}/etc/dropbear/initramfs" ]]; then
 			dropbear_dir="${SDCARD}/etc/dropbear/initramfs"
 			dropbear_config="dropbear.conf"
 		fi

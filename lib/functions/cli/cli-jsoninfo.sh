@@ -106,6 +106,7 @@ function cli_json_info_run() {
 
 		### --- inventory --- ###
 
+		declare ALL_USERSPACE_INVENTORY_FILE="${BASE_INFO_OUTPUT_DIR}/all_userspace_inventory.json"
 		declare ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE="${BASE_INFO_OUTPUT_DIR}/all_boards_all_branches.json"
 		declare TARGETS_OUTPUT_FILE="${BASE_INFO_OUTPUT_DIR}/all-targets.json"
 		declare IMAGE_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/image-info.json"
@@ -115,18 +116,17 @@ function cli_json_info_run() {
 		declare ARTIFACTS_INFO_UPTODATE_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-info-uptodate.json"
 		declare OUTDATED_ARTIFACTS_IMAGES_FILE="${BASE_INFO_OUTPUT_DIR}/outdated-artifacts-images.json"
 
+		# Userspace inventory: RELEASES, and DESKTOPS and their possible ARCH'es, names, and support status.
+		if [[ ! -f "${ALL_USERSPACE_INVENTORY_FILE}" ]]; then
+			display_alert "Generating userspace inventory" "all_userspace_inventory.json" "info"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/userspace-inventory.py ">" "${ALL_USERSPACE_INVENTORY_FILE}"
+		fi
+
 		# Board/branch inventory.
 		if [[ ! -f "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" ]]; then
 			display_alert "Generating board/branch inventory" "all_boards_all_branches.json" "info"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/board-inventory.py ">" "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}"
 		fi
-
-		# @TODO: Release/rootfs inventory?
-
-		# A simplistic all-boards-all-branches target file, for the all-boards-all-branches-targets.json.
-		# Then just use the same info-gatherer-image to get the image info.
-		# This will be used as database for the targets-compositor, for example to get "all boards+branches that have kernel < 5.0" or "all boards+branches of meson64 family" etc.
-		# @TODO: this is a bit heavy; only do it if out-of-date (compared to config/, lib/, extensions/, userpatches/ file mtimes...)
 
 		if [[ "${ARMBIAN_COMMAND}" == "inventory" ]]; then
 			display_alert "Done with" "inventory" "info"
@@ -147,10 +147,15 @@ function cli_json_info_run() {
 			export TARGETS_BETA="${BETA}"                             # Read by the Python script, and injected into every target as "BETA=" param.
 			export TARGETS_REVISION="${REVISION}"                     # Read by the Python script, and injected into every target as "REVISION=" param.
 			export TARGETS_FILTER_INCLUDE="${TARGETS_FILTER_INCLUDE}" # Read by the Python script; used to "only include" targets that match the given string.
-			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/targets-compositor.py "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" "not_yet_releases.json" "${TARGETS_FILE}" ">" "${TARGETS_OUTPUT_FILE}"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/targets-compositor.py "${ALL_BOARDS_ALL_BRANCHES_INVENTORY_FILE}" "${ALL_USERSPACE_INVENTORY_FILE}" "${TARGETS_FILE}" ">" "${TARGETS_OUTPUT_FILE}"
 			unset TARGETS_BETA
 			unset TARGETS_REVISION
 			unset TARGETS_FILTER_INCLUDE
+		fi
+
+		if [[ "${ARMBIAN_COMMAND}" == "targets-composed" ]]; then
+			display_alert "Done with" "targets-dashboard" "info"
+			return 0
 		fi
 
 		### Images.
@@ -243,7 +248,9 @@ function cli_json_info_run() {
 			if [[ ! -f "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}" ]]; then
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py artifacts "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_ARTIFACT_CHUNKS}" ">" "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}"
 			fi
-			github_actions_add_output "artifact-matrix" "$(cat "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}")"
+
+			# rpardini: disabled; we're using a chunked version now, and the GH output is directly set by the Python script, not here.
+			# github_actions_add_output "artifact-matrix" "$(cat "${GHA_ALL_ARTIFACTS_JSON_MATRIX_FILE}")"
 
 			display_alert "Generating GHA matrix for images" "output-gha-matrix :: images" "info"
 			declare GHA_ALL_IMAGES_JSON_MATRIX_FILE="${BASE_INFO_OUTPUT_DIR}/gha-all-images-matrix.json"
@@ -253,7 +260,9 @@ function cli_json_info_run() {
 				export IMAGES_ONLY_OUTDATED_ARTIFACTS="${IMAGES_ONLY_OUTDATED_ARTIFACTS:-"no"}"
 				run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/output-gha-matrix.py images "${OUTDATED_ARTIFACTS_IMAGES_FILE}" "${MATRIX_IMAGE_CHUNKS}" ">" "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}"
 			fi
-			github_actions_add_output "image-matrix" "$(cat "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}")"
+
+			# rpardini: disabled; we're using a chunked version now, and the GH output is directly set by the Python script, not here.
+			# github_actions_add_output "image-matrix" "$(cat "${GHA_ALL_IMAGES_JSON_MATRIX_FILE}")"
 		fi
 
 		### a secondary stage, which only makes sense to be run inside GHA, and as such should be split in a different CLI or under a flag.

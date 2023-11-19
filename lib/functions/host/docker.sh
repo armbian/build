@@ -118,16 +118,15 @@ function docker_cli_prepare() {
 	# @TODO: Make sure we can access docker, on Linux; gotta be part of 'docker' group: grep -q "$(whoami)" <(getent group docker)
 
 	declare -g DOCKER_ARMBIAN_INITIAL_IMAGE_TAG="armbian.local.only/armbian-build:initial"
+	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:trixie"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bookworm"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:sid"}"
-	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"debian:bullseye"}"
-	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:focal"}"
 	# declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:kinetic"}"
 	declare -g DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_IMAGE:-"ubuntu:jammy"}"
 	declare -g DOCKER_ARMBIAN_TARGET_PATH="${DOCKER_ARMBIAN_TARGET_PATH:-"/armbian"}"
 
 	declare wanted_os_tag="${DOCKER_ARMBIAN_BASE_IMAGE%%:*}"
-	declare wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
+	declare -g DOCKER_WANTED_RELEASE="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
 
 	# Store the "from scratch" image. Will be used if Armbian image is not available, for a "from scratch" build.
 	declare -g DOCKER_ARMBIAN_BASE_IMAGE_SCRATCH="${DOCKER_ARMBIAN_BASE_IMAGE}"
@@ -135,8 +134,8 @@ function docker_cli_prepare() {
 	# If we're NOT building the public, official image, then USE the public, official image as base.
 	# IMPORTANT: This has to match the naming scheme for tag the is used in the GitHub actions workflow.
 	if [[ "${DOCKERFILE_USE_ARMBIAN_IMAGE_AS_BASE}" != "no" && "${DOCKER_SIMULATE_CLEAN}" != "yes" ]]; then
-		DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX:-"ghcr.io/armbian/docker-armbian-build:armbian-"}${wanted_os_tag}-${wanted_release_tag}-latest"
-		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${wanted_release_tag}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
+		DOCKER_ARMBIAN_BASE_IMAGE="${DOCKER_ARMBIAN_BASE_COORDINATE_PREFIX:-"ghcr.io/armbian/docker-armbian-build:armbian-"}${wanted_os_tag}-${DOCKER_WANTED_RELEASE}-latest"
+		display_alert "Using prebuilt Armbian image as base for '${wanted_os_tag}-${DOCKER_WANTED_RELEASE}'" "DOCKER_ARMBIAN_BASE_IMAGE: ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
 	fi
 
 	#############################################################################################################
@@ -150,26 +149,26 @@ function docker_cli_prepare() {
 	# Detect some docker info; use cached.
 	get_docker_info_once
 
-	DOCKER_SERVER_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Server Version\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Server Version:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server version" "${DOCKER_SERVER_VERSION}" "debug"
 
-	DOCKER_SERVER_KERNEL_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Kernel Version\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_KERNEL_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "Kernel Version:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Kernel version" "${DOCKER_SERVER_KERNEL_VERSION}" "debug"
 
-	DOCKER_SERVER_TOTAL_RAM="$(echo "${DOCKER_INFO}" | grep -i -e "Total memory\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_TOTAL_RAM="$(echo "${DOCKER_INFO}" | grep -i -e "Total memory:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Total RAM" "${DOCKER_SERVER_TOTAL_RAM}" "debug"
 
-	DOCKER_SERVER_CPUS="$(echo "${DOCKER_INFO}" | grep -i -e "CPUs\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_CPUS="$(echo "${DOCKER_INFO}" | grep -i -e "CPUs:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server CPUs" "${DOCKER_SERVER_CPUS}" "debug"
 
-	DOCKER_SERVER_OS="$(echo "${DOCKER_INFO}" | grep -i -e "Operating System\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_OS="$(echo "${DOCKER_INFO}" | grep -i -e "Operating System:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server OS" "${DOCKER_SERVER_OS}" "debug"
 
 	declare -g DOCKER_ARMBIAN_HOST_OS_UNAME
 	DOCKER_ARMBIAN_HOST_OS_UNAME="$(uname)"
 	display_alert "Local uname" "${DOCKER_ARMBIAN_HOST_OS_UNAME}" "debug"
 
-	DOCKER_BUILDX_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "buildx\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_BUILDX_VERSION="$(echo "${DOCKER_INFO}" | grep -i -e "buildx:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Buildx version" "${DOCKER_BUILDX_VERSION}" "debug"
 
 	declare -g DOCKER_HAS_BUILDX=no
@@ -180,7 +179,7 @@ function docker_cli_prepare() {
 	fi
 	display_alert "Docker has buildx?" "${DOCKER_HAS_BUILDX}" "debug"
 
-	DOCKER_SERVER_NAME_HOST="$(echo "${DOCKER_INFO}" | grep -i -e "name\:" | cut -d ":" -f 2 | xargs echo -n)"
+	DOCKER_SERVER_NAME_HOST="$(echo "${DOCKER_INFO}" | grep -i -e "name:" | cut -d ":" -f 2 | xargs echo -n)"
 	display_alert "Docker Server Hostname" "${DOCKER_SERVER_NAME_HOST}" "debug"
 
 	# Gymnastics: under Darwin, Docker Desktop and Rancher Desktop in dockerd mode behave differently.
@@ -202,12 +201,12 @@ function docker_cli_prepare() {
 		esac
 	fi
 
-	declare un_ignore_dot_git=""
-	declare include_dot_git_dir=""
+	declare -g docker_un_ignore_dot_git=""
+	declare -g docker_include_dot_git_dir=""
 	if [[ "${DOCKER_PASS_GIT}" == "yes" ]]; then
 		display_alert "git/docker:" "adding static copy of .git to Dockerfile" "info"
-		un_ignore_dot_git="!.git"
-		include_dot_git_dir="COPY .git ${DOCKER_ARMBIAN_TARGET_PATH}/.git"
+		docker_un_ignore_dot_git="!.git"
+		docker_include_dot_git_dir="COPY .git ${DOCKER_ARMBIAN_TARGET_PATH}/.git"
 	fi
 
 	# Info summary message. Thank you, GitHub Co-pilot!
@@ -230,7 +229,7 @@ function docker_cli_prepare_dockerfile() {
 		!/extensions
 		!/config/sources
 		!/config/templates
-		${un_ignore_dot_git}
+		${docker_un_ignore_dot_git}
 
 		# Ignore unnecessary files inside include directories
 		# This should go after the include directories
@@ -253,9 +252,8 @@ function docker_cli_prepare_dockerfile() {
 	fi
 	declare -a -g host_dependencies=()
 
-	declare wanted_release_tag="${DOCKER_ARMBIAN_BASE_IMAGE##*:}"
-	host_release="${wanted_release_tag}" early_prepare_host_dependencies
-	display_alert "Pre-game host dependencies" "${host_dependencies[*]}" "debug"
+	host_release="${DOCKER_WANTED_RELEASE}" early_prepare_host_dependencies
+	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}'" "${host_dependencies[*]}" "debug"
 
 	# This includes apt install equivalent to install_host_dependencies()
 	display_alert "Creating" "Dockerfile; FROM ${DOCKER_ARMBIAN_BASE_IMAGE}" "info"
@@ -290,7 +288,7 @@ function docker_cli_prepare_dockerfile() {
 		${c}${c_req}RUN echo "--> CACHE MISS IN DOCKERFILE: running Armbian requirements initialization." && \\
 		${c}${c_req} ARMBIAN_INSIDE_DOCKERFILE_BUILD="yes" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" requirements SHOW_LOG=yes && \\
 		${c}${c_req} rm -rf "${DOCKER_ARMBIAN_TARGET_PATH}/output" "${DOCKER_ARMBIAN_TARGET_PATH}/.tmp" "${DOCKER_ARMBIAN_TARGET_PATH}/cache"
-		${include_dot_git_dir}
+		${docker_include_dot_git_dir}
 	INITIAL_DOCKERFILE
 	# For debugging: RUN rm -fv /usr/bin/pip3 # Remove pip3 symlink to make sure we're not depending on it; non-Dockers may not have it
 }

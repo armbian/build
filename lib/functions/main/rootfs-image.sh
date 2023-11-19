@@ -50,9 +50,9 @@ function build_rootfs_and_image() {
 	LOG_SECTION="apt_lists_copy_from_host_to_image_and_update" do_with_logging apt_lists_copy_from_host_to_image_and_update
 
 	# creating xapian index that synaptic runs faster
-	if [[ "${BUILD_DESKTOP}" == yes ]]; then
+	if [[ "${BUILD_DESKTOP}" == yes && -f "${SDCARD}/usr/sbin/update-apt-xapian-index" ]]; then
 		display_alert "Recreating Synaptic search index" "Please wait - updating Xapian index for image" "info"
-		chroot_sdcard "[[ -f /usr/sbin/update-apt-xapian-index ]] && /usr/sbin/update-apt-xapian-index -u"
+		chroot_sdcard "/usr/sbin/update-apt-xapian-index -u"
 	fi
 
 	# for reference, debugging / sanity checking

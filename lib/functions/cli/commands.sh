@@ -28,6 +28,7 @@ function armbian_register_commands() {
 		["inventory"]="json_info"         # implemented in cli_json_info_pre_run and cli_json_info_run
 		["targets"]="json_info"           # implemented in cli_json_info_pre_run and cli_json_info_run
 		["targets-dashboard"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
+		["targets-composed"]="json_info"  # implemented in cli_json_info_pre_run and cli_json_info_run
 		["debs-to-repo-json"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 		["gha-matrix"]="json_info"        # implemented in cli_json_info_pre_run and cli_json_info_run
 		["gha-workflow"]="json_info"      # implemented in cli_json_info_pre_run and cli_json_info_run
@@ -37,7 +38,8 @@ function armbian_register_commands() {
 		["debs-to-repo-download"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 		["debs-to-repo-reprepro"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
-		["kernel-patches-to-git"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
+		["kernel-patches-to-git"]="patch_kernel"  # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
+		["rewrite-kernel-patches"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
@@ -57,6 +59,7 @@ function armbian_register_commands() {
 		["kernel"]="artifact"
 		["kernel-patch"]="artifact"
 		["kernel-config"]="artifact"
+		["rewrite-kernel-config"]="artifact"
 
 		["uboot"]="artifact"
 		["uboot-patch"]="artifact"
@@ -100,11 +103,15 @@ function armbian_register_commands() {
 		["debs-to-repo-download"]="CLEAN_MATRIX='no' CLEAN_INFO='no'"
 		["debs-to-repo-reprepro"]="CLEAN_MATRIX='no' CLEAN_INFO='no'"
 
+		# patching
+		["rewrite-kernel-patches"]="REWRITE_PATCHES=yes" # rewrite the patches after round-tripping to git: "rebase patches"
+
 		# artifact shortcuts
 		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
 
 		["kernel"]="WHAT='kernel' ${common_cli_artifact_vars}"
 		["kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
+		["rewrite-kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_WILL_NOT_BUILD='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
 		["kernel-patch"]="WHAT='kernel' CREATE_PATCHES='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 
 		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"

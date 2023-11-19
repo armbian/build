@@ -38,16 +38,25 @@ function do_main_configuration() {
 		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
 	fi
 
-	[[ -z $VENDOR ]] && VENDOR="Armbian"
-	[[ -z $VENDORURL ]] && VENDORURL="https://www.armbian.com"
-	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://forum.armbian.com"
-	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://www.armbian.com"
-	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://www.armbian.com/bugs"
+	# Armbian image is set as unofficial if build manually or without declaring from outside
+	[[ -z $VENDOR ]] && VENDOR="Armbian-unofficial"
+
+	# Use framework defaults for community Armbian images and unsupported distribution when building Armbian distribution
+	if [[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]]; then
+		VENDORURL="https://www.armbian.com/"
+		unset VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
+	fi
+
+	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
+	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
+	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
+	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://armbian.atlassian.net/"
+	[[ -z $VENDORDOCS ]] && VENDORDOCS="https://docs.armbian.com/"
 	[[ -z $VENDORLOGO ]] && VENDORLOGO="armbian-logo"
-	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
-	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
-	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                              # en_US.UTF-8 is default locale for target
+	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                        # Must be changed @first login
+	[[ -z $MAINTAINER ]] && MAINTAINER="John Doe"                              # deb signature
+	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="john.doe@somewhere.on.planet"  # deb signature
+	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                                    # en_US.UTF-8 is default locale for target
 	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
 
 	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
@@ -281,6 +290,8 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
 	declare -g -r PACKAGE_LIST_FAMILY_REMOVE="${PACKAGE_LIST_FAMILY_REMOVE}"
 
+	if [[ $RELEASE == trixie || $ARCH == riscv64 ]]; then remove_packages "cpufrequtils"; fi # this will remove from rootfs as well
+
 	display_alert "Done with do_main_configuration" "do_main_configuration" "debug"
 }
 
@@ -296,7 +307,7 @@ function do_extra_configuration() {
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 	[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar|mantic)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"

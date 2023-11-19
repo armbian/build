@@ -16,6 +16,7 @@ declare -g BOOTFS_TYPE="fat"
 declare -g SRC_EXTLINUX="no" # going back to standard uboot for now
 declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
 declare -g DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
+declare -g UEFI_EDK2_BOARD_ID="indiedroid-nova" # This _only_ used for uefi-edk2-rk3588 extension
 
 ## only applies to extlinux so not used
 declare -g SRC_CMDLINE="console=ttyS0,115200n8 console=tty1 console=both net.ifnames=0 rootflags=data=writeback"
@@ -78,4 +79,14 @@ function pre_customize_image__indiedroid_add_bluetooth() {
 		WantedBy=multi-user.target
 	EOD
 	chroot_sdcard systemctl enable bluetooth-rtl8821cs.service
+}
+function post_family_tweaks__indiedroid_naming_audios() {
+	display_alert "$BOARD" "Renaming indiedroid audios" "info"
+
+	mkdir -p $SDCARD/etc/udev/rules.d/
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-dp0-sound", ENV{SOUND_DESCRIPTION}="DP0 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8388-sound", ENV{SOUND_DESCRIPTION}="ES8388 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+
+	return 0
 }
