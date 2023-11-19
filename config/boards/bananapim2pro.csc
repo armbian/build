@@ -1,7 +1,7 @@
 # Amlogic S905X3 quad core 2-4GB RAM SoC eMMC GBE USB3 SPI Wifi
 BOARD_NAME="Banana Pi M2Pro"
 BOARDFAMILY="meson-sm1"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="bretmlw"
 BOOTCONFIG="bananapi-m2-pro_defconfig"
 BOOT_FDT_FILE="amlogic/meson-sm1-bananapi-m2-pro.dtb"
 KERNEL_TARGET="current,edge"
