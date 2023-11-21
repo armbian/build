@@ -77,6 +77,8 @@ function install_distribution_specific() {
 	# rc.local is not existing but one might need it
 	install_rclocal
 	
+	echo "USERPATCHES_PATH=$USERPATCHES_PATH----------------------------------------------"
+	
 	# copy scripts to image
 	install_btt_scripts
 
