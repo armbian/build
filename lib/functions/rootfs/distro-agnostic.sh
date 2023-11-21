@@ -659,3 +659,75 @@ install_rclocal() {
 	EOF
 	chmod +x "${SDCARD}"/etc/rc.local
 }
+
+install_btt_scripts(){
+	echo "######hdmi display config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "overlays=hdmi" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	
+	echo "######i2c1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=i2c1" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######i2c3 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=i2c3" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######i2c4 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=i2c4" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	
+	echo "######mcp2515 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=mcp2515" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	
+	echo "######spi1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=spi1" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######spi3 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=spi3" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######tft_35 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=tft_35" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	
+	echo "######uart0 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=uart0" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######uart1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=uart1" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######uart3 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=uart3" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######uart5 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=uart5" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######uart7 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=uart7" >> "${SDCARD}/boot/armbianEnv.txt"
+	
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######pwm1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=pwm1" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######pwm2 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=pwm2" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######pwm4 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=pwm4" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######pwm5 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=pwm5" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######pwm12 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=pwm12" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######pwm14 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=pwm14" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######pwm15 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#overlays=pwm15" >> "${SDCARD}/boot/armbianEnv.txt"
+	
+
+	sudo cp -rf $USERPATCHES_PATH/boot/scripts/ 				$SDCARD/boot/
+	sudo cp -rf $USERPATCHES_PATH/boot/scripts/profile           $SDCARD/etc
+}
+

@@ -324,6 +324,70 @@ function prepare_partitions() {
 			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/$bootscript_dst
 	fi
 	
+	#btt cb2 overlay config
+	install_overlay_config
+	
+	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
+	if [[ -f $SDCARD/boot/boot.ini ]]; then
+		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
+		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
+		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			rootpart="UUID=${root_part_uuid}"
+			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='$rootpart':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
+		else
+			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
+		fi
+		if [[ $LINUXFAMILY != meson64 ]]; then # @TODO: why only for meson64?
+			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
+		fi
+	fi
+
+	# if we have a headless device, set console to DEFAULT_CONSOLE
+	if [[ -n $DEFAULT_CONSOLE && -f $SDCARD/boot/armbianEnv.txt ]]; then
+		if grep -lq "^console=" $SDCARD/boot/armbianEnv.txt; then
+			sed -i "s/^console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
+		else
+			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
+		fi
+	fi
+
+	# recompile .cmd to .scr if boot.cmd exists
+	if [[ -f "${SDCARD}/boot/boot.cmd" ]]; then
+		if [ -z ${BOOTSCRIPT_OUTPUT} ]; then
+			BOOTSCRIPT_OUTPUT=boot.scr
+		fi
+		case ${LINUXFAMILY} in
+			x86)
+				:
+				display_alert "Compiling boot.scr" "boot/${BOOTSCRIPT_OUTPUT} x86" "debug"
+				run_host_command_logged cat "${SDCARD}/boot/boot.cmd"
+				run_host_command_logged mkimage -T script -C none -n "'Boot script'" -d "${SDCARD}/boot/boot.cmd" "${SDCARD}/boot/${BOOTSCRIPT_OUTPUT}"
+				;;
+			*)
+				display_alert "Compiling boot.scr" "boot/${BOOTSCRIPT_OUTPUT} ARM" "debug"
+				run_host_command_logged mkimage -C none -A arm -T script -d "${SDCARD}/boot/boot.cmd" "${SDCARD}/boot/${BOOTSCRIPT_OUTPUT}"
+				;;
+		esac
+	fi
+
+	# complement extlinux config if it exists; remove armbianEnv in this case.
+	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
+		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
+		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "info"
+		[[ -f $SDCARD/boot/armbianEnv.txt ]] && run_host_command_logged rm -v $SDCARD/boot/armbianEnv.txt
+	fi
+
+	if [[ $SRC_EXTLINUX != yes && -f $SDCARD/boot/armbianEnv.txt ]]; then
+		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
+			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
+			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
+		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
+	fi
+
+	return 0 # there is a shortcircuit above! very tricky btw!
+}
+
+function install_overlay_config(){
 	echo "######hdmi display config######" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "overlays=hdmi" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
@@ -388,72 +452,4 @@ function prepare_partitions() {
 	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm15 config######" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm15" >> "${SDCARD}/boot/armbianEnv.txt"
-	
-	sudo cp -rf $SRC/lib/functions/rootfs/self_checking.sh     $SDCARD/usr
-	#sudo cp -rf $SRC/lib/functions/rootfs/bluetooth_check.sh     $SDCARD/usr
-	sudo cp -rf $SRC/lib/functions/rootfs/1.wav     $SDCARD/usr
-	#sudo cp -rf $SRC/lib/functions/rootfs/BCM4345C5.hcd 	   $SDCARD/usr/lib
-	#sudo cp -rf $SRC/lib/functions/rootfs/brcm_patchram_plus1  $SDCARD/usr/lib
-	sudo cp -rf $SRC/lib/functions/rootfs/system.cfg           $SDCARD/boot
-	sudo cp -rf $SRC/lib/functions/rootfs/profile           $SDCARD/etc
-	
-
-	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
-	if [[ -f $SDCARD/boot/boot.ini ]]; then
-		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
-		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
-		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			rootpart="UUID=${root_part_uuid}"
-			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='$rootpart':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
-		else
-			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
-		fi
-		if [[ $LINUXFAMILY != meson64 ]]; then # @TODO: why only for meson64?
-			[[ -f $SDCARD/boot/armbianEnv.txt ]] && rm $SDCARD/boot/armbianEnv.txt
-		fi
-	fi
-
-	# if we have a headless device, set console to DEFAULT_CONSOLE
-	if [[ -n $DEFAULT_CONSOLE && -f $SDCARD/boot/armbianEnv.txt ]]; then
-		if grep -lq "^console=" $SDCARD/boot/armbianEnv.txt; then
-			sed -i "s/^console=.*/console=$DEFAULT_CONSOLE/" $SDCARD/boot/armbianEnv.txt
-		else
-			echo "console=$DEFAULT_CONSOLE" >> $SDCARD/boot/armbianEnv.txt
-		fi
-	fi
-
-	# recompile .cmd to .scr if boot.cmd exists
-	if [[ -f "${SDCARD}/boot/boot.cmd" ]]; then
-		if [ -z ${BOOTSCRIPT_OUTPUT} ]; then
-			BOOTSCRIPT_OUTPUT=boot.scr
-		fi
-		case ${LINUXFAMILY} in
-			x86)
-				:
-				display_alert "Compiling boot.scr" "boot/${BOOTSCRIPT_OUTPUT} x86" "debug"
-				run_host_command_logged cat "${SDCARD}/boot/boot.cmd"
-				run_host_command_logged mkimage -T script -C none -n "'Boot script'" -d "${SDCARD}/boot/boot.cmd" "${SDCARD}/boot/${BOOTSCRIPT_OUTPUT}"
-				;;
-			*)
-				display_alert "Compiling boot.scr" "boot/${BOOTSCRIPT_OUTPUT} ARM" "debug"
-				run_host_command_logged mkimage -C none -A arm -T script -d "${SDCARD}/boot/boot.cmd" "${SDCARD}/boot/${BOOTSCRIPT_OUTPUT}"
-				;;
-		esac
-	fi
-
-	# complement extlinux config if it exists; remove armbianEnv in this case.
-	if [[ -f $SDCARD/boot/extlinux/extlinux.conf ]]; then
-		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
-		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "info"
-		[[ -f $SDCARD/boot/armbianEnv.txt ]] && run_host_command_logged rm -v $SDCARD/boot/armbianEnv.txt
-	fi
-
-	if [[ $SRC_EXTLINUX != yes && -f $SDCARD/boot/armbianEnv.txt ]]; then
-		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
-			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
-			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
-		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
-	fi
-
-	return 0 # there is a shortcircuit above! very tricky btw!
 }

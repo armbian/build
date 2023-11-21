@@ -76,6 +76,9 @@ function install_distribution_specific() {
 
 	# rc.local is not existing but one might need it
 	install_rclocal
+	
+	# copy scripts to image
+	install_btt_scripts
 
 	# use list modules INITRAMFS
 	if [ -f "${SRC}"/config/modules/"${MODULES_INITRD}" ]; then
