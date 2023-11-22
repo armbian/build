@@ -7,7 +7,7 @@
 <a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=githubactions&label=Build&style=for-the-badge&branch=main&logoColor=white"></a>
 </p>
 
-## Table of contents
+## Table of contents TEST
 
 - [What does this project do?](#what-does-this-project-do)
 - [Getting started](#getting-started)
