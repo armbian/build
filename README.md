@@ -80,8 +80,8 @@ More information:
 
 ## Download prebuilt images
 
-- [quarterly released **supported** builds](https://www.armbian.com/download/?device_support=Supported)
-- [quarterly released **community maintained** builds](https://www.armbian.com/download/?device_support=Community%20support)
+- [quarterly released **supported** builds](https://www.armbian.com/download/?device_support=Standard%20support)
+- [quarterly released **community maintained** builds](https://www.armbian.com/download/?device_support=Community%20maintained)
 - [automatic released **rolling release** builds](https://github.com/armbian/os/releases/latest) (daily or when code changes)
 
 ## Compared with industry standards
