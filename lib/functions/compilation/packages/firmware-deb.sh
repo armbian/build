@@ -30,18 +30,21 @@ function compile_firmware() {
 	if [[ -n $FULL ]]; then
 		# Fetch kernel firmware from git. This is large, but we don't have two copies of it anymore. So more manageable.
 		declare fetched_revision
-		do_checkout="no" fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:main"
+		fetch_from_repo "$MAINLINE_FIRMWARE_SOURCE" "linux-firmware-git" "branch:main"
 		declare -r mainline_firmware_git_sha1="${fetched_revision}"
 
-		# use git archive to export the ${mainline_firmware_git_sha1} revision into "${fw_temp_dir}/${fw_dir}/lib/firmware/"
-		run_host_command_logged git -C "${SRC}/cache/sources/linux-firmware-git" archive --format=tar "${mainline_firmware_git_sha1}" "|" tar -C "${fw_temp_dir}/${fw_dir}/lib/firmware/" -xf -
+		# Usage of make install ensures proper symlink creation
+		cd "${SRC}/cache/sources/linux-firmware-git" || exit_with_error "can't change directory"
+		run_host_command_logged make DESTDIR="${fw_temp_dir}/${fw_dir}" FIRMWAREDIR=/lib/firmware install
 
 		# Full version conflicts with more stuff, of course.
 		extra_conflicts_comma=",amd64-microcode,intel-microcode"
 
-		# @TODO: rpardini: disabled, this is not the place to do this; move to extension/bsp/whatever
-		# cp : create hardlinks for ath11k WCN685x hw2.1 firmware since they are using the same firmware with hw2.0
-		# run_host_command_logged cp -af --reflink=auto "${fw_temp_dir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.0/" "${fw_temp_dir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.1/"
+		# This symlink messes with the armbian-firmware overwrite step
+		# @TODO: remove no longer needed symlink from armbian-firmware
+		if [[ -d "${fw_temp_dir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.1/" ]]; then
+			run_host_command_logged rm -r "${fw_temp_dir}/${fw_dir}/lib/firmware/ath11k/WCN6855/hw2.1/"
+		fi
 	fi
 
 	# Armbian firmware; this overwrites anything in the mainline firmware repo (if that was included, in the full version only)
