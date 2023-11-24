@@ -505,7 +505,9 @@ function enable_extension() {
 
 	# iterate over defined functions, store them in global associative array extension_function_info
 	for newly_defined_function in ${new_function_list}; do
-		#echo "func: ${newly_defined_function} has DIR: ${extension_dir}"
+		# Check if "${newly_defined_function}" is already defined in the extension_function_info array, if not, add it
+		# This is to address the recursive case messing up references
+		[[ -v extension_function_info["${newly_defined_function}"] ]] && continue
 		extension_function_info["${newly_defined_function}"]="EXTENSION=\"${extension_name}\" EXTENSION_DIR=\"${extension_dir}\" EXTENSION_FILE=\"${extension_file}\" EXTENSION_ADDED_BY=\"${stacktrace}\""
 	done
 

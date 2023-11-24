@@ -44,7 +44,7 @@ function memoized_git_ref_to_info() {
 					"ghproxy")
 						case "${MEMO_DICT[GIT_SOURCE]}" in
 							"https://github.com/"*)
-								sha1="$(git ls-remote --exit-code "https://ghproxy.com/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
+								sha1="$(git ls-remote --exit-code "https://${GHPROXY_ADDRESS}/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
 								;;
 							*)
 								sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
@@ -106,7 +106,7 @@ function memoized_git_ref_to_info() {
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					case "${GITHUB_MIRROR}" in
 						"ghproxy")
-							url="https://ghproxy.com/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+							url="https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
 							;;
 						*)
 							url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
