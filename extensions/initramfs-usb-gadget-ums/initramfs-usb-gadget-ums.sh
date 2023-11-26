@@ -18,7 +18,6 @@ function extension_prepare_config__check_sanity_usb_gadget_ums() {
 	fi
 }
 
-
 # @TODO: maybe include this in the bsp-cli, so it can be updated later
 function pre_customize_image__inject_initramfs_usb_gadget_ums() {
 	display_alert "Enabling" "usb-gadget-ums into initramfs" "info"
@@ -28,4 +27,3 @@ function pre_customize_image__inject_initramfs_usb_gadget_ums() {
 	run_host_command_logged chmod -v +x "${script_file_dst}"
 	return 0
 }
-

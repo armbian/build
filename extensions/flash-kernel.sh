@@ -64,6 +64,41 @@ post_family_tweaks_bsp__remove_uboot_flash_kernel() {
 	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs rm
 }
 
+# Make sure we don't try to install or remove /boot/dtb-$kvers directory
+post_family_tweaks_bsp__add_workaround_to_handle_upgrade() {
+	run_host_command_logged mkdir -p "${destination}"/etc/kernel/post{inst,rm}.d
+
+	# Make sure flash kernel doesn't try to remove or install symlink at /boot/dtb-$kvers
+	# as linux-dtb package uses the same.
+	run_host_command_logged cat <<- '00_fix_boot_dtb_kvers' > "${destination}"/etc/kernel/postinst.d/00-fix-flash-kernel
+		#!/bin/sh
+
+		grep /boot/dtb- /usr/share/flash-kernel/functions | grep -vq '^#'
+
+		if [ $? -eq 0 ] ; then
+			sed -i '/\/boot\/dtb-/s/^/#/g' /usr/share/flash-kernel/functions
+		fi
+	00_fix_boot_dtb_kvers
+
+	# Now that flash-kernel is done running, remove the comment so that flash-kernel package
+	# won't report the file as modified
+	run_host_command_logged cat <<- 'zzz_revert_fix_boot_dtb_kvers' > "${destination}"/etc/kernel/postinst.d/zzz-fix-flash-kernel
+		#!/bin/sh
+
+		grep /boot/dtb- /usr/share/flash-kernel/functions | grep -q '^#'
+
+		if [ $? -eq 0 ] ; then
+			sed -i '/\/boot\/dtb-/s/^#//g' /usr/share/flash-kernel/functions
+		fi
+	zzz_revert_fix_boot_dtb_kvers
+
+	run_host_command_logged cp "${destination}"/etc/kernel/post{inst,rm}.d/00-fix-flash-kernel
+	run_host_command_logged chmod a+rx "${destination}"/etc/kernel/post{inst,rm}.d/00-fix-flash-kernel
+
+	run_host_command_logged cp "${destination}"/etc/kernel/post{inst,rm}.d/zzz-fix-flash-kernel
+	run_host_command_logged chmod a+rx "${destination}"/etc/kernel/post{inst,rm}.d/zzz-fix-flash-kernel
+}
+
 pre_umount_final_image__remove_uboot_initramfs_hook_flash_kernel() {
 	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
 	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot

@@ -7,6 +7,23 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+###  _                            _              _
+### (_)_ __ ___  _ __   ___  _ __| |_ __ _ _ __ | |_
+### | | '_ ` _ \| '_ \ / _ \| '__| __/ _` | '_ \| __|
+### | | | | | | | |_) | (_) | |  | || (_| | | | | |_
+### |_|_| |_| |_| .__/ \___/|_|   \__\__,_|_| |_|\__|
+###             |_|
+###
+### do NOT, I repeat, do NOT use "branch:xxx" in fetch_from_repo() calls in this file.
+### this whole file is hashed to produce drivers hash for the kernel versioning.
+### if you use a mutable branch reference, any changes in the upstream will not be detected,
+### and your changes will possibly be ignored.
+### please use "commit:<sha1>" or "tag:<immutable_tagname>" instead, and note the original branch name
+###
+### Also important: do NOT, I repeat, do NOT apply any patches that are not in "patch/misc" directory or subdirs.
+### Only 'patch/misc' is hashed to produce drivers hash for the kernel versioning, and using patches that don't
+### reside there will also lead to problems.
+
 function driver_generic_bring_back_ipx() {
 	#
 	# Returning headers needed for some wireless drivers
@@ -30,7 +47,7 @@ driver_rtl8152_rtl8153() {
 	if linux-version compare "${version}" ge 5.4 && linux-version compare "${version}" le 5.12 && [ "$LINUXFAMILY" != mvebu64 ] && [ "$LINUXFAMILY" != rk322x ] && [ "$LINUXFAMILY" != odroidxu4 ]; then
 
 		# attach to specifics tag or branch
-		local rtl8152ver="branch:master"
+		local rtl8152ver='commit:5a91843e032c00fd46b2c0b3cb2206685bb79420' # was "branch:master"
 
 		display_alert "Adding" "Drivers for 2.5Gb RTL8152/RTL8153 USB dongles ${rtl8152ver}" "info"
 		fetch_from_repo "$GITHUB_SOURCE/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes"
@@ -46,7 +63,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
-		local rtl8189esver="branch:master"
+		local rtl8189esver='commit:05996691a5f3a61968a83f8b368454fd2c6885ca' # used to be "branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -93,7 +110,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
-		local rtl8189fsver="branch:rtl8189fs"
+		local rtl8189fsver='commit:75a566a830037c7d1309c5a9fe411562772a1cf2' # was "branch:rtl8189fs"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
@@ -141,7 +158,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
-		local rtl8192euver="branch:realtek-4.4.x"
+		local rtl8192euver='commit:f2fc8af7ab58d2123eed1aa4428e713cdfc27976' # was "branch:realtek-4.4.x"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -232,21 +249,22 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
+		local xradio_xr819_ver='commit:279868ac96f6db34b65f68c6722830fa0aacb86b' # was "branch:karabek_rebase"
 
-		fetch_from_repo "$GITHUB_SOURCE/dbeinder/xradio" "xradio" "branch:karabek_rebase" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/dbeinder/xradio" "xradio" "${xradio_xr819_ver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
-		cp "${SRC}"/cache/sources/xradio/karabek_rebase/*.{h,c} \
+		cp "${SRC}"/cache/sources/xradio/${xradio_xr819_ver#*:}/*.{h,c} \
 			"$kerneldir/drivers/net/wireless/xradio/"
 
 		# Makefile
-		cp "${SRC}/cache/sources/xradio/karabek_rebase/Makefile" \
+		cp "${SRC}/cache/sources/xradio/${xradio_xr819_ver#*:}/Makefile" \
 			"$kerneldir/drivers/net/wireless/xradio/Makefile"
 
 		# Kconfig
-		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig"
-		cp "${SRC}/cache/sources/xradio/karabek_rebase/Kconfig" \
+		sed -i 's/---help---/help/g' "${SRC}/cache/sources/xradio/${xradio_xr819_ver#*:}/Kconfig"
+		cp "${SRC}/cache/sources/xradio/${xradio_xr819_ver#*:}/Kconfig" \
 			"$kerneldir/drivers/net/wireless/xradio/Kconfig"
 
 		# Add to section Makefile
@@ -344,7 +362,7 @@ driver_rtl8188EU_rtl8188ETV() {
 		linux-version compare "${version}" lt 5.15; then
 
 		# attach to specifics tag or branch
-		local rtl8188euver="branch:v5.7.6.1"
+		local rtl8188euver='commit:0683c3382f7ad4bb90d72b9c903a90a7bd7b200d' # was "branch:v5.7.6.1"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets ${rtl8188euver}" "info"
 
@@ -454,7 +472,7 @@ driver_rtl88x2cs() {
 	if linux-version compare "${version}" ge 5.9 && linux-version compare "${version}" lt 6.1; then
 
 		# attach to specifics tag or branch
-		local rtl88x2csver="branch:tune_for_jethub"
+		local rtl88x2csver='commit:b77a5cf442fbc01c1220b8174ee2227a8f71e204' # was "branch:tune_for_jethub"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
@@ -511,7 +529,7 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# attach to specifics tag or branch
-		local rtl8723dsver="branch:master"
+		local rtl8723dsver='commit:52e593e8c889b68ba58bd51cbdbcad7fe71362e4' # was "branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
@@ -553,7 +571,7 @@ driver_rtl8723DU() {
 
 	if linux-version compare "${version}" ge 5.0; then
 
-		local rtl8723duver="branch:master"
+		local rtl8723duver='commit:b9f1060c848ce18af01c0a62a459c3a08ccde20c' # was "branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
@@ -598,7 +616,8 @@ driver_rtl8822BS() {
 		# attach to specifics tag or branch
 		display_alert "Adding" "Wireless drivers for Realtek 8822BS chipsets ${rtl8822bsver}" "info"
 
-		local rtl8822bsver="branch:local_rtl8822bs"
+		local rtl8822bsver='commit:ee88babf55ad75b49c3312f997fd289e5ca4016b' # was "branch:local_rtl8822bs"
+
 		fetch_from_repo "$GITHUB_SOURCE/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8822bs"
@@ -692,8 +711,8 @@ driver_rtl8723cs() {
 
 	if linux-version compare "${version}" ge 6.1; then
 
-                # Add to section Makefile
-                echo "obj-\$(CONFIG_RTL8723CS)                += rtl8723cs/" >> "$kerneldir/drivers/staging/Makefile"
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_RTL8723CS)                += rtl8723cs/" >> "$kerneldir/drivers/staging/Makefile"
 
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Add-a-new-driver-v5.12.2-7-g2de5ec386.20201013_beta.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Make-the-driver-compile-and-probe-drop-rockchip-platform.patch" "applying"

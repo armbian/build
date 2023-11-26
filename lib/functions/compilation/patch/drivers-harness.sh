@@ -20,8 +20,23 @@ function kernel_drivers_create_patches() {
 	kernel_drivers_patch_hash="undetermined" # outer scope
 	kernel_drivers_patch_file="undetermined" # outer scope
 
-	declare hash_files # any changes in these files will trigger a cache miss; also any changes in misc .patch with "wireless" at start or "wifi" anywhere in the name
-	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh" "${SRC}"/patch/misc/wireless*.patch
+	### @TODO: this whole hashing of drivers is a mess. Any changes to any bash files involved of any changes to patches
+	### @TODO:  will trigger a cache miss across _all_ kernels, even if the changes are not relevant to that kernel.
+	### @TODO: is is also extremely important not to use mutable branch references (eg: "branch:master") in the
+	### @TODO: fetch_from_repo()'s calls that are done in the driver bash implemenation, otherwise changes in the
+	### @TODO: upstream will not be detected. Please use a fixed sha1. Error will be thrown if this is not the case.
+
+	declare hash_files
+	# hash the bash involved in the drivers. any changes in these files will trigger a cache miss
+	calculate_hash_for_files "${SRC}/lib/functions/compilation/patch/drivers_network.sh" "${SRC}/lib/functions/compilation/patch/drivers-harness.sh"
+	declare driver_bash_hash="${hash_files}"
+
+	# hash the whole contents of the patch/misc dir, including subdirectories. any changes in these files will trigger a cache miss
+	calculate_hash_for_all_files_in_dirs "${SRC}"/patch/misc
+	declare driver_patches_hash_all="${hash_files}"
+
+	# combine both hashes into a single one; use the first 8 chars of each
+	declare hash_files="${driver_bash_hash:0:8}_${driver_patches_hash_all:0:8}"
 
 	declare hash_variables="undetermined"
 	do_normalize_src_path="no" calculate_hash_for_variables "${KERNEL_DRIVERS_SKIP[*]}"
@@ -142,7 +157,7 @@ function kernel_drivers_prepare_harness() {
 		cd "${kernel_work_dir}" || exit_with_error "Failed to change directory to ${kernel_work_dir}"
 
 		# invoke the driver; non-armbian-next code.
-		"${driver}"
+		FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE="kernel_drivers_handle_mutable_ref" DRIVER_HARNESS_DRIVER="${driver}" "${driver}"
 
 		# recover from possible cwd changes in the driver code
 		cd "${kernel_work_dir}" || exit_with_error "Failed to change directory to ${kernel_work_dir}"
@@ -199,4 +214,18 @@ function export_changes_as_patch_via_git_format_patch() {
 
 	# move the tmp to final, if it worked.
 	run_host_command_logged mv -v "${target_patch_file_tmp}" "${target_patch_file}"
+}
+
+function kernel_drivers_handle_mutable_ref() {
+	declare url="${1}" ref_type="${2}" ref="${3}" fetched_revision="${4}"
+
+	# get the third-to-last element of the array, which is the caller of this (hopefully)
+	declare stacktrace_element="unknown"
+	get_stacktrace_element_by_index "-3" # fills in stracktrace_element; -1 is get_stacktrace_element_by_index, -2 is this function, and -3 is the caller of this function
+
+	display_alert "Kernel driver ${DRIVER_HARNESS_DRIVER} fetching from mutable ref" "${DRIVER_HARNESS_DRIVER}: ${url} ${ref_type} ${ref} - should be 'commit:${fetched_revision}'" "warn"
+	display_alert "Kernel driver ${DRIVER_HARNESS_DRIVER} fetching from mutable ref" "${DRIVER_HARNESS_DRIVER}: at ${stacktrace_element}" "warn"
+
+	# warning is not enough. lets bomb out with an error, so people are _forced_ to fix it.
+	exit_with_error "Kernel driver '${DRIVER_HARNESS_DRIVER}' fetching from mutable ref: ${url} ${ref_type} ${ref} - should be 'commit:${fetched_revision}' at '${stacktrace_element}' - please fix it"
 }
