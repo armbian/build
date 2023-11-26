@@ -24,11 +24,6 @@ function install_distribution_specific() {
 
 			run_host_command_logged rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
-			declare RENDERER=networkd
-			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
-				local RENDERER=NetworkManager
-			fi
-
 			# DNS fix
 			if [[ -n "$NAMESERVER" ]]; then
 				if [[ -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
@@ -63,11 +58,19 @@ function install_distribution_specific() {
 	fi
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
+	if [[ -d "${SDCARD}"/etc/netplan ]]; then
+
+		declare RENDERER=networkd
+		if [ -d "${SDCARD}"/etc/NetworkManager ]; then
+			local RENDERER=NetworkManager
+		fi
+
+		cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 		network:
 		  version: 2
 		  renderer: ${RENDERER}
-	EOF
+		EOF
+	fi
 
 	# cleanup motd services and related files
 	disable_systemd_service_sdcard motd-news.service motd-news.timer
