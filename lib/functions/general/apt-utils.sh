@@ -14,9 +14,13 @@ function apt_find_upstream_package_version_and_download_url() {
 	declare mirror_with_slash="undetermined/"
 
 	case "${DISTRIBUTION}" in
-		Ubuntu) # try both the jammy-updates and jammy repos, use whatever returns first
-			package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}-updates/${ARCH}/${sought_package_name}/download")
-			package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}/${ARCH}/${sought_package_name}/download")
+		Ubuntu)
+			# Only LTS releases have an "-updates" repo that is worth looking into
+			if [[ "${RELEASE}" == "focal" || "${RELEASE}" == "jammy" ]]; then # @TODO: release info information, is_ubuntu_release_lts() or similar
+				package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}-updates/${ARCH}/${sought_package_name}/download")
+			else
+				package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}/${ARCH}/${sought_package_name}/download")
+			fi
 			mirror_with_slash="${UBUNTU_MIRROR}"
 			;;
 

@@ -34,7 +34,7 @@ function compile_armbian-bsp-cli-transitional() {
 	EOF
 
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
-	fakeroot_dpkg_deb_build "${destination}" "armbian-bsp-cli-transitional"
+	dpkg_deb_build "${destination}" "armbian-bsp-cli-transitional"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
@@ -103,7 +103,11 @@ function compile_armbian-bsp-cli() {
 		INITRD_ARCH=$INITRD_ARCH
 		KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 		FORCE_BOOTSCRIPT_UPDATE=$FORCE_BOOTSCRIPT_UPDATE
-		VENDOR=$VENDOR
+		VENDOR="$VENDOR"
+		VENDORDOCS="$VENDORDOCS"
+		VENDORURL="$VENDORURL"
+		VENDORSUPPORT="$VENDORSUPPORT"
+		VENDORBUGS="$VENDORBUGS"
 	EOF
 
 	# copy general overlay from packages/bsp-cli
@@ -213,7 +217,7 @@ function compile_armbian-bsp-cli() {
 	fi
 
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
-	fakeroot_dpkg_deb_build "${destination}" "armbian-bsp-cli"
+	dpkg_deb_build "${destination}" "armbian-bsp-cli"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 

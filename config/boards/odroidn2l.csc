@@ -3,11 +3,13 @@ BOARD_NAME="Odroid N2L"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="edge" # @TODO: DTB for N2L is only in 6.3+; add current when we bump it to 6.3 or newer.
+MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOTCONFIG="odroid-n2l_defconfig"
-BOOTBRANCH_BOARD="tag:v2023.07.02"
-BOOTPATCHDIR="v2023.07" # Thus boots USB/NVMe/SCSI first. N2L only has USB.
+
+BOOTBRANCH_BOARD="tag:v2023.10"
+BOOTPATCHDIR="v2023.10" # this has 'board_odroidn2l' which has a patch to boot USB/NVMe/SCSI first
 
 # U-boot has detection code for the ODROID boards, but NOT for the n2l, at least until 23.10-rc2.
 # See https://github.com/u-boot/u-boot/blob/v2023.10-rc2/board/amlogic/odroid-n2/odroid-n2.c

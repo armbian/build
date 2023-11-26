@@ -29,7 +29,8 @@ update_initramfs() {
 	local logging_filter=""
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		initrd_debug="v"
-		logging_filter="2>&1 | { grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' -e 'microcode bundle' -e ', pf_mask' || true ; }"
+		# disabled; if debugging, we want the full output, even if it is huge.
+		# logging_filter="2>&1 | { grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' -e 'microcode bundle' -e ', pf_mask' || true ; }"
 	fi
 	if [ "$target_dir" != "" ]; then
 		initrd_kern_ver="$(basename "$target_dir")"
@@ -54,6 +55,7 @@ update_initramfs() {
 	initrd_cache_last_manifest_filepath="${SRC}/cache/initrd/initrd.manifest-${initrd_kern_ver}.last.manifest"
 	initrd_files_to_hash=("${chroot_target}/usr/bin/bash" "${chroot_target}/etc/initramfs")
 	initrd_files_to_hash+=("${chroot_target}/etc/initramfs-tools" "${chroot_target}/usr/share/initramfs-tools/")
+	initrd_files_to_hash+=("${chroot_target}/etc/modprobe.d") # for MODULES_BLACKLIST
 
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then

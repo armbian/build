@@ -22,6 +22,8 @@ PACKAGE_LIST_FAMILY="ethtool"
 
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 
+# rockchip64 (used mainly for RK3399) legacy kernel 4.4 is dead code
+
 # Common variables:
 # BOOT_SCENARIO - determines which tpl (ddrbin), spl and ATF combination to use
 #
@@ -151,8 +153,8 @@ case $BRANCH in
 	edge)
 
 		KERNELPATCHDIR='rockchip64-'$BRANCH
-		declare -g KERNEL_MAJOR_MINOR="6.5" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-6.5.y"
+		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-6.6.y"
 		LINUXFAMILY=rockchip64
 		LINUXCONFIG='linux-rockchip64-'$BRANCH
 

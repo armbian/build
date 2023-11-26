@@ -8,9 +8,9 @@
 function post_family_config__uboot_mekotronics() {
 	display_alert "$BOARD" "Configuring Mekotronics R58 ($BOARD) u-boot" "info"
 
-	declare -g BOOTSOURCE='https://github.com/rockchip-linux/u-boot.git'
+	declare -g BOOTSOURCE='https://github.com/radxa/u-boot.git'
 	#declare -g BOOTBRANCH='branch:next-dev' # disabled, using specific commit below to avoid breakage in the future
-	declare -g BOOTBRANCH="commit:cc781e0266d589b937b5af9e4850fb1e7222f0f1" # specific commit in next-dev branch; tested to work
+	declare -g BOOTBRANCH="commit:609a77ef6e99c56aacd4b8d8f9c3056378f9c761" # specific commit in next-dev branch; tested to work
 
 	declare -g BOOTDIR="u-boot-meko-rk3588"             # do not share u-boot directory
 	declare -g BOOTPATCHDIR="legacy/u-boot-meko-rk3588" # Few patches in there; MAC address & defconfig
