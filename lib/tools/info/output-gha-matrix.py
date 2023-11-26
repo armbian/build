@@ -161,6 +161,12 @@ else:
 	num_chunks = int(len(matrix) / ideal_chunk_size) + 1
 	log.warning(f"Number of chunks: {num_chunks}")
 
+matrix_hard_limit = 17 * 30  # @TODO: maybe 17*50 later
+# if over the limit, just slice to the limit, add warning about lost jobs
+if len(matrix) > matrix_hard_limit:
+	log.warning(f"Matrix size is over the hard limit of {matrix_hard_limit}, slicing to that limit. Matrix is incomplete.")
+	matrix = matrix[:matrix_hard_limit]
+
 # distribute the matrix items equally along the chunks. try to keep every chunk the same size.
 chunks = []
 for i in range(num_chunks):
@@ -177,19 +183,32 @@ for i, chunk in enumerate(chunks):
 		log.error(f"Chunk '{i + 1}' is too big: {len(chunk)}")
 		sys.exit(1)
 
-	# Directly set outputs for _each_ GHA chunk here. (code below is for all the chunks)
+	# For the full matrix, we can't have empty chunks; use a "really" field to indicate a fake entry added to make it non-empty.
+	if len(chunk) == 0:
+		log.warning(f"Chunk '{i + 1}' for '{type_gen}' is empty, adding fake invocation.")
+		chunks[i] = [
+			{"desc": "Fake matrix element so matrix is not empty", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no",
+			 "shost": "no", "fdepth": "1"}
+		]
+	else:
+		for item in chunk:
+			item["really"] = "yes"
+			# For each item in chunk, check if it is going to run in a GH-hosted runner or self-hosted, and set some matrix variables
+			# accordingly; shost: yes/no, and more specifically, fdepth, which is 0 for self-hosted, and 1 for GH-hosted.
+			# The reasoning for this is that git clones are much faster if not shallow on self-hosted, but much slower on GH-hosted.
+			# So, we want to use shallow clones on GH-hosted, but not on self-hosted.
+			if item["runs_on"] == "ubuntu-latest":
+				item["shost"] = "no"
+				item["fdepth"] = "1"  # use a string; 1 is shallow, 0 is full
+			else:
+				item["shost"] = "yes"
+				item["fdepth"] = "0"  # use a string; 1 is shallow, 0 is full
+
+	# Directly set outputs for _each_ GHA chunk here.
 	gha.set_gha_output(f"{type_gen}-chunk-json-{i + 1}", json.dumps({"include": chunk}))
 	# An output that is used to test for empty matrix.
 	gha.set_gha_output(f"{type_gen}-chunk-not-empty-{i + 1}", "yes" if len(chunk) > 0 else "no")
 	gha.set_gha_output(f"{type_gen}-chunk-size-{i + 1}", len(chunk))
-
-	# For the full matrix, we can't have empty chunks; use a "really" field to indicate a fake entry added to make it non-empty.
-	if len(chunk) == 0:
-		log.warning(f"Chunk '{i + 1}' for '{type_gen}' is empty, adding fake invocation.")
-		chunks[i] = [{"desc": "Fake matrix element so matrix is not empty", "runs_on": "ubuntu-latest", "invocation": "none", "really": "no"}]
-	else:
-		for item in chunk:
-			item["really"] = "yes"
 
 # massage the chunks so they're objects with "include" key, the way GHA likes it.
 all_chunks = {}

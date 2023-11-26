@@ -24,7 +24,8 @@ function armbian_kernel_config__disable_module_compression() {
 		kernel_config_set_n CONFIG_MODULE_SIG # No use signing modules
 
 		# DONE: Disable: version shenanigans
-		kernel_config_set_n CONFIG_LOCALVERSION_AUTO # This causes a mismatch between what Armbian wants and what make produces.
+		kernel_config_set_n CONFIG_LOCALVERSION_AUTO      # This causes a mismatch between what Armbian wants and what make produces.
+		kernel_config_set_string CONFIG_LOCALVERSION '""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
 
 		# DONE: Disable: debug option
 		kernel_config_set_n DEBUG_INFO_DWARF5 # Armbian doesn't know how to package a debug kernel.
@@ -54,4 +55,10 @@ function kernel_config_set_n() {
 	declare config="$1"
 	display_alert "Disabling kernel config/module" "${config}=n" "debug"
 	run_host_command_logged ./scripts/config --disable "${config}"
+}
+function kernel_config_set_string() {
+	declare config="$1"
+	declare value="${2}"
+	display_alert "Setting kernel config/module" "${config}=${value}" "debug"
+	run_host_command_logged ./scripts/config --set-str "${config}" "${value}"
 }

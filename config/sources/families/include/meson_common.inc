@@ -54,8 +54,8 @@ case $BRANCH in
 
 	edge)
 
-		declare -g KERNEL_MAJOR_MINOR="6.4" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-6.4.y"
+		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
+		KERNELBRANCH="branch:linux-6.6.y"
 		KERNELPATCHDIR='meson-'$BRANCH
 
 		;;

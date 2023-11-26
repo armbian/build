@@ -121,6 +121,7 @@ class PatchFileInDir:
 		self.file_name_no_ext_no_dirs = os.path.basename(self.relative_dirs_and_base_file_name)
 		self.from_series = False
 		self.series_counter = None
+		self.multiple_patches_in_file = False
 
 	def __str__(self) -> str:
 		desc: str = f"<PatchFileInDir: file_name:'{self.file_name}', dir:{self.patch_dir.__str__()} >"
@@ -215,6 +216,10 @@ class PatchFileInDir:
 		# sanity check, throw exception if there are no patches
 		if len(patches) == 0:
 			raise Exception("No valid patches found in file " + self.full_file_path())
+
+		if (len(patches) > 1):
+			self.multiple_patches_in_file = True
+
 		return patches
 
 	@staticmethod
@@ -240,8 +245,11 @@ class PatchFileInDir:
 		log.info(f"Rewriting {output_file} with new patches...")
 		with open(output_file, "w") as f:
 			for patch in patches:
-				log.info(f"Writing patch {patch.counter} to {output_file}...")
-				f.write(patch.rewritten_patch)
+				if patch.parent.patch_dir.is_autogen_dir:
+					log.debug(f"Skipping autogen patch {patch.counter} in file {output_file}...")
+				else:
+					log.info(f"Writing patch {patch.counter} to {output_file}...")
+					f.write(patch.rewritten_patch)
 
 
 # Placeholder for future manual work
@@ -504,6 +512,10 @@ class PatchInPatchFile:
 				final_files_to_add = [f for f in all_files_to_add if f not in do_not_commit_files]
 				final_files_to_add = [f for f in final_files_to_add if not any(re.match(r, f) for r in do_not_commit_regexes)]
 				log.debug(f"Adding (post-config) {len(final_files_to_add)} files to git: {' '.join(final_files_to_add)}")
+				if len(final_files_to_add) == 0:
+					log.warning(f"There are 0 files to commit post-config. The whole patch should be removed.")
+					self.problems.append("no_files_to_commit_after_config")
+					return None
 				repo.git.add("-f", final_files_to_add)
 
 		if self.failed_to_parse or self.parent.patch_dir.is_autogen_dir or add_all_changes_in_git:
@@ -692,7 +704,10 @@ class PatchInPatchFile:
 			else:
 				color = "red"
 		# @TODO: once our ansi-haste supports it, use [link url=file://blaaa]
-		return f"[bold {color}]{self.markdown_name(skip_markdown=True)}"
+		if self.parent.multiple_patches_in_file:
+			return f"[bold][{color}]{self.markdown_name(skip_markdown=True)}[/bold](:{self.counter})"
+		else:
+			return f"[bold {color}]{self.markdown_name(skip_markdown=True)}"
 
 	def rich_patch_output(self):
 		ret = self.patch_output

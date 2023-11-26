@@ -1,0 +1,256 @@
+From 91769109b85ca90fa484d88919b381f2fec679e2 Mon Sep 17 00:00:00 2001
+From: Gunjan Gupta <viraniac@gmail.com>
+Date: Sat, 2 Sep 2023 22:52:47 +0000
+Subject: [PATCH 1/3] Fix compilation with 6.0 kernel
+
+changes taken from
+https://github.com/fifteenhex/xradio/commit/99be7356e06ec11d34c5668585590e4c23e11871
+---
+ drivers/net/wireless/xradio/ap.c  | 56 +++++++++++++++++++++++--------
+ drivers/net/wireless/xradio/ap.h  |  7 ++++
+ drivers/net/wireless/xradio/sta.c |  6 ++++
+ drivers/net/wireless/xradio/sta.h |  6 ++++
+ drivers/net/wireless/xradio/xradio.h |  1 ++++
+ 4 files changed, 61 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/wireless/xradio/ap.c b/drivers/net/wireless/xradio/ap.c
+index 6c48d26ec2ce..17eb5132ee84 100644
+--- a/drivers/net/wireless/xradio/ap.c
++++ b/drivers/net/wireless/xradio/ap.c
+@@ -219,7 +219,11 @@ static int xradio_set_tim_impl(struct xradio_vif *priv, bool aid0_bit_set)
+ 	ap_printk(XRADIO_DBG_MSG, "%s mcast: %s.\n", __func__, 
+ 	          aid0_bit_set ? "ena" : "dis");
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++	skb = ieee80211_beacon_get_tim(priv->hw, priv->vif, &tim_offset, &tim_length, 0);
++#else
+ 	skb = ieee80211_beacon_get_tim(priv->hw, priv->vif, &tim_offset, &tim_length);
++#endif
+ 	if (!skb) {
+ 		__xradio_flush(hw_priv, true, priv->if_id);
+ 		return -ENOENT;
+@@ -355,13 +359,25 @@ static int xradio_set_btcoexinfo(struct xradio_vif *priv)
+ 	return ret;
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++void xradio_bss_info_changed(struct ieee80211_hw *dev,
++			     struct ieee80211_vif *vif,
++			     struct ieee80211_bss_conf *info,
++			     u64 changed)
++#else
+ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 			     struct ieee80211_vif *vif,
+ 			     struct ieee80211_bss_conf *info,
+ 			     u32 changed)
++#endif
+ {
+ 	struct xradio_common *hw_priv = dev->priv;
+ 	struct xradio_vif *priv = xrwl_get_vif_from_ieee80211(vif);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++	struct ieee80211_vif_cfg *cfg = &vif->cfg;
++#else
++	struct ieee80211_bss_conf *cfg = info;
++#endif
+ 
+ 	ap_printk(XRADIO_DBG_OPS, "%s\n", __func__);
+ 
+@@ -377,9 +393,9 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 		struct wsm_arp_ipv4_filter filter = {0};
+ 		int i;
+ 		ap_printk(XRADIO_DBG_MSG, "[STA] BSS_CHANGED_ARP_FILTER cnt: %d\n",
+-		          info->arp_addr_cnt);
++		          cfg->arp_addr_cnt);
+ 
+-		if (info->arp_addr_cnt){
++		if (cfg->arp_addr_cnt){
+ 			if (vif->type == NL80211_IFTYPE_STATION)
+ 				filter.enable = (u32)XRADIO_ENABLE_ARP_FILTER_OFFLOAD;
+ 			else if (priv->join_status == XRADIO_JOIN_STATUS_AP)
+@@ -390,10 +406,10 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 
+ 		/* Currently only one IP address is supported by firmware.
+ 		 * In case of more IPs arp filtering will be disabled. */
+-		if (info->arp_addr_cnt > 0 &&
+-		    info->arp_addr_cnt <= WSM_MAX_ARP_IP_ADDRTABLE_ENTRIES) {
+-			for (i = 0; i < info->arp_addr_cnt; i++) {
+-				filter.ipv4Address[i] = info->arp_addr_list[i];
++		if (cfg->arp_addr_cnt > 0 &&
++		    cfg->arp_addr_cnt <= WSM_MAX_ARP_IP_ADDRTABLE_ENTRIES) {
++			for (i = 0; i < cfg->arp_addr_cnt; i++) {
++				filter.ipv4Address[i] = cfg->arp_addr_list[i];
+ 				ap_printk(XRADIO_DBG_NIY, "[STA]addr[%d]: 0x%X\n", i, filter.ipv4Address[i]);
+ 			}
+ 		} else
+@@ -415,8 +431,8 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ #ifdef HIDDEN_SSID
+ 		if(priv->join_status != XRADIO_JOIN_STATUS_AP) {
+ 			priv->hidden_ssid = info->hidden_ssid;
+-			priv->ssid_length = info->ssid_len;
+-			memcpy(priv->ssid, info->ssid, info->ssid_len);
++			priv->ssid_length = cfg->ssid_len;
++			memcpy(priv->ssid, cfg->ssid, cfg->ssid_len);
+ 		} else
+ 			ap_printk(XRADIO_DBG_NIY, "priv->join_status=%d\n", priv->join_status);
+ #endif
+@@ -442,7 +458,7 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 		priv->wep_default_key_id = -1;
+ 		wsm_unlock_tx(hw_priv);
+ 
+-		if (!info->assoc /* && !info->ibss_joined */) {
++		if (!cfg->assoc /* && !info->ibss_joined */) {
+ 			priv->cqm_link_loss_count = XRADIO_LINK_LOSS_THOLD_DEF;
+ 			priv->cqm_beacon_loss_count = XRADIO_BSS_LOSS_THOLD_DEF;
+ 			priv->cqm_tx_failure_thold = 0;
+@@ -460,7 +476,7 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 		int i;
+ 		struct xradio_vif *tmp_priv;
+ 		ap_printk(XRADIO_DBG_NIY, "BSS_CHANGED_ASSOC.\n");
+-		if (info->assoc) { /* TODO: ibss_joined */
++		if (cfg->assoc) { /* TODO: ibss_joined */
+ 			struct ieee80211_sta *sta = NULL;
+ 			if (info->dtim_period)
+ 				priv->join_dtim_period = info->dtim_period;
+@@ -548,7 +564,7 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 			priv->bss_params.beaconLostCount = (priv->cqm_beacon_loss_count ?
+ 			  priv->cqm_beacon_loss_count : priv->cqm_link_loss_count);
+ 
+-			priv->bss_params.aid = info->aid;
++			priv->bss_params.aid = cfg->aid;
+ 
+ 			if (priv->join_dtim_period < 1)
+ 				priv->join_dtim_period = 1;
+@@ -589,7 +605,7 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 				                                  hw_priv->ba_tid_mask, priv->if_id));
+ 				wsm_unlock_tx(hw_priv);
+ 			}
+-			
++
+ 			if (priv->vif->p2p) {
+ 				ap_printk(XRADIO_DBG_NIY, "[STA] Setting p2p powersave configuration.\n");
+ 				WARN_ON(wsm_set_p2p_ps_modeinfo(hw_priv, &priv->p2p_ps_modeinfo, priv->if_id));
+@@ -706,11 +722,11 @@ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 	}
+ 
+ 	if (changed & (BSS_CHANGED_PS | BSS_CHANGED_ASSOC)) {
+-		if (!info->ps)
++		if (!cfg->ps)
+ 			priv->powersave_mode.pmMode = WSM_PSM_ACTIVE;
+ 		else
+ 			priv->powersave_mode.pmMode = WSM_PSM_FAST_PS;
+-		
++
+ 		ap_printk(XRADIO_DBG_MSG, "[PowerSave] aid: %d, IsSTA: %s, Powersave: %s\n",
+ 		          priv->bss_params.aid,
+ 		          priv->join_status == XRADIO_JOIN_STATUS_STA ? "yes" : "no",
+@@ -966,7 +982,11 @@ static int xradio_upload_beacon(struct xradio_vif *priv)
+ 	if (priv->vif->p2p || hw_priv->channel->band == NL80211_BAND_5GHZ)
+ 		frame.rate = WSM_TRANSMIT_RATE_6;
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++	frame.skb = ieee80211_beacon_get(priv->hw, priv->vif, 0);
++#else
+ 	frame.skb = ieee80211_beacon_get(priv->hw, priv->vif);
++#endif
+ 	if (WARN_ON(!frame.skb))
+ 		return -ENOMEM;
+ 
+@@ -1234,7 +1254,11 @@ static int xradio_start_ap(struct xradio_vif *priv)
+ 
+ #ifndef HIDDEN_SSID
+ 	/* Get SSID */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++	skb = ieee80211_beacon_get(priv->hw, priv->vif, 0);
++#else
+ 	skb = ieee80211_beacon_get(priv->hw, priv->vif);
++#endif
+ 	if (WARN_ON(!skb)) {
+ 		ap_printk(XRADIO_DBG_ERROR,"%s, ieee80211_beacon_get failed\n", __func__);
+ 		return -ENOMEM;
+@@ -1559,7 +1583,11 @@ void xradio_ht_oper_update_work(struct work_struct *work)
+ 		.count = 1,
+ 	};
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++	skb = ieee80211_beacon_get(priv->hw, priv->vif, 0);
++#else
+ 	skb = ieee80211_beacon_get(priv->hw, priv->vif);
++#endif
+ 	if (WARN_ON(!skb))
+ 		return;
+ 
+diff --git a/drivers/net/wireless/xradio/ap.h b/drivers/net/wireless/xradio/ap.h
+index 9d55fb86b125..36e243912615 100644
+--- a/drivers/net/wireless/xradio/ap.h
++++ b/drivers/net/wireless/xradio/ap.h
+@@ -29,10 +29,17 @@ int xradio_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+ void xradio_sta_notify(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
+ 		       enum sta_notify_cmd notify_cmd,
+ 		       struct ieee80211_sta *sta);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++void xradio_bss_info_changed(struct ieee80211_hw *dev,
++			     struct ieee80211_vif *vif,
++			     struct ieee80211_bss_conf *info,
++			     u64 changed);
++#else
+ void xradio_bss_info_changed(struct ieee80211_hw *dev,
+ 			     struct ieee80211_vif *vif,
+ 			     struct ieee80211_bss_conf *info,
+ 			     u32 changed);
++#endif
+ int xradio_ampdu_action(struct ieee80211_hw *hw,
+ 			struct ieee80211_vif *vif,
+ 			struct ieee80211_ampdu_params *params);
+diff --git a/drivers/net/wireless/xradio/sta.c b/drivers/net/wireless/xradio/sta.c
+index 529835732e12..5eb72ec56559 100644
+--- a/drivers/net/wireless/xradio/sta.c
++++ b/drivers/net/wireless/xradio/sta.c
+@@ -697,8 +697,14 @@ void xradio_configure_filter(struct ieee80211_hw *hw,
+ 	}
+ }
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++int xradio_conf_tx(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
++                   unsigned int link_id, u16 queue,
++		   const struct ieee80211_tx_queue_params *params)
++#else
+ int xradio_conf_tx(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
+                    u16 queue, const struct ieee80211_tx_queue_params *params)
++#endif
+ {
+ 	struct xradio_common *hw_priv = dev->priv;
+ 	struct xradio_vif *priv = xrwl_get_vif_from_ieee80211(vif);
+diff --git a/drivers/net/wireless/xradio/sta.h b/drivers/net/wireless/xradio/sta.h
+index d70274fe1959..5291eea7834c 100644
+--- a/drivers/net/wireless/xradio/sta.h
++++ b/drivers/net/wireless/xradio/sta.h
+@@ -50,8 +50,14 @@ void xradio_configure_filter(struct ieee80211_hw *dev,
+                              unsigned int changed_flags,
+                              unsigned int *total_flags,
+                              u64 multicast);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
++int xradio_conf_tx(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
++                   unsigned int link_id, u16 queue,
++		   const struct ieee80211_tx_queue_params *params);
++#else
+ int xradio_conf_tx(struct ieee80211_hw *dev, struct ieee80211_vif *vif,
+                    u16 queue, const struct ieee80211_tx_queue_params *params);
++#endif
+ int xradio_get_stats(struct ieee80211_hw *dev,
+                      struct ieee80211_low_level_stats *stats);
+ /* Not more a part of interface?
+diff --git a/drivers/net/wireless/xradio/xradio.h b/drivers/net/wireless/xradio/xradio.h
+index d565db0..9f47a8b 100644
+--- a/drivers/net/wireless/xradio/xradio.h
++++ b/drivers/net/wireless/xradio/xradio.h
+@@ -12,6 +12,7 @@
+ #ifndef XRADIO_H
+ #define XRADIO_H
+ 
++#include <linux/version.h>
+ #include <linux/wait.h>
+ #include <linux/mutex.h>
+ #include <linux/workqueue.h>
+-- 
+2.34.1
+

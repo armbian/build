@@ -36,6 +36,10 @@ function artifact_armbian-base-files_prepare_version() {
 	declare -g -r base_files_wanted_upstream_filename="${found_package_filename}"
 	declare -g -r base_files_wanted_deb_down_url="${found_package_down_url}"
 
+	# for OCI tags, we can't have "+" or "~" in the version, which happens in bookworm and some others. clean it up
+	declare base_files_cleaned_upstream_version_tag="${base_files_wanted_upstream_version//+/--}"
+	declare -g -r base_files_cleaned_upstream_version_tag="${base_files_cleaned_upstream_version_tag//~/--}"
+
 	# get the hashes of the lib/ bash sources involved.
 	declare hash_files="undetermined"
 	calculate_hash_for_bash_deb_artifact "artifacts/artifact-armbian-base-files.sh"
@@ -43,7 +47,7 @@ function artifact_armbian-base-files_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${fake_unchanging_base_version}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-B${bash_hash_short}-U${base_files_cleaned_upstream_version_tag}"
 
 	declare -a reasons=("Armbian armbian-base-files" "original ${RELEASE} version \"${base_files_wanted_upstream_version}\"" "framework bash hash \"${bash_hash}\"")
 
@@ -57,7 +61,7 @@ function artifact_armbian-base-files_prepare_version() {
 
 	# Important. Force the final reversioned version to contain the release name.
 	# Otherwise, when publishing to a repo, pool/main/b/base-files/base-files_${REVISION}.deb will be the same across releases.
-	artifact_final_version_reversioned="${REVISION}-${RELEASE}"
+	artifact_final_version_reversioned="${REVISION}-${base_files_wanted_upstream_version}-${RELEASE}"
 
 	# Register the function used to re-version the _contents_ of the base-files deb file.
 	artifact_debs_reversion_functions+=("reversion_armbian-base-files_deb_contents")
@@ -179,7 +183,7 @@ function compile_armbian-base-files() {
 	rm -f "${destination}"/etc/os-release.orig "${destination}"/etc/issue.orig "${destination}"/etc/issue.net.orig "${destination}"/DEBIAN/conffiles.orig
 
 	# Done, pack it.
-	fakeroot_dpkg_deb_build "${destination}" "armbian-base-files"
+	dpkg_deb_build "${destination}" "armbian-base-files"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

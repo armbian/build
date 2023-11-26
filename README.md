@@ -2,10 +2,11 @@
   <a href="#build-framework">
   <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
   </a><br>
-  <strong>Armbian Linux Build Framework</strong><br><h3>
- $${\color{black}NEXT\space \color{red}gen}$$
- </h3> 
- 
+  <strong>Armbian Linux Build Framework</strong><br>
+<br>
+<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=githubactions&label=Build&style=for-the-badge&branch=main&logoColor=white"></a>
+</p>
+
 ## Table of contents
 
 - [What does this project do?](#what-does-this-project-do)
@@ -22,9 +23,9 @@
 
 ## What does this project do?
 
-- Builds custom kernel, image or a distribution optimized for low-resource hardware,
-- Include filesystem generation, low-level control software, kernel image and bootloader compilation,
-- Provides a consistent user experience by keeping system standards across different platforms.
+- Builds custom **kernel**, **image** or a **distribution** optimized for low-resource hardware,
+- Include filesystem generation, low-level control software, kernel image and **bootloader** compilation,
+- Provides a **consistent user experience** by keeping system standards across different platforms.
 
 ## Getting started
 
@@ -58,13 +59,13 @@ Show work-in-progress areas in interactive mode:
 ./compile.sh EXPERT="yes"
 ```
 
-Build minimal CLI Armbian Focal image for Orangepi Zero. Use modern kernel and write image to the SD card:
+Build minimal CLI Armbian Jammy image for Orangepi Zero. Use `current` kernel and write image to the SD card:
 
 ```bash
 ./compile.sh \
 BOARD=orangepizero \
 BRANCH=current \
-RELEASE=focal \
+RELEASE=jammy \
 BUILD_MINIMAL=yes \
 BUILD_DESKTOP=no \
 KERNEL_CONFIGURE=no \
@@ -79,12 +80,13 @@ More information:
 
 ## Download prebuilt images
 
-- quarterly released **supported** builds —  <https://www.armbian.com/download>
-- weekly released **unsupported** community builds —  <https://github.com/armbian/community>
-- upon code change **unsupported** development builds —  <https://github.com/armbian/build/releases>
+- [quarterly released **supported** builds](https://www.armbian.com/download/?device_support=Standard%20support)
+- [quarterly released **community maintained** builds](https://www.armbian.com/download/?device_support=Community%20maintained)
+- [automatic released **rolling release** builds](https://github.com/armbian/os/releases/latest) (daily or when code changes)
 
 ## Compared with industry standards
 
+<details><summary>Expand</summary>
 Check similarities, advantages and disadvantages compared with leading industry standard build software.
 
 Function | Armbian | Yocto | Buildroot |
@@ -98,6 +100,7 @@ Function | Armbian | Yocto | Buildroot |
 | Initramfs support | yes | yes | yes |
 | Getting started | quick | very slow | slow |
 | Cross compilation | yes | yes | yes |
+</details>
 
 ## Project structure
 
@@ -181,38 +184,41 @@ Function | Armbian | Yocto | Buildroot |
 
 ### You don't need to be a programmer to help!
 
-- The easiest way to help is by "Starring" our repository - it helps more people find our code.
+The easiest way to help is by "Starring" our repository - it helps more people find our code. 
+
 - [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
-- [Seed torrents](https://forum.armbian.com/topic/4198-seed-our-torrents/)
-- Help with [forum moderating](https://forum.armbian.com/topic/12631-help-on-forum-moderating/)
-- [Project administration](https://forum.armbian.com/forum/39-armbian-project-administration/)
-- [Donate](https://www.armbian.com/donate).
+- [Mirror our download infrastructure](https://github.com/armbian/mirror/)  ❤️
+- [Donate](https://www.armbian.com/donate)!  ❤️
 
 ### Want to become a maintainer?
 
-Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/), and if you can meet the requirements and find a board on the [Board Maintainers](https://docs.armbian.com/Release_Board-Maintainers/) list with less than two maintainers, then please apply using the linked form.
+Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/) and [apply](https://forum.armbian.com/staffapplications/application/8-single-board-computer-maintainer/) !
 
 ### Want to become a developer?
 
-To help with development, you should first review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/). Then you can review the pre-made Jira dashboards and additional resources provided below to find open tasks and how you can assist:
+To help with development, review [this document](CONTRIBUTING.md) and move straight to the code:
 
-- [pull requests that need a review](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired)
-- dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
-- [documentation](https://docs.armbian.com/)
-- [continuous integration](https://docs.armbian.com/Process_CI/)
+- [release related tickets](https://www.armbian.com/participate/)
+- [review pull requests](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired+label%3A%22Needs+review%22)
+- ticket dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
 
 ## Support
 
 For commercial or prioritized assistance:
  - Book an hour of [professional consultation](https://calendly.com/armbian/consultation)
- - Consider becoming a project partner. Reach us at <https://armbian.com/contact>. Alternatively, find free support via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Remember that our awesome community members mainly provide this in a **best-effort** manner, so there are no guaranteed solutions.
+ - Consider becoming a [project partner](https://forum.armbian.com/subscriptions/)
+ - [Contact us](https://armbian.com/contact)! 
+ 
+Free support:
+
+ Find free support via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Remember that our awesome community members mainly provide this in a **best-effort** manner, so there are no guaranteed solutions.
 
 ## Contact
 
 - [Forums](https://forum.armbian.com) for Participate in Armbian
 - IRC: `#armbian` on Libera.chat
 - Discord: [https://discord.gg/armbian](https://discord.gg/armbian)
-- Follow [@armbian](https://twitter.com/armbian) on Twitter, [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
+- Follow [@armbian](https://twitter.com/armbian) on X (formerly known as Twitter), [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
 - Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
 

@@ -202,12 +202,100 @@ def find_armbian_src_path():
 	if not os.path.exists(core_boards_path):
 		raise Exception("Can't find config/boards")
 
+	# userspace stuff
+	core_distributions_path = os.path.realpath(os.path.join(armbian_src_path, "config", "distributions"))
+	log.debug(f"Real path to core distributions '{core_distributions_path}'")
+	# Make sure it exists
+	if not os.path.exists(core_distributions_path):
+		raise Exception("Can't find config/distributions")
+
+	core_desktop_path = os.path.realpath(os.path.join(armbian_src_path, "config", "desktop"))
+	log.debug(f"Real path to core desktop '{core_desktop_path}'")
+	# Make sure it exists
+	if not os.path.exists(core_desktop_path):
+		raise Exception("Can't find config/desktop")
+
 	userpatches_boards_path = os.path.realpath(os.path.join(armbian_src_path, "userpatches", "config", "boards"))
 	log.debug(f"Real path to userpatches boards '{userpatches_boards_path}'")
 	has_userpatches_path = os.path.exists(userpatches_boards_path)
 
-	return {"armbian_src_path": armbian_src_path, "compile_sh_full_path": compile_sh_full_path, "core_boards_path": core_boards_path,
-			"userpatches_boards_path": userpatches_boards_path, "has_userpatches_path": has_userpatches_path}
+	return {
+		"armbian_src_path": armbian_src_path, "compile_sh_full_path": compile_sh_full_path, "core_boards_path": core_boards_path,
+		"core_distributions_path": core_distributions_path, "core_desktop_path": core_desktop_path,
+		"userpatches_boards_path": userpatches_boards_path, "has_userpatches_path": has_userpatches_path
+	}
+
+
+def read_one_distro_config_file(filename):
+	# Read the contents of filename passed in and return it as string, trimmed
+	with open(filename, 'r') as file_handle:
+		file_contents = file_handle.read()
+		return file_contents.strip()
+
+
+def split_commas_and_clean_into_list(string):
+	ret = []
+	for item in string.split(","):
+		item = item.strip()
+		if item != "":
+			ret.append(item)
+	return ret
+
+
+def get_desktop_inventory_for_distro(distro, armbian_paths):
+	ret = []
+	desktops_path = armbian_paths["core_desktop_path"]
+	envs_path_for_distro = os.path.join(desktops_path, distro, "environments")
+	if not os.path.exists(envs_path_for_distro):
+		log.warning(f"Can't find desktop environments for distro '{distro}' at '{envs_path_for_distro}'")
+		return ret
+	for env in os.listdir(envs_path_for_distro):
+		one_env_path = os.path.join(envs_path_for_distro, env)
+		if not os.path.isdir(one_env_path):
+			continue
+		log.debug(f"Processing desktop '{env}' for distro '{distro}'")
+		support_file_path = os.path.join(one_env_path, "support")
+		arches_file_path = os.path.join(one_env_path, "architectures")
+		if not os.path.exists(support_file_path):
+			log.warning(f"Can't find desktop support file for distro '{distro}' and environment '{env}' at '{support_file_path}'")
+			continue
+		if not os.path.exists(arches_file_path):
+			log.warning(f"Can't find desktop arches file for distro '{distro}' and environment '{env}' at '{arches_file_path}'")
+			continue
+
+		env_main_info = {
+			"id": env,
+			"support": read_one_distro_config_file(support_file_path),
+			"arches": split_commas_and_clean_into_list(read_one_distro_config_file(arches_file_path))
+		}
+		ret.append(env_main_info)
+
+	return ret
+
+
+def armbian_get_all_userspace_inventory():
+	armbian_paths = find_armbian_src_path()
+	distros_path = armbian_paths["core_distributions_path"]
+	all_distros = []
+	# find and loop over every directory in distros_path, including symlinks
+	for distro in os.listdir(distros_path):
+		one_distro_path = os.path.join(distros_path, distro)
+		if not os.path.isdir(one_distro_path):
+			continue
+		log.debug(f"Processing distro '{distro}'")
+		support_file_path = os.path.join(one_distro_path, "support")
+		arches_file_path = os.path.join(one_distro_path, "architectures")
+		name_file_path = os.path.join(one_distro_path, "name")
+		distro_main_info = {
+			"id": distro,
+			"name": read_one_distro_config_file(name_file_path),
+			"support": read_one_distro_config_file(support_file_path),
+			"arches": split_commas_and_clean_into_list(read_one_distro_config_file(arches_file_path)),
+			"desktops": get_desktop_inventory_for_distro(distro, armbian_paths)
+		}
+		all_distros.append(distro_main_info)
+
+	return all_distros
 
 
 def armbian_get_all_boards_inventory():
@@ -275,9 +363,16 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 	except subprocess.CalledProcessError as e:
 		# decode utf8 manually, universal_newlines messes up bash encoding
 		logs = parse_log_lines_from_stderr(e.stderr)
-		log.error(f"Error calling Armbian command: {' '.join(exec_cmd)}")
-		log.error(f"Error details: params: {params} - return code: {e.returncode} - stderr: {'; '.join(logs[-5:])}")
-		return {"in": params, "out": {}, "logs": logs, "config_ok": False}
+		if e.returncode == 44:
+			# special handling for exit_with_target_not_supported_error() in armbian core.
+			log.warning(f"Skipped target: {' '.join(exec_cmd)}")
+			log.warning(f"Skipped target details 1: {'; '.join(logs[-5:])}")
+			return {"in": params, "out": {}, "logs": logs, "config_ok": False, "target_not_supported": True}
+		else:
+			log.error(f"Error calling Armbian command: {' '.join(exec_cmd)}")
+			log.error(f"Error details 1: params: {params}")
+			log.error(f"Error details 2: code: {e.returncode} - {'; '.join(logs[-5:])}")
+			return {"in": params, "out": {}, "logs": logs, "config_ok": False}
 
 	if result is not None:
 		if result.stderr:
@@ -331,7 +426,7 @@ def gather_json_output_from_armbian(command: str, targets: list[dict]):
 		counter = 0
 		total = len(targets)
 		# get the number of processor cores on this machine
-		max_workers = multiprocessing.cpu_count() * 2  # use double the number of cpu cores, that's the sweet spot
+		max_workers = multiprocessing.cpu_count() * 4  # use four times the number of cpu cores, that's the sweet spot
 		log.info(f"Using {max_workers} workers for parallel processing.")
 		with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
 			every_future = []

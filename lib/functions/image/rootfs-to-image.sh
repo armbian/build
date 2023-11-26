@@ -35,6 +35,9 @@ function create_image_from_sdcard_rootfs() {
 	calculate_image_version
 	declare -r -g version="${calculated_image_version}" # global readonly from here
 	declare rsync_ea=" -X "
+	declare exclude_home="--exclude=\"/home/*\""
+	# Some usecase requires home directory to be included
+	if [[ ${INCLUDE_HOME_DIR:-no} == yes ]]; then exclude_home=""; fi
 	# nilfs2 fs does not have extended attributes support, and have to be ignored on copy
 	if [[ $ROOTFS_TYPE == nilfs2 ]]; then rsync_ea=""; fi
 	if [[ $ROOTFS_TYPE != nfs ]]; then
@@ -46,11 +49,12 @@ function create_image_from_sdcard_rootfs() {
 			--exclude="/run/*" \
 			--exclude="/tmp/*" \
 			--exclude="/sys/*" \
+			$exclude_home \
 			--info=progress0,stats1 $SDCARD/ $MOUNT/
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . |
+			--exclude='./sys/*' $exclude_home . |
 			pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" \
 				-N "$(logging_echo_prefix_for_pv "create_rootfs_archive") rootfs.tgz" |
 			gzip -c > "$DEST/images/${version}-rootfs.tgz"
