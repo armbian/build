@@ -28,11 +28,9 @@ function armbian_kernel_config__disable_module_compression() {
 		kernel_config_set_string CONFIG_LOCALVERSION '""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
 
 		# DONE: Disable: debug option
-		kernel_config_set_n DEBUG_INFO_DWARF5 # Armbian doesn't know how to package a debug kernel.
-		kernel_config_set_n DEBUG_KERNEL      # ditto
-		kernel_config_set_n DEBUG_INFO        # ditto
-		kernel_config_set_n DEBUG_INFO_BTF    # ditto
-		kernel_config_set_n GDB_SCRIPTS       # ditto
+		kernel_config_set_n DEBUG_KERNEL # Armbian doesn't know how to package a debug kernel.
+		kernel_config_set_n DEBUG_INFO   # ditto
+		kernel_config_set_n GDB_SCRIPTS  # ditto
 
 		# @TODO: Enable the options for the extrawifi/drivers; so we don't need to worry about them when updating configs
 	fi
