@@ -503,6 +503,10 @@ while [ "x$list" != "x" ]; do
 			"${GRUB_CMDLINE_LINUX_RECOVERY} ${GRUB_CMDLINE_LINUX}"
 	fi
 
+	if [ -f /etc/initramfs-tools/scripts/init-premount/usb-gadget-ums.sh ]; then
+		linux_entry "${OS}" "${version}" init-ums "initrd=ums ums=yes ${GRUB_CMDLINE_LINUX}"
+	fi
+
 	list=$(echo $list | tr ' ' '\n' | fgrep -vx "$linux" | tr '\n' ' ')
 done
 

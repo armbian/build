@@ -13,28 +13,30 @@
 #--------------------------------------------------------------------------------------------------------------------------------
 function fingerprint_image() {
 	cat <<- EOF > "${1}"
-		--------------------------------------------------------------------------------
-		Title:          ${VENDOR} $REVISION ${BOARD^} $BRANCH
-		Kernel:         Linux ${IMAGE_INSTALLED_KERNEL_VERSION}
+		---------------------------------------------------------------------------
+		Generated with Armbian(tm) build framework https://github.com/armbian/build
+		---------------------------------------------------------------------------
+		Vendor:         ${VENDOR}
+		Revision:       $REVISION
+		Board:          ${BOARD^}
+		Kernel:         Linux ${IMAGE_INSTALLED_KERNEL_VERSION} ($BRANCH)
 		Build date:     $(date +'%d.%m.%Y')
-		Builder rev:    ${BUILD_REPOSITORY_COMMIT}
-		Maintainer:     $MAINTAINER <$MAINTAINERMAIL>
+		Sources:        ${BUILD_REPOSITORY_URL}
+		Sources rev:    ${BUILD_REPOSITORY_COMMIT}
 		Authors:        https://www.armbian.com/authors
-		Sources:        https://github.com/armbian/
-		Support:        https://forum.armbian.com/
-		Changelog:      https://www.armbian.com/logbook/
-		Documentation:  https://docs.armbian.com/
+		Maintainer:     ${MAINTAINER} <$MAINTAINERMAIL>
+		Support:        ${VENDORSUPPORT}
 	EOF
 
 	if [ -n "$2" ]; then
 		cat <<- EOF >> "${1}"
-			--------------------------------------------------------------------------------
+			---------------------------------------------------------------------------
 			Partitioning configuration: $IMAGE_PARTITION_TABLE offset: $OFFSET
 			Boot partition type: ${BOOTFS_TYPE:-(none)} ${BOOTSIZE:+"(${BOOTSIZE} MB)"}
 			Root partition type: $ROOTFS_TYPE ${FIXED_IMAGE_SIZE:+"(${FIXED_IMAGE_SIZE} MB)"}
 
 			CPU configuration: $CPUMIN - $CPUMAX with $GOVERNOR
-			--------------------------------------------------------------------------------
+			---------------------------------------------------------------------------
 			Verify GPG signature:
 			gpg --verify $2.img.xz.asc
 
@@ -50,8 +52,7 @@ function fingerprint_image() {
 	fi
 
 	cat <<- EOF >> "${1}"
-		--------------------------------------------------------------------------------
+		---------------------------------------------------------------------------
 		$(cat "${SRC}"/LICENSE)
-		--------------------------------------------------------------------------------
 	EOF
 }

@@ -16,6 +16,30 @@ Once you have decided to contribute to Armbian by working on an issue, check our
 
 Please be sure to review the [Development Code Review Procedures and Guidelines](https://docs.armbian.com/Development-Code_Review_Procedures_and_Guidelines/) as well before you begin.
 
+## PR and issues labeling
+
+Labels are defined in [.github/labels.yml](.github/labels.yml) YAML file. They are automatically recreated upon change. Require at least `Triage` users permission on repository. [Request access](https://github.com/armbian/build#contact) if you cannot change labels!
+
+Most of labels are self explanoritary but here are short instructions on how to use them:
+
+Automated on PR:
+- `size/small`, `size/medium`, `size/large` is determined automatically from the size of the PR
+- `desktop`, `hardware` and `software` is determined automatically depending on location of the changes
+
+Manual on PR:
+- `02` `05` `08` `11` milestone - determine into which release the PR should go
+- `work in progress` - when you are still working on
+- `needs review` - when you are done and seeking for attention
+- `ready to merge` - when you are done
+- `help needed` - when you are desperate and cannot move on
+
+Labeling Issues:
+- `bug` when it is clear that it is our bug, `not our bug` if its clearly not ours, `duplicate` if issue already exists
+- `discussion`, when needed, `user error` when we know it is a problem on the other side
+- `can be closed` for stalled issues
+
+
+
 ## Contributing
 
 This section describes how to start contributing to Armbian.

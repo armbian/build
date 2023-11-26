@@ -4,6 +4,7 @@ BOARDFAMILY="meson-sm1"
 BOARD_MAINTAINER=""
 BOOTCONFIG="odroid-c4_defconfig" # But also 'odroid-hc4_defconfig', see below at UBOOT_TARGET_MAP
 KERNEL_TARGET="current,edge"
+MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
 FULL_DESKTOP="no"
 SERIALCON="ttyAML0"
 BOOT_FDT_FILE="amlogic/meson-sm1-odroid-hc4.dtb"
