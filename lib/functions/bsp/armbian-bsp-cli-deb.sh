@@ -398,6 +398,7 @@ function board_side_bsp_cli_postrm() { # not run here
 	if [[ remove == "$1" ]] || [[ abort-install == "$1" ]]; then
 		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service > /dev/null 2>&1
 		systemctl disable armbian-zram-config.service armbian-ramlog.service > /dev/null 2>&1
+		systemctl disable armbian-live-patch.service > /dev/null 2>&1
 	fi
 }
 
