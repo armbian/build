@@ -249,9 +249,9 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
-		local xradio_xr819_ver='commit:279868ac96f6db34b65f68c6722830fa0aacb86b' # was "branch:karabek_rebase"
+		local xradio_xr819_ver="commit:547521df27d1a80fb5542e93fa13bd09fb2259a2"
 
-		fetch_from_repo "$GITHUB_SOURCE/dbeinder/xradio" "xradio" "${xradio_xr819_ver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradio_xr819_ver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
@@ -268,39 +268,10 @@ driver_xradio_xr819() {
 			"$kerneldir/drivers/net/wireless/xradio/Kconfig"
 
 		# Add to section Makefile
-		echo "obj-\$(CONFIG_WLAN_VENDOR_XRADIO) += xradio/" \
+		echo "obj-\$(CONFIG_XRADIO) += xradio/" \
 			>> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# add support for K5.13+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-5.13.patch" "applying"
-
-		# add support for K5.19+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-code-cleanup.patch" "applying"
-
-		# add support for K5.19+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-insmod-rmmod-fx.patch" "applying"
-
-		# add support for K5.19+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-5.19.patch" "applying"
-
-		# add support for K6.0+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-6.0.patch" "applying"
-
-		# add support for K6.1+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-6.1.patch" "applying"
-
-		# add support for K6.2+
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-6.2.patch" "applying"
-
-		# vmmaped stack memory access fix
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-vmmaped-stack-fix.patch" "applying"
-
-		# add support for aarch64
-		if [[ $ARCH == arm64 ]]; then
-			process_patch_file "${SRC}/patch/misc/wireless-xradio-aarch64.patch" "applying"
-		fi
 
 	fi
 
