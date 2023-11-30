@@ -5,7 +5,7 @@ function add_host_dependencies__cleanup_space_final_image_zerofree() {
 function post_customize_image__998_cleanup_apt_stuff() {
 	# This used to clean apt caches, but no longer; we do that in the core now.
 
-	declare -a too_big_firmware=("netronome" "qcom" "mrv" "qed" "mellanox") # maybe: "amdgpu" "radeon" but I have an AMD GPU.
+	declare -a too_big_firmware=("netronome" "mrv" "mellanox") # maybe: "amdgpu" "radeon" but I have an AMD GPU; qed and qcom: for x13s qcom
 	for big_firm in "${too_big_firmware[@]}"; do
 		local firm_dir="${SDCARD}/usr/lib/firmware/${big_firm}"
 		if [[ -d "${firm_dir}" ]]; then

@@ -1,0 +1,79 @@
+From f7566601794db24c07ee3befdca13d35e105d8c1 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Mon, 28 Nov 2022 10:12:50 +0100
+Subject: [PATCH 310/464] drm: rockchip: dw-mipi-dsi: Fix hsclk calculation for
+ non-burst video modes
+
+For panels that don't use video burst mode, hsclock should match the
+pixel clock * bpp / lane exactly. This fixes display image corruption
+on Pinephone Pro, which doesn't use video burst mode to drive the panel.
+
+To simplify the addition of exact fout calculation for non-burst modes,
+the code is re-organized in order to not redo the same calculation
+multiple times, and to use identical algorithm for per-lane bitrate
+for internal and external dphy use cases.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../gpu/drm/rockchip/dw-mipi-dsi-rockchip.c   | 28 ++++++++-----------
+ 1 file changed, 12 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c b/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
+index 917e79951aac..47890245f85f 100644
+--- a/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
+@@ -542,8 +542,6 @@ dw_mipi_dsi_get_lane_mbps(void *priv_data, const struct drm_display_mode *mode,
+ {
+ 	struct dw_mipi_dsi_rockchip *dsi = priv_data;
+ 	int bpp;
+-	unsigned long mpclk, tmp;
+-	unsigned int target_mbps = 1000;
+ 	unsigned int max_mbps = dppa_map[ARRAY_SIZE(dppa_map) - 1].max_mbps;
+ 	unsigned long best_freq = 0;
+ 	unsigned long fvco_min, fvco_max, fin, fout;
+@@ -561,30 +559,28 @@ dw_mipi_dsi_get_lane_mbps(void *priv_data, const struct drm_display_mode *mode,
+ 		return bpp;
+ 	}
+ 
+-	mpclk = DIV_ROUND_UP(mode->clock, MSEC_PER_SEC);
+-	if (mpclk) {
+-		/* take 1 / 0.8, since mbps must big than bandwidth of RGB */
+-		tmp = mpclk * (bpp / lanes) * 10 / 8;
+-		if (tmp < max_mbps)
+-			target_mbps = tmp;
+-		else
+-			DRM_DEV_ERROR(dsi->dev,
+-				      "DPHY clock frequency is out of range\n");
++	fout = mode->clock * bpp / lanes;
++	if (mode_flags & MIPI_DSI_MODE_VIDEO_BURST)
++		fout = fout * 12 / 10;
++	fout *= MSEC_PER_SEC;
++
++	if (fout > max_mbps * USEC_PER_SEC) {
++		DRM_DEV_ERROR(dsi->dev,
++			      "DPHY clock frequency is out of range\n");
++		return -EINVAL;
+ 	}
+ 
+-	/* for external phy only a the mipi_dphy_config is necessary */
++	/* for external phy only the mipi_dphy_config is necessary */
+ 	if (dsi->phy) {
+-		phy_mipi_dphy_get_default_config(mode->clock * 1000 * 10 / 8,
+-						 bpp, lanes,
++		phy_mipi_dphy_get_default_config_for_hsclk(fout, lanes,
+ 						 &dsi->phy_opts.mipi_dphy);
+-		dsi->lane_mbps = target_mbps;
++		dsi->lane_mbps = DIV_ROUND_UP(fout, USEC_PER_SEC);
+ 		*lane_mbps = dsi->lane_mbps;
+ 
+ 		return 0;
+ 	}
+ 
+ 	fin = clk_get_rate(dsi->pllref_clk);
+-	fout = target_mbps * USEC_PER_SEC;
+ 
+ 	/* constraint: 5Mhz <= Fref / N <= 40MHz */
+ 	min_prediv = DIV_ROUND_UP(fin, 40 * USEC_PER_SEC);
+-- 
+2.34.1
+

@@ -22,7 +22,7 @@ function pre_umount_final_image__configure_uboot_menu() {
 		U_BOOT_FDT_DIR="/usr/lib/linux-image-"
 	UBOOT_MENU_CONFIGURATION_COMMON
 
-	if [[ "${BOOT_FDT_FILE}" != "" ]]; then
+	if [[ "${BOOT_FDT_FILE}" != "" && "${EXTLINUX_SPECIFIC_FDT:-"yes"}" != "no" ]]; then
 		cat <<- UBOOT_MENU_CONFIGURATION_DTB >> "${MOUNT}/etc/default/u-boot"
 			U_BOOT_FDT="${BOOT_FDT_FILE}"
 		UBOOT_MENU_CONFIGURATION_DTB
@@ -32,7 +32,8 @@ function pre_umount_final_image__configure_uboot_menu() {
 		U_BOOT_PARAMETERS="${SRC_CMDLINE:-"loglevel=7 console=ttyS0"}"
 	UBOOT_MENU_CONFIGURATION_CMDLINE
 
-	if [[ "${NAME_INITRD}" == "uInitrd" ]]; then
+	# Set EXTLINUX_UINITRD=no force usage of normal initrd even when NAME_INITRD is uInitrd
+	if [[ "${NAME_INITRD}" == "uInitrd" && "${EXTLINUX_UINITRD:-"yes"}" == "yes" ]]; then
 		cat <<- UBOOT_MENU_CONFIGURATION_INITRD >> "${MOUNT}/etc/default/u-boot"
 			U_BOOT_INITRD="uInitrd" # Force usage of /boot/uInitrd-<version> as initrd
 		UBOOT_MENU_CONFIGURATION_INITRD
@@ -40,20 +41,19 @@ function pre_umount_final_image__configure_uboot_menu() {
 }
 
 # Run it, very late in the game, so all kernels all already installed.
-# @TODO: we need a hook that runs before umount_chroot in the core, so we don't need to do it ourselves. what is it?
 function pre_umount_final_image__995_run_uboot_update() {
 	local chroot_target="${MOUNT}"
 
 	# Mount the chroot...
 	mount_chroot "$chroot_target/" # this already handles /boot/efi which is required for it to work.
 
-	display_alert "Creating u-boot-menu..." "u-boot-update" "warn"
+	display_alert "Creating u-boot-menu..." "u-boot-update" "info"
 	chroot_custom "$chroot_target" u-boot-update || {
 		exit_with_error "u-boot-update failed!"
 	}
 
 	# Let's show the produced /boot/extlinux/extlinux.conf
-	display_alert "u-boot-menu configuration" "extlinux.conf" "warn"
+	display_alert "u-boot-menu configuration" "extlinux.conf" "info"
 	run_tool_batcat --file-name "/boot/extlinux/extlinux.conf" "${MOUNT}/boot/extlinux/extlinux.conf"
 
 	umount_chroot "$chroot_target/"

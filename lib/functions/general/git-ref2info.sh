@@ -44,7 +44,7 @@ function memoized_git_ref_to_info() {
 					"ghproxy")
 						case "${MEMO_DICT[GIT_SOURCE]}" in
 							"https://github.com/"*)
-								sha1="$(git ls-remote --exit-code "https://ghproxy.com/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
+								sha1="$(git ls-remote --exit-code "https://${GHPROXY_ADDRESS}/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
 								;;
 							*)
 								sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
@@ -90,13 +90,14 @@ function memoized_git_ref_to_info() {
 			declare url="undetermined"
 			case "${git_source}" in
 
-				"git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git")
-					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
+				"https://git.kernel.org/pub/scm/linux/kernel/"*)
+					url="${git_source}/plain/Makefile?h=${sha1}"
 					;;
 
-					# @TODO: urgently add support for Google Mirror
-					# @TODO: china mirror etc.
-					# @TODO: mirrors might need to be resolved before/during/after this, refactor
+				"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable" | "https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git" | "https://mirrors.bfsu.edu.cn/git/linux-stable.git")
+					# for mainline kernel source, only the origin source support curl
+					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
+					;;
 
 				"https://github.com/"*)
 					# parse org/repo from https://github.com/org/repo
@@ -105,7 +106,7 @@ function memoized_git_ref_to_info() {
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					case "${GITHUB_MIRROR}" in
 						"ghproxy")
-							url="https://ghproxy.com/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+							url="https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
 							;;
 						*)
 							url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
@@ -113,7 +114,7 @@ function memoized_git_ref_to_info() {
 					esac
 					;;
 
-				"https://gitlab.com/"* | "https://source.denx.de/"*)
+				"https://gitlab.com/"* | "https://source.denx.de/"* | "https://gitlab.collabora.com/"*)
 					# GitLab is more complex than GitHub, there can be more levels.
 					# This code is incomplete... but it works for now.
 					# Example: input:  https://gitlab.com/rk3588_linux/rk/kernel.git

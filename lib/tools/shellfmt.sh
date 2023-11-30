@@ -38,7 +38,7 @@ case "$MACHINE" in
 esac
 
 SHELLFMT_FN="shfmt_v${SHELLFMT_VERSION}_${SHELLFMT_OS}_${SHELLFMT_ARCH}"
-DOWN_URL="https://github.com/mvdan/sh/releases/download/v${SHELLFMT_VERSION}/${SHELLFMT_FN}"
+DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/mvdan/sh/releases/download/v${SHELLFMT_VERSION}/${SHELLFMT_FN}"
 SHELLFMT_BIN="${DIR_SHELLFMT}/${SHELLFMT_FN}"
 
 echo "MACHINE: ${MACHINE}"

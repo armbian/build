@@ -94,7 +94,7 @@ function cli_entrypoint() {
 	if [[ "${ARMBIAN_BUILD_UUID}" != "" ]]; then
 		display_alert "Using passed-in ARMBIAN_BUILD_UUID" "${ARMBIAN_BUILD_UUID}" "debug"
 	else
-		if [[ -f /usr/bin/uuidgen ]]; then
+		if command -v uuidgen 1> /dev/null; then
 			ARMBIAN_BUILD_UUID="$(uuidgen)"
 		else
 			display_alert "uuidgen not found" "uuidgen not installed yet" "info"

@@ -15,4 +15,3 @@ function pre_update_initramfs__add_module_into_initramfs_config() {
 	echo "nilfs2" >> "$MOUNT"/etc/initramfs-tools/modules
 	return 0
 }
-

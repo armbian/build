@@ -5,7 +5,7 @@
   <strong><font size="7">HTC DISPLAY</font></strong><br>
   <font size="4"> for AML-S905X-CC (Le Potato)</font><br>
 <br><br>
- 
+
 ## Table of contents
 
 - [What does this project do?](#what-does-this-project-do)

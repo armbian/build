@@ -12,19 +12,21 @@ function apt_find_upstream_package_version_and_download_url() {
 	declare -a package_info_download_urls=()
 	declare first_letter_of_sought_package_name="${sought_package_name:0:1}"
 	declare mirror_with_slash="undetermined/"
-	declare pool_name_extension=""
 
 	case "${DISTRIBUTION}" in
-		Ubuntu) # try both the jammy-updates and jammy repos, use whatever returns first
-			package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}-updates/${ARCH}/${sought_package_name}/download")
-			package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}/${ARCH}/${sought_package_name}/download")
+		Ubuntu)
+			# Only LTS releases have an "-updates" repo that is worth looking into
+			if [[ "${RELEASE}" == "focal" || "${RELEASE}" == "jammy" ]]; then # @TODO: release info information, is_ubuntu_release_lts() or similar
+				package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}-updates/${ARCH}/${sought_package_name}/download")
+			else
+				package_info_download_urls+=("https://packages.ubuntu.com/${RELEASE}/${ARCH}/${sought_package_name}/download")
+			fi
 			mirror_with_slash="${UBUNTU_MIRROR}"
 			;;
 
 		Debian)
 			package_info_download_urls+=("https://packages.debian.org/${RELEASE}/${ARCH}/${sought_package_name}/download")
 			mirror_with_slash="${DEBIAN_MIRROR}"
-			[[ "${ARCH}" == riscv64 ]] && pool_name_extension="-riscv64"
 			;;
 
 		*)
@@ -37,10 +39,7 @@ function apt_find_upstream_package_version_and_download_url() {
 		mirror_with_slash="${mirror_with_slash}/"
 	fi
 
-	# riscv64 under Debian needs exception
-
-
-	declare base_down_url="http://${mirror_with_slash}pool${pool_name_extension}/main/${first_letter_of_sought_package_name}/${sought_package_name}"
+	declare base_down_url="http://${mirror_with_slash}pool/main/${first_letter_of_sought_package_name}/${sought_package_name}"
 
 	declare index package_info_download_url
 	# loop over the package_info_download_urls with index and value
@@ -51,7 +50,7 @@ function apt_find_upstream_package_version_and_download_url() {
 		declare package_info_download_url_file
 		package_info_download_url_file="$(mktemp)"
 		curl --silent --show-error --max-time 10 "${package_info_download_url}" > "${package_info_download_url_file}" || true # don't fail
-		declare package_info_download_url_file_package_name                                                                  # grep the file for the package name. parse "<kbd>name</kbd>"
+		declare package_info_download_url_file_package_name                                                                   # grep the file for the package name. parse "<kbd>name</kbd>"
 		package_info_download_url_file_package_name="$(grep -oP '(?<=<kbd>)[^<]+' "${package_info_download_url_file}" | grep "^${sought_package_name}_" | head -n 1)"
 		rm -f "${package_info_download_url_file}"
 

@@ -24,12 +24,13 @@ update_initramfs() {
 	local chroot_target=$1 target_dir
 	target_dir="$(find "${chroot_target}/lib/modules"/ -maxdepth 1 -type d -name "*${IMAGE_INSTALLED_KERNEL_VERSION}*")" # @TODO: rpardini: this will break when we add multi-kernel images
 	local initrd_kern_ver initrd_file initrd_cache_key initrd_cache_file_path initrd_hash
-	local initrd_cache_current_manifest_filepath initrd_cache_last_manifest_filepath
-	local initrd_debug=""
+	local initrd_cache_current_manifest_filepath initrd_cache_last_manifest_filepath initrd_files_to_hash
+	local initrd_debug="" update_initramfs_cmd
 	local logging_filter=""
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		initrd_debug="v"
-		logging_filter="2>&1 | { grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' -e 'microcode bundle' -e ', pf_mask' || true ; }"
+		# disabled; if debugging, we want the full output, even if it is huge.
+		# logging_filter="2>&1 | { grep --line-buffered -v -e '.xz' -e 'ORDER ignored' -e 'Adding binary ' -e 'Adding module ' -e 'Adding firmware ' -e 'microcode bundle' -e ', pf_mask' || true ; }"
 	fi
 	if [ "$target_dir" != "" ]; then
 		initrd_kern_ver="$(basename "$target_dir")"
@@ -52,10 +53,19 @@ update_initramfs() {
 	mkdir -p "${SRC}/cache/initrd"
 	initrd_cache_current_manifest_filepath="${WORKDIR}/initrd.img-${initrd_kern_ver}.${ARMBIAN_BUILD_UUID}.manifest"
 	initrd_cache_last_manifest_filepath="${SRC}/cache/initrd/initrd.manifest-${initrd_kern_ver}.last.manifest"
+	initrd_files_to_hash=("${chroot_target}/usr/bin/bash" "${chroot_target}/etc/initramfs")
+	initrd_files_to_hash+=("${chroot_target}/etc/initramfs-tools" "${chroot_target}/usr/share/initramfs-tools/")
+	initrd_files_to_hash+=("${chroot_target}/etc/modprobe.d") # for MODULES_BLACKLIST
+
+	if [[ $CRYPTROOT_ENABLE == yes ]]; then
+		if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
+			[[ -d "${chroot_target}/etc/dropbear-initramfs/" ]] && initrd_files_to_hash+=("${chroot_target}/etc/dropbear-initramfs/")
+			[[ -d "${chroot_target}/etc/dropbear/initramfs/" ]] && initrd_files_to_hash+=("${chroot_target}/etc/dropbear/initramfs/")
+		fi
+	fi
 
 	# Find all the affected files; parallel md5sum sum them; invert hash and path, and remove chroot prefix.
-	find "${target_dir}" "${chroot_target}/usr/bin/bash" "${chroot_target}/etc/initramfs" \
-		"${chroot_target}/etc/initramfs-tools" -type f | parallel -X md5sum |
+	find "${target_dir}" "${initrd_files_to_hash[@]}" -type f | parallel -X md5sum |
 		awk '{print $2 " - " $1}' |
 		sed -e "s|^${chroot_target}||g" | LC_ALL=C sort > "${initrd_cache_current_manifest_filepath}"
 
@@ -72,7 +82,7 @@ update_initramfs() {
 	if [[ -f "${initrd_cache_file_path}" ]]; then
 		display_alert "initrd cache hit" "${initrd_cache_key}" "cachehit"
 		run_host_command_logged cp -v "${initrd_cache_file_path}" "${initrd_file}" # don't (-p)reserve, otherwise fat32 /boot gags
-		touch "${initrd_cache_file_path}" # touch cached file timestamp; LRU bump.
+		touch "${initrd_cache_file_path}"                                          # touch cached file timestamp; LRU bump.
 		if [[ -f "${initrd_cache_last_manifest_filepath}" ]]; then
 			touch "${initrd_cache_last_manifest_filepath}" # touch the manifest file timestamp; LRU bump.
 		fi

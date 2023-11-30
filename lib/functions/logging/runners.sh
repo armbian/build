@@ -120,13 +120,13 @@ function chroot_sdcard_apt_get() {
 # please, please, unify around this function.
 function chroot_sdcard() {
 	raw_command="$*" raw_extra="chroot_sdcard" TMPDIR="" \
-		run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -o pipefail -c "$*"
+		run_host_command_logged_raw chroot "${SDCARD}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # please, please, unify around this function.
 function chroot_mount() {
 	raw_command="$*" raw_extra="chroot_mount" TMPDIR="" \
-		run_host_command_logged_raw chroot "${MOUNT}" /bin/bash -e -o pipefail -c "$*"
+		run_host_command_logged_raw chroot "${MOUNT}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # This should be used if you need to capture the stdout produced by the command. It is NOT logged, and NOT run thru bash, and NOT quoted.
@@ -137,13 +137,13 @@ function chroot_sdcard_with_stdout() {
 function chroot_custom_long_running() { # any pipe causes the left-hand side to subshell and caos ensues. it's just like chroot_custom()
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 function chroot_custom() {
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # For installing packages host-side. Not chroot!
@@ -185,17 +185,17 @@ function run_host_x86_binary_logged() {
 
 # Run simple and exit with it's code. Exactly the same as run_host_command_logged(). Used to have pv pipe, but that causes chaos.
 function run_host_command_logged_long_running() {
-	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
+	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
 function run_host_command_logged() {
-	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
+	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # for interactive, dialog-like host-side invocations. no redirections performed, but same bash usage and expansion, for consistency.
 function run_host_command_dialog() {
-	/bin/bash -e -o pipefail -c "$*"
+	/usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # do NOT use directly, it does NOT expand the way it should (through bash)

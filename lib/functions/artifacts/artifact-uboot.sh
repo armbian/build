@@ -19,7 +19,6 @@ function artifact_uboot_config_dump() {
 function artifact_uboot_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	# Prepare the version, "sans-repos": just the armbian/build repo contents are available.
 	# It is OK to reach out to the internet for a curl or ls-remote, but not for a git clone/fetch.
@@ -55,15 +54,27 @@ function artifact_uboot_prepare_version() {
 	# @TODO: this is even more grave in case of u-boot: v2022.10 has patches for many boards inside, gotta resolve.
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
-	calculate_hash_for_all_files_in_dirs "${SRC}/patch/u-boot/${BOOTPATCHDIR}" "${USERPATCHES_PATH}/u-boot/${BOOTPATCHDIR}"
+	declare -a uboot_patch_dirs=()
+	for patch_dir in ${BOOTPATCHDIR}; do
+		uboot_patch_dirs+=("${SRC}/patch/u-boot/${patch_dir}" "${USERPATCHES_PATH}/u-boot/${patch_dir}")
+	done
+
+	if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
+		uboot_patch_dirs+=("${SRC}/patch/atf/${ATFPATCHDIR}" "${USERPATCHES_PATH}/atf/${ATFPATCHDIR}")
+	fi
+
+	if [[ -n "${CRUSTCONFIG}" ]]; then
+		uboot_patch_dirs+=("${SRC}/patch/crust/${CRUSTPATCHDIR}" "${USERPATCHES_PATH}/crust/${CRUSTPATCHDIR}")
+	fi
+
+	calculate_hash_for_all_files_in_dirs "${uboot_patch_dirs[@]}"
 	patches_hash="${hash_files}"
 	declare uboot_patches_hash_short="${patches_hash:0:${short_hash_size}}"
 
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=(
 		"post_uboot_custom_postprocess" "fetch_custom_uboot" "build_custom_uboot"
-		"pre_config_uboot_target" "post_uboot_custom_postprocess" "post_uboot_custom_postprocess"
-		"post_config_uboot_target"
+		"pre_config_uboot_target" "post_config_uboot_target"
 	)
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
@@ -71,7 +82,7 @@ function artifact_uboot_prepare_version() {
 
 	# Hash the old-timey hooks
 	declare hash_functions="undetermined"
-	calculate_hash_for_function_bodies "write_uboot_platform" "write_uboot_platform_mtd" "setup_write_uboot_platform"
+	calculate_hash_for_function_bodies "uboot_custom_postprocess" "write_uboot_platform" "write_uboot_platform_mtd" "setup_write_uboot_platform"
 	declare hash_uboot_functions="${hash_functions}"
 
 	# Hash those two together
@@ -83,11 +94,14 @@ function artifact_uboot_prepare_version() {
 	declare -a vars_to_hash=(
 		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}" # general for all families
 		"${BOOT_SCENARIO}" "${BOOT_SUPPORT_SPI}" "${BOOT_SOC}"    # rockchip stuff, sorry.
+		"${DDR_BLOB}" "${BL31_BLOB}" "${MINILOADER_BLOB}"         # More rockchip stuff, even more sorry.
 		"${ATF_COMPILE}" "${ATFBRANCH}" "${ATFPATCHDIR}"          # arm-trusted-firmware stuff
+		"${CRUSTCONFIG}" "${CRUSTBRANCH}" "${CRUSTPATCHDIR}"      # crust stuff
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
-	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
+	declare vars_config_hash="${hash_variables}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
@@ -96,7 +110,7 @@ function artifact_uboot_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${GIT_INFO_UBOOT[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-H${hash_hooks_and_functions_short}-V${var_config_hash_short}-B${bash_hash_short}"
+	artifact_version="${GIT_INFO_UBOOT[MAKEFILE_VERSION]}-S${short_sha1}-P${uboot_patches_hash_short}-H${hash_hooks_and_functions_short}-V${var_config_hash_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"version \"${GIT_INFO_UBOOT[MAKEFILE_FULL_VERSION]}\""
@@ -108,20 +122,12 @@ function artifact_uboot_prepare_version() {
 		"framework bash hash \"${bash_hash}\""
 	)
 
+	artifact_deb_repo="global"
+	artifact_deb_arch="${ARCH}"
 	artifact_version_reason="${reasons[*]}" # outer scope
-
-	artifact_map_packages=(
-		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}"
-	)
-
-	artifact_map_debs=(
-		["uboot"]="linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
-	)
-
+	artifact_map_packages=(["uboot"]="linux-u-boot-${BOARD}-${BRANCH}")
 	artifact_name="uboot-${BOARD}-${BRANCH}"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/linux-u-boot-${BOARD}-${BRANCH}_${artifact_version}_${ARCH}.deb"
 
 	return 0
 }
@@ -139,6 +145,19 @@ function artifact_uboot_build_from_sources() {
 			fi
 		else
 			LOG_SECTION="compile_atf" do_with_logging compile_atf
+		fi
+	fi
+
+	if [[ -n "${CRUSTCONFIG}" ]]; then
+		if [[ "${ARTIFACT_BUILD_INTERACTIVE:-"no"}" == "yes" ]]; then
+			display_alert "Running crust build in interactive mode" "log file will be incomplete" "info"
+			compile_crust
+
+			if [[ "${CREATE_PATCHES_CRUST:-"no"}" == "yes" ]]; then
+				return 0 # stop here, otherwise it would build u-boot below...
+			fi
+		else
+			LOG_SECTION="compile_crust" do_with_logging compile_crust
 		fi
 	fi
 

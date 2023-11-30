@@ -16,18 +16,13 @@ function install_distribution_specific() {
 
 	case "${RELEASE}" in
 
-		focal | jammy | kinetic | lunar)
+		focal | jammy | kinetic | lunar | mantic)
 
 			# by using default lz4 initrd compression leads to corruption, go back to proven method
 			# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
 			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
 			run_host_command_logged rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
-
-			declare RENDERER=networkd
-			if [ -d "${SDCARD}"/etc/NetworkManager ]; then
-				local RENDERER=NetworkManager
-			fi
 
 			# DNS fix
 			if [[ -n "$NAMESERVER" ]]; then
@@ -51,8 +46,7 @@ function install_distribution_specific() {
 			disable_systemd_service_sdcard ondemand.service
 
 			# Remove Ubuntu APT spamming
-			declare -g -A image_artifacts_debs
-			install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["fake-ubuntu-advantage-tools"]}"
+			install_artifact_deb_chroot "fake-ubuntu-advantage-tools"
 			truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
 
 			;;
@@ -60,15 +54,23 @@ function install_distribution_specific() {
 
 	# install our base-files package (this replaces the original from Debian/Ubuntu)
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
-		install_deb_chroot "${DEB_STORAGE}/${image_artifacts_debs["armbian-base-files"]}"
+		install_artifact_deb_chroot "armbian-base-files"
 	fi
 
 	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-	[[ -d "${SDCARD}"/etc/netplan ]] && cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
+	if [[ -d "${SDCARD}"/etc/netplan ]]; then
+
+		declare RENDERER=networkd
+		if [ -d "${SDCARD}"/etc/NetworkManager ]; then
+			local RENDERER=NetworkManager
+		fi
+
+		cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
 		network:
 		  version: 2
 		  renderer: ${RENDERER}
-	EOF
+		EOF
+	fi
 
 	# cleanup motd services and related files
 	disable_systemd_service_sdcard motd-news.service motd-news.timer
@@ -93,7 +95,7 @@ function install_distribution_specific() {
 # create_sources_list_and_deploy_repo_key <when> <release> <basedir>
 #
 # <when>: rootfs|image
-# <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar
+# <release>: bullseye|bookworm|sid|focal|jammy|kinetic|lunar|mantic
 # <basedir>: path to root directory
 #
 function create_sources_list_and_deploy_repo_key() {
@@ -119,7 +121,7 @@ function create_sources_list_and_deploy_repo_key() {
 			EOF
 			;;
 
-		bullseye | trixie)
+		bullseye)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free
@@ -135,7 +137,7 @@ function create_sources_list_and_deploy_repo_key() {
 			EOF
 			;;
 
-		bookworm)
+		bookworm | trixie)
 			# non-free firmware in bookworm and later has moved from the non-free archive component to a new non-free-firmware component (alongside main/contrib/non-free). This was implemented on 2023-01-27, see also https://lists.debian.org/debian-boot/2023/01/msg00235.html
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
@@ -160,9 +162,15 @@ function create_sources_list_and_deploy_repo_key() {
 				deb http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 			EOF
+
+			# Exception: with riscv64 not everything was moved from ports
+			# https://lists.debian.org/debian-riscv/2023/07/msg00053.html
+			if [[ "${ARCH}" == riscv64 ]]; then
+				echo "deb http://deb.debian.org/debian-ports/ sid main " >> "${basedir}"/etc/apt/sources.list
+			fi
 			;;
 
-		focal | jammy | kinetic | lunar)
+		focal | jammy | kinetic | lunar | mantic)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse

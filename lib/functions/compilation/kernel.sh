@@ -77,7 +77,7 @@ function compile_kernel() {
 
 	# Stop after configuring kernel, but only if using a specific CLI command ("kernel-config").
 	# Normal "KERNEL_CONFIGURE=yes" (during image build) is still allowed.
-	if [[ "${KERNEL_CONFIGURE}" == yes && "${ARMBIAN_COMMAND}" == "kernel-config" ]]; then
+	if [[ "${KERNEL_CONFIGURE}" == yes && "${ARMBIAN_COMMAND}" == *kernel-config ]]; then
 		display_alert "Stopping after configuring kernel" "" "cachehit"
 		return 0
 	fi
@@ -111,7 +111,7 @@ function kernel_prepare_build_and_package() {
 	build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
 	build_targets+=("${KERNEL_IMAGE_TYPE}")
 	declare cleanup_id="" kernel_dest_install_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "k" cleanup_id kernel_dest_install_dir # namerefs
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "kernel_dest_install_dir" cleanup_id kernel_dest_install_dir # namerefs
 
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
@@ -144,17 +144,9 @@ function kernel_prepare_build_and_package() {
 	# Fire off the build & package
 	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
 
-	# prepare a target dir for the shared, produced kernel .debs, across image/dtb/headers
-	declare cleanup_id_debs="" kernel_debs_temp_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "kd" cleanup_id_debs kernel_debs_temp_dir # namerefs
-
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
-	# This deploys to DEB_STORAGE...
-	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
-
-	done_with_temp_dir "${cleanup_id_debs}" # changes cwd to "${SRC}" and fires the cleanup function early
-	done_with_temp_dir "${cleanup_id}"      # changes cwd to "${SRC}" and fires the cleanup function early
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
 
 function kernel_build() {
@@ -171,14 +163,8 @@ function kernel_build() {
 
 function kernel_package() {
 	local ts=${SECONDS}
-	cd "${kernel_debs_temp_dir}" || exit_with_error "Can't cd to kernel_debs_temp_dir: ${kernel_debs_temp_dir}"
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
-}
-
-function kernel_deploy_pkg() {
-	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
-	run_host_command_logged rsync -v --remove-source-files -r "${kernel_debs_temp_dir}"/*.deb "${DEB_STORAGE}/"
 }

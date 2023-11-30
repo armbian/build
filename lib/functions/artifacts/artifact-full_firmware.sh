@@ -15,7 +15,6 @@ function artifact_full_firmware_config_dump() {
 function artifact_full_firmware_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	local ARMBIAN_FIRMWARE_SOURCE="${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/firmware"}"
 	local ARMBIAN_FIRMWARE_BRANCH="branch:${ARMBIAN_FIRMWARE_GIT_BRANCH:-"master"}"
@@ -52,7 +51,7 @@ function artifact_full_firmware_prepare_version() {
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-SA${short_sha1}-SM${short_sha1_mainline}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-SA${short_sha1}-SM${short_sha1_mainline}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian firmware git revision \"${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}\""
@@ -62,18 +61,12 @@ function artifact_full_firmware_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
-	artifact_map_packages=(
-		["armbian-firmware-full"]="armbian-firmware-full"
-	)
-
-	artifact_map_debs=(
-		["armbian-firmware-full"]="armbian-firmware-full_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["armbian-firmware-full"]="armbian-firmware-full")
 
 	artifact_name="armbian-firmware-full"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-firmware-full_${artifact_version}_all.deb"
+	artifact_deb_repo="global"
+	artifact_deb_arch="all"
 
 	return 0
 }
