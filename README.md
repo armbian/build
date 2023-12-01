@@ -4,7 +4,9 @@
   </a><br>
   <strong>Armbian Linux Build Framework</strong><br>
 <br>
-<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=githubactions&label=Build&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/build/graphs/contributors><img alt="GitHub contributors" src="https://img.shields.io/github/contributors-anon/armbian/build?logo=stackexchange&label=Contributors&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=dependabot&label=CI%20Build&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/build/commits/main><img alt="GitHub last commit (branch)" src="https://img.shields.io/github/last-commit/armbian/build/main?logo=github&label=Last%20commit&style=for-the-badge&branch=main&logoColor=white"></a>
 </p>
 
 ## Table of contents
@@ -38,12 +40,24 @@
 
 ### Start with the build script
 
+#### Development branch:
+
 ```bash
 apt-get -y install git
 git clone --depth=1 --branch=main https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
+
+#### Stable branch:
+
+```bash
+apt-get -y install git
+git clone --depth=1 --branch=v23.11 https://github.com/armbian/build
+cd build
+./compile.sh
+```
+
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
