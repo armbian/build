@@ -1,3 +1,7 @@
+function add_host_dependencies__abl_host_deps() {
+	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} mkbootimg"
+}
+
 function post_build_image__900_convert_to_abl_img() {
 	[[ -z $version ]] && exit_with_error "version is not set"
 
@@ -28,7 +32,7 @@ function post_build_image__900_convert_to_abl_img() {
 		for dtb_name in "${ABL_DTB_LIST[@]}"; do
 			display_alert "Creatng abl kernel boot image with dtb ${dtb_name}" "${EXTENSION}" "info"
 			cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
-			${new_rootfs_image_mount_dir}/usr/bin/mkbootimg \
+			/usr/bin/mkbootimg \
 				--kernel ${DESTIMG}/Image.gz-${dtb_name} \
 				--ramdisk ${new_rootfs_image_mount_dir}/boot/initrd.img-*-* \
 				--base 0x0 \
