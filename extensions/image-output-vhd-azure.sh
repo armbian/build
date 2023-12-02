@@ -2,7 +2,7 @@
 # Copyright (c) 2023 Ricardo Pardini <ricardo@pardini.net>
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/
 
-# This outputs image in VHD format, for use with Hyper-V and Microsoft Azure.
+# This outputs image in VHD format, for use with and Microsoft Azure.
 # The important part is making sure the input raw file is a multiple of 1024*1024 bytes, as per Microsoft's instructions.
 # Otherwise importing the VHD would fail.
 # This extension is incompatible with the qcow2 equivalent.
