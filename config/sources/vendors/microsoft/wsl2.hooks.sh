@@ -1,3 +1,7 @@
+
+# enable output-vhdx, so image files for wsl2 can be used directly as Hyper-V virtual machines as well.
+enable_extension "image-output-vhdx" # Use .vhdx dynamic output, for Hyper-V (not Azure 1024-aligned static vhd)
+
 # A separate LINUXFAMILY and thus kernel .debs for wsl2; one day we might consider merging wsl2/hyperv patches into generic uefi
 function post_family_config__wsl2() {
 	: "${LINUXFAMILY:?"LINUXFAMILY not set"}"
