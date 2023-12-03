@@ -24,17 +24,17 @@ case $BRANCH in
 
 	legacy)
 		declare -g KERNEL_MAJOR_MINOR="5.15" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v5.15.140"
+		declare -g KERNELBRANCH="tag:v5.15.141"
 		;;
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.1.64"
+		declare -g KERNELBRANCH="tag:v6.1.65"
 		;;
 
 	edge)
 		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.6.3"
+		declare -g KERNELBRANCH="tag:v6.6.4"
 		;;
 esac
 
