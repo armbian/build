@@ -263,8 +263,7 @@ InstallHtcDisplay()
 	RealName="HTC Display"
 
 	# Create user for the display
-	#adduser --quiet --disabled-password --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
-	useradd -m -d /home/"$RealUserName" "$RealUserName" -c "$RealName"
+	adduser --quiet --disabled-password --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
 	(echo "$first_input";echo "$second_input";) | passwd "$RealUserName" >/dev/null 2>&1
 	for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
 		usermod -aG "${additionalgroup}" "${RealUserName}" 2>/dev/null
