@@ -309,6 +309,7 @@ InstallHtcDisplay()
 	apt-get install -yy chromium-browser
 	apt-get install -yy unclutter
 	apt-get install -yy xfconf
+	apt-get upgrade -y
 
 	# Download nomachine to temp file and install it
 	FILE=$(mktemp)
