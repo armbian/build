@@ -312,7 +312,7 @@ InstallHtcDisplay()
 
 	# Download nomachine to temp file and install it
 	FILE=$(mktemp)
-	NX_INSTALL_URL="https://download.nomachine.com/download/8.10/Linux/nomachine_8.10.1_1_amd64.deb"
+	NX_INSTALL_URL="https://download.nomachine.com/download/8.10/Arm/nomachine_8.10.1_1_arm64.deb"
 	wget "$NX_INSTALL_URL" -qO $FILE && apt-get install -y $FILE
 	/etc/NX/nxserver --useredit $RealUserName --administrator yes
 
