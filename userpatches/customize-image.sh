@@ -315,8 +315,6 @@ InstallHtcDisplay()
 	FILE=$(mktemp)
 	NX_INSTALL_URL="https://download.nomachine.com/download/8.10/Arm/nomachine_8.10.1_1_arm64.deb"
 	wget "$NX_INSTALL_URL" -qO $FILE && apt-get install -y $FILE
-	/usr/NX/bin/nxserver --useradd $RealUserName
-	/etc/NX/nxserver --useredit $RealUserName --administrator yes
 
 	# Install all required dependencies
 	npm install --prefix $HTCDISPLAY_INSTALL_DIR
