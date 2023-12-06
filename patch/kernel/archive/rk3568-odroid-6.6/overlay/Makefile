@@ -9,6 +9,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-pwm9.dtbo \
 	rockchip-i2c0.dtbo \
 	rockchip-i2c1.dtbo \
+        rockchip-nanopi-r5c-leds.dtbo \
         rockchip-nanopi-r5s-leds.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
