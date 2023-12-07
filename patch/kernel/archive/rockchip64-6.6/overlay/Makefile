@@ -30,17 +30,17 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3399-uart4.dtbo \
 	rockchip-rk3399-w1-gpio.dtbo \
 	rockchip-rk3566-sata2.dtbo \
-	friendlyelec_rockchip-nanopi-r5c-leds.dtbo \
-	friendlyelec_rockchip-nanopi-r5s-leds.dtbo \
-	hardkernel_rockchip-i2c0.dtbo \
-	hardkernel_rockchip-i2c1.dtbo \
-	hardkernel_rockchip-pwm1.dtbo \
-	hardkernel_rockchip-pwm2.dtbo \
-	hardkernel_rockchip-pwm9.dtbo \
-	hardkernel_rockchip-spi-spidev.dtbo \
-	hardkernel_rockchip-uart0.dtbo \
-	hardkernel_rockchip-uart0-rts_cts.dtbo \
-	hardkernel_rockchip-uart1.dtbo
+	rockchip-rk3568-nanopi-r5c-leds.dtbo \
+	rockchip-rk3568-nanopi-r5s-leds.dtbo \
+	rockchip-rk3568-hk-i2c0.dtbo \
+	rockchip-rk3568-hk-i2c1.dtbo \
+	rockchip-rk3568-hk-pwm1.dtbo \
+	rockchip-rk3568-hk-pwm2.dtbo \
+	rockchip-rk3568-hk-pwm9.dtbo \
+	rockchip-rk3568-hk-spi-spidev.dtbo \
+	rockchip-rk3568-hk-uart0.dtbo \
+	rockchip-rk3568-hk-uart0-rts_cts.dtbo \
+	rockchip-rk3568-hk-uart1.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr
