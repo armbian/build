@@ -623,57 +623,57 @@ driver_rtl8822BS() {
 
 }
 
-driver_uwe5622_allwinner() {
+driver_uwe5622() {
 	# Unisoc uwe5622 wireless Support
 	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" le 6.6 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
 		if linux-version compare "${version}" ge 6.3; then
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-v6.3.patch" "applying"
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix-v6.3.patch" "applying"
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-v6.3-compilation-fix.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-allwinner-v6.3.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-allwinner-bugfix-v6.3.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-allwinner-v6.3-compilation-fix.patch" "applying"
 		else
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner.patch" "applying"
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-allwinner-bugfix.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-allwinner.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-allwinner-bugfix.patch" "applying"
 		fi
 
 		if linux-version compare "${version}" ge 6.4; then
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.4-post.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.4-post.patch" "applying"
 		fi
 
-		process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-warnings.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-warnings.patch" "applying"
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_SPARD_WLAN_SUPPORT) += uwe5622/" >> "$kerneldir/drivers/net/wireless/Makefile"
 
 		# Don't add this to legacy (<5.0) kernels.
 		if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 6.1; then
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-pre-v6.1.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-park-link-pre-v6.1.patch" "applying"
 		fi
 
 		if linux-version compare "${version}" ge 6.1; then
 			if linux-version compare "${version}" ge 6.2 && linux-version compare "${version}" lt 6.3; then # only for 6.2.y
-				process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-v6.2-only.patch" "applying"
+				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-park-link-v6.2-only.patch" "applying"
 			else # assume 6.1.y y > 30
-				process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-park-link-v6.1-post.patch" "applying"
+				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-park-link-v6.1-post.patch" "applying"
 			fi
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.1.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.1.patch" "applying"
 		fi
 
 		if linux-version compare "${version}" ge 6.6; then
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-v6.6-fix-tty-sdio.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.6-fix-tty-sdio.patch" "applying"
 		fi
 
 		if [[ "$LINUXFAMILY" == sunxi* ]]; then
-			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-fix-setting-mac-address-for-netdev.patch" "applying"
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-fix-setting-mac-address-for-netdev.patch" "applying"
 		fi
 
 		# Apply patches that adjust the driver only for rockchip platforms
 		if [[ "$LINUXFAMILY" == rockchip* ]]; then
 			if linux-version compare "${version}" le 6.1; then
-				process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-adjust-for-rockchip-pre-6.1.patch"
+				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-adjust-for-rockchip-pre-6.1.patch"
 			else
-				process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-adjust-for-rockchip-post-6.1.patch"
+				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-adjust-for-rockchip-post-6.1.patch"
 			fi
 		fi
 	fi
