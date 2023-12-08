@@ -667,6 +667,15 @@ driver_uwe5622_allwinner() {
 		if [[ "$LINUXFAMILY" == sunxi* ]]; then
 			process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-fix-setting-mac-address-for-netdev.patch" "applying"
 		fi
+
+		# Apply patches that adjust the driver only for rockchip platforms
+		if [[ "$LINUXFAMILY" == rockchip* ]]; then
+			if linux-version compare "${version}" le 6.1; then
+				process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-adjust-for-rockchip-pre-6.1.patch"
+			else
+				process_patch_file "${SRC}/patch/misc/wireless-driver-for-uwe5622-adjust-for-rockchip-post-6.1.patch"
+			fi
+		fi
 	fi
 }
 
