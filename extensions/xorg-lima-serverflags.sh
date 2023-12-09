@@ -16,16 +16,16 @@ function post_family_tweaks_bsp__install_lima_serverflags() {
 
 	cat <<- LIMA_SERVERFLAGS > "${destination}${xorg_conf_dir}/${conf_lima_file}"
 		Section "ServerFlags"
-			Option  "AutoAddGPU" "off"
-			Option "Debug" "dmabuf_capable"
+		    Option  "AutoAddGPU" "off"
+		    Option "Debug" "dmabuf_capable"
 		EndSection
 
 		Section "OutputClass"
-			Identifier "Lima"
-			Driver "modesetting"
-			MatchDriver "rockchip"
-			Option "AccelMethod" "glamor"
-			Option "PrimaryGPU" "true"
+		    Identifier "Lima"
+		    Driver "modesetting"
+		    MatchDriver "rockchip"
+		    Option "AccelMethod" "glamor"
+		    Option "PrimaryGPU" "true"
 		EndSection
 	LIMA_SERVERFLAGS
 
