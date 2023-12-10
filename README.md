@@ -43,7 +43,33 @@ As this is a customised version of Armbian, the build process is the same as for
 
 ## Installation and usage
 
-Coming soon.
+To install image on a supported LePotato single board computer (SBC), download an image from [Releases](https://github.com/slamb2k/build/releases) and use a tool such as [BalenaEtcher](https://etcher.balena.io/#download-etcher) to write the image to a suitable SD Card.
+
+Once the image is written, insert the SD Card into the SBC and power it on. The system will detect that this is the first run and start an initialisation process
+
+Enter a strong password for the root user and then confirm it. Remember this password for future use.
+
+![Alt text](images/root-user.png)
+
+The htc user will be the operational user and requires another strong password. Use something you will remember as this as it will be the password used to access the device locally or remotely.
+
+![Alt text](images/htc-user.png)
+
+If a network connection is not found or wireless is being used, configure the wireless network and continue.
+
+![Alt text](images/wireless.png)
+
+Once the network is connected, use the IP address connected to determine and install locales.
+
+![Alt text](images/locale.png)
+
+Depending on the configuration of your LAS Server, either enter a specific IP address and port where the HTC Display Server is running or simply hit enter to use the default address.
+
+![Alt text](images/webaddress.png)
+
+Power management will be configured to keep the device on at all times and NoMachine NX Server will be installed/activated.
+
+Finally, the device will be rebooted and will login automatically to XFCE where a chromium window running in kiosk mode will display the HTC Display Server.
 
 ## Customised Components
 
@@ -51,10 +77,10 @@ Any components customised from the official Armbian build are listed below.
 
 Component | Description
 |:--|:--
-| User Creation | Automatic creation of user `htc`
-| Initial Startup Wizard | - Allows specification of `root` password<br>- Allows specification of `htc` password<br>- Wifi Connection Manager<br>- Timezone/Local Customization<br>- HTC Display Url Configuration
-| Auto-login | Automatic login to desktop as user `htc`
-| Auto-start | - Automatic start of browser in kiosk mode<br>- Automatic hide of mouse cursor after 2 second idle time.
+| User Creation | - Automatic creation of user `htc`
+| Initial Startup Wizard | - Allows specification of `root` password<br>- Allows specification of `htc` password<br>- Wifi Connection Manager<br>- Timezone/Local Customization<br>- HTC Display Url Configuration<br>- NoMachine Free Server Installation/Configuration
+| Auto-login | - Automatic login to desktop as user `htc`
+| Auto-start | - Automatic start of browser in kiosk mode<br>- Automatic hiding of mouse cursor after 2 second idle time.
 
 
 ## Project structure
@@ -140,9 +166,27 @@ The Armbian build system folder structure is shown below and any directories or 
 ```
 </details>
 
-## Support
+## Administration
 
-Coming soon.
+When first run, a NoMachine server instance will be configured to allow ongoing administration of the device. In order to manage the devices, please download the [NoMachine Installer](https://downloads.nomachine.com/) for the OS of the machine being used to administrator the LePotato devices. When the NoMachine client is opened, it will automatically search for nearby devices:
+
+![Alt text](images/searching.png)
+
+Any devices on the same network will automatically be displayed:
+
+![Alt text](images/machines.png)
+
+When first connecting to a device you will received a comfirmation of the host identification. Select OK to confirm and the choice will be remembered for further connections.
+
+![Alt text](images/verify-host.png)
+
+When asked for user credentials, enter `htc` as the username and the password configuration when the device was first initialised. Save the password in the connection file and always login using this method.
+
+![Alt text](images/credentials.png)
+
+After some initial instrctional screens which can be dismissed for further connections, you will be presented with a remote control window showing the current XFCE session.
+
+![Alt text](images/remote-access.png)
 
 ## Contact
 
