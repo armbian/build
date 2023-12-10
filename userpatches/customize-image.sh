@@ -309,12 +309,6 @@ InstallHtcDisplay()
 	apt-get install -yy chromium-browser
 	apt-get install -yy unclutter
 	apt-get install -yy xfconf
-	apt-get upgrade -y
-
-	# Download nomachine to temp file and install it
-	FILE=$(mktemp)
-	NX_INSTALL_URL="https://download.nomachine.com/download/8.10/Arm/nomachine_8.10.1_1_arm64.deb"
-	wget "$NX_INSTALL_URL" -qO $FILE && apt-get install -y $FILE
 
 	# Install all required dependencies
 	npm install --prefix $HTCDISPLAY_INSTALL_DIR
