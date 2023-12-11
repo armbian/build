@@ -61,6 +61,7 @@ for overlay_file in ${user_overlays}; do
         fi
 done
 
+# Legacy uboot, requires uImage - see pre_package_kernel_image__orangepi_legacy_uImage_manual_conversion()
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}uImage
 

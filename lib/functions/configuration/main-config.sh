@@ -21,31 +21,45 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_DESKTOP
 
 	# common options
-	# daily beta build contains date in subrevision
-	#if [[ $BETA == yes && -z $SUBREVISION ]]; then SUBREVISION="."$(date --date="tomorrow" +"%j"); fi
-	declare revision_from="undetermined"
-	if [ -f $USERPATCHES_PATH/VERSION ]; then
-		REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)"$SUBREVISION" # all boards have same revision
-		revision_from="userpatches VERSION file"
-	else
-		REVISION=$(cat "${SRC}"/VERSION)"$SUBREVISION" # all boards have same revision
-		revision_from="main VERSION file"
+	declare revision_from="set in env or command-line parameter"
+	if [[ "${REVISION}" == "" ]]; then
+		if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
+			REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
+			revision_from="userpatches VERSION file"
+		else
+			REVISION=$(cat "${SRC}"/VERSION)
+			revision_from="main VERSION file"
+		fi
 	fi
 
 	declare -g -r REVISION="${REVISION}"
-	display_alert "Using revision from" "${revision_from}: '${REVISION}" "info"
+	display_alert "Using REVISION from" "${revision_from}: '${REVISION}'" "info"
+	if [[ ! "${REVISION}" =~ ^[0-9] ]]; then
+		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
+	fi
 
-	# This is the prefix used by all artifacts. Readonly. It's just $REVISION and a double dash.
-	declare -r -g artifact_prefix_version="${REVISION}--"
+	# Armbian image is set as unofficial if build manually or without declaring from outside
+	[[ -z $VENDOR ]] && VENDOR="Armbian-unofficial"
 
-	[[ -z $VENDOR ]] && VENDOR="Armbian"
-	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
-	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
-	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                              # en_US.UTF-8 is default locale for target
+	# Use framework defaults for community Armbian images and unsupported distribution when building Armbian distribution
+	if [[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]]; then
+		VENDORURL="https://www.armbian.com/"
+		unset VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
+	fi
+
+	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
+	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
+	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
+	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://armbian.atlassian.net/"
+	[[ -z $VENDORDOCS ]] && VENDORDOCS="https://docs.armbian.com/"
+	[[ -z $VENDORLOGO ]] && VENDORLOGO="armbian-logo"
+	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                       # Must be changed @first login
+	[[ -z $MAINTAINER ]] && MAINTAINER="John Doe"                             # deb signature
+	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="john.doe@somewhere.on.planet" # deb signature
+	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                                   # en_US.UTF-8 is default locale for target
 	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
 
-	export SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
+	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
 
 	# Timezone
 	if [[ -f /etc/timezone ]]; then # Timezone for target is taken from host, if it exists.
@@ -65,9 +79,10 @@ function do_main_configuration() {
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
 
 	if [[ -d "${SRC}/.git" && "${CONFIG_DEFS_ONLY}" != "yes" ]]; then # don't waste time if only gathering config defs
-		display_alert "Getting git info for repo" "${SRC}" "debug"
-		BUILD_REPOSITORY_URL="$(git remote get-url "$(git remote | grep origin || true)" || true)" # ignore all errors
-		BUILD_REPOSITORY_COMMIT="$(git describe --match=d_e_a_d_b_e_e_f --always --dirty || true)" # ignore error
+		# The docker launcher will have passed these as environment variables. If not, try again here.
+		if [[ -z "${BUILD_REPOSITORY_URL}" || -z "${BUILD_REPOSITORY_COMMIT}" ]]; then
+			set_git_build_repo_url_and_commit_vars "main configuration"
+		fi
 	fi
 
 	ROOTFS_CACHE_MAX=200 # max number of rootfs cache, older ones will be cleaned up
@@ -79,6 +94,7 @@ function do_main_configuration() {
 	fi
 	display_alert ".deb compression" "DEB_COMPRESS=${DEB_COMPRESS}" "debug"
 
+	declare -g -r PACKAGES_HASHED_STORAGE="${DEST}/packages-hashed"
 	if [[ $BETA == yes ]]; then
 		DEB_STORAGE=$DEST/debs-beta
 	else
@@ -113,6 +129,9 @@ function do_main_configuration() {
 			enable_extension "fs-btrfs-support"
 			[[ -z $BTRFS_COMPRESSION ]] && BTRFS_COMPRESSION=zlib # default btrfs filesystem compression method is zlib
 			[[ ! $BTRFS_COMPRESSION =~ zlib|lzo|zstd|none ]] && exit_with_error "Unknown btrfs compression method" "$BTRFS_COMPRESSION"
+			;;
+		nilfs2)
+			enable_extension "fs-nilfs2-support"
 			;;
 		*)
 			exit_with_error "Unknown rootfs type: ROOTFS_TYPE='${ROOTFS_TYPE}'"
@@ -153,9 +172,9 @@ function do_main_configuration() {
 	[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
 
 	# URL for the git bundle used to "bootstrap" local git copies without too much server load. This applies independently of git mirror below.
-	export MAINLINE_KERNEL_TORVALDS_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle" # this is plain torvalds, single branch
-	export MAINLINE_KERNEL_STABLE_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/clone.bundle"     # this is all stable branches. with tags!
-	export MAINLINE_KERNEL_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL:-${MAINLINE_KERNEL_TORVALDS_BUNDLE_URL}}"          # default to Torvalds; everything else is small enough with this
+	declare -g MAINLINE_KERNEL_TORVALDS_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle" # this is plain torvalds, single branch
+	declare -g MAINLINE_KERNEL_STABLE_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/clone.bundle"     # this is all stable branches. with tags!
+	declare -g MAINLINE_KERNEL_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL:-${MAINLINE_KERNEL_TORVALDS_BUNDLE_URL}}"          # default to Torvalds; everything else is small enough with this
 
 	case $MAINLINE_MIRROR in
 		google)
@@ -171,8 +190,8 @@ function do_main_configuration() {
 			MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
 			;;
 		*)
-			MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
-			MAINLINE_FIRMWARE_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+			MAINLINE_KERNEL_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
+			MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 	esac
 
@@ -198,6 +217,10 @@ function do_main_configuration() {
 		fastgit)
 			GITHUB_SOURCE='https://hub.fastgit.xyz'
 			;;
+		ghproxy)
+			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=mirror.ghproxy.com
+			GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
+			;;
 		gitclone)
 			GITHUB_SOURCE='https://gitclone.com/github.com'
 			;;
@@ -206,10 +229,18 @@ function do_main_configuration() {
 			;;
 	esac
 
+	case $GHCR_MIRROR in
+		dockerproxy)
+			GHCR_SOURCE='ghcr.dockerproxy.com'
+			;;
+		*)
+			GHCR_SOURCE='ghcr.io'
+			;;
+	esac
+
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
 	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything...
-	KERNEL_IMAGE_TYPE=zImage
 	ATF_COMPILE=yes
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
@@ -260,6 +291,8 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
 	declare -g -r PACKAGE_LIST_FAMILY_REMOVE="${PACKAGE_LIST_FAMILY_REMOVE}"
 
+	if [[ $RELEASE == trixie || $ARCH == riscv64 ]]; then remove_packages "cpufrequtils"; fi # this will remove from rootfs as well
+
 	display_alert "Done with do_main_configuration" "do_main_configuration" "debug"
 }
 
@@ -275,7 +308,7 @@ function do_extra_configuration() {
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 	[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar|mantic)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -310,21 +343,17 @@ function do_extra_configuration() {
 		fi
 	fi
 
-	if [[ "${ARCH}" == "arm64" ]]; then
-		if [[ -n ${CUSTOM_UBUNTU_MIRROR_ARM64} ]]; then
-			display_alert "Using custom ports/arm64 mirror" "${CUSTOM_UBUNTU_MIRROR_ARM64}" "info"
-			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR_ARM64}"
+	if [[ "${ARCH}" != "i386" && "${ARCH}" != "amd64" ]]; then # ports are not present on all mirrors
+		if [[ -n ${CUSTOM_UBUNTU_MIRROR_PORTS} ]]; then
+			display_alert "Using custom ports/${ARCH} mirror" "${CUSTOM_UBUNTU_MIRROR_PORTS}" "info"
+			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR_PORTS}"
 		fi
-	fi
-
-	# Debian needs the ports repo when strapping riscv64 - revise after bookworm release
-	if [[ "${ARCH}" == "riscv64" ]] && [[ $DISTRIBUTION == Debian ]]; then
-		DEBIAN_MIRROR='deb.debian.org/debian-ports'
 	fi
 
 	# Control aria2c's usage of ipv6.
 	[[ -z $DISABLE_IPV6 ]] && DISABLE_IPV6="true"
 
+	# @TODO this is _very legacy_ and should be removed. Old-time users might have a lib.config lying around and it will mess up things.
 	# For (late) user override.
 	# Notice: it is too late to define hook functions or add extensions in lib.config, since the extension initialization already ran by now.
 	#         in case the user tries to use them in lib.config, hopefully they'll be detected as "wishful hooking" and the user will be wrn'ed.
@@ -332,6 +361,10 @@ function do_extra_configuration() {
 		display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
 		source "$USERPATCHES_PATH"/lib.config
 	fi
+
+	# Prepare array for extensions to fill in.
+	display_alert "Main config" "initting EXTRA_IMAGE_SUFFIXES" "debug"
+	declare -g -a EXTRA_IMAGE_SUFFIXES=()
 
 	call_extension_method "user_config" <<- 'USER_CONFIG'
 		*Invoke function with user override*
@@ -361,6 +394,27 @@ function do_extra_configuration() {
 
 	# Give the option to configure DNS server used in the chroot during the build process
 	[[ -z $NAMESERVER ]] && NAMESERVER="1.0.0.1" # default is cloudflare alternate
+
+	# Consolidate the extra image suffix. loop and add.
+	declare EXTRA_IMAGE_SUFFIX=""
+	for suffix in "${EXTRA_IMAGE_SUFFIXES[@]}"; do
+		display_alert "Adding extra image suffix" "'${suffix}'" "debug"
+		EXTRA_IMAGE_SUFFIX="${EXTRA_IMAGE_SUFFIX}${suffix}"
+	done
+	declare -g -r EXTRA_IMAGE_SUFFIX="${EXTRA_IMAGE_SUFFIX}"
+	display_alert "Extra image suffix" "'${EXTRA_IMAGE_SUFFIX}'" "debug"
+	unset EXTRA_IMAGE_SUFFIXES # get rid of this, no longer used
+
+	# Lets estimate the image name, based on the configuration. The real image name depends on _actual_ kernel version.
+	# Here we do a gross estimate with the KERNEL_MAJOR_MINOR + ".y" version, or "generic" if not set (ddks etc).
+	declare calculated_image_version="undetermined"
+	declare predicted_kernel_version="generic"
+	if [[ -n "${KERNEL_MAJOR_MINOR}" ]]; then
+		predicted_kernel_version="${KERNEL_MAJOR_MINOR}.y"
+	fi
+	IMAGE_INSTALLED_KERNEL_VERSION="${predicted_kernel_version}" include_vendor_version="no" calculate_image_version
+
+	declare -r -g IMAGE_FILE_ID="${calculated_image_version}" # Global, readonly.
 
 	display_alert "Done with do_extra_configuration" "do_extra_configuration" "debug"
 }
@@ -423,6 +477,7 @@ function write_config_summary_output_file() {
 function source_family_config_and_arch() {
 	declare -a family_source_paths=("${SRC}/config/sources/families/${LINUXFAMILY}.conf" "${USERPATCHES_PATH}/config/sources/families/${LINUXFAMILY}.conf")
 	declare -i family_sourced_ok=0
+	declare family_source_path
 	for family_source_path in "${family_source_paths[@]}"; do
 		[[ ! -f "${family_source_path}" ]] && continue
 
@@ -452,5 +507,15 @@ function source_family_config_and_arch() {
 	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
 
+	return 0
+}
+
+function set_git_build_repo_url_and_commit_vars() {
+	display_alert "Getting git info for repo, during ${1}..." "${SRC}" "debug"
+	declare -g BUILD_REPOSITORY_URL BUILD_REPOSITORY_COMMIT
+	BUILD_REPOSITORY_URL="$(git -C "${SRC}" remote get-url "$(git -C "${SRC}" remote | grep origin || true)" || true)" # ignore all errors
+	BUILD_REPOSITORY_COMMIT="$(git -C "${SRC}" describe --match=d_e_a_d_b_e_e_f --always --dirty || true)"             # ignore error
+	display_alert "BUILD_REPOSITORY_URL set during ${1}" "${BUILD_REPOSITORY_URL}" "debug"
+	display_alert "BUILD_REPOSITORY_COMMIT set during ${1}" "${BUILD_REPOSITORY_COMMIT}" "debug"
 	return 0
 }

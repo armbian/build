@@ -19,7 +19,6 @@
 # find_toolchain
 # advanced_patch
 # process_patch_file
-# userpatch_create
 # overlayfs_wrapper
 
 grab_version() {

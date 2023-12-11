@@ -86,15 +86,25 @@ function chroot_sdcard_apt_get() {
 	local_apt_deb_cache_prepare "before 'apt-get $*'" # sets LOCAL_APT_CACHE_INFO
 	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
 		# prepare and mount apt cache dir at /var/cache/apt/archives in the SDCARD.
-		run_host_command_logged mkdir -pv "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
+		skip_error_info="yes" run_host_command_logged mkdir -pv "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
 		display_alert "Mounting local apt deb cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "debug"
-		run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}"
+		skip_error_info="yes" run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}"
 		display_alert "Mounting local apt list cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}" "debug"
-		run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_LISTS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
+		skip_error_info="yes" run_host_command_logged mount --bind "${LOCAL_APT_CACHE_INFO[HOST_LISTS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
 	fi
 
+	declare -a extra_envs=("DEBIAN_FRONTEND=noninteractive")
+	# shellcheck disable=SC2154 # extra_apt_envs is defined in the caller
+	if [[ "${#extra_apt_envs[@]}" -gt 0 ]]; then
+		extra_envs+=("${extra_apt_envs[@]}")
+	else
+		display_alert "No extra envs for apt" "none" "debug"
+	fi
+
+	display_alert "Extra envs for apt:" "${extra_envs[*]@Q}" "debug"
+
 	local chroot_apt_result=1
-	chroot_sdcard "${prelude_clean_env[@]}" DEBIAN_FRONTEND=noninteractive apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
+	chroot_sdcard "${prelude_clean_env[@]}" "${extra_envs[@]}" apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
 
 	local_apt_deb_cache_prepare "after 'apt-get $*'" # sets LOCAL_APT_CACHE_INFO
 	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
@@ -110,13 +120,13 @@ function chroot_sdcard_apt_get() {
 # please, please, unify around this function.
 function chroot_sdcard() {
 	raw_command="$*" raw_extra="chroot_sdcard" TMPDIR="" \
-		run_host_command_logged_raw chroot "${SDCARD}" /bin/bash -e -o pipefail -c "$*"
+		run_host_command_logged_raw chroot "${SDCARD}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # please, please, unify around this function.
 function chroot_mount() {
 	raw_command="$*" raw_extra="chroot_mount" TMPDIR="" \
-		run_host_command_logged_raw chroot "${MOUNT}" /bin/bash -e -o pipefail -c "$*"
+		run_host_command_logged_raw chroot "${MOUNT}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # This should be used if you need to capture the stdout produced by the command. It is NOT logged, and NOT run thru bash, and NOT quoted.
@@ -127,13 +137,13 @@ function chroot_sdcard_with_stdout() {
 function chroot_custom_long_running() { # any pipe causes the left-hand side to subshell and caos ensues. it's just like chroot_custom()
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom_long_running" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 function chroot_custom() {
 	local target=$1
 	shift
-	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /bin/bash -e -o pipefail -c "$*"
+	raw_command="$*" raw_extra="chroot_custom" TMPDIR="" run_host_command_logged_raw chroot "${target}" /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # For installing packages host-side. Not chroot!
@@ -175,17 +185,17 @@ function run_host_x86_binary_logged() {
 
 # Run simple and exit with it's code. Exactly the same as run_host_command_logged(). Used to have pv pipe, but that causes chaos.
 function run_host_command_logged_long_running() {
-	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
+	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # run_host_command_logged is the very basic, should be used for everything, but, please use helpers above, this is very low-level.
 function run_host_command_logged() {
-	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /bin/bash -e -o pipefail -c "$*"
+	raw_command="${raw_command:-"$*"}" run_host_command_logged_raw /usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # for interactive, dialog-like host-side invocations. no redirections performed, but same bash usage and expansion, for consistency.
 function run_host_command_dialog() {
-	/bin/bash -e -o pipefail -c "$*"
+	/usr/bin/env bash -e -o pipefail -c "$*"
 }
 
 # do NOT use directly, it does NOT expand the way it should (through bash)
@@ -211,10 +221,14 @@ function run_host_command_logged_raw() {
 		display_alert_skip_screen=1 display_alert "stacktrace for failed command" "exit code ${exit_code}:$*\n$(stack_color="${magenta_color:-}" show_caller_full)" "wrn"
 
 		# Obtain extra info about error, eg, log files produced, extra messages set by caller, etc.
-		logging_enrich_run_command_error_info
+		if [[ "${skip_error_info:-"no"}" != "yes" ]]; then
+			logging_enrich_run_command_error_info
+		fi
 	fi
 
-	logging_clear_run_command_error_info # clear the error info vars, always, otherwise they'll leak into the next invocation.
+	if [[ "${skip_error_info:-"no"}" != "yes" ]]; then
+		logging_clear_run_command_error_info # clear the error info vars, always, otherwise they'll leak into the next invocation.
+	fi
 
 	return ${exit_code} #  exiting with the same error code as the original error
 }
@@ -229,6 +243,7 @@ function logging_enrich_run_command_error_info() {
 	declare -a found_files=()
 
 	for path in "${if_error_find_files_sdcard[@]}"; do
+		display_alert "Searching for if_error_find_files_sdcard files" "${SDCARD}/${path}" "debug"
 		declare -a sdcard_files
 		# shellcheck disable=SC2086 # I wanna expand, thank you...
 		mapfile -t sdcard_files < <(find ${SDCARD}/${path} -type f)

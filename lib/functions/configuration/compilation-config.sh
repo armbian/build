@@ -11,10 +11,10 @@ function prepare_compilation_vars() {
 	#  moved from config: rpardini: ccache belongs in compilation, not config. I think.
 	if [[ $USE_CCACHE != no ]]; then
 		CCACHE=ccache
-		export PATH="/usr/lib/ccache:$PATH"
+		export PATH="/usr/lib/ccache:$PATH" # this actually needs export'ing
 		# private ccache directory to avoid permission issues when using build script with "sudo"
 		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
-		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache
+		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache # actual export
 	else
 		CCACHE=""
 	fi

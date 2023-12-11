@@ -96,6 +96,7 @@ function aggregate_all_packages_python() {
 		"PACKAGE_LIST_BOARD=${PACKAGE_LIST_BOARD}"
 
 		# Those are processed by Python, but not part of rootfs / main packages; results in AGGREGATED_PACKAGES_IMAGE_UNINSTALL
+		# TODO: rpardini: the above statement is untrue; those result in removal _from the rootfs_ and not the image. See also artifact_rootfs_config_dump()
 		# These two vars are made readonly after sourcing the board / family config, so can't be used in extensions and such.
 		"PACKAGE_LIST_BOARD_REMOVE=${PACKAGE_LIST_BOARD_REMOVE}"
 		"PACKAGE_LIST_FAMILY_REMOVE=${PACKAGE_LIST_FAMILY_REMOVE}"
@@ -104,7 +105,12 @@ function aggregate_all_packages_python() {
 	# "raw_command" is only for logging purposes.
 	raw_command="[...shortened...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/aggregation.py" \
 		run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${PYTHON3_INFO[BIN]}" "${SRC}/lib/tools/aggregation.py"
-	#run_host_command_logged cat "${temp_file_for_aggregation}"
+
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "Showing aggregation results" "below" "debug"
+		run_tool_batcat --file-name "aggregation_results/aggregation_results.sh" "${temp_file_for_aggregation}"
+	fi
+
 	# shellcheck disable=SC1090
 	source "${temp_file_for_aggregation}" # SOURCE IT!
 	run_host_command_logged rm -f "${temp_file_for_aggregation}"

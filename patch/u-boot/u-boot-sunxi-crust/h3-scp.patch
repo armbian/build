@@ -1,0 +1,1446 @@
+From 566bc30291896e38b62dcf4677a7f99502e88021 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 17 Apr 2021 13:33:54 -0500
+Subject: [PATCH 1/9] sunxi: binman: Enable SPL FIT loading for 32-bit SoCs
+
+Now that Crust (SCP firmware) has support for H3, we need a FIT image to
+load it. H3 also needs to load a SoC-specific eGon blob to support CPU 0
+hotplug. Let's first enable FIT support before adding extra firmware.
+
+Update the binman description to work on either 32-bit or 64-bit SoCs:
+ - Make BL31 optional, since it is not used on 32-bit SoCs (though BL32
+   may be used in the future).
+ - Explicitly set the minimum offset of the FIT to 32 KiB, since SPL on
+   some boards is still only 24 KiB large even with FIT support enabled.
+   CONFIG_SPL_PAD_TO cannot be used because it is not defined for H616.
+
+FIT unlocks more features (signatures, multiple DTBs, etc.), so enable
+it by default. A10 (sun4i) only has 24 KiB of SRAM A1, so it needs
+SPL_FIT_IMAGE_TINY. For simplicity, enable that option everywhere.
+
+Cover-letter:
+sunxi: SPL FIT support for 32-bit sunxi SoCs
+This series makes the necessary changes so 32-bit sunxi SoCs can load
+additional device trees or firmware from SPL along with U-Boot proper.
+
+There was no existing binman entry property that put the FIT at the
+right offset. The minimum offset is 32k, but this matches neither the
+SPL size (which is no more than 24k on some SoCs) nor the FIT alignment
+(which is 512 bytes in practice due to SPL size constraints). So instead
+of adding a new property, I fixed what is arguably a bug in the offset
+property -- though this strategy will not work if someone is
+intentionally creating overlapping entries.
+END
+Series-to: sunxi
+Series-to: sjg
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/arm/Kconfig               |  1 +
+ arch/arm/dts/sunxi-u-boot.dtsi | 44 ++++++++++++++++++++++------------
+ common/spl/Kconfig             |  7 +++---
+ 3 files changed, 34 insertions(+), 18 deletions(-)
+
+diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
+index da8efdea71..309df7b05d 100644
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -1169,6 +1169,7 @@ config ARCH_SUNXI
+ 	imply SPL_GPIO
+ 	imply SPL_LIBCOMMON_SUPPORT
+ 	imply SPL_LIBGENERIC_SUPPORT
++	imply SPL_LOAD_FIT
+ 	imply SPL_MMC if MMC
+ 	imply SPL_POWER
+ 	imply SPL_SERIAL
+diff --git a/arch/arm/dts/sunxi-u-boot.dtsi b/arch/arm/dts/sunxi-u-boot.dtsi
+index af419c7e59..1353d6e668 100644
+--- a/arch/arm/dts/sunxi-u-boot.dtsi
++++ b/arch/arm/dts/sunxi-u-boot.dtsi
+@@ -1,13 +1,19 @@
+ #include <config.h>
+ 
+-#ifdef CONFIG_MACH_SUN50I_H6
+-#define BL31_ADDR 0x104000
+-#define  SCP_ADDR 0x114000
+-#elif defined(CONFIG_MACH_SUN50I_H616)
+-#define BL31_ADDR 0x40000000
++#ifdef CONFIG_ARM64
++#define ARCH "arm64"
+ #else
+-#define BL31_ADDR  0x44000
+-#define  SCP_ADDR  0x50000
++#define ARCH "arm"
++#endif
++
++#if defined(CONFIG_MACH_SUN50I) || defined(CONFIG_MACH_SUN50I_H5)
++#define BL31_ADDR	0x00044000
++#define SCP_ADDR	0x00050000
++#elif defined(CONFIG_MACH_SUN50I_H6)
++#define BL31_ADDR	0x00104000
++#define SCP_ADDR	0x00114000
++#elif defined(CONFIG_MACH_SUN50I_H616)
++#define BL31_ADDR	0x40000000
+ #endif
+ 
+ / {
+@@ -37,30 +43,33 @@
+ 			filename = "spl/sunxi-spl.bin";
+ 		};
+ 
+-#ifdef CONFIG_ARM64
++#ifdef CONFIG_SPL_LOAD_FIT
+ 		fit {
+-			description = "Configuration to load ATF before U-Boot";
++			description = "Configuration to load U-Boot and firmware";
++			offset = <32768>;
+ 			#address-cells = <1>;
+ 			fit,fdt-list = "of-list";
+ 
+ 			images {
+ 				uboot {
+-					description = "U-Boot (64-bit)";
++					description = "U-Boot";
+ 					type = "standalone";
+ 					os = "u-boot";
+-					arch = "arm64";
++					arch = ARCH;
+ 					compression = "none";
+ 					load = <CONFIG_TEXT_BASE>;
++					entry = <CONFIG_TEXT_BASE>;
+ 
+ 					u-boot-nodtb {
+ 					};
+ 				};
+ 
++#ifdef BL31_ADDR
+ 				atf {
+ 					description = "ARM Trusted Firmware";
+ 					type = "firmware";
+ 					os = "arm-trusted-firmware";
+-					arch = "arm64";
++					arch = ARCH;
+ 					compression = "none";
+ 					load = <BL31_ADDR>;
+ 					entry = <BL31_ADDR>;
+@@ -70,6 +79,7 @@
+ 						missing-msg = "atf-bl31-sunxi";
+ 					};
+ 				};
++#endif
+ 
+ #ifdef SCP_ADDR
+ 				scp {
+@@ -98,12 +108,16 @@
+ 
+ 				@config-SEQ {
+ 					description = "NAME";
++#ifdef BL31_ADDR
+ 					firmware = "atf";
+-#ifndef SCP_ADDR
+-					loadables = "uboot";
+ #else
+-					loadables = "scp", "uboot";
++					firmware = "uboot";
++#endif
++					loadables =
++#ifdef SCP_ADDR
++						    "scp",
+ #endif
++						    "uboot";
+ 					fdt = "fdt-SEQ";
+ 				};
+ 			};
+diff --git a/common/spl/Kconfig b/common/spl/Kconfig
+index 2c042ad306..4e52529e69 100644
+--- a/common/spl/Kconfig
++++ b/common/spl/Kconfig
+@@ -76,7 +76,9 @@ config SPL_SIZE_LIMIT_PROVIDE_STACK
+ 
+ config SPL_MAX_SIZE
+ 	hex "Maximum size of the SPL image, excluding BSS"
++	default 0x37fa0 if MACH_SUN50I_H616
+ 	default 0x30000 if ARCH_MX6 && MX6_OCRAM_256KB
++	default 0x25fa0 if MACH_SUN50I_H6
+ 	default 0x1b000 if AM33XX && !TI_SECURE_DEVICE
+ 	default 0x10000 if ARCH_MX6 && !MX6_OCRAM_256KB
+ 	default 0x7fa0 if SUNXI_SRAM_ADDRESS = 0x10000
+@@ -97,7 +99,7 @@ config SPL_PAD_TO
+ 	default 0x31000 if ARCH_MX6 && MX6_OCRAM_256KB
+ 	default 0x11000 if ARCH_MX7 || (ARCH_MX6 && !MX6_OCRAM_256KB)
+ 	default 0x10000 if ARCH_KEYSTONE
+-	default 0x8000 if ARCH_SUNXI && !MACH_SUN50I_H616
++	default 0x0 if ARCH_SUNXI
+ 	default 0x0 if ARCH_MTMIPS
+ 	default TPL_MAX_SIZE if TPL_MAX_SIZE > SPL_MAX_SIZE
+ 	default SPL_MAX_SIZE
+@@ -576,8 +578,7 @@ config SPL_MD5
+ config SPL_FIT_IMAGE_TINY
+ 	bool "Remove functionality from SPL FIT loading to reduce size"
+ 	depends on SPL_FIT
+-	default y if MACH_SUN50I || MACH_SUN50I_H5 || SUN50I_GEN_H6
+-	default y if ARCH_IMX8M || ARCH_IMX9
++	default y if ARCH_IMX8M || ARCH_IMX9 || ARCH_SUNXI
+ 	help
+ 	  Enable this to reduce the size of the FIT image loading code
+ 	  in SPL, if space for the SPL binary is very tight.
+-- 
+2.34.1
+
+
+From 501729188de546502d939c3cedee7ec1ecb04a7b Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 9 Oct 2021 22:00:22 -0500
+Subject: [PATCH 2/9] sunxi: psci: Avoid hanging when CPU 0 is hot-unplugged
+
+Do not try to send an SGI from CPU 0 to itself. Since FIQs are masked
+when entering monitor mode, this will hang. Plus, CPU 0 cannot fully
+power itself off anyway. Instead, have it turn FIQs back on and continue
+servicing SGIs from other cores.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/arm/cpu/armv7/sunxi/psci.c | 20 +++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/cpu/armv7/sunxi/psci.c b/arch/arm/cpu/armv7/sunxi/psci.c
+index e1d3638b5c..738ea8f281 100644
+--- a/arch/arm/cpu/armv7/sunxi/psci.c
++++ b/arch/arm/cpu/armv7/sunxi/psci.c
+@@ -38,6 +38,15 @@
+ #define SUN8I_R40_PWR_CLAMP(cpu)		(0x120 + (cpu) * 0x4)
+ #define SUN8I_R40_SRAMC_SOFT_ENTRY_REG0		(0xbc)
+ 
++static inline u32 __secure cp15_read_mpidr(void)
++{
++	u32 val;
++
++	asm volatile ("mrc p15, 0, %0, c0, c0, 5" : "=r" (val));
++
++	return val;
++}
++
+ static void __secure cp15_write_cntp_tval(u32 tval)
+ {
+ 	asm volatile ("mcr p15, 0, %0, c14, c2, 0" : : "r" (tval));
+@@ -281,9 +290,14 @@ s32 __secure psci_cpu_off(void)
+ {
+ 	psci_cpu_off_common();
+ 
+-	/* Ask CPU0 via SGI15 to pull the rug... */
+-	writel(BIT(16) | 15, GICD_BASE + GICD_SGIR);
+-	dsb();
++	if (cp15_read_mpidr() & 3) {
++		/* Ask CPU0 via SGI15 to pull the rug... */
++		writel(BIT(16) | 15, GICD_BASE + GICD_SGIR);
++		dsb();
++	} else {
++		/* Unmask FIQs to service SGI15. */
++		asm volatile ("cpsie f");
++	}
+ 
+ 	/* Wait to be turned off */
+ 	while (1)
+-- 
+2.34.1
+
+
+From e9e05a2a43d1641d2d864a06d38f190ee8538211 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 9 Oct 2021 17:12:57 -0500
+Subject: [PATCH 3/9] sunxi: psci: Add support for H3 CPU 0 hotplug
+
+Due to a bug in the H3 SoC, where the CPU 0 hotplug flag cannot be
+written, resuming CPU 0 requires using the "Super Standby" code path in
+the BROM instead of the hotplug path. This path requires jumping to an
+eGON image in SRAM.
+
+Add support to the build system to generate this eGON image and include
+it in the FIT, and add code to direct the BROM to its location in SRAM.
+
+Since the Super Standby code path in the BROM initializes the CPU and
+AHB1 clocks to 24 MHz, those registers need to be restored after control
+passes back to U-Boot. Furthermore, because the BROM lowers the AHB1
+clock divider to /1 before switching to the lower-frequency parent,
+PLL_PERIPH0 must be bypassed to prevent AHB1 from temporarily running at
+600 MHz. Otherwise, this locks up the SoC.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ Makefile                        | 17 +++++++++++++++++
+ arch/arm/cpu/armv7/sunxi/psci.c | 31 +++++++++++++++++++++++++++++++
+ arch/arm/dts/sunxi-u-boot.dtsi  | 23 ++++++++++++++++++++++-
+ include/configs/sun8i.h         |  4 ++++
+ 4 files changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 8b030f31be..6810784142 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1014,6 +1014,23 @@ ifeq ($(CONFIG_ARCH_ROCKCHIP)_$(CONFIG_SPL_FRAMEWORK),y_)
+ INPUTS-y += u-boot.img
+ endif
+ 
++ifeq ($(CONFIG_MACH_SUN8I_H3)$(CONFIG_ARMV7_PSCI),yy)
++INPUTS-$(CONFIG_ARMV7_PSCI) += u-boot-resume.img
++
++MKIMAGEFLAGS_u-boot-resume.img := -B 0x400 -T sunxi_egon
++
++u-boot-resume.img: u-boot-resume.bin
++	$(call if_changed,mkimage)
++
++OBJCOPYFLAGS_u-boot-resume.bin := -O binary
++
++u-boot-resume.bin: u-boot-resume.o
++	$(call if_changed,objcopy)
++
++u-boot-resume.S: u-boot
++	@sed -En 's/(0x[[:xdigit:]]+) +psci_cpu_entry/ldr pc, =\1/p' $<.map > $@
++endif
++
+ INPUTS-$(CONFIG_X86) += u-boot-x86-start16.bin u-boot-x86-reset16.bin \
+ 	$(if $(CONFIG_SPL_X86_16BIT_INIT),spl/u-boot-spl.bin) \
+ 	$(if $(CONFIG_TPL_X86_16BIT_INIT),tpl/u-boot-tpl.bin)
+diff --git a/arch/arm/cpu/armv7/sunxi/psci.c b/arch/arm/cpu/armv7/sunxi/psci.c
+index 738ea8f281..e6bfd193e4 100644
+--- a/arch/arm/cpu/armv7/sunxi/psci.c
++++ b/arch/arm/cpu/armv7/sunxi/psci.c
+@@ -10,6 +10,7 @@
+ #include <common.h>
+ #include <asm/cache.h>
+ 
++#include <asm/arch/clock.h>
+ #include <asm/arch/cpu.h>
+ #include <asm/arch/cpucfg.h>
+ #include <asm/arch/prcm.h>
+@@ -141,6 +142,13 @@ static void __secure sunxi_set_entry_address(void *entry)
+ 		(struct sunxi_cpucfg_reg *)SUNXI_CPUCFG_BASE;
+ 
+ 	writel((u32)entry, &cpucfg->priv0);
++
++#ifdef CONFIG_MACH_SUN8I_H3
++	/* Redirect CPU 0 to the secure monitor via the resume shim. */
++	writel(0x16aaefe8, &cpucfg->super_standy_flag);
++	writel(0xaa16efe8, &cpucfg->super_standy_flag);
++	writel(SUNXI_RESUME_BASE, &cpucfg->priv1);
++#endif
+ }
+ #endif
+ 
+@@ -255,9 +263,12 @@ out:
+ int __secure psci_cpu_on(u32 __always_unused unused, u32 mpidr, u32 pc,
+ 			 u32 context_id)
+ {
++	struct sunxi_ccm_reg *ccu = (struct sunxi_ccm_reg *)SUNXI_CCM_BASE;
+ 	struct sunxi_cpucfg_reg *cpucfg =
+ 		(struct sunxi_cpucfg_reg *)SUNXI_CPUCFG_BASE;
+ 	u32 cpu = (mpidr & 0x3);
++	u32 cpu_clk;
++	u32 bus_clk;
+ 
+ 	/* store target PC and context id */
+ 	psci_save(cpu, pc, context_id);
+@@ -274,12 +285,32 @@ int __secure psci_cpu_on(u32 __always_unused unused, u32 mpidr, u32 pc,
+ 	/* Lock CPU (Disable external debug access) */
+ 	clrbits_le32(&cpucfg->dbg_ctrl1, BIT(cpu));
+ 
++	if (IS_ENABLED(CONFIG_MACH_SUN8I_H3) && cpu == 0) {
++		/* Save registers that will be clobbered by the BROM. */
++		cpu_clk = readl(&ccu->cpu_axi_cfg);
++		bus_clk = readl(&ccu->ahb1_apb1_div);
++
++		/* Bypass PLL_PERIPH0 so AHB1 frequency does not spike. */
++		setbits_le32(&ccu->pll6_cfg, BIT(25));
++	}
++
+ 	/* Power up target CPU */
+ 	sunxi_cpu_set_power(cpu, true);
+ 
+ 	/* De-assert reset on target CPU */
+ 	writel(BIT(1) | BIT(0), &cpucfg->cpu[cpu].rst);
+ 
++	if (IS_ENABLED(CONFIG_MACH_SUN8I_H3) && cpu == 0) {
++		/* Spin until the BROM has clobbered the clock registers. */
++		while (readl(&ccu->ahb1_apb1_div) != 0x00001100);
++
++		/* Restore the registers and turn off PLL_PERIPH0 bypass. */
++		writel(cpu_clk, &ccu->cpu_axi_cfg);
++		writel(bus_clk, &ccu->ahb1_apb1_div);
++
++		clrbits_le32(&ccu->pll6_cfg, BIT(25));
++	}
++
+ 	/* Unlock CPU (Disable external debug access) */
+ 	setbits_le32(&cpucfg->dbg_ctrl1, BIT(cpu));
+ 
+diff --git a/arch/arm/dts/sunxi-u-boot.dtsi b/arch/arm/dts/sunxi-u-boot.dtsi
+index 1353d6e668..5d45157598 100644
+--- a/arch/arm/dts/sunxi-u-boot.dtsi
++++ b/arch/arm/dts/sunxi-u-boot.dtsi
+@@ -6,7 +6,11 @@
+ #define ARCH "arm"
+ #endif
+ 
+-#if defined(CONFIG_MACH_SUN50I) || defined(CONFIG_MACH_SUN50I_H5)
++#if defined(CONFIG_MACH_SUN8I_H3)
++#ifdef CONFIG_ARMV7_PSCI
++#define RESUME_ADDR	SUNXI_RESUME_BASE
++#endif
++#elif defined(CONFIG_MACH_SUN50I) || defined(CONFIG_MACH_SUN50I_H5)
+ #define BL31_ADDR	0x00044000
+ #define SCP_ADDR	0x00050000
+ #elif defined(CONFIG_MACH_SUN50I_H6)
+@@ -81,6 +85,20 @@
+ 				};
+ #endif
+ 
++#ifdef RESUME_ADDR
++				resume {
++					description = "Super Standby resume image";
++					type = "standalone";
++					arch = ARCH;
++					compression = "none";
++					load = <RESUME_ADDR>;
++
++					blob-ext {
++						filename = "u-boot-resume.img";
++					};
++				};
++#endif
++
+ #ifdef SCP_ADDR
+ 				scp {
+ 					description = "SCP firmware";
+@@ -114,6 +132,9 @@
+ 					firmware = "uboot";
+ #endif
+ 					loadables =
++#ifdef RESUME_ADDR
++						    "resume",
++#endif
+ #ifdef SCP_ADDR
+ 						    "scp",
+ #endif
+diff --git a/include/configs/sun8i.h b/include/configs/sun8i.h
+index 608a055892..98e68e068b 100644
+--- a/include/configs/sun8i.h
++++ b/include/configs/sun8i.h
+@@ -8,6 +8,10 @@
+ #ifndef __CONFIG_H
+ #define __CONFIG_H
+ 
++#define SUNXI_RESUME_BASE		(CONFIG_ARMV7_SECURE_BASE + \
++					 CONFIG_ARMV7_SECURE_MAX_SIZE)
++#define SUNXI_RESUME_SIZE		1024
++
+ #include <configs/sunxi-common.h>
+ 
+ #define CONFIG_MACH_TYPE	(0x1029)
+-- 
+2.34.1
+
+
+From 1ebddf814b3f2efeeeabf473c34c366a734688f5 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 9 Oct 2021 14:58:27 -0500
+Subject: [PATCH 4/9] remoteproc: Add a driver for the Allwinner AR100
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ drivers/remoteproc/Kconfig             |   9 ++
+ drivers/remoteproc/Makefile            |   1 +
+ drivers/remoteproc/sun6i_ar100_rproc.c | 111 +++++++++++++++++++++++++
+ 3 files changed, 121 insertions(+)
+ create mode 100644 drivers/remoteproc/sun6i_ar100_rproc.c
+
+diff --git a/drivers/remoteproc/Kconfig b/drivers/remoteproc/Kconfig
+index 27e4a60ff5..bcaf6a2753 100644
+--- a/drivers/remoteproc/Kconfig
++++ b/drivers/remoteproc/Kconfig
+@@ -41,6 +41,15 @@ config REMOTEPROC_STM32_COPRO
+ 	  Say 'y' here to add support for STM32 Cortex-M4 coprocessors via the
+ 	  remoteproc framework.
+ 
++config REMOTEPROC_SUN6I_AR100
++	bool "Support for Allwinner AR100 SCP"
++	select REMOTEPROC
++	depends on ARCH_SUNXI
++	help
++	  Say 'y' here to support Allwinner's AR100 System Control Processor
++	  (SCP), found in various sun6i/sun8i/sun50i family SoCs, through the
++	  remoteproc framework.
++
+ config REMOTEPROC_TI_K3_ARM64
+ 	bool "Support for TI's K3 based ARM64 remoteproc driver"
+ 	select REMOTEPROC
+diff --git a/drivers/remoteproc/Makefile b/drivers/remoteproc/Makefile
+index fbe9c172bc..9529844b2a 100644
+--- a/drivers/remoteproc/Makefile
++++ b/drivers/remoteproc/Makefile
+@@ -10,6 +10,7 @@ obj-$(CONFIG_$(SPL_)REMOTEPROC) += rproc-uclass.o rproc-elf-loader.o
+ obj-$(CONFIG_K3_SYSTEM_CONTROLLER) += k3_system_controller.o
+ obj-$(CONFIG_REMOTEPROC_SANDBOX) += sandbox_testproc.o
+ obj-$(CONFIG_REMOTEPROC_STM32_COPRO) += stm32_copro.o
++obj-$(CONFIG_REMOTEPROC_SUN6I_AR100) += sun6i_ar100_rproc.o
+ obj-$(CONFIG_REMOTEPROC_TI_K3_ARM64) += ti_k3_arm64_rproc.o
+ obj-$(CONFIG_REMOTEPROC_TI_K3_DSP) += ti_k3_dsp_rproc.o
+ obj-$(CONFIG_REMOTEPROC_TI_K3_R5F) += ti_k3_r5f_rproc.o
+diff --git a/drivers/remoteproc/sun6i_ar100_rproc.c b/drivers/remoteproc/sun6i_ar100_rproc.c
+new file mode 100644
+index 0000000000..c94f6c752b
+--- /dev/null
++++ b/drivers/remoteproc/sun6i_ar100_rproc.c
+@@ -0,0 +1,111 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <dm.h>
++#include <errno.h>
++#include <remoteproc.h>
++#include <asm/io.h>
++
++#define SUNXI_SCP_MAGIC			0xb4400012
++
++#define OR1K_VEC_FIRST			0x01
++#define OR1K_VEC_LAST			0x0e
++#define OR1K_VEC_ADDR(n)		(0x100 * (n))
++
++struct sun6i_ar100_rproc_priv {
++	void	*cfg_base;
++	ulong	sram_base;
++};
++
++static int sun6i_ar100_rproc_load(struct udevice *dev, ulong addr, ulong size)
++{
++	struct sun6i_ar100_rproc_priv *priv = dev_get_priv(dev);
++
++	/* Check for a valid SCP firmware. */
++	if (readl_relaxed(addr) != SUNXI_SCP_MAGIC)
++		return -ENOENT;
++
++	/* Program exception vectors to the firmware entry point. */
++	for (u32 i = OR1K_VEC_FIRST; i <= OR1K_VEC_LAST; ++i) {
++		ulong vector = priv->sram_base + OR1K_VEC_ADDR(i);
++		ulong offset = addr - vector;
++
++		writel_relaxed(offset >> 2, vector);
++	}
++
++	return 0;
++}
++
++static int sun6i_ar100_rproc_start(struct udevice *dev)
++{
++	struct sun6i_ar100_rproc_priv *priv = dev_get_priv(dev);
++
++	setbits_le32(priv->cfg_base, BIT(0));
++
++	return 0;
++}
++
++static int sun6i_ar100_rproc_stop(struct udevice *dev)
++{
++	struct sun6i_ar100_rproc_priv *priv = dev_get_priv(dev);
++
++	clrbits_le32(priv->cfg_base, BIT(0));
++
++	return 0;
++}
++
++static int sun6i_ar100_rproc_reset(struct udevice *dev)
++{
++	int ret;
++
++	ret = sun6i_ar100_rproc_stop(dev);
++	if (ret)
++		return ret;
++
++	return sun6i_ar100_rproc_start(dev);
++}
++
++static int sun6i_ar100_rproc_is_running(struct udevice *dev)
++{
++	struct sun6i_ar100_rproc_priv *priv = dev_get_priv(dev);
++
++	return !(readl_relaxed(priv->cfg_base) & BIT(0));
++}
++
++static const struct dm_rproc_ops sun6i_ar100_rproc_ops = {
++	.load		= sun6i_ar100_rproc_load,
++	.start		= sun6i_ar100_rproc_start,
++	.stop		= sun6i_ar100_rproc_stop,
++	.reset		= sun6i_ar100_rproc_reset,
++	.is_running	= sun6i_ar100_rproc_is_running,
++};
++
++static int sun6i_ar100_rproc_probe(struct udevice *dev)
++{
++	struct sun6i_ar100_rproc_priv *priv = dev_get_priv(dev);
++	struct ofnode_phandle_args sram_handle;
++	int ret;
++
++	priv->cfg_base = dev_read_addr_ptr(dev);
++
++	ret = dev_read_phandle_with_args(dev, "sram", NULL, 0, 0, &sram_handle);
++	if (ret)
++		return ret;
++
++	priv->sram_base = ofnode_get_addr(sram_handle.node);
++
++	return 0;
++}
++
++static const struct udevice_id sun6i_ar100_rproc_ids[] = {
++	{ .compatible = "allwinner,sun6i-a31-ar100" },
++	{ }
++};
++
++U_BOOT_DRIVER(sun6i_ar100_rproc) = {
++	.name		= "sun6i_ar100_rproc",
++	.id		= UCLASS_REMOTEPROC,
++	.of_match	= sun6i_ar100_rproc_ids,
++	.probe		= sun6i_ar100_rproc_probe,
++	.priv_auto	= sizeof(struct sun6i_ar100_rproc_priv),
++	.ops		= &sun6i_ar100_rproc_ops,
++};
+-- 
+2.34.1
+
+
+From 53bf73ab3356bc4c05cf4570661cf52e5a0ddc8e Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 9 Oct 2021 15:04:16 -0500
+Subject: [PATCH 5/9] arm: dts: sunxi: h3: Add nodes for AR100 remoteproc
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/arm/dts/sun8i-h3.dtsi | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm/dts/sun8i-h3.dtsi b/arch/arm/dts/sun8i-h3.dtsi
+index eac2349a23..b88dcd4272 100644
+--- a/arch/arm/dts/sun8i-h3.dtsi
++++ b/arch/arm/dts/sun8i-h3.dtsi
+@@ -170,6 +170,14 @@
+ 			#size-cells = <1>;
+ 			ranges;
+ 
++			sram_a2: sram@40000 {
++				compatible = "mmio-sram";
++				reg = <0x00040000 0xc000>;
++				#address-cells = <1>;
++				#size-cells = <1>;
++				ranges = <0 0x00040000 0xc000>;
++			};
++
+ 			sram_c: sram@1d00000 {
+ 				compatible = "mmio-sram";
+ 				reg = <0x01d00000 0x80000>;
+@@ -239,6 +247,12 @@
+ 			nvmem-cell-names = "calibration";
+ 			#thermal-sensor-cells = <0>;
+ 		};
++
++		remoteproc@1f01c00 {
++			compatible = "allwinner,sun6i-a31-ar100";
++			reg = <0x01f01c00 0x400>;
++			sram = <&sram_a2>;
++		};
+ 	};
+ 
+ 	thermal-zones {
+-- 
+2.34.1
+
+
+From 681163212274988bb6d826232da09289c6c2b0ea Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 17 Apr 2021 13:33:54 -0500
+Subject: [PATCH 6/9] sunxi: Enable support for SCP firmware on H3
+
+Now that issues with the BROM have been sorted out, we can implement
+PSCI system suspend on H3 by delegating to SCP firmware. Let's start by
+including the firmware in the FIT image and starting the coprocessor if
+valid firmware is loaded.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/arm/dts/sunxi-u-boot.dtsi | 1 +
+ board/sunxi/board.c            | 8 ++++++++
+ include/configs/sun8i.h        | 3 +++
+ 3 files changed, 12 insertions(+)
+
+diff --git a/arch/arm/dts/sunxi-u-boot.dtsi b/arch/arm/dts/sunxi-u-boot.dtsi
+index 5d45157598..36b55c8b80 100644
+--- a/arch/arm/dts/sunxi-u-boot.dtsi
++++ b/arch/arm/dts/sunxi-u-boot.dtsi
+@@ -9,6 +9,7 @@
+ #if defined(CONFIG_MACH_SUN8I_H3)
+ #ifdef CONFIG_ARMV7_PSCI
+ #define RESUME_ADDR	SUNXI_RESUME_BASE
++#define SCP_ADDR	SUNXI_SCP_BASE
+ #endif
+ #elif defined(CONFIG_MACH_SUN50I) || defined(CONFIG_MACH_SUN50I_H5)
+ #define BL31_ADDR	0x00044000
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index ca9c1cd9e2..289a9d93cb 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -19,6 +19,7 @@
+ #include <init.h>
+ #include <log.h>
+ #include <mmc.h>
++#include <remoteproc.h>
+ #include <axp_pmic.h>
+ #include <generic-phy.h>
+ #include <phy-sun4i-usb.h>
+@@ -881,6 +882,13 @@ int board_late_init(void)
+ 	usb_ether_init();
+ #endif
+ 
++#ifdef CONFIG_REMOTEPROC_SUN6I_AR100
++	if (!rproc_load(0, SUNXI_SCP_BASE, SUNXI_SCP_MAX_SIZE)) {
++		puts("Starting SCP...\n");
++		rproc_start(0);
++	}
++#endif
++
+ 	return 0;
+ }
+ 
+diff --git a/include/configs/sun8i.h b/include/configs/sun8i.h
+index 98e68e068b..506ce35707 100644
+--- a/include/configs/sun8i.h
++++ b/include/configs/sun8i.h
+@@ -12,6 +12,9 @@
+ 					 CONFIG_ARMV7_SECURE_MAX_SIZE)
+ #define SUNXI_RESUME_SIZE		1024
+ 
++#define SUNXI_SCP_BASE			(SUNXI_RESUME_BASE + SUNXI_RESUME_SIZE)
++#define SUNXI_SCP_MAX_SIZE		(16 * 1024)
++
+ #include <configs/sunxi-common.h>
+ 
+ #define CONFIG_MACH_TYPE	(0x1029)
+-- 
+2.34.1
+
+
+From 56b6ac0956fe69cb30d42042d8e20c4fdca4b906 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 9 Oct 2021 22:43:26 -0500
+Subject: [PATCH 7/9] arm: psci: Add definitions for PSCI v1.1
+
+Add the new option, function IDs, and prototypes for PSCI v1.1
+implementations. In the process, fix some issues with the existing
+definitions:
+ - Fix the incorrectly-named ARM_PSCI_0_2_FN64_SYSTEM_RESET2.
+ - Replace the deprecated "affinity_level" naming with "power_level".
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/arm/cpu/armv7/Kconfig    |  3 +++
+ arch/arm/include/asm/psci.h   |  5 +++--
+ arch/arm/include/asm/system.h | 14 +++++++++-----
+ arch/arm/lib/psci-dt.c        |  2 ++
+ 4 files changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm/cpu/armv7/Kconfig b/arch/arm/cpu/armv7/Kconfig
+index e33e53636a..7d58d1837b 100644
+--- a/arch/arm/cpu/armv7/Kconfig
++++ b/arch/arm/cpu/armv7/Kconfig
+@@ -80,6 +80,9 @@ choice
+ 	help
+ 	  Select the supported PSCI version.
+ 
++config ARMV7_PSCI_1_1
++	bool "PSCI V1.1"
++
+ config ARMV7_PSCI_1_0
+ 	bool "PSCI V1.0"
+ 
+diff --git a/arch/arm/include/asm/psci.h b/arch/arm/include/asm/psci.h
+index 7343b941ef..27c2d15521 100644
+--- a/arch/arm/include/asm/psci.h
++++ b/arch/arm/include/asm/psci.h
+@@ -22,9 +22,9 @@
+ #include <linux/bitops.h>
+ #endif
+ 
+-#define ARM_PSCI_VER_1_1		(0x00010001)
+-#define ARM_PSCI_VER_1_0		(0x00010000)
+ #define ARM_PSCI_VER_0_2		(0x00000002)
++#define ARM_PSCI_VER_1_0		(0x00010000)
++#define ARM_PSCI_VER_1_1		(0x00010001)
+ 
+ /* PSCI 0.1 interface */
+ #define ARM_PSCI_FN_BASE		0x95c1ba5e
+@@ -87,6 +87,7 @@
+ #define ARM_PSCI_1_0_FN64_STAT_COUNT		ARM_PSCI_0_2_FN64(17)
+ 
+ /* PSCI 1.1 interface */
++#define ARM_PSCI_1_1_FN_SYSTEM_RESET2		ARM_PSCI_0_2_FN(18)
+ #define ARM_PSCI_1_1_FN64_SYSTEM_RESET2		ARM_PSCI_0_2_FN64(18)
+ 
+ /* 1KB stack per core */
+diff --git a/arch/arm/include/asm/system.h b/arch/arm/include/asm/system.h
+index 87d1c77e8b..bcbb999b49 100644
+--- a/arch/arm/include/asm/system.h
++++ b/arch/arm/include/asm/system.h
+@@ -557,16 +557,20 @@ void mmu_page_table_flush(unsigned long start, unsigned long stop);
+ #ifdef CONFIG_ARMV7_PSCI
+ void psci_arch_cpu_entry(void);
+ void psci_arch_init(void);
++
+ u32 psci_version(void);
+-s32 psci_features(u32 function_id, u32 psci_fid);
++s32 psci_cpu_suspend(u32 function_id, u32 power_state, u32 pc, u32 context_id);
+ s32 psci_cpu_off(void);
+-s32 psci_cpu_on(u32 function_id, u32 target_cpu, u32 pc,
+-		u32 context_id);
+-s32 psci_affinity_info(u32 function_id, u32 target_affinity,
+-		       u32  lowest_affinity_level);
++s32 psci_cpu_on(u32 function_id, u32 target_cpu, u32 pc, u32 context_id);
++s32 psci_affinity_info(u32 function_id, u32 target_affinity, u32 power_level);
+ u32 psci_migrate_info_type(void);
+ void psci_system_off(void);
+ void psci_system_reset(void);
++s32 psci_features(u32 function_id, u32 psci_fid);
++s32 psci_cpu_default_suspend(u32 function_id, u32 pc, u32 context_id);
++s32 psci_node_hw_state(u32 function_id, u32 target_cpu, u32 power_level);
++s32 psci_system_suspend(u32 function_id, u32 pc, u32 context_id);
++s32 psci_system_reset2(u32 function_id, u32 reset_type, u32 cookie);
+ #endif
+ 
+ #endif /* __ASSEMBLY__ */
+diff --git a/arch/arm/lib/psci-dt.c b/arch/arm/lib/psci-dt.c
+index 903b335704..ea9d1c8355 100644
+--- a/arch/arm/lib/psci-dt.c
++++ b/arch/arm/lib/psci-dt.c
+@@ -66,6 +66,8 @@ int fdt_psci(void *fdt)
+ init_psci_node:
+ #if CONFIG_IS_ENABLED(ARMV8_SEC_FIRMWARE_SUPPORT)
+ 	psci_ver = sec_firmware_support_psci_version();
++#elif defined(CONFIG_ARMV7_PSCI_1_1)
++	psci_ver = ARM_PSCI_VER_1_1;
+ #elif defined(CONFIG_ARMV7_PSCI_1_0) || defined(CONFIG_ARMV8_PSCI)
+ 	psci_ver = ARM_PSCI_VER_1_0;
+ #elif defined(CONFIG_ARMV7_PSCI_0_2)
+-- 
+2.34.1
+
+
+From d40b63cac6dcffa2f3b199cca3775138edccbbeb Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Sat, 9 Oct 2021 23:01:05 -0500
+Subject: [PATCH 8/9] sunxi: psci: Delegate PSCI to SCPI
+
+This adds a new PSCI implementation which communicates with SCP firmware
+running on the AR100 using the SCPI protocol. This allows it to support
+the full set of PSCI v1.1 features, including CPU idle states, system
+suspend, and multiple reset methods.
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/arm/cpu/armv7/Kconfig           |   1 +
+ arch/arm/cpu/armv7/sunxi/Makefile    |   4 +
+ arch/arm/cpu/armv7/sunxi/psci-scpi.c | 451 +++++++++++++++++++++++++++
+ 3 files changed, 456 insertions(+)
+ create mode 100644 arch/arm/cpu/armv7/sunxi/psci-scpi.c
+
+diff --git a/arch/arm/cpu/armv7/Kconfig b/arch/arm/cpu/armv7/Kconfig
+index 7d58d1837b..cbcae209dc 100644
+--- a/arch/arm/cpu/armv7/Kconfig
++++ b/arch/arm/cpu/armv7/Kconfig
+@@ -75,6 +75,7 @@ config ARMV7_PSCI
+ choice
+ 	prompt "Supported PSCI version"
+ 	depends on ARMV7_PSCI
++	default ARMV7_PSCI_1_1 if MACH_SUN8I_H3
+ 	default ARMV7_PSCI_0_1 if ARCH_SUNXI
+ 	default ARMV7_PSCI_1_0
+ 	help
+diff --git a/arch/arm/cpu/armv7/sunxi/Makefile b/arch/arm/cpu/armv7/sunxi/Makefile
+index 3e975b366c..6473b9acbd 100644
+--- a/arch/arm/cpu/armv7/sunxi/Makefile
++++ b/arch/arm/cpu/armv7/sunxi/Makefile
+@@ -13,8 +13,12 @@ obj-$(CONFIG_MACH_SUN6I)	+= sram.o
+ obj-$(CONFIG_MACH_SUN8I)	+= sram.o
+ 
+ ifndef CONFIG_SPL_BUILD
++ifdef CONFIG_MACH_SUN8I_H3
++obj-$(CONFIG_ARMV7_PSCI)	+= psci-scpi.o
++else
+ obj-$(CONFIG_ARMV7_PSCI)	+= psci.o
+ endif
++endif
+ 
+ ifdef CONFIG_SPL_BUILD
+ obj-y	+= fel_utils.o
+diff --git a/arch/arm/cpu/armv7/sunxi/psci-scpi.c b/arch/arm/cpu/armv7/sunxi/psci-scpi.c
+new file mode 100644
+index 0000000000..cf85292a8f
+--- /dev/null
++++ b/arch/arm/cpu/armv7/sunxi/psci-scpi.c
+@@ -0,0 +1,451 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (C) 2016 Chen-Yu Tsai <wens@csie.org>
++ * Copyright (C) 2018-2021 Samuel Holland <samuel@sholland.org>
++ */
++
++#include <common.h>
++#include <asm/arch/cpu.h>
++#include <asm/arch/cpucfg.h>
++#include <asm/armv7.h>
++#include <asm/gic.h>
++#include <asm/io.h>
++#include <asm/psci.h>
++#include <asm/secure.h>
++#include <asm/system.h>
++
++#define	GICD_BASE		(SUNXI_GIC400_BASE + GIC_DIST_OFFSET)
++#define	GICC_BASE		(SUNXI_GIC400_BASE + GIC_CPU_OFFSET_A15)
++
++#define HW_ON			0
++#define HW_OFF			1
++#define HW_STANDBY		2
++
++#define MPIDR_AFFLVL0(mpidr)	(mpidr & 0xf)
++#define MPIDR_AFFLVL1(mpidr)	(mpidr >> 8 & 0xf)
++
++#define SCPI_SHMEM_BASE		0x0004be00
++#define SCPI_SHMEM		((struct scpi_shmem *)SCPI_SHMEM_BASE)
++
++#define SCPI_RX_CHANNEL		1
++#define SCPI_TX_CHANNEL		0
++#define SCPI_VIRTUAL_CHANNEL	BIT(0)
++
++#define SCPI_MESSAGE_SIZE	0x100
++#define SCPI_PAYLOAD_SIZE	(SCPI_MESSAGE_SIZE - sizeof(struct scpi_header))
++
++#define SUNXI_MSGBOX_BASE	0x01c17000
++#define REMOTE_IRQ_STAT_REG	(SUNXI_MSGBOX_BASE + 0x0050)
++#define LOCAL_IRQ_STAT_REG	(SUNXI_MSGBOX_BASE + 0x0070)
++#define MSG_STAT_REG(n)		(SUNXI_MSGBOX_BASE + 0x0140 + 0x4 * (n))
++#define MSG_DATA_REG(n)		(SUNXI_MSGBOX_BASE + 0x0180 + 0x4 * (n))
++
++#define RX_IRQ(n)		BIT(0 + 2 * (n))
++#define TX_IRQ(n)		BIT(1 + 2 * (n))
++
++enum {
++	CORE_POWER_LEVEL		= 0,
++	CLUSTER_POWER_LEVEL		= 1,
++	CSS_POWER_LEVEL			= 2,
++};
++
++enum {
++	SCPI_CMD_SCP_READY		= 0x01,
++	SCPI_CMD_SET_CSS_POWER_STATE	= 0x03,
++	SCPI_CMD_GET_CSS_POWER_STATE	= 0x04,
++	SCPI_CMD_SET_SYS_POWER_STATE	= 0x05,
++};
++
++enum {
++	SCPI_E_OK			= 0,
++	SCPI_E_PARAM			= 1,
++	SCPI_E_ALIGN			= 2,
++	SCPI_E_SIZE			= 3,
++	SCPI_E_HANDLER			= 4,
++	SCPI_E_ACCESS			= 5,
++	SCPI_E_RANGE			= 6,
++	SCPI_E_TIMEOUT			= 7,
++	SCPI_E_NOMEM			= 8,
++	SCPI_E_PWRSTATE			= 9,
++	SCPI_E_SUPPORT			= 10,
++	SCPI_E_DEVICE			= 11,
++	SCPI_E_BUSY			= 12,
++	SCPI_E_OS			= 13,
++	SCPI_E_DATA			= 14,
++	SCPI_E_STATE			= 15,
++};
++
++enum {
++	SCPI_POWER_ON			= 0x00,
++	SCPI_POWER_RETENTION		= 0x01,
++	SCPI_POWER_OFF			= 0x03,
++};
++
++enum {
++	SCPI_SYSTEM_SHUTDOWN		= 0x00,
++	SCPI_SYSTEM_REBOOT		= 0x01,
++	SCPI_SYSTEM_RESET		= 0x02,
++};
++
++struct scpi_header {
++	u8			command;
++	u8			sender;
++	u16			size;
++	u32			status;
++};
++
++struct scpi_message {
++	struct scpi_header	header;
++	u8			payload[SCPI_PAYLOAD_SIZE];
++};
++
++struct scpi_shmem {
++	struct scpi_message	rx;
++	struct scpi_message	tx;
++};
++
++static bool __secure_data gic_dist_init;
++
++static u32 __secure_data lock;
++
++static inline u32 __secure read_mpidr(void)
++{
++	u32 val;
++
++	asm volatile ("mrc p15, 0, %0, c0, c0, 5" : "=r" (val));
++
++	return val;
++}
++
++static void __secure scpi_begin_command(void)
++{
++	u32 mpidr = read_mpidr();
++
++	do {
++		while (readl(&lock));
++		writel(mpidr, &lock);
++		dsb();
++	} while (readl(&lock) != mpidr);
++	while (readl(REMOTE_IRQ_STAT_REG) & RX_IRQ(SCPI_TX_CHANNEL));
++}
++
++static void __secure scpi_send_command(void)
++{
++	writel(SCPI_VIRTUAL_CHANNEL, MSG_DATA_REG(SCPI_TX_CHANNEL));
++}
++
++static void __secure scpi_wait_response(void)
++{
++	while (!readl(MSG_STAT_REG(SCPI_RX_CHANNEL)));
++}
++
++static void __secure scpi_end_command(void)
++{
++	while (readl(MSG_STAT_REG(SCPI_RX_CHANNEL)))
++		readl(MSG_DATA_REG(SCPI_RX_CHANNEL));
++	writel(RX_IRQ(SCPI_RX_CHANNEL), LOCAL_IRQ_STAT_REG);
++	writel(0, &lock);
++}
++
++static void __secure scpi_set_css_power_state(u32 target_cpu, u32 core_state,
++					      u32 cluster_state, u32 css_state)
++{
++	struct scpi_shmem *shmem = SCPI_SHMEM;
++
++	scpi_begin_command();
++
++	shmem->tx.header.command = SCPI_CMD_SET_CSS_POWER_STATE;
++	shmem->tx.header.size = 4;
++
++	shmem->tx.payload[0] = target_cpu    >> 4 | target_cpu;
++	shmem->tx.payload[1] = cluster_state << 4 | core_state;
++	shmem->tx.payload[2] = css_state;
++	shmem->tx.payload[3] = 0;
++
++	scpi_send_command();
++	scpi_end_command();
++}
++
++static s32 __secure scpi_get_css_power_state(u32 target_cpu, u8 *core_states,
++					     u8 *cluster_state)
++{
++	struct scpi_shmem *shmem = SCPI_SHMEM;
++	u32 cluster = MPIDR_AFFLVL1(target_cpu);
++	u32 offset;
++	s32 ret;
++
++	scpi_begin_command();
++
++	shmem->tx.header.command = SCPI_CMD_GET_CSS_POWER_STATE;
++	shmem->tx.header.size = 0;
++
++	scpi_send_command();
++	scpi_wait_response();
++
++	for (offset = 0; offset < shmem->rx.header.size; offset += 2) {
++		if ((shmem->rx.payload[offset] & 0xf) == cluster) {
++			*cluster_state = shmem->rx.payload[offset+0] >> 4;
++			*core_states   = shmem->rx.payload[offset+1];
++
++			break;
++		}
++	}
++
++	ret = shmem->rx.header.status;
++
++	scpi_end_command();
++
++	return ret;
++}
++
++static s32 __secure scpi_set_sys_power_state(u32 sys_state)
++{
++	struct scpi_shmem *shmem = SCPI_SHMEM;
++	s32 ret;
++
++	scpi_begin_command();
++
++	shmem->tx.header.command = SCPI_CMD_SET_SYS_POWER_STATE;
++	shmem->tx.header.size = 1;
++
++	shmem->tx.payload[0] = sys_state;
++
++	scpi_send_command();
++	scpi_wait_response();
++
++	ret = shmem->rx.header.status;
++
++	scpi_end_command();
++
++	return ret;
++}
++
++void psci_enable_smp(void);
++
++static s32 __secure psci_suspend_common(u32 pc, u32 context_id, u32 core_state,
++					u32 cluster_state, u32 css_state)
++
++{
++	u32 target_cpu = read_mpidr();
++
++	if (core_state == SCPI_POWER_OFF)
++		psci_save(MPIDR_AFFLVL0(target_cpu), pc, context_id);
++	if (css_state == SCPI_POWER_OFF)
++		gic_dist_init = true;
++
++	scpi_set_css_power_state(target_cpu, core_state,
++				 cluster_state, css_state);
++
++	psci_cpu_off_common();
++
++	wfi();
++
++	psci_enable_smp();
++
++	return ARM_PSCI_RET_SUCCESS;
++}
++
++u32 __secure psci_version(void)
++{
++	return ARM_PSCI_VER_1_1;
++}
++
++s32 __secure psci_cpu_suspend(u32 __always_unused function_id,
++			      u32 power_state, u32 pc, u32 context_id)
++{
++	return psci_suspend_common(pc, context_id,
++				   power_state >> 0 & 0xf,
++				   power_state >> 4 & 0xf,
++				   power_state >> 8 & 0xf);
++}
++
++s32 __secure psci_cpu_off(void)
++{
++	u32 pc = 0, context_id = 0;
++
++	return psci_suspend_common(pc, context_id, SCPI_POWER_OFF,
++				   SCPI_POWER_OFF, SCPI_POWER_ON);
++}
++
++s32 __secure psci_cpu_on(u32 __always_unused function_id,
++			 u32 target_cpu, u32 pc, u32 context_id)
++{
++	psci_save(MPIDR_AFFLVL0(target_cpu), pc, context_id);
++
++	scpi_set_css_power_state(target_cpu, SCPI_POWER_ON,
++				 SCPI_POWER_ON, SCPI_POWER_ON);
++
++	return ARM_PSCI_RET_SUCCESS;
++}
++
++s32 __secure psci_affinity_info(u32 function_id,
++				u32 target_cpu, u32 power_level)
++{
++	if (power_level != CORE_POWER_LEVEL)
++		return ARM_PSCI_RET_INVAL;
++
++	/* This happens to have the same HW_ON/HW_OFF encoding. */
++	return psci_node_hw_state(function_id, target_cpu, power_level);
++}
++
++void __secure psci_system_off(void)
++{
++	scpi_set_sys_power_state(SCPI_SYSTEM_SHUTDOWN);
++
++	/* Wait to be turned off. */
++	for (;;) wfi();
++}
++
++void __secure psci_system_reset(void)
++{
++	scpi_set_sys_power_state(SCPI_SYSTEM_REBOOT);
++
++	/* Wait to be turned off. */
++	for (;;) wfi();
++}
++
++s32 __secure psci_features(u32 __always_unused function_id,
++			   u32 psci_fid)
++{
++	switch (psci_fid) {
++	case ARM_PSCI_0_2_FN_PSCI_VERSION:
++	case ARM_PSCI_0_2_FN_CPU_SUSPEND:
++	case ARM_PSCI_0_2_FN_CPU_OFF:
++	case ARM_PSCI_0_2_FN_CPU_ON:
++	case ARM_PSCI_0_2_FN_AFFINITY_INFO:
++	case ARM_PSCI_0_2_FN_SYSTEM_OFF:
++	case ARM_PSCI_0_2_FN_SYSTEM_RESET:
++	case ARM_PSCI_1_0_FN_PSCI_FEATURES:
++	case ARM_PSCI_1_0_FN_CPU_DEFAULT_SUSPEND:
++	case ARM_PSCI_1_0_FN_NODE_HW_STATE:
++	case ARM_PSCI_1_0_FN_SYSTEM_SUSPEND:
++	case ARM_PSCI_1_1_FN_SYSTEM_RESET2:
++		return ARM_PSCI_RET_SUCCESS;
++	default:
++		return ARM_PSCI_RET_NI;
++	}
++}
++
++s32 __secure psci_cpu_default_suspend(u32 __always_unused function_id,
++				      u32 pc, u32 context_id)
++{
++	return psci_suspend_common(pc, context_id, SCPI_POWER_OFF,
++				   SCPI_POWER_OFF, SCPI_POWER_RETENTION);
++}
++
++s32 __secure psci_node_hw_state(u32 __always_unused function_id,
++				u32 target_cpu, u32 power_level)
++{
++	u32 core = MPIDR_AFFLVL0(target_cpu);
++	u8 core_states, cluster_state;
++
++	if (power_level >= CSS_POWER_LEVEL)
++		return HW_ON;
++	if (scpi_get_css_power_state(target_cpu, &core_states, &cluster_state))
++		return ARM_PSCI_RET_NI;
++	if (power_level == CLUSTER_POWER_LEVEL) {
++		if (cluster_state == SCPI_POWER_ON)
++			return HW_ON;
++		if (cluster_state < SCPI_POWER_OFF)
++			return HW_STANDBY;
++		return HW_OFF;
++	}
++
++	return (core_states & BIT(core)) ? HW_ON : HW_OFF;
++}
++
++s32 __secure psci_system_suspend(u32 __always_unused function_id,
++				 u32 pc, u32 context_id)
++{
++	return psci_suspend_common(pc, context_id, SCPI_POWER_OFF,
++				   SCPI_POWER_OFF, SCPI_POWER_OFF);
++}
++
++s32 __secure psci_system_reset2(u32 __always_unused function_id,
++				u32 reset_type, u32 cookie)
++{
++	s32 ret;
++
++	if (reset_type)
++		return ARM_PSCI_RET_INVAL;
++
++	ret = scpi_set_sys_power_state(SCPI_SYSTEM_RESET);
++	if (ret)
++		return ARM_PSCI_RET_INVAL;
++
++	/* Wait to be turned off. */
++	for (;;) wfi();
++}
++
++/*
++ * R40 is different from other single cluster SoCs. The secondary core
++ * entry address register is in the SRAM controller address range.
++ */
++#define SUN8I_R40_SRAMC_SOFT_ENTRY_REG0		(0xbc)
++
++#ifdef CONFIG_MACH_SUN8I_R40
++/* secondary core entry address is programmed differently on R40 */
++static void __secure sunxi_set_entry_address(void *entry)
++{
++	writel((u32)entry,
++	       SUNXI_SRAMC_BASE + SUN8I_R40_SRAMC_SOFT_ENTRY_REG0);
++}
++#else
++static void __secure sunxi_set_entry_address(void *entry)
++{
++	struct sunxi_cpucfg_reg *cpucfg =
++		(struct sunxi_cpucfg_reg *)SUNXI_CPUCFG_BASE;
++
++	writel((u32)entry, &cpucfg->priv0);
++
++#ifdef CONFIG_MACH_SUN8I_H3
++	/* Redirect CPU 0 to the secure monitor via the resume shim. */
++	writel(0x16aaefe8, &cpucfg->super_standy_flag);
++	writel(0xaa16efe8, &cpucfg->super_standy_flag);
++	writel(SUNXI_RESUME_BASE, &cpucfg->priv1);
++#endif
++}
++#endif
++
++void __secure psci_arch_init(void)
++{
++	static bool __secure_data one_time_init = true;
++
++	if (one_time_init) {
++		/* Set secondary core power-on PC. */
++		sunxi_set_entry_address(psci_cpu_entry);
++
++		/* Wait for the SCP firmware to boot. */
++		scpi_begin_command();
++		scpi_wait_response();
++		scpi_end_command();
++
++		one_time_init = false;
++	}
++
++	/*
++	 * Copied from arch/arm/cpu/armv7/virt-v7.c
++	 * See also gic_resume() in arch/arm/mach-imx/mx7/psci-mx7.c
++	 */
++	if (gic_dist_init) {
++		u32 i, itlinesnr;
++
++		/* enable the GIC distributor */
++		writel(readl(GICD_BASE + GICD_CTLR) | 0x03, GICD_BASE + GICD_CTLR);
++
++		/* TYPER[4:0] contains an encoded number of available interrupts */
++		itlinesnr = readl(GICD_BASE + GICD_TYPER) & 0x1f;
++
++		/* set all bits in the GIC group registers to one to allow access
++		 * from non-secure state. The first 32 interrupts are private per
++		 * CPU and will be set later when enabling the GIC for each core
++		 */
++		for (i = 1; i <= itlinesnr; i++)
++			writel((unsigned)-1, GICD_BASE + GICD_IGROUPRn + 4 * i);
++
++		gic_dist_init = false;
++	}
++
++	/* Be cool with non-secure. */
++	writel(0xff, GICC_BASE + GICC_PMR);
++}
+-- 
+2.34.1
+
+
+From adc8ea72a2d4c0600339a7afed8b1f98f3c07844 Mon Sep 17 00:00:00 2001
+From: Samuel Holland <samuel@sholland.org>
+Date: Wed, 8 Jun 2022 07:55:54 -0500
+Subject: [PATCH 9/9] sunxi: Enable SCP/SCPI on A33 as well
+
+Signed-off-by: Samuel Holland <samuel@sholland.org>
+---
+ arch/arm/cpu/armv7/Kconfig           |  2 +-
+ arch/arm/cpu/armv7/sunxi/Makefile    |  2 +-
+ arch/arm/cpu/armv7/sunxi/psci-scpi.c |  4 ++++
+ arch/arm/dts/sun8i-a23-a33.dtsi      | 14 ++++++++++++++
+ arch/arm/dts/sunxi-u-boot.dtsi       |  4 ++--
+ 5 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/cpu/armv7/Kconfig b/arch/arm/cpu/armv7/Kconfig
+index cbcae209dc..6a515ed6d5 100644
+--- a/arch/arm/cpu/armv7/Kconfig
++++ b/arch/arm/cpu/armv7/Kconfig
+@@ -75,7 +75,7 @@ config ARMV7_PSCI
+ choice
+ 	prompt "Supported PSCI version"
+ 	depends on ARMV7_PSCI
+-	default ARMV7_PSCI_1_1 if MACH_SUN8I_H3
++	default ARMV7_PSCI_1_1 if MACH_SUN8I_A33 || MACH_SUN8I_H3
+ 	default ARMV7_PSCI_0_1 if ARCH_SUNXI
+ 	default ARMV7_PSCI_1_0
+ 	help
+diff --git a/arch/arm/cpu/armv7/sunxi/Makefile b/arch/arm/cpu/armv7/sunxi/Makefile
+index 6473b9acbd..033042666f 100644
+--- a/arch/arm/cpu/armv7/sunxi/Makefile
++++ b/arch/arm/cpu/armv7/sunxi/Makefile
+@@ -13,7 +13,7 @@ obj-$(CONFIG_MACH_SUN6I)	+= sram.o
+ obj-$(CONFIG_MACH_SUN8I)	+= sram.o
+ 
+ ifndef CONFIG_SPL_BUILD
+-ifdef CONFIG_MACH_SUN8I_H3
++ifneq ($(CONFIG_MACH_SUN8I_A33)$(CONFIG_MACH_SUN8I_H3),)
+ obj-$(CONFIG_ARMV7_PSCI)	+= psci-scpi.o
+ else
+ obj-$(CONFIG_ARMV7_PSCI)	+= psci.o
+diff --git a/arch/arm/cpu/armv7/sunxi/psci-scpi.c b/arch/arm/cpu/armv7/sunxi/psci-scpi.c
+index cf85292a8f..717c37c124 100644
+--- a/arch/arm/cpu/armv7/sunxi/psci-scpi.c
++++ b/arch/arm/cpu/armv7/sunxi/psci-scpi.c
+@@ -24,7 +24,11 @@
+ #define MPIDR_AFFLVL0(mpidr)	(mpidr & 0xf)
+ #define MPIDR_AFFLVL1(mpidr)	(mpidr >> 8 & 0xf)
+ 
++#if defined(CONFIG_MACH_SUN8I_H3)
+ #define SCPI_SHMEM_BASE		0x0004be00
++#else
++#define SCPI_SHMEM_BASE		0x00053e00
++#endif
+ #define SCPI_SHMEM		((struct scpi_shmem *)SCPI_SHMEM_BASE)
+ 
+ #define SCPI_RX_CHANNEL		1
+diff --git a/arch/arm/dts/sun8i-a23-a33.dtsi b/arch/arm/dts/sun8i-a23-a33.dtsi
+index 84c6d9379a..826bcddcdf 100644
+--- a/arch/arm/dts/sun8i-a23-a33.dtsi
++++ b/arch/arm/dts/sun8i-a23-a33.dtsi
+@@ -138,6 +138,14 @@
+ 			#size-cells = <1>;
+ 			ranges;
+ 
++			sram_a2: sram@40000 {
++				compatible = "mmio-sram";
++				reg = <0x00040000 0x14000>;
++				#address-cells = <1>;
++				#size-cells = <1>;
++				ranges = <0 0x00040000 0x14000>;
++			};
++
+ 			sram_c: sram@1d00000 {
+ 				compatible = "mmio-sram";
+ 				reg = <0x01d00000 0x80000>;
+@@ -847,5 +855,11 @@
+ 			#address-cells = <1>;
+ 			#size-cells = <0>;
+ 		};
++
++		remoteproc@1f01c00 {
++			compatible = "allwinner,sun6i-a31-ar100";
++			reg = <0x01f01c00 0x400>;
++			sram = <&sram_a2>;
++		};
+ 	};
+ };
+diff --git a/arch/arm/dts/sunxi-u-boot.dtsi b/arch/arm/dts/sunxi-u-boot.dtsi
+index 36b55c8b80..a152b1f787 100644
+--- a/arch/arm/dts/sunxi-u-boot.dtsi
++++ b/arch/arm/dts/sunxi-u-boot.dtsi
+@@ -6,11 +6,11 @@
+ #define ARCH "arm"
+ #endif
+ 
++#if defined(CONFIG_ARMV7_PSCI) && (defined(CONFIG_MACH_SUN8I_A33) || defined(CONFIG_MACH_SUN8I_H3))
+ #if defined(CONFIG_MACH_SUN8I_H3)
+-#ifdef CONFIG_ARMV7_PSCI
+ #define RESUME_ADDR	SUNXI_RESUME_BASE
+-#define SCP_ADDR	SUNXI_SCP_BASE
+ #endif
++#define SCP_ADDR	SUNXI_SCP_BASE
+ #elif defined(CONFIG_MACH_SUN50I) || defined(CONFIG_MACH_SUN50I_H5)
+ #define BL31_ADDR	0x00044000
+ #define SCP_ADDR	0x00050000
+-- 
+2.34.1
+

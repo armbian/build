@@ -1,0 +1,1433 @@
+From c48faa7fb6caf6d8e4ba4ffedd5ad540af20a574 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@xxxxx.com>
+Date: Sun, 27 Aug 2023 20:29:07 -0400
+Subject: [PATCH] drivers: net: wireless: realtek: rtw88: upstream wireless
+
+wireless-next: 2023-08-25: backport: linux-6.4.y
+
+Signed-off-by: Patrick Yavitz <pyavitz@xxxxx.com>
+---
+ drivers/net/wireless/realtek/rtw88/Kconfig    |  11 ++
+ drivers/net/wireless/realtek/rtw88/Makefile   |   3 +
+ drivers/net/wireless/realtek/rtw88/debug.c    |  59 ++++++---
+ drivers/net/wireless/realtek/rtw88/fw.c       |  70 +++++++++-
+ drivers/net/wireless/realtek/rtw88/fw.h       |  13 ++
+ drivers/net/wireless/realtek/rtw88/mac.c      |   6 +-
+ drivers/net/wireless/realtek/rtw88/mac80211.c |   9 +-
+ drivers/net/wireless/realtek/rtw88/main.c     |  28 ++--
+ drivers/net/wireless/realtek/rtw88/main.h     |  10 +-
+ drivers/net/wireless/realtek/rtw88/pci.c      |   7 +-
+ drivers/net/wireless/realtek/rtw88/ps.c       |   9 +-
+ drivers/net/wireless/realtek/rtw88/reg.h      |   2 +
+ drivers/net/wireless/realtek/rtw88/rtw8723d.c |  15 ++-
+ drivers/net/wireless/realtek/rtw88/rtw8723d.h |   6 +
+ .../net/wireless/realtek/rtw88/rtw8723ds.c    |  41 ++++++
+ drivers/net/wireless/realtek/rtw88/tx.c       |  96 ++++++++------
+ drivers/net/wireless/realtek/rtw88/tx.h       | 124 ++++++++----------
+ drivers/net/wireless/realtek/rtw88/usb.c      |  40 +++---
+ drivers/net/wireless/realtek/rtw88/usb.h      |   7 -
+ drivers/net/wireless/realtek/rtw88/util.c     |   7 +-
+ drivers/net/wireless/realtek/rtw88/util.h     |   3 +-
+ 21 files changed, 368 insertions(+), 198 deletions(-)
+ create mode 100644 drivers/net/wireless/realtek/rtw88/rtw8723ds.c
+
+diff --git a/drivers/net/wireless/realtek/rtw88/Kconfig b/drivers/net/wireless/realtek/rtw88/Kconfig
+index 29eb2f8e0eb7..cffad1c01249 100644
+--- a/drivers/net/wireless/realtek/rtw88/Kconfig
++++ b/drivers/net/wireless/realtek/rtw88/Kconfig
+@@ -111,6 +111,17 @@ config RTW88_8723DE
+ 
+ 	  802.11n PCIe wireless network adapter
+ 
++config RTW88_8723DS
++	tristate "Realtek 8723DS SDIO wireless network adapter"
++	depends on MMC
++	select RTW88_CORE
++	select RTW88_SDIO
++	select RTW88_8723D
++	help
++	  Select this option will enable support for 8723DS chipset
++
++	  802.11n SDIO wireless network adapter
++
+ config RTW88_8723DU
+ 	tristate "Realtek 8723DU USB wireless network adapter"
+ 	depends on USB
+diff --git a/drivers/net/wireless/realtek/rtw88/Makefile b/drivers/net/wireless/realtek/rtw88/Makefile
+index 82979b30ae8d..fd212c09d88a 100644
+--- a/drivers/net/wireless/realtek/rtw88/Makefile
++++ b/drivers/net/wireless/realtek/rtw88/Makefile
+@@ -50,6 +50,9 @@ rtw88_8723d-objs		:= rtw8723d.o rtw8723d_table.o
+ obj-$(CONFIG_RTW88_8723DE)	+= rtw88_8723de.o
+ rtw88_8723de-objs		:= rtw8723de.o
+ 
++obj-$(CONFIG_RTW88_8723DS)	+= rtw88_8723ds.o
++rtw88_8723ds-objs		:= rtw8723ds.o
++
+ obj-$(CONFIG_RTW88_8723DU)	+= rtw88_8723du.o
+ rtw88_8723du-objs		:= rtw8723du.o
+ 
+diff --git a/drivers/net/wireless/realtek/rtw88/debug.c b/drivers/net/wireless/realtek/rtw88/debug.c
+index fa3d73b333ba..f8ba133baff0 100644
+--- a/drivers/net/wireless/realtek/rtw88/debug.c
++++ b/drivers/net/wireless/realtek/rtw88/debug.c
+@@ -183,8 +183,8 @@ static int rtw_debugfs_copy_from_user(char tmp[], int size,
+ 
+ 	tmp_len = (count > size - 1 ? size - 1 : count);
+ 
+-	if (!buffer || copy_from_user(tmp, buffer, tmp_len))
+-		return count;
++	if (copy_from_user(tmp, buffer, tmp_len))
++		return -EFAULT;
+ 
+ 	tmp[tmp_len] = '\0';
+ 
+@@ -201,13 +201,16 @@ static ssize_t rtw_debugfs_set_read_reg(struct file *filp,
+ 	char tmp[32 + 1];
+ 	u32 addr, len;
+ 	int num;
++	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 2);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 2);
++	if (ret)
++		return ret;
+ 
+ 	num = sscanf(tmp, "%x %x", &addr, &len);
+ 
+ 	if (num !=  2)
+-		return count;
++		return -EINVAL;
+ 
+ 	if (len != 1 && len != 2 && len != 4) {
+ 		rtw_warn(rtwdev, "read reg setting wrong len\n");
+@@ -288,8 +291,11 @@ static ssize_t rtw_debugfs_set_rsvd_page(struct file *filp,
+ 	char tmp[32 + 1];
+ 	u32 offset, page_num;
+ 	int num;
++	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 2);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 2);
++	if (ret)
++		return ret;
+ 
+ 	num = sscanf(tmp, "%d %d", &offset, &page_num);
+ 
+@@ -314,8 +320,11 @@ static ssize_t rtw_debugfs_set_single_input(struct file *filp,
+ 	char tmp[32 + 1];
+ 	u32 input;
+ 	int num;
++	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	if (ret)
++		return ret;
+ 
+ 	num = kstrtoint(tmp, 0, &input);
+ 
+@@ -338,14 +347,17 @@ static ssize_t rtw_debugfs_set_write_reg(struct file *filp,
+ 	char tmp[32 + 1];
+ 	u32 addr, val, len;
+ 	int num;
++	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 3);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 3);
++	if (ret)
++		return ret;
+ 
+ 	/* write BB/MAC register */
+ 	num = sscanf(tmp, "%x %x %x", &addr, &val, &len);
+ 
+ 	if (num !=  3)
+-		return count;
++		return -EINVAL;
+ 
+ 	switch (len) {
+ 	case 1:
+@@ -381,8 +393,11 @@ static ssize_t rtw_debugfs_set_h2c(struct file *filp,
+ 	char tmp[32 + 1];
+ 	u8 param[8];
+ 	int num;
++	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 3);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 3);
++	if (ret)
++		return ret;
+ 
+ 	num = sscanf(tmp, "%hhx,%hhx,%hhx,%hhx,%hhx,%hhx,%hhx,%hhx",
+ 		     &param[0], &param[1], &param[2], &param[3],
+@@ -408,14 +423,17 @@ static ssize_t rtw_debugfs_set_rf_write(struct file *filp,
+ 	char tmp[32 + 1];
+ 	u32 path, addr, mask, val;
+ 	int num;
++	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 4);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 4);
++	if (ret)
++		return ret;
+ 
+ 	num = sscanf(tmp, "%x %x %x %x", &path, &addr, &mask, &val);
+ 
+ 	if (num !=  4) {
+ 		rtw_warn(rtwdev, "invalid args, [path] [addr] [mask] [val]\n");
+-		return count;
++		return -EINVAL;
+ 	}
+ 
+ 	mutex_lock(&rtwdev->mutex);
+@@ -438,14 +456,17 @@ static ssize_t rtw_debugfs_set_rf_read(struct file *filp,
+ 	char tmp[32 + 1];
+ 	u32 path, addr, mask;
+ 	int num;
++	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 3);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 3);
++	if (ret)
++		return ret;
+ 
+ 	num = sscanf(tmp, "%x %x %x", &path, &addr, &mask);
+ 
+ 	if (num !=  3) {
+ 		rtw_warn(rtwdev, "invalid args, [path] [addr] [mask] [val]\n");
+-		return count;
++		return -EINVAL;
+ 	}
+ 
+ 	debugfs_priv->rf_path = path;
+@@ -467,7 +488,9 @@ static ssize_t rtw_debugfs_set_fix_rate(struct file *filp,
+ 	char tmp[32 + 1];
+ 	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	if (ret)
++		return ret;
+ 
+ 	ret = kstrtou8(tmp, 0, &fix_rate);
+ 	if (ret) {
+@@ -860,7 +883,9 @@ static ssize_t rtw_debugfs_set_coex_enable(struct file *filp,
+ 	bool enable;
+ 	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	if (ret)
++		return ret;
+ 
+ 	ret = kstrtobool(tmp, &enable);
+ 	if (ret) {
+@@ -930,7 +955,9 @@ static ssize_t rtw_debugfs_set_fw_crash(struct file *filp,
+ 	bool input;
+ 	int ret;
+ 
+-	rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	ret = rtw_debugfs_copy_from_user(tmp, sizeof(tmp), buffer, count, 1);
++	if (ret)
++		return ret;
+ 
+ 	ret = kstrtobool(tmp, &input);
+ 	if (ret)
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.c b/drivers/net/wireless/realtek/rtw88/fw.c
+index 2a8ccc8a7f60..a1b674e3caaa 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.c
++++ b/drivers/net/wireless/realtek/rtw88/fw.c
+@@ -140,7 +140,7 @@ struct rtw_beacon_filter_iter_data {
+ 	u8 *payload;
+ };
+ 
+-static void rtw_fw_bcn_filter_notify_vif_iter(void *data, u8 *mac,
++static void rtw_fw_bcn_filter_notify_vif_iter(void *data,
+ 					      struct ieee80211_vif *vif)
+ {
+ 	struct rtw_beacon_filter_iter_data *iter_data = data;
+@@ -308,6 +308,57 @@ void rtw_fw_c2h_cmd_isr(struct rtw_dev *rtwdev)
+ }
+ EXPORT_SYMBOL(rtw_fw_c2h_cmd_isr);
+ 
++static void rtw_fw_send_h2c_command_register(struct rtw_dev *rtwdev,
++					     struct rtw_h2c_register *h2c)
++{
++	u32 box_reg, box_ex_reg;
++	u8 box_state, box;
++	int ret;
++
++	rtw_dbg(rtwdev, RTW_DBG_FW, "send H2C content %08x %08x\n", h2c->w0,
++		h2c->w1);
++
++	lockdep_assert_held(&rtwdev->mutex);
++
++	box = rtwdev->h2c.last_box_num;
++	switch (box) {
++	case 0:
++		box_reg = REG_HMEBOX0;
++		box_ex_reg = REG_HMEBOX0_EX;
++		break;
++	case 1:
++		box_reg = REG_HMEBOX1;
++		box_ex_reg = REG_HMEBOX1_EX;
++		break;
++	case 2:
++		box_reg = REG_HMEBOX2;
++		box_ex_reg = REG_HMEBOX2_EX;
++		break;
++	case 3:
++		box_reg = REG_HMEBOX3;
++		box_ex_reg = REG_HMEBOX3_EX;
++		break;
++	default:
++		WARN(1, "invalid h2c mail box number\n");
++		return;
++	}
++
++	ret = read_poll_timeout_atomic(rtw_read8, box_state,
++				       !((box_state >> box) & 0x1), 100, 3000,
++				       false, rtwdev, REG_HMETFR);
++
++	if (ret) {
++		rtw_err(rtwdev, "failed to send h2c command\n");
++		return;
++	}
++
++	rtw_write32(rtwdev, box_ex_reg, h2c->w1);
++	rtw_write32(rtwdev, box_reg, h2c->w0);
++
++	if (++rtwdev->h2c.last_box_num >= 4)
++		rtwdev->h2c.last_box_num = 0;
++}
++
+ static void rtw_fw_send_h2c_command(struct rtw_dev *rtwdev,
+ 				    u8 *h2c)
+ {
+@@ -468,6 +519,23 @@ void rtw_fw_query_bt_info(struct rtw_dev *rtwdev)
+ 	rtw_fw_send_h2c_command(rtwdev, h2c_pkt);
+ }
+ 
++void rtw_fw_default_port(struct rtw_dev *rtwdev, struct rtw_vif *rtwvif)
++{
++	struct rtw_h2c_register h2c = {};
++
++	if (rtwvif->net_type != RTW_NET_MGD_LINKED)
++		return;
++
++	/* Leave LPS before default port H2C so FW timer is correct */
++	rtw_leave_lps(rtwdev);
++
++	h2c.w0 = u32_encode_bits(H2C_CMD_DEFAULT_PORT, RTW_H2C_W0_CMDID) |
++		 u32_encode_bits(rtwvif->port, RTW_H2C_DEFAULT_PORT_W0_PORTID) |
++		 u32_encode_bits(rtwvif->mac_id, RTW_H2C_DEFAULT_PORT_W0_MACID);
++
++	rtw_fw_send_h2c_command_register(rtwdev, &h2c);
++}
++
+ void rtw_fw_wl_ch_info(struct rtw_dev *rtwdev, u8 link, u8 ch, u8 bw)
+ {
+ 	u8 h2c_pkt[H2C_PKT_SIZE] = {0};
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.h b/drivers/net/wireless/realtek/rtw88/fw.h
+index 397cbc3f6af6..43ccdf9965ac 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.h
++++ b/drivers/net/wireless/realtek/rtw88/fw.h
+@@ -81,6 +81,17 @@ struct rtw_c2h_adaptivity {
+ 	u8 option;
+ } __packed;
+ 
++struct rtw_h2c_register {
++	u32 w0;
++	u32 w1;
++} __packed;
++
++#define RTW_H2C_W0_CMDID		GENMASK(7, 0)
++
++/* H2C_CMD_DEFAULT_PORT command */
++#define RTW_H2C_DEFAULT_PORT_W0_PORTID	GENMASK(15, 8)
++#define RTW_H2C_DEFAULT_PORT_W0_MACID	GENMASK(23, 16)
++
+ struct rtw_h2c_cmd {
+ 	__le32 msg;
+ 	__le32 msg_ext;
+@@ -530,6 +541,7 @@ static inline void rtw_h2c_pkt_set_header(u8 *h2c_pkt, u8 sub_id)
+ #define H2C_CMD_MEDIA_STATUS_RPT	0x01
+ #define H2C_CMD_SET_PWR_MODE		0x20
+ #define H2C_CMD_LPS_PG_INFO		0x2b
++#define H2C_CMD_DEFAULT_PORT		0x2c
+ #define H2C_CMD_RA_INFO			0x40
+ #define H2C_CMD_RSSI_MONITOR		0x42
+ #define H2C_CMD_BCN_FILTER_OFFLOAD_P0	0x56
+@@ -801,6 +813,7 @@ void rtw_fw_c2h_cmd_rx_irqsafe(struct rtw_dev *rtwdev, u32 pkt_offset,
+ void rtw_fw_c2h_cmd_handle(struct rtw_dev *rtwdev, struct sk_buff *skb);
+ void rtw_fw_send_general_info(struct rtw_dev *rtwdev);
+ void rtw_fw_send_phydm_info(struct rtw_dev *rtwdev);
++void rtw_fw_default_port(struct rtw_dev *rtwdev, struct rtw_vif *rtwvif);
+ 
+ void rtw_fw_do_iqk(struct rtw_dev *rtwdev, struct rtw_iqk_para *para);
+ void rtw_fw_inform_rfk_status(struct rtw_dev *rtwdev, bool start);
+diff --git a/drivers/net/wireless/realtek/rtw88/mac.c b/drivers/net/wireless/realtek/rtw88/mac.c
+index a168f36c38ec..298663b03580 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac.c
++++ b/drivers/net/wireless/realtek/rtw88/mac.c
+@@ -794,8 +794,10 @@ static int __rtw_download_firmware(struct rtw_dev *rtwdev,
+ 
+ 	wlan_cpu_enable(rtwdev, true);
+ 
+-	if (!ltecoex_reg_write(rtwdev, 0x38, ltecoex_bckp))
+-		return -EBUSY;
++	if (!ltecoex_reg_write(rtwdev, 0x38, ltecoex_bckp)) {
++		ret = -EBUSY;
++		goto dlfw_fail;
++	}
+ 
+ 	ret = download_firmware_validate(rtwdev);
+ 	if (ret)
+diff --git a/drivers/net/wireless/realtek/rtw88/mac80211.c b/drivers/net/wireless/realtek/rtw88/mac80211.c
+index 09bcc2345bb0..a99b53d44267 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac80211.c
++++ b/drivers/net/wireless/realtek/rtw88/mac80211.c
+@@ -43,7 +43,11 @@ static void rtw_ops_wake_tx_queue(struct ieee80211_hw *hw,
+ 		list_add_tail(&rtwtxq->list, &rtwdev->txqs);
+ 	spin_unlock_bh(&rtwdev->txq_lock);
+ 
+-	queue_work(rtwdev->tx_wq, &rtwdev->tx_work);
++	/* ensure to dequeue EAPOL (4/4) at the right time */
++	if (txq->ac == IEEE80211_AC_VO)
++		__rtw_tx_work(rtwdev);
++	else
++		queue_work(rtwdev->tx_wq, &rtwdev->tx_work);
+ }
+ 
+ static int rtw_ops_start(struct ieee80211_hw *hw)
+@@ -378,6 +382,7 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
+ 
+ 			rtw_fw_download_rsvd_page(rtwdev);
+ 			rtw_send_rsvd_page_h2c(rtwdev);
++			rtw_fw_default_port(rtwdev, rtwvif);
+ 			rtw_coex_media_status_notify(rtwdev, vif->cfg.assoc);
+ 			if (rtw_bf_support)
+ 				rtw_bf_assoc(rtwdev, vif, conf);
+@@ -449,6 +454,7 @@ static int rtw_ops_start_ap(struct ieee80211_hw *hw,
+ 	const struct rtw_chip_info *chip = rtwdev->chip;
+ 
+ 	mutex_lock(&rtwdev->mutex);
++	rtw_write32_set(rtwdev, REG_TCR, BIT_TCR_UPDATE_HGQMD);
+ 	rtwdev->ap_active = true;
+ 	rtw_store_op_chan(rtwdev, true);
+ 	chip->ops->phy_calibration(rtwdev);
+@@ -464,6 +470,7 @@ static void rtw_ops_stop_ap(struct ieee80211_hw *hw,
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 
+ 	mutex_lock(&rtwdev->mutex);
++	rtw_write32_clr(rtwdev, REG_TCR, BIT_TCR_UPDATE_HGQMD);
+ 	rtwdev->ap_active = false;
+ 	if (!rtw_core_check_sta_active(rtwdev))
+ 		rtw_clear_op_chan(rtwdev);
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index 9447a3aae3b5..4a33d2e47f33 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -185,8 +185,7 @@ static void rtw_dynamic_csi_rate(struct rtw_dev *rtwdev, struct rtw_vif *rtwvif)
+ 		bf_info->cur_csi_rpt_rate = new_csi_rate_idx;
+ }
+ 
+-static void rtw_vif_watch_dog_iter(void *data, u8 *mac,
+-				   struct ieee80211_vif *vif)
++static void rtw_vif_watch_dog_iter(void *data, struct ieee80211_vif *vif)
+ {
+ 	struct rtw_watch_dog_iter_data *iter_data = data;
+ 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+@@ -334,12 +333,15 @@ int rtw_sta_add(struct rtw_dev *rtwdev, struct ieee80211_sta *sta,
+ 		struct ieee80211_vif *vif)
+ {
+ 	struct rtw_sta_info *si = (struct rtw_sta_info *)sta->drv_priv;
++	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+ 	int i;
+ 
+ 	si->mac_id = rtw_acquire_macid(rtwdev);
+ 	if (si->mac_id >= RTW_MAX_MAC_ID_NUM)
+ 		return -ENOSPC;
+ 
++	if (vif->type == NL80211_IFTYPE_STATION && vif->cfg.assoc == 0)
++		rtwvif->mac_id = si->mac_id;
+ 	si->rtwdev = rtwdev;
+ 	si->sta = sta;
+ 	si->vif = vif;
+@@ -1300,7 +1302,6 @@ void rtw_update_sta_info(struct rtw_dev *rtwdev, struct rtw_sta_info *si,
+ 	si->stbc_en = stbc_en;
+ 	si->ldpc_en = ldpc_en;
+ 	si->rf_type = rf_type;
+-	si->wireless_set = wireless_set;
+ 	si->sgi_enable = is_support_sgi;
+ 	si->vht_enable = is_vht_enable;
+ 	si->ra_mask = ra_mask;
+@@ -2180,10 +2181,12 @@ void rtw_core_deinit(struct rtw_dev *rtwdev)
+ 		release_firmware(wow_fw->firmware);
+ 
+ 	destroy_workqueue(rtwdev->tx_wq);
++	timer_delete_sync(&rtwdev->tx_report.purge_timer);
+ 	spin_lock_irqsave(&rtwdev->tx_report.q_lock, flags);
+ 	skb_queue_purge(&rtwdev->tx_report.queue);
+-	skb_queue_purge(&rtwdev->coex.queue);
+ 	spin_unlock_irqrestore(&rtwdev->tx_report.q_lock, flags);
++	skb_queue_purge(&rtwdev->coex.queue);
++	skb_queue_purge(&rtwdev->c2h_queue);
+ 
+ 	list_for_each_entry_safe(rsvd_pkt, tmp, &rtwdev->rsvd_page_list,
+ 				 build_list) {
+@@ -2326,7 +2329,7 @@ struct rtw_iter_port_switch_data {
+ 	struct rtw_vif *rtwvif_ap;
+ };
+ 
+-static void rtw_port_switch_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
++static void rtw_port_switch_iter(void *data, struct ieee80211_vif *vif)
+ {
+ 	struct rtw_iter_port_switch_data *iter_data = data;
+ 	struct rtw_dev *rtwdev = iter_data->rtwdev;
+@@ -2340,6 +2343,9 @@ static void rtw_port_switch_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
+ 	rtw_dbg(rtwdev, RTW_DBG_STATE, "AP port switch from %d -> %d\n",
+ 		rtwvif_ap->port, rtwvif_target->port);
+ 
++	/* Leave LPS so the value swapped are not in PS mode */
++	rtw_leave_lps(rtwdev);
++
+ 	reg1 = &rtwvif_ap->conf->net_type;
+ 	reg2 = &rtwvif_target->conf->net_type;
+ 	rtw_swap_reg_mask(rtwdev, reg1, reg2);
+@@ -2358,6 +2364,8 @@ static void rtw_port_switch_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
+ 
+ 	swap(rtwvif_target->port, rtwvif_ap->port);
+ 	swap(rtwvif_target->conf, rtwvif_ap->conf);
++
++	rtw_fw_default_port(rtwdev, rtwvif_target);
+ }
+ 
+ void rtw_core_port_switch(struct rtw_dev *rtwdev, struct ieee80211_vif *vif)
+@@ -2373,8 +2381,7 @@ void rtw_core_port_switch(struct rtw_dev *rtwdev, struct ieee80211_vif *vif)
+ 	rtw_iterate_vifs(rtwdev, rtw_port_switch_iter, &iter_data);
+ }
+ 
+-static void rtw_check_sta_active_iter(void *data, u8 *mac,
+-				      struct ieee80211_vif *vif)
++static void rtw_check_sta_active_iter(void *data, struct ieee80211_vif *vif)
+ {
+ 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+ 	bool *active = data;
+@@ -2403,10 +2410,13 @@ void rtw_core_enable_beacon(struct rtw_dev *rtwdev, bool enable)
+ 	if (!rtwdev->ap_active)
+ 		return;
+ 
+-	if (enable)
++	if (enable) {
+ 		rtw_write32_set(rtwdev, REG_BCN_CTRL, BIT_EN_BCN_FUNCTION);
+-	else
++		rtw_write32_clr(rtwdev, REG_TXPAUSE, BIT_HIGH_QUEUE);
++	} else {
+ 		rtw_write32_clr(rtwdev, REG_BCN_CTRL, BIT_EN_BCN_FUNCTION);
++		rtw_write32_set(rtwdev, REG_TXPAUSE, BIT_HIGH_QUEUE);
++	}
+ }
+ 
+ MODULE_AUTHOR("Realtek Corporation");
+diff --git a/drivers/net/wireless/realtek/rtw88/main.h b/drivers/net/wireless/realtek/rtw88/main.h
+index 9e841f6991a9..c42ef8294d59 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.h
++++ b/drivers/net/wireless/realtek/rtw88/main.h
+@@ -511,12 +511,6 @@ struct rtw_txpwr_idx {
+ 	struct rtw_5g_txpwr_idx pwr_idx_5g;
+ };
+ 
+-struct rtw_timer_list {
+-	struct timer_list timer;
+-	void (*function)(void *data);
+-	void *args;
+-};
+-
+ struct rtw_channel_params {
+ 	u8 center_chan;
+ 	u8 primary_chan;
+@@ -734,9 +728,7 @@ struct rtw_ra_report {
+ 
+ struct rtw_txq {
+ 	struct list_head list;
+-
+ 	unsigned long flags;
+-	unsigned long last_push;
+ };
+ 
+ #define RTW_BC_MC_MACID 1
+@@ -754,7 +746,6 @@ struct rtw_sta_info {
+ 	u8 rate_id;
+ 	enum rtw_bandwidth bw_mode;
+ 	enum rtw_rf_type rf_type;
+-	enum rtw_wireless_set wireless_set;
+ 	u8 stbc_en:2;
+ 	u8 ldpc_en:2;
+ 	bool sgi_enable;
+@@ -803,6 +794,7 @@ struct rtw_bf_info {
+ struct rtw_vif {
+ 	enum rtw_net_type net_type;
+ 	u16 aid;
++	u8 mac_id; /* for STA mode only */
+ 	u8 mac_addr[ETH_ALEN];
+ 	u8 bssid[ETH_ALEN];
+ 	u8 port;
+diff --git a/drivers/net/wireless/realtek/rtw88/pci.c b/drivers/net/wireless/realtek/rtw88/pci.c
+index 672ddde80816..2bfc0e822b8d 100644
+--- a/drivers/net/wireless/realtek/rtw88/pci.c
++++ b/drivers/net/wireless/realtek/rtw88/pci.c
+@@ -738,8 +738,9 @@ static void __rtw_pci_flush_queues(struct rtw_dev *rtwdev, u32 pci_queues,
+ 	u8 q;
+ 
+ 	for (q = 0; q < RTK_MAX_TX_QUEUE_NUM; q++) {
+-		/* It may be not necessary to flush BCN and H2C tx queues. */
+-		if (q == RTW_TX_QUEUE_BCN || q == RTW_TX_QUEUE_H2C)
++		/* Unnecessary to flush BCN, H2C and HI tx queues. */
++		if (q == RTW_TX_QUEUE_BCN || q == RTW_TX_QUEUE_H2C ||
++		    q == RTW_TX_QUEUE_HI0)
+ 			continue;
+ 
+ 		if (pci_queues & BIT(q))
+@@ -1827,5 +1828,5 @@ void rtw_pci_shutdown(struct pci_dev *pdev)
+ EXPORT_SYMBOL(rtw_pci_shutdown);
+ 
+ MODULE_AUTHOR("Realtek Corporation");
+-MODULE_DESCRIPTION("Realtek 802.11ac wireless PCI driver");
++MODULE_DESCRIPTION("Realtek PCI 802.11ac wireless driver");
+ MODULE_LICENSE("Dual BSD/GPL");
+diff --git a/drivers/net/wireless/realtek/rtw88/ps.c b/drivers/net/wireless/realtek/rtw88/ps.c
+index 53933fb38a33..07e8cbd436cd 100644
+--- a/drivers/net/wireless/realtek/rtw88/ps.c
++++ b/drivers/net/wireless/realtek/rtw88/ps.c
+@@ -18,6 +18,7 @@ static int rtw_ips_pwr_up(struct rtw_dev *rtwdev)
+ 	if (ret)
+ 		rtw_err(rtwdev, "leave idle state failed\n");
+ 
++	rtw_coex_ips_notify(rtwdev, COEX_IPS_LEAVE);
+ 	rtw_set_channel(rtwdev);
+ 
+ 	return ret;
+@@ -36,8 +37,7 @@ int rtw_enter_ips(struct rtw_dev *rtwdev)
+ 	return 0;
+ }
+ 
+-static void rtw_restore_port_cfg_iter(void *data, u8 *mac,
+-				      struct ieee80211_vif *vif)
++static void rtw_restore_port_cfg_iter(void *data, struct ieee80211_vif *vif)
+ {
+ 	struct rtw_dev *rtwdev = data;
+ 	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+@@ -63,8 +63,6 @@ int rtw_leave_ips(struct rtw_dev *rtwdev)
+ 
+ 	rtw_iterate_vifs(rtwdev, rtw_restore_port_cfg_iter, rtwdev);
+ 
+-	rtw_coex_ips_notify(rtwdev, COEX_IPS_LEAVE);
+-
+ 	return 0;
+ }
+ 
+@@ -321,8 +319,7 @@ static void __rtw_vif_recalc_lps(struct rtw_vif_recalc_lps_iter_data *data,
+ 	data->found_vif = vif;
+ }
+ 
+-static void rtw_vif_recalc_lps_iter(void *data, u8 *mac,
+-				    struct ieee80211_vif *vif)
++static void rtw_vif_recalc_lps_iter(void *data, struct ieee80211_vif *vif)
+ {
+ 	__rtw_vif_recalc_lps(data, vif);
+ }
+diff --git a/drivers/net/wireless/realtek/rtw88/reg.h b/drivers/net/wireless/realtek/rtw88/reg.h
+index 2a2ae2081f34..7c6c11d50ff3 100644
+--- a/drivers/net/wireless/realtek/rtw88/reg.h
++++ b/drivers/net/wireless/realtek/rtw88/reg.h
+@@ -378,6 +378,7 @@
+ #define BIT_SIFS_BK_EN		BIT(12)
+ #define REG_TXPAUSE		0x0522
+ #define BIT_AC_QUEUE		GENMASK(7, 0)
++#define BIT_HIGH_QUEUE		BIT(5)
+ #define REG_RD_CTRL		0x0524
+ #define BIT_EDCCA_MSK_CNTDOWN_EN BIT(11)
+ #define BIT_DIS_TXOP_CFE	BIT(10)
+@@ -410,6 +411,7 @@
+ #define REG_TCR			0x0604
+ #define BIT_PWRMGT_HWDATA_EN	BIT(7)
+ #define BIT_TCR_UPDATE_TIMIE	BIT(5)
++#define BIT_TCR_UPDATE_HGQMD	BIT(4)
+ #define REG_RCR			0x0608
+ #define BIT_APP_FCS		BIT(31)
+ #define BIT_APP_MIC		BIT(30)
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8723d.c b/drivers/net/wireless/realtek/rtw88/rtw8723d.c
+index 06e7454c9ca6..c575476a0020 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8723d.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8723d.c
+@@ -216,6 +216,12 @@ static void rtw8723du_efuse_parsing(struct rtw_efuse *efuse,
+ 	ether_addr_copy(efuse->addr, map->u.mac_addr);
+ }
+ 
++static void rtw8723ds_efuse_parsing(struct rtw_efuse *efuse,
++				    struct rtw8723d_efuse *map)
++{
++	ether_addr_copy(efuse->addr, map->s.mac_addr);
++}
++
+ static int rtw8723d_read_efuse(struct rtw_dev *rtwdev, u8 *log_map)
+ {
+ 	struct rtw_efuse *efuse = &rtwdev->efuse;
+@@ -248,6 +254,9 @@ static int rtw8723d_read_efuse(struct rtw_dev *rtwdev, u8 *log_map)
+ 	case RTW_HCI_TYPE_USB:
+ 		rtw8723du_efuse_parsing(efuse, map);
+ 		break;
++	case RTW_HCI_TYPE_SDIO:
++		rtw8723ds_efuse_parsing(efuse, map);
++		break;
+ 	default:
+ 		/* unsupported now */
+ 		return -ENOTSUPP;
+@@ -1961,15 +1970,17 @@ static void rtw8723d_fill_txdesc_checksum(struct rtw_dev *rtwdev,
+ 	size_t words = 32 / 2; /* calculate the first 32 bytes (16 words) */
+ 	__le16 chksum = 0;
+ 	__le16 *data = (__le16 *)(txdesc);
++	struct rtw_tx_desc *tx_desc = (struct rtw_tx_desc *)txdesc;
+ 
+-	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, 0x0000);
++	le32p_replace_bits(&tx_desc->w7, 0, RTW_TX_DESC_W7_TXDESC_CHECKSUM);
+ 
+ 	while (words--)
+ 		chksum ^= *data++;
+ 
+ 	chksum = ~chksum;
+ 
+-	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, __le16_to_cpu(chksum));
++	le32p_replace_bits(&tx_desc->w7, __le16_to_cpu(chksum),
++			   RTW_TX_DESC_W7_TXDESC_CHECKSUM);
+ }
+ 
+ static struct rtw_chip_ops rtw8723d_ops = {
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8723d.h b/drivers/net/wireless/realtek/rtw88/rtw8723d.h
+index a356318a5c15..3642a2c7f80c 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8723d.h
++++ b/drivers/net/wireless/realtek/rtw88/rtw8723d.h
+@@ -49,6 +49,11 @@ struct rtw8723du_efuse {
+ 	u8 mac_addr[ETH_ALEN];          /* 0x107 */
+ };
+ 
++struct rtw8723ds_efuse {
++	u8 res4[0x4a];			/* 0xd0 */
++	u8 mac_addr[ETH_ALEN];		/* 0x11a */
++};
++
+ struct rtw8723d_efuse {
+ 	__le16 rtl_id;
+ 	u8 rsvd[2];
+@@ -80,6 +85,7 @@ struct rtw8723d_efuse {
+ 	union {
+ 		struct rtw8723de_efuse e;
+ 		struct rtw8723du_efuse u;
++		struct rtw8723ds_efuse s;
+ 	};
+ };
+ 
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8723ds.c b/drivers/net/wireless/realtek/rtw88/rtw8723ds.c
+new file mode 100644
+index 000000000000..e5b6960ba0a0
+--- /dev/null
++++ b/drivers/net/wireless/realtek/rtw88/rtw8723ds.c
+@@ -0,0 +1,41 @@
++// SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
++/* Copyright(c) Martin Blumenstingl <martin.blumenstingl@googlemail.com>
++ */
++
++#include <linux/mmc/sdio_func.h>
++#include <linux/mmc/sdio_ids.h>
++#include <linux/module.h>
++#include "main.h"
++#include "rtw8723d.h"
++#include "sdio.h"
++
++static const struct sdio_device_id rtw_8723ds_id_table[] =  {
++	{
++		SDIO_DEVICE(SDIO_VENDOR_ID_REALTEK,
++			    SDIO_DEVICE_ID_REALTEK_RTW8723DS_1ANT),
++		.driver_data = (kernel_ulong_t)&rtw8723d_hw_spec,
++	},
++	{
++		SDIO_DEVICE(SDIO_VENDOR_ID_REALTEK,
++			    SDIO_DEVICE_ID_REALTEK_RTW8723DS_2ANT),
++		.driver_data = (kernel_ulong_t)&rtw8723d_hw_spec,
++	},
++	{}
++};
++MODULE_DEVICE_TABLE(sdio, rtw_8723ds_id_table);
++
++static struct sdio_driver rtw_8723ds_driver = {
++	.name = "rtw_8723ds",
++	.probe = rtw_sdio_probe,
++	.remove = rtw_sdio_remove,
++	.id_table = rtw_8723ds_id_table,
++	.drv = {
++		.pm = &rtw_sdio_pm_ops,
++		.shutdown = rtw_sdio_shutdown,
++	}
++};
++module_sdio_driver(rtw_8723ds_driver);
++
++MODULE_AUTHOR("Martin Blumenstingl <martin.blumenstingl@googlemail.com>");
++MODULE_DESCRIPTION("Realtek 802.11n wireless 8723ds driver");
++MODULE_LICENSE("Dual BSD/GPL");
+diff --git a/drivers/net/wireless/realtek/rtw88/tx.c b/drivers/net/wireless/realtek/rtw88/tx.c
+index bb5c7492c98b..f63900b6621d 100644
+--- a/drivers/net/wireless/realtek/rtw88/tx.c
++++ b/drivers/net/wireless/realtek/rtw88/tx.c
+@@ -34,43 +34,57 @@ void rtw_tx_stats(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
+ 
+ void rtw_tx_fill_tx_desc(struct rtw_tx_pkt_info *pkt_info, struct sk_buff *skb)
+ {
+-	__le32 *txdesc = (__le32 *)skb->data;
+-
+-	SET_TX_DESC_TXPKTSIZE(txdesc,  pkt_info->tx_pkt_size);
+-	SET_TX_DESC_OFFSET(txdesc, pkt_info->offset);
+-	SET_TX_DESC_PKT_OFFSET(txdesc, pkt_info->pkt_offset);
+-	SET_TX_DESC_QSEL(txdesc, pkt_info->qsel);
+-	SET_TX_DESC_BMC(txdesc, pkt_info->bmc);
+-	SET_TX_DESC_RATE_ID(txdesc, pkt_info->rate_id);
+-	SET_TX_DESC_DATARATE(txdesc, pkt_info->rate);
+-	SET_TX_DESC_DISDATAFB(txdesc, pkt_info->dis_rate_fallback);
+-	SET_TX_DESC_USE_RATE(txdesc, pkt_info->use_rate);
+-	SET_TX_DESC_SEC_TYPE(txdesc, pkt_info->sec_type);
+-	SET_TX_DESC_DATA_BW(txdesc, pkt_info->bw);
+-	SET_TX_DESC_SW_SEQ(txdesc, pkt_info->seq);
+-	SET_TX_DESC_MAX_AGG_NUM(txdesc, pkt_info->ampdu_factor);
+-	SET_TX_DESC_AMPDU_DENSITY(txdesc, pkt_info->ampdu_density);
+-	SET_TX_DESC_DATA_STBC(txdesc, pkt_info->stbc);
+-	SET_TX_DESC_DATA_LDPC(txdesc, pkt_info->ldpc);
+-	SET_TX_DESC_AGG_EN(txdesc, pkt_info->ampdu_en);
+-	SET_TX_DESC_LS(txdesc, pkt_info->ls);
+-	SET_TX_DESC_DATA_SHORT(txdesc, pkt_info->short_gi);
+-	SET_TX_DESC_SPE_RPT(txdesc, pkt_info->report);
+-	SET_TX_DESC_SW_DEFINE(txdesc, pkt_info->sn);
+-	SET_TX_DESC_USE_RTS(txdesc, pkt_info->rts);
++	struct rtw_tx_desc *tx_desc = (struct rtw_tx_desc *)skb->data;
++	bool more_data = false;
++
++	if (pkt_info->qsel == TX_DESC_QSEL_HIGH)
++		more_data = true;
++
++	tx_desc->w0 = le32_encode_bits(pkt_info->tx_pkt_size, RTW_TX_DESC_W0_TXPKTSIZE) |
++		      le32_encode_bits(pkt_info->offset, RTW_TX_DESC_W0_OFFSET) |
++		      le32_encode_bits(pkt_info->bmc, RTW_TX_DESC_W0_BMC) |
++		      le32_encode_bits(pkt_info->ls, RTW_TX_DESC_W0_LS) |
++		      le32_encode_bits(pkt_info->dis_qselseq, RTW_TX_DESC_W0_DISQSELSEQ);
++
++	tx_desc->w1 = le32_encode_bits(pkt_info->qsel, RTW_TX_DESC_W1_QSEL) |
++		      le32_encode_bits(pkt_info->rate_id, RTW_TX_DESC_W1_RATE_ID) |
++		      le32_encode_bits(pkt_info->sec_type, RTW_TX_DESC_W1_SEC_TYPE) |
++		      le32_encode_bits(pkt_info->pkt_offset, RTW_TX_DESC_W1_PKT_OFFSET) |
++		      le32_encode_bits(more_data, RTW_TX_DESC_W1_MORE_DATA);
++
++	tx_desc->w2 = le32_encode_bits(pkt_info->ampdu_en, RTW_TX_DESC_W2_AGG_EN) |
++		      le32_encode_bits(pkt_info->report, RTW_TX_DESC_W2_SPE_RPT) |
++		      le32_encode_bits(pkt_info->ampdu_density, RTW_TX_DESC_W2_AMPDU_DEN) |
++		      le32_encode_bits(pkt_info->bt_null, RTW_TX_DESC_W2_BT_NULL);
++
++	tx_desc->w3 = le32_encode_bits(pkt_info->hw_ssn_sel, RTW_TX_DESC_W3_HW_SSN_SEL) |
++		      le32_encode_bits(pkt_info->use_rate, RTW_TX_DESC_W3_USE_RATE) |
++		      le32_encode_bits(pkt_info->dis_rate_fallback, RTW_TX_DESC_W3_DISDATAFB) |
++		      le32_encode_bits(pkt_info->rts, RTW_TX_DESC_W3_USE_RTS) |
++		      le32_encode_bits(pkt_info->nav_use_hdr, RTW_TX_DESC_W3_NAVUSEHDR) |
++		      le32_encode_bits(pkt_info->ampdu_factor, RTW_TX_DESC_W3_MAX_AGG_NUM);
++
++	tx_desc->w4 = le32_encode_bits(pkt_info->rate, RTW_TX_DESC_W4_DATARATE);
++
++	tx_desc->w5 = le32_encode_bits(pkt_info->short_gi, RTW_TX_DESC_W5_DATA_SHORT) |
++		      le32_encode_bits(pkt_info->bw, RTW_TX_DESC_W5_DATA_BW) |
++		      le32_encode_bits(pkt_info->ldpc, RTW_TX_DESC_W5_DATA_LDPC) |
++		      le32_encode_bits(pkt_info->stbc, RTW_TX_DESC_W5_DATA_STBC);
++
++	tx_desc->w6 = le32_encode_bits(pkt_info->sn, RTW_TX_DESC_W6_SW_DEFINE);
++
++	tx_desc->w8 = le32_encode_bits(pkt_info->en_hwseq, RTW_TX_DESC_W8_EN_HWSEQ);
++
++	tx_desc->w9 = le32_encode_bits(pkt_info->seq, RTW_TX_DESC_W9_SW_SEQ);
++
+ 	if (pkt_info->rts) {
+-		SET_TX_DESC_RTSRATE(txdesc, DESC_RATE24M);
+-		SET_TX_DESC_DATA_RTS_SHORT(txdesc, 1);
+-	}
+-	SET_TX_DESC_DISQSELSEQ(txdesc, pkt_info->dis_qselseq);
+-	SET_TX_DESC_EN_HWSEQ(txdesc, pkt_info->en_hwseq);
+-	SET_TX_DESC_HW_SSN_SEL(txdesc, pkt_info->hw_ssn_sel);
+-	SET_TX_DESC_NAVUSEHDR(txdesc, pkt_info->nav_use_hdr);
+-	SET_TX_DESC_BT_NULL(txdesc, pkt_info->bt_null);
+-	if (pkt_info->tim_offset) {
+-		SET_TX_DESC_TIM_EN(txdesc, 1);
+-		SET_TX_DESC_TIM_OFFSET(txdesc, pkt_info->tim_offset);
++		tx_desc->w4 |= le32_encode_bits(DESC_RATE24M, RTW_TX_DESC_W4_RTSRATE);
++		tx_desc->w5 |= le32_encode_bits(1, RTW_TX_DESC_W5_DATA_RTS_SHORT);
+ 	}
++
++	if (pkt_info->tim_offset)
++		tx_desc->w9 |= le32_encode_bits(1, RTW_TX_DESC_W9_TIM_EN) |
++			       le32_encode_bits(pkt_info->tim_offset, RTW_TX_DESC_W9_TIM_OFFSET);
+ }
+ EXPORT_SYMBOL(rtw_tx_fill_tx_desc);
+ 
+@@ -592,8 +606,6 @@ static int rtw_txq_push_skb(struct rtw_dev *rtwdev,
+ 		rtw_err(rtwdev, "failed to write TX skb to HCI\n");
+ 		return ret;
+ 	}
+-	rtwtxq->last_push = jiffies;
+-
+ 	return 0;
+ }
+ 
+@@ -635,9 +647,8 @@ static void rtw_txq_push(struct rtw_dev *rtwdev,
+ 	rcu_read_unlock();
+ }
+ 
+-void rtw_tx_work(struct work_struct *w)
++void __rtw_tx_work(struct rtw_dev *rtwdev)
+ {
+-	struct rtw_dev *rtwdev = container_of(w, struct rtw_dev, tx_work);
+ 	struct rtw_txq *rtwtxq, *tmp;
+ 
+ 	spin_lock_bh(&rtwdev->txq_lock);
+@@ -658,6 +669,13 @@ void rtw_tx_work(struct work_struct *w)
+ 	spin_unlock_bh(&rtwdev->txq_lock);
+ }
+ 
++void rtw_tx_work(struct work_struct *w)
++{
++	struct rtw_dev *rtwdev = container_of(w, struct rtw_dev, tx_work);
++
++	__rtw_tx_work(rtwdev);
++}
++
+ void rtw_txq_init(struct rtw_dev *rtwdev, struct ieee80211_txq *txq)
+ {
+ 	struct rtw_txq *rtwtxq;
+diff --git a/drivers/net/wireless/realtek/rtw88/tx.h b/drivers/net/wireless/realtek/rtw88/tx.h
+index 197d5868c8ad..324189606257 100644
+--- a/drivers/net/wireless/realtek/rtw88/tx.h
++++ b/drivers/net/wireless/realtek/rtw88/tx.h
+@@ -9,76 +9,53 @@
+ 
+ #define RTW_TX_PROBE_TIMEOUT		msecs_to_jiffies(500)
+ 
+-#define SET_TX_DESC_TXPKTSIZE(txdesc, value)                                   \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x00, value, GENMASK(15, 0))
+-#define SET_TX_DESC_OFFSET(txdesc, value)                                      \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x00, value, GENMASK(23, 16))
+-#define SET_TX_DESC_PKT_OFFSET(txdesc, value)                                  \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x01, value, GENMASK(28, 24))
+-#define SET_TX_DESC_QSEL(txdesc, value)                                        \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x01, value, GENMASK(12, 8))
+-#define SET_TX_DESC_BMC(txdesc, value)                                         \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x00, value, BIT(24))
+-#define SET_TX_DESC_RATE_ID(txdesc, value)                                     \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x01, value, GENMASK(20, 16))
+-#define SET_TX_DESC_DATARATE(txdesc, value)                                    \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x04, value, GENMASK(6, 0))
+-#define SET_TX_DESC_DISDATAFB(txdesc, value)                                   \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x03, value, BIT(10))
+-#define SET_TX_DESC_USE_RATE(txdesc, value)                                    \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x03, value, BIT(8))
+-#define SET_TX_DESC_SEC_TYPE(txdesc, value)                                    \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x01, value, GENMASK(23, 22))
+-#define SET_TX_DESC_DATA_BW(txdesc, value)                                     \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x05, value, GENMASK(6, 5))
+-#define SET_TX_DESC_SW_SEQ(txdesc, value)                                      \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x09, value, GENMASK(23, 12))
+-#define SET_TX_DESC_TIM_EN(txdesc, value)                                      \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x09, value, BIT(7))
+-#define SET_TX_DESC_TIM_OFFSET(txdesc, value)                                  \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x09, value, GENMASK(6, 0))
+-#define SET_TX_DESC_MAX_AGG_NUM(txdesc, value)                                 \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x03, value, GENMASK(21, 17))
+-#define SET_TX_DESC_USE_RTS(tx_desc, value)                                    \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x03, value, BIT(12))
+-#define SET_TX_DESC_RTSRATE(txdesc, value)                                     \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x04, value, GENMASK(28, 24))
+-#define SET_TX_DESC_DATA_RTS_SHORT(txdesc, value)                              \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x05, value, BIT(12))
+-#define SET_TX_DESC_AMPDU_DENSITY(txdesc, value)                               \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x02, value, GENMASK(22, 20))
+-#define SET_TX_DESC_DATA_STBC(txdesc, value)                                   \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x05, value, GENMASK(9, 8))
+-#define SET_TX_DESC_DATA_LDPC(txdesc, value)                                   \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x05, value, BIT(7))
+-#define SET_TX_DESC_AGG_EN(txdesc, value)                                      \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x02, value, BIT(12))
+-#define SET_TX_DESC_LS(txdesc, value)                                          \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x00, value, BIT(26))
+-#define SET_TX_DESC_DATA_SHORT(txdesc, value)				       \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x05, value, BIT(4))
+-#define SET_TX_DESC_SPE_RPT(tx_desc, value)                                    \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x02, value, BIT(19))
+-#define SET_TX_DESC_SW_DEFINE(tx_desc, value)                                  \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x06, value, GENMASK(11, 0))
+-#define SET_TX_DESC_DISQSELSEQ(txdesc, value)                                 \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x00, value, BIT(31))
+-#define SET_TX_DESC_EN_HWSEQ(txdesc, value)                                   \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x08, value, BIT(15))
+-#define SET_TX_DESC_HW_SSN_SEL(txdesc, value)                                 \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x03, value, GENMASK(7, 6))
+-#define SET_TX_DESC_NAVUSEHDR(txdesc, value)				       \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x03, value, BIT(15))
+-#define SET_TX_DESC_BT_NULL(txdesc, value)				       \
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x02, value, BIT(23))
+-#define SET_TX_DESC_TXDESC_CHECKSUM(txdesc, value)				\
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x07, value, GENMASK(15, 0))
+-#define SET_TX_DESC_DMA_TXAGG_NUM(txdesc, value)				\
+-	le32p_replace_bits((__le32 *)(txdesc) + 0x07, value, GENMASK(31, 24))
+-#define GET_TX_DESC_PKT_OFFSET(txdesc)						\
+-	le32_get_bits(*((__le32 *)(txdesc) + 0x01), GENMASK(28, 24))
+-#define GET_TX_DESC_QSEL(txdesc)						\
+-	le32_get_bits(*((__le32 *)(txdesc) + 0x01), GENMASK(12, 8))
++struct rtw_tx_desc {
++	__le32 w0;
++	__le32 w1;
++	__le32 w2;
++	__le32 w3;
++	__le32 w4;
++	__le32 w5;
++	__le32 w6;
++	__le32 w7;
++	__le32 w8;
++	__le32 w9;
++} __packed;
++
++#define RTW_TX_DESC_W0_TXPKTSIZE GENMASK(15, 0)
++#define RTW_TX_DESC_W0_OFFSET GENMASK(23, 16)
++#define RTW_TX_DESC_W0_BMC BIT(24)
++#define RTW_TX_DESC_W0_LS BIT(26)
++#define RTW_TX_DESC_W0_DISQSELSEQ BIT(31)
++#define RTW_TX_DESC_W1_QSEL GENMASK(12, 8)
++#define RTW_TX_DESC_W1_RATE_ID GENMASK(20, 16)
++#define RTW_TX_DESC_W1_SEC_TYPE GENMASK(23, 22)
++#define RTW_TX_DESC_W1_PKT_OFFSET GENMASK(28, 24)
++#define RTW_TX_DESC_W1_MORE_DATA BIT(29)
++#define RTW_TX_DESC_W2_AGG_EN BIT(12)
++#define RTW_TX_DESC_W2_SPE_RPT BIT(19)
++#define RTW_TX_DESC_W2_AMPDU_DEN GENMASK(22, 20)
++#define RTW_TX_DESC_W2_BT_NULL BIT(23)
++#define RTW_TX_DESC_W3_HW_SSN_SEL GENMASK(7, 6)
++#define RTW_TX_DESC_W3_USE_RATE BIT(8)
++#define RTW_TX_DESC_W3_DISDATAFB BIT(10)
++#define RTW_TX_DESC_W3_USE_RTS BIT(12)
++#define RTW_TX_DESC_W3_NAVUSEHDR BIT(15)
++#define RTW_TX_DESC_W3_MAX_AGG_NUM GENMASK(21, 17)
++#define RTW_TX_DESC_W4_DATARATE GENMASK(6, 0)
++#define RTW_TX_DESC_W4_RTSRATE GENMASK(28, 24)
++#define RTW_TX_DESC_W5_DATA_SHORT BIT(4)
++#define RTW_TX_DESC_W5_DATA_BW GENMASK(6, 5)
++#define RTW_TX_DESC_W5_DATA_LDPC BIT(7)
++#define RTW_TX_DESC_W5_DATA_STBC GENMASK(9, 8)
++#define RTW_TX_DESC_W5_DATA_RTS_SHORT BIT(12)
++#define RTW_TX_DESC_W6_SW_DEFINE GENMASK(11, 0)
++#define RTW_TX_DESC_W7_TXDESC_CHECKSUM GENMASK(15, 0)
++#define RTW_TX_DESC_W7_DMA_TXAGG_NUM GENMASK(31, 24)
++#define RTW_TX_DESC_W8_EN_HWSEQ BIT(15)
++#define RTW_TX_DESC_W9_SW_SEQ GENMASK(23, 12)
++#define RTW_TX_DESC_W9_TIM_EN BIT(7)
++#define RTW_TX_DESC_W9_TIM_OFFSET GENMASK(6, 0)
+ 
+ enum rtw_tx_desc_queue_select {
+ 	TX_DESC_QSEL_TID0	= 0,
+@@ -111,6 +88,7 @@ void rtw_tx(struct rtw_dev *rtwdev,
+ void rtw_txq_init(struct rtw_dev *rtwdev, struct ieee80211_txq *txq);
+ void rtw_txq_cleanup(struct rtw_dev *rtwdev, struct ieee80211_txq *txq);
+ void rtw_tx_work(struct work_struct *w);
++void __rtw_tx_work(struct rtw_dev *rtwdev);
+ void rtw_tx_pkt_info_update(struct rtw_dev *rtwdev,
+ 			    struct rtw_tx_pkt_info *pkt_info,
+ 			    struct ieee80211_sta *sta,
+@@ -139,13 +117,15 @@ void fill_txdesc_checksum_common(u8 *txdesc, size_t words)
+ {
+ 	__le16 chksum = 0;
+ 	__le16 *data = (__le16 *)(txdesc);
++	struct rtw_tx_desc *tx_desc = (struct rtw_tx_desc *)txdesc;
+ 
+-	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, 0x0000);
++	le32p_replace_bits(&tx_desc->w7, 0, RTW_TX_DESC_W7_TXDESC_CHECKSUM);
+ 
+ 	while (words--)
+ 		chksum ^= *data++;
+ 
+-	SET_TX_DESC_TXDESC_CHECKSUM(txdesc, __le16_to_cpu(chksum));
++	le32p_replace_bits(&tx_desc->w7, __le16_to_cpu(chksum),
++			   RTW_TX_DESC_W7_TXDESC_CHECKSUM);
+ }
+ 
+ static inline void rtw_tx_fill_txdesc_checksum(struct rtw_dev *rtwdev,
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.c b/drivers/net/wireless/realtek/rtw88/usb.c
+index 976eafa739a2..d879d7e3dc81 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.c
++++ b/drivers/net/wireless/realtek/rtw88/usb.c
+@@ -24,11 +24,12 @@ struct rtw_usb_txcb {
+ static void rtw_usb_fill_tx_checksum(struct rtw_usb *rtwusb,
+ 				     struct sk_buff *skb, int agg_num)
+ {
++	struct rtw_tx_desc *tx_desc = (struct rtw_tx_desc *)skb->data;
+ 	struct rtw_dev *rtwdev = rtwusb->rtwdev;
+ 	struct rtw_tx_pkt_info pkt_info;
+ 
+-	SET_TX_DESC_DMA_TXAGG_NUM(skb->data, agg_num);
+-	pkt_info.pkt_offset = GET_TX_DESC_PKT_OFFSET(skb->data);
++	le32p_replace_bits(&tx_desc->w7, agg_num, RTW_TX_DESC_W7_DMA_TXAGG_NUM);
++	pkt_info.pkt_offset = le32_get_bits(tx_desc->w1, RTW_TX_DESC_W1_PKT_OFFSET);
+ 	rtw_tx_fill_txdesc_checksum(rtwdev, &pkt_info, skb->data);
+ }
+ 
+@@ -141,7 +142,6 @@ static int rtw_usb_parse(struct rtw_dev *rtwdev,
+ 	struct usb_host_interface *host_interface = &interface->altsetting[0];
+ 	struct usb_interface_descriptor *interface_desc = &host_interface->desc;
+ 	struct usb_endpoint_descriptor *endpoint;
+-	struct usb_device *usbd = interface_to_usbdev(interface);
+ 	int num_out_pipes = 0;
+ 	int i;
+ 	u8 num;
+@@ -183,22 +183,6 @@ static int rtw_usb_parse(struct rtw_dev *rtwdev,
+ 		}
+ 	}
+ 
+-	switch (usbd->speed) {
+-	case USB_SPEED_LOW:
+-	case USB_SPEED_FULL:
+-		rtwusb->bulkout_size = RTW_USB_FULL_SPEED_BULK_SIZE;
+-		break;
+-	case USB_SPEED_HIGH:
+-		rtwusb->bulkout_size = RTW_USB_HIGH_SPEED_BULK_SIZE;
+-		break;
+-	case USB_SPEED_SUPER:
+-		rtwusb->bulkout_size = RTW_USB_SUPER_SPEED_BULK_SIZE;
+-		break;
+-	default:
+-		rtw_err(rtwdev, "failed to detect usb speed\n");
+-		return -EINVAL;
+-	}
+-
+ 	rtwdev->hci.bulkout_num = num_out_pipes;
+ 
+ 	if (num_out_pipes < 1 || num_out_pipes > 4) {
+@@ -306,11 +290,13 @@ static int rtw_usb_write_port(struct rtw_dev *rtwdev, u8 qsel, struct sk_buff *s
+ static bool rtw_usb_tx_agg_skb(struct rtw_usb *rtwusb, struct sk_buff_head *list)
+ {
+ 	struct rtw_dev *rtwdev = rtwusb->rtwdev;
++	struct rtw_tx_desc *tx_desc;
+ 	struct rtw_usb_txcb *txcb;
+ 	struct sk_buff *skb_head;
+ 	struct sk_buff *skb_iter;
+ 	int agg_num = 0;
+ 	unsigned int align_next = 0;
++	u8 qsel;
+ 
+ 	if (skb_queue_empty(list))
+ 		return false;
+@@ -363,9 +349,10 @@ static bool rtw_usb_tx_agg_skb(struct rtw_usb *rtwusb, struct sk_buff_head *list
+ 
+ queue:
+ 	skb_queue_tail(&txcb->tx_ack_queue, skb_head);
++	tx_desc = (struct rtw_tx_desc *)skb_head->data;
++	qsel = le32_get_bits(tx_desc->w1, RTW_TX_DESC_W1_QSEL);
+ 
+-	rtw_usb_write_port(rtwdev, GET_TX_DESC_QSEL(skb_head->data), skb_head,
+-			   rtw_usb_write_port_tx_complete, txcb);
++	rtw_usb_write_port(rtwdev, qsel, skb_head, rtw_usb_write_port_tx_complete, txcb);
+ 
+ 	return true;
+ }
+@@ -465,6 +452,9 @@ static u8 rtw_usb_tx_queue_mapping_to_qsel(struct sk_buff *skb)
+ 
+ 	if (unlikely(ieee80211_is_mgmt(fc) || ieee80211_is_ctl(fc)))
+ 		qsel = TX_DESC_QSEL_MGMT;
++	else if (is_broadcast_ether_addr(hdr->addr1) ||
++		 is_multicast_ether_addr(hdr->addr1))
++		qsel = TX_DESC_QSEL_HIGH;
+ 	else if (skb_get_queue_mapping(skb) <= IEEE80211_AC_BK)
+ 		qsel = skb->priority;
+ 	else
+@@ -647,7 +637,6 @@ static int rtw_usb_alloc_rx_bufs(struct rtw_usb *rtwusb)
+ 	for (i = 0; i < RTW_USB_RXCB_NUM; i++) {
+ 		struct rx_usb_ctrl_block *rxcb = &rtwusb->rx_cb[i];
+ 
+-		rxcb->n = i;
+ 		rxcb->rtwdev = rtwusb->rtwdev;
+ 		rxcb->rx_urb = usb_alloc_urb(0, GFP_KERNEL);
+ 		if (!rxcb->rx_urb)
+@@ -837,7 +826,7 @@ int rtw_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ 
+ 	ret = rtw_core_init(rtwdev);
+ 	if (ret)
+-		goto err_release_hw;
++		goto err_free_rx_bufs;
+ 
+ 	ret = rtw_usb_intf_init(rtwdev, intf);
+ 	if (ret) {
+@@ -883,6 +872,9 @@ int rtw_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ err_deinit_core:
+ 	rtw_core_deinit(rtwdev);
+ 
++err_free_rx_bufs:
++	rtw_usb_free_rx_bufs(rtwusb);
++
+ err_release_hw:
+ 	ieee80211_free_hw(hw);
+ 
+@@ -920,5 +912,5 @@ void rtw_usb_disconnect(struct usb_interface *intf)
+ EXPORT_SYMBOL(rtw_usb_disconnect);
+ 
+ MODULE_AUTHOR("Realtek Corporation");
+-MODULE_DESCRIPTION("Realtek 802.11ac wireless USB driver");
++MODULE_DESCRIPTION("Realtek USB 802.11ac wireless driver");
+ MODULE_LICENSE("Dual BSD/GPL");
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.h b/drivers/net/wireless/realtek/rtw88/usb.h
+index ad1d7955c6a5..86697a5c0103 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.h
++++ b/drivers/net/wireless/realtek/rtw88/usb.h
+@@ -18,10 +18,6 @@
+ 
+ #define RTW_USB_VENQT_CMD_IDX		0x00
+ 
+-#define RTW_USB_SUPER_SPEED_BULK_SIZE	1024
+-#define RTW_USB_HIGH_SPEED_BULK_SIZE	512
+-#define RTW_USB_FULL_SPEED_BULK_SIZE	64
+-
+ #define RTW_USB_TX_SEL_HQ		BIT(0)
+ #define RTW_USB_TX_SEL_LQ		BIT(1)
+ #define RTW_USB_TX_SEL_NQ		BIT(2)
+@@ -58,7 +54,6 @@ struct rx_usb_ctrl_block {
+ 	struct rtw_dev *rtwdev;
+ 	struct urb *rx_urb;
+ 	struct sk_buff *rx_skb;
+-	int n;
+ };
+ 
+ struct rtw_usb_tx_data {
+@@ -74,12 +69,10 @@ struct rtw_usb {
+ 	__le32 *usb_data;
+ 	unsigned int usb_data_index;
+ 
+-	u32 bulkout_size;
+ 	u8 pipe_interrupt;
+ 	u8 pipe_in;
+ 	u8 out_ep[RTW_USB_EP_MAX];
+ 	int qsel_to_ep[TX_DESC_QSEL_MAX];
+-	u8 usb_txagg_num;
+ 
+ 	struct workqueue_struct *txwq, *rxwq;
+ 
+diff --git a/drivers/net/wireless/realtek/rtw88/util.c b/drivers/net/wireless/realtek/rtw88/util.c
+index ff3c269fb1a7..e222d3c01a77 100644
+--- a/drivers/net/wireless/realtek/rtw88/util.c
++++ b/drivers/net/wireless/realtek/rtw88/util.c
+@@ -159,7 +159,6 @@ void rtw_iterate_stas(struct rtw_dev *rtwdev,
+ struct rtw_vifs_entry {
+ 	struct list_head list;
+ 	struct ieee80211_vif *vif;
+-	u8 mac[ETH_ALEN];
+ };
+ 
+ struct rtw_iter_vifs_data {
+@@ -177,13 +176,11 @@ static void rtw_collect_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
+ 		return;
+ 
+ 	vifs_entry->vif = vif;
+-	ether_addr_copy(vifs_entry->mac, mac);
+ 	list_add_tail(&vifs_entry->list, &iter_stas->list);
+ }
+ 
+ void rtw_iterate_vifs(struct rtw_dev *rtwdev,
+-		      void (*iterator)(void *data, u8 *mac,
+-				       struct ieee80211_vif *vif),
++		      void (*iterator)(void *data, struct ieee80211_vif *vif),
+ 		      void *data)
+ {
+ 	struct rtw_iter_vifs_data iter_data;
+@@ -204,7 +201,7 @@ void rtw_iterate_vifs(struct rtw_dev *rtwdev,
+ 	list_for_each_entry_safe(vif_entry, tmp, &iter_data.list,
+ 				 list) {
+ 		list_del_init(&vif_entry->list);
+-		iterator(data, vif_entry->mac, vif_entry->vif);
++		iterator(data, vif_entry->vif);
+ 		kfree(vif_entry);
+ 	}
+ }
+diff --git a/drivers/net/wireless/realtek/rtw88/util.h b/drivers/net/wireless/realtek/rtw88/util.h
+index dc8965525400..f8399128a9a3 100644
+--- a/drivers/net/wireless/realtek/rtw88/util.h
++++ b/drivers/net/wireless/realtek/rtw88/util.h
+@@ -18,8 +18,7 @@ struct rtw_dev;
+ 	ieee80211_iter_keys_rcu((rtwdev)->hw, vif, iterator, data)
+ 
+ void rtw_iterate_vifs(struct rtw_dev *rtwdev,
+-		      void (*iterator)(void *data, u8 *mac,
+-				       struct ieee80211_vif *vif),
++		      void (*iterator)(void *data, struct ieee80211_vif *vif),
+ 		      void *data);
+ void rtw_iterate_stas(struct rtw_dev *rtwdev,
+ 		      void (*iterator)(void *data,
+-- 
+2.39.2
+
+From a43ba488434d768111a7e96fb17332aa93fba71d Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@xxxxx.com>
+Date: Sun, 27 Aug 2023 20:33:17 -0400
+Subject: [PATCH] include: linux: mmc: sdio_ids.h
+
+Realtek SDIO vendor id's
+
+Signed-off-by: Patrick Yavitz <pyavitz@xxxxx.com>
+---
+ include/linux/mmc/sdio_ids.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/mmc/sdio_ids.h b/include/linux/mmc/sdio_ids.h
+index c653accdc7fd..7fada7a714fe 100644
+--- a/include/linux/mmc/sdio_ids.h
++++ b/include/linux/mmc/sdio_ids.h
+@@ -121,7 +121,8 @@
+ #define SDIO_DEVICE_ID_REALTEK_RTW8822BS	0xb822
+ #define SDIO_DEVICE_ID_REALTEK_RTW8821CS	0xc821
+ #define SDIO_DEVICE_ID_REALTEK_RTW8822CS	0xc822
+-#define SDIO_DEVICE_ID_REALTEK_RTW8723DS	0xd723
++#define SDIO_DEVICE_ID_REALTEK_RTW8723DS_2ANT	0xd723
++#define SDIO_DEVICE_ID_REALTEK_RTW8723DS_1ANT	0xd724
+ #define SDIO_DEVICE_ID_REALTEK_RTW8821DS	0xd821
+ 
+ #define SDIO_VENDOR_ID_SIANO			0x039a
+-- 
+2.39.2
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From:   Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+To:     linux-wireless@vger.kernel.org
+Date:   Wed, 2 Aug 2023 00:27:32 +0000
+Subject: [PATCH] wifi: rtw88: sdio: Honor the host max_req_size in the RX path
+
+Lukas reports skb_over_panic errors on his Banana Pi BPI-CM4 which comes
+with an Amlogic A311D (G12B) SoC and a RTL8822CS SDIO wifi/Bluetooth
+combo card. The error he observed is identical to what has been fixed
+in commit e967229ead0e ("wifi: rtw88: sdio: Check the HISR RX_REQUEST
+bit in rtw_sdio_rx_isr()") but that commit didn't fix Lukas' problem.
+
+Lukas found that disabling or limiting RX aggregation fix the problem
+for him. In the following discussion a few key topics have been
+discussed which have an impact on this problem:
+- The Amlogic A311D (G12B) SoC has a hardware bug in the SDIO controller
+  which prevents DMA transfers. Instead all transfers need to go through
+  the controller SRAM which limits transfers to 1536 bytes
+- rtw88 chips don't split incoming (RX) packets, so if a big packet is
+  received this is forwarded to the host in it's original form
+- rtw88 chips can do RX aggregation, meaning more multiple incoming
+  packets can be pulled by the host from the card with one MMC/SDIO
+  transfer. This Depends on settings in the REG_RXDMA_AGG_PG_TH
+  register (BIT_RXDMA_AGG_PG_TH limits the number of packets that will
+  be aggregated, BIT_DMA_AGG_TO_V1 configures a timeout for aggregation
+  and BIT_EN_PRE_CALC makes the chip honor the limits more effectively)
+
+Use multiple consecutive reads in rtw_sdio_read_port() to limit the
+number of bytes which are copied by the host from the card in one
+MMC/SDIO transfer. This allows receiving a buffer that's larger than
+the hosts max_req_size (number of bytes which can be transferred in
+one MMC/SDIO transfer). As a result of this the skb_over_panic error
+is gone as the rtw88 driver is now able to receive more than 1536 bytes
+from the card (either because the incoming packet is larger than that
+or because multiple packets have been aggregated).
+
+Fixes: 65371a3f14e7 ("wifi: rtw88: sdio: Add HCI implementation for SDIO based chipsets")
+Reported-by: Lukas F. Hartmann <lukas@mntre.com>
+Closes: https://lore.kernel.org/linux-wireless/CAFBinCBaXtebixKbjkWKW_WXc5k=NdGNaGUjVE8NCPNxOhsb2g@mail.gmail.com/
+Suggested-by: Ping-Ke Shih <pkshih@realtek.com>
+Signed-off-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+---
+ drivers/net/wireless/realtek/rtw88/sdio.c | 24 +++++++++++++++++------
+ 1 file changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/sdio.c b/drivers/net/wireless/realtek/rtw88/sdio.c
+index 2c1fb2dabd40..b19262ec5d8c 100644
+--- a/drivers/net/wireless/realtek/rtw88/sdio.c
++++ b/drivers/net/wireless/realtek/rtw88/sdio.c
+@@ -500,19 +500,31 @@ static u32 rtw_sdio_get_tx_addr(struct rtw_dev *rtwdev, size_t size,
+ static int rtw_sdio_read_port(struct rtw_dev *rtwdev, u8 *buf, size_t count)
+ {
+ 	struct rtw_sdio *rtwsdio = (struct rtw_sdio *)rtwdev->priv;
++	struct mmc_host *host = rtwsdio->sdio_func->card->host;
+ 	bool bus_claim = rtw_sdio_bus_claim_needed(rtwsdio);
+ 	u32 rxaddr = rtwsdio->rx_addr++;
++	size_t bytes;
+ 	int ret;
+ 
+ 	if (bus_claim)
+ 		sdio_claim_host(rtwsdio->sdio_func);
+ 
+-	ret = sdio_memcpy_fromio(rtwsdio->sdio_func, buf,
+-				 RTW_SDIO_ADDR_RX_RX0FF_GEN(rxaddr), count);
+-	if (ret)
+-		rtw_warn(rtwdev,
+-			 "Failed to read %zu byte(s) from SDIO port 0x%08x",
+-			 count, rxaddr);
++	while (count > 0) {
++		bytes = min_t(size_t, host->max_req_size, count);
++
++		ret = sdio_memcpy_fromio(rtwsdio->sdio_func, buf,
++					 RTW_SDIO_ADDR_RX_RX0FF_GEN(rxaddr),
++					 bytes);
++		if (ret) {
++			rtw_warn(rtwdev,
++				 "Failed to read %zu byte(s) from SDIO port 0x%08x",
++				 bytes, rxaddr);
++			break;
++		}
++
++		count -= bytes;
++		buf += bytes;
++	}
+ 
+ 	if (bus_claim)
+ 		sdio_release_host(rtwsdio->sdio_func);
+-- 
+2.41.0
+
+From 248429fc23232f218d5bd81120eafad70038bd5f Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@xxxxx.com>
+Date: Wed, 6 Sep 2023 21:42:18 -0400
+Subject: [PATCH] drivers: net: wireless: realtek: rtw88: usb-c
+
+Remove duplicate label and correct goto err_release_hw placement.
+
+drivers/net/wireless/realtek/rtw88/usb.c: In function ‘rtw_usb_probe’:
+drivers/net/wireless/realtek/rtw88/usb.c:878:1: error: duplicate label ‘err_free_rx_bufs’
+  878 | err_free_rx_bufs:
+
+Signed-off-by: Patrick Yavitz <pyavitz@xxxxx.com>
+---
+ drivers/net/wireless/realtek/rtw88/usb.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.c b/drivers/net/wireless/realtek/rtw88/usb.c
+index 7f98668cf084..d879d7e3dc81 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.c
++++ b/drivers/net/wireless/realtek/rtw88/usb.c
+@@ -822,7 +822,7 @@ int rtw_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ 
+ 	ret = rtw_usb_alloc_rx_bufs(rtwusb);
+ 	if (ret)
+-		goto err_free_rx_bufs;
++		goto err_release_hw;
+ 
+ 	ret = rtw_core_init(rtwdev);
+ 	if (ret)
+@@ -875,9 +875,6 @@ int rtw_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ err_free_rx_bufs:
+ 	rtw_usb_free_rx_bufs(rtwusb);
+ 
+-err_free_rx_bufs:
+-	rtw_usb_free_rx_bufs(rtwusb);
+-
+ err_release_hw:
+ 	ieee80211_free_hw(hw);
+ 
+-- 
+2.39.2
+

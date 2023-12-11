@@ -39,11 +39,19 @@ function run_memoized() {
 	declare disk_cache_dir="${SRC}/cache/memoize/${MEMO_DICT[MEMO_TYPE]}"
 	mkdir -p "${disk_cache_dir}"
 	declare disk_cache_file="${disk_cache_dir}/${MEMO_DICT[MEMO_INPUT_HASH]}"
+
+	declare -i memoize_cache_ttl=${memoize_cache_ttl:-3600} # 1 hour default; can be overriden from outer scope
+
+	# Lock...
+	exec {lock_fd}> "${disk_cache_file}.lock" || exit_with_error "failed to lock"
+	flock "${lock_fd}" || exit_with_error "flock() failed"
+	display_alert "Lock obtained" "${disk_cache_file}.lock" "debug"
+
 	if [[ -f "${disk_cache_file}" ]]; then
 		declare disk_cache_file_mtime_seconds
 		disk_cache_file_mtime_seconds="$(stat -c %Y "${disk_cache_file}")"
-		# if disk_cache_file is older than 1 hour, delete it and continue.
-		if [[ "${disk_cache_file_mtime_seconds}" -lt "$(($(date +%s) - 3600))" ]]; then
+		# if disk_cache_file is older than the ttl, delete it and continue.
+		if [[ "${disk_cache_file_mtime_seconds}" -lt "$(($(date +%s) - memoize_cache_ttl))" ]]; then
 			display_alert "Deleting stale cache file" "${disk_cache_file}" "debug"
 			rm -f "${disk_cache_file}"
 		else
@@ -62,6 +70,9 @@ function run_memoized() {
 
 	# ... and save the output to the cache; twist declare -p's output due to the nameref
 	declare -p "${var_n}" | sed -e 's|^declare -A ||' > "${disk_cache_file}"
+
+	# ... unlock.
+	flock -u "${lock_fd}"
 
 	return 0
 }
