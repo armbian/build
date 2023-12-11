@@ -7,6 +7,20 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_rootfs_config_dump() {
+	artifact_input_variables[ARCH]="${ARCH}"
+	artifact_input_variables[RELEASE]="${RELEASE}"
+	artifact_input_variables[SELECTED_CONFIGURATION]="${SELECTED_CONFIGURATION}" # should be represented below anyway
+	artifact_input_variables[BUILD_MINIMAL]="${BUILD_MINIMAL}"
+	artifact_input_variables[DESKTOP_ENVIRONMENT]="${DESKTOP_ENVIRONMENT:-"no_DESKTOP_ENVIRONMENT_set"}"
+	artifact_input_variables[DESKTOP_ENVIRONMENT_CONFIG_NAME]="${DESKTOP_ENVIRONMENT_CONFIG_NAME:-"no_DESKTOP_ENVIRONMENT_CONFIG_NAME_set"}"
+	artifact_input_variables[DESKTOP_APPGROUPS_SELECTED]="${DESKTOP_APPGROUPS_SELECTED:-"no_DESKTOP_APPGROUPS_SELECTED_set"}"
+	# Hash of the packages added/removed by extensions
+	declare pkgs_hash="undetermined"
+	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]} ${PACKAGE_LIST_BOARD_REMOVE} ${PACKAGE_LIST_FAMILY_REMOVE}" | sha256sum | cut -d' ' -f1)"
+	artifact_input_variables[EXTRA_PKG_ADD_REMOVE_HASH]="${pkgs_hash}"
+}
+
 function artifact_rootfs_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
@@ -17,7 +31,7 @@ function artifact_rootfs_prepare_version() {
 
 	calculate_rootfs_cache_id # sets rootfs_cache_id
 
-	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
+	display_alert "rootfs version" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
 
 	declare -a reasons=(
 		"arch \"${ARCH}\""
@@ -26,16 +40,24 @@ function artifact_rootfs_prepare_version() {
 		"cache_id \"${rootfs_cache_id}\""
 	)
 
-	# @TODO: "rootfs_cache_id" contains "cache_type", split so we don't repeat ourselves
-	# @TODO: gotta include the extensions rootfs-modifying id to cache_type...
+	# add more reasons for desktop stuff
+	if [[ "${DESKTOP_ENVIRONMENT}" != "" ]]; then
+		reasons+=("desktop_environment \"${DESKTOP_ENVIRONMENT}\"")
+		reasons+=("desktop_environment_config_name \"${DESKTOP_ENVIRONMENT_CONFIG_NAME}\"")
+		reasons+=("desktop_appgroups_selected \"${DESKTOP_APPGROUPS_SELECTED}\"")
+	fi
+
+	# we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
+	declare yyyymm="undetermined"
+	yyyymm="$(date +%Y%m)"
 
 	# outer scope
-	artifact_version="${rootfs_cache_id}"
+	artifact_version="${yyyymm}-${rootfs_cache_id}"
 	artifact_version_reason="${reasons[*]}"
-	artifact_name="${ARCH}-${RELEASE}-${cache_type}"
+	artifact_name="rootfs-${ARCH}-${RELEASE}-${cache_type}"
 	artifact_type="tar.zst"
 	artifact_base_dir="${SRC}/cache/rootfs"
-	artifact_final_file="${SRC}/cache/rootfs/${ARCH}-${RELEASE}-${rootfs_cache_id}.tar.zst"
+	artifact_final_file="${SRC}/cache/rootfs/${artifact_name}_${artifact_version}.tar.zst"
 
 	return 0
 }
@@ -92,15 +114,16 @@ function artifact_rootfs_cli_adapter_pre_run() {
 }
 
 function artifact_rootfs_cli_adapter_config_prep() {
+	declare -g artifact_version_requires_aggregation="yes"
 	declare -g ROOTFS_COMPRESSION_RATIO="${ROOTFS_COMPRESSION_RATIO:-"15"}" # default to Compress stronger when we make rootfs cache
 
 	# If BOARD is set, use it to convert to an ARCH.
 	if [[ -n ${BOARD} ]]; then
-		display_alert "BOARD is set, converting to ARCH for rootfs building" "'BOARD=${BOARD}'" "warn"
+		display_alert "BOARD is set, converting to ARCH for rootfs building" "'BOARD=${BOARD}'" "info"
 		# Convert BOARD to ARCH; source the BOARD and FAMILY stuff
 		LOG_SECTION="config_source_board_file" do_with_conditional_logging config_source_board_file
 		LOG_SECTION="source_family_config_and_arch" do_with_conditional_logging source_family_config_and_arch
-		display_alert "Done sourcing board file" "'${BOARD}' - arch: '${ARCH}'" "warn"
+		display_alert "Done sourcing board file" "'${BOARD}' - arch: '${ARCH}'" "info"
 	fi
 
 	declare -a vars_need_to_be_set=("RELEASE" "ARCH")
@@ -125,7 +148,7 @@ function artifact_rootfs_cli_adapter_config_prep() {
 }
 
 function artifact_rootfs_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-root/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
 }
 
 function artifact_rootfs_is_available_in_local_cache() {

@@ -18,7 +18,7 @@ function mark_aggregation_required_in_default_build_start() {
 }
 
 function aggregate_packages_in_logging_section() {
-	# Aggregate packages, in its own logging section; this decides internally on KERNEL_ONLY=no
+	# Aggregate packages, in its own logging section
 	# We need aggregation to be able to build bsp packages, which contain scripts coming from the aggregation.
 	LOG_SECTION="aggregate_packages" do_with_logging aggregate_packages
 }
@@ -26,23 +26,21 @@ function aggregate_packages_in_logging_section() {
 # This used to be called from config (main-config), but now it's moved default-build, after prepare_host, so Python hostdeps are available.
 # So the aggregation results (hash, etc) are not available for config-dump.
 function aggregate_packages() {
-	if [[ "${KERNEL_ONLY}" != "yes" ]]; then # @TODO: remove, this is not the right place to decide this.
 
-		if [[ ${aggregation_has_already_run:-0} -gt 0 ]]; then
-			exit_with_error "aggregate_packages: Aggregation has already run"
-		fi
-
-		display_alert "Aggregating packages" "rootfs" "info"
-		aggregate_all_packages_python
-		call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
-			*After all aggregations are done*
-			Called after aggregating all package lists.
-			Packages will still be installed after this is called. It is not possible to change anything, though.
-		POST_AGGREGATE_PACKAGES
-
-		declare -i -g -r aggregation_has_already_run=1 # global, readonly.
-
+	if [[ ${aggregation_has_already_run:-0} -gt 0 ]]; then
+		exit_with_error "aggregate_packages: Aggregation has already run"
 	fi
+
+	display_alert "Aggregating packages" "rootfs" "info"
+	aggregate_all_packages_python
+	call_extension_method "post_aggregate_packages" "user_config_post_aggregate_packages" <<- 'POST_AGGREGATE_PACKAGES'
+		*After all aggregations are done*
+		Called after aggregating all package lists.
+		Packages will still be installed after this is called. It is not possible to change anything, though.
+	POST_AGGREGATE_PACKAGES
+
+	declare -i -g -r aggregation_has_already_run=1 # global, readonly.
+
 }
 
 function aggregate_all_packages_python() {
@@ -98,6 +96,7 @@ function aggregate_all_packages_python() {
 		"PACKAGE_LIST_BOARD=${PACKAGE_LIST_BOARD}"
 
 		# Those are processed by Python, but not part of rootfs / main packages; results in AGGREGATED_PACKAGES_IMAGE_UNINSTALL
+		# TODO: rpardini: the above statement is untrue; those result in removal _from the rootfs_ and not the image. See also artifact_rootfs_config_dump()
 		# These two vars are made readonly after sourcing the board / family config, so can't be used in extensions and such.
 		"PACKAGE_LIST_BOARD_REMOVE=${PACKAGE_LIST_BOARD_REMOVE}"
 		"PACKAGE_LIST_FAMILY_REMOVE=${PACKAGE_LIST_FAMILY_REMOVE}"
@@ -106,7 +105,12 @@ function aggregate_all_packages_python() {
 	# "raw_command" is only for logging purposes.
 	raw_command="[...shortened...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/aggregation.py" \
 		run_host_command_logged env -i "${aggregation_params_quoted[@]@Q}" "${PYTHON3_INFO[BIN]}" "${SRC}/lib/tools/aggregation.py"
-	#run_host_command_logged cat "${temp_file_for_aggregation}"
+
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "Showing aggregation results" "below" "debug"
+		run_tool_batcat --file-name "aggregation_results/aggregation_results.sh" "${temp_file_for_aggregation}"
+	fi
+
 	# shellcheck disable=SC1090
 	source "${temp_file_for_aggregation}" # SOURCE IT!
 	run_host_command_logged rm -f "${temp_file_for_aggregation}"

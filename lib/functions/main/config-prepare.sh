@@ -51,8 +51,12 @@ function prep_conf_main_minimal_ni() {
 	# needed
 	LOG_SECTION="config_early_init" do_with_conditional_logging config_early_init
 
-	# needed
-	check_basic_host
+	# needed for most stuff, but not for configdump
+	if [[ "${skip_host_config:-"no"}" != "yes" ]]; then
+		if [[ "${CONFIG_DEFS_ONLY}" != "yes" ]]; then
+			check_basic_host
+		fi
+	fi
 
 	# needed for BOARD= builds.
 	if [[ "${use_board:-"no"}" == "yes" ]]; then
@@ -122,11 +126,18 @@ function config_source_board_file() {
 	# Sanity check: if no board config was sourced, then the board name is invalid
 	[[ ${#sourced_board_configs[@]} -eq 0 ]] && exit_with_error "No such BOARD '${BOARD}'; no board config file found."
 
-	LINUXFAMILY="${BOARDFAMILY}" # @TODO: wtf? why? this is (100%?) rewritten by family config!
-	# this sourced the board config. do_main_configuration will source the family file.
+	# Otherwise publish it as readonly global
+	declare -g -r SOURCED_BOARD_CONFIGS_FILENAME_LIST="${sourced_board_configs[*]}"
 
-	# Lets make some variables readonly.
+	# this is (100%?) rewritten by family config!
+	# answer: this defaults LINUXFAMILY to BOARDFAMILY. that... shouldn't happen, extensions might change it too.
+	# @TODO: better to check for empty after sourcing family config and running extensions, *warning about it*, and only then default to BOARDFAMILY.
+	# this sourced the board config. do_main_configuration will source the (BOARDFAMILY) family file.
+	LINUXFAMILY="${BOARDFAMILY}"
+
+	# Lets make some variables readonly after sourcing the board file.
 	# We don't want anything changing them, it's exclusively for board config.
+	# @TODO: ok but then we need some way to add packages simply via command line or config. ADD_PACKAGES_IMAGE="foo,bar"?
 	declare -g -r PACKAGE_LIST_BOARD="${PACKAGE_LIST_BOARD}"
 	declare -g -r PACKAGE_LIST_BOARD_REMOVE="${PACKAGE_LIST_BOARD_REMOVE}"
 
@@ -149,6 +160,8 @@ function config_early_init() {
 
 	display_alert "Starting single build process" "${BOARD:-"no BOARD set"}" "info"
 
+	declare -g -a KERNEL_DRIVERS_SKIP=() # Prepare array to be filled in by board/family/extensions
+
 	return 0 # protect against eventual shortcircuit above
 }
 
@@ -167,10 +180,6 @@ function config_pre_main() {
 		SELECTED_CONFIGURATION="cli_minimal"
 	fi
 
-	# @TODO: remove this?
-	[[ ${KERNEL_CONFIGURE} == prebuilt ]] && [[ -z ${REPOSITORY_INSTALL} ]] &&
-		REPOSITORY_INSTALL="u-boot,kernel,bsp,armbian-zsh,armbian-config,armbian-bsp-cli,armbian-firmware${BUILD_DESKTOP:+,armbian-desktop,armbian-bsp-desktop}"
-
 	return 0 # shortcircuit above
 }
 
@@ -180,10 +189,13 @@ function config_post_main() {
 	fi
 
 	if [[ "$BETA" == "yes" ]]; then
+		display_alert "BETA" "BETA==yes, nightly image" "debug"
 		IMAGE_TYPE=nightly
-	elif [ "$BETA" == "no" ] || [ "$RC" == "yes" ]; then
+	elif [[ "$BETA" == "no" ]]; then
+		display_alert "BETA" "BETA==no, stable image" "debug"
 		IMAGE_TYPE=stable
 	else
+		display_alert "BETA" "Not yes nor no, user-built" "debug"
 		IMAGE_TYPE=user-built
 	fi
 
@@ -194,16 +206,10 @@ function config_post_main() {
 		ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
 	fi
 
-	declare -g BSP_CLI_PACKAGE_NAME="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}"
-	declare -g BSP_CLI_PACKAGE_FULLNAME="${BSP_CLI_PACKAGE_NAME}_${REVISION}_${ARCH}"
-	declare -g BSP_DESKTOP_PACKAGE_NAME="armbian-bsp-desktop-${BOARD}${EXTRA_BSP_NAME}"
-	declare -g BSP_DESKTOP_PACKAGE_FULLNAME="${BSP_DESKTOP_PACKAGE_NAME}_${REVISION}_${ARCH}"
-
-	declare -g CHOSEN_UBOOT=linux-u-boot-${BRANCH}-${BOARD}
-	declare -g CHOSEN_KERNEL=linux-image-${BRANCH}-${LINUXFAMILY}
-	declare -g CHOSEN_ROOTFS=${BSP_CLI_PACKAGE_NAME}
-	declare -g CHOSEN_DESKTOP=armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}
-	declare -g CHOSEN_KERNEL_WITH_ARCH=${CHOSEN_KERNEL}-${ARCH} # Only for reporting purposes.
+	if [[ -n $CRUSTSOURCE ]]; then
+		declare -g CRUSTSOURCEDIR
+		CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
+	fi
 
 	# So for kernel full cached rebuilds.
 	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
@@ -215,9 +221,18 @@ function config_post_main() {
 	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
 	if [[ "${skip_kernel:-"no"}" != "yes" ]]; then
 		if [[ -n "${KERNELSOURCE}" ]]; then
-			declare -g ARMBIAN_WILL_BUILD_KERNEL="${CHOSEN_KERNEL}-${ARCH}"
 			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
-				exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR" "err"
+				display_alert "Problem: after configuration, there's not enough kernel info" "Might happen if you used the wrong BRANCH. Make sure 'BRANCH=${BRANCH}' is valid." "err"
+				# if we have KERNEL_TARGET set.
+				if [[ -n "${KERNEL_TARGET}" ]]; then
+					# Split KERNEL_TARGET by commas, and display each one.
+					declare -a KERNEL_TARGET_ARRAY=()
+					IFS=',' read -ra KERNEL_TARGET_ARRAY <<< "${KERNEL_TARGET}"
+					for i in "${KERNEL_TARGET_ARRAY[@]}"; do
+						display_alert "Valid branches for current board" "BOARD=${BOARD} BRANCH=${i}" "info"
+					done
+				fi
+				exit_with_error "BAD config, missing" "KERNEL_MAJOR_MINOR; check BOARD and BRANCH combination" "err"
 			fi
 			# assume the worst, and all surprises will be happy ones
 			declare -g KERNEL_HAS_WORKING_HEADERS="no"
@@ -248,7 +263,6 @@ function config_post_main() {
 			fi
 		else
 			declare -g KERNEL_HAS_WORKING_HEADERS="yes" # I assume non-Armbian kernels have working headers, eg: Debian/Ubuntu generic do.
-			declare -g ARMBIAN_WILL_BUILD_KERNEL=no
 		fi
 	else
 		display_alert "Skipping kernel config" "skip_kernel=yes" "debug"
@@ -259,6 +273,9 @@ function config_post_main() {
 	else
 		declare -g ARMBIAN_WILL_BUILD_UBOOT=no
 	fi
+
+	# Do some sanity checks for userspace stuff, if RELEASE/DESKTOP_ENVIRONMENT is set.
+	check_config_userspace_release_and_desktop
 
 	display_alert "Extensions: finish configuration" "extension_finish_config" "debug"
 	call_extension_method "extension_finish_config" <<- 'EXTENSION_FINISH_CONFIG'
@@ -283,6 +300,59 @@ function set_distribution_status() {
 	[[ "${DISTRIBUTION_STATUS}" != "supported" ]] && [[ "${EXPERT}" != "yes" ]] && exit_with_error "Armbian ${RELEASE} is unsupported and, therefore, only available to experts (EXPERT=yes)"
 
 	return 0 # due to last stmt above being a shortcircuit conditional
+}
+
+function check_config_userspace_release_and_desktop() {
+	# Do some sanity checks for userspace stuff.
+	# If RELEASE is set, it must be a valid release.
+	# We'll also check that the RELEASE supports the ARCH.
+	# Then we'll do the same for RELEASE+DESKTOP_ENVIRONMENT and the ARCH.
+	if [[ "${RELEASE}" != "" ]]; then
+		declare release_distro_dir="${SRC}/config/distributions/${RELEASE}"
+		declare release_distro_arches_file="${release_distro_dir}/architectures"
+
+		if [[ ! -d "${release_distro_dir}" ]]; then
+			exit_with_target_not_supported_error "RELEASE '${RELEASE}' is not supported; there is no '${release_distro_dir}' directory."
+		fi
+
+		if [[ ! -f "${release_distro_arches_file}" ]]; then
+			exit_with_target_not_supported_error "RELEASE '${RELEASE}' does not have file ${release_distro_arches_file}"
+		fi
+
+		if grep -q "${ARCH}" "${release_distro_arches_file}"; then
+			display_alert "RELEASE '${RELEASE}' supports ARCH '${ARCH}'" "RELEASE=${RELEASE} ARCH=${ARCH}; see ${release_distro_arches_file}" "debug"
+		else
+			exit_with_target_not_supported_error "RELEASE '${RELEASE}' does not support ARCH '${ARCH}'; see ${release_distro_arches_file}"
+		fi
+
+		# Desktop sanity checks, in the same vein.
+		if [[ "${DESKTOP_ENVIRONMENT}" != "" ]]; then
+
+			# If DESKTOP_ENVIRONMENT is set, but BUILD_DESKTOP is not, then we have a problem.
+			if [[ "${BUILD_DESKTOP}" != "yes" ]]; then
+				exit_with_error "DESKTOP_ENVIRONMENT is set, but BUILD_DESKTOP is not ==yes - please fix your parameters."
+			fi
+
+			declare desktop_release_distro_dir="${SRC}/config/desktop/${RELEASE}/environments/${DESKTOP_ENVIRONMENT}"
+			declare desktop_release_distro_arches_file="${release_distro_dir}/architectures"
+
+			if [[ ! -d "${desktop_release_distro_dir}" ]]; then
+				exit_with_target_not_supported_error "RELEASE '${RELEASE}' and Desktop Environment '${DESKTOP_ENVIRONMENT}' combination is not supported; there is no '${desktop_release_distro_dir}' directory."
+			fi
+
+			if [[ ! -f "${desktop_release_distro_arches_file}" ]]; then
+				exit_with_target_not_supported_error "RELEASE '${RELEASE}' and Desktop Environment '${DESKTOP_ENVIRONMENT}' combination is not supported; there is no '${desktop_release_distro_arches_file}' file."
+			fi
+
+			if grep -q "${ARCH}" "${desktop_release_distro_arches_file}"; then
+				display_alert "RELEASE '${RELEASE}' and Desktop Environment '${DESKTOP_ENVIRONMENT}' combination is supported" "RELEASE=${RELEASE} ARCH=${ARCH}; see ${desktop_release_distro_arches_file}" "debug"
+			else
+				exit_with_target_not_supported_error "RELEASE '${RELEASE}' and Desktop Environment '${DESKTOP_ENVIRONMENT}' combination is not supported; see ${desktop_release_distro_arches_file}"
+			fi
+		fi
+	fi
+
+	return 0
 }
 
 # Some utility functions

@@ -8,8 +8,8 @@
 # https://github.com/armbian/build/
 #
 import json
-import sys
 
+import sys
 from opensearchpy import OpenSearch  # pip3 install opensearch-py
 
 
@@ -48,11 +48,17 @@ eprint('\nCreating index...')
 response_create = client.indices.create(index_name, body=index_body)
 # print(response_create)
 
-for obj in json_object:
-	# print(obj)
-	response = client.index(index=index_name, body=obj)
+counter = 0
 
-eprint("\nRefreshing index...")
+for obj in json_object:
+	# Skip desktop builds
+	if 'BUILD_DESKTOP' in obj['in']['vars']:
+		if obj['in']['vars']['BUILD_DESKTOP'] == 'yes':
+			continue
+	response = client.index(index=index_name, body=obj)
+	counter += 1
+
+eprint(f"\nRefreshing index after loading {counter}...")
 client.indices.refresh(index=index_name)
 
 eprint("\nDone.")

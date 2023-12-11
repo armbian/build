@@ -8,11 +8,8 @@
 # https://github.com/armbian/build/
 
 function obtain_and_check_host_release_and_arch() {
-	# obtain the host release either from os-release or debian_version
-	declare -g HOSTRELEASE
-	HOSTRELEASE="$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)"
-	[[ -z $HOSTRELEASE ]] && HOSTRELEASE="$(cut -d'/' -f1 /etc/debian_version)"
-	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
+
+	obtain_hostrelease_only
 
 	# obtain the host arch, from dpkg
 	declare -g HOSTARCH
@@ -36,7 +33,7 @@ function obtain_and_check_host_release_and_arch() {
 	#
 	# NO_HOST_RELEASE_CHECK overrides the check for a supported host system
 	# Disable host OS check at your own risk. Any issues reported with unsupported releases will be closed without discussion
-	if [[ -z $HOSTRELEASE || "bullseye bookworm sid focal impish hirsute jammy kinetic lunar ulyana ulyssa uma una vanessa vera" != *"$HOSTRELEASE"* ]]; then
+	if [[ -z $HOSTRELEASE || "bookworm trixie sid jammy kinetic lunar vanessa vera victoria mantic" != *"$HOSTRELEASE"* ]]; then
 		if [[ $NO_HOST_RELEASE_CHECK == yes ]]; then
 			display_alert "You are running on an unsupported system" "${HOSTRELEASE:-(unknown)}" "wrn"
 			display_alert "Do not report any errors, warnings or other issues encountered beyond this point" "" "wrn"
@@ -44,4 +41,12 @@ function obtain_and_check_host_release_and_arch() {
 			exit_with_error "Unsupported build system: '${HOSTRELEASE:-(unknown)}'"
 		fi
 	fi
+}
+
+function obtain_hostrelease_only() {
+	# obtain the host release either from os-release or debian_version
+	declare -g HOSTRELEASE
+	HOSTRELEASE="$(cat /etc/os-release | grep VERSION_CODENAME | cut -d"=" -f2)"
+	[[ -z $HOSTRELEASE ]] && HOSTRELEASE="$(cut -d'/' -f1 /etc/debian_version)"
+	display_alert "Build host OS release" "${HOSTRELEASE:-(unknown)}" "info"
 }

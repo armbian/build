@@ -19,6 +19,10 @@ function prepare_host() {
 }
 
 function assert_prepared_host() {
+	if [[ "${PRE_PREPARED_HOST:-"no"}" == "yes" ]]; then
+		return 0
+	fi
+
 	if [[ ${prepare_host_has_already_run:-0} -lt 1 ]]; then
 		exit_with_error "assert_prepared_host: Host has not yet been prepared. This is a bug in armbian-next code. Please report!"
 	fi
@@ -113,11 +117,12 @@ function prepare_host_noninteractive() {
 		download_external_toolchains # Mostly deprecated, since SKIP_EXTERNAL_TOOLCHAINS=yes is the default
 	fi
 
-	# if we're building an image, not only packages...
+	# NEEDS_BINFMT=yes is set by default build and rootfs artifact build.
+	# if we're building an image, not only packages/artifacts...
 	# ... and the host arch does not match the target arch ...
 	# ... we then require binfmt_misc to be enabled.
 	# "enable arm binary format so that the cross-architecture chroot environment will work"
-	if [[ "${KERNEL_ONLY}" != "yes" ]] || [[ "${NEEDS_BINFMT:-"no"}" == "yes" ]]; then
+	if [[ "${NEEDS_BINFMT:-"no"}" == "yes" ]]; then
 
 		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 			display_alert "Debugging binfmt - early" "/proc/sys/fs/binfmt_misc/" "debug"
@@ -167,13 +172,12 @@ function prepare_host_noninteractive() {
 				if [[ "${host_arch}" != "${wanted_arch}" ]]; then
 					if [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" ]]; then
 						display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-						run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || {
-							if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
-								display_alert "Failed to update binfmts - this is expected: aarch64 does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-							else
-								display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err"
-							fi
-						}
+						if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
+							display_alert "Trying to update binfmts - aarch64 (sometimes) does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
+							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "&>" "/dev/null" "||" "true" # don't fail nor produce output, which can be misleading.
+						else
+							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err" # log & continue on failure
+						fi
 					fi
 				fi
 			done
@@ -252,7 +256,7 @@ function adaptative_prepare_host_dependencies() {
 		ca-certificates ccache cpio
 		debootstrap device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
-		fakeroot flex
+		flex
 		gawk gnupg gpg
 		imagemagick # required for boot_logo, plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
@@ -272,12 +276,12 @@ function adaptative_prepare_host_dependencies() {
 		zlib1g-dev
 
 		# by-category below
-		file tree expect                     # logging utilities; expect is needed for 'unbuffer' command
-		colorized-logs                       # for ansi2html, ansi2txt, pipetty
-		unzip zip pigz pixz pbzip2 lzop zstd # compressors et al
-		parted gdisk fdisk                   # partition tools @TODO why so many?
-		aria2 curl wget axel                 # downloaders et al
-		parallel                             # do things in parallel (used for fast md5 hashing in initrd cache)
+		file tree expect                         # logging utilities; expect is needed for 'unbuffer' command
+		colorized-logs                           # for ansi2html, ansi2txt, pipetty
+		unzip zip pigz xz-utils pbzip2 lzop zstd # compressors et al
+		parted gdisk fdisk                       # partition tools @TODO why so many?
+		aria2 curl wget axel                     # downloaders et al
+		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
 	)
 
 	# @TODO: distcc -- handle in extension?
@@ -289,8 +293,8 @@ function adaptative_prepare_host_dependencies() {
 	host_dependencies+=("python3-dev" "python3-distutils" "python3-setuptools" "python3-pip")
 
 	# Python2 -- required for some older u-boot builds
-	# Debian 'sid' does not carry python2 anymore; in this case some u-boot's might fail to build.
-	if [[ "sid bookworm" == *"${host_release}"* ]]; then
+	# Debian 'sid'/'bookworm' and Ubuntu 'lunar' does not carry python2 anymore; in this case some u-boot's might fail to build.
+	if [[ "sid bookworm trixie lunar mantic" == *"${host_release}"* ]]; then
 		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
 	else
 		host_dependencies+=("python2" "python2-dev")
@@ -317,15 +321,15 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("gcc-riscv64-linux-gnu")        # crossbuild-essential-riscv64 is not even available "yet"
-		host_dependencies+=("debian-ports-archive-keyring") # Debian Ports keyring needed, as riscv64 is not released yet
+		host_dependencies+=("gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64 is not even available "yet"
+		host_dependencies+=("debian-archive-keyring")
 	fi
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
 		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
 	fi
 
-	export EXTRA_BUILD_DEPS=""
+	declare -g EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 		*run before installing host dependencies*
 		you can add packages to install, space separated, to ${EXTRA_BUILD_DEPS} here.
@@ -336,7 +340,7 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=(${EXTRA_BUILD_DEPS})
 	fi
 
-	export FINAL_HOST_DEPS="${host_dependencies[*]}"
+	declare -g FINAL_HOST_DEPS="${host_dependencies[*]}"
 	call_extension_method "host_dependencies_known" <<- 'HOST_DEPENDENCIES_KNOWN'
 		*run after all host dependencies are known (but not installed)*
 		At this point we can read `${FINAL_HOST_DEPS}`, but changing won't have any effect.
@@ -371,12 +375,25 @@ function install_host_dependencies() {
 }
 
 function check_host_has_enough_disk_space() {
-	# @TODO: check every possible mount point. Not only one. People might have different mounts / Docker volumes...
-	# check free space (basic) @TODO probably useful to refactor and implement in multiple spots.
+	declare -a dirs_to_check=("${DEST}" "${SRC}/cache")
+	for dir in "${dirs_to_check[@]}"; do
+		if [[ ! -d "${dir}" ]]; then
+			display_alert "Directory not found" "Skipping disk space check for '${dir}'" "debug"
+			continue
+		fi
+		check_dir_has_enough_disk_space "${dir}" 10 || exit_if_countdown_not_aborted 10 "Low free disk space left in '${dir}'"
+	done
+}
+
+function check_dir_has_enough_disk_space() {
+	declare target="${1}"
+	declare -i min_free_space_gib="${2:-10}"
 	declare -i free_space_bytes
-	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${SRC}" --uniq 2> /dev/null) # in bytes
-	if [[ -n "$free_space_bytes" && $((free_space_bytes / 1073741824)) -lt 10 ]]; then
-		display_alert "Low free space left" "$((free_space_bytes / 1073741824))GiB" "wrn"
-		exit_if_countdown_not_aborted 10 "Low free disk space left" # This pauses & exits if error if ENTER is not pressed in 10 seconds
+	free_space_bytes=$(findmnt --noheadings --output AVAIL --bytes --target "${target}" --uniq 2> /dev/null) # in bytes
+	if [[ -n "$free_space_bytes" && $((free_space_bytes / 1073741824)) -lt $min_free_space_gib ]]; then
+		display_alert "Low free space left" "${target}: $((free_space_bytes / 1073741824))GiB free, ${min_free_space_gib} GiB required" "wrn"
+		return 1
 	fi
+	display_alert "Free space left" "${target}: $((free_space_bytes / 1073741824))GiB" "debug"
+	return 0
 }

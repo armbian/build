@@ -41,6 +41,7 @@ function cli_requirements_run() {
 		# We need to change the deployment directory to something not in ./cache, so it's baked into the image.
 		deploy_to_non_cache_dir="yes" run_tool_oras       # download-only, to non-cache dir.
 		deploy_to_non_cache_dir="yes" run_tool_shellcheck # download-only, to non-cache dir.
+		deploy_to_non_cache_dir="yes" run_tool_batcat     # download-only, to non-cache dir.
 
 		# @TODO: shfmt
 	fi

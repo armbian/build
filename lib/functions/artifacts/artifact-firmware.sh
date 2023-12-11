@@ -7,6 +7,11 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function artifact_firmware_config_dump() {
+	# artifact_input_variables: None, for firmware.
+	:
+}
+
 function artifact_firmware_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
@@ -23,13 +28,16 @@ function artifact_firmware_prepare_version() {
 	run_memoized GIT_INFO_ARMBIAN_FIRMWARE "git2info" memoized_git_ref_to_info
 	debug_dict GIT_INFO_ARMBIAN_FIRMWARE
 
+	# Sanity check, the SHA1 gotta be sane.
+	[[ "${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]}'"
+
 	declare fake_unchanging_base_version="1"
 
 	declare short_sha1="${GIT_INFO_ARMBIAN_FIRMWARE[SHA1]:0:${short_hash_size}}"
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/packages/firmware-deb.sh
+	calculate_hash_for_bash_deb_artifact "compilation/packages/firmware-deb.sh"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
@@ -43,18 +51,12 @@ function artifact_firmware_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
-	artifact_map_packages=(
-		["armbian-firmware"]="armbian-firmware"
-	)
-
-	artifact_map_debs=(
-		["armbian-firmware"]="armbian-firmware_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["armbian-firmware"]="armbian-firmware")
 
 	artifact_name="armbian-firmware"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-firmware_${artifact_version}_all.deb"
+	artifact_deb_repo="global"
+	artifact_deb_arch="all"
 
 	return 0
 }
@@ -71,12 +73,11 @@ function artifact_firmware_cli_adapter_pre_run() {
 }
 
 function artifact_firmware_cli_adapter_config_prep() {
-	declare KERNEL_ONLY="yes"                            # @TODO: this is a hack, for the board/family code's benefit...
 	use_board="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 }
 
 function artifact_firmware_get_default_oci_target() {
-	artifact_oci_target_base="ghcr.io/armbian/cache-firmware/"
+	artifact_oci_target_base="${GHCR_SOURCE}/armbian/os/"
 }
 
 function artifact_firmware_is_available_in_local_cache() {

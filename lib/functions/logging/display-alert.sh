@@ -15,7 +15,8 @@ function display_alert() {
 		if [[ "${POOR_MAN_PROFILER}" == "yes" ]]; then
 			poor_man_profiler
 		fi
-		echo -e "${extra_profiler}${*}" | sed 's/\x1b\[[0-9;]*m//g' >&2
+		echo -e "${extra_profiler}${3}::${1} ${2}" | sed 's/\x1b\[[0-9;]*m//g' | sed -z 's|\n|\\n|g' >&2 # remove ANSI colors and newlines
+		echo "" >&2                                                                                      # newline
 		return 0
 	fi
 
@@ -198,7 +199,7 @@ function display_alert() {
 	echo -e "${normal_color}${left_marker:-}${padding:-}${level_indicator}${padding}${normal_color}${right_marker:-}${timing_info}${pids_info}${bashopts_info} ${normal_color}${message}${extra}${normal_color}" >&2
 
 	# Now write to CI, if we're running on it. Remove ANSI escapes which confuse GitHub Actions.
-	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]]; then
+	if [[ "${CI}" == "true" ]] && [[ "${ci_log}" != "" ]] && [[ "${skip_ci_special:-"no"}" != "yes" ]]; then
 		echo -e "::${ci_log} ::" "${1} ${2}" | sed 's/\x1b\[[0-9;]*m//g' >&2
 	fi
 

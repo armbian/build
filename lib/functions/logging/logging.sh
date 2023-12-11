@@ -28,11 +28,11 @@ function logging_init() {
 	declare -g bright_yellow_color="\e[1;33m" yellow_color="\e[0;33m"
 	declare -g ansi_reset_color="\e[0m"
 	declare -g -i logging_section_counter=0 # -i: integer
-	declare -g tool_color="${gray_color}"   # default to gray... (should be ok on terminals)
+	declare -g tool_color="${normal_color}" # default to normal color.
 
-	# @TODO: more terminals might have a bit... impaired... default themes. correct.
-	if [[ "${TERM}" == "alacritty" ]]; then
-		declare -g tool_color="${normal_color}"
+	# A few terminals, like iTerm2, are known to correctly display "bright black" as gray. Use that if available.
+	if [[ "${ITERM_SHELL_INTEGRATION_INSTALLED:-"No"}" == "Yes" ]]; then
+		declare -g tool_color="${gray_color}"
 	fi
 
 	if [[ "${CI}" == "true" ]]; then # ... but that is too dark for Github Actions
@@ -65,17 +65,19 @@ function logging_error_show_log() {
 		echo "::endgroup::"
 	fi
 
-	if [[ -f "${logfile_to_show}" ]]; then
-		local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
-		local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
-		CURRENT_LOGFILE="" display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
+	if [[ "${ANSI_COLOR}" != "none" ]]; then
+		if [[ -f "${logfile_to_show}" ]]; then
+			local prefix_sed_contents="${normal_color}${left_marker}${padding}👉${padding}${right_marker}    "
+			local prefix_sed_cmd="s/^/${prefix_sed_contents}/;"
+			CURRENT_LOGFILE="" display_alert "    👇👇👇 Showing logfile below 👇👇👇" "${logfile_to_show}" "err"
 
-		# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
-		cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
+			# shellcheck disable=SC2002 # my cat is great. thank you, shellcheck.
+			cat "${logfile_to_show}" | grep -v -e "^$" | sed -e "${prefix_sed_cmd}" 1>&2 # write it to stderr!!
 
-		CURRENT_LOGFILE="" display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
-	else
-		CURRENT_LOGFILE="" display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
+			CURRENT_LOGFILE="" display_alert "    👆👆👆 Showing logfile above 👆👆👆" "${logfile_to_show}" "err"
+		else
+			CURRENT_LOGFILE="" display_alert "✋ Error log not available at this stage of build" "check messages above" "debug"
+		fi
 	fi
 	return 0
 }

@@ -1,0 +1,558 @@
+From d2d4783003509c554653cfceeb5ff946fe223bc2 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Thu, 9 Sep 2021 16:35:34 +0000
+Subject: [PATCH 1/4] 01-linux-0002-rockchip-from-list
+
+---
+ drivers/clk/rockchip/clk-pll.c    | 236 ++++++++++++++++++++++++++++--
+ drivers/clk/rockchip/clk-rk3228.c |  18 ++-
+ drivers/clk/rockchip/clk.c        |  39 ++++-
+ drivers/clk/rockchip/clk.h        |  27 +++-
+ include/linux/clk-provider.h      |   2 +
+ 5 files changed, 292 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/clk/rockchip/clk-pll.c b/drivers/clk/rockchip/clk-pll.c
+index f7827b3b7..8409e9eed 100644
+--- a/drivers/clk/rockchip/clk-pll.c
++++ b/drivers/clk/rockchip/clk-pll.c
+@@ -15,6 +15,7 @@
+ #include <linux/iopoll.h>
+ #include <linux/regmap.h>
+ #include <linux/clk.h>
++#include <linux/gcd.h>
+ #include "clk.h"
+ 
+ #define PLL_MODE_MASK		0x3
+@@ -47,6 +48,198 @@ struct rockchip_clk_pll {
+ #define to_rockchip_clk_pll_nb(nb) \
+ 			container_of(nb, struct rockchip_clk_pll, clk_nb)
+ 
++#define MHZ			(1000UL * 1000UL)
++#define KHZ			(1000UL)
++
++/* CLK_PLL_TYPE_RK3066_AUTO type ops */
++#define PLL_FREF_MIN		(269 * KHZ)
++#define PLL_FREF_MAX		(2200 * MHZ)
++
++#define PLL_FVCO_MIN		(440 * MHZ)
++#define PLL_FVCO_MAX		(2200 * MHZ)
++
++#define PLL_FOUT_MIN		(27500 * KHZ)
++#define PLL_FOUT_MAX		(2200 * MHZ)
++
++#define PLL_NF_MAX		(4096)
++#define PLL_NR_MAX		(64)
++#define PLL_NO_MAX		(16)
++
++/* CLK_PLL_TYPE_RK3036/3366/3399_AUTO type ops */
++#define MIN_FOUTVCO_FREQ	(800 * MHZ)
++#define MAX_FOUTVCO_FREQ	(2000 * MHZ)
++
++static struct rockchip_pll_rate_table auto_table;
++
++static struct rockchip_pll_rate_table *rk_pll_rate_table_get(void)
++{
++	return &auto_table;
++}
++
++static int rockchip_pll_clk_set_postdiv(unsigned long fout_hz,
++					u32 *postdiv1,
++					u32 *postdiv2,
++					u32 *foutvco)
++{
++	unsigned long freq;
++
++	if (fout_hz < MIN_FOUTVCO_FREQ) {
++		for (*postdiv1 = 1; *postdiv1 <= 7; (*postdiv1)++) {
++			for (*postdiv2 = 1; *postdiv2 <= 7; (*postdiv2)++) {
++				freq = fout_hz * (*postdiv1) * (*postdiv2);
++				if (freq >= MIN_FOUTVCO_FREQ &&
++				    freq <= MAX_FOUTVCO_FREQ) {
++					*foutvco = freq;
++					return 0;
++				}
++			}
++		}
++		pr_err("CANNOT FIND postdiv1/2 to make fout in range from 800M to 2000M,fout = %lu\n",
++		       fout_hz);
++	} else {
++		*postdiv1 = 1;
++		*postdiv2 = 1;
++	}
++	return 0;
++}
++
++static struct rockchip_pll_rate_table *
++rockchip_pll_clk_set_by_auto(struct rockchip_clk_pll *pll,
++			     unsigned long fin_hz,
++			     unsigned long fout_hz)
++{
++	struct rockchip_pll_rate_table *rate_table = rk_pll_rate_table_get();
++	/* FIXME set postdiv1/2 always 1*/
++	u32 foutvco = fout_hz;
++	u64 fin_64, frac_64;
++	u32 f_frac, postdiv1, postdiv2;
++	unsigned long clk_gcd = 0;
++
++	if (fin_hz == 0 || fout_hz == 0 || fout_hz == fin_hz)
++		return NULL;
++
++	rockchip_pll_clk_set_postdiv(fout_hz, &postdiv1, &postdiv2, &foutvco);
++	rate_table->postdiv1 = postdiv1;
++	rate_table->postdiv2 = postdiv2;
++	rate_table->dsmpd = 1;
++
++	if (fin_hz / MHZ * MHZ == fin_hz && fout_hz / MHZ * MHZ == fout_hz) {
++		fin_hz /= MHZ;
++		foutvco /= MHZ;
++		clk_gcd = gcd(fin_hz, foutvco);
++		rate_table->refdiv = fin_hz / clk_gcd;
++		rate_table->fbdiv = foutvco / clk_gcd;
++
++		rate_table->frac = 0;
++
++		pr_debug("fin = %lu, fout = %lu, clk_gcd = %lu, refdiv = %u, fbdiv = %u, postdiv1 = %u, postdiv2 = %u, frac = %u\n",
++			 fin_hz, fout_hz, clk_gcd, rate_table->refdiv,
++			 rate_table->fbdiv, rate_table->postdiv1,
++			 rate_table->postdiv2, rate_table->frac);
++	} else {
++		pr_debug("frac div running, fin_hz = %lu, fout_hz = %lu, fin_INT_mhz = %lu, fout_INT_mhz = %lu\n",
++			 fin_hz, fout_hz,
++			 fin_hz / MHZ * MHZ,
++			 fout_hz / MHZ * MHZ);
++		pr_debug("frac get postdiv1 = %u,  postdiv2 = %u, foutvco = %u\n",
++			 rate_table->postdiv1, rate_table->postdiv2, foutvco);
++		clk_gcd = gcd(fin_hz / MHZ, foutvco / MHZ);
++		rate_table->refdiv = fin_hz / MHZ / clk_gcd;
++		rate_table->fbdiv = foutvco / MHZ / clk_gcd;
++		pr_debug("frac get refdiv = %u,  fbdiv = %u\n",
++			 rate_table->refdiv, rate_table->fbdiv);
++
++		rate_table->frac = 0;
++
++		f_frac = (foutvco % MHZ);
++		fin_64 = fin_hz;
++		do_div(fin_64, (u64)rate_table->refdiv);
++		frac_64 = (u64)f_frac << 24;
++		do_div(frac_64, fin_64);
++		rate_table->frac = (u32)frac_64;
++		if (rate_table->frac > 0)
++			rate_table->dsmpd = 0;
++		pr_debug("frac = %x\n", rate_table->frac);
++	}
++	return rate_table;
++}
++
++static struct rockchip_pll_rate_table *
++rockchip_rk3066_pll_clk_set_by_auto(struct rockchip_clk_pll *pll,
++				    unsigned long fin_hz,
++				    unsigned long fout_hz)
++{
++	struct rockchip_pll_rate_table *rate_table = rk_pll_rate_table_get();
++	u32 nr, nf, no, nonr;
++	u32 nr_out, nf_out, no_out;
++	u32 n;
++	u32 numerator, denominator;
++	u64 fref, fvco, fout;
++	unsigned long clk_gcd = 0;
++
++	nr_out = PLL_NR_MAX + 1;
++	no_out = 0;
++	nf_out = 0;
++
++	if (fin_hz == 0 || fout_hz == 0 || fout_hz == fin_hz)
++		return NULL;
++
++	clk_gcd = gcd(fin_hz, fout_hz);
++
++	numerator = fout_hz / clk_gcd;
++	denominator = fin_hz / clk_gcd;
++
++	for (n = 1;; n++) {
++		nf = numerator * n;
++		nonr = denominator * n;
++		if (nf > PLL_NF_MAX || nonr > (PLL_NO_MAX * PLL_NR_MAX))
++			break;
++
++		for (no = 1; no <= PLL_NO_MAX; no++) {
++			if (!(no == 1 || !(no % 2)))
++				continue;
++
++			if (nonr % no)
++				continue;
++			nr = nonr / no;
++
++			if (nr > PLL_NR_MAX)
++				continue;
++
++			fref = fin_hz / nr;
++			if (fref < PLL_FREF_MIN || fref > PLL_FREF_MAX)
++				continue;
++
++			fvco = fref * nf;
++			if (fvco < PLL_FVCO_MIN || fvco > PLL_FVCO_MAX)
++				continue;
++
++			fout = fvco / no;
++			if (fout < PLL_FOUT_MIN || fout > PLL_FOUT_MAX)
++				continue;
++
++			/* select the best from all available PLL settings */
++			if ((no > no_out) ||
++			    ((no == no_out) && (nr < nr_out))) {
++				nr_out = nr;
++				nf_out = nf;
++				no_out = no;
++			}
++		}
++	}
++
++	/* output the best PLL setting */
++	if ((nr_out <= PLL_NR_MAX) && (no_out > 0)) {
++		rate_table->nr = nr_out;
++		rate_table->nf = nf_out;
++		rate_table->no = no_out;
++	} else {
++		return NULL;
++	}
++
++	return rate_table;
++}
++
+ static const struct rockchip_pll_rate_table *rockchip_get_pll_settings(
+ 			    struct rockchip_clk_pll *pll, unsigned long rate)
+ {
+@@ -58,24 +251,16 @@ static const struct rockchip_pll_rate_table *rockchip_get_pll_settings(
+ 			return &rate_table[i];
+ 	}
+ 
+-	return NULL;
++	if (pll->type == pll_rk3066)
++		return rockchip_rk3066_pll_clk_set_by_auto(pll, 24 * MHZ, rate);
++	else
++		return rockchip_pll_clk_set_by_auto(pll, 24 * MHZ, rate);
+ }
+ 
+ static long rockchip_pll_round_rate(struct clk_hw *hw,
+ 			    unsigned long drate, unsigned long *prate)
+ {
+-	struct rockchip_clk_pll *pll = to_rockchip_clk_pll(hw);
+-	const struct rockchip_pll_rate_table *rate_table = pll->rate_table;
+-	int i;
+-
+-	/* Assumming rate_table is in descending order */
+-	for (i = 0; i < pll->rate_count; i++) {
+-		if (drate >= rate_table[i].rate)
+-			return rate_table[i].rate;
+-	}
+-
+-	/* return minimum supported value */
+-	return rate_table[i - 1].rate;
++	return drate;
+ }
+ 
+ /*
+@@ -165,7 +350,7 @@ static unsigned long rockchip_rk3036_pll_recalc_rate(struct clk_hw *hw,
+ {
+ 	struct rockchip_clk_pll *pll = to_rockchip_clk_pll(hw);
+ 	struct rockchip_pll_rate_table cur;
+-	u64 rate64 = prate;
++	u64 rate64 = prate, frac_rate64 = prate;
+ 
+ 	rockchip_rk3036_pll_get_params(pll, &cur);
+ 
+@@ -174,7 +359,7 @@ static unsigned long rockchip_rk3036_pll_recalc_rate(struct clk_hw *hw,
+ 
+ 	if (cur.dsmpd == 0) {
+ 		/* fractional mode */
+-		u64 frac_rate64 = prate * cur.frac;
++		frac_rate64 *= cur.frac;
+ 
+ 		do_div(frac_rate64, cur.refdiv);
+ 		rate64 += frac_rate64 >> 24;
+@@ -210,6 +395,11 @@ static int rockchip_rk3036_pll_set_params(struct rockchip_clk_pll *pll,
+ 		rate_change_remuxed = 1;
+ 	}
+ 
++	/* set pll power down */
++	writel(HIWORD_UPDATE(RK3036_PLLCON1_PWRDOWN,
++			     RK3036_PLLCON1_PWRDOWN, 0),
++	       pll->reg_base + RK3036_PLLCON(1));
++
+ 	/* update pll values */
+ 	writel_relaxed(HIWORD_UPDATE(rate->fbdiv, RK3036_PLLCON0_FBDIV_MASK,
+ 					  RK3036_PLLCON0_FBDIV_SHIFT) |
+@@ -231,6 +421,11 @@ static int rockchip_rk3036_pll_set_params(struct rockchip_clk_pll *pll,
+ 	pllcon |= rate->frac << RK3036_PLLCON2_FRAC_SHIFT;
+ 	writel_relaxed(pllcon, pll->reg_base + RK3036_PLLCON(2));
+ 
++	/* set pll power up */
++	writel(HIWORD_UPDATE(0, RK3036_PLLCON1_PWRDOWN, 0),
++	       pll->reg_base + RK3036_PLLCON(1));
++	udelay(1);
++
+ 	/* wait for the pll to lock */
+ 	ret = rockchip_rk3036_pll_wait_lock(pll);
+ 	if (ret) {
+@@ -692,6 +887,11 @@ static int rockchip_rk3399_pll_set_params(struct rockchip_clk_pll *pll,
+ 		rate_change_remuxed = 1;
+ 	}
+ 
++	/* set pll power down */
++	writel(HIWORD_UPDATE(RK3399_PLLCON3_PWRDOWN,
++			     RK3399_PLLCON3_PWRDOWN, 0),
++	       pll->reg_base + RK3399_PLLCON(3));
++
+ 	/* update pll values */
+ 	writel_relaxed(HIWORD_UPDATE(rate->fbdiv, RK3399_PLLCON0_FBDIV_MASK,
+ 						  RK3399_PLLCON0_FBDIV_SHIFT),
+@@ -715,6 +915,12 @@ static int rockchip_rk3399_pll_set_params(struct rockchip_clk_pll *pll,
+ 					    RK3399_PLLCON3_DSMPD_SHIFT),
+ 		       pll->reg_base + RK3399_PLLCON(3));
+ 
++	/* set pll power up */
++	writel(HIWORD_UPDATE(0,
++			     RK3399_PLLCON3_PWRDOWN, 0),
++	       pll->reg_base + RK3399_PLLCON(3));
++	udelay(1);
++
+ 	/* wait for the pll to lock */
+ 	ret = rockchip_rk3399_pll_wait_lock(pll);
+ 	if (ret) {
+diff --git a/drivers/clk/rockchip/clk-rk3228.c b/drivers/clk/rockchip/clk-rk3228.c
+index 7343d2d76..aca1a483a 100644
+--- a/drivers/clk/rockchip/clk-rk3228.c
++++ b/drivers/clk/rockchip/clk-rk3228.c
+@@ -15,6 +15,10 @@
+ 
+ #define RK3228_GRF_SOC_STATUS0	0x480
+ 
++#define RK3228_UART_FRAC_MAX_PRATE	600000000
++#define RK3228_SPDIF_FRAC_MAX_PRATE	600000000
++#define RK3228_I2S_FRAC_MAX_PRATE	600000000
++
+ enum rk3228_plls {
+ 	apll, dpll, cpll, gpll,
+ };
+@@ -420,7 +424,7 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 	COMPOSITE_FRACMUX(0, "i2s0_frac", "i2s0_src", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKSEL_CON(8), 0,
+ 			RK2928_CLKGATE_CON(0), 4, GFLAGS,
+-			&rk3228_i2s0_fracmux),
++			&rk3228_i2s0_fracmux, RK3228_I2S_FRAC_MAX_PRATE),
+ 	GATE(SCLK_I2S0, "sclk_i2s0", "i2s0_pre", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKGATE_CON(0), 5, GFLAGS),
+ 
+@@ -430,7 +434,7 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 	COMPOSITE_FRACMUX(0, "i2s1_frac", "i2s1_src", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKSEL_CON(7), 0,
+ 			RK2928_CLKGATE_CON(0), 11, GFLAGS,
+-			&rk3228_i2s1_fracmux),
++			&rk3228_i2s1_fracmux, RK3228_I2S_FRAC_MAX_PRATE),
+ 	GATE(SCLK_I2S1, "sclk_i2s1", "i2s1_pre", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKGATE_CON(0), 14, GFLAGS),
+ 	COMPOSITE_NODIV(SCLK_I2S_OUT, "i2s_out", mux_i2s_out_p, 0,
+@@ -443,7 +447,7 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 	COMPOSITE_FRACMUX(0, "i2s2_frac", "i2s2_src", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKSEL_CON(30), 0,
+ 			RK2928_CLKGATE_CON(0), 8, GFLAGS,
+-			&rk3228_i2s2_fracmux),
++			&rk3228_i2s2_fracmux, RK3228_I2S_FRAC_MAX_PRATE),
+ 	GATE(SCLK_I2S2, "sclk_i2s2", "i2s2_pre", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKGATE_CON(0), 9, GFLAGS),
+ 
+@@ -453,7 +457,7 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 	COMPOSITE_FRACMUX(0, "spdif_frac", "sclk_spdif_src", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKSEL_CON(20), 0,
+ 			RK2928_CLKGATE_CON(2), 12, GFLAGS,
+-			&rk3228_spdif_fracmux),
++			&rk3228_spdif_fracmux, RK3228_SPDIF_FRAC_MAX_PRATE),
+ 
+ 	GATE(0, "jtag", "ext_jtag", CLK_IGNORE_UNUSED,
+ 			RK2928_CLKGATE_CON(1), 3, GFLAGS),
+@@ -488,15 +492,15 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 	COMPOSITE_FRACMUX(0, "uart0_frac", "uart0_src", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKSEL_CON(17), 0,
+ 			RK2928_CLKGATE_CON(1), 9, GFLAGS,
+-			&rk3228_uart0_fracmux),
++			&rk3228_uart0_fracmux, RK3228_UART_FRAC_MAX_PRATE),
+ 	COMPOSITE_FRACMUX(0, "uart1_frac", "uart1_src", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKSEL_CON(18), 0,
+ 			RK2928_CLKGATE_CON(1), 11, GFLAGS,
+-			&rk3228_uart1_fracmux),
++			&rk3228_uart1_fracmux, RK3228_UART_FRAC_MAX_PRATE),
+ 	COMPOSITE_FRACMUX(0, "uart2_frac", "uart2_src", CLK_SET_RATE_PARENT,
+ 			RK2928_CLKSEL_CON(19), 0,
+ 			RK2928_CLKGATE_CON(1), 13, GFLAGS,
+-			&rk3228_uart2_fracmux),
++			&rk3228_uart2_fracmux, RK3228_UART_FRAC_MAX_PRATE),
+ 
+ 	COMPOSITE(SCLK_NANDC, "sclk_nandc", mux_pll_src_2plls_p, 0,
+ 			RK2928_CLKSEL_CON(2), 14, 1, MFLAGS, 8, 5, DFLAGS,
+diff --git a/drivers/clk/rockchip/clk.c b/drivers/clk/rockchip/clk.c
+index 049e5e0b6..d8e744c22 100644
+--- a/drivers/clk/rockchip/clk.c
++++ b/drivers/clk/rockchip/clk.c
+@@ -210,7 +229,7 @@ static struct clk *rockchip_clk_register_frac_branch(
+ 		void __iomem *base, int muxdiv_offset, u8 div_flags,
+ 		int gate_offset, u8 gate_shift, u8 gate_flags,
+ 		unsigned long flags, struct rockchip_clk_branch *child,
+-		spinlock_t *lock)
++		unsigned long max_prate, spinlock_t *lock)
+ {
+ 	struct clk_hw *hw;
+ 	struct rockchip_clk_frac *frac;
+@@ -251,6 +270,7 @@ static struct clk *rockchip_clk_register_frac_branch(
+ 	div->nmask = GENMASK(div->nwidth - 1, 0) << div->nshift;
+ 	div->lock = lock;
+ 	div->approximation = rockchip_fractional_approximation;
++	div->max_prate = max_prate;
+ 	div_ops = &clk_fractional_divider_ops;
+ 
+ 	hw = clk_hw_register_composite(NULL, name, parent_names, num_parents,
+@@ -387,6 +407,8 @@ struct rockchip_clk_provider *rockchip_clk_init(struct device_node *np,
+ 
+ 	ctx->grf = syscon_regmap_lookup_by_phandle(ctx->cru_node,
+ 						   "rockchip,grf");
++	ctx->pmugrf = syscon_regmap_lookup_by_phandle(ctx->cru_node,
++						   "rockchip,pmugrf");
+ 
+ 	return ctx;
+ 
+@@ -465,6 +487,13 @@ void rockchip_clk_register_branches(struct rockchip_clk_provider *ctx,
+ 				list->mux_shift, list->mux_width,
+ 				list->mux_flags);
+ 			break;
++		case branch_muxpmugrf:
++			clk = rockchip_clk_register_muxgrf(list->name,
++				list->parent_names, list->num_parents,
++				flags, ctx->pmugrf, list->muxdiv_offset,
++				list->mux_shift, list->mux_width,
++				list->mux_flags);
++			break;
+ 		case branch_divider:
+ 			if (list->div_table)
+ 				clk = clk_register_divider_table(NULL,
+@@ -488,7 +517,7 @@ void rockchip_clk_register_branches(struct rockchip_clk_provider *ctx,
+ 				list->div_flags,
+ 				list->gate_offset, list->gate_shift,
+ 				list->gate_flags, flags, list->child,
+-				&ctx->lock);
++				list->max_prate, &ctx->lock);
+ 			break;
+ 		case branch_half_divider:
+ 			clk = rockchip_clk_register_halfdiv(list->name,
+diff --git a/drivers/clk/rockchip/clk.h b/drivers/clk/rockchip/clk.h
+index 7aa45cc70..6becf40a8 100644
+--- a/drivers/clk/rockchip/clk.h
++++ b/drivers/clk/rockchip/clk.h
+@@ -266,6 +266,7 @@ struct rockchip_clk_provider {
+ 	struct clk_onecell_data clk_data;
+ 	struct device_node *cru_node;
+ 	struct regmap *grf;
++	struct regmap *pmugrf;
+ 	spinlock_t lock;
+ };
+ 
+@@ -427,6 +428,7 @@ enum rockchip_clk_branch_type {
+ 	branch_composite,
+ 	branch_mux,
+ 	branch_muxgrf,
++	branch_muxpmugrf,
+ 	branch_divider,
+ 	branch_fraction_divider,
+ 	branch_gate,
+@@ -457,6 +459,7 @@ struct rockchip_clk_branch {
+ 	u8				gate_shift;
+ 	u8				gate_flags;
+ 	struct rockchip_clk_branch	*child;
++	unsigned long			max_prate;
+ };
+ 
+ #define COMPOSITE(_id, cname, pnames, f, mo, ms, mw, mf, ds, dw,\
+@@ -596,7 +599,7 @@ struct rockchip_clk_branch {
+ 		.gate_offset	= -1,				\
+ 	}
+ 
+-#define COMPOSITE_FRAC(_id, cname, pname, f, mo, df, go, gs, gf)\
++#define COMPOSITE_FRAC(_id, cname, pname, f, mo, df, go, gs, gf, prate)\
+ 	{							\
+ 		.id		= _id,				\
+ 		.branch_type	= branch_fraction_divider,	\
+@@ -611,9 +614,10 @@ struct rockchip_clk_branch {
+ 		.gate_offset	= go,				\
+ 		.gate_shift	= gs,				\
+ 		.gate_flags	= gf,				\
++		.max_prate	= prate,			\
+ 	}
+ 
+-#define COMPOSITE_FRACMUX(_id, cname, pname, f, mo, df, go, gs, gf, ch) \
++#define COMPOSITE_FRACMUX(_id, cname, pname, f, mo, df, go, gs, gf, ch, prate) \
+ 	{							\
+ 		.id		= _id,				\
+ 		.branch_type	= branch_fraction_divider,	\
+@@ -629,9 +633,10 @@ struct rockchip_clk_branch {
+ 		.gate_shift	= gs,				\
+ 		.gate_flags	= gf,				\
+ 		.child		= ch,				\
++		.max_prate	= prate,			\
+ 	}
+ 
+-#define COMPOSITE_FRACMUX_NOGATE(_id, cname, pname, f, mo, df, ch) \
++#define COMPOSITE_FRACMUX_NOGATE(_id, cname, pname, f, mo, df, ch, prate) \
+ 	{							\
+ 		.id		= _id,				\
+ 		.branch_type	= branch_fraction_divider,	\
+@@ -645,6 +650,7 @@ struct rockchip_clk_branch {
+ 		.div_flags	= df,				\
+ 		.gate_offset	= -1,				\
+ 		.child		= ch,				\
++		.max_prate	= prate,			\
+ 	}
+ 
+ #define COMPOSITE_DDRCLK(_id, cname, pnames, f, mo, ms, mw,	\
+@@ -695,6 +701,21 @@ struct rockchip_clk_branch {
+ 		.gate_offset	= -1,				\
+ 	}
+ 
++#define MUXPMUGRF(_id, cname, pnames, f, o, s, w, mf)		\
++	{							\
++		.id		= _id,				\
++		.branch_type	= branch_muxpmugrf,		\
++		.name		= cname,			\
++		.parent_names	= pnames,			\
++		.num_parents	= ARRAY_SIZE(pnames),		\
++		.flags		= f,				\
++		.muxdiv_offset	= o,				\
++		.mux_shift	= s,				\
++		.mux_width	= w,				\
++		.mux_flags	= mf,				\
++		.gate_offset	= -1,				\
++	}
++
+ #define DIV(_id, cname, pname, f, o, s, w, df)			\
+ 	{							\
+ 		.id		= _id,				\
+diff --git a/include/linux/clk-provider.h b/include/linux/clk-provider.h
+index d83b82930..d54624046 100644
+--- a/include/linux/clk-provider.h
++++ b/include/linux/clk-provider.h
+@@ -989,6 +989,7 @@ struct clk_hw *devm_clk_hw_register_fixed_factor(struct device *dev,
+  * @mwidth:	width of the numerator bit field
+  * @nshift:	shift to the denominator bit field
+  * @nwidth:	width of the denominator bit field
++ * @max_parent:	the maximum frequency of fractional divider parent clock
+  * @lock:	register lock
+  *
+  * Clock with adjustable fractional divider affecting its output frequency.
+@@ -1012,6 +1013,7 @@ struct clk_fractional_divider {
+ 	u8		nwidth;
+ 	u32		nmask;
+ 	u8		flags;
++	unsigned long	max_prate;
+ 	void		(*approximation)(struct clk_hw *hw,
+ 				unsigned long rate, unsigned long *parent_rate,
+ 				unsigned long *m, unsigned long *n);
+-- 
+2.25.1
+

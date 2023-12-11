@@ -86,7 +86,7 @@ function fetch_from_repo() {
 	local git_work_dir
 
 	# Set GitHub mirror before anything else touches $url
-	url=${url//'https://github.com/'/$GITHUB_SOURCE'/'}
+	url="$(echo "$url" | sed "s|^https://github.com/|${GITHUB_SOURCE}/|")"
 
 	# The 'offline' variable must always be set to 'true' or 'false'
 	local offline=false
@@ -239,6 +239,18 @@ function fetch_from_repo() {
 	fetched_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")" # unix timestamp of the commit date
 	display_alert "Fetched revision: fetched_revision:" "${fetched_revision}" "git"
 	display_alert "Fetched revision: fetched_revision_ts:" "${fetched_revision_ts}" "git"
+
+	# if FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE is set, and the ref is not a sha1, invoke that callback.
+	if [[ "${FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE:-"none"}" != "none" ]]; then
+		case $ref_type in
+			tag | commit) # do nothing
+				;;
+			*) # Complain
+				display_alert "FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE is set, and the ref is not a sha1" "${url} ${ref_type} ${ref_name} - should be commit:${fetched_revision}" "debug"
+				"${FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE}" "${url}" "${ref_type}" "${ref_name}" "${fetched_revision}"
+				;;
+		esac
+	fi
 
 	if [[ "${do_checkout:-"yes"}" == "yes" ]]; then
 		display_alert "git checking out revision SHA" "${fetched_revision}" "git"

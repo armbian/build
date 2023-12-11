@@ -2,25 +2,25 @@
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 function extension_prepare_config__prepare_flash_kernel() {
 	# Configuration defaults, or lack thereof.
-	export FK__TOOL_PACKAGE="${FK__TOOL_PACKAGE:-flash-kernel}"
-	export FK__PUBLISHED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION:-undefined-flash-kernel-version}"
-	export FK__EXTRA_PACKAGES="${FK__EXTRA_PACKAGES:-undefined-flash-kernel-kernel-package}"
-	export FK__KERNEL_PACKAGES="${FK__KERNEL_PACKAGES:-}"
-	export FK__MACHINE_MODEL="${FK__MACHINE_MODEL:-Undefined Flash-Kernel Machine}"
+	declare -g FK__TOOL_PACKAGE="${FK__TOOL_PACKAGE:-flash-kernel}"
+	declare -g FK__PUBLISHED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION:-undefined-flash-kernel-version}"
+	declare -g FK__EXTRA_PACKAGES="${FK__EXTRA_PACKAGES:-undefined-flash-kernel-kernel-package}"
+	declare -g FK__KERNEL_PACKAGES="${FK__KERNEL_PACKAGES:-}"
+	declare -g FK__MACHINE_MODEL="${FK__MACHINE_MODEL:-Undefined Flash-Kernel Machine}"
 
 	# Override certain variables. A case of "this extension knows better and modifies user configurable stuff".
-	export BOOTCONFIG="none"                                                    # To try and convince lib/ to not build or install u-boot.
-	unset BOOTSOURCE                                                            # To try and convince lib/ to not build or install u-boot.
-	export UEFISIZE=256                                                         # in MiB. Not really UEFI, but partition layout is the same.
-	export BOOTSIZE=0                                                           # No separate /boot, flash-kernel will "flash" the kernel+initrd to the firmware part.
-	export UEFI_MOUNT_POINT="/boot/firmware"                                    # mount uefi partition at /boot/firmware
-	export CLOUD_INIT_CONFIG_LOCATION="/boot/firmware"                          # use /boot/firmware for cloud-init as well
-	export IMAGE_INSTALLED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION}"     # For the VERSION
-	export EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-fk${FK__PUBLISHED_KERNEL_VERSION}" # Unique bsp name.
+	declare -g BOOTCONFIG="none"                                                    # To try and convince lib/ to not build or install u-boot.
+	unset BOOTSOURCE                                                                # To try and convince lib/ to not build or install u-boot.
+	declare -g UEFISIZE=256                                                         # in MiB. Not really UEFI, but partition layout is the same.
+	declare -g BOOTSIZE=0                                                           # No separate /boot, flash-kernel will "flash" the kernel+initrd to the firmware part.
+	declare -g UEFI_MOUNT_POINT="/boot/firmware"                                    # mount uefi partition at /boot/firmware
+	declare -g CLOUD_INIT_CONFIG_LOCATION="/boot/firmware"                          # use /boot/firmware for cloud-init as well
+	declare -g IMAGE_INSTALLED_KERNEL_VERSION="${FK__PUBLISHED_KERNEL_VERSION}"     # For the VERSION
+	declare -g EXTRA_BSP_NAME="${EXTRA_BSP_NAME}-fk${FK__PUBLISHED_KERNEL_VERSION}" # Unique bsp name.
 }
 
 function post_install_kernel_debs__install_kernel_and_flash_packages() {
-	export INSTALL_ARMBIAN_FIRMWARE="no" # Disable Armbian-firmware install, which would happen after this method.
+	declare -g INSTALL_ARMBIAN_FIRMWARE="no" # Disable Armbian-firmware install, which would happen after this method.
 
 	if [[ "${FK__EXTRA_PACKAGES}" != "" ]]; then
 		display_alert "Installing flash-kernel extra packages" "${FK__EXTRA_PACKAGES}"
@@ -64,6 +64,41 @@ post_family_tweaks_bsp__remove_uboot_flash_kernel() {
 	find "$destination" -type f | grep -e "uboot" -e "u-boot" | xargs rm
 }
 
+# Make sure we don't try to install or remove /boot/dtb-$kvers directory
+post_family_tweaks_bsp__add_workaround_to_handle_upgrade() {
+	run_host_command_logged mkdir -p "${destination}"/etc/kernel/post{inst,rm}.d
+
+	# Make sure flash kernel doesn't try to remove or install symlink at /boot/dtb-$kvers
+	# as linux-dtb package uses the same.
+	run_host_command_logged cat <<- '00_fix_boot_dtb_kvers' > "${destination}"/etc/kernel/postinst.d/00-fix-flash-kernel
+		#!/bin/sh
+
+		grep /boot/dtb- /usr/share/flash-kernel/functions | grep -vq '^#'
+
+		if [ $? -eq 0 ] ; then
+			sed -i '/\/boot\/dtb-/s/^/#/g' /usr/share/flash-kernel/functions
+		fi
+	00_fix_boot_dtb_kvers
+
+	# Now that flash-kernel is done running, remove the comment so that flash-kernel package
+	# won't report the file as modified
+	run_host_command_logged cat <<- 'zzz_revert_fix_boot_dtb_kvers' > "${destination}"/etc/kernel/postinst.d/zzz-fix-flash-kernel
+		#!/bin/sh
+
+		grep /boot/dtb- /usr/share/flash-kernel/functions | grep -q '^#'
+
+		if [ $? -eq 0 ] ; then
+			sed -i '/\/boot\/dtb-/s/^#//g' /usr/share/flash-kernel/functions
+		fi
+	zzz_revert_fix_boot_dtb_kvers
+
+	run_host_command_logged cp "${destination}"/etc/kernel/post{inst,rm}.d/00-fix-flash-kernel
+	run_host_command_logged chmod a+rx "${destination}"/etc/kernel/post{inst,rm}.d/00-fix-flash-kernel
+
+	run_host_command_logged cp "${destination}"/etc/kernel/post{inst,rm}.d/zzz-fix-flash-kernel
+	run_host_command_logged chmod a+rx "${destination}"/etc/kernel/post{inst,rm}.d/zzz-fix-flash-kernel
+}
+
 pre_umount_final_image__remove_uboot_initramfs_hook_flash_kernel() {
 	# even if BSP still contained this (cached .deb), make sure by removing from ${MOUNT}
 	[[ -f "$MOUNT"/etc/initramfs/post-update.d/99-uboot ]] && rm -v "$MOUNT"/etc/initramfs/post-update.d/99-uboot
@@ -74,13 +109,11 @@ function pre_update_initramfs__setup_flash_kernel() {
 	local chroot_target=$MOUNT
 	deploy_qemu_binary_to_chroot "${chroot_target}"
 	mount_chroot "$chroot_target/" # this already handles /boot/firmware which is required for it to work.
-	# hack, umount the chroot's /sys, otherwise flash-kernel tries to EFI flash due to the build host (!) being EFI
-	umount "$chroot_target/sys"
 
 	chroot_custom "$chroot_target" chmod -v -x "/etc/kernel/postinst.d/initramfs-tools"
 	chroot_custom "$chroot_target" chmod -v -x "/etc/initramfs/post-update.d/flash-kernel"
 
-	export FIRMWARE_DIR="${MOUNT}"/boot/firmware
+	declare -g FIRMWARE_DIR="${MOUNT}"/boot/firmware
 	call_extension_method "pre_initramfs_flash_kernel" <<- 'PRE_INITRAMFS_FLASH_KERNEL'
 		*prepare to update-initramfs before flashing kernel via flash_kernel*
 		A good spot to write firmware config to ${FIRMWARE_DIR} (/boot/firmware) before flash-kernel actually runs.
@@ -92,6 +125,9 @@ function pre_update_initramfs__setup_flash_kernel() {
 		display_alert "Failed to run '$update_initramfs_cmd'" "Check logs" "err"
 		exit 29
 	}
+
+	# hack, umount the chroot's /sys, otherwise flash-kernel tries to EFI flash due to the build host (!) being EFI
+	umount "$chroot_target/sys"
 
 	call_extension_method "pre_flash_kernel" <<- 'PRE_FLASH_KERNEL'
 		*run before running flash-kernel*
