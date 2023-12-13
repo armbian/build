@@ -14,7 +14,7 @@ setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 setenv earlycon "off"
 
-env exists distro_bootpart || setenv distro_bootpart 1
+test -n "${distro_bootpart}" || distro_bootpart=1
 
 echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 
