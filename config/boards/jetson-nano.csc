@@ -6,6 +6,6 @@ declare -g KERNEL_TARGET="current,edge"
 
 declare -g BOOT_LOGO=desktop
 
-declare -g GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0,115200n8"
+declare -g GRUB_CMDLINE_LINUX_DEFAULT="efi=noruntime console=ttyS0,115200n8"
 declare -g BOOT_FDT_FILE="nvidia/tegra210-p3450-0000.dtb"
 enable_extension "grub-with-dtb"
