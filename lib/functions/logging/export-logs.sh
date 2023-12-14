@@ -170,7 +170,7 @@ function export_ansi_logs() {
 		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
 
 		# @TODO: compress...
-		declare paste_url="${PASTE_URL:-"https://paste.next.armbian.com/log"}"
+		declare paste_url="${PASTE_URL:-"https://paste.armbian.com/log"}"
 		if [[ "${SHARE_LOG:-"no"}" == "yes" ]]; then
 			display_alert "SHARE_LOG=yes, uploading log" "uploading logs" "info"
 			declare logs_url="undetermined"
