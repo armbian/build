@@ -1,23 +1,24 @@
-# Rockchip RK3568 quad core 4GB eMMC USB3 USB2 1x GbE 2x 2.5GbE NVME
-BOARD_NAME="NanoPi R5S"
-BOARDFAMILY="rockchip64"
-BOARD_MAINTAINER="utlark"
+# Rockchip RK3568 quad core 4GB eMMC USB3 2x 2.5GbE 
+BOARD_NAME="NanoPi R5C"
+BOARDFAMILY="rockchip64" 
+BOARD_MAINTAINER=""
 BOOT_SOC="rk3568"
 KERNEL_TARGET="edge"
-BOOT_FDT_FILE="rockchip/rk3568-nanopi-r5s.dtb"
+BOOT_FDT_FILE="rockchip/rk3568-nanopi-r5c.dtb"
 SRC_EXTLINUX="no"
 ASOUND_STATE="asound.state.station-m2" # TODO verify me
 IMAGE_PARTITION_TABLE="gpt"
-FULL_DESKTOP="yes"
+FULL_DESKTOP="no"
+INSTALL_HEADERS="yes"
 BOOT_LOGO="desktop"
 
 BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git" # also following kwiboo's uboot due to his rk3568 work
 BOOTBRANCH_BOARD="commit:a6e84f9f5b90ff0fa3ac4e6b7e0d6e2c3ac9bb1b" # specific commit, from "branch:rk3568-2023.10" which is v2023.10-rc2 + kwiboo's patches (including GMAC)
 BOOTPATCHDIR="v2023.10"
-BOOTCONFIG="nanopi-r5s-rk3568_defconfig"
+BOOTCONFIG="nanopi-r5c-rk3568_defconfig"
 BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 
-DEFAULT_OVERLAYS="nanopi-r5s-leds"
+DEFAULT_OVERLAYS="nanopi-r5c-leds"
 
 # Newer blobs...
 RKBIN_GIT_URL="https://github.com/rpardini/armbian-rkbin.git"
@@ -35,14 +36,13 @@ function add_host_dependencies__new_uboot_wants_python3() {
 	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
 }
 
-function post_family_tweaks__nanopir5s_udev_network_interfaces() {
-	display_alert "$BOARD" "Renaming interfaces WAN LAN1 LAN2" "info"
+function post_family_tweaks__nanopir5c_udev_network_interfaces() {
+	display_alert "$BOARD" "Renaming interfaces WAN LAN" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
 	cat << EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
-SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="wan"
-SUBSYSTEM=="net", ACTION=="add", KERNELS=="0000:01:00.0", NAME:="lan1"
-SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan2"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="0002:01:00.0", NAME:="wan"
 EOF
 
 }
