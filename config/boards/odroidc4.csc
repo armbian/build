@@ -4,6 +4,7 @@ BOARDFAMILY="meson-sm1"
 BOARD_MAINTAINER=""
 BOOTCONFIG="odroid-c4_defconfig"
 KERNEL_TARGET="current,edge"
+MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
 FULL_DESKTOP="yes"
 SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"

@@ -90,7 +90,7 @@ function memoized_git_ref_to_info() {
 			declare url="undetermined"
 			case "${git_source}" in
 
-				"https://git.kernel.org/pub/scm/linux/kernel/"*)
+				"https://git.kernel.org/pub/scm/linux/kernel/"* | "https://git.ti.com/"*)
 					url="${git_source}/plain/Makefile?h=${sha1}"
 					;;
 

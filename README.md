@@ -4,22 +4,10 @@
   </a><br>
   <strong>Armbian Linux Build Framework</strong><br>
 <br>
-<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=githubactions&label=Build&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/build/graphs/contributors><img alt="GitHub contributors" src="https://img.shields.io/github/contributors-anon/armbian/build?logo=stackexchange&label=Contributors&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=dependabot&label=CI%20Build&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/build/commits/main><img alt="GitHub last commit (branch)" src="https://img.shields.io/github/last-commit/armbian/build/main?logo=github&label=Last%20commit&style=for-the-badge&branch=main&logoColor=white"></a>
 </p>
-
-## Table of contents
-
-- [What does this project do?](#what-does-this-project-do)
-- [Getting started](#getting-started)
-- [Compared with industry standards](#compared-with-industry-standards)
-- [Download prebuilt images](#download-prebuilt-images)
-- [Project structure](#project-structure)
-- [Contribution](#contribution)
-- [Support](#support)
-- [Contact](#contact)
-- [Contributors](#contributors)
-- [Partners](#armbian-partners)
-- [License](#license)
 
 ## What does this project do?
 
@@ -38,12 +26,24 @@
 
 ### Start with the build script
 
+##### Development branch:
+
 ```bash
 apt-get -y install git
 git clone --depth=1 --branch=main https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
+
+##### Stable branch:
+
+```bash
+apt-get -y install git
+git clone --depth=1 --branch=v23.11 https://github.com/armbian/build
+cd build
+./compile.sh
+```
+
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
@@ -184,7 +184,7 @@ Function | Armbian | Yocto | Buildroot |
 
 ### You don't need to be a programmer to help!
 
-The easiest way to help is by "Starring" our repository - it helps more people find our code. 
+The easiest way to help is by "Starring" our repository - it helps more people find our code.
 
 - [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
 - [Mirror our download infrastructure](https://github.com/armbian/mirror/)  ❤️
@@ -207,8 +207,8 @@ To help with development, review [this document](CONTRIBUTING.md) and move strai
 For commercial or prioritized assistance:
  - Book an hour of [professional consultation](https://calendly.com/armbian/consultation)
  - Consider becoming a [project partner](https://forum.armbian.com/subscriptions/)
- - [Contact us](https://armbian.com/contact)! 
- 
+ - [Contact us](https://armbian.com/contact)!
+
 Free support:
 
  Find free support via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Remember that our awesome community members mainly provide this in a **best-effort** manner, so there are no guaranteed solutions.

@@ -1,3 +1,7 @@
+function add_host_dependencies__abl_host_deps() {
+	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} mkbootimg"
+}
+
 function post_build_image__900_convert_to_abl_img() {
 	[[ -z $version ]] && exit_with_error "version is not set"
 
@@ -24,16 +28,17 @@ function post_build_image__900_convert_to_abl_img() {
 
 	if [ ${#ABL_DTB_LIST[@]} -ne 0 ]; then
 		display_alert "Going to create abl kernel boot image" "${EXTENSION}" "info"
+		source ${new_rootfs_image_mount_dir}/boot/armbianEnv.txt
 		gzip -c ${new_rootfs_image_mount_dir}/boot/vmlinuz-*-* > ${DESTIMG}/Image.gz
 		for dtb_name in "${ABL_DTB_LIST[@]}"; do
-			display_alert "Creatng abl kernel boot image with dtb ${dtb_name}" "${EXTENSION}" "info"
+			display_alert "Creatng abl kernel boot image with dtb ${dtb_name} and cmdline root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}" "${EXTENSION}" "info"
 			cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
-			${new_rootfs_image_mount_dir}/usr/bin/mkbootimg \
+			/usr/bin/mkbootimg \
 				--kernel ${DESTIMG}/Image.gz-${dtb_name} \
 				--ramdisk ${new_rootfs_image_mount_dir}/boot/initrd.img-*-* \
 				--base 0x0 \
 				--second_offset 0x00f00000 \
-				--cmdline "root=UUID=${new_rootfs_image_uuid}" \
+				--cmdline "root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}" \
 				--kernel_offset 0x8000 \
 				--ramdisk_offset 0x1000000 \
 				--tags_offset 0x100 \

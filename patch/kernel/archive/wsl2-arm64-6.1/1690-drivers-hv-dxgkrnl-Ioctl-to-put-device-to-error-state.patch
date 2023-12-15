@@ -1,0 +1,180 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Iouri Tarassov <iourit@linux.microsoft.com>
+Date: Wed, 9 Feb 2022 10:57:57 -0800
+Subject: drivers: hv: dxgkrnl: Ioctl to put device to error state
+
+Implement the ioctl to put the virtual compute device to the error
+state (LX_DXMARKDEVICEASERROR).
+
+This ioctl is used by the user mode driver when it detects an
+unrecoverable error condition.
+
+When a compute device is put to the error state, all subsequent
+ioctl calls to the device will fail.
+
+Signed-off-by: Iouri Tarassov <iourit@linux.microsoft.com>
+[kms: Forward port to v6.1]
+Signed-off-by: Kelsey Steele <kelseysteele@microsoft.com>
+---
+ drivers/hv/dxgkrnl/dxgkrnl.h  |  3 +
+ drivers/hv/dxgkrnl/dxgvmbus.c | 25 ++++++
+ drivers/hv/dxgkrnl/dxgvmbus.h |  5 ++
+ drivers/hv/dxgkrnl/ioctl.c    | 38 +++++++++-
+ include/uapi/misc/d3dkmthk.h  | 12 +++
+ 5 files changed, 82 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/hv/dxgkrnl/dxgkrnl.h b/drivers/hv/dxgkrnl/dxgkrnl.h
+index dafc721ed6cf..b454c7430f06 100644
+--- a/drivers/hv/dxgkrnl/dxgkrnl.h
++++ b/drivers/hv/dxgkrnl/dxgkrnl.h
+@@ -856,6 +856,9 @@ int dxgvmb_send_update_alloc_property(struct dxgprocess *process,
+ 				      struct d3dddi_updateallocproperty *args,
+ 				      struct d3dddi_updateallocproperty *__user
+ 				      inargs);
++int dxgvmb_send_mark_device_as_error(struct dxgprocess *process,
++				     struct dxgadapter *adapter,
++				     struct d3dkmt_markdeviceaserror *args);
+ int dxgvmb_send_set_allocation_priority(struct dxgprocess *process,
+ 					struct dxgadapter *adapter,
+ 					struct d3dkmt_setallocationpriority *a);
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.c b/drivers/hv/dxgkrnl/dxgvmbus.c
+index 8bdd49bc7aa6..f7264b12a477 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.c
++++ b/drivers/hv/dxgkrnl/dxgvmbus.c
+@@ -2730,6 +2730,31 @@ int dxgvmb_send_update_alloc_property(struct dxgprocess *process,
+ 	return ret;
+ }
+ 
++int dxgvmb_send_mark_device_as_error(struct dxgprocess *process,
++				     struct dxgadapter *adapter,
++				     struct d3dkmt_markdeviceaserror *args)
++{
++	struct dxgkvmb_command_markdeviceaserror *command;
++	int ret;
++	struct dxgvmbusmsg msg = {.hdr = NULL};
++
++	ret = init_message(&msg, adapter, process, sizeof(*command));
++	if (ret)
++		goto cleanup;
++	command = (void *)msg.msg;
++
++	command_vgpu_to_host_init2(&command->hdr,
++				   DXGK_VMBCOMMAND_MARKDEVICEASERROR,
++				   process->host_handle);
++	command->args = *args;
++	ret = dxgvmb_send_sync_msg_ntstatus(msg.channel, msg.hdr, msg.size);
++cleanup:
++	free_message(&msg, process);
++	if (ret)
++		DXG_TRACE("err: %d", ret);
++	return ret;
++}
++
+ int dxgvmb_send_set_allocation_priority(struct dxgprocess *process,
+ 				struct dxgadapter *adapter,
+ 				struct d3dkmt_setallocationpriority *args)
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.h b/drivers/hv/dxgkrnl/dxgvmbus.h
+index e1c2ed7b1580..a66e11097bb2 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.h
++++ b/drivers/hv/dxgkrnl/dxgvmbus.h
+@@ -627,6 +627,11 @@ struct dxgkvmb_command_updateallocationproperty_return {
+ 	struct ntstatus			status;
+ };
+ 
++struct dxgkvmb_command_markdeviceaserror {
++	struct dxgkvmb_command_vgpu_to_host hdr;
++	struct d3dkmt_markdeviceaserror args;
++};
++
+ /* Returns ntstatus */
+ struct dxgkvmb_command_changevideomemoryreservation {
+ 	struct dxgkvmb_command_vgpu_to_host hdr;
+diff --git a/drivers/hv/dxgkrnl/ioctl.c b/drivers/hv/dxgkrnl/ioctl.c
+index 78de76abce2d..ce4af610ada7 100644
+--- a/drivers/hv/dxgkrnl/ioctl.c
++++ b/drivers/hv/dxgkrnl/ioctl.c
+@@ -3341,6 +3341,42 @@ dxgkio_update_alloc_property(struct dxgprocess *process, void *__user inargs)
+ 	return ret;
+ }
+ 
++static int
++dxgkio_mark_device_as_error(struct dxgprocess *process, void *__user inargs)
++{
++	struct d3dkmt_markdeviceaserror args;
++	struct dxgadapter *adapter = NULL;
++	struct dxgdevice *device = NULL;
++	int ret;
++
++	ret = copy_from_user(&args, inargs, sizeof(args));
++	if (ret) {
++		DXG_ERR("failed to copy input args");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++	device = dxgprocess_device_by_handle(process, args.device);
++	if (device == NULL) {
++		ret = -EINVAL;
++		goto cleanup;
++	}
++	adapter = device->adapter;
++	ret = dxgadapter_acquire_lock_shared(adapter);
++	if (ret < 0) {
++		adapter = NULL;
++		goto cleanup;
++	}
++	device->execution_state = _D3DKMT_DEVICEEXECUTION_RESET;
++	ret = dxgvmb_send_mark_device_as_error(process, adapter, &args);
++cleanup:
++	if (adapter)
++		dxgadapter_release_lock_shared(adapter);
++	if (device)
++		kref_put(&device->device_kref, dxgdevice_release);
++	DXG_TRACE("ioctl:%s %d", errorstr(ret), ret);
++	return ret;
++}
++
+ static int
+ dxgkio_query_alloc_residency(struct dxgprocess *process, void *__user inargs)
+ {
+@@ -4404,7 +4440,7 @@ static struct ioctl_desc ioctls[] = {
+ /* 0x23 */	{},
+ /* 0x24 */	{},
+ /* 0x25 */	{dxgkio_lock2, LX_DXLOCK2},
+-/* 0x26 */	{},
++/* 0x26 */	{dxgkio_mark_device_as_error, LX_DXMARKDEVICEASERROR},
+ /* 0x27 */	{},
+ /* 0x28 */	{},
+ /* 0x29 */	{},
+diff --git a/include/uapi/misc/d3dkmthk.h b/include/uapi/misc/d3dkmthk.h
+index 749edf28bd43..ce5a638a886d 100644
+--- a/include/uapi/misc/d3dkmthk.h
++++ b/include/uapi/misc/d3dkmthk.h
+@@ -790,6 +790,16 @@ struct d3dkmt_unlock2 {
+ 	struct d3dkmthandle			allocation;
+ };
+ 
++enum d3dkmt_device_error_reason {
++	_D3DKMT_DEVICE_ERROR_REASON_GENERIC		= 0x80000000,
++	_D3DKMT_DEVICE_ERROR_REASON_DRIVER_ERROR	= 0x80000006,
++};
++
++struct d3dkmt_markdeviceaserror {
++	struct d3dkmthandle			device;
++	enum d3dkmt_device_error_reason		reason;
++};
++
+ enum d3dkmt_standardallocationtype {
+ 	_D3DKMT_STANDARDALLOCATIONTYPE_EXISTINGHEAP	= 1,
+ 	_D3DKMT_STANDARDALLOCATIONTYPE_CROSSADAPTER	= 2,
+@@ -1290,6 +1300,8 @@ struct d3dkmt_shareobjectwithhost {
+ 	_IOWR(0x47, 0x1f, struct d3dkmt_flushheaptransitions)
+ #define LX_DXLOCK2			\
+ 	_IOWR(0x47, 0x25, struct d3dkmt_lock2)
++#define LX_DXMARKDEVICEASERROR		\
++	_IOWR(0x47, 0x26, struct d3dkmt_markdeviceaserror)
+ #define LX_DXQUERYALLOCATIONRESIDENCY	\
+ 	_IOWR(0x47, 0x2a, struct d3dkmt_queryallocationresidency)
+ #define LX_DXSETALLOCATIONPRIORITY	\
+-- 
+Armbian
+
