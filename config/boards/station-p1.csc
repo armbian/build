@@ -1,6 +1,6 @@
 # Rockchip RK3399 hexa core 4GB LPDDR4 SoC eMMC GBE USB3
 BOARD_NAME="Station P1"
-BOARDFAMILY="media"
+BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER="150balbes"
 BOOTCONFIG="roc-pc-plus-rk3399_defconfig"
 KERNEL_TARGET="legacy,current,edge"
