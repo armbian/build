@@ -26,7 +26,6 @@ function prepare_host_basic() {
 		"linux-version:linux-base"
 		"locale-gen:locales"
 		"git:git"
-		"rdfind:rdfind"
 	)
 
 	for check_pack in "${checklist[@]}"; do
