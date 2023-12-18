@@ -76,13 +76,18 @@ CARD_DEVICE="/dev/sdX"
 
 More information:
 
-- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
-- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
-- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches, and override sources config;
+- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start, how to automate)
+- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) (all build options)
+- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) (how to add packages, patches, and override sources config)
 
-## Download prebuilt images
+## Download prebuilt images releases
+
+### Point
 
 - [manually released **standard supported** builds](https://www.armbian.com/download/?device_support=Standard%20support) (quarterly)
+
+### Rolling
+  
 - [automatically released **staging and standard supported** builds](https://github.com/armbian/os/releases/latest) (daily)
 - [automatically released **community maintained** builds](https://github.com/armbian/community) (weekly)
 
