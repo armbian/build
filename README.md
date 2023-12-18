@@ -61,7 +61,7 @@ Show work-in-progress areas in interactive mode:
 ./compile.sh EXPERT="yes"
 ```
 
-Build minimal CLI Armbian Jammy image for Raspberry Pi 4B with LTS kernel and write image directly to the SD card:
+Build minimal CLI Armbian Jammy for Raspberry Pi 4B with LTS kernel and write image directly to the SD card:
 
 ```bash
 ./compile.sh \
