@@ -24,7 +24,7 @@
 - Ubuntu Jammy 22.04.x for native building or any Docker capable Linux for containerised
 - Windows 10/11 with WSL2 subsystem running Ubuntu Jammy 22.04.x
 - Superuser rights (configured sudo or root access).
-- Make sure all your system components are up-to-date. Outdated Docker binaries, for example, can cause trouble.
+- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
 
 ### Start with the build script
 
