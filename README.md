@@ -208,7 +208,7 @@ Free support:
 ## Contact
 
 - [Forums](https://forum.armbian.com) for Participate in Armbian
-- IRC: `#armbian` on Libera.chat / OFTC.net
+- IRC: `#armbian` on Libera.chat / oftc.net
 - Discord: [https://discord.gg/armbian](https://discord.gg/armbian)
 - Follow [@armbian](https://twitter.com/armbian) on X (formerly known as Twitter), [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
