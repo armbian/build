@@ -89,7 +89,7 @@ More information:
 ### Rolling
   
 - [automatically released **staging and standard supported** builds](https://github.com/armbian/os/releases/latest) (daily)
-- [automatically released **community maintained** builds](https://github.com/armbian/community) (weekly)
+- [automatically released **community maintained** builds](https://github.com/armbian/community/releases/latest) (weekly)
 
 ## Compared with industry standards
 
