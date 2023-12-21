@@ -1,13 +1,13 @@
-# Rockchip RK3588 SoC octa core 8-32GB SoC 2.5GBe eMMC USB3 NvME
-BOARD_NAME="ArmSoM W3"
+# Rockchip RK3588 SoC octa core 8-64GB SoC 2*2.5GBe eMMC USB3 NvME WIFI
+BOARD_NAME="ArmSoM Sige7"
 BOARDFAMILY="rockchip-rk3588"
-BOARD_MAINTAINER=""
-BOOTCONFIG="armsom-w3-rk3588_defconfig"
+BOARD_MAINTAINER="Z-Keven"
+BOOTCONFIG="armsom-sige7-rk3588_defconfig"
 KERNEL_TARGET="legacy"
 KERNEL_TEST_TARGET="legacy" # in case different then kernel target
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
-BOOT_FDT_FILE="rockchip/rk3588-armsom-w3.dtb"
+BOOT_FDT_FILE="rockchip/rk3588-armsom-sige7.dtb"
 BOOT_SCENARIO="spl-blobs"
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
@@ -28,13 +28,11 @@ function post_family_config_branch_legacy__uboot_armsom() {
 	declare -g BOOTDELAY=1                                # build injects this into u-boot config. we can then get into UMS mode and avoid the whole rockusb/rkdeveloptool thing
 }
 
-function post_family_tweaks__armsom-w3_naming_audios() {
-	display_alert "$BOARD" "Renaming armsom-w3 audios" "info"
+function post_family_tweaks__armsom-sige7_naming_audios() {
+	display_alert "$BOARD" "Renaming armsom-sige7 audios" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
-	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi1-sound", ENV{SOUND_DESCRIPTION}="HDMI1 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
-	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmiin-sound", ENV{SOUND_DESCRIPTION}="HDMI-In Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-dp0-sound", ENV{SOUND_DESCRIPTION}="DP0 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-es8316-sound", ENV{SOUND_DESCRIPTION}="ES8316 Audio"' >> $SDCARD/etc/udev/rules.d/90-naming-audios.rules
 
