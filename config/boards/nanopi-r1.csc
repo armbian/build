@@ -12,3 +12,11 @@ HAS_VIDEO_OUTPUT="no"
 KERNEL_TARGET="legacy,current,edge"
 KERNEL_TEST_TARGET="current"
 BOOT_FDT_FILE="sun8i-h3-nanopi-r1.dtb"
+
+function post_family_tweaks__nanopi_r1_related_configs() {
+	# rename eth1 to wan0
+	echo 'SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*",ATTR{address}=="00:00:00:00:00:00",ATTR{dev_id}=="0x0", ATTR{type}=="1",KERNEL=="eth1", NAME="wan0"' > $SDCARD/etc/udev/rules.d/70-persisetn-net.rules
+	# change default console to tty1 which is wired to the chasis
+	sed -i "s/ttyS0/ttyS1/" $SDCARD/boot/boot.cmd
+	mkimage -C none -A arm -T script -d $SDCARD/boot/boot.cmd $SDCARD/boot/boot.scr
+}
