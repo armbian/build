@@ -4,7 +4,7 @@ BOARDFAMILY="sun50iw6"
 BOARD_MAINTAINER="viraniac"
 BOOTCONFIG="orangepi_3_lts_defconfig"
 BOOT_LOGO="desktop"
-KERNEL_TARGET="current,edge"
+KERNEL_TARGET="legacy,current,edge"
 KERNEL_TEST_TARGET="current,edge"
 CRUSTCONFIG="orangepi_3_lts_defconfig"
 
