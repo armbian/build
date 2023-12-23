@@ -100,6 +100,7 @@ driver_rtl8189ES() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-5.4.251-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 }
 
@@ -147,6 +148,7 @@ driver_rtl8189FS() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-Fix-building-on-5.4.251-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 
 }
@@ -190,6 +192,7 @@ driver_rtl8192EU() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-5.4.251-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 }
 
@@ -238,7 +241,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 		# fix compilation for kernels >= 6.3
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-6.3.patch" "applying"
-
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 
 }
@@ -273,6 +276,7 @@ driver_xradio_xr819() {
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
 
+		process_patch_file "${SRC}/patch/misc/wireless-xradio-Fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 
 }
@@ -676,6 +680,8 @@ driver_uwe5622() {
 				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-adjust-for-rockchip-post-6.1.patch"
 			fi
 		fi
+
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 }
 
