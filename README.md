@@ -4,22 +4,10 @@
   </a><br>
   <strong>Armbian Linux Build Framework</strong><br>
 <br>
-<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=githubactions&label=Build&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/build/graphs/contributors><img alt="GitHub contributors" src="https://img.shields.io/github/contributors-anon/armbian/build?logo=stackexchange&label=Contributors&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=dependabot&label=CI%20Build&style=for-the-badge&branch=main&logoColor=white"></a>
+<a href=https://github.com/armbian/build/commits/main><img alt="GitHub last commit (branch)" src="https://img.shields.io/github/last-commit/armbian/build/main?logo=github&label=Last%20commit&style=for-the-badge&branch=main&logoColor=white"></a>
 </p>
-
-## Table of contents
-
-- [What does this project do?](#what-does-this-project-do)
-- [Getting started](#getting-started)
-- [Compared with industry standards](#compared-with-industry-standards)
-- [Download prebuilt images](#download-prebuilt-images)
-- [Project structure](#project-structure)
-- [Contribution](#contribution)
-- [Support](#support)
-- [Contact](#contact)
-- [Contributors](#contributors)
-- [Partners](#armbian-partners)
-- [License](#license)
 
 ## What does this project do?
 
@@ -29,14 +17,18 @@
 
 ## Getting started
 
-### Basic requirements
+### Requirements
 
-- x86_64 or aarch64 machine with at least 2GB of memory and ~35GB of disk space for a virtual machine, [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install), container or bare metal installation
-- Ubuntu Jammy 22.04.x amd64 or aarch64 for native building or any Docker capable amd64 / aarch64 Linux for containerised
+- x86_64 / aarch64 machine
+- at least 2GB of memory and ~35GB of disk space for VM, container or bare metal installation
+- Ubuntu Jammy 22.04.x for native building or any Docker capable Linux for containerised
+- Windows 10/11 with WSL2 subsystem running Ubuntu Jammy 22.04.x
 - Superuser rights (configured sudo or root access).
-- Make sure all your system components are up-to-date. Outdated Docker binaries, for example, can cause trouble.
+- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
 
 ### Start with the build script
+
+##### Development branch:
 
 ```bash
 apt-get -y install git
@@ -44,6 +36,16 @@ git clone --depth=1 --branch=main https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
+
+##### Stable branch:
+
+```bash
+apt-get -y install git
+git clone --depth=1 --branch=v23.11 https://github.com/armbian/build
+cd build
+./compile.sh
+```
+
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
@@ -59,11 +61,11 @@ Show work-in-progress areas in interactive mode:
 ./compile.sh EXPERT="yes"
 ```
 
-Build minimal CLI Armbian Jammy image for Orangepi Zero. Use `current` kernel and write image to the SD card:
+Build minimal CLI Armbian Jammy for Raspberry Pi 4B with LTS kernel and write image directly to the SD card:
 
 ```bash
 ./compile.sh \
-BOARD=orangepizero \
+BOARD=rpi4b \
 BRANCH=current \
 RELEASE=jammy \
 BUILD_MINIMAL=yes \
@@ -74,15 +76,20 @@ CARD_DEVICE="/dev/sdX"
 
 More information:
 
-- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) — how to start, how to automate;
-- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) — all build options;
-- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) — how to add packages, patches, and override sources config;
+- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start, how to automate)
+- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) (all build options)
+- [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) (how to add packages, patches, and override sources config)
 
-## Download prebuilt images
+## Download prebuilt images releases
 
-- [quarterly released **supported** builds](https://www.armbian.com/download/?device_support=Standard%20support)
-- [quarterly released **community maintained** builds](https://www.armbian.com/download/?device_support=Community%20maintained)
-- [automatic released **rolling release** builds](https://github.com/armbian/os/releases/latest) (daily or when code changes)
+### Point
+
+- [manually released **standard supported** builds](https://www.armbian.com/download/?device_support=Standard%20support) (quarterly)
+
+### Rolling
+
+- [automatically released **staging and standard supported** builds](https://github.com/armbian/os/releases/latest) (daily)
+- [automatically released **community maintained** builds](https://github.com/armbian/community/releases/latest) (weekly)
 
 ## Compared with industry standards
 
@@ -182,33 +189,23 @@ Function | Armbian | Yocto | Buildroot |
 
 ## Contribution
 
-### You don't need to be a programmer to help!
+### Want to help?
 
-The easiest way to help is by "Starring" our repository - it helps more people find our code. 
+We always need those volunteering positions:
 
-- [Check out our list of volunteer positions](https://forum.armbian.com/staffapplications/) and choose what you want to do ❤️
-- [Mirror our download infrastructure](https://github.com/armbian/mirror/)  ❤️
-- [Donate](https://www.armbian.com/donate)!  ❤️
+- [Code reviewer](https://forum.armbian.com/staffapplications/application/23-code-reviewer/)
+- [Build framework maintainer](https://forum.armbian.com/staffapplications/application/9-build-framework-maintainer/)
+- [Test Automation Engineer](https://forum.armbian.com/staffapplications/application/19-test-automation-engineer/)
 
-### Want to become a maintainer?
-
-Please review the [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/) and [apply](https://forum.armbian.com/staffapplications/application/8-single-board-computer-maintainer/) !
-
-### Want to become a developer?
-
-To help with development, review [this document](CONTRIBUTING.md) and move straight to the code:
-
-- [release related tickets](https://www.armbian.com/participate/)
-- [review pull requests](https://github.com/armbian/build/pulls?q=is%3Apr+is%3Aopen+review%3Arequired+label%3A%22Needs+review%22)
-- ticket dashboard for [junior](https://armbian.atlassian.net/jira/dashboards/10000) and [seniors](https://armbian.atlassian.net/jira/dashboards/10103) developers
+Just apply and follow!
 
 ## Support
 
 For commercial or prioritized assistance:
  - Book an hour of [professional consultation](https://calendly.com/armbian/consultation)
  - Consider becoming a [project partner](https://forum.armbian.com/subscriptions/)
- - [Contact us](https://armbian.com/contact)! 
- 
+ - [Contact us](https://armbian.com/contact)!
+
 Free support:
 
  Find free support via [general project search engine](https://www.armbian.com/search), [documentation](https://docs.armbian.com), [community forums](https://forum.armbian.com/) or [IRC/Discord](https://docs.armbian.com/Community_IRC/). Remember that our awesome community members mainly provide this in a **best-effort** manner, so there are no guaranteed solutions.
@@ -216,9 +213,9 @@ Free support:
 ## Contact
 
 - [Forums](https://forum.armbian.com) for Participate in Armbian
-- IRC: `#armbian` on Libera.chat
+- IRC: `#armbian` on Libera.chat / oftc.net
 - Discord: [https://discord.gg/armbian](https://discord.gg/armbian)
-- Follow [@armbian](https://twitter.com/armbian) on X (formerly known as Twitter), [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
+- Follow [@armbian](https://twitter.com/armbian) on 𝕏 (formerly known as Twitter), [Fosstodon](https://fosstodon.org/@armbian) or [LinkedIn](https://www.linkedin.com/company/armbian).
 - Bugs: [issues](https://github.com/armbian/build/issues) / [JIRA](https://armbian.atlassian.net/jira/dashboards/10000)
 - Office hours: [Wednesday, 12 midday, 18 afternoon, CET](https://calendly.com/armbian/office-hours)
 

@@ -1,0 +1,239 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sunil Muthuswamy <sunilmut@microsoft.com>
+Date: Mon, 3 May 2021 14:17:52 -0700
+Subject: Hyper-V: ARM64: Always use the Hyper-V hypercall interface
+
+This patch forces the use of the Hyper-V hypercall interface,
+instead of the architectural SMCCC interface on ARM64 because
+not all versions of Windows support the SMCCC interface. All
+versions of Windows will support the Hyper-V hypercall interface,
+so this change should be both forward and backward compatible.
+
+Signed-off-by: Sunil Muthuswamy <sunilmut@microsoft.com>
+
+[tyhicks: Forward ported to v5.15]
+Signed-off-by: Tyler Hicks <tyhicks@linux.microsoft.com>
+[kms: Forward ported to v6.1]
+Signed-off-by: Kelsey Steele <kelseysteele@microsoft.com>
+---
+ arch/arm64/hyperv/Makefile        |  2 +-
+ arch/arm64/hyperv/hv_core.c       | 57 ++++-----
+ arch/arm64/hyperv/hv_hvc.S        | 61 ++++++++++
+ arch/arm64/include/asm/mshyperv.h |  4 +
+ 4 files changed, 91 insertions(+), 33 deletions(-)
+
+diff --git a/arch/arm64/hyperv/Makefile b/arch/arm64/hyperv/Makefile
+index 87c31c001da9..4cbeaa36d189 100644
+--- a/arch/arm64/hyperv/Makefile
++++ b/arch/arm64/hyperv/Makefile
+@@ -1,2 +1,2 @@
+ # SPDX-License-Identifier: GPL-2.0
+-obj-y		:= hv_core.o mshyperv.o
++obj-y		:= hv_core.o mshyperv.o hv_hvc.o
+diff --git a/arch/arm64/hyperv/hv_core.c b/arch/arm64/hyperv/hv_core.c
+index b54c34793701..e7010b2a587c 100644
+--- a/arch/arm64/hyperv/hv_core.c
++++ b/arch/arm64/hyperv/hv_core.c
+@@ -23,16 +23,13 @@
+  */
+ u64 hv_do_hypercall(u64 control, void *input, void *output)
+ {
+-	struct arm_smccc_res	res;
+ 	u64			input_address;
+ 	u64			output_address;
+ 
+ 	input_address = input ? virt_to_phys(input) : 0;
+ 	output_address = output ? virt_to_phys(output) : 0;
+ 
+-	arm_smccc_1_1_hvc(HV_FUNC_ID, control,
+-			  input_address, output_address, &res);
+-	return res.a0;
++	return hv_do_hvc(control, input_address, output_address);
+ }
+ EXPORT_SYMBOL_GPL(hv_do_hypercall);
+ 
+@@ -41,27 +38,33 @@ EXPORT_SYMBOL_GPL(hv_do_hypercall);
+  * with arguments in registers instead of physical memory.
+  * Avoids the overhead of virt_to_phys for simple hypercalls.
+  */
+-
+ u64 hv_do_fast_hypercall8(u16 code, u64 input)
+ {
+-	struct arm_smccc_res	res;
+ 	u64			control;
+ 
+ 	control = (u64)code | HV_HYPERCALL_FAST_BIT;
+-
+-	arm_smccc_1_1_hvc(HV_FUNC_ID, control, input, &res);
+-	return res.a0;
++	return hv_do_hvc(control, input);
+ }
+ EXPORT_SYMBOL_GPL(hv_do_fast_hypercall8);
+ 
++union hv_hypercall_status {
++	u64 as_uint64;
++	struct {
++		u16 status;
++		u16 reserved;
++		u16 reps_completed;  /* Low 12 bits */
++		u16 reserved2;
++	};
++};
++
+ /*
+  * Set a single VP register to a 64-bit value.
+  */
+ void hv_set_vpreg(u32 msr, u64 value)
+ {
+-	struct arm_smccc_res res;
++	union hv_hypercall_status status;
+ 
+-	arm_smccc_1_1_hvc(HV_FUNC_ID,
++	status.as_uint64 = hv_do_hvc(
+ 		HVCALL_SET_VP_REGISTERS | HV_HYPERCALL_FAST_BIT |
+ 			HV_HYPERCALL_REP_COMP_1,
+ 		HV_PARTITION_ID_SELF,
+@@ -69,15 +72,14 @@ void hv_set_vpreg(u32 msr, u64 value)
+ 		msr,
+ 		0,
+ 		value,
+-		0,
+-		&res);
++		0);
+ 
+ 	/*
+ 	 * Something is fundamentally broken in the hypervisor if
+ 	 * setting a VP register fails. There's really no way to
+ 	 * continue as a guest VM, so panic.
+ 	 */
+-	BUG_ON(!hv_result_success(res.a0));
++	BUG_ON(status.status != HV_STATUS_SUCCESS);
+ }
+ EXPORT_SYMBOL_GPL(hv_set_vpreg);
+ 
+@@ -90,31 +92,22 @@ EXPORT_SYMBOL_GPL(hv_set_vpreg);
+ 
+ void hv_get_vpreg_128(u32 msr, struct hv_get_vp_registers_output *result)
+ {
+-	struct arm_smccc_1_2_regs args;
+-	struct arm_smccc_1_2_regs res;
+-
+-	args.a0 = HV_FUNC_ID;
+-	args.a1 = HVCALL_GET_VP_REGISTERS | HV_HYPERCALL_FAST_BIT |
+-			HV_HYPERCALL_REP_COMP_1;
+-	args.a2 = HV_PARTITION_ID_SELF;
+-	args.a3 = HV_VP_INDEX_SELF;
+-	args.a4 = msr;
++	u64					status;
+ 
+-	/*
+-	 * Use the SMCCC 1.2 interface because the results are in registers
+-	 * beyond X0-X3.
+-	 */
+-	arm_smccc_1_2_hvc(&args, &res);
++	status = hv_do_hvc_fast_get(
++		HVCALL_GET_VP_REGISTERS | HV_HYPERCALL_FAST_BIT |
++			HV_HYPERCALL_REP_COMP_1,
++		HV_PARTITION_ID_SELF,
++		HV_VP_INDEX_SELF,
++		msr,
++		result);
+ 
+ 	/*
+ 	 * Something is fundamentally broken in the hypervisor if
+ 	 * getting a VP register fails. There's really no way to
+ 	 * continue as a guest VM, so panic.
+ 	 */
+-	BUG_ON(!hv_result_success(res.a0));
+-
+-	result->as64.low = res.a6;
+-	result->as64.high = res.a7;
++	BUG_ON((status & HV_HYPERCALL_RESULT_MASK) != HV_STATUS_SUCCESS);
+ }
+ EXPORT_SYMBOL_GPL(hv_get_vpreg_128);
+ 
+diff --git a/arch/arm64/hyperv/hv_hvc.S b/arch/arm64/hyperv/hv_hvc.S
+new file mode 100644
+index 000000000000..c22d34ccd0aa
+--- /dev/null
++++ b/arch/arm64/hyperv/hv_hvc.S
+@@ -0,0 +1,61 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++/*
++ * Microsoft Hyper-V hypervisor invocation routines
++ *
++ * Copyright (C) 2018, Microsoft, Inc.
++ *
++ * Author : Michael Kelley <mikelley@microsoft.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 as published
++ * by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
++ * NON INFRINGEMENT.  See the GNU General Public License for more
++ * details.
++ */
++
++#include <linux/linkage.h>
++#include <asm/assembler.h>
++
++	.text
++/*
++ * Do the HVC instruction.  For Hyper-V the argument is always 1.
++ * x0 contains the hypercall control value, while additional registers
++ * vary depending on the hypercall, and whether the hypercall arguments
++ * are in memory or in registers (a "fast" hypercall per the Hyper-V
++ * TLFS).  When the arguments are in memory x1 is the guest physical
++ * address of the input arguments, and x2 is the guest physical
++ * address of the output arguments.  When the arguments are in
++ * registers, the register values depends on the hypercall.  Note
++ * that this version cannot return any values in registers.
++ */
++SYM_FUNC_START(hv_do_hvc)
++	hvc #1
++	ret
++SYM_FUNC_END(hv_do_hvc)
++
++/*
++ * This variant of HVC invocation is for hv_get_vpreg and
++ * hv_get_vpreg_128. The input parameters are passed in registers
++ * along with a pointer in x4 to where the output result should
++ * be stored. The output is returned in x15 and x16. x19 is used as
++ * scratch space to avoid buildng a stack frame, as Hyper-V does
++ * not preserve registers x0-x17.
++ */
++SYM_FUNC_START(hv_do_hvc_fast_get)
++	/*
++	 * Stash away x19 register so that it can be used as a scratch
++	 * register and pop it at the end.
++	 */
++	str x19, [sp, #-16]!
++	mov x19, x4
++	hvc #1
++	str x15,[x19]
++	str x16,[x19,#8]
++	ldr x19, [sp], #16
++	ret
++SYM_FUNC_END(hv_do_hvc_fast_get)
+diff --git a/arch/arm64/include/asm/mshyperv.h b/arch/arm64/include/asm/mshyperv.h
+index 20070a847304..f87a450e5b6b 100644
+--- a/arch/arm64/include/asm/mshyperv.h
++++ b/arch/arm64/include/asm/mshyperv.h
+@@ -22,6 +22,10 @@
+ #include <linux/arm-smccc.h>
+ #include <asm/hyperv-tlfs.h>
+ 
++extern u64 hv_do_hvc(u64 control, ...);
++extern u64 hv_do_hvc_fast_get(u64 control, u64 input1, u64 input2, u64 input3,
++		struct hv_get_vp_registers_output *output);
++
+ /*
+  * Declare calls to get and set Hyper-V VP register values on ARM64, which
+  * requires a hypercall.
+-- 
+Armbian
+
