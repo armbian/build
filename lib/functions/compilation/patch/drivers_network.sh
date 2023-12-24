@@ -287,7 +287,7 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:9e2772540f66a69170f43864a6560d0d190d97b1"
+		local rtl8811cuver="commit:a41ef7cabd1aa36fa2b4eb63a71cf719bff11b72"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -384,7 +384,7 @@ driver_rtl88x2bu() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# attach to specifics tag or branch
-		local rtl88x2buver="commit:2590672d717e2516dd2e96ed66f1037a6815bced"
+		local rtl88x2buver="commit:cd2b6cbd9c8fbfebee8a1f28fab8e4434450456c"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
@@ -546,7 +546,7 @@ driver_rtl8723DU() {
 
 	if linux-version compare "${version}" ge 5.0; then
 
-		local rtl8723duver='commit:b9f1060c848ce18af01c0a62a459c3a08ccde20c' # was "branch:master"
+		local rtl8723duver='commit:ae03b0861351f72808405ddda80e8aab105bcfce' # was "branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
