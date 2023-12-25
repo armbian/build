@@ -252,7 +252,7 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
-		local xradio_xr819_ver="commit:547521df27d1a80fb5542e93fa13bd09fb2259a2"
+		local xradio_xr819_ver="commit:3a1f77fb2db248b7d18d93b67b16e0d6c91db184"
 
 		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradio_xr819_ver}" "yes"
 		cd "$kerneldir" || exit
@@ -275,8 +275,6 @@ driver_xradio_xr819() {
 			>> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		process_patch_file "${SRC}/patch/misc/wireless-xradio-Fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 
 }
@@ -319,11 +317,6 @@ driver_rtl8811CU_rtl8821C() {
 		echo "obj-\$(CONFIG_RTL8821CU) += rtl8811cu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-p2p-go-advertising.patch" "applying"
-
-		# fix compilation for kernels >= 5.4
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-VFS-import.patch" "applying"
 
 	fi
 
@@ -412,17 +405,6 @@ driver_rtl88x2bu() {
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i "/source \"drivers\/net\/wireless\/ti\/Kconfig\"/a source \"drivers\/net\/wireless\/rtl88x2bu\/Kconfig\"" \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-p2p-go-advertising.patch" "applying"
-
-		# fix compilation for kernels >= 5.4
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-VFS-import.patch" "applying"
-
-		# fix compilation for kernels >= 6.3
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-6.3.0.patch" "applying"
-
-		# fix compilation for kernels >= 6.3.13 < 6.4 and >= 6.5
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-wireless-ignore-stale-kickoff-removal.patch" "applying"
 
 	fi
 
