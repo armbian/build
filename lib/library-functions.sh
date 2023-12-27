@@ -555,6 +555,15 @@ source "${SRC}"/lib/functions/configuration/aggregation.sh
 #set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
 set -o errtrace # trace ERR through - enabled
 set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
+### lib/functions/configuration/change-tracking.sh
+# shellcheck source=lib/functions/configuration/change-tracking.sh
+source "${SRC}"/lib/functions/configuration/change-tracking.sh
+
+# no errors tolerated. invoked before each sourced file to make sure.
+#set -o pipefail  # trace ERR through pipes - will be enabled "soon"
+#set -o nounset   ## set -u : exit the script if you try to use an uninitialised variable - one day will be enabled
+set -o errtrace # trace ERR through - enabled
+set -o errexit  ## set -e : exit the script if any statement returns a non-true return value - enabled
 ### lib/functions/configuration/compilation-config.sh
 # shellcheck source=lib/functions/configuration/compilation-config.sh
 source "${SRC}"/lib/functions/configuration/compilation-config.sh

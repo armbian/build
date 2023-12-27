@@ -140,8 +140,13 @@ function display_alert() {
 			;;
 
 		ext)
-			level_indicator="✨" # or ✅ ?
+			level_indicator="✨"
 			inline_logs_color="\e[1;32m"
+			;;
+
+		change-tracking)
+			level_indicator="✅"
+			inline_logs_color="\e[1;36m" # cyan
 			;;
 
 		*)
