@@ -28,8 +28,8 @@ case "${BRANCH}" in
 
 	current)
 
-		declare -g KERNEL_MAJOR_MINOR="6.1"          # Major and minor versions of this kernel. For mainline caching.
-		declare -g KERNELBRANCH="branch:linux-6.1.y" # Branch or tag to build from. It should match MAJOR_MINOR
+		declare -g KERNEL_MAJOR_MINOR="6.6"          # Major and minor versions of this kernel. For mainline caching.
+		declare -g KERNELBRANCH="branch:linux-6.6.y" # Branch or tag to build from. It should match MAJOR_MINOR
 		;;
 
 	edge)
