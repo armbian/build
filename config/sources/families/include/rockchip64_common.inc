@@ -19,8 +19,24 @@ GOVERNOR="ondemand"
 ATFPATCHDIR='atf-rockchip64'
 BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-rockchip64"}"
 PACKAGE_LIST_FAMILY="ethtool"
-
 RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
+
+# Important, we don't set LINUXFAMILY and LINUXCONFIG -- unless it is current or edge. Specifically, we don't do it for legacy branches, which are used by BOARDFAMILY's other than rockchip64.
+
+case $BRANCH in
+
+	current)
+		declare -g KERNEL_MAJOR_MINOR="6.1"
+		declare -g LINUXFAMILY=rockchip64
+		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
+		;;
+
+	edge)
+		declare -g KERNEL_MAJOR_MINOR="6.6"
+		declare -g LINUXFAMILY=rockchip64
+		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
+		;;
+esac
 
 # rockchip64 (used mainly for RK3399) legacy kernel 4.4 is dead code
 
@@ -138,29 +154,6 @@ elif [[ $BOARD == rockpi-s ]]; then
 		BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.10.elf"}"
 	fi
 fi
-
-case $BRANCH in
-
-	current)
-
-		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-6.1.y"
-		KERNELPATCHDIR='rockchip64-'$BRANCH
-		LINUXFAMILY=rockchip64
-		LINUXCONFIG='linux-rockchip64-'$BRANCH
-		;;
-
-	edge)
-
-		KERNELPATCHDIR='rockchip64-'$BRANCH
-		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-6.6.y"
-		LINUXFAMILY=rockchip64
-		LINUXCONFIG='linux-rockchip64-'$BRANCH
-
-		;;
-
-esac
 
 prepare_boot_configuration() {
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-blob-atf-mainline" ]]; then
