@@ -203,18 +203,7 @@ function config_post_main() {
 		display_alert "BETA" "Not yes nor no, user-built" "debug"
 		IMAGE_TYPE=user-built
 	fi
-
-	declare -g BOOTSOURCEDIR
-	BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
-	if [[ -n $ATFSOURCE ]]; then
-		declare -g ATFSOURCEDIR
-		ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
-	fi
-
-	if [[ -n $CRUSTSOURCE ]]; then
-		declare -g CRUSTSOURCEDIR
-		CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
-	fi
+	track_general_config_variables "at beginning of config_post_main"
 
 	# So for kernel full cached rebuilds.
 	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
@@ -231,6 +220,25 @@ function config_post_main() {
 			*late defaults/overrides, main hook point for KERNELSOURCE/BRANCH and BOOTSOURCE/BRANCH etc*
 		LATE_FAMILY_CONFIG
 		track_general_config_variables "after late_family_config hooks"
+
+		# We need BOOTDIR and BOOTBRANCH here, bomb if not
+		[[ -z "${BOOTDIR}" ]] && exit_with_error "BOOTDIR not set after late_family_config"
+		[[ -z "${BOOTBRANCH}" ]] && exit_with_error "BOOTBRANCH not set after late_family_config"
+
+		declare -g BOOTSOURCEDIR
+		BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
+
+		if [[ -n $ATFSOURCE ]]; then
+			declare -g ATFSOURCEDIR
+			ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
+		fi
+
+		if [[ -n $CRUSTSOURCE ]]; then
+			declare -g CRUSTSOURCEDIR
+			CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
+		fi
+
+		track_general_config_variables "before handling KERNEL_MAJOR_MINOR in config_post_main"
 
 		if [[ "${KERNELSOURCE}" != 'none' ]]; then
 			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
@@ -289,6 +297,7 @@ function config_post_main() {
 	# Do some sanity checks for userspace stuff, if RELEASE/DESKTOP_ENVIRONMENT is set.
 	check_config_userspace_release_and_desktop
 
+	track_general_config_variables "before calling extension_finish_config"
 	display_alert "Extensions: finish configuration" "extension_finish_config" "debug"
 	call_extension_method "extension_finish_config" <<- 'EXTENSION_FINISH_CONFIG'
 		*allow extensions a last chance at configuration just before it is done*
@@ -296,6 +305,7 @@ function config_post_main() {
 		This runs *late*, and is the final step before finishing configuration.
 		Don't change anything not coming from other variables or meant to be configured by the user.
 	EXTENSION_FINISH_CONFIG
+	track_general_config_variables "after calling extension_finish_config"
 
 	return 0 # protect against eventual shortcircuit above
 }
