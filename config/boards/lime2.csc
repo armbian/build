@@ -5,3 +5,7 @@ BOARD_MAINTAINER=""
 BOOTCONFIG="A20-OLinuXino-Lime2-eMMC_defconfig"
 KERNEL_TARGET="legacy,current,edge"
 
+function post_config_uboot_target__extra_configs_for_lime2() {
+	run_host_command_logged scripts/config --enable CONFIG_PHY_MICREL
+	run_host_command_logged scripts/config --enable CONFIG_PHY_MICREL_KSZ90X1
+}
