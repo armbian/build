@@ -11,7 +11,7 @@ function determine_artifacts_to_build_for_image() {
 	if [[ "${BOOTCONFIG}" != "none" ]]; then
 		artifacts_to_build+=("uboot")
 	fi
-	if [[ -n $KERNELSOURCE ]]; then
+	if [[ "${KERNELSOURCE}" != 'none' ]]; then
 		artifacts_to_build+=("kernel")
 	fi
 

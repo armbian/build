@@ -86,7 +86,7 @@ function create_image_from_sdcard_rootfs() {
 	PRE_UPDATE_INITRAMFS
 
 	# stage: create final initramfs
-	[[ -n $KERNELSOURCE ]] && {
+	[[ "${KERNELSOURCE}" != 'none' ]] && {
 		update_initramfs "$MOUNT"
 	}
 
