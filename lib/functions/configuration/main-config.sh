@@ -271,6 +271,7 @@ function do_main_configuration() {
 		Since the family can override values from the user configuration and the board configuration,
 		it is often used to in turn override those.
 	POST_FAMILY_CONFIG
+	track_general_config_variables "after post_family_config hooks"
 
 	# A secondary post_family_config hook, this time with the BRANCH in the name, lowercase.
 	call_extension_method "post_family_config_branch_${BRANCH,,}" <<- 'POST_FAMILY_CONFIG_PER_BRANCH'
@@ -280,6 +281,7 @@ function do_main_configuration() {
 		The sole purpose of this is to avoid "case ... esac for $BRANCH" in the board configuration,
 		allowing separate functions for different branches. You're welcome.
 	POST_FAMILY_CONFIG_PER_BRANCH
+	track_general_config_variables "after post_family_config_branch hooks"
 
 	# Lets make some variables readonly.
 	# We don't want anything changing them, it's exclusively for family config.
@@ -355,6 +357,7 @@ function do_extra_configuration() {
 	if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 		display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
 		source "$USERPATCHES_PATH"/lib.config
+		track_general_config_variables "after sourcing lib.config"
 	fi
 
 	# Prepare array for extensions to fill in.
@@ -367,6 +370,7 @@ function do_extra_configuration() {
 		It is called after sourcing the `lib.config` file if it exists,
 		but before assembling any package lists.
 	USER_CONFIG
+	track_general_config_variables "after user_config hooks"
 
 	display_alert "Extensions: prepare configuration" "extension_prepare_config" "debug"
 	call_extension_method "extension_prepare_config" <<- 'EXTENSION_PREPARE_CONFIG'
@@ -374,6 +378,7 @@ function do_extra_configuration() {
 		Implementors should preserve variable values pre-set, but can default values an/or validate them.
 		This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 	EXTENSION_PREPARE_CONFIG
+	track_general_config_variables "after extension_prepare_config hooks"
 
 	error_if_lib_tag_set # make sure users are not thrown off by using old parameter which does nothing anymore
 
@@ -492,15 +497,19 @@ function source_family_config_and_arch() {
 		fi
 	fi
 
+	track_general_config_variables "after sourcing family config"
+
 	# load "all-around common arch defaults" common.conf
 	display_alert "Sourcing common arch configuration" "common.conf" "debug"
 	# shellcheck source=config/sources/common.conf
 	source "${SRC}/config/sources/common.conf"
+	track_general_config_variables "after sourcing common arch"
 
 	# load architecture defaults
 	display_alert "Sourcing arch configuration" "${ARCH}.conf" "info"
 	# shellcheck source=/dev/null
 	source "${SRC}/config/sources/${ARCH}.conf"
+	track_general_config_variables "after sourcing ${ARCH} arch"
 
 	return 0
 }
