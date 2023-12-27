@@ -13,6 +13,17 @@ function mainline_kernel_decide_version__upstream_release_candidate_number() {
 	fi
 }
 
+# Maintained by @viraniac
+function mainline_kernel_decide_version__sunxi_fixed_versions() {
+	[[ "${LINUXFAMILY}" != "sunxi" && "${LINUXFAMILY}" != "sunxi64" ]] && return 0 # only for sunxi/sunxi64
+	case "${KERNEL_MAJOR_MINOR}" in
+		"6.1") declare -g KERNELBRANCH="tag:v6.1.69" ;;
+		"6.6") declare -g KERNELBRANCH="tag:v6.6.8" ;;
+		"6.7") declare -g KERNELBRANCH="tag:v6.7-rc6" ;;
+	esac
+	display_alert "mainline-kernel" "Using fixed version for sunxi/sunxi64 KERNELBRANCH='${KERNELBRANCH}'" "info"
+}
+
 ### Later than normal hooks, for emergencies / locking versions for release / etc. Use mainline_kernel_decide_version__600 or higher.
 
 ## Example: "6.6.7 was recently released with changes that break our drivers/patches/souls. Let's Lock 6.6 to 6.6.6 until we've time to fix it."
