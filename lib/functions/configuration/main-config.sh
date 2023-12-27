@@ -194,7 +194,6 @@ function do_main_configuration() {
 			;;
 	esac
 
-
 	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
 	case $UBOOT_MIRROR in
@@ -237,7 +236,7 @@ function do_main_configuration() {
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
 	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything... # @TODO: remove
-	ATF_COMPILE=yes # @TODO: move to armhf/arm64
+	ATF_COMPILE=yes              # @TODO: move to armhf/arm64
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 	[[ -z $SKIP_BOOTSPLASH ]] && SKIP_BOOTSPLASH="no"
@@ -299,10 +298,8 @@ function do_extra_configuration() {
 
 	declare BOOTCONFIG_VAR_NAME="BOOTCONFIG_${BRANCH^^}"
 	[[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
-	[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
-	[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY"
+	[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY" # @TODO move to hook
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
-	[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
 	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar|mantic|noble)$ ]]; then
 		DISTRIBUTION="Ubuntu"
