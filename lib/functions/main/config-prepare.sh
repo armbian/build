@@ -220,7 +220,7 @@ function config_post_main() {
 	# So we gotta explictly know the major.minor to be able to do that scheme.
 	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
 	if [[ "${skip_kernel:-"no"}" != "yes" ]]; then
-		if [[ -n "${KERNELSOURCE}" ]]; then
+		if [[ "${KERNELSOURCE}" != 'none' ]]; then
 			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
 				display_alert "Problem: after configuration, there's not enough kernel info" "Might happen if you used the wrong BRANCH. Make sure 'BRANCH=${BRANCH}' is valid." "err"
 				# if we have KERNEL_TARGET set.
