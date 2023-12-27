@@ -33,8 +33,8 @@ case "${BRANCH}" in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH='branch:linux-6.6.y'
+		declare -g KERNEL_MAJOR_MINOR="6.7"    # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH='tag:v6.7-rc7' # @TODO: branch:linux-6.7.y' when released
 		;;
 esac
 
