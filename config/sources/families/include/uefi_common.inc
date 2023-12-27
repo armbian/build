@@ -22,8 +22,8 @@ case "${BRANCH}" in
 		;;
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="5.15"          # Major and minor versions of this kernel. For mainline caching.
-		declare -g KERNELBRANCH="branch:linux-5.15.y" # Branch or tag to build from. It should match MAJOR_MINOR
+		declare -g KERNEL_MAJOR_MINOR="6.1"          # Major and minor versions of this kernel. For mainline caching.
+		declare -g KERNELBRANCH="branch:linux-6.1.y" # Branch or tag to build from. It should match MAJOR_MINOR
 		;;
 
 	current)
