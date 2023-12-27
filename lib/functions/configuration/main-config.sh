@@ -168,80 +168,77 @@ function do_main_configuration() {
 
 	esac
 
-	# used by multiple sources - reduce code duplication
-	[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
+	# Defaults... # @TODO: why?
+	declare -g -r MAINLINE_UBOOT_DIR='u-boot'
+	declare -g -r MAINLINE_KERNEL_DIR='linux-mainline'
 
-	# URL for the git bundle used to "bootstrap" local git copies without too much server load. This applies independently of git mirror below.
-	declare -g MAINLINE_KERNEL_TORVALDS_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/clone.bundle" # this is plain torvalds, single branch
-	declare -g MAINLINE_KERNEL_STABLE_BUNDLE_URL="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/clone.bundle"     # this is all stable branches. with tags!
-	declare -g MAINLINE_KERNEL_COLD_BUNDLE_URL="${MAINLINE_KERNEL_COLD_BUNDLE_URL:-${MAINLINE_KERNEL_TORVALDS_BUNDLE_URL}}"          # default to Torvalds; everything else is small enough with this
+	# pre-calculate mirrors. important: this sets _SOURCE variants that might be used in common.conf to default things to mainline, but using mirror.
+	# @TODO: setting them here allows family/board code (and hooks) to read them and embed them into configuration, which is bad: it might end up without the mirror.
+	[[ $USE_MAINLINE_GOOGLE_MIRROR == yes ]] && MAINLINE_MIRROR=google
 
 	case $MAINLINE_MIRROR in
 		google)
-			MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
-			MAINLINE_FIRMWARE_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+			declare -g -r MAINLINE_KERNEL_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable'
+			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://kernel.googlesource.com/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 		tuna)
-			MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git'
-			MAINLINE_FIRMWARE_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-firmware.git'
+			declare -g -r MAINLINE_KERNEL_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git'
+			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://mirrors.tuna.tsinghua.edu.cn/git/linux-firmware.git'
 			;;
 		bfsu)
-			MAINLINE_KERNEL_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-stable.git'
-			MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
+			declare -g -r MAINLINE_KERNEL_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-stable.git'
+			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
 			;;
 		*)
-			MAINLINE_KERNEL_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
-			MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+			declare -g -r MAINLINE_KERNEL_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
+			declare -g -r MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 	esac
 
-	MAINLINE_KERNEL_DIR='linux-mainline'
 
-	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github
+	[[ $USE_GITHUB_UBOOT_MIRROR == yes ]] && UBOOT_MIRROR=github # legacy compatibility?
 
 	case $UBOOT_MIRROR in
 		gitee)
-			MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
+			declare -g -r MAINLINE_UBOOT_SOURCE='https://gitee.com/mirrors/u-boot.git'
 			;;
 		denx)
-			MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
+			declare -g -r MAINLINE_UBOOT_SOURCE='https://source.denx.de/u-boot/u-boot.git'
 			;;
 		*)
-			MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
+			declare -g -r MAINLINE_UBOOT_SOURCE='https://github.com/u-boot/u-boot'
 			;;
 	esac
 
-	MAINLINE_UBOOT_DIR='u-boot'
-
 	case $GITHUB_MIRROR in
 		fastgit)
-			GITHUB_SOURCE='https://hub.fastgit.xyz'
+			declare -g -r GITHUB_SOURCE='https://hub.fastgit.xyz'
 			;;
 		ghproxy)
 			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=mirror.ghproxy.com
-			GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
+			declare -g -r GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
 			;;
 		gitclone)
-			GITHUB_SOURCE='https://gitclone.com/github.com'
+			declare -g -r GITHUB_SOURCE='https://gitclone.com/github.com'
 			;;
 		*)
-			GITHUB_SOURCE='https://github.com'
+			declare -g -r GITHUB_SOURCE='https://github.com'
 			;;
 	esac
 
 	case $GHCR_MIRROR in
 		dockerproxy)
-			GHCR_SOURCE='ghcr.dockerproxy.com'
+			declare -g -r GHCR_SOURCE='ghcr.dockerproxy.com'
 			;;
 		*)
-			GHCR_SOURCE='ghcr.io'
+			declare -g -r GHCR_SOURCE='ghcr.io'
 			;;
 	esac
 
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
-	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything...
-	ATF_COMPILE=yes
+	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything... # @TODO: remove
+	ATF_COMPILE=yes # @TODO: move to armhf/arm64
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 	[[ -z $SKIP_BOOTSPLASH ]] && SKIP_BOOTSPLASH="no"
