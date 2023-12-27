@@ -15,7 +15,7 @@ declare -g DISTRO_GENERIC_KERNEL=no
 case "${BRANCH}" in
 
 	ddk)
-		# This will force `unset KERNELSOURCE` later; no kernel will be built.
+		# This will force `KERNELSOURCE='none'` later; no kernel will be built.
 		# Instead, the distro's default linux-generic kernel will be installed.
 		# rpardini: For some regrettable reason, most of this logic is in the grub extension.
 		declare -g DISTRO_GENERIC_KERNEL=yes
