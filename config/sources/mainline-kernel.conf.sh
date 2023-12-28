@@ -24,6 +24,8 @@ function mainline_kernel_decide_version__upstream_release_candidate_number() {
 
 ### Later-than-usual hooks, for changing parameters after the hooks above have run. use mainline_kernel_decide_version__750 or higher.
 
+# This is a _special case_ handling for a specific kernel -rc release problem during end-of-year vacations.
+# It should be removed once the problem is fixed at kernel.org / google git mirrors.
 # https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git is missing 6.7-rc7 tag; use Linus GH repo instead.
 # Attention: this does not support/respect git mirror... hopefully kernel.org catches up soon and we can remove this.
 function mainline_kernel_decide_version__750_use_torvalds_for_6.7-rc7() {
