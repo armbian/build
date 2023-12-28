@@ -13,16 +13,6 @@ function mainline_kernel_decide_version__upstream_release_candidate_number() {
 	fi
 }
 
-# Maintained by @paolosabatino
-function mainline_kernel_decide_version__rockchip_32bit_fixed_versions() {
-	[[ "${LINUXFAMILY}" != "rockchip" ]] && return 0 # only for rockchip armhf 32-bit
-	case "${KERNEL_MAJOR_MINOR}" in
-		"6.1") declare -g KERNELBRANCH="tag:v6.1.68" ;;
-		"6.6") declare -g KERNELBRANCH="tag:v6.6.7" ;;
-	esac
-	display_alert "mainline-kernel" "Using fixed version for rockchip armhf 32-bit KERNELBRANCH='${KERNELBRANCH}'" "info"
-}
-
 ### Later than normal hooks, for emergencies / locking versions for release / etc. Use mainline_kernel_decide_version__600 or higher.
 
 ## Example: "6.6.7 was recently released with changes that break our drivers/patches/souls. Let's Lock 6.6 to 6.6.6 until we've time to fix it."
