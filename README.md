@@ -61,7 +61,7 @@ BUILD_DESKTOP=no \
 KERNEL_CONFIGURE=no
 ```
 
-Build with GitHub actions:
+Build with GitHub actions: ([advanced version](https://github.com/armbian/os/blob/main/.github/workflows/complete-artifact-one-by-one.yml))
 
 ```
 name: "Build Armbian"
@@ -76,7 +76,7 @@ jobs:
           armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:   "jammy"                        # userspace
           armbian_target:    "build"                        # build=image, kernel=kernel
-          armbian_board:     "uefi-x86"                     # build target
+          armbian_board:     "uefi-arm64"                   # build target
 ```
 Generated image will be uploaded to your repository release. Note: GitHub upload file limit is 2Gb.
 
