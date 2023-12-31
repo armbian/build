@@ -21,7 +21,7 @@
 
 - x86_64 / aarch64 machine
 - at least 2GB of memory and ~35GB of disk space for VM, container or bare metal installation
-- [Armbian / Ubuntu Jammy 22.04.x](https://github.com/armbian/sdk/releases/latest) for native building or any Docker capable Linux for containerised
+- [Armbian / Ubuntu Jammy 22.04.x](https://github.com/armbian/sdk) for native building or any Docker capable Linux for containerised
 - Windows 10/11 with WSL2 subsystem running Ubuntu Jammy 22.04.x
 - Superuser rights (configured sudo or root access).
 - Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
