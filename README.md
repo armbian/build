@@ -49,11 +49,11 @@ Show work-in-progress areas in interactive mode:
 ./compile.sh EXPERT="yes"
 ```
 
-Build minimal CLI Armbian Jammy for UEFI arm64  with LTS kernel:
+Build minimal CLI Armbian Jammy for Bananapi M5 with LTS kernel:
 
 ```bash
 ./compile.sh \
-BOARD=uefi-arm64 \
+BOARD=bananapim5 \
 BRANCH=current \
 RELEASE=jammy \
 BUILD_MINIMAL=yes \
@@ -76,7 +76,7 @@ jobs:
           armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:   "jammy"                        # userspace
           armbian_target:    "build"                        # build=image, kernel=kernel
-          armbian_board:     "uefi-arm64"                   # build target
+          armbian_board:     "bananapim5"                   # build target
 ```
 Generated image will be uploaded to your repository release. Note: GitHub upload file limit is 2Gb.
 
