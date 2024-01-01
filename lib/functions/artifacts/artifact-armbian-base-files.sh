@@ -137,6 +137,10 @@ function compile_armbian-base-files() {
 		Bugs: ${VENDORBUGS}
 		Parent: ${DISTRIBUTION}
 	EOD
+	# Fix symlinking in postinst for Debian and Ubuntu. They have to point towards Armbian
+	sed -i "s|ln -sf ubuntu /etc/dpkg/origins/default|ln -sf armbian /etc/dpkg/origins/default|g" "${destination}"/DEBIAN/postinst
+	sed -i "s|ln -sf debian \"\$DPKG_ROOT/etc/dpkg/origins/default\"|ln -sf armbian \"\$DPKG_ROOT/etc/dpkg/origins/default\"|g" "${destination}"/DEBIAN/postinst
+
 	sed -i "s|^HOME_URL=.*|HOME_URL=\"${VENDORURL}\"|" "${destination}"/etc/os-release
 	sed -i "s|^SUPPORT_URL=.*|SUPPORT_URL=\"${VENDORSUPPORT}\"|" "${destination}"/etc/os-release
 	sed -i "s|^BUG_REPORT_URL=.*|BUG_REPORT_URL=\"${VENDORBUGS}\"|" "${destination}"/etc/os-release
