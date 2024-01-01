@@ -127,9 +127,12 @@ function kernel_prepare_build_and_package() {
 	)
 
 	[ -z "${SRC_LOADADDR}" ] || install_make_params_quoted+=("${SRC_LOADADDR}") # For uImage
+
 	# @TODO: Only combining `install` and `modules_install` enable mixed-build and __build_one_by_one
 	# We should spilt the `build` and `install` into two make steps as the kernel required
-	build_targets+=("install" "${KERNEL_INSTALL_TYPE:-install}")
+	build_targets+=("${KERNEL_INSTALL_TYPE:-install}")
+
+	install_make_params_quoted+=("INSTALL_MOD_STRIP=1") # strip modules during install
 
 	build_targets+=("modules_install") # headers_install disabled, only used for libc headers
 	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
