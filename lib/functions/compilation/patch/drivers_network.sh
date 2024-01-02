@@ -666,6 +666,7 @@ driver_uwe5622() {
 		fi
 
 		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch"  "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-reduce-system-load.patch"  "applying"
 	fi
 }
 
