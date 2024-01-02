@@ -1,6 +1,6 @@
-# Rockchip RK3568 quad core 4GB eMMC USB3 2x 2.5GbE 
+# Rockchip RK3568 quad core 4GB eMMC USB3 2x 2.5GbE
 BOARD_NAME="NanoPi R5C"
-BOARDFAMILY="rockchip64" 
+BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOT_SOC="rk3568"
 KERNEL_TARGET="edge"
@@ -18,11 +18,9 @@ BOOTPATCHDIR="v2023.10"
 BOOTCONFIG="nanopi-r5c-rk3568_defconfig"
 BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 
+OVERLAY_PREFIX="rockchip-rk3568"
 DEFAULT_OVERLAYS="nanopi-r5c-leds"
 
-# Newer blobs...
-RKBIN_GIT_URL="https://github.com/rpardini/armbian-rkbin.git"
-RKBIN_GIT_BRANCH="update-3568-blobs"
 DDR_BLOB="rk35/rk3568_ddr_1560MHz_v1.18.bin"
 BL31_BLOB="rk35/rk3568_bl31_v1.43.elf"
 
