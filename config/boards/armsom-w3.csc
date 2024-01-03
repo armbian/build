@@ -1,4 +1,4 @@
-# Rockchip RK3588 SoC octa core 8-32GB SoC 2.5GBe PoE eMMC USB3 NvME
+# Rockchip RK3588 SoC octa core 8-32GB SoC 2.5GBe eMMC USB3 NvME
 BOARD_NAME="ArmSoM W3"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""

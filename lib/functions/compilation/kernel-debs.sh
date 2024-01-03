@@ -10,7 +10,7 @@
 # This is a re-imagining of mkdebian and builddeb from the kernel tree.
 
 # We wanna produce Debian/Ubuntu compatible packages so we're able to use their standard tools, like
-# `flash-kernel`, `u-boot-menu`, `grub2`, and others, so we gotta stick to their conventions.
+# `u-boot-menu`, `grub2`, and others, so we gotta stick to their conventions.
 
 # The main difference is that this is NOT invoked from KBUILD's Makefile, but instead
 # directly by Armbian, with references to the dirs where KBUILD's
@@ -235,7 +235,7 @@ function kernel_package_callback_linux_image() {
 	fi
 
 	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
-		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel, u-boot-menu, and other standard Debian/Ubuntu utilities
+		# /usr/lib/linux-image-${kernel_version_family} is wanted by u-boot-menu, and other standard Debian/Ubuntu utilities
 
 		display_alert "DTBs present on kernel output" "DTBs ${package_name}: /usr/lib/linux-image-${kernel_version_family}" "debug"
 		mkdir -p "${package_directory}/usr/lib"

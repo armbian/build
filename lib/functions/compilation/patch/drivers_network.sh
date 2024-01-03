@@ -100,6 +100,7 @@ driver_rtl8189ES() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-5.4.251-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 }
 
@@ -147,6 +148,7 @@ driver_rtl8189FS() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-Fix-building-on-5.4.251-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189fs-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 
 }
@@ -190,6 +192,7 @@ driver_rtl8192EU() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-5.4.251-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 }
 
@@ -238,7 +241,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 		# fix compilation for kernels >= 6.3
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-6.3.patch" "applying"
-
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 
 }
@@ -249,7 +252,7 @@ driver_xradio_xr819() {
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
-		local xradio_xr819_ver="commit:547521df27d1a80fb5542e93fa13bd09fb2259a2"
+		local xradio_xr819_ver="commit:3a1f77fb2db248b7d18d93b67b16e0d6c91db184"
 
 		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradio_xr819_ver}" "yes"
 		cd "$kerneldir" || exit
@@ -272,7 +275,6 @@ driver_xradio_xr819() {
 			>> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/xradio\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
 	fi
 
 }
@@ -283,7 +285,7 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
-		local rtl8811cuver="commit:9e2772540f66a69170f43864a6560d0d190d97b1"
+		local rtl8811cuver="commit:a41ef7cabd1aa36fa2b4eb63a71cf719bff11b72"
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -315,11 +317,6 @@ driver_rtl8811CU_rtl8821C() {
 		echo "obj-\$(CONFIG_RTL8821CU) += rtl8811cu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-p2p-go-advertising.patch" "applying"
-
-		# fix compilation for kernels >= 5.4
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8811cu-Fix-VFS-import.patch" "applying"
 
 	fi
 
@@ -380,7 +377,7 @@ driver_rtl88x2bu() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# attach to specifics tag or branch
-		local rtl88x2buver="commit:2590672d717e2516dd2e96ed66f1037a6815bced"
+		local rtl88x2buver="commit:cd2b6cbd9c8fbfebee8a1f28fab8e4434450456c"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
@@ -408,17 +405,6 @@ driver_rtl88x2bu() {
 		echo "obj-\$(CONFIG_RTL8822BU) += rtl88x2bu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i "/source \"drivers\/net\/wireless\/ti\/Kconfig\"/a source \"drivers\/net\/wireless\/rtl88x2bu\/Kconfig\"" \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-p2p-go-advertising.patch" "applying"
-
-		# fix compilation for kernels >= 5.4
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-Fix-VFS-import.patch" "applying"
-
-		# fix compilation for kernels >= 6.3
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-6.3.0.patch" "applying"
-
-		# fix compilation for kernels >= 6.3.13 < 6.4 and >= 6.5
-		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2bu-wireless-ignore-stale-kickoff-removal.patch" "applying"
 
 	fi
 
@@ -542,7 +528,7 @@ driver_rtl8723DU() {
 
 	if linux-version compare "${version}" ge 5.0; then
 
-		local rtl8723duver='commit:b9f1060c848ce18af01c0a62a459c3a08ccde20c' # was "branch:master"
+		local rtl8723duver='commit:ae03b0861351f72808405ddda80e8aab105bcfce' # was "branch:master"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
@@ -625,7 +611,7 @@ driver_rtl8822BS() {
 
 driver_uwe5622() {
 	# Unisoc uwe5622 wireless Support
-	if linux-version compare "${version}" ge 5.15 && linux-version compare "${version}" le 6.6 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
+	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 ]]; then
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
 		if linux-version compare "${version}" ge 6.3; then
@@ -676,6 +662,8 @@ driver_uwe5622() {
 				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-adjust-for-rockchip-post-6.1.patch"
 			fi
 		fi
+
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 }
 

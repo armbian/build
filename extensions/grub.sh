@@ -79,8 +79,6 @@ function extension_prepare_config__prepare_grub_standard() {
 	display_alert "${UEFI_GRUB} activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }
 
-# @TODO: extract u-boot into an extension, so that core bsps don't have this stuff in there to begin with.
-# @TODO: this code is duplicated in flash-kernel.sh extension, so another reason to refactor the root of the evil
 function post_family_tweaks_bsp__remove_uboot_grub() {
 	if [[ "${UEFI_GRUB}" == "skip" ]]; then
 		display_alert "Skipping remove uboot from BSP" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"

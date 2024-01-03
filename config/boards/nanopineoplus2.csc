@@ -11,3 +11,8 @@ SERIALCON="ttyS0,ttyGS0"
 HAS_VIDEO_OUTPUT="no"
 KERNEL_TARGET="legacy,current,edge"
 CRUSTCONFIG="h5_defconfig"
+
+function post_config_uboot_target__extra_configs_for_nanopi_neo_plus2() {
+	display_alert "$BOARD" "set dram clock" "info"
+	run_host_command_logged scripts/config --set-val CONFIG_DRAM_CLK "504"
+}

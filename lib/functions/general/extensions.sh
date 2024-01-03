@@ -432,7 +432,7 @@ function write_hook_point_metadata() {
 
 # can be called by board, family, config or user to make sure an extension is included.
 # single argument is the extension name.
-# will look for it in /userpatches/extensions first.
+# will look for it in ${USERPATCHES_PATH}/extensions first.
 # if not found there will look in /extensions
 # if not found will exit 17
 function enable_extension() {
@@ -464,7 +464,7 @@ function enable_extension() {
 	enable_extension_recurse_counter=$((enable_extension_recurse_counter + 1))
 
 	# there are many opportunities here. too many, actually. let userpatches override just some functions, etc.
-	for extension_base_path in "${SRC}/userpatches/extensions" "${SRC}/extensions"; do
+	for extension_base_path in "${USERPATCHES_PATH}/extensions" "${SRC}/extensions"; do
 		extension_dir="${extension_base_path}/${extension_name}"
 		extension_file_in_dir="${extension_dir}/${extension_name}.sh"
 		extension_floating_file="${extension_base_path}/${extension_name}.sh"
@@ -526,7 +526,7 @@ function enable_extension() {
 # The reasoning is simple: during Dockerfile build, we wanna have all the hostdeps defined, even if we're not gonna use them.
 function enable_all_extensions_builtin_and_user() {
 	declare -a extension_list=()
-	declare -a ext_dirs=("${SRC}/extensions" "${SRC}/userpatches/extensions")
+	declare -a ext_dirs=("${SRC}/extensions" "${USERPATCHES_PATH}/extensions")
 	declare -a ignore_extensions=("sample-extension")
 
 	# Extensions are files of the format <dir>/extension_name.sh or <dir>/extension_name/extension_name.sh
