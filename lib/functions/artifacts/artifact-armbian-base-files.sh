@@ -141,8 +141,9 @@ function compile_armbian-base-files() {
 	sed -i '/\/etc\/dpkg\/origins\/debian/a \/etc\/dpkg\/origins\/armbian' "${destination}"/DEBIAN/conffiles
 
 	# Fix symlinking in postinst for Debian and Ubuntu. They have to point towards Armbian, Armbian parent is Debian or Ubuntu -> Debian
-	sed -i "s|ln -sf ubuntu /etc/dpkg/origins/default|ln -sf armbian /etc/dpkg/origins/default|g" "${destination}"/DEBIAN/postinst
-	sed -i "s|ln -sf debian \"\$DPKG_ROOT/etc/dpkg/origins/default\"|ln -sf armbian \"\$DPKG_ROOT/etc/dpkg/origins/default\"|g" "${destination}"/DEBIAN/postinst
+	sed -i -E -e "s/\origins\/ubuntu|debian/origins\/armbian/g" "${destination}"/DEBIAN/postinst
+	sed -i -E -e "s/ln -sf ubuntu|debian/ln -sf armbian/g" "${destination}"/DEBIAN/postinst
+
 	# Create preinst file if not exists (Debian)
 	if [[ ! -e "${destination}"/DEBIAN/preinst ]]; then
 		cat <<- EOD >> "${destination}"/DEBIAN/preinst
