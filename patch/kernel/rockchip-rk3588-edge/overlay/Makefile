@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
-	rockchip-rk3588-sata2.dtbo
+	rockchip-rk3588-sata2.dtbo \
+	rockchip-rk3588-rock5b-spi-flash.dtbo
 
 targets += $(dtbo-y)
 
