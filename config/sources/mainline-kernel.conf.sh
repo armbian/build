@@ -8,7 +8,7 @@
 function mainline_kernel_decide_version__upstream_release_candidate_number() {
 	[[ -n "${KERNELBRANCH}" ]] && return 0          # if already set, don't touch it; that way other hooks can run in any order
 	if [[ "${KERNEL_MAJOR_MINOR}" == "6.7" ]]; then # @TODO: roll over to 6.8 and v6.8-rc1 when it is released, which should be around Sunday, 2024-01-21 - see https://deb.tandrin.de/phb-crystal-ball.htm
-		declare -g KERNELBRANCH="tag:v6.7-rc7"
+		declare -g KERNELBRANCH="tag:v6.7-rc8"
 		display_alert "mainline-kernel: upstream release candidate" "Using KERNELBRANCH='${KERNELBRANCH}' for KERNEL_MAJOR_MINOR='${KERNEL_MAJOR_MINOR}'" "info"
 	fi
 }

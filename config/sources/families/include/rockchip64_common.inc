@@ -27,14 +27,10 @@ case $BRANCH in
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.1"
-		declare -g LINUXFAMILY=rockchip64
-		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
 
 	edge)
 		declare -g KERNEL_MAJOR_MINOR="6.6"
-		declare -g LINUXFAMILY=rockchip64
-		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
 esac
 
