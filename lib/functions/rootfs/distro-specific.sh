@@ -14,43 +14,30 @@ function install_distribution_specific() {
 	# disable hostapd as it needs to be configured to start correctly
 	disable_systemd_service_sdcard smartmontools.service smartd.service hostapd.service
 
-	case "${RELEASE}" in
+	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 
-		focal | jammy | kinetic | lunar | mantic)
+		# by using default lz4 initrd compression leads to corruption, go back to proven method
+		# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
+		sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
 
-			# by using default lz4 initrd compression leads to corruption, go back to proven method
-			# @TODO: rpardini: this should be a config option (which is always set to zstd ;-D )
-			sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" "${SDCARD}"/etc/initramfs-tools/initramfs.conf
+		run_host_command_logged rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
 
-			run_host_command_logged rm -f "${SDCARD}"/etc/update-motd.d/{10-uname,10-help-text,50-motd-news,80-esm,80-livepatch,90-updates-available,91-release-upgrade,95-hwe-eol}
+		# Journal service adjustements
+		sed -i "s/#Storage=.*/Storage=volatile/g" "${SDCARD}"/etc/systemd/journald.conf
+		sed -i "s/#Compress=.*/Compress=yes/g" "${SDCARD}"/etc/systemd/journald.conf
+		sed -i "s/#RateLimitIntervalSec=.*/RateLimitIntervalSec=30s/g" "${SDCARD}"/etc/systemd/journald.conf
+		sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" "${SDCARD}"/etc/systemd/journald.conf
 
-			# DNS fix
-			if [[ -n "$NAMESERVER" ]]; then
-				if [[ -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
-					sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
-				else
-					display_alert "DNS fix" "/etc/systemd/resolved.conf not found: ${DISTRIBUTION} ${RELEASE}" "info"
-				fi
-			fi
+		# Chrony temporal fix https://bugs.launchpad.net/ubuntu/+source/chrony/+bug/1878005
+		[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
 
-			# Journal service adjustements
-			sed -i "s/#Storage=.*/Storage=volatile/g" "${SDCARD}"/etc/systemd/journald.conf
-			sed -i "s/#Compress=.*/Compress=yes/g" "${SDCARD}"/etc/systemd/journald.conf
-			sed -i "s/#RateLimitIntervalSec=.*/RateLimitIntervalSec=30s/g" "${SDCARD}"/etc/systemd/journald.conf
-			sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" "${SDCARD}"/etc/systemd/journald.conf
+		# disable conflicting services
+		disable_systemd_service_sdcard ondemand.service
 
-			# Chrony temporal fix https://bugs.launchpad.net/ubuntu/+source/chrony/+bug/1878005
-			[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
-
-			# disable conflicting services
-			disable_systemd_service_sdcard ondemand.service
-
-			# Remove Ubuntu APT spamming
-			install_artifact_deb_chroot "fake-ubuntu-advantage-tools"
-			truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
-
-			;;
-	esac
+		# Remove Ubuntu APT spamming
+		install_artifact_deb_chroot "fake-ubuntu-advantage-tools"
+		truncate --size=0 "${SDCARD}"/etc/apt/apt.conf.d/20apt-esm-hook.conf
+	fi
 
 	# install our base-files package (this replaces the original from Debian/Ubuntu)
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
@@ -70,6 +57,12 @@ function install_distribution_specific() {
 		  version: 2
 		  renderer: ${RENDERER}
 		EOF
+	fi
+
+	# Set DNS server if systemd-resolved is in use
+	if [[ -n "$NAMESERVER" && -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
+		sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
+		display_alert "Setup DNS server for systemd-resolved" "${NAMESERVER}" "info"
 	fi
 
 	# cleanup motd services and related files
@@ -170,7 +163,7 @@ function create_sources_list_and_deploy_repo_key() {
 			fi
 			;;
 
-		focal | jammy | kinetic | lunar | mantic)
+		focal | jammy | kinetic | lunar | mantic | noble)
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${UBUNTU_MIRROR} $release main restricted universe multiverse
 				#deb-src http://${UBUNTU_MIRROR} $release main restricted universe multiverse
