@@ -15,33 +15,28 @@ declare -g DISTRO_GENERIC_KERNEL=no
 case "${BRANCH}" in
 
 	ddk)
-		# This will force `unset KERNELSOURCE` later; no kernel will be built.
+		# This will force `KERNELSOURCE='none'` later; no kernel will be built.
 		# Instead, the distro's default linux-generic kernel will be installed.
 		# rpardini: For some regrettable reason, most of this logic is in the grub extension.
 		declare -g DISTRO_GENERIC_KERNEL=yes
 		;;
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.1"          # Major and minor versions of this kernel. For mainline caching.
-		declare -g KERNELBRANCH="branch:linux-6.1.y" # Branch or tag to build from. It should match MAJOR_MINOR
+		declare -g KERNEL_MAJOR_MINOR="6.1"
 		;;
 
 	current)
-
-		declare -g KERNEL_MAJOR_MINOR="6.6"          # Major and minor versions of this kernel. For mainline caching.
-		declare -g KERNELBRANCH="branch:linux-6.6.y" # Branch or tag to build from. It should match MAJOR_MINOR
+		declare -g KERNEL_MAJOR_MINOR="6.6"
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.7"    # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH='tag:v6.7-rc7' # @TODO: branch:linux-6.7.y' when released
+		declare -g KERNEL_MAJOR_MINOR="6.7"
 		;;
 esac
 
 # Common for all branches
 declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-${BRANCH}"
 declare -g KERNELPATCHDIR="archive/uefi-${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}" # Might be empty; NO SYMLINKS! Attention: KERNEL_MAJOR_MINOR is used, not BRANCH! No symlinks!
-
 
 # Booting EFI stuff via GRUB. There are specific boards (qemu-uboot-x86 and qemu-uboot-arm64) that enable QEMU_UBOOT_BOOTCONFIG.
 # This does not affect "normal" generic UEFI boards

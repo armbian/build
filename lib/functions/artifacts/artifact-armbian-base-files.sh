@@ -137,6 +137,31 @@ function compile_armbian-base-files() {
 		Bugs: ${VENDORBUGS}
 		Parent: ${DISTRIBUTION}
 	EOD
+	# Add armbian to the package conf files.
+	sed -i '/\/etc\/dpkg\/origins\/debian/a \/etc\/dpkg\/origins\/armbian' "${destination}"/DEBIAN/conffiles
+
+	# Fix symlinking in postinst for Debian and Ubuntu. They have to point towards Armbian, Armbian parent is Debian or Ubuntu -> Debian
+	sed -i -E -e "s/\origins\/ubuntu|debian/origins\/armbian/g" "${destination}"/DEBIAN/postinst
+	sed -i -E -e "s/ln -sf ubuntu|debian/ln -sf armbian/g" "${destination}"/DEBIAN/postinst
+
+	# Create preinst file if not exists (Debian)
+	if [[ ! -e "${destination}"/DEBIAN/preinst ]]; then
+		cat <<- EOD >> "${destination}"/DEBIAN/preinst
+		#!/bin/sh
+		set -e
+		# Start of automatically added by ${VENDOR}
+		rm -f /etc/dpkg/origins/default # reset default link
+		# End of automatically added by ${VENDOR}
+		EOD
+		chmod 0755 "${destination}"/DEBIAN/preinst
+	else
+		cat <<- EOD >> "${destination}"/DEBIAN/preinst
+		# Start of automatically added by ${VENDOR}
+		rm -f /etc/dpkg/origins/default # reset default link
+		# End of automatically added by ${VENDOR}
+		EOD
+	fi
+
 	sed -i "s|^HOME_URL=.*|HOME_URL=\"${VENDORURL}\"|" "${destination}"/etc/os-release
 	sed -i "s|^SUPPORT_URL=.*|SUPPORT_URL=\"${VENDORSUPPORT}\"|" "${destination}"/etc/os-release
 	sed -i "s|^BUG_REPORT_URL=.*|BUG_REPORT_URL=\"${VENDORBUGS}\"|" "${destination}"/etc/os-release

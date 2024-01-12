@@ -805,6 +805,7 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 		'--zero-commit',  # do not use the git revision, instead 000000...0000
 		'--stat=120',  # 'wider' stat output; default is 80
 		'--stat-graph-width=10',  # shorten the diffgraph graph part, it's too long
+        '--abbrev=12', # force index length to 12
 		"-1", "--stdout", commit
 	],
 		cwd=repo.working_tree_dir,

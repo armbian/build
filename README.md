@@ -17,18 +17,16 @@
 
 ## Getting started
 
-### Requirements
+### Requirements for self hosted
 
 - x86_64 / aarch64 machine
 - at least 2GB of memory and ~35GB of disk space for VM, container or bare metal installation
-- Ubuntu Jammy 22.04.x for native building or any Docker capable Linux for containerised
+- [Armbian / Ubuntu Jammy 22.04.x](https://github.com/armbian/sdk) for native building or any Docker capable Linux for containerised
 - Windows 10/11 with WSL2 subsystem running Ubuntu Jammy 22.04.x
 - Superuser rights (configured sudo or root access).
 - Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
 
-### Start with the build script
-
-##### Development branch:
+For stable branch use `--branch=v23.11`
 
 ```bash
 apt-get -y install git
@@ -36,16 +34,6 @@ git clone --depth=1 --branch=main https://github.com/armbian/build
 cd build
 ./compile.sh
 ```
-
-##### Stable branch:
-
-```bash
-apt-get -y install git
-git clone --depth=1 --branch=v23.11 https://github.com/armbian/build
-cd build
-./compile.sh
-```
-
 
 <a href="#how-to-build-an-image-or-a-kernel"><img src=".github/README.gif" alt="Armbian logo" width="100%"></a>
 
@@ -61,20 +49,38 @@ Show work-in-progress areas in interactive mode:
 ./compile.sh EXPERT="yes"
 ```
 
-Build minimal CLI Armbian Jammy for Raspberry Pi 4B with LTS kernel and write image directly to the SD card:
+Build minimal CLI Armbian Jammy for Bananapi M5 with LTS kernel:
 
 ```bash
 ./compile.sh \
-BOARD=rpi4b \
+BOARD=bananapim5 \
 BRANCH=current \
 RELEASE=jammy \
 BUILD_MINIMAL=yes \
 BUILD_DESKTOP=no \
-KERNEL_CONFIGURE=no \
-CARD_DEVICE="/dev/sdX"
+KERNEL_CONFIGURE=no
 ```
 
-More information:
+Build with GitHub actions: ([advanced version](https://github.com/armbian/os/blob/main/.github/workflows/complete-artifact-one-by-one.yml))
+
+```
+name: "Build Armbian"
+on:
+  workflow_dispatch:
+jobs:
+  build-armbian:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: armbian/build@main
+        with:
+          armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
+          armbian_release:   "jammy"                        # userspace
+          armbian_target:    "build"                        # build=image, kernel=kernel
+          armbian_board:     "bananapim5"                   # build target
+```
+Generated image will be uploaded to your repository release. Note: GitHub upload file limit is 2Gb.
+
+## More information:
 
 - [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start, how to automate)
 - [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) (all build options)

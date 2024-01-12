@@ -129,11 +129,14 @@ function config_source_board_file() {
 	# Otherwise publish it as readonly global
 	declare -g -r SOURCED_BOARD_CONFIGS_FILENAME_LIST="${sourced_board_configs[*]}"
 
+	track_general_config_variables "after sourcing board"
+
 	# this is (100%?) rewritten by family config!
 	# answer: this defaults LINUXFAMILY to BOARDFAMILY. that... shouldn't happen, extensions might change it too.
 	# @TODO: better to check for empty after sourcing family config and running extensions, *warning about it*, and only then default to BOARDFAMILY.
 	# this sourced the board config. do_main_configuration will source the (BOARDFAMILY) family file.
 	LINUXFAMILY="${BOARDFAMILY}"
+	track_general_config_variables "after defaulting LINUXFAMILY to BOARDFAMILY"
 
 	# Lets make some variables readonly after sourcing the board file.
 	# We don't want anything changing them, it's exclusively for board config.
@@ -161,6 +164,8 @@ function config_early_init() {
 	display_alert "Starting single build process" "${BOARD:-"no BOARD set"}" "info"
 
 	declare -g -a KERNEL_DRIVERS_SKIP=() # Prepare array to be filled in by board/family/extensions
+
+	silent="yes" track_general_config_variables "after config_early_init" # don't log anything, just init the change tracking
 
 	return 0 # protect against eventual shortcircuit above
 }
@@ -220,7 +225,14 @@ function config_post_main() {
 	# So we gotta explictly know the major.minor to be able to do that scheme.
 	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
 	if [[ "${skip_kernel:-"no"}" != "yes" ]]; then
-		if [[ -n "${KERNELSOURCE}" ]]; then
+
+		# call hooks to do late validation/mutation of sources, branches, patch dirs, etc.
+		call_extension_method "late_family_config" <<- 'LATE_FAMILY_CONFIG'
+			*late defaults/overrides, main hook point for KERNELSOURCE/BRANCH and BOOTSOURCE/BRANCH etc*
+		LATE_FAMILY_CONFIG
+		track_general_config_variables "after late_family_config hooks"
+
+		if [[ "${KERNELSOURCE}" != 'none' ]]; then
 			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
 				display_alert "Problem: after configuration, there's not enough kernel info" "Might happen if you used the wrong BRANCH. Make sure 'BRANCH=${BRANCH}' is valid." "err"
 				# if we have KERNEL_TARGET set.

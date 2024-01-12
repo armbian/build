@@ -210,24 +210,22 @@ function create_sources_list_and_deploy_repo_key() {
 	components+=("${RELEASE}-utils")   # utils contains packages Igor picks from other repos
 	components+=("${RELEASE}-desktop") # desktop contains packages Igor picks from other repos
 
-	if [[ "${when}" != "image-early" ]]; then # only add armbian.list when==image-late
-		# stage: add armbian repository and install key
-		if [[ $DOWNLOAD_MIRROR == "china" ]]; then
-			echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
-		elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
-			echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
-		else
-			echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
-		fi
+	# stage: add armbian repository and install key
+	if [[ $DOWNLOAD_MIRROR == "china" ]]; then
+		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
+		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	else
+		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	fi
 
-		# replace local package server if defined. Suitable for development
-		[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	# replace local package server if defined. Suitable for development
+	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
-		# disable repo if SKIP_ARMBIAN_REPO==yes, or if when==image-early.
-		if [[ "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
-			display_alert "Disabling Armbian repo" "${ARCH}-${RELEASE} :: skip:${SKIP_ARMBIAN_REPO:-"no"} when:${when}" "info"
-			mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
-		fi
+	# disable repo if SKIP_ARMBIAN_REPO==yes, or if when==image-early.
+	if [[ "${when}" == "image-early" || "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
+		display_alert "Disabling Armbian repo" "${ARCH}-${RELEASE} :: skip:${SKIP_ARMBIAN_REPO:-"no"} when:${when}" "info"
+		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
 
 	declare CUSTOM_REPO_WHEN="${when}"
