@@ -11,7 +11,6 @@ declare -g BOOT_FDT_FILE="rockchip/rk3588s-indiedroid-nova.dtb"
 declare -g BOOT_SCENARIO="spl-blobs"
 declare -g BOOT_SUPPORT_SPI="no"
 declare -g IMAGE_PARTITION_TABLE="gpt"
-declare -g SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
 declare -g BOOTFS_TYPE="fat"
 declare -g SRC_EXTLINUX="no" # going back to standard uboot for now
 declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
