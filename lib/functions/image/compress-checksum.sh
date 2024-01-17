@@ -35,10 +35,11 @@ function output_images_compress_and_checksum() {
 		# get just the filename, sans path
 		declare uncompressed_file_basename
 		uncompressed_file_basename=$(basename "${uncompressed_file}")
+		declare xz_compression_ratio_image="${IMAGE_XZ_COMPRESSION_RATIO:-"1"}"
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *xz* ]]; then
 			display_alert "Compressing with xz" "${uncompressed_file_basename}.xz" "info"
-			xz -T 0 -1 "${uncompressed_file}" # "If xz is provided with input but no output, it will delete the input"
+			xz -T 0 "-${xz_compression_ratio_image}" "${uncompressed_file}" # "If xz is provided with input but no output, it will delete the input"
 			compression_type=".xz"
 		fi
 
