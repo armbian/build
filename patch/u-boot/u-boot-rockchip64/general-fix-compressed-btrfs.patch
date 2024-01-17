@@ -1,0 +1,78 @@
+From b1d3013d024086c042dbae4ddd99db56bb55b5e7 Mon Sep 17 00:00:00 2001
+From: Dominique Martinet <dominique.martinet@atmark-techno.com>
+Date: Tue, 18 Apr 2023 15:41:55 +0900
+Subject: [PATCH] btrfs: fix offset when reading compressed extents
+
+btrfs_read_extent_reg correctly computed the extent offset in the
+BTRFS_COMPRESS_NONE case, but did not account for the 'offset - key.offset'
+part correctly in the compressed case, making the function read
+incorrect data.
+
+In the case I examined, the last 4k of a file was corrupted and
+contained data from a few blocks prior, e.g. reading a 10k file with a
+single extent:
+btrfs_file_read()
+ -> btrfs_read_extent_reg
+    (aligned part loop, until 8k)
+ -> read_and_truncate_page
+   -> btrfs_read_extent_reg
+      (re-reads the last extent from 8k to the end,
+      incorrectly reading the first 2k of data)
+
+This can be reproduced as follow:
+$ truncate -s 200M btr
+$ mount btr -o compress /mnt
+$ pat() { dd if=/dev/zero bs=1M count=$1 iflag=count_bytes status=none | tr '\0' "\\$2"; }
+$ { pat 4K 1; pat 4K 2; pat 2K 3; }  > /mnt/file
+$ sync
+$ filefrag -v /mnt/file
+File size of /mnt/file is 10240 (3 blocks of 4096 bytes)
+ ext:     logical_offset:        physical_offset: length:   expected: flags:
+   0:        0..       2:       3328..      3330:      3:             last,encoded,eof
+$ umount /mnt
+
+Then in u-boot:
+=> load scsi 0 2000000 file
+10240 bytes read in 3 ms (3.3 MiB/s)
+=> md 2001ff0
+02001ff0: 02020202 02020202 02020202 02020202  ................
+02002000: 01010101 01010101 01010101 01010101  ................
+02002010: 01010101 01010101 01010101 01010101  ................
+
+(02002000 onwards should contain '03' pattern but went back to 01,
+start of the extent)
+
+After patch, data is read properly:
+=> md 2001ff0
+02001ff0: 02020202 02020202 02020202 02020202  ................
+02002000: 03030303 03030303 03030303 03030303  ................
+02002010: 03030303 03030303 03030303 03030303  ................
+
+Note that the code previously (before commit e3427184f38a ("fs: btrfs:
+Implement btrfs_file_read()")) did not split that read in two, so
+this is a regression even if the previous code might not have been
+handling offsets correctly either (something that booted now fails to
+boot)
+
+Fixes: a26a6bedafcf ("fs: btrfs: Introduce btrfs_read_extent_inline() and btrfs_read_extent_reg()")
+Signed-off-by: Dominique Martinet <dominique.martinet@atmark-techno.com>
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+---
+ fs/btrfs/inode.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/fs/btrfs/inode.c b/fs/btrfs/inode.c
+index 40025662f250..38e285bf94b0 100644
+--- a/fs/btrfs/inode.c
++++ b/fs/btrfs/inode.c
+@@ -511,7 +511,9 @@ int btrfs_read_extent_reg(struct btrfs_path *path,
+ 	if (ret < dsize)
+ 		memset(dbuf + ret, 0, dsize - ret);
+ 	/* Then copy the needed part */
+-	memcpy(dest, dbuf + btrfs_file_extent_offset(leaf, fi), len);
++	memcpy(dest,
++	       dbuf + btrfs_file_extent_offset(leaf, fi) + offset - key.offset,
++	       len);
+ 	ret = len;
+ out:
+ 	free(cbuf);
