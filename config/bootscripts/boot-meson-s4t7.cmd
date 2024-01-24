@@ -36,20 +36,6 @@ else
 	setenv plymouthargs "splash=verbose"
 fi
 
-if test -n "${hdmimode}" ; then
-	if test ${display_height} -ge 2160 ; then
-		setenv displaymode "2160p60hz"
-	elif test ${display_height} -ge 1080 ; then
-		setenv displaymode "1080p60hz"
-	else
-		setenv displaymode "720p60hz"
-	fi
-fi
-
-if test "${force_16x9_display}" = "true"; then
-	setexpr bootargs sub "vout=${outputmode}" "vout=${displaymode}" "${bootargs}"
-fi
-
 setexpr bootargs sub "rootfstype=\\S*" "rootfstype=${rootfstype}" "${bootargs}"
 
 setenv bootargs "root=${rootdev} ${bootargs} ${consoleargs} partition_type=generic loglevel=${verbosity} ${plymouthargs} ${extraargs} ${extraboardargs}"
