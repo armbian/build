@@ -249,6 +249,13 @@ function prepare_partitions() {
 			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
 		fi
 
+ 		if [[ $LVM_ENABLE == yes ]]; then
+           display_alert "Using LVM root" "lvm" "info"
+		   vgscan
+           vgchange -a y ${LVM_VG_NAME}
+           rootdevice=/dev/mapper/${LVM_VG_NAME}-root
+        fi
+
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "${rootdevice}"
