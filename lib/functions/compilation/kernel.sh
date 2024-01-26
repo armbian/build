@@ -41,6 +41,12 @@ function compile_kernel() {
 	kernel_base_revision_date="$(LC_ALL=C date -d "@${kernel_base_revision_ts}")"
 	display_alert "Using Kernel git revision" "${kernel_git_revision} at '${kernel_base_revision_date}'"
 
+	# Call extension method to prepare extra sources
+	call_extension_method "kernel_copy_extra_sources" <<- 'ARMBIAN_KERNEL_SOURCES_EXTRA'
+		*Hook to copy extra kernel sources to the kernel under compilation*
+	ARMBIAN_KERNEL_SOURCES_EXTRA
+
+
 	# Possibly 'make clean'.
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
 
