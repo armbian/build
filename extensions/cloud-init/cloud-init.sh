@@ -23,7 +23,7 @@ function extension_prepare_config__ci_image_suffix() {
 
 function extension_prepare_config__prepare_ci() { 
   # Cloud Init related packages selected from Ubuntu RPI distirbution
-  add_packages_to_image cloud-init cloud-initramfs-copymods cloud-initramfs-dyn-netconf
+  add_packages_to_image cloud-init cloud-initramfs-dyn-netconf
 }
 
 function extension_prepare_config__ci_compatibility_check(){
