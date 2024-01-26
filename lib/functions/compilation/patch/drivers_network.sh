@@ -416,7 +416,7 @@ driver_rtw88() {
 	# Upstream wireless RTW88 drivers (wireless-next-2023-08-25)
 	if linux-version compare "${version}" ge 6.1; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.8; then
+		if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.6; then # came in with 6.6.14 and 6.7.2
 			process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
 		fi
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/002-rtw88-usb-make-work-queues-high-priority.patch" "applying"
