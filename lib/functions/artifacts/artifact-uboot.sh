@@ -74,7 +74,7 @@ function artifact_uboot_prepare_version() {
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=(
 		"post_uboot_custom_postprocess" "fetch_custom_uboot" "build_custom_uboot"
-		"pre_config_uboot_target" "post_config_uboot_target"
+		"pre_config_uboot_target" "post_config_uboot_target" "pre_package_uboot_image"
 	)
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
