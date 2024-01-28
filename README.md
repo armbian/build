@@ -1,32 +1,4 @@
-<p align="center">
-  <a href="#build-framework">
-  <img src=".github/armbian-logo.png" alt="Armbian logo" width="144">
-  </a><br>
-  <strong>Armbian Linux Build Framework</strong><br>
-<br>
-<a href=https://github.com/armbian/build/graphs/contributors><img alt="GitHub contributors" src="https://img.shields.io/github/contributors-anon/armbian/build?logo=stackexchange&label=Contributors&style=for-the-badge&branch=main&logoColor=white"></a>
-<a href=https://github.com/armbian/os><img alt="Artifacts generation" src="https://img.shields.io/github/actions/workflow/status/armbian/os/complete-artifact-matrix-all.yml?logo=dependabot&label=CI%20Build&style=for-the-badge&branch=main&logoColor=white"></a>
-<a href=https://github.com/armbian/build/commits/main><img alt="GitHub last commit (branch)" src="https://img.shields.io/github/last-commit/armbian/build/main?logo=github&label=Last%20commit&style=for-the-badge&branch=main&logoColor=white"></a>
-</p>
-
-## What does this project do?
-
-- Builds custom **kernel**, **image** or a **distribution** optimized for low-resource hardware,
-- Include filesystem generation, low-level control software, kernel image and **bootloader** compilation,
-- Provides a **consistent user experience** by keeping system standards across different platforms.
-
-## Getting started
-
-### Requirements for self hosted
-
-- x86_64 / aarch64 machine
-- at least 2GB of memory and ~35GB of disk space for VM, container or bare metal installation
-- [Armbian / Ubuntu Jammy 22.04.x](https://github.com/armbian/sdk) for native building or any Docker capable Linux for containerised
-- Windows 10/11 with WSL2 subsystem running Ubuntu Jammy 22.04.x
-- Superuser rights (configured sudo or root access).
-- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
-
-For stable branch use `--branch=v23.11`
+I made several successful investments with this broker before losing 80% of my savings to the trading scam. It cost me so much money and pain to invest in a broker that was not even real. All thanks to, MAC WIKI TEAM for helping me recover my money back email them now: macwiki @ proton. me
 
 ```bash
 apt-get -y install git
