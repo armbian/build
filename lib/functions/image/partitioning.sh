@@ -98,7 +98,7 @@ function prepare_partitions() {
 		local uefipart=$((next++))
 	fi
 	# Check if we need boot partition
-	if [[ -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes ]]; then
+	if [[ -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes || $LVM_ENABLE == yes ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
@@ -237,7 +237,7 @@ function prepare_partitions() {
 	declare root_part_uuid="uninitialized"
 
 	if [[ -n $rootpart ]]; then
-		local rootdevice="${LOOP}p${rootpart}"
+		declare -g rootdevice="${LOOP}p${rootpart}"
 
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			check_loop_device "$rootdevice"
@@ -249,12 +249,10 @@ function prepare_partitions() {
 			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
 		fi
 
- 		if [[ $LVM_ENABLE == yes ]]; then
-           display_alert "Using LVM root" "lvm" "info"
-		   vgscan
-           vgchange -a y ${LVM_VG_NAME}
-           rootdevice=/dev/mapper/${LVM_VG_NAME}-root
-        fi
+		call_extension_method "prepare_root_device" <<- 'PREPARE_ROOT_DEVICE'
+			*Specialized storage extensions typically transform the root device into a mapped device and should hook in here *
+			At this stage ${rootdevice} has been defined pointing to a loop device partition. Extensions that map the root device must update rootdevice accordingly.
+		PREPARE_ROOT_DEVICE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
