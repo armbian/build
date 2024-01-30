@@ -99,6 +99,14 @@ function memoized_git_ref_to_info() {
 					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
 					;;
 
+				"https://gitee.com/"*)
+					# parse org/repo from https://gitee.com/org/repo
+					declare org_and_repo=""
+					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
+					org_and_repo="${org_and_repo%.git}" # remove .git if present
+					url="https://gitee.com/${org_and_repo}/raw/${sha1}/Makefile"
+					;;
+
 				"https://github.com/"*)
 					# parse org/repo from https://github.com/org/repo
 					declare org_and_repo=""
