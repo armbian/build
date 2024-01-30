@@ -32,19 +32,23 @@ function extension_prepare_config__prepare_lvm() {
   add_packages_to_image lvm2
 }
 
-
 function post_create_partitions__setup_lvm(){
-
-  # Setup LVM on the second partition, ROOTFS
-  parted -s ${SDCARD}.raw -- set 2 lvm on
-  display_alert "LVM Partition table created" "${EXTENSION}" "info"
-  parted -s ${SDCARD}.raw -- print >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
 
   LOOP=$(losetup -f)
   [[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
   check_loop_device "$LOOP"
   losetup $LOOP ${SDCARD}.raw
   partprobe $LOOP 
+
+  # the partition to setup LVM on is defined as rootpart
+  local lvmpart=${rootpart}
+  local lvmdev=${LOOP}p${lvmpart}
+  display_alert "LVM will be on Partition ${lvmpart}, thats ${lvmdev}" "${EXTENSION}" "info"
+
+  # Setup LVM on the partition, ROOTFS
+  parted -s ${SDCARD}.raw -- set ${lvmpart} lvm on
+  display_alert "LVM Partition table created" "${EXTENSION}" "info"
+  parted -s ${SDCARD}.raw -- print >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
   	
   # Caculate the required volume size
 	declare -g -i rootfs_size
@@ -55,9 +59,9 @@ function post_create_partitions__setup_lvm(){
 
   # Create the PV VG and VOL
   display_alert "LVM Creating VG" "${SDCARD}.raw" "info"
-  check_loop_device ${LOOP}p2
-  pvcreate ${LOOP}p2
-  vgcreate ${LVM_VG_NAME} ${LOOP}p2
+  check_loop_device ${lvmdev}
+  pvcreate ${lvmdev}
+  vgcreate ${LVM_VG_NAME} ${lvmdev}
   # Note that devices wont come up automatically inside docker
   lvcreate -Zn --name root --size ${volsize}M ${LVM_VG_NAME}
   vgmknodes
@@ -67,10 +71,18 @@ function post_create_partitions__setup_lvm(){
   display_alert "LVM created volume group" "${EXTENSION}" "info"
 }
 
+function prepare_root_device__create_volume_group(){
+  display_alert "Using LVM root" "${EXTENSION}" "info"
+	vgscan
+  vgchange -a y ${LVM_VG_NAME}
+
+  rootdevice=/dev/mapper/${LVM_VG_NAME}-root
+  display_alert "Root device is ${rootdevice}" "${EXTENSION}" "info"
+}
+
 function format_partitions__format_lvm(){
   # Label the root volume 
   e2label /dev/mapper/${LVM_VG_NAME}-root armbi_root
-  blkid | grep ${LOOP}p1 >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
   blkid | grep ${LVM_VG_NAME} >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
   display_alert "LVM labeled partitions" "${EXTENSION}" "info"
 }
