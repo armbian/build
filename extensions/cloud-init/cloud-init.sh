@@ -39,17 +39,17 @@ function extension_prepare_config__ci_compatibility_check(){
 }
 
 function pre_customize_image__inject_cloud_init_config() {
-		# Copy the NoCLoud Cloud-Init Configuration
+	# Copy the NoCLoud Cloud-Init Configuration
 	display_alert "Configuring" "cloud-init" "info"
 	local config_src="${EXTENSION_DIR}/config"
 	local config_dst="${SDCARD}/etc/cloud/cloud.cfg.d"
-		run_host_command_logged cp ${config_src}/* $config_dst
+	run_host_command_logged cp ${config_src}/* $config_dst
 
-		# Provide default cloud-init files
+	# Provide default cloud-init files
 	display_alert "Defaults" "cloud-init" "info"
 	local defaults_src="${EXTENSION_DIR}/defaults"
 	local defaults_dst="${SDCARD}/boot"
-		run_host_command_logged cp ${defaults_src}/* $defaults_dst
+	run_host_command_logged cp ${defaults_src}/* $defaults_dst
 	return 0
 }
 
