@@ -274,14 +274,14 @@ function install_distribution_agnostic() {
 
 	call_extension_method "pre_install_kernel_debs" <<- 'PRE_INSTALL_KERNEL_DEBS'
 		*called before installing the Armbian-built kernel deb packages*
-		It is not too late to `unset KERNELSOURCE` here and avoid kernel install.
+		It is not too late to `KERNELSOURCE='none'` here and avoid kernel install.
 	PRE_INSTALL_KERNEL_DEBS
 
 	# default IMAGE_INSTALLED_KERNEL_VERSION, will be parsed from Kernel version in the installed deb package.
 	IMAGE_INSTALLED_KERNEL_VERSION="generic"
 
 	# install kernel: image/dtb/headers
-	if [[ -n $KERNELSOURCE ]]; then
+	if [[ "${KERNELSOURCE}" != "none" ]]; then
 		install_artifact_deb_chroot "linux-image"
 
 		if [[ "${KERNEL_BUILD_DTBS:-"yes"}" == "yes" ]]; then

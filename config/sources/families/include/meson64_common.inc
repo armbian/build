@@ -38,16 +38,14 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
-	current)
-		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel. For mainline caching.
-		KERNELBRANCH='branch:linux-6.1.y'
-		KERNELPATCHDIR='meson64-current'
+	legacy)
+		declare -g KERNEL_MAJOR_MINOR="6.1"
 		;;
-
+	current)
+		declare -g KERNEL_MAJOR_MINOR="6.6"
+		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel. For mainline caching.
-		KERNELBRANCH='branch:linux-6.6.y'
-		KERNELPATCHDIR='meson64-edge'
+		declare -g KERNEL_MAJOR_MINOR="6.7"
 		;;
 
 esac

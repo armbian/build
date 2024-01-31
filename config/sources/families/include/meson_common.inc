@@ -19,8 +19,6 @@ CPUMIN=504000
 CPUMAX=1632000
 GOVERNOR=ondemand
 
-SKIP_BOOTSPLASH="yes"
-
 case $BOARD in
 	odroidc1)
 
@@ -44,20 +42,17 @@ case $BOARD in
 esac
 
 case $BRANCH in
+
+        legacy)
+                declare -g KERNEL_MAJOR_MINOR="6.1"
+                ;;
+
 	current)
-
-		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-6.1.y"
-		KERNELPATCHDIR='meson-'$BRANCH
-
+		declare -g KERNEL_MAJOR_MINOR="6.6"
 		;;
 
 	edge)
-
-		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
-		KERNELBRANCH="branch:linux-6.6.y"
-		KERNELPATCHDIR='meson-'$BRANCH
-
+		declare -g KERNEL_MAJOR_MINOR="6.7"
 		;;
 esac
 

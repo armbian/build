@@ -63,7 +63,7 @@ function extension_prepare_config__prepare_grub_standard() {
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
 		declare -g IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}"
-		unset KERNELSOURCE                     # This should make Armbian skip most stuff. At least, I hacked it to.
+		declare -g KERNELSOURCE='none'         # We need to be explicit we don't want a kernel built.
 		declare -g INSTALL_ARMBIAN_FIRMWARE=no # Should skip build and install of Armbian-firmware.
 	else
 		declare -g KERNELDIR="linux-uefi-${LINUXFAMILY}" # Avoid sharing a source tree with others, until we know it's safe.

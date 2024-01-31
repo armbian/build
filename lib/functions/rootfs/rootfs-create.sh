@@ -178,6 +178,10 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# Now do the install, all packages should have been downloaded by now
 	chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_ROOTFS[@]}"
 
+	# Systemd resolver is not working yet
+	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
+
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		# how how many items in AGGREGATED_PACKAGES_DESKTOP array
 		display_alert "Installing ${#AGGREGATED_PACKAGES_DESKTOP[@]} desktop packages" "${RELEASE} ${DESKTOP_ENVIRONMENT}" "info"

@@ -8,7 +8,7 @@
 # https://github.com/armbian/build/
 
 function kernel_prepare_git() {
-	[[ -z $KERNELSOURCE ]] && return 0 # do nothing if no kernel source... but again, why were we called then?
+	[[ "${KERNELSOURCE}" == 'none' ]] && return 0 # do nothing if no kernel source... but again, why were we called then?
 
 	# validate kernel_git_bare_tree is set
 	if [[ -z "${kernel_git_bare_tree}" ]]; then

@@ -98,7 +98,7 @@ function prepare_partitions() {
 		local uefipart=$((next++))
 	fi
 	# Check if we need boot partition
-	if [[ -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes || $LVM_ENABLE == yes ]]; then
+	if [[ $BOOTSIZE != "0" && ( -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes || $LVM_ENABLE == yes ) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
@@ -129,7 +129,7 @@ function prepare_partitions() {
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
 		sdsize=$FIXED_IMAGE_SIZE
 		# basic sanity check
-		if [[ $ROOTFS_TYPE != nfs && $sdsize -lt $rootfs_size ]]; then
+		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs && $sdsize -lt $rootfs_size ]]; then
 			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
 		fi
 	else

@@ -129,11 +129,14 @@ function config_source_board_file() {
 	# Otherwise publish it as readonly global
 	declare -g -r SOURCED_BOARD_CONFIGS_FILENAME_LIST="${sourced_board_configs[*]}"
 
+	track_general_config_variables "after sourcing board"
+
 	# this is (100%?) rewritten by family config!
 	# answer: this defaults LINUXFAMILY to BOARDFAMILY. that... shouldn't happen, extensions might change it too.
 	# @TODO: better to check for empty after sourcing family config and running extensions, *warning about it*, and only then default to BOARDFAMILY.
 	# this sourced the board config. do_main_configuration will source the (BOARDFAMILY) family file.
 	LINUXFAMILY="${BOARDFAMILY}"
+	track_general_config_variables "after defaulting LINUXFAMILY to BOARDFAMILY"
 
 	# Lets make some variables readonly after sourcing the board file.
 	# We don't want anything changing them, it's exclusively for board config.
@@ -161,6 +164,8 @@ function config_early_init() {
 	display_alert "Starting single build process" "${BOARD:-"no BOARD set"}" "info"
 
 	declare -g -a KERNEL_DRIVERS_SKIP=() # Prepare array to be filled in by board/family/extensions
+
+	silent="yes" track_general_config_variables "after config_early_init" # don't log anything, just init the change tracking
 
 	return 0 # protect against eventual shortcircuit above
 }
@@ -198,18 +203,7 @@ function config_post_main() {
 		display_alert "BETA" "Not yes nor no, user-built" "debug"
 		IMAGE_TYPE=user-built
 	fi
-
-	declare -g BOOTSOURCEDIR
-	BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
-	if [[ -n $ATFSOURCE ]]; then
-		declare -g ATFSOURCEDIR
-		ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
-	fi
-
-	if [[ -n $CRUSTSOURCE ]]; then
-		declare -g CRUSTSOURCEDIR
-		CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
-	fi
+	track_general_config_variables "at beginning of config_post_main"
 
 	# So for kernel full cached rebuilds.
 	# We wanna be able to rebuild kernels very fast. so it only makes sense to use a dir for each built kernel.
@@ -220,7 +214,33 @@ function config_post_main() {
 	# So we gotta explictly know the major.minor to be able to do that scheme.
 	# If we don't know, we could use BRANCH as reference, but that changes over time, and leads to wastage.
 	if [[ "${skip_kernel:-"no"}" != "yes" ]]; then
-		if [[ -n "${KERNELSOURCE}" ]]; then
+
+		# call hooks to do late validation/mutation of sources, branches, patch dirs, etc.
+		call_extension_method "late_family_config" <<- 'LATE_FAMILY_CONFIG'
+			*late defaults/overrides, main hook point for KERNELSOURCE/BRANCH and BOOTSOURCE/BRANCH etc*
+		LATE_FAMILY_CONFIG
+		track_general_config_variables "after late_family_config hooks"
+
+		# We need BOOTDIR and BOOTBRANCH here, bomb if not
+		[[ -z "${BOOTDIR}" ]] && exit_with_error "BOOTDIR not set after late_family_config"
+		[[ -z "${BOOTBRANCH}" ]] && exit_with_error "BOOTBRANCH not set after late_family_config"
+
+		declare -g BOOTSOURCEDIR
+		BOOTSOURCEDIR="u-boot-worktree/${BOOTDIR}/$(branch2dir "${BOOTBRANCH}")"
+
+		if [[ -n $ATFSOURCE ]]; then
+			declare -g ATFSOURCEDIR
+			ATFSOURCEDIR="${ATFDIR}/$(branch2dir "${ATFBRANCH}")"
+		fi
+
+		if [[ -n $CRUSTSOURCE ]]; then
+			declare -g CRUSTSOURCEDIR
+			CRUSTSOURCEDIR="${CRUSTDIR}/$(branch2dir "${CRUSTBRANCH}")"
+		fi
+
+		track_general_config_variables "before handling KERNEL_MAJOR_MINOR in config_post_main"
+
+		if [[ "${KERNELSOURCE}" != 'none' ]]; then
 			if [[ "x${KERNEL_MAJOR_MINOR}x" == "xx" ]]; then
 				display_alert "Problem: after configuration, there's not enough kernel info" "Might happen if you used the wrong BRANCH. Make sure 'BRANCH=${BRANCH}' is valid." "err"
 				# if we have KERNEL_TARGET set.
@@ -277,6 +297,7 @@ function config_post_main() {
 	# Do some sanity checks for userspace stuff, if RELEASE/DESKTOP_ENVIRONMENT is set.
 	check_config_userspace_release_and_desktop
 
+	track_general_config_variables "before calling extension_finish_config"
 	display_alert "Extensions: finish configuration" "extension_finish_config" "debug"
 	call_extension_method "extension_finish_config" <<- 'EXTENSION_FINISH_CONFIG'
 		*allow extensions a last chance at configuration just before it is done*
@@ -284,6 +305,7 @@ function config_post_main() {
 		This runs *late*, and is the final step before finishing configuration.
 		Don't change anything not coming from other variables or meant to be configured by the user.
 	EXTENSION_FINISH_CONFIG
+	track_general_config_variables "after calling extension_finish_config"
 
 	return 0 # protect against eventual shortcircuit above
 }

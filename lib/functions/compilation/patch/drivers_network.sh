@@ -416,7 +416,9 @@ driver_rtw88() {
 	# Upstream wireless RTW88 drivers (wireless-next-2023-08-25)
 	if linux-version compare "${version}" ge 6.1; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
+		if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.6; then # came in with 6.6.14 and 6.7.2
+			process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
+		fi
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/002-rtw88-usb-make-work-queues-high-priority.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/003-rtw88-decrease-the-log-level-of-tx-report.patch" "applying"
 	fi
@@ -730,6 +732,10 @@ driver_rtl8723cs() {
 
 	if linux-version compare "${version}" ge 6.5; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.5.patch" "applying"
+	fi
+
+	if linux-version compare "${version}" ge 6.7; then
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.7.patch" "applying"
 	fi
 
 }
