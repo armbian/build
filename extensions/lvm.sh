@@ -25,8 +25,8 @@ function extension_prepare_config__lvm_image_suffix() {
 }
 
 function extension_prepare_config__prepare_lvm() { 
-	# Config for lvm.
-	declare -g LVM_ENABLE=yes
+	# Config for lvm, boot partition is required, many bootloaders do not support LVM.
+	declare -g BOOTPART_REQUIRED=yes
 	declare -g LVM_VG_NAME="${LVM_VG_NAME:-armbivg}"
 	declare -g EXTRA_ROOTFS_MIB_SIZE=256
 	add_packages_to_image lvm2
