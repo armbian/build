@@ -55,9 +55,9 @@ function improved_git_fetch() {
 function git_ensure_safe_directory() {
 	if [[ -n "$(command -v git)" ]]; then
 		local git_dir="$1"
-		if regular_git -C "$1" -C rev-parse --git-dir > /dev/null 2>&1; then
+		if [[ -e "$1/.git" ]]; then
 			display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
-			regular_git -C "$1" config --local --get safe.directory "$1" > /dev/null || regular_git -C "$1" config --local --add safe.directory "$1"
+			regular_git config --global --get safe.directory "$1" > /dev/null || regular_git config --global --add safe.directory "$1"
 		fi
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
