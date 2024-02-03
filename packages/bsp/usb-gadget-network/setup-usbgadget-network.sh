@@ -1,11 +1,10 @@
 #!/bin/bash
 
-deviceinfo_name="Xiaomi Mi Pad 5 Pro"
-deviceinfo_manufacturer="Xiaomi"
-deviceinfo_codename="xiaomi-elish"
+deviceinfo_name="Armbian USB Gadget Network"
+deviceinfo_manufacturer="Armbian"
 #deviceinfo_usb_idVendor=
 #deviceinfo_usb_idProduct=
-deviceinfo_usb_serialnumber="xiaomi-elish"
+#deviceinfo_usb_serialnumber=
 
 setup_usb_network_configfs() {
 	# See: https://www.kernel.org/doc/Documentation/usb/gadget_configfs.txt
@@ -52,6 +51,19 @@ setup_usb_network_configfs() {
 	# Link the network instance to the configuration
 	ln -s $CONFIGFS/g1/functions/"$usb_network_function" $CONFIGFS/g1/configs/c.1 ||
 		echo "  Couldn't symlink $usb_network_function"
+
+	echo 0xEF > $CONFIGFS/g1/functions/"$usb_network_function"/class ||
+		echo "  Couldn't write class"
+	echo 0x04 > $CONFIGFS/g1/functions/"$usb_network_function"/subclass ||
+		echo "  Couldn't write subclass"
+	echo 0x01 > $CONFIGFS/g1/functions/"$usb_network_function"/protocol ||
+		echo "  Couldn't write protocol"
+	echo 0xEF > $CONFIGFS/g1/bDeviceClass ||
+		echo "  Couldn't write g1 class"
+	echo 0x04 > $CONFIGFS/g1/bDeviceSubClass ||
+		echo "  Couldn't write g1 subclass"
+	echo 0x01 > $CONFIGFS/g1/bDeviceProtocol ||
+		echo "  Couldn't write g1 protocol"
 
 	# Check if there's an USB Device Controller
 	if [ -z "$(ls /sys/class/udc)" ]; then

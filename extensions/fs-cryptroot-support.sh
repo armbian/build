@@ -15,6 +15,23 @@ function add_host_dependencies__add_cryptroot_tooling() {
 	fi
 }
 
+function extension_prepare_config__prepare_cryptroot() { 
+	# Config for cryptroot, a boot partition is required.
+	declare -g BOOTPART_REQUIRED=yes
+	EXTRA_IMAGE_SUFFIXES+=("-crypt")
+}
+
+function prepare_root_device__encrypt_root_device(){
+	# We encrypt the rootdevice (currently a loop device) and return the new mapped rootdevice
+	check_loop_device "$rootdevice"
+	display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
+	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
+	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
+	display_alert "Root partition encryption complete." "" "ext"
+	# TODO: pass /dev/mapper to Docker
+	rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
+}
+
 function pre_install_kernel_debs__adjust_dropbear_configuration() {
 	# Adjust initramfs dropbear configuration
 	# Needs to be done before kernel installation, else it won't be in the initrd image

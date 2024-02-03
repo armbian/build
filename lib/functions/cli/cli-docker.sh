@@ -60,6 +60,17 @@ function cli_docker_run() {
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["ARMBIAN_BUILD_UUID"]="${ARMBIAN_BUILD_UUID}") # pass down our uuid to the docker instance
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SKIP_LOG_ARCHIVE"]="yes")                     # launched docker instance will not cleanup logs.
 
+	# Produce the re-launch params.
+	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
+	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
+	produce_relaunch_parameters # produces ARMBIAN_CLI_FINAL_RELAUNCH_ARGS and ARMBIAN_CLI_FINAL_RELAUNCH_ENVS
+
+	# Add the relaunch envs to DOCKER_ARGS.
+	for env in "${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[@]}"; do
+		display_alert "Adding Docker env" "${env}" "debug"
+		DOCKER_ARGS+=("--env" "${env}")
+	done
+
 	case "${DOCKER_SUBCMD}" in
 		shell)
 			display_alert "Launching Docker shell" "docker-shell" "info"
