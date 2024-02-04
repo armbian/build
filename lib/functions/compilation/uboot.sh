@@ -19,9 +19,38 @@ function maybe_make_clean_uboot() {
 	fi
 }
 
+function patch_uboot_target() {
+	local uboot_work_dir=""
+	uboot_work_dir="$(pwd)"
+
+	# outer scope variable: uboot_git_revision, validate that it is set
+	if [[ -z "${uboot_git_revision}" ]]; then
+		exit_with_error "uboot_git_revision is not set"
+	fi
+
+	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
+	git checkout -f -q "${uboot_git_revision}"
+
+	maybe_make_clean_uboot
+
+	# Python patching for u-boot!
+	do_with_hooks uboot_main_patching_python
+
+	# create patch for manual source changes
+	if [[ $CREATE_PATCHES == yes ]]; then
+		userpatch_create "u-boot"
+	fi
+}
+
 # this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
 # also receives uboot_prefix, target_make, target_patchdir, target_files as input
 function compile_uboot_target() {
+	patch_uboot_target
+
+	if [[ $CREATE_PATCHES == yes ]]; then
+		return 0
+	fi
+
 	# atftempdir comes from atf.sh's compile_atf()
 	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
 		display_alert "Copying over bin/elf's from atftempdir" "${atftempdir}" "debug"
@@ -318,32 +347,6 @@ function compile_uboot() {
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "uboot" cleanup_id uboottempdir # namerefs
 
 	mkdir -p "$uboottempdir/usr/lib/u-boot" "$uboottempdir/usr/lib/$uboot_name" "$uboottempdir/DEBIAN"
-
-	local uboot_work_dir=""
-	uboot_work_dir="$(pwd)"
-
-	# outer scope variable: uboot_git_revision, validate that it is set
-	if [[ -z "${uboot_git_revision}" ]]; then
-		exit_with_error "uboot_git_revision is not set"
-	fi
-
-	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
-	git checkout -f -q "${uboot_git_revision}"
-
-	# grab the prepatch version from Makefile
-	local uboot_prepatch_version=""
-	uboot_prepatch_version=$(grab_version "${uboot_work_dir}")
-
-	maybe_make_clean_uboot
-
-	# Python patching for u-boot!
-	do_with_hooks uboot_main_patching_python
-
-	# create patch for manual source changes
-	if [[ $CREATE_PATCHES == yes ]]; then
-		userpatch_create "u-boot"
-		return 0 # exit after this.
-	fi
 
 	# Allow extension-based u-boot bulding. We call the hook, and if EXTENSION_BUILT_UBOOT="yes" afterwards, we skip our own compilation.
 	# This is to make it easy to build vendor/downstream uboot with their own quirks.
