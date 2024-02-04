@@ -98,7 +98,8 @@ function prepare_partitions() {
 		local uefipart=$((next++))
 	fi
 	# Check if we need boot partition
-	if [[ $BOOTSIZE != "0" && ( -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes ) ]]; then
+	# Specialized storage extensions like cryptroot or lvm may require a boot partition
+	if [[ $BOOTSIZE != "0" && ( -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $BOOTPART_REQUIRED == yes ) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
@@ -239,15 +240,10 @@ function prepare_partitions() {
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
 
-		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			check_loop_device "$rootdevice"
-			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
-			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
-			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
-			display_alert "Root partition encryption complete." "" "ext"
-			# TODO: pass /dev/mapper to Docker
-			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
-		fi
+		call_extension_method "prepare_root_device" <<- 'PREPARE_ROOT_DEVICE'
+			*Specialized storage extensions typically transform the root device into a mapped device and should hook in here *
+			At this stage ${rootdevice} has been defined pointing to a loop device partition. Extensions that map the root device must update rootdevice accordingly.
+		PREPARE_ROOT_DEVICE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"

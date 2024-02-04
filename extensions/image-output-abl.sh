@@ -38,7 +38,7 @@ function post_build_image__900_convert_to_abl_img() {
 				--ramdisk ${new_rootfs_image_mount_dir}/boot/initrd.img-*-* \
 				--base 0x0 \
 				--second_offset 0x00f00000 \
-				--cmdline "root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}" \
+				--cmdline "clk_ignore_unused pd_ignore_unused root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}" \
 				--kernel_offset 0x8000 \
 				--ramdisk_offset 0x1000000 \
 				--tags_offset 0x100 \
