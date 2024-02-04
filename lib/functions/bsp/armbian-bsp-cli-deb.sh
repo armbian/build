@@ -69,8 +69,10 @@ function compile_armbian-bsp-cli() {
 	mkdir -p "${destination}"/DEBIAN
 	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
 
-	# array of code to be included in postinst (more than base and finish)
+	# array of code to be included in preinst, postinst, prerm and postrm scripts (more than default code)
+	declare -a preinst_functions=()
 	declare -a postinst_functions=()
+	declare -a postrm_functions=()
 
 	declare -a extra_description=()
 	[[ "${EXTRA_BSP_NAME}" != "" ]] && extra_description+=("(variant '${EXTRA_BSP_NAME}')")
@@ -187,7 +189,8 @@ function compile_armbian-bsp-cli() {
 		*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
 		This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
 		You can write to `$destination` here and it will be packaged.
-		You can also append to the `postinst_functions` array, and the _content_ of those functions will be added to the postinst script.
+		You can also append to the `preinst_functions`, `postinst_functions` and `postrm` array, and the _content_
+		of those functions will be added to the preinst, postinst and postrm scripts respectively.
 	POST_FAMILY_TWEAKS_BSP
 
 	# Render the postinst/postrm/etc
@@ -195,11 +198,11 @@ function compile_armbian-bsp-cli() {
 	# This is never run in build context; instead, it's source code is dumped inside a file that is packaged.
 	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
 	### preinst
-	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst
+	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst  "${preinst_functions[@]}"
 	unset board_side_bsp_cli_preinst
 
 	### postrm
-	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm
+	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm  "${postrm_functions[@]}"
 	unset board_side_bsp_cli_postrm
 
 	### postinst -- a bit more complex, extendable via postinst_functions which can be customized in hook above
