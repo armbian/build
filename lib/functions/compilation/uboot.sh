@@ -19,9 +19,7 @@ function maybe_make_clean_uboot() {
 	fi
 }
 
-# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
-# also receives uboot_prefix, target_make, target_patchdir, target_files as input
-function compile_uboot_target() {
+function patch_uboot_target() {
 	local uboot_work_dir=""
 	uboot_work_dir="$(pwd)"
 
@@ -33,10 +31,6 @@ function compile_uboot_target() {
 	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q "${uboot_git_revision}"
 
-	# grab the prepatch version from Makefile
-	local uboot_prepatch_version=""
-	uboot_prepatch_version=$(grab_version "${uboot_work_dir}")
-
 	maybe_make_clean_uboot
 
 	# Python patching for u-boot!
@@ -45,7 +39,16 @@ function compile_uboot_target() {
 	# create patch for manual source changes
 	if [[ $CREATE_PATCHES == yes ]]; then
 		userpatch_create "u-boot"
-		return 0 # exit after this.
+	fi
+}
+
+# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
+# also receives uboot_prefix, target_make, target_patchdir, target_files as input
+function compile_uboot_target() {
+	patch_uboot_target
+
+	if [[ $CREATE_PATCHES == yes ]]; then
+		return 0
 	fi
 
 	# atftempdir comes from atf.sh's compile_atf()
@@ -368,30 +371,18 @@ function compile_uboot() {
 
 	display_alert "Preparing u-boot general packaging" "${version} ${target_make}"
 
-	# set up postinstall script # @todo: extract into a tinkerboard extension
-	if [[ $BOARD == tinkerboard ]]; then
-		cat <<- EOF > "$uboottempdir/DEBIAN/postinst"
-			#!/bin/bash
-			source /usr/lib/u-boot/platform_install.sh
-			[[ \$DEVICE == /dev/null ]] && exit 0
-			if [[ -z \$DEVICE ]]; then
-				DEVICE="/dev/mmcblk0"
-				# proceed to other options.
-				[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk1"
-				[ ! -b \$DEVICE ] && DEVICE="/dev/mmcblk2"
-			fi
-			[[ \$(type -t setup_write_uboot_platform) == function ]] && setup_write_uboot_platform
-			if [[ -b \$DEVICE ]]; then
-				echo "Updating u-boot on \$DEVICE" >&2
-				write_uboot_platform \$DIR \$DEVICE
-				sync
-			else
-				echo "Device \$DEVICE does not exist, skipping" >&2
-			fi
-			exit 0
-		EOF
-		chmod 755 "$uboottempdir/DEBIAN/postinst"
-	fi
+	local -a postinst_functions=()
+	local destination=$uboottempdir
+
+	call_extension_method "pre_package_uboot_image" <<- 'PRE_PACKAGE_UBOOT_IMAGE'
+		*allow making some last minute changes before u-boot is packaged*
+		This should be implemented by the config to tweak the uboot package, after the board or family has had the chance to.
+		You can write to `$destination` here and it will be packaged.
+		You can also append to the `postinst_functions` array, and the _content_ of those functions will be added to the postinst script.
+	PRE_PACKAGE_UBOOT_IMAGE
+
+	artifact_package_hook_helper_board_side_functions "postinst" uboot_postinst_base "${postinst_functions[@]}"
+	unset uboot_postinst_base postinst_functions destination
 
 	# declare -f on non-defined function does not do anything (but exits with errors, so ignore them with "|| true")
 	cat <<- EOF > "$uboottempdir/usr/lib/u-boot/platform_install.sh"
@@ -433,4 +424,22 @@ function compile_uboot() {
 
 	display_alert "Built u-boot deb OK" "linux-u-boot-${BOARD}-${BRANCH} ${artifact_version}" "info"
 	return 0 # success
+}
+
+function uboot_postinst_base() {
+	# Source the armbian-release information file
+	[ -f /etc/armbian-release ] && . /etc/armbian-release
+	source /usr/lib/u-boot/platform_install.sh
+
+	if [ "${FORCE_UBOOT_UPDATE:-no}" == "yes" ]; then
+		#recognize_root
+		root_uuid=$(sed -e 's/^.*root=//' -e 's/ .*$//' < /proc/cmdline)
+		root_partition=$(blkid | tr -d '":' | grep "${root_uuid}" | awk '{print $1}')
+		root_partition_name=$(echo $root_partition | sed 's/\/dev\///g')
+		root_partition_device_name=$(lsblk -ndo pkname $root_partition)
+		root_partition_device=/dev/$root_partition_device_name
+
+		write_uboot_platform "$DIR" "${root_partition_device}"
+		sync
+	fi
 }

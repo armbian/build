@@ -16,9 +16,10 @@ class PatchingAutoPatchMakefileDTConfig:
 	def __init__(self, data: dict):
 		self.config_var: str = data.get("config-var", None)
 		self.directory: str = data.get("directory", None)
+		self.incremental: bool = not not data.get("incremental", False)
 
 	def __str__(self):
-		return f"PatchingAutoPatchMakefileDTConfig(config-var={self.config_var}, directory={self.directory})"
+		return f"PatchingAutoPatchMakefileDTConfig(config-var={self.config_var}, directory={self.directory}, incremental={self.incremental})"
 
 
 class PatchingDTSDirectoryConfig:

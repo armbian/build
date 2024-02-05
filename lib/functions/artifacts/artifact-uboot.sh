@@ -74,7 +74,7 @@ function artifact_uboot_prepare_version() {
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=(
 		"post_uboot_custom_postprocess" "fetch_custom_uboot" "build_custom_uboot"
-		"pre_config_uboot_target" "post_config_uboot_target"
+		"pre_config_uboot_target" "post_config_uboot_target" "pre_package_uboot_image"
 	)
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
@@ -92,6 +92,7 @@ function artifact_uboot_prepare_version() {
 
 	# Hash variables that affect the build and package of u-boot
 	declare -a vars_to_hash=(
+		"BASE_VAR_REBUILD_2"                                      # Change this to force a full rebuild of all uboot's
 		"${BOOTDELAY}" "${UBOOT_DEBUGGING}" "${UBOOT_TARGET_MAP}" # general for all families
 		"${BOOT_SCENARIO}" "${BOOT_SUPPORT_SPI}" "${BOOT_SOC}"    # rockchip stuff, sorry.
 		"${DDR_BLOB}" "${BL31_BLOB}" "${MINILOADER_BLOB}"         # More rockchip stuff, even more sorry.

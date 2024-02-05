@@ -12,7 +12,6 @@ BOOT_SCENARIO="spl-blobs"
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
-SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
 
 function post_family_tweaks__rock5cmio_naming_audios() {
 	display_alert "$BOARD" "Renaming Rock CM5 audios" "info"

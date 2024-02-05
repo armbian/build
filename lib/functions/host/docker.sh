@@ -568,17 +568,6 @@ function docker_cli_launch() {
 		run_host_command_logged find "${SRC}/userpatches" -name ".DS_Store" -type f -delete "||" true
 	fi
 
-	# Produce the re-launch params.
-	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
-	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
-	produce_relaunch_parameters # produces ARMBIAN_CLI_FINAL_RELAUNCH_ARGS and ARMBIAN_CLI_FINAL_RELAUNCH_ENVS
-
-	# Add the relaunch envs to DOCKER_ARGS.
-	for env in "${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[@]}"; do
-		display_alert "Adding Docker env" "${env}" "debug"
-		DOCKER_ARGS+=("--env" "${env}")
-	done
-
 	display_alert "-----------------Relaunching in Docker after ${SECONDS}s------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result

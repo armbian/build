@@ -239,7 +239,6 @@ function do_main_configuration() {
 	ATF_COMPILE=yes              # @TODO: move to armhf/arm64
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
-	[[ -z $SKIP_BOOTSPLASH ]] && SKIP_BOOTSPLASH="no"
 	[[ -z $PLYMOUTH ]] && PLYMOUTH="yes"
 	[[ -z $AUFS ]] && AUFS="yes"
 	[[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
@@ -254,7 +253,6 @@ function do_main_configuration() {
 	source_family_config_and_arch
 
 	if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
-		SKIP_BOOTSPLASH="yes"
 		PLYMOUTH="no"
 		[[ $BUILD_DESKTOP != "no" ]] && exit_with_error "HAS_VIDEO_OUTPUT is set to no. So we shouldn't build desktop environment"
 	fi
