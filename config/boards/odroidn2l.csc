@@ -2,7 +2,7 @@
 BOARD_NAME="Odroid N2L"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER=""
-KERNEL_TARGET="edge" # @TODO: DTB for N2L is only in 6.3+; add current when we bump it to 6.3 or newer.
+KERNEL_TARGET="current,edge"
 MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

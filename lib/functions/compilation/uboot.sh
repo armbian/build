@@ -19,9 +19,7 @@ function maybe_make_clean_uboot() {
 	fi
 }
 
-# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
-# also receives uboot_prefix, target_make, target_patchdir, target_files as input
-function compile_uboot_target() {
+function patch_uboot_target() {
 	local uboot_work_dir=""
 	uboot_work_dir="$(pwd)"
 
@@ -33,10 +31,6 @@ function compile_uboot_target() {
 	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q "${uboot_git_revision}"
 
-	# grab the prepatch version from Makefile
-	local uboot_prepatch_version=""
-	uboot_prepatch_version=$(grab_version "${uboot_work_dir}")
-
 	maybe_make_clean_uboot
 
 	# Python patching for u-boot!
@@ -45,7 +39,16 @@ function compile_uboot_target() {
 	# create patch for manual source changes
 	if [[ $CREATE_PATCHES == yes ]]; then
 		userpatch_create "u-boot"
-		return 0 # exit after this.
+	fi
+}
+
+# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
+# also receives uboot_prefix, target_make, target_patchdir, target_files as input
+function compile_uboot_target() {
+	patch_uboot_target
+
+	if [[ $CREATE_PATCHES == yes ]]; then
+		return 0
 	fi
 
 	# atftempdir comes from atf.sh's compile_atf()
