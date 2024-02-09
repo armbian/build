@@ -19,13 +19,37 @@ function logging_init() {
 		declare -g SHOW_DEBUG="${SHOW_DEBUG:-"yes"}"
 	fi
 
+	# detect terminal background color
+	case "${COLORFGBG+${COLORFGBG#*;}}" in
+		[0-6]|8)
+			declare -g background_dark_or_light=dark
+			;;
+		7|9|1[0-5])
+			declare -g background_dark_or_light=light
+			;;
+		*)
+			declare -g background_dark_or_light=
+			;;
+	esac
+
 	# globals
 	declare -g padding="" left_marker="[" right_marker="]"
 	declare -g normal_color="\x1B[0m" gray_color="\e[1;30m" # "bright black", which is grey
 	declare -g bright_red_color="\e[1;31m" red_color="\e[0;31m"
 	declare -g bright_blue_color="\e[1;34m" blue_color="\e[0;34m"
 	declare -g bright_magenta_color="\e[1;35m" magenta_color="\e[0;35m"
-	declare -g bright_yellow_color="\e[1;33m" yellow_color="\e[0;33m"
+	case "${background_dark_or_light}" in
+		light)
+			# bold dim yellow, to ensure readability
+			declare -g bright_yellow_color="\e[1;2;33m"
+			declare -g yellow_color="\e[0;33m"
+			;;
+		*)
+			declare -g bright_yellow_color="\e[1;33m"
+			declare -g yellow_color="\e[0;33m"
+			;;
+	esac
+
 	declare -g ansi_reset_color="\e[0m"
 	declare -g -i logging_section_counter=0 # -i: integer
 	declare -g tool_color="${normal_color}" # default to normal color.

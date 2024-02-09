@@ -20,6 +20,7 @@ from unidecode import unidecode
 from unidiff import PatchSet
 
 from common.patching_config import PatchingConfig
+from common.term_colors import background_dark_or_light
 
 MAGIC_MBOX_MARKER_STANDARD = "Mon Sep 17 00:00:00 2001"
 MAGIC_MBOX_MARKER_B4 = "git@z Thu Jan  1 00:00:00 1970"
@@ -703,11 +704,12 @@ class PatchInPatchFile:
 				color = "yellow"
 			else:
 				color = "red"
+		bold = 'bold dim' if background_dark_or_light() == 'light' else 'bold'
 		# @TODO: once our ansi-haste supports it, use [link url=file://blaaa]
 		if self.parent.multiple_patches_in_file:
-			return f"[bold][{color}]{self.markdown_name(skip_markdown=True)}[/bold](:{self.counter})"
+			return f"[{bold}][{color}]{self.markdown_name(skip_markdown=True)}[/{bold}](:{self.counter})"
 		else:
-			return f"[bold {color}]{self.markdown_name(skip_markdown=True)}"
+			return f"[{bold} {color}]{self.markdown_name(skip_markdown=True)}"
 
 	def rich_patch_output(self):
 		ret = self.patch_output
@@ -716,10 +718,11 @@ class PatchInPatchFile:
 			'yellow': ['with fuzz', 'offset ', ' hunks ignored', ' hunk ignored'],
 			'red': ['hunk FAILED', 'hunks FAILED']
 		}
+		bold = 'bold dim' if background_dark_or_light() == 'light' else 'bold'
 		# use Rich's syntax highlighting to highlight with color
 		for color in color_tags:
 			for tag in color_tags[color]:
-				ret = ret.replace(tag, f"[bold {color}]{tag}[/bold {color}]")
+				ret = ret.replace(tag, f"[{bold} {color}]{tag}[/{bold} {color}]")
 		return ret
 
 	def apply_patch_date_to_files(self, working_dir, options):
