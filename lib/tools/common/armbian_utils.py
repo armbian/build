@@ -20,6 +20,8 @@ from pathlib import Path
 
 import sys
 
+from common.term_colors import background_dark_or_light
+
 REGEX_WHITESPACE_LINEBREAK_COMMA_SEMICOLON = r"[\s,;\n]+"
 
 ARMBIAN_BOARD_CONFIG_REGEX_GENERIC = r"^(?!\s)(?:[export |declare \-g]?)+([A-Z0-9_]+)=(?:'|\")(.*)(?:'|\")"
@@ -80,14 +82,24 @@ def setup_logging():
 		if is_debug():
 			level = "DEBUG"
 		format = "%(message)s"
-		styles = {
-			'trace': {'color': 'white', 'bold': False},
-			'debug': {'color': 'white', 'bold': False},
-			'info': {'color': 'green', 'bold': True},
-			'warning': {'color': 'yellow', 'bold': True},
-			'error': {'color': 'red'},
-			'critical': {'bold': True, 'color': 'red'}
-		}
+		if background_dark_or_light() == 'light':
+			styles = {
+				'trace': {'color': 'black', 'bright': True},
+				'debug': {'color': 'black', 'bright': True},
+				'info': {'color': 'green', 'bold': True, 'faint': True},
+				'warning': {'color': 'yellow', 'bold': True, 'faint': True},
+				'error': {'color': 'red'},
+				'critical': {'bold': True, 'color': 'red'}
+			}
+		else:
+			styles = {
+				'trace': {'color': 'white', 'bold': False},
+				'debug': {'color': 'white', 'bold': False},
+				'info': {'color': 'green', 'bold': True},
+				'warning': {'color': 'yellow', 'bold': True},
+				'error': {'color': 'red'},
+				'critical': {'bold': True, 'color': 'red'}
+			}
 		coloredlogs.install(level=level, stream=sys.stderr, isatty=True, fmt=format, level_styles=styles)
 	except ImportError:
 		level = logging.INFO
