@@ -32,6 +32,7 @@ function kernel_main_patching_python() {
 		#"TARGET="                                            # TARGET is need for u-boot's SPI/SATA etc selection logic. empty for kernel
 		# For table generation to fit into the screen, or being large when in GHA.
 		"COLUMNS=${COLUMNS}"
+		"COLORFGBG=${COLORFGBG}"
 		"GITHUB_ACTIONS=${GITHUB_ACTIONS}"
 		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.
 		"PATH=${PATH}"
