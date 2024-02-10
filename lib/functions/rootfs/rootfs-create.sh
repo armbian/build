@@ -234,8 +234,11 @@ function create_new_rootfs_cache_via_debootstrap() {
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
 	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
-	# Note: This will mark machine `firstboot`
-	run_host_command_logged echo "uninitialized" ">" "${SDCARD}/etc/machine-id"
+	# Note: As we don't use systemd-firstboot.service functionality, we make it empty to prevent services
+	# from starting up automatically on first boot on system version 2.50+. If someone is using the same,
+	# please reinitialize this to uninitialized. Do note that systemd will start all services then by
+	# default and that has to be handled in by setting system presets.
+	run_host_command_logged echo -n ">" "${SDCARD}/etc/machine-id"
 	run_host_command_logged rm -v "${SDCARD}/var/lib/dbus/machine-id"
 
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
