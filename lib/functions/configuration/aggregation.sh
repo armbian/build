@@ -57,6 +57,11 @@ function aggregate_all_packages_python() {
 		"OUTPUT=${temp_file_for_aggregation}"
 		"ASSET_LOG_BASE=$(print_current_asset_log_base_file)" # base file name for the asset log; to write .md summaries.
 
+		# Terminal variables
+		"TERM=${TERM}"
+		"COLORFGBG=${COLORFGBG}"
+		"COLUMNS=${COLUMNS:-160}"
+
 		# For the main packages, and others; main packages are not mixed with BOARD or DESKTOP packages.
 		# Results:
 		# - AGGREGATED_DEBOOTSTRAP_COMPONENTS

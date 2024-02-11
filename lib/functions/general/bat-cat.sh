@@ -96,8 +96,12 @@ function run_tool_batcat() {
 	if [[ "${bat_cat_columns}" -lt 60 ]]; then               # but lever less than 60
 		bat_cat_columns=60
 	fi
+	case "${background_dark_or_light}" in
+		dark)	declare bat_cat_theme="Dracula" ;;
+		*)	declare bat_cat_theme="ansi" ;;
+	esac
 	display_alert "Calling batcat" "COLUMNS: ${bat_cat_columns} | $*" "debug"
-	BAT_CONFIG_DIR="${DIR_BATCAT}/config" BAT_CACHE_PATH="${DIR_BATCAT}/cache" "${BATCAT_BIN}" --theme "Dracula" --paging=never --force-colorization --wrap auto --terminal-width "${bat_cat_columns}" "$@"
+	BAT_CONFIG_DIR="${DIR_BATCAT}/config" BAT_CACHE_PATH="${DIR_BATCAT}/cache" "${BATCAT_BIN}" --theme "${bat_cat_theme}" --paging=never --force-colorization --wrap auto --terminal-width "${bat_cat_columns}" "$@"
 	wait_for_disk_sync "after running batcat"
 }
 
