@@ -3,6 +3,7 @@
 #include <fstream>
 #include <vector>
 #include <tuple>
+#include <cstdint>
 
 std::string loadFileAsLine(const std::string& path) {
   std::string result;
