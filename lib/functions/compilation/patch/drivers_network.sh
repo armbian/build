@@ -424,14 +424,24 @@ driver_rtw88() {
 	fi
 }
 
+function armbian_kernel_config__enable_rtl88x2cs_driver() {
+	if [[ "${LINUXFAMILY}" == "meson64" ]]; then
+		kernel_config_modifying_hashes+=("CONFIG_RTL8822CS=m")
+		if [[ -f .config ]]; then
+			display_alert "Enabling rtl88x2cs driver in kernel config" "armbian-kernel" "wrn"
+			kernel_config_set_m CONFIG_RTL8822CS
+		fi
+	fi
+}
+
 driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
 
-	if linux-version compare "${version}" ge 5.9 && linux-version compare "${version}" lt 6.1; then
+	if linux-version compare "${version}" ge 5.9; then
 
 		# attach to specifics tag or branch
-		local rtl88x2csver='commit:b77a5cf442fbc01c1220b8174ee2227a8f71e204' # was "branch:tune_for_jethub"
+		local rtl88x2csver='commit:10f39b61c51fa0302062059e00e9b5440dd3c7a6' # track "branch:tune_for_jethub"
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
