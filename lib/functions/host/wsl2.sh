@@ -26,6 +26,7 @@ function check_windows_wsl2() {
 }
 
 function wsl2_pester_user_for_terminal() {
+	[[ ! -t 0 ]] && return 0                    # return 0 if user is not on a terminal
 	[[ "x${SSH_CLIENT}x" != "xx" ]] && return 0 # not if being accessed over SSH
 	[[ "x${WT_SESSION}x" != "xx" ]] && return 0 # WT_SESSION from Windows Terminal # From info in https://stackoverflow.com/questions/59733731/how-to-detect-if-running-in-the-new-windows-terminal
 
