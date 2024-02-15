@@ -7,3 +7,6 @@ KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 ASOUND_STATE="asound.state.mesongx"
 BOOT_LOGO="desktop"
+
+BOOTBRANCH_BOARD="tag:v2024.01"
+BOOTPATCHDIR="v2024.01"
