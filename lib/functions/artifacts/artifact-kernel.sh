@@ -143,7 +143,7 @@ function artifact_kernel_prepare_version() {
 	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	# Hash the extension hooks
-	declare -a extension_hooks_to_hash=("pre_package_kernel_image" "kernel_copy_extra_sources")
+	declare -a extension_hooks_to_hash=("pre_package_kernel_image" "kernel_copy_extra_sources" "pre_package_kernel_headers")
 	declare -a extension_hooks_hashed=("$(dump_extension_method_sources_functions "${extension_hooks_to_hash[@]}")")
 	declare hash_hooks="undetermined"
 	hash_hooks="$(echo "${extension_hooks_hashed[@]}" | sha256sum | cut -d' ' -f1)"

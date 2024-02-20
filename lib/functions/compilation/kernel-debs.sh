@@ -457,6 +457,13 @@ function kernel_package_callback_linux_headers() {
 		)
 	fi
 
+	call_extension_method "pre_package_kernel_headers" <<- 'PRE_PACKAGE_KERNEL_HEADERS'
+		*fix kernel headers before packaging*
+		Some (legacy/vendor) kernels need preprocessing of the produced kernel headers before packaging.
+		Use this hook to do that, by modifying the file in place, in `${headers_target_dir}` directory.
+		The kernel sources can be found in `${kernel_work_dir}`.
+	PRE_PACKAGE_KERNEL_HEADERS
+
 	# Generate a control file
 	# TODO: libssl-dev is only required if we're signing modules, which is a kernel .config option.
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
