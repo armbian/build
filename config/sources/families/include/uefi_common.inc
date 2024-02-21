@@ -7,6 +7,7 @@
 # https://github.com/armbian/build/
 #
 declare -g SERIALCON="tty1,ttyS0"                    # Soft expectation for graphic terminal (tty1) and fallback to serial terminal (ttyS0) - Customize if needed
+declare -g DEFAULT_CONSOLE="both"                    #
 declare -g SKIP_BOOTSPLASH="yes"                     # No splash.
 declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3} # Default 3-seconds timeout for GRUB menu.
 declare -g BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
