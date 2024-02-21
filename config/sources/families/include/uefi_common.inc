@@ -10,6 +10,7 @@ declare -g SERIALCON="tty1,ttyS0"                    # Soft expectation for grap
 declare -g DEFAULT_CONSOLE="both"                    #
 declare -g SKIP_BOOTSPLASH="yes"                     # No splash.
 declare -g UEFI_GRUB_TIMEOUT=${UEFI_GRUB_TIMEOUT:-3} # Default 3-seconds timeout for GRUB menu.
+declare -g GRUB_CMDLINE_LINUX_DEFAULT="earlyprintk=ttyS0,115200,keep"
 declare -g BOARD_FIRMWARE_INSTALL="-full"            # Install full firmware for UEFI boards
 case "${BRANCH}" in
 
