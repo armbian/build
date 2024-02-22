@@ -1,0 +1,542 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jonas Karlman <jonas@kwiboo.se>
+Date: Sat, 23 May 2020 10:16:01 +0000
+Subject: [PATCH] WIP: media: rkvdec: pm runtime dont use autosuspend before
+ disable and cleanup
+
+Signed-off-by: Jonas Karlman <jonas@kwiboo.se>
+---
+ drivers/staging/media/rkvdec/rkvdec.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index 4f5436c89e08..eaf2f133a264 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -1125,9 +1125,9 @@ static int rkvdec_remove(struct platform_device *pdev)
+ 
+ 	cancel_delayed_work_sync(&rkvdec->watchdog_work);
+ 
+-	rkvdec_v4l2_cleanup(rkvdec);
+-	pm_runtime_disable(&pdev->dev);
+ 	pm_runtime_dont_use_autosuspend(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++	rkvdec_v4l2_cleanup(rkvdec);
+ }
+ 
+ #ifdef CONFIG_PM
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Randy Li <ayaka@soulik.info>
+Date: Sun, 6 Jan 2019 01:48:37 +0800
+Subject: [PATCH] soc: rockchip: power-domain: export idle request
+
+We need to put the power status of HEVC IP into IDLE unless
+we can't reset that IP or the SoC would crash down.
+rockchip_pmu_idle_request(dev, true)---> enter idle
+rockchip_pmu_idle_request(dev, false)---> exit idle
+
+Signed-off-by: Caesar Wang <wxt@rock-chips.com>
+Signed-off-by: Jeffy Chen <jeffy.chen@rock-chips.com>
+Signed-off-by: Randy Li <ayaka@soulik.info>
+---
+ drivers/soc/rockchip/pm_domains.c | 23 +++++++++++++++++++++++
+ include/linux/rockchip_pmu.h      | 15 +++++++++++++++
+ include/soc/rockchip/pm_domains.h |  6 ++++++
+ 3 files changed, 44 insertions(+)
+ create mode 100644 include/linux/rockchip_pmu.h
+
+diff --git a/drivers/soc/rockchip/pm_domains.c b/drivers/soc/rockchip/pm_domains.c
+index 89795abac951..ffb5d62c9d52 100644
+--- a/drivers/soc/rockchip/pm_domains.c
++++ b/drivers/soc/rockchip/pm_domains.c
+@@ -309,6 +309,29 @@ static int rockchip_pmu_set_idle_request(struct rockchip_pm_domain *pd,
+ 	return 0;
+ }
+ 
++int rockchip_pmu_idle_request(struct device *dev, bool idle)
++{
++	struct generic_pm_domain *genpd;
++	struct rockchip_pm_domain *pd;
++	int ret;
++
++	if (IS_ERR_OR_NULL(dev))
++		return -EINVAL;
++
++	if (IS_ERR_OR_NULL(dev->pm_domain))
++		return -EINVAL;
++
++	genpd = pd_to_genpd(dev->pm_domain);
++	pd = to_rockchip_pd(genpd);
++
++	mutex_lock(&pd->pmu->mutex);
++	ret = rockchip_pmu_set_idle_request(pd, idle);
++	mutex_unlock(&pd->pmu->mutex);
++
++	return ret;
++}
++EXPORT_SYMBOL(rockchip_pmu_idle_request);
++
+ static int rockchip_pmu_save_qos(struct rockchip_pm_domain *pd)
+ {
+ 	int i;
+diff --git a/include/linux/rockchip_pmu.h b/include/linux/rockchip_pmu.h
+new file mode 100644
+index 000000000000..720b3314e71a
+--- /dev/null
++++ b/include/linux/rockchip_pmu.h
+@@ -0,0 +1,15 @@
++/*
++ * pm_domain.h - Definitions and headers related to device power domains.
++ *
++ * Copyright (C) 2017 Randy Li <ayaka@soulik.info>.
++ *
++ * This file is released under the GPLv2.
++ */
++
++#ifndef _LINUX_ROCKCHIP_PM_H
++#define _LINUX_ROCKCHIP_PM_H
++#include <linux/device.h>
++
++int rockchip_pmu_idle_request(struct device *dev, bool idle);
++
++#endif /* _LINUX_ROCKCHIP_PM_H */
+diff --git a/include/soc/rockchip/pm_domains.h b/include/soc/rockchip/pm_domains.h
+index 7dbd941fc937..c5a59dd71754 100644
+--- a/include/soc/rockchip/pm_domains.h
++++ b/include/soc/rockchip/pm_domains.h
+@@ -10,6 +10,7 @@
+ 
+ int rockchip_pmu_block(void);
+ void rockchip_pmu_unblock(void);
++int rockchip_pmu_idle_request(struct device *dev, bool idle);
+ 
+ #else /* CONFIG_ROCKCHIP_PM_DOMAINS */
+ 
+@@ -20,6 +21,11 @@ static inline int rockchip_pmu_block(void)
+ 
+ static inline void rockchip_pmu_unblock(void) { }
+ 
++static inline int rockchip_pmu_idle_request(struct device *dev, bool idle)
++{
++	return -ENOTSUPP;
++}
++
+ #endif /* CONFIG_ROCKCHIP_PM_DOMAINS */
+ 
+ #endif /* __SOC_ROCKCHIP_PM_DOMAINS_H__ */
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Wed, 20 May 2020 17:04:47 +0200
+Subject: [PATCH] WIP: media: rkvdec: implement reset controls
+
+---
+ .../bindings/media/rockchip,vdec.yaml         | 19 +++++++
+ drivers/staging/media/rkvdec/rkvdec-regs.h    |  5 ++
+ drivers/staging/media/rkvdec/rkvdec.c         | 53 +++++++++++++++++++
+ drivers/staging/media/rkvdec/rkvdec.h         | 11 +++-
+ 4 files changed, 87 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/media/rockchip,vdec.yaml b/Documentation/devicetree/bindings/media/rockchip,vdec.yaml
+index 3bcfb8e12333..dd6958df1de8 100644
+--- a/Documentation/devicetree/bindings/media/rockchip,vdec.yaml
++++ b/Documentation/devicetree/bindings/media/rockchip,vdec.yaml
+@@ -53,6 +53,18 @@ properties:
+   iommus:
+     maxItems: 1
+ 
++  resets:
++    maxItems: 6
++
++  reset-names:
++    items:
++      - const: video_h
++      - const: video_a
++      - const: video_core
++      - const: video_cabac
++      - const: niu_a
++      - const: niu_h
++
+ required:
+   - compatible
+   - reg
+@@ -60,6 +72,8 @@ required:
+   - clocks
+   - clock-names
+   - power-domains
++  - resets
++  - reset-names
+ 
+ additionalProperties: false
+ 
+@@ -78,6 +92,11 @@ examples:
+         clock-names = "axi", "ahb", "cabac", "core";
+         power-domains = <&power RK3399_PD_VDU>;
+         iommus = <&vdec_mmu>;
++        resets = <&cru SRST_H_VDU>, <&cru SRST_A_VDU>,
++                 <&cru SRST_VDU_CORE>, <&cru SRST_VDU_CA>,
++                 <&cru SRST_A_VDU_NOC>, <&cru SRST_H_VDU_NOC>;
++        reset-names = "video_h", "video_a", "video_core", "video_cabac",
++                      "niu_a", "niu_h";
+     };
+ 
+ ...
+diff --git a/drivers/staging/media/rkvdec/rkvdec-regs.h b/drivers/staging/media/rkvdec/rkvdec-regs.h
+index 15b9bee92016..3acc914888f6 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-regs.h
++++ b/drivers/staging/media/rkvdec/rkvdec-regs.h
+@@ -28,6 +28,11 @@
+ #define RKVDEC_SOFTRST_EN_P				BIT(20)
+ #define RKVDEC_FORCE_SOFTRESET_VALID			BIT(21)
+ #define RKVDEC_SOFTRESET_RDY				BIT(22)
++#define RKVDEC_ERR_MASK					(RKVDEC_BUS_STA \
++							 | RKVDEC_ERR_STA \
++							 | RKVDEC_TIMEOUT_STA \
++							 | RKVDEC_BUF_EMPTY_STA \
++							 | RKVDEC_COLMV_REF_ERR_STA )
+ 
+ #define RKVDEC_REG_SYSCTRL				0x008
+ #define RKVDEC_IN_ENDIAN				BIT(0)
+diff --git a/drivers/staging/media/rkvdec/rkvdec.c b/drivers/staging/media/rkvdec/rkvdec.c
+index eaf2f133a264..f55abb7c377f 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.c
++++ b/drivers/staging/media/rkvdec/rkvdec.c
+@@ -10,12 +10,15 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm.h>
+ #include <linux/pm_runtime.h>
++#include <linux/reset.h>
++#include <linux/rockchip_pmu.h>
+ #include <linux/slab.h>
+ #include <linux/videodev2.h>
+ #include <linux/workqueue.h>
+@@ -717,6 +720,11 @@ static void rkvdec_job_finish(struct rkvdec_ctx *ctx,
+ 
+ 	pm_runtime_mark_last_busy(rkvdec->dev);
+ 	pm_runtime_put_autosuspend(rkvdec->dev);
++
++	if (result == VB2_BUF_STATE_ERROR &&
++	    rkvdec->reset_mask == RESET_NONE)
++		rkvdec->reset_mask |= RESET_SOFT;
++
+ 	rkvdec_job_finish_no_pm(ctx, result);
+ }
+ 
+@@ -754,6 +762,33 @@ static void rkvdec_device_run(void *priv)
+ 
+ 	if (WARN_ON(!desc))
+ 		return;
++	if (rkvdec->reset_mask != RESET_NONE) {
++
++		if (rkvdec->reset_mask & RESET_SOFT) {
++			writel(RKVDEC_SOFTRST_EN_P,
++			       rkvdec->regs + RKVDEC_REG_INTERRUPT);
++			udelay(RKVDEC_RESET_DELAY);
++			if (readl(rkvdec->regs + RKVDEC_REG_INTERRUPT)
++			    & RKVDEC_SOFTRESET_RDY)
++				dev_info_ratelimited(rkvdec->dev,
++						      "softreset failed\n");
++		}
++
++		if (rkvdec->reset_mask & RESET_HARD) {
++			rockchip_pmu_idle_request(rkvdec->dev, true);
++			ret = reset_control_assert(rkvdec->rstc);
++			if (!ret) {
++				udelay(RKVDEC_RESET_DELAY);
++				ret = reset_control_deassert(rkvdec->rstc);
++			}
++			rockchip_pmu_idle_request(rkvdec->dev, false);
++			if (ret)
++				dev_notice_ratelimited(rkvdec->dev,
++							"hardreset failed\n");
++		}
++		rkvdec->reset_mask = RESET_NONE;
++		pm_runtime_suspend(rkvdec->dev);
++	}
+ 
+ 	ret = pm_runtime_resume_and_get(rkvdec->dev);
+ 	if (ret < 0) {
+@@ -1020,6 +1055,11 @@ static irqreturn_t rkvdec_irq_handler(int irq, void *priv)
+ 	if (cancel_delayed_work(&rkvdec->watchdog_work)) {
+ 		struct rkvdec_ctx *ctx;
+ 
++		if (state == VB2_BUF_STATE_ERROR) {
++			rkvdec->reset_mask |= (status & RKVDEC_ERR_MASK) ?
++						RESET_HARD : RESET_SOFT;
++		}
++
+ 		ctx = v4l2_m2m_get_curr_priv(rkvdec->m2m_dev);
+ 		rkvdec_job_finish(ctx, state);
+ 	}
+@@ -1037,6 +1077,7 @@ static void rkvdec_watchdog_func(struct work_struct *work)
+ 	ctx = v4l2_m2m_get_curr_priv(rkvdec->m2m_dev);
+ 	if (ctx) {
+ 		dev_err(rkvdec->dev, "Frame processing timed out!\n");
++		rkvdec->reset_mask |= RESET_HARD;
+ 		writel(RKVDEC_IRQ_DIS, rkvdec->regs + RKVDEC_REG_INTERRUPT);
+ 		writel(0, rkvdec->regs + RKVDEC_REG_SYSCTRL);
+ 		rkvdec_job_finish(ctx, VB2_BUF_STATE_ERROR);
+@@ -1105,6 +1146,18 @@ static int rkvdec_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++
++	rkvdec->rstc = devm_reset_control_array_get(&pdev->dev, false, true);
++	if (IS_ERR(rkvdec->rstc)) {
++		dev_err(&pdev->dev,
++			"get resets failed %ld\n", PTR_ERR(rkvdec->rstc));
++		return PTR_ERR(rkvdec->rstc);
++	} else {
++		dev_dbg(&pdev->dev,
++			 "requested %d resets\n",
++			 reset_control_get_count(&pdev->dev));
++	}
++
+ 	pm_runtime_set_autosuspend_delay(&pdev->dev, 100);
+ 	pm_runtime_use_autosuspend(&pdev->dev);
+ 	pm_runtime_enable(&pdev->dev);
+diff --git a/drivers/staging/media/rkvdec/rkvdec.h b/drivers/staging/media/rkvdec/rkvdec.h
+index b9e219438bc9..f02f79c405f0 100644
+--- a/drivers/staging/media/rkvdec/rkvdec.h
++++ b/drivers/staging/media/rkvdec/rkvdec.h
+@@ -11,10 +11,11 @@
+ #ifndef RKVDEC_H_
+ #define RKVDEC_H_
+ 
++#include <linux/clk.h>
+ #include <linux/platform_device.h>
++#include <linux/reset.h>
+ #include <linux/videodev2.h>
+ #include <linux/wait.h>
+-#include <linux/clk.h>
+ 
+ #include <media/v4l2-ctrls.h>
+ #include <media/v4l2-device.h>
+@@ -22,6 +23,12 @@
+ #include <media/videobuf2-core.h>
+ #include <media/videobuf2-dma-contig.h>
+ 
++#define RESET_NONE		0
++#define RESET_SOFT		BIT(0)
++#define RESET_HARD		BIT(1)
++
++#define RKVDEC_RESET_DELAY	5
++
+ struct rkvdec_ctx;
+ 
+ struct rkvdec_ctrl_desc {
+@@ -96,6 +103,8 @@ struct rkvdec_dev {
+ 	void __iomem *regs;
+ 	struct mutex vdev_lock; /* serializes ioctls */
+ 	struct delayed_work watchdog_work;
++	struct reset_control *rstc;
++	u8 reset_mask;
+ };
+ 
+ struct rkvdec_ctx {
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Tue, 18 Aug 2020 11:38:04 +0200
+Subject: [PATCH] WIP: arm64: dts: add resets to vdec for RK3399
+
+---
+ arch/arm64/boot/dts/rockchip/rk3399.dtsi | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3399.dtsi b/arch/arm64/boot/dts/rockchip/rk3399.dtsi
+index 980b12cb0a49..6e3149e587c5 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3399.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3399.dtsi
+@@ -1062,7 +1062,10 @@ power-domain@RK3399_PD_VCODEC {
+ 			power-domain@RK3399_PD_VDU {
+ 				reg = <RK3399_PD_VDU>;
+ 				clocks = <&cru ACLK_VDU>,
+-					 <&cru HCLK_VDU>;
++					 <&cru HCLK_VDU>,
++					 <&cru SCLK_VDU_CA>,
++					 <&cru SCLK_VDU_CORE>;
++
+ 				pm_qos = <&qos_video_m1_r>,
+ 					 <&qos_video_m1_w>;
+ 				#power-domain-cells = <0>;
+@@ -1345,6 +1348,11 @@ vdec: video-codec@ff660000 {
+ 		clock-names = "axi", "ahb", "cabac", "core";
+ 		iommus = <&vdec_mmu>;
+ 		power-domains = <&power RK3399_PD_VDU>;
++		resets = <&cru SRST_H_VDU>, <&cru SRST_A_VDU>,
++			 <&cru SRST_VDU_CORE>, <&cru SRST_VDU_CA>,
++			 <&cru SRST_A_VDU_NOC>, <&cru SRST_H_VDU_NOC>;
++		reset-names = "video_h", "video_a", "video_core", "video_cabac",
++			       "niu_a", "niu_h";
+ 	};
+ 
+ 	vdec_mmu: iommu@ff660480 {
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Fri, 1 Jan 2021 12:11:12 +0200
+Subject: [PATCH] arm64: dts: rockchip: fix RK3399 vdec register witdh
+
+Signed-off-by: Alex Bee <knaerzche@gmail.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3399.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3399.dtsi b/arch/arm64/boot/dts/rockchip/rk3399.dtsi
+index 6e3149e587c5..093ebe070775 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3399.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3399.dtsi
+@@ -1341,7 +1341,7 @@ vpu_mmu: iommu@ff650800 {
+ 
+ 	vdec: video-codec@ff660000 {
+ 		compatible = "rockchip,rk3399-vdec";
+-		reg = <0x0 0xff660000 0x0 0x400>;
++		reg = <0x0 0xff660000 0x0 0x480>;
+ 		interrupts = <GIC_SPI 116 IRQ_TYPE_LEVEL_HIGH 0>;
+ 		clocks = <&cru ACLK_VDU>, <&cru HCLK_VDU>,
+ 			 <&cru SCLK_VDU_CA>, <&cru SCLK_VDU_CORE>;
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Sat, 21 Aug 2021 16:12:36 +0200
+Subject: [PATCH] media: hantro: rockchip: Increase RK3288's max ACLK
+
+Required to proper decode H.264@4K
+
+Signed-off-by: Alex Bee <knaerzche@gmail.com>
+---
+ drivers/media/platform/verisilicon/rockchip_vpu_hw.c | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/verisilicon/rockchip_vpu_hw.c b/drivers/media/platform/verisilicon/rockchip_vpu_hw.c
+index 8de6fd2e8eef..002b1a600f93 100644
+--- a/drivers/media/platform/verisilicon/rockchip_vpu_hw.c
++++ b/drivers/media/platform/verisilicon/rockchip_vpu_hw.c
+@@ -15,7 +15,8 @@
+ #include "rockchip_vpu2_regs.h"
+ 
+ #define RK3066_ACLK_MAX_FREQ (300 * 1000 * 1000)
+-#define RK3288_ACLK_MAX_FREQ (400 * 1000 * 1000)
++#define RK3288_ACLK_MAX_FREQ (600 * 1000 * 1000)
++#define RK3399_ACLK_MAX_FREQ (400 * 1000 * 1000)
+ #define RK3588_ACLK_MAX_FREQ (300 * 1000 * 1000)
+ 
+ #define ROCKCHIP_VPU981_MIN_SIZE 64
+@@ -346,13 +347,20 @@ static int rk3066_vpu_hw_init(struct hantro_dev *vpu)
+ 	return 0;
+ }
+ 
+-static int rockchip_vpu_hw_init(struct hantro_dev *vpu)
++static int rk3288_vpu_hw_init(struct hantro_dev *vpu)
+ {
+ 	/* Bump ACLK to max. possible freq. to improve performance. */
+ 	clk_set_rate(vpu->clocks[0].clk, RK3288_ACLK_MAX_FREQ);
+ 	return 0;
+ }
+ 
++static int rockchip_vpu_hw_init(struct hantro_dev *vpu)
++{
++	/* Bump ACLK to max. possible freq. to improve performance. */
++	clk_set_rate(vpu->clocks[0].clk, RK3399_ACLK_MAX_FREQ);
++	return 0;
++}
++
+ static void rk3066_vpu_dec_reset(struct hantro_ctx *ctx)
+ {
+ 	struct hantro_dev *vpu = ctx->dev;
+@@ -592,7 +600,7 @@ const struct hantro_variant rk3288_vpu_variant = {
+ 	.codec_ops = rk3288_vpu_codec_ops,
+ 	.irqs = rockchip_vpu1_irqs,
+ 	.num_irqs = ARRAY_SIZE(rockchip_vpu1_irqs),
+-	.init = rockchip_vpu_hw_init,
++	.init = rk3288_vpu_hw_init,
+ 	.clk_names = rockchip_vpu_clk_names,
+ 	.num_clocks = ARRAY_SIZE(rockchip_vpu_clk_names)
+ };
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Sun, 4 Jul 2021 15:19:44 +0200
+Subject: [PATCH] media: rkvdec: disable QoS for VP9 (corruptions on RK3328
+ otherwise)
+
+Signed-off-by: Alex Bee <knaerzche@gmail.com>
+---
+ drivers/staging/media/rkvdec/rkvdec-regs.h | 2 ++
+ drivers/staging/media/rkvdec/rkvdec-vp9.c  | 8 ++++++++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/drivers/staging/media/rkvdec/rkvdec-regs.h b/drivers/staging/media/rkvdec/rkvdec-regs.h
+index 3acc914888f6..265f5234f4eb 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-regs.h
++++ b/drivers/staging/media/rkvdec/rkvdec-regs.h
+@@ -222,6 +222,8 @@
+ #define RKVDEC_REG_H264_ERR_E				0x134
+ #define RKVDEC_H264_ERR_EN_HIGHBITS(x)			((x) & 0x3fffffff)
+ 
++#define RKVDEC_QOS_CTRL					0x18C
++
+ #define RKVDEC_REG_PREF_LUMA_CACHE_COMMAND		0x410
+ #define RKVDEC_REG_PREF_CHR_CACHE_COMMAND		0x450
+ 
+diff --git a/drivers/staging/media/rkvdec/rkvdec-vp9.c b/drivers/staging/media/rkvdec/rkvdec-vp9.c
+index d8c1c0db15c7..a289bc968e91 100644
+--- a/drivers/staging/media/rkvdec/rkvdec-vp9.c
++++ b/drivers/staging/media/rkvdec/rkvdec-vp9.c
+@@ -802,6 +802,7 @@ static int rkvdec_vp9_run(struct rkvdec_ctx *ctx)
+ 	struct rkvdec_dev *rkvdec = ctx->dev;
+ 	struct rkvdec_vp9_run run = { };
+ 	int ret;
++	u32 reg;
+ 
+ 	ret = rkvdec_vp9_run_preamble(ctx, &run);
+ 	if (ret) {
+@@ -823,6 +824,13 @@ static int rkvdec_vp9_run(struct rkvdec_ctx *ctx)
+ 	writel(1, rkvdec->regs + RKVDEC_REG_PREF_CHR_CACHE_COMMAND);
+ 
+ 	writel(0xe, rkvdec->regs + RKVDEC_REG_STRMD_ERR_EN);
++
++	/* disable QOS for RK3328 - no effect on other SoCs */
++	reg = readl(rkvdec->regs + RKVDEC_QOS_CTRL);
++	reg |= 0xFFFF;
++	reg &= (~BIT(12));
++	writel(reg, rkvdec->regs + RKVDEC_QOS_CTRL);
++
+ 	/* Start decoding! */
+ 	writel(RKVDEC_INTERRUPT_DEC_E | RKVDEC_CONFIG_DEC_CLK_GATE_E |
+ 	       RKVDEC_TIMEOUT_E | RKVDEC_BUF_EMPTY_E,
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alex Bee <knaerzche@gmail.com>
+Date: Thu, 16 Jun 2022 13:18:22 +0200
+Subject: [PATCH] WIP: arm64: dts: add resets to vdec for RK3328
+
+---
+ arch/arm64/boot/dts/rockchip/rk3328.dtsi | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3328.dtsi b/arch/arm64/boot/dts/rockchip/rk3328.dtsi
+index 5519347232f6..431c4ec198be 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3328.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3328.dtsi
+@@ -674,6 +674,11 @@ vdec: video-codec@ff360000 {
+ 		assigned-clocks = <&cru ACLK_RKVDEC>, <&cru SCLK_VDEC_CABAC>,
+ 				  <&cru SCLK_VDEC_CORE>;
+ 		assigned-clock-rates = <400000000>, <400000000>, <300000000>;
++		resets = <&cru SRST_VDEC_H>, <&cru SRST_VDEC_A>,
++			 <&cru SRST_VDEC_CORE>, <&cru SRST_VDEC_CABAC>,
++			 <&cru SRST_VDEC_NIU_A>, <&cru SRST_VDEC_NIU_H>;
++		reset-names = "video_h", "video_a", "video_core", "video_cabac",
++			       "niu_a", "niu_h";
+ 		iommus = <&vdec_mmu>;
+ 		power-domains = <&power RK3328_PD_VIDEO>;
+ 	};

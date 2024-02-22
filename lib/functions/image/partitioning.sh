@@ -38,10 +38,7 @@ function prepare_partitions() {
 	parttype[xfs]=xfs
 	# parttype[nfs] is empty
 
-	# metadata_csum and 64bit may need to be disabled explicitly when migrating to newer supported host OS releases
-	if [[ $HOSTRELEASE =~ buster|bullseye|bookworm|sid|focal|impish|hirsute|jammy|kinetic|lunar|ulyana|ulyssa|uma|una|vanessa|vera ]]; then
-		mkopts[ext4]="-q -m 2 -O ^64bit,^metadata_csum"
-	fi
+	mkopts[ext4]="-q -m 2" # for a long time we had '-O ^64bit,^metadata_csum' here
 	# mkopts[fat] is empty
 	mkopts[ext2]=''
 	# mkopts[f2fs] is empty
@@ -236,10 +233,14 @@ function prepare_partitions() {
 
 	# stage: create fs, mount partitions, create fstab
 	rm -f $SDCARD/etc/fstab
+
+	declare root_part_uuid="uninitialized"
+
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
 
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
+			check_loop_device "$rootdevice"
 			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
 			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
@@ -256,13 +257,19 @@ function prepare_partitions() {
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
 		fi
 		wait_for_disk_sync "after mkfs" # force writes to be really flushed
-		display_alert "Mounting rootfs" "$rootdevice"
+
+		# store in readonly global for usage in later hooks
+		root_part_uuid="$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+		declare -g -r ROOT_PART_UUID="${root_part_uuid}"
+
+		display_alert "Mounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
 		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
+
 		# create fstab (and crypttab) entry
 		local rootfs
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
-			echo "$ROOT_MAPPER UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}) none luks" >> $SDCARD/etc/crypttab
+			echo "$ROOT_MAPPER UUID=${root_part_uuid} none luks" >> $SDCARD/etc/crypttab
 			rootfs=$rootdevice # used in fstab
 		else
 			rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
@@ -288,7 +295,15 @@ function prepare_partitions() {
 		run_host_command_logged mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
 		run_host_command_logged mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
-		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+
+		# Allow skipping the fstab entry for the EFI partition if UEFI_MOUNT_POINT_SKIP_FSTAB=yes; add comments instead if so
+		if [[ "${UEFI_MOUNT_POINT_SKIP_FSTAB:-"no"}" == "yes" ]]; then
+			display_alert "Skipping EFI partition in fstab" "UEFI_MOUNT_POINT_SKIP_FSTAB=${UEFI_MOUNT_POINT_SKIP_FSTAB}" "debug"
+			echo "# /boot/efi fstab commented out due to UEFI_MOUNT_POINT_SKIP_FSTAB=${UEFI_MOUNT_POINT_SKIP_FSTAB}"
+			echo "# UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+		else
+			echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+		fi
 	fi
 
 	display_alert "Writing /tmp as tmpfs in chroot fstab" "$SDCARD/etc/fstab" "debug"
@@ -303,19 +318,13 @@ function prepare_partitions() {
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
 		display_alert "Found armbianEnv.txt" "${SDCARD}/boot/armbianEnv.txt" "debug"
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			echo "rootdev=$rootdevice cryptdevice=UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart}):$ROOT_MAPPER" >> "${SDCARD}/boot/armbianEnv.txt"
+			echo "rootdev=$rootdevice cryptdevice=UUID=${root_part_uuid}:$ROOT_MAPPER" >> "${SDCARD}/boot/armbianEnv.txt"
 		else
 			echo "rootdev=$rootfs" >> "${SDCARD}/boot/armbianEnv.txt"
 		fi
 		echo "rootfstype=$ROOTFS_TYPE" >> $SDCARD/boot/armbianEnv.txt
 	elif [[ $rootpart != 1 ]] && [[ $SRC_EXTLINUX != yes ]]; then
 		echo "rootfstype=$ROOTFS_TYPE" >> "${SDCARD}/boot/armbianEnv.txt"
-
-		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
-			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
-			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
-		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
-
 	elif [[ $rootpart != 1 && $SRC_EXTLINUX != yes && -f "${SDCARD}/boot/${bootscript_dst}" ]]; then
 		local bootscript_dst=${BOOTSCRIPT##*:}
 		sed -i 's/mmcblk0p1/mmcblk0p2/' $SDCARD/boot/$bootscript_dst
@@ -328,7 +337,7 @@ function prepare_partitions() {
 		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			rootpart="UUID=$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+			rootpart="UUID=${root_part_uuid}"
 			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='$rootpart':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
@@ -371,6 +380,13 @@ function prepare_partitions() {
 		echo "  append root=$rootfs $SRC_CMDLINE $MAIN_CMDLINE" >> $SDCARD/boot/extlinux/extlinux.conf
 		display_alert "extlinux.conf exists" "removing armbianEnv.txt" "info"
 		[[ -f $SDCARD/boot/armbianEnv.txt ]] && run_host_command_logged rm -v $SDCARD/boot/armbianEnv.txt
+	fi
+
+	if [[ $SRC_EXTLINUX != yes && -f $SDCARD/boot/armbianEnv.txt ]]; then
+		call_extension_method "image_specific_armbian_env_ready" <<- 'IMAGE_SPECIFIC_ARMBIAN_ENV_READY'
+			*during image build, armbianEnv.txt is ready for image-specific customization (not in BSP)*
+			You can write to `"${SDCARD}/boot/armbianEnv.txt"` here, it is guaranteed to exist.
+		IMAGE_SPECIFIC_ARMBIAN_ENV_READY
 	fi
 
 	return 0 # there is a shortcircuit above! very tricky btw!

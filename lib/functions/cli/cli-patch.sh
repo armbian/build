@@ -23,19 +23,23 @@ function cli_patch_kernel_pre_run() {
 }
 
 function cli_patch_kernel_run() {
-	display_alert "Patching kernel" "$BRANCH" "info"
-	declare -g SYNC_CLOCK=no       # don't waste time syncing the clock
-	declare -g JUST_KERNEL=yes     # only for kernel.
-	declare -g PATCHES_TO_GIT=yes  # commit to git.
-	declare -g PATCH_ONLY=yes      # stop after patching.
-	declare -g DEBUG_PATCHING=yes  # debug patching.
-	declare -g GIT_ARCHEOLOGY=yes  # do archeology
-	declare -g FAST_ARCHEOLOGY=yes # do archeology, but only for the exact path we need.
-	#declare -g REWRITE_PATCHES=yes # rewrite the patches after git commiting. Very cheap compared to the rest.
-	declare -g KERNEL_CONFIGURE=no # no menuconfig
-	declare -g RELEASE=jammy       # or whatever, not relevant, just fool the configuration
-	declare -g SHOW_LOG=yes        # show the log
+	display_alert "Patching kernel" "$BRANCH - rewrite: ${REWRITE_PATCHES:-"no"} " "info"
+	declare -g SYNC_CLOCK=no                 # don't waste time syncing the clock
+	declare -g PATCHES_TO_GIT=yes            # commit to git.
+	declare -g PATCH_ONLY=yes                # stop after patching.
+	declare -g GIT_ARCHEOLOGY=yes            # do archeology
+	declare -g FAST_ARCHEOLOGY=yes           # do archeology, but only for the exact path we need.
+	declare -g KERNEL_CONFIGURE=no           # no menuconfig
+	declare -g RELEASE="${RELEASE:-"jammy"}" # or whatever, not relevant, just fool the configuration
+	declare -g BUILD_DESKTOP="no"            # config would ask for this otherwise, just fool the configuration
+
+	# initialize the config # @TODO: rpardini: switch this to prep_conf_main_minimal_ni()
 	prep_conf_main_build_single
+
+	# <prepare the git sha1>
+	declare -A GIT_INFO_KERNEL=([GIT_SOURCE]="${KERNELSOURCE}" [GIT_REF]="${KERNELBRANCH}")
+	obtain_kernel_git_info_and_makefile # this populates GIT_INFO_KERNEL and sets KERNEL_GIT_SHA1 readonly global
+	# </prepare the git sha1>
 
 	declare ymd vendor_lc target_repo_url summary_url
 	ymd="$(date +%Y%m%d)"

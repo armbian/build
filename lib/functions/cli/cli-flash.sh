@@ -15,7 +15,7 @@ function cli_flash_pre_run() {
 }
 
 function cli_flash_run() {
-	if [[ "x${BOARD}x" != "xx" ]]; then
+	if [[ -n "${BOARD}" ]]; then
 		use_board="yes" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 	else
 		use_board="no" prep_conf_main_minimal_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.

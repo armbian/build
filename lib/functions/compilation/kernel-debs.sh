@@ -41,7 +41,6 @@ if_enabled_echo() {
 
 function prepare_kernel_packaging_debs() {
 	: "${artifact_version:?artifact_version is not set}"
-	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
 
 	declare kernel_work_dir="${1}"
 	declare kernel_dest_install_dir="${2}"
@@ -50,7 +49,7 @@ function prepare_kernel_packaging_debs() {
 	declare debs_target_dir="${kernel_work_dir}/.."
 
 	# Some variables and settings used throughout the script
-	declare kernel_version_family="${kernel_version}-${LINUXFAMILY}"
+	declare kernel_version_family="${kernel_version}-${BRANCH}-${LINUXFAMILY}"
 
 	# Package version. Affects users upgrading from repo!
 	display_alert "Kernel .deb package version" "${artifact_version}" "info"
@@ -69,27 +68,27 @@ function prepare_kernel_packaging_debs() {
 
 	# package the linux-image (image, modules, dtbs (if present))
 	display_alert "Packaging linux-image" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
-	create_kernel_deb "linux-image-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_image
+	create_kernel_deb "linux-image-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_image "linux-image"
 
 	# if dtbs present, package those too separately, for u-boot usage.
 	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
 		display_alert "Packaging linux-dtb" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
-		create_kernel_deb "linux-dtb-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_dtb
+		create_kernel_deb "linux-dtb-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_dtb "linux-dtb"
 	fi
 
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" == "yes" ]]; then
 		display_alert "Packaging linux-headers" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
-		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers
+		create_kernel_deb "linux-headers-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_headers "linux-headers"
 	else
 		display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "info"
 	fi
 }
 
 function create_kernel_deb() {
-	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
 	declare package_name="${1}"
 	declare deb_output_dir="${2}"
 	declare callback_function="${3}"
+	declare artifact_deb_id="${4}"
 
 	declare cleanup_id="" package_directory=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-k-${package_name}" cleanup_id package_directory # namerefs
@@ -140,7 +139,7 @@ function create_kernel_deb() {
 	#display_alert "Package dir" "for package ${package_name}" "debug"
 	#run_host_command_logged tree -C -h -d --du "${package_directory}"
 
-	fakeroot_dpkg_deb_build "${package_directory}" "${kernel_debs_temp_dir}/"
+	dpkg_deb_build "${package_directory}" "${artifact_deb_id}"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }
@@ -230,8 +229,10 @@ function kernel_package_callback_linux_image() {
 	# Clean up symlinks in lib/modules/${kernel_version_family}/build and lib/modules/${kernel_version_family}/source; will be in the headers package
 	run_host_command_logged rm -v -f "${package_directory}/lib/modules/${kernel_version_family}/build" "${package_directory}/lib/modules/${kernel_version_family}/source"
 
-	display_alert "Showing contents of Kbuild produced modules" "linux-image" "debug"
-	run_host_command_logged tree -C --du -h -d -L 1 "${package_directory}/lib/modules/${kernel_version_family}/kernel" "|| true" # do not fail
+	if [[ -d "${package_directory}/lib/modules/${kernel_version_family}/kernel" ]]; then
+		display_alert "Showing contents of Kbuild produced modules" "linux-image" "debug"
+		run_host_command_logged tree -C --du -h -d -L 1 "${package_directory}/lib/modules/${kernel_version_family}/kernel" "|| true" # do not fail
+	fi
 
 	if [[ -d "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" ]]; then
 		# /usr/lib/linux-image-${kernel_version_family} is wanted by flash-kernel, u-boot-menu, and other standard Debian/Ubuntu utilities
@@ -246,14 +247,16 @@ function kernel_package_callback_linux_image() {
 		Package: ${package_name}
 		Version: ${artifact_version}
 		Source: linux-${kernel_version}
+		Armbian-Kernel-Version: ${kernel_version}
+		Armbian-Kernel-Version-Family: ${kernel_version_family}
 		Architecture: ${ARCH}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
 		Priority: optional
 		Provides: linux-image, linux-image-armbian, armbian-$BRANCH
-		Description: Armbian Linux $BRANCH kernel image ${artifact_version_reason:-"${kernel_version_family}"}
-		 This package contains the Linux kernel, modules and corresponding other
-		 files, kernel_version_family: $kernel_version_family.
+		Description: Armbian Linux $BRANCH kernel image $kernel_version_family
+		 This package contains the Linux kernel, modules and corresponding other files.
+		 ${artifact_version_reason:-"${kernel_version_family}"}
 	CONTROL_FILE
 
 	# Install the maintainer scripts
@@ -328,8 +331,9 @@ function kernel_package_callback_linux_dtb() {
 		Architecture: ${ARCH}
 		Priority: optional
 		Provides: linux-dtb, linux-dtb-armbian, armbian-$BRANCH
-		Description: Armbian Linux $BRANCH DTBs ${artifact_version_reason:-"${kernel_version_family}"} in /boot/dtb-${kernel_version_family}
-		 This package contains device blobs from the Linux kernel, version ${kernel_version_family}
+		Description: Armbian Linux $BRANCH DTBs in /boot/dtb-${kernel_version_family}
+		 This package contains device tree blobs from the Linux kernel, version ${kernel_version_family}
+		 ${artifact_version_reason:-"${kernel_version_family}"}
 	CONTROL_FILE
 
 	kernel_package_hook_helper "preinst" <(
@@ -418,9 +422,13 @@ function kernel_package_callback_linux_headers() {
 	#               and "make clean" in the "/tools" dir fails. Drop in a fake Makefile there to work around this.
 	if [[ ! -f "${headers_target_dir}/tools/vm/Makefile" ]]; then
 		display_alert "Creating fake tools/vm/Makefile" "6.3+ hackfix" "debug"
-		mkdir -p "${headers_target_dir}/tools/vm"
+		run_host_command_logged mkdir -p "${headers_target_dir}/tools/vm"
 		echo -e "clean:\n\techo fake clean for tools/vm" > "${headers_target_dir}/tools/vm/Makefile"
 	fi
+
+	# Hack for 6.5-rc1: create include/linux dir so the 'clean' step below doesn't fail. I've reported upstream...
+	display_alert "Creating fake counter/include/linux" "6.5-rc1 hackfix" "debug"
+	run_host_command_logged mkdir -p "${headers_target_dir}/tools/counter/include/linux"
 
 	# Now, make the script dirs clean.
 	# This is run in our _target_ dir, NOT the source tree, so we're free to make clean as we wish without invalidating the next build's cache.
@@ -429,8 +437,8 @@ function kernel_package_callback_linux_headers() {
 	#             Important: if the steps _fail_ here, you'll have to enable DEBUG=yes to see what's going on.
 	declare make_bitbucket="&> /dev/null"
 	[[ "${DEBUG}" == "yes" ]] && make_bitbucket=""
-	run_host_command_logged cd "${headers_target_dir}" "&&" make -s "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}"
-	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make -s "ARCH=${SRC_ARCH}" clean "${make_bitbucket}"
+	run_host_command_logged cd "${headers_target_dir}" "&&" make "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}"
+	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" clean "${make_bitbucket}"
 
 	# Trim down on the tools dir a bit after cleaning.
 	rm -rf "${headers_target_dir}/tools/perf" "${headers_target_dir}/tools/testing"
@@ -460,10 +468,11 @@ function kernel_package_callback_linux_headers() {
 		Priority: optional
 		Provides: linux-headers, linux-headers-armbian, armbian-$BRANCH
 		Depends: make, gcc, libc6-dev, bison, flex, libssl-dev, libelf-dev
-		Description: Armbian Linux $BRANCH headers ${artifact_version_reason:-"${kernel_version_family}"}
+		Description: Armbian Linux $BRANCH headers ${kernel_version_family}
 		 This package provides kernel header files for ${kernel_version_family}
 		 .
 		 This is useful for DKMS and building of external modules.
+		 ${artifact_version_reason:-"${kernel_version_family}"}
 	CONTROL_FILE
 
 	# Make sure the target dir is clean/not-existing before installing.

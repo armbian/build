@@ -1,0 +1,450 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Iouri Tarassov <iourit@linux.microsoft.com>
+Date: Wed, 19 Jan 2022 18:02:09 -0800
+Subject: drivers: hv: dxgkrnl: Submit execution commands to the compute device
+
+Implements ioctls for submission of compute device buffers for execution:
+  - LX_DXSUBMITCOMMAND
+    The ioctl is used to submit a command buffer to the device,
+    working in the "packet scheduling" mode.
+
+  - LX_DXSUBMITCOMMANDTOHWQUEUE
+  The ioctl is used to submit a command buffer to the device,
+  working in the "hardware scheduling" mode.
+
+To improve performance both ioctls use asynchronous VM bus messages
+to communicate with the host as these are high frequency operations.
+
+Signed-off-by: Iouri Tarassov <iourit@linux.microsoft.com>
+[kms: Forward port to v6.1]
+Signed-off-by: Kelsey Steele <kelseysteele@microsoft.com>
+---
+ drivers/hv/dxgkrnl/dxgkrnl.h  |   6 +
+ drivers/hv/dxgkrnl/dxgvmbus.c | 113 +++++++++
+ drivers/hv/dxgkrnl/dxgvmbus.h |  14 +
+ drivers/hv/dxgkrnl/ioctl.c    | 127 +++++++++-
+ include/uapi/misc/d3dkmthk.h  |  58 +++++
+ 5 files changed, 316 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/hv/dxgkrnl/dxgkrnl.h b/drivers/hv/dxgkrnl/dxgkrnl.h
+index 440d1f9b8882..ab97bc53b124 100644
+--- a/drivers/hv/dxgkrnl/dxgkrnl.h
++++ b/drivers/hv/dxgkrnl/dxgkrnl.h
+@@ -796,6 +796,9 @@ int dxgvmb_send_create_allocation(struct dxgprocess *pr, struct dxgdevice *dev,
+ int dxgvmb_send_destroy_allocation(struct dxgprocess *pr, struct dxgdevice *dev,
+ 				   struct d3dkmt_destroyallocation2 *args,
+ 				   struct d3dkmthandle *alloc_handles);
++int dxgvmb_send_submit_command(struct dxgprocess *pr,
++			       struct dxgadapter *adapter,
++			       struct d3dkmt_submitcommand *args);
+ int dxgvmb_send_create_sync_object(struct dxgprocess *pr,
+ 				   struct dxgadapter *adapter,
+ 				   struct d3dkmt_createsynchronizationobject2
+@@ -838,6 +841,9 @@ int dxgvmb_send_destroy_hwqueue(struct dxgprocess *process,
+ int dxgvmb_send_query_adapter_info(struct dxgprocess *process,
+ 				   struct dxgadapter *adapter,
+ 				   struct d3dkmt_queryadapterinfo *args);
++int dxgvmb_send_submit_command_hwqueue(struct dxgprocess *process,
++				       struct dxgadapter *adapter,
++				       struct d3dkmt_submitcommandtohwqueue *a);
+ int dxgvmb_send_open_sync_object_nt(struct dxgprocess *process,
+ 				    struct dxgvmbuschannel *channel,
+ 				    struct d3dkmt_opensyncobjectfromnthandle2
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.c b/drivers/hv/dxgkrnl/dxgvmbus.c
+index c9c00b288ae0..7cb04fec217e 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.c
++++ b/drivers/hv/dxgkrnl/dxgvmbus.c
+@@ -1901,6 +1901,61 @@ int dxgvmb_send_get_stdalloc_data(struct dxgdevice *device,
+ 	return ret;
+ }
+ 
++int dxgvmb_send_submit_command(struct dxgprocess *process,
++			       struct dxgadapter *adapter,
++			       struct d3dkmt_submitcommand *args)
++{
++	int ret;
++	u32 cmd_size;
++	struct dxgkvmb_command_submitcommand *command;
++	u32 hbufsize = args->num_history_buffers * sizeof(struct d3dkmthandle);
++	struct dxgvmbusmsg msg = {.hdr = NULL};
++	struct dxgglobal *dxgglobal = dxggbl();
++
++	cmd_size = sizeof(struct dxgkvmb_command_submitcommand) +
++	    hbufsize + args->priv_drv_data_size;
++
++	ret = init_message(&msg, adapter, process, cmd_size);
++	if (ret)
++		goto cleanup;
++	command = (void *)msg.msg;
++
++	ret = copy_from_user(&command[1], args->history_buffer_array,
++			     hbufsize);
++	if (ret) {
++		DXG_ERR(" failed to copy history buffer");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++	ret = copy_from_user((u8 *) &command[1] + hbufsize,
++			     args->priv_drv_data, args->priv_drv_data_size);
++	if (ret) {
++		DXG_ERR("failed to copy history priv data");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	command_vgpu_to_host_init2(&command->hdr,
++				   DXGK_VMBCOMMAND_SUBMITCOMMAND,
++				   process->host_handle);
++	command->args = *args;
++
++	if (dxgglobal->async_msg_enabled) {
++		command->hdr.async_msg = 1;
++		ret = dxgvmb_send_async_msg(msg.channel, msg.hdr, msg.size);
++	} else {
++		ret = dxgvmb_send_sync_msg_ntstatus(msg.channel, msg.hdr,
++						    msg.size);
++	}
++
++cleanup:
++
++	free_message(&msg, process);
++	if (ret)
++		DXG_TRACE("err: %d", ret);
++	return ret;
++}
++
+ static void set_result(struct d3dkmt_createsynchronizationobject2 *args,
+ 		       u64 fence_gpu_va, u8 *va)
+ {
+@@ -2427,3 +2482,61 @@ int dxgvmb_send_query_adapter_info(struct dxgprocess *process,
+ 		DXG_TRACE("err: %d", ret);
+ 	return ret;
+ }
++
++int dxgvmb_send_submit_command_hwqueue(struct dxgprocess *process,
++				       struct dxgadapter *adapter,
++				       struct d3dkmt_submitcommandtohwqueue
++				       *args)
++{
++	int ret = -EINVAL;
++	u32 cmd_size;
++	struct dxgkvmb_command_submitcommandtohwqueue *command;
++	u32 primaries_size = args->num_primaries * sizeof(struct d3dkmthandle);
++	struct dxgvmbusmsg msg = {.hdr = NULL};
++	struct dxgglobal *dxgglobal = dxggbl();
++
++	cmd_size = sizeof(*command) + args->priv_drv_data_size + primaries_size;
++	ret = init_message(&msg, adapter, process, cmd_size);
++	if (ret)
++		goto cleanup;
++	command = (void *)msg.msg;
++
++	if (primaries_size) {
++		ret = copy_from_user(&command[1], args->written_primaries,
++					 primaries_size);
++		if (ret) {
++			DXG_ERR("failed to copy primaries handles");
++			ret = -EINVAL;
++			goto cleanup;
++		}
++	}
++	if (args->priv_drv_data_size) {
++		ret = copy_from_user((char *)&command[1] + primaries_size,
++				      args->priv_drv_data,
++				      args->priv_drv_data_size);
++		if (ret) {
++			DXG_ERR("failed to copy primaries data");
++			ret = -EINVAL;
++			goto cleanup;
++		}
++	}
++
++	command_vgpu_to_host_init2(&command->hdr,
++				   DXGK_VMBCOMMAND_SUBMITCOMMANDTOHWQUEUE,
++				   process->host_handle);
++	command->args = *args;
++
++	if (dxgglobal->async_msg_enabled) {
++		command->hdr.async_msg = 1;
++		ret = dxgvmb_send_async_msg(msg.channel, msg.hdr, msg.size);
++	} else {
++		ret = dxgvmb_send_sync_msg_ntstatus(msg.channel, msg.hdr,
++						    msg.size);
++	}
++
++cleanup:
++	free_message(&msg, process);
++	if (ret)
++		DXG_TRACE("err: %d", ret);
++	return ret;
++}
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.h b/drivers/hv/dxgkrnl/dxgvmbus.h
+index aba075d374c9..acfdbde09e82 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.h
++++ b/drivers/hv/dxgkrnl/dxgvmbus.h
+@@ -314,6 +314,20 @@ struct dxgkvmb_command_flushdevice {
+ 	enum dxgdevice_flushschedulerreason	reason;
+ };
+ 
++struct dxgkvmb_command_submitcommand {
++	struct dxgkvmb_command_vgpu_to_host hdr;
++	struct d3dkmt_submitcommand	args;
++	/* HistoryBufferHandles */
++	/* PrivateDriverData    */
++};
++
++struct dxgkvmb_command_submitcommandtohwqueue {
++	struct dxgkvmb_command_vgpu_to_host hdr;
++	struct d3dkmt_submitcommandtohwqueue args;
++	/* Written primaries */
++	/* PrivateDriverData */
++};
++
+ struct dxgkvmb_command_createallocation_allocinfo {
+ 	u32				flags;
+ 	u32				priv_drv_data_size;
+diff --git a/drivers/hv/dxgkrnl/ioctl.c b/drivers/hv/dxgkrnl/ioctl.c
+index a2d236f5eff5..9128694c8e78 100644
+--- a/drivers/hv/dxgkrnl/ioctl.c
++++ b/drivers/hv/dxgkrnl/ioctl.c
+@@ -1902,6 +1902,129 @@ dxgkio_destroy_allocation(struct dxgprocess *process, void *__user inargs)
+ 	return ret;
+ }
+ 
++static int
++dxgkio_submit_command(struct dxgprocess *process, void *__user inargs)
++{
++	int ret;
++	struct d3dkmt_submitcommand args;
++	struct dxgdevice *device = NULL;
++	struct dxgadapter *adapter = NULL;
++
++	ret = copy_from_user(&args, inargs, sizeof(args));
++	if (ret) {
++		DXG_ERR("failed to copy input args");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	if (args.broadcast_context_count > D3DDDI_MAX_BROADCAST_CONTEXT ||
++	    args.broadcast_context_count == 0) {
++		DXG_ERR("invalid number of contexts");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	if (args.priv_drv_data_size > DXG_MAX_VM_BUS_PACKET_SIZE) {
++		DXG_ERR("invalid private data size");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	if (args.num_history_buffers > 1024) {
++		DXG_ERR("invalid number of history buffers");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	if (args.num_primaries > DXG_MAX_VM_BUS_PACKET_SIZE) {
++		DXG_ERR("invalid number of primaries");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	device = dxgprocess_device_by_object_handle(process,
++						    HMGRENTRY_TYPE_DXGCONTEXT,
++						    args.broadcast_context[0]);
++	if (device == NULL) {
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	adapter = device->adapter;
++	ret = dxgadapter_acquire_lock_shared(adapter);
++	if (ret < 0) {
++		adapter = NULL;
++		goto cleanup;
++	}
++
++	ret = dxgvmb_send_submit_command(process, adapter, &args);
++
++cleanup:
++
++	if (adapter)
++		dxgadapter_release_lock_shared(adapter);
++	if (device)
++		kref_put(&device->device_kref, dxgdevice_release);
++
++	DXG_TRACE("ioctl:%s %d", errorstr(ret), ret);
++	return ret;
++}
++
++static int
++dxgkio_submit_command_to_hwqueue(struct dxgprocess *process, void *__user inargs)
++{
++	int ret;
++	struct d3dkmt_submitcommandtohwqueue args;
++	struct dxgdevice *device = NULL;
++	struct dxgadapter *adapter = NULL;
++
++	ret = copy_from_user(&args, inargs, sizeof(args));
++	if (ret) {
++		DXG_ERR("failed to copy input args");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	if (args.priv_drv_data_size > DXG_MAX_VM_BUS_PACKET_SIZE) {
++		DXG_ERR("invalid private data size");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	if (args.num_primaries > DXG_MAX_VM_BUS_PACKET_SIZE) {
++		DXG_ERR("invalid number of primaries");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	device = dxgprocess_device_by_object_handle(process,
++						    HMGRENTRY_TYPE_DXGHWQUEUE,
++						    args.hwqueue);
++	if (device == NULL) {
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	adapter = device->adapter;
++	ret = dxgadapter_acquire_lock_shared(adapter);
++	if (ret < 0) {
++		adapter = NULL;
++		goto cleanup;
++	}
++
++	ret = dxgvmb_send_submit_command_hwqueue(process, adapter, &args);
++
++cleanup:
++
++	if (adapter)
++		dxgadapter_release_lock_shared(adapter);
++	if (device)
++		kref_put(&device->device_kref, dxgdevice_release);
++
++	DXG_TRACE("ioctl:%s %d", errorstr(ret), ret);
++	return ret;
++}
++
+ static int
+ dxgkio_submit_signal_to_hwqueue(struct dxgprocess *process, void *__user inargs)
+ {
+@@ -3666,7 +3789,7 @@ static struct ioctl_desc ioctls[] = {
+ /* 0x0c */	{},
+ /* 0x0d */	{},
+ /* 0x0e */	{},
+-/* 0x0f */	{},
++/* 0x0f */	{dxgkio_submit_command, LX_DXSUBMITCOMMAND},
+ /* 0x10 */	{dxgkio_create_sync_object, LX_DXCREATESYNCHRONIZATIONOBJECT},
+ /* 0x11 */	{dxgkio_signal_sync_object, LX_DXSIGNALSYNCHRONIZATIONOBJECT},
+ /* 0x12 */	{dxgkio_wait_sync_object, LX_DXWAITFORSYNCHRONIZATIONOBJECT},
+@@ -3706,7 +3829,7 @@ static struct ioctl_desc ioctls[] = {
+ 		 LX_DXSIGNALSYNCHRONIZATIONOBJECTFROMGPU},
+ /* 0x33 */	{dxgkio_signal_sync_object_gpu2,
+ 		 LX_DXSIGNALSYNCHRONIZATIONOBJECTFROMGPU2},
+-/* 0x34 */	{},
++/* 0x34 */	{dxgkio_submit_command_to_hwqueue, LX_DXSUBMITCOMMANDTOHWQUEUE},
+ /* 0x35 */	{dxgkio_submit_signal_to_hwqueue,
+ 		  LX_DXSUBMITSIGNALSYNCOBJECTSTOHWQUEUE},
+ /* 0x36 */	{dxgkio_submit_wait_to_hwqueue,
+diff --git a/include/uapi/misc/d3dkmthk.h b/include/uapi/misc/d3dkmthk.h
+index 6ec70852de6e..9238115d165d 100644
+--- a/include/uapi/misc/d3dkmthk.h
++++ b/include/uapi/misc/d3dkmthk.h
+@@ -58,6 +58,8 @@ struct winluid {
+ 	__u32 b;
+ };
+ 
++#define D3DDDI_MAX_WRITTEN_PRIMARIES		16
++
+ #define D3DKMT_CREATEALLOCATION_MAX		1024
+ #define D3DKMT_ADAPTERS_MAX			64
+ #define D3DDDI_MAX_BROADCAST_CONTEXT		64
+@@ -525,6 +527,58 @@ struct d3dkmt_destroysynchronizationobject {
+ 	struct d3dkmthandle	sync_object;
+ };
+ 
++struct d3dkmt_submitcommandflags {
++	__u32					null_rendering:1;
++	__u32					present_redirected:1;
++	__u32					reserved:30;
++};
++
++struct d3dkmt_submitcommand {
++	__u64					command_buffer;
++	__u32					command_length;
++	struct d3dkmt_submitcommandflags	flags;
++	__u64					present_history_token;
++	__u32					broadcast_context_count;
++	struct d3dkmthandle	broadcast_context[D3DDDI_MAX_BROADCAST_CONTEXT];
++	__u32					reserved;
++#ifdef __KERNEL__
++	void					*priv_drv_data;
++#else
++	__u64					priv_drv_data;
++#endif
++	__u32					priv_drv_data_size;
++	__u32					num_primaries;
++	struct d3dkmthandle	written_primaries[D3DDDI_MAX_WRITTEN_PRIMARIES];
++	__u32					num_history_buffers;
++	__u32					reserved1;
++#ifdef __KERNEL__
++	struct d3dkmthandle			*history_buffer_array;
++#else
++	__u64					history_buffer_array;
++#endif
++};
++
++struct d3dkmt_submitcommandtohwqueue {
++	struct d3dkmthandle	hwqueue;
++	__u32			reserved;
++	__u64			hwqueue_progress_fence_id;
++	__u64			command_buffer;
++	__u32			command_length;
++	__u32			priv_drv_data_size;
++#ifdef __KERNEL__
++	void			*priv_drv_data;
++#else
++	__u64			priv_drv_data;
++#endif
++	__u32			num_primaries;
++	__u32			reserved1;
++#ifdef __KERNEL__
++	struct d3dkmthandle	*written_primaries;
++#else
++	__u64			written_primaries;
++#endif
++};
++
+ enum d3dkmt_standardallocationtype {
+ 	_D3DKMT_STANDARDALLOCATIONTYPE_EXISTINGHEAP	= 1,
+ 	_D3DKMT_STANDARDALLOCATIONTYPE_CROSSADAPTER	= 2,
+@@ -917,6 +971,8 @@ struct d3dkmt_enumadapters3 {
+ 	_IOWR(0x47, 0x07, struct d3dkmt_createpagingqueue)
+ #define LX_DXQUERYADAPTERINFO		\
+ 	_IOWR(0x47, 0x09, struct d3dkmt_queryadapterinfo)
++#define LX_DXSUBMITCOMMAND		\
++	_IOWR(0x47, 0x0f, struct d3dkmt_submitcommand)
+ #define LX_DXCREATESYNCHRONIZATIONOBJECT \
+ 	_IOWR(0x47, 0x10, struct d3dkmt_createsynchronizationobject2)
+ #define LX_DXSIGNALSYNCHRONIZATIONOBJECT \
+@@ -945,6 +1001,8 @@ struct d3dkmt_enumadapters3 {
+ 	_IOWR(0x47, 0x32, struct d3dkmt_signalsynchronizationobjectfromgpu)
+ #define LX_DXSIGNALSYNCHRONIZATIONOBJECTFROMGPU2 \
+ 	_IOWR(0x47, 0x33, struct d3dkmt_signalsynchronizationobjectfromgpu2)
++#define LX_DXSUBMITCOMMANDTOHWQUEUE	\
++	_IOWR(0x47, 0x34, struct d3dkmt_submitcommandtohwqueue)
+ #define LX_DXSUBMITSIGNALSYNCOBJECTSTOHWQUEUE \
+ 	_IOWR(0x47, 0x35, struct d3dkmt_submitsignalsyncobjectstohwqueue)
+ #define LX_DXSUBMITWAITFORSYNCOBJECTSTOHWQUEUE \
+-- 
+Armbian
+

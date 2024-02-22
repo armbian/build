@@ -16,12 +16,13 @@ import multiprocessing
 import os
 import re
 import subprocess
-import sys
 from pathlib import Path
+
+import sys
 
 REGEX_WHITESPACE_LINEBREAK_COMMA_SEMICOLON = r"[\s,;\n]+"
 
-ARMBIAN_CONFIG_REGEX_KERNEL_TARGET = r"^([export |declare -g]+)?KERNEL_TARGET=\"(.*)\""
+ARMBIAN_BOARD_CONFIG_REGEX_GENERIC = r"^(?!\s)(?:[export |declare \-g]?)+([A-Z0-9_]+)=(?:'|\")(.*)(?:'|\")"
 
 log: logging.Logger = logging.getLogger("armbian_utils")
 
@@ -38,8 +39,8 @@ def parse_env_for_tokens(env_name):
 	return [token for token in [token.strip() for token in (tokens)] if token != ""]
 
 
-def get_from_env(env_name):
-	value = os.environ.get(env_name, None)
+def get_from_env(env_name, default=None):
+	value = os.environ.get(env_name, default)
 	if value is not None:
 		value = value.strip()
 	return value
@@ -107,28 +108,66 @@ def to_yaml(gha_workflow):
 
 # I've to read the first line from the board file, that's the hardware description in a pound comment.
 # Also, 'KERNEL_TARGET="legacy,current,edge"' which we need to parse.
-def armbian_parse_board_file_for_static_info(board_file, board_id):
+def armbian_parse_board_file_for_static_info(board_file, board_id, core_or_userpatched):
 	file_handle = open(board_file, 'r')
 	file_lines = file_handle.readlines()
 	file_handle.close()
 
 	file_lines.reverse()
 	hw_desc_line = file_lines.pop()
+	file_lines.reverse()
 	hw_desc_clean = None
 	if hw_desc_line.startswith("# "):
 		hw_desc_clean = hw_desc_line.strip("# ").strip("\n")
 
-	# Parse KERNEL_TARGET line.
-	kernel_targets = None
-	kernel_target_matches = re.findall(ARMBIAN_CONFIG_REGEX_KERNEL_TARGET, "\n".join(file_lines), re.MULTILINE)
-	if len(kernel_target_matches) == 1:
-		kernel_targets = kernel_target_matches[0][1].split(",")
+	# Parse generic bash vars, with a horrendous regex.
+	generic_vars = {}
+	generic_var_matches = re.findall(ARMBIAN_BOARD_CONFIG_REGEX_GENERIC, "\n".join(file_lines), re.MULTILINE)
+	for generic_var_match in generic_var_matches:
+		generic_vars[generic_var_match[0]] = generic_var_match[1]
 
-	ret = {"BOARD": board_id, "BOARD_SUPPORT_LEVEL": (Path(board_file).suffix)[1:]}
-	if hw_desc_clean is not None:
-		ret["BOARD_FILE_HARDWARE_DESC"] = hw_desc_clean
-	if kernel_targets is not None:
-		ret["BOARD_POSSIBLE_BRANCHES"] = kernel_targets
+	kernel_targets = []
+	if "KERNEL_TARGET" in generic_vars:
+		kernel_targets = generic_vars["KERNEL_TARGET"].split(",")
+	if (len(kernel_targets) == 0) or (kernel_targets[0] == ""):
+		log.warning(f"KERNEL_TARGET not found in '{board_file}', syntax error?, missing quotes? stray comma?")
+
+	maintainers = []
+	if "BOARD_MAINTAINER" in generic_vars:
+		maintainers = generic_vars["BOARD_MAINTAINER"].split(" ")
+		maintainers = list(filter(None, maintainers))
+	else:
+		if core_or_userpatched == "core":
+			log.warning(f"BOARD_MAINTAINER not found in '{board_file}', syntax error?, missing quotes? stray space? missing info?")
+
+	board_has_video = True
+	if "HAS_VIDEO_OUTPUT" in generic_vars:
+		if generic_vars["HAS_VIDEO_OUTPUT"] == "no":
+			board_has_video = False
+
+	if "BOARDFAMILY" not in generic_vars:
+		log.warning(f"BOARDFAMILY not found in '{board_file}', syntax error?, missing quotes?")
+
+	# Add some more vars that are not in the board file, so we've a complete BOARD_TOP_LEVEL_VARS as well as first-level
+	extras: list[dict[str, any]] = [
+		{"name": "BOARD", "value": board_id},
+		{"name": "BOARD_SUPPORT_LEVEL", "value": (Path(board_file).suffix)[1:]},
+		{"name": "BOARD_FILE_HARDWARE_DESC", "value": hw_desc_clean},
+		{"name": "BOARD_POSSIBLE_BRANCHES", "value": kernel_targets},
+		{"name": "BOARD_MAINTAINERS", "value": maintainers},
+		{"name": "BOARD_HAS_VIDEO", "value": board_has_video},
+		{"name": "BOARD_CORE_OR_USERPATCHED", "value": core_or_userpatched}
+	]
+
+	# Append the extras to the generic_vars dict.
+	for extra in extras:
+		generic_vars[extra["name"]] = extra["value"]
+
+	ret = {"BOARD_TOP_LEVEL_VARS": generic_vars}
+	# Append the extras to the top-level.
+	for extra in extras:
+		ret[extra["name"]] = extra["value"]
+
 	return ret
 
 
@@ -163,12 +202,100 @@ def find_armbian_src_path():
 	if not os.path.exists(core_boards_path):
 		raise Exception("Can't find config/boards")
 
+	# userspace stuff
+	core_distributions_path = os.path.realpath(os.path.join(armbian_src_path, "config", "distributions"))
+	log.debug(f"Real path to core distributions '{core_distributions_path}'")
+	# Make sure it exists
+	if not os.path.exists(core_distributions_path):
+		raise Exception("Can't find config/distributions")
+
+	core_desktop_path = os.path.realpath(os.path.join(armbian_src_path, "config", "desktop"))
+	log.debug(f"Real path to core desktop '{core_desktop_path}'")
+	# Make sure it exists
+	if not os.path.exists(core_desktop_path):
+		raise Exception("Can't find config/desktop")
+
 	userpatches_boards_path = os.path.realpath(os.path.join(armbian_src_path, "userpatches", "config", "boards"))
 	log.debug(f"Real path to userpatches boards '{userpatches_boards_path}'")
 	has_userpatches_path = os.path.exists(userpatches_boards_path)
 
-	return {"armbian_src_path": armbian_src_path, "compile_sh_full_path": compile_sh_full_path, "core_boards_path": core_boards_path,
-			"userpatches_boards_path": userpatches_boards_path, "has_userpatches_path": has_userpatches_path}
+	return {
+		"armbian_src_path": armbian_src_path, "compile_sh_full_path": compile_sh_full_path, "core_boards_path": core_boards_path,
+		"core_distributions_path": core_distributions_path, "core_desktop_path": core_desktop_path,
+		"userpatches_boards_path": userpatches_boards_path, "has_userpatches_path": has_userpatches_path
+	}
+
+
+def read_one_distro_config_file(filename):
+	# Read the contents of filename passed in and return it as string, trimmed
+	with open(filename, 'r') as file_handle:
+		file_contents = file_handle.read()
+		return file_contents.strip()
+
+
+def split_commas_and_clean_into_list(string):
+	ret = []
+	for item in string.split(","):
+		item = item.strip()
+		if item != "":
+			ret.append(item)
+	return ret
+
+
+def get_desktop_inventory_for_distro(distro, armbian_paths):
+	ret = []
+	desktops_path = armbian_paths["core_desktop_path"]
+	envs_path_for_distro = os.path.join(desktops_path, distro, "environments")
+	if not os.path.exists(envs_path_for_distro):
+		log.warning(f"Can't find desktop environments for distro '{distro}' at '{envs_path_for_distro}'")
+		return ret
+	for env in os.listdir(envs_path_for_distro):
+		one_env_path = os.path.join(envs_path_for_distro, env)
+		if not os.path.isdir(one_env_path):
+			continue
+		log.debug(f"Processing desktop '{env}' for distro '{distro}'")
+		support_file_path = os.path.join(one_env_path, "support")
+		arches_file_path = os.path.join(one_env_path, "architectures")
+		if not os.path.exists(support_file_path):
+			log.warning(f"Can't find desktop support file for distro '{distro}' and environment '{env}' at '{support_file_path}'")
+			continue
+		if not os.path.exists(arches_file_path):
+			log.warning(f"Can't find desktop arches file for distro '{distro}' and environment '{env}' at '{arches_file_path}'")
+			continue
+
+		env_main_info = {
+			"id": env,
+			"support": read_one_distro_config_file(support_file_path),
+			"arches": split_commas_and_clean_into_list(read_one_distro_config_file(arches_file_path))
+		}
+		ret.append(env_main_info)
+
+	return ret
+
+
+def armbian_get_all_userspace_inventory():
+	armbian_paths = find_armbian_src_path()
+	distros_path = armbian_paths["core_distributions_path"]
+	all_distros = []
+	# find and loop over every directory in distros_path, including symlinks
+	for distro in os.listdir(distros_path):
+		one_distro_path = os.path.join(distros_path, distro)
+		if not os.path.isdir(one_distro_path):
+			continue
+		log.debug(f"Processing distro '{distro}'")
+		support_file_path = os.path.join(one_distro_path, "support")
+		arches_file_path = os.path.join(one_distro_path, "architectures")
+		name_file_path = os.path.join(one_distro_path, "name")
+		distro_main_info = {
+			"id": distro,
+			"name": read_one_distro_config_file(name_file_path),
+			"support": read_one_distro_config_file(support_file_path),
+			"arches": split_commas_and_clean_into_list(read_one_distro_config_file(arches_file_path)),
+			"desktops": get_desktop_inventory_for_distro(distro, armbian_paths)
+		}
+		all_distros.append(distro_main_info)
+
+	return all_distros
 
 
 def armbian_get_all_boards_inventory():
@@ -178,8 +305,7 @@ def armbian_get_all_boards_inventory():
 	# first, gather the board_info for every core board. if any fail, stop.
 	info_for_board = {}
 	for board in core_boards.keys():
-		board_info = armbian_parse_board_file_for_static_info(core_boards[board], board)
-		board_info["BOARD_CORE_OR_USERPATCHED"] = "core"
+		board_info = armbian_parse_board_file_for_static_info(core_boards[board], board, "core")
 		# Core boards must have the KERNEL_TARGET defined.
 		if "BOARD_POSSIBLE_BRANCHES" not in board_info:
 			raise Exception(f"Core board '{board}' must have KERNEL_TARGET defined")
@@ -189,8 +315,7 @@ def armbian_get_all_boards_inventory():
 	if armbian_paths["has_userpatches_path"]:
 		userpatched_boards = armbian_get_all_boards_list(armbian_paths["userpatches_boards_path"])
 		for uboard_name in userpatched_boards.keys():
-			uboard = armbian_parse_board_file_for_static_info(userpatched_boards[uboard_name], uboard_name)
-			uboard["BOARD_CORE_OR_USERPATCHED"] = "userpatched"
+			uboard = armbian_parse_board_file_for_static_info(userpatched_boards[uboard_name], uboard_name, "userpatched")
 			is_new_board = not (uboard_name in info_for_board)
 			if is_new_board:
 				log.debug(f"Userpatched Board {uboard_name} is new")
@@ -238,9 +363,16 @@ def armbian_run_command_and_parse_json_from_stdout(exec_cmd: list[str], params: 
 	except subprocess.CalledProcessError as e:
 		# decode utf8 manually, universal_newlines messes up bash encoding
 		logs = parse_log_lines_from_stderr(e.stderr)
-		log.error(f"Error calling Armbian command: {' '.join(exec_cmd)}")
-		log.error(f"Error details: params: {params} - return code: {e.returncode} - stderr: {'; '.join(logs[-5:])}")
-		return {"in": params, "out": {}, "logs": logs, "config_ok": False}
+		if e.returncode == 44:
+			# special handling for exit_with_target_not_supported_error() in armbian core.
+			log.warning(f"Skipped target: {' '.join(exec_cmd)}")
+			log.warning(f"Skipped target details 1: {'; '.join(logs[-5:])}")
+			return {"in": params, "out": {}, "logs": logs, "config_ok": False, "target_not_supported": True}
+		else:
+			log.error(f"Error calling Armbian command: {' '.join(exec_cmd)}")
+			log.error(f"Error details 1: params: {params}")
+			log.error(f"Error details 2: code: {e.returncode} - {'; '.join(logs[-5:])}")
+			return {"in": params, "out": {}, "logs": logs, "config_ok": False}
 
 	if result is not None:
 		if result.stderr:
@@ -294,7 +426,7 @@ def gather_json_output_from_armbian(command: str, targets: list[dict]):
 		counter = 0
 		total = len(targets)
 		# get the number of processor cores on this machine
-		max_workers = multiprocessing.cpu_count() * 2  # use double the number of cpu cores, that's the sweet spot
+		max_workers = multiprocessing.cpu_count() * 4  # use four times the number of cpu cores, that's the sweet spot
 		log.info(f"Using {max_workers} workers for parallel processing.")
 		with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
 			every_future = []

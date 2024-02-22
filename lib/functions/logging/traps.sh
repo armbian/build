@@ -194,3 +194,19 @@ function exit_with_error() {
 
 	exit 43
 }
+
+# terminate build with a specific error code (44), meaning "target not supported".
+# this is exactly like exit_with_error, but will be handled differently by the build pipeline.
+function exit_with_target_not_supported_error() {
+	# Log the error and exit.
+	# Everything else will be done by shared trap handling, above.
+	local _file="${BASH_SOURCE[1]}"
+	local _function=${FUNCNAME[1]}
+	local _line="${BASH_LINENO[0]}"
+
+	display_alert "target not supported! " "${1} ${2}" "err"
+
+	overlayfs_wrapper "cleanup"
+
+	exit 44
+}

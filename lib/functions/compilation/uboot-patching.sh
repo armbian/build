@@ -25,6 +25,9 @@ function uboot_main_patching_python() {
 		"BOARD=${BOARD}"                                      # BOARD is needed for the patchset selection logic; mostly for u-boot.
 		"TARGET=${target_patchdir}"                           # TARGET is need for u-boot's SPI/SATA etc selection logic
 		"USERPATCHES_PATH=${USERPATCHES_PATH}"                # Needed to find the userpatches.
+		# For table generation to fit into the screen, or being large when in GHA.
+		"COLUMNS=${COLUMNS}"
+		"GITHUB_ACTIONS=${GITHUB_ACTIONS}"
 		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.
 		"PATH=${PATH}"
 		"HOME=${HOME}"

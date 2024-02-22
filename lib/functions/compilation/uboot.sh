@@ -55,6 +55,12 @@ function compile_uboot_target() {
 		# atftempdir is under WORKDIR, so no cleanup necessary.
 	fi
 
+	# crusttempdir comes from crust.sh's compile_crust()
+	if [[ -n $CRUSTSOURCE && -d "${crusttempdir}" ]]; then
+		display_alert "Copying over bin/elf's from crusttempdir" "${crusttempdir}" "debug"
+		run_host_command_logged cp -pv "${crusttempdir}"/*.bin "${crusttempdir}"/*.elf ./ # only works due to nullglob
+	fi
+
 	# Hook time, for extra post-processing
 	call_extension_method "pre_config_uboot_target" <<- 'PRE_CONFIG_UBOOT_TARGET'
 		*allow extensions prepare before configuring and compiling an u-boot target*
@@ -62,7 +68,7 @@ function compile_uboot_target() {
 		For example, changing Python version can be done by replacing the `${BIN_WORK_DIR}/python` symlink.
 	PRE_CONFIG_UBOOT_TARGET
 
-	display_alert "${uboot_prefix}Preparing u-boot config" "${version} ${target_make}" "info"
+	display_alert "${uboot_prefix}Preparing u-boot config '${BOOTCONFIG}'" "${version} ${target_make}" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		"KCFLAGS=-fdiagnostics-color=always" \
@@ -147,11 +153,27 @@ function compile_uboot_target() {
 
 	fi
 
+	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
+	# boards/families/extensions can customize this via the hook below
+	local -a uboot_cflags_array=(
+		"-fdiagnostics-color=always" # color messages
+		"-Wno-error=maybe-uninitialized"
+		"-Wno-error=misleading-indentation"   # patches have mismatching indentation
+		"-Wno-error=attributes"               # for very old-uboots
+		"-Wno-error=address-of-packed-member" # for very old-uboots
+	)
+	if linux-version compare "${gcc_version_main}" ge "11.0"; then
+		uboot_cflags_array+=(
+			"-Wno-error=array-parameter" # very old uboots
+		)
+	fi
+
 	# Hook time, for extra post-processing
 	call_extension_method "post_config_uboot_target" <<- 'POST_CONFIG_UBOOT_TARGET'
 		*allow extensions prepare after configuring but before compiling an u-boot target*
 		Some u-boot targets require extra configuration or pre-processing before compiling.
 		Last chance to change .config for u-boot before compiling.
+		Also the only chance to change the (local) array `uboot_cflags_array`.
 	POST_CONFIG_UBOOT_TARGET
 
 	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
@@ -167,25 +189,8 @@ function compile_uboot_target() {
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
 
-	local ts=${SECONDS}
-
-	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
-	# @TODO make configurable/expandable
-	local -a uboot_cflags_array=(
-		"-fdiagnostics-color=always" # color messages
-		"-Wno-error=maybe-uninitialized"
-		"-Wno-error=misleading-indentation"   # patches have mismatching indentation
-		"-Wno-error=attributes"               # for very old-uboots
-		"-Wno-error=address-of-packed-member" # for very old-uboots
-
-	)
-	if linux-version compare "${gcc_version_main}" ge "11.0"; then
-		uboot_cflags_array+=(
-			"-Wno-error=array-parameter" # very old uboots
-		)
-	fi
-
 	local uboot_cflags="${uboot_cflags_array[*]}"
+	local ts=${SECONDS}
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
@@ -275,7 +280,7 @@ function deploy_built_uboot_bins_for_one_target_to_packaging_area() {
 		fi
 		display_alert "${uboot_prefix}Deploying u-boot binary target" "${version} ${target_make} :: ${f_dst}"
 		[[ ! -f $f_src ]] && exit_with_error "U-boot artifact not found" "$(basename "${f_src}")"
-		run_host_command_logged cp -v "${f_src}" "${uboottempdir}/${uboot_name}/usr/lib/${uboot_name}/${f_dst}"
+		run_host_command_logged cp -v "${f_src}" "${uboottempdir}/usr/lib/${uboot_name}/${f_dst}"
 		#display_alert "Done with binary target" "${version} ${target_make} :: ${f_dst}"
 	done
 }
@@ -332,13 +337,13 @@ function compile_uboot() {
 	display_alert "Compiler version" "${UBOOT_COMPILER}gcc '${gcc_version_main}'" "info"
 	[[ -n $toolchain2 ]] && display_alert "Additional compiler version" "${toolchain2_type}gcc $(eval env PATH="${toolchain}:${toolchain2}:${PATH}" "${toolchain2_type}gcc" -dumpfullversion -dumpversion)" "info"
 
-	local uboot_name="${CHOSEN_UBOOT}_${REVISION}_${ARCH}" # @TODO: get rid of CHOSEN_UBOOT
+	local uboot_name="linux-u-boot-${BRANCH}-${BOARD}"
 
 	# create directory structure for the .deb package
 	declare cleanup_id="" uboottempdir=""
 	prepare_temp_dir_in_workdir_and_schedule_cleanup "uboot" cleanup_id uboottempdir # namerefs
 
-	mkdir -p "$uboottempdir/$uboot_name/usr/lib/u-boot" "$uboottempdir/$uboot_name/usr/lib/$uboot_name" "$uboottempdir/$uboot_name/DEBIAN"
+	mkdir -p "$uboottempdir/usr/lib/u-boot" "$uboottempdir/usr/lib/$uboot_name" "$uboottempdir/DEBIAN"
 
 	# Allow extension-based u-boot bulding. We call the hook, and if EXTENSION_BUILT_UBOOT="yes" afterwards, we skip our own compilation.
 	# This is to make it easy to build vendor/downstream uboot with their own quirks.
@@ -365,7 +370,7 @@ function compile_uboot() {
 
 	# set up postinstall script # @todo: extract into a tinkerboard extension
 	if [[ $BOARD == tinkerboard ]]; then
-		cat <<- EOF > "$uboottempdir/${uboot_name}/DEBIAN/postinst"
+		cat <<- EOF > "$uboottempdir/DEBIAN/postinst"
 			#!/bin/bash
 			source /usr/lib/u-boot/platform_install.sh
 			[[ \$DEVICE == /dev/null ]] && exit 0
@@ -385,11 +390,11 @@ function compile_uboot() {
 			fi
 			exit 0
 		EOF
-		chmod 755 "$uboottempdir/${uboot_name}/DEBIAN/postinst"
+		chmod 755 "$uboottempdir/DEBIAN/postinst"
 	fi
 
 	# declare -f on non-defined function does not do anything (but exits with errors, so ignore them with "|| true")
-	cat <<- EOF > "$uboottempdir/${uboot_name}/usr/lib/u-boot/platform_install.sh"
+	cat <<- EOF > "$uboottempdir/usr/lib/u-boot/platform_install.sh"
 		DIR=/usr/lib/$uboot_name
 		$(declare -f write_uboot_platform || true)
 		$(declare -f write_uboot_platform_mtd || true)
@@ -399,28 +404,28 @@ function compile_uboot() {
 	display_alert "Das U-Boot .deb package version" "${artifact_version}" "info"
 
 	# set up control file
-	cat <<- EOF > "$uboottempdir/${uboot_name}/DEBIAN/control"
+	cat <<- EOF > "$uboottempdir/DEBIAN/control"
 		Package: linux-u-boot-${BOARD}-${BRANCH}
 		Version: ${artifact_version}
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Section: kernel
 		Priority: optional
 		Provides: armbian-u-boot
 		Replaces: armbian-u-boot
 		Conflicts: armbian-u-boot, u-boot-sunxi
-		Description: Das U-Boot for ${BOARD} ${artifact_version_reason:-"${version}"}
+		Description: Das U-Boot for ${BOARD}
+		 ${artifact_version_reason:-"${version}"}
 	EOF
 
 	# copy license files, config, etc.
-	[[ -f .config && -n $BOOTCONFIG ]] && run_host_command_logged cp .config "$uboottempdir/${uboot_name}/usr/lib/u-boot/${BOOTCONFIG}"
-	[[ -f COPYING ]] && run_host_command_logged cp COPYING "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
-	[[ -f Licenses/README ]] && run_host_command_logged cp Licenses/README "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE"
-	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/${uboot_name}/usr/lib/u-boot/LICENSE.atf"
+	[[ -f .config && -n $BOOTCONFIG ]] && run_host_command_logged cp .config "$uboottempdir/usr/lib/u-boot/${BOOTCONFIG}"
+	[[ -f COPYING ]] && run_host_command_logged cp COPYING "$uboottempdir/usr/lib/u-boot/LICENSE"
+	[[ -f Licenses/README ]] && run_host_command_logged cp Licenses/README "$uboottempdir/usr/lib/u-boot/LICENSE"
+	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/usr/lib/u-boot/LICENSE.atf"
 
 	display_alert "Building u-boot deb" "(version: ${artifact_version})"
-	fakeroot_dpkg_deb_build "$uboottempdir/${uboot_name}" "${DEB_STORAGE}"
+	dpkg_deb_build "$uboottempdir" "uboot"
 
 	[[ -n $atftempdir ]] && rm -rf "${atftempdir:?}" # @TODO: intricate cleanup; u-boot's pkg uses ATF's tempdir...
 

@@ -59,7 +59,7 @@ function call_extension_method() {
 	done
 }
 
-function dump_extension_method_sources_functions() {
+function dump_extension_method_sources_function() {
 	declare hook_name="${1}"
 	declare dump_source_hook_function="dump_custom_sources_extension_hooks_${hook_name}"
 
@@ -84,6 +84,13 @@ function dump_extension_method_sources_functions() {
 
 	unset dump_body_sans_function_header_or_trailer
 	return 0 # always success
+}
+
+function dump_extension_method_sources_functions() {
+	for hook_name in "${@}"; do
+		display_alert "Extensions hook to expand source" "${hook_name}" "debug"
+		dump_extension_method_sources_function ${hook_name}
+	done
 }
 
 function dump_extension_method_sources_body() {
@@ -498,7 +505,9 @@ function enable_extension() {
 
 	# iterate over defined functions, store them in global associative array extension_function_info
 	for newly_defined_function in ${new_function_list}; do
-		#echo "func: ${newly_defined_function} has DIR: ${extension_dir}"
+		# Check if "${newly_defined_function}" is already defined in the extension_function_info array, if not, add it
+		# This is to address the recursive case messing up references
+		[[ -v extension_function_info["${newly_defined_function}"] ]] && continue
 		extension_function_info["${newly_defined_function}"]="EXTENSION=\"${extension_name}\" EXTENSION_DIR=\"${extension_dir}\" EXTENSION_FILE=\"${extension_file}\" EXTENSION_ADDED_BY=\"${stacktrace}\""
 	done
 

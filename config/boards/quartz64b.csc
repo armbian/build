@@ -1,0 +1,13 @@
+# Rockchip RK3566 quad core 4GB-8GB GBE PCIe USB3
+BOARD_NAME="Pine Quartz64 B"
+BOARDFAMILY="media"
+BOARD_MAINTAINER=""
+BOOT_SOC="rk3568"
+BOOTCONFIG="quartz64-b-rk3566_defconfig"
+KERNEL_TARGET="current,edge"
+FULL_DESKTOP="yes"
+BOOT_LOGO="desktop"
+BOOT_FDT_FILE="rockchip/rk3566-quartz64-b.dtb"
+SRC_EXTLINUX="yes"
+SRC_CMDLINE="console=ttyS02,1500000 console=tty0"
+IMAGE_PARTITION_TABLE="gpt"

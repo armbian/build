@@ -27,8 +27,11 @@ all_artifacts: list[dict] = []
 
 # loop over the build infos. for each, construct a structure with the artifacts.
 for build_info in build_infos:
-	if build_info["config_ok"] == False:
-		log.warning(f"Skipping failed config '{build_info['in']}'...")
+	if build_info["config_ok"] is False:
+		if ("target_not_supported" in build_info) and (build_info["target_not_supported"] is True):
+			log.debug(f"Skipping 'target not supported' config '{build_info['in']}'...")
+		else:
+			log.warning(f"Skipping *failed* config '{build_info['in']}'...")
 		continue
 
 	outvars = build_info["out"]
@@ -52,17 +55,17 @@ for build_info in build_infos:
 			pipeline = build_info["in"]["pipeline"]
 			if "build-artifacts" in pipeline:
 				if pipeline["build-artifacts"] == False:
-					log.warning(f"Skipping artifact '{artifact_name}' (pipeline build-artifacts '{pipeline['build-artifacts']}' config)...")
+					log.debug(f"Skipping artifact '{artifact_name}' (pipeline build-artifacts '{pipeline['build-artifacts']}' config)...")
 					continue
 				else:
-					log.warning(f"Keeping artifact '{artifact_name}' (pipeline build-artifacts '{pipeline['build-artifacts']}' config)...")
+					log.debug(f"Keeping artifact '{artifact_name}' (pipeline build-artifacts '{pipeline['build-artifacts']}' config)...")
 			if "only-artifacts" in pipeline:
 				only_artifacts = pipeline["only-artifacts"]
 				if artifact_name not in only_artifacts:
-					log.warning(f"Skipping artifact '{artifact_name}' (pipeline only-artifacts '{','.join(only_artifacts)}' config)...")
+					log.debug(f"Skipping artifact '{artifact_name}' (pipeline only-artifacts '{','.join(only_artifacts)}' config)...")
 					continue
 				else:
-					log.warning(f"Keeping artifact '{artifact_name}' (pipeline only-artifacts '{','.join(only_artifacts)}' config)...")
+					log.debug(f"Keeping artifact '{artifact_name}' (pipeline only-artifacts '{','.join(only_artifacts)}' config)...")
 
 		inputs: dict[str, str] = {}
 		for input_raw in inputs_raw_array:

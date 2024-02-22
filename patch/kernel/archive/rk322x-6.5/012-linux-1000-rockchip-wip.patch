@@ -1,0 +1,782 @@
+From 92a42b2df843c0f6c2937dc6bdbfe72332c9e557 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Thu, 9 Sep 2021 16:46:33 +0000
+Subject: [PATCH 3/4] 01-linux-1000-rockchip-wip
+
+---
+ arch/arm/boot/dts/rockchip/rk322x.dtsi                 | 101 +++++++++++++++++-
+ arch/arm/boot/dts/rockchip/rk3xxx.dtsi                 |   2 +
+ drivers/clk/rockchip/clk-rk3228.c             |  61 ++++-------
+ drivers/net/ethernet/arc/emac.h               |  14 +++
+ drivers/net/ethernet/arc/emac_main.c          |  81 ++++++++++++--
+ drivers/phy/rockchip/phy-rockchip-inno-hdmi.c |  38 ++++++-
+ drivers/soc/rockchip/pm_domains.c             |  23 ++++
+ drivers/usb/dwc2/core.c                       |   2 +-
+ 8 files changed, 266 insertions(+), 56 deletions(-)
+
+diff --git a/arch/arm/boot/dts/rockchip/rk322x.dtsi b/arch/arm/boot/dts/rockchip/rk322x.dtsi
+index 75af99c76..c50b2ccd7 100644
+--- a/arch/arm/boot/dts/rockchip/rk322x.dtsi
++++ b/arch/arm/boot/dts/rockchip/rk322x.dtsi
+@@ -15,6 +15,7 @@ / {
+ 	interrupt-parent = <&gic>;
+ 
+ 	aliases {
++		ethernet0 = &gmac;
+ 		serial0 = &uart0;
+ 		serial1 = &uart1;
+ 		serial2 = &uart2;
+@@ -105,6 +106,22 @@ arm-pmu {
+ 		interrupt-affinity = <&cpu0>, <&cpu1>, <&cpu2>, <&cpu3>;
+ 	};
+ 
++	hdmi_sound: hdmi-sound {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "hdmi-sound";
++		simple-audio-card,format = "i2s";
++		simple-audio-card,mclk-fs = <256>;
++		status = "disabled";
++
++		simple-audio-card,cpu {
++			sound-dai = <&i2s0>;
++		};
++
++		simple-audio-card,codec {
++			sound-dai = <&hdmi>;
++		};
++	};
++
+ 	psci {
+ 		compatible = "arm,psci-1.0", "arm,psci-0.2";
+ 		method = "smc";
+@@ -132,6 +149,17 @@ display_subsystem: display-subsystem {
+ 		ports = <&vop_out>;
+ 	};
+ 
++	crypto: cypto-controller@100a0000 {
++		compatible = "rockchip,rk3288-crypto";
++		reg = <0x100a0000 0x4000>;
++		interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&cru HCLK_M_CRYPTO>, <&cru HCLK_S_CRYPTO>,
++		<&cru SCLK_CRYPTO>, <&cru ACLK_DMAC>;
++		clock-names = "aclk", "hclk", "sclk", "apb_pclk";
++		resets = <&cru SRST_CRYPTO>;
++		reset-names = "crypto-rst";
++	};
++
+ 	i2s1: i2s1@100b0000 {
+ 		compatible = "rockchip,rk3228-i2s", "rockchip,rk3066-i2s";
+ 		reg = <0x100b0000 0x4000>;
+@@ -142,6 +170,7 @@ i2s1: i2s1@100b0000 {
+ 		dma-names = "tx", "rx";
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&i2s1_bus>;
++		#sound-dai-cells = <0>;
+ 		status = "disabled";
+ 	};
+ 
+@@ -153,6 +182,7 @@ i2s0: i2s0@100c0000 {
+ 		clocks = <&cru SCLK_I2S0>, <&cru HCLK_I2S0_8CH>;
+ 		dmas = <&pdma 11>, <&pdma 12>;
+ 		dma-names = "tx", "rx";
++		#sound-dai-cells = <0>;
+ 		status = "disabled";
+ 	};
+ 
+@@ -166,6 +196,7 @@ spdif: spdif@100d0000 {
+ 		dma-names = "tx";
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&spdif_tx>;
++		#sound-dai-cells = <0>;
+ 		status = "disabled";
+ 	};
+ 
+@@ -337,7 +368,7 @@ uart2: serial@11030000 {
+ 		clocks = <&cru SCLK_UART2>, <&cru PCLK_UART2>;
+ 		clock-names = "baudclk", "apb_pclk";
+ 		pinctrl-names = "default";
+-		pinctrl-0 = <&uart2_xfer>;
++		pinctrl-0 = <&uart21_xfer>;
+ 		reg-shift = <2>;
+ 		reg-io-width = <4>;
+ 		status = "disabled";
+@@ -358,6 +389,10 @@ efuse_id: id@7 {
+ 		cpu_leakage: cpu_leakage@17 {
+ 			reg = <0x17 0x1>;
+ 		};
++		hdmi_phy_flag: hdmi-phy-flag@1d {
++			reg = <0x1d 0x1>;
++			bits = <1 1>;
++		};
+ 	};
+ 
+ 	i2c0: i2c@11050000 {
+@@ -554,6 +589,11 @@ map1 {
+ 						<&cpu2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+ 						<&cpu3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+ 				};
++				map2 {
++					trip = <&cpu_alert1>;
++					cooling-device =
++						<&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
+ 			};
+ 		};
+ 	};
+@@ -584,6 +624,8 @@ hdmi_phy: hdmi-phy@12030000 {
+ 		clock-names = "sysclk", "refoclk", "refpclk";
+ 		#clock-cells = <0>;
+ 		clock-output-names = "hdmiphy_phy";
++		nvmem-cells = <&hdmi_phy_flag>;
++		nvmem-cell-names = "hdmi-phy-flag";
+ 		#phy-cells = <0>;
+ 		status = "disabled";
+ 	};
+@@ -607,7 +649,27 @@ gpu: gpu@20000000 {
+ 		clock-names = "bus", "core";
+ 		power-domains = <&power RK3228_PD_GPU>;
+ 		resets = <&cru SRST_GPU_A>;
+-		status = "disabled";
++		operating-points-v2 = <&gpu_opp_table>;
++		#cooling-cells = <2>; /* min followed by max */
++	};
++
++	gpu_opp_table: opp-table2 {
++		compatible = "operating-points-v2";
++
++		opp-200000000 {
++			opp-hz = /bits/ 64 <200000000>;
++			opp-microvolt = <1050000>;
++		};
++
++		opp-300000000 {
++			opp-hz = /bits/ 64 <300000000>;
++			opp-microvolt = <1050000>;
++		};
++
++		opp-500000000 {
++			opp-hz = /bits/ 64 <500000000>;
++			opp-microvolt = <1150000>;
++		};
+ 	};
+ 
+ 	vpu: video-codec@20020000 {
+@@ -727,6 +789,7 @@ hdmi: hdmi@200a0000 {
+ 		phys = <&hdmi_phy>;
+ 		phy-names = "hdmi";
+ 		rockchip,grf = <&grf>;
++		#sound-dai-cells = <0>;
+ 		status = "disabled";
+ 
+ 		ports {
+@@ -748,9 +811,13 @@ sdmmc: mmc@30000000 {
+ 		clocks = <&cru HCLK_SDMMC>, <&cru SCLK_SDMMC>,
+ 			 <&cru SCLK_SDMMC_DRV>, <&cru SCLK_SDMMC_SAMPLE>;
+ 		clock-names = "biu", "ciu", "ciu-drive", "ciu-sample";
++		bus-width = <4>;
+ 		fifo-depth = <0x100>;
++		max-frequency = <150000000>;
+ 		pinctrl-names = "default";
+-		pinctrl-0 = <&sdmmc_clk &sdmmc_cmd &sdmmc_bus4>;
++		pinctrl-0 = <&sdmmc_clk &sdmmc_cmd &sdmmc_bus4 &sdmmc_pwr>;
++		resets = <&cru SRST_SDMMC>;
++		reset-names = "reset";
+ 		status = "disabled";
+ 	};
+ 
+@@ -760,10 +827,14 @@ sdio: mmc@30010000 {
+ 		interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
+ 		clocks = <&cru HCLK_SDIO>, <&cru SCLK_SDIO>,
+ 			 <&cru SCLK_SDIO_DRV>, <&cru SCLK_SDIO_SAMPLE>;
++		bus-width = <4>;
+ 		clock-names = "biu", "ciu", "ciu-drive", "ciu-sample";
+ 		fifo-depth = <0x100>;
++		max-frequency = <150000000>;
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&sdio_clk &sdio_cmd &sdio_bus4>;
++		resets = <&cru SRST_SDIO>;
++		reset-names = "reset";
+ 		status = "disabled";
+ 	};
+ 
+@@ -771,14 +842,13 @@ emmc: mmc@30020000 {
+ 		compatible = "rockchip,rk3228-dw-mshc", "rockchip,rk3288-dw-mshc";
+ 		reg = <0x30020000 0x4000>;
+ 		interrupts = <GIC_SPI 14 IRQ_TYPE_LEVEL_HIGH>;
+-		clock-frequency = <37500000>;
+-		max-frequency = <37500000>;
+ 		clocks = <&cru HCLK_EMMC>, <&cru SCLK_EMMC>,
+ 			 <&cru SCLK_EMMC_DRV>, <&cru SCLK_EMMC_SAMPLE>;
+ 		clock-names = "biu", "ciu", "ciu-drive", "ciu-sample";
+ 		bus-width = <8>;
+ 		rockchip,default-sample-phase = <158>;
+ 		fifo-depth = <0x100>;
++		max-frequency = <150000000>;
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&emmc_clk &emmc_cmd &emmc_bus8>;
+ 		resets = <&cru SRST_EMMC>;
+@@ -1029,6 +1099,10 @@ sdmmc_bus4: sdmmc-bus4 {
+ 						<1 RK_PC4 1 &pcfg_pull_none_drv_12ma>,
+ 						<1 RK_PC5 1 &pcfg_pull_none_drv_12ma>;
+ 			};
++
++			sdmmc_pwr: sdmmc-pwr {
++				rockchip,pins = <1 RK_PB6 RK_FUNC_GPIO &pcfg_pull_none>;
++			};
+ 		};
+ 
+ 		sdio {
+@@ -1261,13 +1335,30 @@ uart1_xfer: uart1-xfer {
+ 						<1 RK_PB2 1 &pcfg_pull_none>;
+ 			};
+ 
++			uart11_xfer: uart11-xfer {
++				rockchip,pins = <3 RK_PB6 1 &pcfg_pull_up>,
++						<3 RK_PB5 1 &pcfg_pull_none>;
++			};
++
+ 			uart1_cts: uart1-cts {
+ 				rockchip,pins = <1 RK_PB0 1 &pcfg_pull_none>;
+ 			};
+ 
++			uart11_cts: uart11-cts {
++				rockchip,pins = <3 RK_PA7 1 &pcfg_pull_none>;
++			};
++
+ 			uart1_rts: uart1-rts {
+ 				rockchip,pins = <1 RK_PB3 1 &pcfg_pull_none>;
+ 			};
++
++			uart11_rts: uart11-rts {
++				rockchip,pins = <3 RK_PA6 1 &pcfg_pull_none>;
++			};
++
++			uart11_rts_gpio: uart11-rts-gpio {
++				rockchip,pins = <3 RK_PA6 RK_FUNC_GPIO &pcfg_pull_none>;
++			};
+ 		};
+ 
+ 		uart2 {
+diff --git a/arch/arm/boot/dts/rockchip/rk3xxx.dtsi b/arch/arm/boot/dts/rockchip/rk3xxx.dtsi
+index 616a828e0..f233b7a77 100644
+--- a/arch/arm/boot/dts/rockchip/rk3xxx.dtsi
++++ b/arch/arm/boot/dts/rockchip/rk3xxx.dtsi
+@@ -64,6 +64,8 @@ L2: cache-controller@10138000 {
+ 		reg = <0x10138000 0x1000>;
+ 		cache-unified;
+ 		cache-level = <2>;
++		prefetch-data = <1>;
++		prefetch-instr = <1>;
+ 	};
+ 
+ 	scu@1013c000 {
+diff --git a/drivers/clk/rockchip/clk-rk3228.c b/drivers/clk/rockchip/clk-rk3228.c
+index aca1a483a..7250adc64 100644
+--- a/drivers/clk/rockchip/clk-rk3228.c
++++ b/drivers/clk/rockchip/clk-rk3228.c
+@@ -135,24 +135,22 @@ static const struct rockchip_cpuclk_reg_data rk3228_cpuclk_data = {
+ 
+ PNAME(mux_pll_p)		= { "clk_24m", "xin24m" };
+ 
+-PNAME(mux_ddrphy_p)		= { "dpll_ddr", "gpll_ddr", "apll_ddr" };
++PNAME(mux_ddrphy_p)		= { "dpll", "gpll", "apll" };
+ PNAME(mux_armclk_p)		= { "apll_core", "gpll_core", "dpll_core" };
+ PNAME(mux_usb480m_phy_p)	= { "usb480m_phy0", "usb480m_phy1" };
+ PNAME(mux_usb480m_p)		= { "usb480m_phy", "xin24m" };
+ PNAME(mux_hdmiphy_p)		= { "hdmiphy_phy", "xin24m" };
+-PNAME(mux_aclk_cpu_src_p)	= { "cpll_aclk_cpu", "gpll_aclk_cpu", "hdmiphy_aclk_cpu" };
+ 
+ PNAME(mux_pll_src_4plls_p)	= { "cpll", "gpll", "hdmiphy", "usb480m" };
+ PNAME(mux_pll_src_3plls_p)	= { "cpll", "gpll", "hdmiphy" };
+ PNAME(mux_pll_src_2plls_p)	= { "cpll", "gpll" };
+ PNAME(mux_sclk_hdmi_cec_p)	= { "cpll", "gpll", "xin24m" };
+-PNAME(mux_aclk_peri_src_p)	= { "cpll_peri", "gpll_peri", "hdmiphy_peri" };
+ PNAME(mux_mmc_src_p)		= { "cpll", "gpll", "xin24m", "usb480m" };
+ PNAME(mux_pll_src_cpll_gpll_usb480m_p)	= { "cpll", "gpll", "usb480m" };
+ 
+ PNAME(mux_sclk_rga_p)		= { "gpll", "cpll", "sclk_rga_src" };
+ 
+-PNAME(mux_sclk_vop_src_p)	= { "gpll_vop", "cpll_vop" };
++PNAME(mux_sclk_vop_src_p)	= { "gpll", "cpll" };
+ PNAME(mux_dclk_vop_p)		= { "hdmiphy", "sclk_vop_pre" };
+ 
+ PNAME(mux_i2s0_p)		= { "i2s0_src", "i2s0_frac", "ext_i2s", "xin12m" };
+@@ -221,27 +219,23 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 			RK2928_CLKSEL_CON(4), 8, 5, DFLAGS),
+ 
+ 	/* PD_DDR */
+-	GATE(0, "apll_ddr", "apll", CLK_IGNORE_UNUSED,
++	COMPOSITE(0, "clk_ddrphy_src", mux_ddrphy_p, CLK_IGNORE_UNUSED,
++			RK2928_CLKSEL_CON(26), 8, 2, MFLAGS, 0, 2, DFLAGS | CLK_DIVIDER_POWER_OF_TWO,
+ 			RK2928_CLKGATE_CON(0), 2, GFLAGS),
+-	GATE(0, "dpll_ddr", "dpll", CLK_IGNORE_UNUSED,
+-			RK2928_CLKGATE_CON(0), 2, GFLAGS),
+-	GATE(0, "gpll_ddr", "gpll", CLK_IGNORE_UNUSED,
+-			RK2928_CLKGATE_CON(0), 2, GFLAGS),
+-	COMPOSITE(0, "ddrphy4x", mux_ddrphy_p, CLK_IGNORE_UNUSED,
+-			RK2928_CLKSEL_CON(26), 8, 2, MFLAGS, 0, 3, DFLAGS | CLK_DIVIDER_POWER_OF_TWO,
++	GATE(0, "ddrphy4x", "clk_ddrphy_src", CLK_IGNORE_UNUSED,
+ 			RK2928_CLKGATE_CON(7), 1, GFLAGS),
+-	GATE(0, "ddrc", "ddrphy_pre", CLK_IGNORE_UNUSED,
++	FACTOR_GATE(0, "ddrc", "clk_ddrphy_src", CLK_IGNORE_UNUSED, 1, 4,
+ 			RK2928_CLKGATE_CON(8), 5, GFLAGS),
+-	FACTOR_GATE(0, "ddrphy", "ddrphy4x", CLK_IGNORE_UNUSED, 1, 4,
++	FACTOR_GATE(0, "ddrphy", "clk_ddrphy_src", CLK_IGNORE_UNUSED, 1, 4,
+ 			RK2928_CLKGATE_CON(7), 0, GFLAGS),
+ 
+ 	/* PD_CORE */
+-	GATE(0, "dpll_core", "dpll", CLK_IGNORE_UNUSED,
+-			RK2928_CLKGATE_CON(0), 6, GFLAGS),
+ 	GATE(0, "apll_core", "apll", CLK_IGNORE_UNUSED,
+ 			RK2928_CLKGATE_CON(0), 6, GFLAGS),
+ 	GATE(0, "gpll_core", "gpll", CLK_IGNORE_UNUSED,
+ 			RK2928_CLKGATE_CON(0), 6, GFLAGS),
++	GATE(0, "dpll_core", "dpll", CLK_IGNORE_UNUSED,
++			RK2928_CLKGATE_CON(0), 6, GFLAGS),
+ 	COMPOSITE_NOMUX(0, "pclk_dbg", "armclk", CLK_IGNORE_UNUSED,
+ 			RK2928_CLKSEL_CON(1), 0, 4, DFLAGS | CLK_DIVIDER_READ_ONLY,
+ 			RK2928_CLKGATE_CON(4), 1, GFLAGS),
+@@ -258,14 +252,9 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 			RK2928_MISC_CON, 15, 1, MFLAGS),
+ 
+ 	/* PD_BUS */
+-	GATE(0, "hdmiphy_aclk_cpu", "hdmiphy", CLK_IGNORE_UNUSED,
++	COMPOSITE(0, "aclk_cpu_src", mux_pll_src_3plls_p, 0,
++			RK2928_CLKSEL_CON(0), 13, 2, MFLAGS, 8, 5, DFLAGS,
+ 			RK2928_CLKGATE_CON(0), 1, GFLAGS),
+-	GATE(0, "gpll_aclk_cpu", "gpll", CLK_IGNORE_UNUSED,
+-			RK2928_CLKGATE_CON(0), 1, GFLAGS),
+-	GATE(0, "cpll_aclk_cpu", "cpll", CLK_IGNORE_UNUSED,
+-			RK2928_CLKGATE_CON(0), 1, GFLAGS),
+-	COMPOSITE_NOGATE(0, "aclk_cpu_src", mux_aclk_cpu_src_p, 0,
+-			RK2928_CLKSEL_CON(0), 13, 2, MFLAGS, 8, 5, DFLAGS),
+ 	GATE(ACLK_CPU, "aclk_cpu", "aclk_cpu_src", 0,
+ 			RK2928_CLKGATE_CON(6), 0, GFLAGS),
+ 	COMPOSITE_NOMUX(HCLK_CPU, "hclk_cpu", "aclk_cpu_src", 0,
+@@ -338,14 +327,9 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 			RK2928_CLKGATE_CON(3), 8, GFLAGS),
+ 
+ 	/* PD_PERI */
+-	GATE(0, "cpll_peri", "cpll", CLK_IGNORE_UNUSED,
+-			RK2928_CLKGATE_CON(2), 0, GFLAGS),
+-	GATE(0, "gpll_peri", "gpll", CLK_IGNORE_UNUSED,
++	COMPOSITE(0, "aclk_peri_src", mux_pll_src_3plls_p, 0,
++			RK2928_CLKSEL_CON(10), 10, 2, MFLAGS, 0, 5, DFLAGS,
+ 			RK2928_CLKGATE_CON(2), 0, GFLAGS),
+-	GATE(0, "hdmiphy_peri", "hdmiphy", CLK_IGNORE_UNUSED,
+-			RK2928_CLKGATE_CON(2), 0, GFLAGS),
+-	COMPOSITE_NOGATE(0, "aclk_peri_src", mux_aclk_peri_src_p, 0,
+-			RK2928_CLKSEL_CON(10), 10, 2, MFLAGS, 0, 5, DFLAGS),
+ 	COMPOSITE_NOMUX(PCLK_PERI, "pclk_peri", "aclk_peri_src", 0,
+ 			RK2928_CLKSEL_CON(10), 12, 3, DFLAGS,
+ 			RK2928_CLKGATE_CON(5), 2, GFLAGS),
+@@ -380,7 +364,7 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 			RK2928_CLKGATE_CON(10), 12, GFLAGS),
+ 
+ 	COMPOSITE(SCLK_WIFI, "sclk_wifi", mux_pll_src_cpll_gpll_usb480m_p, 0,
+-			RK2928_CLKSEL_CON(23), 5, 2, MFLAGS, 0, 6, DFLAGS,
++			RK2928_CLKSEL_CON(23), 5, 2, MFLAGS, 0, 5, DFLAGS,
+ 			RK2928_CLKGATE_CON(2), 15, GFLAGS),
+ 
+ 	COMPOSITE(SCLK_SDMMC, "sclk_sdmmc", mux_mmc_src_p, 0,
+@@ -403,12 +387,9 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 	 * Clock-Architecture Diagram 2
+ 	 */
+ 
+-	GATE(0, "gpll_vop", "gpll", 0,
+-			RK2928_CLKGATE_CON(3), 1, GFLAGS),
+-	GATE(0, "cpll_vop", "cpll", 0,
++	COMPOSITE_NODIV(0, "sclk_vop_src", mux_sclk_vop_src_p, 0,
++			RK2928_CLKSEL_CON(27), 0, 1, MFLAGS,
+ 			RK2928_CLKGATE_CON(3), 1, GFLAGS),
+-	MUX(0, "sclk_vop_src", mux_sclk_vop_src_p, 0,
+-			RK2928_CLKSEL_CON(27), 0, 1, MFLAGS),
+ 	DIV(DCLK_HDMI_PHY, "dclk_hdmiphy", "sclk_vop_src", 0,
+ 			RK2928_CLKSEL_CON(29), 0, 3, DFLAGS),
+ 	DIV(0, "sclk_vop_pre", "sclk_vop_src", 0,
+@@ -640,13 +621,13 @@ static struct rockchip_clk_branch rk3228_clk_branches[] __initdata = {
+ 
+ 	/* PD_MMC */
+ 	MMC(SCLK_SDMMC_DRV,    "sdmmc_drv",    "sclk_sdmmc", RK3228_SDMMC_CON0, 1),
+-	MMC(SCLK_SDMMC_SAMPLE, "sdmmc_sample", "sclk_sdmmc", RK3228_SDMMC_CON1, 0),
++	MMC(SCLK_SDMMC_SAMPLE, "sdmmc_sample", "sclk_sdmmc", RK3228_SDMMC_CON1, 1),
+ 
+ 	MMC(SCLK_SDIO_DRV,     "sdio_drv",     "sclk_sdio",  RK3228_SDIO_CON0,  1),
+-	MMC(SCLK_SDIO_SAMPLE,  "sdio_sample",  "sclk_sdio",  RK3228_SDIO_CON1,  0),
++	MMC(SCLK_SDIO_SAMPLE,  "sdio_sample",  "sclk_sdio",  RK3228_SDIO_CON1,  1),
+ 
+ 	MMC(SCLK_EMMC_DRV,     "emmc_drv",     "sclk_emmc",  RK3228_EMMC_CON0,  1),
+-	MMC(SCLK_EMMC_SAMPLE,  "emmc_sample",  "sclk_emmc",  RK3228_EMMC_CON1,  0),
++	MMC(SCLK_EMMC_SAMPLE,  "emmc_sample",  "sclk_emmc",  RK3228_EMMC_CON1,  1),
+ };
+ 
+ static const char *const rk3228_critical_clocks[] __initconst = {
+@@ -661,6 +642,7 @@ static const char *const rk3228_critical_clocks[] __initconst = {
+ 	"aclk_vop_noc",
+ 	"aclk_hdcp_noc",
+ 	"hclk_vio_ahb_arbi",
++	"hclk_vio_h2p",
+ 	"hclk_vio_noc",
+ 	"hclk_vop_noc",
+ 	"hclk_host0_arb",
+@@ -678,10 +660,13 @@ static const char *const rk3228_critical_clocks[] __initconst = {
+ 	"pclk_ddrphy",
+ 	"pclk_acodecphy",
+ 	"pclk_phy_noc",
++	"pclk_vio_h2p",
+ 	"aclk_vpu_noc",
+ 	"aclk_rkvdec_noc",
++	"aclk_rkvdec",
+ 	"hclk_vpu_noc",
+ 	"hclk_rkvdec_noc",
++	"hclk_rkvdec",
+ };
+ 
+ static void __init rk3228_clk_init(struct device_node *np)
+diff --git a/drivers/net/ethernet/arc/emac.h b/drivers/net/ethernet/arc/emac.h
+index d820ae03a..0ac87288b 100644
+--- a/drivers/net/ethernet/arc/emac.h
++++ b/drivers/net/ethernet/arc/emac.h
+@@ -91,6 +91,20 @@ struct arc_emac_bd {
+ #define RX_RING_SZ	(RX_BD_NUM * sizeof(struct arc_emac_bd))
+ #define TX_RING_SZ	(TX_BD_NUM * sizeof(struct arc_emac_bd))
+ 
++/* PHY fixups */
++#define RTL_8201F_PHY_ID  		0x001cc816
++
++#define RTL_8201F_PG_SELECT_REG 	0x1f
++#define RTL_8201F_PG4_EEE_REG		0x10
++#define RTL_8201F_PG4_EEE_RX_QUIET_EN		BIT(8)
++#define RTL_8201F_PG4_EEE_TX_QUIET_EN		BIT(9)
++#define RTL_8201F_PG4_EEE_NWAY_EN		BIT(12)
++#define RTL_8201F_PG4_EEE_10M_CAP		BIT(13)
++#define RTL_8201F_PG7_RMSR_REG		0x10
++#define RTL_8201F_PG7_RMSR_CLK_DIR_IN		BIT(12)
++#define RTL_8201F_PG0_PSMR_REG		0x18
++#define RTL_8201F_PG0_PSMR_PWRSVE_EN		BIT(15)
++
+ /**
+  * struct buffer_state - Stores Rx/Tx buffer state.
+  * @sk_buff:	Pointer to socket buffer.
+diff --git a/drivers/net/ethernet/arc/emac_main.c b/drivers/net/ethernet/arc/emac_main.c
+index 67b8113a2..40332a976 100644
+--- a/drivers/net/ethernet/arc/emac_main.c
++++ b/drivers/net/ethernet/arc/emac_main.c
+@@ -140,7 +140,7 @@ static void arc_emac_tx_clean(struct net_device *ndev)
+ 			stats->tx_bytes += skb->len;
+ 		}
+ 
+-		dma_unmap_single(&ndev->dev, dma_unmap_addr(tx_buff, addr),
++		dma_unmap_single(ndev->dev.parent, dma_unmap_addr(tx_buff, addr),
+ 				 dma_unmap_len(tx_buff, len), DMA_TO_DEVICE);
+ 
+ 		/* return the sk_buff to system */
+@@ -223,9 +223,9 @@ static int arc_emac_rx(struct net_device *ndev, int budget)
+ 			continue;
+ 		}
+ 
+-		addr = dma_map_single(&ndev->dev, (void *)skb->data,
++		addr = dma_map_single(ndev->dev.parent, (void *)skb->data,
+ 				      EMAC_BUFFER_SIZE, DMA_FROM_DEVICE);
+-		if (dma_mapping_error(&ndev->dev, addr)) {
++		if (dma_mapping_error(ndev->dev.parent, addr)) {
+ 			if (net_ratelimit())
+ 				netdev_err(ndev, "cannot map dma buffer\n");
+ 			dev_kfree_skb(skb);
+@@ -237,7 +237,7 @@ static int arc_emac_rx(struct net_device *ndev, int budget)
+ 		}
+ 
+ 		/* unmap previosly mapped skb */
+-		dma_unmap_single(&ndev->dev, dma_unmap_addr(rx_buff, addr),
++		dma_unmap_single(ndev->dev.parent, dma_unmap_addr(rx_buff, addr),
+ 				 dma_unmap_len(rx_buff, len), DMA_FROM_DEVICE);
+ 
+ 		pktlen = info & LEN_MASK;
+@@ -445,9 +445,9 @@ static int arc_emac_open(struct net_device *ndev)
+ 		if (unlikely(!rx_buff->skb))
+ 			return -ENOMEM;
+ 
+-		addr = dma_map_single(&ndev->dev, (void *)rx_buff->skb->data,
++		addr = dma_map_single(ndev->dev.parent, (void *)rx_buff->skb->data,
+ 				      EMAC_BUFFER_SIZE, DMA_FROM_DEVICE);
+-		if (dma_mapping_error(&ndev->dev, addr)) {
++		if (dma_mapping_error(ndev->dev.parent, addr)) {
+ 			netdev_err(ndev, "cannot dma map\n");
+ 			dev_kfree_skb(rx_buff->skb);
+ 			return -ENOMEM;
+@@ -555,7 +555,7 @@ static void arc_free_tx_queue(struct net_device *ndev)
+ 		struct buffer_state *tx_buff = &priv->tx_buff[i];
+ 
+ 		if (tx_buff->skb) {
+-			dma_unmap_single(&ndev->dev,
++			dma_unmap_single(ndev->dev.parent,
+ 					 dma_unmap_addr(tx_buff, addr),
+ 					 dma_unmap_len(tx_buff, len),
+ 					 DMA_TO_DEVICE);
+@@ -586,7 +586,7 @@ static void arc_free_rx_queue(struct net_device *ndev)
+ 		struct buffer_state *rx_buff = &priv->rx_buff[i];
+ 
+ 		if (rx_buff->skb) {
+-			dma_unmap_single(&ndev->dev,
++			dma_unmap_single(ndev->dev.parent,
+ 					 dma_unmap_addr(rx_buff, addr),
+ 					 dma_unmap_len(rx_buff, len),
+ 					 DMA_FROM_DEVICE);
+@@ -692,10 +692,10 @@ static netdev_tx_t arc_emac_tx(struct sk_buff *skb, struct net_device *ndev)
+ 		return NETDEV_TX_BUSY;
+ 	}
+ 
+-	addr = dma_map_single(&ndev->dev, (void *)skb->data, len,
++	addr = dma_map_single(ndev->dev.parent, (void *)skb->data, len,
+ 			      DMA_TO_DEVICE);
+ 
+-	if (unlikely(dma_mapping_error(&ndev->dev, addr))) {
++	if (unlikely(dma_mapping_error(ndev->dev.parent, addr))) {
+ 		stats->tx_dropped++;
+ 		stats->tx_errors++;
+ 		dev_kfree_skb_any(skb);
+@@ -850,6 +850,62 @@ static const struct net_device_ops arc_emac_netdev_ops = {
+ #endif
+ };
+ 
++/**
++ * arc_emac_rtl8201f_phy_fixup
++ * @phydev: Pointer to phy_device structure.
++ *
++ * This function registers a fixup in case RTL8201F's phy
++ * clockout is used as reference for the mac interface
++ * and disable EEE, since emac can't handle it
++ */
++static int arc_emac_rtl8201f_phy_fixup(struct phy_device *phydev)
++{
++	unsigned int reg, curr_pg;
++	int err = 0;
++
++	curr_pg = phy_read(phydev, RTL_8201F_PG_SELECT_REG);
++	err = phy_write(phydev, RTL_8201F_PG_SELECT_REG, 4);
++	if (err)
++		goto out_err;
++	mdelay(10);
++
++	/* disable EEE */
++	reg = phy_read(phydev, RTL_8201F_PG4_EEE_REG);
++	reg &=  ~RTL_8201F_PG4_EEE_RX_QUIET_EN &
++		~RTL_8201F_PG4_EEE_TX_QUIET_EN &
++		~RTL_8201F_PG4_EEE_NWAY_EN &
++		~RTL_8201F_PG4_EEE_10M_CAP;
++	err = phy_write(phydev, RTL_8201F_PG4_EEE_REG, reg);
++	if (err)
++		goto out_err;
++
++	if (phydev->interface == PHY_INTERFACE_MODE_RMII) {
++		err = phy_write(phydev, RTL_8201F_PG_SELECT_REG, 7);
++		if (err)
++			goto out_err;
++		mdelay(10);
++
++		reg = phy_read(phydev, RTL_8201F_PG7_RMSR_REG);
++		err = phy_write(phydev, RTL_8201F_PG_SELECT_REG, 0);
++		if (err)
++			goto out_err;
++		mdelay(10);
++
++		if (!(reg & RTL_8201F_PG7_RMSR_CLK_DIR_IN)) {
++			/* disable powersave if phy's clock output is used */
++			reg = phy_read(phydev, RTL_8201F_PG0_PSMR_REG);
++			reg &= ~RTL_8201F_PG0_PSMR_PWRSVE_EN & 0xffff;
++			err = phy_write(phydev, RTL_8201F_PG0_PSMR_REG, reg);
++		}
++	}
++
++out_err:
++	phy_write(phydev, RTL_8201F_PG_SELECT_REG, curr_pg);
++	mdelay(10);
++
++	return err;
++};
++
+ int arc_emac_probe(struct net_device *ndev, int interface)
+ {
+ 	struct device *dev = ndev->dev.parent;
+@@ -970,6 +1026,11 @@ int arc_emac_probe(struct net_device *ndev, int interface)
+ 		goto out_clken;
+ 	}
+ 
++	err = phy_register_fixup_for_uid(RTL_8201F_PHY_ID, 0xfffff0,
++					 arc_emac_rtl8201f_phy_fixup);
++	if (err)
++		dev_warn(dev, "Cannot register PHY board fixup.\n");
++
+ 	phydev = of_phy_connect(ndev, phy_node, arc_emac_adjust_link, 0,
+ 				interface);
+ 	if (!phydev) {
+diff --git a/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c b/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
+index 1889e78e1..6209f51b3 100644
+--- a/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-hdmi.c
+@@ -237,6 +237,9 @@ struct inno_hdmi_phy {
+ 	struct clk *refoclk;
+ 	struct clk *refpclk;
+ 
++	/* phy_flag flag */
++	bool phy_flag;
++
+ 	/* platform data */
+ 	const struct inno_hdmi_phy_drv_data *plat_data;
+ 	int chip_version;
+@@ -471,6 +474,7 @@ static const struct pre_pll_config pre_pll_cfg_table[] = {
+ static const struct post_pll_config post_pll_cfg_table[] = {
+ 	{33750000,  1, 40, 8, 1},
+ 	{33750000,  1, 80, 8, 2},
++	{33750000,  1, 10, 2, 4},
+ 	{74250000,  1, 40, 8, 1},
+ 	{74250000, 18, 80, 8, 2},
+ 	{148500000, 2, 40, 4, 3},
+@@ -621,8 +625,11 @@ static int inno_hdmi_phy_power_on(struct phy *phy)
+ 		return -EINVAL;
+ 
+ 	for (; cfg->tmdsclock != 0; cfg++)
+-		if (tmdsclock <= cfg->tmdsclock &&
+-		    cfg->version & inno->chip_version)
++		if (((!inno->phy_flag || tmdsclock > 33750000)
++		     && tmdsclock <= cfg->tmdsclock
++		     && cfg->version & inno->chip_version) ||
++		    (inno->phy_flag && tmdsclock <= 33750000
++		     && cfg->version & 4))
+ 			break;
+ 
+ 	for (; phy_cfg->tmdsclock != 0; phy_cfg++)
+@@ -1033,6 +1040,10 @@ static int inno_hdmi_phy_clk_register(struct inno_hdmi_phy *inno)
+ 
+ static int inno_hdmi_phy_rk3228_init(struct inno_hdmi_phy *inno)
+ {
++	struct nvmem_cell *cell;
++	unsigned char *efuse_buf;
++	size_t len;
++
+ 	/*
+ 	 * Use phy internal register control
+ 	 * rxsense/poweron/pllpd/pdataen signal.
+@@ -1047,7 +1058,28 @@ static int inno_hdmi_phy_rk3228_init(struct inno_hdmi_phy *inno)
+ 	inno_update_bits(inno, 0xaa, RK3228_POST_PLL_CTRL_MANUAL,
+ 			 RK3228_POST_PLL_CTRL_MANUAL);
+ 
++
+ 	inno->chip_version = 1;
++	inno->phy_flag = false;
++
++	cell = nvmem_cell_get(inno->dev, "hdmi-phy-flag");
++	if (IS_ERR(cell)) {
++		if (PTR_ERR(cell) == -EPROBE_DEFER)
++			return -EPROBE_DEFER;
++
++		return 0;
++	}
++
++	efuse_buf = nvmem_cell_read(cell, &len);
++	nvmem_cell_put(cell);
++
++	if (IS_ERR(efuse_buf))
++		return 0;
++	if (len == 1)
++		inno->phy_flag = (efuse_buf[0] & BIT(1)) ? true : false;
++	kfree(efuse_buf);
++
++	dev_info(inno->dev, "phy_flag is: %d\n", inno->phy_flag);
+ 
+ 	return 0;
+ }
+@@ -1147,6 +1179,8 @@ static int inno_hdmi_phy_rk3328_init(struct inno_hdmi_phy *inno)
+ 
+ 	/* try to read the chip-version */
+ 	inno->chip_version = 1;
++	inno->phy_flag = false;
++
+ 	cell = nvmem_cell_get(inno->dev, "cpu-version");
+ 	if (IS_ERR(cell)) {
+ 		if (PTR_ERR(cell) == -EPROBE_DEFER)
+diff --git a/drivers/soc/rockchip/pm_domains.c b/drivers/soc/rockchip/pm_domains.c
+index fddb4022c..9583c76b4 100644
+--- a/drivers/soc/rockchip/pm_domains.c
++++ b/drivers/soc/rockchip/pm_domains.c
+@@ -73,6 +73,7 @@ struct rockchip_pm_domain {
+ 	struct regmap **qos_regmap;
+ 	u32 *qos_save_regs[MAX_QOS_REGS_NUM];
+ 	int num_clks;
++	bool is_ignore_pwr;
+ 	struct clk_bulk_data *clks;
+ };
+ 
+@@ -361,6 +362,9 @@ static int rockchip_pd_power_on(struct generic_pm_domain *domain)
+ {
+ 	struct rockchip_pm_domain *pd = to_rockchip_pd(domain);
+ 
++	if (pd->is_ignore_pwr)
++		return 0;
++
+ 	return rockchip_pd_power(pd, true);
+ }
+ 
+@@ -368,6 +372,9 @@ static int rockchip_pd_power_off(struct generic_pm_domain *domain)
+ {
+ 	struct rockchip_pm_domain *pd = to_rockchip_pd(domain);
+ 
++	if (pd->is_ignore_pwr)
++		return 0;
++
+ 	return rockchip_pd_power(pd, false);
+ }
+ 
+@@ -447,6 +454,9 @@ static int rockchip_pm_add_one_domain(struct rockchip_pmu *pmu,
+ 	pd->info = pd_info;
+ 	pd->pmu = pmu;
+ 
++	if (!pd_info->pwr_mask)
++		pd->is_ignore_pwr = true;
++
+ 	pd->num_clks = of_clk_get_parent_count(node);
+ 	if (pd->num_clks > 0) {
+ 		pd->clks = devm_kcalloc(pmu->dev, pd->num_clks,
+@@ -600,6 +610,7 @@ static int rockchip_pm_add_subdomain(struct rockchip_pmu *pmu,
+ {
+ 	struct device_node *np;
+ 	struct generic_pm_domain *child_domain, *parent_domain;
++	struct rockchip_pm_domain *child_pd, *parent_pd;
+ 	int error;
+ 
+ 	for_each_child_of_node(parent, np) {
+@@ -640,6 +651,18 @@ static int rockchip_pm_add_subdomain(struct rockchip_pmu *pmu,
+ 				parent_domain->name, child_domain->name);
+ 		}
+ 
++		/*
++		 * If child_pd doesn't do idle request or power on/off,
++		 * parent_pd may fail to do power on/off, so if parent_pd
++		 * need to power on/off, child_pd can't ignore to do idle
++		 * request and power on/off.
++		 */
++		child_pd = to_rockchip_pd(child_domain);
++		parent_pd = to_rockchip_pd(parent_domain);
++		if (!parent_pd->is_ignore_pwr)
++			child_pd->is_ignore_pwr = false;
++
++
+ 		rockchip_pm_add_subdomain(pmu, np);
+ 	}
+ 
+diff --git a/drivers/usb/dwc2/core.c b/drivers/usb/dwc2/core.c
+index 272ae5722..cec178404 100644
+--- a/drivers/usb/dwc2/core.c
++++ b/drivers/usb/dwc2/core.c
+@@ -607,7 +607,7 @@ void dwc2_force_dr_mode(struct dwc2_hsotg *hsotg)
+ 		 * platforms on their host-only dwc2.
+ 		 */
+ 		if (!dwc2_hw_is_otg(hsotg))
+-			msleep(50);
++			msleep(200);
+ 
+ 		break;
+ 	case USB_DR_MODE_PERIPHERAL:
+-- 
+2.25.1
+

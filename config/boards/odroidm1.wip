@@ -1,31 +1,81 @@
 # Rockchip RK3568 quad core 4GB-8GB GBE PCIe USB3 SATA NVMe
 BOARD_NAME="ODROID M1"
-BOARDFAMILY="rk3568-odroid"                     # Separate kernel, has its own family. Uses rockchip64_common for most stuff.
-BOOT_SOC="rk3568"                               # This determined BOOT_SCENARIO et al.
-KERNEL_TARGET="edge"                            # Only mainline based kernel
-BOOT_FDT_FILE="rockchip/rk3568-odroid-m1.dtb"   # HK's DTB
-SRC_EXTLINUX="no"                               # NO EXTLINUX! Family defines a custom bootscript too.
-ASOUND_STATE="asound.state.station-m2"          # @TODO: probably should fix this later.
-IMAGE_PARTITION_TABLE="gpt"                     # HK's bootloader in SPI requires GPT partition table.
-DDR_BLOB="rk35/rk3568_ddr_1560MHz_v1.10.bin"    # Real blob, is actually used. in rkbin repository. HK uses 1.09, 1.10 seems to work just as well.
-BL31_BLOB="rk35/rk356x_usbplug_v1.10.bin--FAKE" # Not really used for anything, as the name proves.
+BOARDFAMILY="rk3568-odroid" # Separate kernel, has its own family. Uses rockchip64_common for most stuff.
+BOARD_MAINTAINER="rpardini"
+BOOT_SOC="rk3568"
+KERNEL_TARGET="edge"
+BOOT_FDT_FILE="rockchip/rk3568-odroid-m1.dtb"
+SRC_EXTLINUX="no"
+ASOUND_STATE="asound.state.station-m2"
+IMAGE_PARTITION_TABLE="gpt"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 
-# Include fw_setenv, configured to point to Petitboot's u-env mtd partition, so users can re-enable Petitboot
-# with `fw_setenv skip_spiboot false` in Armbian.
-PACKAGE_LIST_BOARD="libubootenv-tool" # libubootenv-tool provides fw_printenv and fw_setenv, for talking to U-Boot environment / Petitboot
+BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git"
+BOOTBRANCH_BOARD="commit:a6e84f9f5b90ff0fa3ac4e6b7e0d6e2c3ac9bb1b" # specific commit, from "branch:rk3568-2023.10" which is v2023.10-rc2 + kwiboo's patches (including GMAC)
+BOOTPATCHDIR="v2023.10"
+BOOTCONFIG="odroid-m1-rk3568_defconfig"
+BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
+
+# Newer blobs...
+DDR_BLOB="rk35/rk3568_ddr_1560MHz_v1.18.bin"
+BL31_BLOB="rk35/rk3568_bl31_v1.43.elf"
+
+# HK's SPI partition on MTD:
+# mtd0: start 0         size 917.504   end 917.504    : SPL          == start 0x0      size 0xe0000  : SPL
+# mtd1: start 917.504   size 131.072   end 1.048.576  : U-Boot Env   == start 0xe0000  size 0x20000  : U-Boot Env
+# mtd2: start 1.048.576 size 2.097.152 end 3.145.728  : U-Boot       == start 0x100000 size 0x200000 : U-Boot
+function post_family_config__uboot_config() {
+	display_alert "$BOARD" "u-boot ${BOOTBRANCH_BOARD} overrides" "info"
+	BOOTDELAY=2 # Wait for UART interrupt to enter UMS/RockUSB mode etc
+	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/$BL31_BLOB ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot.itb idbloader.img idbloader-spi.img"
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
+
+	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
+	function write_uboot_platform() {
+		dd if=${1}/u-boot-rockchip.bin of=${2} bs=32k seek=1 conv=fsync
+	}
+
+	# We don't use u-boot-rockchip-spi.bin here; instead, write SPL and u-boot individually
+	# If we're deinfesting from Petitboot, clear the environment too; PREBOOT will save a new one for mainline
+	function write_uboot_platform_mtd() {
+		declare -a extra_opts_flashcp=("--verbose")
+		# -p is: "read the flash and only write blocks that are actually different"
+		# if on bullseye et al, flashcp/mtd-utils is old, and doesn't have --partition/-p
+		if flashcp -h | grep -q -e '--partition'; then
+			echo "Confirmed flashcp supports --partition -- read and write only changed blocks." >&2
+			extra_opts_flashcp+=("--partition")
+		else
+			echo "flashcp does not support --partition, will write full SPI flash blocks." >&2
+		fi
+		flashcp "${extra_opts_flashcp[@]}" "${1}/idbloader-spi.img" /dev/mtd0 # write SPL
+		flashcp "${extra_opts_flashcp[@]}" "${1}/u-boot.itb" /dev/mtd2        # write u-boot
+		if fw_printenv | grep -q -i petitboot; then                           # Petitboot leaves a horrible env behind, clear it off if so
+			echo "Found traces of Petitboot in SPI u-boot environment, clearing SPI environment..." >&2
+			flash_erase /dev/mtd1 0 0 # clear u-boot env
+		fi
+	}
+}
+
+function add_host_dependencies__new_uboot_wants_python3_odroidm1() {
+	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
+}
+
+# Include fw_setenv, configured to point to Petitboot's u-env mtd partition
+PACKAGE_LIST_BOARD="libubootenv-tool" # libubootenv-tool provides fw_printenv and fw_setenv, for talking to U-Boot environment
 
 function post_family_tweaks__config_odroidm1_fwenv() {
 	display_alert "Configuring fw_printenv and fw_setenv" "for Odroid M1" "info"
 	# Addresses below come from
-	# - https://github.com/hardkernel/u-boot/blob/356906e6445378a45ac14ec184fc6e666b22338a/configs/odroid_rk3568_defconfig#L212-L213
-	# - https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/rockchip/rk3568-odroid-m1.dts#L637-L662
+	# - (we use mainline, not vendor, so this is only for reference)
+	#   https://github.com/hardkernel/u-boot/blob/356906e6445378a45ac14ec184fc6e666b22338a/configs/odroid_rk3568_defconfig#L212-L213
+	# - (armbian's uboot patches try to keep this mtd partition layout valid)
+	#   https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/rockchip/rk3568-odroid-m1.dts#L637-L662
 	# The kernel DT has a convenient partition table, so mtd1 is ready to use, just gotta set the size.
 
 	cat <<- 'FW_ENV_CONFIG' > "${SDCARD}"/etc/fw_env.config
 		# MTD on the SPI for the Odroid-M1; this requires the MTD partition table in the board kernel DTS
 		# MTD device name Device offset Env. size Flash sector size Number of sectors
-		/dev/mtd1                       0x0000                      0x20000 
+		/dev/mtd1                       0x0000                      0x20000
 	FW_ENV_CONFIG
 }

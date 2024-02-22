@@ -1,0 +1,253 @@
+From b82562f880a2a43b3bc187f6e6ad80fc8e2dd0f0 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 30 Mar 2023 15:45:50 +0200
+Subject: [PATCH 149/464] 8723cs: Fix the RSSI monitor implementation
+
+We need to send both signal LOW and signal HIGH events.
+
+While we're at it, implement hystheresis, too.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../rtl8723cs/os_dep/linux/ioctl_cfg80211.c   |  17 ++-
+ .../rtl8723cs/os_dep/linux/ioctl_cfg80211.h   |   9 +-
+ .../rtl8723cs/os_dep/linux/rtw_cfgvendor.c    | 139 ++++--------------
+ 3 files changed, 44 insertions(+), 121 deletions(-)
+
+diff --git a/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c b/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c
+index 4067369e65f1..7eea58711252 100644
+--- a/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c
++++ b/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c
+@@ -3405,7 +3405,7 @@ static int cfg80211_rtw_scan(struct wiphy *wiphy
+ 	    && rtw_mi_busy_traffic_check(padapter)) {
+ 		RTW_WARN(FUNC_ADPT_FMT ": scan abort!! BusyTraffic\n",
+ 			 FUNC_ADPT_ARG(padapter));
+- 		need_indicate_scan_done = _TRUE;
++		need_indicate_scan_done = _TRUE;
+ 		goto check_need_indicate_scan_done;
+ 	}
+ #endif /* RTW_BUSY_DENY_SCAN */
+@@ -3518,14 +3518,15 @@ static void cfg80211_rtw_abort_scan(struct wiphy *wiphy,
+ 
+ static int cfg80211_rtw_set_cqm_rssi_config(struct wiphy *wiphy,
+                                             struct net_device *dev,
+-	                               	    s32 rssi_thold,
+-				            u32 rssi_hyst)
++					    s32 rssi_thold,
++					    u32 rssi_hyst)
+ {
+ 	_adapter *padapter = GET_PRIMARY_ADAPTER(wiphy_to_adapter(wiphy));
+         struct rtw_wdev_priv *pwdev_priv = adapter_wdev_data(padapter);
+ 
+-	pwdev_priv->rssi_monitor_max = 0;
+-	pwdev_priv->rssi_monitor_min = rssi_thold;
++	pwdev_priv->rssi_monitor_th = rssi_thold;
++	pwdev_priv->rssi_monitor_hyst = rssi_hyst;
++	pwdev_priv->rssi_monitor_state = 1;
+         pwdev_priv->rssi_monitor_enable = 1;
+         RTW_INFO("%s, rssi_thold=%d, rssi_hyst=%d\n", __func__, rssi_thold, rssi_hyst);
+         return 0;
+@@ -10599,12 +10600,12 @@ int rtw_wdev_alloc(_adapter *padapter, struct wiphy *wiphy)
+ #endif
+ 
+ #ifdef CONFIG_RTW_CFGVENDOR_RSSIMONITOR
++	pwdev_priv->rssi_monitor_th = 0;
++	pwdev_priv->rssi_monitor_hyst = 0;
++	pwdev_priv->rssi_monitor_state = 1;
+         pwdev_priv->rssi_monitor_enable = 0;
+-        pwdev_priv->rssi_monitor_max = 0;
+-        pwdev_priv->rssi_monitor_min = 0;
+ #endif
+ 
+-
+ exit:
+ 	return ret;
+ }
+diff --git a/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.h b/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.h
+index 22018caa33fe..a2b4be249814 100644
+--- a/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.h
++++ b/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.h
+@@ -191,9 +191,12 @@ struct rtw_wdev_priv {
+ #endif
+ 
+ #ifdef CONFIG_RTW_CFGVENDOR_RSSIMONITOR
+-        s8 rssi_monitor_max;
+-        s8 rssi_monitor_min;
+-        u8 rssi_monitor_enable;
++        s32 rssi_monitor_th;
++        u32 rssi_monitor_hyst;
++        s32 rssi_monitor_state; //  0 = midpoint
++				// -1 = last crossed low threshold
++				//  1 = last crossed high threshold
++        bool rssi_monitor_enable;
+ #endif
+ 
+ };
+diff --git a/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c b/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c
+index 5095272414c5..ea7c81e291f1 100644
+--- a/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c
++++ b/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c
+@@ -1305,111 +1305,43 @@ static int rtw_cfgvendor_lstats_clear_info(struct wiphy *wiphy,
+ }
+ #endif /* CONFIG_RTW_CFGVENDOR_LLSTATS */
+ #ifdef CONFIG_RTW_CFGVENDOR_RSSIMONITOR
+-static int rtw_cfgvendor_set_rssi_monitor(struct wiphy *wiphy,
+-	struct wireless_dev *wdev, const void  *data, int len)
+-{
+-        _adapter *padapter = GET_PRIMARY_ADAPTER(wiphy_to_adapter(wiphy));
+-        struct rtw_wdev_priv *pwdev_priv = adapter_wdev_data(padapter);
+-
+-        struct recv_priv *precvpriv = &padapter->recvpriv;
+-	int err = 0, rem, type;
+-        const struct nlattr *iter;
+-
+-        RTW_DBG(FUNC_NDEV_FMT" %s\n", FUNC_NDEV_ARG(wdev_to_ndev(wdev)), (char*)data);
+-
+-	nla_for_each_attr(iter, data, len, rem) {
+-		type = nla_type(iter);
+-
+-		switch (type) {
+-        		case RSSI_MONITOR_ATTRIBUTE_MAX_RSSI:
+-                                pwdev_priv->rssi_monitor_max = (s8)nla_get_u32(iter);;
+-	        		break;
+-		        case RSSI_MONITOR_ATTRIBUTE_MIN_RSSI:
+-                                pwdev_priv->rssi_monitor_min = (s8)nla_get_u32(iter);
+-			        break;
+-        		case RSSI_MONITOR_ATTRIBUTE_START:
+-                                pwdev_priv->rssi_monitor_enable = (u8)nla_get_u32(iter);
+-	        		break;
+-		}
+-	}
+-
+-	return err;
+-}
+-
+ void rtw_cfgvendor_rssi_monitor_evt(_adapter *padapter) {
+-	struct wireless_dev *wdev =  padapter->rtw_wdev;
+-	struct wiphy *wiphy= wdev->wiphy;
+-        struct recv_priv *precvpriv = &padapter->recvpriv;
+-	struct	mlme_priv	*pmlmepriv = &(padapter->mlmepriv);
+-	struct	wlan_network	*pcur_network = &pmlmepriv->cur_network;
++	gfp_t kflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
++	struct wireless_dev *wdev = padapter->rtw_wdev;
++	//struct wiphy *wiphy = wdev->wiphy;
++	struct mlme_priv *pmlmepriv = &padapter->mlmepriv;
++	//struct wlan_network *pcur_network = &pmlmepriv->cur_network;
+         struct rtw_wdev_priv *pwdev_priv = adapter_wdev_data(padapter);
+-	struct sk_buff *skb;
+-	u32 tot_len = NLMSG_DEFAULT_SIZE;
+-	gfp_t kflags;
+-#ifndef CONFIG_RTW_CFGVENDOR_CQM_THRESHOLD_EVT_LOW
+-        rssi_monitor_evt data ;
+-#endif
+-        s8 rssi = precvpriv->rssi;
+-
+-        if (pwdev_priv->rssi_monitor_enable == 0 || check_fwstate(pmlmepriv, WIFI_ASOC_STATE) != _TRUE)
+-                return;
++        struct recv_priv *precvpriv = &padapter->recvpriv;
++        s32 rssi = precvpriv->rssi;
+ 
+-	#ifdef CONFIG_RTW_CFGVENDOR_CQM_THRESHOLD_EVT_LOW
+-        /* Updated this function to return NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW, which is the
+-           type of event expected by wpa_supplicant when the rssi value drops below threshold.
+-           This type of event triggers a scan, and is generally followed by a roam to an AP
+-           with stronger signal. */
+-        if (rssi < pwdev_priv->rssi_monitor_max && rssi > pwdev_priv->rssi_monitor_min)
++	/*
++	 * Nothing to monitor.
++	 */
++        if (!pwdev_priv->rssi_monitor_enable || check_fwstate(pmlmepriv, WIFI_ASOC_STATE) != _TRUE)
+                 return;
+ 
+-	kflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
+-
+-	cfg80211_cqm_rssi_notify(wdev->netdev, NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW, rssi, kflags);
+-
+-	/* After a cqm rssi threshold event, disable event triggering to:
+-	     1. prevent constant event generation.
+-	     2. allow the wpa_supplicant to drive this process based on its bgscan interval settings. */
+-	pwdev_priv->rssi_monitor_enable = 0;
+-
+-	return;
+-
+-        #else
+-	/* The original code calls rtw_cfg80211_vendor_event_alloc() to allocate an skb to
+-           send a "vendor event" to user space.  The third value passed to
+-           rtw_cfg80211_vendor_event_alloc() should be "event_idx: index of the vendor event
+-           in the wiphy's vendor_events", but rather than passing the index of the vendor event
+-           in the vendor_events array, the code incorrectly passes the enum value 13 of the
+-           GOOGLE_RSSI_MONITOR_EVENT vendor event.  This value is larger than the size of the
+-           vendor_events array and results in a return value of NULL rather than the address of
+-           an allocated skb buffer.  Since the skb is not allocated,  no vendor event is actually
+-           reported.  Modifying this code to send the proper index of the vendor_event does not
+-           improve things, since this vendor defined event type is not handled by wpa_supplicant
+-           anyway. */ 
+-
+-        if (rssi < pwdev_priv->rssi_monitor_max || rssi > pwdev_priv->rssi_monitor_min)
+-               return;
+-
+-	kflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
++	//pr_info("got event rssi=%d\n", rssi);
+ 
+-	/* Alloc the SKB for vendor_event */
+-	skb = rtw_cfg80211_vendor_event_alloc(wiphy, wdev, tot_len, GOOGLE_RSSI_MONITOR_EVENT, kflags);
+-	if (!skb) {
+-		goto exit;
++	/*
++	 * If last event was NL80211_CQM_RSSI_THRESHOLD_EVENT_HIGH and RSSI is
++	 * lower than the threshold, raise the signal LOW event.
++	 */
++	if (pwdev_priv->rssi_monitor_state >= 0 && rssi <= pwdev_priv->rssi_monitor_th - pwdev_priv->rssi_monitor_hyst) {
++		cfg80211_cqm_rssi_notify(wdev->netdev, NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW, rssi, kflags);
++		pwdev_priv->rssi_monitor_state = -1;
++		//pr_info("rssi <= %d\n", pwdev_priv->rssi_monitor_th - pwdev_priv->rssi_monitor_hyst);
+ 	}
+ 
+-        _rtw_memset(&data, 0, sizeof(data));
+-
+-        data.version = RSSI_MONITOR_EVT_VERSION;
+-        data.cur_rssi = rssi;
+-        _rtw_memcpy(data.BSSID, pcur_network->network.MacAddress, sizeof(mac_addr));
+-
+-        nla_append(skb, sizeof(data), &data);
+-
+-	rtw_cfg80211_vendor_event(skb, kflags);
+-exit:
+-	return;
+-
+-        #endif /* original code */
++	/*
++	 * If last event was NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW and RSSI is
++	 * lower than the threshold, raise the signal HIGH event.
++	 */
++	if (pwdev_priv->rssi_monitor_state < 0 && rssi > pwdev_priv->rssi_monitor_th + pwdev_priv->rssi_monitor_hyst) {
++		cfg80211_cqm_rssi_notify(wdev->netdev, NL80211_CQM_RSSI_THRESHOLD_EVENT_HIGH, rssi, kflags);
++		pwdev_priv->rssi_monitor_state = 1;
++		//pr_info("rssi > %d\n", pwdev_priv->rssi_monitor_th + pwdev_priv->rssi_monitor_hyst);
++	}
+ }
+ #endif /* CONFIG_RTW_CFGVENDOR_RSSIMONITR */
+ 
+@@ -1946,19 +1878,6 @@ static const struct wiphy_vendor_command rtw_vendor_cmds[] = {
+ 		.doit = rtw_cfgvendor_lstats_clear_info
+ 	},
+ #endif /* CONFIG_RTW_CFGVENDOR_LLSTATS */
+-#ifdef CONFIG_RTW_CFGVENDOR_RSSIMONITOR
+-        {
+-                {
+-                        .vendor_id = OUI_GOOGLE,
+-                        .subcmd = WIFI_SUBCMD_SET_RSSI_MONITOR
+-                },
+-                .flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
+-		.policy = VENDOR_CMD_RAW_DATA,
+-#endif
+-                .doit = rtw_cfgvendor_set_rssi_monitor
+-        },
+-#endif /* CONFIG_RTW_CFGVENDOR_RSSIMONITOR */
+ #ifdef CONFIG_RTW_CFGVENDOR_WIFI_LOGGER
+ 	{
+ 		{
+-- 
+2.34.1
+

@@ -5,12 +5,16 @@
   <strong><font size="7">HTC DISPLAY</font></strong><br>
   <font size="4"> for AML-S905X-CC (Le Potato)</font><br>
 <br><br>
- 
+
 ## Table of contents
 
+- [Table of contents](#table-of-contents)
 - [What does this project do?](#what-does-this-project-do)
 - [Download prebuilt images](#download-prebuilt-images)
+  - [Supported boards](#supported-boards)
+  - [Releases](#releases)
 - [Building the image](#building-the-image)
+- [Installation and usage](#installation-and-usage)
 - [Customised Components](#customised-components)
 - [Project structure](#project-structure)
 - [Support](#support)

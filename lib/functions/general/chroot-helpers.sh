@@ -24,7 +24,7 @@ function mount_chroot() {
 	mount -t tmpfs -o "size=99%" tmpfs "${target}/run/user/0"
 	mount -t proc chproc "${target}"/proc
 	mount -t sysfs chsys "${target}"/sys
-	mount -t devtmpfs chdev "${target}"/dev || mount --bind /dev "${target}"/dev
+	mount --bind /dev "${target}"/dev
 	mount -t devpts chpts "${target}"/dev/pts || mount --bind /dev/pts "${target}"/dev/pts
 }
 

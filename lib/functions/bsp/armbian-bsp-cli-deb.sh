@@ -7,6 +7,53 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
+function compile_armbian-bsp-cli-transitional() {
+	: "${artifact_version:?artifact_version is not set}"
+	: "${artifact_name:?artifact_name is not set}"
+	: "${BOARD:?BOARD is not set}"
+	: "${BRANCH:?BRANCH is not set}"
+
+	display_alert "Creating bsp-cli transitional package on board '${BOARD}' branch '${BRANCH}'" "armbian-bsp-cli-${BOARD} :: ${artifact_version}" "info"
+
+	# "destination" is used a lot in hooks already. keep this name, even if only for compatibility.
+	declare cleanup_id="" destination=""
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "deb-bsp-cli" cleanup_id destination # namerefs
+
+	mkdir -p "${destination}"/DEBIAN
+	cd "${destination}" || exit_with_error "Failed to cd to ${destination}"
+
+	# Add transitional package
+	cat <<- EOF > "${destination}"/DEBIAN/control
+		Package: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}
+		Version: ${artifact_version}
+		Architecture: $ARCH
+		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
+		Section: oldlibs
+		Priority: optional
+		Description: Armbian CLI BSP for board '${BOARD}' - transitional package
+	EOF
+
+	# Build / close the package. This will run shellcheck / show the generated files if debugging
+	dpkg_deb_build "${destination}" "armbian-bsp-cli-transitional"
+
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
+
+	display_alert "Done building BSP CLI transitional package" "${destination}" "debug"
+}
+
+function reversion_armbian-bsp-cli-transitional_deb_contents() {
+	if [[ "${1}" != "armbian-bsp-cli-transitional" ]]; then
+		return 0 # Not our deb, nothing to do.
+	fi
+	display_alert "Reversion" "reversion_armbian-bsp-cli-transitional_deb_contents: '$*'" "debug"
+
+	# Depends on the new package
+	cat <<- EOF >> "${control_file_new}"
+		Depends: ${artifact_name} (= ${REVISION})
+	EOF
+
+}
+
 function compile_armbian-bsp-cli() {
 	: "${artifact_version:?artifact_version is not set}"
 	: "${artifact_name:?artifact_name is not set}"
@@ -28,36 +75,16 @@ function compile_armbian-bsp-cli() {
 	declare -a extra_description=()
 	[[ "${EXTRA_BSP_NAME}" != "" ]] && extra_description+=("(variant '${EXTRA_BSP_NAME}')")
 
-	# Replaces: base-files is needed to replace /etc/update-motd.d/ files on Xenial
-	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
-	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
-	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
-	declare depends_base_files=", base-files (>= ${REVISION})"
-	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
-		depends_base_files=""
-	fi
 	cat <<- EOF > "${destination}"/DEBIAN/control
 		Package: ${artifact_name}
 		Version: ${artifact_version}
 		Architecture: $ARCH
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Section: kernel
 		Priority: optional
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
 		Suggests: armbian-config
-		Replaces: zram-config, base-files
 		Recommends: bsdutils, parted, util-linux, toilet
 		Description: Armbian CLI BSP for board '${BOARD}' branch '${BRANCH}' ${extra_description[@]}
-	EOF
-
-	# generate minimal DEBIAN/changelog
-	cat <<- EOF > "${destination}"/DEBIAN/changelog
-		${artifact_name} (${artifact_version}) armbian-repo-name; urgency=low
-
-		  * A fake changelog entry.
-
-		 -- $MAINTAINER <$MAINTAINERMAIL>  $(date -R)
 	EOF
 
 	# armhwinfo, firstrun, armbianmonitor, etc. config file; also sourced in postinst
@@ -69,7 +96,6 @@ function compile_armbian-bsp-cli() {
 		BOARDFAMILY=${BOARDFAMILY}
 		BUILD_REPOSITORY_URL=${BUILD_REPOSITORY_URL}
 		BUILD_REPOSITORY_COMMIT=${BUILD_REPOSITORY_COMMIT}
-		VERSION=${REVISION}
 		LINUXFAMILY=$LINUXFAMILY
 		ARCH=$ARCHITECTURE
 		IMAGE_TYPE=$IMAGE_TYPE
@@ -77,8 +103,11 @@ function compile_armbian-bsp-cli() {
 		INITRD_ARCH=$INITRD_ARCH
 		KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 		FORCE_BOOTSCRIPT_UPDATE=$FORCE_BOOTSCRIPT_UPDATE
-		VENDOR=$VENDOR
-		REVISION=$REVISION
+		VENDOR="$VENDOR"
+		VENDORDOCS="$VENDORDOCS"
+		VENDORURL="$VENDORURL"
+		VENDORSUPPORT="$VENDORSUPPORT"
+		VENDORBUGS="$VENDORBUGS"
 	EOF
 
 	# copy general overlay from packages/bsp-cli
@@ -122,27 +151,13 @@ function compile_armbian-bsp-cli() {
 		echo "/dev/mmcblk0	${UBOOT_FW_ENV[0]}	${UBOOT_FW_ENV[1]}" >> "${destination}"/etc/fw_env.config
 	fi
 
-	# set up pre install script; use inline functions
-	# This is never run in build context; instead, it's source code is dumped inside a file that is packaged.
-	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
-	### preinst
-	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst
-	unset board_side_bsp_cli_preinst
-
-	### postrm
-	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm
-	unset board_side_bsp_cli_postrm
-
-	### postinst -- a bit more complex
-	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_cli_postinst_base "${postinst_functions[@]}" board_side_bsp_cli_postinst_finish
-	unset board_side_bsp_cli_postinst_base board_side_bsp_cli_postinst_update_uboot_bootscript board_side_bsp_cli_postinst_finish
-
 	# won't recreate files if they were removed by user
 	# TODO: Add proper handling for updated conffiles
 	# We are runing this script each time apt runs. If this package is removed, file is removed and error is triggered.
 	# Keeping armbian-apt-updates as a configuration, solve the problem
 	cat <<- EOF > "${destination}"/DEBIAN/conffiles
 		/usr/lib/armbian/armbian-apt-updates
+		/etc/X11/xorg.conf.d/01-armbian-defaults.conf
 	EOF
 
 	# trigger uInitrd creation after installation, to apply
@@ -170,7 +185,25 @@ function compile_armbian-bsp-cli() {
 	call_extension_method "post_family_tweaks_bsp" <<- 'POST_FAMILY_TWEAKS_BSP'
 		*family_tweaks_bsp overrrides what is in the config, so give it a chance to override the family tweaks*
 		This should be implemented by the config to tweak the BSP, after the board or family has had the chance to.
+		You can write to `$destination` here and it will be packaged.
+		You can also append to the `postinst_functions` array, and the _content_ of those functions will be added to the postinst script.
 	POST_FAMILY_TWEAKS_BSP
+
+	# Render the postinst/postrm/etc
+	# set up pre install script; use inline functions
+	# This is never run in build context; instead, it's source code is dumped inside a file that is packaged.
+	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
+	### preinst
+	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst
+	unset board_side_bsp_cli_preinst
+
+	### postrm
+	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm
+	unset board_side_bsp_cli_postrm
+
+	### postinst -- a bit more complex, extendable via postinst_functions which can be customized in hook above
+	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_cli_postinst_base "${postinst_functions[@]}" board_side_bsp_cli_postinst_finish
+	unset board_side_bsp_cli_postinst_base board_side_bsp_cli_postinst_update_uboot_bootscript board_side_bsp_cli_postinst_finish
 
 	# add some summary to the image # @TODO: another?
 	fingerprint_image "${destination}/etc/armbian.txt"
@@ -184,11 +217,51 @@ function compile_armbian-bsp-cli() {
 	fi
 
 	# Build / close the package. This will run shellcheck / show the generated files if debugging
-	fakeroot_dpkg_deb_build "${destination}" "${DEB_STORAGE}/"
+	dpkg_deb_build "${destination}" "armbian-bsp-cli"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 	display_alert "Done building BSP CLI package" "${destination}" "debug"
+}
+
+# Reversion function is called with the following parameters:
+# ${1} == deb_id
+function reversion_armbian-bsp-cli_deb_contents() {
+	if [[ "${1}" != "armbian-bsp-cli" ]]; then
+		return 0 # Not our deb, nothing to do.
+	fi
+	display_alert "Reversion" "reversion_armbian-bsp-cli_deb_contents: '$*'" "debug"
+
+	# Replaces: base-files is needed to replace the distro's base-files
+	# Depends: linux-base is needed for "linux-version" command in initrd cleanup script
+	# Depends: fping is needed for armbianmonitor to upload armbian-hardware-monitor.log
+	# Depends: base-files (>= ${REVISION}) is to force usage of our base-files package (not the original Distro's).
+	declare depends_base_files=", base-files (>= ${REVISION})"
+	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" == "yes" ]]; then
+		depends_base_files=""
+	fi
+	cat <<- EOF >> "${control_file_new}"
+		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
+		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+	EOF
+
+	artifact_deb_reversion_unpack_data_deb
+	: "${data_dir:?data_dir is not set}"
+
+	cat <<- EOF >> "${data_dir}"/etc/armbian-release
+		VERSION=${REVISION}
+		REVISION=$REVISION
+	EOF
+
+	# Show results if debugging
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		run_tool_batcat --file-name "armbian-release.sh" "${data_dir}"/etc/armbian-release
+	fi
+
+	artifact_deb_reversion_repack_data_deb
+
+	return 0
 }
 
 function get_bootscript_info() {
@@ -325,6 +398,7 @@ function board_side_bsp_cli_postrm() { # not run here
 	if [[ remove == "$1" ]] || [[ abort-install == "$1" ]]; then
 		systemctl disable armbian-hardware-monitor.service armbian-hardware-optimize.service > /dev/null 2>&1
 		systemctl disable armbian-zram-config.service armbian-ramlog.service > /dev/null 2>&1
+		systemctl disable armbian-live-patch.service > /dev/null 2>&1
 	fi
 }
 
@@ -371,4 +445,21 @@ function board_side_bsp_cli_postinst_finish() {
 
 	# Reload services
 	systemctl --no-reload enable armbian-hardware-monitor.service armbian-hardware-optimize.service armbian-zram-config.service armbian-led-state.service > /dev/null 2>&1
+}
+
+# Helper to add files, from stdin, to the bsp-cli package.
+# First and only argument is the destination path, relative to the root of the package -- do NOT include $destination -- it is already included.
+# Containing directory, if any, is created automatically.
+# The full path (including $destination) is set in $file_added_to_bsp_destination, declare in outer scope to get it.
+function add_file_from_stdin_to_bsp_destination() {
+	declare dest_file="${1}"
+	declare dest_dir
+	dest_dir="$(dirname "${dest_file}")"
+	declare dest_dir_fullpath="${destination}/${dest_dir}"
+	declare dest_file_fullpath="${destination}/${dest_file}"
+	display_alert "add_file_from_stdin_to_bsp_destination" "dest_file='${dest_file}' dest_dir='${dest_dir}'" "debug"
+	mkdir -p "${dest_dir_fullpath}"
+	cat - > "${dest_file_fullpath}"
+	file_added_to_bsp_destination="${dest_file_fullpath}" # outer scope
+	return 0
 }

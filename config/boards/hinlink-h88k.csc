@@ -1,15 +1,16 @@
 # Rockchip RK3588 SoC octa core 4-16GB eMMC USB3 NVMe SATA 4G WiFi/BT HDMI DP HDMI-In
 BOARD_NAME="Hinlink H88K"
 BOARDFAMILY="rockchip-rk3588"
+BOARD_MAINTAINER=""
 BOOTCONFIG="rock-5b-rk3588_defconfig"
 KERNEL_TARGET="legacy"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588-hinlink-h88k.dtb"
 BOOT_SCENARIO="spl-blobs"
-WIREGUARD="no"
 IMAGE_PARTITION_TABLE="gpt"
-SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
+SKIP_BOOTSPLASH="yes"                # Skip boot splash patch, conflicts with CONFIG_VT=yes
+declare -g UEFI_EDK2_BOARD_ID="h88k" # This _only_ used for uefi-edk2-rk3588 extension
 
 function post_family_tweaks__hinlink_h88k_naming_audios() {
 	display_alert "$BOARD" "Renaming hinlink-h88k audios" "info"

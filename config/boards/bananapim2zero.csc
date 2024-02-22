@@ -1,6 +1,7 @@
 # Allwinner H2+ quad core 512MB SoC Wi-Fi/BT
 BOARD_NAME="Banana Pi M2 Zero"
 BOARDFAMILY="sun8i"
+BOARD_MAINTAINER=""
 BOOTCONFIG="bananapi_m2_zero_defconfig"
 MODULES_LEGACY="g_serial"
 MODULES_CURRENT="g_serial"

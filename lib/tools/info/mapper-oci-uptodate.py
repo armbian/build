@@ -10,10 +10,10 @@ import hashlib
 import json
 import logging
 import os
+import sys
 
 import oras.client
 import oras.logger
-import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -141,6 +141,8 @@ check_oci = sys.argv[2] == "yes" if len(sys.argv) > 2 else False
 # massage the targets into their full info invocations (sans-command)
 uptodate_artifacts = []
 
+import concurrent.futures
+
 oci_target_map = {}
 for target in targets:
 	if not target["config_ok"]:
@@ -155,13 +157,18 @@ for target in targets:
 
 	oci_target_map[oci_target] = target
 
-# run through the targets and see if they are up-to-date.
-oci_infos = []
-for oci_target in oci_target_map:
-	orig_target = oci_target_map[oci_target]
+
+def process_target(oci_target, orig_target):
 	orig_target["oci"] = {}
 	orig_target["oci"] = check_oci_up_to_date_cache(oci_target, check_oci)
-	oci_infos.append(orig_target)
+	return orig_target
+
+
+oci_infos = []
+with concurrent.futures.ThreadPoolExecutor() as executor:
+	futures = [executor.submit(process_target, oci_target, oci_target_map[oci_target]) for oci_target in oci_target_map]
+	for future in concurrent.futures.as_completed(futures):
+		oci_infos.append(future.result())
 
 # Go, Copilot!
 log.info(

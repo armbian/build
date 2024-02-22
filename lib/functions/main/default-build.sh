@@ -23,9 +23,9 @@ function full_build_packages_rootfs_and_image() {
 	fi
 
 	# Detour, stop if CREATE_PATCHES=yes.
-	if [[ "${CREATE_PATCHES}" == "yes" || "${CREATE_PATCHES_ATF}" == "yes" ]]; then
+	if [[ "${CREATE_PATCHES}" == "yes" || "${CREATE_PATCHES_ATF}" == "yes" || "${CREATE_PATCHES_CRUST}" == "yes" ]]; then
 		display_alert "CREATE_PATCHES=yes during image build is not supported anymore." "First, run './compile.sh BOARD=${BOARD} BRANCH=${BRANCH} kernel-patch'; then move the patch to the correct place and commit your changes; then build the image as normal. This workflow ensures consistent hashing results." "wrn"
-		exit_with_error "CREATE_PATCHES=yes during image build is not supported anymore. Please use the new 'kernel-patch' / 'uboot-patch' / 'atf-patch' CLI commands."
+		exit_with_error "CREATE_PATCHES=yes during image build is not supported anymore. Please use the new 'kernel-patch' / 'uboot-patch' / 'atf-patch' / 'crust-patch' CLI commands."
 	fi
 
 	main_default_build_packages # has its own logging sections # requires aggregation

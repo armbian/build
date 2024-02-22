@@ -1,0 +1,11 @@
+# Marvell Armada 388 2GB ECC RAM SoC 4xSATA 2xUSB3.0 GBE SPI
+BOARD_NAME="Helios4"
+BOARDFAMILY="mvebu"
+BOARD_MAINTAINER=""
+BOOTCONFIG="helios4_defconfig"
+BOOTCONFIG_NEXT="helios4_defconfig"
+MODULES_LEGACY="marvell_cesa lm75"
+MODULES_CURRENT="marvell_cesa lm75"
+HAS_VIDEO_OUTPUT="no"
+FORCE_BOOTSCRIPT_UPDATE="yes"
+KERNEL_TARGET="current,edge"

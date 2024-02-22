@@ -16,6 +16,7 @@ function artifact_kernel_config_dump() {
 	artifact_input_variables[KERNELBRANCH]="${KERNELBRANCH}"
 	artifact_input_variables[KERNELPATCHDIR]="${KERNELPATCHDIR}"
 	artifact_input_variables[ARCH]="${ARCH}"
+	artifact_input_variables[EXTRAWIFI]="${EXTRAWIFI:-"yes"}"
 }
 
 # This is run in a logging section.
@@ -25,7 +26,6 @@ function artifact_kernel_config_dump() {
 function artifact_kernel_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	# - Given KERNELSOURCE and KERNELBRANCH, get:
 	#    - SHA1 of the commit (this is generic... and used for other pkgs)
@@ -62,7 +62,6 @@ function artifact_kernel_prepare_version() {
 	debug_var BOARDFAMILY        # Heh.
 	debug_var KERNEL_MAJOR_MINOR # Double heh. transitional stuff, from when armbian-next began. 🤣
 	debug_var BRANCH
-	debug_var REVISION
 	debug_var KERNELSOURCE
 	debug_var KERNELBRANCH
 	debug_var LINUXFAMILY
@@ -73,30 +72,30 @@ function artifact_kernel_prepare_version() {
 	declare short_hash_size=4
 
 	declare -A GIT_INFO_KERNEL=([GIT_SOURCE]="${KERNELSOURCE}" [GIT_REF]="${KERNELBRANCH}")
-
-	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
-		display_alert "Skipping Makefile version for kernel" "due to KERNEL_SKIP_MAKEFILE_VERSION=yes" "info"
-		run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info
-	else
-		run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info "include_makefile_body"
-	fi
-	debug_dict GIT_INFO_KERNEL
-
-	# Sanity check, the SHA1 gotta be sane.
-	[[ "${GIT_INFO_KERNEL[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_KERNEL[SHA1]}'"
+	obtain_kernel_git_info_and_makefile # this populates GIT_INFO_KERNEL and sets KERNEL_GIT_SHA1 readonly global
 
 	declare short_sha1="${GIT_INFO_KERNEL[SHA1]:0:${short_hash_size}}"
 
-	# get the drivers hash...
-	declare kernel_drivers_patch_hash
-	do_with_hooks kernel_drivers_create_patches_hash_only
+	# get the drivers hash... or "0000000000000000" if EXTRAWIFI=no
+	if [[ "${EXTRAWIFI:-"yes"}" == "no" ]]; then
+		display_alert "Skipping drivers patch hash for kernel" "due to EXTRAWIFI=no" "info"
+		declare kernel_drivers_patch_hash="0000000000000000"
+	else
+		declare kernel_drivers_patch_hash
+		do_with_hooks kernel_drivers_create_patches_hash_only
+	fi
 	declare kernel_drivers_hash_short="${kernel_drivers_patch_hash:0:${short_hash_size}}"
 
 	# get the kernel patches hash...
 	# @TODO: why not just delegate this to the python patching, with some "dry-run" / hash-only option?
 	declare patches_hash="undetermined"
 	declare hash_files="undetermined"
-	calculate_hash_for_all_files_in_dirs "${SRC}/patch/kernel/${KERNELPATCHDIR}" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}"
+	display_alert "User patches directory for kernel" "${USERPATCHES_PATH}/kernel/${KERNELPATCHDIR}" "info"
+	declare -a kernel_patch_dirs=()
+	for patch_dir in ${KERNELPATCHDIR}; do
+		kernel_patch_dirs+=("${SRC}/patch/kernel/${patch_dir}" "${USERPATCHES_PATH}/kernel/${patch_dir}")
+	done
+	calculate_hash_for_all_files_in_dirs "${kernel_patch_dirs[@]}"
 	patches_hash="${hash_files}"
 	declare kernel_patches_hash_short="${patches_hash:0:${short_hash_size}}"
 
@@ -140,7 +139,8 @@ function artifact_kernel_prepare_version() {
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
 	calculate_hash_for_variables "${vars_to_hash[@]}"
-	declare var_config_hash_short="${hash_variables:0:${short_hash_size}}"
+	declare vars_config_hash="${hash_variables}"
+	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	# Hash the extension hooks
 	declare -a extension_hooks_to_hash=("pre_package_kernel_image")
@@ -161,9 +161,9 @@ function artifact_kernel_prepare_version() {
 
 	# outer scope
 	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
-		artifact_version="${artifact_prefix_version}${common_version_suffix}"
+		artifact_version="1-${common_version_suffix}" # "1-" prefix, since we need to start with a digit
 	else
-		artifact_version="${artifact_prefix_version}${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-${common_version_suffix}"
+		artifact_version="${GIT_INFO_KERNEL[MAKEFILE_VERSION]}-${common_version_suffix}"
 	fi
 
 	declare -a reasons=(
@@ -184,33 +184,53 @@ function artifact_kernel_prepare_version() {
 
 	# linux-image is always produced...
 	artifact_map_packages=(["linux-image"]="linux-image-${BRANCH}-${LINUXFAMILY}")
-	artifact_map_debs=(["linux-image"]="linux-image-${BRANCH}-${LINUXFAMILY}_${artifact_version}_${ARCH}.deb")
 
 	# some/most kernels have also working headers...
 	if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
 		artifact_map_packages+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}")
-		artifact_map_debs+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}_${artifact_version}_${ARCH}.deb")
 	fi
 
 	# x86, specially, does not have working dtbs...
 	if [[ "${KERNEL_BUILD_DTBS:-"yes"}" == "yes" ]]; then
 		artifact_map_packages+=(["linux-dtb"]="linux-dtb-${BRANCH}-${LINUXFAMILY}")
-		artifact_map_debs+=(["linux-dtb"]="linux-dtb-${BRANCH}-${LINUXFAMILY}_${artifact_version}_${ARCH}.deb")
 	fi
 
 	artifact_name="kernel-${LINUXFAMILY}-${BRANCH}"
 	artifact_type="deb-tar" # this triggers processing of .deb files in the maps to produce a tarball
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/kernel-${LINUXFAMILY}-${BRANCH}_${artifact_version}.tar"
+	artifact_deb_repo="global"
+	artifact_deb_arch="${ARCH}"
 
 	return 0
+}
+
+# Input: associative array GIT_INFO_KERNEL, with GIT_SOURCE and GIT_REF members
+function obtain_kernel_git_info_and_makefile() {
+	declare -i kernel_git_cache_ttl_seconds=3600 # by default
+	if [[ "${KERNEL_GIT_CACHE_TTL}" != "" ]]; then
+		kernel_git_cache_ttl_seconds="${KERNEL_GIT_CACHE_TTL}"
+		display_alert "Setting kernel git cache TTL to" "${kernel_git_cache_ttl_seconds}" "info"
+	fi
+
+	if [[ "${KERNEL_SKIP_MAKEFILE_VERSION:-"no"}" == "yes" ]]; then
+		display_alert "Skipping Makefile version for kernel" "due to KERNEL_SKIP_MAKEFILE_VERSION=yes" "info"
+		memoize_cache_ttl=$kernel_git_cache_ttl_seconds run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info
+	else
+		memoize_cache_ttl=$kernel_git_cache_ttl_seconds run_memoized GIT_INFO_KERNEL "git2info" memoized_git_ref_to_info "include_makefile_body"
+	fi
+	debug_dict GIT_INFO_KERNEL
+
+	# Sanity check, the SHA1 gotta be sane.
+	[[ "${GIT_INFO_KERNEL[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_KERNEL[SHA1]}'"
+
+	# Set a readonly global with the kernel SHA1. Will be used later for the drivers cache_key.
+	declare -g -r KERNEL_GIT_SHA1="${GIT_INFO_KERNEL[SHA1]}"
 }
 
 function artifact_kernel_build_from_sources() {
 	compile_kernel
 
 	if [[ "${ARTIFACT_WILL_NOT_BUILD}" != "yes" ]]; then # true if kernel-patch, kernel-config, etc.
-		display_alert "Kernel build finished" "${artifact_version_reason}" "info"
+		display_alert "Kernel build finished" "${artifact_version}" "info"
 	fi
 }
 
@@ -224,7 +244,7 @@ function artifact_kernel_cli_adapter_pre_run() {
 function artifact_kernel_cli_adapter_config_prep() {
 	# Sanity check / cattle guard
 	# If KERNEL_CONFIGURE=yes, or CREATE_PATCHES=yes, user must have used the correct CLI commands, and only add those params.
-	if [[ "${KERNEL_CONFIGURE}" == "yes" && "${ARMBIAN_COMMAND}" != "kernel-config" ]]; then
+	if [[ "${KERNEL_CONFIGURE}" == "yes" && "${ARMBIAN_COMMAND}" != *kernel-config ]]; then
 		exit_with_error "KERNEL_CONFIGURE=yes is not supported anymore. Please use the new 'kernel-config' CLI command. Current command: '${ARMBIAN_COMMAND}'"
 	fi
 

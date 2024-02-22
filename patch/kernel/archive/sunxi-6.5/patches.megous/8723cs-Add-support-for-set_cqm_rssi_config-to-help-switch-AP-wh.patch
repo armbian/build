@@ -1,0 +1,142 @@
+From 8f6398041132a694b20a37a4c3566c33b3ba119b Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 30 Mar 2023 13:41:47 +0200
+Subject: [PATCH 148/464] 8723cs: Add support for set_cqm_rssi_config to help
+ switch AP when signal is low
+
+Based on: https://raw.githubusercontent.com/balena-os/balena-jetson/4c0f84d2456232d8c8e6cdc12c18ea4b85985053/layers/meta-balena-jetson/recipes-kernel/linux/linux-tegra/0017-rtl8822ce-os_dep-Fix-rssi-monitor-event-behavior.patch
+
+And ported to Linux 6.3.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/staging/rtl8723cs/Makefile            |  1 +
+ .../rtl8723cs/os_dep/linux/ioctl_cfg80211.c   | 18 +++++++++
+ .../rtl8723cs/os_dep/linux/rtw_cfgvendor.c    | 39 ++++++++++++++++++-
+ 3 files changed, 57 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/staging/rtl8723cs/Makefile b/drivers/staging/rtl8723cs/Makefile
+index a709256357f9..7b630a48af64 100644
+--- a/drivers/staging/rtl8723cs/Makefile
++++ b/drivers/staging/rtl8723cs/Makefile
+@@ -22,6 +22,7 @@ EXTRA_CFLAGS += -Wno-date-time	# Fix compile error && warning on gcc 4.9 and lat
+ endif
+ 
+ EXTRA_CFLAGS += -I$(srctree)/$(src)/include
++EXTRA_CFLAGS += -DCONFIG_RTW_CFGVENDOR_RSSIMONITOR -DCONFIG_RTW_CFGVENDOR_CQM_THRESHOLD_EVT_LOW
+ 
+ EXTRA_LDFLAGS += --strip-debug
+ 
+diff --git a/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c b/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c
+index a92ec4d37036..4067369e65f1 100644
+--- a/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c
++++ b/drivers/staging/rtl8723cs/os_dep/linux/ioctl_cfg80211.c
+@@ -3516,6 +3516,21 @@ static void cfg80211_rtw_abort_scan(struct wiphy *wiphy,
+ }
+ #endif
+ 
++static int cfg80211_rtw_set_cqm_rssi_config(struct wiphy *wiphy,
++                                            struct net_device *dev,
++	                               	    s32 rssi_thold,
++				            u32 rssi_hyst)
++{
++	_adapter *padapter = GET_PRIMARY_ADAPTER(wiphy_to_adapter(wiphy));
++        struct rtw_wdev_priv *pwdev_priv = adapter_wdev_data(padapter);
++
++	pwdev_priv->rssi_monitor_max = 0;
++	pwdev_priv->rssi_monitor_min = rssi_thold;
++        pwdev_priv->rssi_monitor_enable = 1;
++        RTW_INFO("%s, rssi_thold=%d, rssi_hyst=%d\n", __func__, rssi_thold, rssi_hyst);
++        return 0;
++}
++
+ static int cfg80211_rtw_set_wiphy_params(struct wiphy *wiphy, u32 changed)
+ {
+ #if 0
+@@ -10448,6 +10463,9 @@ static struct cfg80211_ops rtw_cfg80211_ops = {
+     || defined(CONFIG_KERNEL_PATCH_EXTERNAL_AUTH)
+ 	.external_auth = cfg80211_rtw_external_auth,
+ #endif
++#ifdef CONFIG_RTW_CFGVENDOR_RSSIMONITOR
++        .set_cqm_rssi_config = cfg80211_rtw_set_cqm_rssi_config,
++#endif
+ };
+ 
+ struct wiphy *rtw_wiphy_alloc(_adapter *padapter, struct device *dev)
+diff --git a/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c b/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c
+index 6daa9e2d6dd1..5095272414c5 100644
+--- a/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c
++++ b/drivers/staging/rtl8723cs/os_dep/linux/rtw_cfgvendor.c
+@@ -36,6 +36,7 @@
+ */
+ 
+ #include <net/rtnetlink.h>
++#include "rtw_cfgvendor.h"
+ 
+ #ifndef MIN
+ #define MIN(x,y) (((x) < (y)) ? (x) : (y))
+@@ -1345,17 +1346,51 @@ void rtw_cfgvendor_rssi_monitor_evt(_adapter *padapter) {
+ 	struct sk_buff *skb;
+ 	u32 tot_len = NLMSG_DEFAULT_SIZE;
+ 	gfp_t kflags;
++#ifndef CONFIG_RTW_CFGVENDOR_CQM_THRESHOLD_EVT_LOW
+         rssi_monitor_evt data ;
++#endif
+         s8 rssi = precvpriv->rssi;
+ 
+         if (pwdev_priv->rssi_monitor_enable == 0 || check_fwstate(pmlmepriv, WIFI_ASOC_STATE) != _TRUE)
+                 return;
+ 
+-        if (rssi < pwdev_priv->rssi_monitor_max || rssi > pwdev_priv->rssi_monitor_min)
++	#ifdef CONFIG_RTW_CFGVENDOR_CQM_THRESHOLD_EVT_LOW
++        /* Updated this function to return NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW, which is the
++           type of event expected by wpa_supplicant when the rssi value drops below threshold.
++           This type of event triggers a scan, and is generally followed by a roam to an AP
++           with stronger signal. */
++        if (rssi < pwdev_priv->rssi_monitor_max && rssi > pwdev_priv->rssi_monitor_min)
+                 return;
+ 
+ 	kflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
+ 
++	cfg80211_cqm_rssi_notify(wdev->netdev, NL80211_CQM_RSSI_THRESHOLD_EVENT_LOW, rssi, kflags);
++
++	/* After a cqm rssi threshold event, disable event triggering to:
++	     1. prevent constant event generation.
++	     2. allow the wpa_supplicant to drive this process based on its bgscan interval settings. */
++	pwdev_priv->rssi_monitor_enable = 0;
++
++	return;
++
++        #else
++	/* The original code calls rtw_cfg80211_vendor_event_alloc() to allocate an skb to
++           send a "vendor event" to user space.  The third value passed to
++           rtw_cfg80211_vendor_event_alloc() should be "event_idx: index of the vendor event
++           in the wiphy's vendor_events", but rather than passing the index of the vendor event
++           in the vendor_events array, the code incorrectly passes the enum value 13 of the
++           GOOGLE_RSSI_MONITOR_EVENT vendor event.  This value is larger than the size of the
++           vendor_events array and results in a return value of NULL rather than the address of
++           an allocated skb buffer.  Since the skb is not allocated,  no vendor event is actually
++           reported.  Modifying this code to send the proper index of the vendor_event does not
++           improve things, since this vendor defined event type is not handled by wpa_supplicant
++           anyway. */ 
++
++        if (rssi < pwdev_priv->rssi_monitor_max || rssi > pwdev_priv->rssi_monitor_min)
++               return;
++
++	kflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
++
+ 	/* Alloc the SKB for vendor_event */
+ 	skb = rtw_cfg80211_vendor_event_alloc(wiphy, wdev, tot_len, GOOGLE_RSSI_MONITOR_EVENT, kflags);
+ 	if (!skb) {
+@@ -1373,6 +1408,8 @@ void rtw_cfgvendor_rssi_monitor_evt(_adapter *padapter) {
+ 	rtw_cfg80211_vendor_event(skb, kflags);
+ exit:
+ 	return;
++
++        #endif /* original code */
+ }
+ #endif /* CONFIG_RTW_CFGVENDOR_RSSIMONITR */
+ 
+-- 
+2.34.1
+

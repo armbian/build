@@ -1,6 +1,7 @@
 # RISC-V StarFive BeagleV
 BOARD_NAME="BeagleV"
 BOARDFAMILY="starfive"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="edge"
 BOOT_FDT_FILE="starfive/jh7100-beaglev-starlight-a1.dtb"
 SRC_EXTLINUX="yes"

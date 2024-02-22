@@ -71,8 +71,10 @@ function wait_for_connected_device_rkdeveloptool() {
 	rkdeveloptool_is_device_connected="no" rkdeveloptool_device_id="" rkdeveloptool_device_mode=""
 	list_devices_rkdeveloptool
 
+	declare -i counter=0
 	while [[ "${rkdeveloptool_is_device_connected}" != "yes" ]]; do
-		display_alert "Waiting for rkdeveloptool device to be connected" "${EXTENSION}" "debug"
+		counter+=1
+		display_alert "Waiting for rkdeveloptool device to be connected (loop ${counter})" "${EXTENSION}" "debug"
 		sleep 1
 		list_devices_rkdeveloptool
 	done
@@ -99,21 +101,17 @@ function flash_image_rkdeveloptool() {
 				display_alert "rkdevflash: Failed to load SPL RockUSB loader. Timeout? Please reset the Rockchip device (again) into recovery..." "${EXTENSION}" "wrn"
 				sleep 5
 			else
-				display_alert "RockUSB Loader deployed, waiting for Loader mode to kick in" "${EXTENSION}" "cachehit"
-				sleep 3
+				display_alert "RockUSB Loader deployed" "${EXTENSION}" "cachehit"
+				break # break out of the loop. once loaded, the spl_loader does change stuff to Loader mode; only u-boot rockusb/"download mode" does that.
 			fi
 		fi
 	done
 
 	wait_for_connected_device_rkdeveloptool
-	if [[ "${rkdeveloptool_device_mode}" == "Loader" ]]; then
-		display_alert "Flashing image" "${EXTENSION} :: ${1}" "info"
-		"${rkdeveloptool_bin_path}" wl 0x0 "${1}"
-		display_alert "Restarting device after flash" "${EXTENSION}" "ext"
-		"${rkdeveloptool_bin_path}" rd
-	else
-		display_alert "Device is not in Loader mode, cannot flash" "${EXTENSION} :: ${1}" "wrn"
-	fi
+	display_alert "Flashing image" "${EXTENSION} :: ${1}" "info"
+	"${rkdeveloptool_bin_path}" wl 0x0 "${1}"
+	display_alert "Restarting device after flash" "${EXTENSION}" "ext"
+	"${rkdeveloptool_bin_path}" rd
 }
 
 function list_devices_rkdeveloptool() {
@@ -126,6 +124,7 @@ function list_devices_rkdeveloptool() {
 		display_alert "Use an USB-C cable to connect the Rockchip device to this host." "${EXTENSION}" ""
 		display_alert "Power on the Rockchip device and put it in recovery mode." "${EXTENSION}" ""
 		display_alert "For example, click & hold Recovery button and then click Reset button once." "${EXTENSION}" ""
+		display_alert "This is try number ${counter:-"0"}" "${EXTENSION}" ""
 	else
 		# Some device is connected, run again and parse the id and mode.
 		declare rkdeveloptool_ld_output

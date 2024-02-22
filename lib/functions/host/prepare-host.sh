@@ -256,7 +256,7 @@ function adaptative_prepare_host_dependencies() {
 		ca-certificates ccache cpio
 		debootstrap device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
-		fakeroot flex
+		flex
 		gawk gnupg gpg
 		imagemagick # required for boot_logo, plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
@@ -294,7 +294,7 @@ function adaptative_prepare_host_dependencies() {
 
 	# Python2 -- required for some older u-boot builds
 	# Debian 'sid'/'bookworm' and Ubuntu 'lunar' does not carry python2 anymore; in this case some u-boot's might fail to build.
-	if [[ "sid bookworm lunar" == *"${host_release}"* ]]; then
+	if [[ "sid bookworm trixie lunar mantic" == *"${host_release}"* ]]; then
 		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
 	else
 		host_dependencies+=("python2" "python2-dev")
@@ -321,8 +321,8 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("gcc-riscv64-linux-gnu")        # crossbuild-essential-riscv64 is not even available "yet"
-		host_dependencies+=("debian-ports-archive-keyring") # Debian Ports keyring needed, as riscv64 is not released yet
+		host_dependencies+=("gcc-riscv64-linux-gnu") # crossbuild-essential-riscv64 is not even available "yet"
+		host_dependencies+=("debian-archive-keyring")
 	fi
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then

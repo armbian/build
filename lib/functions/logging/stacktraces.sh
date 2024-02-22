@@ -11,8 +11,11 @@
 # @TODO this in practice is only used... ?
 function get_extension_hook_stracktrace() {
 	[[ "${CONFIG_DEFS_ONLY}" == "yes" ]] && return 0 # don't waste time here
-	local sources_str="$1"                           # Give this ${BASH_SOURCE[*]} - expanded
-	local lines_str="$2"                             # And this # Give this ${BASH_LINENO[*]} - expanded
+	if [[ "${separator:-"none"}" == "none" ]]; then  # can take a separator from caller
+		local separator="-> "
+	fi
+	local sources_str="$1" # Give this ${BASH_SOURCE[*]} - expanded
+	local lines_str="$2"   # And this # Give this ${BASH_LINENO[*]} - expanded
 	local sources lines index final_stack=""
 	IFS=' ' read -r -a sources <<< "${sources_str}"
 	IFS=' ' read -r -a lines <<< "${lines_str}"
@@ -31,7 +34,7 @@ function get_extension_hook_stracktrace() {
 		source="${source#"lib/"}"
 		# add to the list
 		# shellcheck disable=SC2015 # i know. thanks. I won't write an if here
-		arrow="$([[ "$final_stack" != "" ]] && echo "-> " || true)"
+		arrow="$([[ "$final_stack" != "" ]] && echo "${separator}" || true)"
 		final_stack="${source}:${line} ${arrow} ${final_stack} "
 	done
 	# output the result, no newline
@@ -59,4 +62,16 @@ function show_caller_full() {
 			echo -e "${stack_color:-"${red_color}"}   $padded_function_name --> $short_file_name:$line_no"
 		done
 	} || true # always success
+}
+
+# get a stacktrace element by index; fills in outer scope variable "stacktrace_element"
+function get_stacktrace_element_by_index() {
+	declare -i index="${1}"
+	declare stacktrace
+	stacktrace="$(separator="|" get_extension_hook_stracktrace "${BASH_SOURCE[*]}" "${BASH_LINENO[*]}")"
+	declare -a stack_array=()
+	IFS='|' read -r -a stack_array <<< "${stacktrace}" # split the stacktrace into an array
+	declare caller="${stack_array[${index}]}"          # get the second-to-last element of the array, which is the caller of this (hopefully)
+	display_alert "get_stacktrace_element_by_index:" "${index} :: '${caller}'" "debug"
+	stacktrace_element="${caller#"${caller%%[![:space:]]*}"}" # trim spaces, publish to outer scope "stacktrace_element"
 }

@@ -1,0 +1,193 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Igor Pecovnik <igorpecovnik@users.noreply.github.com>
+Date: Mon, 29 Aug 2022 08:43:24 +0200
+Subject: [ARCHEOLOGY] Add patches needed for Pi-KVM on Rpi4 (#4127)
+
+> X-Git-Archeology: > recovered message: > * Add patches needed for Pi-KVM on Rpi4
+> X-Git-Archeology: > recovered message: > * Remove patch that does not belong here
+> X-Git-Archeology: > recovered message: > * Update config
+> X-Git-Archeology: > recovered message: > * Update edge config
+> X-Git-Archeology: - Revision 2fb3aaaf86a7463ef1d26f4d623e1d3289ea4f25: https://github.com/armbian/build/commit/2fb3aaaf86a7463ef1d26f4d623e1d3289ea4f25
+> X-Git-Archeology:   Date: Mon, 29 Aug 2022 08:43:24 +0200
+> X-Git-Archeology:   From: Igor Pecovnik <igorpecovnik@users.noreply.github.com>
+> X-Git-Archeology:   Subject: Add patches needed for Pi-KVM on Rpi4 (#4127)
+> X-Git-Archeology:
+> X-Git-Archeology: - Revision acf5810cbe38c7578907ecd06e61abb0a446df1e: https://github.com/armbian/build/commit/acf5810cbe38c7578907ecd06e61abb0a446df1e
+> X-Git-Archeology:   Date: Sat, 11 Mar 2023 19:19:13 +0100
+> X-Git-Archeology:   From: Igor Pecovnik <igor@armbian.com>
+> X-Git-Archeology:   Subject: Move Rpi kernels to 6.2, move current to legacy (#4898)
+> X-Git-Archeology:
+> X-Git-Archeology: - Revision 5f2a1af2193187f0b994d6f163b94f370a01134f: https://github.com/armbian/build/commit/5f2a1af2193187f0b994d6f163b94f370a01134f
+> X-Git-Archeology:   Date: Fri, 28 Apr 2023 21:32:52 +0200
+> X-Git-Archeology:   From: Ricardo Pardini <ricardo@pardini.net>
+> X-Git-Archeology:   Subject: `bcm2711`/`edge`: bump to `6.3` (`rpi4b`, RPi Foundation Kernel)
+> X-Git-Archeology:
+---
+ drivers/usb/dwc2/gadget.c           | 73 ++++++++++
+ drivers/usb/gadget/function/f_hid.c | 14 ++
+ drivers/usb/gadget/function/u_hid.h |  1 +
+ 3 files changed, 88 insertions(+)
+
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+index 8b15742d9e8a..a7d997a205d5 100644
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -4763,6 +4763,78 @@ static void dwc2_gadget_set_speed(struct usb_gadget *g, enum usb_device_speed sp
+ 	spin_unlock_irqrestore(&hsotg->lock, flags);
+ }
+ 
++/**
++ * dwc2_hsotg_wakeup - send wakeup signal to the host
++ * @gadget: The usb gadget state
++ *
++ * If the gadget is in device mode and in the L1 or L2 state,
++ * it sends a wakeup signal to the host.
++ */
++static int dwc2_hsotg_wakeup(struct usb_gadget *gadget)
++{
++	struct dwc2_hsotg *hsotg = to_hsotg(gadget);
++	int ret = -1;
++	unsigned long flags;
++
++	spin_lock_irqsave(&hsotg->lock, flags);
++
++	if (!hsotg->remote_wakeup_allowed) {
++		dev_dbg(hsotg->dev,
++			"wakeup: signalling skipped: is not allowed by host\n");
++		goto skip;
++	}
++	if (hsotg->lx_state != DWC2_L1 && hsotg->lx_state != DWC2_L2) {
++		dev_dbg(hsotg->dev,
++			"wakeup: signalling skipped: gadget not in L1/L2 state: %d\n", hsotg->lx_state);
++		goto skip;
++	}
++	if (!dwc2_is_device_mode(hsotg)) {
++		dev_dbg(hsotg->dev,
++			"wakeup: signalling skipped: gadget not in device mode\n");
++		goto skip;
++	}
++
++	/*if (hsotg->in_ppd) {
++		if (dwc2_exit_partial_power_down(hsotg, 1, true))
++			dev_err(hsotg->dev, "wakeup: exit partial_power_down failed\n");
++		call_gadget(hsotg, resume);
++	}*/
++	if (hsotg->params.power_down == DWC2_POWER_DOWN_PARAM_NONE && hsotg->bus_suspended) {
++		u32 pcgctl;
++
++		dev_dbg(hsotg->dev, "wakeup: exiting device clock gating\n");
++
++		/* Clear the Gate hclk. */
++		pcgctl = dwc2_readl(hsotg, PCGCTL);
++		pcgctl &= ~PCGCTL_GATEHCLK;
++		dwc2_writel(hsotg, pcgctl, PCGCTL);
++		udelay(5);
++
++		/* Phy Clock bit. */
++		pcgctl = dwc2_readl(hsotg, PCGCTL);
++		pcgctl &= ~PCGCTL_STOPPCLK;
++		dwc2_writel(hsotg, pcgctl, PCGCTL);
++		udelay(5);
++
++		hsotg->bus_suspended = false;
++	}
++
++	dev_dbg(hsotg->dev, "wakeup: sending signal to the host");
++
++	dwc2_set_bit(hsotg, DCTL, DCTL_RMTWKUPSIG);
++	mdelay(10);
++	dwc2_clear_bit(hsotg, DCTL, DCTL_RMTWKUPSIG);
++
++	/* After the signalling, the USB core wakes up to L0 */
++	call_gadget(hsotg, resume);
++	hsotg->lx_state = DWC2_L0;
++
++	ret = 0;
++skip:
++	spin_unlock_irqrestore(&hsotg->lock, flags);
++	return ret;
++}
++
+ static const struct usb_gadget_ops dwc2_hsotg_gadget_ops = {
+ 	.get_frame	= dwc2_hsotg_gadget_getframe,
+ 	.set_selfpowered	= dwc2_hsotg_set_selfpowered,
+@@ -4772,6 +4844,7 @@ static const struct usb_gadget_ops dwc2_hsotg_gadget_ops = {
+ 	.udc_set_speed		= dwc2_gadget_set_speed,
+ 	.vbus_session		= dwc2_hsotg_vbus_session,
+ 	.vbus_draw		= dwc2_hsotg_vbus_draw,
++	.wakeup			= dwc2_hsotg_wakeup,
+ };
+ 
+ /**
+diff --git a/drivers/usb/gadget/function/f_hid.c b/drivers/usb/gadget/function/f_hid.c
+index ea85e2c701a1..846942e4275a 100644
+--- a/drivers/usb/gadget/function/f_hid.c
++++ b/drivers/usb/gadget/function/f_hid.c
+@@ -58,6 +58,8 @@ struct f_hidg {
+ 	 *              will be used to receive reports.
+ 	 */
+ 	bool				use_out_ep;
++	/* attempt to wake up the host before write */
++	bool				wakeup_on_write;
+ 
+ 	/* recv report */
+ 	spinlock_t			read_spinlock;
+@@ -434,10 +436,19 @@ static ssize_t f_hidg_write(struct file *file, const char __user *buffer,
+ 			    size_t count, loff_t *offp)
+ {
+ 	struct f_hidg *hidg  = file->private_data;
++	struct usb_composite_dev *cdev = hidg->func.config->cdev;
+ 	struct usb_request *req;
+ 	unsigned long flags;
+ 	ssize_t status = -ENOMEM;
+ 
++	/*
++	 * remote wakeup is allowed only when the corresponding bit
++	 * in config descriptor is set and wakeup_on_write is enabled.
++     * FIXME: cdev->config can be NULLed on disconnect.
++	 */
++	if (hidg->wakeup_on_write /*&& cdev->config->bmAttributes & 0x20*/)
++		usb_gadget_wakeup(cdev->gadget);
++
+ 	spin_lock_irqsave(&hidg->write_spinlock, flags);
+ 
+ 	if (!hidg->req) {
+@@ -1101,6 +1112,7 @@ CONFIGFS_ATTR(f_hid_opts_, name)
+ F_HID_OPT(subclass, 8, 255);
+ F_HID_OPT(protocol, 8, 255);
+ F_HID_OPT(no_out_endpoint, 8, 1);
++F_HID_OPT(wakeup_on_write, 8, 1);
+ F_HID_OPT(report_length, 16, 65535);
+ 
+ static ssize_t f_hid_opts_report_desc_show(struct config_item *item, char *page)
+@@ -1161,6 +1173,7 @@ static struct configfs_attribute *hid_attrs[] = {
+ 	&f_hid_opts_attr_subclass,
+ 	&f_hid_opts_attr_protocol,
+ 	&f_hid_opts_attr_no_out_endpoint,
++	&f_hid_opts_attr_wakeup_on_write,
+ 	&f_hid_opts_attr_report_length,
+ 	&f_hid_opts_attr_report_desc,
+ 	&f_hid_opts_attr_dev,
+@@ -1296,6 +1309,7 @@ static struct usb_function *hidg_alloc(struct usb_function_instance *fi)
+ 		}
+ 	}
+ 	hidg->use_out_ep = !opts->no_out_endpoint;
++	hidg->wakeup_on_write = opts->wakeup_on_write;
+ 
+ 	++opts->refcnt;
+ 	mutex_unlock(&opts->lock);
+diff --git a/drivers/usb/gadget/function/u_hid.h b/drivers/usb/gadget/function/u_hid.h
+index 84bb70292855..f7fcaf1eaf1d 100644
+--- a/drivers/usb/gadget/function/u_hid.h
++++ b/drivers/usb/gadget/function/u_hid.h
+@@ -21,6 +21,7 @@ struct f_hid_opts {
+ 	unsigned char			subclass;
+ 	unsigned char			protocol;
+ 	unsigned char			no_out_endpoint;
++	unsigned char			wakeup_on_write;
+ 	unsigned short			report_length;
+ 	unsigned short			report_desc_length;
+ 	unsigned char			*report_desc;
+-- 
+Armbian
+

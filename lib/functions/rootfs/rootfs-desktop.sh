@@ -13,6 +13,7 @@ function desktop_postinstall() {
 	# disable display manager for the first run
 	disable_systemd_service_sdcard lightdm.service
 	disable_systemd_service_sdcard gdm3.service
+	disable_systemd_service_sdcard sddm.service
 
 	# @TODO: why?
 	display_alert "Updating package lists" "for desktop" "info"

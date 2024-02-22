@@ -22,10 +22,10 @@ function prepare_temp_dir_in_workdir_and_schedule_cleanup() {
 
 	# if no WORKDIR set, or not an existing directory, bail with error
 	if [[ -z "${WORKDIR}" ]] || [[ ! -d "${WORKDIR}" ]]; then
-		exit_with_error "prepare_temp_dir_in_workdir_and_schedule_cleanup: WORKDIR is not set or not a directory: ${temp_dir_id}"
+		exit_with_error "prepare_temp_dir_in_workdir_and_schedule_cleanup: WORKDIR ('${WORKDIR}') is not set or not a directory: ${temp_dir_id}"
 	fi
 
-	nameref_temp_dir="$(mktemp -d)" # subject to TMPDIR/WORKDIR
+	nameref_temp_dir="$(mktemp -d --tmpdir "${temp_dir_id}-XXXXX")" # subject to TMPDIR/WORKDIR
 	display_alert "prepare_temp_dir_in_workdir_and_schedule_cleanup: created temp dir" "${nameref_temp_dir}" "cleanup"
 
 	chmod 700 "${nameref_temp_dir}" # does every usage need this? why?

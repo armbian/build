@@ -9,6 +9,7 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 - **BOARDFAMILY** ( board-family ): defines the family of the board to apply board-specific configuration during build time such as adjustments for the temperature, LED behavior, etc..
 	- Refer to [sources table](https://github.com/armbian/build/blob/master/config/sources/README.md)
 	- Example: `sun50iw1`
+- **BOARD_MAINTAINER** ( space-separated list of Github login ): Declares the maintainer of the board
 - **BOOTCONFIG** ( u-boot identifier ): declares the name of the u-boot configuration for the build without the '\_defconifig' suffix
 	- Refer to the [u-boot source tree](https://github.com/u-boot/u-boot/tree/master/configs) to find configuration for the board
 	- Example: `teres-i`
@@ -20,6 +21,9 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- yes: Show the armbian boot logo
 		- desktop: Show the armbian boot logo when `BUILD_DESKTOP` is set to `yes`
 	- Default: `not set`
+- **CRUSTCONFIG** ( crust identifier ): declares the name of the crust defconfig configuration for the build. Specify only if the board has Allwinner CPU with AR100 coprocessor and SOC is supported by [crust firmware](https://github.com/crust-firmware/crust).
+	- Refer to the [crust source tree](https://github.com/crust-firmware/crust/tree/master/configs) to find configuration for the board
+	- Example: `nanopi_m1_defconfig`
 - **IMAGE_PARTITION_TABLE** ( string ): defines which disklabel type to use
 	- Values:
 		- msdos: Use dos/msdos disklabel
@@ -70,6 +74,7 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- edge: Use edge kernel
 		- [branch]: Use specified [branch] kernel
 		- [none]: Exits with error
+- **KERNEL_TEST_TARGET** ( comma-separated list of kernel releases or branches ): if test targets are different for testings (internal switch)
 - **FULL_DESKTOP** ( boolean ): defines whether to install desktop stack of applications such as office, thunderbird, etc..
 	- Values:
 		- yes: install desktop stack

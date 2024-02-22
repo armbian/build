@@ -21,31 +21,42 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_DESKTOP
 
 	# common options
-	declare revision_from="undetermined"
-	if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
-		REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
-		revision_from="userpatches VERSION file"
-	else
-		REVISION=$(cat "${SRC}"/VERSION)
-		revision_from="main VERSION file"
+	declare revision_from="set in env or command-line parameter"
+	if [[ "${REVISION}" == "" ]]; then
+		if [ -f "${USERPATCHES_PATH}"/VERSION ]; then
+			REVISION=$(cat "${USERPATCHES_PATH}"/VERSION)
+			revision_from="userpatches VERSION file"
+		else
+			REVISION=$(cat "${SRC}"/VERSION)
+			revision_from="main VERSION file"
+		fi
 	fi
 
 	declare -g -r REVISION="${REVISION}"
-	display_alert "Using revision from" "${revision_from}: '${REVISION}'" "info"
+	display_alert "Using REVISION from" "${revision_from}: '${REVISION}'" "info"
+	if [[ ! "${REVISION}" =~ ^[0-9] ]]; then
+		exit_with_error "REVISION must begin with a digit, got '${REVISION}'"
+	fi
 
-	# This is the prefix used by all artifacts. Readonly. It's just $REVISION and a double dash.
-	declare -r -g artifact_prefix_version="${REVISION}--"
+	# Armbian image is set as unofficial if build manually or without declaring from outside
+	[[ -z $VENDOR ]] && VENDOR="Armbian-unofficial"
 
-	[[ -z $VENDOR ]] && VENDOR="Armbian"
-	[[ -z $VENDORURL ]] && VENDORURL="https://www.armbian.com"
-	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://forum.armbian.com"
-	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://www.armbian.com"
-	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://www.armbian.com/bugs"
+	# Use framework defaults for community Armbian images and unsupported distribution when building Armbian distribution
+	if [[ ${VENDOR} == "Armbian" ]] && [[ ${BOARD_TYPE} != "conf" || $(cat $SRC/config/distributions/$RELEASE/support) != "supported" ]]; then
+		VENDORURL="https://www.armbian.com/"
+		unset VENDORSUPPORT,VENDORPRIVACY,VENDORBUGS,VENDORLOGO,ROOTPWD,MAINTAINER,MAINTAINERMAIL
+	fi
+
+	[[ -z $VENDORURL ]] && VENDORURL="https://duckduckgo.com/"
+	[[ -z $VENDORSUPPORT ]] && VENDORSUPPORT="https://community.armbian.com/"
+	[[ -z $VENDORPRIVACY ]] && VENDORPRIVACY="https://duckduckgo.com/"
+	[[ -z $VENDORBUGS ]] && VENDORBUGS="https://armbian.atlassian.net/"
+	[[ -z $VENDORDOCS ]] && VENDORDOCS="https://docs.armbian.com/"
 	[[ -z $VENDORLOGO ]] && VENDORLOGO="armbian-logo"
-	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                  # Must be changed @first login
-	[[ -z $MAINTAINER ]] && MAINTAINER="Igor Pecovnik"                   # deb signature
-	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="igor.pecovnik@****l.com" # deb signature
-	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                              # en_US.UTF-8 is default locale for target
+	[[ -z $ROOTPWD ]] && ROOTPWD="1234"                                       # Must be changed @first login
+	[[ -z $MAINTAINER ]] && MAINTAINER="John Doe"                             # deb signature
+	[[ -z $MAINTAINERMAIL ]] && MAINTAINERMAIL="john.doe@somewhere.on.planet" # deb signature
+	DEST_LANG="${DEST_LANG:-"en_US.UTF-8"}"                                   # en_US.UTF-8 is default locale for target
 	display_alert "DEST_LANG..." "DEST_LANG: ${DEST_LANG}" "debug"
 
 	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
@@ -83,6 +94,7 @@ function do_main_configuration() {
 	fi
 	display_alert ".deb compression" "DEB_COMPRESS=${DEB_COMPRESS}" "debug"
 
+	declare -g -r PACKAGES_HASHED_STORAGE="${DEST}/packages-hashed"
 	if [[ $BETA == yes ]]; then
 		DEB_STORAGE=$DEST/debs-beta
 	else
@@ -178,8 +190,8 @@ function do_main_configuration() {
 			MAINLINE_FIRMWARE_SOURCE='https://mirrors.bfsu.edu.cn/git/linux-firmware.git'
 			;;
 		*)
-			MAINLINE_KERNEL_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
-			MAINLINE_FIRMWARE_SOURCE='git://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
+			MAINLINE_KERNEL_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git' # "linux-stable" was renamed to "linux"
+			MAINLINE_FIRMWARE_SOURCE='https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git'
 			;;
 	esac
 
@@ -206,7 +218,8 @@ function do_main_configuration() {
 			GITHUB_SOURCE='https://hub.fastgit.xyz'
 			;;
 		ghproxy)
-			GITHUB_SOURCE='https://ghproxy.com/https://github.com'
+			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=mirror.ghproxy.com
+			GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
 			;;
 		gitclone)
 			GITHUB_SOURCE='https://gitclone.com/github.com'
@@ -278,6 +291,8 @@ function do_main_configuration() {
 	declare -g -r PACKAGE_LIST_FAMILY="${PACKAGE_LIST_FAMILY}"
 	declare -g -r PACKAGE_LIST_FAMILY_REMOVE="${PACKAGE_LIST_FAMILY_REMOVE}"
 
+	if [[ $RELEASE == trixie || $ARCH == riscv64 ]]; then remove_packages "cpufrequtils"; fi # this will remove from rootfs as well
+
 	display_alert "Done with do_main_configuration" "do_main_configuration" "debug"
 }
 
@@ -293,7 +308,7 @@ function do_extra_configuration() {
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 	[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
 
-	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar|mantic)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
@@ -333,11 +348,6 @@ function do_extra_configuration() {
 			display_alert "Using custom ports/${ARCH} mirror" "${CUSTOM_UBUNTU_MIRROR_PORTS}" "info"
 			UBUNTU_MIRROR="${CUSTOM_UBUNTU_MIRROR_PORTS}"
 		fi
-	fi
-
-	# Debian needs the ports repo when strapping riscv64 - revise after bookworm release
-	if [[ "${ARCH}" == "riscv64" ]] && [[ $DISTRIBUTION == Debian ]]; then
-		DEBIAN_MIRROR='deb.debian.org/debian-ports'
 	fi
 
 	# Control aria2c's usage of ipv6.

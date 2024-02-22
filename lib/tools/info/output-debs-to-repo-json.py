@@ -36,6 +36,8 @@ def generate_deb_summary(info):
 		out = artifact["out"]
 		artifact_type = out["artifact_type"]
 		artifact_version = out["artifact_version"]
+		artifact_final_version_reversioned = out["artifact_final_version_reversioned"]
+		artifact_deb_repo = out["artifact_deb_repo"]
 
 		if not (artifact_type == "deb" or artifact_type == "deb-tar"):
 			continue
@@ -46,14 +48,17 @@ def generate_deb_summary(info):
 		artifact_map_debs_values = out["artifact_map_debs_values_ARRAY"]
 		artifact_map_packages_keys = out["artifact_map_packages_keys_ARRAY"]
 		artifact_map_packages_values = out["artifact_map_packages_values_ARRAY"]
+		artifact_map_debs_reversioned_keys = out["artifact_map_debs_reversioned_keys_ARRAY"]
+		artifact_map_debs_reversioned_values = out["artifact_map_debs_reversioned_values_ARRAY"]
 
 		# Sanity check: all those array should have the same amount of elements.
-		if not (len(artifact_map_debs_keys) == len(artifact_map_debs_values) == len(artifact_map_packages_keys) == len(artifact_map_packages_values)):
+		if not (len(artifact_map_debs_keys) == len(artifact_map_debs_values) == len(artifact_map_packages_keys) ==
+				len(artifact_map_packages_values) == len(artifact_map_debs_reversioned_keys) == len(artifact_map_debs_reversioned_values)):
 			log.error(f"Error: artifact {artifact_id} has different amount of keys and values in the map: {artifact}")
 			continue
 
-		# Sanity check: artifact_map_debs_keys and artifact_map_packages_keys should be the same
-		if not (artifact_map_debs_keys == artifact_map_packages_keys):
+		# Sanity check: all keys should be the same
+		if not (artifact_map_debs_keys == artifact_map_packages_keys == artifact_map_debs_reversioned_keys):
 			log.error(f"Error: artifact {artifact_id} has different keys in the map: {artifact}")
 			continue
 
@@ -64,14 +69,16 @@ def generate_deb_summary(info):
 				log.error(f"Error: artifact {artifact_id} has duplicated key {key} in the map: {artifact}")
 				continue
 
-			relative_deb_path = artifact_map_debs_values[i]
-			repo_target = "armbian"
-			# if the relative_deb_path has a slash "/"...
-			if "/" in relative_deb_path:
-				# ...then it's a repo target
-				first_part = relative_deb_path.split("/")[0]
-				repo_target = f'armbian-{first_part}'
-			all_debs[key] = {"relative_deb_path": relative_deb_path, "package_name": (artifact_map_packages_values[i]), "repo_target": repo_target}
+			if artifact_deb_repo == "global":
+				repo_target = "armbian"
+			else:
+				repo_target = f'armbian-{artifact_deb_repo}'
+
+			all_debs[key] = {
+				"relative_deb_path": (artifact_map_debs_reversioned_values[i]),
+				"package_name": (artifact_map_packages_values[i]),
+				"repo_target": repo_target
+			}
 
 		# Aggregate all repo_targets from their debs. There can be only one. Eg: each artifact can only be in one repo_target, no matter how many debs.
 		repo_targets = set()
@@ -88,7 +95,12 @@ def generate_deb_summary(info):
 		invocation = (["download-artifact"] + armbian_utils.map_to_armbian_params(inputs["vars"], False) + inputs["configs"])
 
 		item = {
-			"id": artifact_id, "desc": desc, "artifact_name": artifact_name, "artifact_type": artifact_type, "artifact_version": artifact_version,
+			"id": artifact_id, "desc": desc,
+			"artifact_name": artifact_name,
+			"artifact_type": artifact_type,
+			"artifact_version": artifact_version,
+			"artifact_final_version_reversioned": artifact_final_version_reversioned,
+			"artifact_deb_repo": artifact_deb_repo,
 			"repo_target": repo_target,
 			"download_invocation": invocation,
 			"debs": all_debs

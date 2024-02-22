@@ -88,6 +88,8 @@ log.info(f"Wrote {reprepro_conf_options_fn}")
 # Prepare the reprepro-invoking bash script
 bash_lines = [
 	"#!/bin/bash",
+	'set -e',
+	'set -o pipefail',
 	'mkdir -p "${REPO_CONF_LOCATION}"',
 	'cp -rv "${REPREPRO_INFO_DIR}/conf"/* "${REPO_CONF_LOCATION}"/',
 	# run clearvanished

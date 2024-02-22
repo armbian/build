@@ -1,0 +1,136 @@
+Index: 6.1__mvebu__armhf/drivers/ata/Kconfig
+===================================================================
+--- 6.1__mvebu__armhf.orig/drivers/ata/Kconfig
++++ 6.1__mvebu__armhf/drivers/ata/Kconfig
+@@ -67,6 +67,22 @@ config ATA_FORCE
+ 
+ 	  If unsure, say Y.
+ 
++config ARCH_WANT_LIBATA_LEDS
++	bool
++
++config ATA_LEDS
++	bool "support ATA port LED triggers"
++	depends on ARCH_WANT_LIBATA_LEDS
++	select NEW_LEDS
++	select LEDS_CLASS
++	select LEDS_TRIGGERS
++	default y
++	help
++	  This option adds a LED trigger for each registered ATA port.
++	  It is used to drive disk activity leds connected via GPIO.
++
++	  If unsure, say N.
++
+ config ATA_ACPI
+ 	bool "ATA ACPI Support"
+ 	depends on ACPI
+Index: 6.1__mvebu__armhf/drivers/ata/libata-core.c
+===================================================================
+--- 6.1__mvebu__armhf.orig/drivers/ata/libata-core.c
++++ 6.1__mvebu__armhf/drivers/ata/libata-core.c
+@@ -663,6 +663,19 @@ u64 ata_tf_read_block(const struct ata_t
+ 	return block;
+ }
+ 
++#ifdef CONFIG_ATA_LEDS
++#define LIBATA_BLINK_DELAY 20 /* ms */
++static inline void ata_led_act(struct ata_port *ap)
++{
++	unsigned long led_delay = LIBATA_BLINK_DELAY;
++
++	if (unlikely(!ap->ledtrig))
++		return;
++
++	led_trigger_blink_oneshot(ap->ledtrig, &led_delay, &led_delay, 0);
++}
++#endif
++
+ /**
+  *	ata_build_rw_tf - Build ATA taskfile for given read/write request
+  *	@qc: Metadata associated with the taskfile to build
+@@ -4813,6 +4826,10 @@ void ata_qc_issue(struct ata_queued_cmd
+ 	struct ata_link *link = qc->dev->link;
+ 	u8 prot = qc->tf.protocol;
+ 
++#ifdef CONFIG_ATA_LEDS
++	ata_led_act(ap);
++#endif
++
+ 	/* Make sure only one non-NCQ command is outstanding.  The
+ 	 * check is skipped for old EH because it reuses active qc to
+ 	 * request ATAPI sense.
+@@ -5328,6 +5345,9 @@ struct ata_port *ata_port_alloc(struct a
+ 	ap->stats.unhandled_irq = 1;
+ 	ap->stats.idle_irq = 1;
+ #endif
++#ifdef CONFIG_ATA_LEDS
++	ap->ledtrig = kzalloc(sizeof(struct led_trigger), GFP_KERNEL);
++#endif
+ 	ata_sff_port_init(ap);
+ 
+ 	return ap;
+@@ -5363,6 +5383,12 @@ static void ata_host_release(struct kref
+ 
+ 		kfree(ap->pmp_link);
+ 		kfree(ap->slave_link);
++#ifdef CONFIG_ATA_LEDS
++		if (ap->ledtrig) {
++			led_trigger_unregister(ap->ledtrig);
++			kfree(ap->ledtrig);
++		};
++#endif
+ 		kfree(ap);
+ 		host->ports[i] = NULL;
+ 	}
+@@ -5765,7 +5791,23 @@ int ata_host_register(struct ata_host *h
+ 		host->ports[i]->print_id = atomic_inc_return(&ata_print_id);
+ 		host->ports[i]->local_port_no = i + 1;
+ 	}
++#ifdef CONFIG_ATA_LEDS
++	for (i = 0; i < host->n_ports; i++) {
++		if (unlikely(!host->ports[i]->ledtrig))
++			continue;
+ 
++		snprintf(host->ports[i]->ledtrig_name,
++			sizeof(host->ports[i]->ledtrig_name), "ata%u",
++			host->ports[i]->print_id);
++
++		host->ports[i]->ledtrig->name = host->ports[i]->ledtrig_name;
++
++		if (led_trigger_register(host->ports[i]->ledtrig)) {
++			kfree(host->ports[i]->ledtrig);
++			host->ports[i]->ledtrig = NULL;
++		}
++	}
++#endif
+ 	/* Create associated sysfs transport objects  */
+ 	for (i = 0; i < host->n_ports; i++) {
+ 		rc = ata_tport_add(host->dev,host->ports[i]);
+Index: 6.1__mvebu__armhf/include/linux/libata.h
+===================================================================
+--- 6.1__mvebu__armhf.orig/include/linux/libata.h
++++ 6.1__mvebu__armhf/include/linux/libata.h
+@@ -23,6 +23,9 @@
+ #include <linux/cdrom.h>
+ #include <linux/sched.h>
+ #include <linux/async.h>
++#ifdef CONFIG_ATA_LEDS
++#include <linux/leds.h>
++#endif
+ 
+ /*
+  * Define if arch has non-standard setup.  This is a _PCI_ standard
+@@ -857,6 +860,12 @@ struct ata_port {
+ #ifdef CONFIG_ATA_ACPI
+ 	struct ata_acpi_gtm	__acpi_init_gtm; /* use ata_acpi_init_gtm() */
+ #endif
++
++#ifdef CONFIG_ATA_LEDS
++	struct led_trigger	*ledtrig;
++	char			ledtrig_name[8];
++#endif
++
+ 	/* owned by EH */
+ 	u8			sector_buf[ATA_SECT_SIZE] ____cacheline_aligned;
+ };

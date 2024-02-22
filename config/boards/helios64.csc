@@ -1,9 +1,10 @@
 # RK3399 hexa core 4GB SoC 2.5GbE eMMC USB3 SATA M.2 UPS
 BOARD_NAME="Helios64"
-BOARDFAMILY="rk3399"
+BOARDFAMILY="rockchip64" # Used to be rk3399
+BOARD_MAINTAINER=""
 BOOTCONFIG="helios64-rk3399_defconfig"
 BOOT_SCENARIO="blobless"
-KERNEL_TARGET="legacy,current,edge"
+KERNEL_TARGET="current,edge"
 MODULES="lm75 ledtrig-netdev"
 MODULES_LEGACY="lm75"
 FULL_DESKTOP="yes"
@@ -12,7 +13,7 @@ PACKAGE_LIST_BOARD_REMOVE="fake-hwclock"
 CPUMAX="1800000"
 
 function post_family_tweaks__helios64_enable_heartbeat() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	chroot $SDCARD /bin/bash -c "systemctl --no-reload enable helios64-heartbeat-led.service >/dev/null 2>&1"
 
@@ -20,7 +21,7 @@ function post_family_tweaks__helios64_enable_heartbeat() {
 }
 
 function post_family_tweaks_bsp__helios64() {
-    display_alert "Installing BSP firmware and fixups"
+	display_alert "Installing BSP firmware and fixups"
 
 	mkdir -p $destination/etc/udev/rules.d/
 	mkdir -p $destination/etc/systemd/system/fancontrol.service.d/
