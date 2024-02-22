@@ -338,7 +338,7 @@ if apply_patches:
 		autopatcher_descriptions.extend(dt_makefile_patcher.copy_bare_files(autopatcher_params, "dt"))
 
 	# Include the overlay stuff
-	if pconfig.has_dts_directories:
+	if pconfig.has_overlay_directories:
 		autopatcher_descriptions.extend(dt_makefile_patcher.copy_bare_files(autopatcher_params, "overlay"))
 
 	# Autopatch the Makefile(s) according to the config
