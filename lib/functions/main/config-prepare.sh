@@ -121,6 +121,9 @@ function config_source_board_file() {
 		# shellcheck source=/dev/null
 		source "${BOARD_SOURCE_FILE}"
 		sourced_board_configs+=("${BOARD_SOURCE_FILE}")
+
+		declare board_file_sans_src="${BOARD_SOURCE_FILE#${SRC}/}"
+		track_general_config_variables "after sourcing board file ${board_file_sans_src}"
 	done
 
 	# Sanity check: if no board config was sourced, then the board name is invalid
