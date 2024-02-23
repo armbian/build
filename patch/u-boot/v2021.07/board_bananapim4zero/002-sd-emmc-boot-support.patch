@@ -1,0 +1,169 @@
+From 5b582dc8029698afc157aaf9b169d8bab6ceb0ce Mon Sep 17 00:00:00 2001
+From: Banana Pi -BPI <lionwang@sinovoip.com.cn>
+Date: Fri, 23 Feb 2024 06:57:54 -0500
+Subject: [PATCH] sd emmc boot support
+
+Signed-off-by: Banana Pi -BPI <lionwang@sinovoip.com.cn>
+---
+ arch/arm/include/asm/arch-sunxi/mmc.h |  1 +
+ board/sunxi/board.c                   | 11 +++++
+ drivers/mmc/sunxi_mmc.c               | 70 ++++++++++++++++++++++++---
+ 3 files changed, 74 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm/include/asm/arch-sunxi/mmc.h b/arch/arm/include/asm/arch-sunxi/mmc.h
+index 340e25b04d..5daacf10eb 100644
+--- a/arch/arm/include/asm/arch-sunxi/mmc.h
++++ b/arch/arm/include/asm/arch-sunxi/mmc.h
+@@ -119,6 +119,7 @@ struct sunxi_mmc {
+ #define SUNXI_MMC_STATUS_CARD_PRESENT		(0x1 << 8)
+ #define SUNXI_MMC_STATUS_CARD_DATA_BUSY		(0x1 << 9)
+ #define SUNXI_MMC_STATUS_DATA_FSM_BUSY		(0x1 << 10)
++#define SUNXI_MMC_STATUS_FIFO_LEVEL(reg)	(((reg) >> 17) & 0x3fff)
+ 
+ #define SUNXI_MMC_NTSR_MODE_SEL_NEW		(0x1 << 31)
+ 
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index a5b0e4f152..73f5745f08 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -573,6 +573,17 @@ static void mmc_pinmux_setup(int sdc)
+ 			sunxi_gpio_set_pull(pin, SUNXI_GPIO_PULL_UP);
+ 			sunxi_gpio_set_drv(pin, 2);
+ 		}
++#elif defined(CONFIG_MACH_SUN50I_H616)
++		/* SDC2: PC0-PC1, PC5-PC6, PC8-PC11, PC13-PC16 */
++		for (pin = SUNXI_GPC(0); pin <= SUNXI_GPC(16); pin++) {
++			if (pin > SUNXI_GPC(1) && pin < SUNXI_GPC(5))
++				continue;
++			if (pin == SUNXI_GPC(7) || pin == SUNXI_GPC(12))
++				continue;
++			sunxi_gpio_set_cfgpin(pin, SUNXI_GPC_SDC2);
++			sunxi_gpio_set_pull(pin, SUNXI_GPIO_PULL_UP);
++			sunxi_gpio_set_drv(pin, 3);
++		}		
+ #elif defined(CONFIG_MACH_SUN9I)
+ 		/* SDC2: PC6-PC16 */
+ 		for (pin = SUNXI_GPC(6); pin <= SUNXI_GPC(16); pin++) {
+diff --git a/drivers/mmc/sunxi_mmc.c b/drivers/mmc/sunxi_mmc.c
+index 3503ccdb2e..99a79088b4 100644
+--- a/drivers/mmc/sunxi_mmc.c
++++ b/drivers/mmc/sunxi_mmc.c
+@@ -86,6 +86,7 @@ static int mmc_resource_init(int sdc_no)
+ 	}
+ 	priv->mmc_no = sdc_no;
+ 
++#ifdef BPI
+ 	cd_pin = sunxi_mmc_getcd_gpio(sdc_no);
+ 	if (cd_pin >= 0) {
+ 		ret = gpio_request(cd_pin, "mmc_cd");
+@@ -94,6 +95,12 @@ static int mmc_resource_init(int sdc_no)
+ 			ret = gpio_direction_input(cd_pin);
+ 		}
+ 	}
++#else
++	if(1) {
++		printf("BPI: skip sunxi_mmc_getcd_gpio %d\n", sdc_no);
++		ret=0;
++	}
++#endif
+ 
+ 	return ret;
+ }
+@@ -303,8 +310,9 @@ static int mmc_trans_data_by_cpu(struct sunxi_mmc_priv *priv, struct mmc *mmc,
+ 					      SUNXI_MMC_STATUS_FIFO_FULL;
+ 	unsigned i;
+ 	unsigned *buff = (unsigned int *)(reading ? data->dest : data->src);
+-	unsigned byte_cnt = data->blocksize * data->blocks;
+-	unsigned timeout_msecs = byte_cnt >> 8;
++	unsigned word_cnt = (data->blocksize * data->blocks) >> 2;
++	unsigned timeout_msecs = word_cnt >> 6;
++	uint32_t status;
+ 	unsigned long  start;
+ 
+ 	if (timeout_msecs < 2000)
+@@ -315,16 +323,42 @@ static int mmc_trans_data_by_cpu(struct sunxi_mmc_priv *priv, struct mmc *mmc,
+ 
+ 	start = get_timer(0);
+ 
+-	for (i = 0; i < (byte_cnt >> 2); i++) {
+-		while (readl(&priv->reg->status) & status_bit) {
++	for (i = 0; i < word_cnt;) {
++		unsigned int in_fifo;
++
++		while ((status = readl(&priv->reg->status)) & status_bit) {
+ 			if (get_timer(start) > timeout_msecs)
+ 				return -1;
+ 		}
+ 
+-		if (reading)
+-			buff[i] = readl(&priv->reg->fifo);
+-		else
+-			writel(buff[i], &priv->reg->fifo);
++		/*
++		 * For writing we do not easily know the FIFO size, so have
++		 * to check the FIFO status after every word written.
++		 * TODO: For optimisation we could work out a minimum FIFO
++		 * size across all SoCs, and use that together with the current
++		 * fill level to write chunks of words.
++		 */
++		if (!reading) {
++			writel(buff[i++], &priv->reg->fifo);
++			continue;
++		}
++
++		/*
++		 * The status register holds the current FIFO level, so we
++		 * can be sure to collect as many words from the FIFO
++		 * register without checking the status register after every
++		 * read. That saves half of the costly MMIO reads, effectively
++		 * doubling the read performance.
++		 * Some SoCs (A20) report a level of 0 if the FIFO is
++		 * completely full (value masked out?). Use a safe minimal
++		 * FIFO size in this case.
++		 */
++		in_fifo = SUNXI_MMC_STATUS_FIFO_LEVEL(status);
++		if (in_fifo == 0 && (status & SUNXI_MMC_STATUS_FIFO_FULL))
++			in_fifo = 32;
++		for (; in_fifo > 0; in_fifo--)
++			buff[i++] = readl_relaxed(&priv->reg->fifo);
++		dmb();
+ 	}
+ 
+ 	return 0;
+@@ -531,6 +565,17 @@ struct mmc *sunxi_mmc_init(int sdc_no)
+ 	cfg->f_min = 400000;
+ 	cfg->f_max = 52000000;
+ 
++#ifdef BPI
++#else
++	printf("BPI: init mmc %d clock(%d) and io\n", sdc_no, cfg->f_max);
++	if(sdc_no==2) {
++	cfg->f_max = 2000000;
++	cfg->f_max = 12000000;
++	cfg->f_max = 8000000;
++	printf("BPI: init mmc %d clock(%d) and io\n", sdc_no, cfg->f_max);
++	}
++#endif
++
+ 	if (mmc_resource_init(sdc_no) != 0)
+ 		return NULL;
+ 
+@@ -633,6 +678,15 @@ static int sunxi_mmc_probe(struct udevice *dev)
+ 
+ 	cfg->f_min = 400000;
+ 	cfg->f_max = 52000000;
++#ifdef BPI
++else
++	if (bus_width == 8) {
++	cfg->f_max = 2000000;
++	cfg->f_max = 12000000;
++	cfg->f_max = 8000000;
++	printf("BPI: init mmc %d clock(%d) and io\n", 2, cfg->f_max);
++	}
++#endif
+ 
+ 	priv->reg = (void *)dev_read_addr(dev);
+ 
+-- 
+2.39.2
+
