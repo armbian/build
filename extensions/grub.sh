@@ -218,7 +218,7 @@ pre_umount_final_image__install_grub() {
 	fi
 
 	# Check and warn if the wallpaper was not picked up by grub-mkconfig, if UEFI_GRUB_TERMINAL==gfxterm
-	if [[ "${UEFI_GRUB_TERMINAL}" == "gfxterm" ]]; then
+	if [[ "${UEFI_GRUB_TERMINAL}" =~ "gfxterm" ]]; then
 		if ! grep -q "background_image" "${chroot_target}/boot/grub/grub.cfg"; then
 			display_alert "GRUB mkconfig problem" "no wallpaper detected in generated grub.cfg" "warn"
 		else
