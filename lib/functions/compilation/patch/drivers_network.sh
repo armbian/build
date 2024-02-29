@@ -413,12 +413,13 @@ driver_rtl88x2bu() {
 driver_rtw88() {
 	# Quite a few kernel families have KERNEL_DRIVERS_SKIP listing this driver. If so, this won't even be called.
 
-	# Upstream wireless RTW88 drivers (wireless-next-2023-08-25)
+	# Upstream wireless RTW88 drivers
 	if linux-version compare "${version}" ge 6.1; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
-		if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.6; then # came in with 6.6.14 and 6.7.2
-			process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
-		fi
+		#if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.6; then # came in with 6.6.14 and 6.7.2
+		#	process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
+		#fi
+		process_patch_file "${SRC}/patch/misc/rtw88/${version}/001-drivers-net-wireless-realtek-rtw88-upstream-wireless.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/002-rtw88-usb-make-work-queues-high-priority.patch" "applying"
 		process_patch_file "${SRC}/patch/misc/rtw88/hack/003-rtw88-decrease-the-log-level-of-tx-report.patch" "applying"
 	fi
