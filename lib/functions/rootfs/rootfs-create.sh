@@ -72,12 +72,17 @@ function create_new_rootfs_cache_via_debootstrap() {
 		"'--components=${AGGREGATED_DEBOOTSTRAP_COMPONENTS_COMMA}'" # from aggregation.py
 	)
 
-	# Hacking debootstrap to support future releases as symlink is often the only change, so we don't need to bump host OS
-	# This functionality is coming with debootstrap v1.0.128 (Mantic)
+	# Hacking deboostrap to support future releases
+	# Install most recent version from build framework blob section
 	local debootstrap_home="/usr/share/debootstrap/scripts"
-	if [[ ! -L "${debootstrap_home}/${RELEASE}" && ! -e "${debootstrap_home}/${RELEASE}" ]]; then
-		display_alert "Making symlink as host deboostrap is missing it" "" "wrn"
-		run_host_command_logged ln -s "${DEBOOTSTRAP_SOURCE}" "${debootstrap_home}/${RELEASE}"
+	if [[ ! -L "${debootstrap_home}/${RELEASE}" && ! -e "${debootstrap_home}/${RELEASE}" && "$(debootstrap --version)" != *1.0.134* ]]; then
+		display_alert "Installing new version of deboostrap to the host" "${HOSTRELEASE}" "wrn"
+		if [[ "$(cat /etc/os-release | grep "^ID=" | cut -d"=" -f2)" == "ubuntu" ]]; then
+		run_host_command_logged dpkg -i "${SRC}/packages/blobs/debootstrap/debootstrap_1.0.134ubuntu1_all.deb"
+		else
+		run_host_command_logged dpkg -i "${SRC}/packages/blobs/debootstrap/debootstrap_1.0.134_all.deb"
+		fi
+		run_host_command_logged apt -f install
 	fi
 
 	# Small detour for local apt caching option.
