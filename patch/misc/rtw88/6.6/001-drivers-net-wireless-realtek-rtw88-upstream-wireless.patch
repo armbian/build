@@ -1,131 +1,71 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From:   Martin Blumenstingl <martin.blumenstingl@googlemail.com>
-Date:   Mon, 20 Nov 2023 12:57:26 +0100
-Subject: [PATCH v3] wifi: rtw88: sdio: Honor the host max_req_size in the RX path
+From:   Dmitry Antipov <dmantipov@yandex.ru>
+To:     Ping-Ke Shih <pkshih@realtek.com>
+Date:   Tue, 15 Aug 2023 17:28:28 +0300
+Subject: [PATCH] wifi: rtw88: add missing call to cancel_work_sync()
 
-Lukas reports skb_over_panic errors on his Banana Pi BPI-CM4 which comes
-with an Amlogic A311D (G12B) SoC and a RTL8822CS SDIO wifi/Bluetooth
-combo card. The error he observed is identical to what has been fixed
-in commit e967229ead0e ("wifi: rtw88: sdio: Check the HISR RX_REQUEST
-bit in rtw_sdio_rx_isr()") but that commit didn't fix Lukas' problem.
+Add missing call to 'cancel_work_sync()' in 'rtw_core_stop()'.
 
-Lukas found that disabling or limiting RX aggregation works around the
-problem for some time (but does not fully fix it). In the following
-discussion a few key topics have been discussed which have an impact on
-this problem:
-- The Amlogic A311D (G12B) SoC has a hardware bug in the SDIO controller
-  which prevents DMA transfers. Instead all transfers need to go through
-  the controller SRAM which limits transfers to 1536 bytes
-- rtw88 chips don't split incoming (RX) packets, so if a big packet is
-  received this is forwarded to the host in it's original form
-- rtw88 chips can do RX aggregation, meaning more multiple incoming
-  packets can be pulled by the host from the card with one MMC/SDIO
-  transfer. This Depends on settings in the REG_RXDMA_AGG_PG_TH
-  register (BIT_RXDMA_AGG_PG_TH limits the number of packets that will
-  be aggregated, BIT_DMA_AGG_TO_V1 configures a timeout for aggregation
-  and BIT_EN_PRE_CALC makes the chip honor the limits more effectively)
-
-Use multiple consecutive reads in rtw_sdio_read_port() and limit the
-number of bytes which are copied by the host from the card in one
-MMC/SDIO transfer. This allows receiving a buffer that's larger than
-the hosts max_req_size (number of bytes which can be transferred in
-one MMC/SDIO transfer). As a result of this the skb_over_panic error
-is gone as the rtw88 driver is now able to receive more than 1536 bytes
-from the card (either because the incoming packet is larger than that
-or because multiple packets have been aggregated).
-
-In case of an receive errors (-EILSEQ has been observed by Lukas) we
-need to drain the remaining data from the card's buffer, otherwise the
-card will return corrupt data for the next rtw_sdio_read_port() call.
-
-Fixes: 65371a3f14e7 ("wifi: rtw88: sdio: Add HCI implementation for SDIO based chipsets")
-Reported-by: Lukas F. Hartmann <lukas@mntre.com>
-Closes: https://lore.kernel.org/linux-wireless/CAFBinCBaXtebixKbjkWKW_WXc5k=NdGNaGUjVE8NCPNxOhsb2g@mail.gmail.com/
-Suggested-by: Ping-Ke Shih <pkshih@realtek.com>
-Signed-off-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Fixes: 5c831644e1f4 ("rtw88: handle and recover when firmware crash")
+Signed-off-by: Dmitry Antipov <dmantipov@yandex.ru>
 ---
+ drivers/net/wireless/realtek/rtw88/main.c | 1 +
+ 1 file changed, 1 insertion(+)
 
-Changes since v2 at [2]:
-- Don't initialize err to zero as that intiial value is never used.
-  Thanks Ping-Ke for spotting this!
-- Add a comment explaning why we need to continue reading but still
-  have to return an error to the caller of rtw_sdio_read_port()
-
-Changes since v1 at [0]:
-- We need to read all bytes if we split the transaction into multiple
-  smaller reads. This is even the case when one of N reads reports an
-  error. Otherwise the next read port call will return garbage (partially
-  containing zeros, ...). A similar-ish approach can be found in the
-  vendor driver, see [1] (specifically the call to sdio_recv_and_drop())
-- Update the patch description accordingly
-
-With a preliminary version of this updated patch Lukas reported off-
-list: "i've been using this laptop for almost 3 hours with heavy wifi
-usage and so far no problems"
-
-
-[0] https://lore.kernel.org/lkml/169089906853.212423.17095176293160428610.kvalo@kernel.org/T/
-[1] https://github.com/chewitt/RTL8822CS/blob/ad1391e219b59314485739a499fb442d5bbc069e/hal/rtl8822c/sdio/rtl8822cs_io.c#L468-L477
-[2] https://lore.kernel.org/linux-wireless/20230806181656.2072792-1-martin.blumenstingl@googlemail.com/
-
-
- drivers/net/wireless/realtek/rtw88/sdio.c | 35 ++++++++++++++++++-----
- 1 file changed, 28 insertions(+), 7 deletions(-)
-
-diff --git a/drivers/net/wireless/realtek/rtw88/sdio.c b/drivers/net/wireless/realtek/rtw88/sdio.c
-index 2c1fb2dabd40..0cae5746f540 100644
---- a/drivers/net/wireless/realtek/rtw88/sdio.c
-+++ b/drivers/net/wireless/realtek/rtw88/sdio.c
-@@ -500,19 +500,40 @@ static u32 rtw_sdio_get_tx_addr(struct rtw_dev *rtwdev, size_t size,
- static int rtw_sdio_read_port(struct rtw_dev *rtwdev, u8 *buf, size_t count)
- {
- 	struct rtw_sdio *rtwsdio = (struct rtw_sdio *)rtwdev->priv;
-+	struct mmc_host *host = rtwsdio->sdio_func->card->host;
- 	bool bus_claim = rtw_sdio_bus_claim_needed(rtwsdio);
- 	u32 rxaddr = rtwsdio->rx_addr++;
--	int ret;
-+	int ret = 0, err;
-+	size_t bytes;
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index 4a33d2e47f33..3a63dfc81d06 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -1522,6 +1522,7 @@ void rtw_core_stop(struct rtw_dev *rtwdev)
+ 	mutex_unlock(&rtwdev->mutex);
  
- 	if (bus_claim)
- 		sdio_claim_host(rtwsdio->sdio_func);
- 
--	ret = sdio_memcpy_fromio(rtwsdio->sdio_func, buf,
--				 RTW_SDIO_ADDR_RX_RX0FF_GEN(rxaddr), count);
--	if (ret)
--		rtw_warn(rtwdev,
--			 "Failed to read %zu byte(s) from SDIO port 0x%08x",
--			 count, rxaddr);
-+	while (count > 0) {
-+		bytes = min_t(size_t, host->max_req_size, count);
-+
-+		err = sdio_memcpy_fromio(rtwsdio->sdio_func, buf,
-+					 RTW_SDIO_ADDR_RX_RX0FF_GEN(rxaddr),
-+					 bytes);
-+		if (err) {
-+			rtw_warn(rtwdev,
-+				 "Failed to read %zu byte(s) from SDIO port 0x%08x: %d",
-+				 bytes, rxaddr, err);
-+
-+			 /* Signal to the caller that reading did not work and
-+			  * that the data in the buffer is short/corrupted.
-+			  */
-+			ret = err;
-+
-+			/* Don't stop here - instead drain the remaining data
-+			 * from the card's buffer, else the card will return
-+			 * corrupt data for the next rtw_sdio_read_port() call.
-+			 */
-+		}
-+
-+		count -= bytes;
-+		buf += bytes;
-+	}
- 
- 	if (bus_claim)
- 		sdio_release_host(rtwsdio->sdio_func);
+ 	cancel_work_sync(&rtwdev->c2h_work);
++	cancel_work_sync(&rtwdev->fw_recovery_work);
+ 	cancel_work_sync(&rtwdev->update_beacon_work);
+ 	cancel_delayed_work_sync(&rtwdev->watch_dog_work);
+ 	cancel_delayed_work_sync(&coex->bt_relink_work);
 -- 
-2.42.1
+2.41.0
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From:   Ping-Ke Shih <pkshih@realtek.com>
+To:     <kvalo@kernel.org>
+Date:   Fri, 25 Aug 2023 14:24:04 +0800
+Subject: [PATCH] wifi: rtw88: fix typo rtw8822cu_probe
+
+The probe function of 8822cu is misplaced to 8822bu, so we fix it.
+
+Fixes: 07cef03b8d44 ("wifi: rtw88: Add rtw8822cu chipset support")
+Signed-off-by: Po-Hao Huang <phhuang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+---
+ drivers/net/wireless/realtek/rtw88/rtw8822cu.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8822cu.c b/drivers/net/wireless/realtek/rtw88/rtw8822cu.c
+index af28ca09d41f..157d5102a4b1 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822cu.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822cu.c
+@@ -25,7 +25,7 @@ static const struct usb_device_id rtw_8822cu_id_table[] = {
+ };
+ MODULE_DEVICE_TABLE(usb, rtw_8822cu_id_table);
+ 
+-static int rtw8822bu_probe(struct usb_interface *intf,
++static int rtw8822cu_probe(struct usb_interface *intf,
+ 			   const struct usb_device_id *id)
+ {
+ 	return rtw_usb_probe(intf, id);
+@@ -34,7 +34,7 @@ static int rtw8822bu_probe(struct usb_interface *intf,
+ static struct usb_driver rtw_8822cu_driver = {
+ 	.name = "rtw_8822cu",
+ 	.id_table = rtw_8822cu_id_table,
+-	.probe = rtw8822bu_probe,
++	.probe = rtw8822cu_probe,
+ 	.disconnect = rtw_usb_disconnect,
+ };
+ module_usb_driver(rtw_8822cu_driver);
+-- 
+2.25.1
 
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From:   Ping-Ke Shih <pkshih@realtek.com>
@@ -6194,3 +6134,346 @@ index fcff31688c45..91ed921407bb 100644
  #define REG_FA_CCK	0xa5c
 -- 
 2.25.1
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+Date: Fri, 1 Mar 2024 00:32:45 +0200
+Subject: [PATCH v2 1/4] wifi: rtw88: 8821cu: Fix firmware upload fail
+
+RTL8822CU, RTL8822BU, and RTL8821CU need an extra register write after
+reading and writing certain addresses.
+
+Without this, the firmware upload fails approximately more than 50% of
+the time.
+
+Tested with RTL8811CU (Tenda U9 V2.0) which is the same as RTL8821CU
+but without Bluetooth.
+
+Fixes: a82dfd33d123 ("wifi: rtw88: Add common USB chip support")
+Signed-off-by: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+---
+v2:
+ - Simplify the code and add comments, as suggested.
+---
+ drivers/net/wireless/realtek/rtw88/usb.c | 40 ++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.c b/drivers/net/wireless/realtek/rtw88/usb.c
+index 3c4f28c306a9..3be6cbbf9ad8 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.c
++++ b/drivers/net/wireless/realtek/rtw88/usb.c
+@@ -33,6 +33,36 @@ static void rtw_usb_fill_tx_checksum(struct rtw_usb *rtwusb,
+ 	rtw_tx_fill_txdesc_checksum(rtwdev, &pkt_info, skb->data);
+ }
+ 
++static void rtw_usb_reg_sec(struct rtw_dev *rtwdev, u32 addr, __le32 *data)
++{
++	struct rtw_usb *rtwusb = rtw_get_usb_priv(rtwdev);
++	struct usb_device *udev = rtwusb->udev;
++	bool reg_on_section = false;
++	u16 t_reg = 0x4e0;
++	u8 t_len = 1;
++	int status;
++
++	/* There are three sections:
++	 * 1. on (0x00~0xFF; 0x1000~0x10FF): this section is always powered on
++	 * 2. off (< 0xFE00, excluding "on" section): this section could be
++	 *    powered off
++	 * 3. local (>= 0xFE00): usb specific registers section
++	 */
++	if (addr <= 0xff || (addr >= 0x1000 && addr <= 0x10ff))
++		reg_on_section = true;
++
++	if (!reg_on_section)
++		return;
++
++	status = usb_control_msg(udev, usb_sndctrlpipe(udev, 0),
++				 RTW_USB_CMD_REQ, RTW_USB_CMD_WRITE,
++				 t_reg, 0, data, t_len, 500);
++
++	if (status != t_len && status != -ENODEV)
++		rtw_err(rtwdev, "%s: reg 0x%x, usb write %u fail, status: %d\n",
++			__func__, t_reg, t_len, status);
++}
++
+ static u32 rtw_usb_read(struct rtw_dev *rtwdev, u32 addr, u16 len)
+ {
+ 	struct rtw_usb *rtwusb = rtw_get_usb_priv(rtwdev);
+@@ -58,6 +88,11 @@ static u32 rtw_usb_read(struct rtw_dev *rtwdev, u32 addr, u16 len)
+ 		rtw_err(rtwdev, "read register 0x%x failed with %d\n",
+ 			addr, ret);
+ 
++	if (rtwdev->chip->id == RTW_CHIP_TYPE_8822C ||
++	    rtwdev->chip->id == RTW_CHIP_TYPE_8822B ||
++	    rtwdev->chip->id == RTW_CHIP_TYPE_8821C)
++		rtw_usb_reg_sec(rtwdev, addr, data);
++
+ 	return le32_to_cpu(*data);
+ }
+ 
+@@ -111,6 +146,11 @@ static void rtw_usb_write(struct rtw_dev *rtwdev, u32 addr, u32 val, int len)
+ 	if (ret < 0 && ret != -ENODEV && count++ < 4)
+ 		rtw_err(rtwdev, "write register 0x%x failed with %d\n",
+ 			addr, ret);
++
++	if (rtwdev->chip->id == RTW_CHIP_TYPE_8822C ||
++	    rtwdev->chip->id == RTW_CHIP_TYPE_8822B ||
++	    rtwdev->chip->id == RTW_CHIP_TYPE_8821C)
++		rtw_usb_reg_sec(rtwdev, addr, data);
+ }
+ 
+ static void rtw_usb_write8(struct rtw_dev *rtwdev, u32 addr, u8 val)
+-- 
+2.43.2
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+Date: Fri, 1 Mar 2024 00:34:13 +0200
+Subject: [PATCH v2 2/4] wifi: rtw88: 8821cu: Fix connection failure
+
+Clear bit 8 of REG_SYS_STATUS1 after MAC power on.
+
+Without this, some RTL8821CU and RTL8811CU cannot connect to any
+network:
+
+Feb 19 13:33:11 ideapad2 kernel: wlp3s0f3u2: send auth to
+	90:55:de:__:__:__ (try 1/3)
+Feb 19 13:33:13 ideapad2 kernel: wlp3s0f3u2: send auth to
+	90:55:de:__:__:__ (try 2/3)
+Feb 19 13:33:14 ideapad2 kernel: wlp3s0f3u2: send auth to
+	90:55:de:__:__:__ (try 3/3)
+Feb 19 13:33:15 ideapad2 kernel: wlp3s0f3u2: authentication with
+	90:55:de:__:__:__ timed out
+
+The RTL8822CU and RTL8822BU out-of-tree drivers do this as well, so do
+it for all three types of chips.
+
+Tested with RTL8811CU (Tenda U9 V2.0).
+
+Signed-off-by: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+---
+v2:
+ - Check for pwr_on instead of pwr_seq == chip->pwr_on_seq.
+---
+ drivers/net/wireless/realtek/rtw88/mac.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/mac.c b/drivers/net/wireless/realtek/rtw88/mac.c
+index 298663b03580..0c1c1ff31085 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac.c
++++ b/drivers/net/wireless/realtek/rtw88/mac.c
+@@ -309,6 +309,13 @@ static int rtw_mac_power_switch(struct rtw_dev *rtwdev, bool pwr_on)
+ 	pwr_seq = pwr_on ? chip->pwr_on_seq : chip->pwr_off_seq;
+ 	ret = rtw_pwr_seq_parser(rtwdev, pwr_seq);
+ 
++	if (pwr_on && rtw_hci_type(rtwdev) == RTW_HCI_TYPE_USB) {
++		if (chip->id == RTW_CHIP_TYPE_8822C ||
++		    chip->id == RTW_CHIP_TYPE_8822B ||
++		    chip->id == RTW_CHIP_TYPE_8821C)
++			rtw_write8_clr(rtwdev, REG_SYS_STATUS1 + 1, BIT(0));
++	}
++
+ 	if (rtw_hci_type(rtwdev) == RTW_HCI_TYPE_SDIO)
+ 		rtw_write32(rtwdev, REG_SDIO_HIMR, imr);
+ 
+-- 
+2.43.2
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+Date: Fri, 1 Mar 2024 00:35:09 +0200
+Subject: [PATCH v2 3/4] wifi: rtw88: 8821c: Fix beacon loss and disconnect
+
+Tenda U9 V2.0, which contains RTL8811CU, is practically unusable because
+of frequent disconnections:
+
+Feb 23 14:46:45 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-BEACON-LOSS
+Feb 23 14:46:46 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-DISCONNECTED
+	bssid=90:55:de:__:__:__ reason=4 locally_generated=1
+
+Feb 23 14:46:52 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-CONNECTED
+	- Connection to 90:55:de:__:__:__ completed [id=0 id_str=]
+Feb 23 14:46:54 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-BEACON-LOSS
+Feb 23 14:46:55 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-DISCONNECTED
+	bssid=90:55:de:__:__:__ reason=4 locally_generated=1
+
+Feb 23 14:47:01 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-CONNECTED
+	- Connection to 90:55:de:__:__:__ completed [id=0 id_str=]
+Feb 23 14:47:04 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-BEACON-LOSS
+Feb 23 14:47:05 ideapad2 wpa_supplicant[427]: wlp3s0f3u2: CTRL-EVENT-DISCONNECTED
+	bssid=90:55:de:__:__:__ reason=4 locally_generated=1
+
+This is caused by a mistake in the chip initialisation. This version of
+the chip requires loading an extra AGC table right after the main one,
+but the extra table is being loaded at the wrong time, in
+rtw_chip_board_info_setup().
+
+Move the extra AGC table loading to the right place, in
+rtw_phy_load_tables().
+
+The rtw_chip_board_info_setup() can only do "software" things, and
+rtw_phy_load_tables() can really do IO.
+
+Fixes: 5d6651fe8583 ("rtw88: 8821c: support RFE type2 wifi NIC")
+Signed-off-by: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+---
+v2:
+ - Add more information in the commit message.
+---
+ drivers/net/wireless/realtek/rtw88/main.c | 2 --
+ drivers/net/wireless/realtek/rtw88/phy.c  | 3 +++
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index 6d22628129d0..ffba6b88f392 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -2032,8 +2032,6 @@ static int rtw_chip_board_info_setup(struct rtw_dev *rtwdev)
+ 	rtw_phy_setup_phy_cond(rtwdev, hal->pkg_type);
+ 
+ 	rtw_phy_init_tx_power(rtwdev);
+-	if (rfe_def->agc_btg_tbl)
+-		rtw_load_table(rtwdev, rfe_def->agc_btg_tbl);
+ 	rtw_load_table(rtwdev, rfe_def->phy_pg_tbl);
+ 	rtw_load_table(rtwdev, rfe_def->txpwr_lmt_tbl);
+ 	rtw_phy_tx_power_by_rate_config(hal);
+diff --git a/drivers/net/wireless/realtek/rtw88/phy.c b/drivers/net/wireless/realtek/rtw88/phy.c
+index 128e75a81bf3..37ef80c9091d 100644
+--- a/drivers/net/wireless/realtek/rtw88/phy.c
++++ b/drivers/net/wireless/realtek/rtw88/phy.c
+@@ -1761,12 +1761,15 @@ static void rtw_load_rfk_table(struct rtw_dev *rtwdev)
+ 
+ void rtw_phy_load_tables(struct rtw_dev *rtwdev)
+ {
++	const struct rtw_rfe_def *rfe_def = rtw_get_rfe_def(rtwdev);
+ 	const struct rtw_chip_info *chip = rtwdev->chip;
+ 	u8 rf_path;
+ 
+ 	rtw_load_table(rtwdev, chip->mac_tbl);
+ 	rtw_load_table(rtwdev, chip->bb_tbl);
+ 	rtw_load_table(rtwdev, chip->agc_tbl);
++	if (rfe_def->agc_btg_tbl)
++		rtw_load_table(rtwdev, rfe_def->agc_btg_tbl);
+ 	rtw_load_rfk_table(rtwdev);
+ 
+ 	for (rf_path = 0; rf_path < rtwdev->hal.rf_path_num; rf_path++) {
+-- 
+2.43.2
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+Date: Fri, 1 Mar 2024 00:35:58 +0200
+Subject: [PATCH v2 4/4] wifi: rtw88: 8821c: Fix false alarm count
+From: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+
+total_fa_cnt is supposed to include cck_fa_cnt and ofdm_fa_cnt, not just
+ofdm_fa_cnt.
+
+Fixes: 960361238b86 ("rtw88: 8821c: add false alarm statistics")
+Signed-off-by: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+---
+v2:
+ - No change.
+---
+ drivers/net/wireless/realtek/rtw88/rtw8821c.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8821c.c b/drivers/net/wireless/realtek/rtw88/rtw8821c.c
+index 429bb420b056..fe5d8e188350 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8821c.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8821c.c
+@@ -773,9 +773,9 @@ static void rtw8821c_false_alarm_statistics(struct rtw_dev *rtwdev)
+ 
+ 	dm_info->cck_fa_cnt = cck_fa_cnt;
+ 	dm_info->ofdm_fa_cnt = ofdm_fa_cnt;
++	dm_info->total_fa_cnt = ofdm_fa_cnt;
+ 	if (cck_enable)
+ 		dm_info->total_fa_cnt += cck_fa_cnt;
+-	dm_info->total_fa_cnt = ofdm_fa_cnt;
+ 
+ 	crc32_cnt = rtw_read32(rtwdev, REG_CRC_CCK);
+ 	dm_info->cck_ok_cnt = FIELD_GET(GENMASK(15, 0), crc32_cnt);
+-- 
+2.43.2
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Larry Finger <Larry.Finger@gmail.com>
+Date: Tue, 27 Feb 2024 02:34:40 +0000
+Subject: [PATCHi V2] wifi: rtw88: Add missing VID/PIDs doe 8811CU and 8821CU
+
+From: Nick Morrow <morrownr@gmail.com>
+
+Purpose: Add VID/PIDs that are known to be missing for this driver.
+- removed  /* 8811CU */ and /* 8821CU */ as they are redundant
+since the file is specific to those chips.
+- removed /* TOTOLINK A650UA v3 */ as the manufacturer. It has a REALTEK
+VID so it may not be specific to this adapter.
+
+Source is https://1EHFQ.trk.elasticemail.com/tracking/click?d=I82H0YR_W_h175Lb3Nkb0D8i6IqvuhESe0WLnY6P7IVwR1UKvB0SPxd1Olp3PNJEJTqsu4kyqBXayE0BVd_k7uLFvlTe65Syx2uqLUB-UQSfsKKLkuyE-frMZXSCL7q824UG3Oer614GGEeEz-DNEWHh43p_e8oz7OouS6gRBEng0
+Verified and tested.
+
+Signed-off-by: Nick Morrow <morrownr@gmail.com>
+Signed-off-by: Larry Finger <Larry.Finger@lwfinger.net>
+Acked-by: Ping-Ke Shih <pkshih@realtek.com>
+
+---
+ .../net/wireless/realtek/rtw88/rtw8821cu.c    | 40 ++++++++++++-------
+ 1 file changed, 26 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8821cu.c b/drivers/net/wireless/realtek/rtw88/rtw8821cu.c
+index 7a5cbdc31ef7..e2c7d9f87683 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8821cu.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8821cu.c
+@@ -9,24 +9,36 @@
+ #include "usb.h"
+ 
+ static const struct usb_device_id rtw_8821cu_id_table[] = {
+-	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xb82b, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8821CU */
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0x2006, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0x8731, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0x8811, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xb820, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8821CU */
+-	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc821, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8821CU */
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xb82b, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc80c, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc811, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc820, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8821CU */
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc821, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc82a, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8821CU */
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc82b, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8821CU */
+-	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc811, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8811CU */
+-	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0x8811, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* 8811CU */
+-	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0x2006, 0xff, 0xff, 0xff),
+-	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* TOTOLINK A650UA v3 */
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(RTW_USB_VENDOR_ID_REALTEK, 0xc82c, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) },
++	{ USB_DEVICE_AND_INTERFACE_INFO(0x2001, 0x331d, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* D-Link */
++	{ USB_DEVICE_AND_INTERFACE_INFO(0x7392, 0xc811, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* Edimax */
++	{ USB_DEVICE_AND_INTERFACE_INFO(0x7392, 0xd811, 0xff, 0xff, 0xff),
++	  .driver_info = (kernel_ulong_t)&(rtw8821c_hw_spec) }, /* Edimax */
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(usb, rtw_8821cu_id_table);
+-- 
+2.43.2
+
