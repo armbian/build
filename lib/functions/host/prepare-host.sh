@@ -254,7 +254,7 @@ function adaptative_prepare_host_dependencies() {
 		bison
 		libc6-dev make dpkg-dev gcc # build-essential, without g++
 		ca-certificates ccache cpio
-		debootstrap device-tree-compiler dialog dirmngr dosfstools
+		device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
 		flex
 		gawk gnupg gpg
