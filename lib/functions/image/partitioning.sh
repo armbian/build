@@ -221,7 +221,8 @@ function prepare_partitions() {
 
 	CHECK_LOOP_FOR_SIZE="no" check_loop_device "$LOOP" # initially loop is zero sized, ignore it.
 
-	run_host_command_logged losetup "${LOOP}" "${SDCARD}".raw # @TODO: had a '-P- here, what was it?
+        #--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
+	run_host_command_logged losetup --partscan "${LOOP}" "${SDCARD}".raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
