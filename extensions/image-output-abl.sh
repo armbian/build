@@ -25,20 +25,21 @@ function post_build_image__900_convert_to_abl_img() {
 	rm -rf ${old_rootfs_image_mount_dir} ${DESTIMG}/rootfs.img
 	display_alert "Replace root partition uuid from ${old_rootfs_image_uuid} to ${new_rootfs_image_uuid} in /etc/fstab" "${EXTENSION}" "info"
 	sed -i "s|${old_rootfs_image_uuid}|${new_rootfs_image_uuid}|g" ${new_rootfs_image_mount_dir}/etc/fstab
+	declare -g bootimg_cmdline="${BOOTIMG_CMDLINE_EXTRA} root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}"
 
 	if [ ${#ABL_DTB_LIST[@]} -ne 0 ]; then
 		display_alert "Going to create abl kernel boot image" "${EXTENSION}" "info"
 		source ${new_rootfs_image_mount_dir}/boot/armbianEnv.txt
 		gzip -c ${new_rootfs_image_mount_dir}/boot/vmlinuz-*-* > ${DESTIMG}/Image.gz
 		for dtb_name in "${ABL_DTB_LIST[@]}"; do
-			display_alert "Creatng abl kernel boot image with dtb ${dtb_name} and cmdline root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}" "${EXTENSION}" "info"
+			display_alert "Creatng abl kernel boot image with dtb ${dtb_name} and cmdline ${bootimg_cmdline} " "${EXTENSION}" "info"
 			cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
 			/usr/bin/mkbootimg \
 				--kernel ${DESTIMG}/Image.gz-${dtb_name} \
 				--ramdisk ${new_rootfs_image_mount_dir}/boot/initrd.img-*-* \
 				--base 0x0 \
 				--second_offset 0x00f00000 \
-				--cmdline "clk_ignore_unused pd_ignore_unused root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}" \
+				--cmdline "${bootimg_cmdline}" \
 				--kernel_offset 0x8000 \
 				--ramdisk_offset 0x1000000 \
 				--tags_offset 0x100 \
