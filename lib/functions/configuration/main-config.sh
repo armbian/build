@@ -303,10 +303,8 @@ function do_extra_configuration() {
 
 	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar|mantic|noble)$ ]]; then
 		DISTRIBUTION="Ubuntu"
-		DEBOOTSTRAP_SOURCE="gutsy"
 	else
 		DISTRIBUTION="Debian"
-		DEBOOTSTRAP_SOURCE="sid"
 	fi
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
