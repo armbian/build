@@ -215,8 +215,10 @@ function create_sources_list_and_deploy_repo_key() {
 	# replace local package server if defined. Suitable for development
 	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
-	# disable repo if SKIP_ARMBIAN_REPO==yes, or if when==image-early.
-	if [[ "${when}" == "image-early" || "${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
+	# disable repo if DISTRIBUTION_STATUS==eos, or if SKIP_ARMBIAN_REPO==yes, or if when==image-early.
+	if [[ "${when}" == "image-early" || \
+		"$(cat "${SRC}/config/distributions/${RELEASE}/support")" == "eos" || \
+		"${SKIP_ARMBIAN_REPO}" == "yes" ]]; then
 		display_alert "Disabling Armbian repo" "${ARCH}-${RELEASE} :: skip:${SKIP_ARMBIAN_REPO:-"no"} when:${when}" "info"
 		mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
