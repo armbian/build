@@ -182,12 +182,14 @@ function artifact_kernel_prepare_version() {
 
 	# map what "compile_kernel()" will produce - legacy deb names and versions
 
-	# linux-image is always produced...
-	artifact_map_packages=(["linux-image"]="linux-image-${BRANCH}-${LINUXFAMILY}")
+	# linux-image is always produced... unless we're in DTB-only mode
+	if [[ "${KERNEL_DTB_ONLY}" != "yes" ]]; then
+		artifact_map_packages=(["linux-image"]="linux-image-${BRANCH}-${LINUXFAMILY}")
 
-	# some/most kernels have also working headers...
-	if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
-		artifact_map_packages+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}")
+		# some/most kernels have also working headers...
+		if [[ "${KERNEL_HAS_WORKING_HEADERS:-"no"}" == "yes" ]]; then
+			artifact_map_packages+=(["linux-headers"]="linux-headers-${BRANCH}-${LINUXFAMILY}")
+		fi
 	fi
 
 	# x86, specially, does not have working dtbs...
@@ -195,7 +197,13 @@ function artifact_kernel_prepare_version() {
 		artifact_map_packages+=(["linux-dtb"]="linux-dtb-${BRANCH}-${LINUXFAMILY}")
 	fi
 
-	artifact_name="kernel-${LINUXFAMILY}-${BRANCH}"
+	artifact_name="kernel-${LINUXFAMILY}-${BRANCH}" # default name of regular artifact
+
+	# Separate artifact name if we're in DTB-only mode, so stuff doesn't get mixed up later
+	if [[ "${KERNEL_DTB_ONLY}" == "yes" ]]; then
+		artifact_name="kernel-dtb-only-${LINUXFAMILY}-${BRANCH}"
+	fi
+
 	artifact_type="deb-tar" # this triggers processing of .deb files in the maps to produce a tarball
 	artifact_deb_repo="global"
 	artifact_deb_arch="${ARCH}"
