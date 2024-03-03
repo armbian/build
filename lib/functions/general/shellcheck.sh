@@ -87,6 +87,11 @@ function run_tool_shellcheck() {
 	case "$MACHINE" in
 		*aarch64*) SHELLCHECK_ARCH="aarch64" ;;
 		*x86_64*) SHELLCHECK_ARCH="x86_64" ;;
+		*riscv64*)
+			# check https://github.com/koalaman/shellcheck in the future, build might be possible
+			display_alert "No RISC-V riscv64 support for SHELLCHECK" "SHELLCHECK will not run" "wrn"
+			return 0
+			;;
 		*)
 			exit_with_error "unknown arch: $MACHINE"
 			;;
