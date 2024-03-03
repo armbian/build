@@ -216,8 +216,20 @@ function prepare_partitions() {
 	flock -x $FD
 
 	declare -g LOOP
-	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
-	display_alert "Allocated loop device" "LOOP=${LOOP}"
+	# replace losetup --find with own function and do 10 cycles
+	# losetup always return 1st free loop device and in parallel build,
+	# it often happens that same is found which resoults in:
+	# "failed to set up loop device: Device or resource busy"
+	# If we seek random way, chanches of allocating the same are significantly smaller.
+	FIND_LOOP_CYCLES=1
+	while : ; do
+		LOOP=$(find /dev/loop* | grep -Po "(\/dev\/loop\d|\/dev\/loop\d\d)$" | sort -R | head -1)
+		LOOP_COMPARE=$(losetup -l --noheadings --raw --output=NAME | grep $LOOP || true)
+		[[ -z $LOOP_COMPARE ]] && break
+		[[ $FIND_LOOP_CYCLES -gt 10 ]] && exit_with_error "Unable to find free loop device"
+		FIND_LOOP_CYCLES=$(( FIND_LOOP_CYCLES + 1 ))
+	done
+	display_alert "Allocated loop device" "LOOP=${LOOP} in cycle $FIND_LOOP_CYCLES"
 
 	CHECK_LOOP_FOR_SIZE="no" check_loop_device "$LOOP" # initially loop is zero sized, ignore it.
 
