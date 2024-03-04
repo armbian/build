@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
-        rk3308-s0-ext-antenna.dtbo \
+	rk3308-s0-ext-antenna.dtbo \
+	rk3308-b@1.3ghz.dtbo \
 	rk3308-bs.dtbo rk3308-bs@1.3ghz.dtbo \
 	rk3308-emmc.dtbo \
 	rk3308-sdio@10mhz.dtbo rk3308-sdio@4mhz.dtbo \
