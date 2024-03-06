@@ -2,7 +2,7 @@
 BOARD_NAME="Station M3"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="chainsx"
-KERNEL_TARGET="legacy"
+KERNEL_TARGET="legacy,vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-roc-pc.dtb"

@@ -111,6 +111,7 @@ function cli_json_info_run() {
 		declare TARGETS_OUTPUT_FILE="${BASE_INFO_OUTPUT_DIR}/all-targets.json"
 		declare IMAGE_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/image-info.json"
 		declare IMAGE_INFO_CSV_FILE="${BASE_INFO_OUTPUT_DIR}/image-info.csv"
+		declare INVENTORY_BOARDS_CSV_FILE="${BASE_INFO_OUTPUT_DIR}/boards-inventory.csv"
 		declare REDUCED_ARTIFACTS_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-reduced.json"
 		declare ARTIFACTS_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-info.json"
 		declare ARTIFACTS_INFO_UPTODATE_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-info-uptodate.json"
@@ -170,6 +171,13 @@ function cli_json_info_run() {
 		if [[ ! -f "${IMAGE_INFO_CSV_FILE}" ]]; then
 			display_alert "Generating CSV info" "info.csv" "info"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/json2csv.py "<" "${IMAGE_INFO_FILE}" ">" ${IMAGE_INFO_CSV_FILE}
+		fi
+
+		if [[ "${ARMBIAN_COMMAND}" == "inventory-boards" ]]; then
+			display_alert "Preparing" "inventory-boards" "info"
+			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/inventory-boards-csv.py "<" "${IMAGE_INFO_FILE}" ">" ${INVENTORY_BOARDS_CSV_FILE}
+			display_alert "Done with" "inventory-boards: ${INVENTORY_BOARDS_CSV_FILE}" "info"
+			exit 0
 		fi
 
 		if [[ "${ARMBIAN_COMMAND}" == "targets-dashboard" ]]; then

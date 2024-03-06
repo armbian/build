@@ -46,7 +46,6 @@ function compile_kernel() {
 		*Hook to copy extra kernel sources to the kernel under compilation*
 	ARMBIAN_KERNEL_SOURCES_EXTRA
 
-
 	# Possibly 'make clean'.
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
 
@@ -150,12 +149,63 @@ function kernel_prepare_build_and_package() {
 		install_make_params_quoted+=("${value}")
 	done
 
-	# Fire off the build & package
-	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+	if [[ "${KERNEL_DTB_ONLY}" == "yes" ]]; then
+		# Helper for local development of device tree
+		kernel_dtb_only_build
+	else
+		# Normal build, which includes "all" target etc
+		LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+	fi
 
+	# Package what has been built
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
+}
+
+function kernel_dtb_only_build() {
+	display_alert "Kernel DTB-only for development" "KERNEL_DTB_ONLY: ${KERNEL_DTB_ONLY}" "warn"
+	# Do it in two separate steps, first build the dtbs then install them.
+	build_targets=("dtbs")
+	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+
+	display_alert "Kernel DTB-only for development" "Installing DTBs" "warn"
+	build_targets=("dtbs_install")
+	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+
+	# If BOOT_FDT_FILE is set...
+	if [[ -n "${BOOT_FDT_FILE}" ]]; then
+		display_alert "Kernel DTB-only for development" "Copying preprocessed version of ${BOOT_FDT_FILE}" "warn"
+
+		# Take BOOT_FDT_FILE (eg: "rockchip/rk3588-smth.dtb") and parse fdt_dir and fdt_file out of it
+		declare fdt_dir fdt_file
+		[[ "${BOOT_FDT_FILE}" =~ ^(.*)/(.*)$ ]] && fdt_dir="${BASH_REMATCH[1]}" && fdt_file="${BASH_REMATCH[2]}"
+
+		# Check it worked, or bail
+		if [[ -z "${fdt_dir}" || -z "${fdt_file}" ]]; then
+			exit_with_error "Failed to parse BOOT_FDT_FILE: ${BOOT_FDT_FILE}"
+		fi
+
+		# Kernel build should produce a preprocessed version of all DTS files built into DTBs at arch/arm64/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp
+		declare preprocessed_fdt_source="${kernel_work_dir}/arch/${ARCH}/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp"
+
+		# Check it exists, or bail
+		if [[ ! -f "${preprocessed_fdt_source}" ]]; then
+			exit_with_error "Preprocessed FDT source not found: ${preprocessed_fdt_source}"
+		fi
+
+		declare preprocessed_fdt_dest="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.dts"
+		run_host_command_logged cp -v "${preprocessed_fdt_source}" "${preprocessed_fdt_dest}"
+
+		# Include a normalization pass through the dtc tool, with DTS as both input and output formats; this introduces phandles, unfortunately
+		declare preprocessed_fdt_normalized="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.dts"
+		run_host_command_logged dtc -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
+
+		display_alert "Kernel DTB-only for development" "Preprocessed FDT dest: ${preprocessed_fdt_dest}" "warn"
+		display_alert "Kernel DTB-only for development" "Preprocessed FDT normalized: ${preprocessed_fdt_normalized}" "warn"
+	fi
+
+	return 0
 }
 
 function kernel_build() {
