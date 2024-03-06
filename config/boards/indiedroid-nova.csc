@@ -32,6 +32,11 @@ function post_family_config_branch_legacy__use_9tripod_dtb() {
 	declare -g BOOT_FDT_FILE="rockchip/rk3588s-9tripod-linux.dtb"
 }
 
+# post_family_config hook which also run for vendor kernel
+function post_family_config_branch_vendor__use_9tripod_dtb() {
+post_family_config_branch_legacy__use_9tripod_dtb
+}
+
 # Add bluetooth packages to the image (not rootfs cache)
 function post_family_config__bluetooth_hciattach_add_bluetooth_packages() {
 	display_alert "${BOARD}" "adding bluetooth packages to image" "info"
