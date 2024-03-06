@@ -258,7 +258,7 @@ function adaptative_prepare_host_dependencies() {
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
 		flex
 		gawk gnupg gpg
-		imagemagick # required for boot_logo, plymouth: converting images / spinners
+		imagemagick # required for plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
 		kmod        # this causes initramfs rebuild, but is usually pre-installed, so no harm done unless it's an upgrade
 		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev liblz4-tool
