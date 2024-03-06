@@ -22,8 +22,8 @@ function cli_patch_kernel_pre_run() {
 	cli_standard_relaunch_docker_or_sudo
 }
 
-function cli_patch_kernel_run() {
-	display_alert "Patching kernel" "$BRANCH - rewrite: ${REWRITE_PATCHES:-"no"} " "info"
+# Used by both kernel and u-boot patchers, to fool the config & init it
+function common_config_for_automated_patching() {
 	declare -g SYNC_CLOCK=no                 # don't waste time syncing the clock
 	declare -g PATCHES_TO_GIT=yes            # commit to git.
 	declare -g PATCH_ONLY=yes                # stop after patching.
@@ -35,6 +35,12 @@ function cli_patch_kernel_run() {
 
 	# initialize the config # @TODO: rpardini: switch this to prep_conf_main_minimal_ni()
 	prep_conf_main_build_single
+}
+
+function cli_patch_kernel_run() {
+	display_alert "Patching kernel" "$BRANCH - rewrite: ${REWRITE_PATCHES:-"no"} " "info"
+
+	common_config_for_automated_patching # prepare the config
 
 	# <prepare the git sha1>
 	declare -A GIT_INFO_KERNEL=([GIT_SOURCE]="${KERNELSOURCE}" [GIT_REF]="${KERNELBRANCH}")
@@ -82,4 +88,39 @@ function cli_patch_kernel_run() {
 	fi
 
 	display_alert "Summary URL (after push & gh-pages deploy): " "${summary_url}" "info"
+}
+
+## Similar stuff as kernel, but for u-boot.
+function cli_patch_uboot_pre_run() {
+	cli_patch_kernel_pre_run # same as kernel
+}
+
+# For the u-boot version, we skip over building proper and instead just config/prepare/git/patch
+# @TODO: if ATF and CRUST ever move to the Py patcher they'd also need to be done here for full rewriting glory
+function cli_patch_uboot_run() {
+	display_alert "Patching u-boot" "$BRANCH - rewrite: ${REWRITE_PATCHES:-"no"} " "info"
+
+	common_config_for_automated_patching # prepare the config
+
+	# <prepare the git sha1>
+	declare -A GIT_INFO_UBOOT=([GIT_SOURCE]="${BOOTSOURCE}" [GIT_REF]="${BOOTBRANCH}")
+	run_memoized GIT_INFO_UBOOT "git2info" memoized_git_ref_to_info "include_makefile_body"
+	[[ "${GIT_INFO_UBOOT[SHA1]}" =~ ^[0-9a-f]{40}$ ]] || exit_with_error "SHA1 is not sane: '${GIT_INFO_UBOOT[SHA1]}'"
+	# </prepare the git sha1>
+
+	# Prepare the host
+	prepare_host # This handles its own logging sections, and is possibly interactive.
+
+	# Prepare git...
+	declare uboot_git_revision="not_determined_yet"
+	LOG_SECTION="uboot_prepare_git" do_with_logging_unless_user_terminal uboot_prepare_git
+
+	# change dir to u-boot checkout, since patch_uboot_target expects to be run there
+	local ubootdir="${SRC}/cache/sources/${BOOTSOURCEDIR}"
+	cd "${ubootdir}" || exit_with_error "Could not cd to ${ubootdir}"
+
+	# do the patching
+	LOG_SECTION="patch_uboot_target" do_with_logging patch_uboot_target
+
+	display_alert "Done patching u-boot" "${BRANCH} - ${LINUXFAMILY} - ${BOOTSOURCE}#${BOOTBRANCH}" "cachehit"
 }

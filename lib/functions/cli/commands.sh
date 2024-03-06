@@ -39,8 +39,13 @@ function armbian_register_commands() {
 		["debs-to-repo-download"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 		["debs-to-repo-reprepro"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
+		# Patch to git & patch rewrite, for kernel
 		["kernel-patches-to-git"]="patch_kernel"  # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 		["rewrite-kernel-patches"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
+
+		# Patch to git & patch rewrite, for u-boot
+		["uboot-patches-to-git"]="patch_uboot"  # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
+		["rewrite-uboot-patches"]="patch_uboot" # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
@@ -110,6 +115,7 @@ function armbian_register_commands() {
 
 		# patching
 		["rewrite-kernel-patches"]="REWRITE_PATCHES=yes" # rewrite the patches after round-tripping to git: "rebase patches"
+		["rewrite-uboot-patches"]="REWRITE_PATCHES=yes"  # rewrite the patches after round-tripping to git: "rebase patches"
 
 		# artifact shortcuts
 		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
