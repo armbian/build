@@ -9,7 +9,6 @@ SRC_EXTLINUX="no"
 ASOUND_STATE="asound.state.station-m2" # TODO verify me
 IMAGE_PARTITION_TABLE="gpt"
 FULL_DESKTOP="yes"
-INSTALL_HEADERS="yes"
 BOOT_LOGO="desktop"
 
 BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git" # also following kwiboo's u-boot due to his rk3568 work
