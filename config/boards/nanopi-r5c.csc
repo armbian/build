@@ -1,4 +1,4 @@
-# Rockchip RK3568 quad core 4GB eMMC USB3 2x 2.5GbE
+# Rockchip RK3568 quad core 4GB RAM eMMC USB3 2x 2.5GbE
 BOARD_NAME="NanoPi R5C"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
@@ -38,9 +38,8 @@ function post_family_tweaks__nanopir5c_udev_network_interfaces() {
 	display_alert "$BOARD" "Renaming interfaces WAN LAN" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
-	cat << EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
-SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan"
-SUBSYSTEM=="net", ACTION=="add", KERNELS=="0002:01:00.0", NAME:="wan"
-EOF
-
+	cat <<- EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0002:01:00.0", NAME:="wan"
+	EOF
 }
