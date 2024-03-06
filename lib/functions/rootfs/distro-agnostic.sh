@@ -548,9 +548,6 @@ function install_distribution_agnostic() {
 	# nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
 	sed "s/hosts\:.*/hosts:          files mymachines dns myhostname/g" -i "${SDCARD}"/etc/nsswitch.conf
 
-	# build logo in any case
-	boot_logo
-
 	# Show logo
 	if [[ $PLYMOUTH == yes ]]; then
 		if [[ $BOOT_LOGO == yes || $BOOT_LOGO == desktop && $BUILD_DESKTOP == yes ]]; then
