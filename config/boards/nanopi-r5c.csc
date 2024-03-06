@@ -11,11 +11,9 @@ IMAGE_PARTITION_TABLE="gpt"
 FULL_DESKTOP="no"
 BOOT_LOGO="desktop"
 
-BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git" # also following kwiboo's uboot due to his rk3568 work
-BOOTBRANCH_BOARD="commit:a6e84f9f5b90ff0fa3ac4e6b7e0d6e2c3ac9bb1b" # specific commit, from "branch:rk3568-2023.10" which is v2023.10-rc2 + kwiboo's patches (including GMAC)
-BOOTPATCHDIR="v2023.10"
+BOOTBRANCH_BOARD="tag:v2024.04-rc3"
+BOOTPATCHDIR="v2024.04"
 BOOTCONFIG="nanopi-r5c-rk3568_defconfig"
-BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 
 OVERLAY_PREFIX="rockchip-rk3568"
 DEFAULT_OVERLAYS="nanopi-r5c-leds"
