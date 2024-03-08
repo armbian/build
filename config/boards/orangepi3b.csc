@@ -22,12 +22,13 @@ ROCKUSB_BLOB="rk35/rk3566_spl_loader_1.14.bin" # For `EXT=rkdevflash` flashing
 
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__orangepi3b_use_mainline_uboot() {
-	display_alert "$BOARD" "mainline u-boot overrides" "info"
+	display_alert "$BOARD" "mainline (Kwiboo's tree) u-boot overrides" "info"
 
 	BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git"
-	BOOTBRANCH="commit:63073b4af636146d26a7f0f258610eed060c8f34" # specific commit, from "branch:rk3568-2023.10"
-	BOOTDIR="u-boot-${BOARD}"                                    # do not share u-boot directory
-	BOOTPATCHDIR="v2023.10-orangepi3b"                           # empty, patches are already in Kwiboo's branch:rk3568-2023.10
+	BOOTBRANCH="branch:rk3xxx-2024.04" # specific commit tested is commit:ccef7dfc453bc03c5b5c61fa67d2745b96fa7da6
+	BOOTPATCHDIR="v2024.04-orangepi3b" # empty, patches are already in Kwiboo's branch:rk3xxx-2024.04
+
+	BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 
 	BOOTDELAY=1 # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot.itb idbloader.img idbloader-spi.img"
