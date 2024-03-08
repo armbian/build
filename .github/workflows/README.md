@@ -38,10 +38,14 @@ You need to get a valid token from our DevOps team to proceed.
 
 `forked-helper.yml` workflow helper can help to run custom workflows on the forked repositories.
 
-1. Set `ARMBIAN_SELF_DISPATCH_TOKEN` secret on your repository with `security_events` permissions.
-2. Helper will dispatch `repository_dispatch` event `armbian` on `push`, `release`, `deployment`, 
-   `pull_request` and `workflow_dispatch` events. All needed event details you can find in `client_payload` 
-   property of the event.
+1. Create a [fine-grained Personal Access Token (PAT)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token) with the `repo` scope and store it as a secret. It needs the following permissions on the target repositories:
+    - `contents`: read & write
+    - `metadata`: read only (automatically selected when selecting the contents permission)
+2. Create a secret named `ARMBIAN_SELF_DISPATCH_TOKEN` on your repository with `security_events` permissions. To do this, head to your forked repository, go to `Settings` on the top bar, select `Secrets and variables` and then `Actions`. From here you can create a new repository secret.
+    - `Name`: `ARMBIAN_SELF_DISPATCH_TOKEN`
+    - `Secret`: Paste your fine-grained Personal Access Token that you created in step 1 here
+3. Helper will dispatch `repository_dispatch` event `armbian` on `push`, `release`, `deployment`, 
+   `pull_request` and `workflow_dispatch` events. All needed event details you can find in `client_payload` property of the event.
 4. Create empty default branch in forked repository
 5. Create workflow with `repository_dispatch` in default branch.
 6. Run any need actions in this workflow.
