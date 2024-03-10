@@ -1,18 +1,18 @@
 # install sddm greeter theme
-mkdir -p "${destination}"/usr/share/sddm/themes
-cp -R "${SRC}"/packages/blobs/desktop/sddm/themes/plasma-chili/ "${destination}"/usr/share/sddm/themes
+mkdir -pv "${destination}"/usr/share/sddm/themes
+cp -Rv "${SRC}"/packages/blobs/desktop/sddm/themes/plasma-chili/ "${destination}"/usr/share/sddm/themes
 
 # install default desktop settings
-mkdir -p "${destination}"/etc/skel
-cp -R "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
+mkdir -pv "${destination}"/etc/skel
+cp -Rv "${SRC}"/packages/blobs/desktop/skel/. "${destination}"/etc/skel
 
 # install wallpapers
-mkdir -p "${destination}"/usr/share/backgrounds/armbian/
-cp "${SRC}"/packages/blobs/desktop/desktop-wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian
+mkdir -pv "${destination}"/usr/share/backgrounds/armbian/
+cp -v "${SRC}"/packages/blobs/desktop/desktop-wallpapers/*.jpg "${destination}"/usr/share/backgrounds/armbian
 
 # install logo for login screen
-mkdir -p "${destination}"/usr/share/pixmaps/armbian
-cp "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
+mkdir -pv "${destination}"/usr/share/pixmaps/armbian
+cp -v "${SRC}"/packages/blobs/desktop/icons/armbian.png "${destination}"/usr/share/pixmaps/armbian
 
 # set default wallpaper
 #echo "
