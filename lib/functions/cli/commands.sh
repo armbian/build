@@ -42,10 +42,12 @@ function armbian_register_commands() {
 		# Patch to git & patch rewrite, for kernel
 		["kernel-patches-to-git"]="patch_kernel"  # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 		["rewrite-kernel-patches"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
+		["rewrite-kernel-patches-needing-rebase"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
 		# Patch to git & patch rewrite, for u-boot
 		["uboot-patches-to-git"]="patch_uboot"  # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
 		["rewrite-uboot-patches"]="patch_uboot" # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
+		["rewrite-uboot-patches-needing-rebase"]="patch_uboot" # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
 		["distccd"]="distccd"      # implemented in cli_distccd_pre_run and cli_distccd_run
@@ -114,8 +116,10 @@ function armbian_register_commands() {
 		["inventory-boards"]="TARGETS_FILE='something_that_does_not_exist_so_defaults_are_used'"
 
 		# patching
-		["rewrite-kernel-patches"]="REWRITE_PATCHES=yes" # rewrite the patches after round-tripping to git: "rebase patches"
-		["rewrite-uboot-patches"]="REWRITE_PATCHES=yes"  # rewrite the patches after round-tripping to git: "rebase patches"
+		["rewrite-kernel-patches"]="REWRITE_PATCHES='yes'" # rewrite the patches after round-tripping to git: "rebase patches"
+		["rewrite-uboot-patches"]="REWRITE_PATCHES='yes'"  # rewrite the patches after round-tripping to git: "rebase patches"
+		["rewrite-kernel-patches-needing-rebase"]="REWRITE_PATCHES='yes' REWRITE_PATCHES_NEEDING_REBASE='yes'"
+		["rewrite-uboot-patches-needing-rebase"]="REWRITE_PATCHES='yes' REWRITE_PATCHES_NEEDING_REBASE='yes'"
 
 		# artifact shortcuts
 		["rootfs"]="WHAT='rootfs' ${common_cli_artifact_vars}"
