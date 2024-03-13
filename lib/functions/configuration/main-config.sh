@@ -147,7 +147,7 @@ function do_main_configuration() {
 				if ! modprobe "$ROOTFS_TYPE"; then
 					exit_with_error "Filesystem type unsupported by build host:" "$ROOTFS_TYPE"
 				else
-					display_alert "Sucessfully loaded kernel mopdule for filesystem" "$ROOTFS_TYPE" ""
+					display_alert "Sucessfully loaded kernel module for filesystem" "$ROOTFS_TYPE" ""
 				fi
 			fi
 
@@ -158,8 +158,13 @@ function do_main_configuration() {
 				if [ -f "/boot/config-$(uname -r)" ]; then
 					build_host_kernel_config="/boot/config-$(uname -r)"
 				elif [ -f "/proc/config.gz" ]; then
-					pigz -dc /proc/config.gz > /tmp/build_host_kernel_config # use pigz since it's a host dependency listed in prepare-host.sh
-					build_host_kernel_config="/tmp/build_host_kernel_config"
+					# Try to extract kernel config from /proc/config.gz
+					if command -v gzip &> /dev/null; then
+						gzip -dc /proc/config.gz > /tmp/build_host_kernel_config
+						build_host_kernel_config="/tmp/build_host_kernel_config"
+					else
+						display_alert "Could extract kernel config from build host, please install 'gzip'." "Build might fail in case of missing kernel configs for '${ROOTFS_TYPE}'" "wrn"
+					fi
 				else
 					display_alert "Could not find kernel config of build host." "Build might fail in case of missing kernel configs for '${ROOTFS_TYPE}'." "wrn"
 				fi
