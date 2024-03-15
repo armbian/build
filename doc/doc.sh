@@ -1,8 +1,11 @@
-# paths
+#/bin/bash
+
+clear
+
 script_dir="$(dirname "$0")"
 
 # Load The Bash procedure Objects
-json_file="$script_dir/features.json"
+json_file="$script_dir/in/features.json"
 json_data=$(cat "$json_file")
 
 
@@ -61,28 +64,62 @@ EOF
         
         # Loop over each inner key
 
-for inner_key in $inner_keys; do
-    # Assign the values to variables
-    author=$(echo "$json_data" | jq -r ".$key.$inner_key.Author")
-    src_reference=$(echo "$json_data" | jq -r ".$key.$inner_key.src_reference")
-    desc=$(echo "$json_data" | jq -r ".$key.$inner_key.desc")
-    example=$(echo "$json_data" | jq -r ".$key.$inner_key.\"example / [note] test case\"")
-    status=$(echo "$json_data" | jq -r ".$key.$inner_key.status")
-    doc_link=$(echo "$json_data" | jq -r ".$key.$inner_key.doc_link")
-cat << EOF 
+    for inner_key in $inner_keys; do
+        # Assign the values to variables
+        author=$(echo "$json_data" | jq -r ".$key.$inner_key.Author")
+        src_reference=$(echo "$json_data" | jq -r ".$key.$inner_key.src_reference")
+        desc=$(echo "$json_data" | jq -r ".$key.$inner_key.desc")
+        example=$(echo "$json_data" | jq -r ".$key.$inner_key.\"example / [note] test case\"")
+        status=$(echo "$json_data" | jq -r ".$key.$inner_key.status")
+        doc_link=$(echo "$json_data" | jq -r ".$key.$inner_key.doc_link")
+    cat << EOF 
 | $inner_key | $desc | $example | [references]($src_reference) |  $status | 
 EOF
 
 
-done
     done
+done
 }
 
-echo "This will take a min a sort out the formating
-Try to keep the json file as simple as possible"
+cat << EOF
+Hold on to your hat, we're about to sort out the formatting. 
+Just need a Big Gulp of Pepsi to get the job done.
 
-echo "#!/bin/bash"  > "$script_dir/array.sh"
-bash_ass_aray >> "$script_dir/array.sh" 
-clear ; 
-markdown_table > "$script_dir/features.md"
+Us old-timers might be using the bash shell, and yes, that does mean we're a bit slow. 
+
+We're going to create a bash associative array and a markdown table from the JSON file.
+
+EOF
+
+# Create the bash Array script
+echo "#!/bin/bash"  > "$script_dir/out/features.sh"
+
+cat << EOF
+Keep that JSON file as simple as a Sunday morning for now. 
+We can spice it up with some fancy nesting later if we're feeling adventurous.
+
+And remember, patience is a virtue. So sit back, relax, and let the science happen.
+
+EOF
+
+
+bash_ass_aray >> "$script_dir/out/features.sh"
+clear
+
+cat << EOF
+Alrighty, we've got our associative array all set. 
+Now, let's whittle out a table for markdown. Patience is key here, remember we're more tortoise than hare.
+
+EOF
+
+markdown_table > "$script_dir/out/features.md"
+
+cat << EOF
+Whew! That was a bit of a slow ride, but we made it. 
+Not too painful, we hope. Thanks for moseying down this path with us. 
+Remember, slow and steady not only wins the race, but also ensures stability. 
+
+
+EOF
+
 
