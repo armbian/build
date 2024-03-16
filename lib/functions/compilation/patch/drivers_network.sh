@@ -160,7 +160,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# attach to specifics tag or branch
-		local rtl8192euver='commit:f2fc8af7ab58d2123eed1aa4428e713cdfc27976' # was "branch:realtek-4.4.x"
+		local rtl8192euver='commit:7ef82518547dcb5aacd8797e370332337b37d601' # was "branch:realtek-4.4.x"
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -192,7 +192,6 @@ driver_rtl8192EU() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-5.4.251-kernel.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 }
 
