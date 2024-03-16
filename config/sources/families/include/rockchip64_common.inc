@@ -14,7 +14,7 @@ BOOTENV_FILE='rockchip64.txt'
 UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
 OVERLAY_PREFIX="${OVERLAY_PREFIX:-"rockchip"}" # default to 'rockchip' if not set by board
-SERIALCON=${SERIALCON:=$([ "${BRANCH}" == "legacy" ] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
+SERIALCON=${SERIALCON:=$([[ "${BRANCH}" == "legacy" || "${BRANCH}" == "vendor" ]] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
 GOVERNOR="ondemand"
 ATFPATCHDIR='atf-rockchip64'
 BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-rockchip64"}"
