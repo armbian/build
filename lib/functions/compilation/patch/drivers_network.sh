@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0
 #
-# Copyright (c) 2013-2023 Igor Pecovnik, igor@armbian.com
+# Copyright (c) 2013-2024 Igor Pecovnik, igor@armbian.com
 #
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
@@ -50,7 +50,7 @@ driver_rtl8152_rtl8153() {
 		local rtl8152ver='commit:5a91843e032c00fd46b2c0b3cb2206685bb79420' # was "branch:master"
 
 		display_alert "Adding" "Drivers for 2.5Gb RTL8152/RTL8153 USB dongles ${rtl8152ver}" "info"
-		fetch_from_repo "$GITHUB_SOURCE/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/igorpecovnik/realtek-r8152-linux" "rtl8152" "${rtl8152ver}" "yes" # https://github.com/igorpecovnik/realtek-r8152-linux
 		cp -R "${SRC}/cache/sources/rtl8152/${rtl8152ver#*:}"/{r8152.c,compatibility.h} \
 			"$kerneldir/drivers/net/usb/"
 
@@ -58,6 +58,7 @@ driver_rtl8152_rtl8153() {
 }
 
 driver_rtl8189ES() {
+
 	# Wireless drivers for Realtek 8189ES chipsets
 
 	if linux-version compare "${version}" ge 3.14; then
@@ -67,7 +68,7 @@ driver_rtl8189ES() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" "rtl8189es" "${rtl8189esver}" "yes" # https://github.com/jwrdegoede/rtl8189ES_linux
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8189es"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8189es/"
@@ -115,7 +116,7 @@ driver_rtl8189FS() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" "rtl8189fs" "${rtl8189fsver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/jwrdegoede/rtl8189ES_linux" "rtl8189fs" "${rtl8189fsver}" "yes" # https://github.com/jwrdegoede/rtl8189ES_linux
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8189fs"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8189fs/"
@@ -164,7 +165,7 @@ driver_rtl8192EU() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/Mange/rtl8192eu-linux-driver" "rtl8192eu" "${rtl8192euver}" "yes" # https://github.com/Mange/rtl8192eu-linux-driver
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8192eu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8192eu/"
@@ -206,7 +207,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
 		cd "$kerneldir" || exit
 
 		# Brief detour. Turns out that HardKernel's vendor odroidxu4 kernel already has this driver
@@ -248,12 +249,13 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 driver_xradio_xr819() {
 
 	# Wireless drivers for Xradio XR819 chipsets
+	
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		display_alert "Adding" "Wireless drivers for Xradio XR819 chipsets" "info"
 		local xradio_xr819_ver="commit:3a1f77fb2db248b7d18d93b67b16e0d6c91db184"
 
-		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradio_xr819_ver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/fifteenhex/xradio" "xradio" "${xradio_xr819_ver}" "yes" # https://github.com/fifteenhex/xradio
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/xradio"
 		mkdir -p "$kerneldir/drivers/net/wireless/xradio/"
@@ -288,7 +290,7 @@ driver_rtl8811CU_rtl8821C() {
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210916" "rtl8811cu" "${rtl8811cuver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210916" "rtl8811cu" "${rtl8811cuver}" "yes" # https://github.com/morrownr/8821cu-20210916
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8811cu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8811cu/"
@@ -333,7 +335,7 @@ driver_rtl8188EU_rtl8188ETV() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 8188EU 8188EUS and 8188ETV chipsets ${rtl8188euver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8188eus" "rtl8188eu" "${rtl8188euver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8188eus" "rtl8188eu" "${rtl8188euver}" "yes" # https://github.com/aircrack-ng/rtl8188eus
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8188eu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8188eu/"
@@ -380,7 +382,7 @@ driver_rtl88x2bu() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/morrownr/88x2bu-20210702" "rtl88x2bu" "${rtl88x2buver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/88x2bu-20210702" "rtl88x2bu" "${rtl88x2buver}" "yes" # https://github.com/morrownr/88x2bu-20210702
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2bu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2bu/"
@@ -410,9 +412,10 @@ driver_rtl88x2bu() {
 }
 
 driver_rtw88() {
-	# Quite a few kernel families have KERNEL_DRIVERS_SKIP listing this driver. If so, this won't even be called.
 
 	# Upstream wireless RTW88 drivers
+	# Quite a few kernel families have KERNEL_DRIVERS_SKIP listing this driver. If so, this won't even be called.
+
 	if linux-version compare "${version}" ge 6.1; then
 		display_alert "Adding" "Upstream wireless RTW88 drivers" "info"
 		#if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" lt 6.6; then # came in with 6.6.14 and 6.7.2
@@ -445,7 +448,7 @@ driver_rtl88x2cs() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/jethome-ru/rtl88x2cs" "rtl88x2cs" "${rtl88x2csver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/jethome-ru/rtl88x2cs" "rtl88x2cs" "${rtl88x2csver}" "yes" # https://github.com/jethome-ru/rtl88x2cs
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl88x2cs"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl88x2cs/"
@@ -478,8 +481,10 @@ driver_rtl88x2cs() {
 		process_patch_file "${SRC}/patch/misc/wireless-rtl88x2cs-Fix-VFS-import.patch" "applying"
 	fi
 }
+
 #_bt for blueteeth
 driver_rtl8822cs_bt() {
+	
 	# Bluetooth support for Realtek 8822CS (hci_ver 0x8) chipsets
 	# both of these patches were upstreamed in 5.18
 	if linux-version compare "${version}" ge 5.11 && linux-version compare "${version}" lt 5.18; then
@@ -493,6 +498,7 @@ driver_rtl8822cs_bt() {
 }
 
 driver_rtl8723DS() {
+
 	# Wireless drivers for Realtek 8723DS chipsets
 
 	if linux-version compare "${version}" ge 5.0; then
@@ -502,7 +508,7 @@ driver_rtl8723DS() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes" # https://github.com/lwfinger/rtl8723ds
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8723ds"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8723ds/"
@@ -544,7 +550,7 @@ driver_rtl8723DU() {
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DU chipsets ${rtl8723duver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723du" "rtl8723du" "${rtl8723duver}" "yes" # https://github.com/lwfinger/rtl8723du
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8723du"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8723du/"
@@ -578,6 +584,7 @@ driver_rtl8723DU() {
 }
 
 driver_rtl8822BS() {
+
 	# Wireless drivers for Realtek 8822BS chipsets
 
 	if linux-version compare "${version}" ge 4.4 && linux-version compare "${version}" le 5.16; then
@@ -587,7 +594,7 @@ driver_rtl8822BS() {
 
 		local rtl8822bsver='commit:ee88babf55ad75b49c3312f997fd289e5ca4016b' # was "branch:local_rtl8822bs"
 
-		fetch_from_repo "$GITHUB_SOURCE/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes"
+		fetch_from_repo "$GITHUB_SOURCE/150balbes/wifi" "rtl8822bs" "${rtl8822bsver}" "yes" # https://github.com/150balbes/wifi
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8822bs"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8822bs/"
@@ -622,8 +629,11 @@ driver_rtl8822BS() {
 }
 
 driver_uwe5622() {
-	# Unisoc uwe5622 wireless Support
+
+	# Wireless drivers for Unisoc uwe5622 wireless
+
 	if linux-version compare "${version}" ge 5.15 && [[ "$LINUXFAMILY" == sunxi* || "$LINUXFAMILY" == rockchip64 || "$LINUXFAMILY" == rk35xx ]]; then
+
 		display_alert "Adding" "Drivers for Unisoc uwe5622 found on some Allwinner and Rockchip boards" "info"
 
 		if linux-version compare "${version}" ge 6.3; then
@@ -681,7 +691,8 @@ driver_uwe5622() {
 }
 
 driver_rtl8723cs() {
-	# Realtek rtl8723cs wireless support.
+
+	# Wireless drivers for Realtek rtl8723cs chipsets
 	# Driver has been borrowed from sunxi 6.1 megous patch archive.
 	# Applies only from linux 6.1 onwards, so older kernel archives does not require to be altered
 
