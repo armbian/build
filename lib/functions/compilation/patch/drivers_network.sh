@@ -234,10 +234,6 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 		echo "obj-\$(CONFIG_88XXAU) += rtl8812au/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8812au\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
-
-		# fix compilation for kernels >= 6.3
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-6.3.patch" "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8812au-fix-compilation-with-6.7-kernel.patch"  "applying"
 	fi
 
 }
