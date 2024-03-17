@@ -421,21 +421,12 @@ driver_rtw88() {
 	fi
 }
 
-function armbian_kernel_config__enable_rtl88x2cs_driver() {
-	if [[ "${LINUXFAMILY}" == "meson64" ]]; then
-		kernel_config_modifying_hashes+=("CONFIG_RTL8822CS=m")
-		if [[ -f .config ]]; then
-			display_alert "Enabling rtl88x2cs driver in kernel config" "armbian-kernel" "wrn"
-			kernel_config_set_m CONFIG_RTL8822CS
-		fi
-	fi
-}
-
 driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
+	# Only used for meson64 family boards, use mainline rtw88 driver for all other boards
 
-	if linux-version compare "${version}" ge 5.9; then
+	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]]; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
 		local rtl88x2csver='commit:10f39b61c51fa0302062059e00e9b5440dd3c7a6' # Commit date: Jan 24, 2024 (please update when updating commit ref)
@@ -495,7 +486,7 @@ driver_rtl8723DS() {
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0; then
+	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" le 6.7; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8723dsver='commit:52e593e8c889b68ba58bd51cbdbcad7fe71362e4' # Commit date: Nov 14, 2023 (please update when updating commit ref)
@@ -538,7 +529,7 @@ driver_rtl8723DU() {
 
 	# Wireless drivers for Realtek 8723DU chipsets
 
-	if linux-version compare "${version}" ge 5.0; then
+	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" le 6.7; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8723duver='commit:ae03b0861351f72808405ddda80e8aab105bcfce' # Commit date: Dec 8, 2023 (please update when updating commit ref)
