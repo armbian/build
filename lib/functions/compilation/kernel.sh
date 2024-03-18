@@ -122,7 +122,7 @@ function kernel_prepare_build_and_package() {
 	declare -A kernel_install_dirs=(
 		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"  # Used by `make install`
 		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules" # Used by `make modules_install`
-		#["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install` - disabled, only used for libc headers
+		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install` for libc headers
 	)
 
 	[ -z "${SRC_LOADADDR}" ] || install_make_params_quoted+=("${SRC_LOADADDR}") # For uImage
@@ -133,7 +133,8 @@ function kernel_prepare_build_and_package() {
 
 	install_make_params_quoted+=("INSTALL_MOD_STRIP=1") # strip modules during install
 
-	build_targets+=("modules_install") # headers_install disabled, only used for libc headers
+	build_targets+=("modules_install")
+	build_targets+=("headers_install") # headers_install for libc headers
 	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
 		display_alert "Kernel build will produce DTBs!" "DTBs YES" "debug"
 		build_targets+=("dtbs_install")
