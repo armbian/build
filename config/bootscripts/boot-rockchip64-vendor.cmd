@@ -2,6 +2,7 @@
 #
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
+# @TODO: This boot file is not used by any boards as of March 2024. Delete?
 
 setenv overlay_error "false"
 # default values
@@ -63,7 +64,8 @@ if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
 	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 else
-	if load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr; then
+	if test -e ${devtype} ${devnum} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr; then
+		load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr
 		echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 		source ${ramdisk_addr_r}
 	fi
