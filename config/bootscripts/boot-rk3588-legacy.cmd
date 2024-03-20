@@ -80,6 +80,8 @@ else
 		source ${load_addr}
 	fi
 fi
+
+echo "Trying 'kaslrseed' command... Info: 'Unknown command' can be safely ignored since 'kaslrseed' does not apply to all boards."
 kaslrseed # @TODO: This gives an error (Unknown command ' kaslrseed ' - try 'help') on many devices since CONFIG_CMD_KASLRSEED is not enabled
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
