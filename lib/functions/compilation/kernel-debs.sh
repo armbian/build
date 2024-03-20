@@ -88,7 +88,7 @@ function prepare_kernel_packaging_debs() {
 	fi
 
 	display_alert "Packaging linux-libc-dev" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
-	create_kernel_deb "linux-libc-dev" "${debs_target_dir}" kernel_package_callback_linux_libc_dev "linux-libc-dev"
+	create_kernel_deb "linux-libc-dev-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_libc_dev "linux-libc-dev"
 }
 
 function create_kernel_deb() {
@@ -551,9 +551,8 @@ function kernel_package_callback_linux_libc_dev() {
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Package: ${package_name}
 		Section: devel
-		Provides: linux-kernel-headers
-		Conflicts: linux-kernel-headers
-		Replaces: linux-kernel-headers
+		Priority: optional
+		Provides: linux-libc-dev
 		Architecture: ${ARCH}
 		Description: Armbian Linux support headers for userspace development
 		 This package provides userspaces headers from the Linux kernel.  These headers

@@ -197,7 +197,7 @@ function artifact_kernel_prepare_version() {
 		artifact_map_packages+=(["linux-dtb"]="linux-dtb-${BRANCH}-${LINUXFAMILY}")
 	fi
 
-	artifact_map_packages+=(["linux-libc-dev"]="linux-libc-dev")
+	artifact_map_packages+=(["linux-libc-dev"]="linux-libc-dev-${BRANCH}-${LINUXFAMILY}")
 
 	artifact_name="kernel-${LINUXFAMILY}-${BRANCH}" # default name of regular artifact
 
