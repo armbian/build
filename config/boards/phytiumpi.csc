@@ -1,7 +1,7 @@
 # Phytium PhytiumPi quad core 4GB SoC GBe USB3
 BOARD_NAME="Phytium Pi"
 BOARDFAMILY="phytium-embedded"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="chainsx"
 KERNEL_TARGET="legacy"
 BOOT_FDT_FILE="phytium/phytiumpi_firefly.dtb"
 SRC_EXTLINUX="yes"
