@@ -41,6 +41,11 @@ function run_tool_batcat() {
 		*x86_64-*-linux-gnu*) BATCAT_ARCH_OS="x86_64-unknown-linux-gnu" ;;
 		*aarch64-*-linux-gnu*) BATCAT_ARCH_OS="aarch64-unknown-linux-gnu" ;;
 		*x86_64-apple-darwin*) BATCAT_ARCH_OS="x86_64-apple-darwin" ;;
+		*riscv64*)
+			# check https://github.com/sharkdp/bat in the future, build might be possible
+			display_alert "No RISC-V riscv64 support for batcat" "batcat will not run" "wrn"
+			return 0
+			;;
 		*)
 			exit_with_error "unknown os/arch for batcat download: '$MACHINE'"
 			;;
@@ -97,8 +102,8 @@ function run_tool_batcat() {
 		bat_cat_columns=60
 	fi
 	case "${background_dark_or_light}" in
-		dark)	declare bat_cat_theme="Dracula" ;;
-		*)	declare bat_cat_theme="ansi" ;;
+		dark) declare bat_cat_theme="Dracula" ;;
+		*) declare bat_cat_theme="ansi" ;;
 	esac
 	display_alert "Calling batcat" "COLUMNS: ${bat_cat_columns} | $*" "debug"
 	BAT_CONFIG_DIR="${DIR_BATCAT}/config" BAT_CACHE_PATH="${DIR_BATCAT}/cache" "${BATCAT_BIN}" --theme "${bat_cat_theme}" --paging=never --force-colorization --wrap auto --terminal-width "${bat_cat_columns}" "$@"

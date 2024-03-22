@@ -48,6 +48,10 @@ function run_tool_oras() {
 	case "$MACHINE" in
 		*aarch64*) ORAS_ARCH="arm64" ;;
 		*x86_64*) ORAS_ARCH="amd64" ;;
+		*riscv64*)
+			ORAS_ARCH="riscv64"
+			ORAS_VERSION="1.2.0-beta.1" # Only v1.2.0-beta.1+ has risv64 support
+			;;
 		*)
 			exit_with_error "unknown arch: $MACHINE"
 			;;
