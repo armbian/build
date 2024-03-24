@@ -60,6 +60,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"INITRD_ARCH: ${INITRD_ARCH}"                                 # /etc/armbian-release
 		"KERNEL_IMAGE_TYPE: ${KERNEL_IMAGE_TYPE}"                     # /etc/armbian-release
 		"VENDOR: ${VENDOR}"                                           # /etc/armbian-release
+		"BOOT_SOC: ${BOOT_SOC}"                                       # /etc/armbian-release # See https://github.com/armbian/build/pull/6411
 		"hash_vars_no_normalize: ${hash_vars_no_normalize}"           # The non-normalized part, above
 	)
 	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
