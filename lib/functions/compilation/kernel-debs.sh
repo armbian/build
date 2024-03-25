@@ -86,6 +86,9 @@ function prepare_kernel_packaging_debs() {
 			display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "info"
 		fi
 	fi
+
+	display_alert "Packaging linux-libc-dev" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
+	create_kernel_deb "linux-libc-dev-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_libc_dev "linux-libc-dev"
 }
 
 function create_kernel_deb() {
@@ -530,4 +533,30 @@ function kernel_package_callback_linux_headers() {
 			echo "Done compiling kernel-headers tools (${kernel_version_family})."
 		EOT_POSTINST_FINISH
 	)
+}
+
+
+function kernel_package_callback_linux_libc_dev() {
+	display_alert "linux-libc-dev packaging" "${package_directory}" "debug"
+
+	mkdir -p "${package_directory}/usr"
+	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_HDR_PATH]}/include" "${package_directory}/usr"
+	HOST_ARCH=$(dpkg-architecture -a${ARCH} -q"DEB_HOST_MULTIARCH")
+	run_host_command_logged mkdir "${package_directory}/usr/include/${HOST_ARCH}"
+	run_host_command_logged mv "${package_directory}/usr/include/asm" "${package_directory}/usr/include/${HOST_ARCH}"
+
+    # Generate a control file
+	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
+		Version: ${artifact_version}
+		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
+		Package: ${package_name}
+		Section: devel
+		Priority: optional
+		Provides: linux-libc-dev
+		Architecture: ${ARCH}
+		Description: Armbian Linux support headers for userspace development
+		 This package provides userspaces headers from the Linux kernel.  These headers
+		 are used by the installed headers for GNU glibc and other system libraries.
+		Multi-Arch: same
+	CONTROL_FILE
 }
