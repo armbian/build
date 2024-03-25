@@ -521,6 +521,11 @@ driver_rtl8723cs() {
 	if linux-version compare "${version}" ge 6.7; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.7.patch" "applying"
 	fi
+
+	if linux-version compare "${version}" ge 6.8; then
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.8.patch" "applying"
+	fi
+
 }
 
 
