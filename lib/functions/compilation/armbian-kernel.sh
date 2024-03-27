@@ -19,7 +19,12 @@ function armbian_kernel_config__disable_various_options() {
 		kernel_config_set_n CONFIG_MODULE_COMPRESS_XZ # No use double-compressing modules
 		kernel_config_set_n CONFIG_MODULE_COMPRESS_ZSTD
 		kernel_config_set_n CONFIG_MODULE_COMPRESS_GZIP
-		kernel_config_set_y CONFIG_MODULE_COMPRESS_NONE
+
+		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.0; then
+			kernel_config_set_y CONFIG_MODULE_COMPRESS_NONE	# Introduced in 6.0
+		else
+			kernel_config_set_n CONFIG_MODULE_COMPRESS # Only available up to 5.12
+		fi
 
 		kernel_config_set_n CONFIG_SECURITY_LOCKDOWN_LSM
 		kernel_config_set_n CONFIG_MODULE_SIG # No use signing modules
@@ -31,8 +36,12 @@ function armbian_kernel_config__disable_various_options() {
 		# DONE: Disable: debug option
 		kernel_config_set_n DEBUG_KERNEL	# Armbian doesn't know how to package a debug kernel.
 		kernel_config_set_n EXPERT			# This needs to be disabled as well since DEBUG_KERNEL=y is a dependency for EXPERT=y, meaning DEBUG_KERNEL would be re-enabled automatically if EXPERT is enabled
-		kernel_config_set_y DEBUG_INFO_NONE # Do not build the kernel with debugging information, which will result in a faster and smaller build. (NOTE: Not needed (?) when DEBUG_KERNEL=n and EXPERT=n since all DEBUG_INFO options are missing anyway in that case)
+		#kernel_config_set_y DEBUG_INFO_NONE # Do not build the kernel with debugging information, which will result in a faster and smaller build. (NOTE: Not needed (?) when DEBUG_KERNEL=n and EXPERT=n since all DEBUG_INFO options are missing anyway in that case)
 		kernel_config_set_n GDB_SCRIPTS
+
+		if linux-version compare "${KERNEL_MAJOR_MINOR}" le 6.5; then
+			kernel_config_set_n EMBEDDED	# Only present up to 6.5; this option forces EXPERT=y so it needs to be disabled
+		fi
 
 		# @TODO: Enable the options for the extrawifi/drivers; so we don't need to worry about them when updating configs
 	fi
