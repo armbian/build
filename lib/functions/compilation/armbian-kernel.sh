@@ -52,8 +52,19 @@ function kernel_config_set_y() {
 function kernel_config_set_n() {
 	declare config="$1"
 	display_alert "Disabling kernel config/module" "${config}=n" "debug"
-	run_host_command_logged ./scripts/config --disable "${config}"
+
+	# Only set to "n" if the config option can be found in the config file.
+	# Otherwise the option would maybe be considered as misconfiguration.
+	if grep -qE "(\b${config}\=|CONFIG_${config}\=)" .config; then
+		run_host_command_logged ./scripts/config --disable "${config}"
+	elif grep -qE "(\b${config} is not set|\bCONFIG_${config} is not set)" .config; then
+		display_alert "Kernel config/module was already disabled" "${config}=n skipped" "debug"
+	else
+		display_alert "Kernel config/module was not found in the config file" "${config}=n was not added to prevent misconfiguration" "debug"
+	fi
+
 }
+
 function kernel_config_set_string() {
 	declare config="$1"
 	declare value="${2}"
