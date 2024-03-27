@@ -34,10 +34,6 @@ function kernel_config() {
 	LOG_SECTION="kernel_config_initialize" do_with_logging do_with_hooks kernel_config_initialize
 
 	if [[ "${KERNEL_CONFIGURE}" == "yes" ]]; then
-
-		# Check sanity of kernel config and repair the config if necessary
-		LOG_SECTION="kernel_config_check_and_repair" do_with_logging do_with_hooks kernel_config_check_and_repair
-
 		# Start interactive config menu unless running rewrite-kernel-config
 		if [[ "${ARMBIAN_COMMAND}" != "rewrite-kernel-config" ]]; then
 			# This piece is interactive, no logging
@@ -86,6 +82,8 @@ function kernel_config_initialize() {
 
 	# Save the config state after the extensions forced some kernel options, for later checks
 	run_host_command_logged cp -pv ".config" "${config_after_kernel_config_extension_filename}"
+	# Check sanity of kernel config and repair the config if necessary
+	kernel_config_check_and_repair
 	
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 }
@@ -154,7 +152,7 @@ function kernel_config_export() {
 # This function checks the config, re-establishes its sanity if necessary and outputs any changes to the user
 function kernel_config_check_and_repair() {
 	# Re-run kernel make to automatically solve any dependencies and/or misconfigurations
-	run_kernel_make_dialog oldconfig
+	run_kernel_make olddefconfig
 
 	# Compare the previously saved config file with the current one
 	if cmp --silent "${kernel_work_dir}/.config" "${kernel_work_dir}/${config_after_kernel_config_extension_filename}"; then
@@ -163,7 +161,7 @@ function kernel_config_check_and_repair() {
 	else
 		# Warn user and output diffs if make had to change anything because of missing dependencies or misconfigurations
 		display_alert "Forced kernel options introduced misconfigurations or missing dependencies!" "Please re-run rewrite-kernel-config" "warn"
-		display_alert "If this warning persists" "please remove dependent options using kernel-config or adapt your custom_kernel_config hooks" "warn"
+		display_alert "If this warning persists after re-run" "please remove dependent options using kernel-config or adapt your custom_kernel_config hooks" "warn"
 		display_alert "In some cases, the issue might also be" "misconfigured options in armbian_kernel_config hooks" "debug"
 
 		run_host_command_logged scripts/diffconfig "${config_after_kernel_config_extension_filename}" ".config"
