@@ -107,7 +107,7 @@ function prepare_host_noninteractive() {
 	fi
 
 	# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
-	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
+	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}" "${SRC}"/output/info
 
 	# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,rootfs} "${SRC}"/.tmp
