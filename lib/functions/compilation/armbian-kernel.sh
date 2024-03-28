@@ -50,7 +50,8 @@ function armbian_kernel_config__disable_various_options() {
 function armbian_kernel_config__enable_config_access_in_live_system() {
 	kernel_config_modifying_hashes+=("CONFIG_IKCONFIG_PROC=y")
 	if [[ -f .config ]]; then
-		kernel_config_set_n CONFIG_IKCONFIG_PROC # This option enables access to the kernel configuration file through /proc/config.gz
+		kernel_config_set_y CONFIG_IKCONFIG			# This information can be extracted from the kernel image file with the script scripts/extract-ikconfig and used as input to rebuild the current kernel or to build another kernel
+		kernel_config_set_y CONFIG_IKCONFIG_PROC	# This option enables access to the kernel configuration file through /proc/config.gz
 	fi
 }
 
