@@ -113,7 +113,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	deboostrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
 
-	# Set DEBOOTSTRAP_DIR only for this invocation; if we instead export it, the 2nd stage will fail
+	# Set DEBOOTSTRAP_DIR only for this invocation; if we instead export it, the second stage will fail
 	run_host_command_logged "DEBOOTSTRAP_DIR='${debootstrap_wanted_dir}'" "${debootstrap_bin}" "${deboostrap_arguments[@]}" || {
 		exit_with_error "Debootstrap first stage failed" "${debootstrap_bin} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
