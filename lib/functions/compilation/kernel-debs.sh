@@ -85,10 +85,12 @@ function prepare_kernel_packaging_debs() {
 		else
 			display_alert "Skipping linux-headers package" "for ${KERNEL_MAJOR_MINOR} kernel version" "info"
 		fi
+
+		display_alert "Packaging linux-libc-dev" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
+		create_kernel_deb "linux-libc-dev-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_libc_dev "linux-libc-dev"
 	fi
 
-	display_alert "Packaging linux-libc-dev" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
-	create_kernel_deb "linux-libc-dev-${BRANCH}-${LINUXFAMILY}" "${debs_target_dir}" kernel_package_callback_linux_libc_dev "linux-libc-dev"
+	return 0
 }
 
 function create_kernel_deb() {
@@ -535,7 +537,6 @@ function kernel_package_callback_linux_headers() {
 	)
 }
 
-
 function kernel_package_callback_linux_libc_dev() {
 	display_alert "linux-libc-dev packaging" "${package_directory}" "debug"
 
@@ -545,7 +546,7 @@ function kernel_package_callback_linux_libc_dev() {
 	run_host_command_logged mkdir "${package_directory}/usr/include/${HOST_ARCH}"
 	run_host_command_logged mv "${package_directory}/usr/include/asm" "${package_directory}/usr/include/${HOST_ARCH}"
 
-    # Generate a control file
+	# Generate a control file
 	cat <<- CONTROL_FILE > "${package_DEBIAN_dir}/control"
 		Version: ${artifact_version}
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
