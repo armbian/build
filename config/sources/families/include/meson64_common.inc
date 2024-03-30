@@ -53,7 +53,7 @@ esac
 # Use custom vendor driver for wireless rtl88x2cs
 # See https://github.com/armbian/build/pull/6227
 # @TODO Only use for BOARDFAMILY="jethub" devices?
-function armbian_kernel_config__enable_rtl88x2cs_driver() {
+function custom_kernel_config__enable_rtl88x2cs_driver() {
 	kernel_config_modifying_hashes+=("CONFIG_RTL8822CS=m")
 	if [[ -f .config ]]; then
 		display_alert "Enabling rtl88x2cs driver in kernel config" "armbian-kernel" "wrn"
