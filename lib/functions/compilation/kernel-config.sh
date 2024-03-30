@@ -88,13 +88,16 @@ function kernel_config_initialize() {
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 }
 
+# These kernel config hooks are always called twice, once without being in kernel directory and once with current directory being the kernel work directory.
+# You must check with "if [[ -f .config ]]; then" in which of the two phases you are. Otherwise, functions like "kernel_config_set_y" won't work.
 function call_extensions_kernel_config() {
 	# Run the core-armbian config modifications here, built-in extensions:
 	call_extension_method "armbian_kernel_config" <<- 'ARMBIAN_KERNEL_CONFIG'
 		*Armbian-core default hook point for pre-olddefconfig Kernel config modifications*
 		NOT for user consumption. Do NOT use this hook, this is internal to Armbian.
 		Instead, use `custom_kernel_config` which runs later and can undo anything done by this step.
-		Important: this hook might be run multiple times, and one of them might not have a .config in place.
+		IMPORTANT: this hook might be run multiple times, and one of them might not have a .config in place!
+		Therefore, please check with "if [[ -f .config ]]; then" if you want to modify the kernel config.
 		Either way, the hook _must_ add representative changes to the `kernel_config_modifying_hashes` array, for kernel config hashing.
 		Please note: Manually changing options doesn't check the validity of the .config file. Check for warnings in your build log.
 	ARMBIAN_KERNEL_CONFIG
@@ -105,7 +108,8 @@ function call_extensions_kernel_config() {
 		Called after ${LINUXCONFIG}.config is put in place (.config).
 		A good place to customize the .config directly.
 		Armbian default Kconfig modifications have already been applied and can be overriden.
-		Important: this hook might be run multiple times, and one of them might not have a .config in place.
+		IMPORTANT: this hook might be run multiple times, and one of them might not have a .config in place!
+		Therefore, please check with "if [[ -f .config ]]; then" if you want to modify the kernel config.
 		Either way, the hook _must_ add representative changes to the `kernel_config_modifying_hashes` array, for kernel config hashing.
 		Please note: Manually changing options doesn't check the validity of the .config file. Check for warnings in your build log.
 	CUSTOM_KERNEL_CONFIG
