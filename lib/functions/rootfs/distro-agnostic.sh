@@ -19,7 +19,8 @@ function install_distribution_agnostic() {
 	echo "/dev/mmcblk0p2 /usr $ROOTFS_TYPE defaults 0 2" >> "${SDCARD}"/etc/fstab
 
 	# create modules file
-	local modules=MODULES_${BRANCH^^}
+	local modules=MODULES_${BRANCH^^} # BRANCH, uppercase
+	modules=${modules//-/_}           # replace dashes with underscores
 	if [[ -n "${!modules}" ]]; then
 		tr ' ' '\n' <<< "${!modules}" > "${SDCARD}"/etc/modules
 	elif [[ -n "${MODULES}" ]]; then
@@ -27,7 +28,8 @@ function install_distribution_agnostic() {
 	fi
 
 	# create blacklist files
-	local blacklist=MODULES_BLACKLIST_${BRANCH^^}
+	local blacklist=MODULES_BLACKLIST_${BRANCH^^} # BRANCH, uppercase
+	blacklist=${blacklist//-/_}                   # replace dashes with underscores
 	if [[ -n "${!blacklist}" ]]; then
 		tr ' ' '\n' <<< "${!blacklist}" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
 	elif [[ -n "${MODULES_BLACKLIST}" ]]; then
