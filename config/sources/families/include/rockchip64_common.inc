@@ -14,7 +14,7 @@ BOOTENV_FILE='rockchip64.txt'
 UBOOT_TARGET_MAP=";;idbloader.bin uboot.img trust.bin"
 BOOTDELAY=0
 OVERLAY_PREFIX="${OVERLAY_PREFIX:-"rockchip"}" # default to 'rockchip' if not set by board
-SERIALCON=${SERIALCON:=$([[ "${BRANCH}" == "legacy" || "${BRANCH}" == "vendor" ]] && echo "ttyFIQ0:1500000" || echo "ttyS2:1500000")}
+# SERIALCON is handled/defaulted in hook post_family_config__900_late_default_serial_console_by_branch at end of this file
 GOVERNOR="ondemand"
 ATFPATCHDIR='atf-rockchip64'
 BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-rockchip64"}"
@@ -320,4 +320,28 @@ family_tweaks_bsp() {
 	mkdir -p $destination/etc/sysfs.d
 	cp $SRC/packages/bsp/rk3399/20-gpu-governor.conf $destination/etc/sysfs.d/
 
+}
+
+# A late hook to default SERIALCON based on BRANCH; BOARD and hooks (earlier than 900) can set it to override this.
+function post_family_config__900_late_default_serial_console_by_branch() {
+	display_alert "rockchip64_common: defaulting SERIALCON" "initial SERIALCON: '${SERIALCON:-"unset"}'" "debug"
+
+	# If already set (by BOARD or hooks/extensions ran before this), keep it.
+	if [[ -n $SERIALCON ]]; then
+		display_alert "rockchip64_common: defaulting SERIALCON" "SERIALCON already set to '${SERIALCON}', keeping it." "info"
+		return 0
+	fi
+
+	case $BRANCH in
+		legacy | vendor)
+			display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyFIQ0 for BRANCH='${BRANCH}'" "info"
+			SERIALCON="ttyFIQ0"
+			;;
+		*)
+			display_alert "rockchip64_common: defaulting SERIALCON" "Setting SERIALCON to ttyS2 for BRANCH='${BRANCH}'" "info"
+			SERIALCON="ttyS2"
+			;;
+	esac
+
+	display_alert "rockchip64_common: defaulting SERIALCON" "final SERIALCON: '${SERIALCON}' for BRANCH='${BRANCH}'" "debug"
 }
