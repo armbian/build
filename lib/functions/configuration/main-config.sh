@@ -301,7 +301,8 @@ function do_extra_configuration() {
 	[[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 	[[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
 
-	declare BOOTCONFIG_VAR_NAME="BOOTCONFIG_${BRANCH^^}"
+	declare BOOTCONFIG_VAR_NAME="BOOTCONFIG_${BRANCH^^}" # Branch name, uppercase
+	BOOTCONFIG_VAR_NAME=${BOOTCONFIG_VAR_NAME//-/_}      # Replace dashes with underscores
 	[[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
 	[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY" # @TODO move to hook
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
