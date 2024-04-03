@@ -43,6 +43,7 @@ function post_install_kernel_debs__amazingfated_rk35xx_multimedia() {
 	declare -a pkgs=(rockchip-multimedia-config)
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
 		pkgs+=(chromium-browser libwidevinecdm)
+		pkgs+=("libv4l-rkmpp" "gstreamer1.0-rockchip") # @TODO: remove when added as dependencies to chromium...?
 	fi
 
 	display_alert "Installing rockchip-multimedia by Amazingfate packages" "${EXTENSION} :: ${pkgs[*]}" "info"
