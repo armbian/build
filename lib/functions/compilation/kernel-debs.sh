@@ -554,6 +554,7 @@ function kernel_package_callback_linux_libc_dev() {
 		Section: devel
 		Priority: optional
 		Provides: linux-libc-dev
+		Conflicts: linux-libc-dev
 		Architecture: ${ARCH}
 		Description: Armbian Linux support headers for userspace development
 		 This package provides userspaces headers from the Linux kernel.  These headers
