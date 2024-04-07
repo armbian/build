@@ -196,6 +196,12 @@ function kernel_dtb_only_build() {
 			exit_with_error "Failed to parse BOOT_FDT_FILE: ${BOOT_FDT_FILE}"
 		fi
 
+		# Copy the bin dtb for convenience
+		display_alert "Kernel DTB-only for development" "Copying binary ${BOOT_FDT_FILE}" "warn"
+		declare binary_dtb="${kernel_work_dir}/arch/${ARCH}/boot/dts/${fdt_dir}/${fdt_file}"
+		declare binary_dtb_dest="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.dtb"
+		run_host_command_logged cp -v "${binary_dtb}" "${binary_dtb_dest}"
+
 		# Kernel build should produce a preprocessed version of all DTS files built into DTBs at arch/arm64/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp
 		declare preprocessed_fdt_source="${kernel_work_dir}/arch/${ARCH}/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp"
 
