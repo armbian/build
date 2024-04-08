@@ -14,14 +14,14 @@
 function early_prepare_pip3_dependencies_for_python_tools() {
 	# This is like a stupid version of requirements.txt
 	declare -a -g python3_pip_dependencies=(
-		"unidiff==0.7.4"      # for parsing unified diff
-		"GitPython==3.1.30"   # for manipulating git repos
-		"unidecode==1.3.6"    # for converting strings to ascii
+		"unidiff==0.7.5"      # for parsing unified diff
+		"GitPython==3.1.43"   # for manipulating git repos
+		"unidecode==1.3.8"    # for converting strings to ascii
 		"coloredlogs==15.0.1" # for colored logging
 		"PyYAML==6.0.1"       # for parsing/writing YAML
-		"oras==0.1.17"        # for OCI stuff in mapper-oci-update
-		"Jinja2==3.1.2"       # for templating
-		"rich==13.4.1"        # for rich text formatting
+		"oras==0.1.29"        # for OCI stuff in mapper-oci-update
+		"Jinja2==3.1.3"       # for templating
+		"rich==13.7.1"        # for rich text formatting
 	)
 	return 0
 }
