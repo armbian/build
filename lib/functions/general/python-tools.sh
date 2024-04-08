@@ -22,6 +22,8 @@ function early_prepare_pip3_dependencies_for_python_tools() {
 		"oras==0.1.29"        # for OCI stuff in mapper-oci-update
 		"Jinja2==3.1.3"       # for templating
 		"rich==13.7.1"        # for rich text formatting
+		"dtschema"            # for checking dts files and dt bindings (use latest version)
+		"yamllint"            # for checking dts files and dt bindings (use latest version)
 	)
 	return 0
 }
@@ -47,13 +49,19 @@ function prepare_python_and_pip() {
 	fi
 
 	# Check that the actual python3 --version is 3.9 at least
-	declare python3_version python3_full_version
-	python3_full_version="$("${python3_binary_path}" --version)" # "cut" below masks errors, do it twice.
+	declare python3_version python3_version_full
+	python3_version_full="$("${python3_binary_path}" --version)" # "cut" below masks errors, do it twice.
 	python3_version="$("${python3_binary_path}" --version | cut -d' ' -f2)"
-	display_alert "Python3 version" "${python3_version} - '${python3_full_version}'" "info"
+	display_alert "Python3 version" "${python3_version} - '${python3_version_full}'" "info"
 	if ! linux-version compare "${python3_version}" ge "3.9"; then
 		exit_with_error "Python3 version is too old (${python3_version}), need at least 3.9"
 	fi
+
+	declare python3_version_majorminor python3_version_string
+	# Extract the major and minor version numbers (e.g., "3.12" instead of "3.12.2")
+	python3_version_majorminor=$(echo "${python3_version_full}" | awk '{print $2}' | cut -d. -f1,2)
+	# Construct the version string (e.g., "python3.12")
+	python3_version_string="python$python3_version_majorminor"
 
 	# Check actual pip3 version
 	#   Note: we don't use "/usr/bin/pip3" at all, since it's commonly missing. instead "python -m pip"
@@ -100,16 +108,19 @@ function prepare_python_and_pip() {
 	declare python_hash_base="${python_pip_cache}/pip_pkg_hash"
 	declare python_hash_file="${python_hash_base}_${python3_pip_dependencies_hash}"
 	declare python3_user_base="${python_pip_cache}/base"
+	declare python3_modules_path="${python3_user_base}/lib/${python3_version_string}/site-packages"
 	declare python3_pycache="${python_pip_cache}/pycache"
 
 	# declare a readonly global dict with all needed info for executing stuff using this setup
 	declare -r -g -A PYTHON3_INFO=(
 		[BIN]="${python3_binary_path}"
 		[USERBASE]="${python3_user_base}"
+		[MODULES_PATH]="${python3_modules_path}"
 		[PYCACHEPREFIX]="${python3_pycache}"
 		[HASH]="${python3_pip_dependencies_hash}"
 		[DEPS]="${python3_pip_dependencies[*]}"
 		[VERSION]="${python3_version}"
+		[VERSION_STRING]="${python3_version_string}"
 		[PIP_VERSION]="${pip3_version}"
 	)
 
