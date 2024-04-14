@@ -113,7 +113,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	deboostrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
 
-	# Set DEBOOTSTRAP_DIR only for this invocation; if we instead export it, the 2nd stage will fail
+	# Set DEBOOTSTRAP_DIR only for this invocation; if we instead export it, the second stage will fail
 	run_host_command_logged "DEBOOTSTRAP_DIR='${debootstrap_wanted_dir}'" "${debootstrap_bin}" "${deboostrap_arguments[@]}" || {
 		exit_with_error "Debootstrap first stage failed" "${debootstrap_bin} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
@@ -124,6 +124,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks() @TODO: which is too late for a cache
 
 	display_alert "Installing base system" "Stage 2/2" "info"
+	declare -g -a if_error_find_files_sdcard=("debootstrap.log") # if command fails, go look for this file and show it's contents during error processing
 	declare -g if_error_detail_message="Debootstrap second stage failed ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"

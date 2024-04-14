@@ -22,7 +22,13 @@ function config_possibly_interactive_kernel_board() {
 function config_possibly_interactive_branch_release_desktop_minimal() {
 	interactive_config_ask_branch
 	[[ -z $BRANCH ]] && exit_with_error "No kernel branch selected: BRANCH"
-	[[ ${KERNEL_TARGET} != *${BRANCH}* && ${BRANCH} != "ddk" ]] && exit_with_error "Kernel branch not defined for this board: '${BRANCH}' for '${BOARD}'"
+
+	# Check for BRANCH validity, warn but don't break the build if invalid; mark it as invalid for later checks -- if really no valid config, common.conf will exit with error later.
+	declare -g BRANCH_VALID_FOR_BOARD='yes'
+	if [[ ${KERNEL_TARGET} != *${BRANCH}* && ${BRANCH} != "ddk" ]]; then
+		display_alert "BRANCH not found for board" "BRANCH='${BRANCH}' not valid for BOARD='${BOARD}' - listed KERNEL_TARGET='${KERNEL_TARGET}'" "warn"
+		declare -g BRANCH_VALID_FOR_BOARD='no'
+	fi
 
 	interactive_config_ask_release
 	# If building image or rootfs (and thus "NEEDS_BINFMT=yes"), then RELEASE must be set.

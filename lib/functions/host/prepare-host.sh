@@ -289,8 +289,8 @@ function adaptative_prepare_host_dependencies() {
 	### Python
 	host_deps_add_extra_python # See python-tools.sh::host_deps_add_extra_python()
 
-	# Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+
-	host_dependencies+=("python3-dev" "python3-distutils" "python3-setuptools" "python3-pip")
+	# Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+; ffi-dev is needed for some Python packages when the wheel is not prebuilt
+	host_dependencies+=("python3-dev" "python3-distutils" "python3-setuptools" "python3-pip" "libffi-dev")
 
 	# Python2 -- required for some older u-boot builds
 	# Debian 'sid'/'bookworm' and Ubuntu 'lunar' does not carry python2 anymore; in this case some u-boot's might fail to build.
