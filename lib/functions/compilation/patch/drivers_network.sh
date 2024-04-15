@@ -216,7 +216,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 driver_xradio_xr819() {
 
 	# Wireless drivers for Xradio XR819 chipsets
-	
+
 	if linux-version compare "${version}" ge 4.19 && [[ "$LINUXFAMILY" == sunxi* ]]; then
 
 		# Attach to specific commit (is branch:master)
@@ -527,23 +527,13 @@ driver_rtl8723cs() {
 
 }
 
-
-###
-###
-### NOTICE: <=6.7 BELOW ONLY
-###
-### All drivers and patches listed below are only used in kernels <=6.7 and **not** in >=6.8
-### Sorted by: "linux-version le ..." from high (newer kernel) to low (older kernel).
-### It is sorted like this for better visibility.
-###
-### v v v v v v v v v v v v v v v v v v v v v v v
-
-
+###  The vendor's RTL8723DS driver is still required for RockPI-S support because
+###  the RTW88 driver for the chip configures its RF gains incorrectly
 driver_rtl8723DS() {
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" le 6.7; then
+	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8723dsver='commit:52e593e8c889b68ba58bd51cbdbcad7fe71362e4' # Commit date: Nov 14, 2023 (please update when updating commit ref)
@@ -581,6 +571,16 @@ driver_rtl8723DS() {
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-VFS-import.patch" "applying"
 	fi
 }
+
+###
+###
+### NOTICE: <=6.7 BELOW ONLY
+###
+### All drivers and patches listed below are only used in kernels <=6.7 and **not** in >=6.8
+### Sorted by: "linux-version le ..." from high (newer kernel) to low (older kernel).
+### It is sorted like this for better visibility.
+###
+### v v v v v v v v v v v v v v v v v v v v v v v
 
 driver_rtl8723DU() {
 
