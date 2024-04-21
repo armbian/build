@@ -1,0 +1,110 @@
+diff --git a/arch/arm/configs/imx_v6_v7_defconfig b/arch/arm/configs/imx_v6_v7_defconfig
+index 7327fce87808..b06128da94e5 100644
+--- a/arch/arm/configs/imx_v6_v7_defconfig
++++ b/arch/arm/configs/imx_v6_v7_defconfig
+@@ -336,6 +336,7 @@ CONFIG_USB_SERIAL_FTDI_SIO=m
+ CONFIG_USB_SERIAL_OPTION=m
+ CONFIG_USB_TEST=m
+ CONFIG_USB_EHSET_TEST_FIXTURE=m
++CONFIG_USB_ONBOARD_HUB=y
+ CONFIG_NOP_USB_XCEIV=y
+ CONFIG_USB_MXS_PHY=y
+ CONFIG_USB_GADGET=y
+
+diff --git a/arch/arm/boot/dts/nxp/imx/imx6qdl-udoo.dtsi b/arch/arm/boot/dts/nxp/imx/imx6qdl-udoo.dtsi
+index 647ba5e623dd..14272b42f9a1 100644
+--- a/arch/arm/boot/dts/nxp/imx/imx6qdl-udoo.dtsi
++++ b/arch/arm/boot/dts/nxp/imx/imx6qdl-udoo.dtsi
+@@ -59,16 +59,6 @@ panel_in: endpoint {
+ 		};
+ 	};
+ 
+-	reg_usb_h1_vbus: regulator-usb-h1-vbus {
+-		compatible = "regulator-fixed";
+-		regulator-name = "usb_h1_vbus";
+-		regulator-min-microvolt = <5000000>;
+-		regulator-max-microvolt = <5000000>;
+-		enable-active-high;
+-		startup-delay-us = <2>; /* USB2415 requires a POR of 1 us minimum */
+-		gpio = <&gpio7 12 0>;
+-	};
+-
+ 	reg_panel: regulator-panel {
+ 		compatible = "regulator-fixed";
+ 		regulator-name = "lcd_panel";
+@@ -285,9 +275,18 @@ &uart4 {
+ &usbh1 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&pinctrl_usbh>;
+-	vbus-supply = <&reg_usb_h1_vbus>;
+-	clocks = <&clks IMX6QDL_CLK_CKO>;
+-	status = "disabled";
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	usb-port@1 {
++		compatible = "usb424,2514";
++		reg = <1>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		clocks = <&clks IMX6QDL_CLK_CKO>;
++		reset-gpios = <&gpio7 12 GPIO_ACTIVE_LOW>;
++	};
+ };
+ 
+ &usbotg {
+
+diff --git a/drivers/usb/misc/onboard_usb_hub.c b/drivers/usb/misc/onboard_usb_hub.c
+index 6d122772a97064..3b209104f648fd 100644
+--- a/drivers/usb/misc/onboard_usb_hub.c
++++ b/drivers/usb/misc/onboard_usb_hub.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) 2022, Google LLC
+  */
+ 
++#include <linux/clk.h>
+ #include <linux/device.h>
+ #include <linux/export.h>
+ #include <linux/err.h>
+@@ -61,12 +62,19 @@ struct onboard_hub {
+ 	bool going_away;
+ 	struct list_head udev_list;
+ 	struct mutex lock;
++	struct clk *clk;
+ };
+ 
+ static int onboard_hub_power_on(struct onboard_hub *hub)
+ {
+ 	int err;
+ 
++	err = clk_prepare_enable(hub->clk);
++	if (err) {
++		dev_err(hub->dev, "failed to enable clock: %pe\n", ERR_PTR(err));
++		return err;
++	}
++
+ 	err = regulator_bulk_enable(hub->pdata->num_supplies, hub->supplies);
+ 	if (err) {
+ 		dev_err(hub->dev, "failed to enable supplies: %pe\n", ERR_PTR(err));
+@@ -93,6 +101,8 @@ static int onboard_hub_power_off(struct onboard_hub *hub)
+ 		return err;
+ 	}
+ 
++	clk_disable_unprepare(hub->clk);
++
+ 	hub->is_powered_on = false;
+ 
+ 	return 0;
+@@ -267,6 +277,10 @@ static int onboard_hub_probe(struct platform_device *pdev)
+ 		return err;
+ 	}
+ 
++	hub->clk = devm_clk_get_optional(dev, NULL);
++	if (IS_ERR(hub->clk))
++		return dev_err_probe(dev, PTR_ERR(hub->clk), "failed to get clock\n");
++
+ 	hub->reset_gpio = devm_gpiod_get_optional(dev, "reset",
+ 						  GPIOD_OUT_HIGH);
+ 	if (IS_ERR(hub->reset_gpio))
+
