@@ -2,7 +2,7 @@
 BOARD_NAME="Phytium Pi"
 BOARDFAMILY="phytium-embedded"
 BOARD_MAINTAINER="chainsx"
-KERNEL_TARGET="legacy"
+KERNEL_TARGET="legacy,current"
 BOOT_FDT_FILE="phytium/phytiumpi_firefly.dtb"
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyAMA1,115200 earlycon=pl011,0x2800d000 rootfstype=ext4 rootwait cma=256m"
