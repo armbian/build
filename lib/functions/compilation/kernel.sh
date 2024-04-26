@@ -53,14 +53,7 @@ function compile_kernel() {
 	declare hash pre_patch_version
 	kernel_main_patching # has it's own logging sections inside
 
-	# Validate dts file if flag is set and stop after validation.
-	if [[ "${DTS_VALIDATE}" == yes ]]; then
-		LOG_SECTION="validate_dts" do_with_logging validate_dts
-		display_alert "DTS_VALIDATE is set, stopping." "DTS_VALIDATE=yes and dts sucessfully checked. See output above to fix your board's dts file." "cachehit"
-		return 0
-	fi
-
-	# Stop after patching.
+	# Stop after patching;
 	if [[ "${PATCH_ONLY}" == yes ]]; then
 		display_alert "PATCH_ONLY is set, stopping." "PATCH_ONLY=yes and patching success" "cachehit"
 		return 0
