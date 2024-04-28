@@ -44,9 +44,4 @@ if [[ "${MEKO_USE_MAINLINE_UBOOT:-"no"}" == "yes" ]]; then
 			dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 		}
 	}
-
-	# I'm FED UP with this, @TODO lets make it part of core deps soon and cleanup all those hooks all spread around
-	function add_host_dependencies__new_uboot_wants_pyelftools() {
-		declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
-	}
 fi

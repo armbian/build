@@ -76,8 +76,3 @@ function post_family_tweaks__config_rock5b_fwenv() {
 		/dev/mtd0         0xc00000      0x20000
 	FW_ENV_CONFIG
 }
-
-# I'm FED UP with this, @TODO lets make it part of core deps soon and cleanup all those hooks all spread around - lol it's another week and this still in
-function add_host_dependencies__new_uboot_wants_pyelftools() {
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
-}
