@@ -292,6 +292,9 @@ function adaptative_prepare_host_dependencies() {
 	### Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+; ffi-dev is needed for some Python packages when the wheel is not prebuilt
 	host_dependencies+=("python3-dev" "python3-setuptools" "python3-pip" "python3-pyelftools" "libffi-dev")
 
+	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
+	host_dependencies+=("libgnutls28-dev")
+
 	# Noble and later releases do not carry "python3-distutils" https://docs.python.org/3.10/whatsnew/3.10.html#distutils-deprecated
 	if [[ "noble" == *"${host_release}"* ]]; then
 		display_alert "python3-distutils not available on host release '${host_release}'" "distutils was deprecated with Python 3.12" "debug"
