@@ -24,11 +24,7 @@ BL31_BLOB="rk35/rk3568_bl31_v1.43.elf"
 function post_family_config__uboot_config() {
 	display_alert "$BOARD" "u-boot ${BOOTBRANCH_BOARD} overrides" "info"
 	BOOTDELAY=2 # Wait for UART interrupt to enter UMS/RockUSB mode etc
-    UBOOT_TARGET_MAP="ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB} BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl u-boot.bin flash.bin;;idbloader.img u-boot.itb"
-}
-
-function add_host_dependencies__new_uboot_wants_python3() {
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
+	UBOOT_TARGET_MAP="ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB} BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl u-boot.bin flash.bin;;idbloader.img u-boot.itb"
 }
 
 function post_family_tweaks__nanopir5c_udev_network_interfaces() {

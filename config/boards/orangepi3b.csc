@@ -53,10 +53,6 @@ function post_family_config__orangepi3b_use_mainline_uboot() {
 
 }
 
-function add_host_dependencies__new_uboot_wants_python3_orangepi3b() {
-	declare -g EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} python3-pyelftools" # @TODO: convert to array later
-}
-
 function post_family_tweaks_bsp__orangepi3b() {
 	display_alert "$BOARD" "Installing sprd-bluetooth.service" "info"
 
