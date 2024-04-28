@@ -261,7 +261,7 @@ function adaptative_prepare_host_dependencies() {
 		imagemagick # required for plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
 		kmod        # this causes initramfs rebuild, but is usually pre-installed, so no harm done unless it's an upgrade
-		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev liblz4-tool
+		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev lz4
 		libncurses-dev libssl-dev libusb-1.0-0-dev
 		linux-base locales lsof
 		ncurses-base ncurses-term # for `make menuconfig`
