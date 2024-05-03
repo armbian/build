@@ -1,4 +1,4 @@
-From 54f613f4743d4581026f9ba06e5cf0ab708cfe16 Mon Sep 17 00:00:00 2001
+From 4b2c4ced5e5f564f7ed908ea24a5a3812fc41b45 Mon Sep 17 00:00:00 2001
 From: chraac <chraac@gmail.com>
 Date: Wed, 1 May 2024 14:32:00 +0800
 Subject: [PATCH 5/5] add gmac driver
@@ -8,12 +8,14 @@ commit:
 ---
  .../arm64/boot/dts/allwinner/sun50i-h616.dtsi |   21 +-
  .../allwinner/sun50i-h618-orangepi-zero2w.dts |   18 +-
+ drivers/gpio/gpiolib-of.c                     |   29 +-
  drivers/net/ethernet/allwinner/Kconfig        |    9 +
  drivers/net/ethernet/allwinner/Makefile       |    1 +
  drivers/net/ethernet/allwinner/sunxi-gmac.c   | 2219 +++++++++++++++++
  drivers/net/ethernet/allwinner/sunxi-gmac.h   |  270 ++
  .../net/ethernet/allwinner/sunxi_gmac_ops.c   |  768 ++++++
- 7 files changed, 3292 insertions(+), 14 deletions(-)
+ include/linux/of_gpio.h                       |   18 +
+ 9 files changed, 3324 insertions(+), 29 deletions(-)
  create mode 100644 drivers/net/ethernet/allwinner/sunxi-gmac.c
  create mode 100644 drivers/net/ethernet/allwinner/sunxi-gmac.h
  create mode 100644 drivers/net/ethernet/allwinner/sunxi_gmac_ops.c
@@ -57,7 +59,7 @@ index 3a2a1c4f327a6..b0da643d75837 100644
  				#size-cells = <0>;
  			};
 diff --git a/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dts b/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dts
-index 270215da813fc..4f713de70304e 100644
+index fab468861eeff..bf5e8ec8421b0 100644
 --- a/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dts
 +++ b/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero2w.dts
 @@ -200,19 +200,23 @@ &mmc1 {
@@ -91,6 +93,53 @@ index 270215da813fc..4f713de70304e 100644
  		reg = <1>;
  	};
  };
+diff --git a/drivers/gpio/gpiolib-of.c b/drivers/gpio/gpiolib-of.c
+index d9525d95e818d..6842f90f9efe6 100644
+--- a/drivers/gpio/gpiolib-of.c
++++ b/drivers/gpio/gpiolib-of.c
+@@ -25,21 +25,6 @@
+ #include "gpiolib.h"
+ #include "gpiolib-of.h"
+ 
+-/*
+- * This is Linux-specific flags. By default controllers' and Linux' mapping
+- * match, but GPIO controllers are free to translate their own flags to
+- * Linux-specific in their .xlate callback. Though, 1:1 mapping is recommended.
+- */
+-enum of_gpio_flags {
+-	OF_GPIO_ACTIVE_LOW = 0x1,
+-	OF_GPIO_SINGLE_ENDED = 0x2,
+-	OF_GPIO_OPEN_DRAIN = 0x4,
+-	OF_GPIO_TRANSITORY = 0x8,
+-	OF_GPIO_PULL_UP = 0x10,
+-	OF_GPIO_PULL_DOWN = 0x20,
+-	OF_GPIO_PULL_DISABLE = 0x40,
+-};
+-
+ /**
+  * of_gpio_named_count() - Count GPIOs for a device
+  * @np:		device node to count GPIOs for
+@@ -398,6 +383,20 @@ static struct gpio_desc *of_get_named_gpiod_flags(const struct device_node *np,
+ 	return desc;
+ }
+ 
++int of_get_named_gpio_flags(const struct device_node *np, const char *list_name,
++			    int index, enum of_gpio_flags *flags)
++{
++	struct gpio_desc *desc;
++
++	desc = of_get_named_gpiod_flags(np, list_name, index, flags);
++
++	if (IS_ERR(desc))
++		return PTR_ERR(desc);
++	else
++		return desc_to_gpio(desc);
++}
++EXPORT_SYMBOL_GPL(of_get_named_gpio_flags);
++
+ /**
+  * of_get_named_gpio() - Get a GPIO number to use with GPIO API
+  * @np:		device node to get GPIO from
 diff --git a/drivers/net/ethernet/allwinner/Kconfig b/drivers/net/ethernet/allwinner/Kconfig
 index 3e81059f86932..558d200687c33 100644
 --- a/drivers/net/ethernet/allwinner/Kconfig
@@ -120,7 +169,7 @@ index ddd5a5079e8a6..8860d88d18912 100644
 +obj-$(CONFIG_SUNXI_GMAC) += sunxi-gmac.o sunxi_gmac_ops.o
 diff --git a/drivers/net/ethernet/allwinner/sunxi-gmac.c b/drivers/net/ethernet/allwinner/sunxi-gmac.c
 new file mode 100644
-index 0000000000000..f26488ba9b8be
+index 0000000000000..e22f71b1b71be
 --- /dev/null
 +++ b/drivers/net/ethernet/allwinner/sunxi-gmac.c
 @@ -0,0 +1,2219 @@
@@ -795,7 +844,7 @@ index 0000000000000..f26488ba9b8be
 +            if (IS_ERR_OR_NULL(phydev_tmp) || phydev_tmp->phy_id == 0xffff) {
 +                if (!IS_ERR_OR_NULL(phydev_tmp))
 +                    phy_device_remove(phydev_tmp);
-+                phydev_tmp = mdiobus_scan(new_bus, addr);
++                phydev_tmp = mdiobus_scan_c22(new_bus, addr);
 +            }
 +
 +            if (IS_ERR_OR_NULL(phydev_tmp) || phydev_tmp->phy_id == 0xffff ||
@@ -897,7 +946,7 @@ index 0000000000000..f26488ba9b8be
 +        ndev->phydev = NULL;
 +    }
 +
-+#if 1 // defined(CONFIG_SUNXI_EPHY)
++#if 0 // defined(CONFIG_SUNXI_EPHY)
 +    gmac_ephy_shutdown(); /* Turn off the clock of PHY for low power consumption  */
 +#endif
 +
@@ -1086,7 +1135,7 @@ index 0000000000000..f26488ba9b8be
 +
 +    geth_open(ndev);
 +
-+#if 1 //defined(CONFIG_SUNXI_EPHY)
++#if 0 //defined(CONFIG_SUNXI_EPHY)
 +    if (!ephy_is_enable()) {
 +        pr_info("[geth_resume] ephy is not enable, waiting...\n");
 +        msleep(2000);
@@ -3393,5 +3442,41 @@ index 0000000000000..926516835023e
 +	return ret;
 +}
 +MODULE_LICENSE("Dual BSD/GPL");
+diff --git a/include/linux/of_gpio.h b/include/linux/of_gpio.h
+index d0f66a5e1b2a7..71349cac1a672 100644
+--- a/include/linux/of_gpio.h
++++ b/include/linux/of_gpio.h
+@@ -15,6 +15,21 @@
+ #include <linux/gpio.h>		/* FIXME: Shouldn't be here */
+ #include <linux/of.h>
+ 
++/*
++ * This is Linux-specific flags. By default controllers' and Linux' mapping
++ * match, but GPIO controllers are free to translate their own flags to
++ * Linux-specific in their .xlate callback. Though, 1:1 mapping is recommended.
++ */
++enum of_gpio_flags {
++	OF_GPIO_ACTIVE_LOW = 0x1,
++	OF_GPIO_SINGLE_ENDED = 0x2,
++	OF_GPIO_OPEN_DRAIN = 0x4,
++	OF_GPIO_TRANSITORY = 0x8,
++	OF_GPIO_PULL_UP = 0x10,
++	OF_GPIO_PULL_DOWN = 0x20,
++	OF_GPIO_PULL_DISABLE = 0x40,
++};
++
+ struct device_node;
+ 
+ #ifdef CONFIG_OF_GPIO
+@@ -22,6 +37,9 @@ struct device_node;
+ extern int of_get_named_gpio(const struct device_node *np,
+ 			     const char *list_name, int index);
+ 
++extern int of_get_named_gpio_flags(const struct device_node *np,
++		const char *list_name, int index, enum of_gpio_flags *flags);
++
+ #else /* CONFIG_OF_GPIO */
+ 
+ #include <linux/errno.h>
 -- 
 GitLab
