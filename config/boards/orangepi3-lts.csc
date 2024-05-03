@@ -1,7 +1,7 @@
 # Allwinner H6 quad core 2GB RAM SoC GBE USB3
 BOARD_NAME="Orange Pi 3 LTS"
 BOARDFAMILY="sun50iw6"
-BOARD_MAINTAINER="viraniac"
+BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_3_lts_defconfig"
 BOOT_LOGO="desktop"
 KERNEL_TARGET="legacy,current,edge"
