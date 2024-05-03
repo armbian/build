@@ -1,7 +1,7 @@
 # Allwinner H3 quad core 512MB RAM SoC headless WiFi/BT
 BOARD_NAME="NanoPi Duo2"
 BOARDFAMILY="sun8i"
-BOARD_MAINTAINER="viraniac"
+BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi_neo_defconfig"
 MODULES="g_serial"
 MODULES_BLACKLIST="lima"
