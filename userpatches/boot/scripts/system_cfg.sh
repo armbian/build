@@ -21,6 +21,36 @@ if [ ${STATUS} -eq 0 ]; then
 fi
 
 #######################################################
+ks_restart=0
+# TFT35 fbdev
+tft35=0
+FBDEV_CONFIG="/usr/share/X11/xorg.conf.d/99-fbdev.conf"
+grep -e "^ks_src" ${SYSTEM_CFG_PATH} > /dev/null
+STATUS=$?
+if [ ${STATUS} -eq 0 ] && [ ${ks_src} == "TFT35" ]; then
+    tft35=1
+fi
+
+if [ ${tft35} -eq 1 ] && [ ! -e "${FBDEV_CONFIG}" ]; then
+    sudo touch ${FBDEV_CONFIG}
+
+cat > ${FBDEV_CONFIG} <<EOF
+Section "Device"
+        Identifier      "Allwinner A10/A13/A20 FBDEV"
+        Driver          "fbdev"
+        Option          "fbdev" "/dev/fb0"
+        Option          "SwapbuffersWait" "true"
+EndSection
+EOF
+
+    ks_restart=1
+fi
+
+if [ ${tft35} -eq 0 ] && [ -e "${FBDEV_CONFIG}" ]; then
+    sudo rm ${FBDEV_CONFIG}
+    ks_restart=1
+fi
+
 grep -e "^ks_angle" ${SYSTEM_CFG_PATH} > /dev/null
 STATUS=$?
 if [ ${STATUS} -eq 0 ]; then
@@ -36,38 +66,56 @@ if [ ${STATUS} -eq 0 ]; then
         i=0
     fi
 
-    ks_restart=0
+    # display
+    grep -e "^ks_src" ${SYSTEM_CFG_PATH} > /dev/null
+    STATUS=$?
+    if [ ${STATUS} -eq 0 ]; then
+        DISPLAY_CONFIG_OPTION="Option \"Rotate\" "
+        DISPLAY_DIR_OPTIONS=(
+            "\"normal\""
+            "\"left\""
+            "\"inverted\""
+            "\"right\""
+        )
+        DISPLAY_CONFIG_PATH="/usr/share/X11/xorg.conf.d"
+        DISPLAY_CONFIG="/usr/share/X11/xorg.conf.d/90-monitor.conf"
+        DISPLAY_MONITOR="Identifier \"${ks_src}\""
+        DISPLAY_DIR_LINE="${DISPLAY_CONFIG_OPTION}${DISPLAY_DIR_OPTIONS[$i]}"
 
-    DISPLAY_CONFIG_OPTION="Option \"Rotate\" "
-    DISPLAY_DIR_OPTIONS=(
-        "\"normal\""
-        "\"left\""
-        "\"inverted\""
-        "\"right\""
-    )
-    DISPLAY_CONFIG_PATH="/usr/share/X11/xorg.conf.d"
-    DISPLAY_CONFIG="/usr/share/X11/xorg.conf.d/90-monitor.conf"
-    DISPLAY_MONITOR="Identifier \"HDMI-1\""
-    DISPLAY_DIR_LINE="${DISPLAY_DIR_OPTIONS[$i]}"
-    if [ -e "${DISPLAY_CONFIG}" ]; then
-        grep -e "^\    ${DISPLAY_CONFIG_OPTION}${DISPLAY_DIR_LINE}" ${DISPLAY_CONFIG} > /dev/null
-        STATUS=$?
-        if [ $STATUS -eq 1 ]; then
-            sudo sed -i "/${DISPLAY_CONFIG_OPTION}/d" ${DISPLAY_CONFIG}
-            sudo sed -i "/${DISPLAY_MONITOR}/a\    ${DISPLAY_CONFIG_OPTION}${DISPLAY_DIR_LINE}" ${DISPLAY_CONFIG}
-            ks_restart=1
+        new=0
+        if [ -e "${DISPLAY_CONFIG}" ]; then
+            matched=$(awk -v param1="${DISPLAY_MONITOR}" -v param2="${DISPLAY_DIR_LINE}" -v cnt=0 '
+                      $0 ~ param1 {
+                        found=1
+                        next
+                      }
+                      found && $0 ~ param2 {
+                        found=0
+                        cnt=1
+                        exit
+                      } END{print cnt}' ${DISPLAY_CONFIG})
+
+
+            if [ ${matched} -eq 0 ]; then
+               sudo rm ${DISPLAY_CONFIG}
+               new=1
+            fi
+        else
+            new=1
         fi
-    else
-        if [ -d "${DISPLAY_CONFIG_PATH}" ]; then
-            sudo touch ${DISPLAY_CONFIG}
-            sudo bash -c "echo 'Section \"Monitor\"' > ${DISPLAY_CONFIG} "
-            sudo bash -c "echo '    Identifier \"HDMI-1\"' >> ${DISPLAY_CONFIG} "
-            sudo bash -c "echo 'EndSection' >> ${DISPLAY_CONFIG} "
-            sudo sed -i "/${DISPLAY_MONITOR}/a\    ${DISPLAY_CONFIG_OPTION}${DISPLAY_DIR_LINE}" ${DISPLAY_CONFIG}
-            ks_restart=1
+        if [ ${new} -eq 1 ]; then
+            if [ -d "${DISPLAY_CONFIG_PATH}" ]; then
+                sudo touch ${DISPLAY_CONFIG}
+                sudo bash -c "echo 'Section \"Monitor\"' > ${DISPLAY_CONFIG} "
+                sudo bash -c "echo '    Identifier \"${ks_src}\"' >> ${DISPLAY_CONFIG} "
+                sudo bash -c "echo 'EndSection' >> ${DISPLAY_CONFIG} "
+                sudo sed -i "/${DISPLAY_MONITOR}/a\    ${DISPLAY_DIR_LINE}" ${DISPLAY_CONFIG}
+                ks_restart=1
+            fi
         fi
     fi
 
+    # touch
     CONFIG_OPTION="Option \"CalibrationMatrix\" "
     CALIB_OPTIONS=(
         "\"1 0 0 0 1 0 0 0 1\""
@@ -87,10 +135,10 @@ if [ ${STATUS} -eq 0 ]; then
             ks_restart=1
         fi
     fi
+fi
 
-    if [ ${ks_restart} -eq 1 ];then
-        sudo service KlipperScreen restart
-    fi
+if [ ${ks_restart} -eq 1 ];then
+    sudo service KlipperScreen restart
 fi
 
 #######################################################

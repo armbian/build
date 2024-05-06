@@ -5,6 +5,7 @@ cd /dev
 for file in `ls mmcblk*`
 do
     filelist[$c]=$file
+    echo "${filelist[$c]}"
     ((c++))
 done
 
@@ -13,7 +14,7 @@ ROOT_DEV=/dev/${filelist[0]}
 BOOT_NUM=1
 ROOT_NUM=2
 
-ROOTFS_START=532480
+ROOTFS_START=557056
 
 # fdisk
 sudo fdisk "$ROOT_DEV" << EOF
@@ -25,11 +26,10 @@ p
 $ROOT_NUM
 $ROOTFS_START
 
-y
 w
 EOF
 
-sudo resize2fs /dev/${filelist[$c-1]}
+sudo resize2fs /dev/${filelist[0]}p${ROOT_NUM}
 unset filelist
 
 #-----------------

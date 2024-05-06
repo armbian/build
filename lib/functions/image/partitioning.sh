@@ -389,6 +389,7 @@ function prepare_partitions() {
 
 function install_overlay_config(){
 	echo "## console: 'display', 'serial'" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "## console: 'display', 'serial'" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "console=display" >> "${SDCARD}/boot/armbianEnv.txt"
 	
 	echo "## display: 'hdmi', 'dsi'" >> "${SDCARD}/boot/armbianEnv.txt"
