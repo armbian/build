@@ -454,7 +454,7 @@ function install_distribution_agnostic() {
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-led-state.service ]] && chroot_sdcard systemctl --no-reload enable armbian-led-state.service
 
 	# copy "first run automated config, optional user configured"
-	run_host_command_logged cp -v "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
+#	run_host_command_logged cp -v "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
 	[[ $IMAGE_TYPE == nightly ]] && sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.list
@@ -636,7 +636,7 @@ install_rclocal() {
 		# bits.
 		#
 		# By default this script does nothing.
-		insmod /usr/lib/modules/4.19.232-bigtree-cb2/kernel/drivers/input/touchscreen/raspits_ft5426.ko
+		sudo chmod +x /boot/scripts/*
 		/boot/scripts/btt_init.sh
 		
 		exit 0

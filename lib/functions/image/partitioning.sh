@@ -388,7 +388,10 @@ function prepare_partitions() {
 }
 
 function install_overlay_config(){
-	echo "######hdmi display config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "## console: 'display', 'serial'" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "console=display" >> "${SDCARD}/boot/armbianEnv.txt"
+	
+	echo "## display: 'hdmi', 'dsi'" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "overlays=hdmi" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	
@@ -415,7 +418,10 @@ function install_overlay_config(){
 	echo "######tft_35 config######" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=tft_35" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
-	
+	echo "######tft35_spi_rotate config###### " >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#tft35_spi_rotate=0" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######uart0 config######" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=uart0" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
@@ -452,4 +458,12 @@ function install_overlay_config(){
 	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm15 config######" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm15" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "######gpio shutdown config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#param_gpio_shutdown_pin=GPIO4_C2" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	echo "#param_gpio_shutdown_level=0" >> "${SDCARD}/boot/armbianEnv.txt"
+
+
 }
