@@ -27,7 +27,6 @@ case $BOARD in
 		BOOTBRANCH='branch:odroidc-v2011.03'
 		BOOTPATCHDIR="legacy"
 		UBOOT_COMPILER="arm-linux-gnueabihf-"
-		UBOOT_USE_GCC='< 4.9'
 
 		UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
 
