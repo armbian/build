@@ -5,6 +5,7 @@ BOARD_MAINTAINER="Tonymac32"
 BOOTCONFIG="nanopc_t6_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
 KERNEL_TARGET="legacy,vendor,edge,collabora"
+KERNEL_TEST_TARGET="vendor,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588-nanopc-t6.dtb"
