@@ -1,4 +1,4 @@
-From d68e3f7cb77c0683e49fae1d41e8fc9e1190c6f4 Mon Sep 17 00:00:00 2001
+From 68b0307cc9a0d55384466da693846c1eac4f2ae5 Mon Sep 17 00:00:00 2001
 From: chraac <chraac@gmail.com>
 Date: Wed, 1 May 2024 14:32:00 +0800
 Subject: [PATCH] add gmac driver
@@ -9,11 +9,11 @@ commit:
  .../arm64/boot/dts/allwinner/sun50i-h616.dtsi |   25 +-
  .../allwinner/sun50i-h618-orangepi-zero2w.dts |   41 +-
  drivers/gpio/gpiolib-of.c                     |   29 +-
- drivers/mfd/Kconfig                           |    9 +
+ drivers/mfd/Kconfig                           |   10 +
  drivers/mfd/Makefile                          |    1 +
- drivers/mfd/sunxi-ac200.c                     |  284 +++
+ drivers/mfd/sunxi-ac200.c                     |  288 +++
  drivers/net/ethernet/allwinner/Kconfig        |    8 +
- drivers/net/ethernet/allwinner/Makefile       |    1 +
+ drivers/net/ethernet/allwinner/Makefile       |    2 +
  drivers/net/ethernet/allwinner/sunxi-gmac.c   | 2219 +++++++++++++++++
  drivers/net/ethernet/allwinner/sunxi-gmac.h   |  270 ++
  .../net/ethernet/allwinner/sunxi_gmac_ops.c   |  768 ++++++
@@ -22,7 +22,7 @@ commit:
  drivers/net/phy/sunxi-ephy.c                  |  518 ++++
  include/linux/mfd/ac200.h                     |  213 ++
  include/linux/of_gpio.h                       |   18 +
- 16 files changed, 4367 insertions(+), 46 deletions(-)
+ 16 files changed, 4373 insertions(+), 46 deletions(-)
  create mode 100644 drivers/mfd/sunxi-ac200.c
  create mode 100644 drivers/net/ethernet/allwinner/sunxi-gmac.c
  create mode 100644 drivers/net/ethernet/allwinner/sunxi-gmac.h
@@ -195,17 +195,18 @@ index d9525d95e818..6842f90f9efe 100644
   * of_get_named_gpio() - Get a GPIO number to use with GPIO API
   * @np:		device node to get GPIO from
 diff --git a/drivers/mfd/Kconfig b/drivers/mfd/Kconfig
-index caed5e75d11f..ad5080b68c5d 100644
+index caed5e75d11f..e532334e024f 100644
 --- a/drivers/mfd/Kconfig
 +++ b/drivers/mfd/Kconfig
-@@ -203,6 +203,15 @@ config MFD_AC200
+@@ -203,6 +203,16 @@ config MFD_AC200
  	  This driver include only the core APIs. You have to select individual
  	  components like Ethernet PHY or codec under the corresponding menus.
  
 +config MFD_AC200_SUNXI
-+	bool "X-Powers AC200 (Sunxi)"
++	tristate "X-Powers AC200 (Sunxi)"
 +	select MFD_CORE
 +	depends on I2C
++	depends on PWM_SUNXI_ENHANCE
 +	help
 +	  If you say Y here you get support for the X-Powers AC200 IC.
 +	  This driver include only the core APIs. You have to select individual
@@ -228,10 +229,10 @@ index 0c3b4aaf4eb7..bc180cf44009 100644
  obj-$(CONFIG_MFD_AXP20X_RSB)	+= axp20x-rsb.o
 diff --git a/drivers/mfd/sunxi-ac200.c b/drivers/mfd/sunxi-ac200.c
 new file mode 100644
-index 000000000000..ec8959ef5327
+index 000000000000..7c5b0e0523cf
 --- /dev/null
 +++ b/drivers/mfd/sunxi-ac200.c
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,288 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * MFD core driver for X-Powers' AC200 IC
@@ -325,6 +326,8 @@ index 000000000000..ec8959ef5327
 +    return atomic_read(&ac200_en);
 +}
 +
++EXPORT_SYMBOL(ac200_enable);
++
 +static uint16_t ephy_caldata = 0;
 +
 +static int sun50i_ephy_get_calibrate(struct device *dev)
@@ -363,6 +366,8 @@ index 000000000000..ec8959ef5327
 +{
 +    return ephy_caldata;
 +}
++
++EXPORT_SYMBOL(sun50i_ephy_calibrate_value);
 +
 +static int ac200_i2c_probe(struct i2c_client *i2c)
 +{
@@ -502,7 +507,7 @@ index 000000000000..ec8959ef5327
 +
 +static struct i2c_driver ac200_i2c_driver = {
 +	.driver = {
-+		.name	= "ac200",
++		.name	= "ac200-sunxi",
 +		.of_match_table	= of_match_ptr(ac200_of_match),
 +        .pm = &ac200_core_pm_ops,
 +	},
@@ -534,14 +539,15 @@ index 3e81059f8693..36d808810ca4 100644
 +
  endif # NET_VENDOR_ALLWINNER
 diff --git a/drivers/net/ethernet/allwinner/Makefile b/drivers/net/ethernet/allwinner/Makefile
-index ddd5a5079e8a..8860d88d1891 100644
+index ddd5a5079e8a..56b9c434a5b8 100644
 --- a/drivers/net/ethernet/allwinner/Makefile
 +++ b/drivers/net/ethernet/allwinner/Makefile
-@@ -4,3 +4,4 @@
+@@ -4,3 +4,5 @@
  #
  
  obj-$(CONFIG_SUN4I_EMAC) += sun4i-emac.o
-+obj-$(CONFIG_SUNXI_GMAC) += sunxi-gmac.o sunxi_gmac_ops.o
++sunxi_gmac-objs := sunxi_gmac_ops.o sunxi-gmac.o
++obj-$(CONFIG_SUNXI_GMAC) += sunxi_gmac.o
 diff --git a/drivers/net/ethernet/allwinner/sunxi-gmac.c b/drivers/net/ethernet/allwinner/sunxi-gmac.c
 new file mode 100644
 index 000000000000..d31b86fc1e8c
@@ -3818,7 +3824,7 @@ index 000000000000..926516835023
 +}
 +MODULE_LICENSE("Dual BSD/GPL");
 diff --git a/drivers/net/phy/Kconfig b/drivers/net/phy/Kconfig
-index 43edfd9d61dc..db939f3c6abf 100644
+index 43edfd9d61dc..0283b463cad9 100644
 --- a/drivers/net/phy/Kconfig
 +++ b/drivers/net/phy/Kconfig
 @@ -75,6 +75,14 @@ config AC200_PHY
@@ -3829,7 +3835,7 @@ index 43edfd9d61dc..db939f3c6abf 100644
 +	tristate "AC200 EPHY(Sunxi)"
 +	depends on NVMEM
 +	depends on OF
-+	depends on AC200_SUNXI
++	depends on MFD_AC200_SUNXI
 +	help
 +	  Fast ethernet PHY as found in X-Powers AC200(Sunxi) multi-function device.
 +
@@ -3850,7 +3856,7 @@ index e5a46da678ff..340df0674fcd 100644
  obj-$(CONFIG_AMD_PHY)		+= amd.o
 diff --git a/drivers/net/phy/sunxi-ephy.c b/drivers/net/phy/sunxi-ephy.c
 new file mode 100644
-index 000000000000..ce380a9c3991
+index 000000000000..92f5ba101ced
 --- /dev/null
 +++ b/drivers/net/phy/sunxi-ephy.c
 @@ -0,0 +1,518 @@
@@ -4316,7 +4322,7 @@ index 000000000000..ce380a9c3991
 +
 +static struct platform_driver ac200_ephy_driver = {
 +	.driver = {
-+		.name = "ac200-ephy",
++		.name = "ac200-ephy-sunxi",
 +		.owner = THIS_MODULE,
 +		.pm = &ac200_ephy_pm_ops,
 +	},
@@ -4374,7 +4380,7 @@ index 000000000000..ce380a9c3991
 +MODULE_LICENSE("GPL");
 diff --git a/include/linux/mfd/ac200.h b/include/linux/mfd/ac200.h
 new file mode 100644
-index 000000000000..8cd362d1c859
+index 000000000000..84d89cbfbd3d
 --- /dev/null
 +++ b/include/linux/mfd/ac200.h
 @@ -0,0 +1,213 @@
@@ -4587,8 +4593,8 @@ index 000000000000..8cd362d1c859
 +	struct regmap_irq_chip_data	*regmap_irqc;
 +};
 +
-+int ac200_enable(void);
-+uint16_t sun50i_ephy_calibrate_value(void);
++extern int ac200_enable(void);
++extern uint16_t sun50i_ephy_calibrate_value(void);
 +
 +#endif /* __LINUX_MFD_AC200_H */
 diff --git a/include/linux/of_gpio.h b/include/linux/of_gpio.h
