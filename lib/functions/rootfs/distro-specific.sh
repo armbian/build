@@ -147,13 +147,11 @@ function create_sources_list_and_deploy_repo_key() {
 			EOF
 			;;
 
-		sid) # sid is permanent unstable development and has no such thing as updates or security
+		sid|unstable) # sid is permanent unstable development and has no such thing as updates or security
 			cat <<- EOF > "${basedir}"/etc/apt/sources.list
 				deb http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
 				#deb-src http://${DEBIAN_MIRROR} $release main contrib non-free non-free-firmware
 
-				deb http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
-				#deb-src http://${DEBIAN_MIRROR} unstable main contrib non-free non-free-firmware
 			EOF
 
 			# Exception: with riscv64 not everything was moved from ports
