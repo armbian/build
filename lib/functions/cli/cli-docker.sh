@@ -40,6 +40,8 @@ function cli_docker_run() {
 		set_git_build_repo_url_and_commit_vars "docker launcher"
 	fi
 
+	ensure_loop_exists
+
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
