@@ -27,11 +27,22 @@ function post_install_kernel_debs__oibaf() {
 
 	display_alert "Adding oibaf PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard add-apt-repository ppa:oibaf/graphics-drivers --yes --no-update
+
+	display_alert "Pinning oibaf PPAs" "${EXTENSION}" "info"
+	cat > "${SDCARD}"/etc/apt/preferences.d/mesa-oibaf-graphics-drivers-pin <<EOF
+Package: *
+Pin: release o=LP-PPA-oibaf-graphics-drivers
+Pin-Priority: 1001
+EOF
+
 	display_alert "Updating sources list, after oibaf PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
+
 	display_alert "Installing oibaf packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_install glmark2-wayland glmark2-es2 glmark2-es2-wayland mesa-utils
+
 	display_alert "Upgrading oibaf packages" "${EXTENSION}" "info"
-	do_with_retries 3 chroot_sdcard_apt_get upgrade
+	do_with_retries 3 chroot_sdcard_apt_get dist-upgrade
+
 	display_alert "Installed oibaf packages" "${EXTENSION}" "info"
 }

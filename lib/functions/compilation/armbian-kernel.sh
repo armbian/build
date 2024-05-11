@@ -12,8 +12,11 @@
 
 # This is an internal/core extension.
 function armbian_kernel_config__disable_various_options() {
-	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "DEBUG_KERNEL=n")
+	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
 	if [[ -f .config ]]; then
+		display_alert "Enable CONFIG_EXPERT=y" "armbian-kernel" "debug"
+		kernel_config_set_y EXPERT # Too many config options are hidden behind EXPERT=y, lets have it always on
+
 		display_alert "Disabling module compression and signing / debug / auto version" "armbian-kernel" "debug"
 		# DONE: Disable: signing, and compression of modules, for speed.
 		kernel_config_set_n CONFIG_MODULE_COMPRESS_XZ # No use double-compressing modules
@@ -21,7 +24,7 @@ function armbian_kernel_config__disable_various_options() {
 		kernel_config_set_n CONFIG_MODULE_COMPRESS_GZIP
 
 		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.0; then
-			kernel_config_set_y CONFIG_MODULE_COMPRESS_NONE	# Introduced in 6.0
+			kernel_config_set_y CONFIG_MODULE_COMPRESS_NONE # Introduced in 6.0
 		else
 			kernel_config_set_n CONFIG_MODULE_COMPRESS # Only available up to 5.12
 		fi
@@ -32,26 +35,21 @@ function armbian_kernel_config__disable_various_options() {
 		# DONE: Disable: version shenanigans
 		kernel_config_set_n CONFIG_LOCALVERSION_AUTO      # This causes a mismatch between what Armbian wants and what make produces.
 		kernel_config_set_string CONFIG_LOCALVERSION '""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
-
-		# DONE: Disable: debug option
-		kernel_config_set_n DEBUG_KERNEL	# Armbian doesn't know how to package a debug kernel.
-		kernel_config_set_n EXPERT			# This needs to be disabled as well since DEBUG_KERNEL=y is a dependency for EXPERT=y, meaning DEBUG_KERNEL would be re-enabled automatically if EXPERT is enabled
-		#kernel_config_set_y DEBUG_INFO_NONE # Do not build the kernel with debugging information, which will result in a faster and smaller build. (NOTE: Not needed (?) when DEBUG_KERNEL=n and EXPERT=n since all DEBUG_INFO options are missing anyway in that case)
-		kernel_config_set_n GDB_SCRIPTS
-
-		if linux-version compare "${KERNEL_MAJOR_MINOR}" le 6.5; then
-			kernel_config_set_n EMBEDDED	# Only present up to 6.5; this option forces EXPERT=y so it needs to be disabled
-		fi
-
-		# @TODO: Enable the options for the extrawifi/drivers; so we don't need to worry about them when updating configs
 	fi
 }
 
 function armbian_kernel_config__enable_config_access_in_live_system() {
 	kernel_config_modifying_hashes+=("CONFIG_IKCONFIG_PROC=y")
 	if [[ -f .config ]]; then
-		kernel_config_set_y CONFIG_IKCONFIG			# This information can be extracted from the kernel image file with the script scripts/extract-ikconfig and used as input to rebuild the current kernel or to build another kernel
-		kernel_config_set_y CONFIG_IKCONFIG_PROC	# This option enables access to the kernel configuration file through /proc/config.gz
+		kernel_config_set_y CONFIG_IKCONFIG      # This information can be extracted from the kernel image file with the script scripts/extract-ikconfig and used as input to rebuild the current kernel or to build another kernel
+		kernel_config_set_y CONFIG_IKCONFIG_PROC # This option enables access to the kernel configuration file through /proc/config.gz
+	fi
+}
+
+function armbian_kernel_config__restore_enable_gpio_sysfs() {
+	kernel_config_modifying_hashes+=("CONFIG_GPIO_SYSFS=y")
+	if [[ -f .config ]]; then
+		kernel_config_set_y CONFIG_GPIO_SYSFS # This was a victim of not having EXPERT=y due to some _DEBUG conflicts in old times. Re-enable it forcefully.
 	fi
 }
 
@@ -90,6 +88,13 @@ function kernel_config_set_n() {
 function kernel_config_set_string() {
 	declare config="$1"
 	declare value="${2}"
-	display_alert "Setting kernel config/module" "${config}=${value}" "debug"
+	display_alert "Setting kernel config/module string" "${config}=${value}" "debug"
 	run_host_command_logged ./scripts/config --set-str "${config}" "${value}"
+}
+
+function kernel_config_set_val() {
+	declare config="$1"
+	declare value="${2}"
+	display_alert "Setting kernel config/module value" "${config}=${value}" "debug"
+	run_host_command_logged ./scripts/config --set-val "${config}" "${value}"
 }
