@@ -252,6 +252,11 @@ function fetch_from_repo() {
 		esac
 	fi
 
+	if [[ -f "${SRC}"/config/sources/git_sources.json && $ref_type == "branch" ]]; then
+		cached_revision=$(jq --raw-output '.[] | select(.source == "'$url'" and .branch == "'$ref_name'") |.sha1' "${SRC}"/config/sources/git_sources.json)
+		[[ -z "${cached_revision}" ]] || fetched_revision=${cached_revision}
+	fi
+
 	if [[ "${do_checkout:-"yes"}" == "yes" ]]; then
 		display_alert "git checking out revision SHA" "${fetched_revision}" "git"
 		regular_git checkout -f -q "${fetched_revision}" # Return the files that are tracked by git to the initial state.

@@ -240,7 +240,7 @@ function do_main_configuration() {
 
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
-	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything... # @TODO: remove
+	[[ -z $ARCH ]] && ARCH=arm64 # makes little sense to default to anything... # @TODO: remove, but check_config_userspace_release_and_desktop requires it
 	ATF_COMPILE=yes              # @TODO: move to armhf/arm64
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
@@ -307,7 +307,7 @@ function do_extra_configuration() {
 	[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY" # @TODO move to hook
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 
-	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar|mantic|noble)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy|noble|oracular)$ ]]; then
 		DISTRIBUTION="Ubuntu"
 	else
 		DISTRIBUTION="Debian"
