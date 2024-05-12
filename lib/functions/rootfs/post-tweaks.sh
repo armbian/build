@@ -27,8 +27,6 @@ function post_debootstrap_tweaks() {
 	chroot_sdcard dpkg-divert --quiet --local --rename --remove /sbin/initctl
 	chroot_sdcard dpkg-divert --quiet --local --rename --remove /sbin/start-stop-daemon
 	run_host_command_logged rm -fv "${SDCARD}"/usr/sbin/policy-rc.d
-	display_alert "Cleaning deboostrapped resolv.conf" "info"
-	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
 
 	# remove the qemu static binary
 	undeploy_qemu_binary_from_chroot "${SDCARD}"
