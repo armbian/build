@@ -39,6 +39,19 @@ function prepare_partitions() {
 	# parttype[nfs] is empty
 
 	mkopts[ext4]="-q -m 2" # for a long time we had '-O ^64bit,^metadata_csum' here
+	# Hack: newer versions of e2fsprogs in combination with recent kernels enable orphan_file (FEATURE_C12) by default; that can't be handled by older versions of e2fsprogs
+	#       at the same time, older versions don't know about orphan_file at all, so we can't simply disable for all.
+	# run & parse the version of e2fsprogs to determine if we need to disable orphan_file
+	declare e2fsprogs_version
+	e2fsprogs_version=$(e2fsck -V 2>&1 | head -1 | cut -d " " -f 2 | xargs echo -n)
+	# use linux-version compare to check if the version is at least 1.47
+	if linux-version compare "${e2fsprogs_version}" ge "1.47"; then
+		display_alert "e2fsprogs version" "$e2fsprogs_version supports orphan_file" "info"
+		mkopts[ext4]="-q -m 2 -O ^orphan_file"
+	else
+		display_alert "e2fsprogs version" "$e2fsprogs_version does not support orphan_file" "info"
+	fi
+
 	# mkopts[fat] is empty
 	mkopts[ext2]=''
 	# mkopts[f2fs] is empty
