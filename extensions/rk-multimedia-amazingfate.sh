@@ -22,8 +22,8 @@ function extension_prepare_config__amazingfate_rk35xx_multimedia() {
 		exit_with_error "${EXTENSION} only works on LINUXFAMILY=rockchip-rk3588/rk35xx, currently on '${LINUXFAMILY}'"
 	fi
 
-	if [[ "${BRANCH}" != "legacy" && "${BRANCH}" != "vendor" && "${BRANCH}" != "vendor-boogie-panthor" ]]; then
-		exit_with_error "${EXTENSION} only works on BRANCH=legacy/vendor/vendor-boogie-panthor, currently on '${BRANCH}'"
+	if [[ "${BRANCH}" != "legacy" && "${BRANCH}" != "vendor" ]]; then
+		exit_with_error "${EXTENSION} only works on BRANCH=legacy/vendor, currently on '${BRANCH}'"
 	fi
 }
 
