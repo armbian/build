@@ -1,6 +1,7 @@
 # Rockchip RK3568 quad core 1-8GB SoC 2x2.5GBe eMMC USB3 SATA
 BOARD_NAME="Hinlink HNAS"
 BOARDFAMILY="rk35xx"
+BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-e25-rk3568_defconfig"
 KERNEL_TARGET="legacy,vendor"
 FULL_DESKTOP="yes"
