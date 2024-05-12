@@ -40,6 +40,15 @@ function post_install_kernel_debs__oibaf() {
 	Pin-Priority: 1001
 	EOF
 
+	# Ubuntu oracular workaround
+	local url_to_check='https://ppa.launchpadcontent.net/oibaf/graphics-drivers/ubuntu/dists/${RELEASE}/Release'
+	if curl -o/dev/null -sfIL "$url_to_check" 2>&1; then
+		:
+	else
+		display_alert "Converting to generic sources list due to missing release file" "${EXTENSION}" "info"
+		sed -i "s/${RELEASE}/noble/g" "${SDCARD}"/etc/apt/sources.list.d/oibaf-ubuntu-graphics-drivers-"${RELEASE}".sources
+	fi
+
 	display_alert "Updating sources list, after oibaf PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
