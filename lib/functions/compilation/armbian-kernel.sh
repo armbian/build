@@ -32,7 +32,10 @@ function armbian_kernel_config__disable_various_options() {
 		fi
 
 		kernel_config_set_n CONFIG_SECURITY_LOCKDOWN_LSM
-		kernel_config_set_n CONFIG_MODULE_SIG # No use signing modules
+		kernel_config_set_n CONFIG_MODULE_SIG     # No use signing modules
+		kernel_config_set_n CONFIG_MODULE_SIG_ALL # No use auto-signing modules
+		kernel_config_set_n MODULE_SIG_FORCE      # No forcing of module sign verification
+		kernel_config_set_n IMA_APPRAISE_MODSIG   # No appraisal module-style either
 
 		# DONE: Disable: version shenanigans
 		kernel_config_set_n CONFIG_LOCALVERSION_AUTO      # This causes a mismatch between what Armbian wants and what make produces.
