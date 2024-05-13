@@ -1,5 +1,31 @@
 #!/usr/bin/env bash
 
+# Drop unsupported releases
+drop_unsupported_releases() {
+
+	echo "Cleanup: dropping unsupported"
+
+	BUILD_FW=($(grep -rw config/distributions/*/support -ve 'eos' | cut -d"/" -f3))
+	REPO=($(aptly publish list -config="${CONFIG}" --raw | sed "s/. //g"))
+
+	DROP=()
+	for i in "${REPO[@]}"; do
+	skip=
+		for j in "${BUILD_FW[@]}"; do
+		[[ $i == $j ]] && { skip=1; break ; }
+		done
+		[[ -n $skip ]] || DROP+=("$i")
+	done
+
+	# drop
+	for i in "${DROP[@]}"; do
+		aptly publish drop -config="${CONFIG}" "${i}"
+	done
+}
+
+
+
+
 # Adding package
 #
 # @arg $1 string component
@@ -22,7 +48,7 @@ for f in "${4}${2}"/*.deb; do
 	'Name (% '${name}'), $Version (='${version}'), $Architecture (='${arch}')' &> /dev/null
 	if [[ $? -ne 0 ]]; then
 		echo -e "Checking and adding \x1B[92m$name\x1B[0m to repository \x1B[92m$release $3\x1B[0m"
-		aptly repo add -force-replace=true -config="${CONFIG}" "${1}" "${f}" &> /dev/null
+		aptly repo add -config="${CONFIG}" "${1}" "${f}" &> /dev/null
 	fi
 
 done
@@ -57,18 +83,30 @@ aptly repo add -force-replace=true -config="${CONFIG}" "${1}" "${tmp_dir}/${fake
 # $5: jammy,sid
 #
 publishing() {
+
 # read comma delimited distros into array
 IFS=', ' read -r -a DISTROS <<< "$5"
 local errors=0
 # publish all, update selected
-local distributions=($(grep -rw config/distributions/*/support -ve 'eos' | cut -d"/" -f3))
-#local distributions=("jessy" "xenial" "stretch" "bionic" "focal" "hirsute" "impish" "jammy" "lunar" "kinetic" "buster" "bullseye" "bookworm" "sid")
+local distributions=($(grep -rw config/distributions/*/support -ve '' | cut -d"/" -f3))
 for release in "${distributions[@]}"; do
+
 	local forceoverwrite=""
 
 	ADDING_PACKAGES="false"
 # shellcheck disable=SC2207,2199
-	[[ " ${DISTROS[@]} " =~ " ${release} " ]] && ADDING_PACKAGES="true"
+	if [[ " ${DISTROS[@]} " =~ " ${release} " ]] ; then
+		ADDING_PACKAGES="true"
+	fi
+
+	# don't add packages to eos
+	if [[ ${status} == $(cat config/distributions/${release}/support) ]]; then
+		ADDING_PACKAGES="false"
+	fi
+
+	if [[ ${ADDING_PACKAGES} == true ]]; then
+		echo "Adding: ${release}"
+	fi
 
 	# let's drop from publish if exits
 	if [[ -n $(aptly publish list -config="${CONFIG}" -raw | awk '{print $(NF)}' | grep "${release}") ]]; then
@@ -121,7 +159,7 @@ for release in "${distributions[@]}"; do
 		mkdir -p ${2}/public/
 		sudo date +%s > ${2}/public/control
 		# publish
-		echo "Publishing ${release}"
+		echo "Publishing: ${release}"
 		aptly publish \
 			-acquire-by-hash \
 			-architectures="armhf,arm64,amd64,riscv64,i386,all" \
@@ -259,6 +297,8 @@ case $3 in
 		;;
 
 	update)
+		# remove old releases from publishing
+		drop_unsupported_releases
 		publishing "$1" "$2" "$3" "$4" "$5"
 		;;
 
@@ -274,7 +314,7 @@ esac
 input="output/debs-beta"
 output="output/repository"
 command="show"
-releases="jammy,lunar,buster,bullseye,bookworm,sid"
+releases=$(grep -rw config/distributions/*/support -ve 'eos' | cut -d"/" -f3 | xargs | sed -e 's/ /,/g')
 
 help()
 {

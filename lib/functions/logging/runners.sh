@@ -246,7 +246,7 @@ function logging_enrich_run_command_error_info() {
 		display_alert "Searching for if_error_find_files_sdcard files" "${SDCARD}/${path}" "debug"
 		declare -a sdcard_files
 		# shellcheck disable=SC2086 # I wanna expand, thank you...
-		mapfile -t sdcard_files < <(find ${SDCARD}/${path} -type f)
+		mapfile -t sdcard_files < <(find ${SDCARD}/ -type f -name "${path}")
 		display_alert "Found if_error_find_files_sdcard files" "${sdcard_files[@]}" "debug"
 		found_files+=("${sdcard_files[@]}") # add to result
 	done

@@ -377,8 +377,9 @@ function docker_cli_prepare_launch() {
 		# Change the ccache directory to the named volume or bind created. @TODO: this needs more love. it works for Docker, but not sudo
 		"--env" "CCACHE_DIR=${DOCKER_ARMBIAN_TARGET_PATH}/cache/ccache"
 
-		# Pass down the TERM and the COLUMNS
+		# Pass down the TERM, COLORFGBG, and the COLUMNS
 		"--env" "TERM=${TERM}"
+		"--env" "COLORFGBG=${COLORFGBG-}"
 		"--env" "COLUMNS=${COLUMNS:-"160"}"
 
 		# Pass down the CI env var (GitHub Actions, Jenkins, etc)
@@ -567,17 +568,6 @@ function docker_cli_launch() {
 		run_host_command_logged find "${SRC}/patch" -name ".DS_Store" -type f -delete "||" true
 		run_host_command_logged find "${SRC}/userpatches" -name ".DS_Store" -type f -delete "||" true
 	fi
-
-	# Produce the re-launch params.
-	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
-	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
-	produce_relaunch_parameters # produces ARMBIAN_CLI_FINAL_RELAUNCH_ARGS and ARMBIAN_CLI_FINAL_RELAUNCH_ENVS
-
-	# Add the relaunch envs to DOCKER_ARGS.
-	for env in "${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[@]}"; do
-		display_alert "Adding Docker env" "${env}" "debug"
-		DOCKER_ARGS+=("--env" "${env}")
-	done
 
 	display_alert "-----------------Relaunching in Docker after ${SECONDS}s------------------" "here comes the 🐳" "info"
 

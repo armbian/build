@@ -26,8 +26,7 @@ case $BOARD in
 		BOOTSOURCE='https://github.com/hardkernel/u-boot.git'
 		BOOTBRANCH='branch:odroidc-v2011.03'
 		BOOTPATCHDIR="legacy"
-		UBOOT_COMPILER="arm-linux-gnueabihf-"
-		UBOOT_USE_GCC='< 4.9'
+		UBOOT_COMPILER="arm-linux-gnueabi-"
 
 		UBOOT_TARGET_MAP=';;sd_fuse/bl1.bin.hardkernel sd_fuse/u-boot.bin'
 
@@ -52,7 +51,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.7"
+		declare -g KERNEL_MAJOR_MINOR="6.8"
 		;;
 esac
 

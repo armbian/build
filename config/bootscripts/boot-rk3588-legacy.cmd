@@ -69,7 +69,8 @@ if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
 	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 else
-	if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr; then
+	if test -e ${devtype} ${devnum} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr; then
+		load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/rockchip/overlay/${overlay_prefix}-fixup.scr
 		echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 		source ${load_addr}
 	fi
@@ -79,7 +80,9 @@ else
 		source ${load_addr}
 	fi
 fi
-kaslrseed
+
+echo "Trying 'kaslrseed' command... Info: 'Unknown command' can be safely ignored since 'kaslrseed' does not apply to all boards."
+kaslrseed # @TODO: This gives an error (Unknown command ' kaslrseed ' - try 'help') on many devices since CONFIG_CMD_KASLRSEED is not enabled
 booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:

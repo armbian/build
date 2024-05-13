@@ -44,6 +44,20 @@ load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize 65536
 
+if test "${mipi_lcd_exist}" = "0"; then
+	fdt set /lcd status disabled
+	fdt set /lcd1 status disabled
+	fdt set /lcd2 status disabled
+	fdt set /soc/apb4@fe000000/i2c@6c000/gt9xx@14 status disabled
+	fdt set /soc/apb4@fe000000/i2c@6c000/ft5336@38 status disabled
+else
+	if test "${panel_type}" = "mipi_1"; then
+		fdt set /drm-subsystem fbdev_sizes <1920 1200 1920 2400 32>
+	else
+		fdt set /drm-subsystem fbdev_sizes <1080 1920 1080 3840 32>
+	fi
+fi
+
 for overlay_file in ${overlays}; do
 	if load ${devtype} ${devnum} ${scriptaddr} ${prefix}dtb/amlogic/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
@@ -75,13 +89,8 @@ fi
 
 # The symlinks for kernel and initrd.img are at different locations in debian and ubuntu
 # Check and load from a location that exists
-if test -e ${devtype} ${devnum} /vmlinuz; then
-	load ${devtype} ${devnum} ${kernel_addr_r} /vmlinuz
-	load ${devtype} ${devnum} ${ramdisk_addr_r} /initrd.img
-else
-	load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}vmlinuz
-	load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}initrd.img
-fi
+load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
+load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}Initrd
 booti ${kernel_addr_r} ${ramdisk_addr_r}:${filesize} ${fdt_addr_r}
 
 # Recompile with:

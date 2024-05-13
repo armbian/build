@@ -107,7 +107,7 @@ function prepare_host_noninteractive() {
 	fi
 
 	# create directory structure # @TODO: this should be close to DEST, otherwise super-confusing
-	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}"
+	mkdir -p "${SRC}"/{cache,output} "${USERPATCHES_PATH}" "${SRC}"/output/info
 
 	# @TODO: original: mkdir -p "${DEST}"/debs-beta/extra "${DEST}"/debs/extra "${DEST}"/{config,debug,patch} "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,hash,hash-beta,toolchain,utility,rootfs} "${SRC}"/.tmp
 	mkdir -p "${USERPATCHES_PATH}"/overlay "${SRC}"/cache/{sources,rootfs} "${SRC}"/.tmp
@@ -254,14 +254,14 @@ function adaptative_prepare_host_dependencies() {
 		bison
 		libc6-dev make dpkg-dev gcc # build-essential, without g++
 		ca-certificates ccache cpio
-		debootstrap device-tree-compiler dialog dirmngr dosfstools
+		device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
 		flex
 		gawk gnupg gpg
-		imagemagick # required for boot_logo, plymouth: converting images / spinners
+		imagemagick # required for plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
 		kmod        # this causes initramfs rebuild, but is usually pre-installed, so no harm done unless it's an upgrade
-		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev liblz4-tool
+		libbison-dev libelf-dev libfdt-dev libfile-fcntllock-perl libmpc-dev libfl-dev lz4
 		libncurses-dev libssl-dev libusb-1.0-0-dev
 		linux-base locales lsof
 		ncurses-base ncurses-term # for `make menuconfig`
@@ -289,12 +289,22 @@ function adaptative_prepare_host_dependencies() {
 	### Python
 	host_deps_add_extra_python # See python-tools.sh::host_deps_add_extra_python()
 
-	# Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+
-	host_dependencies+=("python3-dev" "python3-distutils" "python3-setuptools" "python3-pip")
+	### Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+; ffi-dev is needed for some Python packages when the wheel is not prebuilt
+	host_dependencies+=("python3-dev" "python3-setuptools" "python3-pip" "python3-pyelftools" "libffi-dev")
 
-	# Python2 -- required for some older u-boot builds
+	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
+	host_dependencies+=("libgnutls28-dev")
+
+	# Noble and later releases do not carry "python3-distutils" https://docs.python.org/3.10/whatsnew/3.10.html#distutils-deprecated
+	if [[ "noble" == *"${host_release}"* ]]; then
+		display_alert "python3-distutils not available on host release '${host_release}'" "distutils was deprecated with Python 3.12" "debug"
+	else
+		host_dependencies+=("python3-distutils")
+	fi
+
+	### Python2 -- required for some older u-boot builds
 	# Debian 'sid'/'bookworm' and Ubuntu 'lunar' does not carry python2 anymore; in this case some u-boot's might fail to build.
-	if [[ "sid bookworm trixie lunar mantic" == *"${host_release}"* ]]; then
+	if [[ "sid bookworm trixie lunar mantic noble" == *"${host_release}"* ]]; then
 		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
 	else
 		host_dependencies+=("python2" "python2-dev")

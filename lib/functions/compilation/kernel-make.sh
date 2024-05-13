@@ -24,6 +24,8 @@ function run_kernel_make_internal() {
 		"DPKG_COLORS=always"                     # Use colors for dpkg @TODO no dpkg is done anymore, remove?
 		"XZ_OPT='--threads=0'"                   # Use parallel XZ compression
 		"TERM='${TERM}'"                         # Pass the terminal type, so that 'make menuconfig' can work.
+		"COLUMNS='${COLUMNS:-160}'"
+		"COLORFGBG='${COLORFGBG}'"
 	)
 
 	# If CCACHE_DIR is set, pass it to the kernel build; Pass the ccache dir explicitly, since we'll run under "env -i"

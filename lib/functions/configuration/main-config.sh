@@ -138,6 +138,11 @@ function do_main_configuration() {
 			;;
 	esac
 
+	# Check if the filesystem type is supported by the build host
+	if [[ $CONFIG_DEFS_ONLY != yes ]]; then # don't waste time if only gathering config defs
+		check_filesystem_compatibility_on_host
+	fi
+
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
@@ -235,7 +240,7 @@ function do_main_configuration() {
 
 	# Let's set default data if not defined in board configuration above
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
-	[[ -z $ARCH ]] && ARCH=armhf # makes little sense to default to anything... # @TODO: remove
+	[[ -z $ARCH ]] && ARCH=arm64 # makes little sense to default to anything... # @TODO: remove, but check_config_userspace_release_and_desktop requires it
 	ATF_COMPILE=yes              # @TODO: move to armhf/arm64
 	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
@@ -296,17 +301,16 @@ function do_extra_configuration() {
 	[[ -z $UBOOT_USE_GCC ]] && exit_with_error "Error in configuration: UBOOT_USE_GCC is unset"
 	[[ -z $KERNEL_USE_GCC ]] && exit_with_error "Error in configuration: KERNEL_USE_GCC is unset"
 
-	declare BOOTCONFIG_VAR_NAME="BOOTCONFIG_${BRANCH^^}"
+	declare BOOTCONFIG_VAR_NAME="BOOTCONFIG_${BRANCH^^}" # Branch name, uppercase
+	BOOTCONFIG_VAR_NAME=${BOOTCONFIG_VAR_NAME//-/_}      # Replace dashes with underscores
 	[[ -n ${!BOOTCONFIG_VAR_NAME} ]] && BOOTCONFIG=${!BOOTCONFIG_VAR_NAME}
 	[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-$LINUXFAMILY" # @TODO move to hook
 	[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-$LINUXFAMILY"
 
-	if [[ "$RELEASE" =~ ^(focal|jammy|kinetic|lunar|mantic|noble)$ ]]; then
+	if [[ "$RELEASE" =~ ^(focal|jammy|noble|oracular)$ ]]; then
 		DISTRIBUTION="Ubuntu"
-		DEBOOTSTRAP_SOURCE="gutsy"
 	else
 		DISTRIBUTION="Debian"
-		DEBOOTSTRAP_SOURCE="sid"
 	fi
 
 	DEBIAN_MIRROR='deb.debian.org/debian'
@@ -519,5 +523,50 @@ function set_git_build_repo_url_and_commit_vars() {
 	BUILD_REPOSITORY_COMMIT="$(git -C "${SRC}" describe --match=d_e_a_d_b_e_e_f --always --dirty || true)"             # ignore error
 	display_alert "BUILD_REPOSITORY_URL set during ${1}" "${BUILD_REPOSITORY_URL}" "debug"
 	display_alert "BUILD_REPOSITORY_COMMIT set during ${1}" "${BUILD_REPOSITORY_COMMIT}" "debug"
+	return 0
+}
+
+function check_filesystem_compatibility_on_host() {
+	if [[ -f "/proc/filesystems" ]]; then
+			# Check if the filesystem is listed in /proc/filesystems
+		if ! grep -q "\<$ROOTFS_TYPE\>" /proc/filesystems; then		# ensure exact match with \<...\>
+			# Try modprobing the fs module since it doesn't show up in /proc/filesystems if it's an unloaded module versus built-in
+			if ! modprobe "$ROOTFS_TYPE"; then
+				exit_with_error "Filesystem type unsupported by build host:" "$ROOTFS_TYPE"
+			else
+				display_alert "Sucessfully loaded kernel module for filesystem" "$ROOTFS_TYPE" ""
+			fi
+		fi
+
+		# For f2fs, check if support for extended attributes is enabled in kernel config (otherwise will fail later when using rsync)
+		if [ "$ROOTFS_TYPE" = "f2fs" ]; then
+			local build_host_kernel_config=""
+
+			# Try to find kernel config in different places
+			if [ -f "/boot/config-$(uname -r)" ]; then
+				build_host_kernel_config="/boot/config-$(uname -r)"
+			elif [ -f "/proc/config.gz" ]; then
+				# Try to extract kernel config from /proc/config.gz
+				if command -v gzip &> /dev/null; then
+					gzip -dc /proc/config.gz > /tmp/build_host_kernel_config
+					build_host_kernel_config="/tmp/build_host_kernel_config"
+				else
+					display_alert "Could extract kernel config from build host, please install 'gzip'." "Build might fail in case of missing kernel configs for '${ROOTFS_TYPE}'" "wrn"
+				fi
+			else
+				display_alert "Could not find kernel config of build host." "Build might fail in case of missing kernel configs for '${ROOTFS_TYPE}'." "wrn"
+			fi
+
+			# Check if required configurations are set
+			if [ -n "$build_host_kernel_config" ]; then
+				if ! grep -q '^CONFIG_F2FS_FS_XATTR=y$' "$build_host_kernel_config" || \
+				! grep -q '^CONFIG_F2FS_FS_SECURITY=y$' "$build_host_kernel_config"; then
+					exit_with_error "Required kernel configurations for f2fs filesystem not enabled." "Please enable CONFIG_F2FS_FS_XATTR and CONFIG_F2FS_FS_SECURITY in your kernel configuration." "err"
+				fi
+			fi
+		fi
+	else
+		display_alert "Could not check filesystem support via /proc/filesystems on build host." "Build might fail in case of unsupported rootfs type." "wrn"
+	fi
 	return 0
 }

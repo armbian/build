@@ -16,7 +16,7 @@ setenv docker_optimizations "on"
 
 # If gpio3 pin 25 is 0, write magic to GRF os_reg[0] register and
 # reset to trigger maskrom mode
-if gpio input D25; then 
+if gpio input 121; then 
 	echo "Resetting into MASKROM mode..."
         mw.l 0x110005c8 0xEF08A53C 1
         reset

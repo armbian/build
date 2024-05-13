@@ -75,6 +75,30 @@ function memoized_git_ref_to_info() {
 		exit_with_error "Failed to fetch SHA1 of '${MEMO_DICT[GIT_SOURCE]}' '${ref_type}' '${ref_name}' - make sure it's correct"
 	fi
 
+	if [[ ${ref_type} == "branch" ]]; then
+		{
+			flock -x 5
+			flock -x 6
+
+			[[ -s "${SRC}"/output/info/git_sources.json ]] || echo '[]' >&5
+			jq --arg source "${MEMO_DICT[GIT_SOURCE]}" \
+				--arg branch "${ref_name}" \
+				--arg sha1 "${sha1}" \
+				"if (map(select(.source == \$source and .branch == \$branch))| length) !=0 then \
+					(.[]|select(.source == \$source and .branch == \$branch)).sha1 |= \$sha1 \
+				else \
+					. + [{\"source\": \$source, \"branch\": \$branch, \"sha1\": \$sha1}] \
+				end" /dev/fd/5 >&6
+			cat /dev/fd/6 >"${SRC}"/output/info/git_sources.json
+		} 5<>"${SRC}"/output/info/git_sources.json 6<>"${SRC}"/output/info/git_sources.json.new
+	fi
+
+	if [[ -f "${SRC}"/config/sources/git_sources.json && ${ref_type} == "branch" ]]; then
+		cached_revision=$(jq --raw-output '.[] | select(.source == "'${MEMO_DICT[GIT_SOURCE]}'" and .branch == "'$ref_name'") |.sha1' "${SRC}"/config/sources/git_sources.json)
+		display_alert "Found cached git version" "${cached_revision}" "info"
+		[[ -z "${cached_revision}" ]] || sha1=${cached_revision}
+	fi
+
 	MEMO_DICT+=(["SHA1"]="${sha1}")
 
 	if [[ "${2}" == "include_makefile_body" ]]; then

@@ -98,7 +98,8 @@ function prepare_partitions() {
 		local uefipart=$((next++))
 	fi
 	# Check if we need boot partition
-	if [[ $BOOTSIZE != "0" && ( -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes ) ]]; then
+	# Specialized storage extensions like cryptroot or lvm may require a boot partition
+	if [[ $BOOTSIZE != "0" && ( -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $BOOTPART_REQUIRED == yes ) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
@@ -215,12 +216,25 @@ function prepare_partitions() {
 	flock -x $FD
 
 	declare -g LOOP
-	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
-	display_alert "Allocated loop device" "LOOP=${LOOP}"
+	# replace losetup --find with own function and do 10 cycles
+	# losetup always return 1st free loop device and in parallel build,
+	# it often happens that same is found which resoults in:
+	# "failed to set up loop device: Device or resource busy"
+	# If we seek random way, chanches of allocating the same are significantly smaller.
+	FIND_LOOP_CYCLES=1
+	while : ; do
+		LOOP=$(find /dev/loop* | grep -Po "(\/dev\/loop\d|\/dev\/loop\d\d)$" | sort -R | head -1)
+		LOOP_COMPARE=$(losetup -l --noheadings --raw --output=NAME | grep $LOOP || true)
+		[[ -z $LOOP_COMPARE ]] && break
+		[[ $FIND_LOOP_CYCLES -gt 10 ]] && exit_with_error "Unable to find free loop device"
+		FIND_LOOP_CYCLES=$(( FIND_LOOP_CYCLES + 1 ))
+	done
+	display_alert "Allocated loop device" "LOOP=${LOOP} in cycle $FIND_LOOP_CYCLES"
 
 	CHECK_LOOP_FOR_SIZE="no" check_loop_device "$LOOP" # initially loop is zero sized, ignore it.
 
-	run_host_command_logged losetup "${LOOP}" "${SDCARD}".raw # @TODO: had a '-P- here, what was it?
+        #--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
+	run_host_command_logged losetup --partscan "${LOOP}" "${SDCARD}".raw
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
@@ -239,15 +253,10 @@ function prepare_partitions() {
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
 
-		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			check_loop_device "$rootdevice"
-			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
-			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
-			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
-			display_alert "Root partition encryption complete." "" "ext"
-			# TODO: pass /dev/mapper to Docker
-			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
-		fi
+		call_extension_method "prepare_root_device" <<- 'PREPARE_ROOT_DEVICE'
+			*Specialized storage extensions typically transform the root device into a mapped device and should hook in here *
+			At this stage ${rootdevice} has been defined pointing to a loop device partition. Extensions that map the root device must update rootdevice accordingly.
+		PREPARE_ROOT_DEVICE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"

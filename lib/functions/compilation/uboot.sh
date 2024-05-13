@@ -19,9 +19,7 @@ function maybe_make_clean_uboot() {
 	fi
 }
 
-# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
-# also receives uboot_prefix, target_make, target_patchdir, target_files as input
-function compile_uboot_target() {
+function patch_uboot_target() {
 	local uboot_work_dir=""
 	uboot_work_dir="$(pwd)"
 
@@ -33,10 +31,6 @@ function compile_uboot_target() {
 	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q "${uboot_git_revision}"
 
-	# grab the prepatch version from Makefile
-	local uboot_prepatch_version=""
-	uboot_prepatch_version=$(grab_version "${uboot_work_dir}")
-
 	maybe_make_clean_uboot
 
 	# Python patching for u-boot!
@@ -45,7 +39,16 @@ function compile_uboot_target() {
 	# create patch for manual source changes
 	if [[ $CREATE_PATCHES == yes ]]; then
 		userpatch_create "u-boot"
-		return 0 # exit after this.
+	fi
+}
+
+# this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
+# also receives uboot_prefix, target_make, target_patchdir, target_files as input
+function compile_uboot_target() {
+	patch_uboot_target
+
+	if [[ $CREATE_PATCHES == yes ]]; then
+		return 0
 	fi
 
 	# atftempdir comes from atf.sh's compile_atf()
@@ -72,7 +75,7 @@ function compile_uboot_target() {
 	declare -g if_error_detail_message="${uboot_prefix}Failed to configure u-boot ${version} $BOOTCONFIG ${target_make}"
 	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		"KCFLAGS=-fdiagnostics-color=always" \
-		unbuffer make "$CTHREADS" "$BOOTCONFIG" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
+		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
 
 	# armbian specifics u-boot settings
 	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
@@ -176,12 +179,27 @@ function compile_uboot_target() {
 		Also the only chance to change the (local) array `uboot_cflags_array`.
 	POST_CONFIG_UBOOT_TARGET
 
+	# make olddefconfig, so changes made in hook above are consolidated
+	display_alert "${uboot_prefix}Updating u-boot config with olddefconfig" "${version} ${target_make}" "info"
+	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		"KCFLAGS=-fdiagnostics-color=always" \
+		pipetty make "${CTHREADS}" "olddefconfig" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
+
 	if [[ "${UBOOT_CONFIGURE:-"no"}" == "yes" ]]; then
 		display_alert "Configuring u-boot" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_dialog make menuconfig
 		display_alert "Exporting saved config" "UBOOT_CONFIGURE=yes; experimental" "warn"
 		run_host_command_logged make savedefconfig
 		run_host_command_logged cp -v defconfig "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}"
+
+		# check if we can find configs/${BOOTCONFIG}, and if so, output a diff between that and the new saved defconfig
+		if [[ -f "configs/${BOOTCONFIG}" ]]; then
+			display_alert "Diffing ${BOOTCONFIG} and new defconfig" "UBOOT_CONFIGURE=yes; experimental" "warn"
+			run_host_command_logged diff -u --color=always "configs/${BOOTCONFIG}" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "2>&1" "|| true" # no errors please, all to stdout
+		fi
+
+		display_alert "Exporting saved config (experimental)" "${DEST}/defconfig-uboot-${BOARD}-${BRANCH}" "warn"
+
 		return 0 # exit after this
 	fi
 

@@ -27,6 +27,96 @@ check_abort() {
 
 }
 
+mask2cidr() {
+	nbits=0
+	IFS=.
+	for dec in $1 ; do
+		case $dec in
+			255) let nbits+=8;;
+			254) let nbits+=7;;
+			252) let nbits+=6;;
+			248) let nbits+=5;;
+			240) let nbits+=4;;
+			224) let nbits+=3;;
+			192) let nbits+=2;;
+			128) let nbits+=1;;
+			0);;
+			*) echo "Error: $dec is not recognised"; exit 1
+		esac
+	done
+	echo "$nbits"
+}
+
+do_firstrun_automated_network_configuration()
+{
+	#-----------------------------------------------------------------------------
+	#Config FP
+	local fp_config='/root/.not_logged_in_yet'
+
+	#-----------------------------------------------------------------------------
+	#Grab user requested settings
+	if [[ -f $fp_config ]]; then
+
+		# Convert line endings to Unix from Dos
+		sed -i $'s/\r$//' "$fp_config"
+
+		# check syntax
+		bash -n "$fp_config" || return
+
+		# Load vars directly from file
+		source "$fp_config"
+
+		# Obtain backward configuration compatibility
+		PRESET_NET_STATIC_DNS=${PRESET_NET_STATIC_DNS// /,}
+		PRESET_NET_STATIC_MASK=$(mask2cidr $PRESET_NET_STATIC_MASK)
+
+		#-----------------------------------------------------------------------------
+		# Set Network
+		if [[ $PRESET_NET_CHANGE_DEFAULTS == 1 ]]; then
+			# Only run at tty1
+			if [ "$(who am i | awk '{print $2}')" != "tty1" ];then
+				exit
+			fi
+			# - Get name of 1st available ethernet and wifi adapter
+			eth_index="$(nmcli d | grep ethernet | cut -d ' ' -f 1 | head -n 1)"
+			wlan_index="$(nmcli d | grep wifi | cut -d ' ' -f 1 | head -n 1)"
+
+			# for static IP we only append settings
+			if [[ $PRESET_NET_USE_STATIC == 1 ]]; then
+				local FIXED_IP_SETTINGS="ipv4.method manual ipv4.address ${PRESET_NET_STATIC_IP}/${PRESET_NET_STATIC_MASK} ipv4.dns ${PRESET_NET_STATIC_DNS} ipv4.gateway ${PRESET_NET_STATIC_GATEWAY}"
+			fi
+
+			if [[ -n $eth_index || -n $wlan_index ]]; then
+				# delete all current connections
+				LC_ALL=C nmcli -t -f UUID,DEVICE connection show | awk '{print $1}' | cut -f1 -d":" | xargs nmcli connection delete
+
+				# - Wifi enable
+				if [[ $PRESET_NET_WIFI_ENABLED == 1 ]]; then
+
+					#Set wifi country code
+					iw reg set "$PRESET_NET_WIFI_COUNTRYCODE"
+
+					nmcli con add con-name "Armbian wireless" type wifi ifname ${wlan_index} ssid "$PRESET_NET_WIFI_SSID" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PRESET_NET_WIFI_KEY" ${FIXED_IP_SETTINGS}
+					nmcli con up "Armbian wireless"
+
+					#Enable Wlan, disable Eth
+					PRESET_NET_ETHERNET_ENABLED=0
+
+				# - Ethernet enable
+				elif [[ $PRESET_NET_ETHERNET_ENABLED == 1 ]]; then
+
+					nmcli con add con-name "Armbian ethernet" type ethernet ifname ${eth_index} -- ${FIXED_IP_SETTINGS}
+					nmcli con up "Armbian ethernet"
+
+					#Enable Eth, disable Wlan
+					PRESET_NET_WIFI_ENABLED=0
+
+				fi
+			fi
+		fi
+	fi
+} #do_firstrun_automated_network_configuration
+
 read_password() {
 
 	unset password
@@ -75,7 +165,17 @@ set_shell() {
 					echo "$i) $o"
 					((i++)) || true
 				done
-				read -r reply
+				if [ -z $PRESET_USER_SHELL ];then
+					read -r reply
+				else
+					reply=1
+					for index in "${!optionsAudits[@]}"; do
+						if [[ "${optionsAudits[$index]}" == "$PRESET_USER_SHELL" ]]; then
+							reply=$(($index + 1))
+							break
+						fi
+					done
+				fi
 			done
 			case $reply in
 				"1" | "${optionsAudits[0]}")
@@ -120,8 +220,12 @@ set_timezone_and_locales() {
 			echo ""
 			unset response
 			while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
-				read -r -p "Connect via wireless? [Y/n] " response
-				response=${response:-Y}
+				if [ -z $PRESET_CONNECT_WIRELESS ];then
+					read -r -p "Connect via wireless? [Y/n] " response
+					response=${response:-Y}
+				else
+					response=n
+				fi
 				echo "$response"
 			done
 			if [[ "${response}" =~ ^(Y|y)$ ]]; then
@@ -150,8 +254,12 @@ set_timezone_and_locales() {
 	echo ""
 	unset response
 	while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
-		read -r -p "Set user language based on your location? [Y/n] " response
-		response=${response:-Y}
+		if [ -z $SET_LANG_BASED_ON_LOCATION ];then
+			read -r -p "Set user language based on your location? [Y/n] " response
+			response=${response:-Y}
+		else
+			response=$SET_LANG_BASED_ON_LOCATION
+		fi
 		echo "$response"
 	done
 	# change it only if we have a match and if we agree
@@ -167,25 +275,33 @@ set_timezone_and_locales() {
 
 	readarray -t options <<< "${LOCALES}"
 
-	# when having more locales, prompt for choosing one
-	if [[ "${#options[@]}" -gt 1 ]]; then
+	if [ -z $PRESET_LOCALE ];then
+		# when having more locales, prompt for choosing one
+		if [[ "${#options[@]}" -gt 1 ]]; then
 
-		options+=("Skip generating locales")
-		echo -e "\nAt your location, more locales are possible:\n"
-		PS3='Please enter your choice:'
-		select opt in "${options[@]}"; do
-			if [[ " ${options[*]} " == *" ${opt} "* ]]; then
-				LOCALES=${opt}
-				break
-			fi
-		done
+			options+=("Skip generating locales")
+			echo -e "\nAt your location, more locales are possible:\n"
+			PS3='Please enter your choice:'
+			select opt in "${options[@]}"; do
+				if [[ " ${options[*]} " == *" ${opt} "* ]]; then
+					LOCALES=${opt}
+					break
+				fi
+			done
+		fi
+	else
+		LOCALES=$PRESET_LOCALE
 	fi
 
 	if [[ "${LOCALES}" != *Skip* ]]; then
 
-		# if TZDATA was not detected, we need to select one
-		if [[ -z ${TZDATA} ]]; then
-			TZDATA=$(tzselect | tail -1)
+		if [ -z $PRESET_TIMEZONE ];then
+			# if TZDATA was not detected, we need to select one
+			if [[ -z ${TZDATA} ]]; then
+				TZDATA=$(tzselect | tail -1)
+			fi
+		else
+			TZDATA=$PRESET_TIMEZONE
 		fi
 
 		timedatectl set-timezone "${TZDATA}"
@@ -241,7 +357,11 @@ add_user() {
 	REPEATS=3
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		echo -e "\nPlease provide a username (eg. your first name): \c"
-		read -r -e username
+		if [ -z $PRESET_USER_NAME ];then
+			read -r -e username
+		else
+			username=$PRESET_USER_NAME
+		fi
 		if ! grep '^[a-zA-Z][a-zA-Z0-9]*$' <<< "$username" > /dev/null; then
 			echo -e "\n\x1B[91mError\x1B[0m: illegal characters in username"
 			return
@@ -253,10 +373,18 @@ add_user() {
 	done
 
 	while [ -f "/root/.not_logged_in_yet" ]; do
-		read_password "Create user ($username)"
+		if [ -z $PRESET_USER_PASSWORD ];then
+			read_password "Create user ($username)"
+		else
+			password=$PRESET_USER_PASSWORD
+		fi
 		first_input="$password"
 		echo ""
-		read_password "Repeat user ($username)"
+		if [ -z $PRESET_USER_PASSWORD ];then
+			read_password "Repeat user ($username)"
+		else
+			password=$PRESET_USER_PASSWORD
+		fi
 		second_input="$password"
 		echo ""
 		if [[ "$first_input" == "$second_input" ]]; then
@@ -269,7 +397,11 @@ add_user() {
 				fi
 			fi
 			echo -e ""
-			read -r -e -p "Please provide your real name: " -i "${RealUserName^}" RealName
+			if [ -z $PRESET_DEFAULT_REALNAME ];then
+				read -r -e -p "Please provide your real name: " -i "${RealUserName^}" RealName
+			else
+				RealName=$PRESET_DEFAULT_REALNAME
+			fi
 
 			adduser --quiet --disabled-password --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
 			if [[ -n "$first_input" ]]; then
@@ -310,6 +442,8 @@ add_user() {
 }
 
 if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
+	do_firstrun_automated_network_configuration
+
 	# disable autologin
 	rm -f /etc/systemd/system/getty@.service.d/override.conf
 	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
@@ -354,8 +488,15 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	trap '' 2
 	REPEATS=3
 	while [ -f "/root/.not_logged_in_yet" ]; do
-
-		read_password "Create root"
+		. /root/.not_logged_in_yet
+		if [ -z $PRESET_ROOT_PASSWORD ];then
+			read_password "Create root"
+		else
+			if [ "$(who am i | awk '{print $2}')" != "tty1" ];then
+				exit
+			fi
+			password=$PRESET_ROOT_PASSWORD
+		fi
 
 		# only allow one login. Once you enter root password, kill others.
 		loginfrom=$(who am i | awk '{print $2}')
@@ -363,7 +504,11 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 		first_input="$password"
 		echo ""
-		read_password "Repeat root"
+		if [ -z $PRESET_ROOT_PASSWORD ];then
+			read_password "Repeat root"
+		else
+			password=$PRESET_ROOT_PASSWORD
+		fi
 		second_input="$password"
 		echo ""
 		if [[ "$first_input" == "$second_input" ]]; then
@@ -439,7 +584,6 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	# rpardini: hacks per-dm, very much legacy stuff that works by a miracle
 	if [[ "${desktop_dm}" == "lightdm" ]] && [ -n "$RealName" ]; then
 
-		# 1st run goes without login
 		mkdir -p /etc/lightdm/lightdm.conf.d
 		cat <<- EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 			[Seat:*]
@@ -488,10 +632,6 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		# select mate session
 		[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
 		[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
-
-		# select plasma wayland session # @TODO: rpardini: dead code? kde-plasma desktop should use sddm, not lightdm.
-		[[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-		[[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
 		# select sway wayland session
 		[[ -x $(command -v sway) ]] && sed -i "s/user-session.*/user-session=sway/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
@@ -552,9 +692,32 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 			who -la | grep root | grep -q tty1 && exit 1
 		fi
 	elif [[ "${desktop_dm}" == "sddm" ]] && [ -n "$RealName" ]; then
-		# No hacks for sddm. User will have to input password again, and have  chance to choose session wayland
+
+		# create default sddm config
+		mkdir -p /etc/sddm.conf.d
+		cat <<- EOF > /etc/sddm.conf.d/armbian.conf
+			[Theme]
+			Current=breeze
+			[General]
+			InputMethod=none
+		EOF
+
+		# 1st run goes without login
+		cat <<- EOF > /etc/sddm.conf.d/autologin.conf
+			[Autologin]
+			User=$RealUserName
+		EOF
 		echo -e "\n\e[1m\e[39mNow starting desktop environment via ${desktop_dm}...\x1B[0m\n"
-		systemctl enable --now sddm
+		systemctl enable --now sddm 2> /dev/null
+
+		if [ -f /root/.desktop_autologin ]; then
+				rm /root/.desktop_autologin
+		else
+			systemctl -q enable armbian-disable-autologin.timer
+		fi
+		# logout if logged at console
+		who -la | grep root | grep -q tty1 && exit 1
+
 	else
 		# no display manager detected
 		# Display reboot recommendation if necessary

@@ -19,7 +19,8 @@ function install_distribution_agnostic() {
 	echo "/dev/mmcblk0p2 /usr $ROOTFS_TYPE defaults 0 2" >> "${SDCARD}"/etc/fstab
 
 	# create modules file
-	local modules=MODULES_${BRANCH^^}
+	local modules=MODULES_${BRANCH^^} # BRANCH, uppercase
+	modules=${modules//-/_}           # replace dashes with underscores
 	if [[ -n "${!modules}" ]]; then
 		tr ' ' '\n' <<< "${!modules}" > "${SDCARD}"/etc/modules
 	elif [[ -n "${MODULES}" ]]; then
@@ -27,7 +28,8 @@ function install_distribution_agnostic() {
 	fi
 
 	# create blacklist files
-	local blacklist=MODULES_BLACKLIST_${BRANCH^^}
+	local blacklist=MODULES_BLACKLIST_${BRANCH^^} # BRANCH, uppercase
+	blacklist=${blacklist//-/_}                   # replace dashes with underscores
 	if [[ -n "${!blacklist}" ]]; then
 		tr ' ' '\n' <<< "${!blacklist}" | sed -e 's/^/blacklist /' > "${SDCARD}/etc/modprobe.d/blacklist-${BOARD}.conf"
 	elif [[ -n "${MODULES_BLACKLIST}" ]]; then
@@ -391,16 +393,12 @@ function install_distribution_agnostic() {
 	# enable additional services, if they exist.
 	display_alert "Enabling Armbian services" "systemd" "info"
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun.service
-	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun-config.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-zram-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-zram-config.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service ]] && chroot_sdcard systemctl --no-reload enable armbian-hardware-optimize.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-ramlog.service ]] && chroot_sdcard systemctl --no-reload enable armbian-ramlog.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-resize-filesystem.service ]] && chroot_sdcard systemctl --no-reload enable armbian-resize-filesystem.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-hardware-monitor.service ]] && chroot_sdcard systemctl --no-reload enable armbian-hardware-monitor.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-led-state.service ]] && chroot_sdcard systemctl --no-reload enable armbian-led-state.service
-
-	# copy "first run automated config, optional user configured"
-	run_host_command_logged cp -v "${SRC}"/packages/bsp/armbian_first_run.txt.template "${SDCARD}"/boot/armbian_first_run.txt.template
 
 	# switch to beta repository at this stage if building nightly images
 	if [[ $IMAGE_TYPE == nightly && -f "${SDCARD}"/etc/apt/sources.list.d/armbian.list ]]; then
@@ -551,9 +549,6 @@ function install_distribution_agnostic() {
 
 	# nsswitch settings for sane DNS behavior: remove resolve, assure libnss-myhostname support
 	sed "s/hosts\:.*/hosts:          files mymachines dns myhostname/g" -i "${SDCARD}"/etc/nsswitch.conf
-
-	# build logo in any case
-	boot_logo
 
 	# Show logo
 	if [[ $PLYMOUTH == yes ]]; then
