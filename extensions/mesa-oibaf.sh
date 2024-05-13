@@ -41,7 +41,7 @@ function post_install_kernel_debs__oibaf() {
 	EOF
 
 	# Ubuntu oracular workaround
-	local url_to_check='https://ppa.launchpadcontent.net/oibaf/graphics-drivers/ubuntu/dists/${RELEASE}/Release'
+	local url_to_check="https://ppa.launchpadcontent.net/oibaf/graphics-drivers/ubuntu/dists/${RELEASE}/Release"
 	if curl -o/dev/null -sfIL "$url_to_check" 2>&1; then
 		:
 	else
