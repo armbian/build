@@ -53,7 +53,7 @@ function post_install_kernel_debs__oibaf() {
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
 	display_alert "Installing oibaf packages" "${EXTENSION}" "info"
-	do_with_retries 3 chroot_sdcard_apt_get_install --allow-downgrades glmark2-wayland glmark2-es2 glmark2-es2-wayland mesa-utils
+	do_with_retries 3 chroot_sdcard_apt_get_install --allow-downgrades glmark2-wayland glmark2 glmark2-es2 glmark2-es2-wayland mesa-utils
 
 	display_alert "Upgrading oibaf packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get dist-upgrade
