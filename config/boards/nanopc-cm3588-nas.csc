@@ -39,7 +39,7 @@ function post_family_tweaks__nanopccm3588nas_udev_naming_network_interfaces() {
 }
 
 # Mainline u-boot or Kwiboo's tree
-function post_family_config_branch_edge__rock-5b_use_mainline_uboot() {
+function post_family_config_branch_edge__nanopccm3588nas_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
 	unset BOOTFS_TYPE                                                     # mainline can boot from ext4 no problem
