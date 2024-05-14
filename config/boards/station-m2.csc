@@ -1,9 +1,9 @@
 # Rockchip RK3566 quad core 2GB-8GB GBE eMMC NVMe USB3 WiFi
 BOARD_NAME="Station M2"
-BOARDFAMILY="media"
-BOARD_MAINTAINER="150balbes"
+BOARDFAMILY="rk35xx"
+BOARD_MAINTAINER=""
 BOOTCONFIG="firefly-m2-rk3568_defconfig"
-KERNEL_TARGET="current,edge"
+KERNEL_TARGET="legacy,vendor,current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3566-firefly-roc-pc.dtb"
@@ -19,4 +19,12 @@ function post_family_tweaks__station_m2() {
 	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
 
 	return 0
+}
+
+# Override family config for this board; let's avoid conditionals in family config.
+function post_family_config__stationm2_use_vendor_uboot() {
+	BOOTSOURCE='https://github.com/150balbes/u-boot-rk'
+	BOOTBRANCH='branch:rk356x'
+	BOOTDIR="u-boot-${BOARD}"
+	BOOTPATCHDIR="u-boot-station-p2"
 }
