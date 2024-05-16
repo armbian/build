@@ -5,7 +5,7 @@
 #
 
 # This add's amazingfate's PPAs to the the image, and installs all needed packages.
-# It only works on LINUXFAMILY="rk3588-legacy" and RELEASE=jammy and BRANCH=legacy/vendor
+# It only works on LINUXFAMILY="rk3588-legacy" and RELEASE=jammy/noble and BRANCH=legacy/vendor
 # if on a desktop, installs more useful packages, and tries to coerce lightdm to use gtk-greeter and a Wayland session.
 function extension_prepare_config__amazingfate_rk35xx_multimedia() {
 	display_alert "Preparing amazingfate's PPAs for rk35xx multimedia" "${EXTENSION}" "info"
@@ -13,8 +13,8 @@ function extension_prepare_config__amazingfate_rk35xx_multimedia() {
 
 	[[ "${BUILDING_IMAGE}" != "yes" ]] && return 0
 
-	if [[ "${RELEASE}" != "jammy" ]]; then
-		display_alert "skipping..." "${EXTENSION} not for ${RELEASE}, only jammy, skipping" "warn"
+	if [[ "${RELEASE}" != "jammy" ]] && [[ "${RELEASE}" != "noble" ]]; then
+		display_alert "skipping..." "${EXTENSION} not for ${RELEASE}, only jammy/noble, skipping" "warn"
 		return 0
 	fi
 
@@ -28,8 +28,8 @@ function extension_prepare_config__amazingfate_rk35xx_multimedia() {
 }
 
 function post_install_kernel_debs__amazingfated_rk35xx_multimedia() {
-	if [[ "${RELEASE}" != "jammy" ]]; then
-		display_alert "skipping..." "${EXTENSION} not for ${RELEASE}, only jammy, skipping" "info"
+	if [[ "${RELEASE}" != "jammy" ]] && [[ "${RELEASE}" != "noble" ]]; then
+		display_alert "skipping..." "${EXTENSION} not for ${RELEASE}, only jammy/noble, skipping" "info"
 		return 0
 	fi
 
@@ -42,7 +42,12 @@ function post_install_kernel_debs__amazingfated_rk35xx_multimedia() {
 
 	declare -a pkgs=(rockchip-multimedia-config)
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
-		pkgs+=(chromium-browser libwidevinecdm)
+		pkgs+=(chromium-browser)
+		if [[ "${RELEASE}" == "jammy" ]]; then
+			pkgs+=(libwidevinecdm)
+		else
+			pkgs+=(libwidevinecdm0)
+		fi
 		pkgs+=("libv4l-rkmpp" "gstreamer1.0-rockchip") # @TODO: remove when added as dependencies to chromium...?
 	fi
 
