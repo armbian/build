@@ -11,6 +11,7 @@
 
 function do_main_configuration() {
 	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
+	enable_extension "disable-cnf_chroot"
 
 	# Obsolete stuff, make sure not defined, then make readonly
 	declare -g -r DEBOOTSTRAP_LIST
