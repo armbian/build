@@ -413,6 +413,11 @@ function install_distribution_agnostic() {
 	# @TODO: rpardini: still needed? people might want working Samba
 	disable_systemd_service_sdcard nmbd
 
+	# move sshd activation from ssh.service to ssh.socket (more realiable, avoids possible race condition on first boot) supplementary to ffee50a8a6b99bb4f35af90895e019eced7ff71b and 67250321918e59582b8f1003d331f4b1db253b21
+	display_alert "Moving SSH activation from service to socket" "systemd" "info"
+	disable_systemd_service_sdcard ssh
+	chroot_sdcard systemctl enable ssh.socket
+
 	# disable low-level kernel messages for non betas
 	if [[ -z $BETA ]]; then
 		sed -i "s/^#kernel.printk*/kernel.printk/" "${SDCARD}"/etc/sysctl.conf
