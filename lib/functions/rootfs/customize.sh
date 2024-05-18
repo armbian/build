@@ -10,6 +10,7 @@
 customize_image() {
 
 	# for users that need to prepare files at host
+	# shellcheck source=/dev/null
 	[[ -f $USERPATCHES_PATH/customize-image-host.sh ]] && source "$USERPATCHES_PATH"/customize-image-host.sh
 
 	call_extension_method "pre_customize_image" "image_tweaks_pre_customize" <<- 'PRE_CUSTOMIZE_IMAGE'

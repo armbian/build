@@ -443,7 +443,9 @@ function compile_uboot() {
 
 function uboot_postinst_base() {
 	# Source the armbian-release information file
+	# shellcheck source=/dev/null
 	[ -f /etc/armbian-release ] && . /etc/armbian-release
+	# shellcheck source=/dev/null
 	source /usr/lib/u-boot/platform_install.sh
 
 	if [ "${FORCE_UBOOT_UPDATE:-no}" == "yes" ]; then
