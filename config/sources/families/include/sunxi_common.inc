@@ -19,6 +19,7 @@ declare -g UBOOT_FW_ENV='0x88000,0x20000' # /etc/fw_env.config offset and env si
 declare -g ASOUND_STATE='asound.state.sunxi-next'
 declare -g GOVERNOR=ondemand
 
+# shellcheck source=config/sources/families/include/crust_firmware.inc
 source "${BASH_SOURCE%/*}/crust_firmware.inc"
 
 case $BRANCH in

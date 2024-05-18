@@ -18,6 +18,7 @@ UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-BINMAN_ALLOW_MISSING=1;;u-boot-sunxi-with-
 declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
 declare -g LINUXFAMILY=sunxi64
 
+# shellcheck source=config/sources/families/include/crust_firmware.inc
 source "${BASH_SOURCE%/*}/crust_firmware.inc"
 
 case $BRANCH in

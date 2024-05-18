@@ -358,6 +358,7 @@ function do_extra_configuration() {
 	#         in case the user tries to use them in lib.config, hopefully they'll be detected as "wishful hooking" and the user will be wrn'ed.
 	if [[ -f $USERPATCHES_PATH/lib.config ]]; then
 		display_alert "Using user configuration override" "$USERPATCHES_PATH/lib.config" "info"
+		# shellcheck source=/dev/null
 		source "$USERPATCHES_PATH"/lib.config
 		track_general_config_variables "after sourcing lib.config"
 	fi
