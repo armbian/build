@@ -18,7 +18,6 @@ IMAGE_PARTITION_TABLE="gpt"
 function post_family_config_branch_edge__coolpi-cm5_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
-	unset BOOTFS_TYPE                                                     # mainline can boot from ext4 no problem
 	declare -g BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git" # Kwiboo U-Boot
 	unset BOOTBRANCH
 	unset BOOTPATCHDIR
