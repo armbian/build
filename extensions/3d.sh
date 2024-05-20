@@ -3,14 +3,19 @@
 # Armbian build framework extension
 #
 # Enables 3D and multimedia acceleration for Debian and Ubuntu
-# - 
 #
 
 function extension_prepare_config__3d() {
 
 	[[ "${BUILDING_IMAGE}" != "yes" ]] && return 0
 	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
-	display_alert "Enabling" "${EXTENSION}" "info"
+
+	# set suffix
+	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy)$ ]]; then
+                EXTRA_IMAGE_SUFFIXES+=("-panfork") # Add to the image suffix. # global array
+        elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+                EXTRA_IMAGE_SUFFIXES+=("-oibaf")
+	fi
 
 }
 
