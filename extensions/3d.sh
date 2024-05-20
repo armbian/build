@@ -9,21 +9,27 @@
 function extension_prepare_config__3d() {
 
 	[[ "${BUILDING_IMAGE}" != "yes" ]] && return 0
-	EXTRA_IMAGE_SUFFIXES+=("-3d") # Add to the image suffix. # global array
+	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
+	display_alert "Enabling" "${EXTENSION}" "info"
 
 }
 
 function post_install_kernel_debs__3d() {
 
-	declare -a pkgs=("mesa-utils" "mesa-utils-extra" "libglx-mesa0" "libgl1-mesa-dri" "glmark2" "glmark2-wayland" "glmark2-x11" "glmark2-es2-wayland" "glmark2-es2" "glmark2-es2-x11")
-
-	# Do not install those packages on CLI images
-	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
-
-	# Old releases whcih are not supported but are still in the system
+	# Silently deny old releases which are not supported but are still in the system
 	[[ "${RELEASE}" =~ ^(bullseye|buster|focal)$ ]] && return 0
 
+	# Do not install those packages on CLI and minimal images
+	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
+
+	declare -a pkgs=("mesa-utils" "mesa-utils-extra" "libglx-mesa0" "libgl1-mesa-dri" "glmark2" "glmark2-wayland" "glmark2-es2-wayland" "glmark2-es2")
+
+	# x11gl benchmark came late to ubuntu
+	[[ "${RELEASE}" != jammy ]] && pkgs+=("glmark2-x11" "glmark2-es2-x11")
+
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy)$ ]]; then
+
+		EXTRA_IMAGE_SUFFIXES+=("-panfork") # Add to the image suffix. # global array
 
 		display_alert "Adding amazingfated's rk3588 PPAs" "${EXTENSION}" "info"
 		do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/panfork-mesa --yes --no-update
@@ -36,6 +42,8 @@ function post_install_kernel_debs__3d() {
 		EOF
 
 	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+
+		EXTRA_IMAGE_SUFFIXES+=("-oibaf") # Add to the image suffix. # global array
 
 		display_alert "Adding oibaf PPAs" "${EXTENSION}" "info"
 		do_with_retries 3 chroot_sdcard add-apt-repository ppa:oibaf/graphics-drivers --yes --no-update
@@ -52,7 +60,7 @@ function post_install_kernel_debs__3d() {
 	# This should work on all distributions where mesa
 	[[ "${LINUXFAMILY}" == "rockchip-rk3588" && "${LINUXFAMILY}" == "rk35xx" && "$BRANCH" == vendor ]] && declare -g DEFAULT_OVERLAYS="panthor-gpu"
 
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx|rockchip64)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
+	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(jammy|noble)$ && "${BRANCH}" =~ ^(legacy|vendor)$ ]]; then
 
 		pkgs+=("rockchip-multimedia-config" "chromium-browser" "libv4l-rkmpp" "gstreamer1.0-rockchip")
 		if [[ "${RELEASE}" == "jammy" ]]; then
@@ -80,13 +88,5 @@ function post_install_kernel_debs__3d() {
 
 	display_alert "Upgrading Mesa packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get dist-upgrade
-
-	display_alert "Installed Mesa packages" "${EXTENSION}" "info"
-
-}
-
-function post_install_kernel_debs__multimedia(){
-
-	display_alert "Installing multimedia" "${EXTENSION}" "info"
 
 }
