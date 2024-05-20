@@ -42,7 +42,6 @@ function post_family_tweaks__nanopccm3588nas_udev_naming_network_interfaces() {
 function post_family_config_branch_edge__nanopccm3588nas_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
-	unset BOOTFS_TYPE                                                     # mainline can boot from ext4 no problem
 	declare -g BOOTCONFIG="nanopc-t6-rk3588_defconfig"                       # override the default for the board/family
 	declare -g BOOTDELAY=1                                                # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git" # We ❤️ Kwiboo's tree

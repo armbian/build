@@ -11,7 +11,6 @@ BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-nanopi-r6s.dtb"
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
-BOOTFS_TYPE="fat"
 DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
 BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
 declare -g UEFI_EDK2_BOARD_ID="nanopi-r6s" # This _only_ used for uefi-edk2-rk3588 extension
