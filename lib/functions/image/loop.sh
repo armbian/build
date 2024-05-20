@@ -116,9 +116,3 @@ function free_loop_device_retried() {
 	fi
 	losetup -d "${1}"
 }
-
-# Runs losetup -f as root to ensure that there is a /dev/loopX or /dev/loopXY device existing and available
-function ensure_loop_exists() {
-	local sudo_prefix="" && is_root_or_sudo_prefix sudo_prefix
-	${sudo_prefix} losetup -f
-}

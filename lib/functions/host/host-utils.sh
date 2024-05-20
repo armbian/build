@@ -99,7 +99,7 @@ function is_root_or_sudo_prefix() {
 	elif [[ -n "$(command -v doas)" ]]; then
 		# doas binary found in path, use it.
 		display_alert "EUID is not 0" "doas binary found, using it" "debug"
-		__my_sudo_prefix="doas"
+		__my_sudo_prefix="sudo"
 	else
 		# No root and no sudo binary. Bail out
 		exit_with_error "EUID is not 0 and no sudo binary found - Please install sudo or run as root"
