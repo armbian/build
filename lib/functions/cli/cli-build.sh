@@ -10,8 +10,6 @@
 function cli_standard_build_pre_run() {
 	declare -g ARMBIAN_COMMAND_REQUIRE_BASIC_DEPS="yes" # Require prepare_host_basic to run before the command.
 
-	ensure_loop_exists
-
 	# "gimme root on a Linux machine"
 	cli_standard_relaunch_docker_or_sudo
 }
