@@ -23,7 +23,7 @@ function post_install_kernel_debs__3d() {
 	# Old releases whcih are not supported but are still in the system
 	[[ "${RELEASE}" =~ ^(bullseye|buster|focal)$ ]] && return 0
 
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy|vendor)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
+	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy)$ ]]; then
 
 		display_alert "Adding amazingfated's rk3588 PPAs" "${EXTENSION}" "info"
 		do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/panfork-mesa --yes --no-update
@@ -75,7 +75,7 @@ function post_install_kernel_debs__3d() {
 	display_alert "Updating sources list, after oibaf PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
-	display_alert "Installing Mesa packages" "${EXTENSION}" "info"
+	display_alert "Installing 3D extension packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_install --allow-downgrades  "${pkgs[@]}"
 
 	display_alert "Upgrading Mesa packages" "${EXTENSION}" "info"
