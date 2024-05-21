@@ -9,14 +9,19 @@ function extension_prepare_config__3d() {
 
 	# only used when generating image
 	[[ "${BUILDING_IMAGE}" != "yes" ]] && return 0
+
 	# only used when generating desktop
 	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
 
-	# set suffix
+	# Define image suffix
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy|vendor)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
-                EXTRA_IMAGE_SUFFIXES+=("-panfork") # Add to the image suffix. # global array
-        elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
-                EXTRA_IMAGE_SUFFIXES+=("-oibaf")
+
+		EXTRA_IMAGE_SUFFIXES+=("-panfork")
+
+	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+
+		EXTRA_IMAGE_SUFFIXES+=("-oibaf")
+
 	fi
 
 }
@@ -69,7 +74,9 @@ function post_install_kernel_debs__3d() {
 	fi
 
 	# This should work on all distributions where mesa and vendor kernel is present
-	[[ "${LINUXFAMILY}" == "rockchip-rk3588" && "${LINUXFAMILY}" == "rk35xx" && "$BRANCH" == vendor ]] && declare -g DEFAULT_OVERLAYS="panthor-gpu"
+	if [[ "${LINUXFAMILY}" == "rockchip-rk3588" && "${LINUXFAMILY}" == "rk35xx" && "$BRANCH" == vendor ]]; then
+		declare -g DEFAULT_OVERLAYS="panthor-gpu"
+	fi
 
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(jammy|noble)$ && "${BRANCH}" =~ ^(legacy|vendor)$ ]]; then
 
