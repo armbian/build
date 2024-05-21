@@ -14,7 +14,7 @@ function extension_prepare_config__3d() {
 	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
 
 	# Define image suffix
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy|vendor)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
+	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
 
 		EXTRA_IMAGE_SUFFIXES+=("-panfork")
 
@@ -23,6 +23,11 @@ function extension_prepare_config__3d() {
 		EXTRA_IMAGE_SUFFIXES+=("-oibaf")
 
 	fi
+
+        # This should be enabled on all for rk3588 distributions where mesa and vendor kernel is present
+        if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" == vendor ]]; then
+                declare -g DEFAULT_OVERLAYS="panthor-gpu"
+        fi
 
 }
 
@@ -40,8 +45,8 @@ function post_install_kernel_debs__3d() {
 	# Some packages, x11gl benchmark, came late into Ubuntu
 	[[ "${RELEASE}" != jammy ]] && pkgs+=("glmark2-x11" "glmark2-es2-x11")
 
-	# Rockchip RK3588 has to use panfork in order to have 4k video playback with Chromium
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy|vendor)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
+	# Rockchip RK3588 will use panfork only with legacy kernel
+	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
 
 		EXTRA_IMAGE_SUFFIXES+=("-panfork") # Add to the image suffix. # global array
 
@@ -71,11 +76,6 @@ function post_install_kernel_debs__3d() {
 		Pin-Priority: 1001
 		EOF
 
-	fi
-
-	# This should work on all distributions where mesa and vendor kernel is present
-	if [[ "${LINUXFAMILY}" == "rockchip-rk3588" && "${LINUXFAMILY}" == "rk35xx" && "$BRANCH" == vendor ]]; then
-		declare -g DEFAULT_OVERLAYS="panthor-gpu"
 	fi
 
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(jammy|noble)$ && "${BRANCH}" =~ ^(legacy|vendor)$ ]]; then
