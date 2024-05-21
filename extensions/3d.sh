@@ -4,6 +4,8 @@
 #
 # Enables 3D and multimedia acceleration for Debian and Ubuntu
 #
+# Rockchip RK3588 has to use panfork in order to have 4k video playback with Chromium
+#
 
 function extension_prepare_config__3d() {
 
@@ -11,7 +13,7 @@ function extension_prepare_config__3d() {
 	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
 
 	# set suffix
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy)$ ]]; then
+	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy|vendor)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
                 EXTRA_IMAGE_SUFFIXES+=("-panfork") # Add to the image suffix. # global array
         elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
                 EXTRA_IMAGE_SUFFIXES+=("-oibaf")
@@ -32,7 +34,7 @@ function post_install_kernel_debs__3d() {
 	# x11gl benchmark came late to ubuntu
 	[[ "${RELEASE}" != jammy ]] && pkgs+=("glmark2-x11" "glmark2-es2-x11")
 
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy)$ ]]; then
+	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy|vendor)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
 
 		EXTRA_IMAGE_SUFFIXES+=("-panfork") # Add to the image suffix. # global array
 
@@ -45,6 +47,8 @@ function post_install_kernel_debs__3d() {
 		Pin: release o=LP-PPA-liujianfeng1994-panfork-mesa
 		Pin-Priority: 1001
 		EOF
+
+		sed -i "s/noble/jammy/g" "${SDCARD}"/etc/apt/sources.list.d/liujianfeng1994-ubuntu-panfork-mesa-"${RELEASE}".*
 
 	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 
