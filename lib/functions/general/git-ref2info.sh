@@ -75,7 +75,7 @@ function memoized_git_ref_to_info() {
 		exit_with_error "Failed to fetch SHA1 of '${MEMO_DICT[GIT_SOURCE]}' '${ref_type}' '${ref_name}' - make sure it's correct"
 	fi
 
-	if [[ ${ref_type} == "branch" ]]; then
+	if [[ "${ARMBIAN_COMMAND}" == "artifact-config-dump-json" ]] && [[ ${ref_type} == "branch" ]]; then
 		{
 			flock -x 5
 			flock -x 6

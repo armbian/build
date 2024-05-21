@@ -409,6 +409,7 @@ function board_side_bsp_cli_postrm() { # not run here
 
 function board_side_bsp_cli_postinst_base() {
 	# Source the armbian-release information file
+	# shellcheck source=/dev/null
 	[ -f /etc/armbian-release ] && . /etc/armbian-release
 
 	# ARMBIAN_PRETTY_NAME is now set in armbian-base-files.
