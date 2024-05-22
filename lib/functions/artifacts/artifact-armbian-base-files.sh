@@ -26,15 +26,51 @@ function artifact_armbian-base-files_prepare_version() {
 	declare fake_unchanging_base_version="1-${RELEASE}-1armbian1"
 
 	declare found_package_version="undetermined" found_package_filename="undetermined" found_package_down_url="undetermined"
-	sleep_seconds="15" do_with_retries 10 apt_find_upstream_package_version_and_download_url "base-files"
 
-	# download the file, but write it to /dev/null (just for testing it is correct)
-	# wget --timeout=15 --output-document=/dev/null "${found_package_down_url}" || exit_with_error "Could not download '${found_package_down_url}'"
+	# To generate the case statements below, uncomment the echo/exit on line 71, then run:
+	#for onerelease in "bullseye" "bookworm" "trixie" "sid" "jammy" "noble" "oracular"; do
+	#for oneboard in "uefi-arm64" "tinkerboard" "uefi-x86" "uefi-riscv64"; do
+	#echo "oneboard: $oneboard - onerelease: $onerelease"
+	#./compile.sh rpardini-generic armbian-base-files BRANCH=current BOARD=$oneboard RELEASE=$onerelease
+	#done
+	#done
 
-	# Set readonly globals with the wanted info; will be used during the actual build of this artifact
-	declare -g -r base_files_wanted_upstream_version="${found_package_version}"
-	declare -g -r base_files_wanted_upstream_filename="${found_package_filename}"
-	declare -g -r base_files_wanted_deb_down_url="${found_package_down_url}"
+	case "${RELEASE}-${ARCH}" in
+		"bookworm-amd64") base_files_wanted_upstream_version="12.4+deb12u6" base_files_wanted_upstream_filename="base-files_12.4+deb12u6_amd64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_12.4+deb12u6_amd64.deb" ;;
+		"bookworm-arm64") base_files_wanted_upstream_version="12.4+deb12u6" base_files_wanted_upstream_filename="base-files_12.4+deb12u6_arm64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_12.4+deb12u6_arm64.deb" ;;
+		"bookworm-armhf") base_files_wanted_upstream_version="12.4+deb12u6" base_files_wanted_upstream_filename="base-files_12.4+deb12u6_armhf.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_12.4+deb12u6_armhf.deb" ;;
+		"bullseye-amd64") base_files_wanted_upstream_version="11.1+deb11u10" base_files_wanted_upstream_filename="base-files_11.1+deb11u10_amd64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_11.1+deb11u10_amd64.deb" ;;
+		"bullseye-arm64") base_files_wanted_upstream_version="11.1+deb11u10" base_files_wanted_upstream_filename="base-files_11.1+deb11u10_arm64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_11.1+deb11u10_arm64.deb" ;;
+		"bullseye-armhf") base_files_wanted_upstream_version="11.1+deb11u10" base_files_wanted_upstream_filename="base-files_11.1+deb11u10_armhf.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_11.1+deb11u10_armhf.deb" ;;
+		"jammy-amd64") base_files_wanted_upstream_version="12ubuntu4.6" base_files_wanted_upstream_filename="base-files_12ubuntu4.6_amd64.deb" base_files_wanted_deb_down_url="http://archive.ubuntu.com/ubuntu/pool/main/b/base-files/base-files_12ubuntu4.6_amd64.deb" ;;
+		"jammy-arm64") base_files_wanted_upstream_version="12ubuntu4.6" base_files_wanted_upstream_filename="base-files_12ubuntu4.6_arm64.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_12ubuntu4.6_arm64.deb" ;;
+		"jammy-armhf") base_files_wanted_upstream_version="12ubuntu4.6" base_files_wanted_upstream_filename="base-files_12ubuntu4.6_armhf.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_12ubuntu4.6_armhf.deb" ;;
+		"jammy-riscv64") base_files_wanted_upstream_version="12ubuntu4.6" base_files_wanted_upstream_filename="base-files_12ubuntu4.6_riscv64.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_12ubuntu4.6_riscv64.deb" ;;
+		"noble-amd64") base_files_wanted_upstream_version="13ubuntu10" base_files_wanted_upstream_filename="base-files_13ubuntu10_amd64.deb" base_files_wanted_deb_down_url="http://archive.ubuntu.com/ubuntu/pool/main/b/base-files/base-files_13ubuntu10_amd64.deb" ;;
+		"noble-arm64") base_files_wanted_upstream_version="13ubuntu10" base_files_wanted_upstream_filename="base-files_13ubuntu10_arm64.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_13ubuntu10_arm64.deb" ;;
+		"noble-armhf") base_files_wanted_upstream_version="13ubuntu10" base_files_wanted_upstream_filename="base-files_13ubuntu10_armhf.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_13ubuntu10_armhf.deb" ;;
+		"noble-riscv64") base_files_wanted_upstream_version="13ubuntu10" base_files_wanted_upstream_filename="base-files_13ubuntu10_riscv64.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_13ubuntu10_riscv64.deb" ;;
+		"oracular-amd64") base_files_wanted_upstream_version="13.3ubuntu3" base_files_wanted_upstream_filename="base-files_13.3ubuntu3_amd64.deb" base_files_wanted_deb_down_url="http://archive.ubuntu.com/ubuntu/pool/main/b/base-files/base-files_13.3ubuntu3_amd64.deb" ;;
+		"oracular-arm64") base_files_wanted_upstream_version="13.3ubuntu3" base_files_wanted_upstream_filename="base-files_13.3ubuntu3_arm64.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_13.3ubuntu3_arm64.deb" ;;
+		"oracular-armhf") base_files_wanted_upstream_version="13.3ubuntu3" base_files_wanted_upstream_filename="base-files_13.3ubuntu3_armhf.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_13.3ubuntu3_armhf.deb" ;;
+		"oracular-riscv64") base_files_wanted_upstream_version="13.3ubuntu3" base_files_wanted_upstream_filename="base-files_13.3ubuntu3_riscv64.deb" base_files_wanted_deb_down_url="http://ports.ubuntu.com/pool/main/b/base-files/base-files_13.3ubuntu3_riscv64.deb" ;;
+		"sid-amd64") base_files_wanted_upstream_version="13.3" base_files_wanted_upstream_filename="base-files_13.3_amd64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_13.3_amd64.deb" ;;
+		"sid-arm64") base_files_wanted_upstream_version="13.3" base_files_wanted_upstream_filename="base-files_13.3_arm64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_13.3_arm64.deb" ;;
+		"sid-armhf") base_files_wanted_upstream_version="13.3" base_files_wanted_upstream_filename="base-files_13.3_armhf.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_13.3_armhf.deb" ;;
+		"sid-riscv64") base_files_wanted_upstream_version="13.3" base_files_wanted_upstream_filename="base-files_13.3_riscv64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_13.3_riscv64.deb" ;;
+		"trixie-amd64") base_files_wanted_upstream_version="13.3" base_files_wanted_upstream_filename="base-files_13.3_amd64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_13.3_amd64.deb" ;;
+		"trixie-arm64") base_files_wanted_upstream_version="13.3" base_files_wanted_upstream_filename="base-files_13.3_arm64.deb" base_files_wanted_deb_down_url="http://deb.debian.org/debian/pool/main/b/base-files/base-files_13.3_arm64.deb" ;;
+
+		*)
+			display_alert "Release ${RELEASE} and arch ${ARCH}" "base-files hardcoded cache not found, will hit packages server for info" "warn"
+			sleep_seconds="15" do_with_retries 10 apt_find_upstream_package_version_and_download_url "base-files"
+			# Set readonly globals with the wanted info; will be used during the actual build of this artifact
+			declare -g -r base_files_wanted_upstream_version="${found_package_version}"
+			declare -g -r base_files_wanted_upstream_filename="${found_package_filename}"
+			declare -g -r base_files_wanted_deb_down_url="${found_package_down_url}"
+			# echo "\"${RELEASE}-${ARCH}\") base_files_wanted_upstream_version=\"${base_files_wanted_upstream_version}\" base_files_wanted_upstream_filename=\"${base_files_wanted_upstream_filename}\" base_files_wanted_deb_down_url=\"${base_files_wanted_deb_down_url}\";;" >> "${SRC}/output/basefiles.sh" && exit 0
+			;;
+	esac
 
 	# for OCI tags, we can't have "+" or "~" in the version, which happens in bookworm and some others. clean it up
 	declare base_files_cleaned_upstream_version_tag="${base_files_wanted_upstream_version//+/--}"
