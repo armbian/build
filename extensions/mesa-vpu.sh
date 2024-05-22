@@ -48,8 +48,6 @@ function post_install_kernel_debs__3d() {
 	# Rockchip RK3588 will use panfork only with legacy kernel
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
 
-		EXTRA_IMAGE_SUFFIXES+=("-panfork") # Add to the image suffix. # global array
-
 		display_alert "Adding amazingfated's rk3588 PPAs" "${EXTENSION}" "info"
 		do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/panfork-mesa --yes --no-update
 
@@ -63,8 +61,6 @@ function post_install_kernel_debs__3d() {
 		sed -i "s/noble/jammy/g" "${SDCARD}"/etc/apt/sources.list.d/liujianfeng1994-ubuntu-panfork-mesa-"${RELEASE}".*
 
 	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
-
-		EXTRA_IMAGE_SUFFIXES+=("-oibaf") # Add to the image suffix. # global array
 
 		display_alert "Adding oibaf PPAs" "${EXTENSION}" "info"
 		do_with_retries 3 chroot_sdcard add-apt-repository ppa:oibaf/graphics-drivers --yes --no-update
