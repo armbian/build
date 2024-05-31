@@ -1,7 +1,7 @@
 # Rockchip RK3399 hexa core 4GB SoC eMMC GBE USB3 WiFi
 BOARD_NAME="Firefly RK3399"
 BOARDFAMILY="rockchip64"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="150balbes"
 BOOTCONFIG="firefly-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
