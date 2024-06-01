@@ -1,0 +1,12 @@
+# Rockchip RK3399 hexa core 4GB DDR3 SoC TF/PCIE GBE USB3
+BOARD_NAME="xiaobao-nas"
+BOARDFAMILY="rockchip64"
+BOARD_MAINTAINER=""
+BOOTCONFIG="xiaobao-nas-rk3399_defconfig"
+KERNEL_TARGET="current,edge"
+FULL_DESKTOP="yes"
+BOOT_LOGO="desktop"
+BOOT_FDT_FILE="rockchip/rk3399-xiaobao-nas.dtb"
+BOOT_SCENARIO="only-blobs"
+SRC_EXTLINUX="yes"
+SRC_CMDLINE="console=ttyS2,1500000 console=tty0"
