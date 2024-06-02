@@ -48,8 +48,7 @@ dtbotxt-$(CONFIG_ARCH_ROCKCHIP) += \
        README.rk322x-overlays \
        README.rockchip-overlays
 
-targets += $(dtbo-y) $(scr-y) $(dtbotxt-y)
+dtb-y += $(dtbo-y) $(scr-y) $(dtbotxt-y)
 
-always         := $(dtbo-y) $(scr-y) $(dtbotxt-y)
 clean-files    := *.dtbo *.scr
 
