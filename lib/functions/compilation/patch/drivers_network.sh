@@ -296,7 +296,7 @@ driver_rtl88x2bu() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl88x2buver="commit:561384d0dee045bd3ffd24aacc0698d5eebfdc06" # Commit date: Mar 14, 2024 (please update when updating commit ref)
+		local rtl88x2buver="commit:e96ef9a9e0a9261598137b3ad2c70fa018914764" # Commit date: May 11, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
