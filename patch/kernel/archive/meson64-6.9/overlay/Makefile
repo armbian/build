@@ -36,7 +36,6 @@ scr-$(CONFIG_ARCH_MESON) += \
 dtbotxt-$(CONFIG_ARCH_MESON) += \
        README.meson-overlays
 
-targets += $(dtbo-y) $(scr-y) $(dtbotxt-y)
+dtb-y += $(dtbo-y) $(scr-y) $(dtbotxt-y)
 
-always         := $(dtbo-y) $(scr-y) $(dtbotxt-y)
 clean-files    := *.dtbo *.scr
