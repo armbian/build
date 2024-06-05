@@ -33,8 +33,6 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-pwm15-m2.dtbo \
 	rockchip-rk3588-pwm15-m3.dtbo
 
-targets += $(dtbo-y)
+dtb-y += $(dtbo-y)
 
-always         := $(dtbo-y)
 clean-files    := *.dtbo
-
