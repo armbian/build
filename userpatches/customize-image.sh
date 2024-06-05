@@ -24,8 +24,9 @@ Main() {
             
             # Use systemd-repart over armbian's resize scripts for setting initial
             # partition layout.
-            systemctl disable --now armbian-resize-filesystem
-            systemctl enable --now systemd-repart
+            # systemctl disable --now armbian-resize-filesystem
+            # systemctl enable --now systemd-repart
+            # systemctl enable --now systemd-growfs
             
             cp -r /tmp/overlay/* /
 
