@@ -21,14 +21,50 @@ Main() {
 	case $RELEASE in
         jammy)
             # MAIN DMB PRO CUSTOMIZATION CODE
-            
-            # Use systemd-repart over armbian's resize scripts for setting initial
-            # partition layout.
-            # systemctl disable --now armbian-resize-filesystem
-            # systemctl enable --now systemd-repart
-            # systemctl enable --now systemd-growfs
-            
-            cp -r /tmp/overlay/* /
+
+            # 1. Copy overlay files.
+            cp -r /tmp/overlay/rootfs/* /
+
+            # 1.5 Disable interactive prompts.
+            export DEBIAN_FRONTEND="noninteractive"
+            export APT_LISTCHANGES_FRONTEND="none"
+            # export HOME=/root
+            export INCLUDE_HOME_DIR=yes
+
+            # 2. Install necessary packages.
+            apt-get update
+            apt-get install -q -y systemd-repart                # Used for declarative re-partitioning.
+
+            # 3. Setup administrator user
+	        rm /root/.not_logged_in_yet                         # Disable Armbian interactive setup.
+            useradd -m -d /home/dmb -s /bin/bash dmb
+            echo dmb:$(cat /tmp/overlay/password) | chpasswd
+			for new_group in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh render; do
+				usermod -aG "${new_group}" dmb 2> /dev/null
+			done
+            export LANG=C LC_ALL="en_US.UTF-8"
+            locale-gen en_US.UTF-8
+            {
+			    echo "export LANG=en_US.UTF-8"
+			    echo "export LANGUAGE=en_US"
+		    } >> /home/dmb/.bashrc
+		    {
+			    echo "export LANG=en_US.UTF-8"
+			    echo "export LANGUAGE=en_US"
+		    } >> /home/dmb/.xsessionrc
+
+            # 4. Enable LightDM auto-login.
+		    mkdir -p /etc/lightdm/lightdm.conf.d
+		    cat <<- EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+			    [Seat:*]
+			    autologin-user=dmb
+			    autologin-user-timeout=0
+			    user-session=xfce
+EOF
+
+		    [[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		    [[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+            ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
 
             # MAIN DMB PRO CUSTOMIZATION CODE
             ;;
@@ -71,6 +107,7 @@ InstallOpenMediaVault() {
 	export LANG=C LC_ALL="en_US.UTF-8"
 	export DEBIAN_FRONTEND=noninteractive
 	export APT_LISTCHANGES_FRONTEND=none
+    export INCLUDE_HOME_DIR=yes
 
 	case ${RELEASE} in
 		jessie)
