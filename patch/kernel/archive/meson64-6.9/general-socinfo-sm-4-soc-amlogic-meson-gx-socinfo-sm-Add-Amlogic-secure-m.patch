@@ -1,8 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 4fc80646e728133378fb44abe1bffa72655104c6 Mon Sep 17 00:00:00 2001
 From: Viacheslav Bocharov <adeep@lexina.in>
 Date: Wed, 21 Feb 2024 16:41:30 +0300
-Subject: soc: amlogic: meson-gx-socinfo-sm: Add Amlogic secure-monitor SoC
- Information driver
+Subject: [PATCH 4/6] soc: amlogic: meson-gx-socinfo-sm: Add Amlogic
+ secure-monitor SoC Information driver
 
 Amlogic SoCs have a SoC information secure-monitor call for SoC type,
 package type, revision information and chipid.
@@ -12,10 +12,12 @@ Information driver.
 
 Signed-off-by: Viacheslav Bocharov <adeep@lexina.in>
 ---
- drivers/soc/amlogic/Kconfig               |  10 +
- drivers/soc/amlogic/Makefile              |   1 +
- drivers/soc/amlogic/meson-gx-socinfo-sm.c | 192 ++++++++++
- 3 files changed, 203 insertions(+)
+ drivers/soc/amlogic/Kconfig                   |  10 +
+ drivers/soc/amlogic/Makefile                  |   1 +
+ .../soc/amlogic/meson-gx-socinfo-internal.h   |  14 +-
+ drivers/soc/amlogic/meson-gx-socinfo-sm.c     | 190 ++++++++++++++++++
+ 4 files changed, 211 insertions(+), 4 deletions(-)
+ create mode 100644 drivers/soc/amlogic/meson-gx-socinfo-sm.c
 
 diff --git a/drivers/soc/amlogic/Kconfig b/drivers/soc/amlogic/Kconfig
 index d08e398bdad4..82fc77ca3b4b 100644
@@ -48,12 +50,37 @@ index c25f835e6a26..45d9d6f5904c 100644
  obj-$(CONFIG_MESON_GX_SOCINFO) += meson-gx-socinfo.o
 +obj-$(CONFIG_MESON_GX_SOCINFO_SM) += meson-gx-socinfo-sm.o
  obj-$(CONFIG_MESON_MX_SOCINFO) += meson-mx-socinfo.o
+diff --git a/drivers/soc/amlogic/meson-gx-socinfo-internal.h b/drivers/soc/amlogic/meson-gx-socinfo-internal.h
+index 42cd57e67390..f032f4c9cc83 100644
+--- a/drivers/soc/amlogic/meson-gx-socinfo-internal.h
++++ b/drivers/soc/amlogic/meson-gx-socinfo-internal.h
+@@ -33,10 +33,16 @@ union meson_cpu_id {
+ 	u32	raw;
+ };
+ 
+-struct meson_sm_chip_id {
+-	u32 version;
+-	union meson_cpu_id cpu_id;
+-	u8 serial[12];
++union meson_sm_chip_id {
++	struct { // cpu_id v2
++		u32 version;
++		union meson_cpu_id cpu_id;
++		u8 serial[12];
++	} v2;
++	struct { // raw
++		u32 version;
++		u8 buf[12+sizeof(union meson_cpu_id)];
++	} raw;
+ };
+ 
+ static const struct meson_gx_soc_id {
 diff --git a/drivers/soc/amlogic/meson-gx-socinfo-sm.c b/drivers/soc/amlogic/meson-gx-socinfo-sm.c
 new file mode 100644
-index 000000000000..e30e1d2feb61
+index 000000000000..e12f45cd8de2
 --- /dev/null
 +++ b/drivers/soc/amlogic/meson-gx-socinfo-sm.c
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,190 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Copyright (c) 2017 BayLibre, SAS
@@ -81,51 +108,52 @@ index 000000000000..e30e1d2feb61
 +			       union meson_cpu_id *socinfo)
 +{
 +	char *buf;
-+	struct meson_sm_chip_id *id_buf;
++	union meson_sm_chip_id *id_buf;
 +	int ret;
 +
-+	id_buf = devm_kzalloc(dev, sizeof(struct meson_sm_chip_id)+1, GFP_KERNEL);
++	id_buf = kzalloc(sizeof(union meson_sm_chip_id)+1, GFP_KERNEL);
 +	if (!id_buf)
 +		return NULL;
 +
-+	ret = meson_sm_call_read(fw, id_buf, sizeof(struct meson_sm_chip_id), SM_GET_CHIP_ID,
++	ret = meson_sm_call_read(fw, id_buf, sizeof(union meson_sm_chip_id), SM_GET_CHIP_ID,
 +				 2, 0, 0, 0, 0);
 +	if (ret < 0) {
 +		kfree(id_buf);
 +		return NULL;
 +	}
-+	dev_info(dev, "got sm version call %i\n", id_buf->version);
++	dev_info(dev, "got sm version call %i\n", id_buf->raw.version);
 +
-+	if (id_buf->version != 2) {
++	if (id_buf->raw.version != 2) {
 +
 +		u8 tmp;
 +		/**
 +		 * Legacy 12-byte chip ID read out, transform data
 +		 * to expected order format
 +		 */
-+		memmove((void *)&id_buf->serial, (void *)&id_buf->cpu_id, 12);
++		memmove((void *)&id_buf->v2.serial, (void *)&id_buf->raw.buf, 12);
 +		for (int i = 0; i < 6; i++) {
-+			tmp = id_buf->serial[i];
-+			id_buf->serial[i] = id_buf->serial[11 - i];
-+			id_buf->serial[11 - i] = tmp;
++			tmp = id_buf->v2.serial[i];
++			id_buf->v2.serial[i] = id_buf->v2.serial[11 - i];
++			id_buf->v2.serial[11 - i] = tmp;
 +		}
-+		id_buf->cpu_id.v2.major_id = socinfo->v1.major_id;
-+		id_buf->cpu_id.v2.pack_id = socinfo->v1.pack_id;
-+		id_buf->cpu_id.v2.chip_rev = socinfo->v1.chip_rev;
-+		id_buf->cpu_id.v2.reserved = socinfo->v1.reserved;
-+		id_buf->cpu_id.v2.layout_ver = socinfo->v1.layout_ver;
++		id_buf->v2.cpu_id.v2.major_id = socinfo->v1.major_id;
++		id_buf->v2.cpu_id.v2.pack_id = socinfo->v1.pack_id;
++		id_buf->v2.cpu_id.v2.chip_rev = socinfo->v1.chip_rev;
++		id_buf->v2.cpu_id.v2.reserved = socinfo->v1.reserved;
++		id_buf->v2.cpu_id.v2.layout_ver = socinfo->v1.layout_ver;
 +	} else {
 +		/**
 +		 * rewrite socinfo from regmap with value from secure monitor call
 +		 */
-+		socinfo->v1.major_id = id_buf->cpu_id.v2.major_id;
-+		socinfo->v1.pack_id = id_buf->cpu_id.v2.pack_id;
-+		socinfo->v1.chip_rev = id_buf->cpu_id.v2.chip_rev;
-+		socinfo->v1.reserved = id_buf->cpu_id.v2.reserved;
-+		socinfo->v1.layout_ver = id_buf->cpu_id.v2.layout_ver;
++		socinfo->v1.major_id = id_buf->v2.cpu_id.v2.major_id;
++		socinfo->v1.pack_id = id_buf->v2.cpu_id.v2.pack_id;
++		socinfo->v1.chip_rev = id_buf->v2.cpu_id.v2.chip_rev;
++		socinfo->v1.reserved = id_buf->v2.cpu_id.v2.reserved;
++		socinfo->v1.layout_ver = id_buf->v2.cpu_id.v2.layout_ver;
 +	}
 +
-+	buf = kasprintf(GFP_KERNEL, "%4phN%12phN", &(id_buf->cpu_id), &(id_buf->serial));
++	buf = devm_kasprintf(dev, GFP_KERNEL, "%4phN%12phN", &(id_buf->v2.cpu_id),
++			     &(id_buf->v2.serial));
 +
 +	kfree(id_buf);
 +
@@ -149,21 +177,19 @@ index 000000000000..e30e1d2feb61
 +
 +	/* node should be a syscon */
 +	regmap = syscon_node_to_regmap(pdev->dev.of_node);
-+	if (IS_ERR(regmap)) {
-+		dev_err(&pdev->dev, "failed to get regmap\n");
-+		return -ENODEV;
-+	}
++	if (IS_ERR(regmap))
++		return dev_err_probe(&pdev->dev, PTR_ERR(regmap), "failed to get regmap\n");
 +
 +	sm_np = of_parse_phandle(pdev->dev.of_node, "secure-monitor", 0);
 +	if (!sm_np) {
 +		dev_err(&pdev->dev, "no secure-monitor node found\n");
-+		return -ENODEV;
++		return -EINVAL;
 +	}
 +
 +	fw = meson_sm_get(sm_np);
 +	of_node_put(sm_np);
 +	if (!fw) {
-+		dev_info(&pdev->dev, "secure-monitor device not ready, probe later\n");
++		dev_dbg(&pdev->dev, "secure-monitor device not ready, probe later\n");
 +		return -EPROBE_DEFER;
 +	}
 +
@@ -199,7 +225,6 @@ index 000000000000..e30e1d2feb61
 +	if (IS_ERR(soc_dev)) {
 +		kfree(soc_dev_attr->revision);
 +		kfree_const(soc_dev_attr->soc_id);
-+		kfree(soc_dev_attr);
 +		return PTR_ERR(soc_dev);
 +	}
 +
@@ -247,5 +272,5 @@ index 000000000000..e30e1d2feb61
 +MODULE_DESCRIPTION("Amlogic Meson GX SOC SM driver");
 +MODULE_LICENSE("GPL");
 -- 
-Armbian
+2.45.2
 
