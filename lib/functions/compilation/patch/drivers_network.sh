@@ -251,7 +251,9 @@ driver_xradio_xr819() {
 driver_rtl8811CU_rtl8821C() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
-	if linux-version compare "${version}" ge 3.14; then
+	# Support for these chips is included in the mainline RTW88 driver as seen in this commit for example:
+	# https://github.com/torvalds/linux/commit/605d7c0b05eecb985273b1647070497142c470d3
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 6.10; then
 
 		# Attach to specific commit (is branch:main)
 		local rtl8811cuver="commit:3eacc28b721950b51b0249508cc31e6e54988a0c" # Commit date: May 3, 2024 (please update when updating commit ref)
