@@ -467,7 +467,9 @@ driver_rtl8723cs() {
 		return 0
 	fi
 
-	if linux-version compare "${version}" ge 6.1; then
+	# Support for RTL8723cs has been added to mainline 6.10 via RTW88 driver in kernel commit 64be03575f:
+	# https://github.com/torvalds/linux/commit/64be03575f9e9772ebdebc7f067d533348602083
+	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" le 6.10; then
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8723CS)                += rtl8723cs/" >> "$kerneldir/drivers/staging/Makefile"
