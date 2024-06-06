@@ -130,7 +130,8 @@ driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
-	if linux-version compare "${version}" ge 3.14; then
+	# RTL8192EU is supported by mainline driver RTL8XXXU as seen in the Linux kernel folder at "drivers/net/wireless/realtek/rtl8xxxu/Kconfig"
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 6.10; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
 		local rtl8192euver='commit:a5ac6789a78a4f5ca0bf157a0f62385ea034cb9c' # Commit date: May 18, 2024 (please update when updating commit ref)
