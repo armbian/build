@@ -448,6 +448,11 @@ driver_uwe5622() {
 
 		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch"  "applying"
 		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-reduce-system-load.patch"  "applying"
+
+		if linux-version compare "${version}" ge 6.9; then
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.9.patch" "applying"
+		fi
+
 	fi
 }
 
