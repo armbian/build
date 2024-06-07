@@ -1,7 +1,7 @@
 # Allwinner H6 quad core 2GB SoC WiFi eMMC
 BOARD_NAME="Inovato Quadra"
 BOARDFAMILY="sun50iw6"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="NicoD-SBC"
 BOOTCONFIG="tanix_tx6_defconfig"
 CRUSTCONFIG="tanix_tx6_defconfig"
 BOOT_FDT_FILE="allwinner/sun50i-h6-inovato-quadra.dtb"
