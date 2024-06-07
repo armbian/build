@@ -28,7 +28,8 @@ dtbo-$(CONFIG_ARCH_MESON) += \
 	meson-sm1-bananapi-m5-rtl8822cs.dtbo \
 	meson-sm1-bananapi-uartA.dtbo \
 	meson-sm1-bananapi-uartA_cts_rts.dtbo \
-	meson-sm1-bananapi-uartAO_B.dtbo
+	meson-sm1-bananapi-uartAO_B.dtbo \
+	meson-sm1-jethome-jethub-j200-spi.dtbo
 
 scr-$(CONFIG_ARCH_MESON) += \
        meson-fixup.scr
