@@ -45,7 +45,7 @@ fi
 if test -n "${serial}"; then setenv bootargs "${bootargs} serial=${serial}"; fi
 if test -n "${usid}"; then setenv bootargs "${bootargs} usid=${usid}"; fi
 
-if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
+if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory"; fi
 echo "Mainline bootargs: ${bootargs}"
 
 
