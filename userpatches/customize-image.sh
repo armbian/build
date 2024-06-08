@@ -19,7 +19,7 @@ BUILD_DESKTOP=$4
 
 Main() {
 	case $RELEASE in
-        jammy)
+        noble)
             # MAIN DMB PRO CUSTOMIZATION CODE
 
             # 1. Copy overlay files.
@@ -28,12 +28,15 @@ Main() {
             # 1.5 Disable interactive prompts.
             export DEBIAN_FRONTEND="noninteractive"
             export APT_LISTCHANGES_FRONTEND="none"
-            # export HOME=/root
-            export INCLUDE_HOME_DIR=yes
+            # export INCLUDE_HOME_DIR=yes
 
             # 2. Install necessary packages.
-            apt-get update
+            add-apt-repository -y ppa:jjriek/panfork-mesa
+            add-apt-repository -y ppa:liujianfeng1994/rockchip-multimedia
+            apt-get update -y 
             apt-get install -q -y systemd-repart                # Used for declarative re-partitioning.
+            apt install -y mali-g610-firmware rockchip-multimedia-config
+            apt dist-upgrade -y            
 
             # 3. Setup administrator user
 	        rm /root/.not_logged_in_yet                         # Disable Armbian interactive setup.
@@ -53,18 +56,17 @@ Main() {
 			    echo "export LANGUAGE=en_US"
 		    } >> /home/dmb/.xsessionrc
 
-            # 4. Enable LightDM auto-login.
-		    mkdir -p /etc/lightdm/lightdm.conf.d
-		    cat <<- EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
-			    [Seat:*]
-			    autologin-user=dmb
-			    autologin-user-timeout=0
-			    user-session=xfce
+            # 4. Enable Gnome/GDM auto-login.
+		    mkdir -p /etc/gdm3
+		    cat <<- EOF > /etc/gdm3/custom.conf
+            [daemon]
+            AutomaticLoginEnable = true
+            AutomaticLogin = dmb
 EOF
 
-		    [[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-		    [[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
-            ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
+#            [[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+#			[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+            ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
 
             # MAIN DMB PRO CUSTOMIZATION CODE
             ;;
