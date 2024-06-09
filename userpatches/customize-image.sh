@@ -36,6 +36,7 @@ Main() {
             apt-get update -y 
             apt-get install -q -y systemd-repart                # Used for declarative re-partitioning.
             apt install -y mali-g610-firmware rockchip-multimedia-config
+            apt install -y rauc-service
             apt dist-upgrade -y            
 
             # 3. Setup administrator user
@@ -63,12 +64,12 @@ Main() {
             AutomaticLoginEnable = true
             AutomaticLogin = dmb
 EOF
-
-#            [[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-#			[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
             ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
 
-            systemctl enable auto-install-armbian
+            # 5. Final tasks
+            systemctl enable auto-install-armbian   # Auto install/update bootloader
+            echo "overlays=orangepi-5-ap6275p" >> /boot/armbianEnv.txt
+            sed -i '/fdtfile/c fdtfile=rockchip/rk3588s-orangepi-5b.dtb' /boot/armbianEnv.txt
 
             # MAIN DMB PRO CUSTOMIZATION CODE
             ;;
