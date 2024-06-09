@@ -42,11 +42,11 @@ function post_family_tweaks__nanopccm3588nas_udev_naming_network_interfaces() {
 function post_family_config_branch_edge__nanopccm3588nas_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="nanopc-t6-rk3588_defconfig"                       # override the default for the board/family
+	declare -g BOOTCONFIG="nanopc-t6-rk3588_defconfig"                    # override the default for the board/family
 	declare -g BOOTDELAY=1                                                # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git" # We ❤️ Kwiboo's tree
 	declare -g BOOTBRANCH="branch:rk3xxx-2024.04"                         # commit:31522fe7b3c7733313e1c5eb4e340487f6000196 as of 2024-04-01
-	declare -g BOOTPATCHDIR="v2024.04-cm3588nas"                       # empty; defconfig changes are done in hook below
+	declare -g BOOTPATCHDIR="v2024.04/board_${BOARD}"                           # empty; defconfig changes are done in hook below
 	declare -g BOOTDIR="u-boot-${BOARD}"                                  # do not share u-boot directory
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
