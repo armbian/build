@@ -571,3 +571,19 @@ function check_filesystem_compatibility_on_host() {
 	fi
 	return 0
 }
+
+function pre_install_distribution_specific__disable_cnf_apt_hook(){
+	if [[ $(dpkg --print-architecture) != "${ARCH}" && -f "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found ]]; then #disable command-not-found (60% build-time saved under qemu)
+	display_alert "Disabling command-not-found during build-time to speed up image creation" "${BOARD}:${RELEASE}-${BRANCH}" "info"
+	run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled
+        fi
+}
+
+
+function post_post_debootstrap_tweaks__restore_cnf_apt_hook(){
+	if [ -f "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled ]; then # (re-enable command-not-found after building rootfs if it's been disabled)
+	display_alert "Enabling command-not-found after build-time " "${BOARD}:${RELEASE}-${BRANCH}" "info"
+	run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found
+	fi
+
+}
