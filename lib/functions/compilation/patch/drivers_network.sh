@@ -373,13 +373,24 @@ driver_uwe5622() {
 	fi
 }
 
-###  The vendor's RTL8723DS driver is still required for RockPI-S support because
-###  the RTW88 driver for the chip configures its RF gains incorrectly
+###
+###
+### NOTICE: <=6.9 BELOW ONLY
+### With exceptions for a few boards that still rely on these 3rd party drivers
+###
+### All drivers and patches listed below are only used in kernels <=6.9 and **not** in >=6.10
+### Sorted by: "linux-version le ..." from high (newer kernel) to low (older kernel).
+### It is sorted like this for better visibility.
+###
+### v v v v v v v v v v v v v v v v v v v v v v v
+
 driver_rtl8723DS() {
 
 	# Wireless drivers for Realtek 8723DS chipsets
 
-	if linux-version compare "${version}" ge 5.0; then
+	# The vendor's RTL8723DS driver is still required for RockPI-S support because the RTW88 driver for the chip configures its RF gains incorrectly
+	# Keep this driver enabled for RockPi-S and Asus Tinkerboard Rev.2 even for kernels >= 6.10 since they still rely on these 3rd party drivers to work properly
+	if linux-version compare "${version}" ge 5.0 && (linux-version compare "${version}" le 6.9 || [[ "$BOARD" == rockpi-s || "$BOARD" == tinkerboard-2 ]]); then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8723dsver='commit:52e593e8c889b68ba58bd51cbdbcad7fe71362e4' # Commit date: Nov 14, 2023 (please update when updating commit ref)
@@ -418,22 +429,12 @@ driver_rtl8723DS() {
 	fi
 }
 
-###
-###
-### NOTICE: <=6.10 BELOW ONLY
-###
-### All drivers and patches listed below are only used in kernels <=6.10 and **not** in >=6.11
-### Sorted by: "linux-version le ..." from high (newer kernel) to low (older kernel).
-### It is sorted like this for better visibility.
-###
-### v v v v v v v v v v v v v v v v v v v v v v v
-
 driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
 	# RTL8192EU is supported by mainline driver RTL8XXXU as seen in the Linux kernel folder at "drivers/net/wireless/realtek/rtl8xxxu/Kconfig"
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 6.10; then
+	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 6.9; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
 		local rtl8192euver='commit:a5ac6789a78a4f5ca0bf157a0f62385ea034cb9c' # Commit date: May 18, 2024 (please update when updating commit ref)
@@ -476,7 +477,8 @@ driver_rtl8811CU_rtl8821C() {
 
 	# Support for these chips is included in the mainline RTW88 driver as seen in this commit for example:
 	# https://github.com/torvalds/linux/commit/605d7c0b05eecb985273b1647070497142c470d3
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" le 6.10; then
+	# Keep this driver enabled for BananaPi M4 Zero even for kernels >= 6.10 since they still rely on these 3rd party drivers to work properly
+	if linux-version compare "${version}" ge 3.14 && (linux-version compare "${version}" le 6.9 || [[ "$BOARD" == bananapim4zero ]]); then
 
 		# Attach to specific commit (is branch:main)
 		local rtl8811cuver="commit:3eacc28b721950b51b0249508cc31e6e54988a0c" # Commit date: May 3, 2024 (please update when updating commit ref)
@@ -527,7 +529,7 @@ driver_rtl8723cs() {
 
 	# Support for RTL8723cs has been added to mainline 6.10 via RTW88 driver in kernel commit 64be03575f:
 	# https://github.com/torvalds/linux/commit/64be03575f9e9772ebdebc7f067d533348602083
-	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" le 6.10; then
+	if linux-version compare "${version}" ge 6.1 && linux-version compare "${version}" le 6.9; then
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8723CS)                += rtl8723cs/" >> "$kerneldir/drivers/staging/Makefile"
