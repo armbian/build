@@ -68,6 +68,8 @@ EOF
 #			[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
             ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
 
+            systemctl enable auto-install-armbian
+
             # MAIN DMB PRO CUSTOMIZATION CODE
             ;;
 		stretch)
