@@ -72,6 +72,18 @@ function post_install_kernel_debs__3d() {
 		Pin-Priority: 1001
 		EOF
 
+		if [[ "${RELEASE}" == oracular ]]; then
+
+			# workaround for "Signature Key Uses Weak Algorithm"
+			# https://ubuntuhandbook.org/index.php/2024/04/workaround-apt-warning-signature-key-uses-weak-algorithm/
+			# can be dropped once PPA upgrades signing methods
+
+			display_alert "Workaround for weak algorythm" "${EXTENSION}" "info"
+			cat <<- EOF > "${SDCARD}"/etc/apt/apt.conf.d/99weakkey-warning
+			APT::Key::Assert-Pubkey-Algo ">=rsa1024,ed25529,ed448";
+			EOF
+		fi
+
 	fi
 
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(jammy|noble)$ && "${BRANCH}" =~ ^(legacy|vendor)$ ]]; then
