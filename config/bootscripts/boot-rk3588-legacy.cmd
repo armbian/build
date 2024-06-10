@@ -40,9 +40,38 @@ fi
 # get PARTUUID of first partition on SD/eMMC the boot script was loaded from
 if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
 
-setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+# Rauc bootloader configuration
+test -n "${BOOT_ORDER}" || setenv BOOT_ORDER "A B"
+test -n "${BOOT_A_LEFT}" || setenv BOOT_A_LEFT 3
+test -n "${BOOT_B_LEFT}" || setenv BOOT_B_LEFT 3
 
-if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
+setenv bootargs
+echo "Boot order: ${BOOT_ORDER}"
+echo "Boot A left: ${BOOT_A_LEFT} -- Boot B left: ${BOOT_B_LEFT}"
+for BOOT_SLOT in "${BOOT_ORDER}"; do
+    echo "Checking slot ${BOOT_SLOT}..."
+    if test "x${bootargs}" != "x"; then
+        echo "Skipping slot ${BOOT_SLOT}..."
+        # skip remaining slots (?)
+    elif test "x${BOOT_SLOT}" = "xA"; then
+        echo "Checking slot A boot left..."
+        if test ${BOOT_A_LEFT} -gt 0; then
+            echo "Found valid slot A, ${BOOT_A_LEFT} attempts remaining"
+            setexpr BOOT_A_LEFT ${BOOT_A_LEFT} - 1
+            setexpr BOOT_A_LEFT gsub "0x" ""
+            setenv bootargs "root=/dev/mmcblk1p2 rauc.slot=A rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+        fi
+    elif test "x${BOOT_SLOT}" = "xB"; then
+        echo "Checking slot B boot left..."
+        if test ${BOOT_B_LEFT} -gt 0; then
+            echo "Found valid slot B, ${BOOT_B_LEFT} attempts remaining"
+            setexpr BOOT_B_LEFT ${BOOT_B_LEFT} - 1
+            setexpr BOOT_B_LEFT gsub "0x" ""
+            setenv bootargs "root=/dev/mmcblk1p3 rauc.slot=B rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+        fi
+    fi
+done
+echo "Finished checking slots"
 
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}Image
@@ -80,6 +109,20 @@ else
 		source ${load_addr}
 	fi
 fi
+
+# Rauc environment saving
+if test -n "${bootargs}"; then
+    echo "Saving environment..."
+    saveenv
+else
+    echo "No valid slot found, resetting tries to 3..."
+    setenv BOOT_A_LEFT 3
+    setenv BOOT_B_LEFT 3
+    saveenv
+    reset
+fi
+
+if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
 
 echo "Trying 'kaslrseed' command... Info: 'Unknown command' can be safely ignored since 'kaslrseed' does not apply to all boards."
 kaslrseed # @TODO: This gives an error (Unknown command ' kaslrseed ' - try 'help') on many devices since CONFIG_CMD_KASLRSEED is not enabled
