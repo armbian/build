@@ -8,11 +8,11 @@ KERNEL_TARGET="legacy,vendor,edge"
 KERNEL_TEST_TARGET="vendor,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
+IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588s-nanopi-r6s.dtb"
 BOOT_SCENARIO="spl-blobs"
-IMAGE_PARTITION_TABLE="gpt"
-DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
-BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
+DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin'
+BL31_BLOB='rk35/rk3588_bl31_v1.45.elf'
 declare -g UEFI_EDK2_BOARD_ID="nanopi-r6s" # This _only_ used for uefi-edk2-rk3588 extension
 
 function post_family_tweaks__nanopir6s_naming_audios() {
