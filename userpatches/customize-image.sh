@@ -18,77 +18,101 @@ BOARD=$3
 BUILD_DESKTOP=$4
 
 Main() {
-	case $RELEASE in
-        noble)
-            # MAIN DMB PRO CUSTOMIZATION CODE
+    # =========================================================================
+    # Source overlay environment configuration.
+    # =========================================================================
+    set -a
+    source /tmp/overlay/env
+    set +a
 
-            # 1. Copy overlay files.
-            cp -r /tmp/overlay/rootfs/* /
-            cp /tmp/overlay/cert.pem /etc/rauc
+    # =========================================================================
+    # Copy overlay filesystem & other files to root.
+    # =========================================================================
+    cp -r /tmp/overlay/rootfs/* /
+    cp /tmp/overlay/cert.pem /etc/rauc
 
-            # 2. Install necessary packages.
-            export DEBIAN_FRONTEND="noninteractive"
-            export APT_LISTCHANGES_FRONTEND="none"
-            add-apt-repository -y ppa:jjriek/panfork-mesa                   # Mali G610 GPU drivers
-            add-apt-repository -y ppa:liujianfeng1994/rockchip-multimedia   # Mali G610 GPU-supported software
-            apt-get update -y
-            apt-get install -q -y systemd-repart                            # Used for setting up A/B partition layout
-            apt install -y mali-g610-firmware rockchip-multimedia-config    # Mali G610 drivers and config
-            apt install -y rauc-service                                     # Rauc OTA update tool
-            apt install -y libubootenv-tool                                 # U-Boot environment manipulation tools
-            apt dist-upgrade -y
+    sed -i "s#::HAWKBIT_SERVER_URL::#$HAWKBIT_SERVER_URL#" /etc/rauc/hawkbit.conf
+    sed -i "s/::HAWKBIT_GATEWAY_TOKEN::/$HAWKBIT_GATEWAY_TOKEN/" /etc/rauc/hawkbit.conf
+    sed -i "s/::HAWKBIT_DEVICE_TARGET_NAME::/$HAWKBIT_DEVICE_TARGET_NAME/" /etc/rauc/hawkbit.conf
+    sed -i "s/::HAWKBIT_DEVICE_NAME::/$HAWKBIT_DEVICE_NAME/" /etc/rauc/hawkbit.conf
+    sed -i "s/::HAWKBIT_DEVICE_BUILD_VERSION::/$HAWKBIT_DEVICE_BUILD_VERSION/" /etc/rauc/hawkbit.conf
 
-            # 3. Setup administrator user
-	        rm /root/.not_logged_in_yet     # Disable Armbian interactive setup.
-            useradd -m -d /home/dmb -s /bin/bash dmb
-            echo dmb:$(cat /tmp/overlay/password) | chpasswd
-			for new_group in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh render; do
-				usermod -aG "${new_group}" dmb 2> /dev/null
-			done
-            export LANG=C LC_ALL="en_US.UTF-8"
-            locale-gen en_US.UTF-8
-            {
-			    echo "export LANG=en_US.UTF-8"
-			    echo "export LANGUAGE=en_US"
-		    } >> /home/dmb/.bashrc
-		    {
-			    echo "export LANG=en_US.UTF-8"
-			    echo "export LANGUAGE=en_US"
-		    } >> /home/dmb/.xsessionrc
+    # =========================================================================
+    # Install drivers, software packages and update system.
+    #
+    # - systemd-repart:                 Setting up A/B partition layout.
+    # - mali-g610-firmware:             Mali G610 drivers and config.
+    # - rockchip-multimedia-config
+    # - rauc-service                    Rauc OTA update system
+    # - libubootenv-tool                U-Boot tools needed for rauc-service
+    # - meson                           Build tools needed for rauc-hawkbit-updater
+    # - libcurl4-openssl-dev            
+    # - libjson-glib-dev
+    # - chromium-browser                GPU-enabled Chromium from rockchip-multimedia-config
+    # =========================================================================
+    export DEBIAN_FRONTEND="noninteractive"
+    export APT_LISTCHANGES_FRONTEND="none"
+    add-apt-repository -y ppa:jjriek/panfork-mesa
+    add-apt-repository -y ppa:liujianfeng1994/rockchip-multimedia
+    apt-get update -y
+    apt-get install -y systemd-repart mali-g610-firmware rockchip-multimedia-config rauc-service libubootenv-tool meson libcurl4-openssl-dev libjson-glib-dev chromium-browser
+    apt-get dist-upgrade -y
 
-            # 4. Enable Gnome/GDM auto-login.
-		    mkdir -p /etc/gdm3
-		    cat <<- EOF > /etc/gdm3/custom.conf
-            [daemon]
-            AutomaticLoginEnable = true
-            AutomaticLogin = dmb
+    # =========================================================================
+    # Build and install rauc-hawkbit-updater
+    # =========================================================================
+    git clone https://github.com/rauc/rauc-hawkbit-updater /tmp/rauc-hawkbit-updater
+    cd /tmp/rauc-hawkbit-updater
+    meson setup build
+    ninja -C build
+    cp build/rauc-hawkbit-updater /usr/sbin
+
+    # =========================================================================
+    # Setup main user
+    # =========================================================================
+    rm /root/.not_logged_in_yet     # Disable Armbian interactive setup.
+    useradd -m -d /home/dmb -s /bin/bash dmb
+    echo "dmb:$USER_PASSWORD" | chpasswd
+	for new_group in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh render; do
+		usermod -aG "${new_group}" dmb 2> /dev/null
+	done
+    export LANG=C LC_ALL="en_US.UTF-8"
+    locale-gen en_US.UTF-8
+    {
+	    echo "export LANG=en_US.UTF-8"
+	    echo "export LANGUAGE=en_US"
+    } >> /home/dmb/.bashrc
+    {
+	    echo "export LANG=en_US.UTF-8"
+	    echo "export LANGUAGE=en_US"
+    } >> /home/dmb/.xsessionrc
+
+    # =========================================================================
+    # Enable desktop manager auto-login.
+    # =========================================================================
+    mkdir -p /etc/gdm3
+    cat <<- EOF > /etc/gdm3/custom.conf
+    [daemon]
+    AutomaticLoginEnable = true
+    AutomaticLogin = dmb
 EOF
-            ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
+    ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
 
-            # 5. Final tasks
-            systemctl enable auto-install-armbian                                               # Auto install/update bootloader
-            echo "overlays=orangepi-5-ap6275p" >> /boot/armbianEnv.txt                          # Enable Orange Pi WiFi/Bluetooth drivers
-            sed -i '/fdtfile/c fdtfile=rockchip/rk3588s-orangepi-5b.dtb' /boot/armbianEnv.txt   # Set Orange Pi 5B device tree
+    # =========================================================================
+    # Final / Cleanup tasks.
+    # =========================================================================
 
-            # MAIN DMB PRO CUSTOMIZATION CODE
-            ;;
-		stretch)
-			# your code here
-			# InstallOpenMediaVault # uncomment to get an OMV 4 image
-			;;
-		buster)
-			# your code here
-			;;
-		bullseye)
-			# your code here
-			;;
-		bionic)
-			# your code here
-			;;
-		focal)
-			# your code here
-			;;
-	esac
+    systemctl enable dmbp-updater    
+
+    # Update and fix bootloader. systemd-repart breaks it for some reason after
+    # repartitioning, so we have a service run right afterwards that invokes
+    # armbian-install to update the bootloader.
+    systemctl enable auto-install-armbian
+
+    # Setup WiFi/Bluetooth drivers for Orange Pi 5B. At this time, Armbian
+    # doesn't support the board natively, so must configure this manually.
+    echo "overlays=orangepi-5-ap6275p" >> /boot/armbianEnv.txt
+    sed -i '/fdtfile/c fdtfile=rockchip/rk3588s-orangepi-5b.dtb' /boot/armbianEnv.txt   # Set Orange Pi 5B device tree
 } # Main
 
 Main "$@"
