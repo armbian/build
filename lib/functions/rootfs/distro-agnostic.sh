@@ -148,13 +148,14 @@ function install_distribution_agnostic() {
 		fi
 
 		if [[ -n $DEFAULT_OVERLAYS ]]; then
-			DEFAULT_OVERLAYS=(${DEFAULT_OVERLAYS//,/ })
-			DEFAULT_OVERLAYS=("${DEFAULT_OVERLAYS[@]/%/".dtbo"}")
-			DEFAULT_OVERLAYS=("${DEFAULT_OVERLAYS[@]/#/"${bootpart_prefix}dtb/${BOOT_FDT_FILE%%/*}/overlay/${OVERLAY_PREFIX}-"}")
+			DEFAULT_OVERLAYS_ARR=(${DEFAULT_OVERLAYS//,/ })
+			DEFAULT_OVERLAYS_ARR=("${DEFAULT_OVERLAYS_ARR[@]/%/".dtbo"}")
+			DEFAULT_OVERLAYS_ARR=("${DEFAULT_OVERLAYS_ARR[@]/#/"${bootpart_prefix}dtb/${BOOT_FDT_FILE%%/*}/overlay/${OVERLAY_PREFIX}-"}")
 
-			display_alert "Adding to extlinux.conf" "fdtoverlays=${DEFAULT_OVERLAYS[@]}" "debug"
-			echo "  fdtoverlays ${DEFAULT_OVERLAYS[@]}" >> "$SDCARD/boot/extlinux/extlinux.conf"
+			display_alert "Adding to extlinux.conf" "fdtoverlays=${DEFAULT_OVERLAYS_ARR[*]}" "debug"
+			echo "  fdtoverlays ${DEFAULT_OVERLAYS_ARR[*]}" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		fi
+
 	else # ... not extlinux ...
 
 		if [[ -n "${BOOTSCRIPT}" ]]; then # @TODO: && "${BOOTCONFIG}" != "none"
