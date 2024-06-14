@@ -174,6 +174,10 @@ prepare_boot_configuration() {
 			;;
 	esac
 
+	if [[ ! -z $BL32_BLOB ]]; then
+		UBOOT_TARGET_MAP="BL32=$RKBIN_DIR/$BL32_BLOB ${UBOOT_TARGET_MAP}"
+	fi
+
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
 
 		if [[ "${BOOT_SPI_RKSPI_LOADER:-"no"}" != "yes" ]]; then
