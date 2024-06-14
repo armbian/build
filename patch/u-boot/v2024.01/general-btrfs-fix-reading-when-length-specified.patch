@@ -1,0 +1,61 @@
+From 6d6ea52b629c384fb8605678b9003d2a077f9148 Mon Sep 17 00:00:00 2001
+From: Sam Edwards <cfsworks@gmail.com>
+Date: Sat, 11 Nov 2023 08:19:04 -0700
+Subject: [PATCH] fs: btrfs: fix reading when length specified
+
+The btrfs read function limits the read length to ensure that it
+and the read offset do not together exceed the size of the file.
+However, this size was only being queried if the read length was
+passed a value of zero (meaning "whole file"), and the size is
+defaulted to 0 otherwise. This means the clamp will just zero out
+the length if one is specified, preventing reading of the file.
+
+Fix this by checking the file size unconditionally, and unifying
+the default length and clamping logic as a single range check instead.
+
+This bug was discovered when trying to boot Linux with initrd= via
+'bootefi' from a btrfs partition. The EFI stub entered an infinite
+loop of zero-length reads while trying to read the initrd, and the
+boot process stalled indefinitely.
+
+Signed-off-by: Sam Edwards <CFSworks@gmail.com>
+Reviewed-by: Qu Wenruo <wqu@suse.com>
+---
+ fs/btrfs/btrfs.c | 15 ++++++---------
+ 1 file changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/fs/btrfs/btrfs.c b/fs/btrfs/btrfs.c
+index 4cdbbbe3d066..1149a3b20077 100644
+--- a/fs/btrfs/btrfs.c
++++ b/fs/btrfs/btrfs.c
+@@ -228,7 +228,7 @@ int btrfs_read(const char *file, void *buf, loff_t offset, loff_t len,
+ {
+ 	struct btrfs_fs_info *fs_info = current_fs_info;
+ 	struct btrfs_root *root;
+-	loff_t real_size = 0;
++	loff_t real_size;
+ 	u64 ino;
+ 	u8 type;
+ 	int ret;
+@@ -246,16 +246,13 @@ int btrfs_read(const char *file, void *buf, loff_t offset, loff_t len,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (!len) {
+-		ret = btrfs_size(file, &real_size);
+-		if (ret < 0) {
+-			error("Failed to get inode size: %s", file);
+-			return ret;
+-		}
+-		len = real_size;
++	ret = btrfs_size(file, &real_size);
++	if (ret < 0) {
++		error("Failed to get inode size: %s", file);
++		return ret;
+ 	}
+ 
+-	if (len > real_size - offset)
++	if (!len || len > real_size - offset)
+ 		len = real_size - offset;
+ 
+ 	ret = btrfs_file_read(root, ino, offset, len, buf);
