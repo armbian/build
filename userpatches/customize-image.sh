@@ -47,14 +47,17 @@ Main() {
     # - libjson-glib-dev
     # - chromium-browser                GPU-enabled Chromium from rockchip-multimedia-config.
     # - python3-shortuuid               Random ID generator for Hawkbit initial target name.
-    # - vim                             Text editor
+    # - vim                             Text editor for remote / CLI development.
+    # - cmake                           Build tools needed for gnome-monitor-config.
+    # - libcairo2-dev
+    # - gettext                         Build tools needed for Gnome Hide Top Bar extension.
     # =========================================================================
     export DEBIAN_FRONTEND="noninteractive"
     export APT_LISTCHANGES_FRONTEND="none"
     add-apt-repository -y ppa:jjriek/panfork-mesa
     add-apt-repository -y ppa:liujianfeng1994/rockchip-multimedia
     apt-get update -y
-    apt-get install -y systemd-repart mali-g610-firmware rockchip-multimedia-config rauc-service libubootenv-tool meson libcurl4-openssl-dev libjson-glib-dev chromium-browser python3-shortuuid vim
+    apt-get install -y systemd-repart mali-g610-firmware rockchip-multimedia-config rauc-service libubootenv-tool meson libcurl4-openssl-dev libjson-glib-dev chromium-browser python3-shortuuid vim cmake libcairo2-dev gettext
     apt-get dist-upgrade -y
 
     # =========================================================================
@@ -65,6 +68,16 @@ Main() {
     meson setup build
     ninja -C build
     cp build/rauc-hawkbit-updater /usr/sbin
+
+    # =========================================================================
+    # Build and install gnome-monitor-config
+    # =========================================================================
+    git clone https://github.com/jadahl/gnome-monitor-config /tmp/gnome-monitor-config
+    cd /tmp/gnome-monitor-config
+    meson build
+    cd build
+    meson compile
+    cp src/gnome-monitor-config /usr/bin
 
     # =========================================================================
     # Setup main user
@@ -85,6 +98,15 @@ Main() {
 	    echo "export LANG=en_US.UTF-8"
 	    echo "export LANGUAGE=en_US"
     } >> /home/dmb/.xsessionrc
+    mkdir -p /home/dmb/.config/autostart && cp /tmp/overlay/autostart/* /home/dmb/.config/autostart
+
+    # =========================================================================
+    # Build and install Gnome hide top bar
+    # =========================================================================
+    git clone https://gitlab.gnome.org/tuxor1337/hidetopbar.git /tmp/hidetopbar
+    cd /tmp/hidetopbar
+    make
+    sudo -Hu dmb gnome-extensions install ./hidetopbar.zip
 
     # =========================================================================
     # Enable desktop manager auto-login.
