@@ -2,7 +2,7 @@
 BOARD_NAME="Firefly ITX-3588J"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
-KERNEL_TARGET="vendor"
+KERNEL_TARGET="legacy,vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588-firefly-itx-3588j.dtb"
