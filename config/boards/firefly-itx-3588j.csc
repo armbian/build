@@ -18,3 +18,23 @@ function post_family_config__firefly-itx-3588j_use_vendor_uboot() {
 	BOOTDIR="u-boot-${BOARD}"
 	BOOTPATCHDIR="u-boot-firefly-itx-3588j"
 }
+
+function post_family_tweaks_bsp__firefly-itx-3588j() {
+	display_alert "$BOARD" "Installing rk3588-bluetooth.service" "info"
+
+	# Bluetooth on this board is handled by a Broadcom (AP6275PR3) chip and requires
+	# a custom brcm_patchram_plus binary, plus a systemd service to run it at boot time
+	install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
+	cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/rk3588-bluetooth.service
+
+	# Reuse the service file, ttyS0 -> ttyS6; BCM4345C5.hcd -> BCM4362A2.hcd
+	sed -i 's/ttyS0/ttyS6/g' $destination/lib/systemd/system/rk3588-bluetooth.service
+	sed -i 's/BCM4345C5.hcd/BCM4362A2.hcd/g' $destination/lib/systemd/system/rk3588-bluetooth.service
+	return 0
+}
+
+function post_family_tweaks__firefly-itx-3588j_enable_services() {
+	display_alert "$BOARD" "Enabling rk3588-bluetooth.service" "info"
+	chroot_sdcard systemctl enable rk3588-bluetooth.service
+	return 0
+}
