@@ -33,9 +33,6 @@ Main() {
 
     sed -i "s#::HAWKBIT_SERVER_URL::#$HAWKBIT_SERVER_URL#" /etc/rauc/hawkbit.conf
     sed -i "s/::HAWKBIT_GATEWAY_TOKEN::/$HAWKBIT_GATEWAY_TOKEN/" /etc/rauc/hawkbit.conf
-    sed -i "s/::HAWKBIT_DEVICE_TARGET_NAME::/$HAWKBIT_DEVICE_TARGET_NAME/" /etc/rauc/hawkbit.conf
-    sed -i "s/::HAWKBIT_DEVICE_NAME::/$HAWKBIT_DEVICE_NAME/" /etc/rauc/hawkbit.conf
-    sed -i "s/::HAWKBIT_DEVICE_BUILD_VERSION::/$HAWKBIT_DEVICE_BUILD_VERSION/" /etc/rauc/hawkbit.conf
 
     # =========================================================================
     # Install drivers, software packages and update system.
@@ -43,19 +40,21 @@ Main() {
     # - systemd-repart:                 Setting up A/B partition layout.
     # - mali-g610-firmware:             Mali G610 drivers and config.
     # - rockchip-multimedia-config
-    # - rauc-service                    Rauc OTA update system
-    # - libubootenv-tool                U-Boot tools needed for rauc-service
-    # - meson                           Build tools needed for rauc-hawkbit-updater
+    # - rauc-service                    Rauc OTA update system.
+    # - libubootenv-tool                U-Boot tools needed for rauc-service.
+    # - meson                           Build tools needed for rauc-hawkbit-updater.
     # - libcurl4-openssl-dev            
     # - libjson-glib-dev
-    # - chromium-browser                GPU-enabled Chromium from rockchip-multimedia-config
+    # - chromium-browser                GPU-enabled Chromium from rockchip-multimedia-config.
+    # - python3-shortuuid               Random ID generator for Hawkbit initial target name.
+    # - vim                             Text editor
     # =========================================================================
     export DEBIAN_FRONTEND="noninteractive"
     export APT_LISTCHANGES_FRONTEND="none"
     add-apt-repository -y ppa:jjriek/panfork-mesa
     add-apt-repository -y ppa:liujianfeng1994/rockchip-multimedia
     apt-get update -y
-    apt-get install -y systemd-repart mali-g610-firmware rockchip-multimedia-config rauc-service libubootenv-tool meson libcurl4-openssl-dev libjson-glib-dev chromium-browser
+    apt-get install -y systemd-repart mali-g610-firmware rockchip-multimedia-config rauc-service libubootenv-tool meson libcurl4-openssl-dev libjson-glib-dev chromium-browser python3-shortuuid vim
     apt-get dist-upgrade -y
 
     # =========================================================================
@@ -101,13 +100,8 @@ EOF
     # =========================================================================
     # Final / Cleanup tasks.
     # =========================================================================
-
     systemctl enable dmbp-updater    
-
-    # Update and fix bootloader. systemd-repart breaks it for some reason after
-    # repartitioning, so we have a service run right afterwards that invokes
-    # armbian-install to update the bootloader.
-    systemctl enable auto-install-armbian
+    systemctl enable dmbp-install-armbian
 
     # Setup WiFi/Bluetooth drivers for Orange Pi 5B. At this time, Armbian
     # doesn't support the board natively, so must configure this manually.
