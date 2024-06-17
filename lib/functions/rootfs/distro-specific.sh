@@ -28,9 +28,6 @@ function install_distribution_specific() {
 		sed -i "s/#RateLimitIntervalSec=.*/RateLimitIntervalSec=30s/g" "${SDCARD}"/etc/systemd/journald.conf
 		sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" "${SDCARD}"/etc/systemd/journald.conf
 
-		# Chrony temporal fix https://bugs.launchpad.net/ubuntu/+source/chrony/+bug/1878005
-		[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
-
 		# disable conflicting services
 		disable_systemd_service_sdcard ondemand.service
 
@@ -42,21 +39,6 @@ function install_distribution_specific() {
 	# install our base-files package (this replaces the original from Debian/Ubuntu)
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
 		install_artifact_deb_chroot "armbian-base-files"
-	fi
-
-	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-	if [[ -d "${SDCARD}"/etc/netplan ]]; then
-
-		declare RENDERER=networkd
-		if [ -d "${SDCARD}"/etc/NetworkManager ]; then
-			local RENDERER=NetworkManager
-		fi
-
-		cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
-		network:
-		  version: 2
-		  renderer: ${RENDERER}
-		EOF
 	fi
 
 	# Set DNS server if systemd-resolved is in use

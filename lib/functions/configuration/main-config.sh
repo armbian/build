@@ -61,6 +61,13 @@ function do_main_configuration() {
 
 	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
 
+	# Network manager for CLI and desktop, systemd-networkd for minimal
+	if [[ ${BUILD_MINIMAL} == yes ]]; then
+		enable_extension "systemd-neworkd"
+	else
+		enable_extension "network-manager"
+	fi
+
 	# Timezone
 	if [[ -f /etc/timezone ]]; then # Timezone for target is taken from host, if it exists.
 		TZDATA=$(cat /etc/timezone)
