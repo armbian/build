@@ -2,6 +2,7 @@
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-sata1.dtbo \
 	rockchip-rk3588-sata2.dtbo \
+	rockchip-rk3588-i2c8-m2.dtbo \
 	rockchip-rk3588-pwm0-m0.dtbo \
 	rockchip-rk3588-pwm0-m1.dtbo \
 	rockchip-rk3588-pwm0-m2.dtbo \
