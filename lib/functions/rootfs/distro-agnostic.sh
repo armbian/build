@@ -650,6 +650,12 @@ install_btt_scripts(){
 	sudo rm -rf $SDCARD/boot/scripts/profile
 	sudo cp -rf $USERPATCHES_PATH/boot/scripts				$SDCARD/boot/
 	sudo cp -rf $USERPATCHES_PATH/boot/scripts/profile      $SDCARD/etc
+	sudo cp -rf $USERPATCHES_PATH/boot/60-persistent-v4l.rules        $SDCARD/lib/udev/rules.d 
+	sudo cp -rf $USERPATCHES_PATH/boot/60-persistent-v4l.rules        $SDCARD/usr/lib/udev/rules.d
+	sudo mkdir -p $SDCARD/usr/share/X11/xorg.conf.d
+#	sudo cp -rf $USERPATCHES_PATH/boot/display_config/*       		  $SDCARD/usr/share/X11/xorg.conf.d
+	
+
 }
 
 #install_klipper(){
