@@ -106,9 +106,6 @@ function create_sources_list_and_deploy_repo_key() {
 				deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
 
-				deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
-				#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
-
 				deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
 				#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
 			EOF
