@@ -61,11 +61,14 @@ function do_main_configuration() {
 
 	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
 
-	# Network manager for CLI and desktop, systemd-networkd for minimal
+	# Network-manager and Chrony for standard CLI and desktop, systemd-networkd and systemd-timesyncd for minimal
+	# systemd-timesyncd is slimmer and less resource intensive than Chrony, see https://unix.stackexchange.com/questions/504381/chrony-vs-systemd-timesyncd-what-are-the-differences-and-use-cases-as-ntp-cli
 	if [[ ${BUILD_MINIMAL} == yes ]]; then
-		enable_extension "systemd-neworkd"
+		enable_extension "net-systemd-neworkd"
+		enable_extension "net-systemd-timesyncd"
 	else
-		enable_extension "network-manager"
+		enable_extension "net-network-manager"
+		enable_extension "net-chrony"
 	fi
 
 	# Timezone
