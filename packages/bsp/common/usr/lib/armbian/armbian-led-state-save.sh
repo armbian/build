@@ -35,6 +35,8 @@ function store_led() {
 
 	# In case the trigger is any of the kbd-*, don't store any other parameter
 	# This avoids num/scroll/capslock from being restored at startup
+	# In case trigger is representing link-state for any network, don't store its previous state
+	# This avoids ghost wan/lan/etc (led up while cable unplugged)
 	[[ "$TRIGGER_VALUE" =~ kbd-* || "$TRIGGER_VALUE" == *":link" ]] && return
 
 	COMMAND_PARAMS="$CMD_FIND $PATH/ -maxdepth 1 -type f ! -iname uevent ! -iname trigger -perm /u+w -printf %f\\n"
