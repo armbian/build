@@ -175,9 +175,6 @@ function compile_armbian-bsp-cli() {
 		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)" >> "${destination}"/etc/armbian-distribution-status
 	done
 
-	# this is required for NFS boot to prevent deconfiguring the network on shutdown
-	sed -i 's/#no-auto-down/no-auto-down/g' "${destination}"/etc/network/interfaces.default
-
 	# execute $LINUXFAMILY-specific tweaks
 	if [[ $(type -t family_tweaks_bsp) == function ]]; then
 		display_alert "Running family_tweaks_bsp" "${LINUXFAMILY} - ${BOARDFAMILY}" "debug"
@@ -338,13 +335,6 @@ function board_side_bsp_cli_preinst() {
 	# tell people to reboot at next login
 	[ "$1" = "upgrade" ] && touch /var/run/.reboot_required
 
-	# convert link to file
-	if [ -L "/etc/network/interfaces" ]; then
-		cp /etc/network/interfaces /etc/network/interfaces.tmp
-		rm /etc/network/interfaces
-		mv /etc/network/interfaces.tmp /etc/network/interfaces
-	fi
-
 	# fixing ramdisk corruption when using lz4 compression method
 	sed -i "s/^COMPRESS=.*/COMPRESS=gzip/" /etc/initramfs-tools/initramfs.conf
 
@@ -430,7 +420,6 @@ function board_side_bsp_cli_postinst_base() {
 }
 
 function board_side_bsp_cli_postinst_finish() {
-	[ ! -f "/etc/network/interfaces" ] && [ -f "/etc/network/interfaces.default" ] && cp /etc/network/interfaces.default /etc/network/interfaces
 	ln -sf /var/run/motd /etc/motd
 	rm -f /etc/update-motd.d/00-header /etc/update-motd.d/10-help-text
 
