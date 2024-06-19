@@ -16,22 +16,13 @@ function add_host_dependencies__install_network_manager() {
 	fi
 }
 
-function pre_install_kernel_debs__configure_network_manager()
-{
+function pre_install_kernel_debs__configure_network_manager() {
 	display_alert "Extension: ${EXTENSION}: Enabling Network-Manager" "" "info"
 
 	# We can't disable/mask systemd-networkd.service since it is required by Netplan
 
 	# Most likely we don't need to wait for nm to get online
 	chroot_sdcard systemctl disable NetworkManager-wait-online.service
-
-	if [[ -n $NM_IGNORE_DEVICES ]]; then
-		mkdir -p "${SDCARD}"/etc/NetworkManager/conf.d/
-		cat <<- EOF > "${SDCARD}"/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
-			[keyfile]
-			unmanaged-devices=$NM_IGNORE_DEVICES
-		EOF
-	fi
 
 	# Copy network config files into the appropriate folders
 	display_alert "Configuring" "NetworkManager and Netplan" "info"
