@@ -19,7 +19,7 @@ CMD_FIND=$(which find)
 # $1 = base led path 
 # $2 = path of destination state file
 function store_led() {
-	
+
 	PATH="$1"
 	TRIGGER_PATH="$1/trigger"
 	DESTINATION="$2"
@@ -35,7 +35,7 @@ function store_led() {
 
 	# In case the trigger is any of the kbd-*, don't store any other parameter
 	# This avoids num/scroll/capslock from being restored at startup
-	[[ "$TRIGGER_VALUE" =~ kbd-* ]] && return
+	[[ "$TRIGGER_VALUE" =~ kbd-* || "$TRIGGER_VALUE" == *":link" ]] && return
 
 	COMMAND_PARAMS="$CMD_FIND $PATH/ -maxdepth 1 -type f ! -iname uevent ! -iname trigger -perm /u+w -printf %f\\n"
 	PARAMS=$($COMMAND_PARAMS)
