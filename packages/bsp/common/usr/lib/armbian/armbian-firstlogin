@@ -47,6 +47,30 @@ mask2cidr() {
 	echo "$nbits"
 }
 
+createYAML() {
+   local YAML="network:\n"
+    YAML+="  $DEVTYPE:\n"
+    YAML+="    $DEVICE_NAME:\n"
+	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp4: yes\n";fi
+	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp6: yes\n";fi
+	if [[ "${PRESET_NET_USE_STATIC}" == 1 ]]; then
+		YAML+="      addresses:\n"
+		YAML+="        - $PRESET_NET_STATIC_IP/$PRESET_NET_STATIC_MASK\n"
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="      routes:\n";fi
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="        - to: default\n";fi
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="          via: ${PRESET_NET_STATIC_GATEWAY}\n";fi
+		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="      nameservers:\n"; fi
+		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="        addresses: [$PRESET_NET_STATIC_DNS]\n"; fi
+	fi
+	if [[ "${PRESET_NET_WIFI_ENABLED}" == 1 ]]; then
+		if [[ -n "${PRESET_NET_WIFI_COUNTRYCODE}" ]]; then YAML+="      regulatory-domain: $PRESET_NET_WIFI_COUNTRYCODE\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_SSID}" ]]; then        YAML+="      access-points:\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_SSID}" ]]; then        YAML+="        \"$PRESET_NET_WIFI_SSID\":\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_KEY}" ]]; then         YAML+="          password: \"$PRESET_NET_WIFI_KEY\"\n" ; fi
+	fi
+	printf "%s" "$YAML"
+}
+
 do_firstrun_automated_network_configuration()
 {
 	#-----------------------------------------------------------------------------
@@ -73,45 +97,43 @@ do_firstrun_automated_network_configuration()
 		#-----------------------------------------------------------------------------
 		# Set Network
 		if [[ $PRESET_NET_CHANGE_DEFAULTS == 1 ]]; then
-			# Only run at tty1
-			if [ "$(who am i | awk '{print $2}')" != "tty1" ];then
-				exit
-			fi
-			# - Get name of 1st available ethernet and wifi adapter
-			eth_index="$(nmcli d | grep ethernet | cut -d ' ' -f 1 | head -n 1)"
-			wlan_index="$(nmcli d | grep wifi | cut -d ' ' -f 1 | head -n 1)"
 
+			# - Get name of 1st available ethernet and wifi adapter
+			eth_index="$(ip link | awk -F: '$0 !~ "lo|vir|wl|^[^0-9]"{print $2;getline}' | sed 's/^[ \t]*//' | grep "^e" | head -1)"
+			wlan_index="$(iw dev | awk '$1=="Interface"{print $2}' | head -n 1)"
+
+			local CONFIG_NAME="-dhcp"
 			# for static IP we only append settings
 			if [[ $PRESET_NET_USE_STATIC == 1 ]]; then
-				local FIXED_IP_SETTINGS="ipv4.method manual ipv4.address ${PRESET_NET_STATIC_IP}/${PRESET_NET_STATIC_MASK} ipv4.dns ${PRESET_NET_STATIC_DNS} ipv4.gateway ${PRESET_NET_STATIC_GATEWAY}"
+				local CONFIG_NAME="-static"
 			fi
 
+			# at least one device has to exits
 			if [[ -n $eth_index || -n $wlan_index ]]; then
-				# delete all current connections
-				LC_ALL=C nmcli -t -f UUID,DEVICE connection show | awk '{print $1}' | cut -f1 -d":" | xargs nmcli connection delete
 
 				# - Wifi enable
 				if [[ $PRESET_NET_WIFI_ENABLED == 1 ]]; then
 
-					#Set wifi country code
-					iw reg set "$PRESET_NET_WIFI_COUNTRYCODE"
-
-					nmcli con add con-name "Armbian wireless" type wifi ifname ${wlan_index} ssid "$PRESET_NET_WIFI_SSID" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PRESET_NET_WIFI_KEY" ${FIXED_IP_SETTINGS}
-					nmcli con up "Armbian wireless"
-
-					#Enable Wlan, disable Eth
-					PRESET_NET_ETHERNET_ENABLED=0
+						DEVICE_NAME=${wlan_index}
+						DEVTYPE=wifis
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						#Enable Wlan, disable Eth
+						PRESET_NET_ETHERNET_ENABLED=0
+						netplan apply > /dev/null 2>&1
 
 				# - Ethernet enable
 				elif [[ $PRESET_NET_ETHERNET_ENABLED == 1 ]]; then
 
-					nmcli con add con-name "Armbian ethernet" type ethernet ifname ${eth_index} -- ${FIXED_IP_SETTINGS}
-					nmcli con up "Armbian ethernet"
-
-					#Enable Eth, disable Wlan
-					PRESET_NET_WIFI_ENABLED=0
-
+						DEVICE_NAME=${eth_index}
+						DEVTYPE=ethernets
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						# Enable Eth, disable Wlan
+						PRESET_NET_WIFI_ENABLED=0
+						netplan apply > /dev/null 2>&1
 				fi
+
 			fi
 		fi
 	fi
@@ -491,7 +513,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	# IP of the QUAD9 DNS resolver https://quad9.net/
 	PingServerAddress="9.9.9.9"
 	pingcount=11
-	
+
 	# Try to retrieve the local IP address to display
 	retrieve_ip_addr() {
 		# First ping
@@ -513,7 +535,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 			# Save the current cursor position
 			echo -ne "\e[s"
-			
+
 			# Move the cursor to the fixed IP address row and clear the line
 			echo -ne "\e[${ip_address_row};0H\e[K"
 
