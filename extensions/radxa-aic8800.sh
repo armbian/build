@@ -12,7 +12,7 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	[[ -z $AIC8800_TYPE ]] && return 0
 	api_url="https://api.github.com/repos/radxa-pkg/aic8800/releases/latest"
 	latest_version=$(curl -s "${api_url}" | jq -r '.tag_name')
-	aic8800_firmware_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-firmware_${latest_version}_arm64.deb"
+	aic8800_firmware_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-firmware_${latest_version}_all.deb"
 	aic8800_pcie_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-pcie-dkms_${latest_version}_all.deb"
 	aic8800_sdio_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-sdio-dkms_${latest_version}_all.deb"
 	aic8800_usb_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-usb-dkms_${latest_version}_all.deb"
@@ -43,6 +43,6 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	use_clean_environment="yes" chroot_sdcard "wget ${aic8800_firmware_url} -P /tmp"
 	display_alert "Install aic8800 packages, will build kernel module in chroot" "${EXTENSION}" "info"
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/aic8800*/*/build/*.log")
-	use_clean_environment="yes" chroot_sdcard_apt_get_install "/tmp/${aic8800_dkms_file_name} /tmp/aic8800-firmware_${latest_version}_arm64.deb"
+	use_clean_environment="yes" chroot_sdcard_apt_get_install "/tmp/${aic8800_dkms_file_name} /tmp/aic8800-firmware_${latest_version}_all.deb"
 	use_clean_environment="yes" chroot_sdcard "rm -f /tmp/aic8800*.deb"
 }
