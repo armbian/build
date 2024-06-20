@@ -43,8 +43,19 @@ function install_distribution_specific() {
 
 	# Set DNS server if systemd-resolved is in use
 	if [[ -n "$NAMESERVER" && -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
-		sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
 		display_alert "Setup DNS server for systemd-resolved" "${NAMESERVER}" "info"
+
+		# Use resolved.conf.d/ directory as recommended by resolved itself
+		mkdir -p "${SDCARD}"/etc/systemd/resolved.conf.d/
+
+		cat <<- EOF > "${SDCARD}"/etc/systemd/resolved.conf.d/00-armbian-default-dns.conf
+			# Added by Armbian
+			#
+			# See resolved.conf(5) for details
+
+			[Resolve]
+			DNS=${NAMESERVER}
+		EOF
 	fi
 
 	# cleanup motd services and related files

@@ -10,10 +10,9 @@ function pre_install_kernel_debs__configure_systemd_networkd()
 {
 	display_alert "Extension: ${EXTENSION}: Enabling systemd-networkd" "" "info"
 
-	# Enable networkd
+	# Enable networkd and resolved
+	# Very likely not needed to enable manually since these services are enabled by default
 	chroot_sdcard systemctl enable systemd-networkd.service || display_alert "Failed to enable systemd-networkd.service" "" "wrn"
-
-	# Enable resolved too
 	chroot_sdcard systemctl enable systemd-resolved.service || display_alert "Failed to enable systemd-resolved.service" "" "wrn"
 
 	# Copy network config files into the appropriate folders
