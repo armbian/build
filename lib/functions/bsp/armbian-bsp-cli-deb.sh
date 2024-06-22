@@ -242,7 +242,7 @@ function reversion_armbian-bsp-cli_deb_contents() {
 		depends_base_files=""
 	fi
 	cat <<- EOF >> "${control_file_new}"
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}
+		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}, device-tree-compiler
 		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 	EOF

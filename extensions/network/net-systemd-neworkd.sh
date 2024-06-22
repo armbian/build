@@ -2,8 +2,8 @@
 # Extension to manage network interfaces with systemd-networkd + Netplan
 #
 function add_host_dependencies__install_systemd_networkd() {
-        display_alert "Extension: ${EXTENSION}: Installing additional packages" "netplan.io" "info"
-        add_packages_to_rootfs netplan.io
+	display_alert "Extension: ${EXTENSION}: Installing additional packages" "netplan.io" "info"
+	add_packages_to_image netplan.io
 }
 
 function pre_install_kernel_debs__configure_systemd_networkd()
