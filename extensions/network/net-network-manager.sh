@@ -3,16 +3,16 @@
 #
 function add_host_dependencies__install_network_manager() {
 	display_alert "Extension: ${EXTENSION}: Installing additional packages" "network-manager network-manager-openvpn netplan.io" "info"
-	add_packages_to_rootfs network-manager network-manager-openvpn netplan.io
+	add_packages_to_image network-manager network-manager-openvpn netplan.io
 
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
 		display_alert "Extension: ${EXTENSION}: Installing additional packages for desktop" "network-manager-gnome network-manager-ssh network-manager-vpnc" "info"
-		add_packages_to_rootfs network-manager-gnome network-manager-ssh network-manager-vpnc
+		add_packages_to_image network-manager-gnome network-manager-ssh network-manager-vpnc
 	fi
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 		display_alert "Extension: ${EXTENSION}: Installing additional packages for Ubuntu" "network-manager-config-connectivity-ubuntu" "info"
-		add_packages_to_rootfs network-manager-config-connectivity-ubuntu
+		add_packages_to_image network-manager-config-connectivity-ubuntu
 	fi
 }
 
