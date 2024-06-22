@@ -1,7 +1,7 @@
 #
 # Extension to manage network time synchronization with systemd-timesyncd
 #
-function add_host_dependencies__install_systemd-timesyncd() {
+function extension_prepare_config__install_systemd-timesyncd() {
 	display_alert "Extension: ${EXTENSION}: Installing additional packages" "systemd-timesyncd" "info"
 	add_packages_to_image systemd-timesyncd
 }

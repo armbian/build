@@ -1,7 +1,7 @@
 #
 # Extension to manage network interfaces with NetworkManager + Netplan
 #
-function add_host_dependencies__install_network_manager() {
+function extension_prepare_config__install_network_manager() {
 	display_alert "Extension: ${EXTENSION}: Installing additional packages" "network-manager network-manager-openvpn netplan.io" "info"
 	add_packages_to_image network-manager network-manager-openvpn netplan.io
 
