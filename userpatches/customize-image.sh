@@ -53,6 +53,7 @@ Main() {
     # - php-xml                         Packages needed for Laravel application.
     # - php-dom
     # - php-sqlite3
+    # - php-curl
     # - composer
     # - npm
     # - apache2                         Web server.
@@ -63,7 +64,7 @@ Main() {
     add-apt-repository -y ppa:jjriek/panfork-mesa
     add-apt-repository -y ppa:liujianfeng1994/rockchip-multimedia
     apt-get update -y
-    apt-get install -y systemd-repart mali-g610-firmware rockchip-multimedia-config rauc-service libubootenv-tool meson libcurl4-openssl-dev libjson-glib-dev chromium-browser python3-shortuuid vim cmake libcairo2-dev gettext php-xml php-dom php-sqlite3 composer apache2 libapache2-mod-php npm
+    apt-get install -y systemd-repart mali-g610-firmware rockchip-multimedia-config rauc-service libubootenv-tool meson libcurl4-openssl-dev libjson-glib-dev chromium-browser python3-shortuuid vim cmake libcairo2-dev gettext php-xml php-dom php-sqlite3 php-curl composer apache2 libapache2-mod-php npm
     apt-get dist-upgrade -y
 
     # =========================================================================
@@ -136,10 +137,13 @@ Main() {
     # Retrieve and setup application from remote repository.
     export COMPOSER_MAX_PARALLEL_HTTP=4
     git clone https://$APP_REPOSITORY_USER:$APP_REPOSITORY_TOKEN@github.com/$APP_REPOSITORY_PATH /srv/dmbpro
+    cd /srv/dmbpro
     git -C /srv/dmbpro remote set-url origin git@github.com:$APP_REPOSITORYPATH
     cp /srv/dmbpro/.env.dmbp /srv/dmbpro/.env
     chown -R www-data:www-data /srv/dmbpro  # Set ownership to www-data
     sudo -Hu www-data composer -d /srv/dmbpro install --no-dev
+    sudo -Hu www-data npm install
+    sudo -Hu www-data npm run build
     php /srv/dmbpro/artisan key:generate --force
     php /srv/dmbpro/artisan migrate --force
     php /srv/dmbpro/artisan optimize
@@ -175,6 +179,7 @@ EOF
     systemctl enable dmbp-app-queue-worker
     systemctl enable dmbp-app-schedule-worker
     systemctl enable ssh
+    systemctl enable mnt-media.mount
 
     # Setup WiFi/Bluetooth drivers for Orange Pi 5B. At this time, Armbian
     # doesn't support the board natively, so must configure this manually.
