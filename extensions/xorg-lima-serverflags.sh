@@ -1,6 +1,6 @@
 #
 # SPDX-License-Identifier: GPL-2.0
-# Copyright (c) 2023 Armbian 
+# Copyright (c) 2023 Armbian
 # This file is a part of the Armbian Build Framework https://github.com/armbian/build/
 #
 
@@ -31,4 +31,3 @@ function post_family_tweaks_bsp__install_lima_serverflags() {
 
 	return 0
 }
-

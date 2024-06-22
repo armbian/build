@@ -6,8 +6,7 @@ function add_host_dependencies__install_systemd_networkd() {
 	add_packages_to_image netplan.io
 }
 
-function pre_install_kernel_debs__configure_systemd_networkd()
-{
+function pre_install_kernel_debs__configure_systemd_networkd() {
 	display_alert "Extension: ${EXTENSION}: Enabling systemd-networkd" "" "info"
 
 	# Enable networkd and resolved
