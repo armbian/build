@@ -10,23 +10,23 @@
 # Implementaiton is based on the NoCLoud data source that will use
 # the FAT partition with armbi_boot label to source the configuration from
 
-# The Cloud init files in the boot partition are meant to be replaced with user provided ones, they are empty 
+# The Cloud init files in the boot partition are meant to be replaced with user provided ones, they are empty
 # of configurations except for setting hostname and DHCP on ethernet adapters.
 
 # This extension also disables armbian-first-run
 
 # Cloud-Init image marker
 function extension_prepare_config__ci_image_suffix() {
-	# Add to image suffix. 
-	EXTRA_IMAGE_SUFFIXES+=("-ci") 
+	# Add to image suffix.
+	EXTRA_IMAGE_SUFFIXES+=("-ci")
 }
 
-function extension_prepare_config__prepare_ci() { 
+function extension_prepare_config__prepare_ci() {
 	# Cloud Init related packages selected from Ubuntu RPI distirbution
 	add_packages_to_image cloud-init cloud-initramfs-dyn-netconf
 }
 
-function extension_prepare_config__ci_compatibility_check(){
+function extension_prepare_config__ci_compatibility_check() {
 	# We require fat boot partition, will change and if the user provided another type, will fail.
 	if [[ -z "${BOOTFS_TYPE}" ]]; then
 		declare -g BOOTFS_TYPE="fat"
@@ -52,7 +52,6 @@ function pre_customize_image__inject_cloud_init_config() {
 	run_host_command_logged cp ${defaults_src}/* $defaults_dst
 	return 0
 }
-
 
 # @TODO: would be better to have "armbian first run" as an extension that can be disabled
 function pre_customize_image__disable_armbian_first_run() {

@@ -21,10 +21,10 @@ function logging_init() {
 
 	# detect terminal background color
 	case "${COLORFGBG+${COLORFGBG#*;}}" in
-		[0-6]|8)
+		[0-6] | 8)
 			declare -g background_dark_or_light=dark
 			;;
-		7|9|1[0-5])
+		7 | 9 | 1[0-5])
 			declare -g background_dark_or_light=light
 			;;
 		*)

@@ -195,11 +195,11 @@ function compile_armbian-bsp-cli() {
 	# This is never run in build context; instead, it's source code is dumped inside a file that is packaged.
 	# It is done this way so we get shellcheck and formatting instead of a huge heredoc.
 	### preinst
-	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst  "${preinst_functions[@]}"
+	artifact_package_hook_helper_board_side_functions "preinst" board_side_bsp_cli_preinst "${preinst_functions[@]}"
 	unset board_side_bsp_cli_preinst
 
 	### postrm
-	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm  "${postrm_functions[@]}"
+	artifact_package_hook_helper_board_side_functions "postrm" board_side_bsp_cli_postrm "${postrm_functions[@]}"
 	unset board_side_bsp_cli_postrm
 
 	### postinst -- a bit more complex, extendable via postinst_functions which can be customized in hook above

@@ -15,13 +15,13 @@ function add_host_dependencies__add_cryptroot_tooling() {
 	fi
 }
 
-function extension_prepare_config__prepare_cryptroot() { 
+function extension_prepare_config__prepare_cryptroot() {
 	# Config for cryptroot, a boot partition is required.
 	declare -g BOOTPART_REQUIRED=yes
 	EXTRA_IMAGE_SUFFIXES+=("-crypt")
 }
 
-function prepare_root_device__encrypt_root_device(){
+function prepare_root_device__encrypt_root_device() {
 	# We encrypt the rootdevice (currently a loop device) and return the new mapped rootdevice
 	check_loop_device "$rootdevice"
 	display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
