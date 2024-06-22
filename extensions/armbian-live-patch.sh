@@ -1,6 +1,6 @@
 function post_family_tweaks_bsp__armbian-live-patch() {
 
-display_alert "Installing Armbian Live Patch" "${EXTENSION}" "info"
+	display_alert "Installing Armbian Live Patch" "${EXTENSION}" "info"
 
 	run_host_command_logged cat <<- 'armbian-live-patch' > "${destination}"/etc/systemd/system/armbian-live-patch.service
 		# Armbian simple patch system service
