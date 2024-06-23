@@ -2,6 +2,11 @@
 # Extension to manage network interfaces with NetworkManager + Netplan
 #
 function extension_prepare_config__install_network_manager() {
+	# Sanity check
+	if [[ "${NETWORKING_STACK}" != "network-manager" ]]; then
+		exit_with_error "Extension: ${EXTENSION}: requires NETWORKING_STACK='network-manager', currently set to '${NETWORKING_STACK}'"
+	fi
+
 	display_alert "Extension: ${EXTENSION}: Installing additional packages" "network-manager network-manager-openvpn netplan.io" "info"
 	add_packages_to_image network-manager network-manager-openvpn netplan.io
 
@@ -39,9 +44,9 @@ function pre_install_kernel_debs__configure_network_manager() {
 	local network_manager_config_src_folder="${EXTENSION_DIR}/config-nm/NetworkManager/"
 	local network_manager_config_dst_folder="${SDCARD}/etc/NetworkManager/conf.d/"
 
-	run_host_command_logged cp "${netplan_config_src_folder}"* "${netplan_config_dst_folder}"
-	run_host_command_logged cp "${network_manager_config_src_folder}"* "${network_manager_config_dst_folder}"
+	run_host_command_logged cp -v "${netplan_config_src_folder}"* "${netplan_config_dst_folder}"
+	run_host_command_logged cp -v "${network_manager_config_src_folder}"* "${network_manager_config_dst_folder}"
 
 	# Change the file permissions according to https://netplan.readthedocs.io/en/stable/security/
-	chmod 600 "${SDCARD}"/etc/netplan/*
+	chmod -v 600 "${SDCARD}"/etc/netplan/*
 }
