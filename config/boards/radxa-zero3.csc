@@ -1,7 +1,7 @@
 # Rockchip RK3566 quad core
 BOARD_NAME="Radxa ZERO 3"
 BOARDFAMILY="rk35xx"
-BOARD_MAINTAINER="Radxa"
+BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-zero3-rk3566_defconfig"
 KERNEL_TARGET="legacy,vendor"
 FULL_DESKTOP="yes"

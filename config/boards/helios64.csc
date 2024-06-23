@@ -1,7 +1,7 @@
 # RK3399 hexa core 4GB SoC 2.5GbE eMMC USB3 SATA M.2 UPS
 BOARD_NAME="Helios64"
 BOARDFAMILY="rockchip64" # Used to be rk3399
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="prahal"
 BOOTCONFIG="helios64-rk3399_defconfig"
 BOOT_SCENARIO="tpl-blob-atf-mainline"
 KERNEL_TARGET="current,edge"
