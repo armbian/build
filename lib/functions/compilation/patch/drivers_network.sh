@@ -446,8 +446,8 @@ driver_uwe5622() {
 			fi
 		fi
 
-		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch"  "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-reduce-system-load.patch"  "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-reduce-system-load.patch" "applying"
 
 		if linux-version compare "${version}" ge 6.9; then
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.9.patch" "applying"
@@ -643,7 +643,6 @@ driver_mt7921u_add_pids() {
 	fi
 }
 
-
 ###
 ###
 ### NOTICE: <=5.x BELOW ONLY
@@ -653,7 +652,6 @@ driver_mt7921u_add_pids() {
 ### It is sorted like this for better visibility.
 ###
 ### v v v v v v v v v v v v v v v v v v v v v v v
-
 
 #_bt for blueteeth
 driver_rtl8822cs_bt() {

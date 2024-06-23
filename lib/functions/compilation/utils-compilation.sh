@@ -27,7 +27,7 @@ grab_version() {
 	ver[1]=$(grep "^PATCHLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+' || true)
 	ver[2]=$(grep "^SUBLEVEL" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^[[:digit:]]+' || true)
 	ver[3]=$(grep "^EXTRAVERSION" "${1}"/Makefile | head -1 | awk '{print $(NF)}' | grep -oE '^-rc[[:digit:]]+' || true)
-	ver[4]=$(if [ -f localversion-next ];then echo $(cat localversion-next); fi || true)
+	ver[4]=$(if [ -f localversion-next ]; then echo $(cat localversion-next); fi || true)
 	echo "${ver[0]:-0}${ver[1]:+.${ver[1]}}${ver[2]:+.${ver[2]}}${ver[3]}${ver[4]}"
 	return 0
 }

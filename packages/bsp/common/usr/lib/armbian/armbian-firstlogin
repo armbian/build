@@ -47,6 +47,30 @@ mask2cidr() {
 	echo "$nbits"
 }
 
+createYAML() {
+   local YAML="network:\n"
+    YAML+="  $DEVTYPE:\n"
+    YAML+="    $DEVICE_NAME:\n"
+	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp4: yes\n";fi
+	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp6: yes\n";fi
+	if [[ "${PRESET_NET_USE_STATIC}" == 1 ]]; then
+		YAML+="      addresses:\n"
+		YAML+="        - $PRESET_NET_STATIC_IP/$PRESET_NET_STATIC_MASK\n"
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="      routes:\n";fi
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="        - to: default\n";fi
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="          via: ${PRESET_NET_STATIC_GATEWAY}\n";fi
+		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="      nameservers:\n"; fi
+		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="        addresses: [$PRESET_NET_STATIC_DNS]\n"; fi
+	fi
+	if [[ "${PRESET_NET_WIFI_ENABLED}" == 1 ]]; then
+		if [[ -n "${PRESET_NET_WIFI_COUNTRYCODE}" ]]; then YAML+="      regulatory-domain: $PRESET_NET_WIFI_COUNTRYCODE\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_SSID}" ]]; then        YAML+="      access-points:\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_SSID}" ]]; then        YAML+="        \"$PRESET_NET_WIFI_SSID\":\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_KEY}" ]]; then         YAML+="          password: \"$PRESET_NET_WIFI_KEY\"\n" ; fi
+	fi
+	printf "%s" "$YAML"
+}
+
 do_firstrun_automated_network_configuration()
 {
 	#-----------------------------------------------------------------------------
@@ -73,49 +97,80 @@ do_firstrun_automated_network_configuration()
 		#-----------------------------------------------------------------------------
 		# Set Network
 		if [[ $PRESET_NET_CHANGE_DEFAULTS == 1 ]]; then
-			# Only run at tty1
-			if [ "$(who am i | awk '{print $2}')" != "tty1" ];then
-				exit
-			fi
-			# - Get name of 1st available ethernet and wifi adapter
-			eth_index="$(nmcli d | grep ethernet | cut -d ' ' -f 1 | head -n 1)"
-			wlan_index="$(nmcli d | grep wifi | cut -d ' ' -f 1 | head -n 1)"
 
+			# - Get name of 1st available ethernet and wifi adapter
+			eth_index="$(ip link | awk -F: '$0 !~ "lo|vir|wl|^[^0-9]"{print $2;getline}' | sed 's/^[ \t]*//' | grep "^e" | head -1)"
+			wlan_index="$(iw dev | awk '$1=="Interface"{print $2}' | head -n 1)"
+
+			local CONFIG_NAME="-dhcp"
 			# for static IP we only append settings
 			if [[ $PRESET_NET_USE_STATIC == 1 ]]; then
-				local FIXED_IP_SETTINGS="ipv4.method manual ipv4.address ${PRESET_NET_STATIC_IP}/${PRESET_NET_STATIC_MASK} ipv4.dns ${PRESET_NET_STATIC_DNS} ipv4.gateway ${PRESET_NET_STATIC_GATEWAY}"
+				local CONFIG_NAME="-static"
 			fi
 
+			# at least one device has to exits
 			if [[ -n $eth_index || -n $wlan_index ]]; then
-				# delete all current connections
-				LC_ALL=C nmcli -t -f UUID,DEVICE connection show | awk '{print $1}' | cut -f1 -d":" | xargs nmcli connection delete
 
 				# - Wifi enable
 				if [[ $PRESET_NET_WIFI_ENABLED == 1 ]]; then
 
-					#Set wifi country code
-					iw reg set "$PRESET_NET_WIFI_COUNTRYCODE"
-
-					nmcli con add con-name "Armbian wireless" type wifi ifname ${wlan_index} ssid "$PRESET_NET_WIFI_SSID" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PRESET_NET_WIFI_KEY" ${FIXED_IP_SETTINGS}
-					nmcli con up "Armbian wireless"
-
-					#Enable Wlan, disable Eth
-					PRESET_NET_ETHERNET_ENABLED=0
+						DEVICE_NAME=${wlan_index}
+						DEVTYPE=wifis
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						#Enable Wlan, disable Eth
+						PRESET_NET_ETHERNET_ENABLED=0
+						netplan apply > /dev/null 2>&1
 
 				# - Ethernet enable
 				elif [[ $PRESET_NET_ETHERNET_ENABLED == 1 ]]; then
 
-					nmcli con add con-name "Armbian ethernet" type ethernet ifname ${eth_index} -- ${FIXED_IP_SETTINGS}
-					nmcli con up "Armbian ethernet"
-
-					#Enable Eth, disable Wlan
-					PRESET_NET_WIFI_ENABLED=0
-
+						DEVICE_NAME=${eth_index}
+						DEVTYPE=ethernets
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						# Enable Eth, disable Wlan
+						PRESET_NET_WIFI_ENABLED=0
+						netplan apply > /dev/null 2>&1
 				fi
+
 			fi
 		fi
 	fi
 } #do_firstrun_automated_network_configuration
+
+# Try to retrieve the local IP address to display
+get_local_ip_addr() {
+	# How many seconds to wait at maximum to find out the local IP address
+	local ip_wait_seconds_counter=6
+	local local_device_ip=""
+	local retry_message=""
+
+	while [[ -z "$local_device_ip" ]] && [ ${ip_wait_seconds_counter} -ge 0 ]; do
+		local_device_ip=$(ip -4 addr show scope global | grep inet | awk '{print $2}' | cut -d/ -f1 | awk '{$1=$1}1' FS='\n' OFS=',' RS=)
+
+		# Set retry message if some retries are left, but no IP address has been found yet
+		if [[ -z "$local_device_ip" ]] && [[ $ip_wait_seconds_counter -gt 0 ]]; then
+			retry_message="\e[1m\e[97mWaiting for local connection!\x1B[0m Retrying... (${ip_wait_seconds_counter})"
+		# Empty retry message if IP address has been found
+		elif [[ -n "$local_device_ip" ]]; then
+			retry_message=""
+		# Set timeout message if no retries are left and no IP address has been found
+		else
+			retry_message="\e[1m\e[31mNetwork connection timeout!\x1B[0m"
+		fi
+
+		# Display the message
+		echo -e "\e[1A\e[KIP address: \x1B[92m${local_device_ip}\x1B[0m ${retry_message}"
+
+		# Wait for 1 second if the IP has not yet been found
+		if [[ -z "$local_device_ip" ]]; then
+			sleep 1
+		fi
+
+		ip_wait_seconds_counter=$((ip_wait_seconds_counter - 1))
+	done
+}
 
 read_password() {
 
@@ -210,7 +265,11 @@ set_timezone_and_locales() {
 	PUBLIC_IP=$(curl --max-time 5 -s https://ipinfo.io/ip)
 
 	# Check if we have wireless adaptor
-	WIFI_DEVICE=$(LC_ALL=C nmcli dev status | grep " wifi " 2> /dev/null)
+	if command -v nmcli > /dev/null 2>&1; then
+		WIFI_DEVICE=$(LC_ALL=C nmcli dev status | grep " wifi " 2> /dev/null)
+	elif command -v iw > /dev/null 2>&1; then
+		WIFI_DEVICE=$(LC_ALL=C iw dev | awk '$1=="Interface"{print $2}' 2> /dev/null)
+	fi
 
 	if [ -z "$PUBLIC_IP" ]; then
 
@@ -226,10 +285,47 @@ set_timezone_and_locales() {
 				else
 					response=n
 				fi
-				echo "$response"
 			done
 			if [[ "${response}" =~ ^(Y|y)$ ]]; then
-				nmtui-connect
+
+				# get list of wireless networks
+				echo -e "\nDetected wireless networks:\n"
+				ARRAY=($(sudo iwlist ${WIFI_DEVICE} scanning | egrep 'ESSID' | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/ESSID://' | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1'))
+				while [[ 1 ]] ; do
+					while [[ 1 ]] ; do
+						for str in ${ARRAY[@]}; do echo $str | sed "s/,/ \t /g"; done
+						read -r -p "Enter a number of SSID: " input
+						if [[ "$input" =~ ^[0-9]{,2}$ ]] ; then break; fi
+					done
+					echo ""
+					# get password
+					while [[ 1 ]] ; do
+						SSID=$(echo ${ARRAY[$input-1]} | cut -d"," -f2)
+						read -r -p "Enter a password for ${SSID}: " password
+						break
+					done
+
+					# generate config
+					cat <<- EOF > "${SDCARD}"/etc/netplan/30-wifis-dhcp.yaml
+					# Created by Armbian firstlogin script
+					network:
+					  wifis:
+					    ${WIFI_DEVICE}:
+					      dhcp4: yes
+					      dhcp6: yes
+					      access-points:
+					        "$SSID":
+					          password: "${password}"
+					EOF
+
+					# apply to netplan
+					systemctl daemon-reload
+					netplan apply --timeout 0 2>/dev/null
+					sleep 5
+
+					# exit if connection is suffesful
+					if [[ -n $(sudo iw ${WIFI_DEVICE} link | grep "$SSID") ]]; then break; fi
+				done
 			fi
 			echo ""
 		fi
@@ -260,7 +356,6 @@ set_timezone_and_locales() {
 		else
 			response=$SET_LANG_BASED_ON_LOCATION
 		fi
-		echo "$response"
 	done
 	# change it only if we have a match and if we agree
 	if [[ "${response}" =~ ^(N|n)$ ]]; then
@@ -482,8 +577,13 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 	echo -e "Welcome to \e[1m\e[97m${VENDOR}\x1B[0m! \n"
 	echo -e "Documentation: \e[1m\e[92m${VENDORDOCS}\x1B[0m | Community support: \e[1m\e[92m${VENDORSUPPORT}\x1B[0m\n"
-	GET_IP=$(bash /etc/update-motd.d/30-armbian-sysinfo | grep IP | sed "s/.*IP://" | sed 's/^[ \t]*//')
-	[[ -n "$GET_IP" ]] && echo -e "IP address: $GET_IP\n"
+
+	echo "" # empty line
+
+	# Try to get the local IP address (script halts until IP was found or x retries were done)
+	get_local_ip_addr
+
+	echo "" # empty line
 
 	trap '' 2
 	REPEATS=3

@@ -68,7 +68,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	display_alert "Preparing debootstrap" "for ${DISTRIBUTION}'s ${RELEASE}" "info"
 	case "${DISTRIBUTION}" in
 		Ubuntu)
-			GIT_FIXED_WORKDIR="debootstrap-ubuntu-devel" fetch_from_repo "https://git.launchpad.net/ubuntu/+source/debootstrap" "debootstrap-ubuntu-devel" "branch:ubuntu/devel"
+			GIT_FIXED_WORKDIR="debootstrap-ubuntu-devel" fetch_from_repo "https://git.launchpad.net/ubuntu/+source/debootstrap" "debootstrap-ubuntu-devel" "tag:import/1.0.118ubuntu1.13"
 			debootstrap_wanted_dir="${SRC}/cache/sources/debootstrap-ubuntu-devel"
 			debootstrap_default_script="gutsy"
 			;;

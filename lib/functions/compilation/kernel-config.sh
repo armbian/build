@@ -84,7 +84,7 @@ function kernel_config_initialize() {
 	run_host_command_logged cp -pv ".config" "${config_after_kernel_config_extension_filename}"
 	# Check sanity of kernel config and repair the config if necessary
 	kernel_config_check_and_repair
-	
+
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 }
 

@@ -28,9 +28,6 @@ function install_distribution_specific() {
 		sed -i "s/#RateLimitIntervalSec=.*/RateLimitIntervalSec=30s/g" "${SDCARD}"/etc/systemd/journald.conf
 		sed -i "s/#RateLimitBurst=.*/RateLimitBurst=10000/g" "${SDCARD}"/etc/systemd/journald.conf
 
-		# Chrony temporal fix https://bugs.launchpad.net/ubuntu/+source/chrony/+bug/1878005
-		[[ -f "${SDCARD}"/etc/default/chrony ]] && sed -i '/DAEMON_OPTS=/s/"-F -1"/"-F 0"/' "${SDCARD}"/etc/default/chrony
-
 		# disable conflicting services
 		disable_systemd_service_sdcard ondemand.service
 
@@ -44,25 +41,21 @@ function install_distribution_specific() {
 		install_artifact_deb_chroot "armbian-base-files"
 	fi
 
-	# Basic Netplan config. Let NetworkManager/networkd manage all devices on this system
-	if [[ -d "${SDCARD}"/etc/netplan ]]; then
-
-		declare RENDERER=networkd
-		if [ -d "${SDCARD}"/etc/NetworkManager ]; then
-			local RENDERER=NetworkManager
-		fi
-
-		cat <<- EOF > "${SDCARD}"/etc/netplan/armbian-default.yaml
-		network:
-		  version: 2
-		  renderer: ${RENDERER}
-		EOF
-	fi
-
 	# Set DNS server if systemd-resolved is in use
 	if [[ -n "$NAMESERVER" && -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
-		sed -i "s/#DNS=.*/DNS=$NAMESERVER/g" "${SDCARD}"/etc/systemd/resolved.conf
 		display_alert "Setup DNS server for systemd-resolved" "${NAMESERVER}" "info"
+
+		# Use resolved.conf.d/ directory as recommended by resolved itself
+		mkdir -p "${SDCARD}"/etc/systemd/resolved.conf.d/
+
+		cat <<- EOF > "${SDCARD}"/etc/systemd/resolved.conf.d/00-armbian-default-dns.conf
+			# Added by Armbian
+			#
+			# See resolved.conf(5) for details
+
+			[Resolve]
+			DNS=${NAMESERVER}
+		EOF
 	fi
 
 	# cleanup motd services and related files
@@ -105,9 +98,6 @@ function create_sources_list_and_deploy_repo_key() {
 
 				deb http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
 				#deb-src http://${DEBIAN_MIRROR} ${release}-updates main contrib non-free
-
-				deb http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
-				#deb-src http://${DEBIAN_MIRROR} ${release}-backports main contrib non-free
 
 				deb http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
 				#deb-src http://${DEBIAN_SECURTY} ${release}/updates main contrib non-free
