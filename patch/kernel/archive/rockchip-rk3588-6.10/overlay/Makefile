@@ -2,6 +2,7 @@
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-sata1.dtbo \
 	rockchip-rk3588-sata2.dtbo \
+	rockchip-rk3588-i2c8-m2.dtbo \
 	rockchip-rk3588-pwm0-m0.dtbo \
 	rockchip-rk3588-pwm0-m1.dtbo \
 	rockchip-rk3588-pwm0-m2.dtbo \
@@ -31,7 +32,13 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-pwm15-m0.dtbo \
 	rockchip-rk3588-pwm15-m1.dtbo \
 	rockchip-rk3588-pwm15-m2.dtbo \
-	rockchip-rk3588-pwm15-m3.dtbo
+	rockchip-rk3588-pwm15-m3.dtbo \
+	rockchip-rk3588-uart1-m1.dtbo \
+	rockchip-rk3588-uart3-m1.dtbo \
+	rockchip-rk3588-uart4-m2.dtbo \
+	rockchip-rk3588-uart6-m1.dtbo \
+	rockchip-rk3588-uart7-m2.dtbo \
+	rockchip-rk3588-uart8-m1.dtbo
 
 dtb-y += $(dtbo-y)
 

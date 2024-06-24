@@ -61,15 +61,44 @@ function do_main_configuration() {
 
 	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
 
-	# Network-manager and Chrony for standard CLI and desktop, systemd-networkd and systemd-timesyncd for minimal
-	# systemd-timesyncd is slimmer and less resource intensive than Chrony, see https://unix.stackexchange.com/questions/504381/chrony-vs-systemd-timesyncd-what-are-the-differences-and-use-cases-as-ntp-cli
-	if [[ ${BUILD_MINIMAL} == yes ]]; then
-		enable_extension "net-systemd-neworkd"
-		enable_extension "net-systemd-timesyncd"
+	# Network stack to use, default to network-manager; configuration can override this.
+	declare -g NETWORKING_STACK="${NETWORKING_STACK}"
+	# If empty, default depending on BUILD_MINIMAL; if yes, use systemd-networkd; if no, use network-manager.
+	if [[ -z "${NETWORKING_STACK}" ]]; then
+		display_alert "NETWORKING_STACK not set" "Calculating defaults" "debug"
+		# Network-manager and Chrony for standard CLI and desktop, systemd-networkd and systemd-timesyncd for minimal
+		# systemd-timesyncd is slimmer and less resource intensive than Chrony, see https://unix.stackexchange.com/questions/504381/chrony-vs-systemd-timesyncd-what-are-the-differences-and-use-cases-as-ntp-cli
+		if [[ "${BUILD_MINIMAL}" == "yes" ]]; then
+			display_alert "BUILD_MINIMAL is set to yes" "Using systemd-networkd" "debug"
+			NETWORKING_STACK="systemd-networkd"
+		else
+			display_alert "BUILD_MINIMAL not set to yes" "Using network-manager" "debug"
+			NETWORKING_STACK="network-manager"
+		fi
 	else
-		enable_extension "net-network-manager"
-		enable_extension "net-chrony"
+		display_alert "NETWORKING_STACK is preset during configuration" "NETWORKING_STACK: ${NETWORKING_STACK}" "debug"
 	fi
+	# Now make it read-only, as further changes would make the whole thing inconsistent.
+	# Individual networking extensions should _check_ this to make there's no spurious enablement.
+	display_alert "Using NETWORKING_STACK" "NETWORKING_STACK: ${NETWORKING_STACK}" "info"
+	declare -g -r NETWORKING_STACK="${NETWORKING_STACK}"
+
+	# Now enable extensions according to the configuration.
+	case "${NETWORKING_STACK}" in
+		"network-manager")
+			display_alert "Adding networking extensions" "net-network-manager, net-chrony" "info"
+			enable_extension "net-network-manager"
+			enable_extension "net-chrony"
+			;;
+		"systemd-networkd")
+			display_alert "Adding networking extensions" "net-systemd-networkd, net-systemd-timesyncd" "info"
+			enable_extension "net-systemd-networkd"
+			enable_extension "net-systemd-timesyncd"
+			;;
+		"none" | *)
+			display_alert "NETWORKING_STACK=${NETWORKING_STACK}" "Not adding networking extensions" "info"
+			;;
+	esac
 
 	# Timezone
 	if [[ -f /etc/timezone ]]; then # Timezone for target is taken from host, if it exists.
