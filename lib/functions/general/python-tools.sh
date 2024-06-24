@@ -11,23 +11,6 @@
 # If you know to tame it, teach me. I'd rather not know about PYTHONUSERBASE and such.
 # --rpardini
 
-function early_prepare_pip3_dependencies_for_python_tools() {
-	# This is like a stupid version of requirements.txt
-	declare -a -g python3_pip_dependencies=(
-		"unidiff==0.7.5"      # for parsing unified diff
-		"GitPython==3.1.43"   # for manipulating git repos
-		"unidecode==1.3.8"    # for converting strings to ascii
-		"coloredlogs==15.0.1" # for colored logging
-		"PyYAML==6.0.1"       # for parsing/writing YAML
-		"oras==0.1.30"        # for OCI stuff in mapper-oci-update
-		"Jinja2==3.1.4"       # for templating
-		"rich==13.7.1"        # for rich text formatting
-		"dtschema"            # for checking dts files and dt bindings (use latest version)
-		"yamllint"            # for checking dts files and dt bindings (use latest version)
-	)
-	return 0
-}
-
 # call: prepare_python_and_pip # this defines global PYTHON3_INFO dict and PYTHON3_VARS array
 function prepare_python_and_pip() {
 	assert_prepared_host # this needs a prepared host to work; avoid fake errors about "python3-pip" not being installed
@@ -76,9 +59,15 @@ function prepare_python_and_pip() {
 	display_alert "pip3 version" "${pip3_version_number}: '${pip3_version}'" "info"
 
 	# Hash the contents of the dependencies array + the Python version + the release
+	declare python3_pip_dependencies_path
 	declare python3_pip_dependencies_hash
-	early_prepare_pip3_dependencies_for_python_tools
-	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version}" "${python3_pip_dependencies[*]}" | sha256sum | cut -d' ' -f1)"
+
+	python3_pip_dependencies_path="${SRC}/requirements.txt"
+	# Check for the existence of requirements.txt, fail if not found
+	[[ ! -f "${python3_pip_dependencies_path}" ]] && exit_with_error "Python Pip requirements.txt file not found at path: ${python3_pip_dependencies_path}"
+
+	# Calculate the hash for the Pip requirements
+	python3_pip_dependencies_hash="$(echo "${HOSTRELEASE}" "${python3_version}" "${pip3_version}" "$(cat "${python3_pip_dependencies_path}")" | sha256sum | cut -d' ' -f1)"
 
 	declare non_cache_dir="/armbian-pip"
 	declare python_pip_cache="${SRC}/cache/pip"
@@ -117,8 +106,8 @@ function prepare_python_and_pip() {
 		[USERBASE]="${python3_user_base}"
 		[MODULES_PATH]="${python3_modules_path}"
 		[PYCACHEPREFIX]="${python3_pycache}"
-		[HASH]="${python3_pip_dependencies_hash}"
-		[DEPS]="${python3_pip_dependencies[*]}"
+		[REQUIREMENTS_HASH]="${python3_pip_dependencies_hash}"
+		[REQUIREMENTS_PATH]="${python3_pip_dependencies_path}"
 		[VERSION]="${python3_version}"
 		[VERSION_STRING]="${python3_version_string}"
 		[PIP_VERSION]="${pip3_version}"
@@ -139,7 +128,7 @@ function prepare_python_and_pip() {
 		# remove the old hashes matching base, don't leave junk behind
 		run_host_command_logged rm -fv "${python_hash_base}*"
 
-		run_host_command_logged env -i "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" -m pip install "${pip3_extra_args[@]}" "${python3_pip_dependencies[@]}"
+		run_host_command_logged env -i "${PYTHON3_VARS[@]@Q}" "${PYTHON3_INFO[BIN]}" -m pip install "${pip3_extra_args[@]}" -r "${python3_pip_dependencies_path}"
 
 		# Create the hash file
 		run_host_command_logged touch "${python_hash_file}"
