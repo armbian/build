@@ -9,7 +9,7 @@
 
 function github_actions_add_output() {
 	# if CI is not GitHub Actions, do nothing
-	if [[ "${CI}" != "true" ]] && [[ "${GITHUB_ACTIONS}" != "true" ]]; then
+	if [[ "${GITHUB_ACTIONS}" != "true" ]]; then
 		display_alert "Not running in GitHub Actions, not adding output" "'${*}'" "debug"
 		return 0
 	fi
