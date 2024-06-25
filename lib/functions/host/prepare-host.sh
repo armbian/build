@@ -290,7 +290,8 @@ function adaptative_prepare_host_dependencies() {
 	host_deps_add_extra_python # See python-tools.sh::host_deps_add_extra_python()
 
 	### Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+; ffi-dev is needed for some Python packages when the wheel is not prebuilt
-	host_dependencies+=("python3-dev" "python3-setuptools" "python3-pip" "python3-pyelftools" "libffi-dev")
+	### 'python3-setuptools' and 'python3-pyelftools' moved to requirements.txt to make sure build hosts use the same/latest versions of these tools.
+	host_dependencies+=("python3-dev" "python3-pip" "libffi-dev")
 
 	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
 	host_dependencies+=("libgnutls28-dev")
@@ -303,11 +304,12 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	### Python2 -- required for some older u-boot builds
-	# Debian 'sid'/'bookworm' and Ubuntu 'lunar' does not carry python2 anymore; in this case some u-boot's might fail to build.
-	if [[ "sid bookworm trixie lunar mantic noble" == *"${host_release}"* ]]; then
-		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
-	else
+	# Debian newer than 'bookworm' and Ubuntu newer than 'lunar'/'mantic' does not carry python2 anymore; in this case some u-boot's might fail to build.
+	# Last versions to support python2 were Debian 'bullseye' and Ubuntu 'jammy'
+	if [[ "bullseye jammy" == *"${host_release}"* ]]; then
 		host_dependencies+=("python2" "python2-dev")
+	else
+		display_alert "Python2 not available on host release '${host_release}'" "ancient u-boot versions might/will fail to build" "info"
 	fi
 
 	# Only install acng if asked to.

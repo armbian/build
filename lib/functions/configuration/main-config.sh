@@ -568,8 +568,8 @@ function set_git_build_repo_url_and_commit_vars() {
 
 function check_filesystem_compatibility_on_host() {
 	if [[ -f "/proc/filesystems" ]]; then
-			# Check if the filesystem is listed in /proc/filesystems
-		if ! grep -q "\<$ROOTFS_TYPE\>" /proc/filesystems; then		# ensure exact match with \<...\>
+		# Check if the filesystem is listed in /proc/filesystems
+		if ! grep -q "\<$ROOTFS_TYPE\>" /proc/filesystems; then # ensure exact match with \<...\>
 			# Try modprobing the fs module since it doesn't show up in /proc/filesystems if it's an unloaded module versus built-in
 			if ! modprobe "$ROOTFS_TYPE"; then
 				exit_with_error "Filesystem type unsupported by build host:" "$ROOTFS_TYPE"
@@ -599,8 +599,8 @@ function check_filesystem_compatibility_on_host() {
 
 			# Check if required configurations are set
 			if [ -n "$build_host_kernel_config" ]; then
-				if ! grep -q '^CONFIG_F2FS_FS_XATTR=y$' "$build_host_kernel_config" || \
-				! grep -q '^CONFIG_F2FS_FS_SECURITY=y$' "$build_host_kernel_config"; then
+				if ! grep -q '^CONFIG_F2FS_FS_XATTR=y$' "$build_host_kernel_config" ||
+					! grep -q '^CONFIG_F2FS_FS_SECURITY=y$' "$build_host_kernel_config"; then
 					exit_with_error "Required kernel configurations for f2fs filesystem not enabled." "Please enable CONFIG_F2FS_FS_XATTR and CONFIG_F2FS_FS_SECURITY in your kernel configuration." "err"
 				fi
 			fi
@@ -611,18 +611,17 @@ function check_filesystem_compatibility_on_host() {
 	return 0
 }
 
-function pre_install_distribution_specific__disable_cnf_apt_hook(){
+function pre_install_distribution_specific__disable_cnf_apt_hook() {
 	if [[ $(dpkg --print-architecture) != "${ARCH}" && -f "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found ]]; then #disable command-not-found (60% build-time saved under qemu)
-	display_alert "Disabling command-not-found during build-time to speed up image creation" "${BOARD}:${RELEASE}-${BRANCH}" "info"
-	run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled
-        fi
+		display_alert "Disabling command-not-found during build-time to speed up image creation" "${BOARD}:${RELEASE}-${BRANCH}" "info"
+		run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled
+	fi
 }
 
-
-function post_post_debootstrap_tweaks__restore_cnf_apt_hook(){
+function post_post_debootstrap_tweaks__restore_cnf_apt_hook() {
 	if [ -f "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled ]; then # (re-enable command-not-found after building rootfs if it's been disabled)
-	display_alert "Enabling command-not-found after build-time " "${BOARD}:${RELEASE}-${BRANCH}" "info"
-	run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found
+		display_alert "Enabling command-not-found after build-time " "${BOARD}:${RELEASE}-${BRANCH}" "info"
+		run_host_command_logged mv "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found.disabled "${SDCARD}"/etc/apt/apt.conf.d/50command-not-found
 	fi
 
 }

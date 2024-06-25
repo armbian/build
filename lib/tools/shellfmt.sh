@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.6.0} # https://github.com/mvdan/sh/releases/
+SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.8.0} # https://github.com/mvdan/sh/releases/
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
@@ -42,7 +42,7 @@ DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/mvdan/sh/releases/download/v${S
 SHELLFMT_BIN="${DIR_SHELLFMT}/${SHELLFMT_FN}"
 
 echo "MACHINE: ${MACHINE}"
-echo "Down URL: ${DOWN_URL}"
+echo "Download URL: ${DOWN_URL}"
 echo "SHELLFMT_BIN: ${SHELLFMT_BIN}"
 
 if [[ ! -f "${SHELLFMT_BIN}" ]]; then
@@ -73,3 +73,5 @@ echo "Shellfmt files differing:"
 
 echo "Doing for real:"
 "${SHELLFMT_BIN}" -w "${ALL_BASH_FILES[@]}"
+
+echo "Shellfmt finished!"

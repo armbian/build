@@ -18,12 +18,13 @@ function run_kernel_make_internal() {
 	prepare_distcc_compilation_config
 
 	common_make_envs=(
-		"CCACHE_BASEDIR=\"$(pwd)\""              # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
-		"CCACHE_TEMPDIR=\"${CCACHE_TEMPDIR:?}\"" # Temporary directory for ccache, under WORKDIR
-		"PATH=\"${toolchain}:${PATH}\""          # Insert the toolchain first into the PATH.
-		"DPKG_COLORS=always"                     # Use colors for dpkg @TODO no dpkg is done anymore, remove?
-		"XZ_OPT='--threads=0'"                   # Use parallel XZ compression
-		"TERM='${TERM}'"                         # Pass the terminal type, so that 'make menuconfig' can work.
+		"CCACHE_BASEDIR=\"$(pwd)\""                                   # Base directory for ccache, for cache reuse # @TODO: experiment with this and the source path to maximize hit rate
+		"CCACHE_TEMPDIR=\"${CCACHE_TEMPDIR:?}\""                      # Temporary directory for ccache, under WORKDIR
+		"PATH=\"${toolchain}:${PYTHON3_INFO[USERBASE]}/bin:${PATH}\"" # Insert the toolchain and the pip binaries into the PATH
+		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\""  # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed for dtb checks)
+		"DPKG_COLORS=always"                                          # Use colors for dpkg @TODO no dpkg is done anymore, remove?
+		"XZ_OPT='--threads=0'"                                        # Use parallel XZ compression
+		"TERM='${TERM}'"                                              # Pass the terminal type, so that 'make menuconfig' can work.
 		"COLUMNS='${COLUMNS:-160}'"
 		"COLORFGBG='${COLORFGBG}'"
 	)

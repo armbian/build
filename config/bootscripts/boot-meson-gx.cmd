@@ -30,7 +30,7 @@ fi
 if test "${disable_vu7}" = "false"; then setenv usbhidquirks "usbhid.quirks=0x0eef:0x0005:0x0004"; fi
 
 setenv bootargs "root=PARTUUID=${partuuid} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 coherent_pool=2M loglevel=${verbosity} ubootpart=${partuuid} libata.force=noncq usb-storage.quirks=${usbstoragequirks} ${usbhidquirks} ${extraargs} ${extraboardargs}"
-if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory swapaccount=1"; fi
+if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=memory"; fi
 echo "Mainline bootargs: ${bootargs}"
 
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
