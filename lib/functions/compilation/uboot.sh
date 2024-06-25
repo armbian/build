@@ -53,8 +53,8 @@ function compile_uboot_target() {
 
 	# atftempdir comes from atf.sh's compile_atf()
 	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
-		display_alert "Copying over bin/elf's from atftempdir" "${atftempdir}" "debug"
-		run_host_command_logged cp -pv "${atftempdir}"/*.bin "${atftempdir}"/*.elf ./ # only works due to nullglob
+		display_alert "Copying over bin/elf/itb's from atftempdir" "${atftempdir}" "debug"
+		run_host_command_logged cp -pv "${atftempdir}"/*.bin "${atftempdir}"/*.elf "${atftempdir}"/*.itb ./ # only works due to nullglob
 		# atftempdir is under WORKDIR, so no cleanup necessary.
 	fi
 
