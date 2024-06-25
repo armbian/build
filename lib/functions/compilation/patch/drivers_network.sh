@@ -343,6 +343,20 @@ driver_rtw88() {
 	fi
 }
 
+driver_rtl8852bs() {
+	# BananaPi F3 Realtek 8852B SDIO Wireless driver
+	if linux-version compare "${version}" ge 6.1 && [[ "$LINUXFAMILY" == spacemit ]]; then
+		display_alert "Adding" "Realtek 8852B SDIO Wireless driver" "info"
+		process_patch_file "${SRC}/patch/misc/rtl8852bs/001-Realtek-8852B-SDIO-Wireless-driver.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtl8852bs/002-Realtek-8852B-SDIO-Wireless-driver.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtl8852bs/003-Realtek-8852B-SDIO-Wireless-driver.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtl8852bs/004-Realtek-8852B-SDIO-Wireless-driver.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtl8852bs/005-Realtek-8852B-SDIO-Wireless-driver.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtl8852bs/006-Realtek-8852B-SDIO-Wireless-driver.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/rtl8852bs/007-update-rtw_regd_init-for-kernel-v6.1.0.patch" "applying"
+	fi
+}
+
 driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets
