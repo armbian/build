@@ -134,7 +134,7 @@ function armbian_register_commands() {
 		["rewrite-kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_WILL_NOT_BUILD='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
 		["kernel-patch"]="WHAT='kernel' CREATE_PATCHES='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 		["kernel-dtb"]="WHAT='kernel' KERNEL_DTB_ONLY='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
-		["dts-check"]="WHAT='kernel' DTS_VALIDATE='yes' ARTIFACT_WILL_NOT_BUILD='yes'" # Not really an artifact, but cli output only. Builds nothing.
+		["dts-check"]="WHAT='kernel' DTS_VALIDATE='yes' ARTIFACT_WILL_NOT_BUILD='yes' ARTIFACT_IGNORE_CACHE='yes'" # Not really an artifact, but cli output only. Builds nothing.
 
 		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"
 		["uboot-config"]="WHAT='uboot' UBOOT_CONFIGURE='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
