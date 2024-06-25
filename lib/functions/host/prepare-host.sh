@@ -304,11 +304,12 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	### Python2 -- required for some older u-boot builds
-	# Debian 'sid'/'bookworm' and Ubuntu 'lunar' does not carry python2 anymore; in this case some u-boot's might fail to build.
-	if [[ "sid bookworm trixie lunar mantic noble" == *"${host_release}"* ]]; then
-		display_alert "Python2 not available on host release '${host_release}'" "old(er) u-boot builds might/will fail" "wrn"
-	else
+	# Debian newer than 'bookworm' and Ubuntu newer than 'lunar'/'mantic' does not carry python2 anymore; in this case some u-boot's might fail to build.
+	# Last versions to support python2 were Debian 'bullseye' and Ubuntu 'jammy'
+	if [[ "bullseye jammy" == *"${host_release}"* ]]; then
 		host_dependencies+=("python2" "python2-dev")
+	else
+		display_alert "Python2 not available on host release '${host_release}'" "ancient u-boot versions might/will fail to build" "info"
 	fi
 
 	# Only install acng if asked to.
