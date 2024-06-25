@@ -118,6 +118,7 @@ function prepare_python_and_pip() {
 		"PYTHONUSERBASE=${PYTHON3_INFO[USERBASE]}"
 		"PYTHONUNBUFFERED=yes"
 		"PYTHONPYCACHEPREFIX=${PYTHON3_INFO[PYCACHEPREFIX]}"
+		"PATH=\"${toolchain}:${PYTHON3_INFO[USERBASE]}/bin:${PATH}\"" # add toolchain to PATH to make building wheels work
 	)
 
 	# If the hash file exists, we're done.
