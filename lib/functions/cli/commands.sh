@@ -73,7 +73,7 @@ function armbian_register_commands() {
 		["rewrite-kernel-config"]="artifact"
 
 		# Patch kernel and then check & validate the dtb file
-		["dts-check"]="artifact"				# Not really an artifact, but cli output only. Builds nothing.
+		["dts-check"]="artifact" # Not really an artifact, but cli output only. Builds nothing.
 
 		["uboot"]="artifact"
 		["uboot-patch"]="artifact"
