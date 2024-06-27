@@ -465,6 +465,8 @@ function enable_extension() {
 
 	# there are many opportunities here. too many, actually. let userpatches override just some functions, etc.
 	for extension_base_path in "${USERPATCHES_PATH}/extensions" "${SRC}/extensions"; do
+		[[ -d "${extension_base_path}" ]] || continue
+
 		extension_dir="${extension_base_path}/${extension_name}"
 		extension_file_in_dir="${extension_dir}/${extension_name}.sh"
 		extension_floating_file="${extension_base_path}/${extension_name}.sh"
