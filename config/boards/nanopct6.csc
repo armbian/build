@@ -15,9 +15,6 @@ BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="nanopc-t6" # This _only_ used for uefi-edk2-rk3588 extension
 
-DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin'
-BL31_BLOB='rk35/rk3588_bl31_v1.45.elf'
-
 function post_family_tweaks__nanopct6_naming_audios() {
 	display_alert "$BOARD" "Renaming nanopct6 audio" "info"
 
