@@ -13,6 +13,7 @@ declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 e
 
 # newer blobs from rockchip. tested to work.
 # set as variables, early, so they're picked up by `prepare_boot_configuration()`
+# @TODO: consider removing those, as the defaults in rockchip64_common have been bumped up
 declare -g DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
 declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
 
