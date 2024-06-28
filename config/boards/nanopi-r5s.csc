@@ -34,3 +34,39 @@ function post_family_tweaks__nanopir5s_udev_network_interfaces() {
 		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan2"
 	EOF
 }
+
+function post_config_uboot_target__extra_configs_for_nanopi-r5s() {
+	display_alert "u-boot for ${BOARD}" "u-boot: enable preboot & flash all LEDs in preboot" "info"
+	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
+	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led led-power on; led led-lan1 on; led led-lan2 on; led led-wan on; sleep 0.1; led led-lan1 off; led led-lan2 off; led led-wan off'" # double quotes required due to run_host_command_logged's quirks
+
+	display_alert "u-boot for ${BOARD}" "u-boot: enable EFI debugging command" "info"
+	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
+	run_host_command_logged scripts/config --enable CMD_NVEDIT_EFI
+
+	display_alert "u-boot for ${BOARD}" "u-boot: enable more compression support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LZO
+	run_host_command_logged scripts/config --enable CONFIG_BZIP2
+	run_host_command_logged scripts/config --enable CONFIG_ZSTD
+
+	display_alert "u-boot for ${BOARD}" "u-boot: enable gpio LED support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LED
+	run_host_command_logged scripts/config --enable CONFIG_LED_GPIO
+
+	display_alert "u-boot for ${BOARD}" "u-boot: enable networking cmds" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_NFS
+	run_host_command_logged scripts/config --enable CONFIG_CMD_WGET
+	run_host_command_logged scripts/config --enable CONFIG_CMD_DNS
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
+
+	# UMS, RockUSB, gadget stuff
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB" "CONFIG_CMD_USB_MASS_STORAGE")
+	for config in "${enable_configs[@]}"; do
+		display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable ${config}" "info"
+		run_host_command_logged scripts/config --enable "${config}"
+	done
+	# Auto-enabled by the above, force off...
+	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
+
+}
