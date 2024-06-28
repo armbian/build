@@ -100,8 +100,8 @@ case "$BOOT_SOC" in
 	rk3528)
 		CPUMAX=${CPUMAX:="2016000"}
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-		DDR_BLOB="${DDR_BLOB:-"rk35/rk3528_ddr_1056MHz_v1.06.bin"}"
-		BL31_BLOB="${BL31_BLOB:-"rk35/rk3528_bl31_v1.16.elf"}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3528_ddr_1056MHz_v1.09.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3528_bl31_v1.17.elf"}"
 		;;
 
 	rk3566)
