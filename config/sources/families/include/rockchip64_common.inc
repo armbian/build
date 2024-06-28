@@ -73,6 +73,20 @@ CPUMIN=${CPUMIN:="408000"}
 declare -g BOOT_SOC_MKIMAGE="${BOOT_SOC}"
 
 case "$BOOT_SOC" in
+	rk3308)
+		CPUMAX=${CPUMAX:="1296000"}
+		BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
+		DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin"}"
+		MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_v1.22.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.22.elf"}"
+
+		if [[ ${BRANCH} == legacy ]]; then
+			DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m0_v1.26.bin"}"
+			MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_sd_nand_v1.13.bin"}"
+			BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.10.elf"}"
+		fi
+		;;
+
 	rk3328)
 		CPUMAX=${CPUMAX:="1296000"}
 		BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
@@ -123,20 +137,6 @@ case "$BOOT_SOC" in
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
 		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.45.elf"}"
-		;;
-
-	rk3308)
-		CPUMAX=${CPUMAX:="1296000"}
-		BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
-		DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin"}"
-		MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_v1.22.bin"}"
-		BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.22.elf"}"
-
-		if [[ ${BRANCH} == legacy ]]; then
-			DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m0_v1.26.bin"}"
-			MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_sd_nand_v1.13.bin"}"
-			BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.10.elf"}"
-		fi
 		;;
 esac
 
