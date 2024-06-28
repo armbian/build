@@ -18,9 +18,6 @@ BOOTCONFIG="nanopi-r5c-rk3568_defconfig"
 OVERLAY_PREFIX="rockchip-rk3568"
 DEFAULT_OVERLAYS="nanopi-r5c-leds"
 
-DDR_BLOB="rk35/rk3568_ddr_1560MHz_v1.18.bin"
-BL31_BLOB="rk35/rk3568_bl31_v1.43.elf"
-
 function post_family_config__uboot_config() {
 	display_alert "$BOARD" "u-boot ${BOOTBRANCH_BOARD} overrides" "info"
 	BOOTDELAY=2 # Wait for UART interrupt to enter UMS/RockUSB mode etc
