@@ -284,13 +284,29 @@ set_timezone_and_locales() {
 			done
 			if [[ "${response}" =~ ^(Y|y)$ ]]; then
 
+				# We could have multiple devices
+				if (( $(grep -c . <<<"$WIFI_DEVICE") > 1 )); then
+					scanning=0
+					while [[ ${scanning} -lt 3 ]]; do
+						scanning=$(( scanning + 1 ))
+						echo -e "\nMultiple wireless adaptors detected. Choose primary:\n"
+						WIFI_DEVICES=($(printf '%s\n' "${WIFI_DEVICE[@]}" | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/ESSID://' | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1'))
+						for str in ${WIFI_DEVICES[@]}; do echo $str | sed "s/,/ \t /g"; done
+						echo ""
+						read -r -p "Enter a number of wireles adaptor: " input
+						if [[ "$input" =~ ^[0-9]{,2}$ && -n "$input" ]] ; then break; fi
+					done
+					[[ -z $input ]] && input=1
+					WIFI_DEVICE=$(echo ${WIFI_DEVICES[$input-1]} | cut -d"," -f2)
+				fi
+
 				# get list of wireless networks
 				scanning=0
 				broken=1
 				while [[ ${scanning} -lt 3 ]]; do
 					sleep 0.5
 					scanning=$(( scanning + 1 ))
-					ARRAY=($(iwlist ${WIFI_DEVICE} scanning 2> /dev/null | egrep 'ESSID' | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/ESSID://' | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1'))
+					ARRAY=($(iwlist ${WIFI_DEVICE} scanning 2> /dev/null | egrep 'ESSID' | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/ESSID://' | sed '/^$/d' | sort | uniq | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1'))
 					if [[ $? == 0 ]]; then broken=0; break; fi
 				done
 				# wifi can also fail
@@ -309,7 +325,7 @@ set_timezone_and_locales() {
 							if [[ "$input" =~ ^[0-9]{,2}$ ]] ; then break; fi
 						done
 						# get password
-						while [[ 1 ]] ; do
+						while [[ -n "${input}" ]] ; do
 							SSID=$(echo ${ARRAY[$input-1]} | cut -d"," -f2)
 							echo ""
 							read -r -p "Enter a password for ${SSID}: " password
@@ -317,7 +333,7 @@ set_timezone_and_locales() {
 						done
 
 						# generate config
-						cat <<- EOF > "${SDCARD}"/etc/netplan/30-wifis-dhcp.yaml
+						cat <<- EOF > /etc/netplan/30-wifis-dhcp.yaml
 						# Created by Armbian firstlogin script
 						network:
 						  wifis:
@@ -333,14 +349,57 @@ set_timezone_and_locales() {
 						# apply to netplan
 						systemctl daemon-reload
 						netplan apply --timeout 0 2>/dev/null
-						sleep 5
 
-						# exit if connection is suffesful
-						if [[ -n $(iw "${WIFI_DEVICE}" link 2> /dev/null | grep "$SSID") ]]; then broken=0; break; fi
+						# wireless link probing
+						pinging=10
+						broken=1
+						WIRELESSLINK=""
+						echo ""
+						while [[ ${pinging} -gt 1 && -n "${input}" && -n "${password}" ]]; do
+							pinging=$(( pinging - 1 ))
+							printf "\rProbing wireless link ($pinging)"
+							WIRELESSLINK=$(iw "${WIFI_DEVICE}" link 2> /dev/null | grep "$SSID")
+							sleep 2
+							# exit if connection is suffesful
+							if [[ "${WIRELESSLINK}" == *$SSID* ]]; then
+								broken=0
+								break
+							fi
+						done
+
+						if [[ ${broken} == 1 ]]; then
+							echo -e "\n\nWireless link was \x1B[91mnot detected\x1B[0m. Wrong password or weak signal."
+						fi
+						# get public IP probing
+						broken=1
+						pinging=10
+
+						while [[ ${pinging} -gt 1 && -n "${input}" && -n "${password}" && "${WIRELESSLINK}" == *$SSID* ]]; do
+							pinging=$(( pinging - 1 ))
+							printf "\rProbing internet connection ($pinging)"
+							PUBLIC_IP=$(curl --max-time 5 -s https://ipinfo.io/ip)
+							if [[ -n "$PUBLIC_IP" ]]; then
+								broken=0
+								break
+							else
+								sleep 5
+							fi
+						done
+						echo ""
+
+						if [[ ${broken} == 0 ]]; then
+							break
+						fi
 					done
-					if [[ ${broken} == 1 ]]; then
-						echo -e "\n\x1B[91mUnable to connect to Access Point\x1B[0m.\n"
-					fi
+
+						if [[ ${broken} == 1 ]]; then
+							echo -e "\n\x1B[91mUnable to connect to Access Point\x1B[0m.\n"
+							rm -f /etc/netplan/30-wifis-dhcp.yaml
+							netplan apply --timeout 0 2>/dev/null
+							systemctl daemon-reload
+							break
+						fi
+
 				fi # detected or not detected wireless network
 			fi
 			echo ""
