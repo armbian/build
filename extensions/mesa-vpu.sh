@@ -86,7 +86,7 @@ function post_install_kernel_debs__3d() {
 
 			display_alert "Pinning amazingfated's Chromium PPAs" "${EXTENSION}" "info"
 			cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/liujianfeng1994-chromium-pin
-			Package: *
+			Package: chromium
 			Pin: release o=LP-PPA-liujianfeng1994-chromium
 			Pin-Priority: 1001
 			EOF
@@ -99,7 +99,7 @@ function post_install_kernel_debs__3d() {
 
 	                display_alert "Pinning Xtradebs PPAs" "${EXTENSION}" "info"
         	        cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/xtradebs-apps-pin
-			Package: *
+			Package: chromium
 			Pin: release o=LP-PPA-xtradebs-apps
 			Pin-Priority: 1001
 			EOF
