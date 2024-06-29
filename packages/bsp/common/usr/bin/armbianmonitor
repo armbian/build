@@ -81,6 +81,13 @@
 #
 ############################################################################
 
+# Config:
+declare -a paste_servers=("paste.armbian.com" "paste.next.armbian.com")
+if [[ "${PASTE_SERVER_HOST}" != "" ]]; then
+	echo "Using custom paste server: '${PASTE_SERVER_HOST}'"
+	paste_servers=("${PASTE_SERVER_HOST}" "${paste_servers[@]}")
+fi
+
 Main() {
 	export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -151,36 +158,40 @@ ParseOptions() {
 				;;
 			u)
 				# Upload /var/log/armbian-hardware-monitor.log with additional support info
-				which curl > /dev/null 2>&1 || apt-get -f -qq -y install curl
-				echo -e "System diagnosis information will now be uploaded to \c"
-				fping paste.armbian.com 2> /dev/null | grep -q alive
-				if [ $? != 0 ]; then
-					echo -e "\nNetwork/firewall problem detected.\nTrying fallback..." >&2
-					fping ix.io 2> /dev/null | grep -q alive
-					if [ $? != 0 ]; then
-						echo -e "\nNetwork/firewall problem detected. Not able to upload debug info.\nPlease fix this or use \"-U\" instead and upload ${BOLD}whole output${NC} manually to an online pasteboard service\nand provide the URL in the forum where you have been asked for this.\n"
-						exit 1
-					fi
-
-					# we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
-					# in clear since otherwise the log becomes worthless due to randomly generated
-					# addresses here and there that might conflict
-					CollectSupportInfo |
+				# NOTE(rpardini): was here. briefly. just because this uses the paste server and I want ANSI dmesgs
+				# check if curl binary is available in path, if not try to install it. use command, not which
+				if ! command -v curl > /dev/null 2>&1; then
+					echo "curl not found in PATH. Trying to install it." >&2
+					apt-get -f -y install curl
+				fi
+				# loop over the paste_servers; first to work wins.
+				for paste_server in "${paste_servers[@]}"; do # defined at top of file
+					echo "Collecting info and sending to ${paste_server}, wait..."
+					declare -i counter=0
+					{
+						LC_ALL=C date # include timestamp
+						echo "-----------------------------------------------------------------------------------------------------------------------------"
+						dmesg --color=always # output in ANSI color. The paste service handles this.
+						echo "-----------------------------------------------------------------------------------------------------------------------------"
+						CollectSupportInfo || echo "Error collecting support info via CollectSupportInfo"
+					} |
+						# we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
+						# in clear since otherwise the log becomes worthless due to randomly generated
+						# addresses here and there that might conflict
 						sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' |
-						curl -F 'f:1=<-' ix.io
+						curl -s --data-binary @- "https://${paste_server}/log"
+					# Check PIPESTATUS to know if everything worked. Any non-zero exit status means something didn't work.
+					for i in "${PIPESTATUS[@]}"; do
+						counter=$((counter + 1))
+						if [[ $i -ne 0 ]]; then
+							echo "Failed grabbing info (pipe ${counter} result ${i}) and sending to server ${paste_server}."
+							continue 2 # continue the outer loop (paste_servers)
+						fi
+					done
 					echo -e "Please post the URL in the forum where you've been asked for.\n"
 					exit 0
-				fi
+				done
 
-				# we obfuscate IPv4 addresses somehow but not too much, MAC addresses have to remain
-				# in clear since otherwise the log becomes worthless due to randomly generated
-				# addresses here and there that might conflict
-				CollectSupportInfo |
-					sed -E 's/([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3}\.)([0-9]{1,3})/XXX.XXX.\3\4/g' |
-					curl -s --data-binary @- "https://paste.armbian.com/documents" |
-					awk -F'"' '{ print "https://paste.armbian.com/" $4 }'
-				echo -e "Please post the URL in the forum where you've been asked for.\n"
-				exit 0
 				;;
 
 			U)
