@@ -147,18 +147,18 @@ function compile_armbian-base-files() {
 	# Create preinst file if not exists (Debian)
 	if [[ ! -e "${destination}"/DEBIAN/preinst ]]; then
 		cat <<- EOD >> "${destination}"/DEBIAN/preinst
-		#!/bin/sh
-		set -e
-		# Start of automatically added by ${VENDOR}
-		rm -f /etc/dpkg/origins/default # reset default link
-		# End of automatically added by ${VENDOR}
+			#!/bin/sh
+			set -e
+			# Start of automatically added by ${VENDOR}
+			rm -f /etc/dpkg/origins/default # reset default link
+			# End of automatically added by ${VENDOR}
 		EOD
 		chmod 0755 "${destination}"/DEBIAN/preinst
 	else
 		cat <<- EOD >> "${destination}"/DEBIAN/preinst
-		# Start of automatically added by ${VENDOR}
-		rm -f /etc/dpkg/origins/default # reset default link
-		# End of automatically added by ${VENDOR}
+			# Start of automatically added by ${VENDOR}
+			rm -f /etc/dpkg/origins/default # reset default link
+			# End of automatically added by ${VENDOR}
 		EOD
 	fi
 

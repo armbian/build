@@ -40,7 +40,7 @@ if test "${devtype}" = "mmc"; then part uuid mmc ${devnum}:1 partuuid; fi
 
 setenv bootargs "earlyprintk root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
-if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
+if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory"; fi
 
 if test "${board}" = "miqi_rk3288"; then setenv fdtfile "rk3288-miqi.dtb"; fi
 

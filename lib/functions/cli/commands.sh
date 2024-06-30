@@ -9,6 +9,8 @@
 
 function armbian_register_commands() {
 	# More than one command can map to the same handler. In that case, use ARMBIAN_COMMANDS_TO_VARS_DICT for specific vars.
+	# The handlers' functions "cli_${ARMBIAN_COMMAND_HANDLER}_pre_run" and "cli_${ARMBIAN_COMMAND_HANDLER}_run" get automatically called in "utils-cli.sh"
+	# Example: For command "docker-purge", the handler is "docker", which means the functions "cli_docker_pre_run" and "cli_docker_run" inside "cli-docker.sh are automatically called by "utils-cli.sh"
 	declare -g -A ARMBIAN_COMMANDS_TO_HANDLERS_DICT=(
 		["docker"]="docker" # thus requires cli_docker_pre_run and cli_docker_run
 		["docker-purge"]="docker"
@@ -40,13 +42,13 @@ function armbian_register_commands() {
 		["debs-to-repo-reprepro"]="json_info" # implemented in cli_json_info_pre_run and cli_json_info_run
 
 		# Patch to git & patch rewrite, for kernel
-		["kernel-patches-to-git"]="patch_kernel"  # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
-		["rewrite-kernel-patches"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
+		["kernel-patches-to-git"]="patch_kernel"                 # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
+		["rewrite-kernel-patches"]="patch_kernel"                # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 		["rewrite-kernel-patches-needing-rebase"]="patch_kernel" # implemented in cli_patch_kernel_pre_run and cli_patch_kernel_run
 
 		# Patch to git & patch rewrite, for u-boot
-		["uboot-patches-to-git"]="patch_uboot"  # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
-		["rewrite-uboot-patches"]="patch_uboot" # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
+		["uboot-patches-to-git"]="patch_uboot"                 # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
+		["rewrite-uboot-patches"]="patch_uboot"                # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
 		["rewrite-uboot-patches-needing-rebase"]="patch_uboot" # implemented in cli_patch_uboot_pre_run and cli_patch_uboot_run
 
 		["build"]="standard_build" # implemented in cli_standard_build_pre_run and cli_standard_build_run
@@ -69,6 +71,9 @@ function armbian_register_commands() {
 		["kernel-patch"]="artifact"
 		["kernel-config"]="artifact"
 		["rewrite-kernel-config"]="artifact"
+
+		# Patch kernel and then check & validate the dtb file
+		["dts-check"]="artifact" # Not really an artifact, but cli output only. Builds nothing.
 
 		["uboot"]="artifact"
 		["uboot-patch"]="artifact"
@@ -129,6 +134,7 @@ function armbian_register_commands() {
 		["rewrite-kernel-config"]="WHAT='kernel' KERNEL_CONFIGURE='yes' ARTIFACT_WILL_NOT_BUILD='yes' ARTIFACT_IGNORE_CACHE='yes' ${common_cli_artifact_vars}"
 		["kernel-patch"]="WHAT='kernel' CREATE_PATCHES='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
 		["kernel-dtb"]="WHAT='kernel' KERNEL_DTB_ONLY='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"
+		["dts-check"]="WHAT='kernel' DTS_VALIDATE='yes' ARTIFACT_WILL_NOT_BUILD='yes' ARTIFACT_IGNORE_CACHE='yes'" # Not really an artifact, but cli output only. Builds nothing.
 
 		["uboot"]="WHAT='uboot' ${common_cli_artifact_vars}"
 		["uboot-config"]="WHAT='uboot' UBOOT_CONFIGURE='yes' ${common_cli_artifact_interactive_vars} ${common_cli_artifact_vars}"

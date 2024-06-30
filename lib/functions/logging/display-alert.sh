@@ -31,8 +31,8 @@ function display_alert() {
 			fi
 			level_indicator="🐛"
 			case "${background_dark_or_light}" in
-				light)	inline_logs_color="\e[1;2;33m" ;;
-				*)	inline_logs_color="\e[1;33m" ;;
+				light) inline_logs_color="\e[1;2;33m" ;;
+				*) inline_logs_color="\e[1;33m" ;;
 			esac
 			skip_logfile=1
 			;;
@@ -48,8 +48,8 @@ function display_alert() {
 		info)
 			level_indicator="🌱"
 			case "${background_dark_or_light}" in
-				light)	inline_logs_color="\e[1;2;32m" ;;
-				*)	inline_logs_color="\e[1;32m" ;;
+				light) inline_logs_color="\e[1;2;32m" ;;
+				*) inline_logs_color="\e[1;32m" ;;
 			esac
 			;;
 
@@ -59,8 +59,8 @@ function display_alert() {
 			fi
 			level_indicator="🧽"
 			case "${background_dark_or_light}" in
-				light)	inline_logs_color="\e[1;2;33m" ;;
-				*)	inline_logs_color="\e[1;33m" ;;
+				light) inline_logs_color="\e[1;2;33m" ;;
+				*) inline_logs_color="\e[1;33m" ;;
 			esac
 			skip_logfile=1
 			;;
@@ -151,8 +151,8 @@ function display_alert() {
 		ext)
 			level_indicator="✨"
 			case "${background_dark_or_light}" in
-				light)	inline_logs_color="\e[1;2;32m" ;;
-				*)	inline_logs_color="\e[1;32m" ;;
+				light) inline_logs_color="\e[1;2;32m" ;;
+				*) inline_logs_color="\e[1;32m" ;;
 			esac
 			;;
 
@@ -165,8 +165,8 @@ function display_alert() {
 			level="${level:-info}" # for file logging.
 			level_indicator="🌿"
 			case "${background_dark_or_light}" in
-				dark)	inline_logs_color="\e[1;37m" ;;
-				*)	inline_logs_color="\e[1;39m" ;;
+				dark) inline_logs_color="\e[1;37m" ;;
+				*) inline_logs_color="\e[1;39m" ;;
 			esac
 			;;
 	esac

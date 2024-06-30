@@ -45,7 +45,7 @@ case $BRANCH in
 		declare -g KERNEL_MAJOR_MINOR="6.6"
 		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.8"
+		declare -g KERNEL_MAJOR_MINOR="6.9"
 		;;
 
 esac
@@ -287,7 +287,7 @@ family_tweaks_bsp() {
 				EndSection
 			EOF
 			;;
-		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2" | "bananapi-m2s")
+		"jethubj200" | "odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2" | "bananapi-m2s")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf
 				Section "Device"
 				    Identifier  "DRM Graphics Acclerated"

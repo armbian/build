@@ -37,7 +37,7 @@ function extension_finish_config__prepare_megous_patches() {
 
 		if [[ -d ${patch_dir_base} ]]; then
 			display_alert "allwinner-kernel-bump" "Found existing kernel patch directory" "info"
-			if [[ "${OVERWRITE_PATCHDIR:-no}" == "yes"  ]]; then
+			if [[ "${OVERWRITE_PATCHDIR:-no}" == "yes" ]]; then
 				display_alert "allwinner-kernel-bump" "Removing as requested. Any manual changes will get overwritten" "info"
 				rm -rf ${patch_dir_base}
 			else
@@ -69,9 +69,9 @@ function extension_finish_config__prepare_megous_patches() {
 		run_host_command_logged rm -f ${patch_dir_base}/series.{conf,megous}
 
 		display_alert "allwinner-kernel-bump" "Extracting latest Megous patches" "info"
-		megous_trees=( "a83t-suspend" "af8133j" "anx" "audio" "axp" "cam" "drm"
+		megous_trees=("a83t-suspend" "af8133j" "anx" "audio" "axp" "cam" "drm"
 			"err" "fixes" "mbus" "modem" "opi3" "pb" "pinetab" "pp" "ppkb" "samuel"
-			"speed" "tbs-a711" "ths" )
+			"speed" "tbs-a711" "ths")
 
 		run_host_command_logged mkdir -p ${patch_dir_megous} ${patch_dir_tmp}
 

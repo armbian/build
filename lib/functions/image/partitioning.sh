@@ -39,6 +39,19 @@ function prepare_partitions() {
 	# parttype[nfs] is empty
 
 	mkopts[ext4]="-q -m 2" # for a long time we had '-O ^64bit,^metadata_csum' here
+	# Hack: newer versions of e2fsprogs in combination with recent kernels enable orphan_file (FEATURE_C12) by default; that can't be handled by older versions of e2fsprogs
+	#       at the same time, older versions don't know about orphan_file at all, so we can't simply disable for all.
+	# run & parse the version of e2fsprogs to determine if we need to disable orphan_file
+	declare e2fsprogs_version
+	e2fsprogs_version=$(e2fsck -V 2>&1 | head -1 | cut -d " " -f 2 | xargs echo -n)
+	# use linux-version compare to check if the version is at least 1.47
+	if linux-version compare "${e2fsprogs_version}" ge "1.47"; then
+		display_alert "e2fsprogs version" "$e2fsprogs_version supports orphan_file" "info"
+		mkopts[ext4]="-q -m 2 -O ^orphan_file"
+	else
+		display_alert "e2fsprogs version" "$e2fsprogs_version does not support orphan_file" "info"
+	fi
+
 	# mkopts[fat] is empty
 	mkopts[ext2]=''
 	# mkopts[f2fs] is empty
@@ -99,7 +112,7 @@ function prepare_partitions() {
 	fi
 	# Check if we need boot partition
 	# Specialized storage extensions like cryptroot or lvm may require a boot partition
-	if [[ $BOOTSIZE != "0" && ( -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $BOOTPART_REQUIRED == yes ) ]]; then
+	if [[ $BOOTSIZE != "0" && (-n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $BOOTPART_REQUIRED == yes) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
@@ -216,25 +229,9 @@ function prepare_partitions() {
 	flock -x $FD
 
 	declare -g LOOP
-	# replace losetup --find with own function and do 10 cycles
-	# losetup always return 1st free loop device and in parallel build,
-	# it often happens that same is found which resoults in:
-	# "failed to set up loop device: Device or resource busy"
-	# If we seek random way, chanches of allocating the same are significantly smaller.
-	FIND_LOOP_CYCLES=1
-	while : ; do
-		LOOP=$(find /dev/loop* | grep -Po "(\/dev\/loop\d|\/dev\/loop\d\d)$" | sort -R | head -1)
-		LOOP_COMPARE=$(losetup -l --noheadings --raw --output=NAME | grep $LOOP || true)
-		[[ -z $LOOP_COMPARE ]] && break
-		[[ $FIND_LOOP_CYCLES -gt 10 ]] && exit_with_error "Unable to find free loop device"
-		FIND_LOOP_CYCLES=$(( FIND_LOOP_CYCLES + 1 ))
-	done
-	display_alert "Allocated loop device" "LOOP=${LOOP} in cycle $FIND_LOOP_CYCLES"
-
-	CHECK_LOOP_FOR_SIZE="no" check_loop_device "$LOOP" # initially loop is zero sized, ignore it.
-
-        #--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
-	run_host_command_logged losetup --partscan "${LOOP}" "${SDCARD}".raw
+	#--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
+	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	display_alert "Allocated loop device" "LOOP=${LOOP}"
 
 	# loop device was grabbed here, unlock
 	flock -u $FD

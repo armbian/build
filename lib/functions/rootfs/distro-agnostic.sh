@@ -44,10 +44,6 @@ function install_distribution_agnostic() {
 		GOVERNOR=$GOVERNOR
 	EOF
 
-	# remove default interfaces file if present
-	# before installing board support package
-	rm -f "${SDCARD}"/etc/network/interfaces
-
 	# disable selinux by default
 	mkdir -p "${SDCARD}"/selinux
 	[[ -f "${SDCARD}"/etc/selinux/config ]] && sed "s/^SELINUX=.*/SELINUX=disabled/" -i "${SDCARD}"/etc/selinux/config
@@ -146,6 +142,16 @@ function install_distribution_agnostic() {
 		else
 			echo "  fdtdir ${bootpart_prefix}dtb/" >> "$SDCARD/boot/extlinux/extlinux.conf"
 		fi
+
+		if [[ -n $DEFAULT_OVERLAYS ]]; then
+			DEFAULT_OVERLAYS_ARR=(${DEFAULT_OVERLAYS//,/ })
+			DEFAULT_OVERLAYS_ARR=("${DEFAULT_OVERLAYS_ARR[@]/%/".dtbo"}")
+			DEFAULT_OVERLAYS_ARR=("${DEFAULT_OVERLAYS_ARR[@]/#/"${bootpart_prefix}dtb/${BOOT_FDT_FILE%%/*}/overlay/${OVERLAY_PREFIX}-"}")
+
+			display_alert "Adding to extlinux.conf" "fdtoverlays=${DEFAULT_OVERLAYS_ARR[*]}" "debug"
+			echo "  fdtoverlays ${DEFAULT_OVERLAYS_ARR[*]}" >> "$SDCARD/boot/extlinux/extlinux.conf"
+		fi
+
 	else # ... not extlinux ...
 
 		if [[ -n "${BOOTSCRIPT}" ]]; then # @TODO: && "${BOOTCONFIG}" != "none"
@@ -413,11 +419,6 @@ function install_distribution_agnostic() {
 	# @TODO: rpardini: still needed? people might want working Samba
 	disable_systemd_service_sdcard nmbd
 
-	# move sshd activation from ssh.service to ssh.socket (more realiable, avoids possible race condition on first boot) supplementary to ffee50a8a6b99bb4f35af90895e019eced7ff71b and 67250321918e59582b8f1003d331f4b1db253b21
-	display_alert "Moving SSH activation from service to socket" "systemd" "info"
-	disable_systemd_service_sdcard ssh
-	chroot_sdcard systemctl enable ssh.socket
-
 	# disable low-level kernel messages for non betas
 	if [[ -z $BETA ]]; then
 		sed -i "s/^#kernel.printk*/kernel.printk/" "${SDCARD}"/etc/sysctl.conf
@@ -489,62 +490,6 @@ function install_distribution_agnostic() {
 
 	# enable PubkeyAuthentication
 	sed -i 's/#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' "${SDCARD}"/etc/ssh/sshd_config
-
-	if [[ -f "${SDCARD}"/etc/NetworkManager/NetworkManager.conf ]]; then
-		# configure network manager
-		sed "s/managed=\(.*\)/managed=true/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
-
-		## remove network manager defaults to handle eth by default @TODO: why?
-		rm -f "${SDCARD}"/usr/lib/NetworkManager/conf.d/10-globally-managed-devices.conf
-
-		# `systemd-networkd.service` will be enabled by `/lib/systemd/system-preset/90-systemd.preset` during first-run.
-		# Mask it to avoid conflict
-		chroot_sdcard systemctl mask systemd-networkd.service
-
-		# most likely we don't need to wait for nm to get online
-		chroot_sdcard systemctl disable NetworkManager-wait-online.service
-
-		# Just regular DNS and maintain /etc/resolv.conf as a file @TODO: this does not apply as of impish at least
-		sed "/dns/d" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
-		sed "s/\[main\]/\[main\]\ndns=default\nrc-manager=file/g" -i "${SDCARD}"/etc/NetworkManager/NetworkManager.conf
-
-		if [[ -n $NM_IGNORE_DEVICES ]]; then
-			mkdir -p "${SDCARD}"/etc/NetworkManager/conf.d/
-			cat <<- EOF > "${SDCARD}"/etc/NetworkManager/conf.d/10-ignore-interfaces.conf
-				[keyfile]
-				unmanaged-devices=$NM_IGNORE_DEVICES
-			EOF
-		fi
-
-	elif [ -d "${SDCARD}"/etc/systemd/network ]; then
-		# enable services
-		chroot_sdcard systemctl enable systemd-networkd.service
-		chroot_sdcard systemctl enable systemd-resolved.service || display_alert "Failed to enable systemd-resolved.service" "" "wrn"
-
-		# Mask `NetworkManager.service` to avoid conflict
-		chroot_sdcard systemctl mask NetworkManager.service
-
-		if [ -e "${SDCARD}"/etc/systemd/timesyncd.conf ]; then
-			chroot_sdcard systemctl enable systemd-timesyncd.service
-		fi
-
-		umask 022
-		cat > "${SDCARD}"/etc/systemd/network/eth0.network <<- __EOF__
-			[Match]
-			Name=eth0
-
-			[Network]
-			#MACAddress=
-			DHCP=ipv4
-			LinkLocalAddressing=ipv4
-			#Address=192.168.1.100/24
-			#Gateway=192.168.1.1
-			#DNS=192.168.1.1
-			#Domains=example.com
-			NTP=0.pool.ntp.org 1.pool.ntp.org
-		__EOF__
-
-	fi
 
 	# avahi daemon defaults if exists
 	[[ -f "${SDCARD}"/usr/share/doc/avahi-daemon/examples/sftp-ssh.service ]] &&

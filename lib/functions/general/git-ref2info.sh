@@ -89,8 +89,8 @@ function memoized_git_ref_to_info() {
 				else \
 					. + [{\"source\": \$source, \"branch\": \$branch, \"sha1\": \$sha1}] \
 				end" /dev/fd/5 >&6
-			cat /dev/fd/6 >"${SRC}"/output/info/git_sources.json
-		} 5<>"${SRC}"/output/info/git_sources.json 6<>"${SRC}"/output/info/git_sources.json.new
+			cat /dev/fd/6 > "${SRC}"/output/info/git_sources.json
+		} 5<> "${SRC}"/output/info/git_sources.json 6<> "${SRC}"/output/info/git_sources.json.new
 	fi
 
 	if [[ -f "${SRC}"/config/sources/git_sources.json && ${ref_type} == "branch" ]]; then

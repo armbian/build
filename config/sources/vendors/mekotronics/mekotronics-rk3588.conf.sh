@@ -21,10 +21,7 @@ declare -g BOOT_SOC="rk3588"                            # so we don't depend on 
 declare -g BOOTCONFIG="rk3588_meko_defconfig" # generic ebv plus distro dtb hacks
 declare -g IMAGE_PARTITION_TABLE="gpt"
 
-# newer blobs from rockchip. tested to work.
-# set as variables, early, so they're picked up by `prepare_boot_configuration()`
-declare -g DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
-declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
+# Uses default DDR_BLOB and BL31_BLOB from rockchip64_common.
 
 # For the u-boot-menu extension (build with 'EXT=u-boot-menu')
 declare -g SRC_CMDLINE="loglevel=7 console=ttyS2,1500000 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"

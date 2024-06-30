@@ -351,7 +351,7 @@ driver_rtl88x2cs() {
 	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]]; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
-		local rtl88x2csver='commit:10f39b61c51fa0302062059e00e9b5440dd3c7a6' # Commit date: Jan 24, 2024 (please update when updating commit ref)
+		local rtl88x2csver='commit:40450f759c8a930d271b5f0a663685f412debc72' # Commit date: Jan 24, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
@@ -446,8 +446,13 @@ driver_uwe5622() {
 			fi
 		fi
 
-		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch"  "applying"
-		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-reduce-system-load.patch"  "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-Fix-compilation-with-6.7-kernel.patch" "applying"
+		process_patch_file "${SRC}/patch/misc/wireless-uwe5622/wireless-uwe5622-reduce-system-load.patch" "applying"
+
+		if linux-version compare "${version}" ge 6.9; then
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.9.patch" "applying"
+		fi
+
 	fi
 }
 
@@ -523,6 +528,10 @@ driver_rtl8723cs() {
 
 	if linux-version compare "${version}" ge 6.8; then
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.8.patch" "applying"
+	fi
+
+	if linux-version compare "${version}" ge 6.9; then
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.9.patch" "applying"
 	fi
 
 }
@@ -634,7 +643,6 @@ driver_mt7921u_add_pids() {
 	fi
 }
 
-
 ###
 ###
 ### NOTICE: <=5.x BELOW ONLY
@@ -644,7 +652,6 @@ driver_mt7921u_add_pids() {
 ### It is sorted like this for better visibility.
 ###
 ### v v v v v v v v v v v v v v v v v v v v v v v
-
 
 #_bt for blueteeth
 driver_rtl8822cs_bt() {

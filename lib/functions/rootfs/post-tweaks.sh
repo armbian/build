@@ -13,14 +13,11 @@ function post_debootstrap_tweaks() {
 	# adjust tzselect to improve political correctness
 	sed -i "s/Please select a country/Please select a country or a region/g" "${SDCARD}"/usr/bin/tzselect
 
-	# activate systemd-resolved, if not using NetworkManager
-	if [[ ! -f "${SDCARD}"/etc/NetworkManager/NetworkManager.conf ]]; then
-		if [[ -d "${SDCARD}"/etc/systemd/network ]]; then
-			display_alert "Activating systemd-resolved" "Symlink resolv.conf to systemd-resolved's" "debug"
-			run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
-			run_host_command_logged ln -s /run/systemd/resolve/resolv.conf "${SDCARD}"/etc/resolv.conf
-		fi
-	fi
+	# activate systemd-resolved
+	display_alert "Activating systemd-resolved" "Symlinking /etc/resolv.conf to /run/systemd/resolve/stub-resolv.conf" "debug"
+	run_host_command_logged rm -fv "${SDCARD}"/etc/resolv.conf
+	# The method of symlinking to /run/systemd/resolve/stub-resolv.conf is recommended, see https://www.man7.org/linux/man-pages/man8/systemd-resolved.service.8.html
+	run_host_command_logged ln -s /run/systemd/resolve/stub-resolv.conf "${SDCARD}"/etc/resolv.conf
 
 	# remove service start blockers
 	run_host_command_logged rm -fv "${SDCARD}"/sbin/initctl "${SDCARD}"/sbin/start-stop-daemon
@@ -36,5 +33,4 @@ function post_debootstrap_tweaks() {
 		Last chance to touch the `${SDCARD}` filesystem before it is copied to the final media.
 		It is too late to run any chrooted commands, since the supporting filesystems are already unmounted.
 	POST_POST_DEBOOTSTRAP_TWEAKS
-
 }

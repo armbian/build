@@ -225,6 +225,7 @@ function docker_cli_prepare_dockerfile() {
 		!/VERSION
 		!/LICENSE
 		!/compile.sh
+		!/requirements.txt
 		!/lib
 		!/extensions
 		!/config/sources

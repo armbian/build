@@ -32,7 +32,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.8"
+		declare -g KERNEL_MAJOR_MINOR="6.9"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
@@ -121,8 +121,8 @@ case "$BOOT_SOC" in
 
 	rk3588) #CPUMAX undefined?
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.08.bin"}"
-		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.28.elf"}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.45.elf"}"
 		;;
 
 	rk3308)
@@ -173,6 +173,10 @@ prepare_boot_configuration() {
 			ATF_COMPILE='no'
 			;;
 	esac
+
+	if [[ ! -z $BL32_BLOB ]]; then
+		UBOOT_TARGET_MAP="BL32=$RKBIN_DIR/$BL32_BLOB ${UBOOT_TARGET_MAP}"
+	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
 

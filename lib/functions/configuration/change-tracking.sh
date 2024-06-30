@@ -45,4 +45,5 @@ function track_general_config_variables() {
 	array_values="yes" track_config_variables "${1}" KERNEL_DRIVERS_SKIP
 	track_config_variables "${1}" BOOTSOURCE BOOTSOURCEDIR BOOTBRANCH BOOTPATCHDIR BOOTDIR BOOTCONFIG BOOTBRANCH_BOARD BOOTPATCHDIR_BOARD
 	track_config_variables "${1}" ATFSOURCEDIR ATFDIR ATFBRANCH CRUSTSOURCEDIR CRUSTDIR CRUSTBRANCH LINUXSOURCEDIR
+	track_config_variables "${1}" NETWORKING_STACK
 }

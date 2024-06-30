@@ -465,6 +465,8 @@ function enable_extension() {
 
 	# there are many opportunities here. too many, actually. let userpatches override just some functions, etc.
 	for extension_base_path in "${USERPATCHES_PATH}/extensions" "${SRC}/extensions"; do
+		[[ -d "${extension_base_path}" ]] || continue
+
 		extension_dir="${extension_base_path}/${extension_name}"
 		extension_file_in_dir="${extension_dir}/${extension_name}.sh"
 		extension_floating_file="${extension_base_path}/${extension_name}.sh"
@@ -476,6 +478,14 @@ function enable_extension() {
 			extension_dir="${extension_base_path}" # this is misleading. only directory-based extensions should have this.
 			extension_file="${extension_floating_file}"
 			break
+		else
+			# Search for the extension file in any subdirectory
+			extension_file=$(find "${extension_base_path}" -type f -name "${extension_name}.sh" | head -n 1) # Example format: extensions/network/net-network-manager.sh
+			if [[ -n "${extension_file}" ]]; then
+				# Extract extension dir from file, e.g. from "extensions/network/net-network-manager.sh" the dir "extensions/network/" gets extracted
+				extension_dir="${extension_file%/*}"
+				break
+			fi
 		fi
 	done
 

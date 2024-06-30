@@ -13,20 +13,20 @@ function post_build_image__900_convert_to_abl_img() {
 	declare -g ROOTFS_IMAGE_FILE="${DESTIMG}/${version}.rootfs.img"
 	rootfs_start_sector=$(gdisk -l ${DESTIMG}/${version}.img | grep rootfs | awk '{print $2}')
 	rootfs_end_sector=$(gdisk -l ${DESTIMG}/${version}.img | grep rootfs | awk '{print $3}')
-	dd if=${DESTIMG}/${version}.img skip=${rootfs_start_sector} count=$((${rootfs_end_sector} - ${rootfs_start_sector})) of=${DESTIMG}/rootfs.img
-	rm ${DESTIMG}/${version}.img
-	old_rootfs_image_uuid=$(blkid -s UUID -o value ${DESTIMG}/rootfs.img)
 	old_rootfs_image_mount_dir=${DESTIMG}/rootfs-old
 	new_rootfs_image_mount_dir=${DESTIMG}/rootfs-new
 	mkdir -p ${old_rootfs_image_mount_dir} ${new_rootfs_image_mount_dir}
 	truncate --size=9216M ${ROOTFS_IMAGE_FILE}
 	mkfs.ext4 -F ${ROOTFS_IMAGE_FILE}
 	new_rootfs_image_uuid=$(blkid -s UUID -o value ${ROOTFS_IMAGE_FILE})
-	mount ${DESTIMG}/rootfs.img ${old_rootfs_image_mount_dir}
+	old_image_loop_device=$(losetup -f -P --show ${DESTIMG}/${version}.img)
+	old_rootfs_image_uuid=$(blkid -s UUID -o value ${old_image_loop_device}p1)
+	mount ${old_image_loop_device}p1 ${old_rootfs_image_mount_dir}
 	mount ${ROOTFS_IMAGE_FILE} ${new_rootfs_image_mount_dir}
 	cp -rfp ${old_rootfs_image_mount_dir}/* ${new_rootfs_image_mount_dir}/
 	umount ${old_rootfs_image_mount_dir}
-	rm -rf ${old_rootfs_image_mount_dir} ${DESTIMG}/rootfs.img
+	losetup -d ${old_image_loop_device}
+	rm ${DESTIMG}/${version}.img
 	display_alert "Replace root partition uuid from ${old_rootfs_image_uuid} to ${new_rootfs_image_uuid} in /etc/fstab" "${EXTENSION}" "info"
 	sed -i "s|${old_rootfs_image_uuid}|${new_rootfs_image_uuid}|g" ${new_rootfs_image_mount_dir}/etc/fstab
 	declare -g bootimg_cmdline="${BOOTIMG_CMDLINE_EXTRA} root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}"
