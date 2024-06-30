@@ -4,6 +4,7 @@ BOARDFAMILY="spacemit"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="legacy,current"
 BOOT_FDT_FILE="spacemit/k1-bananapi-f3.dtb"
+BOOTDELAY=1
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="earlycon=sbi console=tty1 console=ttyS0,115200 clk_ignore_unused swiotlb=65536"
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
