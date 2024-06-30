@@ -25,10 +25,11 @@ copy_all_packages_files_for() {
 	for package_src_dir in ${PACKAGES_SEARCH_ROOT_ABSOLUTE_DIRS}; do
 		local package_dirpath="${package_src_dir}/${package_name}"
 		if [ -d "${package_dirpath}" ]; then
-			display_alert "Adding found files" "${package_dirpath} for '${package_name}'" "debug"
-			run_host_command_logged cp -r "${package_dirpath}/"* "${destination}/"
+			display_alert "Adding found files" "${package_dirpath} for '${package_name}'" "info"
+			run_host_command_logged cp -rv "${package_dirpath}/"* "${destination}/"
 		else
 			display_alert "No files found in" "${package_dirpath} for '${package_name}'" "debug"
 		fi
+		wait_for_disk_sync "after copying ${package_src_dir} files for ${package_name} package"
 	done
 }

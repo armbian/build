@@ -119,7 +119,9 @@ function compile_armbian-bsp-cli() {
 
 	# copy common files from a premade directory structure
 	# @TODO this includes systemd config, assumes things about serial console, etc, that need dynamism or just to not exist with modern systemd
-	run_host_command_logged rsync -a "${SRC}"/packages/bsp/common/* "${destination}"
+	display_alert "Copying common bsp files" "packages/bsp/common" "info"
+	run_host_command_logged rsync -av "${SRC}"/packages/bsp/common/* "${destination}"
+	wait_for_disk_sync "after rsync'ing package/bsp/common for bsp-cli"
 
 	mkdir -p "${destination}"/usr/share/armbian/
 
@@ -242,7 +244,7 @@ function reversion_armbian-bsp-cli_deb_contents() {
 		depends_base_files=""
 	fi
 	cat <<- EOF >> "${control_file_new}"
-		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping${depends_base_files}, device-tree-compiler
+		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}
 		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 	EOF
