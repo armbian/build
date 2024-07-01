@@ -1,0 +1,4785 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ arch/riscv/Kconfig                       | 110 ++-
+ arch/riscv/Kconfig.socs                  |  60 ++
+ arch/riscv/Makefile                      |  22 +-
+ arch/riscv/boot/Makefile                 |  50 ++
+ arch/riscv/generic/Image.its.S           |  32 +
+ arch/riscv/generic/Platform              |  15 +
+ arch/riscv/include/asm/cacheflush.h      |   4 +
+ arch/riscv/include/asm/csr.h             |  25 +-
+ arch/riscv/include/asm/elf.h             |  14 +
+ arch/riscv/include/asm/errata_list.h     |   4 +-
+ arch/riscv/include/asm/hwcap.h           |   5 +
+ arch/riscv/include/asm/insn.h            | 410 ++++++++++
+ arch/riscv/include/asm/kvm_host.h        |   2 +
+ arch/riscv/include/asm/kvm_vcpu_vector.h |  82 ++
+ arch/riscv/include/asm/mmio.h            |  38 +
+ arch/riscv/include/asm/module.h          |  16 +
+ arch/riscv/include/asm/processor.h       |  17 +
+ arch/riscv/include/asm/sbi.h             |  16 +
+ arch/riscv/include/asm/simd.h            |  44 +
+ arch/riscv/include/asm/switch_to.h       |   9 +-
+ arch/riscv/include/asm/thread_info.h     |   3 +
+ arch/riscv/include/asm/vdso/processor.h  |  28 +-
+ arch/riscv/include/asm/vector.h          | 210 +++++
+ arch/riscv/include/asm/xor.h             |  83 ++
+ arch/riscv/include/uapi/asm/auxvec.h     |   1 +
+ arch/riscv/include/uapi/asm/elf.h        |   5 +-
+ arch/riscv/include/uapi/asm/hwcap.h      |   1 +
+ arch/riscv/include/uapi/asm/kvm.h        |  10 +
+ arch/riscv/include/uapi/asm/ptrace.h     |  39 +
+ 29 files changed, 1322 insertions(+), 33 deletions(-)
+
+diff --git a/arch/riscv/Kconfig b/arch/riscv/Kconfig
+index 111111111111..222222222222 100644
+--- a/arch/riscv/Kconfig
++++ b/arch/riscv/Kconfig
+@@ -75,8 +75,8 @@ config RISCV
+ 	select HAVE_ARCH_AUDITSYSCALL
+ 	select HAVE_ARCH_JUMP_LABEL if !XIP_KERNEL
+ 	select HAVE_ARCH_JUMP_LABEL_RELATIVE if !XIP_KERNEL
+-	select HAVE_ARCH_KASAN if MMU && 64BIT
+-	select HAVE_ARCH_KASAN_VMALLOC if MMU && 64BIT
++	# select HAVE_ARCH_KASAN if MMU && 64BIT
++	# select HAVE_ARCH_KASAN_VMALLOC if MMU && 64BIT
+ 	select HAVE_ARCH_KFENCE if MMU && 64BIT
+ 	select HAVE_ARCH_KGDB if !XIP_KERNEL
+ 	select HAVE_ARCH_KGDB_QXFER_PKT
+@@ -94,7 +94,7 @@ config RISCV
+ 	select HAVE_DMA_CONTIGUOUS if MMU
+ 	select HAVE_EBPF_JIT if MMU
+ 	select HAVE_FUNCTION_ERROR_INJECTION
+-	select HAVE_GCC_PLUGINS
++	# select HAVE_GCC_PLUGINS
+ 	select HAVE_GENERIC_VDSO if MMU && 64BIT
+ 	select HAVE_IRQ_TIME_ACCOUNTING
+ 	select HAVE_KPROBES if !XIP_KERNEL
+@@ -118,7 +118,7 @@ config RISCV
+ 	select MODULES_USE_ELF_RELA if MODULES
+ 	select MODULE_SECTIONS if MODULES
+ 	select OF
+-	select OF_DMA_DEFAULT_COHERENT
++	# select OF_DMA_DEFAULT_COHERENT
+ 	select OF_EARLY_FLATTREE
+ 	select OF_IRQ
+ 	select PCI_DOMAINS_GENERIC if PCI
+@@ -130,7 +130,8 @@ config RISCV
+ 	select THREAD_INFO_IN_TASK
+ 	select TRACE_IRQFLAGS_SUPPORT
+ 	select UACCESS_MEMCPY if !MMU
+-	select ZONE_DMA32 if 64BIT
++	select ZONE_DMA32 if 64BIT && !SOC_SPACEMIT_K1PRO
++	select ARCH_SUSPEND_POSSIBLE
+ 
+ config ARCH_MMAP_RND_BITS_MIN
+ 	default 18 if 64BIT
+@@ -235,6 +236,12 @@ config RISCV_DMA_NONCOHERENT
+ config AS_HAS_INSN
+ 	def_bool $(as-instr,.insn r 51$(comma) 0$(comma) 0$(comma) t0$(comma) t0$(comma) zero)
+ 
++config AS_HAS_OPTION_ARCH
++	# https://reviews.llvm.org/D123515
++	def_bool y
++	depends on $(as-instr, .option arch$(comma) +m)
++	depends on !$(as-instr, .option arch$(comma) -i)
++
+ source "arch/riscv/Kconfig.socs"
+ source "arch/riscv/Kconfig.erratas"
+ 
+@@ -413,6 +420,50 @@ config RISCV_ISA_SVPBMT
+ 
+ 	   If you don't know what to do here, say Y.
+ 
++config TOOLCHAIN_HAS_V
++	bool
++	default y
++	depends on !64BIT || $(cc-option,-mabi=lp64 -march=rv64iv)
++	depends on !32BIT || $(cc-option,-mabi=ilp32 -march=rv32iv)
++	depends on LLD_VERSION >= 140000 || LD_VERSION >= 23800
++	depends on AS_HAS_OPTION_ARCH
++
++config RISCV_ISA_V
++	bool "VECTOR extension support"
++	depends on TOOLCHAIN_HAS_V
++	depends on FPU
++	select DYNAMIC_SIGFRAME
++	default y
++	help
++	  Say N here if you want to disable all vector related procedure
++	  in the kernel.
++
++	  If you don't know what to do here, say Y.
++
++config TOOLCHAIN_HAS_ZBB
++	bool
++	default y
++	depends on !64BIT || $(cc-option,-mabi=lp64 -march=rv64ima_zbb)
++	depends on !32BIT || $(cc-option,-mabi=ilp32 -march=rv32ima_zbb)
++	depends on LLD_VERSION >= 150000 || LD_VERSION >= 23900
++	depends on AS_HAS_OPTION_ARCH
++
++config RISCV_ISA_ZBB
++	bool "Zbb extension support for bit manipulation instructions"
++	depends on TOOLCHAIN_HAS_ZBB
++	depends on !XIP_KERNEL && MMU
++	select RISCV_ALTERNATIVE
++	default y
++	help
++	   Adds support to dynamically detect the presence of the ZBB
++	   extension (basic bit manipulation) and enable its usage.
++
++	   The Zbb extension provides instructions to accelerate a number
++	   of bit-specific operations (count bit population, sign extending,
++	   bitrotation, etc).
++
++	   If you don't know what to do here, say Y.
++
+ config TOOLCHAIN_HAS_ZICBOM
+ 	bool
+ 	default y
+@@ -437,6 +488,42 @@ config RISCV_ISA_ZICBOM
+ 
+ 	   If you don't know what to do here, say Y.
+ 
++config TOOLCHAIN_HAS_ZICBOZ
++	bool
++	default y
++	depends on !64BIT || $(cc-option,-mabi=lp64 -march=rv64ima_zicboz)
++	depends on !32BIT || $(cc-option,-mabi=ilp32 -march=rv32ima_zicboz)
++	depends on LLD_VERSION >= 150000 || LD_VERSION >= 23800
++
++config RISCV_ISA_ZICBOZ
++	bool "Zicboz extension support"
++	depends on TOOLCHAIN_HAS_ZICBOZ
++	depends on !XIP_KERNEL && MMU
++	default y
++	help
++	   Adds support to dynamically detect the presence of the ZICBOZ
++	   extension and enable its usage.
++
++	   If you don't know what to do here, say Y.
++
++config TOOLCHAIN_HAS_ZICBOP
++	bool
++	default y
++	depends on !64BIT || $(cc-option,-mabi=lp64 -march=rv64ima_zicbop)
++	depends on !32BIT || $(cc-option,-mabi=ilp32 -march=rv32ima_zicbop)
++	depends on LLD_VERSION >= 150000 || LD_VERSION >= 23800
++
++config RISCV_ISA_ZICBOP
++	bool "Zicboz extension support"
++	depends on TOOLCHAIN_HAS_ZICBOP
++	depends on !XIP_KERNEL && MMU
++	default y
++	help
++	   Adds support to dynamically detect the presence of the ZICBOP
++	   extension and enable its usage.
++
++	   If you don't know what to do here, say Y.
++
+ config TOOLCHAIN_HAS_ZIHINTPAUSE
+ 	bool
+ 	default y
+@@ -711,15 +798,28 @@ config PORTABLE
+ 	select OF
+ 	select MMU
+ 
++config IMAGE_LOAD_OFFSET
++	hex "Image load offset from start of RAM when load kernel to RAM"
++	default 0x400000 if 32BIT
++	default 0x200000 if 64BIT
++	help
++	  This is the RAM offset from start of ram. Bootloader would use
++	  this offset to load kernel image to ram.
++
+ menu "Power management options"
+ 
+ source "kernel/power/Kconfig"
+ 
++config ARCH_SUSPEND_POSSIBLE
++	depends on SOC_SPACEMIT
++	def_bool y
++
+ endmenu # "Power management options"
+ 
+ menu "CPU Power Management"
+ 
+ source "drivers/cpuidle/Kconfig"
++source "drivers/cpufreq/Kconfig"
+ 
+ endmenu # "CPU Power Management"
+ 
+diff --git a/arch/riscv/Kconfig.socs b/arch/riscv/Kconfig.socs
+index 111111111111..222222222222 100644
+--- a/arch/riscv/Kconfig.socs
++++ b/arch/riscv/Kconfig.socs
+@@ -81,4 +81,64 @@ config SOC_CANAAN_K210_DTB_SOURCE
+ 
+ endif # SOC_CANAAN
+ 
++config SOC_SPACEMIT
++	bool "Spacemit SoCs"
++	select SIFIVE_PLIC
++	help
++	  This enables support for Spacemit SoCs platform hardware.
++
++if SOC_SPACEMIT
++
++choice
++	prompt "Spacemit SOCs platform"
++	help
++	  choice Spacemit soc platform
++
++	config SOC_SPACEMIT_K1
++		bool "k1"
++		help
++		  select Spacemit k1 Platform SOCs.
++
++	config SOC_SPACEMIT_K2
++		bool "k2"
++		help
++		  select Spacemit k2 Platform SOCs.
++
++endchoice
++
++if SOC_SPACEMIT_K1
++
++choice
++	prompt "Spacemit K1 serial SOCs"
++	help
++	  choice Spacemit K1 soc platform
++
++	config SOC_SPACEMIT_K1PRO
++		bool "k1-pro"
++		select DW_APB_TIMER_OF
++		help
++		  This enables support for Spacemit k1-pro Platform Hardware.
++
++	config SOC_SPACEMIT_K1X
++		bool "k1-x"
++		help
++		  This enables support for Spacemit k1-x Platform Hardware.
++endchoice
++
++config SOC_SPACEMIT_K1_FPGA
++	bool "Spacemit K1 serial SoC FPGA platform"
++	default n
++	help
++	  This enable FPGA platform for K1 SoCs.
++
++endif
++
++config BIND_THREAD_TO_AICORES
++	bool "enable bind ai cores when use AI instruction"
++	default y
++	help
++	  This enable bind ai cores when use AI instruction.
++
++endif
++
+ endmenu # "SoC selection"
+diff --git a/arch/riscv/Makefile b/arch/riscv/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/riscv/Makefile
++++ b/arch/riscv/Makefile
+@@ -56,6 +56,7 @@ riscv-march-$(CONFIG_ARCH_RV32I)	:= rv32ima
+ riscv-march-$(CONFIG_ARCH_RV64I)	:= rv64ima
+ riscv-march-$(CONFIG_FPU)		:= $(riscv-march-y)fd
+ riscv-march-$(CONFIG_RISCV_ISA_C)	:= $(riscv-march-y)c
++riscv-march-$(CONFIG_RISCV_ISA_V)	:= $(riscv-march-y)v
+ 
+ ifdef CONFIG_TOOLCHAIN_NEEDS_OLD_ISA_SPEC
+ KBUILD_CFLAGS += -Wa,-misa-spec=2.2
+@@ -66,11 +67,16 @@ endif
+ 
+ # Check if the toolchain supports Zicbom extension
+ riscv-march-$(CONFIG_TOOLCHAIN_HAS_ZICBOM) := $(riscv-march-y)_zicbom
++riscv-march-$(CONFIG_TOOLCHAIN_HAS_ZICBOZ) := $(riscv-march-y)_zicboz
++riscv-march-$(CONFIG_TOOLCHAIN_HAS_ZICBOP) := $(riscv-march-y)_zicbop
+ 
+ # Check if the toolchain supports Zihintpause extension
+ riscv-march-$(CONFIG_TOOLCHAIN_HAS_ZIHINTPAUSE) := $(riscv-march-y)_zihintpause
+ 
+-KBUILD_CFLAGS += -march=$(subst fd,,$(riscv-march-y))
++# Remove F,D,V from isa string for all. Keep extensions between "fd" and "v" by
++# matching non-v and non-multi-letter extensions out with the filter ([^v_]*)
++KBUILD_CFLAGS += -march=$(shell echo $(riscv-march-y) | sed -E 's/(rv32ima|rv64ima)fd([^v_]*)v?/\1\2/')
++
+ KBUILD_AFLAGS += -march=$(riscv-march-y)
+ 
+ KBUILD_CFLAGS += -mno-save-restore
+@@ -151,7 +157,7 @@ ifeq ($(CONFIG_RISCV_M_MODE)$(CONFIG_SOC_CANAAN),yy)
+ KBUILD_IMAGE := $(boot)/loader.bin
+ else
+ ifeq ($(CONFIG_EFI_ZBOOT),)
+-KBUILD_IMAGE := $(boot)/Image.gz
++KBUILD_IMAGE := $(boot)/Image.gz.itb
+ else
+ KBUILD_IMAGE := $(boot)/vmlinuz.efi
+ endif
+@@ -159,14 +165,20 @@ endif
+ endif
+ BOOT_TARGETS := Image Image.gz loader loader.bin xipImage vmlinuz.efi
+ 
+-all:	$(notdir $(KBUILD_IMAGE))
++#
++# extra files
++#
++include $(srctree)/arch/riscv/generic/Platform
++bootvars-y	= ITS_INPUTS="$(its-y)"
++
++all:	$(notdir $(KBUILD_IMAGE)) Image.itb Image.gz.itb
+ 
+ $(BOOT_TARGETS): vmlinux
+ 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
+ 	@$(kecho) '  Kernel: $(boot)/$@ is ready'
+ 
+-Image.%: Image
+-	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
++Image.%: Image Image.gz
++	$(Q)$(MAKE) $(build)=$(boot) $(bootvars-y) $(boot)/$@
+ 
+ install: KBUILD_IMAGE := $(boot)/Image
+ zinstall: KBUILD_IMAGE := $(boot)/Image.gz
+diff --git a/arch/riscv/boot/Makefile b/arch/riscv/boot/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/riscv/boot/Makefile
++++ b/arch/riscv/boot/Makefile
+@@ -59,6 +59,56 @@ $(obj)/Image.lzo: $(obj)/Image FORCE
+ $(obj)/loader.bin: $(obj)/loader FORCE
+ 	$(call if_changed,objcopy)
+ 
++ifdef CONFIG_32BIT
++ADDR_BITS := 32
++ADDR_CELLS := 1
++else
++ADDR_BITS := 64
++ADDR_CELLS := 2
++endif
++
++IMAGE_LOAD_ADDRESS := $(CONFIG_IMAGE_LOAD_OFFSET)
++IMAGE_ENTRY_ADDRESS := $(CONFIG_IMAGE_LOAD_OFFSET)
++IMAGE_ALGO := crc32
++
++quiet_cmd_its_cat = CAT     $@
++      cmd_its_cat = cat $(real-prereqs) >$@
++
++$(obj)/Image.its.S: $(addprefix $(srctree)/arch/riscv/generic/,$(ITS_INPUTS)) FORCE
++	$(call if_changed,its_cat)
++
++quiet_cmd_cpp_its_S = ITS     $@
++      cmd_cpp_its_S = $(CPP) -P -C -o $@ $< \
++		-DKERNEL_NAME="\"Linux $(KERNELRELEASE)\"" \
++		-DIMAGE_COMPRESSION="\"$(2)\"" \
++		-DIMAGE_CHECK_ALGORITHM="\"$(3)\"" \
++		-DIMAGE_BINARY="\"$(4)\"" \
++		-DIMAGE_LOAD_ADDRESS=$(IMAGE_LOAD_ADDRESS) \
++		-DIMAGE_ENTRY_ADDRESS=$(IMAGE_ENTRY_ADDRESS) \
++		-DADDR_BITS=$(ADDR_BITS) \
++		-DADDR_CELLS=$(ADDR_CELLS)
++
++$(obj)/Image.its: $(obj)/Image.its.S $(obj)/Image FORCE
++	$(call if_changed,cpp_its_S,none,$(IMAGE_ALGO),Image)
++
++$(obj)/Image.gz.its: $(obj)/Image.its.S $(obj)/Image.gz FORCE
++	$(call if_changed,cpp_its_S,gzip,$(IMAGE_ALGO),Image.gz)
++
++quiet_cmd_itb-image = ITB     $@
++      cmd_itb-image = \
++		env PATH="$(objtree)/scripts/dtc:$(PATH)" \
++		$(BASH) $(MKIMAGE) \
++		-D "-I dts -O dtb -p 500 \
++			--include $(objtree)/arch/riscv \
++			--warning no-unit_address_vs_reg" \
++		-f $(2) $@
++
++$(obj)/Image.itb: $(obj)/Image.its $(obj)/Image FORCE
++	$(call if_changed,itb-image,$<)
++
++$(obj)/Image.%.itb: $(obj)/Image.%.its $(obj)/Image.% FORCE
++	$(call if_changed,itb-image,$<)
++
+ EFI_ZBOOT_PAYLOAD	:= Image
+ EFI_ZBOOT_BFD_TARGET	:= elf$(BITS)-littleriscv
+ EFI_ZBOOT_MACH_TYPE	:= RISCV$(BITS)
+diff --git a/arch/riscv/generic/Image.its.S b/arch/riscv/generic/Image.its.S
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/generic/Image.its.S
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/dts-v1/;
++
++/ {
++	description = KERNEL_NAME;
++	#address-cells = <ADDR_CELLS>;
++
++	images {
++		kernel {
++			description = KERNEL_NAME;
++			data = /incbin/(IMAGE_BINARY);
++			type = "kernel";
++			arch = "riscv";
++			os = "linux";
++			compression = IMAGE_COMPRESSION;
++			load = /bits/ ADDR_BITS <IMAGE_LOAD_ADDRESS>;
++			entry = /bits/ ADDR_BITS <IMAGE_ENTRY_ADDRESS>;
++			hash {
++				algo = IMAGE_CHECK_ALGORITHM;
++			};
++		};
++	};
++
++	configurations {
++		default = "conf-default";
++
++		conf-default {
++			description = "Generic Linux kernel";
++			kernel = "kernel";
++		};
++	};
++};
+diff --git a/arch/riscv/generic/Platform b/arch/riscv/generic/Platform
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/generic/Platform
+@@ -0,0 +1,15 @@
++#
++# SPDX-License-Identifier: GPL-2.0
++#
++# Copyright (C) 2024 Spacemit
++#
++# This software is licensed under the terms of the GNU General Public
++# License version 2, as published by the Free Software Foundation, and
++# may be copied, distributed, and modified under those terms.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++
++its-y	:= Image.its.S
+diff --git a/arch/riscv/include/asm/cacheflush.h b/arch/riscv/include/asm/cacheflush.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/cacheflush.h
++++ b/arch/riscv/include/asm/cacheflush.h
+@@ -30,6 +30,10 @@ static inline void flush_dcache_page(struct page *page)
+ #define flush_icache_user_page(vma, pg, addr, len) \
+ 	flush_icache_mm(vma->vm_mm, 0)
+ 
++#ifdef CONFIG_64BIT
++#define flush_cache_vmap(start, end)	flush_tlb_kernel_range(start, end)
++#endif
++
+ #ifndef CONFIG_SMP
+ 
+ #define flush_icache_all() local_flush_icache_all()
+diff --git a/arch/riscv/include/asm/csr.h b/arch/riscv/include/asm/csr.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/csr.h
++++ b/arch/riscv/include/asm/csr.h
+@@ -24,16 +24,24 @@
+ #define SR_FS_CLEAN	_AC(0x00004000, UL)
+ #define SR_FS_DIRTY	_AC(0x00006000, UL)
+ 
++#define SR_VS		_AC(0x00000600, UL) /* Vector Status */
++#define SR_VS_OFF	_AC(0x00000000, UL)
++#define SR_VS_INITIAL	_AC(0x00000200, UL)
++#define SR_VS_CLEAN	_AC(0x00000400, UL)
++#define SR_VS_DIRTY	_AC(0x00000600, UL)
++
+ #define SR_XS		_AC(0x00018000, UL) /* Extension Status */
+ #define SR_XS_OFF	_AC(0x00000000, UL)
+ #define SR_XS_INITIAL	_AC(0x00008000, UL)
+ #define SR_XS_CLEAN	_AC(0x00010000, UL)
+ #define SR_XS_DIRTY	_AC(0x00018000, UL)
+ 
++#define SR_FS_VS	(SR_FS | SR_VS) /* Vector and Floating-Point Unit */
++
+ #ifndef CONFIG_64BIT
+-#define SR_SD		_AC(0x80000000, UL) /* FS/XS dirty */
++#define SR_SD		_AC(0x80000000, UL) /* FS/VS/XS dirty */
+ #else
+-#define SR_SD		_AC(0x8000000000000000, UL) /* FS/XS dirty */
++#define SR_SD		_AC(0x8000000000000000, UL) /* FS/VS/XS dirty */
+ #endif
+ 
+ #ifdef CONFIG_64BIT
+@@ -240,6 +248,7 @@
+ #define CSR_SIE			0x104
+ #define CSR_STVEC		0x105
+ #define CSR_SCOUNTEREN		0x106
++#define CSR_SENVCFG		0x10a
+ #define CSR_SSCRATCH		0x140
+ #define CSR_SEPC		0x141
+ #define CSR_SCAUSE		0x142
+@@ -297,6 +306,18 @@
+ #define CSR_MIMPID		0xf13
+ #define CSR_MHARTID		0xf14
+ 
++#define CSR_VSTART		0x8
++#define CSR_VCSR		0xf
++#define CSR_VL			0xc20
++#define CSR_VTYPE		0xc21
++#define CSR_VLENB		0xc22
++
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++/* TCM enable register */
++#define CSR_TCMCFG		0x5db
++#define TCM_EN			_AC(0x00000001, UL) /* TCM Access Enable */
++#endif
++
+ #ifdef CONFIG_RISCV_M_MODE
+ # define CSR_STATUS	CSR_MSTATUS
+ # define CSR_IE		CSR_MIE
+diff --git a/arch/riscv/include/asm/elf.h b/arch/riscv/include/asm/elf.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/elf.h
++++ b/arch/riscv/include/asm/elf.h
+@@ -14,6 +14,7 @@
+ #include <asm/auxvec.h>
+ #include <asm/byteorder.h>
+ #include <asm/cacheinfo.h>
++#include <asm/vector.h>
+ 
+ /*
+  * These are used to set parameters in the core dumps.
+@@ -30,6 +31,10 @@
+ 
+ #define ELF_DATA	ELFDATA2LSB
+ 
++#define ELF_PLAT_INIT(_r, load_addr)	do { \
++	riscv_v_csr_init(); \
++} while (0)
++
+ /*
+  * This is used to ensure we don't load something for the wrong architecture.
+  */
+@@ -103,6 +108,15 @@ do {								\
+ 		get_cache_size(3, CACHE_TYPE_UNIFIED));		\
+ 	NEW_AUX_ENT(AT_L3_CACHEGEOMETRY,			\
+ 		get_cache_geometry(3, CACHE_TYPE_UNIFIED));	\
++	/*							 \
++	 * Should always be nonzero unless there's a kernel bug. \
++	 * If we haven't determined a sensible value to give to	 \
++	 * userspace, omit the entry:				 \
++	 */							 \
++	if (likely(signal_minsigstksz))				 \
++		NEW_AUX_ENT(AT_MINSIGSTKSZ, signal_minsigstksz); \
++	else							 \
++		NEW_AUX_ENT(AT_IGNORE, 0);			 \
+ } while (0)
+ #define ARCH_HAS_SETUP_ADDITIONAL_PAGES
+ struct linux_binprm;
+diff --git a/arch/riscv/include/asm/errata_list.h b/arch/riscv/include/asm/errata_list.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/errata_list.h
++++ b/arch/riscv/include/asm/errata_list.h
+@@ -22,7 +22,9 @@
+ 
+ #define	CPUFEATURE_SVPBMT 0
+ #define	CPUFEATURE_ZICBOM 1
+-#define	CPUFEATURE_NUMBER 2
++#define	CPUFEATURE_ZICBOZ 2
++#define	CPUFEATURE_ZICBOP 3
++#define	CPUFEATURE_NUMBER 4
+ 
+ #ifdef __ASSEMBLY__
+ 
+diff --git a/arch/riscv/include/asm/hwcap.h b/arch/riscv/include/asm/hwcap.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/hwcap.h
++++ b/arch/riscv/include/asm/hwcap.h
+@@ -35,6 +35,7 @@ extern unsigned long elf_hwcap;
+ #define RISCV_ISA_EXT_m		('m' - 'a')
+ #define RISCV_ISA_EXT_s		('s' - 'a')
+ #define RISCV_ISA_EXT_u		('u' - 'a')
++#define RISCV_ISA_EXT_v		('v' - 'a')
+ 
+ /*
+  * Increse this to higher value as kernel support more ISA extensions.
+@@ -56,6 +57,8 @@ enum riscv_isa_ext_id {
+ 	RISCV_ISA_EXT_SSCOFPMF = RISCV_ISA_EXT_BASE,
+ 	RISCV_ISA_EXT_SVPBMT,
+ 	RISCV_ISA_EXT_ZICBOM,
++	RISCV_ISA_EXT_ZICBOZ,
++	RISCV_ISA_EXT_ZICBOP,
+ 	RISCV_ISA_EXT_ZIHINTPAUSE,
+ 	RISCV_ISA_EXT_SSTC,
+ 	RISCV_ISA_EXT_SVINVAL,
+@@ -107,6 +110,8 @@ bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, int bit);
+ #define riscv_isa_extension_available(isa_bitmap, ext)	\
+ 	__riscv_isa_extension_available(isa_bitmap, RISCV_ISA_EXT_##ext)
+ 
++void riscv_user_isa_enable(void);
++
+ #endif
+ 
+ #endif /* _ASM_RISCV_HWCAP_H */
+diff --git a/arch/riscv/include/asm/insn.h b/arch/riscv/include/asm/insn.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/include/asm/insn.h
+@@ -0,0 +1,410 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Copyright (C) 2020 SiFive
++ */
++
++#ifndef _ASM_RISCV_INSN_H
++#define _ASM_RISCV_INSN_H
++
++#include <linux/bits.h>
++
++#define RV_INSN_FUNCT3_MASK	GENMASK(14, 12)
++#define RV_INSN_FUNCT3_OPOFF	12
++#define RV_INSN_OPCODE_MASK	GENMASK(6, 0)
++#define RV_INSN_OPCODE_OPOFF	0
++#define RV_INSN_FUNCT12_OPOFF	20
++
++#define RV_ENCODE_FUNCT3(f_)	(RVG_FUNCT3_##f_ << RV_INSN_FUNCT3_OPOFF)
++#define RV_ENCODE_FUNCT12(f_)	(RVG_FUNCT12_##f_ << RV_INSN_FUNCT12_OPOFF)
++
++/* The bit field of immediate value in I-type instruction */
++#define RV_I_IMM_SIGN_OPOFF	31
++#define RV_I_IMM_11_0_OPOFF	20
++#define RV_I_IMM_SIGN_OFF	12
++#define RV_I_IMM_11_0_OFF	0
++#define RV_I_IMM_11_0_MASK	GENMASK(11, 0)
++
++/* The bit field of immediate value in J-type instruction */
++#define RV_J_IMM_SIGN_OPOFF	31
++#define RV_J_IMM_10_1_OPOFF	21
++#define RV_J_IMM_11_OPOFF	20
++#define RV_J_IMM_19_12_OPOFF	12
++#define RV_J_IMM_SIGN_OFF	20
++#define RV_J_IMM_10_1_OFF	1
++#define RV_J_IMM_11_OFF		11
++#define RV_J_IMM_19_12_OFF	12
++#define RV_J_IMM_10_1_MASK	GENMASK(9, 0)
++#define RV_J_IMM_11_MASK	GENMASK(0, 0)
++#define RV_J_IMM_19_12_MASK	GENMASK(7, 0)
++
++/*
++ * U-type IMMs contain the upper 20bits [31:20] of an immediate with
++ * the rest filled in by zeros, so no shifting required. Similarly,
++ * bit31 contains the signed state, so no sign extension necessary.
++ */
++#define RV_U_IMM_SIGN_OPOFF	31
++#define RV_U_IMM_31_12_OPOFF	0
++#define RV_U_IMM_31_12_MASK	GENMASK(31, 12)
++
++/* The bit field of immediate value in B-type instruction */
++#define RV_B_IMM_SIGN_OPOFF	31
++#define RV_B_IMM_10_5_OPOFF	25
++#define RV_B_IMM_4_1_OPOFF	8
++#define RV_B_IMM_11_OPOFF	7
++#define RV_B_IMM_SIGN_OFF	12
++#define RV_B_IMM_10_5_OFF	5
++#define RV_B_IMM_4_1_OFF	1
++#define RV_B_IMM_11_OFF		11
++#define RV_B_IMM_10_5_MASK	GENMASK(5, 0)
++#define RV_B_IMM_4_1_MASK	GENMASK(3, 0)
++#define RV_B_IMM_11_MASK	GENMASK(0, 0)
++
++/* The register offset in RVG instruction */
++#define RVG_RS1_OPOFF		15
++#define RVG_RS2_OPOFF		20
++#define RVG_RD_OPOFF		7
++#define RVG_RD_MASK		GENMASK(4, 0)
++
++/* The bit field of immediate value in RVC J instruction */
++#define RVC_J_IMM_SIGN_OPOFF	12
++#define RVC_J_IMM_4_OPOFF	11
++#define RVC_J_IMM_9_8_OPOFF	9
++#define RVC_J_IMM_10_OPOFF	8
++#define RVC_J_IMM_6_OPOFF	7
++#define RVC_J_IMM_7_OPOFF	6
++#define RVC_J_IMM_3_1_OPOFF	3
++#define RVC_J_IMM_5_OPOFF	2
++#define RVC_J_IMM_SIGN_OFF	11
++#define RVC_J_IMM_4_OFF		4
++#define RVC_J_IMM_9_8_OFF	8
++#define RVC_J_IMM_10_OFF	10
++#define RVC_J_IMM_6_OFF		6
++#define RVC_J_IMM_7_OFF		7
++#define RVC_J_IMM_3_1_OFF	1
++#define RVC_J_IMM_5_OFF		5
++#define RVC_J_IMM_4_MASK	GENMASK(0, 0)
++#define RVC_J_IMM_9_8_MASK	GENMASK(1, 0)
++#define RVC_J_IMM_10_MASK	GENMASK(0, 0)
++#define RVC_J_IMM_6_MASK	GENMASK(0, 0)
++#define RVC_J_IMM_7_MASK	GENMASK(0, 0)
++#define RVC_J_IMM_3_1_MASK	GENMASK(2, 0)
++#define RVC_J_IMM_5_MASK	GENMASK(0, 0)
++
++/* The bit field of immediate value in RVC B instruction */
++#define RVC_B_IMM_SIGN_OPOFF	12
++#define RVC_B_IMM_4_3_OPOFF	10
++#define RVC_B_IMM_7_6_OPOFF	5
++#define RVC_B_IMM_2_1_OPOFF	3
++#define RVC_B_IMM_5_OPOFF	2
++#define RVC_B_IMM_SIGN_OFF	8
++#define RVC_B_IMM_4_3_OFF	3
++#define RVC_B_IMM_7_6_OFF	6
++#define RVC_B_IMM_2_1_OFF	1
++#define RVC_B_IMM_5_OFF		5
++#define RVC_B_IMM_4_3_MASK	GENMASK(1, 0)
++#define RVC_B_IMM_7_6_MASK	GENMASK(1, 0)
++#define RVC_B_IMM_2_1_MASK	GENMASK(1, 0)
++#define RVC_B_IMM_5_MASK	GENMASK(0, 0)
++
++#define RVC_INSN_FUNCT4_MASK	GENMASK(15, 12)
++#define RVC_INSN_FUNCT4_OPOFF	12
++#define RVC_INSN_FUNCT3_MASK	GENMASK(15, 13)
++#define RVC_INSN_FUNCT3_OPOFF	13
++#define RVC_INSN_J_RS2_MASK	GENMASK(6, 2)
++#define RVC_INSN_OPCODE_MASK	GENMASK(1, 0)
++#define RVC_ENCODE_FUNCT3(f_)	(RVC_FUNCT3_##f_ << RVC_INSN_FUNCT3_OPOFF)
++#define RVC_ENCODE_FUNCT4(f_)	(RVC_FUNCT4_##f_ << RVC_INSN_FUNCT4_OPOFF)
++
++/* The register offset in RVC op=C0 instruction */
++#define RVC_C0_RS1_OPOFF	7
++#define RVC_C0_RS2_OPOFF	2
++#define RVC_C0_RD_OPOFF		2
++
++/* The register offset in RVC op=C1 instruction */
++#define RVC_C1_RS1_OPOFF	7
++#define RVC_C1_RS2_OPOFF	2
++#define RVC_C1_RD_OPOFF		7
++
++/* The register offset in RVC op=C2 instruction */
++#define RVC_C2_RS1_OPOFF	7
++#define RVC_C2_RS2_OPOFF	2
++#define RVC_C2_RD_OPOFF		7
++
++/* parts of opcode for RVG*/
++#define RVG_OPCODE_FENCE	0x0f
++#define RVG_OPCODE_AUIPC	0x17
++#define RVG_OPCODE_BRANCH	0x63
++#define RVG_OPCODE_JALR		0x67
++#define RVG_OPCODE_JAL		0x6f
++#define RVG_OPCODE_SYSTEM	0x73
++#define RVG_SYSTEM_CSR_OFF	20
++#define RVG_SYSTEM_CSR_MASK	GENMASK(12, 0)
++
++/* parts of opcode for RVF, RVD and RVQ */
++#define RVFDQ_FL_FS_WIDTH_OFF	12
++#define RVFDQ_FL_FS_WIDTH_MASK	GENMASK(3, 0)
++#define RVFDQ_FL_FS_WIDTH_W	2
++#define RVFDQ_FL_FS_WIDTH_D	3
++#define RVFDQ_LS_FS_WIDTH_Q	4
++#define RVFDQ_OPCODE_FL		0x07
++#define RVFDQ_OPCODE_FS		0x27
++
++/* parts of opcode for RVV */
++#define RVV_OPCODE_VECTOR	0x57
++#define RVV_VL_VS_WIDTH_8	0
++#define RVV_VL_VS_WIDTH_16	5
++#define RVV_VL_VS_WIDTH_32	6
++#define RVV_VL_VS_WIDTH_64	7
++#define RVV_OPCODE_VL		RVFDQ_OPCODE_FL
++#define RVV_OPCODE_VS		RVFDQ_OPCODE_FS
++
++/* parts of opcode for RVC*/
++#define RVC_OPCODE_C0		0x0
++#define RVC_OPCODE_C1		0x1
++#define RVC_OPCODE_C2		0x2
++
++/* parts of funct3 code for I, M, A extension*/
++#define RVG_FUNCT3_JALR		0x0
++#define RVG_FUNCT3_BEQ		0x0
++#define RVG_FUNCT3_BNE		0x1
++#define RVG_FUNCT3_BLT		0x4
++#define RVG_FUNCT3_BGE		0x5
++#define RVG_FUNCT3_BLTU		0x6
++#define RVG_FUNCT3_BGEU		0x7
++
++/* parts of funct3 code for C extension*/
++#define RVC_FUNCT3_C_BEQZ	0x6
++#define RVC_FUNCT3_C_BNEZ	0x7
++#define RVC_FUNCT3_C_J		0x5
++#define RVC_FUNCT3_C_JAL	0x1
++#define RVC_FUNCT4_C_JR		0x8
++#define RVC_FUNCT4_C_JALR	0x9
++#define RVC_FUNCT4_C_EBREAK	0x9
++
++#define RVG_FUNCT12_EBREAK	0x1
++#define RVG_FUNCT12_SRET	0x102
++
++#define RVG_MATCH_AUIPC		(RVG_OPCODE_AUIPC)
++#define RVG_MATCH_JALR		(RV_ENCODE_FUNCT3(JALR) | RVG_OPCODE_JALR)
++#define RVG_MATCH_JAL		(RVG_OPCODE_JAL)
++#define RVG_MATCH_FENCE		(RVG_OPCODE_FENCE)
++#define RVG_MATCH_BEQ		(RV_ENCODE_FUNCT3(BEQ) | RVG_OPCODE_BRANCH)
++#define RVG_MATCH_BNE		(RV_ENCODE_FUNCT3(BNE) | RVG_OPCODE_BRANCH)
++#define RVG_MATCH_BLT		(RV_ENCODE_FUNCT3(BLT) | RVG_OPCODE_BRANCH)
++#define RVG_MATCH_BGE		(RV_ENCODE_FUNCT3(BGE) | RVG_OPCODE_BRANCH)
++#define RVG_MATCH_BLTU		(RV_ENCODE_FUNCT3(BLTU) | RVG_OPCODE_BRANCH)
++#define RVG_MATCH_BGEU		(RV_ENCODE_FUNCT3(BGEU) | RVG_OPCODE_BRANCH)
++#define RVG_MATCH_EBREAK	(RV_ENCODE_FUNCT12(EBREAK) | RVG_OPCODE_SYSTEM)
++#define RVG_MATCH_SRET		(RV_ENCODE_FUNCT12(SRET) | RVG_OPCODE_SYSTEM)
++#define RVC_MATCH_C_BEQZ	(RVC_ENCODE_FUNCT3(C_BEQZ) | RVC_OPCODE_C1)
++#define RVC_MATCH_C_BNEZ	(RVC_ENCODE_FUNCT3(C_BNEZ) | RVC_OPCODE_C1)
++#define RVC_MATCH_C_J		(RVC_ENCODE_FUNCT3(C_J) | RVC_OPCODE_C1)
++#define RVC_MATCH_C_JAL		(RVC_ENCODE_FUNCT3(C_JAL) | RVC_OPCODE_C1)
++#define RVC_MATCH_C_JR		(RVC_ENCODE_FUNCT4(C_JR) | RVC_OPCODE_C2)
++#define RVC_MATCH_C_JALR	(RVC_ENCODE_FUNCT4(C_JALR) | RVC_OPCODE_C2)
++#define RVC_MATCH_C_EBREAK	(RVC_ENCODE_FUNCT4(C_EBREAK) | RVC_OPCODE_C2)
++
++#define RVG_MASK_AUIPC		(RV_INSN_OPCODE_MASK)
++#define RVG_MASK_JALR		(RV_INSN_FUNCT3_MASK | RV_INSN_OPCODE_MASK)
++#define RVG_MASK_JAL		(RV_INSN_OPCODE_MASK)
++#define RVG_MASK_FENCE		(RV_INSN_OPCODE_MASK)
++#define RVC_MASK_C_JALR		(RVC_INSN_FUNCT4_MASK | RVC_INSN_J_RS2_MASK | RVC_INSN_OPCODE_MASK)
++#define RVC_MASK_C_JR		(RVC_INSN_FUNCT4_MASK | RVC_INSN_J_RS2_MASK | RVC_INSN_OPCODE_MASK)
++#define RVC_MASK_C_JAL		(RVC_INSN_FUNCT3_MASK | RVC_INSN_OPCODE_MASK)
++#define RVC_MASK_C_J		(RVC_INSN_FUNCT3_MASK | RVC_INSN_OPCODE_MASK)
++#define RVG_MASK_BEQ		(RV_INSN_FUNCT3_MASK | RV_INSN_OPCODE_MASK)
++#define RVG_MASK_BNE		(RV_INSN_FUNCT3_MASK | RV_INSN_OPCODE_MASK)
++#define RVG_MASK_BLT		(RV_INSN_FUNCT3_MASK | RV_INSN_OPCODE_MASK)
++#define RVG_MASK_BGE		(RV_INSN_FUNCT3_MASK | RV_INSN_OPCODE_MASK)
++#define RVG_MASK_BLTU		(RV_INSN_FUNCT3_MASK | RV_INSN_OPCODE_MASK)
++#define RVG_MASK_BGEU		(RV_INSN_FUNCT3_MASK | RV_INSN_OPCODE_MASK)
++#define RVC_MASK_C_BEQZ		(RVC_INSN_FUNCT3_MASK | RVC_INSN_OPCODE_MASK)
++#define RVC_MASK_C_BNEZ		(RVC_INSN_FUNCT3_MASK | RVC_INSN_OPCODE_MASK)
++#define RVC_MASK_C_EBREAK	0xffff
++#define RVG_MASK_EBREAK		0xffffffff
++#define RVG_MASK_SRET		0xffffffff
++
++#define __INSN_LENGTH_MASK	_UL(0x3)
++#define __INSN_LENGTH_GE_32	_UL(0x3)
++#define __INSN_OPCODE_MASK	_UL(0x7F)
++#define __INSN_BRANCH_OPCODE	_UL(RVG_OPCODE_BRANCH)
++
++#define __RISCV_INSN_FUNCS(name, mask, val)				\
++static __always_inline bool riscv_insn_is_##name(u32 code)		\
++{									\
++	BUILD_BUG_ON(~(mask) & (val));					\
++	return (code & (mask)) == (val);				\
++}									\
++
++#if __riscv_xlen == 32
++/* C.JAL is an RV32C-only instruction */
++__RISCV_INSN_FUNCS(c_jal, RVC_MASK_C_JAL, RVC_MATCH_C_JAL)
++#else
++#define riscv_insn_is_c_jal(opcode) 0
++#endif
++__RISCV_INSN_FUNCS(auipc, RVG_MASK_AUIPC, RVG_MATCH_AUIPC)
++__RISCV_INSN_FUNCS(jalr, RVG_MASK_JALR, RVG_MATCH_JALR)
++__RISCV_INSN_FUNCS(jal, RVG_MASK_JAL, RVG_MATCH_JAL)
++__RISCV_INSN_FUNCS(c_jr, RVC_MASK_C_JR, RVC_MATCH_C_JR)
++__RISCV_INSN_FUNCS(c_jalr, RVC_MASK_C_JALR, RVC_MATCH_C_JALR)
++__RISCV_INSN_FUNCS(c_j, RVC_MASK_C_J, RVC_MATCH_C_J)
++__RISCV_INSN_FUNCS(beq, RVG_MASK_BEQ, RVG_MATCH_BEQ)
++__RISCV_INSN_FUNCS(bne, RVG_MASK_BNE, RVG_MATCH_BNE)
++__RISCV_INSN_FUNCS(blt, RVG_MASK_BLT, RVG_MATCH_BLT)
++__RISCV_INSN_FUNCS(bge, RVG_MASK_BGE, RVG_MATCH_BGE)
++__RISCV_INSN_FUNCS(bltu, RVG_MASK_BLTU, RVG_MATCH_BLTU)
++__RISCV_INSN_FUNCS(bgeu, RVG_MASK_BGEU, RVG_MATCH_BGEU)
++__RISCV_INSN_FUNCS(c_beqz, RVC_MASK_C_BEQZ, RVC_MATCH_C_BEQZ)
++__RISCV_INSN_FUNCS(c_bnez, RVC_MASK_C_BNEZ, RVC_MATCH_C_BNEZ)
++__RISCV_INSN_FUNCS(c_ebreak, RVC_MASK_C_EBREAK, RVC_MATCH_C_EBREAK)
++__RISCV_INSN_FUNCS(ebreak, RVG_MASK_EBREAK, RVG_MATCH_EBREAK)
++__RISCV_INSN_FUNCS(sret, RVG_MASK_SRET, RVG_MATCH_SRET)
++__RISCV_INSN_FUNCS(fence, RVG_MASK_FENCE, RVG_MATCH_FENCE);
++
++/* special case to catch _any_ system instruction */
++static __always_inline bool riscv_insn_is_system(u32 code)
++{
++	return (code & RV_INSN_OPCODE_MASK) == RVG_OPCODE_SYSTEM;
++}
++
++/* special case to catch _any_ branch instruction */
++static __always_inline bool riscv_insn_is_branch(u32 code)
++{
++	return (code & RV_INSN_OPCODE_MASK) == RVG_OPCODE_BRANCH;
++}
++
++#define RV_IMM_SIGN(x) (-(((x) >> 31) & 1))
++#define RVC_IMM_SIGN(x) (-(((x) >> 12) & 1))
++#define RV_X(X, s, mask)  (((X) >> (s)) & (mask))
++#define RVC_X(X, s, mask) RV_X(X, s, mask)
++
++#define RV_EXTRACT_RD_REG(x) \
++	({typeof(x) x_ = (x); \
++	(RV_X(x_, RVG_RD_OPOFF, RVG_RD_MASK)); })
++
++#define RV_EXTRACT_UTYPE_IMM(x) \
++	({typeof(x) x_ = (x); \
++	(RV_X(x_, RV_U_IMM_31_12_OPOFF, RV_U_IMM_31_12_MASK)); })
++
++#define RV_EXTRACT_JTYPE_IMM(x) \
++	({typeof(x) x_ = (x); \
++	(RV_X(x_, RV_J_IMM_10_1_OPOFF, RV_J_IMM_10_1_MASK) << RV_J_IMM_10_1_OFF) | \
++	(RV_X(x_, RV_J_IMM_11_OPOFF, RV_J_IMM_11_MASK) << RV_J_IMM_11_OFF) | \
++	(RV_X(x_, RV_J_IMM_19_12_OPOFF, RV_J_IMM_19_12_MASK) << RV_J_IMM_19_12_OFF) | \
++	(RV_IMM_SIGN(x_) << RV_J_IMM_SIGN_OFF); })
++
++#define RV_EXTRACT_ITYPE_IMM(x) \
++	({typeof(x) x_ = (x); \
++	(RV_X(x_, RV_I_IMM_11_0_OPOFF, RV_I_IMM_11_0_MASK)) | \
++	(RV_IMM_SIGN(x_) << RV_I_IMM_SIGN_OFF); })
++
++#define RV_EXTRACT_BTYPE_IMM(x) \
++	({typeof(x) x_ = (x); \
++	(RV_X(x_, RV_B_IMM_4_1_OPOFF, RV_B_IMM_4_1_MASK) << RV_B_IMM_4_1_OFF) | \
++	(RV_X(x_, RV_B_IMM_10_5_OPOFF, RV_B_IMM_10_5_MASK) << RV_B_IMM_10_5_OFF) | \
++	(RV_X(x_, RV_B_IMM_11_OPOFF, RV_B_IMM_11_MASK) << RV_B_IMM_11_OFF) | \
++	(RV_IMM_SIGN(x_) << RV_B_IMM_SIGN_OFF); })
++
++#define RVC_EXTRACT_JTYPE_IMM(x) \
++	({typeof(x) x_ = (x); \
++	(RVC_X(x_, RVC_J_IMM_3_1_OPOFF, RVC_J_IMM_3_1_MASK) << RVC_J_IMM_3_1_OFF) | \
++	(RVC_X(x_, RVC_J_IMM_4_OPOFF, RVC_J_IMM_4_MASK) << RVC_J_IMM_4_OFF) | \
++	(RVC_X(x_, RVC_J_IMM_5_OPOFF, RVC_J_IMM_5_MASK) << RVC_J_IMM_5_OFF) | \
++	(RVC_X(x_, RVC_J_IMM_6_OPOFF, RVC_J_IMM_6_MASK) << RVC_J_IMM_6_OFF) | \
++	(RVC_X(x_, RVC_J_IMM_7_OPOFF, RVC_J_IMM_7_MASK) << RVC_J_IMM_7_OFF) | \
++	(RVC_X(x_, RVC_J_IMM_9_8_OPOFF, RVC_J_IMM_9_8_MASK) << RVC_J_IMM_9_8_OFF) | \
++	(RVC_X(x_, RVC_J_IMM_10_OPOFF, RVC_J_IMM_10_MASK) << RVC_J_IMM_10_OFF) | \
++	(RVC_IMM_SIGN(x_) << RVC_J_IMM_SIGN_OFF); })
++
++#define RVC_EXTRACT_BTYPE_IMM(x) \
++	({typeof(x) x_ = (x); \
++	(RVC_X(x_, RVC_B_IMM_2_1_OPOFF, RVC_B_IMM_2_1_MASK) << RVC_B_IMM_2_1_OFF) | \
++	(RVC_X(x_, RVC_B_IMM_4_3_OPOFF, RVC_B_IMM_4_3_MASK) << RVC_B_IMM_4_3_OFF) | \
++	(RVC_X(x_, RVC_B_IMM_5_OPOFF, RVC_B_IMM_5_MASK) << RVC_B_IMM_5_OFF) | \
++	(RVC_X(x_, RVC_B_IMM_7_6_OPOFF, RVC_B_IMM_7_6_MASK) << RVC_B_IMM_7_6_OFF) | \
++	(RVC_IMM_SIGN(x_) << RVC_B_IMM_SIGN_OFF); })
++
++#define RVG_EXTRACT_SYSTEM_CSR(x) \
++	({typeof(x) x_ = (x); RV_X(x_, RVG_SYSTEM_CSR_OFF, RVG_SYSTEM_CSR_MASK); })
++
++#define RVFDQ_EXTRACT_FL_FS_WIDTH(x) \
++	({typeof(x) x_ = (x); RV_X(x_, RVFDQ_FL_FS_WIDTH_OFF, \
++				   RVFDQ_FL_FS_WIDTH_MASK); })
++
++#define RVV_EXRACT_VL_VS_WIDTH(x) RVFDQ_EXTRACT_FL_FS_WIDTH(x)
++
++/*
++ * Get the immediate from a J-type instruction.
++ *
++ * @insn: instruction to process
++ * Return: immediate
++ */
++static inline s32 riscv_insn_extract_jtype_imm(u32 insn)
++{
++	return RV_EXTRACT_JTYPE_IMM(insn);
++}
++
++/*
++ * Update a J-type instruction with an immediate value.
++ *
++ * @insn: pointer to the jtype instruction
++ * @imm: the immediate to insert into the instruction
++ */
++static inline void riscv_insn_insert_jtype_imm(u32 *insn, s32 imm)
++{
++	/* drop the old IMMs, all jal IMM bits sit at 31:12 */
++	*insn &= ~GENMASK(31, 12);
++	*insn |= (RV_X(imm, RV_J_IMM_10_1_OFF, RV_J_IMM_10_1_MASK) << RV_J_IMM_10_1_OPOFF) |
++		 (RV_X(imm, RV_J_IMM_11_OFF, RV_J_IMM_11_MASK) << RV_J_IMM_11_OPOFF) |
++		 (RV_X(imm, RV_J_IMM_19_12_OFF, RV_J_IMM_19_12_MASK) << RV_J_IMM_19_12_OPOFF) |
++		 (RV_X(imm, RV_J_IMM_SIGN_OFF, 1) << RV_J_IMM_SIGN_OPOFF);
++}
++
++/*
++ * Put together one immediate from a U-type and I-type instruction pair.
++ *
++ * The U-type contains an upper immediate, meaning bits[31:12] with [11:0]
++ * being zero, while the I-type contains a 12bit immediate.
++ * Combined these can encode larger 32bit values and are used for example
++ * in auipc + jalr pairs to allow larger jumps.
++ *
++ * @utype_insn: instruction containing the upper immediate
++ * @itype_insn: instruction
++ * Return: combined immediate
++ */
++static inline s32 riscv_insn_extract_utype_itype_imm(u32 utype_insn, u32 itype_insn)
++{
++	s32 imm;
++
++	imm = RV_EXTRACT_UTYPE_IMM(utype_insn);
++	imm += RV_EXTRACT_ITYPE_IMM(itype_insn);
++
++	return imm;
++}
++
++/*
++ * Update a set of two instructions (U-type + I-type) with an immediate value.
++ *
++ * Used for example in auipc+jalrs pairs the U-type instructions contains
++ * a 20bit upper immediate representing bits[31:12], while the I-type
++ * instruction contains a 12bit immediate representing bits[11:0].
++ *
++ * This also takes into account that both separate immediates are
++ * considered as signed values, so if the I-type immediate becomes
++ * negative (BIT(11) set) the U-type part gets adjusted.
++ *
++ * @utype_insn: pointer to the utype instruction of the pair
++ * @itype_insn: pointer to the itype instruction of the pair
++ * @imm: the immediate to insert into the two instructions
++ */
++static inline void riscv_insn_insert_utype_itype_imm(u32 *utype_insn, u32 *itype_insn, s32 imm)
++{
++	/* drop possible old IMM values */
++	*utype_insn &= ~(RV_U_IMM_31_12_MASK);
++	*itype_insn &= ~(RV_I_IMM_11_0_MASK << RV_I_IMM_11_0_OPOFF);
++
++	/* add the adapted IMMs */
++	*utype_insn |= (imm & RV_U_IMM_31_12_MASK) + ((imm & BIT(11)) << 1);
++	*itype_insn |= ((imm & RV_I_IMM_11_0_MASK) << RV_I_IMM_11_0_OPOFF);
++}
++#endif /* _ASM_RISCV_INSN_H */
+diff --git a/arch/riscv/include/asm/kvm_host.h b/arch/riscv/include/asm/kvm_host.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/kvm_host.h
++++ b/arch/riscv/include/asm/kvm_host.h
+@@ -15,6 +15,7 @@
+ #include <linux/spinlock.h>
+ #include <asm/csr.h>
+ #include <asm/hwcap.h>
++#include <asm/ptrace.h>
+ #include <asm/kvm_vcpu_fp.h>
+ #include <asm/kvm_vcpu_insn.h>
+ #include <asm/kvm_vcpu_timer.h>
+@@ -144,6 +145,7 @@ struct kvm_cpu_context {
+ 	unsigned long sstatus;
+ 	unsigned long hstatus;
+ 	union __riscv_fp_state fp;
++	struct __riscv_v_ext_state vector;
+ };
+ 
+ struct kvm_vcpu_csr {
+diff --git a/arch/riscv/include/asm/kvm_vcpu_vector.h b/arch/riscv/include/asm/kvm_vcpu_vector.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/include/asm/kvm_vcpu_vector.h
+@@ -0,0 +1,82 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Copyright (C) 2022 SiFive
++ *
++ * Authors:
++ *     Vincent Chen <vincent.chen@sifive.com>
++ *     Greentime Hu <greentime.hu@sifive.com>
++ */
++
++#ifndef __KVM_VCPU_RISCV_VECTOR_H
++#define __KVM_VCPU_RISCV_VECTOR_H
++
++#include <linux/types.h>
++
++#ifdef CONFIG_RISCV_ISA_V
++#include <asm/vector.h>
++#include <asm/kvm_host.h>
++
++static __always_inline void __kvm_riscv_vector_save(struct kvm_cpu_context *context)
++{
++	__riscv_v_vstate_save(&context->vector, context->vector.datap);
++}
++
++static __always_inline void __kvm_riscv_vector_restore(struct kvm_cpu_context *context)
++{
++	__riscv_v_vstate_restore(&context->vector, context->vector.datap);
++}
++
++void kvm_riscv_vcpu_vector_reset(struct kvm_vcpu *vcpu);
++void kvm_riscv_vcpu_guest_vector_save(struct kvm_cpu_context *cntx,
++				      unsigned long *isa);
++void kvm_riscv_vcpu_guest_vector_restore(struct kvm_cpu_context *cntx,
++					 unsigned long *isa);
++void kvm_riscv_vcpu_host_vector_save(struct kvm_cpu_context *cntx);
++void kvm_riscv_vcpu_host_vector_restore(struct kvm_cpu_context *cntx);
++int kvm_riscv_vcpu_alloc_vector_context(struct kvm_vcpu *vcpu,
++					struct kvm_cpu_context *cntx);
++void kvm_riscv_vcpu_free_vector_context(struct kvm_vcpu *vcpu);
++#else
++
++struct kvm_cpu_context;
++
++static inline void kvm_riscv_vcpu_vector_reset(struct kvm_vcpu *vcpu)
++{
++}
++
++static inline void kvm_riscv_vcpu_guest_vector_save(struct kvm_cpu_context *cntx,
++						    unsigned long *isa)
++{
++}
++
++static inline void kvm_riscv_vcpu_guest_vector_restore(struct kvm_cpu_context *cntx,
++						       unsigned long *isa)
++{
++}
++
++static inline void kvm_riscv_vcpu_host_vector_save(struct kvm_cpu_context *cntx)
++{
++}
++
++static inline void kvm_riscv_vcpu_host_vector_restore(struct kvm_cpu_context *cntx)
++{
++}
++
++static inline int kvm_riscv_vcpu_alloc_vector_context(struct kvm_vcpu *vcpu,
++						      struct kvm_cpu_context *cntx)
++{
++	return 0;
++}
++
++static inline void kvm_riscv_vcpu_free_vector_context(struct kvm_vcpu *vcpu)
++{
++}
++#endif
++
++int kvm_riscv_vcpu_get_reg_vector(struct kvm_vcpu *vcpu,
++				  const struct kvm_one_reg *reg,
++				  unsigned long rtype);
++int kvm_riscv_vcpu_set_reg_vector(struct kvm_vcpu *vcpu,
++				  const struct kvm_one_reg *reg,
++				  unsigned long rtype);
++#endif
+diff --git a/arch/riscv/include/asm/mmio.h b/arch/riscv/include/asm/mmio.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/mmio.h
++++ b/arch/riscv/include/asm/mmio.h
+@@ -148,4 +148,42 @@ static inline u64 __raw_readq(const volatile void __iomem *addr)
+ #define writeq(v, c)	({ __io_bw(); writeq_cpu((v), (c)); __io_aw(); })
+ #endif
+ 
++
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++/*
++  on the spacemit k1x platform, there is some i/o area
++  is override by the tcm, so, need switch the tcm when
++  read or write these i/o area
++*/
++#include <asm/irqflags.h>
++
++/* i/o read on the tcm override area */
++static inline u32 tcm_override_readl(const volatile void __iomem *addr)
++{
++	u32	val;
++	unsigned long flags, tcm_csr;
++
++	flags = arch_local_irq_save();
++	tcm_csr = csr_read_clear(CSR_TCMCFG, TCM_EN);
++	val = readl(addr);
++	csr_set(CSR_TCMCFG, tcm_csr);
++	arch_local_irq_restore(flags);
++
++	return val;
++}
++
++/* i/o write on the tcm override area */
++static inline void tcm_override_writel(u32 val, volatile void __iomem *addr)
++{
++	unsigned long flags, tcm_csr;
++
++	flags = arch_local_irq_save();
++	tcm_csr = csr_read_clear(CSR_TCMCFG, TCM_EN);
++	writel(val, addr);
++	csr_set(CSR_TCMCFG, tcm_csr);
++	arch_local_irq_restore(flags);
++}
++
++#endif
++
+ #endif /* _ASM_RISCV_MMIO_H */
+diff --git a/arch/riscv/include/asm/module.h b/arch/riscv/include/asm/module.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/module.h
++++ b/arch/riscv/include/asm/module.h
+@@ -5,6 +5,7 @@
+ #define _ASM_RISCV_MODULE_H
+ 
+ #include <asm-generic/module.h>
++#include <linux/elf.h>
+ 
+ struct module;
+ unsigned long module_emit_got_entry(struct module *mod, unsigned long val);
+@@ -111,4 +112,19 @@ static inline struct plt_entry *get_plt_entry(unsigned long val,
+ 
+ #endif /* CONFIG_MODULE_SECTIONS */
+ 
++static inline const Elf_Shdr *find_section(const Elf_Ehdr *hdr,
++					   const Elf_Shdr *sechdrs,
++					   const char *name)
++{
++	const Elf_Shdr *s, *se;
++	const char *secstrs = (void *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
++
++	for (s = sechdrs, se = sechdrs + hdr->e_shnum; s < se; s++) {
++		if (strcmp(name, secstrs + s->sh_name) == 0)
++			return s;
++	}
++
++	return NULL;
++}
++
+ #endif /* _ASM_RISCV_MODULE_H */
+diff --git a/arch/riscv/include/asm/processor.h b/arch/riscv/include/asm/processor.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/processor.h
++++ b/arch/riscv/include/asm/processor.h
+@@ -7,6 +7,7 @@
+ #define _ASM_RISCV_PROCESSOR_H
+ 
+ #include <linux/const.h>
++#include <linux/cache.h>
+ 
+ #include <vdso/processor.h>
+ 
+@@ -31,6 +32,17 @@
+ struct task_struct;
+ struct pt_regs;
+ 
++/*
++ * We use a flag to track in-kernel Vector context. Currently the flag has the
++ * following meaning:
++ *
++ *  - bit 0: indicates whether the in-kernel Vector context is active. The
++ *    activation of this state disables the preemption. On a non-RT kernel, it
++ *    also disable bh. Currently only 0 and 1 are valid value for this field.
++ *    Other values are reserved for future uses.
++ */
++#define RISCV_KERNEL_MODE_V	0x1
++
+ /* CPU-specific state of a task */
+ struct thread_struct {
+ 	/* Callee-saved registers */
+@@ -39,6 +51,9 @@ struct thread_struct {
+ 	unsigned long s[12];	/* s[0]: frame pointer */
+ 	struct __riscv_d_ext_state fstate;
+ 	unsigned long bad_cause;
++	u32 riscv_v_flags;
++	u32 vstate_ctrl;
++	struct __riscv_v_ext_state vstate;
+ };
+ 
+ /* Whitelist the fstate from the task_struct for hardened usercopy */
+@@ -79,7 +94,9 @@ int riscv_of_parent_hartid(struct device_node *node, unsigned long *hartid);
+ 
+ extern void riscv_fill_hwcap(void);
+ extern int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src);
++extern struct cpumask ai_core_mask_get(void);
+ 
++extern unsigned long signal_minsigstksz __ro_after_init;
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* _ASM_RISCV_PROCESSOR_H */
+diff --git a/arch/riscv/include/asm/sbi.h b/arch/riscv/include/asm/sbi.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/sbi.h
++++ b/arch/riscv/include/asm/sbi.h
+@@ -29,6 +29,7 @@ enum sbi_ext_id {
+ 	SBI_EXT_RFENCE = 0x52464E43,
+ 	SBI_EXT_HSM = 0x48534D,
+ 	SBI_EXT_SRST = 0x53525354,
++	SBI_EXT_SUSP = 0x53555350,
+ 	SBI_EXT_PMU = 0x504D55,
+ 
+ 	/* Experimentals extensions must lie within this range */
+@@ -48,6 +49,9 @@ enum sbi_ext_base_fid {
+ 	SBI_EXT_BASE_GET_MVENDORID,
+ 	SBI_EXT_BASE_GET_MARCHID,
+ 	SBI_EXT_BASE_GET_MIMPID,
++#if defined(CONFIG_SOC_SPACEMIT_K1PRO) || defined(CONFIG_SOC_SPACEMIT_K1X)
++	SBI_EXT_BASE_FLUSH_CACHE_ALL,
++#endif
+ };
+ 
+ enum sbi_ext_time_fid {
+@@ -113,6 +117,14 @@ enum sbi_srst_reset_reason {
+ 	SBI_SRST_RESET_REASON_SYS_FAILURE,
+ };
+ 
++enum sbi_ext_susp_fid {
++	SBI_EXT_SUSP_SYSTEM_SUSPEND = 0,
++};
++
++enum sbi_ext_susp_sleep_type {
++	SBI_SUSP_SLEEP_TYPE_SUSPEND_TO_RAM = 0,
++};
++
+ enum sbi_ext_pmu_fid {
+ 	SBI_EXT_PMU_NUM_COUNTERS = 0,
+ 	SBI_EXT_PMU_COUNTER_GET_INFO,
+@@ -295,6 +307,10 @@ int sbi_remote_hfence_vvma_asid(const struct cpumask *cpu_mask,
+ 				unsigned long asid);
+ long sbi_probe_extension(int ext);
+ 
++#if defined(CONFIG_SOC_SPACEMIT_K1PRO) || defined(CONFIG_SOC_SPACEMIT_K1X)
++void sbi_flush_local_dcache_all(void);
++#endif
++
+ /* Check if current SBI specification version is 0.1 or not */
+ static inline int sbi_spec_is_0_1(void)
+ {
+diff --git a/arch/riscv/include/asm/simd.h b/arch/riscv/include/asm/simd.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/include/asm/simd.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Copyright (C) 2017 Linaro Ltd. <ard.biesheuvel@linaro.org>
++ * Copyright (C) 2023 SiFive
++ */
++
++#ifndef __ASM_SIMD_H
++#define __ASM_SIMD_H
++
++#include <linux/compiler.h>
++#include <linux/irqflags.h>
++#include <linux/percpu.h>
++#include <linux/preempt.h>
++#include <linux/types.h>
++
++#include <asm/vector.h>
++
++#ifdef CONFIG_RISCV_ISA_V
++/*
++ * may_use_simd - whether it is allowable at this time to issue vector
++ *                instructions or access the vector register file
++ *
++ * Callers must not assume that the result remains true beyond the next
++ * preempt_enable() or return from softirq context.
++ */
++static __must_check inline bool may_use_simd(void)
++{
++	/*
++	 * RISCV_KERNEL_MODE_V is only set while preemption is disabled,
++	 * and is clear whenever preemption is enabled.
++	 */
++	return !in_hardirq() && !in_nmi() && !irqs_disabled() && !(riscv_v_flags() & RISCV_KERNEL_MODE_V);
++}
++
++#else /* ! CONFIG_RISCV_ISA_V */
++
++static __must_check inline bool may_use_simd(void)
++{
++	return false;
++}
++
++#endif /* ! CONFIG_RISCV_ISA_V */
++
++#endif
+\ No newline at end of file
+diff --git a/arch/riscv/include/asm/switch_to.h b/arch/riscv/include/asm/switch_to.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/switch_to.h
++++ b/arch/riscv/include/asm/switch_to.h
+@@ -8,6 +8,7 @@
+ 
+ #include <linux/jump_label.h>
+ #include <linux/sched/task_stack.h>
++#include <asm/vector.h>
+ #include <asm/hwcap.h>
+ #include <asm/processor.h>
+ #include <asm/ptrace.h>
+@@ -46,7 +47,7 @@ static inline void fstate_restore(struct task_struct *task,
+ 	}
+ }
+ 
+-static inline void __switch_to_aux(struct task_struct *prev,
++static inline void __switch_to_fpu(struct task_struct *prev,
+ 				   struct task_struct *next)
+ {
+ 	struct pt_regs *regs;
+@@ -65,7 +66,7 @@ static __always_inline bool has_fpu(void)
+ static __always_inline bool has_fpu(void) { return false; }
+ #define fstate_save(task, regs) do { } while (0)
+ #define fstate_restore(task, regs) do { } while (0)
+-#define __switch_to_aux(__prev, __next) do { } while (0)
++#define __switch_to_fpu(__prev, __next) do { } while (0)
+ #endif
+ 
+ extern struct task_struct *__switch_to(struct task_struct *,
+@@ -76,7 +77,9 @@ do {							\
+ 	struct task_struct *__prev = (prev);		\
+ 	struct task_struct *__next = (next);		\
+ 	if (has_fpu())					\
+-		__switch_to_aux(__prev, __next);	\
++		__switch_to_fpu(__prev, __next);	\
++	if (has_vector())					\
++		__switch_to_vector(__prev, __next);	\
+ 	((last) = __switch_to(__prev, __next));		\
+ } while (0)
+ 
+diff --git a/arch/riscv/include/asm/thread_info.h b/arch/riscv/include/asm/thread_info.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/thread_info.h
++++ b/arch/riscv/include/asm/thread_info.h
+@@ -80,6 +80,9 @@ struct thread_info {
+ 	.preempt_count	= INIT_PREEMPT_COUNT,	\
+ }
+ 
++void arch_release_task_struct(struct task_struct *tsk);
++int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src);
++
+ #endif /* !__ASSEMBLY__ */
+ 
+ /*
+diff --git a/arch/riscv/include/asm/vdso/processor.h b/arch/riscv/include/asm/vdso/processor.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/asm/vdso/processor.h
++++ b/arch/riscv/include/asm/vdso/processor.h
+@@ -4,30 +4,26 @@
+ 
+ #ifndef __ASSEMBLY__
+ 
+-#include <linux/jump_label.h>
+ #include <asm/barrier.h>
+-#include <asm/hwcap.h>
+ 
+ static inline void cpu_relax(void)
+ {
+-	if (!static_branch_likely(&riscv_isa_ext_keys[RISCV_ISA_EXT_KEY_ZIHINTPAUSE])) {
+ #ifdef __riscv_muldiv
+-		int dummy;
+-		/* In lieu of a halt instruction, induce a long-latency stall. */
+-		__asm__ __volatile__ ("div %0, %0, zero" : "=r" (dummy));
++	int dummy;
++	/* In lieu of a halt instruction, induce a long-latency stall. */
++	__asm__ __volatile__ ("div %0, %0, zero" : "=r" (dummy));
+ #endif
+-	} else {
+-		/*
+-		 * Reduce instruction retirement.
+-		 * This assumes the PC changes.
+-		 */
+-#ifdef CONFIG_TOOLCHAIN_HAS_ZIHINTPAUSE
+-		__asm__ __volatile__ ("pause");
++
++#ifdef __riscv_zihintpause
++	/*
++	 * Reduce instruction retirement.
++	 * This assumes the PC changes.
++	 */
++	__asm__ __volatile__ ("pause");
+ #else
+-		/* Encoding of the pause instruction */
+-		__asm__ __volatile__ (".4byte 0x100000F");
++	/* Encoding of the pause instruction */
++	__asm__ __volatile__ (".4byte 0x100000F");
+ #endif
+-	}
+ 	barrier();
+ }
+ 
+diff --git a/arch/riscv/include/asm/vector.h b/arch/riscv/include/asm/vector.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/include/asm/vector.h
+@@ -0,0 +1,210 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) 2020 SiFive
++ */
++
++#ifndef __ASM_RISCV_VECTOR_H
++#define __ASM_RISCV_VECTOR_H
++
++#include <linux/types.h>
++
++#ifdef CONFIG_RISCV_ISA_V
++
++#include <linux/stringify.h>
++#include <linux/sched.h>
++#include <linux/sched/task_stack.h>
++#include <asm/ptrace.h>
++#include <asm/hwcap.h>
++#include <asm/csr.h>
++#include <asm/asm.h>
++
++extern unsigned long riscv_v_vsize;
++void riscv_v_setup_vsize(void);
++bool riscv_v_first_use_handler(struct pt_regs *regs);
++void kernel_vector_begin(void);
++void kernel_vector_end(void);
++void get_cpu_vector_context(void);
++void put_cpu_vector_context(void);
++
++static inline u32 riscv_v_flags(void)
++{
++	return current->thread.riscv_v_flags;
++}
++
++static __always_inline bool has_vector(void)
++{
++	//return riscv_has_extension_likely(RISCV_ISA_EXT_v);
++	return true;
++}
++
++static inline void __riscv_v_vstate_clean(struct pt_regs *regs)
++{
++	regs->status = (regs->status & ~SR_VS) | SR_VS_CLEAN;
++}
++
++static inline void riscv_v_vstate_off(struct pt_regs *regs)
++{
++	regs->status = (regs->status & ~SR_VS) | SR_VS_OFF;
++}
++
++static inline void riscv_v_vstate_on(struct pt_regs *regs)
++{
++	regs->status = (regs->status & ~SR_VS) | SR_VS_INITIAL;
++}
++
++static inline bool riscv_v_vstate_query(struct pt_regs *regs)
++{
++	return (regs->status & SR_VS) != 0;
++}
++
++static __always_inline void riscv_v_enable(void)
++{
++	csr_set(CSR_SSTATUS, SR_VS);
++}
++
++static __always_inline void riscv_v_disable(void)
++{
++	csr_clear(CSR_SSTATUS, SR_VS);
++}
++
++static __always_inline void riscv_v_csr_init(void)
++{
++	riscv_v_enable();
++	asm volatile (
++		"csrw	" __stringify(CSR_VSTART) ", 0\n\t"
++		"csrw	" __stringify(CSR_VCSR) ", 0\n\t"
++		: : :);
++	riscv_v_disable();
++}
++
++static __always_inline void __vstate_csr_save(struct __riscv_v_ext_state *dest)
++{
++	asm volatile (
++		"csrr	%0, " __stringify(CSR_VSTART) "\n\t"
++		"csrr	%1, " __stringify(CSR_VTYPE) "\n\t"
++		"csrr	%2, " __stringify(CSR_VL) "\n\t"
++		"csrr	%3, " __stringify(CSR_VCSR) "\n\t"
++		: "=r" (dest->vstart), "=r" (dest->vtype), "=r" (dest->vl),
++		  "=r" (dest->vcsr) : :);
++}
++
++static __always_inline void __vstate_csr_restore(struct __riscv_v_ext_state *src)
++{
++	asm volatile (
++		".option push\n\t"
++		".option arch, +v\n\t"
++		"vsetvl	 x0, %2, %1\n\t"
++		".option pop\n\t"
++		"csrw	" __stringify(CSR_VSTART) ", %0\n\t"
++		"csrw	" __stringify(CSR_VCSR) ", %3\n\t"
++		: : "r" (src->vstart), "r" (src->vtype), "r" (src->vl),
++		    "r" (src->vcsr) :);
++}
++
++static inline void __riscv_v_vstate_save(struct __riscv_v_ext_state *save_to,
++					 void *datap)
++{
++	unsigned long vl;
++
++	riscv_v_enable();
++	__vstate_csr_save(save_to);
++	asm volatile (
++		".option push\n\t"
++		".option arch, +v\n\t"
++		"vsetvli	%0, x0, e8, m8, ta, ma\n\t"
++		"vse8.v		v0, (%1)\n\t"
++		"add		%1, %1, %0\n\t"
++		"vse8.v		v8, (%1)\n\t"
++		"add		%1, %1, %0\n\t"
++		"vse8.v		v16, (%1)\n\t"
++		"add		%1, %1, %0\n\t"
++		"vse8.v		v24, (%1)\n\t"
++		".option pop\n\t"
++		: "=&r" (vl) : "r" (datap) : "memory");
++	riscv_v_disable();
++}
++
++static inline void __riscv_v_vstate_restore(struct __riscv_v_ext_state *restore_from,
++					    void *datap)
++{
++	unsigned long vl;
++
++	riscv_v_enable();
++	asm volatile (
++		".option push\n\t"
++		".option arch, +v\n\t"
++		"vsetvli	%0, x0, e8, m8, ta, ma\n\t"
++		"vle8.v		v0, (%1)\n\t"
++		"add		%1, %1, %0\n\t"
++		"vle8.v		v8, (%1)\n\t"
++		"add		%1, %1, %0\n\t"
++		"vle8.v		v16, (%1)\n\t"
++		"add		%1, %1, %0\n\t"
++		"vle8.v		v24, (%1)\n\t"
++		".option pop\n\t"
++		: "=&r" (vl) : "r" (datap) : "memory");
++	__vstate_csr_restore(restore_from);
++	riscv_v_disable();
++}
++
++static inline void riscv_v_vstate_save(struct task_struct *task,
++				       struct pt_regs *regs)
++{
++	if ((regs->status & SR_VS) == SR_VS_DIRTY) {
++		struct __riscv_v_ext_state *vstate = &task->thread.vstate;
++
++		__riscv_v_vstate_save(vstate, vstate->datap);
++		__riscv_v_vstate_clean(regs);
++	}
++}
++
++static inline void riscv_v_vstate_restore(struct task_struct *task,
++					  struct pt_regs *regs)
++{
++	if ((regs->status & SR_VS) != SR_VS_OFF) {
++		struct __riscv_v_ext_state *vstate = &task->thread.vstate;
++
++		__riscv_v_vstate_restore(vstate, vstate->datap);
++		__riscv_v_vstate_clean(regs);
++	}
++}
++
++static inline void __switch_to_vector(struct task_struct *prev,
++				      struct task_struct *next)
++{
++	struct pt_regs *regs;
++
++	regs = task_pt_regs(prev);
++	riscv_v_vstate_save(prev, regs);
++	riscv_v_vstate_restore(next, task_pt_regs(next));
++}
++
++#else /* ! CONFIG_RISCV_ISA_V  */
++
++struct pt_regs;
++
++static __always_inline bool has_vector(void) { return false; }
++static inline bool riscv_v_first_use_handler(struct pt_regs *regs) { return false; }
++static inline bool riscv_v_vstate_query(struct pt_regs *regs) { return false; }
++#define riscv_v_vsize (0)
++#define riscv_v_setup_vsize()			do {} while (0)
++#define riscv_v_vstate_save(task, regs)		do {} while (0)
++#define riscv_v_vstate_restore(task, regs)	do {} while (0)
++#define __switch_to_vector(__prev, __next)	do {} while (0)
++#define riscv_v_vstate_off(regs)		do {} while (0)
++#define riscv_v_vstate_on(regs)			do {} while (0)
++#define riscv_v_csr_init()				do {} while (0)
++
++#endif /* CONFIG_RISCV_ISA_V */
++/*
++ * Return the implementation's vlen value.
++ *
++ * riscv_v_vsize contains the value of "32 vector registers with vlenb length"
++ * so rebuild the vlen value in bits from it.
++ */
++static inline int riscv_vector_vlen(void)
++{
++	return riscv_v_vsize / 32 * 8;
++}
++
++#endif /* ! __ASM_RISCV_VECTOR_H */
+diff --git a/arch/riscv/include/asm/xor.h b/arch/riscv/include/asm/xor.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/include/asm/xor.h
+@@ -0,0 +1,83 @@
++
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) 2021 SiFive
++ */
++
++#include <linux/hardirq.h>
++#include <asm-generic/xor.h>
++#ifdef CONFIG_RISCV_ISA_V
++#include <asm/vector.h>
++#include <asm/switch_to.h>
++
++void xor_regs_2_(unsigned long bytes, unsigned long *__restrict p1,
++		 const unsigned long *__restrict p2);
++void xor_regs_3_(unsigned long bytes, unsigned long *__restrict p1,
++		 const unsigned long *__restrict p2,
++		 const unsigned long *__restrict p3);
++void xor_regs_4_(unsigned long bytes, unsigned long *__restrict p1,
++		 const unsigned long *__restrict p2,
++		 const unsigned long *__restrict p3,
++		 const unsigned long *__restrict p4);
++void xor_regs_5_(unsigned long bytes, unsigned long *__restrict p1,
++		 const unsigned long *__restrict p2,
++		 const unsigned long *__restrict p3,
++		 const unsigned long *__restrict p4,
++		 const unsigned long *__restrict p5);
++
++static void xor_vector_2(unsigned long bytes, unsigned long *__restrict p1,
++			 const unsigned long *__restrict p2)
++{
++	kernel_vector_begin();
++	xor_regs_2_(bytes, p1, p2);
++	kernel_vector_end();
++}
++
++static void xor_vector_3(unsigned long bytes, unsigned long *__restrict p1,
++			 const unsigned long *__restrict p2,
++			 const unsigned long *__restrict p3)
++{
++	kernel_vector_begin();
++	xor_regs_3_(bytes, p1, p2, p3);
++	kernel_vector_end();
++}
++
++static void xor_vector_4(unsigned long bytes, unsigned long *__restrict p1,
++			 const unsigned long *__restrict p2,
++			 const unsigned long *__restrict p3,
++			 const unsigned long *__restrict p4)
++{
++	kernel_vector_begin();
++	xor_regs_4_(bytes, p1, p2, p3, p4);
++	kernel_vector_end();
++}
++
++static void xor_vector_5(unsigned long bytes, unsigned long *__restrict p1,
++			 const unsigned long *__restrict p2,
++			 const unsigned long *__restrict p3,
++			 const unsigned long *__restrict p4,
++			 const unsigned long *__restrict p5)
++{
++	kernel_vector_begin();
++	xor_regs_5_(bytes, p1, p2, p3, p4, p5);
++	kernel_vector_end();
++}
++
++static struct xor_block_template xor_block_rvv = {
++	.name = "rvv",
++	.do_2 = xor_vector_2,
++	.do_3 = xor_vector_3,
++	.do_4 = xor_vector_4,
++	.do_5 = xor_vector_5
++};
++
++#undef XOR_TRY_TEMPLATES
++#define XOR_TRY_TEMPLATES           \
++	do {        \
++		xor_speed(&xor_block_8regs);    \
++		xor_speed(&xor_block_32regs);    \
++		if (has_vector()) { \
++			xor_speed(&xor_block_rvv);\
++		} \
++	} while (0)
++#endif
+diff --git a/arch/riscv/include/uapi/asm/auxvec.h b/arch/riscv/include/uapi/asm/auxvec.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/uapi/asm/auxvec.h
++++ b/arch/riscv/include/uapi/asm/auxvec.h
+@@ -35,5 +35,6 @@
+ 
+ /* entries in ARCH_DLINFO */
+ #define AT_VECTOR_SIZE_ARCH	9
++#define AT_MINSIGSTKSZ		51
+ 
+ #endif /* _UAPI_ASM_RISCV_AUXVEC_H */
+diff --git a/arch/riscv/include/uapi/asm/elf.h b/arch/riscv/include/uapi/asm/elf.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/uapi/asm/elf.h
++++ b/arch/riscv/include/uapi/asm/elf.h
+@@ -49,6 +49,7 @@ typedef union __riscv_fp_state elf_fpregset_t;
+ #define R_RISCV_TLS_DTPREL64	9
+ #define R_RISCV_TLS_TPREL32	10
+ #define R_RISCV_TLS_TPREL64	11
++#define R_RISCV_IRELATIVE	58
+ 
+ /* Relocation types not used by the dynamic linker */
+ #define R_RISCV_BRANCH		16
+@@ -81,7 +82,6 @@ typedef union __riscv_fp_state elf_fpregset_t;
+ #define R_RISCV_ALIGN		43
+ #define R_RISCV_RVC_BRANCH	44
+ #define R_RISCV_RVC_JUMP	45
+-#define R_RISCV_LUI		46
+ #define R_RISCV_GPREL_I		47
+ #define R_RISCV_GPREL_S		48
+ #define R_RISCV_TPREL_I		49
+@@ -93,6 +93,9 @@ typedef union __riscv_fp_state elf_fpregset_t;
+ #define R_RISCV_SET16		55
+ #define R_RISCV_SET32		56
+ #define R_RISCV_32_PCREL	57
++#define R_RISCV_PLT32		59
++#define R_RISCV_SET_ULEB128	60
++#define R_RISCV_SUB_ULEB128	61
+ 
+ 
+ #endif /* _UAPI_ASM_RISCV_ELF_H */
+diff --git a/arch/riscv/include/uapi/asm/hwcap.h b/arch/riscv/include/uapi/asm/hwcap.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/uapi/asm/hwcap.h
++++ b/arch/riscv/include/uapi/asm/hwcap.h
+@@ -21,5 +21,6 @@
+ #define COMPAT_HWCAP_ISA_F	(1 << ('F' - 'A'))
+ #define COMPAT_HWCAP_ISA_D	(1 << ('D' - 'A'))
+ #define COMPAT_HWCAP_ISA_C	(1 << ('C' - 'A'))
++#define COMPAT_HWCAP_ISA_V	(1 << ('V' - 'A'))
+ 
+ #endif /* _UAPI_ASM_RISCV_HWCAP_H */
+diff --git a/arch/riscv/include/uapi/asm/kvm.h b/arch/riscv/include/uapi/asm/kvm.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/uapi/asm/kvm.h
++++ b/arch/riscv/include/uapi/asm/kvm.h
+@@ -102,6 +102,9 @@ enum KVM_RISCV_ISA_EXT_ID {
+ 	KVM_RISCV_ISA_EXT_SVINVAL,
+ 	KVM_RISCV_ISA_EXT_ZIHINTPAUSE,
+ 	KVM_RISCV_ISA_EXT_ZICBOM,
++	KVM_RISCV_ISA_EXT_ZICBOZ,
++	KVM_RISCV_ISA_EXT_ZICBOP,
++	KVM_RISCV_ISA_EXT_V,
+ 	KVM_RISCV_ISA_EXT_MAX,
+ };
+ 
+@@ -149,6 +152,13 @@ enum KVM_RISCV_ISA_EXT_ID {
+ /* ISA Extension registers are mapped as type 7 */
+ #define KVM_REG_RISCV_ISA_EXT		(0x07 << KVM_REG_RISCV_TYPE_SHIFT)
+ 
++/* V extension registers are mapped as type 8 */
++#define KVM_REG_RISCV_VECTOR		(0x08 << KVM_REG_RISCV_TYPE_SHIFT)
++#define KVM_REG_RISCV_VECTOR_CSR_REG(name)	\
++		(offsetof(struct __riscv_v_ext_state, name) / sizeof(unsigned long))
++#define KVM_REG_RISCV_VECTOR_REG(n)	\
++		((n) + sizeof(struct __riscv_v_ext_state) / sizeof(unsigned long))
++
+ #endif
+ 
+ #endif /* __LINUX_KVM_RISCV_H */
+diff --git a/arch/riscv/include/uapi/asm/ptrace.h b/arch/riscv/include/uapi/asm/ptrace.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/uapi/asm/ptrace.h
++++ b/arch/riscv/include/uapi/asm/ptrace.h
+@@ -71,12 +71,51 @@ struct __riscv_q_ext_state {
+ 	__u32 reserved[3];
+ };
+ 
++struct __riscv_ctx_hdr {
++	__u32 magic;
++	__u32 size;
++};
++
++struct __riscv_extra_ext_header {
++	__u32 __padding[129] __attribute__((aligned(16)));
++	/*
++	 * Reserved for expansion of sigcontext structure.  Currently zeroed
++	 * upon signal, and must be zero upon sigreturn.
++	 */
++	__u32 reserved;
++	struct __riscv_ctx_hdr hdr;
++};
++
+ union __riscv_fp_state {
+ 	struct __riscv_f_ext_state f;
+ 	struct __riscv_d_ext_state d;
+ 	struct __riscv_q_ext_state q;
+ };
+ 
++struct __riscv_v_ext_state {
++	unsigned long vstart;
++	unsigned long vl;
++	unsigned long vtype;
++	unsigned long vcsr;
++	void *datap;
++	/*
++	 * In signal handler, datap will be set a correct user stack offset
++	 * and vector registers will be copied to the address of datap
++	 * pointer.
++	 *
++	 * In ptrace syscall, datap will be set to zero and the vector
++	 * registers will be copied to the address right after this
++	 * structure.
++	 */
++};
++
++/*
++ * According to spec: The number of bits in a single vector register,
++ * VLEN >= ELEN, which must be a power of 2, and must be no greater than
++ * 2^16 = 65536bits = 8192bytes
++ */
++#define RISCV_MAX_VLENB (8192)
++
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* _UAPI_ASM_RISCV_PTRACE_H */
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@xxxxx.com>
+Date: Sat, 22 Jun 2024 07:23:03 -0400
+Subject: arch: riscv: include: uapi: asm: setup: cmdline 2048
+
+Signed-off-by: Patrick Yavitz <pyavitz@xxxxx.com>
+---
+ arch/riscv/include/uapi/asm/setup.h      |   2 +-
+ arch/riscv/include/uapi/asm/sigcontext.h |  16 +-
+ arch/riscv/kernel/Makefile               |   2 +
+ arch/riscv/kernel/cpu-hotplug.c          |   7 +-
+ arch/riscv/kernel/cpu.c                  |   8 +-
+ arch/riscv/kernel/cpu_ops_sbi.c          |  30 ++-
+ arch/riscv/kernel/cpufeature.c           | 103 +++++++-
+ arch/riscv/kernel/entry.S                |   6 +-
+ arch/riscv/kernel/head.S                 |  50 ++--
+ arch/riscv/kernel/kernel_mode_vector.c   | 125 ++++++++++
+ 10 files changed, 318 insertions(+), 31 deletions(-)
+
+diff --git a/arch/riscv/include/uapi/asm/setup.h b/arch/riscv/include/uapi/asm/setup.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/uapi/asm/setup.h
++++ b/arch/riscv/include/uapi/asm/setup.h
+@@ -3,6 +3,6 @@
+ #ifndef _UAPI_ASM_RISCV_SETUP_H
+ #define _UAPI_ASM_RISCV_SETUP_H
+ 
+-#define COMMAND_LINE_SIZE	1024
++#define COMMAND_LINE_SIZE	2048
+ 
+ #endif /* _UAPI_ASM_RISCV_SETUP_H */
+diff --git a/arch/riscv/include/uapi/asm/sigcontext.h b/arch/riscv/include/uapi/asm/sigcontext.h
+index 111111111111..222222222222 100644
+--- a/arch/riscv/include/uapi/asm/sigcontext.h
++++ b/arch/riscv/include/uapi/asm/sigcontext.h
+@@ -8,6 +8,17 @@
+ 
+ #include <asm/ptrace.h>
+ 
++/* The Magic number for signal context frame header. */
++#define RISCV_V_MAGIC	0x53465457
++#define END_MAGIC	0x0
++
++/* The size of END signal context header. */
++#define END_HDR_SIZE	0x0
++
++struct __sc_riscv_v_state {
++	struct __riscv_v_ext_state v_state;
++} __attribute__((aligned(16)));
++
+ /*
+  * Signal context structure
+  *
+@@ -16,7 +27,10 @@
+  */
+ struct sigcontext {
+ 	struct user_regs_struct sc_regs;
+-	union __riscv_fp_state sc_fpregs;
++	union {
++		union __riscv_fp_state sc_fpregs;
++		struct __riscv_extra_ext_header sc_extdesc;
++	};
+ };
+ 
+ #endif /* _UAPI_ASM_RISCV_SIGCONTEXT_H */
+diff --git a/arch/riscv/kernel/Makefile b/arch/riscv/kernel/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/Makefile
++++ b/arch/riscv/kernel/Makefile
+@@ -58,6 +58,8 @@ obj-$(CONFIG_MMU) += vdso.o vdso/
+ 
+ obj-$(CONFIG_RISCV_M_MODE)	+= traps_misaligned.o
+ obj-$(CONFIG_FPU)		+= fpu.o
++obj-$(CONFIG_RISCV_ISA_V)	+= vector.o
++obj-$(CONFIG_RISCV_ISA_V)	+= kernel_mode_vector.o
+ obj-$(CONFIG_SMP)		+= smpboot.o
+ obj-$(CONFIG_SMP)		+= smp.o
+ obj-$(CONFIG_SMP)		+= cpu_ops.o
+diff --git a/arch/riscv/kernel/cpu-hotplug.c b/arch/riscv/kernel/cpu-hotplug.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/cpu-hotplug.c
++++ b/arch/riscv/kernel/cpu-hotplug.c
+@@ -74,9 +74,14 @@ void __cpu_die(unsigned int cpu)
+ void arch_cpu_idle_dead(void)
+ {
+ 	idle_task_exit();
+-
++#if defined(CONFIG_SOC_SPACEMIT_K1PRO) || defined(CONFIG_SOC_SPACEMIT_K1X)
++	sbi_flush_local_dcache_all();
++#endif
+ 	(void)cpu_report_death();
+ 
++#if defined(CONFIG_SOC_SPACEMIT_K1PRO) || defined(CONFIG_SOC_SPACEMIT_K1X)
++	sbi_flush_local_dcache_all();
++#endif
+ 	cpu_ops[smp_processor_id()]->cpu_stop();
+ 	/* It should never reach here */
+ 	BUG();
+diff --git a/arch/riscv/kernel/cpu.c b/arch/riscv/kernel/cpu.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/cpu.c
++++ b/arch/riscv/kernel/cpu.c
+@@ -144,6 +144,8 @@ static struct riscv_isa_ext_data isa_ext_arr[] = {
+ 	__RISCV_ISA_EXT_DATA(svinval, RISCV_ISA_EXT_SVINVAL),
+ 	__RISCV_ISA_EXT_DATA(svpbmt, RISCV_ISA_EXT_SVPBMT),
+ 	__RISCV_ISA_EXT_DATA(zicbom, RISCV_ISA_EXT_ZICBOM),
++	__RISCV_ISA_EXT_DATA(zicboz, RISCV_ISA_EXT_ZICBOZ),
++	__RISCV_ISA_EXT_DATA(zicbop, RISCV_ISA_EXT_ZICBOP),
+ 	__RISCV_ISA_EXT_DATA(zihintpause, RISCV_ISA_EXT_ZIHINTPAUSE),
+ 	__RISCV_ISA_EXT_DATA("", RISCV_ISA_EXT_MAX),
+ };
+@@ -238,10 +240,14 @@ static int c_show(struct seq_file *m, void *v)
+ 	unsigned long cpu_id = (unsigned long)v - 1;
+ 	struct device_node *node = of_get_cpu_node(cpu_id, NULL);
+ 	struct riscv_cpuinfo *ci = per_cpu_ptr(&riscv_cpuinfo, cpu_id);
+-	const char *compat, *isa;
++	const char *compat, *isa, *model;
+ 
+ 	seq_printf(m, "processor\t: %lu\n", cpu_id);
+ 	seq_printf(m, "hart\t\t: %lu\n", cpuid_to_hartid_map(cpu_id));
++
++	if (!of_property_read_string(node, "model", &model))
++		seq_printf(m, "model name\t: %s\n", model);
++
+ 	if (!of_property_read_string(node, "riscv,isa", &isa))
+ 		print_isa(m, isa);
+ 	print_mmu(m);
+diff --git a/arch/riscv/kernel/cpu_ops_sbi.c b/arch/riscv/kernel/cpu_ops_sbi.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/cpu_ops_sbi.c
++++ b/arch/riscv/kernel/cpu_ops_sbi.c
+@@ -12,6 +12,8 @@
+ #include <asm/cpu_ops_sbi.h>
+ #include <asm/sbi.h>
+ #include <asm/smp.h>
++#include <linux/delay.h>
++#include <linux/jiffies.h>
+ 
+ extern char secondary_start_sbi[];
+ const struct cpu_operations cpu_ops_sbi;
+@@ -108,11 +110,37 @@ static int sbi_cpu_is_stopped(unsigned int cpuid)
+ {
+ 	int rc;
+ 	unsigned long hartid = cpuid_to_hartid_map(cpuid);
+-
++#ifndef CONFIG_ARM_SCMI_PROTOCOL
+ 	rc = sbi_hsm_hart_get_status(hartid);
+ 
+ 	if (rc == SBI_HSM_STATE_STOPPED)
+ 		return 0;
++#else
++        unsigned long start, end;
++
++        /*
++         * cpu_kill could race with cpu_die and we can
++         * potentially end up declaring this cpu undead
++         * while it is dying. So, try again a few times.
++         */
++        start = jiffies;
++        end = start + msecs_to_jiffies(100);
++        do {
++                rc = sbi_hsm_hart_get_status(hartid);
++                if (rc == SBI_HSM_STATE_STOPPED) {
++                        pr_info("CPU%d killed (polled %d ms)\n", cpuid,
++                                jiffies_to_msecs(jiffies - start));
++                        return 0;
++                }
++
++                usleep_range(100, 1000);
++        } while (time_before(jiffies, end));
++
++        pr_warn("CPU%d may not have shut down cleanly (AFFINITY_INFO reports %d)\n",
++                        cpuid, rc);
++        rc = -ETIMEDOUT;
++
++#endif
+ 	return rc;
+ }
+ #endif
+diff --git a/arch/riscv/kernel/cpufeature.c b/arch/riscv/kernel/cpufeature.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/cpufeature.c
++++ b/arch/riscv/kernel/cpufeature.c
+@@ -21,6 +21,7 @@
+ #include <asm/processor.h>
+ #include <asm/smp.h>
+ #include <asm/switch_to.h>
++#include <asm/vector.h>
+ 
+ #define NUM_ALPHA_EXTS ('z' - 'a' + 1)
+ 
+@@ -69,6 +70,33 @@ bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, int bit)
+ }
+ EXPORT_SYMBOL_GPL(__riscv_isa_extension_available);
+ 
++struct cpumask ai_core_mask_get(void)
++{
++	struct device_node *node;
++	const char *cpu_ai;
++	struct cpumask	cpu_mask;
++	unsigned long hartid;
++	int rc;
++
++	cpumask_clear(&cpu_mask);
++
++	for_each_of_cpu_node(node) {
++		rc = riscv_of_processor_hartid(node, &hartid);
++		if (rc < 0)
++			continue;
++
++		if (of_property_read_string(node, "cpu-ai", &cpu_ai)) {
++			continue;
++		}
++
++		if(!strcmp(cpu_ai, "true")) {
++			cpumask_set_cpu(hartid, &cpu_mask);
++		}
++	}
++
++	return cpu_mask;
++}
++
+ void __init riscv_fill_hwcap(void)
+ {
+ 	struct device_node *node;
+@@ -78,12 +106,13 @@ void __init riscv_fill_hwcap(void)
+ 	static unsigned long isa2hwcap[256] = {0};
+ 	unsigned long hartid;
+ 
+-	isa2hwcap['i'] = isa2hwcap['I'] = COMPAT_HWCAP_ISA_I;
+-	isa2hwcap['m'] = isa2hwcap['M'] = COMPAT_HWCAP_ISA_M;
+-	isa2hwcap['a'] = isa2hwcap['A'] = COMPAT_HWCAP_ISA_A;
+-	isa2hwcap['f'] = isa2hwcap['F'] = COMPAT_HWCAP_ISA_F;
+-	isa2hwcap['d'] = isa2hwcap['D'] = COMPAT_HWCAP_ISA_D;
+-	isa2hwcap['c'] = isa2hwcap['C'] = COMPAT_HWCAP_ISA_C;
++	isa2hwcap['i' - 'a'] = COMPAT_HWCAP_ISA_I;
++	isa2hwcap['m' - 'a'] = COMPAT_HWCAP_ISA_M;
++	isa2hwcap['a' - 'a'] = COMPAT_HWCAP_ISA_A;
++	isa2hwcap['f' - 'a'] = COMPAT_HWCAP_ISA_F;
++	isa2hwcap['d' - 'a'] = COMPAT_HWCAP_ISA_D;
++	isa2hwcap['c' - 'a'] = COMPAT_HWCAP_ISA_C;
++	isa2hwcap['v' - 'a'] = COMPAT_HWCAP_ISA_V;
+ 
+ 	elf_hwcap = 0;
+ 
+@@ -197,12 +226,15 @@ void __init riscv_fill_hwcap(void)
+ 			if (unlikely(ext_err))
+ 				continue;
+ 			if (!ext_long) {
+-				this_hwcap |= isa2hwcap[(unsigned char)(*ext)];
+-				set_bit(*ext - 'a', this_isa);
++				int nr = *ext - 'a';
++				this_hwcap |= isa2hwcap[nr];
++				set_bit(nr, this_isa);
+ 			} else {
+ 				SET_ISA_EXT_MAP("sscofpmf", RISCV_ISA_EXT_SSCOFPMF);
+ 				SET_ISA_EXT_MAP("svpbmt", RISCV_ISA_EXT_SVPBMT);
+ 				SET_ISA_EXT_MAP("zicbom", RISCV_ISA_EXT_ZICBOM);
++				SET_ISA_EXT_MAP("zicboz", RISCV_ISA_EXT_ZICBOZ);
++				SET_ISA_EXT_MAP("zicbop", RISCV_ISA_EXT_ZICBOP);
+ 				SET_ISA_EXT_MAP("zihintpause", RISCV_ISA_EXT_ZIHINTPAUSE);
+ 				SET_ISA_EXT_MAP("sstc", RISCV_ISA_EXT_SSTC);
+ 				SET_ISA_EXT_MAP("svinval", RISCV_ISA_EXT_SVINVAL);
+@@ -233,6 +265,17 @@ void __init riscv_fill_hwcap(void)
+ 		elf_hwcap &= ~COMPAT_HWCAP_ISA_F;
+ 	}
+ 
++	if (elf_hwcap & COMPAT_HWCAP_ISA_V) {
++		riscv_v_setup_vsize();
++		/*
++		 * ISA string in device tree might have 'v' flag, but
++		 * CONFIG_RISCV_ISA_V is disabled in kernel.
++		 * Clear V flag in elf_hwcap if CONFIG_RISCV_ISA_V is disabled.
++		 */
++		if (!IS_ENABLED(CONFIG_RISCV_ISA_V))
++			elf_hwcap &= ~COMPAT_HWCAP_ISA_V;
++	}
++
+ 	memset(print_str, 0, sizeof(print_str));
+ 	for (i = 0, j = 0; i < NUM_ALPHA_EXTS; i++)
+ 		if (riscv_isa[0] & BIT_MASK(i))
+@@ -252,6 +295,15 @@ void __init riscv_fill_hwcap(void)
+ 	}
+ }
+ 
++void riscv_user_isa_enable(void)
++{
++	if (riscv_isa_extension_available(NULL, ZICBOZ))
++		csr_set(CSR_SENVCFG, ENVCFG_CBZE);
++
++	if (riscv_isa_extension_available(NULL, ZICBOM))
++		csr_set(CSR_SENVCFG, ENVCFG_CBCFE | (ENVCFG_CBIE_FLUSH << ENVCFG_CBIE_SHIFT));
++}
++
+ #ifdef CONFIG_RISCV_ALTERNATIVE
+ static bool __init_or_module cpufeature_probe_svpbmt(unsigned int stage)
+ {
+@@ -279,6 +331,35 @@ static bool __init_or_module cpufeature_probe_zicbom(unsigned int stage)
+ 	return true;
+ }
+ 
++static bool __init_or_module cpufeature_probe_zicboz(unsigned int stage)
++{
++	if (!IS_ENABLED(CONFIG_RISCV_ISA_ZICBOZ))
++		return false;
++
++	if (stage == RISCV_ALTERNATIVES_EARLY_BOOT)
++		return false;
++
++	if (!riscv_isa_extension_available(NULL, ZICBOZ))
++		return false;
++
++	return true;
++}
++
++static bool __init_or_module cpufeature_probe_zicbop(unsigned int stage)
++{
++	if (!IS_ENABLED(CONFIG_RISCV_ISA_ZICBOP))
++		return false;
++
++	if (stage == RISCV_ALTERNATIVES_EARLY_BOOT)
++		return false;
++
++	if (!riscv_isa_extension_available(NULL, ZICBOP))
++		return false;
++
++	return true;
++}
++
++
+ /*
+  * Probe presence of individual extensions.
+  *
+@@ -296,6 +377,12 @@ static u32 __init_or_module cpufeature_probe(unsigned int stage)
+ 	if (cpufeature_probe_zicbom(stage))
+ 		cpu_req_feature |= BIT(CPUFEATURE_ZICBOM);
+ 
++	if (cpufeature_probe_zicboz(stage))
++		cpu_req_feature |= BIT(CPUFEATURE_ZICBOZ);
++
++	if (cpufeature_probe_zicbop(stage))
++		cpu_req_feature |= BIT(CPUFEATURE_ZICBOP);
++
+ 	return cpu_req_feature;
+ }
+ 
+diff --git a/arch/riscv/kernel/entry.S b/arch/riscv/kernel/entry.S
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/entry.S
++++ b/arch/riscv/kernel/entry.S
+@@ -77,10 +77,10 @@ _save_context:
+ 	 * Disable user-mode memory access as it should only be set in the
+ 	 * actual user copy routines.
+ 	 *
+-	 * Disable the FPU to detect illegal usage of floating point in kernel
+-	 * space.
++	 * Disable the FPU/Vector to detect illegal usage of floating point
++	 * or vector in kernel space.
+ 	 */
+-	li t0, SR_SUM | SR_FS
++	li t0, SR_SUM | SR_FS_VS
+ 
+ 	REG_L s0, TASK_TI_USER_SP(tp)
+ 	csrrc s1, CSR_STATUS, t0
+diff --git a/arch/riscv/kernel/head.S b/arch/riscv/kernel/head.S
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/head.S
++++ b/arch/riscv/kernel/head.S
+@@ -42,13 +42,8 @@ ENTRY(_start)
+ 	/* Image load offset (0MB) from start of RAM for M-mode */
+ 	.dword 0
+ #else
+-#if __riscv_xlen == 64
+-	/* Image load offset(2MB) from start of RAM */
+-	.dword 0x200000
+-#else
+-	/* Image load offset(4MB) from start of RAM */
+-	.dword 0x400000
+-#endif
++	/* Image load offset from start of RAM */
++	.dword CONFIG_IMAGE_LOAD_OFFSET
+ #endif
+ 	/* Effective size of kernel image */
+ 	.dword _end - _start
+@@ -140,10 +135,10 @@ secondary_start_sbi:
+ 	.option pop
+ 
+ 	/*
+-	 * Disable FPU to detect illegal usage of
+-	 * floating point in kernel space
++	 * Disable FPU & VECTOR to detect illegal usage of
++	 * floating point or vector in kernel space
+ 	 */
+-	li t0, SR_FS
++	li t0, SR_FS_VS
+ 	csrc CSR_STATUS, t0
+ 
+ 	/* Set trap vector to spin forever to help debug */
+@@ -234,10 +229,10 @@ pmp_done:
+ .option pop
+ 
+ 	/*
+-	 * Disable FPU to detect illegal usage of
+-	 * floating point in kernel space
++	 * Disable FPU & VECTOR to detect illegal usage of
++	 * floating point or vector in kernel space
+ 	 */
+-	li t0, SR_FS
++	li t0, SR_FS_VS
+ 	csrc CSR_STATUS, t0
+ 
+ #ifdef CONFIG_RISCV_BOOT_SPINWAIT
+@@ -301,6 +296,7 @@ clear_bss_done:
+ 	la tp, init_task
+ 	la sp, init_thread_union + THREAD_SIZE
+ 	XIP_FIXUP_OFFSET sp
++	addi sp, sp, -PT_SIZE_ON_STACK
+ #ifdef CONFIG_BUILTIN_DTB
+ 	la a0, __dtb_start
+ 	XIP_FIXUP_OFFSET a0
+@@ -318,6 +314,7 @@ clear_bss_done:
+ 	/* Restore C environment */
+ 	la tp, init_task
+ 	la sp, init_thread_union + THREAD_SIZE
++	addi sp, sp, -PT_SIZE_ON_STACK
+ 
+ #ifdef CONFIG_KASAN
+ 	call kasan_early_init
+@@ -392,7 +389,7 @@ ENTRY(reset_regs)
+ #ifdef CONFIG_FPU
+ 	csrr	t0, CSR_MISA
+ 	andi	t0, t0, (COMPAT_HWCAP_ISA_F | COMPAT_HWCAP_ISA_D)
+-	beqz	t0, .Lreset_regs_done
++	beqz	t0, .Lreset_regs_done_fpu
+ 
+ 	li	t1, SR_FS
+ 	csrs	CSR_STATUS, t1
+@@ -430,8 +427,31 @@ ENTRY(reset_regs)
+ 	fmv.s.x	f31, zero
+ 	csrw	fcsr, 0
+ 	/* note that the caller must clear SR_FS */
++.Lreset_regs_done_fpu:
+ #endif /* CONFIG_FPU */
+-.Lreset_regs_done:
++
++#ifdef CONFIG_RISCV_ISA_V
++	csrr	t0, CSR_MISA
++	li	t1, COMPAT_HWCAP_ISA_V
++	and	t0, t0, t1
++	beqz	t0, .Lreset_regs_done_vector
++
++	/*
++	 * Clear vector registers and reset vcsr
++	 * VLMAX has a defined value, VLEN is a constant,
++	 * and this form of vsetvli is defined to set vl to VLMAX.
++	 */
++	li	t1, SR_VS
++	csrs	CSR_STATUS, t1
++	csrs	CSR_VCSR, x0
++	vsetvli t1, x0, e8, m8, ta, ma
++	vmv.v.i v0, 0
++	vmv.v.i v8, 0
++	vmv.v.i v16, 0
++	vmv.v.i v24, 0
++	/* note that the caller must clear SR_VS */
++.Lreset_regs_done_vector:
++#endif /* CONFIG_RISCV_ISA_V */
+ 	ret
+ END(reset_regs)
+ #endif /* CONFIG_RISCV_M_MODE */
+diff --git a/arch/riscv/kernel/kernel_mode_vector.c b/arch/riscv/kernel/kernel_mode_vector.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/kernel/kernel_mode_vector.c
+@@ -0,0 +1,125 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) 2012 ARM Ltd.
++ * Author: Catalin Marinas <catalin.marinas@arm.com>
++ * Copyright (C) 2017 Linaro Ltd. <ard.biesheuvel@linaro.org>
++ * Copyright (C) 2021 SiFive
++ */
++#include <linux/compiler.h>
++#include <linux/irqflags.h>
++#include <linux/percpu.h>
++#include <linux/preempt.h>
++#include <linux/types.h>
++
++#include <asm/vector.h>
++#include <asm/switch_to.h>
++#include <asm/simd.h>
++
++static inline void riscv_v_flags_set(u32 flags)
++{
++	current->thread.riscv_v_flags = flags;
++}
++
++static inline void riscv_v_start(u32 flags)
++{
++	int orig;
++
++	orig = riscv_v_flags();
++	BUG_ON((orig & flags) != 0);
++	riscv_v_flags_set(orig | flags);
++}
++
++static inline void riscv_v_stop(u32 flags)
++{
++	int orig;
++
++	orig = riscv_v_flags();
++	BUG_ON((orig & flags) == 0);
++	riscv_v_flags_set(orig & ~flags);
++}
++
++/*
++ * Claim ownership of the CPU vector context for use by the calling context.
++ *
++ * The caller may freely manipulate the vector context metadata until
++ * put_cpu_vector_context() is called.
++ */
++void get_cpu_vector_context(void)
++{
++	/*
++	 * disable softirqs so it is impossible for softirqs to nest
++	 * get_cpu_vector_context() when kernel is actively using Vector.
++	 */
++	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++		local_bh_disable();
++	else
++		preempt_disable();
++	riscv_v_start(RISCV_KERNEL_MODE_V);
++}
++
++/*
++ * Release the CPU vector context.
++ *
++ * Must be called from a context in which get_cpu_vector_context() was
++ * previously called, with no call to put_cpu_vector_context() in the
++ * meantime.
++ */
++void put_cpu_vector_context(void)
++{
++	riscv_v_stop(RISCV_KERNEL_MODE_V);
++
++	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
++		local_bh_enable();
++	else
++		preempt_enable();
++}
++
++/*
++ * kernel_vector_begin(): obtain the CPU vector registers for use by the calling
++ * context
++ *
++ * Must not be called unless may_use_simd() returns true.
++ * Task context in the vector registers is saved back to memory as necessary.
++ *
++ * A matching call to kernel_vector_end() must be made before returning from the
++ * calling context.
++ *
++ * The caller may freely use the vector registers until kernel_vector_end() is
++ * called.
++ */
++void kernel_vector_begin(void)
++{
++	if (WARN_ON(!has_vector()))
++		return;
++
++	BUG_ON(!may_use_simd());
++
++	get_cpu_vector_context();
++
++	riscv_v_vstate_save(current, task_pt_regs(current));
++
++	riscv_v_enable();
++}
++EXPORT_SYMBOL_GPL(kernel_vector_begin);
++
++/*
++ * kernel_vector_end(): give the CPU vector registers back to the current task
++ *
++ * Must be called from a context in which kernel_vector_begin() was previously
++ * called, with no call to kernel_vector_end() in the meantime.
++ *
++ * The caller must not use the vector registers after this function is called,
++ * unless kernel_vector_begin() is called again in the meantime.
++ */
++void kernel_vector_end(void)
++{
++	if (WARN_ON(!has_vector()))
++		return;
++
++	riscv_v_vstate_restore(current, task_pt_regs(current));
++
++	riscv_v_disable();
++
++	put_cpu_vector_context();
++}
++EXPORT_SYMBOL_GPL(kernel_vector_end);
+\ No newline at end of file
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@xxxxx.com>
+Date: Sat, 22 Jun 2024 07:28:17 -0400
+Subject: arch: riscv: kernel: module.c
+
+Signed-off-by: Patrick Yavitz <pyavitz@xxxxx.com>
+---
+ arch/riscv/kernel/module.c  | 708 ++++++++--
+ arch/riscv/kernel/process.c |  19 +
+ arch/riscv/kernel/ptrace.c  |  70 +
+ arch/riscv/kernel/sbi.c     |   9 +
+ arch/riscv/kernel/setup.c   |   5 +
+ 5 files changed, 692 insertions(+), 119 deletions(-)
+
+diff --git a/arch/riscv/kernel/module.c b/arch/riscv/kernel/module.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/module.c
++++ b/arch/riscv/kernel/module.c
+@@ -7,6 +7,9 @@
+ #include <linux/elf.h>
+ #include <linux/err.h>
+ #include <linux/errno.h>
++#include <linux/hashtable.h>
++#include <linux/kernel.h>
++#include <linux/log2.h>
+ #include <linux/moduleloader.h>
+ #include <linux/vmalloc.h>
+ #include <linux/sizes.h>
+@@ -14,6 +17,29 @@
+ #include <asm/alternative.h>
+ #include <asm/sections.h>
+ 
++struct used_bucket {
++	struct list_head head;
++	struct hlist_head *bucket;
++};
++
++struct relocation_head {
++	struct hlist_node node;
++	struct list_head *rel_entry;
++	void *location;
++};
++
++struct relocation_entry {
++	struct list_head head;
++	Elf_Addr value;
++	unsigned int type;
++};
++
++struct relocation_handlers {
++	int (*reloc_handler)(struct module *me, void *location, Elf_Addr v);
++	int (*accumulate_handler)(struct module *me, void *location,
++				  long buffer);
++};
++
+ /*
+  * The auipc+jalr instruction pair can reach any PC-relative offset
+  * in the range [-2^31 - 2^11, 2^31 - 2^11)
+@@ -27,68 +53,90 @@ static bool riscv_insn_valid_32bit_offset(ptrdiff_t val)
+ #endif
+ }
+ 
+-static int apply_r_riscv_32_rela(struct module *me, u32 *location, Elf_Addr v)
++static int riscv_insn_rmw(void *location, u32 keep, u32 set)
++{
++	__le16 *parcel = location;
++	u32 insn = (u32)le16_to_cpu(parcel[0]) | (u32)le16_to_cpu(parcel[1]) << 16;
++
++	insn &= keep;
++	insn |= set;
++
++	parcel[0] = cpu_to_le16(insn);
++	parcel[1] = cpu_to_le16(insn >> 16);
++	return 0;
++}
++
++static int riscv_insn_rvc_rmw(void *location, u16 keep, u16 set)
++{
++	__le16 *parcel = location;
++	u16 insn = le16_to_cpu(*parcel);
++
++	insn &= keep;
++	insn |= set;
++
++	*parcel = cpu_to_le16(insn);
++	return 0;
++}
++
++static int apply_r_riscv_32_rela(struct module *me, void *location, Elf_Addr v)
+ {
+ 	if (v != (u32)v) {
+ 		pr_err("%s: value %016llx out of range for 32-bit field\n",
+ 		       me->name, (long long)v);
+ 		return -EINVAL;
+ 	}
+-	*location = v;
++	*(u32 *)location = v;
+ 	return 0;
+ }
+ 
+-static int apply_r_riscv_64_rela(struct module *me, u32 *location, Elf_Addr v)
++static int apply_r_riscv_64_rela(struct module *me, void *location, Elf_Addr v)
+ {
+ 	*(u64 *)location = v;
+ 	return 0;
+ }
+ 
+-static int apply_r_riscv_branch_rela(struct module *me, u32 *location,
++static int apply_r_riscv_branch_rela(struct module *me, void *location,
+ 				     Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
++	ptrdiff_t offset = (void *)v - location;
+ 	u32 imm12 = (offset & 0x1000) << (31 - 12);
+ 	u32 imm11 = (offset & 0x800) >> (11 - 7);
+ 	u32 imm10_5 = (offset & 0x7e0) << (30 - 10);
+ 	u32 imm4_1 = (offset & 0x1e) << (11 - 4);
+ 
+-	*location = (*location & 0x1fff07f) | imm12 | imm11 | imm10_5 | imm4_1;
+-	return 0;
++	return riscv_insn_rmw(location, 0x1fff07f, imm12 | imm11 | imm10_5 | imm4_1);
+ }
+ 
+-static int apply_r_riscv_jal_rela(struct module *me, u32 *location,
++static int apply_r_riscv_jal_rela(struct module *me, void *location,
+ 				  Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
++	ptrdiff_t offset = (void *)v - location;
+ 	u32 imm20 = (offset & 0x100000) << (31 - 20);
+ 	u32 imm19_12 = (offset & 0xff000);
+ 	u32 imm11 = (offset & 0x800) << (20 - 11);
+ 	u32 imm10_1 = (offset & 0x7fe) << (30 - 10);
+ 
+-	*location = (*location & 0xfff) | imm20 | imm19_12 | imm11 | imm10_1;
+-	return 0;
++	return riscv_insn_rmw(location, 0xfff, imm20 | imm19_12 | imm11 | imm10_1);
+ }
+ 
+-static int apply_r_riscv_rvc_branch_rela(struct module *me, u32 *location,
++static int apply_r_riscv_rvc_branch_rela(struct module *me, void *location,
+ 					 Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
++	ptrdiff_t offset = (void *)v - location;
+ 	u16 imm8 = (offset & 0x100) << (12 - 8);
+ 	u16 imm7_6 = (offset & 0xc0) >> (6 - 5);
+ 	u16 imm5 = (offset & 0x20) >> (5 - 2);
+ 	u16 imm4_3 = (offset & 0x18) << (12 - 5);
+ 	u16 imm2_1 = (offset & 0x6) << (12 - 10);
+ 
+-	*(u16 *)location = (*(u16 *)location & 0xe383) |
+-		    imm8 | imm7_6 | imm5 | imm4_3 | imm2_1;
+-	return 0;
++	return riscv_insn_rvc_rmw(location, 0xe383,
++			imm8 | imm7_6 | imm5 | imm4_3 | imm2_1);
+ }
+ 
+-static int apply_r_riscv_rvc_jump_rela(struct module *me, u32 *location,
++static int apply_r_riscv_rvc_jump_rela(struct module *me, void *location,
+ 				       Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
++	ptrdiff_t offset = (void *)v - location;
+ 	u16 imm11 = (offset & 0x800) << (12 - 11);
+ 	u16 imm10 = (offset & 0x400) >> (10 - 8);
+ 	u16 imm9_8 = (offset & 0x300) << (12 - 11);
+@@ -98,16 +146,14 @@ static int apply_r_riscv_rvc_jump_rela(struct module *me, u32 *location,
+ 	u16 imm4 = (offset & 0x10) << (12 - 5);
+ 	u16 imm3_1 = (offset & 0xe) << (12 - 10);
+ 
+-	*(u16 *)location = (*(u16 *)location & 0xe003) |
+-		    imm11 | imm10 | imm9_8 | imm7 | imm6 | imm5 | imm4 | imm3_1;
+-	return 0;
++	return riscv_insn_rvc_rmw(location, 0xe003,
++			imm11 | imm10 | imm9_8 | imm7 | imm6 | imm5 | imm4 | imm3_1);
+ }
+ 
+-static int apply_r_riscv_pcrel_hi20_rela(struct module *me, u32 *location,
++static int apply_r_riscv_pcrel_hi20_rela(struct module *me, void *location,
+ 					 Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
+-	s32 hi20;
++	ptrdiff_t offset = (void *)v - location;
+ 
+ 	if (!riscv_insn_valid_32bit_offset(offset)) {
+ 		pr_err(
+@@ -116,23 +162,20 @@ static int apply_r_riscv_pcrel_hi20_rela(struct module *me, u32 *location,
+ 		return -EINVAL;
+ 	}
+ 
+-	hi20 = (offset + 0x800) & 0xfffff000;
+-	*location = (*location & 0xfff) | hi20;
+-	return 0;
++	return riscv_insn_rmw(location, 0xfff, (offset + 0x800) & 0xfffff000);
+ }
+ 
+-static int apply_r_riscv_pcrel_lo12_i_rela(struct module *me, u32 *location,
++static int apply_r_riscv_pcrel_lo12_i_rela(struct module *me, void *location,
+ 					   Elf_Addr v)
+ {
+ 	/*
+ 	 * v is the lo12 value to fill. It is calculated before calling this
+ 	 * handler.
+ 	 */
+-	*location = (*location & 0xfffff) | ((v & 0xfff) << 20);
+-	return 0;
++	return riscv_insn_rmw(location, 0xfffff, (v & 0xfff) << 20);
+ }
+ 
+-static int apply_r_riscv_pcrel_lo12_s_rela(struct module *me, u32 *location,
++static int apply_r_riscv_pcrel_lo12_s_rela(struct module *me, void *location,
+ 					   Elf_Addr v)
+ {
+ 	/*
+@@ -142,15 +185,12 @@ static int apply_r_riscv_pcrel_lo12_s_rela(struct module *me, u32 *location,
+ 	u32 imm11_5 = (v & 0xfe0) << (31 - 11);
+ 	u32 imm4_0 = (v & 0x1f) << (11 - 4);
+ 
+-	*location = (*location & 0x1fff07f) | imm11_5 | imm4_0;
+-	return 0;
++	return riscv_insn_rmw(location, 0x1fff07f, imm11_5 | imm4_0);
+ }
+ 
+-static int apply_r_riscv_hi20_rela(struct module *me, u32 *location,
++static int apply_r_riscv_hi20_rela(struct module *me, void *location,
+ 				   Elf_Addr v)
+ {
+-	s32 hi20;
+-
+ 	if (IS_ENABLED(CONFIG_CMODEL_MEDLOW)) {
+ 		pr_err(
+ 		  "%s: target %016llx can not be addressed by the 32-bit offset from PC = %p\n",
+@@ -158,22 +198,20 @@ static int apply_r_riscv_hi20_rela(struct module *me, u32 *location,
+ 		return -EINVAL;
+ 	}
+ 
+-	hi20 = ((s32)v + 0x800) & 0xfffff000;
+-	*location = (*location & 0xfff) | hi20;
+-	return 0;
++	return riscv_insn_rmw(location, 0xfff, ((s32)v + 0x800) & 0xfffff000);
+ }
+ 
+-static int apply_r_riscv_lo12_i_rela(struct module *me, u32 *location,
++static int apply_r_riscv_lo12_i_rela(struct module *me, void *location,
+ 				     Elf_Addr v)
+ {
+ 	/* Skip medlow checking because of filtering by HI20 already */
+ 	s32 hi20 = ((s32)v + 0x800) & 0xfffff000;
+ 	s32 lo12 = ((s32)v - hi20);
+-	*location = (*location & 0xfffff) | ((lo12 & 0xfff) << 20);
+-	return 0;
++
++	return riscv_insn_rmw(location, 0xfffff, (lo12 & 0xfff) << 20);
+ }
+ 
+-static int apply_r_riscv_lo12_s_rela(struct module *me, u32 *location,
++static int apply_r_riscv_lo12_s_rela(struct module *me, void *location,
+ 				     Elf_Addr v)
+ {
+ 	/* Skip medlow checking because of filtering by HI20 already */
+@@ -181,20 +219,18 @@ static int apply_r_riscv_lo12_s_rela(struct module *me, u32 *location,
+ 	s32 lo12 = ((s32)v - hi20);
+ 	u32 imm11_5 = (lo12 & 0xfe0) << (31 - 11);
+ 	u32 imm4_0 = (lo12 & 0x1f) << (11 - 4);
+-	*location = (*location & 0x1fff07f) | imm11_5 | imm4_0;
+-	return 0;
++
++	return riscv_insn_rmw(location, 0x1fff07f, imm11_5 | imm4_0);
+ }
+ 
+-static int apply_r_riscv_got_hi20_rela(struct module *me, u32 *location,
++static int apply_r_riscv_got_hi20_rela(struct module *me, void *location,
+ 				       Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
+-	s32 hi20;
++	ptrdiff_t offset = (void *)v - location;
+ 
+ 	/* Always emit the got entry */
+ 	if (IS_ENABLED(CONFIG_MODULE_SECTIONS)) {
+-		offset = module_emit_got_entry(me, v);
+-		offset = (void *)offset - (void *)location;
++		offset = (void *)module_emit_got_entry(me, v) - location;
+ 	} else {
+ 		pr_err(
+ 		  "%s: can not generate the GOT entry for symbol = %016llx from PC = %p\n",
+@@ -202,22 +238,19 @@ static int apply_r_riscv_got_hi20_rela(struct module *me, u32 *location,
+ 		return -EINVAL;
+ 	}
+ 
+-	hi20 = (offset + 0x800) & 0xfffff000;
+-	*location = (*location & 0xfff) | hi20;
+-	return 0;
++	return riscv_insn_rmw(location, 0xfff, (offset + 0x800) & 0xfffff000);
+ }
+ 
+-static int apply_r_riscv_call_plt_rela(struct module *me, u32 *location,
++static int apply_r_riscv_call_plt_rela(struct module *me, void *location,
+ 				       Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
++	ptrdiff_t offset = (void *)v - location;
+ 	u32 hi20, lo12;
+ 
+ 	if (!riscv_insn_valid_32bit_offset(offset)) {
+ 		/* Only emit the plt entry if offset over 32-bit range */
+ 		if (IS_ENABLED(CONFIG_MODULE_SECTIONS)) {
+-			offset = module_emit_plt_entry(me, v);
+-			offset = (void *)offset - (void *)location;
++			offset = (void *)module_emit_plt_entry(me, v) - location;
+ 		} else {
+ 			pr_err(
+ 			  "%s: target %016llx can not be addressed by the 32-bit offset from PC = %p\n",
+@@ -228,15 +261,14 @@ static int apply_r_riscv_call_plt_rela(struct module *me, u32 *location,
+ 
+ 	hi20 = (offset + 0x800) & 0xfffff000;
+ 	lo12 = (offset - hi20) & 0xfff;
+-	*location = (*location & 0xfff) | hi20;
+-	*(location + 1) = (*(location + 1) & 0xfffff) | (lo12 << 20);
+-	return 0;
++	riscv_insn_rmw(location, 0xfff, hi20);
++	return riscv_insn_rmw(location + 4, 0xfffff, lo12 << 20);
+ }
+ 
+-static int apply_r_riscv_call_rela(struct module *me, u32 *location,
++static int apply_r_riscv_call_rela(struct module *me, void *location,
+ 				   Elf_Addr v)
+ {
+-	ptrdiff_t offset = (void *)v - (void *)location;
++	ptrdiff_t offset = (void *)v - location;
+ 	u32 hi20, lo12;
+ 
+ 	if (!riscv_insn_valid_32bit_offset(offset)) {
+@@ -248,18 +280,17 @@ static int apply_r_riscv_call_rela(struct module *me, u32 *location,
+ 
+ 	hi20 = (offset + 0x800) & 0xfffff000;
+ 	lo12 = (offset - hi20) & 0xfff;
+-	*location = (*location & 0xfff) | hi20;
+-	*(location + 1) = (*(location + 1) & 0xfffff) | (lo12 << 20);
+-	return 0;
++	riscv_insn_rmw(location, 0xfff, hi20);
++	return riscv_insn_rmw(location + 4, 0xfffff, lo12 << 20);
+ }
+ 
+-static int apply_r_riscv_relax_rela(struct module *me, u32 *location,
++static int apply_r_riscv_relax_rela(struct module *me, void *location,
+ 				    Elf_Addr v)
+ {
+ 	return 0;
+ }
+ 
+-static int apply_r_riscv_align_rela(struct module *me, u32 *location,
++static int apply_r_riscv_align_rela(struct module *me, void *location,
+ 				    Elf_Addr v)
+ {
+ 	pr_err(
+@@ -268,75 +299,509 @@ static int apply_r_riscv_align_rela(struct module *me, u32 *location,
+ 	return -EINVAL;
+ }
+ 
+-static int apply_r_riscv_add32_rela(struct module *me, u32 *location,
++static int apply_r_riscv_add8_rela(struct module *me, void *location, Elf_Addr v)
++{
++	*(u8 *)location += (u8)v;
++	return 0;
++}
++
++static int apply_r_riscv_add16_rela(struct module *me, void *location,
++				    Elf_Addr v)
++{
++	*(u16 *)location += (u16)v;
++	return 0;
++}
++
++static int apply_r_riscv_add32_rela(struct module *me, void *location,
+ 				    Elf_Addr v)
+ {
+ 	*(u32 *)location += (u32)v;
+ 	return 0;
+ }
+ 
+-static int apply_r_riscv_add64_rela(struct module *me, u32 *location,
++static int apply_r_riscv_add64_rela(struct module *me, void *location,
+ 				    Elf_Addr v)
+ {
+ 	*(u64 *)location += (u64)v;
+ 	return 0;
+ }
+ 
+-static int apply_r_riscv_sub32_rela(struct module *me, u32 *location,
++static int apply_r_riscv_sub8_rela(struct module *me, void *location, Elf_Addr v)
++{
++	*(u8 *)location -= (u8)v;
++	return 0;
++}
++
++static int apply_r_riscv_sub16_rela(struct module *me, void *location,
++				    Elf_Addr v)
++{
++	*(u16 *)location -= (u16)v;
++	return 0;
++}
++
++static int apply_r_riscv_sub32_rela(struct module *me, void *location,
+ 				    Elf_Addr v)
+ {
+ 	*(u32 *)location -= (u32)v;
+ 	return 0;
+ }
+ 
+-static int apply_r_riscv_sub64_rela(struct module *me, u32 *location,
++static int apply_r_riscv_sub64_rela(struct module *me, void *location,
+ 				    Elf_Addr v)
+ {
+ 	*(u64 *)location -= (u64)v;
+ 	return 0;
+ }
+ 
+-static int (*reloc_handlers_rela[]) (struct module *me, u32 *location,
+-				Elf_Addr v) = {
+-	[R_RISCV_32]			= apply_r_riscv_32_rela,
+-	[R_RISCV_64]			= apply_r_riscv_64_rela,
+-	[R_RISCV_BRANCH]		= apply_r_riscv_branch_rela,
+-	[R_RISCV_JAL]			= apply_r_riscv_jal_rela,
+-	[R_RISCV_RVC_BRANCH]		= apply_r_riscv_rvc_branch_rela,
+-	[R_RISCV_RVC_JUMP]		= apply_r_riscv_rvc_jump_rela,
+-	[R_RISCV_PCREL_HI20]		= apply_r_riscv_pcrel_hi20_rela,
+-	[R_RISCV_PCREL_LO12_I]		= apply_r_riscv_pcrel_lo12_i_rela,
+-	[R_RISCV_PCREL_LO12_S]		= apply_r_riscv_pcrel_lo12_s_rela,
+-	[R_RISCV_HI20]			= apply_r_riscv_hi20_rela,
+-	[R_RISCV_LO12_I]		= apply_r_riscv_lo12_i_rela,
+-	[R_RISCV_LO12_S]		= apply_r_riscv_lo12_s_rela,
+-	[R_RISCV_GOT_HI20]		= apply_r_riscv_got_hi20_rela,
+-	[R_RISCV_CALL_PLT]		= apply_r_riscv_call_plt_rela,
+-	[R_RISCV_CALL]			= apply_r_riscv_call_rela,
+-	[R_RISCV_RELAX]			= apply_r_riscv_relax_rela,
+-	[R_RISCV_ALIGN]			= apply_r_riscv_align_rela,
+-	[R_RISCV_ADD32]			= apply_r_riscv_add32_rela,
+-	[R_RISCV_ADD64]			= apply_r_riscv_add64_rela,
+-	[R_RISCV_SUB32]			= apply_r_riscv_sub32_rela,
+-	[R_RISCV_SUB64]			= apply_r_riscv_sub64_rela,
++static int dynamic_linking_not_supported(struct module *me, void *location,
++					 Elf_Addr v)
++{
++	pr_err("%s: Dynamic linking not supported in kernel modules PC = %p\n",
++	       me->name, location);
++	return -EINVAL;
++}
++
++static int tls_not_supported(struct module *me, void *location, Elf_Addr v)
++{
++	pr_err("%s: Thread local storage not supported in kernel modules PC = %p\n",
++	       me->name, location);
++	return -EINVAL;
++}
++
++static int apply_r_riscv_sub6_rela(struct module *me, void *location, Elf_Addr v)
++{
++	u8 *byte = location;
++	u8 value = v;
++
++	*byte = (*byte - (value & 0x3f)) & 0x3f;
++	return 0;
++}
++
++static int apply_r_riscv_set6_rela(struct module *me, void *location, Elf_Addr v)
++{
++	u8 *byte = location;
++	u8 value = v;
++
++	*byte = (*byte & 0xc0) | (value & 0x3f);
++	return 0;
++}
++
++static int apply_r_riscv_set8_rela(struct module *me, void *location, Elf_Addr v)
++{
++	*(u8 *)location = (u8)v;
++	return 0;
++}
++
++static int apply_r_riscv_set16_rela(struct module *me, void *location,
++				    Elf_Addr v)
++{
++	*(u16 *)location = (u16)v;
++	return 0;
++}
++
++static int apply_r_riscv_set32_rela(struct module *me, void *location,
++				    Elf_Addr v)
++{
++	*(u32 *)location = (u32)v;
++	return 0;
++}
++
++static int apply_r_riscv_32_pcrel_rela(struct module *me, void *location,
++				       Elf_Addr v)
++{
++	*(u32 *)location = v - (uintptr_t)location;
++	return 0;
++}
++
++static int apply_r_riscv_plt32_rela(struct module *me, void *location,
++				    Elf_Addr v)
++{
++	ptrdiff_t offset = (void *)v - location;
++
++	if (!riscv_insn_valid_32bit_offset(offset)) {
++		/* Only emit the plt entry if offset over 32-bit range */
++		if (IS_ENABLED(CONFIG_MODULE_SECTIONS)) {
++			offset = (void *)module_emit_plt_entry(me, v) - location;
++		} else {
++			pr_err("%s: target %016llx can not be addressed by the 32-bit offset from PC = %p\n",
++			       me->name, (long long)v, location);
++			return -EINVAL;
++		}
++	}
++
++	*(u32 *)location = (u32)offset;
++	return 0;
++}
++
++static int apply_r_riscv_set_uleb128(struct module *me, void *location, Elf_Addr v)
++{
++	*(long *)location = v;
++	return 0;
++}
++
++static int apply_r_riscv_sub_uleb128(struct module *me, void *location, Elf_Addr v)
++{
++	*(long *)location -= v;
++	return 0;
++}
++
++static int apply_6_bit_accumulation(struct module *me, void *location, long buffer)
++{
++	u8 *byte = location;
++	u8 value = buffer;
++
++	if (buffer > 0x3f) {
++		pr_err("%s: value %ld out of range for 6-bit relocation.\n",
++		       me->name, buffer);
++		return -EINVAL;
++	}
++
++	*byte = (*byte & 0xc0) | (value & 0x3f);
++	return 0;
++}
++
++static int apply_8_bit_accumulation(struct module *me, void *location, long buffer)
++{
++	if (buffer > U8_MAX) {
++		pr_err("%s: value %ld out of range for 8-bit relocation.\n",
++		       me->name, buffer);
++		return -EINVAL;
++	}
++	*(u8 *)location = (u8)buffer;
++	return 0;
++}
++
++static int apply_16_bit_accumulation(struct module *me, void *location, long buffer)
++{
++	if (buffer > U16_MAX) {
++		pr_err("%s: value %ld out of range for 16-bit relocation.\n",
++		       me->name, buffer);
++		return -EINVAL;
++	}
++	*(u16 *)location = (u16)buffer;
++	return 0;
++}
++
++static int apply_32_bit_accumulation(struct module *me, void *location, long buffer)
++{
++	if (buffer > U32_MAX) {
++		pr_err("%s: value %ld out of range for 32-bit relocation.\n",
++		       me->name, buffer);
++		return -EINVAL;
++	}
++	*(u32 *)location = (u32)buffer;
++	return 0;
++}
++
++static int apply_64_bit_accumulation(struct module *me, void *location, long buffer)
++{
++	*(u64 *)location = (u64)buffer;
++	return 0;
++}
++
++static int apply_uleb128_accumulation(struct module *me, void *location, long buffer)
++{
++	/*
++	 * ULEB128 is a variable length encoding. Encode the buffer into
++	 * the ULEB128 data format.
++	 */
++	u8 *p = location;
++
++	while (buffer != 0) {
++		u8 value = buffer & 0x7f;
++
++		buffer >>= 7;
++		value |= (!!buffer) << 7;
++
++		*p++ = value;
++	}
++	return 0;
++}
++
++/*
++ * Relocations defined in the riscv-elf-psabi-doc.
++ * This handles static linking only.
++ */
++static const struct relocation_handlers reloc_handlers[] = {
++	[R_RISCV_32]		= { .reloc_handler = apply_r_riscv_32_rela },
++	[R_RISCV_64]		= { .reloc_handler = apply_r_riscv_64_rela },
++	[R_RISCV_RELATIVE]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_COPY]		= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_JUMP_SLOT]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_TLS_DTPMOD32]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_TLS_DTPMOD64]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_TLS_DTPREL32]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_TLS_DTPREL64]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_TLS_TPREL32]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_TLS_TPREL64]	= { .reloc_handler = dynamic_linking_not_supported },
++	/* 12-15 undefined */
++	[R_RISCV_BRANCH]	= { .reloc_handler = apply_r_riscv_branch_rela },
++	[R_RISCV_JAL]		= { .reloc_handler = apply_r_riscv_jal_rela },
++	[R_RISCV_CALL]		= { .reloc_handler = apply_r_riscv_call_rela },
++	[R_RISCV_CALL_PLT]	= { .reloc_handler = apply_r_riscv_call_plt_rela },
++	[R_RISCV_GOT_HI20]	= { .reloc_handler = apply_r_riscv_got_hi20_rela },
++	[R_RISCV_TLS_GOT_HI20]	= { .reloc_handler = tls_not_supported },
++	[R_RISCV_TLS_GD_HI20]	= { .reloc_handler = tls_not_supported },
++	[R_RISCV_PCREL_HI20]	= { .reloc_handler = apply_r_riscv_pcrel_hi20_rela },
++	[R_RISCV_PCREL_LO12_I]	= { .reloc_handler = apply_r_riscv_pcrel_lo12_i_rela },
++	[R_RISCV_PCREL_LO12_S]	= { .reloc_handler = apply_r_riscv_pcrel_lo12_s_rela },
++	[R_RISCV_HI20]		= { .reloc_handler = apply_r_riscv_hi20_rela },
++	[R_RISCV_LO12_I]	= { .reloc_handler = apply_r_riscv_lo12_i_rela },
++	[R_RISCV_LO12_S]	= { .reloc_handler = apply_r_riscv_lo12_s_rela },
++	[R_RISCV_TPREL_HI20]	= { .reloc_handler = tls_not_supported },
++	[R_RISCV_TPREL_LO12_I]	= { .reloc_handler = tls_not_supported },
++	[R_RISCV_TPREL_LO12_S]	= { .reloc_handler = tls_not_supported },
++	[R_RISCV_TPREL_ADD]	= { .reloc_handler = tls_not_supported },
++	[R_RISCV_ADD8]		= { .reloc_handler = apply_r_riscv_add8_rela,
++				    .accumulate_handler = apply_8_bit_accumulation },
++	[R_RISCV_ADD16]		= { .reloc_handler = apply_r_riscv_add16_rela,
++				    .accumulate_handler = apply_16_bit_accumulation },
++	[R_RISCV_ADD32]		= { .reloc_handler = apply_r_riscv_add32_rela,
++				    .accumulate_handler = apply_32_bit_accumulation },
++	[R_RISCV_ADD64]		= { .reloc_handler = apply_r_riscv_add64_rela,
++				    .accumulate_handler = apply_64_bit_accumulation },
++	[R_RISCV_SUB8]		= { .reloc_handler = apply_r_riscv_sub8_rela,
++				    .accumulate_handler = apply_8_bit_accumulation },
++	[R_RISCV_SUB16]		= { .reloc_handler = apply_r_riscv_sub16_rela,
++				    .accumulate_handler = apply_16_bit_accumulation },
++	[R_RISCV_SUB32]		= { .reloc_handler = apply_r_riscv_sub32_rela,
++				    .accumulate_handler = apply_32_bit_accumulation },
++	[R_RISCV_SUB64]		= { .reloc_handler = apply_r_riscv_sub64_rela,
++				    .accumulate_handler = apply_64_bit_accumulation },
++	/* 41-42 reserved for future standard use */
++	[R_RISCV_ALIGN]		= { .reloc_handler = apply_r_riscv_align_rela },
++	[R_RISCV_RVC_BRANCH]	= { .reloc_handler = apply_r_riscv_rvc_branch_rela },
++	[R_RISCV_RVC_JUMP]	= { .reloc_handler = apply_r_riscv_rvc_jump_rela },
++	/* 46-50 reserved for future standard use */
++	[R_RISCV_RELAX]		= { .reloc_handler = apply_r_riscv_relax_rela },
++	[R_RISCV_SUB6]		= { .reloc_handler = apply_r_riscv_sub6_rela,
++				    .accumulate_handler = apply_6_bit_accumulation },
++	[R_RISCV_SET6]		= { .reloc_handler = apply_r_riscv_set6_rela,
++				    .accumulate_handler = apply_6_bit_accumulation },
++	[R_RISCV_SET8]		= { .reloc_handler = apply_r_riscv_set8_rela,
++				    .accumulate_handler = apply_8_bit_accumulation },
++	[R_RISCV_SET16]		= { .reloc_handler = apply_r_riscv_set16_rela,
++				    .accumulate_handler = apply_16_bit_accumulation },
++	[R_RISCV_SET32]		= { .reloc_handler = apply_r_riscv_set32_rela,
++				    .accumulate_handler = apply_32_bit_accumulation },
++	[R_RISCV_32_PCREL]	= { .reloc_handler = apply_r_riscv_32_pcrel_rela },
++	[R_RISCV_IRELATIVE]	= { .reloc_handler = dynamic_linking_not_supported },
++	[R_RISCV_PLT32]		= { .reloc_handler = apply_r_riscv_plt32_rela },
++	[R_RISCV_SET_ULEB128]	= { .reloc_handler = apply_r_riscv_set_uleb128,
++				    .accumulate_handler = apply_uleb128_accumulation },
++	[R_RISCV_SUB_ULEB128]	= { .reloc_handler = apply_r_riscv_sub_uleb128,
++				    .accumulate_handler = apply_uleb128_accumulation },
++	/* 62-191 reserved for future standard use */
++	/* 192-255 nonstandard ABI extensions  */
+ };
+ 
++static void
++process_accumulated_relocations(struct module *me,
++				struct hlist_head **relocation_hashtable,
++				struct list_head *used_buckets_list)
++{
++	/*
++	 * Only ADD/SUB/SET/ULEB128 should end up here.
++	 *
++	 * Each bucket may have more than one relocation location. All
++	 * relocations for a location are stored in a list in a bucket.
++	 *
++	 * Relocations are applied to a temp variable before being stored to the
++	 * provided location to check for overflow. This also allows ULEB128 to
++	 * properly decide how many entries are needed before storing to
++	 * location. The final value is stored into location using the handler
++	 * for the last relocation to an address.
++	 *
++	 * Three layers of indexing:
++	 *	- Each of the buckets in use
++	 *	- Groups of relocations in each bucket by location address
++	 *	- Each relocation entry for a location address
++	 */
++	struct used_bucket *bucket_iter;
++	struct used_bucket *bucket_iter_tmp;
++	struct relocation_head *rel_head_iter;
++	struct hlist_node *rel_head_iter_tmp;
++	struct relocation_entry *rel_entry_iter;
++	struct relocation_entry *rel_entry_iter_tmp;
++	int curr_type;
++	void *location;
++	long buffer;
++
++	list_for_each_entry_safe(bucket_iter, bucket_iter_tmp,
++				 used_buckets_list, head) {
++		hlist_for_each_entry_safe(rel_head_iter, rel_head_iter_tmp,
++					  bucket_iter->bucket, node) {
++			buffer = 0;
++			location = rel_head_iter->location;
++			list_for_each_entry_safe(rel_entry_iter,
++						 rel_entry_iter_tmp,
++						 rel_head_iter->rel_entry,
++						 head) {
++				curr_type = rel_entry_iter->type;
++				reloc_handlers[curr_type].reloc_handler(
++					me, &buffer, rel_entry_iter->value);
++				kfree(rel_entry_iter);
++			}
++			reloc_handlers[curr_type].accumulate_handler(
++				me, location, buffer);
++			kfree(rel_head_iter);
++		}
++		kfree(bucket_iter);
++	}
++
++	kfree(*relocation_hashtable);
++}
++
++static int add_relocation_to_accumulate(struct module *me, int type,
++					void *location,
++					unsigned int hashtable_bits, Elf_Addr v,
++					struct hlist_head *relocation_hashtable,
++					struct list_head *used_buckets_list)
++{
++	struct relocation_entry *entry;
++	struct relocation_head *rel_head;
++	struct hlist_head *current_head;
++	struct used_bucket *bucket;
++	unsigned long hash;
++	bool found = false;
++	struct relocation_head *rel_head_iter;
++
++	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
++
++	if (!entry)
++		return -ENOMEM;
++
++	INIT_LIST_HEAD(&entry->head);
++	entry->type = type;
++	entry->value = v;
++
++	hash = hash_min((uintptr_t)location, hashtable_bits);
++
++	current_head = &relocation_hashtable[hash];
++
++	/*
++	 * Search for the relocation_head for the relocations that happen at the
++	 * provided location
++	 */
++	hlist_for_each_entry(rel_head_iter, current_head, node) {
++		if (rel_head_iter->location == location) {
++			found = true;
++			rel_head = rel_head_iter;
++			break;
++		}
++	}
++
++	/*
++	 * If there has not yet been any relocations at the provided location,
++	 * create a relocation_head for that location and populate it with this
++	 * relocation_entry.
++	 */
++	if (!found) {
++		rel_head = kmalloc(sizeof(*rel_head), GFP_KERNEL);
++
++		if (!rel_head) {
++			kfree(entry);
++			return -ENOMEM;
++		}
++
++		rel_head->rel_entry =
++			kmalloc(sizeof(struct list_head), GFP_KERNEL);
++
++		if (!rel_head->rel_entry) {
++			kfree(entry);
++			kfree(rel_head);
++			return -ENOMEM;
++		}
++
++		INIT_LIST_HEAD(rel_head->rel_entry);
++		rel_head->location = location;
++		INIT_HLIST_NODE(&rel_head->node);
++		if (!current_head->first) {
++			bucket =
++				kmalloc(sizeof(struct used_bucket), GFP_KERNEL);
++
++			if (!bucket) {
++				kfree(entry);
++				kfree(rel_head->rel_entry);
++				kfree(rel_head);
++				return -ENOMEM;
++			}
++
++			INIT_LIST_HEAD(&bucket->head);
++			bucket->bucket = current_head;
++			list_add(&bucket->head, used_buckets_list);
++		}
++		hlist_add_head(&rel_head->node, current_head);
++	}
++
++	/* Add relocation to head of discovered rel_head */
++	list_add_tail(&entry->head, rel_head->rel_entry);
++
++	return 0;
++}
++
++static unsigned int
++initialize_relocation_hashtable(unsigned int num_relocations,
++				struct hlist_head **relocation_hashtable)
++{
++	/* Can safely assume that bits is not greater than sizeof(long) */
++	unsigned long hashtable_size = roundup_pow_of_two(num_relocations);
++	/*
++	 * When hashtable_size == 1, hashtable_bits == 0.
++	 * This is valid because the hashing algorithm returns 0 in this case.
++	 */
++	unsigned int hashtable_bits = ilog2(hashtable_size);
++
++	/*
++	 * Double size of hashtable if num_relocations * 1.25 is greater than
++	 * hashtable_size.
++	 */
++	int should_double_size = ((num_relocations + (num_relocations >> 2)) > (hashtable_size));
++
++	hashtable_bits += should_double_size;
++
++	hashtable_size <<= should_double_size;
++
++	*relocation_hashtable = kmalloc_array(hashtable_size,
++					      sizeof(**relocation_hashtable),
++					      GFP_KERNEL);
++	if (!*relocation_hashtable)
++		return 0;
++
++	__hash_init(*relocation_hashtable, hashtable_size);
++
++	return hashtable_bits;
++}
++
+ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
+ 		       unsigned int symindex, unsigned int relsec,
+ 		       struct module *me)
+ {
+ 	Elf_Rela *rel = (void *) sechdrs[relsec].sh_addr;
+-	int (*handler)(struct module *me, u32 *location, Elf_Addr v);
++	int (*handler)(struct module *me, void *location, Elf_Addr v);
+ 	Elf_Sym *sym;
+-	u32 *location;
++	void *location;
+ 	unsigned int i, type;
++	unsigned int j_idx = 0;
+ 	Elf_Addr v;
+ 	int res;
++	unsigned int num_relocations = sechdrs[relsec].sh_size / sizeof(*rel);
++	struct hlist_head *relocation_hashtable;
++	struct list_head used_buckets_list;
++	unsigned int hashtable_bits;
++
++	hashtable_bits = initialize_relocation_hashtable(num_relocations,
++							 &relocation_hashtable);
++
++	if (!relocation_hashtable)
++		return -ENOMEM;
++
++	INIT_LIST_HEAD(&used_buckets_list);
+ 
+ 	pr_debug("Applying relocate section %u to %u\n", relsec,
+ 	       sechdrs[relsec].sh_info);
+ 
+-	for (i = 0; i < sechdrs[relsec].sh_size / sizeof(*rel); i++) {
++	for (i = 0; i < num_relocations; i++) {
+ 		/* This is where to make the change */
+ 		location = (void *)sechdrs[sechdrs[relsec].sh_info].sh_addr
+ 			+ rel[i].r_offset;
+@@ -354,8 +819,8 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
+ 
+ 		type = ELF_RISCV_R_TYPE(rel[i].r_info);
+ 
+-		if (type < ARRAY_SIZE(reloc_handlers_rela))
+-			handler = reloc_handlers_rela[type];
++		if (type < ARRAY_SIZE(reloc_handlers))
++			handler = reloc_handlers[type].reloc_handler;
+ 		else
+ 			handler = NULL;
+ 
+@@ -368,9 +833,10 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
+ 		v = sym->st_value + rel[i].r_addend;
+ 
+ 		if (type == R_RISCV_PCREL_LO12_I || type == R_RISCV_PCREL_LO12_S) {
+-			unsigned int j;
++			unsigned int j = j_idx;
++			bool found = false;
+ 
+-			for (j = 0; j < sechdrs[relsec].sh_size / sizeof(*rel); j++) {
++			do {
+ 				unsigned long hi20_loc =
+ 					sechdrs[sechdrs[relsec].sh_info].sh_addr
+ 					+ rel[j].r_offset;
+@@ -399,23 +865,42 @@ int apply_relocate_add(Elf_Shdr *sechdrs, const char *strtab,
+ 					hi20 = (offset + 0x800) & 0xfffff000;
+ 					lo12 = offset - hi20;
+ 					v = lo12;
++					found = true;
+ 
+ 					break;
+ 				}
+-			}
+-			if (j == sechdrs[relsec].sh_size / sizeof(*rel)) {
++
++				j++;
++				if (j > sechdrs[relsec].sh_size / sizeof(*rel))
++					j = 0;
++
++			} while (j_idx != j);
++
++			if (!found) {
+ 				pr_err(
+ 				  "%s: Can not find HI20 relocation information\n",
+ 				  me->name);
+ 				return -EINVAL;
+ 			}
++
++			/* Record the previous j-loop end index */
++			j_idx = j;
+ 		}
+ 
+-		res = handler(me, location, v);
++		if (reloc_handlers[type].accumulate_handler)
++			res = add_relocation_to_accumulate(me, type, location,
++							   hashtable_bits, v,
++							   relocation_hashtable,
++							   &used_buckets_list);
++		else
++			res = handler(me, location, v);
+ 		if (res)
+ 			return res;
+ 	}
+ 
++	process_accumulated_relocations(me, &relocation_hashtable,
++					&used_buckets_list);
++
+ 	return 0;
+ }
+ 
+@@ -430,21 +915,6 @@ void *module_alloc(unsigned long size)
+ }
+ #endif
+ 
+-static const Elf_Shdr *find_section(const Elf_Ehdr *hdr,
+-				    const Elf_Shdr *sechdrs,
+-				    const char *name)
+-{
+-	const Elf_Shdr *s, *se;
+-	const char *secstrs = (void *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
+-
+-	for (s = sechdrs, se = sechdrs + hdr->e_shnum; s < se; s++) {
+-		if (strcmp(name, secstrs + s->sh_name) == 0)
+-			return s;
+-	}
+-
+-	return NULL;
+-}
+-
+ int module_finalize(const Elf_Ehdr *hdr,
+ 		    const Elf_Shdr *sechdrs,
+ 		    struct module *me)
+diff --git a/arch/riscv/kernel/process.c b/arch/riscv/kernel/process.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/process.c
++++ b/arch/riscv/kernel/process.c
+@@ -24,6 +24,7 @@
+ #include <asm/switch_to.h>
+ #include <asm/thread_info.h>
+ #include <asm/cpuidle.h>
++#include <asm/vector.h>
+ 
+ #if defined(CONFIG_STACKPROTECTOR) && !defined(CONFIG_STACKPROTECTOR_PER_TASK)
+ #include <linux/stackprotector.h>
+@@ -146,12 +147,28 @@ void flush_thread(void)
+ 	fstate_off(current, task_pt_regs(current));
+ 	memset(&current->thread.fstate, 0, sizeof(current->thread.fstate));
+ #endif
++#ifdef CONFIG_RISCV_ISA_V
++	/* Reset vector state */
++	riscv_v_vstate_off(task_pt_regs(current));
++	kfree(current->thread.vstate.datap);
++	memset(&current->thread.vstate, 0, sizeof(struct __riscv_v_ext_state));
++#endif
++}
++
++void arch_release_task_struct(struct task_struct *tsk)
++{
++	/* Free the vector context of datap. */
++	if (has_vector())
++		kfree(tsk->thread.vstate.datap);
+ }
+ 
+ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
+ {
+ 	fstate_save(src, task_pt_regs(src));
+ 	*dst = *src;
++	/* clear entire V context, including datap for a new task */
++	memset(&dst->thread.vstate, 0, sizeof(struct __riscv_v_ext_state));
++
+ 	return 0;
+ }
+ 
+@@ -183,6 +200,8 @@ int copy_thread(struct task_struct *p, const struct kernel_clone_args *args)
+ 		childregs->a0 = 0; /* Return value of fork() */
+ 		p->thread.ra = (unsigned long)ret_from_fork;
+ 	}
++	p->thread.riscv_v_flags = 0;
++	riscv_v_vstate_off(childregs);
+ 	p->thread.sp = (unsigned long)childregs; /* kernel sp */
+ 	return 0;
+ }
+diff --git a/arch/riscv/kernel/ptrace.c b/arch/riscv/kernel/ptrace.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/ptrace.c
++++ b/arch/riscv/kernel/ptrace.c
+@@ -7,6 +7,7 @@
+  * Copied from arch/tile/kernel/ptrace.c
+  */
+ 
++#include <asm/vector.h>
+ #include <asm/ptrace.h>
+ #include <asm/syscall.h>
+ #include <asm/thread_info.h>
+@@ -27,6 +28,9 @@ enum riscv_regset {
+ #ifdef CONFIG_FPU
+ 	REGSET_F,
+ #endif
++#ifdef CONFIG_RISCV_ISA_V
++	REGSET_V,
++#endif
+ };
+ 
+ static int riscv_gpr_get(struct task_struct *target,
+@@ -83,6 +87,61 @@ static int riscv_fpr_set(struct task_struct *target,
+ }
+ #endif
+ 
++#ifdef CONFIG_RISCV_ISA_V
++static int riscv_vr_get(struct task_struct *target,
++			const struct user_regset *regset,
++			struct membuf to)
++{
++	struct __riscv_v_ext_state *vstate = &target->thread.vstate;
++
++	if (!riscv_v_vstate_query(task_pt_regs(target)))
++		return -EINVAL;
++
++	/*
++	 * Ensure the vector registers have been saved to the memory before
++	 * copying them to membuf.
++	 */
++	if (target == current)
++		riscv_v_vstate_save(current, task_pt_regs(current));
++
++	/* Copy vector header from vstate. */
++	membuf_write(&to, vstate, offsetof(struct __riscv_v_ext_state, datap));
++	membuf_zero(&to, sizeof(void *));
++
++	/* Copy all the vector registers from vstate. */
++	return membuf_write(&to, vstate->datap, riscv_v_vsize);
++}
++
++static int riscv_vr_set(struct task_struct *target,
++			const struct user_regset *regset,
++			unsigned int pos, unsigned int count,
++			const void *kbuf, const void __user *ubuf)
++{
++	int ret, size;
++	struct __riscv_v_ext_state *vstate = &target->thread.vstate;
++
++	if (!riscv_v_vstate_query(task_pt_regs(target)))
++		return -EINVAL;
++
++	/* Copy rest of the vstate except datap */
++	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, vstate, 0,
++				 offsetof(struct __riscv_v_ext_state, datap));
++	if (unlikely(ret))
++		return ret;
++
++	/* Skip copy datap. */
++	size = sizeof(vstate->datap);
++	count -= size;
++	ubuf += size;
++
++	/* Copy all the vector registers. */
++	pos = 0;
++	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, vstate->datap,
++				 0, riscv_v_vsize);
++	return ret;
++}
++#endif
++
+ static const struct user_regset riscv_user_regset[] = {
+ 	[REGSET_X] = {
+ 		.core_note_type = NT_PRSTATUS,
+@@ -102,6 +161,17 @@ static const struct user_regset riscv_user_regset[] = {
+ 		.set = riscv_fpr_set,
+ 	},
+ #endif
++#ifdef CONFIG_RISCV_ISA_V
++	[REGSET_V] = {
++		.core_note_type = NT_RISCV_VECTOR,
++		.align = 16,
++		.n = ((32 * RISCV_MAX_VLENB) +
++		      sizeof(struct __riscv_v_ext_state)) / sizeof(__u32),
++		.size = sizeof(__u32),
++		.regset_get = riscv_vr_get,
++		.set = riscv_vr_set,
++	},
++#endif
+ };
+ 
+ static const struct user_regset_view riscv_user_native_view = {
+diff --git a/arch/riscv/kernel/sbi.c b/arch/riscv/kernel/sbi.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/sbi.c
++++ b/arch/riscv/kernel/sbi.c
+@@ -529,6 +529,15 @@ int sbi_remote_hfence_vvma(const struct cpumask *cpu_mask,
+ }
+ EXPORT_SYMBOL(sbi_remote_hfence_vvma);
+ 
++#if defined(CONFIG_SOC_SPACEMIT_K1PRO) || defined(CONFIG_SOC_SPACEMIT_K1X)
++void sbi_flush_local_dcache_all(void)
++{
++	sbi_ecall(SBI_EXT_BASE, SBI_EXT_BASE_FLUSH_CACHE_ALL, 0,
++			0, 0, 0, 0, 0);
++}
++EXPORT_SYMBOL(sbi_flush_local_dcache_all);
++#endif
++
+ /**
+  * sbi_remote_hfence_vvma_asid() - Execute HFENCE.VVMA instructions on given
+  * remote harts for current guest virtual address range belonging to a specific
+diff --git a/arch/riscv/kernel/setup.c b/arch/riscv/kernel/setup.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/setup.c
++++ b/arch/riscv/kernel/setup.c
+@@ -262,6 +262,8 @@ static void __init parse_dtb(void)
+ #endif
+ }
+ 
++extern void __init init_rt_signal_env(void);
++
+ void __init setup_arch(char **cmdline_p)
+ {
+ 	parse_dtb();
+@@ -295,7 +297,10 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	riscv_init_cbom_blocksize();
+ 	riscv_fill_hwcap();
++	init_rt_signal_env();
+ 	apply_boot_alternatives();
++
++	riscv_user_isa_enable();
+ }
+ 
+ static int __init topology_init(void)
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@xxxxx.com>
+Date: Sat, 22 Jun 2024 07:34:04 -0400
+Subject: arch: riscv: kernel: signal.c
+
+Signed-off-by: Patrick Yavitz <pyavitz@xxxxx.com>
+---
+ arch/riscv/kernel/signal.c   | 220 ++++++++--
+ arch/riscv/kernel/smpboot.c  |   2 +
+ arch/riscv/kernel/suspend.c  |  44 ++
+ arch/riscv/kernel/traps.c    |  42 +-
+ arch/riscv/kernel/vector.c   | 111 +++++
+ arch/riscv/kvm/Makefile      |   1 +
+ arch/riscv/kvm/vcpu.c        |  30 +-
+ arch/riscv/kvm/vcpu_vector.c | 186 ++++++++
+ arch/riscv/lib/Makefile      |   1 +
+ arch/riscv/lib/xor.S         |  81 ++++
+ 10 files changed, 687 insertions(+), 31 deletions(-)
+
+diff --git a/arch/riscv/kernel/signal.c b/arch/riscv/kernel/signal.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/signal.c
++++ b/arch/riscv/kernel/signal.c
+@@ -18,10 +18,14 @@
+ #include <asm/signal.h>
+ #include <asm/signal32.h>
+ #include <asm/switch_to.h>
++#include <asm/vector.h>
+ #include <asm/csr.h>
+ #include <asm/cacheflush.h>
+ 
++unsigned long signal_minsigstksz __ro_after_init;
++
+ extern u32 __user_rt_sigreturn[2];
++static size_t riscv_v_sc_size __ro_after_init;
+ 
+ #define DEBUG_SIG 0
+ 
+@@ -39,26 +43,13 @@ static long restore_fp_state(struct pt_regs *regs,
+ {
+ 	long err;
+ 	struct __riscv_d_ext_state __user *state = &sc_fpregs->d;
+-	size_t i;
+ 
+ 	err = __copy_from_user(&current->thread.fstate, state, sizeof(*state));
+ 	if (unlikely(err))
+ 		return err;
+ 
+ 	fstate_restore(current, regs);
+-
+-	/* We support no other extension state at this time. */
+-	for (i = 0; i < ARRAY_SIZE(sc_fpregs->q.reserved); i++) {
+-		u32 value;
+-
+-		err = __get_user(value, &sc_fpregs->q.reserved[i]);
+-		if (unlikely(err))
+-			break;
+-		if (value != 0)
+-			return -EINVAL;
+-	}
+-
+-	return err;
++	return 0;
+ }
+ 
+ static long save_fp_state(struct pt_regs *regs,
+@@ -66,52 +57,186 @@ static long save_fp_state(struct pt_regs *regs,
+ {
+ 	long err;
+ 	struct __riscv_d_ext_state __user *state = &sc_fpregs->d;
+-	size_t i;
+ 
+ 	fstate_save(current, regs);
+ 	err = __copy_to_user(state, &current->thread.fstate, sizeof(*state));
++	return err;
++}
++#else
++#define save_fp_state(task, regs) (0)
++#define restore_fp_state(task, regs) (0)
++#endif
++
++#ifdef CONFIG_RISCV_ISA_V
++
++static long save_v_state(struct pt_regs *regs, void __user **sc_vec)
++{
++	struct __riscv_ctx_hdr __user *hdr;
++	struct __sc_riscv_v_state __user *state;
++	void __user *datap;
++	long err;
++
++	hdr = *sc_vec;
++	/* Place state to the user's signal context space after the hdr */
++	state = (struct __sc_riscv_v_state __user *)(hdr + 1);
++	/* Point datap right after the end of __sc_riscv_v_state */
++	datap = state + 1;
++
++	/* datap is designed to be 16 byte aligned for better performance */
++	WARN_ON(unlikely(!IS_ALIGNED((unsigned long)datap, 16)));
++
++	riscv_v_vstate_save(current, regs);
++	/* Copy everything of vstate but datap. */
++	err = __copy_to_user(&state->v_state, &current->thread.vstate,
++			     offsetof(struct __riscv_v_ext_state, datap));
++	/* Copy the pointer datap itself. */
++	err |= __put_user(datap, &state->v_state.datap);
++	/* Copy the whole vector content to user space datap. */
++	err |= __copy_to_user(datap, current->thread.vstate.datap, riscv_v_vsize);
++	/* Copy magic to the user space after saving  all vector conetext */
++	err |= __put_user(RISCV_V_MAGIC, &hdr->magic);
++	err |= __put_user(riscv_v_sc_size, &hdr->size);
+ 	if (unlikely(err))
+ 		return err;
+ 
+-	/* We support no other extension state at this time. */
+-	for (i = 0; i < ARRAY_SIZE(sc_fpregs->q.reserved); i++) {
+-		err = __put_user(0, &sc_fpregs->q.reserved[i]);
+-		if (unlikely(err))
+-			break;
+-	}
++	/* Only progress the sv_vec if everything has done successfully  */
++	*sc_vec += riscv_v_sc_size;
++	return 0;
++}
++
++/*
++ * Restore Vector extension context from the user's signal frame. This function
++ * assumes a valid extension header. So magic and size checking must be done by
++ * the caller.
++ */
++static long __restore_v_state(struct pt_regs *regs, void __user *sc_vec)
++{
++	long err;
++	struct __sc_riscv_v_state __user *state = sc_vec;
++	void __user *datap;
++
++	/* Copy everything of __sc_riscv_v_state except datap. */
++	err = __copy_from_user(&current->thread.vstate, &state->v_state,
++			       offsetof(struct __riscv_v_ext_state, datap));
++	if (unlikely(err))
++		return err;
++
++	/* Copy the pointer datap itself. */
++	err = __get_user(datap, &state->v_state.datap);
++	if (unlikely(err))
++		return err;
++	/*
++	 * Copy the whole vector content from user space datap. Use
++	 * copy_from_user to prevent information leak.
++	 */
++	err = copy_from_user(current->thread.vstate.datap, datap, riscv_v_vsize);
++	if (unlikely(err))
++		return err;
++
++	riscv_v_vstate_restore(current, regs);
+ 
+ 	return err;
+ }
+ #else
+-#define save_fp_state(task, regs) (0)
+-#define restore_fp_state(task, regs) (0)
++#define save_v_state(task, regs) (0)
++#define __restore_v_state(task, regs) (0)
+ #endif
+ 
+ static long restore_sigcontext(struct pt_regs *regs,
+ 	struct sigcontext __user *sc)
+ {
++	void __user *sc_ext_ptr = &sc->sc_extdesc.hdr;
++	__u32 rsvd;
+ 	long err;
+ 	/* sc_regs is structured the same as the start of pt_regs */
+ 	err = __copy_from_user(regs, &sc->sc_regs, sizeof(sc->sc_regs));
++	if (unlikely(err))
++		return err;
++
+ 	/* Restore the floating-point state. */
+-	if (has_fpu())
+-		err |= restore_fp_state(regs, &sc->sc_fpregs);
++	if (has_fpu()) {
++		err = restore_fp_state(regs, &sc->sc_fpregs);
++		if (unlikely(err))
++			return err;
++	}
++
++	/* Check the reserved word before extensions parsing */
++	err = __get_user(rsvd, &sc->sc_extdesc.reserved);
++	if (unlikely(err))
++		return err;
++	if (unlikely(rsvd))
++		return -EINVAL;
++
++	while (!err) {
++		__u32 magic, size;
++		struct __riscv_ctx_hdr __user *head = sc_ext_ptr;
++
++		err |= __get_user(magic, &head->magic);
++		err |= __get_user(size, &head->size);
++		if (unlikely(err))
++			return err;
++
++		sc_ext_ptr += sizeof(*head);
++		switch (magic) {
++		case END_MAGIC:
++			if (size != END_HDR_SIZE)
++				return -EINVAL;
++
++			return 0;
++		case RISCV_V_MAGIC:
++			if (!has_vector() || !riscv_v_vstate_query(regs) ||
++			    size != riscv_v_sc_size)
++				return -EINVAL;
++
++			err = __restore_v_state(regs, sc_ext_ptr);
++			break;
++		default:
++			return -EINVAL;
++		}
++		sc_ext_ptr = (void __user *)head + size;
++	}
+ 	return err;
+ }
+ 
++static size_t get_rt_frame_size(bool cal_all)
++{
++	struct rt_sigframe __user *frame;
++	size_t frame_size;
++	size_t total_context_size = 0;
++
++	frame_size = sizeof(*frame);
++
++	if (has_vector()) {
++		if (cal_all || riscv_v_vstate_query(task_pt_regs(current)))
++			total_context_size += riscv_v_sc_size;
++	}
++	/*
++	 * Preserved a __riscv_ctx_hdr for END signal context header if an
++	 * extension uses __riscv_extra_ext_header
++	 */
++	if (total_context_size)
++		total_context_size += sizeof(struct __riscv_ctx_hdr);
++
++	frame_size += total_context_size;
++
++	frame_size = round_up(frame_size, 16);
++	return frame_size;
++}
++
+ SYSCALL_DEFINE0(rt_sigreturn)
+ {
+ 	struct pt_regs *regs = current_pt_regs();
+ 	struct rt_sigframe __user *frame;
+ 	struct task_struct *task;
+ 	sigset_t set;
++	size_t frame_size = get_rt_frame_size(false);
+ 
+ 	/* Always make any pending restarted system calls return -EINTR */
+ 	current->restart_block.fn = do_no_restart_syscall;
+ 
+ 	frame = (struct rt_sigframe __user *)regs->sp;
+ 
+-	if (!access_ok(frame, sizeof(*frame)))
++	if (!access_ok(frame, frame_size))
+ 		goto badframe;
+ 
+ 	if (__copy_from_user(&set, &frame->uc.uc_sigmask, sizeof(set)))
+@@ -145,12 +270,23 @@ static long setup_sigcontext(struct rt_sigframe __user *frame,
+ 	struct pt_regs *regs)
+ {
+ 	struct sigcontext __user *sc = &frame->uc.uc_mcontext;
++	struct __riscv_ctx_hdr __user *sc_ext_ptr = &sc->sc_extdesc.hdr;
+ 	long err;
++
+ 	/* sc_regs is structured the same as the start of pt_regs */
+ 	err = __copy_to_user(&sc->sc_regs, regs, sizeof(sc->sc_regs));
+ 	/* Save the floating-point state. */
+ 	if (has_fpu())
+ 		err |= save_fp_state(regs, &sc->sc_fpregs);
++	/* Save the vector state. */
++	if (has_vector() && riscv_v_vstate_query(regs))
++		err |= save_v_state(regs, (void __user **)&sc_ext_ptr);
++	/* Write zero to fp-reserved space and check it on restore_sigcontext */
++	err |= __put_user(0, &sc->sc_extdesc.reserved);
++	/* And put END __riscv_ctx_hdr at the end. */
++	err |= __put_user(END_MAGIC, &sc_ext_ptr->magic);
++	err |= __put_user(END_HDR_SIZE, &sc_ext_ptr->size);
++
+ 	return err;
+ }
+ 
+@@ -174,6 +310,13 @@ static inline void __user *get_sigframe(struct ksignal *ksig,
+ 	/* Align the stack frame. */
+ 	sp &= ~0xfUL;
+ 
++	/*
++	 * Fail if the size of the altstack is not large enough for the
++	 * sigframe construction.
++	 */
++	if (current->sas_ss_size && sp < current->sas_ss_sp)
++		return (void __user __force *)-1UL;
++
+ 	return (void __user *)sp;
+ }
+ 
+@@ -182,10 +325,11 @@ static int setup_rt_frame(struct ksignal *ksig, sigset_t *set,
+ {
+ 	struct rt_sigframe __user *frame;
+ 	long err = 0;
++	size_t frame_size = get_rt_frame_size(false);
+ 	unsigned long __maybe_unused addr;
+ 
+-	frame = get_sigframe(ksig, regs, sizeof(*frame));
+-	if (!access_ok(frame, sizeof(*frame)))
++	frame = get_sigframe(ksig, regs, frame_size);
++	if (!access_ok(frame, frame_size))
+ 		return -EFAULT;
+ 
+ 	err |= copy_siginfo_to_user(&frame->info, &ksig->info);
+@@ -351,3 +495,23 @@ asmlinkage __visible void do_work_pending(struct pt_regs *regs,
+ 		thread_info_flags = read_thread_flags();
+ 	} while (thread_info_flags & _TIF_WORK_MASK);
+ }
++
++void init_rt_signal_env(void);
++void __init init_rt_signal_env(void)
++{
++	riscv_v_sc_size = sizeof(struct __riscv_ctx_hdr) +
++			  sizeof(struct __sc_riscv_v_state) + riscv_v_vsize;
++	/*
++	 * Determine the stack space required for guaranteed signal delivery.
++	 * The signal_minsigstksz will be populated into the AT_MINSIGSTKSZ entry
++	 * in the auxiliary array at process startup.
++	 */
++	signal_minsigstksz = get_rt_frame_size(true);
++}
++
++#ifdef CONFIG_DYNAMIC_SIGFRAME
++bool sigaltstack_size_valid(size_t ss_size)
++{
++	return ss_size > get_rt_frame_size(false);
++}
++#endif /* CONFIG_DYNAMIC_SIGFRAME */
+diff --git a/arch/riscv/kernel/smpboot.c b/arch/riscv/kernel/smpboot.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/smpboot.c
++++ b/arch/riscv/kernel/smpboot.c
+@@ -169,6 +169,8 @@ asmlinkage __visible void smp_callin(void)
+ 	numa_add_cpu(curr_cpuid);
+ 	set_cpu_online(curr_cpuid, 1);
+ 
++	riscv_user_isa_enable();
++
+ 	/*
+ 	 * Remote TLB flushes are ignored while the CPU is offline, so emit
+ 	 * a local TLB flush right now just in case.
+diff --git a/arch/riscv/kernel/suspend.c b/arch/riscv/kernel/suspend.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/suspend.c
++++ b/arch/riscv/kernel/suspend.c
+@@ -4,8 +4,12 @@
+  * Copyright (c) 2022 Ventana Micro Systems Inc.
+  */
+ 
++#define pr_fmt(fmt) "suspend: " fmt
++
+ #include <linux/ftrace.h>
++#include <linux/suspend.h>
+ #include <asm/csr.h>
++#include <asm/sbi.h>
+ #include <asm/suspend.h>
+ 
+ static void suspend_save_csrs(struct suspend_context *context)
+@@ -85,3 +89,43 @@ int cpu_suspend(unsigned long arg,
+ 
+ 	return rc;
+ }
++
++#ifdef CONFIG_RISCV_SBI
++static int sbi_system_suspend(unsigned long sleep_type,
++			      unsigned long resume_addr,
++			      unsigned long opaque)
++{
++	struct sbiret ret;
++
++	ret = sbi_ecall(SBI_EXT_SUSP, SBI_EXT_SUSP_SYSTEM_SUSPEND,
++			sleep_type, resume_addr, opaque, 0, 0, 0);
++	if (ret.error)
++		return sbi_err_map_linux_errno(ret.error);
++
++	return ret.value;
++}
++
++static int sbi_system_suspend_enter(suspend_state_t state)
++{
++	return cpu_suspend(SBI_SUSP_SLEEP_TYPE_SUSPEND_TO_RAM, sbi_system_suspend);
++}
++
++static const struct platform_suspend_ops sbi_system_suspend_ops = {
++	.valid = suspend_valid_only_mem,
++	.enter = sbi_system_suspend_enter,
++};
++
++static int __init sbi_system_suspend_init(void)
++{
++	if (sbi_spec_version >= sbi_mk_version(1, 0) &&
++	    sbi_probe_extension(SBI_EXT_SUSP) > 0) {
++		pr_info("SBI SUSP extension detected\n");
++		if (IS_ENABLED(CONFIG_SUSPEND))
++			suspend_set_ops(&sbi_system_suspend_ops);
++	}
++
++	return 0;
++}
++
++arch_initcall(sbi_system_suspend_init);
++#endif /* CONFIG_RISCV_SBI */
+diff --git a/arch/riscv/kernel/traps.c b/arch/riscv/kernel/traps.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kernel/traps.c
++++ b/arch/riscv/kernel/traps.c
+@@ -24,6 +24,7 @@
+ #include <asm/processor.h>
+ #include <asm/ptrace.h>
+ #include <asm/thread_info.h>
++#include <asm/vector.h>
+ 
+ int show_unhandled_signals = 1;
+ 
+@@ -112,8 +113,45 @@ DO_ERROR_INFO(do_trap_insn_misaligned,
+ 	SIGBUS, BUS_ADRALN, "instruction address misaligned");
+ DO_ERROR_INFO(do_trap_insn_fault,
+ 	SIGSEGV, SEGV_ACCERR, "instruction access fault");
+-DO_ERROR_INFO(do_trap_insn_illegal,
+-	SIGILL, ILL_ILLOPC, "illegal instruction");
++
++#ifdef CONFIG_BIND_THREAD_TO_AICORES
++#include <linux/cpumask.h>
++#define AI_OPCODE_MASK0  0xFE0000FF
++#define AI_OPCODE_MATCH0 0xE200002B
++#define AI_OPCODE_MASK1  0xFE0000FF
++#define AI_OPCODE_MATCH1 0xE600002B
++#endif
++asmlinkage __visible __trap_section void do_trap_insn_illegal(struct pt_regs *regs)
++{
++	int flag = 0;
++#ifdef CONFIG_BIND_THREAD_TO_AICORES
++	u32 epc;
++#endif
++
++	if (has_vector() && user_mode(regs)) {
++		if (riscv_v_first_use_handler(regs)) {
++			flag = 1;
++		}
++	}
++
++#ifdef CONFIG_BIND_THREAD_TO_AICORES
++	__get_user(epc, (u32 __user *)regs->epc);
++	if ((epc & AI_OPCODE_MASK0) == AI_OPCODE_MATCH0 ||
++		(epc & AI_OPCODE_MASK1) == AI_OPCODE_MATCH1) {
++		struct cpumask mask;
++		pid_t pid = current->pid;
++
++		mask = ai_core_mask_get();
++		sched_setaffinity(pid, &mask);
++		flag = 1;
++	}
++#endif
++	if (!flag) {
++		do_trap_error(regs, SIGILL, ILL_ILLOPC, regs->epc,
++			"Oops - illegal instruction");
++	}
++}
++
+ DO_ERROR_INFO(do_trap_load_fault,
+ 	SIGSEGV, SEGV_ACCERR, "load access fault");
+ #ifndef CONFIG_RISCV_M_MODE
+diff --git a/arch/riscv/kernel/vector.c b/arch/riscv/kernel/vector.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/kernel/vector.c
+@@ -0,0 +1,111 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) 2023 SiFive
++ * Author: Andy Chiu <andy.chiu@sifive.com>
++ */
++#include <linux/export.h>
++#include <linux/sched/signal.h>
++#include <linux/types.h>
++#include <linux/slab.h>
++#include <linux/sched.h>
++#include <linux/uaccess.h>
++
++#include <asm/thread_info.h>
++#include <asm/processor.h>
++#include <asm/insn.h>
++#include <asm/vector.h>
++#include <asm/csr.h>
++#include <asm/ptrace.h>
++#include <asm/bug.h>
++
++unsigned long riscv_v_vsize __read_mostly;
++EXPORT_SYMBOL_GPL(riscv_v_vsize);
++
++void riscv_v_setup_vsize(void)
++{
++	/* There are 32 vector registers with vlenb length. */
++	riscv_v_enable();
++	riscv_v_vsize = csr_read(CSR_VLENB) * 32;
++	riscv_v_disable();
++}
++
++static bool insn_is_vector(u32 insn_buf)
++{
++	u32 opcode = insn_buf & __INSN_OPCODE_MASK;
++	bool is_vector = false;
++	u32 width, csr;
++
++	/*
++	 * All V-related instructions, including CSR operations are 4-Byte. So,
++	 * do not handle if the instruction length is not 4-Byte.
++	 */
++	if (unlikely(GET_INSN_LENGTH(insn_buf) != 4))
++		return false;
++
++	switch (opcode) {
++	case RVV_OPCODE_VECTOR:
++		is_vector = true;
++		break;
++	case RVV_OPCODE_VL:
++	case RVV_OPCODE_VS:
++		width = RVV_EXRACT_VL_VS_WIDTH(insn_buf);
++		if (width == RVV_VL_VS_WIDTH_8 || width == RVV_VL_VS_WIDTH_16 ||
++		    width == RVV_VL_VS_WIDTH_32 || width == RVV_VL_VS_WIDTH_64)
++			is_vector = true;
++		break;
++	case RVG_OPCODE_SYSTEM:
++		csr = RVG_EXTRACT_SYSTEM_CSR(insn_buf);
++		if ((csr >= CSR_VSTART && csr <= CSR_VCSR) ||
++		    (csr >= CSR_VL && csr <= CSR_VLENB))
++			is_vector = true;
++		break;
++	}
++	return is_vector;
++}
++
++static int riscv_v_thread_zalloc(void)
++{
++	void *datap;
++
++	datap = kzalloc(riscv_v_vsize, GFP_KERNEL);
++	if (!datap)
++		return -ENOMEM;
++	current->thread.vstate.datap = datap;
++	memset(&current->thread.vstate, 0, offsetof(struct __riscv_v_ext_state,
++						    datap));
++	return 0;
++}
++
++bool riscv_v_first_use_handler(struct pt_regs *regs)
++{
++	u32 __user *epc = (u32 __user *)regs->epc;
++	u32 insn = (u32)regs->badaddr;
++
++	/* If V has been enabled then it is not the first-use trap */
++	if (riscv_v_vstate_query(regs))
++		return false;
++
++	/* Get the instruction */
++	if (!insn) {
++		if (__get_user(insn, epc))
++			return false;
++	}
++	/* Filter out non-V instructions */
++	if (!insn_is_vector(insn))
++		return false;
++
++	/* Sanity check. datap should be null by the time of the first-use trap */
++	WARN_ON(current->thread.vstate.datap);
++	/*
++	 * Now we sure that this is a V instruction. And it executes in the
++	 * context where VS has been off. So, try to allocate the user's V
++	 * context and resume execution.
++	 */
++	if (riscv_v_thread_zalloc()) {
++		force_sig(SIGKILL);
++		return true;
++	}
++	riscv_v_vstate_on(regs);
++	riscv_v_csr_init();
++	return true;
++}
+diff --git a/arch/riscv/kvm/Makefile b/arch/riscv/kvm/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kvm/Makefile
++++ b/arch/riscv/kvm/Makefile
+@@ -17,6 +17,7 @@ kvm-y += mmu.o
+ kvm-y += vcpu.o
+ kvm-y += vcpu_exit.o
+ kvm-y += vcpu_fp.o
++kvm-y += vcpu_vector.o
+ kvm-y += vcpu_insn.o
+ kvm-y += vcpu_switch.o
+ kvm-y += vcpu_sbi.o
+diff --git a/arch/riscv/kvm/vcpu.c b/arch/riscv/kvm/vcpu.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/kvm/vcpu.c
++++ b/arch/riscv/kvm/vcpu.c
+@@ -21,6 +21,9 @@
+ #include <asm/csr.h>
+ #include <asm/cacheflush.h>
+ #include <asm/hwcap.h>
++#include <asm/sbi.h>
++#include <asm/vector.h>
++#include <asm/kvm_vcpu_vector.h>
+ 
+ const struct _kvm_stats_desc kvm_vcpu_stats_desc[] = {
+ 	KVM_GENERIC_VCPU_STATS(),
+@@ -56,12 +59,15 @@ static const unsigned long kvm_isa_ext_arr[] = {
+ 	[KVM_RISCV_ISA_EXT_H] = RISCV_ISA_EXT_h,
+ 	[KVM_RISCV_ISA_EXT_I] = RISCV_ISA_EXT_i,
+ 	[KVM_RISCV_ISA_EXT_M] = RISCV_ISA_EXT_m,
++	[KVM_RISCV_ISA_EXT_V] = RISCV_ISA_EXT_v,
+ 
+ 	KVM_ISA_EXT_ARR(SSTC),
+ 	KVM_ISA_EXT_ARR(SVINVAL),
+ 	KVM_ISA_EXT_ARR(SVPBMT),
+ 	KVM_ISA_EXT_ARR(ZIHINTPAUSE),
+ 	KVM_ISA_EXT_ARR(ZICBOM),
++	KVM_ISA_EXT_ARR(ZICBOZ),
++	KVM_ISA_EXT_ARR(ZICBOP),
+ };
+ 
+ static unsigned long kvm_riscv_vcpu_base2isa_ext(unsigned long base_ext)
+@@ -132,6 +138,8 @@ static void kvm_riscv_reset_vcpu(struct kvm_vcpu *vcpu)
+ 
+ 	kvm_riscv_vcpu_fp_reset(vcpu);
+ 
++	kvm_riscv_vcpu_vector_reset(vcpu);
++
+ 	kvm_riscv_vcpu_timer_reset(vcpu);
+ 
+ 	WRITE_ONCE(vcpu->arch.irqs_pending, 0);
+@@ -182,6 +190,9 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
+ 	cntx->hstatus |= HSTATUS_SPVP;
+ 	cntx->hstatus |= HSTATUS_SPV;
+ 
++	if (kvm_riscv_vcpu_alloc_vector_context(vcpu, cntx))
++		return -ENOMEM;
++
+ 	/* By default, make CY, TM, and IR counters accessible in VU mode */
+ 	reset_csr->scounteren = 0x7;
+ 
+@@ -212,6 +223,9 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
+ 
+ 	/* Free unused pages pre-allocated for G-stage page table mappings */
+ 	kvm_mmu_free_memory_cache(&vcpu->arch.mmu_page_cache);
++
++	/* Free vector context space for host and guest kernel */
++	kvm_riscv_vcpu_free_vector_context(vcpu);
+ }
+ 
+ int kvm_cpu_has_pending_timer(struct kvm_vcpu *vcpu)
+@@ -560,6 +574,9 @@ static int kvm_riscv_vcpu_set_reg(struct kvm_vcpu *vcpu,
+ 						 KVM_REG_RISCV_FP_D);
+ 	else if ((reg->id & KVM_REG_RISCV_TYPE_MASK) == KVM_REG_RISCV_ISA_EXT)
+ 		return kvm_riscv_vcpu_set_reg_isa_ext(vcpu, reg);
++	else if ((reg->id & KVM_REG_RISCV_TYPE_MASK) == KVM_REG_RISCV_VECTOR)
++		return kvm_riscv_vcpu_set_reg_vector(vcpu, reg,
++						 KVM_REG_RISCV_VECTOR);
+ 
+ 	return -EINVAL;
+ }
+@@ -583,6 +600,9 @@ static int kvm_riscv_vcpu_get_reg(struct kvm_vcpu *vcpu,
+ 						 KVM_REG_RISCV_FP_D);
+ 	else if ((reg->id & KVM_REG_RISCV_TYPE_MASK) == KVM_REG_RISCV_ISA_EXT)
+ 		return kvm_riscv_vcpu_get_reg_isa_ext(vcpu, reg);
++	else if ((reg->id & KVM_REG_RISCV_TYPE_MASK) == KVM_REG_RISCV_VECTOR)
++		return kvm_riscv_vcpu_get_reg_vector(vcpu, reg,
++						 KVM_REG_RISCV_VECTOR);
+ 
+ 	return -EINVAL;
+ }
+@@ -804,6 +824,7 @@ int kvm_arch_vcpu_ioctl_set_guest_debug(struct kvm_vcpu *vcpu,
+ 	return -EINVAL;
+ }
+ 
++/*
+ static void kvm_riscv_vcpu_update_config(const unsigned long *isa)
+ {
+ 	u64 henvcfg = 0;
+@@ -822,6 +843,7 @@ static void kvm_riscv_vcpu_update_config(const unsigned long *isa)
+ 	csr_write(CSR_HENVCFGH, henvcfg >> 32);
+ #endif
+ }
++*/
+ 
+ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ {
+@@ -837,7 +859,7 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ 	csr_write(CSR_HVIP, csr->hvip);
+ 	csr_write(CSR_VSATP, csr->vsatp);
+ 
+-	kvm_riscv_vcpu_update_config(vcpu->arch.isa);
++//	kvm_riscv_vcpu_update_config(vcpu->arch.isa);
+ 
+ 	kvm_riscv_gstage_update_hgatp(vcpu);
+ 
+@@ -846,6 +868,9 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ 	kvm_riscv_vcpu_host_fp_save(&vcpu->arch.host_context);
+ 	kvm_riscv_vcpu_guest_fp_restore(&vcpu->arch.guest_context,
+ 					vcpu->arch.isa);
++	kvm_riscv_vcpu_host_vector_save(&vcpu->arch.host_context);
++	kvm_riscv_vcpu_guest_vector_restore(&vcpu->arch.guest_context,
++					    vcpu->arch.isa);
+ 
+ 	vcpu->cpu = cpu;
+ }
+@@ -861,6 +886,9 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
+ 	kvm_riscv_vcpu_host_fp_restore(&vcpu->arch.host_context);
+ 
+ 	kvm_riscv_vcpu_timer_save(vcpu);
++	kvm_riscv_vcpu_guest_vector_save(&vcpu->arch.guest_context,
++					 vcpu->arch.isa);
++	kvm_riscv_vcpu_host_vector_restore(&vcpu->arch.host_context);
+ 
+ 	csr->vsstatus = csr_read(CSR_VSSTATUS);
+ 	csr->vsie = csr_read(CSR_VSIE);
+diff --git a/arch/riscv/kvm/vcpu_vector.c b/arch/riscv/kvm/vcpu_vector.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/kvm/vcpu_vector.c
+@@ -0,0 +1,186 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (C) 2022 SiFive
++ *
++ * Authors:
++ *     Vincent Chen <vincent.chen@sifive.com>
++ *     Greentime Hu <greentime.hu@sifive.com>
++ */
++
++#include <linux/errno.h>
++#include <linux/err.h>
++#include <linux/kvm_host.h>
++#include <linux/uaccess.h>
++#include <asm/hwcap.h>
++#include <asm/kvm_vcpu_vector.h>
++#include <asm/vector.h>
++
++#ifdef CONFIG_RISCV_ISA_V
++void kvm_riscv_vcpu_vector_reset(struct kvm_vcpu *vcpu)
++{
++	unsigned long *isa = vcpu->arch.isa;
++	struct kvm_cpu_context *cntx = &vcpu->arch.guest_context;
++
++	cntx->sstatus &= ~SR_VS;
++	if (riscv_isa_extension_available(isa, v)) {
++		cntx->sstatus |= SR_VS_INITIAL;
++		WARN_ON(!cntx->vector.datap);
++		memset(cntx->vector.datap, 0, riscv_v_vsize);
++	} else {
++		cntx->sstatus |= SR_VS_OFF;
++	}
++}
++
++static void kvm_riscv_vcpu_vector_clean(struct kvm_cpu_context *cntx)
++{
++	cntx->sstatus &= ~SR_VS;
++	cntx->sstatus |= SR_VS_CLEAN;
++}
++
++void kvm_riscv_vcpu_guest_vector_save(struct kvm_cpu_context *cntx,
++				      unsigned long *isa)
++{
++	if ((cntx->sstatus & SR_VS) == SR_VS_DIRTY) {
++		if (riscv_isa_extension_available(isa, v))
++			__kvm_riscv_vector_save(cntx);
++		kvm_riscv_vcpu_vector_clean(cntx);
++	}
++}
++
++void kvm_riscv_vcpu_guest_vector_restore(struct kvm_cpu_context *cntx,
++					 unsigned long *isa)
++{
++	if ((cntx->sstatus & SR_VS) != SR_VS_OFF) {
++		if (riscv_isa_extension_available(isa, v))
++			__kvm_riscv_vector_restore(cntx);
++		kvm_riscv_vcpu_vector_clean(cntx);
++	}
++}
++
++void kvm_riscv_vcpu_host_vector_save(struct kvm_cpu_context *cntx)
++{
++	/* No need to check host sstatus as it can be modified outside */
++	if (riscv_isa_extension_available(NULL, v))
++		__kvm_riscv_vector_save(cntx);
++}
++
++void kvm_riscv_vcpu_host_vector_restore(struct kvm_cpu_context *cntx)
++{
++	if (riscv_isa_extension_available(NULL, v))
++		__kvm_riscv_vector_restore(cntx);
++}
++
++int kvm_riscv_vcpu_alloc_vector_context(struct kvm_vcpu *vcpu,
++					struct kvm_cpu_context *cntx)
++{
++	cntx->vector.datap = kmalloc(riscv_v_vsize, GFP_KERNEL);
++	if (!cntx->vector.datap)
++		return -ENOMEM;
++
++	vcpu->arch.host_context.vector.datap = kzalloc(riscv_v_vsize, GFP_KERNEL);
++	if (!vcpu->arch.host_context.vector.datap)
++		return -ENOMEM;
++
++	return 0;
++}
++
++void kvm_riscv_vcpu_free_vector_context(struct kvm_vcpu *vcpu)
++{
++	kfree(vcpu->arch.guest_reset_context.vector.datap);
++	kfree(vcpu->arch.host_context.vector.datap);
++}
++#endif
++
++static void *kvm_riscv_vcpu_vreg_addr(struct kvm_vcpu *vcpu,
++				      unsigned long reg_num,
++				      size_t reg_size)
++{
++	struct kvm_cpu_context *cntx = &vcpu->arch.guest_context;
++	void *reg_val;
++	size_t vlenb = riscv_v_vsize / 32;
++
++	if (reg_num < KVM_REG_RISCV_VECTOR_REG(0)) {
++		if (reg_size != sizeof(unsigned long))
++			return NULL;
++		switch (reg_num) {
++		case KVM_REG_RISCV_VECTOR_CSR_REG(vstart):
++			reg_val = &cntx->vector.vstart;
++			break;
++		case KVM_REG_RISCV_VECTOR_CSR_REG(vl):
++			reg_val = &cntx->vector.vl;
++			break;
++		case KVM_REG_RISCV_VECTOR_CSR_REG(vtype):
++			reg_val = &cntx->vector.vtype;
++			break;
++		case KVM_REG_RISCV_VECTOR_CSR_REG(vcsr):
++			reg_val = &cntx->vector.vcsr;
++			break;
++		case KVM_REG_RISCV_VECTOR_CSR_REG(datap):
++		default:
++			return NULL;
++		}
++	} else if (reg_num <= KVM_REG_RISCV_VECTOR_REG(31)) {
++		if (reg_size != vlenb)
++			return NULL;
++		reg_val = cntx->vector.datap
++			  + (reg_num - KVM_REG_RISCV_VECTOR_REG(0)) * vlenb;
++	} else {
++		return NULL;
++	}
++
++	return reg_val;
++}
++
++int kvm_riscv_vcpu_get_reg_vector(struct kvm_vcpu *vcpu,
++				  const struct kvm_one_reg *reg,
++				  unsigned long rtype)
++{
++	unsigned long *isa = vcpu->arch.isa;
++	unsigned long __user *uaddr =
++			(unsigned long __user *)(unsigned long)reg->addr;
++	unsigned long reg_num = reg->id & ~(KVM_REG_ARCH_MASK |
++					    KVM_REG_SIZE_MASK |
++					    rtype);
++	void *reg_val = NULL;
++	size_t reg_size = KVM_REG_SIZE(reg->id);
++
++	if (rtype == KVM_REG_RISCV_VECTOR &&
++	    riscv_isa_extension_available(isa, v)) {
++		reg_val = kvm_riscv_vcpu_vreg_addr(vcpu, reg_num, reg_size);
++	}
++
++	if (!reg_val)
++		return -EINVAL;
++
++	if (copy_to_user(uaddr, reg_val, reg_size))
++		return -EFAULT;
++
++	return 0;
++}
++
++int kvm_riscv_vcpu_set_reg_vector(struct kvm_vcpu *vcpu,
++				  const struct kvm_one_reg *reg,
++				  unsigned long rtype)
++{
++	unsigned long *isa = vcpu->arch.isa;
++	unsigned long __user *uaddr =
++			(unsigned long __user *)(unsigned long)reg->addr;
++	unsigned long reg_num = reg->id & ~(KVM_REG_ARCH_MASK |
++					    KVM_REG_SIZE_MASK |
++					    rtype);
++	void *reg_val = NULL;
++	size_t reg_size = KVM_REG_SIZE(reg->id);
++
++	if (rtype == KVM_REG_RISCV_VECTOR &&
++	    riscv_isa_extension_available(isa, v)) {
++		reg_val = kvm_riscv_vcpu_vreg_addr(vcpu, reg_num, reg_size);
++	}
++
++	if (!reg_val)
++		return -EINVAL;
++
++	if (copy_from_user(reg_val, uaddr, reg_size))
++		return -EFAULT;
++
++	return 0;
++}
+diff --git a/arch/riscv/lib/Makefile b/arch/riscv/lib/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/riscv/lib/Makefile
++++ b/arch/riscv/lib/Makefile
+@@ -5,5 +5,6 @@ lib-y			+= memset.o
+ lib-y			+= memmove.o
+ lib-$(CONFIG_MMU)	+= uaccess.o
+ lib-$(CONFIG_64BIT)	+= tishift.o
++lib-$(CONFIG_RISCV_ISA_V)	+= xor.o
+ 
+ obj-$(CONFIG_FUNCTION_ERROR_INJECTION) += error-inject.o
+diff --git a/arch/riscv/lib/xor.S b/arch/riscv/lib/xor.S
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/riscv/lib/xor.S
+@@ -0,0 +1,81 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) 2021 SiFive
++ */
++#include <linux/linkage.h>
++#include <asm-generic/export.h>
++#include <asm/asm.h>
++
++ENTRY(xor_regs_2_)
++	vsetvli a3, a0, e8, m8, ta, ma
++	vle8.v v0, (a1)
++	vle8.v v8, (a2)
++	sub a0, a0, a3
++	vxor.vv v16, v0, v8
++	add a2, a2, a3
++	vse8.v v16, (a1)
++	add a1, a1, a3
++	bnez a0, xor_regs_2_
++	ret
++END(xor_regs_2_)
++EXPORT_SYMBOL(xor_regs_2_)
++
++ENTRY(xor_regs_3_)
++	vsetvli a4, a0, e8, m8, ta, ma
++	vle8.v v0, (a1)
++	vle8.v v8, (a2)
++	sub a0, a0, a4
++	vxor.vv v0, v0, v8
++	vle8.v v16, (a3)
++	add a2, a2, a4
++	vxor.vv v16, v0, v16
++	add a3, a3, a4
++	vse8.v v16, (a1)
++	add a1, a1, a4
++	bnez a0, xor_regs_3_
++	ret
++END(xor_regs_3_)
++EXPORT_SYMBOL(xor_regs_3_)
++
++ENTRY(xor_regs_4_)
++	vsetvli a5, a0, e8, m8, ta, ma
++	vle8.v v0, (a1)
++	vle8.v v8, (a2)
++	sub a0, a0, a5
++	vxor.vv v0, v0, v8
++	vle8.v v16, (a3)
++	add a2, a2, a5
++	vxor.vv v0, v0, v16
++	vle8.v v24, (a4)
++	add a3, a3, a5
++	vxor.vv v16, v0, v24
++	add a4, a4, a5
++	vse8.v v16, (a1)
++	add a1, a1, a5
++	bnez a0, xor_regs_4_
++	ret
++END(xor_regs_4_)
++EXPORT_SYMBOL(xor_regs_4_)
++
++ENTRY(xor_regs_5_)
++	vsetvli a6, a0, e8, m8, ta, ma
++	vle8.v v0, (a1)
++	vle8.v v8, (a2)
++	sub a0, a0, a6
++	vxor.vv v0, v0, v8
++	vle8.v v16, (a3)
++	add a2, a2, a6
++	vxor.vv v0, v0, v16
++	vle8.v v24, (a4)
++	add a3, a3, a6
++	vxor.vv v0, v0, v24
++	vle8.v v8, (a5)
++	add a4, a4, a6
++	vxor.vv v16, v0, v8
++	add a5, a5, a6
++	vse8.v v16, (a1)
++	add a1, a1, a6
++	bnez a0, xor_regs_5_
++	ret
++END(xor_regs_5_)
++EXPORT_SYMBOL(xor_regs_5_)
+\ No newline at end of file
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@xxxxx.com>
+Date: Sat, 22 Jun 2024 07:38:30 -0400
+Subject: arch: riscv: mm: init.c
+
+Signed-off-by: Patrick Yavitz <pyavitz@xxxxx.com>
+---
+ arch/riscv/mm/init.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/riscv/mm/init.c b/arch/riscv/mm/init.c
+index 111111111111..222222222222 100644
+--- a/arch/riscv/mm/init.c
++++ b/arch/riscv/mm/init.c
+@@ -232,7 +232,12 @@ static void __init setup_bootmem(void)
+ 	max_low_pfn = max_pfn = PFN_DOWN(phys_ram_end);
+ 	high_memory = (void *)(__va(PFN_PHYS(max_low_pfn)));
+ 
++	#ifdef CONFIG_SOC_SPACEMIT_K1X
++	/* 2GB~4GB is IO area on spacemit-k1x, will be reserved when early_init_fdt_scan_reserved_mem */
++	dma32_phys_limit = min(2UL * SZ_1G, (unsigned long)PFN_PHYS(max_low_pfn));
++	#else
+ 	dma32_phys_limit = min(4UL * SZ_1G, (unsigned long)PFN_PHYS(max_low_pfn));
++	#endif
+ 	set_max_mapnr(max_low_pfn - ARCH_PFN_OFFSET);
+ 
+ 	reserve_initrd_mem();
+@@ -253,7 +258,12 @@ static void __init setup_bootmem(void)
+ 	if (!IS_ENABLED(CONFIG_BUILTIN_DTB))
+ 		memblock_reserve(dtb_early_pa, fdt_totalsize(dtb_early_va));
+ 
++#ifdef CONFIG_ZONE_DMA32
+ 	dma_contiguous_reserve(dma32_phys_limit);
++#else
++	dma_contiguous_reserve(PFN_PHYS(max_low_pfn));
++#endif
++
+ 	if (IS_ENABLED(CONFIG_64BIT))
+ 		hugetlb_cma_reserve(PUD_SHIFT - PAGE_SHIFT);
+ }
+-- 
+Armbian
+

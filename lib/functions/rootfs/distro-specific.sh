@@ -11,8 +11,7 @@ function install_distribution_specific() {
 	display_alert "Applying distribution specific tweaks for" "${RELEASE:-}" "info"
 
 	# disable broken service, the problem is in default misconfiguration
-	# disable hostapd as it needs to be configured to start correctly
-	disable_systemd_service_sdcard smartmontools.service smartd.service hostapd.service
+	disable_systemd_service_sdcard smartmontools.service smartd.service
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 

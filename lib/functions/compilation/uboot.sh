@@ -53,8 +53,8 @@ function compile_uboot_target() {
 
 	# atftempdir comes from atf.sh's compile_atf()
 	if [[ -n $ATFSOURCE && -d "${atftempdir}" ]]; then
-		display_alert "Copying over bin/elf's from atftempdir" "${atftempdir}" "debug"
-		run_host_command_logged cp -pv "${atftempdir}"/*.bin "${atftempdir}"/*.elf ./ # only works due to nullglob
+		display_alert "Copying over bin/elf/itb's from atftempdir" "${atftempdir}" "debug"
+		run_host_command_logged cp -pv "${atftempdir}"/*.bin "${atftempdir}"/*.elf "${atftempdir}"/*.itb ./ # only works due to nullglob
 		# atftempdir is under WORKDIR, so no cleanup necessary.
 	fi
 
@@ -203,6 +203,20 @@ function compile_uboot_target() {
 		return 0 # exit after this
 	fi
 
+	##########################################
+	# REAL COMPILATION SECTION STARTING HERE #
+	##########################################
+
+	# Collect make environment variables, similar to 'kernel-make.sh'
+	uboot_make_envs=(
+		"CFLAGS='${uboot_cflags}'"
+		"KCFLAGS='${uboot_cflags}'"
+		"CCACHE_BASEDIR=$(pwd)"
+		"PATH=${toolchain}:${toolchain2}:${PATH}"
+		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\"" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed e.g. for pyelftools)
+		"HOME=${WORKDIR}"                                            # give it a temporary-dir HOME; some Python stuff in old u-boots wants HOME env to be set
+	)
+
 	# workaround when two compilers are needed
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
@@ -213,8 +227,7 @@ function compile_uboot_target() {
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
 	do_with_ccache_statistics run_host_command_logged_long_running \
-		"CFLAGS='${uboot_cflags}'" "KCFLAGS='${uboot_cflags}'" \
-		CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+		"env" "-i" "${uboot_make_envs[@]}" \
 		unbuffer make "$target_make" "$CTHREADS" "${cross_compile}"
 
 	display_alert "${uboot_prefix}built u-boot target" "${version} in $((SECONDS - ts)) seconds" "info"

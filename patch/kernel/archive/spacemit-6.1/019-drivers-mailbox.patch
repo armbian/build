@@ -1,0 +1,400 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/mailbox/Kconfig                |  27 +
+ drivers/mailbox/Makefile               |   2 +
+ drivers/mailbox/spacemit/Makefile      |   2 +
+ drivers/mailbox/spacemit/k1x-mailbox.c | 283 ++++++++++
+ drivers/mailbox/spacemit/k1x_mailbox.h |  32 ++
+ 5 files changed, 346 insertions(+)
+
+diff --git a/drivers/mailbox/Kconfig b/drivers/mailbox/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/mailbox/Kconfig
++++ b/drivers/mailbox/Kconfig
+@@ -294,4 +294,31 @@ config QCOM_IPCC
+ 	  acts as an interrupt controller for receiving interrupts from clients.
+ 	  Say Y here if you want to build this driver.
+ 
++config SPACEMIT_MAILBOX
++	tristate "Spacemit Message Box"
++	depends on SOC_SPACEMIT
++	help
++	  Mailbox implementation for the hardware message box present in
++	  various Spacemit SoCs. This mailbox is used for communication
++	  between the application CPUs and the power management coprocessor.
++
++if SPACEMIT_MAILBOX
++
++config K1PRO_MAILBOX
++	tristate "Spacemit K1pro Message Box"
++	depends on SOC_SPACEMIT
++	help
++	  Mailbox implementation for the hardware message box present in
++	  various Spacemit SoCs. This mailbox is used for communication
++	  between the application CPUs and the power management coprocessor.
++
++config K1X_MAILBOX
++	tristate "Spacemit K1x Message Box"
++	depends on SOC_SPACEMIT
++	help
++	  Mailbox implementation for the hardware message box present in
++	  various Spacemit SoCs. This mailbox is used for communication
++	  between the application CPUs and the power management coprocessor.
++endif
++
+ endif
+diff --git a/drivers/mailbox/Makefile b/drivers/mailbox/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/mailbox/Makefile
++++ b/drivers/mailbox/Makefile
+@@ -62,3 +62,5 @@ obj-$(CONFIG_SPRD_MBOX)		+= sprd-mailbox.o
+ obj-$(CONFIG_QCOM_IPCC)		+= qcom-ipcc.o
+ 
+ obj-$(CONFIG_APPLE_MAILBOX)	+= apple-mailbox.o
++
++obj-$(CONFIG_SPACEMIT_MAILBOX)	+= spacemit/
+diff --git a/drivers/mailbox/spacemit/Makefile b/drivers/mailbox/spacemit/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/mailbox/spacemit/Makefile
+@@ -0,0 +1,2 @@
++obj-$(CONFIG_K1PRO_MAILBOX) += k1pro-mailbox.o
++obj-$(CONFIG_K1X_MAILBOX) += k1x-mailbox.o
+diff --git a/drivers/mailbox/spacemit/k1x-mailbox.c b/drivers/mailbox/spacemit/k1x-mailbox.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/mailbox/spacemit/k1x-mailbox.c
+@@ -0,0 +1,283 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/mailbox_controller.h>
++#include <linux/mailbox_client.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/platform_device.h>
++#include <linux/reset.h>
++#include <linux/spinlock.h>
++#include <linux/pm_runtime.h>
++#include <linux/pm_qos.h>
++#include "../mailbox.h"
++#include "k1x_mailbox.h"
++
++#define mbox_dbg(mbox, ...)	dev_dbg((mbox)->controller.dev, __VA_ARGS__)
++
++#define DEV_PM_QOS_CLK_GATE            1
++#define DEV_PM_QOS_REGULATOR_GATE      2
++#define DEV_PM_QOS_PM_DOMAIN_GATE      4
++#define DEV_PM_QOS_DEFAULT             7
++
++static struct dev_pm_qos_request greq;
++
++static irqreturn_t spacemit_mbox_irq(int irq, void *dev_id)
++{
++	struct spacemit_mailbox *mbox = dev_id;
++	struct mbox_chan *chan;
++	unsigned int status, msg = 0;
++	int i;
++
++	writel(0, (void __iomem *)&mbox->regs->ipc_iir);
++
++	status = readl((void __iomem *)&mbox->regs->ipc_iir);
++
++	if (!(status & 0xff))
++		return IRQ_NONE;
++
++	for (i = SPACEMIT_TX_ACK_OFFSET; i < SPACEMIT_NUM_CHANNELS + SPACEMIT_TX_ACK_OFFSET; ++i) {
++		chan = &mbox->controller.chans[i - SPACEMIT_TX_ACK_OFFSET];
++		/* new msg irq */
++		if (!(status & (1 << i)))
++			continue;
++
++		/* clear the irq pending */
++		writel(1 << i, (void __iomem *)&mbox->regs->ipc_icr);
++
++		if (chan->txdone_method & TXDONE_BY_IRQ)
++			mbox_chan_txdone(chan, 0);
++	}
++
++	for (i = 0; i < SPACEMIT_NUM_CHANNELS; ++i) {
++		chan = &mbox->controller.chans[i];
++
++		/* new msg irq */
++		if (!(status & (1 << i)))
++			continue;
++
++		mbox_chan_received_data(chan, &msg);
++
++		/* clear the irq pending */
++		writel(1 << i, (void __iomem *)&mbox->regs->ipc_icr);
++	}
++
++	return IRQ_HANDLED;
++}
++
++static int spacemit_chan_send_data(struct mbox_chan *chan, void *data)
++{
++	unsigned long flag;
++	struct spacemit_mailbox *mbox = ((struct spacemit_mb_con_priv *)chan->con_priv)->smb;
++	unsigned int chan_num = chan - mbox->controller.chans;
++
++	spin_lock_irqsave(&mbox->lock, flag);
++
++	writel(1 << chan_num, (void __iomem *)&mbox->regs->ipc_isrw);
++
++	spin_unlock_irqrestore(&mbox->lock, flag);
++
++	mbox_dbg(mbox, "Channel %d sent 0x%08x\n", chan_num, *((unsigned int *)data));
++
++	return 0;
++}
++
++static int spacemit_chan_startup(struct mbox_chan *chan)
++{
++	return 0;
++}
++
++static void spacemit_chan_shutdown(struct mbox_chan *chan)
++{
++	unsigned int j;
++	unsigned long flag;
++	struct spacemit_mailbox *mbox = ((struct spacemit_mb_con_priv *)chan->con_priv)->smb;
++	unsigned int chan_num = chan - mbox->controller.chans;
++
++	spin_lock_irqsave(&mbox->lock, flag);
++
++	/* clear pending */
++	j = 0;
++	j |= (1 << chan_num);
++	writel(j, (void __iomem *)&mbox->regs->ipc_icr);
++
++	spin_unlock_irqrestore(&mbox->lock, flag);
++}
++
++static bool spacemit_chan_last_tx_done(struct mbox_chan *chan)
++{
++	return 0;
++}
++
++static bool spacemit_chan_peek_data(struct mbox_chan *chan)
++{
++	struct spacemit_mailbox *mbox = ((struct spacemit_mb_con_priv *)chan->con_priv)->smb;
++	unsigned int chan_num = chan - mbox->controller.chans;
++
++	return readl((void __iomem *)&mbox->regs->ipc_rdr) & (1 << chan_num);
++}
++
++static const struct mbox_chan_ops spacemit_chan_ops = {
++	.send_data    = spacemit_chan_send_data,
++	.startup      = spacemit_chan_startup,
++	.shutdown     = spacemit_chan_shutdown,
++	.last_tx_done = spacemit_chan_last_tx_done,
++	.peek_data    = spacemit_chan_peek_data,
++};
++
++static int spacemit_mailbox_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct mbox_chan *chans;
++	struct spacemit_mailbox *mbox;
++	struct spacemit_mb_con_priv *con_priv;
++	int i, ret;
++
++	mbox = devm_kzalloc(dev, sizeof(*mbox), GFP_KERNEL);
++	if (!mbox)
++		return -ENOMEM;
++
++	con_priv = devm_kzalloc(dev, sizeof(*con_priv) * SPACEMIT_NUM_CHANNELS, GFP_KERNEL);
++	if (!con_priv)
++		return -ENOMEM;
++
++	chans = devm_kcalloc(dev, SPACEMIT_NUM_CHANNELS, sizeof(*chans), GFP_KERNEL);
++	if (!chans)
++		return -ENOMEM;
++
++	for (i = 0; i < SPACEMIT_NUM_CHANNELS; ++i) {
++		con_priv[i].smb = mbox;
++		chans[i].con_priv = con_priv + i;
++	}
++
++	mbox->dev = dev;
++
++	mbox->regs = (mbox_reg_desc_t *)devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(mbox->regs)) {
++		ret = PTR_ERR(mbox->regs);
++		dev_err(dev, "Failed to map MMIO resource: %d\n", ret);
++		return -EINVAL;
++	}
++
++	mbox->reset = devm_reset_control_get_exclusive(dev, "core_reset");
++	if (IS_ERR(mbox->reset)) {
++		ret = PTR_ERR(mbox->reset);
++		dev_err(dev, "Failed to get reset: %d\n", ret);
++		return -EINVAL;
++	}
++
++	/* deasser clk  */
++	ret = reset_control_deassert(mbox->reset);
++	if (ret) {
++		dev_err(dev, "Failed to deassert reset: %d\n", ret);
++		return -EINVAL;
++	}
++
++	pm_runtime_enable(dev);
++	dev_pm_qos_add_request(dev, &greq, DEV_PM_QOS_MAX_FREQUENCY,
++			DEV_PM_QOS_CLK_GATE | DEV_PM_QOS_PM_DOMAIN_GATE);
++	pm_runtime_get_sync(dev);
++	/* do not disable the clk of mailbox when suspend */
++	dev_pm_qos_update_request(&greq, DEV_PM_QOS_PM_DOMAIN_GATE);
++	pm_runtime_get_noresume(dev);
++
++	/* request irq */
++	ret = devm_request_irq(dev, platform_get_irq(pdev, 0),
++			       spacemit_mbox_irq, IRQF_NO_SUSPEND, dev_name(dev), mbox);
++	if (ret) {
++		dev_err(dev, "Failed to register IRQ handler: %d\n", ret);
++		return -EINVAL;
++	}
++
++	/* register the mailbox controller */
++	mbox->controller.dev           = dev;
++	mbox->controller.ops           = &spacemit_chan_ops;
++	mbox->controller.chans         = chans;
++	mbox->controller.num_chans     = SPACEMIT_NUM_CHANNELS;
++	mbox->controller.txdone_irq    = true;
++	mbox->controller.txdone_poll   = false;
++	mbox->controller.txpoll_period = 5;
++
++	spin_lock_init(&mbox->lock);
++	platform_set_drvdata(pdev, mbox);
++
++	ret = mbox_controller_register(&mbox->controller);
++	if (ret) {
++		dev_err(dev, "Failed to register controller: %d\n", ret);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int spacemit_mailbox_remove(struct platform_device *pdev)
++{
++	struct spacemit_mailbox *mbox = platform_get_drvdata(pdev);
++
++	mbox_controller_unregister(&mbox->controller);
++
++	pm_runtime_put_noidle(&pdev->dev);
++	pm_runtime_put_sync(&pdev->dev);
++
++	return 0;
++}
++
++static const struct of_device_id spacemit_mailbox_of_match[] = {
++	{ .compatible = "spacemit,k1-x-mailbox", },
++	{},
++};
++MODULE_DEVICE_TABLE(of, spacemit_mailbox_of_match);
++
++#ifdef CONFIG_PM_SLEEP
++static int k1x_mailbox_suspend_noirq(struct device *dev)
++{
++#if 0
++	int ret;
++	struct spacemit_mailbox *mbox = dev_get_drvdata(dev);
++
++	ret = reset_control_assert(mbox->reset);
++#endif
++
++	return 0;
++}
++
++static int k1x_mailbox_resume_noirq(struct device *dev)
++{
++#if 0
++	int ret;
++	struct spacemit_mailbox *mbox = dev_get_drvdata(dev);
++
++	ret = reset_control_deassert(mbox->reset);
++#endif
++
++	return 0;
++}
++
++static const struct dev_pm_ops k1x_mailbox_pm_qos = {
++	.suspend_noirq = k1x_mailbox_suspend_noirq,
++	.resume_noirq = k1x_mailbox_resume_noirq,
++};
++#endif
++
++static struct platform_driver spacemit_mailbox_driver = {
++	.driver = {
++		.name = "spacemit-mailbox",
++#ifdef CONFIG_PM_SLEEP
++		.pm	= &k1x_mailbox_pm_qos,
++#endif
++		.of_match_table = spacemit_mailbox_of_match,
++	},
++	.probe  = spacemit_mailbox_probe,
++	.remove = spacemit_mailbox_remove,
++};
++module_platform_driver(spacemit_mailbox_driver);
++
++MODULE_DESCRIPTION("spacemit Message Box driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/mailbox/spacemit/k1x_mailbox.h b/drivers/mailbox/spacemit/k1x_mailbox.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/mailbox/spacemit/k1x_mailbox.h
+@@ -0,0 +1,32 @@
++#ifndef __SPACEMIT_MAILBOX_H__
++#define __SPACEMIT_MAILBOX_H__
++
++#include <linux/kernel.h>
++#include <linux/mailbox_controller.h>
++#include <linux/spinlock.h>
++
++#define SPACEMIT_NUM_CHANNELS	4
++#define SPACEMIT_TX_ACK_OFFSET	4
++
++typedef struct mbox_reg_desc {
++	unsigned int ipc_dw;
++	unsigned int ipc_wdr;
++	unsigned int ipc_isrw;
++	unsigned int ipc_icr;
++	unsigned int ipc_iir;
++	unsigned int ipc_rdr;
++} mbox_reg_desc_t;
++
++struct spacemit_mailbox {
++	struct mbox_controller controller;
++	struct reset_control *reset;
++	mbox_reg_desc_t *regs;
++	spinlock_t lock;
++	struct device *dev;
++};
++
++struct spacemit_mb_con_priv {
++	struct spacemit_mailbox *smb;
++};
++
++#endif /* __SPACEMIT_MAILBOX_H__ */
+-- 
+Armbian
+

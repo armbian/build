@@ -343,6 +343,58 @@ driver_rtw88() {
 	fi
 }
 
+driver_rtl8852bs() {
+
+	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
+
+	if linux-version compare "${version}" ge 6.1 && [[ "${BOARD}" == bananapif3 || "${BOARD}" == armsom-sige5 ]]; then
+
+		# Attach to specific commit
+		local rtl8852bs_ver='commit:56420ff22f9c174e23ef1d1fefc66cbed197bc12' # Commit date: June 30, 2024 (please update when updating commit ref)
+
+		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
+
+		fetch_from_repo "$GITHUB_SOURCE/armbian/wifi-rtl8852bs" "rtl8852bs" "${rtl8852bs_ver}" "yes" # https://github.com/armbian/wifi-rtl8852bs
+		cd "$kerneldir" || exit
+		rm -rf "$kerneldir/drivers/net/wireless/realtek/rtl8852bs"
+		mkdir -p "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/"
+
+		# Copy folders into kernel-work-dir
+		cp -R "${SRC}/cache/sources/rtl8852bs/${rtl8852bs_ver#*:}"/{core,include,os_dep,phl,platform} \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs"
+
+		# Copy Kconfig into kernel-work-dir
+		cp "${SRC}/cache/sources/rtl8852bs/${rtl8852bs_ver#*:}"/Kconfig \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Kconfig"
+
+		# Copy Makefile into kernel-work-dir
+		cp "${SRC}/cache/sources/rtl8852bs/${rtl8852bs_ver#*:}"/Makefile \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
+
+		# Disable debug
+		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
+
+		# Add to section Makefile
+		echo "obj-\$(CONFIG_RTL8723DU) += rtl8723du/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
+		sed -i '/source "drivers\/net\/wireless\/realtek\/rtw89\/Kconfig"/a source "drivers\/net\/wireless\/realtek\/rtl8852bs\/Kconfig"' \
+			"$kerneldir/drivers/net/wireless/realtek/Kconfig"
+
+		# We have to enable specific platforms in the driver Makefile to enable specific driver tweaks, they are all "n" by default
+		case ${BOARD} in
+			bananapif3)
+				sed -i "s/CONFIG_PLATFORM_ARM_ROCKCHIP = n/CONFIG_PLATFORM_ARM_ROCKCHIP = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
+				;;
+			armsom-sige5)
+				sed -i "s/CONFIG_PLATFORM_SPACEMIT = n/CONFIG_PLATFORM_SPACEMIT = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
+				;;
+		esac
+
+		# Patches
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8852bs-Update-rtw_regd_init-for-6.1.patch" "applying"
+	fi
+}
+
 driver_rtl88x2cs() {
 
 	# Wireless drivers for Realtek 88x2cs chipsets

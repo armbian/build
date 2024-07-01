@@ -1,0 +1,722 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/rtc/Kconfig        |   9 +-
+ drivers/rtc/Makefile       |   1 +
+ drivers/rtc/rtc-sa1100.c   |  18 +
+ drivers/rtc/rtc-sa1100.h   |   1 +
+ drivers/rtc/rtc-spt-pmic.c | 577 ++++++++++
+ 5 files changed, 605 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/rtc/Kconfig b/drivers/rtc/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/rtc/Kconfig
++++ b/drivers/rtc/Kconfig
+@@ -724,6 +724,13 @@ config RTC_DRV_SD3078
+ 	  This driver can also be built as a module. If so, the module
+ 	  will be called rtc-sd3078
+ 
++config RTC_DRV_SPT_PMIC
++	tristate "Spacemit spm8xxx RTC"
++	depends on MFD_SPACEMIT_PMIC
++	help
++	  If you say yes here you will get support for the
++	  RTC of Spacemit spm8xxx PMIC.
++
+ endif # I2C
+ 
+ comment "SPI RTC drivers"
+@@ -1458,7 +1465,7 @@ config RTC_DRV_EP93XX
+ 
+ config RTC_DRV_SA1100
+ 	tristate "SA11x0/PXA2xx/PXA910"
+-	depends on ARCH_SA1100 || ARCH_PXA || ARCH_MMP
++	depends on ARCH_SA1100 || ARCH_PXA || ARCH_MMP || SOC_SPACEMIT_K1X
+ 	help
+ 	  If you say Y here you will get access to the real time clock
+ 	  built into your SA11x0 or PXA2xx CPU.
+diff --git a/drivers/rtc/Makefile b/drivers/rtc/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/rtc/Makefile
++++ b/drivers/rtc/Makefile
+@@ -186,3 +186,4 @@ obj-$(CONFIG_RTC_DRV_WM8350)	+= rtc-wm8350.o
+ obj-$(CONFIG_RTC_DRV_X1205)	+= rtc-x1205.o
+ obj-$(CONFIG_RTC_DRV_XGENE)	+= rtc-xgene.o
+ obj-$(CONFIG_RTC_DRV_ZYNQMP)	+= rtc-zynqmp.o
++obj-$(CONFIG_RTC_DRV_SPT_PMIC) += rtc-spt-pmic.o
+diff --git a/drivers/rtc/rtc-sa1100.c b/drivers/rtc/rtc-sa1100.c
+index 111111111111..222222222222 100644
+--- a/drivers/rtc/rtc-sa1100.c
++++ b/drivers/rtc/rtc-sa1100.c
+@@ -20,6 +20,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/module.h>
+ #include <linux/clk.h>
++#include <linux/reset.h>
+ #include <linux/rtc.h>
+ #include <linux/init.h>
+ #include <linux/fs.h>
+@@ -80,7 +81,10 @@ static irqreturn_t sa1100_rtc_interrupt(int irq, void *dev_id)
+ 
+ 	/* update irq data & counter */
+ 	if (rtsr & RTSR_AL)
++	{
+ 		events |= RTC_AF | RTC_IRQF;
++		printk("rtc hit alarm\n");
++	}
+ 	if (rtsr & RTSR_HZ)
+ 		events |= RTC_UF | RTC_IRQF;
+ 
+@@ -186,6 +190,10 @@ int sa1100_rtc_init(struct platform_device *pdev, struct sa1100_rtc *info)
+ 	ret = clk_prepare_enable(info->clk);
+ 	if (ret)
+ 		return ret;
++
++	ret = reset_control_deassert(info->reset);
++	if(ret)
++		goto free_clk;
+ 	/*
+ 	 * According to the manual we should be able to let RTTR be zero
+ 	 * and then a default diviser for a 32.768KHz clock is used.
+@@ -207,6 +215,7 @@ int sa1100_rtc_init(struct platform_device *pdev, struct sa1100_rtc *info)
+ 
+ 	ret = devm_rtc_register_device(info->rtc);
+ 	if (ret) {
++		reset_control_assert(info->reset);
+ 		clk_disable_unprepare(info->clk);
+ 		return ret;
+ 	}
+@@ -236,6 +245,10 @@ int sa1100_rtc_init(struct platform_device *pdev, struct sa1100_rtc *info)
+ 	writel_relaxed(RTSR_AL | RTSR_HZ, info->rtsr);
+ 
+ 	return 0;
++
++free_clk:
++	clk_disable_unprepare(info->clk);
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(sa1100_rtc_init);
+ 
+@@ -274,6 +287,10 @@ static int sa1100_rtc_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++	info->reset = devm_reset_control_get_optional(&pdev->dev, NULL);
++	if(IS_ERR(info->reset))
++		return PTR_ERR(info->reset);
++
+ 	base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(base))
+ 		return PTR_ERR(base);
+@@ -305,6 +322,7 @@ static int sa1100_rtc_remove(struct platform_device *pdev)
+ 		spin_lock_irq(&info->lock);
+ 		writel_relaxed(0, info->rtsr);
+ 		spin_unlock_irq(&info->lock);
++		reset_control_assert(info->reset);
+ 		clk_disable_unprepare(info->clk);
+ 	}
+ 
+diff --git a/drivers/rtc/rtc-sa1100.h b/drivers/rtc/rtc-sa1100.h
+index 111111111111..222222222222 100644
+--- a/drivers/rtc/rtc-sa1100.h
++++ b/drivers/rtc/rtc-sa1100.h
+@@ -17,6 +17,7 @@ struct sa1100_rtc {
+ 	int			irq_alarm;
+ 	struct rtc_device	*rtc;
+ 	struct clk		*clk;
++	struct reset_control	*reset;
+ };
+ 
+ int sa1100_rtc_init(struct platform_device *pdev, struct sa1100_rtc *info);
+diff --git a/drivers/rtc/rtc-spt-pmic.c b/drivers/rtc/rtc-spt-pmic.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/rtc/rtc-spt-pmic.c
+@@ -0,0 +1,577 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/of.h>
++#include <linux/module.h>
++#include <linux/init.h>
++#include <linux/rtc.h>
++#include <linux/platform_device.h>
++#include <linux/pm.h>
++#include <linux/pm_wakeirq.h>
++#include <linux/of_device.h>
++#include <linux/regmap.h>
++#include <linux/slab.h>
++#include <linux/mfd/spacemit/spacemit_pmic.h>
++
++SPM8821_RTC_REG_DESC;
++
++struct spacemit_rtc {
++	int irq;
++	struct device *dev;
++	struct regmap *regmap;
++	struct rtc_device *rtc_dev;
++	struct rtc_regdesc *desc;
++};
++
++static const struct of_device_id spacemit_id_table[] = {
++	{ .compatible = "pmic,rtc,spm8821", .data = &spm8821_regdesc, },
++	{ },
++};
++MODULE_DEVICE_TABLE(of, spacemit_id_table);
++
++static irqreturn_t spt_rtc_irq(int irq, void *_pwr)
++{
++	struct spacemit_rtc *rtc = (struct spacemit_rtc *)_pwr;
++
++	rtc_update_irq(rtc->rtc_dev, 1, RTC_IRQF | RTC_AF);
++
++	return IRQ_HANDLED;
++}
++
++static int spt_rtc_read_time(struct device *dev, struct rtc_time *tm)
++{
++	int ret;
++	unsigned int v[6], pre_v[6] = {0};
++	struct spacemit_rtc *rtc = dev_get_drvdata(dev);
++
++	ret = regmap_read(rtc->regmap, rtc->desc->cnt_s.reg, &pre_v[0]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read second: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->cnt_mi.reg, &pre_v[1]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read minute: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->cnt_h.reg, &pre_v[2]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read hour: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->cnt_d.reg, &pre_v[3]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read day: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->cnt_mo.reg, &pre_v[4]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read month: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->cnt_y.reg, &pre_v[5]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read year: %d\n", ret);
++		return -EINVAL;
++	}
++
++	while (1) {
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_s.reg, &v[0]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read second: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_mi.reg, &v[1]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read minute: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_h.reg, &v[2]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read hour: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_d.reg, &v[3]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read day: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_mo.reg, &v[4]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read month: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_y.reg, &v[5]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read year: %d\n", ret);
++			return -EINVAL;
++		}
++
++		if ((pre_v[0] == v[0]) && (pre_v[1] == v[1]) &&
++			(pre_v[2] == v[2]) && (pre_v[3] == v[3]) &&
++			(pre_v[4] == v[4]) && (pre_v[5] == v[5]))
++				break;
++		else {
++			pre_v[0] = v[0];
++			pre_v[1] = v[1];
++			pre_v[2] = v[2];
++			pre_v[3] = v[3];
++			pre_v[4] = v[4];
++			pre_v[5] = v[5];
++		}
++	}
++
++	tm->tm_sec = v[0] & rtc->desc->cnt_s.msk;
++	tm->tm_min = v[1] & rtc->desc->cnt_mi.msk;
++	tm->tm_hour = v[2] & rtc->desc->cnt_h.msk;
++	tm->tm_mday = (v[3] & rtc->desc->cnt_d.msk) + 1;
++	tm->tm_mon = (v[4] & rtc->desc->cnt_mo.msk);
++	tm->tm_year = (v[5] & rtc->desc->cnt_y.msk) + 100;
++
++	pr_debug("%s:%d, s:%d, min:%d, hour:%d, mday:%d, month:%d, year:%d\n",
++			__func__, __LINE__,
++			tm->tm_sec,
++			tm->tm_min,
++			tm->tm_hour,
++			tm->tm_mday,
++			tm->tm_mon,
++			tm->tm_year);
++
++	return 0;
++}
++
++static int spt_rtc_set_time(struct device *dev, struct rtc_time *tm)
++{
++	int ret;
++	unsigned int v[6];
++	union rtc_ctl_desc rtc_ctl;
++	struct spacemit_rtc *rtc = dev_get_drvdata(dev);
++
++	pr_debug("%s:%d, s:%d, min:%d, hour:%d, mday:%d, month:%d, year:%d\n",
++			__func__, __LINE__,
++			tm->tm_sec,
++			tm->tm_min,
++			tm->tm_hour,
++			tm->tm_mday,
++			tm->tm_mon,
++			tm->tm_year);
++
++	ret = regmap_read(rtc->regmap, rtc->desc->rtc_ctl.reg, (unsigned int *)&rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read rtc ctrl: %d\n", ret);
++		return -EINVAL;
++	}
++
++	/* disbale rtc first */
++	rtc_ctl.bits.rtc_en = 0;
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->rtc_ctl.reg,
++			0xff, rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to set rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	while (1) {
++		ret = regmap_write_bits(rtc->regmap, rtc->desc->cnt_s.reg,
++				rtc->desc->cnt_s.msk, tm->tm_sec);
++		if (ret) {
++			dev_err(rtc->dev, "failed to update second: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_write_bits(rtc->regmap, rtc->desc->cnt_mi.reg,
++				rtc->desc->cnt_mi.msk, tm->tm_min);
++		if (ret) {
++			dev_err(rtc->dev, "failed to update minutes: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_write_bits(rtc->regmap, rtc->desc->cnt_h.reg,
++				rtc->desc->cnt_h.msk, tm->tm_hour);
++		if (ret) {
++			dev_err(rtc->dev, "failed to update hour: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_write_bits(rtc->regmap, rtc->desc->cnt_d.reg,
++				rtc->desc->cnt_d.msk, tm->tm_mday - 1);
++		if (ret) {
++			dev_err(rtc->dev, "failed to update day: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_write_bits(rtc->regmap, rtc->desc->cnt_mo.reg,
++				rtc->desc->cnt_mo.msk, tm->tm_mon);
++		if (ret) {
++			dev_err(rtc->dev, "failed to update month: %d\n", ret);
++			return -EINVAL;
++		}
++
++		ret = regmap_write_bits(rtc->regmap, rtc->desc->cnt_y.reg,
++				rtc->desc->cnt_y.msk, tm->tm_year - 100);
++		if (ret) {
++			dev_err(rtc->dev, "failed to update month: %d\n", ret);
++			return -EINVAL;
++		}
++
++		/* read again */
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_s.reg, &v[0]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read second: %d\n", ret);
++			return -EINVAL;
++		}
++		v[0] = v[0] & rtc->desc->cnt_s.msk;
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_mi.reg, &v[1]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read minute: %d\n", ret);
++			return -EINVAL;
++		}
++		v[1] = v[1] & rtc->desc->cnt_mi.msk;
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_h.reg, &v[2]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read hour: %d\n", ret);
++			return -EINVAL;
++		}
++		v[2] = v[2] & rtc->desc->cnt_h.msk;
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_d.reg, &v[3]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read day: %d\n", ret);
++			return -EINVAL;
++		}
++		v[3] = v[3] & rtc->desc->cnt_d.msk;
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_mo.reg, &v[4]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read month: %d\n", ret);
++			return -EINVAL;
++		}
++		v[4] = v[4] & rtc->desc->cnt_mo.msk;
++
++		ret = regmap_read(rtc->regmap, rtc->desc->cnt_y.reg, &v[5]);
++		if (ret) {
++			dev_err(rtc->dev, "failed to read year: %d\n", ret);
++			return -EINVAL;
++		}
++		v[5] = v[5] & rtc->desc->cnt_y.msk;
++
++		if ((v[0] == (rtc->desc->cnt_s.msk & tm->tm_sec)) &&
++			(v[1] == (rtc->desc->cnt_mi.msk & tm->tm_min)) &&
++			(v[2] == (rtc->desc->cnt_h.msk & tm->tm_hour)) &&
++			((v[3] + 1) == (rtc->desc->cnt_d.msk & tm->tm_mday)) &&
++			(v[4] == (rtc->desc->cnt_mo.msk & tm->tm_mon)) &&
++			(v[5] == (rtc->desc->cnt_y.msk & (tm->tm_year - 100))))
++			break;
++	}
++
++	/* enable rtc last */
++	rtc_ctl.bits.rtc_en = 1;
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->rtc_ctl.reg,
++			0xff, rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to set rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int spt_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
++{
++	int ret;
++	unsigned int v[6];
++	union rtc_ctl_desc rtc_ctl;
++	struct spacemit_rtc *rtc = dev_get_drvdata(dev);
++
++	ret = regmap_read(rtc->regmap, rtc->desc->alarm_s.reg, &v[0]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read alarm second: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->alarm_mi.reg, &v[1]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read alarm minute: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->alarm_h.reg, &v[2]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read alarm hour: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->alarm_d.reg, &v[3]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read alarm day: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->alarm_mo.reg, &v[4]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read alarm month: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_read(rtc->regmap, rtc->desc->alarm_y.reg, &v[5]);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read alarm year: %d\n", ret);
++		return -EINVAL;
++	}
++
++	/* 2000:1:1:0:0:0 */
++	alrm->time.tm_sec = v[0] & rtc->desc->alarm_s.msk;
++	alrm->time.tm_min = v[1] & rtc->desc->alarm_mi.msk;
++	alrm->time.tm_hour = v[2] & rtc->desc->alarm_h.msk;
++	alrm->time.tm_mday = (v[3] & rtc->desc->alarm_d.msk) + 1;
++	alrm->time.tm_mon = (v[4] & rtc->desc->alarm_mo.msk);
++	alrm->time.tm_year = (v[5] & rtc->desc->alarm_y.msk) + 100;
++
++	pr_debug("%s:%d, s:%d, min:%d, hour:%d, mday:%d, month:%d, year:%d\n",
++			__func__, __LINE__,
++			alrm->time.tm_sec,
++			alrm->time.tm_min,
++			alrm->time.tm_hour,
++			alrm->time.tm_mday,
++			alrm->time.tm_mon,
++			alrm->time.tm_year);
++
++	ret = regmap_read(rtc->regmap, rtc->desc->rtc_ctl.reg, (unsigned int *)&rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read alarm second: %d\n", ret);
++		return -EINVAL;
++	}
++
++	alrm->enabled = rtc_ctl.bits.alarm_en;
++
++	return 0;
++}
++
++static int spt_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
++{
++	int ret;
++	union rtc_ctl_desc rtc_ctl;
++	struct spacemit_rtc *rtc = dev_get_drvdata(dev);
++
++	pr_debug("%s:%d, s:%d, min:%d, hour:%d, mday:%d, month:%d, year:%d\n",
++			__func__, __LINE__,
++			alrm->time.tm_sec,
++			alrm->time.tm_min,
++			alrm->time.tm_hour,
++			alrm->time.tm_mday,
++			alrm->time.tm_mon,
++			alrm->time.tm_year);
++
++	/* disable the alrm function first */
++	ret = regmap_read(rtc->regmap, rtc->desc->rtc_ctl.reg, (unsigned int *)&rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	rtc_ctl.bits.alarm_en = 0;
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->rtc_ctl.reg,
++			0xff, rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to set rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->alarm_s.reg,
++			rtc->desc->alarm_s.msk, alrm->time.tm_sec);
++	if (ret) {
++		dev_err(rtc->dev, "failed to update alrm second: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->alarm_mi.reg,
++			rtc->desc->alarm_mi.msk, alrm->time.tm_min);
++	if (ret) {
++		dev_err(rtc->dev, "failed to update alarm minutes: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->alarm_h.reg,
++			rtc->desc->alarm_h.msk, alrm->time.tm_hour);
++	if (ret) {
++		dev_err(rtc->dev, "failed to update alarm hour: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->alarm_d.reg,
++			rtc->desc->alarm_d.msk, alrm->time.tm_mday - 1);
++	if (ret) {
++		dev_err(rtc->dev, "failed to update alarm day: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->alarm_mo.reg,
++			rtc->desc->alarm_mo.msk, alrm->time.tm_mon);
++	if (ret) {
++		dev_err(rtc->dev, "failed to update alarm month: %d\n", ret);
++		return -EINVAL;
++	}
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->alarm_y.reg,
++			rtc->desc->alarm_y.msk, alrm->time.tm_year - 100);
++	if (ret) {
++		dev_err(rtc->dev, "failed to update month: %d\n", ret);
++		return -EINVAL;
++	}
++
++	if (alrm->enabled) {
++		rtc_ctl.bits.alarm_en = 1;
++
++		ret = regmap_write_bits(rtc->regmap, rtc->desc->rtc_ctl.reg,
++				0xff, rtc_ctl.val);
++		if (ret) {
++			dev_err(rtc->dev, "failed to set rtc ctrl register: %d\n", ret);
++			return -EINVAL;
++		}
++	}
++
++	return 0;
++}
++
++static int spt_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
++{
++	int ret;
++	union rtc_ctl_desc rtc_ctl;
++	struct spacemit_rtc *rtc = dev_get_drvdata(dev);
++
++	ret = regmap_read(rtc->regmap, rtc->desc->rtc_ctl.reg, (unsigned int *)&rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	if (enabled)
++		rtc_ctl.bits.alarm_en = 1;
++	else
++		rtc_ctl.bits.alarm_en = 0;
++
++	ret = regmap_write_bits(rtc->regmap, rtc->desc->rtc_ctl.reg,
++			0xff, rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to set rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static const struct rtc_class_ops spt_rtc_ops = {
++	.read_time = spt_rtc_read_time,
++	.set_time = spt_rtc_set_time,
++	.read_alarm = spt_rtc_read_alarm,
++	.set_alarm = spt_rtc_set_alarm,
++	.alarm_irq_enable = spt_rtc_alarm_irq_enable,
++};
++
++static int spacemit_rtc_probe(struct platform_device *pdev)
++{
++	int ret = 0;
++	struct spacemit_rtc *rtc;
++	union rtc_ctl_desc rtc_ctl;
++	const struct of_device_id *of_id;
++	struct spacemit_pmic *pmic = dev_get_drvdata(pdev->dev.parent);
++
++	rtc = devm_kzalloc(&pdev->dev, sizeof(struct spacemit_rtc), GFP_KERNEL);
++	if (!rtc)
++		return -ENOMEM;
++
++	of_id = of_match_device(spacemit_id_table, &pdev->dev);
++	if (!of_id) {
++		pr_err("Unable to match OF ID\n");
++		return -ENODEV;
++	}
++
++	rtc->regmap = pmic->regmap;
++	rtc->dev = &pdev->dev;
++	rtc->desc = (struct rtc_regdesc *)of_id->data;
++	rtc->irq = platform_get_irq(pdev, 0);
++	if (rtc->irq < 0) {
++		dev_err(&pdev->dev, "get rtc irq error: %d\n", rtc->irq);
++		return -EINVAL;
++	}
++
++	dev_set_drvdata(&pdev->dev, rtc);
++
++	ret = devm_request_any_context_irq(&pdev->dev, rtc->irq,
++					   spt_rtc_irq,
++					   IRQF_TRIGGER_NONE | IRQF_ONESHOT,
++					   "rtc@pmic", rtc);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "Can't register rtc irq: %d\n", ret);
++		return -EINVAL;
++	}
++
++	dev_pm_set_wake_irq(&pdev->dev, rtc->irq);
++	device_init_wakeup(&pdev->dev, 1);
++
++	rtc->rtc_dev = devm_rtc_allocate_device(&pdev->dev);
++	if (IS_ERR(rtc->rtc_dev))
++		return PTR_ERR(rtc->rtc_dev);
++
++	rtc->rtc_dev->ops = &spt_rtc_ops;
++	rtc->rtc_dev->range_min = RTC_TIMESTAMP_BEGIN_2000;
++	rtc->rtc_dev->range_max = RTC_TIMESTAMP_END_2063;
++
++	ret = devm_rtc_register_device(rtc->rtc_dev);
++	if (ret) {
++		dev_err(&pdev->dev, "register rtc device error: %d\n", ret);
++		return -EINVAL;
++	}
++
++	/* enable the rtc function */
++	ret = regmap_read(rtc->regmap, rtc->desc->rtc_ctl.reg, (unsigned int *)&rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to read rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	/* internal 32k clk */
++	rtc_ctl.bits.rtc_clk_sel = 1;
++	/* enable rtc */
++	rtc_ctl.bits.rtc_en = 1;
++	/* rtc clk out enable */
++	rtc_ctl.bits.out_32k_en = 1;
++	/* enable external crystal */
++	rtc_ctl.bits.crystal_en = 1;
++
++	ret = regmap_update_bits(rtc->regmap, rtc->desc->rtc_ctl.reg,
++			0xff, rtc_ctl.val);
++	if (ret) {
++		dev_err(rtc->dev, "failed to set rtc ctrl register: %d\n", ret);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static struct platform_driver spacemit_pmic_rtc_driver = {
++	.probe		= spacemit_rtc_probe,
++	.driver	= {
++		.name		= "spacemit-pmic-rtc",
++		.of_match_table	= spacemit_id_table,
++	},
++};
++
++module_platform_driver(spacemit_pmic_rtc_driver);
++
++MODULE_ALIAS("platform:rtc-spt-pmic");
++MODULE_DESCRIPTION("PMIC RTC driver");
++MODULE_LICENSE("GPL v2");
+-- 
+Armbian
+

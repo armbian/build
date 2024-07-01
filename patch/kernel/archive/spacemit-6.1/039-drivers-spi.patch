@@ -1,0 +1,5512 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/spi/Kconfig           |   20 +
+ drivers/spi/Makefile          |    3 +
+ drivers/spi/spi-dw-espi.c     | 1256 +++++++
+ drivers/spi/spi-dw-espi.h     |  325 ++
+ drivers/spi/spi-dw-mmio-ext.c |  171 +
+ drivers/spi/spi-k1x-dma.c     |  375 ++
+ drivers/spi/spi-k1x-qspi.c    | 1722 ++++++++++
+ drivers/spi/spi-k1x.c         | 1189 +++++++
+ drivers/spi/spi-k1x.h         |  364 ++
+ 9 files changed, 5425 insertions(+)
+
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -272,6 +272,26 @@ config SPI_DAVINCI
+ 	help
+ 	  SPI master controller for DaVinci/DA8x/OMAP-L/AM1x SPI modules.
+ 
++config SPI_DESIGNWARE_EXT
++	tristate "DesignWare enhanced SPI controller core support"
++        imply SPI_MEM
++	help
++	  general driver for enhanced SPI controller core from  DesignWare
++
++config SPI_K1X
++	tristate "K1X SPI Controller"
++	depends on SOC_SPACEMIT_K1X
++	help
++	  Enable support for the Spacemit K1X SPI controller.
++
++config SPI_K1X_QSPI
++	tristate "K1X QuadSPI Controller"
++	depends on SPI_MEM
++	help
++	  This enables support for the Spacemit K1X QuadSPI controller in master mode.
++	  This controller does only support the high-level SPI memory interface
++	  and not support generic SPI messages.
++
+ config SPI_DESIGNWARE
+ 	tristate "DesignWare SPI controller core support"
+ 	imply SPI_MEM
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -40,6 +40,9 @@ obj-$(CONFIG_SPI_CLPS711X)		+= spi-clps711x.o
+ obj-$(CONFIG_SPI_COLDFIRE_QSPI)		+= spi-coldfire-qspi.o
+ obj-$(CONFIG_SPI_DAVINCI)		+= spi-davinci.o
+ obj-$(CONFIG_SPI_DLN2)			+= spi-dln2.o
++obj-$(CONFIG_SPI_DESIGNWARE_EXT)	+= spi-dw-mmio-ext.o spi-dw-espi.o
++obj-$(CONFIG_SPI_K1X)			+= spi-k1x.o spi-k1x-dma.o
++obj-$(CONFIG_SPI_K1X_QSPI)		+= spi-k1x-qspi.o
+ obj-$(CONFIG_SPI_DESIGNWARE)		+= spi-dw.o
+ spi-dw-y				:= spi-dw-core.o
+ spi-dw-$(CONFIG_SPI_DW_DMA)		+= spi-dw-dma.o
+diff --git a/drivers/spi/spi-dw-espi.c b/drivers/spi/spi-dw-espi.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/spi/spi-dw-espi.c
+@@ -0,0 +1,1256 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Designware SPI core controller driver
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ * base on design-ware spi-core driver(spi-dw-xxx.c)
++ */
++
++#include <linux/bitfield.h>
++#include <linux/dma-mapping.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/preempt.h>
++#include <linux/highmem.h>
++#include <linux/delay.h>
++#include <linux/slab.h>
++#include <linux/spi/spi.h>
++#include <linux/spi/spi-mem.h>
++#include <linux/string.h>
++#include <linux/of.h>
++
++#include "spi-dw-espi.h"
++
++#ifdef CONFIG_DEBUG_FS
++#include <linux/debugfs.h>
++#endif
++
++/* Slave spi_device related */
++struct dw_spi_chip_data {
++	u32 cr0;
++	u32 rx_sample_dly;	/* RX sample delay */
++};
++
++#ifdef CONFIG_DEBUG_FS
++
++#define DW_SPI_DBGFS_REG(_name, _off)	\
++{					\
++	.name = _name,			\
++	.offset = _off,			\
++}
++
++static const struct debugfs_reg32 dw_spi_dbgfs_regs[] = {
++	DW_SPI_DBGFS_REG("CTRLR0", DW_SPI_CTRLR0),
++	DW_SPI_DBGFS_REG("CTRLR1", DW_SPI_CTRLR1),
++	DW_SPI_DBGFS_REG("SSIENR", DW_SPI_SSIENR),
++	DW_SPI_DBGFS_REG("SER", DW_SPI_SER),
++	DW_SPI_DBGFS_REG("BAUDR", DW_SPI_BAUDR),
++	DW_SPI_DBGFS_REG("TXFTLR", DW_SPI_TXFTLR),
++	DW_SPI_DBGFS_REG("RXFTLR", DW_SPI_RXFTLR),
++	DW_SPI_DBGFS_REG("TXFLR", DW_SPI_TXFLR),
++	DW_SPI_DBGFS_REG("RXFLR", DW_SPI_RXFLR),
++	DW_SPI_DBGFS_REG("SR", DW_SPI_SR),
++	DW_SPI_DBGFS_REG("IMR", DW_SPI_IMR),
++	DW_SPI_DBGFS_REG("ISR", DW_SPI_ISR),
++	DW_SPI_DBGFS_REG("DMACR", DW_SPI_DMACR),
++	DW_SPI_DBGFS_REG("DMATDLR", DW_SPI_DMATDLR),
++	DW_SPI_DBGFS_REG("DMARDLR", DW_SPI_DMARDLR),
++	DW_SPI_DBGFS_REG("RX_SAMPLE_DLY", DW_SPI_RX_SAMPLE_DLY),
++};
++
++static int dw_spi_debugfs_init(struct dw_spi *dws)
++{
++	char name[32];
++
++	snprintf(name, 32, "dw_spi%d", dws->master->bus_num);
++	dws->debugfs = debugfs_create_dir(name, NULL);
++	if (!dws->debugfs)
++		return -ENOMEM;
++
++	dws->regset.regs = dw_spi_dbgfs_regs;
++	dws->regset.nregs = ARRAY_SIZE(dw_spi_dbgfs_regs);
++	dws->regset.base = dws->regs;
++	debugfs_create_regset32("registers", 0400, dws->debugfs, &dws->regset);
++
++	return 0;
++}
++
++static void dw_spi_debugfs_remove(struct dw_spi *dws)
++{
++	debugfs_remove_recursive(dws->debugfs);
++}
++
++#else
++static inline int dw_spi_debugfs_init(struct dw_spi *dws)
++{
++	return 0;
++}
++
++static inline void dw_spi_debugfs_remove(struct dw_spi *dws)
++{
++}
++#endif /* CONFIG_DEBUG_FS */
++
++void dw_spi_ext_set_cs(struct spi_device *spi, bool enable)
++{
++	struct dw_spi *dws = spi_controller_get_devdata(spi->controller);
++	bool cs_high = !!(spi->mode & SPI_CS_HIGH);
++
++	/*
++	 * DW SPI controller demands any native CS being set in order to
++	 * proceed with data transfer. So in order to activate the SPI
++	 * communications we must set a corresponding bit in the Slave
++	 * Enable register no matter whether the SPI core is configured to
++	 * support active-high or active-low CS level.
++	 */
++	if (cs_high == enable)
++		dw_writel(dws, DW_SPI_SER, BIT(spi->chip_select));
++	else
++		dw_writel(dws, DW_SPI_SER, 0);
++}
++
++/* Return the max entries we can fill into tx fifo */
++static inline u32 dw_spi_tx_max(struct dw_spi *dws)
++{
++	u32 tx_room, rxtx_gap;
++
++	tx_room = dws->fifo_len - dw_readl(dws, DW_SPI_TXFLR);
++
++	/*
++	 * Another concern is about the tx/rx mismatch, we
++	 * though to use (dws->fifo_len - rxflr - txflr) as
++	 * one maximum value for tx, but it doesn't cover the
++	 * data which is out of tx/rx fifo and inside the
++	 * shift registers. So a control from sw point of
++	 * view is taken.
++	 */
++	rxtx_gap = dws->fifo_len - (dws->rx_len - dws->tx_len);
++
++	return min3((u32)dws->tx_len, tx_room, rxtx_gap);
++}
++
++/* Return the max entries we should read out of rx fifo */
++static inline u32 dw_spi_rx_max(struct dw_spi *dws)
++{
++	return min_t(u32, dws->rx_len, dw_readl(dws, DW_SPI_RXFLR));
++}
++
++static void dw_writer(struct dw_spi *dws)
++{
++	u32 max = dw_spi_tx_max(dws);
++	u32 txw = 0;
++
++	while (max--) {
++		if (dws->tx) {
++			if (dws->n_bytes == 1)
++				txw = *(u8 *)(dws->tx);
++			else if (dws->n_bytes == 2)
++				txw = *(u16 *)(dws->tx);
++			else
++				txw = *(u32 *)(dws->tx);
++
++			dws->tx += dws->n_bytes;
++		}
++		dw_write_io_reg(dws, DW_SPI_DR, txw);
++		--dws->tx_len;
++	}
++}
++
++static void dw_reader(struct dw_spi *dws)
++{
++	u32 max = dw_spi_rx_max(dws);
++	u32 rxw;
++
++	while (max--) {
++		rxw = dw_read_io_reg(dws, DW_SPI_DR);
++		if (dws->rx) {
++			if (dws->n_bytes == 1)
++				*(u8 *)(dws->rx) = rxw;
++			else if (dws->n_bytes == 2)
++				*(u16 *)(dws->rx) = rxw;
++			else
++				*(u32 *)(dws->rx) = rxw;
++
++			dws->rx += dws->n_bytes;
++		}
++		--dws->rx_len;
++	}
++}
++
++int dw_spi_ext_check_status(struct dw_spi *dws, bool raw)
++{
++	u32 irq_status;
++	int ret = 0;
++
++	if (raw)
++		irq_status = dw_readl(dws, DW_SPI_RISR);
++	else
++		irq_status = dw_readl(dws, DW_SPI_ISR);
++
++	if (irq_status & DW_SPI_INT_RXOI) {
++		dev_err(&dws->master->dev, "RX FIFO overflow detected\n");
++		ret = -EIO;
++	}
++
++	if (irq_status & DW_SPI_INT_RXUI) {
++		dev_err(&dws->master->dev, "RX FIFO underflow detected\n");
++		ret = -EIO;
++	}
++
++	if (irq_status & DW_SPI_INT_TXOI) {
++		dev_err(&dws->master->dev, "TX FIFO overflow detected\n");
++		ret = -EIO;
++	}
++
++	/* Generically handle the erroneous situation */
++	if (ret) {
++		dw_spi_reset_chip(dws);
++		if (dws->master->cur_msg)
++			dws->master->cur_msg->status = ret;
++	}
++
++	return ret;
++}
++
++static irqreturn_t dw_spi_transfer_handler(struct dw_spi *dws)
++{
++	u16 irq_status = dw_readl(dws, DW_SPI_ISR);
++
++	if (dw_spi_ext_check_status(dws, false)) {
++		spi_finalize_current_transfer(dws->master);
++		return IRQ_HANDLED;
++	}
++
++	/*
++	 * Read data from the Rx FIFO every time we've got a chance executing
++	 * this method. If there is nothing left to receive, terminate the
++	 * procedure. Otherwise adjust the Rx FIFO Threshold level if it's a
++	 * final stage of the transfer. By doing so we'll get the next IRQ
++	 * right when the leftover incoming data is received.
++	 */
++	dw_reader(dws);
++	if (!dws->rx_len) {
++		dw_spi_mask_intr(dws, 0xff);
++		spi_finalize_current_transfer(dws->master);
++	} else if (dws->rx_len <= dw_readl(dws, DW_SPI_RXFTLR)) {
++		dw_writel(dws, DW_SPI_RXFTLR, dws->rx_len - 1);
++	}
++
++	/*
++	 * Send data out if Tx FIFO Empty IRQ is received. The IRQ will be
++	 * disabled after the data transmission is finished so not to
++	 * have the TXE IRQ flood at the final stage of the transfer.
++	 */
++	if (irq_status & DW_SPI_INT_TXEI) {
++		dw_writer(dws);
++		if (!dws->tx_len)
++			dw_spi_mask_intr(dws, DW_SPI_INT_TXEI);
++	}
++
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t dw_spi_ext_irq(int irq, void *dev_id)
++{
++	struct spi_controller *master = dev_id;
++	struct dw_spi *dws = spi_controller_get_devdata(master);
++	u16 irq_status = dw_readl(dws, DW_SPI_ISR) & DW_SPI_INT_MASK;
++
++	if (!irq_status)
++		return IRQ_NONE;
++
++	if (!master->cur_msg) {
++		dw_spi_mask_intr(dws, 0xff);
++		return IRQ_HANDLED;
++	}
++
++	return dws->transfer_handler(dws);
++}
++
++static u32 dw_spi_prepare_cr0(struct dw_spi *dws, struct spi_device *spi)
++{
++	u32 cr0 = 0;
++
++	if (dw_spi_ip_is(dws, PSSI)) {
++		/* CTRLR0[ 5: 4] Frame Format */
++		cr0 |= FIELD_PREP(DW_PSSI_CTRLR0_FRF_MASK, DW_SPI_CTRLR0_FRF_MOTO_SPI);
++
++		/*
++		 * SPI mode (SCPOL|SCPH)
++		 * CTRLR0[ 6] Serial Clock Phase
++		 * CTRLR0[ 7] Serial Clock Polarity
++		 */
++		if (spi->mode & SPI_CPOL)
++			cr0 |= DW_PSSI_CTRLR0_SCPOL;
++		if (spi->mode & SPI_CPHA)
++			cr0 |= DW_PSSI_CTRLR0_SCPHA;
++
++		/* CTRLR0[11] Shift Register Loop */
++		if (spi->mode & SPI_LOOP)
++			cr0 |= DW_PSSI_CTRLR0_SRL;
++	} else {
++		/* CTRLR0[ 7: 6] Frame Format */
++		cr0 |= FIELD_PREP(DW_HSSI_CTRLR0_FRF_MASK, DW_SPI_CTRLR0_FRF_MOTO_SPI);
++
++		/*
++		 * SPI mode (SCPOL|SCPH)
++		 * CTRLR0[ 8] Serial Clock Phase
++		 * CTRLR0[ 9] Serial Clock Polarity
++		 */
++		if (spi->mode & SPI_CPOL)
++			cr0 |= DW_HSSI_CTRLR0_SCPOL;
++		if (spi->mode & SPI_CPHA)
++			cr0 |= DW_HSSI_CTRLR0_SCPHA;
++
++		/* CTRLR0[13] Shift Register Loop */
++		if (spi->mode & SPI_LOOP)
++			cr0 |= DW_HSSI_CTRLR0_SRL;
++
++		/* CTRLR0[31] MST */
++		if (dw_spi_ver_is_ge(dws, HSSI, 102A))
++			cr0 |= DW_HSSI_CTRLR0_MST;
++	}
++
++	return cr0;
++}
++
++void dw_spi_ext_update_config(struct dw_spi *dws, struct spi_device *spi,
++			  struct dw_spi_cfg *cfg)
++{
++	struct dw_spi_chip_data *chip = spi_get_ctldata(spi);
++	u32 cr0 = chip->cr0;
++	u32 speed_hz;
++	u16 clk_div;
++
++	/* CTRLR0[ 4/3: 0] or CTRLR0[ 20: 16] Data Frame Size */
++	cr0 |= (cfg->dfs - 1) << dws->dfs_offset;
++
++	if (dw_spi_ip_is(dws, PSSI))
++		/* CTRLR0[ 9:8] Transfer Mode */
++		cr0 |= FIELD_PREP(DW_PSSI_CTRLR0_TMOD_MASK, cfg->tmode);
++	else
++		/* CTRLR0[11:10] Transfer Mode */
++		cr0 |= FIELD_PREP(DW_HSSI_CTRLR0_TMOD_MASK, cfg->tmode);
++
++    if (dws->caps & DW_SPI_CAP_EXT_SPI) {
++		if (cfg->spi_frf)
++			cr0 |= FIELD_PREP(DW_HSSI_CTRLR0_SPI_FRF_MASK,
++				cfg->spi_frf);
++		else
++			cr0 &= ~DW_HSSI_CTRLR0_SPI_FRF_MASK;
++	}
++
++	dw_writel(dws, DW_SPI_CTRLR0, cr0);
++
++	if (cfg->tmode == DW_SPI_CTRLR0_TMOD_EPROMREAD ||
++	    cfg->tmode == DW_SPI_CTRLR0_TMOD_RO ||
++	    (cfg->tmode == DW_SPI_CTRLR0_TMOD_TO &&
++	     (dws->caps & DW_SPI_CAP_EXT_SPI) && cfg->spi_frf))
++		dw_writel(dws, DW_SPI_CTRLR1, cfg->ndf ? cfg->ndf - 1 : 0);
++
++	/* Note DW APB SSI clock divider doesn't support odd numbers */
++	clk_div = (DIV_ROUND_UP(dws->max_freq, cfg->freq) + 1) & 0xfffe;
++	speed_hz = dws->max_freq / clk_div;
++
++	if (dws->current_freq != speed_hz) {
++		dw_spi_set_clk(dws, clk_div);
++		dws->current_freq = speed_hz;
++	}
++
++	/* Update RX sample delay if required */
++	if (dws->cur_rx_sample_dly != chip->rx_sample_dly) {
++		dw_writel(dws, DW_SPI_RX_SAMPLE_DLY, chip->rx_sample_dly);
++		dws->cur_rx_sample_dly = chip->rx_sample_dly;
++	}
++}
++
++static void dw_spi_ext_irq_setup(struct dw_spi *dws)
++{
++	u16 level;
++	u8 imask;
++
++	/*
++	 * Originally Tx and Rx data lengths match. Rx FIFO Threshold level
++	 * will be adjusted at the final stage of the IRQ-based SPI transfer
++	 * execution so not to lose the leftover of the incoming data.
++	 */
++	level = min_t(unsigned int, dws->fifo_len / 2, dws->tx_len);
++	dw_writel(dws, DW_SPI_TXFTLR, level);
++	dw_writel(dws, DW_SPI_RXFTLR, level - 1);
++
++	dws->transfer_handler = dw_spi_transfer_handler;
++
++	imask = DW_SPI_INT_TXEI | DW_SPI_INT_TXOI |
++		DW_SPI_INT_RXUI | DW_SPI_INT_RXOI | DW_SPI_INT_RXFI;
++	dw_spi_umask_intr(dws, imask);
++}
++
++/*
++ * The iterative procedure of the poll-based transfer is simple: write as much
++ * as possible to the Tx FIFO, wait until the pending to receive data is ready
++ * to be read, read it from the Rx FIFO and check whether the performed
++ * procedure has been successful.
++ *
++ * Note this method the same way as the IRQ-based transfer won't work well for
++ * the SPI devices connected to the controller with native CS due to the
++ * automatic CS assertion/de-assertion.
++ */
++static int dw_spi_poll_transfer(struct dw_spi *dws,
++				struct spi_transfer *transfer)
++{
++	struct spi_delay delay;
++	u16 nbits;
++	int ret;
++
++	delay.unit = SPI_DELAY_UNIT_SCK;
++	nbits = dws->n_bytes * BITS_PER_BYTE;
++
++	do {
++		dw_writer(dws);
++
++		delay.value = nbits * (dws->rx_len - dws->tx_len);
++		spi_delay_exec(&delay, transfer);
++
++		dw_reader(dws);
++
++		ret = dw_spi_ext_check_status(dws, true);
++		if (ret)
++			return ret;
++	} while (dws->rx_len);
++
++	return 0;
++}
++
++static int dw_spi_transfer_one(struct spi_controller *master,
++			       struct spi_device *spi,
++			       struct spi_transfer *transfer)
++{
++	struct dw_spi *dws = spi_controller_get_devdata(master);
++	struct dw_spi_cfg cfg = {
++		.tmode = DW_SPI_CTRLR0_TMOD_TR,
++		.dfs = transfer->bits_per_word,
++		.freq = transfer->speed_hz,
++		.spi_frf = 0,
++	};
++	int ret;
++
++	dws->dma_mapped = 0;
++	dws->n_bytes = DIV_ROUND_UP(transfer->bits_per_word, BITS_PER_BYTE);
++	dws->tx = (void *)transfer->tx_buf;
++	dws->tx_len = transfer->len / dws->n_bytes;
++	dws->rx = transfer->rx_buf;
++	dws->rx_len = dws->tx_len;
++
++	/* Ensure the data above is visible for all CPUs */
++	smp_mb();
++
++	dw_spi_enable_chip(dws, 0);
++
++	dw_spi_ext_update_config(dws, spi, &cfg);
++
++	transfer->effective_speed_hz = dws->current_freq;
++
++	/* Check if current transfer is a DMA transaction */
++	if (master->can_dma && master->can_dma(master, spi, transfer))
++		dws->dma_mapped = master->cur_msg_mapped;
++
++	/* For poll mode just disable all interrupts */
++	dw_spi_mask_intr(dws, 0xff);
++
++	if (dws->dma_mapped) {
++		ret = dws->dma_ops->dma_setup(dws, transfer);
++		if (ret)
++			return ret;
++	}
++
++	dw_spi_enable_chip(dws, 1);
++
++	if (dws->dma_mapped)
++		return dws->dma_ops->dma_transfer(dws, transfer);
++	else if (dws->irq == IRQ_NOTCONNECTED)
++		return dw_spi_poll_transfer(dws, transfer);
++
++	dw_spi_ext_irq_setup(dws);
++
++	return 1;
++}
++
++static void dw_spi_handle_err(struct spi_controller *master,
++			      struct spi_message *msg)
++{
++	struct dw_spi *dws = spi_controller_get_devdata(master);
++
++	if (dws->dma_mapped)
++		dws->dma_ops->dma_stop(dws);
++
++	dw_spi_reset_chip(dws);
++}
++
++static int dw_spi_adjust_mem_op_size(struct spi_mem *mem, struct spi_mem_op *op)
++{
++	if (op->data.dir == SPI_MEM_DATA_IN)
++		op->data.nbytes = clamp_val(op->data.nbytes, 0, DW_SPI_NDF_MASK + 1);
++
++	return 0;
++}
++
++static bool dw_spi_supports_mem_op(struct spi_mem *mem,
++				   const struct spi_mem_op *op)
++{
++	struct dw_spi *dws = spi_controller_get_devdata(mem->spi->controller);
++
++	/*
++	 * Only support the numbler of io lines used to transfer the cmd 
++	 * is 1 in enhanced SPI for now.
++	 */
++	if (op->addr.buswidth > 1 || op->dummy.buswidth > 1 ||
++		op->cmd.buswidth > 1)
++		return false;
++
++	/* In enhanced SPI 1, 2, 4, 8 all are valid modes. */
++	if (op->data.buswidth > 1 && (!(dws->caps & DW_SPI_CAP_EXT_SPI)))
++		return false;
++
++	/* Only support upto 32 bit address in enhanced SPI for now. */
++	if (op->data.buswidth > 1 && op->addr.nbytes > 4)
++ 		return false;
++
++	return spi_mem_default_supports_op(mem, op);
++}
++
++static int dw_spi_init_mem_buf(struct dw_spi *dws, const struct spi_mem_op *op,
++								bool enhanced_spi)
++{
++	unsigned int i, j, len;
++	u8 *out;
++
++	/*
++	 * Calculate the total length of the EEPROM command transfer and
++	 * either use the pre-allocated buffer or create a temporary one.
++	 */
++	len = op->cmd.nbytes + op->addr.nbytes + op->dummy.nbytes;
++	if (op->data.dir == SPI_MEM_DATA_OUT)
++		len += op->data.nbytes;
++
++	if (len <= DW_SPI_BUF_SIZE) {
++		out = dws->buf;
++	} else {
++		out = kzalloc(len, GFP_KERNEL);
++		if (!out)
++			return -ENOMEM;
++	}
++
++	/*
++	 * Collect the operation code, address and dummy bytes into the single
++	 * buffer. If it's a transfer with data to be sent, also copy it into the
++	 * single buffer in order to speed the data transmission up.
++	 */
++	for (i = 0; i < op->cmd.nbytes; ++i)
++		out[i] = DW_SPI_GET_BYTE(op->cmd.opcode, op->cmd.nbytes - i - 1);
++	
++	if (enhanced_spi) {
++		/*
++		 * Fill the remaining spaces of dws->reg_io_width bytes
++		 * size register with zero for cmd.
++		 */
++		for (; i < dws->reg_io_width; ++i)
++			out[i] = 0;
++		/*
++		 * Copy the address bytes in dws->reg_io_width bytes size
++		 * register and fill remaining spaces with zero.
++		 */
++		for (j = op->addr.nbytes; j > 0; ++i, --j)
++			out[i] = DW_SPI_GET_BYTE(op->addr.val, op->addr.nbytes - j);
++		for (j = op->addr.nbytes; j < dws->reg_io_width; ++i, ++j)
++			out[i] = 0;
++	} else {
++		for (j = 0; j < op->addr.nbytes; ++i, ++j)
++			out[i] = DW_SPI_GET_BYTE(op->addr.val, op->addr.nbytes - j - 1);
++	}
++
++	if (!enhanced_spi) {
++		/*
++		 * dummy bytes are not needed in enhanced mode as
++		 * wait_cycles specified as number of SPI clock cycles
++		 * between control frames transmit and data reception
++		 * will be mentioned in enhanced spi mode.
++		 */
++		for (j = 0; j < op->dummy.nbytes; ++i, ++j)
++			out[i] = 0x0;
++	}
++
++	if (op->data.dir == SPI_MEM_DATA_OUT)
++		memcpy(&out[i], op->data.buf.out, op->data.nbytes);
++
++	dws->n_bytes = 1;
++	dws->tx = out;
++	
++	if (enhanced_spi) {
++		/*
++		 * In enhanced mode cmd will be one FIFO and address
++		 * will be one more FIFO.
++		 */
++		dws->tx_len = 1;
++		if (op->addr.nbytes)
++			dws->tx_len += 1;
++		if (op->data.dir == SPI_MEM_DATA_OUT)
++			dws->tx_len += op->data.nbytes;
++	} else {
++		dws->tx_len = len;
++	}
++
++	if (op->data.dir == SPI_MEM_DATA_IN) {
++		dws->rx = op->data.buf.in;
++		dws->rx_len = op->data.nbytes;
++	} else {
++		dws->rx = NULL;
++		dws->rx_len = 0;
++	}
++
++	return 0;
++}
++
++static void dw_spi_free_mem_buf(struct dw_spi *dws)
++{
++	if (dws->tx != dws->buf)
++		kfree(dws->tx);
++}
++
++static int dw_spi_write_then_read(struct dw_spi *dws, struct spi_device *spi)
++{
++	u32 room, entries, sts;
++	unsigned int len;
++	u8 *buf;
++
++	/*
++	 * At initial stage we just pre-fill the Tx FIFO in with no rush,
++	 * since native CS hasn't been enabled yet and the automatic data
++	 * transmission won't start til we do that.
++	 */
++	len = min(dws->fifo_len, dws->tx_len);
++	buf = dws->tx;
++	while (len--)
++		dw_write_io_reg(dws, DW_SPI_DR, *buf++);
++
++	/*
++	 * After setting any bit in the SER register the transmission will
++	 * start automatically. We have to keep up with that procedure
++	 * otherwise the CS de-assertion will happen whereupon the memory
++	 * operation will be pre-terminated.
++	 */
++	len = dws->tx_len - ((void *)buf - dws->tx);
++	dw_spi_ext_set_cs(spi, false);
++	while (len) {
++		entries = readl_relaxed(dws->regs + DW_SPI_TXFLR);
++		if (!entries) {
++			dev_err(&dws->master->dev, "CS de-assertion on Tx\n");
++			return -EIO;
++		}
++		room = min(dws->fifo_len - entries, len);
++		for (; room; --room, --len)
++			dw_write_io_reg(dws, DW_SPI_DR, *buf++);
++	}
++
++	/*
++	 * Data fetching will start automatically if the EEPROM-read mode is
++	 * activated. We have to keep up with the incoming data pace to
++	 * prevent the Rx FIFO overflow causing the inbound data loss.
++	 */
++	len = dws->rx_len;
++	buf = dws->rx;
++	while (len) {
++		entries = readl_relaxed(dws->regs + DW_SPI_RXFLR);
++		if (!entries) {
++			sts = readl_relaxed(dws->regs + DW_SPI_RISR);
++			if (sts & DW_SPI_INT_RXOI) {
++				dev_err(&dws->master->dev, "FIFO overflow on Rx\n");
++				return -EIO;
++			}
++			continue;
++		}
++		entries = min(entries, len);
++		for (; entries; --entries, --len)
++			*buf++ = dw_read_io_reg(dws, DW_SPI_DR);
++	}
++
++	return 0;
++}
++
++static inline bool dw_spi_ctlr_busy(struct dw_spi *dws)
++{
++	return dw_readl(dws, DW_SPI_SR) & DW_SPI_SR_BUSY;
++}
++
++static int dw_spi_wait_mem_op_done(struct dw_spi *dws)
++{
++	int retry = DW_SPI_WAIT_RETRIES;
++	struct spi_delay delay;
++	unsigned long ns, us;
++	u32 nents;
++
++	nents = dw_readl(dws, DW_SPI_TXFLR);
++	ns = NSEC_PER_SEC / dws->current_freq * nents;
++	ns *= dws->n_bytes * BITS_PER_BYTE;
++	if (ns <= NSEC_PER_USEC) {
++		delay.unit = SPI_DELAY_UNIT_NSECS;
++		delay.value = ns;
++	} else {
++		us = DIV_ROUND_UP(ns, NSEC_PER_USEC);
++		delay.unit = SPI_DELAY_UNIT_USECS;
++		delay.value = clamp_val(us, 0, USHRT_MAX);
++	}
++
++	while (dw_spi_ctlr_busy(dws) && retry--)
++		spi_delay_exec(&delay, NULL);
++
++	if (retry < 0) {
++		dev_err(&dws->master->dev, "Mem op hanged up\n");
++		return -EIO;
++	}
++
++	return 0;
++}
++
++static void ext_transfer_delay(struct dw_spi *dws)
++{
++	struct spi_delay delay;
++	unsigned long ns, us;
++	u32 nents;
++
++	nents = dw_readl(dws, DW_SPI_TXFLR);
++	ns = NSEC_PER_SEC / dws->current_freq * nents;
++	ns *= dws->n_bytes * BITS_PER_BYTE;
++	if (ns <= NSEC_PER_USEC) {
++		delay.unit = SPI_DELAY_UNIT_NSECS;
++		delay.value = ns;
++	} else {
++		us = DIV_ROUND_UP(ns, NSEC_PER_USEC);
++		delay.unit = SPI_DELAY_UNIT_USECS;
++		delay.value = clamp_val(us, 0, USHRT_MAX);
++	}
++	/* wait until there is some space in TX FIFO */
++	while (!(dw_readl(dws, DW_SPI_SR) & DW_SPI_SR_TF_NOT_FULL))
++		spi_delay_exec(&delay, NULL);
++}
++
++static void dw_spi_stop_mem_op(struct dw_spi *dws, struct spi_device *spi)
++{
++	dw_spi_enable_chip(dws, 0);
++	dw_spi_ext_set_cs(spi, true);
++	dw_spi_enable_chip(dws, 1);
++}
++
++static int enhanced_transfer(struct dw_spi *dws, struct spi_device *spi,
++			     const struct spi_mem_op *op)
++{
++	u32 max, txw = 0, rxw;
++	bool cs_done = false;
++	void *buf = dws->tx;
++	int ret;
++
++	/* Send cmd as 32 bit value */
++	if (buf) {
++		txw = *(u32 *)(buf);
++		dw_write_io_reg(dws, DW_SPI_DR, txw);
++		buf += 4;
++		dws->tx_len--;
++		if (op->addr.nbytes) {
++			/*
++			 * Send address as 32 bit value if address
++			 * is present in the instruction.
++			 */
++			txw = *(u32 *)(buf);
++			dw_write_io_reg(dws, DW_SPI_DR, txw);
++			buf += 4;
++			dws->tx_len--;
++		}
++	}
++
++	do {
++		max = min_t(u32, dws->tx_len, dws->fifo_len -
++			    dw_readl(dws, DW_SPI_TXFLR));
++		while (max--) {
++			if (buf) {
++				txw = *(u8 *)(buf);
++				buf += dws->n_bytes;
++			}
++			dw_write_io_reg(dws, DW_SPI_DR, txw);
++			--dws->tx_len;
++		}
++		/* Enable CS after filling up FIFO */
++		if (!cs_done) {
++			dw_spi_ext_set_cs(spi, false);
++			cs_done = true;
++		}
++		ext_transfer_delay(dws);
++		if (!dws->tx_len && !dws->rx_len) {
++			/*
++			 * We only need to wait for done if there is
++			 * nothing to receive and there is nothing more
++			 * to transmit. If we are receiving, then the
++			 * wait cycles will make sure we wait.
++			 */
++			ret = dw_spi_wait_mem_op_done(dws);
++			if (ret)
++				return ret;
++		}
++	} while (dws->tx_len);
++
++	buf = dws->rx;
++	while (dws->rx_len) {
++		max = dw_spi_rx_max(dws);
++
++		while (max--) {
++			rxw = dw_read_io_reg(dws, DW_SPI_DR);
++			if (buf) {
++				*(u8 *)(buf) = rxw;
++				buf += dws->n_bytes;
++			}
++			--dws->rx_len;
++		}
++
++		ret = dw_spi_ext_check_status(dws, true);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static void update_spi_ctrl0(struct dw_spi *dws, const struct spi_mem_op *op, bool enable)
++{
++	u32 spi_ctrlr0;
++	u32 addr_l = 0;
++
++	spi_ctrlr0 = dw_readl(dws, DW_SPI_SPI_CTRLR0);
++	if (enable) {
++		spi_ctrlr0 |= FIELD_PREP(DW_HSSI_SPI_CTRLR0_WAIT_CYCLE_MASK,
++					 op->dummy.nbytes * BITS_PER_BYTE);
++		/* 8 bit instruction length */
++		spi_ctrlr0 |= FIELD_PREP(DW_HSSI_SPI_CTRLR0_INST_L_MASK,
++					 DW_HSSI_SPI_CTRLR0_INST_L8);
++		/* 32 bit address length */
++		addr_l = clamp(op->addr.nbytes * 2, 0, 0xf);
++		spi_ctrlr0 |= FIELD_PREP(DW_HSSI_SPI_CTRLR0_ADDR_L_MASK,
++					 addr_l);
++		/* Enable clock stretching */
++		spi_ctrlr0 |= DW_HSSI_SPI_CTRLR0_CLK_STRETCH_EN;
++	} else {
++		spi_ctrlr0 &= ~DW_HSSI_SPI_CTRLR0_WAIT_CYCLE_MASK;
++		spi_ctrlr0 &= ~DW_HSSI_SPI_CTRLR0_INST_L_MASK;
++		spi_ctrlr0 &= ~DW_HSSI_SPI_CTRLR0_ADDR_L_MASK;
++		spi_ctrlr0 &= ~DW_HSSI_SPI_CTRLR0_CLK_STRETCH_EN;
++	}
++
++	dw_writel(dws, DW_SPI_SPI_CTRLR0, spi_ctrlr0);
++}
++
++/*
++ * The SPI memory operation implementation below is the best choice for the
++ * devices, which are selected by the native chip-select lane. It's
++ * specifically developed to workaround the problem with automatic chip-select
++ * lane toggle when there is no data in the Tx FIFO buffer. Luckily the current
++ * SPI-mem core calls exec_op() callback only if the GPIO-based CS is
++ * unavailable.
++ */
++static int dw_spi_exec_mem_op(struct spi_mem *mem, const struct spi_mem_op *op)
++{
++	struct dw_spi *dws = spi_controller_get_devdata(mem->spi->controller);
++	bool enhanced_spi = false;
++	struct dw_spi_cfg cfg;
++	unsigned long flags;
++	int ret;
++
++    if (dws->caps & DW_SPI_CAP_EXT_SPI) {
++		switch (op->data.buswidth) {
++		case 2:
++			cfg.spi_frf = DW_SSI_CTRLR0_SPI_FRF_DUAL_SPI;
++			enhanced_spi = true;
++			break;
++		case 4:
++			cfg.spi_frf = DW_SSI_CTRLR0_SPI_FRF_QUAD_SPI;
++			enhanced_spi = true;
++			break;
++		case 8:
++			cfg.spi_frf = DW_SSI_CTRLR0_SPI_FRF_OCT_SPI;
++			enhanced_spi = true;
++			break;
++		default:
++			cfg.spi_frf = 0;
++			break;
++		}
++	}
++
++	/*
++	 * Collect the outbound data into a single buffer to speed the
++	 * transmission up at least on the initial stage.
++	 */
++	ret = dw_spi_init_mem_buf(dws, op, enhanced_spi);
++	if (ret)
++		return ret;
++
++	/*
++	 * DW SPI EEPROM-read mode is required only for the SPI memory Data-IN
++	 * operation. Transmit-only mode is suitable for the rest of them.
++	 */
++	cfg.dfs = 8;
++	cfg.freq = clamp(mem->spi->max_speed_hz, 0U, dws->max_mem_freq);
++	if (op->data.dir == SPI_MEM_DATA_IN) {
++		if (enhanced_spi)
++			cfg.tmode = DW_SPI_CTRLR0_TMOD_RO;
++		else
++			cfg.tmode = DW_SPI_CTRLR0_TMOD_EPROMREAD;
++		cfg.ndf = op->data.nbytes;
++	} else {
++		cfg.tmode = DW_SPI_CTRLR0_TMOD_TO;
++		if (enhanced_spi)
++			cfg.ndf = op->data.nbytes;
++	}
++
++	dw_spi_enable_chip(dws, 0);
++
++	if (enhanced_spi) {
++		u16 level;
++
++		level = min_t(unsigned int, dws->fifo_len / 2, dws->tx_len);
++		dw_writel(dws, DW_SPI_TXFTLR, level);
++		/*
++		 * In enhanced mode if we are reading then tx_len is 0 as we
++		 * have nothing to transmit. Calculate DW_SPI_RXFTLR with
++		 * rx_len.
++		 */
++		if (dws->rx_len != 0) {
++			level = min_t(u16, dws->fifo_len / 2, dws->rx_len);
++		}
++		dw_writel(dws, DW_SPI_RXFTLR, level - 1);
++    }
++
++    if (dws->caps & DW_SPI_CAP_EXT_SPI)
++		update_spi_ctrl0(dws, op, enhanced_spi);
++
++	dw_spi_ext_update_config(dws, mem->spi, &cfg);
++
++	dw_spi_mask_intr(dws, 0xff);
++
++	dw_spi_enable_chip(dws, 1);
++
++	/*
++	 * DW APB SSI controller has very nasty peculiarities. First originally
++	 * (without any vendor-specific modifications) it doesn't provide a
++	 * direct way to set and clear the native chip-select signal. Instead
++	 * the controller asserts the CS lane if Tx FIFO isn't empty and a
++	 * transmission is going on, and automatically de-asserts it back to
++	 * the high level if the Tx FIFO doesn't have anything to be pushed
++	 * out. Due to that a multi-tasking or heavy IRQs activity might be
++	 * fatal, since the transfer procedure preemption may cause the Tx FIFO
++	 * getting empty and sudden CS de-assertion, which in the middle of the
++	 * transfer will most likely cause the data loss. Secondly the
++	 * EEPROM-read or Read-only DW SPI transfer modes imply the incoming
++	 * data being automatically pulled in into the Rx FIFO. So if the
++	 * driver software is late in fetching the data from the FIFO before
++	 * it's overflown, new incoming data will be lost. In order to make
++	 * sure the executed memory operations are CS-atomic and to prevent the
++	 * Rx FIFO overflow we have to disable the local interrupts so to block
++	 * any preemption during the subsequent IO operations.
++	 *
++	 * Note. At some circumstances disabling IRQs may not help to prevent
++	 * the problems described above. The CS de-assertion and Rx FIFO
++	 * overflow may still happen due to the relatively slow system bus or
++	 * CPU not working fast enough, so the write-then-read algo implemented
++	 * here just won't keep up with the SPI bus data transfer. Such
++	 * situation is highly platform specific and is supposed to be fixed by
++	 * manually restricting the SPI bus frequency using the
++	 * dws->max_mem_freq parameter.
++	 */
++	if (!enhanced_spi) {
++	    local_irq_save(flags);
++	    preempt_disable();
++
++	    ret = dw_spi_write_then_read(dws, mem->spi);
++
++	    local_irq_restore(flags);
++	    preempt_enable();
++
++	    /*
++	     * Wait for the operation being finished and check the controller
++	     * status only if there hasn't been any run-time error detected. In the
++	     * former case it's just pointless. In the later one to prevent an
++	     * additional error message printing since any hw error flag being set
++	     * would be due to an error detected on the data transfer.
++	     */
++	    if (!ret) {
++		    ret = dw_spi_wait_mem_op_done(dws);
++		    if (!ret)
++			    ret = dw_spi_ext_check_status(dws, true);
++	    }
++	} else {
++		/*
++		 * We donot need to disable IRQs as clock stretching will
++		 * be enabled in enhanced mode which will prevent CS
++		 * from being de-assert.
++		 */
++		ret = enhanced_transfer(dws, mem->spi, op);
++	}
++
++	dw_spi_stop_mem_op(dws, mem->spi);
++
++	dw_spi_free_mem_buf(dws);
++
++	return ret;
++}
++
++/*
++ * Initialize the default memory operations if a glue layer hasn't specified
++ * custom ones. Direct mapping operations will be preserved anyway since DW SPI
++ * controller doesn't have an embedded dirmap interface. Note the memory
++ * operations implemented in this driver is the best choice only for the DW APB
++ * SSI controller with standard native CS functionality. If a hardware vendor
++ * has fixed the automatic CS assertion/de-assertion peculiarity, then it will
++ * be safer to use the normal SPI-messages-based transfers implementation.
++ */
++static void dw_spi_init_mem_ops(struct dw_spi *dws)
++{
++	if (!dws->mem_ops.exec_op && !(dws->caps & DW_SPI_CAP_CS_OVERRIDE) &&
++	    !dws->set_cs) {
++		dws->mem_ops.adjust_op_size = dw_spi_adjust_mem_op_size;
++		dws->mem_ops.supports_op = dw_spi_supports_mem_op;
++		dws->mem_ops.exec_op = dw_spi_exec_mem_op;
++		if (!dws->max_mem_freq)
++			dws->max_mem_freq = dws->max_freq;
++	}
++}
++
++/* This may be called twice for each spi dev */
++static int dw_spi_setup(struct spi_device *spi)
++{
++	struct dw_spi *dws = spi_controller_get_devdata(spi->controller);
++	struct dw_spi_chip_data *chip;
++
++	/* Only alloc on first setup */
++	chip = spi_get_ctldata(spi);
++	if (!chip) {
++		struct dw_spi *dws = spi_controller_get_devdata(spi->controller);
++		u32 rx_sample_dly_ns;
++
++		chip = kzalloc(sizeof(*chip), GFP_KERNEL);
++		if (!chip)
++			return -ENOMEM;
++		spi_set_ctldata(spi, chip);
++		/* Get specific / default rx-sample-delay */
++		if (device_property_read_u32(&spi->dev,
++					     "rx-sample-delay-ns",
++					     &rx_sample_dly_ns) != 0)
++			/* Use default controller value */
++			rx_sample_dly_ns = dws->def_rx_sample_dly_ns;
++		chip->rx_sample_dly = DIV_ROUND_CLOSEST(rx_sample_dly_ns,
++							NSEC_PER_SEC /
++							dws->max_freq);
++	}
++
++	/*
++	 * Update CR0 data each time the setup callback is invoked since
++	 * the device parameters could have been changed, for instance, by
++	 * the MMC SPI driver or something else.
++	 */
++	chip->cr0 = dw_spi_prepare_cr0(dws, spi);
++
++	return 0;
++}
++
++static void dw_spi_cleanup(struct spi_device *spi)
++{
++	struct dw_spi_chip_data *chip = spi_get_ctldata(spi);
++
++	kfree(chip);
++	spi_set_ctldata(spi, NULL);
++}
++
++/* Restart the controller, disable all interrupts, clean rx fifo */
++static void dw_spi_hw_init(struct device *dev, struct dw_spi *dws)
++{
++	dw_spi_reset_chip(dws);
++
++	/*
++	 * Retrieve the Synopsys component version if it hasn't been specified
++	 * by the platform. CoreKit version ID is encoded as a 3-chars ASCII
++	 * code enclosed with '*' (typical for the most of Synopsys IP-cores).
++	 */
++	if (!dws->ver) {
++		dws->ver = dw_readl(dws, DW_SPI_VERSION);
++
++		dev_dbg(dev, "Synopsys DWC%sSSI v%c.%c%c\n",
++			dw_spi_ip_is(dws, PSSI) ? " APB " : " ",
++			DW_SPI_GET_BYTE(dws->ver, 3), DW_SPI_GET_BYTE(dws->ver, 2),
++			DW_SPI_GET_BYTE(dws->ver, 1));
++	}
++
++	/*
++	 * Try to detect the FIFO depth if not set by interface driver,
++	 * the depth could be from 2 to 256 from HW spec
++	 */
++	if (!dws->fifo_len) {
++		u32 fifo;
++
++		for (fifo = 1; fifo < 256; fifo++) {
++			dw_writel(dws, DW_SPI_TXFTLR, fifo);
++			if (fifo != dw_readl(dws, DW_SPI_TXFTLR))
++				break;
++		}
++		dw_writel(dws, DW_SPI_TXFTLR, 0);
++
++		dws->fifo_len = (fifo == 1) ? 0 : fifo;
++		dev_dbg(dev, "Detected FIFO size: %u bytes\n", dws->fifo_len);
++	}
++
++	/*
++	 * Detect CTRLR0.DFS field size and offset by testing the lowest bits
++	 * writability. Note DWC SSI controller also has the extended DFS, but
++	 * with zero offset.
++	 */
++	if (dw_spi_ip_is(dws, PSSI)) {
++		u32 cr0, tmp = dw_readl(dws, DW_SPI_CTRLR0);
++
++		dw_spi_enable_chip(dws, 0);
++		dw_writel(dws, DW_SPI_CTRLR0, 0xffffffff);
++		cr0 = dw_readl(dws, DW_SPI_CTRLR0);
++		dw_writel(dws, DW_SPI_CTRLR0, tmp);
++		dw_spi_enable_chip(dws, 1);
++
++		if (!(cr0 & DW_PSSI_CTRLR0_DFS_MASK)) {
++			dws->caps |= DW_SPI_CAP_DFS32;
++			dws->dfs_offset = __bf_shf(DW_PSSI_CTRLR0_DFS32_MASK);
++			dev_dbg(dev, "Detected 32-bits max data frame size\n");
++		}
++	} else {
++		dws->caps |= DW_SPI_CAP_DFS32;
++	}
++}
++
++int dw_spi_ext_add_host(struct device *dev, struct dw_spi *dws)
++{
++	struct spi_controller *master;
++	int ret;
++
++	if (!dws)
++		return -EINVAL;
++
++	master = spi_alloc_master(dev, 0);
++	if (!master)
++		return -ENOMEM;
++
++	device_set_node(&master->dev, dev_fwnode(dev));
++
++	dws->master = master;
++	dws->dma_addr = (dma_addr_t)(dws->paddr + DW_SPI_DR);
++
++	spi_controller_set_devdata(master, dws);
++
++	/* Basic HW init */
++	dw_spi_hw_init(dev, dws);
++
++	ret = request_irq(dws->irq, dw_spi_ext_irq, IRQF_SHARED, dev_name(dev),
++			  master);
++	if (ret < 0 && ret != -ENOTCONN) {
++		dev_err(dev, "can not get IRQ\n");
++		goto err_free_master;
++	}
++
++	dw_spi_init_mem_ops(dws);
++
++	master->use_gpio_descriptors = true;
++	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_LOOP;
++	if (dws->caps & DW_SPI_CAP_EXT_SPI)
++		master->mode_bits |= SPI_TX_DUAL | SPI_RX_DUAL |
++				SPI_TX_QUAD | SPI_RX_QUAD |
++				SPI_TX_OCTAL | SPI_RX_OCTAL;
++	if (dws->caps & DW_SPI_CAP_DFS32)
++		master->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 32);
++	else
++		master->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 16);
++	master->bus_num = dws->bus_num;
++	master->num_chipselect = dws->num_cs;
++	master->setup = dw_spi_setup;
++	master->cleanup = dw_spi_cleanup;
++	if (dws->set_cs)
++		master->set_cs = dws->set_cs;
++	else
++		master->set_cs = dw_spi_ext_set_cs;
++	master->transfer_one = dw_spi_transfer_one;
++	master->handle_err = dw_spi_handle_err;
++	if (dws->mem_ops.exec_op)
++		master->mem_ops = &dws->mem_ops;
++	master->max_speed_hz = dws->max_freq;
++	master->flags = SPI_MASTER_GPIO_SS;
++	master->auto_runtime_pm = true;
++
++	/* Get default rx sample delay */
++	device_property_read_u32(dev, "rx-sample-delay-ns",
++				 &dws->def_rx_sample_dly_ns);
++
++	if (dws->dma_ops && dws->dma_ops->dma_init) {
++		ret = dws->dma_ops->dma_init(dev, dws);
++		if (ret == -EPROBE_DEFER) {
++			goto err_free_irq;
++		} else if (ret) {
++			dev_warn(dev, "DMA init failed\n");
++		} else {
++			master->can_dma = dws->dma_ops->can_dma;
++			master->flags |= SPI_CONTROLLER_MUST_TX;
++		}
++	}
++
++	ret = spi_register_controller(master);
++	if (ret) {
++		dev_err_probe(dev, ret, "problem registering spi master\n");
++		goto err_dma_exit;
++	}
++
++	dw_spi_debugfs_init(dws);
++	return 0;
++
++err_dma_exit:
++	if (dws->dma_ops && dws->dma_ops->dma_exit)
++		dws->dma_ops->dma_exit(dws);
++	dw_spi_enable_chip(dws, 0);
++err_free_irq:
++	free_irq(dws->irq, master);
++err_free_master:
++	spi_controller_put(master);
++	return ret;
++}
++
++void dw_spi_ext_remove_host(struct dw_spi *dws)
++{
++	dw_spi_debugfs_remove(dws);
++
++	spi_unregister_controller(dws->master);
++
++	if (dws->dma_ops && dws->dma_ops->dma_exit)
++		dws->dma_ops->dma_exit(dws);
++
++	dw_spi_shutdown_chip(dws);
++
++	free_irq(dws->irq, dws->master);
++}
++
++int dw_spi_ext_suspend_host(struct dw_spi *dws)
++{
++	int ret;
++
++	ret = spi_controller_suspend(dws->master);
++	if (ret)
++		return ret;
++
++	dw_spi_shutdown_chip(dws);
++	return 0;
++}
++
++int dw_spi_ext_resume_host(struct dw_spi *dws)
++{
++	dw_spi_hw_init(&dws->master->dev, dws);
++	return spi_controller_resume(dws->master);
++}
++
++MODULE_AUTHOR("George hu");
++MODULE_DESCRIPTION("Spacemit enhance spi driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/spi/spi-dw-espi.h b/drivers/spi/spi-dw-espi.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/spi/spi-dw-espi.h
+@@ -0,0 +1,325 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#ifndef DW_ESPI_HEADER_H
++#define DW_ESPI_HEADER_H
++
++#include <linux/bits.h>
++#include <linux/completion.h>
++#include <linux/debugfs.h>
++#include <linux/irqreturn.h>
++#include <linux/io.h>
++#include <linux/scatterlist.h>
++#include <linux/spi/spi-mem.h>
++#include <linux/bitfield.h>
++
++/* Synopsys DW SSI IP-core virtual IDs */
++#define DW_PSSI_ID			0
++#define DW_HSSI_ID			1
++
++/* Synopsys DW SSI component versions (FourCC sequence) */
++#define DW_HSSI_102A			0x3130322a
++
++/* DW SSI IP-core ID and version check helpers */
++#define dw_spi_ip_is(_dws, _ip) \
++	((_dws)->ip == DW_ ## _ip ## _ID)
++
++#define __dw_spi_ver_cmp(_dws, _ip, _ver, _op) \
++	(dw_spi_ip_is(_dws, _ip) && (_dws)->ver _op DW_ ## _ip ## _ ## _ver)
++
++#define dw_spi_ver_is(_dws, _ip, _ver) __dw_spi_ver_cmp(_dws, _ip, _ver, ==)
++
++#define dw_spi_ver_is_ge(_dws, _ip, _ver) __dw_spi_ver_cmp(_dws, _ip, _ver, >=)
++
++/* DW SPI controller capabilities */
++#define DW_SPI_CAP_CS_OVERRIDE		BIT(0)
++#define DW_SPI_CAP_DFS32		BIT(1)
++#define DW_SPI_CAP_EXT_SPI		BIT(2)
++
++/* Register offsets (Generic for both DWC APB SSI and DWC SSI IP-cores) */
++#define DW_SPI_CTRLR0			0x00
++#define DW_SPI_CTRLR1			0x04
++#define DW_SPI_SSIENR			0x08
++#define DW_SPI_MWCR			0x0c
++#define DW_SPI_SER			0x10
++#define DW_SPI_BAUDR			0x14
++#define DW_SPI_TXFTLR			0x18
++#define DW_SPI_RXFTLR			0x1c
++#define DW_SPI_TXFLR			0x20
++#define DW_SPI_RXFLR			0x24
++#define DW_SPI_SR			0x28
++#define DW_SPI_IMR			0x2c
++#define DW_SPI_ISR			0x30
++#define DW_SPI_RISR			0x34
++#define DW_SPI_TXOICR			0x38
++#define DW_SPI_RXOICR			0x3c
++#define DW_SPI_RXUICR			0x40
++#define DW_SPI_MSTICR			0x44
++#define DW_SPI_ICR			0x48
++#define DW_SPI_DMACR			0x4c
++#define DW_SPI_DMATDLR			0x50
++#define DW_SPI_DMARDLR			0x54
++#define DW_SPI_IDR			0x58
++#define DW_SPI_VERSION			0x5c
++#define DW_SPI_DR			0x60
++#define DW_SPI_RX_SAMPLE_DLY		0xf0
++#define DW_SPI_SPI_CTRLR0		0xf4
++#define DW_SPI_DDR_DRV_EDGE     0xf8
++
++/* Bit fields in CTRLR0 (DWC APB SSI) */
++#define DW_PSSI_CTRLR0_DFS_MASK			GENMASK(3, 0)
++#define DW_PSSI_CTRLR0_DFS32_MASK		GENMASK(20, 16)
++
++#define DW_PSSI_CTRLR0_FRF_MASK			GENMASK(5, 4)
++#define DW_SPI_CTRLR0_FRF_MOTO_SPI		0x0
++#define DW_SPI_CTRLR0_FRF_TI_SSP		0x1
++#define DW_SPI_CTRLR0_FRF_NS_MICROWIRE		0x2
++#define DW_SPI_CTRLR0_FRF_RESV			0x3
++
++#define DW_PSSI_CTRLR0_MODE_MASK		GENMASK(7, 6)
++#define DW_PSSI_CTRLR0_SCPHA			BIT(6)
++#define DW_PSSI_CTRLR0_SCPOL			BIT(7)
++
++#define DW_PSSI_CTRLR0_TMOD_MASK		GENMASK(9, 8)
++#define DW_SPI_CTRLR0_TMOD_TR			0x0	/* xmit & recv */
++#define DW_SPI_CTRLR0_TMOD_TO			0x1	/* xmit only */
++#define DW_SPI_CTRLR0_TMOD_RO			0x2	/* recv only */
++#define DW_SPI_CTRLR0_TMOD_EPROMREAD		0x3	/* eeprom read mode */
++
++#define DW_PSSI_CTRLR0_SLV_OE			BIT(10)
++#define DW_PSSI_CTRLR0_SRL			BIT(11)
++#define DW_PSSI_CTRLR0_CFS			BIT(12)
++
++/* Bit fields in CTRLR0 (DWC SSI with AHB interface) */
++#define DW_HSSI_CTRLR0_DFS_MASK			GENMASK(4, 0)
++#define DW_HSSI_CTRLR0_FRF_MASK			GENMASK(7, 6)
++#define DW_HSSI_CTRLR0_SCPHA			BIT(8)
++#define DW_HSSI_CTRLR0_SCPOL			BIT(9)
++#define DW_HSSI_CTRLR0_TMOD_MASK		GENMASK(11, 10)
++#define DW_HSSI_CTRLR0_SRL			BIT(13)
++#define DW_HSSI_CTRLR0_MST			BIT(31)
++
++/* Bit fields in CTRLR0 for enhanced SPI */
++#define DW_HSSI_CTRLR0_SPI_FRF_MASK		GENMASK(23, 22)
++#define DW_SSI_CTRLR0_SPI_FRF_DUAL_SPI		0x1
++#define DW_SSI_CTRLR0_SPI_FRF_QUAD_SPI		0x2
++#define DW_SSI_CTRLR0_SPI_FRF_OCT_SPI		0x3
++
++/* Bit fields in CTRLR1 */
++#define DW_SPI_NDF_MASK				GENMASK(15, 0)
++
++/* Bit fields in SR, 7 bits */
++#define DW_SPI_SR_MASK				GENMASK(6, 0)
++#define DW_SPI_SR_BUSY				BIT(0)
++#define DW_SPI_SR_TF_NOT_FULL			BIT(1)
++#define DW_SPI_SR_TF_EMPT			BIT(2)
++#define DW_SPI_SR_RF_NOT_EMPT			BIT(3)
++#define DW_SPI_SR_RF_FULL			BIT(4)
++#define DW_SPI_SR_TX_ERR			BIT(5)
++#define DW_SPI_SR_DCOL				BIT(6)
++
++/* Bit fields in ISR, IMR, RISR, 7 bits */
++#define DW_SPI_INT_MASK				GENMASK(5, 0)
++#define DW_SPI_INT_TXEI				BIT(0)
++#define DW_SPI_INT_TXOI				BIT(1)
++#define DW_SPI_INT_RXUI				BIT(2)
++#define DW_SPI_INT_RXOI				BIT(3)
++#define DW_SPI_INT_RXFI				BIT(4)
++#define DW_SPI_INT_MSTI				BIT(5)
++
++/* Bit fields in DMACR */
++#define DW_SPI_DMACR_RDMAE			BIT(0)
++#define DW_SPI_DMACR_TDMAE			BIT(1)
++
++/* Bit fields in SPI_CTRLR0 (Defined in DWC SSI >= 1.02a) */
++#define DW_HSSI_SPI_CTRLR0_CLK_STRETCH_EN	BIT(30)
++#define DW_HSSI_SPI_CTRLR0_WAIT_CYCLE_MASK	GENMASK(15, 11)
++#define DW_HSSI_SPI_CTRLR0_INST_L_MASK		GENMASK(9, 8)
++#define DW_HSSI_SPI_CTRLR0_INST_L8		0x2
++#define DW_HSSI_SPI_CTRLR0_ADDR_L_MASK		GENMASK(5, 2)
++#define DW_HSSI_SPI_CTRLR0_ADDR_L32		0x8
++
++/* Mem/DMA operations helpers */
++#define DW_SPI_WAIT_RETRIES			5
++#define DW_SPI_BUF_SIZE \
++	(sizeof_field(struct spi_mem_op, cmd.opcode) + \
++	 sizeof_field(struct spi_mem_op, addr.val) + 256)
++#define DW_SPI_GET_BYTE(_val, _idx) \
++	((_val) >> (BITS_PER_BYTE * (_idx)) & 0xff)
++
++/* Slave spi_transfer/spi_mem_op related */
++struct dw_spi_cfg {
++	u8 tmode;
++	u8 dfs;
++	u32 ndf;
++	u32 freq;
++	u8 spi_frf;
++};
++
++struct dw_spi;
++struct dw_spi_dma_ops {
++	int (*dma_init)(struct device *dev, struct dw_spi *dws);
++	void (*dma_exit)(struct dw_spi *dws);
++	int (*dma_setup)(struct dw_spi *dws, struct spi_transfer *xfer);
++	bool (*can_dma)(struct spi_controller *master, struct spi_device *spi,
++			struct spi_transfer *xfer);
++	int (*dma_transfer)(struct dw_spi *dws, struct spi_transfer *xfer);
++	void (*dma_stop)(struct dw_spi *dws);
++};
++
++struct dw_spi {
++	struct spi_controller	*master;
++
++	u32			ip;		/* Synopsys DW SSI IP-core ID */
++	u32			ver;		/* Synopsys component version */
++	u32			caps;		/* DW SPI capabilities */
++
++	void __iomem		*regs;
++	unsigned long		paddr;
++	int			irq;
++	u32			fifo_len;	/* depth of the FIFO buffer */
++	unsigned int		dfs_offset;     /* CTRLR0 DFS field offset */
++	u32			max_mem_freq;	/* max mem-ops bus freq */
++	u32			max_freq;	/* max bus freq supported */
++
++	u32			reg_io_width;	/* DR I/O width in bytes */
++	u16			bus_num;
++	u16			num_cs;		/* supported slave numbers */
++	void (*set_cs)(struct spi_device *spi, bool enable);
++
++	/* Current message transfer state info */
++	void			*tx;
++	unsigned int		tx_len;
++	void			*rx;
++	unsigned int		rx_len;
++	u8			buf[DW_SPI_BUF_SIZE];
++	int			dma_mapped;
++	u8			n_bytes;	/* current is a 1/2 bytes op */
++	irqreturn_t		(*transfer_handler)(struct dw_spi *dws);
++	u32			current_freq;	/* frequency in hz */
++	u32			cur_rx_sample_dly;
++	u32			def_rx_sample_dly_ns;
++
++	/* Custom memory operations */
++	struct spi_controller_mem_ops mem_ops;
++
++	/* DMA info */
++	struct dma_chan		*txchan;
++	u32			txburst;
++	struct dma_chan		*rxchan;
++	u32			rxburst;
++	u32			dma_sg_burst;
++	unsigned long		dma_chan_busy;
++	dma_addr_t		dma_addr; /* phy address of the Data register */
++	const struct dw_spi_dma_ops *dma_ops;
++	struct completion	dma_completion;
++
++#ifdef CONFIG_DEBUG_FS
++	struct dentry *debugfs;
++	struct debugfs_regset32 regset;
++#endif
++};
++
++static inline u32 dw_readl(struct dw_spi *dws, u32 offset)
++{
++	return __raw_readl(dws->regs + offset);
++}
++
++static inline void dw_writel(struct dw_spi *dws, u32 offset, u32 val)
++{
++	__raw_writel(val, dws->regs + offset);
++}
++
++static inline u32 dw_read_io_reg(struct dw_spi *dws, u32 offset)
++{
++	switch (dws->reg_io_width) {
++	case 2:
++		return readw_relaxed(dws->regs + offset);
++	case 4:
++	default:
++		return readl_relaxed(dws->regs + offset);
++	}
++}
++
++static inline void dw_write_io_reg(struct dw_spi *dws, u32 offset, u32 val)
++{
++	switch (dws->reg_io_width) {
++	case 2:
++		writew_relaxed(val, dws->regs + offset);
++		break;
++	case 4:
++	default:
++		writel_relaxed(val, dws->regs + offset);
++		break;
++	}
++}
++
++static inline void dw_spi_enable_chip(struct dw_spi *dws, int enable)
++{
++	dw_writel(dws, DW_SPI_SSIENR, (enable ? 1 : 0));
++}
++
++static inline void dw_spi_set_clk(struct dw_spi *dws, u16 div)
++{
++	dw_writel(dws, DW_SPI_BAUDR, div);
++}
++
++/* Disable IRQ bits */
++static inline void dw_spi_mask_intr(struct dw_spi *dws, u32 mask)
++{
++	u32 new_mask;
++
++	new_mask = dw_readl(dws, DW_SPI_IMR) & ~mask;
++	dw_writel(dws, DW_SPI_IMR, new_mask);
++}
++
++/* Enable IRQ bits */
++static inline void dw_spi_umask_intr(struct dw_spi *dws, u32 mask)
++{
++	u32 new_mask;
++
++	new_mask = dw_readl(dws, DW_SPI_IMR) | mask;
++	dw_writel(dws, DW_SPI_IMR, new_mask);
++}
++
++/*
++ * This disables the SPI controller, interrupts, clears the interrupts status
++ * and CS, then re-enables the controller back. Transmit and receive FIFO
++ * buffers are cleared when the device is disabled.
++ */
++static inline void dw_spi_reset_chip(struct dw_spi *dws)
++{
++	dw_spi_enable_chip(dws, 0);
++	dw_spi_mask_intr(dws, 0xff);
++	dw_readl(dws, DW_SPI_ICR);
++	dw_writel(dws, DW_SPI_SER, 0);
++	dw_spi_enable_chip(dws, 1);
++}
++
++static inline void dw_spi_shutdown_chip(struct dw_spi *dws)
++{
++	dw_spi_enable_chip(dws, 0);
++	dw_spi_set_clk(dws, 0);
++}
++
++extern void dw_spi_ext_set_cs(struct spi_device *spi, bool enable);
++extern void dw_spi_ext_update_config(struct dw_spi *dws, struct spi_device *spi,
++				 struct dw_spi_cfg *cfg);
++extern int dw_spi_ext_check_status(struct dw_spi *dws, bool raw);
++extern int dw_spi_ext_add_host(struct device *dev, struct dw_spi *dws);
++extern void dw_spi_ext_remove_host(struct dw_spi *dws);
++extern int dw_spi_ext_suspend_host(struct dw_spi *dws);
++extern int dw_spi_ext_resume_host(struct dw_spi *dws);
++
++#ifdef CONFIG_SPI_DW_DMA
++
++extern void dw_spi_dma_setup_mfld(struct dw_spi *dws);
++extern void dw_spi_dma_setup_generic(struct dw_spi *dws);
++
++#else
++
++static inline void dw_spi_dma_setup_mfld(struct dw_spi *dws) {}
++static inline void dw_spi_dma_setup_generic(struct dw_spi *dws) {}
++
++#endif /* !CONFIG_SPI_DW_DMA */
++
++#endif /* DW_ESPI_HEADER_H */
+diff --git a/drivers/spi/spi-dw-mmio-ext.c b/drivers/spi/spi-dw-mmio-ext.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/spi/spi-dw-mmio-ext.c
+@@ -0,0 +1,171 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Memory-mapped interface driver for DW SPI Core
++ *
++ * Copyright (c) 2023, spacemit.
++ */
++
++#include <linux/clk.h>
++#include <linux/err.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/slab.h>
++#include <linux/spi/spi.h>
++#include <linux/scatterlist.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/acpi.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++#include "spi-dw-espi.h"
++
++#define DRIVER_NAME "dw_spi_mmio_ext"
++
++struct dw_spi_mmio_ext {
++	struct dw_spi  dws;
++	struct clk     *clk;
++	struct clk     *pclk;
++	void           *priv;
++	struct reset_control *rstc;
++};
++
++static int dw_spi_hssi_ext_init(struct platform_device *pdev,
++			    struct dw_spi_mmio_ext *dwsmmio)
++{
++	dwsmmio->dws.ip = DW_HSSI_ID;
++	dwsmmio->dws.caps = DW_SPI_CAP_EXT_SPI;
++
++	dw_spi_dma_setup_generic(&dwsmmio->dws);
++
++	return 0;
++}
++
++static int dw_spi_mmio_ext_probe(struct platform_device *pdev)
++{
++	int (*init_func)(struct platform_device *pdev,
++			 struct dw_spi_mmio_ext *dwsmmio);
++	struct dw_spi_mmio_ext *dwsmmio;
++    struct resource *mem;
++	struct dw_spi *dws;
++	int ret;
++	int num_cs;
++
++	dwsmmio = devm_kzalloc(&pdev->dev, sizeof(struct dw_spi_mmio_ext),
++			GFP_KERNEL);
++	if (!dwsmmio)
++		return -ENOMEM;
++
++	dws = &dwsmmio->dws;
++
++	/* Get basic io resource and map it */
++	dws->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &mem);
++	if (IS_ERR(dws->regs))
++		return PTR_ERR(dws->regs);
++
++	dws->paddr = mem->start;
++
++	dws->irq = platform_get_irq(pdev, 0);
++	if (dws->irq < 0)
++		return dws->irq; /* -ENXIO */
++
++	dwsmmio->clk = devm_clk_get(&pdev->dev, NULL);
++	if (IS_ERR(dwsmmio->clk))
++		return PTR_ERR(dwsmmio->clk);
++	ret = clk_prepare_enable(dwsmmio->clk);
++	if (ret)
++		return ret;
++
++	/* Optional clock needed to access the registers */
++	dwsmmio->pclk = devm_clk_get_optional(&pdev->dev, "pclk");
++	if (IS_ERR(dwsmmio->pclk)) {
++		ret = PTR_ERR(dwsmmio->pclk);
++		goto out_clk;
++	}
++	ret = clk_prepare_enable(dwsmmio->pclk);
++	if (ret)
++		goto out_clk;
++
++	/* find an optional reset controller */
++	dwsmmio->rstc = devm_reset_control_get_optional_exclusive(&pdev->dev, NULL);
++	if (IS_ERR(dwsmmio->rstc)) {
++		ret = PTR_ERR(dwsmmio->rstc);
++		dev_err(&pdev->dev, "failed to get reset.\n");
++		goto out_clk;
++	}
++	reset_control_deassert(dwsmmio->rstc);
++
++	/* set bus number */
++	dws->bus_num = pdev->id;
++
++	/* get supported freq in max */
++	dws->max_freq = clk_get_rate(dwsmmio->clk);
++
++	/* get reg width of controler */
++	device_property_read_u32(&pdev->dev, "reg-io-width", &dws->reg_io_width);
++
++	/* get chip select count of controler */
++	num_cs = 4;
++	device_property_read_u32(&pdev->dev, "num-cs", &num_cs);
++	dws->num_cs = num_cs;
++	init_func = device_get_match_data(&pdev->dev);
++	if (init_func) {
++		ret = init_func(pdev, dwsmmio);
++		if (ret)
++			goto out;
++	}
++
++	pm_runtime_enable(&pdev->dev);
++
++	ret = dw_spi_ext_add_host(&pdev->dev, dws);
++	if (ret)
++		goto out;
++
++	platform_set_drvdata(pdev, dwsmmio);
++	dev_info(&pdev->dev, "dw_spi_ext_probe success.\n");
++	return 0;
++
++out:
++	pm_runtime_disable(&pdev->dev);
++	clk_disable_unprepare(dwsmmio->pclk);
++out_clk:
++	clk_disable_unprepare(dwsmmio->clk);
++	reset_control_assert(dwsmmio->rstc);
++
++	return ret;
++}
++
++static int dw_spi_mmio_ext_remove(struct platform_device *pdev)
++{
++	struct dw_spi_mmio_ext *dwsmmio = platform_get_drvdata(pdev);
++
++	dw_spi_ext_remove_host(&dwsmmio->dws);
++    pm_runtime_disable(&pdev->dev);
++	clk_disable_unprepare(dwsmmio->pclk);
++	clk_disable_unprepare(dwsmmio->clk);
++	reset_control_assert(dwsmmio->rstc);
++
++	return 0;
++}
++
++static const struct of_device_id dw_spi_mmio_ext_of_match[] = {
++	{ .compatible = "snps,dwc-ssi-1.02a", .data = dw_spi_hssi_ext_init},
++	{ /* end of table */}
++};
++MODULE_DEVICE_TABLE(of, dw_spi_mmio_ext_of_match);
++
++static struct platform_driver dw_spi_mmio_ext_driver = {
++	.probe		= dw_spi_mmio_ext_probe,
++	.remove		= dw_spi_mmio_ext_remove,
++	.driver		= {
++		.name	= DRIVER_NAME,
++		.of_match_table = dw_spi_mmio_ext_of_match,
++	},
++};
++module_platform_driver(dw_spi_mmio_ext_driver);
++
++MODULE_AUTHOR("George hu");
++MODULE_DESCRIPTION("Spacemit qspi driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/spi/spi-k1x-dma.c b/drivers/spi/spi-k1x-dma.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/spi/spi-k1x-dma.c
+@@ -0,0 +1,375 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Support for Spacemit k1x spi controller dma mode
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#include <linux/device.h>
++#include <linux/dma-mapping.h>
++#include <linux/dmaengine.h>
++#include <linux/scatterlist.h>
++#include <linux/sizes.h>
++#include <linux/spi/spi.h>
++#include <linux/delay.h>
++
++#include "spi-k1x.h"
++
++static int k1x_spi_map_dma_buffer(struct spi_driver_data *drv_data,
++				enum dma_data_direction dir)
++{
++	int i, nents, len = drv_data->len;
++	struct scatterlist *sg;
++	struct device *dmadev;
++	struct sg_table *sgt;
++	void *buf, *pbuf;
++
++	if (dir == DMA_TO_DEVICE) {
++		dmadev = drv_data->tx_chan->device->dev;
++		sgt = &drv_data->tx_sgt;
++		buf = drv_data->tx;
++		drv_data->tx_map_len = len;
++	} else {
++		dmadev = drv_data->rx_chan->device->dev;
++		sgt = &drv_data->rx_sgt;
++		buf = drv_data->rx;
++		drv_data->rx_map_len = len;
++	}
++
++	nents = DIV_ROUND_UP(len, SZ_2K);
++	if (nents != sgt->nents) {
++		int ret;
++
++		sg_free_table(sgt);
++		ret = sg_alloc_table(sgt, nents, GFP_ATOMIC);
++		if (ret)
++			return ret;
++	}
++
++	pbuf = buf;
++	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
++		size_t bytes = min_t(size_t, len, SZ_2K);
++
++		if (buf)
++			sg_set_buf(sg, pbuf, bytes);
++		else
++			sg_set_buf(sg, drv_data->dummy, bytes);
++
++		pbuf += bytes;
++		len -= bytes;
++	}
++
++	nents = dma_map_sg(dmadev, sgt->sgl, sgt->nents, dir);
++	if (!nents)
++		return -ENOMEM;
++
++	return nents;
++}
++
++static void k1x_spi_unmap_dma_buffer(struct spi_driver_data *drv_data,
++					enum dma_data_direction dir)
++{
++	struct device *dmadev;
++	struct sg_table *sgt;
++
++	if (dir == DMA_TO_DEVICE) {
++		dmadev = drv_data->tx_chan->device->dev;
++		sgt = &drv_data->tx_sgt;
++	} else {
++		dmadev = drv_data->rx_chan->device->dev;
++		sgt = &drv_data->rx_sgt;
++	}
++
++	dma_unmap_sg(dmadev, sgt->sgl, sgt->nents, dir);
++}
++
++static void k1x_spi_unmap_dma_buffers(struct spi_driver_data *drv_data)
++{
++	if (!drv_data->dma_mapped)
++		return;
++
++	k1x_spi_unmap_dma_buffer(drv_data, DMA_FROM_DEVICE);
++	k1x_spi_unmap_dma_buffer(drv_data, DMA_TO_DEVICE);
++
++	drv_data->dma_mapped = 0;
++}
++
++static void k1x_spi_dma_transfer_complete(struct spi_driver_data *drv_data,
++					     bool error)
++{
++	struct spi_message *msg = drv_data->cur_msg;
++
++	/*
++	 * It is possible that one CPU is handling ROR interrupt and other
++	 * just gets DMA completion. Calling pump_transfers() twice for the
++	 * same transfer leads to problems thus we prevent concurrent calls
++	 * by using ->dma_running.
++	 */
++	if (atomic_dec_and_test(&drv_data->dma_running)) {
++		/*
++		 * If the other CPU is still handling the ROR interrupt we
++		 * might not know about the error yet. So we re-check the
++		 * ROR bit here before we clear the status register.
++		 */
++		if (!error) {
++			u32 status = k1x_spi_read(drv_data, STATUS)
++				     & drv_data->mask_sr;
++			error = status & STATUS_ROR;
++		}
++
++		/* Clear status & disable interrupts */
++		k1x_spi_write(drv_data, FIFO_CTRL,
++				k1x_spi_read(drv_data, FIFO_CTRL)
++				& ~drv_data->dma_fifo_ctrl);
++		k1x_spi_write(drv_data, TOP_CTRL,
++				k1x_spi_read(drv_data, TOP_CTRL)
++				& ~drv_data->dma_top_ctrl);
++		k1x_spi_write(drv_data, STATUS, drv_data->clear_sr);
++		k1x_spi_write(drv_data, TO, 0);
++
++		if (!error) {
++			k1x_spi_unmap_dma_buffers(drv_data);
++
++			drv_data->tx += drv_data->tx_map_len;
++			drv_data->rx += drv_data->rx_map_len;
++
++			msg->actual_length += drv_data->len;
++			msg->state = k1x_spi_next_transfer(drv_data);
++		} else {
++			/* In case we got an error we disable the SSP now */
++			k1x_spi_write(drv_data, TOP_CTRL,
++					 k1x_spi_read(drv_data, TOP_CTRL)
++					 & ~TOP_SSE);
++
++			msg->state = ERROR_STATE;
++		}
++		queue_work(system_wq, &drv_data->pump_transfers);
++	}
++}
++
++static void k1x_spi_dma_callback(void *data)
++{
++	k1x_spi_dma_transfer_complete(data, false);
++}
++
++static struct dma_async_tx_descriptor *
++k1x_spi_dma_prepare_one(struct spi_driver_data *drv_data,
++			   enum dma_transfer_direction dir)
++{
++	struct chip_data *chip = drv_data->cur_chip;
++	enum dma_slave_buswidth width;
++	struct dma_slave_config cfg;
++	struct dma_chan *chan;
++	struct sg_table *sgt;
++	int nents, ret;
++
++	switch (drv_data->n_bytes) {
++	case 1:
++		width = DMA_SLAVE_BUSWIDTH_1_BYTE;
++		break;
++	case 2:
++		width = DMA_SLAVE_BUSWIDTH_2_BYTES;
++		break;
++	default:
++		width = DMA_SLAVE_BUSWIDTH_4_BYTES;
++		break;
++	}
++
++	memset(&cfg, 0, sizeof(cfg));
++	cfg.direction = dir;
++
++	if (dir == DMA_MEM_TO_DEV) {
++		cfg.dst_addr = drv_data->ssdr_physical;
++		cfg.dst_addr_width = width;
++		cfg.dst_maxburst = chip->dma_burst_size;
++
++		sgt = &drv_data->tx_sgt;
++		nents = drv_data->tx_nents;
++		chan = drv_data->tx_chan;
++	} else {
++		cfg.src_addr = drv_data->ssdr_physical;
++		cfg.src_addr_width = width;
++		cfg.src_maxburst = chip->dma_burst_size;
++
++		sgt = &drv_data->rx_sgt;
++		nents = drv_data->rx_nents;
++		chan = drv_data->rx_chan;
++	}
++
++	ret = dmaengine_slave_config(chan, &cfg);
++	if (ret) {
++		dev_warn(&drv_data->pdev->dev, "DMA slave config failed\n");
++		return NULL;
++	}
++
++	return dmaengine_prep_slave_sg(chan, sgt->sgl, nents, dir,
++			DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
++}
++
++bool k1x_spi_dma_is_possible(size_t len)
++{
++	return len <= MAX_DMA_LEN;
++}
++
++int k1x_spi_map_dma_buffers(struct spi_driver_data *drv_data)
++{
++	const struct chip_data *chip = drv_data->cur_chip;
++	int ret;
++
++	if (!chip->enable_dma)
++		return 0;
++
++	/* Don't bother with DMA if we can't do even a single burst */
++	if (drv_data->len < chip->dma_burst_size)
++		return 0;
++
++	ret = k1x_spi_map_dma_buffer(drv_data, DMA_TO_DEVICE);
++	if (ret <= 0) {
++		dev_warn(&drv_data->pdev->dev, "failed to DMA map TX\n");
++		return 0;
++	}
++
++	drv_data->tx_nents = ret;
++
++	ret = k1x_spi_map_dma_buffer(drv_data, DMA_FROM_DEVICE);
++	if (ret <= 0) {
++		k1x_spi_unmap_dma_buffer(drv_data, DMA_TO_DEVICE);
++		dev_warn(&drv_data->pdev->dev, "failed to DMA map RX\n");
++		return 0;
++	}
++
++	drv_data->rx_nents = ret;
++	return 1;
++}
++
++irqreturn_t k1x_spi_dma_transfer(struct spi_driver_data *drv_data)
++{
++	u32 status;
++
++	status = k1x_spi_read(drv_data, STATUS) & drv_data->mask_sr;
++
++	if (((drv_data->slave_mode) && (status & STATUS_TINT)) ||
++			(status & STATUS_ROR)) {
++		dmaengine_terminate_all(drv_data->rx_chan);
++		dmaengine_terminate_all(drv_data->tx_chan);
++		k1x_spi_dma_transfer_complete(drv_data, true);
++		return IRQ_HANDLED;
++	}
++
++	return IRQ_NONE;
++}
++
++void k1x_spi_slave_sw_timeout_callback(struct spi_driver_data *drv_data)
++{
++	dmaengine_terminate_all(drv_data->rx_chan);
++	dmaengine_terminate_all(drv_data->tx_chan);
++	k1x_spi_dma_transfer_complete(drv_data, true);
++}
++
++int k1x_spi_dma_prepare(struct spi_driver_data *drv_data, u32 dma_burst)
++{
++	struct dma_async_tx_descriptor *tx_desc, *rx_desc;
++
++	tx_desc = k1x_spi_dma_prepare_one(drv_data, DMA_MEM_TO_DEV);
++	if (!tx_desc) {
++		dev_err(&drv_data->pdev->dev,
++			"failed to get DMA TX descriptor\n");
++		return -EBUSY;
++	}
++
++	rx_desc = k1x_spi_dma_prepare_one(drv_data, DMA_DEV_TO_MEM);
++	if (!rx_desc) {
++		dev_err(&drv_data->pdev->dev,
++			"failed to get DMA RX descriptor\n");
++		return -EBUSY;
++	}
++
++	/* We are ready when RX completes */
++	rx_desc->callback = k1x_spi_dma_callback;
++	rx_desc->callback_param = drv_data;
++
++	dmaengine_submit(rx_desc);
++	dmaengine_submit(tx_desc);
++	return 0;
++}
++
++void k1x_spi_dma_start(struct spi_driver_data *drv_data)
++{
++	dma_async_issue_pending(drv_data->rx_chan);
++	dma_async_issue_pending(drv_data->tx_chan);
++
++	atomic_set(&drv_data->dma_running, 1);
++}
++
++int k1x_spi_dma_setup(struct spi_driver_data *drv_data)
++{
++	struct k1x_spi_master *pdata = drv_data->master_info;
++	struct device *dev = &drv_data->pdev->dev;
++	dma_cap_mask_t mask;
++
++	dma_cap_zero(mask);
++	dma_cap_set(DMA_SLAVE, mask);
++
++	drv_data->dummy = devm_kzalloc(dev, SZ_2K, GFP_KERNEL);
++	if (!drv_data->dummy)
++		return -ENOMEM;
++
++	drv_data->tx_chan = dma_request_slave_channel_compat(mask,
++				pdata->dma_filter, pdata->tx_param, dev, "tx");
++	if (!drv_data->tx_chan)
++		return -ENODEV;
++
++	drv_data->rx_chan = dma_request_slave_channel_compat(mask,
++				pdata->dma_filter, pdata->rx_param, dev, "rx");
++	if (!drv_data->rx_chan) {
++		dma_release_channel(drv_data->tx_chan);
++		drv_data->tx_chan = NULL;
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++void k1x_spi_dma_release(struct spi_driver_data *drv_data)
++{
++	if (drv_data->rx_chan) {
++		dmaengine_terminate_all(drv_data->rx_chan);
++		dma_release_channel(drv_data->rx_chan);
++		sg_free_table(&drv_data->rx_sgt);
++		drv_data->rx_chan = NULL;
++	}
++	if (drv_data->tx_chan) {
++		dmaengine_terminate_all(drv_data->tx_chan);
++		dma_release_channel(drv_data->tx_chan);
++		sg_free_table(&drv_data->tx_sgt);
++		drv_data->tx_chan = NULL;
++	}
++}
++
++int k1x_spi_set_dma_burst_and_threshold(struct chip_data *chip,
++					   struct spi_device *spi,
++					   u8 bits_per_word, u32 *burst_code,
++					   u32 *threshold)
++{
++	/*
++	 * If the DMA burst size is given in chip_info we use
++	 * that, otherwise we set it to half of FIFO size; SPI
++	 * FIFO has 16 entry, so FIFO size = 16*bits_per_word/8;
++	 * Also we use the default FIFO thresholds for now.
++	 */
++	if (chip && chip->dma_burst_size)
++		*burst_code = chip->dma_burst_size;
++	else if (bits_per_word <= 8) {
++		*burst_code = 8;
++	}
++	else if (bits_per_word <= 16)
++		*burst_code = 16;
++	else
++		*burst_code = 32;
++
++	*threshold = FIFO_RxTresh(RX_THRESH_DFLT)
++		   | FIFO_TxTresh(TX_THRESH_DFLT);
++
++	return 0;
++}
+diff --git a/drivers/spi/spi-k1x-qspi.c b/drivers/spi/spi-k1x-qspi.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/spi/spi-k1x-qspi.c
+@@ -0,0 +1,1722 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Spacemit k1x qspi controller driver
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/completion.h>
++#include <linux/delay.h>
++#include <linux/dmaengine.h>
++#include <linux/dma-mapping.h>
++#include <linux/err.h>
++#include <linux/errno.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/jiffies.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/pm_qos.h>
++#include <linux/pm_runtime.h>
++#include <linux/sizes.h>
++#include <linux/spi/spi.h>
++#include <linux/spi/spi-mem.h>
++#include <linux/reset.h>
++
++//#define K1X_DUMP_QSPI_REG
++
++#define QSPI_WAIT_TIMEOUT		(300) /* ms */
++#define QSPI_AUTOSUSPEND_TIMEOUT	2000
++#define K1X_MPMU_ACGR			0xd4051024
++
++/* QSPI PMUap register */
++#define PMUA_QSPI_CLK_RES_CTRL		0xd4282860
++#define QSPI_CLK_SEL(x)			((x) << 6)
++#define QSPI_CLK_SEL_MASK		GENMASK(8, 6)
++#define QSPI_CLK_EN			BIT(4)
++#define QSPI_BUS_CLK_EN			BIT(3)
++#define QSPI_CLK_RST			BIT(1)
++#define QSPI_BUS_RST			BIT(0)
++
++/* QSPI memory base */
++#define QSPI_AMBA_BASE			0xb8000000
++#define QSPI_FLASH_A1_BASE		QSPI_AMBA_BASE
++#define QSPI_FLASH_A1_TOP		(QSPI_FLASH_A1_BASE + 0x4000000)
++#define QSPI_FLASH_A2_BASE		QSPI_FLASH_A1_TOP
++#define QSPI_FLASH_A2_TOP		(QSPI_FLASH_A2_BASE + 0x100000)
++#define QSPI_FLASH_B1_BASE		QSPI_FLASH_A2_TOP
++#define QSPI_FLASH_B1_TOP		(QSPI_FLASH_B1_BASE + 0x100000)
++#define QSPI_FLASH_B2_BASE		QSPI_FLASH_B1_TOP
++#define QSPI_FLASH_B2_TOP		(QSPI_FLASH_B2_BASE + 0x100000)
++
++/* TX/RX/ABH buffer max */
++#define QSPI_RX_BUFF_MAX 		SZ_128
++#define QSPI_TX_BUFF_MAX 		SZ_256
++#define QSPI_TX_BUFF_POP_MIN 		16
++#define QSPI_AHB_BUFF_MAX_SIZE		SZ_512
++#define QSPI_TX_DMA_BURST 		SZ_16
++
++#define QSPI_WAIT_BIT_CLEAR		0
++#define QSPI_WAIT_BIT_SET		1
++
++/* QSPI Host Registers used by the driver */
++#define QSPI_MCR			0x00
++#define QSPI_MCR_ISD_MASK		GENMASK(19, 16)
++#define QSPI_MCR_MDIS_MASK		BIT(14)
++#define QSPI_MCR_CLR_TXF_MASK		BIT(11)
++#define QSPI_MCR_CLR_RXF_MASK		BIT(10)
++#define QSPI_MCR_DDR_EN_MASK		BIT(7)
++#define QSPI_MCR_END_CFG_MASK		GENMASK(3, 2)
++#define QSPI_MCR_SWRSTHD_MASK		BIT(1)
++#define QSPI_MCR_SWRSTSD_MASK		BIT(0)
++
++#define QSPI_TCR			0x04
++#define QSPI_IPCR			0x08
++#define QSPI_IPCR_SEQID(x)		((x) << 24)
++
++#define QSPI_FLSHCR			0x0c
++
++#define QSPI_BUF0CR			0x10
++#define QSPI_BUF1CR			0x14
++#define QSPI_BUF2CR			0x18
++#define QSPI_BUF3CR			0x1c
++#define QSPI_BUF3CR_ALLMST_MASK		BIT(31)
++#define QSPI_BUF3CR_ADATSZ(x)		((x) << 8)
++#define QSPI_BUF3CR_ADATSZ_MASK		GENMASK(15, 8)
++
++#define QSPI_BFGENCR			0x20
++#define QSPI_BFGENCR_SEQID(x)		((x) << 12)
++
++#define QSPI_SOCCR			0x24
++
++#define QSPI_BUF0IND			0x30
++#define QSPI_BUF1IND			0x34
++#define QSPI_BUF2IND			0x38
++
++#define QSPI_SFAR			0x100
++#define QSPI_SFACR			0x104
++
++#define QSPI_SMPR			0x108
++#define QSPI_SMPR_DDRSMP_MASK		GENMASK(18, 16)
++#define QSPI_SMPR_FSDLY_MASK		BIT(6)
++#define QSPI_SMPR_FSPHS_MASK		BIT(5)
++#define QSPI_SMPR_FSPHS_CLK		(416000000)
++#define QSPI_SMPR_HSENA_MASK		BIT(0)
++
++#define QSPI_RBSR			0x10c
++
++#define QSPI_RBCT			0x110
++#define QSPI_RBCT_WMRK_MASK		GENMASK(4, 0)
++#define QSPI_RBCT_RXBRD_MASK		BIT(8)
++
++#define QSPI_TBSR			0x150
++#define QSPI_TBDR			0x154
++#define QSPI_TBCT			0x158
++#define QSPI_TX_WMRK			(QSPI_TX_DMA_BURST / 4 - 1)
++
++#define QSPI_SR				0x15c
++#define QSPI_SR_BUSY			BIT(0)
++#define QSPI_SR_IP_ACC_MASK		BIT(1)
++#define QSPI_SR_AHB_ACC_MASK		BIT(2)
++#define QSPI_SR_TXFULL			BIT(27)
++
++#define QSPI_FR				0x160
++#define QSPI_FR_TFF_MASK		BIT(0)
++#define QSPI_FR_IPGEF			BIT(4)
++#define QSPI_FR_IPIEF			BIT(6)
++#define QSPI_FR_IPAEF			BIT(7)
++#define QSPI_FR_IUEF			BIT(11)
++#define QSPI_FR_ABOF			BIT(12)
++#define QSPI_FR_AIBSEF			BIT(13)
++#define QSPI_FR_AITEF			BIT(14)
++#define QSPI_FR_ABSEF			BIT(15)
++#define QSPI_FR_RBDF			BIT(16)
++#define QSPI_FR_RBOF			BIT(17)
++#define QSPI_FR_ILLINE			BIT(23)
++#define QSPI_FR_TBUF			BIT(26)
++#define QSPI_FR_TBFF			BIT(27)
++#define BUFFER_FR_FLAG			(QSPI_FR_ABOF| QSPI_FR_RBOF| \
++					QSPI_FR_TBUF)
++
++#define COMMAND_FR_FLAG			(QSPI_FR_ABSEF | QSPI_FR_AITEF | \
++					QSPI_FR_AIBSEF | QSPI_FR_IUEF | \
++					QSPI_FR_IPAEF |QSPI_FR_IPIEF | \
++					QSPI_FR_IPGEF)
++
++#define QSPI_RSER			0x164
++#define QSPI_RSER_TFIE			BIT(0)
++#define QSPI_RSER_IPGEIE		BIT(4)
++#define QSPI_RSER_IPIEIE		BIT(6)
++#define QSPI_RSER_IPAEIE		BIT(7)
++#define QSPI_RSER_IUEIE			BIT(11)
++#define QSPI_RSER_ABOIE			BIT(12)
++#define QSPI_RSER_AIBSIE		BIT(13)
++#define QSPI_RSER_AITIE			BIT(14)
++#define QSPI_RSER_ABSEIE		BIT(15)
++#define QSPI_RSER_RBDIE			BIT(16)
++#define QSPI_RSER_RBOIE			BIT(17)
++#define QSPI_RSER_RBDDE			BIT(21)
++#define QSPI_RSER_ILLINIE		BIT(23)
++#define QSPI_RSER_TBFDE			BIT(25)
++#define QSPI_RSER_TBUIE			BIT(26)
++#define QSPI_RSER_TBFIE			BIT(27)
++#define BUFFER_ERROR_INT		(QSPI_RSER_ABOIE| QSPI_RSER_RBOIE| \
++					QSPI_RSER_TBUIE)
++
++#define COMMAND_ERROR_INT		(QSPI_RSER_ABSEIE | QSPI_RSER_AITIE | \
++					QSPI_RSER_AIBSIE | QSPI_RSER_IUEIE | \
++					QSPI_RSER_IPAEIE |QSPI_RSER_IPIEIE | \
++					QSPI_RSER_IPGEIE)
++
++#define QSPI_SPNDST			0x168
++#define QSPI_SPTRCLR			0x16c
++#define QSPI_SPTRCLR_IPPTRC		BIT(8)
++#define QSPI_SPTRCLR_BFPTRC		BIT(0)
++
++#define QSPI_SFA1AD			0x180
++#define QSPI_SFA2AD			0x184
++#define QSPI_SFB1AD			0x188
++#define QSPI_SFB2AD			0x18c
++#define QSPI_DLPR			0x190
++#define QSPI_RBDR(x)			(0x200 + ((x) * 4))
++
++#define QSPI_LUTKEY			0x300
++#define QSPI_LUTKEY_VALUE		0x5af05af0
++
++#define QSPI_LCKCR			0x304
++#define QSPI_LCKER_LOCK			BIT(0)
++#define QSPI_LCKER_UNLOCK		BIT(1)
++
++#define QSPI_LUT_BASE			0x310
++/* 16Bytes per sequence */
++#define QSPI_LUT_REG(seqid, i)		(QSPI_LUT_BASE + (seqid) * 16 + (i) * 4)
++
++/*
++ * QSPI Sequence index.
++ * index 0 is preset at boot for AHB read,
++ * index 1 is used for other command.
++ */
++#define	SEQID_LUT_AHBREAD_ID		0
++#define	SEQID_LUT_SHARED_ID		1
++
++/* QSPI Instruction set for the LUT register */
++#define LUT_INSTR_STOP			0
++#define LUT_INSTR_CMD			1
++#define LUT_INSTR_ADDR			2
++#define LUT_INSTR_DUMMY			3
++#define LUT_INSTR_MODE			4
++#define LUT_INSTR_MODE2			5
++#define LUT_INSTR_MODE4			6
++#define LUT_INSTR_READ			7
++#define LUT_INSTR_WRITE			8
++#define LUT_INSTR_JMP_ON_CS		9
++#define LUT_INSTR_ADDR_DDR		10
++#define LUT_INSTR_MODE_DDR		11
++#define LUT_INSTR_MODE2_DDR		12
++#define LUT_INSTR_MODE4_DDR		13
++#define LUT_INSTR_READ_DDR		14
++#define LUT_INSTR_WRITE_DDR		15
++#define LUT_INSTR_DATA_LEARN		16
++
++/*
++ * The PAD definitions for LUT register.
++ *
++ * The pad stands for the number of IO lines [0:3].
++ * For example, the quad read needs four IO lines,
++ * so you should use LUT_PAD(4).
++ */
++#define LUT_PAD(x) (fls(x) - 1)
++
++/*
++ * One sequence must be consisted of 4 LUT enteries(16Bytes).
++ * LUT entries with the following register layout:
++ * b'31                                                                     b'0
++ *  ---------------------------------------------------------------------------
++ *  |INSTR1[15~10]|PAD1[9~8]|OPRND1[7~0] | INSTR0[15~10]|PAD0[9~8]|OPRND0[7~0]|
++ *  ---------------------------------------------------------------------------
++ */
++#define LUT_DEF(idx, ins, pad, opr)	\
++	((((ins) << 10) | ((pad) << 8) | (opr)) << (((idx) & 0x1) * 16))
++
++#define READ_FROM_CACHE_OP		0x03
++#define READ_FROM_CACHE_OP_Fast		0x0b
++#define READ_FROM_CACHE_OP_X2		0x3b
++#define READ_FROM_CACHE_OP_X4		0x6b
++#define READ_FROM_CACHE_OP_DUALIO	0xbb
++#define READ_FROM_CACHE_OP_QUADIO	0xeb
++
++u32 reg_offset_table[] = {
++	QSPI_MCR,	QSPI_TCR,	QSPI_IPCR,	QSPI_FLSHCR,
++	QSPI_BUF0CR,	QSPI_BUF1CR,	QSPI_BUF2CR,	QSPI_BUF3CR,
++	QSPI_BFGENCR,	QSPI_SOCCR,	QSPI_BUF0IND,	QSPI_BUF1IND,
++	QSPI_BUF2IND,	QSPI_SFAR,	QSPI_SFACR,	QSPI_SMPR,
++	QSPI_RBSR,	QSPI_RBCT,	QSPI_TBSR,	QSPI_TBDR,
++	QSPI_TBCT,	QSPI_SR,	QSPI_FR,	QSPI_RSER,
++	QSPI_SPNDST,	QSPI_SPTRCLR,	QSPI_SFA1AD,	QSPI_SFA2AD,
++	QSPI_SFB1AD,	QSPI_SFB2AD,	QSPI_DLPR,	QSPI_LUTKEY,
++	QSPI_LCKCR
++};
++
++/* k1x qspi host priv */
++struct k1x_qspi {
++	struct device *dev;
++	struct spi_controller *ctrl;
++	void __iomem *io_map;
++	phys_addr_t io_phys;
++
++	void __iomem *ahb_map;
++	phys_addr_t memmap_base;
++	u32 memmap_size;
++
++	u32 sfa1ad;
++	u32 sfa2ad;
++	u32 sfb1ad;
++	u32 sfb2ad;
++
++	u32 pmuap_reg;
++	void __iomem *pmuap_addr;
++	u32 mpmu_acgr_reg;
++	void __iomem *mpmu_acgr;
++
++	u32 rx_buf_size;
++	u32 tx_buf_size;
++	u32 ahb_buf_size;
++	u32 ahb_read_enable;
++	u32 tx_unit_size;
++	u32 rx_unit_size;
++
++	u32 cmd_interrupt;
++	u32 fr_error_flag;
++
++	u32 tx_dma_enable;
++	u32 tx_wmrk;
++	struct dma_chan *tx_dma;
++	struct dma_slave_config tx_dma_cfg;
++
++	u32 rx_dma_enable;
++	struct dma_chan *rx_dma;
++
++	struct sg_table sgt;
++	struct completion dma_completion;
++
++	u32 cs_selected;
++	u32 max_hz;
++	u32 endian_xchg;
++	u32 dma_enable;
++
++	struct clk *clk, *bus_clk;
++	struct reset_control *resets;
++
++	struct completion cmd_completion;
++	struct mutex lock;
++	int selected;
++
++	u32 tx_underrun_err;
++	u32 rx_overflow_err;
++	u32 ahb_overflow_err;
++};
++
++enum qpsi_cs {
++	QSPI_CS_A1 = 0,
++	QSPI_CS_A2,
++	QSPI_CS_B1,
++	QSPI_CS_B2,
++	QSPI_CS_MAX,
++};
++#define QSPI_DEFAULT_CS		(QSPI_CS_A1)
++
++enum qpsi_mode {
++	QSPI_NORMAL_MODE = 0,
++	QSPI_DISABLE_MODE,
++	QSPI_STOP_MODE,
++};
++
++static ssize_t qspi_info_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct k1x_qspi *t_qspi = dev_get_drvdata(dev);
++	return sprintf(buf, "%s: rx_dma_en=%d, rx_buf_size=0x%x, tx_dma_en=%d, tx_buf_size=0x%x,"
++				"ahb_read_enable=%d, ahb_buf_size=0x%x\n",
++				dev_name(dev),
++				t_qspi->rx_dma_enable, t_qspi->rx_buf_size,
++				t_qspi->tx_dma_enable, t_qspi->tx_buf_size,
++				t_qspi->ahb_read_enable, t_qspi->ahb_buf_size);
++}
++static DEVICE_ATTR_RO(qspi_info);
++
++static ssize_t qspi_err_resp_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct k1x_qspi *t_qspi = dev_get_drvdata(dev);
++	return sprintf(buf, "%s: tx_underrun (%d), rx_overflow (%d), ahb_overflow (%d)\n",
++			dev_name(dev),
++			t_qspi->tx_underrun_err, t_qspi->rx_overflow_err, t_qspi->ahb_overflow_err);
++}
++static DEVICE_ATTR_RO(qspi_err_resp);
++
++static struct attribute *qspi_dev_attrs[] = {
++	&dev_attr_qspi_info.attr,
++	&dev_attr_qspi_err_resp.attr,
++	NULL,
++};
++
++static struct attribute_group qspi_dev_group = {
++	.name = "qspi_dev",
++	.attrs = qspi_dev_attrs,
++};
++
++static void qspi_writel(struct k1x_qspi *qspi, u32 val, void __iomem *addr)
++{
++	if (qspi->endian_xchg)
++		iowrite32be(val, addr);
++	else
++		iowrite32(val, addr);
++}
++
++static u32 qspi_readl(struct k1x_qspi *qspi, void __iomem *addr)
++{
++	if (qspi->endian_xchg)
++		return ioread32be(addr);
++	else
++		return ioread32(addr);
++}
++
++static int qspi_set_func_clk(struct k1x_qspi *qspi)
++{
++	int ret = 0;
++
++	qspi->clk = devm_clk_get(qspi->dev, "qspi_clk");
++	if (IS_ERR_OR_NULL(qspi->clk)) {
++		dev_err(qspi->dev, "can not find the clock\n");
++		return -EINVAL;
++	}
++
++	qspi->bus_clk = devm_clk_get(qspi->dev, "qspi_bus_clk");
++	if (IS_ERR_OR_NULL(qspi->bus_clk)) {
++		dev_err(qspi->dev, "can not find the bus clock\n");
++		return -EINVAL;
++	}
++
++	clk_disable_unprepare(qspi->bus_clk);
++	clk_disable_unprepare(qspi->clk);
++
++	ret = clk_set_rate(qspi->clk, qspi->max_hz);
++	if (ret) {
++		dev_err(qspi->dev, "fail to set clk, ret:%d\n", ret);
++		return ret;
++	}
++
++	ret = clk_prepare_enable(qspi->clk);
++	if (ret) {
++		dev_err(qspi->dev, "fail to enable clk, ret:%d\n", ret);
++		return ret;
++	}
++
++	clk_prepare_enable(qspi->bus_clk);
++
++	dev_dbg(qspi->dev, "bus clock %dHz, PMUap reg[0x%08x]:0x%08x\n",
++		qspi->max_hz, qspi->pmuap_reg, qspi_readl(qspi, qspi->pmuap_addr));
++
++	return 0;
++}
++
++static void qspi_config_mfp(struct k1x_qspi *qspi)
++{
++	int cs = qspi->cs_selected;
++
++	/* TODO: only for FPGA */
++#if 0
++	void * __iomem mfpr_base = ioremap((phys_addr_t)0xd401e000, 0x200);
++	if (!mfpr_base) {
++		pr_err("%s: ioremap mfpr reg error.\n", __func__);
++		return;
++	}
++
++	if (cs == QSPI_CS_A1 || cs == QSPI_CS_A2) {
++		writel(0xa800, mfpr_base + 0x174); // QSPI_DAT3
++		writel(0xa800, mfpr_base + 0x170); // QSPI_DAT2
++		writel(0xa800, mfpr_base + 0x16C); // QSPI_DAT1
++		writel(0xa800, mfpr_base + 0x168); // QSPI_DAT0
++		writel(0xa800, mfpr_base + 0x17C); // QSPI_CLK
++		writel(0xc800, mfpr_base + 0x178); // QSPI_CS1
++		dev_err(qspi->dev, "config mfp for cs:[%d]\n", cs);
++	}
++#endif
++	dev_info(qspi->dev, "config mfp for cs:[%d]\n", cs);
++}
++
++static int k1x_qspi_readl_poll_tout(struct k1x_qspi *qspi, void __iomem *base,
++					u32 mask, u32 timeout_us, u8 wait_set)
++{
++	u32 reg;
++
++	if (qspi->endian_xchg)
++		mask = swab32(mask);
++
++	if (wait_set)
++		return readl_poll_timeout(base, reg, (reg & mask), 10, timeout_us);
++	else
++		return readl_poll_timeout(base, reg, !(reg & mask), 10, timeout_us);
++}
++
++static void qspi_reset(struct k1x_qspi *qspi)
++{
++	uint32_t reg;
++	int err;
++
++	/* QSPI_SR[QSPI_SR_BUSY] must be 0 */
++	err = k1x_qspi_readl_poll_tout(qspi, qspi->io_map + QSPI_SR,
++			QSPI_SR_BUSY, QSPI_WAIT_TIMEOUT*1000, QSPI_WAIT_BIT_CLEAR);
++	if (err) {
++		dev_err(qspi->dev, "failed to reset qspi host.\n");
++	} else {
++		/* qspi softreset first */
++		reg = qspi_readl(qspi, qspi->io_map + QSPI_MCR);
++		reg |= QSPI_MCR_SWRSTHD_MASK | QSPI_MCR_SWRSTSD_MASK;
++		qspi_writel(qspi, reg, qspi->io_map + QSPI_MCR);
++		reg = qspi_readl(qspi, qspi->io_map + QSPI_MCR);
++		if ((reg & 0x3) != 0x3)
++			dev_info(qspi->dev, "reset ignored 0x%x.\n", reg);
++
++		udelay(1);
++		reg &= ~(QSPI_MCR_SWRSTHD_MASK | QSPI_MCR_SWRSTSD_MASK);
++		qspi_writel(qspi, reg, qspi->io_map + QSPI_MCR);
++	}
++}
++
++
++static void qspi_enter_mode(struct k1x_qspi *qspi, uint32_t mode)
++{
++	uint32_t mcr;
++
++	mcr = qspi_readl(qspi, qspi->io_map + QSPI_MCR);
++	if (mode == QSPI_NORMAL_MODE)
++		mcr &= ~QSPI_MCR_MDIS_MASK;
++	else if (mode == QSPI_DISABLE_MODE)
++		mcr |= QSPI_MCR_MDIS_MASK;
++	qspi_writel(qspi, mcr, qspi->io_map + QSPI_MCR);
++}
++
++static void qspi_write_sfar(struct k1x_qspi *qspi, uint32_t val)
++{
++	int err;
++
++	/* QSPI_SR[IP_ACC] must be 0 */
++	err = k1x_qspi_readl_poll_tout(qspi, qspi->io_map + QSPI_SR,
++			QSPI_SR_IP_ACC_MASK, QSPI_WAIT_TIMEOUT*1000, QSPI_WAIT_BIT_CLEAR);
++	if (err)
++		dev_err(qspi->dev, "failed to set QSPI_SFAR.\n");
++	else
++		qspi_writel(qspi, val, qspi->io_map + QSPI_SFAR);
++}
++
++/*
++ * IP Command Trigger could not be executed Error Flag may happen for write
++ * access to RBCT/SFAR register, need retry for these two register
++ */
++static void qspi_write_rbct(struct k1x_qspi *qspi, uint32_t val)
++{
++	int err;
++
++	/* QSPI_SR[IP_ACC] must be 0 */
++	err = k1x_qspi_readl_poll_tout(qspi, qspi->io_map + QSPI_SR,
++			QSPI_SR_IP_ACC_MASK, QSPI_WAIT_TIMEOUT*1000, QSPI_WAIT_BIT_CLEAR);
++	if (err)
++		dev_err(qspi->dev, "failed to set QSPI_RBCT.\n");
++	else
++		qspi_writel(qspi, val, qspi->io_map + QSPI_RBCT);
++}
++
++void qspi_init_ahbread(struct k1x_qspi *qspi, int seq_id)
++{
++	u32 buf_cfg = 0;
++
++	/* Disable BUF0~BUF1, use BUF3 for all masters */
++	qspi_writel(qspi, 0, qspi->io_map + QSPI_BUF0IND);
++	qspi_writel(qspi, 0, qspi->io_map + QSPI_BUF1IND);
++	qspi_writel(qspi, 0, qspi->io_map + QSPI_BUF2IND);
++
++	buf_cfg = QSPI_BUF3CR_ALLMST_MASK |
++			QSPI_BUF3CR_ADATSZ((qspi->ahb_buf_size / 8));
++
++	/* AHB Master port */
++	qspi_writel(qspi, 0xe, qspi->io_map + QSPI_BUF0CR);
++	qspi_writel(qspi, 0xe, qspi->io_map + QSPI_BUF1CR);
++	qspi_writel(qspi, 0xe, qspi->io_map + QSPI_BUF2CR);
++	qspi_writel(qspi, buf_cfg, qspi->io_map + QSPI_BUF3CR); // other masters
++
++	/* set AHB read sequence id */
++	qspi_writel(qspi, QSPI_BFGENCR_SEQID(seq_id), qspi->io_map + QSPI_BFGENCR);
++	dev_info(qspi->dev, "AHB buf size: %d\n", qspi->ahb_buf_size);
++}
++
++void qspi_dump_reg(struct k1x_qspi *qspi)
++{
++	u32 reg = 0;
++	void __iomem *base = qspi->io_map;
++	int i;
++
++	dev_notice(qspi->dev, "dump qspi host register:\n");
++	for (i = 0; i < ARRAY_SIZE(reg_offset_table); i++) {
++		if (i > 0 && (i % 4 == 0))
++			dev_notice(qspi->dev, "\n");
++		reg = qspi_readl(qspi, base + reg_offset_table[i]);
++		dev_notice(qspi->dev, "offset[0x%03x]:0x%08x\t\t",
++				reg_offset_table[i], reg);
++	}
++
++	dev_notice(qspi->dev, "\ndump AHB read LUT:\n");
++	for (i = 0; i < 4; i++) {
++		reg = qspi_readl(qspi, base + QSPI_LUT_REG(SEQID_LUT_AHBREAD_ID, i));
++		dev_notice(qspi->dev, "lut_reg[0x%03x]:0x%08x\t\t",
++				QSPI_LUT_REG(SEQID_LUT_AHBREAD_ID, i), reg);
++	}
++
++	dev_notice(qspi->dev, "\ndump shared LUT:\n");
++	for (i = 0; i < 4; i++) {
++		reg = qspi_readl(qspi, base + QSPI_LUT_REG(SEQID_LUT_SHARED_ID, i));
++		dev_notice(qspi->dev, "lut_reg[0x%03x]:0x%08x\t\t",
++				QSPI_LUT_REG(SEQID_LUT_SHARED_ID, i), reg);
++	}
++	dev_notice(qspi->dev, "\n");
++}
++
++/*
++ * If the slave device content being changed by Write/Erase, need to
++ * invalidate the AHB buffer. This can be achieved by doing the reset
++ * of controller after setting MCR0[SWRESET] bit.
++ */
++static inline void k1x_qspi_invalid(struct k1x_qspi *qspi)
++{
++	u32 reg;
++
++	reg = qspi_readl(qspi, qspi->io_map + QSPI_MCR);
++	reg |= QSPI_MCR_SWRSTHD_MASK | QSPI_MCR_SWRSTSD_MASK;
++	qspi_writel(qspi, reg, qspi->io_map + QSPI_MCR);
++
++	/*
++	 * The minimum delay : 1 AHB + 2 SFCK clocks.
++	 * Delay 1 us is enough.
++	 */
++	udelay(1);
++
++	reg &= ~(QSPI_MCR_SWRSTHD_MASK | QSPI_MCR_SWRSTSD_MASK);
++	qspi_writel(qspi, reg, qspi->io_map + QSPI_MCR);
++}
++
++static void k1x_qspi_prepare_lut(struct k1x_qspi *qspi,
++				const struct spi_mem_op *op, u32 seq_id)
++{
++	u32 lutval[4] = {0,};
++	int lutidx = 0;
++	int i;
++
++	/* qspi cmd */
++	lutval[0] |= LUT_DEF(lutidx, LUT_INSTR_CMD,
++			     LUT_PAD(op->cmd.buswidth),
++			     op->cmd.opcode);
++	lutidx++;
++
++	/* addr bytes */
++	if (op->addr.nbytes) {
++		lutval[lutidx / 2] |= LUT_DEF(lutidx, LUT_INSTR_ADDR,
++					      LUT_PAD(op->addr.buswidth),
++					      op->addr.nbytes * 8);
++		lutidx++;
++	}
++
++	/* dummy bytes, if needed */
++	if (op->dummy.nbytes) {
++		lutval[lutidx / 2] |= LUT_DEF(lutidx, LUT_INSTR_DUMMY,
++					      LUT_PAD(op->dummy.buswidth),
++					      op->dummy.nbytes * 8 /
++					      op->dummy.buswidth);
++		lutidx++;
++	}
++
++	/* read/write data bytes */
++	if (op->data.nbytes) {
++		lutval[lutidx / 2] |= LUT_DEF(lutidx,
++					      op->data.dir == SPI_MEM_DATA_IN ?
++					      LUT_INSTR_READ : LUT_INSTR_WRITE,
++					      LUT_PAD(op->data.buswidth),
++					      0);
++		lutidx++;
++	}
++
++	/* stop condition. */
++	lutval[lutidx / 2] |= LUT_DEF(lutidx, LUT_INSTR_STOP, 0, 0);
++
++	/* unlock LUT */
++	qspi_writel(qspi, QSPI_LUTKEY_VALUE, qspi->io_map + QSPI_LUTKEY);
++	qspi_writel(qspi, QSPI_LCKER_UNLOCK, qspi->io_map + QSPI_LCKCR);
++
++	/* fill LUT register */
++	for (i = 0; i < ARRAY_SIZE(lutval); i++)
++		qspi_writel(qspi, lutval[i], qspi->io_map + QSPI_LUT_REG(seq_id, i));
++
++	/* lock LUT */
++	qspi_writel(qspi, QSPI_LUTKEY_VALUE, qspi->io_map + QSPI_LUTKEY);
++	qspi_writel(qspi, QSPI_LCKER_LOCK, qspi->io_map + QSPI_LCKCR);
++
++	dev_dbg(qspi->dev, "opcode:0x%x, lut_reg[0:0x%x, 1:0x%x, 2:0x%x, 3:0x%x]\n",
++		op->cmd.opcode, lutval[0], lutval[1], lutval[2], lutval[3]);
++}
++
++static void k1x_qspi_enable_interrupt(struct k1x_qspi *qspi, u32 val)
++{
++	u32 resr = 0;
++
++	resr = qspi_readl(qspi, qspi->io_map + QSPI_RSER);
++	resr |= val;
++	qspi_writel(qspi, resr, qspi->io_map + QSPI_RSER);
++}
++
++static void k1x_qspi_disable_interrupt(struct k1x_qspi *qspi, u32 val)
++{
++	u32 resr = 0;
++
++	resr = qspi_readl(qspi, qspi->io_map + QSPI_RSER);
++	resr &= ~val;
++	qspi_writel(qspi, resr, qspi->io_map + QSPI_RSER);
++}
++
++static void k1x_qspi_prepare_dma(struct k1x_qspi *qspi)
++{
++	struct dma_slave_config dma_cfg;
++	struct device *dev = qspi->dev;
++	dma_cap_mask_t mask;
++
++	if (qspi->rx_dma_enable) {
++		/* RX DMA: DMA_MEMCPY type */
++		dma_cap_zero(mask);
++		dma_cap_set(DMA_MEMCPY, mask);
++		qspi->rx_dma = dma_request_chan_by_mask(&mask);
++		if (IS_ERR_OR_NULL(qspi->rx_dma)) {
++			dev_err(dev, "rx dma request channel failed\n");
++			qspi->rx_dma = NULL;
++			qspi->rx_dma_enable = 0;
++		} else {
++			dev_dbg(dev, "rx dma enable, channel:%d\n", qspi->rx_dma->chan_id);
++		}
++	}
++
++	if (qspi->tx_dma_enable) {
++		/* TX DMA: DMA_SLAVE type */
++		qspi->tx_dma = dma_request_slave_channel(dev, "tx-dma");
++		if (qspi->tx_dma) {
++			memset(&dma_cfg, 0, sizeof(struct dma_slave_config));
++			dma_cfg.direction = DMA_MEM_TO_DEV;
++			dma_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
++			dma_cfg.dst_addr = qspi->io_phys + QSPI_TBDR - 4;
++			dma_cfg.dst_maxburst = QSPI_TX_DMA_BURST;
++			if (dmaengine_slave_config(qspi->tx_dma, &dma_cfg)) {
++				dev_err(dev, "tx dma slave config failed\n");
++				dma_release_channel(qspi->tx_dma);
++				qspi->tx_dma = NULL;
++				qspi->tx_dma_enable = 0;
++			} else {
++				dev_dbg(dev, "tx dma enable, channel:%d\n", qspi->tx_dma->chan_id);
++			}
++		} else {
++			qspi->tx_dma_enable = 0;
++		}
++	}
++
++	if (qspi->tx_dma || qspi->rx_dma)
++		init_completion(&qspi->dma_completion);
++}
++
++static void k1x_qspi_dma_callback(void *arg)
++{
++	struct completion *dma_completion = arg;
++
++	complete(dma_completion);
++}
++
++int k1x_qspi_tx_dma_exec(struct k1x_qspi *qspi,
++			const struct spi_mem_op *op)
++{
++	struct dma_async_tx_descriptor *desc;
++	enum dma_transfer_direction dma_dir;
++	dma_cookie_t cookie;
++	int err = 0;
++
++	if (!virt_addr_valid(op->data.buf.in) ||
++	    spi_controller_dma_map_mem_op_data(qspi->ctrl, op, &qspi->sgt)) {
++		dev_err(qspi->dev, "tx dma spi_controller_dma_map_mem_op_data error\n");
++		return -EIO;
++	}
++
++	dma_dir = DMA_MEM_TO_DEV;
++	desc = dmaengine_prep_slave_sg(qspi->tx_dma, qspi->sgt.sgl, qspi->sgt.nents,
++				       dma_dir, DMA_PREP_INTERRUPT);
++	if (!desc) {
++		dev_err(qspi->dev, "tx dma dmaengine_prep_slave_sg error\n");
++		err = -ENOMEM;
++		goto out;
++	}
++
++	reinit_completion(&qspi->dma_completion);
++	desc->callback = k1x_qspi_dma_callback;
++	desc->callback_param = &qspi->dma_completion;
++
++	cookie = dmaengine_submit(desc);
++	err = dma_submit_error(cookie);
++	if (err) {
++		dev_err(qspi->dev, "tx dma dmaengine_submit error\n");
++		goto out;
++	}
++
++	dma_async_issue_pending(qspi->tx_dma);
++
++	return 0;
++out:
++	spi_controller_dma_unmap_mem_op_data(qspi->ctrl, op, &qspi->sgt);
++	return err;
++}
++
++int k1x_qspi_rx_dma_exec(struct k1x_qspi *qspi, dma_addr_t dma_dst,
++			dma_addr_t dma_src, size_t len)
++{
++	dma_cookie_t cookie;
++	enum dma_ctrl_flags flags = DMA_CTRL_ACK | DMA_PREP_INTERRUPT;
++	struct dma_async_tx_descriptor *desc;
++	int ret;
++
++	desc = dmaengine_prep_dma_memcpy(qspi->rx_dma, dma_dst, dma_src, len, flags);
++	if (!desc) {
++		dev_err(qspi->dev, "dmaengine_prep_dma_memcpy error\n");
++		return -EIO;
++	}
++
++	reinit_completion(&qspi->dma_completion);
++	desc->callback = k1x_qspi_dma_callback;
++	desc->callback_param = &qspi->dma_completion;
++	cookie = dmaengine_submit(desc);
++	ret = dma_submit_error(cookie);
++	if (ret) {
++		dev_err(qspi->dev, "dma_submit_error %d\n", cookie);
++		return -EIO;
++	}
++
++	dma_async_issue_pending(qspi->rx_dma);
++	ret = wait_for_completion_timeout(&qspi->dma_completion,
++					  msecs_to_jiffies(len));
++	if (ret <= 0) {
++		dmaengine_terminate_sync(qspi->rx_dma);
++		dev_err(qspi->dev, "DMA wait_for_completion_timeout\n");
++		return -ETIMEDOUT;
++	}
++
++	return 0;
++}
++
++static int k1x_qspi_rx_dma_sg(struct k1x_qspi *qspi, struct sg_table rx_sg,
++			       loff_t from)
++{
++	struct scatterlist *sg;
++	dma_addr_t dma_src = qspi->memmap_base + from;
++	dma_addr_t dma_dst;
++	int i, len, ret;
++
++	for_each_sg(rx_sg.sgl, sg, rx_sg.nents, i) {
++		dma_dst = sg_dma_address(sg);
++		len = sg_dma_len(sg);
++		dev_dbg(qspi->dev, "rx dma, dst:0x%pad, src:0x%pad, len:%d\n",
++			&dma_dst, &dma_src, len);
++		ret = k1x_qspi_rx_dma_exec(qspi, dma_dst, dma_src, len);
++		if (ret)
++			return ret;
++		dma_src += len;
++	}
++
++	return 0;
++}
++
++static int k1x_qspi_ahb_read(struct k1x_qspi *qspi,
++				const struct spi_mem_op *op)
++{
++	int ret = 0;
++	u32 len = op->data.nbytes;
++	u32 from = op->addr.val;
++	struct sg_table sgt;
++
++	/* Read out the data directly from the AHB buffer. */
++	dev_dbg(qspi->dev, "ahb read %d bytes from address:0x%llx\n",
++				len, (qspi->memmap_base + op->addr.val));
++	if (from + len > qspi->memmap_size)
++		return -ENOTSUPP;
++
++	/* firstly try the DMA */
++	if (qspi->rx_dma_enable) {
++		if (virt_addr_valid(op->data.buf.in) &&
++		    !spi_controller_dma_map_mem_op_data(qspi->ctrl, op, &sgt)) {
++			ret = k1x_qspi_rx_dma_sg(qspi, sgt, from);
++			spi_controller_dma_unmap_mem_op_data(qspi->ctrl, op, &sgt);
++		} else {
++			ret = -EIO;
++			dev_err(qspi->dev, "spi_controller_dma_map_mem_op_data error\n");
++		}
++
++		/* DMA completed */
++		if (!ret)
++			return 0;
++	}
++
++	if (qspi->rx_dma_enable && ret) {
++		dev_dbg(qspi->dev, "rx dma read fallback to memcpy read.\n");
++	}
++
++	if (!qspi->rx_dma_enable || (qspi->rx_dma_enable && ret)) {
++		memcpy(op->data.buf.in, (qspi->ahb_map + op->addr.val), len);
++	}
++
++	return 0;
++}
++
++static int k1x_qspi_fill_txfifo(struct k1x_qspi *qspi,
++				 const struct spi_mem_op *op)
++{
++	void __iomem *base = qspi->io_map;
++	int i;
++	u32 val;
++	u32 tbsr;
++	u32 wait_cnt;
++
++	if (!qspi->tx_dma_enable || (op->data.nbytes % QSPI_TX_BUFF_POP_MIN)) {
++		qspi->tx_wmrk = 0;
++		for (i = 0; i < ALIGN_DOWN(op->data.nbytes, 4); i += 4) {
++			memcpy(&val, op->data.buf.out + i, 4);
++			qspi_writel(qspi, val, base + QSPI_TBDR);
++		}
++
++		if (i < op->data.nbytes) {
++			memcpy(&val, op->data.buf.out + i, op->data.nbytes - i);
++			qspi_writel(qspi, val, base + QSPI_TBDR);
++		}
++
++		/*
++		 * There must be at least 128bit data available in TX FIFO
++		 * for any pop operation otherwise QSPI_FR[TBUF] will be set
++		 */
++		for (i = op->data.nbytes; i < ALIGN_DOWN(op->data.nbytes + (QSPI_TX_BUFF_POP_MIN - 1), QSPI_TX_BUFF_POP_MIN); i += 4) {
++			qspi_writel(qspi, 0, base + QSPI_TBDR);
++		}
++	} else {
++		/*
++		 * Note that the number of bytes per DMA loop is determined
++		 * by thee size of the QSPI_TBCT[WMRK].
++		 * bytes per DMA loop = (QSPI_TBCT[WMRK] + 1) * 4.
++		 * set QSPI_TX_WMRK as the TX watermark.
++		 */
++		qspi->tx_wmrk = QSPI_TX_WMRK;
++		qspi_writel(qspi, qspi->tx_wmrk, base + QSPI_TBCT);
++
++		/* config DMA channel and start */
++		if (k1x_qspi_tx_dma_exec(qspi, op)) {
++			qspi->tx_wmrk = 0;
++			dev_err(qspi->dev, "failed to start tx dma\n");
++			return -EIO;
++		}
++		/* enable DMA request */
++		k1x_qspi_enable_interrupt(qspi, QSPI_RSER_TBFDE);
++
++		/*
++		 * before trigger qspi to send data to external bus, TX bufer
++		 * need to have some data, or underrun error may happen.
++		 * DMA need some time to write data to TX buffer, so add
++		 * a delay here for this requirement.
++		 */
++		wait_cnt = 0;
++		tbsr = qspi_readl(qspi, base + QSPI_TBSR);
++		while (4 * (tbsr >> 16) < min_t(unsigned int, qspi->tx_buf_size, op->data.nbytes)) {
++			udelay(1);
++			tbsr = qspi_readl(qspi, base + QSPI_TBSR);
++			if (wait_cnt++ >= 100) {
++				msleep(100);
++				tbsr = qspi_readl(qspi, base + QSPI_TBSR);
++				if (4 * (tbsr >> 16) < min_t(unsigned int, qspi->tx_buf_size, op->data.nbytes)) {
++					dev_err(qspi->dev, "tx dma failed to fill txbuf\n");
++					/* disable all interrupts */
++					qspi_writel(qspi, 0, qspi->io_map + QSPI_RSER);
++					dmaengine_terminate_all(qspi->tx_dma);
++					spi_controller_dma_unmap_mem_op_data(qspi->ctrl, op, &qspi->sgt);
++					qspi->tx_wmrk = 0;
++
++					return -EIO;
++				} else {
++					break;
++				}
++			}
++		}
++	}
++
++	return 0;
++}
++
++static void k1x_qspi_read_rxfifo(struct k1x_qspi *qspi,
++			  const struct spi_mem_op *op)
++{
++	void __iomem *base = qspi->io_map;
++	int i;
++	u8 *buf = op->data.buf.in;
++	u32 val;
++
++	dev_dbg(qspi->dev, "ip read %d bytes\n", op->data.nbytes);
++	for (i = 0; i < ALIGN_DOWN(op->data.nbytes, 4); i += 4) {
++		val = qspi_readl(qspi, base + QSPI_RBDR(i / 4));
++		memcpy(buf + i, &val, 4);
++	}
++
++	if (i < op->data.nbytes) {
++		val = qspi_readl(qspi, base + QSPI_RBDR(i / 4));
++		memcpy(buf + i, &val, op->data.nbytes - i);
++	}
++}
++
++static irqreturn_t k1x_qspi_irq_handler(int irq, void *dev_id)
++{
++	struct k1x_qspi *qspi = dev_id;
++	u32 fr;
++
++	/* disable all interrupts */
++	qspi_writel(qspi, 0, qspi->io_map + QSPI_RSER);
++
++	fr = qspi_readl(qspi, qspi->io_map + QSPI_FR);
++	dev_dbg(qspi->dev, "QSPI_FR:0x%08x\n", fr);
++	/* check QSPI_FR error flag */
++	if (fr & (COMMAND_FR_FLAG | BUFFER_FR_FLAG)) {
++		qspi->fr_error_flag = fr & (COMMAND_FR_FLAG | BUFFER_FR_FLAG);
++
++		if (fr & QSPI_FR_IPGEF)
++			dev_err(qspi->dev, "IP command trigger during AHB grant\n");
++		if (fr & QSPI_FR_IPIEF)
++			dev_err(qspi->dev, "IP command trigger could not be executed\n");
++		if (fr & QSPI_FR_IPAEF)
++			dev_err(qspi->dev, "IP command trigger during AHB access\n");
++		if (fr & QSPI_FR_IUEF)
++			dev_err(qspi->dev, "IP command usage error\n");
++		if (fr & QSPI_FR_AIBSEF)
++			dev_err(qspi->dev, "AHB illegal burst size error\n");
++		if (fr & QSPI_FR_AITEF)
++			dev_err(qspi->dev, "AHB illegal trancaction error\n");
++		if (fr & QSPI_FR_ABSEF)
++			dev_err(qspi->dev, "AHB sequence error\n");
++
++		if (fr & QSPI_FR_TBUF) {
++			/* disable TBFDE interrupt */
++			k1x_qspi_disable_interrupt(qspi, QSPI_RSER_TBFDE);
++			dev_err_ratelimited(qspi->dev, "TX buffer underrun\n");
++			qspi->tx_underrun_err++;
++		}
++		if (fr & QSPI_FR_RBOF) {
++			dev_err(qspi->dev, "RX buffer overflow\n");
++			qspi->rx_overflow_err++;
++		}
++		if (fr & QSPI_FR_ABOF) {
++			dev_err(qspi->dev, "AHB buffer overflow\n");
++			qspi->ahb_overflow_err++;
++		}
++	}
++
++	if (qspi->cmd_interrupt && (fr & (QSPI_FR_TFF_MASK | COMMAND_FR_FLAG | BUFFER_FR_FLAG)))
++		complete(&qspi->cmd_completion);
++
++	return IRQ_HANDLED;
++}
++
++static int k1x_qspi_do_op(struct k1x_qspi *qspi, const struct spi_mem_op *op)
++{
++	void __iomem *base = qspi->io_map;
++	int err = 0;
++	u32 mcr;
++
++	if (qspi->cmd_interrupt) {
++		k1x_qspi_enable_interrupt(qspi, QSPI_RSER_TFIE | BUFFER_ERROR_INT | COMMAND_ERROR_INT);
++		init_completion(&qspi->cmd_completion);
++	}
++
++#ifdef K1X_DUMP_QSPI_REG
++	/* dump reg if need */
++	qspi_dump_reg(qspi);
++#endif
++	/* trigger LUT */
++	qspi_writel(qspi, op->data.nbytes | QSPI_IPCR_SEQID(SEQID_LUT_SHARED_ID),
++		    base + QSPI_IPCR);
++
++	/* wait for the transaction complete */
++	if (qspi->cmd_interrupt) {
++		wait_for_completion(&qspi->cmd_completion);
++	} else {
++		err = k1x_qspi_readl_poll_tout(qspi, base + QSPI_FR, QSPI_FR_TFF_MASK,
++						QSPI_WAIT_TIMEOUT*1000, QSPI_WAIT_BIT_SET);
++	}
++	if (err) {
++		dev_err(qspi->dev, "opcode:0x%x transaction abort, ret:%d, error flag:0x%08x\n",
++			op->cmd.opcode, err, qspi->fr_error_flag);
++		dev_err(qspi->dev, "pmuap[0x%08x]:0x%08x\n", qspi->pmuap_reg, qspi_readl(qspi, qspi->pmuap_addr));
++		dev_err(qspi->dev, "mpmu[0x%08x]:0x%08x\n", K1X_MPMU_ACGR, qspi_readl(qspi, qspi->mpmu_acgr));
++		qspi_dump_reg(qspi);
++		goto tx_dma_unmap;
++	}
++
++	err = k1x_qspi_readl_poll_tout(qspi, base + QSPI_SR, QSPI_SR_BUSY,
++					QSPI_WAIT_TIMEOUT*1000, QSPI_WAIT_BIT_CLEAR);
++	if (err) {
++		dev_err(qspi->dev, "opcode:0x%x busy timeout, ret:%d\n", op->cmd.opcode, err);
++		goto tx_dma_unmap;
++	}
++
++	/* read RX buffer for IP command read */
++	if (op->data.nbytes && op->data.dir == SPI_MEM_DATA_IN) {
++#ifdef K1X_DUMP_QSPI_REG
++		qspi_dump_reg(qspi);
++#endif
++		k1x_qspi_read_rxfifo(qspi, op);
++	}
++
++	if (qspi->fr_error_flag & QSPI_FR_TBUF) {
++		/* abort current dma transfer */
++		if (qspi->tx_dma_enable)
++			dmaengine_terminate_all(qspi->tx_dma);
++
++		/* clear TX buf */
++		mcr = qspi_readl(qspi, qspi->io_map + QSPI_MCR);
++		mcr |= QSPI_MCR_CLR_TXF_MASK ;
++		qspi_writel(qspi, mcr, qspi->io_map + QSPI_MCR);
++
++		/* reduce tx unit size and retry */
++		if (qspi->tx_dma_enable)
++			qspi->tx_unit_size = qspi->tx_buf_size;
++
++		err = -EAGAIN;
++	} else {
++		if (qspi->tx_dma_enable)
++			qspi->tx_unit_size = qspi->tx_buf_size;
++	}
++
++tx_dma_unmap:
++	if (qspi->tx_wmrk) {
++		/* disable TBFDE interrupt and dma unmap */
++		k1x_qspi_disable_interrupt(qspi, QSPI_RSER_TBFDE);
++		spi_controller_dma_unmap_mem_op_data(qspi->ctrl, op, &qspi->sgt);
++		qspi->tx_wmrk = 0;
++	}
++
++	return err;
++}
++
++static void dump_spi_mem_op_info(struct k1x_qspi *qspi,
++				const struct spi_mem_op *op)
++{
++	dev_dbg(qspi->dev, "cmd.opcode:0x%x\n", op->cmd.opcode);
++	dev_dbg(qspi->dev, "cmd.buswidth:%d\n", op->cmd.buswidth);
++	dev_dbg(qspi->dev, "addr.nbytes:%d,\n", op->addr.nbytes);
++	dev_dbg(qspi->dev, "addr.buswidth:%d\n", op->addr.buswidth);
++	dev_dbg(qspi->dev, "addr.val:0x%llx\n", op->addr.val);
++	dev_dbg(qspi->dev, "dummy.nbytes:%d\n", op->dummy.nbytes);
++	dev_dbg(qspi->dev, "dummy.buswidth:%d\n", op->dummy.buswidth);
++	dev_dbg(qspi->dev, "%s data.nbytes:%d\n",
++		(op->data.dir == SPI_MEM_DATA_IN) ? "read" :"write",
++		op->data.nbytes);
++	dev_dbg(qspi->dev, "data.buswidth:%d\n", op->data.buswidth);
++	dev_dbg(qspi->dev, "data.buf:0x%p\n", op->data.buf.in);
++}
++
++static int is_read_from_cache_opcode(u8 opcode)
++{
++	int ret;
++
++	ret = ((opcode == READ_FROM_CACHE_OP) ||
++		(opcode == READ_FROM_CACHE_OP_Fast) ||
++		(opcode == READ_FROM_CACHE_OP_X2) ||
++		(opcode == READ_FROM_CACHE_OP_X4) ||
++		(opcode == READ_FROM_CACHE_OP_DUALIO) ||
++		(opcode == READ_FROM_CACHE_OP_QUADIO));
++
++	return ret;
++}
++
++static int k1x_qspi_check_buswidth(struct k1x_qspi *qspi, u8 width)
++{
++	switch (width) {
++	case 1:
++	case 2:
++	case 4:
++		return 0;
++	}
++
++	return -ENOTSUPP;
++}
++
++static bool k1x_qspi_supports_op(struct spi_mem *mem,
++				 const struct spi_mem_op *op)
++{
++	struct k1x_qspi *qspi = spi_controller_get_devdata(mem->spi->master);
++	int ret;
++
++	mutex_lock(&qspi->lock);
++	ret = k1x_qspi_check_buswidth(qspi, op->cmd.buswidth);
++
++	if (op->addr.nbytes)
++		ret |= k1x_qspi_check_buswidth(qspi, op->addr.buswidth);
++
++	if (op->dummy.nbytes)
++		ret |= k1x_qspi_check_buswidth(qspi, op->dummy.buswidth);
++
++	if (op->data.nbytes)
++		ret |= k1x_qspi_check_buswidth(qspi, op->data.buswidth);
++
++	if (ret) {
++		mutex_unlock(&qspi->lock);
++		return false;
++	}
++
++	/* address bytes should be equal to or less than 4 bytes */
++	if (op->addr.nbytes > 4) {
++		mutex_unlock(&qspi->lock);
++		return false;
++	}
++
++	/* check controller TX/RX buffer limits and alignment */
++	if (op->data.dir == SPI_MEM_DATA_IN &&
++	    (op->data.nbytes > qspi->rx_unit_size ||
++	    (op->data.nbytes > qspi->rx_buf_size - 4 && !IS_ALIGNED(op->data.nbytes, 4)))) {
++		mutex_unlock(&qspi->lock);
++		return false;
++	}
++
++	if (op->data.dir == SPI_MEM_DATA_OUT && op->data.nbytes > qspi->tx_unit_size) {
++		mutex_unlock(&qspi->lock);
++		return false;
++	}
++
++	/*
++	 * If requested address value is greater than controller assigned
++	 * memory mapped space, return error as it didn't fit in the range.
++	 */
++	if (op->addr.val >= qspi->memmap_size) {
++		pr_err("k1x_qspi_supports_op: addr.val:%lld greater than the map size\n", op->addr.val);
++		mutex_unlock(&qspi->lock);
++		return false;
++	}
++
++	/* number of dummy clock cycles should be <= 64 cycles */
++	if (op->dummy.buswidth &&
++	    (op->dummy.nbytes * 8 / op->dummy.buswidth > 64)) {
++		mutex_unlock(&qspi->lock);
++		return false;
++	}
++
++	mutex_unlock(&qspi->lock);
++	return true;
++}
++
++static int k1x_qspi_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
++{
++	struct k1x_qspi *qspi = spi_controller_get_devdata(mem->spi->master);
++	int err = 0;
++	u32 mask;
++	u32 reg;
++	void __iomem *base;
++
++	base = qspi->io_map;
++
++	mutex_lock(&qspi->lock);
++
++	dump_spi_mem_op_info(qspi, op);
++
++	/* wait for controller being ready */
++	mask = QSPI_SR_BUSY | QSPI_SR_IP_ACC_MASK | QSPI_SR_AHB_ACC_MASK;
++	err = k1x_qspi_readl_poll_tout(qspi, base + QSPI_SR, mask, QSPI_WAIT_TIMEOUT*1000, QSPI_WAIT_BIT_CLEAR);
++	if (err) {
++		dev_err(qspi->dev, "controller not ready!\n");
++		dev_err(qspi->dev, "pmuap[0x%08x]:0x%08x\n", qspi->pmuap_reg, qspi_readl(qspi, qspi->pmuap_addr));
++		dev_err(qspi->dev, "mpmu[0x%08x]:0x%08x\n", K1X_MPMU_ACGR, qspi_readl(qspi, qspi->mpmu_acgr));
++		qspi_dump_reg(qspi);
++		mutex_unlock(&qspi->lock);
++		return err;
++	}
++
++	/* clear TX/RX buffer before transaction */
++	reg = qspi_readl(qspi, base + QSPI_MCR);
++	reg |= QSPI_MCR_CLR_TXF_MASK | QSPI_MCR_CLR_RXF_MASK;
++	qspi_writel(qspi, reg, base + QSPI_MCR);
++
++	/*
++	 * reset the sequence pointers whenever the sequence ID is changed by
++	 * updating the SEDID filed in QSPI_IPCR OR QSPI_BFGENCR.
++	 */
++	reg = qspi_readl(qspi, base + QSPI_SPTRCLR);
++	reg |= (QSPI_SPTRCLR_IPPTRC | QSPI_SPTRCLR_BFPTRC);
++	qspi_writel(qspi, reg, base + QSPI_SPTRCLR);
++
++	/* set the flash address into the QSPI_SFAR */
++	qspi_write_sfar(qspi, qspi->memmap_base + op->addr.val);
++
++	/* clear QSPI_FR before trigger LUT command */
++	reg = qspi_readl(qspi, base + QSPI_FR);
++	if (reg)
++		qspi_writel(qspi, reg, base + QSPI_FR);
++	qspi->fr_error_flag = 0;
++
++	/*
++	 * read page command 13h must be done by IP command.
++	 * read from cache through the AHB bus by accessing the mapped memory.
++	 * In all other cases we use IP commands to access the flash.
++	 */
++	if (op->data.nbytes > (qspi->rx_buf_size - 4) &&
++		op->data.dir == SPI_MEM_DATA_IN &&
++		qspi->ahb_read_enable &&
++		is_read_from_cache_opcode(op->cmd.opcode)) {
++		k1x_qspi_prepare_lut(qspi, op, SEQID_LUT_AHBREAD_ID);
++		err = k1x_qspi_ahb_read(qspi, op);
++	} else {
++		/* IP command */
++		k1x_qspi_prepare_lut(qspi, op, SEQID_LUT_SHARED_ID);
++		if (op->data.nbytes && op->data.dir == SPI_MEM_DATA_OUT) {
++			err = k1x_qspi_fill_txfifo(qspi, op);
++		}
++		if (!err)
++			err = k1x_qspi_do_op(qspi, op);
++	}
++
++	/* invalidate the data in the AHB buffer. */
++	k1x_qspi_invalid(qspi);
++
++	mutex_unlock(&qspi->lock);
++
++	return err;
++}
++
++static int k1x_qspi_adjust_op_size(struct spi_mem *mem, struct spi_mem_op *op)
++{
++	struct k1x_qspi *qspi = spi_controller_get_devdata(mem->spi->master);
++
++	mutex_lock(&qspi->lock);
++	if (op->data.dir == SPI_MEM_DATA_OUT) {
++		if (op->data.nbytes > qspi->tx_unit_size)
++			op->data.nbytes = qspi->tx_unit_size;
++	} else {
++		if (op->data.nbytes > qspi->rx_unit_size)
++			op->data.nbytes = qspi->rx_unit_size;
++	}
++	mutex_unlock(&qspi->lock);
++
++	return 0;
++}
++
++static int k1x_qspi_host_init(struct k1x_qspi *qspi)
++{
++	void __iomem *base = qspi->io_map;
++	u32 reg;
++
++	qspi->resets = devm_reset_control_array_get_optional_exclusive(qspi->dev);
++	if (IS_ERR(qspi->resets)) {
++		dev_err(qspi->dev, "Failed to get qspi's resets\n");
++		return PTR_ERR(qspi->resets);
++	}
++
++	/* config mfp */
++	qspi_config_mfp(qspi);
++
++	reset_control_assert(qspi->resets);
++	/* set PMUap */
++	qspi_set_func_clk(qspi);
++	reset_control_deassert(qspi->resets);
++
++	/* rest qspi */
++	qspi_reset(qspi);
++
++	/* clock settings */
++	qspi_enter_mode(qspi, QSPI_DISABLE_MODE);
++
++	/* sampled by sfif_clk_b; half cycle delay; */
++	if (qspi->max_hz < (QSPI_SMPR_FSPHS_CLK >> 2))
++		qspi_writel(qspi, 0x0, base + QSPI_SMPR);
++	else
++		qspi_writel(qspi, QSPI_SMPR_FSPHS_MASK, base + QSPI_SMPR);
++
++	/* Fix wirte failure issue*/
++	qspi_writel(qspi, 0x8, base + QSPI_SOCCR);
++
++	/* set the default source address QSPI_AMBA_BASE*/
++	qspi_write_sfar(qspi, qspi->memmap_base);
++	qspi_writel(qspi, 0x0, base + QSPI_SFACR);
++
++	 /* config ahb read */
++	qspi_init_ahbread(qspi, SEQID_LUT_AHBREAD_ID);
++
++	/* set flash memory map */
++	qspi_writel(qspi, qspi->sfa1ad & 0xfffffc00, base + QSPI_SFA1AD);
++	qspi_writel(qspi, qspi->sfa2ad & 0xfffffc00, base + QSPI_SFA2AD);
++	qspi_writel(qspi, qspi->sfb1ad & 0xfffffc00, base + QSPI_SFB1AD);
++	qspi_writel(qspi, qspi->sfb2ad & 0xfffffc00, base + QSPI_SFB2AD);
++
++	/* ISD3FB, ISD2FB, ISD3FA, ISD2FA = 1; END_CFG=0x3 */
++	reg = qspi_readl(qspi, base + QSPI_MCR);
++	reg |= QSPI_MCR_END_CFG_MASK | QSPI_MCR_ISD_MASK;
++	qspi_writel(qspi, reg, base + QSPI_MCR);
++
++	/* Module enabled */
++	qspi_enter_mode(qspi, QSPI_NORMAL_MODE);
++
++	/* Read using the IP Bus registers QSPI_RBDR0 to QSPI_RBDR31*/
++	qspi_write_rbct(qspi, QSPI_RBCT_RXBRD_MASK);
++
++	/* clear all interrupt status */
++	qspi_writel(qspi, 0xffffffff, base + QSPI_FR);
++
++	dev_dbg(qspi->dev, "qspi host init done.\n");
++#ifdef K1X_DUMP_QSPI_REG
++	qspi_dump_reg(qspi);
++#endif
++	return 0;
++}
++
++static const struct spi_controller_mem_ops k1x_qspi_mem_ops = {
++	.adjust_op_size = k1x_qspi_adjust_op_size,
++	.supports_op = k1x_qspi_supports_op,
++	.exec_op = k1x_qspi_exec_op,
++};
++
++static int k1x_qspi_probe(struct platform_device *pdev)
++{
++	struct spi_controller *ctlr;
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node;
++	struct k1x_qspi *qspi;
++	struct resource *res;
++
++	int ret = 0;
++	u32 qspi_bus_num = 0;
++	int host_irq = 0;
++
++	ctlr = spi_alloc_master(&pdev->dev, sizeof(struct k1x_qspi));
++	if (!ctlr)
++		return -ENOMEM;
++
++	ctlr->mode_bits = SPI_RX_DUAL | SPI_RX_QUAD | SPI_TX_DUAL | SPI_TX_QUAD ;
++	qspi = spi_controller_get_devdata(ctlr);
++	qspi->dev = dev;
++	qspi->ctrl = ctlr;
++
++	platform_set_drvdata(pdev, qspi);
++
++	/* get qspi frequency */
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-freq", &qspi->max_hz)) {
++		dev_err(dev, "failed to get qspi frequency\n");
++		goto err_put_ctrl;
++	}
++
++	/* get qspi register base address */
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "qspi-base");
++	qspi->io_map = devm_ioremap_resource(dev, res);
++	if (IS_ERR(qspi->io_map)) {
++		ret = PTR_ERR(qspi->io_map);
++		goto err_put_ctrl;
++	}
++	qspi->io_phys = res->start;
++
++	/* get qspi memory-map address */
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "qspi-mmap");
++	qspi->ahb_map = devm_ioremap_resource(dev, res);
++	if (IS_ERR(qspi->ahb_map)) {
++		ret = PTR_ERR(qspi->ahb_map);
++		goto err_put_ctrl;
++	}
++
++	qspi->memmap_base = res->start;
++	qspi->memmap_size = resource_size(res);
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-sfa1ad", &qspi->sfa1ad))
++		qspi->sfa1ad = QSPI_FLASH_A1_TOP;
++	else
++		qspi->sfa1ad += qspi->memmap_base;
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-sfa2ad", &qspi->sfa2ad))
++		qspi->sfa2ad = QSPI_FLASH_A2_TOP;
++	else
++		qspi->sfa2ad += qspi->sfa1ad;
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-sfb1ad", &qspi->sfb1ad))
++		qspi->sfb1ad = QSPI_FLASH_B1_TOP;
++	else
++		qspi->sfb1ad = qspi->sfa2ad;
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-sfb2ad", &qspi->sfb2ad))
++		qspi->sfb2ad = QSPI_FLASH_B2_TOP;
++	else
++		qspi->sfb2ad += qspi->sfb1ad;
++
++	dev_dbg(dev, "k1x_qspi_probe:memmap base:0x%pa, memmap size:0x%x\n",
++			&qspi->memmap_base, qspi->memmap_size);
++
++	host_irq = platform_get_irq(pdev, 0);
++	if (host_irq < 0) {
++		dev_err(dev, "invalid host irq:%d\n", host_irq);
++		goto err_put_ctrl;
++	}
++	ret = devm_request_irq(dev, host_irq, k1x_qspi_irq_handler,
++				0, pdev->name, qspi);
++	if (ret) {
++		dev_err(dev, "failed to request irq:%d\n", ret);
++		goto err_put_ctrl;
++	}
++	init_completion(&qspi->cmd_completion);
++	dev_dbg(qspi->dev, "k1x_qspi_probe: host_irq:%d\n", host_irq);
++
++	/* map QSPI PMUap register address */
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-pmuap-reg", &qspi->pmuap_reg)) {
++		qspi->pmuap_reg = PMUA_QSPI_CLK_RES_CTRL;
++	}
++	qspi->pmuap_addr = ioremap(qspi->pmuap_reg, 4);
++
++	/* map QSPI MPMU ACGR register address */
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-mpmu-acgr-reg", &qspi->mpmu_acgr_reg)) {
++		qspi->mpmu_acgr_reg = K1X_MPMU_ACGR;
++	}
++	qspi->mpmu_acgr = ioremap(qspi->mpmu_acgr_reg, 4);
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-rx-buf", &qspi->rx_buf_size)) {
++		qspi->rx_buf_size = QSPI_RX_BUFF_MAX;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-tx-buf", &qspi->tx_buf_size)) {
++		qspi->tx_buf_size = QSPI_TX_BUFF_MAX;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-ahb-buf", &qspi->ahb_buf_size)) {
++		qspi->ahb_buf_size = QSPI_AHB_BUFF_MAX_SIZE;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-ahb-enable", &qspi->ahb_read_enable)) {
++		qspi->ahb_read_enable = 1;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-interrupt", &qspi->cmd_interrupt)) {
++		qspi->cmd_interrupt = 1;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-endian-xchg", &qspi->endian_xchg)) {
++		qspi->endian_xchg = 0;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-cs", &qspi->cs_selected)) {
++		qspi->cs_selected = QSPI_DEFAULT_CS;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-tx-dma", &qspi->tx_dma_enable)) {
++		qspi->tx_dma_enable = 0;
++	}
++
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-rx-dma", &qspi->rx_dma_enable)) {
++		qspi->rx_dma_enable = 0;
++	}
++
++	k1x_qspi_prepare_dma(qspi);
++	mutex_init(&qspi->lock);
++
++	/* set the qspi device default index */
++	if (of_property_read_u32(dev->of_node, "k1x,qspi-id", &qspi_bus_num))
++		ctlr->bus_num = 0;
++	else
++		ctlr->bus_num = qspi_bus_num;
++	ctlr->num_chipselect = 1;
++	ctlr->mem_ops = &k1x_qspi_mem_ops;
++
++	dev_dbg(dev, "k1x_qspi_probe: rx_buf_size:%d, tx_buf_size:%d\n",
++			qspi->rx_buf_size, qspi->tx_buf_size);
++	dev_dbg(dev, "k1x_qspi_probe: ahb_buf_size:%d, ahb_read:%d\n",
++			qspi->ahb_buf_size, qspi->ahb_read_enable);
++
++	if (qspi->tx_dma_enable)
++		qspi->tx_unit_size = qspi->tx_buf_size;
++	else
++		qspi->tx_unit_size = qspi->tx_buf_size;
++
++	if (qspi->ahb_read_enable)
++		qspi->rx_unit_size = SZ_4K;
++	else
++		qspi->rx_unit_size = qspi->rx_buf_size;
++	k1x_qspi_host_init(qspi);
++
++	pm_runtime_use_autosuspend(&pdev->dev);
++	pm_runtime_set_autosuspend_delay(&pdev->dev, QSPI_AUTOSUSPEND_TIMEOUT);
++	pm_suspend_ignore_children(&pdev->dev, 1);
++	pm_runtime_enable(&pdev->dev);
++	pm_runtime_set_active(&pdev->dev);
++
++	ctlr->dev.of_node = np;
++	ctlr->dev.parent = &pdev->dev;
++	ctlr->use_gpio_descriptors = true;
++	ctlr->auto_runtime_pm = true;
++	ret = spi_register_controller(ctlr);
++	if (ret)
++		goto err_destroy_mutex;
++
++	pm_runtime_put_autosuspend(&pdev->dev);
++
++#ifdef CONFIG_SYSFS
++	ret = sysfs_create_group(&(pdev->dev.kobj),
++			(const struct attribute_group *)(&qspi_dev_group));
++	if (ret) {
++		dev_err(dev,
++			"failed to create attr group for qspi dev!\n");
++		goto err_destroy_mutex;
++	}
++#endif
++
++	return 0;
++
++err_destroy_mutex:
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_put_noidle(&pdev->dev);
++
++	mutex_destroy(&qspi->lock);
++	iounmap(qspi->pmuap_addr);
++
++err_put_ctrl:
++	spi_controller_put(ctlr);
++
++	dev_err(dev, "K1X QSPI probe failed\n");
++	return ret;
++}
++
++static int k1x_qspi_remove(struct platform_device *pdev)
++{
++	struct k1x_qspi *qspi = platform_get_drvdata(pdev);
++
++	pm_runtime_get_sync(&pdev->dev);
++
++	/* set disable mode */
++	qspi_writel(qspi, QSPI_MCR_MDIS_MASK, qspi->io_map + QSPI_MCR);
++	qspi_writel(qspi, 0x0, qspi->io_map + QSPI_RSER);
++
++	pm_runtime_disable(&pdev->dev);
++	pm_runtime_put_noidle(&pdev->dev);
++
++	if (qspi->tx_dma)
++		dma_release_channel(qspi->tx_dma);
++	if (qspi->rx_dma)
++		dma_release_channel(qspi->rx_dma);
++
++	mutex_destroy(&qspi->lock);
++	iounmap(qspi->pmuap_addr);
++
++	reset_control_assert(qspi->resets);
++	clk_disable_unprepare(qspi->clk);
++	clk_disable_unprepare(qspi->bus_clk);
++
++#ifdef CONFIG_SYSFS
++	sysfs_remove_group(&(pdev->dev.kobj),
++			(const struct attribute_group *)(&qspi_dev_group));
++#endif
++	return 0;
++}
++
++#ifdef CONFIG_PM_SLEEP
++static int k1x_qspi_suspend(struct device *dev)
++{
++	int ret;
++	u32 sr;
++	struct k1x_qspi *qspi = dev_get_drvdata(dev);
++
++	pm_runtime_get_sync(qspi->dev);
++
++	sr = qspi_readl(qspi, qspi->io_map + QSPI_SR);
++	if (sr & QSPI_SR_BUSY) {
++		dev_err(dev, "qspi busy with ongoing cmd\n");
++		return -EBUSY;
++	}
++
++	ret = pm_runtime_force_suspend(dev);
++	if (ret) {
++		dev_err(dev, "failed to suspend(ret:%d)\n", ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static int k1x_qspi_resume(struct device *dev)
++{
++	int ret;
++
++	ret = pm_runtime_force_resume(dev);
++	if (ret) {
++		dev_err(dev, "failed to resume(ret:%d)\n", ret);
++		return ret;
++	}
++
++	pm_runtime_mark_last_busy(dev);
++	pm_runtime_put_autosuspend(dev);
++
++	return 0;
++}
++#endif
++
++#ifdef CONFIG_PM
++static int k1x_qspi_runtime_suspend(struct device *dev)
++{
++	u32 sr;
++	struct k1x_qspi *qspi = dev_get_drvdata(dev);
++
++	mutex_lock(&qspi->lock);
++	sr = qspi_readl(qspi, qspi->io_map + QSPI_SR);
++	if (sr & QSPI_SR_BUSY) {
++		dev_err(dev, "qspi busy with ongoing cmd\n");
++		mutex_unlock(&qspi->lock);
++		return -EBUSY;
++	}
++	qspi_enter_mode(qspi, QSPI_DISABLE_MODE);
++	mutex_unlock(&qspi->lock);
++
++	return 0;
++}
++
++static int k1x_qspi_runtime_resume(struct device *dev)
++{
++	struct k1x_qspi *qspi = dev_get_drvdata(dev);
++
++	qspi_enter_mode(qspi, QSPI_NORMAL_MODE);
++
++	return 0;
++}
++
++static const struct dev_pm_ops k1x_qspi_pmops = {
++	SET_SYSTEM_SLEEP_PM_OPS(k1x_qspi_suspend, k1x_qspi_resume)
++	SET_RUNTIME_PM_OPS(k1x_qspi_runtime_suspend,
++		k1x_qspi_runtime_resume, NULL)
++};
++
++#define K1X_QSPI_PMOPS (&k1x_qspi_pmops)
++
++#else
++#define K1X_QSPI_PMOPS NULL
++#endif
++
++static const struct of_device_id k1x_qspi_dt_ids[] = {
++	{ .compatible = "spacemit,k1x-qspi", },
++	{}
++};
++MODULE_DEVICE_TABLE(of, k1x_qspi_dt_ids);
++
++static struct platform_driver k1x_qspi_driver = {
++	.driver = {
++		.name	= "k1x-qspi",
++		.of_match_table = k1x_qspi_dt_ids,
++		.pm = K1X_QSPI_PMOPS,
++	},
++	.probe          = k1x_qspi_probe,
++	.remove		= k1x_qspi_remove,
++};
++module_platform_driver(k1x_qspi_driver);
++
++MODULE_AUTHOR("Spacemit");
++MODULE_DESCRIPTION("Spacemit k1x qspi controller driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/spi/spi-k1x.c b/drivers/spi/spi-k1x.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/spi/spi-k1x.c
+@@ -0,0 +1,1189 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Support for Spacemit k1x spi controller
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#include <linux/err.h>
++#include <linux/bitops.h>
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/device.h>
++#include <linux/ioport.h>
++#include <linux/errno.h>
++#include <linux/err.h>
++#include <linux/interrupt.h>
++#include <linux/kernel.h>
++#include <linux/pci.h>
++#include <linux/platform_device.h>
++#include <linux/spi/spi.h>
++#include <linux/of_device.h>
++#include <linux/delay.h>
++#include <linux/gpio.h>
++#include <linux/slab.h>
++#include <linux/clk.h>
++#include <linux/pm_runtime.h>
++#include <linux/acpi.h>
++
++#include "spi-k1x.h"
++
++#define TIMOUT_DFLT		3000
++#define TIMOUT_DFLT_SLAVE	0x40000
++
++//#define CONFIG_K1X_SSP_DEBUG	1
++
++static bool k1x_spi_txfifo_full(const struct spi_driver_data *drv_data)
++{
++	return !(k1x_spi_read(drv_data, STATUS) & STATUS_TNF);
++}
++
++static u32 k1x_configure_topctrl(const struct spi_driver_data *drv_data, u8 bits)
++{
++	/*
++	 * set Motorola Frame Format
++	 * set DSS
++	 */
++	return TOP_FRF_Motorola | TOP_DSS(bits);
++}
++
++static void set_dvfm_constraint(struct spi_driver_data *drv_data)
++{
++#if 0
++	if (drv_data->qos_idle_value != PM_QOS_CPUIDLE_BLOCK_DEFAULT_VALUE)
++		freq_qos_update_request(&drv_data->qos_idle,
++				drv_data->qos_idle_value);
++#endif
++}
++
++static void unset_dvfm_constraint(struct spi_driver_data *drv_data)
++{
++#if 0
++	if (drv_data->qos_idle_value != PM_QOS_CPUIDLE_BLOCK_DEFAULT_VALUE)
++		freq_qos_update_request(&drv_data->qos_idle,
++					PM_QOS_CPUIDLE_BLOCK_DEFAULT_VALUE);
++#endif
++}
++
++static void init_dvfm_constraint(struct spi_driver_data *drv_data)
++{
++#if 0
++#ifdef CONFIG_PM
++	struct freq_constraints *idle_qos;
++
++	idle_qos = cpuidle_get_constraints();
++
++	freq_qos_add_request(idle_qos, &drv_data->qos_idle, FREQ_QOS_MAX,
++			     PM_QOS_CPUIDLE_BLOCK_DEFAULT_VALUE);
++#endif
++#endif
++}
++
++static void deinit_dvfm_constraint(struct spi_driver_data *drv_data)
++{
++#if 0
++#ifdef CONFIG_PM
++	freq_qos_remove_request(&drv_data->qos_idle);
++#endif
++#endif
++}
++
++static void cs_assert(struct spi_driver_data *drv_data)
++{
++	struct chip_data *chip = drv_data->cur_chip;
++
++	if (chip->cs_control) {
++		chip->cs_control(K1X_CS_ASSERT);
++		return;
++	}
++
++	if (gpio_is_valid(chip->gpio_cs)) {
++		gpio_set_value(chip->gpio_cs, chip->gpio_cs_inverted);
++		return;
++	}
++}
++
++static void cs_deassert(struct spi_driver_data *drv_data)
++{
++	struct chip_data *chip = drv_data->cur_chip;
++
++	if (chip->cs_control) {
++		chip->cs_control(K1X_CS_DEASSERT);
++		return;
++	}
++
++	if (gpio_is_valid(chip->gpio_cs)) {
++		gpio_set_value(chip->gpio_cs, !chip->gpio_cs_inverted);
++		return;
++	}
++}
++
++/* clear all rx fifo useless data */
++int k1x_spi_flush(struct spi_driver_data *drv_data)
++{
++	unsigned long limit = loops_per_jiffy << 1;
++
++	do {
++		while (k1x_spi_read(drv_data, STATUS) & STATUS_RNE)
++			k1x_spi_read(drv_data, DATAR);
++	} while ((k1x_spi_read(drv_data, STATUS) & STATUS_BSY) && --limit);
++	k1x_spi_write(drv_data, STATUS, STATUS_ROR);
++
++	return limit;
++}
++
++static int null_writer(struct spi_driver_data *drv_data)
++{
++	u8 n_bytes = drv_data->n_bytes;
++
++	if (k1x_spi_txfifo_full(drv_data)
++		|| (drv_data->tx == drv_data->tx_end))
++		return 0;
++
++	k1x_spi_write(drv_data, DATAR, 0);
++	drv_data->tx += n_bytes;
++
++	return 1;
++}
++
++static int null_reader(struct spi_driver_data *drv_data)
++{
++	u8 n_bytes = drv_data->n_bytes;
++
++	while ((k1x_spi_read(drv_data, STATUS) & STATUS_RNE)
++	       && (drv_data->rx < drv_data->rx_end)) {
++		k1x_spi_read(drv_data, DATAR);
++		drv_data->rx += n_bytes;
++	}
++
++	return drv_data->rx == drv_data->rx_end;
++}
++
++static int u8_writer(struct spi_driver_data *drv_data)
++{
++	if (k1x_spi_txfifo_full(drv_data)
++		|| (drv_data->tx == drv_data->tx_end))
++		return 0;
++
++	k1x_spi_write(drv_data, DATAR, *(u8 *)(drv_data->tx));
++	++drv_data->tx;
++
++	return 1;
++}
++
++static int u8_reader(struct spi_driver_data *drv_data)
++{
++	while ((k1x_spi_read(drv_data, STATUS) & STATUS_RNE)
++	       && (drv_data->rx < drv_data->rx_end)) {
++		*(u8 *)(drv_data->rx) = k1x_spi_read(drv_data, DATAR);
++		++drv_data->rx;
++	}
++
++	return drv_data->rx == drv_data->rx_end;
++}
++
++static int u16_writer(struct spi_driver_data *drv_data)
++{
++	if (k1x_spi_txfifo_full(drv_data)
++		|| (drv_data->tx == drv_data->tx_end))
++		return 0;
++
++	k1x_spi_write(drv_data, DATAR, *(u16 *)(drv_data->tx));
++	drv_data->tx += 2;
++
++	return 1;
++}
++
++static int u16_reader(struct spi_driver_data *drv_data)
++{
++	while ((k1x_spi_read(drv_data, STATUS) & STATUS_RNE)
++	       && (drv_data->rx < drv_data->rx_end)) {
++		*(u16 *)(drv_data->rx) = k1x_spi_read(drv_data, DATAR);
++		drv_data->rx += 2;
++	}
++
++	return drv_data->rx == drv_data->rx_end;
++}
++
++static int u32_writer(struct spi_driver_data *drv_data)
++{
++	if (k1x_spi_txfifo_full(drv_data)
++		|| (drv_data->tx == drv_data->tx_end))
++		return 0;
++
++	k1x_spi_write(drv_data, DATAR, *(u32 *)(drv_data->tx));
++	drv_data->tx += 4;
++
++	return 1;
++}
++
++static int u32_reader(struct spi_driver_data *drv_data)
++{
++	while ((k1x_spi_read(drv_data, STATUS) & STATUS_RNE)
++	       && (drv_data->rx < drv_data->rx_end)) {
++		*(u32 *)(drv_data->rx) = k1x_spi_read(drv_data, DATAR);
++		drv_data->rx += 4;
++	}
++
++	return drv_data->rx == drv_data->rx_end;
++}
++
++void *k1x_spi_next_transfer(struct spi_driver_data *drv_data)
++{
++	struct spi_message *msg = drv_data->cur_msg;
++	struct spi_transfer *trans = drv_data->cur_transfer;
++
++	/* Move to next transfer */
++	if (trans->transfer_list.next != &msg->transfers) {
++		drv_data->cur_transfer =
++			list_entry(trans->transfer_list.next,
++					struct spi_transfer,
++					transfer_list);
++		return RUNNING_STATE;
++	} else
++		return DONE_STATE;
++}
++
++/* caller already set message->status; dma and pio irqs are blocked */
++static void giveback(struct spi_driver_data *drv_data)
++{
++	struct spi_transfer* last_transfer;
++	struct spi_message *msg;
++
++	msg = drv_data->cur_msg;
++	drv_data->cur_msg = NULL;
++	drv_data->cur_transfer = NULL;
++
++	last_transfer = list_last_entry(&msg->transfers, struct spi_transfer,
++					transfer_list);
++
++	/* Delay if requested before any change in chip select */
++	spi_transfer_delay_exec(last_transfer);
++
++	/* Drop chip select UNLESS cs_change is true or we are returning
++	 * a message with an error, or next message is for another chip
++	 */
++	if (!last_transfer->cs_change)
++		cs_deassert(drv_data);
++	else {
++		struct spi_message *next_msg;
++
++		/* Holding of cs was hinted, but we need to make sure
++		 * the next message is for the same chip.  Don't waste
++		 * time with the following tests unless this was hinted.
++		 *
++		 * We cannot postpone this until pump_messages, because
++		 * after calling msg->complete (below) the driver that
++		 * sent the current message could be unloaded, which
++		 * could invalidate the cs_control() callback...
++		 */
++
++		/* get a pointer to the next message, if any */
++		next_msg = spi_get_next_queued_message(drv_data->master);
++
++		/* see if the next and current messages point
++		 * to the same chip
++		 */
++		if (next_msg && next_msg->spi != msg->spi)
++			next_msg = NULL;
++		if (!next_msg || msg->state == ERROR_STATE)
++			cs_deassert(drv_data);
++	}
++
++	drv_data->cur_chip = NULL;
++	spi_finalize_current_message(drv_data->master);
++	unset_dvfm_constraint(drv_data);
++
++	if (drv_data->slave_mode)
++		del_timer(&drv_data->slave_rx_timer);
++	complete(&drv_data->cur_msg_completion);
++}
++
++static void reset_fifo_ctrl(struct spi_driver_data *drv_data)
++{
++	struct chip_data *chip = drv_data->cur_chip;
++	u32 fifo_ctrl = 0;
++
++	fifo_ctrl |= chip->threshold;
++	k1x_spi_write(drv_data, FIFO_CTRL, fifo_ctrl);
++}
++
++static void reset_int_en(struct spi_driver_data *drv_data)
++{
++	u32 int_en = 0;
++
++	int_en = k1x_spi_read(drv_data, INT_EN);
++	int_en &= ~drv_data->int_cr;
++	k1x_spi_write(drv_data, INT_EN, int_en);
++}
++
++static void int_error_stop(struct spi_driver_data *drv_data, const char* msg)
++{
++	/* Stop and reset SSP */
++	k1x_spi_write(drv_data, STATUS, drv_data->clear_sr);
++	reset_fifo_ctrl(drv_data);
++	reset_int_en(drv_data);
++	k1x_spi_write(drv_data, TO, 0);
++	k1x_spi_flush(drv_data);
++	k1x_spi_write(drv_data, TOP_CTRL,
++			 k1x_spi_read(drv_data, TOP_CTRL) & ~(TOP_SSE | TOP_HOLD_FRAME_LOW));
++	dev_err(&drv_data->pdev->dev, "%s\n", msg);
++
++	drv_data->cur_msg->state = ERROR_STATE;
++	queue_work(system_wq, &drv_data->pump_transfers);
++}
++
++static void int_transfer_complete(struct spi_driver_data *drv_data)
++{
++	/* Stop SSP */
++	k1x_spi_write(drv_data, STATUS, drv_data->clear_sr);
++	reset_fifo_ctrl(drv_data);
++	reset_int_en(drv_data);
++	k1x_spi_write(drv_data, TO, 0);
++
++	/* Update total byte transferred return count actual bytes read */
++	drv_data->cur_msg->actual_length += drv_data->len -
++				(drv_data->rx_end - drv_data->rx);
++
++	/* Transfer delays and chip select release are
++	 * handled in pump_transfers or giveback
++	 */
++
++	/* Move to next transfer */
++	drv_data->cur_msg->state = k1x_spi_next_transfer(drv_data);
++
++	/* Schedule transfer tasklet */
++	queue_work(system_wq, &drv_data->pump_transfers);
++}
++
++static irqreturn_t interrupt_transfer(struct spi_driver_data *drv_data)
++{
++	u32 irq_mask = (k1x_spi_read(drv_data, INT_EN) & INT_EN_TIE) ?
++		       drv_data->mask_sr : drv_data->mask_sr & ~STATUS_TFS;
++
++	u32 irq_status = k1x_spi_read(drv_data, STATUS) & irq_mask;
++
++	if (irq_status & STATUS_ROR) {
++		int_error_stop(drv_data, "interrupt_transfer: fifo overrun");
++		return IRQ_HANDLED;
++	}
++
++	if (irq_status & STATUS_TINT) {
++		k1x_spi_write(drv_data, STATUS, STATUS_TINT);
++		if (drv_data->read(drv_data)) {
++			int_transfer_complete(drv_data);
++			return IRQ_HANDLED;
++		}
++	}
++
++	/* Drain rx fifo, Fill tx fifo and prevent overruns */
++	do {
++		if (drv_data->read(drv_data)) {
++			int_transfer_complete(drv_data);
++			return IRQ_HANDLED;
++		}
++	} while (drv_data->write(drv_data));
++
++	if (drv_data->read(drv_data)) {
++		int_transfer_complete(drv_data);
++		return IRQ_HANDLED;
++	}
++
++	if (drv_data->tx == drv_data->tx_end) {
++		u32 int_en;
++
++		int_en = k1x_spi_read(drv_data, INT_EN);
++		int_en &= ~INT_EN_TIE;
++
++		k1x_spi_write(drv_data, INT_EN, int_en);
++	}
++
++	/* We did something */
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t ssp_int(int irq, void *dev_id)
++{
++	struct spi_driver_data *drv_data = dev_id;
++	u32 int_en;
++	u32 mask = drv_data->mask_sr;
++	u32 int_status;
++
++	/*
++	 * The IRQ might be shared with other peripherals so we must first
++	 * check that are we RPM suspended or not. If we are we assume that
++	 * the IRQ was not for us (we shouldn't be RPM suspended when the
++	 * interrupt is enabled).
++	 */
++	if (pm_runtime_suspended(&drv_data->pdev->dev))
++		return IRQ_NONE;
++
++	/*
++	 * If the device is not yet in RPM suspended state and we get an
++	 * interrupt that is meant for another device, check if status bits
++	 * are all set to one. That means that the device is already
++	 * powered off.
++	 */
++	int_status = k1x_spi_read(drv_data, STATUS);
++	if (int_status == ~0)
++		return IRQ_NONE;
++
++	int_en = k1x_spi_read(drv_data, INT_EN);
++
++	/* Ignore possible writes if we don't need to write */
++	if (!(int_en & INT_EN_TIE))
++		mask &= ~STATUS_TFS;
++
++	/* Ignore RX timeout interrupt if it is disabled */
++	if (!(int_en & INT_EN_TINTE))
++		mask &= ~STATUS_TINT;
++
++	if (!(int_status & mask))
++		return IRQ_NONE;
++
++	if (!drv_data->cur_msg) {
++
++		k1x_spi_write(drv_data, TOP_CTRL,
++				 k1x_spi_read(drv_data, TOP_CTRL)
++				 & ~(TOP_SSE | TOP_HOLD_FRAME_LOW));
++		k1x_spi_write(drv_data, INT_EN,
++				 k1x_spi_read(drv_data, INT_EN)
++				 & ~drv_data->int_cr);
++		k1x_spi_write(drv_data, TO, 0);
++		k1x_spi_write(drv_data, STATUS, drv_data->clear_sr);
++
++		dev_err(&drv_data->pdev->dev,
++			"bad message state in interrupt handler\n");
++
++		/* Never fail */
++		return IRQ_HANDLED;
++	}
++
++	return drv_data->transfer_handler(drv_data);
++}
++
++static void slave_rx_timer_expired(struct timer_list *t) {
++	struct spi_driver_data *drv_data = from_timer(drv_data, t, slave_rx_timer);
++#ifdef CONFIG_K1X_SSP_DEBUG
++	pr_err("%s\n", __func__);
++	pr_err("spi top = 0x%x\n", k1x_spi_read(drv_data, TOP_CTRL));
++	pr_err("fifo = 0x%x\n", k1x_spi_read(drv_data, FIFO_CTRL));
++	pr_err("int_en = 0x%x\n", k1x_spi_read(drv_data, INT_EN));
++	pr_err("to = 0x%x\n", k1x_spi_read(drv_data, TO));
++#endif
++	k1x_spi_slave_sw_timeout_callback(drv_data);
++}
++
++static void pump_transfers(struct work_struct *work)
++{
++	struct spi_driver_data *drv_data = container_of(work, struct spi_driver_data, pump_transfers);
++	struct spi_message *message = NULL;
++	struct spi_transfer *transfer = NULL;
++	struct spi_transfer *previous = NULL;
++	struct chip_data *chip = NULL;
++	u8 bits = 0;
++	u32 top_ctrl;
++	u32 fifo_ctrl;
++	u32 int_en = 0;
++	u32 dma_thresh = drv_data->cur_chip->dma_threshold;
++	u32 dma_burst = drv_data->cur_chip->dma_burst_size;
++
++	if (drv_data->slave_mode)
++		mod_timer(&drv_data->slave_rx_timer,
++				jiffies + msecs_to_jiffies(1000));
++
++	/* Get current state information */
++	message = drv_data->cur_msg;
++	transfer = drv_data->cur_transfer;
++	chip = drv_data->cur_chip;
++
++	/* Handle for abort */
++	if (message->state == ERROR_STATE) {
++		message->status = -EIO;
++		giveback(drv_data);
++		return;
++	}
++
++	/* Handle end of message */
++	if (message->state == DONE_STATE) {
++		message->status = 0;
++		giveback(drv_data);
++		return;
++	}
++
++	/* Delay if requested at end of transfer before CS change */
++	if (message->state == RUNNING_STATE) {
++		previous = list_entry(transfer->transfer_list.prev,
++					struct spi_transfer,
++					transfer_list);
++		spi_transfer_delay_exec(previous);
++
++		/* Drop chip select only if cs_change is requested */
++		if (previous->cs_change)
++			cs_deassert(drv_data);
++	}
++
++	/* Check if we can DMA this transfer */
++	if (!k1x_spi_dma_is_possible(transfer->len) && chip->enable_dma) {
++		/* reject already-mapped transfers; PIO won't always work */
++		if (message->is_dma_mapped
++				|| transfer->rx_dma || transfer->tx_dma) {
++			dev_err(&drv_data->pdev->dev,
++				"pump_transfers: mapped transfer length of "
++				"%u is greater than %d\n",
++				transfer->len, MAX_DMA_LEN);
++			message->status = -EINVAL;
++			giveback(drv_data);
++			return;
++		}
++
++		/* warn ... we force this to PIO mode */
++		dev_warn_ratelimited(&message->spi->dev,
++				     "pump_transfers: DMA disabled for transfer length %ld "
++				     "greater than %d\n",
++				     (long)drv_data->len, MAX_DMA_LEN);
++	}
++
++	/* Setup the transfer state based on the type of transfer */
++	if (k1x_spi_flush(drv_data) == 0) {
++		dev_err(&drv_data->pdev->dev, "pump_transfers: flush failed\n");
++		message->status = -EIO;
++		giveback(drv_data);
++		return;
++	}
++	drv_data->n_bytes = chip->n_bytes;
++	drv_data->tx = (void *)transfer->tx_buf;
++	drv_data->tx_end = drv_data->tx + transfer->len;
++	drv_data->rx = transfer->rx_buf;
++	drv_data->rx_end = drv_data->rx + transfer->len;
++	drv_data->rx_dma = transfer->rx_dma;
++	drv_data->tx_dma = transfer->tx_dma;
++	drv_data->len = transfer->len;
++	drv_data->write = drv_data->tx ? chip->write : null_writer;
++	drv_data->read = drv_data->rx ? chip->read : null_reader;
++
++	/* Change speed and bit per word on a per transfer */
++	bits = transfer->bits_per_word;
++
++	if (bits <= 8) {
++		drv_data->n_bytes = 1;
++		drv_data->read = drv_data->read != null_reader ?
++					u8_reader : null_reader;
++		drv_data->write = drv_data->write != null_writer ?
++					u8_writer : null_writer;
++	} else if (bits <= 16) {
++		drv_data->n_bytes = 2;
++		drv_data->read = drv_data->read != null_reader ?
++					u16_reader : null_reader;
++		drv_data->write = drv_data->write != null_writer ?
++					u16_writer : null_writer;
++	} else if (bits <= 32) {
++		drv_data->n_bytes = 4;
++		drv_data->read = drv_data->read != null_reader ?
++					u32_reader : null_reader;
++		drv_data->write = drv_data->write != null_writer ?
++					u32_writer : null_writer;
++	}
++	/*
++	 * if bits/word is changed in dma mode, then must check the
++	 * thresholds and burst also
++	 */
++	if (chip->enable_dma) {
++		if (k1x_spi_set_dma_burst_and_threshold(chip,
++						message->spi,
++						bits, &dma_burst,
++						&dma_thresh))
++			dev_warn_ratelimited(&message->spi->dev,
++					     "pump_transfers: DMA burst size reduced to match bits_per_word\n");
++	}
++
++	top_ctrl = k1x_configure_topctrl(drv_data, bits);
++		dev_dbg(&message->spi->dev, "%u Hz, %s\n",
++			drv_data->master->max_speed_hz,
++			chip->enable_dma ? "DMA" : "PIO");
++	top_ctrl |= chip->top_ctrl;
++	fifo_ctrl = chip->fifo_ctrl;
++
++	if (drv_data->ssp_enhancement) {
++		/*
++		 * If transfer length is times of 4, then use
++		 * 32 bit fifo width with endian swap support
++		 */
++		if (drv_data->len % 4 == 0 && transfer->bits_per_word <= 16) {
++			if (transfer->bits_per_word <= 8)
++				fifo_ctrl |=  FIFO_WR_ENDIAN_8BITS |
++					FIFO_RD_ENDIAN_8BITS;
++			else if (transfer->bits_per_word <= 16)
++				fifo_ctrl |= FIFO_WR_ENDIAN_16BITS |
++					FIFO_RD_ENDIAN_16BITS;
++			bits = 32;
++			drv_data->n_bytes = 4;
++			if(transfer->rx_buf)
++				drv_data->read = u32_reader;
++			if(transfer->tx_buf)
++				drv_data->write = u32_writer;
++
++			if (chip->enable_dma) {
++				if (k1x_spi_set_dma_burst_and_threshold(chip,
++							message->spi,
++							bits, &dma_burst,
++							&dma_thresh))
++					dev_warn_ratelimited(&message->spi->dev,
++							"pump_transfers:"
++							"DMA burst size reduced to"
++							"match bits_per_word\n");
++			}
++
++			top_ctrl &= ~TOP_DSS_MASK;
++			top_ctrl |= TOP_DSS(32);
++		}
++	}
++
++	message->state = RUNNING_STATE;
++
++	drv_data->dma_mapped = 0;
++	if (k1x_spi_dma_is_possible(drv_data->len))
++		drv_data->dma_mapped = k1x_spi_map_dma_buffers(drv_data);
++	if (drv_data->dma_mapped) {
++		/* Ensure we have the correct interrupt handler */
++		drv_data->transfer_handler = k1x_spi_dma_transfer;
++
++		k1x_spi_dma_prepare(drv_data, dma_burst);
++
++		/* Clear status and start DMA engine */
++		fifo_ctrl |= chip->fifo_ctrl | dma_thresh | drv_data->dma_fifo_ctrl;
++		top_ctrl |= chip->top_ctrl | drv_data->dma_top_ctrl;
++		k1x_spi_write(drv_data, STATUS, drv_data->clear_sr);
++		k1x_spi_dma_start(drv_data);
++		int_en = k1x_spi_read(drv_data, INT_EN) | drv_data->dma_cr;
++	} else {
++		/* Ensure we have the correct interrupt handler	*/
++		drv_data->transfer_handler = interrupt_transfer;
++
++		fifo_ctrl = fifo_ctrl | chip->fifo_ctrl | chip->threshold;
++		int_en = k1x_spi_read(drv_data, INT_EN) | drv_data->int_cr;
++		k1x_spi_write(drv_data, STATUS, drv_data->clear_sr);
++	}
++
++	k1x_spi_write(drv_data, TO, chip->timeout);
++
++	cs_assert(drv_data);
++
++	/*
++	 * TODO: refine these logic
++	 * k1x_spi_get_ssrc1_change_mask
++	 * if ((k1x_spi_read(drv_data, SSCR0) != cr0)
++	 * cs_assert(drv_data);
++	 * k1x_spi_write(drv_data, SSCR1, cr1);
++	 */
++
++	set_dvfm_constraint(drv_data);	/*disable system to idle while DMA */
++	if (drv_data->slave_mode)
++		top_ctrl |= TOP_SSE | TOP_SCLKDIR | TOP_SFRMDIR;
++	else
++		top_ctrl |= TOP_HOLD_FRAME_LOW;
++	/*
++	 * This part changed the logic
++	 * 1. clear SSE
++	 * 2. write TOP_CTRL and other register
++	 * 3. set SSE in the end of this function
++	 */
++	top_ctrl &= ~TOP_SSE;
++	k1x_spi_write(drv_data, TOP_CTRL, top_ctrl);
++	k1x_spi_write(drv_data, FIFO_CTRL, fifo_ctrl);
++	k1x_spi_write(drv_data, INT_EN, int_en);
++	top_ctrl |= TOP_SSE;
++#ifdef CONFIG_K1X_SSP_DEBUG
++	dev_err(&message->spi->dev, "spi top = 0x%x\n", top_ctrl);
++	dev_err(&message->spi->dev, "fifo = 0x%x\n", k1x_spi_read(drv_data, FIFO_CTRL));
++	dev_err(&message->spi->dev, "int_en = 0x%x\n", k1x_spi_read(drv_data, INT_EN));
++	dev_err(&message->spi->dev, "to = 0x%x\n", k1x_spi_read(drv_data, TO));
++#endif
++	k1x_spi_write(drv_data, TOP_CTRL, top_ctrl);
++}
++
++static int k1x_spi_transfer_one_message(struct spi_master *master,
++					   struct spi_message *msg)
++{
++	struct spi_driver_data *drv_data = spi_master_get_devdata(master);
++
++	drv_data->cur_msg = msg;
++	/* Initial message state*/
++	drv_data->cur_msg->state = START_STATE;
++	drv_data->cur_transfer = list_entry(drv_data->cur_msg->transfers.next,
++						struct spi_transfer,
++						transfer_list);
++
++	/*
++	 * prepare to setup the SSP, in pump_transfers, using the per
++	 * chip configuration
++	 */
++	drv_data->cur_chip = spi_get_ctldata(drv_data->cur_msg->spi);
++
++	if (master->max_speed_hz != drv_data->cur_transfer->speed_hz) {
++		master->max_speed_hz = drv_data->cur_transfer->speed_hz;
++		clk_set_rate(drv_data->clk, master->max_speed_hz);
++	}
++
++	reinit_completion(&drv_data->cur_msg_completion);
++	/* Mark as busy and launch transfers */
++	queue_work(system_wq, &drv_data->pump_transfers);
++	wait_for_completion(&drv_data->cur_msg_completion);
++
++	return 0;
++}
++
++static int k1x_spi_unprepare_transfer(struct spi_master *master)
++{
++	struct spi_driver_data *drv_data = spi_master_get_devdata(master);
++
++	/* Disable the SSP now */
++	k1x_spi_write(drv_data, TOP_CTRL,
++			 k1x_spi_read(drv_data, TOP_CTRL) & ~(TOP_SSE | TOP_HOLD_FRAME_LOW));
++
++	return 0;
++}
++
++static int setup_cs(struct spi_device *spi, struct chip_data *chip)
++{
++	int err = 0;
++
++	if (chip == NULL)
++		return 0;
++	return err;
++}
++
++static int setup(struct spi_device *spi)
++{
++	struct chip_data *chip;
++	struct spi_driver_data *drv_data = spi_master_get_devdata(spi->master);
++	uint tx_thres, tx_hi_thres, rx_thres;
++
++	tx_thres = TX_THRESH_DFLT;
++	tx_hi_thres = 0;
++	rx_thres = RX_THRESH_DFLT;
++
++	/* Only alloc on first setup */
++	chip = spi_get_ctldata(spi);
++	if (!chip) {
++		chip = devm_kzalloc(&spi->master->dev, sizeof(struct chip_data),
++				GFP_KERNEL);
++		if (!chip)
++			return -ENOMEM;
++
++		chip->gpio_cs = -1;
++		chip->enable_dma = 0;
++		chip->timeout =
++			drv_data->slave_mode ? TIMOUT_DFLT_SLAVE : TIMOUT_DFLT;
++	}
++
++	chip->top_ctrl = 0;
++	chip->fifo_ctrl = 0;
++
++	chip->enable_dma = drv_data->master_info->enable_dma;
++	if (drv_data->slave_mode)
++		chip->dma_burst_size = 32;
++
++	if (chip->enable_dma) {
++		/* set up legal burst and threshold for dma */
++		if (k1x_spi_set_dma_burst_and_threshold(chip, spi,
++						spi->bits_per_word,
++						&chip->dma_burst_size,
++						&chip->dma_threshold)) {
++			dev_warn(&spi->dev,
++					"in setup: DMA burst size reduced to match bits_per_word\n");
++		}
++	}
++	chip->threshold = (FIFO_RxTresh(rx_thres) & FIFO_RFT) |
++		(FIFO_TxTresh(tx_thres) & FIFO_TFT);
++
++	chip->top_ctrl &= ~(TOP_SPO | TOP_SPH);
++	chip->top_ctrl |= (((spi->mode & SPI_CPHA) != 0) ? TOP_SPH : 0)
++			| (((spi->mode & SPI_CPOL) != 0) ? TOP_SPO : 0);
++
++	if (spi->mode & SPI_LOOP)
++		chip->top_ctrl |= TOP_LBM;
++
++	/* Enable rx fifo auto full control */
++	if (drv_data->ssp_enhancement)
++		chip->fifo_ctrl |= FIFO_RXFIFO_AUTO_FULL_CTRL;
++
++	if (spi->bits_per_word <= 8) {
++		chip->n_bytes = 1;
++		chip->read = u8_reader;
++		chip->write = u8_writer;
++	} else if (spi->bits_per_word <= 16) {
++		chip->n_bytes = 2;
++		chip->read = u16_reader;
++		chip->write = u16_writer;
++	} else if (spi->bits_per_word <= 32) {
++		chip->n_bytes = 4;
++		chip->read = u32_reader;
++		chip->write = u32_writer;
++	}
++
++	if (spi->master->max_speed_hz != spi->max_speed_hz) {
++		spi->master->max_speed_hz = spi->max_speed_hz;
++		clk_set_rate(drv_data->clk, spi->master->max_speed_hz);
++	}
++
++	spi_set_ctldata(spi, chip);
++
++	return setup_cs(spi, chip);
++}
++
++static void cleanup(struct spi_device *spi)
++{
++	struct chip_data *chip = spi_get_ctldata(spi);
++
++	if (!chip)
++		return;
++
++	if (gpio_is_valid(chip->gpio_cs))
++		gpio_free(chip->gpio_cs);
++
++	devm_kfree(&spi->dev, chip);
++}
++
++static const struct of_device_id k1x_spi_dt_ids[] = {
++	{ .compatible = "spacemit,k1x-spi", .data = (void *) K1X_SSP },
++	{}
++};
++MODULE_DEVICE_TABLE(of, k1x_spi_dt_ids);
++
++static int k1x_spi_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct k1x_spi_master *platform_info;
++	struct spi_master *master = NULL;
++	struct spi_driver_data *drv_data = NULL;
++	struct device_node *np = dev->of_node;
++	const struct of_device_id *id =
++		of_match_device(of_match_ptr(k1x_spi_dt_ids), dev);
++	struct resource *iores;
++	u32 bus_num;
++#if 0
++	const __be32 *prop;
++	unsigned int proplen;
++#endif
++    int status;
++	u32 tmp;
++
++	platform_info = dev_get_platdata(dev);
++	if (!platform_info) {
++		platform_info = devm_kzalloc(dev, sizeof(*platform_info),
++				GFP_KERNEL);
++		if (!platform_info)
++			return -ENOMEM;
++		platform_info->num_chipselect = 1;
++		/* TODO: NO DMA on FPGA yet */
++		if (of_get_property(np, "k1x,ssp-disable-dma", NULL))
++			platform_info->enable_dma = 0;
++		else
++			platform_info->enable_dma = 1;
++	}
++
++	master = spi_alloc_master(dev, sizeof(struct spi_driver_data));
++	if (!master) {
++		dev_err(&pdev->dev, "cannot alloc spi_master\n");
++		return -ENOMEM;
++	}
++	drv_data = spi_master_get_devdata(master);
++
++	iores = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (iores == NULL) {
++		dev_err(dev, "no memory resource defined\n");
++		status = -ENODEV;
++		goto out_error_master_alloc;
++	}
++
++	drv_data->ioaddr = devm_ioremap_resource(dev, iores);
++	if (drv_data->ioaddr == NULL) {
++		dev_err(dev, "failed to ioremap() registers\n");
++		status = -ENODEV;
++		goto out_error_master_alloc;
++	}
++
++	drv_data->irq = platform_get_irq(pdev, 0);
++	if (drv_data->irq < 0) {
++		dev_err(dev, "no IRQ resource defined\n");
++		status = -ENODEV;
++		goto out_error_master_alloc;
++	}
++
++	/* Receive FIFO auto full ctrl enable */
++	if (of_get_property(np, "k1x,ssp-enhancement", NULL))
++		drv_data->ssp_enhancement = 1;
++
++	if (of_get_property(np, "k1x,ssp-slave-mode", NULL)) {
++		drv_data->slave_mode = 1;
++		dev_warn(&pdev->dev, "slave mode\n");
++		timer_setup(&drv_data->slave_rx_timer,
++				slave_rx_timer_expired, 0);
++	}
++
++#if 0
++	prop = of_get_property(dev->of_node, "k1x,ssp-lpm-qos", &proplen);
++	if (!prop) {
++		dev_err(&pdev->dev, "lpm-qos for spi is not defined!\n");
++		status = -EINVAL;
++		goto out_error_master_alloc;
++	} else
++		drv_data->qos_idle_value = be32_to_cpup(prop);
++#endif
++
++	init_dvfm_constraint(drv_data);
++
++	master->dev.of_node = dev->of_node;
++	drv_data->ssp_type = (uintptr_t) id->data;
++	if (!of_property_read_u32(np, "k1x,ssp-id", &bus_num))
++		master->bus_num = bus_num;
++	drv_data->ssdr_physical = iores->start + DATAR;
++
++	drv_data->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR_OR_NULL(drv_data->clk)) {
++		dev_err(&pdev->dev, "cannot get clk\n");
++		status = -ENODEV;
++		goto out_error_clk_check;
++	}
++
++    	drv_data->reset = devm_reset_control_get_optional(dev, NULL);
++	if (IS_ERR_OR_NULL(drv_data->reset)) {
++		dev_err(&pdev->dev, "Failed to get spi's reset\n");
++		goto out_error_clk_check;
++	}
++
++	drv_data->master = master;
++	drv_data->master_info = platform_info;
++	drv_data->pdev = pdev;
++
++	master->dev.parent = &pdev->dev;
++	/* the spi->mode bits understood by this driver: */
++	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH | SPI_LOOP;
++
++	master->dma_alignment = DMA_ALIGNMENT;
++	master->cleanup = cleanup;
++	master->setup = setup;
++	master->transfer_one_message = k1x_spi_transfer_one_message;
++	master->unprepare_transfer_hardware = k1x_spi_unprepare_transfer;
++	master->auto_runtime_pm = true;
++
++	master->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 32);
++	drv_data->int_cr = INT_EN_TIE | INT_EN_RIE | INT_EN_TINTE; /* INT_EN */
++	drv_data->dma_cr = (drv_data->slave_mode) ? INT_EN_TINTE : 0;
++	drv_data->clear_sr = STATUS_ROR | STATUS_TINT;
++	drv_data->mask_sr = STATUS_TINT | STATUS_RFS | STATUS_TFS | STATUS_ROR;
++	drv_data->dma_top_ctrl = DEFAULT_DMA_TOP_CTRL;
++	drv_data->dma_fifo_ctrl = DEFAULT_DMA_FIFO_CTRL;
++
++	status = devm_request_irq(&pdev->dev, drv_data->irq, ssp_int, IRQF_SHARED, dev_name(dev),
++			drv_data);
++	if (status < 0) {
++		dev_err(&pdev->dev, "cannot get IRQ %d\n", drv_data->irq);
++		goto out_error_master_alloc;
++	}
++
++	/* Setup DMA if requested */
++	if (platform_info->enable_dma) {
++		status = k1x_spi_dma_setup(drv_data);
++		if (status) {
++			dev_dbg(dev, "no DMA channels available, using PIO\n");
++			platform_info->enable_dma = false;
++		}
++	}
++
++	status = of_property_read_u32(np, "k1x,ssp-clock-rate", &master->max_speed_hz);
++	if (status < 0) {
++		dev_err(&pdev->dev, "cannot get clock-rate from DT file\n");
++		goto out_error_master_alloc;
++	}
++
++	clk_set_rate(drv_data->clk, master->max_speed_hz);
++	master->max_speed_hz = clk_get_rate(drv_data->clk);
++	clk_prepare_enable(drv_data->clk);
++    	reset_control_deassert(drv_data->reset);
++
++	/* Load default SSP configuration */
++	k1x_spi_write(drv_data, TOP_CTRL, 0);
++	k1x_spi_write(drv_data, FIFO_CTRL, 0);
++	tmp = FIFO_RxTresh(RX_THRESH_DFLT) |
++	      FIFO_TxTresh(TX_THRESH_DFLT);
++	k1x_spi_write(drv_data, FIFO_CTRL, tmp);
++	tmp = TOP_FRF_Motorola | TOP_DSS(8);
++	k1x_spi_write(drv_data, TOP_CTRL, tmp);
++	k1x_spi_write(drv_data, TO, 0);
++
++	k1x_spi_write(drv_data, PSP_CTRL, 0);
++
++	master->num_chipselect = platform_info->num_chipselect;
++
++	INIT_WORK(&drv_data->pump_transfers, pump_transfers);
++	pm_runtime_set_autosuspend_delay(&pdev->dev, 50);
++	pm_runtime_use_autosuspend(&pdev->dev);
++	pm_runtime_set_active(&pdev->dev);
++	pm_runtime_enable(&pdev->dev);
++
++	init_completion(&drv_data->cur_msg_completion);
++
++	/* Register with the SPI framework */
++	platform_set_drvdata(pdev, drv_data);
++	status = devm_spi_register_master(&pdev->dev, master);
++	if (status != 0) {
++		dev_err(&pdev->dev, "problem registering spi master\n");
++		goto out_error_clock_enabled;
++	}
++
++	return status;
++
++out_error_clock_enabled:
++    	reset_control_assert(drv_data->reset);
++	clk_disable_unprepare(drv_data->clk);
++	k1x_spi_dma_release(drv_data);
++	free_irq(drv_data->irq, drv_data);
++out_error_clk_check:
++	deinit_dvfm_constraint(drv_data);
++out_error_master_alloc:
++	spi_master_put(master);
++	return status;
++}
++
++static int k1x_spi_remove(struct platform_device *pdev)
++{
++	struct spi_driver_data *drv_data = platform_get_drvdata(pdev);
++
++	if (!drv_data)
++		return 0;
++
++	pm_runtime_get_sync(&pdev->dev);
++
++	/* Disable the SSP at the peripheral and SOC level */
++	k1x_spi_write(drv_data, TOP_CTRL, 0);
++	k1x_spi_write(drv_data, FIFO_CTRL, 0); /* whether need this line? */
++
++    	reset_control_assert(drv_data->reset);
++	clk_disable_unprepare(drv_data->clk);
++
++	/* Release DMA */
++	if (drv_data->master_info->enable_dma)
++		k1x_spi_dma_release(drv_data);
++
++	pm_runtime_put_noidle(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++
++	/* Release IRQ */
++	free_irq(drv_data->irq, drv_data);
++
++	deinit_dvfm_constraint(drv_data);
++	return 0;
++}
++
++static void k1x_spi_shutdown(struct platform_device *pdev)
++{
++	int status = 0;
++
++	if ((status = k1x_spi_remove(pdev)) != 0)
++		dev_err(&pdev->dev, "shutdown failed with %d\n", status);
++}
++
++#ifdef CONFIG_PM_SLEEP
++static int k1x_spi_suspend(struct device *dev)
++{
++	struct spi_driver_data *drv_data = dev_get_drvdata(dev);
++	int status = 0;
++
++	pm_runtime_get_sync(dev);
++	status = spi_master_suspend(drv_data->master);
++	if (status != 0)
++		return status;
++	k1x_spi_write(drv_data, TOP_CTRL, 0);
++	k1x_spi_write(drv_data, FIFO_CTRL, 0); /* whether need this line? */
++
++	status = pm_runtime_force_suspend(dev);
++
++	return status;
++}
++
++static int k1x_spi_resume(struct device *dev)
++{
++	struct spi_driver_data *drv_data = dev_get_drvdata(dev);
++	int status = 0;
++
++	/* Enable the SSP clock */
++	status = pm_runtime_force_resume(dev);
++	if (status) {
++		dev_err(dev, "failed to resume pm_runtime (%d)\n", status);
++		return status;
++	}
++
++	/* Start the queue running */
++	status = spi_master_resume(drv_data->master);
++	pm_runtime_mark_last_busy(dev);
++	pm_runtime_put_autosuspend(dev);
++	if (status != 0) {
++		dev_err(dev, "problem starting queue (%d)\n", status);
++		return status;
++	}
++
++	return 0;
++}
++#endif
++
++#ifdef CONFIG_PM
++/** static int k1x_spi_runtime_suspend(struct device *dev)
++ * {
++ *	struct spi_driver_data *drv_data = dev_get_drvdata(dev);
++ *
++ *	reset_control_assert(drv_data->reset);
++ *	clk_disable_unprepare(drv_data->clk);
++ *
++ *	return 0;
++ *}
++ */
++
++/**
++ * static int k1x_spi_runtime_resume(struct device *dev)
++ * {
++ *	struct spi_driver_data *drv_data = dev_get_drvdata(dev);
++ *
++ *	clk_prepare_enable(drv_data->clk);
++ *	reset_control_deassert(drv_data->reset);
++ *	return 0;
++ *}
++ */
++#endif
++
++static const struct dev_pm_ops k1x_spi_pm_ops = {
++	SET_SYSTEM_SLEEP_PM_OPS(k1x_spi_suspend, k1x_spi_resume)
++	/**
++	 * SET_RUNTIME_PM_OPS(k1x_spi_runtime_suspend,
++	 *		   k1x_spi_runtime_resume, NULL)
++	 */
++};
++
++static struct platform_driver driver = {
++	.driver = {
++		.name	= "k1x-spi",
++		.pm	= &k1x_spi_pm_ops,
++		.of_match_table = k1x_spi_dt_ids,
++	},
++	.probe = k1x_spi_probe,
++	.remove = k1x_spi_remove,
++	.shutdown = k1x_spi_shutdown,
++};
++
++static int __init k1x_spi_init(void)
++{
++	return platform_driver_register(&driver);
++}
++module_init(k1x_spi_init);
++
++static void __exit k1x_spi_exit(void)
++{
++	platform_driver_unregister(&driver);
++}
++module_exit(k1x_spi_exit);
++
++MODULE_AUTHOR("Spacemit");
++MODULE_DESCRIPTION("Spacemit k1x spi controller driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/spi/spi-k1x.h b/drivers/spi/spi-k1x.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/spi/spi-k1x.h
+@@ -0,0 +1,364 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Support for Spacemit k1x spi controller
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#ifndef _SPI_K1X_H
++#define _SPI_K1X_H
++
++#include <linux/atomic.h>
++#include <linux/dmaengine.h>
++#include <linux/errno.h>
++#include <linux/io.h>
++#include <linux/interrupt.h>
++#include <linux/platform_device.h>
++#include <linux/scatterlist.h>
++#include <linux/sizes.h>
++#include <linux/spi/spi.h>
++#include <linux/pm_qos.h>
++#include <linux/list.h>
++#include <linux/io.h>
++#include <linux/of.h>
++#include <linux/reset.h>
++
++/* Spacemit k1x SPI Registers */
++#define TOP_CTRL		0x00	/* SSP Top Control Register */
++#define FIFO_CTRL		0x04	/* SSP FIFO Control Register */
++#define INT_EN			0x08    /* SSP Interrupt Enable Register */
++#define TO              0x0C    /* SSP Time Out Register */
++#define DATAR			0x10    /* SSP Data Register */
++#define STATUS			0x14    /* SSP Stauts Register */
++#define PSP_CTRL		0x18    /* SSP Programmable Serial Protocal Control Register */
++#define NET_WORK_CTRL		0x1C    /* SSP NET Work Control Register */
++#define NET_WORK_STATUS		0x20    /* SSP Net Work Status Register */
++#define RWOT_CTRL		0x24    /* SSP RWOT Control Register */
++#define RWOT_CCM		0x28    /* SSP RWOT Counter Cycles Match Register */
++#define RWOT_CVWRn		0x2C    /* SSP RWOT Counter Value Write for Read Request Register */
++
++/* 0x00 TOP_CTRL */
++#define TOP_TTELP		(1 << 18)
++#define TOP_TTE			(1 << 17)
++#define TOP_SCFR		(1 << 16)
++#define TOP_IFS			(1 << 15)
++#define TOP_HOLD_FRAME_LOW	(1 << 14)
++#define TOP_TRAIL		(1 << 13)
++#define TOP_LBM			(1 << 12)
++#define TOP_SPH			(1 << 11)
++#define TOP_SPO			(1 << 10)
++#define TOP_DSS(x)		((x - 1) << 5)
++#define TOP_DSS_MASK		(0x1F << 5)
++#define TOP_SFRMDIR		(1 << 4)
++#define TOP_SCLKDIR		(1 << 3)
++#define TOP_FRF_MASK		(0x3 << 1)
++#define TOP_FRF_Motorola	(0x0 << 1)	/* Motorola's Serial Peripheral Interface (SPI) */
++#define TOP_FRF_TI		(0x1 << 1)	/* Texas Instruments' Synchronous Serial Protocol (SSP) */
++#define TOP_FRF_National	(0x2 << 1)	/* National Microwire */
++#define TOP_FRF_PSP		(0x3 << 1)	/* Programmable Serial Protocol(PSP) */
++#define TOP_SSE			(1 << 0)
++
++/* 0x04 FIFO_CTRL */
++#define FIFO_STRF			(1 << 19)
++#define FIFO_EFWR			(1 << 18)
++#define FIFO_RXFIFO_AUTO_FULL_CTRL	(1 << 17)
++#define FIFO_FPCKE			(1 << 16)
++#define FIFO_TXFIFO_WR_ENDIAN_MASK	(0x3 << 14)
++#define FIFO_RXFIFO_RD_ENDIAN_MASK	(0x3 << 12)
++#define FIFO_WR_ENDIAN_16BITS		(1 << 14)	/* Swap first 16 bits and last 16 bits */
++#define FIFO_WR_ENDIAN_8BITS		(2 << 14)	/* Swap all 4 bytes */
++#define FIFO_RD_ENDIAN_16BITS		(1 << 12)	/* Swap first 16 bits and last 16 bits */
++#define FIFO_RD_ENDIAN_8BITS		(2 << 12)	/* Swap all 4 bytes */
++#define FIFO_RSRE			(1 << 11)
++#define FIFO_TSRE			(1 << 10)
++
++/* 0x08 INT_EN */
++#define INT_EN_EBCEI		(1 << 6)
++#define INT_EN_TIM		(1 << 5)
++#define INT_EN_RIM		(1 << 4)
++#define INT_EN_TIE		(1 << 3)
++#define INT_EN_RIE		(1 << 2)
++#define INT_EN_TINTE		(1 << 1)
++#define INT_EN_PINTE		(1 << 0)
++
++/* 0x0C TO */
++#define TIMEOUT(x)	((x) << 0)
++
++/* 0x10 DATAR */
++#define DATA(x)		((x) << 0)
++
++/* 0x14 STATUS */
++#define STATUS_OSS		(1 << 23)
++#define STATUS_TX_OSS		(1 << 22)
++#define STATUS_BCE		(1 << 21)
++#define STATUS_ROR		(1 << 20)
++#define STATUS_RNE		(1 << 14)
++#define STATUS_RFS		(1 << 13)
++#define STATUS_TUR		(1 << 12)
++#define STATUS_TNF		(1 << 6)
++#define STATUS_TFS		(1 << 5)
++#define STATUS_EOC		(1 << 4)
++#define STATUS_TINT		(1 << 3)
++#define STATUS_PINT		(1 << 2)
++#define STATUS_CSS		(1 << 1)
++#define STATUS_BSY		(1 << 0)
++
++/* 0x18 PSP_CTRL */
++#define PSP_EDMYSTOP(x)		((x) << 27)
++#define PSP_EMYSTOP(x)		((x) << 25)
++#define PSP_EDMYSTRT(x)		((x) << 23)
++#define PSP_DMYSTRT(x)		((x) << 21)
++#define PSP_STRTDLY(x)		((x) << 18)
++#define PSP_SFRMWDTH(x)		((x) << 12)
++#define PSP_SFRMDLY(x)		((x) << 5)
++#define PSP_SFRMP		(1 << 4)
++#define PSP_FSRT		(1 << 3)
++#define PSP_ETDS		(1 << 2)
++#define PSP_SCMODE(x)		((x) << 0)
++
++/* 0x1C NET_WORK_CTRL */
++#define RTSA(x)			((x) << 12)
++#define RTSA_MASK		(0xFF << 12)
++#define TTSA(x)			((x) << 4)
++#define TTSA_MASK		(0xFF << 4)
++#define NET_FRDC(x)		((x) << 1)
++#define NET_WORK_MODE		(1 << 0)
++
++/* 0x20 NET_WORK_STATUS */
++#define NET_SATUS_NMBSY		(1 << 3)
++#define NET_STATUS_TSS(x)	((x) << 0)
++
++/* 0x24 RWOT_CTRL */
++#define RWOT_MASK_RWOT_LAST_SAMPLE	(1 << 4)
++#define RWOT_CLR_RWOT_CYCLE		(1 << 3)
++#define RWOT_SET_RWOT_CYCLE		(1 << 2)
++#define RWOT_CYCLE_RWOT_EN		(1 << 1)
++#define RWOT_RWOT			(1 << 0)
++
++enum k1x_ssp_type {
++	SSP_UNDEFINED = 0,
++	K1X_SSP,
++};
++
++struct spi_driver_data {
++	/* Driver model hookup */
++	struct platform_device *pdev;
++
++	/* SSP Info */
++	struct ssp_device *ssp;
++
++	/* SPI framework hookup */
++	enum k1x_ssp_type ssp_type;
++	struct spi_master *master;
++
++	/* k1x hookup */
++	struct k1x_spi_master *master_info;
++
++	/* SSP register addresses */
++	void __iomem *ioaddr;
++	u32 ssdr_physical;
++
++	/* SSP masks*/
++	u32 dma_fifo_ctrl;
++	u32 dma_top_ctrl;
++	u32 int_cr;
++	u32 dma_cr;
++	u32 clear_sr;
++	u32 mask_sr;
++
++	/* Message Transfer pump */
++	struct work_struct pump_transfers;
++
++	/* DMA engine support */
++	struct dma_chan *rx_chan;
++	struct dma_chan *tx_chan;
++	struct sg_table rx_sgt;
++	struct sg_table tx_sgt;
++	int rx_nents;
++	int tx_nents;
++	void *dummy;
++	atomic_t dma_running;
++
++	/* Current message transfer state info */
++	struct spi_message *cur_msg;
++	struct spi_transfer *cur_transfer;
++	struct chip_data *cur_chip;
++	struct completion   cur_msg_completion;
++	size_t len;
++	void *tx;
++	void *tx_end;
++	void *rx;
++	void *rx_end;
++	int dma_mapped;
++	dma_addr_t rx_dma;
++	dma_addr_t tx_dma;
++	size_t rx_map_len;
++	size_t tx_map_len;
++	u8 n_bytes;
++	int (*write)(struct spi_driver_data *drv_data);
++	int (*read)(struct spi_driver_data *drv_data);
++	irqreturn_t (*transfer_handler)(struct spi_driver_data *drv_data);
++	void (*cs_control)(u32 command);
++	struct freq_qos_request qos_idle;
++	int qos_idle_value;
++	struct clk      *clk;
++	struct reset_control *reset;
++	int irq;
++	/* Support RX FIFO auto full control and endian swap */
++	unsigned int ssp_enhancement;
++	unsigned char slave_mode;
++	struct timer_list slave_rx_timer;
++};
++
++struct chip_data {
++	u32 top_ctrl;
++	u32 fifo_ctrl;
++	u32 timeout;
++	u8 n_bytes;
++	u32 dma_burst_size;
++	u32 threshold;
++	u32 dma_threshold;
++	u8 enable_dma;
++	union {
++		int gpio_cs;
++		unsigned int frm;
++	};
++	int gpio_cs_inverted;
++	int (*write)(struct spi_driver_data *drv_data);
++	int (*read)(struct spi_driver_data *drv_data);
++	void (*cs_control)(u32 command);
++};
++
++static inline u32 k1x_spi_read(const struct spi_driver_data *drv_data,
++				  unsigned reg)
++{
++	return __raw_readl(drv_data->ioaddr + reg);
++}
++
++static  inline void k1x_spi_write(const struct spi_driver_data *drv_data,
++				     unsigned reg, u32 val)
++{
++	__raw_writel(val, drv_data->ioaddr + reg);
++}
++
++#define START_STATE ((void *)0)
++#define RUNNING_STATE ((void *)1)
++#define DONE_STATE ((void *)2)
++#define ERROR_STATE ((void *)-1)
++
++#define IS_DMA_ALIGNED(x)	IS_ALIGNED((unsigned long)(x), DMA_ALIGNMENT)
++#define DMA_ALIGNMENT           64
++
++extern int k1x_spi_flush(struct spi_driver_data *drv_data);
++extern void *k1x_spi_next_transfer(struct spi_driver_data *drv_data);
++
++/*
++ * Select the right DMA implementation.
++ */
++#define MAX_DMA_LEN		SZ_512K
++#define DEFAULT_DMA_FIFO_CTRL	(FIFO_TSRE | FIFO_RSRE)
++#define DEFAULT_DMA_TOP_CTRL	(TOP_TRAIL)
++
++extern bool k1x_spi_dma_is_possible(size_t len);
++extern int k1x_spi_map_dma_buffers(struct spi_driver_data *drv_data);
++extern irqreturn_t k1x_spi_dma_transfer(struct spi_driver_data *drv_data);
++extern void k1x_spi_slave_sw_timeout_callback(struct spi_driver_data *drv_data);
++extern int k1x_spi_dma_prepare(struct spi_driver_data *drv_data, u32 dma_burst);
++extern void k1x_spi_dma_start(struct spi_driver_data *drv_data);
++extern int k1x_spi_dma_setup(struct spi_driver_data *drv_data);
++extern void k1x_spi_dma_release(struct spi_driver_data *drv_data);
++extern int k1x_spi_set_dma_burst_and_threshold(struct chip_data *chip,
++						  struct spi_device *spi,
++						  u8 bits_per_word,
++						  u32 *burst_code,
++						  u32 *threshold);
++
++#define RX_THRESH_DFLT	9
++#define TX_THRESH_DFLT	8
++/* 0x14  */
++#define STATUS_TFL_MASK		(0x1f << 7)	/* Transmit FIFO Level mask */
++#define STATUS_RFL_MASK		(0x1f << 15)	/* Receive FIFO Level mask */
++/* 0x4 */
++#define FIFO_TFT		(0x0000001F)	/* Transmit FIFO Threshold (mask) */
++#define FIFO_TxTresh(x) 	(((x) - 1) << 0) /* level [1..32] */
++#define FIFO_RFT		(0x000003E0)	/* Receive FIFO Threshold (mask) */
++#define FIFO_RxTresh(x) 	(((x) - 1) << 5) /* level [1..32] */
++
++struct ssp_device {
++	struct platform_device *pdev;
++	struct list_head	node;
++
++	struct clk	*clk;
++	void __iomem	*mmio_base;
++	unsigned long	phys_base;
++
++	const char	*label;
++	int		port_id;
++	int		type;
++	int		use_count;
++	int		irq;
++	int		drcmr_rx;
++	int		drcmr_tx;
++
++	struct device_node	*of_node;
++};
++
++/**
++ * k1x_ssp_write_reg - Write to a SSP register
++ *
++ * @dev: SSP device to access
++ * @reg: Register to write to
++ * @val: Value to be written.
++ */
++static inline void k1x_ssp_write_reg(struct ssp_device *dev, u32 reg, u32 val)
++{
++	__raw_writel(val, dev->mmio_base + reg);
++}
++
++/**
++ * k1x_ssp_read_reg - Read from a SSP register
++ *
++ * @dev: SSP device to access
++ * @reg: Register to read from
++ */
++static inline u32 k1x_ssp_read_reg(struct ssp_device *dev, u32 reg)
++{
++	return __raw_readl(dev->mmio_base + reg);
++}
++
++static inline void k1x_ssp_free(struct ssp_device *ssp) {}
++#define K1X_CS_ASSERT (0x01)
++#define K1X_CS_DEASSERT (0x02)
++
++struct dma_chan;
++
++/* device.platform_data for SSP controller devices */
++struct k1x_spi_master {
++	u16 num_chipselect;
++	u8 enable_dma;
++
++	/* DMA engine specific config */
++	bool (*dma_filter)(struct dma_chan *chan, void *param);
++	void *tx_param;
++	void *rx_param;
++
++	/* For sound ssp controller */
++	struct ssp_device ssp;
++};
++
++/* spi_board_info.controller_data for SPI slave devices,
++ * copied to spi_device.platform_data ... mostly for dma tuning
++ */
++struct k1x_spi_chip {
++	u8 tx_threshold;
++	u8 tx_hi_threshold;
++	u8 rx_threshold;
++	u8 dma_burst_size;
++	u32 timeout;
++	u8 enable_loopback;
++	int gpio_cs;
++	void (*cs_control)(u32 command);
++};
++
++#endif /* _SPI_K1X_H */
+-- 
+Armbian
+

@@ -29,7 +29,7 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 			use_clean_environment="yes" chroot_sdcard "wget ${aic8800_pcie_url} -P /tmp"
 			;;
 		"sdio")
-			aic8800_dkms_file_name=aic8800-usb-dkms_${latest_version}_all.deb
+			aic8800_dkms_file_name=aic8800-sdio-dkms_${latest_version}_all.deb
 			use_clean_environment="yes" chroot_sdcard "wget ${aic8800_sdio_url} -P /tmp"
 			;;
 		"usb")

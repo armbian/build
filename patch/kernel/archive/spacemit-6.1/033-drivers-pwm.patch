@@ -1,0 +1,198 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/pwm/Makefile  |  1 +
+ drivers/pwm/pwm-pxa.c | 98 +++++++++-
+ 2 files changed, 95 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/pwm/Makefile b/drivers/pwm/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/pwm/Makefile
++++ b/drivers/pwm/Makefile
+@@ -15,6 +15,7 @@ obj-$(CONFIG_PWM_CLPS711X)	+= pwm-clps711x.o
+ obj-$(CONFIG_PWM_CRC)		+= pwm-crc.o
+ obj-$(CONFIG_PWM_CROS_EC)	+= pwm-cros-ec.o
+ obj-$(CONFIG_PWM_DWC)		+= pwm-dwc.o
++obj-$(CONFIG_PWM_DWC_K1pro)	+= pwm-dwc-k1pro.o
+ obj-$(CONFIG_PWM_EP93XX)	+= pwm-ep93xx.o
+ obj-$(CONFIG_PWM_FSL_FTM)	+= pwm-fsl-ftm.o
+ obj-$(CONFIG_PWM_HIBVT)		+= pwm-hibvt.o
+diff --git a/drivers/pwm/pwm-pxa.c b/drivers/pwm/pwm-pxa.c
+index 111111111111..222222222222 100644
+--- a/drivers/pwm/pwm-pxa.c
++++ b/drivers/pwm/pwm-pxa.c
+@@ -14,6 +14,7 @@
+ #include <linux/slab.h>
+ #include <linux/err.h>
+ #include <linux/clk.h>
++#include <linux/reset.h>
+ #include <linux/io.h>
+ #include <linux/pwm.h>
+ #include <linux/of_device.h>
+@@ -45,7 +46,12 @@ struct pxa_pwm_chip {
+ 	struct device	*dev;
+ 
+ 	struct clk	*clk;
++	struct reset_control	*reset;
+ 	void __iomem	*mmio_base;
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	int dcr_fd; /* Controller PWM_DCR FD feature */
++	int rcpu_pwm; /* PWM in rcpu domain */
++#endif
+ };
+ 
+ static inline struct pxa_pwm_chip *to_pxa_pwm_chip(struct pwm_chip *chip)
+@@ -82,10 +88,32 @@ static int pxa_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
+ 		return -EINVAL;
+ 
+ 	if (duty_ns == period_ns)
++#ifdef 	CONFIG_SOC_SPACEMIT_K1X
++	{
++		if(pc->dcr_fd)
++			dc = PWMDCR_FD;
++		else{
++			dc = (pv + 1) * duty_ns / period_ns;
++			if (dc >= PWMDCR_FD) {
++				dc = PWMDCR_FD - 1;
++				pv = dc - 1;
++			}
++		}
++	}
++#else
+ 		dc = PWMDCR_FD;
++#endif
+ 	else
+ 		dc = mul_u64_u64_div_u64(pv + 1, duty_ns, period_ns);
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	/*
++	 * FIXME: Graceful shutdown mode would cause the function clock
++	 * could not be enabled normally, so chose abrupt shutdown mode.
++	 */
++	prescale |= PWMCR_SD;
++#endif
++
+ 	/* NOTE: the clock to PWM has to be enabled first
+ 	 * before writing to the registers
+ 	 */
+@@ -157,6 +185,9 @@ static const struct of_device_id pwm_of_match[] = {
+ 	{ .compatible = "marvell,pxa270-pwm", .data = &pwm_id_table[0]},
+ 	{ .compatible = "marvell,pxa168-pwm", .data = &pwm_id_table[0]},
+ 	{ .compatible = "marvell,pxa910-pwm", .data = &pwm_id_table[0]},
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	{ .compatible = "spacemit,k1x-pwm", .data = &pwm_id_table[0]},
++#endif
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, pwm_of_match);
+@@ -187,10 +218,32 @@ static int pwm_probe(struct platform_device *pdev)
+ 	if (pc == NULL)
+ 		return -ENOMEM;
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	if (pdev->dev.of_node) {
++		if(of_get_property(pdev->dev.of_node, "k1x,pwm-disable-fd", NULL))
++			pc->dcr_fd = 0;
++		else
++			pc->dcr_fd = 1;
++		if(of_get_property(pdev->dev.of_node, "rcpu-pwm", NULL))
++			pc->rcpu_pwm = 1;
++		else
++			pc->rcpu_pwm = 0;
++	}
++	else {
++		pc->dcr_fd = 0;
++		pc->rcpu_pwm = 0;
++	}
++#endif
++
+ 	pc->clk = devm_clk_get(&pdev->dev, NULL);
+ 	if (IS_ERR(pc->clk))
+ 		return PTR_ERR(pc->clk);
+ 
++	pc->reset = devm_reset_control_get_optional(&pdev->dev, NULL);
++	if(IS_ERR(pc->reset))
++		return PTR_ERR(pc->reset);
++	reset_control_deassert(pc->reset);
++
+ 	pc->chip.dev = &pdev->dev;
+ 	pc->chip.ops = &pxa_pwm_ops;
+ 	pc->chip.npwm = (id->driver_data & HAS_SECONDARY_PWM) ? 2 : 1;
+@@ -201,27 +254,64 @@ static int pwm_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	pc->mmio_base = devm_platform_ioremap_resource(pdev, 0);
+-	if (IS_ERR(pc->mmio_base))
+-		return PTR_ERR(pc->mmio_base);
++	if (IS_ERR(pc->mmio_base)) {
++		ret = PTR_ERR(pc->mmio_base);
++		goto err_rst;
++	}
+ 
+ 	ret = devm_pwmchip_add(&pdev->dev, &pc->chip);
+ 	if (ret < 0) {
+ 		dev_err(&pdev->dev, "pwmchip_add() failed: %d\n", ret);
+-		return ret;
++		goto err_rst;
+ 	}
+ 
++	platform_set_drvdata(pdev, pc);
++
+ 	return 0;
++
++err_rst:
++	reset_control_assert(pc->reset);
++	return ret;
+ }
+ 
++#ifdef CONFIG_PM_SLEEP
++static int pxa_pwm_suspend_noirq(struct device *dev)
++{
++	return 0;
++}
++
++static int pxa_pwm_resume_noirq(struct device *dev)
++{
++	struct pxa_pwm_chip *pc = dev_get_drvdata(dev);
++
++	/* if pwm in rcpu domain, deassert reset first before apply the old state */
++	if(pc->rcpu_pwm)
++		reset_control_deassert(pc->reset);
++	return 0;
++}
++#endif
++
++static const struct dev_pm_ops pxa_pwm_pm_qos = {
++	.suspend_noirq = pxa_pwm_suspend_noirq,
++	.resume_noirq = pxa_pwm_resume_noirq,
++};
++
+ static struct platform_driver pwm_driver = {
+ 	.driver		= {
+ 		.name	= "pxa25x-pwm",
++#ifdef CONFIG_PM_SLEEP
++		.pm	= &pxa_pwm_pm_qos,
++#endif
+ 		.of_match_table = pwm_of_match,
+ 	},
+ 	.probe		= pwm_probe,
+ 	.id_table	= pwm_id_table,
+ };
+ 
+-module_platform_driver(pwm_driver);
++static int k1x_pwm_driver_init(void)
++{
++	return platform_driver_register(&pwm_driver);
++}
++late_initcall_sync(k1x_pwm_driver_init);
+ 
+ MODULE_LICENSE("GPL v2");
+-- 
+Armbian
+

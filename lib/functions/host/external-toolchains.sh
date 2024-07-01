@@ -24,9 +24,6 @@ function download_external_toolchains() {
 			# download external Linaro compiler and missing special dependencies since they are needed for certain sources
 
 			local toolchains=(
-				"gcc-linaro-aarch64-none-elf-4.8-2013.11_linux.tar.xz"
-				"gcc-linaro-arm-none-eabi-4.8-2014.04_linux.tar.xz"
-				"gcc-linaro-arm-linux-gnueabihf-4.8-2014.04_linux.tar.xz"
 				"gcc-linaro-7.4.1-2019.02-x86_64_arm-linux-gnueabi.tar.xz"
 				"gcc-linaro-7.4.1-2019.02-x86_64_aarch64-linux-gnu.tar.xz"
 				"gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf.tar.xz"

@@ -10,8 +10,6 @@ BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588-nanopc-cm3588-nas.dtb"
 BOOT_SCENARIO="spl-blobs"
-DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin'
-BL31_BLOB='rk35/rk3588_bl31_v1.45.elf'
 
 function post_family_tweaks__nanopccm3588nas_udev_naming_audios() {
 	display_alert "$BOARD" "Renaming CM3588 audio interfaces to human-readable form" "info"
