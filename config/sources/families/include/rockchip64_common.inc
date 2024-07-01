@@ -137,6 +137,13 @@ case "$BOOT_SOC" in
 		ROCKUSB_BLOB="rk35/rk356x_spl_loader_v1.21.113.bin"
 		;;
 
+	rk3576)
+		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.03.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3576_bl31_v1.04.elf"}"
+		BL32_BLOB="${BL32_BLOB:-"rk35/rk3576_bl32_v1.01.bin"}"
+		;;
+
 	rk3588) #CPUMAX undefined?
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
 		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin"}"
