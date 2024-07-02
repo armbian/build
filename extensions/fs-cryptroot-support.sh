@@ -47,7 +47,7 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 		# Set the port of the dropbear ssh daemon in the initramfs to a different one if configured
 		# this avoids the typical 'host key changed warning' - `WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!`
 		[[ -f "${dropbear_dir}/${dropbear_config}" ]] &&
-			sed -i 's/^#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-j -k -p '"${CRYPTROOT_SSH_UNLOCK_PORT}"' -s -c cryptroot-unlock"/' \
+			sed -i "s/^#DROPBEAR_OPTIONS=.*/DROPBEAR_OPTIONS=\"-I 100 -j -k -p "${CRYPTROOT_SSH_UNLOCK_PORT}" -s -c cryptroot-unlock\"/" \
 				"${dropbear_dir}/${dropbear_config}"
 
 		# setup dropbear authorized_keys, either provided by userpatches or generated
