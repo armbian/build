@@ -130,3 +130,5 @@ function extract_rootfs_artifact() {
 
 	return 0
 }
+
+# This comment strategically introduced to force a rebuild of all rootfs, as this file's contents are hashed into all rootfs versions.
