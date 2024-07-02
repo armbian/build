@@ -4,7 +4,7 @@ BOARDFAMILY="rockchip-rk3588"
 BOOT_SOC="rk3588"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="vendor"
-BOOTCONFIG="rk3588_defconfig"
+BOOTCONFIG="rock-5a-rk3588s_defconfig"
 BOOT_FDT_FILE="rockchip/rk3588-firefly-itx-3588j.dtb"
 BOOT_LOGO="desktop"
 FULL_DESKTOP="yes"
@@ -24,8 +24,17 @@ function post_family_tweaks_bsp__firefly_itx_3588j() {
 	return 0
 }
 
+function post_family_tweaks__firefly_itx_3588j_naming_audios() {
+	display_alert "$BOARD" "Renaming firefly-itx-3588j audios" "info"
+	mkdir -p $SDCARD/etc/udev/rules.d/
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	return 0
+}
+
 function post_family_tweaks__firefly_itx_3588j_enable_services() {
 	display_alert "$BOARD" "Enabling rk3588-bluetooth.service" "info"
 	chroot_sdcard systemctl enable rk3588-bluetooth.service
 	return 0
 }
+
+
