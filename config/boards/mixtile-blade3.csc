@@ -21,7 +21,7 @@ declare -g BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
 function post_family_config__uboot_mixtile() {
 	display_alert "$BOARD" "Configuring Mixtile u-boot" "info"
 	declare -g BOOTSOURCE='https://github.com/radxa/u-boot.git'
-	declare -g BOOTBRANCH="commit:ddc91cd08c10f625f7a7c93033042aa4071c78a8" # specific commit in next-dev branch
+	declare -g BOOTBRANCH='branch:next-dev-v2024.03'
 	declare -g OVERLAY_PREFIX='rockchip-rk3588'
 	declare -g BOOTDIR="u-boot-${BOARD}"                   # do not share u-boot directory
 	declare -g BOOTPATCHDIR="legacy/u-boot-mixtile-rk3588" # Few patches in there; defconfig & PD hacks
