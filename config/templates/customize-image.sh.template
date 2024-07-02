@@ -184,7 +184,7 @@ InstallOpenMediaVault() {
 			lsusb | grep -q -i "05e3:0735" && sed -i "/exit\ 0/i echo 20 > /sys/class/block/sda/queue/max_sectors_kb" /etc/rc.local \
 			/usr/sbin/i2cdetect -y 1 | grep -q "60: 60" && /usr/local/sbin/cloudshell2-support.sh' /usr/lib/armbian/armbian-firstrun
 			;;
-		bananapim3|nanopifire3|nanopct3plus|nanopim3)
+		bananapim3)
 			HMP_Fix='; taskset -c -p 4-7 $i '
 			;;
 		edge*|ficus|firefly-rk3399|nanopct4|nanopim4|nanopineo4|renegade-elite|roc-rk3399-pc|rockpro64|station-p1)
