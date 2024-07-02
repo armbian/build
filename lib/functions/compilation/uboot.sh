@@ -152,7 +152,7 @@ function compile_uboot_target() {
 
 		run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
 			"KCFLAGS=-fdiagnostics-color=always" \
-			unbuffer make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
+			pipetty make "olddefconfig" "CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 
 	fi
 
@@ -228,7 +228,7 @@ function compile_uboot_target() {
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"
 	do_with_ccache_statistics run_host_command_logged_long_running \
 		"env" "-i" "${uboot_make_envs[@]}" \
-		unbuffer make "$target_make" "$CTHREADS" "${cross_compile}"
+		pipetty make "$target_make" "$CTHREADS" "${cross_compile}"
 
 	display_alert "${uboot_prefix}built u-boot target" "${version} in $((SECONDS - ts)) seconds" "info"
 
