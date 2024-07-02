@@ -70,7 +70,6 @@ function artifact_armbian-bsp-cli_prepare_version() {
 
 	declare -a dirs_to_hash=(
 		"${SRC}/packages/bsp/common" # common stuff
-		"${SRC}/packages/bsp-cli"
 		"${SRC}/config/optional/_any_board/_packages/bsp-cli"
 		"${SRC}/config/optional/architectures/${ARCH}/_packages/bsp-cli"
 		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
@@ -83,7 +82,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_bash_deb_artifact "bsp/armbian-bsp-cli-deb.sh"
+	calculate_hash_for_bash_deb_artifact "bsp/armbian-bsp-cli-deb.sh" "bsp/utils-bsp.sh"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
