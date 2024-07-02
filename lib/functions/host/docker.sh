@@ -460,6 +460,8 @@ function docker_cli_prepare_launch() {
 		DOCKER_ARGS+=("--mount" "type=bind,source=${GITHUB_STEP_SUMMARY},target=${GITHUB_STEP_SUMMARY}")
 		DOCKER_ARGS+=("--env" "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY}")
 
+	fi
+	if [[ "${CI}" == "true" ]]; then
 		# For pushing/pulling from OCI/ghcr.io; if OCI_TARGET_BASE is set:
 		# - bind-mount the Docker config file (if it exists)
 		if [[ -n "${OCI_TARGET_BASE}" ]]; then
@@ -467,7 +469,7 @@ function docker_cli_prepare_launch() {
 			DOCKER_ARGS+=("--env" "OCI_TARGET_BASE=${OCI_TARGET_BASE}")
 		fi
 
-		# Mount the Docker config file (if it exists) -- always, even if OCI_TARGET_BASE is not set; @TODO: why only in GitHub actions?
+		# Mount the Docker config file (if it exists) -- always, even if OCI_TARGET_BASE is not set;
 		local docker_config_file_host="${HOME}/.docker/config.json"
 		local docker_config_file_docker="/root/.docker/config.json" # inside Docker
 		if [[ -f "${docker_config_file_host}" ]]; then
