@@ -1,0 +1,668 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/thermal/Kconfig           |  14 +
+ drivers/thermal/Makefile          |   2 +
+ drivers/thermal/hotplug_cooling.c | 160 +++++
+ drivers/thermal/k1x-thermal.c     | 352 ++++++++++
+ drivers/thermal/k1x-thermal.h     |  77 ++
+ 5 files changed, 605 insertions(+)
+
+diff --git a/drivers/thermal/Kconfig b/drivers/thermal/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/Kconfig
++++ b/drivers/thermal/Kconfig
+@@ -189,6 +189,13 @@ config CPU_IDLE_THERMAL
+ 	  This implements the CPU cooling mechanism through
+ 	  idle injection. This will throttle the CPU by injecting
+ 	  idle cycle.
++
++config CPU_HOTPLUG_THERMAL
++	bool "CPU hotplug cooling device"
++	depends on HOTPLUG_CPU && SOC_SPACEMIT
++	help
++	  This implements the CPU cooling mechanism through
++	  cpu hotplug.
+ endif
+ 
+ config DEVFREQ_THERMAL
+@@ -434,6 +441,13 @@ config AMLOGIC_THERMAL
+ 	  This driver can also be built as a module. If so, the module will
+ 	  be called amlogic_thermal.
+ 
++config K1X_THERMAL
++	tristate "Spacemit K1X Thermal Support"
++	depends on OF && SOC_SPACEMIT
++	help
++	  Enable this option if you want to have support for thermal management
++	  controller present in Spacemit SoCs
++
+ menu "Intel thermal drivers"
+ depends on X86 || X86_INTEL_QUARK || COMPILE_TEST
+ source "drivers/thermal/intel/Kconfig"
+diff --git a/drivers/thermal/Makefile b/drivers/thermal/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/thermal/Makefile
++++ b/drivers/thermal/Makefile
+@@ -61,3 +61,5 @@ obj-$(CONFIG_UNIPHIER_THERMAL)	+= uniphier_thermal.o
+ obj-$(CONFIG_AMLOGIC_THERMAL)     += amlogic_thermal.o
+ obj-$(CONFIG_SPRD_THERMAL)	+= sprd_thermal.o
+ obj-$(CONFIG_KHADAS_MCU_FAN_THERMAL)	+= khadas_mcu_fan.o
++obj-$(CONFIG_K1X_THERMAL) += k1x-thermal.o
++obj-$(CONFIG_CPU_HOTPLUG_THERMAL) += hotplug_cooling.o
+diff --git a/drivers/thermal/hotplug_cooling.c b/drivers/thermal/hotplug_cooling.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/hotplug_cooling.c
+@@ -0,0 +1,160 @@
++#include <linux/cpu.h>
++#include <linux/cpu_cooling.h>
++#include <linux/cpufreq.h>
++#include <linux/device.h>
++#include <linux/err.h>
++#include <linux/export.h>
++#include <linux/pm_opp.h>
++#include <linux/pm_qos.h>
++#include <linux/slab.h>
++#include <linux/thermal.h>
++#include <linux/units.h>
++
++struct hotplug_cooling_device {
++	unsigned int max_level;
++	unsigned int hotplug_state;
++	unsigned int cpu;
++	struct thermal_cooling_device_ops cooling_ops;
++};
++
++static int hotplug_get_max_state(struct thermal_cooling_device *cdev,
++				 unsigned long *state)
++{
++	struct hotplug_cooling_device *hotplug_cdev = cdev->devdata;
++
++	*state = hotplug_cdev->max_level;
++	return 0;
++}
++
++static int hotplug_get_cur_state(struct thermal_cooling_device *cdev,
++				 unsigned long *state)
++{
++	struct hotplug_cooling_device *hotplug_cdev = cdev->devdata;
++
++	*state = hotplug_cdev->hotplug_state;
++	return 0;
++}
++
++static int hotplug_set_cur_state(struct thermal_cooling_device *cdev,
++				 unsigned long state)
++{
++	struct hotplug_cooling_device *hotplug_cdev = cdev->devdata;
++
++	/* Request state should be less than max_level */
++	if (state > hotplug_cdev->max_level)
++		return -EINVAL;
++
++	/* Check if the old cooling action is same as new cooling action */
++	if (hotplug_cdev->hotplug_state == state)
++		return 0;
++
++	hotplug_cdev->hotplug_state = state;
++
++	/* do some governors ? */
++	if (state == 1)
++		cpu_device_down(get_cpu_device(hotplug_cdev->cpu));
++	else
++		cpu_device_up(get_cpu_device(hotplug_cdev->cpu));
++
++	return 0;
++}
++
++static struct thermal_cooling_device *
++__hotplug_cooling_register(struct device_node *np, unsigned int cpu)
++{
++	char *name;
++	struct device *dev;
++	struct thermal_cooling_device *cdev;
++	struct hotplug_cooling_device *hotplug_cdev;
++	struct thermal_cooling_device_ops *cooling_ops;
++
++	dev = get_cpu_device(cpu);
++	if (unlikely(!dev)) {
++		pr_warn("No cpu device for cpu %d\n", cpu);
++		return ERR_PTR(-ENODEV);
++	}
++
++	hotplug_cdev = kzalloc(sizeof(*hotplug_cdev), GFP_KERNEL);
++	if (!hotplug_cdev)
++		return ERR_PTR(-ENOMEM);
++
++	hotplug_cdev->max_level = 1;
++	hotplug_cdev->cpu = cpu;
++	cooling_ops = &hotplug_cdev->cooling_ops;
++	cooling_ops->get_max_state = hotplug_get_max_state;
++	cooling_ops->get_cur_state = hotplug_get_cur_state;
++	cooling_ops->set_cur_state = hotplug_set_cur_state;
++
++	cdev = ERR_PTR(-ENOMEM);
++	name = kasprintf(GFP_KERNEL, "hotplug-%s", dev_name(dev));
++
++	cdev = thermal_of_cooling_device_register(np, name, hotplug_cdev,
++						  cooling_ops);
++	kfree(name);
++
++	if (IS_ERR(cdev)) {
++		pr_err("%s: Failed to register hotplug cooling device (%p)\n", __func__, PTR_ERR(cdev));
++		return PTR_ERR(cdev);
++	}
++
++	return cdev;
++}
++
++struct thermal_cooling_device **
++of_hotplug_cooling_register(struct cpufreq_policy *policy)
++{
++	unsigned int cpu, num_cpus = 0, cpus = 0;
++	struct device_node *np = NULL;
++	struct device_node *cooling_node;
++	struct thermal_cooling_device **cdev = NULL;
++
++	for_each_cpu(cpu, policy->related_cpus)
++		++ num_cpus;
++
++	cdev = kzalloc(sizeof(struct thermal_cooling_device *) * num_cpus, GFP_KERNEL);
++	if (!cdev) {
++		pr_err("hotplug_cooling: alloc cooling_device failed\n");
++		return NULL;
++	}
++
++	for_each_cpu(cpu, policy->related_cpus) {
++		np = of_get_cpu_node(cpu, NULL);
++		if (!np) {
++			pr_err("hotplug_cooling: OF node not available for cpu%d\n", cpu);
++			return NULL;
++		}
++
++		cooling_node = of_get_child_by_name(np, "thermal-hotplug");
++		if (of_find_property(cooling_node, "#cooling-cells", NULL)) {
++			cdev[cpus] = __hotplug_cooling_register(cooling_node, cpu);
++			if (IS_ERR(cdev)) {
++				pr_err("hotplug_cooling: cpu%d failed to register as cooling device: %ld\n",
++						cpu, PTR_ERR(cdev[cpus]));
++				cdev[cpus] = NULL;
++			}
++
++			++cpus;
++		}
++
++		of_node_put(np);
++	}
++
++	return cdev;
++}
++EXPORT_SYMBOL_GPL(of_hotplug_cooling_register);
++
++void hotplug_cooling_unregister(struct cpufreq_policy *policy, struct thermal_cooling_device **cdev)
++{
++	unsigned int cpu;
++	struct hotplug_cooling_device *hotplug_cdev;
++
++	if (cdev)
++		return;
++
++	for_each_cpu(cpu, policy->related_cpus) {
++		hotplug_cdev = cdev[cpu]->devdata;
++		thermal_cooling_device_unregister(cdev[cpu]);
++		kfree(hotplug_cdev);
++	}
++}
++EXPORT_SYMBOL_GPL(hotplug_cooling_unregister);
+diff --git a/drivers/thermal/k1x-thermal.c b/drivers/thermal/k1x-thermal.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/k1x-thermal.c
+@@ -0,0 +1,352 @@
++// SPDX-License-Identifier: GPL-2.0-only
++
++#include <linux/cpufreq.h>
++#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/io.h>
++#include <linux/of_device.h>
++#include <linux/thermal.h>
++#include <linux/reset.h>
++#include "k1x-thermal.h"
++
++#define MAX_SENSOR_NUMBER		5
++
++static struct k1x_thermal_sensor_desc gsdesc[] = {
++	/* bjt0: local, sensor internal temperature */
++	[0] = {
++		.int_msk = 0x14, .int_clr = 0x10, .int_sta = 0x18, .offset = 0x0, .bit_msk = 0b110,
++		.se = { .bjt_en = 0x8, .en_val = 0x1, .offset = 0x0, .bit_msk = 0x1, },
++		.sd = { .data_reg = 0x20, .offset = 0x0, .bit_msk = 0xffff, },
++		.sr = { .temp_thrsh = 0x40, .low_offset = 0x0, .high_offset = 16, },
++	},
++
++	/* bjt1: top */
++	[1] = {
++		.int_msk = 0x14, .int_clr = 0x10, .int_sta = 0x18, .offset = 0x3, .bit_msk = 0b11000,
++		.se = { .bjt_en = 0x8, .en_val = 0x1, .offset = 0x1, .bit_msk = 0x2, },
++		.sd = { .data_reg = 0x20, .offset = 16, .bit_msk = 0xffff0000, },
++		.sr = { .temp_thrsh = 0x44, .low_offset = 0x0, .high_offset = 16, },
++	},
++
++	/* bjt2: gpu */
++	[2] = {
++		.int_msk = 0x14, .int_clr = 0x10, .int_sta = 0x18, .offset = 0x5, .bit_msk = 0b1100000,
++		.se = { .bjt_en = 0x8, .en_val = 0x1, .offset = 0x2, .bit_msk = 0x4, },
++		.sd = { .data_reg = 0x24, .offset = 0, .bit_msk = 0xffff, },
++		.sr = { .temp_thrsh = 0x48, .low_offset = 0x0, .high_offset = 16, },
++	},
++
++	/* bjt3: cluster0 */
++	[3] = {
++		.int_msk = 0x14, .int_clr = 0x10, .int_sta = 0x18, .offset = 0x7, .bit_msk = 0b110000000,
++		.se = { .bjt_en = 0x8, .en_val = 0x1, .offset = 0x3, .bit_msk = 0x8, },
++		.sd = { .data_reg = 0x24, .offset = 16, .bit_msk = 0xffff0000, },
++		.sr = { .temp_thrsh = 0x4c, .low_offset = 0x0, .high_offset = 16, },
++	},
++
++	/* bjt4: cluster1 */
++	[4] = {
++		.int_msk = 0x14, .int_clr = 0x10, .int_sta = 0x18, .offset = 0x9, .bit_msk = 0b11000000000,
++		.se = { .bjt_en = 0x8, .en_val = 0x1, .offset = 0x4, .bit_msk = 0x10, },
++		.sd = { .data_reg = 0x28, .offset = 0, .bit_msk = 0xffff, },
++		.sr = { .temp_thrsh = 0x50, .low_offset = 0x0, .high_offset = 16, },
++	},
++};
++
++static int init_sensors(struct platform_device *pdev)
++{
++	int ret, i;
++	unsigned int /* thresh, emrt, */ temp;
++	struct k1x_thermal_sensor *s = platform_get_drvdata(pdev);
++
++	/* read the sensor range */
++	ret = of_property_read_u32_array(pdev->dev.of_node, "sensor_range", s->sr, 2);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "get sensor range error\n");
++		return ret;
++	}
++
++	if (s->sr[1] >= MAX_SENSOR_NUMBER) {
++		dev_err(&pdev->dev, "un-fitable sensor range\n");
++		return -EINVAL;	
++	}
++
++#if 0
++	/* first get the emergent_reboot_thrsh */
++	ret = of_property_read_u32(pdev->dev.of_node,
++			"emergent_reboot_threshold",
++			&emrt);
++	if (ret) {
++		dev_err(&pdev->dev, "no emergent reboot threshold\n");
++		return ret;
++	}
++
++	thresh = (emrt + TEMPERATURE_OFFSET) & REG_EMERGENT_REBOOT_TEMP_THR_MSK;
++	writel(thresh, s->base + REG_EMERGENT_REBOOT_TEMP_THR);
++#endif
++
++	/* first: disable all the interrupts */
++	writel(0xffffffff, s->base + REG_TSEN_INT_MASK);
++
++#if 0
++	/* enable the emergent intterupt */
++	temp = readl(s->base + REG_TSEN_INT_MASK);
++	temp &= ~(1 << TSEN_EMERGENT_INT_OFFSET);
++	writel(temp, s->base + REG_TSEN_INT_MASK);
++#endif
++
++	/*
++	 * Decrease filter period time from 0x4000 to 0x3000, that
++	 * means decrease 1/4 ADC sampling time for each sensor.
++	 */
++        temp = readl(s->base + REG_TSEN_TIME_CTRL);
++        temp &= ~BITS_TIME_CTRL_MASK;
++        temp |= VALUE_FILTER_PERIOD;
++        temp |= BITS_RST_ADC_CNT;
++        temp |= VALUE_WAIT_REF_CNT;
++        writel(temp, s->base + REG_TSEN_TIME_CTRL);
++
++	/*
++	 * enable all sensors' auto mode, enable dither control,
++	 * consecutive mode, and power up sensor.
++	 */
++	temp = readl(s->base + REG_TSEN_PCTRL);
++        temp |= BIT_TSEN_RAW_SEL | BIT_TEMP_MODE | BIT_EN_SENSOR;
++        temp &= ~BITS_TSEN_SW_CTRL;
++        temp &= ~BITS_CTUNE;
++        writel(temp, s->base + REG_TSEN_PCTRL);
++
++	/* select 24M clk for high speed mode */
++	temp = readl(s->base + REG_TSEN_PCTRL2);
++	temp &= ~BITS_SDM_CLK_SEL;
++	temp |= BITS_SDM_CLK_SEL_24M;
++	writel(temp, s->base + REG_TSEN_PCTRL2);
++
++	/* enable the sensor interrupt */
++	for (i = s->sr[0]; i <= s->sr[1]; ++i) {
++		temp = readl(s->base + s->sdesc[i].se.bjt_en);
++		temp &= ~s->sdesc[i].se.bit_msk;
++		temp |= (s->sdesc[i].se.en_val << s->sdesc[i].se.offset);
++		writel(temp, s->base + s->sdesc[i].se.bjt_en);
++	}
++
++	return 0;
++}
++
++static void enable_sensors(struct platform_device *pdev)
++{
++	struct k1x_thermal_sensor *s = platform_get_drvdata(pdev);
++
++	writel(readl(s->base + REG_TSEN_INT_MASK) | TSEN_INT_MASK,
++			s->base + REG_TSEN_INT_MASK);
++	writel(readl(s->base + REG_TSEN_PCTRL) | BIT_HW_AUTO_MODE,
++			s->base + REG_TSEN_PCTRL);
++}
++
++static void enable_sensor_irq(struct k1x_thermal_sensor_desc *desc)
++{
++	unsigned int temp;
++
++	/* clear the interrupt */
++	temp = readl(desc->base + desc->int_clr);
++	temp |= desc->bit_msk;
++	writel(temp, desc->base + desc->int_clr);
++
++	/* enable the interrupt */
++	temp = readl(desc->base + desc->int_msk);
++	temp &= ~desc->bit_msk;
++	writel(temp, desc->base + desc->int_msk);
++}
++
++static int k1x_thermal_get_temp(struct thermal_zone_device *tz, int *temp)
++{
++	struct k1x_thermal_sensor_desc *desc = (struct k1x_thermal_sensor_desc *)tz->devdata;
++
++	*temp = readl(desc->base + desc->sd.data_reg);
++	*temp &= desc->sd.bit_msk;
++	*temp >>= desc->sd.offset;
++
++	*temp -= TEMPERATURE_OFFSET;
++
++	*temp *= 1000;
++
++	return 0;
++}
++
++static int k1x_thermal_set_trips(struct thermal_zone_device *tz, int low, int high)
++{
++	unsigned int temp;
++	int over_thrsh = high;
++	int under_thrsh = low;
++	struct k1x_thermal_sensor_desc *desc = (struct k1x_thermal_sensor_desc *)tz->devdata;
++
++	/* set overflow */
++	over_thrsh /= 1000;
++	over_thrsh += TEMPERATURE_OFFSET;
++
++	temp = readl(desc->base + desc->sr.temp_thrsh);
++	temp &= ~0xffff0000;
++	temp |= (over_thrsh << desc->sr.high_offset);
++	writel(temp, desc->base + desc->sr.temp_thrsh);
++
++	/* set underflow */
++	if (low < 0)
++		under_thrsh = 0;
++
++	under_thrsh /= 1000;
++	under_thrsh += TEMPERATURE_OFFSET;
++	temp = readl(desc->base + desc->sr.temp_thrsh);
++	temp &= ~0xffff;
++	temp |= (under_thrsh << desc->sr.low_offset);
++	writel(temp, desc->base + desc->sr.temp_thrsh);
++
++	return 0;
++}
++
++static const struct thermal_zone_device_ops k1x_of_thermal_ops = {
++	.get_temp = k1x_thermal_get_temp,
++	.set_trips = k1x_thermal_set_trips,
++};
++
++static irqreturn_t k1x_thermal_irq(int irq, void *data)
++{
++	unsigned int status, msk;
++	struct k1x_thermal_sensor_desc *desc = (struct k1x_thermal_sensor_desc *)data;
++
++	/* get the status */
++	status = readl(desc->base + desc->int_sta);
++	status &= desc->bit_msk;
++
++	if (status == 0x0)
++		return IRQ_HANDLED;
++
++	/* then clear the pending */
++	msk = readl(desc->base + desc->int_clr);
++	msk |= status;
++	writel(msk, desc->base + desc->int_clr);
++
++	return IRQ_WAKE_THREAD;
++}
++
++static irqreturn_t k1x_thermal_irq_thread(int irq, void *data)
++{
++	struct k1x_thermal_sensor_desc *desc = (struct k1x_thermal_sensor_desc *)data;
++
++	thermal_zone_device_update(desc->tzd, THERMAL_EVENT_UNSPECIFIED);
++
++	return IRQ_HANDLED;
++}
++
++static int k1x_thermal_probe(struct platform_device *pdev)
++{
++	int ret, i;
++	struct resource *res;
++	struct k1x_thermal_sensor *s;
++	struct device *dev = &pdev->dev;
++
++	s = devm_kzalloc(dev, sizeof(*s), GFP_KERNEL);
++	if (!s)
++		return -ENOMEM;
++
++	s->dev = dev;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	s->base = devm_ioremap_resource(dev, res);
++	if (IS_ERR(s->base))
++		return PTR_ERR(s->base);
++
++	s->irq = platform_get_irq(pdev, 0);
++	if (s->irq < 0) {
++		dev_err(dev, "failed to get irq number\n");
++		return -EINVAL;
++	}
++
++	s->resets = devm_reset_control_get_optional(&pdev->dev, NULL);
++	if (IS_ERR(s->resets))
++		return PTR_ERR(s->resets);
++
++        reset_control_deassert(s->resets);
++
++	s->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(s->clk))
++		return PTR_ERR(s->clk);
++
++	clk_prepare_enable(s->clk);
++
++	s->sdesc = (struct k1x_thermal_sensor_desc *)of_device_get_match_data(dev);
++
++	platform_set_drvdata(pdev, s);
++
++	/* initialize the sensors */
++	ret = init_sensors(pdev);
++
++	/* then register the thermal zone */
++	for (i = s->sr[0]; i <= s->sr[1]; ++i) {
++		s->sdesc[i].base = s->base;
++
++		s->sdesc[i].tzd = devm_thermal_of_zone_register(dev,
++				i, s->sdesc + i, &k1x_of_thermal_ops);
++		if (IS_ERR(s->sdesc[i].tzd)) {
++			ret = PTR_ERR(s->sdesc[i].tzd);
++			dev_err(dev, "faild to register sensor id %d: %d\n",
++					i, ret);
++			return ret;
++		}
++
++		ret = devm_request_threaded_irq(dev, s->irq, k1x_thermal_irq,
++				k1x_thermal_irq_thread, IRQF_SHARED,
++				dev_name(&s->sdesc[i].tzd->device), s->sdesc + i);
++		if (ret < 0) {
++			dev_err(dev, "failed to request irq: %d\n", ret);
++			return ret;
++		}
++
++		/* enable sensor low & higth threshold interrupt */
++		enable_sensor_irq(s->sdesc + i);
++	}
++
++	/* enable the sensor interrupt & using auto mode */
++	enable_sensors(pdev);
++
++	return 0;
++}
++
++static int k1x_thermal_remove(struct platform_device *pdev)
++{
++	int i;
++	struct k1x_thermal_sensor *s = platform_get_drvdata(pdev);
++
++	/* disable the clk */
++	clk_disable_unprepare(s->clk);
++	reset_control_assert(s->resets);
++
++	for (i = s->sr[0]; i <= s->sr[1]; ++i) {
++		devm_thermal_of_zone_unregister(&pdev->dev, s->sdesc[i].tzd);
++		devm_free_irq(&pdev->dev, s->irq, s->sdesc + i);
++	}
++
++	return 0;
++}
++
++static const struct of_device_id of_k1x_thermal_match[] = {
++	{
++		.compatible = "spacemit,k1x-tsensor",
++		.data = (void *)gsdesc,
++	},
++	{ /* end */ }
++};
++
++MODULE_DEVICE_TABLE(of, of_hisi_thermal_match);
++
++static struct platform_driver k1x_thermal_driver = {
++	.driver = {
++		.name		= "k1x_thermal",
++		.of_match_table = of_k1x_thermal_match,
++	},
++	.probe	= k1x_thermal_probe,
++	.remove	= k1x_thermal_remove,
++};
++
++module_platform_driver(k1x_thermal_driver);
+diff --git a/drivers/thermal/k1x-thermal.h b/drivers/thermal/k1x-thermal.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/thermal/k1x-thermal.h
+@@ -0,0 +1,77 @@
++#ifndef __K1X_THERMAL_H__
++#define __K1X_THERMAL_H__
++
++#define BITS(_start, _end) ((BIT(_end) - BIT(_start)) + BIT(_end))
++
++#define MAX_SENSOR_NUMBER		5
++#define TEMPERATURE_OFFSET		278
++
++#define REG_TSEN_INT_MASK		0x14
++#define TSEN_EMERGENT_INT_OFFSET	23
++#define REG_EMERGENT_REBOOT_TEMP_THR		0x68
++#define REG_EMERGENT_REBOOT_TEMP_THR_MSK	0xffff
++
++#define REG_TSEN_TIME_CTRL	0x0C
++#define BITS_TIME_CTRL_MASK	BITS(0, 23)
++#define VALUE_FILTER_PERIOD	(0x3000 << 8)
++#define BITS_RST_ADC_CNT	BITS(4, 7)
++#define VALUE_WAIT_REF_CNT	(0xf << 0)
++
++#define BIT_TSEN_RAW_SEL	BIT(7)
++#define BIT_TEMP_MODE		BIT(3)
++#define BIT_EN_SENSOR		BIT(0)
++#define BITS_TSEN_SW_CTRL	BITS(18, 21)
++#define BITS_CTUNE		BITS(8, 11)
++#define REG_TSEN_PCTRL		0x00
++
++#define REG_TSEN_PCTRL2		0x04
++#define BITS_SDM_CLK_SEL	BITS(14, 15)
++#define BITS_SDM_CLK_SEL_24M	(0 << 14)
++
++#define TSEN_INT_MASK		BIT(0)
++#define BIT_HW_AUTO_MODE	BIT(23)
++
++struct sensor_enable {
++	unsigned int bjt_en;
++	unsigned int offset;
++	unsigned int bit_msk;
++	unsigned int en_val;
++};
++
++struct sensor_data {
++	unsigned int data_reg;
++	unsigned int offset;
++	unsigned int bit_msk;
++};
++
++struct sensor_thrsh {
++	unsigned int temp_thrsh;
++	unsigned int low_offset;
++	unsigned int high_offset;
++};
++
++struct k1x_thermal_sensor_desc {
++	void __iomem *base;
++	unsigned int int_msk;
++	unsigned int int_clr;
++	unsigned int int_sta;
++	unsigned int offset;
++	unsigned int bit_msk;
++	struct sensor_enable se;
++	struct sensor_data sd;
++	struct sensor_thrsh sr;
++	struct thermal_zone_device *tzd;
++};
++
++struct k1x_thermal_sensor {
++	int irq;
++	void __iomem *base;
++	struct clk *clk;
++	struct reset_control *resets;
++	struct device *dev;
++	/* sensor range */
++	unsigned int sr[2];
++	struct k1x_thermal_sensor_desc *sdesc;
++};
++
++#endif
+-- 
+Armbian
+

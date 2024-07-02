@@ -1,0 +1,1476 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ tools/lib/perf/cpumap.c                                        |  10 +-
+ tools/perf/arch/riscv/util/Build                               |   1 +
+ tools/perf/arch/riscv/util/header.c                            | 104 ++
+ tools/perf/pmu-events/arch/riscv/mapfile.csv                   |  18 +
+ tools/perf/pmu-events/arch/riscv/riscv-sbi-firmware.json       | 134 +++
+ tools/perf/pmu-events/arch/riscv/sifive/u74/firmware.json      |  68 ++
+ tools/perf/pmu-events/arch/riscv/sifive/u74/instructions.json  |  92 ++
+ tools/perf/pmu-events/arch/riscv/sifive/u74/memory.json        |  32 +
+ tools/perf/pmu-events/arch/riscv/sifive/u74/microarch.json     |  57 +
+ tools/perf/pmu-events/arch/riscv/spacemit/x60/branch.json      |  62 ++
+ tools/perf/pmu-events/arch/riscv/spacemit/x60/cache.json       | 122 +++
+ tools/perf/pmu-events/arch/riscv/spacemit/x60/instruction.json | 122 +++
+ tools/perf/pmu-events/arch/riscv/spacemit/x60/microarch.json   | 522 ++++++++++
+ 13 files changed, 1339 insertions(+), 5 deletions(-)
+
+diff --git a/tools/lib/perf/cpumap.c b/tools/lib/perf/cpumap.c
+index 111111111111..222222222222 100644
+--- a/tools/lib/perf/cpumap.c
++++ b/tools/lib/perf/cpumap.c
+@@ -351,8 +351,8 @@ struct perf_cpu_map *perf_cpu_map__merge(struct perf_cpu_map *orig,
+ 					 struct perf_cpu_map *other)
+ {
+ 	struct perf_cpu *tmp_cpus;
+-	int tmp_len;
+-	int i, j, k;
++	unsigned int tmp_len;
++	unsigned int i, j, k;
+ 	struct perf_cpu_map *merged;
+ 
+ 	if (perf_cpu_map__is_subset(orig, other))
+@@ -369,7 +369,7 @@ struct perf_cpu_map *perf_cpu_map__merge(struct perf_cpu_map *orig,
+ 
+ 	/* Standard merge algorithm from wikipedia */
+ 	i = j = k = 0;
+-	while (i < orig->nr && j < other->nr) {
++	while (i < (unsigned int)orig->nr && j < (unsigned int)other->nr) {
+ 		if (orig->map[i].cpu <= other->map[j].cpu) {
+ 			if (orig->map[i].cpu == other->map[j].cpu)
+ 				j++;
+@@ -378,10 +378,10 @@ struct perf_cpu_map *perf_cpu_map__merge(struct perf_cpu_map *orig,
+ 			tmp_cpus[k++] = other->map[j++];
+ 	}
+ 
+-	while (i < orig->nr)
++	while (i < (unsigned int)orig->nr)
+ 		tmp_cpus[k++] = orig->map[i++];
+ 
+-	while (j < other->nr)
++	while (j < (unsigned int)other->nr)
+ 		tmp_cpus[k++] = other->map[j++];
+ 	assert(k <= tmp_len);
+ 
+diff --git a/tools/perf/arch/riscv/util/Build b/tools/perf/arch/riscv/util/Build
+index 111111111111..222222222222 100644
+--- a/tools/perf/arch/riscv/util/Build
++++ b/tools/perf/arch/riscv/util/Build
+@@ -1,4 +1,5 @@
+ perf-y += perf_regs.o
++perf-y += header.o
+ 
+ perf-$(CONFIG_DWARF) += dwarf-regs.o
+ perf-$(CONFIG_LIBDW_DWARF_UNWIND) += unwind-libdw.o
+diff --git a/tools/perf/arch/riscv/util/header.c b/tools/perf/arch/riscv/util/header.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/arch/riscv/util/header.c
+@@ -0,0 +1,104 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Implementation of get_cpuid().
++ *
++ * Author: Nikita Shubin <n.shubin@yadro.com>
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <api/fs/fs.h>
++#include <errno.h>
++#include "../../util/debug.h"
++#include "../../util/header.h"
++
++#define CPUINFO_MVEN	"mvendorid"
++#define CPUINFO_MARCH	"marchid"
++#define CPUINFO_MIMP	"mimpid"
++#define CPUINFO		"/proc/cpuinfo"
++
++static char *_get_field(const char *line)
++{
++	char *line2, *nl;
++
++	line2 = strrchr(line, ' ');
++	if (!line2)
++		return NULL;
++
++	line2++;
++	nl = strrchr(line, '\n');
++	if (!nl)
++		return NULL;
++
++	return strndup(line2, nl - line2);
++}
++
++static char *_get_cpuid(void)
++{
++	char *line = NULL;
++	char *mvendorid = NULL;
++	char *marchid = NULL;
++	char *mimpid = NULL;
++	char *cpuid = NULL;
++	int read;
++	unsigned long line_sz;
++	FILE *cpuinfo;
++
++	cpuinfo = fopen(CPUINFO, "r");
++	if (cpuinfo == NULL)
++		return cpuid;
++
++	while ((read = getline(&line, &line_sz, cpuinfo)) != -1) {
++		if (!strncmp(line, CPUINFO_MVEN, strlen(CPUINFO_MVEN))) {
++			mvendorid = _get_field(line);
++			if (!mvendorid)
++				goto free;
++		} else if (!strncmp(line, CPUINFO_MARCH, strlen(CPUINFO_MARCH))) {
++			marchid = _get_field(line);
++			if (!marchid)
++				goto free;
++		} else if (!strncmp(line, CPUINFO_MIMP, strlen(CPUINFO_MIMP))) {
++			mimpid = _get_field(line);
++			if (!mimpid)
++				goto free;
++
++			break;
++		}
++	}
++
++	if (!mvendorid || !marchid || !mimpid)
++		goto free;
++
++	if (asprintf(&cpuid, "%s-%s-%s", mvendorid, marchid, mimpid) < 0)
++		cpuid = NULL;
++
++free:
++	fclose(cpuinfo);
++	free(mvendorid);
++	free(marchid);
++	free(mimpid);
++
++	return cpuid;
++}
++
++int get_cpuid(char *buffer, size_t sz)
++{
++	char *cpuid = _get_cpuid();
++	int ret = 0;
++
++	if (sz < strlen(cpuid)) {
++		ret = -EINVAL;
++		goto free;
++	}
++
++	scnprintf(buffer, sz, "%s", cpuid);
++free:
++	free(cpuid);
++	return ret;
++}
++
++char *
++get_cpuid_str(struct perf_pmu *pmu __maybe_unused)
++{
++	return _get_cpuid();
++}
+diff --git a/tools/perf/pmu-events/arch/riscv/mapfile.csv b/tools/perf/pmu-events/arch/riscv/mapfile.csv
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/mapfile.csv
+@@ -0,0 +1,18 @@
++# Format:
++#	MVENDORID-MARCHID-MIMPID,Version,JSON/file/pathname,Type
++#
++# where
++#	MVENDORID	JEDEC code of the core provider
++#	MARCHID		base microarchitecture of the hart
++#	MIMPID		unique encoding of the version
++#			of the processor implementation
++#	Version could be used to track version of JSON file
++#		but currently unused.
++#	JSON/file/pathname is the path to JSON file, relative
++#		to tools/perf/pmu-events/arch/riscv/.
++#	Type is core, uncore etc
++#
++#
++#MVENDORID-MARCHID-MIMPID,Version,Filename,EventType
++0x489-0x8000000000000007-0x[[:xdigit:]]+,v1,sifive/u74,core
++0x710-0x8000000058000001-0x[[:xdigit:]]+,v1,spacemit/x60,core
+diff --git a/tools/perf/pmu-events/arch/riscv/riscv-sbi-firmware.json b/tools/perf/pmu-events/arch/riscv/riscv-sbi-firmware.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/riscv-sbi-firmware.json
+@@ -0,0 +1,134 @@
++[
++  {
++    "PublicDescription": "Misaligned load trap",
++    "ConfigCode": "0x8000000000000000",
++    "EventName": "FW_MISALIGNED_LOAD",
++    "BriefDescription": "Misaligned load trap event"
++  },
++  {
++    "PublicDescription": "Misaligned store trap",
++    "ConfigCode": "0x8000000000000001",
++    "EventName": "FW_MISALIGNED_STORE",
++    "BriefDescription": "Misaligned store trap event"
++  },
++  {
++    "PublicDescription": "Load access trap",
++    "ConfigCode": "0x8000000000000002",
++    "EventName": "FW_ACCESS_LOAD",
++    "BriefDescription": "Load access trap event"
++  },
++  {
++    "PublicDescription": "Store access trap",
++    "ConfigCode": "0x8000000000000003",
++    "EventName": "FW_ACCESS_STORE",
++    "BriefDescription": "Store access trap event"
++  },
++  {
++    "PublicDescription": "Illegal instruction trap",
++    "ConfigCode": "0x8000000000000004",
++    "EventName": "FW_ILLEGAL_INSN",
++    "BriefDescription": "Illegal instruction trap event"
++  },
++  {
++    "PublicDescription": "Set timer event",
++    "ConfigCode": "0x8000000000000005",
++    "EventName": "FW_SET_TIMER",
++    "BriefDescription": "Set timer event"
++  },
++  {
++    "PublicDescription": "Sent IPI to other HART event",
++    "ConfigCode": "0x8000000000000006",
++    "EventName": "FW_IPI_SENT",
++    "BriefDescription": "Sent IPI to other HART event"
++  },
++  {
++    "PublicDescription": "Received IPI from other HART event",
++    "ConfigCode": "0x8000000000000007",
++    "EventName": "FW_IPI_RECEIVED",
++    "BriefDescription": "Received IPI from other HART event"
++  },
++  {
++    "PublicDescription": "Sent FENCE.I request to other HART event",
++    "ConfigCode": "0x8000000000000008",
++    "EventName": "FW_FENCE_I_SENT",
++    "BriefDescription": "Sent FENCE.I request to other HART event"
++  },
++  {
++    "PublicDescription": "Received FENCE.I request from other HART event",
++    "ConfigCode": "0x8000000000000009",
++    "EventName": "FW_FENCE_I_RECEIVED",
++    "BriefDescription": "Received FENCE.I request from other HART event"
++  },
++  {
++    "PublicDescription": "Sent SFENCE.VMA request to other HART event",
++    "ConfigCode": "0x800000000000000a",
++    "EventName": "FW_SFENCE_VMA_SENT",
++    "BriefDescription": "Sent SFENCE.VMA request to other HART event"
++  },
++  {
++    "PublicDescription": "Received SFENCE.VMA request from other HART event",
++    "ConfigCode": "0x800000000000000b",
++    "EventName": "FW_SFENCE_VMA_RECEIVED",
++    "BriefDescription": "Received SFENCE.VMA request from other HART event"
++  },
++  {
++    "PublicDescription": "Sent SFENCE.VMA with ASID request to other HART event",
++    "ConfigCode": "0x800000000000000c",
++    "EventName": "FW_SFENCE_VMA_RECEIVED",
++    "BriefDescription": "Sent SFENCE.VMA with ASID request to other HART event"
++  },
++  {
++    "PublicDescription": "Received SFENCE.VMA with ASID request from other HART event",
++    "ConfigCode": "0x800000000000000d",
++    "EventName": "FW_SFENCE_VMA_ASID_RECEIVED",
++    "BriefDescription": "Received SFENCE.VMA with ASID request from other HART event"
++  },
++  {
++    "PublicDescription": "Sent HFENCE.GVMA request to other HART event",
++    "ConfigCode": "0x800000000000000e",
++    "EventName": "FW_HFENCE_GVMA_SENT",
++    "BriefDescription": "Sent HFENCE.GVMA request to other HART event"
++  },
++  {
++    "PublicDescription": "Received HFENCE.GVMA request from other HART event",
++    "ConfigCode": "0x800000000000000f",
++    "EventName": "FW_HFENCE_GVMA_RECEIVED",
++    "BriefDescription": "Received HFENCE.GVMA request from other HART event"
++  },
++  {
++    "PublicDescription": "Sent HFENCE.GVMA with VMID request to other HART event",
++    "ConfigCode": "0x8000000000000010",
++    "EventName": "FW_HFENCE_GVMA_VMID_SENT",
++    "BriefDescription": "Sent HFENCE.GVMA with VMID request to other HART event"
++  },
++  {
++    "PublicDescription": "Received HFENCE.GVMA with VMID request from other HART event",
++    "ConfigCode": "0x8000000000000011",
++    "EventName": "FW_HFENCE_GVMA_VMID_RECEIVED",
++    "BriefDescription": "Received HFENCE.GVMA with VMID request from other HART event"
++  },
++  {
++    "PublicDescription": "Sent HFENCE.VVMA request to other HART event",
++    "ConfigCode": "0x8000000000000012",
++    "EventName": "FW_HFENCE_VVMA_SENT",
++    "BriefDescription": "Sent HFENCE.VVMA request to other HART event"
++  },
++  {
++    "PublicDescription": "Received HFENCE.VVMA request from other HART event",
++    "ConfigCode": "0x8000000000000013",
++    "EventName": "FW_HFENCE_VVMA_RECEIVED",
++    "BriefDescription": "Received HFENCE.VVMA request from other HART event"
++  },
++  {
++    "PublicDescription": "Sent HFENCE.VVMA with ASID request to other HART event",
++    "ConfigCode": "0x8000000000000014",
++    "EventName": "FW_HFENCE_VVMA_ASID_SENT",
++    "BriefDescription": "Sent HFENCE.VVMA with ASID request to other HART event"
++  },
++  {
++    "PublicDescription": "Received HFENCE.VVMA with ASID request from other HART event",
++    "ConfigCode": "0x8000000000000015",
++    "EventName": "FW_HFENCE_VVMA_ASID_RECEIVED",
++    "BriefDescription": "Received HFENCE.VVMA with ASID request from other HART event"
++  }
++]
+diff --git a/tools/perf/pmu-events/arch/riscv/sifive/u74/firmware.json b/tools/perf/pmu-events/arch/riscv/sifive/u74/firmware.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/sifive/u74/firmware.json
+@@ -0,0 +1,68 @@
++[
++  {
++    "ArchStdEvent": "FW_MISALIGNED_LOAD"
++  },
++  {
++    "ArchStdEvent": "FW_MISALIGNED_STORE"
++  },
++  {
++    "ArchStdEvent": "FW_ACCESS_LOAD"
++  },
++  {
++    "ArchStdEvent": "FW_ACCESS_STORE"
++  },
++  {
++    "ArchStdEvent": "FW_ILLEGAL_INSN"
++  },
++  {
++    "ArchStdEvent": "FW_SET_TIMER"
++  },
++  {
++    "ArchStdEvent": "FW_IPI_SENT"
++  },
++  {
++    "ArchStdEvent": "FW_IPI_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_FENCE_I_SENT"
++  },
++  {
++    "ArchStdEvent": "FW_FENCE_I_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_SFENCE_VMA_SENT"
++  },
++  {
++    "ArchStdEvent": "FW_SFENCE_VMA_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_SFENCE_VMA_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_SFENCE_VMA_ASID_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_GVMA_SENT"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_GVMA_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_GVMA_VMID_SENT"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_GVMA_VMID_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_VVMA_SENT"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_VVMA_RECEIVED"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_VVMA_ASID_SENT"
++  },
++  {
++    "ArchStdEvent": "FW_HFENCE_VVMA_ASID_RECEIVED"
++  }
++]
+diff --git a/tools/perf/pmu-events/arch/riscv/sifive/u74/instructions.json b/tools/perf/pmu-events/arch/riscv/sifive/u74/instructions.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/sifive/u74/instructions.json
+@@ -0,0 +1,92 @@
++[
++  {
++    "EventName": "EXCEPTION_TAKEN",
++    "EventCode": "0x0000100",
++    "BriefDescription": "Exception taken"
++  },
++  {
++    "EventName": "INTEGER_LOAD_RETIRED",
++    "EventCode": "0x0000200",
++    "BriefDescription": "Integer load instruction retired"
++  },
++  {
++    "EventName": "INTEGER_STORE_RETIRED",
++    "EventCode": "0x0000400",
++    "BriefDescription": "Integer store instruction retired"
++  },
++  {
++    "EventName": "ATOMIC_MEMORY_RETIRED",
++    "EventCode": "0x0000800",
++    "BriefDescription": "Atomic memory operation retired"
++  },
++  {
++    "EventName": "SYSTEM_INSTRUCTION_RETIRED",
++    "EventCode": "0x0001000",
++    "BriefDescription": "System instruction retired"
++  },
++  {
++    "EventName": "INTEGER_ARITHMETIC_RETIRED",
++    "EventCode": "0x0002000",
++    "BriefDescription": "Integer arithmetic instruction retired"
++  },
++  {
++    "EventName": "CONDITIONAL_BRANCH_RETIRED",
++    "EventCode": "0x0004000",
++    "BriefDescription": "Conditional branch retired"
++  },
++  {
++    "EventName": "JAL_INSTRUCTION_RETIRED",
++    "EventCode": "0x0008000",
++    "BriefDescription": "JAL instruction retired"
++  },
++  {
++    "EventName": "JALR_INSTRUCTION_RETIRED",
++    "EventCode": "0x0010000",
++    "BriefDescription": "JALR instruction retired"
++  },
++  {
++    "EventName": "INTEGER_MULTIPLICATION_RETIRED",
++    "EventCode": "0x0020000",
++    "BriefDescription": "Integer multiplication instruction retired"
++  },
++  {
++    "EventName": "INTEGER_DIVISION_RETIRED",
++    "EventCode": "0x0040000",
++    "BriefDescription": "Integer division instruction retired"
++  },
++  {
++    "EventName": "FP_LOAD_RETIRED",
++    "EventCode": "0x0080000",
++    "BriefDescription": "Floating-point load instruction retired"
++  },
++  {
++    "EventName": "FP_STORE_RETIRED",
++    "EventCode": "0x0100000",
++    "BriefDescription": "Floating-point store instruction retired"
++  },
++  {
++    "EventName": "FP_ADDITION_RETIRED",
++    "EventCode": "0x0200000",
++    "BriefDescription": "Floating-point addition retired"
++  },
++  {
++    "EventName": "FP_MULTIPLICATION_RETIRED",
++    "EventCode": "0x0400000",
++    "BriefDescription": "Floating-point multiplication retired"
++  },
++  {
++    "EventName": "FP_FUSEDMADD_RETIRED",
++    "EventCode": "0x0800000",
++    "BriefDescription": "Floating-point fused multiply-add retired"
++  },
++  {
++    "EventName": "FP_DIV_SQRT_RETIRED",
++    "EventCode": "0x1000000",
++    "BriefDescription": "Floating-point division or square-root retired"
++  },
++  {
++    "EventName": "OTHER_FP_RETIRED",
++    "EventCode": "0x2000000",
++    "BriefDescription": "Other floating-point instruction retired"
++  }
++]
+\ No newline at end of file
+diff --git a/tools/perf/pmu-events/arch/riscv/sifive/u74/memory.json b/tools/perf/pmu-events/arch/riscv/sifive/u74/memory.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/sifive/u74/memory.json
+@@ -0,0 +1,32 @@
++[
++  {
++    "EventName": "ICACHE_RETIRED",
++    "EventCode": "0x0000102",
++    "BriefDescription": "Instruction cache miss"
++  },
++  {
++    "EventName": "DCACHE_MISS_MMIO_ACCESSES",
++    "EventCode": "0x0000202",
++    "BriefDescription": "Data cache miss or memory-mapped I/O access"
++  },
++  {
++    "EventName": "DCACHE_WRITEBACK",
++    "EventCode": "0x0000402",
++    "BriefDescription": "Data cache write-back"
++  },
++  {
++    "EventName": "INST_TLB_MISS",
++    "EventCode": "0x0000802",
++    "BriefDescription": "Instruction TLB miss"
++  },
++  {
++    "EventName": "DATA_TLB_MISS",
++    "EventCode": "0x0001002",
++    "BriefDescription": "Data TLB miss"
++  },
++  {
++    "EventName": "UTLB_MISS",
++    "EventCode": "0x0002002",
++    "BriefDescription": "UTLB miss"
++  }
++]
+\ No newline at end of file
+diff --git a/tools/perf/pmu-events/arch/riscv/sifive/u74/microarch.json b/tools/perf/pmu-events/arch/riscv/sifive/u74/microarch.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/sifive/u74/microarch.json
+@@ -0,0 +1,57 @@
++[
++  {
++    "EventName": "ADDRESSGEN_INTERLOCK",
++    "EventCode": "0x0000101",
++    "BriefDescription": "Address-generation interlock"
++  },
++  {
++    "EventName": "LONGLAT_INTERLOCK",
++    "EventCode": "0x0000201",
++    "BriefDescription": "Long-latency interlock"
++  },
++  {
++    "EventName": "CSR_READ_INTERLOCK",
++    "EventCode": "0x0000401",
++    "BriefDescription": "CSR read interlock"
++  },
++  {
++    "EventName": "ICACHE_ITIM_BUSY",
++    "EventCode": "0x0000801",
++    "BriefDescription": "Instruction cache/ITIM busy"
++  },
++  {
++    "EventName": "DCACHE_DTIM_BUSY",
++    "EventCode": "0x0001001",
++    "BriefDescription": "Data cache/DTIM busy"
++  },
++  {
++    "EventName": "BRANCH_DIRECTION_MISPREDICTION",
++    "EventCode": "0x0002001",
++    "BriefDescription": "Branch direction misprediction"
++  },
++  {
++    "EventName": "BRANCH_TARGET_MISPREDICTION",
++    "EventCode": "0x0004001",
++    "BriefDescription": "Branch/jump target misprediction"
++  },
++  {
++    "EventName": "PIPE_FLUSH_CSR_WRITE",
++    "EventCode": "0x0008001",
++    "BriefDescription": "Pipeline flush from CSR write"
++  },
++  {
++    "EventName": "PIPE_FLUSH_OTHER_EVENT",
++    "EventCode": "0x0010001",
++    "BriefDescription": "Pipeline flush from other event"
++  },
++  {
++    "EventName": "INTEGER_MULTIPLICATION_INTERLOCK",
++    "EventCode": "0x0020001",
++    "BriefDescription": "Integer multiplication interlock"
++  },
++  {
++    "EventName": "FP_INTERLOCK",
++    "EventCode": "0x0040001",
++    "BriefDescription": "Floating-point interlock"
++  }
++]
+\ No newline at end of file
+diff --git a/tools/perf/pmu-events/arch/riscv/spacemit/x60/branch.json b/tools/perf/pmu-events/arch/riscv/spacemit/x60/branch.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/spacemit/x60/branch.json
+@@ -0,0 +1,62 @@
++[
++  {
++    "EventName": "cond_br_inst",
++    "EventCode": "1",
++    "BriefDescription": "Conditional branch instructions"
++  },
++  {
++    "EventName": "cond_br_mispred",
++    "EventCode": "2",
++    "BriefDescription": "Conditional branch mispredictions"
++  },
++  {
++    "EventName": "br_inst",
++    "EventCode": "60",
++    "BriefDescription": "Branch instructions"
++  },
++  {
++    "EventName": "uncond_br_inst",
++    "EventCode": "61",
++    "BriefDescription": "Unconditional branch instructions"
++  },
++  {
++    "EventName": "indirect_br_inst",
++    "EventCode": "62",
++    "BriefDescription": "Indirect branch instructions"
++  },
++  {
++    "EventName": "indirect_br_mispred",
++    "EventCode": "66",
++    "BriefDescription": "Indirect branch mispredictions"
++  },
++  {
++    "EventName": "br_mispred",
++    "EventCode": "69",
++    "BriefDescription": "Branch mispredictions"
++  },
++  {
++    "EventName": "uncond_br_mispred",
++    "EventCode": "70",
++    "BriefDescription": "Unconditional branch mispredictions"
++  },
++  {
++    "EventName": "taken_br_mispred",
++    "EventCode": "71",
++    "BriefDescription": "Taken branch mispredictions"
++  },
++  {
++    "EventName": "taken_cond_br_inst",
++    "EventCode": "72",
++    "BriefDescription": "Taken conditional branch instructions"
++  },
++  {
++    "EventName": "taken_cond_br_mispred",
++    "EventCode": "73",
++    "BriefDescription": "Taken conditional branch mispredictions"
++  },
++  {
++    "EventName": "long_jump",
++    "EventCode": "74",
++    "BriefDescription": "Long jumps"
++  }
++]
+diff --git a/tools/perf/pmu-events/arch/riscv/spacemit/x60/cache.json b/tools/perf/pmu-events/arch/riscv/spacemit/x60/cache.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/spacemit/x60/cache.json
+@@ -0,0 +1,122 @@
++[
++  {
++    "EventName": "l1d_load_miss",
++    "EventCode": "5",
++    "BriefDescription": "L1 D-cache load misses"
++  },
++  {
++    "EventName": "l1d_load_access",
++    "EventCode": "6",
++    "BriefDescription": "L1 D-cache load accesses"
++  },
++  {
++    "EventName": "l1d_store_miss",
++    "EventCode": "9",
++    "BriefDescription": "L1 D-cache store misses"
++  },
++  {
++    "EventName": "l1d_store_access",
++    "EventCode": "10",
++    "BriefDescription": "L1 D-cache store accesses"
++  },
++  {
++    "EventName": "l1i_load_miss",
++    "EventCode": "11",
++    "BriefDescription": "L1 I-cache load misses"
++  },
++  {
++    "EventName": "l1i_load_access",
++    "EventCode": "12",
++    "BriefDescription": "L1 I-cache load accesses"
++  },
++  {
++    "EventName": "l1i_prefetch_miss",
++    "EventCode": "13",
++    "BriefDescription": "L1 I-cache prefetch misses"
++  },
++  {
++    "EventName": "l1i_prefetch",
++    "EventCode": "14",
++    "BriefDescription": "L1 I-cache prefetches"
++  },
++  {
++    "EventName": "dtlb_load_miss",
++    "EventCode": "21",
++    "BriefDescription": "DTLB load misses"
++  },
++  {
++    "EventName": "dtlb_store_miss",
++    "EventCode": "25",
++    "BriefDescription": "DTLB store misses"
++  },
++  {
++    "EventName": "itlb_load_miss",
++    "EventCode": "27",
++    "BriefDescription": "ITLB load misses"
++  },
++  {
++    "EventName": "jtlb_miss",
++    "EventCode": "163",
++    "BriefDescription": "JTLB misses"
++  },
++  {
++    "EventName": "l1d_access",
++    "EventCode": "170",
++    "BriefDescription": "L1 D-cache accesses"
++  },
++  {
++    "EventName": "l1d_miss",
++    "EventCode": "171",
++    "BriefDescription": "L1 D-cache misses"
++  },
++  {
++    "EventName": "l1d_excl_evict",
++    "EventCode": "172",
++    "BriefDescription": "L1 D-cache exclusive evictions to L2"
++  },
++  {
++    "EventName": "l1d_amr_active",
++    "EventCode": "173",
++    "BriefDescription": "L1 D-cache AMR actives"
++  },
++  {
++    "EventName": "l1d_prefetch_refill",
++    "EventCode": "174",
++    "BriefDescription": "L1 D-cache prefetch refills"
++  },
++  {
++    "EventName": "l1d_prefetch_hit",
++    "EventCode": "175",
++    "BriefDescription": "L1 D-cache prefetch hits"
++  },
++  {
++    "EventName": "l2_access",
++    "EventCode": "184",
++    "BriefDescription": "L2 cache accesses"
++  },
++  {
++    "EventName": "l2_miss",
++    "EventCode": "185",
++    "BriefDescription": "L2 cache misses"
++  },
++  {
++    "EventName": "l2_load_access",
++    "EventCode": "186",
++    "BriefDescription": "L2 cache load accesses"
++  },
++  {
++    "EventName": "l2_load_stall",
++    "EventCode": "187",
++    "BriefDescription": "L2 cache load stalls"
++  },
++  {
++    "EventName": "l2_store_access",
++    "EventCode": "188",
++    "BriefDescription": "L2 cache store accesses"
++  },
++  {
++    "EventName": "l2_store_stall",
++    "EventCode": "189",
++    "BriefDescription": "L2 cache store stalls"
++  }
++]
+diff --git a/tools/perf/pmu-events/arch/riscv/spacemit/x60/instruction.json b/tools/perf/pmu-events/arch/riscv/spacemit/x60/instruction.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/spacemit/x60/instruction.json
+@@ -0,0 +1,122 @@
++[
++  {
++    "EventName": "alu_inst",
++    "EventCode": "36",
++    "BriefDescription": "ALU (integer) instructions"
++  },
++  {
++    "EventName": "mult_inst",
++    "EventCode": "37",
++    "BriefDescription": "Multiplication instructions"
++  },
++  {
++    "EventName": "div_inst",
++    "EventCode": "38",
++    "BriefDescription": "Division instructions"
++  },
++  {
++    "EventName": "vector_div_inst",
++    "EventCode": "39",
++    "BriefDescription": "Vector division instructions"
++  },
++  {
++    "EventName": "fp_div_inst",
++    "EventCode": "40",
++    "BriefDescription": "Floating-point division instructions"
++  },
++  {
++    "EventName": "csr_inst",
++    "EventCode": "41",
++    "BriefDescription": "CSR instructions"
++  },
++  {
++    "EventName": "ecall_inst",
++    "EventCode": "42",
++    "BriefDescription": "ECALL instructions"
++  },
++  {
++    "EventName": "fp_inst",
++    "EventCode": "43",
++    "BriefDescription": "Floating-point instructions"
++  },
++  {
++    "EventName": "store_inst",
++    "EventCode": "44",
++    "BriefDescription": "Store instructions"
++  },
++  {
++    "EventName": "load_inst",
++    "EventCode": "45",
++    "BriefDescription": "Load instructions"
++  },
++  {
++    "EventName": "unaligned_load_inst",
++    "EventCode": "46",
++    "BriefDescription": "Unaligned load instructions"
++  },
++  {
++    "EventName": "unaligned_store_inst",
++    "EventCode": "47",
++    "BriefDescription": "Unaligned store instructions"
++  },
++  {
++    "EventName": "atomic_inst",
++    "EventCode": "48",
++    "BriefDescription": "Atomic instructions"
++  },
++  {
++    "EventName": "lr_inst",
++    "EventCode": "49",
++    "BriefDescription": "LR instructions"
++  },
++  {
++    "EventName": "sc_inst",
++    "EventCode": "50",
++    "BriefDescription": "SC instructions"
++  },
++  {
++    "EventName": "amo_inst",
++    "EventCode": "51",
++    "BriefDescription": "AMO instructions"
++  },
++  {
++    "EventName": "fence_inst",
++    "EventCode": "52",
++    "BriefDescription": "FENCE instructions"
++  },
++  {
++    "EventName": "failed_sc_inst",
++    "EventCode": "53",
++    "BriefDescription": "Failed SC instructions"
++  },
++  {
++    "EventName": "bus_fence_inst",
++    "EventCode": "54",
++    "BriefDescription": "Bus FENCE instructions"
++  },
++  {
++    "EventName": "fp_load_inst",
++    "EventCode": "55",
++    "BriefDescription": "Floating-point load instructions"
++  },
++  {
++    "EventName": "fp_store_inst",
++    "EventCode": "56",
++    "BriefDescription": "Floating-point store instructions"
++  },
++  {
++    "EventName": "vector_load_inst",
++    "EventCode": "57",
++    "BriefDescription": "Vector load instructions"
++  },
++  {
++    "EventName": "vector_store_inst",
++    "EventCode": "58",
++    "BriefDescription": "Vector store instructions"
++  },
++  {
++    "EventName": "vector_inst",
++    "EventCode": "59",
++    "BriefDescription": "Vector instructions"
++  }
++]
+diff --git a/tools/perf/pmu-events/arch/riscv/spacemit/x60/microarch.json b/tools/perf/pmu-events/arch/riscv/spacemit/x60/microarch.json
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/tools/perf/pmu-events/arch/riscv/spacemit/x60/microarch.json
+@@ -0,0 +1,522 @@
++[
++  {
++    "EventName": "stalled_cycle_frontend",
++    "EventCode": "3",
++    "BriefDescription": "Stalled cycles frontend"
++  },
++  {
++    "EventName": "stalled_cycle_backend",
++    "EventCode": "4",
++    "BriefDescription": "Stalled cycles backend"
++  },
++  {
++    "EventName": "m_mode_cycle",
++    "EventCode": "32",
++    "BriefDescription": "M-mode cycles"
++  },
++  {
++    "EventName": "s_mode_cycle",
++    "EventCode": "33",
++    "BriefDescription": "S-mode cycles"
++  },
++  {
++    "EventName": "u_mode_cycle",
++    "EventCode": "34",
++    "BriefDescription": "U-mode cycles"
++  },
++  {
++    "EventName": "pipeline_flush",
++    "EventCode": "63",
++    "BriefDescription": "Pipeline flushes"
++  },
++  {
++    "EventName": "interrupt",
++    "EventCode": "64",
++    "BriefDescription": "Interrupts"
++  },
++  {
++    "EventName": "exception",
++    "EventCode": "65",
++    "BriefDescription": "Exceptions"
++  },
++  {
++    "EventName": "ifu_btb_miss",
++    "EventCode": "67",
++    "BriefDescription": "IFU (Instruction Fetch Unit) BTB misses"
++  },
++  {
++    "EventName": "ifu_btb_access",
++    "EventCode": "68",
++    "BriefDescription": "IFU (Instruction Fetch Unit) BTB accesses"
++  },
++  {
++    "EventName": "ecc_interrupt",
++    "EventCode": "75",
++    "BriefDescription": "ECC interrupts"
++  },
++  {
++    "EventName": "async_abort",
++    "EventCode": "76",
++    "BriefDescription": "Asynchronous aborts"
++  },
++  {
++    "EventName": "issued_inst",
++    "EventCode": "77",
++    "BriefDescription": "Issued instructions"
++  },
++  {
++    "EventName": "if_stall",
++    "EventCode": "78",
++    "BriefDescription": "IF stalls"
++  },
++  {
++    "EventName": "if_mmu_stall",
++    "EventCode": "79",
++    "BriefDescription": "IF-MMU stalls"
++  },
++  {
++    "EventName": "if_refill_stall",
++    "EventCode": "80",
++    "BriefDescription": "IF-refill stalls"
++  },
++  {
++    "EventName": "ip_stall",
++    "EventCode": "81",
++    "BriefDescription": "IP stalls"
++  },
++  {
++    "EventName": "ib_stall",
++    "EventCode": "82",
++    "BriefDescription": "IB stalls"
++  },
++  {
++    "EventName": "ib_vsetvl_stall",
++    "EventCode": "83",
++    "BriefDescription": "IB vsetvl stalls"
++  },
++  {
++    "EventName": "ib_fifo_stall",
++    "EventCode": "84",
++    "BriefDescription": "IB FIFO stalls"
++  },
++  {
++    "EventName": "ib_mispred_stall",
++    "EventCode": "85",
++    "BriefDescription": "IB misprediction stalls"
++  },
++  {
++    "EventName": "ib_ind_btd_stall",
++    "EventCode": "86",
++    "BriefDescription": "IB IND BTB stalls"
++  },
++  {
++    "EventName": "iq_full",
++    "EventCode": "87",
++    "BriefDescription": "IQ fulls"
++  },
++  {
++    "EventName": "id_stall",
++    "EventCode": "88",
++    "BriefDescription": "ID stalls"
++  },
++  {
++    "EventName": "id_inst_pipedown",
++    "EventCode": "89",
++    "BriefDescription": "ID instruction pipedowns"
++  },
++  {
++    "EventName": "id_one_inst_pipedown",
++    "EventCode": "90",
++    "BriefDescription": "ID one instruction pipedowns"
++  },
++  {
++    "EventName": "id_flush_stall",
++    "EventCode": "91",
++    "BriefDescription": "ID flush stalls"
++  },
++  {
++    "EventName": "id_vsetvl_fof_stall",
++    "EventCode": "92",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "id_iid_not_vld_stall",
++    "EventCode": "93",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "id_csr_bef_fence_stall",
++    "EventCode": "94",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "id_mispred_stall",
++    "EventCode": "95",
++    "BriefDescription": "ID misprediction stalls"
++  },
++  {
++    "EventName": "rf_stall",
++    "EventCode": "96",
++    "BriefDescription": "RF stalls"
++  },
++  {
++    "EventName": "rf_inst_pipedown",
++    "EventCode": "97",
++    "BriefDescription": "RF instruction pipedowns"
++  },
++  {
++    "EventName": "rf_one_inst_pipedown",
++    "EventCode": "98",
++    "BriefDescription": "RF one instruction pipedowns"
++  },
++  {
++    "EventName": "rf_waw_stall",
++    "EventCode": "99",
++    "BriefDescription": "RF WAW stalls"
++  },
++  {
++    "EventName": "rf_raw_stall",
++    "EventCode": "100",
++    "BriefDescription": "RF RAW stalls"
++  },
++  {
++    "EventName": "rf_csr_aft_fence_stall",
++    "EventCode": "101",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rf_structure_stall",
++    "EventCode": "102",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "eu_stall",
++    "EventCode": "103",
++    "BriefDescription": "EU (Execution Unit) stalls"
++  },
++  {
++    "EventName": "eu_iu_full",
++    "EventCode": "104",
++    "BriefDescription": "EU IU (Integer Unit) fulls"
++  },
++  {
++    "EventName": "eu_iu_control_full",
++    "EventCode": "105",
++    "BriefDescription": "EU IU (Integer Unit) control fulls"
++  },
++  {
++    "EventName": "eu_bju_full",
++    "EventCode": "106",
++    "BriefDescription": "EU BJU (Branch and Jump Unit) fulls"
++  },
++  {
++    "EventName": "eu_lsu_load_full",
++    "EventCode": "107",
++    "BriefDescription": "EU LSU (Load and Store Unit) load fulls"
++  },
++  {
++    "EventName": "eu_lsu_store_full",
++    "EventCode": "108",
++    "BriefDescription": "EU LSU (Load and Store Unit) store fulls"
++  },
++  {
++    "EventName": "eu_cp0_full",
++    "EventCode": "109",
++    "BriefDescription": "EU CP0 (Coprocessor 0) fulls"
++  },
++  {
++    "EventName": "eu_vfpu_full",
++    "EventCode": "110",
++    "BriefDescription": "EU VFPU (Vector and Floating-point Processing Unit)"
++  },
++  {
++    "EventName": "iu_dp_stall_pipe0",
++    "EventCode": "111",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_mult_stall_pipe0",
++    "EventCode": "112",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_div_ex1_stall_pipe0",
++    "EventCode": "113",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_dp_pipe_stall_pipe1",
++    "EventCode": "114",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_mult_stall_pipe1",
++    "EventCode": "115",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_div_ex1_stall_pipe1",
++    "EventCode": "116",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_dp_uncommit_pipe0",
++    "EventCode": "117",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_dp_wb_conflict_pipe0",
++    "EventCode": "118",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_dp_waw_stall_pipe0",
++    "EventCode": "119",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_dp_uncommit_pipe1",
++    "EventCode": "120",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_dp_wb_conflict_pipe1",
++    "EventCode": "121",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_dp_waw_stall_pipe1",
++    "EventCode": "122",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_mult_wb_stall",
++    "EventCode": "123",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_mult_uncommit",
++    "EventCode": "124",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_div_wb_stall",
++    "EventCode": "125",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "iu_div_uncommit",
++    "EventCode": "126",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "mult_inner_forward",
++    "EventCode": "127",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "div_buffer_hit",
++    "EventCode": "128",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vpu_stall_pipe0",
++    "EventCode": "129",
++    "BriefDescription": "VPU (Vector Processing Unit) pipe0 stalls"
++  },
++  {
++    "EventName": "vpu_stall_pipe1",
++    "EventCode": "130",
++    "BriefDescription": "VPU (Vector Processing Unit) pipe1 stalls"
++  },
++  {
++    "EventName": "vpu_hazard_stall_pipe0",
++    "EventCode": "131",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vpu_uncommit_stall_pipe0",
++    "EventCode": "132",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vpu_vlsu_stall_pipe0",
++    "EventCode": "133",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vpu_hazard_stall_pipe1",
++    "EventCode": "134",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vpu_uncommit_stall_pipe1",
++    "EventCode": "135",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vpu_vlsu_stall_pipe1",
++    "EventCode": "136",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vpu_div_busy",
++    "EventCode": "137",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "bju_cp0_stall",
++    "EventCode": "138",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "bju_ibuf_stall",
++    "EventCode": "139",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "bju_wb_stall",
++    "EventCode": "140",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "bju_pipedown",
++    "EventCode": "141",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec0_stall",
++    "EventCode": "142",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec1_stall",
++    "EventCode": "143",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec0_depend_stall",
++    "EventCode": "144",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec0_struct_hazard_stall",
++    "EventCode": "145",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec1_depend_stall",
++    "EventCode": "146",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec1_struct_hazard_stall",
++    "EventCode": "147",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_total_cycle",
++    "EventCode": "148",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec0_cycle",
++    "EventCode": "149",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_vec1_cycle",
++    "EventCode": "150",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vector_micro_op",
++    "EventCode": "151",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_flush_cycle",
++    "EventCode": "152",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_only_iu_not_no_op",
++    "EventCode": "153",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_only_bju_not_no_op",
++    "EventCode": "154",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_only_cp0_not_no_op",
++    "EventCode": "155",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_only_lsu_not_no_op",
++    "EventCode": "156",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_only_vfpu_not_no_op",
++    "EventCode": "157",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_iu_not_no_op",
++    "EventCode": "158",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_bju_not_no_op",
++    "EventCode": "159",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_cp0_not_no_op",
++    "EventCode": "160",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_lsu_not_no_op",
++    "EventCode": "161",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "rtu_vfpu_not_no_op",
++    "EventCode": "162",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "lsu_fence_stall",
++    "EventCode": "164",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "lsu_load_waw_stall",
++    "EventCode": "165",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "lsu_load_commit_stall",
++    "EventCode": "166",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "lsu_load_raw_stall",
++    "EventCode": "167",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "lsu_store_commit_stall",
++    "EventCode": "168",
++    "BriefDescription": " "
++  },
++  {
++    "EventName": "vidu_rf_no_pipedown",
++    "EventCode": "169",
++    "BriefDescription": " "
++  }
++]
+-- 
+Armbian
+

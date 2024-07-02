@@ -1,0 +1,3245 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Fri, 21 Jun 2024 11:54:06 -0400
+Subject: add spacemit patch set
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/clk/Kconfig                     |    2 +-
+ drivers/clk/Makefile                    |    1 +
+ drivers/clk/spacemit/Kconfig            |   15 +
+ drivers/clk/spacemit/Makefile           |    8 +
+ drivers/clk/spacemit/ccu-spacemit-k1x.c | 1537 ++++++++++
+ drivers/clk/spacemit/ccu-spacemit-k1x.h |   83 +
+ drivers/clk/spacemit/ccu_ddn.c          |  170 +
+ drivers/clk/spacemit/ccu_ddn.h          |   97 +
+ drivers/clk/spacemit/ccu_mix.c          |  489 +++
+ drivers/clk/spacemit/ccu_mix.h          |  374 +++
+ drivers/clk/spacemit/ccu_pll.c          |  280 ++
+ drivers/clk/spacemit/ccu_pll.h          |   84 +
+ 12 files changed, 3139 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
+index 111111111111..222222222222 100644
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -471,7 +471,7 @@ source "drivers/clk/visconti/Kconfig"
+ source "drivers/clk/x86/Kconfig"
+ source "drivers/clk/xilinx/Kconfig"
+ source "drivers/clk/zynqmp/Kconfig"
+-
++source "drivers/clk/spacemit/Kconfig"
+ # Kunit test cases
+ config CLK_KUNIT_TEST
+ 	tristate "Basic Clock Framework Kunit Tests" if !KUNIT_ALL_TESTS
+diff --git a/drivers/clk/Makefile b/drivers/clk/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -132,3 +132,4 @@ endif
+ obj-y					+= xilinx/
+ obj-$(CONFIG_ARCH_ZYNQ)			+= zynq/
+ obj-$(CONFIG_COMMON_CLK_ZYNQMP)         += zynqmp/
++obj-y					+= spacemit/
+diff --git a/drivers/clk/spacemit/Kconfig b/drivers/clk/spacemit/Kconfig
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/Kconfig
+@@ -0,0 +1,15 @@
++# SPDX-License-Identifier: GPL-2.0
++# common clock support for SPACEMIT SoC family.
++
++config SPACEMIT_K1PRO_CCU
++	tristate "Clock support for Spacemit k1pro SoCs"
++	depends on SOC_SPACEMIT_K1PRO
++	help
++	  Build the driver for K1pro Clock Driver.
++
++config SPACEMIT_K1X_CCU
++        tristate "Clock support for Spacemit k1x SoCs"
++        depends on SOC_SPACEMIT_K1X
++        help
++          Build the driver for Spacemit K1x Clock Driver.
++
+diff --git a/drivers/clk/spacemit/Makefile b/drivers/clk/spacemit/Makefile
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/Makefile
+@@ -0,0 +1,8 @@
++# SPDX-License-Identifier: GPL-2.0
++#
++# Spacemit Clock specific Makefile
++#
++
++#SoC support
++obj-$(CONFIG_SPACEMIT_K1X_CCU)     += ccu-spacemit-k1x.o ccu_mix.o ccu_pll.o ccu_ddn.o
++obj-$(CONFIG_SPACEMIT_K1PRO_CCU)   += ccu-spacemit-k1pro.o
+diff --git a/drivers/clk/spacemit/ccu-spacemit-k1x.c b/drivers/clk/spacemit/ccu-spacemit-k1x.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu-spacemit-k1x.c
+@@ -0,0 +1,1537 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Spacemit k1x clock controller driver
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/clk.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++#include <dt-bindings/clock/spacemit-k1x-clock.h>
++#include "ccu-spacemit-k1x.h"
++#include "ccu_mix.h"
++#include "ccu_pll.h"
++#include "ccu_ddn.h"
++
++#define LOG_INFO(fmt, arg...)    pr_info("[K1X-CLK][%s][%d]:" fmt "\n", __func__, __LINE__, ##arg)
++
++DEFINE_SPINLOCK(g_cru_lock);
++
++/* APBS register offset */
++//pll1
++#define APB_SPARE1_REG          0x100
++#define APB_SPARE2_REG          0x104
++#define APB_SPARE3_REG          0x108
++//pll2
++#define APB_SPARE7_REG          0x118
++#define APB_SPARE8_REG          0x11c
++#define APB_SPARE9_REG          0x120
++//pll3
++#define APB_SPARE10_REG         0x124
++#define APB_SPARE11_REG         0x128
++#define APB_SPARE12_REG         0x12c
++/* end of APBS register offset */
++
++/* APBC register offset */
++#define APBC_UART1_CLK_RST      0x0
++#define APBC_UART2_CLK_RST      0x4
++#define APBC_GPIO_CLK_RST       0x8
++#define APBC_PWM0_CLK_RST       0xc
++#define APBC_PWM1_CLK_RST       0x10
++#define APBC_PWM2_CLK_RST       0x14
++#define APBC_PWM3_CLK_RST       0x18
++#define APBC_TWSI8_CLK_RST      0x20
++#define APBC_UART3_CLK_RST      0x24
++#define APBC_RTC_CLK_RST        0x28 //reserved
++#define APBC_TWSI0_CLK_RST      0x2c
++#define APBC_TWSI1_CLK_RST      0x30
++#define APBC_TIMERS1_CLK_RST    0x34
++#define APBC_TWSI2_CLK_RST      0x38
++#define APBC_AIB_CLK_RST        0x3c
++#define APBC_TWSI4_CLK_RST      0x40
++#define APBC_TIMERS2_CLK_RST    0x44
++#define APBC_ONEWIRE_CLK_RST    0x48
++#define APBC_TWSI5_CLK_RST      0x4c
++#define APBC_DRO_CLK_RST        0x58
++#define APBC_IR_CLK_RST         0x5c
++#define APBC_TWSI6_CLK_RST      0x60
++#define APBC_COUNTER_CLK_SEL    0x64
++
++#define APBC_TWSI7_CLK_RST      0x68
++#define APBC_TSEN_CLK_RST       0x6c
++
++#define APBC_UART4_CLK_RST      0x70
++#define APBC_UART5_CLK_RST      0x74
++#define APBC_UART6_CLK_RST      0x78
++#define APBC_SSP3_CLK_RST       0x7c
++
++#define APBC_SSPA0_CLK_RST      0x80
++#define APBC_SSPA1_CLK_RST      0x84
++
++#define APBC_IPC_AP2AUD_CLK_RST 0x90
++#define APBC_UART7_CLK_RST      0x94
++#define APBC_UART8_CLK_RST      0x98
++#define APBC_UART9_CLK_RST      0x9c
++
++#define APBC_CAN0_CLK_RST       0xa0
++#define APBC_PWM4_CLK_RST       0xa8
++#define APBC_PWM5_CLK_RST       0xac
++#define APBC_PWM6_CLK_RST       0xb0
++#define APBC_PWM7_CLK_RST       0xb4
++#define APBC_PWM8_CLK_RST       0xb8
++#define APBC_PWM9_CLK_RST       0xbc
++#define APBC_PWM10_CLK_RST      0xc0
++#define APBC_PWM11_CLK_RST      0xc4
++#define APBC_PWM12_CLK_RST      0xc8
++#define APBC_PWM13_CLK_RST      0xcc
++#define APBC_PWM14_CLK_RST      0xd0
++#define APBC_PWM15_CLK_RST      0xd4
++#define APBC_PWM16_CLK_RST      0xd8
++#define APBC_PWM17_CLK_RST      0xdc
++#define APBC_PWM18_CLK_RST      0xe0
++#define APBC_PWM19_CLK_RST      0xe4
++/* end of APBC register offset */
++
++/* MPMU register offset */
++#define MPMU_POSR			0x10 //no define
++#define POSR_PLL1_LOCK			BIT(27)
++#define POSR_PLL2_LOCK			BIT(28)
++#define POSR_PLL3_LOCK			BIT(29)
++
++#define MPMU_VRCR			0x18 //no define
++#define MPMU_VRCR_REQ_EN0		BIT(0)
++#define MPMU_VRCR_REQ_EN2		BIT(2)
++#define MPMU_VRCR_REQ_POL2		BIT(6)
++#define MPMU_VRCR_VCXO_OUT_REQ_EN2	BIT(14)
++
++#define MPMU_WDTPCR     0x200
++#define MPMU_RIPCCR     0x210 //no define
++#define MPMU_ACGR       0x1024
++#define MPMU_SUCCR      0x14
++#define MPMU_ISCCR      0x44
++#define MPMU_SUCCR_1    0x10b0
++#define MPMU_APBCSCR    0x1050
++
++/* end of MPMU register offset */
++
++/* APMU register offset */
++#define APMU_JPG_CLK_RES_CTRL       0x20
++#define APMU_CSI_CCIC2_CLK_RES_CTRL 0x24
++#define APMU_ISP_CLK_RES_CTRL       0x38
++#define APMU_LCD_CLK_RES_CTRL1      0x44
++#define APMU_LCD_SPI_CLK_RES_CTRL   0x48
++#define APMU_LCD_CLK_RES_CTRL2      0x4c
++#define APMU_CCIC_CLK_RES_CTRL      0x50
++#define APMU_SDH0_CLK_RES_CTRL      0x54
++#define APMU_SDH1_CLK_RES_CTRL      0x58
++#define APMU_USB_CLK_RES_CTRL       0x5c
++#define APMU_QSPI_CLK_RES_CTRL      0x60
++#define APMU_USB_CLK_RES_CTRL       0x5c
++#define APMU_DMA_CLK_RES_CTRL       0x64
++#define APMU_AES_CLK_RES_CTRL       0x68
++#define APMU_VPU_CLK_RES_CTRL       0xa4
++#define APMU_GPU_CLK_RES_CTRL       0xcc
++#define APMU_SDH2_CLK_RES_CTRL      0xe0
++#define APMU_PMUA_MC_CTRL           0xe8
++#define APMU_PMU_CC2_AP             0x100
++#define APMU_PMUA_EM_CLK_RES_CTRL   0x104
++
++#define APMU_AUDIO_CLK_RES_CTRL     0x14c
++#define APMU_HDMI_CLK_RES_CTRL      0x1B8
++#define APMU_CCI550_CLK_CTRL        0x300
++#define APMU_ACLK_CLK_CTRL          0x388
++#define APMU_CPU_C0_CLK_CTRL        0x38C
++#define APMU_CPU_C1_CLK_CTRL        0x390
++
++#define APMU_PCIE_CLK_RES_CTRL_0    0x3cc
++#define APMU_PCIE_CLK_RES_CTRL_1    0x3d4
++#define APMU_PCIE_CLK_RES_CTRL_2    0x3dc
++
++#define APMU_EMAC0_CLK_RES_CTRL     0x3e4
++#define APMU_EMAC1_CLK_RES_CTRL     0x3ec
++/* end of APMU register offset */
++
++/* APBC2 register offset */
++#define APBC2_UART1_CLK_RST		0x00
++#define APBC2_SSP2_CLK_RST		0x04
++#define APBC2_TWSI3_CLK_RST		0x08
++#define APBC2_RTC_CLK_RST		0x0c
++#define APBC2_TIMERS0_CLK_RST		0x10
++#define APBC2_KPC_CLK_RST		0x14
++#define APBC2_GPIO_CLK_RST		0x1c
++/* end of APBC2 register offset */
++
++/* RCPU register offset */
++#define RCPU_HDMI_CLK_RST		0x2044
++#define RCPU_CAN_CLK_RST		0x4c
++/* end of RCPU register offset */
++
++/* RCPU2 register offset */
++#define RCPU2_PWM_CLK_RST		0x08
++/* end of RCPU2 register offset */
++
++struct spacemit_k1x_clk k1x_clock_controller;
++
++//apbs
++static const struct ccu_pll_rate_tbl pll2_rate_tbl[] = {
++	PLL_RATE(3000000000UL, 0x66, 0xdd, 0x50, 0x00, 0x3f, 0xe00000),
++	PLL_RATE(3200000000UL, 0x67, 0xdd, 0x50, 0x00, 0x43, 0xeaaaab),
++	PLL_RATE(2457600000UL, 0x64, 0xdd, 0x50, 0x00, 0x33, 0x0ccccd),
++	PLL_RATE(2800000000UL, 0x66, 0xdd, 0x50, 0x00, 0x3a, 0x155555),
++};
++
++static const struct ccu_pll_rate_tbl pll3_rate_tbl[] = {
++	PLL_RATE(3000000000UL, 0x66, 0xdd, 0x50, 0x00, 0x3f, 0xe00000),
++	PLL_RATE(3200000000UL, 0x67, 0xdd, 0x50, 0x00, 0x43, 0xeaaaab),
++	PLL_RATE(2457600000UL, 0x64, 0xdd, 0x50, 0x00, 0x33, 0x0ccccd),
++};
++
++static SPACEMIT_CCU_PLL(pll2, "pll2", &pll2_rate_tbl, ARRAY_SIZE(pll2_rate_tbl),
++	BASE_TYPE_APBS, APB_SPARE7_REG, APB_SPARE8_REG, APB_SPARE9_REG,
++	MPMU_POSR, POSR_PLL2_LOCK, 1,
++	CLK_IGNORE_UNUSED);
++
++static SPACEMIT_CCU_PLL(pll3, "pll3", &pll3_rate_tbl, ARRAY_SIZE(pll3_rate_tbl),
++	BASE_TYPE_APBS, APB_SPARE10_REG, APB_SPARE11_REG, APB_SPARE12_REG,
++	MPMU_POSR, POSR_PLL3_LOCK, 1,
++	CLK_IGNORE_UNUSED);
++
++//pll1
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d2, "pll1_d2", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(1), BIT(1), 0x0,
++	2, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d3, "pll1_d3", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(2), BIT(2), 0x0,
++	3, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d4, "pll1_d4", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(3), BIT(3), 0x0,
++	4, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d5, "pll1_d5", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(4), BIT(4), 0x0,
++	5, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d6, "pll1_d6", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(5), BIT(5), 0x0,
++	6, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d7, "pll1_d7", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(6), BIT(6), 0x0,
++	7, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d8, "pll1_d8", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(7), BIT(7), 0x0,
++	8, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d11_223p4, "pll1_d11_223p4", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(15), BIT(15), 0x0,
++	11, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d13_189, "pll1_d13_189", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(16), BIT(16), 0x0,
++	13, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d23_106p8, "pll1_d23_106p8", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(20), BIT(20), 0x0,
++	23, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d64_38p4, "pll1_d64_38p4", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(0), BIT(0), 0x0,
++	64, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_aud_245p7, "pll1_aud_245p7", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(10), BIT(10), 0x0,
++	10, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_aud_24p5, "pll1_aud_24p5", "pll1_2457p6_vco",
++	BASE_TYPE_APBS, APB_SPARE2_REG,
++	BIT(11), BIT(11), 0x0,
++	100, 1, CLK_IGNORE_UNUSED);
++
++//pll2
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d1, "pll2_d1", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(0), BIT(0), 0x0,
++	1, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d2, "pll2_d2", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(1), BIT(1), 0x0,
++	2, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d3, "pll2_d3", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(2), BIT(2), 0x0,
++	3, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d4, "pll2_d4", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(3), BIT(3), 0x0,
++	4, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d5, "pll2_d5", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(4), BIT(4), 0x0,
++	5, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d6, "pll2_d6", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(5), BIT(5), 0x0,
++	6, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d7, "pll2_d7", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(6), BIT(6), 0x0,
++	7, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll2_d8, "pll2_d8", "pll2",
++	BASE_TYPE_APBS, APB_SPARE8_REG,
++	BIT(7), BIT(7), 0x0,
++	8, 1, CLK_IGNORE_UNUSED);
++
++//pll3
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d1, "pll3_d1", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(0), BIT(0), 0x0,
++	1, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d2, "pll3_d2", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(1), BIT(1), 0x0,
++	2, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d3, "pll3_d3", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(2), BIT(2), 0x0,
++	3, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d4, "pll3_d4", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(3), BIT(3), 0x0,
++	4, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d5, "pll3_d5", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(4), BIT(4), 0x0,
++	5, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d6, "pll3_d6", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(5), BIT(5), 0x0,
++	6, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d7, "pll3_d7", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(6), BIT(6), 0x0,
++	7, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll3_d8, "pll3_d8", "pll3",
++	BASE_TYPE_APBS, APB_SPARE11_REG,
++	BIT(7), BIT(7), 0x0,
++	8, 1, CLK_IGNORE_UNUSED);
++
++//pll3_div
++static SPACEMIT_CCU_FACTOR(pll3_80, "pll3_80", "pll3_d8",
++	5, 1);
++static SPACEMIT_CCU_FACTOR(pll3_40, "pll3_40", "pll3_d8",
++	10, 1);
++static SPACEMIT_CCU_FACTOR(pll3_20, "pll3_20", "pll3_d8",
++	20, 1);
++
++//pll1_d8
++static SPACEMIT_CCU_GATE(pll1_d8_307p2, "pll1_d8_307p2", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(13), BIT(13), 0x0,
++	CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_FACTOR(pll1_d32_76p8, "pll1_d32_76p8", "pll1_d8_307p2",
++	4, 1);
++static SPACEMIT_CCU_FACTOR(pll1_d40_61p44, "pll1_d40_61p44", "pll1_d8_307p2",
++	5, 1);
++static SPACEMIT_CCU_FACTOR(pll1_d16_153p6, "pll1_d16_153p6", "pll1_d8",
++	2, 1);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d24_102p4, "pll1_d24_102p4", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(12), BIT(12), 0x0,
++	3, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d48_51p2, "pll1_d48_51p2", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(7), BIT(7), 0x0,
++	6, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d48_51p2_ap, "pll1_d48_51p2_ap", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(11), BIT(11), 0x0,
++	6, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_m3d128_57p6, "pll1_m3d128_57p6", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(8), BIT(8), 0x0,
++	16, 3, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d96_25p6, "pll1_d96_25p6", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(4), BIT(4), 0x0,
++	12, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d192_12p8, "pll1_d192_12p8", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(3), BIT(3), 0x0,
++	24, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d192_12p8_wdt, "pll1_d192_12p8_wdt", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(19), BIT(19), 0x0,
++	24, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d384_6p4, "pll1_d384_6p4", "pll1_d8",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(2), BIT(2), 0x0,
++	48, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_FACTOR(pll1_d768_3p2, "pll1_d768_3p2", "pll1_d384_6p4",
++	2, 1);
++static SPACEMIT_CCU_FACTOR(pll1_d1536_1p6, "pll1_d1536_1p6", "pll1_d384_6p4",
++	4, 1);
++static SPACEMIT_CCU_FACTOR(pll1_d3072_0p8, "pll1_d3072_0p8", "pll1_d384_6p4",
++	8, 1);
++//pll1_d7
++static SPACEMIT_CCU_FACTOR(pll1_d7_351p08, "pll1_d7_351p08", "pll1_d7",
++	1, 1);
++//pll1_d6
++static SPACEMIT_CCU_GATE(pll1_d6_409p6, "pll1_d6_409p6", "pll1_d6",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(0), BIT(0), 0x0,
++	CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d12_204p8, "pll1_d12_204p8", "pll1_d6",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(5), BIT(5), 0x0,
++	2, 1, CLK_IGNORE_UNUSED);
++//pll1_d5
++static SPACEMIT_CCU_GATE(pll1_d5_491p52, "pll1_d5_491p52", "pll1_d5",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(21), BIT(21), 0x0,
++	CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d10_245p76, "pll1_d10_245p76", "pll1_d5",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(18), BIT(18), 0x0,
++	2, 1, CLK_IGNORE_UNUSED);
++//pll1_d4
++static SPACEMIT_CCU_GATE(pll1_d4_614p4, "pll1_d4_614p4", "pll1_d4",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(15), BIT(15), 0x0,
++	CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d52_47p26, "pll1_d52_47p26", "pll1_d4",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(10), BIT(10), 0x0,
++	13, 1, CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_GATE_FACTOR(pll1_d78_31p5, "pll1_d78_31p5", "pll1_d4",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(6), BIT(6), 0x0,
++	39, 2, CLK_IGNORE_UNUSED);
++//pll1_d3
++static SPACEMIT_CCU_GATE(pll1_d3_819p2, "pll1_d3_819p2", "pll1_d3",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(14), BIT(14), 0x0,
++	CLK_IGNORE_UNUSED);
++//pll1_d2
++static SPACEMIT_CCU_GATE(pll1_d2_1228p8, "pll1_d2_1228p8", "pll1_d2",
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(16), BIT(16), 0x0,
++	CLK_IGNORE_UNUSED);
++
++//mpmu
++static struct ccu_ddn_info uart_ddn_mask_info = {
++	.factor = 2,
++	.num_mask = 0x1fff,
++	.den_mask = 0x1fff,
++	.num_shift = 16,
++	.den_shift = 0,
++};
++static struct ccu_ddn_tbl slow_uart1_tbl[] = {
++	{.num = 125, .den = 24}, /*rate = parent_rate*24/125/2) */
++};
++static struct ccu_ddn_tbl slow_uart2_tbl[] = {
++	{.num = 6144, .den = 960},/*rate = parent_rate*960/6144/2) */
++};
++
++static SPACEMIT_CCU_GATE_NO_PARENT(slow_uart, "slow_uart", NULL,
++	BASE_TYPE_MPMU, MPMU_ACGR,
++	BIT(1), BIT(1), 0x0,
++	0);
++static SPACEMIT_CCU_DDN(slow_uart1_14p74, "slow_uart1_14p74", "pll1_d16_153p6",
++	&uart_ddn_mask_info, &slow_uart1_tbl, ARRAY_SIZE(slow_uart1_tbl),
++	BASE_TYPE_MPMU, MPMU_SUCCR,
++	CLK_IGNORE_UNUSED);
++static SPACEMIT_CCU_DDN(slow_uart2_48, "slow_uart2_48", "pll1_d4_614p4",
++	&uart_ddn_mask_info, &slow_uart2_tbl, ARRAY_SIZE(slow_uart2_tbl),
++	BASE_TYPE_MPMU, MPMU_SUCCR_1,
++	CLK_IGNORE_UNUSED);
++
++//apbc
++static const char * const uart_parent_names[] = {
++	"pll1_m3d128_57p6", "slow_uart1_14p74", "slow_uart2_48"
++};
++static SPACEMIT_CCU_MUX_GATE(uart1_clk, "uart1_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART1_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart2_clk, "uart2_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART2_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart3_clk, "uart3_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART3_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart4_clk, "uart4_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART4_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart5_clk, "uart5_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART5_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart6_clk, "uart6_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART6_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart7_clk, "uart7_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART7_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart8_clk, "uart8_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART8_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(uart9_clk, "uart9_clk", uart_parent_names,
++	BASE_TYPE_APBC, APBC_UART9_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_GATE(gpio_clk, "gpio_clk", "vctcxo_24",
++	BASE_TYPE_APBC, APBC_GPIO_CLK_RST,
++	0x3, 0x3, 0x0,
++	0);
++static const char *pwm_parent_names[] = {
++	"pll1_d192_12p8", "clk_32k"
++};
++static SPACEMIT_CCU_MUX_GATE(pwm0_clk, "pwm0_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM0_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm1_clk, "pwm1_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM1_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm2_clk, "pwm2_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM2_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm3_clk, "pwm3_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM3_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm4_clk, "pwm4_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM4_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm5_clk, "pwm5_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM5_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm6_clk, "pwm6_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM6_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm7_clk, "pwm7_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM7_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm8_clk, "pwm8_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM8_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm9_clk, "pwm9_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM9_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm10_clk, "pwm10_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM10_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm11_clk, "pwm11_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM11_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm12_clk, "pwm12_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM12_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm13_clk, "pwm13_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM13_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm14_clk, "pwm14_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM14_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm15_clk, "pwm15_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM15_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm16_clk, "pwm16_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM16_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm17_clk, "pwm17_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM17_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm18_clk, "pwm18_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM18_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(pwm19_clk, "pwm19_clk", pwm_parent_names,
++	BASE_TYPE_APBC, APBC_PWM19_CLK_RST,
++	4, 3, 0x2, 0x2, 0x0,
++	0);
++static const char *ssp_parent_names[] = { "pll1_d384_6p4", "pll1_d192_12p8", "pll1_d96_25p6",
++	"pll1_d48_51p2", "pll1_d768_3p2", "pll1_d1536_1p6", "pll1_d3072_0p8"
++};
++static SPACEMIT_CCU_MUX_GATE(ssp3_clk, "ssp3_clk", ssp_parent_names,
++	BASE_TYPE_APBC, APBC_SSP3_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_GATE(rtc_clk, "rtc_clk", "clk_32k",
++	BASE_TYPE_APBC, APBC_RTC_CLK_RST,
++	0x83, 0x83, 0x0, 0);
++static const char *twsi_parent_names[] = {
++	"pll1_d78_31p5", "pll1_d48_51p2", "pll1_d40_61p44"
++};
++static SPACEMIT_CCU_MUX_GATE(twsi0_clk, "twsi0_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI0_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(twsi1_clk, "twsi1_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI1_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(twsi2_clk, "twsi2_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI2_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(twsi4_clk, "twsi4_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI4_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(twsi5_clk, "twsi5_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI5_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(twsi6_clk, "twsi6_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI6_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(twsi7_clk, "twsi7_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI7_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(twsi8_clk, "twsi8_clk", twsi_parent_names,
++	BASE_TYPE_APBC, APBC_TWSI8_CLK_RST,
++	4, 3, 0x7, 0x3, 0x4,
++	0);
++static const char *timer_parent_names[] = {
++	"pll1_d192_12p8", "clk_32k", "pll1_d384_6p4", "vctcxo_3", "vctcxo_1"
++};
++static SPACEMIT_CCU_MUX_GATE(timers1_clk, "timers1_clk", timer_parent_names,
++	BASE_TYPE_APBC, APBC_TIMERS1_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(timers2_clk, "timers2_clk", timer_parent_names,
++	BASE_TYPE_APBC, APBC_TIMERS2_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_GATE(aib_clk, "aib_clk", "vctcxo_24",
++	BASE_TYPE_APBC, APBC_AIB_CLK_RST,
++	0x3, 0x3, 0x0, 0);
++static SPACEMIT_CCU_GATE_NO_PARENT(onewire_clk, "onewire_clk", NULL,
++	BASE_TYPE_APBC, APBC_ONEWIRE_CLK_RST,
++	0x3, 0x3, 0x0, 0);
++
++static SPACEMIT_CCU_GATE_FACTOR(i2s_sysclk, "i2s_sysclk", "pll1_d16_153p6",
++	BASE_TYPE_MPMU, MPMU_ISCCR,
++	BIT(31), BIT(31), 0x0,
++	50, 1, 0);
++static SPACEMIT_CCU_GATE_FACTOR(i2s_bclk, "i2s_bclk", "i2s_sysclk",
++	BASE_TYPE_MPMU, MPMU_ISCCR,
++	BIT(29), BIT(29), 0x0,
++	1, 1, 0);
++static const char *sspa_parent_names[] = { "pll1_d384_6p4", "pll1_d192_12p8", "pll1_d96_25p6",
++	"pll1_d48_51p2", "pll1_d768_3p2", "pll1_d1536_1p6", "pll1_d3072_0p8", "i2s_bclk"
++};
++static SPACEMIT_CCU_MUX_GATE(sspa0_clk, "sspa0_clk", sspa_parent_names,
++	BASE_TYPE_APBC, APBC_SSPA0_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_MUX_GATE(sspa1_clk, "sspa1_clk", sspa_parent_names,
++	BASE_TYPE_APBC, APBC_SSPA1_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(dro_clk, "dro_clk", NULL,
++	BASE_TYPE_APBC, APBC_DRO_CLK_RST,
++	0x1, 0x1, 0x0, 0);
++static SPACEMIT_CCU_GATE_NO_PARENT(ir_clk, "ir_clk", NULL,
++	BASE_TYPE_APBC, APBC_IR_CLK_RST,
++	0x1, 0x1, 0x0, 0);
++static SPACEMIT_CCU_GATE_NO_PARENT(tsen_clk, "tsen_clk", NULL,
++	BASE_TYPE_APBC, APBC_TSEN_CLK_RST,
++	0x3, 0x3, 0x0, 0);
++static SPACEMIT_CCU_GATE_NO_PARENT(ipc_ap2aud_clk, "ipc_ap2aud_clk", NULL,
++	BASE_TYPE_APBC, APBC_IPC_AP2AUD_CLK_RST,
++	0x3, 0x3, 0x0, 0);
++static const char *can_parent_names[] = {
++	"pll3_20", "pll3_40", "pll3_80"
++};
++static SPACEMIT_CCU_MUX_GATE(can0_clk, "can0_clk", can_parent_names,
++	BASE_TYPE_APBC, APBC_CAN0_CLK_RST,
++	4, 3, BIT(1), BIT(1), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(can0_bus_clk, "can0_bus_clk", NULL,
++	BASE_TYPE_APBC, APBC_CAN0_CLK_RST,
++	BIT(0), BIT(0), 0x0, 0);
++
++//mpmu
++static SPACEMIT_CCU_GATE(wdt_clk, "wdt_clk", "pll1_d96_25p6",
++	BASE_TYPE_MPMU, MPMU_WDTPCR,
++	0x3, 0x3, 0x0, 0);
++static SPACEMIT_CCU_GATE_NO_PARENT(ripc_clk, "ripc_clk", NULL,
++	BASE_TYPE_MPMU, MPMU_RIPCCR,
++	0x3, 0x3, 0x0, 0);
++
++//apmu
++static const char * const jpg_parent_names[] = {
++	 "pll1_d4_614p4", "pll1_d6_409p6", "pll1_d5_491p52", "pll1_d3_819p2",
++	 "pll1_d2_1228p8", "pll2_d4", "pll2_d3"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(jpg_clk, "jpg_clk", jpg_parent_names,
++	BASE_TYPE_APMU, APMU_JPG_CLK_RES_CTRL,
++	5, 3, BIT(15),
++	2, 3, BIT(1), BIT(1), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(jpg_4kafbc_clk, "jpg_4kafbc_clk", NULL,
++	BASE_TYPE_APMU, APMU_JPG_CLK_RES_CTRL,
++	BIT(16), BIT(16), 0x0, 0);
++static SPACEMIT_CCU_GATE_NO_PARENT(jpg_2kafbc_clk, "jpg_2kafbc_clk", NULL,
++	BASE_TYPE_APMU, APMU_JPG_CLK_RES_CTRL,
++	BIT(17), BIT(17), 0x0, 0);
++static const char * const ccic2phy_parent_names[] = {
++	"pll1_d24_102p4", "pll1_d48_51p2_ap"
++};
++static SPACEMIT_CCU_MUX_GATE(ccic2phy_clk, "ccic2phy_clk", ccic2phy_parent_names,
++	BASE_TYPE_APMU, APMU_CSI_CCIC2_CLK_RES_CTRL,
++	7, 1, BIT(5), BIT(5), 0x0,
++	0);
++static const char * const ccic3phy_parent_names[] = {
++	"pll1_d24_102p4", "pll1_d48_51p2_ap"
++};
++static SPACEMIT_CCU_MUX_GATE(ccic3phy_clk, "ccic3phy_clk", ccic3phy_parent_names,
++	BASE_TYPE_APMU, APMU_CSI_CCIC2_CLK_RES_CTRL,
++	31, 1, BIT(30), BIT(30), 0x0, 0);
++static const char * const csi_parent_names[] = {
++	 "pll1_d5_491p52", "pll1_d6_409p6", "pll1_d4_614p4", "pll1_d3_819p2",
++	 "pll2_d2", "pll2_d3", "pll2_d4", "pll1_d2_1228p8"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(csi_clk, "csi_clk", csi_parent_names,
++	BASE_TYPE_APMU, APMU_CSI_CCIC2_CLK_RES_CTRL,
++	20, 3, BIT(15),
++	16, 3, BIT(4), BIT(4), 0x0,
++	0);
++static const char * const camm_parent_names[] = {
++	"pll1_d8_307p2", "pll2_d5", "pll1_d6_409p6", "vctcxo_24"
++};
++static SPACEMIT_CCU_DIV_MUX_GATE(camm0_clk, "camm0_clk", camm_parent_names,
++	BASE_TYPE_APMU, APMU_CSI_CCIC2_CLK_RES_CTRL,
++	23, 4, 8, 2,
++	BIT(28), BIT(28), 0x0,
++	0);
++static SPACEMIT_CCU_DIV_MUX_GATE(camm1_clk, "camm1_clk", camm_parent_names,
++	BASE_TYPE_APMU, APMU_CSI_CCIC2_CLK_RES_CTRL,
++	23, 4, 8, 2,
++	BIT(6), BIT(6), 0x0,
++	0);
++static SPACEMIT_CCU_DIV_MUX_GATE(camm2_clk, "camm2_clk", camm_parent_names,
++	BASE_TYPE_APMU, APMU_CSI_CCIC2_CLK_RES_CTRL,
++	23, 4, 8, 2,
++	BIT(3), BIT(3), 0x0,
++	0);
++static const char * const isp_cpp_parent_names[] = {
++	 "pll1_d8_307p2", "pll1_d6_409p6"
++};
++static SPACEMIT_CCU_DIV_MUX_GATE(isp_cpp_clk, "isp_cpp_clk", isp_cpp_parent_names,
++	BASE_TYPE_APMU, APMU_ISP_CLK_RES_CTRL,
++	24, 2, 26, 1,
++	BIT(28), BIT(28), 0x0,
++	0);
++static const char * const isp_bus_parent_names[] = {
++	 "pll1_d6_409p6", "pll1_d5_491p52", "pll1_d8_307p2", "pll1_d10_245p76"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(isp_bus_clk, "isp_bus_clk", isp_bus_parent_names,
++	BASE_TYPE_APMU, APMU_ISP_CLK_RES_CTRL,
++	18, 3, BIT(23),
++	21, 2, BIT(17), BIT(17), 0x0,
++	0);
++static const char * const isp_parent_names[] = {
++	 "pll1_d6_409p6", "pll1_d5_491p52", "pll1_d4_614p4", "pll1_d8_307p2"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(isp_clk, "isp_clk", isp_parent_names,
++	BASE_TYPE_APMU, APMU_ISP_CLK_RES_CTRL,
++	4, 3, BIT(7),
++	8, 2, BIT(1), BIT(1), 0x0,
++	0);
++static const char * const dpumclk_parent_names[] = {
++	"pll1_d6_409p6", "pll1_d5_491p52", "pll1_d4_614p4", "pll1_d8_307p2"
++};
++static SPACEMIT_CCU_DIV2_FC_MUX_GATE(dpu_mclk, "dpu_mclk", dpumclk_parent_names,
++	BASE_TYPE_APMU, APMU_LCD_CLK_RES_CTRL1, APMU_LCD_CLK_RES_CTRL2,
++	1, 4, BIT(29),
++	5, 3, BIT(0), BIT(0), 0x0,
++	0);
++static const char * const dpuesc_parent_names[] = {
++	"pll1_d48_51p2_ap", "pll1_d52_47p26", "pll1_d96_25p6", "pll1_d32_76p8"
++};
++static SPACEMIT_CCU_MUX_GATE(dpu_esc_clk, "dpu_esc_clk", dpuesc_parent_names,
++	BASE_TYPE_APMU, APMU_LCD_CLK_RES_CTRL1,
++	0, 2, BIT(2), BIT(2), 0x0,
++	0);
++static const char * const dpubit_parent_names[] = { "pll1_d3_819p2", "pll2_d2", "pll2_d3",
++	"pll1_d2_1228p8", "pll2_d4", "pll2_d5", "pll2_d8", "pll2_d8" //6 should be 429M?
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(dpu_bit_clk, "dpu_bit_clk", dpubit_parent_names,
++	BASE_TYPE_APMU, APMU_LCD_CLK_RES_CTRL1,
++	17, 3, BIT(31),
++	20, 3, BIT(16), BIT(16), 0x0,
++	0);
++static const char * const dpupx_parent_names[] = {
++	"pll1_d6_409p6", "pll1_d5_491p52", "pll1_d4_614p4", "pll1_d8_307p2", "pll2_d7", "pll2_d8"
++};
++static SPACEMIT_CCU_DIV2_FC_MUX_GATE(dpu_pxclk, "dpu_pxclk", dpupx_parent_names,
++	BASE_TYPE_APMU, APMU_LCD_CLK_RES_CTRL1, APMU_LCD_CLK_RES_CTRL2,
++	17, 4, BIT(30),
++	21, 3, BIT(16), BIT(16), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(dpu_hclk, "dpu_hclk", NULL,
++	BASE_TYPE_APMU, APMU_LCD_CLK_RES_CTRL1,
++	BIT(5), BIT(5), 0x0,
++	0);
++static const char * const dpu_spi_parent_names[] = {
++	 "pll1_d8_307p2", "pll1_d6_409p6", "pll1_d10_245p76", "pll1_d11_223p4",
++	 "pll1_d13_189", "pll1_d23_106p8", "pll2_d3", "pll2_d5"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(dpu_spi_clk, "dpu_spi_clk", dpu_spi_parent_names,
++	BASE_TYPE_APMU, APMU_LCD_SPI_CLK_RES_CTRL,
++	8, 3, BIT(7),
++	12, 3, BIT(1), BIT(1), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(dpu_spi_hbus_clk, "dpu_spi_hbus_clk", NULL,
++	BASE_TYPE_APMU, APMU_LCD_SPI_CLK_RES_CTRL,
++	BIT(3), BIT(3), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(dpu_spi_bus_clk, "dpu_spi_bus_clk", NULL,
++	BASE_TYPE_APMU, APMU_LCD_SPI_CLK_RES_CTRL,
++	BIT(5), BIT(5), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(dpu_spi_aclk, "dpu_spi_aclk", NULL,
++	BASE_TYPE_APMU, APMU_LCD_SPI_CLK_RES_CTRL,
++	BIT(6), BIT(6), 0x0,
++	0);
++static const char * const v2d_parent_names[] = {
++	"pll1_d5_491p52", "pll1_d6_409p6", "pll1_d8_307p2", "pll1_d4_614p4",
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(v2d_clk, "v2d_clk", v2d_parent_names,
++	BASE_TYPE_APMU, APMU_LCD_CLK_RES_CTRL1,
++	9, 3, BIT(28),
++	12, 2, BIT(8), BIT(8), 0x0,
++	0);
++static const char * const ccic_4x_parent_names[] = {
++	 "pll1_d5_491p52", "pll1_d6_409p6", "pll1_d4_614p4", "pll1_d3_819p2",
++	 "pll2_d2", "pll2_d3", "pll2_d4", "pll1_d2_1228p8"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(ccic_4x_clk, "ccic_4x_clk", ccic_4x_parent_names,
++	BASE_TYPE_APMU, APMU_CCIC_CLK_RES_CTRL,
++	18, 3, BIT(15),
++	23, 2, BIT(4), BIT(4), 0x0,
++	0);
++static const char * const ccic1phy_parent_names[] = {
++	"pll1_d24_102p4", "pll1_d48_51p2_ap"
++};
++static SPACEMIT_CCU_MUX_GATE(ccic1phy_clk, "ccic1phy_clk", ccic1phy_parent_names,
++	BASE_TYPE_APMU, APMU_CCIC_CLK_RES_CTRL,
++	7, 1, BIT(5), BIT(5), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(sdh_axi_aclk, "sdh_axi_aclk", NULL,
++	BASE_TYPE_APMU, APMU_SDH0_CLK_RES_CTRL,
++	BIT(3), BIT(3), 0x0,
++	0);
++static const char * const sdh01_parent_names[] = {"pll1_d6_409p6",
++	"pll1_d4_614p4", "pll2_d8", "pll2_d5", "pll1_d11_223p4", "pll1_d13_189", "pll1_d23_106p8" };
++
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(sdh0_clk, "sdh0_clk", sdh01_parent_names,
++	BASE_TYPE_APMU, APMU_SDH0_CLK_RES_CTRL,
++	8, 3, BIT(11),
++	5, 3, BIT(4), BIT(4), 0x0,
++	0);
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(sdh1_clk, "sdh1_clk", sdh01_parent_names,
++	BASE_TYPE_APMU, APMU_SDH1_CLK_RES_CTRL,
++	8, 3, BIT(11),
++	5, 3, BIT(4), BIT(4), 0x0,
++	0);
++static const char * const sdh2_parent_names[] = {"pll1_d6_409p6",
++	"pll1_d4_614p4", "pll2_d8", "pll1_d3_819p2", "pll1_d11_223p4", "pll1_d13_189", "pll1_d23_106p8" };
++
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(sdh2_clk, "sdh2_clk", sdh2_parent_names,
++	BASE_TYPE_APMU, APMU_SDH2_CLK_RES_CTRL,
++	8, 3, BIT(11),
++	5, 3, BIT(4), BIT(4), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(usb_axi_clk, "usb_axi_clk", NULL,
++	BASE_TYPE_APMU, APMU_USB_CLK_RES_CTRL,
++	BIT(1), BIT(1), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(usb_p1_aclk, "usb_p1_aclk", NULL,
++	BASE_TYPE_APMU, APMU_USB_CLK_RES_CTRL,
++	BIT(5), BIT(5), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(usb30_clk, "usb30_clk", NULL,
++	BASE_TYPE_APMU, APMU_USB_CLK_RES_CTRL,
++	BIT(8), BIT(8), 0x0,
++	0);
++static const char * const qspi_parent_names[] = {"pll1_d6_409p6", "pll2_d8", "pll1_d8_307p2",
++		"pll1_d10_245p76", "pll1_d11_223p4", "pll1_d23_106p8", "pll1_d5_491p52", "pll1_d13_189"};
++static SPACEMIT_CCU_DIV_MUX_GATE(qspi_clk, "qspi_clk", qspi_parent_names,
++	BASE_TYPE_APMU, APMU_QSPI_CLK_RES_CTRL,
++	9, 3,
++	6, 3, BIT(4), BIT(4), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(qspi_bus_clk, "qspi_bus_clk", NULL,
++	BASE_TYPE_APMU, APMU_QSPI_CLK_RES_CTRL,
++	BIT(3), BIT(3), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(dma_clk, "dma_clk", NULL,
++	BASE_TYPE_APMU, APMU_DMA_CLK_RES_CTRL,
++	BIT(3), BIT(3), 0x0,
++	0);
++static const char * const aes_parent_names[] = {
++	"pll1_d12_204p8", "pll1_d24_102p4"
++};
++static SPACEMIT_CCU_MUX_GATE(aes_clk, "aes_clk", aes_parent_names,
++	BASE_TYPE_APMU, APMU_AES_CLK_RES_CTRL,
++	6, 1, BIT(5), BIT(5), 0x0,
++	0);
++static const char * const vpu_parent_names[] = {
++	"pll1_d4_614p4", "pll1_d5_491p52", "pll1_d3_819p2", "pll1_d6_409p6",
++	"pll3_d6", "pll2_d3", "pll2_d4", "pll2_d5"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(vpu_clk, "vpu_clk", vpu_parent_names,
++	BASE_TYPE_APMU, APMU_VPU_CLK_RES_CTRL,
++	13, 3, BIT(21),
++	10, 3,
++	BIT(3), BIT(3), 0x0,
++	0);
++static const char * const gpu_parent_names[] = {
++	"pll1_d4_614p4", "pll1_d5_491p52", "pll1_d3_819p2", "pll1_d6_409p6",
++	"pll3_d6", "pll2_d3", "pll2_d4", "pll2_d5"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(gpu_clk, "gpu_clk", gpu_parent_names,
++	BASE_TYPE_APMU, APMU_GPU_CLK_RES_CTRL,
++	12, 3, BIT(15),
++	18, 3,
++	BIT(4), BIT(4), 0x0,
++	0);
++static const char * const emmc_parent_names[] = {
++	"pll1_d6_409p6", "pll1_d4_614p4", "pll1_d52_47p26", "pll1_d3_819p2"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(emmc_clk, "emmc_clk", emmc_parent_names,
++	BASE_TYPE_APMU, APMU_PMUA_EM_CLK_RES_CTRL,
++	8, 3, BIT(11),
++	6, 2,
++	0x18, 0x18, 0x0,
++	0);
++static SPACEMIT_CCU_DIV_GATE(emmc_x_clk, "emmc_x_clk", "pll1_d2_1228p8",
++	BASE_TYPE_APMU, APMU_PMUA_EM_CLK_RES_CTRL,
++	12, 3, BIT(15), BIT(15), 0x0,
++	0);
++static const char * const audio_parent_names[] = {
++	 "pll1_aud_245p7", "pll1_d8_307p2", "pll1_d6_409p6"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(audio_clk, "audio_clk", audio_parent_names,
++	BASE_TYPE_APMU, APMU_AUDIO_CLK_RES_CTRL,
++	4, 3, BIT(15),
++	7, 3,
++	BIT(12), BIT(12), 0x0,
++	0);
++static const char * const hdmi_parent_names[] = {
++	 "pll1_d6_409p6", "pll1_d5_491p52", "pll1_d4_614p4", "pll1_d8_307p2"
++};
++static SPACEMIT_CCU_DIV_FC_MUX_GATE(hdmi_mclk, "hdmi_mclk", hdmi_parent_names,
++	BASE_TYPE_APMU, APMU_HDMI_CLK_RES_CTRL,
++	1, 4, BIT(29),
++	5, 3,
++	BIT(0), BIT(0), 0x0,
++	0);
++static const char * const cci550_parent_names[] = {
++	 "pll1_d5_491p52", "pll1_d4_614p4", "pll1_d3_819p2", "pll2_d3"
++};
++static SPACEMIT_CCU_DIV_FC_MUX(cci550_clk, "cci550_clk", cci550_parent_names,
++	BASE_TYPE_APMU, APMU_CCI550_CLK_CTRL,
++	8, 3, BIT(12),
++	0, 2,
++	0);
++static const char * const pmua_aclk_parent_names[] = {
++	 "pll1_d10_245p76", "pll1_d8_307p2"
++};
++static SPACEMIT_CCU_DIV_FC_MUX(pmua_aclk, "pmua_aclk", pmua_aclk_parent_names,
++	BASE_TYPE_APMU, APMU_ACLK_CLK_CTRL,
++	1, 2, BIT(4),
++	0, 1,
++	0);
++static const char * const cpu_c0_hi_parent_names[] = {
++	 "pll3_d2", "pll3_d1"
++};
++static SPACEMIT_CCU_MUX(cpu_c0_hi_clk, "cpu_c0_hi_clk", cpu_c0_hi_parent_names,
++	BASE_TYPE_APMU, APMU_CPU_C0_CLK_CTRL,
++	13, 1,
++	0);
++static const char * const cpu_c0_parent_names[] = { "pll1_d4_614p4", "pll1_d3_819p2", "pll1_d6_409p6",
++	"pll1_d5_491p52", "pll1_d2_1228p8", "pll3_d3", "pll2_d3", "cpu_c0_hi_clk"
++};
++static SPACEMIT_CCU_MUX_FC(cpu_c0_core_clk, "cpu_c0_core_clk", cpu_c0_parent_names,
++	BASE_TYPE_APMU, APMU_CPU_C0_CLK_CTRL,
++	BIT(12),
++	0, 3,
++	0);
++static SPACEMIT_CCU_DIV(cpu_c0_ace_clk, "cpu_c0_ace_clk", "cpu_c0_core_clk",
++	BASE_TYPE_APMU, APMU_CPU_C0_CLK_CTRL,
++	6, 3,
++	0);
++static SPACEMIT_CCU_DIV(cpu_c0_tcm_clk, "cpu_c0_tcm_clk", "cpu_c0_core_clk",
++	BASE_TYPE_APMU, APMU_CPU_C0_CLK_CTRL,
++	9, 3,
++	0);
++static const char * const cpu_c1_hi_parent_names[] = {
++	 "pll3_d2", "pll3_d1"
++};
++static SPACEMIT_CCU_MUX(cpu_c1_hi_clk, "cpu_c1_hi_clk", cpu_c1_hi_parent_names,
++	BASE_TYPE_APMU, APMU_CPU_C1_CLK_CTRL,
++	13, 1,
++	0);
++static const char * const cpu_c1_parent_names[] = { "pll1_d4_614p4", "pll1_d3_819p2", "pll1_d6_409p6",
++	"pll1_d5_491p52", "pll1_d2_1228p8", "pll3_d3", "pll2_d3", "cpu_c1_hi_clk"
++};
++static SPACEMIT_CCU_MUX_FC(cpu_c1_pclk, "cpu_c1_pclk", cpu_c1_parent_names,
++	BASE_TYPE_APMU, APMU_CPU_C1_CLK_CTRL,
++	BIT(12),
++	0, 3,
++	0);
++static SPACEMIT_CCU_DIV(cpu_c1_ace_clk, "cpu_c1_ace_clk", "cpu_c1_pclk",
++	BASE_TYPE_APMU, APMU_CPU_C1_CLK_CTRL,
++	6, 3,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(pcie0_clk, "pcie0_clk", NULL,
++	BASE_TYPE_APMU, APMU_PCIE_CLK_RES_CTRL_0,
++	0x7, 0x7, 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(pcie1_clk, "pcie1_clk", NULL,
++	BASE_TYPE_APMU, APMU_PCIE_CLK_RES_CTRL_1,
++	0x7, 0x7, 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(pcie2_clk, "pcie2_clk", NULL,
++	BASE_TYPE_APMU, APMU_PCIE_CLK_RES_CTRL_2,
++	0x7, 0x7, 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(emac0_bus_clk, "emac0_bus_clk", NULL,
++	BASE_TYPE_APMU, APMU_EMAC0_CLK_RES_CTRL,
++	BIT(0), BIT(0), 0x0,
++	0);
++static SPACEMIT_CCU_GATE(emac0_ptp_clk, "emac0_ptp_clk", "pll2_d6",
++	BASE_TYPE_APMU, APMU_EMAC0_CLK_RES_CTRL,
++	BIT(15), BIT(15), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(emac1_bus_clk, "emac1_bus_clk", NULL,
++	BASE_TYPE_APMU, APMU_EMAC1_CLK_RES_CTRL,
++	BIT(0), BIT(0), 0x0,
++	0);
++static SPACEMIT_CCU_GATE(emac1_ptp_clk, "emac1_ptp_clk", "pll2_d6",
++	BASE_TYPE_APMU, APMU_EMAC1_CLK_RES_CTRL,
++	BIT(15), BIT(15), 0x0,
++	0);
++
++//apbc2
++static const char * const uart1_sec_parent_names[] = {
++	"pll1_m3d128_57p6", "slow_uart1_14p74", "slow_uart2_48"
++};
++static SPACEMIT_CCU_MUX_GATE(uart1_sec_clk, "uart1_sec_clk", uart1_sec_parent_names,
++	BASE_TYPE_APBC2, APBC2_UART1_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++
++static const char *ssp2_sec_parent_names[] = { "pll1_d384_6p4", "pll1_d192_12p8", "pll1_d96_25p6",
++	"pll1_d48_51p2", "pll1_d768_3p2", "pll1_d1536_1p6", "pll1_d3072_0p8"
++};
++static SPACEMIT_CCU_MUX_GATE(ssp2_sec_clk, "ssp2_sec_clk", ssp2_sec_parent_names,
++	BASE_TYPE_APBC2, APBC2_SSP2_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static const char *twsi3_sec_parent_names[] = {
++	"pll1_d78_31p5", "pll1_d48_51p2", "pll1_d40_61p44"
++};
++static SPACEMIT_CCU_MUX_GATE(twsi3_sec_clk, "twsi3_sec_clk", twsi3_sec_parent_names,
++	BASE_TYPE_APBC2, APBC2_TWSI3_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_GATE(rtc_sec_clk, "rtc_sec_clk", "clk_32k",
++	BASE_TYPE_APBC2, APBC2_RTC_CLK_RST,
++	0x83, 0x83, 0x0, 0);
++static const char *timer_sec_parent_names[] = {
++	"pll1_d192_12p8", "clk_32k", "pll1_d384_6p4", "vctcxo_3", "vctcxo_1"
++};
++static SPACEMIT_CCU_MUX_GATE(timers0_sec_clk, "timers0_sec_clk", timer_sec_parent_names,
++	BASE_TYPE_APBC2, APBC2_TIMERS0_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static const char *kpc_sec_parent_names[] = {
++	"pll1_d192_12p8", "clk_32k", "pll1_d384_6p4", "vctcxo_3", "vctcxo_1"
++};
++static SPACEMIT_CCU_MUX_GATE(kpc_sec_clk, "kpc_sec_clk", kpc_sec_parent_names,
++	BASE_TYPE_APBC2, APBC2_KPC_CLK_RST,
++	4, 3, 0x3, 0x3, 0x0,
++	0);
++static SPACEMIT_CCU_GATE(gpio_sec_clk, "gpio_sec_clk", "vctcxo_24",
++	BASE_TYPE_APBC2, APBC2_GPIO_CLK_RST,
++	0x3, 0x3, 0x0,
++	0);
++
++static const char * const apb_parent_names[] = {
++	"pll1_d96_25p6", "pll1_d48_51p2", "pll1_d96_25p6", "pll1_d24_102p4"
++};
++static SPACEMIT_CCU_MUX(apb_clk, "apb_clk", apb_parent_names,
++	BASE_TYPE_MPMU, MPMU_APBCSCR,
++	0, 2, 0);
++//rcpu
++static const char *rhdmi_audio_parent_names[] = {
++	"pll1_aud_24p5", "pll1_aud_245p7"
++};
++static SPACEMIT_CCU_DIV_MUX_GATE(rhdmi_audio_clk, "rhdmi_audio_clk", rhdmi_audio_parent_names,
++	BASE_TYPE_RCPU, RCPU_HDMI_CLK_RST,
++	4, 11, 16, 2,
++	0x6, 0x6, 0x0,
++	0);
++
++static const char *rcan_parent_names[] = {
++	"pll3_20", "pll3_40", "pll3_80"
++};
++static SPACEMIT_CCU_DIV_MUX_GATE(rcan_clk, "rcan_clk", rcan_parent_names,
++	BASE_TYPE_RCPU, RCPU_CAN_CLK_RST,
++	8, 11, 4, 2,
++	BIT(1), BIT(1), 0x0,
++	0);
++static SPACEMIT_CCU_GATE_NO_PARENT(rcan_bus_clk, "rcan_bus_clk", NULL,
++	BASE_TYPE_RCPU, RCPU_CAN_CLK_RST,
++	BIT(2), BIT(2), 0x0, 0);
++//rcpu2
++static const char *rpwm_parent_names[] = {
++	"pll1_aud_245p7", "pll1_aud_24p5"
++};
++static SPACEMIT_CCU_DIV_MUX_GATE(rpwm_clk, "rpwm_clk", rpwm_parent_names,
++	BASE_TYPE_RCPU2, RCPU2_PWM_CLK_RST,
++	8, 11, 4, 2,
++	BIT(1), BIT(1), 0x0,
++	0);
++
++static struct clk_hw_onecell_data spacemit_k1x_hw_clks = {
++	.hws	= {
++		[CLK_PLL2]		= &pll2.common.hw,
++		[CLK_PLL3]		= &pll3.common.hw,
++		[CLK_PLL1_D2]		= &pll1_d2.common.hw,
++		[CLK_PLL1_D3]		= &pll1_d3.common.hw,
++		[CLK_PLL1_D4]		= &pll1_d4.common.hw,
++		[CLK_PLL1_D5]		= &pll1_d5.common.hw,
++		[CLK_PLL1_D6]		= &pll1_d6.common.hw,
++		[CLK_PLL1_D7]		= &pll1_d7.common.hw,
++		[CLK_PLL1_D8]		= &pll1_d8.common.hw,
++		[CLK_PLL1_D11]		= &pll1_d11_223p4.common.hw,
++		[CLK_PLL1_D13]		= &pll1_d13_189.common.hw,
++		[CLK_PLL1_D23]		= &pll1_d23_106p8.common.hw,
++		[CLK_PLL1_D64]		= &pll1_d64_38p4.common.hw,
++		[CLK_PLL1_D10_AUD]	= &pll1_aud_245p7.common.hw,
++		[CLK_PLL1_D100_AUD]	= &pll1_aud_24p5.common.hw,
++		[CLK_PLL2_D1]		= &pll2_d1.common.hw,
++		[CLK_PLL2_D2]		= &pll2_d2.common.hw,
++		[CLK_PLL2_D3]		= &pll2_d3.common.hw,
++		[CLK_PLL2_D4]		= &pll2_d4.common.hw,
++		[CLK_PLL2_D5]		= &pll2_d5.common.hw,
++		[CLK_PLL2_D6]		= &pll2_d6.common.hw,
++		[CLK_PLL2_D7]		= &pll2_d7.common.hw,
++		[CLK_PLL2_D8]		= &pll2_d8.common.hw,
++		[CLK_PLL3_D1]		= &pll3_d1.common.hw,
++		[CLK_PLL3_D2]		= &pll3_d2.common.hw,
++		[CLK_PLL3_D3]		= &pll3_d3.common.hw,
++		[CLK_PLL3_D4]		= &pll3_d4.common.hw,
++		[CLK_PLL3_D5]		= &pll3_d5.common.hw,
++		[CLK_PLL3_D6]		= &pll3_d6.common.hw,
++		[CLK_PLL3_D7]		= &pll3_d7.common.hw,
++		[CLK_PLL3_D8]		= &pll3_d8.common.hw,
++		[CLK_PLL3_80]		= &pll3_80.common.hw,
++		[CLK_PLL3_40]		= &pll3_40.common.hw,
++		[CLK_PLL3_20]		= &pll3_20.common.hw,
++		[CLK_PLL1_307P2]	= &pll1_d8_307p2.common.hw,
++		[CLK_PLL1_76P8]		= &pll1_d32_76p8.common.hw,
++		[CLK_PLL1_61P44]	= &pll1_d40_61p44.common.hw,
++		[CLK_PLL1_153P6]	= &pll1_d16_153p6.common.hw,
++		[CLK_PLL1_102P4]	= &pll1_d24_102p4.common.hw,
++		[CLK_PLL1_51P2]		= &pll1_d48_51p2.common.hw,
++		[CLK_PLL1_51P2_AP]	= &pll1_d48_51p2_ap.common.hw,
++		[CLK_PLL1_57P6]		= &pll1_m3d128_57p6.common.hw,
++		[CLK_PLL1_25P6]		= &pll1_d96_25p6.common.hw,
++		[CLK_PLL1_12P8]		= &pll1_d192_12p8.common.hw,
++		[CLK_PLL1_12P8_WDT]	= &pll1_d192_12p8_wdt.common.hw,
++		[CLK_PLL1_6P4]		= &pll1_d384_6p4.common.hw,
++		[CLK_PLL1_3P2]		= &pll1_d768_3p2.common.hw,
++		[CLK_PLL1_1P6]		= &pll1_d1536_1p6.common.hw,
++		[CLK_PLL1_0P8]		= &pll1_d3072_0p8.common.hw,
++		[CLK_PLL1_351]		= &pll1_d7_351p08.common.hw,
++		[CLK_PLL1_409P6]	= &pll1_d6_409p6.common.hw,
++		[CLK_PLL1_204P8]	= &pll1_d12_204p8.common.hw,
++		[CLK_PLL1_491]		= &pll1_d5_491p52.common.hw,
++		[CLK_PLL1_245P76]	= &pll1_d10_245p76.common.hw,
++		[CLK_PLL1_614]		= &pll1_d4_614p4.common.hw,
++		[CLK_PLL1_47P26]	= &pll1_d52_47p26.common.hw,
++		[CLK_PLL1_31P5]		= &pll1_d78_31p5.common.hw,
++		[CLK_PLL1_819]		= &pll1_d3_819p2.common.hw,
++		[CLK_PLL1_1228]		= &pll1_d2_1228p8.common.hw,
++		[CLK_SLOW_UART1]	= &slow_uart1_14p74.common.hw,
++		[CLK_SLOW_UART2]	= &slow_uart2_48.common.hw,
++		[CLK_UART1]		= &uart1_clk.common.hw,
++		[CLK_UART2]		= &uart2_clk.common.hw,
++		[CLK_UART3]		= &uart3_clk.common.hw,
++		[CLK_UART4]		= &uart4_clk.common.hw,
++		[CLK_UART5]		= &uart5_clk.common.hw,
++		[CLK_UART6]		= &uart6_clk.common.hw,
++		[CLK_UART7]		= &uart7_clk.common.hw,
++		[CLK_UART8]		= &uart8_clk.common.hw,
++		[CLK_UART9]		= &uart9_clk.common.hw,
++		[CLK_GPIO]		= &gpio_clk.common.hw,
++		[CLK_PWM0]		= &pwm0_clk.common.hw,
++		[CLK_PWM1]		= &pwm1_clk.common.hw,
++		[CLK_PWM2]		= &pwm2_clk.common.hw,
++		[CLK_PWM3]		= &pwm3_clk.common.hw,
++		[CLK_PWM4]		= &pwm4_clk.common.hw,
++		[CLK_PWM5]		= &pwm5_clk.common.hw,
++		[CLK_PWM6]		= &pwm6_clk.common.hw,
++		[CLK_PWM7]		= &pwm7_clk.common.hw,
++		[CLK_PWM8]		= &pwm8_clk.common.hw,
++		[CLK_PWM9]		= &pwm9_clk.common.hw,
++		[CLK_PWM10]		= &pwm10_clk.common.hw,
++		[CLK_PWM11]		= &pwm11_clk.common.hw,
++		[CLK_PWM12]		= &pwm12_clk.common.hw,
++		[CLK_PWM13]		= &pwm13_clk.common.hw,
++		[CLK_PWM14]		= &pwm14_clk.common.hw,
++		[CLK_PWM15]		= &pwm15_clk.common.hw,
++		[CLK_PWM16]		= &pwm16_clk.common.hw,
++		[CLK_PWM17]		= &pwm17_clk.common.hw,
++		[CLK_PWM18]		= &pwm18_clk.common.hw,
++		[CLK_PWM19]		= &pwm19_clk.common.hw,
++		[CLK_SSP3]		= &ssp3_clk.common.hw,
++		[CLK_RTC]		= &rtc_clk.common.hw,
++		[CLK_TWSI0]		= &twsi0_clk.common.hw,
++		[CLK_TWSI1]		= &twsi1_clk.common.hw,
++		[CLK_TWSI2]		= &twsi2_clk.common.hw,
++		[CLK_TWSI4]		= &twsi4_clk.common.hw,
++		[CLK_TWSI5]		= &twsi5_clk.common.hw,
++		[CLK_TWSI6]		= &twsi6_clk.common.hw,
++		[CLK_TWSI7]		= &twsi7_clk.common.hw,
++		[CLK_TWSI8]		= &twsi8_clk.common.hw,
++		[CLK_TIMERS1]		= &timers1_clk.common.hw,
++		[CLK_TIMERS2]		= &timers2_clk.common.hw,
++		[CLK_AIB]		= &aib_clk.common.hw,
++		[CLK_ONEWIRE]		= &onewire_clk.common.hw,
++		[CLK_SSPA0]		= &sspa0_clk.common.hw,
++		[CLK_SSPA1]		= &sspa1_clk.common.hw,
++		[CLK_DRO]		= &dro_clk.common.hw,
++		[CLK_IR]		= &ir_clk.common.hw,
++		[CLK_TSEN]		= &tsen_clk.common.hw,
++		[CLK_IPC_AP2AUD]	= &ipc_ap2aud_clk.common.hw,
++		[CLK_CAN0]		= &can0_clk.common.hw,
++		[CLK_CAN0_BUS]		= &can0_bus_clk.common.hw,
++		[CLK_WDT] 		= &wdt_clk.common.hw,
++		[CLK_RIPC] 		= &ripc_clk.common.hw,
++		[CLK_JPG] 		= &jpg_clk.common.hw,
++		[CLK_JPF_4KAFBC]	= &jpg_4kafbc_clk.common.hw,
++		[CLK_JPF_2KAFBC]	= &jpg_2kafbc_clk.common.hw,
++		[CLK_CCIC2PHY]		= &ccic2phy_clk.common.hw,
++		[CLK_CCIC3PHY]		= &ccic3phy_clk.common.hw,
++		[CLK_CSI]		= &csi_clk.common.hw,
++		[CLK_CAMM0]		= &camm0_clk.common.hw,
++		[CLK_CAMM1]		= &camm1_clk.common.hw,
++		[CLK_CAMM2]		= &camm2_clk.common.hw,
++		[CLK_ISP_CPP]		= &isp_cpp_clk.common.hw,
++		[CLK_ISP_BUS]		= &isp_bus_clk.common.hw,
++		[CLK_ISP]		= &isp_clk.common.hw,
++		[CLK_DPU_MCLK]		= &dpu_mclk.common.hw,
++		[CLK_DPU_ESC]		= &dpu_esc_clk.common.hw,
++		[CLK_DPU_BIT]		= &dpu_bit_clk.common.hw,
++		[CLK_DPU_PXCLK]		= &dpu_pxclk.common.hw,
++		[CLK_DPU_HCLK]		= &dpu_hclk.common.hw,
++		[CLK_DPU_SPI]		= &dpu_spi_clk.common.hw,
++		[CLK_DPU_SPI_HBUS]	= &dpu_spi_hbus_clk.common.hw,
++		[CLK_DPU_SPIBUS]	= &dpu_spi_bus_clk.common.hw,
++		[CLK_SPU_SPI_ACLK]	= &dpu_spi_aclk.common.hw,
++		[CLK_V2D]		= &v2d_clk.common.hw,
++		[CLK_CCIC_4X]		= &ccic_4x_clk.common.hw,
++		[CLK_CCIC1PHY]		= &ccic1phy_clk.common.hw,
++		[CLK_SDH_AXI]		= &sdh_axi_aclk.common.hw,
++		[CLK_SDH0] 		= &sdh0_clk.common.hw,
++		[CLK_SDH1]		= &sdh1_clk.common.hw,
++		[CLK_SDH2]		= &sdh2_clk.common.hw,
++		[CLK_USB_P1]		= &usb_p1_aclk.common.hw,
++		[CLK_USB_AXI]		= &usb_axi_clk.common.hw,
++		[CLK_USB30]		= &usb30_clk.common.hw,
++		[CLK_QSPI]		= &qspi_clk.common.hw,
++		[CLK_QSPI_BUS]		= &qspi_bus_clk.common.hw,
++		[CLK_DMA]		= &dma_clk.common.hw,
++		[CLK_AES]		= &aes_clk.common.hw,
++		[CLK_VPU]		= &vpu_clk.common.hw,
++		[CLK_GPU]		= &gpu_clk.common.hw,
++		[CLK_EMMC]		= &emmc_clk.common.hw,
++		[CLK_EMMC_X]		= &emmc_x_clk.common.hw,
++		[CLK_AUDIO]		= &audio_clk.common.hw,
++		[CLK_HDMI]		= &hdmi_mclk.common.hw,
++		[CLK_CCI550]		= &cci550_clk.common.hw,
++		[CLK_PMUA_ACLK]		= &pmua_aclk.common.hw,
++		[CLK_CPU_C0_HI]		= &cpu_c0_hi_clk.common.hw,
++		[CLK_CPU_C0_CORE]	= &cpu_c0_core_clk.common.hw,
++		[CLK_CPU_C0_ACE]	= &cpu_c0_ace_clk.common.hw,
++		[CLK_CPU_C0_TCM]	= &cpu_c0_tcm_clk.common.hw,
++		[CLK_CPU_C1_HI]		= &cpu_c1_hi_clk.common.hw,
++		[CLK_CPU_C1_CORE]	= &cpu_c1_pclk.common.hw,
++		[CLK_CPU_C1_ACE]	= &cpu_c1_ace_clk.common.hw,
++		[CLK_PCIE0]		= &pcie0_clk.common.hw,
++		[CLK_PCIE1]		= &pcie1_clk.common.hw,
++		[CLK_PCIE2]		= &pcie2_clk.common.hw,
++		[CLK_EMAC0_BUS]		= &emac0_bus_clk.common.hw,
++		[CLK_EMAC0_PTP]		= &emac0_ptp_clk.common.hw,
++		[CLK_EMAC1_BUS]		= &emac1_bus_clk.common.hw,
++		[CLK_EMAC1_PTP]		= &emac1_ptp_clk.common.hw,
++		[CLK_SEC_UART1]		= &uart1_sec_clk.common.hw,
++		[CLK_SEC_SSP2]		= &ssp2_sec_clk.common.hw,
++		[CLK_SEC_TWSI3]		= &twsi3_sec_clk.common.hw,
++		[CLK_SEC_RTC]		= &rtc_sec_clk.common.hw,
++		[CLK_SEC_TIMERS0]	= &timers0_sec_clk.common.hw,
++		[CLK_SEC_KPC]		= &kpc_sec_clk.common.hw,
++		[CLK_SEC_GPIO]		= &gpio_sec_clk.common.hw,
++		[CLK_APB]		= &apb_clk.common.hw,
++		[CLK_SLOW_UART]		= &slow_uart.common.hw,
++		[CLK_I2S_SYSCLK]	= &i2s_sysclk.common.hw,
++		[CLK_I2S_BCLK]		= &i2s_bclk.common.hw,
++		[CLK_RCPU_HDMIAUDIO]	= &rhdmi_audio_clk.common.hw,
++		[CLK_RCPU_CAN] 		= &rcan_clk.common.hw,
++		[CLK_RCPU_CAN_BUS]	= &rcan_bus_clk.common.hw,
++		[CLK_RCPU2_PWM] 	= &rpwm_clk.common.hw,
++	},
++	.num = CLK_MAX_NO,
++};
++
++static struct clk_hw_table bootup_enable_clk_table[] = {
++	{"pll1_d8_307p2", 	CLK_PLL1_307P2},
++	{"pll1_d6_409p6", 	CLK_PLL1_409P6},
++	{"pll1_d5_491p52", 	CLK_PLL1_491},
++	{"pll1_d4_614p4", 	CLK_PLL1_614},
++	{"pll1_d3_819p2", 	CLK_PLL1_819},
++	{"pll1_d2_1228p8", 	CLK_PLL1_1228},
++	{"pll1_d10_245p76",	CLK_PLL1_245P76},
++	{"pll1_d48_51p2", 	CLK_PLL1_51P2},
++	{"pll1_d48_51p2_ap",	CLK_PLL1_51P2_AP},
++	{"pll1_d96_25p6", 	CLK_PLL1_25P6},
++	{"pll3_d1", 	CLK_PLL3_D1},
++	{"pll3_d2", 	CLK_PLL3_D2},
++	{"pll3_d3", 	CLK_PLL3_D3},
++	{"pll2_d3", 	CLK_PLL2_D3},
++	{"apb_clk", 	CLK_APB},
++	{"pmua_aclk", 	CLK_PMUA_ACLK},
++};
++
++void spacemit_clocks_enable(struct clk_hw_table *tbl, int tbl_size)
++{
++	int i;
++	struct clk *clk;
++
++	for (i = 0; i < tbl_size; i++) {
++		clk = clk_hw_get_clk(spacemit_k1x_hw_clks.hws[tbl[i].clk_hw_id], tbl[i].name);
++		if (!IS_ERR_OR_NULL(clk))
++			clk_prepare_enable(clk);
++		else
++			pr_err("%s : can't find clk %s\n", __func__, tbl[i].name);
++	}
++}
++
++int ccu_common_init(struct clk_hw * hw, struct spacemit_k1x_clk *clk_info)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++	struct ccu_pll *pll = hw_to_ccu_pll(hw);
++
++	if (!common)
++		return -1;
++
++	common->lock = &g_cru_lock;
++
++	switch(common->base_type){
++	case BASE_TYPE_MPMU:
++		common->base = clk_info->mpmu_base;
++		break;
++	case BASE_TYPE_APMU:
++		common->base = clk_info->apmu_base;
++		break;
++	case BASE_TYPE_APBC:
++		common->base = clk_info->apbc_base;
++		break;
++	case BASE_TYPE_APBS:
++		common->base = clk_info->apbs_base;
++		break;
++	case BASE_TYPE_CIU:
++		common->base = clk_info->ciu_base;
++		break;
++	case BASE_TYPE_DCIU:
++		common->base = clk_info->dciu_base;
++		break;
++	case BASE_TYPE_DDRC:
++		common->base = clk_info->ddrc_base;
++		break;
++	case BASE_TYPE_AUDC:
++		common->base = clk_info->audio_ctrl_base;
++		break;
++	case BASE_TYPE_APBC2:
++		common->base = clk_info->apbc2_base;
++		break;
++	case BASE_TYPE_RCPU:
++		common->base = clk_info->rcpu_base;
++		break;
++	case BASE_TYPE_RCPU2:
++		common->base = clk_info->rcpu2_base;
++		break;
++	default:
++		common->base = clk_info->apbc_base;
++		break;
++
++	}
++	if(common->is_pll)
++		pll->pll.lock_base = clk_info->mpmu_base;
++
++	return 0;
++}
++
++int spacemit_ccu_probe(struct device_node *node, struct spacemit_k1x_clk *clk_info,
++		    struct clk_hw_onecell_data *hw_clks)
++{
++	int i, ret;
++	for (i = 0; i < hw_clks->num ; i++) {
++		struct clk_hw *hw = hw_clks->hws[i];
++		const char *name;
++		if (!hw)
++			continue;
++		if (!hw->init)
++			continue;
++
++		ccu_common_init(hw, clk_info);
++		name = hw->init->name;
++
++		ret = of_clk_hw_register(node, hw);
++		if (ret) {
++			pr_err("Couldn't register clock %d - %s\n", i, name);
++			goto err_clk_unreg;
++		}
++	}
++	ret = of_clk_add_hw_provider(node, of_clk_hw_onecell_get,
++				     hw_clks);
++	if (ret)
++		goto err_clk_unreg;
++
++	//enable some clocks
++	spacemit_clocks_enable(bootup_enable_clk_table, ARRAY_SIZE(bootup_enable_clk_table));
++
++	return 0;
++
++err_clk_unreg:
++	while (--i >= 0) {
++		struct clk_hw *hw = hw_clks->hws[i];
++		if (!hw)
++			continue;
++		clk_hw_unregister(hw);
++	}
++	LOG_INFO("clock init fail");
++	return ret;
++}
++
++static void spacemit_k1x_ccu_probe(struct device_node *np)
++{
++	int ret;
++	struct spacemit_k1x_clk *clk_info;
++	struct clk_hw_onecell_data *hw_clks = &spacemit_k1x_hw_clks;
++
++	//LOG_INFO("init clock");
++	if (of_device_is_compatible(np, "spacemit,k1x-clock")){
++		clk_info = &k1x_clock_controller;
++
++		clk_info->mpmu_base = of_iomap(np, 0);
++		if (!clk_info->mpmu_base) {
++			pr_err("failed to map mpmu registers\n");
++			goto out;
++		}
++
++		clk_info->apmu_base = of_iomap(np, 1);
++		if (!clk_info->apmu_base) {
++			pr_err("failed to map apmu registers\n");
++			goto out;
++		}
++
++		clk_info->apbc_base = of_iomap(np, 2);
++		if (!clk_info->apbc_base) {
++			pr_err("failed to map apbc registers\n");
++			goto out;
++		}
++
++		clk_info->apbs_base = of_iomap(np, 3);
++		if (!clk_info->apbs_base) {
++			pr_err("failed to map apbs registers\n");
++			goto out;
++		}
++
++		clk_info->ciu_base = of_iomap(np, 4);
++		if (!clk_info->ciu_base) {
++			pr_err("failed to map ciu registers\n");
++			goto out;
++		}
++
++		clk_info->dciu_base = of_iomap(np, 5);
++		if (!clk_info->dciu_base) {
++			pr_err("failed to map dragon ciu registers\n");
++			goto out;
++		}
++
++		clk_info->ddrc_base = of_iomap(np, 6);
++		if (!clk_info->ddrc_base) {
++			pr_err("failed to map ddrc registers\n");
++			goto out;
++		}
++
++		clk_info->apbc2_base = of_iomap(np, 7);
++		if (!clk_info->apbc2_base) {
++			pr_err("failed to map apbc2 registers\n");
++			goto out;
++		}
++
++		clk_info->rcpu_base = of_iomap(np, 8);
++		if (!clk_info->rcpu_base) {
++			pr_err("failed to map rcpu registers\n");
++			goto out;
++		}
++
++		clk_info->rcpu2_base = of_iomap(np, 9);
++		if (!clk_info->rcpu2_base) {
++			pr_err("failed to map rcpu2 registers\n");
++			goto out;
++		}
++	}
++	ret = spacemit_ccu_probe(np, clk_info, hw_clks);
++	//LOG_INFO("init clock finish");
++	if (ret)
++		return;
++out:
++	return;
++}
++
++CLK_OF_DECLARE(k1x_clock, "spacemit,k1x-clock", spacemit_k1x_ccu_probe);
++
+diff --git a/drivers/clk/spacemit/ccu-spacemit-k1x.h b/drivers/clk/spacemit/ccu-spacemit-k1x.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu-spacemit-k1x.h
+@@ -0,0 +1,83 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#ifndef _CCU_SPACEMIT_K1X_H_
++#define _CCU_SPACEMIT_K1X_H_
++
++#include <linux/compiler.h>
++#include <linux/clk-provider.h>
++
++enum ccu_base_type{
++	BASE_TYPE_MPMU       = 0,
++	BASE_TYPE_APMU       = 1,
++	BASE_TYPE_APBC       = 2,
++	BASE_TYPE_APBS       = 3,
++	BASE_TYPE_CIU        = 4,
++	BASE_TYPE_DCIU       = 5,
++	BASE_TYPE_DDRC       = 6,
++	BASE_TYPE_AUDC       = 7,
++	BASE_TYPE_APBC2      = 8,
++	BASE_TYPE_RCPU       = 9,
++	BASE_TYPE_RCPU2      = 10,
++};
++
++enum {
++	CLK_DIV_TYPE_1REG_NOFC_V1 = 0,
++	CLK_DIV_TYPE_1REG_FC_V2,
++	CLK_DIV_TYPE_2REG_NOFC_V3,
++	CLK_DIV_TYPE_2REG_FC_V4,
++	CLK_DIV_TYPE_1REG_FC_DIV_V5,
++	CLK_DIV_TYPE_1REG_FC_MUX_V6,
++};
++
++struct ccu_common {
++	void __iomem	*base;
++	enum ccu_base_type base_type;
++	u32 	reg_type;
++	u32 	reg_ctrl;
++	u32 	reg_sel;
++	u32 	reg_xtc;
++	u32 	fc;
++	bool	is_pll;
++	const char		*name;
++	const struct clk_ops	*ops;
++	const char		* const *parent_names;
++	u8	num_parents;
++	unsigned long	flags;
++	spinlock_t	*lock;
++	struct clk_hw	hw;
++};
++
++struct spacemit_k1x_clk {
++	void __iomem *mpmu_base;
++	void __iomem *apmu_base;
++	void __iomem *apbc_base;
++	void __iomem *apbs_base;
++	void __iomem *ciu_base;
++	void __iomem *dciu_base;
++	void __iomem *ddrc_base;
++	void __iomem *audio_ctrl_base;
++	void __iomem *apbc2_base;
++	void __iomem *rcpu_base;
++	void __iomem *rcpu2_base;
++};
++
++struct clk_hw_table {
++	char	*name;
++	u32 clk_hw_id;
++};
++
++extern spinlock_t g_cru_lock;
++
++static inline struct ccu_common *hw_to_ccu_common(struct clk_hw *hw)
++{
++	return container_of(hw, struct ccu_common, hw);
++}
++
++int spacemit_ccu_probe(struct device_node *node, struct spacemit_k1x_clk *clk_info,
++		    struct clk_hw_onecell_data *desc);
++
++#endif /* _CCU_SPACEMIT_K1X_H_ */
+diff --git a/drivers/clk/spacemit/ccu_ddn.c b/drivers/clk/spacemit/ccu_ddn.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu_ddn.c
+@@ -0,0 +1,170 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Spacemit clock type ddn
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#include <linux/clk-provider.h>
++#include <linux/io.h>
++
++#include "ccu_ddn.h"
++/*
++ * It is M/N clock
++ *
++ * Fout from synthesizer can be given from two equations:
++ * numerator/denominator = Fin / (Fout * factor)
++ */
++
++static void ccu_ddn_disable(struct clk_hw *hw)
++{
++	struct ccu_ddn *ddn = hw_to_ccu_ddn(hw);
++	struct ccu_common * common = &ddn->common;
++	unsigned long flags;
++	u32 reg;
++
++	if (!ddn->gate)
++		return;
++
++	spin_lock_irqsave(common->lock, flags);
++
++	reg = readl(common->base + common->reg_sel);
++
++	writel(reg & ~ddn->gate, common->base + common->reg_sel);
++
++	spin_unlock_irqrestore(common->lock, flags);
++}
++
++static int ccu_ddn_enable(struct clk_hw *hw)
++{
++	struct ccu_ddn *ddn = hw_to_ccu_ddn(hw);
++	struct ccu_common * common = &ddn->common;
++	unsigned long flags;
++	u32 reg;
++
++	if (!ddn->gate)
++		return 0;
++
++	spin_lock_irqsave(common->lock, flags);
++
++	reg = readl(common->base + common->reg_sel);
++
++	writel(reg | ddn->gate, common->base + common->reg_sel);
++
++	spin_unlock_irqrestore(common->lock, flags);
++
++	return 0;
++}
++
++static int ccu_ddn_is_enabled(struct clk_hw *hw)
++{
++	struct ccu_ddn *ddn = hw_to_ccu_ddn(hw);
++	struct ccu_common * common = &ddn->common;
++
++	if (!ddn->gate)
++		return 1;
++
++	return readl(common->base + common->reg_sel) & ddn->gate;
++}
++
++static long clk_ddn_round_rate(struct clk_hw *hw, unsigned long drate,
++		unsigned long *prate)
++{
++	struct ccu_ddn *ddn = hw_to_ccu_ddn(hw);
++	struct ccu_ddn_config *params = &ddn->ddn;
++	unsigned long rate = 0, prev_rate;
++	unsigned long result;
++	int i;
++
++	for (i = 0; i < params->tbl_size; i++) {
++		prev_rate = rate;
++		rate = (((*prate / 10000) * params->tbl[i].den) /
++			(params->tbl[i].num * params->info->factor)) * 10000;
++		if (rate > drate)
++			break;
++	}
++	if ((i == 0) || (i == params->tbl_size)) {
++		result = rate;
++	} else {
++		if ((drate - prev_rate) > (rate - drate))
++			result = rate;
++		else
++			result = prev_rate;
++	}
++	return result;
++}
++
++static unsigned long clk_ddn_recalc_rate(struct clk_hw *hw,
++		unsigned long parent_rate)
++{
++	struct ccu_ddn *ddn = hw_to_ccu_ddn(hw);
++	struct ccu_ddn_config *params = &ddn->ddn;
++	unsigned int val, num, den;
++	unsigned long rate;
++
++	val = readl(ddn->common.base + ddn->common.reg_ctrl);
++
++	/* calculate numerator */
++	num = (val >> params->info->num_shift) & params->info->num_mask;
++
++	/* calculate denominator */
++	den = (val >> params->info->den_shift) & params->info->den_mask;
++
++	if (!den)
++		return 0;
++	rate = (((parent_rate / 10000)  * den) /
++			(num * params->info->factor)) * 10000;
++	return rate;
++}
++
++/* Configures new clock rate*/
++static int clk_ddn_set_rate(struct clk_hw *hw, unsigned long drate,
++				unsigned long prate)
++{
++	struct ccu_ddn *ddn = hw_to_ccu_ddn(hw);
++	struct ccu_ddn_config *params = &ddn->ddn;
++	int i;
++	unsigned long val;
++	unsigned long prev_rate, rate = 0;
++	unsigned long flags = 0;
++
++	for (i = 0; i < params->tbl_size; i++) {
++		prev_rate = rate;
++		rate = (((prate / 10000) * params->tbl[i].den) /
++			(params->tbl[i].num * params->info->factor)) * 10000;
++		if (rate > drate)
++			break;
++	}
++
++	if (i > 0)
++		i--;
++
++	if (ddn->common.lock)
++		spin_lock_irqsave(ddn->common.lock, flags);
++
++	val = readl(ddn->common.base + ddn->common.reg_ctrl);
++
++	val &= ~(params->info->num_mask << params->info->num_shift);
++	val |= (params->tbl[i].num & params->info->num_mask) << params->info->num_shift;
++
++	val &= ~(params->info->den_mask << params->info->den_shift);
++	val |= (params->tbl[i].den & params->info->den_mask) << params->info->den_shift;
++
++	writel(val, ddn->common.base + ddn->common.reg_ctrl);
++
++	if (ddn->common.lock)
++		spin_unlock_irqrestore(ddn->common.lock, flags);
++
++	return 0;
++}
++
++const struct clk_ops ccu_ddn_ops = {
++    .disable	 = ccu_ddn_disable,
++	.enable		 = ccu_ddn_enable,
++	.is_enabled	 = ccu_ddn_is_enabled,
++	.recalc_rate = clk_ddn_recalc_rate,
++	.round_rate = clk_ddn_round_rate,
++	.set_rate = clk_ddn_set_rate,
++};
++
+diff --git a/drivers/clk/spacemit/ccu_ddn.h b/drivers/clk/spacemit/ccu_ddn.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu_ddn.h
+@@ -0,0 +1,97 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#ifndef _CCU_DDN_H_
++#define _CCU_DDN_H_
++
++
++#include <linux/spinlock_types.h>
++#include <linux/clk-provider.h>
++
++#include "ccu-spacemit-k1x.h"
++
++struct ccu_ddn_tbl {
++	unsigned int num;
++	unsigned int den;
++};
++
++struct ccu_ddn_info {
++	unsigned int factor;
++	unsigned int num_mask;
++	unsigned int den_mask;
++	unsigned int num_shift;
++	unsigned int den_shift;
++};
++
++struct ccu_ddn_config {
++	struct ccu_ddn_info * info;
++	struct ccu_ddn_tbl * tbl;
++	u32 tbl_size;
++};
++
++#define PLL_DDN_TBL(_num, _den)		\
++	{						\
++		.num	=	(_num),		\
++		.den	=	(_den),			\
++	}
++
++struct ccu_ddn {
++	u32 gate;
++	struct ccu_ddn_config  ddn;
++	struct ccu_common	common;
++};
++
++#define _SPACEMIT_CCU_DDN_CONFIG(_info, _table, _size)	\
++	{						\
++		.info	= (struct ccu_ddn_info *)_info,			\
++		.tbl	= (struct ccu_ddn_tbl *)_table,			\
++		.tbl_size	= _size,			\
++	}
++
++#define SPACEMIT_CCU_DDN(_struct, _name, _parent, _info, _table, _size,	\
++						 _base_type, _reg_ctrl, 	\
++						 _flags)				\
++	struct ccu_ddn _struct = {					\
++		.ddn	= _SPACEMIT_CCU_DDN_CONFIG(_info, _table, _size),	\
++		.common = { 					\
++			.reg_ctrl		= _reg_ctrl, 			\
++			.base_type		= _base_type,	   \
++			.hw.init	= CLK_HW_INIT(_name,	\
++								  _parent, \
++								  &ccu_ddn_ops, \
++								  _flags),	\
++		}							\
++	}
++
++#define SPACEMIT_CCU_DDN_GATE(_struct, _name, _parent, _info, _table, _size,	\
++							 _base_type, _reg_ddn, __reg_gate, _gate_mask, \
++							 _flags)				\
++	struct ccu_ddn _struct = {					\
++		.gate	= _gate_mask,	 \
++		.ddn	= _SPACEMIT_CCU_DDN_CONFIG(_info, _table, _size),	\
++		.common = { 					\
++			.reg_ctrl		= _reg_ddn,			\
++			.reg_sel		= __reg_gate,			\
++			.base_type		= _base_type,	   \
++			.hw.init	= CLK_HW_INIT(_name,	\
++								  _parent, \
++								  &ccu_ddn_ops, \
++								  _flags),	\
++		}							\
++	}
++
++
++static inline struct ccu_ddn *hw_to_ccu_ddn(struct clk_hw *hw)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++
++	return container_of(common, struct ccu_ddn, common);
++}
++
++extern const struct clk_ops ccu_ddn_ops;
++
++
++#endif
+diff --git a/drivers/clk/spacemit/ccu_mix.c b/drivers/clk/spacemit/ccu_mix.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu_mix.c
+@@ -0,0 +1,489 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Spacemit clock type mix(div/mux/gate/factor)
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++#include <linux/clk-provider.h>
++#include <linux/io.h>
++#include <linux/delay.h>
++#include <linux/slab.h>
++#include <linux/err.h>
++
++#include "ccu_mix.h"
++
++#define TIMEOUT_LIMIT (20000) /* max timeout 10000us */
++static int twsi8_reg_val = 0x04;
++const char * tswi8_clk_name = "twsi8_clk";
++static void ccu_mix_disable(struct clk_hw *hw)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_gate_config *gate = mix->gate;
++	unsigned long flags = 0;
++	unsigned long rate;
++	u32 tmp;
++
++	if (!gate)
++		return;
++
++	if (!strcmp(common->name, tswi8_clk_name)){
++		twsi8_reg_val &= ~gate->gate_mask;;
++		twsi8_reg_val |= gate->val_disable;
++		tmp = twsi8_reg_val;
++		if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++			|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++			writel(tmp, common->base + common->reg_sel);
++		else
++			writel(tmp, common->base + common->reg_ctrl);
++		return;
++	}
++
++	if (common->lock)
++		spin_lock_irqsave(common->lock, flags);
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		tmp = readl(common->base + common->reg_sel);
++	else
++		tmp = readl(common->base + common->reg_ctrl);
++
++	tmp &= ~gate->gate_mask;
++	tmp |= gate->val_disable;
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		writel(tmp, common->base + common->reg_sel);
++	else
++		writel(tmp, common->base + common->reg_ctrl);
++
++	if (common->lock)
++		spin_unlock_irqrestore(common->lock, flags);
++
++	if (gate->flags & SPACEMIT_CLK_GATE_NEED_DELAY) {
++		rate = clk_hw_get_rate(&common->hw);
++
++		if (rate == 0)
++			pr_err("clock rate of %s is 0.\n", clk_hw_get_name(&common->hw));
++		else
++			/* Need delay 2M cycles. */
++			udelay(DIV_ROUND_UP(2000000, rate));
++	}
++
++	return;
++}
++
++static int ccu_mix_enable(struct clk_hw *hw)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_gate_config *gate = mix->gate;
++	unsigned long flags = 0;
++	unsigned long rate;
++	u32 tmp;
++	u32 val = 0;
++	int timeout_power = 1;
++
++    if (!gate)
++		return 0;
++
++	if (!strcmp(common->name, tswi8_clk_name)){
++		twsi8_reg_val &= ~gate->gate_mask;;
++		twsi8_reg_val |= gate->val_enable;
++		tmp = twsi8_reg_val;
++		if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++			|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++			writel(tmp, common->base + common->reg_sel);
++		else
++			writel(tmp, common->base + common->reg_ctrl);
++		return 0;
++	}
++
++	if (common->lock)
++		spin_lock_irqsave(common->lock, flags);
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		tmp = readl(common->base + common->reg_sel);
++	else
++		tmp = readl(common->base + common->reg_ctrl);
++
++	tmp &= ~gate->gate_mask;
++	tmp |= gate->val_enable;
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		writel(tmp, common->base + common->reg_sel);
++	else
++		writel(tmp, common->base + common->reg_ctrl);
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		val = readl(common->base + common->reg_sel);
++	else
++		val = readl(common->base + common->reg_ctrl);
++
++	if (common->lock)
++		spin_unlock_irqrestore(common->lock, flags);
++
++	while ((val & gate->gate_mask) != gate->val_enable && (timeout_power < TIMEOUT_LIMIT)) {
++		udelay(timeout_power);
++		if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++			val = readl(common->base + common->reg_sel);
++		else
++			val = readl(common->base + common->reg_ctrl);
++		timeout_power *= 10;
++	}
++
++	if (timeout_power > 1) {
++		if (val == tmp)
++			pr_err("write clk_gate %s timeout occur, read pass after %d us delay\n",
++			clk_hw_get_name(&common->hw), timeout_power);
++		else
++			pr_err("write clk_gate  %s timeout after %d us!\n", clk_hw_get_name(&common->hw), timeout_power);
++	}
++
++	if (gate->flags & SPACEMIT_CLK_GATE_NEED_DELAY) {
++		rate = clk_hw_get_rate(&common->hw);
++
++		if (rate == 0)
++			pr_err("clock rate of %s is 0.\n", clk_hw_get_name(&common->hw));
++		else
++			/* Need delay 2M cycles. */
++			udelay(DIV_ROUND_UP(2000000, rate));
++	}
++
++	return 0;
++}
++
++static int ccu_mix_is_enabled(struct clk_hw *hw)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_gate_config *gate = mix->gate;
++	unsigned long flags = 0;
++	u32 tmp;
++
++	if (!gate)
++		return 1;
++
++	if (!strcmp(common->name, tswi8_clk_name)){
++		return (twsi8_reg_val & gate->gate_mask) == gate->val_enable;
++	}
++
++	if (common->lock)
++		spin_lock_irqsave(common->lock, flags);
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		tmp = readl(common->base + common->reg_sel);
++	else
++		tmp = readl(common->base + common->reg_ctrl);
++
++	if (common->lock)
++		spin_unlock_irqrestore(common->lock, flags);
++
++	return (tmp & gate->gate_mask) == gate->val_enable;
++}
++
++static unsigned long ccu_mix_recalc_rate(struct clk_hw *hw,
++					unsigned long parent_rate)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_div_config *div = mix->div;
++	unsigned long val;
++	u32 reg;
++
++	if (!div){
++		if (mix->factor)
++			return parent_rate * mix->factor->mul / mix->factor->div;
++		else
++		    return parent_rate;
++	}
++    if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		reg = readl(common->base + common->reg_sel);
++	else
++		reg = readl(common->base + common->reg_ctrl);
++
++	val = reg >> div->shift;
++	val &= (1 << div->width) - 1;
++
++	val = divider_recalc_rate(hw, parent_rate, val, div->table,
++				  div->flags, div->width);
++
++	return val;
++}
++
++
++static int ccu_mix_trigger_fc(struct clk_hw *hw)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	unsigned long val = 0;
++
++	int ret = 0, timeout = 50;
++
++	if (common->reg_type == CLK_DIV_TYPE_1REG_FC_V2
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4
++		|| common->reg_type == CLK_DIV_TYPE_1REG_FC_DIV_V5
++		|| common->reg_type == CLK_DIV_TYPE_1REG_FC_MUX_V6) {
++
++		timeout = 50;
++		val = readl(common->base + common->reg_ctrl);
++		val |= common->fc;
++		writel(val, common->base + common->reg_ctrl);
++
++		do {
++			val = readl(common->base + common->reg_ctrl);
++			timeout--;
++			if (!(val & (common->fc)))
++				break;
++		} while (timeout);
++
++		if (timeout == 0) {
++			timeout = 5000;
++			do {
++				val = readl(common->base + common->reg_ctrl);
++				timeout--;
++				if (!(val & (common->fc)))
++					break;
++			} while (timeout);
++			if (timeout != 0) {
++				ret = 0;
++
++			} else {
++				ret = -1;
++			}
++		}
++	}
++
++	return ret;
++
++}
++
++static long ccu_mix_round_rate(struct clk_hw *hw, unsigned long rate,
++				unsigned long *prate)
++{
++	return rate;
++}
++
++unsigned long ccu_mix_calc_best_rate(struct clk_hw *hw, unsigned long rate, u32 *mux_val, u32 *div_val)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_div_config *div = mix->div? mix->div: NULL;
++	struct clk_hw *parent;
++	unsigned long parent_rate = 0, best_rate = 0;
++	u32 i, j, div_max;
++
++	for (i = 0; i < common->num_parents; i++) {
++
++		parent = clk_hw_get_parent_by_index(hw, i);
++		if (!parent)
++			continue;
++		parent_rate = clk_hw_get_rate(parent);
++
++		if(div)
++			div_max = 1 << div->width;
++		else
++			div_max = 1;
++
++		for(j = 1; j <= div_max; j++){
++			if(abs(parent_rate/j - rate) < abs(best_rate - rate)){
++				best_rate = DIV_ROUND_UP_ULL(parent_rate, j);
++				*mux_val = i;
++				*div_val = j - 1;
++			}
++		}
++	}
++
++	return best_rate;
++}
++
++static int ccu_mix_set_rate(struct clk_hw *hw, unsigned long rate,
++			   unsigned long parent_rate)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_div_config *div = mix->div? mix->div: NULL;
++	struct ccu_mux_config *mux = mix->mux? mix->mux: NULL;
++	unsigned long best_rate = 0;
++	unsigned long flags;
++	u32 cur_mux, cur_div, mux_val = 0, div_val = 0;
++	u32 reg = 0;
++	int ret = 0;
++
++	if(!div && !mux){
++		return 0;
++	}
++
++	best_rate = ccu_mix_calc_best_rate(hw, rate, &mux_val, &div_val);
++	if (!strcmp(common->name, tswi8_clk_name)){
++		if(mux){
++		cur_mux = twsi8_reg_val >> mux->shift;
++		cur_mux &= (1 << mux->width) - 1;
++		if(cur_mux != mux_val)
++			clk_hw_set_parent(hw, clk_hw_get_parent_by_index(hw, mux_val));
++		}
++		return 0;
++	}
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		reg = readl(common->base + common->reg_sel);
++	else
++		reg = readl(common->base + common->reg_ctrl);
++
++	if(mux){
++		cur_mux = reg >> mux->shift;
++		cur_mux &= (1 << mux->width) - 1;
++		if(cur_mux != mux_val)
++			clk_hw_set_parent(hw, clk_hw_get_parent_by_index(hw, mux_val));
++	}
++	if(div){
++		cur_div = reg >> div->shift;
++		cur_div &= (1 << div->width) - 1;
++		if(cur_div == div_val)
++			return 0;
++	}else{
++		return 0;
++	}
++
++	spin_lock_irqsave(common->lock, flags);
++    if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		reg = readl(common->base + common->reg_sel);
++	else
++		reg = readl(common->base + common->reg_ctrl);
++
++	reg &= ~GENMASK(div->width + div->shift - 1, div->shift);
++
++    if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		writel(reg | (div_val << div->shift),
++	       common->base + common->reg_sel);
++	else
++		writel(reg | (div_val << div->shift),
++	       common->base + common->reg_ctrl);
++
++	if (common->reg_type == CLK_DIV_TYPE_1REG_FC_V2
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4
++		|| common->reg_type == CLK_DIV_TYPE_1REG_FC_DIV_V5) {
++
++		ret = ccu_mix_trigger_fc(hw);
++	}
++	spin_unlock_irqrestore(common->lock, flags);
++
++	if(ret)
++		pr_err("%s of %s timeout\n", __func__, clk_hw_get_name(&common->hw));
++	return 0;
++}
++
++static u8 ccu_mix_get_parent(struct clk_hw *hw)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_mux_config *mux = mix->mux;
++	u32 reg;
++	u8 parent;
++
++	if(!mux)
++		return 0;
++
++	if (!strcmp(common->name, tswi8_clk_name)){
++		parent = twsi8_reg_val >> mux->shift;
++		parent &= (1 << mux->width) - 1;
++		return parent;
++	}
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		reg = readl(common->base + common->reg_sel);
++	else
++		reg = readl(common->base + common->reg_ctrl);
++
++	parent = reg >> mux->shift;
++	parent &= (1 << mux->width) - 1;
++
++	if (mux->table) {
++		int num_parents = clk_hw_get_num_parents(&common->hw);
++		int i;
++
++		for (i = 0; i < num_parents; i++)
++			if (mux->table[i] == parent)
++				return i;
++	}
++	return parent;
++}
++
++static int ccu_mix_set_parent(struct clk_hw *hw, u8 index)
++{
++	struct ccu_mix *mix = hw_to_ccu_mix(hw);
++	struct ccu_common * common = &mix->common;
++	struct ccu_mux_config *mux = mix->mux;
++	unsigned long flags;
++	u32 reg = 0;
++	int ret = 0;
++
++	if(!mux)
++		return 0;
++
++	if (mux->table)
++		index = mux->table[index];
++
++	if (!strcmp(common->name, tswi8_clk_name)){
++		twsi8_reg_val &= ~GENMASK(mux->width + mux->shift - 1, mux->shift);
++		twsi8_reg_val |= (index << mux->shift);
++		reg = twsi8_reg_val;
++		if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++			|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++			writel(reg, common->base + common->reg_sel);
++		else
++			writel(reg, common->base + common->reg_ctrl);
++		return 0;
++	}
++
++	spin_lock_irqsave(common->lock, flags);
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		reg = readl(common->base + common->reg_sel);
++	else
++		reg = readl(common->base + common->reg_ctrl);
++
++	reg &= ~GENMASK(mux->width + mux->shift - 1, mux->shift);
++
++	if (common->reg_type == CLK_DIV_TYPE_2REG_NOFC_V3
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4)
++		writel(reg | (index << mux->shift), common->base + common->reg_sel);
++	else
++		writel(reg | (index << mux->shift), common->base + common->reg_ctrl);
++
++	if (common->reg_type == CLK_DIV_TYPE_1REG_FC_V2
++		|| common->reg_type == CLK_DIV_TYPE_2REG_FC_V4
++		|| common->reg_type == CLK_DIV_TYPE_1REG_FC_MUX_V6) {
++
++		ret = ccu_mix_trigger_fc(hw);
++	}
++	spin_unlock_irqrestore(common->lock, flags);
++
++	if(ret)
++		pr_err("%s of %s timeout\n", __func__, clk_hw_get_name(&common->hw));
++
++	return 0;
++}
++
++const struct clk_ops ccu_mix_ops = {
++	.disable	 = ccu_mix_disable,
++	.enable		 = ccu_mix_enable,
++	.is_enabled	 = ccu_mix_is_enabled,
++	.get_parent	 = ccu_mix_get_parent,
++	.set_parent	 = ccu_mix_set_parent,
++	.round_rate  = ccu_mix_round_rate,
++	.recalc_rate = ccu_mix_recalc_rate,
++	.set_rate	 = ccu_mix_set_rate,
++};
++
+diff --git a/drivers/clk/spacemit/ccu_mix.h b/drivers/clk/spacemit/ccu_mix.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu_mix.h
+@@ -0,0 +1,374 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#ifndef _CCU_MIX_H_
++#define _CCU_MIX_H_
++
++#include <linux/clk-provider.h>
++#include "ccu-spacemit-k1x.h"
++
++
++#define SPACEMIT_CLK_GATE_NEED_DELAY BIT(0)
++
++struct ccu_gate_config {
++	u32		gate_mask;
++	u32		val_enable;
++	u32		val_disable;
++	u32		flags;
++};
++
++struct ccu_factor_config {
++	u32		div;
++	u32		mul;
++};
++
++struct ccu_mux_config {
++	u8		shift;
++	u8		width;
++	const u8	*table;
++	u32		flags;
++};
++
++struct ccu_div_config {
++	u8			shift;
++	u8			width;
++	u32			max;
++	u32			offset;
++	u32			flags;
++	struct clk_div_table	*table;
++};
++
++struct ccu_mix {
++	struct ccu_gate_config  *gate;
++	struct ccu_factor_config  *factor;
++	struct ccu_div_config	*div;
++	struct ccu_mux_config	*mux;
++	struct ccu_common	common;
++};
++
++#define CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, _flags)		\
++	(&(struct ccu_gate_config) {				\
++		.gate_mask   = _gate_mask,			\
++		.val_enable  = _val_enable,			\
++		.val_disable = _val_disable,	\
++		.flags	= _flags,				\
++	})
++
++#define CCU_FACTOR_INIT(_div, _mul)		\
++	(&(struct ccu_factor_config) {				\
++		.div = _div,			\
++		.mul = _mul,			\
++	})
++
++
++#define CCU_MUX_INIT(_shift, _width, _table, _flags)		\
++	(&(struct ccu_mux_config) {				\
++		.shift	= _shift,			\
++		.width	= _width,			\
++		.table	= _table,			\
++		.flags	= _flags,				\
++	})
++
++#define CCU_DIV_INIT(_shift, _width, _table, _flags)		\
++	(&(struct ccu_div_config) {				\
++		.shift	= _shift,					\
++		.width	= _width,					\
++		.flags	= _flags,					\
++		.table	= _table,					\
++	})
++
++#define SPACEMIT_CCU_GATE(_struct, _name, _parent, _base_type, _reg,	\
++				      _gate_mask, _val_enable, _val_disable, _flags) \
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	 \
++		.common	= {						\
++			.reg_ctrl		= _reg,				\
++			.base_type 		= _base_type,       \
++			.name			= _name,       \
++			.num_parents	= 1,		\
++			.hw.init	= CLK_HW_INIT(_name,	\
++						      _parent,		\
++						      &ccu_mix_ops,	\
++						      _flags),		\
++		}							\
++	}
++#define SPACEMIT_CCU_GATE_NO_PARENT(_struct, _name, _parent, _base_type, _reg,	\
++						  _gate_mask, _val_enable, _val_disable, _flags) \
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	 \
++		.common = { 					\
++			.reg_ctrl		= _reg, 			\
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.num_parents	= 0,		\
++			.hw.init	= CLK_HW_INIT_NO_PARENT(_name,	\
++							  &ccu_mix_ops, \
++							  _flags),		\
++		}							\
++	}
++
++#define SPACEMIT_CCU_FACTOR(_struct, _name, _parent,	\
++						  _div, _mul) \
++	struct ccu_mix _struct = {					\
++		.factor	= CCU_FACTOR_INIT(_div, _mul),	 \
++		.common = { 					\
++			.name			= _name,    \
++			.num_parents	= 1,		\
++			.hw.init	= CLK_HW_INIT(_name,	\
++							  _parent,		\
++							  &ccu_mix_ops, \
++							  0),		\
++		}							\
++	}
++
++#define SPACEMIT_CCU_MUX(_struct, _name, _parents, _base_type, _reg,	\
++						  _shift, _width, _flags) \
++	struct ccu_mix _struct = {					\
++		.mux	= CCU_MUX_INIT(_shift, _width, NULL, 0),	 \
++		.common = { 					\
++			.reg_ctrl		= _reg, 			\
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.parent_names	= _parents,         \
++			.num_parents	= ARRAY_SIZE(_parents),		\
++			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\
++							  _parents,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		}							\
++	}
++
++#define SPACEMIT_CCU_DIV(_struct, _name, _parent, _base_type, _reg,	\
++							  _shift, _width, _flags) \
++	struct ccu_mix _struct = {					\
++		.div	= CCU_DIV_INIT(_shift, _width, NULL, 0),	 \
++		.common = { 					\
++			.reg_ctrl		= _reg, 			\
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.num_parents	= 1,		\
++			.hw.init	= CLK_HW_INIT(_name,	\
++							  _parent,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		}							\
++	}
++
++#define SPACEMIT_CCU_GATE_FACTOR(_struct, _name, _parent, _base_type, _reg,	\
++						  _gate_mask, _val_enable, _val_disable,  \
++						  _div, _mul, _flags) \
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	 \
++		.factor	= CCU_FACTOR_INIT(_div, _mul),	 \
++		.common = { 					\
++			.reg_ctrl		= _reg, 			\
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.num_parents	= 1,		\
++			.hw.init	= CLK_HW_INIT(_name,	\
++							  _parent,		\
++							  &ccu_mix_ops, \
++							  _flags),		\
++		}							\
++	}
++
++
++#define SPACEMIT_CCU_MUX_GATE(_struct, _name, _parents, _base_type, _reg,	\
++							  _shift, _width, _gate_mask, _val_enable, _val_disable, _flags) \
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	 \
++		.mux	= CCU_MUX_INIT(_shift, _width, NULL, 0),	 \
++		.common = { 					\
++			.reg_ctrl		= _reg, 			\
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.parent_names	= _parents,         \
++			.num_parents	= ARRAY_SIZE(_parents),		\
++			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\
++							  _parents,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		}							\
++	}
++
++#define SPACEMIT_CCU_DIV_GATE(_struct, _name, _parent, _base_type, _reg,	\
++								 _shift, _width, _gate_mask, _val_enable, _val_disable, _flags) \
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	 \
++		.div	= CCU_DIV_INIT(_shift, _width, NULL, 0),	 \
++		.common = { 					\
++			.reg_ctrl		= _reg, 			\
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.num_parents	= 1,		\
++			.hw.init	= CLK_HW_INIT(_name,	\
++							  _parent,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		}							\
++	}
++
++
++#define SPACEMIT_CCU_DIV_MUX_GATE(_struct, _name, _parents,		\
++					_base_type, _reg_ctrl,				\
++					_mshift, _mwidth,		\
++					_muxshift, _muxwidth,		\
++					_gate_mask, _val_enable, _val_disable, _flags)			\
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),				\
++		.div	= CCU_DIV_INIT(_mshift, _mwidth, NULL, 0),		\
++		.mux	= CCU_MUX_INIT(_muxshift, _muxwidth, NULL, 0), \
++		.common	= {						\
++			.reg_ctrl		= _reg_ctrl,				\
++			.base_type 		= _base_type,       \
++			.name			= _name,       \
++			.parent_names	= _parents,         \
++			.num_parents	= ARRAY_SIZE(_parents),		\
++			.hw.init	= CLK_HW_INIT_PARENTS(_name,	\
++							      _parents, \
++							      &ccu_mix_ops, \
++							      _flags|CLK_GET_RATE_NOCACHE),	\
++		},							\
++	}
++
++#define SPACEMIT_CCU_DIV2_FC_MUX_GATE(_struct, _name, _parents, _base_type, _reg_ctrl, _reg_sel,	\
++						  _mshift, _mwidth, _fc, _muxshift, _muxwidth, _gate_mask, _val_enable, _val_disable, 		\
++						  _flags)					\
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	\
++		.div	= CCU_DIV_INIT(_mshift, _mwidth, NULL, 0),		\
++		.mux	= CCU_MUX_INIT(_muxshift, _muxwidth, NULL, 0), \
++		.common = { 					\
++		    .reg_type = CLK_DIV_TYPE_2REG_FC_V4,   \
++			.reg_ctrl		= _reg_ctrl,			\
++			.reg_sel		= _reg_sel, 	 \
++			.fc 			= _fc,		   \
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.parent_names	= _parents,         \
++			.num_parents	= ARRAY_SIZE(_parents),		\
++			.hw.init	= CLK_HW_INIT_PARENTS(_name,		\
++							  _parents,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		},							\
++	}
++
++
++#define SPACEMIT_CCU_DIV_FC_MUX_GATE(_struct, _name, _parents, _base_type, _reg_ctrl,	\
++						  _mshift, _mwidth, _fc, _muxshift, _muxwidth, _gate_mask, _val_enable, _val_disable, 		\
++						  _flags)					\
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	\
++		.div	= CCU_DIV_INIT(_mshift, _mwidth, NULL, 0),		\
++		.mux	= CCU_MUX_INIT(_muxshift, _muxwidth, NULL, 0), \
++		.common = { 					\
++		    .reg_type = CLK_DIV_TYPE_1REG_FC_V2,    \
++			.reg_ctrl		= _reg_ctrl,			\
++			.fc 			= _fc,		   \
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.parent_names	= _parents,         \
++			.num_parents	= ARRAY_SIZE(_parents),		\
++			.hw.init	= CLK_HW_INIT_PARENTS(_name,		\
++							  _parents,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		},							\
++	}
++
++#define SPACEMIT_CCU_DIV_MFC_MUX_GATE(_struct, _name, _parents, _base_type, _reg_ctrl,	\
++							  _mshift, _mwidth, _fc, _muxshift, _muxwidth, _gate_mask, _val_enable, _val_disable,		\
++							  _flags)					\
++		struct ccu_mix _struct = {					\
++			.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	\
++			.div	= CCU_DIV_INIT(_mshift, _mwidth, NULL, 0),		\
++			.mux	= CCU_MUX_INIT(_muxshift, _muxwidth, NULL, 0), \
++			.common = { 					\
++				.reg_type = CLK_DIV_TYPE_1REG_FC_MUX_V6,	\
++				.reg_ctrl		= _reg_ctrl,			\
++				.fc 			= _fc,		   \
++				.base_type		= _base_type,		\
++				.name			= _name,       \
++				.parent_names	= _parents, 		\
++				.num_parents	= ARRAY_SIZE(_parents), 	\
++				.hw.init	= CLK_HW_INIT_PARENTS(_name,		\
++								  _parents, 	\
++								  &ccu_mix_ops, \
++								  _flags|CLK_GET_RATE_NOCACHE), 	\
++			},							\
++		}
++
++
++#define SPACEMIT_CCU_DIV_FC_WITH_GATE(_struct, _name, _parent, _base_type, _reg_ctrl,		\
++					  _mshift, _mwidth, _fc, _gate_mask, _val_enable, _val_disable,			\
++					  _flags)					\
++	struct ccu_mix _struct = {					\
++		.gate	= CCU_GATE_INIT(_gate_mask, _val_enable, _val_disable, 0),	\
++		.div	= CCU_DIV_INIT(_mshift, _mwidth, NULL, 0),		\
++		.common = { 					\
++			.reg_type = CLK_DIV_TYPE_1REG_FC_V2,	\
++			.reg_ctrl		= _reg_ctrl, 			\
++			.fc 			= _fc,         \
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.num_parents	= 1,		\
++			.hw.init	= CLK_HW_INIT(_name,		\
++							  _parent,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		},							\
++	}
++
++#define SPACEMIT_CCU_DIV_FC_MUX(_struct, _name, _parents, _base_type, _reg_ctrl,		\
++					  _mshift, _mwidth, _fc, _muxshift, _muxwidth, _flags)					\
++	struct ccu_mix _struct = {					\
++		.div	= CCU_DIV_INIT(_mshift, _mwidth, NULL, 0),		\
++		.mux	= CCU_MUX_INIT(_muxshift, _muxwidth, NULL, 0), \
++		.common = { 					\
++			.reg_type = CLK_DIV_TYPE_1REG_FC_V2,	\
++			.reg_ctrl		= _reg_ctrl, 			\
++			.fc 			= _fc,         \
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.parent_names	= _parents,         \
++			.num_parents	= ARRAY_SIZE(_parents),		\
++			.hw.init	= CLK_HW_INIT_PARENTS(_name,		\
++							  _parents,		\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE),		\
++		},							\
++	}
++
++#define SPACEMIT_CCU_MUX_FC(_struct, _name, _parents, _base_type, _reg_ctrl,		\
++						  _fc, _muxshift, _muxwidth, _flags)					\
++	struct ccu_mix _struct = {					\
++		.mux	= CCU_MUX_INIT(_muxshift, _muxwidth, NULL, 0), \
++		.common = { 					\
++			.reg_type = CLK_DIV_TYPE_1REG_FC_V2,	\
++			.reg_ctrl		= _reg_ctrl,			\
++			.fc 			= _fc,		   \
++			.base_type		= _base_type,		\
++			.name			= _name,       \
++			.parent_names	= _parents, 		\
++			.num_parents	= ARRAY_SIZE(_parents), 	\
++			.hw.init	= CLK_HW_INIT_PARENTS(_name,		\
++							  _parents, 	\
++							  &ccu_mix_ops, \
++							  _flags|CLK_GET_RATE_NOCACHE), 	\
++		},							\
++	}
++
++static inline struct ccu_mix *hw_to_ccu_mix(struct clk_hw *hw)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++
++	return container_of(common, struct ccu_mix, common);
++}
++
++extern const struct clk_ops ccu_mix_ops;
++
++#endif /* _CCU_DIV_H_ */
+diff --git a/drivers/clk/spacemit/ccu_pll.c b/drivers/clk/spacemit/ccu_pll.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu_pll.c
+@@ -0,0 +1,280 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Spacemit clock type pll
++ *
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#include <linux/io.h>
++#include <linux/clk.h>
++#include <linux/clk-provider.h>
++#include <linux/clkdev.h>
++#include <linux/delay.h>
++
++#include "ccu_pll.h"
++
++#define PLL_MIN_FREQ 600000000
++#define PLL_MAX_FREQ 3400000000
++#define PLL_DELAYTIME 590 //(590*5)us
++
++#define pll_readl(reg)		readl(reg)
++#define pll_readl_pll_swcr1(p)	pll_readl(p.base + p.reg_ctrl)
++#define pll_readl_pll_swcr2(p)	pll_readl(p.base + p.reg_sel)
++#define pll_readl_pll_swcr3(p)	pll_readl(p.base + p.reg_xtc)
++
++#define pll_writel(val, reg)		writel(val, reg)
++#define pll_writel_pll_swcr1(val, p)	pll_writel(val, p.base + p.reg_ctrl)
++#define pll_writel_pll_swcr2(val, p)	pll_writel(val, p.base + p.reg_sel)
++#define pll_writel_pll_swcr3(val, p)	pll_writel(val, p.base + p.reg_xtc)
++
++/* unified pllx_swcr1 for pll1~3 */
++union pllx_swcr1 {
++	struct {
++		unsigned int reg5:8;
++		unsigned int reg6:8;
++		unsigned int reg7:8;
++		unsigned int reg8:8;
++	} b;
++	unsigned int v;
++};
++
++/* unified pllx_swcr2 for pll1~3 */
++union pllx_swcr2 {
++	struct {
++		unsigned int div1_en:1;
++		unsigned int div2_en:1;
++		unsigned int div3_en:1;
++		unsigned int div4_en:1;
++		unsigned int div5_en:1;
++		unsigned int div6_en:1;
++		unsigned int div7_en:1;
++		unsigned int div8_en:1;
++		unsigned int reserved1:4;
++		unsigned int atest_en:1;
++		unsigned int cktest_en:1;
++		unsigned int dtest_en:1;
++		unsigned int rdo:2;
++		unsigned int mon_cfg:4;
++		unsigned int reserved2:11;
++	} b;
++	unsigned int v;
++};
++
++/* unified pllx_swcr3 for pll1~3 */
++union pllx_swcr3{
++	struct {
++		unsigned int div_frc:24;
++		unsigned int div_int:7;
++		unsigned int pll_en:1;
++	} b;
++
++	unsigned int v;
++};
++
++static int ccu_pll_is_enabled(struct clk_hw *hw)
++{
++	struct ccu_pll *p = hw_to_ccu_pll(hw);
++	union pllx_swcr3 swcr3;
++	unsigned int enabled;
++
++	swcr3.v = pll_readl_pll_swcr3(p->common);
++	enabled = swcr3.b.pll_en;
++
++	return enabled;
++}
++
++/* frequency unit Mhz, return pll vco freq */
++static unsigned long __get_vco_freq(struct clk_hw *hw)
++{
++	unsigned int reg5, reg6, reg7, reg8, size, i;
++	unsigned int div_int, div_frc;
++	struct ccu_pll_rate_tbl *freq_pll_regs_table;
++	struct ccu_pll *p = hw_to_ccu_pll(hw);
++	union pllx_swcr1 swcr1;
++	union pllx_swcr3 swcr3;
++
++	swcr1.v = pll_readl_pll_swcr1(p->common);
++	swcr3.v = pll_readl_pll_swcr3(p->common);
++
++    reg5 = swcr1.b.reg5;
++    reg6 = swcr1.b.reg6;
++    reg7 = swcr1.b.reg7;
++    reg8 = swcr1.b.reg8;
++
++    div_int = swcr3.b.div_int;
++    div_frc = swcr3.b.div_frc;
++
++    freq_pll_regs_table = p->pll.rate_tbl;
++    size = p->pll.tbl_size;
++
++    for (i = 0; i < size; i++) {
++              if ((freq_pll_regs_table[i].reg5 == reg5)
++              && (freq_pll_regs_table[i].reg6 == reg6)
++              && (freq_pll_regs_table[i].reg7 == reg7)
++              && (freq_pll_regs_table[i].reg8 == reg8)
++	  && (freq_pll_regs_table[i].div_int == div_int)
++	  && (freq_pll_regs_table[i].div_frac == div_frc))
++                    return freq_pll_regs_table[i].rate;
++
++    }
++
++    pr_err("Unknown rate for clock %s\n", __clk_get_name(hw->clk));
++
++    return 0;
++}
++
++static int ccu_pll_enable(struct clk_hw *hw)
++{
++	unsigned int delaytime = PLL_DELAYTIME;
++	unsigned long flags;
++	struct ccu_pll *p = hw_to_ccu_pll(hw);
++	union pllx_swcr3 swcr3;
++
++	if (ccu_pll_is_enabled(hw))
++		return 0;
++
++	spin_lock_irqsave(p->common.lock, flags);
++	swcr3.v = pll_readl_pll_swcr3(p->common);
++	swcr3.b.pll_en = 1;
++	pll_writel_pll_swcr3(swcr3.v, p->common);
++	spin_unlock_irqrestore(p->common.lock, flags);
++
++	/* check lock status */
++	udelay(50);
++
++	while ((!(readl(p->pll.lock_base + p->pll.reg_lock) & p->pll.lock_enable_bit))
++	       && delaytime) {
++		udelay(5);
++		delaytime--;
++	}
++	if (unlikely(!delaytime)) {
++		pr_err("%s enabling didn't get stable within 3000us!!!\n", __clk_get_name(hw->clk));
++		//panic("pllx_r/w timeout!\n");
++	}
++
++	return 0;
++}
++
++static void ccu_pll_disable(struct clk_hw *hw)
++{
++	unsigned long flags;
++	struct ccu_pll *p = hw_to_ccu_pll(hw);
++	union pllx_swcr3 swcr3;
++
++	spin_lock_irqsave(p->common.lock, flags);
++	swcr3.v = pll_readl_pll_swcr3(p->common);
++	swcr3.b.pll_en = 0;
++	pll_writel_pll_swcr3(swcr3.v, p->common);
++	spin_unlock_irqrestore(p->common.lock, flags);
++}
++
++/*
++ * pll rate change requires sequence:
++ * clock off -> change rate setting -> clock on
++ * This function doesn't really change rate, but cache the config
++ */
++static int ccu_pll_set_rate(struct clk_hw *hw, unsigned long rate,
++			       unsigned long parent_rate)
++{
++	unsigned int i, reg5 = 0, reg6 = 0, reg7 = 0, reg8 = 0;
++	unsigned int div_int, div_frc;
++	unsigned long flags;
++	unsigned long new_rate = rate, old_rate;
++	struct ccu_pll *p = hw_to_ccu_pll(hw);
++	struct ccu_pll_config *params = &p->pll;
++	union pllx_swcr1 swcr1;
++	union pllx_swcr3 swcr3;
++	bool found = false;
++
++	if (ccu_pll_is_enabled(hw)) {
++		pr_err("%s %s is enabled, ignore the setrate!\n",
++		       __func__, __clk_get_name(hw->clk));
++		return 0;
++	}
++
++	old_rate = __get_vco_freq(hw);
++	/* setp 1: calculate fbd frcd kvco and band */
++	if (params->rate_tbl) {
++		for (i = 0; i < params->tbl_size; i++) {
++			if (rate == params->rate_tbl[i].rate) {
++				found = true;
++
++				reg5 = params->rate_tbl[i].reg5;
++				reg6 = params->rate_tbl[i].reg6;
++				reg7 = params->rate_tbl[i].reg7;
++				reg8 = params->rate_tbl[i].reg8;
++				div_int = params->rate_tbl[i].div_int;
++				div_frc = params->rate_tbl[i].div_frac;
++				break;
++			}
++		}
++
++		BUG_ON(!found);
++	} else {
++		pr_err("don't find freq table for pll\n");
++		return -EINVAL;
++	}
++
++	spin_lock_irqsave(p->common.lock, flags);
++	/* setp 2: set pll kvco/band and fbd/frcd setting */
++	swcr1.v = pll_readl_pll_swcr1(p->common);
++	swcr1.b.reg5 = reg5;
++	swcr1.b.reg6 = reg6;
++	swcr1.b.reg7 = reg7;
++	swcr1.b.reg8 = reg8;
++	pll_writel_pll_swcr1(swcr1.v, p->common);
++
++	swcr3.v = pll_readl_pll_swcr3(p->common);
++	swcr3.b.div_int = div_int;
++	swcr3.b.div_frc = div_frc;
++	pll_writel_pll_swcr3(swcr3.v, p->common);
++
++	spin_unlock_irqrestore(p->common.lock, flags);
++
++	pr_debug("%s %s rate %lu->%lu!\n", __func__,
++		 __clk_get_name(hw->clk), old_rate, new_rate);
++	return 0;
++}
++
++static unsigned long ccu_pll_recalc_rate(struct clk_hw *hw,
++					 unsigned long parent_rate)
++{
++	return __get_vco_freq(hw);
++}
++
++static long ccu_pll_round_rate(struct clk_hw *hw, unsigned long rate,
++			       unsigned long *prate)
++{
++	struct ccu_pll *p = hw_to_ccu_pll(hw);
++	unsigned long max_rate = 0;
++	unsigned int i;
++	struct ccu_pll_config *params = &p->pll;
++
++	if (rate > PLL_MAX_FREQ || rate < PLL_MIN_FREQ) {
++		pr_err("%lu rate out of range!\n", rate);
++		return -EINVAL;
++	}
++
++	if (params->rate_tbl) {
++		for (i = 0; i < params->tbl_size; i++) {
++			if (params->rate_tbl[i].rate <= rate) {
++				if (max_rate < params->rate_tbl[i].rate)
++					max_rate = params->rate_tbl[i].rate;
++			}
++		}
++	} else {
++		pr_err("don't find freq table for pll\n");
++	}
++	return max_rate;
++}
++
++const struct clk_ops ccu_pll_ops = {
++	.enable = ccu_pll_enable,
++	.disable = ccu_pll_disable,
++	.set_rate = ccu_pll_set_rate,
++	.recalc_rate = ccu_pll_recalc_rate,
++	.round_rate = ccu_pll_round_rate,
++	.is_enabled = ccu_pll_is_enabled,
++};
++
+diff --git a/drivers/clk/spacemit/ccu_pll.h b/drivers/clk/spacemit/ccu_pll.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/clk/spacemit/ccu_pll.h
+@@ -0,0 +1,84 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2023, spacemit Corporation.
++ *
++ */
++
++#ifndef _CCU_PLL_H_
++#define _CCU_PLL_H_
++
++#include <linux/spinlock_types.h>
++#include <linux/clk-provider.h>
++#include "ccu-spacemit-k1x.h"
++
++struct ccu_pll_rate_tbl {
++	unsigned long long rate;
++	u32 reg5;
++	u32 reg6;
++	u32 reg7;
++	u32 reg8;
++	unsigned int div_int;
++	unsigned int div_frac;
++};
++
++struct ccu_pll_config {
++	struct ccu_pll_rate_tbl * rate_tbl;
++	u32 tbl_size;
++	void __iomem	*lock_base;
++	u32		reg_lock;
++	u32 lock_enable_bit;
++};
++
++#define PLL_RATE(_rate, _reg5, _reg6, _reg7, _reg8, _div_int, _div_frac)		\
++	{						\
++		.rate	=	(_rate),		\
++		.reg5	=	(_reg5),			\
++		.reg6	=	(_reg6),			\
++		.reg7	=	(_reg7),			\
++		.reg8	=	(_reg8),			\
++		.div_int	=	(_div_int),			\
++		.div_frac	=	(_div_frac),			\
++	}
++
++struct ccu_pll {
++	struct ccu_pll_config	pll;
++	struct ccu_common	common;
++};
++
++#define _SPACEMIT_CCU_PLL_CONFIG(_table, _size, _reg_lock, _lock_enable_bit)	\
++	{						\
++		.rate_tbl	= (struct ccu_pll_rate_tbl *)_table,			\
++		.tbl_size	= _size,			\
++		.reg_lock 	= _reg_lock,        \
++		.lock_enable_bit	= _lock_enable_bit,			\
++	}
++
++#define SPACEMIT_CCU_PLL(_struct, _name, _table, _size,	\
++						 _base_type, _reg_ctrl, _reg_sel, _reg_xtc,\
++						 _reg_lock, _lock_enable_bit, _is_pll,	\
++						 _flags)				\
++	struct ccu_pll _struct = {					\
++		.pll	= _SPACEMIT_CCU_PLL_CONFIG(_table, _size, _reg_lock, _lock_enable_bit),	\
++		.common = { 					\
++			.reg_ctrl		= _reg_ctrl, 			\
++			.reg_sel		= _reg_sel, 			\
++			.reg_xtc		= _reg_xtc, 			\
++			.base_type		= _base_type,	   \
++			.is_pll 		= _is_pll,       \
++			.hw.init	= CLK_HW_INIT_NO_PARENT(_name,	\
++								  &ccu_pll_ops, \
++								  _flags),	\
++		}							\
++	}
++
++
++static inline struct ccu_pll *hw_to_ccu_pll(struct clk_hw *hw)
++{
++	struct ccu_common *common = hw_to_ccu_common(hw);
++
++	return container_of(common, struct ccu_pll, common);
++}
++
++extern const struct clk_ops ccu_pll_ops;
++
++#endif
+-- 
+Armbian
+
