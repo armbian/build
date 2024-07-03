@@ -4,7 +4,7 @@ declare -g BOARD_MAINTAINER="lanefu"
 declare -g BOARDFAMILY="rockchip-rk3588"
 declare -g BOOTCONFIG="indiedroid_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 declare -g BOOT_SOC="rk3588"
-declare -g KERNEL_TARGET="legacy,vendor,collabora,edge"
+declare -g KERNEL_TARGET="vendor,collabora,edge"
 declare -g FULL_DESKTOP="yes"
 declare -g BOOT_LOGO="desktop"
 declare -g BOOT_FDT_FILE="rockchip/rk3588s-indiedroid-nova.dtb"
@@ -29,13 +29,8 @@ function post_family_config__indiedroid-nova_use_stvhay_uboot() {
 }
 
 # BSP kernel uses device name from contract manufacturer rather than production name in mainline
-function post_family_config_branch_legacy__use_9tripod_dtb() {
-	declare -g BOOT_FDT_FILE="rockchip/rk3588s-9tripod-linux.dtb"
-}
-
-# post_family_config hook which also run for vendor kernel
 function post_family_config_branch_vendor__use_9tripod_dtb() {
-post_family_config_branch_legacy__use_9tripod_dtb
+	declare -g BOOT_FDT_FILE="rockchip/rk3588s-9tripod-linux.dtb"
 }
 
 # Add bluetooth packages to the image (not rootfs cache)
@@ -85,6 +80,7 @@ function pre_customize_image__indiedroid_add_bluetooth() {
 	EOD
 	chroot_sdcard systemctl enable bluetooth-rtl8821cs.service
 }
+
 function post_family_tweaks__indiedroid_naming_audios() {
 	display_alert "$BOARD" "Renaming indiedroid audios" "info"
 
