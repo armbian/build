@@ -13,10 +13,3 @@ BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
 BOOTFS_TYPE="ext4"
-
-# Override family config for this board; let's avoid conditionals in family config.
-function post_family_config__hinlink-h28k_use_vendor_uboot() {
-	BOOTSOURCE='https://github.com/rockchip-linux/u-boot.git'
-	BOOTBRANCH='commit:32640b0ada9344f91e7a407576568782907161cd'
-	BOOTPATCHDIR="legacy/board_hinlink-h28k"
-}
