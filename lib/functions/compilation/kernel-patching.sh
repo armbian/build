@@ -57,7 +57,7 @@ function kernel_main_patching_python() {
 		"EXTRA_PATCH_FILES_FIRST=${kernel_drivers_patch_file}"  # Is a space-separated list.
 		"EXTRA_PATCH_HASHES_FIRST=${kernel_drivers_patch_hash}" # Is a space-separated list.
 	)
-	display_alert "Calling Python patching script" "for kernel ${KERNELBRANCH}" "info"
+	display_alert "Calling Python patching script for kernel:" "${KERNELSOURCE} - ${KERNELBRANCH}" "info"
 	display_alert "Using kernel patch dir:" "${KERNELPATCHDIR}" "info"
 
 	# "raw_command" is only for logging purposes.
