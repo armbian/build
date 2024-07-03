@@ -11,7 +11,6 @@ declare -g BOOTCONFIG="blade3_defconfig"
 declare -g IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 extension
 
-# post_family_config hook which only runs when branch is legacy.
 function post_family_config__uboot_mixtile() {
 	display_alert "$BOARD" "Configuring Mixtile u-boot" "info"
 	declare -g BOOTSOURCE='https://github.com/radxa/u-boot.git'
