@@ -53,24 +53,15 @@ function improved_git_fetch() {
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
 function git_ensure_safe_directory() {
-	# instead of previous attempts to
-	# 1) mark all directories as safe
-	# 2) mark the passed-in directory (${1}) as safe
-	# 3) conditionally mark the passed-in diretory (${1}) as safe
-	# this is now
-	# 4) don't change any config. instead:
-	#    export environment variables GIT_CONFIG_COUNT & GIT_CONFIG_KEY_0 & GIT_CONFIG_VALUE_0
-	#    I learned about this by studying systemd-mkosi.
-	#    see https://git-scm.com/docs/git-config/#Documentation/git-config.txt-GITCONFIGCOUNT
-	#    see https://github.com/systemd/mkosi/blob/76b0a04e48e3b606c729660477db9615a5d0437b/mkosi/__init__.py#L402
-	# rpardini, 20204-07-01
-	display_alert "git_ensure_safe_directory" "ignoring ${1} - all dirs are safe" "debug" # this fools shellcheck that we actually use the argument passed-in
-	export GIT_CONFIG_COUNT="1"
-	export GIT_CONFIG_KEY_0="safe.directory"
-	export GIT_CONFIG_VALUE_0="*"
-	# For the next person who comes saying this is insecure:
-	# feel free to store ${1} in dictkeys and assembling a list of actually safe directories.
-	# then run into environment size issues. you're welcome.
+	if [[ -n "$(command -v git)" ]]; then
+		local git_dir="$1"
+		if [[ -e "$1/.git" ]]; then
+			display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
+			regular_git config --global --get safe.directory "$1" > /dev/null || regular_git config --global --add safe.directory "$1"
+		fi
+	else
+		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
+	fi
 }
 
 # fetch_from_repo <url> <directory> <ref> <ref_subdir>

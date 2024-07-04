@@ -49,7 +49,7 @@ function uboot_main_patching_python() {
 		"MAINTAINER_NAME=${MAINTAINER}"      # Name of the maintainer
 		"MAINTAINER_EMAIL=${MAINTAINERMAIL}" # Email of the maintainer
 	)
-	display_alert "Calling Python patching script" "for U-Boot ${BOOTBRANCH}" "info"
+	display_alert "Calling Python patching script for U-Boot:" "${BOOTSOURCE} - ${BOOTBRANCH}" "info"
 	display_alert "Using U-Boot patch dir:" "${BOOTPATCHDIR}" "info"
 
 	# "raw_command" is only for logging purposes.
