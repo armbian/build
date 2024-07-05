@@ -3,12 +3,12 @@
 # This is automatically enabled if CRYPTROOT_ENABLE is set to yes in main-config.sh.
 
 function add_host_dependencies__add_cryptroot_tooling() {
-	display_alert "Adding cryptroot to host dependencies" "cryptsetup LUKS" "debug"
+	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "cryptsetup openssh-client" "info"
 	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} cryptsetup openssh-client" # @TODO: convert to array later
 }
 
 function extension_prepare_config__prepare_cryptroot() {
-	display_alert "Adding rootfs encryption related packages" "cryptsetup cryptsetup-initramfs" "info"
+	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "cryptsetup cryptsetup-initramfs" "info"
 	add_packages_to_image cryptsetup cryptsetup-initramfs
 
 	# Config for cryptroot, a boot partition is required.
@@ -16,7 +16,7 @@ function extension_prepare_config__prepare_cryptroot() {
 	EXTRA_IMAGE_SUFFIXES+=("-crypt")
 
 	if [[ $CRYPTROOT_SSH_UNLOCK == yes ]]; then
-		display_alert "Adding rootfs encryption related packages" "dropbear-initramfs" "info"
+		display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "dropbear-initramfs" "info"
 		add_packages_to_image dropbear-initramfs
 	fi
 }
@@ -24,10 +24,10 @@ function extension_prepare_config__prepare_cryptroot() {
 function prepare_root_device__encrypt_root_device() {
 	# We encrypt the rootdevice (currently a loop device) and return the new mapped rootdevice
 	check_loop_device "$rootdevice"
-	display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
+	display_alert "Extension: ${EXTENSION}: Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
 	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
 	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
-	display_alert "Root partition encryption complete." "" "ext"
+	display_alert "Extension: ${EXTENSION}: Root partition encryption complete." "" "ext"
 	# TODO: pass /dev/mapper to Docker
 	rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
 }
@@ -56,7 +56,7 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 		else
 			# generate a default ssh key for login on dropbear in initramfs
 			# this key should be changed by the user on first login
-			display_alert "Generating a new SSH key pair for dropbear (initramfs)" "" ""
+			display_alert "Extension: ${EXTENSION}: Generating a new SSH key pair for dropbear (initramfs)" "" ""
 
 			# Generate the SSH keys
 			ssh-keygen -t ecdsa -f "${dropbear_dir}"/id_ecdsa \
@@ -68,7 +68,7 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 			CRYPTROOT_SSH_UNLOCK_KEY_NAME="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${DESKTOP_ENVIRONMENT}".key
 			# copy dropbear ssh key to image output dir for convenience
 			cp "${dropbear_dir}"/id_ecdsa "${DEST}/images/${CRYPTROOT_SSH_UNLOCK_KEY_NAME}"
-			display_alert "SSH private key for dropbear (initramfs) has been copied to:" \
+			display_alert "Extension: ${EXTENSION}: SSH private key for dropbear (initramfs) has been copied to:" \
 				"$DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME" "info"
 		fi
 	fi

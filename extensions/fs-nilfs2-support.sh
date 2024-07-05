@@ -2,12 +2,12 @@
 # This is automatically enabled if ROOTFS_TYPE is set to nilfs2 in main-config.sh.
 
 function extension_prepare_config__add_to_image_nilfs-tools() {
-	display_alert "Adding nilfs-tools extra package..." "${EXTENSION}" "info"
+	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "nilfs-tools" "info"
 	add_packages_to_image nilfs-tools
 }
 
 function add_host_dependencies__add_nilfs_tools() {
-	display_alert "Adding NILFS tools to host dependencies..." "${EXTENSION}" "debug"
+	display_alert "Extension: ${EXTENSION}: Adding packages to host dependencies" "nilfs-tools" "debug"
 	EXTRA_BUILD_DEPS="${EXTRA_BUILD_DEPS} nilfs-tools" # @TODO: convert to array later
 }
 

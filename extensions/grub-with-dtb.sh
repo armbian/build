@@ -18,7 +18,7 @@ function extension_prepare_config__prepare_grub_with_dtb() {
 	# Make sure BOOT_FDT_FILE is set and not empty
 	[[ -n "${BOOT_FDT_FILE}" ]] || exit_with_error "BOOT_FDT_FILE is not set, required for grub-with-dtb"
 
-	display_alert "initializing config" "${EXTENSION} :: ${BOARD}" "info"
+	display_alert "Extension: ${EXTENSION}: Initializing config" "${BOARD}" "info"
 }
 
 # Hack the bsp-cli to:
@@ -27,7 +27,7 @@ function extension_prepare_config__prepare_grub_with_dtb() {
 #   works across Debian and Ubuntu. it reads /etc/armbian-grub-with-dtb and puts symlinks or copies in /boot/dtb-<kernel-version>
 function post_family_tweaks_bsp__add_grub_with_dtb_config_file() {
 	: "${destination:?}"
-	display_alert "adding grub-with-dtb config file" "${EXTENSION} :: ${BOARD}" "info"
+	display_alert "Extension: ${EXTENSION}: Adding grub-with-dtb config file" "${BOARD}" "info"
 	# maybe add this to conffiles?
 	cat <<- EOD > "${destination}"/etc/armbian-grub-with-dtb
 		BOOT_FDT_FILE="${BOOT_FDT_FILE}"
@@ -36,7 +36,7 @@ function post_family_tweaks_bsp__add_grub_with_dtb_config_file() {
 
 function post_family_tweaks_bsp__add_grub_with_dtb_kernel_hook() {
 	: "${destination:?}"
-	display_alert "adding grub-with-dtb kernel hook" "${EXTENSION} :: ${BOARD}" "info"
+	display_alert "Extension: ${EXTENSION}: Adding grub-with-dtb kernel hook" "${BOARD}" "info"
 	run_host_command_logged mkdir -p "${destination}"/etc/kernel/postinst.d
 	cat <<- 'EOD' > "${destination}"/etc/kernel/postinst.d/armbian-grub-with-dtb
 		#! /bin/bash
@@ -75,21 +75,21 @@ function grub_pre_install__force_run_kernel_hook_for_armbian_dtb() {
 	# Run the kernel hook to deploy the DTB file to the boot partition.
 	# This is done forcibly here during `grub_pre_install`, since the kernel hook is deployed in the bsp-cli package
 	# which is only deployed after the linux-image package is installed and thus is not run.
-	display_alert "deploy DTB for GRUB for image build" "${EXTENSION} :: ${BOARD}" "info"
+	display_alert "Extension: ${EXTENSION}: Deploying DTB for GRUB for image build" "${BOARD}" "info"
 	chroot_custom "${MOUNT}" 'for k in $(linux-version list); do /etc/kernel/postinst.d/armbian-grub-with-dtb "$k"; done'
 }
 
 function grub_late_config__check_dtb_in_grub_cfg() {
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
-		display_alert "Debugging" "GRUB config and /boot contents" "info"
+		display_alert "Extension: ${EXTENSION}: Debugging" "GRUB config and /boot contents" "info"
 		run_tool_batcat "${MOUNT}/boot/grub/grub.cfg"
 		run_host_command_logged ls -la --color=always "${MOUNT}"/boot
 	fi
 
 	if ! grep -q 'devicetree' "${MOUNT}/boot/grub/grub.cfg"; then
-		display_alert "Sanity check failed" "GRUB DTB not found in grub.cfg; RELEASE=${RELEASE}" "warn"
+		display_alert "Extension: ${EXTENSION}: Sanity check failed" "GRUB DTB not found in grub.cfg; RELEASE=${RELEASE}" "warn"
 	else
-		display_alert "Sanity check passed" "GRUB DTB found in grub.cfg; RELEASE=${RELEASE}" "info"
+		display_alert "Extension: ${EXTENSION}: Sanity check passed" "GRUB DTB found in grub.cfg; RELEASE=${RELEASE}" "info"
 	fi
 	return 0
 }

@@ -23,6 +23,7 @@ function extension_prepare_config__ci_image_suffix() {
 
 function extension_prepare_config__prepare_ci() {
 	# Cloud Init related packages selected from Ubuntu RPI distirbution
+	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "cloud-init cloud-initramfs-dyn-netconf" "info"
 	add_packages_to_image cloud-init cloud-initramfs-dyn-netconf
 }
 
@@ -30,23 +31,23 @@ function extension_prepare_config__ci_compatibility_check() {
 	# We require fat boot partition, will change and if the user provided another type, will fail.
 	if [[ -z "${BOOTFS_TYPE}" ]]; then
 		declare -g BOOTFS_TYPE="fat"
-		display_alert "Changing BOOTFS_TYPE" "cloud_init requires a fat partition" "warn"
+		display_alert "Extension: ${EXTENSION}: Changing BOOTFS_TYPE" "cloud_init requires a fat partition" "warn"
 	fi
 
 	if [[ "${BOOTFS_TYPE}" != "fat" ]]; then
-		exit_with_error "BOOTFS_TYPE ${BOOTFS_TYPE} not compatible with cloud-init"
+		exit_with_error "Extension: ${EXTENSION}: BOOTFS_TYPE ${BOOTFS_TYPE} not compatible with cloud-init"
 	fi
 }
 
 function pre_customize_image__inject_cloud_init_config() {
 	# Copy the NoCLoud Cloud-Init Configuration
-	display_alert "Configuring" "cloud-init" "info"
+	display_alert "Extension: ${EXTENSION}: Configuring" "cloud-init" "info"
 	local config_src="${EXTENSION_DIR}/config"
 	local config_dst="${SDCARD}/etc/cloud/cloud.cfg.d"
 	run_host_command_logged cp ${config_src}/* $config_dst
 
 	# Provide default cloud-init files
-	display_alert "Defaults" "cloud-init" "info"
+	display_alert "Extension: ${EXTENSION}: Defaults" "cloud-init" "info"
 	local defaults_src="${EXTENSION_DIR}/defaults"
 	local defaults_dst="${SDCARD}/boot"
 	run_host_command_logged cp ${defaults_src}/* $defaults_dst
@@ -55,7 +56,7 @@ function pre_customize_image__inject_cloud_init_config() {
 
 # @TODO: would be better to have "armbian first run" as an extension that can be disabled
 function pre_customize_image__disable_armbian_first_run() {
-	display_alert "Disabling" "armbian first run" "info"
+	display_alert "Extension: ${EXTENSION}: Disabling" "armbian firstrun" "info"
 
 	# Clean up default profile and network
 	rm -f ${SDCARD}/etc/profile.d/armbian-check-first-*
