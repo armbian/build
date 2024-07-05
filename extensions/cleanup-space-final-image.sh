@@ -22,15 +22,15 @@ function post_umount_final_image__200_zerofree() {
 		local partType
 		partType="$(file -s "${partDev}" | awk -F ': ' '{print $2}')"
 		if [[ "${partType}" == *"ext4"* ]]; then
-			display_alert "Zerofreeing ext4 partition ${partDev}" "${EXTENSION}" "info"
+			display_alert "Extension: ${EXTENSION}: Zerofreeing ext4 partition ${partDev}" "${EXTENSION}" "info"
 			run_host_command_logged zerofree "${partDev}"
 		else
-			display_alert "Skipping zerofreeing partition ${partDev} of type '${partType}'" "${EXTENSION}" "info"
+			display_alert "Extension: ${EXTENSION}: Skipping zerofreeing partition ${partDev} of type '${partType}'" "${EXTENSION}" "info"
 		fi
 	done
 }
 
 function pre_umount_final_image__999_show_space_usage() {
-	display_alert "Calculating used space in image" "${EXTENSION}" "info"
+	display_alert "Extension: ${EXTENSION}: Calculating used space in image" "${EXTENSION}" "info"
 	run_host_command_logged "cd ${MOUNT} && " du -h -d 4 -x "." "| sort -h | tail -20"
 }
