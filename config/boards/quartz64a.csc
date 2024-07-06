@@ -15,7 +15,7 @@ function post_family_config__quartz64_a_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.07-rc5"
+	declare -g BOOTBRANCH="tag:v2024.07"
 	declare -g BOOTPATCHDIR="v2024.07/board_${BOARD}"
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 

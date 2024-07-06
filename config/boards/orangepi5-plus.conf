@@ -35,7 +35,7 @@ function post_family_config_branch_edge__orangepi5plus_use_mainline_uboot() {
 	declare -g BOOTCONFIG="orangepi-5-plus-rk3588_defconfig"      # override the default for the board/family
 	declare -g BOOTDELAY=1                                        # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"  # We ❤️ mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.07-rc4"
+	declare -g BOOTBRANCH="tag:v2024.07"
 	declare -g BOOTPATCHDIR="v2024.07/board_${BOARD}"
 	declare -g BOOTDIR="u-boot-${BOARD}"                          # do not share u-boot directory
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
