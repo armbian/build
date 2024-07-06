@@ -35,10 +35,18 @@ function post_family_tweaks__nanopir5s_udev_network_interfaces() {
 	EOF
 }
 
+# We've an overlay (DEFAULT_OVERLAYS="nanopi-r5s-leds") to drive the LEDs. Disable armbian-led-state service.
+function pre_customize_image__nanopi-r5s_leds_kernel_only() {
+	display_alert "$BOARD" "Disabling armbian-led-state service since we have DEFAULT_OVERLAYS='${DEFAULT_OVERLAYS}'" "info"
+	chroot_sdcard systemctl --no-reload disable armbian-led-state
+}
+
+# For UMS/RockUSB to work in u-boot, &usb_host0_xhci { dr_mode = "otg" } is required. See 0002-usb-otg-mode.patch
+# Attention: the Power USB-C port is NOT the OTG port; instead, the USB-A closest to the edge is the OTG port.
 function post_config_uboot_target__extra_configs_for_nanopi-r5s() {
-	display_alert "u-boot for ${BOARD}" "u-boot: enable preboot & flash all LEDs in preboot" "info"
+	display_alert "u-boot for ${BOARD}" "u-boot: enable preboot & flash all LEDs and do PCI/NVMe enumeration in preboot" "info"
 	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
-	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led led-power on; led led-lan1 on; led led-lan2 on; led led-wan on; sleep 0.1; led led-lan1 off; led led-lan2 off; led led-wan off'" # double quotes required due to run_host_command_logged's quirks
+	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led led-power on; led led-lan1 on; led led-lan2 on; led led-wan on; pci enum; nvme scan; led led-lan1 off; led led-lan2 off; led led-wan off'" # double quotes required due to run_host_command_logged's quirks
 
 	display_alert "u-boot for ${BOARD}" "u-boot: enable EFI debugging command" "info"
 	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
