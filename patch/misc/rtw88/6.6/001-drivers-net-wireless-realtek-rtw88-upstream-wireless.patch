@@ -6135,3 +6135,594 @@ index fcff31688c45..91ed921407bb 100644
 -- 
 2.25.1
 
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Subject: [PATCH] wifi: rtw88: coex: Prevent doing I/O during Wi-Fi power saving
+Date: Wed, 20 Mar 2024 15:50:47 +0800
+
+From: Ching-Te Ku <ku920601@realtek.com>
+
+Fix Wi-Fi 2.4Ghz throughput drop over than 40% when Bluetooh is idle.
+The code flow will read registers during Wi-Fi power saving, and be
+returned, which results in incorrect counters to do mechanism judgment.
+Adjust the code flow. Will leave Wi-Fi power save mode first then update
+counters.
+
+Signed-off-by: Ching-Te Ku <ku920601@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+---
+ drivers/net/wireless/realtek/rtw88/coex.c | 4 +++-
+ drivers/net/wireless/realtek/rtw88/main.c | 5 ++---
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/coex.c b/drivers/net/wireless/realtek/rtw88/coex.c
+index 86467d2f8888..de3332eb7a22 100644
+--- a/drivers/net/wireless/realtek/rtw88/coex.c
++++ b/drivers/net/wireless/realtek/rtw88/coex.c
+@@ -3937,7 +3937,9 @@ void rtw_coex_display_coex_info(struct rtw_dev *rtwdev, struct seq_file *m)
+ 	lte_coex = rtw_coex_read_indirect_reg(rtwdev, 0x38);
+ 	bt_coex = rtw_coex_read_indirect_reg(rtwdev, 0x54);
+ 
+-	if (!coex_stat->bt_disabled && !coex_stat->bt_mailbox_reply) {
++	if (!coex_stat->wl_under_ips &&
++	    (!coex_stat->wl_under_lps || coex_stat->wl_force_lps_ctrl) &&
++	    !coex_stat->bt_disabled && !coex_stat->bt_mailbox_reply) {
+ 		rtw_coex_get_bt_supported_version(rtwdev,
+ 				&coex_stat->bt_supported_version);
+ 		rtw_coex_get_bt_patch_version(rtwdev, &coex_stat->patch_ver);
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index ffba6b88f392..81ef4717dbf4 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -227,9 +227,6 @@ static void rtw_watch_dog_work(struct work_struct *work)
+ 	else
+ 		clear_bit(RTW_FLAG_BUSY_TRAFFIC, rtwdev->flags);
+ 
+-	rtw_coex_wl_status_check(rtwdev);
+-	rtw_coex_query_bt_hid_list(rtwdev);
+-
+ 	if (busy_traffic != test_bit(RTW_FLAG_BUSY_TRAFFIC, rtwdev->flags))
+ 		rtw_coex_wl_status_change_notify(rtwdev, 0);
+ 
+@@ -257,6 +254,8 @@ static void rtw_watch_dog_work(struct work_struct *work)
+ 
+ 	/* make sure BB/RF is working for dynamic mech */
+ 	rtw_leave_lps(rtwdev);
++	rtw_coex_wl_status_check(rtwdev);
++	rtw_coex_query_bt_hid_list(rtwdev);
+ 
+ 	rtw_phy_dynamic_mechanism(rtwdev);
+ 
+-- 
+2.25.1
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+To: <linux-wireless@vger.kernel.org>
+CC: <martin.blumenstingl@googlemail.com>
+Subject: [PATCH v2] wifi: rtw88: station mode only for SDIO chips
+Date: Wed, 27 Mar 2024 08:41:55 +0800
+
+Since only station mode has been tested on SDIO chips, only keep it support
+for SDIO chips to reflect correct supported features.
+
+Link: https://lore.kernel.org/linux-wireless/87wmpu1do6.fsf@kernel.org/T/#t
+Link: https://lore.kernel.org/linux-wireless/36972ff5-0c48-4bd2-8f9a-9649bfa24225@lexina.in/
+Cc: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+---
+v2: correct subject prefix that should be "rtw88" instead of "rtw89"
+---
+ drivers/net/wireless/realtek/rtw88/main.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/main.c b/drivers/net/wireless/realtek/rtw88/main.c
+index 81ef4717dbf4..d1f0e7541bfa 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.c
++++ b/drivers/net/wireless/realtek/rtw88/main.c
+@@ -2203,6 +2203,7 @@ EXPORT_SYMBOL(rtw_core_deinit);
+ 
+ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
+ {
++	bool sta_mode_only = rtwdev->hci.type == RTW_HCI_TYPE_SDIO;
+ 	struct rtw_hal *hal = &rtwdev->hal;
+ 	int max_tx_headroom = 0;
+ 	int ret;
+@@ -2231,10 +2232,13 @@ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
+ 	ieee80211_hw_set(hw, TX_AMSDU);
+ 	ieee80211_hw_set(hw, SINGLE_SCAN_ON_ALL_BANDS);
+ 
+-	hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
+-				     BIT(NL80211_IFTYPE_AP) |
+-				     BIT(NL80211_IFTYPE_ADHOC) |
+-				     BIT(NL80211_IFTYPE_MESH_POINT);
++	if (sta_mode_only)
++		hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);
++	else
++		hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
++					     BIT(NL80211_IFTYPE_AP) |
++					     BIT(NL80211_IFTYPE_ADHOC) |
++					     BIT(NL80211_IFTYPE_MESH_POINT);
+ 	hw->wiphy->available_antennas_tx = hal->antenna_tx;
+ 	hw->wiphy->available_antennas_rx = hal->antenna_rx;
+ 
+@@ -2245,7 +2249,7 @@ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
+ 	hw->wiphy->max_scan_ssids = RTW_SCAN_MAX_SSIDS;
+ 	hw->wiphy->max_scan_ie_len = rtw_get_max_scan_ie_len(rtwdev);
+ 
+-	if (rtwdev->chip->id == RTW_CHIP_TYPE_8822C) {
++	if (!sta_mode_only && rtwdev->chip->id == RTW_CHIP_TYPE_8822C) {
+ 		hw->wiphy->iface_combinations = rtw_iface_combs;
+ 		hw->wiphy->n_iface_combinations = ARRAY_SIZE(rtw_iface_combs);
+ 	}
+-- 
+2.25.1
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Ping-Ke Shih <pkshih@realtek.com>
+Subject: [PATCH] wifi: rtw88: Set default CQM config if not present
+Date: Mon, 1 Apr 2024 11:30:19 +0800
+
+From: Po-Hao Huang <phhuang@realtek.com>
+
+When wpa_supplicant is initiated by users and not by NetworkManager,
+the CQM configuration might not be set. Without this setting, ICs
+with connection quality monitor handled by firmware won't detect
+connection loss. To fix this we prepare a default setting upon
+associated at first, then update again if any is given later.
+
+Signed-off-by: Po-Hao Huang <phhuang@realtek.com>
+Signed-off-by: Ping-Ke Shih <pkshih@realtek.com>
+---
+ drivers/net/wireless/realtek/rtw88/fw.c       | 14 ++++++++++----
+ drivers/net/wireless/realtek/rtw88/fw.h       |  2 ++
+ drivers/net/wireless/realtek/rtw88/mac80211.c |  2 ++
+ 3 files changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.c b/drivers/net/wireless/realtek/rtw88/fw.c
+index 3f037ddcecf1..ab7d414d0ba6 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.c
++++ b/drivers/net/wireless/realtek/rtw88/fw.c
+@@ -783,12 +783,18 @@ void rtw_fw_beacon_filter_config(struct rtw_dev *rtwdev, bool connect,
+ 	static const u8 rssi_min = 0, rssi_max = 100, rssi_offset = 100;
+ 	struct rtw_sta_info *si =
+ 		sta ? (struct rtw_sta_info *)sta->drv_priv : NULL;
+-	s32 threshold = bss_conf->cqm_rssi_thold + rssi_offset;
++	s32 thold = RTW_DEFAULT_CQM_THOLD;
++	u32 hyst = RTW_DEFAULT_CQM_HYST;
+ 	u8 h2c_pkt[H2C_PKT_SIZE] = {0};
+ 
+ 	if (!rtw_fw_feature_check(&rtwdev->fw, FW_FEATURE_BCN_FILTER))
+ 		return;
+ 
++	if (bss_conf->cqm_rssi_thold)
++		thold = bss_conf->cqm_rssi_thold;
++	if (bss_conf->cqm_rssi_hyst)
++		hyst = bss_conf->cqm_rssi_hyst;
++
+ 	if (!connect) {
+ 		SET_H2C_CMD_ID_CLASS(h2c_pkt, H2C_CMD_BCN_FILTER_OFFLOAD_P1);
+ 		SET_BCN_FILTER_OFFLOAD_P1_ENABLE(h2c_pkt, connect);
+@@ -805,15 +811,15 @@ void rtw_fw_beacon_filter_config(struct rtw_dev *rtwdev, bool connect,
+ 	rtw_fw_send_h2c_command(rtwdev, h2c_pkt);
+ 
+ 	memset(h2c_pkt, 0, sizeof(h2c_pkt));
+-	threshold = clamp_t(s32, threshold, rssi_min, rssi_max);
++	thold = clamp_t(s32, thold + rssi_offset, rssi_min, rssi_max);
+ 	SET_H2C_CMD_ID_CLASS(h2c_pkt, H2C_CMD_BCN_FILTER_OFFLOAD_P1);
+ 	SET_BCN_FILTER_OFFLOAD_P1_ENABLE(h2c_pkt, connect);
+ 	SET_BCN_FILTER_OFFLOAD_P1_OFFLOAD_MODE(h2c_pkt,
+ 					       BCN_FILTER_OFFLOAD_MODE_DEFAULT);
+-	SET_BCN_FILTER_OFFLOAD_P1_THRESHOLD(h2c_pkt, (u8)threshold);
++	SET_BCN_FILTER_OFFLOAD_P1_THRESHOLD(h2c_pkt, thold);
+ 	SET_BCN_FILTER_OFFLOAD_P1_BCN_LOSS_CNT(h2c_pkt, BCN_LOSS_CNT);
+ 	SET_BCN_FILTER_OFFLOAD_P1_MACID(h2c_pkt, si->mac_id);
+-	SET_BCN_FILTER_OFFLOAD_P1_HYST(h2c_pkt, bss_conf->cqm_rssi_hyst);
++	SET_BCN_FILTER_OFFLOAD_P1_HYST(h2c_pkt, hyst);
+ 	SET_BCN_FILTER_OFFLOAD_P1_BCN_INTERVAL(h2c_pkt, bss_conf->beacon_int);
+ 	rtw_fw_send_h2c_command(rtwdev, h2c_pkt);
+ }
+diff --git a/drivers/net/wireless/realtek/rtw88/fw.h b/drivers/net/wireless/realtek/rtw88/fw.h
+index 84e47c71ea12..e999c24e4634 100644
+--- a/drivers/net/wireless/realtek/rtw88/fw.h
++++ b/drivers/net/wireless/realtek/rtw88/fw.h
+@@ -29,6 +29,8 @@
+ #define BCN_FILTER_CONNECTION_LOSS	1
+ #define BCN_FILTER_CONNECTED		2
+ #define BCN_FILTER_NOTIFY_BEACON_LOSS	3
++#define RTW_DEFAULT_CQM_THOLD		-70
++#define RTW_DEFAULT_CQM_HYST		4
+ 
+ #define SCAN_NOTIFY_TIMEOUT  msecs_to_jiffies(10)
+ 
+diff --git a/drivers/net/wireless/realtek/rtw88/mac80211.c b/drivers/net/wireless/realtek/rtw88/mac80211.c
+index 7af5bf7fe5b6..0acebbfa13c4 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac80211.c
++++ b/drivers/net/wireless/realtek/rtw88/mac80211.c
+@@ -386,6 +386,8 @@ static void rtw_ops_bss_info_changed(struct ieee80211_hw *hw,
+ 			rtw_coex_media_status_notify(rtwdev, vif->cfg.assoc);
+ 			if (rtw_bf_support)
+ 				rtw_bf_assoc(rtwdev, vif, conf);
++
++			rtw_fw_beacon_filter_config(rtwdev, true, vif);
+ 		} else {
+ 			rtw_leave_lps(rtwdev);
+ 			rtw_bf_disassoc(rtwdev, vif, conf);
+-- 
+2.25.1
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+Subject: [PATCH v2] wifi: rtw88: usb: Simplify rtw_usb_write_data
+To: "linux-wireless@vger.kernel.org" <linux-wireless@vger.kernel.org>
+
+The skb created in this function always has the same headroom,
+the chip's TX descriptor size. (pkt_info->offset is set by
+rtw_usb_write_data_rsvd_page() to chip->tx_pkt_desc_sz.) Use
+chip->tx_pkt_desc_sz directly.
+
+Signed-off-by: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+---
+v2:
+ - Don't touch rtw_usb_write_data_rsvd_page(). It needs to set
+   pkt_info.offset after all, otherwise RTL8822BU and RTL8821CU fail
+   to upload the firmware:
+
+---
+ drivers/net/wireless/realtek/rtw88/usb.c | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.c b/drivers/net/wireless/realtek/rtw88/usb.c
+index 1dfe7c6ae4ba..a28f35a03b26 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.c
++++ b/drivers/net/wireless/realtek/rtw88/usb.c
+@@ -440,23 +440,21 @@ static int rtw_usb_write_data(struct rtw_dev *rtwdev,
+ {
+ 	const struct rtw_chip_info *chip = rtwdev->chip;
+ 	struct sk_buff *skb;
+-	unsigned int desclen, headsize, size;
++	unsigned int size;
+ 	u8 qsel;
+ 	int ret = 0;
+ 
+ 	size = pkt_info->tx_pkt_size;
+ 	qsel = pkt_info->qsel;
+-	desclen = chip->tx_pkt_desc_sz;
+-	headsize = pkt_info->offset ? pkt_info->offset : desclen;
+ 
+-	skb = dev_alloc_skb(headsize + size);
++	skb = dev_alloc_skb(chip->tx_pkt_desc_sz + size);
+ 	if (unlikely(!skb))
+ 		return -ENOMEM;
+ 
+-	skb_reserve(skb, headsize);
++	skb_reserve(skb, chip->tx_pkt_desc_sz);
+ 	skb_put_data(skb, buf, size);
+-	skb_push(skb, headsize);
+-	memset(skb->data, 0, headsize);
++	skb_push(skb, chip->tx_pkt_desc_sz);
++	memset(skb->data, 0, chip->tx_pkt_desc_sz);
+ 	rtw_tx_fill_tx_desc(pkt_info, skb);
+ 	rtw_tx_fill_txdesc_checksum(rtwdev, pkt_info, skb->data);
+ 
+-- 
+2.44.0
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+Date: Mon, 29 Apr 2024 20:57:52 +0300
+Subject: [PATCH] wifi: rtw88: usb: Fix disconnection after beacon loss
+
+When there is beacon loss, for example due to unrelated Bluetooth
+devices transmitting music nearby, the wifi connection dies soon
+after the first beacon loss message:
+
+Apr 28 20:47:14 ideapad2 wpa_supplicant[1161]: wlp3s0f3u4:
+ CTRL-EVENT-BEACON-LOSS
+Apr 28 20:47:15 ideapad2 wpa_supplicant[1161]: wlp3s0f3u4:
+ CTRL-EVENT-DISCONNECTED bssid=... reason=4 locally_generated=1
+
+Apr 28 20:47:24 ideapad2 wpa_supplicant[1161]: wlp3s0f3u4:
+ CTRL-EVENT-BEACON-LOSS
+Apr 28 20:47:25 ideapad2 wpa_supplicant[1161]: wlp3s0f3u4:
+ CTRL-EVENT-DISCONNECTED bssid=... reason=4 locally_generated=1
+
+Apr 28 20:47:34 ideapad2 wpa_supplicant[1161]: wlp3s0f3u4:
+ CTRL-EVENT-BEACON-LOSS
+Apr 28 20:47:35 ideapad2 wpa_supplicant[1161]: wlp3s0f3u4:
+ CTRL-EVENT-DISCONNECTED bssid=... reason=4 locally_generated=1
+
+When the beacon loss happens, mac80211 makes rtw88 transmit a QOS
+NULL frame and asks to confirm the ACK status. Even though rtw88
+confirms to mac80211 that the QOS NULL was transmitted successfully,
+the connection still dies. This is because rtw88 is handing the QOS
+NULL back to mac80211 with skb->data pointing to the headroom (the
+TX descriptor) instead of ieee80211_hdr.
+
+Fix the disconnection by moving skb->data to the correct position
+before ieee80211_tx_status_irqsafe().
+
+The problem was observed with RTL8811AU (TP-Link Archer T2U Nano)
+and the potential future rtw88_8821au driver. Also tested with
+RTL8811CU (Tenda U9).
+
+Cc: stable@vger.kernel.org
+Signed-off-by: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+---
+ drivers/net/wireless/realtek/rtw88/usb.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.c b/drivers/net/wireless/realtek/rtw88/usb.c
+index 3ba7b81c6080..1dfe7c6ae4ba 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.c
++++ b/drivers/net/wireless/realtek/rtw88/usb.c
+@@ -278,6 +278,8 @@ static void rtw_usb_write_port_tx_complete(struct urb *urb)
+ 		info = IEEE80211_SKB_CB(skb);
+ 		tx_data = rtw_usb_get_tx_data(skb);
+ 
++		skb_pull(skb, rtwdev->chip->tx_pkt_desc_sz);
++
+ 		/* enqueue to wait for tx report */
+ 		if (info->flags & IEEE80211_TX_CTL_REQ_TX_STATUS) {
+ 			rtw_tx_report_enqueue(rtwdev, skb, tx_data->sn);
+-- 
+2.44.0
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+Date: Sun, 16 Jun 2024 22:27:34 +0300
+Subject: [PATCH v3] wifi: rtw88: usb: Further limit the TX aggregation
+
+Currently the number of frames sent to the chip in a single USB Request
+Block is limited only by the size of the TX buffer, which is 20 KiB.
+Testing reveals that as many as 13 frames get aggregated. This is more
+than what any of the chips would like to receive. RTL8822CU, RTL8822BU,
+and RTL8821CU want at most 3 frames, and RTL8723DU wants only 1 frame
+per URB.
+
+RTL8723DU in particular reliably malfunctions during a speed test if it
+receives more than 1 frame per URB. All traffic seems to stop. Pinging
+the AP no longer works.
+
+Fix this problem by limiting the number of frames sent to the chip in a
+single URB according to what each chip likes.
+
+Also configure RTL8822CU, RTL8822BU, and RTL8821CU to expect 3 frames
+per URB.
+
+RTL8703B may or may not be found in USB devices. Declare that it wants
+only 1 frame per URB, just in case.
+
+Tested with RTL8723DU and RTL8811CU.
+
+Signed-off-by: Bitterblue Smith <rtl8821cerfe2@gmail.com>
+---
+v3:
+ - Don't sort the members of rtw{8703b,8723d,8821c,8822b,8822c}_hw_spec.
+ - Put usb_tx_agg_desc_num in rtw{8723d,8821c,8822b,8822c}_hw_spec
+   in a better position.
+ - Explicitly say that RTL8723DU malfunctions if it receives more than
+   1 frame per URB.
+
+v2:
+ - Use rtw_write8_mask and GENMASK.
+ - Initialise the members of rtw{8703b,8723d,8821c,8822b,8822c}_hw_spec
+   in the same order they are declared.
+---
+ drivers/net/wireless/realtek/rtw88/mac.c      | 9 +++++++++
+ drivers/net/wireless/realtek/rtw88/main.h     | 2 ++
+ drivers/net/wireless/realtek/rtw88/reg.h      | 1 +
+ drivers/net/wireless/realtek/rtw88/rtw8703b.c | 1 +
+ drivers/net/wireless/realtek/rtw88/rtw8723d.c | 1 +
+ drivers/net/wireless/realtek/rtw88/rtw8821c.c | 1 +
+ drivers/net/wireless/realtek/rtw88/rtw8822b.c | 1 +
+ drivers/net/wireless/realtek/rtw88/rtw8822c.c | 1 +
+ drivers/net/wireless/realtek/rtw88/usb.c      | 4 +++-
+ 9 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/mac.c b/drivers/net/wireless/realtek/rtw88/mac.c
+index 0dba8aae7716..564f5988ee82 100644
+--- a/drivers/net/wireless/realtek/rtw88/mac.c
++++ b/drivers/net/wireless/realtek/rtw88/mac.c
+@@ -1201,6 +1201,15 @@ static int __priority_queue_cfg(struct rtw_dev *rtwdev,
+ 	rtw_write16(rtwdev, REG_FIFOPAGE_CTRL_2 + 2, fifo->rsvd_boundary);
+ 	rtw_write16(rtwdev, REG_BCNQ1_BDNY_V1, fifo->rsvd_boundary);
+ 	rtw_write32(rtwdev, REG_RXFF_BNDY, chip->rxff_size - C2H_PKT_BUF - 1);
++
++	if (rtwdev->hci.type == RTW_HCI_TYPE_USB) {
++		rtw_write8_mask(rtwdev, REG_AUTO_LLT_V1, BIT_MASK_BLK_DESC_NUM,
++				chip->usb_tx_agg_desc_num);
++
++		rtw_write8(rtwdev, REG_AUTO_LLT_V1 + 3, chip->usb_tx_agg_desc_num);
++		rtw_write8_set(rtwdev, REG_TXDMA_OFFSET_CHK + 1, BIT(1));
++	}
++
+ 	rtw_write8_set(rtwdev, REG_AUTO_LLT_V1, BIT_AUTO_INIT_LLT_V1);
+ 
+ 	if (!check_hw_ready(rtwdev, REG_AUTO_LLT_V1, BIT_AUTO_INIT_LLT_V1, 0))
+diff --git a/drivers/net/wireless/realtek/rtw88/main.h b/drivers/net/wireless/realtek/rtw88/main.h
+index 49894331f7b4..49a3fd4fb7dc 100644
+--- a/drivers/net/wireless/realtek/rtw88/main.h
++++ b/drivers/net/wireless/realtek/rtw88/main.h
+@@ -1197,6 +1197,8 @@ struct rtw_chip_info {
+ 	u16 fw_fifo_addr[RTW_FW_FIFO_MAX];
+ 	const struct rtw_fwcd_segs *fwcd_segs;
+ 
++	u8 usb_tx_agg_desc_num;
++
+ 	u8 default_1ss_tx_path;
+ 
+ 	bool path_div_supported;
+diff --git a/drivers/net/wireless/realtek/rtw88/reg.h b/drivers/net/wireless/realtek/rtw88/reg.h
+index b122f226924b..02ef9a77316b 100644
+--- a/drivers/net/wireless/realtek/rtw88/reg.h
++++ b/drivers/net/wireless/realtek/rtw88/reg.h
+@@ -270,6 +270,7 @@
+ #define BIT_MASK_BCN_HEAD_1_V1	0xfff
+ #define REG_AUTO_LLT_V1		0x0208
+ #define BIT_AUTO_INIT_LLT_V1	BIT(0)
++#define BIT_MASK_BLK_DESC_NUM	GENMASK(7, 4)
+ #define REG_DWBCN0_CTRL		0x0208
+ #define BIT_BCN_VALID		BIT(16)
+ #define REG_TXDMA_OFFSET_CHK	0x020C
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8723d.c b/drivers/net/wireless/realtek/rtw88/rtw8723d.c
+index f8df4c84d39f..3fba4054d45f 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8723d.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8723d.c
+@@ -2171,6 +2171,7 @@ const struct rtw_chip_info rtw8723d_hw_spec = {
+ 	.band = RTW_BAND_2G,
+ 	.page_size = TX_PAGE_SIZE,
+ 	.dig_min = 0x20,
++	.usb_tx_agg_desc_num = 1,
+ 	.ht_supported = true,
+ 	.vht_supported = false,
+ 	.lps_deep_mode_supported = 0,
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8821c.c b/drivers/net/wireless/realtek/rtw88/rtw8821c.c
+index fe5d8e188350..526e8de77b3e 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8821c.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8821c.c
+@@ -2008,6 +2008,7 @@ const struct rtw_chip_info rtw8821c_hw_spec = {
+ 	.band = RTW_BAND_2G | RTW_BAND_5G,
+ 	.page_size = TX_PAGE_SIZE,
+ 	.dig_min = 0x1c,
++	.usb_tx_agg_desc_num = 3,
+ 	.ht_supported = true,
+ 	.vht_supported = true,
+ 	.lps_deep_mode_supported = BIT(LPS_DEEP_MODE_LCLK),
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8822b.c b/drivers/net/wireless/realtek/rtw88/rtw8822b.c
+index 3017a9760da8..2456ff242818 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822b.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822b.c
+@@ -2548,6 +2548,7 @@ const struct rtw_chip_info rtw8822b_hw_spec = {
+ 	.band = RTW_BAND_2G | RTW_BAND_5G,
+ 	.page_size = TX_PAGE_SIZE,
+ 	.dig_min = 0x1c,
++	.usb_tx_agg_desc_num = 3,
+ 	.ht_supported = true,
+ 	.vht_supported = true,
+ 	.lps_deep_mode_supported = BIT(LPS_DEEP_MODE_LCLK),
+diff --git a/drivers/net/wireless/realtek/rtw88/rtw8822c.c b/drivers/net/wireless/realtek/rtw88/rtw8822c.c
+index cd965edc29ce..62376d1cca22 100644
+--- a/drivers/net/wireless/realtek/rtw88/rtw8822c.c
++++ b/drivers/net/wireless/realtek/rtw88/rtw8822c.c
+@@ -5366,6 +5366,7 @@ const struct rtw_chip_info rtw8822c_hw_spec = {
+ 	.band = RTW_BAND_2G | RTW_BAND_5G,
+ 	.page_size = TX_PAGE_SIZE,
+ 	.dig_min = 0x20,
++	.usb_tx_agg_desc_num = 3,
+ 	.default_1ss_tx_path = BB_PATH_A,
+ 	.path_div_supported = true,
+ 	.ht_supported = true,
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.c b/drivers/net/wireless/realtek/rtw88/usb.c
+index d204d138afe2..057c0ffbe944 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.c
++++ b/drivers/net/wireless/realtek/rtw88/usb.c
+@@ -379,7 +379,9 @@ static bool rtw_usb_tx_agg_skb(struct rtw_usb *rtwusb, struct sk_buff_head *list
+ 
+ 		skb_iter = skb_peek(list);
+ 
+-		if (skb_iter && skb_iter->len + skb_head->len <= RTW_USB_MAX_XMITBUF_SZ)
++		if (skb_iter &&
++		    skb_iter->len + skb_head->len <= RTW_USB_MAX_XMITBUF_SZ &&
++		    agg_num < rtwdev->chip->usb_tx_agg_desc_num)
+ 			__skb_unlink(skb_iter, list);
+ 		else
+ 			skb_iter = NULL;
+-- 
+2.45.1
+
+From 3b25c78f92268d44d0c3c8201a302f49a841c0a1 Mon Sep 17 00:00:00 2001
+From: Marcin Ślusarz <mslusarz@renau.com>
+Subject: [PATCH] wifi: rtw88: schedule rx work after everything is set up
+Date: Tue, 28 May 2024 13:02:46 +0200
+
+Right now it's possible to hit NULL pointer dereference in
+rtw_rx_fill_rx_status on hw object and/or its fields because
+initialization routine can start getting USB replies before
+rtw_dev is fully setup.
+
+The stack trace looks like this:
+
+rtw_rx_fill_rx_status
+rtw8821c_query_rx_desc
+rtw_usb_rx_handler
+...
+queue_work
+rtw_usb_read_port_complete
+...
+usb_submit_urb
+rtw_usb_rx_resubmit
+rtw_usb_init_rx
+rtw_usb_probe
+
+So while we do the async stuff rtw_usb_probe continues and calls
+rtw_register_hw, which does all kinds of initialization (e.g.
+via ieee80211_register_hw) that rtw_rx_fill_rx_status relies on.
+
+Fix this by moving the first usb_submit_urb after everything
+is set up.
+
+For me, this bug manifested as:
+[    8.893177] rtw_8821cu 1-1:1.2: band wrong, packet dropped
+[    8.910904] rtw_8821cu 1-1:1.2: hw->conf.chandef.chan NULL in rtw_rx_fill_rx_status
+because I'm using Larry's backport of rtw88 driver with the NULL
+checks in rtw_rx_fill_rx_status.
+
+Reported-by: Tim K <tpkuester@gmail.com>
+Closes: https://lore.kernel.org/linux-wireless/CA+shoWQ7P49jhQasofDcTdQhiuarPTjYEDa--NiVVx494WcuQw@mail.gmail.com/
+Signed-off-by: Marcin Ślusarz <mslusarz@renau.com>
+Cc: Ping-Ke Shih <pkshih@realtek.com>
+Cc: Larry Finger <Larry.Finger@lwfinger.net>
+Cc: Kalle Valo <kvalo@kernel.org>
+Cc: linux-wireless@vger.kernel.org
+Cc: linux-kernel@vger.kernel.org
+---
+ drivers/net/wireless/realtek/rtw88/usb.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/realtek/rtw88/usb.c b/drivers/net/wireless/realtek/rtw88/usb.c
+index a0188511099a..98f81e3ae13e 100644
+--- a/drivers/net/wireless/realtek/rtw88/usb.c
++++ b/drivers/net/wireless/realtek/rtw88/usb.c
+@@ -740,7 +740,6 @@ static struct rtw_hci_ops rtw_usb_ops = {
+ static int rtw_usb_init_rx(struct rtw_dev *rtwdev)
+ {
+ 	struct rtw_usb *rtwusb = rtw_get_usb_priv(rtwdev);
+-	int i;
+ 
+ 	rtwusb->rxwq = create_singlethread_workqueue("rtw88_usb: rx wq");
+ 	if (!rtwusb->rxwq) {
+@@ -752,13 +751,19 @@ static int rtw_usb_init_rx(struct rtw_dev *rtwdev)
+ 
+ 	INIT_WORK(&rtwusb->rx_work, rtw_usb_rx_handler);
+ 
++	return 0;
++}
++
++static void rtw_usb_setup_rx(struct rtw_dev *rtwdev)
++{
++	struct rtw_usb *rtwusb = rtw_get_usb_priv(rtwdev);
++	int i;
++
+ 	for (i = 0; i < RTW_USB_RXCB_NUM; i++) {
+ 		struct rx_usb_ctrl_block *rxcb = &rtwusb->rx_cb[i];
+ 
+ 		rtw_usb_rx_resubmit(rtwusb, rxcb);
+ 	}
+-
+-	return 0;
+ }
+ 
+ static void rtw_usb_deinit_rx(struct rtw_dev *rtwdev)
+@@ -895,6 +900,8 @@ int rtw_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ 		goto err_destroy_rxwq;
+ 	}
+ 
++	rtw_usb_setup_rx(rtwdev);
++
+ 	return 0;
+ 
+ err_destroy_rxwq:
+-- 
+2.25.1
+
