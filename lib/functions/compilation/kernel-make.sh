@@ -53,7 +53,10 @@ function run_kernel_make_internal() {
 		"KBUILD_BUILD_USER=armbian"                           # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
 		"KBUILD_BUILD_HOST=next"                              # https://www.kernel.org/doc/html/latest/kbuild/kbuild.html#kbuild-build-user-kbuild-build-host
 
-		"KGZIP=pigz" "KBZIP2=pbzip2" # Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/ # @TODO: what about XZ?
+		# Parallel compression, use explicit parallel compressors https://lore.kernel.org/lkml/20200901151002.988547791@linuxfoundation.org/
+		"KGZIP=pigz"
+		"KBZIP2=pbzip2"
+		# Parallel compression for `xz` if needed can be added with "XZ_OPT=\"--threads=0\""
 	)
 
 	# last statement, so it passes the result to calling function. "env -i" is used for empty env
