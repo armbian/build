@@ -45,6 +45,8 @@ function patch_uboot_target() {
 # this receives version  target uboot_name uboottempdir uboot_target_counter toolchain as variables.
 # also receives uboot_prefix, target_make, target_patchdir, target_files as input
 function compile_uboot_target() {
+	: "${artifact_version:?artifact_version is not set}"
+
 	patch_uboot_target
 
 	if [[ $CREATE_PATCHES == yes ]]; then
@@ -78,7 +80,7 @@ function compile_uboot_target() {
 		pipetty make "${CTHREADS}" "${BOOTCONFIG}" "CROSS_COMPILE=\"${CCACHE} ${UBOOT_COMPILER}\""
 
 	# armbian specifics u-boot settings
-	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION=""/CONFIG_LOCALVERSION="-armbian"/g' .config
+	[[ -f .config ]] && sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"-armbian-${artifact_version}\"/g" .config
 	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 
 	# for modern (? 2018-2019?) kernel and non spi targets
