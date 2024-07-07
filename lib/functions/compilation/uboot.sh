@@ -216,7 +216,6 @@ function compile_uboot_target() {
 		"CCACHE_BASEDIR=$(pwd)"
 		"PATH=${toolchain}:${toolchain2}:${PATH}"
 		"PYTHONPATH=\"${PYTHON3_INFO[MODULES_PATH]}:${PYTHONPATH}\"" # Insert the pip modules downloaded by Armbian into PYTHONPATH (needed e.g. for pyelftools)
-		"HOME=${WORKDIR}"                                            # give it a temporary-dir HOME; some Python stuff in old u-boots wants HOME env to be set
 	)
 
 	# workaround when two compilers are needed
