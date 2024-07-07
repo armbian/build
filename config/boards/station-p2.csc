@@ -11,7 +11,7 @@ ASOUND_STATE="asound.state.station-p2"
 IMAGE_PARTITION_TABLE="gpt"
 
 function post_family_tweaks__station_p2() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
 	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/

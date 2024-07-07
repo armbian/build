@@ -12,7 +12,7 @@ ASOUND_STATE="asound.state.station-m2"
 IMAGE_PARTITION_TABLE="gpt"
 
 function post_family_tweaks__station_m2() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
 

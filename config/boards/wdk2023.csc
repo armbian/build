@@ -10,7 +10,7 @@ declare -g BOOT_LOGO=desktop
 # This board boots via EFI/Grub, but requires a DTB to be passed, from Grub, to the Kernel.
 declare -g GRUB_CMDLINE_LINUX_DEFAULT="efi=noruntime clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave"
 declare -g BOOT_FDT_FILE="qcom/sc8280xp-microsoft-dev-kit-2023.dtb"
-enable_extension "grub-with-dtb"             # important, puts the whole DTB handling in place.
+enable_extension "grub-with-dtb" # important, puts the whole DTB handling in place.
 
 # Use the full firmware, complete linux-firmware plus Armbian's
 # @TODO: see if we can only get the blobs that are required for WDK operation.
@@ -46,7 +46,6 @@ function post_family_config__debian_now_has_userspace_for_the_wdk2023() {
 	add_packages_to_image "acpi"                     # general ACPI support
 	add_packages_to_image "zstd"                     # for zstd compression of initrd
 	add_packages_to_image "mtools"                   # for access to the EFI partition
-
 
 	# Trixie, as of 2023-10-13, is missing fprintd and libpam-fprintd; see https://tracker.debian.org/pkg/fprintd and https://tracker.debian.org/pkg/libpam-fprintd
 	# @TODO: check again later, and remove this if it's there
@@ -147,4 +146,3 @@ function pre_customize_image__disable_snapd_seeded() {
 	display_alert "Disabling snapd.seeded" "${BOARD}" "info"
 	chroot_sdcard systemctl disable snapd.seeded.service "||" true
 }
-
