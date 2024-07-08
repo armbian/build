@@ -6,4 +6,3 @@ BOOTCONFIG="nanopi-neo4-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
-

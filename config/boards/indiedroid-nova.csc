@@ -11,7 +11,7 @@ declare -g BOOT_FDT_FILE="rockchip/rk3588s-indiedroid-nova.dtb"
 declare -g BOOT_SCENARIO="spl-blobs"
 declare -g BOOT_SUPPORT_SPI="no"
 declare -g IMAGE_PARTITION_TABLE="gpt"
-declare -g SRC_EXTLINUX="no" # going back to standard uboot for now
+declare -g SRC_EXTLINUX="no"                    # going back to standard uboot for now
 declare -g UEFI_EDK2_BOARD_ID="indiedroid-nova" # This _only_ used for uefi-edk2-rk3588 extension
 
 # @TODO: consider removing those, as the defaults in rockchip64_common have been bumped up

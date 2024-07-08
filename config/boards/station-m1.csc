@@ -11,7 +11,7 @@ BOOT_FDT_FILE="rockchip/rk3328-roc-pc.dtb"
 ASOUND_STATE="asound.state.station-m1"
 
 function post_family_tweaks__station_m1() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
 	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/

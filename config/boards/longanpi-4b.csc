@@ -12,12 +12,12 @@ SERIALCON="ttyAS0"
 declare -g SYTERKIT_BOARD_ID="longanpi-4b" # This _only_ used for syterkit-allwinner extension
 
 function post_family_tweaks__longanpi-4b() {
-    display_alert "Applying boot blobs"
+	display_alert "Applying boot blobs"
 	cp -v "$SRC/packages/blobs/sunxi/sun50iw3/bl31.bin" "$SDCARD/boot/bl31.bin"
 	cp -v "$SRC/packages/blobs/sunxi/sun50iw3/scp.bin" "$SDCARD/boot/scp.bin"
-	
-    display_alert "Applying wifi firmware"
-        pushd "$SDCARD/lib/firmware"
+
+	display_alert "Applying wifi firmware"
+	pushd "$SDCARD/lib/firmware"
 	ln -s "aic8800/SDIO/aic8800/fmacfw_rf.bin" "$SDCARD/lib/firmware"
 	ln -s "aic8800/SDIO/aic8800/fw_adid.bin" "$SDCARD/lib/firmware"
 	ln -s "aic8800/SDIO/aic8800/fw_patch_table.bin" "$SDCARD/lib/firmware"
@@ -29,6 +29,6 @@ function post_family_tweaks__longanpi-4b() {
 	ln -s "aic8800/SDIO/aic8800/fmacfw_usb.bin" "$SDCARD/lib/firmware"
 	ln -s "aic8800/SDIO/aic8800/fw_patch.bin" "$SDCARD/lib/firmware"
 	ln -s "aic8800/SDIO/aic8800/fw_patch_u03.bin" "$SDCARD/lib/firmware"
-        ln -s "aic8800/SDIO/aic8800D80" "aic8800d80" # use armbian-firmware
-        popd
+	ln -s "aic8800/SDIO/aic8800D80" "aic8800d80" # use armbian-firmware
+	popd
 }

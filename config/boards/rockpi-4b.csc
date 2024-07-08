@@ -13,7 +13,7 @@ BOOT_SUPPORT_SPI=yes
 DDR_BLOB="rk33/rk3399_ddr_933MHz_v1.20.bin"
 
 function post_family_tweaks_bsp__rockpi-4b_BSP() {
-    display_alert "Installing BSP firmware and fixups"
+	display_alert "Installing BSP firmware and fixups"
 
 	if [[ $BRANCH == legacy ]]; then
 

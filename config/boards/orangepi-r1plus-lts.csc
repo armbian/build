@@ -24,52 +24,51 @@ BOOT_FDT_FILE="rockchip/rk3328-orangepi-r1-plus-lts.dtb"
 
 # Content:
 function post_family_tweaks_bsp__enable_leds_orangepi_r1_plus_lts() {
-display_alert "Creating board support LEDs config for orangepi-r1-plus-lts"
-cat <<- EOF > "${destination}"/etc/armbian-leds.conf
-	[/sys/class/leds/orangepi-r1-plus-lts:green:lan]
-	trigger=netdev
-	interval=52
-	brightness=1
-	link=1
-	tx=0
-	rx=1
-	device_name=eth0
+	display_alert "Creating board support LEDs config for orangepi-r1-plus-lts"
+	cat <<- EOF > "${destination}"/etc/armbian-leds.conf
+		[/sys/class/leds/orangepi-r1-plus-lts:green:lan]
+		trigger=netdev
+		interval=52
+		brightness=1
+		link=1
+		tx=0
+		rx=1
+		device_name=eth0
 
-	[/sys/class/leds/orangepi-r1-plus-lts:green:wan]
-	trigger=netdev
-	interval=52
-	brightness=1
-	link=1
-	tx=0
-	rx=1
-	device_name=lan0
+		[/sys/class/leds/orangepi-r1-plus-lts:green:wan]
+		trigger=netdev
+		interval=52
+		brightness=1
+		link=1
+		tx=0
+		rx=1
+		device_name=lan0
 
-	[/sys/class/leds/orangepi-r1-plus-lts:red:status]
-	trigger=heartbeat
-	brightness=0
-	invert=0
-EOF
+		[/sys/class/leds/orangepi-r1-plus-lts:red:status]
+		trigger=heartbeat
+		brightness=0
+		invert=0
+	EOF
 
-if [[ $BRANCH == legacy ]]; then
+	if [[ $BRANCH == legacy ]]; then
 
-	# Bluetooth for most of others (custom patchram is needed only in legacy)
-	install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
-	cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
+		# Bluetooth for most of others (custom patchram is needed only in legacy)
+		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
+		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
 
-fi
+	fi
 
-# add a network rule to work-around RTL8153B initialization issue.
-display_alert "Creating board support network rename rule to work-around RTL8153B initialization issue for orangepi-r1-plus-lts"
-mkdir -p "${destination}"/etc/udev/rules.d/
-cat <<- EOF > "${destination}"/etc/udev/rules.d/70-rename-lan.rules
-    SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", KERNEL=="end*", NAME="eth0"
-	SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="e*", NAME="lan0", \
-	RUN+="/usr/sbin/ip link set lan0 down", \
-	RUN+="/usr/sbin/ip link set eth0 down", \
-	RUN+="/usr/bin/sleep 5s ", \
-	RUN+="/usr/sbin/ip link set eth0 up", \
-	RUN+="/usr/bin/sleep 25s ", \
-	RUN+="/usr/sbin/ip link set lan0 up"
-EOF
+	# add a network rule to work-around RTL8153B initialization issue.
+	display_alert "Creating board support network rename rule to work-around RTL8153B initialization issue for orangepi-r1-plus-lts"
+	mkdir -p "${destination}"/etc/udev/rules.d/
+	cat <<- EOF > "${destination}"/etc/udev/rules.d/70-rename-lan.rules
+		    SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", KERNEL=="end*", NAME="eth0"
+			SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="e*", NAME="lan0", \
+			RUN+="/usr/sbin/ip link set lan0 down", \
+			RUN+="/usr/sbin/ip link set eth0 down", \
+			RUN+="/usr/bin/sleep 5s ", \
+			RUN+="/usr/sbin/ip link set eth0 up", \
+			RUN+="/usr/bin/sleep 25s ", \
+			RUN+="/usr/sbin/ip link set lan0 up"
+	EOF
 }
-
