@@ -53,9 +53,9 @@ function prepare_partitions() {
 	fi
 
 	# mkopts[fat] is empty
-	mkopts[ext2]=''
+	# mkopts[ext2] is empty
 	# mkopts[f2fs] is empty
-	mkopts[btrfs]='-m dup'
+	mkopts[btrfs]='-m dup' # '-m dup' is already the default https://man.archlinux.org/man/mkfs.btrfs.8#m_
 	# mkopts[nilfs2] is empty
 	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
@@ -78,11 +78,11 @@ function prepare_partitions() {
 	mkfs[xfs]=xfs
 	# mkfs[nfs] is empty
 
-	mountopts[ext4]=',commit=600,errors=remount-ro'
+	mountopts[ext4]=',commit=120,errors=remount-ro' # EXT4 default: 5 (https://www.man7.org/linux/man-pages/man5/ext4.5.html)
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	mountopts[btrfs]=',commit=600'
+	mountopts[btrfs]=',commit=120' # BTRFS default: 30 (https://btrfs.readthedocs.io/en/latest/ch-mount-options.html)
 	# mountopts[nilfs2] is empty
 	# mountopts[xfs] is empty
 	# mountopts[nfs] is empty

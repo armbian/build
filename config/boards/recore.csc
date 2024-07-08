@@ -18,7 +18,7 @@ function post_family_config__shrink_atf() {
 
 function format_partitions__make_boot_ro() {
 	display_alert "Making boot partition ro 🍰" "recore"
-	sed -i 's:/boot ext4 defaults,commit=600,errors=remount-ro:/boot ext4 ro,defaults:' $SDCARD/etc/fstab
+	sed -i 's:/boot ext4 defaults,commit=120,errors=remount-ro:/boot ext4 ro,defaults:' $SDCARD/etc/fstab
 }
 
 function extension_finish_config__enable_plymouth() {
