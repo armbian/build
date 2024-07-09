@@ -179,54 +179,58 @@ function prepare_partitions() {
 			yourself. Good luck.
 		CREATE_PARTITION_TABLE
 	else
-		# Create a script in a bracket shell, then pipe it to fdisk.
-		{
-			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] && echo "label: dos" || echo "label: $IMAGE_PARTITION_TABLE"
+		# Create a script in a bracket shell, then use the output of the script in sfdisk.
+		partition_script_output=$(
+			{
+				[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] && echo "label: dos" || echo "label: $IMAGE_PARTITION_TABLE"
 
-			local next=$OFFSET
+				local next=$OFFSET
 
-			# Legacy BIOS partition
-			if [[ -n "$biospart" ]]; then
-				# gpt: BIOS boot
-				local type="21686148-6449-6E6F-744E-656564454649"
-				echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=${type}"
-				local next=$(($next + $BIOSSIZE))
-			fi
-
-			# EFI partition
-			if [[ -n "$uefipart" ]]; then
-				# dos: EFI (FAT-12/16/32)
-				# gpt: EFI System
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ef" || local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
-				echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=${type}"
-				local next=$(($next + $UEFISIZE))
-			fi
-
-			# Linux extended boot loader (XBOOTLDR) partition
-			# See also https://wiki.archlinux.org/title/Partitioning#/boot
-			if [[ -n "$bootpart" ]]; then
-				# dos: Linux extended boot (see https://github.com/util-linux/util-linux/commit/d0c430068206e1215222792e3aa10689f8c632a6)
-				# gpt: Linux extended boot
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ea" || local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
-				if [[ -n "$rootpart" ]]; then
-					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=${type}"
-					local next=$(($next + $BOOTSIZE))
-				else
-					# no `size` argument mean "as much as possible"
-					echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=${type}"
+				# Legacy BIOS partition
+				if [[ -n "$biospart" ]]; then
+					# gpt: BIOS boot
+					local type="21686148-6449-6E6F-744E-656564454649"
+					echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=${type}"
+					local next=$(($next + $BIOSSIZE))
 				fi
-			fi
 
-			# Root filesystem partition
-			if [[ -n "$rootpart" ]]; then
-				# dos: Linux
-				# gpt: Linux filesystem
-				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="83" || local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
-				# no `size` argument mean "as much as possible"
-				echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
-			fi
-		} |
-			run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partition fail."
+				# EFI partition
+				if [[ -n "$uefipart" ]]; then
+					# dos: EFI (FAT-12/16/32)
+					# gpt: EFI System
+					[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ef" || local type="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+					echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=${type}"
+					local next=$(($next + $UEFISIZE))
+				fi
+
+				# Linux extended boot loader (XBOOTLDR) partition
+				# See also https://wiki.archlinux.org/title/Partitioning#/boot
+				if [[ -n "$bootpart" ]]; then
+					# dos: Linux extended boot (see https://github.com/util-linux/util-linux/commit/d0c430068206e1215222792e3aa10689f8c632a6)
+					# gpt: Linux extended boot
+					[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ea" || local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
+					if [[ -n "$rootpart" ]]; then
+						echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=${type}"
+						local next=$(($next + $BOOTSIZE))
+					else
+						# no `size` argument mean "as much as possible"
+						echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=${type}"
+					fi
+				fi
+
+				# Root filesystem partition
+				if [[ -n "$rootpart" ]]; then
+					# dos: Linux
+					# gpt: Linux filesystem
+					[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="83" || local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+					# no `size` argument mean "as much as possible"
+					echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
+				fi
+			}
+		)
+		# Output the partitioning options from above to the debug log first and then pipe it into the 'sfdisk' command
+		display_alert "Partitioning with the following options" "$partition_script_output" "debug"
+		echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
