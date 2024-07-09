@@ -1,0 +1,118 @@
+name: Update Tools in Scripts
+run-name: Update Tools in Scripts by @${{ github.actor }}
+#
+# Some of our scripts download tools from a repo. These can't be bumped by dependabot, so this workflow is a self-created dependabot to bump versions of those tools to stay up-to-date.
+# This workflow only creates a PR if the version was actually updated.
+# To add a new tool, it just needs to be added to the matrix below by filling out all the variables.
+#
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "42 3 16 * *" # Run monthly on the 16th day of the month at 03:42 AM (random value as to not overload GitHub)
+
+jobs:
+  update-tool-version:
+    name: Update ${{ matrix.tool.REPO_NAME }} version
+    runs-on: ubuntu-latest
+
+    # Add new tools here, no need to add anything anywhere else.
+    # Only works for tools hosted on GitHub for now.
+    strategy:
+      matrix:
+        tool:
+          # Shellcheck
+          - USER_NAME: "koalaman"               # GitHub user name
+            REPO_NAME: "shellcheck"             # GitHub repo name
+            PROJECT_NAME: "koalaman/shellcheck" # This is always USER_NAME/REPO_NAME (like in the GitHub URL)
+            VAR_FILE: "lib/tools/shellcheck.sh" # Where the version variable of the tool is saved
+            VERSION_VAR: "SHELLCHECK_VERSION"   # Version variable how it appears in the script
+
+          # Shellcheck #2
+          - USER_NAME: "koalaman"
+            REPO_NAME: "shellcheck"
+            PROJECT_NAME: "koalaman/shellcheck"
+            VAR_FILE: "lib/functions/general/shellcheck.sh"
+            VERSION_VAR: "SHELLCHECK_VERSION"
+
+          # Shellfmt
+          - USER_NAME: "mvdan"
+            REPO_NAME: "sh"
+            PROJECT_NAME: "mvdan/sh"
+            VAR_FILE: "lib/tools/shellfmt.sh"
+            VERSION_VAR: "SHELLFMT_VERSION"
+
+          # ORAS
+          - USER_NAME: "oras-project"
+            REPO_NAME: "oras"
+            PROJECT_NAME: "oras-project/oras"
+            VAR_FILE: "lib/functions/general/oci-oras.sh"
+            VERSION_VAR: "ORAS_VERSION"
+
+          # Bat
+          - USER_NAME: "sharkdp"
+            REPO_NAME: "bat"
+            PROJECT_NAME: "sharkdp/bat"
+            VAR_FILE: "lib/functions/general/bat-cat.sh"
+            VERSION_VAR: "BATCAT_VERSION"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get current ${{ matrix.tool.PROJECT_NAME }} version
+        id: get-version-current
+        run: |
+          version_current=$(grep -Po '(?<=${{ matrix.tool.VERSION_VAR}}=\${${{ matrix.tool.VERSION_VAR}}:-)[0-9.]+(?=})' ${{ matrix.tool.VAR_FILE }})
+          echo "version_current=$version_current" >> $GITHUB_OUTPUT
+
+      - name: Get latest ${{ matrix.tool.PROJECT_NAME }} version
+        id: get-version-latest
+        # Multi-line string for CHANGE_LOG env, see https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#multiline-strings
+        # Further exmplanation for the CHANGE_LOG env:
+        # The first 'sed' expression replaces "#123" with "username/repo#123" to link to the correct repo (would otherwise auto-link to own repo)
+        # The second 'sed' expression replaces GitHub URLs with "redirect.github.com" to prevent "This was referenced" in the external repo's PRs/issues
+        run: |
+          version_latest=$(curl --silent "https://api.github.com/repos/${{ matrix.tool.PROJECT_NAME }}/releases/latest" | jq -r .tag_name)
+          version_latest=${version_latest#v}                        # Removing the 'v' prefix since the script uses only plain numbers
+          echo "version_latest=$version_latest" >> $GITHUB_OUTPUT                                                                                
+          {
+            echo "CHANGE_LOG<<EOFFEOFFF42"                          # Has to be a unique delimiter that doesn't appear in the changelog itself
+            curl --silent "https://api.github.com/repos/${{ matrix.tool.PROJECT_NAME }}/releases/latest" | jq -r .body \
+            | sed -E -e 's/(#([0-9]+))/${{ matrix.tool.USER_NAME }}\/${{ matrix.tool.REPO_NAME }}\1/g' \
+            -e 's/https\:\/\/github\.com/https\:\/\/redirect.github.com/g'
+            echo "EOFFEOFFF42"
+          } >> "$GITHUB_ENV"
+
+      - name: Update ${{ matrix.tool.VERSION_VAR}} in script
+        # @TODO Make sure that the version is actually higher, not lower (the 'latest' tag does not neccessarily mean that the version is higher!)
+        run: |
+          version_latest=${{ steps.get-version-latest.outputs.version_latest }}
+          sed -i "s/${{ matrix.tool.VERSION_VAR}}=\${${{ matrix.tool.VERSION_VAR}}:-[0-9.]*}/${{ matrix.tool.VERSION_VAR}}=\${${{ matrix.tool.VERSION_VAR}}:-$version_latest}/g" ${{ matrix.tool.VAR_FILE }}
+
+      - name: Create Pull Request to update ${{ matrix.tool.VERSION_VAR}} for ${{ matrix.tool.PROJECT_NAME }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "tools: Bump `${{ matrix.tool.VERSION_VAR}}` from ${{ steps.get-version-current.outputs.version_current }} to ${{ steps.get-version-latest.outputs.version_latest }}"
+          branch: update-version-${{ matrix.tool.VAR_FILE }}-${{ matrix.tool.PROJECT_NAME }}-${{ steps.get-version-latest.outputs.version_latest }}
+          delete-branch: true
+          title: "Bump ${{ matrix.tool.PROJECT_NAME}} from ${{ steps.get-version-current.outputs.version_current }} to ${{ steps.get-version-latest.outputs.version_latest }} in `${{ matrix.tool.VAR_FILE}}`"
+          body: |
+            Bump [${{ matrix.tool.PROJECT_NAME}}](https://github.com/${{ matrix.tool.PROJECT_NAME }}) from ${{ steps.get-version-current.outputs.version_current }} to ${{ steps.get-version-latest.outputs.version_latest }} by bumping `${{ matrix.tool.VERSION_VAR}}` in `${{ matrix.tool.VAR_FILE}}`.
+
+            <details><summary><b>Release notes</b></summary>
+            <p><em>Sourced from <a href="https://github.com/${{ matrix.tool.PROJECT_NAME }}/releases">${{ matrix.tool.PROJECT_NAME }}'s releases</a>.
+            <br>Please note that this only shows the release notes for the latest release.</em></p>
+            <blockquote>
+
+            ${{ env.CHANGE_LOG }}
+
+            </blockquote>
+            </details>
+          labels: Dependencies, Bash
