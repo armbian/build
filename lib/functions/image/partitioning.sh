@@ -214,7 +214,7 @@ function prepare_partitions() {
 						echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=${type}"
 						local next=$(($next + $BOOTSIZE))
 					else
-						# no `size` argument mean "as much as possible"
+						# No 'size' argument means "expand as much as possible"
 						echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=${type}"
 					fi
 				fi
@@ -222,9 +222,20 @@ function prepare_partitions() {
 				# Root filesystem partition
 				if [[ -n "$rootpart" ]]; then
 					# dos: Linux
-					# gpt: Linux filesystem
-					[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="83" || local type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
-					# no `size` argument mean "as much as possible"
+					# gpt: Linux root
+					if [[ "$IMAGE_PARTITION_TABLE" != "gpt" ]]; then
+						local type="83"
+					else
+						# Linux root has a different Type-UUID for every architecture
+						# See https://uapi-group.org/specifications/specs/discoverable_partitions_specification/
+						# The ${PARTITION_TYPE_UUID_ROOT} variable is defined in each architecture file (e.g. config/sources/arm64.conf)
+						if [[ -n "${PARTITION_TYPE_UUID_ROOT}" ]]; then
+							local type="${PARTITION_TYPE_UUID_ROOT}"
+						else
+							exit_with_error "Missing 'PARTITION_TYPE_UUID_ROOT' variable while partitioning the root filesystem!"
+						fi
+					fi
+					# No 'size' argument means "expand as much as possible"
 					echo "$rootpart : name=\"rootfs\", start=${next}MiB, type=${type}"
 				fi
 			}
