@@ -184,12 +184,16 @@ function prepare_partitions() {
 			[[ "$IMAGE_PARTITION_TABLE" == "msdos" ]] && echo "label: dos" || echo "label: $IMAGE_PARTITION_TABLE"
 
 			local next=$OFFSET
+
+			# Legacy BIOS partition
 			if [[ -n "$biospart" ]]; then
 				# gpt: BIOS boot
 				local type="21686148-6449-6E6F-744E-656564454649"
 				echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=${type}"
 				local next=$(($next + $BIOSSIZE))
 			fi
+
+			# EFI partition
 			if [[ -n "$uefipart" ]]; then
 				# dos: EFI (FAT-12/16/32)
 				# gpt: EFI System
@@ -197,8 +201,12 @@ function prepare_partitions() {
 				echo "$uefipart : name=\"efi\", start=${next}MiB, size=${UEFISIZE}MiB, type=${type}"
 				local next=$(($next + $UEFISIZE))
 			fi
+
+			# Linux extended boot loader (XBOOTLDR) partition
+			# See also https://wiki.archlinux.org/title/Partitioning#/boot
 			if [[ -n "$bootpart" ]]; then
-				# Linux extended boot
+				# dos: Linux extended boot (see https://github.com/util-linux/util-linux/commit/d0c430068206e1215222792e3aa10689f8c632a6)
+				# gpt: Linux extended boot
 				[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ea" || local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
 				if [[ -n "$rootpart" ]]; then
 					echo "$bootpart : name=\"bootfs\", start=${next}MiB, size=${BOOTSIZE}MiB, type=${type}"
@@ -208,6 +216,8 @@ function prepare_partitions() {
 					echo "$bootpart : name=\"bootfs\", start=${next}MiB, type=${type}"
 				fi
 			fi
+
+			# Root filesystem partition
 			if [[ -n "$rootpart" ]]; then
 				# dos: Linux
 				# gpt: Linux filesystem
@@ -247,6 +257,9 @@ function prepare_partitions() {
 
 	declare root_part_uuid="uninitialized"
 
+	##
+	## ROOT PARTITION
+	##
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
 
@@ -258,10 +271,16 @@ function prepare_partitions() {
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
 		run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "${rootdevice}"
+
+		#
+		# BEGIN: Options for specific filesystems
 		[[ $ROOTFS_TYPE == ext4 ]] && run_host_command_logged tune2fs -o journal_data_writeback "$rootdevice"
 		if [[ $ROOTFS_TYPE == btrfs && $BTRFS_COMPRESSION != none ]]; then
 			local fscreateopt="-o compress-force=${BTRFS_COMPRESSION}"
 		fi
+		# END: Options for specific filesystems
+		#
+
 		wait_for_disk_sync "after mkfs" # force writes to be really flushed
 
 		# store in readonly global for usage in later hooks
@@ -287,6 +306,9 @@ function prepare_partitions() {
 		echo "/dev/nfs / nfs defaults 0 0" >> $SDCARD/etc/fstab
 	fi
 
+	##
+	## BOOT (XBOOTLDR) PARTITION
+	##
 	if [[ -n $bootpart ]]; then
 		display_alert "Creating /boot" "$bootfs on ${LOOP}p${bootpart}"
 		check_loop_device "${LOOP}p${bootpart}"
@@ -295,6 +317,10 @@ function prepare_partitions() {
 		run_host_command_logged mount ${LOOP}p${bootpart} $MOUNT/boot/
 		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${bootpart}) /boot ${mkfs[$bootfs]} defaults${mountopts[$bootfs]} 0 2" >> $SDCARD/etc/fstab
 	fi
+
+	##
+	## EFI PARTITION
+	##
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
 		check_loop_device "${LOOP}p${uefipart}"
@@ -311,6 +337,9 @@ function prepare_partitions() {
 			echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
 		fi
 	fi
+	##
+	## END OF PARTITION CREATION
+	##
 
 	display_alert "Writing /tmp as tmpfs in chroot fstab" "$SDCARD/etc/fstab" "debug"
 	echo "tmpfs /tmp tmpfs defaults,nosuid 0 0" >> $SDCARD/etc/fstab
