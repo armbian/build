@@ -189,6 +189,7 @@ function prepare_partitions() {
 				# Legacy BIOS partition
 				if [[ -n "$biospart" ]]; then
 					# gpt: BIOS boot
+					[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && exit_with_error "Legacy BIOS partition is not allowed for MBR partition table (${BIOSSIZE} can't be >0)!"
 					local type="21686148-6449-6E6F-744E-656564454649"
 					echo "$biospart : name=\"bios\", start=${next}MiB, size=${BIOSSIZE}MiB, type=${type}"
 					local next=$(($next + $BIOSSIZE))
