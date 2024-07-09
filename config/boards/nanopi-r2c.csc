@@ -12,7 +12,7 @@ HAS_VIDEO_OUTPUT="no"
 BOOT_FDT_FILE="rockchip/rk3328-nanopi-r2-rev06.dtb"
 
 function post_family_tweaks__nanopi-r2c_rename_USB_LAN() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	# rename USB based network to lan0
 	mkdir -p $SDCARD/etc/udev/rules.d/

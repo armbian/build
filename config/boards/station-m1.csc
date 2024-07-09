@@ -11,7 +11,7 @@ BOOT_FDT_FILE="rockchip/rk3328-roc-pc.dtb"
 ASOUND_STATE="asound.state.station-m1"
 
 function post_family_tweaks__station_m1() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
 	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
@@ -22,7 +22,7 @@ function post_family_config__station_m1_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.07-rc5"
+	declare -g BOOTBRANCH="tag:v2024.07"
 	declare -g BOOTPATCHDIR="v2024.07/board_${BOARD}"
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 

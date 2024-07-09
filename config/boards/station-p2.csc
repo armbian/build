@@ -11,7 +11,7 @@ ASOUND_STATE="asound.state.station-p2"
 IMAGE_PARTITION_TABLE="gpt"
 
 function post_family_tweaks__station_p2() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
 	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
@@ -25,7 +25,7 @@ function post_family_config__station_p2_use_mainline_uboot() {
 
 	declare -g BOOTCONFIG="generic-rk3568_defconfig"             # Use generic defconfig which should boot all RK3568 boards
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.07-rc5"
+	declare -g BOOTBRANCH="tag:v2024.07"
 	declare -g BOOTPATCHDIR="v2024.07/board_${BOARD}"
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 

@@ -36,5 +36,3 @@ function post_family_tweaks__firefly_itx_3588j_enable_services() {
 	chroot_sdcard systemctl enable rk3588-bluetooth.service
 	return 0
 }
-
-

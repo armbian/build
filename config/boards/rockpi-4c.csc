@@ -11,7 +11,7 @@ BOOT_SCENARIO="tpl-spl-blob"
 BOOT_SUPPORT_SPI=yes
 
 function post_family_tweaks_bsp__rockpi-4c_BSP() {
-    display_alert "Installing BSP firmware and fixups"
+	display_alert "Installing BSP firmware and fixups"
 
 	if [[ $BRANCH == legacy ]]; then
 

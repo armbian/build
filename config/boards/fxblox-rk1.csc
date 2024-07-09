@@ -17,7 +17,6 @@ IMAGE_PARTITION_TABLE="gpt"
 DDR_BLOB='rk35/rk3588_ddr_lp4_2112MHz_lp5_2736MHz_v1.11.bin'
 BL31_BLOB='rk35/rk3588_bl31_v1.38.elf'
 
-
 function post_family_tweaks__fxblox-rk1_naming_audios() {
 	display_alert "$BOARD" "Renaming fxblox rk1 audios" "info"
 
