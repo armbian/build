@@ -350,7 +350,7 @@ driver_rtl8852bs() {
 	if linux-version compare "${version}" ge 6.1 && [[ "${BOARD}" == bananapif3 || "${BOARD}" == armsom-sige5 ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:56420ff22f9c174e23ef1d1fefc66cbed197bc12' # Commit date: June 30, 2024 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:b7d94226641ef4687bc7f54ae6fa01b7e30f4b82' # Commit date: July 10, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
@@ -371,22 +371,29 @@ driver_rtl8852bs() {
 		cp "${SRC}/cache/sources/rtl8852bs/${rtl8852bs_ver#*:}"/Makefile \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 
+		# Copy common.mk into kernel-work-dir
+		cp "${SRC}/cache/sources/rtl8852bs/${rtl8852bs_ver#*:}"/common.mk \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/common.mk"
+
 		# Disable debug
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 
+		# Comment undefined RTW_WARN_LMT
+		sed -i  "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
+
 		# Add to section Makefile
-		echo "obj-\$(CONFIG_RTL8723DU) += rtl8723du/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
+		echo "obj-\$(CONFIG_RTL8852BS) += rtl8852bs/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/realtek\/rtw89\/Kconfig"/a source "drivers\/net\/wireless\/realtek\/rtl8852bs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/realtek/Kconfig"
 
 		# We have to enable specific platforms in the driver Makefile to enable specific driver tweaks, they are all "n" by default
 		case ${BOARD} in
 			bananapif3)
-				sed -i "s/CONFIG_PLATFORM_ARM_ROCKCHIP = n/CONFIG_PLATFORM_ARM_ROCKCHIP = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
+				sed -i "s/CONFIG_PLATFORM_SPACEMIT = n/CONFIG_PLATFORM_SPACEMIT = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
 			armsom-sige5)
-				sed -i "s/CONFIG_PLATFORM_SPACEMIT = n/CONFIG_PLATFORM_SPACEMIT = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
+				sed -i "s/CONFIG_PLATFORM_ARM_ROCKCHIP = n/CONFIG_PLATFORM_ARM_ROCKCHIP = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
 		esac
 
