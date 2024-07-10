@@ -379,8 +379,10 @@ driver_rtl8852bs() {
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 
-		# Comment undefined RTW_WARN_LMT
-		sed -i  "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
+		# Bugfix/workaround: Comment undefined RTW_WARN_LMT
+		# @TODO Check on update if this fix is still needed (added 2024-July-10)
+		sed -i  "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g"  \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
 
 		# Add to section Makefile
 		echo "obj-\$(CONFIG_RTL8852BS) += rtl8852bs/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
@@ -389,11 +391,13 @@ driver_rtl8852bs() {
 
 		# We have to enable specific platforms in the driver Makefile to enable specific driver tweaks, they are all "n" by default
 		case ${BOARD} in
-			bananapif3)
-				sed -i "s/CONFIG_PLATFORM_SPACEMIT = n/CONFIG_PLATFORM_SPACEMIT = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
-				;;
+			# For Rockchip devices, add board name here
 			armsom-sige5)
 				sed -i "s/CONFIG_PLATFORM_ARM_ROCKCHIP = n/CONFIG_PLATFORM_ARM_ROCKCHIP = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
+				;;
+			# For Spacemit devices, add board name here
+			bananapif3)
+				sed -i "s/CONFIG_PLATFORM_SPACEMIT = n/CONFIG_PLATFORM_SPACEMIT = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
 		esac
 
