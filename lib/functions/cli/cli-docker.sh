@@ -74,7 +74,7 @@ function cli_docker_run() {
 	case "${DOCKER_SUBCMD}" in
 		shell)
 			display_alert "Launching Docker shell" "docker-shell" "info"
-			docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
+			docker run -it --cap-add MKNOD "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
 			;;
 
 		purge)
