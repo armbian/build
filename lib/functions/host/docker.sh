@@ -575,7 +575,10 @@ function docker_cli_launch() {
 	display_alert "-----------------Relaunching in Docker after ${SECONDS}s------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result
-	if docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}"; then
+	# Bind mount /dev into the container to fix an edge case where device reported by `losetup -f`
+	# wouldn't be available in the container if the device didn't exist on host
+	# when container is launched.
+	if docker run -v /dev:/dev "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash "${DOCKER_ARMBIAN_TARGET_PATH}/compile.sh" "${ARMBIAN_CLI_FINAL_RELAUNCH_ARGS[@]}"; then
 		docker_build_result=$? # capture exit code of test done in the line above.
 		display_alert "-------------Docker run finished after ${SECONDS}s------------------------" "🐳 successfull" "info"
 	else

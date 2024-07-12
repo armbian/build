@@ -74,7 +74,10 @@ function cli_docker_run() {
 	case "${DOCKER_SUBCMD}" in
 		shell)
 			display_alert "Launching Docker shell" "docker-shell" "info"
-			docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
+			# Bind mount /dev into the container to fix an edge case where device reported by
+			# `losetup -f` wouldn't be available in the container if the device didn't exist
+			# on host when container is launched.
+			docker run -v /dev:/dev -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
 			;;
 
 		purge)
