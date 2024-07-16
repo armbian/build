@@ -251,7 +251,8 @@ function do_main_configuration() {
 
 	case $GHCR_MIRROR in
 		dockerproxy)
-			declare -g -r GHCR_SOURCE='ghcr.dockerproxy.com'
+			GHCR_MIRROR_ADDRESS="${GHCR_MIRROR_ADDRESS:-"ghcr.dockerproxy.com"}"
+			declare -g -r GHCR_SOURCE=$GHCR_MIRROR_ADDRESS
 			;;
 		*)
 			declare -g -r GHCR_SOURCE='ghcr.io'
