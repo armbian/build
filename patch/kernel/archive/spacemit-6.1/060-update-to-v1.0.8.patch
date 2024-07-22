@@ -1,0 +1,443 @@
+From 05bebc19949413beb180f86c3efb10957713658a Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Tue, 16 Jul 2024 08:47:05 -0400
+Subject: [PATCH] update to v1.0.8
+
+source: https://gitee.com/bianbu-linux/linux-6.1
+
+Signed-off-by: James Deng <james.deng@spacemit.com>
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/cpufreq/spacemit-cpufreq.c            |  35 +++-
+ drivers/crypto/spacemit/spacemit_ce_engine.c  |  13 +-
+ drivers/i2c/busses/i2c-k1x.c                  |   5 +-
+ drivers/pwm/pwm-pxa.c                         |   6 +-
+ .../soc/spacemit/pm_domain/k1x-pm_domain.c    |   8 +
+ drivers/usb/phy/Makefile                      |   2 +-
+ scripts/package/generic                       |  16 ++
+ sound/soc/spacemit/spacemit-snd-pcm-dma.c     | 150 +++++++-----------
+ 8 files changed, 124 insertions(+), 111 deletions(-)
+ create mode 100644 scripts/package/generic
+
+diff --git a/drivers/cpufreq/spacemit-cpufreq.c b/drivers/cpufreq/spacemit-cpufreq.c
+index 52d40d7f25fe..ce81b344a1c6 100644
+--- a/drivers/cpufreq/spacemit-cpufreq.c
++++ b/drivers/cpufreq/spacemit-cpufreq.c
+@@ -36,9 +36,15 @@ of_hotplug_cooling_register(struct cpufreq_policy *policy);
+ 
+ #define TURBO_FREQUENCY		(1600000000)
+ #define STABLE_FREQUENCY	(1200000000)
+-#define FILTER_POINTS		(140)
++
++#define FILTER_POINTS_0		(135)
++#define FILTER_POINTS_1		(142)
++
+ #define FREQ_TABLE_0		(0)
+ #define FREQ_TABLE_1		(1)
++#define FREQ_TABLE_2		(2)
++
++#define PRODUCT_ID_M1		(0x36070000)
+ 
+ static int spacemit_policy_notifier(struct notifier_block *nb,
+                                   unsigned long event, void *data)
+@@ -390,7 +396,9 @@ static int spacemit_dt_cpufreq_pre_probe(struct platform_device *pdev)
+ {
+ 	int cpu;
+ 	struct device_node *cpus;
++	struct device_node *product_id, *wafer_id;
+ 	u32 prop = 0;
++	u32 product_prop, wafer_prop;
+ 
+ 	if (strncmp(pdev->name, "cpufreq-dt", 10) != 0)
+ 		return 0;
+@@ -400,8 +408,29 @@ static int spacemit_dt_cpufreq_pre_probe(struct platform_device *pdev)
+ 		pr_info("Spacemit Platform with no 'svt-dro' in DTS, using defualt frequency Table0\n");
+ 	}
+ 
+-	for_each_possible_cpu(cpu) {
+-		spacemit_dt_cpufreq_pre_early_init(&pdev->dev, cpu, prop >= FILTER_POINTS ? FREQ_TABLE_1 : FREQ_TABLE_0);
++	product_id = of_find_node_by_path("/");
++	if (!product_id || of_property_read_u32(product_id, "product-id", &product_prop)) {
++		pr_info("Spacemit Platform with no 'product-id' in DTS\n");
++	}
++
++	wafer_id = of_find_node_by_path("/");
++	if (!wafer_id || of_property_read_u32(product_id, "wafer-id", &wafer_prop)) {
++		pr_info("Spacemit Platform with no 'product-id' in DTS\n");
++	}
++
++	if ((wafer_prop << 16 | product_prop) == PRODUCT_ID_M1) {
++		for_each_possible_cpu(cpu) {
++			if (prop <= FILTER_POINTS_0)
++				spacemit_dt_cpufreq_pre_early_init(&pdev->dev, cpu, FREQ_TABLE_0);
++			else if (prop <= FILTER_POINTS_1)
++				spacemit_dt_cpufreq_pre_early_init(&pdev->dev, cpu, FREQ_TABLE_1);
++			else
++				spacemit_dt_cpufreq_pre_early_init(&pdev->dev, cpu, FREQ_TABLE_2);
++		}
++	} else {
++		for_each_possible_cpu(cpu) {
++			spacemit_dt_cpufreq_pre_early_init(&pdev->dev, cpu, FREQ_TABLE_0);
++		}
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/crypto/spacemit/spacemit_ce_engine.c b/drivers/crypto/spacemit/spacemit_ce_engine.c
+index 8623eb4843dd..8ebdd842532b 100644
+--- a/drivers/crypto/spacemit/spacemit_ce_engine.c
++++ b/drivers/crypto/spacemit/spacemit_ce_engine.c
+@@ -1733,6 +1733,12 @@ static int crypto_engine_probe(struct platform_device *pdev)
+ 		return -ENODEV;
+ 	}
+ 
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
++	if (ret) {
++		dev_err(dev, "Unable to set dma mask\n");
++		return ret;
++	}
++
+ 	in_buffer = dma_alloc_noncoherent(dev, SPACEMIT_AES_BUFFER_LEN, &dma_addr_in, DMA_TO_DEVICE, GFP_KERNEL);
+ 	out_buffer = dma_alloc_noncoherent(dev, SPACEMIT_AES_BUFFER_LEN, &dma_addr_out, DMA_FROM_DEVICE, GFP_KERNEL);
+ 	ctrl = kmalloc(sizeof(struct aes_clk_reset_ctrl), GFP_KERNEL);
+@@ -1829,13 +1835,6 @@ static int crypto_engine_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
+-
+-	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
+-	if (ret) {
+-		dev_err(dev, "Unable to set dma mask\n");
+-		return ret;
+-	}
+-
+ #ifdef CONFIG_SPACEMIT_CRYPTO_SELF_TEST
+ 	ce_aes_test(num_engines);
+ #endif
+diff --git a/drivers/i2c/busses/i2c-k1x.c b/drivers/i2c/busses/i2c-k1x.c
+index eda79cfb2422..f0b6e9d36fe3 100644
+--- a/drivers/i2c/busses/i2c-k1x.c
++++ b/drivers/i2c/busses/i2c-k1x.c
+@@ -1245,15 +1245,12 @@ spacemit_i2c_xfer(struct i2c_adapter *adapt, struct i2c_msg msgs[], int num)
+ 	 * software power down command to pmic via i2c interface
+ 	 * with local irq disabled, so just enter PIO mode at once
+ 	*/
+-	if (unlikely(irqs_disabled()
++	if (unlikely(spacemit_i2c_restart_notify == true
+ #ifdef CONFIG_DEBUG_FS
+ 		|| spacemit_i2c->dbgfs_mode == SPACEMIT_I2C_MODE_PIO
+ #endif
+ 		)) {
+ 
+-		if(!spacemit_i2c_restart_notify)
+-			dev_warn(spacemit_i2c->dev, "%s: i2c transfer called with irq off!\n", __func__);
+-
+ 		spacemit_i2c->msgs = msgs;
+ 		spacemit_i2c->num = num;
+ 
+diff --git a/drivers/pwm/pwm-pxa.c b/drivers/pwm/pwm-pxa.c
+index 4fd778f7a608..a571c207c1a9 100644
+--- a/drivers/pwm/pwm-pxa.c
++++ b/drivers/pwm/pwm-pxa.c
+@@ -308,10 +308,6 @@ static struct platform_driver pwm_driver = {
+ 	.id_table	= pwm_id_table,
+ };
+ 
+-static int k1x_pwm_driver_init(void)
+-{
+-	return platform_driver_register(&pwm_driver);
+-}
+-late_initcall_sync(k1x_pwm_driver_init);
++module_platform_driver(pwm_driver);
+ 
+ MODULE_LICENSE("GPL v2");
+diff --git a/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c b/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c
+index de03e2e2e5d9..5cb23eb36019 100644
+--- a/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c
++++ b/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c
+@@ -45,6 +45,9 @@
+ /* gpio */
+ #define WAKEUP_SOURCE_WAKEUP_2	2
+ 
++/* usb & others */
++#define WAKEUP_SOURCE_WAKEUP_5	5
++
+ #define PM_QOS_BLOCK_C1		0x0 /* core wfi */
+ #define PM_QOS_BLOCK_C2		0x2 /* core power off */
+ #define PM_QOS_BLOCK_M2		0x6 /* core l2 off */
+@@ -818,6 +821,11 @@ static int acpr_per_suspend(void)
+ 	apcr_per |= (1 << WAKEUP_SOURCE_WAKEUP_2);
+ 	regmap_write(gpmu->regmap[MPMU_REGMAP_INDEX], MPMU_AWUCRM_REG, apcr_per);
+ 
++	/* enable usb/rcpu/ap2audio */
++	regmap_read(gpmu->regmap[MPMU_REGMAP_INDEX], MPMU_AWUCRM_REG, &apcr_per);
++	apcr_per |= (1 << WAKEUP_SOURCE_WAKEUP_5);
++	regmap_write(gpmu->regmap[MPMU_REGMAP_INDEX], MPMU_AWUCRM_REG, apcr_per);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/usb/phy/Makefile b/drivers/usb/phy/Makefile
+index 01b40aa3f8b7..b6d549df71f4 100644
+--- a/drivers/usb/phy/Makefile
++++ b/drivers/usb/phy/Makefile
+@@ -25,5 +25,5 @@ obj-$(CONFIG_USB_ULPI)			+= phy-ulpi.o
+ obj-$(CONFIG_USB_ULPI_VIEWPORT)		+= phy-ulpi-viewport.o
+ obj-$(CONFIG_KEYSTONE_USB_PHY)		+= phy-keystone.o
+ obj-$(CONFIG_JZ4770_PHY)		+= phy-jz4770.o
+-obj-$(CONFIG_USB_K1XCI_OTG)		+= phy-k1x-ci-otg.o
+ obj-$(CONFIG_K1XCI_USB2_PHY)	+= phy-k1x-ci-usb2.o
++obj-$(CONFIG_USB_K1XCI_OTG)		+= phy-k1x-ci-otg.o
+diff --git a/scripts/package/generic b/scripts/package/generic
+new file mode 100644
+index 000000000000..3b0286cd0e5a
+--- /dev/null
++++ b/scripts/package/generic
+@@ -0,0 +1,16 @@
++#!/bin/bash
++full_version=`uname -r`
++
++# First check for a fully qualified version.
++this="/usr/lib/linux-tools/$full_version/`basename $0`"
++if [ -f "$this" ]; then
++	exec "$this" "$@"
++fi
++
++# Give them a hint as to what to install.
++echo "WARNING: `basename $0` not found for kernel $full_version" >&2
++echo "" >&2
++echo "  You may need to install the following packages for this specific kernel:" >&2
++echo "    linux-tools-$full_version" >&2
++
++exit 2
+\ No newline at end of file
+diff --git a/sound/soc/spacemit/spacemit-snd-pcm-dma.c b/sound/soc/spacemit/spacemit-snd-pcm-dma.c
+index 4dbd81098f7f..192927837cf6 100644
+--- a/sound/soc/spacemit/spacemit-snd-pcm-dma.c
++++ b/sound/soc/spacemit/spacemit-snd-pcm-dma.c
+@@ -34,32 +34,18 @@
+ #define HDMI_TXDATA              0x80
+ #define HDMI_PERIOD_SIZE         480
+ 
+-#define L_CH                            0
+-#define R_CH                            1
+ #define SAMPLE_PRESENT_FLAG_OFFSET      31
+ #define AUDIO_FRAME_START_BIT_OFFSET    30
+-#define SAMPLE_FLAT_BIT_OFFSET          29
+-#define NOT_USED_OFFSET                 28
+ #define PARITY_BIT_OFFSET               27
+ #define CHANNEL_STATUS_OFFSET           26
+-#define USER_DATA_OFFSET                25
+ #define VALID_OFFSET                    24
+ 
+-#define IEC958_AES0_CONSUMER            (0<<0)	/* 0 = consumer, 1 = professional */
+-#define IEC958_AES0_AUDIO               (0<<1)	/* 0 = audio, 1 = non-audio */
+-#define IEC958_AES3_CON_FS_48000        (2<<0)	/* 48kHz */
+-#define IEC958_AES0_CON_NOT_COPYRIGHT   (1<<2)	/* 0 = copyright, 1 = not copyright */
+-#define IEC958_AES0_CON_EMPHASIS_NONE   (0<<3)	/* none emphasis */
+-#define IEC958_AES1_CON_GENERAL         (0x00)
+-#define IEC958_AES2_CON_SOURCE_UNSPEC   (0<<0)	/* unspecified */
+-#define IEC958_AES2_CON_CHANNEL_UNSPEC  (0<<4)	/* unspecified */
+-#define IEC958_AES3_CON_CLOCK_1000PPM   (0<<4)	/* 1000 ppm */
+-#define IEC958_AES4_CON_WORDLEN_24_20   (5<<1)	/* 24-bit or 20-bit */
+-#define IEC958_AES4_CON_MAX_WORDLEN_24  (1<<0)	/* 0 = 20-bit, 1 = 24-bit */
+-
+ #define CS_CTRL1 ((1 << SAMPLE_PRESENT_FLAG_OFFSET) | (1 << AUDIO_FRAME_START_BIT_OFFSET))
+ #define CS_CTRL2 ((1 << SAMPLE_PRESENT_FLAG_OFFSET) | (0 << AUDIO_FRAME_START_BIT_OFFSET))
+ 
++#define CS_SAMPLING_FREQUENCY           25
++#define CS_MAX_SAMPLE_WORD              32
++
+ #define P2(n) n, n^1, n^1, n
+ #define P4(n) P2(n), P2(n^1), P2(n^1), P2(n)
+ #define P6(n) P4(n), P4(n^1), P4(n^1), P4(n)
+@@ -96,11 +82,9 @@ struct hdmi_codec_priv {
+     uint32_t srate;
+     uint32_t channels;
+     uint8_t iec_offset;
+-    uint8_t ch_sn;
+-    uint8_t cs[24];
+ };
+ 
+-struct hdmi_codec_priv hdmi_ptr = {0};
++static struct hdmi_codec_priv hdmi_ptr = {0};
+ static const bool ParityTable256[256] =
+ {
+     P6(0), P6(1), P6(1), P6(0)
+@@ -567,8 +551,12 @@ static int spacemit_snd_pcm_trigger(struct snd_soc_component *component, struct
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 		if (runtime->info & SNDRV_PCM_INFO_PAUSE)
+ 			dmaengine_pause(dmadata->dma_chan);
+-		else
++		else {
+ 			dmaengine_terminate_async(dmadata->dma_chan);
++			dmadata->playback_data = 0;
++			dmadata->pos = 0;
++			spacemit_update_stream_status(dev, dmadata->stream, false);
++		}
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+@@ -623,18 +611,7 @@ spacemit_snd_pcm_hdmi_pointer(struct snd_soc_component *component, struct snd_pc
+ 	struct spacemit_snd_dmadata *dmadata = substream->runtime->private_data;
+ 	return bytes_to_frames(substream->runtime, dmadata->pos);
+ }
+-static void hdmi_create_cs(struct hdmi_codec_priv *hdmi_priv)
+-{
+-    uint8_t *cs;
+-    memset(hdmi_priv->cs, 0, sizeof(hdmi_priv->cs));
+-    cs = hdmi_priv->cs;
+-    cs[0] = IEC958_AES0_CONSUMER | IEC958_AES0_AUDIO | IEC958_AES0_CON_NOT_COPYRIGHT | IEC958_AES0_CON_EMPHASIS_NONE;
+-    cs[1] = IEC958_AES1_CON_GENERAL;
+-    cs[2] = IEC958_AES2_CON_SOURCE_UNSPEC | IEC958_AES2_CON_CHANNEL_UNSPEC;
+-    cs[3] = IEC958_AES3_CON_CLOCK_1000PPM | IEC958_AES3_CON_FS_48000;
+-    cs[4] = IEC958_AES4_CON_WORDLEN_24_20 | IEC958_AES4_CON_MAX_WORDLEN_24;		//24bits
+ 
+-}
+ static int spacemit_snd_pcm_open(struct snd_soc_component *component, struct snd_pcm_substream *substream)
+ {
+ 	int ret = 0;
+@@ -677,10 +654,8 @@ static int spacemit_snd_pcm_open(struct snd_soc_component *component, struct snd
+ 	substream->runtime->private_data = dmadata;
+ 
+ 	if (dmadata->dma_id == DMA_HDMI) {
+-		hdmi_ptr.ch_sn = L_CH;
+         hdmi_ptr.iec_offset = 0;
+         hdmi_ptr.srate = 48000;
+-        hdmi_create_cs(&hdmi_ptr);
+ 	}
+ unlock:
+ 	spin_unlock_irqrestore(&dev->lock, flags);
+@@ -704,7 +679,6 @@ static int spacemit_snd_pcm_close(struct snd_soc_component *component, struct sn
+ 	}
+ 	dmaengine_terminate_all(chan);
+ 	if (dmadata->dma_id == DMA_HDMI) {
+-		hdmi_ptr.ch_sn = L_CH;
+ 		hdmi_ptr.iec_offset = 0;
+ 	}
+ unlock:
+@@ -830,72 +804,66 @@ static void spacemit_snd_pcm_remove(struct snd_soc_component *component)
+ 		dev->dmadata[i].dma_chan = NULL;
+ 	}
+ }
+-static void hdmi_set_cs_channel_sn(struct hdmi_codec_priv *hdmi_priv)
+-{
+-    hdmi_priv->cs[2] &= 0x0f;
+-    if (hdmi_priv->ch_sn == L_CH) {
+-        hdmi_priv->cs[2] |= (0x1 << 4);
+-        hdmi_priv->ch_sn = R_CH;
+-    } else if (hdmi_priv->ch_sn == R_CH)  {
+-        hdmi_priv->cs[2] |= (0x2 << 4);
+-        hdmi_priv->ch_sn = L_CH;
+-    }
+-}
+ 
+-static uint32_t get_cs_bit(struct hdmi_codec_priv *hdmi_priv)
++static uint32_t parity_even(uint32_t sample)
+ {
+-    unsigned long tmp = 0;
+-    int cs_idx;
+-    int bit_idx;
+-    cs_idx = hdmi_priv->iec_offset >> 3;
+-    bit_idx = hdmi_priv->iec_offset - (cs_idx << 3);
+-
+-    tmp = hdmi_priv->cs[cs_idx] >> bit_idx;
+-
+-    return (uint32_t)tmp&0x1;
++	bool parity = 0;
++	sample ^= sample >> 16;
++	sample ^= sample >> 8;
++	parity = ParityTable256[sample & 0xff];
++	if (parity)
++		return 1;
++	else
++		return 0;
+ }
+ 
+-static uint32_t parity_even(uint32_t sample)
++static int32_t cal_cs_status_48kHz(int32_t offset)
+ {
+-	bool parity = 0;
+-    sample ^= sample >> 16;
+-    sample ^= sample >> 8;
+-    parity = ParityTable256[sample & 0xff];
+-    if (parity)
+-        return 1;
+-    else
+-        return 0;
++	if ((offset == CS_SAMPLING_FREQUENCY) || (offset == CS_MAX_SAMPLE_WORD))
++	{
++		return 1;
++	} else {
++		return 0;
++	}
+ }
+ 
+ static void hdmi_reformat(void *dst, void *src, int len)
+ {
+-    uint32_t *dst32 = (uint32_t *)dst;
+-    uint16_t *src16 = (uint16_t *)src;
+-    struct hdmi_codec_priv *dw = &hdmi_ptr;
+-    uint16_t frm_cnt = len;
+-    uint32_t ctrl;
+-    uint32_t sample,parity;
+-    dw->channels = 2;
+-    while (frm_cnt--) {
+-        for (int i = 0; i < dw->channels; i++) {
+-            hdmi_set_cs_channel_sn(dw);
+-            if (dw->iec_offset == 0) {
+-                ctrl = CS_CTRL1 | (get_cs_bit(dw) << CHANNEL_STATUS_OFFSET);
+-            }  else {
+-                ctrl = CS_CTRL2 | (get_cs_bit(dw) << CHANNEL_STATUS_OFFSET);
+-            }
+-
+-            sample = ((uint32_t)(*src16++) << 8)| ctrl;
+-            parity = parity_even(sample);
+-            sample = sample | (parity << PARITY_BIT_OFFSET);
+-            *dst32++ = sample;
+-        }
+-
+-        dw->iec_offset++;
+-        if (dw->iec_offset >= 192){
+-            dw->iec_offset = 0;
++	uint32_t *dst32 = (uint32_t *)dst;
++	uint16_t *src16 = (uint16_t *)src;
++	struct hdmi_codec_priv *dw = &hdmi_ptr;
++	uint16_t frm_cnt = len;
++	uint32_t ctrl;
++	uint32_t sample,parity;
++	dw->channels = 2;
++	while (frm_cnt--) {
++		for (int i = 0; i < dw->channels; i++) {
++			//bit 0-23
++			sample = ((uint32_t)(*src16++) << 8);
++			//bit 24
++			sample = sample | (1 << VALID_OFFSET);
++			//bit 26
++			sample = sample | (cal_cs_status_48kHz(dw->iec_offset) << CHANNEL_STATUS_OFFSET);
++			//bit 27
++			parity = parity_even(sample);
++			sample = sample | (parity << PARITY_BIT_OFFSET);
++
++			//bit 30 31
++			if (dw->iec_offset == 0) {
++				ctrl = CS_CTRL1;
++			}  else {
++				ctrl = CS_CTRL2;
++			}
++			sample = sample | ctrl;
++
++			*dst32++ = sample;
+ 		}
+-    };
++
++		dw->iec_offset++;
++		if (dw->iec_offset >= 192){
++			dw->iec_offset = 0;
++		}
++	}
+ }
+ 
+ static int spacemit_snd_pcm_copy(struct snd_soc_component *component, struct snd_pcm_substream *substream, int channel, 
+-- 
+2.39.2
+
