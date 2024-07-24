@@ -2,7 +2,7 @@
 # https://radxa.com/products/rocks/s0
 BOARD_NAME="Rock S0"
 BOARDFAMILY="rock-s0"
-BOARD_MAINTAINER="brentr"
+BOARD_MAINTAINER=""
 BOOTCONFIG="rock-s0-rk3308_defconfig"
 DEFAULT_CONSOLE="serial"
 SERIALCON="ttyS0"

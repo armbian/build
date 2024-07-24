@@ -2,7 +2,7 @@
 BOARD_NAME="Station M1"
 BOARDFAMILY="rockchip64"
 BOOT_SOC="rk3328"
-BOARD_MAINTAINER="150balbes"
+BOARD_MAINTAINER=""
 BOOTCONFIG="roc-cc-rk3328_defconfig"
 KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"

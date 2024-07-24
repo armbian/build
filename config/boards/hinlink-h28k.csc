@@ -2,7 +2,7 @@
 BOARD_NAME="HinLink H28k"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="hinlink_rk3528_defconfig"
-BOARD_MAINTAINER="sputnik2019"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

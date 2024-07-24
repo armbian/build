@@ -1,7 +1,7 @@
 # Rockchip RK3588S octa core 8GB RAM SoC eMMC 1x NVMe 1x USB3 1x USB2 1x 2.5GbE 1x GbE
 BOARD_NAME="NanoPi R6C"
 BOARDFAMILY="rockchip-rk3588"
-BOARD_MAINTAINER="ColorfulRhino"
+BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi-r6c-rk3588s_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
 KERNEL_TARGET="vendor,current,edge"

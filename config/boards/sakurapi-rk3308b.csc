@@ -1,7 +1,7 @@
 # Rockchip RK3308 quad core 256-512MB SoC WiFi
 BOOT_SOC="rk3308"
 BOARD_NAME="Sakura Pi RK3308B"
-BOARD_MAINTAINER="TheSnowfield"
+BOARD_MAINTAINER=""
 BOARDFAMILY="rockchip64"
 BOOTCONFIG="sakurapi_rk3308b_defconfig"
 DEFAULT_CONSOLE="serial"

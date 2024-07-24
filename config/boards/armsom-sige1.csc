@@ -2,7 +2,7 @@
 BOARD_NAME="ArmSoM Sige1"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="hinlink_rk3528_defconfig"
-BOARD_MAINTAINER="amazingfate"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

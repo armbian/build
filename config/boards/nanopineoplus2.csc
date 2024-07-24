@@ -1,7 +1,7 @@
 # Allwinner H5 quad core 1GB RAM SoC headless GBE eMMC WiFi/BT
 BOARD_NAME="NanoPi Neo Plus 2"
 BOARDFAMILY="sun50iw2"
-BOARD_MAINTAINER="teknoid"
+BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi_neo_plus2_defconfig"
 MODULES="g_serial"
 MODULES_BLACKLIST="lima"

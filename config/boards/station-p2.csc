@@ -2,7 +2,7 @@
 BOARD_NAME="Station P2"
 BOARDFAMILY="rockchip64"
 BOOT_SOC="rk3568"
-BOARD_MAINTAINER="150balbes"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

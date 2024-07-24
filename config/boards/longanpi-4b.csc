@@ -1,7 +1,7 @@
 # Allwinner Cortex-A55 octa core 2/4GB RAM SoC USB3 PCIE USB-C 2x GbE
 BOARD_NAME="LonganPi 4B"
 BOARDFAMILY="sun55iw3-syterkit"
-BOARD_MAINTAINER="chainsx"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="legacy"
 BOOT_FDT_FILE="allwinner/sun55i-t527-longanpi-4b-pcie.dtb"
 SRC_EXTLINUX="yes"
