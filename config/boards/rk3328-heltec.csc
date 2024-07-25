@@ -1,7 +1,7 @@
 # Rockchip RK3328 quad core 2GB RAM SoC WIFI/BT eMMC
 BOARD_NAME="RK3328-Heltec"
 BOARDFAMILY="rockchip64"
-BOARD_MAINTAINER="sic"
+BOARD_MAINTAINER="sicXnull"
 BOOTCONFIG="evb-rk3328_defconfig"
 KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
