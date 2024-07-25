@@ -2,11 +2,11 @@
 BOARD_NAME="Station P2"
 BOARDFAMILY="rockchip64"
 BOOT_SOC="rk3568"
-BOARD_MAINTAINER="150balbes"
+BOARD_MAINTAINER=""
 KERNEL_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
-BOOT_FDT_FILE="rockchip/rk3568-firefly-roc-pc.dtb"
+BOOT_FDT_FILE="rockchip/rk3568-roc-pc.dtb"
 ASOUND_STATE="asound.state.station-p2"
 IMAGE_PARTITION_TABLE="gpt"
 
