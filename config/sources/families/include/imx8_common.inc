@@ -27,7 +27,7 @@ case $BOARD in
 
 			current) # active lts mainline kernel
 				KERNEL_MAJOR_MINOR="6.6"
-				KERNELBRANCH='branch:linux-6.6.y'
+				KERNELBRANCH='tag:v6.6.43'
 				KERNELPATCHDIR="archive/imx8m-6.6"
 				;;
 
