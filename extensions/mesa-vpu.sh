@@ -22,6 +22,10 @@ function extension_prepare_config__3d() {
 
 		EXTRA_IMAGE_SUFFIXES+=("-kisak")
 
+	elif [[ "${DISTRIBUTION}" == "Debian" && "${RELEASE}" == "bookworm" ]]; then
+
+		EXTRA_IMAGE_SUFFIXES+=("-backported-mesa")
+
 	fi
 
 	# This should be enabled on all for rk3588 distributions where mesa and vendor kernel is present
@@ -71,6 +75,12 @@ function post_install_kernel_debs__3d() {
 			Pin: release o=LP-PPA-kisak-kisak-mesa
 			Pin-Priority: 1001
 		EOF
+
+	elif [[ "${DISTRIBUTION}" == "Debian" && "${RELEASE}" == "bookworm" ]]; then
+
+		display_alert "Adding mesa backport repo for ${RELEASE} from OBS" "${EXTENSION}" "info"
+		echo 'deb http://download.opensuse.org/repositories/home:/amazingfate:/mesa-bookworm-backport/Debian_12/ /' | tee "${SDCARD}"/etc/apt/sources.list.d/home:amazingfate:mesa-bookworm-backport.list
+		curl -fsSL https://download.opensuse.org/repositories/home:amazingfate:mesa-bookworm-backport/Debian_12/Release.key | gpg --dearmor | tee "${SDCARD}"/etc/apt/trusted.gpg.d/home_amazingfate_mesa-bookworm-backport.gpg > /dev/null
 
 	fi
 
