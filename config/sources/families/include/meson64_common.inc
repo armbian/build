@@ -45,7 +45,7 @@ case $BRANCH in
 		declare -g KERNEL_MAJOR_MINOR="6.6"
 		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.9"
+		declare -g KERNEL_MAJOR_MINOR="6.10"
 		;;
 
 esac
