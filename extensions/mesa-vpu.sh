@@ -86,7 +86,7 @@ function post_install_kernel_debs__3d() {
 
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(jammy|noble)$ && "${BRANCH}" =~ ^(legacy|vendor)$ ]]; then
 
-		pkgs+=("rockchip-multimedia-config" "chromium-browser" "libv4l-rkmpp" "gstreamer1.0-rockchip")
+		pkgs+=("rockchip-multimedia-config" "chromium" "libv4l-rkmpp" "gstreamer1.0-rockchip")
 		if [[ "${RELEASE}" == "jammy" ]]; then
 			pkgs+=(libwidevinecdm)
 		else
