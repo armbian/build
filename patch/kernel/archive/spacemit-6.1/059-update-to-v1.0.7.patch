@@ -1,0 +1,2610 @@
+From 5f0bb67fb85257a83e59ebdbf57f378b1383e2d8 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Thu, 11 Jul 2024 07:10:18 -0400
+Subject: [PATCH] update to v1.0.7
+
+Signed-off-by: James Deng <james.deng@spacemit.com>
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/clk/spacemit/ccu-spacemit-k1x.c       |   5 +-
+ drivers/clk/spacemit/ccu_pll.c                |  11 +-
+ drivers/cpufreq/cpufreq-dt.c                  |  19 +
+ drivers/cpufreq/spacemit-cpufreq.c            | 375 +++++++++++++++---
+ drivers/crypto/spacemit/spacemit_ce_engine.c  |   2 +-
+ drivers/gpio/gpio-k1x.c                       |   6 -
+ drivers/gpu/drm/spacemit/lt8911exb.c          |  15 +-
+ .../spacemit/camera/cam_sensor/cam_sensor.c   | 173 ++++++--
+ .../spacemit/camera/cam_sensor/cam_sensor.h   |   4 +
+ drivers/mtd/spi-nor/Makefile                  |   1 +
+ drivers/mtd/spi-nor/core.c                    |   1 +
+ drivers/mtd/spi-nor/core.h                    |   1 +
+ drivers/mtd/spi-nor/fmsh.c                    |  20 +
+ drivers/nvmem/Kconfig                         |  10 +
+ drivers/nvmem/Makefile                        |   2 +
+ drivers/nvmem/spacemit-efuse.c                | 172 ++++++++
+ drivers/opp/core.c                            | 113 ++++++
+ drivers/pinctrl/pinctrl-single.c              | 124 +++++-
+ drivers/soc/spacemit/Kconfig                  |   9 +
+ drivers/soc/spacemit/Makefile                 |  11 +-
+ .../soc/spacemit/pm_domain/k1x-pm_domain.c    |   7 +
+ .../soc/spacemit/spacemit-rf/spacemit-wlan.c  |  25 +-
+ drivers/soc/spacemit/spacemit-socinfo.c       | 205 ++++++++++
+ drivers/usb/dwc3/dwc3-spacemit.c              |  98 ++++-
+ drivers/usb/host/ehci-k1x-ci.c                | 188 +++++++--
+ include/linux/pm_opp.h                        |   3 +
+ sound/soc/codecs/es8326.c                     |  76 +++-
+ 31 files changed, 1750 insertions(+), 304 deletions(-)
+ create mode 100644 drivers/mtd/spi-nor/fmsh.c
+ create mode 100644 drivers/nvmem/spacemit-efuse.c
+ create mode 100644 drivers/soc/spacemit/spacemit-socinfo.c
+
+diff --git a/drivers/clk/spacemit/ccu-spacemit-k1x.c b/drivers/clk/spacemit/ccu-spacemit-k1x.c
+index cd8176a5ea79..05e6c40c8913 100644
+--- a/drivers/clk/spacemit/ccu-spacemit-k1x.c
++++ b/drivers/clk/spacemit/ccu-spacemit-k1x.c
+@@ -186,6 +186,9 @@ static const struct ccu_pll_rate_tbl pll2_rate_tbl[] = {
+ };
+ 
+ static const struct ccu_pll_rate_tbl pll3_rate_tbl[] = {
++	PLL_RATE(1600000000UL, 0x61, 0xcd, 0x50, 0x00, 0x43, 0xeaaaab),
++	PLL_RATE(1800000000UL, 0x61, 0xcd, 0x50, 0x00, 0x4b, 0x000000),
++	PLL_RATE(2000000000UL, 0x62, 0xdd, 0x50, 0x00, 0x2a, 0xeaaaab),
+ 	PLL_RATE(3000000000UL, 0x66, 0xdd, 0x50, 0x00, 0x3f, 0xe00000),
+ 	PLL_RATE(3200000000UL, 0x67, 0xdd, 0x50, 0x00, 0x43, 0xeaaaab),
+ 	PLL_RATE(2457600000UL, 0x64, 0xdd, 0x50, 0x00, 0x33, 0x0ccccd),
+@@ -1124,7 +1127,7 @@ static SPACEMIT_CCU_GATE_NO_PARENT(rcan_bus_clk, "rcan_bus_clk", NULL,
+ 	BIT(2), BIT(2), 0x0, 0);
+ //rcpu2
+ static const char *rpwm_parent_names[] = {
+-	"pll1_aud_245p7", "pll1_aud_24p5"
++	"pll1_aud_24p5", "pll1_aud_245p7"
+ };
+ static SPACEMIT_CCU_DIV_MUX_GATE(rpwm_clk, "rpwm_clk", rpwm_parent_names,
+ 	BASE_TYPE_RCPU2, RCPU2_PWM_CLK_RST,
+diff --git a/drivers/clk/spacemit/ccu_pll.c b/drivers/clk/spacemit/ccu_pll.c
+index 391498a28457..ecf5f265e219 100644
+--- a/drivers/clk/spacemit/ccu_pll.c
++++ b/drivers/clk/spacemit/ccu_pll.c
+@@ -186,11 +186,11 @@ static int ccu_pll_set_rate(struct clk_hw *hw, unsigned long rate,
+ 	union pllx_swcr1 swcr1;
+ 	union pllx_swcr3 swcr3;
+ 	bool found = false;
++	bool pll_enabled = false;
+ 
+ 	if (ccu_pll_is_enabled(hw)) {
+-		pr_err("%s %s is enabled, ignore the setrate!\n",
+-		       __func__, __clk_get_name(hw->clk));
+-		return 0;
++		pll_enabled = true;
++		ccu_pll_disable(hw);
+ 	}
+ 
+ 	old_rate = __get_vco_freq(hw);
+@@ -213,6 +213,8 @@ static int ccu_pll_set_rate(struct clk_hw *hw, unsigned long rate,
+ 		BUG_ON(!found);
+ 	} else {
+ 		pr_err("don't find freq table for pll\n");
++		if (pll_enabled)
++			ccu_pll_enable(hw);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -232,6 +234,9 @@ static int ccu_pll_set_rate(struct clk_hw *hw, unsigned long rate,
+ 
+ 	spin_unlock_irqrestore(p->common.lock, flags);
+ 
++	if (pll_enabled)
++		ccu_pll_enable(hw);
++
+ 	pr_debug("%s %s rate %lu->%lu!\n", __func__,
+ 		 __clk_get_name(hw->clk), old_rate, new_rate);
+ 	return 0;
+diff --git a/drivers/cpufreq/cpufreq-dt.c b/drivers/cpufreq/cpufreq-dt.c
+index 4aec4b2a5225..957d2c2a58af 100644
+--- a/drivers/cpufreq/cpufreq-dt.c
++++ b/drivers/cpufreq/cpufreq-dt.c
+@@ -42,6 +42,7 @@ static struct freq_attr *cpufreq_dt_attr[] = {
+ 	NULL,
+ };
+ 
++#ifndef CONFIG_SOC_SPACEMIT
+ static struct private_data *cpufreq_dt_find_data(int cpu)
+ {
+ 	struct private_data *priv;
+@@ -53,6 +54,24 @@ static struct private_data *cpufreq_dt_find_data(int cpu)
+ 
+ 	return NULL;
+ }
++#else
++struct private_data *cpufreq_dt_find_data(int cpu)
++{
++	struct private_data *priv;
++
++	list_for_each_entry(priv, &priv_list, node) {
++		if (cpumask_test_cpu(cpu, priv->cpus))
++			return priv;
++	}
++
++	return NULL;
++}
++
++void cpufreq_dt_add_data(struct private_data *priv)
++{
++	list_add(&priv->node, &priv_list);
++}
++#endif
+ 
+ static int set_target(struct cpufreq_policy *policy, unsigned int index)
+ {
+diff --git a/drivers/cpufreq/spacemit-cpufreq.c b/drivers/cpufreq/spacemit-cpufreq.c
+index 5fd734cffa0a..52d40d7f25fe 100644
+--- a/drivers/cpufreq/spacemit-cpufreq.c
++++ b/drivers/cpufreq/spacemit-cpufreq.c
+@@ -8,19 +8,25 @@
+ #include <linux/clk/clk-conf.h>
+ #include <linux/pm_qos.h>
+ #include <linux/notifier.h>
++#include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
+ #include <linux/mutex.h>
++#include <linux/pm_opp.h>
++#include <linux/device.h>
++#include <linux/of.h>
++#include <linux/slab.h>
+ #include "../opp/opp.h"
++#include "cpufreq-dt.h"
+ 
+-struct per_device_qos {
+-	struct regulator *regulator;
+-	struct freq_qos_request qos;
+-};
++struct private_data {
++	struct list_head node;
+ 
+-static DEFINE_MUTEX(regulator_mutex);
+-static struct notifier_block vol_constraints_notifier;
+-static struct freq_constraints vol_constraints;
+-static struct per_device_qos *vol_qos[CONFIG_NR_CPUS];
++	cpumask_var_t cpus;
++	struct device *cpu_dev;
++	struct cpufreq_frequency_table *freq_table;
++	bool have_static_opps;
++	int opp_token;
++};
+ 
+ #ifdef CONFIG_CPU_HOTPLUG_THERMAL
+ struct thermal_cooling_device **ghotplug_cooling;
+@@ -28,24 +34,22 @@ extern struct thermal_cooling_device **
+ of_hotplug_cooling_register(struct cpufreq_policy *policy);
+ #endif
+ 
+-static int spacemit_vol_qos_notifier_call(struct notifier_block *nb, unsigned long action, void *data)
+-{
+-	regulator_set_voltage(vol_qos[0]->regulator, action * 1000, action * 1000);
+-
+-	return 0;
+-}
++#define TURBO_FREQUENCY		(1600000000)
++#define STABLE_FREQUENCY	(1200000000)
++#define FILTER_POINTS		(140)
++#define FREQ_TABLE_0		(0)
++#define FREQ_TABLE_1		(1)
+ 
+ static int spacemit_policy_notifier(struct notifier_block *nb,
+                                   unsigned long event, void *data)
+ {
+-	int cpu, err;
++	int cpu;
+ 	u64 rates;
+ 	static int cci_init;
+ 	struct clk *cci_clk;
+ 	struct device *cpu_dev;
+ 	struct cpufreq_policy *policy = data;
+ 	struct opp_table *opp_table;
+-	const char *strings;
+ 
+ 	cpu = cpumask_first(policy->related_cpus);
+ 	cpu_dev = get_cpu_device(cpu);
+@@ -57,32 +61,17 @@ static int spacemit_policy_notifier(struct notifier_block *nb,
+ 		clk_set_rate(cci_clk, rates);
+ 		clk_put(cci_clk);
+ 		cci_init = 1;
+-	}
+-
+-	vol_qos[cpu] = devm_kzalloc(cpu_dev, sizeof(struct per_device_qos), GFP_KERNEL);
+-	if (!vol_qos[cpu])
+-		return -ENOMEM;
+-
+-	err = of_property_read_string_array(cpu_dev->of_node, "vin-supply-names",
+-			&strings, 1);
+-	if (err >= 0) {
+-		vol_qos[cpu]->regulator = devm_regulator_get(cpu_dev, strings);
+-		if (IS_ERR(vol_qos[cpu]->regulator)) {
+-			pr_err("regulator supply %s, get failed\n", strings);
+-			return PTR_ERR(vol_qos[cpu]->regulator);
+-		}
+ 
+-		err = regulator_enable(vol_qos[cpu]->regulator);
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++		if (policy->clk)
++			clk_put(policy->clk);
+ 
+-	} else {
+-		/* using the same regulator */
+-		vol_qos[cpu]->regulator = vol_qos[0]->regulator;
++		/* cover the policy->clk & opp_table->clk which has been set before */
++		policy->clk = opp_table->clks[0];
++		opp_table->clk = opp_table->clks[0];
++#endif
+ 	}
+ 
+-	if (vol_qos[cpu]->regulator)
+-		freq_qos_add_request(&vol_constraints, &vol_qos[cpu]->qos, FREQ_QOS_MIN,
+-				regulator_get_voltage(vol_qos[cpu]->regulator) / 1000);
+-
+ #ifdef CONFIG_CPU_HOTPLUG_THERMAL
+        ghotplug_cooling = of_hotplug_cooling_register(policy);
+        if (!ghotplug_cooling) {
+@@ -102,9 +91,10 @@ static int spacemit_processor_notifier(struct notifier_block *nb,
+ 	struct cpufreq_policy *policy = ( struct cpufreq_policy *)freqs->policy;
+ 	struct opp_table *opp_table;
+ 	struct device_node *np;
+-	struct clk *tcm_clk, *ace_clk;
++	struct clk *tcm_clk, *ace0_clk, *ace1_clk, *pll_clk;
+ 	u64 rates;
+ 	u32 microvol;
++	int i;
+ 
+ 	cpu = cpumask_first(policy->related_cpus);
+ 	cpu_dev = get_cpu_device(cpu);
+@@ -120,31 +110,42 @@ static int spacemit_processor_notifier(struct notifier_block *nb,
+ 
+ 	/* get the tcm/ace clk handler */
+ 	tcm_clk = of_clk_get_by_name(opp_table->np, "tcm");
+-	ace_clk = of_clk_get_by_name(opp_table->np, "ace");
++	ace0_clk = of_clk_get_by_name(opp_table->np, "ace0");
++	ace1_clk = of_clk_get_by_name(opp_table->np, "ace1");
++	pll_clk = of_clk_get_by_name(opp_table->np, "pll3");
+ 
+ 	if (event == CPUFREQ_PRECHANGE) {
+-
+-		mutex_lock(&regulator_mutex);
+-
+-		if (freqs->new > freqs->old) {
+-			/* increase voltage first */
+-			if (vol_qos[cpu]->regulator)
+-				freq_qos_update_request(&vol_qos[cpu]->qos, microvol / 1000);
+-		}
+-
+ 		/**
+ 		 * change the tcm/ace's frequency first.
+ 		 * binary division is safe
+ 		 */
+-		if (!IS_ERR(ace_clk)) {
+-			clk_set_rate(ace_clk, clk_get_rate(clk_get_parent(ace_clk)) / 2);
+-			clk_put(ace_clk);
++		if (!IS_ERR(ace0_clk)) {
++			clk_set_rate(ace0_clk, clk_get_rate(clk_get_parent(ace0_clk)) / 2);
++			clk_put(ace0_clk);
++		}
++
++		if (!IS_ERR(ace1_clk)) {
++			clk_set_rate(ace1_clk, clk_get_rate(clk_get_parent(ace1_clk)) / 2);
++			clk_put(ace1_clk);
+ 		}
+ 
+ 		if (!IS_ERR(tcm_clk)) {
+ 			clk_set_rate(tcm_clk, clk_get_rate(clk_get_parent(tcm_clk)) / 2);
+ 			clk_put(tcm_clk);
+ 		}
++
++		if (freqs->new * 1000 >= TURBO_FREQUENCY) {
++			if (freqs->old * 1000 >= TURBO_FREQUENCY) {
++				for (i = 0; i < opp_table->clk_count; ++i) {
++					clk_set_rate(opp_table->clks[i], STABLE_FREQUENCY);
++				}
++			}
++
++			/* change the frequency of pll3 first */
++			clk_set_rate(pll_clk, freqs->new * 1000);
++			clk_put(pll_clk);
++		}
++
+ 	}
+ 
+ 	if (event == CPUFREQ_POSTCHANGE) {
+@@ -158,22 +159,23 @@ static int spacemit_processor_notifier(struct notifier_block *nb,
+ 			clk_put(tcm_clk);
+ 		}
+ 
+-		if (!IS_ERR(ace_clk)) {
+-			clk_get_rate(clk_get_parent(ace_clk));
++		if (!IS_ERR(ace0_clk)) {
++			clk_get_rate(clk_get_parent(ace0_clk));
+ 			/* get the ace-hz */
+-			of_property_read_u64_array(np, "ace-hz", &rates, 1);
++			of_property_read_u64_array(np, "ace0-hz", &rates, 1);
+ 			/* then set rate */
+-			clk_set_rate(ace_clk, rates);
+-			clk_put(ace_clk);
++			clk_set_rate(ace0_clk, rates);
++			clk_put(ace0_clk);
+ 		}
+ 
+-		if (freqs->new < freqs->old) {
+-			/* decrease the voltage last */
+-			if (vol_qos[cpu]->regulator)
+-				freq_qos_update_request(&vol_qos[cpu]->qos, microvol / 1000);
++		if (!IS_ERR(ace1_clk)) {
++			clk_get_rate(clk_get_parent(ace1_clk));
++			/* get the ace-hz */
++			of_property_read_u64_array(np, "ace1-hz", &rates, 1);
++			/* then set rate */
++			clk_set_rate(ace1_clk, rates);
++			clk_put(ace1_clk);
+ 		}
+-
+-		mutex_unlock(&regulator_mutex);
+ 	}
+ 
+ 	dev_pm_opp_put_opp_table(opp_table);
+@@ -189,6 +191,249 @@ static struct notifier_block spacemit_policy_notifier_block = {
+        .notifier_call = spacemit_policy_notifier,
+ };
+ 
++static int _dev_pm_opp_of_get_sharing_cpus(struct device *cpu_dev,
++				   struct cpumask *cpumask, int indexs)
++{
++	struct device_node *np, *tmp_np, *cpu_np;
++	int cpu, ret = 0;
++
++	/* Get OPP descriptor node */
++	np = of_parse_phandle(cpu_dev->of_node, "operating-points-v2", indexs);
++	if (!np) {
++		dev_dbg(cpu_dev, "%s: Couldn't find opp node.\n", __func__);
++		return -ENOENT;
++	}
++
++	cpumask_set_cpu(cpu_dev->id, cpumask);
++
++	/* OPPs are shared ? */
++	if (!of_property_read_bool(np, "opp-shared"))
++		goto put_cpu_node;
++
++	for_each_possible_cpu(cpu) {
++		if (cpu == cpu_dev->id)
++			continue;
++
++		cpu_np = of_cpu_device_node_get(cpu);
++		if (!cpu_np) {
++			dev_err(cpu_dev, "%s: failed to get cpu%d node\n",
++				__func__, cpu);
++			ret = -ENOENT;
++			goto put_cpu_node;
++		}
++
++		/* Get OPP descriptor node */
++		tmp_np = of_parse_phandle(cpu_np, "operating-points-v2", indexs);
++		of_node_put(cpu_np);
++		if (!tmp_np) {
++			pr_err("%pOF: Couldn't find opp node\n", cpu_np);
++			ret = -ENOENT;
++			goto put_cpu_node;
++		}
++
++		/* CPUs are sharing opp node */
++		if (np == tmp_np)
++			cpumask_set_cpu(cpu, cpumask);
++
++		of_node_put(tmp_np);
++	}
++
++put_cpu_node:
++	of_node_put(np);
++	return ret;
++}
++
++/**
++ * dev_pm_opp_of_cpumask_add_table() - Adds OPP table for @cpumask
++ * @cpumask:	cpumask for which OPP table needs to be added.
++ *
++ * This adds the OPP tables for CPUs present in the @cpumask.
++ */
++static int _dev_pm_opp_of_cpumask_add_table(const struct cpumask *cpumask, int indexs)
++{
++	struct device *cpu_dev;
++	int cpu, ret;
++
++	if (WARN_ON(cpumask_empty(cpumask)))
++		return -ENODEV;
++
++	for_each_cpu(cpu, cpumask) {
++		cpu_dev = get_cpu_device(cpu);
++		if (!cpu_dev) {
++			pr_err("%s: failed to get cpu%d device\n", __func__,
++			       cpu);
++			ret = -ENODEV;
++			goto remove_table;
++		}
++
++		ret = dev_pm_opp_of_add_table_indexed(cpu_dev, indexs);
++		if (ret) {
++			/*
++			 * OPP may get registered dynamically, don't print error
++			 * message here.
++			 */
++			pr_debug("%s: couldn't find opp table for cpu:%d, %d\n",
++				 __func__, cpu, ret);
++
++			goto remove_table;
++		}
++	}
++
++	return 0;
++
++remove_table:
++	/* Free all other OPPs */
++	_dev_pm_opp_cpumask_remove_table(cpumask, cpu);
++
++	return ret;
++}
++
++extern struct private_data *cpufreq_dt_find_data(int cpu);
++extern void cpufreq_dt_add_data(struct private_data *priv);
++
++static int spacemit_dt_cpufreq_pre_early_init(struct device *dev, int cpu, int indexs)
++{
++	struct private_data *priv;
++	struct device *cpu_dev;
++	const char *reg_name[] = { "clst", NULL };
++	const char *clk_name[] = { "cls0", "cls1", NULL };
++	struct dev_pm_opp_config config = {
++		.regulator_names = reg_name,
++		.clk_names = clk_name,
++		.config_clks = dev_pm_opp_config_clks_simple,
++	};
++	int ret;
++
++	/* Check if this CPU is already covered by some other policy */
++	if (cpufreq_dt_find_data(cpu))
++		return 0;
++
++	cpu_dev = get_cpu_device(cpu);
++	if (!cpu_dev)
++		return -EPROBE_DEFER;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	if (!alloc_cpumask_var(&priv->cpus, GFP_KERNEL))
++		return -ENOMEM;
++
++	cpumask_set_cpu(cpu, priv->cpus);
++	priv->cpu_dev = cpu_dev;
++
++	/*
++	 * OPP layer will be taking care of regulators now, but it needs to know
++	 * the name of the regulator first.
++	 */
++	priv->opp_token = dev_pm_opp_set_config_indexed(cpu_dev, &config, indexs);
++	if (priv->opp_token < 0) {
++		ret = dev_err_probe(cpu_dev, priv->opp_token,
++				    "failed to set regulators\n");
++		goto free_cpumask;
++	}
++
++	/* Get OPP-sharing information from "operating-points-v2" bindings */
++	ret = _dev_pm_opp_of_get_sharing_cpus(cpu_dev, priv->cpus, indexs);
++	if (ret)
++		goto out;
++
++	/*
++	 * Initialize OPP tables for all priv->cpus. They will be shared by
++	 * all CPUs which have marked their CPUs shared with OPP bindings.
++	 *
++	 * For platforms not using operating-points-v2 bindings, we do this
++	 * before updating priv->cpus. Otherwise, we will end up creating
++	 * duplicate OPPs for the CPUs.
++	 *
++	 * OPPs might be populated at runtime, don't fail for error here unless
++	 * it is -EPROBE_DEFER.
++	 */
++	ret = _dev_pm_opp_of_cpumask_add_table(priv->cpus, indexs);
++	if (!ret) {
++		priv->have_static_opps = true;
++	} else if (ret == -EPROBE_DEFER) {
++		goto out;
++	}
++
++	/*
++	 * The OPP table must be initialized, statically or dynamically, by this
++	 * point.
++	 */
++	ret = dev_pm_opp_get_opp_count(cpu_dev);
++	if (ret <= 0) {
++		dev_err(cpu_dev, "OPP table can't be empty\n");
++		ret = -ENODEV;
++		goto out;
++	}
++
++	ret = dev_pm_opp_init_cpufreq_table(cpu_dev, &priv->freq_table);
++	if (ret) {
++		dev_err(cpu_dev, "failed to init cpufreq table: %d\n", ret);
++		goto out;
++	}
++
++	cpufreq_dt_add_data(priv);
++
++	return 0;
++
++out:
++	if (priv->have_static_opps)
++		dev_pm_opp_of_cpumask_remove_table(priv->cpus);
++	dev_pm_opp_put_regulators(priv->opp_token);
++free_cpumask:
++	free_cpumask_var(priv->cpus);
++	return ret;
++}
++
++static int spacemit_dt_cpufreq_pre_probe(struct platform_device *pdev)
++{
++	int cpu;
++	struct device_node *cpus;
++	u32 prop = 0;
++
++	if (strncmp(pdev->name, "cpufreq-dt", 10) != 0)
++		return 0;
++
++	cpus = of_find_node_by_path("/cpus");
++	if (!cpus || of_property_read_u32(cpus, "svt-dro", &prop)) {
++		pr_info("Spacemit Platform with no 'svt-dro' in DTS, using defualt frequency Table0\n");
++	}
++
++	for_each_possible_cpu(cpu) {
++		spacemit_dt_cpufreq_pre_early_init(&pdev->dev, cpu, prop >= FILTER_POINTS ? FREQ_TABLE_1 : FREQ_TABLE_0);
++	}
++
++	return 0;
++}
++
++static int __device_notifier_call(struct notifier_block *nb,
++				      unsigned long event, void *dev)
++{
++	struct platform_device *pdev = to_platform_device(dev);
++
++	switch (event) {
++	case BUS_NOTIFY_REMOVED_DEVICE:
++		break;
++	case BUS_NOTIFY_UNBOUND_DRIVER:
++		break;
++	case BUS_NOTIFY_BIND_DRIVER:
++		/* here */
++		spacemit_dt_cpufreq_pre_probe(pdev);
++		break;
++	case BUS_NOTIFY_ADD_DEVICE:
++		break;
++	default:
++		break;
++	}
++
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block spacemit_platform_nb = {
++	.notifier_call = __device_notifier_call,
++};
++
+ static int __init spacemit_processor_driver_init(void)
+ {
+        int ret;
+@@ -205,9 +450,7 @@ static int __init spacemit_processor_driver_init(void)
+                return -EINVAL;
+        }
+ 
+-       vol_constraints_notifier.notifier_call = spacemit_vol_qos_notifier_call;
+-       freq_constraints_init(&vol_constraints);
+-       freq_qos_add_notifier(&vol_constraints, FREQ_QOS_MIN, &vol_constraints_notifier);
++	bus_register_notifier(&platform_bus_type, &spacemit_platform_nb);
+ 
+        return 0;
+ }
+diff --git a/drivers/crypto/spacemit/spacemit_ce_engine.c b/drivers/crypto/spacemit/spacemit_ce_engine.c
+index 0c3f78cf4b0d..8623eb4843dd 100644
+--- a/drivers/crypto/spacemit/spacemit_ce_engine.c
++++ b/drivers/crypto/spacemit/spacemit_ce_engine.c
+@@ -1741,7 +1741,7 @@ static int crypto_engine_probe(struct platform_device *pdev)
+ 		return PTR_ERR(ctrl->clk);
+ 	clk_prepare_enable(ctrl->clk);
+ 
+-	ctrl->reset = devm_reset_control_get_optional(&pdev->dev, NULL);
++	ctrl->reset = devm_reset_control_get_optional_shared(&pdev->dev, NULL);
+ 	if(IS_ERR(ctrl->reset))
+ 		return PTR_ERR(ctrl->reset);
+ 	reset_control_deassert(ctrl->reset);
+diff --git a/drivers/gpio/gpio-k1x.c b/drivers/gpio/gpio-k1x.c
+index 185e2298fee2..d4609f679fed 100644
+--- a/drivers/gpio/gpio-k1x.c
++++ b/drivers/gpio/gpio-k1x.c
+@@ -17,7 +17,6 @@
+ #include <linux/platform_device.h>
+ #include <linux/module.h>
+ #include <linux/irqdomain.h>
+-#include <linux/pm_wakeirq.h>
+ 
+ #define GPLR		0x0
+ #define GPDR		0xc
+@@ -393,11 +392,6 @@ static int k1x_gpio_probe(struct platform_device *pdev)
+ 		goto err;
+ 	}
+ 
+-#ifdef CONFIG_PM
+-	dev_pm_set_wake_irq(&pdev->dev, irq);
+-	device_init_wakeup(&pdev->dev, true);
+-#endif
+-
+ 	gpiochip_add(&k1x_chip->chip);
+ 
+ 	/* clear all GPIO edge detects */
+diff --git a/drivers/gpu/drm/spacemit/lt8911exb.c b/drivers/gpu/drm/spacemit/lt8911exb.c
+index 143048ad3548..640ff46a90b2 100644
+--- a/drivers/gpu/drm/spacemit/lt8911exb.c
++++ b/drivers/gpu/drm/spacemit/lt8911exb.c
+@@ -1153,10 +1153,6 @@ static int lt8911exb_panel_enable(struct drm_panel *panel)
+ 
+ 	DRM_INFO("%s()\n", __func__);
+ 
+-	gpiod_direction_output(lt8911exb->enable_gpio, 1);
+-	gpiod_direction_output(lt8911exb->standby_gpio, 1);
+-	usleep_range(50*1000, 100*1000); //100ms
+-
+ 	schedule_delayed_work(&lt8911exb->init_work,
+ 				msecs_to_jiffies(500));
+ 	lt8911exb->init_work_pending = true;
+@@ -1171,10 +1167,11 @@ static int lt8911exb_panel_disable(struct drm_panel *panel)
+ 	DRM_INFO("%s()\n", __func__);
+ 
+ 	gpiod_direction_output(lt8911exb->bl_gpio, 0);
+-	gpiod_direction_output(lt8911exb->standby_gpio, 0);
+ 	gpiod_direction_output(lt8911exb->enable_gpio, 0);
+ 	usleep_range(50*1000, 100*1000); //100ms
+ 
++	gpiod_direction_output(lt8911exb->standby_gpio, 0);
++
+ 	if (lt8911exb->init_work_pending) {
+ 		cancel_delayed_work_sync(&lt8911exb->init_work);
+ 		lt8911exb->init_work_pending = false;
+@@ -1244,6 +1241,9 @@ static void init_work_func(struct work_struct *work)
+ 
+ 	DRM_DEBUG(" %s() \n", __func__);
+ 
++	gpiod_direction_output(lt8911exb->standby_gpio, 1);
++	usleep_range(50*1000, 100*1000); //100ms
++
+ 	lt8911exb_reset(lt8911exb);
+ 	lt8911exb_chip_id(lt8911exb);
+ 
+@@ -1263,6 +1263,7 @@ static void init_work_func(struct work_struct *work)
+ 
+ 	PCR_Status(lt8911exb);
+ 
++	gpiod_direction_output(lt8911exb->enable_gpio, 1);
+ 	gpiod_direction_output(lt8911exb->bl_gpio, 1);
+ }
+ 
+@@ -1330,12 +1331,12 @@ static int lt8911exb_probe(struct i2c_client *client,
+ 		return PTR_ERR(lt8911exb->bl_gpio);
+ 	}
+ 	gpiod_direction_output(lt8911exb->bl_gpio, 0);
++	gpiod_direction_output(lt8911exb->enable_gpio, 0);
++	usleep_range(50*1000, 100*1000); //100ms
+ 
+ 	//disable firstly
+ 	gpiod_direction_output(lt8911exb->standby_gpio, 0);
+-	gpiod_direction_output(lt8911exb->enable_gpio, 0);
+ 	usleep_range(50*1000, 100*1000); //100ms
+-	gpiod_direction_output(lt8911exb->enable_gpio, 1);
+ 	gpiod_direction_output(lt8911exb->standby_gpio, 1);
+ 	usleep_range(50*1000, 100*1000); //100ms
+ 
+diff --git a/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.c b/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.c
+index 8635db4d48e8..be9b88194815 100644
+--- a/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.c
++++ b/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.c
+@@ -1099,10 +1099,68 @@ static int camsnr_open(struct inode *inode, struct file *file)
+ {
+ 	struct cam_sensor_device *msnr_dev =
+ 	    container_of(inode->i_cdev, struct cam_sensor_device, cdev);
++	u32 cell_id;
++	struct device *dev = NULL;
++	int ret;
+ 
+-	cam_dbg("%s open %s%d, twsi_no %d\n", __func__, DRIVER_NAME, msnr_dev->id,
+-		msnr_dev->twsi_no);
+ 	file->private_data = msnr_dev;
++
++	if (msnr_dev->is_pinmulti) {
++		dev = &msnr_dev->pdev->dev;
++		cell_id = msnr_dev->id;
++
++		// msnr_dev->pinctrl = devm_pinctrl_get (dev);
++		msnr_dev->pinctrl = pinctrl_get_select (dev, "mclk_multi");
++		if (IS_ERR(msnr_dev->pinctrl)) {
++			cam_err("unable to get sensor%d mclk pinctrl\n", cell_id);
++			return PTR_ERR(msnr_dev->pinctrl);
++		}
++
++		msnr_dev->pinctrl_state = pinctrl_lookup_state(msnr_dev->pinctrl, "mclk_multi");
++		if (IS_ERR(msnr_dev->pinctrl_state)) {
++			cam_err("unable to lookup sensor%d mclk pinctrl state\n", cell_id);
++			pinctrl_put(msnr_dev->pinctrl);
++			return PTR_ERR(msnr_dev->pinctrl_state);
++		}
++
++		pinctrl_select_state(msnr_dev->pinctrl, msnr_dev->pinctrl_state);
++
++		/* mclks */
++		msnr_dev->mclk = clk_get(dev, msnr_dev->mclk_name);
++		if (IS_ERR(msnr_dev->mclk)) {
++			cam_err("unable to get cam_mclk%d\n", cell_id);
++			return PTR_ERR(msnr_dev->mclk);
++		}
++
++		/* pwdn-gpios */
++		msnr_dev->pwdn = gpiod_get(dev, "pwdn", GPIOD_OUT_HIGH);
++		if (IS_ERR(msnr_dev->pwdn)) {
++			cam_info("%s: unable to parse sensor%d pwdn gpio", __func__, cell_id);
++			return PTR_ERR(msnr_dev->pwdn);
++		} else {
++			ret = gpiod_direction_output(msnr_dev->pwdn, 0);
++			if (ret < 0) {
++				cam_err("%s: Failed to init sensor%d pwdn gpio", __func__, cell_id);
++				return ret;
++			}
++		}
++
++		/* rst-gpios */
++		msnr_dev->rst = gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++		if (IS_ERR(msnr_dev->rst)) {
++			cam_info("%s: unable to parse sensor%d reset gpio", __func__, cell_id);
++			return PTR_ERR(msnr_dev->rst);
++		} else {
++			ret = gpiod_direction_output(msnr_dev->rst, 0);
++			if (ret < 0) {
++				cam_err("%s: Failed to init sensor%d reset gpio", __func__, cell_id);
++				return ret;
++			}
++		}
++	}
++	cam_dbg("%s open %s%d, twsi_no %d, is_pinmulti %d\n", __func__, DRIVER_NAME, msnr_dev->id,
++		msnr_dev->twsi_no, msnr_dev->is_pinmulti);
++
+ 	return 0;
+ }
+ 
+@@ -1110,8 +1168,29 @@ static int camsnr_release(struct inode *inode, struct file *file)
+ {
+ 	struct cam_sensor_device *msnr_dev =
+ 	    container_of(inode->i_cdev, struct cam_sensor_device, cdev);
+-	cam_dbg("%s close %s%d, twsi_no %d\n", __func__, DRIVER_NAME, msnr_dev->id,
+-		msnr_dev->twsi_no);
++
++	if (msnr_dev->is_pinmulti) {
++		pinctrl_put(msnr_dev->pinctrl);
++
++		/* mclks */
++		if (msnr_dev->mclk)
++			clk_put(msnr_dev->mclk);
++		msnr_dev->mclk = NULL;
++
++		/* pwdn-gpios */
++		if (msnr_dev->pwdn)
++			gpiod_put(msnr_dev->pwdn);
++		msnr_dev->pwdn = NULL;
++
++		/* rst-gpios */
++		if (msnr_dev->rst)
++			gpiod_put(msnr_dev->rst);
++		msnr_dev->rst = NULL;
++	}
++
++	cam_dbg("%s close %s%d, twsi_no %d, is_pinmulti %d\n", __func__, DRIVER_NAME, msnr_dev->id,
++		msnr_dev->twsi_no, msnr_dev->is_pinmulti);
++
+ 	return 0;
+ }
+ 
+@@ -1199,7 +1278,7 @@ static int camsnr_of_parse(struct cam_sensor_device *sensor)
+ 	struct device_node *of_node = NULL;
+ 	u32 cell_id, twsi_no, dphy_no;
+ 	int ret;
+-	const char *mclk_name;
++	//const char *mclk_name;
+ 
+ 	SENSOR_DRIVER_CHECK_POINTER(sensor);
+ 	dev = &sensor->pdev->dev;
+@@ -1239,25 +1318,6 @@ static int camsnr_of_parse(struct cam_sensor_device *sensor)
+ 	}
+ 	sensor->dphy_no = (u8) dphy_no;
+ 
+-	ret = of_property_read_string(of_node, "clock-names", &mclk_name);
+-	if (!ret) {
+-		if (strcmp(mclk_name, "cam_mclk0") && strcmp(mclk_name, "cam_mclk1") && strcmp(mclk_name, "cam_mclk2")) {
+-			cam_err("%s: error! only support cam_mclk0~2!", __func__);
+-			return -EINVAL;
+-		}
+-	} else {
+-		cam_err("%s: clock-names read failed", __func__);
+-		return ret;
+-	}
+-
+-	/* mclks */
+-	sensor->mclk = devm_clk_get(dev, mclk_name);
+-	if (IS_ERR(sensor->mclk)) {
+-		cam_err("unable to get cam_mclk%d\n", cell_id);
+-		ret = PTR_ERR(sensor->mclk);
+-		goto st_err;
+-	}
+-
+ 	sensor->afvdd = devm_regulator_get(dev, "af_2v8");
+ 	if (IS_ERR(sensor->afvdd)) {
+ 		dev_warn(dev, "Failed to get regulator af_2v8\n");
+@@ -1282,31 +1342,56 @@ static int camsnr_of_parse(struct cam_sensor_device *sensor)
+ 		sensor->dvdd = NULL;
+ 	}
+ 
+-	/* pwdn-gpios */
+-	sensor->pwdn = devm_gpiod_get(dev, "pwdn", GPIOD_OUT_HIGH);
+-	if (IS_ERR(sensor->pwdn)) {
+-		cam_info("%s: unable to parse sensor%d pwdn gpio", __func__, cell_id);
+-		ret = PTR_ERR(sensor->pwdn);
+-	} else {
+-		ret = gpiod_direction_output(sensor->pwdn, 0);
+-		if (ret < 0) {
+-			cam_err("%s: Failed to init sensor%d pwdn gpio", __func__, cell_id);
+-			goto st_err;
++	ret = of_property_read_string(of_node, "clock-names", &sensor->mclk_name);
++	if (!ret) {
++		if (strcmp(sensor->mclk_name, "cam_mclk0") && strcmp(sensor->mclk_name, "cam_mclk1") && strcmp(sensor->mclk_name, "cam_mclk2")) {
++			cam_err("%s: error! only support cam_mclk0~2!", __func__);
++			return -EINVAL;
+ 		}
++	} else {
++		cam_err("%s: clock-names read failed", __func__);
++		return ret;
+ 	}
+ 
+-	/* rst-gpios */
+-	sensor->rst = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
+-	if (IS_ERR(sensor->rst)) {
+-		cam_info("%s: unable to parse sensor%d reset gpio", __func__, cell_id);
+-		ret = PTR_ERR(sensor->rst);
+-	} else {
+-		ret = gpiod_direction_output(sensor->rst, 0);
+-		if (ret < 0) {
+-			cam_err("%s: Failed to init sensor%d reset gpio", __func__, cell_id);
++	// mclk/pwdn/rst multiplex
++	sensor->is_pinmulti = of_property_read_bool(of_node, "pinmulti-enable");
++	cam_info("cam_sensor%d is_pinmulti: %d\n", sensor->id, sensor->is_pinmulti);
++	if (!sensor->is_pinmulti) {
++		/* mclks */
++		sensor->mclk = devm_clk_get(dev, sensor->mclk_name);
++		if (IS_ERR(sensor->mclk)) {
++			cam_err("unable to get cam_mclk%d\n", cell_id);
++			ret = PTR_ERR(sensor->mclk);
+ 			goto st_err;
+ 		}
++
++		/* pwdn-gpios */
++		sensor->pwdn = devm_gpiod_get(dev, "pwdn", GPIOD_OUT_HIGH);
++		if (IS_ERR(sensor->pwdn)) {
++			cam_info("%s: unable to parse sensor%d pwdn gpio", __func__, cell_id);
++			ret = PTR_ERR(sensor->pwdn);
++		} else {
++			ret = gpiod_direction_output(sensor->pwdn, 0);
++			if (ret < 0) {
++				cam_err("%s: Failed to init sensor%d pwdn gpio", __func__, cell_id);
++				goto st_err;
++			}
++		}
++
++		/* rst-gpios */
++		sensor->rst = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++		if (IS_ERR(sensor->rst)) {
++			cam_info("%s: unable to parse sensor%d reset gpio", __func__, cell_id);
++			ret = PTR_ERR(sensor->rst);
++		} else {
++			ret = gpiod_direction_output(sensor->rst, 0);
++			if (ret < 0) {
++				cam_err("%s: Failed to init sensor%d reset gpio", __func__, cell_id);
++				goto st_err;
++			}
++		}
+ 	}
++
+ #ifdef CONFIG_ARCH_ZYNQMP
+ 	cam_dbg("dptc-gpios,cell_id =0x%x",cell_id);
+ 	/* dptc-gpios */
+@@ -1375,7 +1460,7 @@ static int cam_sensor_probe(struct platform_device *pdev)
+ 	mutex_init(&msnr_dev->lock);
+ 
+ 	g_sdev[msnr_dev->id] = msnr_dev;
+-	cam_dbg("camera sensor%d probed", msnr_dev->id);
++	cam_info("camera sensor%d probed", msnr_dev->id);
+ 
+ 	return ret;
+ }
+diff --git a/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.h b/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.h
+index 7eb45f5d85e7..d70ed1bba223 100644
+--- a/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.h
++++ b/drivers/media/platform/spacemit/camera/cam_sensor/cam_sensor.h
+@@ -34,6 +34,10 @@ struct cam_sensor_device {
+ 	struct gpio_desc *dptc;
+ #endif
+ 	struct clk *mclk;
++	const char *mclk_name;
++	bool is_pinmulti;
++	struct pinctrl *pinctrl;
++	struct pinctrl_state *pinctrl_state;
+ 
+ 	atomic_t usr_cnt;
+ 	struct mutex lock;	/* Protects streaming, format, interval */
+diff --git a/drivers/mtd/spi-nor/Makefile b/drivers/mtd/spi-nor/Makefile
+index e347b435a038..dfeacc89f407 100644
+--- a/drivers/mtd/spi-nor/Makefile
++++ b/drivers/mtd/spi-nor/Makefile
+@@ -17,6 +17,7 @@ spi-nor-objs			+= sst.o
+ spi-nor-objs			+= winbond.o
+ spi-nor-objs			+= xilinx.o
+ spi-nor-objs			+= xmc.o
++spi-nor-objs			+= fmsh.o
+ spi-nor-$(CONFIG_DEBUG_FS)	+= debugfs.o
+ obj-$(CONFIG_MTD_SPI_NOR)	+= spi-nor.o
+ 
+diff --git a/drivers/mtd/spi-nor/core.c b/drivers/mtd/spi-nor/core.c
+index 5dbf52aa0355..23534c5154c5 100644
+--- a/drivers/mtd/spi-nor/core.c
++++ b/drivers/mtd/spi-nor/core.c
+@@ -1633,6 +1633,7 @@ static const struct spi_nor_manufacturer *manufacturers[] = {
+ 	&spi_nor_winbond,
+ 	&spi_nor_xilinx,
+ 	&spi_nor_xmc,
++	&spi_nor_fmsh,
+ };
+ 
+ static const struct flash_info *spi_nor_match_id(struct spi_nor *nor,
+diff --git a/drivers/mtd/spi-nor/core.h b/drivers/mtd/spi-nor/core.h
+index 85b0cf254e97..6cae01a11605 100644
+--- a/drivers/mtd/spi-nor/core.h
++++ b/drivers/mtd/spi-nor/core.h
+@@ -627,6 +627,7 @@ extern const struct spi_nor_manufacturer spi_nor_sst;
+ extern const struct spi_nor_manufacturer spi_nor_winbond;
+ extern const struct spi_nor_manufacturer spi_nor_xilinx;
+ extern const struct spi_nor_manufacturer spi_nor_xmc;
++extern const struct spi_nor_manufacturer spi_nor_fmsh;
+ 
+ extern const struct attribute_group *spi_nor_sysfs_groups[];
+ 
+diff --git a/drivers/mtd/spi-nor/fmsh.c b/drivers/mtd/spi-nor/fmsh.c
+new file mode 100644
+index 000000000000..73004e94476e
+--- /dev/null
++++ b/drivers/mtd/spi-nor/fmsh.c
+@@ -0,0 +1,20 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (c) 2023, spacemit Corporation.
++ */
++
++#include <linux/mtd/spi-nor.h>
++
++#include "core.h"
++
++static const struct flash_info fmsh_nor_parts[] = {
++	{ "FM25Q64AI3", INFO(0xa14017, 0, 4 * 1024,  2048)
++		NO_SFDP_FLAGS(SECT_4K | SPI_NOR_QUAD_READ |
++			      SPI_NOR_DUAL_READ) },
++};
++
++const struct spi_nor_manufacturer spi_nor_fmsh = {
++	.name = "fmsh",
++	.parts = fmsh_nor_parts,
++	.nparts = ARRAY_SIZE(fmsh_nor_parts),
++};
+diff --git a/drivers/nvmem/Kconfig b/drivers/nvmem/Kconfig
+index ec8a49c04003..1841a2249806 100644
+--- a/drivers/nvmem/Kconfig
++++ b/drivers/nvmem/Kconfig
+@@ -271,6 +271,16 @@ config NVMEM_SNVS_LPGPR
+ 	  This driver can also be built as a module. If so, the module
+ 	  will be called nvmem-snvs-lpgpr.
+ 
++config NVMEM_SPACEMIT_EFUSE
++	tristate "Spacemit SoCs efuse support"
++	depends on SOC_SPACEMIT || COMPILE_TEST
++	help
++	  This is a simple efuse provider driver for Spacemit SoC
++	  provide data from eFuse, such as chip-version.
++
++	  This driver can also be built as a module. If so, the module
++	  will be called nvmem_spacemit_efuse.
++
+ config NVMEM_SPMI_SDAM
+ 	tristate "SPMI SDAM Support"
+ 	depends on SPMI
+diff --git a/drivers/nvmem/Makefile b/drivers/nvmem/Makefile
+index fa80fe17e567..fa86f9895c28 100644
+--- a/drivers/nvmem/Makefile
++++ b/drivers/nvmem/Makefile
+@@ -55,6 +55,8 @@ obj-$(CONFIG_NVMEM_SC27XX_EFUSE)	+= nvmem-sc27xx-efuse.o
+ nvmem-sc27xx-efuse-y			:= sc27xx-efuse.o
+ obj-$(CONFIG_NVMEM_SNVS_LPGPR)		+= nvmem_snvs_lpgpr.o
+ nvmem_snvs_lpgpr-y			:= snvs_lpgpr.o
++obj-$(CONFIG_NVMEM_SPACEMIT_EFUSE)	+= nvmem_spacemit_efuse.o
++nvmem_spacemit_efuse-y			:= spacemit-efuse.o
+ obj-$(CONFIG_NVMEM_SPMI_SDAM)		+= nvmem_qcom-spmi-sdam.o
+ nvmem_qcom-spmi-sdam-y			+= qcom-spmi-sdam.o
+ obj-$(CONFIG_NVMEM_SPRD_EFUSE)		+= nvmem_sprd_efuse.o
+diff --git a/drivers/nvmem/spacemit-efuse.c b/drivers/nvmem/spacemit-efuse.c
+new file mode 100644
+index 000000000000..782dbf02a8ff
+--- /dev/null
++++ b/drivers/nvmem/spacemit-efuse.c
+@@ -0,0 +1,172 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Spacemit eFuse Driver
++ *
++ * Copyright (c) 2024 Spacemit Co. Ltd.
++ */
++
++#include <linux/clk.h>
++#include <linux/reset.h>
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/nvmem-provider.h>
++#include <linux/slab.h>
++#include <linux/of.h>
++#include <linux/of_platform.h>
++#include <linux/platform_device.h>
++
++
++struct spacemit_efuse_bank {
++	struct device *dev;
++	void __iomem *base;
++	struct clk *clk;
++	struct reset_control *reset;
++	struct nvmem_device *nvmem;
++	struct nvmem_config *econfig;
++	u8 *efuse_data;
++	u32 size;
++};
++
++
++/*
++ * read efuse data to buffer for k1 soc.
++ */
++static int spacemit_k1_efuse_read(struct spacemit_efuse_bank *efuse)
++{
++	int i, ret;
++	u32 *buffer;
++
++	ret = clk_prepare_enable(efuse->clk);
++	if (ret < 0) {
++		dev_err(efuse->dev, "failed to prepare/enable efuse clk\n");
++		return ret;
++	}
++	ret = reset_control_deassert(efuse->reset);
++	if (ret < 0) {
++		dev_err(efuse->dev, "failed to deassert efuse\n");
++		clk_disable_unprepare(efuse->clk);
++		return ret;
++	}
++
++	/*
++	 * efuse data has been load into register by uboot already,
++	 * just get efuse data from register
++	 */
++	buffer = (u32 *)efuse->efuse_data;
++	for (i = 0; i < efuse->size/sizeof(u32); i++) {
++		buffer[i] = readl(efuse->base + i*4);
++	}
++
++	reset_control_assert(efuse->reset);
++	clk_disable_unprepare(efuse->clk);
++
++	return ret;
++}
++
++
++/*
++ * call-back function, just read data from buffer
++ */
++static int spacemit_efuse_read(void *context, unsigned int offset,
++				      void *val, size_t bytes)
++{
++	int i;
++	u8 *buf = (u8 *)val;
++	struct spacemit_efuse_bank *efuse = context;
++
++	/* check if data request is out of bound */
++	for(i=0; i<bytes; i++) {
++		buf[i] = efuse->efuse_data[offset + i];
++	}
++
++	return 0;
++}
++
++static int spacemit_efuse_probe(struct platform_device *pdev)
++{
++	int ret = 0;
++	struct resource *res;
++	struct nvmem_device *nvmem;
++	struct nvmem_config *econfig;
++	struct spacemit_efuse_bank *efuse;
++	struct device *dev = &pdev->dev;
++	int (*efuse_read)(struct spacemit_efuse_bank *efuse);
++
++	efuse_read = of_device_get_match_data(dev);
++	if (!efuse_read) {
++		return -EINVAL;
++	}
++
++	efuse = devm_kzalloc(dev, sizeof(struct spacemit_efuse_bank),
++			     GFP_KERNEL);
++	if (!efuse)
++		return -ENOMEM;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	efuse->base = devm_ioremap_resource(dev, res);
++	if (IS_ERR(efuse->base))
++		return PTR_ERR(efuse->base);
++
++	efuse->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(efuse->clk))
++		return PTR_ERR(efuse->clk);
++
++	efuse->reset = devm_reset_control_get_optional_shared(dev, NULL);
++	if (IS_ERR(efuse->reset))
++		return PTR_ERR(efuse->reset);
++
++	/* try read efuse data to buffer */
++	efuse->size = roundup(resource_size(res), sizeof(u32));
++	efuse->efuse_data = devm_kzalloc(dev, efuse->size, GFP_KERNEL);
++	if (!efuse->efuse_data)
++		return -ENOMEM;
++
++	ret = efuse_read(efuse);
++	if (ret < 0)
++		return -EBUSY;
++	efuse->dev = dev;
++
++	econfig = devm_kzalloc(dev, sizeof(*econfig), GFP_KERNEL);
++        if (!econfig)
++		return -ENOMEM;
++
++	efuse->econfig = econfig;
++	econfig->dev = dev;
++	econfig->name = dev_name(dev),
++	econfig->stride = 1;
++	econfig->word_size = 1;
++	econfig->read_only = true;
++	econfig->reg_read = spacemit_efuse_read;
++	econfig->size = resource_size(res);
++	econfig->priv = efuse;
++
++	nvmem = devm_nvmem_register(dev, econfig);
++	efuse->nvmem = nvmem;
++
++	platform_set_drvdata(pdev, efuse);
++
++	return PTR_ERR_OR_ZERO(nvmem);
++}
++
++static const struct of_device_id spacemit_efuse_match[] = {
++	{
++		.compatible = "spacemit,k1-efuse",
++		.data = (void *)&spacemit_k1_efuse_read,
++	},
++	{ /* sentinel */},
++};
++
++static struct platform_driver spacemit_efuse_driver = {
++	.probe = spacemit_efuse_probe,
++	.driver = {
++		.name = "spacemit-efuse",
++		.of_match_table = spacemit_efuse_match,
++	},
++};
++module_platform_driver(spacemit_efuse_driver);
++
++MODULE_DESCRIPTION("Spacemit eFuse driver");
++MODULE_LICENSE("GPL v2");
++
+diff --git a/drivers/opp/core.c b/drivers/opp/core.c
+index e87567dbe99f..602c24e1303d 100644
+--- a/drivers/opp/core.c
++++ b/drivers/opp/core.c
+@@ -624,8 +624,13 @@ EXPORT_SYMBOL_GPL(dev_pm_opp_find_freq_exact);
+ static noinline struct dev_pm_opp *_find_freq_ceil(struct opp_table *opp_table,
+ 						   unsigned long *freq)
+ {
++#ifndef CONFIG_SOC_SPACEMIT
+ 	return _opp_table_find_key_ceil(opp_table, freq, 0, true, _read_freq,
+ 					assert_single_clk);
++#else
++	return _opp_table_find_key_ceil(opp_table, freq, 0, true, _read_freq,
++					NULL);
++#endif
+ }
+ 
+ /**
+@@ -649,7 +654,11 @@ static noinline struct dev_pm_opp *_find_freq_ceil(struct opp_table *opp_table,
+ struct dev_pm_opp *dev_pm_opp_find_freq_ceil(struct device *dev,
+ 					     unsigned long *freq)
+ {
++#ifndef CONFIG_SOC_SPACEMIT
+ 	return _find_key_ceil(dev, freq, 0, true, _read_freq, assert_single_clk);
++#else
++	return _find_key_ceil(dev, freq, 0, true, _read_freq, NULL);
++#endif
+ }
+ EXPORT_SYMBOL_GPL(dev_pm_opp_find_freq_ceil);
+ 
+@@ -2549,6 +2558,110 @@ int dev_pm_opp_set_config(struct device *dev, struct dev_pm_opp_config *config)
+ }
+ EXPORT_SYMBOL_GPL(dev_pm_opp_set_config);
+ 
++#ifdef CONFIG_SOC_SPACEMIT
++int dev_pm_opp_set_config_indexed(struct device *dev, struct dev_pm_opp_config *config, int index)
++{
++	struct opp_table *opp_table;
++	struct opp_config_data *data;
++	unsigned int id;
++	int ret;
++
++	data = kmalloc(sizeof(*data), GFP_KERNEL);
++	if (!data)
++		return -ENOMEM;
++
++	opp_table = _add_opp_table_indexed(dev, index, false);
++	if (IS_ERR(opp_table)) {
++		kfree(data);
++		return PTR_ERR(opp_table);
++	}
++
++	data->opp_table = opp_table;
++	data->flags = 0;
++
++	/* This should be called before OPPs are initialized */
++	if (WARN_ON(!list_empty(&opp_table->opp_list))) {
++		ret = -EBUSY;
++		goto err;
++	}
++
++	/* Configure clocks */
++	if (config->clk_names) {
++		ret = _opp_set_clknames(opp_table, dev, config->clk_names,
++					config->config_clks);
++		if (ret)
++			goto err;
++
++		data->flags |= OPP_CONFIG_CLK;
++	} else if (config->config_clks) {
++		/* Don't allow config callback without clocks */
++		ret = -EINVAL;
++		goto err;
++	}
++
++	/* Configure property names */
++	if (config->prop_name) {
++		ret = _opp_set_prop_name(opp_table, config->prop_name);
++		if (ret)
++			goto err;
++
++		data->flags |= OPP_CONFIG_PROP_NAME;
++	}
++
++	/* Configure config_regulators helper */
++	if (config->config_regulators) {
++		ret = _opp_set_config_regulators_helper(opp_table, dev,
++						config->config_regulators);
++		if (ret)
++			goto err;
++
++		data->flags |= OPP_CONFIG_REGULATOR_HELPER;
++	}
++
++	/* Configure supported hardware */
++	if (config->supported_hw) {
++		ret = _opp_set_supported_hw(opp_table, config->supported_hw,
++					    config->supported_hw_count);
++		if (ret)
++			goto err;
++
++		data->flags |= OPP_CONFIG_SUPPORTED_HW;
++	}
++
++	/* Configure supplies */
++	if (config->regulator_names) {
++		ret = _opp_set_regulators(opp_table, dev,
++					  config->regulator_names);
++		if (ret)
++			goto err;
++
++		data->flags |= OPP_CONFIG_REGULATOR;
++	}
++
++	/* Attach genpds */
++	if (config->genpd_names) {
++		ret = _opp_attach_genpd(opp_table, dev, config->genpd_names,
++					config->virt_devs);
++		if (ret)
++			goto err;
++
++		data->flags |= OPP_CONFIG_GENPD;
++	}
++
++	ret = xa_alloc(&opp_configs, &id, data, XA_LIMIT(1, INT_MAX),
++		       GFP_KERNEL);
++	if (ret)
++		goto err;
++
++	return id;
++
++err:
++	_opp_clear_config(data);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(dev_pm_opp_set_config_indexed);
++#endif
++
+ /**
+  * dev_pm_opp_clear_config() - Releases resources blocked for OPP configuration.
+  * @opp_table: OPP table returned from dev_pm_opp_set_config().
+diff --git a/drivers/pinctrl/pinctrl-single.c b/drivers/pinctrl/pinctrl-single.c
+index d5d4fa84738e..91d02fad612c 100644
+--- a/drivers/pinctrl/pinctrl-single.c
++++ b/drivers/pinctrl/pinctrl-single.c
+@@ -29,6 +29,11 @@
+ #include <linux/pinctrl/pinconf-generic.h>
+ 
+ #include <linux/platform_data/pinctrl-single.h>
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++#include <linux/pm_wakeirq.h>
++#include <linux/reset.h>
++#include <linux/clk.h>
++#endif
+ 
+ #include "core.h"
+ #include "devicetree.h"
+@@ -38,6 +43,10 @@
+ #define DRIVER_NAME			"pinctrl-single"
+ #define PCS_OFF_DISABLED		~0U
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++#define EDGE_CLEAR			6
++#endif
++
+ /**
+  * struct pcs_func_vals - mux function register offset and value pair
+  * @reg:	register virtual address
+@@ -176,6 +185,11 @@ struct pcs_soc_data {
+ struct pcs_device {
+ 	struct resource *res;
+ 	void __iomem *base;
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	struct resource *gedge_flag_res;
++	void __iomem *gedge_flag_base;
++	unsigned gedge_flag_size;
++#endif
+ 	void *saved_vals;
+ 	unsigned size;
+ 	struct device *dev;
+@@ -1431,8 +1445,11 @@ static inline void pcs_irq_set(struct pcs_soc_data *pcs_soc,
+ static void pcs_irq_mask(struct irq_data *d)
+ {
+ 	struct pcs_soc_data *pcs_soc = irq_data_get_irq_chip_data(d);
+-
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	pcs_irq_set(pcs_soc, d->irq, true);
++#else
+ 	pcs_irq_set(pcs_soc, d->irq, false);
++#endif
+ }
+ 
+ /**
+@@ -1443,7 +1460,11 @@ static void pcs_irq_unmask(struct irq_data *d)
+ {
+ 	struct pcs_soc_data *pcs_soc = irq_data_get_irq_chip_data(d);
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	pcs_irq_set(pcs_soc, d->irq, false);
++#else
+ 	pcs_irq_set(pcs_soc, d->irq, true);
++#endif
+ }
+ 
+ /**
+@@ -1484,6 +1505,7 @@ static int pcs_irq_handle(struct pcs_soc_data *pcs_soc)
+ 		unsigned mask;
+ 
+ 		pcswi = list_entry(pos, struct pcs_interrupt, node);
++#ifndef CONFIG_SOC_SPACEMIT_K1X
+ 		raw_spin_lock(&pcs->lock);
+ 		mask = pcs->read(pcswi->reg);
+ 		raw_spin_unlock(&pcs->lock);
+@@ -1492,6 +1514,21 @@ static int pcs_irq_handle(struct pcs_soc_data *pcs_soc)
+ 						  pcswi->hwirq);
+ 			count++;
+ 		}
++#else
++		unsigned reg_offset, bit_offset;
++
++		reg_offset = (pcswi->hwirq / 4 - 1) / 32 * 4;
++		bit_offset = (pcswi->hwirq / 4 - 1) - reg_offset / 4 * 32;
++
++		raw_spin_lock(&pcs->lock);
++		mask = pcs->read(pcs->gedge_flag_base + reg_offset);
++		raw_spin_unlock(&pcs->lock);
++		if (mask & (1 << bit_offset)) {
++			generic_handle_domain_irq(pcs->domain,
++						pcswi->hwirq);
++			count++;
++		}
++#endif
+ 	}
+ 
+ 	return count;
+@@ -1592,7 +1629,6 @@ static int pcs_irq_init_chained_handler(struct pcs_device *pcs,
+ 
+ 	if (PCS_QUIRK_HAS_SHARED_IRQ) {
+ 		int res;
+-
+ 		res = request_irq(pcs_soc->irq, pcs_irq_handler,
+ 				  IRQF_SHARED | IRQF_NO_SUSPEND |
+ 				  IRQF_NO_THREAD,
+@@ -1775,6 +1811,11 @@ static int pcs_quirk_missing_pinctrl_cells(struct pcs_device *pcs,
+ 	return error;
+ }
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++static struct clk *psc_clk;
++static struct reset_control *psc_rst;
++#endif
++
+ static int pcs_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *np = pdev->dev.of_node;
+@@ -1783,11 +1824,44 @@ static int pcs_probe(struct platform_device *pdev)
+ 	struct pcs_device *pcs;
+ 	const struct pcs_soc_data *soc;
+ 	int ret;
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	unsigned val;
++	void __iomem *mem_base;
++#endif
+ 
+ 	soc = of_device_get_match_data(&pdev->dev);
+ 	if (WARN_ON(!soc))
+ 		return -EINVAL;
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	psc_rst = devm_reset_control_get_exclusive(&pdev->dev, "aib_rst");
++	if (IS_ERR(psc_rst)) {
++		ret = PTR_ERR(psc_rst);
++		dev_err(&pdev->dev, "Failed to get reset: %d\n", ret);
++		return -EINVAL;
++	}
++
++	/* deasser clk  */
++	ret = reset_control_deassert(psc_rst);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to deassert reset: %d\n", ret);
++		return -EINVAL;
++	}
++
++	psc_clk = devm_clk_get(&pdev->dev, NULL);
++	if (IS_ERR(psc_clk)) {
++		dev_err(&pdev->dev, "Fail to get pinctrl clock, error %ld.\n",
++			PTR_ERR(psc_clk));
++		return PTR_ERR(psc_clk);
++	}
++
++	ret = clk_prepare_enable(psc_clk);
++	if (ret) {
++		dev_err(&pdev->dev, "Fail to enable pinctrl clock, error %d.\n", ret);
++		return ret;
++	}
++#endif
++
+ 	pcs = devm_kzalloc(&pdev->dev, sizeof(*pcs), GFP_KERNEL);
+ 	if (!pcs)
+ 		return -ENOMEM;
+@@ -1855,6 +1929,30 @@ static int pcs_probe(struct platform_device *pdev)
+ 		return -ENODEV;
+ 	}
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++	if (!res) {
++		dev_err(pcs->dev, "could not get resource\n");
++		return -ENODEV;
++	}
++
++	pcs->gedge_flag_res = devm_request_mem_region(pcs->dev, res->start,
++			resource_size(res), DRIVER_NAME);
++	if (!pcs->gedge_flag_res) {
++		dev_err(pcs->dev, "could not get mem_region\n");
++		return -EBUSY;
++	}
++
++	pcs->gedge_flag_size = resource_size(pcs->gedge_flag_res);
++	pcs->gedge_flag_base = devm_ioremap(pcs->dev, pcs->gedge_flag_res->start,
++			pcs->gedge_flag_size);
++	if (!pcs->gedge_flag_base) {
++		dev_err(pcs->dev, "could not ioremap\n");
++		return -ENODEV;
++	}
++#endif
++	mem_base = pcs->base;
++
+ 	platform_set_drvdata(pdev, pcs);
+ 
+ 	switch (pcs->width) {
+@@ -1918,6 +2016,11 @@ static int pcs_probe(struct platform_device *pdev)
+ 
+ 	dev_info(pcs->dev, "%i pins, size %u\n", pcs->desc.npins, pcs->size);
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	dev_pm_set_wake_irq(&pdev->dev, pcs->socdata.irq );
++	device_init_wakeup(&pdev->dev, true);
++#endif
++
+ 	return pinctrl_enable(pcs->pctl);
+ 
+ free:
+@@ -1935,6 +2038,12 @@ static int pcs_remove(struct platform_device *pdev)
+ 
+ 	pcs_free_resources(pcs);
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	clk_disable_unprepare(psc_clk);
++
++	reset_control_assert(psc_rst);
++#endif
++
+ 	return 0;
+ }
+ 
+@@ -1955,6 +2064,14 @@ static const struct pcs_soc_data pinctrl_single_am437x = {
+ 	.irq_status_mask = (1 << 30),   /* OMAP_WAKEUP_EVENT */
+ };
+ 
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++static const struct pcs_soc_data pinconf_single_aib = {
++	.flags = PCS_QUIRK_SHARED_IRQ,
++	.irq_enable_mask = (1 << EDGE_CLEAR),	/* WAKEUPENABLE */
++	.irq_status_mask = (1 << EDGE_CLEAR),   /* WAKEUPSTATUS */
++};
++#endif
++
+ static const struct pcs_soc_data pinctrl_single = {
+ };
+ 
+@@ -1970,6 +2087,9 @@ static const struct of_device_id pcs_of_match[] = {
+ 	{ .compatible = "ti,am437-padconf", .data = &pinctrl_single_am437x },
+ 	{ .compatible = "pinctrl-single", .data = &pinctrl_single },
+ 	{ .compatible = "pinconf-single", .data = &pinconf_single },
++#ifdef CONFIG_SOC_SPACEMIT_K1X
++	{ .compatible = "pinconf-single-aib", .data = &pinconf_single_aib },
++#endif
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(of, pcs_of_match);
+diff --git a/drivers/soc/spacemit/Kconfig b/drivers/soc/spacemit/Kconfig
+index c36e986f25bb..c1c3536488d8 100644
+--- a/drivers/soc/spacemit/Kconfig
++++ b/drivers/soc/spacemit/Kconfig
+@@ -34,6 +34,15 @@ config SPACEMI_K1X_DMA_RANGE
+ 	  This driver is an empty shell, in order to make the dma-ranges function
+           effective
+ 
++config SPACEMI_SOCINFO
++	tristate "Socinfo driver for spacemit SoCs"
++	depends on SOC_SPACEMIT && NVMEM_SPACEMIT_EFUSE
++	select MFD_SYSCON
++	select SOC_BUS
++	help
++	  Spacemit SoCs information driver, which get information from efuse and
++	  report to userspace.
++
+ source "drivers/soc/spacemit/jpu/Kconfig"
+ source "drivers/soc/spacemit/v2d/Kconfig"
+ source "drivers/soc/spacemit/spacemit-rf/Kconfig"
+diff --git a/drivers/soc/spacemit/Makefile b/drivers/soc/spacemit/Makefile
+index e5e23be15e73..523fe88365b9 100644
+--- a/drivers/soc/spacemit/Makefile
++++ b/drivers/soc/spacemit/Makefile
+@@ -1,8 +1,9 @@
+-obj-$(CONFIG_SPACEMIT_PM_DOMAINS) += pm_domain/
+-obj-$(CONFIG_CHIP_MEDIA_JPU)    += jpu/
+-obj-$(CONFIG_SPACEMIT_V2D)    += v2d/
+-obj-$(CONFIG_SPACEMIT_RFKILL)   += spacemit-rf/
+-obj-$(CONFIG_SPACEMIT_REBOOT_CONTROL)	+= spacemit_reboot.o
+ obj-$(CONFIG_SPACEMI_K1X_DMA_RANGE) += k1x-dma-range.o
+ obj-$(CONFIG_SPACEMIT_LID_CONTROL)	+= spacemit_lid.o
++obj-$(CONFIG_SPACEMIT_REBOOT_CONTROL)	+= spacemit_reboot.o
++obj-$(CONFIG_SPACEMI_SOCINFO) += spacemit-socinfo.o
++obj-$(CONFIG_CHIP_MEDIA_JPU)    += jpu/
+ obj-$(CONFIG_PM) += pm/
++obj-$(CONFIG_SPACEMIT_PM_DOMAINS) += pm_domain/
++obj-$(CONFIG_SPACEMIT_RFKILL)   += spacemit-rf/
++obj-$(CONFIG_SPACEMIT_V2D)    += v2d/
+diff --git a/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c b/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c
+index 4a2dd1b2e553..de03e2e2e5d9 100644
+--- a/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c
++++ b/drivers/soc/spacemit/pm_domain/k1x-pm_domain.c
+@@ -42,6 +42,8 @@
+ /* pmic */
+ #define WAKEUP_SOURCE_WAKEUP_7	7
+ 
++/* gpio */
++#define WAKEUP_SOURCE_WAKEUP_2	2
+ 
+ #define PM_QOS_BLOCK_C1		0x0 /* core wfi */
+ #define PM_QOS_BLOCK_C2		0x2 /* core power off */
+@@ -811,6 +813,11 @@ static int acpr_per_suspend(void)
+ 	apcr_per |= (1 << WAKEUP_SOURCE_WAKEUP_7);
+ 	regmap_write(gpmu->regmap[MPMU_REGMAP_INDEX], MPMU_AWUCRM_REG, apcr_per);
+ 
++	/* enable gpio wakeup */
++	regmap_read(gpmu->regmap[MPMU_REGMAP_INDEX], MPMU_AWUCRM_REG, &apcr_per);
++	apcr_per |= (1 << WAKEUP_SOURCE_WAKEUP_2);
++	regmap_write(gpmu->regmap[MPMU_REGMAP_INDEX], MPMU_AWUCRM_REG, apcr_per);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/soc/spacemit/spacemit-rf/spacemit-wlan.c b/drivers/soc/spacemit/spacemit-rf/spacemit-wlan.c
+index 2c6a5fa4d3e6..1e22a32dba65 100644
+--- a/drivers/soc/spacemit/spacemit-rf/spacemit-wlan.c
++++ b/drivers/soc/spacemit/spacemit-rf/spacemit-wlan.c
+@@ -27,7 +27,7 @@ struct wlan_pwrseq {
+ 	u32 power_on_delay_ms;
+ 
+ 	struct gpio_desc *regon;
+-	struct gpio_desc *hostwake;
++	int irq;
+ 
+ 	struct mutex wlan_mutex;
+ };
+@@ -56,16 +56,15 @@ EXPORT_SYMBOL_GPL(spacemit_wlan_set_power);
+ int spacemit_wlan_get_oob_irq(void)
+ {
+ 	struct wlan_pwrseq *pwrseq = pdata;
+-	int host_oob_irq = 0;
+ 
+-	if (!pwrseq || IS_ERR(pwrseq->hostwake))
++	if (!pwrseq)
+ 		return 0;
+ 
+-	host_oob_irq = gpiod_to_irq(pwrseq->hostwake);
+-	if (host_oob_irq < 0)
+-		dev_err(pwrseq->dev, "map hostwake gpio to virq failed\n");
+-
+-	return host_oob_irq;
++	if (pwrseq->irq <= 0){
++		dev_err(pwrseq->dev, "get oob irq failed\n");
++		return 0;
++	}
++	return pwrseq->irq;
+ }
+ EXPORT_SYMBOL_GPL(spacemit_wlan_get_oob_irq);
+ 
+@@ -77,7 +76,7 @@ int spacemit_wlan_get_oob_irq_flags(void)
+ 	if (!pwrseq)
+ 		return 0;
+ 
+-	oob_irq_flags = (IRQF_TRIGGER_HIGH | IRQF_SHARED | IRQF_NO_SUSPEND);
++	oob_irq_flags = (IRQF_TRIGGER_FALLING | IRQF_NO_SUSPEND);
+ 
+ 	return oob_irq_flags;
+ }
+@@ -125,11 +124,9 @@ static int spacemit_wlan_probe(struct platform_device *pdev)
+ 		return PTR_ERR(pwrseq->regon);
+ 	}
+ 
+-	pwrseq->hostwake = devm_gpiod_get(dev, "hostwake", GPIOD_IN);
+-	if (IS_ERR(pwrseq->hostwake) &&
+-		PTR_ERR(pwrseq->hostwake) != -ENOENT &&
+-		PTR_ERR(pwrseq->hostwake) != -ENOSYS) {
+-		return PTR_ERR(pwrseq->hostwake);
++	pwrseq->irq = platform_get_irq(pdev, 0);
++	if (pwrseq->irq < 0){
++		dev_err(pwrseq->dev, "get hostwake irq failed, ignore wow\n");
+ 	}
+ 
+ 	if(device_property_read_u32(dev, "power-on-delay-ms",
+diff --git a/drivers/soc/spacemit/spacemit-socinfo.c b/drivers/soc/spacemit/spacemit-socinfo.c
+new file mode 100644
+index 000000000000..0dfec63b7a8d
+--- /dev/null
++++ b/drivers/soc/spacemit/spacemit-socinfo.c
+@@ -0,0 +1,205 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Copyright (c) 2024 Spacemit Co., Ltd.
++ */
++
++#include <linux/device.h>
++#include <linux/errno.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/slab.h>
++#include <linux/sys_soc.h>
++#include <linux/nvmem-consumer.h>
++
++
++/*
++ * soc information
++ */
++static struct spacemit_soc_info {
++	u32 die_id;	/* die/wafer id */
++	u32 ver_id;	/* die/wafer version */
++	u32 pack_id;	/* package id */
++	u32 svtdro;	/* dro vaule */
++	u64 chipid;	/* chip serial number */
++	u32 soc_id;	/* soc id */
++	char *name;	/* chip name */
++} soc_info;
++
++
++static const struct spacemit_soc_id {
++	const char *name;
++	unsigned int id;
++} soc_ids[] = {
++	{ "unknown", 0x00000000 },
++
++	/* k1 serial soc */
++	{ "M1-8571", 0x36070000 },
++	{ "K1-6370", 0x36070009 },
++	{ "K1-6350", 0x36070012 },
++	{ "K1-6371", 0x36070040 },
++	{ "M103-6370", 0x36070109 },
++	{ "M103-6371", 0x36070140 },
++};
++
++
++static const char *soc_id_to_chip_name(u32 die_id, u32 ver_id, u32 pack_id)
++{
++	int i;
++	u32 soc_id;
++
++	soc_id = (die_id << 16) | (pack_id);
++	for (i = 0; i < ARRAY_SIZE(soc_ids); i++)
++		if (soc_id == soc_ids[i].id)
++			return soc_ids[i].name;
++
++	/* the soc id is unkown */
++	return soc_ids[0].name;
++}
++
++static int socinfo_get_nvparam(struct device *dev, char *cell_name, char *val, size_t size)
++{
++	size_t bytes;
++	void *buf;
++	struct nvmem_cell *cell;
++
++	cell = devm_nvmem_cell_get(dev, cell_name);
++	if (IS_ERR(cell)) {
++		dev_err(dev, "devm_nvmem_cell_get %s failed\n", cell_name);
++		return PTR_ERR(cell);
++	}
++	buf = nvmem_cell_read(cell, &bytes);
++	if (IS_ERR(buf)) {
++		dev_err(dev, "nvmem_cell_read %s failed\n", cell_name);
++		return PTR_ERR(buf);
++	}
++
++	WARN_ON(size < bytes);
++	if (bytes > size) {
++		dev_err(dev, "buffer size is not enough for get %s\n", cell_name);
++		bytes = size;
++	}
++	memcpy(val, buf, bytes);
++
++	kfree(buf);
++
++	return bytes;
++}
++
++static int spacemit_get_soc_info(struct device *dev)
++{
++	int size;
++
++	memset(&soc_info, 0, sizeof(soc_info));
++	size = socinfo_get_nvparam(dev, "soc_die_id",
++			(char *)&soc_info.die_id, sizeof(soc_info.die_id));
++	if (size <= 0) {
++		dev_err(dev, "try to get soc_die_id from efuse failed\n");
++	}
++
++	size = socinfo_get_nvparam(dev, "soc_ver_id",
++			(char *)&soc_info.ver_id, sizeof(soc_info.ver_id));
++	if (size <= 0) {
++		dev_err(dev, "try to get soc_ver_id from efuse failed\n");
++	}
++
++	size = socinfo_get_nvparam(dev, "soc_pack_id",
++			(char *)&soc_info.pack_id, sizeof(soc_info.pack_id));
++	if (size <= 0) {
++		dev_err(dev, "try to get soc_pack_id from efuse failed\n");
++	}
++
++	size = socinfo_get_nvparam(dev, "soc_svt_dro",
++			(char *)&soc_info.svtdro, sizeof(soc_info.svtdro));
++	if (size <= 0) {
++		dev_err(dev, "try to get soc_svt_dro from efuse failed\n");
++	}
++
++	size = socinfo_get_nvparam(dev, "soc_chip_id",
++			(char *)&soc_info.chipid, sizeof(soc_info.chipid));
++	if (size <= 0) {
++		dev_err(dev, "try to get soc_chip_id from efuse failed\n");
++	}
++
++	soc_info.soc_id = (soc_info.die_id << 16) | soc_info.pack_id;
++
++	return 0;
++}
++
++
++static int spacemit_socinfo_probe(struct platform_device *pdev)
++{
++	struct soc_device_attribute *soc_dev_attr;
++	struct device *dev = &pdev->dev;
++	struct soc_device *soc_dev;
++	struct device_node *root;
++	int ret;
++
++	ret = spacemit_get_soc_info(dev);
++	if (ret) {
++		dev_err(dev, "try to get soc info failed!\n");
++		return -EINVAL;
++	}
++
++	soc_dev_attr = devm_kzalloc(&pdev->dev, sizeof(*soc_dev_attr),
++				    GFP_KERNEL);
++	if (!soc_dev_attr) {
++		return -ENOMEM;
++	}
++
++	/* setup soc information */
++	root = of_find_node_by_path("/");
++	of_property_read_string(root, "model", &soc_dev_attr->machine);
++	of_node_put(root);
++
++	soc_dev_attr->family = "spacemit socs";
++	soc_dev_attr->revision = devm_kasprintf(&pdev->dev, GFP_KERNEL,
++				"%c", (soc_info.ver_id + 'A') & 0xff);
++	soc_dev_attr->soc_id = soc_id_to_chip_name(soc_info.die_id,
++				soc_info.ver_id, soc_info.pack_id);
++	soc_dev_attr->serial_number = kasprintf(GFP_KERNEL, "%016llX",
++				soc_info.chipid);
++
++	/* please note that the actual registration will be deferred */
++	soc_dev = soc_device_register(soc_dev_attr);
++	if (IS_ERR(soc_dev)) {
++		return PTR_ERR(soc_dev);
++	}
++	platform_set_drvdata(pdev, soc_dev);
++
++	dev_info(&pdev->dev, "Spacemit: CPU[%s] REV[%s] DRO[%u] Detected\n",
++		 soc_dev_attr->soc_id, soc_dev_attr->revision, soc_info.svtdro);
++
++	return 0;
++}
++
++static int spacemit_socinfo_remove(struct platform_device *pdev)
++{
++	struct soc_device *soc_dev = platform_get_drvdata(pdev);
++
++	soc_device_unregister(soc_dev);
++
++	return 0;
++}
++
++static const struct of_device_id spacemit_socinfo_dt_match[] = {
++	{ .compatible = "spacemit,socinfo-k1x",  },
++	{ },
++};
++
++static struct platform_driver spacemit_socinfo_driver = {
++	.driver = {
++		.name   = "spacemit-socinfo",
++		.of_match_table = spacemit_socinfo_dt_match,
++	},
++
++	.probe = spacemit_socinfo_probe,
++	.remove = spacemit_socinfo_remove,
++};
++module_platform_driver(spacemit_socinfo_driver);
++
++MODULE_DESCRIPTION("Spacemit soc information driver");
++MODULE_LICENSE("GPL v2");
+\ No newline at end of file
+diff --git a/drivers/usb/dwc3/dwc3-spacemit.c b/drivers/usb/dwc3/dwc3-spacemit.c
+index 9744c10731d1..eb9107e58ac8 100644
+--- a/drivers/usb/dwc3/dwc3-spacemit.c
++++ b/drivers/usb/dwc3/dwc3-spacemit.c
+@@ -4,7 +4,6 @@
+  *
+  * Copyright (c) 2023 Spacemit Co., Ltd.
+  *
+- * Author: Wilson <long.wan@spacemit.com>
+  */
+ 
+ #include <linux/module.h>
+@@ -18,9 +17,33 @@
+ #include <linux/of_platform.h>
+ #include <linux/reset.h>
+ #include <linux/of_address.h>
++#include <linux/pm_wakeirq.h>
++
++#define DWC3_LFPS_WAKE_STATUS		(1 << 29)
++#define DWC3_CDWS_WAKE_STATUS		(1 << 28)
++#define DWC3_ID_WAKE_STATUS			(1 << 27)
++#define DWC3_VBUS_WAKE_STATUS		(1 << 26)
++#define DWC3_LINS1_WAKE_STATUS		(1 << 25)
++#define DWC3_LINS0_WAKE_STATUS		(1 << 24)
++
++#define DWC3_CDWS_WAKE_CLEAR		(1 << 20)
++#define DWC3_ID_WAKE_CLEAR		    (1 << 19)
++#define DWC3_VBUS_WAKE_CLEAR		(1 << 18)
++#define DWC3_LINS1_WAKE_CLEAR		(1 << 17)
++#define DWC3_LINS0_WAKE_CLEAR		(1 << 16)
++#define DWC3_LFPS_WAKE_CLEAR		(1 << 14)
++
++#define DWC3_WAKEUP_INT_MASK		(1 << 15)
++#define DWC3_LFPS_WAKE_MASK			(1 << 13)
++#define DWC3_CDWS_WAKE_MASK			(1 << 12)
++#define DWC3_ID_WAKE_MASK			(1 << 11)
++#define DWC3_VBUS_WAKE_MASK			(1 << 10)
++#define DWC3_LINS1_WAKE_MASK		(1 <<  9)
++#define DWC3_LINS0_WAKE_MASK		(1 <<  8)
+ 
+ #define DWC3_SPACEMIT_MAX_CLOCKS	4
+ 
++
+ struct dwc3_spacemit_driverdata {
+ 	const char		*clk_names[DWC3_SPACEMIT_MAX_CLOCKS];
+ 	int			num_clks;
+@@ -44,8 +67,44 @@ struct dwc3_spacemit {
+ 	struct phy		*usb3_generic_phy;
+ 
+ 	bool 		need_notify_disconnect;
++	int	irq;
++	void __iomem *wakeup_reg;
+ };
+ 
++static void dwc3_spacemit_enable_wakeup_irqs(struct dwc3_spacemit *spacemit)
++{
++	u32 reg;
++	reg = readl(spacemit->wakeup_reg);
++	reg |= (DWC3_LFPS_WAKE_MASK | DWC3_LINS0_WAKE_MASK | DWC3_WAKEUP_INT_MASK);
++	writel(reg, spacemit->wakeup_reg);
++}
++
++static void dwc3_spacemit_disable_wakeup_irqs(struct dwc3_spacemit *spacemit)
++{
++	u32 reg;
++	reg = readl(spacemit->wakeup_reg);
++	reg &= ~(DWC3_LFPS_WAKE_MASK | DWC3_LINS0_WAKE_MASK | DWC3_WAKEUP_INT_MASK);
++	writel(reg, spacemit->wakeup_reg);
++}
++
++static void dwc3_spacemit_clear_wakeup_irqs(struct dwc3_spacemit *spacemit)
++{
++	u32 reg;
++	reg = readl(spacemit->wakeup_reg);
++	dev_dbg(spacemit->dev, "wakeup_reg: 0x%x\n", reg);
++	reg |= (DWC3_LFPS_WAKE_CLEAR | DWC3_LINS0_WAKE_CLEAR);
++	writel(reg, spacemit->wakeup_reg);
++}
++
++static irqreturn_t dwc3_spacemit_wakeup_interrupt(int irq, void *_spacemit)
++{
++	struct dwc3_spacemit	*spacemit = _spacemit;
++	dwc3_spacemit_disable_wakeup_irqs(spacemit);
++	dwc3_spacemit_clear_wakeup_irqs(spacemit);
++
++	return IRQ_HANDLED;
++}
++
+ void dwc3_spacemit_clear_disconnect(struct device *dev)
+ {
+ 	struct platform_device *pdev;
+@@ -184,6 +243,7 @@ static int dwc3_spacemit_probe(struct platform_device *pdev)
+ 	struct device		*dev = &pdev->dev;
+ 	struct device_node	*node = dev->of_node;
+ 	const struct dwc3_spacemit_driverdata *driver_data;
++	struct resource		*res;
+ 	int			i, ret;
+ 
+ 	spacemit = devm_kzalloc(dev, sizeof(*spacemit), GFP_KERNEL);
+@@ -200,6 +260,24 @@ static int dwc3_spacemit_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, spacemit);
+ 
++	spacemit->irq = platform_get_irq(pdev, 0);
++	if (spacemit->irq < 0) {
++		dev_err(dev, "missing IRQ resource\n");
++		return -EINVAL;
++	}
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res) {
++		dev_err(dev, "missing wakeup base resource\n");
++		return -ENODEV;
++	}
++
++	spacemit->wakeup_reg = devm_ioremap(&pdev->dev, res->start, resource_size(res));
++	if (!spacemit->wakeup_reg) {
++		dev_err(dev, " wakeup reg ioremap failed\n");
++		return -ENODEV;
++	}
++
+ 	for (i = 0; i < spacemit->num_clks; i++) {
+ 		spacemit->clks[i] = devm_clk_get(dev, spacemit->clk_names[i]);
+ 		if (IS_ERR(spacemit->clks[i])) {
+@@ -238,8 +316,20 @@ static int dwc3_spacemit_probe(struct platform_device *pdev)
+ 		goto populate_err;
+ 	}
+ 
++	ret = devm_request_irq(dev, spacemit->irq, dwc3_spacemit_wakeup_interrupt, IRQF_NO_SUSPEND,
++			"dwc3-usb-wakeup", spacemit);
++	if (ret) {
++		dev_err(dev, "failed to request IRQ #%d --> %d\n",
++				spacemit->irq, ret);
++		goto irq_err;
++	}
++
++	device_init_wakeup(dev, true);
++	dev_pm_set_wake_irq(dev, spacemit->irq);
+ 	return 0;
+ 
++irq_err:
++	of_platform_depopulate(&pdev->dev);
+ populate_err:
+ 	dwc3_spacemit_exit(spacemit);
+ 	return ret;
+@@ -249,6 +339,9 @@ static int dwc3_spacemit_remove(struct platform_device *pdev)
+ {
+ 	struct dwc3_spacemit	*spacemit = platform_get_drvdata(pdev);
+ 
++	dwc3_spacemit_disable_wakeup_irqs(spacemit);
++	dev_pm_clear_wake_irq(spacemit->dev);
++	device_init_wakeup(spacemit->dev, false);
+ 	of_platform_depopulate(&pdev->dev);
+ 	dwc3_spacemit_exit(spacemit);
+ 
+@@ -298,6 +391,8 @@ static int dwc3_spacemit_suspend(struct device *dev)
+ 	for (i = spacemit->num_clks - 1; i >= 0; i--)
+ 		clk_disable_unprepare(spacemit->clks[i]);
+ 
++	dwc3_spacemit_clear_wakeup_irqs(spacemit);
++	dwc3_spacemit_enable_wakeup_irqs(spacemit);
+ 	return 0;
+ }
+ 
+@@ -346,6 +441,5 @@ static struct platform_driver dwc3_spacemit_driver = {
+ 
+ module_platform_driver(dwc3_spacemit_driver);
+ 
+-MODULE_AUTHOR("Wilson <long.wan@spacemit.com>");
+ MODULE_LICENSE("GPL v2");
+ MODULE_DESCRIPTION("DesignWare USB3 Spacemit Glue Layer");
+diff --git a/drivers/usb/host/ehci-k1x-ci.c b/drivers/usb/host/ehci-k1x-ci.c
+index 57af956a24bd..dcea1a11306c 100644
+--- a/drivers/usb/host/ehci-k1x-ci.c
++++ b/drivers/usb/host/ehci-k1x-ci.c
+@@ -22,23 +22,44 @@
+ #include <linux/platform_data/k1x_ci_usb.h>
+ #include <dt-bindings/usb/k1x_ci_usb.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/pm_wakeirq.h>
+ 
+-#define CAPLENGTH_MASK         (0xff)
++#define CAPLENGTH_MASK				(0xff)
++
++#define USB_CDWS_WAKE_STATUS		(1 << 28)
++#define USB_ID_WAKE_STATUS			(1 << 27)
++#define USB_VBUS_WAKE_STATUS		(1 << 26)
++#define USB_LINS1_WAKE_STATUS		(1 << 25)
++#define USB_LINS0_WAKE_STATUS		(1 << 24)
++
++#define USB_VBUS_DRV				(1 << 21)
++
++#define USB_CDWS_WAKE_CLEAR			(1 << 20)
++#define USB_ID_WAKE_CLEAR			(1 << 19)
++#define USB_VBUS_WAKE_CLEAR			(1 << 18)
++#define USB_LINS1_WAKE_CLEAR		(1 << 17)
++#define USB_LINS0_WAKE_CLEAR		(1 << 16)
++
++#define USB_WAKEUP_INT_MASK			(1 << 15)
++#define USB_CDWS_WAKE_MASK			(1 << 12)
++#define USB_ID_WAKE_MASK			(1 << 11)
++#define USB_VBUS_WAKE_MASK			(1 << 10)
++#define USB_LINS1_WAKE_MASK			(1 <<  9)
++#define USB_LINS0_WAKE_MASK			(1 <<  8)
+ 
+-#define PMU_SD_ROT_WAKE_CLR	0x7C
+-#define PMU_SD_ROT_WAKE_CLR_VBUS_DRV	(0x1 << 21)
+ 
+ struct ehci_hcd_mv {
+ 	struct usb_hcd *hcd;
+ 	struct usb_phy *phy;
++	struct device  *dev;
+ 
+ 	/* Which mode does this ehci running OTG/Host ? */
+ 	int mode;
+ 
+ 	void __iomem *cap_regs;
+ 	void __iomem *op_regs;
+-	void __iomem *apmu_base;
+-
++	void __iomem *wakeup_reg;
++	int	irq;
+ 	struct usb_phy *otg;
+ 
+ 	struct mv_usb_platform_data *pdata;
+@@ -50,34 +71,88 @@ struct ehci_hcd_mv {
+ 	bool reset_on_resume;
+ };
+ 
+-static int ehci_otg_enable(struct device *dev, struct ehci_hcd_mv *ehci_mv, bool enable)
++static void mv_ehci_enable_wakeup_irqs(struct ehci_hcd_mv *ehci_mv)
+ {
+-	uint32_t temp;
++	u32 reg;
++	reg = readl(ehci_mv->wakeup_reg);
++	reg |= (USB_LINS0_WAKE_MASK | USB_LINS1_WAKE_MASK);
++	writel(reg, ehci_mv->wakeup_reg);
++}
+ 
+-	temp = readl(ehci_mv->apmu_base + PMU_SD_ROT_WAKE_CLR);
+-	if (enable)
+-		writel(PMU_SD_ROT_WAKE_CLR_VBUS_DRV | temp, ehci_mv->apmu_base + PMU_SD_ROT_WAKE_CLR);
+-	else
+-		writel(temp & ~PMU_SD_ROT_WAKE_CLR_VBUS_DRV , ehci_mv->apmu_base + PMU_SD_ROT_WAKE_CLR);
++static void mv_ehci_disable_wakeup_irqs(struct ehci_hcd_mv *ehci_mv)
++{
++	u32 reg;
++	reg = readl(ehci_mv->wakeup_reg);
++	reg &= ~(USB_LINS0_WAKE_MASK | USB_LINS1_WAKE_MASK);
++	writel(reg, ehci_mv->wakeup_reg);
++}
+ 
+-	return 0;
++static void mv_ehci_clear_wakeup_irqs(struct ehci_hcd_mv *ehci_mv)
++{
++	u32 reg;
++	reg = readl(ehci_mv->wakeup_reg);
++	dev_dbg(ehci_mv->dev, "wakeup_reg: 0x%x\n", reg);
++	reg |= (USB_LINS0_WAKE_CLEAR | USB_LINS1_WAKE_CLEAR);
++	writel(reg, ehci_mv->wakeup_reg);
+ }
+ 
+-static void ehci_clock_enable(struct ehci_hcd_mv *ehci_mv)
++static irqreturn_t mv_ehci_wakeup_interrupt(int irq, void *_ehci_mv)
+ {
+-	clk_enable(ehci_mv->clk);
++	struct ehci_hcd_mv *ehci_mv = _ehci_mv;
++	mv_ehci_disable_wakeup_irqs(ehci_mv);
++	mv_ehci_clear_wakeup_irqs(ehci_mv);
++
++	return IRQ_HANDLED;
++}
++
++static int mv_ehci_setvbus(struct ehci_hcd_mv *ehci_mv, bool enable)
++{
++	u32 reg;
++	reg = readl(ehci_mv->wakeup_reg);
++	if (enable)
++		reg |= USB_VBUS_DRV;
++	else
++		reg &= ~USB_VBUS_DRV;
++	writel(reg, ehci_mv->wakeup_reg);
++	return 0;
+ }
+ 
+-static void ehci_clock_disable(struct ehci_hcd_mv *ehci_mv)
++static int mv_ehci_enable(struct ehci_hcd_mv *ehci_mv)
+ {
+-	clk_disable(ehci_mv->clk);
++	int ret;
++
++	ret = clk_prepare_enable(ehci_mv->clk);
++	if (ret){
++		dev_err(ehci_mv->dev, "Failed to enable clock\n");
++		return ret;
++	}
++
++	ret = reset_control_deassert(ehci_mv->reset);
++	if (ret){
++		dev_err(ehci_mv->dev, "Failed to deassert reset control\n");
++		goto err_clk;
++	}
++
++	ret = usb_phy_init(ehci_mv->phy);
++	if (ret) {
++		dev_err(ehci_mv->dev, "Failed to init phy\n");
++		goto err_reset;
++	}
++
++	return 0;
++
++err_reset:
++	reset_control_assert(ehci_mv->reset);
++err_clk:
++	clk_disable_unprepare(ehci_mv->clk);
++	return ret;
+ }
+ 
+ static void mv_ehci_disable(struct ehci_hcd_mv *ehci_mv)
+ {
+ 	usb_phy_shutdown(ehci_mv->phy);
+ 	reset_control_assert(ehci_mv->reset);
+-	ehci_clock_disable(ehci_mv);
++	clk_disable_unprepare(ehci_mv->clk);
+ }
+ 
+ static int mv_ehci_reset(struct usb_hcd *hcd)
+@@ -178,7 +253,6 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ {
+ 	struct mv_usb_platform_data *pdata;
+ 	struct device *dev = &pdev->dev;
+-	struct device_node *node;
+ 	struct usb_hcd *hcd;
+ 	struct ehci_hcd *ehci;
+ 	struct ehci_hcd_mv *ehci_mv;
+@@ -221,6 +295,7 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 	platform_set_drvdata(pdev, ehci_mv);
+ 	ehci_mv->pdata = pdata;
+ 	ehci_mv->hcd = hcd;
++	ehci_mv->dev = dev;
+ 	ehci_mv->reset_on_resume = of_property_read_bool(pdev->dev.of_node,
+ 		"spacemit,reset-on-resume");
+ 
+@@ -230,7 +305,6 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 		retval = PTR_ERR(ehci_mv->clk);
+ 		goto err_clear_drvdata;
+ 	}
+-	clk_prepare(ehci_mv->clk);
+ 
+ 	ehci_mv->reset = devm_reset_control_array_get_optional_shared(&pdev->dev);
+ 	if (IS_ERR(ehci_mv->reset)) {
+@@ -262,24 +336,15 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 		else {
+ 			kfree(hcd->bandwidth_mutex);
+ 			kfree(hcd);
+-
+ 			return -EPROBE_DEFER;
+ 		}
+ 		goto err_clear_drvdata;
+ 	}
+ 
+-	ehci_clock_enable(ehci_mv);
+-
+-	retval = reset_control_deassert(ehci_mv->reset);
+-	if (retval) {
+-		dev_err(&pdev->dev, "reset error %d\n", retval);
+-		goto err_disable_clk_rst;
+-	}
+-
+-	retval = usb_phy_init(ehci_mv->phy);
++	retval = mv_ehci_enable(ehci_mv);
+ 	if (retval) {
+-		dev_err(&pdev->dev, "init phy error %d\n", retval);
+-		goto err_disable_clk_rst;
++		dev_err(&pdev->dev, "enable ehci error: %d\n", retval);
++		goto err_clear_drvdata;
+ 	}
+ 
+ 	offset = readl(ehci_mv->cap_regs) & CAPLENGTH_MASK;
+@@ -301,11 +366,17 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 
+ 	ehci_mv->mode = pdata->mode;
+ 
+-	node = of_find_compatible_node(NULL, NULL, "spacemit,spacemit-apmu");
+-	BUG_ON(!node);
+-	ehci_mv->apmu_base = of_iomap(node, 0);
+-	if (ehci_mv->apmu_base == NULL) {
+-		dev_err(&pdev->dev, "failed to map apmu base memory\n");
++	r = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++	if (!r) {
++		dev_err(dev, "missing wakeup base resource\n");
++		retval = -ENODEV;
++		goto err_disable_clk_rst;
++	}
++
++	ehci_mv->wakeup_reg = devm_ioremap(&pdev->dev, r->start, resource_size(r));
++	if (!ehci_mv->wakeup_reg) {
++		dev_err(dev, " wakeup reg ioremap failed\n");
++		retval = -ENODEV;
+ 		goto err_disable_clk_rst;
+ 	}
+ 
+@@ -314,7 +385,6 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 		ehci_mv->otg = devm_usb_get_phy_by_phandle(&pdev->dev, "usb-otg", 0);
+ 		if (IS_ERR(ehci_mv->otg)) {
+ 			retval = PTR_ERR(ehci_mv->otg);
+-
+ 			if (retval == -ENXIO)
+ 				dev_info(&pdev->dev, "MV_USB_MODE_OTG "
+ 						"must have CONFIG_USB_PHY enabled\n");
+@@ -334,7 +404,7 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 		/* otg will enable clock before use as host */
+ 		mv_ehci_disable(ehci_mv);
+ 	} else {
+-		retval = ehci_otg_enable(dev, ehci_mv, 1);
++		retval = mv_ehci_setvbus(ehci_mv, 1);
+ 		if (retval)
+ 			goto err_disable_clk_rst;
+ 
+@@ -346,6 +416,24 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 		}
+ 	}
+ 
++	ehci_mv->irq = platform_get_irq(pdev, 1);
++	if (!hcd->irq) {
++		dev_err(&pdev->dev, "Cannot get wake irq.");
++		retval = -ENODEV;
++		goto err_set_vbus;
++	}
++
++	retval = devm_request_irq(dev, ehci_mv->irq, mv_ehci_wakeup_interrupt, IRQF_NO_SUSPEND,
++			"usb-wakeup", ehci_mv);
++	if (retval) {
++		dev_err(dev, "failed to request IRQ #%d --> %d\n",
++				ehci_mv->irq, retval);
++		goto err_set_vbus;
++	}
++
++	device_init_wakeup(dev, true);
++	dev_pm_set_wake_irq(dev, ehci_mv->irq);
++
+ 	pm_runtime_set_active(dev);
+ 	pm_runtime_enable(dev);
+ 	pm_suspend_ignore_children(dev, false);
+@@ -359,7 +447,12 @@ static int mv_ehci_probe(struct platform_device *pdev)
+ 	return 0;
+ 
+ err_set_vbus:
+-	ehci_otg_enable(dev, ehci_mv, 0);
++	if (!IS_ERR_OR_NULL(ehci_mv->otg))
++		otg_set_host(ehci_mv->otg->otg, NULL);
++	if (ehci_mv->mode == MV_USB_MODE_HOST) {
++		usb_remove_hcd(hcd);
++		mv_ehci_setvbus(ehci_mv, 0);
++	}
+ err_disable_clk_rst:
+ 	mv_ehci_disable(ehci_mv);
+ err_clear_drvdata:
+@@ -375,6 +468,10 @@ static int mv_ehci_remove(struct platform_device *pdev)
+ 	struct ehci_hcd_mv *ehci_mv = platform_get_drvdata(pdev);
+ 	struct usb_hcd *hcd = ehci_mv->hcd;
+ 
++	mv_ehci_disable_wakeup_irqs(ehci_mv);
++	dev_pm_clear_wake_irq(ehci_mv->dev);
++	device_init_wakeup(ehci_mv->dev, false);
++
+ 	if (hcd->rh_registered)
+ 		usb_remove_hcd(hcd);
+ 
+@@ -382,11 +479,11 @@ static int mv_ehci_remove(struct platform_device *pdev)
+ 		otg_set_host(ehci_mv->otg->otg, NULL);
+ 
+ 	if (ehci_mv->mode == MV_USB_MODE_HOST) {
+-		ehci_otg_enable(&pdev->dev, ehci_mv, 0);
+-		mv_ehci_disable(ehci_mv);
+-		clk_unprepare(ehci_mv->clk);
++		mv_ehci_setvbus(ehci_mv, 0);
+ 	}
+ 
++	mv_ehci_disable(ehci_mv);
++	platform_set_drvdata(pdev, NULL);
+ 	usb_put_hcd(hcd);
+ 
+ 	pm_runtime_disable(&pdev->dev);
+@@ -439,6 +536,9 @@ static int mv_ehci_suspend(struct device *dev)
+ 
+ 	clk_disable_unprepare(ehci_mv->clk);
+ 	dev_dbg(dev, "pm suspend: disable clks and phy\n");
++
++	mv_ehci_clear_wakeup_irqs(ehci_mv);
++	mv_ehci_enable_wakeup_irqs(ehci_mv);
+ 	return ret;
+ }
+ 
+@@ -465,7 +565,7 @@ static int mv_ehci_resume(struct device *dev)
+ 	ret = usb_phy_init(ehci_mv->phy);
+ 	if (ret) {
+ 		dev_err(dev, "Failed to init phy\n");
+-		ehci_clock_disable(ehci_mv);
++		clk_disable_unprepare(ehci_mv->clk);
+ 		return ret;
+ 	}
+ 	dev_dbg(dev, "pm resume: do EHCI resume\n");
+diff --git a/include/linux/pm_opp.h b/include/linux/pm_opp.h
+index dc1fb5890792..b5618dd9b3b2 100644
+--- a/include/linux/pm_opp.h
++++ b/include/linux/pm_opp.h
+@@ -157,6 +157,9 @@ int dev_pm_opp_register_notifier(struct device *dev, struct notifier_block *nb);
+ int dev_pm_opp_unregister_notifier(struct device *dev, struct notifier_block *nb);
+ 
+ int dev_pm_opp_set_config(struct device *dev, struct dev_pm_opp_config *config);
++#ifdef CONFIG_SOC_SPACEMIT
++int dev_pm_opp_set_config_indexed(struct device *dev, struct dev_pm_opp_config *config, int index);
++#endif
+ int devm_pm_opp_set_config(struct device *dev, struct dev_pm_opp_config *config);
+ void dev_pm_opp_clear_config(int token);
+ int dev_pm_opp_config_clks_simple(struct device *dev,
+diff --git a/sound/soc/codecs/es8326.c b/sound/soc/codecs/es8326.c
+index e2bebd53560e..6362e232f24b 100644
+--- a/sound/soc/codecs/es8326.c
++++ b/sound/soc/codecs/es8326.c
+@@ -52,6 +52,7 @@ struct es8326_priv {
+ 	int mic_gpio;
+ 	int mic_irq;
+ 	struct delayed_work hpmic_detect_work;
++	unsigned int coeff;
+ #endif
+ };
+ 
+@@ -264,6 +265,10 @@ static bool es8326_volatile_register(struct device *dev, unsigned int reg)
+ static const struct regmap_config es8326_regmap_config = {
+ 	.reg_bits = 8,
+ 	.val_bits = 8,
++#ifdef SPACEMIT_CONFIG_CODEC_ES8326
++	.use_single_read = true,
++	.use_single_write = true,
++#endif
+ 	.max_register = 0xff,
+ 	.volatile_reg = es8326_volatile_register,
+ 	.cache_type = REGCACHE_RBTREE,
+@@ -472,6 +477,9 @@ static int es8326_pcm_hw_params(struct snd_pcm_substream *substream,
+ 	}
+ 
+ 	coeff = get_coeff(es8326->sysclk, params_rate(params), array, coeff_div);
++#ifdef SPACEMIT_CONFIG_CODEC_ES8326
++	es8326->coeff = coeff;
++#endif
+ 	/* bit size */
+ 	switch (params_format(params)) {
+ 	case SNDRV_PCM_FORMAT_S16_LE:
+@@ -520,6 +528,44 @@ static int es8326_pcm_hw_params(struct snd_pcm_substream *substream,
+ 	return 0;
+ }
+ 
++#ifdef SPACEMIT_CONFIG_CODEC_ES8326
++static int es8326_reset_clk(struct snd_soc_component *component)
++{
++	const struct _coeff_div *coeff_div;
++	struct es8326_priv *es8326 = snd_soc_component_get_drvdata(component);
++	int coeff;
++
++	if (es8326->version == 0) {
++		coeff_div =  coeff_div_v0;
++	} else {
++		coeff_div =  coeff_div_v3;
++	}
++	coeff = es8326->coeff;
++	if (coeff >= 0) {
++		regmap_write(es8326->regmap,  ES8326_CLK_DIV1,
++			     coeff_div[coeff].reg4);
++		regmap_write(es8326->regmap,  ES8326_CLK_DIV2,
++			     coeff_div[coeff].reg5);
++		regmap_write(es8326->regmap,  ES8326_CLK_DLL,
++			     coeff_div[coeff].reg6);
++		regmap_write(es8326->regmap,  ES8326_CLK_MUX,
++			     coeff_div[coeff].reg7);
++		regmap_write(es8326->regmap,  ES8326_CLK_ADC_SEL,
++			     coeff_div[coeff].reg8);
++		regmap_write(es8326->regmap,  ES8326_CLK_DAC_SEL,
++			     coeff_div[coeff].reg9);
++		regmap_write(es8326->regmap,  ES8326_CLK_ADC_OSR,
++			     coeff_div[coeff].rega);
++		regmap_write(es8326->regmap,  ES8326_CLK_DAC_OSR,
++			     coeff_div[coeff].regb);
++	} else {
++		dev_warn(component->dev, "Clock coefficients do not match");
++	}
++
++	return 0;
++}
++#endif
++
+ static int es8326_mute(struct snd_soc_dai *dai, int mute, int direction)
+ {
+ 	struct snd_soc_component *component = dai->component;
+@@ -819,7 +865,9 @@ static void es8326_jack_detect_handler(struct work_struct *work)
+ 			 * Don't report jack status.
+ 			 */
+ 			regmap_update_bits(es8326->regmap, ES8326_HPDET_TYPE, 0x03, 0x01);
++			#ifndef SPACEMIT_CONFIG_CODEC_ES8326
+ 			es8326_enable_micbias(es8326->component);
++			#endif
+ 			usleep_range(50000, 70000);
+ 			regmap_update_bits(es8326->regmap, ES8326_HPDET_TYPE, 0x03, 0x00);
+ 			regmap_write(es8326->regmap, ES8326_SYS_BIAS, 0x1f);
+@@ -832,7 +880,11 @@ static void es8326_jack_detect_handler(struct work_struct *work)
+ 			#endif
+ 			goto exit;
+ 		}
++		#ifdef SPACEMIT_CONFIG_CODEC_ES8326
++		if ((es8326->jack->status & SND_JACK_HEADSET) == SND_JACK_HEADSET) {
++		#else
+ 		if (es8326->jack->status & SND_JACK_HEADSET) {
++		#endif
+ 			/* detect button */
+ 			dev_dbg(comp->dev, "button pressed\n");
+ 			queue_delayed_work(system_wq, &es8326->button_press_work, 10);
+@@ -909,7 +961,6 @@ static void es8326_hpmic_detect_handler(struct work_struct *work)
+ 	} else {
+ 		if (es8326->hp == 0) {
+ 			regmap_update_bits(es8326->regmap, ES8326_HPDET_TYPE, 0x03, 0x01);
+-			es8326_enable_micbias(es8326->component);
+ 			usleep_range(50000, 70000);
+ 			regmap_update_bits(es8326->regmap, ES8326_HPDET_TYPE, 0x03, 0x00);
+ 			regmap_write(es8326->regmap, ES8326_SYS_BIAS, 0x1f);
+@@ -1090,18 +1141,37 @@ static int es8326_resume(struct snd_soc_component *component)
+ 
+ 	regcache_cache_only(es8326->regmap, false);
+ 	regcache_sync(es8326->regmap);
+-	if (es8326->jack)
+-		es8326_irq(es8326->irq, es8326);
++	es8326_init(component);
++	es8326_reset_clk(component);
++	if (es8326->jack) {
++		snd_soc_jack_report(es8326->jack, 0, SND_JACK_HEADSET);
++		if (es8326->jd_inverted) {
++			snd_soc_component_update_bits(component, ES8326_HPDET_TYPE,
++					      ES8326_HP_DET_JACK_POL, ~es8326->jack_pol);
++		}
++		es8326_disable_micbias(component);
++		if (es8326->irq > 0)
++			es8326_irq(es8326->irq, es8326);
++		else
++			es8326_irq_hpmic(es8326->irq, es8326);
++	}
+ 	return 0;
+ }
++
+ static int es8326_suspend(struct snd_soc_component *component)
+ {
+ 	struct es8326_priv *es8326 = snd_soc_component_get_drvdata(component);
+ 
+ 	cancel_delayed_work_sync(&es8326->jack_detect_work);
++	es8326->calibrated = false;
++	regmap_write(es8326->regmap, ES8326_CLK_CTL, ES8326_CLK_OFF);
+ 	regcache_cache_only(es8326->regmap, true);
+ 	regcache_mark_dirty(es8326->regmap);
+ 
++	/* reset register value to default */
++	regmap_write(es8326->regmap, ES8326_CSM_I2C_STA, 0x01);
++	usleep_range(1000, 3000);
++	regmap_write(es8326->regmap, ES8326_CSM_I2C_STA, 0x00);
+ 	return 0;
+ }
+ #else
+-- 
+2.39.2
+

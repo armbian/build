@@ -9,7 +9,7 @@
 
 function run_tool_oras() {
 	# Default version
-	ORAS_VERSION=${ORAS_VERSION:-0.16.0} # https://github.com/oras-project/oras/releases
+	ORAS_VERSION=${ORAS_VERSION:-1.2.0} # https://github.com/oras-project/oras/releases
 	#ORAS_VERSION=${ORAS_VERSION:-"1.0.0-rc.1"} # https://github.com/oras-project/oras/releases
 
 	declare non_cache_dir="/armbian-tools/oras" # To deploy/reuse cached ORAS in a Docker image.
@@ -81,9 +81,11 @@ function run_tool_oras() {
 	fi
 
 	# Run oras, possibly with retries...
+	declare ORAS_HOME="${HOME:-"${TMPDIR}"}" # oras _requires_ a HOME to work atleast in 1.2+
+	display_alert "Running ORAS ${ACTUAL_VERSION}" "HOME='${ORAS_HOME}'; retries='${retries:-1}'; cmdline: $*" "debug"
 	if [[ "${retries:-1}" -gt 1 ]]; then
 		display_alert "Calling ORAS with retries ${retries}" "$*" "debug"
-		sleep_seconds="30" do_with_retries "${retries}" "${ORAS_BIN}" "$@"
+		sleep_seconds="30" do_with_retries "${retries}" env -i "HOME=${ORAS_HOME}" "${ORAS_BIN}" "$@"
 	else
 		# If any parameters passed, call ORAS, otherwise exit. We call it this way (sans-parameters) early to prepare ORAS tooling.
 		if [[ $# -eq 0 ]]; then
@@ -92,7 +94,7 @@ function run_tool_oras() {
 		fi
 
 		display_alert "Calling ORAS" "$*" "debug"
-		"${ORAS_BIN}" "$@"
+		env -i "HOME=${ORAS_HOME}" "${ORAS_BIN}" "$@"
 	fi
 }
 

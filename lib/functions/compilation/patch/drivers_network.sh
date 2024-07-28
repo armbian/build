@@ -87,7 +87,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
-		local rtl8189fsver='commit:30a52f789a0b933c4a7eb06cbf4a4d21c8e581aa' # Commit date: May 10, 2024 (please update when updating commit ref)
+		local rtl8189fsver='commit:9a82349c2c40515f9d20b9f6721670f76b4e1c7a' # Commit date: May 19, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
@@ -347,10 +347,10 @@ driver_rtl8852bs() {
 
 	# Wireless driver for Realtek 8852BS SDIO Wireless driver used in BananaPi F3 and Armsom Sige5
 
-	if linux-version compare "${version}" ge 6.1 && [[ "${BOARD}" == bananapif3 || "${BOARD}" == armsom-sige5 ]]; then
+	if linux-version compare "${version}" ge 6.1 && [[ "${LINUXFAMILY}" == spacemit || "${LINUXFAMILY}" == rk35xx ]]; then
 
 		# Attach to specific commit
-		local rtl8852bs_ver='commit:56420ff22f9c174e23ef1d1fefc66cbed197bc12' # Commit date: June 30, 2024 (please update when updating commit ref)
+		local rtl8852bs_ver='commit:b7d94226641ef4687bc7f54ae6fa01b7e30f4b82' # Commit date: July 10, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8852BS SDIO chipset ${rtl8852bs_ver}" "info"
 
@@ -371,21 +371,32 @@ driver_rtl8852bs() {
 		cp "${SRC}/cache/sources/rtl8852bs/${rtl8852bs_ver#*:}"/Makefile \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 
+		# Copy common.mk into kernel-work-dir
+		cp "${SRC}/cache/sources/rtl8852bs/${rtl8852bs_ver#*:}"/common.mk \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/common.mk"
+
 		# Disable debug
 		sed -i "s/^CONFIG_RTW_DEBUG.*/CONFIG_RTW_DEBUG = n/" \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 
+		# Bugfix/workaround: Comment undefined RTW_WARN_LMT
+		# @TODO Check on update if this fix is still needed (added 2024-July-10)
+		sed -i  "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g"  \
+			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
+
 		# Add to section Makefile
-		echo "obj-\$(CONFIG_RTL8723DU) += rtl8723du/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
+		echo "obj-\$(CONFIG_RTL8852BS) += rtl8852bs/" >> "$kerneldir/drivers/net/wireless/realtek/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/realtek\/rtw89\/Kconfig"/a source "drivers\/net\/wireless\/realtek\/rtl8852bs\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/realtek/Kconfig"
 
 		# We have to enable specific platforms in the driver Makefile to enable specific driver tweaks, they are all "n" by default
-		case ${BOARD} in
-			bananapif3)
+		case ${LINUXFAMILY} in
+			# For Rockchip devices, add family name here
+			rk35xx)
 				sed -i "s/CONFIG_PLATFORM_ARM_ROCKCHIP = n/CONFIG_PLATFORM_ARM_ROCKCHIP = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
-			armsom-sige5)
+			# For Spacemit devices, add family name here
+			spacemit)
 				sed -i "s/CONFIG_PLATFORM_SPACEMIT = n/CONFIG_PLATFORM_SPACEMIT = y/g" "$kerneldir/drivers/net/wireless/realtek/rtl8852bs/Makefile"
 				;;
 		esac

@@ -20,7 +20,11 @@ function extension_prepare_config__3d() {
 
 	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 
-		EXTRA_IMAGE_SUFFIXES+=("-oibaf")
+		EXTRA_IMAGE_SUFFIXES+=("-kisak")
+
+	elif [[ "${DISTRIBUTION}" == "Debian" && "${RELEASE}" == "bookworm" ]]; then
+
+		EXTRA_IMAGE_SUFFIXES+=("-backported-mesa")
 
 	fi
 
@@ -62,15 +66,21 @@ function post_install_kernel_debs__3d() {
 
 	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
 
-		display_alert "Adding oibaf PPAs" "${EXTENSION}" "info"
-		do_with_retries 3 chroot_sdcard add-apt-repository ppa:oibaf/graphics-drivers --yes --no-update
+		display_alert "Adding kisak PPAs" "${EXTENSION}" "info"
+		do_with_retries 3 chroot_sdcard add-apt-repository ppa:kisak/kisak-mesa --yes --no-update
 
-		display_alert "Pinning oibaf PPAs" "${EXTENSION}" "info"
-		cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/mesa-oibaf-graphics-drivers-pin
+		display_alert "Pinning kisak PPAs" "${EXTENSION}" "info"
+		cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/mesa-kisak-kisak-mesa-pin
 			Package: *
-			Pin: release o=LP-PPA-oibaf-graphics-drivers
+			Pin: release o=LP-PPA-kisak-kisak-mesa
 			Pin-Priority: 1001
 		EOF
+
+	elif [[ "${DISTRIBUTION}" == "Debian" && "${RELEASE}" == "bookworm" ]]; then
+
+		display_alert "Adding mesa backport repo for ${RELEASE} from OBS" "${EXTENSION}" "info"
+		echo 'deb http://download.opensuse.org/repositories/home:/amazingfate:/mesa-bookworm-backport/Debian_12/ /' | tee "${SDCARD}"/etc/apt/sources.list.d/home:amazingfate:mesa-bookworm-backport.list
+		curl -fsSL https://download.opensuse.org/repositories/home:amazingfate:mesa-bookworm-backport/Debian_12/Release.key | gpg --dearmor | tee "${SDCARD}"/etc/apt/trusted.gpg.d/home_amazingfate_mesa-bookworm-backport.gpg > /dev/null
 
 	fi
 
@@ -94,7 +104,7 @@ function post_install_kernel_debs__3d() {
 		EOF
 	fi
 
-	display_alert "Updating sources list, after oibaf PPAs" "${EXTENSION}" "info"
+	display_alert "Updating sources list, after kisak PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
 	display_alert "Installing 3D extension packages" "${EXTENSION}" "info"

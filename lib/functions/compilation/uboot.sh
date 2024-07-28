@@ -209,6 +209,9 @@ function compile_uboot_target() {
 	# REAL COMPILATION SECTION STARTING HERE #
 	##########################################
 
+	local uboot_cflags="${uboot_cflags_array[*]}"
+	local ts=${SECONDS}
+
 	# Collect make environment variables, similar to 'kernel-make.sh'
 	uboot_make_envs=(
 		"CFLAGS='${uboot_cflags}'"
@@ -221,9 +224,6 @@ function compile_uboot_target() {
 	# workaround when two compilers are needed
 	cross_compile="CROSS_COMPILE=\"$CCACHE $UBOOT_COMPILER\""
 	[[ -n $UBOOT_TOOLCHAIN2 ]] && cross_compile="ARMBIAN=foe" # empty parameter is not allowed
-
-	local uboot_cflags="${uboot_cflags_array[*]}"
-	local ts=${SECONDS}
 
 	display_alert "${uboot_prefix}Compiling u-boot" "${version} ${target_make} with gcc '${gcc_version_main}'" "info"
 	declare -g if_error_detail_message="${uboot_prefix}Failed to build u-boot ${version} ${target_make}"

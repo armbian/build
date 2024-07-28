@@ -32,7 +32,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.9"
+		declare -g KERNEL_MAJOR_MINOR="6.10"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
@@ -99,7 +99,7 @@ case "$BOOT_SOC" in
 		CPUMAX=${CPUMAX:="2016000"}
 		BOOT_SCENARIO="${BOOT_SCENARIO:=only-blobs}"
 		DDR_BLOB="${DDR_BLOB:-"rk33/rk3399_ddr_933MHz_v1.25.bin"}"
-		MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3399_loader_v1.30.130.bin"}"
+		MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3399_miniloader_v1.26.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk33/rk3399_bl31_v1.35.elf"}"
 		;;
 
@@ -126,6 +126,7 @@ case "$BOOT_SOC" in
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk356x_spl_loader_v1.21.113.bin"
 		BOOT_SOC_MKIMAGE="rk3568" # mkimage does not know about rk3566, and rk3568 works.
+		BOOTENV_FILE='rk356x.txt'
 		;;
 
 	rk3568)
@@ -135,6 +136,14 @@ case "$BOOT_SOC" in
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3568_bl31_v1.44.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk356x_spl_loader_v1.21.113.bin"
+		BOOTENV_FILE='rk356x.txt'
+		;;
+
+	rk3576)
+		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.03.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3576_bl31_v1.04.elf"}"
+		BL32_BLOB="${BL32_BLOB:-"rk35/rk3576_bl32_v1.01.bin"}"
 		;;
 
 	rk3588) #CPUMAX undefined?

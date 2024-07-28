@@ -7,16 +7,16 @@ function extension_prepare_config__install_network_manager() {
 		exit_with_error "Extension: ${EXTENSION}: requires NETWORKING_STACK='network-manager', currently set to '${NETWORKING_STACK}'"
 	fi
 
-	display_alert "Extension: ${EXTENSION}: Installing additional packages" "network-manager network-manager-openvpn netplan.io" "info"
+	display_alert "Extension: ${EXTENSION}: Adding extra packages to image" "network-manager network-manager-openvpn netplan.io" "info"
 	add_packages_to_image network-manager network-manager-openvpn netplan.io
 
 	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
-		display_alert "Extension: ${EXTENSION}: Installing additional packages for desktop" "network-manager-gnome network-manager-ssh network-manager-vpnc" "info"
+		display_alert "Extension: ${EXTENSION}: Adding extra packages for desktop to image" "network-manager-gnome network-manager-ssh network-manager-vpnc" "info"
 		add_packages_to_image network-manager-gnome network-manager-ssh network-manager-vpnc
 	fi
 
 	if [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
-		display_alert "Extension: ${EXTENSION}: Installing additional packages for Ubuntu" "network-manager-config-connectivity-ubuntu" "info"
+		display_alert "Extension: ${EXTENSION}: Adding extra packages for Ubuntu to image" "network-manager-config-connectivity-ubuntu" "info"
 		add_packages_to_image network-manager-config-connectivity-ubuntu
 	fi
 }
