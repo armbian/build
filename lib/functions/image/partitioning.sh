@@ -121,7 +121,7 @@ function prepare_partitions() {
 	fi
 	# Check if we need root partition
 	[[ $ROOTFS_TYPE != nfs ]] &&
-		rootpart=$((next++))
+		local rootpart=$((next++))
 
 	display_alert "calculated rootpart" "rootpart: ${rootpart}" "debug"
 
