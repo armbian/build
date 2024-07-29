@@ -1,0 +1,227 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Mon, 29 Apr 2024 16:18:46 +0200
+Subject: clock entries to accomodate rk3228 HDMI features
+
+---
+ arch/arm/include/asm/arch-rockchip/cru_rk322x.h |  14 +
+ drivers/clk/rockchip/clk_rk322x.c               | 129 +++++++++-
+ 2 files changed, 140 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/include/asm/arch-rockchip/cru_rk322x.h b/arch/arm/include/asm/arch-rockchip/cru_rk322x.h
+index 111111111111..222222222222 100644
+--- a/arch/arm/include/asm/arch-rockchip/cru_rk322x.h
++++ b/arch/arm/include/asm/arch-rockchip/cru_rk322x.h
+@@ -193,6 +193,10 @@ enum {
+ 	/* CRU_CLKSEL27_CON */
+ 	VOP_DCLK_DIV_SHIFT	= 8,
+ 	VOP_DCLK_DIV_MASK	= 0xff << VOP_DCLK_DIV_SHIFT,
++	VOP_DCLK_PLL_SEL_SHIFT	= 0,
++	VOP_DCLK_PLL_SEL_MASK	= 1 << VOP_DCLK_PLL_SEL_SHIFT,
++	VOP_DCLK_SEL_GPLL	= 0,
++	VOP_DCLK_SEL_CPLL	= 1,
+ 	VOP_PLL_SEL_SHIFT	= 1,
+ 	VOP_PLL_SEL_MASK	= 1 << VOP_PLL_SEL_SHIFT,
+ 
+@@ -200,6 +204,16 @@ enum {
+ 	GMAC_CLK_SRC_SHIFT	= 12,
+ 	GMAC_CLK_SRC_MASK	= 1 << GMAC_CLK_SRC_SHIFT,
+ 
++	/* CRU_CLKSEL33_CON */
++	VOP_ACLK_DIV_SHIFT	= 0,
++	VOP_ACLK_DIV_MASK	= 0x1f << VOP_ACLK_DIV_SHIFT,
++	VOP_ACLK_PLL_SEL_SHIFT	= 5,
++	VOP_ACLK_PLL_SEL_MASK	= 3 << VOP_ACLK_PLL_SEL_SHIFT,
++	VOP_ACLK_SEL_CPLL	= 0,
++	VOP_ACLK_SEL_GPLL	= 1,
++	VOP_ACLK_SEL_HDMIPHY	= 2,
++	VOP_ACLK_SEL_USBPHY	= 3,
++
+ 	/* CRU_SOFTRST5_CON */
+ 	DDRCTRL_PSRST_SHIFT	= 11,
+ 	DDRCTRL_SRST_SHIFT	= 10,
+diff --git a/drivers/clk/rockchip/clk_rk322x.c b/drivers/clk/rockchip/clk_rk322x.c
+index 111111111111..222222222222 100644
+--- a/drivers/clk/rockchip/clk_rk322x.c
++++ b/drivers/clk/rockchip/clk_rk322x.c
+@@ -367,6 +367,14 @@ static ulong rk322x_clk_get_rate(struct clk *clk)
+ 	case SCLK_SDMMC:
+ 		rate = rockchip_mmc_get_clk(priv->cru, gclk_rate, clk->id);
+ 		break;
++	case SCLK_HDMI_PHY:
++	case PCLK_HDMI_PHY:
++	case DCLK_HDMI_PHY:
++	case SCLK_HDMI_HDCP:
++	case PCLK_HDMI_CTRL:
++	case SCLK_HDMI_CEC:
++		printf("Attempt to get clk id %ld\n", clk->id);
++		return 0;
+ 	default:
+ 		return -ENOENT;
+ 	}
+@@ -374,6 +382,68 @@ static ulong rk322x_clk_get_rate(struct clk *clk)
+ 	return rate;
+ }
+ 
++#ifndef CONFIG_SPL_BUILD
++static ulong rk3228_vop_get_clk(struct rk322x_cru *cru, ulong clk_id)
++{
++	u32 div, con, parent;
++
++	switch (clk_id) {
++		case DCLK_VOP:
++			con = readl(&cru->cru_clksel_con[27]);
++			div = (con & VOP_DCLK_DIV_MASK) >> VOP_DCLK_DIV_SHIFT;
++			parent = GPLL_HZ;
++			break;
++		case ACLK_VOP:
++			con = readl(&cru->cru_clksel_con[33]);
++			div = (con & VOP_ACLK_DIV_MASK) >> VOP_ACLK_DIV_SHIFT;
++			parent = GPLL_HZ;
++			break;
++		default:
++			debug("%s: Unsupported vop get clk#%ld\n", __func__, clk_id);
++			return -ENOENT;
++	}
++
++	return DIV_TO_RATE(parent, div);
++}
++
++static ulong rk3228_vop_set_clk(struct rk322x_cru *cru,
++				ulong clk_id, uint hz)
++{
++	int src_clk_div;
++
++	src_clk_div = DIV_ROUND_UP(GPLL_HZ, hz);
++	assert(src_clk_div - 1 < 31);
++
++	switch (clk_id) {
++		case DCLK_VOP:
++
++			/*
++			 * Set HDMI parent clock to HDMIPHY. Normally, this is done
++			 * by .set_parent, but u-boot does not seem to work well with
++			 * device tree references
++			 */
++			rk_clrsetreg(&cru->cru_misc_con, BIT(13), 0);
++
++			rk_clrsetreg(&cru->cru_clksel_con[27],
++				VOP_DCLK_DIV_MASK | VOP_DCLK_PLL_SEL_MASK,
++				VOP_DCLK_SEL_GPLL << VOP_DCLK_PLL_SEL_SHIFT |
++				(src_clk_div - 1) << VOP_DCLK_DIV_SHIFT);
++			break;
++		case ACLK_VOP:
++			rk_clrsetreg(&cru->cru_clksel_con[33],
++				VOP_ACLK_DIV_MASK | VOP_ACLK_PLL_SEL_MASK,
++				VOP_ACLK_SEL_GPLL << VOP_ACLK_PLL_SEL_SHIFT |
++				(src_clk_div - 1) << VOP_ACLK_DIV_SHIFT);
++			break;
++		default:
++			printf("%s: Unable to set vop clk#%ld\n", __func__, clk_id);
++			return -EINVAL;
++	}
++
++	return rk3228_vop_get_clk(cru, clk_id);
++}
++#endif
++
+ static ulong rk322x_clk_set_rate(struct clk *clk, ulong rate)
+ {
+ 	struct rk322x_clk_priv *priv = dev_get_priv(clk->dev);
+@@ -395,7 +465,29 @@ static ulong rk322x_clk_set_rate(struct clk *clk, ulong rate)
+ 		new_rate = rk322x_mac_set_clk(priv->cru, rate);
+ 		break;
+ 	case PLL_GPLL:
+-		return 0;
++	case PLL_CPLL:
++	case ACLK_PERI:
++	case HCLK_PERI:
++	case PCLK_PERI:
++	case ACLK_CPU:
++	case HCLK_CPU:
++	case PCLK_CPU:
++	case ARMCLK:
++	case SCLK_HDMI_PHY:
++	case PCLK_HDMI_PHY:
++	case DCLK_HDMI_PHY:
++	case SCLK_HDMI_HDCP:
++	case PCLK_HDMI_CTRL:
++	case SCLK_HDMI_CEC:
++		debug("Attempt to set clkid %ld, rate=%ld\n", clk->id, rate);
++		return rate;
++#ifndef CONFIG_SPL_BUILD
++	case ACLK_VOP:
++	case DCLK_VOP:
++		debug("VOP set rate clkid %ld, rate=%ld\n", clk->id, rate);
++		rate = rk3228_vop_set_clk(priv->cru, clk->id, rate);
++		break;
++#endif
+ 	default:
+ 		return -ENOENT;
+ 	}
+@@ -456,13 +548,44 @@ static int rk322x_gmac_extclk_set_parent(struct clk *clk, struct clk *parent)
+ 	return -EINVAL;
+ }
+ 
++static int rk322x_hdmi_set_parent(struct clk *clk, struct clk *parent)
++{
++	struct rk322x_clk_priv *priv = dev_get_priv(clk->dev);
++	const char *clock_output_name;
++	struct rk322x_cru *cru = priv->cru;
++	int ret;
++
++	ret = dev_read_string_index(parent->dev, "clock-output-names",
++				    parent->id, &clock_output_name);
++	if (ret < 0)
++		return -ENODATA;
++
++	if (!strcmp(clock_output_name, "hdmiphy_phy")) {
++		debug("%s: switching hdmi_sclk to hdmiphy_phy\n", __func__);
++		rk_clrsetreg(&cru->cru_misc_con, BIT(13), 0);
++		return 0;
++	} else if (!strcmp(clock_output_name, "xin24m")) {
++		debug("%s: switching hdmi_sclk to xin24m\n", __func__);
++		rk_clrsetreg(&cru->cru_misc_con, BIT(13), BIT(13));
++		return 0;
++	}
++
++	return -EINVAL;
++
++}
++
+ static int rk322x_clk_set_parent(struct clk *clk, struct clk *parent)
+ {
++
++	debug("%s, clkid=%ld, parent=%ld\n", __func__, clk->id, parent->id);
++
+ 	switch (clk->id) {
+ 	case SCLK_MAC:
+ 		return rk322x_gmac_set_parent(clk, parent);
+ 	case SCLK_MAC_EXTCLK:
+ 		return rk322x_gmac_extclk_set_parent(clk, parent);
++	case SCLK_HDMI_PHY:
++		return rk322x_hdmi_set_parent(clk, parent);
+ 	}
+ 
+ 	debug("%s: unsupported clk %ld\n", __func__, clk->id);
+@@ -520,7 +643,7 @@ static int rk322x_clk_bind(struct udevice *dev)
+ 		debug("Warning: software reset driver bind failed\n");
+ #endif
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static const struct udevice_id rk322x_clk_ids[] = {
+@@ -529,7 +652,7 @@ static const struct udevice_id rk322x_clk_ids[] = {
+ };
+ 
+ U_BOOT_DRIVER(rockchip_rk322x_cru) = {
+-	.name		= "clk_rk322x",
++	.name		= "rockchip_rk322x_cru",
+ 	.id		= UCLASS_CLK,
+ 	.of_match	= rk322x_clk_ids,
+ 	.priv_auto	= sizeof(struct rk322x_clk_priv),
+-- 
+Armbian
+

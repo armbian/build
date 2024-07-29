@@ -76,12 +76,12 @@ function extension_prepare_config__prepare_grub_standard() {
 	# shellcheck disable=SC2086
 	add_packages_to_image ${DISTRO_FIRMWARE_PACKAGES} ${DISTRO_KERNEL_PACKAGES} "${packages[@]}"
 
-	display_alert "${UEFI_GRUB} activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
+	display_alert "Extension: ${EXTENSION}: ${UEFI_GRUB} activating" "GRUB with SERIALCON=${SERIALCON}; timeout ${UEFI_GRUB_TIMEOUT}; BIOS=${UEFI_GRUB_TARGET_BIOS}" ""
 }
 
 function post_family_tweaks_bsp__remove_uboot_grub() {
 	if [[ "${UEFI_GRUB}" == "skip" ]]; then
-		display_alert "Skipping remove uboot from BSP" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
+		display_alert "Extension: ${EXTENSION}: Skipping remove uboot from BSP" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
 		return 0
 	fi
 
@@ -95,7 +95,7 @@ function post_family_tweaks_bsp__remove_uboot_grub() {
 
 function pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
 	if [[ "${UEFI_GRUB}" == "skip" ]]; then
-		display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
+		display_alert "Extension: ${EXTENSION}: Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
 		return 0
 	fi
 
@@ -106,9 +106,9 @@ function pre_umount_final_image__remove_uboot_initramfs_hook_grub() {
 
 pre_umount_final_image__install_grub() {
 	if [[ "${UEFI_GRUB}" == "skip" ]]; then
-		display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
+		display_alert "Extension: ${EXTENSION}: Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB}" "debug"
 		if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-			display_alert "Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB} - calling update_initramfs directly with IMAGE_INSTALLED_KERNEL_VERSION=${DISTRO_KERNEL_VER}" "debug"
+			display_alert "Extension: ${EXTENSION}: Skipping GRUB install" "due to UEFI_GRUB:${UEFI_GRUB} - calling update_initramfs directly with IMAGE_INSTALLED_KERNEL_VERSION=${DISTRO_KERNEL_VER}" "debug"
 			IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
 		fi
 		return 0
@@ -116,7 +116,7 @@ pre_umount_final_image__install_grub() {
 
 	configure_grub
 	local chroot_target="${MOUNT}"
-	display_alert "Installing bootloader" "GRUB" "info"
+	display_alert "Extension: ${EXTENSION}: Installing bootloader" "GRUB" "info"
 
 	# Ubuntu's grub (10_linux) will look for /boot/dtb, /boot/dtb-<version> ...
 	# ... unfortunately it does not account for the fact those might be a directories (as in Armbian's linux-dtb case).
@@ -141,7 +141,7 @@ pre_umount_final_image__install_grub() {
 	cp "${SRC}"/packages/blobs/splash/grub.png "${MOUNT}"/usr/share/images/grub/wallpaper.png
 
 	if [[ "${DISTRO_GENERIC_KERNEL}" == "yes" ]]; then
-		display_alert "Using Distro Generic Kernel" "${EXTENSION}: update_initramfs with IMAGE_INSTALLED_KERNEL_VERSION: ${DISTRO_KERNEL_VER}" "debug"
+		display_alert "Extension: ${EXTENSION}: Using Distro Generic Kernel" "${EXTENSION}: update_initramfs with IMAGE_INSTALLED_KERNEL_VERSION: ${DISTRO_KERNEL_VER}" "debug"
 		IMAGE_INSTALLED_KERNEL_VERSION="${DISTRO_KERNEL_VER}" update_initramfs "${MOUNT}"
 	fi
 
@@ -154,14 +154,14 @@ pre_umount_final_image__install_grub() {
 	GRUB_PRE_INSTALL
 
 	if [[ "${UEFI_GRUB_TARGET_BIOS}" != "" ]]; then
-		display_alert "Installing GRUB BIOS..." "${UEFI_GRUB_TARGET_BIOS} device ${LOOP}" ""
+		display_alert "Extension: ${EXTENSION}: Installing GRUB BIOS..." "${UEFI_GRUB_TARGET_BIOS} device ${LOOP}" ""
 		chroot_custom "$chroot_target" grub-install --target=${UEFI_GRUB_TARGET_BIOS} "${LOOP}" || {
 			exit_with_error "${install_grub_cmdline} failed!"
 		}
 	fi
 
 	local install_grub_cmdline="grub-install --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
-	display_alert "Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
+	display_alert "Extension: ${EXTENSION}: Installing GRUB EFI..." "${UEFI_GRUB_TARGET}" ""
 	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
 		exit_with_error "${install_grub_cmdline} failed!"
 	}
@@ -174,7 +174,7 @@ pre_umount_final_image__install_grub() {
 	# shellcheck disable=SC2016 # some wierd escaping going on there.
 	chroot_custom "$chroot_target" mkdir -pv '/dev/disk/by-uuid/"$(grub-probe --target=fs_uuid /)"' "||" true
 
-	display_alert "Creating GRUB config..." "grub-mkconfig" ""
+	display_alert "Extension: ${EXTENSION}: Creating GRUB config..." "grub-mkconfig" ""
 	chroot_custom "$chroot_target" update-grub || {
 		display_alert "GRUB grub-mkconfig failed" "update-grub failed; dumping full config" "err"
 
@@ -202,7 +202,7 @@ pre_umount_final_image__install_grub() {
 		SHOW_LOG=yes run_host_command_logged grep '/dev' "${chroot_target}/boot/grub/grub.cfg" "||" true
 		has_failed_sanity_check=1
 	else
-		display_alert "GRUB config sanity check passed" "no '/dev' found in grub.cfg" "info"
+		display_alert "Extension: ${EXTENSION}: GRUB config sanity check passed" "no '/dev' found in grub.cfg" "info"
 	fi
 
 	# - HAVE references to initrd, otherwise going to fail.
@@ -210,22 +210,22 @@ pre_umount_final_image__install_grub() {
 		display_alert "GRUB config sanity check failed" "no initrd.img references found in /boot/grub/grub.cfg" "err"
 		has_failed_sanity_check=1
 	else
-		display_alert "GRUB config sanity check passed" "initrd.img references found OK in /boot/grub/grub.cfg" "debug"
+		display_alert "Extension: ${EXTENSION}: GRUB config sanity check passed" "initrd.img references found OK in /boot/grub/grub.cfg" "debug"
 	fi
 
 	if [[ ${has_failed_sanity_check} -gt 0 ]]; then
-		exit_with_error "GRUB config sanity check failed, image will be unbootable; see above errors"
+		exit_with_error "Extension: ${EXTENSION}: GRUB config sanity check failed, image will be unbootable; see above errors"
 	fi
 
 	# Check and warn if the wallpaper was not picked up by grub-mkconfig, if UEFI_GRUB_TERMINAL==gfxterm
 	if [[ "${UEFI_GRUB_TERMINAL}" =~ "gfxterm" ]]; then
 		if ! grep -q "background_image" "${chroot_target}/boot/grub/grub.cfg"; then
-			display_alert "GRUB mkconfig problem" "no wallpaper detected in generated grub.cfg" "warn"
+			display_alert "Extension: ${EXTENSION}: GRUB mkconfig problem" "no wallpaper detected in generated grub.cfg" "warn"
 		else
-			display_alert "GRUB config sanity check passed" "wallpaper setup" "debug"
+			display_alert "Extension: ${EXTENSION}: GRUB config sanity check passed" "wallpaper setup" "debug"
 		fi
 	else
-		display_alert "GRUB config sanity check passed" "UEFI_GRUB_TERMINAL!=gfxterm, skipping wallpaper check" "debug"
+		display_alert "Extension: ${EXTENSION}: GRUB config sanity check passed" "UEFI_GRUB_TERMINAL!=gfxterm, skipping wallpaper check" "debug"
 	fi
 
 	# Remove host-side config.
@@ -237,7 +237,7 @@ pre_umount_final_image__install_grub() {
 
 pre_umount_final_image__900_export_kernel_and_initramfs() {
 	if [[ "${UEFI_EXPORT_KERNEL_INITRD}" == "yes" ]]; then
-		display_alert "Exporting Kernel and Initrd for" "kexec" "info"
+		display_alert "Extension: ${EXTENSION}: Exporting Kernel and Initrd for" "kexec" "info"
 		# this writes to ${DESTIMG} directly, since debootstrap.sh will move them later.
 		# capture the $MOUNT/boot/vmlinuz and initrd and send it out ${DESTIMG}
 		run_host_command_logged ls -la "${MOUNT}"/boot/vmlinuz-* "${MOUNT}"/boot/initrd.img-* || true
@@ -256,7 +256,7 @@ configure_grub() {
 
 	# Enable Armbian Wallpaper on GRUB
 	if [[ "${VENDOR}" == Armbian ]]; then
-		display_alert "Enabling" "Armbian Wallpaper on GRUB" "info"
+		display_alert "Extension: ${EXTENSION}: Enabling" "Armbian Wallpaper on GRUB" "info"
 		mkdir -p "${MOUNT}"/usr/share/desktop-base/
 		cat <<- grubWallpaper >> "${MOUNT}"/usr/share/desktop-base/grub_background.sh
 			WALLPAPER=/usr/share/images/grub/wallpaper.png
@@ -266,7 +266,7 @@ configure_grub() {
 		run_host_command_logged chmod -v +x "${MOUNT}"/usr/share/desktop-base/grub_background.sh
 	fi
 
-	display_alert "GRUB EFI kernel cmdline" "${GRUB_CMDLINE_LINUX_DEFAULT} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
+	display_alert "Extension: ${EXTENSION}: GRUB EFI kernel cmdline" "${GRUB_CMDLINE_LINUX_DEFAULT} distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
 	cat <<- grubCfgFrag >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 		GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT}"
 		GRUB_TIMEOUT_STYLE=menu                                  # Show the menu with Kernel options (Armbian or -generic)...

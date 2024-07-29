@@ -16,9 +16,8 @@ declare -g BLUETOOTH_HCIATTACH_PARAMS="-s 115200 /dev/ttyS6 bcm43xx 1500000" # F
 enable_extension "bluetooth-hciattach"                                       # Enable the bluetooth-hciattach extension
 
 # board-like config
-declare -g BOOT_SCENARIO="spl-blobs"                    # so we don't depend on defconfig naming convention
-declare -g BOOT_SOC="rk3588"                            # so we don't depend on defconfig naming convention
-declare -g BOOTCONFIG="rk3588_meko_defconfig" # generic ebv plus distro dtb hacks
+declare -g BOOT_SCENARIO="spl-blobs" # so we don't depend on defconfig naming convention
+declare -g BOOT_SOC="rk3588"         # so we don't depend on defconfig naming convention
 declare -g IMAGE_PARTITION_TABLE="gpt"
 
 # Uses default DDR_BLOB and BL31_BLOB from rockchip64_common.

@@ -1,4 +1,3 @@
-
 # enable output-vhdx, so image files for wsl2 can be used directly as Hyper-V virtual machines as well.
 enable_extension "image-output-vhdx" # Use .vhdx dynamic output, for Hyper-V (not Azure 1024-aligned static vhd)
 

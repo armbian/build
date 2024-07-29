@@ -1,25 +1,16 @@
 # Rockchip RK3588j Octa core 4GB-32GB eMMC GBE HDMI HDMI-IN PCIe SATA USB3 WiFi 4G 5G
 BOARD_NAME="Firefly ITX-3588J"
 BOARDFAMILY="rockchip-rk3588"
+BOOT_SOC="rk3588"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="vendor"
-FULL_DESKTOP="yes"
-BOOT_LOGO="desktop"
+BOOTCONFIG="rk3588_defconfig"
 BOOT_FDT_FILE="rockchip/rk3588-firefly-itx-3588j.dtb"
-SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS02,1500000 console=tty0"
-BOOT_SOC="rk3588"
+BOOT_LOGO="desktop"
+FULL_DESKTOP="yes"
 IMAGE_PARTITION_TABLE="gpt"
 
-function post_family_config__firefly-itx-3588j_use_vendor_uboot() {
-	BOOTCONFIG="rk3588_defconfig"
-	BOOTSOURCE='https://github.com/150balbes/u-boot-rk'
-	BOOTBRANCH='branch:rk3588'
-	BOOTDIR="u-boot-${BOARD}"
-	BOOTPATCHDIR="u-boot-firefly-itx-3588j"
-}
-
-function post_family_tweaks_bsp__firefly-itx-3588j() {
+function post_family_tweaks_bsp__firefly_itx_3588j() {
 	display_alert "$BOARD" "Installing rk3588-bluetooth.service" "info"
 
 	# Bluetooth on this board is handled by a Broadcom (AP6275PR3) chip and requires
@@ -33,7 +24,14 @@ function post_family_tweaks_bsp__firefly-itx-3588j() {
 	return 0
 }
 
-function post_family_tweaks__firefly-itx-3588j_enable_services() {
+function post_family_tweaks__firefly_itx_3588j_naming_audios() {
+	display_alert "$BOARD" "Renaming firefly-itx-3588j audios" "info"
+	mkdir -p $SDCARD/etc/udev/rules.d/
+	echo 'SUBSYSTEM=="sound", ENV{ID_PATH}=="platform-hdmi0-sound", ENV{SOUND_DESCRIPTION}="HDMI0 Audio"' > $SDCARD/etc/udev/rules.d/90-naming-audios.rules
+	return 0
+}
+
+function post_family_tweaks__firefly_itx_3588j_enable_services() {
 	display_alert "$BOARD" "Enabling rk3588-bluetooth.service" "info"
 	chroot_sdcard systemctl enable rk3588-bluetooth.service
 	return 0

@@ -1,0 +1,199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paolo Sabatino <paolo.sabatino@gmail.com>
+Date: Sun, 30 Jun 2024 17:37:39 +0200
+Subject: rk3228 hdmi driver
+
+---
+ drivers/video/rockchip/Makefile      |   1 +
+ drivers/video/rockchip/rk3228_hdmi.c | 168 ++++++++++
+ 2 files changed, 169 insertions(+)
+
+diff --git a/drivers/video/rockchip/Makefile b/drivers/video/rockchip/Makefile
+index 111111111111..222222222222 100644
+--- a/drivers/video/rockchip/Makefile
++++ b/drivers/video/rockchip/Makefile
+@@ -10,6 +10,7 @@ obj-$(CONFIG_ROCKCHIP_RK3328) += rk3328_vop.o
+ obj-$(CONFIG_ROCKCHIP_RK3399) += rk3399_vop.o
+ obj-$(CONFIG_DISPLAY_ROCKCHIP_EDP) += rk_edp.o
+ obj-$(CONFIG_DISPLAY_ROCKCHIP_LVDS) += rk_lvds.o
++obj-hdmi-$(CONFIG_ROCKCHIP_RK322X) += rk3228_hdmi.o
+ obj-hdmi-$(CONFIG_ROCKCHIP_RK3288) += rk3288_hdmi.o
+ obj-hdmi-$(CONFIG_ROCKCHIP_RK3328) += rk3328_hdmi.o
+ obj-hdmi-$(CONFIG_ROCKCHIP_RK3399) += rk3399_hdmi.o
+diff --git a/drivers/video/rockchip/rk3228_hdmi.c b/drivers/video/rockchip/rk3228_hdmi.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/drivers/video/rockchip/rk3228_hdmi.c
+@@ -0,0 +1,168 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Copyright (c) 2023 Edgeble AI Technologies Pvt. Ltd.
++ */
++#include <common.h>
++#include <clk.h>
++#include <display.h>
++#include <reset.h>
++#include <linux/delay.h>
++#include <dm.h>
++#include <dw_hdmi.h>
++#include <asm/io.h>
++#include "rk_hdmi.h"
++
++#define HIWORD_UPDATE(val, mask)	(val | (mask) << 16)
++
++#define RK3228_GRF_SOC_CON2	0x0408
++#define RK3228_GRF_SOC_CON6	0x0418
++
++#define RK3228_HDMI_HPD_VSEL	BIT(6)
++#define RK3228_HDMI_SDA_VSEL	BIT(5)
++#define RK3228_HDMI_SCL_VSEL	BIT(4)
++
++#define RK3228_HDMI_SDAIN_MSK	BIT(14)
++#define RK3228_HDMI_SCLIN_MSK	BIT(13)
++
++static int rk3228_hdmi_enable(struct udevice *dev, int panel_bpp,
++			      const struct display_timing *edid)
++{
++	struct rk_hdmi_priv *priv = dev_get_priv(dev);
++
++	return dw_hdmi_enable(&priv->hdmi, edid);
++}
++
++static int rk3228_dw_hdmi_phy_cfg(struct dw_hdmi *hdmi, uint pixclock)
++{
++	struct rk_hdmi_priv *priv = container_of(hdmi, struct rk_hdmi_priv, hdmi);
++	int ret;
++
++	ret = generic_phy_init(&priv->phy);
++	if (ret < 0) {
++		printf("failed to init phy (ret=%d)\n", ret);
++		return ret;
++	}
++
++	ret = generic_phy_power_on(&priv->phy);
++	if (ret) {
++		printf("failed to power on hdmi phy (ret=%d)\n", ret);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void rk3228_dw_hdmi_setup_hpd(struct dw_hdmi *hdmi)
++{
++	struct rk_hdmi_priv *priv = container_of(hdmi, struct rk_hdmi_priv, hdmi);
++	void *grf = priv->grf;
++
++	/*
++	 * Undocumented registers, write them to get correct access to EDID
++	 */
++	writel(HIWORD_UPDATE(RK3228_HDMI_HPD_VSEL | RK3228_HDMI_SDA_VSEL | RK3228_HDMI_SCL_VSEL,
++		RK3228_HDMI_HPD_VSEL | RK3228_HDMI_SDA_VSEL | RK3228_HDMI_SCL_VSEL),
++		grf + RK3228_GRF_SOC_CON6);
++
++	writel(HIWORD_UPDATE(RK3228_HDMI_SDAIN_MSK | RK3228_HDMI_SCLIN_MSK,
++		RK3228_HDMI_SDAIN_MSK | RK3228_HDMI_SCLIN_MSK),
++		grf + RK3228_GRF_SOC_CON2);
++
++}
++
++static const struct dw_hdmi_phy_ops dw_hdmi_rk3228_phy_ops = {
++	.phy_set = rk3228_dw_hdmi_phy_cfg,
++	.setup_hpd = rk3228_dw_hdmi_setup_hpd,
++};
++
++static int rk3228_hdmi_of_to_plat(struct udevice *dev)
++{
++	struct rk_hdmi_priv *priv = dev_get_priv(dev);
++	struct dw_hdmi *hdmi = &priv->hdmi;
++
++	hdmi->i2c_clk_high = 0x71;
++	hdmi->i2c_clk_low = 0x76;
++
++	rk_hdmi_of_to_plat(dev);
++
++	hdmi->ops = &dw_hdmi_rk3228_phy_ops;
++
++	return 0;
++}
++
++static int rk3228_hdmi_probe(struct udevice *dev)
++{
++	struct rk_hdmi_priv *priv = dev_get_priv(dev);
++	int ret;
++
++	ret = generic_phy_get_by_name(dev, "hdmi", &priv->phy);
++	if (ret) {
++		printf("failed to get hdmi phy\n");
++		return ret;
++	};
++
++	ret = rk_hdmi_probe(dev);
++	if (ret) {
++		printf("failed to probe rk hdmi\n");
++		return ret;
++	}
++
++	return 0;
++}
++
++/*
++ * Asserting and deasserting the HDMI resets allows the vendor kernel
++ * to turn on HDMI when necessary. Mainline kernel does not need it though
++ */
++static int rk3228_hdmi_remove(struct udevice *dev)
++{
++	struct rk_hdmi_priv *priv = dev_get_priv(dev);
++	struct reset_ctl_bulk resets;
++	int ret;
++
++	debug("%s\n", __func__);
++
++	dw_hdmi_disable(&priv->hdmi);
++
++	ret = generic_phy_power_off(&priv->phy);
++	if (ret) {
++		printf("failed to on hdmi phy (ret=%d)\n", ret);
++	}
++
++	ret = reset_get_bulk(dev, &resets);
++	if (ret) {
++		printf("failed to get resets (ret=%d)\n", ret);
++		return ret;
++	}
++
++	reset_assert_bulk(&resets);
++	udelay(20);
++
++	reset_deassert_bulk(&resets);
++	udelay(20);
++
++	return 0;
++
++}
++
++static const struct dm_display_ops rk3228_hdmi_ops = {
++	.read_edid = rk_hdmi_read_edid,
++	.enable = rk3228_hdmi_enable,
++};
++
++static const struct udevice_id rk3228_hdmi_ids[] = {
++	{ .compatible = "rockchip,rk3228-dw-hdmi" },
++	{ }
++};
++
++U_BOOT_DRIVER(rk3228_hdmi_rockchip) = {
++	.name = "rk3228_hdmi_rockchip",
++	.id = UCLASS_DISPLAY,
++	.of_match = rk3228_hdmi_ids,
++	.ops = &rk3228_hdmi_ops,
++	.of_to_plat = rk3228_hdmi_of_to_plat,
++	.probe = rk3228_hdmi_probe,
++	.priv_auto	= sizeof(struct rk_hdmi_priv),
++	.remove = rk3228_hdmi_remove,
++	.flags	= DM_FLAG_OS_PREPARE
++};
+-- 
+Armbian
+

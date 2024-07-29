@@ -2,7 +2,7 @@
 BOARD_NAME="Station M3"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="chainsx"
-KERNEL_TARGET="legacy,vendor"
+KERNEL_TARGET="vendor"
 BOOTCONFIG="rock-5a-rk3588s_defconfig"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
@@ -13,7 +13,7 @@ IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="station-m3" # This _only_ used for uefi-edk2-rk3588 extension
 
 function post_family_tweaks__station_m3() {
-    display_alert "$BOARD" "Installing board tweaks" "info"
+	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
 	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/

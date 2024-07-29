@@ -21,8 +21,8 @@ function post_family_config_branch_edge__coolpi-cm5_use_mainline_uboot() {
 	declare -g BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git" # Kwiboo U-Boot
 	unset BOOTBRANCH
 	unset BOOTPATCHDIR
-	declare -g BOOTBRANCH_BOARD="tag:v2024.07-rc2"                        # commit: 52835266d3e as of v2024.07-rc2
-	declare -g BOOTDIR="u-boot-${BOARD}"                                  # do not share u-boot directory
+	declare -g BOOTBRANCH_BOARD="tag:v2024.07"
+	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
 
@@ -35,4 +35,3 @@ function post_family_config_branch_edge__coolpi-cm5_use_mainline_uboot() {
 		flashcp -v -p "$1/u-boot-rockchip-spi.bin" /dev/mtd0
 	}
 }
-

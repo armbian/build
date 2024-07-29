@@ -91,8 +91,9 @@ fi
 mkopts[btrfs]='-f'
 mkopts[f2fs]='-f'
 
-mountopts[ext4]='defaults,noatime,commit=600,errors=remount-ro,x-gvfs-hide	0	1'
-mountopts[btrfs]='defaults,noatime,commit=600,compress=lzo,x-gvfs-hide			0	2'
+# @TODO source these options from one source, this is mostly defined in partioning.sh
+mountopts[ext4]='defaults,noatime,commit=120,errors=remount-ro,x-gvfs-hide	0	1'
+mountopts[btrfs]='defaults,noatime,commit=120,compress=lzo,x-gvfs-hide			0	2'
 mountopts[f2fs]='defaults,noatime,x-gvfs-hide	0	2'
 
 # Create boot and root file system #
@@ -241,8 +242,9 @@ create_armbian()
 	if [[ $1 == *nand* ]]; then
 		echo "Finishing installation to NAND." >> $logfile
 		REMOVESDTXT="and remove SD to boot from NAND"
+		# @TODO source these fstab options from one source, this is mostly defined in partioning.sh
 		echo "$1 /boot vfat	defaults 0 0" >> "${TempDir}"/rootfs/etc/fstab
-		echo "$2 / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1" >> "${TempDir}"/rootfs/etc/fstab
+		echo "$2 / ext4 defaults,noatime,commit=120,errors=remount-ro 0 1" >> "${TempDir}"/rootfs/etc/fstab
 		dialog --title "$title" --backtitle "$backtitle" --infobox "\nConverting kernel ... few seconds." 5 60
 		mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d \
 			/boot/zImage "${TempDir}"/bootfs/uImage >/dev/null 2>&1
@@ -658,6 +660,24 @@ check_partitions()
 	[[ -n "$2" ]] && INCLUDE=" | grep $2" && diskcheck=$2
 	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}'"
 	AvailablePartitions=$(eval $CMD)
+
+	dialog --yes-label "Proceed" --no-label 'Skip' --title "$title" --backtitle "$backtitle" --yesno "\nIt is highly recommended to wipe all partitions on the destination disk\n \n/dev/$diskcheck\n\nand leave installer to make them!" 10 75
+
+	# wiping destination to make sure we don't run into issues
+	if [[ $? -eq 0 ]]; then
+		exec 3>&1
+			ACKNOWLEDGEMENT=$(dialog --colors --nocancel --backtitle "$BACKTITLE" --no-collapse --title " Warning " \
+			--clear \--radiolist "\nTHIS OPERATION WILL WIPE ALL DATA ON DRIVE:\n\n/dev/$diskcheck\n " 0 56 4 "Yes, I understand" "" off       2>&1 1>&3)
+		exec 3>&-
+		if [[ "${ACKNOWLEDGEMENT}" == "Yes, I understand" ]]; then
+			dd if=/dev/zero of=/dev/${diskcheck} bs=1M count=10 >> $logfile 2>&1
+			partprobe -s "/dev/${diskcheck}" >> $logfile 2>&1
+			echo -e 'mktable gpt\nmkpart primary ext4 0% 100%\nquit' | sudo parted "/dev/${diskcheck}" >> $logfile 2>&1
+			sudo partprobe -s "/dev/${diskcheck}" >> $logfile 2>&1
+			sleep 2
+		fi
+	fi
+
 	if [[ -z $AvailablePartitions ]]; then
 		# Consider brand new devices or devices with a wiped partition table
 		if [[ -z $(blkid /dev/$diskcheck) ]]; then
@@ -790,10 +810,14 @@ main()
 	IFS="'"
 	options=()
 	if [[ -n $emmccheck ]]; then
-		ichip='eMMC';
+		if [[ "${emmccheck#*mmcblk}" == "0" ]]; then
+			ichip='SD card'
+		else
+			ichip='eMMC'
+		fi
 		dest_boot=$emmccheck'p1'
 		dest_root=$emmccheck'p1'
-	else
+	elif [ -b /dev/nand1 ] && [ -b /dev/nand2 ]; then
 		ichip='legacy SUNXI NAND'
 		dest_boot='/dev/nand1'
 		dest_root='/dev/nand2'
@@ -808,14 +832,30 @@ main()
 
 	else
 
-		[[ -n $sduuid && -n $diskcheck ]]					&& options+=(1 'Boot from SD - system on SATA, USB or NVMe')
-		[[ -n $emmccheck ]] 						&& options+=(2 "Boot from $ichip - system on $ichip")
-		[[ -n $emmccheck && -n $diskcheck ]] 				&& options+=(3 "Boot from $ichip - system on SATA, USB or NVMe")
-		[[ -n $mtdcheck ]] 						&& options+=(4 'Boot from MTD Flash - system on SATA, USB or NVMe')
-		[[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]]	&& options+=(5 'Install/Update the bootloader on SD/eMMC')
-		[[ ( $LINUXFAMILY == odroidxu4 || $LINUXFAMILY == mvebu* \
-		|| $LINUXFAMILY == mt7623 ) && \
-		( -b /dev/mmcblk0boot0 || -b /dev/mmcblk1boot0 ) ]]		&& options+=(6 'Install/Update the bootloader on special eMMC partition')
+		[[ -n $sduuid && -n $diskcheck ]]		&& options+=(1 'Boot from SD - system on SATA, USB or NVMe')
+		[[ -n $emmccheck ]] 				&& options+=(2 "Boot from $ichip - system on $ichip")
+		[[ -n $emmccheck && -n $diskcheck ]] 		&& options+=(3 "Boot from $ichip - system on SATA, USB or NVMe")
+		[[ -n $mtdcheck ]] 				&& options+=(4 'Boot from MTD Flash - system on SATA, USB or NVMe')
+
+		if [[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]]; then
+			if [ "${root_partition_device#*mmcblk}" == "0" ]; then
+				rootchip='SD card'
+			else
+				rootchip='eMMC'
+			fi
+			options+=(5 "Install/Update the bootloader on $rootchip (${root_partition_device})")
+                fi
+
+		BOOTPART=$(find /dev -name 'mmcblk*boot0' -and -type b)
+		if [ "${BOOTPART/boot0}" != "${root_partition_device}" ]; then
+
+			options+=(6 "Install/Update the bootloader on eMMC (${BOOTPART/boot0/})")
+
+		elif [ -b /dev/mmcblk0 ]; then
+			BOOTPART=/dev/mmcblk0
+			options+=(6 "Install/Update the bootloader on SD card (${BOOTPART/boot0/})")
+		fi
+
 		[[ -n $mtdcheck && \
 		$(type -t write_uboot_platform_mtd) == function ]] 		&& options+=(7 'Install/Update the bootloader on MTD Flash')
 	fi
@@ -840,11 +880,11 @@ main()
 			2)
 				title="$ichip install"
 				command='Power off'
-				show_warning "This script will erase your $ichip. Continue?"
+				show_warning "This script will erase your $ichip ($emmccheck).\n     Continue?"
 				if [[ -n $emmccheck ]]; then
 					umount_device "$emmccheck"
 					format_emmc "$emmccheck"
-				else
+				elif [ -b /dev/nand ]; then
 					umount_device '/dev/nand'
 					format_nand
 				fi
@@ -854,11 +894,11 @@ main()
 				title="$ichip boot | USB/SATA/NVMe root install"
 				command='Power off'
 				check_partitions
-				show_warning "This script will erase your $ichip and $DISK_ROOT_PART. Continue?"
+				show_warning "This script will erase your ${ichip} ($emmccheck)\n    and $DISK_ROOT_PART. Continue?"
 				if [[ -n $emmccheck ]]; then
 					umount_device "$emmccheck"
 					format_emmc "$emmccheck"
-				else
+				elif [ -b /dev/nand ]; then
 					umount_device '/dev/nand'
 					format_nand
 				fi
@@ -887,20 +927,15 @@ main()
 				fi
 				;;
 			5)
-				show_warning 'This script will update the bootloader on SD/eMMC. Continue?'
+				show_warning 'This script will update the bootloader on ${root_partition_device}.\n\n    Continue?'
 				write_uboot_platform "$DIR" "${root_partition_device}"
 				update_bootscript
 				dialog --backtitle "$backtitle" --title 'Writing bootloader' --msgbox '\n          Done.' 7 30
 				return
 				;;
 			6)
-				if [[ -b /dev/mmcblk0boot0 ]]; then
-					BOOTPART='/dev/mmcblk0'
-				elif [[ -b /dev/mmcblk1boot0 ]]; then
-					BOOTPART='/dev/mmcblk1'
-				fi
-				show_warning "This script will update the bootloader on $BOOTPART. Continue?"
-				write_uboot_platform "$DIR" $BOOTPART
+				show_warning "This script will update the bootloader on ${BOOTPART/boot0/}.\n\n    Continue?"
+				write_uboot_platform "$DIR" ${BOOTPART/boot0/}
 				echo 'Done'
 				return
 				;;

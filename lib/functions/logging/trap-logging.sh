@@ -97,7 +97,7 @@ function trap_handler_cleanup_logging() {
 	fi
 
 	# Export Markdown assets, but not if in GHA and GHA_EXPORT_MD_SUMMARY != yes
-	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]] && [[ "${GHA_EXPORT_MD_SUMMARY:-no}" != "yes" ]]; then
+	if [[ "${CI}" == "true" ]] && ([[ "${GITHUB_ACTIONS}" != "true" ]] || [[ "${GHA_EXPORT_MD_SUMMARY:-no}" != "yes" ]]); then
 		display_alert "Not exporting Markdown logs to GitHub Actions" "GITHUB_ACTIONS: '${GITHUB_ACTIONS}', GHA_EXPORT_MD_SUMMARY: '${GHA_EXPORT_MD_SUMMARY}'" "debug"
 	else
 		# Export Markdown logs.

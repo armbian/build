@@ -1,0 +1,52 @@
+From 3d499ba2dce4ac8716f2c9bb07f66f45d0555a19 Mon Sep 17 00:00:00 2001
+From: The-going <48602507+The-going@users.noreply.github.com>
+Date: Fri, 12 Jul 2024 14:20:15 +0300
+Subject: arm: patch: call 'patch_unmap' after flushing dcache and icache
+
+Problem: Linux kernel hangs in early boot on 32-bit ARM platform,
+when ftrace 4-byte "mcount" function call location for
+"_raw_spin_unlock_irqrestore" function straddles icache lines.
+
+1. The ftrace location for "_raw_spin_unlock_irqrestore" is NOT
+   4-byte aligned and 4 bytes at this location straddle the instruction
+   cache line (0x20) boundaries.
+
+The problem is present for (cross-compiler) GCC 10, 11, 12.
+It does not happen when the kernel is compiled with GCC 9,
+even when condition (1) is satisfied.
+
+Detailed description:
+https://forum.armbian.com/topic/41339-linux-image-legacy-sunxi2451-kernel-6192-is-broken-stuck-at-starting-kernel/?do=findComment&comment=196528
+
+Author: @mikhailai
+---
+ arch/arm/kernel/patch.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/kernel/patch.c b/arch/arm/kernel/patch.c
+index e9e828b6bb30..ce0fd3aeb575 100644
+--- a/arch/arm/kernel/patch.c
++++ b/arch/arm/kernel/patch.c
+@@ -101,11 +101,18 @@ void __kprobes __patch_text_real(void *addr, unsigned int insn, bool remap)
+ 
+ 	if (waddr != addr) {
+ 		flush_kernel_vmap_range(waddr, twopage ? size / 2 : size);
+-		patch_unmap(FIX_TEXT_POKE0, &flags);
+ 	}
+ 
+ 	flush_icache_range((uintptr_t)(addr),
+ 			   (uintptr_t)(addr) + size);
++
++	/* Can only call 'patch_unmap' after flushing dcache and icache,
++	 * because it calls 'raw_spin_unlock_irqrestore', but that may
++	 * happen to be the very function we're currently patching
++	 * (as it happens during the ftrace init).
++	 */
++	if (waddr != addr)
++		patch_unmap(FIX_TEXT_POKE0, &flags);
+ }
+ 
+ static int __kprobes patch_text_stop_machine(void *data)
+-- 
+2.35.3
+

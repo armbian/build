@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ## Hooks
 function extension_metadata_ready__499_display_docs_generation_start_info() {
-	display_alert "Generating hook documentation and sample extension"
+	display_alert "Extension: ${EXTENSION}: Generating hook documentation and sample extension"
 }
 
 function extension_metadata_ready__docs_markdown() {

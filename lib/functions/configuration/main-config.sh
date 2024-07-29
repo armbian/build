@@ -62,7 +62,9 @@ function do_main_configuration() {
 	declare -g SKIP_EXTERNAL_TOOLCHAINS="${SKIP_EXTERNAL_TOOLCHAINS:-yes}" # don't use any external toolchains, by default.
 
 	# Network stack to use, default to network-manager; configuration can override this.
+	# Will be made read-only further down.
 	declare -g NETWORKING_STACK="${NETWORKING_STACK}"
+
 	# If empty, default depending on BUILD_MINIMAL; if yes, use systemd-networkd; if no, use network-manager.
 	if [[ -z "${NETWORKING_STACK}" ]]; then
 		display_alert "NETWORKING_STACK not set" "Calculating defaults" "debug"
@@ -78,27 +80,6 @@ function do_main_configuration() {
 	else
 		display_alert "NETWORKING_STACK is preset during configuration" "NETWORKING_STACK: ${NETWORKING_STACK}" "debug"
 	fi
-	# Now make it read-only, as further changes would make the whole thing inconsistent.
-	# Individual networking extensions should _check_ this to make there's no spurious enablement.
-	display_alert "Using NETWORKING_STACK" "NETWORKING_STACK: ${NETWORKING_STACK}" "info"
-	declare -g -r NETWORKING_STACK="${NETWORKING_STACK}"
-
-	# Now enable extensions according to the configuration.
-	case "${NETWORKING_STACK}" in
-		"network-manager")
-			display_alert "Adding networking extensions" "net-network-manager, net-chrony" "info"
-			enable_extension "net-network-manager"
-			enable_extension "net-chrony"
-			;;
-		"systemd-networkd")
-			display_alert "Adding networking extensions" "net-systemd-networkd, net-systemd-timesyncd" "info"
-			enable_extension "net-systemd-networkd"
-			enable_extension "net-systemd-timesyncd"
-			;;
-		"none" | *)
-			display_alert "NETWORKING_STACK=${NETWORKING_STACK}" "Not adding networking extensions" "info"
-			;;
-	esac
 
 	# Timezone
 	if [[ -f /etc/timezone ]]; then # Timezone for target is taken from host, if it exists.
@@ -270,7 +251,8 @@ function do_main_configuration() {
 
 	case $GHCR_MIRROR in
 		dockerproxy)
-			declare -g -r GHCR_SOURCE='ghcr.dockerproxy.com'
+			GHCR_MIRROR_ADDRESS="${GHCR_MIRROR_ADDRESS:-"ghcr.dockerproxy.com"}"
+			declare -g -r GHCR_SOURCE=$GHCR_MIRROR_ADDRESS
 			;;
 		*)
 			declare -g -r GHCR_SOURCE='ghcr.io'
@@ -293,13 +275,41 @@ function do_main_configuration() {
 	# single ext4 partition is the default and preferred configuration
 	#BOOTFS_TYPE=''
 
-	## ------ Sourcing family config ---------------------------
+	###
+	### ------------------- Sourcing family config -------------------
+	###
 	source_family_config_and_arch
 
 	if [[ "$HAS_VIDEO_OUTPUT" == "no" ]]; then
 		PLYMOUTH="no"
 		[[ $BUILD_DESKTOP != "no" ]] && exit_with_error "HAS_VIDEO_OUTPUT is set to no. So we shouldn't build desktop environment"
 	fi
+
+	# Make NETWORKING_STACK read-only, as further changes would make the whole thing inconsistent.
+	# But only after family config to allow family to change it (post-family hooks CANNOT change NETWORKING_STACK since the hook is running after this).
+	# Individual networking extensions should _check_ this to make there's no spurious enablement.
+	display_alert "Using NETWORKING_STACK" "NETWORKING_STACK: ${NETWORKING_STACK}" "info"
+	declare -g -r NETWORKING_STACK="${NETWORKING_STACK}"
+
+	# Now enable extensions according to the configuration.
+	case "${NETWORKING_STACK}" in
+		"network-manager")
+			display_alert "Adding networking extensions" "net-network-manager, net-chrony" "info"
+			enable_extension "net-network-manager"
+			enable_extension "net-chrony"
+			;;
+		"systemd-networkd")
+			display_alert "Adding networking extensions" "net-systemd-networkd, net-systemd-timesyncd" "info"
+			enable_extension "net-systemd-networkd"
+			enable_extension "net-systemd-timesyncd"
+			;;
+		"none")
+			display_alert "NETWORKING_STACK=${NETWORKING_STACK}" "Not adding networking extensions" "info"
+			;;
+		*)
+			display_alert "NETWORKING_STACK=${NETWORKING_STACK}" "Invalid value? Not adding networking extensions" "wrn"
+			;;
+	esac
 
 	## Extensions: at this point we've sourced all the config files that will be used,
 	##             and (hopefully) not yet invoked any extension methods. So this is the perfect

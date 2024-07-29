@@ -1,0 +1,138 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Patrick Yavitz <pyavitz@armbian.com>
+Date: Sat, 22 Jun 2024 08:00:24 -0400
+Subject: drivers: irqchip: irq-sifive-plic.c
+
+Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
+---
+ drivers/irqchip/irq-sifive-plic.c | 60 ++++++++--
+ 1 file changed, 53 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/irqchip/irq-sifive-plic.c b/drivers/irqchip/irq-sifive-plic.c
+index 111111111111..222222222222 100644
+--- a/drivers/irqchip/irq-sifive-plic.c
++++ b/drivers/irqchip/irq-sifive-plic.c
+@@ -38,27 +38,39 @@
+  * We always hardwire it to one in Linux.
+  */
+ #define PRIORITY_BASE			0
+-#define     PRIORITY_PER_ID		4
++#define PRIORITY_PER_ID			4
+ 
+ /*
+  * Each hart context has a vector of interrupt enable bits associated with it.
+  * There's one bit for each interrupt source.
+  */
++#ifdef CONFIG_SOC_SPACEMIT
++#define PENDING_BASE			0x1000
++#define CONTEXT_ENABLE_BASE		0x2080
++#define CONTEXT_ENABLE_SIZE		0x100
++#else
+ #define CONTEXT_ENABLE_BASE		0x2000
+-#define     CONTEXT_ENABLE_SIZE		0x80
++#define CONTEXT_ENABLE_SIZE		0x80
++#endif
+ 
+ /*
+  * Each hart context has a set of control registers associated with it.  Right
+  * now there's only two: a source priority threshold over which the hart will
+  * take an interrupt, and a register to claim interrupts.
+  */
++#ifdef CONFIG_SOC_SPACEMIT
++#define CONTEXT_BASE			0x201000
++#define CONTEXT_SIZE			0x2000
++#else
+ #define CONTEXT_BASE			0x200000
+-#define     CONTEXT_SIZE		0x1000
+-#define     CONTEXT_THRESHOLD		0x00
+-#define     CONTEXT_CLAIM		0x04
++#define CONTEXT_SIZE			0x1000
++#endif
+ 
+-#define	PLIC_DISABLE_THRESHOLD		0x7
+-#define	PLIC_ENABLE_THRESHOLD		0
++#define CONTEXT_THRESHOLD		0x00
++#define CONTEXT_CLAIM			0x04
++
++#define PLIC_DISABLE_THRESHOLD		0x7
++#define PLIC_ENABLE_THRESHOLD		0
+ 
+ #define PLIC_QUIRK_EDGE_INTERRUPT	0
+ 
+@@ -100,7 +112,19 @@ static void __plic_toggle(void __iomem *enable_base, int hwirq, int enable)
+ static void plic_toggle(struct plic_handler *handler, int hwirq, int enable)
+ {
+ 	raw_spin_lock(&handler->enable_lock);
++
++#ifdef CONFIG_SOC_SPACEMIT
++	if (!enable)
++		writel(hwirq, handler->hart_base + CONTEXT_CLAIM);
++#endif
++
+ 	__plic_toggle(handler->enable_base, hwirq, enable);
++
++#ifdef CONFIG_SOC_SPACEMIT
++	if (enable)
++		writel(hwirq, handler->hart_base + CONTEXT_CLAIM);
++#endif
++
+ 	raw_spin_unlock(&handler->enable_lock);
+ }
+ 
+@@ -193,7 +217,11 @@ static struct irq_chip plic_edge_chip = {
+ 	.irq_set_affinity = plic_set_affinity,
+ #endif
+ 	.irq_set_type	= plic_irq_set_type,
++#ifdef CONFIG_SOC_SPACEMIT
++	.flags		= IRQCHIP_AFFINITY_PRE_STARTUP | IRQCHIP_ENABLE_WAKEUP_ON_SUSPEND | IRQCHIP_SKIP_SET_WAKE,
++#else
+ 	.flags		= IRQCHIP_AFFINITY_PRE_STARTUP,
++#endif
+ };
+ 
+ static struct irq_chip plic_chip = {
+@@ -207,7 +235,11 @@ static struct irq_chip plic_chip = {
+ 	.irq_set_affinity = plic_set_affinity,
+ #endif
+ 	.irq_set_type	= plic_irq_set_type,
++#ifdef CONFIG_SOC_SPACEMIT
++	.flags		= IRQCHIP_AFFINITY_PRE_STARTUP | IRQCHIP_ENABLE_WAKEUP_ON_SUSPEND | IRQCHIP_SKIP_SET_WAKE,
++#else
+ 	.flags		= IRQCHIP_AFFINITY_PRE_STARTUP,
++#endif
+ };
+ 
+ static int plic_irq_set_type(struct irq_data *d, unsigned int type)
+@@ -439,15 +471,29 @@ static int __init __plic_init(struct device_node *node,
+ 
+ 		cpumask_set_cpu(cpu, &priv->lmask);
+ 		handler->present = true;
++#ifdef CONFIG_SOC_SPACEMIT
++		handler->hart_base = priv->regs + CONTEXT_BASE +
++			hartid * CONTEXT_SIZE;
++#else
+ 		handler->hart_base = priv->regs + CONTEXT_BASE +
+ 			i * CONTEXT_SIZE;
++#endif
+ 		raw_spin_lock_init(&handler->enable_lock);
++#ifdef CONFIG_SOC_SPACEMIT
++		handler->enable_base = priv->regs + CONTEXT_ENABLE_BASE +
++			hartid * CONTEXT_ENABLE_SIZE;
++#else
+ 		handler->enable_base = priv->regs + CONTEXT_ENABLE_BASE +
+ 			i * CONTEXT_ENABLE_SIZE;
++#endif
+ 		handler->priv = priv;
+ done:
+ 		for (hwirq = 1; hwirq <= nr_irqs; hwirq++) {
+ 			plic_toggle(handler, hwirq, 0);
++			#ifdef CONFIG_SOC_SPACEMIT
++			/* clear pending, which maybe triggered by uboot */
++			writel(0, priv->regs + PENDING_BASE + (hwirq/32)*4);
++			#endif
+ 			writel(1, priv->regs + PRIORITY_BASE +
+ 				  hwirq * PRIORITY_PER_ID);
+ 		}
+-- 
+Armbian
+
