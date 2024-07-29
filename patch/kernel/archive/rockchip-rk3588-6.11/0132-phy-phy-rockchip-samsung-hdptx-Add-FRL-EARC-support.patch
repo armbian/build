@@ -1,7 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 07fd1529770701e8c18d9030cd70344b8e2472a5 Mon Sep 17 00:00:00 2001
 From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
 Date: Mon, 5 Feb 2024 01:38:48 +0200
-Subject: phy: phy-rockchip-samsung-hdptx: Add FRL & EARC support
+Subject: [PATCH 2/2] [WIP] phy: phy-rockchip-samsung-hdptx: Add FRL & EARC
+ support
 
 For upstreaming, this requires extending the standard PHY API to support
 HDMI configuration options [1].
@@ -10,37 +11,40 @@ Currently, the bus_width PHY attribute is used to pass clock rate and
 flags for 10-bit color depth, FRL and EARC. This is done by the HDMI
 bridge driver via phy_set_bus_width().
 
-[1]: https://lore.kernel.org/all/59d5595a24bbcca897e814440179fa2caf3dff38.1707040881.git.Sandor.yu@nxp.com/
+[1]: https://lore.kernel.org/all/20240306101625.795732-3-alexander.stein@ew.tq-group.com/
 
 Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
 ---
- drivers/phy/rockchip/phy-rockchip-samsung-hdptx.c | 434 +++++++++-
- 1 file changed, 431 insertions(+), 3 deletions(-)
+ .../phy/rockchip/phy-rockchip-samsung-hdptx.c | 428 +++++++++++++++++-
+ 1 file changed, 426 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/phy/rockchip/phy-rockchip-samsung-hdptx.c b/drivers/phy/rockchip/phy-rockchip-samsung-hdptx.c
-index 111111111111..222222222222 100644
+index 9f084697dd05..45db96be3f64 100644
 --- a/drivers/phy/rockchip/phy-rockchip-samsung-hdptx.c
 +++ b/drivers/phy/rockchip/phy-rockchip-samsung-hdptx.c
-@@ -190,6 +190,12 @@
- #define LN3_TX_SER_RATE_SEL_HBR2	BIT(3)
+@@ -193,6 +193,10 @@
  #define LN3_TX_SER_RATE_SEL_HBR3	BIT(2)
  
-+#define HDMI20_MAX_RATE			600000000
+ #define HDMI20_MAX_RATE			600000000
 +#define DATA_RATE_MASK			0xFFFFFFF
 +#define COLOR_DEPTH_MASK		BIT(31)
 +#define HDMI_MODE_MASK			BIT(30)
 +#define HDMI_EARC_MASK			BIT(29)
-+
+ 
  struct lcpll_config {
  	u32 bit_rate;
- 	u8 lcvco_mode_en;
-@@ -272,6 +278,25 @@ struct rk_hdptx_phy {
+@@ -276,6 +280,7 @@ struct rk_hdptx_phy {
  	struct clk_bulk_data *clks;
  	int nr_clks;
  	struct reset_control_bulk_data rsts[RST_MAX];
 +	bool earc_en;
-+};
-+
+ 
+ 	/* clk provider */
+ 	struct clk_hw hw;
+@@ -284,6 +289,24 @@ struct rk_hdptx_phy {
+ 	atomic_t usage_count;
+ };
+ 
 +static const struct lcpll_config lcpll_cfg[] = {
 +	{ 48000000, 1, 0, 0, 0x7d, 0x7d, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 2,
 +	  0, 0x13, 0x18, 1, 0, 0x20, 0x0c, 1, 0, },
@@ -57,10 +61,12 @@ index 111111111111..222222222222 100644
 +	  0, 0, 0x20, 0x0c, 1, 0x0e, 0, 0, },
 +	{ 9000000, 0x7d, 0x7d, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1,
 +	  0, 0, 0x20, 0x0c, 1, 0x0e, 0, 0, },
- };
- 
++};
++
  static const struct ropll_config ropll_tmds_cfg[] = {
-@@ -449,6 +474,73 @@ static const struct reg_sequence rk_hdtpx_tmds_cmn_init_seq[] = {
+ 	{ 5940000, 124, 124, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 62, 1, 16, 5, 0,
+ 	  1, 1, 0, 0x20, 0x0c, 1, 0x0e, 0, 0, },
+@@ -459,6 +482,73 @@ static const struct reg_sequence rk_hdtpx_tmds_cmn_init_seq[] = {
  	REG_SEQ0(CMN_REG(009b), 0x00),
  };
  
@@ -134,7 +140,7 @@ index 111111111111..222222222222 100644
  static const struct reg_sequence rk_hdtpx_common_sb_init_seq[] = {
  	REG_SEQ0(SB_REG(0114), 0x00),
  	REG_SEQ0(SB_REG(0115), 0x00),
-@@ -472,6 +564,17 @@ static const struct reg_sequence rk_hdtpx_tmds_lntop_lowbr_seq[] = {
+@@ -482,6 +572,17 @@ static const struct reg_sequence rk_hdtpx_tmds_lntop_lowbr_seq[] = {
  	REG_SEQ0(LNTOP_REG(0205), 0x1f),
  };
  
@@ -152,7 +158,7 @@ index 111111111111..222222222222 100644
  static const struct reg_sequence rk_hdtpx_common_lane_init_seq[] = {
  	REG_SEQ0(LANE_REG(0303), 0x0c),
  	REG_SEQ0(LANE_REG(0307), 0x20),
-@@ -550,6 +653,40 @@ static const struct reg_sequence rk_hdtpx_tmds_lane_init_seq[] = {
+@@ -560,6 +661,40 @@ static const struct reg_sequence rk_hdtpx_tmds_lane_init_seq[] = {
  	REG_SEQ0(LANE_REG(0606), 0x1c),
  };
  
@@ -193,7 +199,7 @@ index 111111111111..222222222222 100644
  static bool rk_hdptx_phy_is_rw_reg(struct device *dev, unsigned int reg)
  {
  	switch (reg) {
-@@ -651,6 +788,47 @@ static int rk_hdptx_post_enable_pll(struct rk_hdptx_phy *hdptx)
+@@ -661,6 +796,47 @@ static int rk_hdptx_post_enable_pll(struct rk_hdptx_phy *hdptx)
  	return 0;
  }
  
@@ -241,7 +247,7 @@ index 111111111111..222222222222 100644
  static void rk_hdptx_phy_disable(struct rk_hdptx_phy *hdptx)
  {
  	u32 val;
-@@ -680,6 +858,99 @@ static void rk_hdptx_phy_disable(struct rk_hdptx_phy *hdptx)
+@@ -690,6 +866,99 @@ static void rk_hdptx_phy_disable(struct rk_hdptx_phy *hdptx)
  	regmap_write(hdptx->grf, GRF_HDPTX_CON0, val);
  }
  
@@ -341,7 +347,7 @@ index 111111111111..222222222222 100644
  static bool rk_hdptx_phy_clk_pll_calc(unsigned int data_rate,
  				      struct ropll_config *cfg)
  {
-@@ -755,9 +1026,13 @@ static bool rk_hdptx_phy_clk_pll_calc(unsigned int data_rate,
+@@ -765,9 +1034,13 @@ static bool rk_hdptx_phy_clk_pll_calc(unsigned int data_rate,
  static int rk_hdptx_ropll_tmds_cmn_config(struct rk_hdptx_phy *hdptx,
  					  unsigned int rate)
  {
@@ -354,9 +360,9 @@ index 111111111111..222222222222 100644
 +	if (color_depth)
 +		rate = rate * 10 / 8;
  
- 	for (i = 0; i < ARRAY_SIZE(ropll_tmds_cfg); i++)
- 		if (rate == ropll_tmds_cfg[i].bit_rate) {
-@@ -813,6 +1088,9 @@ static int rk_hdptx_ropll_tmds_cmn_config(struct rk_hdptx_phy *hdptx,
+ 	hdptx->rate = rate * 100;
+ 
+@@ -825,6 +1098,9 @@ static int rk_hdptx_ropll_tmds_cmn_config(struct rk_hdptx_phy *hdptx,
  	regmap_update_bits(hdptx->regmap, CMN_REG(0086), PLL_PCG_POSTDIV_SEL_MASK,
  			   FIELD_PREP(PLL_PCG_POSTDIV_SEL_MASK, cfg->pms_sdiv));
  
@@ -366,7 +372,7 @@ index 111111111111..222222222222 100644
  	regmap_update_bits(hdptx->regmap, CMN_REG(0086), PLL_PCG_CLK_EN,
  			   PLL_PCG_CLK_EN);
  
-@@ -853,9 +1131,146 @@ static int rk_hdptx_ropll_tmds_mode_config(struct rk_hdptx_phy *hdptx,
+@@ -852,9 +1128,146 @@ static int rk_hdptx_ropll_tmds_mode_config(struct rk_hdptx_phy *hdptx,
  	rk_hdptx_multi_reg_write(hdptx, rk_hdtpx_common_lane_init_seq);
  	rk_hdptx_multi_reg_write(hdptx, rk_hdtpx_tmds_lane_init_seq);
  
@@ -510,10 +516,10 @@ index 111111111111..222222222222 100644
 +	return rk_hdptx_post_power_up(hdptx);
 +}
 +
- static int rk_hdptx_phy_power_on(struct phy *phy)
+ static int rk_hdptx_phy_consumer_get(struct rk_hdptx_phy *hdptx,
+ 				     unsigned int rate)
  {
- 	struct rk_hdptx_phy *hdptx = phy_get_drvdata(phy);
-@@ -865,7 +1280,7 @@ static int rk_hdptx_phy_power_on(struct phy *phy)
+@@ -922,11 +1335,22 @@ static int rk_hdptx_phy_power_on(struct phy *phy)
  	 * from the HDMI bridge driver until phy_configure_opts_hdmi
  	 * becomes available in the PHY API.
  	 */
@@ -522,11 +528,7 @@ index 111111111111..222222222222 100644
  
  	dev_dbg(hdptx->dev, "%s bus_width=%x rate=%u\n",
  		__func__, bus_width, rate);
-@@ -876,7 +1291,20 @@ static int rk_hdptx_phy_power_on(struct phy *phy)
- 		return ret;
- 	}
  
--	ret = rk_hdptx_ropll_tmds_mode_config(hdptx, rate);
 +	if (bus_width & HDMI_EARC_MASK)
 +		hdptx->earc_en = true;
 +	else
@@ -534,16 +536,13 @@ index 111111111111..222222222222 100644
 +
 +	if (bus_width & HDMI_MODE_MASK) {
 +		if (rate > 24000000)
-+			ret = rk_hdptx_lcpll_frl_mode_config(hdptx, bus_width);
-+		else
-+			ret = rk_hdptx_ropll_frl_mode_config(hdptx, bus_width);
-+	} else {
-+		ret = rk_hdptx_ropll_tmds_mode_config(hdptx, rate);
++			return rk_hdptx_lcpll_frl_mode_config(hdptx, bus_width);
++		return rk_hdptx_ropll_frl_mode_config(hdptx, bus_width);
 +	}
 +
+ 	ret = rk_hdptx_phy_consumer_get(hdptx, rate);
  	if (ret)
- 		pm_runtime_put(hdptx->dev);
- 
+ 		return ret;
 -- 
-Armbian
+2.45.2
 
