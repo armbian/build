@@ -17,18 +17,18 @@ function post_family_config__vendor_uboot_mekotronics() {
 
 # Conditional hook to allow experimenting with this against legacy/vendor branches
 if [[ "${MEKO_USE_MAINLINE_UBOOT:-"no"}" == "yes" ]]; then
-	# Mainline u-boot with generic rk3588 support from next branch upstream (2024-03-31) or Kwiboo's tree
+	# Mainline u-boot with generic rk3588 support; no pci/usb/ethernet but should work SD/eMMC and UMS/Gadget mode
 
 	function post_family_config__meko_use_mainline_uboot() {
 		display_alert "$BOARD" "mainline (next branch) u-boot overrides for $BOARD / $BRANCH" "info"
 
 		declare -g BOOTCONFIG="generic-rk3588_defconfig" # MAINLINE U-BOOT OVERRIDE
 
-		declare -g BOOTDELAY=1 # Wait for UART interrupt to enter UMS/RockUSB mode etc
+		declare -g BOOTDELAY=1 # Wait for UART interrupt
 
-		BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git"
-		BOOTBRANCH="branch:rk3xxx-2024.04"  # commit:31522fe7b3c7733313e1c5eb4e340487f6000196 as of 2024-04-01
-		BOOTPATCHDIR="v2024.04-mekotronics" # empty
+		BOOTSOURCE="https://github.com/u-boot/u-boot.git"
+		BOOTBRANCH="tag:v2025.01"
+		BOOTPATCHDIR="v2025.01-mekotronics" # empty
 
 		BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 
@@ -39,5 +39,7 @@ if [[ "${MEKO_USE_MAINLINE_UBOOT:-"no"}" == "yes" ]]; then
 		function write_uboot_platform() {
 			dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 		}
+
+		declare -g PLYMOUTH="no" # Disable plymouth as that only causes more confusion
 	}
 fi
