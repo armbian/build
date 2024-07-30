@@ -36,6 +36,13 @@ function kernel_config() {
 	if [[ "${KERNEL_CONFIGURE}" == "yes" ]]; then
 		# Start interactive config menu unless running rewrite-kernel-config
 		if [[ "${ARMBIAN_COMMAND}" != "rewrite-kernel-config" ]]; then
+			# Run pre-config script. It may contain instructions like:
+			# scripts/config --enable CONFIG_DEBUG_KERNEL
+			declare pre_config_script_path="$USERPATCHES_PATH/kernel/pre-config.sh"
+			display_alert "Running user's pre-config script" "$pre_config_script_path" "info"
+			if [[ -f $pre_config_script_path ]]; then
+				source $pre_config_script_path
+			fi
 			# This piece is interactive, no logging
 			display_alert "Starting (interactive) kernel ${KERNEL_MENUCONFIG:-menuconfig}" "${LINUXCONFIG}" "debug"
 			run_kernel_make_dialog "${KERNEL_MENUCONFIG:-menuconfig}"
