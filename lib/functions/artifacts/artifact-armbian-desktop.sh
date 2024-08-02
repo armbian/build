@@ -59,7 +59,7 @@ function artifact_armbian-desktop_prepare_version() {
 
 	artifact_name="armbian-${RELEASE}-desktop-${DESKTOP_ENVIRONMENT}"
 	artifact_type="deb"
-	artifact_deb_repo="${RELEASE}"
+	artifact_deb_repo="extra/${RELEASE}-desktop"
 	artifact_deb_arch="all"
 
 	artifact_map_packages=(["armbian-desktop"]="${artifact_name}")
