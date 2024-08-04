@@ -140,6 +140,9 @@ function post_install_kernel_debs__3d() {
 		EOF
 	fi
 
+	# KDE neon downgrades base-files for some reason. This prevents tacking it
+	do_with_retries 3 chroot_sdcard apt-mark hold base-files
+
 	display_alert "Updating sources list, after kisak PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
@@ -148,6 +151,9 @@ function post_install_kernel_debs__3d() {
 
 	display_alert "Upgrading Mesa packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get dist-upgrade
+
+	# KDE neon downgrade hack undo
+	do_with_retries 3 chroot_sdcard apt-mark unhold base-files
 
 	# Disable wayland flag for XFCE
 	#if [[ "${DESKTOP_ENVIRONMENT}" == "xfce" ]]; then
