@@ -2,7 +2,7 @@
 BOARD_NAME="ArmSoM Sige5"
 BOARDFAMILY="rk35xx"
 BOOTCONFIG="armsom-sige5-rk3576_defconfig"
-KERNEL_TARGET="rk3576"
+KERNEL_TARGET="vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3576-armsom-sige5.dtb"
@@ -10,6 +10,7 @@ BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 SRC_EXTLINUX="yes"
 MODULES_BLACKLIST="panfrost"
+BOARD_MAINTAINER=""
 
 function post_family_config_branch_vendor__armsom-sige7_use_vendor_uboot() {
         display_alert "$BOARD" "vendor u-boot overrides for $BOARD / $BRANCH" "info"
