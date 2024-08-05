@@ -297,7 +297,7 @@ function adaptative_prepare_host_dependencies() {
 	host_dependencies+=("libgnutls28-dev")
 
 	# Noble and later releases do not carry "python3-distutils" https://docs.python.org/3.10/whatsnew/3.10.html#distutils-deprecated
-	if [[ "noble" == *"${host_release}"* ]]; then
+	if [[ "$host_release" =~ ^(noble|wilma)$ ]]; then
 		display_alert "python3-distutils not available on host release '${host_release}'" "distutils was deprecated with Python 3.12" "debug"
 	else
 		host_dependencies+=("python3-distutils")

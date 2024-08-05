@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Date: Wed, 16 Jun 2021 21:07:50 +0200
+Subject: usb: common: usb-conn-gpio: Fall back to polling the GPIO
+
+On some SoCs (for example: Amlogic Meson8/8b/8m2 and GXBB) the ID GPIO
+cannot generate an interrupt. Fall back to polling the GPIO(s) in that
+case.
+
+Signed-off-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+---
+ drivers/usb/common/usb-conn-gpio.c | 76 ++++++----
+ 1 file changed, 48 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/usb/common/usb-conn-gpio.c b/drivers/usb/common/usb-conn-gpio.c
+index 111111111111..222222222222 100644
+--- a/drivers/usb/common/usb-conn-gpio.c
++++ b/drivers/usb/common/usb-conn-gpio.c
+@@ -23,6 +23,7 @@
+ 
+ #define USB_GPIO_DEB_MS		20	/* ms */
+ #define USB_GPIO_DEB_US		((USB_GPIO_DEB_MS) * 1000)	/* us */
++#define USB_GPIO_POLL_MS	1000
+ 
+ #define USB_CONN_IRQF	\
+ 	(IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT)
+@@ -45,6 +46,23 @@ struct usb_conn_info {
+ 	bool initial_detection;
+ };
+ 
++static void usb_conn_queue_dwork(struct usb_conn_info *info,
++				 unsigned long delay)
++{
++	queue_delayed_work(system_power_efficient_wq, &info->dw_det, delay);
++}
++
++static void usb_conn_gpio_start_polling(struct usb_conn_info *info)
++{
++	usb_conn_queue_dwork(info, msecs_to_jiffies(USB_GPIO_POLL_MS));
++}
++
++static bool usb_conn_gpio_needs_polling(struct usb_conn_info *info)
++{
++	/* We need to poll if one of the GPIOs cannot generate an IRQ. */
++	return info->id_irq < 0 || info->vbus_irq < 0;
++}
++
+ /*
+  * "DEVICE" = VBUS and "HOST" = !ID, so we have:
+  * Both "DEVICE" and "HOST" can't be set as active at the same time
+@@ -88,7 +106,10 @@ static void usb_conn_detect_cable(struct work_struct *work)
+ 		usb_role_string(info->last_role), usb_role_string(role), id, vbus);
+ 
+ 	if (!info->initial_detection && info->last_role == role) {
+-		dev_warn(info->dev, "repeated role: %s\n", usb_role_string(role));
++		if (usb_conn_gpio_needs_polling(info))
++			usb_conn_gpio_start_polling(info);
++		else
++			dev_warn(info->dev, "repeated role: %s\n", usb_role_string(role));
+ 		return;
+ 	}
+ 
+@@ -114,12 +135,9 @@ static void usb_conn_detect_cable(struct work_struct *work)
+ 			regulator_is_enabled(info->vbus) ? "enabled" : "disabled");
+ 
+ 	power_supply_changed(info->charger);
+-}
+ 
+-static void usb_conn_queue_dwork(struct usb_conn_info *info,
+-				 unsigned long delay)
+-{
+-	queue_delayed_work(system_power_efficient_wq, &info->dw_det, delay);
++	if (usb_conn_gpio_needs_polling(info))
++		usb_conn_gpio_start_polling(info);
+ }
+ 
+ static irqreturn_t usb_conn_isr(int irq, void *dev_id)
+@@ -226,34 +244,34 @@ static int usb_conn_probe(struct platform_device *pdev)
+ 	if (info->id_gpiod) {
+ 		info->id_irq = gpiod_to_irq(info->id_gpiod);
+ 		if (info->id_irq < 0) {
+-			dev_err(dev, "failed to get ID IRQ\n");
+-			ret = info->id_irq;
+-			goto put_role_sw;
+-		}
+-
+-		ret = devm_request_threaded_irq(dev, info->id_irq, NULL,
+-						usb_conn_isr, USB_CONN_IRQF,
+-						pdev->name, info);
+-		if (ret < 0) {
+-			dev_err(dev, "failed to request ID IRQ\n");
+-			goto put_role_sw;
++			dev_info(dev,
++				 "failed to get ID IRQ - falling back to polling\n");
++		} else {
++			ret = devm_request_threaded_irq(dev, info->id_irq,
++							NULL, usb_conn_isr,
++							USB_CONN_IRQF,
++							pdev->name, info);
++			if (ret < 0) {
++				dev_err(dev, "failed to request ID IRQ\n");
++				goto put_role_sw;
++			}
+ 		}
+ 	}
+ 
+ 	if (info->vbus_gpiod) {
+ 		info->vbus_irq = gpiod_to_irq(info->vbus_gpiod);
+ 		if (info->vbus_irq < 0) {
+-			dev_err(dev, "failed to get VBUS IRQ\n");
+-			ret = info->vbus_irq;
+-			goto put_role_sw;
+-		}
+-
+-		ret = devm_request_threaded_irq(dev, info->vbus_irq, NULL,
+-						usb_conn_isr, USB_CONN_IRQF,
+-						pdev->name, info);
+-		if (ret < 0) {
+-			dev_err(dev, "failed to request VBUS IRQ\n");
+-			goto put_role_sw;
++			dev_info(dev,
++				 "failed to get VBUS IRQ - falling back to polling\n");
++		} else {
++			ret = devm_request_threaded_irq(dev, info->vbus_irq,
++							NULL, usb_conn_isr,
++							USB_CONN_IRQF,
++							pdev->name, info);
++			if (ret < 0) {
++				dev_err(dev, "failed to request VBUS IRQ\n");
++				goto put_role_sw;
++			}
+ 		}
+ 	}
+ 
+@@ -300,6 +318,8 @@ static int __maybe_unused usb_conn_suspend(struct device *dev)
+ 	if (info->vbus_gpiod)
+ 		disable_irq(info->vbus_irq);
+ 
++	cancel_delayed_work_sync(&info->dw_det);
++
+ 	pinctrl_pm_select_sleep_state(dev);
+ 
+ 	return 0;
+-- 
+Armbian
+
