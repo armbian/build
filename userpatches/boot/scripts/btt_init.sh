@@ -2,11 +2,12 @@
 
 sudo chown biqu:biqu /home/biqu/ -R
 # sudo ntpdate stdtime.gov.hk
+
 sync
 
 cd /boot/scripts
 
-./extend_fs.sh &
+#./extend_fs.sh &
 
 ./system_cfg.sh &
 

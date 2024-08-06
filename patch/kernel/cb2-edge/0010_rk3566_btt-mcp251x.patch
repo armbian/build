@@ -1,0 +1,136 @@
+diff -ruN a/drivers/net/can/spi/mcp251x.c b/drivers/net/can/spi/mcp251x.c
+--- a/drivers/net/can/spi/mcp251x.c	2024-08-02 16:13:45.000000000 +0800
++++ b/drivers/net/can/spi/mcp251x.c	2024-07-31 18:57:26.000000000 +0800
+@@ -237,6 +237,7 @@
+ 	u8 *spi_rx_buf;
+ 
+ 	struct sk_buff *tx_skb;
++	int tx_len;
+ 
+ 	struct workqueue_struct *wq;
+ 	struct work_struct tx_work;
+@@ -249,8 +250,6 @@
+ #define AFTER_SUSPEND_POWER 4
+ #define AFTER_SUSPEND_RESTART 8
+ 	int restart_tx;
+-	bool tx_busy;
+-
+ 	struct regulator *power;
+ 	struct regulator *transceiver;
+ 	struct clk *clk;
+@@ -273,13 +272,13 @@
+ {
+ 	struct mcp251x_priv *priv = netdev_priv(net);
+ 
+-	if (priv->tx_skb || priv->tx_busy)
++	if (priv->tx_skb || priv->tx_len)
+ 		net->stats.tx_errors++;
+ 	dev_kfree_skb(priv->tx_skb);
+-	if (priv->tx_busy)
++	if (priv->tx_len)
+ 		can_free_echo_skb(priv->net, 0, NULL);
+ 	priv->tx_skb = NULL;
+-	priv->tx_busy = false;
++	priv->tx_len = 0;
+ }
+ 
+ /* Note about handling of error return of mcp251x_spi_trans: accessing
+@@ -601,6 +600,9 @@
+ 	gpio->ngpio = ARRAY_SIZE(mcp251x_gpio_names);
+ 	gpio->names = mcp251x_gpio_names;
+ 	gpio->can_sleep = true;
++#ifdef CONFIG_OF_GPIO
++	gpio->of_node = priv->spi->dev.of_node;
++#endif
+ 
+ 	return devm_gpiochip_add_data(&priv->spi->dev, gpio, priv);
+ }
+@@ -654,9 +656,9 @@
+ 		((eid >> SIDL_EID_SHIFT) & SIDL_EID_MASK);
+ 	buf[TXBEID8_OFF] = GET_BYTE(eid, 1);
+ 	buf[TXBEID0_OFF] = GET_BYTE(eid, 0);
+-	buf[TXBDLC_OFF] = (rtr << DLC_RTR_SHIFT) | frame->len;
+-	memcpy(buf + TXBDAT_OFF, frame->data, frame->len);
+-	mcp251x_hw_tx_frame(spi, buf, frame->len, tx_buf_idx);
++	buf[TXBDLC_OFF] = (rtr << DLC_RTR_SHIFT) | frame->can_dlc;
++	memcpy(buf + TXBDAT_OFF, frame->data, frame->can_dlc);
++	mcp251x_hw_tx_frame(spi, buf, frame->can_dlc, tx_buf_idx);
+ 
+ 	/* use INSTRUCTION_RTS, to avoid "repeated frame problem" */
+ 	priv->spi_tx_buf[0] = INSTRUCTION_RTS(1 << tx_buf_idx);
+@@ -730,13 +732,12 @@
+ 			frame->can_id |= CAN_RTR_FLAG;
+ 	}
+ 	/* Data length */
+-	frame->len = can_cc_dlc2len(buf[RXBDLC_OFF] & RXBDLC_LEN_MASK);
+-	if (!(frame->can_id & CAN_RTR_FLAG)) {
+-		memcpy(frame->data, buf + RXBDAT_OFF, frame->len);
++	frame->can_dlc =  can_cc_dlc2len(buf[RXBDLC_OFF] & RXBDLC_LEN_MASK);
++	memcpy(frame->data, buf + RXBDAT_OFF, frame->can_dlc);
+ 
+-		priv->net->stats.rx_bytes += frame->len;
+-	}
+ 	priv->net->stats.rx_packets++;
++	priv->net->stats.rx_bytes += frame->can_dlc;
++
+ 
+ 	netif_rx(skb);
+ }
+@@ -784,7 +785,7 @@
+ 	struct mcp251x_priv *priv = netdev_priv(net);
+ 	struct spi_device *spi = priv->spi;
+ 
+-	if (priv->tx_skb || priv->tx_busy) {
++	if (priv->tx_skb || priv->tx_len) {
+ 		dev_warn(&spi->dev, "hard_xmit called while tx busy\n");
+ 		return NETDEV_TX_BUSY;
+ 	}
+@@ -1004,10 +1005,10 @@
+ 		} else {
+ 			frame = (struct can_frame *)priv->tx_skb->data;
+ 
+-			if (frame->len > CAN_FRAME_MAX_DATA_LEN)
+-				frame->len = CAN_FRAME_MAX_DATA_LEN;
++			if (frame->can_dlc > CAN_FRAME_MAX_DATA_LEN)
++				frame->can_dlc = CAN_FRAME_MAX_DATA_LEN;
+ 			mcp251x_hw_tx(spi, frame, 0);
+-			priv->tx_busy = true;
++			priv->tx_len = 1 + frame->can_dlc;
+ 			can_put_echo_skb(priv->tx_skb, net, 0, 0);
+ 			priv->tx_skb = NULL;
+ 		}
+@@ -1143,7 +1144,7 @@
+ 			if (new_state >= CAN_STATE_ERROR_WARNING &&
+ 			    new_state <= CAN_STATE_BUS_OFF)
+ 				priv->can.can_stats.error_warning++;
+-			fallthrough;
++			// fallthrough;
+ 		case CAN_STATE_ERROR_WARNING:
+ 			if (new_state >= CAN_STATE_ERROR_PASSIVE &&
+ 			    new_state <= CAN_STATE_BUS_OFF)
+@@ -1185,11 +1186,11 @@
+ 			break;
+ 
+ 		if (intf & CANINTF_TX) {
+-			if (priv->tx_busy) {
+-				net->stats.tx_packets++;
+-				net->stats.tx_bytes += can_get_echo_skb(net, 0,
+-									NULL);
+-				priv->tx_busy = false;
++			net->stats.tx_packets++;
++			net->stats.tx_bytes += priv->tx_len - 1;
++			if (priv->tx_len) {
++				can_get_echo_skb(net, 0, NULL);
++				priv->tx_len = 0;
+ 			}
+ 			netif_wake_queue(net);
+ 		}
+@@ -1216,7 +1217,7 @@
+ 
+ 	priv->force_quit = 0;
+ 	priv->tx_skb = NULL;
+-	priv->tx_busy = false;
++	priv->tx_len = 0;
+ 
+ 	if (!dev_fwnode(&spi->dev))
+ 		flags = IRQF_TRIGGER_FALLING;

@@ -39,15 +39,15 @@ compile_armbian-plymouth-theme() {
 	# this requires `imagemagick`
 
 	run_host_command_logged convert -resize 256x256 \
-		"${SRC}"/packages/plymouth-theme-armbian/armbian-logo.png \
+		"${SRC}"/packages/plymouth-theme-armbian/watermark.png \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/bgrt-fallback.png
 
 	run_host_command_logged convert -resize 52x52 \
 		"${SRC}"/packages/plymouth-theme-armbian/spinner.gif \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/throbber-%04d.png
 
-	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/watermark.png \
-		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
+#	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/watermark.png \
+#		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
 	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/{bullet,capslock,entry,keyboard,keymap-render,lock}.png \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
@@ -55,7 +55,7 @@ compile_armbian-plymouth-theme() {
 	run_host_command_logged cp "${SRC}"/packages/plymouth-theme-armbian/armbian.plymouth \
 		"${tmp_dir}/${plymouth_theme_armbian_dir}"/usr/share/plymouth/themes/armbian/
 
-	fakeroot_dpkg_deb_build "${tmp_dir}/${plymouth_theme_armbian_dir}" "${DEB_STORAGE}"
+	dpkg_deb_build "${tmp_dir}/${plymouth_theme_armbian_dir}" "armbian-plymouth-theme"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

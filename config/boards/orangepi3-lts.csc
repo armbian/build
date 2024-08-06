@@ -1,22 +1,23 @@
 # Allwinner H6 quad core 2GB RAM SoC GBE USB3
 BOARD_NAME="Orange Pi 3 LTS"
 BOARDFAMILY="sun50iw6"
+BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_3_lts_defconfig"
-KERNEL_TARGET="current,edge"
-MODULES="sprdbt_tty sprdwl_ng"
-MODULES_BLACKLIST_LEGACY="bcmdhd"
-ATFBRANCH="tag:v2.2"
+BOOT_LOGO="desktop"
+KERNEL_TARGET="legacy,current,edge"
+KERNEL_TEST_TARGET="current,edge"
+CRUSTCONFIG="orangepi_3_lts_defconfig"
 
-function post_family_tweaks_bsp__orangepi3-lts_BSP() {
-    display_alert "Installing BSP firmware and fixups"
+enable_extension "uwe5622-allwinner"
 
-	if [[ $BRANCH == legacy ]]; then
+function post_family_config__opi3lts_set_asoundstate_file() {
+	declare -g ASOUND_STATE='asound.state.sun50iw6-current'
+}
 
-		# Bluetooth for most of others (custom patchram is needed only in legacy)
-		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
-		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
-
+function post_family_tweaks__opi3lts_configure_pulse_audio() {
+	if [[ $BUILD_DESKTOP == yes ]]; then
+		sed -i "s/auto-profiles = yes/auto-profiles = no/" ${SDCARD}/usr/share/pulseaudio/alsa-mixer/profile-sets/default.conf
+		echo "load-module module-alsa-sink device=hw:0,0 sink_name=AudioCodec-Playback sink_properties=\"device.description='Audio Codec'\"" >> ${SDCARD}/etc/pulse/default.pa
+		echo "load-module module-alsa-sink device=hw:1,0 sink_name=HDMI-Playback sink_properties=\"device.description='HDMI Audio'\"" >> ${SDCARD}/etc/pulse/default.pa
 	fi
-
-	return 0
 }

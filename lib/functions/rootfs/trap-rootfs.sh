@@ -31,7 +31,10 @@ function prepare_rootfs_build_params_and_trap() {
 	declare use_tmpfs=no                      # by default
 	if [[ ${FORCE_USE_RAMDISK} == no ]]; then # do not use, even if it fits
 		display_alert "Not using tmpfs for rootfs" "due to FORCE_USE_RAMDISK=no" "info"
-	elif [[ ${FORCE_USE_RAMDISK} == yes || ${available_physical_memory_mib} -gt ${tmpfs_estimated_size} ]]; then # use, either force or fits
+	elif [[ ${FORCE_USE_RAMDISK} == yes ]]; then # use, either force or fits
+		use_tmpfs=yes
+		display_alert "Using tmpfs for rootfs build" "FORCE_USE_RAMDISK forced to \"yes\"" "info"
+	elif [[ ${available_physical_memory_mib} -gt ${tmpfs_estimated_size} ]]; then
 		use_tmpfs=yes
 		display_alert "Using tmpfs for rootfs build" "RAM available: ${available_physical_memory_mib}MiB > ${tmpfs_estimated_size}MiB estimated" "info"
 	else

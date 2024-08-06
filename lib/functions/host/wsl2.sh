@@ -26,6 +26,7 @@ function check_windows_wsl2() {
 }
 
 function wsl2_pester_user_for_terminal() {
+	[[ ! -t 0 ]] && return 0                    # return 0 if user is not on a terminal
 	[[ "x${SSH_CLIENT}x" != "xx" ]] && return 0 # not if being accessed over SSH
 	[[ "x${WT_SESSION}x" != "xx" ]] && return 0 # WT_SESSION from Windows Terminal # From info in https://stackoverflow.com/questions/59733731/how-to-detect-if-running-in-the-new-windows-terminal
 
@@ -44,6 +45,7 @@ function wsl2_detect_type() {
 	declare unameOut
 	unameOut="$(uname -a)"
 	case "${unameOut}" in
+		*"-wsl2-x86"* | *"-wsl2-arm64"*) wsl2_type="WSL2" ;; # using armbian-built WSL2 kernel
 		*"microsoft-standard-WSL2"*) wsl2_type="WSL2" ;;
 		*"Microsoft"*) wsl2_type="WSL1" ;; # @TODO: do these catch Azure? send a PR!
 		*"microsoft"*) wsl2_type="WSL2" ;;

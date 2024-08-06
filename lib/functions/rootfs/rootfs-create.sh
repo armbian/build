@@ -62,6 +62,37 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	# @TODO: one day: https://gitlab.mister-muffin.de/josch/mmdebstrap/src/branch/main/mmdebstrap
 
+	# Obtain the latest debootstrap (which is just a shell script) from Debian or Ubuntu's git at the latest development version
+	declare debootstrap_bin="" debootstrap_version="" debootstrap_wanted_dir="" debootstrap_default_script=""
+
+	display_alert "Preparing debootstrap" "for ${DISTRIBUTION}'s ${RELEASE}" "info"
+	case "${DISTRIBUTION}" in
+		Ubuntu)
+			GIT_FIXED_WORKDIR="debootstrap-ubuntu-devel" fetch_from_repo "https://git.launchpad.net/ubuntu/+source/debootstrap" "debootstrap-ubuntu-devel" "tag:import/1.0.118ubuntu1.13"
+			debootstrap_wanted_dir="${SRC}/cache/sources/debootstrap-ubuntu-devel"
+			debootstrap_default_script="gutsy"
+			;;
+		Debian)
+			GIT_FIXED_WORKDIR="debootstrap-debian-devel" fetch_from_repo "https://salsa.debian.org/installer-team/debootstrap.git" "debootstrap-debian-devel" "branch:master"
+			debootstrap_wanted_dir="${SRC}/cache/sources/debootstrap-debian-devel"
+			debootstrap_default_script="sid"
+			;;
+		*)
+			exit_with_error "Unknown distribution for debootstrap" "${DISTRIBUTION}"
+			;;
+	esac
+
+	debootstrap_bin="${debootstrap_wanted_dir}/debootstrap"
+	debootstrap_version="$(sed 's/.*(\(.*\)).*/\1/; q' "${debootstrap_wanted_dir}/debian/changelog")"
+	run_host_command_logged chmod a+x "${debootstrap_bin}"
+	display_alert "Debootstrap version" "'${debootstrap_version}' for ${debootstrap_bin}" "info"
+
+	# check if the debootstrap has the scripts/${RELEASE} script present, otherwise symlink it to debootstrap_default_script
+	if [[ ! -f "${debootstrap_wanted_dir}/scripts/${RELEASE}" ]]; then
+		display_alert "Symlinking" "debootstrap scripts/${RELEASE} to scripts/${debootstrap_default_script}" "info"
+		run_host_command_logged ln -sv "${debootstrap_wanted_dir}/scripts/${debootstrap_default_script}" "${debootstrap_wanted_dir}/scripts/${RELEASE}"
+	fi
+
 	display_alert "Installing base system with ${#AGGREGATED_PACKAGES_DEBOOTSTRAP[@]} packages" "Stage 1/2" "info"
 	cd "${SDCARD}" || exit_with_error "cray-cray about SDCARD" "${SDCARD}" # this will prevent error sh: 0: getcwd() failed
 
@@ -80,24 +111,11 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	deboostrap_arguments+=("--foreign") # release name
 
-	# Debian does not carry riscv64 in their main repo, needs ports, which needs a specific keyring in the host.
-	# that's done in prepare-host.sh when by adding debian-ports-archive-keyring hostdep, but there's an if anyway.
-	# debian-ports-archive-keyring is also included in-image by: config/optional/architectures/riscv64/_config/cli/_all_distributions/main/packages
-	# Revise this after bookworm release.
-	# @TODO: rpardini: this clearly shows a need for hooks for debootstrap
-	if [[ "${ARCH}" == "riscv64" ]] && [[ $DISTRIBUTION == Debian ]]; then
-		if [[ -f /usr/share/keyrings/debian-ports-archive-keyring.gpg ]]; then
-			display_alert "Adding ports keyring for Debian debootstrap" "riscv64" "info"
-			deboostrap_arguments+=("--keyring" "/usr/share/keyrings/debian-ports-archive-keyring.gpg")
-		else
-			exit_with_error "Debian debootstrap for riscv64 needs debian-ports-archive-keyring hostdep"
-		fi
-	fi
-
 	deboostrap_arguments+=("${RELEASE}" "${SDCARD}/" "${debootstrap_apt_mirror}") # release, path and mirror; always last, positional arguments.
 
-	run_host_command_logged debootstrap "${deboostrap_arguments[@]}" || {
-		exit_with_error "Debootstrap first stage failed" "${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
+	# Set DEBOOTSTRAP_DIR only for this invocation; if we instead export it, the second stage will fail
+	run_host_command_logged "DEBOOTSTRAP_DIR='${debootstrap_wanted_dir}'" "${debootstrap_bin}" "${deboostrap_arguments[@]}" || {
+		exit_with_error "Debootstrap first stage failed" "${debootstrap_bin} ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	}
 	[[ ! -f ${SDCARD}/debootstrap/debootstrap ]] && exit_with_error "Debootstrap first stage did not produce marker file"
 
@@ -106,6 +124,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks() @TODO: which is too late for a cache
 
 	display_alert "Installing base system" "Stage 2/2" "info"
+	declare -g -a if_error_find_files_sdcard=("debootstrap.log") # if command fails, go look for this file and show it's contents during error processing
 	declare -g if_error_detail_message="Debootstrap second stage failed ${RELEASE} ${DESKTOP_APPGROUPS_SELECTED} ${DESKTOP_ENVIRONMENT} ${BUILD_MINIMAL}"
 	chroot_sdcard LC_ALL=C LANG=C /debootstrap/debootstrap --second-stage
 	[[ ! -f "${SDCARD}/bin/bash" ]] && exit_with_error "Debootstrap first stage did not produce /bin/bash"
@@ -145,8 +164,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 		chroot_sdcard LC_ALL=C LANG=C setupcon --save --force
 	fi
 
-	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS)
-	create_sources_list "$RELEASE" "$SDCARD/"
+	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS).
+	# for the Armbian repo, only the components which are _not_ produced by armbian/build are included (-desktop and -utils)
+	create_sources_list_and_deploy_repo_key "root" "$RELEASE" "$SDCARD/"
 
 	# optionally add armhf arhitecture to arm64, if asked to do so.
 	if [[ "a${ARMHF_ARCH}" == "ayes" ]]; then
@@ -183,6 +203,10 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# Now do the install, all packages should have been downloaded by now
 	chroot_sdcard_apt_get_install "${AGGREGATED_PACKAGES_ROOTFS[@]}"
 
+	# Systemd resolver is not working yet
+	run_host_command_logged rm -v "${SDCARD}"/etc/resolv.conf
+	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
+
 	if [[ $BUILD_DESKTOP == "yes" ]]; then
 		# how how many items in AGGREGATED_PACKAGES_DESKTOP array
 		display_alert "Installing ${#AGGREGATED_PACKAGES_DESKTOP[@]} desktop packages" "${RELEASE} ${DESKTOP_ENVIRONMENT}" "info"
@@ -199,9 +223,12 @@ function create_new_rootfs_cache_via_debootstrap() {
 	fi
 
 	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
-	display_alert "Checking MD5 sum of installed packages" "debsums" "info"
-	declare -g if_error_detail_message="Check MD5 sum of installed packages failed"
-	#chroot_sdcard debsums --silent
+	# lets check only for supported targets only unless forced
+	if [[ "${DISTRIBUTION_STATUS}" == "supported" || "${FORCE_CHECK_MD5_PACKAGES:-"no"}" == "yes" ]]; then
+		display_alert "Checking MD5 sum of installed packages" "debsums" "info"
+		declare -g if_error_detail_message="Check MD5 sum of installed packages failed"
+		chroot_sdcard debsums --silent
+	fi
 
 	# # Remove packages from packages.uninstall
 	# # @TODO: aggregation.py handling of this... if we wanted it removed in rootfs cache, why did we install it in the first place?
@@ -232,8 +259,11 @@ function create_new_rootfs_cache_via_debootstrap() {
 	run_host_command_logged echo "nameserver $NAMESERVER" ">" "${SDCARD}"/etc/resolv.conf
 
 	# Remove `machine-id` (https://www.freedesktop.org/software/systemd/man/machine-id.html)
-	# Note: This will mark machine `firstboot`
-	run_host_command_logged echo "uninitialized" ">" "${SDCARD}/etc/machine-id"
+	# Note: As we don't use systemd-firstboot.service functionality, we make it empty to prevent services
+	# from starting up automatically on first boot on system version 2.50+. If someone is using the same,
+	# please reinitialize this to uninitialized. Do note that systemd will start all services then by
+	# default and that has to be handled in by setting system presets.
+	run_host_command_logged echo -n ">" "${SDCARD}/etc/machine-id"
 	run_host_command_logged rm -v "${SDCARD}/var/lib/dbus/machine-id"
 
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.

@@ -9,7 +9,7 @@
 
 function run_tool_oras() {
 	# Default version
-	ORAS_VERSION=${ORAS_VERSION:-0.16.0} # https://github.com/oras-project/oras/releases
+	ORAS_VERSION=${ORAS_VERSION:-1.2.0} # https://github.com/oras-project/oras/releases
 	#ORAS_VERSION=${ORAS_VERSION:-"1.0.0-rc.1"} # https://github.com/oras-project/oras/releases
 
 	declare non_cache_dir="/armbian-tools/oras" # To deploy/reuse cached ORAS in a Docker image.
@@ -48,6 +48,10 @@ function run_tool_oras() {
 	case "$MACHINE" in
 		*aarch64*) ORAS_ARCH="arm64" ;;
 		*x86_64*) ORAS_ARCH="amd64" ;;
+		*riscv64*)
+			ORAS_ARCH="riscv64"
+			ORAS_VERSION="1.2.0-beta.1" # Only v1.2.0-beta.1+ has risv64 support
+			;;
 		*)
 			exit_with_error "unknown arch: $MACHINE"
 			;;
@@ -55,7 +59,7 @@ function run_tool_oras() {
 
 	declare ORAS_FN="oras_${ORAS_VERSION}_${ORAS_OS}_${ORAS_ARCH}"
 	declare ORAS_FN_TARXZ="${ORAS_FN}.tar.gz"
-	declare DOWN_URL="https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/${ORAS_FN_TARXZ}"
+	declare DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/oras-project/oras/releases/download/v${ORAS_VERSION}/${ORAS_FN_TARXZ}"
 	declare ORAS_BIN="${DIR_ORAS}/${ORAS_FN}"
 	declare ACTUAL_VERSION
 
@@ -77,9 +81,11 @@ function run_tool_oras() {
 	fi
 
 	# Run oras, possibly with retries...
+	declare ORAS_HOME="${HOME:-"${TMPDIR}"}" # oras _requires_ a HOME to work atleast in 1.2+
+	display_alert "Running ORAS ${ACTUAL_VERSION}" "HOME='${ORAS_HOME}'; retries='${retries:-1}'; cmdline: $*" "debug"
 	if [[ "${retries:-1}" -gt 1 ]]; then
 		display_alert "Calling ORAS with retries ${retries}" "$*" "debug"
-		do_with_retries ${retries} "${ORAS_BIN}" "$@"
+		sleep_seconds="30" do_with_retries "${retries}" env -i "HOME=${ORAS_HOME}" "${ORAS_BIN}" "$@"
 	else
 		# If any parameters passed, call ORAS, otherwise exit. We call it this way (sans-parameters) early to prepare ORAS tooling.
 		if [[ $# -eq 0 ]]; then
@@ -88,7 +94,7 @@ function run_tool_oras() {
 		fi
 
 		display_alert "Calling ORAS" "$*" "debug"
-		"${ORAS_BIN}" "$@"
+		env -i "HOME=${ORAS_HOME}" "${ORAS_BIN}" "$@"
 	fi
 }
 
@@ -133,7 +139,7 @@ function oras_push_artifact_file() {
 	display_alert "upload_file_name: ${upload_file_name}" "ORAS upload" "debug"
 
 	pushd "${upload_file_base_path}" &> /dev/null || exit_with_error "Failed to pushd to ${upload_file_base_path} - ORAS upload"
-	retries=5 run_tool_oras push "${extra_params[@]}" "${image_full_oci}" "${upload_file_name}:application/vnd.unknown.layer.v1+tar"
+	retries=10 run_tool_oras push "${extra_params[@]}" "${image_full_oci}" "${upload_file_name}:application/vnd.unknown.layer.v1+tar"
 	popd &> /dev/null || exit_with_error "Failed to popd" "ORAS upload"
 	return 0
 }

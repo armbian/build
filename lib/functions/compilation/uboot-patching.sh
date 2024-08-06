@@ -25,13 +25,18 @@ function uboot_main_patching_python() {
 		"BOARD=${BOARD}"                                      # BOARD is needed for the patchset selection logic; mostly for u-boot.
 		"TARGET=${target_patchdir}"                           # TARGET is need for u-boot's SPI/SATA etc selection logic
 		"USERPATCHES_PATH=${USERPATCHES_PATH}"                # Needed to find the userpatches.
+		# For table generation to fit into the screen, or being large when in GHA.
+		"COLUMNS=${COLUMNS}"
+		"COLORFGBG=${COLORFGBG}"
+		"GITHUB_ACTIONS=${GITHUB_ACTIONS}"
 		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.
 		"PATH=${PATH}"
 		"HOME=${HOME}"
 		# What to do?
-		"APPLY_PATCHES=yes"                      # Apply the patches to the filesystem. Does not imply git commiting. If no, still exports the hash.
-		"PATCHES_TO_GIT=${PATCHES_TO_GIT:-no}"   # Commit to git after applying the patches.
-		"REWRITE_PATCHES=${REWRITE_PATCHES:-no}" # Rewrite the original patch files after git commiting.
+		"APPLY_PATCHES=yes"                                                    # Apply the patches to the filesystem. Does not imply git commiting. If no, still exports the hash.
+		"PATCHES_TO_GIT=${PATCHES_TO_GIT:-no}"                                 # Commit to git after applying the patches.
+		"REWRITE_PATCHES=${REWRITE_PATCHES:-no}"                               # Rewrite the original patch files after git commiting.
+		"REWRITE_PATCHES_NEEDING_REBASE=${REWRITE_PATCHES_NEEDING_REBASE:-no}" # Only rewrite those patch files in need of a rebase.
 		# Git dir, revision, and target branch
 		"GIT_WORK_DIR=${uboot_work_dir}"               # "Where to apply patches?"
 		"BASE_GIT_REVISION=${uboot_git_revision}"      # The revision we're building/patching. Python will reset and clean to this.
@@ -44,7 +49,8 @@ function uboot_main_patching_python() {
 		"MAINTAINER_NAME=${MAINTAINER}"      # Name of the maintainer
 		"MAINTAINER_EMAIL=${MAINTAINERMAIL}" # Email of the maintainer
 	)
-	display_alert "Calling Python patching script" "for u-boot target" "info"
+	display_alert "Calling Python patching script for U-Boot:" "${BOOTSOURCE} - ${BOOTBRANCH}" "info"
+	display_alert "Using U-Boot patch dir:" "${BOOTPATCHDIR}" "info"
 
 	# "raw_command" is only for logging purposes.
 	raw_command="[...shortened u-boot patching...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/patching.py" \

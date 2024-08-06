@@ -69,50 +69,54 @@ prepare_board() {
 	find /etc/logrotate.d/. -type f | xargs grep -H -c 'compress' | grep 0$ | cut -d':' -f1 | xargs -r -L1 sed -i '/{/ a compress'
 	sed -i "s/#compress/compress/" /etc/logrotate.conf
 
-	# tweak ondemand cpufreq governor settings to increase cpufreq with IO load
-	grep -q ondemand /etc/default/cpufrequtils
-	if [ $? -eq 0 ]; then
-		echo ondemand > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
-
-		case ${BOARDFAMILY} in
-			station* | media | rockchip-rk3588)
-				prefix="/sys/devices/system/cpu"
-				CPUFreqPolicies=($(ls -d ${prefix}/cpufreq/policy? | sed 's/freq\/policy//'))
-				if [ ${#CPUFreqPolicies[@]} -eq 1 -a -d "${prefix}/cpufreq" ]; then
-					# if there's just a single cpufreq policy ondemand sysfs entries differ
-					CPUFreqPolicies=${prefix}
-				fi
-				for i in "${CPUFreqPolicies[@]}"; do
-					affected_cpu=$(tr -d -c '[:digit:]' <<< ${i})
-					echo ondemand > ${prefix}/cpu${affected_cpu:-0}/cpufreq/scaling_governor
-					echo 1 > ${i}/cpufreq/ondemand/io_is_busy
-					echo 25 > ${i}/cpufreq/ondemand/up_threshold
-					echo 10 > ${i}/cpufreq/ondemand/sampling_down_factor
-					echo 200000 > ${i}/cpufreq/ondemand/sampling_rate
-				done
-				;;
-			*)
-				cd /sys/devices/system/cpu
-				for i in cpufreq/ondemand cpu0/cpufreq/ondemand cpu4/cpufreq/ondemand; do
-					if [ -d $i ]; then
-						echo 1 > ${i}/io_is_busy
-						echo 25 > ${i}/up_threshold
-						echo 10 > ${i}/sampling_down_factor
-						echo 200000 > ${i}/sampling_rate
-					fi
-				done
-				;;
-		esac
-
+	# Fully replace Armbian's former limited utilization of cpufrequtils package
+	# FIXME literally just borrowing the cpufrequtils config file -- should configuration be driven by a new file?
+	if [ -r /etc/default/cpufrequtils ] ; then
+		. /etc/default/cpufrequtils
+		for Cluster in /sys/devices/system/cpu/cpufreq/policy* ; do
+			[[ -e "${Cluster}" ]] || break
+			grep -q "${GOVERNOR}" "${Cluster}/scaling_available_governors" && [ -w "${Cluster}/scaling_governor" ] && echo "${GOVERNOR}" >"${Cluster}/scaling_governor"
+			[ "X${MIN_SPEED}" != "X" ] && [ -w "${Cluster}/scaling_min_freq" ] && echo "${MIN_SPEED}" >"${Cluster}/scaling_min_freq"
+			[ "X${MAX_SPEED}" != "X" ] && [ -w "${Cluster}/scaling_max_freq" ] && echo "${MAX_SPEED}" >"${Cluster}/scaling_max_freq"
+		done
 	fi
 
-	# IRQ distribution based on $BOARDFAMILY and/or $BOARD_NAME
-	case ${BOARD} in
-		rockpro64 | renegade-elite | pinebook-pro | station-p1)
-			BOARDFAMILY=rk3399
-			;;
-	esac
-	case ${BOARDFAMILY} in
+	# Tweak ondemand cpufreq governor settings to increase cpufreq with IO load.
+	if [ "X${GOVERNOR}" = "Xondemand" ]; then
+		cd /sys/devices/system/cpu
+		# FIXME - arbitrary globbing range left as a breadcrumb to encourage socratic learning
+		# and take on the task of understanding the performance optimizations in general
+		# and its use in this script.
+		#     
+		# Are you the one?  PR's welcome--and encouraged
+		#
+		# Why loop over these 3 patterns?  Is it for older and newer kernel paradigms?
+		# would `for i in cpufreq/ondemand cpu*[0-9]/cpufreq/ondemand` be sufficient? 
+		# 
+		# for more insights see conversations here:
+		# https://github.com/armbian/build/pull/6120
+		# https://github.com/armbian/build/pull/6507
+		for i in cpufreq/ondemand cpu[0-9]/cpufreq/ondemand cpu[1-9][0-9]/cpufreq/ondemand; do
+			if [ -d $i ]; then
+				echo 1 > ${i}/io_is_busy
+				echo 25 > ${i}/up_threshold
+				echo 10 > ${i}/sampling_down_factor
+				echo 200000 > ${i}/sampling_rate
+			fi
+		done
+	fi
+
+	local hw_optimization_family
+	# IRQ distribution based on $BOARDFAMILY or $BOARD or $BOOT_SOC
+	if [[ "${BOARD}" == "rockpro64" || "${BOARD}" == "renegade-elite" || "${BOARD}" == "pinebook-pro" || "${BOARD}" == "station-p1" ]]; then
+		hw_optimization_family="rk3399"
+	elif [[ "${BOOT_SOC}" == "rk322x" ]]; then
+		hw_optimization_family="rk322x"
+	else
+		hw_optimization_family="${BOARDFAMILY}"
+	fi
+
+	case ${hw_optimization_family} in
 		cubox | udoo*) # i.MX6 boards: send Ethernet to cpu3, MMC to cpu1/cpu2 (when available)
 			echo 2 > /proc/irq/$(awk -F":" "/mmc0/ {print \$1}" < /proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2> /dev/null
 			echo 4 > /proc/irq/$(awk -F":" "/mmc1/ {print \$1}" < /proc/interrupts | sed 's/\ //g' | head -1)/smp_affinity 2> /dev/null
@@ -190,11 +194,6 @@ prepare_board() {
 			echo 8 > /proc/irq/$(awk -F":" "/eth0/ {print \$1}" < /proc/interrupts | sed 's/\ //g' | head -n1)/smp_affinity
 			echo 7 > /sys/class/net/eth0/queues/rx-0/rps_cpus
 
-			# Mali in 4.4 kernel
-			for i in $(awk -F':' '/Mali_/{print $1}' /proc/interrupts | sed 's/\ //g'); do
-				echo 8 > /proc/irq/$i/smp_affinity
-			done
-
 			# Lima in mainline kernel
 			echo 8 > /proc/irq/$(awk -F':' '/gp$/{print $1}' /proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 8 > /proc/irq/$(awk -F':' '/gpmmu/{print $1}' /proc/interrupts | sed 's/\ //g')/smp_affinity
@@ -213,17 +212,33 @@ prepare_board() {
 			for i in $(awk -F":" "/xhci/ {print \$1}" < /proc/interrupts | sed 's/\ //g'); do
 				echo 4 > /proc/irq/$i/smp_affinity
 			done
+			# Most boards get eth0 as main ethernet interface name, but Helios64 doesn't, see below
+			_rockchip64_ethernet_interface_name=eth0
+			case ${BOARD_NAME} in
+				"Helios64")
+					for i in $(awk -F":" "/xhci/ {print \$1}" < /proc/interrupts | sed 's/\ //g'); do
+						echo 10 > /proc/irq/$i/smp_affinity
+					done
+					for i in $(awk -F":" "/ahci/ {print \$1}" < /proc/interrupts | sed 's/\ //g'); do
+						echo 30 > /proc/irq/$i/smp_affinity
+					done
+					_rockchip64_ethernet_interface_name=end0
+					;;
+				*)
+					;;
+			esac
 
-			# Wait (up to 5s) until eth0 brought up
+
+			# Wait (up to 5s) until eth0/end0 brought up
 			for i in {1..5}; do
-				grep -q "eth0" /proc/interrupts && break
+				grep -q "$_rockchip64_ethernet_interface_name" /proc/interrupts && break
 				sleep 1
 			done
 
-			echo 8 > /proc/irq/$(awk -F":" "/eth0/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity
-			echo 7 > /sys/class/net/eth0/queues/rx-0/rps_cpus
+			echo 8 > /proc/irq/$(awk -F":" "/${_rockchip64_ethernet_interface_name}/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity
+			echo 7 > /sys/class/net/${_rockchip64_ethernet_interface_name}/queues/rx-0/rps_cpus
 			echo 32768 > /proc/sys/net/core/rps_sock_flow_entries
-			echo 32768 > /sys/class/net/eth0/queues/rx-0/rps_flow_cnt
+			echo 32768 > /sys/class/net/${_rockchip64_ethernet_interface_name}/queues/rx-0/rps_flow_cnt
 			;;
 		rk3399)
 			for i in $(awk -F':' '/gpu/{print $1}' < /proc/interrupts | sed 's/\ //g'); do
@@ -260,14 +275,6 @@ prepare_board() {
 				echo performance > /sys/bus/platform/drivers/rockchip-dmc/dmc/devfreq/dmc/governor
 			fi
 			case ${BOARD_NAME} in
-				"Helios64")
-					for i in $(awk -F":" "/xhci/ {print \$1}" < /proc/interrupts | sed 's/\ //g'); do
-						echo 10 > /proc/irq/$i/smp_affinity
-					done
-					for i in $(awk -F":" "/ahci/ {print \$1}" < /proc/interrupts | sed 's/\ //g'); do
-						echo 30 > /proc/irq/$i/smp_affinity
-					done
-					;;
 				"Pinebook Pro")
 					echo s2idle > /sys/power/mem_sleep
 					;;
@@ -280,20 +287,6 @@ prepare_board() {
 			echo 4 > /proc/irq/$(awk -F":" "/owl_dma0/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 8 > /proc/irq/$(awk -F":" "/ethernet_mac/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity
 			echo 8 > /proc/irq/$(awk -F":" "/sdcard/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity
-			;;
-		s5p6818) # NanoPi M3: dw-mci on cpu1, USB host on cpu2, GbE on cpu3, USB OTG on cpu4, video-codec on cpu5
-			for i in $(awk -F':' '/dw-mci/{print $1}' < /proc/interrupts | sed 's/\ //g'); do
-				echo 1 > /proc/irq/$i/smp_affinity_list
-			done
-			echo 2 > /proc/irq/$(awk -F":" "/usb3/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity_list
-			echo 3 > /proc/irq/$(awk -F":" "/eth0/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity_list
-			echo 4 > /proc/irq/$(awk -F":" "/usb1/ {print \$1}" < /proc/interrupts | sed 's/\ //g')/smp_affinity_list
-			for i in $(awk -F':' '/c0080000.video-codec/{print $1}' < /proc/interrupts | sed 's/\ //g'); do
-				echo 5 > /proc/irq/$i/smp_affinity_list
-			done
-			echo 7 > /sys/class/net/eth0/queues/rx-0/rps_cpus
-			echo 32768 > /proc/sys/net/core/rps_sock_flow_entries
-			echo 32768 > /sys/class/net/eth0/queues/rx-0/rps_flow_cnt
 			;;
 		sun4i | sun5i | rda8810) # only one core, nothing to improve
 			:

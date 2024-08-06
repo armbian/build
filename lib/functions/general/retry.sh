@@ -30,7 +30,8 @@ function do_with_retries() {
 		if [[ "${silent_retry}" == "yes" ]]; then
 			: # do nothing
 		else
-			display_alert "Command failed, retrying in ${sleep_seconds}s" "$*" "warn"
+			# skip_ci_special="yes": don't write this warning to CI/GHA summary. retries are normal in GHA and pollute the Summary view
+			skip_ci_special="yes" display_alert "Command failed, retrying in ${sleep_seconds}s" "$*" "warn"
 		fi
 		unset IS_A_RETRY
 		unset RETRY_RUNS

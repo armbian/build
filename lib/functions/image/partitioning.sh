@@ -39,10 +39,23 @@ function prepare_partitions() {
 	# parttype[nfs] is empty
 
 	mkopts[ext4]="-q -m 2" # for a long time we had '-O ^64bit,^metadata_csum' here
+	# Hack: newer versions of e2fsprogs in combination with recent kernels enable orphan_file (FEATURE_C12) by default; that can't be handled by older versions of e2fsprogs
+	#       at the same time, older versions don't know about orphan_file at all, so we can't simply disable for all.
+	# run & parse the version of e2fsprogs to determine if we need to disable orphan_file
+	declare e2fsprogs_version
+	e2fsprogs_version=$(e2fsck -V 2>&1 | head -1 | cut -d " " -f 2 | xargs echo -n)
+	# use linux-version compare to check if the version is at least 1.47
+	if linux-version compare "${e2fsprogs_version}" ge "1.47"; then
+		display_alert "e2fsprogs version" "$e2fsprogs_version supports orphan_file" "info"
+		mkopts[ext4]="-q -m 2 -O ^orphan_file"
+	else
+		display_alert "e2fsprogs version" "$e2fsprogs_version does not support orphan_file" "info"
+	fi
+
 	# mkopts[fat] is empty
-	mkopts[ext2]=''
+	# mkopts[ext2] is empty
 	# mkopts[f2fs] is empty
-	mkopts[btrfs]='-m dup'
+	mkopts[btrfs]='-m dup' # '-m dup' is already the default https://man.archlinux.org/man/mkfs.btrfs.8#m_
 	# mkopts[nilfs2] is empty
 	# mkopts[xfs] is empty
 	# mkopts[nfs] is empty
@@ -65,11 +78,11 @@ function prepare_partitions() {
 	mkfs[xfs]=xfs
 	# mkfs[nfs] is empty
 
-	mountopts[ext4]=',commit=600,errors=remount-ro'
+	mountopts[ext4]=',commit=120,errors=remount-ro' # EXT4 default: 5 (https://www.man7.org/linux/man-pages/man5/ext4.5.html)
 	# mountopts[ext2] is empty
 	# mountopts[fat] is empty
 	# mountopts[f2fs] is empty
-	mountopts[btrfs]=',commit=600'
+	mountopts[btrfs]=',commit=120' # BTRFS default: 30 (https://btrfs.readthedocs.io/en/latest/ch-mount-options.html)
 	# mountopts[nilfs2] is empty
 	# mountopts[xfs] is empty
 	# mountopts[nfs] is empty
@@ -98,7 +111,8 @@ function prepare_partitions() {
 		local uefipart=$((next++))
 	fi
 	# Check if we need boot partition
-	if [[ -n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $CRYPTROOT_ENABLE == yes ]]; then
+	# Specialized storage extensions like cryptroot or lvm may require a boot partition
+	if [[ $BOOTSIZE != "0" && (-n $BOOTFS_TYPE || $ROOTFS_TYPE != ext4 || $BOOTPART_REQUIRED == yes) ]]; then
 		local bootpart=$((next++))
 		local bootfs=${BOOTFS_TYPE:-ext4}
 		[[ -z $BOOTSIZE || $BOOTSIZE -le 8 ]] && BOOTSIZE=${DEFAULT_BOOTSIZE}
@@ -129,7 +143,7 @@ function prepare_partitions() {
 		display_alert "Using user-defined image size" "$FIXED_IMAGE_SIZE MiB" "info"
 		sdsize=$FIXED_IMAGE_SIZE
 		# basic sanity check
-		if [[ $ROOTFS_TYPE != nfs && $sdsize -lt $rootfs_size ]]; then
+		if [[ $ROOTFS_TYPE != nfs && $ROOTFS_TYPE != btrfs && $sdsize -lt $rootfs_size ]]; then
 			exit_with_error "User defined image size is too small" "$sdsize <= $rootfs_size"
 		fi
 	else
@@ -215,12 +229,9 @@ function prepare_partitions() {
 	flock -x $FD
 
 	declare -g LOOP
-	LOOP=$(losetup -f) || exit_with_error "Unable to find free loop device"
+	#--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
+	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
 	display_alert "Allocated loop device" "LOOP=${LOOP}"
-
-	CHECK_LOOP_FOR_SIZE="no" check_loop_device "$LOOP" # initially loop is zero sized, ignore it.
-
-	run_host_command_logged losetup "${LOOP}" "${SDCARD}".raw # @TODO: had a '-P- here, what was it?
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
@@ -239,15 +250,10 @@ function prepare_partitions() {
 	if [[ -n $rootpart ]]; then
 		local rootdevice="${LOOP}p${rootpart}"
 
-		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			check_loop_device "$rootdevice"
-			display_alert "Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
-			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
-			echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
-			display_alert "Root partition encryption complete." "" "ext"
-			# TODO: pass /dev/mapper to Docker
-			rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
-		fi
+		call_extension_method "prepare_root_device" <<- 'PREPARE_ROOT_DEVICE'
+			*Specialized storage extensions typically transform the root device into a mapped device and should hook in here *
+			At this stage ${rootdevice} has been defined pointing to a loop device partition. Extensions that map the root device must update rootdevice accordingly.
+		PREPARE_ROOT_DEVICE
 
 		check_loop_device "$rootdevice"
 		display_alert "Creating rootfs" "$ROOTFS_TYPE on $rootdevice"
@@ -295,7 +301,15 @@ function prepare_partitions() {
 		run_host_command_logged mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
 		run_host_command_logged mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
-		echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+
+		# Allow skipping the fstab entry for the EFI partition if UEFI_MOUNT_POINT_SKIP_FSTAB=yes; add comments instead if so
+		if [[ "${UEFI_MOUNT_POINT_SKIP_FSTAB:-"no"}" == "yes" ]]; then
+			display_alert "Skipping EFI partition in fstab" "UEFI_MOUNT_POINT_SKIP_FSTAB=${UEFI_MOUNT_POINT_SKIP_FSTAB}" "debug"
+			echo "# /boot/efi fstab commented out due to UEFI_MOUNT_POINT_SKIP_FSTAB=${UEFI_MOUNT_POINT_SKIP_FSTAB}"
+			echo "# UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+		else
+			echo "UUID=$(blkid -s UUID -o value ${LOOP}p${uefipart}) ${UEFI_MOUNT_POINT} vfat defaults 0 2" >> $SDCARD/etc/fstab
+		fi
 	fi
 
 	display_alert "Writing /tmp as tmpfs in chroot fstab" "$SDCARD/etc/fstab" "debug"
@@ -323,10 +337,9 @@ function prepare_partitions() {
 		sed -i -e "s/rootfstype=ext4/rootfstype=$ROOTFS_TYPE/" \
 			-e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/$bootscript_dst
 	fi
-	
+
 	#btt cb2 overlay config
 	install_overlay_config
-	
 	# if we have boot.ini = remove armbianEnv.txt and add UUID there if enabled
 	if [[ -f $SDCARD/boot/boot.ini ]]; then
 		display_alert "Found boot.ini" "${SDCARD}/boot/boot.ini" "debug"
@@ -388,83 +401,107 @@ function prepare_partitions() {
 }
 
 function install_overlay_config(){
+	
+
+	
+
+	echo "overlay_prefix=rk3566" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "## console: 'display', 'serial'" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "## console: 'display', 'serial'" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "console=display" >> "${SDCARD}/boot/armbianEnv.txt"
-	
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "## display: 'hdmi', 'dsi'" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "overlays=hdmi" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
-	
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######i2c1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=i2c1" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######i2c3 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=i2c3" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######i2c4 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=i2c4" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
-	
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######mcp2515 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=mcp2515" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
-	
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######spi1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=spi1" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######spi3 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=spi3" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######tft_35 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=tft_35" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######tft35_spi_rotate config###### " >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#tft35_spi_rotate=0" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######uart0 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=uart0" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######uart1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=uart1" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######uart3 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=uart3" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######uart5 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=uart5" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######uart7 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=uart7" >> "${SDCARD}/boot/armbianEnv.txt"
-	
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm1 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm1" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm2 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm2" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm4 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm4" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm5 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm5" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm12 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm12" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm14 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm14" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######pwm15 config######" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#overlays=pwm15" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "######gpio shutdown config######" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#param_gpio_shutdown_pin=GPIO4_C2" >> "${SDCARD}/boot/armbianEnv.txt"
-	echo "" >> "${SDCARD}/boot/armbianEnv.txt"
+	#echo "" >> "${SDCARD}/boot/armbianEnv.txt"
 	echo "#param_gpio_shutdown_level=0" >> "${SDCARD}/boot/armbianEnv.txt"
 
 
 }
+
+

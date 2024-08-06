@@ -55,9 +55,9 @@ function improved_git_fetch() {
 function git_ensure_safe_directory() {
 	if [[ -n "$(command -v git)" ]]; then
 		local git_dir="$1"
-		display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
-		if ! grep -q "directory = \*" "${HOME}/.gitconfig" 2> /dev/null; then
-			git config --global --add safe.directory "*"
+		if [[ -e "$1/.git" ]]; then
+			display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
+			regular_git config --global --get safe.directory "$1" > /dev/null || regular_git config --global --add safe.directory "$1"
 		fi
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
@@ -239,6 +239,23 @@ function fetch_from_repo() {
 	fetched_revision_ts="$(git log -1 --pretty=%ct "${checkout_from}")" # unix timestamp of the commit date
 	display_alert "Fetched revision: fetched_revision:" "${fetched_revision}" "git"
 	display_alert "Fetched revision: fetched_revision_ts:" "${fetched_revision_ts}" "git"
+
+	# if FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE is set, and the ref is not a sha1, invoke that callback.
+	if [[ "${FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE:-"none"}" != "none" ]]; then
+		case $ref_type in
+			tag | commit) # do nothing
+				;;
+			*) # Complain
+				display_alert "FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE is set, and the ref is not a sha1" "${url} ${ref_type} ${ref_name} - should be commit:${fetched_revision}" "debug"
+				"${FETCH_FROM_REPO_CALLBACK_IF_REF_MUTABLE}" "${url}" "${ref_type}" "${ref_name}" "${fetched_revision}"
+				;;
+		esac
+	fi
+
+	if [[ -f "${SRC}"/config/sources/git_sources.json && $ref_type == "branch" ]]; then
+		cached_revision=$(jq --raw-output '.[] | select(.source == "'$url'" and .branch == "'$ref_name'") |.sha1' "${SRC}"/config/sources/git_sources.json)
+		[[ -z "${cached_revision}" ]] || fetched_revision=${cached_revision}
+	fi
 
 	if [[ "${do_checkout:-"yes"}" == "yes" ]]; then
 		display_alert "git checking out revision SHA" "${fetched_revision}" "git"

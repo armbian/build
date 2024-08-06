@@ -14,35 +14,30 @@ function apt_purge_unneeded_packages_and_clean_apt_caches() {
 
 	declare dir_var_lib_apt_lists="/var/lib/apt/lists"
 	declare dir_var_cache_apt="/var/cache/apt"
-	declare -i dir_var_cache_apt_size_mb dir_var_cache_apt_size_after_cleaning_mb dir_var_lib_apt_lists_size_mb
+	declare -i dir_var_cache_apt_file_count dir_var_lib_apt_lists_file_count
 
 	# Now, let's list what is under ${SDCARD}/var/cache/apt -- it should be empty. If it isn't, warn, and clean it up.
-	dir_var_cache_apt_size_mb="$(du -sm "${SDCARD}${dir_var_cache_apt}" | cut -f1)"
-	if [[ "${dir_var_cache_apt_size_mb}" -gt 0 ]]; then
-		display_alert "SDCARD ${dir_var_cache_apt} is not empty" "${dir_var_cache_apt} :: ${dir_var_cache_apt_size_mb}MB" "wrn"
-		# list the contents
+	dir_var_cache_apt_file_count="$(find "${SDCARD}${dir_var_cache_apt}" -type f | wc -l)"
+	if [[ "${dir_var_cache_apt_file_count}" -gt 1 ]]; then # there is sometimes at least one file, the lock file
+		display_alert "SDCARD ${dir_var_cache_apt} is not empty" "${dir_var_cache_apt} :: ${dir_var_cache_apt_file_count} files" "wrn"
 		run_host_command_logged ls -lahtR "${SDCARD}${dir_var_cache_apt}"
 		wait_for_disk_sync "after listing ${SDCARD}${dir_var_cache_apt}"
 	else
-		display_alert "SDCARD ${dir_var_cache_apt} is empty" "${dir_var_cache_apt} :: ${dir_var_cache_apt_size_mb}MB" "debug"
+		display_alert "SDCARD ${dir_var_cache_apt} is empty" "${dir_var_cache_apt} :: ${dir_var_cache_apt_file_count} files" "debug"
 	fi
 
 	# attention: this is _very different_ from `chroot_sdcard_apt_get clean` (which would clean the cache)
 	chroot_sdcard apt-get clean
 	wait_for_disk_sync "after apt-get clean"
 
-	dir_var_cache_apt_size_after_cleaning_mb="$(du -sm "${SDCARD}${dir_var_cache_apt}" | cut -f1)"
-	display_alert "SDCARD ${dir_var_cache_apt} size after cleaning" "${dir_var_cache_apt} :: ${dir_var_cache_apt_size_after_cleaning_mb}MB" "debug"
-
 	# Also clean ${SDCARD}/var/lib/apt/lists; this is where the package lists are stored.
-	dir_var_lib_apt_lists_size_mb="$(du -sm "${SDCARD}${dir_var_lib_apt_lists}" | cut -f1)"
-	if [[ "${dir_var_lib_apt_lists_size_mb}" -gt 0 ]]; then
-		display_alert "SDCARD ${dir_var_lib_apt_lists} is not empty" "${dir_var_lib_apt_lists} :: ${dir_var_lib_apt_lists_size_mb}MB" "wrn"
-		# list the contents
+	dir_var_lib_apt_lists_file_count="$(find "${SDCARD}${dir_var_lib_apt_lists}" -type f | wc -l)"
+	if [[ "${dir_var_lib_apt_lists_file_count}" -gt 1 ]]; then # there is sometimes at least one file, the lock file
+		display_alert "SDCARD ${dir_var_lib_apt_lists} is not empty" "${dir_var_lib_apt_lists} :: ${dir_var_lib_apt_lists_file_count} files" "wrn"
 		run_host_command_logged ls -lahtR "${SDCARD}${dir_var_lib_apt_lists}"
 		wait_for_disk_sync "after listing ${SDCARD}${dir_var_cache_apt}"
 	else
-		display_alert "SDCARD ${dir_var_lib_apt_lists} is empty" "${dir_var_lib_apt_lists} :: ${dir_var_lib_apt_lists_size_mb}MB" "debug"
+		display_alert "SDCARD ${dir_var_lib_apt_lists} is empty" "${dir_var_lib_apt_lists} :: ${dir_var_lib_apt_lists_file_count} files" "debug"
 	fi
 
 	# Either way, clean it away, we don't wanna ship those lists on images or rootfs.
@@ -111,13 +106,22 @@ function install_deb_chroot() {
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends install "${install_target}" # don't auto-maintain apt cache when installing from packages.
 	unset extra_apt_envs
 
-	# @TODO: mysterious. store installed/downloaded packages in deb storage. only used for u-boot deb. why?
-	# this is some contrived way to get the uboot.deb when installing from repo; image builder needs the deb to be able to deploy uboot  later, even though it is already installed inside the chroot, it needs deb to be in host to reuse code later
-	if [[ ${variant} == remote && ${transfer} == yes ]]; then
-		display_alert "install_deb_chroot called with" "transfer=yes, copy WHOLE CACHE back to DEB_STORAGE, this is probably a bug" "warn"
-		run_host_command_logged rsync -r "${SDCARD}"/var/cache/apt/archives/*.deb "${DEB_STORAGE}"/
-	fi
-
 	# IMPORTANT! Do not use short-circuit above as last statement in a function, since it determines the result of the function.
 	return 0
+}
+
+function install_artifact_deb_chroot() {
+	declare deb_name="$1"
+	declare -A -g image_artifacts_debs_reversioned # global associative array
+	declare revisioned_deb_rel_path="${image_artifacts_debs_reversioned["${deb_name}"]}"
+	if [[ -z "${revisioned_deb_rel_path}" ]]; then
+		exit_with_error "No revisioned deb path found for '${deb_name}'"
+	fi
+	display_alert "Installing artifact deb" "${deb_name} :: ${revisioned_deb_rel_path}" "debug"
+	install_deb_chroot "${DEB_STORAGE}/${revisioned_deb_rel_path}"
+
+	# Mark the deb as installed in the global associative array.
+	declare -A -g image_artifacts_debs_installed
+	image_artifacts_debs_installed["${deb_name}"]="yes"
+	debug_dict image_artifacts_debs_installed
 }

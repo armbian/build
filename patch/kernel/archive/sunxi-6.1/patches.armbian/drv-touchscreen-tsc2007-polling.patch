@@ -1,0 +1,195 @@
+From 7c62c1ea69d7f892555ad697dbefbf4803d0908b Mon Sep 17 00:00:00 2001
+From: Alan <Alan>
+Date: Sat, 20 May 2023 14:44:07 +0800
+Subject: [PATCH 10/13] Optimize: TSC2007 touchscreen add polling method
+
+---
+ drivers/input/touchscreen/tsc2007.h      |   6 ++
+ drivers/input/touchscreen/tsc2007_core.c | 110 +++++++++++++++++++++--
+ 2 files changed, 108 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/input/touchscreen/tsc2007.h b/drivers/input/touchscreen/tsc2007.h
+index 69b08dd6c8df..5252b6c6daeb 100644
+--- a/drivers/input/touchscreen/tsc2007.h
++++ b/drivers/input/touchscreen/tsc2007.h
+@@ -66,10 +66,13 @@ struct tsc2007 {
+ 	u16			model;
+ 	u16			x_plate_ohms;
+ 	u16			max_rt;
++	u16			rt_thr;
++	u8			touched;
+ 	unsigned long		poll_period; /* in jiffies */
+ 	int			fuzzx;
+ 	int			fuzzy;
+ 	int			fuzzz;
++	bool			ignore_nak;
+ 
+ 	struct gpio_desc	*gpiod;
+ 	int			irq;
+@@ -81,6 +84,9 @@ struct tsc2007 {
+ 	void			(*clear_penirq)(void);
+ 
+ 	struct mutex		mlock;
++
++	struct timer_list timer;
++	struct work_struct work_i2c_poll;
+ };
+ 
+ int tsc2007_xfer(struct tsc2007 *tsc, u8 cmd);
+diff --git a/drivers/input/touchscreen/tsc2007_core.c b/drivers/input/touchscreen/tsc2007_core.c
+index 3e871d182c40..6e3bdf1debe0 100644
+--- a/drivers/input/touchscreen/tsc2007_core.c
++++ b/drivers/input/touchscreen/tsc2007_core.c
+@@ -28,6 +28,8 @@
+ #include <linux/platform_data/tsc2007.h>
+ #include "tsc2007.h"
+ 
++#define POLL_INTERVAL_MS 17 /* 17ms = 60fps */
++
+ int tsc2007_xfer(struct tsc2007 *tsc, u8 cmd)
+ {
+ 	s32 data;
+@@ -172,6 +174,65 @@ static irqreturn_t tsc2007_soft_irq(int irq, void *handle)
+ 	return IRQ_HANDLED;
+ }
+ 
++static irqreturn_t tsc2007_soft_poll(int irq, void *handle)
++{
++	struct tsc2007 *ts = handle;
++	struct input_dev *input = ts->input;
++	struct ts_event tc;
++	u32 rt;
++
++	if(!ts->stopped) {
++
++		mutex_lock(&ts->mlock);
++		tsc2007_read_values(ts, &tc);
++		mutex_unlock(&ts->mlock);
++
++		rt = tsc2007_calculate_resistance(ts, &tc);
++
++		if (rt == 0 || rt == 256) {
++
++			/*
++				* Sample found inconsistent by debouncing or pressure is
++				* beyond the maximum. Don't report it to user space,
++				* repeat at least once more the measurement.
++				*/
++			dev_dbg(&ts->client->dev, "ignored pressure %d\n", rt);
++
++		} else {
++
++			if (rt < ts->rt_thr) {
++
++				dev_dbg(&ts->client->dev,
++					"DOWN point(%4d,%4d), resistance (%4u)\n",
++					tc.x, tc.y, rt);
++
++				rt = ts->max_rt - rt;
++
++				input_report_key(input, BTN_TOUCH, 1);
++				input_report_abs(input, ABS_X, tc.y);
++				input_report_abs(input, ABS_Y, 4096 - tc.x);
++				input_report_abs(input, ABS_PRESSURE, rt);
++
++				input_sync(input);
++				ts->touched = 1;
++
++			} else if (ts->touched == 1) {
++
++				dev_dbg(&ts->client->dev, "UP\n");
++
++				input_report_key(input, BTN_TOUCH, 0);
++				input_report_abs(input, ABS_PRESSURE, 0);
++				input_sync(input);
++				ts->touched = 0;
++			}
++		}
++
++
++	}
++
++	return IRQ_HANDLED;
++}
++
+ static irqreturn_t tsc2007_hard_irq(int irq, void *handle)
+ {
+ 	struct tsc2007 *ts = handle;
+@@ -229,11 +290,32 @@ static int tsc2007_get_pendown_state_gpio(struct device *dev)
+ 	return gpiod_get_value(ts->gpiod);
+ }
+ 
++static void tsc2007_ts_irq_poll_timer(struct timer_list *t)
++{
++	struct tsc2007 *ts = from_timer(ts, t, timer);
++
++	schedule_work(&ts->work_i2c_poll);
++	mod_timer(&ts->timer, jiffies + msecs_to_jiffies(POLL_INTERVAL_MS));
++}
++
++static void tsc2007_ts_work_i2c_poll(struct work_struct *work)
++{
++	struct tsc2007 *ts = container_of(work,
++			struct tsc2007, work_i2c_poll);
++
++	tsc2007_soft_poll(0, ts);
++}
++
+ static int tsc2007_probe_properties(struct device *dev, struct tsc2007 *ts)
+ {
+ 	u32 val32;
+ 	u64 val64;
+ 
++	ts->ignore_nak = device_property_read_bool(dev, "i2c,ignore-nak");
++
++	if (!device_property_read_u32(dev, "ti,rt-thr", &val32))
++		ts->rt_thr = val32;
++
+ 	if (!device_property_read_u32(dev, "ti,max-rt", &val32))
+ 		ts->max_rt = val32;
+ 	else
+@@ -330,6 +412,9 @@ static int tsc2007_probe(struct i2c_client *client,
+ 	if (!input_dev)
+ 		return -ENOMEM;
+ 
++	if (ts->ignore_nak)
++		client->flags |= I2C_M_IGNORE_NAK;
++
+ 	i2c_set_clientdata(client, ts);
+ 
+ 	ts->client = client;
+@@ -375,14 +460,23 @@ static int tsc2007_probe(struct i2c_client *client,
+ 			pdata->init_platform_hw();
+ 	}
+ 
+-	err = devm_request_threaded_irq(&client->dev, ts->irq,
+-					tsc2007_hard_irq, tsc2007_soft_irq,
+-					IRQF_ONESHOT,
+-					client->dev.driver->name, ts);
+-	if (err) {
+-		dev_err(&client->dev, "Failed to request irq %d: %d\n",
+-			ts->irq, err);
+-		return err;
++	if (ts->gpiod) {
++		err = devm_request_threaded_irq(&client->dev, ts->irq,
++						tsc2007_hard_irq, tsc2007_soft_irq,
++						IRQF_ONESHOT,
++						client->dev.driver->name, ts);
++		if (err) {
++			dev_err(&client->dev, "Failed to request irq %d: %d\n",
++				ts->irq, err);
++			return err;
++		}
++	} else {
++		INIT_WORK(&ts->work_i2c_poll,
++			  tsc2007_ts_work_i2c_poll);
++		timer_setup(&ts->timer, tsc2007_ts_irq_poll_timer, 0);
++		ts->timer.expires = jiffies +
++					msecs_to_jiffies(POLL_INTERVAL_MS);
++		add_timer(&ts->timer);
+ 	}
+ 
+ 	tsc2007_stop(ts);
+-- 
+2.34.1
+

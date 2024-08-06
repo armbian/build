@@ -38,19 +38,28 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
-	current)
-		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel. For mainline caching.
-		KERNELBRANCH='branch:linux-6.1.y'
-		KERNELPATCHDIR='meson64-current'
+	legacy)
+		declare -g KERNEL_MAJOR_MINOR="6.1"
 		;;
-
+	current)
+		declare -g KERNEL_MAJOR_MINOR="6.6"
+		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.2" # Major and minor versions of this kernel. For mainline caching.
-		KERNELBRANCH='branch:linux-6.2.y'
-		KERNELPATCHDIR='meson64-edge'
+		declare -g KERNEL_MAJOR_MINOR="6.9"
 		;;
 
 esac
+
+# Use custom vendor driver for wireless rtl88x2cs
+# See https://github.com/armbian/build/pull/6227
+# @TODO Only use for BOARDFAMILY="jethub" devices?
+function custom_kernel_config__enable_rtl88x2cs_driver() {
+	kernel_config_modifying_hashes+=("CONFIG_RTL8822CS=m")
+	if [[ -f .config ]]; then
+		display_alert "Enabling rtl88x2cs driver in kernel config" "armbian-kernel" "wrn"
+		kernel_config_set_m CONFIG_RTL8822CS
+	fi
+}
 
 # this helper function includes postprocess for p212 and its variants.
 # $1 PATH for uboot blob repo
@@ -278,7 +287,7 @@ family_tweaks_bsp() {
 				EndSection
 			EOF
 			;;
-		"odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2" | "bananapi-m2s")
+		"jethubj200" | "odroidn2" | "odroidc4" | "khadas-vim2" | "odroidhc4" | "khadas-vim3" | "khadas-vim3l" | "radxa-zero" | "radxa-zero2" | "bananapi-m2s")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf
 				Section "Device"
 				    Identifier  "DRM Graphics Acclerated"

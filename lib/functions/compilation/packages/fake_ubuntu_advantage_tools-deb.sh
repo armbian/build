@@ -27,18 +27,23 @@ function compile_fake_ubuntu_advantage_tools() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Installed-Size: 1
 		Conflicts: ubuntu-advantage-tools
 		Breaks: ubuntu-advantage-tools
 		Provides: ubuntu-advantage-tools (= 65535)
+		Priority: optional
+		Section: admin
 		Description: Ban ubuntu-advantage-tools while satisfying ubuntu-minimal dependency
 	END
 
-	cd "${fw_temp_dir}" || exit_with_error "can't change directory"
+	# set up post install script
+	cat <<- END > DEBIAN/postinst
+		#!/bin/sh
+		rm -f /var/lib/ubuntu-advantage/messages/motd-esm-announce 2> /dev/null
+		exit 0
+	END
+	chmod 755 DEBIAN/postinst
 
-	# package, directly to DEB_STORAGE; full version might be very big for tmpfs.
-	display_alert "Building fake Ubuntu advantage tools package" "fake_ubuntu_advantage_tools" "info"
-	fakeroot_dpkg_deb_build "fake_ubuntu_advantage_tools" "${DEB_STORAGE}"
+	dpkg_deb_build "${fw_temp_dir}/${fw_dir}" "fake-ubuntu-advantage-tools"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 }

@@ -43,9 +43,7 @@ compile_armbian-config() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Replaces: armbian-bsp, neofetch
 		Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, zip, debconf-utils, unzip, build-essential, html2text, html2text, dirmngr, software-properties-common, debconf, jq
-		Recommends: armbian-bsp
 		Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
 		Section: utils
 		Priority: optional
@@ -68,7 +66,7 @@ compile_armbian-config() {
 	ln -sf /usr/sbin/armbian-config "${tmp_dir}/${armbian_config_dir}"/usr/bin/armbian-config
 	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
 
-	fakeroot_dpkg_deb_build "${tmp_dir}/${armbian_config_dir}" "${DEB_STORAGE}"
+	dpkg_deb_build "${tmp_dir}/${armbian_config_dir}" "armbian-config"
 
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 

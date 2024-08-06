@@ -44,7 +44,7 @@ function memoized_git_ref_to_info() {
 					"ghproxy")
 						case "${MEMO_DICT[GIT_SOURCE]}" in
 							"https://github.com/"*)
-								sha1="$(git ls-remote --exit-code "https://ghproxy.com/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
+								sha1="$(git ls-remote --exit-code "https://${GHPROXY_ADDRESS}/${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
 								;;
 							*)
 								sha1="$(git ls-remote --exit-code "${MEMO_DICT[GIT_SOURCE]}" "${to_try}" | cut -f1)"
@@ -75,6 +75,30 @@ function memoized_git_ref_to_info() {
 		exit_with_error "Failed to fetch SHA1 of '${MEMO_DICT[GIT_SOURCE]}' '${ref_type}' '${ref_name}' - make sure it's correct"
 	fi
 
+	if [[ "${ARMBIAN_COMMAND}" == "artifact-config-dump-json" ]] && [[ ${ref_type} == "branch" ]]; then
+		{
+			flock -x 5
+			flock -x 6
+
+			[[ -s "${SRC}"/output/info/git_sources.json ]] || echo '[]' >&5
+			jq --arg source "${MEMO_DICT[GIT_SOURCE]}" \
+				--arg branch "${ref_name}" \
+				--arg sha1 "${sha1}" \
+				"if (map(select(.source == \$source and .branch == \$branch))| length) !=0 then \
+					(.[]|select(.source == \$source and .branch == \$branch)).sha1 |= \$sha1 \
+				else \
+					. + [{\"source\": \$source, \"branch\": \$branch, \"sha1\": \$sha1}] \
+				end" /dev/fd/5 >&6
+			cat /dev/fd/6 > "${SRC}"/output/info/git_sources.json
+		} 5<> "${SRC}"/output/info/git_sources.json 6<> "${SRC}"/output/info/git_sources.json.new
+	fi
+
+	if [[ -f "${SRC}"/config/sources/git_sources.json && ${ref_type} == "branch" ]]; then
+		cached_revision=$(jq --raw-output '.[] | select(.source == "'${MEMO_DICT[GIT_SOURCE]}'" and .branch == "'$ref_name'") |.sha1' "${SRC}"/config/sources/git_sources.json)
+		display_alert "Found cached git version" "${cached_revision}" "info"
+		[[ -z "${cached_revision}" ]] || sha1=${cached_revision}
+	fi
+
 	MEMO_DICT+=(["SHA1"]="${sha1}")
 
 	if [[ "${2}" == "include_makefile_body" ]]; then
@@ -90,13 +114,22 @@ function memoized_git_ref_to_info() {
 			declare url="undetermined"
 			case "${git_source}" in
 
-				"git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git")
+				"https://git.kernel.org/pub/scm/linux/kernel/"* | "https://git.ti.com/"*)
+					url="${git_source}/plain/Makefile?h=${sha1}"
+					;;
+
+				"https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable" | "https://mirrors.tuna.tsinghua.edu.cn/git/linux-stable.git" | "https://mirrors.bfsu.edu.cn/git/linux-stable.git")
+					# for mainline kernel source, only the origin source support curl
 					url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/Makefile?h=${sha1}"
 					;;
 
-					# @TODO: urgently add support for Google Mirror
-					# @TODO: china mirror etc.
-					# @TODO: mirrors might need to be resolved before/during/after this, refactor
+				"https://gitee.com/"*)
+					# parse org/repo from https://gitee.com/org/repo
+					declare org_and_repo=""
+					org_and_repo="$(echo "${git_source}" | cut -d/ -f4-5)"
+					org_and_repo="${org_and_repo%.git}" # remove .git if present
+					url="https://gitee.com/${org_and_repo}/raw/${sha1}/Makefile"
+					;;
 
 				"https://github.com/"*)
 					# parse org/repo from https://github.com/org/repo
@@ -105,7 +138,7 @@ function memoized_git_ref_to_info() {
 					org_and_repo="${org_and_repo%.git}" # remove .git if present
 					case "${GITHUB_MIRROR}" in
 						"ghproxy")
-							url="https://ghproxy.com/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
+							url="https://${GHPROXY_ADDRESS}/https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
 							;;
 						*)
 							url="https://raw.githubusercontent.com/${org_and_repo}/${sha1}/Makefile"
@@ -113,7 +146,7 @@ function memoized_git_ref_to_info() {
 					esac
 					;;
 
-				"https://gitlab.com/"*)
+				"https://gitlab.com/"* | "https://source.denx.de/"* | "https://gitlab.collabora.com/"*)
 					# GitLab is more complex than GitHub, there can be more levels.
 					# This code is incomplete... but it works for now.
 					# Example: input:  https://gitlab.com/rk3588_linux/rk/kernel.git

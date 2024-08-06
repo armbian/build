@@ -29,6 +29,7 @@ grep -e "^ks_src" ${SYSTEM_CFG_PATH} > /dev/null
 STATUS=$?
 if [ ${STATUS} -eq 0 ] && [ ${ks_src} == "TFT35" ]; then
     tft35=1
+	insmod /usr/lib/modules/6.1.43-bigtree-cb2/kernel/drivers/input/touchscreen/tsc2007.ko
 fi
 
 if [ ${tft35} -eq 1 ] && [ ! -e "${FBDEV_CONFIG}" ]; then
@@ -181,4 +182,6 @@ if [[ ${BTT_PAD7} == "ON" ]]; then
 fi
 
 #######################################################
-
+sudo cp -rf /usr/service/60-persistent-v4l.rules /lib/udev/rules.d 
+sudo cp -rf /usr/service/60-persistent-v4l.rules /usr/lib/udev/rules.d
+  

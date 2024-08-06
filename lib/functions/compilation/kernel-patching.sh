@@ -30,13 +30,18 @@ function kernel_main_patching_python() {
 		"USERPATCHES_PATH=${USERPATCHES_PATH}"                # Needed to find the userpatches.
 		#"BOARD="                                             # BOARD is needed for the patchset selection logic; mostly for u-boot. empty for kernel.
 		#"TARGET="                                            # TARGET is need for u-boot's SPI/SATA etc selection logic. empty for kernel
+		# For table generation to fit into the screen, or being large when in GHA.
+		"COLUMNS=${COLUMNS}"
+		"COLORFGBG=${COLORFGBG}"
+		"GITHUB_ACTIONS=${GITHUB_ACTIONS}"
 		# Needed so git can find the global .gitconfig, and Python can parse the PATH to determine which git to use.
 		"PATH=${PATH}"
 		"HOME=${HOME}"
 		# What to do?
-		"APPLY_PATCHES=yes"                      # Apply the patches to the filesystem. Does not imply git commiting. If no, still exports the hash.
-		"PATCHES_TO_GIT=${PATCHES_TO_GIT:-no}"   # Commit to git after applying the patches.
-		"REWRITE_PATCHES=${REWRITE_PATCHES:-no}" # Rewrite the original patch files after git commiting.
+		"APPLY_PATCHES=yes"                                                    # Apply the patches to the filesystem. Does not imply git commiting. If no, still exports the hash.
+		"PATCHES_TO_GIT=${PATCHES_TO_GIT:-no}"                                 # Commit to git after applying the patches.
+		"REWRITE_PATCHES=${REWRITE_PATCHES:-no}"                               # Rewrite the original patch files after git commiting.
+		"REWRITE_PATCHES_NEEDING_REBASE=${REWRITE_PATCHES_NEEDING_REBASE:-no}" # Only rewrite those patch files in need of a rebase.
 		# Git dir, revision, and target branch
 		"GIT_WORK_DIR=${kernel_work_dir}"                                # "Where to apply patches?"
 		"BASE_GIT_REVISION=${kernel_git_revision}"                       # The revision we're building/patching. Python will reset and clean to this.
@@ -52,7 +57,9 @@ function kernel_main_patching_python() {
 		"EXTRA_PATCH_FILES_FIRST=${kernel_drivers_patch_file}"  # Is a space-separated list.
 		"EXTRA_PATCH_HASHES_FIRST=${kernel_drivers_patch_hash}" # Is a space-separated list.
 	)
-	display_alert "Calling Python patching script" "for kernel" "info"
+	display_alert "Calling Python patching script for kernel:" "${KERNELSOURCE} - ${KERNELBRANCH}" "info"
+	display_alert "Using kernel patch dir:" "${KERNELPATCHDIR}" "info"
+
 	# "raw_command" is only for logging purposes.
 	raw_command="[...shortened kernel patching...] ${PYTHON3_INFO[BIN]} ${SRC}/lib/tools/patching.py" \
 		run_host_command_logged env -i "${params_quoted[@]@Q}" "${PYTHON3_INFO[BIN]}" "${SRC}/lib/tools/patching.py"

@@ -14,7 +14,6 @@ function artifact_armbian-bsp-cli_config_dump() {
 }
 
 function artifact_armbian-bsp-cli_prepare_version() {
-	: "${artifact_prefix_version:?artifact_prefix_version is not set}"
 	: "${BRANCH:?BRANCH is not set}"
 	: "${BOARD:?BOARD is not set}"
 
@@ -35,31 +34,42 @@ function artifact_armbian-bsp-cli_prepare_version() {
 	hash_hooks="$(echo "${hooks_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
 	declare hash_hooks_short="${hash_hooks:0:${short_hash_size}}"
 
-	# Hash variables/bootscripts that affect the contents of bsp-cli package
-	get_bootscript_info # get bootscript info, that is included in bsp-cli, hash it
-	declare -a vars_to_hash=(
-		"${bootscript_info[bootscript_file_contents]}"
-		"${bootscript_info[bootenv_file_contents]}"
-		"${bootscript_info[has_bootscript]}"
-		"${bootscript_info[has_extlinux]}"
-		"${UBOOT_FW_ENV}"                   # not included in bootscript
-		"${KEEP_ORIGINAL_OS_RELEASE:-"no"}" # /etc/os-release
-		"${BOARDFAMILY}"                    # /etc/armbian-release
-		"${LINUXFAMILY}"                    # /etc/armbian-release
-		"${IMAGE_TYPE}"                     # /etc/armbian-release
-		"${BOARD_TYPE}"                     # /etc/armbian-release
-		"${INITRD_ARCH}"                    # /etc/armbian-release
-		"${KERNEL_IMAGE_TYPE}"              # /etc/armbian-release
-		"${VENDOR}"                         # /etc/armbian-release
+	# get the bootscript info...
+	declare -A bootscript_info=()
+	get_bootscript_info # fills in bootscript_info array
+
+	# Hash variables/bootscripts that affect the contents of bsp-cli package.
+	# Those contain /armbian a lot, so don't normalize them.
+	declare -a vars_to_hash_no_normalize=(
+		"bootscript_file_contents: ${bootscript_info[bootscript_file_contents]}"
+		"bootenv_file_contents: ${bootscript_info[bootenv_file_contents]}"
 	)
-	declare hash_vars="undetermined"
-	hash_vars="$(echo "${vars_to_hash[@]}" | sha256sum | cut -d' ' -f1)"
-	vars_config_hash="${hash_vars}"
+	declare hash_variables="undetermined"                                                     # will be set by calculate_hash_for_variables(), but without normalization
+	do_normalize_src_path="no" calculate_hash_for_variables "${vars_to_hash_no_normalize[@]}" # don't normalize
+	declare hash_vars_no_normalize="${hash_variables}"
+
+	declare -a vars_to_hash=(
+		"has_bootscript: ${bootscript_info[has_bootscript]}"
+		"has_extlinux: ${bootscript_info[has_extlinux]}"
+		"UBOOT_FW_ENV: ${UBOOT_FW_ENV}"                               # not included in bootscript
+		"KEEP_ORIGINAL_OS_RELEASE: ${KEEP_ORIGINAL_OS_RELEASE:-"no"}" # /etc/os-release
+		"BOARDFAMILY: ${BOARDFAMILY}"                                 # /etc/armbian-release
+		"LINUXFAMILY: ${LINUXFAMILY}"                                 # /etc/armbian-release
+		"IMAGE_TYPE: ${IMAGE_TYPE}"                                   # /etc/armbian-release
+		"BOARD_TYPE: ${BOARD_TYPE}"                                   # /etc/armbian-release
+		"INITRD_ARCH: ${INITRD_ARCH}"                                 # /etc/armbian-release
+		"KERNEL_IMAGE_TYPE: ${KERNEL_IMAGE_TYPE}"                     # /etc/armbian-release
+		"VENDOR: ${VENDOR}"                                           # /etc/armbian-release
+		"BOOT_SOC: ${BOOT_SOC}"                                       # /etc/armbian-release # See https://github.com/armbian/build/pull/6411
+		"hash_vars_no_normalize: ${hash_vars_no_normalize}"           # The non-normalized part, above
+	)
+	declare hash_variables="undetermined" # will be set by calculate_hash_for_variables(), which normalizes the input
+	calculate_hash_for_variables "${vars_to_hash[@]}"
+	declare vars_config_hash="${hash_variables}"
 	declare var_config_hash_short="${vars_config_hash:0:${short_hash_size}}"
 
 	declare -a dirs_to_hash=(
 		"${SRC}/packages/bsp/common" # common stuff
-		"${SRC}/packages/bsp-cli"
 		"${SRC}/config/optional/_any_board/_packages/bsp-cli"
 		"${SRC}/config/optional/architectures/${ARCH}/_packages/bsp-cli"
 		"${SRC}/config/optional/families/${LINUXFAMILY}/_packages/bsp-cli"
@@ -72,12 +82,12 @@ function artifact_armbian-bsp-cli_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/bsp/armbian-bsp-cli-deb.sh
+	calculate_hash_for_bash_deb_artifact "bsp/armbian-bsp-cli-deb.sh" "bsp/utils-bsp.sh"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-H${hash_hooks_short}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-PC${packages_config_hash_short}-V${var_config_hash_short}-H${hash_hooks_short}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian package armbian-bsp-cli"
@@ -92,23 +102,31 @@ function artifact_armbian-bsp-cli_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
+	artifact_deb_repo="global"  # "global" meaning: release-independent repo. could be '${RELEASE}' for a release-specific package.
+	artifact_deb_arch="${ARCH}" # arch-specific package, or 'all' for arch-independent package.
 	artifact_name="armbian-bsp-cli-${BOARD}-${BRANCH}${EXTRA_BSP_NAME}"
-	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/${artifact_name}_${artifact_version}_${ARCH}.deb"
+	artifact_type="deb-tar"
 
-	artifact_map_packages=(
-		["armbian-bsp-cli"]="${artifact_name}"
-	)
+	artifact_map_packages=(["armbian-bsp-cli"]="${artifact_name}")
 
-	artifact_map_debs=(
-		["armbian-bsp-cli"]="${artifact_name}_${artifact_version}_${ARCH}.deb"
-	)
+	# Register the function used to re-version the _contents_ of the bsp-cli deb file (non-transitional)
+	artifact_debs_reversion_functions+=("reversion_armbian-bsp-cli_deb_contents")
+
+	if artifact_armbian-bsp-cli_needs_transitional_package; then
+		artifact_map_packages+=(["armbian-bsp-cli-transitional"]="armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME}")
+		# Register the function used to re-version the _contents_ of the bsp-cli deb file (transitional)
+		artifact_debs_reversion_functions+=("reversion_armbian-bsp-cli-transitional_deb_contents")
+	fi
 
 	return 0
 }
 
 function artifact_armbian-bsp-cli_build_from_sources() {
+	# Generate transitional package when needed.
+	if artifact_armbian-bsp-cli_needs_transitional_package; then
+		LOG_SECTION="compile_armbian-bsp-cli" do_with_logging compile_armbian-bsp-cli-transitional
+	fi
+
 	LOG_SECTION="compile_armbian-bsp-cli" do_with_logging compile_armbian-bsp-cli
 }
 
@@ -142,4 +160,16 @@ function artifact_armbian-bsp-cli_obtain_from_remote_cache() {
 
 function artifact_armbian-bsp-cli_deploy_to_remote_cache() {
 	upload_artifact_to_oci
+}
+
+function artifact_armbian-bsp-cli_needs_transitional_package() {
+	if [[ "${KERNEL_TARGET}" == "${BRANCH}" ]]; then
+		return 0
+	elif [[ "${BRANCH}" == "current" ]]; then
+		return 0
+	elif [[ "${KERNEL_TARGET}" != *current* && "${BRANCH}" == "legacy" ]]; then
+		return 0
+	else
+		return 1
+	fi
 }

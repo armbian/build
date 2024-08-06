@@ -1,0 +1,454 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Iouri Tarassov <iourit@linux.microsoft.com>
+Date: Wed, 19 Jan 2022 16:53:47 -0800
+Subject: drivers: hv: dxgkrnl: Query the dxgdevice state
+
+Implement the ioctl to query the dxgdevice state - LX_DXGETDEVICESTATE.
+The IOCTL is used to query the state of the given dxgdevice object (active,
+error, etc.).
+
+A call to the dxgdevice execution state could be high frequency.
+The following method is used to avoid sending a synchronous VM
+bus message to the host for every call:
+- When a dxgdevice is created, a pointer to dxgglobal->device_state_counter
+  is sent to the host
+- Every time the device state on the host is changed, the host will send
+  an asynchronous message to the guest (DXGK_VMBCOMMAND_SETGUESTDATA) and
+  the guest will increment the device_state_counter value.
+- the dxgdevice object has execution_state_counter member, which is equal
+  to dxgglobal->device_state_counter value at the time when
+  LX_DXGETDEVICESTATE was last processed..
+- if execution_state_counter is different from device_state_counter, the
+  dxgk_vmbcommand_getdevicestate VM bus message is sent to the host.
+  Otherwise, the cached value is returned to the caller.
+
+Signed-off-by: Iouri Tarassov <iourit@linux.microsoft.com>
+[kms: Forward port to v6.1]
+Signed-off-by: Kelsey Steele <kelseysteele@microsoft.com>
+---
+ drivers/hv/dxgkrnl/dxgkrnl.h   |  11 +
+ drivers/hv/dxgkrnl/dxgmodule.c |   1 -
+ drivers/hv/dxgkrnl/dxgvmbus.c  |  68 +++++++
+ drivers/hv/dxgkrnl/dxgvmbus.h  |  26 +++
+ drivers/hv/dxgkrnl/ioctl.c     |  66 +++++-
+ include/uapi/misc/d3dkmthk.h   | 101 +++++++++-
+ 6 files changed, 261 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/hv/dxgkrnl/dxgkrnl.h b/drivers/hv/dxgkrnl/dxgkrnl.h
+index a39d11d76e41..b131c3b43838 100644
+--- a/drivers/hv/dxgkrnl/dxgkrnl.h
++++ b/drivers/hv/dxgkrnl/dxgkrnl.h
+@@ -268,12 +268,18 @@ void dxgsyncobject_destroy(struct dxgprocess *process,
+ void dxgsyncobject_stop(struct dxgsyncobject *syncobj);
+ void dxgsyncobject_release(struct kref *refcount);
+ 
++/*
++ * device_state_counter - incremented every time the execition state of
++ *	a DXGDEVICE is changed in the host. Used to optimize access to the
++ *	device execution state.
++ */
+ struct dxgglobal {
+ 	struct dxgdriver	*drvdata;
+ 	struct dxgvmbuschannel	channel;
+ 	struct hv_device	*hdev;
+ 	u32			num_adapters;
+ 	u32			vmbus_ver;	/* Interface version */
++	atomic_t		device_state_counter;
+ 	struct resource		*mem;
+ 	u64			mmiospace_base;
+ 	u64			mmiospace_size;
+@@ -512,6 +518,7 @@ struct dxgdevice {
+ 	struct list_head	syncobj_list_head;
+ 	struct d3dkmthandle	handle;
+ 	enum d3dkmt_deviceexecution_state execution_state;
++	int			execution_state_counter;
+ 	u32			handle_valid;
+ };
+ 
+@@ -849,6 +856,10 @@ int dxgvmb_send_open_sync_object_nt(struct dxgprocess *process,
+ 				    struct d3dkmt_opensyncobjectfromnthandle2
+ 				    *args,
+ 				    struct dxgsyncobject *syncobj);
++int dxgvmb_send_get_device_state(struct dxgprocess *process,
++				 struct dxgadapter *adapter,
++				 struct d3dkmt_getdevicestate *args,
++				 struct d3dkmt_getdevicestate *__user inargs);
+ int dxgvmb_send_create_nt_shared_object(struct dxgprocess *process,
+ 					struct d3dkmthandle object,
+ 					struct d3dkmthandle *shared_handle);
+diff --git a/drivers/hv/dxgkrnl/dxgmodule.c b/drivers/hv/dxgkrnl/dxgmodule.c
+index 8cbe1095599f..5c364a46b65f 100644
+--- a/drivers/hv/dxgkrnl/dxgmodule.c
++++ b/drivers/hv/dxgkrnl/dxgmodule.c
+@@ -827,7 +827,6 @@ static struct dxgglobal *dxgglobal_create(void)
+ #ifdef DEBUG
+ 	dxgk_validate_ioctls();
+ #endif
+-
+ 	return dxgglobal;
+ }
+ 
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.c b/drivers/hv/dxgkrnl/dxgvmbus.c
+index 67a16de622e0..ed800dc09180 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.c
++++ b/drivers/hv/dxgkrnl/dxgvmbus.c
+@@ -281,6 +281,24 @@ static void command_vm_to_host_init1(struct dxgkvmb_command_vm_to_host *command,
+ 	command->channel_type = DXGKVMB_VM_TO_HOST;
+ }
+ 
++static void set_guest_data(struct dxgkvmb_command_host_to_vm *packet,
++			   u32 packet_length)
++{
++	struct dxgkvmb_command_setguestdata *command = (void *)packet;
++	struct dxgglobal *dxgglobal = dxggbl();
++
++	DXG_TRACE("Setting guest data: %d %d %p %p",
++		command->data_type,
++		command->data32,
++		command->guest_pointer,
++		&dxgglobal->device_state_counter);
++	if (command->data_type == SETGUESTDATA_DATATYPE_DWORD &&
++	    command->guest_pointer == &dxgglobal->device_state_counter &&
++	    command->data32 != 0) {
++		atomic_inc(&dxgglobal->device_state_counter);
++	}
++}
++
+ static void signal_guest_event(struct dxgkvmb_command_host_to_vm *packet,
+ 			       u32 packet_length)
+ {
+@@ -311,6 +329,9 @@ static void process_inband_packet(struct dxgvmbuschannel *channel,
+ 			DXG_TRACE("global packet %d",
+ 				packet->command_type);
+ 			switch (packet->command_type) {
++			case DXGK_VMBCOMMAND_SETGUESTDATA:
++				set_guest_data(packet, packet_length);
++				break;
+ 			case DXGK_VMBCOMMAND_SIGNALGUESTEVENT:
+ 			case DXGK_VMBCOMMAND_SIGNALGUESTEVENTPASSIVE:
+ 				signal_guest_event(packet, packet_length);
+@@ -1028,6 +1049,7 @@ struct d3dkmthandle dxgvmb_send_create_device(struct dxgadapter *adapter,
+ 	struct dxgkvmb_command_createdevice *command;
+ 	struct dxgkvmb_command_createdevice_return result = { };
+ 	struct dxgvmbusmsg msg;
++	struct dxgglobal *dxgglobal = dxggbl();
+ 
+ 	ret = init_message(&msg, adapter, process, sizeof(*command));
+ 	if (ret)
+@@ -1037,6 +1059,7 @@ struct d3dkmthandle dxgvmb_send_create_device(struct dxgadapter *adapter,
+ 	command_vgpu_to_host_init2(&command->hdr, DXGK_VMBCOMMAND_CREATEDEVICE,
+ 				   process->host_handle);
+ 	command->flags = args->flags;
++	command->error_code = &dxgglobal->device_state_counter;
+ 
+ 	ret = dxgvmb_send_sync_msg(msg.channel, msg.hdr, msg.size,
+ 				   &result, sizeof(result));
+@@ -1806,6 +1829,51 @@ int dxgvmb_send_destroy_allocation(struct dxgprocess *process,
+ 	return ret;
+ }
+ 
++int dxgvmb_send_get_device_state(struct dxgprocess *process,
++				 struct dxgadapter *adapter,
++				 struct d3dkmt_getdevicestate *args,
++				 struct d3dkmt_getdevicestate *__user output)
++{
++	int ret;
++	struct dxgkvmb_command_getdevicestate *command;
++	struct dxgkvmb_command_getdevicestate_return result = { };
++	struct dxgvmbusmsg msg = {.hdr = NULL};
++
++	ret = init_message(&msg, adapter, process, sizeof(*command));
++	if (ret)
++		goto cleanup;
++	command = (void *)msg.msg;
++
++	command_vgpu_to_host_init2(&command->hdr,
++				   DXGK_VMBCOMMAND_GETDEVICESTATE,
++				   process->host_handle);
++	command->args = *args;
++
++	ret = dxgvmb_send_sync_msg(msg.channel, msg.hdr, msg.size,
++				   &result, sizeof(result));
++	if (ret < 0)
++		goto cleanup;
++
++	ret = ntstatus2int(result.status);
++	if (ret < 0)
++		goto cleanup;
++
++	ret = copy_to_user(output, &result.args, sizeof(result.args));
++	if (ret) {
++		DXG_ERR("failed to copy output args");
++		ret = -EINVAL;
++	}
++
++	if (args->state_type == _D3DKMT_DEVICESTATE_EXECUTION)
++		args->execution_state = result.args.execution_state;
++
++cleanup:
++	free_message(&msg, process);
++	if (ret)
++		DXG_TRACE("err: %d", ret);
++	return ret;
++}
++
+ int dxgvmb_send_open_resource(struct dxgprocess *process,
+ 			      struct dxgadapter *adapter,
+ 			      struct d3dkmthandle device,
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.h b/drivers/hv/dxgkrnl/dxgvmbus.h
+index c1f693917d99..6ca1068b0d4c 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.h
++++ b/drivers/hv/dxgkrnl/dxgvmbus.h
+@@ -172,6 +172,22 @@ struct dxgkvmb_command_signalguestevent {
+ 	bool				dereference_event;
+ };
+ 
++enum set_guestdata_type {
++	SETGUESTDATA_DATATYPE_DWORD	= 0,
++	SETGUESTDATA_DATATYPE_UINT64	= 1
++};
++
++struct dxgkvmb_command_setguestdata {
++	struct dxgkvmb_command_host_to_vm hdr;
++	void *guest_pointer;
++	union {
++		u64	data64;
++		u32	data32;
++	};
++	u32	dereference	: 1;
++	u32	data_type	: 4;
++};
++
+ struct dxgkvmb_command_opensyncobject {
+ 	struct dxgkvmb_command_vm_to_host hdr;
+ 	struct d3dkmthandle		device;
+@@ -574,6 +590,16 @@ struct dxgkvmb_command_destroyhwqueue {
+ 	struct d3dkmthandle		hwqueue;
+ };
+ 
++struct dxgkvmb_command_getdevicestate {
++	struct dxgkvmb_command_vgpu_to_host hdr;
++	struct d3dkmt_getdevicestate	args;
++};
++
++struct dxgkvmb_command_getdevicestate_return {
++	struct d3dkmt_getdevicestate	args;
++	struct ntstatus			status;
++};
++
+ struct dxgkvmb_command_shareobjectwithhost {
+ 	struct dxgkvmb_command_vm_to_host hdr;
+ 	struct d3dkmthandle	device_handle;
+diff --git a/drivers/hv/dxgkrnl/ioctl.c b/drivers/hv/dxgkrnl/ioctl.c
+index ac052836ce27..26d410fd6e99 100644
+--- a/drivers/hv/dxgkrnl/ioctl.c
++++ b/drivers/hv/dxgkrnl/ioctl.c
+@@ -3142,6 +3142,70 @@ dxgkio_wait_sync_object_gpu(struct dxgprocess *process, void *__user inargs)
+ 	return ret;
+ }
+ 
++static int
++dxgkio_get_device_state(struct dxgprocess *process, void *__user inargs)
++{
++	int ret;
++	struct d3dkmt_getdevicestate args;
++	struct dxgdevice *device = NULL;
++	struct dxgadapter *adapter = NULL;
++	int global_device_state_counter = 0;
++	struct dxgglobal *dxgglobal = dxggbl();
++
++	ret = copy_from_user(&args, inargs, sizeof(args));
++	if (ret) {
++		DXG_ERR("failed to copy input args");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	device = dxgprocess_device_by_handle(process, args.device);
++	if (device == NULL) {
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	adapter = device->adapter;
++	ret = dxgadapter_acquire_lock_shared(adapter);
++	if (ret < 0) {
++		adapter = NULL;
++		goto cleanup;
++	}
++
++	if (args.state_type == _D3DKMT_DEVICESTATE_EXECUTION) {
++		global_device_state_counter =
++			atomic_read(&dxgglobal->device_state_counter);
++		if (device->execution_state_counter ==
++		    global_device_state_counter) {
++			args.execution_state = device->execution_state;
++			ret = copy_to_user(inargs, &args, sizeof(args));
++			if (ret) {
++				DXG_ERR("failed to copy args to user");
++				ret = -EINVAL;
++			}
++			goto cleanup;
++		}
++	}
++
++	ret = dxgvmb_send_get_device_state(process, adapter, &args, inargs);
++
++	if (ret == 0 && args.state_type == _D3DKMT_DEVICESTATE_EXECUTION) {
++		device->execution_state = args.execution_state;
++		device->execution_state_counter = global_device_state_counter;
++	}
++
++cleanup:
++
++	if (adapter)
++		dxgadapter_release_lock_shared(adapter);
++	if (device)
++		kref_put(&device->device_kref, dxgdevice_release);
++	if (ret < 0)
++		DXG_ERR("Failed to get device state %x", ret);
++
++	return ret;
++}
++
+ static int
+ dxgsharedsyncobj_get_host_nt_handle(struct dxgsharedsyncobject *syncobj,
+ 				    struct dxgprocess *process,
+@@ -3822,7 +3886,7 @@ static struct ioctl_desc ioctls[] = {
+ /* 0x0b */	{},
+ /* 0x0c */	{},
+ /* 0x0d */	{},
+-/* 0x0e */	{},
++/* 0x0e */	{dxgkio_get_device_state, LX_DXGETDEVICESTATE},
+ /* 0x0f */	{dxgkio_submit_command, LX_DXSUBMITCOMMAND},
+ /* 0x10 */	{dxgkio_create_sync_object, LX_DXCREATESYNCHRONIZATIONOBJECT},
+ /* 0x11 */	{dxgkio_signal_sync_object, LX_DXSIGNALSYNCHRONIZATIONOBJECT},
+diff --git a/include/uapi/misc/d3dkmthk.h b/include/uapi/misc/d3dkmthk.h
+index 895861505e6e..8a013b07e88a 100644
+--- a/include/uapi/misc/d3dkmthk.h
++++ b/include/uapi/misc/d3dkmthk.h
+@@ -236,6 +236,95 @@ struct d3dddi_destroypagingqueue {
+ 	struct d3dkmthandle		paging_queue;
+ };
+ 
++enum dxgk_render_pipeline_stage {
++	_DXGK_RENDER_PIPELINE_STAGE_UNKNOWN		= 0,
++	_DXGK_RENDER_PIPELINE_STAGE_INPUT_ASSEMBLER	= 1,
++	_DXGK_RENDER_PIPELINE_STAGE_VERTEX_SHADER	= 2,
++	_DXGK_RENDER_PIPELINE_STAGE_GEOMETRY_SHADER	= 3,
++	_DXGK_RENDER_PIPELINE_STAGE_STREAM_OUTPUT	= 4,
++	_DXGK_RENDER_PIPELINE_STAGE_RASTERIZER		= 5,
++	_DXGK_RENDER_PIPELINE_STAGE_PIXEL_SHADER	= 6,
++	_DXGK_RENDER_PIPELINE_STAGE_OUTPUT_MERGER	= 7,
++};
++
++enum dxgk_page_fault_flags {
++	_DXGK_PAGE_FAULT_WRITE			= 0x1,
++	_DXGK_PAGE_FAULT_FENCE_INVALID		= 0x2,
++	_DXGK_PAGE_FAULT_ADAPTER_RESET_REQUIRED	= 0x4,
++	_DXGK_PAGE_FAULT_ENGINE_RESET_REQUIRED	= 0x8,
++	_DXGK_PAGE_FAULT_FATAL_HARDWARE_ERROR	= 0x10,
++	_DXGK_PAGE_FAULT_IOMMU			= 0x20,
++	_DXGK_PAGE_FAULT_HW_CONTEXT_VALID	= 0x40,
++	_DXGK_PAGE_FAULT_PROCESS_HANDLE_VALID	= 0x80,
++};
++
++enum dxgk_general_error_code {
++	_DXGK_GENERAL_ERROR_PAGE_FAULT		= 0,
++	_DXGK_GENERAL_ERROR_INVALID_INSTRUCTION	= 1,
++};
++
++struct dxgk_fault_error_code {
++	union {
++		struct {
++			__u32	is_device_specific_code:1;
++			enum dxgk_general_error_code general_error_code:31;
++		};
++		struct {
++			__u32	is_device_specific_code_reserved_bit:1;
++			__u32	device_specific_code:31;
++		};
++	};
++};
++
++struct d3dkmt_devicereset_state {
++	union {
++		struct {
++			__u32	desktop_switched:1;
++			__u32	reserved:31;
++		};
++		__u32		value;
++	};
++};
++
++struct d3dkmt_devicepagefault_state {
++	__u64				faulted_primitive_api_sequence_number;
++	enum dxgk_render_pipeline_stage	faulted_pipeline_stage;
++	__u32				faulted_bind_table_entry;
++	enum dxgk_page_fault_flags	page_fault_flags;
++	struct dxgk_fault_error_code	fault_error_code;
++	__u64				faulted_virtual_address;
++};
++
++enum d3dkmt_deviceexecution_state {
++	_D3DKMT_DEVICEEXECUTION_ACTIVE			= 1,
++	_D3DKMT_DEVICEEXECUTION_RESET			= 2,
++	_D3DKMT_DEVICEEXECUTION_HUNG			= 3,
++	_D3DKMT_DEVICEEXECUTION_STOPPED			= 4,
++	_D3DKMT_DEVICEEXECUTION_ERROR_OUTOFMEMORY	= 5,
++	_D3DKMT_DEVICEEXECUTION_ERROR_DMAFAULT		= 6,
++	_D3DKMT_DEVICEEXECUTION_ERROR_DMAPAGEFAULT	= 7,
++};
++
++enum d3dkmt_devicestate_type {
++	_D3DKMT_DEVICESTATE_EXECUTION		= 1,
++	_D3DKMT_DEVICESTATE_PRESENT		= 2,
++	_D3DKMT_DEVICESTATE_RESET		= 3,
++	_D3DKMT_DEVICESTATE_PRESENT_DWM		= 4,
++	_D3DKMT_DEVICESTATE_PAGE_FAULT		= 5,
++	_D3DKMT_DEVICESTATE_PRESENT_QUEUE	= 6,
++};
++
++struct d3dkmt_getdevicestate {
++	struct d3dkmthandle				device;
++	enum d3dkmt_devicestate_type			state_type;
++	union {
++		enum d3dkmt_deviceexecution_state	execution_state;
++		struct d3dkmt_devicereset_state		reset_state;
++		struct d3dkmt_devicepagefault_state	page_fault_state;
++		char alignment[48];
++	};
++};
++
+ enum d3dkmdt_gdisurfacetype {
+ 	_D3DKMDT_GDISURFACE_INVALID				= 0,
+ 	_D3DKMDT_GDISURFACE_TEXTURE				= 1,
+@@ -759,16 +848,6 @@ struct d3dkmt_queryadapterinfo {
+ 	__u32				private_data_size;
+ };
+ 
+-enum d3dkmt_deviceexecution_state {
+-	_D3DKMT_DEVICEEXECUTION_ACTIVE			= 1,
+-	_D3DKMT_DEVICEEXECUTION_RESET			= 2,
+-	_D3DKMT_DEVICEEXECUTION_HUNG			= 3,
+-	_D3DKMT_DEVICEEXECUTION_STOPPED			= 4,
+-	_D3DKMT_DEVICEEXECUTION_ERROR_OUTOFMEMORY	= 5,
+-	_D3DKMT_DEVICEEXECUTION_ERROR_DMAFAULT		= 6,
+-	_D3DKMT_DEVICEEXECUTION_ERROR_DMAPAGEFAULT	= 7,
+-};
+-
+ struct d3dddi_openallocationinfo2 {
+ 	struct d3dkmthandle	allocation;
+ #ifdef __KERNEL__
+@@ -978,6 +1057,8 @@ struct d3dkmt_shareobjectwithhost {
+ 	_IOWR(0x47, 0x07, struct d3dkmt_createpagingqueue)
+ #define LX_DXQUERYADAPTERINFO		\
+ 	_IOWR(0x47, 0x09, struct d3dkmt_queryadapterinfo)
++#define LX_DXGETDEVICESTATE		\
++	_IOWR(0x47, 0x0e, struct d3dkmt_getdevicestate)
+ #define LX_DXSUBMITCOMMAND		\
+ 	_IOWR(0x47, 0x0f, struct d3dkmt_submitcommand)
+ #define LX_DXCREATESYNCHRONIZATIONOBJECT \
+-- 
+Armbian
+

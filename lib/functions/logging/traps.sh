@@ -108,7 +108,8 @@ function run_cleanup_handlers() {
 		return 0 # No handlers set, just return.
 	else
 		if [[ ${cleanup_exit_code:-0} -gt 0 ]]; then
-			display_alert "Cleaning up" "please wait for cleanups to finish" "error"
+			# No use polluting GHA/CI with notices about cleanup, if we're already failing. skip_ci_special="yes"
+			skip_ci_special="yes" display_alert "Cleaning up" "please wait for cleanups to finish" "error"
 		else
 			display_alert "Cleaning up" "please wait for cleanups to finish" "info"
 		fi
@@ -192,4 +193,20 @@ function exit_with_error() {
 	# do NOT close the fd 13 here, otherwise the error will not be logged to logfile...
 
 	exit 43
+}
+
+# terminate build with a specific error code (44), meaning "target not supported".
+# this is exactly like exit_with_error, but will be handled differently by the build pipeline.
+function exit_with_target_not_supported_error() {
+	# Log the error and exit.
+	# Everything else will be done by shared trap handling, above.
+	local _file="${BASH_SOURCE[1]}"
+	local _function=${FUNCNAME[1]}
+	local _line="${BASH_LINENO[0]}"
+
+	display_alert "target not supported! " "${1} ${2}" "err"
+
+	overlayfs_wrapper "cleanup"
+
+	exit 44
 }

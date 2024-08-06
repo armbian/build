@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # This runs *after* user_config. Don't change anything not coming from other variables or meant to be configured by the user.
 function extension_prepare_config__prepare_grub-riscv64() {
-	display_alert "Prepare config" "${EXTENSION}" "info"
+	display_alert "Extension: ${EXTENSION}: Prepare config" "${EXTENSION}" "info"
 	# Extension configuration defaults.
 	declare -g DISTRO_GENERIC_KERNEL=${DISTRO_GENERIC_KERNEL:-no}             # if yes, does not build our own kernel, instead, uses generic one from distro
 	declare -g UEFI_GRUB_TERMINAL="${UEFI_GRUB_TERMINAL:-serial console}"     # 'serial' forces grub menu on serial console. empty to not include
@@ -20,7 +20,7 @@ function extension_prepare_config__prepare_grub-riscv64() {
 	declare -g UEFI_GRUB_TARGET="riscv64-efi"                                        # Default for x86_64
 
 	if [[ "${DISTRIBUTION}" != "Ubuntu" && "${BUILDING_IMAGE}" == "yes" ]]; then
-		exit_with_error "${DISTRIBUTION} is not supported yet"
+		exit_with_error "Extension: ${EXTENSION}: ${DISTRIBUTION} is not supported yet"
 	fi
 
 	add_packages_to_image efibootmgr efivar cloud-initramfs-growroot busybox os-prober "grub-efi-${ARCH}-bin" "grub-efi-${ARCH}"
@@ -32,10 +32,10 @@ pre_umount_final_image__install_grub() {
 
 	configure_grub
 	local chroot_target="${MOUNT}"
-	display_alert "Installing bootloader" "GRUB" "info"
+	display_alert "Extension: ${EXTENSION}: Installing bootloader" "GRUB" "info"
 
 	# RiscV64 specific: actually copy the DTBs to the ESP
-	display_alert "Copying DTBs to ESP" "${EXTENSION}" "info"
+	display_alert "Extension: ${EXTENSION}: Copying DTBs to ESP" "${EXTENSION}" "info"
 	run_host_command_logged mkdir -pv "${chroot_target}"/boot/efi/dtb
 	run_host_command_logged cp -rpv "${chroot_target}"/boot/dtb/* "${chroot_target}"/boot/efi/dtb/
 	# RiscV64 specific: @TODO ??? what is this ??
@@ -61,15 +61,15 @@ pre_umount_final_image__install_grub() {
 	# shellcheck disable=SC2016 # some wierd escaping going on there.
 	chroot_custom "$chroot_target" mkdir -pv '/dev/disk/by-uuid/"$(grub-probe --target=fs_uuid /)"' "||" true
 
-	display_alert "Creating GRUB config..." "${EXTENSION}: grub-mkconfig / update-grub"
+	display_alert "Extension: ${EXTENSION}: Creating GRUB config..." "${EXTENSION}: grub-mkconfig / update-grub"
 	chroot_custom "$chroot_target" update-grub || {
 		exit_with_error "update-grub failed!"
 	}
 
 	local install_grub_cmdline="grub-install --target=${UEFI_GRUB_TARGET} --no-nvram --removable" # nvram is global to the host, even across chroot. take care.
-	display_alert "Installing GRUB EFI..." "${EXTENSION}: ${UEFI_GRUB_TARGET}"
+	display_alert "Extension: ${EXTENSION}: Installing GRUB EFI..." "${EXTENSION}: ${UEFI_GRUB_TARGET}"
 	chroot_custom "$chroot_target" "$install_grub_cmdline" || {
-		exit_with_error "${install_grub_cmdline} failed!"
+		exit_with_error "Extension: ${EXTENSION}: ${install_grub_cmdline} failed!"
 	}
 
 	### Sanity check. The produced "/boot/grub/grub.cfg" should:
@@ -77,23 +77,23 @@ pre_umount_final_image__install_grub() {
 
 	# - NOT have any mention of `/dev` inside; otherwise something is going to fail
 	if grep -q '/dev' "${chroot_target}/boot/grub/grub.cfg"; then
-		display_alert "GRUB sanity check failed" "grub.cfg contains /dev" "err"
+		display_alert "Extension: ${EXTENSION}: GRUB sanity check failed" "grub.cfg contains /dev" "err"
 		SHOW_LOG=yes run_host_command_logged grep '/dev' "${chroot_target}/boot/grub/grub.cfg" "||" true
 		has_failed_sanity_check=1
 	else
-		display_alert "GRUB config sanity check passed" "no '/dev' found in grub.cfg" "info"
+		display_alert "Extension: ${EXTENSION}: GRUB config sanity check passed" "no '/dev' found in grub.cfg" "info"
 	fi
 
 	# - HAVE references to initrd, otherwise going to fail.
 	if ! grep -q 'initrd.img' "${chroot_target}/boot/grub/grub.cfg"; then
-		display_alert "GRUB config sanity check failed" "no initrd.img references found in /boot/grub/grub.cfg" "err"
+		display_alert "Extension: ${EXTENSION}: GRUB config sanity check failed" "no initrd.img references found in /boot/grub/grub.cfg" "err"
 		has_failed_sanity_check=1
 	else
-		display_alert "GRUB config sanity check passed" "initrd.img references found OK in /boot/grub/grub.cfg" "debug"
+		display_alert "Extension: ${EXTENSION}: GRUB config sanity check passed" "initrd.img references found OK in /boot/grub/grub.cfg" "debug"
 	fi
 
 	if [[ ${has_failed_sanity_check} -gt 0 ]]; then
-		exit_with_error "GRUB config sanity check failed, image will be unbootable; see above errors"
+		exit_with_error "Extension: ${EXTENSION}: GRUB config sanity check failed, image will be unbootable; see above errors"
 	fi
 
 	# Remove host-side config.
@@ -122,7 +122,7 @@ configure_grub() {
 		run_host_command_logged chmod -v +x "${MOUNT}"/usr/share/desktop-base/grub_background.sh
 	fi
 
-	display_alert "GRUB EFI kernel cmdline" "'${GRUB_CMDLINE_LINUX_DEFAULT}' distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
+	display_alert "Extension: ${EXTENSION}: GRUB EFI kernel cmdline" "'${GRUB_CMDLINE_LINUX_DEFAULT}' distro=${UEFI_GRUB_DISTRO_NAME} timeout=${UEFI_GRUB_TIMEOUT}" ""
 	cat <<- grubCfgFrag >> "${MOUNT}"/etc/default/grub.d/98-armbian.cfg
 		GRUB_CMDLINE_LINUX_DEFAULT="${GRUB_CMDLINE_LINUX_DEFAULT}"
 		GRUB_TIMEOUT_STYLE=menu                                  # Show the menu with Kernel options (Armbian or -generic)...

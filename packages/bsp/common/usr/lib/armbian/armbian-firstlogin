@@ -15,9 +15,7 @@
 
 . /etc/armbian-release
 
-
-check_abort()
-{
+check_abort() {
 
 	echo -e "\nDisabling user account creation procedure\n"
 	rm -f /root/.not_logged_in_yet
@@ -29,9 +27,152 @@ check_abort()
 
 }
 
+mask2cidr() {
+	nbits=0
+	IFS=.
+	for dec in $1 ; do
+		case $dec in
+			255) let nbits+=8;;
+			254) let nbits+=7;;
+			252) let nbits+=6;;
+			248) let nbits+=5;;
+			240) let nbits+=4;;
+			224) let nbits+=3;;
+			192) let nbits+=2;;
+			128) let nbits+=1;;
+			0);;
+			*) echo "Error: $dec is not recognised"; exit 1
+		esac
+	done
+	echo "$nbits"
+}
 
-read_password()
+createYAML() {
+   local YAML="network:\n"
+    YAML+="  $DEVTYPE:\n"
+    YAML+="    $DEVICE_NAME:\n"
+	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp4: yes\n";fi
+	if [[ "${PRESET_NET_USE_STATIC}" == 0 ]]; then		YAML+="      dhcp6: yes\n";fi
+	if [[ "${PRESET_NET_USE_STATIC}" == 1 ]]; then
+		YAML+="      addresses:\n"
+		YAML+="        - $PRESET_NET_STATIC_IP/$PRESET_NET_STATIC_MASK\n"
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="      routes:\n";fi
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="        - to: default\n";fi
+		if [[ -n "${PRESET_NET_STATIC_GATEWAY}" ]]; then   YAML+="          via: ${PRESET_NET_STATIC_GATEWAY}\n";fi
+		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="      nameservers:\n"; fi
+		if [[ -n "${PRESET_NET_STATIC_DNS}" ]]; then       YAML+="        addresses: [$PRESET_NET_STATIC_DNS]\n"; fi
+	fi
+	if [[ "${PRESET_NET_WIFI_ENABLED}" == 1 ]]; then
+		if [[ -n "${PRESET_NET_WIFI_COUNTRYCODE}" ]]; then YAML+="      regulatory-domain: $PRESET_NET_WIFI_COUNTRYCODE\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_SSID}" ]]; then        YAML+="      access-points:\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_SSID}" ]]; then        YAML+="        \"$PRESET_NET_WIFI_SSID\":\n"; fi
+		if [[ -n "${PRESET_NET_WIFI_KEY}" ]]; then         YAML+="          password: \"$PRESET_NET_WIFI_KEY\"\n" ; fi
+	fi
+	printf "%s" "$YAML"
+}
+
+do_firstrun_automated_network_configuration()
 {
+	#-----------------------------------------------------------------------------
+	#Config FP
+	local fp_config='/root/.not_logged_in_yet'
+
+	#-----------------------------------------------------------------------------
+	#Grab user requested settings
+	if [[ -f $fp_config ]]; then
+
+		# Convert line endings to Unix from Dos
+		sed -i $'s/\r$//' "$fp_config"
+
+		# check syntax
+		bash -n "$fp_config" || return
+
+		# Load vars directly from file
+		source "$fp_config"
+
+		# Obtain backward configuration compatibility
+		PRESET_NET_STATIC_DNS=${PRESET_NET_STATIC_DNS// /,}
+		PRESET_NET_STATIC_MASK=$(mask2cidr $PRESET_NET_STATIC_MASK)
+
+		#-----------------------------------------------------------------------------
+		# Set Network
+		if [[ $PRESET_NET_CHANGE_DEFAULTS == 1 ]]; then
+
+			# - Get name of 1st available ethernet and wifi adapter
+			eth_index="$(ip link | awk -F: '$0 !~ "lo|vir|wl|^[^0-9]"{print $2;getline}' | sed 's/^[ \t]*//' | grep "^e" | head -1)"
+			wlan_index="$(iw dev | awk '$1=="Interface"{print $2}' | head -n 1)"
+
+			local CONFIG_NAME="-dhcp"
+			# for static IP we only append settings
+			if [[ $PRESET_NET_USE_STATIC == 1 ]]; then
+				local CONFIG_NAME="-static"
+			fi
+
+			# at least one device has to exits
+			if [[ -n $eth_index || -n $wlan_index ]]; then
+
+				# - Wifi enable
+				if [[ $PRESET_NET_WIFI_ENABLED == 1 ]]; then
+
+						DEVICE_NAME=${wlan_index}
+						DEVTYPE=wifis
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						#Enable Wlan, disable Eth
+						PRESET_NET_ETHERNET_ENABLED=0
+						netplan apply > /dev/null 2>&1
+
+				# - Ethernet enable
+				elif [[ $PRESET_NET_ETHERNET_ENABLED == 1 ]]; then
+
+						DEVICE_NAME=${eth_index}
+						DEVTYPE=ethernets
+						echo -e "$(createYAML)" > /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						chmod 600 /etc/netplan/30-${DEVTYPE}${CONFIG_NAME}.yaml
+						# Enable Eth, disable Wlan
+						PRESET_NET_WIFI_ENABLED=0
+						netplan apply > /dev/null 2>&1
+				fi
+
+			fi
+		fi
+	fi
+} #do_firstrun_automated_network_configuration
+
+# Try to retrieve the local IP address to display
+get_local_ip_addr() {
+	# How many seconds to wait at maximum to find out the local IP address
+	local ip_wait_seconds_counter=6
+	local local_device_ip=""
+	local retry_message=""
+
+	while [[ -z "$local_device_ip" ]] && [ ${ip_wait_seconds_counter} -ge 0 ]; do
+		local_device_ip=$(ip -4 addr show scope global | grep inet | awk '{print $2}' | cut -d/ -f1 | awk '{$1=$1}1' FS='\n' OFS=',' RS=)
+
+		# Set retry message if some retries are left, but no IP address has been found yet
+		if [[ -z "$local_device_ip" ]] && [[ $ip_wait_seconds_counter -gt 0 ]]; then
+			retry_message="\e[1m\e[97mWaiting for local connection!\x1B[0m Retrying... (${ip_wait_seconds_counter})"
+		# Empty retry message if IP address has been found
+		elif [[ -n "$local_device_ip" ]]; then
+			retry_message=""
+		# Set timeout message if no retries are left and no IP address has been found
+		else
+			retry_message="\e[1m\e[31mNetwork connection timeout!\x1B[0m"
+		fi
+
+		# Display the message
+		echo -e "\e[1A\e[KIP address: \x1B[92m${local_device_ip}\x1B[0m ${retry_message}"
+
+		# Wait for 1 second if the IP has not yet been found
+		if [[ -z "$local_device_ip" ]]; then
+			sleep 1
+		fi
+
+		ip_wait_seconds_counter=$((ip_wait_seconds_counter - 1))
+	done
+}
+
+read_password() {
 
 	unset password
 	unset charcount
@@ -40,26 +181,22 @@ read_password()
 	stty -echo
 
 	charcount=0
-	while IFS= read -p "$prompt" -r -s -n 1 char
-	do
-		if [[ $char == $'\0' ]]
-		then
+	while IFS= read -p "$prompt" -r -s -n 1 char; do
+		if [[ $char == $'\0' ]]; then
 			break
 		fi
 
 		# Handle backspace
-		if [[ $char == $'\177' ]]
-		then
-			if [ $charcount -gt 0 ]
-			then
-				charcount=$((charcount-1))
+		if [[ $char == $'\177' ]]; then
+			if [ $charcount -gt 0 ]; then
+				charcount=$((charcount - 1))
 				prompt=$'\b \b'
 				password="${password%?}"
 			else
 				prompt=''
 			fi
 		else
-			charcount=$((charcount+1))
+			charcount=$((charcount + 1))
 			prompt='*'
 			password+="$char"
 		fi
@@ -69,31 +206,47 @@ read_password()
 
 }
 
+set_shell() {
 
-set_shell()
-{
-
-	readarray -t optionsAudits <<<"$(grep "zsh\|/bash" /etc/shells | sed 's/\/bin\///g' | sed 's/\/usr//g' | uniq)"
+	readarray -t optionsAudits <<< "$(grep "zsh\|/bash" /etc/shells | sed 's/\/bin\///g' | sed 's/\/usr//g' | uniq)"
 	USER_SHELL="bash"
 
 	if [[ "${#optionsAudits[@]}" -gt 1 ]]; then
-		while :
-			do
-				while [[ ! "${reply}" =~ ^(1|2)$ ]]; do
-					i=1
-					echo -e "\nChoose default system command shell:\n"
-					for o in  "${optionsAudits[@]}"; do
-						echo "$i) $o"
-						(( i++ )) || true
-					done
-					read -r reply
+		while :; do
+			while [[ ! "${reply}" =~ ^(1|2)$ ]]; do
+				i=1
+				echo -e "\nChoose default system command shell:\n"
+				for o in "${optionsAudits[@]}"; do
+					echo "$i) $o"
+					((i++)) || true
 				done
-				case $reply in
-					"1"|"${optionsAudits[0]}") USER_SHELL="${optionsAudits[0]}"; break;;
-					"2"|"${optionsAudits[1]}") USER_SHELL="${optionsAudits[1]}"; break;;
-					*) USER_SHELL="${optionsAudits[0]}"; break;;
-				esac
+				if [ -z $PRESET_USER_SHELL ];then
+					read -r reply
+				else
+					reply=1
+					for index in "${!optionsAudits[@]}"; do
+						if [[ "${optionsAudits[$index]}" == "$PRESET_USER_SHELL" ]]; then
+							reply=$(($index + 1))
+							break
+						fi
+					done
+				fi
 			done
+			case $reply in
+				"1" | "${optionsAudits[0]}")
+					USER_SHELL="${optionsAudits[0]}"
+					break
+					;;
+				"2" | "${optionsAudits[1]}")
+					USER_SHELL="${optionsAudits[1]}"
+					break
+					;;
+				*)
+					USER_SHELL="${optionsAudits[0]}"
+					break
+					;;
+			esac
+		done
 	fi
 	SHELL_PATH=$(grep "/$USER_SHELL$" /etc/shells | tail -1)
 
@@ -106,14 +259,13 @@ set_shell()
 
 }
 
-set_timezone_and_locales()
-{
+set_timezone_and_locales() {
 
 	# Grab this machine's public IP address
 	PUBLIC_IP=$(curl --max-time 5 -s https://ipinfo.io/ip)
 
 	# Check if we have wireless adaptor
-	WIFI_DEVICE=$(LC_ALL=C nmcli dev status | grep  " wifi " 2>/dev/null)
+	WIFI_DEVICE=$(LC_ALL=C iw dev | awk '$1=="Interface"{print $2}' 2> /dev/null)
 
 	if [ -z "$PUBLIC_IP" ]; then
 
@@ -123,73 +275,204 @@ set_timezone_and_locales()
 			echo ""
 			unset response
 			while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
-				read -r -p "Connect via wireless? [Y/n] " response
-				response=${response:-Y}
-				echo "$response"
+				if [ -z $PRESET_CONNECT_WIRELESS ];then
+					read -r -p "Connect via wireless? [Y/n] " response
+					response=${response:-Y}
+				else
+					response=n
+				fi
 			done
 			if [[ "${response}" =~ ^(Y|y)$ ]]; then
-				nmtui-connect
+
+				# We could have multiple devices
+				if (( $(grep -c . <<<"$WIFI_DEVICE") > 1 )); then
+					scanning=0
+					while [[ ${scanning} -lt 3 ]]; do
+						scanning=$(( scanning + 1 ))
+						echo -e "\nMultiple wireless adaptors detected. Choose primary:\n"
+						WIFI_DEVICES=($(printf '%s\n' "${WIFI_DEVICE[@]}" | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/ESSID://' | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1'))
+						for str in ${WIFI_DEVICES[@]}; do echo $str | sed "s/,/ \t /g"; done
+						echo ""
+						read -r -p "Enter a number of wireles adaptor: " input
+						if [[ "$input" =~ ^[0-9]{,2}$ && -n "$input" ]] ; then break; fi
+					done
+					[[ -z $input ]] && input=1
+					WIFI_DEVICE=$(echo ${WIFI_DEVICES[$input-1]} | cut -d"," -f2)
+				fi
+
+				# get list of wireless networks
+				scanning=0
+				broken=1
+				while [[ ${scanning} -lt 3 ]]; do
+					sleep 0.5
+					scanning=$(( scanning + 1 ))
+					ARRAY=($(iwlist ${WIFI_DEVICE} scanning 2> /dev/null | egrep 'ESSID' | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/ESSID://' | sed '/^$/d' | sort | uniq | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1'))
+					if [[ $? == 0 ]]; then broken=0; break; fi
+				done
+				# wifi can also fail
+				if [[ ${broken} == 1 ]]; then
+					echo -e "\nWireless connection was \x1B[91mnot detected\x1B[0m.\n"
+				else
+					echo -e "\nDetected wireless networks:\n"
+					scanning=0
+					broken=1
+					while [[ ${scanning} -lt 3 ]]; do
+						scanning=$(( scanning + 1 ))
+						while [[ 1 ]] ; do
+							for str in ${ARRAY[@]}; do echo $str | sed "s/,/ \t /g"; done
+							echo ""
+							read -r -p "Enter a number of SSID: " input
+							if [[ "$input" =~ ^[0-9]{,2}$ ]] ; then break; fi
+						done
+						# get password
+						while [[ -n "${input}" ]] ; do
+							SSID=$(echo ${ARRAY[$input-1]} | cut -d"," -f2)
+							echo ""
+							read -r -p "Enter a password for ${SSID}: " password
+							break
+						done
+
+						# generate config
+						cat <<- EOF > /etc/netplan/30-wifis-dhcp.yaml
+						# Created by Armbian firstlogin script
+						network:
+						  wifis:
+						    ${WIFI_DEVICE}:
+						      dhcp4: yes
+						      dhcp6: yes
+						      access-points:
+						        "$SSID":
+						         password: "${password}"
+						EOF
+						chmod 600 /etc/netplan/30-wifis-dhcp.yaml
+
+						# apply to netplan
+						systemctl daemon-reload
+						netplan apply --timeout 0 2>/dev/null
+
+						# wireless link probing
+						pinging=10
+						broken=1
+						WIRELESSLINK=""
+						echo ""
+						while [[ ${pinging} -gt 1 && -n "${input}" && -n "${password}" ]]; do
+							pinging=$(( pinging - 1 ))
+							printf "\rProbing wireless link ($pinging)"
+							WIRELESSLINK=$(iw "${WIFI_DEVICE}" link 2> /dev/null | grep "$SSID")
+							sleep 2
+							# exit if connection is suffesful
+							if [[ "${WIRELESSLINK}" == *$SSID* ]]; then
+								broken=0
+								break
+							fi
+						done
+
+						if [[ ${broken} == 1 ]]; then
+							echo -e "\n\nWireless link was \x1B[91mnot detected\x1B[0m. Wrong password or weak signal."
+						fi
+						# get public IP probing
+						broken=1
+						pinging=10
+
+						while [[ ${pinging} -gt 1 && -n "${input}" && -n "${password}" && "${WIRELESSLINK}" == *$SSID* ]]; do
+							pinging=$(( pinging - 1 ))
+							printf "\rProbing internet connection ($pinging)"
+							PUBLIC_IP=$(curl --max-time 5 -s https://ipinfo.io/ip)
+							if [[ -n "$PUBLIC_IP" ]]; then
+								broken=0
+								break
+							else
+								sleep 5
+							fi
+						done
+						echo ""
+
+						if [[ ${broken} == 0 ]]; then
+							break
+						fi
+					done
+
+						if [[ ${broken} == 1 ]]; then
+							echo -e "\n\x1B[91mUnable to connect to Access Point\x1B[0m.\n"
+							rm -f /etc/netplan/30-wifis-dhcp.yaml
+							netplan apply --timeout 0 2>/dev/null
+							systemctl daemon-reload
+							break
+						fi
+
+				fi # detected or not detected wireless network
 			fi
 			echo ""
 		fi
 	fi
 
 	# Grab IP once again if not found
+	sleep 3
 	[[ -z "$PUBLIC_IP" && -n "$WIFI_DEVICE" ]] && PUBLIC_IP=$(curl --max-time 5 -s https://ipinfo.io/ip)
 
 	# Call the geolocation API and capture the output
 	RES=$(
-		curl --max-time 5 -s "http://ipwhois.app/json/${PUBLIC_IP}" | \
-			jq '.timezone, .country, .country_code' | \
+		curl --max-time 5 -s "http://ipwhois.app/json/${PUBLIC_IP}" |
+			jq '.timezone, .country, .country_code' |
 			while read -r TIMEZONE; do
 				read -r COUNTRY
 				echo "${TIMEZONE},${COUNTRY},${COUNTRYCODE}" | tr --delete '"\n'
 			done
-		)
+	)
 
 	TZDATA=$(echo "${RES}" | cut -d"," -f1)
 	CCODE=$(echo "${RES}" | cut -d"," -f3 | xargs)
-	echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
-	echo ""
+
 	unset response
 	while [[ ! "${response}" =~ ^(Y|y|N|n)$ ]]; do
-		read -r -p "Set user language based on your location? [Y/n] " response
-		response=${response:-Y}
-		echo "$response"
+		if [ -z "${SET_LANG_BASED_ON_LOCATION}" ] && [ -n "${TZDATA}" ];then
+			echo -e "Detected timezone: \x1B[92m$TZDATA\x1B[0m"
+			echo ""
+			read -r -p "Set user language based on your location? [Y/n] " response
+			response=${response:-Y}
+		else
+			response=$SET_LANG_BASED_ON_LOCATION
+			break
+		fi
 	done
 	# change it only if we have a match and if we agree
 	if [[ "${response}" =~ ^(N|n)$ ]]; then
 		unset CCODE TZDATA
 	fi
 
-	LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  \
-	xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "\.UTF-8" | cut -d " " -f 1)
+	LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |
+		xargs -I{} grep {} /usr/share/i18n/SUPPORTED | grep "UTF-8$" | cut -d " " -f 1)
 	# UTF8 is not present everywhere so check again in case it returns empty value
-	[[ -z "$LOCALES" ]] && LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |  \
-	xargs -I{} grep {} /usr/share/i18n/SUPPORTED | cut -d " " -f 1)
+	[[ -z "$LOCALES" ]] && LOCALES=$(grep territory /usr/share/i18n/locales/* | grep _"$CCODE" | cut -d ":" -f 1 | cut -d "/" -f 6 |
+		xargs -I{} grep {} /usr/share/i18n/SUPPORTED | cut -d " " -f 1)
+	readarray -t options <<< "${LOCALES}"
 
-	readarray -t options <<<"${LOCALES}"
-
-	# when having more locales, prompt for choosing one
-	if [[ "${#options[@]}" -gt 1 ]]; then
-
-		options+=("Skip generating locales")
-		echo -e "\nAt your location, more locales are possible:\n"
-		PS3='Please enter your choice:'
-		select opt in "${options[@]}"
-			do
+	if [ -z $PRESET_LOCALE ];then
+		# when having more locales, prompt for choosing one
+		if [[ "${#options[@]}" -gt 1 ]]; then
+			options+=("Skip generating locales")
+			echo -e "\nAt your location, more locales are possible:\n"
+			PS3='Please enter your choice:'
+			select opt in "${options[@]}"; do
 				if [[ " ${options[*]} " == *" ${opt} "* ]]; then
 					LOCALES=${opt}
 					break
 				fi
 			done
+		fi
+	else
+		LOCALES=$PRESET_LOCALE
 	fi
 
 	if [[ "${LOCALES}" != *Skip* ]]; then
 
-		# if TZDATA was not detected, we need to select one
-		if [[ -z ${TZDATA} ]]; then
-			TZDATA=$(tzselect | tail -1)
+		if [ -z $PRESET_TIMEZONE ];then
+			# if TZDATA was not detected, we need to select one
+			if [[ -z ${TZDATA} ]]; then
+				TZDATA=$(tzselect | tail -1)
+			fi
+		else
+			TZDATA=$PRESET_TIMEZONE
 		fi
 
 		timedatectl set-timezone "${TZDATA}"
@@ -216,17 +499,17 @@ set_timezone_and_locales()
 	fi
 }
 
+add_profile_sync_settings() {
+	if [[ ! -f /usr/bin/psd ]]; then
+		return 0
+	fi
 
-
-
-add_profile_sync_settings()
-{
-	/usr/bin/psd >/dev/null 2>&1
+	/usr/bin/psd > /dev/null 2>&1
 	config_file="${HOME}/.config/psd/psd.conf"
 	if [ -f "${config_file}" ]; then
 		# test for overlayfs
 		sed -i 's/#USE_OVERLAYFS=.*/USE_OVERLAYFS="yes"/' "${config_file}"
-		case $(/usr/bin/psd p 2>/dev/null | grep Overlayfs) in
+		case $(/usr/bin/psd p 2> /dev/null | grep Overlayfs) in
 			*active*)
 				echo -e "\nConfigured profile sync daemon with overlayfs."
 				;;
@@ -236,68 +519,85 @@ add_profile_sync_settings()
 				;;
 		esac
 	fi
-	systemctl --user enable psd.service >/dev/null 2>&1
-	systemctl --user start psd.service >/dev/null 2>&1
+	systemctl --user enable psd.service > /dev/null 2>&1
+	systemctl --user start psd.service > /dev/null 2>&1
 }
 
-
-
-
-
-add_user()
-{
+add_user() {
 	read -r -t 0 _
 	REPEATS=3
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		echo -e "\nPlease provide a username (eg. your first name): \c"
-		read -r -e username
-		if ! grep '^[a-zA-Z][a-zA-Z0-9]*$' <<< "$username" > /dev/null ; then
+		if [ -z "$PRESET_USER_NAME" ];then
+			read -r -e username
+		else
+			username="$PRESET_USER_NAME"
+		fi
+		if ! grep '^[a-zA-Z][a-zA-Z0-9]*$' <<< "$username" > /dev/null; then
 			echo -e "\n\x1B[91mError\x1B[0m: illegal characters in username"
 			return
 		fi
 
-
 		RealUserName="$(echo "$username" | tr '[:upper:]' '[:lower:]' | tr -d -c '[:alnum:]')"
 		[ -z "$RealUserName" ] && return
-		if ! id "$RealUserName" >/dev/null 2>&1; then break; else echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."; fi
+		if ! id "$RealUserName" > /dev/null 2>&1; then break; else echo -e "Username \e[0;31m$RealUserName\x1B[0m already exists on the system."; fi
 	done
 
 	while [ -f "/root/.not_logged_in_yet" ]; do
-		read_password "Create user ($username)"
+		if [ -z "$PRESET_USER_PASSWORD" ];then
+			read_password "Create user ($username)"
+		else
+			password="$PRESET_USER_PASSWORD"
+		fi
 		first_input="$password"
 		echo ""
-		read_password "Repeat user ($username)"
+		if [ -z "$PRESET_USER_PASSWORD" ];then
+			read_password "Repeat user ($username)"
+		else
+			password="$PRESET_USER_PASSWORD"
+		fi
 		second_input="$password"
 		echo ""
 		if [[ "$first_input" == "$second_input" ]]; then
 			# minimal images might not have this
-			if command -v cracklib-check >/dev/null 2>&1; then
-				result="$(cracklib-check <<<"$password")"
-				okay="$(awk -F': ' '{ print $2}' <<<"$result")"
+			if command -v cracklib-check > /dev/null 2>&1; then
+				result="$(cracklib-check <<< "$password")"
+				okay="$(awk -F': ' '{ print $2}' <<< "$result")"
 				if [[ "$okay" != "OK" ]]; then
 					echo -e "\n\e[0;31mWarning:\x1B[0m Weak password, $okay \b!"
 				fi
 			fi
 			echo -e ""
-			read -r -e -p "Please provide your real name: " -i "${RealUserName^}" RealName
+			if [ -z "$PRESET_DEFAULT_REALNAME" ];then
+				read -r -e -p "Please provide your real name: " -i "${RealUserName^}" RealName
+			else
+				RealName="$PRESET_DEFAULT_REALNAME"
+			fi
 
 			adduser --quiet --disabled-password --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
-			(echo "$first_input";echo "$second_input";) | passwd "$RealUserName" >/dev/null 2>&1
-			for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh; do
-				usermod -aG "${additionalgroup}" "${RealUserName}" 2>/dev/null
+			if [[ -n "$first_input" ]]; then
+				(
+					echo "$first_input"
+					echo "$second_input"
+				) | passwd "$RealUserName" > /dev/null 2>&1
+			else
+				passwd -d "$RealUserName" > /dev/null 2>&1
+			fi
+			for additionalgroup in sudo netdev audio video disk tty users games dialout plugdev input bluetooth systemd-journal ssh render; do
+				usermod -aG "${additionalgroup}" "${RealUserName}" 2> /dev/null
 			done
 
 			# fix for gksu in Xenial
 			touch /home/"$RealUserName"/.Xauthority
 			chown "$RealUserName":"$RealUserName" /home/"$RealUserName"/.Xauthority
-			RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" </etc/passwd | cut -d',' -f1)"
+			RealName="$(awk -F":" "/^${RealUserName}:/ {print \$5}" < /etc/passwd | cut -d',' -f1)"
 			[ -z "$RealName" ] && RealName="$RealUserName"
 			echo -e "\nDear \e[0;92m${RealName}\x1B[0m, your account \e[0;92m${RealUserName}\x1B[0m has been created and is sudo enabled."
 			echo -e "Please use this account for your daily work from now on.\n"
 			rm -f /root/.not_logged_in_yet
 			chmod +x /etc/update-motd.d/*
 			# set up profile sync daemon on desktop systems
-			if command -v psd >/dev/null 2>&1; then
+			if command -v psd > /dev/null 2>&1; then
 				echo -e "${RealUserName} ALL=(ALL) NOPASSWD: /usr/bin/psd-overlay-helper" >> /etc/sudoers
 				touch /home/"${RealUserName}"/.activate_psd
 				chown "$RealUserName":"$RealUserName" /home/"${RealUserName}"/.activate_psd
@@ -313,18 +613,30 @@ add_user()
 }
 
 if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
+	do_firstrun_automated_network_configuration
+
 	# disable autologin
 	rm -f /etc/systemd/system/getty@.service.d/override.conf
 	rm -f /etc/systemd/system/serial-getty@.service.d/override.conf
 	systemctl daemon-reload
 
-	# detect display manager
-	desktop_lightdm=$(dpkg-query -W -f='${db:Status-Abbrev}\n' lightdm 2>/dev/null)
-	desktop_gdm3=$(dpkg-query -W -f='${db:Status-Abbrev}\n' gdm3 2>/dev/null)
+	declare desktop_dm="none"
+	declare -i desktop_is_sddm=0 desktop_is_lightdm=0 desktop_is_gdm3=0
+	if [[ -f /usr/bin/sddm ]]; then
+		desktop_dm="sddm"
+		desktop_is_sddm=1
+	fi
+	if [[ -f /usr/sbin/lightdm ]]; then
+		desktop_dm="lightdm"
+		desktop_is_lightdm=1
+	fi
+	if [[ -f /usr/sbin/gdm3 ]]; then
+		desktop_dm="gdm3"
+		desktop_is_gdm3=1
+	fi
 
 	echo -e "\nWaiting for system to finish booting ..."
-
-	systemctl is-system-running --wait >/dev/null
+	systemctl is-system-running --wait > /dev/null
 
 	# enable hiDPI support
 	if [[ "$(cut -d, -f1 < /sys/class/graphics/fb0/virtual_size 2> /dev/null)" -gt 1920 ]]; then
@@ -332,21 +644,35 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		[[ -f /etc/lightdm/slick-greeter.conf ]] && echo "enable-hidpi = on" >> /etc/lightdm/slick-greeter.conf
 		# xfce
 		[[ -f /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml ]] && sed -i 's|<property name="WindowScalingFactor" type="int" value=".*|<property name="WindowScalingFactor" type="int" value="2">|g' /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
+
+		# framebuffer console larger font
 		setfont /usr/share/consolefonts/Uni3-TerminusBold32x16.psf.gz
 	fi
 
 	clear
 
-	echo -e "Welcome to \e[1m\e[97mARMBIAN\x1B[0m! \n"
-	echo -e "Documentation: \e[1m\e[92mhttps://docs.armbian.com\x1B[0m | Community: \e[1m\e[92mhttps://forum.armbian.com\x1B[0m\n"
-	GET_IP=$(bash /etc/update-motd.d/30-armbian-sysinfo | grep IP | sed "s/.*IP://" | sed 's/^[ \t]*//')
-	[[ -n "$GET_IP" ]] && echo -e "IP address: $GET_IP\n"
+	echo -e "Welcome to \e[1m\e[97m${VENDOR}\x1B[0m! \n"
+	echo -e "Documentation: \e[1m\e[92m${VENDORDOCS}\x1B[0m | Community support: \e[1m\e[92m${VENDORSUPPORT}\x1B[0m\n"
+
+	echo "" # empty line
+
+	# Try to get the local IP address (script halts until IP was found or x retries were done)
+	get_local_ip_addr
+
+	echo "" # empty line
 
 	trap '' 2
 	REPEATS=3
 	while [ -f "/root/.not_logged_in_yet" ]; do
-
-		read_password "Create root"
+		. /root/.not_logged_in_yet
+		if [ -z "$PRESET_ROOT_PASSWORD" ];then
+			read_password "Create root"
+		else
+			if [ "$(who am i | awk '{print $2}')" != "tty1" ];then
+				exit
+			fi
+			password="$PRESET_ROOT_PASSWORD"
+		fi
 
 		# only allow one login. Once you enter root password, kill others.
 		loginfrom=$(who am i | awk '{print $2}')
@@ -354,19 +680,26 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 		first_input="$password"
 		echo ""
-		read_password "Repeat root"
+		if [ -z "$PRESET_ROOT_PASSWORD" ];then
+			read_password "Repeat root"
+		else
+			password="$PRESET_ROOT_PASSWORD"
+		fi
 		second_input="$password"
 		echo ""
 		if [[ "$first_input" == "$second_input" ]]; then
 			# minimal might not have this
-			if command -v cracklib-check >/dev/null 2>&1; then
-				result="$(cracklib-check <<<"$password")"
-				okay="$(awk -F': ' '{ print $2}' <<<"$result")"
+			if command -v cracklib-check > /dev/null 2>&1; then
+				result="$(cracklib-check <<< "$password")"
+				okay="$(awk -F': ' '{ print $2}' <<< "$result")"
 				if [[ "$okay" != "OK" ]]; then
 					echo -e "\n\e[0;31mWarning:\x1B[0m Weak password, $okay \b!"
 				fi
 			fi
-			(echo "$first_input";echo "$second_input";) | passwd root >/dev/null 2>&1
+			(
+				echo "$first_input"
+				echo "$second_input"
+			) | passwd root > /dev/null 2>&1
 			break
 		elif [[ -n $password ]]; then
 			echo -e "Rejected - \e[0;31mpasswords do not match.\x1B[0m Try again [${REPEATS}]."
@@ -387,12 +720,12 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		fi
 	else
 
-	echo -e "\e[0;31m\nWARNING!\x1B[0m\n\nYou are using an \e[0;31mautomated build\x1B[0m meant only for developers to provide"
-	echo -e	"constructive feedback to improve build system, OS settings or UX.\n"
+		echo -e "\e[0;31m\nWARNING!\x1B[0m\n\nYou are using an \e[0;31mautomated build\x1B[0m meant only for developers to provide"
+		echo -e "constructive feedback to improve build system, OS settings or UX.\n"
 
-	echo -e "If this does not apply to you, \e[0;31mSTOP NOW!\x1B[0m  Especially don't use this "
-	echo -e "image for production since things might not work as expected or at "
-	echo -e "all. They may  break anytime with next update."
+		echo -e "If this does not apply to you, \e[0;31mSTOP NOW!\x1B[0m  Especially don't use this "
+		echo -e "image for production since things might not work as expected or at "
+		echo -e "all. They may  break anytime with next update."
 
 	fi
 
@@ -405,7 +738,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
-		[ -n "$desktop_lightdm" ] && echo -e "\n\e[0;31mDesktop environment will not be enabled if you abort the new user creation\x1B[0m"
+		[[ "${desktop_dm}" != "none" ]] && echo -e "\n\e[0;31mDesktop environment will not be enabled if you abort the new user creation\x1B[0m"
 		add_user
 	done
 	trap - INT TERM EXIT
@@ -419,103 +752,154 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		printf "\nYou selected \e[0;91mZSH\x1B[0m as your default shell. If you want to use it right away, please logout and login! \n\n"
 	fi
 
-	# check whether desktop environment has to be considered
-	if [ -n "$desktop_lightdm" ] && [ -n "$RealName" ] ; then
+	# re-enable passing locale environment via ssh
+	sed -e '/^#AcceptEnv LANG/ s/^#//' -i /etc/ssh/sshd_config
+	# restart sshd daemon
+	systemctl restart ssh.service
 
-			# 1st run goes without login
-			mkdir -p /etc/lightdm/lightdm.conf.d
-			cat <<-EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+	# rpardini: hacks per-dm, very much legacy stuff that works by a miracle
+	if [[ "${desktop_dm}" == "lightdm" ]] && [ -n "$RealName" ]; then
+
+		mkdir -p /etc/lightdm/lightdm.conf.d
+		cat <<- EOF > /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 			[Seat:*]
 			autologin-user=$RealUserName
 			autologin-user-timeout=0
 			user-session=xfce
-			EOF
+		EOF
 
-			# select gnome session (has to be first or it breaks budgie/cinnamon desktop autologin and user-session)
-			[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		# select gnome session (has to be first or it breaks budgie/cinnamon desktop autologin and user-session)
+		# @TODO: remove this, gnome should use gdm3, not lightdm
+		[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v gnome-session) ]] && sed -i "s/user-session.*/user-session=ubuntu/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-			# select budgie session
-			[[ -x $(command -v budgie-desktop) ]] && sed -i "s/user-session.*/user-session=budgie-desktop/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v budgie-desktop) ]] && sed -i "s/user-session.*/user-session=budgie-desktop/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		# select awesome session
+		[[ -x $(command -v awesome) ]] && sed -i "s/user-session.*/user-session=awesome/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v awesome) ]] && sed -i "s/user-session.*/user-session=awesome/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-			# select deepin session
-			[[ -x $(command -v deepin-wm) ]] && sed -i "s/user-session.*/user-session=deepin/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v deepin-wm) ]] && sed -i "s/user-session.*/user-session=deepin/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		# select budgie session
+		[[ -x $(command -v budgie-desktop) ]] && sed -i "s/user-session.*/user-session=budgie-desktop/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v budgie-desktop) ]] && sed -i "s/user-session.*/user-session=budgie-desktop/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-			# select cinnamon session
-			[[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		# select cinnamon session
+		[[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v cinnamon) ]] && sed -i "s/user-session.*/user-session=cinnamon/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-			# select mate session
-			[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		# select deepin session
+		[[ -x $(command -v deepin-wm) ]] && sed -i "s/user-session.*/user-session=deepin/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v deepin-wm) ]] && sed -i "s/user-session.*/user-session=deepin/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-			# select plasma wayland session
-			[[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
-			[[ -x $(command -v plasmashell) ]] && sed -i "s/user-session.*/user-session=plasmawayland/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+		# select ice-wm session
+		[[ -x $(command -v icewm-session) ]] && sed -i "s/user-session.*/user-session=icewm-session/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v icewm-session) ]] && sed -i "s/user-session.*/user-session=icewm-session/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-			ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
+		# select i3 session
+		[[ -x $(command -v i3) ]] && sed -i "s/user-session.*/user-session=i3/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v i3) ]] && sed -i "s/user-session.*/user-session=i3/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 
-			if [[ -f /var/run/resize2fs-reboot ]]; then
-				# Let the user reboot now otherwise start desktop environment
-				printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
-				printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		# select lxde session
+		[[ -x $(command -v startlxde) ]] && sed -i "s/user-session.*/user-session=LXDE/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v startlxde) ]] && sed -i "s/user-session.*/user-session=LXDE/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+
+		# select lxqt session
+		[[ -x $(command -v startlxqt) ]] && sed -i "s/user-session.*/user-session=lxqt/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v startlxqt) ]] && sed -i "s/user-session.*/user-session=lxqt/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+
+		# select mate session
+		[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v mate-wm) ]] && sed -i "s/user-session.*/user-session=mate/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+
+		# select sway wayland session
+		[[ -x $(command -v sway) ]] && sed -i "s/user-session.*/user-session=sway/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v sway) ]] && sed -i "s/user-session.*/user-session=sway/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+
+		# select xmonad session
+		[[ -x $(command -v xmonad) ]] && sed -i "s/user-session.*/user-session=xmonad/" /etc/lightdm/lightdm.conf.d/11-armbian.conf
+		[[ -x $(command -v xmonad) ]] && sed -i "s/user-session.*/user-session=xmonad/" /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
+
+		ln -sf /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
+
+		if [[ -f /var/run/resize2fs-reboot ]]; then
+			# Let the user reboot now otherwise start desktop environment
+			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
+			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		else
+			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
+			sleep 1
+			service lightdm start 2> /dev/null
+			if [ -f /root/.desktop_autologin ]; then
+				rm /root/.desktop_autologin
 			else
-				echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
-				sleep 1
-				service lightdm start 2>/dev/null
-				if [ -f /root/.desktop_autologin ]; then
-					rm /root/.desktop_autologin
-				else
-					systemctl -q enable armbian-disable-autologin.timer
-					systemctl start armbian-disable-autologin.timer
-				fi
-				# logout if logged at console
-				who -la | grep root | grep -q tty1 && exit 1
+				systemctl -q enable armbian-disable-autologin.timer
+				systemctl start armbian-disable-autologin.timer
 			fi
+			# logout if logged at console
+			who -la | grep root | grep -q tty1 && exit 1
+		fi
 
-	elif [ -n "$desktop_gdm3" ] && [ -n "$RealName" ] ; then
-
-			# 1st run goes without login
-			mkdir -p /etc/gdm3
-			cat <<-EOF > /etc/gdm3/custom.conf
+	elif [[ "${desktop_dm}" == "gdm3" ]] && [ -n "$RealName" ]; then
+		# 1st run goes without login
+		mkdir -p /etc/gdm3
+		cat <<- EOF > /etc/gdm3/custom.conf
 			[daemon]
 			AutomaticLoginEnable = true
 			AutomaticLogin = $RealUserName
-			EOF
+		EOF
 
-			ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
+		ln -sf /lib/systemd/system/gdm3.service /etc/systemd/system/display-manager.service
 
-				if [[ -f /var/run/resize2fs-reboot ]]; then
+		if [[ -f /var/run/resize2fs-reboot ]]; then
+			# Let the user reboot now otherwise start desktop environment
+			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
+			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		else
+			echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
+			sleep 1
+			service gdm3 start 2> /dev/null
+			if [ -f /root/.desktop_autologin ]; then
+				rm /root/.desktop_autologin
+			else
+				(
+					sleep 20
+					sed -i "s/AutomaticLoginEnable.*/AutomaticLoginEnable = false/" /etc/gdm3/custom.conf
+				) &
+			fi
+			# logout if logged at console
+			who -la | grep root | grep -q tty1 && exit 1
+		fi
+	elif [[ "${desktop_dm}" == "sddm" ]] && [ -n "$RealName" ]; then
 
-					# Let the user reboot now otherwise start desktop environment
-					printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
-					printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
+		# create default sddm config
+		mkdir -p /etc/sddm.conf.d
+		cat <<- EOF > /etc/sddm.conf.d/armbian.conf
+			[Theme]
+			Current=breeze
+			[General]
+			InputMethod=none
+		EOF
 
-				else
+		# 1st run goes without login
+		cat <<- EOF > /etc/sddm.conf.d/autologin.conf
+			[Autologin]
+			User=$RealUserName
+		EOF
+		echo -e "\n\e[1m\e[39mNow starting desktop environment via ${desktop_dm}...\x1B[0m\n"
+		systemctl enable --now sddm 2> /dev/null
 
-					echo -e "\n\e[1m\e[39mNow starting desktop environment...\x1B[0m\n"
-					sleep 1
-					service gdm3 start 2>/dev/null
-					if [ -f /root/.desktop_autologin ]; then
-						rm /root/.desktop_autologin
-					else
-						(sleep 20; sed -i "s/AutomaticLoginEnable.*/AutomaticLoginEnable = false/" /etc/gdm3/custom.conf) &
-					fi
-					# logout if logged at console
-					who -la | grep root | grep -q tty1 && exit 1
-
-				fi
+		if [ -f /root/.desktop_autologin ]; then
+				rm /root/.desktop_autologin
+		else
+			systemctl -q enable armbian-disable-autologin.timer
+		fi
+		# logout if logged at console
+		who -la | grep root | grep -q tty1 && exit 1
 
 	else
-
+		# no display manager detected
 		# Display reboot recommendation if necessary
 		if [[ -f /var/run/resize2fs-reboot ]]; then
 			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"
 			printf "\e[0;91mPlease reboot the system now \x1B[0m \n\n"
 		fi
-
 	fi
-
 fi

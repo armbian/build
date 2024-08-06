@@ -1,0 +1,12 @@
+# Rockchip RK3399 hexa core 4GB SoC eMMC GBE USB3 WiFi
+BOARD_NAME="Fine3399"
+BOARDFAMILY="rockchip64"
+BOARD_MAINTAINER=""
+BOOTCONFIG="fine3399-rk3399_defconfig"
+KERNEL_TARGET="current,edge"
+FULL_DESKTOP="yes"
+BOOT_LOGO="desktop"
+BOOT_FDT_FILE="rockchip/rk3399-fine3399.dtb"
+BOOT_SCENARIO="only-blobs"
+SRC_EXTLINUX="yes"
+SRC_CMDLINE="console=ttyS2,1500000 console=tty0"

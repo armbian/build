@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.6.0} # https://github.com/mvdan/sh/releases/
+SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.8.0} # https://github.com/mvdan/sh/releases/
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
@@ -38,11 +38,11 @@ case "$MACHINE" in
 esac
 
 SHELLFMT_FN="shfmt_v${SHELLFMT_VERSION}_${SHELLFMT_OS}_${SHELLFMT_ARCH}"
-DOWN_URL="https://github.com/mvdan/sh/releases/download/v${SHELLFMT_VERSION}/${SHELLFMT_FN}"
+DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/mvdan/sh/releases/download/v${SHELLFMT_VERSION}/${SHELLFMT_FN}"
 SHELLFMT_BIN="${DIR_SHELLFMT}/${SHELLFMT_FN}"
 
 echo "MACHINE: ${MACHINE}"
-echo "Down URL: ${DOWN_URL}"
+echo "Download URL: ${DOWN_URL}"
 echo "SHELLFMT_BIN: ${SHELLFMT_BIN}"
 
 if [[ ! -f "${SHELLFMT_BIN}" ]]; then
@@ -61,15 +61,23 @@ cd "${SRC}"
 
 # Should match the .editorconfig
 
-declare -a ALL_BASH_FILES=($(find config/sources -type f | grep -e "\.conf\$" -e "\.inc\$") $(find lib -type f | grep -e "\.sh\$" | grep -v -e "^lib\/tools\/") $(find extensions -type f | grep -e "\.sh\$") compile.sh)
+# Aggregate all files that should be formatted
+board_config_files=$(find config/boards -type f \( -name "*.conf" -o -name "*.csc" -o -name "*.tvb" \))  # All board config files
+family_config_files=$(find config/sources -type f \( -name "*.conf" -o -name "*.inc" -o -name "*.sh" \)) # All family config files
+lib_files=$(find lib -type f -name "*.sh")                                                               # All build framework shell files
+extensions_files=$(find extensions -type f -name "*.sh")                                                 # All extension shell files
 
-echo "All files:" "${ALL_BASH_FILES[@]}"
+declare -a ALL_BASH_FILES=(compile.sh ${board_config_files} ${family_config_files} ${lib_files} ${extensions_files})
 
-echo "Shellfmt files differing:"
+echo -e "\nAll files:" "${ALL_BASH_FILES[@]}"
+
+echo -e "\nShellfmt files differing:"
 "${SHELLFMT_BIN}" -l "${ALL_BASH_FILES[@]}" | sort -h # list all formatted files
 
 #echo "Diff with current:"
 # "${SHELLFMT_BIN}" -d "${ALL_BASH_FILES[@]}" # list files that have different formatting than they should
 
-echo "Doing for real:"
+echo -e "\nFormatting files..."
 "${SHELLFMT_BIN}" -w "${ALL_BASH_FILES[@]}"
+
+echo "Shellfmt finished!"

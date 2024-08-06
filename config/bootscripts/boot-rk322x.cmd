@@ -16,7 +16,7 @@ setenv docker_optimizations "on"
 
 # If gpio3 pin 25 is 0, write magic to GRF os_reg[0] register and
 # reset to trigger maskrom mode
-if gpio input D25; then 
+if gpio input 121; then 
 	echo "Resetting into MASKROM mode..."
         mw.l 0x110005c8 0xEF08A53C 1
         reset
@@ -42,7 +42,7 @@ fi
 
 setenv bootargs "earlyprintk root=${rootdev} console=ttyS2,115200n8 console=tty1 rootwait rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
-if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
+if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory"; fi
 
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage

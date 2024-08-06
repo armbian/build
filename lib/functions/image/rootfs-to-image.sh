@@ -34,21 +34,27 @@ function create_image_from_sdcard_rootfs() {
 	declare calculated_image_version="undetermined"
 	calculate_image_version
 	declare -r -g version="${calculated_image_version}" # global readonly from here
-
+	declare rsync_ea=" -X "
+	declare exclude_home="--exclude=\"/home/*\""
+	# Some usecase requires home directory to be included
+	if [[ ${INCLUDE_HOME_DIR:-no} == yes ]]; then exclude_home=""; fi
+	# nilfs2 fs does not have extended attributes support, and have to be ignored on copy
+	if [[ $ROOTFS_TYPE == nilfs2 ]]; then rsync_ea=""; fi
 	if [[ $ROOTFS_TYPE != nfs ]]; then
 		display_alert "Copying files via rsync to" "/ (MOUNT root)"
-		run_host_command_logged rsync -aHWXh \
+		run_host_command_logged rsync -aHWh $rsync_ea \
 			--exclude="/boot" \
 			--exclude="/dev/*" \
 			--exclude="/proc/*" \
 			--exclude="/run/*" \
 			--exclude="/tmp/*" \
 			--exclude="/sys/*" \
+			$exclude_home \
 			--info=progress0,stats1 $SDCARD/ $MOUNT/
 	else
 		display_alert "Creating rootfs archive" "rootfs.tgz" "info"
 		tar cp --xattrs --directory=$SDCARD/ --exclude='./boot/*' --exclude='./dev/*' --exclude='./proc/*' --exclude='./run/*' --exclude='./tmp/*' \
-			--exclude='./sys/*' . |
+			--exclude='./sys/*' $exclude_home . |
 			pv -p -b -r -s "$(du -sb "$SDCARD"/ | cut -f1)" \
 				-N "$(logging_echo_prefix_for_pv "create_rootfs_archive") rootfs.tgz" |
 			gzip -c > "$DEST/images/${version}-rootfs.tgz"
@@ -57,9 +63,19 @@ function create_image_from_sdcard_rootfs() {
 	# stage: rsync /boot
 	display_alert "Copying files to" "/boot (MOUNT /boot)"
 	if [[ $(findmnt --noheadings --output FSTYPE --target "$MOUNT/boot" --uniq) == vfat ]]; then
+		# FAT filesystems can't have symlinks; rsync, below, will replace them with copies (-L)...
+		# ... unless they're dangling symlinks, in which case rsync will fail.
+		# Find dangling symlinks in "$MOUNT/boot", warn, and remove them.
+		display_alert "Checking for dangling symlinks" "in FAT32 /boot" "info"
+		declare -a dangling_symlinks=()
+		while IFS= read -r -d '' symlink; do
+			dangling_symlinks+=("$symlink")
+		done < <(find "$SDCARD/boot" -xtype l -print0)
+		if [[ ${#dangling_symlinks[@]} -gt 0 ]]; then
+			display_alert "Dangling symlinks in /boot" "$(printf '%s ' "${dangling_symlinks[@]}")" "warning"
+			run_host_command_logged rm -fv "${dangling_symlinks[@]}"
+		fi
 		run_host_command_logged rsync -rLtWh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # fat32
-		# @TODO: -L causes symlinks to be replaced with copies, but what if they don't exist?
-		# Also: what's the sense in replacing symlinks with copies?
 	else
 		run_host_command_logged rsync -aHWXh --info=progress0,stats1 "$SDCARD/boot" "$MOUNT" # ext4
 	fi
@@ -70,7 +86,7 @@ function create_image_from_sdcard_rootfs() {
 	PRE_UPDATE_INITRAMFS
 
 	# stage: create final initramfs
-	[[ -n $KERNELSOURCE ]] && {
+	[[ "${KERNELSOURCE}" != 'none' ]] && {
 		update_initramfs "$MOUNT"
 	}
 
@@ -81,9 +97,9 @@ function create_image_from_sdcard_rootfs() {
 	display_alert "Mount point" "$(echo -e "$freespace" | awk -v mp="${MOUNT}" '$6==mp {print $5}')" "info"
 
 	# stage: write u-boot, unless BOOTCONFIG=none
-	declare -g -A image_artifacts_debs
+	declare -g -A image_artifacts_debs_reversioned
 	if [[ "${BOOTCONFIG}" != "none" ]]; then
-		write_uboot_to_loop_image "${LOOP}" "${DEB_STORAGE}/${image_artifacts_debs["uboot"]}"
+		write_uboot_to_loop_image "${LOOP}" "${DEB_STORAGE}/${image_artifacts_debs_reversioned["uboot"]}"
 	fi
 
 	# fix wrong / permissions

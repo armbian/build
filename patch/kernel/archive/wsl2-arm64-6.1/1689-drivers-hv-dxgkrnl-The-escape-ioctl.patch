@@ -1,0 +1,305 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Iouri Tarassov <iourit@linux.microsoft.com>
+Date: Tue, 18 Jan 2022 15:50:30 -0800
+Subject: drivers: hv: dxgkrnl: The escape ioctl
+
+Implement the escape ioctl (LX_DXESCAPE).
+
+This ioctl is used to send/receive private data between user mode
+compute device driver (guest) and kernel mode compute device
+driver (host). It allows the user mode driver to extend the virtual
+compute device API.
+
+Signed-off-by: Iouri Tarassov <iourit@linux.microsoft.com>
+[kms: Forward port to v6.1]
+Signed-off-by: Kelsey Steele <kelseysteele@microsoft.com>
+---
+ drivers/hv/dxgkrnl/dxgkrnl.h  |  3 +
+ drivers/hv/dxgkrnl/dxgvmbus.c | 75 +++++++++-
+ drivers/hv/dxgkrnl/dxgvmbus.h | 12 ++
+ drivers/hv/dxgkrnl/ioctl.c    | 42 +++++-
+ include/uapi/misc/d3dkmthk.h  | 41 +++++
+ 5 files changed, 167 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/hv/dxgkrnl/dxgkrnl.h b/drivers/hv/dxgkrnl/dxgkrnl.h
+index b6a7288a4177..dafc721ed6cf 100644
+--- a/drivers/hv/dxgkrnl/dxgkrnl.h
++++ b/drivers/hv/dxgkrnl/dxgkrnl.h
+@@ -894,6 +894,9 @@ int dxgvmb_send_query_alloc_residency(struct dxgprocess *process,
+ 				      struct dxgadapter *adapter,
+ 				      struct d3dkmt_queryallocationresidency
+ 				      *args);
++int dxgvmb_send_escape(struct dxgprocess *process,
++		       struct dxgadapter *adapter,
++		       struct d3dkmt_escape *args);
+ int dxgvmb_send_query_vidmem_info(struct dxgprocess *process,
+ 				  struct dxgadapter *adapter,
+ 				  struct d3dkmt_queryvideomemoryinfo *args,
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.c b/drivers/hv/dxgkrnl/dxgvmbus.c
+index 48ff49456057..8bdd49bc7aa6 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.c
++++ b/drivers/hv/dxgkrnl/dxgvmbus.c
+@@ -1925,6 +1925,70 @@ int dxgvmb_send_query_alloc_residency(struct dxgprocess *process,
+ 	return ret;
+ }
+ 
++int dxgvmb_send_escape(struct dxgprocess *process,
++		       struct dxgadapter *adapter,
++		       struct d3dkmt_escape *args)
++{
++	int ret;
++	struct dxgkvmb_command_escape *command = NULL;
++	u32 cmd_size = sizeof(*command);
++	struct dxgvmbusmsg msg = {.hdr = NULL};
++
++	if (args->priv_drv_data_size > DXG_MAX_VM_BUS_PACKET_SIZE) {
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	cmd_size = cmd_size - sizeof(args->priv_drv_data[0]) +
++	    args->priv_drv_data_size;
++
++	ret = init_message(&msg, adapter, process, cmd_size);
++	if (ret)
++		goto cleanup;
++	command = (void *)msg.msg;
++	command_vgpu_to_host_init2(&command->hdr,
++				   DXGK_VMBCOMMAND_ESCAPE,
++				   process->host_handle);
++	command->adapter = args->adapter;
++	command->device = args->device;
++	command->type = args->type;
++	command->flags = args->flags;
++	command->priv_drv_data_size = args->priv_drv_data_size;
++	command->context = args->context;
++	if (args->priv_drv_data_size) {
++		ret = copy_from_user(command->priv_drv_data,
++				     args->priv_drv_data,
++				     args->priv_drv_data_size);
++		if (ret) {
++			DXG_ERR("failed to copy priv data");
++			ret = -EINVAL;
++			goto cleanup;
++		}
++	}
++
++	ret = dxgvmb_send_sync_msg(msg.channel, msg.hdr, msg.size,
++				   command->priv_drv_data,
++				   args->priv_drv_data_size);
++	if (ret < 0)
++		goto cleanup;
++
++	if (args->priv_drv_data_size) {
++		ret = copy_to_user(args->priv_drv_data,
++				   command->priv_drv_data,
++				   args->priv_drv_data_size);
++		if (ret) {
++			DXG_ERR("failed to copy priv data");
++			ret = -EINVAL;
++		}
++	}
++
++cleanup:
++	free_message(&msg, process);
++	if (ret)
++		DXG_TRACE("err: %d", ret);
++	return ret;
++}
++
+ int dxgvmb_send_query_vidmem_info(struct dxgprocess *process,
+ 				  struct dxgadapter *adapter,
+ 				  struct d3dkmt_queryvideomemoryinfo *args,
+@@ -1955,14 +2019,14 @@ int dxgvmb_send_query_vidmem_info(struct dxgprocess *process,
+ 	ret = copy_to_user(&output->budget, &result.budget,
+ 			   sizeof(output->budget));
+ 	if (ret) {
+-		pr_err("%s failed to copy budget", __func__);
++		DXG_ERR("failed to copy budget");
+ 		ret = -EINVAL;
+ 		goto cleanup;
+ 	}
+ 	ret = copy_to_user(&output->current_usage, &result.current_usage,
+ 			   sizeof(output->current_usage));
+ 	if (ret) {
+-		pr_err("%s failed to copy current usage", __func__);
++		DXG_ERR("failed to copy current usage");
+ 		ret = -EINVAL;
+ 		goto cleanup;
+ 	}
+@@ -1970,7 +2034,7 @@ int dxgvmb_send_query_vidmem_info(struct dxgprocess *process,
+ 			   &result.current_reservation,
+ 			   sizeof(output->current_reservation));
+ 	if (ret) {
+-		pr_err("%s failed to copy reservation", __func__);
++		DXG_ERR("failed to copy reservation");
+ 		ret = -EINVAL;
+ 		goto cleanup;
+ 	}
+@@ -1978,14 +2042,14 @@ int dxgvmb_send_query_vidmem_info(struct dxgprocess *process,
+ 			   &result.available_for_reservation,
+ 			   sizeof(output->available_for_reservation));
+ 	if (ret) {
+-		pr_err("%s failed to copy avail reservation", __func__);
++		DXG_ERR("failed to copy avail reservation");
+ 		ret = -EINVAL;
+ 	}
+ 
+ cleanup:
+ 	free_message(&msg, process);
+ 	if (ret)
+-		dev_dbg(DXGDEV, "err: %d", ret);
++		DXG_TRACE("err: %d", ret);
+ 	return ret;
+ }
+ 
+@@ -3152,3 +3216,4 @@ int dxgvmb_send_submit_command_hwqueue(struct dxgprocess *process,
+ 		DXG_TRACE("err: %d", ret);
+ 	return ret;
+ }
++
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.h b/drivers/hv/dxgkrnl/dxgvmbus.h
+index a1549983d50f..e1c2ed7b1580 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.h
++++ b/drivers/hv/dxgkrnl/dxgvmbus.h
+@@ -664,6 +664,18 @@ struct dxgkvmb_command_queryallocationresidency_return {
+ 	/* d3dkmt_allocationresidencystatus[NumAllocations] */
+ };
+ 
++/* Returns only private data */
++struct dxgkvmb_command_escape {
++	struct dxgkvmb_command_vgpu_to_host hdr;
++	struct d3dkmthandle		adapter;
++	struct d3dkmthandle		device;
++	enum d3dkmt_escapetype		type;
++	struct d3dddi_escapeflags	flags;
++	u32				priv_drv_data_size;
++	struct d3dkmthandle		context;
++	u8				priv_drv_data[1];
++};
++
+ struct dxgkvmb_command_queryvideomemoryinfo {
+ 	struct dxgkvmb_command_vgpu_to_host hdr;
+ 	struct d3dkmthandle		adapter;
+diff --git a/drivers/hv/dxgkrnl/ioctl.c b/drivers/hv/dxgkrnl/ioctl.c
+index e692b127e219..78de76abce2d 100644
+--- a/drivers/hv/dxgkrnl/ioctl.c
++++ b/drivers/hv/dxgkrnl/ioctl.c
+@@ -3547,6 +3547,46 @@ dxgkio_flush_heap_transitions(struct dxgprocess *process, void *__user inargs)
+ 	return ret;
+ }
+ 
++static int
++dxgkio_escape(struct dxgprocess *process, void *__user inargs)
++{
++	struct d3dkmt_escape args;
++	int ret;
++	struct dxgadapter *adapter = NULL;
++	bool adapter_locked = false;
++
++	ret = copy_from_user(&args, inargs, sizeof(args));
++	if (ret) {
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	adapter = dxgprocess_adapter_by_handle(process, args.adapter);
++	if (adapter == NULL) {
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	ret = dxgadapter_acquire_lock_shared(adapter);
++	if (ret < 0) {
++		adapter = NULL;
++		goto cleanup;
++	}
++	adapter_locked = true;
++
++	args.adapter = adapter->host_handle;
++	ret = dxgvmb_send_escape(process, adapter, &args);
++
++cleanup:
++
++	if (adapter_locked)
++		dxgadapter_release_lock_shared(adapter);
++	if (adapter)
++		kref_put(&adapter->adapter_kref, dxgadapter_release);
++	DXG_TRACE("ioctl:%s %d", errorstr(ret), ret);
++	return ret;
++}
++
+ static int
+ dxgkio_query_vidmem_info(struct dxgprocess *process, void *__user inargs)
+ {
+@@ -4338,7 +4378,7 @@ static struct ioctl_desc ioctls[] = {
+ /* 0x0a */	{dxgkio_query_vidmem_info, LX_DXQUERYVIDEOMEMORYINFO},
+ /* 0x0b */	{},
+ /* 0x0c */	{},
+-/* 0x0d */	{},
++/* 0x0d */	{dxgkio_escape, LX_DXESCAPE},
+ /* 0x0e */	{dxgkio_get_device_state, LX_DXGETDEVICESTATE},
+ /* 0x0f */	{dxgkio_submit_command, LX_DXSUBMITCOMMAND},
+ /* 0x10 */	{dxgkio_create_sync_object, LX_DXCREATESYNCHRONIZATIONOBJECT},
+diff --git a/include/uapi/misc/d3dkmthk.h b/include/uapi/misc/d3dkmthk.h
+index b7d8b1d91cfc..749edf28bd43 100644
+--- a/include/uapi/misc/d3dkmthk.h
++++ b/include/uapi/misc/d3dkmthk.h
+@@ -236,6 +236,45 @@ struct d3dddi_destroypagingqueue {
+ 	struct d3dkmthandle		paging_queue;
+ };
+ 
++enum d3dkmt_escapetype {
++	_D3DKMT_ESCAPE_DRIVERPRIVATE	= 0,
++	_D3DKMT_ESCAPE_VIDMM		= 1,
++	_D3DKMT_ESCAPE_VIDSCH		= 3,
++	_D3DKMT_ESCAPE_DEVICE		= 4,
++	_D3DKMT_ESCAPE_DRT_TEST		= 8,
++};
++
++struct d3dddi_escapeflags {
++	union {
++		struct {
++			__u32		hardware_access:1;
++			__u32		device_status_query:1;
++			__u32		change_frame_latency:1;
++			__u32		no_adapter_synchronization:1;
++			__u32		reserved:1;
++			__u32		virtual_machine_data:1;
++			__u32		driver_known_escape:1;
++			__u32		driver_common_escape:1;
++			__u32		reserved2:24;
++		};
++		__u32			value;
++	};
++};
++
++struct d3dkmt_escape {
++	struct d3dkmthandle		adapter;
++	struct d3dkmthandle		device;
++	enum d3dkmt_escapetype		type;
++	struct d3dddi_escapeflags	flags;
++#ifdef __KERNEL__
++	void				*priv_drv_data;
++#else
++	__u64				priv_drv_data;
++#endif
++	__u32				priv_drv_data_size;
++	struct d3dkmthandle		context;
++};
++
+ enum dxgk_render_pipeline_stage {
+ 	_DXGK_RENDER_PIPELINE_STAGE_UNKNOWN		= 0,
+ 	_DXGK_RENDER_PIPELINE_STAGE_INPUT_ASSEMBLER	= 1,
+@@ -1217,6 +1256,8 @@ struct d3dkmt_shareobjectwithhost {
+ 	_IOWR(0x47, 0x09, struct d3dkmt_queryadapterinfo)
+ #define LX_DXQUERYVIDEOMEMORYINFO	\
+ 	_IOWR(0x47, 0x0a, struct d3dkmt_queryvideomemoryinfo)
++#define LX_DXESCAPE			\
++	_IOWR(0x47, 0x0d, struct d3dkmt_escape)
+ #define LX_DXGETDEVICESTATE		\
+ 	_IOWR(0x47, 0x0e, struct d3dkmt_getdevicestate)
+ #define LX_DXSUBMITCOMMAND		\
+-- 
+Armbian
+

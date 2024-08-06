@@ -19,11 +19,27 @@ import git  # GitPython
 from unidecode import unidecode
 from unidiff import PatchSet
 
+from common.patching_config import PatchingConfig
+from common.term_colors import background_dark_or_light
+
 MAGIC_MBOX_MARKER_STANDARD = "Mon Sep 17 00:00:00 2001"
 MAGIC_MBOX_MARKER_B4 = "git@z Thu Jan  1 00:00:00 1970"
 
 REGEX_PATCH_FILENAMES = r"^patching file \"(.+)\""
 log: logging.Logger = logging.getLogger("patching_utils")
+
+# Magic strings and regex for rewriting patches' "index xxx....yyyy" lines
+index_zero = f"{'0' * 12}"
+index_from_zero = f"index {'0' * 12}..{'1' * 12}"
+index_not_zero = f"index {'1' * 12}..{'2' * 12}"
+index_rewrite_regexp: re.Pattern = re.compile(r"index ([0-9a-f]{12})\.\.([0-9a-f]{12})")
+
+
+# Callback used for rewriting index lines.
+def rewrite_indexes_callback(x: re.Match):  # Preserve zero from's for new file creations.
+	if x.group(1) == index_zero:
+		return index_from_zero
+	return index_not_zero
 
 
 class PatchRootDir:
@@ -119,6 +135,7 @@ class PatchFileInDir:
 		self.file_name_no_ext_no_dirs = os.path.basename(self.relative_dirs_and_base_file_name)
 		self.from_series = False
 		self.series_counter = None
+		self.multiple_patches_in_file = False
 
 	def __str__(self) -> str:
 		desc: str = f"<PatchFileInDir: file_name:'{self.file_name}', dir:{self.patch_dir.__str__()} >"
@@ -213,6 +230,10 @@ class PatchFileInDir:
 		# sanity check, throw exception if there are no patches
 		if len(patches) == 0:
 			raise Exception("No valid patches found in file " + self.full_file_path())
+
+		if (len(patches) > 1):
+			self.multiple_patches_in_file = True
+
 		return patches
 
 	@staticmethod
@@ -238,8 +259,11 @@ class PatchFileInDir:
 		log.info(f"Rewriting {output_file} with new patches...")
 		with open(output_file, "w") as f:
 			for patch in patches:
-				log.info(f"Writing patch {patch.counter} to {output_file}...")
-				f.write(patch.rewritten_patch)
+				if patch.parent.patch_dir.is_autogen_dir:
+					log.debug(f"Skipping autogen patch {patch.counter} in file {output_file}...")
+				else:
+					log.info(f"Writing patch {patch.counter} to {output_file}...")
+					f.write(patch.rewritten_patch)
 
 
 # Placeholder for future manual work
@@ -289,6 +313,8 @@ class PatchInPatchFile:
 		self.deleted_file_names = []
 		self.renamed_file_names_source = []  # The original file names of renamed files
 		self.all_file_names_touched = []
+		self.rejects: str | None = None
+		self.patch_output: str | None = None
 
 	def parse_from_name_email(self, from_str: str) -> tuple["str | None", "str | None"]:
 		m = re.match(r'(?P<name>.*)\s*<\s*(?P<email>.*)\s*>', from_str)
@@ -426,7 +452,6 @@ class PatchInPatchFile:
 			with open(rejects_file, "r") as f:
 				reject_contents = f.read()
 				self.rejects = reject_contents
-				log.debug(f"Rejects file contents: {reject_contents}")
 			# delete it
 			os.remove(rejects_file)
 
@@ -444,17 +469,18 @@ class PatchInPatchFile:
 			self.actually_patched_files = parse_patch_stdout_for_files(stdout_output)
 			self.apply_patch_date_to_files(working_dir, options)
 
+		# Store the stdout and stderr output
+		patch_output = ""
+		patch_output += f"{stdout_output}\n" if stdout_output != "" else ""
+		patch_output += f"{stderr_output}\n" if stderr_output != "" else ""
+		self.patch_output = f"{patch_output}"
+
 		# Check if the exit code is not zero and bomb
 		if proc.returncode != 0:
-			# prefix each line of the stderr_output with "STDERR: ", then join again
-			stderr_output = "\n".join([f"STDERR: {line}" for line in stderr_output.splitlines()])
-			stderr_output = "\n" + stderr_output if stderr_output != "" else stderr_output
-			stdout_output = "\n".join([f"STDOUT: {line}" for line in stdout_output.splitlines()])
-			stdout_output = "\n" + stdout_output if stdout_output != "" else stdout_output
 			self.problems.append("failed_apply")
-			raise Exception(f"Failed to apply patch {self.parent.full_file_path()}:{stderr_output}{stdout_output}")
+			raise Exception(f"Failed to apply patch {self.parent.full_file_path()}")
 
-	def commit_changes_to_git(self, repo: git.Repo, add_rebase_tags: bool, split_patches: bool):
+	def commit_changes_to_git(self, repo: git.Repo, add_rebase_tags: bool, split_patches: bool, pconfig: PatchingConfig):
 		log.info(f"Committing changes to git: {self.parent.relative_dirs_and_base_file_name}")
 		# add all the files that were touched by the patch
 		# if the patch failed to parse, this will be an empty list, so we'll just add all changes.
@@ -494,7 +520,17 @@ class PatchInPatchFile:
 				return self.commit_changes_to_git_grouped(all_files_to_add, repo)
 
 			if not add_all_changes_in_git:
-				repo.git.add("-f", all_files_to_add)
+				log.debug(f"Adding (pre-config ) {len(all_files_to_add)} files to git: {' '.join(all_files_to_add)}")
+				do_not_commit_files = pconfig.patches_to_git_config.do_not_commit_files  # from config
+				do_not_commit_regexes = pconfig.patches_to_git_config.do_not_commit_regexes  # from config
+				final_files_to_add = [f for f in all_files_to_add if f not in do_not_commit_files]
+				final_files_to_add = [f for f in final_files_to_add if not any(re.match(r, f) for r in do_not_commit_regexes)]
+				log.debug(f"Adding (post-config) {len(final_files_to_add)} files to git: {' '.join(final_files_to_add)}")
+				if len(final_files_to_add) == 0:
+					log.warning(f"There are 0 files to commit post-config. The whole patch should be removed.")
+					self.problems.append("no_files_to_commit_after_config")
+					return None
+				repo.git.add("-f", final_files_to_add)
 
 		if self.failed_to_parse or self.parent.patch_dir.is_autogen_dir or add_all_changes_in_git:
 			log.warning(f"Rescue: adding all changed files to git for {self}")
@@ -609,6 +645,18 @@ class PatchInPatchFile:
 	def markdown_diffstat(self):
 		return f"`{self.text_diffstats()}`"
 
+	def text_files(self):
+		ret = []
+		max_files_shown = 15
+		file_names = list(self.patched_file_stats_dict.keys())
+		if len(file_names) == 0:
+			return "?"
+		for file_name in file_names[:max_files_shown]:
+			ret.append(f"{file_name}")
+		if len(file_names) > max_files_shown:
+			ret.append(f"and {len(file_names) - max_files_shown} more")
+		return ", ".join(ret)
+
 	def markdown_files(self):
 		ret = []
 		max_files_shown = 15
@@ -623,6 +671,11 @@ class PatchInPatchFile:
 			ret.append(f"_and {len(file_names) - max_files_shown} more_")
 		return ", ".join(ret)
 
+	def text_author(self):
+		if self.from_name:
+			return f"{self.from_name.strip()}"
+		return "[no Author]"
+
 	def markdown_author(self):
 		if self.from_name:
 			return f"`{self.from_name.strip()}`"
@@ -633,21 +686,57 @@ class PatchInPatchFile:
 			return f"_{self.subject}_"
 		return "`[no Subject]`"
 
+	def text_subject(self):
+		if self.subject:
+			return f"{self.subject}"
+		return "[no Subject]"
+
 	def markdown_link_to_patch(self):
 		if self.git_commit_hash is None:
 			return ""
 		return f"{self.git_commit_hash} "
 
-	def markdown_name(self):
+	def markdown_name(self, skip_markdown=False):
 		ret = []
+		escape = "`" if not skip_markdown else ""
 		patch_name = self.parent.relative_dirs_and_base_file_name
 		# if the basename includes slashes, split after the last slash, the first part is the directory, second the file
 		if "/" in self.parent.relative_dirs_and_base_file_name:
 			dir_name, patch_name = self.parent.relative_dirs_and_base_file_name.rsplit("/", 1)
 			if dir_name is not None:
-				ret.append(f"`[{dir_name}/]`")
-		ret.append(f"`{patch_name}`")
+				# get only the last part of the dir_name
+				dir_name = dir_name.split("/")[-1]
+				ret.append(f"{escape}[{dir_name}/]{escape}")
+		ret.append(f"{escape}{patch_name}{escape}")
 		return " ".join(ret)
+
+	def rich_name_status(self):
+		color = "green"
+		for problem in self.problems:
+			if problem in ["not_mbox", "needs_rebase"]:
+				color = "yellow"
+			else:
+				color = "red"
+		bold = 'bold dim' if background_dark_or_light() == 'light' else 'bold'
+		# @TODO: once our ansi-haste supports it, use [link url=file://blaaa]
+		if self.parent.multiple_patches_in_file:
+			return f"[{bold}][{color}]{self.markdown_name(skip_markdown=True)}[/{bold}](:{self.counter})"
+		else:
+			return f"[{bold} {color}]{self.markdown_name(skip_markdown=True)}"
+
+	def rich_patch_output(self):
+		ret = self.patch_output
+		color_tags = {
+			'green': ['Reversed (or previously applied) patch detected!'],
+			'yellow': ['with fuzz', 'offset ', ' hunks ignored', ' hunk ignored'],
+			'red': ['hunk FAILED', 'hunks FAILED']
+		}
+		bold = 'bold dim' if background_dark_or_light() == 'light' else 'bold'
+		# use Rich's syntax highlighting to highlight with color
+		for color in color_tags:
+			for tag in color_tags[color]:
+				ret = ret.replace(tag, f"[{bold} {color}]{tag}[/{bold} {color}]")
+		return ret
 
 	def apply_patch_date_to_files(self, working_dir, options):
 		# The date applied to the patched files is:
@@ -732,6 +821,7 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 		'--zero-commit',  # do not use the git revision, instead 000000...0000
 		'--stat=120',  # 'wider' stat output; default is 80
 		'--stat-graph-width=10',  # shorten the diffgraph graph part, it's too long
+		'--abbrev=12',  # force index length to 12 - essential for the regex below to work
 		"-1", "--stdout", commit
 	],
 		cwd=repo.working_tree_dir,
@@ -746,7 +836,17 @@ def export_commit_as_patch(repo: git.Repo, commit: str):
 		raise Exception(f"Failed to export commit {commit} to patch: {stderr_output}")
 	if stdout_output == "":
 		raise Exception(f"Failed to export commit {commit} to patch: no output")
-	return stdout_output
+
+	# Now, massage the output. We don't want the "index 08c33ec7e9f1..528741fcc0ec 100644" lines changing every time.
+	# We do need to preserve "0000000000.." ones as that indicates new file creation.
+	# Use a regular expression and a callback to decide. Check the top of this file for the regex and callback.
+	rewritten_indexes = re.sub(index_rewrite_regexp, rewrite_indexes_callback, stdout_output)
+
+	# If rewritten is same as original this didn't work, surely.
+	if rewritten_indexes == stdout_output:
+		raise Exception(f"Failed to rewrite indexes in patch output: {stdout_output}")
+
+	return rewritten_indexes
 
 
 # Hack

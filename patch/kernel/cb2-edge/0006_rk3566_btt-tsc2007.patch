@@ -1,0 +1,249 @@
+diff -ruN a/drivers/input/touchscreen/raspits_ft5426.c b/drivers/input/touchscreen/raspits_ft5426.c
+--- a/drivers/input/touchscreen/raspits_ft5426.c	2024-08-05 18:20:17.000000000 +0800
++++ b/drivers/input/touchscreen/raspits_ft5426.c	2024-07-31 18:57:26.000000000 +0800
+@@ -276,7 +276,7 @@
+ 	return ret;
+ }
+ 
+-static int raspits_ft5426_remove(struct i2c_client *client)
++static void raspits_ft5426_remove(struct i2c_client *client)
+ {
+ 	struct raspits_ft5426_data *ts_data = i2c_get_clientdata(client);
+ 
+@@ -286,17 +286,17 @@
+ 		input_free_device(ts_data->input_dev);
+ 	}
+ 	kfree(ts_data);
+-	return 0;
++
+ }
+ 
+ static const struct i2c_device_id raspits_ft5426_id[] = {
+-	{ "raspits_ft5426", 0 },
++	{ "rockpi_ft5406", 0 },
+ 	{ },
+ };
+ 
+ static struct i2c_driver raspits_ft5426_driver = {
+ 	.driver = {
+-		.name = "raspits_ft5426",
++		.name = "rockpi_ft5406",
+ 	},
+ 	.probe = raspits_ft5426_probe,
+ 	.remove = raspits_ft5426_remove,
+diff -ruN a/drivers/input/touchscreen/tsc2007_core.c b/drivers/input/touchscreen/tsc2007_core.c
+--- a/drivers/input/touchscreen/tsc2007_core.c	2024-08-05 18:20:17.000000000 +0800
++++ b/drivers/input/touchscreen/tsc2007_core.c	2024-07-31 18:57:26.000000000 +0800
+@@ -28,6 +28,8 @@
+ #include <linux/platform_data/tsc2007.h>
+ #include "tsc2007.h"
+ 
++#define POLL_INTERVAL_MS 17 /* 17ms = 60fps */
++
+ int tsc2007_xfer(struct tsc2007 *tsc, u8 cmd)
+ {
+ 	s32 data;
+@@ -172,6 +174,65 @@
+ 	return IRQ_HANDLED;
+ }
+ 
++static irqreturn_t tsc2007_soft_poll(int irq, void *handle)
++{
++	struct tsc2007 *ts = handle;
++	struct input_dev *input = ts->input;
++	struct ts_event tc;
++	u32 rt;
++
++	if(!ts->stopped) {
++
++		mutex_lock(&ts->mlock);
++		tsc2007_read_values(ts, &tc);
++		mutex_unlock(&ts->mlock);
++
++		rt = tsc2007_calculate_resistance(ts, &tc);
++
++		if (rt == 0 || rt == 256) {
++
++			/*
++				* Sample found inconsistent by debouncing or pressure is
++				* beyond the maximum. Don't report it to user space,
++				* repeat at least once more the measurement.
++				*/
++			dev_dbg(&ts->client->dev, "ignored pressure %d\n", rt);
++
++		} else {
++
++			if (rt < ts->rt_thr) {
++
++				dev_dbg(&ts->client->dev,
++					"DOWN point(%4d,%4d), resistance (%4u)\n",
++					tc.x, tc.y, rt);
++
++				rt = ts->max_rt - rt;
++
++				input_report_key(input, BTN_TOUCH, 1);
++				input_report_abs(input, ABS_X, tc.y);
++				input_report_abs(input, ABS_Y, 4096 - tc.x);
++				input_report_abs(input, ABS_PRESSURE, rt);
++
++				input_sync(input);
++				ts->touched = 1;
++
++			} else if (ts->touched == 1) {
++
++				dev_dbg(&ts->client->dev, "UP\n");
++
++				input_report_key(input, BTN_TOUCH, 0);
++				input_report_abs(input, ABS_PRESSURE, 0);
++				input_sync(input);
++				ts->touched = 0;
++			}
++		}
++
++
++	}
++
++	return IRQ_HANDLED;
++}
++
+ static irqreturn_t tsc2007_hard_irq(int irq, void *handle)
+ {
+ 	struct tsc2007 *ts = handle;
+@@ -229,11 +290,32 @@
+ 	return gpiod_get_value(ts->gpiod);
+ }
+ 
++static void tsc2007_ts_irq_poll_timer(struct timer_list *t)
++{
++	struct tsc2007 *ts = from_timer(ts, t, timer);
++
++	schedule_work(&ts->work_i2c_poll);
++	mod_timer(&ts->timer, jiffies + msecs_to_jiffies(POLL_INTERVAL_MS));
++}
++
++static void tsc2007_ts_work_i2c_poll(struct work_struct *work)
++{
++	struct tsc2007 *ts = container_of(work,
++			struct tsc2007, work_i2c_poll);
++
++	tsc2007_soft_poll(0, ts);
++}
++
+ static int tsc2007_probe_properties(struct device *dev, struct tsc2007 *ts)
+ {
+ 	u32 val32;
+ 	u64 val64;
+ 
++	ts->ignore_nak = device_property_read_bool(dev, "i2c,ignore-nak");
++
++	if (!device_property_read_u32(dev, "ti,rt-thr", &val32))
++		ts->rt_thr = val32;
++
+ 	if (!device_property_read_u32(dev, "ti,max-rt", &val32))
+ 		ts->max_rt = val32;
+ 	else
+@@ -260,14 +342,14 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	ts->gpiod = devm_gpiod_get_optional(dev, NULL, GPIOD_IN);
+-	if (IS_ERR(ts->gpiod))
+-		return PTR_ERR(ts->gpiod);
+-
+-	if (ts->gpiod)
+-		ts->get_pendown_state = tsc2007_get_pendown_state_gpio;
+-	else
+-		dev_warn(dev, "Pen down GPIO is not specified in properties\n");
++//	ts->gpiod = devm_gpiod_get_optional(dev, NULL, GPIOD_IN);
++//	if (IS_ERR(ts->gpiod))
++//		return PTR_ERR(ts->gpiod);
++//
++//	if (ts->gpiod)
++//		ts->get_pendown_state = tsc2007_get_pendown_state_gpio;
++//	else
++//		dev_warn(dev, "Pen down GPIO is not specified in properties\n");
+ 
+ 	return 0;
+ }
+@@ -330,6 +412,9 @@
+ 	if (!input_dev)
+ 		return -ENOMEM;
+ 
++	if (ts->ignore_nak)
++		client->flags |= I2C_M_IGNORE_NAK;
++
+ 	i2c_set_clientdata(client, ts);
+ 
+ 	ts->client = client;
+@@ -375,15 +460,24 @@
+ 			pdata->init_platform_hw();
+ 	}
+ 
+-	err = devm_request_threaded_irq(&client->dev, ts->irq,
+-					tsc2007_hard_irq, tsc2007_soft_irq,
+-					IRQF_ONESHOT,
+-					client->dev.driver->name, ts);
+-	if (err) {
+-		dev_err(&client->dev, "Failed to request irq %d: %d\n",
+-			ts->irq, err);
+-		return err;
+-	}
++//	if (ts->gpiod) {
++//		err = devm_request_threaded_irq(&client->dev, ts->irq,
++//						tsc2007_hard_irq, tsc2007_soft_irq,
++//						IRQF_ONESHOT,
++//						client->dev.driver->name, ts);
++//		if (err) {
++//			dev_err(&client->dev, "Failed to request irq %d: %d\n",
++//				ts->irq, err);
++//			return err;
++//		}
++//	} else {
++		INIT_WORK(&ts->work_i2c_poll,
++			  tsc2007_ts_work_i2c_poll);
++		timer_setup(&ts->timer, tsc2007_ts_irq_poll_timer, 0);
++		ts->timer.expires = jiffies +
++					msecs_to_jiffies(POLL_INTERVAL_MS);
++		add_timer(&ts->timer);
++//	}
+ 
+ 	tsc2007_stop(ts);
+ 
+diff -ruN a/drivers/input/touchscreen/tsc2007.h b/drivers/input/touchscreen/tsc2007.h
+--- a/drivers/input/touchscreen/tsc2007.h	2024-08-05 18:20:17.000000000 +0800
++++ b/drivers/input/touchscreen/tsc2007.h	2024-07-31 18:57:26.000000000 +0800
+@@ -66,10 +66,13 @@
+ 	u16			model;
+ 	u16			x_plate_ohms;
+ 	u16			max_rt;
++	u16			rt_thr;
++	u8			touched;
+ 	unsigned long		poll_period; /* in jiffies */
+ 	int			fuzzx;
+ 	int			fuzzy;
+ 	int			fuzzz;
++	bool		ignore_nak;
+ 
+ 	struct gpio_desc	*gpiod;
+ 	int			irq;
+@@ -81,6 +84,9 @@
+ 	void			(*clear_penirq)(void);
+ 
+ 	struct mutex		mlock;
++
++	struct timer_list timer;
++	struct work_struct work_i2c_poll;
+ };
+ 
+ int tsc2007_xfer(struct tsc2007 *tsc, u8 cmd);
+diff -ruN a/drivers/input/touchscreen/tsc2007_iio.c b/drivers/input/touchscreen/tsc2007_iio.c
+--- a/drivers/input/touchscreen/tsc2007_iio.c	2024-08-05 18:20:17.000000000 +0800
++++ b/drivers/input/touchscreen/tsc2007_iio.c	2024-07-31 18:57:26.000000000 +0800
+@@ -119,6 +119,7 @@
+ 	iio->ts = ts;
+ 
+ 	indio_dev->name = "tsc2007";
++	indio_dev->dev.parent = &ts->client->dev;
+ 	indio_dev->info = &tsc2007_iio_info;
+ 	indio_dev->modes = INDIO_DIRECT_MODE;
+ 	indio_dev->channels = tsc2007_iio_channel;

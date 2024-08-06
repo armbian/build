@@ -17,14 +17,13 @@ function artifact_rootfs_config_dump() {
 	artifact_input_variables[DESKTOP_APPGROUPS_SELECTED]="${DESKTOP_APPGROUPS_SELECTED:-"no_DESKTOP_APPGROUPS_SELECTED_set"}"
 	# Hash of the packages added/removed by extensions
 	declare pkgs_hash="undetermined"
-	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]}" | sha256sum | cut -d' ' -f1)"
+	pkgs_hash="$(echo "${REMOVE_PACKAGES[*]} ${EXTRA_PACKAGES_ROOTFS[*]} ${PACKAGE_LIST_BOARD_REMOVE} ${PACKAGE_LIST_FAMILY_REMOVE}" | sha256sum | cut -d' ' -f1)"
 	artifact_input_variables[EXTRA_PKG_ADD_REMOVE_HASH]="${pkgs_hash}"
 }
 
 function artifact_rootfs_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
-	[[ -z "${artifact_prefix_version}" ]] && exit_with_error "artifact_prefix_version is not set"
 
 	assert_requires_aggregation # Bombs if aggregation has not run
 
@@ -32,7 +31,7 @@ function artifact_rootfs_prepare_version() {
 
 	calculate_rootfs_cache_id # sets rootfs_cache_id
 
-	display_alert "Going to build rootfs" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
+	display_alert "rootfs version" "packages_hash: '${packages_hash:-}' cache_type: '${cache_type:-}' rootfs_cache_id: '${rootfs_cache_id}'" "info"
 
 	declare -a reasons=(
 		"arch \"${ARCH}\""
@@ -48,8 +47,7 @@ function artifact_rootfs_prepare_version() {
 		reasons+=("desktop_appgroups_selected \"${DESKTOP_APPGROUPS_SELECTED}\"")
 	fi
 
-	# rootfs does NOT include ${artifact_prefix_version} -- there's no reason to, since rootfs is not in an apt repo
-	# instead, we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
+	# we use YYYYMM to make a new rootfs cache version per-month, even if nothing else changes.
 	declare yyyymm="undetermined"
 	yyyymm="$(date +%Y%m)"
 

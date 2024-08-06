@@ -41,6 +41,11 @@ function compile_kernel() {
 	kernel_base_revision_date="$(LC_ALL=C date -d "@${kernel_base_revision_ts}")"
 	display_alert "Using Kernel git revision" "${kernel_git_revision} at '${kernel_base_revision_date}'"
 
+	# Call extension method to prepare extra sources
+	call_extension_method "kernel_copy_extra_sources" <<- 'ARMBIAN_KERNEL_SOURCES_EXTRA'
+		*Hook to copy extra kernel sources to the kernel under compilation*
+	ARMBIAN_KERNEL_SOURCES_EXTRA
+
 	# Possibly 'make clean'.
 	LOG_SECTION="kernel_maybe_clean" do_with_logging do_with_hooks kernel_maybe_clean
 
@@ -48,7 +53,7 @@ function compile_kernel() {
 	declare hash pre_patch_version
 	kernel_main_patching # has it's own logging sections inside
 
-	# Stop after patching;
+	# Stop after patching.
 	if [[ "${PATCH_ONLY}" == yes ]]; then
 		display_alert "PATCH_ONLY is set, stopping." "PATCH_ONLY=yes and patching success" "cachehit"
 		return 0
@@ -67,7 +72,6 @@ function compile_kernel() {
 	# re-read kernel version after patching
 	declare version
 	version=$(grab_version "$kernel_work_dir")
-	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 	# determine the toolchain
 	declare toolchain
@@ -75,12 +79,22 @@ function compile_kernel() {
 
 	kernel_config # has it's own logging sections inside
 
+	# Validate dts file if flag is set and stop after validation.
+	# Has to happen after kernel .config file was created
+	if [[ "${DTS_VALIDATE}" == yes ]]; then
+		LOG_SECTION="validate_dts" do_with_logging validate_dts
+		display_alert "DTS_VALIDATE is set, stopping." "DTS_VALIDATE=yes and dts sucessfully checked. See output above to fix your board's dts file." "cachehit"
+		return 0
+	fi
+
 	# Stop after configuring kernel, but only if using a specific CLI command ("kernel-config").
 	# Normal "KERNEL_CONFIGURE=yes" (during image build) is still allowed.
-	if [[ "${KERNEL_CONFIGURE}" == yes && "${ARMBIAN_COMMAND}" == "kernel-config" ]]; then
+	if [[ "${KERNEL_CONFIGURE}" == yes && "${ARMBIAN_COMMAND}" == *kernel-config ]]; then
 		display_alert "Stopping after configuring kernel" "" "cachehit"
 		return 0
 	fi
+
+	display_alert "Compiling $BRANCH kernel" "$version" "info"
 
 	# build via make and package .debs; they're separate sub-steps
 	kernel_prepare_build_and_package # has it's own logging sections inside
@@ -111,21 +125,25 @@ function kernel_prepare_build_and_package() {
 	build_targets=("all") # "All" builds the vmlinux/Image/Image.gz default for the ${ARCH}
 	build_targets+=("${KERNEL_IMAGE_TYPE}")
 	declare cleanup_id="" kernel_dest_install_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "k" cleanup_id kernel_dest_install_dir # namerefs
+	prepare_temp_dir_in_workdir_and_schedule_cleanup "kernel_dest_install_dir" cleanup_id kernel_dest_install_dir # namerefs
 
 	# define dict with vars passed and target directories
 	declare -A kernel_install_dirs=(
-		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"  # Used by `make install`
-		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules" # Used by `make modules_install`
-		#["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install` - disabled, only used for libc headers
+		["INSTALL_PATH"]="${kernel_dest_install_dir}/image/boot"       # Used by `make install`
+		["INSTALL_MOD_PATH"]="${kernel_dest_install_dir}/modules"      # Used by `make modules_install`
+		["INSTALL_HDR_PATH"]="${kernel_dest_install_dir}/libc_headers" # Used by `make headers_install` for libc headers
 	)
 
 	[ -z "${SRC_LOADADDR}" ] || install_make_params_quoted+=("${SRC_LOADADDR}") # For uImage
+
 	# @TODO: Only combining `install` and `modules_install` enable mixed-build and __build_one_by_one
 	# We should spilt the `build` and `install` into two make steps as the kernel required
 	build_targets+=("install" "${KERNEL_INSTALL_TYPE:-install}")
 
-	build_targets+=("modules_install") # headers_install disabled, only used for libc headers
+	install_make_params_quoted+=("INSTALL_MOD_STRIP=1") # strip modules during install
+
+	build_targets+=("modules_install")
+	build_targets+=("headers_install") # headers_install for libc headers
 	if [[ "${KERNEL_BUILD_DTBS:-yes}" == "yes" ]]; then
 		display_alert "Kernel build will produce DTBs!" "DTBs YES" "debug"
 		build_targets+=("dtbs_install")
@@ -141,20 +159,68 @@ function kernel_prepare_build_and_package() {
 		install_make_params_quoted+=("${value}")
 	done
 
-	# Fire off the build & package
-	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+	if [[ "${KERNEL_DTB_ONLY}" == "yes" ]]; then
+		# Helper for local development of device tree
+		kernel_dtb_only_build
+	else
+		# Normal build, which includes "all" target etc
+		LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+	fi
 
-	# prepare a target dir for the shared, produced kernel .debs, across image/dtb/headers
-	declare cleanup_id_debs="" kernel_debs_temp_dir=""
-	prepare_temp_dir_in_workdir_and_schedule_cleanup "kd" cleanup_id_debs kernel_debs_temp_dir # namerefs
-
+	# Package what has been built
 	LOG_SECTION="kernel_package" do_with_logging do_with_hooks kernel_package
 
-	# This deploys to DEB_STORAGE...
-	LOG_SECTION="kernel_deploy_pkg" do_with_logging do_with_hooks kernel_deploy_pkg
+	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
+}
 
-	done_with_temp_dir "${cleanup_id_debs}" # changes cwd to "${SRC}" and fires the cleanup function early
-	done_with_temp_dir "${cleanup_id}"      # changes cwd to "${SRC}" and fires the cleanup function early
+function kernel_dtb_only_build() {
+	display_alert "Kernel DTB-only for development" "KERNEL_DTB_ONLY: ${KERNEL_DTB_ONLY}" "warn"
+	# Do it in two separate steps, first build the dtbs then install them.
+	build_targets=("dtbs")
+	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+
+	display_alert "Kernel DTB-only for development" "Installing DTBs" "warn"
+	build_targets=("dtbs_install")
+	LOG_SECTION="kernel_build" do_with_logging do_with_hooks kernel_build
+
+	# If BOOT_FDT_FILE is set...
+	if [[ -n "${BOOT_FDT_FILE}" ]]; then
+		display_alert "Kernel DTB-only for development" "Copying preprocessed version of ${BOOT_FDT_FILE}" "warn"
+
+		# Take BOOT_FDT_FILE (eg: "rockchip/rk3588-smth.dtb") and parse fdt_dir and fdt_file out of it
+		declare fdt_dir fdt_file
+		[[ "${BOOT_FDT_FILE}" =~ ^(.*)/(.*)$ ]] && fdt_dir="${BASH_REMATCH[1]}" && fdt_file="${BASH_REMATCH[2]}"
+
+		# Check it worked, or bail
+		if [[ -z "${fdt_dir}" || -z "${fdt_file}" ]]; then
+			exit_with_error "Failed to parse BOOT_FDT_FILE: ${BOOT_FDT_FILE}"
+		fi
+
+		# Kernel build should produce a preprocessed version of all DTS files built into DTBs at arch/arm64/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp
+		declare preprocessed_fdt_source="${kernel_work_dir}/arch/${ARCH}/boot/dts/${fdt_dir}/.${fdt_file}.dts.tmp"
+
+		# Check it exists, or bail
+		if [[ ! -f "${preprocessed_fdt_source}" ]]; then
+			exit_with_error "Preprocessed FDT source not found: ${preprocessed_fdt_source}"
+		fi
+
+		declare preprocessed_fdt_dest="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.dts"
+		run_host_command_logged cp -v "${preprocessed_fdt_source}" "${preprocessed_fdt_dest}"
+
+		# Include a normalization pass through the dtc tool, with DTS as both input and output formats; this introduces phandles, unfortunately
+		declare preprocessed_fdt_normalized="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.dts"
+		run_host_command_logged dtc -I dts -O dts -o "${preprocessed_fdt_normalized}" "${preprocessed_fdt_dest}"
+
+		# Remove phandles and hex references, probably the worst way possible (grep) -- somehow the diff is reasonable then.
+		declare preprocessed_fdt_normalized_nophandles="${SRC}/output/${fdt_dir}-${fdt_file}--${KERNEL_MAJOR_MINOR}-${BRANCH}.preprocessed.normalized.nophandles.dts"
+		grep -v -e "phandle =" -e "connect =" -e '= <0x' "${preprocessed_fdt_normalized}" > "${preprocessed_fdt_normalized_nophandles}"
+
+		display_alert "Kernel DTB-only for development" "Preprocessed FDT dest: ${preprocessed_fdt_dest}" "warn"
+		display_alert "Kernel DTB-only for development" "Preprocessed FDT normalized: ${preprocessed_fdt_normalized}" "warn"
+		display_alert "Kernel DTB-only for development" "Preprocessed FDT normalized, no phandles: ${preprocessed_fdt_normalized_nophandles}" "warn"
+	fi
+
+	return 0
 }
 
 function kernel_build() {
@@ -171,14 +237,8 @@ function kernel_build() {
 
 function kernel_package() {
 	local ts=${SECONDS}
-	cd "${kernel_debs_temp_dir}" || exit_with_error "Can't cd to kernel_debs_temp_dir: ${kernel_debs_temp_dir}"
 	cd "${kernel_work_dir}" || exit_with_error "Can't cd to kernel_work_dir: ${kernel_work_dir}"
 	display_alert "Packaging kernel" "${LINUXFAMILY} ${LINUXCONFIG}" "info"
 	prepare_kernel_packaging_debs "${kernel_work_dir}" "${kernel_dest_install_dir}" "${version}" kernel_install_dirs
 	display_alert "Kernel packaged in" "$((SECONDS - ts)) seconds - ${version}-${LINUXFAMILY}" "info"
-}
-
-function kernel_deploy_pkg() {
-	: "${kernel_debs_temp_dir:?kernel_debs_temp_dir is not set}"
-	run_host_command_logged rsync -v --remove-source-files -r "${kernel_debs_temp_dir}"/*.deb "${DEB_STORAGE}/"
 }

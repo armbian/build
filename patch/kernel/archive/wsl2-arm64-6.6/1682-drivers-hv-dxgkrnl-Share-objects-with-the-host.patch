@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Iouri Tarassov <iourit@linux.microsoft.com>
+Date: Sat, 7 Aug 2021 18:11:34 -0700
+Subject: drivers: hv: dxgkrnl: Share objects with the host
+
+Implement the LX_DXSHAREOBJECTWITHHOST ioctl.
+This ioctl is used to create a Windows NT handle on the host
+for the given shared object (resource or sync object). The NT
+handle is returned to the caller. The caller could share the NT
+handle with a host application, which needs to access the object.
+The host application can open the shared resource using the NT
+handle. This way the guest and the host have access to the same
+object.
+
+Fix incorrect handling of error results from copy_from_user().
+
+Signed-off-by: Iouri Tarassov <iourit@linux.microsoft.com>
+[kms: Forward port to v6.1]
+Signed-off-by: Kelsey Steele <kelseysteele@microsoft.com>
+---
+ drivers/hv/dxgkrnl/dxgkrnl.h  |  2 +
+ drivers/hv/dxgkrnl/dxgvmbus.c | 60 +++++++++-
+ drivers/hv/dxgkrnl/dxgvmbus.h | 18 +++
+ drivers/hv/dxgkrnl/ioctl.c    | 38 +++++-
+ include/uapi/misc/d3dkmthk.h  |  9 ++
+ 5 files changed, 120 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/hv/dxgkrnl/dxgkrnl.h b/drivers/hv/dxgkrnl/dxgkrnl.h
+index ab97bc53b124..a39d11d76e41 100644
+--- a/drivers/hv/dxgkrnl/dxgkrnl.h
++++ b/drivers/hv/dxgkrnl/dxgkrnl.h
+@@ -872,6 +872,8 @@ int dxgvmb_send_get_stdalloc_data(struct dxgdevice *device,
+ int dxgvmb_send_async_msg(struct dxgvmbuschannel *channel,
+ 			  void *command,
+ 			  u32 cmd_size);
++int dxgvmb_send_share_object_with_host(struct dxgprocess *process,
++				struct d3dkmt_shareobjectwithhost *args);
+ 
+ void signal_host_cpu_event(struct dxghostevent *eventhdr);
+ int ntstatus2int(struct ntstatus status);
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.c b/drivers/hv/dxgkrnl/dxgvmbus.c
+index 7cb04fec217e..67a16de622e0 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.c
++++ b/drivers/hv/dxgkrnl/dxgvmbus.c
+@@ -881,6 +881,50 @@ int dxgvmb_send_destroy_sync_object(struct dxgprocess *process,
+ 	return ret;
+ }
+ 
++int dxgvmb_send_share_object_with_host(struct dxgprocess *process,
++				struct d3dkmt_shareobjectwithhost *args)
++{
++	struct dxgkvmb_command_shareobjectwithhost *command;
++	struct dxgkvmb_command_shareobjectwithhost_return result = {};
++	int ret;
++	struct dxgvmbusmsg msg = {.hdr = NULL};
++
++	ret = init_message(&msg, NULL, process, sizeof(*command));
++	if (ret)
++		return ret;
++	command = (void *)msg.msg;
++
++	ret = dxgglobal_acquire_channel_lock();
++	if (ret < 0)
++		goto cleanup;
++
++	command_vm_to_host_init2(&command->hdr,
++				 DXGK_VMBCOMMAND_SHAREOBJECTWITHHOST,
++				 process->host_handle);
++	command->device_handle = args->device_handle;
++	command->object_handle = args->object_handle;
++
++	ret = dxgvmb_send_sync_msg(dxgglobal_get_dxgvmbuschannel(),
++				   msg.hdr, msg.size, &result, sizeof(result));
++
++	dxgglobal_release_channel_lock();
++
++	if (ret || !NT_SUCCESS(result.status)) {
++		if (ret == 0)
++			ret = ntstatus2int(result.status);
++		DXG_ERR("Host failed to share object with host: %d %x",
++			ret, result.status.v);
++		goto cleanup;
++	}
++	args->object_vail_nt_handle = result.vail_nt_handle;
++
++cleanup:
++	free_message(&msg, process);
++	if (ret)
++		DXG_ERR("err: %d", ret);
++	return ret;
++}
++
+ /*
+  * Virtual GPU messages to the host
+  */
+@@ -2323,37 +2367,43 @@ int dxgvmb_send_create_hwqueue(struct dxgprocess *process,
+ 
+ 	ret = copy_to_user(&inargs->queue, &command->hwqueue,
+ 			   sizeof(struct d3dkmthandle));
+-	if (ret < 0) {
++	if (ret) {
+ 		DXG_ERR("failed to copy hwqueue handle");
++		ret = -EINVAL;
+ 		goto cleanup;
+ 	}
+ 	ret = copy_to_user(&inargs->queue_progress_fence,
+ 			   &command->hwqueue_progress_fence,
+ 			   sizeof(struct d3dkmthandle));
+-	if (ret < 0) {
++	if (ret) {
+ 		DXG_ERR("failed to progress fence");
++		ret = -EINVAL;
+ 		goto cleanup;
+ 	}
+ 	ret = copy_to_user(&inargs->queue_progress_fence_cpu_va,
+ 			   &hwqueue->progress_fence_mapped_address,
+ 			   sizeof(inargs->queue_progress_fence_cpu_va));
+-	if (ret < 0) {
++	if (ret) {
+ 		DXG_ERR("failed to copy fence cpu va");
++		ret = -EINVAL;
+ 		goto cleanup;
+ 	}
+ 	ret = copy_to_user(&inargs->queue_progress_fence_gpu_va,
+ 			   &command->hwqueue_progress_fence_gpuva,
+ 			   sizeof(u64));
+-	if (ret < 0) {
++	if (ret) {
+ 		DXG_ERR("failed to copy fence gpu va");
++		ret = -EINVAL;
+ 		goto cleanup;
+ 	}
+ 	if (args->priv_drv_data_size) {
+ 		ret = copy_to_user(args->priv_drv_data,
+ 				   command->priv_drv_data,
+ 				   args->priv_drv_data_size);
+-		if (ret < 0)
++		if (ret) {
+ 			DXG_ERR("failed to copy private data");
++			ret = -EINVAL;
++		}
+ 	}
+ 
+ cleanup:
+diff --git a/drivers/hv/dxgkrnl/dxgvmbus.h b/drivers/hv/dxgkrnl/dxgvmbus.h
+index acfdbde09e82..c1f693917d99 100644
+--- a/drivers/hv/dxgkrnl/dxgvmbus.h
++++ b/drivers/hv/dxgkrnl/dxgvmbus.h
+@@ -574,4 +574,22 @@ struct dxgkvmb_command_destroyhwqueue {
+ 	struct d3dkmthandle		hwqueue;
+ };
+ 
++struct dxgkvmb_command_shareobjectwithhost {
++	struct dxgkvmb_command_vm_to_host hdr;
++	struct d3dkmthandle	device_handle;
++	struct d3dkmthandle	object_handle;
++	u64			reserved;
++};
++
++struct dxgkvmb_command_shareobjectwithhost_return {
++	struct ntstatus	status;
++	u32		alignment;
++	u64		vail_nt_handle;
++};
++
++int
++dxgvmb_send_sync_msg(struct dxgvmbuschannel *channel,
++		     void *command, u32 command_size, void *result,
++		     u32 result_size);
++
+ #endif /* _DXGVMBUS_H */
+diff --git a/drivers/hv/dxgkrnl/ioctl.c b/drivers/hv/dxgkrnl/ioctl.c
+index 9128694c8e78..ac052836ce27 100644
+--- a/drivers/hv/dxgkrnl/ioctl.c
++++ b/drivers/hv/dxgkrnl/ioctl.c
+@@ -2460,6 +2460,7 @@ dxgkio_open_sync_object_nt(struct dxgprocess *process, void *__user inargs)
+ 	if (ret == 0)
+ 		goto success;
+ 	DXG_ERR("failed to copy output args");
++	ret = -EINVAL;
+ 
+ cleanup:
+ 
+@@ -3364,8 +3365,10 @@ dxgkio_share_objects(struct dxgprocess *process, void *__user inargs)
+ 	tmp = (u64) object_fd;
+ 
+ 	ret = copy_to_user(args.shared_handle, &tmp, sizeof(u64));
+-	if (ret < 0)
++	if (ret) {
+ 		DXG_ERR("failed to copy shared handle");
++		ret = -EINVAL;
++	}
+ 
+ cleanup:
+ 	if (ret < 0) {
+@@ -3773,6 +3776,37 @@ dxgkio_open_resource_nt(struct dxgprocess *process,
+ 	return ret;
+ }
+ 
++static int
++dxgkio_share_object_with_host(struct dxgprocess *process, void *__user inargs)
++{
++	struct d3dkmt_shareobjectwithhost args;
++	int ret;
++
++	ret = copy_from_user(&args, inargs, sizeof(args));
++	if (ret) {
++		DXG_ERR("failed to copy input args");
++		ret = -EINVAL;
++		goto cleanup;
++	}
++
++	ret = dxgvmb_send_share_object_with_host(process, &args);
++	if (ret) {
++		DXG_ERR("dxgvmb_send_share_object_with_host dailed");
++		goto cleanup;
++	}
++
++	ret = copy_to_user(inargs, &args, sizeof(args));
++	if (ret) {
++		DXG_ERR("failed to copy data to user");
++		ret = -EINVAL;
++	}
++
++cleanup:
++
++	DXG_TRACE("ioctl:%s %d", errorstr(ret), ret);
++	return ret;
++}
++
+ static struct ioctl_desc ioctls[] = {
+ /* 0x00 */	{},
+ /* 0x01 */	{dxgkio_open_adapter_from_luid, LX_DXOPENADAPTERFROMLUID},
+@@ -3850,7 +3884,7 @@ static struct ioctl_desc ioctls[] = {
+ 		 LX_DXQUERYRESOURCEINFOFROMNTHANDLE},
+ /* 0x42 */	{dxgkio_open_resource_nt, LX_DXOPENRESOURCEFROMNTHANDLE},
+ /* 0x43 */	{},
+-/* 0x44 */	{},
++/* 0x44 */	{dxgkio_share_object_with_host, LX_DXSHAREOBJECTWITHHOST},
+ /* 0x45 */	{},
+ };
+ 
+diff --git a/include/uapi/misc/d3dkmthk.h b/include/uapi/misc/d3dkmthk.h
+index 9238115d165d..895861505e6e 100644
+--- a/include/uapi/misc/d3dkmthk.h
++++ b/include/uapi/misc/d3dkmthk.h
+@@ -952,6 +952,13 @@ struct d3dkmt_enumadapters3 {
+ #endif
+ };
+ 
++struct d3dkmt_shareobjectwithhost {
++	struct d3dkmthandle	device_handle;
++	struct d3dkmthandle	object_handle;
++	__u64			reserved;
++	__u64			object_vail_nt_handle;
++};
++
+ /*
+  * Dxgkrnl Graphics Port Driver ioctl definitions
+  *
+@@ -1021,5 +1028,7 @@ struct d3dkmt_enumadapters3 {
+ 	_IOWR(0x47, 0x41, struct d3dkmt_queryresourceinfofromnthandle)
+ #define LX_DXOPENRESOURCEFROMNTHANDLE	\
+ 	_IOWR(0x47, 0x42, struct d3dkmt_openresourcefromnthandle)
++#define LX_DXSHAREOBJECTWITHHOST	\
++	_IOWR(0x47, 0x44, struct d3dkmt_shareobjectwithhost)
+ 
+ #endif /* _D3DKMTHK_H */
+-- 
+Armbian
+

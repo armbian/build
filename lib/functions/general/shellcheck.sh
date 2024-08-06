@@ -49,7 +49,7 @@ function shellcheck_debian_control_scripts() {
 
 function run_tool_shellcheck() {
 	# Default version
-	SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.9.0} # https://github.com/koalaman/shellcheck/releases
+	SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.10.0} # https://github.com/koalaman/shellcheck/releases
 
 	declare non_cache_dir="/armbian-tools/shellcheck" # To deploy/reuse cached SHELLCHECK in a Docker image.
 
@@ -87,6 +87,11 @@ function run_tool_shellcheck() {
 	case "$MACHINE" in
 		*aarch64*) SHELLCHECK_ARCH="aarch64" ;;
 		*x86_64*) SHELLCHECK_ARCH="x86_64" ;;
+		*riscv64*)
+			# check https://github.com/koalaman/shellcheck in the future, build might be possible
+			display_alert "No RISC-V riscv64 support for SHELLCHECK" "SHELLCHECK will not run" "wrn"
+			return 0
+			;;
 		*)
 			exit_with_error "unknown arch: $MACHINE"
 			;;
@@ -94,7 +99,7 @@ function run_tool_shellcheck() {
 
 	declare SHELLCHECK_FN="shellcheck-v${SHELLCHECK_VERSION}.${SHELLCHECK_OS}.${SHELLCHECK_ARCH}"
 	declare SHELLCHECK_FN_TARXZ="${SHELLCHECK_FN}.tar.xz"
-	declare DOWN_URL="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
+	declare DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
 	declare SHELLCHECK_BIN="${DIR_SHELLCHECK}/${SHELLCHECK_FN}"
 	declare ACTUAL_VERSION
 

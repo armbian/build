@@ -16,8 +16,8 @@ function artifact_armbian-zsh_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
 
-	local ARMBIAN_ZSH_SOURCE="${ARMBIAN_ZSH_SOURCE:-"https://github.com/ohmyzsh/ohmyzsh"}"
-	local ARMBIAN_ZSH_BRANCH="branch:${ARMBIAN_ZSH_BRANCH:-"master"}"
+	declare -g ARMBIAN_ZSH_SOURCE="${ARMBIAN_ZSH_SOURCE:-"https://github.com/ohmyzsh/ohmyzsh"}"
+	declare -g ARMBIAN_ZSH_BRANCH="commit:bfeeda1491b5366aa5798a86cf6f3621536b171c" # 2023-05-21, update this once in a while
 
 	debug_var ARMBIAN_ZSH_SOURCE
 	debug_var ARMBIAN_ZSH_BRANCH
@@ -37,12 +37,12 @@ function artifact_armbian-zsh_prepare_version() {
 
 	# get the hashes of the lib/ bash sources involved...
 	declare hash_files="undetermined"
-	calculate_hash_for_files "${SRC}"/lib/functions/compilation/packages/armbian-zsh-deb.sh
+	calculate_hash_for_bash_deb_artifact "compilation/packages/armbian-zsh-deb.sh"
 	declare bash_hash="${hash_files}"
 	declare bash_hash_short="${bash_hash:0:${short_hash_size}}"
 
 	# outer scope
-	artifact_version="${artifact_prefix_version}${fake_unchanging_base_version}-SA${short_sha1}-B${bash_hash_short}"
+	artifact_version="${fake_unchanging_base_version}-SA${short_sha1}-B${bash_hash_short}"
 
 	declare -a reasons=(
 		"Armbian armbian-zsh git revision \"${GIT_INFO_ARMBIAN_ZSH[SHA1]}\""
@@ -51,18 +51,12 @@ function artifact_armbian-zsh_prepare_version() {
 
 	artifact_version_reason="${reasons[*]}" # outer scope
 
-	artifact_map_packages=(
-		["armbian-zsh"]="armbian-zsh"
-	)
-
-	artifact_map_debs=(
-		["armbian-zsh"]="armbian-zsh_${artifact_version}_all.deb"
-	)
+	artifact_map_packages=(["armbian-zsh"]="armbian-zsh")
 
 	artifact_name="armbian-zsh"
 	artifact_type="deb"
-	artifact_base_dir="${DEB_STORAGE}"
-	artifact_final_file="${DEB_STORAGE}/armbian-zsh_${artifact_version}_all.deb"
+	artifact_deb_repo="global"
+	artifact_deb_arch="all"
 
 	return 0
 }

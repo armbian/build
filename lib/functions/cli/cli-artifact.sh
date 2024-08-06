@@ -8,6 +8,14 @@
 # https://github.com/armbian/build/
 
 function cli_artifact_pre_run() {
+	case "${ARMBIAN_COMMAND}" in
+		download-artifact)
+			display_alert "download-only mode:" "won't build '${WHAT}'" "info"
+			declare -g DONT_BUILD_ARTIFACTS="${WHAT}"
+			declare -g KEEP_HASHED_DEB_ARTIFACTS="yes"
+			;;
+	esac
+
 	initialize_artifact "${WHAT}"
 	# Run the pre run adapter
 	artifact_cli_adapter_pre_run
@@ -32,43 +40,25 @@ function cli_artifact_run() {
 		obtain_hostrelease_only # Sets HOSTRELEASE
 	fi
 
-	# When run in GHA, assume we're checking/updating the remote cache only.
-	# Local cache is ignored, and if found, it's not unpacked, either from local or remote.
-	# If remote cache is found, does nothing.
-	declare default_update_remote_only="no"
-	if [[ "${CI}" == "true" ]] && [[ "${GITHUB_ACTIONS}" == "true" ]]; then
-		display_alert "Running in GitHub Actions, assuming we're updating remote cache only" "GHA remote-only" "info"
-		default_update_remote_only="yes"
-	fi
+	declare deploy_to_remote="no"
 
-	declare skip_unpack_if_found_in_caches="${skip_unpack_if_found_in_caches:-"${default_update_remote_only}"}"
-	declare ignore_local_cache="${ignore_local_cache:-"${default_update_remote_only}"}"
-	declare deploy_to_remote="${deploy_to_remote:-"${default_update_remote_only}"}"
+	case "${ARMBIAN_COMMAND}" in
+		download-artifact)
+			display_alert "Running in download-artifact mode" "download-artifact" "ext"
+			;;
+		*)
+			# Warn of deprecation...
+			if [[ "${ARTIFACT_USE_CACHE}" == "yes" ]]; then
+				display_alert "deprecated!" "ARTIFACT_USE_CACHE=yes is deprecated, its behaviour is now the default." "warn"
+			fi
 
-	# If OCI_TARGET_BASE is explicitly set, ignore local, skip if found in remote, and deploy to remote after build.
-	if [[ -n "${OCI_TARGET_BASE}" ]]; then
-		skip_unpack_if_found_in_caches="yes"
-		ignore_local_cache="yes"
-		deploy_to_remote="yes"
-
-		# Pass ARTIFACT_USE_CACHE=yes to actually use the cache versions, but don't deploy to remote.
-		# @TODO this is confusing. each op should be individually controlled...
-		# what we want is:
-		# 1: - check remote, if not found, check local, if not found, build, then deploy to remote
-		#      - if remote found, do nothing.
-		#      - if local found, deploy it to remote (for switching targets)
-		# 2: - get from remote -> get local -> build, then DON'T deploy to remote
-		if [[ "${ARTIFACT_USE_CACHE}" == "yes" ]]; then
-			skip_unpack_if_found_in_caches="no"
-			ignore_local_cache="no"
-			deploy_to_remote="no"
-		fi
-	fi
-
-	# Force artifacts download we need to populate repository
-	if [[ "${FORCE_ARTIFACTS_DOWNLOAD}" == "yes" ]]; then
-		skip_unpack_if_found_in_caches="no"
-	fi
+			# If UPLOAD_TO_OCI_ONLY=yes is explicitly set; deploy to remote.
+			if [[ "${UPLOAD_TO_OCI_ONLY}" == "yes" ]]; then
+				display_alert "UPLOAD_TO_OCI_ONLY=yes is set" "UPLOAD_TO_OCI_ONLY=yes; ignoring local cache and deploying to remote" "info"
+				deploy_to_remote="yes"
+			fi
+			;;
+	esac
 
 	if [[ "${ARTIFACT_BUILD_INTERACTIVE}" == "yes" ]]; then # Set by `kernel-config`, `kernel-patch`, `uboot-config`, `uboot-patch`, etc.
 		display_alert "Running artifact build in interactive mode" "log file will be incomplete" "info"

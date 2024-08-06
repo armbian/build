@@ -35,6 +35,11 @@ function cli_docker_run() {
 	declare -g GIT_INFO_ANSI
 	GIT_INFO_ANSI="$(prepare_ansi_git_info_log_header)"
 
+	# Same stuff for BUILD_REPOSITORY_URL and BUILD_REPOSITORY_COMMIT.
+	if [[ -d "${SRC}/.git" && "${CONFIG_DEFS_ONLY}" != "yes" ]]; then # don't waste time if only gathering config defs
+		set_git_build_repo_url_and_commit_vars "docker launcher"
+	fi
+
 	LOG_SECTION="docker_cli_prepare" do_with_logging docker_cli_prepare
 
 	# @TODO: and can be very well said that in CI, we always want FAST_DOCKER=yes, unless we're building the Docker image itself.
@@ -55,10 +60,24 @@ function cli_docker_run() {
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["ARMBIAN_BUILD_UUID"]="${ARMBIAN_BUILD_UUID}") # pass down our uuid to the docker instance
 	ARMBIAN_CLI_RELAUNCH_PARAMS+=(["SKIP_LOG_ARCHIVE"]="yes")                     # launched docker instance will not cleanup logs.
 
+	# Produce the re-launch params.
+	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ARGS=()
+	declare -g ARMBIAN_CLI_FINAL_RELAUNCH_ENVS=()
+	produce_relaunch_parameters # produces ARMBIAN_CLI_FINAL_RELAUNCH_ARGS and ARMBIAN_CLI_FINAL_RELAUNCH_ENVS
+
+	# Add the relaunch envs to DOCKER_ARGS.
+	for env in "${ARMBIAN_CLI_FINAL_RELAUNCH_ENVS[@]}"; do
+		display_alert "Adding Docker env" "${env}" "debug"
+		DOCKER_ARGS+=("--env" "${env}")
+	done
+
 	case "${DOCKER_SUBCMD}" in
 		shell)
 			display_alert "Launching Docker shell" "docker-shell" "info"
-			docker run -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
+			# The MKNOD capability is required for loop device search function.
+			# In case there are no loop devices available, losetup -f would not be able to create a loop
+			# device, yet it will output a loop device path
+			docker run -it --cap-add MKNOD "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
 			;;
 
 		purge)

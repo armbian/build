@@ -38,3 +38,6 @@ unset filelist
 # sudo gpasswd -d biqu root     # remove biqu from root group
 
 sudo sed -i '/^.\/extend_fs.sh/s/^/#/' /boot/scripts/btt_init.sh
+
+
+

@@ -1,0 +1,74 @@
+# Rockchip RK3328 quad core 1GB 2 x GBE USB2 SPI
+BOARD_NAME="Orange Pi R1 Plus LTS"
+BOARDFAMILY="rockchip64"
+BOARD_MAINTAINER="schwar3kat"
+BOOTCONFIG="orangepi_r1_plus_lts_rk3328_defconfig"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
+DEFAULT_CONSOLE="serial"
+MODULES="g_serial ledtrig_netdev"
+MODULES_BLACKLIST="rockchipdrm analogix_dp dw_mipi_dsi dw_hdmi gpu_sched lima hantro_vpu"
+SERIALCON="ttyS2:1500000,ttyGS0"
+HAS_VIDEO_OUTPUT="no"
+BOOT_FDT_FILE="rockchip/rk3328-orangepi-r1-plus-lts.dtb"
+
+# SYS-TRIGGERED LEDs:
+
+# NOTE:	If LED funcionality is hard coded into an Armbian service for a board or family, it may override one or more of these settings.
+# This will add a file /etc/armbian-leds.conf to the build to configure the three board LEDs.
+# Green lan LED will flicker on lan0 RX. Green eth LED will flicker on eth0 RX.
+# Red status led will display heartbeat pattern.
+# For netdev trigger to work, ledtrig-netdev must be enabled in kernel.
+# either in the board config file: e.g. MODULES="...,ledtrig_netdev"
+# or in the family config file: e.g. CONFIG_LEDS_TRIGGER_NETDEV=y in linux-rockchip64-current.config
+
+# Content:
+function post_family_tweaks_bsp__enable_leds_orangepi_r1_plus_lts() {
+	display_alert "Creating board support LEDs config for orangepi-r1-plus-lts"
+	cat <<- EOF > "${destination}"/etc/armbian-leds.conf
+		[/sys/class/leds/orangepi-r1-plus-lts:green:lan]
+		trigger=netdev
+		interval=52
+		brightness=1
+		link=1
+		tx=0
+		rx=1
+		device_name=eth0
+
+		[/sys/class/leds/orangepi-r1-plus-lts:green:wan]
+		trigger=netdev
+		interval=52
+		brightness=1
+		link=1
+		tx=0
+		rx=1
+		device_name=lan0
+
+		[/sys/class/leds/orangepi-r1-plus-lts:red:status]
+		trigger=heartbeat
+		brightness=0
+		invert=0
+	EOF
+
+	if [[ $BRANCH == legacy ]]; then
+
+		# Bluetooth for most of others (custom patchram is needed only in legacy)
+		install -m 755 $SRC/packages/bsp/rk3399/brcm_patchram_plus_rk3399 $destination/usr/bin
+		cp $SRC/packages/bsp/rk3399/rk3399-bluetooth.service $destination/lib/systemd/system/
+
+	fi
+
+	# add a network rule to work-around RTL8153B initialization issue.
+	display_alert "Creating board support network rename rule to work-around RTL8153B initialization issue for orangepi-r1-plus-lts"
+	mkdir -p "${destination}"/etc/udev/rules.d/
+	cat <<- EOF > "${destination}"/etc/udev/rules.d/70-rename-lan.rules
+		    SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", KERNEL=="end*", NAME="eth0"
+			SUBSYSTEM=="net", ACTION=="add", DRIVERS=="r8152", KERNEL=="e*", NAME="lan0", \
+			RUN+="/usr/sbin/ip link set lan0 down", \
+			RUN+="/usr/sbin/ip link set eth0 down", \
+			RUN+="/usr/bin/sleep 5s ", \
+			RUN+="/usr/sbin/ip link set eth0 up", \
+			RUN+="/usr/bin/sleep 25s ", \
+			RUN+="/usr/sbin/ip link set lan0 up"
+	EOF
+}

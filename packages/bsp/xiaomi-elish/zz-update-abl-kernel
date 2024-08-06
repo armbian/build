@@ -1,0 +1,41 @@
+#!/bin/bash
+set -ex
+machine_model=$(cat /sys/firmware/devicetree/base/model|tr '\0' '\n')
+case $machine_model in
+	"Xiaomi Mi Pad 5 Pro (BOE)")
+		panel_type=boe
+		;;
+	"Xiaomi Mi Pad 5 Pro (CSOT)")
+		panel_type=csot
+		;;
+	*)
+		echo "$machine_model is not supported, exit"
+		exit
+		;;
+esac
+new_rootfs_image_uuid=$(sed -e 's/^.*root=UUID=//' -e 's/ .*$//' < /proc/cmdline)
+gzip -c /boot/vmlinuz-*-sm8250 > /tmp/Image.gz
+
+cat /tmp/Image.gz /usr/lib/linux-image-*-sm8250/qcom/sm8250-xiaomi-elish-${panel_type}.dtb > /tmp/Image.gz-dtb-${panel_type}
+
+source /boot/armbianEnv.txt
+/usr/bin/mkbootimg \
+        --kernel /tmp/Image.gz-dtb-${panel_type} \
+        --ramdisk /boot/initrd.img-*-sm8250 \
+        --base 0x0 \
+        --second_offset 0x00f00000 \
+        --cmdline "root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}" \
+        --kernel_offset 0x8000 \
+        --ramdisk_offset 0x1000000 \
+        --tags_offset 0x100 \
+        --pagesize 4096 \
+        -o /boot/armbian-kernel-${panel_type}.img
+rm -f /tmp/Image.gz /tmp/Image.gz-dtb-${panel_type}
+
+if [ -n "$abl_boot_partition_label" ];then
+	echo abl boot partition label is $abl_boot_partition_label
+	dd if=/boot/armbian-kernel-${panel_type}.img of=/dev/disk/by-partlabel/${abl_boot_partition_label}
+else
+	echo abl boot partition label is not defined, exit
+	exit
+fi

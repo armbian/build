@@ -9,6 +9,8 @@
 # Functions:
 #
 # show_motd_warning
+# generate_random_mac
+# set_fixed_mac
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 my_name="${0##*/}"
@@ -23,38 +25,48 @@ EOT
 chmod +x /etc/update-motd.d/90-warning
 } # show_motd_warning
 
-get_random_mac ()
+# Generate a random MAC address
+generate_random_mac ()
 {
-local prefixes=("02" "06" "0A" "0E")
-local random=$(shuf -i 0-3 -n 1)
-MACADDR=$(printf ${prefixes[$random]}':%02X:%02X:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
+	# These prefixes are 4 sets of Locally Administered Address Ranges which can be used on the network without fear of conflict
+	local prefixes=("02" "06" "0A" "0E")
+	local random=$(shuf -i 0-3 -n 1)
+	MACADDR=$(printf ${prefixes[$random]}':%02X:%02X:%02X:%02X:%02X\n' $[RANDOM%256] $[RANDOM%256] $[RANDOM%256] $[RANDOM%256] $[RANDOM%256])
 }
 
-
-# set fixed IP address from first randomly assigned one. If nothing is detected, generate one.
+# Set a fixed random MAC for each Ethernet interface
 set_fixed_mac ()
 {
-	if [ -n "$(command -v nmcli)" ]; then
-		CONNECTION="$(nmcli -f UUID,ACTIVE,DEVICE,TYPE connection show --active | tail -n1)"
-		UUID=$(awk -F" " '/ethernet/ {print $1}' <<< "${CONNECTION}")
-		DEVNAME=$(awk -F" " '/ethernet/ {print $3}' <<< "${CONNECTION}")
-	else
-		DEVNAME=eth0
+
+	# we use random mac routine only with sytemd-network.
+	if ! grep 'renderer: networkd' /etc/netplan/*.yaml >/dev/null; then
+		return
 	fi
 
-	MACADDR=$(/sbin/ip link | grep -A1 ${DEVNAME} | awk -F" " '/ether / {print $2}')
+	local netplan_config_file="/etc/netplan/20-eth-fixed-mac.yaml"
 
-	[[ -z $MACADDR ]] && get_random_mac
+	# Initialize a new Netplan config file
+	cat <<- EOF > "${netplan_config_file}"
+		network:
+		  version: 2
+		  ethernets:
+	EOF
 
-	if [[ -n "$(command -v nmcli)" && -n $UUID ]]; then
-		nmcli connection modify "$UUID" ethernet.cloned-mac-address "$MACADDR"
-		nmcli connection modify "$UUID" -ethernet.mac-address ""
-		nmcli connection down "$UUID" >/dev/null 2>&1
-		nmcli connection up "$UUID" >/dev/null 2>&1
-	elif [[ -f /etc/systemd/network/$DEVNAME.network ]]; then
-		if ! grep '^ *MACAddress=' /etc/systemd/network/$DEVNAME.network > /dev/null; then
-			sed -i "s/#MACAddress=/MACAddress=$MACADDR/g" /etc/systemd/network/$DEVNAME.network
-		fi
-	fi
-	return 0
-} # set fixed mac to the 1st active network adapter
+	# Iterate over each Ethernet interface
+	for iface in $(ip link | awk -F: '$0 !~ "lo|vir|wl|^[^0-9]"{print $2;getline}' | sed 's/^[ \t]*//' | grep "^e")
+	do
+		generate_random_mac
+
+		# Append the MAC address configuration for the interface to the Netplan configuration file
+		cat <<- EOF >> "${netplan_config_file}"
+			    $iface:
+			      macaddress: $MACADDR
+		EOF
+	done
+
+	# Change the file permissions according to https://netplan.readthedocs.io/en/stable/security/
+	chmod 600 "${netplan_config_file}"
+
+	# Apply the Netplan configuration
+	netplan apply
+}

@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.9.0} # https://github.com/koalaman/shellcheck/releases
+SHELLCHECK_VERSION=${SHELLCHECK_VERSION:-0.10.0} # https://github.com/koalaman/shellcheck/releases
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
@@ -43,7 +43,7 @@ esac
 
 SHELLCHECK_FN="shellcheck-v${SHELLCHECK_VERSION}.${SHELLCHECK_OS}.${SHELLCHECK_ARCH}"
 SHELLCHECK_FN_TARXZ="${SHELLCHECK_FN}.tar.xz"
-DOWN_URL="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
+DOWN_URL="${GITHUB_SOURCE:-"https://github.com"}/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${SHELLCHECK_FN_TARXZ}"
 SHELLCHECK_BIN="${DIR_SHELLCHECK}/${SHELLCHECK_FN}"
 
 if [[ ! -f "${SHELLCHECK_BIN}" ]]; then
