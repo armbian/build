@@ -1,0 +1,178 @@
+diff --git a/board/xilinx/common/board.c b/board/xilinx/common/board.c
+index b47d2d23f913..098738017bab 100644
+--- a/board/xilinx/common/board.c
++++ b/board/xilinx/common/board.c
+@@ -702,11 +702,6 @@ phys_addr_t board_get_usable_ram_top(phys_size_t total_size)
+ #define MAX_RAND_SIZE 8
+ int ft_board_setup(void *blob, struct bd_info *bd)
+ {
+-	size_t n = MAX_RAND_SIZE;
+-	struct udevice *dev;
+-	u8 buf[MAX_RAND_SIZE];
+-	int nodeoffset, ret;
+-
+ 	static const struct node_info nodes[] = {
+ 		{ "arm,pl353-nand-r2p1", MTD_DEV_TYPE_NAND, },
+ 	};
+@@ -714,41 +709,6 @@ int ft_board_setup(void *blob, struct bd_info *bd)
+ 	if (IS_ENABLED(CONFIG_FDT_FIXUP_PARTITIONS) && IS_ENABLED(CONFIG_NAND_ZYNQ))
+ 		fdt_fixup_mtdparts(blob, nodes, ARRAY_SIZE(nodes));
+ 
+-	if (uclass_get_device(UCLASS_RNG, 0, &dev) || !dev) {
+-		debug("No RNG device\n");
+-		return 0;
+-	}
+-
+-	if (dm_rng_read(dev, buf, n)) {
+-		debug("Reading RNG failed\n");
+-		return 0;
+-	}
+-
+-	if (!blob) {
+-		debug("No FDT memory address configured. Please configure\n"
+-		      "the FDT address via \"fdt addr <address>\" command.\n"
+-		      "Aborting!\n");
+-		return 0;
+-	}
+-
+-	ret = fdt_check_header(blob);
+-	if (ret < 0) {
+-		debug("fdt_chosen: %s\n", fdt_strerror(ret));
+-		return ret;
+-	}
+-
+-	nodeoffset = fdt_find_or_add_subnode(blob, 0, "chosen");
+-	if (nodeoffset < 0) {
+-		debug("Reading chosen node failed\n");
+-		return nodeoffset;
+-	}
+-
+-	ret = fdt_setprop(blob, nodeoffset, "kaslr-seed", buf, sizeof(buf));
+-	if (ret < 0) {
+-		debug("Unable to set kaslr-seed on chosen node: %s\n", fdt_strerror(ret));
+-		return ret;
+-	}
+-
+ 	return 0;
+ }
+ #endif
+diff --git a/boot/pxe_utils.c b/boot/pxe_utils.c
+index 5c1c962ff4c1..38ca9b81a42d 100644
+--- a/boot/pxe_utils.c
++++ b/boot/pxe_utils.c
+@@ -324,10 +324,6 @@ static void label_boot_kaslrseed(void)
+ #if CONFIG_IS_ENABLED(DM_RNG)
+ 	ulong fdt_addr;
+ 	struct fdt_header *working_fdt;
+-	size_t n = 0x8;
+-	struct udevice *dev;
+-	u64 *buf;
+-	int nodeoffset;
+ 	int err;
+ 
+ 	/* Get the main fdt and map it */
+@@ -343,35 +339,7 @@ static void label_boot_kaslrseed(void)
+ 	if (err <= 0)
+ 		return;
+ 
+-	if (uclass_get_device(UCLASS_RNG, 0, &dev) || !dev) {
+-		printf("No RNG device\n");
+-		return;
+-	}
+-
+-	nodeoffset = fdt_find_or_add_subnode(working_fdt, 0, "chosen");
+-	if (nodeoffset < 0) {
+-		printf("Reading chosen node failed\n");
+-		return;
+-	}
+-
+-	buf = malloc(n);
+-	if (!buf) {
+-		printf("Out of memory\n");
+-		return;
+-	}
+-
+-	if (dm_rng_read(dev, buf, n)) {
+-		printf("Reading RNG failed\n");
+-		goto err;
+-	}
+-
+-	err = fdt_setprop(working_fdt, nodeoffset, "kaslr-seed", buf, sizeof(buf));
+-	if (err < 0) {
+-		printf("Unable to set kaslr-seed on chosen node: %s\n", fdt_strerror(err));
+-		goto err;
+-	}
+-err:
+-	free(buf);
++	fdt_kaslrseed(working_fdt, true);
+ #endif
+ 	return;
+ }
+diff --git a/cmd/kaslrseed.c b/cmd/kaslrseed.c
+index 9acb8e163863..645cab2e74fd 100644
+--- a/cmd/kaslrseed.c
++++ b/cmd/kaslrseed.c
+@@ -16,56 +16,21 @@
+ 
+ static int do_kaslr_seed(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
+ {
+-	size_t n = 0x8;
+-	struct udevice *dev;
+-	u64 *buf;
+-	int nodeoffset;
+-	int ret = CMD_RET_SUCCESS;
++	int err = CMD_RET_SUCCESS;
+ 
+-	if (uclass_get_device(UCLASS_RNG, 0, &dev) || !dev) {
+-		printf("No RNG device\n");
+-		return CMD_RET_FAILURE;
+-	}
+-
+-	buf = malloc(n);
+-	if (!buf) {
+-		printf("Out of memory\n");
+-		return CMD_RET_FAILURE;
+-	}
+-
+-	if (dm_rng_read(dev, buf, n)) {
+-		printf("Reading RNG failed\n");
+-		return CMD_RET_FAILURE;
+-	}
++	printf("Notice: a /chosen/kaslr-seed is automatically added to the device-tree when booted via booti/bootm/bootz therefore using this command is likely no longer needed\n");
+ 
+ 	if (!working_fdt) {
+ 		printf("No FDT memory address configured. Please configure\n"
+ 		       "the FDT address via \"fdt addr <address>\" command.\n"
+ 		       "Aborting!\n");
+-		return CMD_RET_FAILURE;
+-	}
+-
+-	ret = fdt_check_header(working_fdt);
+-	if (ret < 0) {
+-		printf("fdt_chosen: %s\n", fdt_strerror(ret));
+-		return CMD_RET_FAILURE;
+-	}
+-
+-	nodeoffset = fdt_find_or_add_subnode(working_fdt, 0, "chosen");
+-	if (nodeoffset < 0) {
+-		printf("Reading chosen node failed\n");
+-		return CMD_RET_FAILURE;
++		err = CMD_RET_FAILURE;
++	} else {
++		if (fdt_kaslrseed(working_fdt, true) < 0)
++			err = CMD_RET_FAILURE;
+ 	}
+ 
+-	ret = fdt_setprop(working_fdt, nodeoffset, "kaslr-seed", buf, sizeof(buf));
+-	if (ret < 0) {
+-		printf("Unable to set kaslr-seed on chosen node: %s\n", fdt_strerror(ret));
+-		return CMD_RET_FAILURE;
+-	}
+-
+-	free(buf);
+-
+-	return ret;
++	return cmd_process_error(cmdtp, err);
+ }
+ 
+ U_BOOT_LONGHELP(kaslrseed,
