@@ -29,10 +29,11 @@ case $BRANCH in
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.6"
+		declare -g KERNELBRANCH='tag:v6.6.43' # last known good tag on current patchset
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.9"
+		declare -g KERNEL_MAJOR_MINOR="6.10"
 		;;
 esac
 

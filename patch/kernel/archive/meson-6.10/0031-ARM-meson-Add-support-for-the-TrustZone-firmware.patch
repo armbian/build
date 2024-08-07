@@ -1,0 +1,436 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+Date: Mon, 3 May 2021 00:34:53 +0200
+Subject: ARM: meson: Add support for the TrustZone firmware
+
+Amlogic Meson6/8/8b/8m2 SoCs can optionally use a TrustZone secure
+firmware. This prevents anything outside of the TEE (Trusted
+Execution Environment aka TrustZone secure firmware) from accessing
+certain functionality of these SoCs, such as (but not limited to):
+Bringing up/down secondary SMP cores, accessing the eFuse and getting
+the SoC misc version.
+ARM SMCCC is used for communication with the TrustZone secure
+firmware.
+
+Signed-off-by: Martin Blumenstingl <martin.blumenstingl@googlemail.com>
+---
+ arch/arm/mach-meson/Makefile                      |   2 +-
+ arch/arm/mach-meson/meson.c                       |   4 +
+ arch/arm/mach-meson/tz_firmware.c                 | 250 ++++++++++
+ arch/arm/mach-meson/tz_firmware.h                 |  76 +++
+ include/linux/firmware/meson/meson_mx_trustzone.h |  37 ++
+ 5 files changed, 368 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-meson/Makefile b/arch/arm/mach-meson/Makefile
+index 111111111111..222222222222 100644
+--- a/arch/arm/mach-meson/Makefile
++++ b/arch/arm/mach-meson/Makefile
+@@ -1,3 +1,3 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+-obj-$(CONFIG_ARCH_MESON) += meson.o
++obj-$(CONFIG_ARCH_MESON) += meson.o tz_firmware.o
+ obj-$(CONFIG_SMP) += platsmp.o
+diff --git a/arch/arm/mach-meson/meson.c b/arch/arm/mach-meson/meson.c
+index 111111111111..222222222222 100644
+--- a/arch/arm/mach-meson/meson.c
++++ b/arch/arm/mach-meson/meson.c
+@@ -5,6 +5,8 @@
+ 
+ #include <asm/mach/arch.h>
+ 
++#include "tz_firmware.h"
++
+ static const char * const meson_common_board_compat[] = {
+ 	"amlogic,meson6",
+ 	"amlogic,meson8",
+@@ -17,4 +19,6 @@ DT_MACHINE_START(MESON, "Amlogic Meson platform")
+ 	.dt_compat	= meson_common_board_compat,
+ 	.l2c_aux_val	= 0,
+ 	.l2c_aux_mask	= ~0,
++	.init_early	= meson_mx_trustzone_firmware_init,
++	.reserve	= meson_mx_trustzone_firmware_reserve_mem,
+ MACHINE_END
+diff --git a/arch/arm/mach-meson/tz_firmware.c b/arch/arm/mach-meson/tz_firmware.c
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/arm/mach-meson/tz_firmware.c
+@@ -0,0 +1,250 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (C) 2021 Martin Blumenstingl <martin.blumenstingl@googlemail.com>
++ */
++
++#include <linux/arm-smccc.h>
++#include <linux/firmware/meson/meson_mx_trustzone.h>
++#include <linux/memblock.h>
++#include <linux/of.h>
++
++#include <asm/firmware.h>
++#include <asm/hardware/cache-l2x0.h>
++#include <asm/outercache.h>
++
++#include "tz_firmware.h"
++
++struct meson_mx_trustzone_firmware_memconfig {
++	unsigned char name[64];
++	unsigned int start_phy_addr;
++	unsigned int end_phy_addr;
++} __packed;
++
++static struct meson_mx_trustzone_firmware_memconfig meson_firmware_memconfig[2];
++
++static int meson_mx_trustzone_firmware_hal_api(unsigned int cmd, u32 *args)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(MESON_CALL_TRUSTZONE_HAL_API, cmd, virt_to_phys(args), 0,
++		      0, 0, 0, 0, &res);
++
++	return res.a0;
++}
++
++static u32 meson_mx_trustzone_firmware_mon(unsigned int cmd, unsigned int arg0,
++					   unsigned int arg1)
++{
++	struct arm_smccc_res res;
++
++	arm_smccc_smc(MESON_CALL_TRUSTZONE_MON, cmd, arg0, arg1, 0, 0, 0, 0,
++		      &res);
++
++	return res.a0;
++}
++
++static int meson_mx_trustzone_firmware_set_cpu_boot_addr(int cpu,
++							 unsigned long boot_addr){
++	return meson_mx_trustzone_firmware_mon(MESON_TRUSTZONE_MON_CORE_BOOTADDR_INDEX,
++					       cpu, boot_addr);
++}
++
++static int meson_mx_trustzone_firmware_cpu_boot(int cpu)
++{
++	u32 ret, corectrl;
++
++	corectrl = meson_mx_trustzone_firmware_mon(MESON_TRUSTZONE_MON_CORE_RD_CTRL_INDEX,
++						   0, 0);
++
++	corectrl |= BIT(cpu);
++
++	ret = meson_mx_trustzone_firmware_mon(MESON_TRUSTZONE_MON_CORE_WR_CTRL_INDEX,
++					      corectrl, 0);
++	if (ret != corectrl)
++		return -EINVAL;
++
++	return 0;
++}
++
++static void meson_mx_trustzone_firmware_l2x0_write_sec(unsigned long val,
++						       unsigned int reg)
++{
++	u32 fn;
++
++	switch (reg) {
++	case L2X0_CTRL:
++		fn = MESON_TRUSTZONE_MON_L2X0_CTRL_INDEX;
++		break;
++
++	case L2X0_AUX_CTRL:
++		fn = MESON_TRUSTZONE_MON_L2X0_AUXCTRL_INDEX;
++		break;
++
++	case L310_TAG_LATENCY_CTRL:
++		fn = MESON_TRUSTZONE_MON_L2X0_TAGLATENCY_INDEX;
++		break;
++
++	case L310_DATA_LATENCY_CTRL:
++		fn = MESON_TRUSTZONE_MON_L2X0_DATALATENCY_INDEX;
++		break;
++
++	case L310_ADDR_FILTER_START:
++		fn = MESON_TRUSTZONE_MON_L2X0_FILTERSTART_INDEX;
++		break;
++
++	case L310_ADDR_FILTER_END:
++		fn = MESON_TRUSTZONE_MON_L2X0_FILTEREND_INDEX;
++		break;
++
++	case L2X0_DEBUG_CTRL:
++		fn = MESON_TRUSTZONE_MON_L2X0_DEBUG_INDEX;
++		break;
++
++	case L310_PREFETCH_CTRL:
++		fn = MESON_TRUSTZONE_MON_L2X0_PREFETCH_INDEX;
++		break;
++
++	case L310_POWER_CTRL:
++		fn = MESON_TRUSTZONE_MON_L2X0_POWER_INDEX;
++		break;
++
++	default:
++		pr_warn("Amlogic Meson TrustZone - unsupported L2X0 register 0x%08x\n",
++			reg);
++		return;
++	}
++
++	WARN_ON(meson_mx_trustzone_firmware_mon(fn, val, 0));
++}
++
++static int __maybe_unused meson_mx_trustzone_firmware_l2x0_init(void)
++{
++	if (IS_ENABLED(CONFIG_CACHE_L2X0))
++		outer_cache.write_sec = meson_mx_trustzone_firmware_l2x0_write_sec;
++
++	return 0;
++}
++
++static const struct firmware_ops meson_mx_trustzone_firmware_ops = {
++	.set_cpu_boot_addr	= meson_mx_trustzone_firmware_set_cpu_boot_addr,
++	.cpu_boot		= meson_mx_trustzone_firmware_cpu_boot,
++	.l2x0_init		= meson_mx_trustzone_firmware_l2x0_init,
++};
++
++void __init meson_mx_trustzone_firmware_init(void)
++{
++	if (!meson_mx_trustzone_firmware_available())
++		return;
++
++	pr_info("Running under Amlogic Meson TrustZone secure firmware.\n");
++
++	register_firmware_ops(&meson_mx_trustzone_firmware_ops);
++
++	call_firmware_op(l2x0_init);
++}
++
++static void __init meson_mx_trustzone_firmware_memconfig_init(void)
++{
++	unsigned int i, size;
++	u32 args[2] = {
++		__pa_symbol(meson_firmware_memconfig),
++		ARRAY_SIZE(meson_firmware_memconfig),
++	};
++	int ret;
++
++	ret = meson_mx_trustzone_firmware_hal_api(MESON_TRUSTZONE_HAL_API_MEMCONFIG,
++						  args);
++	if (ret) {
++		pr_err("Amlogic Meson TrustZone memconfig failed: %d\n", ret);
++		return;
++	}
++
++	for (i = 0; i < ARRAY_SIZE(meson_firmware_memconfig); i++) {
++		size = meson_firmware_memconfig[i].end_phy_addr -
++		       meson_firmware_memconfig[i].start_phy_addr;
++
++		pr_debug("\tAmlogic Meson TrustZone memblock[%d]: %s (%u bytes)\n",
++			 i, meson_firmware_memconfig[i].name, size);
++
++		ret = memblock_mark_nomap(meson_firmware_memconfig[i].start_phy_addr,
++					  size);
++		if (ret)
++			pr_err("Failed to reserve %u bytes for Amlogic Meson TrustZone memblock[%d] (%s): %d\n",
++			       size, i, meson_firmware_memconfig[i].name, ret);
++	}
++}
++
++static void __init meson_mx_trustzone_firmware_monitor_memory_init(void)
++{
++	u32 base, size;
++	int ret;
++
++	base = meson_mx_trustzone_firmware_mon(MESON_TRUSTZONE_MON_MEM_BASE,
++					       0, 0);
++	WARN_ON(!base);
++
++	size = meson_mx_trustzone_firmware_mon(MESON_TRUSTZONE_MON_MEM_TOTAL_SIZE,
++					       0, 0);
++	WARN_ON(!size);
++
++	ret = memblock_mark_nomap(base, size);
++	if (ret)
++		pr_err("Failed to reserve %u bytes of Amlogic Meson TrustZone monitor memory: %d\n",
++		       size, ret);
++}
++
++void __init meson_mx_trustzone_firmware_reserve_mem(void)
++{
++	if (!meson_mx_trustzone_firmware_available())
++		return;
++
++	meson_mx_trustzone_firmware_monitor_memory_init();
++	meson_mx_trustzone_firmware_memconfig_init();
++}
++
++bool meson_mx_trustzone_firmware_available(void)
++{
++	struct device_node *np;
++
++	np = of_find_compatible_node(NULL, NULL,
++				     "amlogic,meson-mx-trustzone-firmware");
++	if (!np)
++		return false;
++
++	of_node_put(np);
++
++	return true;
++}
++EXPORT_SYMBOL_GPL(meson_mx_trustzone_firmware_available);
++
++int meson_mx_trustzone_firmware_efuse_read(unsigned int offset,
++					   unsigned int bytes, void *buf)
++{
++	unsigned int read_bytes;
++	u32 args[5] = {
++		MESON_TRUSTZONE_HAL_API_EFUSE_CMD_READ,
++		offset,
++		bytes,
++		__pa_symbol(buf),
++		virt_to_phys(&read_bytes)
++	};
++	int ret;
++
++	ret = meson_mx_trustzone_firmware_hal_api(MESON_TRUSTZONE_HAL_API_EFUSE,
++						  args);
++	if (ret)
++		return -EIO;
++
++	if (read_bytes != bytes)
++		return -EINVAL;
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(meson_mx_trustzone_firmware_efuse_read);
++
++u32 meson_mx_trustzone_read_soc_rev1(void)
++{
++	return meson_mx_trustzone_firmware_mon(MESON_TRUSTZONE_MON_CORE_RD_SOC_REV1,
++					       0, 0);
++}
++EXPORT_SYMBOL_GPL(meson_mx_trustzone_read_soc_rev1);
+diff --git a/arch/arm/mach-meson/tz_firmware.h b/arch/arm/mach-meson/tz_firmware.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/arch/arm/mach-meson/tz_firmware.h
+@@ -0,0 +1,76 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Amlogic Meson6/8/8b/8m2 secure TrustZone firmware definitions.
++ *
++ * Based on meson-secure.c and meson-secure.h from the Amlogic vendor kernel:
++ *   Copyright (C) 2002 ARM Ltd.
++ *   Copyright (c) 2010, Code Aurora Forum. All rights reserved.
++ *   Copyright (C) 2013 Amlogic, Inc.
++ *     Author: Platform-SH@amlogic.com
++ *
++ * Copyright (C) 2021 Martin Blumenstingl <martin.blumenstingl@googlemail.com>
++ */
++
++/* Meson Secure Monitor/HAL APIs */
++#define MESON_CALL_TRUSTZONE_API			0x1
++#define MESON_CALL_TRUSTZONE_MON			0x4
++#define MESON_CALL_TRUSTZONE_HAL_API			0x5
++
++/* Secure Monitor mode APIs */
++#define MESON_TRUSTZONE_MON_TYPE_MASK			0xF00
++#define MESON_TRUSTZONE_MON_FUNC_MASK			0x0FF
++
++#define MESON_TRUSTZONE_MON_L2X0			0x100
++#define MESON_TRUSTZONE_MON_L2X0_CTRL_INDEX		0x101
++#define MESON_TRUSTZONE_MON_L2X0_AUXCTRL_INDEX		0x102
++#define MESON_TRUSTZONE_MON_L2X0_PREFETCH_INDEX		0x103
++#define MESON_TRUSTZONE_MON_L2X0_TAGLATENCY_INDEX	0x104
++#define MESON_TRUSTZONE_MON_L2X0_DATALATENCY_INDEX	0x105
++#define MESON_TRUSTZONE_MON_L2X0_FILTERSTART_INDEX	0x106
++#define MESON_TRUSTZONE_MON_L2X0_FILTEREND_INDEX	0x107
++#define MESON_TRUSTZONE_MON_L2X0_DEBUG_INDEX		0x108
++#define MESON_TRUSTZONE_MON_L2X0_POWER_INDEX		0x109
++
++#define MESON_TRUSTZONE_MON_CORE			0x200
++#define MESON_TRUSTZONE_MON_CORE_RD_CTRL_INDEX		0x201
++#define MESON_TRUSTZONE_MON_CORE_WR_CTRL_INDEX		0x202
++#define MESON_TRUSTZONE_MON_CORE_RD_STATUS0_INDEX	0x203
++#define MESON_TRUSTZONE_MON_CORE_WR_STATUS0_INDEX	0x204
++#define MESON_TRUSTZONE_MON_CORE_RD_STATUS1_INDEX	0x205
++#define MESON_TRUSTZONE_MON_CORE_WR_STATUS1_INDEX	0x206
++#define MESON_TRUSTZONE_MON_CORE_BOOTADDR_INDEX		0x207
++#define MESON_TRUSTZONE_MON_CORE_DDR_INDEX		0x208
++#define MESON_TRUSTZONE_MON_CORE_RD_SOC_REV1		0x209
++#define MESON_TRUSTZONE_MON_CORE_RD_SOC_REV2		0x20A
++
++#define MESON_TRUSTZONE_MON_SUSPEND_FIRMWARE		0x300
++#define MESON_TRUSTZONE_MON_SAVE_CPU_GIC		0x400
++
++#define MESON_TRUSTZONE_MON_RTC				0x500
++#define MESON_TRUSTZONE_MON_RTC_RD_REG_INDEX		0x501
++#define MESON_TRUSTZONE_MON_RTC_WR_REG_INDEX		0x502
++
++#define MESON_TRUSTZONE_MON_REG				0x600
++#define MESON_TRUSTZONE_MON_REG_RD_INDEX		0x601
++#define MESON_TRUSTZONE_MON_REG_WR_INDEX		0x602
++
++#define MESON_TRUSTZONE_MON_MEM				0x700
++#define MESON_TRUSTZONE_MON_MEM_BASE			0x701
++#define MESON_TRUSTZONE_MON_MEM_TOTAL_SIZE		0x702
++#define MESON_TRUSTZONE_MON_MEM_FLASH			0x703
++#define MESON_TRUSTZONE_MON_MEM_FLASH_SIZE		0x704
++#define MESON_TRUSTZONE_MON_MEM_GE2D			0x705
++
++/* Secure HAL APIs*/
++#define MESON_TRUSTZONE_HAL_API_EFUSE			0x100
++#define MESON_TRUSTZONE_HAL_API_EFUSE_CMD_READ		0x0
++#define MESON_TRUSTZONE_HAL_API_EFUSE_CMD_WRITE		0x1
++#define MESON_TRUSTZONE_HAL_API_EFUSE_CMD_VERIFY_IMG	0x3
++
++#define MESON_TRUSTZONE_HAL_API_STORAGE			0x200
++
++#define MESON_TRUSTZONE_HAL_API_MEMCONFIG		0x300
++#define MESON_TRUSTZONE_HAL_API_MEMCONFIG_GE2D		0x301
++
++void __init meson_mx_trustzone_firmware_init(void);
++void __init meson_mx_trustzone_firmware_reserve_mem(void);
+diff --git a/include/linux/firmware/meson/meson_mx_trustzone.h b/include/linux/firmware/meson/meson_mx_trustzone.h
+new file mode 100644
+index 000000000000..111111111111
+--- /dev/null
++++ b/include/linux/firmware/meson/meson_mx_trustzone.h
+@@ -0,0 +1,37 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) 2021 Martin Blumenstingl <martin.blumenstingl@googlemail.com>
++ */
++
++#include <linux/errno.h>
++#include <linux/types.h>
++
++#if defined(CONFIG_ARM) && defined(CONFIG_ARCH_MESON)
++
++bool meson_mx_trustzone_firmware_available(void);
++
++int meson_mx_trustzone_firmware_efuse_read(unsigned int offset,
++					   unsigned int bytes, void *buf);
++
++u32 meson_mx_trustzone_read_soc_rev1(void);
++
++#else
++
++static inline bool meson_mx_trustzone_firmware_available(void)
++{
++	return false;
++}
++
++static inline int meson_mx_trustzone_firmware_efuse_read(unsigned int offset,
++							 unsigned int bytes,
++							 void *buf)
++{
++	return -EINVAL;
++}
++
++static inline u32 meson_mx_trustzone_read_soc_rev1(void)
++{
++	return 0;
++}
++
++#endif
+-- 
+Armbian
+
