@@ -282,6 +282,7 @@ function adaptative_prepare_host_dependencies() {
 		parted gdisk fdisk                       # partition tools @TODO why so many?
 		aria2 curl wget axel                     # downloaders et al
 		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
+		rdfind                                   # armbian-firmware-full/linux-firmware symlink creation step
 	)
 
 	# @TODO: distcc -- handle in extension?
