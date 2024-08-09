@@ -74,10 +74,10 @@ function cli_docker_run() {
 	case "${DOCKER_SUBCMD}" in
 		shell)
 			display_alert "Launching Docker shell" "docker-shell" "info"
-			# The MKNOD capability is required for loop device search function.
-			# In case there are no loop devices available, losetup -f would not be able to create a loop
-			# device, yet it will output a loop device path
-			docker run -it --cap-add MKNOD "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
+			# Bind mount /dev into the container to fix an edge case where device reported by
+			# `losetup -f` wouldn't be available in the container if the device didn't exist
+			# on host when container is launched.
+			docker run -v /dev:/dev -it "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /bin/bash
 			;;
 
 		purge)
