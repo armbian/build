@@ -99,16 +99,14 @@ function install_distribution_agnostic() {
 	echo -e "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^} \\l \n" > "${SDCARD}"/etc/issue
 	echo "${VENDOR} ${IMAGE_VERSION:-"${REVISION}"} ${RELEASE^}" > "${SDCARD}"/etc/issue.net
 
-	# PRETTY_NAME changing in os-release is now done in armbian-base-files directly.
+	# Copy SKEL bashrc and profile to root user
+	cp "${SDCARD}"/etc/skel/.bashrc "${SDCARD}"/root/
+	cp "${SDCARD}"/etc/skel/.profile "${SDCARD}"/root/
 
-	# enable few bash aliases enabled in Ubuntu by default to make it even
-	sed "s/#alias ll='ls -l'/alias ll='ls -l'/" -i "${SDCARD}"/etc/skel/.bashrc
-	sed "s/#alias la='ls -A'/alias la='ls -A'/" -i "${SDCARD}"/etc/skel/.bashrc
-	sed "s/#alias l='ls -CF'/alias l='ls -CF'/" -i "${SDCARD}"/etc/skel/.bashrc
-	# root user is already there. Copy bashrc there as well
-	cp "${SDCARD}"/etc/skel/.bashrc "${SDCARD}"/root
+	# Copy systemwide alieases to root user too
+	cp "${SRC}"/packages/bsp/common/etc/skel/.bash_aliases "${SDCARD}"/root/
 
-	# display welcome message at first root login @TODO: what reads this?
+	# display welcome message at first root login which is ready by /usr/sbin/armbian/armbian-firstlogin
 	touch "${SDCARD}"/root/.not_logged_in_yet
 
 	if [[ ${DESKTOP_AUTOLOGIN} == yes ]]; then
