@@ -8,10 +8,10 @@ KERNEL_TARGET="edge,current,vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
-BOOT_FDT_FILE="rockchip/rk3588-nanopc-cm3588-nas.dtb"
+BOOT_FDT_FILE="rockchip/rk3588-friendlyelec-cm3588-nas.dtb"
 BOOT_SCENARIO="spl-blobs"
 
-function post_family_tweaks__nanopccm3588nas_udev_naming_audios() {
+function post_family_tweaks__cm3588_nas_udev_naming_audios() {
 	display_alert "$BOARD" "Renaming CM3588 audio interfaces to human-readable form" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
@@ -27,7 +27,7 @@ function post_family_tweaks__nanopccm3588nas_udev_naming_audios() {
 
 # Output from CM3588 syslog with edge kernel 6.8: r8169 0004:41:00.0 enP4p65s0: renamed from eth0
 # Note: legacy kernel 5.10 uses driver r8125, edge kernel uses r8169 as of 6.8
-function post_family_tweaks__nanopccm3588nas_udev_naming_network_interfaces() {
+function post_family_tweaks__cm3588_nas_udev_naming_network_interfaces() {
 	display_alert "$BOARD" "Renaming CM3588 LAN interface to eth0" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
