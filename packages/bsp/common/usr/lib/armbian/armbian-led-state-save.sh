@@ -60,7 +60,7 @@ for LED in /sys/class/leds/*; do
 	[[ -d "$LED" ]] || continue
 
 	# Skip saving state for directories starting with enP e.g. enP1p1s0-0::lan enP2p1s0-2::lan etc. etc.
-	if [[ "$(basename "$LED")" == enP* ]]; then
+	if [[ "$(/usr/bin/basename "$LED")" == enP* ]]; then
 		continue
 	fi
 
