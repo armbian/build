@@ -16,7 +16,7 @@ CMD_FIND=$(which find)
 
 # Retrieve the trigger for a specific led and stores the entry in a destination state file
 # Also retrieve all the writable parameters for a led and stores them in a destination state file
-# $1 = base led path 
+# $1 = base led path
 # $2 = path of destination state file
 function store_led() {
 
@@ -58,6 +58,12 @@ function store_led() {
 
 for LED in /sys/class/leds/*; do
 	[[ -d "$LED" ]] || continue
+
+	# Skip saving state for directories starting with enP e.g. enP1p1s0-0::lan enP2p1s0-2::lan etc. etc.
+	if [[ "$(/usr/bin/basename "$LED")" == enP* ]]; then
+		continue
+	fi
+
 	store_led $LED $STATE_PATH
 	echo >> $STATE_PATH
 
