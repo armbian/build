@@ -1,4 +1,10 @@
 function extension_finish_config__install_kernel_headers_for_aic8800_dkms() {
+
+	if [[ ( "${KERNEL_MAJOR_MINOR}" > 6.6 ) ]]; then
+		display_alert "Driver compilation is not supported on kernel ${KERNEL_MAJOR_MINOR} or higher" "skipping aic8800 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
+		return 0
+	fi
+
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping aic8800 dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0
