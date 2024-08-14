@@ -1,0 +1,179 @@
+From 2d14664c492e6c5537f62d6db1add8b7f47614cc Mon Sep 17 00:00:00 2001
+From: Frank Oltmanns <frank@oltmanns.dev>
+Date: Sun, 10 Mar 2024 14:32:29 +0100
+Subject: drm/sun4i: tcon: Support keeping dclk rate upon ancestor clock
+ changes
+
+Allow the dclk to reset its rate when a rate change is initiated from an
+ancestor clock. This makes it possible to no longer to get an exclusive
+lock. As a consequence, it is now possible to set new rates if
+necessary, e.g. when an external display is connected.
+
+The first user of this functionality is the A64 because PLL-VIDEO0 is an
+ancestor for both HDMI and TCON0. This allows to select an optimal rate
+for TCON0 as long as there is no external HDMI connection. Once a change
+in PLL-VIDEO0 is performed when an HDMI connection is established, TCON0
+can react gracefully and select an optimal rate based on this the new
+constraint.
+
+Signed-off-by: Frank Oltmanns <frank@oltmanns.dev>
+---
+ drivers/gpu/drm/sun4i/sun4i_tcon.c | 70 +++++++++++++++++++++++++++---
+ drivers/gpu/drm/sun4i/sun4i_tcon.h | 12 +++++
+ 2 files changed, 76 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.c b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+index 4a3ba9082b4c..654df088f2de 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.c
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.c
+@@ -110,9 +110,11 @@ static void sun4i_tcon_channel_set_status(struct sun4i_tcon *tcon, int channel,
+ 
+ 	if (enabled) {
+ 		clk_prepare_enable(clk);
+-		clk_rate_exclusive_get(clk);
++		if (!tcon->quirks->restores_rate)
++			clk_rate_exclusive_get(clk);
+ 	} else {
+-		clk_rate_exclusive_put(clk);
++		if (!tcon->quirks->restores_rate)
++			clk_rate_exclusive_put(clk);
+ 		clk_disable_unprepare(clk);
+ 	}
+ }
+@@ -373,6 +375,53 @@ static void sun4i_tcon0_mode_set_dithering(struct sun4i_tcon *tcon,
+ 	regmap_write(tcon->regs, SUN4I_TCON_FRM_CTL_REG, val);
+ }
+ 
++static void sun4i_rate_reset_notifier_delayed_update(struct work_struct *work)
++{
++	struct sun4i_rate_reset_nb *rate_reset = container_of(work, struct sun4i_rate_reset_nb,
++							    reset_rate_work.work);
++
++	clk_set_rate(rate_reset->target_clk, rate_reset->saved_rate);
++}
++
++static int sun4i_rate_reset_notifier_cb(struct notifier_block *nb,
++				      unsigned long event, void *data)
++{
++	struct sun4i_rate_reset_nb *rate_reset = to_sun4i_rate_reset_nb(nb);
++
++	if (event == POST_RATE_CHANGE)
++		mod_delayed_work(system_wq, &rate_reset->reset_rate_work, msecs_to_jiffies(100));
++
++	return NOTIFY_DONE;
++}
++
++static void sun4i_rate_reset_notifier_register(struct sun4i_rate_reset_nb *rate_reset_nb)
++{
++	if (rate_reset_nb->is_registered)
++		return;
++
++	rate_reset_nb->clk_nb.notifier_call = sun4i_rate_reset_notifier_cb;
++
++	INIT_DELAYED_WORK(&rate_reset_nb->reset_rate_work,
++			  sun4i_rate_reset_notifier_delayed_update);
++
++	if (!clk_notifier_register(rate_reset_nb->target_clk,
++				   &rate_reset_nb->clk_nb))
++		rate_reset_nb->is_registered = true;
++}
++
++static struct sun4i_rate_reset_nb tcon_rate_reset_tcon0_nb;
++
++static void sun4i_tcon0_set_dclk_rate(struct sun4i_tcon *tcon, unsigned long rate)
++{
++	clk_set_rate(tcon->dclk, rate);
++
++	if (tcon->quirks->restores_rate) {
++		tcon_rate_reset_tcon0_nb.target_clk = tcon->dclk;
++		tcon_rate_reset_tcon0_nb.saved_rate = rate;
++		sun4i_rate_reset_notifier_register(&tcon_rate_reset_tcon0_nb);
++	}
++}
++
+ static void sun4i_tcon0_mode_set_cpu(struct sun4i_tcon *tcon,
+ 				     const struct drm_encoder *encoder,
+ 				     const struct drm_display_mode *mode)
+@@ -390,8 +439,8 @@ static void sun4i_tcon0_mode_set_cpu(struct sun4i_tcon *tcon,
+ 	 */
+ 	tcon->dclk_min_div = SUN6I_DSI_TCON_DIV;
+ 	tcon->dclk_max_div = SUN6I_DSI_TCON_DIV;
+-	clk_set_rate(tcon->dclk, mode->crtc_clock * 1000 * (bpp / lanes)
+-						  / SUN6I_DSI_TCON_DIV);
++	sun4i_tcon0_set_dclk_rate(tcon, mode->crtc_clock * 1000 * (bpp / lanes)
++				  / SUN6I_DSI_TCON_DIV);
+ 
+ 	/* Set the resolution */
+ 	regmap_write(tcon->regs, SUN4I_TCON0_BASIC0_REG,
+@@ -464,7 +513,7 @@ static void sun4i_tcon0_mode_set_lvds(struct sun4i_tcon *tcon,
+ 
+ 	tcon->dclk_min_div = 7;
+ 	tcon->dclk_max_div = 7;
+-	clk_set_rate(tcon->dclk, mode->crtc_clock * 1000);
++	sun4i_tcon0_set_dclk_rate(tcon, mode->crtc_clock * 1000);
+ 
+ 	/* Set the resolution */
+ 	regmap_write(tcon->regs, SUN4I_TCON0_BASIC0_REG,
+@@ -548,7 +597,7 @@ static void sun4i_tcon0_mode_set_rgb(struct sun4i_tcon *tcon,
+ 
+ 	tcon->dclk_min_div = tcon->quirks->dclk_min_div;
+ 	tcon->dclk_max_div = 127;
+-	clk_set_rate(tcon->dclk, mode->crtc_clock * 1000);
++	sun4i_tcon0_set_dclk_rate(tcon, mode->crtc_clock * 1000);
+ 
+ 	/* Set the resolution */
+ 	regmap_write(tcon->regs, SUN4I_TCON0_BASIC0_REG,
+@@ -1561,6 +1610,14 @@ static const struct sun4i_tcon_quirks sun8i_a33_quirks = {
+ 	.supports_lvds		= true,
+ };
+ 
++static const struct sun4i_tcon_quirks sun50i_a64_lcd_quirks = {
++	.supports_lvds		= true,
++	.has_channel_0		= true,
++	.restores_rate		= true,
++	.dclk_min_div		= 1,
++	.setup_lvds_phy		= sun6i_tcon_setup_lvds_phy,
++};
++
+ static const struct sun4i_tcon_quirks sun8i_a83t_lcd_quirks = {
+ 	.supports_lvds		= true,
+ 	.has_channel_0		= true,
+@@ -1619,6 +1676,7 @@ const struct of_device_id sun4i_tcon_of_table[] = {
+ 	{ .compatible = "allwinner,sun9i-a80-tcon-tv", .data = &sun9i_a80_tcon_tv_quirks },
+ 	{ .compatible = "allwinner,sun20i-d1-tcon-lcd", .data = &sun20i_d1_lcd_quirks },
+ 	{ .compatible = "allwinner,sun20i-d1-tcon-tv", .data = &sun8i_r40_tv_quirks },
++	{ .compatible = "allwinner,sun50i-a64-tcon-lcd", .data = &sun50i_a64_lcd_quirks },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, sun4i_tcon_of_table);
+diff --git a/drivers/gpu/drm/sun4i/sun4i_tcon.h b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+index 864d70b9d242..729d64b78846 100644
+--- a/drivers/gpu/drm/sun4i/sun4i_tcon.h
++++ b/drivers/gpu/drm/sun4i/sun4i_tcon.h
+@@ -250,6 +250,7 @@ struct sun4i_tcon_quirks {
+ 	bool    needs_edp_reset; /* a80 edp reset needed for tcon0 access */
+ 	bool	supports_lvds;   /* Does the TCON support an LVDS output? */
+ 	bool	polarity_in_ch0; /* some tcon1 channels have polarity bits in tcon0 pol register */
++	bool	restores_rate;   /* restores the initial rate when rate changes */
+ 	u8	dclk_min_div;	/* minimum divider for TCON0 DCLK */
+ 
+ 	/* callback to handle tcon muxing options */
+@@ -312,4 +313,15 @@ void sun4i_tcon_enable_gamma(struct sun4i_tcon *tcon, bool enable);
+ 
+ extern const struct of_device_id sun4i_tcon_of_table[];
+ 
++struct sun4i_rate_reset_nb {
++	struct notifier_block	clk_nb;
++	struct delayed_work	reset_rate_work;
++
++	struct clk		*target_clk;
++	unsigned long		saved_rate;
++	bool			is_registered;
++};
++
++#define to_sun4i_rate_reset_nb(_nb) container_of(_nb, struct sun4i_rate_reset_nb, clk_nb)
++
+ #endif /* __SUN4I_TCON_H__ */
+-- 
+2.35.3
+
