@@ -1,0 +1,94 @@
+From 043e41ba3eeb25029116375921951ad5b2f031c5 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Wed, 17 Jul 2024 09:30:39 +0200
+Subject: drm: rockchip: dw-mipi-dsi-rockchip: Restore DPHY config on resume
+
+After a suspend and resume cycle, ISP1 stops receiving data, as observed on the
+Pine64 PinePhone Pro, which is based on the Rockchip RK3399 SoC. Re-initializing
+DPHY during resume, if the SoC variant supports initialization, fixes this
+issue.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ .../gpu/drm/rockchip/dw-mipi-dsi-rockchip.c   | 51 ++++++++++++-------
+ 1 file changed, 34 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c b/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
+index 9ad48c6dfac3..000462c6392a 100644
+--- a/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
++++ b/drivers/gpu/drm/rockchip/dw-mipi-dsi-rockchip.c
+@@ -1122,6 +1122,31 @@ static const struct component_ops dw_mipi_dsi_rockchip_dphy_ops = {
+ 	.unbind	= dw_mipi_dsi_rockchip_dphy_unbind,
+ };
+ 
++static int dw_mipi_dsi_dphy_rx_init(struct dw_mipi_dsi_rockchip *dsi)
++{
++	int ret;
++
++	if (dsi->cdata->dphy_rx_init) {
++		ret = clk_prepare_enable(dsi->pclk);
++		if (ret < 0)
++			return ret;
++
++		ret = clk_prepare_enable(dsi->grf_clk);
++		if (ret) {
++			clk_disable_unprepare(dsi->pclk);
++			return ret;
++		}
++
++		ret = dsi->cdata->dphy_rx_init(dsi->dphy);
++		clk_disable_unprepare(dsi->grf_clk);
++		clk_disable_unprepare(dsi->pclk);
++		if (ret < 0)
++			return ret;
++	}
++
++	return 0;
++}
++
+ static int dw_mipi_dsi_dphy_init(struct phy *phy)
+ {
+ 	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
+@@ -1142,23 +1167,9 @@ static int dw_mipi_dsi_dphy_init(struct phy *phy)
+ 	if (ret < 0)
+ 		goto err_graph;
+ 
+-	if (dsi->cdata->dphy_rx_init) {
+-		ret = clk_prepare_enable(dsi->pclk);
+-		if (ret < 0)
+-			goto err_init;
+-
+-		ret = clk_prepare_enable(dsi->grf_clk);
+-		if (ret) {
+-			clk_disable_unprepare(dsi->pclk);
+-			goto err_init;
+-		}
+-
+-		ret = dsi->cdata->dphy_rx_init(phy);
+-		clk_disable_unprepare(dsi->grf_clk);
+-		clk_disable_unprepare(dsi->pclk);
+-		if (ret < 0)
+-			goto err_init;
+-	}
++	ret = dw_mipi_dsi_dphy_rx_init(dsi);
++	if (ret < 0)
++		goto err_init;
+ 
+ 	return 0;
+ 
+@@ -1341,6 +1352,12 @@ static int __maybe_unused dw_mipi_dsi_rockchip_resume(struct device *dev)
+ 			dw_mipi_dsi_rockchip_config(dsi->slave);
+ 
+ 		clk_disable_unprepare(dsi->grf_clk);
++	} else if (dsi->usage_mode == DW_DSI_USAGE_PHY) {
++		ret = dw_mipi_dsi_dphy_rx_init(dsi);
++		if (ret < 0) {
++			DRM_DEV_ERROR(dsi->dev, "hardware-specific phy init failed: %d\n", ret);
++			return ret;
++		}
+ 	}
+ 
+ 	return 0;
+-- 
+2.35.3
+
