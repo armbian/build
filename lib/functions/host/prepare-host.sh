@@ -342,6 +342,12 @@ function adaptative_prepare_host_dependencies() {
 		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
 	fi
 
+	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+		host_dependencies+=("clang")
+		host_dependencies+=("llvm")
+		host_dependencies+=("lld")
+	fi
+
 	declare -g EXTRA_BUILD_DEPS=""
 	call_extension_method "add_host_dependencies" <<- 'ADD_HOST_DEPENDENCIES'
 		*run before installing host dependencies*
