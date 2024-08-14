@@ -572,6 +572,13 @@ function docker_cli_launch() {
 		run_host_command_logged find "${SRC}/userpatches" -name ".DS_Store" -type f -delete "||" true
 	fi
 
+	# This check is performed in order to set up the host so that it has a loop device, as calling losetup inside of
+	# docker creates a loop device but does not make it available to the already running container
+	if [[ ! -e /dev/loop0 ]]; then
+		display_alert "Running losetup in a temporary container" "because no loop devices exist" "info"
+		docker run "${DOCKER_ARGS[@]}" "${DOCKER_ARMBIAN_INITIAL_IMAGE_TAG}" /usr/sbin/losetup -f
+	fi
+
 	display_alert "-----------------Relaunching in Docker after ${SECONDS}s------------------" "here comes the 🐳" "info"
 
 	local -i docker_build_result
