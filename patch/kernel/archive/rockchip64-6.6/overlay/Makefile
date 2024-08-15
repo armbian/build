@@ -6,6 +6,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk3308-emmc.dtbo \
 	rk3308-sdio@10mhz.dtbo rk3308-sdio@4mhz.dtbo \
 	rockchip-bigtreetech-cb2-mcp2515.dtbo \
+	rockchip-bigtreetech-cb2-rtc-rk808.dtbo \
 	rockchip-rockpi4cplus-usb-host.dtbo \
 	rockchip-rockpro64-lcd.dtbo \
 	rockchip-rk3318-box-cpu-hs.dtbo \
