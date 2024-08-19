@@ -153,13 +153,18 @@ function post_install_kernel_debs__3d() {
 	do_with_retries 3 chroot_sdcard_apt_get_install "${pkgs[@]}"
 
 	# This library gets downgraded
-	do_with_retries 3 chroot_sdcard apt-mark hold libdav1d7
+	if [[ "${RELEASE}" =~ ^(oracular|noble)$ ]]; then
+		do_with_retries 3 chroot_sdcard apt-mark hold libdav1d7
+	fi
 
 	display_alert "Upgrading Mesa packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get dist-upgrade
 
 	# KDE neon downgrade hack undo
-	do_with_retries 3 chroot_sdcard apt-mark unhold base-files libdav1d7
+	do_with_retries 3 chroot_sdcard apt-mark unhold base-files
+	if [[ "${RELEASE}" =~ ^(oracular|noble)$ ]]; then
+		do_with_retries 3 chroot_sdcard apt-mark unhold libdav1d7
+	fi
 
 	# Disable wayland flag for XFCE
 	#if [[ "${DESKTOP_ENVIRONMENT}" == "xfce" ]]; then
