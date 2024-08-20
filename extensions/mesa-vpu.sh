@@ -140,20 +140,31 @@ function post_install_kernel_debs__3d() {
 		EOF
 	fi
 
-	# KDE neon downgrades base-files for some reason. This prevents tacking it
-	do_with_retries 3 chroot_sdcard apt-mark hold base-files
-
 	display_alert "Updating sources list, after kisak PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
+	# KDE neon downgrades base-files for some reason. This prevents tacking it
+	do_with_retries 3 chroot_sdcard apt-mark hold base-files
+
+	# This library must be installed before rockchip-multimedia
+	do_with_retries 3 chroot_sdcard_apt_get_install libv4l-0
+
 	display_alert "Installing 3D extension packages" "${EXTENSION}" "info"
-	do_with_retries 3 chroot_sdcard_apt_get_install --allow-downgrades "${pkgs[@]}"
+	do_with_retries 3 chroot_sdcard_apt_get_install "${pkgs[@]}"
+
+	# This library gets downgraded
+	if [[ "${RELEASE}" =~ ^(oracular|noble)$ ]]; then
+		do_with_retries 3 chroot_sdcard apt-mark hold libdav1d7
+	fi
 
 	display_alert "Upgrading Mesa packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get dist-upgrade
 
 	# KDE neon downgrade hack undo
 	do_with_retries 3 chroot_sdcard apt-mark unhold base-files
+	if [[ "${RELEASE}" =~ ^(oracular|noble)$ ]]; then
+		do_with_retries 3 chroot_sdcard apt-mark unhold libdav1d7
+	fi
 
 	# Disable wayland flag for XFCE
 	#if [[ "${DESKTOP_ENVIRONMENT}" == "xfce" ]]; then

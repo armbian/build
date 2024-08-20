@@ -282,6 +282,7 @@ function adaptative_prepare_host_dependencies() {
 		parted gdisk fdisk                       # partition tools @TODO why so many?
 		aria2 curl wget axel                     # downloaders et al
 		parallel                                 # do things in parallel (used for fast md5 hashing in initrd cache)
+		rdfind                                   # armbian-firmware-full/linux-firmware symlink creation step
 	)
 
 	# @TODO: distcc -- handle in extension?
@@ -339,6 +340,12 @@ function adaptative_prepare_host_dependencies() {
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
 		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
+	fi
+
+	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+		host_dependencies+=("clang")
+		host_dependencies+=("llvm")
+		host_dependencies+=("lld")
 	fi
 
 	declare -g EXTRA_BUILD_DEPS=""
