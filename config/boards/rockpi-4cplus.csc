@@ -3,6 +3,7 @@ BOARD_NAME="Rockpi 4C+"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 

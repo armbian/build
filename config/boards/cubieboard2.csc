@@ -4,6 +4,7 @@ BOARDFAMILY="sun7i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="Cubieboard2_config"
 KERNEL_TARGET="legacy,current,edge"
+KERNEL_TEST_TARGET="current"
 
 function post_config_uboot_target__extra_configs_for_cubieboard2() {
 	display_alert "$BOARD" "set dram clock" "info"
