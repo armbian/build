@@ -3,6 +3,7 @@ BOARD_NAME="Odroid N2L"
 BOARDFAMILY="meson-g12b"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 MODULES_BLACKLIST="simpledrm" # SimpleDRM conflicts with Panfrost
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

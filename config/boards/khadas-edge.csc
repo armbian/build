@@ -4,6 +4,7 @@ BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOTCONFIG="khadas-edge-v-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_SUPPORT_SPI=yes

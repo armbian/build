@@ -4,6 +4,7 @@ BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOT_SOC="rk3568"
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 BOOT_FDT_FILE="rockchip/rk3568-nanopi-r5c.dtb"
 SRC_EXTLINUX="no"
 ASOUND_STATE="asound.state.station-m2" # TODO verify me
