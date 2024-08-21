@@ -4,5 +4,6 @@ BOARDFAMILY="rockchip64" # Used to be rk3399
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi-neo4-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"

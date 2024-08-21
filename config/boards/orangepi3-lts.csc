@@ -5,7 +5,7 @@ BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_3_lts_defconfig"
 BOOT_LOGO="desktop"
 KERNEL_TARGET="legacy,current,edge"
-KERNEL_TEST_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 CRUSTCONFIG="orangepi_3_lts_defconfig"
 
 enable_extension "uwe5622-allwinner"
