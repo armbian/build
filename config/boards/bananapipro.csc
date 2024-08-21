@@ -4,7 +4,7 @@ BOARDFAMILY="sun7i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="Bananapro_defconfig"
 KERNEL_TARGET="legacy,current,edge"
-KERNEL_TEST_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 
 function post_config_uboot_target__extra_configs_for_bananapipro() {
 	display_alert "$BOARD" "set dram clock" "info"

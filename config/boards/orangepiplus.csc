@@ -4,6 +4,7 @@ BOARDFAMILY="sun8i"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_plus_defconfig"
 KERNEL_TARGET="legacy,current,edge"
+KERNEL_TEST_TARGET="current"
 
 function post_config_uboot_target__extra_configs_for_orangepi_plus() {
 	display_alert "$BOARD" "set dram clock" "info"
