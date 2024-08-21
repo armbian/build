@@ -3,6 +3,7 @@ BOARD_NAME="Odroid C1"
 BOARDFAMILY="meson8b"
 BOARD_MAINTAINER=""
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 
 BOOTDIR='u-boot-odroidc1'
 BOOTSOURCE='https://github.com/hardkernel/u-boot.git'

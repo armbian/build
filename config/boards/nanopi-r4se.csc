@@ -4,6 +4,7 @@ BOARDFAMILY="rockchip64" # Used to be rk3399
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi-r4se-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 DEFAULT_CONSOLE="serial"
 MODULES_BLACKLIST="rockchipdrm analogix_dp dw_mipi_dsi dw_hdmi gpu_sched lima hantro_vpu panfrost"
 HAS_VIDEO_OUTPUT="no"
