@@ -153,7 +153,7 @@ function post_install_kernel_debs__3d() {
 	do_with_retries 3 chroot_sdcard_apt_get_install "${pkgs[@]}"
 
 	# This library gets downgraded
-	if [[ "${RELEASE}" =~ ^(oracular|noble)$ ]]; then
+	if [[ "${RELEASE}" =~ ^(oracular|noble|jammy)$ && "${ARCH}" == arm* ]]; then
 		do_with_retries 3 chroot_sdcard apt-mark hold libdav1d7
 	fi
 
@@ -162,7 +162,7 @@ function post_install_kernel_debs__3d() {
 
 	# KDE neon downgrade hack undo
 	do_with_retries 3 chroot_sdcard apt-mark unhold base-files
-	if [[ "${RELEASE}" =~ ^(oracular|noble)$ ]]; then
+	if [[ "${RELEASE}" =~ ^(oracular|noble|jammy)$ && "${ARCH}" == arm* ]]; then
 		do_with_retries 3 chroot_sdcard apt-mark unhold libdav1d7
 	fi
 
