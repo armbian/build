@@ -77,6 +77,7 @@ function install_deb_chroot() {
 	local package="$1"
 	local variant="$2"
 	local transfer="$3"
+	local apt_options="$4"
 	local install_target="${package}"
 	local log_extra=" from repository"
 	local package_filename
@@ -103,7 +104,7 @@ function install_deb_chroot() {
 	declare -g if_error_detail_message="Installation of $install_target failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	declare -a extra_apt_envs=()
 	extra_apt_envs+=("ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE=${BOOTFS_TYPE:-"unset"}")                             # used by package postinst scripts to bevahe
-	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends install "${install_target}" # don't auto-maintain apt cache when installing from packages.
+	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends "${apt_options}" install "${install_target}" # don't auto-maintain apt cache when installing from packages.
 	unset extra_apt_envs
 
 	# IMPORTANT! Do not use short-circuit above as last statement in a function, since it determines the result of the function.
@@ -112,13 +113,14 @@ function install_deb_chroot() {
 
 function install_artifact_deb_chroot() {
 	declare deb_name="$1"
+	declare apt_options="$2"
 	declare -A -g image_artifacts_debs_reversioned # global associative array
 	declare revisioned_deb_rel_path="${image_artifacts_debs_reversioned["${deb_name}"]}"
 	if [[ -z "${revisioned_deb_rel_path}" ]]; then
 		exit_with_error "No revisioned deb path found for '${deb_name}'"
 	fi
 	display_alert "Installing artifact deb" "${deb_name} :: ${revisioned_deb_rel_path}" "debug"
-	install_deb_chroot "${DEB_STORAGE}/${revisioned_deb_rel_path}"
+	install_deb_chroot "${DEB_STORAGE}/${revisioned_deb_rel_path}" "" "" "${apt_options}"
 
 	# Mark the deb as installed in the global associative array.
 	declare -A -g image_artifacts_debs_installed
