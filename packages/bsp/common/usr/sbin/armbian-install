@@ -824,10 +824,13 @@ main() {
 	options=()
 
 	if [[ -n $emmccheck ]]; then
+		# @TODO this check is nonsensical if you consider emmccheck might have 2 devices in it
 		if [[ "${emmccheck}" == "$sd_dev" ]]; then
 			ichip='SD card'
 		elif [[ "${emmccheck}" == "$emmc_dev" ]]; then
 			ichip='eMMC'
+		else
+			ichip="eMMC/SDcard"
 		fi
 		dest_boot=$emmccheck'p1'
 		dest_root=$emmccheck'p1'
@@ -838,11 +841,10 @@ main() {
 	fi
 
 	if [[ -n $diskcheck && -d /sys/firmware/efi ]]; then
-
+		# just add each device as a (non-numeric) option
 		while read line; do
-			options+=("$line" "Install UEFI system with Grub")
+			options+=("$line" "Install UEFI system with Grub to ${line}")
 		done <<< "$diskcheck"
-
 	else
 
 		[[ -n $sduuid && -n $diskcheck ]] && options+=(1 'Boot from SD - system on SATA, USB or NVMe')
@@ -851,32 +853,55 @@ main() {
 		[[ -n $mtdcheck ]] && options+=(4 'Boot from MTD Flash - system on SATA, USB or NVMe')
 
 		if [[ -n ${root_partition_device} && ${DEVICE_TYPE} != "uefi" ]]; then
+			declare menu_option_to_flash=no
 			if [ "${root_partition_device}" == "$sd_dev" ]; then
 				rootchip='SD card'
+				menu_option_to_flash=yes
 			elif [ "${root_partition_device}" == "$emmc_dev" ]; then
 				rootchip='eMMC'
+				menu_option_to_flash=yes
+			# if root_partition_device contains 'nvme' then it's NVMe
+			elif [[ "${root_partition_device}" == *nvme* ]]; then
+				rootchip='NVMe' # do NOT offer to flash bootloader to NVMe -- prove me wrong
+
+			# if matches 'sd?' then it's either SATA or USB, normally. Some virtual devices end up here too
+			elif [[ "${root_partition_device}" == *sd? ]]; then
+				rootchip='SATA/USB' # do NOT offer to flash bootloader to SATA/USB -- prove me wrong
 			fi
-			options+=(5 "Install/Update the bootloader on $rootchip (${root_partition_device})")
+
+			[[ $menu_option_to_flash == yes ]] &&
+				options+=(5 "Flash the bootloader to $rootchip (${root_partition_device})")
 		fi
 
 		if [ -n "${emmc_dev}" ] && [ "${emmc_dev}" != "${root_partition_device}" ]; then
-
-			options+=(6 "Install/Update the bootloader on eMMC (${emmc_dev})")
-			BOOTPART=${emmc_dev}
-
-		elif [ -n "${sd_dev}" ] && [ "${sd_dev}" != "${root_partition_device}" ]; then
-
-			options+=(6 "Install/Update the bootloader on SD card (${sd_dev})")
-			BOOTPART=${sd_dev}
+			options+=(6 "Flash the bootloader to eMMC (${emmc_dev})")
 		fi
 
-		[[ -n $mtdcheck &&
-			$(type -t write_uboot_platform_mtd) == function ]] && options+=(7 'Install/Update the bootloader on MTD Flash')
+		if [[ -n $mtdcheck && $(type -t write_uboot_platform_mtd) == function ]]; then
+			options+=(7 'Flash the bootloader to MTD/SPI Flash')
+		fi
+
+		if [ -n "${sd_dev}" ] && [ "${sd_dev}" != "${root_partition_device}" ]; then
+			options+=(8 "Flash the bootloader to SD card (${sd_dev})")
+		fi
+
 	fi
 
-	[[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]] &&
+	if [[ ${#options[@]} -eq 0 || "$root_uuid" == "$emmcuuid" || "$root_uuid" == "/dev/nand2" ]]; then
 		dialog --ok-label 'Cancel' --title ' Warning ' --backtitle "$backtitle" --colors --no-collapse --msgbox '\n\Z1There are no targets. Please check your drives.\Zn' 7 52
-	cmd=(dialog --title 'Choose an option:' --backtitle "$backtitle" --menu "\nCurrent root: $root_uuid \n              $rootchip (${root_partition_device})\n" 14 75 7)
+	fi
+
+	declare shortened_root_uuid_to_20_chars="${root_uuid:0:20}..."
+
+	declare -a menu_title_lines=()
+	menu_title_lines+=("-> current.root.dev: ${root_partition_device} ($rootchip) ${shortened_root_uuid_to_20_chars}")
+	menu_title_lines+=("-> eMMC.device.....: ${emmc_dev:-"none detected"}")
+	menu_title_lines+=("-> SD.device.......: ${sd_dev:-"none detected"}")
+
+	declare menu_title_joined_by_newlines
+	menu_title_joined_by_newlines="$(printf "%s\n" "${menu_title_lines[@]}")"
+
+	cmd=(dialog --title 'Choose an option:' --backtitle "$backtitle" --menu "${menu_title_joined_by_newlines}" 16 75 7)
 	choices=$("${cmd[@]}" "${options[@]}" 2>&1 > /dev/tty)
 	[[ $? -ne 0 ]] && exit 16
 
@@ -946,7 +971,9 @@ main() {
 				dialog --backtitle "$backtitle" --title 'Writing bootloader' --msgbox '\n          Done.' 7 30
 				return
 				;;
-			6)
+			6 | 8)
+				[[ $choice == 6 ]] && BOOTPART=${emmc_dev}
+				[[ $choice == 8 ]] && BOOTPART=${sd_dev}
 				show_warning "This script will update the bootloader on ${BOOTPART}.\n\n    Continue?"
 				write_uboot_platform "$DIR" ${BOOTPART}
 				echo 'Done'
@@ -957,7 +984,8 @@ main() {
 				return
 				;;
 
-			*)
+			# "UEFI install with Grub" passed the device name as parameter directly
+			sd* | nvme* | vd* | hd*)
 				title='UEFI install to internal drive'
 				command='Reboot'
 				check_partitions "$root_partition_device_name" "$choice"
@@ -966,6 +994,11 @@ main() {
 				show_warning "This script will erase your device $DISK_ROOT_PART. Continue?"
 				format_disk "$DISK_ROOT_PART"
 				create_armbian "" "$DISK_ROOT_PART" "$choice"
+				;;
+
+			*)
+				echo "Unknown option: $choice"
+				exit 17
 				;;
 		esac
 	done
