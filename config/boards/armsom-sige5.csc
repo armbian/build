@@ -16,10 +16,10 @@ function post_family_config_branch_vendor__armsom-sige7_use_vendor_uboot() {
         display_alert "$BOARD" "vendor u-boot overrides for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/ArmSoM/u-boot.git"
-	declare -g BOOTBRANCH="tag:rk3576"
+	declare -g BOOTBRANCH="tag:rk3576-6.1-rk3.1"
 	declare -g BOOTPATCHDIR="legacy/u-boot-armsom-rk3576"
-        declare -g BOOTDIR="u-boot-${BOARD}"
-        declare -g UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB TEE=$RKBIN_DIR/$BL32_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
+	declare -g BOOTDIR="u-boot-${BOARD}"
+	declare -g UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB TEE=$RKBIN_DIR/$BL32_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
 }
 
 function post_family_tweaks__armsom-sige7_naming_audios() {
