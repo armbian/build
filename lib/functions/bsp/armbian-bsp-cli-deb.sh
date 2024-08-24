@@ -208,6 +208,18 @@ function compile_armbian-bsp-cli() {
 	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_cli_postinst_base "${postinst_functions[@]}" board_side_bsp_cli_postinst_finish
 	unset board_side_bsp_cli_postinst_base board_side_bsp_cli_postinst_update_uboot_bootscript board_side_bsp_cli_postinst_finish
 
+	### preventing upgrading stable kernels beyond version if defined
+	# if freeze variable is removed, upgrade becomes possible again
+	if [[ "${BETA}" != "yes" && -n "${KERNEL_UPGRADE_FREEZE}" ]]; then
+		cat <<- EOF >> "${destination}"/etc/apt/preferences.d/frozen-armbian
+		Package: linux-*-${BRANCH}-${LINUXFAMILY}
+		Pin: version ${KERNEL_UPGRADE_FREEZE}
+		Pin-Priority: 999
+		EOF
+	else
+		touch "${destination}"/etc/apt/preferences.d/frozen-armbian
+	fi
+
 	# add some summary to the image # @TODO: another?
 	fingerprint_image "${destination}/etc/armbian.txt"
 
