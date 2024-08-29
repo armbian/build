@@ -1,4 +1,4 @@
-# Rockchip RK3588S octa core 32GB RAM SoC eMMC NvME 1x USB3 3x USB2 1x GbE
+# Rockchip RK3588S octa core 32GB RAM SoC eMMC NvME 1x USB3 4x USB2 1x GbE
 BOARD_NAME="Youyeetoo R1 v3"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="superkali"
