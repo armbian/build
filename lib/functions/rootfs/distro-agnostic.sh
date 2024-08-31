@@ -488,6 +488,9 @@ function install_distribution_agnostic() {
 	# permit root login via SSH for the first boot
 	sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' "${SDCARD}"/etc/ssh/sshd_config
 
+	# reduce clutter - disable showing last log when connected via SSH
+	sed -i 's/#\?PrintLastLog .*/PrintLastLog no/' "${SDCARD}"/etc/ssh/sshd_config
+
 	# enable PubkeyAuthentication
 	sed -i 's/#\?PubkeyAuthentication .*/PubkeyAuthentication yes/' "${SDCARD}"/etc/ssh/sshd_config
 
