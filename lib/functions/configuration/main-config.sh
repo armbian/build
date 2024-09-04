@@ -579,11 +579,11 @@ function set_git_build_repo_url_and_commit_vars() {
 
 function check_filesystem_compatibility_on_host() {
 	if [[ -f "/proc/filesystems" ]]; then
-		# Check if the filesystem is listed in /proc/filesystems
-		if ! grep -q "\<$ROOTFS_TYPE\>" /proc/filesystems; then # ensure exact match with \<...\>
-			# Try modprobing the fs module since it doesn't show up in /proc/filesystems if it's an unloaded module versus built-in
-			if ! modprobe "$ROOTFS_TYPE"; then
-				exit_with_error "Filesystem type unsupported by build host:" "$ROOTFS_TYPE"
+		# Check if the filesystem available on the host
+		if ! modinfo "$ROOTFS_TYPE" >/dev/null; then
+			# Check if the required filesystem is loaded if not, ask the user to load it as there isn't any non-root way to load kernel modules especially on hardened kernels
+			if ! lsmod | grep "$ROOTFS_TYPE" >/dev/null; then
+				exit_with_error "Filesystem type '$ROOTFS_TYPE' is not loaded by build host, try following and restart the build: sudo modprobe $ROOTFS_TYPE"
 			else
 				display_alert "Sucessfully loaded kernel module for filesystem" "$ROOTFS_TYPE" ""
 			fi
