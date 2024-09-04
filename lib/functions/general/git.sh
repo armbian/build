@@ -53,6 +53,9 @@ function improved_git_fetch() {
 
 # workaround new limitations imposed by CVE-2022-24765 fix in git, otherwise  "fatal: unsafe repository"
 function git_ensure_safe_directory() {
+	# Don't run this abomination on NixOS
+	! command -v nix 1>/dev/null || return 0
+
 	if [[ -n "$(command -v git)" ]]; then
 		local git_dir="$1"
 		if [[ -e "$1/.git" ]]; then
