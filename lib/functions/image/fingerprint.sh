@@ -23,7 +23,6 @@ function fingerprint_image() {
 		Build date:     $(date +'%d.%m.%Y')
 		Sources:        ${BUILD_REPOSITORY_URL}
 		Sources rev:    ${BUILD_REPOSITORY_COMMIT}
-		Extensions:     ${ENABLE_EXTENSIONS}
 		Authors:        https://www.armbian.com/authors
 		Maintainer:     ${MAINTAINER} <$MAINTAINERMAIL>
 		Support:        ${VENDORSUPPORT}
