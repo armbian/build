@@ -18,10 +18,10 @@ if [ -f "${HOME}/.activate_psd" ]; then
 		sed -i 's/#USE_OVERLAYFS=.*/USE_OVERLAYFS="yes"/' "${config_file}"
 		case $(/usr/bin/psd p 2>/dev/null | grep Overlayfs) in
 			*active*)
-				echo -e "\nConfigured profile sync daemon with overlayfs."
+				echo -e "\n Configured profile sync daemon with overlayfs."
 				;;
 			*)
-				echo -e "\nConfigured profile sync daemon."
+				echo -e "\n Configured profile sync daemon."
 				sed -i 's/USE_OVERLAYFS="yes"/#USE_OVERLAYFS="no"/' "${config_file}"
 				;;
 		esac
