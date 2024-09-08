@@ -335,9 +335,7 @@ function install_distribution_agnostic() {
 
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_artifact_deb_chroot "armbian-config"
-		fi
+		install_artifact_deb_chroot "armbian-config"
 	fi
 
 	# install armbian-zsh
