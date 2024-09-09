@@ -80,7 +80,7 @@ def auto_patch_dt_makefile(git_work_dir: str, dt_rel_dir: str, config_var: str, 
 	# Parse it into a list of lines
 	makefile_lines = makefile_contents.splitlines()
 	log.info(f"Read {len(makefile_lines)} lines from {makefile_path}")
-	regex_dtb = r"(.*)\s(([a-zA-Z0-9-_]+)\.dtb)(.*)"
+	regex_dtb = r"(.*)\s(([^ \f\n\r\t\v]+)\.dtb)(.*)"
 	regex_configopt = r"^dtb-\$\(([a-zA-Z0-9_]+)\)\s+"
 
 	# For each line, check if it matches the regex_dtb, extract the groups
