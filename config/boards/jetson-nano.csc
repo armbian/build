@@ -1,7 +1,7 @@
 # Nvidia Jetson Nano quad core 2G/4GB SoC 4 x USB3 HDMI & DP
 declare -g BOARD_NAME="Jetson Nano"
 declare -g BOARDFAMILY="uefi-arm64"
-declare -g BOARD_MAINTAINER="150balbes"
+declare -g BOARD_MAINTAINER=""
 declare -g KERNEL_TARGET="current,edge"
 declare -g KERNEL_TEST_TARGET="current"
 
