@@ -6,7 +6,7 @@ KERNEL_TARGET="legacy,current,edge"
 KERNEL_TEST_TARGET="current"
 MODULES="g_serial"
 BOOT_LOGO="yes"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="eliasbakken"
 
 function post_family_config__shrink_atf() {
 	display_alert "Choose ATF branch 🍰" "recore"
