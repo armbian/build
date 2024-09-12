@@ -451,6 +451,9 @@ function board_side_bsp_cli_postinst_finish() {
 	if [ ! -f "/etc/default/armbian-zram-config" ] && [ -f /etc/default/armbian-zram-config.dpkg-dist ]; then
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
 	fi
+    if [ ! -f "/etc/default/armbian-firstrun" ]; then
+		mv /etc/default/armbian-firstrun.dpkg-dist /etc/default/armbian-firstrun
+	fi
 
 	if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then
 		mv /usr/lib/chromium-browser/master_preferences.dpkg-dist /usr/lib/chromium-browser/master_preferences
