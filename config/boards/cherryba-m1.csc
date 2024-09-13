@@ -8,4 +8,4 @@ KERNEL_TEST_TARGET="current,edge" # in case different then kernel target
 FORCE_BOOTSCRIPT_UPDATE="yes"
 BOOTBRANCH_BOARD="tag:v2024.01"
 BOOTPATCHDIR="v2024.01"
-VENDOR="CherryBaM1"
+BOARD_MAINTAINER="IsMrX"
