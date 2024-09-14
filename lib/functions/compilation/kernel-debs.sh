@@ -326,7 +326,7 @@ function kernel_package_callback_linux_dtb() {
 	display_alert "linux-dtb packaging" "${package_directory}" "debug"
 
 	display_alert "Showing tree of Kbuild produced DTBs" "linux-dtb" "debug"
-	run_host_command_logged tree -C --du -h -L 2 "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}"
+	run_host_command_logged tree -C --du -h -L 3 "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}"
 
 	mkdir -p "${package_directory}/boot/"
 	run_host_command_logged cp -rp "${tmp_kernel_install_dirs[INSTALL_DTBS_PATH]}" "${package_directory}/boot/dtb-${kernel_version_family}"
