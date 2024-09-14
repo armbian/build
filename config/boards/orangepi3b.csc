@@ -19,9 +19,9 @@ MODULES_BLACKLIST_LEGACY="bcmdhd"
 function post_family_config__orangepi3b_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (Kwiboo's tree) u-boot overrides" "info"
 
-	BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git"
-	BOOTBRANCH="branch:rk3xxx-2024.04" # specific commit tested is commit:ccef7dfc453bc03c5b5c61fa67d2745b96fa7da6
-	BOOTPATCHDIR="v2024.04-orangepi3b" # empty, patches are already in Kwiboo's branch:rk3xxx-2024.04
+	BOOTSOURCE='https://github.com/u-boot/u-boot'
+	BOOTBRANCH="tag:v2024.10-rc3"
+	BOOTPATCHDIR="v2024.10-orangepi3b"
 
 	BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 

@@ -2,7 +2,7 @@
 BOARD_NAME="Firefly ITX-3588J"
 BOARDFAMILY="rockchip-rk3588"
 BOOT_SOC="rk3588"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="SeeleVolleri"
 KERNEL_TARGET="vendor"
 BOOTCONFIG="rk3588_defconfig"
 BOOT_FDT_FILE="rockchip/rk3588-firefly-itx-3588j.dtb"

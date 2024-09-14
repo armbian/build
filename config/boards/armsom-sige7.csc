@@ -1,7 +1,7 @@
 # Rockchip RK3588 SoC octa core 8-64GB SoC 2*2.5GBe eMMC USB3 NvME WIFI
 BOARD_NAME="ArmSoM Sige7"
 BOARDFAMILY="rockchip-rk3588"
-BOARD_MAINTAINER="Z-Keven"
+BOARD_MAINTAINER=""
 BOOTCONFIG="armsom-sige7-rk3588_defconfig"
 KERNEL_TARGET="edge,current,vendor"
 FULL_DESKTOP="yes"

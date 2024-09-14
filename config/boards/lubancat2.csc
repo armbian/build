@@ -2,7 +2,7 @@
 BOARD_NAME="Lubancat2"
 BOARDFAMILY="rk35xx"
 BOARD_FIRMWARE_INSTALL="-full"
-BOARD_MAINTAINER="Andyshrk"
+BOARD_MAINTAINER="andyshrk"
 BOOTCONFIG="lubancat-2-rk3568_defconfig"
 KERNEL_TARGET="edge"
 FULL_DESKTOP="yes"

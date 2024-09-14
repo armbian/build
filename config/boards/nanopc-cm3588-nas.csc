@@ -1,7 +1,7 @@
 # Rockchip RK3588 octa core 16GB RAM SoC eMMC 4x NVMe 2x USB3 USB2 USB-C 2.5GbE
 BOARD_NAME="FriendlyElec CM3588 NAS"
 BOARDFAMILY="rockchip-rk3588"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="ColorfulRhino"
 BOOTCONFIG="nanopc_cm3588_defconfig" # Enables booting from NVMe. Vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
 KERNEL_TARGET="edge,current,vendor"
