@@ -24,11 +24,18 @@ function pre_install_kernel_debs__configure_systemd_networkd() {
 	local netplan_config_src_folder="${EXTENSION_DIR}/config-networkd/netplan/"
 	local netplan_config_dst_folder="${SDCARD}/etc/netplan/"
 
+	run_host_command_logged cp -v "${netplan_config_src_folder}"* "${netplan_config_dst_folder}"
+
 	local networkd_config_src_folder="${EXTENSION_DIR}/config-networkd/systemd/network/"
 	local networkd_config_dst_folder="${SDCARD}/etc/systemd/network/"
 
-	run_host_command_logged cp -v "${netplan_config_src_folder}"* "${netplan_config_dst_folder}"
 	run_host_command_logged cp -v "${networkd_config_src_folder}"* "${networkd_config_dst_folder}"
+
+	local networkd_conf_d_config_src_folder="${EXTENSION_DIR}/config-networkd/systemd/networkd.conf.d/"
+	local networkd_conf_d_config_dst_folder="${SDCARD}/etc/systemd/networkd.conf.d/"
+
+	mkdir -p "${networkd_conf_d_config_dst_folder}" # This doesn't exist by default, create it
+	run_host_command_logged cp -v "${networkd_conf_d_config_src_folder}"* "${networkd_conf_d_config_dst_folder}"
 
 	# Change the file permissions according to https://netplan.readthedocs.io/en/stable/security/
 	chmod -v 600 "${SDCARD}"/etc/netplan/*

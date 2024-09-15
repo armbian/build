@@ -106,6 +106,7 @@ function compile_armbian-bsp-cli() {
 		KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
 		FORCE_BOOTSCRIPT_UPDATE=$FORCE_BOOTSCRIPT_UPDATE
 		FORCE_UBOOT_UPDATE=$FORCE_UBOOT_UPDATE
+		OVERLAYDIR="$OVERLAYDIR"
 		VENDOR="$VENDOR"
 		VENDORDOCS="$VENDORDOCS"
 		VENDORURL="$VENDORURL"
@@ -450,6 +451,9 @@ function board_side_bsp_cli_postinst_finish() {
 	fi
 	if [ ! -f "/etc/default/armbian-zram-config" ] && [ -f /etc/default/armbian-zram-config.dpkg-dist ]; then
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
+	fi
+    if [ ! -f "/etc/default/armbian-firstrun" ]; then
+		mv /etc/default/armbian-firstrun.dpkg-dist /etc/default/armbian-firstrun
 	fi
 
 	if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then

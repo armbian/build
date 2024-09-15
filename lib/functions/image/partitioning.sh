@@ -300,7 +300,7 @@ function prepare_partitions() {
 		wait_for_disk_sync "after mkfs" # force writes to be really flushed
 
 		# store in readonly global for usage in later hooks
-		root_part_uuid="$(blkid -s UUID -o value ${LOOP}p${rootpart})"
+		root_part_uuid="$(blkid -s UUID -o value ${rootdevice})"
 		declare -g -r ROOT_PART_UUID="${root_part_uuid}"
 
 		display_alert "Mounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"

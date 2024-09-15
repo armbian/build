@@ -398,7 +398,14 @@ function install_distribution_agnostic() {
 
 	# enable additional services, if they exist.
 	display_alert "Enabling Armbian services" "systemd" "info"
-	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun.service
+	if [[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun.service ]]; then
+	    # Note: armbian-firstrun starts before the user has a chance to edit the env file's values.
+	    # Exceptionaly, the env file can be edited during image build time
+        if test -n "$OPENSSHD_REGENERATE_HOST_KEYS"; then
+            sed -i "s/\(^OPENSSHD_REGENERATE_HOST_KEYS *= *\).*/\1$OPENSSHD_REGENERATE_HOST_KEYS/" "${SDCARD}"/etc/default/armbian-firstrun
+        fi
+		chroot_sdcard systemctl --no-reload enable armbian-firstrun.service
+	fi
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-zram-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-zram-config.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service ]] && chroot_sdcard systemctl --no-reload enable armbian-hardware-optimize.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-ramlog.service ]] && chroot_sdcard systemctl --no-reload enable armbian-ramlog.service
