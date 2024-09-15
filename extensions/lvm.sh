@@ -71,6 +71,13 @@ function post_create_partitions__setup_lvm() {
 }
 
 function prepare_root_device__create_volume_group() {
+
+	LOOP=$(losetup -f)
+	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
+	check_loop_device "$LOOP"
+	losetup $LOOP ${SDCARD}.raw
+	partprobe $LOOP
+
 	display_alert "Using LVM root" "${EXTENSION}" "info"
 	vgscan
 	vgchange -a y ${LVM_VG_NAME}

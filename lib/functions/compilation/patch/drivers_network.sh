@@ -501,7 +501,7 @@ driver_uwe5622() {
 		fi
 
 		# Apply patches that adjust the driver only for rockchip platforms
-		if [[ "$LINUXFAMILY" == rockchip* ]]; then
+		if [[ "$LINUXFAMILY" == rockchip* || "$LINUXFAMILY" == "rk35xx" ]]; then
 			if linux-version compare "${version}" le 6.1; then
 				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-adjust-for-rockchip-pre-6.1.patch"
 			else

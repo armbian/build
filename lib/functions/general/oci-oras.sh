@@ -85,7 +85,7 @@ function run_tool_oras() {
 	display_alert "Running ORAS ${ACTUAL_VERSION}" "HOME='${ORAS_HOME}'; retries='${retries:-1}'; cmdline: $*" "debug"
 	if [[ "${retries:-1}" -gt 1 ]]; then
 		display_alert "Calling ORAS with retries ${retries}" "$*" "debug"
-		sleep_seconds="30" do_with_retries "${retries}" env -i "HOME=${ORAS_HOME}" "${ORAS_BIN}" "$@"
+		sleep_seconds="30" do_with_retries "${retries}" env -i "HOME=${ORAS_HOME}" "HTTPS_PROXY=${HTTPS_PROXY}"  "${ORAS_BIN}" "$@"
 	else
 		# If any parameters passed, call ORAS, otherwise exit. We call it this way (sans-parameters) early to prepare ORAS tooling.
 		if [[ $# -eq 0 ]]; then

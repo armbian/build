@@ -93,7 +93,7 @@ function do_main_configuration() {
 	USEALLCORES=yes # Use all CPU cores for compiling
 
 	[[ -z $EXIT_PATCHING_ERROR ]] && EXIT_PATCHING_ERROR="" # exit patching if failed
-	[[ -z $HOST ]] && HOST="$BOARD"                         # set hostname to the board
+	[[ -z $HOST ]] && HOST="$BOARD"
 	cd "${SRC}" || exit
 
 	[[ -z "${CHROOT_CACHE_VERSION}" ]] && CHROOT_CACHE_VERSION=7
