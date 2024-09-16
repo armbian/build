@@ -7,7 +7,7 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.8.0} # https://github.com/mvdan/sh/releases/
+SHELLFMT_VERSION=${SHELLFMT_VERSION:-3.9.0} # https://github.com/mvdan/sh/releases/
 
 SRC="$(
 	cd "$(dirname "$0")/../.."
