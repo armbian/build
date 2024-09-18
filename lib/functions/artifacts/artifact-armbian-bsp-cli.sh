@@ -61,6 +61,8 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"KERNEL_IMAGE_TYPE: ${KERNEL_IMAGE_TYPE}"                     # /etc/armbian-release
 		"VENDOR: ${VENDOR}"                                           # /etc/armbian-release
 		"OVERLAYDIR: ${OVERLAYDIR}"                                   # /etc/armbian-release
+		"KERNEL_TARGET: ${KERNEL_TARGET}"                             # /etc/armbian-release
+		"KERNEL_TEST_TARGET: ${KERNEL_TEST_TARGET}"                   # /etc/armbian-release
 		"BOOT_SOC: ${BOOT_SOC}"                                       # /etc/armbian-release # See https://github.com/armbian/build/pull/6411
 		"hash_vars_no_normalize: ${hash_vars_no_normalize}"           # The non-normalized part, above
 	)
