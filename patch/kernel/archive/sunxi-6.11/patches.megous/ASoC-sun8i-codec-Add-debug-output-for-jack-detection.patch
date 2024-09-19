@@ -1,0 +1,129 @@
+From f1da2c16ddce574d78ba08a294c7dfc4f059dbe4 Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Sat, 17 Feb 2024 01:13:39 +0100
+Subject: ASoC: sun8i-codec: Add debug output for jack detection
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ sound/soc/sunxi/sun8i-codec.c | 32 +++++++++++++++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/sunxi/sun8i-codec.c b/sound/soc/sunxi/sun8i-codec.c
+index 67e304cb4238..a89c0f6aa99f 100644
+--- a/sound/soc/sunxi/sun8i-codec.c
++++ b/sound/soc/sunxi/sun8i-codec.c
+@@ -9,6 +9,8 @@
+  * Mylène Josserand <mylene.josserand@free-electrons.com>
+  */
+ 
++#define DEBUG
++
+ #include <linux/module.h>
+ #include <linux/delay.h>
+ #include <linux/clk.h>
+@@ -234,6 +236,7 @@ struct sun8i_codec {
+ 	int				jack_status;
+ 	int				jack_type;
+ 	int				jack_last_sample;
++	unsigned			jack_last_btn;
+ 	ktime_t				jack_hbias_ready;
+ 	struct mutex			jack_mutex;
+ 	int				last_hmic_irq;
+@@ -1344,6 +1347,8 @@ static void sun8i_codec_set_hmic_bias(struct sun8i_codec *scodec, bool enable)
+ 
+ 	snd_soc_dapm_sync(dapm);
+ 
++	dev_dbg(scodec->component->dev, "HMIC bias %s\n", enable ? "on" : "off");
++
+ 	regmap_update_bits(scodec->regmap, SUN8I_HMIC_CTRL1,
+ 			   irq_mask, enable ? irq_mask : 0);
+ }
+@@ -1352,6 +1357,7 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ {
+ 	struct sun8i_codec *scodec = container_of(work, struct sun8i_codec,
+ 						  jack_work.work);
++	struct device *dev = scodec->component->dev;
+ 	unsigned int mdata;
+ 	int type;
+ 
+@@ -1362,6 +1368,7 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ 			return;
+ 
+ 		scodec->jack_last_sample = -1;
++		scodec->jack_last_btn = 0;
+ 
+ 		if (scodec->jack_type & SND_JACK_MICROPHONE) {
+ 			/*
+@@ -1419,6 +1426,8 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ 
+ 		snd_soc_jack_report(scodec->jack, type, scodec->jack_type);
+ 		scodec->jack_status = SUN8I_JACK_STATUS_CONNECTED;
++
++		dev_dbg(dev, "jack: plug-in reported\n");
+ 	} else if (scodec->jack_status == SUN8I_JACK_STATUS_CONNECTED) {
+ 		if (scodec->last_hmic_irq != SUN8I_HMIC_STS_JACK_OUT_IRQ_ST)
+ 			return;
+@@ -1428,14 +1437,18 @@ static void sun8i_codec_jack_work(struct work_struct *work)
+ 			sun8i_codec_set_hmic_bias(scodec, false);
+ 
+ 		snd_soc_jack_report(scodec->jack, 0, scodec->jack_type);
++
++		dev_dbg(dev, "jack: plug-out reported\n");
+ 	}
+ }
+ 
+ static irqreturn_t sun8i_codec_jack_irq(int irq, void *dev_id)
+ {
+ 	struct sun8i_codec *scodec = dev_id;
++	struct device *dev = scodec->component->dev;
+ 	int type = SND_JACK_HEADSET;
+ 	unsigned int status, value;
++	unsigned btn_chg = 0;
+ 
+ 	guard(mutex)(&scodec->jack_mutex);
+ 
+@@ -1447,6 +1460,8 @@ static irqreturn_t sun8i_codec_jack_irq(int irq, void *dev_id)
+ 	 * 100ms after each interrupt..
+ 	 */
+ 	if (status & BIT(SUN8I_HMIC_STS_JACK_OUT_IRQ_ST)) {
++		dev_dbg(dev, "jack: irq plug-out\n");
++
+ 		/*
+ 		 * Out interrupt has priority over in interrupt so that if
+ 		 * we get both, we assume the disconnected state, which is
+@@ -1456,6 +1471,8 @@ static irqreturn_t sun8i_codec_jack_irq(int irq, void *dev_id)
+ 		mod_delayed_work(system_power_efficient_wq, &scodec->jack_work,
+ 				 msecs_to_jiffies(100));
+ 	} else if (status & BIT(SUN8I_HMIC_STS_JACK_IN_IRQ_ST)) {
++		dev_dbg(dev, "jack: irq plug-in\n");
++
+ 		scodec->last_hmic_irq = SUN8I_HMIC_STS_JACK_IN_IRQ_ST;
+ 		mod_delayed_work(system_power_efficient_wq, &scodec->jack_work,
+ 				 msecs_to_jiffies(100));
+@@ -1489,9 +1506,22 @@ static irqreturn_t sun8i_codec_jack_irq(int irq, void *dev_id)
+ 		 * samples are identical.
+ 		 */
+ 		if (scodec->jack_last_sample >= 0 &&
+-		    scodec->jack_last_sample == value)
++		    scodec->jack_last_sample == value) {
+ 			snd_soc_jack_report(scodec->jack, type,
+ 					    scodec->jack_type);
++			btn_chg = (scodec->jack_last_btn ^ type) & SUN8I_CODEC_BUTTONS;
++			scodec->jack_last_btn = type;
++		}
++
++		if (btn_chg & SND_JACK_BTN_0)
++			dev_dbg(dev, "jack: key_%spress BTN_0 (%#x)\n",
++				type & SND_JACK_BTN_0 ? "" : "de", value);
++		if (btn_chg & SND_JACK_BTN_1)
++			dev_dbg(dev, "jack: key_%spress BTN_1 (%#x)\n",
++				type & SND_JACK_BTN_1 ? "" : "de", value);
++		if (btn_chg & SND_JACK_BTN_2)
++			dev_dbg(dev, "jack: key_%spress BTN_2 (%#x)\n",
++				type & SND_JACK_BTN_2 ? "" : "de", value);
+ 
+ 		scodec->jack_last_sample = value;
+ 	}
+-- 
+2.35.3
+
