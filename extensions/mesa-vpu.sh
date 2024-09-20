@@ -158,7 +158,7 @@ function post_install_kernel_debs__3d() {
 	fi
 
 	display_alert "Upgrading Mesa packages" "${EXTENSION}" "info"
-	do_with_retries 3 chroot_sdcard_apt_get dist-upgrade
+	do_with_retries 3 chroot_sdcard_apt_get -o Dpkg::Options::="--force-confold" dist-upgrade
 
 	# KDE neon downgrade hack undo
 	do_with_retries 3 chroot_sdcard apt-mark unhold base-files
