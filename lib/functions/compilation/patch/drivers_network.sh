@@ -515,6 +515,10 @@ driver_uwe5622() {
 		if linux-version compare "${version}" ge 6.9; then
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.9.patch" "applying"
 		fi
+		
+		if linux-version compare "${version}" ge 6.11; then
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.11.patch" "applying"
+		fi
 
 	fi
 }
