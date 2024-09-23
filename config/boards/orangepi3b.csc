@@ -12,12 +12,6 @@ BOOT_SCENARIO="spl-blobs"
 BOOT_SUPPORT_SPI="yes"
 BOOT_SPI_RKSPI_LOADER="yes"
 
-function post_family_config_branch_edge__orangepi3b_use_patched_dtb() {
-	# orangepi 3b dtbs are coming to mainline in v6.11
-	# until then, v1.1 boards can continue to use patched dtb
-	BOOT_FDT_FILE="rockchip/rk3566-orangepi-3b.dtb"
-}
-
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__orangepi3b_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline u-boot overrides" "info"
