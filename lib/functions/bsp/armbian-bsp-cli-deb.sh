@@ -172,10 +172,11 @@ function compile_armbian-bsp-cli() {
 		activate update-initramfs
 	EOF
 
-	# copy distribution support status # @TODO: why? this changes over time and will be out of date
+	# copy distribution support and upgrade status
+	# this information is used in motd to show status and within armbian-config to perform upgrades
 	local releases=($(find ${SRC}/config/distributions -mindepth 1 -maxdepth 1 -type d))
 	for i in "${releases[@]}"; do
-		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)" >> "${destination}"/etc/armbian-distribution-status
+		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)$(echo ";upgrade" | sed 's/.*\///')=$(cat $i/upgrade)" >> "${destination}"/etc/armbian-distribution-status
 	done
 
 	# execute $LINUXFAMILY-specific tweaks
