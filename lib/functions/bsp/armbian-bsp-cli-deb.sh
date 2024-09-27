@@ -174,7 +174,7 @@ function compile_armbian-bsp-cli() {
 
 	# copy distribution support and upgrade status
 	# this information is used in motd to show status and within armbian-config to perform upgrades
-	local releases=($(find ${SRC}/config/distributions -mindepth 1 -maxdepth 1 -type d))
+	local releases=($(find ${SRC}/config/distributions -iname '*order*' -exec echo {} \; -exec cat {} \; | xargs -n2 -d'\n' | sort -nk2 | sed "s/\/order.*//g"))
 	for i in "${releases[@]}"; do
 		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)$(echo ";upgrade" | sed 's/.*\///')=$(cat $i/upgrade)" >> "${destination}"/etc/armbian-distribution-status
 	done
