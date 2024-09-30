@@ -138,6 +138,13 @@ function artifact_rootfs_cli_adapter_config_prep() {
 	declare -g -r RELEASE="${RELEASE}" # make readonly for finding who tries to change it
 	declare -g -r NEEDS_BINFMT="yes"   # make sure binfmts are installed during prepare_host_interactive
 
+	if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then # if not set to yes, force it to yes.
+		declare -g SKIP_ARMBIAN_REPO="yes"            # Using the repo during rootfs build causes insanity, so don't. Make readonly to ensure.
+	fi
+	declare -g -r SKIP_ARMBIAN_REPO # make it readonly to ensure sanity if hooks try to change it
+
+	track_general_config_variables "in artifact_rootfs_cli_adapter_config_prep"
+
 	# prep_conf_main_only_rootfs_ni is prep_conf_main_only_rootfs_ni() + mark_aggregation_required_in_default_build_start()
 	prep_conf_main_only_rootfs_ni < /dev/null # no stdin for this, so it bombs if tries to be interactive.
 
