@@ -176,9 +176,10 @@ function compile_armbian-bsp-cli() {
 
 	# copy distribution support and upgrade status
 	# this information is used in motd to show status and within armbian-config to perform upgrades
-	local releases=($(find ${SRC}/config/distributions -iname '*order*' -exec echo {} \; -exec cat {} \; | xargs -n2 -d'\n' | sort -nk2 | sed "s/\/order.*//g"))
+	declare -a releases=()
+	mapfile -t releases < <(for relorder in "${SRC}"/config/distributions/*/order; do echo "${relorder} $(xargs echo < "${relorder}")"; done | sort -nk2 | sed "s/\/order.*//g")
 	for i in "${releases[@]}"; do
-		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)$(echo ";upgrade" | sed 's/.*\///')=$(cat $i/upgrade)" >> "${destination}"/etc/armbian-distribution-status
+		echo "$(echo "$i" | sed 's/.*\///')=$(cat "$i"/support)$(echo ";upgrade" | sed 's/.*\///')=$(cat "$i"/upgrade)" >> "${destination}"/etc/armbian-distribution-status
 	done
 
 	# execute $LINUXFAMILY-specific tweaks
@@ -216,12 +217,12 @@ function compile_armbian-bsp-cli() {
 	# if freeze variable is removed, upgrade becomes possible again
 	if [[ "${BETA}" != "yes" ]]; then
 		for pin_variants in $(echo $KERNEL_UPGRADE_FREEZE | sed "s/,/ /g"); do
-		extracted_pins=(${pin_variants//@/ })
+			extracted_pins=(${pin_variants//@/ })
 			if [[ "${BRANCH}-${LINUXFAMILY}" == "${extracted_pins[0]}" ]]; then
 				cat <<- EOF >> "${destination}"/etc/apt/preferences.d/frozen-armbian
-				Package: linux-*-${extracted_pins[0]}
-				Pin: version ${extracted_pins[1]}
-				Pin-Priority: 999
+					Package: linux-*-${extracted_pins[0]}
+					Pin: version ${extracted_pins[1]}
+					Pin-Priority: 999
 				EOF
 			fi
 		done
@@ -455,7 +456,7 @@ function board_side_bsp_cli_postinst_finish() {
 	if [ ! -f "/etc/default/armbian-zram-config" ] && [ -f /etc/default/armbian-zram-config.dpkg-dist ]; then
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
 	fi
-    if [ ! -f "/etc/default/armbian-firstrun" ]; then
+	if [ ! -f "/etc/default/armbian-firstrun" ]; then
 		mv /etc/default/armbian-firstrun.dpkg-dist /etc/default/armbian-firstrun
 	fi
 
