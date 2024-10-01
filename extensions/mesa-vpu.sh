@@ -6,29 +6,19 @@
 #
 
 function extension_prepare_config__3d() {
-
-	# only used when generating image
-	[[ "${BUILDING_IMAGE}" != "yes" ]] && return 0
-
-	# only used when generating desktop
-	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
+	# Silently deny old releases which are not supported but are still in the system
+	[[ "${RELEASE}" =~ ^(bullseye|buster|focal)$ ]] && return 0
 
 	# some desktops doesn't support wayland
 	[[ "${DESKTOP_ENVIRONMENT}" == "xfce" || "${DESKTOP_ENVIRONMENT}" == "i3-wm" ]] && return 0
 
 	# Define image suffix
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
-
 		EXTRA_IMAGE_SUFFIXES+=("-panfork")
-
 	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
-
 		EXTRA_IMAGE_SUFFIXES+=("-kisak")
-
 	elif [[ "${DISTRIBUTION}" == "Debian" && "${RELEASE}" == "bookworm" ]]; then
-
 		EXTRA_IMAGE_SUFFIXES+=("-backported-mesa")
-
 	fi
 
 	# This should be enabled on all for rk3588 distributions where mesa and vendor kernel is present
@@ -39,21 +29,21 @@ function extension_prepare_config__3d() {
 }
 
 function post_install_kernel_debs__3d() {
-
 	# Silently deny old releases which are not supported but are still in the system
 	[[ "${RELEASE}" =~ ^(bullseye|buster|focal)$ ]] && return 0
-
-	# Do not install those packages on CLI and minimal images
-	[[ "${BUILD_DESKTOP}" != "yes" ]] && return 0
 
 	# some desktops doesn't support wayland
 	[[ "${DESKTOP_ENVIRONMENT}" == "xfce" || "${DESKTOP_ENVIRONMENT}" == "i3-wm" ]] && return 0
 
-	# Packages that are going to be installed
-	declare -a pkgs=("mesa-utils" "mesa-utils-extra" "libglx-mesa0" "libgl1-mesa-dri" "glmark2" "glmark2-wayland" "glmark2-es2-wayland" "glmark2-es2")
+	# Packages that are going to be installed, always, both for cli and desktop
+	declare -a pkgs=("libgl1-mesa-dri")
 
-	# Some packages, x11gl benchmark, came late into Ubuntu
-	[[ "${RELEASE}" != jammy ]] && pkgs+=("glmark2-x11" "glmark2-es2-x11")
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+		pkgs+=("libglx-mesa0") # x11 stuff all the way
+		pkgs+=("mesa-utils" "mesa-utils-extra")
+		pkgs+=("glmark2" "glmark2-wayland" "glmark2-es2-wayland" "glmark2-es2")
+		[[ "${RELEASE}" != jammy ]] && pkgs+=("glmark2-x11" "glmark2-es2-x11") # Some packages, x11gl benchmark, came late into Ubuntu
+	fi
 
 	# Rockchip RK3588 will use panfork only with legacy kernel
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
@@ -82,36 +72,38 @@ function post_install_kernel_debs__3d() {
 			Pin-Priority: 1001
 		EOF
 
-		if [[ "${ARCH}" == "arm64" ]]; then
+		# Add chromium if building a desktop
+		if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+			if [[ "${ARCH}" == "arm64" ]]; then
 
-			display_alert "Adding Amazingfate Chromium PPAs" "${EXTENSION}" "info"
-			do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/chromium --yes --no-update
-			sed -i "s/oracular/noble/g" "${SDCARD}"/etc/apt/sources.list.d/liujianfeng1994-ubuntu-chromium-"${RELEASE}".*
+				display_alert "Adding Amazingfate Chromium PPAs" "${EXTENSION}" "info"
+				do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/chromium --yes --no-update
+				sed -i "s/oracular/noble/g" "${SDCARD}"/etc/apt/sources.list.d/liujianfeng1994-ubuntu-chromium-"${RELEASE}".*
 
-			display_alert "Pinning amazingfated's Chromium PPAs" "${EXTENSION}" "info"
-			cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/liujianfeng1994-chromium-pin
-			Package: chromium
-			Pin: release o=LP-PPA-liujianfeng1994-chromium
-			Pin-Priority: 1001
-			EOF
+				display_alert "Pinning amazingfated's Chromium PPAs" "${EXTENSION}" "info"
+				cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/liujianfeng1994-chromium-pin
+					Package: chromium
+					Pin: release o=LP-PPA-liujianfeng1994-chromium
+					Pin-Priority: 1001
+				EOF
 
-		else
+			else
 
-			display_alert "Adding Xtradebs Apps PPAs" "${EXTENSION}" "info"
-			do_with_retries 3 chroot_sdcard add-apt-repository ppa:xtradeb/apps --yes --no-update
-			sed -i "s/oracular/noble/g" "${SDCARD}"/etc/apt/sources.list.d/xtradeb-ubuntu-apps-"${RELEASE}".*
+				display_alert "Adding Xtradebs Apps PPAs" "${EXTENSION}" "info"
+				do_with_retries 3 chroot_sdcard add-apt-repository ppa:xtradeb/apps --yes --no-update
+				sed -i "s/oracular/noble/g" "${SDCARD}"/etc/apt/sources.list.d/xtradeb-ubuntu-apps-"${RELEASE}".*
 
-	                display_alert "Pinning Xtradebs PPAs" "${EXTENSION}" "info"
-        	        cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/xtradebs-apps-pin
-			Package: chromium
-			Pin: release o=LP-PPA-xtradebs-apps
-			Pin-Priority: 1001
-			EOF
+				display_alert "Pinning Xtradebs PPAs" "${EXTENSION}" "info"
+				cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/xtradebs-apps-pin
+					Package: chromium
+					Pin: release o=LP-PPA-xtradebs-apps
+					Pin-Priority: 1001
+				EOF
 
+			fi
+
+			pkgs+=("chromium")
 		fi
-
-		pkgs+=("chromium")
-
 	elif [[ "${DISTRIBUTION}" == "Debian" && "${RELEASE}" == "bookworm" ]]; then
 
 		display_alert "Adding mesa backport repo for ${RELEASE} from OBS" "${EXTENSION}" "info"
@@ -120,50 +112,57 @@ function post_install_kernel_debs__3d() {
 
 	fi
 
-	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(jammy|noble)$ && "${BRANCH}" =~ ^(legacy|vendor)$ ]]; then
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then # if desktop, add amazingfated's multimedia PPAs and rockchip-multimedia-config utility, chromium, gstreamer, etc
+		if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "${RELEASE}" =~ ^(jammy|noble)$ && "${BRANCH}" =~ ^(legacy|vendor)$ ]]; then
 
-		pkgs+=("rockchip-multimedia-config" "chromium" "libv4l-rkmpp" "gstreamer1.0-rockchip")
-		if [[ "${RELEASE}" == "jammy" ]]; then
-			pkgs+=(libwidevinecdm)
-		else
-			pkgs+=(libwidevinecdm0)
+			pkgs+=("rockchip-multimedia-config" "chromium" "libv4l-rkmpp" "gstreamer1.0-rockchip")
+			if [[ "${RELEASE}" == "jammy" ]]; then
+				pkgs+=(libwidevinecdm)
+			else
+				pkgs+=(libwidevinecdm0)
+			fi
+
+			display_alert "Adding amazingfated's multimedia PPAs" "${EXTENSION}" "info"
+			do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/rockchip-multimedia --yes --no-update
+
+			display_alert "Pinning amazingfated's multimedia PPAs" "${EXTENSION}" "info"
+			cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/amazingfated-rk3588-rockchip-multimedia-pin
+				Package: *
+				Pin: release o=LP-PPA-liujianfeng1994-rockchip-multimedia
+				Pin-Priority: 1001
+			EOF
 		fi
-
-		display_alert "Adding amazingfated's multimedia PPAs" "${EXTENSION}" "info"
-		do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/rockchip-multimedia --yes --no-update
-
-		display_alert "Pinning amazingfated's multimedia PPAs" "${EXTENSION}" "info"
-		cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/amazingfated-rk3588-rockchip-multimedia-pin
-			Package: *
-			Pin: release o=LP-PPA-liujianfeng1994-rockchip-multimedia
-			Pin-Priority: 1001
-		EOF
 	fi
-
-	display_alert "Updating sources list, after kisak PPAs" "${EXTENSION}" "info"
+	display_alert "Updating sources list, after adding all PPAs" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
 	# KDE neon downgrades base-files for some reason. This prevents tacking it
 	do_with_retries 3 chroot_sdcard apt-mark hold base-files
 
-	# This library must be installed before rockchip-multimedia
-	do_with_retries 3 chroot_sdcard_apt_get_install libv4l-0
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then # This library must be installed before rockchip-multimedia; only for desktops
+		do_with_retries 3 chroot_sdcard_apt_get_install libv4l-0
+	fi
 
 	display_alert "Installing 3D extension packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get_install "${pkgs[@]}"
 
 	# This library gets downgraded
-	if [[ "${RELEASE}" =~ ^(oracular|noble|jammy)$ && "${ARCH}" == arm* ]]; then
-		do_with_retries 3 chroot_sdcard apt-mark hold libdav1d7
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+		if [[ "${RELEASE}" =~ ^(oracular|noble|jammy)$ && "${ARCH}" == arm* ]]; then
+			do_with_retries 3 chroot_sdcard apt-mark hold libdav1d7
+		fi
 	fi
 
-	display_alert "Upgrading Mesa packages" "${EXTENSION}" "info"
+	display_alert "Upgrading all packages, including hopefully all mesa packages" "${EXTENSION}" "info"
 	do_with_retries 3 chroot_sdcard_apt_get -o Dpkg::Options::="--force-confold" dist-upgrade
 
 	# KDE neon downgrade hack undo
 	do_with_retries 3 chroot_sdcard apt-mark unhold base-files
-	if [[ "${RELEASE}" =~ ^(oracular|noble|jammy)$ && "${ARCH}" == arm* ]]; then
-		do_with_retries 3 chroot_sdcard apt-mark unhold libdav1d7
+
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+		if [[ "${RELEASE}" =~ ^(oracular|noble|jammy)$ && "${ARCH}" == arm* ]]; then
+			do_with_retries 3 chroot_sdcard apt-mark unhold libdav1d7
+		fi
 	fi
 
 	# Disable wayland flag for XFCE
@@ -171,4 +170,5 @@ function post_install_kernel_debs__3d() {
 	#	sed -e '/wayland/ s/^#*/#/' -i "${SDCARD}"/etc/chromium.d/default-flags
 	#fi
 
+	return 0
 }
