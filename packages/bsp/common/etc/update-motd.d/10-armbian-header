@@ -11,6 +11,7 @@
 
 THIS_SCRIPT="header"
 MOTD_DISABLE=""
+HIDE_IP_PATTERN="^dummy0|^lo|^docker"
 
 # Read image configuration
 [[ -f /etc/armbian-image-release ]] && . /etc/armbian-image-release
@@ -35,7 +36,18 @@ if [[ -f /etc/armbian-distribution-status ]]; then
 	[[ -z "$DISTRIBUTION_CODENAME" && -x /usr/bin/lsb_release ]] && DISTRIBUTION_CODENAME=$(/usr/bin/lsb_release -c | cut -d":" -f2 | tr -d "\t")
 	[[ -z "$DISTRIBUTION_ID" && -x /usr/bin/lsb_release ]] && DISTRIBUTION_ID=$(/usr/bin/lsb_release -i | cut -d":" -f2 | tr -d "\t")
 	# Read Armbian distribution status
-	DISTRIBUTION_STATUS=$(grep "$DISTRIBUTION_CODENAME" /etc/armbian-distribution-status | cut -d"=" -f2)
+	DISTRIBUTION_STATUS=$(grep "^${DISTRIBUTION_CODENAME}" /etc/armbian-distribution-status | cut -d"=" -f2 | cut -d";" -f1)
+
+	# Read upgrade possibilities on stable channel
+	filter=$(grep "supported" /etc/armbian-distribution-status | cut -d"=" -f1)
+	upgrade=$(for j in $filter; do
+		for i in $(grep "^${DISTRIBUTION_CODENAME}" /etc/armbian-distribution-status | cut -d";" -f2 | cut -d"=" -f2 | sed "s/,/ /g"); do
+			if [[ $i == $j ]]; then
+				echo $i
+			fi
+		done
+	done | tail -1)
+
 fi
 [[ -f /etc/default/armbian-motd ]] && . /etc/default/armbian-motd
 
@@ -43,8 +55,33 @@ for f in $MOTD_DISABLE; do
 	[[ $f == $THIS_SCRIPT ]] && exit 0
 done
 
+function get_wan_address() {
+	curl --connect-timeout 2 -s http://whatismyip.akamai.com/
+} # get wan ip address
+
+function get_ip_addresses() {
+	local ips=()
+	for f in /sys/class/net/*; do
+		local intf=$(basename $f)
+		# match only interface names "dummy0" and "lo"
+		if [[ $intf =~ $HIDE_IP_PATTERN ]]; then
+			continue
+		else
+			local tmp=$(ip -4 addr show dev $intf | grep -v "$intf:avahi" | awk '/inet/ {print $2}' | cut -d'/' -f1 | uniq)
+			# add both name and IP - can be informative but becomes ugly with long persistent/predictable device names
+			#[[ -n $tmp ]] && ips+=("$intf: $tmp")
+			# add IP only
+			[[ -n $tmp ]] && ips+=("$tmp")
+		fi
+	done
+	echo "${ips[@]}"
+} # get_ip_addresses
+
 # Read Armbian kernel version
 KERNELID=$(uname -r)
+# Get other variables
+ip_address=$(get_ip_addresses &)
+wan_ip_address=$(get_wan_address &)
 
 # Display software vendor logo
 echo -e "\e[1;91m$(figlet -f small " $VENDOR")\e[0m";
@@ -72,6 +109,7 @@ else
 	DISTRO_STATUS="\e[0;93mrolling\e[0m ($DISTRIBUTION_CODENAME)"
 fi
 
+
 # read packages update status
 NUM_UPDATES=0
 NUM_UPDATES_ONHOLD=0
@@ -93,6 +131,9 @@ echo ""
 
 # Display packages status
 if [[ -n $DISTRO_STATUS ]]; then
+	if [[ -n "${upgrade}" ]]; then
+		DISTRO_STATUS+=", possible distro upgrade ($upgrade)"
+	fi
 	echo -e " Packages:     ${DISTRIBUTION_ID^} ${DISTRO_STATUS}"
 fi
 
@@ -105,3 +146,9 @@ fi
 if [[ -n $HARDWARE_STATUS ]]; then
         echo -e " Support:      $HARDWARE_STATUS"
 fi
+
+echo -en " IP addresses: \x1B[93m(LAN)\x1B[0m \x1B[92m$ip_address\x1B[0m "
+if [[ -n $wan_ip_address ]]; then
+echo -e "\x1B[93m(WAN)\x1B[0m $wan_ip_address"
+fi
+echo ""
