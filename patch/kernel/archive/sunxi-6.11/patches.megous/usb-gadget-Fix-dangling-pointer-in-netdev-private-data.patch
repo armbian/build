@@ -1,0 +1,307 @@
+From 8775dece1121a2034faa387e488786af1ca0445b Mon Sep 17 00:00:00 2001
+From: Ondrej Jirman <megi@xff.cz>
+Date: Thu, 7 Sep 2023 14:07:26 +0200
+Subject: usb: gadget: Fix dangling pointer in netdev private data
+
+Some USB drivers destroy and re-create the gadget regularly. This
+leads to stale gadget pointer in gether_* using USB gadget functions
+(ecm, eem, ncm, rndis, etc.).
+
+Don't parent the netdev to the gadget device, and set gadget to
+NULL in function unbind callback, to avoid potential user-after-free
+issues.
+
+Signed-off-by: Ondrej Jirman <megi@xff.cz>
+---
+ drivers/usb/gadget/function/f_ecm.c    | 12 ++++++-----
+ drivers/usb/gadget/function/f_eem.c    | 28 +++++++++++++-------------
+ drivers/usb/gadget/function/f_ncm.c    |  9 ++++++---
+ drivers/usb/gadget/function/f_rndis.c  | 26 ++++++++++++------------
+ drivers/usb/gadget/function/f_subset.c | 18 +++++++++++------
+ drivers/usb/gadget/function/u_ether.c  | 10 ++++-----
+ 6 files changed, 56 insertions(+), 47 deletions(-)
+
+diff --git a/drivers/usb/gadget/function/f_ecm.c b/drivers/usb/gadget/function/f_ecm.c
+index 6cb7771e8a69..fb54b2007981 100644
+--- a/drivers/usb/gadget/function/f_ecm.c
++++ b/drivers/usb/gadget/function/f_ecm.c
+@@ -685,14 +685,12 @@ ecm_bind(struct usb_configuration *c, struct usb_function *f)
+ 	ecm_opts = container_of(f->fi, struct f_ecm_opts, func_inst);
+ 
+ 	mutex_lock(&ecm_opts->lock);
+-
+ 	gether_set_gadget(ecm_opts->net, cdev->gadget);
+-
+ 	if (!ecm_opts->bound) {
+ 		status = gether_register_netdev(ecm_opts->net);
+-		ecm_opts->bound = true;
++		if (!status)
++			ecm_opts->bound = true;
+ 	}
+-
+ 	mutex_unlock(&ecm_opts->lock);
+ 	if (status)
+ 		return status;
+@@ -907,7 +905,9 @@ static void ecm_free(struct usb_function *f)
+ 
+ static void ecm_unbind(struct usb_configuration *c, struct usb_function *f)
+ {
+-	struct f_ecm		*ecm = func_to_ecm(f);
++	struct f_ecm *ecm = func_to_ecm(f);
++	struct f_ecm_opts *opts = container_of(f->fi, struct f_ecm_opts,
++					       func_inst);
+ 
+ 	DBG(c->cdev, "ecm unbind\n");
+ 
+@@ -920,6 +920,8 @@ static void ecm_unbind(struct usb_configuration *c, struct usb_function *f)
+ 
+ 	kfree(ecm->notify_req->buf);
+ 	usb_ep_free_request(ecm->notify, ecm->notify_req);
++
++	gether_set_gadget(opts->net, NULL);
+ }
+ 
+ static struct usb_function *ecm_alloc(struct usb_function_instance *fi)
+diff --git a/drivers/usb/gadget/function/f_eem.c b/drivers/usb/gadget/function/f_eem.c
+index 6de81ea17274..b1e1a26808dd 100644
+--- a/drivers/usb/gadget/function/f_eem.c
++++ b/drivers/usb/gadget/function/f_eem.c
+@@ -247,28 +247,23 @@ static int eem_bind(struct usb_configuration *c, struct usb_function *f)
+ 	struct usb_composite_dev *cdev = c->cdev;
+ 	struct f_eem		*eem = func_to_eem(f);
+ 	struct usb_string	*us;
+-	int			status;
++	int			status = 0;
+ 	struct usb_ep		*ep;
+ 
+ 	struct f_eem_opts	*eem_opts;
+ 
+ 	eem_opts = container_of(f->fi, struct f_eem_opts, func_inst);
+-	/*
+-	 * in drivers/usb/gadget/configfs.c:configfs_composite_bind()
+-	 * configurations are bound in sequence with list_for_each_entry,
+-	 * in each configuration its functions are bound in sequence
+-	 * with list_for_each_entry, so we assume no race condition
+-	 * with regard to eem_opts->bound access
+-	 */
++
++	mutex_lock(&eem_opts->lock);
++	gether_set_gadget(eem_opts->net, cdev->gadget);
+ 	if (!eem_opts->bound) {
+-		mutex_lock(&eem_opts->lock);
+-		gether_set_gadget(eem_opts->net, cdev->gadget);
+ 		status = gether_register_netdev(eem_opts->net);
+-		mutex_unlock(&eem_opts->lock);
+-		if (status)
+-			return status;
+-		eem_opts->bound = true;
++		if (!status)
++			eem_opts->bound = true;
+ 	}
++	mutex_unlock(&eem_opts->lock);
++	if (status)
++		return status;
+ 
+ 	us = usb_gstrings_attach(cdev, eem_strings,
+ 				 ARRAY_SIZE(eem_string_defs));
+@@ -635,9 +630,14 @@ static void eem_free(struct usb_function *f)
+ 
+ static void eem_unbind(struct usb_configuration *c, struct usb_function *f)
+ {
++	struct f_eem_opts *opts = container_of(f->fi, struct f_eem_opts,
++					       func_inst);
++
+ 	DBG(c->cdev, "eem unbind\n");
+ 
+ 	usb_free_all_descriptors(f);
++
++	gether_set_gadget(opts->net, NULL);
+ }
+ 
+ static struct usb_function *eem_alloc(struct usb_function_instance *fi)
+diff --git a/drivers/usb/gadget/function/f_ncm.c b/drivers/usb/gadget/function/f_ncm.c
+index 8e761249d672..49b41da779ed 100644
+--- a/drivers/usb/gadget/function/f_ncm.c
++++ b/drivers/usb/gadget/function/f_ncm.c
+@@ -1454,14 +1454,13 @@ static int ncm_bind(struct usb_configuration *c, struct usb_function *f)
+ 	if (!ncm_opts->bound) {
+ 		ncm_opts->net->mtu = (ncm_opts->max_segment_size - ETH_HLEN);
+ 		status = gether_register_netdev(ncm_opts->net);
++		if (!status)
++			ncm_opts->bound = true;
+ 	}
+ 	mutex_unlock(&ncm_opts->lock);
+-
+ 	if (status)
+ 		goto fail;
+ 
+-	ncm_opts->bound = true;
+-
+ 	us = usb_gstrings_attach(cdev, ncm_strings,
+ 				 ARRAY_SIZE(ncm_string_defs));
+ 	if (IS_ERR(us)) {
+@@ -1728,6 +1727,8 @@ static void ncm_free(struct usb_function *f)
+ static void ncm_unbind(struct usb_configuration *c, struct usb_function *f)
+ {
+ 	struct f_ncm *ncm = func_to_ncm(f);
++	struct f_ncm_opts *opts = container_of(f->fi, struct f_ncm_opts,
++					       func_inst);
+ 
+ 	DBG(c->cdev, "ncm unbind\n");
+ 
+@@ -1746,6 +1747,8 @@ static void ncm_unbind(struct usb_configuration *c, struct usb_function *f)
+ 
+ 	kfree(ncm->notify_req->buf);
+ 	usb_ep_free_request(ncm->notify, ncm->notify_req);
++
++	gether_set_gadget(opts->net, NULL);
+ }
+ 
+ static struct usb_function *ncm_alloc(struct usb_function_instance *fi)
+diff --git a/drivers/usb/gadget/function/f_rndis.c b/drivers/usb/gadget/function/f_rndis.c
+index 7cec19d65fb5..c2138f17a1c4 100644
+--- a/drivers/usb/gadget/function/f_rndis.c
++++ b/drivers/usb/gadget/function/f_rndis.c
+@@ -658,7 +658,7 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
+ 	struct usb_composite_dev *cdev = c->cdev;
+ 	struct f_rndis		*rndis = func_to_rndis(f);
+ 	struct usb_string	*us;
+-	int			status;
++	int			status = 0;
+ 	struct usb_ep		*ep;
+ 
+ 	struct f_rndis_opts *rndis_opts;
+@@ -681,20 +681,16 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
+ 	rndis_iad_descriptor.bFunctionSubClass = rndis_opts->subclass;
+ 	rndis_iad_descriptor.bFunctionProtocol = rndis_opts->protocol;
+ 
+-	/*
+-	 * in drivers/usb/gadget/configfs.c:configfs_composite_bind()
+-	 * configurations are bound in sequence with list_for_each_entry,
+-	 * in each configuration its functions are bound in sequence
+-	 * with list_for_each_entry, so we assume no race condition
+-	 * with regard to rndis_opts->bound access
+-	 */
++	mutex_lock(&rndis_opts->lock);
++	gether_set_gadget(rndis_opts->net, cdev->gadget);
+ 	if (!rndis_opts->bound) {
+-		gether_set_gadget(rndis_opts->net, cdev->gadget);
+ 		status = gether_register_netdev(rndis_opts->net);
+-		if (status)
+-			goto fail;
+-		rndis_opts->bound = true;
++		if (!status)
++			rndis_opts->bound = true;
+ 	}
++	mutex_unlock(&rndis_opts->lock);
++	if (status)
++		goto fail;
+ 
+ 	us = usb_gstrings_attach(cdev, rndis_strings,
+ 				 ARRAY_SIZE(rndis_string_defs));
+@@ -954,7 +950,9 @@ static void rndis_free(struct usb_function *f)
+ 
+ static void rndis_unbind(struct usb_configuration *c, struct usb_function *f)
+ {
+-	struct f_rndis		*rndis = func_to_rndis(f);
++	struct f_rndis *rndis = func_to_rndis(f);
++	struct f_rndis_opts *opts = container_of(f->fi, struct f_rndis_opts,
++						 func_inst);
+ 
+ 	kfree(f->os_desc_table);
+ 	f->os_desc_n = 0;
+@@ -962,6 +960,8 @@ static void rndis_unbind(struct usb_configuration *c, struct usb_function *f)
+ 
+ 	kfree(rndis->notify_req->buf);
+ 	usb_ep_free_request(rndis->notify, rndis->notify_req);
++
++	gether_set_gadget(opts->net, NULL);
+ }
+ 
+ static struct usb_function *rndis_alloc(struct usb_function_instance *fi)
+diff --git a/drivers/usb/gadget/function/f_subset.c b/drivers/usb/gadget/function/f_subset.c
+index ea3fdd842462..b595beb5f474 100644
+--- a/drivers/usb/gadget/function/f_subset.c
++++ b/drivers/usb/gadget/function/f_subset.c
+@@ -308,15 +308,16 @@ geth_bind(struct usb_configuration *c, struct usb_function *f)
+ 	 * with list_for_each_entry, so we assume no race condition
+ 	 * with regard to gether_opts->bound access
+ 	 */
++	mutex_lock(&gether_opts->lock);
++	gether_set_gadget(gether_opts->net, cdev->gadget);
+ 	if (!gether_opts->bound) {
+-		mutex_lock(&gether_opts->lock);
+-		gether_set_gadget(gether_opts->net, cdev->gadget);
+ 		status = gether_register_netdev(gether_opts->net);
+-		mutex_unlock(&gether_opts->lock);
+-		if (status)
+-			return status;
+-		gether_opts->bound = true;
++		if (!status)
++			gether_opts->bound = true;
+ 	}
++	mutex_unlock(&gether_opts->lock);
++	if (status)
++		return status;
+ 
+ 	us = usb_gstrings_attach(cdev, geth_strings,
+ 				 ARRAY_SIZE(geth_string_defs));
+@@ -456,8 +457,13 @@ static void geth_free(struct usb_function *f)
+ 
+ static void geth_unbind(struct usb_configuration *c, struct usb_function *f)
+ {
++	struct f_gether_opts *opts = container_of(f->fi, struct f_gether_opts,
++						  func_inst);
++
+ 	geth_string_defs[0].id = 0;
+ 	usb_free_all_descriptors(f);
++
++	gether_set_gadget(opts->net, NULL);
+ }
+ 
+ static struct usb_function *geth_alloc(struct usb_function_instance *fi)
+diff --git a/drivers/usb/gadget/function/u_ether.c b/drivers/usb/gadget/function/u_ether.c
+index 09e2838917e2..2ee513024f59 100644
+--- a/drivers/usb/gadget/function/u_ether.c
++++ b/drivers/usb/gadget/function/u_ether.c
+@@ -112,8 +112,10 @@ static void eth_get_drvinfo(struct net_device *net, struct ethtool_drvinfo *p)
+ 
+ 	strscpy(p->driver, "g_ether", sizeof(p->driver));
+ 	strscpy(p->version, UETH__VERSION, sizeof(p->version));
+-	strscpy(p->fw_version, dev->gadget->name, sizeof(p->fw_version));
+-	strscpy(p->bus_info, dev_name(&dev->gadget->dev), sizeof(p->bus_info));
++	if (dev->gadget) {
++		strscpy(p->fw_version, dev->gadget->name, sizeof(p->fw_version));
++		strscpy(p->bus_info, dev_name(&dev->gadget->dev), sizeof(p->bus_info));
++	}
+ }
+ 
+ /* REVISIT can also support:
+@@ -787,7 +789,6 @@ struct eth_dev *gether_setup_name(struct usb_gadget *g,
+ 	net->max_mtu = GETHER_MAX_MTU_SIZE;
+ 
+ 	dev->gadget = g;
+-	SET_NETDEV_DEV(net, &g->dev);
+ 	SET_NETDEV_DEVTYPE(net, &gadget_type);
+ 
+ 	status = register_netdev(net);
+@@ -860,8 +861,6 @@ int gether_register_netdev(struct net_device *net)
+ 	struct usb_gadget *g;
+ 	int status;
+ 
+-	if (!net->dev.parent)
+-		return -EINVAL;
+ 	dev = netdev_priv(net);
+ 	g = dev->gadget;
+ 
+@@ -892,7 +891,6 @@ void gether_set_gadget(struct net_device *net, struct usb_gadget *g)
+ 
+ 	dev = netdev_priv(net);
+ 	dev->gadget = g;
+-	SET_NETDEV_DEV(net, &g->dev);
+ }
+ EXPORT_SYMBOL_GPL(gether_set_gadget);
+ 
+-- 
+2.35.3
+

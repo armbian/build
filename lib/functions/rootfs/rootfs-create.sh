@@ -224,7 +224,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	# stage: check md5 sum of installed packages. Just in case. @TODO: rpardini: this should also be done when a cache is used, not only when it is created
 	# lets check only for supported targets only unless forced
-	if [[ "${DISTRIBUTION_STATUS}" == "supported" || "${FORCE_CHECK_MD5_PACKAGES:-"no"}" == "yes" ]]; then
+	if [[ "${DISTRIBUTION_STATUS}" == "supported" && "${FORCE_CHECK_MD5_PACKAGES:-"no"}" == "yes" ]]; then
 		display_alert "Checking MD5 sum of installed packages" "debsums" "info"
 		declare -g if_error_detail_message="Check MD5 sum of installed packages failed"
 		chroot_sdcard debsums --silent
