@@ -1,0 +1,211 @@
+name: "Rebuild Armbian"
+author: "https://github.com/armbian"
+description: "Build Armbian Linux"
+inputs:
+
+  armbian_token:
+    description: "GitHub installation access token"
+    required: true
+
+  armbian_runner_clean:
+    description: "Make some space on GH runners"
+    required: false
+    default: ""
+
+  armbian_artifacts:
+    descriptions: "Upload PATH"
+    required: false
+    default: "build/output/images/"
+
+  armbian_target:
+    description: "Build image or kernel"
+    required: false
+    default: "kernel"
+
+  armbian_branch:
+    description: "Choose framework branch"
+    required: false
+    default: "main"
+
+  armbian_kernel_branch:
+    description: "Choose kernel branch"
+    required: false
+    default: "current"
+
+  armbian_release:
+    description: "Choose userspace release"
+    required: false
+    default: "jammy"
+
+  armbian_version:
+    description: "Set different version"
+    required: false
+    default: ""
+
+  armbian_board:
+    description: "Select hardware platform"
+    required: false
+    default: "uefi-x86"
+
+  armbian_ui:
+    description: "Armbian user interface"
+    required: false
+    default: "server"
+
+  armbian_compress:
+    description: "Armbian compress method"
+    required: false
+    default: "sha,img,xz"
+
+  armbian_extensions:
+    description: "Armbian lists of extensions"
+    required: false
+    default: ""
+
+  armbian_userpatches:
+    description: "Armbian userpatches path"
+    required: false
+    default: ""
+
+  armbian_pgp_key:
+    description: "Armbian PGP key"
+    required: false
+    default: ""
+
+  armbian_pgp_password:
+    description: "Armbian PGP password"
+    required: false
+    default: ""
+
+  armbian_release_tittle:
+    description: "Armbian image"
+    required: false
+    default: "Armbian image"
+
+  armbian_release_body:
+    description: "Armbian images"
+    required: false
+    default: "Build with [Armbian tools](https://github.com/armbian/build)"
+
+runs:
+  using: "composite"
+
+  steps:
+
+    - name: Free Github Runner
+      if: ${{ inputs.armbian_runner_clean != '' }}
+      uses: descriptinc/free-disk-space@main
+      with:
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: "Import GPG key"
+      if: ${{ inputs.armbian_pgp_key != '' }}
+      uses: crazy-max/ghaction-import-gpg@v6
+      with:
+        gpg_private_key: ${{ inputs.armbian_pgp_key }}
+        passphrase: ${{ inputs.armbian_pgp_password }}
+
+    - name: "Checkout Armbian os"
+      uses: actions/checkout@v4
+      with:
+        repository: armbian/os
+        fetch-depth: 0
+        clean: false
+        path: os
+
+    - name: "Checkout Armbian build framework"
+      uses: actions/checkout@v4
+      with:
+        repository: armbian/build
+        fetch-depth: 0
+        clean: false
+        path: build
+
+    - name: "Checkout customisations"
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        clean: false
+        path: custom
+
+    - shell: bash
+      run: |
+
+        # read version from upstream Armbian OS
+        cat os/stable.json | jq '.version' | sed "s/\"//g" | sed 's/^/ARMBIAN_VERSION=/' >> $GITHUB_ENV
+        [[ "${{ inputs.armbian_version }}" != '' ]] && echo "ARMBIAN_VERSION=${{ inputs.armbian_version }}" >> $GITHUB_ENV
+
+        # copy os userpatches and custom
+        mkdir -pv build/userpatches
+        rsync -av os/userpatches/. build/userpatches/
+        [[ -d custom/userpatches ]] && rsync -av custom/userpatches/. build/userpatches/
+
+    - shell: bash
+      run: |
+
+        # userspace decode
+        if [[ "${{ inputs.armbian_ui }}" == minimal ]]; then
+          BUILD_DESKTOP="no"
+          BUILD_MINIMAL="yes"
+        elif [[ "${{ inputs.armbian_ui }}" == server ]]; then
+          BUILD_DESKTOP="no"
+          BUILD_MINIMAL="no"
+        else
+          BUILD_DESKTOP="yes"
+          BUILD_MINIMAL="no"
+          DESKTOP_ENVIRONMENT="${{ inputs.armbian_ui }}"
+          DESKTOP_APPGROUPS_SELECTED=""
+          DESKTOP_ENVIRONMENT_CONFIG_NAME="config_base"
+        fi
+
+        # go to build folder and checkout
+        cd build
+        git checkout ${{ inputs.armbian_branch }}
+
+        # execute build command
+        ./compile.sh "${{ inputs.armbian_target }}" \
+        REVISION="${{ env.ARMBIAN_VERSION }}" \
+        BOARD="${{ inputs.armbian_board }}" \
+        BRANCH="${{ inputs.armbian_kernel_branch }}" \
+        RELEASE="${{ inputs.armbian_release }}" \
+        KERNEL_CONFIGURE="no" \
+        BUILD_DESKTOP="${BUILD_DESKTOP}" \
+        BUILD_MINIMAL="${BUILD_MINIMAL}" \
+        DESKTOP_ENVIRONMENT="${DESKTOP_ENVIRONMENT}" \
+        DESKTOP_APPGROUPS_SELECTED="${DESKTOP_APPGROUPS_SELECTED}" \
+        DESKTOP_ENVIRONMENT_CONFIG_NAME="${DESKTOP_ENVIRONMENT_CONFIG_NAME}" \
+        ENABLE_EXTENSIONS="${{ inputs.armbian_extensions }}" \
+        COMPRESS_OUTPUTIMAGE="${{ inputs.armbian_compress }}" \
+        SHARE_LOG="yes" \
+        EXPERT="yes"
+
+    - name: Sign
+      shell: bash
+      if: ${{ inputs.armbian_pgp_password != '' }}
+      run: |
+        echo ${{ inputs.armbian_pgp_password }} | \
+        gpg --passphrase-fd 0 --armor --detach-sign --pinentry-mode loopback --batch --yes \
+        build/output/images/*.img*.xz
+
+    - uses: ncipollo/release-action@v1
+      with:
+        tag: "${{ env.ARMBIAN_VERSION }}"
+        name: "${{ inputs.armbian_release_tittle }}"
+        artifacts: "${{ inputs.armbian_artifacts }}*"
+        allowUpdates: true
+        removeArtifacts: false
+        replacesArtifacts: true
+        makeLatest: true
+        token: "${{ inputs.armbian_token }}"
+        body: |
+          ${{ inputs.armbian_release_body }}
+
+branding:
+  icon: "check"
+  color: "red"
+
