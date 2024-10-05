@@ -9,7 +9,7 @@ function extension_prepare_config__3d() {
 	# Silently deny old releases which are not supported but are still in the system
 	[[ "${RELEASE}" =~ ^(bullseye|buster|focal)$ ]] && return 0
 
-	# Silently deny on minimal CLI images
+	# Deny on minimal CLI images
 	if [[ "${BUILD_MINIMAL}" == "yes" ]]; then
 		display_alert "Extension: ${EXTENSION}" "skip installation in minimal images" "warn"
 		return 0
@@ -37,6 +37,12 @@ function extension_prepare_config__3d() {
 function post_install_kernel_debs__3d() {
 	# Silently deny old releases which are not supported but are still in the system
 	[[ "${RELEASE}" =~ ^(bullseye|buster|focal)$ ]] && return 0
+
+	# Deny on minimal CLI images
+	if [[ "${BUILD_MINIMAL}" == "yes" ]]; then
+		display_alert "Extension: ${EXTENSION}" "skip installation in minimal images" "warn"
+		return 0
+	fi
 
 	# some desktops doesn't support wayland
 	[[ "${DESKTOP_ENVIRONMENT}" == "xfce" || "${DESKTOP_ENVIRONMENT}" == "i3-wm" ]] && return 0
