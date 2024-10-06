@@ -29,7 +29,11 @@ function extension_prepare_config__3d() {
 
 	# This should be enabled on all for rk3588 distributions where mesa and vendor kernel is present
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" == vendor ]]; then
-		declare -g DEFAULT_OVERLAYS="panthor-gpu"
+		if [[ -n $DEFAULT_OVERLAYS ]]; then
+			DEFAULT_OVERLAYS+=" panthor-gpu"
+		else
+			declare -g DEFAULT_OVERLAYS="panthor-gpu"
+		fi
 	fi
 
 }
