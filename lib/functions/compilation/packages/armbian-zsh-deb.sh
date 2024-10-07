@@ -78,6 +78,9 @@ compile_armbian-zsh() {
 	# define default plugins
 	sed -i 's/^plugins=.*/plugins=(evalcache git git-extras debian tmux screen history extract colorize web-search docker)/' "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
 
+	# add collection of Armbian BASH aliases also to ZSH. They are compatible
+	cat "${SRC}"/packages/bsp/common/etc/skel/.bash_aliases >> "${tmp_dir}/${armbian_zsh_dir}"/etc/skel/.zshrc
+
 	chmod 755 "${tmp_dir}/${armbian_zsh_dir}"/DEBIAN/postinst
 
 	dpkg_deb_build "${tmp_dir}/${armbian_zsh_dir}" "armbian-zsh"
