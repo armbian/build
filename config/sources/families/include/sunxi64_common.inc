@@ -16,7 +16,7 @@ declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2024.01"}"
 declare -g BOOTENV_FILE='sunxi.txt'
 declare -g UBOOT_TARGET_MAP="${UBOOT_TARGET_MAP:-BINMAN_ALLOW_MISSING=1;;u-boot-sunxi-with-spl.bin}"
 declare -g BOOTSCRIPT='boot-sun50i-next.cmd:boot.cmd'
-declare -g OVERLAYDIR="/boot/dtb/allwinner/overlay"
+declare -g OVERLAY_DIR="/boot/dtb/allwinner/overlay"
 declare -g LINUXFAMILY=sunxi64
 
 # shellcheck source=config/sources/families/include/crust_firmware.inc
