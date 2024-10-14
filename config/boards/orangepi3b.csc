@@ -14,16 +14,16 @@ BOOT_SPI_RKSPI_LOADER="yes"
 
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__orangepi3b_use_mainline_uboot() {
-	display_alert "$BOARD" "mainline u-boot overrides" "info"
+	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
 
-	BOOTSOURCE='https://github.com/u-boot/u-boot'
-	BOOTBRANCH="tag:v2024.10-rc3"
-	BOOTPATCHDIR="v2024.10-orangepi3b"
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
+	declare -g BOOTBRANCH="tag:v2024.10"
+	declare -g BOOTPATCHDIR="v2024.10"
+	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 
-	BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
+	declare -g BOOTDELAY=1 # Wait for UART interrupt to enter UMS/RockUSB mode etc
 
-	BOOTDELAY=1 # Wait for UART interrupt to enter UMS/RockUSB mode etc
-	UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot.itb idbloader.img idbloader-spi.img"
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin u-boot.itb idbloader.img idbloader-spi.img"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
 
 	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
