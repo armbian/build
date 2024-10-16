@@ -1,29 +1,33 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Ricardo Pardini <ricardo@pardini.net>
 Date: Thu, 4 Aug 2022 21:49:10 +0200
-Subject: Phytium onboard ethernet drivers for 6.x
+Subject: net: stmicro: stmmac: Phytium onboard ethernet drivers and ACPI glue
+ for 6.x
 
- My board has two eths; only eth1 has an actual PHY and works.
- From https://gitee.com/atzlinux/atzlinux-kernel/tree/master/debian/patch
- rpardini hammered:
- - small api change in upstream around 5.19
- - hand-merged for 6.5
-   - use `.remove_new` due to "net: stmmac: Make stmmac_pltfr_remove() return void"
- - hand-merged for 6.6:
-   - OXNAS is no more, Makefile lost reference, fix manually
- - Remove Kconfig deps from Feiteng stuff not in mainline
- - Default Kconfig to module
- Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
+My board has two eths; only eth1 has an actual PHY and works.
+Source is https://gitee.com/atzlinux/atzlinux-kernel/tree/master/debian/patch
+rpardini hammered:
+- small api change in upstream around 5.19
+- hand-merged for 6.5
+  - use `.remove_new` due to "net: stmmac: Make stmmac_pltfr_remove() return void"
+- hand-merged for 6.6:
+  - OXNAS is no more, Makefile lost reference, fix manually
+- Remove Kconfig deps from Feiteng stuff not in mainline
+- Default Kconfig to module
+- fix stmmac acpi glue for Feiteng on 6.6.y
+- drop the (now-qcom) phy hibernate stuff as it landed by 6.12.y
+- rework stmmac_probe_config_acpi addition for 6.12.y
+
+Signed-off-by: Ricardo Pardini <ricardo@pardini.net>
 ---
  drivers/net/ethernet/stmicro/stmmac/Kconfig           |  10 +
  drivers/net/ethernet/stmicro/stmmac/Makefile          |   1 +
  drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c   |  19 +
- drivers/net/ethernet/stmicro/stmmac/dwmac-phytium.c   | 222 ++++++++
+ drivers/net/ethernet/stmicro/stmmac/dwmac-phytium.c   | 223 ++++++++
  drivers/net/ethernet/stmicro/stmmac/stmmac_main.c     |   1 +
- drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c | 254 +++++++++-
+ drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c | 255 +++++++++-
  drivers/net/ethernet/stmicro/stmmac/stmmac_platform.h |   2 +
- drivers/net/phy/at803x.c                              |  23 +
- 8 files changed, 531 insertions(+), 1 deletion(-)
+ 7 files changed, 510 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/net/ethernet/stmicro/stmmac/Kconfig b/drivers/net/ethernet/stmicro/stmmac/Kconfig
 index 111111111111..222222222222 100644
@@ -57,7 +61,7 @@ index 111111111111..222222222222 100644
 +obj-$(CONFIG_DWMAC_PHYTIUM)	+= dwmac-phytium.o
  obj-$(CONFIG_DWMAC_QCOM_ETHQOS)	+= dwmac-qcom-ethqos.o
  obj-$(CONFIG_DWMAC_ROCKCHIP)	+= dwmac-rk.o
- obj-$(CONFIG_DWMAC_SOCFPGA)	+= dwmac-altr-socfpga.o
+ obj-$(CONFIG_DWMAC_RZN1)	+= dwmac-rzn1.o
 diff --git a/drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c b/drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c
 index 111111111111..222222222222 100644
 --- a/drivers/net/ethernet/stmicro/stmmac/dwmac-generic.c
@@ -83,7 +87,7 @@ index 111111111111..222222222222 100644
  	} else {
  		plat_dat = dev_get_platdata(&pdev->dev);
  		if (!plat_dat) {
-@@ -75,6 +82,17 @@ static const struct of_device_id dwmac_generic_match[] = {
+@@ -65,12 +72,24 @@ static const struct of_device_id dwmac_generic_match[] = {
  };
  MODULE_DEVICE_TABLE(of, dwmac_generic_match);
  
@@ -100,8 +104,7 @@ index 111111111111..222222222222 100644
 +
  static struct platform_driver dwmac_generic_driver = {
  	.probe  = dwmac_generic_probe,
- 	.remove_new = stmmac_pltfr_remove,
-@@ -82,6 +100,7 @@ static struct platform_driver dwmac_generic_driver = {
+ 	.driver = {
  		.name           = STMMAC_RESOURCE_NAME,
  		.pm		= &stmmac_pltfr_pm_ops,
  		.of_match_table = dwmac_generic_match,
@@ -114,7 +117,7 @@ new file mode 100644
 index 000000000000..111111111111
 --- /dev/null
 +++ b/drivers/net/ethernet/stmicro/stmmac/dwmac-phytium.c
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,223 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Phytium DWMAC platform glue driver
@@ -172,7 +175,7 @@ index 000000000000..111111111111
 +	np = dev_fwnode(dev);
 +
 +	plat->phy_interface = fwnode_get_phy_mode(np);
-+	plat->interface = plat->phy_interface;
++	plat->mac_interface = plat->phy_interface;
 +
 +	/* Get max speed of operation from properties */
 +	if (fwnode_property_read_u32(np, "max-speed", &plat->max_speed))
@@ -197,8 +200,9 @@ index 000000000000..111111111111
 +
 +	plat->force_sf_dma_mode =
 +		fwnode_property_read_bool(np, "snps,force_sf_dma_mode");
-+	plat->en_tx_lpi_clockgating =
-+		fwnode_property_read_bool(np, "snps,en-tx-lpi-clockgating");
++
++	if (fwnode_property_read_bool(np, "snps,en-tx-lpi-clockgating"))
++		plat->flags |= STMMAC_FLAG_EN_TX_LPI_CLOCKGATING;
 +
 +	/* Set the maxmtu to a default of JUMBO_LEN in case the
 +	 * parameter is not present.
@@ -363,9 +367,9 @@ index 111111111111..222222222222 100644
  #include <linux/platform_device.h>
  #include <linux/pm_runtime.h>
  #include <linux/module.h>
-@@ -703,6 +706,248 @@ EXPORT_SYMBOL_GPL(stmmac_probe_config_dt);
+@@ -707,6 +710,249 @@ devm_stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac)
+ #endif /* CONFIG_OF */
  EXPORT_SYMBOL_GPL(devm_stmmac_probe_config_dt);
- EXPORT_SYMBOL_GPL(stmmac_remove_config_dt);
  
 +#ifdef CONFIG_ACPI
 +/*
@@ -512,7 +516,7 @@ index 111111111111..222222222222 100644
 +
 +	np = dev_fwnode(&(pdev->dev));
 +
-+	plat->interface = fw_get_phy_mode(np);
++	plat->mac_interface = fw_get_phy_mode(np);
 +
 +	/* Get max speed of operation from device tree */
 +	if (fwnode_property_read_u32(np, "max-speed", &plat->max_speed))
@@ -542,8 +546,9 @@ index 111111111111..222222222222 100644
 +
 +	plat->force_sf_dma_mode =
 +		fwnode_property_read_bool(np, "snps,force_sf_dma_mode");
-+	plat->en_tx_lpi_clockgating =
-+		fwnode_property_read_bool(np, "snps,en-tx-lpi-clockgating");
++
++	if (fwnode_property_read_bool(np, "snps,en-tx-lpi-clockgating"))
++		plat->flags |= STMMAC_FLAG_EN_TX_LPI_CLOCKGATING;
 +
 +	/* Set the maxmtu to a default of JUMBO_LEN in case the
 +	 * parameter is not present.
@@ -612,7 +617,7 @@ index 111111111111..222222222222 100644
  int stmmac_get_platform_resources(struct platform_device *pdev,
  				  struct stmmac_resources *stmmac_res)
  {
-@@ -710,8 +955,14 @@ int stmmac_get_platform_resources(struct platform_device *pdev,
+@@ -714,8 +960,14 @@ int stmmac_get_platform_resources(struct platform_device *pdev,
  
  	/* Get IRQ information early to have an ability to ask for deferred
  	 * probe if needed before we went too far with resource allocation.
@@ -628,7 +633,7 @@ index 111111111111..222222222222 100644
  	if (stmmac_res->irq < 0)
  		return stmmac_res->irq;
  
-@@ -729,6 +980,7 @@ int stmmac_get_platform_resources(struct platform_device *pdev,
+@@ -733,6 +985,7 @@ int stmmac_get_platform_resources(struct platform_device *pdev,
  			return -EPROBE_DEFER;
  		dev_info(&pdev->dev, "IRQ eth_wake_irq not found\n");
  		stmmac_res->wol_irq = stmmac_res->irq;
@@ -640,63 +645,15 @@ diff --git a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.h b/drivers/net
 index 111111111111..222222222222 100644
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.h
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_platform.h
-@@ -15,6 +15,8 @@ struct plat_stmmacenet_data *
- stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac);
+@@ -13,6 +13,8 @@
+ 
  struct plat_stmmacenet_data *
  devm_stmmac_probe_config_dt(struct platform_device *pdev, u8 *mac);
 +struct plat_stmmacenet_data *
 +stmmac_probe_config_acpi(struct platform_device *pdev, u8 *mac);
- void stmmac_remove_config_dt(struct platform_device *pdev,
- 			     struct plat_stmmacenet_data *plat);
  
-diff --git a/drivers/net/phy/at803x.c b/drivers/net/phy/at803x.c
-index 111111111111..222222222222 100644
---- a/drivers/net/phy/at803x.c
-+++ b/drivers/net/phy/at803x.c
-@@ -111,6 +111,11 @@
- #define AT803X_DEBUG_SYSTEM_CTRL_MODE		0x05
- #define AT803X_DEBUG_TX_CLK_DLY_EN		BIT(8)
- 
-+#define AT803X_DEBUG_REG_B                      0x0B
-+#define AT803X_DEBUG_REG_B_HIBERNATION_ENABLE	0x1
-+#define AT803X_DEBUG_REG_B_HIBERNATION_OFFSET	15
-+
-+
- #define AT803X_DEBUG_REG_HIB_CTRL		0x0b
- #define   AT803X_DEBUG_HIB_CTRL_SEL_RST_80U	BIT(10)
- #define   AT803X_DEBUG_HIB_CTRL_EN_ANY_CHANGE	BIT(13)
-@@ -397,6 +402,20 @@ static int at803x_enable_rx_delay(struct phy_device *phydev)
- 				     AT803X_DEBUG_RX_CLK_DLY_EN);
- }
- 
-+static inline int at803x_disable_hibernate(struct phy_device *phydev)
-+{
-+	int ret = 0;
-+	u16 val = 0;
-+
-+	ret = at803x_debug_reg_read(phydev, AT803X_DEBUG_REG_B);
-+	if (ret < 0)
-+		return ret;
-+
-+	val = ret & 0xffff;
-+	val &= (~(AT803X_DEBUG_REG_B_HIBERNATION_ENABLE << AT803X_DEBUG_REG_B_HIBERNATION_OFFSET));
-+	return phy_write(phydev, AT803X_DEBUG_DATA, val);
-+}
-+
- static int at803x_enable_tx_delay(struct phy_device *phydev)
- {
- 	return at803x_debug_reg_mask(phydev, AT803X_DEBUG_SYSTEM_CTRL_MODE, 0,
-@@ -1037,6 +1056,10 @@ static int at803x_config_init(struct phy_device *phydev)
- 		ret = at803x_disable_rx_delay(phydev);
- 	if (ret < 0)
- 		return ret;
-+	else
-+		ret = at803x_disable_hibernate(phydev);
-+	if (ret < 0)
-+		return ret;
- 
- 	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID ||
- 	    phydev->interface == PHY_INTERFACE_MODE_RGMII_TXID)
+ int stmmac_get_platform_resources(struct platform_device *pdev,
+ 				  struct stmmac_resources *stmmac_res);
 -- 
 Armbian
 
