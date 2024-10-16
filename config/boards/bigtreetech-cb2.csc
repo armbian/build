@@ -2,7 +2,7 @@
 BOARD_NAME="BigTreeTech CB2"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
-#BOOTCONFIG="bigtreetech_cb2_defconfig"
+BOOTCONFIG="bigtreetech-cb2_defconfig"
 BOOT_SOC="rk3566"
 KERNEL_TARGET="current,edge"
 BOOT_FDT_FILE="rockchip/rk3566-bigtreetech-cb2.dtb"
@@ -16,9 +16,9 @@ DDR_BLOB="rk35/rk3566_ddr_1056MHz_v1.18.bin"
 BL31_BLOB="rk35/rk3568_bl31_v1.43.elf" # NOT a typo, bl31 is shared across 68 and 66
 
 function post_family_config__bigtreetech-cb2_use_mainline_uboot() {
-	bigtreetech_uboot
+	#bigtreetech_uboot
 
-	#mainline_kwiboo_uboot
+	mainline_kwiboo_uboot
 }
 
 function bigtreetech_uboot() {
@@ -50,5 +50,5 @@ function mainline_kwiboo_uboot() {
 		dd if=${1}/u-boot-rockchip.bin of=${2} bs=32k seek=1 conv=fsync
 	}
 
-	declare -g BOOTCONFIG=generic-rk3568_bootconfig
+	#declare -g BOOTCONFIG=generic-rk3568_bootconfig
 }
