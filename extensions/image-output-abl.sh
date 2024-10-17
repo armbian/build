@@ -29,11 +29,11 @@ function post_build_image__900_convert_to_abl_img() {
 	rm ${DESTIMG}/${version}.img
 	display_alert "Replace root partition uuid from ${old_rootfs_image_uuid} to ${new_rootfs_image_uuid} in /etc/fstab" "${EXTENSION}" "info"
 	sed -i "s|${old_rootfs_image_uuid}|${new_rootfs_image_uuid}|g" ${new_rootfs_image_mount_dir}/etc/fstab
+	source ${new_rootfs_image_mount_dir}/boot/armbianEnv.txt
 	declare -g bootimg_cmdline="${BOOTIMG_CMDLINE_EXTRA} root=UUID=${new_rootfs_image_uuid} slot_suffix=${abl_boot_partition_label#boot}"
 
 	if [ ${#ABL_DTB_LIST[@]} -ne 0 ]; then
 		display_alert "Going to create abl kernel boot image" "${EXTENSION}" "info"
-		source ${new_rootfs_image_mount_dir}/boot/armbianEnv.txt
 		gzip -c ${new_rootfs_image_mount_dir}/boot/vmlinuz-*-* > ${DESTIMG}/Image.gz
 		for dtb_name in "${ABL_DTB_LIST[@]}"; do
 			display_alert "Creatng abl kernel boot image with dtb ${dtb_name} and cmdline ${bootimg_cmdline} " "${EXTENSION}" "info"
