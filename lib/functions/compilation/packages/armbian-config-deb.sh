@@ -18,12 +18,13 @@ compile_armbian-config() {
 	declare armbian_config_dir="armbian-config"
 	mkdir -p "${tmp_dir}/${armbian_config_dir}"
 
-	local ARMBIAN_CONFIG_GIT_SOURCE="${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/config"}"
-	local ARMBIAN_CONFIG_GIT_BRANCH="${ARMBIAN_FIRMWARE_GIT_BRANCH:-"master"}"
+	local ARMBIAN_CONFIG_GIT_SOURCE="${ARMBIAN_FIRMWARE_GIT_SOURCE:-"https://github.com/armbian/configng"}"
+	local ARMBIAN_CONFIG_GIT_BRANCH="${ARMBIAN_FIRMWARE_GIT_BRANCH:-"main"}"
 
-	fetch_from_repo "https://github.com/armbian/config" "armbian-config" "branch:master"
 	# this is also not getting any updates
-	fetch_from_repo "https://github.com/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
+	fetch_from_repo "$GITHUB_SOURCE/dylanaraps/neofetch" "neofetch" "tag:7.1.0"
+	fetch_from_repo "$GITHUB_SOURCE/armbian/configng" "armbian-config" "branch:main"
+	fetch_from_repo "$GITHUB_SOURCE/complexorganizations/wireguard-manager" "wireguard-manager" "branch:main"
 
 	# Fetch Armbian config from git.
 	declare fetched_revision
@@ -33,7 +34,7 @@ compile_armbian-config() {
 	# @TODO: move this to where it is actually used; not everyone needs to pull this in
 	fetch_from_repo "$GITHUB_SOURCE/complexorganizations/wireguard-manager" "wireguard-manager" "branch:main"
 
-	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,usr/bin/,usr/sbin/,usr/lib/armbian-config/}
+	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,bin/,lib/armbian-configng/,usr/bin/}
 
 	cd "${tmp_dir}/${armbian_config_dir}" || exit_with_error "can't change directory"
 
@@ -43,31 +44,27 @@ compile_armbian-config() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Depends: bash, iperf3, psmisc, curl, bc, expect, dialog, pv, zip, debconf-utils, unzip, build-essential, html2text, html2text, dirmngr, software-properties-common, debconf, jq
-		Suggests: libpam-google-authenticator, qrencode, network-manager, sunxi-tools
+		Depends: whiptail, jq
 		Section: utils
 		Priority: optional
-		Description: Armbian configuration utility
+		Description: Armbian configuration utility New Generation
 	END
 
 	install -m 755 "${SRC}"/cache/sources/neofetch/neofetch "${tmp_dir}/${armbian_config_dir}"/usr/bin/neofetch
 	cd "${tmp_dir}/${armbian_config_dir}"/usr/bin/ || exit_with_error "Failed to cd to ${tmp_dir}/${armbian_config_dir}/usr/bin/"
 	process_patch_file "${SRC}/patch/misc/add-armbian-neofetch.patch" "applying"
 
+	# 3rd party utilities
 	install -m 755 "${SRC}"/cache/sources/wireguard-manager/wireguard-manager.sh "${tmp_dir}/${armbian_config_dir}"/usr/bin/wireguard-manager
-	install -m 755 "${SRC}"/cache/sources/armbian-config/scripts/tv_grab_file "${tmp_dir}/${armbian_config_dir}"/usr/bin/tv_grab_file
-	install -m 755 "${SRC}"/cache/sources/armbian-config/debian-config "${tmp_dir}/${armbian_config_dir}"/usr/sbin/armbian-config
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-jobs "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/jobs.sh
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-submenu "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/submenu.sh
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/functions.sh
-	install -m 644 "${SRC}"/cache/sources/armbian-config/debian-config-functions-network "${tmp_dir}/${armbian_config_dir}"/usr/lib/armbian-config/functions-network.sh
-	install -m 755 "${SRC}"/cache/sources/armbian-config/softy "${tmp_dir}/${armbian_config_dir}"/usr/sbin/softy
-	# fallback to replace armbian-config in BSP
-	ln -sf /usr/sbin/armbian-config "${tmp_dir}/${armbian_config_dir}"/usr/bin/armbian-config
-	ln -sf /usr/sbin/softy "${tmp_dir}/${armbian_config_dir}"/usr/bin/softy
+
+	# Armbian config parts
+	install -m 755 "${SRC}"/cache/sources/armbian-config/bin/armbian-configng "${tmp_dir}/${armbian_config_dir}"/bin/armbian-configng
+	cp -R "${SRC}"/cache/sources/armbian-config/lib/armbian-configng/ "${tmp_dir}/${armbian_config_dir}"/lib/
+
+	# Linking
+	ln -sf /bin/armbian-configng "${tmp_dir}/${armbian_config_dir}"/usr/bin/armbian-config
 
 	dpkg_deb_build "${tmp_dir}/${armbian_config_dir}" "armbian-config"
-
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
 }
