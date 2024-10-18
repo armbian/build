@@ -23,7 +23,9 @@ function armbian_kernel_config__disable_various_options() {
 		kernel_config_set_n CONFIG_MODULE_COMPRESS_ZSTD
 		kernel_config_set_n CONFIG_MODULE_COMPRESS_GZIP
 
-		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.0; then
+		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.12; then
+			kernel_config_set_n CONFIG_MODULE_COMPRESS # Introduced in 6.12 (see https://github.com/torvalds/linux/commit/c7ff693fa2094ba0a9d0a20feb4ab1658eff9c33)
+		elif linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.0; then
 			kernel_config_set_y CONFIG_MODULE_COMPRESS_NONE # Introduced in 6.0
 		else
 			kernel_config_set_n CONFIG_MODULE_COMPRESS # Only available up to 5.12
