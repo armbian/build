@@ -1,6 +1,6 @@
 # Generate kernel and rootfs image for Qcom ABL booting
 declare -g BOARD_NAME="Oneplus Kebab"
-declare -g BOARD_MAINTAINER="amazingfate"
+declare -g BOARD_MAINTAINER=""
 declare -g BOARDFAMILY="sm8250"
 declare -g KERNEL_TARGET="current,edge"
 declare -g KERNEL_TEST_TARGET="edge"
