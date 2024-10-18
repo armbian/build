@@ -66,8 +66,25 @@ function apt_find_upstream_package_version_and_download_url() {
 	if [[ "${found_package_filename}" == "${sought_package_name}_"* ]]; then
 		display_alert "Found upstream base-files package filename" "${found_package_filename}" "info"
 	else
-		display_alert "Could not find package filename for '${sought_package_name}' in '${package_info_download_urls[*]}'" "looking for ${sought_package_name}" "warn"
-		return 1
+		display_alert "Could not find package filename for '${sought_package_name}' in '${package_info_download_urls[*]}'" "Trying alternative method to get ${sought_package_name}" "warn"
+		# Try alternative method since packages.debian.org is down often
+		# Use -N with wget so it always downloads the latest file, overwriting the local one if it exists
+		run_host_command_logged wget --no-verbose -N https://${mirror_with_slash}/dists/${RELEASE}/main/binary-${ARCH}/Packages.xz
+		run_host_command_logged xz -d -f Packages.xz
+		declare package_filename_from_packages
+		package_filename_from_packages="$(grep -A 25 "Package: ${sought_package_name}" Packages | grep "Filename:" | awk '{print $2}')" # Format example: pool/main/b/base-files/base-files_13.3_arm64.deb
+
+		found_package_down_url=="http://${mirror_with_slash}${package_filename_from_packages}"
+		found_package_filename="$(echo $found_package_down_url | awk -F'/' '{print $NF}')"
+
+		# Test again, same as if statement above
+		if [[ "${found_package_filename}" == "${sought_package_name}_"* ]]; then
+			display_alert "Found upstream base-files package filename" "${found_package_filename}" "info"
+			run_host_command_logged rm -f Packages
+		else
+			display_alert "Could not find package filename for '${sought_package_name}' in '${found_package_down_url}'" "looking for ${sought_package_name} with the alternative method" "warn"
+			return 1
+		fi
 	fi
 
 	# Now we have the package name, lets parse out the version.
