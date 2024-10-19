@@ -80,12 +80,6 @@ case "$BOOT_SOC" in
 		DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin"}"
 		MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_v1.22.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.22.elf"}"
-
-		if [[ ${BRANCH} == legacy ]]; then
-			DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m0_v1.26.bin"}"
-			MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_sd_nand_v1.13.bin"}"
-			BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.10.elf"}"
-		fi
 		;;
 
 	rk3328)
@@ -207,6 +201,7 @@ prepare_boot_configuration() {
 
 uboot_custom_postprocess() {
 	[[ -z ${BOOT_SOC} ]] && exit_with_error "BOOT_SOC not defined for scenario '${BOOT_SCENARIO}' for BOARD'=${BOARD}' and BOOTCONFIG='${BOOTCONFIG}'"
+	display_alert "${BOARD}" "boots using ${BOOT_SCENARIO} scenario" "info"
 
 	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
 		:
