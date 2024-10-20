@@ -42,7 +42,7 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.10-rc3"
+	declare -g BOOTBRANCH="tag:v2024.10"
 	declare -g BOOTPATCHDIR="v2024.10"
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 
