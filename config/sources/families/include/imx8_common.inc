@@ -26,10 +26,8 @@ case $BOARD in
 		LINUXCONFIG='linux-tqma-'$BRANCH # one config for "tq arm modules"
 		case $BRANCH in
 
-			current) # active lts mainline kernel
-				KERNEL_MAJOR_MINOR="6.6"
-				KERNELBRANCH='tag:v6.6.43'
-				KERNELPATCHDIR="archive/imx8m-6.6"
+			current) # mainline stable kernel
+				KERNEL_MAJOR_MINOR="6.11"
 				;;
 
 			edge | default) # use for tests with recent mainline kernels
