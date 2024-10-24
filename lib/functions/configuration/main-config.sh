@@ -186,7 +186,7 @@ function do_main_configuration() {
 		china)
 			[[ -z $USE_MAINLINE_GOOGLE_MIRROR ]] && [[ -z $MAINLINE_MIRROR ]] && MAINLINE_MIRROR=tuna
 			[[ -z $USE_GITHUB_UBOOT_MIRROR ]] && [[ -z $UBOOT_MIRROR ]] && UBOOT_MIRROR=gitee
-			[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=gitclone
+			[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=ghproxy
 			[[ -z $DOWNLOAD_MIRROR ]] && DOWNLOAD_MIRROR=china
 			;;
 		*) ;;
@@ -238,7 +238,7 @@ function do_main_configuration() {
 			declare -g -r GITHUB_SOURCE='https://hub.fastgit.xyz'
 			;;
 		ghproxy)
-			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=mirror.ghproxy.com
+			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=ghp.ci
 			declare -g -r GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
 			;;
 		gitclone)
