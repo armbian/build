@@ -188,6 +188,7 @@ function do_main_configuration() {
 			[[ -z $USE_GITHUB_UBOOT_MIRROR ]] && [[ -z $UBOOT_MIRROR ]] && UBOOT_MIRROR=gitee
 			[[ -z $GITHUB_MIRROR ]] && GITHUB_MIRROR=ghproxy
 			[[ -z $DOWNLOAD_MIRROR ]] && DOWNLOAD_MIRROR=china
+			[[ -z $GHCR_MIRROR ]] && GHCR_MIRROR=nju
 			;;
 		*) ;;
 
@@ -253,6 +254,9 @@ function do_main_configuration() {
 		dockerproxy)
 			GHCR_MIRROR_ADDRESS="${GHCR_MIRROR_ADDRESS:-"ghcr.dockerproxy.com"}"
 			declare -g -r GHCR_SOURCE=$GHCR_MIRROR_ADDRESS
+			;;
+		nju)
+			declare -g -r GHCR_SOURCE='ghcr.nju.edu.cn'
 			;;
 		*)
 			declare -g -r GHCR_SOURCE='ghcr.io'
