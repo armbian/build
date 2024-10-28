@@ -44,7 +44,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3568-hk-spi-spidev.dtbo \
 	rockchip-rk3568-hk-uart0.dtbo \
 	rockchip-rk3568-hk-uart0-rts_cts.dtbo \
-	rockchip-rk3568-hk-uart1.dtbo
+	rockchip-rk3568-hk-uart1.dtbo \
+	rockchip-rk3568-rock-3a-disable-uart2.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr
