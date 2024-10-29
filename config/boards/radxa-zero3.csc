@@ -37,7 +37,6 @@ function post_family_config_branch_edge__radxa-zero3_use_mainline_uboot() {
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
 	BOOTBRANCH="tag:v2024.10"
 	BOOTPATCHDIR="v2024.10"
-	BOOTPATCHDIR="u-boot-zero3" # Empty
 
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
 
