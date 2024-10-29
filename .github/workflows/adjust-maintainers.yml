@@ -1,0 +1,128 @@
+name: "Sync maintainers status"
+
+# Script connects to the contacts database once per hour and updates BOARD_MAINTAINER property in the board config files.
+# If there are any changes, it opens a Pull Request
+#
+# spdx-id: GPL-2.0-or-later
+# copyright-owner: @igorpecovnik
+
+# Dependencies: lftp, jq
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+
+  Build:
+    name: "Maintainers sync"
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'armbian' }}
+    steps:
+
+      - name: "Checkout build repo"
+        uses: actions/checkout@v4
+        with:
+          repository: armbian/build
+          ref:  main
+          fetch-depth: 0
+          clean: false
+
+      - name: "Install SSH key for storage"
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.KEY_UPLOAD }}
+          known_hosts: ${{ secrets.KNOWN_HOSTS_ARMBIAN_UPLOAD }}
+          if_key_exists: replace
+
+      - name: "Install dependencies"
+        run: |
+
+          sudo apt-get -y -qq install jq
+
+      - name: "Download JSON file"
+        run: |
+
+          # download json that is prepared for this action in another cron job
+          rsync -e "ssh -p ${{ secrets.HOST_UPLOAD_PORT }}" -arvc ${{ secrets.HOST_UPLOAD_USER }}@${{ secrets.HOST_UPLOAD }}:/incoming/json/armbian_maintainers.json /tmp/
+
+      - name: "Update maintainers"
+        run: |
+
+          # reset all maintainers so we generate from scratch
+          sed -i "s/BOARD_MAINTAINER.*/BOARD_MAINTAINER=\"\"/" config/boards/*.{conf,wip,eos,tvb}
+
+          # extract values fron JSON
+          declare -A MAINTAINERS
+          {
+            # By default, bash run the pipe command in subshells
+            # which make variable can't be assigned to.
+            # And yes, lastpipe can solve it
+            # But this is better.
+            while read -r i; do
+              NAME="$(echo "$i" | jq --raw-output '.First_Name')"
+              BOARD="$(echo "$i" | jq --raw-output '.Maintaining')"
+              MAINTAINER_GITHUB="$(echo "$i" | jq --raw-output '.Github' | cut -d"/" -f4)"
+              if [[ "$BOARD" != null && "$MAINTAINER_GITHUB" != null ]]; then
+                echo "- [$NAME](https://github.com/${MAINTAINER_GITHUB})"
+                while read -r i; do
+                  echo -e "  - $i"
+                  MAINTAINERS["$i"]+="$MAINTAINER_GITHUB "
+                done < <( echo "$BOARD" | sed "s/,/\n/g" | sort -u )
+              fi
+            done < <(jq -c '.[]' /tmp/armbian_maintainers.json)
+
+            for cfg in config/boards/*.{conf,wip,csc,eos,tvb}; do
+              board_name="$(echo "${cfg##*/}" | sed -E 's/\..*//')"
+              declare -a maintainers
+              readarray -t maintainers < <(echo "${MAINTAINERS[${board_name}]}" | xargs -n1 | sort -u)
+              sed -i "s/BOARD_MAINTAINER=.*/BOARD_MAINTAINER=\"${maintainers[*]}\"/" "${cfg}"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Mark csc for no maintainer"
+        run: |
+
+          grep BOARD_MAINTAINER=\"\" config/boards/*.{wip,conf} | cut -d":" -f1 |
+            while read -r line; do
+              if [[ "${line}" != "${line/.conf/.csc}" ]]; then
+                mv -v "$line" "${line/.conf/.csc}"
+              fi
+              if [[ "${line}" != "${line/.wip/.csc}" ]]; then
+                mv -v "$line" "${line/.wip/.csc}"
+              fi
+            done
+
+      - name: "Re-generate CODEOWNERS"
+        run: |
+
+          ./.github/generate_CODEOWNERS.sh
+
+      - name: Create Pull Request
+        id: cpr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: '`Automatic` board configs status synchronise'
+          signoff: false
+          branch: update-maintainers
+          delete-branch: true
+          title: '`Automatic` board configs status synchronise'
+          body: |
+            Update maintainers and board status
+
+            - synced status from the database
+            - rename to .`csc` where we don't have anyone
+
+            If you want to become a board maintainer, [adjust data here](https://www.armbian.com/update-data/).
+
+            Ref:
+              - [Board Maintainers Procedures and Guidelines](https://docs.armbian.com/Board_Maintainers_Procedures_and_Guidelines/)
+              - [Contribute](https://docs.armbian.com/Process_Contribute/)
+
+          labels: |
+            Needs review
+          #assignees: igorpecovnik
+          #reviewers: Must be org collaborator
+          draft: false
