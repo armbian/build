@@ -310,7 +310,7 @@ function prepare_partitions() {
 		local rootfs
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
-			echo "$ROOT_MAPPER UUID=${root_part_uuid} none luks" >> $SDCARD/etc/crypttab
+			echo "$CRYPTROOT_MAPPER UUID=${root_part_uuid} none luks" >> $SDCARD/etc/crypttab
 			rootfs=$rootdevice # used in fstab
 		else
 			rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
@@ -369,7 +369,7 @@ function prepare_partitions() {
 	if [[ -f $SDCARD/boot/armbianEnv.txt ]]; then
 		display_alert "Found armbianEnv.txt" "${SDCARD}/boot/armbianEnv.txt" "debug"
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
-			echo "rootdev=$rootdevice cryptdevice=UUID=${root_part_uuid}:$ROOT_MAPPER" >> "${SDCARD}/boot/armbianEnv.txt"
+			echo "rootdev=$rootdevice cryptdevice=UUID=${root_part_uuid}:$CRYPTROOT_MAPPER" >> "${SDCARD}/boot/armbianEnv.txt"
 		else
 			echo "rootdev=$rootfs" >> "${SDCARD}/boot/armbianEnv.txt"
 		fi
@@ -389,7 +389,7 @@ function prepare_partitions() {
 		sed -i -e "s/rootfstype \"ext4\"/rootfstype \"$ROOTFS_TYPE\"/" $SDCARD/boot/boot.ini
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			rootpart="UUID=${root_part_uuid}"
-			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$ROOT_MAPPER' cryptdevice='$rootpart':'$ROOT_MAPPER'"/' $SDCARD/boot/boot.ini
+			sed -i 's/^setenv rootdev .*/setenv rootdev "\/dev\/mapper\/'$CRYPTROOT_MAPPER' cryptdevice='$rootpart':'$CRYPTROOT_MAPPER'"/' $SDCARD/boot/boot.ini
 		else
 			sed -i 's/^setenv rootdev .*/setenv rootdev "'$rootfs'"/' $SDCARD/boot/boot.ini
 		fi
