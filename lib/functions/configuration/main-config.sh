@@ -166,10 +166,10 @@ function do_main_configuration() {
 	# Support for LUKS / cryptroot
 	if [[ $CRYPTROOT_ENABLE == yes ]]; then
 		enable_extension "fs-cryptroot-support" # add the tooling needed, cryptsetup
-		ROOT_MAPPER="armbian-root"              # TODO: fixed name can't be used for parallel image building (rpardini: ?)
 		if [[ -z $CRYPTROOT_PASSPHRASE ]]; then # a passphrase is mandatory if rootfs encryption is enabled
 			exit_with_error "Root encryption is enabled but CRYPTROOT_PASSPHRASE is not set"
 		fi
+		[[ -z $CRYPTROOT_MAPPER ]] && CRYPTROOT_MAPPER="armbian-root" # TODO: fixed name can't be used for parallel image building (rpardini: ?)
 		[[ -z $CRYPTROOT_SSH_UNLOCK ]] && CRYPTROOT_SSH_UNLOCK=yes
 		[[ -z $CRYPTROOT_SSH_UNLOCK_PORT ]] && CRYPTROOT_SSH_UNLOCK_PORT=2022
 		# Default to pdkdf2, this used to be the default with cryptroot <= 2.0, however

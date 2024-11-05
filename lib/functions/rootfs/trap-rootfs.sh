@@ -63,7 +63,7 @@ function trap_handler_cleanup_rootfs_and_image() {
 	# unmount tmpfs mounted on SDCARD if it exists. #@TODO: move to new tmpfs-utils scheme
 	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
 
-	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${CRYPTROOT_MAPPER}"
 
 	if [[ "${PRESERVE_SDCARD_MOUNT}" == "yes" ]]; then
 		display_alert "Preserving SD card mount" "trap_handler_cleanup_rootfs_and_image" "warn"

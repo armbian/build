@@ -119,7 +119,7 @@ function create_image_from_sdcard_rootfs() {
 	wait_for_disk_sync "before umount MOUNT"
 
 	umount_chroot_recursive "${MOUNT}" "MOUNT"
-	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "$ROOT_MAPPER"
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "$CRYPTROOT_MAPPER"
 
 	call_extension_method "post_umount_final_image" "config_post_umount_final_image" <<- 'POST_UMOUNT_FINAL_IMAGE'
 		*allow config to hack into the image after the unmount*
