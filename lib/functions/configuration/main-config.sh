@@ -267,7 +267,6 @@ function do_main_configuration() {
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
 	[[ -z $ARCH ]] && ARCH=arm64 # makes little sense to default to anything... # @TODO: remove, but check_config_userspace_release_and_desktop requires it
 	ATF_COMPILE=yes              # @TODO: move to armhf/arm64
-	[[ -z $WIREGUARD ]] && WIREGUARD="yes"
 	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 	[[ -z $PLYMOUTH ]] && PLYMOUTH="yes"
 	[[ -z $AUFS ]] && AUFS="yes"
