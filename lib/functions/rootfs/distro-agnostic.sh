@@ -352,11 +352,6 @@ function install_distribution_agnostic() {
 		chroot_sdcard_apt_get_remove --auto-remove plymouth
 	fi
 
-	# install wireguard tools
-	if [[ $WIREGUARD == yes ]]; then
-		install_deb_chroot "wireguard-tools" "remote" # @TODO: move this to some image pkg list in config
-	fi
-
 	# freeze armbian packages
 	if [[ "${BSPFREEZE:-"no"}" == yes ]]; then
 		display_alert "Freezing Armbian packages" "$BOARD" "info"
