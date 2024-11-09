@@ -16,7 +16,7 @@ MODULES=""
 MODULES_BLACKLIST_LEGACY="bcmdhd"
 
 # Override family config for this board; let's avoid conditionals in family config.
-function post_family_config__orangepi3b_use_mainline_uboot() {
+function post_family_config__core3566_use_mainline_uboot() {
 	display_alert "$BOARD" "mainline (Kwiboo's tree) u-boot overrides" "info"
 
 	BOOTSOURCE="https://github.com/Kwiboo/u-boot-rockchip.git"
@@ -48,10 +48,10 @@ function post_family_config__orangepi3b_use_mainline_uboot() {
 
 }
 
-function post_family_tweaks_bsp__orangepi3b() {
+function post_family_tweaks_bsp__core3566() {
 	# display_alert "$BOARD" "Installing sprd-bluetooth.service" "info"
 
-	# Bluetooth on orangepi3b board is handled by a Spreadtrum (sprd) chip and requires
+	# Bluetooth on core3566 board is handled by a Spreadtrum (sprd) chip and requires
 	# a custom hciattach_opi binary, plus a systemd service to run it at boot time
 	#install -m 755 $SRC/packages/bsp/rk3399/hciattach_opi $destination/usr/bin
 	# cp $SRC/packages/bsp/rk3399/sprd-bluetooth.service $destination/lib/systemd/system/
@@ -59,7 +59,7 @@ function post_family_tweaks_bsp__orangepi3b() {
 	return 0
 }
 
-function post_family_tweaks__orangepi3b_enable_services() {
+function post_family_tweaks__core3566_enable_services() {
 	# display_alert "$BOARD" "Enabling sprd-bluetooth.service" "info"
 	# chroot_sdcard systemctl enable sprd-bluetooth.service
 	return 0
