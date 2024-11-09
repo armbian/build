@@ -9,6 +9,7 @@ BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 BOOT_LOGO="desktop"
 OVERLAY_PREFIX="sun50i-h616"
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 FORCE_BOOTSCRIPT_UPDATE="yes"
 
 enable_extension "uwe5622-allwinner"

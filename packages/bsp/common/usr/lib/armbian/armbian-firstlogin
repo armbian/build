@@ -11,7 +11,7 @@
 [[ -f /etc/lsb-release ]] && . /etc/lsb-release
 [[ -f /etc/os-release ]] && . /etc/os-release
 [[ -z "$DISTRIB_CODENAME" ]] && DISTRIB_CODENAME="${VERSION_CODENAME}"
-[[ -n "$DISTRIB_CODENAME" && -f /etc/armbian-distribution-status ]] && DISTRIBUTION_STATUS=$(grep "$DISTRIB_CODENAME" /etc/armbian-distribution-status | cut -d"=" -f2)
+[[ -n "$DISTRIB_CODENAME" && -f /etc/armbian-distribution-status ]] && DISTRIBUTION_STATUS=$(grep "^$DISTRIB_CODENAME" /etc/armbian-distribution-status | cut -d"=" -f2 | cut -d";" -f1)
 
 . /etc/armbian-release
 
@@ -247,11 +247,12 @@ set_shell() {
 					;;
 			esac
 		done
-	fi
-	SHELL_PATH=$(grep "/$USER_SHELL$" /etc/shells | tail -1)
-
-	chsh -s "$(grep -iF "/$USER_SHELL" /etc/shells | tail -1)"
+	# Display shell selection only if needs to be selected
 	echo -e "\nShell: \x1B[92m${USER_SHELL^^}\x1B[0m"
+	fi
+
+	SHELL_PATH=$(grep "/$USER_SHELL$" /etc/shells | tail -1)
+	chsh -s "$(grep -iF "/$USER_SHELL" /etc/shells | tail -1)"
 
 	# change shell for future users
 	sed -i "s|^SHELL=.*|SHELL=${SHELL_PATH}|" /etc/default/useradd
@@ -306,8 +307,8 @@ set_timezone_and_locales() {
 				while [[ ${scanning} -lt 3 ]]; do
 					sleep 0.5
 					scanning=$(( scanning + 1 ))
-					ARRAY=($(iwlist ${WIFI_DEVICE} scanning 2> /dev/null | egrep 'ESSID' | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/ESSID://' | sed '/^$/d' | sort | uniq | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1'))
-					if [[ $? == 0 ]]; then broken=0; break; fi
+					readarray -t ARRAY < <(iw dev ${WIFI_DEVICE} scan 2> /dev/null | egrep 'SSID' | sed 's/^[ \t]*//' | sed 's/"//g' | sed 's/SSID: //' | sed '/^$/d' | sort | uniq | awk 'BEGIN{FS=OFS=","} {$NF=++count OFS $NF} 1')
+					if [[ ${#ARRAY[@]} -gt 0 ]]; then broken=0; break; fi
 				done
 				# wifi can also fail
 				if [[ ${broken} == 1 ]]; then
@@ -319,14 +320,14 @@ set_timezone_and_locales() {
 					while [[ ${scanning} -lt 3 ]]; do
 						scanning=$(( scanning + 1 ))
 						while [[ 1 ]] ; do
-							for str in ${ARRAY[@]}; do echo $str | sed "s/,/ \t /g"; done
+							for str in "${ARRAY[@]}"; do echo $str | sed "s/,/ \t /"; done
 							echo ""
 							read -r -p "Enter a number of SSID: " input
 							if [[ "$input" =~ ^[0-9]{,2}$ ]] ; then break; fi
 						done
 						# get password
 						while [[ -n "${input}" ]] ; do
-							SSID=$(echo ${ARRAY[$input-1]} | cut -d"," -f2)
+							SSID=$(echo ${ARRAY[$input-1]} | cut -d"," -f2-)
 							echo ""
 							read -r -p "Enter a password for ${SSID}: " password
 							break
@@ -471,6 +472,7 @@ set_timezone_and_locales() {
 			if [[ -z ${TZDATA} ]]; then
 				TZDATA=$(tzselect | tail -1)
 			fi
+			echo ""
 		else
 			TZDATA=$PRESET_TIMEZONE
 		fi
@@ -478,8 +480,10 @@ set_timezone_and_locales() {
 		timedatectl set-timezone "${TZDATA}"
 		dpkg-reconfigure --frontend=noninteractive tzdata > /dev/null 2>&1
 
+		# change default locales
+		sed -i "s/=.*/=$(echo ${LOCALES} | cut -d" " -f1)/g" /etc/default/locale
+
 		# generate locales
-		echo ""
 		sed -i 's/# '"${LOCALES}"'/'"${LOCALES}"'/' /etc/locale.gen
 		echo -e "Generating locales: \x1B[92m${LOCALES}\x1B[0m"
 		locale-gen "${LOCALES}" > /dev/null 2>&1
@@ -527,7 +531,7 @@ add_user() {
 	read -r -t 0 _
 	REPEATS=3
 	while [ -f "/root/.not_logged_in_yet" ]; do
-		echo -e "\nPlease provide a username (eg. your first name): \c"
+		[[ -z "${PRESET_USER_NAME}" ]] && echo -e "\nPlease provide a username (eg. your first name): \c"
 		if [ -z "$PRESET_USER_NAME" ];then
 			read -r -e username
 		else
@@ -546,18 +550,18 @@ add_user() {
 	while [ -f "/root/.not_logged_in_yet" ]; do
 		if [ -z "$PRESET_USER_PASSWORD" ];then
 			read_password "Create user ($username)"
+			echo ""
 		else
 			password="$PRESET_USER_PASSWORD"
 		fi
 		first_input="$password"
-		echo ""
 		if [ -z "$PRESET_USER_PASSWORD" ];then
 			read_password "Repeat user ($username)"
+			echo ""
 		else
 			password="$PRESET_USER_PASSWORD"
 		fi
 		second_input="$password"
-		echo ""
 		if [[ "$first_input" == "$second_input" ]]; then
 			# minimal images might not have this
 			if command -v cracklib-check > /dev/null 2>&1; then
@@ -567,14 +571,22 @@ add_user() {
 					echo -e "\n\e[0;31mWarning:\x1B[0m Weak password, $okay \b!"
 				fi
 			fi
-			echo -e ""
 			if [ -z "$PRESET_DEFAULT_REALNAME" ];then
+				echo -e ""
 				read -r -e -p "Please provide your real name: " -i "${RealUserName^}" RealName
 			else
 				RealName="$PRESET_DEFAULT_REALNAME"
 			fi
 
 			adduser --quiet --disabled-password --home /home/"$RealUserName" --gecos "$RealName" "$RealUserName"
+
+			# download and add SSH key if defined
+			if [[ -n "${PRESET_USER_KEY}" ]]; then
+				mkdir -p /home/"$RealUserName"/.ssh/
+				curl --retry 5 --connect-timeout 3 "${PRESET_ROOT_KEY}" > /home/"$RealUserName"/.ssh/authorized_keys 2> /dev/null
+				chown -R "$RealUserName":"$RealUserName" /home/"$RealUserName"/.ssh/
+			fi
+
 			if [[ -n "$first_input" ]]; then
 				(
 					echo "$first_input"
@@ -613,6 +625,14 @@ add_user() {
 }
 
 if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
+
+	. /root/.not_logged_in_yet
+
+	# override configuration from URL
+	if [[ -n "${PRESET_CONFIGURATION}" ]]; then
+		curl --retry 5 --connect-timeout 3 "${PRESET_CONFIGURATION}" > /root/.not_logged_in_yet 2> /dev/null
+	fi
+
 	do_firstrun_automated_network_configuration
 
 	# disable autologin
@@ -651,6 +671,8 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 
 	clear
 
+	# In case VENDORPRETTYNAME is defined, display that
+	[[ -n "${VENDORPRETTYNAME}" ]] && VENDOR="$VENDORPRETTYNAME"
 	echo -e "Welcome to \e[1m\e[97m${VENDOR}\x1B[0m! \n"
 	echo -e "Documentation: \e[1m\e[92m${VENDORDOCS}\x1B[0m | Community support: \e[1m\e[92m${VENDORSUPPORT}\x1B[0m\n"
 
@@ -659,7 +681,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	# Try to get the local IP address (script halts until IP was found or x retries were done)
 	get_local_ip_addr
 
-	echo "" # empty line
+	[[ -z "$PRESET_ROOT_PASSWORD" ]] && echo "" # empty line
 
 	trap '' 2
 	REPEATS=3
@@ -668,10 +690,16 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		if [ -z "$PRESET_ROOT_PASSWORD" ];then
 			read_password "Create root"
 		else
-			if [ "$(who am i | awk '{print $2}')" != "tty1" ];then
-				exit
-			fi
+			# allow automated install also in interactive session
+			#if [ "$(who am i | awk '{print $2}')" != "tty1" ];then
+			#	exit
+			#fi
 			password="$PRESET_ROOT_PASSWORD"
+			# download SSH key if defined
+			if [[ -n "${PRESET_ROOT_KEY}" ]]; then
+				mkdir -p /root/.ssh/
+				curl --retry 5 --connect-timeout 3 "${PRESET_ROOT_KEY}" > /root/.ssh/authorized_keys 2> /dev/null
+			fi
 		fi
 
 		# only allow one login. Once you enter root password, kill others.
@@ -679,14 +707,14 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		who -la | grep root | grep -v "$loginfrom" | awk '{print $7}' | xargs --no-run-if-empty kill -9
 
 		first_input="$password"
-		echo ""
 		if [ -z "$PRESET_ROOT_PASSWORD" ];then
+			echo ""
 			read_password "Repeat root"
+			echo ""
 		else
 			password="$PRESET_ROOT_PASSWORD"
 		fi
 		second_input="$password"
-		echo ""
 		if [[ "$first_input" == "$second_input" ]]; then
 			# minimal might not have this
 			if command -v cracklib-check > /dev/null 2>&1; then
@@ -737,7 +765,7 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 	trap check_abort INT
 
 	while [ -f "/root/.not_logged_in_yet" ]; do
-		echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
+		[[ -z "${PRESET_USER_NAME}" ]] && echo -e "\nCreating a new user account. Press <Ctrl-C> to abort"
 		[[ "${desktop_dm}" != "none" ]] && echo -e "\n\e[0;31mDesktop environment will not be enabled if you abort the new user creation\x1B[0m"
 		add_user
 	done
@@ -895,7 +923,10 @@ if [[ -f /root/.not_logged_in_yet && -n $(tty) ]]; then
 		who -la | grep root | grep -q tty1 && exit 1
 
 	else
-		# no display manager detected
+		# no display manager detected -> clear screen and show motd
+		clear
+		run-parts --lsbsysinit /etc/update-motd.d
+
 		# Display reboot recommendation if necessary
 		if [[ -f /var/run/resize2fs-reboot ]]; then
 			printf "\n\n\e[0;91mWarning: a reboot is needed to finish resizing the filesystem \x1B[0m \n"

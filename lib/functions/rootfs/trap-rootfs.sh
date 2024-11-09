@@ -26,7 +26,7 @@ function prepare_rootfs_build_params_and_trap() {
 	# @TODO: well those are very... arbitrary numbers. At least when using cached rootfs, we can be more precise.
 	# predicting the size of tmpfs is hard/impossible, so would be nice to show the used size at the end so we can tune.
 	declare -i tmpfs_estimated_size=2300                     # MiB - bumped from 2000, empirically
-	[[ $BUILD_DESKTOP == yes ]] && tmpfs_estimated_size=5000 # MiB
+	[[ $BUILD_DESKTOP == yes ]] && tmpfs_estimated_size=6000 # MiB
 
 	declare use_tmpfs=no                      # by default
 	if [[ ${FORCE_USE_RAMDISK} == no ]]; then # do not use, even if it fits
@@ -63,7 +63,7 @@ function trap_handler_cleanup_rootfs_and_image() {
 	# unmount tmpfs mounted on SDCARD if it exists. #@TODO: move to new tmpfs-utils scheme
 	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
 
-	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${ROOT_MAPPER}"
+	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${CRYPTROOT_MAPPER}"
 
 	if [[ "${PRESERVE_SDCARD_MOUNT}" == "yes" ]]; then
 		display_alert "Preserving SD card mount" "trap_handler_cleanup_rootfs_and_image" "warn"

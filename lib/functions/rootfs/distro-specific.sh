@@ -37,24 +37,13 @@ function install_distribution_specific() {
 
 	# install our base-files package (this replaces the original from Debian/Ubuntu)
 	if [[ "${KEEP_ORIGINAL_OS_RELEASE:-"no"}" != "yes" ]]; then
-		install_artifact_deb_chroot "armbian-base-files"
+		install_artifact_deb_chroot "armbian-base-files" "--allow-downgrades"
 	fi
 
 	# Set DNS server if systemd-resolved is in use
 	if [[ -n "$NAMESERVER" && -f "${SDCARD}"/etc/systemd/resolved.conf ]]; then
-		display_alert "Setup DNS server for systemd-resolved" "${NAMESERVER}" "info"
-
-		# Use resolved.conf.d/ directory as recommended by resolved itself
-		mkdir -p "${SDCARD}"/etc/systemd/resolved.conf.d/
-
-		cat <<- EOF > "${SDCARD}"/etc/systemd/resolved.conf.d/00-armbian-default-dns.conf
-			# Added by Armbian
-			#
-			# See resolved.conf(5) for details
-
-			[Resolve]
-			DNS=${NAMESERVER}
-		EOF
+		display_alert "Using systemd-resolved" "for DNS management" "info"
+		# This used to set a default DNS entry from $NAMESERVER into "${SDCARD}"/etc/systemd/resolved.conf.d/00-armbian-default-dns.conf -- no longer; better left to DHCP.
 	fi
 
 	# cleanup motd services and related files

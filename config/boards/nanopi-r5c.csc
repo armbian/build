@@ -4,6 +4,7 @@ BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
 BOOT_SOC="rk3568"
 KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
 BOOT_FDT_FILE="rockchip/rk3568-nanopi-r5c.dtb"
 SRC_EXTLINUX="no"
 ASOUND_STATE="asound.state.station-m2" # TODO verify me
@@ -12,7 +13,7 @@ FULL_DESKTOP="no"
 BOOT_LOGO="desktop"
 
 BOOTBRANCH_BOARD="tag:v2024.07"
-BOOTPATCHDIR="v2024.07/board_${BOARD}"
+BOOTPATCHDIR="v2024.07"
 BOOTCONFIG="nanopi-r5c-rk3568_defconfig"
 
 OVERLAY_PREFIX="rockchip-rk3568"

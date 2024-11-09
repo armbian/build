@@ -16,6 +16,7 @@ SRC_LOADADDR='LOADADDR=0x1080000'
 BOOTBRANCH="${BOOTBRANCH_BOARD:-"tag:v2022.07"}"
 BOOTPATCHDIR="${BOOTPATCHDIR:-"v2022.07"}"
 OVERLAY_PREFIX='meson'
+OVERLAY_DIR="/boot/dtb/amlogic/overlay"
 
 # This is an extension method, put directly in meson64_common. A "built-in" extension if you will.
 # Bring in LibreELEC's amlogic-boot-fip repo, which is the authoritative source for FIP blobs.
@@ -45,7 +46,7 @@ case $BRANCH in
 		declare -g KERNEL_MAJOR_MINOR="6.6"
 		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.10"
+		declare -g KERNEL_MAJOR_MINOR="6.11"
 		;;
 
 esac

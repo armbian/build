@@ -297,8 +297,8 @@ function adaptative_prepare_host_dependencies() {
 	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
 	host_dependencies+=("libgnutls28-dev")
 
-	# Noble and later releases do not carry "python3-distutils" https://docs.python.org/3.10/whatsnew/3.10.html#distutils-deprecated
-	if [[ "$host_release" =~ ^(noble|wilma)$ ]]; then
+	# Noble/Trixie and later releases do not carry "python3-distutils" https://docs.python.org/3.10/whatsnew/3.10.html#distutils-deprecated
+	if [[ "$host_release" =~ ^(trixie|sid|noble|wilma)$ ]]; then
 		display_alert "python3-distutils not available on host release '${host_release}'" "distutils was deprecated with Python 3.12" "debug"
 	else
 		host_dependencies+=("python3-distutils")
@@ -340,6 +340,12 @@ function adaptative_prepare_host_dependencies() {
 
 	if [[ "${wanted_arch}" != "amd64" ]]; then
 		host_dependencies+=(libc6-amd64-cross) # Support for running x86 binaries (under qemu on other arches)
+	fi
+
+	if [[ "${KERNEL_COMPILER}" == "clang" ]]; then
+		host_dependencies+=("clang")
+		host_dependencies+=("llvm")
+		host_dependencies+=("lld")
 	fi
 
 	declare -g EXTRA_BUILD_DEPS=""

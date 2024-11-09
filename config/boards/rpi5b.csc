@@ -3,8 +3,8 @@ declare -g BOARD_NAME="Raspberry Pi 5"
 declare -g BOARDFAMILY="bcm2711"
 declare -g BOARD_MAINTAINER=""
 declare -g KERNEL_TARGET="current,edge"
+declare -g KERNEL_TEST_TARGET="current"
 declare -g ASOUND_STATE="asound.state.rpi"
-declare -g KERNEL_TEST_TARGET="current,edge"
 
 function post_family_config__rename_linux_family() {
 	display_alert "rpi5b" "Changing LINUXFAMILY" "info"

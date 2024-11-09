@@ -28,3 +28,12 @@ function post_family_tweaks__armsom-w3_naming_audios() {
 
 	return 0
 }
+
+function post_family_tweaks__armsom-w3_fix_m2_bluetooth() {
+	display_alert "$BOARD" "Fixing armsom-w3 m.2 usb bluetooth" "info"
+
+	mkdir -p $SDCARD/etc/udev/rules.d/
+	echo 'ACTION=="add", SUBSYSTEM=="usb",ATTR{bConfigurationValue}=="", ATTR{bConfigurationValue}="1"' > $SDCARD/etc/udev/rules.d/91-m2-usb-bluetooth.rules
+
+	return 0
+}

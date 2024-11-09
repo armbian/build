@@ -1,7 +1,7 @@
 # Allwinner H2+ quad core 256MB/512MB RAM SoC WiFi SPI 2xETH
 BOARD_NAME="Orange Pi R1"
 BOARDFAMILY="sun8i"
-BOARD_MAINTAINER="schwar3kat"
+BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_r1_defconfig"
 DEFAULT_OVERLAYS="usbhost2 usbhost3"
 MODULES="g_serial"
@@ -10,3 +10,4 @@ HAS_VIDEO_OUTPUT="no"
 DEFAULT_CONSOLE="serial"
 SERIALCON="ttyS0,ttyGS0"
 KERNEL_TARGET="legacy,current,edge"
+KERNEL_TEST_TARGET="current"

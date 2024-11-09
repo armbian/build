@@ -74,7 +74,8 @@ If you are unsure about the documentation then invoke `$ grep -r -A5 -B5 "BUILD_
 		- edge: Use edge kernel
 		- [branch]: Use specified [branch] kernel
 		- [none]: Exits with error
-- **KERNEL_TEST_TARGET** ( comma-separated list of kernel releases or branches ): if test targets are different for testings (internal switch)
+- **KERNEL_TEST_TARGET** ( comma-separated list of kernel releases or branches ): if test targets are different for testings. Also applies to build list generation. (internal switch)
+- **KERNEL_UPGRADE_FREEZE** ( comma-separated list of kernels with versions obove which they stop updating, example: KERNEL_UPGRADE_FREEZE="vendor-rk35xx@24.8.1,current-rockchip-rk3588@24.8.2" )
 - **FULL_DESKTOP** ( boolean ): defines whether to install desktop stack of applications such as office, thunderbird, etc..
 	- Values:
 		- yes: install desktop stack

@@ -335,9 +335,7 @@ function install_distribution_agnostic() {
 
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_artifact_deb_chroot "armbian-config"
-		fi
+		install_artifact_deb_chroot "armbian-config"
 	fi
 
 	# install armbian-zsh
@@ -352,11 +350,6 @@ function install_distribution_agnostic() {
 		install_artifact_deb_chroot "armbian-plymouth-theme"
 	else
 		chroot_sdcard_apt_get_remove --auto-remove plymouth
-	fi
-
-	# install wireguard tools
-	if [[ $WIREGUARD == yes ]]; then
-		install_deb_chroot "wireguard-tools" "remote" # @TODO: move this to some image pkg list in config
 	fi
 
 	# freeze armbian packages
@@ -398,7 +391,14 @@ function install_distribution_agnostic() {
 
 	# enable additional services, if they exist.
 	display_alert "Enabling Armbian services" "systemd" "info"
-	[[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun.service ]] && chroot_sdcard systemctl --no-reload enable armbian-firstrun.service
+	if [[ -f "${SDCARD}"/lib/systemd/system/armbian-firstrun.service ]]; then
+	    # Note: armbian-firstrun starts before the user has a chance to edit the env file's values.
+	    # Exceptionaly, the env file can be edited during image build time
+        if test -n "$OPENSSHD_REGENERATE_HOST_KEYS"; then
+            sed -i "s/\(^OPENSSHD_REGENERATE_HOST_KEYS *= *\).*/\1$OPENSSHD_REGENERATE_HOST_KEYS/" "${SDCARD}"/etc/default/armbian-firstrun
+        fi
+		chroot_sdcard systemctl --no-reload enable armbian-firstrun.service
+	fi
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-zram-config.service ]] && chroot_sdcard systemctl --no-reload enable armbian-zram-config.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-hardware-optimize.service ]] && chroot_sdcard systemctl --no-reload enable armbian-hardware-optimize.service
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-ramlog.service ]] && chroot_sdcard systemctl --no-reload enable armbian-ramlog.service
@@ -479,6 +479,14 @@ function install_distribution_agnostic() {
 
 	# save initial armbian-release state
 	cp "${SDCARD}"/etc/armbian-release "${SDCARD}"/etc/armbian-image-release
+
+	# save list of enabled extensions for this image
+	EXTENSIONS=${ENABLE_EXTENSIONS} >> "${SDCARD}"/etc/armbian-image-release
+
+	# store vendor pretty name to image only. We don't need to save this in BSP upgrade
+	# files. Vendor should be only defined at build image stage.
+	[[ -z $VENDORPRETTYNAME ]] && VENDORPRETTYNAME="${VENDOR}"
+	VENDORPRETTYNAME="$VENDORPRETTYNAME" >> "${SDCARD}"/etc/armbian-image-release
 
 	# DNS fix. package resolvconf is not available everywhere
 	if [ -d "${SDCARD}"/etc/resolvconf/resolv.conf.d ] && [ -n "$NAMESERVER" ]; then

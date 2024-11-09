@@ -1,0 +1,331 @@
+From 41a15ab971400502e93bbbf0d7336fa81daf25c9 Mon Sep 17 00:00:00 2001
+From: James Deng <james.deng@spacemit.com>
+Date: Tue, 30 Apr 2024 17:48:07 +0800
+Subject: Update for v1.0rc1
+
+---
+ include/sbi_utils/cache/cacheflush.h          | 34 +++++++++-----
+ lib/sbi/sbi_hsm.c                             |  2 +-
+ lib/utils/psci/psci_private.h                 |  2 +-
+ .../spacemit/plat/k1x/underly_implement.c     | 37 ---------------
+ lib/utils/psci/spacemit/plat/plat_pm.c        |  4 +-
+ .../generic/include/spacemit/k1x/k1x_evb.h    | 44 ++++++++++++++++-
+ .../generic/include/spacemit/k1x/k1x_fpga.h   | 47 +++++++++++++++++--
+ platform/generic/spacemit/spacemit_k1.c       | 13 +++++
+ 8 files changed, 126 insertions(+), 57 deletions(-)
+
+diff --git a/include/sbi_utils/cache/cacheflush.h b/include/sbi_utils/cache/cacheflush.h
+index c3e353229f75..126931b25888 100644
+--- a/include/sbi_utils/cache/cacheflush.h
++++ b/include/sbi_utils/cache/cacheflush.h
+@@ -167,26 +167,34 @@ static inline void __mdelay(void)
+ 		cpu_relax();
+ }
+ 
+-static inline void csi_flush_l2_cache(void)
++static inline void csi_flush_l2_cache(bool hw)
+ {
+ 	unsigned int hartid = current_hartid();
+ 
+ 	uintptr_t *cr =(MPIDR_AFFLVL1_VAL(hartid) == 0) ? (uintptr_t *)CLUSTER0_L2_CACHE_FLUSH_REG_BASE :
+ 			(uintptr_t *)CLUSTER1_L2_CACHE_FLUSH_REG_BASE;
+ 
+-	/* flush l2 cache */
+-	writel(readl(cr) | (1 << L2_CACHE_FLUSH_REQUEST_BIT_OFFSET), cr);
+-	/* k1pro */
+-	if (L2_CACHE_FLUSH_REQUEST_BIT_OFFSET == L2_CACHE_FLUSH_DONE_BIT_OFFSET)
+-		while (readl(cr) & (1 << L2_CACHE_FLUSH_DONE_BIT_OFFSET));
+-	else /* k1x */ {
+-		/* clear the request */
+-		while (1) {
+-			if ((readl(cr) & (1 << L2_CACHE_FLUSH_DONE_BIT_OFFSET)) == 0)
+-				break;
+-			__mdelay();
++	if (!hw) {
++		writel(0x0, cr);
++		/* flush l2 cache */
++		writel(readl(cr) | (1 << L2_CACHE_FLUSH_REQUEST_BIT_OFFSET), cr);
++		/* k1pro */
++		if (L2_CACHE_FLUSH_REQUEST_BIT_OFFSET == L2_CACHE_FLUSH_DONE_BIT_OFFSET)
++			while (readl(cr) & (1 << L2_CACHE_FLUSH_DONE_BIT_OFFSET));
++		else /* k1x */ {
++			/* clear the request */
++			while (1) {
++				if ((readl(cr) & (1 << L2_CACHE_FLUSH_DONE_BIT_OFFSET)) == 0)
++					break;
++				__mdelay();
++			}
++			writel(readl(cr) & ~(1 << L2_CACHE_FLUSH_REQUEST_BIT_OFFSET), cr);
+ 		}
+-		writel(readl(cr) & ~(1 << L2_CACHE_FLUSH_REQUEST_BIT_OFFSET), cr);
++	} else {
++		/* k1pro */
++		if (L2_CACHE_FLUSH_REQUEST_BIT_OFFSET == L2_CACHE_FLUSH_DONE_BIT_OFFSET)
++			return /* do nothing */;
++		writel((1 << L2_CACHE_FLUSH_HW_TYPE_BIT_OFFSET) | (1 << L2_CACHE_FLUSH_HW_EN_BIT_OFFSET), cr);
+ 	}
+ }
+ #endif
+diff --git a/lib/sbi/sbi_hsm.c b/lib/sbi/sbi_hsm.c
+index acd3c9e04c87..51c982ad7b78 100644
+--- a/lib/sbi/sbi_hsm.c
++++ b/lib/sbi/sbi_hsm.c
+@@ -183,7 +183,7 @@ void __noreturn sbi_hsm_hart_start_finish(struct sbi_scratch *scratch,
+ 	 * */
+ 	if (cool_boot) {
+ 		csi_flush_dcache_all();
+-		csi_flush_l2_cache();
++		csi_flush_l2_cache(0);
+ 	}
+ 
+ 	sbi_hart_switch_mode(hartid, next_arg1, next_addr, next_mode, false);
+diff --git a/lib/utils/psci/psci_private.h b/lib/utils/psci/psci_private.h
+index c768d3f379ab..0a3f260f5c39 100644
+--- a/lib/utils/psci/psci_private.h
++++ b/lib/utils/psci/psci_private.h
+@@ -182,7 +182,7 @@ static inline void psci_do_pwrdown_cache_maintenance(int hartid, uintptr_t scrat
+ 		/* disable the tcm */
+ 		csr_write(CSR_TCMCFG, 0);
+ #endif
+-		csi_flush_l2_cache();
++		csi_flush_l2_cache(0);
+ 	}
+ 
+ 	/* disable dcache */
+diff --git a/lib/utils/psci/spacemit/plat/k1x/underly_implement.c b/lib/utils/psci/spacemit/plat/k1x/underly_implement.c
+index 279e6d5dc741..73feec440d27 100644
+--- a/lib/utils/psci/spacemit/plat/k1x/underly_implement.c
++++ b/lib/utils/psci/spacemit/plat/k1x/underly_implement.c
+@@ -5,43 +5,6 @@
+ #include <sbi/sbi_console.h>
+ #include <spacemit/spacemit_config.h>
+ 
+-#define C1_CPU_RESET_BASE_ADDR		(0xD4282B24)
+-
+-#define PMU_CAP_CORE0_IDLE_CFG		(0xd4282924)
+-#define PMU_CAP_CORE1_IDLE_CFG		(0xd4282928)
+-#define PMU_CAP_CORE2_IDLE_CFG		(0xd4282960)
+-#define PMU_CAP_CORE3_IDLE_CFG		(0xd4282964)
+-#define PMU_CAP_CORE4_IDLE_CFG		(0xd4282b04)
+-#define PMU_CAP_CORE5_IDLE_CFG		(0xd4282b08)
+-#define PMU_CAP_CORE6_IDLE_CFG		(0xd4282b0c)
+-#define PMU_CAP_CORE7_IDLE_CFG		(0xd4282b10)
+-
+-#define PMU_C0_CAPMP_IDLE_CFG0		(0xd4282920)
+-#define PMU_C0_CAPMP_IDLE_CFG1		(0xd42828e4)
+-#define PMU_C0_CAPMP_IDLE_CFG2		(0xd4282950)
+-#define PMU_C0_CAPMP_IDLE_CFG3		(0xd4282954)
+-#define PMU_C1_CAPMP_IDLE_CFG0		(0xd4282b14)
+-#define PMU_C1_CAPMP_IDLE_CFG1		(0xd4282b18)
+-#define PMU_C1_CAPMP_IDLE_CFG2		(0xd4282b1c)
+-#define PMU_C1_CAPMP_IDLE_CFG3		(0xd4282b20)
+-
+-#define PMU_ACPR_CLUSTER0_REG		(0xd4051090)
+-#define PMU_ACPR_CLUSTER1_REG		(0xd4051094)
+-#define PMU_ACPR_UNKONW_REG		(0xd4050038)
+-
+-
+-#define CPU_PWR_DOWN_VALUE		(0x3)
+-#define CLUSTER_PWR_DOWN_VALUE		(0x3)
+-#define CLUSTER_AXISDO_OFFSET		(31)
+-#define CLUSTER_DDRSD_OFFSET		(27)
+-#define CLUSTER_APBSD_OFFSET		(26)
+-#define CLUSTER_VCXOSD_OFFSET		(19)
+-#define CLUSTER_BIT29_OFFSET		(29)
+-#define CLUSTER_BIT14_OFFSET		(14)
+-#define CLUSTER_BIT30_OFFSET		(30)
+-#define CLUSTER_BIT25_OFFSET		(25)
+-#define CLUSTER_BIT13_OFFSET		(13)
+-
+ struct pmu_cap_wakeup {
+ 	unsigned int pmu_cap_core0_wakeup;
+ 	unsigned int pmu_cap_core1_wakeup;
+diff --git a/lib/utils/psci/spacemit/plat/plat_pm.c b/lib/utils/psci/spacemit/plat/plat_pm.c
+index da6f958157fa..a5b91270834f 100644
+--- a/lib/utils/psci/spacemit/plat/plat_pm.c
++++ b/lib/utils/psci/spacemit/plat/plat_pm.c
+@@ -7,6 +7,7 @@
+ #include <sbi/sbi_console.h>
+ #include <sbi_utils/psci/plat/arm/common/arm_def.h>
+ #include <sbi_utils/irqchip/fdt_irqchip_plic.h>
++#include <sbi_utils/cache/cacheflush.h>
+ #include "underly_implement.h"
+ 
+ #define CORE_PWR_STATE(state) \
+@@ -81,6 +82,7 @@ static void spacemit_pwr_domain_off(const psci_power_state_t *target_state)
+ #endif
+                 cci_disable_snoop_dvm_reqs(MPIDR_AFFLVL1_VAL(hartid));
+                 spacemit_cluster_off(hartid);
++		csi_flush_l2_cache(1);
+         }
+ 
+ 	if (SYSTEM_PWR_STATE(target_state) == ARM_LOCAL_STATE_OFF) {
+@@ -180,8 +182,8 @@ static void spacemit_pwr_domain_suspend(const psci_power_state_t *target_state)
+ 		csr_write(CSR_TCMCFG, 0);
+ #endif
+ 		cci_disable_snoop_dvm_reqs(clusterid);
+-
+ 		spacemit_cluster_off(hartid);
++		csi_flush_l2_cache(1);
+ 	}
+ 
+ 	if (SYSTEM_PWR_STATE(target_state) == ARM_LOCAL_STATE_OFF) {
+diff --git a/platform/generic/include/spacemit/k1x/k1x_evb.h b/platform/generic/include/spacemit/k1x/k1x_evb.h
+index b951105e0c04..5f5b672a61a6 100644
+--- a/platform/generic/include/spacemit/k1x/k1x_evb.h
++++ b/platform/generic/include/spacemit/k1x/k1x_evb.h
+@@ -24,6 +24,45 @@
+ #define C1_RVBADDR_LO_ADDR          (0xD4282C00 + 0x2B0)
+ #define C1_RVBADDR_HI_ADDR          (0xD4282C00 + 0X2B4)
+ 
++#define C1_CPU_RESET_BASE_ADDR		(0xD4282B24)
++
++#define PMU_CAP_CORE0_IDLE_CFG		(0xd4282924)
++#define PMU_CAP_CORE1_IDLE_CFG		(0xd4282928)
++#define PMU_CAP_CORE2_IDLE_CFG		(0xd4282960)
++#define PMU_CAP_CORE3_IDLE_CFG		(0xd4282964)
++#define PMU_CAP_CORE4_IDLE_CFG		(0xd4282b04)
++#define PMU_CAP_CORE5_IDLE_CFG		(0xd4282b08)
++#define PMU_CAP_CORE6_IDLE_CFG		(0xd4282b0c)
++#define PMU_CAP_CORE7_IDLE_CFG		(0xd4282b10)
++
++#define PMU_C0_CAPMP_IDLE_CFG0		(0xd4282920)
++#define PMU_C0_CAPMP_IDLE_CFG1		(0xd42828e4)
++#define PMU_C0_CAPMP_IDLE_CFG2		(0xd4282950)
++#define PMU_C0_CAPMP_IDLE_CFG3		(0xd4282954)
++#define PMU_C1_CAPMP_IDLE_CFG0		(0xd4282b14)
++#define PMU_C1_CAPMP_IDLE_CFG1		(0xd4282b18)
++#define PMU_C1_CAPMP_IDLE_CFG2		(0xd4282b1c)
++#define PMU_C1_CAPMP_IDLE_CFG3		(0xd4282b20)
++
++#define PMU_ACPR_CLUSTER0_REG		(0xd4051090)
++#define PMU_ACPR_CLUSTER1_REG		(0xd4051094)
++#define PMU_ACPR_UNKONW_REG		(0xd4050038)
++
++
++#define CPU_PWR_DOWN_VALUE		(0x3)
++#define CLUSTER_PWR_DOWN_VALUE		(0x3)
++#define CLUSTER_AXISDO_OFFSET		(31)
++#define CLUSTER_DDRSD_OFFSET		(27)
++#define CLUSTER_APBSD_OFFSET		(26)
++#define CLUSTER_VCXOSD_OFFSET		(19)
++#define CLUSTER_BIT29_OFFSET		(29)
++#define CLUSTER_BIT14_OFFSET		(14)
++#define CLUSTER_BIT30_OFFSET		(30)
++#define CLUSTER_BIT25_OFFSET		(25)
++#define CLUSTER_BIT13_OFFSET		(13)
++
++#define L2_HARDWARE_CACHE_FLUSH_EN	(13)
++
+ /***************************mailbox***************************/
+ #define SCMI_MAILBOX_SHARE_MEM		(0x2f902080)
+ #define PLAT_MAILBOX_REG_BASE		(0x2f824000)
+@@ -66,7 +105,10 @@
+ #define CLUSTER0_L2_CACHE_FLUSH_REG_BASE	(0xD84401B0)
+ #define CLUSTER1_L2_CACHE_FLUSH_REG_BASE	(0xD84401B4)
+ 
+-#define L2_CACHE_FLUSH_REQUEST_BIT_OFFSET	(0x1)
++#define L2_CACHE_FLUSH_REQUEST_BIT_OFFSET	(0x1) /* sw flush l2 cache */
+ #define L2_CACHE_FLUSH_DONE_BIT_OFFSET		(0x3)
+ 
++#define L2_CACHE_FLUSH_HW_TYPE_BIT_OFFSET	(0)
++#define L2_CACHE_FLUSH_HW_EN_BIT_OFFSET		(0x2)
++
+ #endif /* __K1X_EVB_CONFIG_H__ */
+diff --git a/platform/generic/include/spacemit/k1x/k1x_fpga.h b/platform/generic/include/spacemit/k1x/k1x_fpga.h
+index 4748c86b69c2..3d8964c861c4 100644
+--- a/platform/generic/include/spacemit/k1x/k1x_fpga.h
++++ b/platform/generic/include/spacemit/k1x/k1x_fpga.h
+@@ -24,13 +24,51 @@
+ #define C1_RVBADDR_LO_ADDR          (0xD4282C00 + 0x2B0)
+ #define C1_RVBADDR_HI_ADDR          (0xD4282C00 + 0X2B4)
+ 
++#define C1_CPU_RESET_BASE_ADDR		(0xD4282B24)
++
++#define PMU_CAP_CORE0_IDLE_CFG		(0xd4282924)
++#define PMU_CAP_CORE1_IDLE_CFG		(0xd4282928)
++#define PMU_CAP_CORE2_IDLE_CFG		(0xd4282960)
++#define PMU_CAP_CORE3_IDLE_CFG		(0xd4282964)
++#define PMU_CAP_CORE4_IDLE_CFG		(0xd4282b04)
++#define PMU_CAP_CORE5_IDLE_CFG		(0xd4282b08)
++#define PMU_CAP_CORE6_IDLE_CFG		(0xd4282b0c)
++#define PMU_CAP_CORE7_IDLE_CFG		(0xd4282b10)
++
++#define PMU_C0_CAPMP_IDLE_CFG0		(0xd4282920)
++#define PMU_C0_CAPMP_IDLE_CFG1		(0xd42828e4)
++#define PMU_C0_CAPMP_IDLE_CFG2		(0xd4282950)
++#define PMU_C0_CAPMP_IDLE_CFG3		(0xd4282954)
++#define PMU_C1_CAPMP_IDLE_CFG0		(0xd4282b14)
++#define PMU_C1_CAPMP_IDLE_CFG1		(0xd4282b18)
++#define PMU_C1_CAPMP_IDLE_CFG2		(0xd4282b1c)
++#define PMU_C1_CAPMP_IDLE_CFG3		(0xd4282b20)
++
++#define PMU_ACPR_CLUSTER0_REG		(0xd4051090)
++#define PMU_ACPR_CLUSTER1_REG		(0xd4051094)
++#define PMU_ACPR_UNKONW_REG		(0xd4050038)
++
++
++#define CPU_PWR_DOWN_VALUE		(0x3)
++#define CLUSTER_PWR_DOWN_VALUE		(0x3)
++#define CLUSTER_AXISDO_OFFSET		(31)
++#define CLUSTER_DDRSD_OFFSET		(27)
++#define CLUSTER_APBSD_OFFSET		(26)
++#define CLUSTER_VCXOSD_OFFSET		(19)
++#define CLUSTER_BIT29_OFFSET		(29)
++#define CLUSTER_BIT14_OFFSET		(14)
++#define CLUSTER_BIT30_OFFSET		(30)
++#define CLUSTER_BIT25_OFFSET		(25)
++#define CLUSTER_BIT13_OFFSET		(13)
++
++#define L2_HARDWARE_CACHE_FLUSH_EN	(13)
++
+ /***************************mailbox***************************/
+ #define SCMI_MAILBOX_SHARE_MEM		(0x2f902080)
+ #define PLAT_MAILBOX_REG_BASE		(0x2f824000)
+ 
+ /****************************scmi*****************************/
+-#define PLAT_SCMI_SINGLE_CLUSTER_DOMAIN_MAP     {0, 1, 2, 3}
+-#define PLAT_SCMI_DOUBLE_CLUSTER_DOMAIN_MAP     {0, 1, 4, 5}
++#define PLAT_SCMI_DOMAIN_MAP		{0, 1, 2, 3}
+ 
+ /*************************cpu topology************************/
+ #define ARM_SYSTEM_COUNT		(1U)
+@@ -67,7 +105,10 @@
+ #define CLUSTER0_L2_CACHE_FLUSH_REG_BASE	(0xD84401B0)
+ #define CLUSTER1_L2_CACHE_FLUSH_REG_BASE	(0xD84401B4)
+ 
+-#define L2_CACHE_FLUSH_REQUEST_BIT_OFFSET	(0x1)
++#define L2_CACHE_FLUSH_REQUEST_BIT_OFFSET	(0x1) /* sw flush l2 cache */
+ #define L2_CACHE_FLUSH_DONE_BIT_OFFSET		(0x3)
+ 
++#define L2_CACHE_FLUSH_HW_TYPE_BIT_OFFSET	(0)
++#define L2_CACHE_FLUSH_HW_EN_BIT_OFFSET		(0x2)
++
+ #endif /* __K1X_FPGA_CONFIG_H__ */
+diff --git a/platform/generic/spacemit/spacemit_k1.c b/platform/generic/spacemit/spacemit_k1.c
+index 38794c2dfbb5..95218846715f 100644
+--- a/platform/generic/spacemit/spacemit_k1.c
++++ b/platform/generic/spacemit/spacemit_k1.c
+@@ -65,6 +65,19 @@ static void wakeup_other_core(void)
+ 	unsigned char *cpu_topology = plat_get_power_domain_tree_desc();
+ #endif
+ 
++#if defined(CONFIG_PLATFORM_SPACEMIT_K1X)
++	/* enable the hw l2 cache flush method for each core */
++	writel(readl((u32 *)PMU_C0_CAPMP_IDLE_CFG0) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C0_CAPMP_IDLE_CFG0);
++	writel(readl((u32 *)PMU_C0_CAPMP_IDLE_CFG1) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C0_CAPMP_IDLE_CFG1);
++	writel(readl((u32 *)PMU_C0_CAPMP_IDLE_CFG2) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C0_CAPMP_IDLE_CFG2);
++	writel(readl((u32 *)PMU_C0_CAPMP_IDLE_CFG3) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C0_CAPMP_IDLE_CFG3);
++
++	writel(readl((u32 *)PMU_C1_CAPMP_IDLE_CFG0) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C1_CAPMP_IDLE_CFG0);
++	writel(readl((u32 *)PMU_C1_CAPMP_IDLE_CFG1) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C1_CAPMP_IDLE_CFG1);
++	writel(readl((u32 *)PMU_C1_CAPMP_IDLE_CFG2) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C1_CAPMP_IDLE_CFG2);
++	writel(readl((u32 *)PMU_C1_CAPMP_IDLE_CFG3) | (1 << L2_HARDWARE_CACHE_FLUSH_EN), (u32 *)PMU_C1_CAPMP_IDLE_CFG3);
++#endif
++
+ 	// hart0 is already boot up
+ 	for (i = 0; i < platform.hart_count; i++) {
+ 		hartid = platform.hart_index2id[i];
+-- 
+2.35.3
+

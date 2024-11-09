@@ -4,6 +4,7 @@ BOARDFAMILY="sun50iw2"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_pc2_defconfig"
 KERNEL_TARGET="legacy,current,edge"
+KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 CRUSTCONFIG="h5_defconfig"
 

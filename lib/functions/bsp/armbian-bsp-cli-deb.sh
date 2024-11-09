@@ -104,8 +104,11 @@ function compile_armbian-bsp-cli() {
 		BOARD_TYPE=$BOARD_TYPE
 		INITRD_ARCH=$INITRD_ARCH
 		KERNEL_IMAGE_TYPE=$KERNEL_IMAGE_TYPE
+		KERNEL_TARGET=$KERNEL_TARGET
+		KERNEL_TEST_TARGET=$KERNEL_TEST_TARGET
 		FORCE_BOOTSCRIPT_UPDATE=$FORCE_BOOTSCRIPT_UPDATE
 		FORCE_UBOOT_UPDATE=$FORCE_UBOOT_UPDATE
+		OVERLAY_DIR="$OVERLAY_DIR"
 		VENDOR="$VENDOR"
 		VENDORDOCS="$VENDORDOCS"
 		VENDORURL="$VENDORURL"
@@ -171,10 +174,12 @@ function compile_armbian-bsp-cli() {
 		activate update-initramfs
 	EOF
 
-	# copy distribution support status # @TODO: why? this changes over time and will be out of date
-	local releases=($(find ${SRC}/config/distributions -mindepth 1 -maxdepth 1 -type d))
+	# copy distribution support and upgrade status
+	# this information is used in motd to show status and within armbian-config to perform upgrades
+	declare -a releases=()
+	mapfile -t releases < <(for relorder in "${SRC}"/config/distributions/*/order; do echo "${relorder} $(xargs echo < "${relorder}")"; done | sort -nk2 | sed "s/\/order.*//g")
 	for i in "${releases[@]}"; do
-		echo "$(echo $i | sed 's/.*\///')=$(cat $i/support)" >> "${destination}"/etc/armbian-distribution-status
+		echo "$(echo "$i" | sed 's/.*\///')=$(cat "$i"/support)$(echo ";upgrade" | sed 's/.*\///')=$(cat "$i"/upgrade)" >> "${destination}"/etc/armbian-distribution-status
 	done
 
 	# execute $LINUXFAMILY-specific tweaks
@@ -207,6 +212,23 @@ function compile_armbian-bsp-cli() {
 	### postinst -- a bit more complex, extendable via postinst_functions which can be customized in hook above
 	artifact_package_hook_helper_board_side_functions "postinst" board_side_bsp_cli_postinst_base "${postinst_functions[@]}" board_side_bsp_cli_postinst_finish
 	unset board_side_bsp_cli_postinst_base board_side_bsp_cli_postinst_update_uboot_bootscript board_side_bsp_cli_postinst_finish
+
+	### preventing upgrading stable kernels beyond version if defined
+	# if freeze variable is removed, upgrade becomes possible again
+	if [[ "${BETA}" != "yes" ]]; then
+		for pin_variants in $(echo $KERNEL_UPGRADE_FREEZE | sed "s/,/ /g"); do
+			extracted_pins=(${pin_variants//@/ })
+			if [[ "${BRANCH}-${LINUXFAMILY}" == "${extracted_pins[0]}" ]]; then
+				cat <<- EOF >> "${destination}"/etc/apt/preferences.d/frozen-armbian
+					Package: linux-*-${extracted_pins[0]}
+					Pin: version ${extracted_pins[1]}
+					Pin-Priority: 999
+				EOF
+			fi
+		done
+	else
+		touch "${destination}"/etc/apt/preferences.d/frozen-armbian
+	fi
 
 	# add some summary to the image # @TODO: another?
 	fingerprint_image "${destination}/etc/armbian.txt"
@@ -433,6 +455,9 @@ function board_side_bsp_cli_postinst_finish() {
 	fi
 	if [ ! -f "/etc/default/armbian-zram-config" ] && [ -f /etc/default/armbian-zram-config.dpkg-dist ]; then
 		mv /etc/default/armbian-zram-config.dpkg-dist /etc/default/armbian-zram-config
+	fi
+	if [ ! -f "/etc/default/armbian-firstrun" ]; then
+		mv /etc/default/armbian-firstrun.dpkg-dist /etc/default/armbian-firstrun
 	fi
 
 	if [ -L "/usr/lib/chromium-browser/master_preferences.dpkg-dist" ]; then

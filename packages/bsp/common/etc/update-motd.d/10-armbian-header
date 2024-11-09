@@ -11,6 +11,7 @@
 
 THIS_SCRIPT="header"
 MOTD_DISABLE=""
+HIDE_IP_PATTERN="^dummy0|^lo|^docker"
 
 # Read image configuration
 [[ -f /etc/armbian-image-release ]] && . /etc/armbian-image-release
@@ -22,12 +23,31 @@ VENDORTEMP="${VENDOR}"
 # Keep the VENDOR from image if its defined there
 [[ -n "${VENDORTEMP}" && "${VENDORTEMP}" != "${VENDOR}" ]] && VENDOR="${VENDORTEMP}"
 
+# If VENDORPRETTYNAME is defined, used that
+[[ -n $VENDORPRETTYNAME ]] && VENDOR="$VENDORPRETTYNAME"
+
 if [[ -f /etc/armbian-distribution-status ]]; then
 	. /etc/armbian-distribution-status
+	# Find a way that works
 	[[ -f /etc/lsb-release ]] && DISTRIBUTION_CODENAME=$(grep CODENAME /etc/lsb-release | cut -d"=" -f2)
+	[[ -f /etc/lsb-release ]] && DISTRIBUTION_ID=$(grep DISTRIB_ID /etc/lsb-release | cut -d"=" -f2)
 	[[ -z "$DISTRIBUTION_CODENAME" && -f /etc/os-release ]] && DISTRIBUTION_CODENAME=$(grep VERSION_CODENAME /etc/os-release | cut -d"=" -f2)
+	[[ -z "$DISTRIBUTION_ID" && -f /etc/os-release ]] && DISTRIBUTION_ID=$(grep "^ID" /etc/os-release | cut -d"=" -f2)
 	[[ -z "$DISTRIBUTION_CODENAME" && -x /usr/bin/lsb_release ]] && DISTRIBUTION_CODENAME=$(/usr/bin/lsb_release -c | cut -d":" -f2 | tr -d "\t")
-	DISTRIBUTION_STATUS=$(grep "$DISTRIBUTION_CODENAME" /etc/armbian-distribution-status | cut -d"=" -f2)
+	[[ -z "$DISTRIBUTION_ID" && -x /usr/bin/lsb_release ]] && DISTRIBUTION_ID=$(/usr/bin/lsb_release -i | cut -d":" -f2 | tr -d "\t")
+	# Read Armbian distribution status
+	DISTRIBUTION_STATUS=$(grep "^${DISTRIBUTION_CODENAME}" /etc/armbian-distribution-status | cut -d"=" -f2 | cut -d";" -f1)
+
+	# Read upgrade possibilities on stable channel
+	filter=$(grep "supported" /etc/armbian-distribution-status | cut -d"=" -f1)
+	upgrade=$(for j in $filter; do
+		for i in $(grep "^${DISTRIBUTION_CODENAME}" /etc/armbian-distribution-status | cut -d";" -f2 | cut -d"=" -f2 | sed "s/,/ /g"); do
+			if [[ $i == $j ]]; then
+				echo $i
+			fi
+		done
+	done | tail -1)
+
 fi
 [[ -f /etc/default/armbian-motd ]] && . /etc/default/armbian-motd
 
@@ -35,31 +55,115 @@ for f in $MOTD_DISABLE; do
 	[[ $f == $THIS_SCRIPT ]] && exit 0
 done
 
+function get_wan_address() {
+	curl --connect-timeout 2 -s http://whatismyip.akamai.com/
+} # get wan ip address
 
+function get_ip_addresses() {
+	local ipv4s=()
+	local ipv6s=()
+
+	for f in /sys/class/net/*; do
+		local intf=$(basename $f)
+		# match only interface names
+		if [[ $intf =~ $HIDE_IP_PATTERN ]]; then
+			continue
+		else
+			local ipv4=$(ip -4 addr show dev $intf | grep -v "$intf:avahi" | awk '/inet/ {print $2}' | cut -d'/' -f1 | uniq)
+			local ipv6=$(ip -6 addr show dev $intf | grep -v "$intf:avahi" | awk '/inet6/ {print $2}' | cut -d'/' -f1 | uniq)
+
+			[[ -n $ipv4 ]] && ipv4s+=("$ipv4")
+			[[ -n $ipv6 ]] && ipv6s+=("$ipv6")
+		fi
+	done
+
+	echo "${ipv4s[@]}|${ipv6s[@]}"
+} # get_ip_addresses
+
+# Read Armbian kernel version
 KERNELID=$(uname -r)
+# Get other variables
+ip_address=$(get_ip_addresses &)
+wan_ip_address=$(get_wan_address &)
+# Get access point info
+if systemctl is-active --quiet service hostapd && [ -f /etc/hostapd/hostapd.conf ]; then
+. /etc/hostapd/hostapd.conf
+fi
 
-# Odroid N2 exception
-[[ -f /proc/device-tree/model ]] && [[ -n $(tr -d '\000' < /proc/device-tree/model | grep ODROID | grep Plus) ]] && BOARD_NAME+="+"
+# Display software vendor logo
+echo -e "\e[1;91m$(figlet -f small " $VENDOR")\e[0m";
 
-TERM=linux toilet -f standard -F metal $(echo $BOARD_NAME | sed 's/Orange Pi/OPi/' | sed 's/NanoPi/NPi/' | sed 's/Banana Pi/BPi/')
-echo -e "Welcome to \e[0;91m${VENDOR} ${VERSION} ${DISTRIBUTION_CODENAME^}\x1B[0m with $([[ $BRANCH == edge ]] && echo -e "\e[0;91mbleeding\x1B[0m edge " )\e[0;91mLinux $KERNELID\x1B[0m\n"
+# Display version, board, and kernel version
+[[ $VERSION == *trunk* ]] && VERSION=$(echo -e $VERSION | cut -d"." -f1-2 | sed "s/\$/ rolling/")
+echo -e " \e[0;92mv${VERSION}\x1B[0m for $BOARD_NAME running Armbian Linux \e[0;92m${KERNELID^}\x1B[0m"
 
-# displaying status warnings
-
+# render image and board type
 if [[ "$IMAGE_TYPE" != "stable" ]]; then
-	[[ "$IMAGE_TYPE" == "user-built" ]] && UNSUPPORTED_TEXT="built from trunk"
-	[[ "$IMAGE_TYPE" == "nightly" ]] && UNSUPPORTED_TEXT="untested automated build"
+	[[ "$IMAGE_TYPE" == "user-built" ]] && HARDWARE_STATUS="\e[0;91mDIY\x1B[0m (custom image)\x1B[0m"
+	[[ "$IMAGE_TYPE" == "nightly" ]] && HARDWARE_STATUS="\e[0;91mfor advanced users\x1B[0m (rolling release)\x1B[0m"
 else
-	[[ "$BOARD_TYPE" == "csc" || "$BOARD_TYPE" == "tvb" ]] && UNSUPPORTED_TEXT="community creations"
-	[[ "$BOARD_TYPE" == "wip" ]] && UNSUPPORTED_TEXT="work in progress"
-	[[ "$BOARD_TYPE" == "eos" ]] && UNSUPPORTED_TEXT="end of life"
+	[[ "$BOARD_TYPE" == "csc" || "$BOARD_TYPE" == "tvb" ]] && HARDWARE_STATUS="\e[0;91mDIY (community maintained)\x1B[0m"
+	[[ "$BOARD_TYPE" == "wip" ]] && HARDWARE_STATUS="\e[0;91mfor advanced users\x1B[0m (work in progress)\x1B[0m"
+	[[ "$BOARD_TYPE" == "eos" ]] && HARDWARE_STATUS="\e[0;91mend of life\x1B[0m"
 fi
 
-if [[ -n $DISTRIBUTION_STATUS && $DISTRIBUTION_STATUS != supported ]]; then
-	[[ -n $UNSUPPORTED_TEXT ]] && UNSUPPORTED_TEXT+=" & "
-	UNSUPPORTED_TEXT+="unsupported ($DISTRIBUTION_CODENAME) userspace!"
+# render distribution status
+if [[ $DISTRIBUTION_STATUS == supported ]]; then
+	DISTRO_STATUS="\e[0;92mstable\e[0m ($DISTRIBUTION_CODENAME)"
+elif [[ $DISTRIBUTION_STATUS == eos ]]; then
+	DISTRO_STATUS="\e[0;91mend of life\e[0m ($DISTRIBUTION_CODENAME)"
+else
+	DISTRO_STATUS="\e[0;93mrolling\e[0m ($DISTRIBUTION_CODENAME)"
 fi
 
-if [[ -n $UNSUPPORTED_TEXT ]]; then
-	 echo -e "\e[0;91mNo end-user support: \x1B[0m$UNSUPPORTED_TEXT\n"
+
+# read packages update status
+NUM_UPDATES=0
+NUM_UPDATES_ONHOLD=0
+NUM_SECURITY_UPDATES=0
+[[ -f /var/cache/apt/archives/updates.number ]] && . /var/cache/apt/archives/updates.number
+if [[ $NUM_UPDATES -gt 0 ]]; then
+	if apt-mark showhold | grep -q linux-image 2>/dev/null; then
+		UPDATE_STATUS="Kernel upgrade \e[0;91mdisabled\e[0m"
+		else
+		UPDATE_STATUS="Kernel upgrade \e[0;92menabled\e[0m"
+	fi
+	UPDATE_STATUS+=" and \e[1;92m$NUM_UPDATES\e[0m package"
+	# Cosmetic is important
+	[[ $NUM_UPDATES -gt 1 ]] && UPDATE_STATUS+="s"
+	UPDATE_STATUS+=" available for upgrade\e[0m "
 fi
+
+echo ""
+
+# Display packages status
+if [[ -n $DISTRO_STATUS ]]; then
+	if [[ -n "${upgrade}" ]]; then
+		DISTRO_STATUS+=", possible distro upgrade ($upgrade)"
+	fi
+	echo -e " Packages:     ${DISTRIBUTION_ID^} ${DISTRO_STATUS}"
+fi
+
+# Display available updates
+if [[ -n $UPDATE_STATUS ]]; then
+        echo -e " Updates:      $UPDATE_STATUS"
+fi
+
+# Display hardware support status
+if [[ -n $HARDWARE_STATUS ]]; then
+        echo -e " Support:      $HARDWARE_STATUS"
+fi
+
+IFS='|' read -r ipv4s ipv6s <<< "$ip_address"
+echo -en " IP addresses: \x1B[93m(LAN)\x1B[0m IPv4: \x1B[92m${ipv4s// /, }\x1B[0m IPv6: \x1B[96m${ipv6s// /, }\x1B[0m "
+if [[ -n $wan_ip_address ]]; then
+echo -e "\x1B[93m(WAN)\x1B[0m $wan_ip_address"
+fi
+
+# Display hostapd
+if [[ -n $ssid ]]; then
+        echo -e " WiFi AP:      SSID: (\x1B[91m$ssid\x1B[0m), $(iw $interface info | grep channel | xargs)"
+fi
+
+
+echo ""

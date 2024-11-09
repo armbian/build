@@ -19,7 +19,7 @@ MOTD_DISABLE=""
 PRIMARY_INTERFACE="eth0"
 PRIMARY_DIRECTION="rx"
 STORAGE=/dev/sda1
-HIDE_IP_PATTERN="^dummy0|^lo"
+
 CPU_TEMP_LIMIT=60
 # Temperature offset in Celcius degrees
 CPU_TEMP_OFFSET=0
@@ -53,24 +53,6 @@ function display() {
 	fi
 } # display
 
-function get_ip_addresses() {
-	local ips=()
-	for f in /sys/class/net/*; do
-		local intf=$(basename $f)
-		# match only interface names "dummy0" and "lo"
-		if [[ $intf =~ $HIDE_IP_PATTERN ]]; then
-			continue
-		else
-			local tmp=$(ip -4 addr show dev $intf | grep -v "$intf:avahi" | awk '/inet/ {print $2}' | cut -d'/' -f1 | uniq)
-			# add both name and IP - can be informative but becomes ugly with long persistent/predictable device names
-			#[[ -n $tmp ]] && ips+=("$intf: $tmp")
-			# add IP only
-			[[ -n $tmp ]] && ips+=("$tmp")
-		fi
-	done
-	echo "${ips[@]}"
-} # get_ip_addresses
-
 function storage_info() {
 	# storage info
 	RootInfo=$(df -h /)
@@ -90,7 +72,6 @@ function storage_info() {
 # query various systems and send some stuff to the background for overall faster execution.
 # Works only with ambienttemp and batteryinfo since A20 is slow enough :)
 amb_temp=$(ambienttemp &)
-ip_address=$(get_ip_addresses &)
 batteryinfo
 storage_info
 getboardtemp
@@ -123,7 +104,14 @@ swap_usage=$( (awk '/Swap/ { printf("%3.0f", $3/$2*100) }' <<<${swap_info} 2>/de
 swap_total=$(awk '{print $(2)}' <<<${swap_info})
 
 # display info
-display "System load" "${load%% *}" "${critical_load}" "0" "%" ""
+
+# draw a line to start this section
+
+#echo ""
+printf "\e[0;90m Performance:  \x1B[0m"
+echo "" # fixed newline
+echo ""
+display " Load" "${load%% *}" "${critical_load}" "0" "%" ""
 
 printf "Up time:       \x1B[92m%s\x1B[0m\t" "$time"
 display "Local users" "${users##* }" "3" "2" ""
@@ -140,14 +128,15 @@ else
 	swap_total+="M"
 fi
 
-display "Memory usage" "$memory_usage" "70" "0" "%" " of ${memory_total}"
+display " Memory usage" "$memory_usage" "70" "0" "%" " of ${memory_total}"
 display "Zram usage" "$swap_usage" "75" "0" "%" " of ${swap_total}"
-printf "IP:	       "
-printf "\x1B[92m%s\x1B[0m" "$ip_address"
 echo "" # fixed newline
-display "CPU temp" "$board_temp" $CPU_TEMP_LIMIT "0" "°C" ""
+display " CPU temp" "$board_temp" $CPU_TEMP_LIMIT "0" "°C" ""
 display "Ambient temp" "$amb_temp" $AMB_TEMP_LIMIT "0" "°C" ""
-display "Usage of /" "$root_usage" "90" "1" "%" " of $root_total"
+display "Usage of /" "$root_usage" "90" "1" "%" " of $root_total $overlay_root"
+if command -v overlayroot-chroot > /dev/null 2>&1 && findmnt -k /media/root-ro | tail -1 | grep -w /media/root-ro > /dev/null 2>&1; then
+echo -ne "\x1B[91m(read only rootfs)\x1B[0m"
+fi
 echo "" # fixed newline
 a=0
 display "storage/" "$storage_usage" "90" "1" "%" " of $storage_total" ; a=$((a+$?))
@@ -157,22 +146,24 @@ display "Battery" "$battery_percent" "20" "1" "%" "$status_battery_text" ; a=$((
 
 line=0
 if [[ -n "$PRIMARY_INTERFACE" ]] && vnstat -i "$PRIMARY_INTERFACE" &> /dev/null; then
-	traffic=$(vnstat -i $PRIMARY_INTERFACE --oneline | cut -d";" -f4,5)
-	traffic_rx=$(echo $traffic | cut -d";" -f1,1 | sed -r 's/([0-9]+\.[0-9]{1})[0-9]*/\1/')
-	traffic_tx=$(echo $traffic | cut -d";" -f2,2 | sed -r 's/([0-9]+\.[0-9]{1})[0-9]*/\1/')
+	traffic=$(LC_ALL=C vnstat -i $PRIMARY_INTERFACE --oneline | cut -d";" -f4,5)
+	traffic_rx=$(echo $traffic | cut -d";" -f1,1 | sed -r 's/([0-9]+\.[0-9]{1})[0-9]*/\1/' | cut -d" " -f1 | cut -d"." -f1)
+	traffic_rx_unit=$(echo $traffic | cut -d";" -f1,1 | sed -r 's/([0-9]+\.[0-9]{1})[0-9]*/\1/' | cut -d" " -f2)
+	traffic_tx=$(echo $traffic | cut -d";" -f2,2 | sed -r 's/([0-9]+\.[0-9]{1})[0-9]*/\1/' | cut -d" " -f1 | cut -d"." -f1)
+	traffic_tx_unit=$(echo $traffic | cut -d";" -f2,2 | sed -r 's/([0-9]+\.[0-9]{1})[0-9]*/\1/' | cut -d" " -f2)
 	[[ "$traffic" == *"Not enough"* ]] && { traffic_tx="n/a	"; traffic_rx="n/a	"; }
 	case $PRIMARY_DIRECTION in
 		tx)
-			printf "TX today:      \x1B[92m%s\x1B[0m  \t"  "$traffic_tx"
+			display " TX today" "$traffic_tx" 500 0 "" "$traffic_tx_unit" ""
 			line=$((line+1))
 		;;
 		rx)
-			printf "RX today:      \x1B[92m%s\x1B[0m  \t"  "$traffic_rx"
+			display " RX today" "$traffic_rx" 500 0 "" "$traffic_rx_unit" ""
 			line=$((line+1))
 		;;
 		both)
-			printf "TX today:      \x1B[92m%s\x1B[0m  \t"  "$traffic_tx"
-			printf "RX today:      \x1B[92m%s\x1B[0m  \t"  "$traffic_rx"
+			display " TX today" "$traffic_tx" 500 0 "" "$traffic_tx_unit" ""
+			display "RX today" "$traffic_rx" 500 0 "" "$traffic_rx_unit" ""
 			line=$((line+1))
 		;;
 		*) #off or whatever
@@ -185,18 +176,17 @@ if [[ $(command -v zpool) ]]; then
 	if [[ -n $(echo $zpoolstatus | grep 'not loaded') ]]; then
 	:
 	elif [[ -n $(echo $zpoolstatus | grep 'degraded\|OFFLINE') ]]; then
-		printf "ZFS pool:      "
+		printf " ZFS pool:     "
 		echo -ne "\e[0;91mDegraded\x1B[0m"
 		line=$((line+1))
 	elif [[ -n $(echo $zpoolstatus | grep 'no pools available') ]]; then
-		printf "ZFS pool:      "
+		printf " ZFS pool:     "
 		echo -ne "n/a"
 		line=$((line+1))
 	else
-		printf "ZFS pool:      "
+		printf " ZFS pool:     "
 		echo -ne "\e[0;92mOnline\x1B[0m"
 		line=$((line+1))
 	fi
 fi
-[[ $line -ne 0 ]] && echo ""
 echo ""
