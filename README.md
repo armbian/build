@@ -82,9 +82,11 @@ Generated image will be uploaded to your repository release. Note: GitHub upload
 
 ## More information:
 
-- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start, how to automate)
-- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) (all build options)
+- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start)
+- [Build commands](https://docs.armbian.com/Developer-Guide_Build-Commands/)
+- [Build switches](https://docs.armbian.com/Developer-Guide_Build-Switches/)
 - [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) (how to add packages, patches, and override sources config)
+- [System config](https://docs.armbian.com/User-Guide_Armbian-Config/) menu driven utility to setup OS and HW features
 
 ## Download prebuilt images releases
 
