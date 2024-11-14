@@ -6,3 +6,6 @@ BOOTCONFIG="Sinovoip_BPI_M3_defconfig"
 OVERLAY_PREFIX="sun8i-a83t"
 KERNEL_TARGET="legacy,current,edge"
 KERNEL_TEST_TARGET="current"
+
+BOOTBRANCH="tag:v2024.01"
+BOOTPATCHDIR="u-boot-sunxi/board_${BOARD}"
