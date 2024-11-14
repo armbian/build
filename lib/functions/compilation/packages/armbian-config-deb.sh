@@ -66,7 +66,7 @@ compile_armbian-config() {
 
 	# Add development repository to keep rooling release of this tool
 	cat <<- END > ${tmp_dir}/${armbian_config_dir}/etc/apt/sources.list.d/armbian-config.list
-	deb [signed-by=/usr/share/keyrings/armbian.gpg] https://armbian.github.io/configng stable main
+	deb [signed-by=/usr/share/keyrings/armbian.gpg] https://github.armbian.com/configng stable main
 	END
 
 	dpkg_deb_build "${tmp_dir}/${armbian_config_dir}" "armbian-config"
