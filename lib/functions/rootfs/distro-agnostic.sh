@@ -335,9 +335,7 @@ function install_distribution_agnostic() {
 
 	# install armbian-config
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			install_artifact_deb_chroot "armbian-config"
-		fi
+		install_artifact_deb_chroot "armbian-config"
 	fi
 
 	# install armbian-zsh
@@ -352,11 +350,6 @@ function install_distribution_agnostic() {
 		install_artifact_deb_chroot "armbian-plymouth-theme"
 	else
 		chroot_sdcard_apt_get_remove --auto-remove plymouth
-	fi
-
-	# install wireguard tools
-	if [[ $WIREGUARD == yes ]]; then
-		install_deb_chroot "wireguard-tools" "remote" # @TODO: move this to some image pkg list in config
 	fi
 
 	# freeze armbian packages

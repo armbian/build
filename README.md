@@ -26,7 +26,7 @@
 - Superuser rights (configured sudo or root access).
 - Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
 
-For stable branch use `--branch=v24.08`
+For stable branch use `--branch=v24.11`
 
 ```bash
 apt-get -y install git
@@ -82,9 +82,10 @@ Generated image will be uploaded to your repository release. Note: GitHub upload
 
 ## More information:
 
-- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start, how to automate)
-- [Build options](https://docs.armbian.com/Developer-Guide_Build-Options/) (all build options)
+- [Building Armbian](https://docs.armbian.com/Developer-Guide_Build-Preparation/) (how to start)
+- [Build commands](https://docs.armbian.com/Developer-Guide_Build-Commands/) and [switches](https://docs.armbian.com/Developer-Guide_Build-Switches/) (build options)
 - [User configuration](https://docs.armbian.com/Developer-Guide_User-Configurations/) (how to add packages, patches, and override sources config)
+- [System config](https://docs.armbian.com/User-Guide_Armbian-Config/) (menu driven utility to setup OS and HW features)
 
 ## Download prebuilt images releases
 

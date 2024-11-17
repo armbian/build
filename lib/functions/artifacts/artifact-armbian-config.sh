@@ -15,8 +15,8 @@ function artifact_armbian-config_prepare_version() {
 	artifact_version="undetermined"        # outer scope
 	artifact_version_reason="undetermined" # outer scope
 
-	local ARMBIAN_CONFIG_SOURCE="${ARMBIAN_CONFIG_SOURCE:-"https://github.com/armbian/config"}"
-	local ARMBIAN_CONFIG_BRANCH="branch:${ARMBIAN_CONFIG_BRANCH:-"master"}"
+	local ARMBIAN_CONFIG_SOURCE="${ARMBIAN_CONFIG_SOURCE:-"https://github.com/armbian/configng"}"
+	local ARMBIAN_CONFIG_BRANCH="branch:${ARMBIAN_CONFIG_BRANCH:-"main"}"
 
 	debug_var ARMBIAN_CONFIG_SOURCE
 	debug_var ARMBIAN_CONFIG_BRANCH

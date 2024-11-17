@@ -26,10 +26,10 @@ function prepare_root_device__encrypt_root_device() {
 	check_loop_device "$rootdevice"
 	display_alert "Extension: ${EXTENSION}: Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
 	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
-	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $ROOT_MAPPER -
+	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $CRYPTROOT_MAPPER -
 	display_alert "Extension: ${EXTENSION}: Root partition encryption complete." "" "ext"
 	# TODO: pass /dev/mapper to Docker
-	rootdevice=/dev/mapper/$ROOT_MAPPER # used by `mkfs` and `mount` commands
+	rootdevice=/dev/mapper/$CRYPTROOT_MAPPER # used by `mkfs` and `mount` commands
 }
 
 function pre_install_kernel_debs__adjust_dropbear_configuration() {
