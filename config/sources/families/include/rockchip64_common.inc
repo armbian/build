@@ -20,7 +20,7 @@ GOVERNOR="ondemand"
 ATFPATCHDIR='atf-rockchip64'
 BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-rockchip64"}"
 PACKAGE_LIST_FAMILY="ethtool"
-RKBIN_DIR="${RKBIN_DIR-$SRC/cache/sources/rkbin-tools}"
+RKBIN_DIR="${RKBIN_DIR:-$SRC/cache/sources/rkbin-tools}"
 
 # Important, we don't set LINUXFAMILY and LINUXCONFIG -- unless it is current or edge. Specifically, we don't do it for legacy branches, which are used by BOARDFAMILY's other than rockchip64.
 
@@ -57,7 +57,7 @@ esac
 # - tpl-blob-atf-mainline: proprietary rockchip ddrbin + mainline u-boot SPL + mainline ATF
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
 # - binman:  u-boot builds full boot image from information in device tree.  See:
-#               https://github.com/ARM-software/u-boot/blob/master/tools/binman/README
+#               https://docs.u-boot.org/en/latest/develop/package/binman.html
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
 BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
