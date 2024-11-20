@@ -8,7 +8,6 @@ BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3576-armsom-sige5.dtb"
 BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
-SRC_EXTLINUX="yes"
 BOARD_MAINTAINER=""
 
 function post_family_config_branch_vendor__armsom-sige7_use_vendor_uboot() {

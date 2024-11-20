@@ -32,9 +32,7 @@ function determine_artifacts_to_build_for_image() {
 	fi
 
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		if [[ $BUILD_MINIMAL != yes ]]; then
-			artifacts_to_build+=("armbian-config")
-		fi
+		artifacts_to_build+=("armbian-config")
 	fi
 
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-zsh* ]]; then
