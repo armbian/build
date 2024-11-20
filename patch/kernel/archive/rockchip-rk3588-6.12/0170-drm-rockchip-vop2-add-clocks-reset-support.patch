@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Detlev Casanova <detlev.casanova@collabora.com>
+Date: Fri, 3 May 2024 14:27:39 -0400
+Subject: vop2: Add clock resets support
+
+At the end of initialization, each VP clock needs to be reset before
+they can be used.
+
+Failing to do so can put the VOP in an undefined state where the
+generated HDMI signal is either lost or not matching the selected mode.
+
+Signed-off-by: Detlev Casanova <detlev.casanova@collabora.com>
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.c | 30 ++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+@@ -19,6 +19,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
++#include <linux/reset.h>
+ #include <linux/swab.h>
+ 
+ #include <drm/drm.h>
+@@ -159,6 +160,7 @@ struct vop2_win {
+ struct vop2_video_port {
+ 	struct drm_crtc crtc;
+ 	struct vop2 *vop2;
++	struct reset_control *dclk_rst;
+ 	struct clk *dclk;
+ 	unsigned int id;
+ 	const struct vop2_video_port_data *data;
+@@ -2064,6 +2066,26 @@ static struct vop2_clk *vop2_clk_get(struct vop2 *vop2, const char *name)
+ 	return NULL;
+ }
+ 
++static int vop2_clk_reset(struct vop2_video_port *vp)
++{
++	struct reset_control *rstc = vp->dclk_rst;
++	struct vop2 *vop2 = vp->vop2;
++	int ret;
++
++	if (!rstc)
++		return 0;
++
++	ret = reset_control_assert(rstc);
++	if (ret < 0)
++		drm_warn(vop2->drm, "failed to assert reset\n");
++	udelay(10);
++	ret = reset_control_deassert(rstc);
++	if (ret < 0)
++		drm_warn(vop2->drm, "failed to deassert reset\n");
++
++	return ret;
++}
++
+ static void vop2_crtc_atomic_enable(struct drm_crtc *crtc,
+ 				    struct drm_atomic_state *state)
+ {
+@@ -2233,6 +2255,8 @@ static void vop2_crtc_atomic_enable(struct drm_crtc *crtc,
+ 
+ 	vop2_vp_write(vp, RK3568_VP_DSP_CTRL, dsp_ctrl);
+ 
++	vop2_clk_reset(vp);
++
+ 	drm_crtc_vblank_on(crtc);
+ 
+ 	vop2_unlock(vop2);
+@@ -2920,6 +2944,12 @@ static int vop2_create_crtcs(struct vop2 *vop2)
+ 		vp->data = vp_data;
+ 
+ 		snprintf(dclk_name, sizeof(dclk_name), "dclk_vp%d", vp->id);
++		vp->dclk_rst = devm_reset_control_get_optional(vop2->dev, dclk_name);
++		if (IS_ERR(vp->dclk_rst)) {
++		        drm_err(vop2->drm, "failed to get %s reset\n", dclk_name);
++		        return PTR_ERR(vp->dclk_rst);
++		}
++
+ 		vp->dclk = devm_clk_get(vop2->dev, dclk_name);
+ 		if (IS_ERR(vp->dclk)) {
+ 			drm_err(vop2->drm, "failed to get %s\n", dclk_name);
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Detlev Casanova <detlev.casanova@collabora.com>
+Date: Mon, 6 May 2024 13:54:01 -0400
+Subject: dt-bindings: display: vop2: Add VP clock resets
+
+Add the documentation for VOP2 video ports reset clocks.
+One reset can be set per video port.
+
+Signed-off-by: Detlev Casanova <detlev.casanova@collabora.com>
+---
+ Documentation/devicetree/bindings/display/rockchip/rockchip-vop2.yaml | 27 ++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/display/rockchip/rockchip-vop2.yaml b/Documentation/devicetree/bindings/display/rockchip/rockchip-vop2.yaml
+index 111111111111..222222222222 100644
+--- a/Documentation/devicetree/bindings/display/rockchip/rockchip-vop2.yaml
++++ b/Documentation/devicetree/bindings/display/rockchip/rockchip-vop2.yaml
+@@ -65,6 +65,22 @@ properties:
+       - const: dclk_vp3
+       - const: pclk_vop
+ 
++  resets:
++    minItems: 3
++    items:
++      - description: Pixel clock reset for video port 0.
++      - description: Pixel clock reset for video port 1.
++      - description: Pixel clock reset for video port 2.
++      - description: Pixel clock reset for video port 3.
++
++  reset-names:
++    minItems: 3
++    items:
++      - const: dclk_vp0
++      - const: dclk_vp1
++      - const: dclk_vp2
++      - const: dclk_vp3
++
+   rockchip,grf:
+     $ref: /schemas/types.yaml#/definitions/phandle
+     description:
+@@ -128,6 +144,11 @@ allOf:
+         clock-names:
+           minItems: 7
+ 
++        resets:
++          minItems: 4
++        reset-names:
++          minItems: 4
++
+         ports:
+           required:
+             - port@0
+@@ -183,6 +204,12 @@ examples:
+                               "dclk_vp0",
+                               "dclk_vp1",
+                               "dclk_vp2";
++                resets = <&cru SRST_VOP0>,
++                         <&cru SRST_VOP1>,
++                         <&cru SRST_VOP2>;
++                reset-names = "dclk_vp0",
++                              "dclk_vp1",
++                              "dclk_vp2";
+                 power-domains = <&power RK3568_PD_VO>;
+                 iommus = <&vop_mmu>;
+                 vop_out: ports {
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Muhammed Efe Cetin <efectn@protonmail.com>
+Date: Fri, 2 Aug 2024 00:13:32 +0300
+Subject: arm64: dts: rockchip: rk3588: add VOP2 clock resets
+
+---
+ arch/arm64/boot/dts/rockchip/rk3588-base.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi b/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+@@ -1272,6 +1272,14 @@ vop: vop@fdd90000 {
+ 			      "pclk_vop";
+ 		iommus = <&vop_mmu>;
+ 		power-domains = <&power RK3588_PD_VOP>;
++		resets = <&cru SRST_D_VOP0>,
++			 <&cru SRST_D_VOP1>,
++			 <&cru SRST_D_VOP2>,
++			 <&cru SRST_D_VOP3>;
++		reset-names = "dclk_vp0",
++			      "dclk_vp1",
++			      "dclk_vp2",
++			      "dclk_vp3";
+ 		rockchip,grf = <&sys_grf>;
+ 		rockchip,vop-grf = <&vop_grf>;
+ 		rockchip,vo1-grf = <&vo1_grf>;
+-- 
+Armbian
+
