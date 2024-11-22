@@ -301,18 +301,15 @@ write_uboot_platform_mtd() {
 }
 
 setup_write_uboot_platform() {
-
 	if grep -q "ubootpart" /proc/cmdline; then
-
-		local tmp=$(cat /proc/cmdline)
+		local tmp part dev
+		tmp=$(cat /proc/cmdline)
 		tmp="${tmp##*ubootpart=}"
 		tmp="${tmp%% *}"
-		[[ -n $tmp ]] && local part=$(findfs PARTUUID=$tmp 2> /dev/null)
-		[[ -n $part ]] && local dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
+		[[ -n $tmp ]] && part=$(findfs PARTUUID=$tmp 2> /dev/null)
+		[[ -n $part ]] && dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
 		[[ -n $dev ]] && DEVICE="/dev/$dev"
-
 	fi
-
 }
 
 family_tweaks() {

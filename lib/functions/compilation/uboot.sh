@@ -414,12 +414,22 @@ function compile_uboot() {
 	unset uboot_postinst_base postinst_functions destination
 
 	# declare -f on non-defined function does not do anything (but exits with errors, so ignore them with "|| true")
-	cat <<- EOF > "$uboottempdir/usr/lib/u-boot/platform_install.sh"
+	cat <<- EOF > "${uboottempdir}/usr/lib/u-boot/platform_install.sh"
+		# Armbian u-boot install script for linux-u-boot-${BOARD}-${BRANCH} ${artifact_version}
+		# This file provides functions for deploying u-boot to a block device.
 		DIR=/usr/lib/$uboot_name
 		$(declare -f write_uboot_platform || true)
 		$(declare -f write_uboot_platform_mtd || true)
 		$(declare -f setup_write_uboot_platform || true)
 	EOF
+
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "Showing contents of" "usr/lib/u-boot/platform_install.sh" "info"
+		run_tool_batcat --file-name "usr/lib/u-boot/platform_install.sh" "${uboottempdir}/usr/lib/u-boot/platform_install.sh"
+	fi
+
+	display_alert "Running shellcheck" "usr/lib/u-boot/platform_install.sh" "info"
+	shellcheck_debian_control_scripts "${uboottempdir}/usr/lib/u-boot/platform_install.sh"
 
 	display_alert "Das U-Boot .deb package version" "${artifact_version}" "info"
 
