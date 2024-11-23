@@ -12,7 +12,7 @@ PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
 function post_config_uboot_target__extra_configs_for_bananapi_f3() {
 	display_alert "u-boot for ${BOARD}" "u-boot: enabling extra configs" "info"
-	
+
 	run_host_command_logged scripts/config --enable CONFIG_SD_BOOT
 	run_host_command_logged scripts/config --enable CONFIG_EXT4_WRITE
 	run_host_command_logged scripts/config --enable CONFIG_FS_BTRFS
