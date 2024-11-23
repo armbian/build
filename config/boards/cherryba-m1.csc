@@ -1,4 +1,4 @@
- # Allwinner H618 quad core 1GB 2GB 4GB RAM SoC WiFi USB-C emmc
+# Allwinner H618 quad core 1GB 2GB 4GB RAM SoC WiFi USB-C emmc
 BOARD_NAME="CherryBa M1"
 BOARDFAMILY="sun50iw9"
 BOOTCONFIG="cherryba-m1_defconfig"

@@ -11,7 +11,7 @@ IMAGE_PARTITION_TABLE="gpt"
 BOARD_MAINTAINER=""
 
 function post_family_config_branch_vendor__armsom-cm5-io_use_vendor_uboot() {
-        display_alert "$BOARD" "vendor u-boot overrides for $BOARD / $BRANCH" "info"
+	display_alert "$BOARD" "vendor u-boot overrides for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTSOURCE="https://github.com/ArmSoM/u-boot.git"
 	declare -g BOOTBRANCH="tag:rk3576-6.1-rk3.1"
