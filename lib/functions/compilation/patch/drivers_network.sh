@@ -381,7 +381,7 @@ driver_rtl8852bs() {
 
 		# Bugfix/workaround: Comment undefined RTW_WARN_LMT
 		# @TODO Check on update if this fix is still needed (added 2024-July-10)
-		sed -i  "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g"  \
+		sed -i "s/RTW_WARN_LMT(/\/\/RTW_WARN_LMT(/g" \
 			"$kerneldir/drivers/net/wireless/realtek/rtl8852bs/core/rtw_xmit.c"
 
 		# Add to section Makefile
