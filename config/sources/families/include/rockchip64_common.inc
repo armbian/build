@@ -56,7 +56,6 @@ esac
 # - tpl-spl-blob: uses mainline u-boot TPL and SPL with proprietary rockchip ATF blob
 # - tpl-blob-atf-mainline: proprietary rockchip ddrbin + mainline u-boot SPL + mainline ATF
 # - blobless: mainline u-boot TPL + mainline u-boot SPL + mainline ATF
-# - binman:  u-boot builds full boot image from information in device tree.  See: https://docs.u-boot.org/en/latest/develop/package/binman.html
 
 #BOOT_SOC=`expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*'`
 BOOT_SOC=${BOOT_SOC:=$(expr $BOOTCONFIG : '.*\(rk[[:digit:]]\+.*\)_.*' || true)}
@@ -81,6 +80,12 @@ case "$BOOT_SOC" in
 		DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin"}"
 		MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_v1.22.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.22.elf"}"
+
+		if [[ ${BRANCH} == legacy ]]; then
+			DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m0_v1.26.bin"}"
+			MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_sd_nand_v1.13.bin"}"
+			BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.10.elf"}"
+		fi
 		;;
 
 	rk3328)
@@ -152,12 +157,9 @@ case "$BOOT_SOC" in
 esac
 
 prepare_boot_configuration() {
-	ATFSOURCE=''
-	ATF_COMPILE='no'
 	case "$BOOT_SCENARIO" in
 		blobless | tpl-blob-atf-mainline)
 			UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
-			ATF_COMPILE=yes
 			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 			ATF_COMPILER='aarch64-linux-gnu-'
 			ATFDIR='arm-trusted-firmware'
@@ -169,17 +171,22 @@ prepare_boot_configuration() {
 			[[ $BOOT_SCENARIO == tpl-blob-atf-mainline ]] &&
 				UBOOT_TARGET_MAP="BL31=bl31.elf idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
 			;;
+
 		tpl-spl-blob)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB idbloader.img u-boot.itb;;idbloader.img u-boot.itb"
+			ATFSOURCE=''
+			ATF_COMPILE='no'
 			;;
 		spl-blobs)
 			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
+			ATFSOURCE=''
+			ATF_COMPILE='no'
 			;;
+
 		only-blobs)
 			UBOOT_TARGET_MAP="u-boot-dtb.bin;;idbloader.bin uboot.img trust.bin"
-			;;
-		binman)
-			UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
+			ATFSOURCE=''
+			ATF_COMPILE='no'
 			;;
 	esac
 
@@ -199,52 +206,45 @@ prepare_boot_configuration() {
 }
 
 uboot_custom_postprocess() {
-	[[ -z ${BOOT_SOC} ]] &&
-		exit_with_error "BOOT_SOC not defined for scenario '${BOOT_SCENARIO}' for BOARD'=${BOARD}' and BOOTCONFIG='${BOOTCONFIG}'"
-	display_alert "${BOARD}" "boots with ${BOOT_SCENARIO} scenario" "info"
+	[[ -z ${BOOT_SOC} ]] && exit_with_error "BOOT_SOC not defined for scenario '${BOOT_SCENARIO}' for BOARD'=${BOARD}' and BOOTCONFIG='${BOOTCONFIG}'"
 
-	case "$BOOT_SCENARIO" in
-		blobless | tpl-spl-blob | binman)
-			:
-			;;
+	if [[ $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob" ]]; then
+		:
+	elif [[ $BOOT_SCENARIO == "spl-blobs" || $BOOT_SCENARIO == "tpl-blob-atf-mainline" ]]; then
+		# Bomb if DDR_BLOB not defined or does not exist
+		declare SPL_BIN_PATH="${RKBIN_DIR}/${DDR_BLOB}"
+		[[ -z ${SPL_BIN_PATH} ]] && exit_with_error "DDR_BLOB not defined for scenario ${BOOT_SCENARIO}"
+		[[ ! -f "${SPL_BIN_PATH}" ]] && exit_with_error "DDR_BLOB ${SPL_BIN_PATH} does not exist for scenario ${BOOT_SCENARIO}"
 
-		spl-blobs | tpl-blob-atf-mainline)
-			# Bomb if DDR_BLOB not defined or does not exist
-			declare SPL_BIN_PATH="${RKBIN_DIR}/${DDR_BLOB}"
-			[[ -z ${SPL_BIN_PATH} ]] && exit_with_error "DDR_BLOB not defined for scenario ${BOOT_SCENARIO}"
-			[[ ! -f "${SPL_BIN_PATH}" ]] && exit_with_error "DDR_BLOB ${SPL_BIN_PATH} does not exist for scenario ${BOOT_SCENARIO}"
+		if [[ $BOOT_SOC == "rk3576" ]]; then
+			display_alert "boot_merger for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
+			RKBOOT_INI_FILE=rk3576.ini
+			cp $RKBIN_DIR/rk35/RK3576MINIALL.ini $RKBOOT_INI_FILE
+			sed -i "s|FlashBoost=.*$|FlashBoost=${RKBIN_DIR}/rk35/rk3576_boost_v1.02.bin|g" $RKBOOT_INI_FILE
+			sed -i "s|Path1=.*rk3576_ddr.*$|Path1=${SPL_BIN_PATH}|g" $RKBOOT_INI_FILE
+			sed -i "s|Path1=.*rk3576_usbplug.*$|Path1=${RKBIN_DIR}/rk35/rk3576_usbplug_v1.03.bin|g" $RKBOOT_INI_FILE
+			sed -i "s|FlashData=.*$|FlashData=${SPL_BIN_PATH}|g" $RKBOOT_INI_FILE
+			sed -i "s|FlashBoot=.*$|FlashBoot=./spl/u-boot-spl.bin|g" $RKBOOT_INI_FILE
+			sed -i "s|IDB_PATH=.*$|IDB_PATH=idbloader.img|g" $RKBOOT_INI_FILE
+			run_host_x86_binary_logged $RKBIN_DIR/tools/boot_merger $RKBOOT_INI_FILE
+			rm -f $RKBOOT_INI_FILE
+		else
+			display_alert "mkimage for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
+			run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rksd -d "${SPL_BIN_PATH}:spl/u-boot-spl.bin" idbloader.img
+		fi
 
-			if [[ "$BOOT_SOC" == "rk3576" ]]; then
-				display_alert "boot_merger for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
-				RKBOOT_INI_FILE=rk3576.ini
-				cp $RKBIN_DIR/rk35/RK3576MINIALL.ini $RKBOOT_INI_FILE
-				sed -i "s|FlashBoost=.*$|FlashBoost=${RKBIN_DIR}/rk35/rk3576_boost_v1.02.bin|g" $RKBOOT_INI_FILE
-				sed -i "s|Path1=.*rk3576_ddr.*$|Path1=${SPL_BIN_PATH}|g" $RKBOOT_INI_FILE
-				sed -i "s|Path1=.*rk3576_usbplug.*$|Path1=${RKBIN_DIR}/rk35/rk3576_usbplug_v1.03.bin|g" $RKBOOT_INI_FILE
-				sed -i "s|FlashData=.*$|FlashData=${SPL_BIN_PATH}|g" $RKBOOT_INI_FILE
-				sed -i "s|FlashBoot=.*$|FlashBoot=./spl/u-boot-spl.bin|g" $RKBOOT_INI_FILE
-				sed -i "s|IDB_PATH=.*$|IDB_PATH=idbloader.img|g" $RKBOOT_INI_FILE
-				run_host_x86_binary_logged $RKBIN_DIR/tools/boot_merger $RKBOOT_INI_FILE
-				rm -f $RKBOOT_INI_FILE
-			else
-				display_alert "mkimage for '${BOOT_SOC}' for scenario ${BOOT_SCENARIO}" "SPL_BIN_PATH: ${SPL_BIN_PATH}" "debug"
-				run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rksd -d "${SPL_BIN_PATH}:spl/u-boot-spl.bin" idbloader.img
-			fi
-			;;
+	elif [[ $BOOT_SCENARIO == "only-blobs" ]]; then
 
-		only-blobs)
-			local tempfile
-			tempfile=$(mktemp)
-			run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
-			cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
-			run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
-			run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
-			;;
+		local tempfile
+		tempfile=$(mktemp)
+		run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
+		cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
+		run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+		run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 
-		*)
-			exit_with_error "\"$BOOT_SCENARIO\" is an Unsupported Boot Scenario!"
-			;;
-	esac
+	else
+		exit_with_error "Unsupported u-boot processing configuration!"
+	fi
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
 		if [[ "${BOOT_SPI_RKSPI_LOADER:-"no"}" == "yes" ]]; then
@@ -273,11 +273,9 @@ write_uboot_platform() {
 	local logging_prelude=""
 	[[ $(type -t run_host_command_logged) == function ]] && logging_prelude="run_host_command_logged"
 
-	if [ -f $1/u-boot-rockchip.bin ]; then #"$BOOT_SCENARIO" == binman
-		${logging_prelude} dd if=$1/u-boot-rockchip.bin of=$2 bs=32k seek=1 conv=notrunc status=none
-	elif [ -f $1/rksd_loader.img ]; then # legacy rk3399 loader
+	if [[ -f $1/rksd_loader.img ]]; then # legacy rk3399 loader
 		${logging_prelude} dd if=$1/rksd_loader.img of=$2 seek=64 conv=notrunc status=none
-	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_SCENARIO "blobless" or "tpl-spl-blob"
+	elif [[ -f $1/u-boot.itb ]]; then # $BOOT_SCENARIO == "blobless" || $BOOT_SCENARIO == "tpl-spl-blob"
 		${logging_prelude} dd if=$1/idbloader.img of=$2 seek=64 conv=notrunc status=none
 		${logging_prelude} dd if=$1/u-boot.itb of=$2 seek=16384 conv=notrunc status=none
 	elif [[ -f $1/uboot.img ]]; then # $BOOT_SCENARIO == "only-blobs"
@@ -290,13 +288,16 @@ write_uboot_platform() {
 	fi
 }
 
-# @TODO: this is not ready for BOOT_SCENARIO=binman yet
 write_uboot_platform_mtd() {
 	if [[ -f $1/rkspi_loader.img ]]; then
+
 		dd if=$1/rkspi_loader.img of=$2 conv=notrunc status=none > /dev/null 2>&1
+
 	else
+
 		echo "SPI u-boot image not found!"
 		exit 1
+
 	fi
 }
 
