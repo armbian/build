@@ -181,6 +181,9 @@ function create_sources_list_and_deploy_repo_key() {
 		echo "deb ${SIGNED_BY}https://mirrors.tuna.tsinghua.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	elif [[ $DOWNLOAD_MIRROR == "bfsu" ]]; then
 		echo "deb ${SIGNED_BY}http://mirrors.bfsu.edu.cn/armbian $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
+	elif [[ "$DOWNLOAD_MIRROR" == "jethome" ]]; then
+		echo "deb http://repo.jethome.ru"$([[ $BETA == yes ]] && echo "/beta")" ${RELEASE} jethome-${RELEASE}"  > "${basedir}"/etc/apt/sources.list.d/armbian.list
+		gpg --dearmor < "${SRC}"/config/jethome.key > "${basedir}"/etc/apt/trusted.gpg.d/jethome.gpg
 	else
 		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
