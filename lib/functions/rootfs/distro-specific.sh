@@ -156,20 +156,17 @@ function create_sources_list_and_deploy_repo_key() {
 			;;
 	esac
 
+	# add armbian key
 	display_alert "Adding Armbian repository and authentication key" "${when} :: /etc/apt/sources.list.d/armbian.list" "info"
+	mkdir -p "${basedir}"/usr/share/keyrings
+	# change to binary form
+	gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}"/usr/share/keyrings/armbian.gpg
+	SIGNED_BY="[signed-by=/usr/share/keyrings/armbian.gpg] "
 
-	# apt-key add is getting deprecated
-	APT_VERSION=$(chroot "${basedir}" /bin/bash -c "apt --version | cut -d\" \" -f2")
-	if linux-version compare "${APT_VERSION}" ge 2.4.1; then
-		# add armbian key
-		mkdir -p "${basedir}"/usr/share/keyrings
-		# change to binary form
-		gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}"/usr/share/keyrings/armbian.gpg
-		SIGNED_BY="[signed-by=/usr/share/keyrings/armbian.gpg] "
-	else
-		# use old method for compatibility reasons # @TODO: rpardini: not gonna fix this?
+	# lets keep old way for old distributions
+	if [[ "${RELEASE}" =~ (focal|bullseye) ]]; then
 		cp "${SRC}"/config/armbian.key "${basedir}"
-		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add -"
+		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
 	fi
 
 	declare -a components=()
