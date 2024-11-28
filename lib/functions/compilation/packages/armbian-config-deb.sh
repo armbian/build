@@ -37,7 +37,7 @@ compile_armbian-config() {
 	# @TODO: move this to where it is actually used; not everyone needs to pull this in
 	fetch_from_repo "$GITHUB_SOURCE/complexorganizations/wireguard-manager" "wireguard-manager" "branch:main"
 
-	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,bin/,lib/armbian-config/,usr/bin/,/etc/apt/sources.list.d/}
+	mkdir -p "${tmp_dir}/${armbian_config_dir}"/{DEBIAN,bin/,lib/armbian-config/,usr/bin/,/etc/apt/sources.list.d/,/etc/apt/preferences.d/}
 
 	cd "${tmp_dir}/${armbian_config_dir}" || exit_with_error "can't change directory"
 
@@ -68,7 +68,16 @@ compile_armbian-config() {
 	cat <<- END > ${tmp_dir}/${armbian_config_dir}/etc/apt/sources.list.d/armbian-config.list
 		deb [signed-by=/usr/share/keyrings/armbian.gpg] https://github.armbian.com/configng stable main
 	END
+	# Prevent upgrade from incompatible repo hosted at GitHub for Older builds
+	cat <<- END > ${tmp_dir}/${armbian_config_dir}/etc/apt/preferences.d/armbian-config
+		Package: armbian-config
+		Pin: release n=bullseye
+		Pin-Priority: -10
 
+		Package: armbian-config
+		Pin: release n=focal
+		Pin-Priority: -10
+	END
 	dpkg_deb_build "${tmp_dir}/${armbian_config_dir}" "armbian-config"
 	done_with_temp_dir "${cleanup_id}" # changes cwd to "${SRC}" and fires the cleanup function early
 
