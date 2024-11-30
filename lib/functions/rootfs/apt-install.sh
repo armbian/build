@@ -103,7 +103,7 @@ function install_deb_chroot() {
 	# install in chroot via apt-get, not dpkg, so dependencies are also installed from repo if needed.
 	declare -g if_error_detail_message="Installation of $install_target failed ${BOARD} ${RELEASE} ${BUILD_DESKTOP} ${LINUXFAMILY}"
 	declare -a extra_apt_envs=()
-	extra_apt_envs+=("ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE=${BOOTFS_TYPE:-"unset"}")                             # used by package postinst scripts to bevahe
+	extra_apt_envs+=("ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE=${BOOTFS_TYPE:-"unset"}")                                              # used by package postinst scripts to bevahe
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get --no-install-recommends "${apt_options}" install "${install_target}" # don't auto-maintain apt cache when installing from packages.
 	unset extra_apt_envs
 

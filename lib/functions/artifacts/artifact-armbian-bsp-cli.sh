@@ -60,7 +60,7 @@ function artifact_armbian-bsp-cli_prepare_version() {
 		"INITRD_ARCH: ${INITRD_ARCH}"                                 # /etc/armbian-release
 		"KERNEL_IMAGE_TYPE: ${KERNEL_IMAGE_TYPE}"                     # /etc/armbian-release
 		"VENDOR: ${VENDOR}"                                           # /etc/armbian-release
-		"OVERLAY_DIR: ${OVERLAY_DIR}"                                   # /etc/armbian-release
+		"OVERLAY_DIR: ${OVERLAY_DIR}"                                 # /etc/armbian-release
 		"KERNEL_TARGET: ${KERNEL_TARGET}"                             # /etc/armbian-release
 		"KERNEL_TEST_TARGET: ${KERNEL_TEST_TARGET}"                   # /etc/armbian-release
 		"BOOT_SOC: ${BOOT_SOC}"                                       # /etc/armbian-release # See https://github.com/armbian/build/pull/6411
