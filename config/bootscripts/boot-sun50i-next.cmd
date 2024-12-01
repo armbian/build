@@ -13,14 +13,14 @@ setenv console "both"
 setenv docker_optimizations "on"
 setenv bootlogo "false"
 
+setenv vendor "allwinner"
+
 # Remember the default u-boot fdtfile
 setenv deffdt_file ${fdtfile}
 
 # Remember the default u-boot fdtdir
 setenv deffdt_dir "${prefix}dtb"
-if test "$fdtdir" = ""; then setenv fdtdir "${deffdt_dir}";fi
-
-setenv vendor "allwinner"
+if test "$fdtdir" = ""; then setenv fdtdir "${deffdt_dir}/${vendor}";fi
 
 # Print boot source
 itest.b *0x10028 == 0x00 && echo "U-boot loaded from SD"
