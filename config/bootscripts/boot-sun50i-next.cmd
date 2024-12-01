@@ -38,27 +38,22 @@ fi
 # Make a check of reasonable ways to find the dtb file.
 # Set the true value of the paths.
 if test -e ${devtype} ${devnum} "${fdtdir}/${fdtfile}"; then
-	:
+	echo "Load fdt: ${fdtdir}/${fdtfile}"
 else
-	echo "File ${fdtdir}/${fdtfile} does not exists"
+	echo "The file ${fdtfile} was not found in the path ${fdtdir}"
 	if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${fdtfile}"; then
 		setenv fdtdir "${deffdt_dir}/${vendor}"
 	else
-		echo "File ${deffdt_dir}/${vendor}/${fdtfile} does not exists"
 		if test -e ${devtype} ${devnum} "${deffdt_dir}/${fdtfile}"; then
 			setenv fdtdir "${deffdt_dir}"
 		else
-			echo "File ${deffdt_dir}/${fdtfile} does not exists"
 			if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${deffdt_file}"; then
 				setenv fdtdir "${deffdt_dir}/${vendor}"
 				setenv fdtfile "${deffdt_file}"
 			else
-				echo "File ${deffdt_dir}/${vendor}/${deffdt_file} does not exists"
 				if test -e ${devtype} ${devnum} "${deffdt_dir}/${deffdt_file}"; then
 					setenv fdtdir "${deffdt_dir}"
 					setenv fdtfile "${deffdt_file}"
-				else
-					echo "File ${deffdt_dir}/${deffdt_file} does not exists"
 				fi
 			fi
 		fi
