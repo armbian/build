@@ -41,8 +41,9 @@ if test -e ${devtype} ${devnum} "${fdtdir}/${fdtfile}"; then
 	echo "Load fdt: ${fdtdir}/${fdtfile}"
 else
 	echo "The file ${fdtfile} was not found in the path ${fdtdir}"
-	if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${fdtfile}"; then
-		setenv fdtdir "${deffdt_dir}/${vendor}"
+	if test -e ${devtype} ${devnum} "${deffdt_dir}/${fdtfile}"; then
+		setenv fdtdir "${deffdt_dir}"
+		echo "Load fdt: ${fdtdir}/${fdtfile}"
 	else
 		if test -e ${devtype} ${devnum} "${deffdt_dir}/${fdtfile}"; then
 			setenv fdtdir "${deffdt_dir}"
