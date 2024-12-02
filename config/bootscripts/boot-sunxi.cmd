@@ -49,28 +49,22 @@ fi
 # Make a check of reasonable ways to find the dtb file.
 # Set the true value of the paths.
 if test -e ${devtype} ${devnum} "${fdtdir}/${fdtfile}"; then
-	:
+	echo "Load fdt: ${fdtdir}/${fdtfile}"
 else
-	echo "File ${fdtdir}/${fdtfile} does not exists"
+	echo "The file ${fdtfile} was not found in the path ${fdtdir}"
 	if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${fdtfile}"; then
 		setenv fdtdir "${deffdt_dir}/${vendor}"
+		echo "Load fdt: ${fdtdir}/${fdtfile}"
 	else
-		echo "File ${deffdt_dir}/${vendor}/${fdtfile} does not exists"
-		if test -e ${devtype} ${devnum} "${deffdt_dir}/${fdtfile}"; then
-			setenv fdtdir "${deffdt_dir}"
+		if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${deffdt_file}"; then
+			setenv fdtdir "${deffdt_dir}/${vendor}"
+			setenv fdtfile "${deffdt_file}"
+			echo "Load fdt: ${fdtdir}/${fdtfile}"
 		else
-			echo "File ${deffdt_dir}/${fdtfile} does not exists"
-			if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${deffdt_file}"; then
-				setenv fdtdir "${deffdt_dir}/${vendor}"
+			if test -e ${devtype} ${devnum} "${deffdt_dir}/${deffdt_file}"; then
+				setenv fdtdir "${deffdt_dir}"
 				setenv fdtfile "${deffdt_file}"
-			else
-				echo "File ${deffdt_dir}/${vendor}/${deffdt_file} does not exists"
-				if test -e ${devtype} ${devnum} "${deffdt_dir}/${deffdt_file}"; then
-					setenv fdtdir "${deffdt_dir}"
-					setenv fdtfile "${deffdt_file}"
-				else
-					echo "File ${deffdt_dir}/${deffdt_file} does not exists"
-				fi
+				echo "Load fdt: ${fdtdir}/${fdtfile}"
 			fi
 		fi
 	fi
@@ -99,9 +93,7 @@ load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
 
 if test -e ${devtype} ${devnum} "${prefix}.next"; then
 	echo "Found mainline kernel configuration"
-	if load ${devtype} ${devnum} ${fdt_addr_r} ${fdtdir}/${fdtfile}; then
-		echo "Load fdt: ${fdtdir}/${fdtfile}"
-	fi
+	load ${devtype} ${devnum} ${fdt_addr_r} ${fdtdir}/${fdtfile}
 	fdt addr ${fdt_addr_r}
 	fdt resize 65536
 	for overlay_file in ${overlays}; do
