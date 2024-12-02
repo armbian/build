@@ -45,17 +45,15 @@ else
 		setenv fdtdir "${deffdt_dir}"
 		echo "Load fdt: ${fdtdir}/${fdtfile}"
 	else
-		if test -e ${devtype} ${devnum} "${deffdt_dir}/${fdtfile}"; then
-			setenv fdtdir "${deffdt_dir}"
+		if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${deffdt_file}"; then
+			setenv fdtdir "${deffdt_dir}/${vendor}"
+			setenv fdtfile "${deffdt_file}"
+			echo "Load fdt: ${fdtdir}/${fdtfile}"
 		else
-			if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${deffdt_file}"; then
-				setenv fdtdir "${deffdt_dir}/${vendor}"
+			if test -e ${devtype} ${devnum} "${deffdt_dir}/${deffdt_file}"; then
+				setenv fdtdir "${deffdt_dir}"
 				setenv fdtfile "${deffdt_file}"
-			else
-				if test -e ${devtype} ${devnum} "${deffdt_dir}/${deffdt_file}"; then
-					setenv fdtdir "${deffdt_dir}"
-					setenv fdtfile "${deffdt_file}"
-				fi
+				echo "Load fdt: ${fdtdir}/${fdtfile}"
 			fi
 		fi
 	fi
