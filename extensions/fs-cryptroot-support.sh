@@ -21,12 +21,13 @@ function extension_prepare_config__prepare_cryptroot() {
 	fi
 }
 
-function prepare_root_device__encrypt_root_device() {
+function prepare_root_device__250_encrypt_root_device() {
 	# We encrypt the rootdevice (currently a loop device) and return the new mapped rootdevice
 	check_loop_device "$rootdevice"
 	display_alert "Extension: ${EXTENSION}: Encrypting root partition with LUKS..." "cryptsetup luksFormat $rootdevice" ""
 	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksFormat $CRYPTROOT_PARAMETERS $rootdevice -
 	echo -n $CRYPTROOT_PASSPHRASE | cryptsetup luksOpen $rootdevice $CRYPTROOT_MAPPER -
+	add_cleanup_handler cleanup_cryptroot
 	display_alert "Extension: ${EXTENSION}: Root partition encryption complete." "" "ext"
 	# TODO: pass /dev/mapper to Docker
 	rootdevice=/dev/mapper/$CRYPTROOT_MAPPER # used by `mkfs` and `mount` commands
@@ -65,6 +66,9 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 			# /usr/share/initramfs-tools/hooks/dropbear will automatically add 'id_ecdsa.pub' to authorized_keys file
 			# during mkinitramfs of update-initramfs
 			#cat "${dropbear_dir}"/id_ecdsa.pub > "${SDCARD}"/etc/dropbear-initramfs/authorized_keys
+
+
+			# copy it a) later via hook to make use of a proper naming / structural equal -> "${DESTIMG}/${version}.img"
 			CRYPTROOT_SSH_UNLOCK_KEY_NAME="${VENDOR}_${REVISION}_${BOARD^}_${RELEASE}_${BRANCH}_${DESKTOP_ENVIRONMENT}".key
 			# copy dropbear ssh key to image output dir for convenience
 			cp "${dropbear_dir}"/id_ecdsa "${DEST}/images/${CRYPTROOT_SSH_UNLOCK_KEY_NAME}"
@@ -72,4 +76,13 @@ function pre_install_kernel_debs__adjust_dropbear_configuration() {
 				"$DEST/images/$CRYPTROOT_SSH_UNLOCK_KEY_NAME" "info"
 		fi
 	fi
+}
+
+function post_umount_final_image__750_cryptroot_cleanup(){
+	execute_and_remove_cleanup_handler cleanup_cryptroot
+}
+
+function cleanup_cryptroot(){
+	cryptsetup luksClose "${CRYPTROOT_MAPPER}" 2>&1
+	display_alert "Cryptroot closed ${CRYPTROOT_MAPPER}" "${EXTENSION}" "info"
 }

@@ -246,7 +246,6 @@ function prepare_partitions() {
 	fi
 	
 	declare -g LOOP
-
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
 		*called after all partitions are created, but not yet formatted*
 	POST_CREATE_PARTITIONS
@@ -256,10 +255,15 @@ function prepare_partitions() {
 	exec {FD}> /var/lock/armbian-debootstrap-losetup
 	flock -x $FD
 
-	
-	#--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
-	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
-	display_alert "Allocated loop device" "LOOP=${LOOP}"
+	#--partscan is using to force the kernel for scanning partition table in preventing of partprobe errors
+	if [[ -z $LOOP ]]; then
+		LOOP=$(losetup -f)
+	#	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+		[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device" 
+		display_alert "Allocated loop device" "LOOP=${LOOP}"
+		check_loop_device "$LOOP"
+		losetup $LOOP ${SDCARD}.raw
+	fi
 
 	# loop device was grabbed here, unlock
 	flock -u $FD
@@ -279,8 +283,8 @@ function prepare_partitions() {
 	## ROOT PARTITION
 	##
 	if [[ -n $rootpart ]]; then
-		local physical_rootdevice="${LOOP}p${rootpart}"
-		local rootdevice="${LOOP}p${rootpart}"
+		local rootdevice=${LOOP}p${rootpart}
+		local physical_rootdevice=$rootdevice
 
 		call_extension_method "prepare_root_device" <<- 'PREPARE_ROOT_DEVICE'
 			*Specialized storage extensions typically transform the root device into a mapped device and should hook in here *
@@ -306,23 +310,20 @@ function prepare_partitions() {
 		root_part_uuid="$(blkid -s UUID -o value ${LOOP}p${rootpart})"
 		declare -g -r ROOT_PART_UUID="${root_part_uuid}"
 
-		physical_root_part_uuid="$(blkid -s UUID -o value $physical_rootdevice)"
-		declare -g -r PHYSICAL_ROOT_PART_UUID="${physical_root_part_uuid}"
-		display_alert "Physical root device" "$physical_rootdevice (UUID=${PHYSICAL_ROOT_PART_UUID})" "debug"
-
 		display_alert "Mounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
 		run_host_command_logged mount ${fscreateopt} $rootdevice $MOUNT/
 
 		# create fstab (and crypttab) entry
-		local rootfs
 		if [[ $CRYPTROOT_ENABLE == yes ]]; then
 			# map the LUKS container partition via its UUID to be the 'cryptroot' device
+			physical_root_part_uuid="$(blkid -s UUID -o value $physical_rootdevice)"
 			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} none luks" >> $SDCARD/etc/crypttab
-			rootfs=$rootdevice # used in fstab
-		else
-			rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
+			run_host_command_logged cat $SDCARD/etc/crypttab
 		fi
+		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		run_host_command_logged cat $SDCARD/etc/fstab
+
 	else
 		# update_initramfs will fail if /lib/modules/ doesn't exist
 		mount --bind --make-private $SDCARD $MOUNT/
