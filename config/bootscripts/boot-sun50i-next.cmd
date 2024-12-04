@@ -15,8 +15,10 @@ setenv bootlogo "false"
 
 setenv vendor "allwinner"
 
-# Remember the default u-boot fdtfile
-setenv deffdt_file ${fdtfile}
+# Remember the default fdtfile provided by u-boot and delete the vendor name
+if setexpr subfdt sub ${vendor}/ "" ${fdtfile};then
+	setenv deffdt_file ${subfdt}
+fi
 
 # Remember the default u-boot fdtdir
 setenv deffdt_dir "${prefix}dtb"
@@ -32,6 +34,12 @@ echo "Boot script loaded from ${devtype}"
 if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
 	load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt
 	env import -t ${load_addr} ${filesize}
+fi
+
+# Delete the vendor's name from the fdtfile variable and record the result
+# after the file with the environment variables has been read
+if setexpr subfdt sub ${vendor}/ "" ${fdtfile};then
+	setenv fdtfile ${subfdt}
 fi
 
 # In this shell, we can only check the existence of the file.
