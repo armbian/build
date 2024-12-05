@@ -117,7 +117,7 @@ function create_image_from_sdcard_rootfs() {
 	fi
 
 	wait_for_disk_sync "before umount MOUNT"
-	
+
 	umount_chroot_recursive "${MOUNT}" "MOUNT"
 
 	call_extension_method "post_umount_final_image" "config_post_umount_final_image" <<- 'POST_UMOUNT_FINAL_IMAGE'

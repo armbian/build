@@ -54,17 +54,12 @@ function trap_handler_cleanup_rootfs_and_image() {
 	display_alert "Cleanup for rootfs and image" "trap_handler_cleanup_rootfs_and_image" "cleanup"
 
 	debug_tmpfs_show_usage "before cleanup of rootfs"
-
 	cd "${SRC}" || echo "Failed to cwd to ${SRC}" # Move pwd away, so unmounts work
 
 	# those will loop until they're unmounted.
-	display_alert "Cleanup sdcard begin" "trap_handler_cleanup_rootfs_and_image" "cleanup"
 	umount_chroot_recursive "${SDCARD}" "SDCARD" || true
-
-	display_alert "Cleanup mount begin" "trap_handler_cleanup_rootfs_and_image" "cleanup"
 	umount_chroot_recursive "${MOUNT}" "MOUNT" || true
 
-	display_alert "Cleanup umount sdcard begin" "trap_handler_cleanup_rootfs_and_image" "cleanup"
 	# unmount tmpfs mounted on SDCARD if it exists. #@TODO: move to new tmpfs-utils scheme
 	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
 
