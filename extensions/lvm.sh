@@ -41,10 +41,9 @@ function post_create_partitions__setup_lvm() {
 function prepare_root_device__create_volume_group() {
 
 	# the partition to setup LVM on is defined as rootpart
-	local lvmdev=$rootdevice
-	display_alert "LVM will be on Partition ${rootpart}, thats ${lvmdev}" "${EXTENSION}" "info"
+	display_alert "LVM will be on ${rootdevice}" "${EXTENSION}" "info"
 
-	# Caculate the required volume size
+	# Calculate the required volume size
 	declare -g -i rootfs_size
 	rootfs_size=$(du --apparent-size -sm "${SDCARD}"/ | cut -f1) # MiB
 	display_alert "Current rootfs size" "$rootfs_size MiB" "info"
@@ -52,25 +51,20 @@ function prepare_root_device__create_volume_group() {
 	display_alert "Root volume size" "$volsize MiB" "info"
 
 	# Create the PV VG and VOL
-	display_alert "LVM Creating VG" "${lvmdev}" "info"
-	check_loop_device ${lvmdev}
-	pvcreate ${lvmdev}
-	vgcreate ${LVM_VG_NAME} ${lvmdev}
-	wait_for_disk_sync "wait for VG to sync"
+	display_alert "LVM Creating VG" "${rootdevice}" "info"
+	check_loop_device ${rootdevice}
+	pvcreate ${rootdevice}
+	wait_for_disk_sync "wait for pvcreate to sync"
+	vgcreate ${LVM_VG_NAME} ${rootdevice}
+	add_cleanup_handler cleanup_lvm
+	wait_for_disk_sync "wait for vgcreate to sync"
 	# Note that devices wont come up automatically inside docker
 	lvcreate -Zn --name root --size ${volsize}M ${LVM_VG_NAME}
 	vgmknodes
 	lvs >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
-	# TODO [ms] check if disable-scan-enable is necessary
-	vgchange -a n ${LVM_VG_NAME}
-	display_alert "LVM created volume group" "${EXTENSION}" "info"
-
-	display_alert "Using LVM root" "${EXTENSION}" "info"
-	vgscan
-	vgchange -a y ${LVM_VG_NAME}
-
+	
 	rootdevice=/dev/mapper/${LVM_VG_NAME}-root
-	display_alert "Root device is ${rootdevice}" "${EXTENSION}" "info"
+	display_alert "LVM created volume group - root device ${rootdevice}" "${EXTENSION}" "info"
 }
 
 function format_partitions__format_lvm() {
@@ -80,7 +74,7 @@ function format_partitions__format_lvm() {
 	display_alert "LVM labeled partitions" "${EXTENSION}" "info"
 }
 
-function post_umount_final_image__lvm_cleanup(){
+function post_umount_final_image__cleanup_lvm(){
 	execute_and_remove_cleanup_handler cleanup_lvm
 }
 
