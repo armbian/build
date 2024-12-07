@@ -21,6 +21,7 @@ dtbo-$(CONFIG_ARCH_MESON) += \
 	meson-g12a-radxa-zero-uart-ao-b-on-gpioao-2-gpioao-3.dtbo \
 	meson-g12a-radxa-zero-uart-ao-b-on-gpioao-8-gpioao-9.dtbo \
 	meson-g12a-radxa-zero-uart-ee-c.dtbo \
+	meson-g12b-bananapi-cm4-i2c2.dtbo \
 	meson-g12b-bananapi-cm4-pwm-gpioh-5-fan.dtbo \
 	meson-g12b-bananapi-cm4-wifi-freq-200mhz.dtbo \
 	meson-g12b-bananapi-m2s-rtl8822cs.dtbo \
