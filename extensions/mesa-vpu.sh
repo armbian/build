@@ -90,34 +90,6 @@ function post_install_kernel_debs__3d() {
 
 		# Add chromium if building a desktop
 		if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
-			if [[ "${ARCH}" == "arm64" ]]; then
-
-				display_alert "Adding Amazingfate Chromium PPAs" "${EXTENSION}" "info"
-				do_with_retries 3 chroot_sdcard add-apt-repository ppa:liujianfeng1994/chromium --yes --no-update
-				sed -i "s/oracular/noble/g" "${SDCARD}"/etc/apt/sources.list.d/liujianfeng1994-ubuntu-chromium-"${RELEASE}".*
-
-				display_alert "Pinning amazingfated's Chromium PPAs" "${EXTENSION}" "info"
-				cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/liujianfeng1994-chromium-pin
-					Package: chromium
-					Pin: release o=LP-PPA-liujianfeng1994-chromium
-					Pin-Priority: 1001
-				EOF
-
-			else
-
-				display_alert "Adding Xtradebs Apps PPAs" "${EXTENSION}" "info"
-				do_with_retries 3 chroot_sdcard add-apt-repository ppa:xtradeb/apps --yes --no-update
-				sed -i "s/oracular/noble/g" "${SDCARD}"/etc/apt/sources.list.d/xtradeb-ubuntu-apps-"${RELEASE}".*
-
-				display_alert "Pinning Xtradebs PPAs" "${EXTENSION}" "info"
-				cat <<- EOF > "${SDCARD}"/etc/apt/preferences.d/xtradebs-apps-pin
-					Package: chromium
-					Pin: release o=LP-PPA-xtradebs-apps
-					Pin-Priority: 1001
-				EOF
-
-			fi
-
 			pkgs+=("chromium")
 		fi
 	fi
