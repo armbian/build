@@ -14,4 +14,4 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 MODULES="ads7846 spidev"
 BOOTFS_TYPE="fat"
-
+PACKAGE_LIST_BOARD="build-essential usb-modeswitch"
