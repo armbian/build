@@ -45,32 +45,32 @@ if test -e ${devtype} ${devnum} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
+# Delete the vendor's name from the fdtfile variable and record the result
+# after the file with the environment variables has been read
+if setexpr subfdt sub ${vendor}/ "" ${fdtfile};then
+	setenv fdtfile ${subfdt}
+fi
+
 # In this shell, we can only check the existence of the file.
 # Make a check of reasonable ways to find the dtb file.
 # Set the true value of the paths.
 if test -e ${devtype} ${devnum} "${fdtdir}/${fdtfile}"; then
-	:
+	echo "Load fdt: ${fdtdir}/${fdtfile}"
 else
-	echo "File ${fdtdir}/${fdtfile} does not exists"
+	echo "The file ${fdtfile} was not found in the path ${fdtdir}"
 	if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${fdtfile}"; then
 		setenv fdtdir "${deffdt_dir}/${vendor}"
+		echo "Load fdt: ${fdtdir}/${fdtfile}"
 	else
-		echo "File ${deffdt_dir}/${vendor}/${fdtfile} does not exists"
-		if test -e ${devtype} ${devnum} "${deffdt_dir}/${fdtfile}"; then
-			setenv fdtdir "${deffdt_dir}"
+		if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${deffdt_file}"; then
+			setenv fdtdir "${deffdt_dir}/${vendor}"
+			setenv fdtfile "${deffdt_file}"
+			echo "Load fdt: ${fdtdir}/${fdtfile}"
 		else
-			echo "File ${deffdt_dir}/${fdtfile} does not exists"
-			if test -e ${devtype} ${devnum} "${deffdt_dir}/${vendor}/${deffdt_file}"; then
-				setenv fdtdir "${deffdt_dir}/${vendor}"
+			if test -e ${devtype} ${devnum} "${deffdt_dir}/${deffdt_file}"; then
+				setenv fdtdir "${deffdt_dir}"
 				setenv fdtfile "${deffdt_file}"
-			else
-				echo "File ${deffdt_dir}/${vendor}/${deffdt_file} does not exists"
-				if test -e ${devtype} ${devnum} "${deffdt_dir}/${deffdt_file}"; then
-					setenv fdtdir "${deffdt_dir}"
-					setenv fdtfile "${deffdt_file}"
-				else
-					echo "File ${deffdt_dir}/${deffdt_file} does not exists"
-				fi
+				echo "Load fdt: ${fdtdir}/${fdtfile}"
 			fi
 		fi
 	fi
@@ -99,9 +99,7 @@ load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
 
 if test -e ${devtype} ${devnum} "${prefix}.next"; then
 	echo "Found mainline kernel configuration"
-	if load ${devtype} ${devnum} ${fdt_addr_r} ${fdtdir}/${fdtfile}; then
-		echo "Load fdt: ${fdtdir}/${fdtfile}"
-	fi
+	load ${devtype} ${devnum} ${fdt_addr_r} ${fdtdir}/${fdtfile}
 	fdt addr ${fdt_addr_r}
 	fdt resize 65536
 	for overlay_file in ${overlays}; do
@@ -120,7 +118,8 @@ if test -e ${devtype} ${devnum} "${prefix}.next"; then
 		echo "Error applying DT overlays, restoring original DT"
 		load ${devtype} ${devnum} ${fdt_addr_r} ${fdtdir}/${fdtfile}
 	else
-		if load ${devtype} ${devnum} ${load_addr} ${fdtdir}/overlay/${overlay_prefix}-fixup.scr; then
+		if test -e ${devtype} ${devnum} ${fdtdir}/overlay/${overlay_prefix}-fixup.scr; then
+			load ${devtype} ${devnum} ${load_addr} ${fdtdir}/overlay/${overlay_prefix}-fixup.scr
 			echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
 			source ${load_addr}
 		fi
