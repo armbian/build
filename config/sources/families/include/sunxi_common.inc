@@ -63,12 +63,13 @@ write_uboot_platform() {
 }
 
 setup_write_uboot_platform() {
+	local tmp part dev
 	if grep -q "ubootpart" /proc/cmdline; then
-		local tmp=$(cat /proc/cmdline)
+		tmp=$(cat /proc/cmdline)
 		tmp="${tmp##*ubootpart=}"
 		tmp="${tmp%% *}"
-		[[ -n $tmp ]] && local part=$(findfs PARTUUID=$tmp 2> /dev/null)
-		[[ -n $part ]] && local dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
+		[[ -n $tmp ]] && part=$(findfs PARTUUID=$tmp 2> /dev/null)
+		[[ -n $part ]] && dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
 		[[ -n $dev ]] && DEVICE="/dev/$dev"
 	elif [[ -f /var/lib/armbian/force_search_uboot ]]; then
 		# This may cause overwriting u-boot for android or other non-Armbian OS installed on eMMC
