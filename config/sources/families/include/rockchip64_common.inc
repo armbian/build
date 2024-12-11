@@ -122,7 +122,7 @@ case "$BOOT_SOC" in
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk356x_spl_loader_v1.21.113.bin"
 		BOOT_SOC_MKIMAGE="rk3568" # mkimage does not know about rk3566, and rk3568 works.
-		BOOTENV_FILE='rk356x.txt'
+		BOOTENV_FILE='rk35xx.txt'
 		;;
 
 	rk3568)
@@ -132,7 +132,7 @@ case "$BOOT_SOC" in
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3568_bl31_v1.44.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk356x_spl_loader_v1.21.113.bin"
-		BOOTENV_FILE='rk356x.txt'
+		BOOTENV_FILE='rk35xx.txt'
 		;;
 
 	rk3576)
@@ -148,6 +148,7 @@ case "$BOOT_SOC" in
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.45.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk3588_spl_loader_v1.16.113.bin"
+		BOOTENV_FILE='rk35xx.txt'
 		;;
 esac
 
