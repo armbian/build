@@ -52,9 +52,9 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	}
 }
 
-function post_family_tweaks_bsp__youyeetoo_r1_extras {
+function post_family_tweaks__youyeetoo_r1 {
 	if [[ "${BRANCH}" != "vendor" ]]; then
-		display_alert "$BOARD" "Adjusting rtw89_8852be modules" "info"
+		display_alert "$BOARD" "Adjusting rtw89_8852be module" "info"
 		cat <<- EOF > "${SDCARD}/etc/modprobe.d/rtw8852be.conf"
 			options rtw89_pci disable_aspm_l1=y disable_aspm_l1ss=y
 			options rtw89pci disable_aspm_l1=y disable_aspm_l1ss=y
