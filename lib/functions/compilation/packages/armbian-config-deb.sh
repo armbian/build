@@ -47,7 +47,7 @@ compile_armbian-config() {
 		Version: ${artifact_version}
 		Architecture: all
 		Maintainer: $MAINTAINER <$MAINTAINERMAIL>
-		Depends: whiptail, jq, sudo, procps, systemd, iproute2
+		Depends: debconf, iproute2, jq, libtext-iconv-perl, procps, sudo, systemd, whiptail
 		Section: utils
 		Priority: optional
 		Description: Armbian configuration utility - The new generation

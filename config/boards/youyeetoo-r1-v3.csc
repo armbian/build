@@ -4,7 +4,7 @@ BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="SuperKali"
 BOOTCONFIG="generic-rk3588_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
-KERNEL_TARGET="current,vendor"
+KERNEL_TARGET="current,edge,vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
@@ -37,8 +37,8 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	declare -g BOOTCONFIG="generic-rk3588_defconfig"             # Use generic defconfig which should boot all RK3588 boards
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.07"
-	declare -g BOOTPATCHDIR="v2024.07"
+	declare -g BOOTBRANCH="tag:v2024.10"
+	declare -g BOOTPATCHDIR="v2024.10"
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
@@ -50,4 +50,16 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	function write_uboot_platform() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
+}
+
+function post_family_tweaks__youyeetoo_r1 {
+	if [[ "${BRANCH}" != "vendor" ]]; then
+		display_alert "$BOARD" "Adjusting rtw89_8852be module" "info"
+		cat <<- EOF > "${SDCARD}/etc/modprobe.d/rtw8852be.conf"
+			options rtw89_pci disable_aspm_l1=y disable_aspm_l1ss=y
+			options rtw89pci disable_aspm_l1=y disable_aspm_l1ss=y
+			options rtw89_core disable_ps_mode=y
+			options rtw89core disable_ps_mode=y
+		EOF
+	fi
 }

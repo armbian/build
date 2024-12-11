@@ -1,7 +1,7 @@
 # Amlogic S805 C1 quad core 1GB RAM SoC GBE
 BOARD_NAME="Odroid C1"
 BOARDFAMILY="meson8b"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="juanlufont"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 
