@@ -51,3 +51,15 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
 }
+
+function post_family_tweaks_bsp__youyeetoo_r1_extras {
+	if [[ "${BRANCH}" != "vendor" ]]; then
+		display_alert "$BOARD" "Adjusting rtw89_8852be modules" "info"
+		cat <<- EOF > "${SDCARD}/etc/modprobe.d/rtw8852be.conf"
+			options rtw89_pci disable_aspm_l1=y disable_aspm_l1ss=y
+			options rtw89pci disable_aspm_l1=y disable_aspm_l1ss=y
+			options rtw89_core disable_ps_mode=y
+			options rtw89core disable_ps_mode=y
+		EOF
+	fi
+}
