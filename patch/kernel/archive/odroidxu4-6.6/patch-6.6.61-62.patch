@@ -1,0 +1,1683 @@
+diff --git a/Makefile b/Makefile
+index e0bb5aaa7fed63..5f3e285d98120c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ VERSION = 6
+ PATCHLEVEL = 6
+-SUBLEVEL = 61
++SUBLEVEL = 62
+ EXTRAVERSION =
+ NAME = Pinguïn Aangedreven
+ 
+diff --git a/arch/loongarch/include/asm/loongarch.h b/arch/loongarch/include/asm/loongarch.h
+index 33531d432b492d..23232c7bdb9ff5 100644
+--- a/arch/loongarch/include/asm/loongarch.h
++++ b/arch/loongarch/include/asm/loongarch.h
+@@ -242,7 +242,7 @@
+ #define  CSR_ESTAT_IS_WIDTH		14
+ #define  CSR_ESTAT_IS			(_ULCAST_(0x3fff) << CSR_ESTAT_IS_SHIFT)
+ 
+-#define LOONGARCH_CSR_ERA		0x6	/* ERA */
++#define LOONGARCH_CSR_ERA		0x6	/* Exception return address */
+ 
+ #define LOONGARCH_CSR_BADV		0x7	/* Bad virtual address */
+ 
+diff --git a/arch/powerpc/platforms/powernv/opal-irqchip.c b/arch/powerpc/platforms/powernv/opal-irqchip.c
+index 56a1f7ce78d2c7..d92759c21fae94 100644
+--- a/arch/powerpc/platforms/powernv/opal-irqchip.c
++++ b/arch/powerpc/platforms/powernv/opal-irqchip.c
+@@ -282,6 +282,7 @@ int __init opal_event_init(void)
+ 				 name, NULL);
+ 		if (rc) {
+ 			pr_warn("Error %d requesting OPAL irq %d\n", rc, (int)r->start);
++			kfree(name);
+ 			continue;
+ 		}
+ 	}
+diff --git a/arch/riscv/kvm/aia_imsic.c b/arch/riscv/kvm/aia_imsic.c
+index e808723a85f1b1..c1585444f856ea 100644
+--- a/arch/riscv/kvm/aia_imsic.c
++++ b/arch/riscv/kvm/aia_imsic.c
+@@ -55,7 +55,7 @@ struct imsic {
+ 	/* IMSIC SW-file */
+ 	struct imsic_mrif *swfile;
+ 	phys_addr_t swfile_pa;
+-	spinlock_t swfile_extirq_lock;
++	raw_spinlock_t swfile_extirq_lock;
+ };
+ 
+ #define imsic_vs_csr_read(__c)			\
+@@ -622,7 +622,7 @@ static void imsic_swfile_extirq_update(struct kvm_vcpu *vcpu)
+ 	 * interruptions between reading topei and updating pending status.
+ 	 */
+ 
+-	spin_lock_irqsave(&imsic->swfile_extirq_lock, flags);
++	raw_spin_lock_irqsave(&imsic->swfile_extirq_lock, flags);
+ 
+ 	if (imsic_mrif_atomic_read(mrif, &mrif->eidelivery) &&
+ 	    imsic_mrif_topei(mrif, imsic->nr_eix, imsic->nr_msis))
+@@ -630,7 +630,7 @@ static void imsic_swfile_extirq_update(struct kvm_vcpu *vcpu)
+ 	else
+ 		kvm_riscv_vcpu_unset_interrupt(vcpu, IRQ_VS_EXT);
+ 
+-	spin_unlock_irqrestore(&imsic->swfile_extirq_lock, flags);
++	raw_spin_unlock_irqrestore(&imsic->swfile_extirq_lock, flags);
+ }
+ 
+ static void imsic_swfile_read(struct kvm_vcpu *vcpu, bool clear,
+@@ -1051,7 +1051,7 @@ int kvm_riscv_vcpu_aia_imsic_init(struct kvm_vcpu *vcpu)
+ 	}
+ 	imsic->swfile = page_to_virt(swfile_page);
+ 	imsic->swfile_pa = page_to_phys(swfile_page);
+-	spin_lock_init(&imsic->swfile_extirq_lock);
++	raw_spin_lock_init(&imsic->swfile_extirq_lock);
+ 
+ 	/* Setup IO device */
+ 	kvm_iodevice_init(&imsic->iodev, &imsic_iodoev_ops);
+diff --git a/block/elevator.c b/block/elevator.c
+index 5ff093cb3cf8f5..ba072d8f660e6e 100644
+--- a/block/elevator.c
++++ b/block/elevator.c
+@@ -558,7 +558,7 @@ EXPORT_SYMBOL_GPL(elv_unregister);
+ static inline bool elv_support_iosched(struct request_queue *q)
+ {
+ 	if (!queue_is_mq(q) ||
+-	    (q->tag_set && (q->tag_set->flags & BLK_MQ_F_NO_SCHED)))
++	    (q->tag_set->flags & BLK_MQ_F_NO_SCHED))
+ 		return false;
+ 	return true;
+ }
+@@ -569,7 +569,7 @@ static inline bool elv_support_iosched(struct request_queue *q)
+  */
+ static struct elevator_type *elevator_get_default(struct request_queue *q)
+ {
+-	if (q->tag_set && q->tag_set->flags & BLK_MQ_F_NO_SCHED_BY_DEFAULT)
++	if (q->tag_set->flags & BLK_MQ_F_NO_SCHED_BY_DEFAULT)
+ 		return NULL;
+ 
+ 	if (q->nr_hw_queues != 1 &&
+diff --git a/crypto/algapi.c b/crypto/algapi.c
+index 85bc279b4233fa..b3a60860425304 100644
+--- a/crypto/algapi.c
++++ b/crypto/algapi.c
+@@ -396,7 +396,7 @@ void crypto_alg_tested(const char *name, int err)
+ 	q->cra_flags |= CRYPTO_ALG_DEAD;
+ 	alg = test->adult;
+ 
+-	if (list_empty(&alg->cra_list))
++	if (crypto_is_dead(alg))
+ 		goto complete;
+ 
+ 	if (err == -ECANCELED)
+diff --git a/drivers/crypto/marvell/cesa/hash.c b/drivers/crypto/marvell/cesa/hash.c
+index 8d84ad45571c7f..f150861ceaf695 100644
+--- a/drivers/crypto/marvell/cesa/hash.c
++++ b/drivers/crypto/marvell/cesa/hash.c
+@@ -947,7 +947,7 @@ struct ahash_alg mv_md5_alg = {
+ 		.base = {
+ 			.cra_name = "md5",
+ 			.cra_driver_name = "mv-md5",
+-			.cra_priority = 300,
++			.cra_priority = 0,
+ 			.cra_flags = CRYPTO_ALG_ASYNC |
+ 				     CRYPTO_ALG_ALLOCATES_MEMORY |
+ 				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+@@ -1018,7 +1018,7 @@ struct ahash_alg mv_sha1_alg = {
+ 		.base = {
+ 			.cra_name = "sha1",
+ 			.cra_driver_name = "mv-sha1",
+-			.cra_priority = 300,
++			.cra_priority = 0,
+ 			.cra_flags = CRYPTO_ALG_ASYNC |
+ 				     CRYPTO_ALG_ALLOCATES_MEMORY |
+ 				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+@@ -1092,7 +1092,7 @@ struct ahash_alg mv_sha256_alg = {
+ 		.base = {
+ 			.cra_name = "sha256",
+ 			.cra_driver_name = "mv-sha256",
+-			.cra_priority = 300,
++			.cra_priority = 0,
+ 			.cra_flags = CRYPTO_ALG_ASYNC |
+ 				     CRYPTO_ALG_ALLOCATES_MEMORY |
+ 				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+@@ -1302,7 +1302,7 @@ struct ahash_alg mv_ahmac_md5_alg = {
+ 		.base = {
+ 			.cra_name = "hmac(md5)",
+ 			.cra_driver_name = "mv-hmac-md5",
+-			.cra_priority = 300,
++			.cra_priority = 0,
+ 			.cra_flags = CRYPTO_ALG_ASYNC |
+ 				     CRYPTO_ALG_ALLOCATES_MEMORY |
+ 				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+@@ -1373,7 +1373,7 @@ struct ahash_alg mv_ahmac_sha1_alg = {
+ 		.base = {
+ 			.cra_name = "hmac(sha1)",
+ 			.cra_driver_name = "mv-hmac-sha1",
+-			.cra_priority = 300,
++			.cra_priority = 0,
+ 			.cra_flags = CRYPTO_ALG_ASYNC |
+ 				     CRYPTO_ALG_ALLOCATES_MEMORY |
+ 				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+@@ -1444,7 +1444,7 @@ struct ahash_alg mv_ahmac_sha256_alg = {
+ 		.base = {
+ 			.cra_name = "hmac(sha256)",
+ 			.cra_driver_name = "mv-hmac-sha256",
+-			.cra_priority = 300,
++			.cra_priority = 0,
+ 			.cra_flags = CRYPTO_ALG_ASYNC |
+ 				     CRYPTO_ALG_ALLOCATES_MEMORY |
+ 				     CRYPTO_ALG_KERN_DRIVER_ONLY,
+diff --git a/drivers/gpu/drm/amd/amdkfd/kfd_chardev.c b/drivers/gpu/drm/amd/amdkfd/kfd_chardev.c
+index 19d46be6394295..8669677662d0c0 100644
+--- a/drivers/gpu/drm/amd/amdkfd/kfd_chardev.c
++++ b/drivers/gpu/drm/amd/amdkfd/kfd_chardev.c
+@@ -1164,7 +1164,7 @@ static int kfd_ioctl_alloc_memory_of_gpu(struct file *filep,
+ 
+ 		if (flags & KFD_IOC_ALLOC_MEM_FLAGS_AQL_QUEUE_MEM)
+ 			size >>= 1;
+-		WRITE_ONCE(pdd->vram_usage, pdd->vram_usage + PAGE_ALIGN(size));
++		atomic64_add(PAGE_ALIGN(size), &pdd->vram_usage);
+ 	}
+ 
+ 	mutex_unlock(&p->mutex);
+@@ -1235,7 +1235,7 @@ static int kfd_ioctl_free_memory_of_gpu(struct file *filep,
+ 		kfd_process_device_remove_obj_handle(
+ 			pdd, GET_IDR_HANDLE(args->handle));
+ 
+-	WRITE_ONCE(pdd->vram_usage, pdd->vram_usage - size);
++	atomic64_sub(size, &pdd->vram_usage);
+ 
+ err_unlock:
+ err_pdd:
+@@ -2352,7 +2352,7 @@ static int criu_restore_memory_of_gpu(struct kfd_process_device *pdd,
+ 	} else if (bo_bucket->alloc_flags & KFD_IOC_ALLOC_MEM_FLAGS_VRAM) {
+ 		bo_bucket->restored_offset = offset;
+ 		/* Update the VRAM usage count */
+-		WRITE_ONCE(pdd->vram_usage, pdd->vram_usage + bo_bucket->size);
++		atomic64_add(bo_bucket->size, &pdd->vram_usage);
+ 	}
+ 	return 0;
+ }
+diff --git a/drivers/gpu/drm/amd/amdkfd/kfd_priv.h b/drivers/gpu/drm/amd/amdkfd/kfd_priv.h
+index 67204c3dfbb8f6..27c9d5c43765af 100644
+--- a/drivers/gpu/drm/amd/amdkfd/kfd_priv.h
++++ b/drivers/gpu/drm/amd/amdkfd/kfd_priv.h
+@@ -765,7 +765,7 @@ struct kfd_process_device {
+ 	enum kfd_pdd_bound bound;
+ 
+ 	/* VRAM usage */
+-	uint64_t vram_usage;
++	atomic64_t vram_usage;
+ 	struct attribute attr_vram;
+ 	char vram_filename[MAX_SYSFS_FILENAME_LEN];
+ 
+diff --git a/drivers/gpu/drm/amd/amdkfd/kfd_process.c b/drivers/gpu/drm/amd/amdkfd/kfd_process.c
+index 43f520b3796700..6c90231e0aec2b 100644
+--- a/drivers/gpu/drm/amd/amdkfd/kfd_process.c
++++ b/drivers/gpu/drm/amd/amdkfd/kfd_process.c
+@@ -306,7 +306,7 @@ static ssize_t kfd_procfs_show(struct kobject *kobj, struct attribute *attr,
+ 	} else if (strncmp(attr->name, "vram_", 5) == 0) {
+ 		struct kfd_process_device *pdd = container_of(attr, struct kfd_process_device,
+ 							      attr_vram);
+-		return snprintf(buffer, PAGE_SIZE, "%llu\n", READ_ONCE(pdd->vram_usage));
++		return snprintf(buffer, PAGE_SIZE, "%llu\n", atomic64_read(&pdd->vram_usage));
+ 	} else if (strncmp(attr->name, "sdma_", 5) == 0) {
+ 		struct kfd_process_device *pdd = container_of(attr, struct kfd_process_device,
+ 							      attr_sdma);
+@@ -1589,7 +1589,7 @@ struct kfd_process_device *kfd_create_process_device_data(struct kfd_node *dev,
+ 	pdd->bound = PDD_UNBOUND;
+ 	pdd->already_dequeued = false;
+ 	pdd->runtime_inuse = false;
+-	pdd->vram_usage = 0;
++	atomic64_set(&pdd->vram_usage, 0);
+ 	pdd->sdma_past_activity_counter = 0;
+ 	pdd->user_gpu_id = dev->id;
+ 	atomic64_set(&pdd->evict_duration_counter, 0);
+diff --git a/drivers/gpu/drm/amd/amdkfd/kfd_svm.c b/drivers/gpu/drm/amd/amdkfd/kfd_svm.c
+index ce76d455499841..6b7c6f45a80a86 100644
+--- a/drivers/gpu/drm/amd/amdkfd/kfd_svm.c
++++ b/drivers/gpu/drm/amd/amdkfd/kfd_svm.c
+@@ -391,6 +391,27 @@ static void svm_range_bo_release(struct kref *kref)
+ 		spin_lock(&svm_bo->list_lock);
+ 	}
+ 	spin_unlock(&svm_bo->list_lock);
++
++	if (mmget_not_zero(svm_bo->eviction_fence->mm)) {
++		struct kfd_process_device *pdd;
++		struct kfd_process *p;
++		struct mm_struct *mm;
++
++		mm = svm_bo->eviction_fence->mm;
++		/*
++		 * The forked child process takes svm_bo device pages ref, svm_bo could be
++		 * released after parent process is gone.
++		 */
++		p = kfd_lookup_process_by_mm(mm);
++		if (p) {
++			pdd = kfd_get_process_device_data(svm_bo->node, p);
++			if (pdd)
++				atomic64_sub(amdgpu_bo_size(svm_bo->bo), &pdd->vram_usage);
++			kfd_unref_process(p);
++		}
++		mmput(mm);
++	}
++
+ 	if (!dma_fence_is_signaled(&svm_bo->eviction_fence->base))
+ 		/* We're not in the eviction worker. Signal the fence. */
+ 		dma_fence_signal(&svm_bo->eviction_fence->base);
+@@ -518,6 +539,7 @@ int
+ svm_range_vram_node_new(struct kfd_node *node, struct svm_range *prange,
+ 			bool clear)
+ {
++	struct kfd_process_device *pdd;
+ 	struct amdgpu_bo_param bp;
+ 	struct svm_range_bo *svm_bo;
+ 	struct amdgpu_bo_user *ubo;
+@@ -609,6 +631,10 @@ svm_range_vram_node_new(struct kfd_node *node, struct svm_range *prange,
+ 	list_add(&prange->svm_bo_list, &svm_bo->range_list);
+ 	spin_unlock(&svm_bo->list_lock);
+ 
++	pdd = svm_range_get_pdd_by_node(prange, node);
++	if (pdd)
++		atomic64_add(amdgpu_bo_size(bo), &pdd->vram_usage);
++
+ 	return 0;
+ 
+ reserve_bo_failed:
+diff --git a/drivers/gpu/drm/vmwgfx/vmwgfx_drv.h b/drivers/gpu/drm/vmwgfx/vmwgfx_drv.h
+index ac3d7ff3f5bb9f..def98d868deb49 100644
+--- a/drivers/gpu/drm/vmwgfx/vmwgfx_drv.h
++++ b/drivers/gpu/drm/vmwgfx/vmwgfx_drv.h
+@@ -61,7 +61,7 @@
+ #define VMWGFX_DRIVER_MINOR 20
+ #define VMWGFX_DRIVER_PATCHLEVEL 0
+ #define VMWGFX_FIFO_STATIC_SIZE (1024*1024)
+-#define VMWGFX_MAX_DISPLAYS 16
++#define VMWGFX_NUM_DISPLAY_UNITS 8
+ #define VMWGFX_CMD_BOUNCE_INIT_SIZE 32768
+ 
+ #define VMWGFX_MIN_INITIAL_WIDTH 1280
+@@ -81,7 +81,7 @@
+ #define VMWGFX_NUM_GB_CONTEXT 256
+ #define VMWGFX_NUM_GB_SHADER 20000
+ #define VMWGFX_NUM_GB_SURFACE 32768
+-#define VMWGFX_NUM_GB_SCREEN_TARGET VMWGFX_MAX_DISPLAYS
++#define VMWGFX_NUM_GB_SCREEN_TARGET VMWGFX_NUM_DISPLAY_UNITS
+ #define VMWGFX_NUM_DXCONTEXT 256
+ #define VMWGFX_NUM_DXQUERY 512
+ #define VMWGFX_NUM_MOB (VMWGFX_NUM_GB_CONTEXT +\
+diff --git a/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c b/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c
+index 11f7c0e5420e04..33f73d559be72d 100644
+--- a/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c
++++ b/drivers/gpu/drm/vmwgfx/vmwgfx_kms.c
+@@ -2327,7 +2327,7 @@ int vmw_kms_update_layout_ioctl(struct drm_device *dev, void *data,
+ 	struct drm_mode_config *mode_config = &dev->mode_config;
+ 	struct drm_vmw_update_layout_arg *arg =
+ 		(struct drm_vmw_update_layout_arg *)data;
+-	void __user *user_rects;
++	const void __user *user_rects;
+ 	struct drm_vmw_rect *rects;
+ 	struct drm_rect *drm_rects;
+ 	unsigned rects_size;
+@@ -2339,6 +2339,8 @@ int vmw_kms_update_layout_ioctl(struct drm_device *dev, void *data,
+ 					    VMWGFX_MIN_INITIAL_HEIGHT};
+ 		vmw_du_update_layout(dev_priv, 1, &def_rect);
+ 		return 0;
++	} else if (arg->num_outputs > VMWGFX_NUM_DISPLAY_UNITS) {
++		return -E2BIG;
+ 	}
+ 
+ 	rects_size = arg->num_outputs * sizeof(struct drm_vmw_rect);
+diff --git a/drivers/gpu/drm/vmwgfx/vmwgfx_kms.h b/drivers/gpu/drm/vmwgfx/vmwgfx_kms.h
+index 19a843da87b789..ec86f92517a148 100644
+--- a/drivers/gpu/drm/vmwgfx/vmwgfx_kms.h
++++ b/drivers/gpu/drm/vmwgfx/vmwgfx_kms.h
+@@ -198,9 +198,6 @@ struct vmw_kms_dirty {
+ 	s32 unit_y2;
+ };
+ 
+-#define VMWGFX_NUM_DISPLAY_UNITS 8
+-
+-
+ #define vmw_framebuffer_to_vfb(x) \
+ 	container_of(x, struct vmw_framebuffer, base)
+ #define vmw_framebuffer_to_vfbs(x) \
+diff --git a/drivers/hid/hid-ids.h b/drivers/hid/hid-ids.h
+index d4f6066dbbc596..1a05e226858954 100644
+--- a/drivers/hid/hid-ids.h
++++ b/drivers/hid/hid-ids.h
+@@ -868,6 +868,7 @@
+ #define USB_DEVICE_ID_LOGITECH_NANO_RECEIVER_LIGHTSPEED_1	0xc539
+ #define USB_DEVICE_ID_LOGITECH_NANO_RECEIVER_LIGHTSPEED_1_1	0xc53f
+ #define USB_DEVICE_ID_LOGITECH_NANO_RECEIVER_POWERPLAY	0xc53a
++#define USB_DEVICE_ID_LOGITECH_BOLT_RECEIVER	0xc548
+ #define USB_DEVICE_ID_SPACETRAVELLER	0xc623
+ #define USB_DEVICE_ID_SPACENAVIGATOR	0xc626
+ #define USB_DEVICE_ID_DINOVO_DESKTOP	0xc704
+diff --git a/drivers/hid/hid-lenovo.c b/drivers/hid/hid-lenovo.c
+index f86c1ea83a0378..a4062f617ba202 100644
+--- a/drivers/hid/hid-lenovo.c
++++ b/drivers/hid/hid-lenovo.c
+@@ -473,6 +473,7 @@ static int lenovo_input_mapping(struct hid_device *hdev,
+ 		return lenovo_input_mapping_tp10_ultrabook_kbd(hdev, hi, field,
+ 							       usage, bit, max);
+ 	case USB_DEVICE_ID_LENOVO_X1_TAB:
++	case USB_DEVICE_ID_LENOVO_X1_TAB3:
+ 		return lenovo_input_mapping_x1_tab_kbd(hdev, hi, field, usage, bit, max);
+ 	default:
+ 		return 0;
+@@ -583,6 +584,7 @@ static ssize_t attr_fn_lock_store(struct device *dev,
+ 		break;
+ 	case USB_DEVICE_ID_LENOVO_TP10UBKBD:
+ 	case USB_DEVICE_ID_LENOVO_X1_TAB:
++	case USB_DEVICE_ID_LENOVO_X1_TAB3:
+ 		ret = lenovo_led_set_tp10ubkbd(hdev, TP10UBKBD_FN_LOCK_LED, value);
+ 		if (ret)
+ 			return ret;
+@@ -777,6 +779,7 @@ static int lenovo_event(struct hid_device *hdev, struct hid_field *field,
+ 		return lenovo_event_cptkbd(hdev, field, usage, value);
+ 	case USB_DEVICE_ID_LENOVO_TP10UBKBD:
+ 	case USB_DEVICE_ID_LENOVO_X1_TAB:
++	case USB_DEVICE_ID_LENOVO_X1_TAB3:
+ 		return lenovo_event_tp10ubkbd(hdev, field, usage, value);
+ 	default:
+ 		return 0;
+@@ -1059,6 +1062,7 @@ static int lenovo_led_brightness_set(struct led_classdev *led_cdev,
+ 		break;
+ 	case USB_DEVICE_ID_LENOVO_TP10UBKBD:
+ 	case USB_DEVICE_ID_LENOVO_X1_TAB:
++	case USB_DEVICE_ID_LENOVO_X1_TAB3:
+ 		ret = lenovo_led_set_tp10ubkbd(hdev, tp10ubkbd_led[led_nr], value);
+ 		break;
+ 	}
+@@ -1289,6 +1293,7 @@ static int lenovo_probe(struct hid_device *hdev,
+ 		break;
+ 	case USB_DEVICE_ID_LENOVO_TP10UBKBD:
+ 	case USB_DEVICE_ID_LENOVO_X1_TAB:
++	case USB_DEVICE_ID_LENOVO_X1_TAB3:
+ 		ret = lenovo_probe_tp10ubkbd(hdev);
+ 		break;
+ 	default:
+@@ -1375,6 +1380,7 @@ static void lenovo_remove(struct hid_device *hdev)
+ 		break;
+ 	case USB_DEVICE_ID_LENOVO_TP10UBKBD:
+ 	case USB_DEVICE_ID_LENOVO_X1_TAB:
++	case USB_DEVICE_ID_LENOVO_X1_TAB3:
+ 		lenovo_remove_tp10ubkbd(hdev);
+ 		break;
+ 	}
+@@ -1424,6 +1430,8 @@ static const struct hid_device_id lenovo_devices[] = {
+ 	 */
+ 	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
+ 		     USB_VENDOR_ID_LENOVO, USB_DEVICE_ID_LENOVO_X1_TAB) },
++	{ HID_DEVICE(BUS_USB, HID_GROUP_GENERIC,
++		     USB_VENDOR_ID_LENOVO, USB_DEVICE_ID_LENOVO_X1_TAB3) },
+ 	{ }
+ };
+ 
+diff --git a/drivers/hid/hid-multitouch.c b/drivers/hid/hid-multitouch.c
+index e7199ae2e3d918..bf9cad71125923 100644
+--- a/drivers/hid/hid-multitouch.c
++++ b/drivers/hid/hid-multitouch.c
+@@ -2020,6 +2020,10 @@ static const struct hid_device_id mt_devices[] = {
+ 		HID_DEVICE(BUS_I2C, HID_GROUP_MULTITOUCH_WIN_8,
+ 			USB_VENDOR_ID_ELAN, 0x3148) },
+ 
++	{ .driver_data = MT_CLS_WIN_8_FORCE_MULTI_INPUT_NSMU,
++		HID_DEVICE(BUS_I2C, HID_GROUP_MULTITOUCH_WIN_8,
++			USB_VENDOR_ID_ELAN, 0x32ae) },
++
+ 	/* Elitegroup panel */
+ 	{ .driver_data = MT_CLS_SERIAL,
+ 		MT_USB_DEVICE(USB_VENDOR_ID_ELITEGROUP,
+@@ -2089,6 +2093,11 @@ static const struct hid_device_id mt_devices[] = {
+ 		HID_DEVICE(BUS_I2C, HID_GROUP_MULTITOUCH_WIN_8,
+ 			0x347d, 0x7853) },
+ 
++	/* HONOR MagicBook Art 14 touchpad */
++	{ .driver_data = MT_CLS_VTL,
++		HID_DEVICE(BUS_I2C, HID_GROUP_MULTITOUCH_WIN_8,
++			0x35cc, 0x0104) },
++
+ 	/* Ilitek dual touch panel */
+ 	{  .driver_data = MT_CLS_NSMU,
+ 		MT_USB_DEVICE(USB_VENDOR_ID_ILITEK,
+@@ -2131,6 +2140,10 @@ static const struct hid_device_id mt_devices[] = {
+ 		HID_DEVICE(BUS_BLUETOOTH, HID_GROUP_MULTITOUCH_WIN_8,
+ 			USB_VENDOR_ID_LOGITECH,
+ 			USB_DEVICE_ID_LOGITECH_CASA_TOUCHPAD) },
++	{ .driver_data = MT_CLS_WIN_8_FORCE_MULTI_INPUT_NSMU,
++		HID_DEVICE(BUS_USB, HID_GROUP_MULTITOUCH_WIN_8,
++			USB_VENDOR_ID_LOGITECH,
++			USB_DEVICE_ID_LOGITECH_BOLT_RECEIVER) },
+ 
+ 	/* MosArt panels */
+ 	{ .driver_data = MT_CLS_CONFIDENCE_MINUS_ONE,
+diff --git a/drivers/infiniband/sw/siw/siw_qp_tx.c b/drivers/infiniband/sw/siw/siw_qp_tx.c
+index 60b6a413596118..feae920784be80 100644
+--- a/drivers/infiniband/sw/siw/siw_qp_tx.c
++++ b/drivers/infiniband/sw/siw/siw_qp_tx.c
+@@ -337,6 +337,8 @@ static int siw_tcp_sendpages(struct socket *s, struct page **page, int offset,
+ 			msg.msg_flags &= ~MSG_MORE;
+ 
+ 		tcp_rate_check_app_limited(sk);
++		if (!sendpage_ok(page[i]))
++			msg.msg_flags &= ~MSG_SPLICE_PAGES;
+ 		bvec_set_page(&bvec, page[i], bytes, offset);
+ 		iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, &bvec, 1, size);
+ 
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu-impl.c b/drivers/iommu/arm/arm-smmu/arm-smmu-impl.c
+index 9dc772f2cbb27c..99030e6b16e7aa 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu-impl.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu-impl.c
+@@ -130,7 +130,7 @@ int arm_mmu500_reset(struct arm_smmu_device *smmu)
+ 
+ 	/*
+ 	 * Disable MMU-500's not-particularly-beneficial next-page
+-	 * prefetcher for the sake of errata #841119 and #826419.
++	 * prefetcher for the sake of at least 5 known errata.
+ 	 */
+ 	for (i = 0; i < smmu->num_context_banks; ++i) {
+ 		reg = arm_smmu_cb_read(smmu, i, ARM_SMMU_CB_ACTLR);
+@@ -138,7 +138,7 @@ int arm_mmu500_reset(struct arm_smmu_device *smmu)
+ 		arm_smmu_cb_write(smmu, i, ARM_SMMU_CB_ACTLR, reg);
+ 		reg = arm_smmu_cb_read(smmu, i, ARM_SMMU_CB_ACTLR);
+ 		if (reg & ARM_MMU500_ACTLR_CPRE)
+-			dev_warn_once(smmu->dev, "Failed to disable prefetcher [errata #841119 and #826419], check ACR.CACHE_LOCK\n");
++			dev_warn_once(smmu->dev, "Failed to disable prefetcher for errata workarounds, check SACR.CACHE_LOCK\n");
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/irqchip/irq-mscc-ocelot.c b/drivers/irqchip/irq-mscc-ocelot.c
+index 4d0c3532dbe735..c19ab379e8c5ea 100644
+--- a/drivers/irqchip/irq-mscc-ocelot.c
++++ b/drivers/irqchip/irq-mscc-ocelot.c
+@@ -37,7 +37,7 @@ static struct chip_props ocelot_props = {
+ 	.reg_off_ena_clr	= 0x1c,
+ 	.reg_off_ena_set	= 0x20,
+ 	.reg_off_ident		= 0x38,
+-	.reg_off_trigger	= 0x5c,
++	.reg_off_trigger	= 0x4,
+ 	.n_irq			= 24,
+ };
+ 
+@@ -70,7 +70,7 @@ static struct chip_props jaguar2_props = {
+ 	.reg_off_ena_clr	= 0x1c,
+ 	.reg_off_ena_set	= 0x20,
+ 	.reg_off_ident		= 0x38,
+-	.reg_off_trigger	= 0x5c,
++	.reg_off_trigger	= 0x4,
+ 	.n_irq			= 29,
+ };
+ 
+diff --git a/drivers/net/mdio/mdio-bcm-unimac.c b/drivers/net/mdio/mdio-bcm-unimac.c
+index 6b26a0803696d3..a29838be335c9f 100644
+--- a/drivers/net/mdio/mdio-bcm-unimac.c
++++ b/drivers/net/mdio/mdio-bcm-unimac.c
+@@ -336,6 +336,7 @@ static SIMPLE_DEV_PM_OPS(unimac_mdio_pm_ops,
+ static const struct of_device_id unimac_mdio_ids[] = {
+ 	{ .compatible = "brcm,asp-v2.1-mdio", },
+ 	{ .compatible = "brcm,asp-v2.0-mdio", },
++	{ .compatible = "brcm,bcm6846-mdio", },
+ 	{ .compatible = "brcm,genet-mdio-v5", },
+ 	{ .compatible = "brcm,genet-mdio-v4", },
+ 	{ .compatible = "brcm,genet-mdio-v3", },
+diff --git a/drivers/net/usb/qmi_wwan.c b/drivers/net/usb/qmi_wwan.c
+index 92c1500fa7c448..2cf4324a12fd18 100644
+--- a/drivers/net/usb/qmi_wwan.c
++++ b/drivers/net/usb/qmi_wwan.c
+@@ -1432,6 +1432,7 @@ static const struct usb_device_id products[] = {
+ 	{QMI_FIXED_INTF(0x2c7c, 0x0296, 4)},	/* Quectel BG96 */
+ 	{QMI_QUIRK_SET_DTR(0x2c7c, 0x030e, 4)},	/* Quectel EM05GV2 */
+ 	{QMI_QUIRK_SET_DTR(0x2cb7, 0x0104, 4)},	/* Fibocom NL678 series */
++	{QMI_QUIRK_SET_DTR(0x2cb7, 0x0112, 0)},	/* Fibocom FG132 */
+ 	{QMI_FIXED_INTF(0x0489, 0xe0b4, 0)},	/* Foxconn T77W968 LTE */
+ 	{QMI_FIXED_INTF(0x0489, 0xe0b5, 0)},	/* Foxconn T77W968 LTE with eSIM support*/
+ 	{QMI_FIXED_INTF(0x2692, 0x9025, 4)},    /* Cellient MPL200 (rebranded Qualcomm 05c6:9025) */
+diff --git a/drivers/nvme/host/core.c b/drivers/nvme/host/core.c
+index 82509f3679373a..965ca7d7a3de22 100644
+--- a/drivers/nvme/host/core.c
++++ b/drivers/nvme/host/core.c
+@@ -1178,10 +1178,9 @@ static void nvme_queue_keep_alive_work(struct nvme_ctrl *ctrl)
+ 			   nvme_keep_alive_work_period(ctrl));
+ }
+ 
+-static enum rq_end_io_ret nvme_keep_alive_end_io(struct request *rq,
+-						 blk_status_t status)
++static void nvme_keep_alive_finish(struct request *rq,
++		blk_status_t status, struct nvme_ctrl *ctrl)
+ {
+-	struct nvme_ctrl *ctrl = rq->end_io_data;
+ 	unsigned long flags;
+ 	bool startka = false;
+ 	unsigned long rtt = jiffies - (rq->deadline - rq->timeout);
+@@ -1199,13 +1198,11 @@ static enum rq_end_io_ret nvme_keep_alive_end_io(struct request *rq,
+ 		delay = 0;
+ 	}
+ 
+-	blk_mq_free_request(rq);
+-
+ 	if (status) {
+ 		dev_err(ctrl->device,
+ 			"failed nvme_keep_alive_end_io error=%d\n",
+ 				status);
+-		return RQ_END_IO_NONE;
++		return;
+ 	}
+ 
+ 	ctrl->ka_last_check_time = jiffies;
+@@ -1217,7 +1214,6 @@ static enum rq_end_io_ret nvme_keep_alive_end_io(struct request *rq,
+ 	spin_unlock_irqrestore(&ctrl->lock, flags);
+ 	if (startka)
+ 		queue_delayed_work(nvme_wq, &ctrl->ka_work, delay);
+-	return RQ_END_IO_NONE;
+ }
+ 
+ static void nvme_keep_alive_work(struct work_struct *work)
+@@ -1226,6 +1222,7 @@ static void nvme_keep_alive_work(struct work_struct *work)
+ 			struct nvme_ctrl, ka_work);
+ 	bool comp_seen = ctrl->comp_seen;
+ 	struct request *rq;
++	blk_status_t status;
+ 
+ 	ctrl->ka_last_check_time = jiffies;
+ 
+@@ -1248,9 +1245,9 @@ static void nvme_keep_alive_work(struct work_struct *work)
+ 	nvme_init_request(rq, &ctrl->ka_cmd);
+ 
+ 	rq->timeout = ctrl->kato * HZ;
+-	rq->end_io = nvme_keep_alive_end_io;
+-	rq->end_io_data = ctrl;
+-	blk_execute_rq_nowait(rq, false);
++	status = blk_execute_rq(rq, false);
++	nvme_keep_alive_finish(rq, status, ctrl);
++	blk_mq_free_request(rq);
+ }
+ 
+ static void nvme_start_keep_alive(struct nvme_ctrl *ctrl)
+@@ -2250,8 +2247,13 @@ int nvme_enable_ctrl(struct nvme_ctrl *ctrl)
+ 	else
+ 		ctrl->ctrl_config = NVME_CC_CSS_NVM;
+ 
+-	if (ctrl->cap & NVME_CAP_CRMS_CRWMS && ctrl->cap & NVME_CAP_CRMS_CRIMS)
+-		ctrl->ctrl_config |= NVME_CC_CRIME;
++	/*
++	 * Setting CRIME results in CSTS.RDY before the media is ready. This
++	 * makes it possible for media related commands to return the error
++	 * NVME_SC_ADMIN_COMMAND_MEDIA_NOT_READY. Until the driver is
++	 * restructured to handle retries, disable CC.CRIME.
++	 */
++	ctrl->ctrl_config &= ~NVME_CC_CRIME;
+ 
+ 	ctrl->ctrl_config |= (NVME_CTRL_PAGE_SHIFT - 12) << NVME_CC_MPS_SHIFT;
+ 	ctrl->ctrl_config |= NVME_CC_AMS_RR | NVME_CC_SHN_NONE;
+@@ -2286,10 +2288,7 @@ int nvme_enable_ctrl(struct nvme_ctrl *ctrl)
+ 		 * devices are known to get this wrong. Use the larger of the
+ 		 * two values.
+ 		 */
+-		if (ctrl->ctrl_config & NVME_CC_CRIME)
+-			ready_timeout = NVME_CRTO_CRIMT(crto);
+-		else
+-			ready_timeout = NVME_CRTO_CRWMT(crto);
++		ready_timeout = NVME_CRTO_CRWMT(crto);
+ 
+ 		if (ready_timeout < timeout)
+ 			dev_warn_once(ctrl->device, "bad crto:%x cap:%llx\n",
+@@ -3545,7 +3544,8 @@ struct nvme_ns *nvme_find_get_ns(struct nvme_ctrl *ctrl, unsigned nsid)
+ 	int srcu_idx;
+ 
+ 	srcu_idx = srcu_read_lock(&ctrl->srcu);
+-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list) {
++	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
++				 srcu_read_lock_held(&ctrl->srcu)) {
+ 		if (ns->head->ns_id == nsid) {
+ 			if (!nvme_get_ns(ns))
+ 				continue;
+@@ -4556,7 +4556,8 @@ void nvme_mark_namespaces_dead(struct nvme_ctrl *ctrl)
+ 	int srcu_idx;
+ 
+ 	srcu_idx = srcu_read_lock(&ctrl->srcu);
+-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list)
++	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
++				 srcu_read_lock_held(&ctrl->srcu))
+ 		blk_mark_disk_dead(ns->disk);
+ 	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+ }
+@@ -4568,7 +4569,8 @@ void nvme_unfreeze(struct nvme_ctrl *ctrl)
+ 	int srcu_idx;
+ 
+ 	srcu_idx = srcu_read_lock(&ctrl->srcu);
+-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list)
++	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
++				 srcu_read_lock_held(&ctrl->srcu))
+ 		blk_mq_unfreeze_queue(ns->queue);
+ 	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+ 	clear_bit(NVME_CTRL_FROZEN, &ctrl->flags);
+@@ -4581,7 +4583,8 @@ int nvme_wait_freeze_timeout(struct nvme_ctrl *ctrl, long timeout)
+ 	int srcu_idx;
+ 
+ 	srcu_idx = srcu_read_lock(&ctrl->srcu);
+-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list) {
++	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
++				 srcu_read_lock_held(&ctrl->srcu)) {
+ 		timeout = blk_mq_freeze_queue_wait_timeout(ns->queue, timeout);
+ 		if (timeout <= 0)
+ 			break;
+@@ -4597,7 +4600,8 @@ void nvme_wait_freeze(struct nvme_ctrl *ctrl)
+ 	int srcu_idx;
+ 
+ 	srcu_idx = srcu_read_lock(&ctrl->srcu);
+-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list)
++	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
++				 srcu_read_lock_held(&ctrl->srcu))
+ 		blk_mq_freeze_queue_wait(ns->queue);
+ 	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+ }
+@@ -4610,7 +4614,8 @@ void nvme_start_freeze(struct nvme_ctrl *ctrl)
+ 
+ 	set_bit(NVME_CTRL_FROZEN, &ctrl->flags);
+ 	srcu_idx = srcu_read_lock(&ctrl->srcu);
+-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list)
++	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
++				 srcu_read_lock_held(&ctrl->srcu))
+ 		blk_freeze_queue_start(ns->queue);
+ 	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+ }
+@@ -4658,7 +4663,8 @@ void nvme_sync_io_queues(struct nvme_ctrl *ctrl)
+ 	int srcu_idx;
+ 
+ 	srcu_idx = srcu_read_lock(&ctrl->srcu);
+-	list_for_each_entry_rcu(ns, &ctrl->namespaces, list)
++	list_for_each_entry_srcu(ns, &ctrl->namespaces, list,
++				 srcu_read_lock_held(&ctrl->srcu))
+ 		blk_sync_queue(ns->queue);
+ 	srcu_read_unlock(&ctrl->srcu, srcu_idx);
+ }
+diff --git a/drivers/nvme/host/multipath.c b/drivers/nvme/host/multipath.c
+index 37ea0fa421da8b..ede2a14dad8be7 100644
+--- a/drivers/nvme/host/multipath.c
++++ b/drivers/nvme/host/multipath.c
+@@ -499,6 +499,20 @@ static int nvme_add_ns_head_cdev(struct nvme_ns_head *head)
+ 	return ret;
+ }
+ 
++static void nvme_partition_scan_work(struct work_struct *work)
++{
++	struct nvme_ns_head *head =
++		container_of(work, struct nvme_ns_head, partition_scan_work);
++
++	if (WARN_ON_ONCE(!test_and_clear_bit(GD_SUPPRESS_PART_SCAN,
++					     &head->disk->state)))
++		return;
++
++	mutex_lock(&head->disk->open_mutex);
++	bdev_disk_changed(head->disk, false);
++	mutex_unlock(&head->disk->open_mutex);
++}
++
+ static void nvme_requeue_work(struct work_struct *work)
+ {
+ 	struct nvme_ns_head *head =
+@@ -525,6 +539,7 @@ int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl, struct nvme_ns_head *head)
+ 	bio_list_init(&head->requeue_list);
+ 	spin_lock_init(&head->requeue_lock);
+ 	INIT_WORK(&head->requeue_work, nvme_requeue_work);
++	INIT_WORK(&head->partition_scan_work, nvme_partition_scan_work);
+ 
+ 	/*
+ 	 * Add a multipath node if the subsystems supports multiple controllers.
+@@ -540,6 +555,16 @@ int nvme_mpath_alloc_disk(struct nvme_ctrl *ctrl, struct nvme_ns_head *head)
+ 		return -ENOMEM;
+ 	head->disk->fops = &nvme_ns_head_ops;
+ 	head->disk->private_data = head;
++
++	/*
++	 * We need to suppress the partition scan from occuring within the
++	 * controller's scan_work context. If a path error occurs here, the IO
++	 * will wait until a path becomes available or all paths are torn down,
++	 * but that action also occurs within scan_work, so it would deadlock.
++	 * Defer the partion scan to a different context that does not block
++	 * scan_work.
++	 */
++	set_bit(GD_SUPPRESS_PART_SCAN, &head->disk->state);
+ 	sprintf(head->disk->disk_name, "nvme%dn%d",
+ 			ctrl->subsys->instance, head->instance);
+ 
+@@ -589,6 +614,7 @@ static void nvme_mpath_set_live(struct nvme_ns *ns)
+ 			return;
+ 		}
+ 		nvme_add_ns_head_cdev(head);
++		kblockd_schedule_work(&head->partition_scan_work);
+ 	}
+ 
+ 	mutex_lock(&head->lock);
+@@ -889,6 +915,12 @@ void nvme_mpath_shutdown_disk(struct nvme_ns_head *head)
+ 	kblockd_schedule_work(&head->requeue_work);
+ 	if (test_bit(NVME_NSHEAD_DISK_LIVE, &head->flags)) {
+ 		nvme_cdev_del(&head->cdev, &head->cdev_device);
++		/*
++		 * requeue I/O after NVME_NSHEAD_DISK_LIVE has been cleared
++		 * to allow multipath to fail all I/O.
++		 */
++		synchronize_srcu(&head->srcu);
++		kblockd_schedule_work(&head->requeue_work);
+ 		del_gendisk(head->disk);
+ 	}
+ }
+@@ -900,6 +932,7 @@ void nvme_mpath_remove_disk(struct nvme_ns_head *head)
+ 	/* make sure all pending bios are cleaned up */
+ 	kblockd_schedule_work(&head->requeue_work);
+ 	flush_work(&head->requeue_work);
++	flush_work(&head->partition_scan_work);
+ 	put_disk(head->disk);
+ }
+ 
+diff --git a/drivers/nvme/host/nvme.h b/drivers/nvme/host/nvme.h
+index 799f8a2bb0b4f1..14a867245c29f3 100644
+--- a/drivers/nvme/host/nvme.h
++++ b/drivers/nvme/host/nvme.h
+@@ -476,6 +476,7 @@ struct nvme_ns_head {
+ 	struct bio_list		requeue_list;
+ 	spinlock_t		requeue_lock;
+ 	struct work_struct	requeue_work;
++	struct work_struct	partition_scan_work;
+ 	struct mutex		lock;
+ 	unsigned long		flags;
+ #define NVME_NSHEAD_DISK_LIVE	0
+diff --git a/drivers/nvme/host/tcp.c b/drivers/nvme/host/tcp.c
+index f1d62d74426f0e..be04c5f3856d24 100644
+--- a/drivers/nvme/host/tcp.c
++++ b/drivers/nvme/host/tcp.c
+@@ -2444,10 +2444,11 @@ static int nvme_tcp_get_address(struct nvme_ctrl *ctrl, char *buf, int size)
+ 
+ 	len = nvmf_get_address(ctrl, buf, size);
+ 
++	if (!test_bit(NVME_TCP_Q_LIVE, &queue->flags))
++		return len;
++
+ 	mutex_lock(&queue->queue_lock);
+ 
+-	if (!test_bit(NVME_TCP_Q_LIVE, &queue->flags))
+-		goto done;
+ 	ret = kernel_getsockname(queue->sock, (struct sockaddr *)&src_addr);
+ 	if (ret > 0) {
+ 		if (len > 0)
+@@ -2455,7 +2456,7 @@ static int nvme_tcp_get_address(struct nvme_ctrl *ctrl, char *buf, int size)
+ 		len += scnprintf(buf + len, size - len, "%ssrc_addr=%pISc\n",
+ 				(len) ? "," : "", &src_addr);
+ 	}
+-done:
++
+ 	mutex_unlock(&queue->queue_lock);
+ 
+ 	return len;
+diff --git a/drivers/nvme/target/loop.c b/drivers/nvme/target/loop.c
+index 48d5df054cd024..bd61a1b82c4cd7 100644
+--- a/drivers/nvme/target/loop.c
++++ b/drivers/nvme/target/loop.c
+@@ -265,6 +265,13 @@ static void nvme_loop_destroy_admin_queue(struct nvme_loop_ctrl *ctrl)
+ {
+ 	if (!test_and_clear_bit(NVME_LOOP_Q_LIVE, &ctrl->queues[0].flags))
+ 		return;
++	/*
++	 * It's possible that some requests might have been added
++	 * after admin queue is stopped/quiesced. So now start the
++	 * queue to flush these requests to the completion.
++	 */
++	nvme_unquiesce_admin_queue(&ctrl->ctrl);
++
+ 	nvmet_sq_destroy(&ctrl->queues[0].nvme_sq);
+ 	nvme_remove_admin_tag_set(&ctrl->ctrl);
+ }
+@@ -297,6 +304,12 @@ static void nvme_loop_destroy_io_queues(struct nvme_loop_ctrl *ctrl)
+ 		nvmet_sq_destroy(&ctrl->queues[i].nvme_sq);
+ 	}
+ 	ctrl->ctrl.queue_count = 1;
++	/*
++	 * It's possible that some requests might have been added
++	 * after io queue is stopped/quiesced. So now start the
++	 * queue to flush these requests to the completion.
++	 */
++	nvme_unquiesce_io_queues(&ctrl->ctrl);
+ }
+ 
+ static int nvme_loop_init_io_queues(struct nvme_loop_ctrl *ctrl)
+diff --git a/drivers/vdpa/ifcvf/ifcvf_base.c b/drivers/vdpa/ifcvf/ifcvf_base.c
+index 060f837a4f9f76..3b09476e007c85 100644
+--- a/drivers/vdpa/ifcvf/ifcvf_base.c
++++ b/drivers/vdpa/ifcvf/ifcvf_base.c
+@@ -109,7 +109,7 @@ int ifcvf_init_hw(struct ifcvf_hw *hw, struct pci_dev *pdev)
+ 	u32 i;
+ 
+ 	ret = pci_read_config_byte(pdev, PCI_CAPABILITY_LIST, &pos);
+-	if (ret < 0) {
++	if (ret) {
+ 		IFCVF_ERR(pdev, "Failed to read PCI capability list\n");
+ 		return -EIO;
+ 	}
+diff --git a/fs/9p/fid.c b/fs/9p/fid.c
+index de009a33e0e26d..f84412290a30cf 100644
+--- a/fs/9p/fid.c
++++ b/fs/9p/fid.c
+@@ -131,10 +131,9 @@ static struct p9_fid *v9fs_fid_find(struct dentry *dentry, kuid_t uid, int any)
+ 			}
+ 		}
+ 		spin_unlock(&dentry->d_lock);
+-	} else {
+-		if (dentry->d_inode)
+-			ret = v9fs_fid_find_inode(dentry->d_inode, false, uid, any);
+ 	}
++	if (!ret && dentry->d_inode)
++		ret = v9fs_fid_find_inode(dentry->d_inode, false, uid, any);
+ 
+ 	return ret;
+ }
+diff --git a/fs/ocfs2/file.c b/fs/ocfs2/file.c
+index aa39d5d2d94f18..e4acb795d11901 100644
+--- a/fs/ocfs2/file.c
++++ b/fs/ocfs2/file.c
+@@ -1128,9 +1128,12 @@ int ocfs2_setattr(struct mnt_idmap *idmap, struct dentry *dentry,
+ 	trace_ocfs2_setattr(inode, dentry,
+ 			    (unsigned long long)OCFS2_I(inode)->ip_blkno,
+ 			    dentry->d_name.len, dentry->d_name.name,
+-			    attr->ia_valid, attr->ia_mode,
+-			    from_kuid(&init_user_ns, attr->ia_uid),
+-			    from_kgid(&init_user_ns, attr->ia_gid));
++			    attr->ia_valid,
++				attr->ia_valid & ATTR_MODE ? attr->ia_mode : 0,
++				attr->ia_valid & ATTR_UID ?
++					from_kuid(&init_user_ns, attr->ia_uid) : 0,
++				attr->ia_valid & ATTR_GID ?
++					from_kgid(&init_user_ns, attr->ia_gid) : 0);
+ 
+ 	/* ensuring we don't even attempt to truncate a symlink */
+ 	if (S_ISLNK(inode->i_mode))
+diff --git a/fs/smb/client/connect.c b/fs/smb/client/connect.c
+index e325e06357ffb7..1df0a6edcc2167 100644
+--- a/fs/smb/client/connect.c
++++ b/fs/smb/client/connect.c
+@@ -1054,6 +1054,7 @@ clean_demultiplex_info(struct TCP_Server_Info *server)
+ 		 */
+ 	}
+ 
++	put_net(cifs_net_ns(server));
+ 	kfree(server->leaf_fullpath);
+ 	kfree(server);
+ 
+@@ -1649,8 +1650,6 @@ cifs_put_tcp_session(struct TCP_Server_Info *server, int from_reconnect)
+ 	/* srv_count can never go negative */
+ 	WARN_ON(server->srv_count < 0);
+ 
+-	put_net(cifs_net_ns(server));
+-
+ 	list_del_init(&server->tcp_ses_list);
+ 	spin_unlock(&cifs_tcp_ses_lock);
+ 
+@@ -3077,13 +3076,22 @@ generic_ip_connect(struct TCP_Server_Info *server)
+ 	if (server->ssocket) {
+ 		socket = server->ssocket;
+ 	} else {
+-		rc = __sock_create(cifs_net_ns(server), sfamily, SOCK_STREAM,
++		struct net *net = cifs_net_ns(server);
++		struct sock *sk;
++
++		rc = __sock_create(net, sfamily, SOCK_STREAM,
+ 				   IPPROTO_TCP, &server->ssocket, 1);
+ 		if (rc < 0) {
+ 			cifs_server_dbg(VFS, "Error %d creating socket\n", rc);
+ 			return rc;
+ 		}
+ 
++		sk = server->ssocket->sk;
++		__netns_tracker_free(net, &sk->ns_tracker, false);
++		sk->sk_net_refcnt = 1;
++		get_net_track(net, &sk->ns_tracker, GFP_KERNEL);
++		sock_inuse_add(net, 1);
++
+ 		/* BB other socket options to set KEEPALIVE, NODELAY? */
+ 		cifs_dbg(FYI, "Socket created\n");
+ 		socket = server->ssocket;
+diff --git a/include/net/tls.h b/include/net/tls.h
+index 2ad28545b15f01..6c642ea1805041 100644
+--- a/include/net/tls.h
++++ b/include/net/tls.h
+@@ -395,8 +395,12 @@ tls_offload_ctx_tx(const struct tls_context *tls_ctx)
+ 
+ static inline bool tls_sw_has_ctx_tx(const struct sock *sk)
+ {
+-	struct tls_context *ctx = tls_get_ctx(sk);
++	struct tls_context *ctx;
++
++	if (!sk_is_inet(sk) || !inet_test_bit(IS_ICSK, sk))
++		return false;
+ 
++	ctx = tls_get_ctx(sk);
+ 	if (!ctx)
+ 		return false;
+ 	return !!tls_sw_ctx_tx(ctx);
+@@ -404,8 +408,12 @@ static inline bool tls_sw_has_ctx_tx(const struct sock *sk)
+ 
+ static inline bool tls_sw_has_ctx_rx(const struct sock *sk)
+ {
+-	struct tls_context *ctx = tls_get_ctx(sk);
++	struct tls_context *ctx;
++
++	if (!sk_is_inet(sk) || !inet_test_bit(IS_ICSK, sk))
++		return false;
+ 
++	ctx = tls_get_ctx(sk);
+ 	if (!ctx)
+ 		return false;
+ 	return !!tls_sw_ctx_rx(ctx);
+diff --git a/io_uring/io_uring.c b/io_uring/io_uring.c
+index 484c9bcbee77c3..70dd6a5b9647c9 100644
+--- a/io_uring/io_uring.c
++++ b/io_uring/io_uring.c
+@@ -4358,8 +4358,10 @@ static __cold int io_register_iowq_max_workers(struct io_ring_ctx *ctx,
+ 	}
+ 
+ 	if (sqd) {
++		mutex_unlock(&ctx->uring_lock);
+ 		mutex_unlock(&sqd->lock);
+ 		io_put_sq_data(sqd);
++		mutex_lock(&ctx->uring_lock);
+ 	}
+ 
+ 	if (copy_to_user(arg, new_count, sizeof(new_count)))
+@@ -4384,8 +4386,11 @@ static __cold int io_register_iowq_max_workers(struct io_ring_ctx *ctx,
+ 	return 0;
+ err:
+ 	if (sqd) {
++		mutex_unlock(&ctx->uring_lock);
+ 		mutex_unlock(&sqd->lock);
+ 		io_put_sq_data(sqd);
++		mutex_lock(&ctx->uring_lock);
++
+ 	}
+ 	return ret;
+ }
+diff --git a/kernel/bpf/syscall.c b/kernel/bpf/syscall.c
+index 8a1cadc1ff9dd9..252aed82d45ea6 100644
+--- a/kernel/bpf/syscall.c
++++ b/kernel/bpf/syscall.c
+@@ -2963,13 +2963,17 @@ static void bpf_link_show_fdinfo(struct seq_file *m, struct file *filp)
+ {
+ 	const struct bpf_link *link = filp->private_data;
+ 	const struct bpf_prog *prog = link->prog;
++	enum bpf_link_type type = link->type;
+ 	char prog_tag[sizeof(prog->tag) * 2 + 1] = { };
+ 
+-	seq_printf(m,
+-		   "link_type:\t%s\n"
+-		   "link_id:\t%u\n",
+-		   bpf_link_type_strs[link->type],
+-		   link->id);
++	if (type < ARRAY_SIZE(bpf_link_type_strs) && bpf_link_type_strs[type]) {
++		seq_printf(m, "link_type:\t%s\n", bpf_link_type_strs[type]);
++	} else {
++		WARN_ONCE(1, "missing BPF_LINK_TYPE(...) for link type %u\n", type);
++		seq_printf(m, "link_type:\t<%u>\n", type);
++	}
++	seq_printf(m, "link_id:\t%u\n", link->id);
++
+ 	if (prog) {
+ 		bin2hex(prog_tag, prog->tag, sizeof(prog->tag));
+ 		seq_printf(m,
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index 67eb55a354bcc8..4f19a091571bb6 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -20230,7 +20230,7 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr, bpfptr_t uattr, __u3
+ 	/* 'struct bpf_verifier_env' can be global, but since it's not small,
+ 	 * allocate/free it every time bpf_check() is called
+ 	 */
+-	env = kzalloc(sizeof(struct bpf_verifier_env), GFP_KERNEL);
++	env = kvzalloc(sizeof(struct bpf_verifier_env), GFP_KERNEL);
+ 	if (!env)
+ 		return -ENOMEM;
+ 
+@@ -20450,6 +20450,6 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr, bpfptr_t uattr, __u3
+ 		mutex_unlock(&bpf_verifier_lock);
+ 	vfree(env->insn_aux_data);
+ err_free_env:
+-	kfree(env);
++	kvfree(env);
+ 	return ret;
+ }
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 5e9359e4ff9ed3..2c308413387ffb 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -1957,8 +1957,6 @@ struct folio *__filemap_get_folio(struct address_space *mapping, pgoff_t index,
+ 			gfp_t alloc_gfp = gfp;
+ 
+ 			err = -ENOMEM;
+-			if (order == 1)
+-				order = 0;
+ 			if (order > 0)
+ 				alloc_gfp |= __GFP_NORETRY | __GFP_NOWARN;
+ 			folio = filemap_alloc_folio(alloc_gfp, order);
+diff --git a/mm/huge_memory.c b/mm/huge_memory.c
+index 7b4cb5c68b61be..635f0f0f6860e8 100644
+--- a/mm/huge_memory.c
++++ b/mm/huge_memory.c
+@@ -569,8 +569,8 @@ struct deferred_split *get_deferred_split_queue(struct folio *folio)
+ 
+ void folio_prep_large_rmappable(struct folio *folio)
+ {
+-	VM_BUG_ON_FOLIO(folio_order(folio) < 2, folio);
+-	INIT_LIST_HEAD(&folio->_deferred_list);
++	if (!folio || !folio_test_large(folio))
++		return;
+ 	folio_set_large_rmappable(folio);
+ }
+ 
+@@ -2720,9 +2720,10 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
+ 	/* Prevent deferred_split_scan() touching ->_refcount */
+ 	spin_lock(&ds_queue->split_queue_lock);
+ 	if (folio_ref_freeze(folio, 1 + extra_pins)) {
+-		if (!list_empty(&folio->_deferred_list)) {
++		if (folio_order(folio) > 1 &&
++		    !list_empty(&folio->_deferred_list)) {
+ 			ds_queue->split_queue_len--;
+-			list_del(&folio->_deferred_list);
++			list_del_init(&folio->_deferred_list);
+ 		}
+ 		spin_unlock(&ds_queue->split_queue_lock);
+ 		if (mapping) {
+@@ -2766,26 +2767,38 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
+ 	return ret;
+ }
+ 
+-void folio_undo_large_rmappable(struct folio *folio)
++/*
++ * __folio_unqueue_deferred_split() is not to be called directly:
++ * the folio_unqueue_deferred_split() inline wrapper in mm/internal.h
++ * limits its calls to those folios which may have a _deferred_list for
++ * queueing THP splits, and that list is (racily observed to be) non-empty.
++ *
++ * It is unsafe to call folio_unqueue_deferred_split() until folio refcount is
++ * zero: because even when split_queue_lock is held, a non-empty _deferred_list
++ * might be in use on deferred_split_scan()'s unlocked on-stack list.
++ *
++ * If memory cgroups are enabled, split_queue_lock is in the mem_cgroup: it is
++ * therefore important to unqueue deferred split before changing folio memcg.
++ */
++bool __folio_unqueue_deferred_split(struct folio *folio)
+ {
+ 	struct deferred_split *ds_queue;
+ 	unsigned long flags;
++	bool unqueued = false;
+ 
+-	/*
+-	 * At this point, there is no one trying to add the folio to
+-	 * deferred_list. If folio is not in deferred_list, it's safe
+-	 * to check without acquiring the split_queue_lock.
+-	 */
+-	if (data_race(list_empty(&folio->_deferred_list)))
+-		return;
++	WARN_ON_ONCE(folio_ref_count(folio));
++	WARN_ON_ONCE(!mem_cgroup_disabled() && !folio_memcg(folio));
+ 
+ 	ds_queue = get_deferred_split_queue(folio);
+ 	spin_lock_irqsave(&ds_queue->split_queue_lock, flags);
+ 	if (!list_empty(&folio->_deferred_list)) {
+ 		ds_queue->split_queue_len--;
+-		list_del(&folio->_deferred_list);
++		list_del_init(&folio->_deferred_list);
++		unqueued = true;
+ 	}
+ 	spin_unlock_irqrestore(&ds_queue->split_queue_lock, flags);
++
++	return unqueued;	/* useful for debug warnings */
+ }
+ 
+ void deferred_split_folio(struct folio *folio)
+@@ -2796,17 +2809,19 @@ void deferred_split_folio(struct folio *folio)
+ #endif
+ 	unsigned long flags;
+ 
+-	VM_BUG_ON_FOLIO(folio_order(folio) < 2, folio);
++	/*
++	 * Order 1 folios have no space for a deferred list, but we also
++	 * won't waste much memory by not adding them to the deferred list.
++	 */
++	if (folio_order(folio) <= 1)
++		return;
+ 
+ 	/*
+-	 * The try_to_unmap() in page reclaim path might reach here too,
+-	 * this may cause a race condition to corrupt deferred split queue.
+-	 * And, if page reclaim is already handling the same folio, it is
+-	 * unnecessary to handle it again in shrinker.
+-	 *
+-	 * Check the swapcache flag to determine if the folio is being
+-	 * handled by page reclaim since THP swap would add the folio into
+-	 * swap cache before calling try_to_unmap().
++	 * Exclude swapcache: originally to avoid a corrupt deferred split
++	 * queue. Nowadays that is fully prevented by mem_cgroup_swapout();
++	 * but if page reclaim is already handling the same folio, it is
++	 * unnecessary to handle it again in the shrinker, so excluding
++	 * swapcache here may still be a useful optimization.
+ 	 */
+ 	if (folio_test_swapcache(folio))
+ 		return;
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 0acb04c3e95291..92b955cc5a41d3 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -1795,6 +1795,7 @@ static void __update_and_free_hugetlb_folio(struct hstate *h,
+ 		destroy_compound_gigantic_folio(folio, huge_page_order(h));
+ 		free_gigantic_folio(folio, huge_page_order(h));
+ 	} else {
++		INIT_LIST_HEAD(&folio->_deferred_list);
+ 		__free_pages(&folio->page, huge_page_order(h));
+ 	}
+ }
+diff --git a/mm/internal.h b/mm/internal.h
+index ef8d787a510c5c..b30907537801cc 100644
+--- a/mm/internal.h
++++ b/mm/internal.h
+@@ -413,7 +413,30 @@ static inline void folio_set_order(struct folio *folio, unsigned int order)
+ #endif
+ }
+ 
+-void folio_undo_large_rmappable(struct folio *folio);
++bool __folio_unqueue_deferred_split(struct folio *folio);
++static inline bool folio_unqueue_deferred_split(struct folio *folio)
++{
++	if (folio_order(folio) <= 1 || !folio_test_large_rmappable(folio))
++		return false;
++
++	/*
++	 * At this point, there is no one trying to add the folio to
++	 * deferred_list. If folio is not in deferred_list, it's safe
++	 * to check without acquiring the split_queue_lock.
++	 */
++	if (data_race(list_empty(&folio->_deferred_list)))
++		return false;
++
++	return __folio_unqueue_deferred_split(folio);
++}
++
++static inline struct folio *page_rmappable_folio(struct page *page)
++{
++	struct folio *folio = (struct folio *)page;
++
++	folio_prep_large_rmappable(folio);
++	return folio;
++}
+ 
+ static inline void prep_compound_head(struct page *page, unsigned int order)
+ {
+@@ -423,6 +446,8 @@ static inline void prep_compound_head(struct page *page, unsigned int order)
+ 	atomic_set(&folio->_entire_mapcount, -1);
+ 	atomic_set(&folio->_nr_pages_mapped, 0);
+ 	atomic_set(&folio->_pincount, 0);
++	if (order > 1)
++		INIT_LIST_HEAD(&folio->_deferred_list);
+ }
+ 
+ static inline void prep_compound_tail(struct page *head, int tail_idx)
+diff --git a/mm/memcontrol.c b/mm/memcontrol.c
+index 110afda740a18a..d2ceadd11b1004 100644
+--- a/mm/memcontrol.c
++++ b/mm/memcontrol.c
+@@ -5873,6 +5873,8 @@ static int mem_cgroup_move_account(struct page *page,
+ 	css_get(&to->css);
+ 	css_put(&from->css);
+ 
++	/* Warning should never happen, so don't worry about refcount non-0 */
++	WARN_ON_ONCE(folio_unqueue_deferred_split(folio));
+ 	folio->memcg_data = (unsigned long)to;
+ 
+ 	__folio_memcg_unlock(from);
+@@ -6237,7 +6239,10 @@ static int mem_cgroup_move_charge_pte_range(pmd_t *pmd,
+ 	enum mc_target_type target_type;
+ 	union mc_target target;
+ 	struct page *page;
++	struct folio *folio;
++	bool tried_split_before = false;
+ 
++retry_pmd:
+ 	ptl = pmd_trans_huge_lock(pmd, vma);
+ 	if (ptl) {
+ 		if (mc.precharge < HPAGE_PMD_NR) {
+@@ -6247,6 +6252,28 @@ static int mem_cgroup_move_charge_pte_range(pmd_t *pmd,
+ 		target_type = get_mctgt_type_thp(vma, addr, *pmd, &target);
+ 		if (target_type == MC_TARGET_PAGE) {
+ 			page = target.page;
++			folio = page_folio(page);
++			/*
++			 * Deferred split queue locking depends on memcg,
++			 * and unqueue is unsafe unless folio refcount is 0:
++			 * split or skip if on the queue? first try to split.
++			 */
++			if (!list_empty(&folio->_deferred_list)) {
++				spin_unlock(ptl);
++				if (!tried_split_before)
++					split_folio(folio);
++				folio_unlock(folio);
++				folio_put(folio);
++				if (tried_split_before)
++					return 0;
++				tried_split_before = true;
++				goto retry_pmd;
++			}
++			/*
++			 * So long as that pmd lock is held, the folio cannot
++			 * be racily added to the _deferred_list, because
++			 * page_remove_rmap() will find it still pmdmapped.
++			 */
+ 			if (isolate_lru_page(page)) {
+ 				if (!mem_cgroup_move_account(page, true,
+ 							     mc.from, mc.to)) {
+@@ -7199,6 +7226,7 @@ static void uncharge_folio(struct folio *folio, struct uncharge_gather *ug)
+ 			ug->nr_memory += nr_pages;
+ 		ug->pgpgout++;
+ 
++		WARN_ON_ONCE(folio_unqueue_deferred_split(folio));
+ 		folio->memcg_data = 0;
+ 	}
+ 
+@@ -7492,6 +7520,7 @@ void mem_cgroup_swapout(struct folio *folio, swp_entry_t entry)
+ 	VM_BUG_ON_FOLIO(oldid, folio);
+ 	mod_memcg_state(swap_memcg, MEMCG_SWAP, nr_entries);
+ 
++	folio_unqueue_deferred_split(folio);
+ 	folio->memcg_data = 0;
+ 
+ 	if (!mem_cgroup_is_root(memcg))
+diff --git a/mm/mempolicy.c b/mm/mempolicy.c
+index 4cae854c0f28d1..109826a2af3877 100644
+--- a/mm/mempolicy.c
++++ b/mm/mempolicy.c
+@@ -2200,10 +2200,7 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
+ 		mpol_cond_put(pol);
+ 		gfp |= __GFP_COMP;
+ 		page = alloc_page_interleave(gfp, order, nid);
+-		folio = (struct folio *)page;
+-		if (folio && order > 1)
+-			folio_prep_large_rmappable(folio);
+-		goto out;
++		return page_rmappable_folio(page);
+ 	}
+ 
+ 	if (pol->mode == MPOL_PREFERRED_MANY) {
+@@ -2213,10 +2210,7 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
+ 		gfp |= __GFP_COMP;
+ 		page = alloc_pages_preferred_many(gfp, order, node, pol);
+ 		mpol_cond_put(pol);
+-		folio = (struct folio *)page;
+-		if (folio && order > 1)
+-			folio_prep_large_rmappable(folio);
+-		goto out;
++		return page_rmappable_folio(page);
+ 	}
+ 
+ 	if (unlikely(IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) && hugepage)) {
+@@ -2310,12 +2304,7 @@ EXPORT_SYMBOL(alloc_pages);
+ 
+ struct folio *folio_alloc(gfp_t gfp, unsigned order)
+ {
+-	struct page *page = alloc_pages(gfp | __GFP_COMP, order);
+-	struct folio *folio = (struct folio *)page;
+-
+-	if (folio && order > 1)
+-		folio_prep_large_rmappable(folio);
+-	return folio;
++	return page_rmappable_folio(alloc_pages(gfp | __GFP_COMP, order));
+ }
+ EXPORT_SYMBOL(folio_alloc);
+ 
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 1bbbf2f8b7e4c1..7272a922b83831 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -600,9 +600,7 @@ void destroy_large_folio(struct folio *folio)
+ 		return;
+ 	}
+ 
+-	if (folio_test_large_rmappable(folio))
+-		folio_undo_large_rmappable(folio);
+-
++	folio_unqueue_deferred_split(folio);
+ 	mem_cgroup_uncharge(folio);
+ 	free_the_page(&folio->page, folio_order(folio));
+ }
+@@ -1002,10 +1000,11 @@ static int free_tail_page_prepare(struct page *head_page, struct page *page)
+ 		}
+ 		break;
+ 	case 2:
+-		/*
+-		 * the second tail page: ->mapping is
+-		 * deferred_list.next -- ignore value.
+-		 */
++		/* the second tail page: deferred_list overlaps ->mapping */
++		if (unlikely(!list_empty(&folio->_deferred_list))) {
++			bad_page(page, "on deferred list");
++			goto out;
++		}
+ 		break;
+ 	default:
+ 		if (page->mapping != TAIL_MAPPING) {
+@@ -4464,12 +4463,8 @@ struct folio *__folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
+ 		nodemask_t *nodemask)
+ {
+ 	struct page *page = __alloc_pages(gfp | __GFP_COMP, order,
+-			preferred_nid, nodemask);
+-	struct folio *folio = (struct folio *)page;
+-
+-	if (folio && order > 1)
+-		folio_prep_large_rmappable(folio);
+-	return folio;
++					preferred_nid, nodemask);
++	return page_rmappable_folio(page);
+ }
+ EXPORT_SYMBOL(__folio_alloc);
+ 
+diff --git a/mm/readahead.c b/mm/readahead.c
+index 7c0449f8bec7f4..e9b11d928b0c48 100644
+--- a/mm/readahead.c
++++ b/mm/readahead.c
+@@ -514,16 +514,11 @@ void page_cache_ra_order(struct readahead_control *ractl,
+ 		unsigned int order = new_order;
+ 
+ 		/* Align with smaller pages if needed */
+-		if (index & ((1UL << order) - 1)) {
++		if (index & ((1UL << order) - 1))
+ 			order = __ffs(index);
+-			if (order == 1)
+-				order = 0;
+-		}
+ 		/* Don't allocate pages past EOF */
+-		while (index + (1UL << order) - 1 > limit) {
+-			if (--order == 1)
+-				order = 0;
+-		}
++		while (index + (1UL << order) - 1 > limit)
++			order--;
+ 		err = ra_alloc_folio(ractl, index, mark, order, gfp);
+ 		if (err)
+ 			break;
+diff --git a/mm/slab_common.c b/mm/slab_common.c
+index ef971fcdaa0708..2e2b43fae2c3f8 100644
+--- a/mm/slab_common.c
++++ b/mm/slab_common.c
+@@ -1391,7 +1391,7 @@ __do_krealloc(const void *p, size_t new_size, gfp_t flags)
+ 		/* Zero out spare memory. */
+ 		if (want_init_on_alloc(flags)) {
+ 			kasan_disable_current();
+-			memset((void *)p + new_size, 0, ks - new_size);
++			memset(kasan_reset_tag(p) + new_size, 0, ks - new_size);
+ 			kasan_enable_current();
+ 		}
+ 
+diff --git a/net/9p/client.c b/net/9p/client.c
+index b05f73c291b4b9..d841d82e908fe3 100644
+--- a/net/9p/client.c
++++ b/net/9p/client.c
+@@ -976,8 +976,10 @@ static int p9_client_version(struct p9_client *c)
+ struct p9_client *p9_client_create(const char *dev_name, char *options)
+ {
+ 	int err;
++	static atomic_t seqno = ATOMIC_INIT(0);
+ 	struct p9_client *clnt;
+ 	char *client_id;
++	char *cache_name;
+ 
+ 	clnt = kmalloc(sizeof(*clnt), GFP_KERNEL);
+ 	if (!clnt)
+@@ -1034,15 +1036,23 @@ struct p9_client *p9_client_create(const char *dev_name, char *options)
+ 	if (err)
+ 		goto close_trans;
+ 
++	cache_name = kasprintf(GFP_KERNEL,
++		"9p-fcall-cache-%u", atomic_inc_return(&seqno));
++	if (!cache_name) {
++		err = -ENOMEM;
++		goto close_trans;
++	}
++
+ 	/* P9_HDRSZ + 4 is the smallest packet header we can have that is
+ 	 * followed by data accessed from userspace by read
+ 	 */
+ 	clnt->fcall_cache =
+-		kmem_cache_create_usercopy("9p-fcall-cache", clnt->msize,
++		kmem_cache_create_usercopy(cache_name, clnt->msize,
+ 					   0, 0, P9_HDRSZ + 4,
+ 					   clnt->msize - (P9_HDRSZ + 4),
+ 					   NULL);
+ 
++	kfree(cache_name);
+ 	return clnt;
+ 
+ close_trans:
+diff --git a/net/core/filter.c b/net/core/filter.c
+index a2467a7c01f9ed..f9d05eff80b17c 100644
+--- a/net/core/filter.c
++++ b/net/core/filter.c
+@@ -2233,7 +2233,7 @@ static int bpf_out_neigh_v6(struct net *net, struct sk_buff *skb,
+ 		rcu_read_unlock();
+ 		return ret;
+ 	}
+-	rcu_read_unlock_bh();
++	rcu_read_unlock();
+ 	if (dst)
+ 		IP6_INC_STATS(net, ip6_dst_idev(dst), IPSTATS_MIB_OUTNOROUTES);
+ out_drop:
+diff --git a/sound/Kconfig b/sound/Kconfig
+index 4c036a9a420ab5..8b40205394fe00 100644
+--- a/sound/Kconfig
++++ b/sound/Kconfig
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ menuconfig SOUND
+ 	tristate "Sound card support"
+-	depends on HAS_IOMEM || UML
++	depends on HAS_IOMEM || INDIRECT_IOMEM
+ 	help
+ 	  If you have a sound card in your computer, i.e. if it can say more
+ 	  than an occasional beep, say Y.
+diff --git a/sound/soc/amd/yc/acp6x-mach.c b/sound/soc/amd/yc/acp6x-mach.c
+index e027bc1d35f4fc..08f823cd886999 100644
+--- a/sound/soc/amd/yc/acp6x-mach.c
++++ b/sound/soc/amd/yc/acp6x-mach.c
+@@ -325,6 +325,13 @@ static const struct dmi_system_id yc_acp_quirk_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "M6500RC"),
+ 		}
+ 	},
++	{
++		.driver_data = &acp6x_card,
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK COMPUTER INC."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "E1404FA"),
++		}
++	},
+ 	{
+ 		.driver_data = &acp6x_card,
+ 		.matches = {
+@@ -339,6 +346,13 @@ static const struct dmi_system_id yc_acp_quirk_table[] = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "M7600RE"),
+ 		}
+ 	},
++	{
++		.driver_data = &acp6x_card,
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK COMPUTER INC."),
++			DMI_MATCH(DMI_PRODUCT_NAME, "M3502RA"),
++		}
++	},
+ 	{
+ 		.driver_data = &acp6x_card,
+ 		.matches = {
+diff --git a/sound/soc/codecs/rt722-sdca-sdw.c b/sound/soc/codecs/rt722-sdca-sdw.c
+index 32578a212642e0..91314327d9eeec 100644
+--- a/sound/soc/codecs/rt722-sdca-sdw.c
++++ b/sound/soc/codecs/rt722-sdca-sdw.c
+@@ -253,7 +253,7 @@ static int rt722_sdca_read_prop(struct sdw_slave *slave)
+ 	}
+ 
+ 	/* set the timeout values */
+-	prop->clk_stop_timeout = 200;
++	prop->clk_stop_timeout = 900;
+ 
+ 	/* wake-up event */
+ 	prop->wake_capable = 1;
+diff --git a/sound/soc/fsl/fsl_micfil.c b/sound/soc/fsl/fsl_micfil.c
+index 9407179af5d574..8478a4ac59f9dd 100644
+--- a/sound/soc/fsl/fsl_micfil.c
++++ b/sound/soc/fsl/fsl_micfil.c
+@@ -28,6 +28,13 @@
+ 
+ #define MICFIL_OSR_DEFAULT	16
+ 
++#define MICFIL_NUM_RATES	7
++#define MICFIL_CLK_SRC_NUM	3
++/* clock source ids */
++#define MICFIL_AUDIO_PLL1	0
++#define MICFIL_AUDIO_PLL2	1
++#define MICFIL_CLK_EXT3		2
++
+ enum quality {
+ 	QUALITY_HIGH,
+ 	QUALITY_MEDIUM,
+@@ -45,9 +52,12 @@ struct fsl_micfil {
+ 	struct clk *mclk;
+ 	struct clk *pll8k_clk;
+ 	struct clk *pll11k_clk;
++	struct clk *clk_src[MICFIL_CLK_SRC_NUM];
+ 	struct snd_dmaengine_dai_dma_data dma_params_rx;
+ 	struct sdma_peripheral_config sdmacfg;
+ 	struct snd_soc_card *card;
++	struct snd_pcm_hw_constraint_list constraint_rates;
++	unsigned int constraint_rates_list[MICFIL_NUM_RATES];
+ 	unsigned int dataline;
+ 	char name[32];
+ 	int irq[MICFIL_IRQ_LINES];
+@@ -475,12 +485,34 @@ static int fsl_micfil_startup(struct snd_pcm_substream *substream,
+ 			      struct snd_soc_dai *dai)
+ {
+ 	struct fsl_micfil *micfil = snd_soc_dai_get_drvdata(dai);
++	unsigned int rates[MICFIL_NUM_RATES] = {8000, 11025, 16000, 22050, 32000, 44100, 48000};
++	int i, j, k = 0;
++	u64 clk_rate;
+ 
+ 	if (!micfil) {
+ 		dev_err(dai->dev, "micfil dai priv_data not set\n");
+ 		return -EINVAL;
+ 	}
+ 
++	micfil->constraint_rates.list = micfil->constraint_rates_list;
++	micfil->constraint_rates.count = 0;
++
++	for (j = 0; j < MICFIL_NUM_RATES; j++) {
++		for (i = 0; i < MICFIL_CLK_SRC_NUM; i++) {
++			clk_rate = clk_get_rate(micfil->clk_src[i]);
++			if (clk_rate != 0 && do_div(clk_rate, rates[j]) == 0) {
++				micfil->constraint_rates_list[k++] = rates[j];
++				micfil->constraint_rates.count++;
++				break;
++			}
++		}
++	}
++
++	if (micfil->constraint_rates.count > 0)
++		snd_pcm_hw_constraint_list(substream->runtime, 0,
++					   SNDRV_PCM_HW_PARAM_RATE,
++					   &micfil->constraint_rates);
++
+ 	return 0;
+ }
+ 
+@@ -1165,6 +1197,12 @@ static int fsl_micfil_probe(struct platform_device *pdev)
+ 	fsl_asoc_get_pll_clocks(&pdev->dev, &micfil->pll8k_clk,
+ 				&micfil->pll11k_clk);
+ 
++	micfil->clk_src[MICFIL_AUDIO_PLL1] = micfil->pll8k_clk;
++	micfil->clk_src[MICFIL_AUDIO_PLL2] = micfil->pll11k_clk;
++	micfil->clk_src[MICFIL_CLK_EXT3] = devm_clk_get(&pdev->dev, "clkext3");
++	if (IS_ERR(micfil->clk_src[MICFIL_CLK_EXT3]))
++		micfil->clk_src[MICFIL_CLK_EXT3] = NULL;
++
+ 	/* init regmap */
+ 	regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+ 	if (IS_ERR(regs))
+diff --git a/tools/testing/selftests/bpf/progs/verifier_scalar_ids.c b/tools/testing/selftests/bpf/progs/verifier_scalar_ids.c
+index 13b29a7faa71a1..d24d3a36ec1448 100644
+--- a/tools/testing/selftests/bpf/progs/verifier_scalar_ids.c
++++ b/tools/testing/selftests/bpf/progs/verifier_scalar_ids.c
+@@ -656,4 +656,71 @@ __naked void two_old_ids_one_cur_id(void)
+ 	: __clobber_all);
+ }
+ 
++SEC("socket")
++/* Note the flag, see verifier.c:opt_subreg_zext_lo32_rnd_hi32() */
++__flag(BPF_F_TEST_RND_HI32)
++__success
++/* This test was added because of a bug in verifier.c:sync_linked_regs(),
++ * upon range propagation it destroyed subreg_def marks for registers.
++ * The subreg_def mark is used to decide whether zero extension instructions
++ * are needed when register is read. When BPF_F_TEST_RND_HI32 is set it
++ * also causes generation of statements to randomize upper halves of
++ * read registers.
++ *
++ * The test is written in a way to return an upper half of a register
++ * that is affected by range propagation and must have it's subreg_def
++ * preserved. This gives a return value of 0 and leads to undefined
++ * return value if subreg_def mark is not preserved.
++ */
++__retval(0)
++/* Check that verifier believes r1/r0 are zero at exit */
++__log_level(2)
++__msg("4: (77) r1 >>= 32                     ; R1_w=0")
++__msg("5: (bf) r0 = r1                       ; R0_w=0 R1_w=0")
++__msg("6: (95) exit")
++__msg("from 3 to 4")
++__msg("4: (77) r1 >>= 32                     ; R1_w=0")
++__msg("5: (bf) r0 = r1                       ; R0_w=0 R1_w=0")
++__msg("6: (95) exit")
++/* Verify that statements to randomize upper half of r1 had not been
++ * generated.
++ */
++__xlated("call unknown")
++__xlated("r0 &= 2147483647")
++__xlated("w1 = w0")
++/* This is how disasm.c prints BPF_ZEXT_REG at the moment, x86 and arm
++ * are the only CI archs that do not need zero extension for subregs.
++ */
++#if !defined(__TARGET_ARCH_x86) && !defined(__TARGET_ARCH_arm64)
++__xlated("w1 = w1")
++#endif
++__xlated("if w0 < 0xa goto pc+0")
++__xlated("r1 >>= 32")
++__xlated("r0 = r1")
++__xlated("exit")
++__naked void linked_regs_and_subreg_def(void)
++{
++	asm volatile (
++	"call %[bpf_ktime_get_ns];"
++	/* make sure r0 is in 32-bit range, otherwise w1 = w0 won't
++	 * assign same IDs to registers.
++	 */
++	"r0 &= 0x7fffffff;"
++	/* link w1 and w0 via ID */
++	"w1 = w0;"
++	/* 'if' statement propagates range info from w0 to w1,
++	 * but should not affect w1->subreg_def property.
++	 */
++	"if w0 < 10 goto +0;"
++	/* r1 is read here, on archs that require subreg zero
++	 * extension this would cause zext patch generation.
++	 */
++	"r1 >>= 32;"
++	"r0 = r1;"
++	"exit;"
++	:
++	: __imm(bpf_ktime_get_ns)
++	: __clobber_all);
++}
++
+ char _license[] SEC("license") = "GPL";
