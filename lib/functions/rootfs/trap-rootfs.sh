@@ -54,16 +54,14 @@ function trap_handler_cleanup_rootfs_and_image() {
 	display_alert "Cleanup for rootfs and image" "trap_handler_cleanup_rootfs_and_image" "cleanup"
 
 	debug_tmpfs_show_usage "before cleanup of rootfs"
-
 	cd "${SRC}" || echo "Failed to cwd to ${SRC}" # Move pwd away, so unmounts work
+
 	# those will loop until they're unmounted.
 	umount_chroot_recursive "${SDCARD}" "SDCARD" || true
 	umount_chroot_recursive "${MOUNT}" "MOUNT" || true
 
 	# unmount tmpfs mounted on SDCARD if it exists. #@TODO: move to new tmpfs-utils scheme
 	mountpoint -q "${SDCARD}" && umount "${SDCARD}"
-
-	[[ $CRYPTROOT_ENABLE == yes ]] && cryptsetup luksClose "${CRYPTROOT_MAPPER}"
 
 	if [[ "${PRESERVE_SDCARD_MOUNT}" == "yes" ]]; then
 		display_alert "Preserving SD card mount" "trap_handler_cleanup_rootfs_and_image" "warn"
@@ -72,7 +70,7 @@ function trap_handler_cleanup_rootfs_and_image() {
 
 	# shellcheck disable=SC2153 # global var.
 	if [[ -b "${LOOP}" ]]; then
-		display_alert "Freeing loop" "trap_handler_cleanup_rootfs_and_image ${LOOP}" "wrn"
+		display_alert "Freeing loop" "trap_handler_cleanup_rootfs_and_image ${LOOP}" "warn"
 		free_loop_device_insistent "${LOOP}" || true
 	fi
 
