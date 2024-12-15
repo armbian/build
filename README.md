@@ -169,31 +169,34 @@ Steps to configure CAN bus:
    ``` 
 3.2. Systemd-Networkd, for modern distros,  starting with `0.4.0-24.11.0-trunk` images:
    ```
-    cat <<-'EOF' | sudo tee /etc/systemd/network/80-can0.network
-	[Match]
-	Name=can0
+    cat <<-'EOF' | sudo tee /etc/systemd/network/10-can.link
+[Match]
+Type=can
 
-	[CAN]
-	BitRate=1M
-	RestartSec=200ms
-	# see also https://www.freedesktop.org/software/systemd/man/latest/systemd.network.html#[CAN]%20Section%20Options
-	EOF
-	
-	cat <<-'EOF' | sudo tee /etc/systemd/network/80-can.link
-	[Match]
-    Type=can
+[Link]
+TransmitQueueLength=1024
+# see also https://www.freedesktop.org/software/systemd/man/latest/systemd.network.html#%5BLink%5D%20Section%20Options
+EOF
 
-	[Link]
-	TransmitQueueLength=1024
-	# see also https://www.freedesktop.org/software/systemd/man/latest/systemd.network.html#%5BLink%5D%20Section%20Options
-	EOF
-	
-	sudo systemctl enable systemd-networkd
-	sudo systemctl start systemd-networkd
-	sudo systemctl status systemd-networkd
+   cat <<-'EOF' | sudo tee /etc/systemd/network/20-can0.network
+[Match]
+Name=can0
+
+[CAN]
+BitRate=1M
+RestartSec=200ms
+# see also https://www.freedesktop.org/software/systemd/man/latest/systemd.network.html#[CAN]%20Section%20Options
+EOF
+ 
+
+ 
+sudo systemctl enable systemd-networkd
+sudo systemctl start systemd-networkd
+sudo systemctl status systemd-networkd
    ``` 
 4. Reboot. Yes, it's important! 
 5. Hook a toolhead board, find connected devices `~/klippy-env/bin/python ~/klipper/scripts/canbus_query.py can0` and follow [Klipper documentation -- USB to CAN bus bridge mode](https://www.klipper3d.org/CANBUS.html#usb-to-can-bus-bridge-mode) for the rest of configuration.
+6. Double check output of `sudo ip link show can0` command. `qlen` should have 1024 value (or whatever was specified in `TransmitQueueLength` param) 
 
 
 In case of `MCU 'mcu' shutdown: Timer too close`, `b'Got error -1 in can write: (105)No buffer space available'` or similar troubles, please try following steps:
