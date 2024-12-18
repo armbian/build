@@ -106,6 +106,7 @@ function write_uboot_to_loop_image() {
 
 # This exists to prevent silly failures; sometimes the user is inspecting the directory outside of build, etc.
 function free_loop_device_insistent() {
+	wait_for_disk_sync
 	display_alert "Freeing loop device" "${1}"
 	do_with_retries 10 free_loop_device_retried "${1}"
 }
