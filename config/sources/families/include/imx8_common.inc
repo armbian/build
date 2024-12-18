@@ -27,7 +27,7 @@ case $BOARD in
 		case $BRANCH in
 
 			current) # mainline stable kernel
-				KERNEL_MAJOR_MINOR="6.11"
+				KERNEL_MAJOR_MINOR="6.12"
 				;;
 
 			edge | default) # use for tests with recent mainline kernels
