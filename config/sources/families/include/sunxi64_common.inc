@@ -31,7 +31,7 @@ case $BRANCH in
 
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.6.62"
+		declare -g KERNELBRANCH="tag:v6.6.65"
 		;;
 
 	edge)
@@ -54,21 +54,22 @@ write_uboot_platform() {
 }
 
 setup_write_uboot_platform() {
+	local tmp part dev
 	if grep -q "ubootpart" /proc/cmdline; then
 		# mainline with new boot script
-		local tmp=$(cat /proc/cmdline)
+		tmp=$(cat /proc/cmdline)
 		tmp="${tmp##*ubootpart=}"
 		tmp="${tmp%% *}"
-		[[ -n $tmp ]] && local part=$(findfs PARTUUID=$tmp 2> /dev/null)
-		[[ -n $part ]] && local dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
+		[[ -n $tmp ]] && part=$(findfs PARTUUID=$tmp 2> /dev/null)
+		[[ -n $part ]] && dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
 		[[ -n $dev ]] && DEVICE="/dev/$dev"
 	else
 		# legacy or old boot script
-		local tmp=$(cat /proc/cmdline)
+		tmp=$(cat /proc/cmdline)
 		tmp="${tmp##*root=}"
 		tmp="${tmp%% *}"
-		[[ -n $tmp ]] && local part=$(findfs $tmp 2> /dev/null)
-		[[ -n $part ]] && local dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
+		[[ -n $tmp ]] && part=$(findfs $tmp 2> /dev/null)
+		[[ -n $part ]] && dev=$(lsblk -n -o PKNAME $part 2> /dev/null)
 		# do not try to write u-boot to USB devices
 		[[ -n $dev && $dev == mmcblk* ]] && DEVICE="/dev/$dev"
 	fi

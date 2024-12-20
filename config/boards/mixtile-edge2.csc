@@ -40,7 +40,7 @@ function post_family_config_branch_vendor__kernel_and_uboot_rk35xx_mixtile_edge2
 	# Copypasta from rockchip-rk3588.conf family file -- we _really_ gotta find a better way!
 	declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
 	declare -g KERNELSOURCE='https://github.com/armbian/linux-rockchip.git'
-	declare -g KERNELBRANCH='branch:rk-6.1-rkr3'
+	declare -g KERNELBRANCH='branch:rk-6.1-rkr4.1'
 	declare -g KERNELPATCHDIR='rk35xx-vendor-6.1'
 	declare -g LINUXFAMILY=rk35xx
 	declare -g -i KERNEL_GIT_CACHE_TTL=120 # 2 minutes
