@@ -24,6 +24,7 @@ function check_loop_device_internal() {
 		if [[ $CONTAINER_COMPAT == yes && -b "/tmp/${device}" ]]; then
 			display_alert "Creating device node" "${device}"
 			run_host_command_logged mknod -m0660 "${device}" b "0x$(stat -c '%t' "/tmp/${device}")" "0x$(stat -c '%T' "/tmp/${device}")"
+			wait_for_disk_sync
 			if [[ ! -b "${device}" ]]; then # try again after creating node
 				return 1                       # fail, it will be retried, and should exist on next retry.
 			else
@@ -106,7 +107,6 @@ function write_uboot_to_loop_image() {
 
 # This exists to prevent silly failures; sometimes the user is inspecting the directory outside of build, etc.
 function free_loop_device_insistent() {
-	wait_for_disk_sync
 	display_alert "Freeing loop device" "${1}"
 	do_with_retries 10 free_loop_device_retried "${1}"
 }
@@ -115,5 +115,7 @@ function free_loop_device_retried() {
 	if [[ ${RETRY_RUNS} -gt 1 ]]; then
 		display_alert "Freeing loop device (try ${RETRY_RUNS})" "${1}"
 	fi
-	losetup -d "${1}"
+	# check if the device (still) exists / needs to be freed
+	[[ ! -f  "${1}" ]] && return 0;
+	losetup -d "${1}" || (display_alert "losetup -d ${1} - return code:" "$?"; return 1)
 }

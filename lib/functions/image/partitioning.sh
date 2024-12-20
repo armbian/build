@@ -252,15 +252,21 @@ function prepare_partitions() {
 
 	# stage: mount image
 	# lock access to loop devices
-	if [[ -z $LOOP ]]; then
+	if [[ -z "${LOOP}" ]]; then
 		exec {FD}> /var/lock/armbian-debootstrap-losetup
 		flock -x $FD
 
 		LOOP=$(losetup -f)
 		[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device" 
 		display_alert "Allocated loop device" "LOOP=${LOOP}"
+		
+
 		check_loop_device "${LOOP}"
-		losetup $LOOP ${SDCARD}.raw
+		run_host_command_logged losetup "${LOOP}" || true
+		
+		losetup --partscan "${LOOP}" ${SDCARD}.raw
+		
+		run_host_command_logged losetup "${LOOP}" || true
 
 		# loop device was grabbed here, unlock
 		flock -u $FD
