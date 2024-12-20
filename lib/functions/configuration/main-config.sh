@@ -239,7 +239,7 @@ function do_main_configuration() {
 			declare -g -r GITHUB_SOURCE='https://hub.fastgit.xyz'
 			;;
 		ghproxy)
-			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=ghp.ci
+			[[ -z $GHPROXY_ADDRESS ]] && GHPROXY_ADDRESS=ghgo.xyz
 			declare -g -r GITHUB_SOURCE="https://${GHPROXY_ADDRESS}/https://github.com"
 			;;
 		gitclone)
