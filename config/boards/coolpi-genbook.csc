@@ -20,7 +20,7 @@ function post_family_config_branch_edge__coolpi-genbook_use_mainline_uboot() {
 
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # Mainline U-Boot
 	unset BOOTBRANCH
-	unset BOOTPATCHDIR
+	declare -g BOOTPATCHDIR="v2025.01-rc3-coolpi-cm5"
 	declare -g BOOTBRANCH_BOARD="tag:v2025.01-rc3"
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # disable stuff from rockchip64_common; we're using binman here which does all the work already
