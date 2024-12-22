@@ -24,3 +24,15 @@ function post_family_tweaks__hinlink_h88k_naming_audios() {
 
 	return 0
 }
+
+function post_family_tweaks_bsp__hinlink_h88k_bsp_firmware_in_initrd() {
+	display_alert "Adding to bsp-cli" "${BOARD}: firmware in initrd" "info"
+	declare file_added_to_bsp_destination # will be filled in by add_file_from_stdin_to_bsp_destination
+	add_file_from_stdin_to_bsp_destination "/etc/initramfs-tools/hooks/hinlink-h88k-firmware" <<- 'FIRMWARE_HOOK'
+		#!/bin/bash
+		[[ "$1" == "prereqs" ]] && exit 0
+		. /usr/share/initramfs-tools/hook-functions
+		add_firmware "hinlink-h88k-240x135-lcd.bin" # firmware for 240x135 spi lcd
+	FIRMWARE_HOOK
+	run_host_command_logged chmod -v +x "${file_added_to_bsp_destination}"
+}
