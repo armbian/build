@@ -1,0 +1,63 @@
+From d0f6b8b0000847160766e3b9df8a8c2b61d543d0 Mon Sep 17 00:00:00 2001
+From: Mikhail Iakhiaev <mikhailai@gmail.com>
+Date: Mon, 29 Jul 2024 09:50:36 -0700
+Subject: arm/patch: call flush_icache ASAP after writing new instruction.
+
+The patch moves flush_icache before the patch_unmap call.
+The change avoids the possibility of the CPU seeing
+partially-patched instructions if a function from patch_unmap
+call tree has just been patched. That HAS been observed
+in practice, leading to kernel panic or freezing in early boot:
+https://bugzilla.kernel.org/show_bug.cgi?id=219089
+Specifically, the patch_unmap invokes _raw_spin_unlock_irqrestore
+(could be non-inlined) and that function is being patched
+during the ftrace_init, so the original code would run the
+patched code BEFORE flushing the icache.
+
+Note, some arches are more careful about flushing icache early. E.g.
+arch/riscv/kernel/patch.c:
+  __patch_insn_set and __patch_insn_write call the
+  local_flush_icache_range before the patch_unmap and have an
+  explicit comment about this.
+arch/x86/kernel/alternative.c:
+  text_poke_early calls sync_core (flushes icache) before
+  local_irq_restore.
+
+Closes: https://bugzilla.kernel.org/show_bug.cgi?id=219089
+Signed-off-by: Mikhail Iakhiaev <mikhailai@gmail.com>
+
+Signed-off-by: The-going <48602507+The-going@users.noreply.github.com>
+---
+ arch/arm/kernel/patch.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/kernel/patch.c b/arch/arm/kernel/patch.c
+index e9e828b6bb30..f003867f085a 100644
+--- a/arch/arm/kernel/patch.c
++++ b/arch/arm/kernel/patch.c
+@@ -99,13 +99,19 @@ void __kprobes __patch_text_real(void *addr, unsigned int insn, bool remap)
+ 		size = sizeof(u32);
+ 	}
+ 
+-	if (waddr != addr) {
++	if (waddr != addr)
+ 		flush_kernel_vmap_range(waddr, twopage ? size / 2 : size);
+-		patch_unmap(FIX_TEXT_POKE0, &flags);
+-	}
+ 
+ 	flush_icache_range((uintptr_t)(addr),
+ 			   (uintptr_t)(addr) + size);
++
++	/* Can only call 'patch_unmap' after flushing dcache and icache,
++	 * because it calls 'raw_spin_unlock_irqrestore', but that may
++	 * happen to be the very function we're currently patching
++	 * (as it happens during the ftrace init).
++	 */
++	if (waddr != addr)
++		patch_unmap(FIX_TEXT_POKE0, &flags);
+ }
+ 
+ static int __kprobes patch_text_stop_machine(void *data)
+-- 
+2.35.3
+
