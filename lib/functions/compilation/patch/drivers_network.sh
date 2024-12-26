@@ -520,6 +520,11 @@ driver_uwe5622() {
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.11.patch" "applying"
 		fi
 
+		# Fix "spanning-writes" warning in dmesg, applicable when kernel is compiled with FORTIFY_SOURCE 
+		if linux-version compare "${version}" ge 6.12; then
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-fix-spanning-writes.patch" "applying"
+		fi
+
 	fi
 }
 
