@@ -1,13 +1,12 @@
 # SpacemiT K1 octa core RISC-V SoC 2GB/4GB RAM 8GB/16GB eMMC 4x USB3 2x GbE
-BOARD_NAME="Banana Pi F3"
+BOARD_NAME="BananaPi BPI-F3"
 BOARDFAMILY="spacemit"
 BOARD_MAINTAINER=""
-KERNEL_TARGET="legacy,current"
-KERNEL_TEST_TARGET="legacy"
+KERNEL_TARGET="current"
 BOOT_FDT_FILE="spacemit/k1-bananapi-f3.dtb"
 BOOTDELAY=1
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="earlycon=sbi console=tty1 console=ttyS0,115200 clk_ignore_unused swiotlb=65536"
+SRC_CMDLINE="earlycon=sbi console=tty1 console=ttyS0,115200 clk_ignore_unused"
 PACKAGE_LIST_BOARD="rfkill bluetooth bluez bluez-tools"
 
 function post_config_uboot_target__extra_configs_for_bananapi_f3() {
