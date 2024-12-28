@@ -13,6 +13,9 @@ function build_rootfs_and_image() {
 	# get a basic rootfs, either from cache or from scratch
 	get_or_create_rootfs_cache_chroot_sdcard # only occurrence of this; has its own logging sections
 
+	# deploy the qemu binary, no matter where the rootfs came from (built or cached)
+	LOG_SECTION="deploy_qemu_binary_to_chroot_image" do_with_logging deploy_qemu_binary_to_chroot "${SDCARD}" "image" # undeployed at end of this function
+
 	# stage: with a basic rootfs available, we mount the chroot and work on it
 	LOG_SECTION="mount_chroot_sdcard" do_with_logging mount_chroot "${SDCARD}"
 
@@ -65,6 +68,9 @@ function build_rootfs_and_image() {
 	LOG_SECTION="list_installed_packages" do_with_logging list_installed_packages
 
 	LOG_SECTION="post_debootstrap_tweaks" do_with_logging post_debootstrap_tweaks
+
+	# undeploy the qemu binary from the image; we don't want to ship the host's qemu in the target image
+	LOG_SECTION="undeploy_qemu_binary_from_chroot_image" do_with_logging undeploy_qemu_binary_from_chroot "${SDCARD}" "image"
 
 	# clean up / prepare for making the image
 	LOG_SECTION="umount_chroot_sdcard" do_with_logging umount_chroot "${SDCARD}"
