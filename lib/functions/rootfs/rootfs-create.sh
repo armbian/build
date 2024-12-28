@@ -121,7 +121,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 
 	skip_target_check="yes" local_apt_deb_cache_prepare "after debootstrap first stage" # just for size reference in logs; skip the target check: debootstrap uses it for second stage.
 
-	deploy_qemu_binary_to_chroot "${SDCARD}" # this is cleaned-up later by post_debootstrap_tweaks() @TODO: which is too late for a cache
+	deploy_qemu_binary_to_chroot "${SDCARD}" "rootfs" # undeployed near the end of this function
 
 	display_alert "Installing base system" "Stage 2/2" "info"
 	declare -g -a if_error_find_files_sdcard=("debootstrap.log") # if command fails, go look for this file and show it's contents during error processing
@@ -269,6 +269,9 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# Mask `systemd-firstboot.service` which will prompt locale, timezone and root-password too early.
 	# `armbian-first-run` will do the same thing later
 	chroot_sdcard systemctl mask systemd-firstboot.service
+
+	# undeploy the qemu binary; we don't want to ship the host's qemu binary in the rootfs cache.
+	undeploy_qemu_binary_from_chroot "${SDCARD}" "rootfs"
 
 	# stage: make rootfs cache archive
 	display_alert "Ending debootstrap process and preparing cache" "$RELEASE" "info"
