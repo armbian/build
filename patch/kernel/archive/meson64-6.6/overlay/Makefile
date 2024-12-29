@@ -13,7 +13,6 @@ dtbo-$(CONFIG_ARCH_MESON) += \
 	meson-g12a-radxa-zero-i2c-ao-m0-gpioao-2-gpioao-3.dtbo \
 	meson-g12a-radxa-zero-i2c-ee-m1-gpioh-6-gpioh-7.dtbo \
 	meson-g12a-radxa-zero-i2c-ee-m1-gpiox-10-gpiox-11.dtbo \
-	meson-g12a-radxa-zero-i2c-ee-m2-gpiox-17-gpiox-18.dtbo \
 	meson-g12a-radxa-zero-i2c-ee-m3-gpioa-14-gpioa-15.dtbo \
 	meson-g12a-radxa-zero-pwm-c-on-gpiox-8.dtbo \
 	meson-g12a-radxa-zero-pwmao-a-on-gpioao-11.dtbo \
@@ -31,7 +30,8 @@ dtbo-$(CONFIG_ARCH_MESON) += \
 	meson-sm1-bananapi-m5-rtl8822cs.dtbo \
 	meson-sm1-bananapi-uartA.dtbo \
 	meson-sm1-bananapi-uartA_cts_rts.dtbo \
-	meson-sm1-bananapi-uartAO_B.dtbo
+	meson-sm1-bananapi-uartAO_B.dtbo \
+	meson-sm1-odroid-c4-i2c-ee-m2-gpiox-17-gpiox-18.dtbo
 
 scr-$(CONFIG_ARCH_MESON) += \
        meson-fixup.scr
