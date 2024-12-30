@@ -43,6 +43,50 @@ function armbian_kernel_config__disable_various_options() {
 	fi
 }
 
+function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
+	display_alert "Enabling eBPF and BTF info" "for fully BTF & CO-RE enabled kernel" "info"
+
+	declare -A opts_val=()
+	declare -a opts_n=("CONFIG_DEBUG_INFO_NONE")
+	declare -a opts_y=(
+		"CONFIG_BPF_JIT" "CONFIG_BPF_JIT_DEFAULT_ON" "CONFIG_FTRACE_SYSCALLS" "CONFIG_PROBE_EVENTS_BTF_ARGS" "CONFIG_BPF_KPROBE_OVERRIDE"
+		"CONFIG_DEBUG_INFO" "CONFIG_DEBUG_INFO_DWARF5"
+		"CONFIG_DEBUG_INFO_BTF" "CONFIG_DEBUG_INFO_BTF_MODULES"
+	)
+
+	declare opt_y opt_val opt_n
+	for opt_n in "${opts_n[@]}"; do
+		kernel_config_modifying_hashes+=("${opt_n}=n")
+	done
+
+	for opt_y in "${opts_y[@]}"; do
+		kernel_config_modifying_hashes+=("${opt_y}=y")
+	done
+
+	for opt_val in "${!opts_val[@]}"; do
+		kernel_config_modifying_hashes+=("${opt_val}=${opts_val[$opt_val]}")
+	done
+
+	if [[ -f .config ]]; then
+		for opt_n in "${opts_n[@]}"; do
+			display_alert "Disabling kernel opt" "${opt_n}=n" "debug"
+			kernel_config_set_n "${opt_n}"
+		done
+
+		for opt_y in "${opts_y[@]}"; do
+			display_alert "Enabling kernel opt" "${opt_y}=y" "debug"
+			kernel_config_set_y "${opt_y}"
+		done
+
+		for opt_val in "${!opts_val[@]}"; do
+			display_alert "Setting kernel opt" "${opt_val}=${opts_val[$opt_val]}" "debug"
+			kernel_config_set_val "${opt_val}" "${opts_val[$opt_val]}"
+		done
+	fi
+
+	return 0
+}
+
 function armbian_kernel_config__enable_config_access_in_live_system() {
 	kernel_config_modifying_hashes+=("CONFIG_IKCONFIG_PROC=y")
 	if [[ -f .config ]]; then
