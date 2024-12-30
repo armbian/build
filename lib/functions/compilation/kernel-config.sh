@@ -135,20 +135,18 @@ function kernel_config_finalize() {
 }
 
 function kernel_config_export() {
-	# store kernel config in easily reachable place
+	# export defconfig
+	run_kernel_make savedefconfig
+
+	# store kernel defconfig in easily reachable place (output dir)
 	mkdir -p "${DEST}"/config
-	display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
-	run_host_command_logged cp -pv .config "${DEST}/config/${LINUXCONFIG}.config"
+	display_alert "Exporting new kernel defconfig" "$DEST/config/$LINUXCONFIG.config" "info"
+	run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.config"
 
 	# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.
 	if [[ "${kernel_config_source_filename}" != "" ]]; then
 		display_alert "Exporting new kernel config - git commit pending" "${kernel_config_source_filename}" "info"
-		run_host_command_logged cp -pv .config "${kernel_config_source_filename}"
-
-		# export defconfig
-		run_kernel_make savedefconfig
-		run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
-		run_host_command_logged cp -pv defconfig "${kernel_config_source_filename}.defconfig"
+		run_host_command_logged cp -pv defconfig "${kernel_config_source_filename}"
 	fi
 }
 
