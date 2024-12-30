@@ -54,6 +54,11 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 		"CONFIG_DEBUG_INFO_BTF" "CONFIG_DEBUG_INFO_BTF_MODULES"
 	)
 
+	if [[ "${ARCH}" == "arm64" ]]; then
+		opts_y+=("CONFIG_ARM64_VA_BITS_48")
+		opts_val["CONFIG_ARM64_PA_BITS"]="48"
+	fi
+
 	declare opt_y opt_val opt_n
 	for opt_n in "${opts_n[@]}"; do
 		kernel_config_modifying_hashes+=("${opt_n}=n")
