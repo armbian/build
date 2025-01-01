@@ -3,9 +3,9 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-ds1307.dtbo    \
 	rockchip-i2c1.dtbo      \
 	rockchip-i2c4.dtbo      \
-	rockchip-pwm1.dtbo      \
-	rockchip-pwm2.dtbo      \
-	rockchip-pwm3.dtbo      \
+	rockchip-pwm1.dtbo	\
+	rockchip-pwm2.dtbo	\
+	rockchip-pwm3.dtbo	\
 	rockchip-spi0.dtbo      \
 	rockchip-spi2.dtbo      \
 	rockchip-spidev0.dtbo   \
@@ -51,8 +51,7 @@ dtbotxt-$(CONFIG_ARCH_ROCKCHIP) += \
        README.rk322x-overlays \
        README.rockchip-overlays
 
-targets += $(dtbo-y) $(scr-y) $(dtbotxt-y)
+dtb-y += $(dtbo-y) $(scr-y) $(dtbotxt-y)
 
-always         := $(dtbo-y) $(scr-y) $(dtbotxt-y)
 clean-files    := *.dtbo *.scr
 

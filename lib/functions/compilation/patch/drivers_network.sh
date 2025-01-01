@@ -605,6 +605,10 @@ driver_rtl8723cs() {
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.9.patch" "applying"
 	fi
 
+	if linux-version compare "${version}" ge 6.13; then
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723cs/8723cs-Port-to-6.13.patch" "applying"
+	fi
+
 }
 
 ###  The vendor's RTL8723DS driver is still required for RockPI-S support because
