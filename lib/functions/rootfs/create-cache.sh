@@ -66,8 +66,8 @@ function create_new_rootfs_cache() {
 
 	display_alert "Creating new rootfs cache" "'${cache_name}'" "info"
 
-	create_new_rootfs_cache_via_debootstrap # in rootfs-create.sh
-	create_new_rootfs_cache_tarball         # in rootfs-create.sh
+	create_new_rootfs_cache_via_debootstrap # in rootfs-create.sh; deploys & undeploys the qemu binary
+	create_new_rootfs_cache_tarball         # in rootfs-create.sh; no qemu binary available here
 
 	return 0 # protect against possible future short-circuiting above this
 }
