@@ -252,19 +252,21 @@ function prepare_partitions() {
 
 	# stage: mount image
 	# lock access to loop devices
-	if [[ -z $LOOP ]]; then
-		exec {FD}> /var/lock/armbian-debootstrap-losetup
-		flock -x $FD
+	exec {FD}> /var/lock/armbian-debootstrap-losetup
+	flock -x $FD
 
+	#--partscan is using to force the kernel for scanning partition table in preventing of partprobe errors
+	if [[ -z $LOOP ]]; then
 		LOOP=$(losetup -f)
+	#	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
 		[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device" 
 		display_alert "Allocated loop device" "LOOP=${LOOP}"
-		check_loop_device "${LOOP}"
+		check_loop_device "$LOOP"
 		losetup $LOOP ${SDCARD}.raw
-
-		# loop device was grabbed here, unlock
-		flock -u $FD
 	fi
+
+	# loop device was grabbed here, unlock
+	flock -u $FD
 
 	display_alert "Running partprobe" "${LOOP}" "debug"
 	run_host_command_logged partprobe "${LOOP}"
@@ -318,7 +320,6 @@ function prepare_partitions() {
 			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} none luks" >> $SDCARD/etc/crypttab
 			run_host_command_logged cat $SDCARD/etc/crypttab
 		fi
-		
 		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 		run_host_command_logged cat $SDCARD/etc/fstab
