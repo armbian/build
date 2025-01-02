@@ -15,12 +15,7 @@ function create_new_rootfs_cache_tarball() {
 	# validate cache_name is set
 	[[ -n "${cache_name}" ]] || exit_with_error "create_new_rootfs_cache_tarball: cache_name is not set"
 
-	# create list of installed packages for debug purposes - this captures it's own stdout.
-	# @TODO: sanity check, compare this with the source of the hash coming from aggregation
-	chroot_sdcard "dpkg -l | grep ^ii | awk '{ print \$2\",\"\$3 }'" > "${cache_fname}.list"
-	echo "${AGGREGATED_ROOTFS_HASH_TEXT}" > "${cache_fname}.hash_text"
-
-	# Show the disk space usage of the rootfs
+	# Show the disk space usage of the rootfs; use only host-side tools, as qemu binary is already undeployed from chroot
 	display_alert "Disk space usage of rootfs" "${RELEASE}:: ${cache_name}" "info"
 	run_host_command_logged "cd ${SDCARD} && " du -h -d 4 -x "." "| sort -h | tail -20"
 	wait_for_disk_sync "after disk-space usage report of rootfs"
