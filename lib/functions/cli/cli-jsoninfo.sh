@@ -17,10 +17,12 @@ function cli_json_info_run() {
 
 	prep_conf_main_minimal_ni
 
+	# shellcheck disable=SC2317
 	function json_info_logged() { # logging wrapper
 		LOG_SECTION="json_info" do_with_logging json_info_only
 	}
 
+	# shellcheck disable=SC2317
 	function json_info_only() {
 		prepare_python_and_pip # requires HOSTRELEASE
 
@@ -113,6 +115,8 @@ function cli_json_info_run() {
 		declare IMAGE_INFO_CSV_FILE="${BASE_INFO_OUTPUT_DIR}/image-info.csv"
 		declare INVENTORY_BOARDS_CSV_FILE="${BASE_INFO_OUTPUT_DIR}/boards-inventory.csv"
 		declare REDUCED_ARTIFACTS_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-reduced.json"
+		declare REDUCED_KERNELS_FILE="${BASE_INFO_OUTPUT_DIR}/kernels.ndjson"
+		declare REDUCED_UBOOTS_FILE="${BASE_INFO_OUTPUT_DIR}/uboots.ndjson"
 		declare ARTIFACTS_INFO_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-info.json"
 		declare ARTIFACTS_INFO_UPTODATE_FILE="${BASE_INFO_OUTPUT_DIR}/artifacts-info-uptodate.json"
 		declare OUTDATED_ARTIFACTS_IMAGES_FILE="${BASE_INFO_OUTPUT_DIR}/outdated-artifacts-images.json"
@@ -199,6 +203,17 @@ function cli_json_info_run() {
 		if [[ ! -f "${REDUCED_ARTIFACTS_FILE}" ]]; then
 			display_alert "Reducing info into artifacts" "artifact-reducer" "info"
 			run_host_command_logged "${PYTHON3_VARS[@]}" "${PYTHON3_INFO[BIN]}" "${INFO_TOOLS_DIR}"/artifact-reducer.py "${IMAGE_INFO_FILE}" ">" "${REDUCED_ARTIFACTS_FILE}"
+
+			# Simple jq to get reduced kernels, with board and branch coordinates and number of images for each; NDJSON (newline-delimited JSON) format.
+			jq -c '.[] | select(.artifact_name == "kernel") | {"vars": .original_inputs.vars,"kernel":.inputs.LINUXFAMILY,"needed_by":.needed_by} | {"BOARD":.vars.BOARD,"BRANCH":.vars.BRANCH,"kernel":.kernel,"needed_by":.needed_by}' < "${REDUCED_ARTIFACTS_FILE}" > "${REDUCED_KERNELS_FILE}"
+
+			# Similar, but for u-boot's.
+			jq -c '.[] | select(.artifact_name == "uboot") | {"vars": .original_inputs.vars,"needed_by":.needed_by} | {"BOARD":.vars.BOARD,"BRANCH":.vars.BRANCH,"needed_by":.needed_by}' < "${REDUCED_ARTIFACTS_FILE}" > "${REDUCED_UBOOTS_FILE}"
+		fi
+
+		if [[ "${ARMBIAN_COMMAND}" == "inventory-artifacts" ]]; then
+			display_alert "Done with" "inventory-artifacts" "info"
+			return 0
 		fi
 
 		# The artifact info extractor.
