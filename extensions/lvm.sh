@@ -32,17 +32,22 @@ function extension_prepare_config__prepare_lvm() {
 }
 
 function post_create_partitions__setup_lvm() {
-	# Setup LVM on the partition, ROOTFS
-	parted -s ${SDCARD}.raw -- set ${rootpart} lvm on
-	display_alert "LVM Partition table created" "${EXTENSION}" "info"
-	parted -s ${SDCARD}.raw -- print >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
-}
 
-function prepare_root_device__create_volume_group() {
+	LOOP=$(losetup -f)
+	[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device"
+	check_loop_device "$LOOP"
+	losetup $LOOP ${SDCARD}.raw
+	partprobe $LOOP
 
 	# the partition to setup LVM on is defined as rootpart
-	local lvmdev=$rootdevice
-	display_alert "LVM will be on Partition ${rootpart}, thats ${lvmdev}" "${EXTENSION}" "info"
+	local lvmpart=${rootpart}
+	local lvmdev=${LOOP}p${lvmpart}
+	display_alert "LVM will be on Partition ${lvmpart}, thats ${lvmdev}" "${EXTENSION}" "info"
+
+	# Setup LVM on the partition, ROOTFS
+	parted -s ${SDCARD}.raw -- set ${lvmpart} lvm on
+	display_alert "LVM Partition table created" "${EXTENSION}" "info"
+	parted -s ${SDCARD}.raw -- print >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
 
 	# Caculate the required volume size
 	declare -g -i rootfs_size
@@ -52,18 +57,20 @@ function prepare_root_device__create_volume_group() {
 	display_alert "Root volume size" "$volsize MiB" "info"
 
 	# Create the PV VG and VOL
-	display_alert "LVM Creating VG" "${lvmdev}" "info"
+	display_alert "LVM Creating VG" "${SDCARD}.raw" "info"
 	check_loop_device ${lvmdev}
 	pvcreate ${lvmdev}
 	vgcreate ${LVM_VG_NAME} ${lvmdev}
-	wait_for_disk_sync "wait for VG to sync"
 	# Note that devices wont come up automatically inside docker
 	lvcreate -Zn --name root --size ${volsize}M ${LVM_VG_NAME}
 	vgmknodes
 	lvs >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1
-	# TODO [ms] check if disable-scan-enable is necessary
 	vgchange -a n ${LVM_VG_NAME}
+	losetup -d ${LOOP}
 	display_alert "LVM created volume group" "${EXTENSION}" "info"
+}
+
+function prepare_root_device__create_volume_group() {
 
 	display_alert "Using LVM root" "${EXTENSION}" "info"
 	vgscan
@@ -80,11 +87,8 @@ function format_partitions__format_lvm() {
 	display_alert "LVM labeled partitions" "${EXTENSION}" "info"
 }
 
-function post_umount_final_image__lvm_cleanup(){
-	execute_and_remove_cleanup_handler cleanup_lvm
-}
-
-function cleanup_lvm() {
-	vgchange -a n ${LVM_VG_NAME} >> "${DEST}"/${LOG_SUBPATH}/lvm.log 2>&1 || true
+function post_umount_final_image__close_lvm() {
+	# Deactivat the Volume Group
+	vgchange -a n ${LVM_VG_NAME}
 	display_alert "LVM deactivated volume group" "${EXTENSION}" "info"
 }
