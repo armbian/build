@@ -73,12 +73,12 @@ compile_atf() {
 		display_alert "Binutils version for ATF" ">= 2.39, adding --no-warn-rwx-segment" "info"
 		binutils_flags_atf="--no-warn-rwx-segment"
 	fi
-
 	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
-	run_host_command_logged CCACHE_BASEDIR="$(pwd)" PATH="${toolchain}:${toolchain2}:${PATH}" \
+
+	run_host_command_logged "CROSS_COMPILE='ccache ${ATF_COMPILER}'" CCACHE_BASEDIR="$(pwd)" "CC='ccache ${ATF_COMPILER}gcc'" PATH="${toolchain}:${toolchain2}:${PATH}" \
 		"CFLAGS='-fdiagnostics-color=always -Wno-error=attributes -Wno-error=incompatible-pointer-types'" \
 		"TF_LDFLAGS='${binutils_flags_atf}'" \
-		make ENABLE_BACKTRACE="0" LOG_LEVEL="40" BUILD_STRING="armbian" $target_make "${CTHREADS}" "CROSS_COMPILE='$CCACHE $ATF_COMPILER'"
+		make ENABLE_BACKTRACE="0" LOG_LEVEL="40" BUILD_STRING="armbian" $target_make "${CTHREADS}"
 
 	# @TODO: severely missing logging
 	[[ $(type -t atf_custom_postprocess) == function ]] && atf_custom_postprocess 2>&1
