@@ -57,7 +57,7 @@ root_partition_device=/dev/$root_partition_device_name
 # find targets: legacy SUNXI NAND, EMMC, SATA, NVMe, MTD block and/or MTD char driven flash
 [[ -b /dev/nand ]] && nandcheck=$(ls -d -1 /dev/nand* | grep -w 'nand' | awk '{print $NF}');
 emmccheck=$(ls -d -1 /dev/mmcblk* 2>/dev/null | grep -w 'mmcblk[0-9]' | grep -v "$root_partition_device");
-diskcheck=$(lsblk -l | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme|^mmc' | grep -v "$root_partition_device_name" | grep -v boot)
+diskcheck=$(lsblk -Al | awk -F" " '/ disk / {print $1}' | grep -E '^sd|^nvme|^mmc' | grep -v "$root_partition_device_name" | grep -v boot)
 # Start mtdcheck with probable MTD block device partitions:
 mtdcheck=$(grep 'mtdblock' /proc/partitions | awk '{print $NF}' | xargs)
 # Append mtdcheck with probable MTD char devices filtered for partition name(s)
@@ -168,7 +168,7 @@ create_armbian()
 
 	# count files is needed for progress bar
 	dialog --title " $title " --backtitle "$backtitle" --infobox "\n  Counting files ... few seconds." 5 60
-	TODO=$(rsync -avx --delete --stats --exclude-from=$EX_LIST / "${TempDir}"/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
+	TODO=$(rsync -avrltD --delete --stats --exclude-from=$EX_LIST / "${TempDir}"/rootfs | grep "Number of files:"|awk '{print $4}' | tr -d '.,')
 	echo -e "\nCopying ${TODO} files to $2. \c" >> $logfile
 
 	# creating rootfs
@@ -183,7 +183,7 @@ create_armbian()
 
 	 # Launch rsync in background
 	{ \
-	rsync -avx --delete --exclude-from=$EX_LIST / "${TempDir}"/rootfs | \
+	rsync -avrltD --delete --exclude-from=$EX_LIST / "${TempDir}"/rootfs | \
 	nl | awk '{ printf "%.0f\n", 100*$1/"'"$TODO"'" }' \
 	> "${nsi_conn_progress}" ;
 	 # create empty persistent journal directory if it exists before install
@@ -229,7 +229,7 @@ create_armbian()
 
 	# run rsync again to silently catch outstanding changes between / and "${TempDir}"/rootfs/
 	dialog --title "$title" --backtitle "$backtitle" --infobox "\n               Cleaning up ... Almost done." 5 60
-	rsync -avx --delete --exclude-from=$EX_LIST / "${TempDir}"/rootfs >/dev/null 2>&1
+	rsync -avrltD --delete --exclude-from=$EX_LIST / "${TempDir}"/rootfs >/dev/null 2>&1
 
 	# mark OS as transferred
 	if ! grep -q "INSTALLED=true" /etc/armbian-image-release; then
@@ -669,6 +669,8 @@ check_partitions()
 	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}'"
 	AvailablePartitions=$(eval $CMD)
 
+	FREE_SPACE=$(sfdisk --list-free /dev/$diskcheck | grep G | tail -1 | awk '{print $4}' | sed "s/G//")
+
 	dialog --yes-label "Proceed" --no-label 'Skip' --title "$title" --backtitle "$backtitle" --yesno "\nIt is highly recommended to wipe all partitions on the destination disk\n \n/dev/$diskcheck\n\nand leave installer to make them!" 10 75
 
 	# wiping destination to make sure we don't run into issues
@@ -680,13 +682,16 @@ check_partitions()
 		if [[ "${ACKNOWLEDGEMENT}" == "Yes, I understand" ]]; then
 			dd if=/dev/zero of=/dev/${diskcheck} bs=1M count=10 >> $logfile 2>&1
 			partprobe -s "/dev/${diskcheck}" >> $logfile 2>&1
-			echo -e 'mktable gpt\nmkpart primary ext4 0% 100%\nquit' | sudo parted "/dev/${diskcheck}" >> $logfile 2>&1
-			sudo partprobe -s "/dev/${diskcheck}" >> $logfile 2>&1
-			sleep 2
+			# only make one ext4 partition if we don't have UEFI
+			if [[ "$DEVICE_TYPE" != uefi ]]; then
+				echo -e 'mktable gpt\nmkpart primary ext4 0% 100%\nquit' | sudo parted "/dev/${diskcheck}" >> $logfile 2>&1
+				sudo partprobe -s "/dev/${diskcheck}" >> $logfile 2>&1
+				sleep 2
+			fi
 		fi
 	fi
 
-	if [[ -z $AvailablePartitions ]]; then
+	if [[ -z $AvailablePartitions ]] || [[ "${FREE_SPACE%.*}" -gt 4 ]]; then
 		# Consider brand new devices or devices with a wiped partition table
 		if [[ -z $(blkid /dev/$diskcheck) ]]; then
 			# There is not yet any partition table on the disk device.
@@ -696,6 +701,7 @@ check_partitions()
 			# The device has an initial partition table
 			FREE_SPACE=$(parted /dev/$diskcheck unit GB print free | awk '/Free Space/{c++; sum += $3; print sum}' | tail -1)
 		fi
+
 		# Logic for auto created partitions:
 		#  1. Check for a minimum free space of 4GB for a partition
 		#  2. Ask user to proceed with auto-created partition(s) or not
@@ -736,7 +742,7 @@ check_partitions()
 			} | fdisk /dev/$diskcheck &> /dev/null || true
 		fi
 	fi
-	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
+	CMD="lsblk -io KNAME,FSTYPE,SIZE,TYPE,MOUNTPOINT,PARTTYPENAME | grep -v -w $root_partition_name $INCLUDE $EXCLUDE | grep Linux | grep -E '^sd|^nvme|^md|^mmc' | awk -F\" \" '/ part | raid..? / {print \$1}' | uniq | sed 's|^|/dev/|' | nl | xargs echo -n"
 	partprobe
 	AvailablePartitions=$(eval $CMD)
 	PartitionOptions=($AvailablePartitions)
