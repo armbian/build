@@ -518,12 +518,17 @@ function kernel_package_callback_linux_headers() {
 		cat <<- EOT_POSTINST
 			cd "/usr/src/linux-headers-${kernel_version_family}"
 			NCPU=\$(grep -c 'processor' /proc/cpuinfo)
-			echo "Compiling kernel-headers tools (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
-			yes "" | make ARCH="${SRC_ARCH}" oldconfig
+			echo "Configuring kernel-headers (${kernel_version_family}) - please wait ..."
+			make ARCH="${SRC_ARCH}" olddefconfig
+
+			echo "Compiling kernel-headers scripts (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
 			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
+
+			echo "Compiling kernel-headers scripts/mod (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
 			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
+
 			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
-			echo "Done compiling kernel-headers tools (${kernel_version_family})."
+			echo "Done compiling kernel-headers (${kernel_version_family})."
 		EOT_POSTINST
 
 		if [[ "${ARCH}" == "amd64" ]]; then # This really only works on x86/amd64; @TODO revisit later
