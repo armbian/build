@@ -103,7 +103,7 @@ function install_distribution_agnostic() {
 	cp "${SDCARD}"/etc/skel/.bashrc "${SDCARD}"/root/
 	cp "${SDCARD}"/etc/skel/.profile "${SDCARD}"/root/
 
-	# Copy systemwide alieases to root user too
+	# Copy systemwide aliases to root user too
 	cp "${SRC}"/packages/bsp/common/etc/skel/.bash_aliases "${SDCARD}"/root/
 
 	# display welcome message at first root login which is ready by /usr/sbin/armbian/armbian-firstlogin
