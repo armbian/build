@@ -52,7 +52,17 @@ function patch_uboot_target() {
 function compile_uboot_target() {
 	: "${artifact_version:?artifact_version is not set}"
 
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "${uboot_prefix}Listing contents of u-boot directory" "'${version}' '${target_make}' before patching" "debug"
+		run_host_command_logged "ls -laht"
+	fi
+
 	patch_uboot_target
+
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "${uboot_prefix}Listing contents of u-boot directory" "'${version}' '${target_make}' after patching" "debug"
+		run_host_command_logged "ls -laht"
+	fi
 
 	if [[ $CREATE_PATCHES == yes ]]; then
 		return 0
