@@ -31,6 +31,11 @@ function patch_uboot_target() {
 	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q "${uboot_git_revision}"
 
+	# remove all git untracked files; echo their names to screen
+	# this throws away the baby with the bathwater; rebuilds will be slow. but the risk of shipping wrong binaries is too high.
+	display_alert "${uboot_prefix} Cleaning u-boot tree" "${BOOTSOURCEDIR} for '${target_make}'"
+	regular_git clean -xfdq
+
 	maybe_make_clean_uboot
 
 	# Python patching for u-boot!
