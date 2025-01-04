@@ -245,9 +245,14 @@ function logging_enrich_run_command_error_info() {
 	for path in "${if_error_find_files_sdcard[@]}"; do
 		display_alert "Searching for if_error_find_files_sdcard files" "${SDCARD}/${path}" "debug"
 		declare -a sdcard_files
-		# shellcheck disable=SC2086 # I wanna expand, thank you...
-		mapfile -t sdcard_files < <(find ${SDCARD}/ -type f -name "${path}")
-		display_alert "Found if_error_find_files_sdcard files" "${sdcard_files[@]}" "debug"
+		if [[ "${path}" == /* ]]; then # if path begins with a slash, we need to use path-matching and prepend an "*" asterisk.
+			mapfile -t sdcard_files < <(find "${SDCARD}" -type f -path "*${path}")
+		else # if path does not begin with a slash, we need to use name-matching.
+			mapfile -t sdcard_files < <(find "${SDCARD}" -type f -name "${path}")
+		fi
+		declare -i num_files_found=0
+		num_files_found="${#sdcard_files[@]}"
+		display_alert "Found if_error_find_files_sdcard files" "${num_files_found} files: ${sdcard_files[*]}" "err"
 		found_files+=("${sdcard_files[@]}") # add to result
 	done
 
