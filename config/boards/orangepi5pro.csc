@@ -28,11 +28,9 @@ function post_family_tweaks__orangepi5pro_naming_audios() {
 
 function post_family_config_branch_vendor__orangepi5pro_uboot_add_sata_target() {
 	display_alert "$BOARD" "Configuring ($BOARD) standard and sata uboot target map" "info"
-
-	UBOOT_TARGET_MAP="
-	BL31=$RKBIN_DIR/$BL31_BLOB $BOOTCONFIG spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb rkspi_loader.img
-	BL31=$RKBIN_DIR/$BL31_BLOB $BOOTCONFIG_SATA spl/u-boot-spl.bin u-boot.dtb u-boot.itb;; rkspi_loader_sata.img
-	"
+	# Note: whitespace/newlines are significant; BOOT_SUPPORT_SPI & BOOT_SPI_RKSPI_LOADER influence the postprocess step that runs for _every_ target and produces rkspi_loader.img
+	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB $BOOTCONFIG spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb rkspi_loader.img
+	BL31=$RKBIN_DIR/$BL31_BLOB $BOOTCONFIG_SATA spl/u-boot-spl.bin u-boot.dtb u-boot.itb;; rkspi_loader_sata.img"
 }
 
 function post_uboot_custom_postprocess__create_sata_spi_image() {
