@@ -10,6 +10,7 @@ BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588-friendlyelec-cm3588-nas.dtb"
 BOOT_SCENARIO="spl-blobs"
+UEFI_EDK2_BOARD_ID="nanopc-cm3588-nas" # This _only_ used for uefi-edk2-rk3588 extension; cm3588-nas was introduced in v0.12 of edk2-porting/edk2-rk3588
 
 function post_family_tweaks__cm3588_nas_udev_naming_audios() {
 	display_alert "$BOARD" "Renaming CM3588 audio interfaces to human-readable form" "info"
