@@ -42,17 +42,61 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.10"
-	declare -g BOOTPATCHDIR="v2024.10"
-	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
-
+	declare -g BOOTBRANCH="tag:v2025.01-rc6"
+	declare -g BOOTPATCHDIR="v2025.01"
+	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
-
-	# Disable stuff from rockchip64_common; we're using binman here which does all the work already
-	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # Disable stuff from rockchip64_common; we're using binman here which does all the work
 
 	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go
 	function write_uboot_platform() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
+}
+
+function pre_config_uboot_target__cm3588_patch_uboot_dtsi_for_ums() {
+	display_alert "u-boot for ${BOARD}" "u-boot: add to u-boot dtsi for UMS" "info" # avoid a patch, just append to the dtsi file
+	cat <<- UBOOT_BOARD_DTSI_OTG >> arch/arm/dts/rk3588-friendlyelec-cm3588-nas-u-boot.dtsi
+		&u2phy0 { status = "okay"; };
+		&u2phy0_otg { status = "okay"; };
+		&usbdp_phy0 { status = "okay"; };
+		&usb_host0_xhci { dr_mode = "peripheral";  maximum-speed = "high-speed";  status = "okay"; };
+	UBOOT_BOARD_DTSI_OTG
+}
+
+function post_config_uboot_target__extra_configs_for_cm3588-nas_uboot() {
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
+	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
+	run_host_command_logged scripts/config --set-str CONFIG_PREBOOT "'led led-1 on; sleep 0.1; led led-1 off'" # double quotes required due to run_host_command_logged's quirks
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable EFI debugging commands" "info"
+	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
+	run_host_command_logged scripts/config --enable CMD_NVEDIT_EFI
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable more compression support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LZO
+	run_host_command_logged scripts/config --enable CONFIG_BZIP2
+	run_host_command_logged scripts/config --enable CONFIG_ZSTD
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable gpio LED support" "info"
+	run_host_command_logged scripts/config --enable CONFIG_LED
+	run_host_command_logged scripts/config --enable CONFIG_LED_GPIO
+
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable networking cmds" "info"
+	run_host_command_logged scripts/config --enable CONFIG_CMD_NFS
+	run_host_command_logged scripts/config --enable CONFIG_CMD_WGET
+	run_host_command_logged scripts/config --enable CONFIG_CMD_DNS
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP
+	run_host_command_logged scripts/config --enable CONFIG_PROT_TCP_SACK
+
+	# UMS, RockUSB, gadget stuff
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable UMS/RockUSB gadget" "info"
+	declare -a enable_configs=("CONFIG_CMD_USB_MASS_STORAGE" "CONFIG_USB_GADGET" "USB_GADGET_DOWNLOAD" "CONFIG_USB_FUNCTION_ROCKUSB" "CONFIG_USB_FUNCTION_ACM" "CONFIG_CMD_ROCKUSB" "CONFIG_CMD_USB_MASS_STORAGE")
+	for config in "${enable_configs[@]}"; do
+		run_host_command_logged scripts/config --enable "${config}"
+	done
+	# Auto-enabled by the above, force off...
+	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
+
+	return 0
 }
