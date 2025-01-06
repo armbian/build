@@ -55,6 +55,18 @@ function post_build_image__900_convert_to_abl_img() {
 				--pagesize 4096 \
 				-o ${DESTIMG}/${version}.boot_${dtb_name}.img
 		done
+		display_alert "Creatng abl kernel boot recovery image with dtb ${ABL_DTB_LIST[0]}" "${EXTENSION}" "info"
+		cat ${DESTIMG}/Image.gz ${new_rootfs_image_mount_dir}/usr/lib/linux-image-*/qcom/${dtb_name}.dtb > ${DESTIMG}/Image.gz-${dtb_name}
+		/usr/bin/mkbootimg \
+			--kernel ${DESTIMG}/Image.gz-${ABL_DTB_LIST[0]} \
+			--ramdisk ${new_rootfs_image_mount_dir}/boot/initrd.img-*-* \
+			--base 0x0 \
+			--second_offset 0x00f00000 \
+			--kernel_offset 0x8000 \
+			--ramdisk_offset 0x1000000 \
+			--tags_offset 0x100 \
+			--pagesize 4096 \
+			-o ${DESTIMG}/${version}.boot_recovery.img
 	fi
 
 	umount ${new_rootfs_image_mount_dir}
