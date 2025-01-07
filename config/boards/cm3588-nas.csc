@@ -65,6 +65,18 @@ function pre_config_uboot_target__cm3588_patch_uboot_dtsi_for_ums() {
 	UBOOT_BOARD_DTSI_OTG
 }
 
+# "rockchip-common: boot SD card first, then NVMe, then mmc"
+# include/configs/rockchip-common.h
+# -#define BOOT_TARGETS "mmc1 mmc0 nvme scsi usb pxe dhcp spi"
+# +#define BOOT_TARGETS "mmc0 nvme mmc1 scsi usb pxe dhcp spi"
+# On cm3588-nas, mmc0 is the eMMC, mmc1 is the SD card slot
+function pre_config_uboot_target__cm3588_patch_rockchip_common_boot_order() {
+	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "scsi" "usb" "pxe" "dhcp" "spi") # for future make-this-generic delight
+	display_alert "u-boot for ${BOARD}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
+	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
+	regular_git diff -u include/configs/rockchip-common.h || true
+}
+
 function post_config_uboot_target__extra_configs_for_cm3588-nas_uboot() {
 	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: enable preboot & flash user LED in preboot" "info"
 	run_host_command_logged scripts/config --enable CONFIG_USE_PREBOOT
