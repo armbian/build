@@ -43,7 +43,7 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2025.01-rc6"
+	declare -g BOOTBRANCH="tag:v2025.01"
 	declare -g BOOTPATCHDIR="v2025.01"
 	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
@@ -72,7 +72,7 @@ function pre_config_uboot_target__cm3588_patch_uboot_dtsi_for_ums() {
 # On cm3588-nas, mmc0 is the eMMC, mmc1 is the SD card slot
 function pre_config_uboot_target__cm3588_patch_rockchip_common_boot_order() {
 	declare -a rockchip_uboot_targets=("mmc1" "nvme" "mmc0" "scsi" "usb" "pxe" "dhcp" "spi") # for future make-this-generic delight
-	display_alert "u-boot for ${BOARD}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
 	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
 	regular_git diff -u include/configs/rockchip-common.h || true
 }
