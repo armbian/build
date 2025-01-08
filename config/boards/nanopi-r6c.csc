@@ -10,6 +10,7 @@ BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588s-nanopi-r6c.dtb"
 BOOT_SCENARIO="spl-blobs"
+declare -g UEFI_EDK2_BOARD_ID="nanopi-r6c" # This _only_ used for uefi-edk2-rk3588 extension
 
 function post_family_tweaks__nanopi_r6c_naming_audios() {
 	display_alert "$BOARD" "Renaming NanoPi R6C HDMI audio interface to human-readable form" "info"
