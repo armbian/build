@@ -245,26 +245,22 @@ function prepare_partitions() {
 		echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
 	fi
 	
-	declare -g LOOP
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
 		*called after all partitions are created, but not yet formatted*
 	POST_CREATE_PARTITIONS
 
 	# stage: mount image
 	# lock access to loop devices
-	if [[ -z $LOOP ]]; then
-		exec {FD}> /var/lock/armbian-debootstrap-losetup
-		flock -x $FD
+	exec {FD}> /var/lock/armbian-debootstrap-losetup
+	flock -x $FD
 
-		LOOP=$(losetup -f)
-		[[ -z $LOOP ]] && exit_with_error "Unable to find free loop device" 
-		display_alert "Allocated loop device" "LOOP=${LOOP}"
-		check_loop_device "${LOOP}"
-		losetup $LOOP ${SDCARD}.raw
+	declare -g LOOP
+	#--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
+	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	display_alert "Allocated loop device" "LOOP=${LOOP}"
 
-		# loop device was grabbed here, unlock
-		flock -u $FD
-	fi
+	# loop device was grabbed here, unlock
+	flock -u $FD
 
 	display_alert "Running partprobe" "${LOOP}" "debug"
 	run_host_command_logged partprobe "${LOOP}"
