@@ -88,7 +88,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-uart6-m1.dtbo \
 	rockchip-rk3588-uart7-m2.dtbo \
 	rockchip-rk3588-uart8-m1.dtbo \
-	rockchip-rk3588-rkvenc-overlay.dtso
+	rockchip-rk3588-rkvenc-overlay.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr
