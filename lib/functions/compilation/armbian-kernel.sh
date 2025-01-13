@@ -51,8 +51,12 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 	declare -a opts_y=(
 		"CONFIG_BPF_JIT" "CONFIG_BPF_JIT_DEFAULT_ON" "CONFIG_FTRACE_SYSCALLS" "CONFIG_PROBE_EVENTS_BTF_ARGS" "CONFIG_BPF_KPROBE_OVERRIDE"
 		"CONFIG_DEBUG_INFO" "CONFIG_DEBUG_INFO_DWARF5"
-		"CONFIG_DEBUG_INFO_BTF" "CONFIG_DEBUG_INFO_BTF_MODULES"
 	)
+
+	# We don't enable BTF on rk vendor kernel because it will cause some dkms module load with kernel panic
+	if [[ "${LINUXFAMILY}" != "rk35xx" ]]; then
+		opts_y+=("CONFIG_DEBUG_INFO_BTF")
+	fi
 
 	if [[ "${ARCH}" == "arm64" ]]; then
 		opts_y+=("CONFIG_ARM64_VA_BITS_48")
