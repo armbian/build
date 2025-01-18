@@ -331,9 +331,9 @@ function install_distribution_agnostic() {
 		desktop_postinstall
 	fi
 
-	# install armbian-config
+	# install armbian-config from GitHub repo added in distro-specific.sh
 	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		install_artifact_deb_chroot "armbian-config"
+		chroot_sdcard_apt_get_install_dry_run "armbian-config"
 	fi
 
 	# install armbian-zsh
