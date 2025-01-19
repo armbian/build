@@ -32,13 +32,13 @@ function post_family_tweaks__youyeetoo_r1_naming_udev_network_interfaces() {
 
 # Mainline U-Boot
 function post_family_config__youyeetoo_r1_use_mainline_uboot() {
-	display_alert "$BOARD" "Using mainline U-Boot for $BOARD / $BRANCH" "info"
+	display_alert "$BOARD" "Using mainline (next branch) U-Boot for $BOARD / $BRANCH" "info"
 
 	declare -g BOOTCONFIG="generic-rk3588_defconfig"             # Use generic defconfig which should boot all RK3588 boards
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
-	declare -g BOOTBRANCH="tag:v2024.10"
-	declare -g BOOTPATCHDIR="v2024.10"
+	declare -g BOOTBRANCH="tag:v2025.01"
+	declare -g BOOTPATCHDIR="v2025.01"
 	# Don't set BOOTDIR, allow shared U-Boot source directory for disk space efficiency
 
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
@@ -50,6 +50,18 @@ function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	function write_uboot_platform() {
 		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
 	}
+}
+
+# "rockchip-common: boot SD card first, then NVMe, then mmc"
+# include/configs/rockchip-common.h
+# -#define BOOT_TARGETS "mmc1 mmc0 nvme scsi usb pxe dhcp"
+# +#define BOOT_TARGETS "mmc0 nvme mmc1 scsi usb pxe dhcp"
+# On youyeetoo R1, mmc0 is the SD card, mmc1 is the eMMC slot
+function pre_config_uboot_target__youyeetoo_r1_patch_rockchip_common_boot_order() {
+	declare -a rockchip_uboot_targets=("mmc0" "nvme" "mmc1" "scsi" "usb" "pxe" "dhcp") # for future make-this-generic delight
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
+	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
+	regular_git diff -u include/configs/rockchip-common.h || true
 }
 
 function post_family_tweaks__youyeetoo_r1 {
