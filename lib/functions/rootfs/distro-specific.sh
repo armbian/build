@@ -185,11 +185,6 @@ function create_sources_list_and_deploy_repo_key() {
 		echo "deb ${SIGNED_BY}http://$([[ $BETA == yes ]] && echo "beta" || echo "apt").armbian.com $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 	fi
 
-	# add armbian-config repository
-	cat <<- EOF > "${basedir}"/etc/apt/sources.list.d/armbian-config.list
-	deb ${SIGNED_BY} https://github.armbian.com/configng stable main
-	EOF
-
 	# replace local package server if defined. Suitable for development
 	[[ -n $LOCAL_MIRROR ]] && echo "deb ${SIGNED_BY}http://$LOCAL_MIRROR $RELEASE ${components[*]}" > "${basedir}"/etc/apt/sources.list.d/armbian.list
 
