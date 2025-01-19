@@ -254,7 +254,7 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.13; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl8811cuver="commit:c39c174065badba68c42369834b7c8a91e9d0630" # Commit date: May 3, 2024 (please update when updating commit ref)
+		local rtl8811cuver="commit:3eacc28b721950b51b0249508cc31e6e54988a0c" # Commit date: May 3, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
