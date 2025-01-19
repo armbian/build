@@ -39,14 +39,11 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
-	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.1"
-		;;
 	current)
-		declare -g KERNEL_MAJOR_MINOR="6.6"
+		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.13"
 		;;
 
 esac
