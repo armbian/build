@@ -9,14 +9,16 @@
 
 function prepare_compilation_vars() {
 	#  moved from config: rpardini: ccache belongs in compilation, not config. I think.
-	if [[ $USE_CCACHE != no ]]; then
-		CCACHE=ccache
-		export PATH="/usr/lib/ccache:$PATH" # this actually needs export'ing
+	if [[ "${USE_CCACHE:-"no"}" == "yes" ]]; then
+		display_alert "Using ccache is not recommended" "please do not USE_CCACHE=yes - it makes builds slower, does a lot of I/O, and has very few benefits" "warn"
+		declare -g -r CCACHE=ccache
+		export PATH="/usr/lib/ccache:$PATH" # this actually needs export'ing # @TODO but is it needed at all? we add $CCACHE to invocations, it shouldn't be.
 		# private ccache directory to avoid permission issues when using build script with "sudo"
 		# see https://ccache.samba.org/manual.html#_sharing_a_cache for alternative solution
 		[[ $PRIVATE_CCACHE == yes ]] && export CCACHE_DIR=$SRC/cache/ccache # actual export
+		declare -g -r USE_CCACHE                                            # make readonly to avoid disappointments later, as value is burned-in by now
 	else
-		CCACHE=""
+		declare -g -r CCACHE=""
 	fi
 
 	# moved from config: this does not belong in configuration. it's a compilation thing.
