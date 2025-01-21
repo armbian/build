@@ -9,7 +9,9 @@
 
 function prepare_compilation_vars() {
 	#  moved from config: rpardini: ccache belongs in compilation, not config. I think.
-	if [[ $USE_CCACHE != no ]]; then
+	if [[ $USE_CCACHE == yes || ${PRIVATE_CCACHE} == yes ]]; then
+		display_alert "using CCACHE" "USE_CCACHE or PRIVATE_CCACHE is set to yes" "warn"
+
 		CCACHE=ccache
 		export PATH="/usr/lib/ccache:$PATH" # this actually needs export'ing
 		# private ccache directory to avoid permission issues when using build script with "sudo"
