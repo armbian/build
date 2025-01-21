@@ -38,7 +38,7 @@ driver_rtl8189ES() {
 
 	# Wireless drivers for Realtek 8189ES chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.13; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
 		local rtl8189esver='commit:master' # Commit date: Dec 29, 2024 (please update when updating commit ref)
@@ -84,7 +84,7 @@ driver_rtl8189FS() {
 
 	# Wireless drivers for Realtek 8189FS chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.13; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
 		local rtl8189fsver='commit:94cc959d56c1425fbca4f6e49e949cf58ec5dc8d' # Commit date: May 19, 2024 (please update when updating commit ref)
@@ -130,7 +130,7 @@ driver_rtl8192EU() {
 
 	# Wireless drivers for Realtek 8192EU chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.13; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
 		local rtl8192euver='commit:b9f21a6ff209edc220b2fc4ca610eb54595f218d' # Commit date: Dec 23, 2024 (please update when updating commit ref)
@@ -172,10 +172,10 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 
 	# Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.13; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:v5.6.4.2)
-		local rtl8812auver="commit:b44d288f423ede0fc7cdbf92d07a7772cd727de4" # Commit date: May 10, 2024 (please update when updating commit ref)
+		local rtl8812auver="commit:5c20308822e5de5809d097ff600492ab4b25f5ab" # Commit date: Jan 21, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
@@ -251,10 +251,10 @@ driver_xradio_xr819() {
 driver_rtl8811CU_rtl8821C() {
 	# Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets
 
-	if linux-version compare "${version}" ge 3.14 && linux-version compare "${version}" lt 6.13; then
+	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl8811cuver="commit:3eacc28b721950b51b0249508cc31e6e54988a0c" # Commit date: May 3, 2024 (please update when updating commit ref)
+		local rtl8811cuver="commit:d381f233553bfd958d15add256f077159f7d846e" # Commit date: Jan 21, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -293,10 +293,10 @@ driver_rtl88x2bu() {
 
 	# Wireless drivers for Realtek 88x2bu chipsets
 
-	if linux-version compare "${version}" ge 5.0 && linux-version compare "${version}" lt 6.13; then
+	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl88x2buver="commit:139e4fc2eeea7a140239d34c73b6bf4f69c1f74d" # Commit date: May 11, 2024 (please update when updating commit ref)
+		local rtl88x2buver="commit:d3a2ea9f7c6c33a43599a331e8639794fb55fc4a" # Commit date: Jan 21, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
