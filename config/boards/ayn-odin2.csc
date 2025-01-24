@@ -19,7 +19,7 @@ declare -g DESKTOP_AUTOLOGIN="yes"
 function post_family_config_branch_sm8550__edk2_kernel() {
 	declare -g KERNELSOURCE='https://github.com/edk2-porting/linux-next'
 	declare -g KERNEL_MAJOR_MINOR="6.7" # Major and minor versions of this kernel.
-	declare -g KERNELBRANCH="branch:integration/ayn-odin2"
+	declare -g KERNELBRANCH="branch:ci/odin2/stable"
 	declare -g LINUXCONFIG="linux-${ARCH}-${BRANCH}" # for this board: linux-arm64-sm8550
 	display_alert "Setting up kernel ${KERNEL_MAJOR_MINOR} for" "${BOARD}" "info"
 }
@@ -45,10 +45,6 @@ function post_family_tweaks__enable_services() {
 	# We need unudhcpd from armbian repo, so enable it
 	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled "${SDCARD}"/etc/apt/sources.list.d/armbian.list
 
-	# Add zink env
-	echo '__GLX_VENDOR_LIBRARY_NAME=mesa' | tee -a "${SDCARD}"/etc/environment
-	echo 'MESA_LOADER_DRIVER_OVERRIDE=zink' | tee -a "${SDCARD}"/etc/environment
-	echo 'GALLIUM_DRIVER=zink' | tee -a "${SDCARD}"/etc/environment
 	# Add Gamepad udev rule
 	echo 'SUBSYSTEM=="input", ATTRS{name}=="Ayn Odin2 Gamepad", MODE="0666", ENV{ID_INPUT_MOUSE}="0", ENV{ID_INPUT_JOYSTICK}="1"' > "${SDCARD}"/etc/udev/rules.d/99-ignore-gamepad.rules
 	# No driver support for suspend
