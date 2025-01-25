@@ -1,0 +1,86 @@
+From 250f94fef62c8315df28aa7220c32f8e88e35c02 Mon Sep 17 00:00:00 2001
+From: Dmitry Baryshkov <dmitry.baryshkov@linaro.org>
+Date: Fri, 6 Dec 2024 11:43:04 +0200
+Subject: [PATCH 016/126] drm/connector: add mutex to protect ELD from
+ concurrent access
+
+The connector->eld is accessed by the .get_eld() callback. This access
+can collide with the drm_edid_to_eld() updating the data at the same
+time. Add drm_connector.eld_mutex to protect the data from concurrenct
+access. Individual drivers are not updated (to reduce possible issues
+while applying the patch), maintainers are to find a best suitable way
+to lock that mutex while accessing the ELD data.
+
+Reviewed-by: Maxime Ripard <mripard@kernel.org>
+Link: https://patchwork.freedesktop.org/patch/msgid/20241206-drm-connector-eld-mutex-v2-1-c9bce1ee8bea@linaro.org
+Signed-off-by: Dmitry Baryshkov <dmitry.baryshkov@linaro.org>
+---
+ drivers/gpu/drm/drm_connector.c | 1 +
+ drivers/gpu/drm/drm_edid.c      | 6 ++++++
+ include/drm/drm_connector.h     | 5 ++++-
+ 3 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/drm_connector.c b/drivers/gpu/drm/drm_connector.c
+index fc35f47e2..bbdaaf702 100644
+--- a/drivers/gpu/drm/drm_connector.c
++++ b/drivers/gpu/drm/drm_connector.c
+@@ -277,6 +277,7 @@ static int __drm_connector_init(struct drm_device *dev,
+ 	INIT_LIST_HEAD(&connector->probed_modes);
+ 	INIT_LIST_HEAD(&connector->modes);
+ 	mutex_init(&connector->mutex);
++	mutex_init(&connector->eld_mutex);
+ 	mutex_init(&connector->edid_override_mutex);
+ 	mutex_init(&connector->hdmi.infoframes.lock);
+ 	connector->edid_blob_ptr = NULL;
+diff --git a/drivers/gpu/drm/drm_edid.c b/drivers/gpu/drm/drm_edid.c
+index 855beafb7..13bc4c290 100644
+--- a/drivers/gpu/drm/drm_edid.c
++++ b/drivers/gpu/drm/drm_edid.c
+@@ -5605,7 +5605,9 @@ EXPORT_SYMBOL(drm_edid_get_monitor_name);
+ 
+ static void clear_eld(struct drm_connector *connector)
+ {
++	mutex_lock(&connector->eld_mutex);
+ 	memset(connector->eld, 0, sizeof(connector->eld));
++	mutex_unlock(&connector->eld_mutex);
+ 
+ 	connector->latency_present[0] = false;
+ 	connector->latency_present[1] = false;
+@@ -5657,6 +5659,8 @@ static void drm_edid_to_eld(struct drm_connector *connector,
+ 	if (!drm_edid)
+ 		return;
+ 
++	mutex_lock(&connector->eld_mutex);
++
+ 	mnl = get_monitor_name(drm_edid, &eld[DRM_ELD_MONITOR_NAME_STRING]);
+ 	drm_dbg_kms(connector->dev, "[CONNECTOR:%d:%s] ELD monitor %s\n",
+ 		    connector->base.id, connector->name,
+@@ -5717,6 +5721,8 @@ static void drm_edid_to_eld(struct drm_connector *connector,
+ 	drm_dbg_kms(connector->dev, "[CONNECTOR:%d:%s] ELD size %d, SAD count %d\n",
+ 		    connector->base.id, connector->name,
+ 		    drm_eld_size(eld), total_sad_count);
++
++	mutex_unlock(&connector->eld_mutex);
+ }
+ 
+ static int _drm_edid_to_sad(const struct drm_edid *drm_edid,
+diff --git a/include/drm/drm_connector.h b/include/drm/drm_connector.h
+index e3fa43291..1e2b25e20 100644
+--- a/include/drm/drm_connector.h
++++ b/include/drm/drm_connector.h
+@@ -2001,8 +2001,11 @@ struct drm_connector {
+ 	struct drm_encoder *encoder;
+ 
+ #define MAX_ELD_BYTES	128
+-	/** @eld: EDID-like data, if present */
++	/** @eld: EDID-like data, if present, protected by @eld_mutex */
+ 	uint8_t eld[MAX_ELD_BYTES];
++	/** @eld_mutex: protection for concurrenct access to @eld */
++	struct mutex eld_mutex;
++
+ 	/** @latency_present: AV delay info from ELD, if found */
+ 	bool latency_present[2];
+ 	/**
+-- 
+2.48.1
+
