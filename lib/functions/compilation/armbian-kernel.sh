@@ -11,6 +11,20 @@
 # Please note: Manually changing options doesn't check the validity of the .config file. This is done at next make time. Check for warnings in build log.
 
 # This is an internal/core extension.
+function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.13; then
+		kernel_config_modifying_hashes+=("CONFIG_CFG80211=m" "CONFIG_MAC80211=m" "CONFIG_MAC80211_MESH=y" "CONFIG_CFG80211_WEXT=y")
+		if [[ -f .config ]]; then
+			# Required by many wifi drivers; otherwise "error: 'struct net_device' has no member named 'ieee80211_ptr'"
+			# In 6.13 something changed ref CONFIG_MAC80211 and CONFIG_CFG80211; enable both to preserve wireless drivers
+			kernel_config_set_m CONFIG_CFG80211
+			kernel_config_set_m CONFIG_MAC80211
+			kernel_config_set_y CONFIG_MAC80211_MESH
+			kernel_config_set_y CONFIG_CFG80211_WEXT
+		fi
+	fi
+}
+
 function armbian_kernel_config__disable_various_options() {
 	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
 	if [[ -f .config ]]; then
@@ -32,12 +46,64 @@ function armbian_kernel_config__disable_various_options() {
 		fi
 
 		kernel_config_set_n CONFIG_SECURITY_LOCKDOWN_LSM
-		kernel_config_set_n CONFIG_MODULE_SIG # No use signing modules
+		kernel_config_set_n CONFIG_MODULE_SIG     # No use signing modules
+		kernel_config_set_n CONFIG_MODULE_SIG_ALL # No use auto-signing modules
+		kernel_config_set_n MODULE_SIG_FORCE      # No forcing of module sign verification
+		kernel_config_set_n IMA_APPRAISE_MODSIG   # No appraisal module-style either
 
 		# DONE: Disable: version shenanigans
 		kernel_config_set_n CONFIG_LOCALVERSION_AUTO      # This causes a mismatch between what Armbian wants and what make produces.
 		kernel_config_set_string CONFIG_LOCALVERSION '""' # Must be empty; make is later invoked with LOCALVERSION and it adds up
 	fi
+}
+
+function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
+	display_alert "Enabling eBPF and BTF info" "for fully BTF & CO-RE enabled kernel" "info"
+
+	declare -A opts_val=()
+	declare -a opts_n=("CONFIG_DEBUG_INFO_NONE")
+	declare -a opts_y=(
+		"CONFIG_BPF_JIT" "CONFIG_BPF_JIT_DEFAULT_ON" "CONFIG_FTRACE_SYSCALLS" "CONFIG_PROBE_EVENTS_BTF_ARGS" "CONFIG_BPF_KPROBE_OVERRIDE"
+		"CONFIG_DEBUG_INFO" "CONFIG_DEBUG_INFO_DWARF5"
+		"CONFIG_DEBUG_INFO_BTF" "CONFIG_DEBUG_INFO_BTF_MODULES"
+	)
+
+	if [[ "${ARCH}" == "arm64" ]]; then
+		opts_y+=("CONFIG_ARM64_VA_BITS_48")
+		opts_val["CONFIG_ARM64_PA_BITS"]="48"
+	fi
+
+	declare opt_y opt_val opt_n
+	for opt_n in "${opts_n[@]}"; do
+		kernel_config_modifying_hashes+=("${opt_n}=n")
+	done
+
+	for opt_y in "${opts_y[@]}"; do
+		kernel_config_modifying_hashes+=("${opt_y}=y")
+	done
+
+	for opt_val in "${!opts_val[@]}"; do
+		kernel_config_modifying_hashes+=("${opt_val}=${opts_val[$opt_val]}")
+	done
+
+	if [[ -f .config ]]; then
+		for opt_n in "${opts_n[@]}"; do
+			display_alert "Disabling kernel opt" "${opt_n}=n" "debug"
+			kernel_config_set_n "${opt_n}"
+		done
+
+		for opt_y in "${opts_y[@]}"; do
+			display_alert "Enabling kernel opt" "${opt_y}=y" "debug"
+			kernel_config_set_y "${opt_y}"
+		done
+
+		for opt_val in "${!opts_val[@]}"; do
+			display_alert "Setting kernel opt" "${opt_val}=${opts_val[$opt_val]}" "debug"
+			kernel_config_set_val "${opt_val}" "${opts_val[$opt_val]}"
+		done
+	fi
+
+	return 0
 }
 
 function armbian_kernel_config__enable_config_access_in_live_system() {

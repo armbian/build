@@ -34,6 +34,12 @@ function cli_docker_run() {
 	# It's gonna be picked up by export_ansi_logs() and included in the final log, if it exists.
 	declare -g GIT_INFO_ANSI
 	GIT_INFO_ANSI="$(prepare_ansi_git_info_log_header)"
+	# GIT_INFO_ANSI can grow to be quite large if there are many changed files.
+	# If it's too big, it will cause "argument list too long" errors when launching docker.
+	# Limit it to 1024 characters, otherwise replace it with a simple message.
+	if [[ ${#GIT_INFO_ANSI} -gt 1024 ]]; then
+		GIT_INFO_ANSI="Armbian: too many git changes to list."
+	fi
 
 	# Same stuff for BUILD_REPOSITORY_URL and BUILD_REPOSITORY_COMMIT.
 	if [[ -d "${SRC}/.git" && "${CONFIG_DEFS_ONLY}" != "yes" ]]; then # don't waste time if only gathering config defs

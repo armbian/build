@@ -444,10 +444,13 @@ function kernel_package_callback_linux_headers() {
 	# Understand: I'm sending the logs of this to the bitbucket ON PURPOSE: "clean" tries to use clang, ALSA, etc, which are not available.
 	#             The logs produced during this step throw off developers casually looking at the logs.
 	#             Important: if the steps _fail_ here, you'll have to enable DEBUG=yes to see what's going on.
+	#
+	# In order for the cleanup to be correct  for tools, we need to pass the VMLINUX_BTF variable,
+	# which contains the real path to the newly compiled vmlinux file.
 	declare make_bitbucket="&> /dev/null"
 	[[ "${DEBUG}" == "yes" ]] && make_bitbucket=""
 	run_host_command_logged cd "${headers_target_dir}" "&&" make "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}"
-	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" clean "${make_bitbucket}"
+	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" "VMLINUX_BTF=${kernel_work_dir}/vmlinux" clean "${make_bitbucket}"
 
 	# Trim down on the tools dir a bit after cleaning.
 	rm -rf "${headers_target_dir}/tools/perf" "${headers_target_dir}/tools/testing"
@@ -515,12 +518,17 @@ function kernel_package_callback_linux_headers() {
 		cat <<- EOT_POSTINST
 			cd "/usr/src/linux-headers-${kernel_version_family}"
 			NCPU=\$(grep -c 'processor' /proc/cpuinfo)
-			echo "Compiling kernel-headers tools (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
-			yes "" | make ARCH="${SRC_ARCH}" oldconfig
+			echo "Configuring kernel-headers (${kernel_version_family}) - please wait ..."
+			make ARCH="${SRC_ARCH}" olddefconfig
+
+			echo "Compiling kernel-headers scripts (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
 			make ARCH="${SRC_ARCH}" -j\$NCPU scripts
+
+			echo "Compiling kernel-headers scripts/mod (${kernel_version_family}) using \$NCPU CPUs - please wait ..."
 			make ARCH="${SRC_ARCH}" -j\$NCPU M=scripts/mod/
+
 			# make ARCH="${SRC_ARCH}" -j\$NCPU modules_prepare # depends on too much other stuff.
-			echo "Done compiling kernel-headers tools (${kernel_version_family})."
+			echo "Done compiling kernel-headers (${kernel_version_family})."
 		EOT_POSTINST
 
 		if [[ "${ARCH}" == "amd64" ]]; then # This really only works on x86/amd64; @TODO revisit later

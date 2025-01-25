@@ -13,8 +13,8 @@ declare -g SYTERKIT_BOARD_ID="longanpi-4b" # This _only_ used for syterkit-allwi
 
 function post_family_tweaks__longanpi-4b() {
 	display_alert "Applying boot blobs"
-	cp -v "$SRC/packages/blobs/sunxi/sun50iw3/bl31.bin" "$SDCARD/boot/bl31.bin"
-	cp -v "$SRC/packages/blobs/sunxi/sun50iw3/scp.bin" "$SDCARD/boot/scp.bin"
+	cp -v "$SRC/packages/blobs/sunxi/sun55iw3/bl31.bin" "$SDCARD/boot/bl31.bin"
+	cp -v "$SRC/packages/blobs/sunxi/sun55iw3/scp.bin" "$SDCARD/boot/scp.bin"
 
 	display_alert "Applying wifi firmware"
 	pushd "$SDCARD/lib/firmware"

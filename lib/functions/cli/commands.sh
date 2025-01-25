@@ -83,7 +83,6 @@ function armbian_register_commands() {
 
 		["firmware"]="artifact"
 		["firmware-full"]="artifact"
-		["armbian-config"]="artifact"
 		["armbian-zsh"]="artifact"
 		["armbian-plymouth-theme"]="artifact"
 		["fake-ubuntu-advantage-tools"]="artifact"
@@ -144,7 +143,6 @@ function armbian_register_commands() {
 
 		["firmware"]="WHAT='firmware' ${common_cli_artifact_vars}"
 		["firmware-full"]="WHAT='full_firmware' ${common_cli_artifact_vars}"
-		["armbian-config"]="WHAT='armbian-config' ${common_cli_artifact_vars}"
 		["armbian-zsh"]="WHAT='armbian-zsh' ${common_cli_artifact_vars}"
 		["armbian-plymouth-theme"]="WHAT='armbian-plymouth-theme' ${common_cli_artifact_vars}"
 		["fake-ubuntu-advantage-tools"]="WHAT='fake_ubuntu_advantage_tools' ${common_cli_artifact_vars}"

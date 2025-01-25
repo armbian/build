@@ -31,6 +31,11 @@ function patch_uboot_target() {
 	display_alert "${uboot_prefix} Checking out to clean sources SHA1 ${uboot_git_revision}" "{$BOOTSOURCEDIR} for ${target_make}"
 	git checkout -f -q "${uboot_git_revision}"
 
+	# remove all git untracked files; echo their names to screen
+	# this throws away the baby with the bathwater; rebuilds will be slow. but the risk of shipping wrong binaries is too high.
+	display_alert "${uboot_prefix} Cleaning u-boot tree" "${BOOTSOURCEDIR} for '${target_make}'"
+	regular_git clean -xfdq
+
 	maybe_make_clean_uboot
 
 	# Python patching for u-boot!
@@ -47,7 +52,17 @@ function patch_uboot_target() {
 function compile_uboot_target() {
 	: "${artifact_version:?artifact_version is not set}"
 
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "${uboot_prefix}Listing contents of u-boot directory" "'${version}' '${target_make}' before patching" "debug"
+		run_host_command_logged "ls -laht"
+	fi
+
 	patch_uboot_target
+
+	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
+		display_alert "${uboot_prefix}Listing contents of u-boot directory" "'${version}' '${target_make}' after patching" "debug"
+		run_host_command_logged "ls -laht"
+	fi
 
 	if [[ $CREATE_PATCHES == yes ]]; then
 		return 0
@@ -83,7 +98,7 @@ function compile_uboot_target() {
 	[[ -f .config ]] && sed -i "s/CONFIG_LOCALVERSION=\"\"/CONFIG_LOCALVERSION=\"-armbian-${artifact_version}\"/g" .config
 	[[ -f .config ]] && sed -i 's/CONFIG_LOCALVERSION_AUTO=.*/# CONFIG_LOCALVERSION_AUTO is not set/g' .config
 
-	# for modern (? 2018-2019?) kernel and non spi targets
+	# for modern (? 2018-2019?) kernel and non spi targets @TODO: this does not belong here
 	if [[ ${BOOTBRANCH} =~ ^tag:v201[8-9](.*) && ${target} != "spi" && -f .config ]]; then
 		display_alert "Hacking ENV stuff in u-boot config 2018-2019" "for ${target}" "debug"
 		sed -i 's/^.*CONFIG_ENV_IS_IN_FAT.*/# CONFIG_ENV_IS_IN_FAT is not set/g' .config
@@ -158,7 +173,7 @@ function compile_uboot_target() {
 
 	fi
 
-	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables.
+	# cflags will be passed both as CFLAGS, KCFLAGS, and both as make params and as env variables. (some vendor u-boot's are cuckoo)
 	# boards/families/extensions can customize this via the hook below
 	local -a uboot_cflags_array=(
 		"-fdiagnostics-color=always" # color messages
@@ -233,6 +248,11 @@ function compile_uboot_target() {
 
 	display_alert "${uboot_prefix}built u-boot target" "${version} in $((SECONDS - ts)) seconds" "info"
 
+	# Save a defconfig, as that will be included as reference in the .deb package
+	# Do not fail here; some very (very!) old u-boots like 2011 do not have 'savedefconfig'
+	run_host_command_logged "env" "-i" "${uboot_make_envs[@]}" pipetty make savedefconfig "$CTHREADS" "${cross_compile}" ||
+		display_alert "${uboot_prefix}Failed to save defconfig" "${version} ${target_make}" "warn"
+
 	if [[ $(type -t uboot_custom_postprocess) == function ]]; then
 		display_alert "${uboot_prefix}Postprocessing u-boot" "${version} ${target_make}"
 		uboot_custom_postprocess
@@ -244,7 +264,35 @@ function compile_uboot_target() {
 		For hacking at the produced binaries after u-boot is compiled and post-processed.
 	POST_UBOOT_CUSTOM_POSTPROCESS
 
+	declare -a target_dst_files=()                           # to be filled by deploy_built_uboot_bins_for_one_target_to_packaging_area
 	deploy_built_uboot_bins_for_one_target_to_packaging_area # copy according to the target_files
+
+	# Include metadata about the build, for reference; use the target_counter as part of filename to avoid overwriting
+	# .config and defconfig go to ${uboottempdir}/usr/lib/${uboot_name}/u-boot-config-target-${target_counter}
+	# ${uboottempdir}/usr/lib/${uboot_name}/u-boot-metadata-target-${uboot_target_counter}.sh has general metadata about the target
+	cat <<- UBOOT_TARGET_METADATA_SH > "${uboottempdir}/usr/lib/${uboot_name}/u-boot-metadata-target-${uboot_target_counter}.sh"
+		declare -a UBOOT_TARGET_BINS=(${target_dst_files[@]@Q})
+		declare UBOOT_TARGET_MAKE=${target_make@Q}
+	UBOOT_TARGET_METADATA_SH
+
+	if [[ -f .config ]]; then # Not all u-boots have .config; some very old did boards.cfg or whatever. Ignore in this case
+		run_host_command_logged cp -v .config "${uboottempdir}/usr/lib/${uboot_name}/u-boot-config-target-${uboot_target_counter}"
+		cat <<- UBOOT_TARGET_METADATA_SH >> "${uboottempdir}/usr/lib/${uboot_name}/u-boot-metadata-target-${uboot_target_counter}.sh"
+			declare UBOOT_TARGET_CONFIG="u-boot-config-target-${uboot_target_counter}"
+		UBOOT_TARGET_METADATA_SH
+	fi
+
+	if [[ -f defconfig ]]; then # Not all u-boots are capable of savedefconfig, and thus defconfig will not be available
+		run_host_command_logged cp -v defconfig "${uboottempdir}/usr/lib/${uboot_name}/u-boot-defconfig-target-${uboot_target_counter}"
+		cat <<- UBOOT_TARGET_METADATA_SH >> "${uboottempdir}/usr/lib/${uboot_name}/u-boot-metadata-target-${uboot_target_counter}.sh"
+			declare UBOOT_TARGET_DEFCONFIG="u-boot-defconfig-target-${uboot_target_counter}"
+		UBOOT_TARGET_METADATA_SH
+	fi
+
+	if [[ $DEBUG == yes ]]; then
+		display_alert "${uboot_prefix}Showing u-boot metadata for target" "${version} ${target_make}" "debug"
+		run_tool_batcat --file-name "/usr/lib/${uboot_name}/u-boot-metadata-target-${uboot_target_counter}.sh" "${uboottempdir}/usr/lib/${uboot_name}/u-boot-metadata-target-${uboot_target_counter}.sh"
+	fi
 
 	display_alert "${uboot_prefix}Done with u-boot target" "${version} ${target_make}"
 	return 0
@@ -253,9 +301,10 @@ function compile_uboot_target() {
 function loop_over_uboot_targets_and_do() {
 	# Try very hard, to fault even, to avoid using subshells while reading a newline-delimited string.
 	# Sorry for the juggling with IFS.
-	local _old_ifs="${IFS}" _new_ifs=$'\n' uboot_target_counter=1
+	declare _old_ifs="${IFS}" _new_ifs=$'\n'
 	IFS="${_new_ifs}" # split on newlines only
 	display_alert "Looping over u-boot targets" "'${UBOOT_TARGET_MAP}'" "debug"
+	declare -i uboot_target_counter=1
 
 	# save the current state of nullglob into a variable; don't fail
 	declare _old_nullglob
@@ -294,27 +343,31 @@ function loop_over_uboot_targets_and_do() {
 	# reset nullglob to _old_nullglob
 	eval "${_old_nullglob}"
 
+	uboot_target_counter=$((uboot_target_counter - 1))           # decrement, as we incremented after the last target
+	declare -g -i uboot_target_counter="${uboot_target_counter}" # set global, for metadata ("how many targets?")
+
 	return 0
 }
 
 function deploy_built_uboot_bins_for_one_target_to_packaging_area() {
 	display_alert "${uboot_prefix}Preparing u-boot targets packaging" "${version} ${target_make}"
 	# copy files to build directory
+	declare f
 	for f in $target_files; do
-		local f_src
+		declare f_src f_dst
 		f_src=$(cut -d':' -f1 <<< "${f}")
 		if [[ $f == *:* ]]; then
-			local f_dst
 			f_dst=$(cut -d':' -f2 <<< "${f}")
 		else
-			local f_dst
 			f_dst=$(basename "${f_src}")
 		fi
 		display_alert "${uboot_prefix}Deploying u-boot binary target" "${version} ${target_make} :: ${f_dst}"
 		[[ ! -f $f_src ]] && exit_with_error "U-boot artifact not found" "$(basename "${f_src}")"
 		run_host_command_logged cp -v "${f_src}" "${uboottempdir}/usr/lib/${uboot_name}/${f_dst}"
 		#display_alert "Done with binary target" "${version} ${target_make} :: ${f_dst}"
+		target_dst_files+=("${f_dst}") # for metadata
 	done
+	return 0
 }
 
 function compile_uboot() {
@@ -428,6 +481,29 @@ function compile_uboot() {
 		run_tool_batcat --file-name "usr/lib/u-boot/platform_install.sh" "${uboottempdir}/usr/lib/u-boot/platform_install.sh"
 	fi
 
+	# Write general metadata. This is intended to be used board-side, and allows some better gui and reuse.
+	# Ensure that all variables used here are hashed in the artifact-uboot.sh during version calculation.
+	cat <<- UBOOT_GENERAL_METADATA_SH > "${uboottempdir}/usr/lib/${uboot_name}/u-boot-metadata.sh"
+		declare -i UBOOT_NUM_TARGETS=${uboot_target_counter}
+		declare UBOOT_BIN_DIR="/usr/lib/${uboot_name}"
+		declare UBOOT_VERSION="${version}"
+		declare UBOOT_ARTIFACT_VERSION="${artifact_version}"
+		declare UBOOT_GIT_REVISION="${hash}"
+		declare UBOOT_GIT_SOURCE="${BOOTSOURCE}"
+		declare UBOOT_GIT_BRANCH="${BOOTBRANCH}"
+		declare UBOOT_GIT_PATCHDIR="${BOOTPATCHDIR}"
+		declare UBOOT_PARTITION_TYPE="${IMAGE_PARTITION_TABLE}"
+		declare UBOOT_KERNEL_DTB="${BOOT_FDT_FILE}"
+		declare UBOOT_KERNEL_SERIALCON="${SERIALCON}"
+		declare UBOOT_EXTLINUX_PREFER="${SRC_EXTLINUX:-"no"}"
+		declare UBOOT_EXTLINUX_CMDLINE="${SRC_CMDLINE}"
+	UBOOT_GENERAL_METADATA_SH
+
+	if [[ $DEBUG == yes ]]; then
+		display_alert "${uboot_prefix}Showing u-boot metadata for target" "${version} ${target_make}" "debug"
+		run_tool_batcat --file-name "/usr/lib/${uboot_name}/u-boot-metadata.sh" "${uboottempdir}/usr/lib/${uboot_name}/u-boot-metadata.sh"
+	fi
+
 	display_alert "Running shellcheck" "usr/lib/u-boot/platform_install.sh" "info"
 	shellcheck_debian_control_scripts "${uboottempdir}/usr/lib/u-boot/platform_install.sh"
 
@@ -449,7 +525,7 @@ function compile_uboot() {
 	EOF
 
 	# copy license files, config, etc.
-	[[ -f .config && -n $BOOTCONFIG ]] && run_host_command_logged cp .config "$uboottempdir/usr/lib/u-boot/${BOOTCONFIG}"
+	[[ -f .config && -n $BOOTCONFIG ]] && run_host_command_logged cp .config "$uboottempdir/usr/lib/u-boot/${BOOTCONFIG}" # legacy and @TODO should be removed as it has only the last target; we now have per-target configs and defconfigs
 	[[ -f COPYING ]] && run_host_command_logged cp COPYING "$uboottempdir/usr/lib/u-boot/LICENSE"
 	[[ -f Licenses/README ]] && run_host_command_logged cp Licenses/README "$uboottempdir/usr/lib/u-boot/LICENSE"
 	[[ -n $atftempdir && -f $atftempdir/license.md ]] && run_host_command_logged cp "${atftempdir}/license.md" "$uboottempdir/usr/lib/u-boot/LICENSE.atf"

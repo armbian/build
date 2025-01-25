@@ -117,80 +117,7 @@ function prepare_host_noninteractive() {
 		download_external_toolchains # Mostly deprecated, since SKIP_EXTERNAL_TOOLCHAINS=yes is the default
 	fi
 
-	# NEEDS_BINFMT=yes is set by default build and rootfs artifact build.
-	# if we're building an image, not only packages/artifacts...
-	# ... and the host arch does not match the target arch ...
-	# ... we then require binfmt_misc to be enabled.
-	# "enable arm binary format so that the cross-architecture chroot environment will work"
-	if [[ "${NEEDS_BINFMT:-"no"}" == "yes" ]]; then
-
-		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
-			display_alert "Debugging binfmt - early" "/proc/sys/fs/binfmt_misc/" "debug"
-			run_host_command_logged ls -la /proc/sys/fs/binfmt_misc/ || true
-		fi
-
-		if dpkg-architecture -e "${ARCH}"; then
-			display_alert "Native arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "cachehit"
-		else
-			local failed_binfmt_modprobe=0
-
-			display_alert "Cross arch build" "target ${ARCH} on host $(dpkg --print-architecture)" "debug"
-
-			# Check if binfmt_misc is loaded; if not, try to load it, but don't fail: it might be built in.
-			if grep -q "^binfmt_misc" /proc/modules; then
-				display_alert "binfmt_misc is already loaded" "binfmt_misc already loaded" "debug"
-			else
-				display_alert "binfmt_misc is not loaded" "trying to load binfmt_misc" "debug"
-
-				# try to modprobe. if it fails, emit a warning later, but not here.
-				# this is for the in-container case, where the host already has the module, but won't let the container know about it.
-				modprobe -q binfmt_misc || failed_binfmt_modprobe=1
-			fi
-
-			# Now, /proc/sys/fs/binfmt_misc/ has to be mounted. Mount, or fail with a message
-			if mountpoint -q /proc/sys/fs/binfmt_misc/; then
-				display_alert "binfmt_misc is already mounted" "binfmt_misc already mounted" "debug"
-			else
-				display_alert "binfmt_misc is not mounted" "trying to mount binfmt_misc" "debug"
-				mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc/ || {
-					if [[ $failed_binfmt_modprobe == 1 ]]; then
-						display_alert "Failed to load binfmt_misc module" "modprobe binfmt_misc failed" "wrn"
-					fi
-					display_alert "Check your HOST kernel" "CONFIG_BINFMT_MISC=m is required in host kernel" "warn"
-					display_alert "Failed to mount" "binfmt_misc /proc/sys/fs/binfmt_misc/" "err"
-					exit_with_error "Failed to mount binfmt_misc"
-				}
-				display_alert "binfmt_misc mounted" "binfmt_misc mounted" "debug"
-			fi
-
-			declare host_arch
-			host_arch="$(arch)"
-			local -a wanted_arches=("arm" "aarch64" "x86_64" "riscv64")
-			display_alert "Preparing binfmts for arch" "binfmts: host '${host_arch}', wanted arches '${wanted_arches[*]}'" "debug"
-			declare wanted_arch
-			for wanted_arch in "${wanted_arches[@]}"; do
-				if [[ "${host_arch}" != "${wanted_arch}" ]]; then
-					if [[ ! -e "/proc/sys/fs/binfmt_misc/qemu-${wanted_arch}" ]]; then
-						display_alert "Updating binfmts" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-						if [[ "${host_arch}" == "aarch64" && "${wanted_arch}" == "arm" ]]; then
-							display_alert "Trying to update binfmts - aarch64 (sometimes) does 32-bit sans emulation" "update-binfmts --enable qemu-${wanted_arch}" "debug"
-							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" "&>" "/dev/null" "||" "true" # don't fail nor produce output, which can be misleading.
-						else
-							run_host_command_logged update-binfmts --enable "qemu-${wanted_arch}" || display_alert "Failed to update binfmts" "update-binfmts --enable qemu-${wanted_arch}" "err" # log & continue on failure
-						fi
-					fi
-				fi
-			done
-
-			# @TODO: we could create a tiny loop here to test if the binfmt_misc is working, but this is before deps are installed.
-		fi
-
-		if [[ "${SHOW_DEBUG}" == "yes" ]]; then
-			display_alert "Debugging binfmt - late" "/proc/sys/fs/binfmt_misc/" "debug"
-			run_host_command_logged ls -la /proc/sys/fs/binfmt_misc/ || true
-		fi
-
-	fi
+	prepare_host_binfmt_qemu # in qemu-static.sh as most binfmt/qemu logic is there now
 
 	# @TODO: rpardini: this does not belong here, instead with the other templates, pre-configuration.
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
@@ -267,7 +194,7 @@ function adaptative_prepare_host_dependencies() {
 		ncurses-base ncurses-term # for `make menuconfig`
 		ntpdate
 		patchutils pkg-config pv
-		qemu-user-static
+		"qemu-user-static" "arch-test"
 		rsync
 		swig # swig is needed for some u-boot's. example: "bananapi.conf"
 		u-boot-tools

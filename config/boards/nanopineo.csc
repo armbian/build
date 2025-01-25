@@ -1,7 +1,7 @@
 # Allwinner H3 quad core 256/512MB RAM SoC headless
 BOARD_NAME="NanoPi Neo"
 BOARDFAMILY="sun8i"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="spendist"
 BOOTCONFIG="nanopi_neo_defconfig"
 MODULES="g_serial"
 MODULES_BLACKLIST="lima"

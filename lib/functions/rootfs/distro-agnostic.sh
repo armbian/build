@@ -103,7 +103,7 @@ function install_distribution_agnostic() {
 	cp "${SDCARD}"/etc/skel/.bashrc "${SDCARD}"/root/
 	cp "${SDCARD}"/etc/skel/.profile "${SDCARD}"/root/
 
-	# Copy systemwide alieases to root user too
+	# Copy systemwide aliases to root user too
 	cp "${SRC}"/packages/bsp/common/etc/skel/.bash_aliases "${SDCARD}"/root/
 
 	# display welcome message at first root login which is ready by /usr/sbin/armbian/armbian-firstlogin
@@ -329,11 +329,6 @@ function install_distribution_agnostic() {
 		install_artifact_deb_chroot "armbian-bsp-desktop"
 		# install display manager and PACKAGE_LIST_DESKTOP_FULL packages if enabled per board
 		desktop_postinstall
-	fi
-
-	# install armbian-config
-	if [[ "${PACKAGE_LIST_RM}" != *armbian-config* ]]; then
-		install_artifact_deb_chroot "armbian-config"
 	fi
 
 	# install armbian-zsh

@@ -29,7 +29,6 @@ function kernel_config() {
 	[[ ! -d "${kernel_work_dir}" ]] && exit_with_error "kernel_work_dir does not exist: ${kernel_work_dir}"
 	declare previous_config_filename=".config.armbian.previous"
 	declare kernel_config_source_filename="" # which actual .config was used?
-	declare config_after_kernel_config_extension_filename=".config_after_kernel_config_extension"
 
 	LOG_SECTION="kernel_config_initialize" do_with_logging do_with_hooks kernel_config_initialize
 
@@ -70,20 +69,16 @@ function kernel_config_initialize() {
 		run_host_command_logged cp -pv "${kernel_config_source_filename}" "${kernel_work_dir}/.config"
 	fi
 
-	# Start by running olddefconfig -- always.
+	# Call the extensions. This is _also_ done during the kernel artifact's prepare_version, for consistent caching.
+	cd "${kernel_work_dir}" || exit_with_error "kernel_work_dir does not exist before call_extensions_kernel_config: ${kernel_work_dir}"
+	call_extensions_kernel_config
+
+	# Run olddefconfig; this is the "safe" way to update the kernel config.
 	# It "updates" the config, using defaults from Kbuild files in the source tree.
 	# It is worthy noting that on the first run, it builds the tools, so the host-side compiler has to be working,
 	# regardless of the cross-build toolchain.
 	cd "${kernel_work_dir}" || exit_with_error "kernel_work_dir does not exist: ${kernel_work_dir}"
 	run_kernel_make olddefconfig
-
-	# Call the extensions. This is _also_ done during the kernel artifact's prepare_version, for consistent caching.
-	call_extensions_kernel_config
-
-	# Save the config state after the extensions forced some kernel options, for later checks
-	run_host_command_logged cp -pv ".config" "${config_after_kernel_config_extension_filename}"
-	# Check sanity of kernel config and repair the config if necessary
-	kernel_config_check_and_repair
 
 	display_alert "Kernel configuration" "${LINUXCONFIG}" "info"
 }
@@ -135,41 +130,17 @@ function kernel_config_finalize() {
 }
 
 function kernel_config_export() {
-	# store kernel config in easily reachable place
+	# export defconfig
+	run_kernel_make savedefconfig
+
+	# store kernel defconfig in easily reachable place (output dir)
 	mkdir -p "${DEST}"/config
-	display_alert "Exporting new kernel config" "$DEST/config/$LINUXCONFIG.config" "info"
-	run_host_command_logged cp -pv .config "${DEST}/config/${LINUXCONFIG}.config"
+	display_alert "Exporting new kernel defconfig" "$DEST/config/$LINUXCONFIG.config" "info"
+	run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.config"
 
 	# store back into original LINUXCONFIG too, if it came from there, so it's pending commits when done.
 	if [[ "${kernel_config_source_filename}" != "" ]]; then
 		display_alert "Exporting new kernel config - git commit pending" "${kernel_config_source_filename}" "info"
-		run_host_command_logged cp -pv .config "${kernel_config_source_filename}"
-
-		# export defconfig
-		run_kernel_make savedefconfig
-		run_host_command_logged cp -pv defconfig "${DEST}/config/${LINUXCONFIG}.defconfig"
-		run_host_command_logged cp -pv defconfig "${kernel_config_source_filename}.defconfig"
-	fi
-}
-
-# Manually forcing kernel options with 'call_extensions_kernel_config()' can introduce missing dependencies or misconfigurations
-# This function checks the config, re-establishes its sanity if necessary and outputs any changes to the user
-function kernel_config_check_and_repair() {
-	# Re-run kernel make to automatically solve any dependencies and/or misconfigurations
-	run_kernel_make olddefconfig
-
-	# Compare the previously saved config file with the current one
-	if cmp --silent "${kernel_work_dir}/.config" "${kernel_work_dir}/${config_after_kernel_config_extension_filename}"; then
-		# Do nothing if both files are the same
-		display_alert "No misconfigurations or missing kernel option dependencies detected" "info"
-	else
-		# Warn user and output diffs if make had to change anything because of missing dependencies or misconfigurations
-		display_alert "Forced kernel options introduced misconfigurations or missing dependencies!" "Please re-run rewrite-kernel-config" "warn"
-		display_alert "If this warning persists after re-run" "please remove dependent options using kernel-config or adapt your custom_kernel_config hooks" "warn"
-		display_alert "In some cases, the issue might also be" "misconfigured options in armbian_kernel_config hooks" "debug"
-
-		run_host_command_logged scripts/diffconfig "${config_after_kernel_config_extension_filename}" ".config"
-
-		display_alert "See options above which have been changed automatically" "to solve dependencies and/or misconfigurations" "warn"
+		run_host_command_logged cp -pv defconfig "${kernel_config_source_filename}"
 	fi
 }

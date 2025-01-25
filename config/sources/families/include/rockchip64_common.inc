@@ -27,13 +27,13 @@ RKBIN_DIR="$SRC/cache/sources/rkbin-tools"
 case $BRANCH in
 
 	current)
-		declare -g KERNEL_MAJOR_MINOR="6.6"
+		declare -g KERNEL_MAJOR_MINOR="6.12"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.13"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
@@ -122,7 +122,7 @@ case "$BOOT_SOC" in
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk356x_spl_loader_v1.21.113.bin"
 		BOOT_SOC_MKIMAGE="rk3568" # mkimage does not know about rk3566, and rk3568 works.
-		BOOTENV_FILE='rk356x.txt'
+		BOOTENV_FILE='rk35xx.txt'
 		;;
 
 	rk3568)
@@ -132,7 +132,7 @@ case "$BOOT_SOC" in
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3568_bl31_v1.44.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk356x_spl_loader_v1.21.113.bin"
-		BOOTENV_FILE='rk356x.txt'
+		BOOTENV_FILE='rk35xx.txt'
 		;;
 
 	rk3576)
@@ -148,6 +148,7 @@ case "$BOOT_SOC" in
 		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.45.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk3588_spl_loader_v1.16.113.bin"
+		BOOTENV_FILE='rk35xx.txt'
 		;;
 esac
 
@@ -161,7 +162,7 @@ prepare_boot_configuration() {
 			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 			ATF_COMPILER='aarch64-linux-gnu-'
 			ATFDIR='arm-trusted-firmware'
-			ATFBRANCH='tag:lts-v2.8.8'
+			ATFBRANCH='tag:v2.12.0'
 			ATF_USE_GCC='> 6.3'
 			ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
 			ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"
@@ -248,22 +249,24 @@ uboot_custom_postprocess() {
 
 	if [[ $BOOT_SUPPORT_SPI == yes ]]; then
 		if [[ "${BOOT_SPI_RKSPI_LOADER:-"no"}" == "yes" ]]; then
-			dd if=/dev/zero of=rkspi_loader.img bs=1M count=0 seek=16
-			/sbin/parted -s rkspi_loader.img mklabel gpt
-			/sbin/parted -s rkspi_loader.img unit s mkpart idbloader 64 7167
-			/sbin/parted -s rkspi_loader.img unit s mkpart vnvm 7168 7679
-			/sbin/parted -s rkspi_loader.img unit s mkpart reserved_space 7680 8063
-			/sbin/parted -s rkspi_loader.img unit s mkpart reserved1 8064 8127
-			/sbin/parted -s rkspi_loader.img unit s mkpart uboot_env 8128 8191
-			/sbin/parted -s rkspi_loader.img unit s mkpart reserved2 8192 16383
-			/sbin/parted -s rkspi_loader.img unit s mkpart uboot 16384 32734
-			dd if=idbloader.img of=rkspi_loader.img seek=64 conv=notrunc
-			dd if=u-boot.itb of=rkspi_loader.img seek=16384 conv=notrunc
+			display_alert "uboot_custom_postprocess (parted) for BOOT_SUPPORT_SPI:${BOOT_SUPPORT_SPI:-"no"} and BOOT_SPI_RKSPI_LOADER=${BOOT_SPI_RKSPI_LOADER:-"no"}" "SPI rkspi_loader.img with GPT" "info"
+			run_host_command_logged dd if=/dev/zero of=rkspi_loader.img bs=1M count=0 seek=16
+			run_host_command_logged /sbin/parted -s rkspi_loader.img mklabel gpt
+			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart idbloader 64 7167
+			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart vnvm 7168 7679
+			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart reserved_space 7680 8063
+			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart reserved1 8064 8127
+			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart uboot_env 8128 8191
+			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart reserved2 8192 16383
+			run_host_command_logged /sbin/parted -s rkspi_loader.img unit s mkpart uboot 16384 32734
+			run_host_command_logged dd if=idbloader.img of=rkspi_loader.img seek=64 conv=notrunc
+			run_host_command_logged dd if=u-boot.itb of=rkspi_loader.img seek=16384 conv=notrunc
 		else
-			tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
-			dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
-			dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
-			dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
+			display_alert "uboot_custom_postprocess (mkimage) for BOOT_SUPPORT_SPI:${BOOT_SUPPORT_SPI:-"no"} and BOOT_SPI_RKSPI_LOADER=${BOOT_SPI_RKSPI_LOADER:-"no"}" "SPI rkspi_loader.img" "info"
+			run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rkspi -d tpl/u-boot-tpl.bin:spl/u-boot-spl.bin rkspi_tpl_spl.img
+			run_host_command_logged dd if=/dev/zero of=rkspi_loader.img count=8128 status=none
+			run_host_command_logged dd if=rkspi_tpl_spl.img of=rkspi_loader.img conv=notrunc status=none
+			run_host_command_logged dd if=u-boot.itb of=rkspi_loader.img seek=768 conv=notrunc status=none
 		fi
 	fi
 }

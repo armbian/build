@@ -39,14 +39,11 @@ GOVERNOR=${GOVERNOR:-ondemand}
 
 case $BRANCH in
 
-	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.1"
-		;;
 	current)
-		declare -g KERNEL_MAJOR_MINOR="6.6"
+		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g KERNEL_MAJOR_MINOR="6.13"
 		;;
 
 esac
@@ -268,7 +265,7 @@ family_tweaks_bsp() {
 
 	mkdir -p "$destination"/etc/X11/xorg.conf.d
 	case "${BOARD}" in
-		"odroidc2" | "nanopik2-s905" | "lepotato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | "aml-s9xx-box")
+		"odroidc2" | "nanopik2-s905" | "lepotato" | "sweet-potato" | "lafrite" | "khadas-vim1" | "khadas-vim2" | "aml-c400-plus" | "aml-s9xx-box")
 			cat <<- EOF > "$destination"/etc/X11/xorg.conf.d/02-driver.conf
 				Section "OutputClass"
 				    Identifier "Amlogic"
