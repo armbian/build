@@ -19,7 +19,6 @@ function armbian_register_artifacts() {
 		["firmware"]="firmware"
 		["full_firmware"]="full_firmware"
 		["fake_ubuntu_advantage_tools"]="fake_ubuntu_advantage_tools"
-		["armbian-config"]="armbian-config"
 		["armbian-zsh"]="armbian-zsh"
 		["armbian-plymouth-theme"]="armbian-plymouth-theme"
 		["armbian-base-files"]="armbian-base-files"

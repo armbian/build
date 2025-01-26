@@ -10,17 +10,15 @@ BOOT_LOGO="desktop"
 BOOT_SCENARIO="blobless"
 BOOT_SUPPORT_SPI=yes
 
-# u-boot v2024.07 for rockpro64; this includes https://github.com/u-boot/u-boot/commit/5e7cd8a119953dc2f466fea81e230d683ee03493
-BOOTBRANCH_BOARD="tag:v2024.07"
-BOOTPATCHDIR="v2024.07"
+BOOTBRANCH_BOARD="tag:v2025.01"
+BOOTPATCHDIR="v2025.01"
 
 # Include fw_setenv, configured to point to the correct spot on the SPI Flash
 PACKAGE_LIST_BOARD="libubootenv-tool" # libubootenv-tool provides fw_printenv and fw_setenv, for talking to U-Boot environment
 
 function post_family_config__use_mainline_uboot_rockpro64() {
-	# Use latest lts 2.8 ATF
-	ATFBRANCH='tag:lts-v2.8.16'
-	ATFPATCHDIR="atf-rockchip64" # patches for logging etc
+	# Do not set ATFBRANCH; instead uses the default from rockchip64_common, tested with v2.12.0 as of 2025.01[.09]
+
 	display_alert "$BOARD" "using ATF (blobless) ${ATFBRANCH} for ${BOOTBRANCH_BOARD} u-boot" "info"
 	# bl31.elf is copied directly from ATF build dir to uboot dir (by armbian u-boot build system)
 	UBOOT_TARGET_MAP="BL31=bl31.elf;;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
@@ -42,9 +40,7 @@ function post_config_uboot_target__extra_configs_for_rockpro64() {
 	run_host_command_logged scripts/config --set-val CONFIG_OF_LIBFDT_OVERLAY "y"
 	run_host_command_logged scripts/config --set-val CONFIG_MMC_HS400_SUPPORT "y"
 
-	# upstream defconfig already has env in SPI: https://github.com/u-boot/u-boot/blob/v2024.07/configs/rockpro64-rk3399_defconfig
-
-	# No preboot stuff for rockpro64.
+	# upstream defconfig already has env in SPI: https://github.com/u-boot/u-boot/blob/v2025.01/configs/rockpro64-rk3399_defconfig
 
 	display_alert "u-boot for ${BOARD}" "u-boot: enable EFI debugging command" "info"
 	run_host_command_logged scripts/config --enable CMD_EFIDEBUG
@@ -74,6 +70,22 @@ function post_config_uboot_target__extra_configs_for_rockpro64() {
 	done
 	# Auto-enabled by the above, force off...
 	run_host_command_logged scripts/config --disable USB_FUNCTION_FASTBOOT
+}
+
+function pre_config_uboot_target__rockpro64_patch_uboot_dtsi_for_ums() {
+	display_alert "u-boot for ${BOARD}" "u-boot: add to u-boot dtsi for UMS" "info" # avoid a patch, just append to the dtsi file
+	cat <<- UBOOT_BOARD_DTSI_OTG >> arch/arm/dts/rk3399-rockpro64-u-boot.dtsi
+		&usbdrd_dwc3_0 { status = "okay"; dr_mode = "otg"; };
+	UBOOT_BOARD_DTSI_OTG
+}
+
+# "rockchip-common: boot SD card first, then NVMe, then SATA, then USB, then mmc"
+# On rockpro64, mmc0 is the eMMC, mmc1 is the SD card slot https://github.com/torvalds/linux/blob/master/arch/arm64/boot/dts/rockchip/rk3399-rockpro64.dtsi#L15-L16
+function pre_config_uboot_target__rockpro64_patch_rockchip_common_boot_order() {
+	declare -a rockchip_uboot_targets=("mmc1" "nvme" "scsi" "usb" "mmc0" "pxe" "dhcp" "spi") # for future make-this-generic delight
+	display_alert "u-boot for ${BOARD}/${BRANCH}" "u-boot: adjust boot order to '${rockchip_uboot_targets[*]}'" "info"
+	sed -i -e "s/#define BOOT_TARGETS.*/#define BOOT_TARGETS \"${rockchip_uboot_targets[*]}\"/" include/configs/rockchip-common.h
+	regular_git diff -u include/configs/rockchip-common.h || true
 }
 
 function post_family_tweaks__config_rockpro64_fwenv() {

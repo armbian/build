@@ -28,7 +28,7 @@ function build_rootfs_and_image() {
 	# install distribution and board specific applications
 
 	LOG_SECTION="install_distribution_specific_${RELEASE}" do_with_logging install_distribution_specific
-	LOG_SECTION="install_distribution_agnostic" do_with_logging install_distribution_agnostic
+	LOG_SECTION="install_distribution_agnostic" do_with_logging install_distribution_agnostic # does apt update
 
 	# install locally built packages  #  @TODO: armbian-nextify this eventually
 	#[[ $EXTERNAL_NEW == compile ]] && LOG_SECTION="packages_local" do_with_logging chroot_installpackages_local
@@ -40,9 +40,10 @@ function build_rootfs_and_image() {
 
 	# stage: user customization script
 	# NOTE: installing too many packages may fill tmpfs mount
+	# NOTE(rpardini): hooks run _without_ the standard Armbian repo (sources.list) enabled.
 	LOG_SECTION="customize_image" do_with_logging customize_image
 
-	# Deploy the full apt lists, including the Armbian repo.
+	# Deploy the full apt lists, including the Armbian repo. Hook: "custom_apt_repo"
 	create_sources_list_and_deploy_repo_key "image-late" "${RELEASE}" "${SDCARD}/"
 
 	# We call this above method too many times. @TODO: find out why and fix the same
@@ -50,6 +51,16 @@ function build_rootfs_and_image() {
 	if [[ -e "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled ]]; then
 		rm "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
 	fi
+
+	LOG_SECTION="post_repo_apt_update" do_with_logging post_repo_apt_update
+
+	## stage: further customization; hooks only run _with_ Armbian repo enabled, or not at all.
+	if [[ "${SKIP_ARMBIAN_REPO}" != "yes" ]]; then
+		LOG_SECTION="post_armbian_repo_customize_image" do_with_logging run_hooks_post_armbian_repo_customize_image
+	fi
+
+	## stage: late customization script; hooks always run; either with or without Armbian repo enabled.
+	LOG_SECTION="post_repo_customize_image" do_with_logging run_hooks_post_repo_customize_image
 
 	# remove packages that are no longer needed. rootfs cache + uninstall might have leftovers.
 	LOG_SECTION="apt_purge_unneeded_packages_and_clean_apt_caches" do_with_logging apt_purge_unneeded_packages_and_clean_apt_caches

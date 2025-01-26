@@ -11,6 +11,20 @@
 # Please note: Manually changing options doesn't check the validity of the .config file. This is done at next make time. Check for warnings in build log.
 
 # This is an internal/core extension.
+function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.13; then
+		kernel_config_modifying_hashes+=("CONFIG_CFG80211=m" "CONFIG_MAC80211=m" "CONFIG_MAC80211_MESH=y" "CONFIG_CFG80211_WEXT=y")
+		if [[ -f .config ]]; then
+			# Required by many wifi drivers; otherwise "error: 'struct net_device' has no member named 'ieee80211_ptr'"
+			# In 6.13 something changed ref CONFIG_MAC80211 and CONFIG_CFG80211; enable both to preserve wireless drivers
+			kernel_config_set_m CONFIG_CFG80211
+			kernel_config_set_m CONFIG_MAC80211
+			kernel_config_set_y CONFIG_MAC80211_MESH
+			kernel_config_set_y CONFIG_CFG80211_WEXT
+		fi
+	fi
+}
+
 function armbian_kernel_config__disable_various_options() {
 	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
 	if [[ -f .config ]]; then
