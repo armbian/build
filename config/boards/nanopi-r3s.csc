@@ -1,5 +1,5 @@
-# Rockchip RK3566 quad core, dual GBe NIC
-BOARD_NAME="FriendlyElec NanoPi R3S"
+# Rockchip RK3566 quad core 2GB RAM eMMC 2x GbE USB3
+BOARD_NAME="NanoPi R3S"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi-r3s-rk3566_defconfig"
