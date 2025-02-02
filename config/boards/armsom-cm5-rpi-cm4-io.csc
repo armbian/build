@@ -10,12 +10,6 @@ BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 BOARD_MAINTAINER=""
 
-function post_family_config_branch_vendor__armsom-cm5-rpi-cm4-io_use_vendor_uboot() {
-	display_alert "$BOARD" "vendor u-boot overrides for $BOARD / $BRANCH" "info"
-
-	declare -g UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB TEE=$RKBIN_DIR/$BL32_BLOB spl/u-boot-spl.bin u-boot.dtb u-boot.itb;;idbloader.img u-boot.itb"
-}
-
 function post_family_tweaks__armsom-cm5-rpi-cm4-io_naming_audios() {
 	display_alert "$BOARD" "Renaming armsom-cm5-rpi-cm4-io audios" "info"
 
