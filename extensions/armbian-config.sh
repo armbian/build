@@ -2,8 +2,14 @@
 # and they are moved to main armbian repo periodically
 
 
-function custom_apt_repo__add_armbian-github-repo(){
-	echo "deb ${SIGNED_BY}https://github.armbian.com/configng stable main" > "${SDCARD}"/etc/apt/sources.list.d/armbian-config.list
+function custom_apt_repo__add_armbian-github-repo() {
+	cat <<- EOF > "${SDCARD}"/etc/apt/sources.list.d/armbian-config.sources
+	Types: deb
+	URIs: https://github.armbian.com/configng
+	Suites: stable
+	Components: main
+	Signed-By: "${APT_SIGNING_KEY_FILE}"
+	EOF
 }
 
 
