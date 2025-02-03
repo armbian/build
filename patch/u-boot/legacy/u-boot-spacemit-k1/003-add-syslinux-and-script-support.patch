@@ -1,25 +1,27 @@
-From 55d1b972a09de27995c29fe4eb8e3b9ade3a9ba9 Mon Sep 17 00:00:00 2001
+From 888cb8a8729eaf8b19f64ca8c44c20f7fa1844e8 Mon Sep 17 00:00:00 2001
 From: Patrick Yavitz <pyavitz@armbian.com>
-Date: Wed, 25 Dec 2024 18:35:46 -0500
+Date: Mon, 3 Feb 2025 08:48:30 -0500
 Subject: [PATCH] Add syslinux and script support
 
 Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
 ---
- board/spacemit/k1-x/k1-x.env | 246 ++++-------------------------------
- 1 file changed, 22 insertions(+), 224 deletions(-)
+ board/spacemit/k1-x/k1-x.env | 265 +++--------------------------------
+ board/spacemit/k1-x/k1x.c    |  20 +--
+ configs/k1_defconfig         |   3 +
+ include/configs/k1-x.h       |  23 ++-
+ 4 files changed, 44 insertions(+), 267 deletions(-)
 
 diff --git a/board/spacemit/k1-x/k1-x.env b/board/spacemit/k1-x/k1-x.env
-index bb18f40e..acb1ef7a 100644
+index f4dadc9a..3b5b8e20 100644
 --- a/board/spacemit/k1-x/k1-x.env
 +++ b/board/spacemit/k1-x/k1-x.env
-@@ -4,230 +4,28 @@ console=ttyS0,115200
+@@ -3,251 +3,28 @@ earlycon=sbi
  init=/init
  bootdelay=0
  baudrate=115200
 +loglevel=8
  stderr=serial
--stdin=serial,usbkbd,usbkbd1
-+stdin=serial,usbkbd
+ stdin=serial,usbkbd,usbkbd1
  stdout=serial
 -workqueue.default_affinity_scope=system
 -
@@ -33,26 +35,31 @@ index bb18f40e..acb1ef7a 100644
 -mmc_rootfstype=ext4
 -
 -// rootfs part number must less than 99
--rootfs_part_to_ul=echo "set rootfs_part to ul"; setexpr temp_num_0 ${rootfs_part} / a;\
--                    setexpr temp_num_1 ${rootfs_part} % a;\
--                    setenv rootfs_part ${temp_num_0}${temp_num_1};
+-rootfs_part_to_ul=echo "set rootfs_part to ul"; setexpr temp_num_0 ${rootfs_part} / a; \
+-            setexpr temp_num_1 ${rootfs_part} % a; \
+-            setenv rootfs_part ${temp_num_0}${temp_num_1};
 -
 -// Get "rootfs" partition number in decimal, and set var "blk_root"
 -// Variable "boot_devnum" is set during board_lat_init()
 -set_rootfs_env=if test "${bootfs_devname}" = mmc; then \
--                    setenv blk_root "/dev/mmcblk${boot_devnum}p${rootfs_part}"; \
--                elif test "${bootfs_devname}" = nvme; then \
--                    setenv blk_root "/dev/nvme${boot_devnum}n1p${rootfs_part}"; \
--                else echo "not define rootfs part at this blk device, add to env"; \
--                fi;
+-                setenv blk_root "/dev/mmcblk${boot_devnum}p${rootfs_part}"; \
+-            elif test "${bootfs_devname}" = nvme; then \
+-                setenv blk_root "/dev/nvme${boot_devnum}n1p${rootfs_part}"; \
+-            else \
+-			    echo "not define rootfs part at this blk device, add to env"; \
+-            fi;
+-
 -get_rootfs_env=part number ${bootfs_devname} ${boot_devnum} rootfs rootfs_part; \
--             setexpr rootfs_part ${rootfs_part} + 0; \
--             if test ${rootfs_part} > 9 ; then run rootfs_part_to_ul;fi; \
--             echo "get rootfs_part index:${rootfs_part}";
+-            setexpr rootfs_part ${rootfs_part} + 0; \
+-            if test ${rootfs_part} > 9; then run rootfs_part_to_ul; fi; \
+-            echo "get rootfs_part index:${rootfs_part}";
 -
--set_mmc_root=run get_rootfs_env; run set_rootfs_env;
+-// get "rootfs" partition uuid, and set var "rootfs_uuid"
+-get_rootfs_uuid=part number ${bootfs_devname} ${boot_devnum} rootfs rootfs_part; \
+-            fsuuid ${bootfs_devname} ${boot_devnum}:${rootfs_part} rootfs_uuid;
 -
--set_nor_root=run get_rootfs_env; run set_rootfs_env;
+-set_root_arg=run get_rootfs_uuid; \
+-            setenv bootargs "${bootargs}" root=UUID=${rootfs_uuid};
 -
 -//override here, otherwise gen random addr and save to eeprom by uboot
 -//ethaddr=fe:fe:fe:22:22:01
@@ -64,6 +71,8 @@ index bb18f40e..acb1ef7a 100644
 -gatewayip=10.0.92.1
 -net_data_path=net_flash_file/net_flash_file/
 -mac_mapping_file=/home/it/nfs/bianbu/mac_mapping.txt
+-
+-//net_flash_protocol=spacemit_tftp
 -
 -preboot=
 -ramdisk_size=-
@@ -90,51 +99,63 @@ index bb18f40e..acb1ef7a 100644
 -            part number ${bootfs_devname} ${boot_devnum} ${esp_name} esp_index;
 -
 -// Common boot args
--commonargs=setenv bootargs earlyprintk quiet splash plymouth.ignore-serial-consoles plymouth.prefer-fbcon clk_ignore_unused swiotlb=65536 workqueue.default_affinity_scope=${workqueue.default_affinity_scope}
+-commonargs=setenv bootargs earlyprintk quiet splash plymouth.ignore-serial-consoles \
+-            plymouth.prefer-fbcon clk_ignore_unused swiotlb=65536 \
+-            workqueue.default_affinity_scope=${workqueue.default_affinity_scope}
+-set_loglevel=if test "${loglevel}" != "";then \
+-                setenv bootargs "${bootargs}" loglevel=${loglevel};
+-            fi
+-
+-set_console=if test "${console}" != "";then \
+-                setenv bootargs "${bootargs}" console=${console};
+-            fi
+-
+-add_bootarg=run set_console; \
+-            run set_loglevel;
 -
 -//detect product_name from env and select dtb file to load
 -dtb_env=if test -n "${product_name}"; then \
--                if test "${product_name}" = k1_evb; then \
--                    setenv dtb_name ${dtb_dir}/k1-x_evb.dtb; \
--                elif test "${product_name}" = k1_deb1; then \
--                    setenv dtb_name ${dtb_dir}/k1-x_deb1.dtb; \
--                elif test "${product_name}" = k1_deb2; then \
--                    setenv dtb_name ${dtb_dir}/k1-x_deb2.dtb; \
--                elif test "${product_name}" = k1_hs450; then \
--                    setenv dtb_name ${dtb_dir}/k1-x_hs450.dtb; \
--                elif test "${product_name}" = k1_kx312; then \
--                    setenv dtb_name ${dtb_dir}/k1-x_kx312.dtb; \
--                elif test "${product_name}" = k1_mingo; then \
--                    setenv dtb_name ${dtb_dir}/k1-x_mingo.dtb; \
--                elif test "${product_name}" = k1_MINI-PC; then \
--                    setenv dtb_name ${dtb_dir}/k1-x_MINI-PC.dtb; \
--                else \
--                    echo "match dtb by product_name: ${dtb_dir}/${product_name}.dtb"; \
--                    setenv dtb_name  ${dtb_dir}/${product_name}.dtb; \
--                fi; \
--            fi;
+-            if test "${product_name}" = k1_evb; then \
+-                setenv dtb_name ${dtb_dir}/k1-x_evb.dtb; \
+-            elif test "${product_name}" = k1_deb1; then \
+-                setenv dtb_name ${dtb_dir}/k1-x_deb1.dtb; \
+-            elif test "${product_name}" = k1_deb2; then \
+-                setenv dtb_name ${dtb_dir}/k1-x_deb2.dtb; \
+-            elif test "${product_name}" = k1_hs450; then \
+-                setenv dtb_name ${dtb_dir}/k1-x_hs450.dtb; \
+-            elif test "${product_name}" = k1_kx312; then \
+-                setenv dtb_name ${dtb_dir}/k1-x_kx312.dtb; \
+-            elif test "${product_name}" = k1_mingo; then \
+-                setenv dtb_name ${dtb_dir}/k1-x_mingo.dtb; \
+-            elif test "${product_name}" = k1_MINI-PC; then \
+-                setenv dtb_name ${dtb_dir}/k1-x_MINI-PC.dtb; \
+-            else \
+-                echo "match dtb by product_name: ${dtb_dir}/${product_name}.dtb"; \
+-                setenv dtb_name  ${dtb_dir}/${product_name}.dtb; \
+-            fi; \
+-        fi;
 -
 -detect_dtb=echo "product_name: ${product_name}"; run dtb_env; echo "select ${dtb_name} to load";
 -
 -loadknl=echo "Loading kernel..."; \
--            load ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${kernel_addr_r} ${knl_name};
+-        load ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${kernel_addr_r} ${knl_name};
 -
 -loadramdisk=echo "Loading ramdisk ..."; \
--            if load ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${ramdisk_addr} ${ramdisk_name}; then \
--                size ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${ramdisk_name}; \
--                setenv ramdisk_size ${filesize}; \
--                setenv ramdisk_combo ${ramdisk_addr}:${ramdisk_size}; \
--            else \
--                echo "load ramdisk from bootfs fail, use built-in ramdisk"; \
--                setenv ramdisk_addr -; \
--            fi;
+-        if load ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${ramdisk_addr} ${ramdisk_name}; then \
+-            size ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${ramdisk_name}; \
+-            setenv ramdisk_size ${filesize}; \
+-            setenv ramdisk_combo ${ramdisk_addr}:${ramdisk_size}; \
+-        else \
+-            echo "load ramdisk from bootfs fail, use built-in ramdisk"; \
+-            setenv ramdisk_addr -; \
+-        fi;
 -
 -loaddtb=echo "Loading dtb..."; \
--            if load ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${dtb_addr} ${dtb_name}; then \
--            else \
--                echo "load dtb from bootfs fail, use built-in dtb"; \
--                setenv dtb_addr ""; \
--            fi;
+-        if load ${bootfs_devname} ${boot_devnum}:${bootfs_part} ${dtb_addr} ${dtb_name}; then \
+-        else \
+-            echo "load dtb from bootfs fail, use built-in dtb"; \
+-            setenv dtb_addr ""; \
+-        fi;
 -
 -load_grub=echo "Loading grub..."; \
 -            load ${bootfs_devname} ${boot_devnum}:${esp_index} ${kernel_addr_r} ${grub_file};
@@ -147,7 +168,8 @@ index bb18f40e..acb1ef7a 100644
 -            booti ${kernel_addr_r} ${ramdisk_combo} ${dtb_addr}; \
 -        fi;
 -
--boot_kernel=run detect_dtb; \
+-boot_kernel=run set_root_arg; \
+-        run detect_dtb; \
 -        run loadknl; \
 -        run loaddtb; \
 -        run loadramdisk; \
@@ -160,10 +182,10 @@ index bb18f40e..acb1ef7a 100644
 -        bootefi ${kernel_addr_r};
 -
 -// Nor+ssd boot combo
--set_nor_args=setenv bootargs "${bootargs}" mtdparts=${mtdparts} root=${blk_root} rootfstype=ext4
+-set_nor_args=setenv bootargs "${bootargs}" mtdparts=${mtdparts} rootfstype=ext4
 -nor_boot=echo "Try to boot from ${bootfs_devname}${boot_devnum} ..."; \
 -        run commonargs; \
--        run set_nor_root; \
+-        run add_bootarg; \
 -        run set_nor_args; \
 -        run get_esp_index; \
 -        if test -e ${bootfs_devname} ${boot_devnum}:${esp_index} ${grub_file}; then \
@@ -176,11 +198,11 @@ index bb18f40e..acb1ef7a 100644
 -//##############################################################################
 -// eMMC/SDCard boot
 -//##############################################################################
--set_mmc_args=setenv bootargs "${bootargs}" root=${blk_root} rootwait rootfstype=${mmc_rootfstype};
+-set_mmc_args=setenv bootargs "${bootargs}" rootwait rootfstype=${mmc_rootfstype};
 -
 -mmc_boot=echo "Try to boot from ${bootfs_devname}${boot_devnum} ..."; \
 -        run commonargs; \
--        run set_mmc_root; \
+-        run add_bootarg; \
 -        run set_mmc_args; \
 -        run get_esp_index; \
 -        if test -e ${bootfs_devname} ${boot_devnum}:${esp_index} ${grub_file}; then \
@@ -192,6 +214,7 @@ index bb18f40e..acb1ef7a 100644
 -
 -nfs_boot=echo "Try to boot from NFS ..."; \
 -        run commonargs; \
+-        run add_bootarg; \
 -        setenv bootargs "${bootargs}" root=/dev/nfs nfsroot=${serverip}:${rootfs_path} bootfs=${serverip}:${bootfs_path} ip=${ipaddr}:${serverip}:${gatewayip}:${netmask}::${netdev}:off noipath; \
 -        echo "bootargs: ${bootargs}"; \
 -        run detect_dtb; \
@@ -265,23 +288,8 @@ index bb18f40e..acb1ef7a 100644
 +	fi;
 +
 +bootcmd=echo "Loading ..."; run autoboot
--- 
-2.39.5
-
-From 9bb50320cc81251c93a21a94fb73cf0a2feb693e Mon Sep 17 00:00:00 2001
-From: Patrick Yavitz <pyavitz@armbian.com>
-Date: Mon, 4 Nov 2024 10:09:19 -0500
-Subject: [PATCH] Add syslinux and script support
-
-Signed-off-by: Patrick Yavitz <pyavitz@armbian.com>
----
- board/spacemit/k1-x/k1x.c | 20 ++++++++++----------
- configs/k1_defconfig      |  3 +++
- include/configs/k1-x.h    | 23 ++++++++++-------------
- 3 files changed, 23 insertions(+), 23 deletions(-)
-
 diff --git a/board/spacemit/k1-x/k1x.c b/board/spacemit/k1-x/k1x.c
-index 460eea4f..7f59b332 100644
+index 9210e121..f6c9a5c7 100644
 --- a/board/spacemit/k1-x/k1x.c
 +++ b/board/spacemit/k1-x/k1x.c
 @@ -458,8 +458,8 @@ void _load_env_from_blk(struct blk_desc *dev_desc, const char *dev_name, int dev
@@ -336,7 +344,7 @@ index 460eea4f..7f59b332 100644
  	}
  }
 diff --git a/configs/k1_defconfig b/configs/k1_defconfig
-index 8db91b1e..63ac72b5 100644
+index 18ac1e3a..a54d4fcf 100644
 --- a/configs/k1_defconfig
 +++ b/configs/k1_defconfig
 @@ -43,6 +43,8 @@ CONFIG_AUTOBOOT_STOP_STR=" "
@@ -348,16 +356,16 @@ index 8db91b1e..63ac72b5 100644
  CONFIG_LOGLEVEL=7
  CONFIG_SPL_LOGLEVEL=1
  # CONFIG_SYS_DEVICE_NULLDEV is not set
-@@ -288,3 +290,4 @@ CONFIG_PRINT_TIMESTAMP=y
+@@ -294,3 +296,4 @@ CONFIG_PRINT_TIMESTAMP=y
  # CONFIG_SPL_SHA256 is not set
  CONFIG_ZSTD=y
  # CONFIG_HEXDUMP is not set
 +CONFIG_OF_LIBFDT_OVERLAY=y
 diff --git a/include/configs/k1-x.h b/include/configs/k1-x.h
-index 8d27fe9d..c7f42bbc 100644
+index 3e83e032..3cd5f491 100644
 --- a/include/configs/k1-x.h
 +++ b/include/configs/k1-x.h
-@@ -84,11 +84,6 @@
+@@ -106,11 +106,6 @@
  #define TLV_CODE_EEPROM_I2C_INDEX	0x81
  #define TLV_CODE_EEPROM_PIN_GROUP	0x82
  
@@ -369,7 +377,7 @@ index 8d27fe9d..c7f42bbc 100644
  // for those has NOT been through test procedure(ATE)
  #define SVT_DRO_DEFAULT_VALUE	(120)
  
-@@ -142,6 +137,11 @@ struct boot_storage_op
+@@ -164,6 +159,11 @@ struct boot_storage_op
  #define BOOT_TARGET_DEVICES(func) \
  	func(QEMU, qemu, na)
  
@@ -381,7 +389,7 @@ index 8d27fe9d..c7f42bbc 100644
  #include <config_distro_bootcmd.h>
  
  #define BOOTENV_DEV_QEMU(devtypeu, devtypel, instance) \
-@@ -167,16 +167,13 @@ struct boot_storage_op
+@@ -189,16 +189,13 @@ struct boot_storage_op
  /*if env not use for spl, please define to board/spacemit/k1-x/k1-x.env */
  #define CONFIG_EXTRA_ENV_SETTINGS \
  	"stdout_flash=serial,vidconsole\0" \
