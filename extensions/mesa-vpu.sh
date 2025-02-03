@@ -21,7 +21,7 @@ function extension_prepare_config__3d() {
 	# Define image suffix
 	if [[ "${LINUXFAMILY}" =~ ^(rockchip-rk3588|rk35xx)$ && "$BRANCH" =~ ^(legacy)$ && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
 		EXTRA_IMAGE_SUFFIXES+=("-panfork")
-	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+	elif [[ "${DISTRIBUTION}" == "Ubuntu" && "${RELEASE}" =~ ^(jammy)$ ]]; then
 		EXTRA_IMAGE_SUFFIXES+=("-kisak")
 	elif [[ "${DISTRIBUTION}" == "Debian" && "${RELEASE}" == "bookworm" ]]; then
 		EXTRA_IMAGE_SUFFIXES+=("-backported-mesa")
@@ -76,7 +76,7 @@ function post_install_kernel_debs__3d() {
 
 		sed -i "s/noble/jammy/g" "${SDCARD}"/etc/apt/sources.list.d/liujianfeng1994-ubuntu-panfork-mesa-"${RELEASE}".*
 
-	elif [[ "${DISTRIBUTION}" == "Ubuntu" ]]; then
+	elif [[ "${DISTRIBUTION}" == "Ubuntu" && "${RELEASE}" =~ ^(jammy)$ ]]; then
 
 		display_alert "Adding kisak PPAs" "${EXTENSION}" "info"
 		do_with_retries 3 chroot_sdcard add-apt-repository ppa:kisak/kisak-mesa --yes --no-update
