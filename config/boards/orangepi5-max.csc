@@ -4,7 +4,7 @@ BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi-5-max-rk3588_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
-KERNEL_TARGET="vendor"
+KERNEL_TARGET="vendor,current,edge"
 KERNEL_TEST_TARGET="vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
@@ -15,6 +15,9 @@ BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
 enable_extension "bcmdhd"
 BCMDHD_TYPE="sdio"
+# It is ok to use Armbian repo for Ubuntu 24.04, but for Debian 12 you should skip it, otherwise the board is not booting
+SKIP_ARMBIAN_REPO="yes" 
+
 
 function post_family_tweaks__orangepi5max_naming_audios() {
 	display_alert "$BOARD" "Renaming orangepi5max audios" "info"
