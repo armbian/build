@@ -215,7 +215,7 @@ function move_images_to_final_destination() {
 		done
 	else
 		display_alert "Moving artefacts using rsync to final destination" "${version}" "info"
-		run_host_command_logged rsync -av --sparse --no-owner --no-group --remove-source-files "${DESTIMG}/${version}"* "${FINALDEST}"
+		run_host_command_logged rsync -av --no-owner --no-group --remove-source-files "${DESTIMG}/${version}"* "${FINALDEST}"
 		run_host_command_logged rm -rfv --one-file-system "${DESTIMG}"
 	fi
 	return 0
