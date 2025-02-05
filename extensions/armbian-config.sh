@@ -8,7 +8,7 @@ function custom_apt_repo__add_armbian-github-repo() {
 	URIs: https://github.armbian.com/configng
 	Suites: stable
 	Components: main
-	Signed-By: "${APT_SIGNING_KEY_FILE}"
+	Signed-By: ${APT_SIGNING_KEY_FILE}
 	EOF
 }
 
