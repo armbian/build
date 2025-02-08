@@ -24,15 +24,11 @@ SKIP_BOOTSPLASH="yes"
 case $BRANCH in
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.1"
-		;;
-
-	current)
 		declare -g KERNEL_MAJOR_MINOR="6.6"
 		;;
 
-	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.10"
+	current)
+		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
 esac
 
