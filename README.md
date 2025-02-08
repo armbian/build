@@ -3,6 +3,10 @@
 TLTR: Unofficial Armbian images  of Makerbase MKS PI, MKS SKIPR and several derivatives boards. Contains `mkspi` board configuration, related kernel and u-boot patches.  
 Unlike MKS images, these does not have pre-installed Klipper. You have to configure OS, Klipper and all related software from the scratch. However you would get up-to-dated OS, EU/US based package repositories and only official Armbian components.
 
+ℹ please checkout a [release page](https://github.com/redrathnure/armbian-mkspi/releases) if you have MKS PI or MKS SKIPR board
+ℹ keep reading this page if you have QIDI X-4 and X-6 Mainboards, CANbus, ADXL345 or need to adjust PI-TS35 display
+ℹ in case you have Sovol SV06 or Sovol SV07 printers with [`MKS KLIPAD50 Vx.y` board](https://torte71.github.io/InsideSovolKlipperScreen/hardware.html) please visit [mksklipad50 releases from @torte71 fork](https://github.com/torte71/mksklipad50-armbian-images/releases) and check [Inside Sovol KlipperScreen](https://torte71.github.io/InsideSovolKlipperScreen), [Inside Sovol KlipperScreen::Armbian images](https://torte71.github.io/InsideSovolKlipperScreen/armbian_images.html) and [relathed discussion](https://github.com/redrathnure/armbian-mkspi/issues/42#issuecomment-2640941074) for the more details.
+
 ⚠️ WARNING **absolutely no guarantees, you do everything at your own risk.**  
 
 
