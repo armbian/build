@@ -10,16 +10,16 @@ case $BRANCH in
 
 	legacy | current | edge)
 
-		BOOTSOURCE=$MAINLINE_UBOOT_SOURCE
-		BOOTBRANCH='tag:v2019.04'
+		BOOTSOURCE='https://github.com/SolidRun/u-boot'
+		BOOTBRANCH='branch:v2024.04-solidrun-a38x'
 		BOOTDIR=$MAINLINE_UBOOT_DIR
 		BOOTPATCHDIR='legacy/u-boot-helios4'
 		BOOTSCRIPT='boot-mvebu.cmd:boot.cmd'
 
-		UBOOT_TARGET_MAP=";sdhc;u-boot-spl.kwb:u-boot.mmc
-				  ;spi;u-boot-spl.kwb:u-boot.flash
-				  ;uart;u-boot-spl.kwb:u-boot.uart"
-
+		UBOOT_TARGET_MAP=";sdhc;u-boot-with-spl.kwb:u-boot.mmc"
+		# disabled spi and uart, patches needs rework
+		# ;spi;u-boot-with-spl.kwb:u-boot.flash
+		# ;uart;u-boot-with-spl.kwb:u-boot.uart
 		UBOOT_USE_GCC='> 7.0'
 
 		OVERLAY_PREFIX='armada-388-helios4'
