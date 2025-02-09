@@ -265,7 +265,7 @@ function kernel_package_callback_linux_image() {
 		Maintainer: ${MAINTAINER} <${MAINTAINERMAIL}>
 		Section: kernel
 		Priority: optional
-		Provides: linux-image, linux-image-armbian, armbian-$BRANCH
+		Provides: linux-image, linux-image-armbian, armbian-$BRANCH, wireguard-modules
 		Description: Armbian Linux $BRANCH kernel image $kernel_version_family
 		 This package contains the Linux kernel, modules and corresponding other files.
 		 ${artifact_version_reason:-"${kernel_version_family}"}
