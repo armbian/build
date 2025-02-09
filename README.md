@@ -178,7 +178,7 @@ Steps to configure CAN bus:
 Type=can
 
 [Link]
-TransmitQueueLength=1024
+TransmitQueueLength=128
 # see also https://www.freedesktop.org/software/systemd/man/latest/systemd.network.html#%5BLink%5D%20Section%20Options
 EOF
 
@@ -200,7 +200,7 @@ sudo systemctl status systemd-networkd
    ``` 
 4. Reboot. Yes, it's important! 
 5. Hook a toolhead board, find connected devices `~/klippy-env/bin/python ~/klipper/scripts/canbus_query.py can0` and follow [Klipper documentation -- USB to CAN bus bridge mode](https://www.klipper3d.org/CANBUS.html#usb-to-can-bus-bridge-mode) for the rest of configuration.
-6. Double check output of `sudo ip link show can0` command. `qlen` should have 1024 value (or whatever was specified in `TransmitQueueLength` param) 
+6. Double check output of `sudo ip link show can0` command. `qlen` should have 128 value (or whatever was specified in `TransmitQueueLength` param) 
 
 
 In case of `MCU 'mcu' shutdown: Timer too close`, `b'Got error -1 in can write: (105)No buffer space available'` or similar troubles, please try following steps:
