@@ -23,10 +23,6 @@ SKIP_BOOTSPLASH="yes"
 
 case $BRANCH in
 
-	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.6"
-		;;
-
 	current)
 		declare -g KERNEL_MAJOR_MINOR="6.12"
 		;;
