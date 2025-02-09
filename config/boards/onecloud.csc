@@ -2,7 +2,7 @@
 BOARD_NAME="OneCloud"
 BOARDFAMILY="meson8b"
 BOARD_MAINTAINER="hzyitc"
-KERNEL_TARGET="legacy,current"
+KERNEL_TARGET="current"
 KERNEL_TEST_TARGET="current"
 BOOTCONFIG="none"
 BOOTSCRIPT="boot-onecloud.cmd:boot.cmd"

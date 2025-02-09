@@ -2,7 +2,7 @@
 BOARD_NAME="Odroid C1"
 BOARDFAMILY="meson8b"
 BOARD_MAINTAINER="juanlufont"
-KERNEL_TARGET="legacy,current"
+KERNEL_TARGET="current"
 KERNEL_TEST_TARGET="current"
 
 BOOTDIR='u-boot-odroidc1'
