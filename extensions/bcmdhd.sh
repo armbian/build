@@ -18,7 +18,7 @@ function post_install_kernel_debs__install_bcmdhd_dkms_package() {
 	bcmdhd_sdio_url="https://github.com/armbian/bcmdhd-dkms/releases/download/${latest_version}/bcmdhd-sdio-dkms_${latest_version}_all.deb"
 	bcmdhd_usb_url="https://github.com/armbian/bcmdhd-dkms/releases/download/${latest_version}/bcmdhd-usb-dkms_${latest_version}_all.deb"
 	if [[ "${GITHUB_MIRROR}" == "ghproxy" ]]; then
-		ghproxy_header="https://mirror.ghproxy.com/"
+		ghproxy_header="https://ghfast.top/"
 		bcmdhd_pcie_url=${ghproxy_header}${bcmdhd_pcie_url}
 		bcmdhd_sdio_url=${ghproxy_header}${bcmdhd_sdio_url}
 		bcmdhd_usb_url=${ghproxy_header}${bcmdhd_usb_url}
