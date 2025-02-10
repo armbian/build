@@ -23,7 +23,7 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	aic8800_sdio_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-sdio-dkms_${latest_version}_all.deb"
 	aic8800_usb_url="https://github.com/radxa-pkg/aic8800/releases/download/${latest_version}/aic8800-usb-dkms_${latest_version}_all.deb"
 	if [[ "${GITHUB_MIRROR}" == "ghproxy" ]]; then
-		ghproxy_header="https://mirror.ghproxy.com/"
+		ghproxy_header="https://ghfast.top/"
 		aic8800_firmware_url=${ghproxy_header}${aic8800_firmware_url}
 		aic8800_pcie_url=${ghproxy_header}${aic8800_pcie_url}
 		aic8800_sdio_url=${ghproxy_header}${aic8800_sdio_url}
