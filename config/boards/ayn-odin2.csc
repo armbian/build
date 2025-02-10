@@ -43,7 +43,7 @@ function post_family_tweaks__enable_services() {
 	fi
 
 	# We need unudhcpd from armbian repo, so enable it
-	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled "${SDCARD}"/etc/apt/sources.list.d/armbian.sources
 
 	# Add Gamepad udev rule
 	echo 'SUBSYSTEM=="input", ATTRS{name}=="Ayn Odin2 Gamepad", MODE="0666", ENV{ID_INPUT_MOUSE}="0", ENV{ID_INPUT_JOYSTICK}="1"' > "${SDCARD}"/etc/udev/rules.d/99-ignore-gamepad.rules
@@ -59,7 +59,7 @@ function post_family_tweaks__enable_services() {
 	do_with_retries 3 chroot_sdcard_apt_get_install alsa-ucm-conf unudhcpd mkbootimg git
 
 	# Disable armbian repo back
-	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.list "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
+	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled
 	do_with_retries 3 chroot_sdcard_apt_get_update
 
 	do_with_retries 3 chroot_sdcard_apt_get_install mesa-vulkan-drivers qbootctl qrtr-tools protection-domain-mapper tqftpserv
@@ -133,7 +133,7 @@ function post_family_tweaks_bsp__firmware_in_initrd() {
 		# Extra one for bt
 		for f in /lib/firmware/qca/* ; do
 			add_firmware "${f#/lib/firmware/}"
-		done 
+		done
 	FIRMWARE_HOOK
 	run_host_command_logged chmod -v +x "${file_added_to_bsp_destination}"
 }
