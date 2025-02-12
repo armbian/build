@@ -32,6 +32,11 @@ if [[ $BOARD == lafrite ]]; then
 	UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
 fi
 
+# @TODO: this is temporary measure before to figure out why it doesn't load from `config/boards/radxa-zero.conf`
+if [[ $BOARD == radxa-zero ]]; then
+    OVERLAY_PREFIX="meson-g12a"
+fi
+
 # Set CPUMIN et al if not already set in the board config.
 CPUMIN=${CPUMIN:-500000}
 CPUMAX=${CPUMAX:-1536000}
