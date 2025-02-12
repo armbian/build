@@ -2,6 +2,7 @@
 BOARD_NAME="NanoPi R3S"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
+HAS_VIDEO_OUTPUT="no"
 BOOTCONFIG="nanopi-r3s-rk3566_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current,edge"
