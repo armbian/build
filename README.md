@@ -246,7 +246,7 @@ Thank you to all the people who already contributed to Armbian!
 
 Armbian's partnership program helps to support Armbian and the Armbian community! Please take a moment to familiarize yourself with our Partners:
 
-- [Click here to visit our Partners page!](https://armbian.com/partners)
+- [Click here to visit our Partners page!](https://www.armbian.com/partners)
 - [How can I become a Partner?](https://forum.armbian.com/subscriptions)
 
 ## Star History
