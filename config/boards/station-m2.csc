@@ -12,14 +12,6 @@ BOOT_SCENARIO="spl-blobs"
 ASOUND_STATE="asound.state.station-m2"
 IMAGE_PARTITION_TABLE="gpt"
 
-function post_family_tweaks__station_m2() {
-	display_alert "$BOARD" "Installing board tweaks" "info"
-
-	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
-
-	return 0
-}
-
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__stationm2_use_radxa_vendor_uboot() {
 	BOOTSOURCE='https://github.com/radxa/u-boot.git'
