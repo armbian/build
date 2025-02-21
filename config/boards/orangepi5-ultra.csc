@@ -4,8 +4,8 @@ BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi-5-ultra-rk3588_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
-KERNEL_TARGET="current"
-KERNEL_TEST_TARGET="current"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588-orangepi-5-ultra.dtb"
@@ -15,6 +15,13 @@ BOOT_SPI_RKSPI_LOADER="yes"
 IMAGE_PARTITION_TABLE="gpt"
 #enable_extension "bcmdhd"
 BCMDHD_TYPE="sdio"
+
+function post_family_config_branch_edge__orangepi5-ultra_use_custom_source() {
+	KERNEL_MAJOR_MINOR="6.14"   # Major and minor versions of this kernel.
+	KERNELSOURCE='https://github.com/jimmyhon/linux.git'
+	KERNELBRANCH='branch:integrate-6.15'
+	KERNELPATCHDIR='integrate-6.15'
+}
 
 function post_family_tweaks__orangepi5ultra_naming_audios() {
 	display_alert "$BOARD" "Renaming orangepi5ultra audios" "info"
