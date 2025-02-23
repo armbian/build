@@ -18,7 +18,9 @@ function run_hook() {
 function generate_for_board() {
 	local board_config="$1"
 	(
+		BOARD="${board_config%.*}"
 		source "${SRC}/config/boards/${board_config}"
+
 		LINUXFAMILY="${BOARDFAMILY}"
 
 		[[ -n "${BOARD_MAINTAINER}" ]] || return
