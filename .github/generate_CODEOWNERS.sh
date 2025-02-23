@@ -35,6 +35,7 @@ function generate_for_board() {
 
 				[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 				[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="archive/${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}"
+				[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-${LINUXFAMILY}"
 
 				cat <<-EOF
 					config/boards/${board_config}			${maintainers}
@@ -47,6 +48,12 @@ function generate_for_board() {
 				if [[ -n "${patch_archive}" ]]; then
 					patch_archive="${patch_archive%/}"
 					echo "patch/kernel/${patch_archive%-*}-*/	${maintainers}"
+				fi
+
+				if [[ -n "${BOOTCONFIG}" && "${BOOTCONFIG}" != "none" ]]; then
+					while read -r d; do
+						echo "patch/u-boot/${d}/		${maintainers}"
+					done < <(echo "${BOOTPATCHDIR}" | xargs -n1)
 				fi
 			)
 		done < <(echo "${KERNEL_TARGET}" | tr ',' '\n')
