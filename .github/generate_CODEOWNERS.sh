@@ -24,7 +24,7 @@ function generate_for_board() {
 				source "${SRC}/config/sources/${ARCH}.conf"
 
 				[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
-				[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
+				[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="archive/${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}"
 
 				cat <<-EOF
 					config/boards/${board_config}			${maintainers}
