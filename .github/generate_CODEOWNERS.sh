@@ -68,9 +68,9 @@ function merge() {
 	local file
 	while read -r file; do
 		declare -a maintainers
-		readarray -t maintainers < <(echo "${codeowners["$file"]}" | xargs -n1 | sort -u)
+		readarray -t maintainers < <(echo "${codeowners["$file"]}" | xargs -n1 | LC_ALL=C.UTF-8 sort -u)
 		echo "${file}		${maintainers[*]}"
-	done < <(printf "%s\n" "${!codeowners[@]}" | sort)
+	done < <(printf "%s\n" "${!codeowners[@]}" | LC_ALL=C.UTF-8 sort)
 }
 
 cat <<-EOF >"${SRC}/.github/CODEOWNERS"
