@@ -28,10 +28,6 @@ function fetch_sources_tools__libreelec_amlogic_fip() {
 # this family does not need it
 ATF_COMPILE="no"
 
-if [[ $BOARD == lafrite ]]; then
-	UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
-fi
-
 # Set CPUMIN et al if not already set in the board config.
 CPUMIN=${CPUMIN:-500000}
 CPUMAX=${CPUMAX:-1536000}
