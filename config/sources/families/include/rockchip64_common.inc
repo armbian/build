@@ -148,8 +148,8 @@ case "$BOOT_SOC" in
 
 	rk3588) #CPUMAX undefined?
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin"}"
-		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.45.elf"}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.18.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.48.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk3588_spl_loader_v1.16.113.bin"
 		BOOTENV_FILE='rk35xx.txt'
