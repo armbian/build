@@ -7,6 +7,13 @@ function display_alert() { :; }
 function enable_extension() { :; }
 function add_packages_to_image() { :; }
 
+function run_hook() {
+	local hook_point="$1"
+	while read -r hook_point_function; do
+		"${hook_point_function}"
+	done < <(compgen -A function | grep "^${hook_point}__" | LC_ALL=C.UTF-8 sort)
+}
+
 # $1: board config
 function generate_for_board() {
 	local board_config="$1"
@@ -22,6 +29,9 @@ function generate_for_board() {
 				source "${SRC}/config/sources/families/${LINUXFAMILY}.conf"
 				source "${SRC}/config/sources/common.conf"
 				source "${SRC}/config/sources/${ARCH}.conf"
+
+				run_hook "post_family_config"
+				run_hook "post_family_config_branch_${BRANCH,,}"
 
 				[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
 				[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="archive/${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}"
