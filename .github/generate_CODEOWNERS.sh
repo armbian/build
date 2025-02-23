@@ -3,12 +3,9 @@
 SRC="$(realpath "${BASH_SOURCE%/*}/../")"
 
 # Dummy function for successful source
-function display_alert() {
-	:
-}
-function enable_extension() {
-	:
-}
+function display_alert() { :; }
+function enable_extension() { :; }
+function add_packages_to_image() { :; }
 
 # $1: board config
 function generate_for_board() {
