@@ -39,7 +39,7 @@ function generate_for_board() {
 				cat <<-EOF
 					config/boards/${board_config}			${maintainers}
 					config/kernel/${LINUXCONFIG%-*}-*.config	${maintainers}
-					sources/families/${LINUXFAMILY}.conf		${maintainers}
+					sources/families/${BOARDFAMILY}.conf		${maintainers}
 					patch/kernel/${KERNELPATCHDIR%-*}-*/		${maintainers}
 				EOF
 
