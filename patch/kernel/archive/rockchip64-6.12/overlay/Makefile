@@ -20,6 +20,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3318-box-wlan-ext.dtbo \
 	rockchip-rk3328-i2c0.dtbo \
 	rockchip-rk3328-i2s1-pcm5102.dtbo \
+	rockchip-rk3328-mksklipad50-enable-rtc-end1.dtbo \
+	rockchip-rk3328-mksklipad50-enable-v4l2.dtbo \
 	rockchip-rk3328-mkspi-disable-lcd-spi.dtbo \
 	rockchip-rk3328-opp-1.4ghz.dtbo \
 	rockchip-rk3328-opp-1.5ghz.dtbo \
@@ -88,7 +90,8 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rockchip-rk3588-uart6-m1.dtbo \
 	rockchip-rk3588-uart7-m2.dtbo \
 	rockchip-rk3588-uart8-m1.dtbo \
-	rockchip-rk3588-rkvenc-overlay.dtbo
+	rockchip-rk3588-rkvenc-overlay.dtbo \
+	rockchip-rk3588-nanopi-m6-spi-nor-flash.dtbo
 
 scr-$(CONFIG_ARCH_ROCKCHIP) += \
        rockchip-fixup.scr

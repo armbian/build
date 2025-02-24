@@ -45,7 +45,8 @@ function output_images_compress_and_checksum() {
 
 		if [[ $COMPRESS_OUTPUTIMAGE == *sha* ]]; then
 			display_alert "SHA256 calculating" "${uncompressed_file_basename}${compression_type}" "info"
-			sha256sum -b "${uncompressed_file}${compression_type}" > "${uncompressed_file}${compression_type}".sha
+			# awk manipulation is needed to get rid of temporal folder path from SHA signature
+			sha256sum -b "${uncompressed_file}${compression_type}" | awk '{split($2, a, "/"); print $1, a[length(a)]}' > "${uncompressed_file}${compression_type}".sha
 		fi
 
 	done
