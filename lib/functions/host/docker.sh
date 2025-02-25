@@ -247,12 +247,14 @@ function docker_cli_prepare_dockerfile() {
 	# initialize the extension manager; enable all extensions; only once..
 	if [[ "${docker_prepare_cli_skip_exts:-no}" != "yes" ]]; then
 		display_alert "Docker launcher" "enabling all extensions looking for Docker dependencies" "info"
-		enable_all_extensions_builtin_and_user
+		declare -i seconds_before_extensions=$SECONDS
+		enable_extensions_with_hostdeps_builtin_and_user "add_host_dependencies" "host_dependencies_known"
 		initialize_extension_manager
+		display_alert "Docker launcher" "enabled extensions in $((SECONDS - seconds_before_extensions)) seconds" "debug"
 	fi
 	declare -a -g host_dependencies=()
 
-	host_release="${DOCKER_WANTED_RELEASE}" early_prepare_host_dependencies
+	host_release="${DOCKER_WANTED_RELEASE}" early_prepare_host_dependencies # hooks: add_host_dependencies // host_dependencies_known
 	display_alert "Pre-game host dependencies for host_release '${DOCKER_WANTED_RELEASE}'" "${host_dependencies[*]}" "debug"
 
 	# This includes apt install equivalent to install_host_dependencies()
