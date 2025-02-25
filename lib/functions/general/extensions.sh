@@ -562,6 +562,42 @@ function enable_all_extensions_builtin_and_user() {
 	done
 }
 
+# This looks up and enables extensions containing function hooks passed in as arguments.
+# The reasoning is simple: during Dockerfile build, we wanna have all the hostdeps defined, even if we're not gonna use them.
+function enable_extensions_with_hostdeps_builtin_and_user() {
+	declare -a searched_hook_names=("${@}") #eg: "add_host_dependencies" "host_dependencies_known"
+	declare -a grep_args=()
+	for hook_name in "${searched_hook_names[@]}"; do
+		grep_args+=("-e" "^function ${hook_name}__")
+	done
+
+	declare -a extension_list=()
+	declare -a ext_dirs=("${SRC}/extensions" "${USERPATCHES_PATH}/extensions")
+	declare -a ignore_extensions=("sample-extension")
+
+	# Extensions are files of the format <dir>/extension_name.sh or <dir>/extension_name/extension_name.sh
+	for ext_dir in "${ext_dirs[@]}"; do
+		if [[ -d "${ext_dir}" ]]; then
+			declare -a ext_list_dir=()
+			mapfile -t ext_list_dir < <(find "${ext_dir}" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 grep -l "${grep_args[@]}")
+			extension_list+=("${ext_list_dir[@]}")
+		fi
+	done
+
+	# loop over the files found; remove the prefix
+	for extension_file in "${extension_list[@]}"; do
+		extension_file="${extension_file#${SRC}/}"
+		extension_file="${extension_file%.sh}"
+		extension_name="${extension_file##*/}"
+		# skip, if extension_name is in the ignore_extensions array
+		if [[ " ${ignore_extensions[*]} " == *" ${extension_name} "* ]]; then
+			continue
+		fi
+		# enable the extensions, quietly.
+		enable_extension_quiet="yes" enable_extension "${extension_name}"
+	done
+}
+
 # Fancy placeholder for future ideas. allow any core function to be hooked. maybe with "voters" infrastructure?
 function do_with_hooks() {
 	"$@"
