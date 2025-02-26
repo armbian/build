@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Date: Sat, 15 Feb 2025 02:55:37 +0200
+Subject: drm/rockchip: vop2: Improve display modes handling on RK3588 HDMI1
+
+The RK3588 specific implementation is currently quite limited in terms
+of handling the full range of display modes supported by the connected
+screens, e.g. 2560x1440@75Hz, 2048x1152@60Hz, 1024x768@60Hz are just a
+few of them.
+
+Additionally, it doesn't cope well with non-integer refresh rates like
+59.94, 29.97, 23.98, etc.
+
+Make use of HDMI1 PHY PLL as a more accurate DCLK source to handle
+all display modes up to 4K@60Hz.
+
+Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+---
+ drivers/gpu/drm/rockchip/rockchip_drm_vop2.c | 26 +++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+index 111111111111..222222222222 100644
+--- a/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
++++ b/drivers/gpu/drm/rockchip/rockchip_drm_vop2.c
+@@ -216,6 +216,7 @@ struct vop2 {
+ 	struct clk *aclk;
+ 	struct clk *pclk;
+ 	struct clk *pll_hdmiphy0;
++	struct clk *pll_hdmiphy1;
+ 
+ 	/* optional internal rgb encoder */
+ 	struct rockchip_rgb *rgb;
+@@ -2270,11 +2271,14 @@ static void vop2_crtc_atomic_enable(struct drm_crtc *crtc,
+ 	 * Switch to HDMI PHY PLL as DCLK source for display modes up
+ 	 * to 4K@60Hz, if available, otherwise keep using the system CRU.
+ 	 */
+-	if (vop2->pll_hdmiphy0 && clock <= VOP2_MAX_DCLK_RATE) {
++	if ((vop2->pll_hdmiphy0 || vop2->pll_hdmiphy1) && clock <= VOP2_MAX_DCLK_RATE) {
+ 		drm_for_each_encoder_mask(encoder, crtc->dev, crtc_state->encoder_mask) {
+ 			struct rockchip_encoder *rkencoder = to_rockchip_encoder(encoder);
+ 
+ 			if (rkencoder->crtc_endpoint_id == ROCKCHIP_VOP2_EP_HDMI0) {
++				if (!vop2->pll_hdmiphy0)
++					break;
++
+ 				if (!vp->dclk_src)
+ 					vp->dclk_src = clk_get_parent(vp->dclk);
+ 
+@@ -2284,6 +2288,20 @@ static void vop2_crtc_atomic_enable(struct drm_crtc *crtc,
+ 						 "Could not switch to HDMI0 PHY PLL: %d\n", ret);
+ 				break;
+ 			}
++
++			if (rkencoder->crtc_endpoint_id == ROCKCHIP_VOP2_EP_HDMI1) {
++				if (!vop2->pll_hdmiphy1)
++					break;
++
++				if (!vp->dclk_src)
++					vp->dclk_src = clk_get_parent(vp->dclk);
++
++				ret = clk_set_parent(vp->dclk, vop2->pll_hdmiphy1);
++				if (ret < 0)
++					drm_warn(vop2->drm,
++						 "Could not switch to HDMI1 PHY PLL: %d\n", ret);
++				break;
++			}
+ 		}
+ 	}
+ 
+@@ -3733,6 +3751,12 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
+ 		return PTR_ERR(vop2->pll_hdmiphy0);
+ 	}
+ 
++	vop2->pll_hdmiphy1 = devm_clk_get_optional(vop2->dev, "pll_hdmiphy1");
++	if (IS_ERR(vop2->pll_hdmiphy1)) {
++		drm_err(vop2->drm, "failed to get pll_hdmiphy1\n");
++		return PTR_ERR(vop2->pll_hdmiphy1);
++	}
++
+ 	vop2->irq = platform_get_irq(pdev, 0);
+ 	if (vop2->irq < 0) {
+ 		drm_err(vop2->drm, "cannot find irq for vop2\n");
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Date: Sat, 15 Feb 2025 02:55:38 +0200
+Subject: arm64: dts: rockchip: Enable HDMI1 PHY clk provider on RK3588
+
+Since commit c4b09c562086 ("phy: phy-rockchip-samsung-hdptx: Add clock
+provider support"), the HDMI PHY PLL can be used as an alternative and
+more accurate pixel clock source for VOP2 to improve display modes
+handling on RK3588 SoC.
+
+Add the missing #clock-cells property to allow using the clock provider
+functionality of HDMI1 PHY.
+
+Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi b/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi
+@@ -506,6 +506,7 @@ hdptxphy1: phy@fed70000 {
+ 		reg = <0x0 0xfed70000 0x0 0x2000>;
+ 		clocks = <&cru CLK_USB2PHY_HDPTXRXPHY_REF>, <&cru PCLK_HDPTX1>;
+ 		clock-names = "ref", "apb";
++		#clock-cells = <0>;
+ 		#phy-cells = <0>;
+ 		resets = <&cru SRST_HDPTX1>, <&cru SRST_P_HDPTX1>,
+ 			 <&cru SRST_HDPTX1_INIT>, <&cru SRST_HDPTX1_CMN>,
+-- 
+Armbian
+
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+Date: Sat, 15 Feb 2025 02:55:39 +0200
+Subject: arm64: dts: rockchip: Add HDMI1 PHY PLL clock source to VOP2 on
+ RK3588
+
+VOP2 on RK3588 is able to use the HDMI PHY PLL as an alternative and
+more accurate pixel clock source to improve handling of display modes up
+to 4K@60Hz on video ports 0, 1 and 2.
+
+The HDMI1 PHY PLL clock source cannot be added directly to vop node in
+rk3588-base.dtsi, along with the HDMI0 related one, because HDMI1 is an
+optional feature and its PHY node belongs to a separate (extra) DT file.
+
+Therefore, add the HDMI1 PHY PLL clock source to VOP2 by overwriting its
+clocks & clock-names properties in the extra DT file.
+
+Signed-off-by: Cristian Ciocaltea <cristian.ciocaltea@collabora.com>
+---
+ arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi | 21 ++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi b/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi
+index 111111111111..222222222222 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3588-extra.dtsi
+@@ -569,3 +569,24 @@ pcie30phy: phy@fee80000 {
+ 		status = "disabled";
+ 	};
+ };
++
++&vop {
++	clocks = <&cru ACLK_VOP>,
++		 <&cru HCLK_VOP>,
++		 <&cru DCLK_VOP0>,
++		 <&cru DCLK_VOP1>,
++		 <&cru DCLK_VOP2>,
++		 <&cru DCLK_VOP3>,
++		 <&cru PCLK_VOP_ROOT>,
++		 <&hdptxphy0>,
++		 <&hdptxphy1>;
++	clock-names = "aclk",
++		      "hclk",
++		      "dclk_vp0",
++		      "dclk_vp1",
++		      "dclk_vp2",
++		      "dclk_vp3",
++		      "pclk_vop",
++		      "pll_hdmiphy0",
++		      "pll_hdmiphy1";
++};
+-- 
+Armbian
+

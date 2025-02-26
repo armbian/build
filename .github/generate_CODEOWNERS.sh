@@ -3,18 +3,24 @@
 SRC="$(realpath "${BASH_SOURCE%/*}/../")"
 
 # Dummy function for successful source
-function display_alert() {
-	:
-}
-function enable_extension() {
-	:
+function display_alert() { :; }
+function enable_extension() { :; }
+function add_packages_to_image() { :; }
+
+function run_hook() {
+	local hook_point="$1"
+	while read -r hook_point_function; do
+		"${hook_point_function}"
+	done < <(compgen -A function | grep "^${hook_point}__" | LC_ALL=C.UTF-8 sort)
 }
 
 # $1: board config
 function generate_for_board() {
 	local board_config="$1"
 	(
+		BOARD="${board_config%.*}"
 		source "${SRC}/config/boards/${board_config}"
+
 		LINUXFAMILY="${BOARDFAMILY}"
 
 		[[ -n "${BOARD_MAINTAINER}" ]] || return
@@ -26,13 +32,18 @@ function generate_for_board() {
 				source "${SRC}/config/sources/common.conf"
 				source "${SRC}/config/sources/${ARCH}.conf"
 
+				run_hook "post_family_config"
+				run_hook "post_family_config_branch_${BRANCH,,}"
+
 				[[ -z $LINUXCONFIG ]] && LINUXCONFIG="linux-${LINUXFAMILY}-${BRANCH}"
-				[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="$LINUXFAMILY-$BRANCH"
+				[[ -z $KERNELPATCHDIR ]] && KERNELPATCHDIR="archive/${LINUXFAMILY}-${KERNEL_MAJOR_MINOR}"
+				[[ -z $BOOTPATCHDIR ]] && BOOTPATCHDIR="u-boot-${LINUXFAMILY}"
+				[[ -z $ATFPATCHDIR ]] && ATFPATCHDIR="atf-${LINUXFAMILY}"
 
 				cat <<-EOF
 					config/boards/${board_config}			${maintainers}
 					config/kernel/${LINUXCONFIG%-*}-*.config	${maintainers}
-					sources/families/${LINUXFAMILY}.conf		${maintainers}
+					sources/families/${BOARDFAMILY}.conf		${maintainers}
 					patch/kernel/${KERNELPATCHDIR%-*}-*/		${maintainers}
 				EOF
 
@@ -40,6 +51,16 @@ function generate_for_board() {
 				if [[ -n "${patch_archive}" ]]; then
 					patch_archive="${patch_archive%/}"
 					echo "patch/kernel/${patch_archive%-*}-*/	${maintainers}"
+				fi
+
+				if [[ -n "${BOOTCONFIG}" && "${BOOTCONFIG}" != "none" ]]; then
+					while read -r d; do
+						echo "patch/u-boot/${d}/		${maintainers}"
+					done < <(echo "${BOOTPATCHDIR}" | xargs -n1)
+				fi
+
+				if [[ -n "${ATFSOURCE}" && "${ATFSOURCE}" != "none" ]]; then
+					echo "patch/atf/${ATFPATCHDIR}/			${maintainers}"
 				fi
 			)
 		done < <(echo "${KERNEL_TARGET}" | tr ',' '\n')
@@ -68,9 +89,9 @@ function merge() {
 	local file
 	while read -r file; do
 		declare -a maintainers
-		readarray -t maintainers < <(echo "${codeowners["$file"]}" | xargs -n1 | sort -u)
+		readarray -t maintainers < <(echo "${codeowners["$file"]}" | xargs -n1 | LC_ALL=C.UTF-8 sort -u)
 		echo "${file}		${maintainers[*]}"
-	done < <(printf "%s\n" "${!codeowners[@]}" | sort)
+	done < <(printf "%s\n" "${!codeowners[@]}" | LC_ALL=C.UTF-8 sort)
 }
 
 cat <<-EOF >"${SRC}/.github/CODEOWNERS"

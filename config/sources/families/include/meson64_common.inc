@@ -28,10 +28,6 @@ function fetch_sources_tools__libreelec_amlogic_fip() {
 # this family does not need it
 ATF_COMPILE="no"
 
-if [[ $BOARD == lafrite ]]; then
-	UBOOT_TARGET_MAP="u-boot-dtb.img;;u-boot.bin:u-boot.bin u-boot-dtb.img"
-fi
-
 # Set CPUMIN et al if not already set in the board config.
 CPUMIN=${CPUMIN:-500000}
 CPUMAX=${CPUMAX:-1536000}
@@ -57,45 +53,6 @@ function custom_kernel_config__enable_rtl88x2cs_driver() {
 		display_alert "Enabling rtl88x2cs driver in kernel config" "armbian-kernel" "wrn"
 		kernel_config_set_m CONFIG_RTL8822CS
 	fi
-}
-
-# this helper function includes postprocess for p212 and its variants.
-# $1 PATH for uboot blob repo
-# $2 dir name in uboot blob repo
-uboot_gxl_postprocess() {
-	run_host_command_logged mv -v u-boot.bin bl33.bin
-
-	run_host_command_logged $1/blx_fix.sh $1/$2/bl30.bin \
-		$1/$2/zero_tmp \
-		$1/$2/bl30_zero.bin \
-		$1/$2/bl301.bin \
-		$1/$2/bl301_zero.bin \
-		$1/$2/bl30_new.bin bl30
-
-	run_host_command_logged python2 $1/acs_tool.pyc $1/$2/bl2.bin \
-		$1/$2/bl2_acs.bin \
-		$1/$2/acs.bin 0
-
-	run_host_command_logged $1/blx_fix.sh $1/$2/bl2_acs.bin \
-		$1/$2/zero_tmp \
-		$1/$2/bl2_zero.bin \
-		$1/$2/bl21.bin \
-		$1/$2/bl21_zero.bin \
-		$1/$2/bl2_new.bin bl2
-
-	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl3enc --input $1/$2/bl30_new.bin
-	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl3enc --input $1/$2/bl31.img
-	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl3enc --input bl33.bin
-
-	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bl2sig --input $1/$2/bl2_new.bin \
-		--output bl2.n.bin.sig
-
-	run_host_x86_binary_logged $1/$2/aml_encrypt_gxl --bootmk \
-		--output u-boot.bin \
-		--bl2 bl2.n.bin.sig \
-		--bl30 $1/$2/bl30_new.bin.enc \
-		--bl31 $1/$2/bl31.img.enc \
-		--bl33 bl33.bin.enc
 }
 
 # this helper function includes postprocess for s400 and its variants.

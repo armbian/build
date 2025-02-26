@@ -47,9 +47,9 @@ function build_rootfs_and_image() {
 	create_sources_list_and_deploy_repo_key "image-late" "${RELEASE}" "${SDCARD}/"
 
 	# We call this above method too many times. @TODO: find out why and fix the same
-	# We may have a armbian.list.disabled file lying around. Remove the same
-	if [[ -e "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled ]]; then
-		rm "${SDCARD}"/etc/apt/sources.list.d/armbian.list.disabled
+	# We may have a armbian.sources.disabled file lying around. Remove the same
+	if [[ -e "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled ]]; then
+		rm "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled
 	fi
 
 	LOG_SECTION="post_repo_apt_update" do_with_logging post_repo_apt_update
