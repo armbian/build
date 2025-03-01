@@ -1,10 +1,10 @@
 # Rockchip RK3566 quad core 4GB-8GB GBE PCIe USB3
 BOARD_NAME="Pine Quartz64 A"
-BOARDFAMILY="rockchip64"
+BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOT_SOC="rk3566"
 BOOTCONFIG="quartz64-a-rk3566_defconfig"
-KERNEL_TARGET="current,edge"
+KERNEL_TARGET="current,edge,vendor"
 KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
