@@ -1,0 +1,126 @@
+From 3b6462ebad249f4762acfd8e262442bb0cda95b4 Mon Sep 17 00:00:00 2001
+From: Jernej Skrabec <jernej.skrabec@gmail.com>
+Date: Sun, 29 Sep 2024 22:04:40 +1300
+Subject: drm: sun4i: de3: add YUV support to the DE3 mixer
+
+The mixer in the DE3 display engine supports YUV 8 and 10 bit
+formats in addition to 8-bit RGB. Add the required register
+configuration and format enumeration callback functions to the mixer,
+and store the in-use output format (defaulting to RGB) and color
+encoding in engine variables.
+
+Signed-off-by: Jernej Skrabec <jernej.skrabec@gmail.com>
+Signed-off-by: Ryan Walklin <ryan@testtoast.com>
+---
+ drivers/gpu/drm/sun4i/sun8i_mixer.c  | 53 ++++++++++++++++++++++++++--
+ drivers/gpu/drm/sun4i/sunxi_engine.h |  5 +++
+ 2 files changed, 55 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+index 252827715de1..a50c583852ed 100644
+--- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
++++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
+@@ -23,7 +23,10 @@
+ #include <drm/drm_gem_dma_helper.h>
+ #include <drm/drm_probe_helper.h>
+ 
++#include <uapi/linux/media-bus-format.h>
++
+ #include "sun4i_drv.h"
++#include "sun50i_fmt.h"
+ #include "sun8i_mixer.h"
+ #include "sun8i_ui_layer.h"
+ #include "sun8i_vi_layer.h"
+@@ -390,12 +393,52 @@ static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
+ 
+ 	DRM_DEBUG_DRIVER("Switching display mixer interlaced mode %s\n",
+ 			 interlaced ? "on" : "off");
++
++	if (engine->format == MEDIA_BUS_FMT_RGB888_1X24)
++		val = SUN8I_MIXER_BLEND_COLOR_BLACK;
++	else
++		val = 0xff108080;
++
++	regmap_write(mixer->engine.regs,
++		     SUN8I_MIXER_BLEND_BKCOLOR(bld_base), val);
++	regmap_write(mixer->engine.regs,
++		     SUN8I_MIXER_BLEND_ATTR_FCOLOR(bld_base, 0), val);
++
++	if (mixer->cfg->has_formatter)
++		sun50i_fmt_setup(mixer, mode->hdisplay,
++				 mode->vdisplay, mixer->engine.format);
++}
++
++static u32 *sun8i_mixer_get_supported_fmts(struct sunxi_engine *engine, u32 *num)
++{
++	struct sun8i_mixer *mixer = engine_to_sun8i_mixer(engine);
++	u32 *formats, count;
++
++	count = 0;
++
++	formats = kcalloc(5, sizeof(*formats), GFP_KERNEL);
++	if (!formats)
++		return NULL;
++
++	if (mixer->cfg->has_formatter) {
++		formats[count++] = MEDIA_BUS_FMT_UYYVYY10_0_5X30;
++		formats[count++] = MEDIA_BUS_FMT_YUV8_1X24;
++		formats[count++] = MEDIA_BUS_FMT_UYVY8_1X16;
++		formats[count++] = MEDIA_BUS_FMT_UYYVYY8_0_5X24;
++	}
++
++	formats[count++] = MEDIA_BUS_FMT_RGB888_1X24;
++
++	*num = count;
++
++	return formats;
+ }
+ 
+ static const struct sunxi_engine_ops sun8i_engine_ops = {
+-	.commit		= sun8i_mixer_commit,
+-	.layers_init	= sun8i_layers_init,
+-	.mode_set	= sun8i_mixer_mode_set,
++	.commit			= sun8i_mixer_commit,
++	.layers_init		= sun8i_layers_init,
++	.mode_set		= sun8i_mixer_mode_set,
++	.get_supported_fmts	= sun8i_mixer_get_supported_fmts,
+ };
+ 
+ static const struct regmap_config sun8i_mixer_regmap_config = {
+@@ -456,6 +499,10 @@ static int sun8i_mixer_bind(struct device *dev, struct device *master,
+ 	dev_set_drvdata(dev, mixer);
+ 	mixer->engine.ops = &sun8i_engine_ops;
+ 	mixer->engine.node = dev->of_node;
++	/* default output format, supported by all mixers */
++	mixer->engine.format = MEDIA_BUS_FMT_RGB888_1X24;
++	/* default color encoding, ignored with RGB I/O */
++	mixer->engine.encoding = DRM_COLOR_YCBCR_BT601;
+ 
+ 	if (of_property_present(dev->of_node, "iommus")) {
+ 		/*
+diff --git a/drivers/gpu/drm/sun4i/sunxi_engine.h b/drivers/gpu/drm/sun4i/sunxi_engine.h
+index c48cbc1aceb8..ffafc29b3a0c 100644
+--- a/drivers/gpu/drm/sun4i/sunxi_engine.h
++++ b/drivers/gpu/drm/sun4i/sunxi_engine.h
+@@ -6,6 +6,8 @@
+ #ifndef _SUNXI_ENGINE_H_
+ #define _SUNXI_ENGINE_H_
+ 
++#include <drm/drm_color_mgmt.h>
++
+ struct drm_plane;
+ struct drm_crtc;
+ struct drm_device;
+@@ -151,6 +153,9 @@ struct sunxi_engine {
+ 
+ 	int id;
+ 
++	u32				format;
++	enum drm_color_encoding		encoding;
++
+ 	/* Engine list management */
+ 	struct list_head		list;
+ };
+-- 
+2.35.3
+

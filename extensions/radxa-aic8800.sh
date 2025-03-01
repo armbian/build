@@ -51,4 +51,13 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
 	declare -ag if_error_find_files_sdcard=("/var/lib/dkms/aic8800*/*/build/*.log")
 	use_clean_environment="yes" chroot_sdcard_apt_get_install "/tmp/${aic8800_dkms_file_name} /tmp/aic8800-firmware_${latest_version}_all.deb"
 	use_clean_environment="yes" chroot_sdcard "rm -f /tmp/aic8800*.deb"
+	use_clean_environment="yes" chroot_sdcard "mkdir -p /usr/lib/systemd/network/"
+	use_clean_environment="yes" chroot_sdcard 'cat <<- EOF > /usr/lib/systemd/network/50-radxa-aic8800.link
+		[Match]
+		OriginalName=wlan*
+		Driver=usb
+
+		[Link]
+		NamePolicy=kernel
+	EOF'
 }

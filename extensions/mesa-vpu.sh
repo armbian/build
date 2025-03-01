@@ -87,9 +87,13 @@ function post_install_kernel_debs__3d() {
 			Pin: release o=LP-PPA-kisak-kisak-mesa
 			Pin-Priority: 1001
 		EOF
+	fi
 
-		# Add chromium if building a desktop
-		if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+	# Add chromium if building a desktop
+	if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+		if [[ "${DISTRIBUTION}" == "Debian" ]]; then
+			pkgs+=("chromium")
+		elif [[ "${DISTRIBUTION}" == "Ubuntu" && "${RELEASE}" =~ ^(jammy|noble)$ ]]; then
 			pkgs+=("chromium")
 		fi
 	fi

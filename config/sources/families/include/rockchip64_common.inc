@@ -33,7 +33,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.13"
+		declare -g KERNEL_MAJOR_MINOR="6.14"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
@@ -74,6 +74,10 @@ CPUMIN=${CPUMIN:="408000"}
 # BOOT_SOC_MKIMAGE defaults to BOOT_SOC, but can be overriden. See rk3566
 declare -g BOOT_SOC_MKIMAGE="${BOOT_SOC}"
 
+# LOADER_UBOOT_OFFSET defaults to 0x200000, but can be overriden. See rk3308
+# It only take effects while $BOOT_SCENARIO == 'only-blobs'
+declare -g LOADER_UBOOT_OFFSET="0x200000"
+
 case "$BOOT_SOC" in
 	rk3308)
 		CPUMAX=${CPUMAX:="1296000"}
@@ -81,6 +85,7 @@ case "$BOOT_SOC" in
 		DDR_BLOB="${DDR_BLOB:-"rk33/rk3308_ddr_589MHz_uart2_m1_v1.30.bin"}"
 		MINILOADER_BLOB="${MINILOADER_BLOB:-"rk33/rk3308_miniloader_v1.22.bin"}"
 		BL31_BLOB="${BL31_BLOB:-"rk33/rk3308_bl31_v2.22.elf"}"
+		LOADER_UBOOT_OFFSET="0x600000" # rk3308 loader has a quirky uboot offset 0x600000
 		;;
 
 	rk3328)
@@ -143,8 +148,8 @@ case "$BOOT_SOC" in
 
 	rk3588) #CPUMAX undefined?
 		BOOT_SCENARIO="${BOOT_SCENARIO:=spl-blobs}"
-		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.16.bin"}"
-		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.45.elf"}"
+		DDR_BLOB="${DDR_BLOB:-"rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.18.bin"}"
+		BL31_BLOB="${BL31_BLOB:-"rk35/rk3588_bl31_v1.48.elf"}"
 		# ROCKUSB_BLOB is used to flash a board with rkdeveloptool (Linux, can use 'rkdevflash' extension) or RKDevTool (Windows) in MASKROM mode
 		ROCKUSB_BLOB="rk35/rk3588_spl_loader_v1.16.113.bin"
 		BOOTENV_FILE='rk35xx.txt'
@@ -237,7 +242,7 @@ uboot_custom_postprocess() {
 			tempfile=$(mktemp)
 			run_host_command_logged tools/mkimage -n "${BOOT_SOC_MKIMAGE}" -T rksd -d $RKBIN_DIR/$DDR_BLOB idbloader.bin
 			cat $RKBIN_DIR/$MINILOADER_BLOB >> idbloader.bin
-			run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img 0x200000
+			run_host_x86_binary_logged $RKBIN_DIR/tools/loaderimage --pack --uboot ./u-boot-dtb.bin uboot.img ${LOADER_UBOOT_OFFSET}
 			run_host_x86_binary_logged $RKBIN_DIR/tools/trust_merger --replace bl31.elf $RKBIN_DIR/$BL31_BLOB trust.ini
 			;;
 

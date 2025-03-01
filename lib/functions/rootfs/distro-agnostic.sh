@@ -400,8 +400,8 @@ function install_distribution_agnostic() {
 	[[ -f "${SDCARD}"/lib/systemd/system/armbian-led-state.service ]] && chroot_sdcard systemctl --no-reload enable armbian-led-state.service
 
 	# switch to beta repository at this stage if building nightly images
-	if [[ $IMAGE_TYPE == nightly && -f "${SDCARD}"/etc/apt/sources.list.d/armbian.list ]]; then
-		sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.list
+	if [[ $IMAGE_TYPE == nightly && -f "${SDCARD}"/etc/apt/sources.list.d/armbian.sources ]]; then
+		sed -i 's/apt/beta/' "${SDCARD}"/etc/apt/sources.list.d/armbian.sources
 	fi
 
 	# fix for https://bugs.launchpad.net/ubuntu/+source/blueman/+bug/1542723 @TODO: from ubuntu 15. maybe gone?

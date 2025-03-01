@@ -219,17 +219,11 @@ function adaptative_prepare_host_dependencies() {
 
 	### Python3 -- required for Armbian's Python tooling, and also for more recent u-boot builds. Needs 3.9+; ffi-dev is needed for some Python packages when the wheel is not prebuilt
 	### 'python3-setuptools' and 'python3-pyelftools' moved to requirements.txt to make sure build hosts use the same/latest versions of these tools.
-	host_dependencies+=("python3-dev" "python3-pip" "libffi-dev")
+	### 'python3-dev' depends on distutils, so instead depend on libpython3-dev which doesn't.
+	host_dependencies+=("python3" "libpython3-dev" "libffi-dev")
 
 	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
 	host_dependencies+=("libgnutls28-dev")
-
-	# Noble/Trixie and later releases do not carry "python3-distutils" https://docs.python.org/3.10/whatsnew/3.10.html#distutils-deprecated
-	if [[ "$host_release" =~ ^(trixie|sid|noble|wilma)$ ]]; then
-		display_alert "python3-distutils not available on host release '${host_release}'" "distutils was deprecated with Python 3.12" "debug"
-	else
-		host_dependencies+=("python3-distutils")
-	fi
 
 	### Python2 -- required for some older u-boot builds
 	# Debian newer than 'bookworm' and Ubuntu newer than 'lunar'/'mantic' does not carry python2 anymore; in this case some u-boot's might fail to build.

@@ -41,7 +41,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:master' # Commit date: Dec 29, 2024 (please update when updating commit ref)
+		local rtl8189esver='commit:fb77d4b9316805f64893771b520e009215a10bc3' # Commit date: Feb 16, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -133,7 +133,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:b9f21a6ff209edc220b2fc4ca610eb54595f218d' # Commit date: Dec 23, 2024 (please update when updating commit ref)
+		local rtl8192euver='commit:e6721468a4e48cf2199c212fa13c086e3705bcb3' # Commit date: Feb 16, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -620,7 +620,7 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:4b8d758f42ce38b75f9a98a083906b0d59d244c3' # Commit date: Dec 23, 2024 (please update when updating commit ref)
+		local rtl8723dsver='commit:ac64712f6767565bc3560e6ae412b780b07bc84c' # Commit date: Feb 16, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 

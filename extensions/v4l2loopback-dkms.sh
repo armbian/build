@@ -1,4 +1,9 @@
 function extension_finish_config__build_v4l2loopback_dkms_kernel_module() {
+	# Deny on minimal CLI images
+	if [[ "${BUILD_MINIMAL}" == "yes" ]]; then
+		display_alert "Extension: ${EXTENSION}" "skip installation in minimal images" "warn"
+		return 0
+	fi
 	if [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]]; then
 		display_alert "Kernel version has no working headers package" "skipping v4l2loopback-dkms for kernel v${KERNEL_MAJOR_MINOR}" "warn"
 		return 0

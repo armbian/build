@@ -169,17 +169,39 @@ function export_ansi_logs() {
 	if [[ "${show_message_after_export:-"yes"}" != "skip" && "${ARMBIAN_INSIDE_DOCKERFILE_BUILD:-"no"}" != "yes" ]]; then
 		display_alert "ANSI log file built; inspect it by running:" "less -RS ${target_relative_to_src}"
 
-		# @TODO: compress...
-		declare paste_url="${PASTE_URL:-"https://paste.armbian.com/log"}"
+		# Define here the paste servers to use, in order: each will be tried in sequence until one works
+		declare -a paste_servers=("paste.armbian.com" "paste.armbian.de" "paste.next.armbian.com" "paste.armbian.eu")
+
+		# User can override by setting PASTE_SERVER_HOST=some.paste.server.com - it will be added as the first to try
+		if [[ "${PASTE_SERVER_HOST}" != "" ]]; then
+			display_alert "Using custom paste server" "${PASTE_SERVER_HOST}" "info"
+			paste_servers=("${PASTE_SERVER_HOST}" "${paste_servers[@]}")
+		fi
+
 		if [[ "${SHARE_LOG:-"no"}" == "yes" ]]; then
-			display_alert "SHARE_LOG=yes, uploading log" "uploading logs" "info"
-			declare logs_url="undetermined"
-			logs_url=$(curl --silent --data-binary "@${target_relative_to_src}" "${paste_url}" | xargs echo -n || true) # don't fail
-			display_alert "Log uploaded, share URL:" "${logs_url}" ""
-			# set output for GitHub Actions
-			github_actions_add_output logs_url "${logs_url}"
+			declare -i some_paste_server_worked=0
+			for paste_server in "${paste_servers[@]}"; do
+				declare paste_url="https://${paste_server}/log"
+				display_alert "SHARE_LOG=yes, uploading log" "uploading logs to '${paste_server}'" "info"
+				declare result_from_paste_server="undetermined"
+				result_from_paste_server=$(curl --silent --max-time 120 --data-binary "@${target_relative_to_src}" "${paste_url}" | xargs echo -n || true) # don't fail
+				# Check if the result_from_paste_server begin with https:// and the paste_server; if yes, it's a success, break the loop
+				if [[ "${result_from_paste_server}" == "https://${paste_server}/"* ]]; then
+					display_alert "Log uploaded, share URL:" "${result_from_paste_server}" ""
+					github_actions_add_output logs_url "${result_from_paste_server}" # set output for GitHub Actions
+					some_paste_server_worked=1
+					break
+				else
+					display_alert "Log upload failed, retrying with next server"
+				fi
+			done
+			[[ ${some_paste_server_worked} -eq 0 ]] && display_alert "Log upload failed" "No paste server worked" "warn"
 		else
-			display_alert "Share log manually (or SHARE_LOG=yes):" "curl --data-binary @${target_relative_to_src} ${paste_url}"
+			display_alert "Share log manually:" "use one of the commands below (or add SHARE_LOG=yes next time!)" "info"
+			for paste_server in "${paste_servers[@]}"; do
+				declare paste_url="https://${paste_server}/log"
+				display_alert "Share log manually:" "curl --data-binary @${target_relative_to_src} ${paste_url}"
+			done
 		fi
 	fi
 
