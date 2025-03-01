@@ -21,6 +21,7 @@ function post_family_config_branch_edge__pocketbeagle2_use_beagle_kernel_uboot()
 	declare -g KERNELSOURCE="https://github.com/beagleboard/linux" # BeagleBoard kernel
 	declare -g KERNEL_MAJOR_MINOR="6.12"
 	declare -g KERNELBRANCH="branch:v6.12.9-ti-arm64-r21"
+	declare -g LINUXFAMILY="k3-pb2" # Separate kernel package from the regular `k3` family
 
 	declare -g BOOTSOURCE="https://github.com/beagleboard/u-boot" # BeagleBoard u-boot
 	declare -g BOOTBRANCH="branch:v2025.01-pocketbeagle2"
