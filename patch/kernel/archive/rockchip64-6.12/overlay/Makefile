@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
+	hinlink-h88k-240x135-lcd.dtbo \
 	rk3308-s0-ext-antenna.dtbo \
 	rk3308-b@1.3ghz.dtbo \
 	rk3308-bs.dtbo rk3308-bs@1.3ghz.dtbo \
