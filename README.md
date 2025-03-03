@@ -202,7 +202,6 @@ We always need those volunteering positions:
 
 - [Code reviewer](https://forum.armbian.com/staffapplications/application/23-code-reviewer/)
 - [Build framework maintainer](https://forum.armbian.com/staffapplications/application/9-build-framework-maintainer/)
-- [Test Automation Engineer](https://forum.armbian.com/staffapplications/application/19-test-automation-engineer/)
 
 Just apply and follow!
 
