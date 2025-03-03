@@ -1,0 +1,12 @@
+# Rockchip RK3328 quad core 1GB RAM eMMC USB-C USB3 USB2 WiFi
+BOARD_NAME="mksklipad50"
+BOARDFAMILY="rockchip64"
+BOARD_MAINTAINER="torte71"
+BOOTCONFIG="mksklipad50-rk3328_defconfig"
+KERNEL_TARGET="current,edge"
+KERNEL_TEST_TARGET="current"
+HAS_VIDEO_OUTPUT="no"
+BOOT_LOGO="desktop"
+MODULES="pinctrl-rk805 ads7846 spidev"
+BOOTFS_TYPE="fat"
+PACKAGE_LIST_BOARD="build-essential usb-modeswitch"

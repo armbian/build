@@ -435,6 +435,16 @@ function kernel_package_callback_linux_headers() {
 		echo -e "clean:\n\techo fake clean for tools/vm" > "${headers_target_dir}/tools/vm/Makefile"
 	fi
 
+	# Small detour: in v6.14-rc1, in commit https://github.com/torvalds/linux/commit/e19bde2269ca,
+	#               the tools/pci dir was renamed to tools/testing/selftests/pci_endpoint.
+	#               Unfortunately tools/Makefile still expects it to exist,
+	#               and "make clean" in the "/tools" dir fails. Drop in a fake Makefile there to work around this.
+	if [[ ! -f "${headers_target_dir}/tools/pci/Makefile" ]] && [[ "${KERNEL_MAJOR_MINOR}" == "6.14" ]]; then
+		display_alert "Creating fake tools/pci/Makefile" "6.14 hackfix" "debug"
+		run_host_command_logged mkdir -p "${headers_target_dir}/tools/pci"
+		echo -e "clean:\n\techo fake clean for tools/pci" > "${headers_target_dir}/tools/pci/Makefile"
+	fi
+
 	# Hack for 6.5-rc1: create include/linux dir so the 'clean' step below doesn't fail. I've reported upstream...
 	display_alert "Creating fake counter/include/linux" "6.5-rc1 hackfix" "debug"
 	run_host_command_logged mkdir -p "${headers_target_dir}/tools/counter/include/linux"

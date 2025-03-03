@@ -9,7 +9,7 @@
 
 function run_tool_batcat() {
 	# Default version
-	BATCAT_VERSION=${BATCAT_VERSION:-0.24.0} # https://github.com/sharkdp/bat/releases
+	BATCAT_VERSION=${BATCAT_VERSION:-0.25.0} # https://github.com/sharkdp/bat/releases
 
 	declare non_cache_dir="/armbian-tools/batcat" # To deploy/reuse cached batcat in a Docker image.
 

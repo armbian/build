@@ -9,7 +9,7 @@
 
 function run_tool_oras() {
 	# Default version
-	ORAS_VERSION=${ORAS_VERSION:-1.2.1} # https://github.com/oras-project/oras/releases
+	ORAS_VERSION=${ORAS_VERSION:-1.2.2} # https://github.com/oras-project/oras/releases
 	#ORAS_VERSION=${ORAS_VERSION:-"1.0.0-rc.1"} # https://github.com/oras-project/oras/releases
 
 	declare non_cache_dir="/armbian-tools/oras" # To deploy/reuse cached ORAS in a Docker image.

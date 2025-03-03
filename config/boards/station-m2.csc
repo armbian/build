@@ -3,22 +3,14 @@ BOARD_NAME="Station M2"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="station-m2-rk3566_defconfig"
-KERNEL_TARGET="edge,current,vendor"
+KERNEL_TARGET="current,edge,vendor"
 KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
-BOOT_FDT_FILE="rockchip/rk3566-firefly-roc-pc.dtb"
+BOOT_FDT_FILE="rockchip/rk3566-roc-pc.dtb"
 BOOT_SCENARIO="spl-blobs"
 ASOUND_STATE="asound.state.station-m2"
 IMAGE_PARTITION_TABLE="gpt"
-
-function post_family_tweaks__station_m2() {
-	display_alert "$BOARD" "Installing board tweaks" "info"
-
-	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
-
-	return 0
-}
 
 # Override family config for this board; let's avoid conditionals in family config.
 function post_family_config__stationm2_use_radxa_vendor_uboot() {

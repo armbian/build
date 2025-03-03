@@ -13,7 +13,6 @@
 # compile_uboot
 # compile_kernel
 # compile_firmware
-# compile_armbian-config
 # compile_xilinx_bootgen
 # grab_version
 # find_toolchain
