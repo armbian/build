@@ -80,6 +80,9 @@ function create_sources_list_and_deploy_repo_key() {
 
 	declare distro=""
 
+	# Drop deboostrap sources leftovers
+	rm -f "${basedir}/etc/apt/sources.list"
+
 	# Add upstream (Debian/Ubuntu) APT repository
 	case $release in
 		buster | bullseye | bookworm | trixie)
