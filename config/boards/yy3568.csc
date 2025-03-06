@@ -1,5 +1,5 @@
 # Rockchip RK3568 quad core 1-8GB SoC 2x1GBe eMMC USB3
-BOARD_NAME="yy3568"
+BOARD_NAME="YouYeeToo YY3568"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER="hqnicolas"
 BOOTCONFIG="yy3568-rk3568_defconfig"
