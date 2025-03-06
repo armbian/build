@@ -177,7 +177,7 @@ function create_new_rootfs_cache_via_debootstrap() {
 	# @TODO: use asset logging for this; actually log contents of the files too
 	run_host_command_logged ls -l "${SDCARD}/usr/share/keyrings"
 	run_host_command_logged ls -l "${SDCARD}/etc/apt/sources.list.d"
-	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list"
+	run_host_command_logged cat "${SDCARD}/etc/apt/sources.list.d/${DISTRIBUTION,,}.sources"
 
 	# stage: update packages list
 	display_alert "Updating package list" "$RELEASE" "info"
