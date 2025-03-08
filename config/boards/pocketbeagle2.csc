@@ -2,7 +2,7 @@
 
 BOARD_NAME="PocketBeagle 2"
 BOARDFAMILY="k3"
-BOARD_MAINTAINER="grippy98"
+BOARD_MAINTAINER="Grippy98"
 BOOTCONFIG="am6232_pocketbeagle2_a53_defconfig"
 BOOTFS_TYPE="fat"
 BOOT_FDT_FILE="k3-am6232-pocketbeagle2.dts"
