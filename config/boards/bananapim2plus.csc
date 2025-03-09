@@ -1,7 +1,7 @@
 # Allwinner H3 quad core 1Gb RAM SoC Wifi GBE
 BOARD_NAME="Banana Pi M2+"
 BOARDFAMILY="sun8i"
-BOARD_MAINTAINER=""
+BOARD_MAINTAINER="leggewie"
 BOOTCONFIG="bananapi_m2_plus_h3_defconfig"
 DEFAULT_OVERLAYS="analog-codec"
 MODULES_CURRENT="g_serial"
