@@ -9,14 +9,14 @@ KERNEL_TARGET="dev"
 BOOT_FDT_FILE="dtb/allwinner/sun55i-a527-radxa-a5e.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 #IMAGE_PARTITION_TABLE="msdos"
-#BOOTFS_TYPE="fat"
+BOOTFS_TYPE="fat"
 BOOTSTART="1"
 BOOTSIZE="512"
 ROOTSTART="513"
 
-function post_family_tweaks__radxa_cubie-a5e() {
-	display_alert "Applying wifi firmware"
-	pushd "$SDCARD/lib/firmware"
-	ln -s "aic8800/SDIO/aic8800D80" "aic8800_sdio" # use armbian-firmware
-	popd
-}
+#function post_family_tweaks__radxa_cubie-a5e() {
+#	display_alert "Applying wifi firmware"
+#	pushd "$SDCARD/lib/firmware"
+#	ln -s "aic8800/SDIO/aic8800D80" "aic8800_sdio" # use armbian-firmware
+#	popd
+#}
