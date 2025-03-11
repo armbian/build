@@ -1,5 +1,5 @@
-# Ayn Odin2 Configuration
-declare -g BOARD_NAME="Ayn Odin2"
+# Ayn Odin2 Portal Configuration
+declare -g BOARD_NAME="Ayn Odin2 Portal"
 declare -g BOARD_MAINTAINER="FantasyGmm"
 declare -g BOARDFAMILY="sm8550"
 declare -g KERNEL_TARGET="current,edge"
@@ -59,7 +59,7 @@ function post_family_tweaks_bsp__ayn-odin2_firmware() {
 	return 0
 }
 
-function post_family_tweaks__ayn-odin2_enable_services() {
+function post_family_tweaks__ayn-odin2portal_enable_services() {
 	if ! ayn-odin2_is_userspace_supported; then
 		if [[ "${RELEASE}" != "" ]]; then
 			display_alert "Missing userspace for ${BOARD}" "${RELEASE} does not have the userspace necessary to support the ${BOARD}" "warn"
@@ -76,8 +76,8 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled "${SDCARD}"/etc/apt/sources.list.d/armbian.sources
 
 	do_with_retries 3 chroot_sdcard_apt_get_update
-		display_alert "Installing ${BOARD} tweaks" "warn"
-	do_with_retries 3 chroot_sdcard_apt_get_install alsa-ucm-conf qbootctl qrtr-tools unudhcpd mkbootimg
+	display_alert "Installing ${BOARD} tweaks" "warn"
+	do_with_retries 3 chroot_sdcard_apt_get_install alsa-ucm-conf qbootctl qrtr-tools unudhcpd mkbootimg git mtools zstd
 	# disable armbian repo back
 	mv "${SDCARD}"/etc/apt/sources.list.d/armbian.sources "${SDCARD}"/etc/apt/sources.list.d/armbian.sources.disabled
 	do_with_retries 3 chroot_sdcard_apt_get_update
@@ -94,7 +94,7 @@ function post_family_tweaks__ayn-odin2_enable_services() {
 	return 0
 }
 
-function post_family_tweaks__ayn-odin2_preset_configs() {
+function post_family_tweaks__ayn-odin2portal_preset_configs() {
 	display_alert "Adding preset configs for ${BOARD} rootfs" "warn"
 	# Set PRESET_NET_CHANGE_DEFAULTS to 1 to apply any network related settings below
 	echo "PRESET_NET_CHANGE_DEFAULTS=1" > "${SDCARD}"/root/.not_logged_in_yet
@@ -132,7 +132,7 @@ function post_family_tweaks__ayn-odin2_preset_configs() {
 	echo "PRESET_DEFAULT_REALNAME=Odin" >> "${SDCARD}"/root/.not_logged_in_yet
 }
 
-function post_family_tweaks_bsp__ayn-odin2_bsp_firmware_in_initrd() {
+function post_family_tweaks_bsp__ayn-odin2portal_bsp_firmware_in_initrd() {
 	display_alert "Adding to bsp-cli" "${BOARD}: firmware in initrd" "warn"
 	declare file_added_to_bsp_destination # Will be filled in by add_file_from_stdin_to_bsp_destination
 	# Using odin2's firmware for now
