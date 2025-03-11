@@ -1,0 +1,138 @@
+From 891448a1c84c14a040d721138bc5b47927c057ae Mon Sep 17 00:00:00 2001
+From: Andre Przywara <andre.przywara@arm.com>
+Date: Sun, 25 Feb 2024 16:06:16 +0000
+Subject: [PATCH] clk: sunxi-ng: h6-r: add GPU power domain
+
+The Allwinner H616 features register 0x7010254 in the PRCM MMIO frame,
+where bit 0 needs to be cleared to enable operation of the Mali GPU.
+With this bit set (the reset default), any access to the Mali registers
+hangs the bus and thus the whole system. The BSP code clears this bit
+in U-Boot and their kernel never touches it again.
+
+Register a power-domain device to control this bit. Since we claim this
+MMIO region in the H6 R-CCU driver, add the code here, so that we don't
+need to artificially split the MMIO range in the DT.
+Since there seems to be at least one other register with similar behaviour
+nearby (0x7010260), make the power domain take one cell, even though we
+only support domain #0 for now.
+
+Signed-off-by: Andre Przywara <andre.przywara@arm.com>
+---
+ drivers/clk/sunxi-ng/ccu-sun50i-h6-r.c | 84 ++++++++++++++++++++++++++
+ 1 file changed, 84 insertions(+)
+
+diff --git a/drivers/clk/sunxi-ng/ccu-sun50i-h6-r.c b/drivers/clk/sunxi-ng/ccu-sun50i-h6-r.c
+index 2a8b998cf09c..ab8b167f4a72 100644
+--- a/drivers/clk/sunxi-ng/ccu-sun50i-h6-r.c
++++ b/drivers/clk/sunxi-ng/ccu-sun50i-h6-r.c
+@@ -4,9 +4,11 @@
+  */
+ 
+ #include <linux/clk-provider.h>
++#include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_domain.h>
+ 
+ #include "ccu_common.h"
+ #include "ccu_reset.h"
+@@ -217,6 +219,86 @@ static const struct sunxi_ccu_desc sun50i_h616_r_ccu_desc = {
+ 	.num_resets	= ARRAY_SIZE(sun50i_h616_r_ccu_resets),
+ };
+ 
++#define	PD_H616_GPU_REG			0x254
++
++struct sun50i_h616_ppu_pd {
++	struct generic_pm_domain	genpd;
++	void __iomem			*base;
++};
++
++#define to_sun50i_h616_ppu_pd(_genpd) \
++	container_of(_genpd, struct sun50i_h616_ppu_pd, genpd)
++
++static bool sun50i_h616_ppu_power_status(const struct sun50i_h616_ppu_pd *pd)
++{
++	return !readl(pd->base + PD_H616_GPU_REG);
++}
++
++static int sun50i_h616_ppu_pd_set_power(const struct sun50i_h616_ppu_pd *pd,
++					bool power_on)
++{
++	if (power_on)
++		writel(0, pd->base + PD_H616_GPU_REG);
++	else
++		writel(1, pd->base + PD_H616_GPU_REG);
++
++	return 0;
++}
++
++static int sun50i_h616_ppu_pd_power_on(struct generic_pm_domain *genpd)
++{
++	const struct sun50i_h616_ppu_pd *pd = to_sun50i_h616_ppu_pd(genpd);
++
++	return sun50i_h616_ppu_pd_set_power(pd, true);
++}
++
++static int sun50i_h616_ppu_pd_power_off(struct generic_pm_domain *genpd)
++{
++	const struct sun50i_h616_ppu_pd *pd = to_sun50i_h616_ppu_pd(genpd);
++
++	return sun50i_h616_ppu_pd_set_power(pd, false);
++}
++
++static int sun50i_h616_register_ppu(struct platform_device *pdev,
++				    void __iomem *base)
++{
++	struct device *dev = &pdev->dev;
++	struct genpd_onecell_data *ppu;
++	struct sun50i_h616_ppu_pd *pd;
++	int ret;
++
++	pd = devm_kzalloc(dev, sizeof(*pd), GFP_KERNEL);
++	if (!pd)
++		return -ENOMEM;
++
++	ppu = devm_kzalloc(dev, sizeof(*ppu), GFP_KERNEL);
++	if (!ppu)
++		return -ENOMEM;
++
++	ppu->domains = devm_kzalloc(dev, sizeof(*ppu->domains), GFP_KERNEL);
++	if (!ppu->domains)
++		return -ENOMEM;
++
++	ppu->num_domains = 1;
++	pd->genpd.name		= "GPU";
++	pd->genpd.power_off	= sun50i_h616_ppu_pd_power_off;
++	pd->genpd.power_on	= sun50i_h616_ppu_pd_power_on;
++	pd->base		= base;
++
++	ret = pm_genpd_init(&pd->genpd, NULL, !sun50i_h616_ppu_power_status(pd));
++	if (ret) {
++		dev_warn(dev, "Failed to add GPU power domain: %d\n", ret);
++		return ret;
++	}
++
++	ppu->domains[0] = &pd->genpd;
++	ret = of_genpd_add_provider_onecell(dev->of_node, ppu);
++	if (ret)
++		dev_warn(dev, "Failed to add provider: %d\n", ret);
++
++	return 0;
++}
++
+ static int sun50i_h6_r_ccu_probe(struct platform_device *pdev)
+ {
+ 	const struct sunxi_ccu_desc *desc;
+@@ -230,6 +312,8 @@ static int sun50i_h6_r_ccu_probe(struct platform_device *pdev)
+ 	if (IS_ERR(reg))
+ 		return PTR_ERR(reg);
+ 
++	sun50i_h616_register_ppu(pdev, reg);
++
+ 	return devm_sunxi_ccu_probe(&pdev->dev, reg, desc);
+ }
+ 
+-- 
+2.35.3
+
