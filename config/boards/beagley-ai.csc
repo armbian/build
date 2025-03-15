@@ -2,7 +2,7 @@
 
 BOARD_NAME="BeagleY-AI"
 BOARDFAMILY="k3"
-BOARD_MAINTAINER="grippy98"
+BOARD_MAINTAINER="Grippy98"
 BOOTCONFIG="am67a_beagley_ai_a53_defconfig"
 BOOTFS_TYPE="fat"
 BOOT_FDT_FILE="k3-am67a-beagley-ai.dts"
