@@ -229,7 +229,8 @@ function kernel_prepare_bare_repo_from_oras_gitball() {
 		display_alert "Kernel bare tree already exists" "${kernel_git_bare_tree}" "cachehit"
 	fi
 
-	git_ensure_safe_directory "${kernel_git_bare_tree}"
+	# If we tell git to set this folder as safe it fails as not a git directory
+	# git_ensure_safe_directory "${kernel_git_bare_tree}"
 
 	return 0
 }
