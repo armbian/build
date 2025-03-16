@@ -57,7 +57,9 @@ function git_ensure_safe_directory() {
 		local git_dir="$1"
 		if [[ -e "$1/.git" ]]; then
 			display_alert "git: Marking all directories as safe, which should include" "$git_dir" "debug"
-			git config --local --get safe.directory "$1" > /dev/null || regular_git config --local --add safe.directory "$1"
+			cd "$1" # make sure we are in the right directory for the next command
+			git config --local --get safe.directory > /dev/null || regular_git config --local --add safe.directory
+			cd -
 		fi
 	else
 		display_alert "git not installed" "a true wonder how you got this far without git - it will be installed for you" "warn"
