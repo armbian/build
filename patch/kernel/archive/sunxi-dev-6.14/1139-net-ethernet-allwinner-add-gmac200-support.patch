@@ -1,0 +1,3238 @@
+
+Code is backport from BSP kernel
+
+Signed-off-by: Piotr Oniszczuk <piotr.oniszczuk@gmail.com>
+
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.c linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.c
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.c	2025-01-21 15:58:05.577494134 +0100
+@@ -0,0 +1,829 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
++/*
++* Allwinner DWMAC driver.
++*
++* Copyright(c) 2022-2027 Allwinnertech Co., Ltd.
++*
++* This file is licensed under the terms of the GNU General Public
++* License version 2.  This program is licensed "as is" without any
++* warranty of any kind, whether express or implied.
++*/
++#define SUNXI_MODNAME "stmmac"
++#include "sunxi-log.h"
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/mdio-mux.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/of_mdio.h>
++#include <linux/of_net.h>
++#include <linux/phy.h>
++#include <linux/platform_device.h>
++#include <linux/regulator/consumer.h>
++#include <linux/regmap.h>
++#include <linux/stmmac.h>
++
++#include "stmmac/stmmac.h"
++#include "stmmac/stmmac_platform.h"
++
++#include "dwmac-sunxi.h"
++
++#define DWMAC_MODULE_VERSION		"0.3.0"
++
++#define MAC_ADDR_LEN			18
++#define SUNXI_DWMAC_MAC_ADDRESS		"80:3f:5d:09:8b:26"
++#define MAC_IRQ_NAME			8
++
++static char mac_str[MAC_ADDR_LEN] = SUNXI_DWMAC_MAC_ADDRESS;
++module_param_string(mac_str, mac_str, MAC_ADDR_LEN, S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(mac_str, "MAC Address String.(xx:xx:xx:xx:xx:xx)");
++
++//todo #ifdef MODULE
++//extern int get_custom_mac_address(int fmt, char *name, char *addr);
++//#endif
++
++static int sunxi_dwmac200_set_syscon(struct sunxi_dwmac *chip)
++{
++	u32 reg_val = 0;
++
++	/* Clear interface mode bits */
++	reg_val &= ~(SUNXI_DWMAC200_SYSCON_ETCS | SUNXI_DWMAC200_SYSCON_EPIT);
++	if (chip->variant->interface & PHY_INTERFACE_MODE_RMII)
++		reg_val &= ~SUNXI_DWMAC200_SYSCON_RMII_EN;
++
++	switch (chip->interface) {
++	case PHY_INTERFACE_MODE_MII:
++		/* default */
++		break;
++	case PHY_INTERFACE_MODE_RGMII:
++	case PHY_INTERFACE_MODE_RGMII_ID:
++	case PHY_INTERFACE_MODE_RGMII_RXID:
++	case PHY_INTERFACE_MODE_RGMII_TXID:
++		reg_val |= SUNXI_DWMAC200_SYSCON_EPIT;
++		reg_val |= FIELD_PREP(SUNXI_DWMAC200_SYSCON_ETCS,
++					chip->rgmii_clk_ext ? SUNXI_DWMAC_ETCS_EXT_GMII : SUNXI_DWMAC_ETCS_INT_GMII);
++		if (chip->rgmii_clk_ext)
++			sunxi_info(chip->dev, "RGMII use external transmit clock\n");
++		else
++			sunxi_info(chip->dev, "RGMII use internal transmit clock\n");
++		break;
++	case PHY_INTERFACE_MODE_RMII:
++		reg_val |= SUNXI_DWMAC200_SYSCON_RMII_EN;
++		reg_val &= ~SUNXI_DWMAC200_SYSCON_ETCS;
++		break;
++	default:
++		sunxi_err(chip->dev, "Unsupported interface mode: %s", phy_modes(chip->interface));
++		return -EINVAL;
++	}
++
++	writel(reg_val, chip->syscfg_base + SUNXI_DWMAC200_SYSCON_REG);
++	return 0;
++}
++
++static int sunxi_dwmac200_set_delaychain(struct sunxi_dwmac *chip, enum sunxi_dwmac_delaychain_dir dir, u32 delay)
++{
++	u32 reg_val = readl(chip->syscfg_base + SUNXI_DWMAC200_SYSCON_REG);
++	int ret = -EINVAL;
++
++	switch (dir) {
++	case SUNXI_DWMAC_DELAYCHAIN_TX:
++		if (delay <= chip->variant->tx_delay_max) {
++			reg_val &= ~SUNXI_DWMAC200_SYSCON_ETXDC;
++			reg_val |= FIELD_PREP(SUNXI_DWMAC200_SYSCON_ETXDC, delay);
++			ret = 0;
++		}
++		break;
++	case SUNXI_DWMAC_DELAYCHAIN_RX:
++		if (delay <= chip->variant->rx_delay_max) {
++			reg_val &= ~SUNXI_DWMAC200_SYSCON_ERXDC;
++			reg_val |= FIELD_PREP(SUNXI_DWMAC200_SYSCON_ERXDC, delay);
++			ret = 0;
++		}
++		break;
++	}
++
++	if (!ret)
++		writel(reg_val, chip->syscfg_base + SUNXI_DWMAC200_SYSCON_REG);
++
++	return ret;
++}
++
++static u32 sunxi_dwmac200_get_delaychain(struct sunxi_dwmac *chip, enum sunxi_dwmac_delaychain_dir dir)
++{
++	u32 delay = 0;
++	u32 reg_val = readl(chip->syscfg_base + SUNXI_DWMAC200_SYSCON_REG);
++
++	switch (dir) {
++	case SUNXI_DWMAC_DELAYCHAIN_TX:
++		delay = FIELD_GET(SUNXI_DWMAC200_SYSCON_ETXDC, reg_val);
++		break;
++	case SUNXI_DWMAC_DELAYCHAIN_RX:
++		delay = FIELD_GET(SUNXI_DWMAC200_SYSCON_ERXDC, reg_val);
++		break;
++	default:
++		sunxi_err(chip->dev, "Unknow delaychain dir %d\n", dir);
++	}
++
++	return delay;
++}
++
++static int sunxi_dwmac210_set_delaychain(struct sunxi_dwmac *chip, enum sunxi_dwmac_delaychain_dir dir, u32 delay)
++{
++	u32 reg_val = readl(chip->syscfg_base + SUNXI_DWMAC210_CFG_REG);
++	int ret = -EINVAL;
++
++	switch (dir) {
++	case SUNXI_DWMAC_DELAYCHAIN_TX:
++		if (delay <= chip->variant->tx_delay_max) {
++			reg_val &= ~(SUNXI_DWMAC210_CFG_ETXDC_H | SUNXI_DWMAC210_CFG_ETXDC_L);
++			reg_val |= FIELD_PREP(SUNXI_DWMAC210_CFG_ETXDC_H, delay >> 3);
++			reg_val |= FIELD_PREP(SUNXI_DWMAC210_CFG_ETXDC_L, delay);
++			ret = 0;
++		}
++		break;
++	case SUNXI_DWMAC_DELAYCHAIN_RX:
++		if (delay <= chip->variant->rx_delay_max) {
++			reg_val &= ~SUNXI_DWMAC210_CFG_ERXDC;
++			reg_val |= FIELD_PREP(SUNXI_DWMAC210_CFG_ERXDC, delay);
++			ret = 0;
++		}
++		break;
++	}
++
++	if (!ret)
++		writel(reg_val, chip->syscfg_base + SUNXI_DWMAC210_CFG_REG);
++
++	return ret;
++}
++
++static u32 sunxi_dwmac210_get_delaychain(struct sunxi_dwmac *chip, enum sunxi_dwmac_delaychain_dir dir)
++{
++	u32 delay = 0;
++	u32 tx_l, tx_h;
++	u32 reg_val = readl(chip->syscfg_base + SUNXI_DWMAC210_CFG_REG);
++
++	switch (dir) {
++	case SUNXI_DWMAC_DELAYCHAIN_TX:
++		tx_h = FIELD_GET(SUNXI_DWMAC210_CFG_ETXDC_H, reg_val);
++		tx_l = FIELD_GET(SUNXI_DWMAC210_CFG_ETXDC_L, reg_val);
++		delay = (tx_h << 3 | tx_l);
++		break;
++	case SUNXI_DWMAC_DELAYCHAIN_RX:
++		delay = FIELD_GET(SUNXI_DWMAC210_CFG_ERXDC, reg_val);
++		break;
++	}
++
++	return delay;
++}
++
++static int sunxi_dwmac110_get_version(struct sunxi_dwmac *chip, u16 *ip_tag, u16 *ip_vrm)
++{
++	u32 reg_val;
++
++	if (!ip_tag || !ip_vrm)
++		return -EINVAL;
++
++	reg_val = readl(chip->syscfg_base + SUNXI_DWMAC110_VERSION_REG);
++	*ip_tag = FIELD_GET(SUNXI_DWMAC110_VERSION_IP_TAG, reg_val);
++	*ip_vrm = FIELD_GET(SUNXI_DWMAC110_VERSION_IP_VRM, reg_val);
++	return 0;
++}
++
++static int sunxi_dwmac_power_on(struct sunxi_dwmac *chip)
++{
++	int ret;
++
++	/* set dwmac pin bank voltage to 3.3v */
++	if (!IS_ERR(chip->dwmac3v3_supply)) {
++		ret = regulator_set_voltage(chip->dwmac3v3_supply, 3300000, 3300000);
++		if (ret) {
++			sunxi_err(chip->dev, "Set dwmac3v3-supply voltage 3300000 failed %d\n", ret);
++			goto err_dwmac3v3;
++		}
++
++		ret = regulator_enable(chip->dwmac3v3_supply);
++		if (ret) {
++			sunxi_err(chip->dev, "Enable dwmac3v3-supply failed %d\n", ret);
++			goto err_dwmac3v3;
++		}
++	}
++
++	/* set phy voltage to 3.3v */
++	if (!IS_ERR(chip->phy3v3_supply)) {
++		ret = regulator_set_voltage(chip->phy3v3_supply, 3300000, 3300000);
++		if (ret) {
++			sunxi_err(chip->dev, "Set phy3v3-supply voltage 3300000 failed %d\n", ret);
++			goto err_phy3v3;
++		}
++
++		ret = regulator_enable(chip->phy3v3_supply);
++		if (ret) {
++			sunxi_err(chip->dev, "Enable phy3v3-supply failed\n");
++			goto err_phy3v3;
++		}
++	}
++
++	return 0;
++
++err_phy3v3:
++	regulator_disable(chip->dwmac3v3_supply);
++err_dwmac3v3:
++	return ret;
++}
++
++static void sunxi_dwmac_power_off(struct sunxi_dwmac *chip)
++{
++	if (!IS_ERR(chip->phy3v3_supply))
++		regulator_disable(chip->phy3v3_supply);
++	if (!IS_ERR(chip->dwmac3v3_supply))
++		regulator_disable(chip->dwmac3v3_supply);
++}
++
++static int sunxi_dwmac_clk_init(struct sunxi_dwmac *chip)
++{
++	int ret;
++
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE)
++		reset_control_deassert(chip->hsi_rst);
++	reset_control_deassert(chip->ahb_rst);
++
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE) {
++		ret = clk_prepare_enable(chip->hsi_ahb);
++		if (ret) {
++			sunxi_err(chip->dev, "enable hsi_ahb failed\n");
++			goto err_ahb;
++		}
++		ret = clk_prepare_enable(chip->hsi_axi);
++		if (ret) {
++			sunxi_err(chip->dev, "enable hsi_axi failed\n");
++			goto err_axi;
++		}
++	}
++
++	if (chip->variant->flags & SUNXI_DWMAC_NSI_CLK_GATE) {
++		ret = clk_prepare_enable(chip->nsi_clk);
++		if (ret) {
++			sunxi_err(chip->dev, "enable nsi clk failed\n");
++			goto err_nsi;
++		}
++	}
++
++	if (chip->soc_phy_clk_en) {
++		ret = clk_prepare_enable(chip->phy_clk);
++		if (ret) {
++			sunxi_err(chip->dev, "Enable phy clk failed\n");
++			goto err_phy;
++		}
++	}
++
++	return 0;
++
++err_phy:
++	if (chip->variant->flags & SUNXI_DWMAC_NSI_CLK_GATE)
++		clk_disable_unprepare(chip->nsi_clk);
++err_nsi:
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE) {
++		clk_disable_unprepare(chip->hsi_axi);
++err_axi:
++		clk_disable_unprepare(chip->hsi_ahb);
++	}
++err_ahb:
++	reset_control_assert(chip->ahb_rst);
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE)
++		reset_control_assert(chip->hsi_rst);
++	return ret;
++}
++
++static void sunxi_dwmac_clk_exit(struct sunxi_dwmac *chip)
++{
++	if (chip->soc_phy_clk_en)
++		clk_disable_unprepare(chip->phy_clk);
++	if (chip->variant->flags & SUNXI_DWMAC_NSI_CLK_GATE)
++		clk_disable_unprepare(chip->nsi_clk);
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE) {
++		clk_disable_unprepare(chip->hsi_axi);
++		clk_disable_unprepare(chip->hsi_ahb);
++	}
++	reset_control_assert(chip->ahb_rst);
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE)
++		reset_control_assert(chip->hsi_rst);
++}
++
++static int sunxi_dwmac_hw_init(struct sunxi_dwmac *chip)
++{
++	int ret;
++
++	ret = chip->variant->set_syscon(chip);
++	if (ret < 0) {
++		sunxi_err(chip->dev, "Set syscon failed\n");
++		goto err;
++	}
++
++	ret = chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_TX, chip->tx_delay);
++	if (ret < 0) {
++		sunxi_err(chip->dev, "Invalid TX clock delay: %d\n", chip->tx_delay);
++		goto err;
++	}
++
++	ret = chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_RX, chip->rx_delay);
++	if (ret < 0) {
++		sunxi_err(chip->dev, "Invalid RX clock delay: %d\n", chip->rx_delay);
++		goto err;
++	}
++
++err:
++	return ret;
++}
++
++static void sunxi_dwmac_hw_exit(struct sunxi_dwmac *chip)
++{
++	writel(0, chip->syscfg_base);
++}
++
++static int sunxi_dwmac_ecc_init(struct sunxi_dwmac *chip)
++{
++	struct net_device *ndev = dev_get_drvdata(chip->dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct plat_stmmacenet_data *plat_dat = priv->plat;
++
++	plat_dat->safety_feat_cfg = devm_kzalloc(chip->dev, sizeof(*plat_dat->safety_feat_cfg), GFP_KERNEL);
++	if (!plat_dat->safety_feat_cfg)
++		return -ENOMEM;
++
++	plat_dat->safety_feat_cfg->tsoee	= 0; /* TSO memory ECC Disabled */
++	plat_dat->safety_feat_cfg->mrxpee	= 0; /* MTL Rx Parser ECC Disabled */
++	plat_dat->safety_feat_cfg->mestee	= 0; /* MTL EST ECC Disabled */
++	plat_dat->safety_feat_cfg->mrxee	= 1; /* MTL Rx FIFO ECC Enable */
++	plat_dat->safety_feat_cfg->mtxee	= 1; /* MTL Tx FIFO ECC Enable */
++	plat_dat->safety_feat_cfg->epsi		= 0; /* Not Enable Parity on Slave Interface port */
++	plat_dat->safety_feat_cfg->edpp		= 1; /* Enable Data path Parity Protection */
++	plat_dat->safety_feat_cfg->prtyen	= 1; /* Enable FSM parity feature */
++	plat_dat->safety_feat_cfg->tmouten	= 1; /* Enable FSM timeout feature */
++
++	return 0;
++}
++
++static int sunxi_dwmac_init(struct platform_device *pdev, void *priv)
++{
++	struct sunxi_dwmac *chip = priv;
++	int ret;
++
++	ret = sunxi_dwmac_power_on(chip);
++	if (ret) {
++		sunxi_err(&pdev->dev, "Power on dwmac failed\n");
++		return ret;
++	}
++
++	ret = sunxi_dwmac_clk_init(chip);
++	if (ret) {
++		sunxi_err(&pdev->dev, "Clk init dwmac failed\n");
++		goto err_clk;
++	}
++
++	ret = sunxi_dwmac_hw_init(chip);
++	if (ret)
++		sunxi_warn(&pdev->dev, "Hw init dwmac failed\n");
++
++	return 0;
++
++err_clk:
++	sunxi_dwmac_power_off(chip);
++	return ret;
++}
++
++static void sunxi_dwmac_exit(struct platform_device *pdev, void *priv)
++{
++	struct sunxi_dwmac *chip = priv;
++
++	sunxi_dwmac_hw_exit(chip);
++	sunxi_dwmac_clk_exit(chip);
++	sunxi_dwmac_power_off(chip);
++}
++
++static void sunxi_dwmac_parse_delay_maps(struct sunxi_dwmac *chip)
++{
++	struct platform_device *pdev = to_platform_device(chip->dev);
++	struct device_node *np = pdev->dev.of_node;
++	int ret, maps_cnt;
++	u32 *maps;
++
++	maps_cnt = of_property_count_elems_of_size(np, "delay-maps", sizeof(u32));
++	if (maps_cnt <= 0) {
++		sunxi_info(&pdev->dev, "Not found delay-maps in dts\n");
++		return;
++	}
++
++	maps = devm_kcalloc(&pdev->dev, maps_cnt, sizeof(u32), GFP_KERNEL);
++	if (!maps)
++		return;
++
++	ret = of_property_read_u32_array(np, "delay-maps", maps, maps_cnt);
++	if (ret) {
++		sunxi_err(&pdev->dev, "Failed to parse delay-maps\n");
++		goto err_parse_maps;
++	}
++/* todo
++	int i;
++	const u8 array_size = 3;
++	u16 soc_ver;
++
++	soc_ver = (u16)sunxi_get_soc_ver();
++	for (i = 0; i < (maps_cnt / array_size); i++) {
++		if (soc_ver == maps[i * array_size]) {
++			chip->rx_delay = maps[i * array_size + 1];
++			chip->tx_delay = maps[i * array_size + 2];
++			sunxi_info(&pdev->dev, "Overwrite delay-maps parameters, rx-delay:%d, tx-delay:%d\n",
++					chip->rx_delay, chip->tx_delay);
++		}
++	}
++*/
++err_parse_maps:
++	devm_kfree(&pdev->dev, maps);
++}
++
++static void sunxi_dwmac_request_mtl_irq(struct platform_device *pdev, struct sunxi_dwmac *chip,
++		struct plat_stmmacenet_data *plat_dat)
++{
++	u32 queues;
++	char int_name[MAC_IRQ_NAME];
++
++	for (queues = 0; queues < plat_dat->tx_queues_to_use; queues++) {
++		sprintf(int_name, "%s%d_%s", "tx", queues, "irq");
++		chip->res->tx_irq[queues] = platform_get_irq_byname_optional(pdev, int_name);
++		if (chip->res->tx_irq[queues] < 0)
++			chip->res->tx_irq[queues] = 0;
++	}
++
++	for (queues = 0; queues < plat_dat->rx_queues_to_use; queues++) {
++		sprintf(int_name, "%s%d_%s", "rx", queues, "irq");
++		chip->res->rx_irq[queues] = platform_get_irq_byname_optional(pdev, int_name);
++		if (chip->res->rx_irq[queues] < 0)
++			chip->res->rx_irq[queues] = 0;
++	}
++}
++
++static int sunxi_dwmac_resource_get(struct platform_device *pdev, struct sunxi_dwmac *chip,
++		struct plat_stmmacenet_data *plat_dat)
++{
++	struct device_node *np = pdev->dev.of_node;
++	struct device *dev = &pdev->dev;
++	struct resource *res;
++	int ret;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
++	if (!res) {
++		sunxi_err(dev, "Get phy memory failed\n");
++		return -ENODEV;
++	}
++
++	chip->syscfg_base = devm_ioremap_resource(dev, res);
++	if (!chip->syscfg_base) {
++		sunxi_err(dev, "Phy memory mapping failed\n");
++		return -ENOMEM;
++	}
++
++	chip->rgmii_clk_ext	= of_property_read_bool(np, "aw,rgmii-clk-ext");
++	chip->soc_phy_clk_en = of_property_read_bool(np, "aw,soc-phy-clk-en") ||
++							of_property_read_bool(np, "aw,soc-phy25m");
++	if (chip->soc_phy_clk_en) {
++		chip->phy_clk = devm_clk_get(dev, "phy");
++		if (IS_ERR(chip->phy_clk)) {
++			chip->phy_clk = devm_clk_get(dev, "phy25m");
++			if (IS_ERR(chip->phy_clk)) {
++				sunxi_err(dev, "Get phy25m clk failed\n");
++				return -EINVAL;
++			}
++		}
++		sunxi_info(dev, "Phy use soc fanout\n");
++	} else
++		sunxi_info(dev, "Phy use ext osc\n");
++
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE) {
++		chip->hsi_ahb = devm_clk_get(dev, "hsi_ahb");
++		if (IS_ERR(chip->hsi_ahb)) {
++			sunxi_err(dev, "Get hsi_ahb clk failed\n");
++			return -EINVAL;
++		}
++		chip->hsi_axi = devm_clk_get(dev, "hsi_axi");
++		if (IS_ERR(chip->hsi_axi)) {
++			sunxi_err(dev, "Get hsi_axi clk failed\n");
++			return -EINVAL;
++		}
++	}
++
++	if (chip->variant->flags & SUNXI_DWMAC_NSI_CLK_GATE) {
++		chip->nsi_clk = devm_clk_get(dev, "nsi");
++		if (IS_ERR(chip->nsi_clk)) {
++			sunxi_err(dev, "Get nsi clk failed\n");
++			return -EINVAL;
++		}
++	}
++
++	if (chip->variant->flags & SUNXI_DWMAC_MEM_ECC) {
++		sunxi_info(dev, "Support mem ecc\n");
++		chip->res->sfty_ce_irq = platform_get_irq_byname_optional(pdev, "mac_eccirq");
++		if (chip->res->sfty_ce_irq < 0) {
++			sunxi_err(&pdev->dev, "Get ecc irq failed\n");
++			return -EINVAL;
++		}
++	}
++
++	if (chip->variant->flags & SUNXI_DWMAC_HSI_CLK_GATE) {
++		chip->hsi_rst = devm_reset_control_get_shared(chip->dev, "hsi");
++		if (IS_ERR(chip->hsi_rst)) {
++			sunxi_err(dev, "Get hsi reset failed\n");
++			return -EINVAL;
++		}
++	}
++
++	chip->ahb_rst = devm_reset_control_get_optional_shared(chip->dev, "ahb");
++	if (IS_ERR(chip->ahb_rst)) {
++		sunxi_err(dev, "Get mac reset failed\n");
++		return -EINVAL;
++	}
++
++	chip->dwmac3v3_supply = devm_regulator_get_optional(&pdev->dev, "dwmac3v3");
++	if (IS_ERR(chip->dwmac3v3_supply))
++		sunxi_warn(dev, "Not found dwmac3v3-supply\n");
++
++	chip->phy3v3_supply = devm_regulator_get_optional(&pdev->dev, "phy3v3");
++	if (IS_ERR(chip->phy3v3_supply))
++		sunxi_warn(dev, "Not found phy3v3-supply\n");
++
++	ret = of_property_read_u32(np, "tx-delay", &chip->tx_delay);
++	if (ret) {
++		sunxi_warn(dev, "Get gmac tx-delay failed, use default 0\n");
++		chip->tx_delay = 0;
++	}
++
++	ret = of_property_read_u32(np, "rx-delay", &chip->rx_delay);
++	if (ret) {
++		sunxi_warn(dev, "Get gmac rx-delay failed, use default 0\n");
++		chip->rx_delay = 0;
++	}
++
++	sunxi_dwmac_parse_delay_maps(chip);
++
++	if (chip->variant->flags & SUNXI_DWMAC_MULTI_MSI)
++		sunxi_dwmac_request_mtl_irq(pdev, chip, plat_dat);
++
++	return 0;
++}
++
++#ifndef MODULE
++static void sunxi_dwmac_set_mac(u8 *dst, u8 *src)
++{
++	int i;
++	char *p = src;
++
++	for (i = 0; i < ETH_ALEN; i++, p++)
++		dst[i] = simple_strtoul(p, &p, 16);
++}
++#endif
++
++static int sunxi_dwmac_probe(struct platform_device *pdev)
++{
++	struct plat_stmmacenet_data *plat_dat;
++	struct stmmac_resources stmmac_res;
++	struct sunxi_dwmac *chip;
++	struct device *dev = &pdev->dev;
++	int ret;
++
++	ret = stmmac_get_platform_resources(pdev, &stmmac_res);
++	if (ret)
++		return ret;
++
++	chip = devm_kzalloc(dev, sizeof(*chip), GFP_KERNEL);
++	if (!chip) {
++		sunxi_err(&pdev->dev, "Alloc sunxi dwmac err\n");
++		return -ENOMEM;
++	}
++
++	chip->variant = of_device_get_match_data(&pdev->dev);
++	if (!chip->variant) {
++		sunxi_err(&pdev->dev, "Missing dwmac-sunxi variant\n");
++		return -EINVAL;
++	}
++
++	chip->dev = dev;
++	chip->res = &stmmac_res;
++
++	plat_dat = devm_stmmac_probe_config_dt(pdev, stmmac_res.mac);
++
++	if (IS_ERR(plat_dat))
++		return PTR_ERR(plat_dat);
++
++	ret = sunxi_dwmac_resource_get(pdev, chip, plat_dat);
++	if (ret < 0)
++		return -EINVAL;
++
++#ifdef MODULE
++//todo	get_custom_mac_address(1, "eth", stmmac_res.mac);
++#else
++//todo 	sunxi_dwmac_set_mac(stmmac_res.mac, mac_str);
++#endif
++
++
++	plat_dat->bsp_priv = chip;
++	plat_dat->init = sunxi_dwmac_init;
++	plat_dat->exit = sunxi_dwmac_exit;
++	/* must use 0~4G space */
++	plat_dat->host_dma_width = 32;
++
++	/* Disable Split Header (SPH) feature for sunxi platfrom as default
++	 * The same issue also detect on intel platfrom, see 41eebbf90dfbcc8ad16d4755fe2cdb8328f5d4a7.
++	 */
++	if (chip->variant->flags & SUNXI_DWMAC_SPH_DISABLE)
++		plat_dat->flags |= STMMAC_FLAG_SPH_DISABLE;
++	if (chip->variant->flags & SUNXI_DWMAC_MULTI_MSI)
++		plat_dat->flags |= STMMAC_FLAG_MULTI_MSI_EN;
++	chip->interface = plat_dat->mac_interface;
++
++	plat_dat->clk_csr = 4; /* MDC = AHB(200M)/102 = 2M */
++
++	ret = sunxi_dwmac_init(pdev, plat_dat->bsp_priv);
++	if (ret)
++		goto err_init;
++
++	ret = stmmac_dvr_probe(&pdev->dev, plat_dat, &stmmac_res);
++	if (ret)
++		goto err_dvr_probe;
++
++	if (chip->variant->flags & SUNXI_DWMAC_MEM_ECC) {
++		ret = sunxi_dwmac_ecc_init(chip);
++		if (ret < 0) {
++			sunxi_err(chip->dev, "Init ecc failed\n");
++			goto err_cfg;
++		}
++	}
++
++	sunxi_dwmac_sysfs_init(&pdev->dev);
++
++	sunxi_info(&pdev->dev, "probe success (Version %s)\n", DWMAC_MODULE_VERSION);
++
++	return 0;
++
++err_cfg:
++	stmmac_dvr_remove(&pdev->dev);
++err_dvr_probe:
++	sunxi_dwmac_exit(pdev, chip);
++err_init:
++	//stmmac_remove_config_dt(pdev, plat_dat);
++	return ret;
++}
++
++static void sunxi_dwmac_remove(struct platform_device *pdev)
++{
++	sunxi_dwmac_sysfs_exit(&pdev->dev);
++	stmmac_pltfr_remove(pdev);
++}
++
++static void sunxi_dwmac_shutdown(struct platform_device *pdev)
++{
++	struct net_device *ndev = platform_get_drvdata(pdev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++
++	sunxi_dwmac_exit(pdev, chip);
++}
++
++static int __maybe_unused sunxi_dwmac_suspend(struct device *dev)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct platform_device *pdev = to_platform_device(dev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	int ret;
++
++	/* suspend error workaround */
++	if (ndev && ndev->phydev) {
++		chip->uevent_suppress = dev_get_uevent_suppress(&ndev->phydev->mdio.dev);
++		dev_set_uevent_suppress(&ndev->phydev->mdio.dev, true);
++	}
++
++	ret = stmmac_suspend(dev);
++	sunxi_dwmac_exit(pdev, chip);
++	stmmac_bus_clks_config(priv, false);
++
++	return ret;
++}
++
++static int __maybe_unused sunxi_dwmac_resume(struct device *dev)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct platform_device *pdev = to_platform_device(dev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	int ret;
++
++	stmmac_bus_clks_config(priv, true);
++	sunxi_dwmac_init(pdev, chip);
++	ret = stmmac_resume(dev);
++
++	if (ndev && ndev->phydev) {
++		/* State machine change phy state too early before mdio bus resume.
++		 * WARN_ON would print in mdio_bus_phy_resume if state not equal to PHY_HALTED/PHY_READY/PHY_UP.
++		 * Workaround is change the state back to PHY_UP and modify the state machine work so the judgment can be passed.
++		 */
++		rtnl_lock();
++		mutex_lock(&ndev->phydev->lock);
++		if (ndev->phydev->state == PHY_UP || ndev->phydev->state == PHY_NOLINK) {
++			if (ndev->phydev->state == PHY_NOLINK)
++				ndev->phydev->state = PHY_UP;
++			phy_queue_state_machine(ndev->phydev, HZ);
++		}
++		mutex_unlock(&ndev->phydev->lock);
++		rtnl_unlock();
++
++		/* suspend error workaround */
++		dev_set_uevent_suppress(&ndev->phydev->mdio.dev, chip->uevent_suppress);
++	}
++
++	return ret;
++}
++
++static SIMPLE_DEV_PM_OPS(sunxi_dwmac_pm_ops, sunxi_dwmac_suspend, sunxi_dwmac_resume);
++
++static const struct sunxi_dwmac_variant dwmac200_variant = {
++	.interface = PHY_INTERFACE_MODE_RMII | PHY_INTERFACE_MODE_RGMII,
++	.flags = SUNXI_DWMAC_SPH_DISABLE,
++	.rx_delay_max = 31,
++	.tx_delay_max = 7,
++	.set_syscon = sunxi_dwmac200_set_syscon,
++	.set_delaychain = sunxi_dwmac200_set_delaychain,
++	.get_delaychain = sunxi_dwmac200_get_delaychain,
++};
++
++static const struct sunxi_dwmac_variant dwmac210_variant = {
++	.interface = PHY_INTERFACE_MODE_RMII | PHY_INTERFACE_MODE_RGMII,
++	.flags = SUNXI_DWMAC_SPH_DISABLE | SUNXI_DWMAC_MULTI_MSI,
++	.rx_delay_max = 31,
++	.tx_delay_max = 31,
++	.set_syscon = sunxi_dwmac200_set_syscon,
++	.set_delaychain = sunxi_dwmac210_set_delaychain,
++	.get_delaychain = sunxi_dwmac210_get_delaychain,
++};
++
++static const struct sunxi_dwmac_variant dwmac220_variant = {
++	.interface = PHY_INTERFACE_MODE_RMII | PHY_INTERFACE_MODE_RGMII,
++	.flags = SUNXI_DWMAC_SPH_DISABLE | SUNXI_DWMAC_NSI_CLK_GATE | SUNXI_DWMAC_MULTI_MSI | SUNXI_DWMAC_MEM_ECC,
++	.rx_delay_max = 31,
++	.tx_delay_max = 31,
++	.set_syscon = sunxi_dwmac200_set_syscon,
++	.set_delaychain = sunxi_dwmac210_set_delaychain,
++	.get_delaychain = sunxi_dwmac210_get_delaychain,
++};
++
++static const struct sunxi_dwmac_variant dwmac110_variant = {
++	.interface = PHY_INTERFACE_MODE_RMII | PHY_INTERFACE_MODE_RGMII,
++	.flags = SUNXI_DWMAC_SPH_DISABLE | SUNXI_DWMAC_NSI_CLK_GATE | SUNXI_DWMAC_HSI_CLK_GATE | SUNXI_DWMAC_MULTI_MSI,
++	.rx_delay_max = 31,
++	.tx_delay_max = 31,
++	.set_syscon = sunxi_dwmac200_set_syscon,
++	.set_delaychain = sunxi_dwmac210_set_delaychain,
++	.get_delaychain = sunxi_dwmac210_get_delaychain,
++	.get_version = sunxi_dwmac110_get_version,
++};
++
++static const struct of_device_id sunxi_dwmac_match[] = {
++	{ .compatible = "allwinner,sunxi-gmac-200", .data = &dwmac200_variant },
++	{ .compatible = "allwinner,sunxi-gmac-210", .data = &dwmac210_variant },
++	{ .compatible = "allwinner,sunxi-gmac-220", .data = &dwmac220_variant },
++	{ .compatible = "allwinner,sunxi-gmac-110", .data = &dwmac110_variant },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sunxi_dwmac_match);
++
++static struct platform_driver sunxi_dwmac_driver = {
++	.probe = sunxi_dwmac_probe,
++	.remove = sunxi_dwmac_remove,
++	.shutdown = sunxi_dwmac_shutdown,
++	.driver = {
++		.name			= "dwmac-sunxi",
++		.pm		= &sunxi_dwmac_pm_ops,
++		.of_match_table = sunxi_dwmac_match,
++	},
++};
++module_platform_driver(sunxi_dwmac_driver);
++
++#ifndef MODULE
++static int __init sunxi_dwmac_set_mac_addr(char *str)
++{
++	char *p = str;
++
++	if (str && strlen(str))
++		memcpy(mac_str, p, MAC_ADDR_LEN);
++
++	return 0;
++}
++__setup("mac_addr=", sunxi_dwmac_set_mac_addr);
++#endif /* MODULE */
++
++MODULE_DESCRIPTION("Allwinner DWMAC driver");
++MODULE_AUTHOR("wujiayi <wujiayi@allwinnertech.com>");
++MODULE_AUTHOR("xuminghui <xuminghui@allwinnertech.com>");
++MODULE_AUTHOR("Piotr Oniszczuk <piotr.oniszczuk@gmail.com>");
++MODULE_LICENSE("Dual BSD/GPL");
++MODULE_VERSION(DWMAC_MODULE_VERSION);
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.h linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.h
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi.h	2025-01-21 15:58:05.577494134 +0100
+@@ -0,0 +1,176 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
++/*
++* Allwinner DWMAC driver header.
++*
++* Copyright(c) 2022-2027 Allwinnertech Co., Ltd.
++*
++* This file is licensed under the terms of the GNU General Public
++* License version 2.  This program is licensed "as is" without any
++* warranty of any kind, whether express or implied.
++*/
++
++#ifndef _DWMAC_SUNXI_H_
++#define _DWMAC_SUNXI_H_
++
++#include <linux/version.h>
++#include <linux/bitfield.h>
++
++/* DWCMAC5 ECC Debug Register
++ * These macro do not defined in mainline code dwmac5.h
++ */
++#define MTL_DBG_CTL				0x00000c08
++#define EIEC				BIT(18)
++#define EIAEE				BIT(17)
++#define EIEE				BIT(16)
++#define FIFOSEL				GENMASK(13, 12)
++#define FIFOWREN			BIT(11)
++#define FIFORDEN			BIT(10)
++#define RSTSEL				BIT(9)
++#define RSTALL				BIT(8)
++#define DBGMOD				BIT(1)
++#define FDBGEN				BIT(0)
++#define MTL_DBG_STS				0x00000c0c
++#define FIFOBUSY			BIT(0)
++#define MTL_FIFO_DEBUG_DATA		0x00000c10
++#define MTL_ECC_ERR_STS_RCTL	0x00000cd0
++#define CUES				BIT(5)
++#define CCES				BIT(4)
++#define EMS					GENMASK(3, 1)
++#define EESRE				BIT(0)
++#define MTL_ECC_ERR_ADDR_STATUS	0x00000cd4
++#define EUEAS				GENMASK(31, 16)
++#define ECEAS				GENMASK(15, 0)
++#define MTL_ECC_ERR_CNTR_STATUS	0x00000cd8
++#define EUECS				GENMASK(19, 16)
++#define ECECS				GENMASK(7, 0)
++#define MTL_DPP_ECC_EIC			0x00000ce4
++#define EIM					BIT(16)
++#define BLEI				GENMASK(7, 0)
++
++/* GMAC-200 Register */
++#define SUNXI_DWMAC200_SYSCON_REG	(0x00)
++	#define SUNXI_DWMAC200_SYSCON_BPS_EFUSE		GENMASK(31, 28)
++	#define SUNXI_DWMAC200_SYSCON_XMII_SEL		BIT(27)
++	#define SUNXI_DWMAC200_SYSCON_EPHY_MODE		GENMASK(26, 25)
++	#define SUNXI_DWMAC200_SYSCON_PHY_ADDR		GENMASK(24, 20)
++	#define SUNXI_DWMAC200_SYSCON_BIST_CLK_EN	BIT(19)
++	#define SUNXI_DWMAC200_SYSCON_CLK_SEL		BIT(18)
++	#define SUNXI_DWMAC200_SYSCON_LED_POL		BIT(17)
++	#define SUNXI_DWMAC200_SYSCON_SHUTDOWN		BIT(16)
++	#define SUNXI_DWMAC200_SYSCON_PHY_SEL		BIT(15)
++	#define SUNXI_DWMAC200_SYSCON_ENDIAN_MODE	BIT(14)
++	#define SUNXI_DWMAC200_SYSCON_RMII_EN		BIT(13)
++	#define SUNXI_DWMAC200_SYSCON_ETXDC			GENMASK(12, 10)
++	#define SUNXI_DWMAC200_SYSCON_ERXDC			GENMASK(9, 5)
++	#define SUNXI_DWMAC200_SYSCON_ERXIE			BIT(4)
++	#define SUNXI_DWMAC200_SYSCON_ETXIE			BIT(3)
++	#define SUNXI_DWMAC200_SYSCON_EPIT			BIT(2)
++	#define SUNXI_DWMAC200_SYSCON_ETCS			GENMASK(1, 0)
++
++/* GMAC-210 Register */
++#define SUNXI_DWMAC210_CFG_REG	(0x00)
++	#define SUNXI_DWMAC210_CFG_ETXDC_H		GENMASK(17, 16)
++	#define SUNXI_DWMAC210_CFG_PHY_SEL		BIT(15)
++	#define SUNXI_DWMAC210_CFG_ENDIAN_MODE	BIT(14)
++	#define SUNXI_DWMAC210_CFG_RMII_EN		BIT(13)
++	#define SUNXI_DWMAC210_CFG_ETXDC_L		GENMASK(12, 10)
++	#define SUNXI_DWMAC210_CFG_ERXDC		GENMASK(9, 5)
++	#define SUNXI_DWMAC210_CFG_ERXIE		BIT(4)
++	#define SUNXI_DWMAC210_CFG_ETXIE		BIT(3)
++	#define SUNXI_DWMAC210_CFG_EPIT			BIT(2)
++	#define SUNXI_DWMAC210_CFG_ETCS			GENMASK(1, 0)
++#define SUNXI_DWMAC210_PTP_TIMESTAMP_L_REG	(0x40)
++#define SUNXI_DWMAC210_PTP_TIMESTAMP_H_REG	(0x48)
++#define SUNXI_DWMAC210_STAT_INT_REG		(0x4C)
++	#define SUNXI_DWMAC210_STAT_PWR_DOWN_ACK	BIT(4)
++	#define SUNXI_DWMAC210_STAT_SBD_TX_CLK_GATE	BIT(3)
++	#define SUNXI_DWMAC210_STAT_LPI_INT			BIT(1)
++	#define SUNXI_DWMAC210_STAT_PMT_INT			BIT(0)
++#define SUNXI_DWMAC210_CLK_GATE_CFG_REG	(0x80)
++	#define SUNXI_DWMAC210_CLK_GATE_CFG_RX		BIT(7)
++	#define SUNXI_DWMAC210_CLK_GATE_CFG_PTP_REF	BIT(6)
++	#define SUNXI_DWMAC210_CLK_GATE_CFG_CSR		BIT(5)
++	#define SUNXI_DWMAC210_CLK_GATE_CFG_TX		BIT(4)
++	#define SUNXI_DWMAC210_CLK_GATE_CFG_APP		BIT(3)
++
++/* GMAC-110 Register */
++#define SUNXI_DWMAC110_CFG_REG	SUNXI_DWMAC210_CFG_REG
++	/* SUNXI_DWMAC110_CFG_REG is same with SUNXI_DWMAC210_CFG_REG */
++#define SUNXI_DWMAC110_CLK_GATE_CFG_REG	(0x04)
++	#define SUNXI_DWMAC110_CLK_GATE_CFG_RX	BIT(3)
++	#define SUNXI_DWMAC110_CLK_GATE_CFG_TX	BIT(2)
++	#define SUNXI_DWMAC110_CLK_GATE_CFG_APP	BIT(1)
++	#define SUNXI_DWMAC110_CLK_GATE_CFG_CSR	BIT(0)
++#define SUNXI_DWMAC110_VERSION_REG		(0xfc)
++	#define SUNXI_DWMAC110_VERSION_IP_TAG	GENMASK(31, 16)
++	#define SUNXI_DWMAC110_VERSION_IP_VRM	GENMASK(15, 0)
++
++#define SUNXI_DWMAC_ETCS_MII		0x0
++#define SUNXI_DWMAC_ETCS_EXT_GMII	0x1
++#define SUNXI_DWMAC_ETCS_INT_GMII	0x2
++
++/* MAC flags defined */
++#define SUNXI_DWMAC_SPH_DISABLE		BIT(0)
++#define SUNXI_DWMAC_NSI_CLK_GATE	BIT(1)
++#define SUNXI_DWMAC_MULTI_MSI		BIT(2)
++#define SUNXI_DWMAC_MEM_ECC			BIT(3)
++#define SUNXI_DWMAC_HSI_CLK_GATE	BIT(4)
++
++struct sunxi_dwmac;
++
++enum sunxi_dwmac_delaychain_dir {
++	SUNXI_DWMAC_DELAYCHAIN_TX,
++	SUNXI_DWMAC_DELAYCHAIN_RX,
++};
++
++enum sunxi_dwmac_ecc_fifo_type {
++	SUNXI_DWMAC_ECC_FIFO_TX,
++	SUNXI_DWMAC_ECC_FIFO_RX,
++};
++
++struct sunxi_dwmac_variant {
++	u32 flags;
++	u32 interface;
++	u32 rx_delay_max;
++	u32 tx_delay_max;
++	int (*set_syscon)(struct sunxi_dwmac *chip);
++	int (*set_delaychain)(struct sunxi_dwmac *chip, enum sunxi_dwmac_delaychain_dir dir, u32 delay);
++	u32 (*get_delaychain)(struct sunxi_dwmac *chip, enum sunxi_dwmac_delaychain_dir dir);
++	int (*get_version)(struct sunxi_dwmac *chip, u16 *ip_tag, u16 *ip_vrm);
++};
++
++struct sunxi_dwmac_mii_reg {
++	u32 addr;
++	u16 reg;
++	u16 value;
++};
++
++struct sunxi_dwmac {
++	const struct sunxi_dwmac_variant *variant;
++	struct sunxi_dwmac_mii_reg mii_reg;
++	struct clk *phy_clk;
++	struct clk *nsi_clk;
++	struct clk *hsi_ahb;
++	struct clk *hsi_axi;
++	struct reset_control *ahb_rst;
++	struct reset_control *hsi_rst;
++	struct device *dev;
++	void __iomem *syscfg_base;
++	struct regulator *dwmac3v3_supply;
++	struct regulator *phy3v3_supply;
++
++	u32 tx_delay; /* adjust transmit clock delay */
++	u32 rx_delay; /* adjust receive clock delay */
++
++	bool rgmii_clk_ext;
++	bool soc_phy_clk_en;
++	int interface;
++	unsigned int uevent_suppress; /* suspend error workaround: control kobject_uevent_env */
++
++	struct stmmac_resources *res;
++};
++
++#include "dwmac-sunxi-sysfs.h"
++
++#endif /* _DWMAC_SUNXI_H_ */
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.c linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.c
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.c	2025-01-21 15:58:05.577494134 +0100
+@@ -0,0 +1,927 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
++/*
++* Allwinner DWMAC driver sysfs.
++*
++* Copyright(c) 2022-2027 Allwinnertech Co., Ltd.
++*
++*/
++
++#include "sunxi-log.h"
++#include <linux/bitrev.h>
++#include <linux/completion.h>
++#include <linux/crc32.h>
++#include <linux/ethtool.h>
++#include <linux/ip.h>
++#include <linux/phy.h>
++#include <linux/udp.h>
++#include <net/pkt_cls.h>
++#include <net/pkt_sched.h>
++#include <net/tcp.h>
++#include <net/udp.h>
++#include <net/tc_act/tc_gact.h>
++
++#include "stmmac/stmmac.h"
++
++#include "dwmac-sunxi-sysfs.h"
++
++struct sunxi_dwmac_hdr {
++	__be32 version;
++	__be64 magic;
++	u8 id;
++	u32 tx;
++	u32 rx;
++} __packed;
++
++#define SUNXI_DWMAC_PKT_SIZE	(sizeof(struct ethhdr) + sizeof(struct iphdr) + \
++									sizeof(struct sunxi_dwmac_hdr))
++#define SUNXI_DWMAC_PKT_MAGIC	0xdeadcafecafedeadULL
++#define SUNXI_DWMAC_TIMEOUT		msecs_to_jiffies(2)
++
++struct sunxi_dwmac_packet_attr {
++	u32 tx;
++	u32 rx;
++	unsigned char *src;
++	unsigned char *dst;
++	u32 ip_src;
++	u32 ip_dst;
++	int tcp;
++	int sport;
++	int dport;
++	int dont_wait;
++	int timeout;
++	int size;
++	int max_size;
++	u8 id;
++	u16 queue_mapping;
++	u64 timestamp;
++};
++
++struct sunxi_dwmac_loop_priv {
++	struct sunxi_dwmac_packet_attr *packet;
++	struct packet_type pt;
++	struct completion comp;
++	int ok;
++};
++
++struct sunxi_dwmac_calibrate {
++	u8 id;
++	u32 tx_delay;
++	u32 rx_delay;
++	u32 window_tx;
++	u32 window_rx;
++};
++
++/**
++ * sunxi_dwmac_parse_read_str - parse the input string for write attri.
++ * @str: string to be parsed, eg: "0x00 0x01".
++ * @addr: store the phy addr. eg: 0x00.
++ * @reg: store the reg addr. eg: 0x01.
++ *
++ * return 0 if success, otherwise failed.
++ */
++static int sunxi_dwmac_parse_read_str(char *str, u16 *addr, u16 *reg)
++{
++	char *ptr = str;
++	char *tstr = NULL;
++	int ret;
++
++	/**
++	 * Skip the leading whitespace, find the true split symbol.
++	 * And it must be 'address value'.
++	 */
++	tstr = strim(str);
++	ptr = strchr(tstr, ' ');
++	if (!ptr)
++		return -EINVAL;
++
++	/**
++	 * Replaced split symbol with a %NUL-terminator temporary.
++	 * Will be fixed at end.
++	 */
++	*ptr = '\0';
++	ret = kstrtos16(tstr, 16, addr);
++	if (ret)
++		goto out;
++
++	ret = kstrtos16(skip_spaces(ptr + 1), 16, reg);
++
++out:
++	return ret;
++}
++
++/**
++ * sunxi_dwmac_parse_write_str - parse the input string for compare attri.
++ * @str: string to be parsed, eg: "0x00 0x11 0x11".
++ * @addr: store the phy addr. eg: 0x00.
++ * @reg: store the reg addr. eg: 0x11.
++ * @val: store the value. eg: 0x11.
++ *
++ * return 0 if success, otherwise failed.
++ */
++static int sunxi_dwmac_parse_write_str(char *str, u16 *addr,
++					u16 *reg, u16 *val)
++{
++	u16 result_addr[3] = { 0 };
++	char *ptr = str;
++	char *ptr2 = NULL;
++	int i, ret;
++
++	for (i = 0; i < ARRAY_SIZE(result_addr); i++) {
++		ptr = skip_spaces(ptr);
++		ptr2 = strchr(ptr, ' ');
++		if (ptr2)
++			*ptr2 = '\0';
++
++		ret = kstrtou16(ptr, 16, &result_addr[i]);
++
++		if (!ptr2 || ret)
++			break;
++
++		ptr = ptr2 + 1;
++	}
++
++	*addr = result_addr[0];
++	*reg = result_addr[1];
++	*val = result_addr[2];
++
++	return ret;
++}
++
++static struct sk_buff *sunxi_dwmac_get_skb(struct stmmac_priv *priv,
++							struct sunxi_dwmac_packet_attr *attr)
++{
++	struct sk_buff *skb = NULL;
++	struct udphdr *uhdr = NULL;
++	struct tcphdr *thdr = NULL;
++	struct sunxi_dwmac_hdr *shdr;
++	struct ethhdr *ehdr;
++	struct iphdr *ihdr;
++	int iplen, size;
++
++	size = attr->size + SUNXI_DWMAC_PKT_SIZE;
++
++	if (attr->tcp)
++		size += sizeof(*thdr);
++	else
++		size += sizeof(*uhdr);
++
++	if (attr->max_size && (attr->max_size > size))
++		size = attr->max_size;
++
++	skb = netdev_alloc_skb(priv->dev, size);
++	if (!skb)
++		return NULL;
++
++	prefetchw(skb->data);
++
++	ehdr = skb_push(skb, ETH_HLEN);
++	skb_reset_mac_header(skb);
++
++	skb_set_network_header(skb, skb->len);
++	ihdr = skb_put(skb, sizeof(*ihdr));
++
++	skb_set_transport_header(skb, skb->len);
++	if (attr->tcp)
++		thdr = skb_put(skb, sizeof(*thdr));
++	else
++		uhdr = skb_put(skb, sizeof(*uhdr));
++
++	eth_zero_addr(ehdr->h_source);
++	eth_zero_addr(ehdr->h_dest);
++	if (attr->src)
++		ether_addr_copy(ehdr->h_source, attr->src);
++	if (attr->dst)
++		ether_addr_copy(ehdr->h_dest, attr->dst);
++
++	ehdr->h_proto = htons(ETH_P_IP);
++
++	if (attr->tcp) {
++		thdr->source = htons(attr->sport);
++		thdr->dest = htons(attr->dport);
++		thdr->doff = sizeof(*thdr) / 4;
++		thdr->check = 0;
++	} else {
++		uhdr->source = htons(attr->sport);
++		uhdr->dest = htons(attr->dport);
++		uhdr->len = htons(sizeof(*shdr) + sizeof(*uhdr) + attr->size);
++		if (attr->max_size)
++			uhdr->len = htons(attr->max_size -
++						(sizeof(*ihdr) + sizeof(*ehdr)));
++		uhdr->check = 0;
++	}
++
++	ihdr->ihl = 5;
++	ihdr->ttl = 32;
++	ihdr->version = 4;
++	if (attr->tcp)
++		ihdr->protocol = IPPROTO_TCP;
++	else
++		ihdr->protocol = IPPROTO_UDP;
++	iplen = sizeof(*ihdr) + sizeof(*shdr) + attr->size;
++	if (attr->tcp)
++		iplen += sizeof(*thdr);
++	else
++		iplen += sizeof(*uhdr);
++
++	if (attr->max_size)
++		iplen = attr->max_size - sizeof(*ehdr);
++
++	ihdr->tot_len = htons(iplen);
++	ihdr->frag_off = 0;
++	ihdr->saddr = htonl(attr->ip_src);
++	ihdr->daddr = htonl(attr->ip_dst);
++	ihdr->tos = 0;
++	ihdr->id = 0;
++	ip_send_check(ihdr);
++
++	shdr = skb_put(skb, sizeof(*shdr));
++	shdr->version = 0;
++	shdr->magic = cpu_to_be64(SUNXI_DWMAC_PKT_MAGIC);
++	shdr->id = attr->id;
++	shdr->tx = attr->tx;
++	shdr->rx = attr->rx;
++
++	if (attr->size)
++		skb_put(skb, attr->size);
++	if (attr->max_size && (attr->max_size > skb->len))
++		skb_put(skb, attr->max_size - skb->len);
++
++	skb->csum = 0;
++	skb->ip_summed = CHECKSUM_PARTIAL;
++	if (attr->tcp) {
++		thdr->check = ~tcp_v4_check(skb->len, ihdr->saddr, ihdr->daddr, 0);
++		skb->csum_start = skb_transport_header(skb) - skb->head;
++		skb->csum_offset = offsetof(struct tcphdr, check);
++	} else {
++		udp4_hwcsum(skb, ihdr->saddr, ihdr->daddr);
++	}
++
++	skb->protocol = htons(ETH_P_IP);
++	skb->pkt_type = PACKET_HOST;
++	skb->dev = priv->dev;
++
++	if (attr->timestamp)
++		skb->tstamp = ns_to_ktime(attr->timestamp);
++
++	return skb;
++}
++
++static int sunxi_dwmac_loopback_validate(struct sk_buff *skb,
++						struct net_device *ndev,
++						struct packet_type *pt,
++						struct net_device *orig_ndev)
++{
++	struct sunxi_dwmac_loop_priv *tpriv = pt->af_packet_priv;
++	unsigned char *src = tpriv->packet->src;
++	unsigned char *dst = tpriv->packet->dst;
++	struct sunxi_dwmac_hdr *shdr;
++	struct ethhdr *ehdr;
++	struct udphdr *uhdr;
++	struct tcphdr *thdr;
++	struct iphdr *ihdr;
++
++	skb = skb_unshare(skb, GFP_ATOMIC);
++	if (!skb)
++		goto out;
++
++	if (skb_linearize(skb))
++		goto out;
++	if (skb_headlen(skb) < (SUNXI_DWMAC_PKT_SIZE - ETH_HLEN))
++		goto out;
++
++	ehdr = (struct ethhdr *)skb_mac_header(skb);
++	if (dst) {
++		if (!ether_addr_equal_unaligned(ehdr->h_dest, dst))
++			goto out;
++	}
++	if (src) {
++		if (!ether_addr_equal_unaligned(ehdr->h_source, src))
++			goto out;
++	}
++
++	ihdr = ip_hdr(skb);
++
++	if (tpriv->packet->tcp) {
++		if (ihdr->protocol != IPPROTO_TCP)
++			goto out;
++
++		thdr = (struct tcphdr *)((u8 *)ihdr + 4 * ihdr->ihl);
++		if (thdr->dest != htons(tpriv->packet->dport))
++			goto out;
++
++		shdr = (struct sunxi_dwmac_hdr *)((u8 *)thdr + sizeof(*thdr));
++	} else {
++		if (ihdr->protocol != IPPROTO_UDP)
++			goto out;
++
++		uhdr = (struct udphdr *)((u8 *)ihdr + 4 * ihdr->ihl);
++		if (uhdr->dest != htons(tpriv->packet->dport))
++			goto out;
++
++		shdr = (struct sunxi_dwmac_hdr *)((u8 *)uhdr + sizeof(*uhdr));
++	}
++
++	if (shdr->magic != cpu_to_be64(SUNXI_DWMAC_PKT_MAGIC))
++		goto out;
++	if (tpriv->packet->id != shdr->id)
++		goto out;
++	if (tpriv->packet->tx != shdr->tx || tpriv->packet->rx != shdr->rx)
++		goto out;
++
++	tpriv->ok = true;
++	complete(&tpriv->comp);
++out:
++	kfree_skb(skb);
++	return 0;
++}
++
++static int sunxi_dwmac_loopback_run(struct stmmac_priv *priv,
++					struct sunxi_dwmac_packet_attr *attr)
++{
++	struct sunxi_dwmac_loop_priv *tpriv;
++	struct sk_buff *skb = NULL;
++	int ret = 0;
++
++	tpriv = kzalloc(sizeof(*tpriv), GFP_KERNEL);
++	if (!tpriv)
++		return -ENOMEM;
++
++	tpriv->ok = false;
++	init_completion(&tpriv->comp);
++
++	tpriv->pt.type = htons(ETH_P_IP);
++	tpriv->pt.func = sunxi_dwmac_loopback_validate;
++	tpriv->pt.dev = priv->dev;
++	tpriv->pt.af_packet_priv = tpriv;
++	tpriv->packet = attr;
++
++	if (!attr->dont_wait)
++		dev_add_pack(&tpriv->pt);
++
++	skb = sunxi_dwmac_get_skb(priv, attr);
++	if (!skb) {
++		ret = -ENOMEM;
++		goto cleanup;
++	}
++
++	ret = dev_direct_xmit(skb, attr->queue_mapping);
++	if (ret)
++		goto cleanup;
++
++	if (attr->dont_wait)
++		goto cleanup;
++
++	if (!attr->timeout)
++		attr->timeout = SUNXI_DWMAC_TIMEOUT;
++
++	wait_for_completion_timeout(&tpriv->comp, attr->timeout);
++	ret = tpriv->ok ? 0 : -ETIMEDOUT;
++
++cleanup:
++	if (!attr->dont_wait)
++		dev_remove_pack(&tpriv->pt);
++	kfree(tpriv);
++	return ret;
++}
++
++static int sunxi_dwmac_test_delaychain(struct sunxi_dwmac *chip, struct sunxi_dwmac_calibrate *cali)
++{
++	struct net_device *ndev = dev_get_drvdata(chip->dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	unsigned char src[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
++	unsigned char dst[ETH_ALEN] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
++	struct sunxi_dwmac_packet_attr attr = { };
++
++	chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_TX, cali->tx_delay);
++	chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_RX, cali->rx_delay);
++
++	attr.src = src;
++	attr.dst = dst;
++	attr.tcp = true;
++	attr.queue_mapping = 0;
++	stmmac_get_systime(priv, priv->ptpaddr, &attr.timestamp);
++	attr.id = cali->id;
++	attr.tx = cali->tx_delay;
++	attr.rx = cali->rx_delay;
++
++	return sunxi_dwmac_loopback_run(priv, &attr);
++}
++
++static int sunxi_dwmac_calibrate_scan_window(struct sunxi_dwmac *chip, struct sunxi_dwmac_calibrate *cali)
++{
++	struct net_device *ndev = dev_get_drvdata(chip->dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	char *buf, *ptr;
++	int tx_sum, rx_sum, count;
++	u32 tx, rx;
++	int ret = 0;
++
++	buf = devm_kzalloc(chip->dev, PAGE_SIZE, GFP_KERNEL);
++	if (!buf)
++		return -ENOMEM;
++
++	netif_testing_on(ndev);
++
++	ret = phy_loopback(priv->dev->phydev, true);
++	if (ret)
++		goto err;
++
++	tx_sum = rx_sum = count = 0;
++
++	for (tx = 0; tx < cali->window_tx; tx++) {
++		ptr = buf;
++		ptr += scnprintf(ptr, PAGE_SIZE - (ptr - buf), "TX(0x%02x): ", tx);
++		for (rx = 0; rx < cali->window_rx; rx++) {
++			cali->id++;
++			cali->tx_delay = tx;
++			cali->rx_delay = rx;
++			if (sunxi_dwmac_test_delaychain(chip, cali) < 0) {
++				ptr += scnprintf(ptr, PAGE_SIZE - (ptr - buf), "X");
++			} else {
++				tx_sum += tx;
++				rx_sum += rx;
++				count++;
++				ptr += scnprintf(ptr, PAGE_SIZE - (ptr - buf), "-");
++			}
++		}
++		ptr += scnprintf(ptr, PAGE_SIZE - (ptr - buf), "\n");
++		printk(buf);
++	}
++
++	if (tx_sum && rx_sum && count) {
++		cali->tx_delay = tx_sum / count;
++		cali->rx_delay = rx_sum / count;
++	} else {
++		cali->tx_delay = cali->rx_delay = 0;
++	}
++
++	phy_loopback(priv->dev->phydev, false);
++
++err:
++	netif_testing_off(ndev);
++	devm_kfree(chip->dev, buf);
++	return ret;
++}
++
++static ssize_t sunxi_dwmac_calibrate_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	struct phy_device *phydev = priv->dev->phydev;
++	struct sunxi_dwmac_calibrate *cali;
++	u32 old_tx, old_rx;
++	int ret;
++
++	if (!ndev || !phydev) {
++		sunxi_err(chip->dev, "Not found netdevice or phy\n");
++		return -EINVAL;
++	}
++
++	if (!netif_carrier_ok(ndev) || !phydev->link) {
++		sunxi_err(chip->dev, "Netdevice or phy not link\n");
++		return -EINVAL;
++	}
++
++	if (phydev->speed < SPEED_1000) {
++		sunxi_err(chip->dev, "Speed %s no need calibrate\n", phy_speed_to_str(phydev->speed));
++		return -EINVAL;
++	}
++
++	cali = devm_kzalloc(dev, sizeof(*cali), GFP_KERNEL);
++	if (!cali)
++		return -ENOMEM;
++
++	old_tx = chip->variant->get_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_TX);
++	old_rx = chip->variant->get_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_RX);
++
++	cali->window_tx = chip->variant->tx_delay_max + 1;
++	cali->window_rx = chip->variant->rx_delay_max + 1;
++
++	ret = sunxi_dwmac_calibrate_scan_window(chip, cali);
++	if (ret) {
++		sunxi_err(dev, "Calibrate scan window tx:%d rx:%d failed\n", cali->window_tx, cali->window_rx);
++		goto err;
++	}
++
++	if (cali->tx_delay && cali->rx_delay) {
++		chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_TX, cali->tx_delay);
++		chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_RX, cali->rx_delay);
++		sunxi_info(chip->dev, "Calibrate suitable delay tx:%d rx:%d\n", cali->tx_delay, cali->rx_delay);
++	} else {
++		chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_TX, old_tx);
++		chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_RX, old_rx);
++		sunxi_warn(chip->dev, "Calibrate cannot find suitable delay\n");
++	}
++
++err:
++	devm_kfree(dev, cali);
++	return count;
++}
++
++static int sunxi_dwmac_test_ecc_inject(struct stmmac_priv *priv, enum sunxi_dwmac_ecc_fifo_type type, u8 bit)
++{
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	static const u32 wdata[2] = {0x55555555, 0x55555555};
++	u32 rdata[ARRAY_SIZE(wdata)];
++	u32 mtl_dbg_ctl, mtl_dpp_ecc_eic;
++	u32 val;
++	int i, ret = 0;
++
++	mtl_dbg_ctl = readl(priv->ioaddr + MTL_DBG_CTL);
++	mtl_dpp_ecc_eic = readl(priv->ioaddr + MTL_DPP_ECC_EIC);
++
++	mtl_dbg_ctl &= ~EIAEE; /* disable ecc error injection on address */
++	mtl_dbg_ctl |= DBGMOD | FDBGEN; /* ecc debug mode enable */
++	mtl_dpp_ecc_eic &= ~EIM; /* indicate error injection on data */
++	mtl_dpp_ecc_eic |= FIELD_PREP(BLEI, 36); /* inject bit location is bit0 and bit36 */
++
++	/* ecc select inject bit */
++	switch (bit) {
++	case 0:
++		mtl_dbg_ctl &= ~EIEE; /* ecc inject error disable */
++		break;
++	case 1:
++		mtl_dbg_ctl &= ~EIEC; /* ecc inject insert 1-bit error */
++		mtl_dbg_ctl |= EIEE; /* ecc inject error enable */
++		break;
++	case 2:
++		mtl_dbg_ctl |= EIEC; /* ecc inject insert 2-bit error */
++		mtl_dbg_ctl |= EIEE; /* ecc inject error enable */
++		break;
++	default:
++		ret = -EINVAL;
++		sunxi_err(chip->dev, "test unsupport ecc inject bit %d\n", bit);
++		goto err;
++	}
++
++	/* ecc select fifo */
++	mtl_dbg_ctl &= ~FIFOSEL;
++	switch (type) {
++	case SUNXI_DWMAC_ECC_FIFO_TX:
++		mtl_dbg_ctl |= FIELD_PREP(FIFOSEL, 0x0);
++		break;
++	case SUNXI_DWMAC_ECC_FIFO_RX:
++		mtl_dbg_ctl |= FIELD_PREP(FIFOSEL, 0x3);
++		break;
++	default:
++		ret = -EINVAL;
++		sunxi_err(chip->dev, "test unsupport ecc inject fifo type %d\n", type);
++		goto err;
++	}
++
++	writel(mtl_dpp_ecc_eic, priv->ioaddr + MTL_DPP_ECC_EIC);
++	writel(mtl_dbg_ctl, priv->ioaddr + MTL_DBG_CTL);
++
++	/* write fifo debug data */
++	mtl_dbg_ctl &= ~FIFORDEN;
++	mtl_dbg_ctl |= FIFOWREN;
++	for (i = 0; i < ARRAY_SIZE(wdata); i++) {
++		writel(wdata[i], priv->ioaddr + MTL_FIFO_DEBUG_DATA);
++		writel(mtl_dbg_ctl, priv->ioaddr + MTL_DBG_CTL);
++		ret = readl_poll_timeout_atomic(priv->ioaddr + MTL_DBG_STS, val, !(val & FIFOBUSY), 10, 200000);
++		if (ret) {
++			sunxi_err(chip->dev, "timeout with ecc debug fifo write busy (%#x)\n", val);
++			goto err;
++		}
++	}
++
++	/* read fifo debug data */
++	mtl_dbg_ctl &= ~FIFOWREN;
++	mtl_dbg_ctl |= FIFORDEN;
++	for (i = 0; i < ARRAY_SIZE(wdata); i++) {
++		writel(mtl_dbg_ctl, priv->ioaddr + MTL_DBG_CTL);
++		ret = readl_poll_timeout_atomic(priv->ioaddr + MTL_DBG_STS, val, !(val & FIFOBUSY), 10, 200000);
++		if (ret) {
++			sunxi_err(chip->dev, "test timeout with ecc debug fifo read busy (%#x)\n", val);
++			goto err;
++		}
++		rdata[i] = readl(priv->ioaddr + MTL_FIFO_DEBUG_DATA);
++	}
++
++	/* compare data */
++	switch (bit) {
++	case 0:
++	case 1:
++		/* for ecc error inject 0/1 bit, read should be same with write */
++		for (i = 0; i < ARRAY_SIZE(wdata); i++) {
++			if (rdata[i] != wdata[i]) {
++				ret = -EINVAL;
++				break;
++			}
++		}
++		break;
++	case 2:
++		/* for ecc error inject 2 bit, read should be different with write */
++		for (i = 0; i < ARRAY_SIZE(wdata); i++) {
++			if (rdata[i] == wdata[i]) {
++				ret = -EINVAL;
++				break;
++			}
++		}
++		break;
++	}
++
++	for (i = 0; i < ARRAY_SIZE(wdata); i++)
++		sunxi_info(chip->dev, "fifo %d write [%#x] -> read [%#x]\n", i, wdata[i], rdata[i]);
++
++err:
++	/* ecc debug mode disable */
++	mtl_dbg_ctl &= ~(EIEE | EIEC | FIFOWREN | FIFORDEN);
++	writel(mtl_dbg_ctl, priv->ioaddr + MTL_DBG_CTL);
++
++	return ret;
++}
++
++static ssize_t sunxi_dwmac_ecc_inject_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return scnprintf(buf, PAGE_SIZE,
++			"Usage:\n"
++			"echo \"[dir] [inject_bit]\" > ecc_inject\n\n"
++			"[dir] : 0(tx) 1(rx)\n"
++			"[inject_bit] : 0/1/2\n");
++}
++
++static ssize_t sunxi_dwmac_ecc_inject_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	struct phy_device *phydev = priv->dev->phydev;
++	static const char *dir_str[] = {"tx", "rx"};
++	u16 dir, inject_bit;
++	u64 ret;
++
++	if (!ndev || !phydev) {
++		sunxi_err(chip->dev, "netdevice or phy not found\n");
++		return -EINVAL;
++	}
++
++	if (!netif_running(ndev)) {
++		sunxi_err(chip->dev, "netdevice is not running\n");
++		return -EINVAL;
++	}
++
++	if (!(chip->variant->flags & SUNXI_DWMAC_MEM_ECC)) {
++		sunxi_err(chip->dev, "ecc not support or enabled\n");
++		return -EOPNOTSUPP;
++	}
++
++	ret = sunxi_dwmac_parse_read_str((char *)buf, &dir, &inject_bit);
++	if (ret)
++		return ret;
++
++	switch (dir) {
++	case 0:
++		dir = SUNXI_DWMAC_ECC_FIFO_TX;
++		break;
++	case 1:
++		dir = SUNXI_DWMAC_ECC_FIFO_RX;
++		break;
++	default:
++		sunxi_err(chip->dev, "test unsupport ecc dir %d\n", dir);
++		return -EINVAL;
++	}
++
++	netif_testing_on(ndev);
++
++	/* ecc inject test */
++	ret = sunxi_dwmac_test_ecc_inject(priv, dir, inject_bit);
++	if (ret)
++		sunxi_info(chip->dev, "test ecc %s inject %d bit : FAILED\n", dir_str[dir], inject_bit);
++	else
++		sunxi_info(chip->dev, "test ecc %s inject %d bit : PASS\n", dir_str[dir], inject_bit);
++
++	netif_testing_off(ndev);
++
++	return count;
++}
++
++static ssize_t sunxi_dwmac_tx_delay_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	u32 delay = chip->variant->get_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_TX);
++
++	return scnprintf(buf, PAGE_SIZE,
++			"Usage:\n"
++			"echo [0~%d] > tx_delay\n\n"
++			"now tx_delay: %d\n",
++			chip->variant->tx_delay_max, delay);
++}
++
++static ssize_t sunxi_dwmac_tx_delay_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	int ret;
++	u32 delay;
++
++	if (!netif_running(ndev)) {
++		sunxi_err(dev, "Eth is not running\n");
++		return count;
++	}
++
++	ret = kstrtou32(buf, 0, &delay);
++	if (ret)
++		return ret;
++
++	if (delay > chip->variant->tx_delay_max) {
++		sunxi_err(dev, "Tx_delay exceed max %d\n", chip->variant->tx_delay_max);
++		return -EINVAL;
++	}
++
++	chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_TX, delay);
++
++	return count;
++}
++
++static ssize_t sunxi_dwmac_rx_delay_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	u32 delay = chip->variant->get_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_RX);
++
++	return scnprintf(buf, PAGE_SIZE,
++			"Usage:\n"
++			"echo [0~%d] > rx_delay\n\n"
++			"now rx_delay: %d\n",
++			chip->variant->rx_delay_max, delay);
++}
++
++static ssize_t sunxi_dwmac_rx_delay_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	int ret;
++	u32 delay;
++
++	if (!netif_running(ndev)) {
++		sunxi_err(dev, "Eth is not running\n");
++		return count;
++	}
++
++	ret = kstrtou32(buf, 0, &delay);
++	if (ret)
++		return ret;
++
++	if (delay > chip->variant->rx_delay_max) {
++		sunxi_err(dev, "Rx_delay exceed max %d\n", chip->variant->rx_delay_max);
++		return -EINVAL;
++	}
++
++	chip->variant->set_delaychain(chip, SUNXI_DWMAC_DELAYCHAIN_RX, delay);
++
++	return count;
++}
++
++static ssize_t sunxi_dwmac_mii_read_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++
++	if (!netif_running(ndev)) {
++		sunxi_err(dev, "Eth is not running\n");
++		return 0;
++	}
++
++	chip->mii_reg.value = mdiobus_read(priv->mii, chip->mii_reg.addr, chip->mii_reg.reg);
++	return sprintf(buf, "ADDR[0x%02x]:REG[0x%02x] = 0x%04x\n",
++				chip->mii_reg.addr, chip->mii_reg.reg, chip->mii_reg.value);
++}
++
++static ssize_t sunxi_dwmac_mii_read_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	int ret;
++	u16 reg, addr;
++	char *ptr;
++
++	ptr = (char *)buf;
++
++	if (!netif_running(ndev)) {
++		sunxi_err(dev, "Eth is not running\n");
++		return count;
++	}
++
++	ret = sunxi_dwmac_parse_read_str(ptr, &addr, &reg);
++	if (ret)
++		return ret;
++
++	chip->mii_reg.addr = addr;
++	chip->mii_reg.reg = reg;
++
++	return count;
++}
++
++static ssize_t sunxi_dwmac_mii_write_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	u16 bef_val, aft_val;
++
++	if (!netif_running(ndev)) {
++		sunxi_err(dev, "Eth is not running\n");
++		return 0;
++	}
++
++	bef_val = mdiobus_read(priv->mii, chip->mii_reg.addr, chip->mii_reg.reg);
++	mdiobus_write(priv->mii, chip->mii_reg.addr, chip->mii_reg.reg, chip->mii_reg.value);
++	aft_val = mdiobus_read(priv->mii, chip->mii_reg.addr, chip->mii_reg.reg);
++	return sprintf(buf, "before ADDR[0x%02x]:REG[0x%02x] = 0x%04x\n"
++				"after  ADDR[0x%02x]:REG[0x%02x] = 0x%04x\n",
++				chip->mii_reg.addr, chip->mii_reg.reg, bef_val,
++				chip->mii_reg.addr, chip->mii_reg.reg, aft_val);
++}
++
++static ssize_t sunxi_dwmac_mii_write_store(struct device *dev,
++		struct device_attribute *attr, const char *buf, size_t count)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	int ret;
++	u16 reg, addr, val;
++	char *ptr;
++
++	ptr = (char *)buf;
++
++	if (!netif_running(ndev)) {
++		sunxi_err(dev, "Eth is not running\n");
++		return count;
++	}
++
++	ret = sunxi_dwmac_parse_write_str(ptr, &addr, &reg, &val);
++	if (ret)
++		return ret;
++
++	chip->mii_reg.reg = reg;
++	chip->mii_reg.addr = addr;
++	chip->mii_reg.value = val;
++
++	return count;
++}
++
++static ssize_t sunxi_dwmac_version_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	struct net_device *ndev = dev_get_drvdata(dev);
++	struct stmmac_priv *priv = netdev_priv(ndev);
++	struct sunxi_dwmac *chip = priv->plat->bsp_priv;
++	u16 ip_tag, ip_vrm;
++	ssize_t count = 0;
++
++	if (chip->variant->get_version) {
++		chip->variant->get_version(chip, &ip_tag, &ip_vrm);
++		count = sprintf(buf, "IP TAG: %x\nIP VRM: %x\n", ip_tag, ip_vrm);
++	}
++
++	return count;
++}
++
++static struct device_attribute sunxi_dwmac_tool_attr[] = {
++	__ATTR(calibrate, 0220, NULL, sunxi_dwmac_calibrate_store),
++	__ATTR(rx_delay, 0664, sunxi_dwmac_rx_delay_show, sunxi_dwmac_rx_delay_store),
++	__ATTR(tx_delay, 0664, sunxi_dwmac_tx_delay_show, sunxi_dwmac_tx_delay_store),
++	__ATTR(mii_read, 0664, sunxi_dwmac_mii_read_show, sunxi_dwmac_mii_read_store),
++	__ATTR(mii_write, 0664, sunxi_dwmac_mii_write_show, sunxi_dwmac_mii_write_store),
++	__ATTR(ecc_inject, 0664, sunxi_dwmac_ecc_inject_show, sunxi_dwmac_ecc_inject_store),
++	__ATTR(version, 0444, sunxi_dwmac_version_show, NULL),
++};
++
++void sunxi_dwmac_sysfs_init(struct device *dev)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(sunxi_dwmac_tool_attr); i++)
++		device_create_file(dev, &sunxi_dwmac_tool_attr[i]);
++}
++
++void sunxi_dwmac_sysfs_exit(struct device *dev)
++{
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(sunxi_dwmac_tool_attr); i++)
++		device_remove_file(dev, &sunxi_dwmac_tool_attr[i]);
++}
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.h linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.h
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/dwmac-sunxi-sysfs.h	2025-01-21 15:58:05.577494134 +0100
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
++/*
++*
++* Allwinner DWMAC driver sysfs haeder.
++*
++* Copyright(c) 2022-2027 Allwinnertech Co., Ltd.
++*
++*/
++
++#ifndef _DWMAC_SUNXI_SYSFS_H_
++#define _DWMAC_SUNXI_SYSFS_H_
++
++#include "dwmac-sunxi.h"
++
++void sunxi_dwmac_sysfs_init(struct device *dev);
++void sunxi_dwmac_sysfs_exit(struct device *dev);
++
++#endif /* _DWMAC_SUNXI_SYSFS_H_ */
++
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Kconfig linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Kconfig
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Kconfig	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Kconfig	2025-01-23 10:54:36.827432742 +0100
+@@ -0,0 +1,34 @@
++# SPDX-License-Identifier: GPL-2.0-only
++menu "Stmmac Drivers"
++
++config SUNXI55I_GMAC200
++	tristate "Allwinner A523 GMAC-200 driver"
++	depends on OF && (ARCH_SUNXI || COMPILE_TEST)
++	select STMMAC_ETH
++	select STMMAC_PLATFORM
++	select SUNXI55I_STMMAC
++
++	help
++	  Support for Allwinner A523 GMAC-200/GMAC-300 ethernet controllers.
++
++	  This selects Allwinner A523 SoC glue layer support for the
++	  stmmac device driver. This driver is used for
++	  GMAC-200/GMAC-300 ethernet controller.
++
++if SUNXI55I_GMAC200
++config SUNXI55I_STMMAC
++	tristate "Allwinner A523 GMAC-200 STMMAC support"
++	depends on OF && (ARCH_SUNXI || COMPILE_TEST)
++	help
++	  Support stmmac device driver for Allwinner A523 GMAC-200/GMAC-300.
++
++config SUNXI55I_STMMAC_UIO
++	tristate "Allwinner A523 GMAC-200 UIO ethernet controller"
++	default n
++	select UIO
++	help
++	  Say M here if you want to use the sunxi-uio.ko for DPDK on A523.
++
++endif
++
++endmenu
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Makefile linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Makefile
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Makefile	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/Makefile	2025-01-23 10:41:37.537411780 +0100
+@@ -0,0 +1,8 @@
++# SPDX-License-Identifier: GPL-2.0-only
++ccflags-y += -I $(srctree)/include/linux/
++ccflags-y += -I $(srctree)/drivers/net/ethernet/stmicro/
++ccflags-y += -DDYNAMIC_DEBUG_MODULE
++
++obj-$(CONFIG_SUNXI55I_STMMAC) += sunxi-stmmac.o
++sunxi-stmmac-objs += dwmac-sunxi.o dwmac-sunxi-sysfs.o
++obj-$(CONFIG_SUNXI55I_STMMAC_UIO) += sunxi-uio.o
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-log.h linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-log.h
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-log.h	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-log.h	2025-01-21 15:58:05.577494134 +0100
+@@ -0,0 +1,174 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/* Copyright(c) 2020 - 2023 Allwinner Technology Co.,Ltd. All rights reserved. */
++/*
++ * Allwinner's log functions
++ *
++ * Copyright (c) 2023, lvda <lvda@allwinnertech.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ */
++
++#ifndef __SUNXI_LOG_H__
++#define __SUNXI_LOG_H__
++
++#define SUNXI_LOG_VERSION	"V0.7"
++/* Allow user to define their own MODNAME with `SUNXI_MODNAME` */
++#ifndef SUNXI_MODNAME
++#define SUNXI_MODNAME		KBUILD_MODNAME
++#endif
++
++#ifdef pr_fmt
++#undef pr_fmt
++#endif
++
++#ifdef dev_fmt
++#undef dev_fmt
++#endif
++
++#define pr_fmt(fmt)		"sunxi:" SUNXI_MODNAME fmt
++#define dev_fmt			pr_fmt
++
++#include <linux/kernel.h>
++#include <linux/device.h>
++
++/*
++ * Copy from dev_name(). Someone like to use "dev_name" as local variable,
++ * which will case compile error.
++ */
++static inline const char *sunxi_log_dev_name(const struct device *dev)
++{
++	/* Use the init name until the kobject becomes available */
++	if (dev->init_name)
++		return dev->init_name;
++
++	return kobject_name(&dev->kobj);
++}
++
++/*
++ * Parameter Description:
++ * 1. dev: Optional parameter. If the context cannot obtain dev, fill in NULL
++ * 2. fmt: Format specifier
++ * 3. err_code: Error code. Only used in sunxi_err_std()
++ * 4. ...: Variable arguments
++ */
++
++#if IS_ENABLED(CONFIG_AW_LOG_VERBOSE)
++
++/* void sunxi_err(struct device *dev, char *fmt, ...); */
++#define sunxi_err(dev, fmt, ...)											\
++	do { if (dev)													\
++		pr_err("-%s:[ERR]:%s +%d %s(): "fmt, sunxi_log_dev_name(dev), __FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
++	     else													\
++		pr_err(":[ERR]:%s +%d %s(): "fmt, __FILE__, __LINE__, __func__, ## __VA_ARGS__);				\
++	} while (0)
++
++/* void sunxi_err_std(struct device *dev, int err_code, char *fmt, ...); */
++#define sunxi_err_std(dev, err_code, fmt, ...)											\
++	do { if (dev)														\
++		pr_err("-%s:[ERR%d]:%s +%d %s(): "fmt, sunxi_log_dev_name(dev), err_code, __FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
++	     else														\
++		pr_err(":[ERR%d]:%s +%d %s(): "fmt, err_code, __FILE__, __LINE__, __func__, ## __VA_ARGS__);			\
++	} while (0)
++
++/* void sunxi_warn(struct device *dev, char *fmt, ...); */
++#define sunxi_warn(dev, fmt, ...)											\
++	do { if (dev)													\
++		pr_warn("-%s:[WARN]:%s +%d %s(): "fmt, sunxi_log_dev_name(dev), __FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
++	     else													\
++		pr_warn(":[WARN]:%s +%d %s(): "fmt, __FILE__, __LINE__, __func__, ## __VA_ARGS__);			\
++	} while (0)
++
++/* void sunxi_info(struct device *dev, char *fmt, ...); */
++#define sunxi_info(dev, fmt, ...)											\
++	do { if (dev)													\
++		pr_info("-%s:[INFO]:%s +%d %s(): "fmt, sunxi_log_dev_name(dev), __FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
++	     else													\
++		pr_info(":[INFO]:%s +%d %s(): "fmt, __FILE__, __LINE__, __func__, ## __VA_ARGS__);			\
++	} while (0)
++
++/* void sunxi_debug(struct device *dev, char *fmt, ...); */
++#define sunxi_debug(dev, fmt, ...)											\
++	do { if (dev)													\
++		pr_debug("-%s:[DEBUG]:%s +%d %s(): "fmt, sunxi_log_dev_name(dev), __FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
++	     else													\
++		pr_debug(":[DEBUG]:%s +%d %s(): "fmt, __FILE__, __LINE__, __func__, ## __VA_ARGS__);			\
++	} while (0)
++
++#else  /* !CONFIG_AW_LOG_VERBOSE */
++
++/* void sunxi_err(struct device *dev, char *fmt, ...); */
++#define sunxi_err(dev, fmt, ...)							\
++	do { if (dev)									\
++		pr_err("-%s:[ERR]: "fmt, sunxi_log_dev_name(dev), ## __VA_ARGS__);			\
++	     else									\
++		pr_err(":[ERR]: "fmt, ## __VA_ARGS__);					\
++	} while (0)
++
++/* void sunxi_err_std(struct device *dev, int err_code, char *fmt, ...); */
++#define sunxi_err_std(dev, err_code, fmt, ...)						\
++	do { if (dev)									\
++		pr_err("-%s:[ERR%d]: "fmt, sunxi_log_dev_name(dev), err_code, ## __VA_ARGS__);	\
++	     else									\
++		pr_err(":[ERR%d]: "fmt, err_code, ## __VA_ARGS__);			\
++	} while (0)
++
++/* void sunxi_warn(struct device *dev, char *fmt, ...); */
++#define sunxi_warn(dev, fmt, ...)							\
++	do { if (dev)									\
++		pr_warn("-%s:[WARN]: "fmt, sunxi_log_dev_name(dev), ## __VA_ARGS__);		\
++	     else									\
++		pr_warn(":[WARN]: "fmt, ## __VA_ARGS__);					\
++	} while (0)
++
++/* void sunxi_info(struct device *dev, char *fmt, ...); */
++#define sunxi_info(dev, fmt, ...)						\
++	do { if (dev)								\
++		pr_info("-%s:[INFO]: "fmt, sunxi_log_dev_name(dev), ## __VA_ARGS__);	\
++	     else								\
++		pr_info(":[INFO]: "fmt, ## __VA_ARGS__);				\
++	} while (0)
++
++/* void sunxi_debug(struct device *dev, char *fmt, ...); */
++#define sunxi_debug(dev, fmt, ...)						\
++	do { if (dev)								\
++		pr_debug("-%s:[DEBUG]: "fmt, sunxi_log_dev_name(dev), ## __VA_ARGS__);	\
++	     else								\
++		pr_debug(":[DEBUG]: "fmt, ## __VA_ARGS__);			\
++	} while (0)
++
++#endif  /* CONFIG_AW_LOG_VERBOSE */
++
++/* void sunxi_debug_verbose(struct device *dev, char *fmt, ...); */
++#define sunxi_debug_verbose(dev, fmt, ...)										\
++	do { if (dev)													\
++		pr_debug("-%s:[DEBUG]:%s +%d %s(): "fmt, sunxi_log_dev_name(dev), __FILE__, __LINE__, __func__, ## __VA_ARGS__);	\
++	     else													\
++		pr_debug(":[DEBUG]:%s +%d %s(): "fmt, __FILE__, __LINE__, __func__, ## __VA_ARGS__);			\
++	} while (0)
++
++/* void sunxi_debug_line(struct device *dev); */
++#define sunxi_debug_line(dev)											\
++	do { if (dev)												\
++		pr_debug("-%s:[DEBUG]:%s +%d %s()\n", sunxi_log_dev_name(dev), __FILE__, __LINE__, __func__);		\
++	     else												\
++		pr_debug(":[DEBUG]:%s +%d %s()\n", __FILE__, __LINE__, __func__);				\
++	} while (0)
++
++/*
++ * TODO:
++ * print_hex_dump_debug
++ * print_hex_dump_bytes
++ * trace_printk
++ * printk_ratelimited
++*/
++
++#endif
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-uio.c linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-uio.c
+--- linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-uio.c	1970-01-01 01:00:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/gmac-200/sunxi-uio.c	2025-01-21 15:58:05.577494134 +0100
+@@ -0,0 +1,1015 @@
++// SPDX-License-Identifier: GPL-2.0
++/**
++ * Copyright 2023 Allwinnertech
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/of_address.h>
++#include <linux/of_platform.h>
++#include <linux/of_net.h>
++#include <linux/uio_driver.h>
++#include <linux/clk.h>
++#include <linux/kernel.h>
++#include <linux/mii.h>
++#include <linux/dma-mapping.h>
++#include <linux/of_mdio.h>
++#include <linux/slab.h>
++#include <linux/version.h>
++
++#include "stmmac/stmmac_ptp.h"
++#include "stmmac/stmmac.h"
++#include "hwif.h"
++
++#define DRIVER_NAME	"sunxi_uio"
++#define DRIVER_VERSION	"0.0.1"
++
++#define TC_DEFAULT 64
++static int tc = TC_DEFAULT;
++
++#define DEFAULT_BUFSIZE	1536
++static int buf_sz = DEFAULT_BUFSIZE;
++
++#define STMMAC_RX_COPYBREAK	256
++
++/**
++ * sunxi_uio
++ * local information for uio module driver
++ *
++ * @dev:      device pointer
++ * @ndev:     network device pointer
++ * @name:     uio name
++ * @uio:      uio information
++ * @map_num:  number of uio memory regions
++ */
++struct sunxi_uio {
++	struct device *dev;
++	struct net_device *ndev;
++	char name[16];
++	struct uio_info uio;
++	int map_num;
++};
++
++static int sunxi_uio_open(struct uio_info *info, struct inode *inode)
++{
++	return 0;
++}
++
++static int sunxi_uio_release(struct uio_info *info,
++				     struct inode *inode)
++{
++	return 0;
++}
++
++static int sunxi_uio_mmap(struct uio_info *info,
++				  struct vm_area_struct *vma)
++{
++	u32 ret, pfn;
++
++	pfn = (info->mem[vma->vm_pgoff].addr) >> PAGE_SHIFT;
++
++	if (vma->vm_pgoff)
++		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++	else
++		vma->vm_page_prot = pgprot_device(vma->vm_page_prot);
++
++	ret = remap_pfn_range(vma, vma->vm_start, pfn,
++			      vma->vm_end - vma->vm_start, vma->vm_page_prot);
++	if (ret) {
++		/* Error Handle */
++		pr_err("remap_pfn_range failed");
++	}
++	return ret;
++}
++
++/**
++ * sunxi_uio_free_dma_rx_desc_resources - free RX dma desc resources
++ * @priv: private structure
++ */
++static void sunxi_uio_free_dma_rx_desc_resources(struct stmmac_priv *priv)
++{
++	u32 queue, rx_count = priv->plat->rx_queues_to_use;
++
++	/* Free RX queue resources */
++	for (queue = 0; queue < rx_count; queue++) {
++		struct stmmac_rx_queue *rx_q = &priv->rx_queue[queue];
++
++		/* Free DMA regions of consistent memory previously allocated */
++		if (!priv->extend_desc)
++			dma_free_coherent(priv->device, priv->dma_rx_size *
++					  sizeof(struct dma_desc),
++					  rx_q->dma_rx, rx_q->dma_rx_phy);
++		else
++			dma_free_coherent(priv->device, priv->dma_rx_size *
++					  sizeof(struct dma_extended_desc),
++					  rx_q->dma_erx, rx_q->dma_rx_phy);
++	}
++}
++
++/**
++ * sunxi_uio_free_dma_tx_desc_resources - free TX dma desc resources
++ * @priv: private structure
++ */
++static void sunxi_uio_free_dma_tx_desc_resources(struct stmmac_priv *priv)
++{
++	u32 queue, tx_count = priv->plat->tx_queues_to_use;
++
++	/* Free TX queue resources */
++	for (queue = 0; queue < tx_count; queue++) {
++		struct stmmac_tx_queue *tx_q = &priv->tx_queue[queue];
++		size_t size;
++		void *addr;
++
++		if (priv->extend_desc) {
++			size = sizeof(struct dma_extended_desc);
++			addr = tx_q->dma_etx;
++		} else if (tx_q->tbs & STMMAC_TBS_AVAIL) {
++			size = sizeof(struct dma_edesc);
++			addr = tx_q->dma_entx;
++		} else {
++			size = sizeof(struct dma_desc);
++			addr = tx_q->dma_tx;
++		}
++
++		size *= priv->dma_tx_size;
++
++		dma_free_coherent(priv->device, size, addr, tx_q->dma_tx_phy);
++	}
++}
++
++/**
++ * sunxi_uio_alloc_dma_rx_desc_resources - alloc RX resources.
++ * @priv: private structure
++ * Description: according to which descriptor can be used (extend or basic)
++ * this function allocates the resources for TX and RX paths. In case of
++ * reception, for example, it pre-allocated the RX socket buffer in order to
++ * allow zero-copy mechanism.
++ */
++static int sunxi_uio_alloc_dma_rx_desc_resources(struct stmmac_priv *priv)
++{
++	u32 queue, rx_count = priv->plat->rx_queues_to_use;
++	int ret = -ENOMEM;
++
++	/* RX queues buffers and DMA */
++	for (queue = 0; queue < rx_count; queue++) {
++		struct stmmac_rx_queue *rx_q = &priv->rx_queue[queue];
++
++		if (priv->extend_desc) {
++			rx_q->dma_erx = dma_alloc_coherent(priv->device,
++							   priv->dma_rx_size *
++							   sizeof(struct dma_extended_desc),
++							   &rx_q->dma_rx_phy,
++							   GFP_KERNEL);
++			if (!rx_q->dma_erx)
++				goto err_dma;
++		} else {
++			rx_q->dma_rx = dma_alloc_coherent(priv->device,
++							  priv->dma_rx_size *
++							  sizeof(struct dma_desc),
++							  &rx_q->dma_rx_phy,
++							  GFP_KERNEL);
++			if (!rx_q->dma_rx)
++				goto err_dma;
++		}
++	}
++
++	return 0;
++
++err_dma:
++	sunxi_uio_free_dma_rx_desc_resources(priv);
++
++	return ret;
++}
++
++/**
++ * sunxi_uio_alloc_dma_tx_desc_resources - alloc TX resources.
++ * @priv: private structure
++ * Description: according to which descriptor can be used (extend or basic)
++ * this function allocates the resources for TX and RX paths. In case of
++ * reception, for example, it pre-allocated the RX socket buffer in order to
++ * allow zero-copy mechanism.
++ */
++static int sunxi_uio_alloc_dma_tx_desc_resources(struct stmmac_priv *priv)
++{
++	u32 queue, tx_count = priv->plat->tx_queues_to_use;
++	int ret = -ENOMEM;
++
++	/* TX queues buffers and DMA */
++	for (queue = 0; queue < tx_count; queue++) {
++		struct stmmac_tx_queue *tx_q = &priv->tx_queue[queue];
++		size_t size;
++		void *addr;
++
++		tx_q->queue_index = queue;
++		tx_q->priv_data = priv;
++
++		if (priv->extend_desc)
++			size = sizeof(struct dma_extended_desc);
++		else if (tx_q->tbs & STMMAC_TBS_AVAIL)
++			size = sizeof(struct dma_edesc);
++		else
++			size = sizeof(struct dma_desc);
++
++		size *= priv->dma_tx_size;
++
++		addr = dma_alloc_coherent(priv->device, size,
++					  &tx_q->dma_tx_phy, GFP_KERNEL);
++		if (!addr)
++			goto err_dma;
++
++		if (priv->extend_desc)
++			tx_q->dma_etx = addr;
++		else if (tx_q->tbs & STMMAC_TBS_AVAIL)
++			tx_q->dma_entx = addr;
++		else
++			tx_q->dma_tx = addr;
++	}
++
++	return 0;
++
++err_dma:
++	sunxi_uio_free_dma_tx_desc_resources(priv);
++	return ret;
++}
++
++/**
++ * sunxi_uio_alloc_dma_desc_resources - alloc TX/RX resources.
++ * @priv: private structure
++ * Description: according to which descriptor can be used (extend or basic)
++ * this function allocates the resources for TX and RX paths. In case of
++ * reception, for example, it pre-allocated the RX socket buffer in order to
++ * allow zero-copy mechanism.
++ */
++static int sunxi_uio_alloc_dma_desc_resources(struct stmmac_priv *priv)
++{
++	/* RX Allocation */
++	int ret = sunxi_uio_alloc_dma_rx_desc_resources(priv);
++
++	if (ret)
++		return ret;
++
++	ret = sunxi_uio_alloc_dma_tx_desc_resources(priv);
++
++	return ret;
++}
++
++/**
++ * sunxi_uio_free_dma_desc_resources - free dma desc resources
++ * @priv: private structure
++ */
++static void sunxi_uio_free_dma_desc_resources(struct stmmac_priv *priv)
++{
++	/* Release the DMA RX socket buffers */
++	sunxi_uio_free_dma_rx_desc_resources(priv);
++
++	/* Release the DMA TX socket buffers */
++	sunxi_uio_free_dma_tx_desc_resources(priv);
++}
++
++/**
++ * sunxi_uio_init_phy - PHY initialization
++ * @dev: net device structure
++ * Description: it initializes the driver's PHY state, and attaches the PHY
++ * to the mac driver.
++ *  Return value:
++ *  0 on success
++ */
++static int sunxi_uio_init_phy(struct net_device *dev)
++{
++	struct stmmac_priv *priv = netdev_priv(dev);
++	struct device_node *node;
++	int ret;
++
++	node = priv->plat->phylink_node;
++
++	if (node)
++		ret = phylink_of_phy_connect(priv->phylink, node, 0);
++
++	/* Some DT bindings do not set-up the PHY handle. Let's try to
++	 * manually parse it
++	 */
++	if (!node || ret) {
++		int addr = priv->plat->phy_addr;
++		struct phy_device *phydev;
++
++		phydev = mdiobus_get_phy(priv->mii, addr);
++		if (!phydev) {
++			netdev_err(priv->dev, "no phy at addr %d\n", addr);
++			return -ENODEV;
++		}
++
++		ret = phylink_connect_phy(priv->phylink, phydev);
++	}
++
++	if (!priv->plat->pmt) {
++		struct ethtool_wolinfo wol = { .cmd = ETHTOOL_GWOL };
++
++		phylink_ethtool_get_wol(priv->phylink, &wol);
++		device_set_wakeup_capable(priv->device, !!wol.supported);
++	}
++
++	return ret;
++}
++
++/**
++ * sunxi_uio_init_dma_engine - DMA init.
++ * @priv: driver private structure
++ * Description:
++ * It inits the DMA invoking the specific MAC/GMAC callback.
++ * Some DMA parameters can be passed from the platform;
++ * in case of these are not passed a default is kept for the MAC or GMAC.
++ */
++static int sunxi_uio_init_dma_engine(struct stmmac_priv *priv)
++{
++	u32 rx_channels_count = priv->plat->rx_queues_to_use;
++	u32 tx_channels_count = priv->plat->tx_queues_to_use;
++	u32 dma_csr_ch = max(rx_channels_count, tx_channels_count);
++	struct stmmac_rx_queue *rx_q;
++	struct stmmac_tx_queue *tx_q;
++	u32 chan = 0;
++	int atds = 0, ret = 0;
++
++	if (!priv->plat->dma_cfg || !priv->plat->dma_cfg->pbl) {
++		dev_err(priv->device, "Invalid DMA configuration\n");
++		return -EINVAL;
++	}
++
++	if (priv->extend_desc && priv->mode == STMMAC_RING_MODE)
++		atds = 1;
++
++	ret = stmmac_reset(priv, priv->ioaddr);
++	if (ret) {
++		dev_err(priv->device, "Failed to reset the dma\n");
++		return ret;
++	}
++
++	/* DMA Configuration */
++	stmmac_dma_init(priv, priv->ioaddr, priv->plat->dma_cfg, atds);
++
++	if (priv->plat->axi)
++		stmmac_axi(priv, priv->ioaddr, priv->plat->axi);
++
++	/* DMA CSR Channel configuration */
++	for (chan = 0; chan < dma_csr_ch; chan++)
++		stmmac_init_chan(priv, priv->ioaddr, priv->plat->dma_cfg, chan);
++
++	/* DMA RX Channel Configuration */
++	for (chan = 0; chan < rx_channels_count; chan++) {
++		rx_q = &priv->rx_queue[chan];
++
++		stmmac_init_rx_chan(priv, priv->ioaddr, priv->plat->dma_cfg,
++				    rx_q->dma_rx_phy, chan);
++
++		rx_q->rx_tail_addr = rx_q->dma_rx_phy +
++				     (priv->dma_rx_size *
++				      sizeof(struct dma_desc));
++		stmmac_set_rx_tail_ptr(priv, priv->ioaddr,
++				       rx_q->rx_tail_addr, chan);
++	}
++
++	/* DMA TX Channel Configuration */
++	for (chan = 0; chan < tx_channels_count; chan++) {
++		tx_q = &priv->tx_queue[chan];
++
++		stmmac_init_tx_chan(priv, priv->ioaddr, priv->plat->dma_cfg,
++				    tx_q->dma_tx_phy, chan);
++
++		tx_q->tx_tail_addr = tx_q->dma_tx_phy;
++		stmmac_set_tx_tail_ptr(priv, priv->ioaddr,
++				       tx_q->tx_tail_addr, chan);
++	}
++
++	return ret;
++}
++
++static void sunxi_uio_set_rings_length(struct stmmac_priv *priv)
++{
++	u32 rx_channels_count = priv->plat->rx_queues_to_use;
++	u32 tx_channels_count = priv->plat->tx_queues_to_use;
++	u32 chan;
++
++	/* set TX ring length */
++	for (chan = 0; chan < tx_channels_count; chan++)
++		stmmac_set_tx_ring_len(priv, priv->ioaddr,
++				       (priv->dma_tx_size - 1), chan);
++
++	/* set RX ring length */
++	for (chan = 0; chan < rx_channels_count; chan++)
++		stmmac_set_rx_ring_len(priv, priv->ioaddr,
++				       (priv->dma_rx_size - 1), chan);
++}
++
++/**
++ *  sunxi_uio_set_tx_queue_weight - Set TX queue weight
++ *  @priv: driver private structure
++ *  Description: It is used for setting TX queues weight
++ */
++static void sunxi_uio_set_tx_queue_weight(struct stmmac_priv *priv)
++{
++	u32 tx_queues_count = priv->plat->tx_queues_to_use;
++	u32 weight, queue;
++
++	for (queue = 0; queue < tx_queues_count; queue++) {
++		weight = priv->plat->tx_queues_cfg[queue].weight;
++		stmmac_set_mtl_tx_queue_weight(priv, priv->hw, weight, queue);
++	}
++}
++
++/**
++ *  sunxi_uio_configure_cbs - Configure CBS in TX queue
++ *  @priv: driver private structure
++ *  Description: It is used for configuring CBS in AVB TX queues
++ */
++static void sunxi_uio_configure_cbs(struct stmmac_priv *priv)
++{
++	u32 tx_queues_count = priv->plat->tx_queues_to_use;
++	u32 mode_to_use, queue;
++
++	/* queue 0 is reserved for legacy traffic */
++	for (queue = 1; queue < tx_queues_count; queue++) {
++		mode_to_use = priv->plat->tx_queues_cfg[queue].mode_to_use;
++		if (mode_to_use == MTL_QUEUE_DCB)
++			continue;
++
++		stmmac_config_cbs(priv, priv->hw,
++				  priv->plat->tx_queues_cfg[queue].send_slope,
++				  priv->plat->tx_queues_cfg[queue].idle_slope,
++				  priv->plat->tx_queues_cfg[queue].high_credit,
++				  priv->plat->tx_queues_cfg[queue].low_credit,
++				  queue);
++	}
++}
++
++/**
++ *  sunxi_uio_rx_queue_dma_chan_map - Map RX queue to RX dma channel
++ *  @priv: driver private structure
++ *  Description: It is used for mapping RX queues to RX dma channels
++ */
++static void sunxi_uio_rx_queue_dma_chan_map(struct stmmac_priv *priv)
++{
++	u32 rx_queues_count = priv->plat->rx_queues_to_use;
++	u32 queue, chan;
++
++	for (queue = 0; queue < rx_queues_count; queue++) {
++		chan = priv->plat->rx_queues_cfg[queue].chan;
++		stmmac_map_mtl_to_dma(priv, priv->hw, queue, chan);
++	}
++}
++
++/**
++ *  sunxi_uio_mac_config_rx_queues_prio - Configure RX Queue priority
++ *  @priv: driver private structure
++ *  Description: It is used for configuring the RX Queue Priority
++ */
++static void sunxi_uio_mac_config_rx_queues_prio(struct stmmac_priv *priv)
++{
++	u32 rx_queues_count = priv->plat->rx_queues_to_use;
++	u32 queue, prio;
++
++	for (queue = 0; queue < rx_queues_count; queue++) {
++		if (!priv->plat->rx_queues_cfg[queue].use_prio)
++			continue;
++
++		prio = priv->plat->rx_queues_cfg[queue].prio;
++		stmmac_rx_queue_prio(priv, priv->hw, prio, queue);
++	}
++}
++
++/**
++ *  sunxi_uio_mac_config_tx_queues_prio - Configure TX Queue priority
++ *  @priv: driver private structure
++ *  Description: It is used for configuring the TX Queue Priority
++ */
++static void sunxi_uio_mac_config_tx_queues_prio(struct stmmac_priv *priv)
++{
++	u32 tx_queues_count = priv->plat->tx_queues_to_use;
++	u32 queue, prio;
++
++	for (queue = 0; queue < tx_queues_count; queue++) {
++		if (!priv->plat->tx_queues_cfg[queue].use_prio)
++			continue;
++
++		prio = priv->plat->tx_queues_cfg[queue].prio;
++		stmmac_tx_queue_prio(priv, priv->hw, prio, queue);
++	}
++}
++
++/**
++ *  sunxi_uio_mac_config_rx_queues_routing - Configure RX Queue Routing
++ *  @priv: driver private structure
++ *  Description: It is used for configuring the RX queue routing
++ */
++static void sunxi_uio_mac_config_rx_queues_routing(struct stmmac_priv *priv)
++{
++	u32 rx_queues_count = priv->plat->rx_queues_to_use;
++	u32 queue;
++	u8 packet;
++
++	for (queue = 0; queue < rx_queues_count; queue++) {
++		/* no specific packet type routing specified for the queue */
++		if (priv->plat->rx_queues_cfg[queue].pkt_route == 0x0)
++			continue;
++
++		packet = priv->plat->rx_queues_cfg[queue].pkt_route;
++		stmmac_rx_queue_routing(priv, priv->hw, packet, queue);
++	}
++}
++
++static void sunxi_uio_mac_config_rss(struct stmmac_priv *priv)
++{
++	if (!priv->dma_cap.rssen || !priv->plat->rss_en) {
++		priv->rss.enable = false;
++		return;
++	}
++
++	if (priv->dev->features & NETIF_F_RXHASH)
++		priv->rss.enable = true;
++	else
++		priv->rss.enable = false;
++
++	stmmac_rss_configure(priv, priv->hw, &priv->rss,
++			     priv->plat->rx_queues_to_use);
++}
++
++/**
++ *  sunxi_uio_mac_enable_rx_queues - Enable MAC rx queues
++ *  @priv: driver private structure
++ *  Description: It is used for enabling the rx queues in the MAC
++ */
++static void sunxi_uio_mac_enable_rx_queues(struct stmmac_priv *priv)
++{
++	u32 rx_queues_count = priv->plat->rx_queues_to_use;
++	int queue;
++	u8 mode;
++
++	for (queue = 0; queue < rx_queues_count; queue++) {
++		mode = priv->plat->rx_queues_cfg[queue].mode_to_use;
++		stmmac_rx_queue_enable(priv, priv->hw, mode, queue);
++	}
++}
++
++/**
++ *  sunxi_uio_mtl_configuration - Configure MTL
++ *  @priv: driver private structure
++ *  Description: It is used for configuring MTL
++ */
++static void sunxi_uio_mtl_configuration(struct stmmac_priv *priv)
++{
++	u32 rx_queues_count = priv->plat->rx_queues_to_use;
++	u32 tx_queues_count = priv->plat->tx_queues_to_use;
++
++	if (tx_queues_count > 1)
++		sunxi_uio_set_tx_queue_weight(priv);
++
++	/* Configure MTL RX algorithms */
++	if (rx_queues_count > 1)
++		stmmac_prog_mtl_rx_algorithms(priv, priv->hw,
++				priv->plat->rx_sched_algorithm);
++
++	/* Configure MTL TX algorithms */
++	if (tx_queues_count > 1)
++		stmmac_prog_mtl_tx_algorithms(priv, priv->hw,
++				priv->plat->tx_sched_algorithm);
++
++	/* Configure CBS in AVB TX queues */
++	if (tx_queues_count > 1)
++		sunxi_uio_configure_cbs(priv);
++
++	/* Map RX MTL to DMA channels */
++	sunxi_uio_rx_queue_dma_chan_map(priv);
++
++	/* Enable MAC RX Queues */
++	sunxi_uio_mac_enable_rx_queues(priv);
++
++	/* Set RX priorities */
++	if (rx_queues_count > 1)
++		sunxi_uio_mac_config_rx_queues_prio(priv);
++
++	/* Set TX priorities */
++	if (tx_queues_count > 1)
++		sunxi_uio_mac_config_tx_queues_prio(priv);
++
++	/* Set RX routing */
++	if (rx_queues_count > 1)
++		sunxi_uio_mac_config_rx_queues_routing(priv);
++
++	/* Receive Side Scaling */
++	if (rx_queues_count > 1)
++		sunxi_uio_mac_config_rss(priv);
++}
++
++static void sunxi_uio_safety_feat_configuration(struct stmmac_priv *priv)
++{
++	if (priv->dma_cap.asp) {
++		netdev_info(priv->dev, "Enabling Safety Features\n");
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0))
++		stmmac_safety_feat_config(priv, priv->ioaddr, priv->dma_cap.asp);
++#else
++		stmmac_safety_feat_config(priv, priv->ioaddr, priv->dma_cap.asp,
++				priv->plat->safety_feat_cfg);
++#endif
++	} else {
++		netdev_info(priv->dev, "No Safety Features support found\n");
++	}
++}
++
++/**
++ *  sunxi_uio_dma_operation_mode - HW DMA operation mode
++ *  @priv: driver private structure
++ *  Description: it is used for configuring the DMA operation mode register in
++ *  order to program the tx/rx DMA thresholds or Store-And-Forward mode.
++ */
++static void sunxi_uio_dma_operation_mode(struct stmmac_priv *priv)
++{
++	u32 rx_channels_count = priv->plat->rx_queues_to_use;
++	u32 tx_channels_count = priv->plat->tx_queues_to_use;
++	int rxfifosz = priv->plat->rx_fifo_size;
++	int txfifosz = priv->plat->tx_fifo_size;
++	u32 txmode = 0, rxmode = 0, chan = 0;
++	u8 qmode = 0;
++
++	if (rxfifosz == 0)
++		rxfifosz = priv->dma_cap.rx_fifo_size;
++	if (txfifosz == 0)
++		txfifosz = priv->dma_cap.tx_fifo_size;
++
++	/* Adjust for real per queue fifo size */
++	rxfifosz /= rx_channels_count;
++	txfifosz /= tx_channels_count;
++
++	if (priv->plat->force_thresh_dma_mode) {
++		txmode = tc;
++		rxmode = tc;
++	} else if (priv->plat->force_sf_dma_mode || priv->plat->tx_coe) {
++		/* In case of GMAC, SF mode can be enabled
++		 * to perform the TX COE in HW. This depends on:
++		 * 1) TX COE if actually supported
++		 * 2) There is no bugged Jumbo frame support
++		 *    that needs to not insert csum in the TDES.
++		 */
++		txmode = SF_DMA_MODE;
++		rxmode = SF_DMA_MODE;
++		priv->xstats.threshold = SF_DMA_MODE;
++	} else {
++		txmode = tc;
++		rxmode = SF_DMA_MODE;
++	}
++
++	/* configure all channels */
++	for (chan = 0; chan < rx_channels_count; chan++) {
++		qmode = priv->plat->rx_queues_cfg[chan].mode_to_use;
++
++		stmmac_dma_rx_mode(priv, priv->ioaddr, rxmode, chan,
++				   rxfifosz, qmode);
++		stmmac_set_dma_bfsize(priv, priv->ioaddr, priv->dma_buf_sz,
++				      chan);
++	}
++
++	for (chan = 0; chan < tx_channels_count; chan++) {
++		qmode = priv->plat->tx_queues_cfg[chan].mode_to_use;
++
++		stmmac_dma_tx_mode(priv, priv->ioaddr, txmode, chan,
++				   txfifosz, qmode);
++	}
++}
++
++/**
++ *  sunxi_uio_hw_setup - setup mac in a usable state.
++ *  @dev : pointer to the device structure.
++ *  @init_ptp: initialize PTP if set
++ *  Description:
++ *  this is the main function to setup the HW in a usable state because the
++ *  dma engine is reset, the core registers are configured (e.g. AXI,
++ *  Checksum features, timers). The DMA is ready to start receiving and
++ *  transmitting.
++ *  Return value:
++ *  0 on success and an appropriate (-)ve integer as defined in errno.h
++ *  file on failure.
++ */
++static int sunxi_uio_hw_setup(struct net_device *dev, bool init_ptp)
++{
++	struct stmmac_priv *priv = netdev_priv(dev);
++	int ret;
++
++	/* DMA initialization and SW reset */
++	ret = sunxi_uio_init_dma_engine(priv);
++	if (ret < 0) {
++		netdev_err(priv->dev, "%s: DMA engine initialization failed\n",
++			   __func__);
++		return ret;
++	}
++
++	/* Copy the MAC addr into the HW  */
++	stmmac_set_umac_addr(priv, priv->hw, dev->dev_addr, 0);
++
++	/* PS and related bits will be programmed according to the speed */
++	if (priv->hw->pcs) {
++		int speed = priv->plat->mac_port_sel_speed;
++
++		if (speed == SPEED_10 || speed == SPEED_100 ||
++		    speed == SPEED_1000) {
++			priv->hw->ps = speed;
++		} else {
++			dev_warn(priv->device, "invalid port speed\n");
++			priv->hw->ps = 0;
++		}
++	}
++
++	/* Initialize the MAC Core */
++	stmmac_core_init(priv, priv->hw, dev);
++
++	/* Initialize MTL*/
++	sunxi_uio_mtl_configuration(priv);
++
++	/* Initialize Safety Features */
++	sunxi_uio_safety_feat_configuration(priv);
++
++	ret = stmmac_rx_ipc(priv, priv->hw);
++	if (!ret) {
++		netdev_warn(priv->dev, "RX IPC Checksum Offload disabled\n");
++		priv->plat->rx_coe = STMMAC_RX_COE_NONE;
++		priv->hw->rx_csum = 0;
++	}
++
++	/* Enable the MAC Rx/Tx */
++	stmmac_mac_set(priv, priv->ioaddr, true);
++
++	/* Set the HW DMA mode and the COE */
++	sunxi_uio_dma_operation_mode(priv);
++
++	if (priv->hw->pcs)
++		stmmac_pcs_ctrl_ane(priv, priv->hw, 1, priv->hw->ps, 0);
++
++	/* set TX and RX rings length */
++	sunxi_uio_set_rings_length(priv);
++
++	return 0;
++}
++
++static int sunxi_uio_set_bfsize(int mtu, int bufsize)
++{
++	int ret = bufsize;
++
++	if (mtu >= BUF_SIZE_8KiB)
++		ret = BUF_SIZE_16KiB;
++	else if (mtu >= BUF_SIZE_4KiB)
++		ret = BUF_SIZE_8KiB;
++	else if (mtu >= BUF_SIZE_2KiB)
++		ret = BUF_SIZE_4KiB;
++	else if (mtu > DEFAULT_BUFSIZE)
++		ret = BUF_SIZE_2KiB;
++	else
++		ret = DEFAULT_BUFSIZE;
++
++	return ret;
++}
++
++/**
++ *  sunxi_uio_init - open entry point of the driver
++ *  @dev : pointer to the device structure.
++ *  Description:
++ *  This function is the open entry point of the driver.
++ *  Return value:
++ *  0 on success and an appropriate (-)ve integer as defined in errno.h
++ *  file on failure.
++ */
++static int sunxi_uio_init(struct net_device *dev)
++{
++	struct stmmac_priv *priv = netdev_priv(dev);
++	int ret, bfsize = 0;
++
++	if (priv->hw->pcs != STMMAC_PCS_TBI &&
++	    priv->hw->pcs != STMMAC_PCS_RTBI &&
++	    !priv->hw->xpcs) {
++		ret = sunxi_uio_init_phy(dev);
++		if (ret) {
++			netdev_err(priv->dev,
++				   "%s: Cannot attach to PHY (error: %d)\n",
++				   __func__, ret);
++			return ret;
++		}
++	}
++
++	/* Extra statistics */
++	priv->xstats.threshold = tc;
++
++	bfsize = stmmac_set_16kib_bfsize(priv, dev->mtu);
++	if (bfsize < 0)
++		bfsize = 0;
++
++	if (bfsize < BUF_SIZE_16KiB)
++		bfsize = sunxi_uio_set_bfsize(dev->mtu, priv->dma_buf_sz);
++
++	priv->dma_buf_sz = bfsize;
++	buf_sz = bfsize;
++
++	priv->rx_copybreak = STMMAC_RX_COPYBREAK;
++
++	if (!priv->dma_tx_size)
++		priv->dma_tx_size = DMA_DEFAULT_TX_SIZE;
++	if (!priv->dma_rx_size)
++		priv->dma_rx_size = DMA_DEFAULT_RX_SIZE;
++
++	ret = sunxi_uio_alloc_dma_desc_resources(priv);
++	if (ret < 0) {
++		netdev_err(priv->dev, "%s: DMA descriptors allocation failed\n",
++			   __func__);
++		goto dma_desc_error;
++	}
++
++	ret = sunxi_uio_hw_setup(dev, true);
++	if (ret < 0) {
++		netdev_err(priv->dev, "%s: Hw setup failed\n", __func__);
++		goto init_error;
++	}
++
++	phylink_start(priv->phylink);
++	/* We may have called phylink_speed_down before */
++	phylink_speed_up(priv->phylink);
++
++	return 0;
++
++init_error:
++	sunxi_uio_free_dma_desc_resources(priv);
++dma_desc_error:
++	phylink_disconnect_phy(priv->phylink);
++	return ret;
++}
++
++/**
++ *  sunxi_uio_exit - close entry point of the driver
++ *  @dev : device pointer.
++ *  Description:
++ *  This is the stop entry point of the driver.
++ */
++static int sunxi_uio_exit(struct net_device *dev)
++{
++	struct stmmac_priv *priv = netdev_priv(dev);
++
++	/* Stop and disconnect the PHY */
++	if (dev->phydev) {
++		phy_stop(dev->phydev);
++		phy_disconnect(dev->phydev);
++	}
++
++	/* Release and free the Rx/Tx resources */
++	sunxi_uio_free_dma_desc_resources(priv);
++
++	/* Disable the MAC Rx/Tx */
++	stmmac_mac_set(priv, priv->ioaddr, false);
++
++	netif_carrier_off(dev);
++
++	return 0;
++}
++
++/**
++ * sunxi_uio_probe() platform driver probe routine
++ * - register uio devices filled with memory maps retrieved
++ * from device tree
++ */
++static int sunxi_uio_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node, *mac_node;
++	struct sunxi_uio *chip;
++	struct net_device *netdev;
++	struct stmmac_priv *priv;
++	struct uio_info *uio;
++	struct resource *res;
++	int err = 0;
++
++	chip = devm_kzalloc(dev, sizeof(struct sunxi_uio),
++				 GFP_KERNEL);
++	if (!chip)
++		return -ENOMEM;
++
++	uio = &chip->uio;
++	chip->dev = dev;
++	mac_node = of_parse_phandle(np, "sunxi,ethernet", 0);
++	if (!mac_node)
++		return -ENODEV;
++
++	if (of_device_is_available(mac_node)) {
++		netdev = of_find_net_device_by_node(mac_node);
++		of_node_put(mac_node);
++		if (!netdev)
++			return -ENODEV;
++	} else {
++		of_node_put(mac_node);
++		return -EINVAL;
++	}
++
++	chip->ndev = netdev;
++	rtnl_lock();
++	dev_close(netdev);
++	rtnl_unlock();
++
++	rtnl_lock();
++	err = sunxi_uio_init(netdev);
++	if (err) {
++		rtnl_unlock();
++		dev_err(dev, "Failed to open stmmac resource: %d\n", err);
++		return err;
++	}
++	rtnl_unlock();
++
++	priv = netdev_priv(netdev);
++	snprintf(chip->name, sizeof(chip->name), "uio_%s",
++		 netdev->name);
++	uio->name = chip->name;
++	uio->version = DRIVER_VERSION;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res)
++		return -ENODEV;
++
++	uio->mem[0].name = "eth_regs";
++	uio->mem[0].addr = res->start & PAGE_MASK;
++	uio->mem[0].size = PAGE_ALIGN(resource_size(res));
++	uio->mem[0].memtype = UIO_MEM_PHYS;
++
++	uio->mem[1].name = "eth_rx_bd";
++	uio->mem[1].addr = priv->rx_queue[0].dma_rx_phy;
++	uio->mem[1].size = priv->dma_rx_size * sizeof(struct dma_desc);
++	uio->mem[1].memtype = UIO_MEM_PHYS;
++
++	uio->mem[2].name = "eth_tx_bd";
++	uio->mem[2].addr = priv->tx_queue[0].dma_tx_phy;
++	uio->mem[2].size = priv->dma_tx_size * sizeof(struct dma_desc);
++	uio->mem[2].memtype = UIO_MEM_PHYS;
++
++	uio->open = sunxi_uio_open;
++	uio->release = sunxi_uio_release;
++	/* Custom mmap function. */
++	uio->mmap = sunxi_uio_mmap;
++	uio->priv = chip;
++
++	err = uio_register_device(dev, uio);
++	if (err) {
++		dev_err(dev, "Failed to register uio device: %d\n", err);
++		return err;
++	}
++
++	chip->map_num = 3;
++
++	dev_info(dev, "Registered %s uio devices, %d register maps attached\n",
++		 chip->name, chip->map_num);
++
++	platform_set_drvdata(pdev, chip);
++
++	return 0;
++}
++
++/**
++ * sunxi_uio_remove() - UIO platform driver release
++ * routine - unregister uio devices
++ */
++static int sunxi_uio_remove(struct platform_device *pdev)
++{
++	struct sunxi_uio *chip = platform_get_drvdata(pdev);
++	struct net_device *netdev;
++
++	if (!chip)
++		return -EINVAL;
++
++	netdev = chip->ndev;
++
++	uio_unregister_device(&chip->uio);
++
++	if (netdev) {
++		rtnl_lock();
++		sunxi_uio_exit(netdev);
++		rtnl_unlock();
++	}
++
++	platform_set_drvdata(pdev, NULL);
++
++	if (netdev) {
++		rtnl_lock();
++		dev_open(netdev, NULL);
++		rtnl_unlock();
++	}
++
++	return 0;
++}
++
++static const struct of_device_id sunxi_uio_of_match[] = {
++	{ .compatible	= "allwinner,sunxi-uio", },
++	{ }
++};
++
++static struct platform_driver sunxi_uio_driver = {
++	.driver = {
++		.owner		= THIS_MODULE,
++		.name		= DRIVER_NAME,
++		.of_match_table	= sunxi_uio_of_match,
++	},
++	.probe	= sunxi_uio_probe,
++	.remove	= sunxi_uio_remove,
++};
++module_platform_driver(sunxi_uio_driver);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("xuminghui <xuminghui@allwinnertech.com>");
++MODULE_VERSION(DRIVER_VERSION);
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/Kconfig linux-6.12.10/drivers/net/ethernet/allwinner/Kconfig
+--- linux-6.12.10/drivers/net/ethernet/allwinner/Kconfig	2025-01-17 13:41:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/Kconfig	2025-01-23 10:53:24.284097476 +0100
+@@ -34,4 +34,6 @@
+ 	  To compile this driver as a module, choose M here.  The module
+ 	  will be called sun4i-emac.
+ 
++source "drivers/net/ethernet/allwinner/gmac-200/Kconfig"
++
+ endif # NET_VENDOR_ALLWINNER
+diff --speed-large-files --no-dereference --minimal -Naur linux-6.12.10/drivers/net/ethernet/allwinner/Makefile linux-6.12.10/drivers/net/ethernet/allwinner/Makefile
+--- linux-6.12.10/drivers/net/ethernet/allwinner/Makefile	2025-01-17 13:41:00.000000000 +0100
++++ linux-6.12.10/drivers/net/ethernet/allwinner/Makefile	2025-01-23 10:53:31.710764338 +0100
+@@ -4,3 +4,4 @@
+ #
+ 
+ obj-$(CONFIG_SUN4I_EMAC) += sun4i-emac.o
++obj-$(CONFIG_NET_VENDOR_ALLWINNER) += gmac-200/
