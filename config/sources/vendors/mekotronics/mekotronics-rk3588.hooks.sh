@@ -8,6 +8,11 @@
 function post_family_config__vendor_uboot_mekotronics() {
 	display_alert "$BOARD" "Configuring $BOARD vendor u-boot" "info"
 	declare -g BOOTDELAY=1 # build injects this into u-boot config. we can then get into UMS mode and avoid the whole rockusb/rkdeveloptool thing
+
+	# Override the stuff from rockchip-rk3588 family; Meko's have a patch for stable MAC address that breaks with Radxa's next-dev-v2024.10+
+	declare -g BOOTSOURCE='https://github.com/radxa/u-boot.git'
+	declare -g BOOTBRANCH='branch:next-dev-v2024.03' # NOT next-dev-v2024.10
+	declare -g BOOTPATCHDIR="legacy/u-boot-radxa-rk35xx"
 }
 
 # Conditional hook to allow experimenting with this against legacy/vendor branches
