@@ -181,6 +181,7 @@ function userpatch_create() {
 		fi
 
 		display_alert "OK, here's how your diff looks like" "showing patch diff" "info"
+		git add -N .
 		git "${common_git_params[@]}" diff | run_tool_batcat --file-name "${patch}" -
 
 		# Prompt the user if he is happy with the patch
