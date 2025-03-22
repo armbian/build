@@ -269,6 +269,7 @@ function reversion_armbian-bsp-cli_deb_contents() {
 		Depends: bash, linux-base, u-boot-tools, initramfs-tools, lsb-release, fping, device-tree-compiler${depends_base_files}
 		Replaces: zram-config, armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
 		Breaks: armbian-bsp-cli-${BOARD}${EXTRA_BSP_NAME} (<< ${REVISION})
+		Provides: armbian-bsp-cli
 	EOF
 
 	artifact_deb_reversion_unpack_data_deb
