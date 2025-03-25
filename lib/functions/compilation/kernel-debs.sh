@@ -458,9 +458,8 @@ function kernel_package_callback_linux_headers() {
 	# In order for the cleanup to be correct  for tools, we need to pass the VMLINUX_BTF variable,
 	# which contains the real path to the newly compiled vmlinux file.
 	declare make_bitbucket="&> /dev/null"
-	[[ "${DEBUG}" == "yes" ]] && make_bitbucket=""
-	run_host_command_logged cd "${headers_target_dir}" "&&" make "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}"
-	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" "VMLINUX_BTF=${kernel_work_dir}/vmlinux" clean "${make_bitbucket}"
+	run_host_command_logged cd "${headers_target_dir}" "&&" make "ARCH=${SRC_ARCH}" "M=scripts" clean "${make_bitbucket}" "||" make "ARCH=${SRC_ARCH}" "M=scripts" clean
+	run_host_command_logged cd "${headers_target_dir}/tools" "&&" make "ARCH=${SRC_ARCH}" "VMLINUX_BTF=${kernel_work_dir}/vmlinux" clean "${make_bitbucket}" "||" make "ARCH=${SRC_ARCH}" "VMLINUX_BTF=${kernel_work_dir}/vmlinux" clean
 
 	# Trim down on the tools dir a bit after cleaning.
 	rm -rf "${headers_target_dir}/tools/perf" "${headers_target_dir}/tools/testing"
