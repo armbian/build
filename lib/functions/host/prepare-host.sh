@@ -179,7 +179,7 @@ function adaptative_prepare_host_dependencies() {
 		# big bag of stuff from before
 		bc binfmt-support
 		bison
-		bsdmainutils
+		bsdextrautils
 		libc6-dev make dpkg-dev gcc # build-essential, without g++
 		ca-certificates ccache cpio
 		device-tree-compiler dialog dirmngr dosfstools
