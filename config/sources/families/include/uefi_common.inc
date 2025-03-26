@@ -29,7 +29,7 @@ case "${BRANCH}" in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.13"
+		declare -g KERNEL_MAJOR_MINOR="6.14"
 		;;
 esac
 
@@ -46,7 +46,7 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 	declare -g ATF_COMPILE="no"
 
 	declare -g BOOTDIR="qemu-uboot-${LINUXFAMILY}"
-	declare -g BOOTBRANCH='tag:v2023.10'
+	declare -g BOOTBRANCH='tag:v2025.01'
 	declare -g BOOTSOURCE='https://github.com/u-boot/u-boot' # Gotta set this again, it is unset by grub extension
 
 	declare -g BOOTCONFIG="${QEMU_UBOOT_BOOTCONFIG}"

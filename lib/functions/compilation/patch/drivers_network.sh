@@ -41,7 +41,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:fb77d4b9316805f64893771b520e009215a10bc3' # Commit date: Feb 16, 2025 (please update when updating commit ref)
+		local rtl8189esver='commit:fcf2a5746e6fe11d9d71337ee5dac6cf43423a97' # Commit date: Feb 24, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -87,7 +87,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
-		local rtl8189fsver='commit:94cc959d56c1425fbca4f6e49e949cf58ec5dc8d' # Commit date: May 19, 2024 (please update when updating commit ref)
+		local rtl8189fsver='commit:fcf2a5746e6fe11d9d71337ee5dac6cf43423a97' # Commit date: Feb 25, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
@@ -175,11 +175,12 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:v5.6.4.2)
-		local rtl8812auver="commit:5c20308822e5de5809d097ff600492ab4b25f5ab" # Commit date: Jan 21, 2025 (please update when updating commit ref)
+		local rtl8812auver="commit:40ace7013407c147e0c40c9afef908319a99733c" # Commit date: Mar 25, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
+		fetch_from_repo "$GITHUB_SOURCE/rpardini/aircrack-ng-rtl8812au-kernel-bump-fixes" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
+
 		cd "$kerneldir" || exit
 
 		# Brief detour. Turns out that HardKernel's vendor odroidxu4 kernel already has this driver
@@ -254,7 +255,7 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl8811cuver="commit:96c65c58b544241178638e810b333dcc9aa26b91" # Commit date: Jan 22, 2024 (please update when updating commit ref)
+		local rtl8811cuver="commit:132dcf025806a436b9a95fb4af24eacfd07222f5" # Commit date: Feb 19, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -296,7 +297,7 @@ driver_rtl88x2bu() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl88x2buver="commit:da8c42ebf4c055d2095f7a3d9dfae1a3b66c0821" # Commit date: Jan 22, 2024 (please update when updating commit ref)
+		local rtl88x2buver="commit:bd8baa17dc0c07510a7a56c52410a81c363b85ae" # Commit date: Feb 21, 2024 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
@@ -413,7 +414,7 @@ driver_rtl88x2cs() {
 	if linux-version compare "${version}" ge 5.9 && [[ "$LINUXFAMILY" == meson64 ]]; then
 
 		# Attach to specific commit (track branch:tune_for_jethub)
-		local rtl88x2csver='commit:e2fce3c61059d1977f0ae65e648db2720dcba5f5' # Commit date: Jan 13, 2025 (please update when updating commit ref)
+		local rtl88x2csver='commit:0986d5734e7630efea218dae9c16d11a10231819' # Commit date: Mar 25, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2cs chipsets ${rtl88x2csver}" "info"
 
@@ -519,7 +520,7 @@ driver_uwe5622() {
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.11.patch" "applying"
 		fi
 
-		# Fix "spanning-writes" warning in dmesg, applicable when kernel is compiled with FORTIFY_SOURCE 
+		# Fix "spanning-writes" warning in dmesg, applicable when kernel is compiled with FORTIFY_SOURCE
 		if linux-version compare "${version}" ge 6.12; then
 			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-fix-spanning-writes.patch" "applying"
 		fi
