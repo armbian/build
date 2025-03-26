@@ -196,6 +196,9 @@ function interactive_config_ask_branch() {
 			"edge")
 				options+=("edge" "Bleeding edge / latest possible")
 				;;
+			"cloud")
+				options+=("cloud" "Cloud optimised minimal LTS kernel")
+				;;
 			*)
 				options+=("${one_kernel_target}" "Experimental ${one_kernel_target} kernel / for Developers")
 				;;
