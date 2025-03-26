@@ -19,6 +19,14 @@ case "${BRANCH}" in
 		# rpardini: For some regrettable reason, most of this logic is in the grub extension.
 		declare -g DISTRO_GENERIC_KERNEL=yes
 		;;
+	cloud)
+		declare -g GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 max_loop=32"
+		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-cloud"
+		declare -g BOARD_FIRMWARE_INSTALL=""
+		declare -g EXTRAWIFI="no"
+		declare -g UEFI_GRUB_TIMEOUT=0
+		;;
 
 	legacy)
 		declare -g KERNEL_MAJOR_MINOR="6.6"
