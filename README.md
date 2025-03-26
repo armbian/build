@@ -26,7 +26,7 @@
 - Superuser rights (configured sudo or root access).
 - Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
 
-For stable branch use `--branch=v24.11`
+For stable branch use `--branch=v25.02`
 
 ```bash
 apt-get -y install git
