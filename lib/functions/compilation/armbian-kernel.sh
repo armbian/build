@@ -101,6 +101,152 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 	return 0
 }
 
+function armbian_kernel_config__enable_zram_support() {
+	kernel_config_modifying_hashes+=("CONFIG_ZRAM=y")
+	if [[ -f .config ]]; then
+		kernel_config_set_y ZSWAP                           # Enables compressed swap space in memory
+		kernel_config_set_y ZSWAP_ZPOOL_DEFAULT_ZBUD        # Sets default compression pool for ZSWAP to ZBUD
+		kernel_config_set_m ZSMALLOC                        # Enables compressed memory allocator for better memory usage
+		kernel_config_set_m ZRAM                            # Enables in-memory block device compression for swap or temporary storage
+		kernel_config_set_y ZRAM_WRITEBACK                  # Allows write-back of compressed ZRAM data to storage
+		kernel_config_set_y ZRAM_MEMORY_TRACKING            # Enables tracking of memory usage in ZRAM
+	fi
+}
+
+function armbian_kernel_config__enable_docker_support() {
+	kernel_config_modifying_hashes+=("CONFIG_DOCKER=y")
+	if [[ -f .config ]]; then
+		kernel_config_set_y BTRFS_FS                        # Enables the BTRFS file system support
+		kernel_config_set_y BTRFS_FS_POSIX_ACL              # Enables POSIX ACL support for BTRFS
+		kernel_config_set_y BLK_CGROUP                      # Enables block layer control groups (cgroups)
+		kernel_config_set_y BLK_DEV_THROTTLING              # Enables block device IO throttling
+		kernel_config_set_y BRIDGE_VLAN_FILTERING           # Enables VLAN filtering on network bridges
+		kernel_config_set_m BRIDGE_NETFILTER                # Enables netfilter support for the bridge
+		kernel_config_set_y BRIDGE                          # Enables support for Ethernet bridges
+		kernel_config_set_y CFQ_GROUP_IOSCHED               # Enables CFQ (Completely Fair Queueing) I/O scheduler for cgroups
+		kernel_config_set_y CGROUP_BPF                      # Enables BPF-based control groups
+		kernel_config_set_y CGROUP_CPUACCT                  # Enables CPU accounting in cgroups
+		kernel_config_set_y CGROUP_DEVICE                   # Enables device control in cgroups
+		kernel_config_set_y CGROUP_FREEZER                  # Enables freezer for suspending tasks in cgroups
+		kernel_config_set_y CGROUP_HUGETLB                  # Enables huge page control in cgroups
+		kernel_config_set_y CGROUP_NET_CLASSID              # Enables network classid control in cgroups
+		kernel_config_set_y CGROUP_NET_PRIO                 # Enables network priority control in cgroups
+		kernel_config_set_y CGROUP_PERF                     # Enables performance counter control in cgroups
+		kernel_config_set_y CGROUP_PIDS                     # Enables process ID control in cgroups
+		kernel_config_set_y CGROUP_SCHED                    # Enables scheduler control in cgroups
+		kernel_config_set_y CGROUPS                         # Enables general cgroup functionality
+		kernel_config_set_y CPUSETS                         # Enables CPU set support for cgroups
+		kernel_config_set_m CRYPTO                          # Enables cryptographic algorithms support as modules
+		kernel_config_set_m CRYPTO_AEAD                     # Enables AEAD (Authenticated Encryption with Associated Data) algorithms support
+		kernel_config_set_m CRYPTO_GCM                      # Enables GCM (Galois/Counter Mode) cipher support
+		kernel_config_set_m CRYPTO_GHASH                    # Enables GHASH algorithm support
+		kernel_config_set_m CRYPTO_SEQIV                    # Enables sequential initialization vector support for cryptographic operations
+		kernel_config_set_y EVENTFD                         # Enables eventfd system calls for event notification
+		kernel_config_set_y BPF_SYSCALL                     # Enables BPF (Berkeley Packet Filter) system call support
+		kernel_config_set_y NF_TABLES                       # Enables nf_tables framework support
+		kernel_config_set_y NF_TABLES_INET                  # Enables IPv4 and IPv6 support for nf_tables
+		kernel_config_set_y NF_TABLES_NETDEV                # Enables netdevice support for nf_tables
+		kernel_config_set_y CFS_BANDWIDTH                   # Enables bandwidth control for CFS (Completely Fair Scheduler)
+		kernel_config_set_m DUMMY                           # Enables dummy network driver module
+		kernel_config_set_y DEVPTS_MULTIPLE_INSTANCES       # Enables multiple instances of devpts (pseudo-terminal master/slave pairs)
+		kernel_config_set_y ENCRYPTED_KEYS                  # Enables support for encrypted keys in the kernel
+		kernel_config_set_m EXT4_FS                         # Enables EXT4 file system support as a module
+		kernel_config_set_y EXT4_FS_POSIX_ACL               # Enables POSIX ACL support for EXT4
+		kernel_config_set_y EXT4_FS_SECURITY                # Enables security extensions for EXT4 file system
+		kernel_config_set_m IP6_NF_FILTER                   # Enables IPv6 netfilter filtering support
+		kernel_config_set_m IP6_NF_MANGLE                   # Enables IPv6 netfilter mangling support
+		kernel_config_set_m IP6_NF_NAT                      # Enables IPv6 network address translation support
+		kernel_config_set_m IP6_NF_RAW                      # Enables raw support for IPv6 netfilter
+		kernel_config_set_m IP6_NF_SECURITY                 # Enables IPv6 netfilter security features
+		kernel_config_set_m IP6_NF_TARGET_MASQUERADE        # Enables IPv6 netfilter target for masquerading (NAT)
+		kernel_config_set_m IPVLAN                          # Enables IPvlan network driver support
+		kernel_config_set_y INET                            # Enables Internet protocol (IPv4) support
+		kernel_config_set_y FAIR_GROUP_SCHED                # Enables fair group scheduling support
+		kernel_config_set_m INET_ESP                        # Enables ESP (Encapsulating Security Payload) for IPv4
+		kernel_config_set_y IP_NF_FILTER                    # Enables IPv4 netfilter filtering support
+		kernel_config_set_m IP_NF_TARGET_MASQUERADE         # Enables IPv4 netfilter target for masquerading (NAT)
+		kernel_config_set_m IP_NF_TARGET_NETMAP             # Enables IPv4 netfilter target for netmap
+		kernel_config_set_m IP_NF_TARGET_REDIRECT           # Enables IPv4 netfilter target for redirect
+		kernel_config_set_y IP_NF_IPTABLES                  # Enables iptables for IPv4
+		kernel_config_set_m IP_NF_NAT                       # Enables NAT (Network Address Translation) support for IPv4
+		kernel_config_set_m IP_NF_RAW                       # Enables raw support for IPv4 netfilter
+		kernel_config_set_y IP_NF_SECURITY                  # Enables security features for IPv4 netfilter
+		kernel_config_set_y IP_VS_NFCT                      # Enables connection tracking for IPVS (IP Virtual Server)
+		kernel_config_set_y IP_VS_PROTO_TCP                 # Enables TCP protocol support for IPVS
+		kernel_config_set_y IP_VS_PROTO_UDP                 # Enables UDP protocol support for IPVS
+		kernel_config_set_m IP_VS                           # Enables IPVS (IP Virtual Server) support as a module
+		kernel_config_set_m IP_VS_RR                        # Enables round-robin scheduling for IPVS
+		kernel_config_set_y KEY_DH_OPERATIONS               # Enables Diffie-Hellman key exchange operations
+		kernel_config_set_y KEYS                            # Enables key management framework support
+		kernel_config_set_m MACVLAN                         # Enables MACVLAN network driver support
+		kernel_config_set_y MEMCG                           # Enables memory controller for cgroups
+		kernel_config_set_y MEMCG_KMEM                      # Enables memory controller for kmem (kernel memory) cgroups
+		kernel_config_set_m NFT_NAT                         # Enables NAT (Network Address Translation) support in nftables
+		kernel_config_set_m NFT_TUNNEL                      # Enables tunneling support in nftables
+		kernel_config_set_m NFT_QUOTA                       # Enables quota support in nftables
+		kernel_config_set_m NFT_REJECT                      # Enables reject target support in nftables
+		kernel_config_set_m NFT_COMPAT                      # Enables compatibility support for older nftables versions
+		kernel_config_set_m NFT_HASH                        # Enables hash-based set operations support in nftables
+		kernel_config_set_m NFT_XFRM                        # Enables transformation support in nftables
+		kernel_config_set_m NFT_SOCKET                      # Enables socket operations support in nftables
+		kernel_config_set_m NFT_TPROXY                      # Enables transparent proxy support in nftables
+		kernel_config_set_m NFT_SYNPROXY                    # Enables SYN proxy support in nftables
+		kernel_config_set_m NFT_DUP_NETDEV                  # Enables duplicate netdev (network device) support in nftables
+		kernel_config_set_m NFT_FWD_NETDEV                  # Enables forward netdev support in nftables
+		kernel_config_set_m NFT_REJECT_NETDEV               # Enables reject netdev support in nftables
+		kernel_config_set_m NF_CONNMARK_IPV4                # Enables connection mark support for IPv4 netfilter
+		kernel_config_set_y NF_CONNTRACK                    # Enables connection tracking support
+		kernel_config_set_m NF_CONNTRACK_FTP                # Enables FTP connection tracking support
+		kernel_config_set_m NF_CONNTRACK_IRC                # Enables IRC connection tracking support
+		kernel_config_set_y NF_CONNTRACK_MARK               # Enables connection mark support in netfilter
+		kernel_config_set_m NF_CONNTRACK_PPTP               # Enables PPTP connection tracking support
+		kernel_config_set_m NF_CONNTRACK_TFTP               # Enables TFTP connection tracking support
+		kernel_config_set_y NF_CONNTRACK_ZONES              # Enables connection tracking zones support
+		kernel_config_set_y NF_CONNTRACK_EVENTS             # Enables connection tracking events support
+		kernel_config_set_y NF_CONNTRACK_LABELS             # Enables connection tracking labels support
+		kernel_config_set_m NF_NAT                          # Enables NAT support in nf_conntrack
+		kernel_config_set_m NF_NAT_MASQUERADE_IPV4          # Enables IPv4 masquerading for NAT in nf_conntrack
+		kernel_config_set_m NF_NAT_IPV4                     # Enables IPv4 NAT support in nf_conntrack
+		kernel_config_set_m NF_NAT_NEEDED                   # Enables NAT support in nf_conntrack when needed
+		kernel_config_set_m NF_NAT_FTP                      # Enables FTP NAT support in nf_conntrack
+		kernel_config_set_m NF_NAT_TFTP                     # Enables TFTP NAT support in nf_conntrack
+		kernel_config_set_m NET_CLS_CGROUP                  # Enables network classification using cgroups
+		kernel_config_set_y NET_CORE                        # Enables core networking stack support
+		kernel_config_set_y NET_L3_MASTER_DEV               # Enables master device support for Layer 3 (L3) networking
+		kernel_config_set_y NET_NS                          # Enables network namespace support
+		kernel_config_set_y NET_SCHED                       # Enables network scheduler support
+		kernel_config_set_y NETFILTER                       # Enables support for netfilter framework
+		kernel_config_set_y NETFILTER_ADVANCED              # Enables advanced netfilter options
+		kernel_config_set_m NETFILTER_XT_MATCH_ADDRTYPE     # Enables address type matching for netfilter
+		kernel_config_set_m NETFILTER_XT_MATCH_BPF          # Enables BPF match support in netfilter
+		kernel_config_set_m NETFILTER_XT_MATCH_CONNTRACK    # Enables connection tracking match support in netfilter
+		kernel_config_set_m NETFILTER_XT_MATCH_IPVS         # Enables IPVS match support in netfilter
+		kernel_config_set_m NETFILTER_XT_MARK               # Enables mark matching for netfilter
+		kernel_config_set_m NETFILTER_XTABLES               # Enables x_tables support in netfilter
+		kernel_config_set_m NETFILTER_XT_TARGET_MASQUERADE  # Enables masquerade target for netfilter
+		kernel_config_set_y NETDEVICES                      # Enables support for network devices
+		kernel_config_set_y NAMESPACES                      # Enables support for namespaces (including network namespaces)
+		kernel_config_set_m OVERLAY_FS                      # Enables support for OverlayFS
+		kernel_config_set_y PID_NS                          # Enables PID (Process ID) namespace support
+		kernel_config_set_y POSIX_MQUEUE                    # Enables POSIX message queues support
+		kernel_config_set_y PROC_PID_CPUSET                 # Enables CPU set control for /proc/{pid}/cpuset
+		kernel_config_set_y PERSISTENT_KEYRINGS             # Enables persistent keyring support
+		kernel_config_set_m RESOURCE_COUNTERS               # Enables resource counters support in cgroups
+		kernel_config_set_y RT_GROUP_SCHED                  # Enables real-time group scheduling
+		kernel_config_set_y SECURITY_APPARMOR               # Enables AppArmor security module support
+		kernel_config_set_y SECCOMP                         # Enables seccomp (secure computing) support
+		kernel_config_set_y SECCOMP_FILTER                  # Enables seccomp filtering
+		kernel_config_set_y USER_NS                         # Enables user namespace support
+		kernel_config_set_m VXLAN                           # Enables VXLAN network driver support
+		kernel_config_set_m VETH                            # Enables Virtual Ethernet (veth) network driver support
+		kernel_config_set_m VLAN_8021Q                      # Enables 802.1Q VLAN tagging support
+		kernel_config_set_y XFRM                            # Enables transform (XFRM) framework support
+		kernel_config_set_m XFRM_ALGO                       # Enables cryptographic algorithm support for XFRM
+		kernel_config_set_m XFRM_USER                       # Enables user space XFRM framework support
+	fi
+}
+
+
 function armbian_kernel_config__enable_config_access_in_live_system() {
 	kernel_config_modifying_hashes+=("CONFIG_IKCONFIG_PROC=y")
 	if [[ -f .config ]]; then
