@@ -67,6 +67,30 @@ function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
 	armbian_kernel_config_apply_opts_from_arrays
 }
 
+# Configures kernel options to enable or disable eBPF and BTF debug information.
+#
+# This function adjusts kernel configuration settings based on the value of the global
+# variable KERNEL_BTF and the amount of available system memory. When KERNEL_BTF is set
+# to "no", the function disables all debug and BTF options (while leaving eBPF options unchanged).
+# Otherwise, it checks if the system has at least 6451 MiB of available RAM. If memory is
+# insufficient and KERNEL_BTF is not explicitly set to "yes", the function exits with an error.
+# When sufficient memory is available or KERNEL_BTF is forced to "yes", it enables eBPF and BTF
+# support, including a set of related debug options.
+#
+# Globals:
+#   KERNEL_BTF   - Determines whether BTF debug information should be enabled ("yes" to enable,
+#                  "no" to disable).
+#   /proc/meminfo - Used to calculate available system memory in MiB.
+#
+# Outputs:
+#   Alerts are displayed via the display_alert function to indicate configuration changes.
+#   The function may exit with an error message if the available memory is insufficient.
+#
+# Returns:
+#   0 on successful configuration application.
+#
+# Example:
+#   armbian_kernel_config__600_enable_ebpf_and_btf_info
 function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 	declare -A opts_val=()
 	declare -a opts_y=() opts_n=()
@@ -101,6 +125,22 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 	return 0
 }
 
+# Enables ZRAM support by configuring the kernel for compressed memory swap.
+#
+# This function appends "CONFIG_ZRAM=y" to the global array tracking kernel modifications.
+# If a .config file is present, it sets several related kernel options:
+#   - Enables compressed swap space (ZSWAP).
+#   - Sets the default compression pool for ZSWAP to ZBUD.
+#   - Activates the compressed memory allocator (ZSMALLOC).
+#   - Enables in-memory compression for swap or temporary storage (ZRAM).
+#   - Allows write-back of compressed ZRAM data (ZRAM_WRITEBACK).
+#   - Enables memory usage tracking for ZRAM (ZRAM_MEMORY_TRACKING).
+#
+# Globals:
+#   kernel_config_modifying_hashes - Array used to store configuration changes.
+#
+# Example:
+#   armbian_kernel_config__enable_zram_support
 function armbian_kernel_config__enable_zram_support() {
 	kernel_config_modifying_hashes+=("CONFIG_ZRAM=y")
 	if [[ -f .config ]]; then
@@ -113,6 +153,20 @@ function armbian_kernel_config__enable_zram_support() {
 	fi
 }
 
+# Enables Docker support by configuring a comprehensive set of kernel options required for Docker functionality.
+#
+# Globals:
+#   kernel_config_modifying_hashes - Global array that tracks configuration changes to be applied.
+#
+# Description:
+#   This function appends "CONFIG_DOCKER=y" to the global modification array. If the .config file exists,
+#   it sets a wide range of kernel configuration options necessary for Docker, including support for
+#   filesystems (e.g., BTRFS, EXT4), control groups (cgroups), networking, security, and various netfilter
+#   components. These settings ensure that the kernel is properly configured to support containerized environments.
+#
+# Example:
+#   To enable Docker support in the kernel configuration, simply call:
+#     armbian_kernel_config__enable_docker_support
 function armbian_kernel_config__enable_docker_support() {
 	kernel_config_modifying_hashes+=("CONFIG_DOCKER=y")
 	if [[ -f .config ]]; then
@@ -247,6 +301,18 @@ function armbian_kernel_config__enable_docker_support() {
 }
 
 
+# Enables live system access to the kernel configuration via /proc/config.gz.
+#
+# This function appends "CONFIG_IKCONFIG_PROC=y" to the global list of kernel
+# configuration modifications. If the ".config" file exists, it ensures that both
+# CONFIG_IKCONFIG and CONFIG_IKCONFIG_PROC are enabled, allowing the current kernel's
+# configuration to be accessible and extracted for further use.
+#
+# Globals:
+#   kernel_config_modifying_hashes - Array holding pending kernel configuration changes.
+#
+# Example:
+#   armbian_kernel_config__enable_config_access_in_live_system
 function armbian_kernel_config__enable_config_access_in_live_system() {
 	kernel_config_modifying_hashes+=("CONFIG_IKCONFIG_PROC=y")
 	if [[ -f .config ]]; then
