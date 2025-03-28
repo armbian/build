@@ -7,7 +7,39 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-### Attention: we can't use any interactive programs, read from stdin, nor use non-coreutils utilities here.
+# Initializes the main build configuration for generating Armbian images.
+#
+# This function sets up core environment variables, applies defaults for branding,
+# network configuration, filesystem support, timezone settings, and build options.
+# It determines the build revision from user or main version files, validates critical
+# settings (e.g., ensuring the revision starts with a digit and that mandatory
+# encryption parameters are defined when needed), and marks key variables as read-only.
+# The function also invokes extension hooks for family- and branch-specific configuration.
+#
+# Globals:
+#   MOUNT_UUID           - Identifier used in alert messages.
+#   REVISION             - Build revision derived from version files; made read-only.
+#   VENDOR               - Build image vendor, defaulting to "Armbian-unofficial" if unset.
+#   VENDORURL, VENDORSUPPORT, VENDORPRIVACY, VENDORBUGS, VENDORLOGO
+#                        - Settings for image branding and support links.
+#   ROOTPWD, MAINTAINER, MAINTAINERMAIL
+#                        - Default credentials and maintainer details.
+#   DEST_LANG            - Target locale for the image, defaulting to "en_US.UTF-8".
+#   SKIP_EXTERNAL_TOOLCHAINS, USE_CCACHE
+#                        - Build toolchain and caching options.
+#   NETWORKING_STACK     - Selected networking configuration, inferred based on BUILD_MINIMAL.
+#   TZDATA               - Timezone info taken from /etc/timezone or defaulted to "Etc/UTC".
+#   CHROOT_CACHE_VERSION - Version for chroot cache management.
+#   DEB_COMPRESS         - Compression method for .deb packages, adjusted for CI environments.
+#
+# Outputs:
+#   Displays progress and debug alerts to STDOUT/STDERR and exits on configuration errors.
+#
+# Returns:
+#   None. Exits the script if critical configuration validations fail.
+#
+# Example:
+#   do_main_configuration
 
 function do_main_configuration() {
 	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
