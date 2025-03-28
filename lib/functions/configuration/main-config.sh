@@ -7,7 +7,32 @@
 # This file is a part of the Armbian Build Framework
 # https://github.com/armbian/build/
 
-### Attention: we can't use any interactive programs, read from stdin, nor use non-coreutils utilities here.
+# do_main_configuration - Initialize main build configuration for Armbian Build Framework.
+#
+# This function sets up the primary build configuration by determining and validating the build revision,
+# configuring vendor details, setting default toolchain options, and selecting the appropriate networking
+# stack based on the BUILD_MINIMAL flag. It also configures timezone settings, root filesystem support,
+# package storage, and various extensions needed for the build process. Additionally, it invokes post-configuration
+# hooks to allow further customization through family and branch-specific settings.
+#
+# Globals:
+#   REVISION                - Build revision determined from the userpatches or main version file (set to read-only).
+#   VENDOR                  - Vendor identifier; defaults to "Armbian-unofficial" if not set.
+#   VENDORURL, VENDORCOLOR, VENDORSUPPORT, VENDORPRIVACY, VENDORBUGS, VENDORDOCS, VENDORLOGO
+#                           - Variables for vendor branding and support; set to defaults if unset.
+#   DEST_LANG               - Target locale for the build (default "en_US.UTF-8").
+#   NETWORKING_STACK        - Determines which network management tools to use ("network-manager" or "systemd-networkd").
+#   DEB_COMPRESS            - Compression method for .deb packages.
+#   Other build-specific globals are also initialized or set as read-only.
+#
+# Outputs:
+#   Diagnostic messages routed via display_alert for information and troubleshooting.
+#
+# Returns:
+#   None. Exits with an error message if a critical configuration issue is detected.
+#
+# Example:
+#   do_main_configuration
 
 function do_main_configuration() {
 	display_alert "Starting main configuration" "${MOUNT_UUID}" "info"
