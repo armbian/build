@@ -160,7 +160,29 @@ function late_prepare_host_dependencies() {
 		early_prepare_host_dependencies
 }
 
-# Adaptive: used by both early & late.
+# Prepares and sets the list of host dependencies for the current build.
+#
+# This function populates a global array (host_dependencies) with a comprehensive list of required
+# packages based on the detected host release, target architecture, and other environment settings.
+# It conditionally includes packages for Python support, cross-compilers for various architectures,
+# and optional tools such as apt-cacher-ng or LLVM tools if specified. Extension hooks are invoked
+# to allow further customization of the dependency list.
+#
+# Globals:
+#   host_release      - Indicates the host OS release; used to determine applicable packages.
+#   target_arch       - Specifies the target architecture; defaults to "all" if not provided.
+#   host_dependencies - Global array that is populated with the required packages.
+#   MANAGE_ACNG       - If set to "yes", adds the apt-cacher-ng package.
+#   KERNEL_COMPILER   - If set to "clang", adds clang, llvm, and lld packages.
+#   EXTRA_BUILD_DEPS  - Global variable for extra dependencies added via an extension hook.
+#   FINAL_HOST_DEPS   - Global variable set to the finalized, space-separated list of host dependencies.
+#
+# Outputs:
+#   Displays debug messages using display_alert to indicate the detection and usage of host_release and target_arch.
+#
+# Example:
+#   To prepare host dependencies adaptively:
+#       adaptative_prepare_host_dependencies
 function adaptative_prepare_host_dependencies() {
 	if [[ "x${host_release:-"unknown"}x" == "xx" ]]; then
 		display_alert "No specified host_release" "preparing for all-hosts, all-targets deps" "debug"
@@ -197,6 +219,7 @@ function adaptative_prepare_host_dependencies() {
 		patchutils pkg-config pv
 		"qemu-user-static" "arch-test"
 		rsync
+		squid-deb-proxy-client
 		swig # swig is needed for some u-boot's. example: "bananapi.conf"
 		u-boot-tools
 		udev # causes initramfs rebuild, but is usually pre-installed.
