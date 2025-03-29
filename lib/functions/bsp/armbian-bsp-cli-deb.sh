@@ -250,7 +250,29 @@ function compile_armbian-bsp-cli() {
 }
 
 # Reversion function is called with the following parameters:
-# ${1} == deb_id
+# Updates control file metadata and version information for the armbian-bsp-cli Debian package reversion.
+#
+# Globals:
+#   REVISION - The target package version/revision used in control file entries.
+#   control_file_new - The file to which package metadata is appended.
+#   data_dir - Directory containing package data; must be set.
+#   KEEP_ORIGINAL_OS_RELEASE - Flag determining whether to include base-files dependency.
+#   SHOW_DEBUG - If "yes", enables output of debug information.
+#   BOARD, EXTRA_BSP_NAME - Identifiers used to form package names in metadata.
+#
+# Arguments:
+#   $1 - Package identifier; the function proceeds only if this equals "armbian-bsp-cli".
+#
+# Outputs:
+#   Appends dependency, replacement, breaking, and provides fields to the package control file.
+#   Updates the armbian-release file with the current VERSION and REVISION.
+#   Optionally displays the updated release file if debug output is enabled.
+#
+# Returns:
+#   0 on success or if the package identifier does not match "armbian-bsp-cli".
+#
+# Example:
+#   reversion_armbian-bsp-cli_deb_contents "armbian-bsp-cli"
 function reversion_armbian-bsp-cli_deb_contents() {
 	if [[ "${1}" != "armbian-bsp-cli" ]]; then
 		return 0 # Not our deb, nothing to do.
