@@ -255,11 +255,12 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl8811cuver="commit:132dcf025806a436b9a95fb4af24eacfd07222f5" # Commit date: Feb 19, 2024 (please update when updating commit ref)
+		local rtl8811cuver="commit:132dcf025806a436b9a95fb4af24eacfd07222f5" # Commit date: Feb 19, 2025
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210916" "rtl8811cu" "${rtl8811cuver}" "yes" # https://github.com/morrownr/8821cu-20210916
+		# https://github.com/morrownr/8821cu-20210916
+		fetch_from_repo "$GITHUB_SOURCE/morrownr/8821cu-20210916" "rtl8811cu" "${rtl8811cuver}" "yes"
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8811cu"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8811cu/"
@@ -287,6 +288,7 @@ driver_rtl8811CU_rtl8821C() {
 		echo "obj-\$(CONFIG_RTL8821CU) += rtl8811cu/" >> "$kerneldir/drivers/net/wireless/Makefile"
 		sed -i '/source "drivers\/net\/wireless\/ti\/Kconfig"/a source "drivers\/net\/wireless\/rtl8811cu\/Kconfig"' \
 			"$kerneldir/drivers/net/wireless/Kconfig"
+
 	fi
 }
 
