@@ -175,12 +175,11 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:v5.6.4.2)
-		local rtl8812auver="commit:40ace7013407c147e0c40c9afef908319a99733c" # Commit date: Mar 25, 2025 (please update when updating commit ref)
+		local rtl8812auver="commit:80d4ba5a672f69a4a8b2c4b4dacfe804844e6952" # Commit date: Feb 10, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/rpardini/aircrack-ng-rtl8812au-kernel-bump-fixes" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
-
+		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
 		cd "$kerneldir" || exit
 
 		# Brief detour. Turns out that HardKernel's vendor odroidxu4 kernel already has this driver
