@@ -175,7 +175,7 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:v5.6.4.2)
-		local rtl8812auver="commit:80d4ba5a672f69a4a8b2c4b4dacfe804844e6952" # Commit date: Feb 10, 2025 (please update when updating commit ref)
+		local rtl8812auver="commit:c3fb89a2f7066f4bf4e4d9d85d84f9791f14c83e" # Commit date: Mar 30, 2025 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
