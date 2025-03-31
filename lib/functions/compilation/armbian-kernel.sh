@@ -21,8 +21,6 @@
 #   KERNEL_MAJOR_MINOR            - Current kernel version in major.minor format.
 #   kernel_config_modifying_hashes - Array accumulating configuration changes.
 #
-# Example:
-#   armbian_kernel_config__extrawifi_enable_wifi_opts_80211
 function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.13; then
 		kernel_config_modifying_hashes+=("CONFIG_CFG80211=m" "CONFIG_MAC80211=m" "CONFIG_MAC80211_MESH=y" "CONFIG_CFG80211_WEXT=y")
@@ -45,8 +43,6 @@ function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 # This function checks if the current kernel's version is at least 6.7 and confirms the presence of a .config file.
 # If both conditions are met, it alerts the user about enabling NETKIT and sets the NETKIT option to 'y' in the kernel configuration.
 #
-# Example:
-#   armbian_kernel_config__netkit
 function armbian_kernel_config__netkit() {
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.7; then
 		if [[ -f .config ]]; then
@@ -71,8 +67,6 @@ function armbian_kernel_config__netkit() {
 #   It forces EXPERT mode (EXPERT=y) to ensure hidden configurations are visible and applies different module
 #   compression settings based on the kernel version. All modifications are only performed if the .config file exists.
 #
-# Example:
-#   armbian_kernel_config__disable_various_options
 function armbian_kernel_config__disable_various_options() {
 	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
 	if [[ -f .config ]]; then
@@ -137,8 +131,6 @@ function armbian_kernel_config__force_pa_va_48_bits_on_arm64() {
 # Returns:
 #   0 on successful configuration application.
 #
-# Example:
-#   armbian_kernel_config__600_enable_ebpf_and_btf_info
 function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 	declare -A opts_val=()
 	declare -a opts_y=() opts_n=()
@@ -187,8 +179,6 @@ function armbian_kernel_config__600_enable_ebpf_and_btf_info() {
 # Globals:
 #   kernel_config_modifying_hashes - Array used to store configuration changes.
 #
-# Example:
-#   armbian_kernel_config__enable_zram_support
 function armbian_kernel_config__enable_zram_support() {
 	kernel_config_modifying_hashes+=("CONFIG_ZRAM=y")
 	if [[ -f .config ]]; then
@@ -212,9 +202,6 @@ function armbian_kernel_config__enable_zram_support() {
 #   filesystems (e.g., BTRFS, EXT4), control groups (cgroups), networking, security, and various netfilter
 #   components. These settings ensure that the kernel is properly configured to support containerized environments.
 #
-# Example:
-#   To enable Docker support in the kernel configuration, simply call:
-#     armbian_kernel_config__enable_docker_support
 function armbian_kernel_config__enable_docker_support() {
 	kernel_config_modifying_hashes+=("CONFIG_DOCKER=y")
 	if [[ -f .config ]]; then
@@ -359,8 +346,6 @@ function armbian_kernel_config__enable_docker_support() {
 # Globals:
 #   kernel_config_modifying_hashes - Array holding pending kernel configuration changes.
 #
-# Example:
-#   armbian_kernel_config__enable_config_access_in_live_system
 function armbian_kernel_config__enable_config_access_in_live_system() {
 	kernel_config_modifying_hashes+=("CONFIG_IKCONFIG_PROC=y")
 	if [[ -f .config ]]; then
