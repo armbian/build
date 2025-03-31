@@ -12,7 +12,7 @@ BOOT_LOGO="yes"
 
 BOOTBRANCH_BOARD="tag:v2025.04-rc4"
 BOOTBRANCH="${BOOTBRANCH_BOARD}"
-BOOTPATCHDIR="v2025.04-rc4"
+BOOTPATCHDIR="v2025.04"
 
 BOOTCONFIG="odroid-m2-rk3588s_defconfig"
 BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
