@@ -10,7 +10,19 @@
 # Forced .config options for all Armbian kernels.
 # Please note: Manually changing options doesn't check the validity of the .config file. This is done at next make time. Check for warnings in build log.
 
-# This is an internal/core extension.
+# Enables additional wireless configuration options for Wi-Fi drivers on kernels 6.13 and later.
+#
+# This internal function updates the kernel configuration by adding necessary wireless options
+# to a global modification list, and if a .config file exists, it applies these changes directly.
+# It ensures that settings for wireless drivers (e.g. cfg80211 and mac80211) are properly enabled
+# to avoid build errors due to recent kernel updates.
+#
+# Globals:
+#   KERNEL_MAJOR_MINOR            - Current kernel version in major.minor format.
+#   kernel_config_modifying_hashes - Array accumulating configuration changes.
+#
+# Example:
+#   armbian_kernel_config__extrawifi_enable_wifi_opts_80211
 function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.13; then
 		kernel_config_modifying_hashes+=("CONFIG_CFG80211=m" "CONFIG_MAC80211=m" "CONFIG_MAC80211_MESH=y" "CONFIG_CFG80211_WEXT=y")
@@ -25,6 +37,16 @@ function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 	fi
 }
 
+# Enables the NETKIT kernel configuration option for kernels version 6.7 and above.
+#
+# Globals:
+#   KERNEL_MAJOR_MINOR - The kernel version string used to verify the minimum required version.
+#
+# This function checks if the current kernel's version is at least 6.7 and confirms the presence of a .config file.
+# If both conditions are met, it alerts the user about enabling NETKIT and sets the NETKIT option to 'y' in the kernel configuration.
+#
+# Example:
+#   armbian_kernel_config__netkit
 function armbian_kernel_config__netkit() {
 	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.7; then
 		if [[ -f .config ]]; then
@@ -34,6 +56,23 @@ function armbian_kernel_config__netkit() {
 	fi
 }
 
+# Disables various kernel configuration options that conflict with Armbian's kernel build requirements.
+#
+# Globals:
+#   kernel_config_modifying_hashes - Array tracking the configuration option changes.
+#   KERNEL_MAJOR_MINOR            - Kernel version used to apply version-specific configuration updates.
+#
+# Outputs:
+#   Displays alerts to notify about the configuration changes being applied.
+#
+# Description:
+#   This function disables several kernel configuration options such as module compression, module signing,
+#   and automatic versioning to speed up the build process and ensure compatibility with Armbian requirements.
+#   It forces EXPERT mode (EXPERT=y) to ensure hidden configurations are visible and applies different module
+#   compression settings based on the kernel version. All modifications are only performed if the .config file exists.
+#
+# Example:
+#   armbian_kernel_config__disable_various_options
 function armbian_kernel_config__disable_various_options() {
 	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
 	if [[ -f .config ]]; then
