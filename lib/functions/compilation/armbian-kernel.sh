@@ -25,6 +25,15 @@ function armbian_kernel_config__extrawifi_enable_wifi_opts_80211() {
 	fi
 }
 
+function armbian_kernel_config__netkit() {
+	if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.7; then
+		if [[ -f .config ]]; then
+			display_alert "Enable NETKIT=y" "armbian-kernel" "debug"
+			kernel_config_set_y NETKIT
+		fi
+	fi
+}
+
 function armbian_kernel_config__disable_various_options() {
 	kernel_config_modifying_hashes+=("CONFIG_MODULE_COMPRESS_NONE=y" "CONFIG_MODULE_SIG=n" "CONFIG_LOCALVERSION_AUTO=n" "EXPERT=y")
 	if [[ -f .config ]]; then
