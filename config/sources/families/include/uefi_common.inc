@@ -26,6 +26,7 @@ case "${BRANCH}" in
 		declare -g INSTALL_ARMBIAN_FIRMWARE="no"
 		declare -g EXTRAWIFI="no"
 		declare -g UEFI_GRUB_TIMEOUT=0
+		declare -g QCOW2_RESIZE_AMOUNT="16G"
 		;;
 
 	legacy)
