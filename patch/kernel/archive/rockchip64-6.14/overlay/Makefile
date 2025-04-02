@@ -6,6 +6,7 @@ dtbo-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk3308-bs.dtbo rk3308-bs@1.3ghz.dtbo \
 	rk3308-emmc.dtbo \
 	rk3308-sdio@10mhz.dtbo rk3308-sdio@4mhz.dtbo \
+	rockchip-sakurapi-rk3308b-ws2812.dtbo \
 	rockchip-rockpi4cplus-usb-host.dtbo \
 	rockchip-rockpro64-lcd.dtbo \
 	rockchip-rk3318-box-cpu-hs.dtbo \
