@@ -197,6 +197,7 @@ function adaptative_prepare_host_dependencies() {
 		patchutils pkg-config pv
 		"qemu-user-static" "arch-test"
 		rsync
+		squid-deb-proxy-client
 		swig # swig is needed for some u-boot's. example: "bananapi.conf"
 		u-boot-tools
 		udev # causes initramfs rebuild, but is usually pre-installed.
