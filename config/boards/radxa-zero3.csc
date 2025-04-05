@@ -3,7 +3,7 @@ BOARD_NAME="Radxa ZERO 3"
 BOARDFAMILY="rk35xx"
 BOARD_MAINTAINER=""
 BOOTCONFIG="radxa-zero3-rk3566_defconfig"
-KERNEL_TARGET="vendor,edge"
+KERNEL_TARGET="vendor,current,edge"
 KERNEL_TEST_TARGET="vendor"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
@@ -11,6 +11,10 @@ BOOT_FDT_FILE="rockchip/rk3566-radxa-zero3.dtb"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_SCENARIO="spl-blobs"
 BOOTFS_TYPE="fat" # Only for vendor/legacy
+
+
+AIC8800_TYPE="sdio"
+enable_extension "radxa-aic8800"
 
 function post_family_config__use_mainline_uboot_except_vendor() {
 	# use mainline u-boot for _current_ and _edge_
