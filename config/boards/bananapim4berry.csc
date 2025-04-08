@@ -25,7 +25,7 @@ function post_family_tweaks_bsp__bananapi_module_conf() {
 		#
 		# To see all options that are available:
 		#
-		# for f in /sys/module/8821cu/parameters/*;do echo "$(basename $f): $(sudo cat $f)";done
+		# for f in /sys/module/8821cu/parameters/*;do echo "\$(basename \$f): \$(sudo cat \$f)";done
 		#
 		blacklist rtw88_8821cu
 		#
