@@ -1,4 +1,4 @@
-From 798259bd159149b069f7ce6bb2340f58bd872cd4 Mon Sep 17 00:00:00 2001
+From 6d80f39a376532c5d54fd72686534e2cd5d59652 Mon Sep 17 00:00:00 2001
 From: Radoslav <radoslavv@centrum.sk>
 Date: Sat, 15 Apr 2023 22:47:26 +0200
 Subject: enable TV Output on OrangePi Zero LTE
@@ -31,9 +31,9 @@ Merged:
  drivers/clk/sunxi-ng/ccu-sun8i-h3.c           | 14 ++-
  drivers/gpu/drm/sun4i/Makefile                |  2 +-
  drivers/gpu/drm/sun4i/sun4i_tv.c              | 35 ++++++-
- drivers/gpu/drm/sun4i/sun8i_mixer.c           | 36 ++++++-
- drivers/gpu/drm/sun4i/sun8i_mixer.h           |  5 +-
- 16 files changed, 310 insertions(+), 14 deletions(-)
+ drivers/gpu/drm/sun4i/sun8i_mixer.c           | 30 +++++-
+ drivers/gpu/drm/sun4i/sun8i_mixer.h           |  2 +
+ 16 files changed, 305 insertions(+), 10 deletions(-)
  create mode 100644 arch/arm/boot/dts/allwinner/overlay/sun8i-h3-tve.dtso
  create mode 100644 arch/arm64/boot/dts/allwinner/overlay/sun50i-h5-tve.dtso
 
@@ -443,7 +443,7 @@ index c63e0871658e..fee2d680d2ca 100644
 +	remote-endpoint = <&tve_in_tcon1>;
 +};
 diff --git a/drivers/clk/sunxi-ng/ccu-sun8i-h3.c b/drivers/clk/sunxi-ng/ccu-sun8i-h3.c
-index eed11bb2d631..80650ec914fd 100644
+index 9bd05a0488ff..4a80c04c369b 100644
 --- a/drivers/clk/sunxi-ng/ccu-sun8i-h3.c
 +++ b/drivers/clk/sunxi-ng/ccu-sun8i-h3.c
 @@ -469,8 +469,18 @@ static SUNXI_CCU_M_WITH_MUX_GATE(tcon_clk, "tcon", tcon_parents,
@@ -468,20 +468,20 @@ index eed11bb2d631..80650ec914fd 100644
  static const char * const deinterlace_parents[] = { "pll-periph0", "pll-periph1" };
  static SUNXI_CCU_M_WITH_MUX_GATE(deinterlace_clk, "deinterlace", deinterlace_parents,
 diff --git a/drivers/gpu/drm/sun4i/Makefile b/drivers/gpu/drm/sun4i/Makefile
-index 5e9dc9370584..3a7130623351 100644
+index 8ffddaa3e069..e557b9cd51ff 100644
 --- a/drivers/gpu/drm/sun4i/Makefile
 +++ b/drivers/gpu/drm/sun4i/Makefile
-@@ -19,7 +19,7 @@ sun8i-drm-hdmi-y		+= sun8i_hdmi_phy_clk.o
- 
+@@ -20,7 +20,7 @@ sun8i-drm-hdmi-y		+= sun8i_hdmi_phy_clk.o
  sun8i-mixer-y			+= sun8i_mixer.o sun8i_ui_layer.o \
  				   sun8i_vi_layer.o sun8i_ui_scaler.o \
--				   sun8i_vi_scaler.o sun8i_csc.o
-+				   sun8i_vi_scaler.o sun8i_csc.o sun4i_tv.o
+ 				   sun8i_vi_scaler.o sun8i_csc.o \
+-				   sun50i_fmt.o sun50i_afbc.o
++				   sun50i_fmt.o sun50i_afbc.o sun4i_tv.o
  
  sun4i-tcon-y			+= sun4i_crtc.o
  sun4i-tcon-y			+= sun4i_tcon_dclk.o
 diff --git a/drivers/gpu/drm/sun4i/sun4i_tv.c b/drivers/gpu/drm/sun4i/sun4i_tv.c
-index ec65d9d59de7..d2235d5a7416 100644
+index cce4e38789b9..de3498ab2c58 100644
 --- a/drivers/gpu/drm/sun4i/sun4i_tv.c
 +++ b/drivers/gpu/drm/sun4i/sun4i_tv.c
 @@ -10,6 +10,7 @@
@@ -570,12 +570,12 @@ index ec65d9d59de7..d2235d5a7416 100644
  };
  MODULE_DEVICE_TABLE(of, sun4i_tv_of_table);
 diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.c b/drivers/gpu/drm/sun4i/sun8i_mixer.c
-index c82adcb928b9..537a97599f93 100644
+index b8bd520a9292..b0f7df6fa883 100644
 --- a/drivers/gpu/drm/sun4i/sun8i_mixer.c
 +++ b/drivers/gpu/drm/sun4i/sun8i_mixer.c
 @@ -37,6 +37,12 @@ struct de2_fmt_info {
- 
- static bool hw_preconfigured;
+ 	u32	de2_fmt;
+ };
  
 +static const u32 sun8i_rgb2yuv_coef[12] = {
 +	0x00000107, 0x00000204, 0x00000064, 0x00004200,
@@ -586,8 +586,8 @@ index c82adcb928b9..537a97599f93 100644
  static const struct de2_fmt_info de2_formats[] = {
  	{
  		.drm_fmt = DRM_FORMAT_ARGB8888,
-@@ -427,10 +433,29 @@ static void sun8i_mixer_mode_set(struct sunxi_engine *engine,
- 			 interlaced ? "on" : "off");
+@@ -445,11 +451,30 @@ static u32 *sun8i_mixer_get_supported_fmts(struct sunxi_engine *engine, u32 *num
+ 	return formats;
  }
  
 +static void sun8i_mixer_apply_color_correction(struct sunxi_engine *engine)
@@ -608,18 +608,16 @@ index c82adcb928b9..537a97599f93 100644
 +}
 +
  static const struct sunxi_engine_ops sun8i_engine_ops = {
--	.commit		= sun8i_mixer_commit,
--	.layers_init	= sun8i_layers_init,
--	.mode_set	= sun8i_mixer_mode_set,
-+	.commit				= sun8i_mixer_commit,
-+	.layers_init			= sun8i_layers_init,
-+	.mode_set			= sun8i_mixer_mode_set,
+ 	.commit			= sun8i_mixer_commit,
+ 	.layers_init		= sun8i_layers_init,
+ 	.mode_set		= sun8i_mixer_mode_set,
+ 	.get_supported_fmts	= sun8i_mixer_get_supported_fmts,
 +	.apply_color_correction		= sun8i_mixer_apply_color_correction,
 +	.disable_color_correction	= sun8i_mixer_disable_color_correction,
  };
  
  static const struct regmap_config sun8i_mixer_regmap_config = {
-@@ -711,8 +736,9 @@ static const struct sun8i_mixer_cfg sun8i_h3_mixer0_cfg = {
+@@ -772,8 +797,9 @@ static const struct sun8i_mixer_cfg sun8i_h3_mixer0_cfg = {
  static const struct sun8i_mixer_cfg sun8i_h3_mixer1_cfg = {
  	.ccsc		= CCSC_MIXER1_LAYOUT,
  	.mod_rate	= 432000000,
@@ -632,25 +630,15 @@ index c82adcb928b9..537a97599f93 100644
  };
  
 diff --git a/drivers/gpu/drm/sun4i/sun8i_mixer.h b/drivers/gpu/drm/sun4i/sun8i_mixer.h
-index 68e2741b0962..7bc8efca6980 100644
+index 26b001164647..85e46e3c185b 100644
 --- a/drivers/gpu/drm/sun4i/sun8i_mixer.h
 +++ b/drivers/gpu/drm/sun4i/sun8i_mixer.h
-@@ -119,6 +119,10 @@
- /* format 20 is packed YVU444 10-bit */
- /* format 21 is packed YUV444 10-bit */
- 
-+/* The DCSC sub-engine is used to do color space conversation */
-+#define SUN8I_MIXER_DCSC_EN			0xb0000
-+#define SUN8I_MIXER_DCSC_COEF_REG(x)		(0xb0010 + 0x4 * (x))
-+
- /*
-  * Sub-engines listed bellow are unused for now. The EN registers are here only
-  * to be used to disable these sub-engines.
-@@ -129,7 +133,6 @@
- #define SUN8I_MIXER_PEAK_EN			0xa6000
+@@ -134,6 +134,8 @@
  #define SUN8I_MIXER_ASE_EN			0xa8000
  #define SUN8I_MIXER_FCC_EN			0xaa000
--#define SUN8I_MIXER_DCSC_EN			0xb0000
+ #define SUN8I_MIXER_DCSC_EN			0xb0000
++/* The DCSC sub-engine is used to do color space conversation */
++#define SUN8I_MIXER_DCSC_COEF_REG(x)		(0xb0010 + 0x4 * (x))
  
  #define SUN50I_MIXER_FCE_EN			0x70000
  #define SUN50I_MIXER_PEAK_EN			0x70800
