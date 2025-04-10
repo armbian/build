@@ -272,7 +272,6 @@ function do_main_configuration() {
 	[[ -z $OFFSET ]] && OFFSET=4 # offset to 1st partition (we use 4MiB boundaries by default)
 	[[ -z $ARCH ]] && ARCH=arm64 # makes little sense to default to anything... # @TODO: remove, but check_config_userspace_release_and_desktop requires it
 	ATF_COMPILE=yes              # @TODO: move to armhf/arm64
-	[[ -z $EXTRAWIFI ]] && EXTRAWIFI="yes"
 	[[ -z $PLYMOUTH ]] && PLYMOUTH="yes"
 	[[ -z $AUFS ]] && AUFS="yes"
 	[[ -z $IMAGE_PARTITION_TABLE ]] && IMAGE_PARTITION_TABLE="msdos"
@@ -473,6 +472,17 @@ function do_extra_configuration() {
 	IMAGE_INSTALLED_KERNEL_VERSION="${predicted_kernel_version}" include_vendor_version="no" calculate_image_version
 
 	declare -r -g IMAGE_FILE_ID="${calculated_image_version}" # Global, readonly.
+
+	if [[ -z $EXTRAWIFI ]]; then
+		display_alert "EXTRAWIFI" "EXTRAWIFI is not set, defaulting to yes, kernel: ${KERNEL_MAJOR_MINOR}" "warn"
+		EXTRAWIFI="yes"
+		if linux-version compare "${KERNEL_MAJOR_MINOR}" ge 6.15; then
+			display_alert "EXTRAWIFI" "EXTRAWIFI is not set, 6.15 disabled" "warn"
+			EXTRAWIFI="no" # 6.15 breakage
+		fi
+	else
+		display_alert "EXTRAWIFI" "EXTRAWIFI is set to ${EXTRAWIFI}" "warn"
+	fi
 
 	display_alert "Done with do_extra_configuration" "do_extra_configuration" "debug"
 }
