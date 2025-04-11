@@ -92,6 +92,7 @@ function prepare_partitions() {
 	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
 	UEFISIZE=${UEFISIZE:-0}
 	BIOSSIZE=${BIOSSIZE:-0}
+	UEFI_PART_ALIGN=${UEFI_PART_ALIGN:-512}
 	UEFI_MOUNT_POINT=${UEFI_MOUNT_POINT:-/boot/efi}
 	UEFI_FS_LABEL="${UEFI_FS_LABEL:-armbi_efi}"
 	ROOT_FS_LABEL="${ROOT_FS_LABEL:-armbi_root}"
@@ -244,7 +245,7 @@ function prepare_partitions() {
 		display_alert "Partitioning with the following options" "$partition_script_output" "debug"
 		echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
 	fi
-	
+
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
 		*called after all partitions are created, but not yet formatted*
 	POST_CREATE_PARTITIONS
@@ -314,7 +315,7 @@ function prepare_partitions() {
 			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} none luks" >> $SDCARD/etc/crypttab
 			run_host_command_logged cat $SDCARD/etc/crypttab
 		fi
-		
+
 		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
 		run_host_command_logged cat $SDCARD/etc/fstab
@@ -343,7 +344,7 @@ function prepare_partitions() {
 	if [[ -n $uefipart ]]; then
 		display_alert "Creating EFI partition" "FAT32 ${UEFI_MOUNT_POINT} on ${LOOP}p${uefipart} label ${UEFI_FS_LABEL}"
 		check_loop_device "${LOOP}p${uefipart}"
-		run_host_command_logged mkfs.fat -F32 -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
+		run_host_command_logged mkfs.fat -F32 -S "${UEFI_PART_ALIGN}" -n "${UEFI_FS_LABEL^^}" ${LOOP}p${uefipart} 2>&1 # "^^" makes variable UPPERCASE, required for FAT32.
 		mkdir -p "${MOUNT}${UEFI_MOUNT_POINT}"
 		run_host_command_logged mount ${LOOP}p${uefipart} "${MOUNT}${UEFI_MOUNT_POINT}"
 
