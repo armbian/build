@@ -83,6 +83,8 @@ function trap_handler_cleanup_logging() {
 	# Check if fd 13 is still open; close it and wait for tee to die. This is done again in discard_logs_tmp_dir()
 	check_and_close_fd_13
 
+	display_alert "Repeat Build Options" "${repeat_args[*]}" "ext" # * = expand array, space delimited, single-word.
+
 	# Export ANSI logs.
 	local target_file="${target_path}/log-${ARMBIAN_LOG_CLI_ID}-${ARMBIAN_BUILD_UUID}.log.ans"
 	export_ansi_logs
