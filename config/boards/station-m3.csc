@@ -12,14 +12,6 @@ BOOT_SOC="rk3588"
 IMAGE_PARTITION_TABLE="gpt"
 declare -g UEFI_EDK2_BOARD_ID="station-m3" # This _only_ used for uefi-edk2-rk3588 extension
 
-function post_family_tweaks__station_m3() {
-	display_alert "$BOARD" "Installing board tweaks" "info"
-
-	cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
-	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
-	return 0
-}
-
 function post_family_tweaks__station-m3_naming_audios() {
 	display_alert "$BOARD" "Renaming station-m3 audios" "info"
 
