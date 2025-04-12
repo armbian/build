@@ -24,3 +24,16 @@ oci_target = "ghcr.io/armsurvivors/armbian-release/uboot-rockpro64-edge:2025.01-
 container = client.get_container(oci_target)
 manifest = client.get_manifest(container)
 log.debug(f"Got manifest for existing '{oci_target}'.")
+
+oci_target_does_not_exist = "ghcr.io/armsurvivors/armbian-release/uboot-rockpro64-edge:does-not-exist"
+try:
+	container = client.get_container(oci_target_does_not_exist)
+	manifest = client.get_manifest(container)
+	log.info(f"Got manifest for non-existing '{oci_target_does_not_exist}'.")
+except Exception as e:
+	message: str = str(e)
+	# A known-good cache miss.
+	if ": Not Found" in message:
+		log.info("Got expected 'Not Found' error for non-existing OCI target.")
+	else:
+		log.warning(f"Failed to get manifest for '{oci_target_does_not_exist}': {e}")
