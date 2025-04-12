@@ -4,8 +4,8 @@ BOARDFAMILY="sun50iw9-bpi"
 BOARD_MAINTAINER="The-going"
 BOOTCONFIG="bananapi_m4_berry_defconfig"
 
-BOOTPATCHDIR="v2025.01/board_bananapim4berry"
-BOOTBRANCH_BOARD="tag:v2025.01"
+BOOTPATCHDIR="v2025-sunxi"
+BOOTBRANCH_BOARD="tag:v2025.04"
 
 OVERLAY_PREFIX="sun50i-h616"
 BOOT_FDT_FILE="sun50i-h618-bananapi-m4-berry.dtb"
