@@ -25,8 +25,8 @@ function post_family_config__use_mainline_uboot_except_vendor() {
 	unset BOOTFS_TYPE   # mainline u-boot can boot ext4 directly
 	BOOTCONFIG="radxa-zero-3-rk3566_defconfig"
 	BOOTSOURCE="https://github.com/u-boot/u-boot"
-	BOOTBRANCH="tag:v2025.01"
-	BOOTPATCHDIR="v2025.01"
+	BOOTBRANCH="tag:v2025.04"
+	BOOTPATCHDIR="v2025.04"
 
 	UBOOT_TARGET_MAP="BL31=$RKBIN_DIR/$BL31_BLOB ROCKCHIP_TPL=$RKBIN_DIR/$DDR_BLOB;;u-boot-rockchip.bin"
 
