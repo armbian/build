@@ -39,9 +39,6 @@ function post_family_config_branch_edge__orangepi5max_use_mainline_uboot() {
 	}
 }
 
-
-
-
 function post_family_tweaks__orangepi5max_naming_audios() {
 	display_alert "$BOARD" "Renaming orangepi5max audios" "info"
 
