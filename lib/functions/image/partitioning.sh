@@ -89,6 +89,7 @@ function prepare_partitions() {
 
 	# default BOOTSIZE to use if not specified
 	DEFAULT_BOOTSIZE=256 # MiB
+	SECTOR_SIZE=${SECTOR_SIZE:-512}
 	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
 	UEFISIZE=${UEFISIZE:-0}
 	BIOSSIZE=${BIOSSIZE:-0}
@@ -242,7 +243,16 @@ function prepare_partitions() {
 		)
 		# Output the partitioning options from above to the debug log first and then pipe it into the 'sfdisk' command
 		display_alert "Partitioning with the following options" "$partition_script_output" "debug"
-		echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
+
+		# Check sfdisk version to determine if --sector-size is supported
+		sfdisk_version=$(sfdisk --version | awk '/util-linux/ {print $NF}')
+		sfdisk_version_num=$(echo "$sfdisk_version" | awk -F. '{printf "%d%02d%02d\n", $1, $2, $3}')
+		if [ "$sfdisk_version_num" -ge "24100" ]; then
+			echo "${partition_script_output}" | run_host_command_logged sfdisk --sector-size "$SECTOR_SIZE" "${SDCARD}".raw || exit_with_error "Partitioning failed!"
+		else
+			echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
+		fi
+
 	fi
 
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
@@ -256,7 +266,11 @@ function prepare_partitions() {
 
 	declare -g LOOP
 	#--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
-	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	if [ "$sfdisk_version_num" -ge "24100" ]; then
+		LOOP=$(losetup --show --partscan --find -b "$SECTOR_SIZE" "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	else
+		LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	fi
 	display_alert "Allocated loop device" "LOOP=${LOOP}"
 
 	# loop device was grabbed here, unlock
