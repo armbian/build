@@ -18,7 +18,6 @@ function post_family_tweaks__station_p1() {
 	display_alert "$BOARD" "Installing board tweaks" "info"
 
 	cp -R $SRC/packages/blobs/rtl8723bt_fw/* $SDCARD/lib/firmware/rtl_bt/
-	cp -R $SRC/packages/blobs/station/firmware/* $SDCARD/lib/firmware/
 
 	return 0
 }
