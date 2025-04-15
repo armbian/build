@@ -121,6 +121,7 @@ function prepare_host_noninteractive() {
 
 	# @TODO: rpardini: this does not belong here, instead with the other templates, pre-configuration.
 	[[ ! -f "${USERPATCHES_PATH}"/customize-image.sh ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/customize-image.sh.template "${USERPATCHES_PATH}"/customize-image.sh
+	[[ ! -f "${USERPATCHES_PATH}"/config-example.conf ]] && run_host_command_logged cp -pv "${SRC}"/config/templates/config-example.conf.template "${USERPATCHES_PATH}"/config-example.conf
 
 	if [[ -d "${USERPATCHES_PATH}" ]]; then
 		# create patches directory structure under USERPATCHES_PATH
