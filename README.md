@@ -184,8 +184,7 @@ Function | Armbian | Yocto | Buildroot |
 |       └── u-boot-family                For entire kernel family
 ├── tools                                Tools for dealing with kernel patches and configs
 └── userpatches                          User: configuration patching area
-    ├── lib.config                       User: framework common config/override file
-    ├── config-default.conf              User: default user config file
+    ├── config-example.conf              User: example user config file
     ├── customize-image.sh               User: script will execute just before closing the image
     ├── atf                              User: ARM trusted firmware
     ├── kernel                           User: Linux kernel per kernel family
