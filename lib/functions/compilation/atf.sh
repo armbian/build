@@ -71,7 +71,7 @@ compile_atf() {
 	display_alert "Binutils version for ATF" "${binutils_version}" "info"
 	if linux-version compare "${binutils_version}" ge "2.39"; then
 		display_alert "Binutils version for ATF" ">= 2.39, adding --no-warn-rwx-segment" "info"
-		binutils_flags_atf="--no-warn-rwx-segment"
+		binutils_flags_atf="-Wl,--no-warn-rwx-segment"
 	fi
 	# - ENABLE_BACKTRACE="0" has been added to workaround a regression in ATF. Check: https://github.com/armbian/build/issues/1157
 
