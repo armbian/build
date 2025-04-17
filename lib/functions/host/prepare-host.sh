@@ -236,6 +236,11 @@ function adaptative_prepare_host_dependencies() {
 		display_alert "Python2 not available on host release '${host_release}'" "ancient u-boot versions might/will fail to build" "info"
 	fi
 
+	# Noble lacks gcc-arm-linux-gnueabi for unknown reason causing ATF compile to fail
+	if [[ "noble" == *"${host_release}"* ]]; then
+		host_dependencies+=("gcc-arm-linux-gnueabi")
+	fi
+
 	# Only install acng if asked to.
 	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
 		host_dependencies+=("apt-cacher-ng")
