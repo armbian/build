@@ -26,6 +26,7 @@ function prepare_host_basic() {
 		"linux-version:linux-base"
 		"locale-gen:locales"
 		"git:git"
+		"wget:wget"
 	)
 
 	for check_pack in "${checklist[@]}"; do
