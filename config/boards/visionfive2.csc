@@ -2,8 +2,8 @@
 BOARD_NAME="VisionFive2"
 BOARDFAMILY="starfive2"
 BOARD_MAINTAINER="libiunc"
-KERNEL_TARGET="edge"
-BOOT_FDT_FILE="starfive/jh7110-visionfive-v2.dtb"
+KERNEL_TARGET="vendor"
+BOOT_FDT_FILE="starfive/jh7110-starfive-visionfive-2-v1.3b.dtb"
 SRC_EXTLINUX="yes"
 SRC_CMDLINE="console=ttyS0,115200n8 console=tty0 earlycon=sbi rootflags=data=writeback stmmaceth=chain_mode:1 rw"
 BOOTCONFIG=none
@@ -23,7 +23,7 @@ function post_family_tweaks__visionfive2_uenv() {
 		ramdisk_addr_r=0x48100000
 
 		# Move distro to first boot to speed up booting
-		boot_targets=distro mmc1 dhcp 
+		boot_targets=distro mmc1 dhcp
 
 		distro_bootpart=1
 
