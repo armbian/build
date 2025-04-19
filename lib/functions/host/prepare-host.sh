@@ -203,6 +203,7 @@ function adaptative_prepare_host_dependencies() {
 		udev # causes initramfs rebuild, but is usually pre-installed.
 		uuid-dev
 		zlib1g-dev
+		gcc-arm-linux-gnueabi # necessary for rockchip64 (and maybe other too) ATF compilation  
 
 		# by-category below
 		file tree expect                         # logging utilities; expect is needed for 'unbuffer' command
@@ -236,11 +237,6 @@ function adaptative_prepare_host_dependencies() {
 		display_alert "Python2 not available on host release '${host_release}'" "ancient u-boot versions might/will fail to build" "info"
 	fi
 
-	# Noble lacks gcc-arm-linux-gnueabi for unknown reason causing ATF compile to fail
-	if [[ "noble" == *"${host_release}"* ]]; then
-		host_dependencies+=("gcc-arm-linux-gnueabi")
-	fi
-
 	# Only install acng if asked to.
 	if [[ "${MANAGE_ACNG}" == "yes" ]]; then
 		host_dependencies+=("apt-cacher-ng")
@@ -258,7 +254,7 @@ function adaptative_prepare_host_dependencies() {
 	fi
 
 	if [[ "${wanted_arch}" == "armhf" || "${wanted_arch}" == "all" ]]; then
-		host_dependencies+=("gcc-arm-linux-gnueabihf" "gcc-arm-linux-gnueabi") # from crossbuild-essential-armhf crossbuild-essential-armel
+		host_dependencies+=("gcc-arm-linux-gnueabihf") # from crossbuild-essential-armhf crossbuild-essential-armel
 	fi
 
 	if [[ "${wanted_arch}" == "riscv64" || "${wanted_arch}" == "all" ]]; then
