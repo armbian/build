@@ -2,10 +2,10 @@
 BOARD_NAME="Rock 4SE"
 BOARDFAMILY="rockchip64"
 BOARD_MAINTAINER=""
-BOOTBRANCH_BOARD="tag:v2023.10-rc2"
+BOOTBRANCH_BOARD="tag:v2025.04"
 #BOOTCONFIG="rock-4se-rk3399_defconfig" ## irony being we chose mainline uboot because of support for this board but its broken
 BOOTCONFIG="rock-pi-4-rk3399_defconfig"
-BOOTPATCHDIR='v2023.10-rc2'
+BOOTPATCHDIR='v2025.04'
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
 FULL_DESKTOP="yes"
