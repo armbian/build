@@ -28,6 +28,7 @@ case "${BRANCH}" in
 		declare -g UEFI_GRUB_TIMEOUT=0
 		declare -g QCOW2_RESIZE_AMOUNT="16G"
 		# add additional packages to the image
+		display_alert "Add additional packages to the image" "qemu-guest-agent spice-vdagent" "debug"
 		add_packages_to_image qemu-guest-agent spice-vdagent
 		;;
 
