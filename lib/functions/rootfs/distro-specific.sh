@@ -161,7 +161,7 @@ function create_sources_list_and_deploy_repo_key() {
 	display_alert "Adding Armbian repository and authentication key" "${when} :: /etc/apt/sources.list.d/armbian.sources" "info"
 	mkdir -p "${basedir}"/usr/share/keyrings
 	# change to binary form
-	APT_SIGNING_KEY_FILE="/usr/share/keyrings/armbian.gpg"
+	APT_SIGNING_KEY_FILE="/usr/share/keyrings/armbian-archive-keyring.gpg"
 	gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}${APT_SIGNING_KEY_FILE}"
 
 	# lets keep old way for old distributions
