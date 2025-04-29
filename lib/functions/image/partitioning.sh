@@ -336,8 +336,7 @@ function prepare_partitions() {
 			# getting the subvolume id of the newly created volume @ to install it
 			# as the default volume for mounting without explicit reference
 
-			run_host_command_logged "btrfs subvolume list $MOUNT | grep 'path $btrfs_root_subvolume' | cut -d' ' -f2 \
-				| xargs -I{} btrfs subvolume set-default {} $MOUNT/ "
+			run_host_command_logged "btrfs subvolume set-default $MOUNT/$btrfs_root_subvolume"
 
 			call_extension_method "btrfs_root_add_subvolumes" <<- 'BTRFS_ROOT_ADD_SUBVOLUMES'
 				# *custom post btrfs rootfs creation hook*
