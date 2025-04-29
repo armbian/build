@@ -330,12 +330,13 @@ function prepare_partitions() {
 		fi
 
 		if [[ $ROOTFS_TYPE == btrfs ]]; then
+			btrfs_root_subvolume="${BTRFS_ROOT_SUBVOLUME:-@}"
 			mountopts[$ROOTFS_TYPE]='commit=120'
-			run_host_command_logged btrfs subvolume create $MOUNT/@
+			run_host_command_logged btrfs subvolume create $MOUNT/$btrfs_root_subvolume
 			# getting the subvolume id of the newly created volume @ to install it
 			# as the default volume for mounting without explicit reference
 
-			run_host_command_logged "btrfs subvolume list $MOUNT | grep 'path @' | cut -d' ' -f2 \
+			run_host_command_logged "btrfs subvolume list $MOUNT | grep 'path $btrfs_root_subvolume' | cut -d' ' -f2 \
 				| xargs -I{} btrfs subvolume set-default {} $MOUNT/ "
 
 			call_extension_method "btrfs_root_add_subvolumes" <<- 'BTRFS_ROOT_ADD_SUBVOLUMES'
@@ -352,7 +353,7 @@ function prepare_partitions() {
 
 			run_host_command_logged umount $rootdevice
 			display_alert "Remounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
-			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]},subvol=@ $rootdevice $MOUNT/
+			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]},subvol=$btrfs_root_subvolume $rootdevice $MOUNT/
 		fi
 		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
