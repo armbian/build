@@ -41,7 +41,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:fcf2a5746e6fe11d9d71337ee5dac6cf43423a97' # Commit date: Feb 24, 2025 (please update when updating commit ref)
+		local rtl8189esver='commit:7b43c5c7971eabea263dc2b6cc0928b84323f310' # Commit date: 2025-04-30 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -87,7 +87,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
-		local rtl8189fsver='commit:3f34f380715b88e4a3ef049b3a60e2fc69ccc9bd' # Commit date: Feb 25, 2025 (please update when updating commit ref)
+		local rtl8189fsver='commit:06e89edce6817616d963414825dccf87094a7e54' # Commit date: 2025-05-04 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
@@ -133,7 +133,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:e6721468a4e48cf2199c212fa13c086e3705bcb3' # Commit date: Feb 16, 2025 (please update when updating commit ref)
+		local rtl8192euver='commit:27aa922c298f2be240eec6c2e8636fe865ece195' # Commit date: 2025-05-04 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -175,11 +175,11 @@ driver_rtl8811_rtl8812_rtl8814_rtl8821() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:v5.6.4.2)
-		local rtl8812auver="commit:c3fb89a2f7066f4bf4e4d9d85d84f9791f14c83e" # Commit date: Mar 30, 2025 (please update when updating commit ref)
+		local rtl8812auver="commit:fd80508096699705ec9eb95c7a5c970fa6c2ecdc" # Commit date: 2025-05-03 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8811, 8812, 8814 and 8821 chipsets ${rtl8812auver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/aircrack-ng/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
+		fetch_from_repo "$GITHUB_SOURCE/domin144/rtl8812au" "rtl8812au" "${rtl8812auver}" "yes" # https://github.com/aircrack-ng/rtl8812au
 		cd "$kerneldir" || exit
 
 		# Brief detour. Turns out that HardKernel's vendor odroidxu4 kernel already has this driver
@@ -254,7 +254,7 @@ driver_rtl8811CU_rtl8821C() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl8811cuver="commit:132dcf025806a436b9a95fb4af24eacfd07222f5" # Commit date: Feb 19, 2024 (please update when updating commit ref)
+		local rtl8811cuver="commit:d74134a1c68f59f2b80cdd6c6afb8c1a8a687cbf" # Commit date: 2025-05-08 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek RTL8811CU and RTL8821C chipsets ${rtl8811cuver}" "info"
 
@@ -296,7 +296,7 @@ driver_rtl88x2bu() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (is branch:main)
-		local rtl88x2buver="commit:bd8baa17dc0c07510a7a56c52410a81c363b85ae" # Commit date: Feb 21, 2024 (please update when updating commit ref)
+		local rtl88x2buver="commit:1ee13286e0b212c22946aa8d51aa7d84cb876cd4" # Commit date: 2025-05-06 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 88x2bu chipsets ${rtl88x2buver}" "info"
 
@@ -625,11 +625,11 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:ac64712f6767565bc3560e6ae412b780b07bc84c' # Commit date: Feb 16, 2025 (please update when updating commit ref)
+		local rtl8723dsver='commit:b01f1ad2eb45679375266f5098909532c73495c6' # Commit date: 2025-05-10 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/lwfinger/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes" # https://github.com/lwfinger/rtl8723ds
+		fetch_from_repo "$GITHUB_SOURCE/domin144/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes" # https://github.com/lwfinger/rtl8723ds
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8723ds"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8723ds/"
