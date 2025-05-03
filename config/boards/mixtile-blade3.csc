@@ -12,8 +12,13 @@ declare -g UEFI_EDK2_BOARD_ID="blade3" # This _only_ used for uefi-edk2-rk3588 e
 
 # Vendor u-boot; use the default family (rockchip-rk3588) u-boot. See config/sources/families/rockchip-rk3588.conf
 function post_family_config__vendor_uboot_mekotronics() {
-	display_alert "$BOARD" "Configuring $BOARD vendor u-boot" "info"
+	display_alert "$BOARD" "Configuring $BOARD vendor u-boot (using Radxa's older next-dev-v2024.03)" "info"
 	declare -g BOOTDELAY=1 # build injects this into u-boot config. we can then get into UMS mode and avoid the whole rockusb/rkdeveloptool thing
+
+	# Override the stuff from rockchip-rk3588 family; Meko's have a patch for stable MAC address that breaks with Radxa's next-dev-v2024.10+
+	declare -g BOOTSOURCE='https://github.com/radxa/u-boot.git'
+	declare -g BOOTBRANCH='branch:next-dev-v2024.03' # NOT next-dev-v2024.10
+	declare -g BOOTPATCHDIR="legacy/u-boot-radxa-rk35xx"
 }
 
 function post_family_config_branch_edge__different_dtb_for_edge() {
