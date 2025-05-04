@@ -299,10 +299,42 @@ write_uboot_platform() {
 
 # @TODO: this is not ready for BOOT_SCENARIO=binman yet
 write_uboot_platform_mtd() {
-	if [[ -f $1/rkspi_loader.img ]]; then
-		dd if=$1/rkspi_loader.img of=$2 conv=notrunc status=none > /dev/null 2>&1
+	FILES=$(find "$1" -maxdepth 1 -type f -name "rkspi_loader*.img")
+	if [ -z "$FILES" ]; then
+		echo "No SPI image found."
+		exit 1
+	fi
+
+	MENU_ITEMS=()
+	i=1
+
+	# Read the files into an array
+	while IFS= read -r file; do
+		filename=$(basename "$file")
+		MENU_ITEMS+=("$i" "$filename" "")
+		((i++))
+	done <<< "$FILES"
+
+	# If there is only one image, we can skip the dialog
+	if [[ $i -eq 2 ]]; then
+		dd if=$1/${MENU_ITEMS[1]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+		return
+	fi
+
+	[[ -f /etc/armbian-release ]] && source /etc/armbian-release
+	backtitle="Armbian for $BOARD_NAME install script, https://www.armbian.com"
+
+	CHOICE=$(dialog --no-collapse \
+  		--title "armbian-install" \
+  		--backtitle $backtitle \
+  		--radiolist "Choose SPI image:" 0 56 4 \
+  		"${MENU_ITEMS[@]}" \
+  		3>&1 1>&2 2>&3)
+
+	if [ $? -eq 0 ]; then
+		dd if=$1/${MENU_ITEMS[($CHOICE*3)-2]} of=$2 conv=notrunc status=none > /dev/null 2>&1
 	else
-		echo "SPI u-boot image not found!"
+		echo "No SPI image chosen."
 		exit 1
 	fi
 }
