@@ -5,7 +5,6 @@ BOARDFAMILY="k3"
 BOARD_MAINTAINER="Grippy98"
 BOOTCONFIG="am6232_pocketbeagle2_a53_defconfig"
 BOOTFS_TYPE="fat"
-BOOT_FDT_FILE="k3-am6232-pocketbeagle2.dts"
 TIBOOT3_BOOTCONFIG="am6232_pocketbeagle2_r5_defconfig"
 TIBOOT3_FILE="tiboot3-am62x-hs-fs-evm.bin"
 DEFAULT_CONSOLE="serial"
@@ -13,6 +12,9 @@ KERNEL_TARGET="edge"
 KERNEL_TEST_TARGET="edge"
 SERIALCON="ttyS2"
 ATF_BOARD="lite"
+SRC_EXTLINUX="yes"
+SRC_CMDLINE="console=ttyS2,115200n8"
+BOOT_FDT_FILE="ti/k3-am6232-pocketbeagle2.dtb"
 
 #Until PB2 goes upstream, use this branch
 function post_family_config_branch_edge__pocketbeagle2_use_beagle_kernel_uboot() {
