@@ -15,36 +15,63 @@ setenv ethaddr "00:50:43:84:fb:2f"
 setenv eth1addr "00:50:43:25:fb:84"
 setenv eth2addr "00:50:43:84:25:2f"
 setenv eth3addr "00:50:43:0d:19:18"
+setenv fdt_extrasize "0x00010000"
+setenv addr_align "0x00001000"
+setenv align_addr_next 'setexpr modulo ${addr_next} % ${addr_align} ; if itest $modulo -gt 0 ; then setexpr addr_next ${addr_next} / ${addr_align} ; setexpr addr_next ${addr_next} + 1 ; setexpr addr_next ${addr_next} * ${addr_align} ; fi'
 
 echo "Boot script loaded from ${devtype}"
 
+echo "Loading environment from ${devtype} to ${load_addr} ..."
 if load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
 fi
 
 setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${devtype} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
+echo "Loading DT from ${devtype} to ${fdt_addr_r} ..."
 load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
-load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
-load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
 
 fdt addr ${fdt_addr_r}
-fdt resize 65536
+fdt resize ${fdt_extrasize}
+
+# calculate next load address
+fdt header get fdt_totalsize totalsize
+if itest "${fdt_totalsize}" == ""
+then
+	# 'fdt resize' will align upwards to 4k address boundary
+	setexpr fdt_totalsize ${filesize} / 0x1000
+	setexpr fdt_totalsize ${fdt_totalsize} + 1
+	setexpr fdt_totalsize ${fdt_totalsize} * 0x1000
+	if itest "${fdt_extrasize}" != ""
+	then
+		# add 'extrasize' before aligning
+		setexpr fdt_totalsize ${fdt_totalsize} + ${fdt_extrasize}
+	fi
+fi
+setexpr addr_next ${fdt_addr_r} + ${fdt_totalsize}
+run align_addr_next
+setenv kernel_addr_r ${addr_next}
+
 for overlay_file in ${overlays}; do
 	if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
 		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
 done
+
 for overlay_file in ${user_overlays}; do
 	if load ${devtype} ${devnum} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
 		echo "Applying user provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
 	fi
 done
+
 if test "${overlay_error}" = "true"; then
 	echo "Error applying DT overlays, restoring original DT"
 	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+	fdt addr ${fdt_addr_r}
+	fdt resize ${fdt_extrasize}
+	# no need to recalculate next load address here
 else
 	if test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr; then
 		load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr
@@ -68,14 +95,24 @@ fi
 # SPI - SATA workaround
 if test "${spi_workaround}" = "on"; then
 	echo "Applying SPI workaround to the DT"
-	fdt addr ${fdt_addr}
-	fdt resize
 	fdt set /soc/internal-regs/sata@e0000 status "disabled"
 	fdt set /soc/internal-regs/sata@a8000 status "disabled"
 	fdt set /soc/spi@10680 status "okay"
 	fdt set /soc/spi@10680/spi-flash@0 status "okay"
 fi
 
+echo "Loading kernel from ${devtype} to ${kernel_addr_r} ..."
+load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
+
+# calculate next load address
+setexpr addr_next ${kernel_addr_r} + ${filesize}
+run align_addr_next
+setenv ramdisk_addr_r ${addr_next}
+
+echo "Loading ramdisk from ${devtype} to ${ramdisk_addr_r} ..."
+load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
+
+echo "Booting kernel ..."
 bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
 
 # Recompile with:
