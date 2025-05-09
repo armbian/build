@@ -3,7 +3,11 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-setenv load_addr "0x300000"
+setenv load_addr      "0x00300000"
+setenv fdt_addr_r     "0x02040000" # max size 128 KiB (=dtb+dto+fdt_extrasize)
+setenv kernel_addr_r  "0x02060000" # max size 16 MiB
+setenv ramdisk_addr_r "0x03060000"
+
 # default values
 setenv overlay_error "false"
 setenv rootdev "/dev/mmcblk0p1"
@@ -16,8 +20,8 @@ setenv eth1addr "00:50:43:25:fb:84"
 setenv eth2addr "00:50:43:84:25:2f"
 setenv eth3addr "00:50:43:0d:19:18"
 setenv fdt_extrasize "0x00010000"
-setenv addr_align "0x00001000"
-setenv align_addr_next 'setexpr modulo ${addr_next} % ${addr_align} ; if itest $modulo -gt 0 ; then setexpr addr_next ${addr_next} / ${addr_align} ; setexpr addr_next ${addr_next} + 1 ; setexpr addr_next ${addr_next} * ${addr_align} ; fi'
+setenv align_to "0x00001000"
+setenv align_addr_next 'setexpr modulo ${addr_next} % ${align_to} ; if itest $modulo -gt 0 ; then setexpr addr_next ${addr_next} / ${align_to} ; setexpr addr_next ${addr_next} + 1 ; setexpr addr_next ${addr_next} * ${align_to} ; fi'
 
 echo "Boot script loaded from ${devtype}"
 
@@ -34,23 +38,30 @@ load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 fdt addr ${fdt_addr_r}
 fdt resize ${fdt_extrasize}
 
-# calculate next load address
-fdt header get fdt_totalsize totalsize
-if itest "${fdt_totalsize}" == ""
-then
-	# 'fdt resize' will align upwards to 4k address boundary
-	setexpr fdt_totalsize ${filesize} / 0x1000
-	setexpr fdt_totalsize ${fdt_totalsize} + 1
-	setexpr fdt_totalsize ${fdt_totalsize} * 0x1000
-	if itest "${fdt_extrasize}" != ""
-	then
-		# add 'extrasize' before aligning
-		setexpr fdt_totalsize ${fdt_totalsize} + ${fdt_extrasize}
-	fi
+if setexpr setexpr 1 + 1 ; then
+	setenv setexpr "available"
+else
+	echo "** Command `setexpr` not available - using configured load addresses"
 fi
-setexpr addr_next ${fdt_addr_r} + ${fdt_totalsize}
-run align_addr_next
-setenv kernel_addr_r ${addr_next}
+
+if test "${setexpr}" = "available" ; then
+	fdt header get fdt_totalsize totalsize
+	if test "${fdt_totalsize}" = "" ; then
+		echo "** Command `fdt header` does not support `get <var> <member>` - calculating DT size"
+
+		# 'fdt resize' will align upwards to 4k address boundary
+		setexpr fdt_totalsize ${filesize} / 0x1000
+		setexpr fdt_totalsize ${fdt_totalsize} + 1
+		setexpr fdt_totalsize ${fdt_totalsize} * 0x1000
+		if test "${fdt_extrasize}" != "" ; then
+			# add 'extrasize' before aligning
+			setexpr fdt_totalsize ${fdt_totalsize} + ${fdt_extrasize}
+		fi
+	fi
+	setexpr addr_next ${fdt_addr_r} + ${fdt_totalsize}
+	run align_addr_next
+	setenv kernel_addr_r ${addr_next}
+fi
 
 for overlay_file in ${overlays}; do
 	if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
@@ -67,7 +78,7 @@ for overlay_file in ${user_overlays}; do
 done
 
 if test "${overlay_error}" = "true"; then
-	echo "Error applying DT overlays, restoring original DT"
+	echo "!! Error applying DT overlays, restoring original DT"
 	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
 	fdt addr ${fdt_addr_r}
 	fdt resize ${fdt_extrasize}
@@ -104,10 +115,11 @@ fi
 echo "Loading kernel from ${devtype} to ${kernel_addr_r} ..."
 load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
 
-# calculate next load address
-setexpr addr_next ${kernel_addr_r} + ${filesize}
-run align_addr_next
-setenv ramdisk_addr_r ${addr_next}
+if test "${setexpr}" = "available" ; then
+	setexpr addr_next ${kernel_addr_r} + ${filesize}
+	run align_addr_next
+	setenv ramdisk_addr_r ${addr_next}
+fi
 
 echo "Loading ramdisk from ${devtype} to ${ramdisk_addr_r} ..."
 load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
