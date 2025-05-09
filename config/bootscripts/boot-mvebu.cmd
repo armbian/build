@@ -4,9 +4,9 @@
 #
 
 setenv load_addr      "0x00300000"
-setenv fdt_addr_r     "0x02040000" # max size 128 KiB (=dtb+dto+fdt_extrasize)
-setenv kernel_addr_r  "0x02060000" # max size 16 MiB
-setenv ramdisk_addr_r "0x03060000"
+setenv fdt_addr_r     "0x02040000" # max size 256 KiB (=dtb+dto+fdt_extrasize)
+setenv kernel_addr_r  "0x02080000" # max size 16 MiB
+setenv ramdisk_addr_r "0x03080000"
 
 # default values
 setenv overlay_error "false"
