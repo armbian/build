@@ -194,7 +194,7 @@ function adaptative_prepare_host_dependencies() {
 		libncurses-dev libssl-dev libusb-1.0-0-dev
 		linux-base locales lsof
 		ncurses-base ncurses-term # for `make menuconfig`
-		ntpdate
+		ntpsec-ntpdate #this is a more secure ntpdate
 		patchutils pkg-config pv
 		"qemu-user-static" "arch-test"
 		rsync
