@@ -2,7 +2,7 @@
 BOARD_NAME="Youyeetoo R1 v3"
 BOARDFAMILY="rockchip-rk3588"
 BOARD_MAINTAINER="SuperKali"
-BOOTCONFIG="generic-rk3588_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
+BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOT_SOC="rk3588"
 KERNEL_TARGET="vendor,current,edge"
 KERNEL_TEST_TARGET="vendor,edge"
@@ -35,7 +35,7 @@ function post_family_tweaks__youyeetoo_r1_naming_udev_network_interfaces() {
 function post_family_config__youyeetoo_r1_use_mainline_uboot() {
 	display_alert "$BOARD" "Using mainline (next branch) U-Boot for $BOARD / $BRANCH" "info"
 
-	declare -g BOOTCONFIG="generic-rk3588_defconfig"             # Use generic defconfig which should boot all RK3588 boards
+	declare -g BOOTCONFIG="youyeetoo-r1-rk3588s_defconfig"             # Use generic defconfig which should boot all RK3588 boards
 	declare -g BOOTDELAY=1                                       # Wait for UART interrupt to enter UMS/RockUSB mode etc
 	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git" # We ❤️ Mainline U-Boot
 	declare -g BOOTBRANCH="tag:v2025.04"
