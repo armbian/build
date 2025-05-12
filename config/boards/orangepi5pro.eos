@@ -53,5 +53,5 @@ function post_uboot_custom_postprocess__create_sata_spi_image() {
 function post_family_config__orangepi5pro_use_vendor_uboot() {
 	BOOTSOURCE='https://github.com/orangepi-xunlong/u-boot-orangepi.git'
 	BOOTBRANCH='branch:v2017.09-rk3588'
-	BOOTPATCHDIR="legacy/u-boot-orangepi5-rk3588"
+	BOOTPATCHDIR="legacy"
 }
