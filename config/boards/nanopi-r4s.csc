@@ -1,7 +1,7 @@
 # Rockchip RK3399 hexa core 1GB/4GB RAM SoC 2 x GBE USB3 USB-C
 BOARD_NAME="NanoPi R4S"
 BOARDFAMILY="rockchip64" # Used to be rk3399
-BOARD_MAINTAINER="Manouchehri"
+BOARD_MAINTAINER=""
 BOOTCONFIG="nanopi-r4s-rk3399_defconfig"
 KERNEL_TARGET="current,edge"
 KERNEL_TEST_TARGET="current"
