@@ -19,14 +19,14 @@
 
 ### Requirements for self hosted
 
-- x86_64 / aarch64 machine
-- at least 2GB of memory and ~35GB of disk space for VM, container or bare metal installation
-- [Armbian / Ubuntu Jammy 22.04.x](https://github.com/armbian/sdk) for native building or any Docker capable Linux for containerised
-- Windows 10/11 with WSL2 subsystem running Ubuntu Jammy 22.04.x
+- x86_64 / aarch64 / riscv64 machine
+- at least 8GB (less for non-[BTF](https://docs.kernel.org/bpf/btf.html) builds) of memory and ~50GB of disk space for VM, container, or bare-metal installation
+- **Armbian / Ubuntu Jammy 22.04.x** for native building or any Docker capable Linux for containerised
+- **Windows 10/11 with WSL2 subsystem** running Armbian / Ubuntu Jammy 22.04.x
 - Superuser rights (configured sudo or root access).
-- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
+- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble
 
-For stable branch use `--branch=v25.02`
+For stable branch use `--branch=v25.05`
 
 ```bash
 apt-get -y install git
