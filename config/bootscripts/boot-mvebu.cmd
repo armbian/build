@@ -25,9 +25,15 @@ setenv align_to "0x00001000"
 setenv align_overlap_oboe_avoidance "on"
 setenv align_addr_next 'if test "${align_overlap_oboe_avoidance}" = "on" ; then setexpr addr_next ${addr_next} + 1 ; fi ; setexpr modulo ${addr_next} % ${align_to} ; if itest ${modulo} -gt 0 ; then setexpr addr_next ${addr_next} / ${align_to} ; setexpr addr_next ${addr_next} + 1 ; setexpr addr_next ${addr_next} * ${align_to} ; fi'
 
+if setexpr setexpr 1 + 1 ; then
+	setenv setexpr "available"
+else
+	echo "** Command `setexpr` not available - using configured load addresses"
+fi
+
 echo "Boot script loaded from ${devtype}"
 
-setenv something "environment from ${devtype} to ${load_addr}"
+setenv something "environment ${prefix}armbianEnv.txt from ${devtype} to ${load_addr}"
 echo "Loading ${something} ..."
 if load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
@@ -37,7 +43,7 @@ fi
 
 setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${devtype} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
-setenv something "DT from ${devtype} to ${fdt_addr_r}"
+setenv something "DT ${prefix}dtb/${fdtfile} from ${devtype} to ${fdt_addr_r}"
 echo "Loading ${something} ..."
 if load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile} ; then
 else
@@ -47,33 +53,9 @@ else
 	fi
 fi
 
+setenv fdt_filesize ${filesize}
 fdt addr ${fdt_addr_r}
 fdt resize ${fdt_extrasize}
-
-if setexpr setexpr 1 + 1 ; then
-	setenv setexpr "available"
-else
-	echo "** Command `setexpr` not available - using configured load addresses"
-fi
-
-if test "${setexpr}" = "available" ; then
-	fdt header get fdt_totalsize totalsize
-	if test "${fdt_totalsize}" = "" ; then
-		echo "** Command `fdt header` does not support `get <var> <member>` - calculating DT size"
-
-		# 'fdt resize' will align upwards to 4k address boundary
-		setexpr fdt_totalsize ${filesize} / 0x1000
-		setexpr fdt_totalsize ${fdt_totalsize} + 1
-		setexpr fdt_totalsize ${fdt_totalsize} * 0x1000
-		if test "${fdt_extrasize}" != "" ; then
-			# add 'extrasize' before aligning
-			setexpr fdt_totalsize ${fdt_totalsize} + ${fdt_extrasize}
-		fi
-	fi
-	setexpr addr_next ${fdt_addr_r} + ${fdt_totalsize}
-	run align_addr_next
-	setenv kernel_addr_r ${addr_next}
-fi
 
 for overlay_file in ${overlays}; do
 	setenv something "kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo from ${devtype} to ${load_addr}"
@@ -145,7 +127,29 @@ if test "${spi_workaround}" = "on"; then
 	fdt set /soc/spi@10680/spi-flash@0 status "okay"
 fi
 
-setenv something "kernel from ${devtype} to ${kernel_addr_r}"
+echo "Trimming DT ..."
+fdt resize
+
+if test "${setexpr}" = "available" ; then
+	fdt header get fdt_totalsize totalsize
+	if test "${fdt_totalsize}" = "" ; then
+		echo "** Command `fdt header` does not support `get <var> <member>` - calculating DT size"
+
+		# 'fdt resize' will align upwards to 4k address boundary
+		setexpr fdt_totalsize ${fdt_filesize} / 0x1000
+		setexpr fdt_totalsize ${fdt_totalsize} + 1
+		setexpr fdt_totalsize ${fdt_totalsize} * 0x1000
+		if test "${fdt_extrasize}" != "" ; then
+			# add 'extrasize' before aligning
+			setexpr fdt_totalsize ${fdt_totalsize} + ${fdt_extrasize}
+		fi
+	fi
+	setexpr addr_next ${fdt_addr_r} + ${fdt_totalsize}
+	run align_addr_next
+	setenv kernel_addr_r ${addr_next}
+fi
+
+setenv something "kernel ${prefix}zImage from ${devtype} to ${kernel_addr_r}"
 echo "Loading ${something} ..."
 if load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage ; then
 else
@@ -161,7 +165,7 @@ if test "${setexpr}" = "available" ; then
 	setenv ramdisk_addr_r ${addr_next}
 fi
 
-setenv something "initial ramdisk from ${devtype} to ${ramdisk_addr_r}"
+setenv something "initial ramdisk ${prefix}uInitrd from ${devtype} to ${ramdisk_addr_r}"
 echo "Loading ${something} ..."
 if load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd ; then
 else
@@ -171,7 +175,7 @@ else
 	fi
 fi
 
-setenv something "kernel"
+setenv something "kernel from ${kernel_addr_r}"
 echo "Booting ${something} ..."
 if bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r} ; then
 else
