@@ -19,6 +19,7 @@ setenv ethaddr "00:50:43:84:fb:2f"
 setenv eth1addr "00:50:43:25:fb:84"
 setenv eth2addr "00:50:43:84:25:2f"
 setenv eth3addr "00:50:43:0d:19:18"
+setenv exit_on_critical_errors "on"
 setenv fdt_extrasize "0x00010000"
 setenv align_to "0x00001000"
 setenv align_overlap_oboe_avoidance "on"
@@ -26,15 +27,25 @@ setenv align_addr_next 'if test "${align_overlap_oboe_avoidance}" = "on" ; then 
 
 echo "Boot script loaded from ${devtype}"
 
-echo "Loading environment from ${devtype} to ${load_addr} ..."
+setenv something "environment from ${devtype} to ${load_addr}"
+echo "Loading ${something} ..."
 if load ${devtype} ${devnum} ${load_addr} ${prefix}armbianEnv.txt; then
 	env import -t ${load_addr} ${filesize}
+else
+	echo "** Could not load ${something} - using default environment"
 fi
 
 setenv bootargs "console=ttyS0,115200 root=${rootdev} rootwait rootfstype=${rootfstype} ubootdev=${devtype} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs}"
 
-echo "Loading DT from ${devtype} to ${fdt_addr_r} ..."
-load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+setenv something "DT from ${devtype} to ${fdt_addr_r}"
+echo "Loading ${something} ..."
+if load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile} ; then
+else
+	echo "!! CRITICAL - Could not load ${something}"
+	if test "${exit_on_critical_errors}" = "on" ; then
+		exit
+	fi
+fi
 
 fdt addr ${fdt_addr_r}
 fdt resize ${fdt_extrasize}
@@ -65,35 +76,56 @@ if test "${setexpr}" = "available" ; then
 fi
 
 for overlay_file in ${overlays}; do
+	setenv something "kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo from ${devtype} to ${load_addr}"
+	echo "Loading ${something} ..."
 	if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
-		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
+	else
+		echo "** Could not load ${something}"
 	fi
 done
 
 for overlay_file in ${user_overlays}; do
+	setenv something "user provided DT overlay ${overlay_file}.dtbo from ${devtype} to ${load_addr}"
+	echo "Loading ${something}"
 	if load ${devtype} ${devnum} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
-		echo "Applying user provided DT overlay ${overlay_file}.dtbo"
 		fdt apply ${load_addr} || setenv overlay_error "true"
+	else
+		echo "** Could not load ${something}"
 	fi
 done
 
 if test "${overlay_error}" = "true"; then
-	echo "!! Error applying DT overlays, restoring original DT"
-	load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
-	fdt addr ${fdt_addr_r}
-	fdt resize ${fdt_extrasize}
-	# no need to recalculate next load address here
+	echo "** Error applying DT overlays"
+	setenv something "original DT ${prefix}dtb/${fdtfile} from ${devtype} to ${fdt_addr_r}"
+	echo "Restoring ${something} ..."
+	if load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile} ; then
+		fdt addr ${fdt_addr_r}
+		fdt resize ${fdt_extrasize}
+	else
+		echo "!! CRITICAL - Could not restore ${something}"
+		if test "${exit_on_critical_errors}" = "on" ; then
+			exit
+		fi
+	fi
 else
 	if test -e ${devtype} ${devnum} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr; then
-		load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr
-		echo "Applying kernel provided DT fixup script (${overlay_prefix}-fixup.scr)"
-		source ${load_addr}
+		setenv something "kernel provided DT fixup script (${overlay_prefix}-fixup.scr) from ${devtype} to ${load_addr}"
+		echo "Loading ${something} ..."
+		if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr ; then
+			source ${load_addr}
+		else
+			echo "** Could not load ${something}"
+		fi
 	fi
 	if test -e ${devtype} ${devnum} ${prefix}fixup.scr; then
-		load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr
-		echo "Applying user provided fixup script (fixup.scr)"
-		source ${load_addr}
+		setenv something "user provided fixup script (fixup.scr) from ${devtype} to ${load_addr}"
+		echo "Loading ${something} ..."
+		if load ${devtype} ${devnum} ${load_addr} ${prefix}fixup.scr ; then
+			source ${load_addr}
+		else
+			echo "** Could not load ${something}"
+		fi
 	fi
 fi
 
@@ -113,8 +145,15 @@ if test "${spi_workaround}" = "on"; then
 	fdt set /soc/spi@10680/spi-flash@0 status "okay"
 fi
 
-echo "Loading kernel from ${devtype} to ${kernel_addr_r} ..."
-load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage
+setenv something "kernel from ${devtype} to ${kernel_addr_r}"
+echo "Loading ${something} ..."
+if load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}zImage ; then
+else
+	echo "!! CRITICAL - Could not load ${something}"
+	if test "${exit_on_critical_errors}" = "on" ; then
+		exit
+	fi
+fi
 
 if test "${setexpr}" = "available" ; then
 	setexpr addr_next ${kernel_addr_r} + ${filesize}
@@ -122,11 +161,25 @@ if test "${setexpr}" = "available" ; then
 	setenv ramdisk_addr_r ${addr_next}
 fi
 
-echo "Loading ramdisk from ${devtype} to ${ramdisk_addr_r} ..."
-load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
+setenv something "initial ramdisk from ${devtype} to ${ramdisk_addr_r}"
+echo "Loading ${something} ..."
+if load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd ; then
+else
+	echo "!! CRITICAL - Could not load ${something}"
+	if test "${exit_on_critical_errors}" = "on" ; then
+		exit
+	fi
+fi
 
-echo "Booting kernel ..."
-bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
+setenv something "kernel"
+echo "Booting ${something} ..."
+if bootz ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r} ; then
+else
+	echo "!! CRITICAL - Could not boot ${something}"
+	if test "${exit_on_critical_errors}" = "on" ; then
+		exit
+	fi
+fi
 
 # Recompile with:
 # mkimage -C none -A arm -T script -d /boot/boot.cmd /boot/boot.scr
