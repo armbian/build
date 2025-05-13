@@ -3,9 +3,9 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-setenv load_addr      "0x00300000"
-setenv fdt_addr_r     "0x02040000" # max size 256 KiB (=dtb+dto+fdt_extrasize)
-setenv kernel_addr_r  "0x02080000" # max size 16 MiB
+setenv load_addr "0x00300000"
+setenv fdt_addr_r "0x02040000" # max size 256 KiB (=dtb+dto+fdt_extrasize)
+setenv kernel_addr_r "0x02080000" # max size 16 MiB
 setenv ramdisk_addr_r "0x03080000"
 
 # default values
@@ -21,7 +21,8 @@ setenv eth2addr "00:50:43:84:25:2f"
 setenv eth3addr "00:50:43:0d:19:18"
 setenv fdt_extrasize "0x00010000"
 setenv align_to "0x00001000"
-setenv align_addr_next 'setexpr modulo ${addr_next} % ${align_to} ; if itest $modulo -gt 0 ; then setexpr addr_next ${addr_next} / ${align_to} ; setexpr addr_next ${addr_next} + 1 ; setexpr addr_next ${addr_next} * ${align_to} ; fi'
+setenv align_overlap_oboe_avoidance "on"
+setenv align_addr_next 'if test "${align_overlap_oboe_avoidance}" = "on" ; then setexpr addr_next ${addr_next} + 1 ; fi ; setexpr modulo ${addr_next} % ${align_to} ; if itest ${modulo} -gt 0 ; then setexpr addr_next ${addr_next} / ${align_to} ; setexpr addr_next ${addr_next} + 1 ; setexpr addr_next ${addr_next} * ${align_to} ; fi'
 
 echo "Boot script loaded from ${devtype}"
 
