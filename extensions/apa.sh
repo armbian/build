@@ -2,6 +2,7 @@
 
 function extension_prepare_config__apa() {
 	display_alert "Target image will have Armbian Package Archive (APA) enabled by default" "${EXTENSION}" "info"
+	export APA_IS_ACTIVE="true"
 }
 
 function custom_apt_repo__add_apa() {
