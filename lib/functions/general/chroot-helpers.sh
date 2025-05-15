@@ -16,9 +16,7 @@ function mount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "mount_chroot" "$target" "debug"
-
 	mkdir -p "${target}/run/user/0"
-	mkdir -p "${target}/armbian/cache"
 
 	# tmpfs size=50% is the Linux default, but we need more.
 	mount -t tmpfs -o "size=99%" tmpfs "${target}/tmp"
@@ -28,8 +26,6 @@ function mount_chroot() {
 	mount -t sysfs chsys "${target}"/sys
 	mount --bind /dev "${target}"/dev
 	mount -t devpts chpts "${target}"/dev/pts || mount --bind /dev/pts "${target}"/dev/pts
-
-	mount --bind /armbian/cache "${target}/armbian/cache"
 }
 
 # umount_chroot <target>
@@ -40,7 +36,7 @@ function umount_chroot() {
 	local target
 	target="$(realpath "$1")" # normalize, remove last slash if dir
 	display_alert "Unmounting" "$target" "info"
-	while grep -Eq "${target}\/(dev|proc|sys|tmp|var\/tmp|run\/user\/0|armbian\/cache)" /proc/mounts; do
+	while grep -Eq "${target}\/(dev|proc|sys|tmp|var\/tmp|run\/user\/0)" /proc/mounts; do
 		display_alert "Unmounting..." "target: ${target}" "debug"
 		umount "${target}"/dev/pts || true
 		umount --recursive "${target}"/dev || true
@@ -49,7 +45,6 @@ function umount_chroot() {
 		umount "${target}"/tmp || true
 		umount "${target}"/var/tmp || true
 		umount "${target}"/run/user/0 || true
-		umount "${target}"/armbian/cache || true
 		wait_for_disk_sync "after umount chroot"
 		run_host_command_logged grep -E "'${target}/(dev|proc|sys|tmp)'" /proc/mounts "||" true
 	done
