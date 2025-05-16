@@ -17,7 +17,7 @@
 # `make install dtbs_install modules_install headers_install` have already successfully been run.
 
 # This will create a SET of packages. It should always create these:
-# image package: vmlinuz and such, config, modules, and dtbs (if exist) in /usr/lib/xxx
+# image package: vmlinux and such, config, modules, and dtbs (if exist) in /usr/lib/xxx
 # linux-headers package: "just" the kernel headers, for building out-of-tree modules, dkms, etc.
 # linux-dtbs package: only dtbs, if they exist. in /boot/
 
@@ -202,22 +202,22 @@ function kernel_package_callback_linux_image() {
 
 	# @TODO: we expect _all_ kernels to produce this, which is... not true.
 	declare kernel_pre_package_path="${tmp_kernel_install_dirs[INSTALL_PATH]}"
-	declare kernel_image_pre_package_path="${kernel_pre_package_path}/vmlinuz-${kernel_version_family}"
-	declare installed_image_path="boot/vmlinuz-${kernel_version_family}" # using old mkdebian terminology here for compatibility
+	declare kernel_image_pre_package_path="${kernel_pre_package_path}/vmlinux-${kernel_version_family}"
+	declare installed_image_path="boot/vmlinux-${kernel_version_family}" # using old mkdebian terminology here for compatibility
 
 	display_alert "Showing contents of Kbuild produced /boot" "linux-image" "debug"
 	run_host_command_logged tree -C --du -h "${tmp_kernel_install_dirs[INSTALL_PATH]}"
 
-	display_alert "Kernel-built image filetype" "vmlinuz-${kernel_version_family}: $(file --brief "${kernel_image_pre_package_path}")" "info"
+	display_alert "Kernel-built image filetype" "vmlinux-${kernel_version_family}: $(file --brief "${kernel_image_pre_package_path}")" "info"
 
-	declare image_name="Image" # "Image" for arm64. or, "zImage" for arm, or "vmlinuz" for others. 'image_name' is for easy mkdebian compat
+	declare image_name="Image" # "Image" for arm64. or, "zImage" for arm, or "vmlinux" for others. 'image_name' is for easy mkdebian compat
 	# If NAME_KERNEL is set (usually in arch config file), warn and use that instead.
 	if [[ -n "${NAME_KERNEL}" ]]; then
 		display_alert "NAME_KERNEL is set" "using '${NAME_KERNEL}' instead of '${image_name}'" "debug"
 		image_name="${NAME_KERNEL}"
 	fi
 
-	# allow hook to do stuff here. Some (legacy/vendor/weird) kernels spit out a vmlinuz that needs manual conversion to uImage, etc.
+	# allow hook to do stuff here. Some (legacy/vendor/weird) kernels spit out a vmlinux that needs manual conversion to uImage, etc.
 	run_host_command_logged ls -la "${kernel_pre_package_path}" "${kernel_image_pre_package_path}"
 
 	call_extension_method "pre_package_kernel_image" <<- 'PRE_PACKAGE_KERNEL_IMAGE'
@@ -227,7 +227,7 @@ function kernel_package_callback_linux_image() {
 		The final file that will be used is stored in `${kernel_image_pre_package_path}` -- which you shouldn't change.
 	PRE_PACKAGE_KERNEL_IMAGE
 
-	display_alert "Kernel image filetype after pre_package_kernel_image" "vmlinuz-${kernel_version_family}: $(file --brief "${kernel_image_pre_package_path}")" "info"
+	display_alert "Kernel image filetype after pre_package_kernel_image" "vmlinux-${kernel_version_family}: $(file --brief "${kernel_image_pre_package_path}")" "info"
 
 	unset kernel_pre_package_path       # be done with var after hook
 	unset kernel_image_pre_package_path # be done with var after hook
@@ -289,7 +289,7 @@ function kernel_package_callback_linux_image() {
 			if [[ "${script}" == "preinst" ]]; then
 				cat <<- HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 					if is_boot_dev_vfat; then
-						rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/$image_name /boot/uImage
+						rm -f /boot/System.map* /boot/config* /boot/vmlinux* /boot/$image_name /boot/uImage
 					fi
 				HOOK_FOR_REMOVE_VFAT_BOOT_FILES
 			fi
