@@ -17,12 +17,14 @@ setenv docker_optimizations "on"
 setenv earlycon "off"
 setenv exit_on_critical_errors "on"
 setenv fdt_extrasize "0x00010000"
-setenv load_addr "0x45000000"
 setenv overlay_error "false"
 setenv rootdev "/dev/mmcblk${devnum}p1"
 setenv rootfstype "ext4"
 setenv vendor "allwinner"
 setenv verbosity "1"
+
+# load addresses
+setenv load_addr "0x45000000"
 
 if test "${devtype}" = "mmc"; then
 	setenv devnum ${mmc_bootdev}
@@ -134,6 +136,7 @@ fi
 if test -e ${devtype} ${devnum} "${prefix}.next"; then
 	echo "Found mainline kernel configuration"
 
+	# load the device tree blob
 	setenv file "${fdtdir}/${fdtfile}"
 	if load ${devtype} ${devnum} ${fdt_addr_r} ${file} ; then
 		setenv message "Loaded DT (${file}) from ${devtype} to ${fdt_addr_r}"

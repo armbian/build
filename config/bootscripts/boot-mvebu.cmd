@@ -3,7 +3,7 @@
 # Please edit /boot/armbianEnv.txt to set supported parameters
 #
 
-# default values
+# default environment variables
 setenv align_overlap_oboe_avoidance "on"
 setenv align_to "0x00001000"
 setenv emmc_fix "off"
@@ -25,6 +25,7 @@ setenv fdt_addr_r "0x02040000"
 setenv kernel_addr_r "0x02080000"
 setenv ramdisk_addr_r "0x03080000"
 
+# environment run variables
 setenv align_addr_next 'if test "${align_overlap_oboe_avoidance}" = "on" ; then setexpr addr_next ${addr_next} + 1 ; fi ; setexpr modulo ${addr_next} % ${align_to} ; if itest ${modulo} -gt 0 ; then setexpr addr_next ${addr_next} / ${align_to} ; setexpr addr_next ${addr_next} + 1 ; setexpr addr_next ${addr_next} * ${align_to} ; fi'
 setenv inform 'if test "${verbosity}" != "" ; then if itest ${verbosity} -gt 0 ; then echo "${message}" ; fi ; fi'
 setenv warn 'echo "** WARNING: ${message}"'
@@ -79,6 +80,7 @@ fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} ubootdev=${devtype} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
+# load the device tree blob
 setenv file "${prefix}dtb/${fdtfile}"
 if load ${devtype} ${devnum} ${fdt_addr_r} ${file} ; then
 	setenv message "Loaded DT (${file}) from ${devtype} to ${fdt_addr_r}"
