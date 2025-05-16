@@ -242,7 +242,7 @@ function docker_cli_prepare_dockerfile() {
 	# Prepare some dependencies; these will be used on the Dockerfile
 
 	# @TODO: this might be unified with prepare_basic_deps
-	declare -g -a BASIC_DEPS=("bash" "git" "psmisc" "uuid-runtime")
+	declare -g -a BASIC_DEPS=("bash" "git" "psmisc" "uuid-runtime" "qemu-user-static")
 
 	# initialize the extension manager; enable all extensions; only once..
 	if [[ "${docker_prepare_cli_skip_exts:-no}" != "yes" ]]; then

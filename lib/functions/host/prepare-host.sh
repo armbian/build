@@ -196,7 +196,8 @@ function adaptative_prepare_host_dependencies() {
 		ncurses-base ncurses-term # for `make menuconfig`
 		ntpsec-ntpdate #this is a more secure ntpdate
 		patchutils pkg-config pv
-		"qemu-user-static" "arch-test"
+		qemu-user-static
+		arch-test
 		rsync
 		swig # swig is needed for some u-boot's. example: "bananapi.conf"
 		u-boot-tools
