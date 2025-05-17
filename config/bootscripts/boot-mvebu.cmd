@@ -6,6 +6,7 @@
 # default environment variables
 setenv align_overlap_oboe_avoidance "on"
 setenv align_to "0x00001000"
+setenv default_fdtdir "${prefix}dtb"
 setenv emmc_fix "off"
 setenv eth1addr "00:50:43:25:fb:84"
 setenv eth2addr "00:50:43:84:25:2f"
@@ -80,13 +81,19 @@ fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} ubootdev=${devtype} scandelay loglevel=${verbosity} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
+
+# determine the directory and filename for the base device tree file
+if test "${fdtdir}" = ""; then
+	setenv fdtdir "${default_fdtdir}"
+fi
+
 # load the device tree blob
-setenv file "${prefix}dtb/${fdtfile}"
+setenv file "${fdtdir}/${fdtfile}"
 if load ${devtype} ${devnum} ${fdt_addr_r} ${file} ; then
 	setenv message "Loaded DT (${file}) from ${devtype} to ${fdt_addr_r}"
 	run inform
 else
-	setenv message "Could not load ${file}"
+	setenv message "Could not load DT (${file})"
 	run critical_error
 fi
 
@@ -99,8 +106,8 @@ if test "${overlays}" != "" ; then
 	setenv message "Loading kernel provided DT overlay(s) from ${devtype} to ${load_addr}"
 	run inform
 
-	for overlay_file in ${overlays}; do
-		setenv file "${prefix}dtb/overlay/${overlay_prefix}-${overlay_file}.dtbo"
+	for overlay in ${overlays}; do
+		setenv file "${fdtdir}/overlay/${overlay_prefix}-${overlay}.dtbo"
 		if test -e ${devtype} ${devnum} ${file} ; then
 			if load ${devtype} ${devnum} ${load_addr} ${file} ; then
 				if fdt apply ${load_addr} ; then
@@ -108,15 +115,15 @@ if test "${overlays}" != "" ; then
 					run inform
 				else
 					setenv overlay_error "true"
-					setenv message "Could NOT apply DT overlay ${file}"
+					setenv message "Could NOT apply DT overlay ${overlay} (${file})"
 					run warn
 				fi
 			else
-				setenv message "Could NOT load DT overlay ${file}"
+				setenv message "Could NOT load DT overlay ${overlay} (${file})"
 				run warn
 			fi
 		else
-			setenv message "Could NOT find DT overlay ${file}"
+			setenv message "Could NOT find DT overlay ${overlay} (${file})"
 			run warn
 		fi
 	done
@@ -128,7 +135,7 @@ if test "${user_overlays}" != "" ; then
 	run inform
 
 	for user_overlay in ${user_overlays}; do
-		setenv file "${prefix}overlay-user/${overlay_file}.dtbo"
+		setenv file "${prefix}overlay-user/${user_overlay}.dtbo"
 		if test -e ${devtype} ${devnum} ${file} ; then
 			if load ${devtype} ${devnum} ${load_addr} ${file} ; then
 				if fdt apply ${load_addr} ; then
@@ -136,15 +143,15 @@ if test "${user_overlays}" != "" ; then
 					run inform
 				else
 					setenv overlay_error "true"
-					setenv message "Could NOT apply user DT overlay ${file}"
+					setenv message "Could NOT apply user DT overlay ${user_overlay} (${file})"
 					run warn
 				fi
 			else
-				setenv message "Could NOT load user DT overlay ${file}"
+				setenv message "Could NOT load user DT overlay ${user_overlay} (${file})"
 				run warn
 			fi
 		else
-			setenv message "Could NOT find user DT overlay ${file}"
+			setenv message "Could NOT find user DT overlay ${user_overlay} (${file})"
 			run warn
 		fi
 	done
@@ -154,7 +161,7 @@ if test "${overlay_error}" = "true"; then
 	setenv message "Could not apply DT overlays"
 	run warn
 
-	setenv file "${prefix}dtb/${fdtfile}"
+	setenv file "${fdtdir}/${fdtfile}"
 	if load ${devtype} ${devnum} ${fdt_addr_r} ${file} ; then
 		setenv message "Loaded original DT (${file}) from ${devtype} to ${fdt_addr_r}"
 		run inform
@@ -167,7 +174,7 @@ if test "${overlay_error}" = "true"; then
 		run critical_error
 	fi
 else
-	for fixup_script in ${prefix}dtb/overlay/${overlay_prefix}-fixup.scr ${prefix}fixup.scr ; do
+	for fixup_script in ${fdtdir}/overlay/${overlay_prefix}-fixup.scr ${prefix}fixup.scr ; do
 		if test -e ${devtype} ${devnum} ${fixup_script} ; then
 			if load ${devtype} ${devnum} ${load_addr} ${fixup_script} ; then
 				if source ${load_addr} ; then
@@ -230,7 +237,7 @@ if load ${devtype} ${devnum} ${kernel_addr_r} ${file} ; then
 	setenv message "Loaded kernel (${file}) from ${devtype} to ${kernel_addr_r}"
 	run inform
 else
-	setenv message "Could not load ${file}"
+	setenv message "Could not load kernel (${file})"
 	run critical_error
 fi
 
@@ -245,7 +252,7 @@ if load ${devtype} ${devnum} ${ramdisk_addr_r} ${file} ; then
 	setenv message "Loaded initial ramdisk (${file}) from ${devtype} to ${ramdisk_addr_r}"
 	run inform
 else
-	setenv message "Could not load ${file}"
+	setenv message "Could not load initial ramdisk (${file})"
 	run critical_error
 fi
 

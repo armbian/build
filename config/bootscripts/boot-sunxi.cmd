@@ -93,6 +93,9 @@ if test "${bootlogo}" = "true"; then
 else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
+if test "${earlycon}" = "on" ; then
+	setenv consoleargs "earlycon ${consoleargs}"
+fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} hdmi.audio=EDID:0 disp.screen0_output_mode=${disp_mode} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} ubootsource=${devtype} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
@@ -142,7 +145,7 @@ if test -e ${devtype} ${devnum} "${prefix}.next"; then
 		setenv message "Loaded DT (${file}) from ${devtype} to ${fdt_addr_r}"
 		run inform
 	else
-		setenv message "Could not load ${file}"
+		setenv message "Could not load DT (${file})"
 		run critical_error
 	fi
 
@@ -164,15 +167,15 @@ if test -e ${devtype} ${devnum} "${prefix}.next"; then
 						run inform
 					else
 						setenv overlay_error "true"
-						setenv message "Could NOT apply DT overlay ${file}"
+						setenv message "Could NOT apply DT overlay ${overlay} (${file})"
 						run warn
 					fi
 				else
-					setenv message "Could NOT load DT overlay ${file}"
+					setenv message "Could NOT load DT overlay ${overlay} (${file})"
 					run warn
 				fi
 			else
-				setenv message "Could NOT find DT overlay ${file}"
+				setenv message "Could NOT find DT overlay ${overlay} (${file})"
 				run warn
 			fi
 		done
@@ -192,15 +195,15 @@ if test -e ${devtype} ${devnum} "${prefix}.next"; then
 						run inform
 					else
 						setenv overlay_error "true"
-						setenv message "Could NOT apply user DT overlay ${file}"
+						setenv message "Could NOT apply user DT overlay ${user_overlay} (${file})"
 						run warn
 					fi
 				else
-					setenv message "Could NOT load user DT overlay ${file}"
+					setenv message "Could NOT load user DT overlay ${user_overlay} (${file})"
 					run warn
 				fi
 			else
-				setenv message "Could NOT find user DT overlay ${file}"
+				setenv message "Could NOT find user DT overlay ${user_overlay} (${file})"
 				run warn
 			fi
 		done
@@ -268,7 +271,7 @@ if test -e ${devtype} ${devnum} "${prefix}.next"; then
 		setenv message "Loaded kernel (${file}) from ${devtype} to ${kernel_addr_r}"
 		run inform
 	else
-		setenv message "Could not load ${file}"
+		setenv message "Could not load kernel (${file})"
 		run critical_error
 	fi
 
@@ -281,7 +284,7 @@ if test -e ${devtype} ${devnum} "${prefix}.next"; then
 		setenv message "Loaded initial ramdisk (${file}) from ${devtype} to ${ramdisk_addr_r}"
 		run inform
 	else
-		setenv message "Could not load ${file}"
+		setenv message "Could not load initial ramdisk (${file})"
 		run critical_error
 	fi
 
