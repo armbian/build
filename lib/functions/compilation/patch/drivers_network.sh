@@ -625,11 +625,11 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:b01f1ad2eb45679375266f5098909532c73495c6' # Commit date: 2025-05-10 (please update when updating commit ref)
+		local rtl8723dsver='commit:86e3c4d2203b7f977d36a17c24efe0549afc6e31' # Commit date: 2025-05-14 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
-		fetch_from_repo "$GITHUB_SOURCE/domin144/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes" # https://github.com/lwfinger/rtl8723ds
+		fetch_from_repo "$GITHUB_SOURCE/armbian/rtl8723ds" "rtl8723ds" "${rtl8723dsver}" "yes" # https://github.com/armbian/rtl8723ds
 		cd "$kerneldir" || exit
 		rm -rf "$kerneldir/drivers/net/wireless/rtl8723ds"
 		mkdir -p "$kerneldir/drivers/net/wireless/rtl8723ds/"
