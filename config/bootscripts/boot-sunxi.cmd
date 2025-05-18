@@ -93,9 +93,6 @@ if test "${bootlogo}" = "true"; then
 else
 	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
-if test "${earlycon}" = "on" ; then
-	setenv consoleargs "earlycon ${consoleargs}"
-fi
 
 setenv bootargs "root=${rootdev} rootwait rootfstype=${rootfstype} ${consoleargs} hdmi.audio=EDID:0 disp.screen0_output_mode=${disp_mode} consoleblank=0 loglevel=${verbosity} ubootpart=${partuuid} ubootsource=${devtype} usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
