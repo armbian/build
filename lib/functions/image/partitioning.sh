@@ -352,7 +352,7 @@ function prepare_partitions() {
 
 			run_host_command_logged umount $rootdevice
 			display_alert "Remounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
-			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]} $rootdevice $MOUNT/
+			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]} ${fscreateopt} $rootdevice $MOUNT/
 		fi
 		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
 		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
