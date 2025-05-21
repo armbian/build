@@ -32,9 +32,9 @@ function armbian_kernel_config__create_ksrc_package() {
 		xz < ${kernel_work_dir}/.config > "${sources_pkg_dir}/usr/src/${LINUXCONFIG}_${version}_${REVISION}_config.xz"
 
 		display_alert "Compressing sources for the linux-source package" "${EXTENSION}" "info"
-		tar cp --directory="$kernel_work_dir" --exclude='.git' --owner=root . |
-			pv -p -b -r -s "$(du -sb "$kernel_work_dir" --exclude=='.git' | cut -f1)" |
-			xz -T0 -1 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
+        tar cp --directory="$kernel_work_dir" --exclude='.git' --owner=root . |
+            pv -p -b -r -s "$(du -sb "$kernel_work_dir" --exclude='.git' | cut -f1)" |
+            xz -T0 -1 > "${sources_pkg_dir}/usr/src/linux-source-${version}-${LINUXFAMILY}.tar.xz"
 		cp ${kernel_work_dir}/COPYING "${sources_pkg_dir}/usr/share/doc/linux-source-${version}-${LINUXFAMILY}/LICENSE"
 
 		cat <<- EOF > "${sources_pkg_dir}"/DEBIAN/control
