@@ -12,9 +12,6 @@ function add_host_dependencies__add_fakeroot() {
 function armbian_kernel_config__create_ksrc_package() {
 	if [[ -f .config ]]; then
 
-		#( set -o posix ; set )
-		echo ${kernel_version_family}
-
 		display_alert "Packaging kernel source..." "${EXTENSION}" "info"
 		declare kernel_work_dir="${SRC}/cache/sources/${LINUXSOURCEDIR}"
 		declare CHOSEN_KSRC=linux-source-${BRANCH}-${LINUXFAMILY}
