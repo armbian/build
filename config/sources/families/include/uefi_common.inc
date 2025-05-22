@@ -19,6 +19,18 @@ case "${BRANCH}" in
 		# rpardini: For some regrettable reason, most of this logic is in the grub extension.
 		declare -g DISTRO_GENERIC_KERNEL=yes
 		;;
+	cloud)
+		declare -g GRUB_CMDLINE_LINUX_DEFAULT="selinux=0 loglevel=3 max_loop=32"
+		declare -g KERNEL_MAJOR_MINOR="6.12"
+		declare -g LINUXCONFIG="linux-uefi-${LINUXFAMILY}-cloud"
+		declare -g INSTALL_ARMBIAN_FIRMWARE="no"
+		declare -g EXTRAWIFI="no"
+		declare -g UEFI_GRUB_TIMEOUT=0
+		declare -g QCOW2_RESIZE_AMOUNT="16G"
+		# add additional packages to the image
+		display_alert "Add additional packages to the image" "qemu-guest-agent spice-vdagent" "debug"
+		add_packages_to_image qemu-guest-agent spice-vdagent
+		;;
 
 	legacy)
 		declare -g KERNEL_MAJOR_MINOR="6.6"
@@ -29,7 +41,7 @@ case "${BRANCH}" in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.13"
+		declare -g KERNEL_MAJOR_MINOR="6.14"
 		;;
 esac
 
@@ -46,7 +58,7 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 	declare -g ATF_COMPILE="no"
 
 	declare -g BOOTDIR="qemu-uboot-${LINUXFAMILY}"
-	declare -g BOOTBRANCH='tag:v2023.10'
+	declare -g BOOTBRANCH='tag:v2025.01'
 	declare -g BOOTSOURCE='https://github.com/u-boot/u-boot' # Gotta set this again, it is unset by grub extension
 
 	declare -g BOOTCONFIG="${QEMU_UBOOT_BOOTCONFIG}"
@@ -67,3 +79,10 @@ if [[ "${QEMU_UBOOT_BOOTCONFIG}" != "" ]]; then
 	}
 
 fi
+
+function pre_customize_image__disable_few_armbian_services() {
+	display_alert "Disabling Armbian services that are not needed for UEFI" "${BOARD}" "info"
+	chroot_sdcard systemctl disable armbian-hardware-monitor.service "||" true
+	chroot_sdcard systemctl disable armbian-hardware-optimize.service "||" true
+	chroot_sdcard systemctl disable armbian-led-state.service "||" true
+}

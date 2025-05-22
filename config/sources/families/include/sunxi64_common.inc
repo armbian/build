@@ -9,7 +9,7 @@
 enable_extension "sunxi-tools"
 declare -g ARCH=arm64
 declare -g ATF_TARGET_MAP="PLAT=$ATF_PLAT DEBUG=1 bl31;;build/$ATF_PLAT/debug/bl31.bin"
-declare -g ATFBRANCH="tag:v2.9.0"
+declare -g ATFBRANCH="tag:lts-v2.12.1"
 declare -g BOOTDELAY=1
 declare -g BOOTPATCHDIR="${BOOTPATCHDIR:-"u-boot-sunxi"}"
 declare -g BOOTBRANCH="${BOOTBRANCH:-"tag:v2024.01"}"
@@ -25,18 +25,18 @@ source "${BASH_SOURCE%/*}/crust_firmware.inc"
 case $BRANCH in
 
 	legacy)
-		declare -g KERNEL_MAJOR_MINOR="6.1" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.1.104"
+		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.6.75" # frozen on this version
 		;;
 
 	current)
-		declare -g KERNEL_MAJOR_MINOR="6.6" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.6.75"
+		declare -g KERNEL_MAJOR_MINOR="6.12" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.12.23"
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.12" # Major and minor versions of this kernel.
-		declare -g KERNELBRANCH="tag:v6.12.9"
+		declare -g KERNEL_MAJOR_MINOR="6.14" # Major and minor versions of this kernel.
+		declare -g KERNELBRANCH="tag:v6.14.5"
 		;;
 esac
 

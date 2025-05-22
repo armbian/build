@@ -10,7 +10,7 @@ echo "INITRD LOAD ADDRESS: ramdisk_addr_r: ${ramdisk_addr_r}"
 echo "FDT LOAD ADDRESS   : fdt_addr      : ${fdt_addr}"
 
 # /vmlinuz and /initrd.img are standard Debian symlinks to the "latest installed kernel"
-load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} /vmlinuz
+load ${devtype} ${devnum}:${distro_bootpart} ${kernel_addr_r} ${prefix}vmlinuz
 # Attention, this is uInitrd for uboot/ARM; there's a symlink put there by Armbian hooks
 load ${devtype} ${devnum}:${distro_bootpart} ${ramdisk_addr_r} ${prefix}uInitrd
 

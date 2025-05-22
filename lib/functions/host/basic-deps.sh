@@ -14,7 +14,7 @@
 function prepare_host_basic() {
 
 	# command:package1 package2 ...
-	# list of commands that are neeeded:packages where this command is
+	# list of commands that are needed:packages where this command is
 	local check_pack install_pack
 	local checklist=(
 		"dialog:dialog"
@@ -26,6 +26,7 @@ function prepare_host_basic() {
 		"linux-version:linux-base"
 		"locale-gen:locales"
 		"git:git"
+		"wget:wget"
 	)
 
 	for check_pack in "${checklist[@]}"; do

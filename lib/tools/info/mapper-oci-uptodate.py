@@ -99,9 +99,8 @@ def check_oci_up_to_date_cache(oci_target: str, really_check: bool = False):
 		log.debug(f"No cache file for '{oci_target}'")
 
 		try:
-			container = client.remote.get_container(oci_target)
-			client.remote.load_configs(container)
-			manifest = client.remote.get_manifest(container)
+			container = client.get_container(oci_target)
+			manifest = client.get_manifest(container)
 			log.debug(f"Got manifest for '{oci_target}'.")
 			ret["up-to-date"] = True
 			ret["reason"] = "manifest_exists"

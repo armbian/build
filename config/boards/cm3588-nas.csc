@@ -9,7 +9,7 @@ FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 IMAGE_PARTITION_TABLE="gpt"
 BOOT_FDT_FILE="rockchip/rk3588-friendlyelec-cm3588-nas.dtb"
-BOOT_SCENARIO="spl-blobs"
+BOOT_SCENARIO="tpl-blob-atf-mainline"
 UEFI_EDK2_BOARD_ID="nanopc-cm3588-nas" # This _only_ used for uefi-edk2-rk3588 extension; cm3588-nas was introduced in v0.12 of edk2-porting/edk2-rk3588
 
 function post_family_tweaks__cm3588_nas_udev_naming_audios() {
@@ -46,7 +46,7 @@ function post_family_config__cm3588_nas_use_mainline_uboot() {
 	declare -g BOOTBRANCH="tag:v2025.01"
 	declare -g BOOTPATCHDIR="v2025.01"
 	declare -g BOOTDIR="u-boot-${BOARD}" # do not share u-boot directory
-	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
+	declare -g UBOOT_TARGET_MAP="BL31=bl31.elf ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd # Disable stuff from rockchip64_common; we're using binman here which does all the work
 
 	# Just use the binman-provided u-boot-rockchip.bin, which is ready-to-go

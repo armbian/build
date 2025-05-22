@@ -16,6 +16,11 @@
 
 # Read in basic OS image information
 . /etc/armbian-release
+
+# Read mkfs version as it behaves differently after v2.40.1 (Trixie / Plucky ->)
+# mkfs is used to create the zram devices and the ramlog partition
+MKFS_VERSION=$(mkfs --version | grep -oP '\d+\.\d+\.\d+')
+
 # and script configuration
 . /usr/lib/armbian/armbian-common
 
@@ -25,6 +30,8 @@ ENABLED=false
 [ -f /etc/default/armbian-zram-config ] && . /etc/default/armbian-zram-config
 # Exit if not Enabled
 [[ "$ENABLED" != "true" ]] && exit 0
+# Exit if module not Loaded
+if ! modinfo "zram" 2>/dev/null; then exit 0; fi
 
 # Do not interfere with already present zram-config package
 dpkg -l | grep -q 'zram-config' && exit 0
@@ -60,7 +67,7 @@ activate_zram_swap() {
 	# swap file or partition on *capable* storage needs to be chosen and
 	# defined as swap and also in /etc/default/armbian-zram-config SWAP=false
 	# needs to be set.
-	echo 0 >/sys/module/zswap/parameters/enabled 2>/dev/null
+	[[ -f /sys/module/zswap/parameters/enabled ]] && echo 0 >/sys/module/zswap/parameters/enabled
 
 	# Limit Journal size to 20Mb
 	sed -i "s/.*SystemMaxUse=$/SystemMaxUse=20M/" /etc/systemd/journald.conf
@@ -121,7 +128,12 @@ activate_ramlog_partition() {
 		echo -n ${disksize} > /sys/block/${log_device}/disksize
 	fi
 
-	mkfs.ext4 -O ^has_journal -s 1024 -L log2ram /dev/${log_device}
+	if dpkg --compare-versions "$MKFS_VERSION" gt "2.40.1"; then
+		mkfs.ext4 -O ^has_journal -L log2ram /dev/${log_device}
+	else
+		mkfs.ext4 -O ^has_journal -s 1024 -L log2ram /dev/${log_device}
+	fi
+
 	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/${log_device}/comp_algorithm)
 	printf "### Activated Armbian ramlog partition with %s compression\n" "${algo}" >> ${Log}
 } # activate_ramlog_partition
@@ -140,7 +152,12 @@ activate_compressed_tmp() {
 		fi
 	fi
 	[[ -z ${TMP_SIZE} ]] && echo -n $(( memory_total / 2 )) > /sys/block/${tmp_device}/disksize || echo -n ${TMP_SIZE} > /sys/block/${tmp_device}/disksize
-	mkfs.ext4 -O ^has_journal -s 1024 -L tmp /dev/${tmp_device}
+	if dpkg --compare-versions "$MKFS_VERSION" gt "2.40.1"; then
+		mkfs.ext4 -O ^has_journal -L tmp /dev/${tmp_device}
+	else
+		mkfs.ext4 -O ^has_journal -s 1024 -L tmp /dev/${tmp_device}
+	fi
+
 	mount -o nosuid,discard /dev/${tmp_device} /tmp
 	chmod 1777 /tmp
 	algo=$(sed 's/.*\[\([^]]*\)\].*/\1/g' </sys/block/${tmp_device}/comp_algorithm)

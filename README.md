@@ -19,14 +19,14 @@
 
 ### Requirements for self hosted
 
-- x86_64 / aarch64 machine
-- at least 2GB of memory and ~35GB of disk space for VM, container or bare metal installation
-- [Armbian / Ubuntu Jammy 22.04.x](https://github.com/armbian/sdk) for native building or any Docker capable Linux for containerised
-- Windows 10/11 with WSL2 subsystem running Ubuntu Jammy 22.04.x
+- x86_64 / aarch64 / riscv64 machine
+- at least 8GB (less for non-[BTF](https://docs.kernel.org/bpf/btf.html) builds) of memory and ~50GB of disk space for VM, container, or bare-metal installation
+- **Armbian / Ubuntu Jammy 22.04.x** for native building or any Docker capable Linux for containerised
+- **Windows 10/11 with WSL2 subsystem** running Armbian / Ubuntu Jammy 22.04.x
 - Superuser rights (configured sudo or root access).
-- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble.
+- Make sure your system is up-to-date! Outdated Docker binaries, for example, can cause trouble
 
-For stable branch use `--branch=v24.11`
+For stable branch use `--branch=v25.05`
 
 ```bash
 apt-get -y install git
@@ -55,7 +55,7 @@ Build minimal CLI Armbian Jammy for Bananapi M5 with LTS kernel:
 ./compile.sh \
 BOARD=bananapim5 \
 BRANCH=current \
-RELEASE=jammy \
+RELEASE=noble \
 BUILD_MINIMAL=yes \
 BUILD_DESKTOP=no \
 KERNEL_CONFIGURE=no
@@ -69,12 +69,12 @@ on:
   workflow_dispatch:
 jobs:
   build-armbian:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm # use ubuntu-24.04 when building x86 or riscv64
     steps:
       - uses: armbian/build@main
         with:
           armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
-          armbian_release:   "jammy"                        # userspace
+          armbian_release:   "noble"                        # userspace
           armbian_target:    "build"                        # build=image, kernel=kernel
           armbian_board:     "bananapim5"                   # build target
 ```
@@ -184,8 +184,7 @@ Function | Armbian | Yocto | Buildroot |
 |       └── u-boot-family                For entire kernel family
 ├── tools                                Tools for dealing with kernel patches and configs
 └── userpatches                          User: configuration patching area
-    ├── lib.config                       User: framework common config/override file
-    ├── config-default.conf              User: default user config file
+    ├── config-example.conf              User: example user config file
     ├── customize-image.sh               User: script will execute just before closing the image
     ├── atf                              User: ARM trusted firmware
     ├── kernel                           User: Linux kernel per kernel family

@@ -89,6 +89,7 @@ function prepare_partitions() {
 
 	# default BOOTSIZE to use if not specified
 	DEFAULT_BOOTSIZE=256 # MiB
+	SECTOR_SIZE=${SECTOR_SIZE:-512}
 	# size of UEFI partition. 0 for no UEFI. Don't mix UEFISIZE>0 and BOOTSIZE>0
 	UEFISIZE=${UEFISIZE:-0}
 	BIOSSIZE=${BIOSSIZE:-0}
@@ -242,9 +243,18 @@ function prepare_partitions() {
 		)
 		# Output the partitioning options from above to the debug log first and then pipe it into the 'sfdisk' command
 		display_alert "Partitioning with the following options" "$partition_script_output" "debug"
-		echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
+
+		# Check sfdisk version to determine if --sector-size is supported
+		sfdisk_version=$(sfdisk --version | awk '/util-linux/ {print $NF}')
+		sfdisk_version_num=$(echo "$sfdisk_version" | awk -F. '{printf "%d%02d%02d\n", $1, $2, $3}')
+		if [ "$sfdisk_version_num" -ge "24100" ]; then
+			echo "${partition_script_output}" | run_host_command_logged sfdisk --sector-size "$SECTOR_SIZE" "${SDCARD}".raw || exit_with_error "Partitioning failed!"
+		else
+			echo "${partition_script_output}" | run_host_command_logged sfdisk "${SDCARD}".raw || exit_with_error "Partitioning failed!"
+		fi
+
 	fi
-	
+
 	call_extension_method "post_create_partitions" <<- 'POST_CREATE_PARTITIONS'
 		*called after all partitions are created, but not yet formatted*
 	POST_CREATE_PARTITIONS
@@ -256,7 +266,11 @@ function prepare_partitions() {
 
 	declare -g LOOP
 	#--partscan is using to force the kernel for scaning partition table in preventing of partprobe errors
-	LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	if [ "$sfdisk_version_num" -ge "24100" ]; then
+		LOOP=$(losetup --show --partscan --find -b "$SECTOR_SIZE" "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	else
+		LOOP=$(losetup --show --partscan --find "${SDCARD}".raw) || exit_with_error "Unable to find free loop device"
+	fi
 	display_alert "Allocated loop device" "LOOP=${LOOP}"
 
 	# loop device was grabbed here, unlock
@@ -314,9 +328,54 @@ function prepare_partitions() {
 			echo "$CRYPTROOT_MAPPER UUID=${physical_root_part_uuid} none luks" >> $SDCARD/etc/crypttab
 			run_host_command_logged cat $SDCARD/etc/crypttab
 		fi
-		
+
+		if [[ $ROOTFS_TYPE == btrfs ]]; then
+			btrfs_root_subvolume="${BTRFS_ROOT_SUBVOLUME:-@}"
+			mountopts[$ROOTFS_TYPE]='commit=120'
+			run_host_command_logged btrfs subvolume create $MOUNT/$btrfs_root_subvolume
+			# getting the subvolume id of the newly created volume @ to install it
+			# as the default volume for mounting without explicit reference
+
+			run_host_command_logged "btrfs subvolume set-default $MOUNT/$btrfs_root_subvolume"
+
+			call_extension_method "btrfs_root_add_subvolumes" <<- 'BTRFS_ROOT_ADD_SUBVOLUMES'
+				# *custom post btrfs rootfs creation hook*
+				# Called if rootfs btrfs after creating the subvolume "@" for rootfs
+				# Used to create other separate btrfs subvolume if needed.
+				# Mountpoints and fstab records should be created too.
+				run_host_command_logged btrfs subvolume create $MOUNT/@home
+				run_host_command_logged btrfs subvolume create $MOUNT/@var
+				run_host_command_logged btrfs subvolume create $MOUNT/@var_log
+				run_host_command_logged btrfs subvolume create $MOUNT/@var_cache
+				run_host_command_logged btrfs subvolume create $MOUNT/@srv
+			BTRFS_ROOT_ADD_SUBVOLUMES
+
+			run_host_command_logged umount $rootdevice
+			display_alert "Remounting rootfs" "$rootdevice (UUID=${ROOT_PART_UUID})"
+			run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]} ${fscreateopt} $rootdevice $MOUNT/
+		fi
 		rootfs="UUID=$(blkid -s UUID -o value $rootdevice)"
-		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,noatime${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		echo "$rootfs / ${mkfs[$ROOTFS_TYPE]} defaults,${mountopts[$ROOTFS_TYPE]} 0 1" >> $SDCARD/etc/fstab
+		if [[ $ROOTFS_TYPE == btrfs ]]; then
+			call_extension_method "btrfs_root_add_subvolumes_fstab" <<- 'BTRFS_ROOT_ADD_SUBVOLUMES_FSTAB'
+				run_host_command_logged mkdir -p $MOUNT/home
+				run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]},subvol=@home $rootdevice $MOUNT/home
+				echo "$rootfs /home btrfs defaults,${mountopts[$ROOTFS_TYPE]},subvol=@home 0 2" >> $SDCARD/etc/fstab
+				run_host_command_logged mkdir -p $MOUNT/var
+				run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]},subvol=@var $rootdevice $MOUNT/var
+				echo "$rootfs /var btrfs defaults,${mountopts[$ROOTFS_TYPE]},subvol=@var 0 2" >> $SDCARD/etc/fstab
+				run_host_command_logged mkdir -p $MOUNT/var/log
+				run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]},subvol=@var_log $rootdevice $MOUNT/var/log
+				echo "$rootfs /var/log btrfs defaults,${mountopts[$ROOTFS_TYPE]},subvol=@var_log 0 2" >> $SDCARD/etc/fstab
+				run_host_command_logged mkdir -p $MOUNT/var/cache
+				run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]},subvol=@var_cache $rootdevice $MOUNT/var/cache
+				echo "$rootfs /var/cache btrfs defaults,${mountopts[$ROOTFS_TYPE]},subvol=@var_cache 0 2" >> $SDCARD/etc/fstab
+				run_host_command_logged mkdir -p  $MOUNT/srv
+				run_host_command_logged mount -odefaults,${mountopts[$ROOTFS_TYPE]},subvol=@srv $rootdevice $MOUNT/srv
+				echo "$rootfs /srv btrfs defaults,${mountopts[$ROOTFS_TYPE]},subvol=@srv 0 2" >> $SDCARD/etc/fstab
+			BTRFS_ROOT_ADD_SUBVOLUMES_FSTAB
+		fi
+
 		run_host_command_logged cat $SDCARD/etc/fstab
 
 	else
