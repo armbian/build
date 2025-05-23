@@ -55,7 +55,7 @@ Build minimal CLI Armbian Jammy for Bananapi M5 with LTS kernel:
 ./compile.sh \
 BOARD=bananapim5 \
 BRANCH=current \
-RELEASE=jammy \
+RELEASE=noble \
 BUILD_MINIMAL=yes \
 BUILD_DESKTOP=no \
 KERNEL_CONFIGURE=no
@@ -69,12 +69,12 @@ on:
   workflow_dispatch:
 jobs:
   build-armbian:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm # use ubuntu-24.04 when building x86 or riscv64
     steps:
       - uses: armbian/build@main
         with:
           armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
-          armbian_release:   "jammy"                        # userspace
+          armbian_release:   "noble"                        # userspace
           armbian_target:    "build"                        # build=image, kernel=kernel
           armbian_board:     "bananapim5"                   # build target
 ```
