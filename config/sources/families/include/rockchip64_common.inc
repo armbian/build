@@ -323,8 +323,8 @@ write_uboot_platform_mtd() {
 		((i++))
 	done <<< "$FILES"
 
-	# If there is only one image, we can skip the dialog
-	if [[ $i -eq 2 ]]; then
+	# If there is only one image or the terminal is not interactive, we can skip the dialog
+	if [[ ! -t 1 || $i -eq 2 ]]; then
 		dd if=$1/${MENU_ITEMS[1]} of=$2 conv=notrunc status=none > /dev/null 2>&1
 		return
 	fi
@@ -340,7 +340,8 @@ write_uboot_platform_mtd() {
   		3>&1 1>&2 2>&3)
 
 	if [ $? -eq 0 ]; then
-		dd if=$1/${MENU_ITEMS[($CHOICE*3)-2]} of=$2 conv=notrunc status=none > /dev/null 2>&1
+		idx=$((CHOICE*3-2))
+		dd if=$1/${MENU_ITEMS[$idx]} of=$2 conv=notrunc status=none > /dev/null 2>&1
 	else
 		echo "No SPI image chosen."
 		exit 1
