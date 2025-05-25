@@ -20,8 +20,10 @@ function customize_image() {
 		If you need repos, please consider `post_armbian_repo_customize_image` or `post_repo_customize_image`.
 	PRE_CUSTOMIZE_IMAGE
 
-	cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
-	chmod +x "${SDCARD}"/tmp/customize-image.sh
+	if [[ -f "$USERPATCHES_PATH"/customize-image.sh ]]; then
+		cp "$USERPATCHES_PATH"/customize-image.sh "${SDCARD}"/tmp/customize-image.sh
+		chmod +x "${SDCARD}"/tmp/customize-image.sh
+	fi
 	mkdir -p "${SDCARD}"/tmp/overlay
 
 	# util-linux >= 2.27 required
