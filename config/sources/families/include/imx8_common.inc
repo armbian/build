@@ -11,7 +11,7 @@ ARCH="arm64"
 KERNEL_IMAGE_TYPE="Image"
 OVERLAY_DIR="/boot/dtb/freescale/overlay"
 SRC_EXTLINUX="yes" # use extlinux as default
-IMX_FIRMWARE="${IMX_FIRMWARE:-"firmware-imx-8.12"}"
+IMX_FIRMWARE="${IMX_FIRMWARE:-"firmware-imx-8.26-d4c33ab"}"
 # ATF_PLAT musst set in board
 # ATF_UART_BASE musst set in board
 # MAP = target_make,target_patchdir,target_files
