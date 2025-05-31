@@ -37,8 +37,15 @@ function chroot_sdcard_apt_get_remove() {
 	DONT_MAINTAIN_APT_CACHE="yes" chroot_sdcard_apt_get remove "$@"
 }
 
+function chroot_sdcard_custom_with_apt_logic() {
+	declare command="${1}"
+	shift
+	chroot_command="${command}" chroot_sdcard_apt_get "$@"
+}
+
 function chroot_sdcard_apt_get() {
 	acng_check_status_or_restart # make sure apt-cacher-ng is running OK.
+	declare apt_get_command="${chroot_command:-"apt-get"}"
 	declare default_apt_logging="-qq"
 	if [[ "${SHOW_DEBUG}" == "yes" ]]; then
 		default_apt_logging=""
@@ -83,7 +90,7 @@ function chroot_sdcard_apt_get() {
 		prelude_clean_env=("env" "-i")
 	fi
 
-	local_apt_deb_cache_prepare "before 'apt-get $*'" # sets LOCAL_APT_CACHE_INFO
+	local_apt_deb_cache_prepare "before '${apt_get_command} $*'" # sets LOCAL_APT_CACHE_INFO
 	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
 		# prepare and mount apt cache dir at /var/cache/apt/archives in the SDCARD.
 		skip_error_info="yes" run_host_command_logged mkdir -pv "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "${LOCAL_APT_CACHE_INFO[SDCARD_LISTS_DIR]}"
@@ -104,9 +111,14 @@ function chroot_sdcard_apt_get() {
 	display_alert "Extra envs for apt:" "${extra_envs[*]@Q}" "debug"
 
 	local chroot_apt_result=1
-	chroot_sdcard "${prelude_clean_env[@]}" "${extra_envs[@]}" apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
+	if [[ "${apt_get_command}" == "apt-get" ]]; then
+		chroot_sdcard "${prelude_clean_env[@]}" "${extra_envs[@]}" apt-get "${apt_params[@]}" "$@" && chroot_apt_result=0
+	else
+		# custom case: does not pass the apt parameters; but envs are passed normally.
+		chroot_sdcard "${prelude_clean_env[@]}" "${extra_envs[@]}" "${apt_get_command}" "$@" && chroot_apt_result=0
+	fi
 
-	local_apt_deb_cache_prepare "after 'apt-get $*'" # sets LOCAL_APT_CACHE_INFO
+	local_apt_deb_cache_prepare "after '${apt_get_command} $*'" # sets LOCAL_APT_CACHE_INFO
 	if [[ "${LOCAL_APT_CACHE_INFO[USE]}" == "yes" ]]; then
 		display_alert "Unmounting apt deb cache dir" "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}" "debug"
 		run_host_command_logged umount "${LOCAL_APT_CACHE_INFO[SDCARD_DEBS_DIR]}"
