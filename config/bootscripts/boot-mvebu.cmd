@@ -55,7 +55,6 @@ setenv func_inform 'test "${verbosity}" = "" || itest ${verbosity} -gt 0 && echo
 setenv func_warn 'echo "** WARNING: ${l_message}"'
 setenv func_critical_error '
 	echo "!! CRITICAL: ${l_message}" ;
-	sleep 10 ;
 	if test "${exit_on_critical_errors}" = "on" ; then
 		false ;
 	else
