@@ -58,7 +58,7 @@ setenv func_critical_error '
 	sleep 10 ;
 	if test "${exit_on_critical_errors}" = "on" ; then
 		false ;
-	else ;
+	else
 		true ;
 	fi'
 
