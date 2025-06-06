@@ -525,7 +525,11 @@ driver_uwe5622() {
 		fi
 
 		if linux-version compare "${version}" ge 6.15; then
-			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.15-timer-api-changes.patch" "applying"
+			if [[ "$LINUXFAMILY" == sunxi* ]]; then
+				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-fix-timer-api-changes-for-6.15-only-sunxi.patch" "applying"
+			else
+				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.15-timer-api-changes.patch" "applying"
+			fi
 		fi
 	fi
 }
