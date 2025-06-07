@@ -367,8 +367,14 @@ function armbian_kernel_config__restore_enable_gpio_sysfs() {
 #
 function kernel_config_set_m() {
 	declare module="$1"
-	display_alert "Enabling kernel module" "${module}=m" "debug"
-	run_host_command_logged ./scripts/config --module "$module"
+	state=$(./scripts/config --state "$module")
+
+	if [ "$state" == "y" ]; then
+		display_alert "${module} is already enabled as built-in"
+	else
+		display_alert "Enabling kernel module" "${module}=m" "debug"
+		run_host_command_logged ./scripts/config --module "$module"
+	fi
 }
 
 function kernel_config_set_y() {
