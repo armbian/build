@@ -33,7 +33,7 @@ case $BRANCH in
 		;;
 
 	edge)
-		declare -g KERNEL_MAJOR_MINOR="6.14"
+		declare -g KERNEL_MAJOR_MINOR="6.15"
 		declare -g LINUXFAMILY=rockchip64
 		declare -g LINUXCONFIG='linux-rockchip64-'$BRANCH
 		;;
@@ -166,7 +166,7 @@ prepare_boot_configuration() {
 			ATFSOURCE='https://github.com/ARM-software/arm-trusted-firmware'
 			ATF_COMPILER='aarch64-linux-gnu-'
 			ATFDIR='arm-trusted-firmware'
-			ATFBRANCH='tag:v2.12.0'
+			ATFBRANCH='tag:v2.13.0'
 			ATF_USE_GCC='> 6.3'
 			ATF_TARGET_MAP="M0_CROSS_COMPILE=arm-linux-gnueabi- PLAT=$BOOT_SOC bl31;;build/$BOOT_SOC/release/bl31/bl31.elf:bl31.elf"
 			ATF_TOOLCHAIN2="arm-linux-gnueabi-:< 10.0"

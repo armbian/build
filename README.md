@@ -187,6 +187,7 @@ Function | Armbian | Yocto | Buildroot |
     ├── config-example.conf              User: example user config file
     ├── customize-image.sh               User: script will execute just before closing the image
     ├── atf                              User: ARM trusted firmware
+    ├── extensions                       User: Extend build system with specific functionality
     ├── kernel                           User: Linux kernel per kernel family
     ├── misc                             User: various
     └── u-boot                           User: universal boot loader patches

@@ -397,7 +397,7 @@ function build_artifact_for_image() {
 
 function pack_artifact_to_local_cache() {
 	if [[ "${artifact_type}" == "deb-tar" ]]; then
-		declare -a files_to_tar=()
+		wait_for_disk_sync "before pack_artifact_to_local_cache for deb-tar"
 		run_host_command_logged tar -C "${artifact_base_dir}" -cf "${artifact_final_file}" "${artifact_map_debs[@]}"
 		display_alert "Created deb-tar artifact" "deb-tar: ${artifact_final_file}" "info"
 	fi

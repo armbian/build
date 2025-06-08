@@ -13,6 +13,8 @@ KERNEL_TARGET="current"
 KERNEL_TEST_TARGET="current"
 SERIALCON="ttyS2"
 ATF_BOARD="lite"
+OPTEE_ARGS=""
+OPTEE_PLATFORM="k3-am62x"
 
 # Use these branches until BeagleY-AI goes upstream
 function post_family_config_branch_current__beagley_ai_use_beagle_kernel_uboot() {

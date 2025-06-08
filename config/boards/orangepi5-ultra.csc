@@ -16,15 +16,6 @@ IMAGE_PARTITION_TABLE="gpt"
 #enable_extension "bcmdhd"
 BCMDHD_TYPE="sdio"
 
-# for testing purpose only. needs adaption to mainline once this makes it into 6.15 or .16
-function post_family_config_branch_edge__orangepi5-ultra_use_custom_source() {
-	KERNEL_MAJOR_MINOR="6.14"   # Major and minor versions of this kernel.
-	KERNELSOURCE='https://github.com/jimmyhon/linux.git'
-	KERNELBRANCH='branch:integrate-6.15'
-	KERNELPATCHDIR='integrate-6.15'
-	EXTRAWIFI=no # due to absence of our own fixups 3rd party wifi drivers break
-}
-
 function post_family_tweaks__orangepi5ultra_naming_audios() {
 	display_alert "$BOARD" "Renaming orangepi5ultra audios" "info"
 

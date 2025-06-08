@@ -203,7 +203,7 @@ function adaptative_prepare_host_dependencies() {
 		udev # causes initramfs rebuild, but is usually pre-installed.
 		uuid-dev
 		zlib1g-dev
-		gcc-arm-linux-gnueabi # necessary for rockchip64 (and maybe other too) ATF compilation  
+		gcc-arm-linux-gnueabi # necessary for rockchip64 (and maybe other too) ATF compilation
 
 		# by-category below
 		file tree expect                         # logging utilities; expect is needed for 'unbuffer' command
@@ -227,6 +227,12 @@ function adaptative_prepare_host_dependencies() {
 
 	# Needed for some u-boot's, lest "tools/mkeficapsule.c:21:10: fatal error: gnutls/gnutls.h"
 	host_dependencies+=("libgnutls28-dev")
+
+	# Some versions of U-Boot do not require/import 'python3-setuptools' properly, so add them explicitly.
+	if [[ 'tag:v2022.04' == "${BOOTBRANCH:-}" || 'tag:v2022.07' == "${BOOTBRANCH:-}" ]]; then
+		display_alert "Adding package to 'host_dependencies'" "python3-setuptools" "info"
+		host_dependencies+=("python3-setuptools")
+	fi
 
 	### Python2 -- required for some older u-boot builds
 	# Debian newer than 'bookworm' and Ubuntu newer than 'lunar'/'mantic' does not carry python2 anymore; in this case some u-boot's might fail to build.
