@@ -411,10 +411,10 @@ function docker_cli_prepare_launch() {
 		"--env" "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
 
 		# Pass proxy args
-		"--env" "HTTP_PROXY=${HTTP_PROXY}"
+ 		"--env" "http_proxy=${http_proxy:-${HTTP_PROXY}}"
+ 		"--env" "https_proxy=${https_proxy:-${HTTPS_PROXY}}"
+ 		"--env" "HTTP_PROXY=${HTTP_PROXY}"
 		"--env" "HTTPS_PROXY=${HTTPS_PROXY}"
-		"--env" "http_proxy=${HTTP_PROXY}"
-		"--env" "https_proxy=${HTTPS_PROXY}"
 		"--env" "APT_PROXY_ADDR=${APT_PROXY_ADDR}"
 	)
 
