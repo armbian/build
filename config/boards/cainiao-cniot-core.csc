@@ -10,6 +10,9 @@ FULL_DESKTOP="yes"
 SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="amlogic/meson-g12b-a311d-cainiao-cniot-core.dtb"
+# playback via HDMI: aplay -D plughw:CNIoTCORE,0 /usr/share/sounds/alsa/Front_Center.wav
+# playback via internal speaker: aplay -D plughw:CNIoTCORE,1 /usr/share/sounds/alsa/Front_Center.wav
+ASOUND_STATE="asound.state.cainiao-cniot-core"
 
 BOOTBRANCH_BOARD="tag:v2025.04"
 BOOTPATCHDIR="v2025.04" # This has a patch that adds support for CAINIAO CNIoT-CORE.
