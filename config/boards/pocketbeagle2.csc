@@ -13,8 +13,9 @@ KERNEL_TEST_TARGET="edge"
 SERIALCON="ttyS2"
 ATF_BOARD="lite"
 SRC_EXTLINUX="yes"
-SRC_CMDLINE="console=ttyS2,115200n8"
+SRC_CMDLINE="root=/dev/mmcblk1p2 rootwait console=ttyS2,115200n8"
 BOOT_FDT_FILE="ti/k3-am6232-pocketbeagle2.dtb"
+OPTEE_PLATFORM="k3-am62x"
 
 #Until PB2 goes upstream, use this branch
 function post_family_config_branch_edge__pocketbeagle2_use_beagle_kernel_uboot() {
@@ -22,9 +23,9 @@ function post_family_config_branch_edge__pocketbeagle2_use_beagle_kernel_uboot()
 
 	declare -g KERNELSOURCE="https://github.com/beagleboard/linux" # BeagleBoard kernel
 	declare -g KERNEL_MAJOR_MINOR="6.12"
-	declare -g KERNELBRANCH="branch:v6.12.13-ti-arm64-r24"
+	declare -g KERNELBRANCH="branch:v6.12.24-ti-arm64-r41"
 	declare -g LINUXFAMILY="k3-beagle" # Separate kernel package from the regular `k3` family
 
 	declare -g BOOTSOURCE="https://github.com/beagleboard/u-boot" # BeagleBoard u-boot
-	declare -g BOOTBRANCH="branch:v2025.01-pocketbeagle2"
+	declare -g BOOTBRANCH="branch:v2025.04-pocketbeagle2"
 }
