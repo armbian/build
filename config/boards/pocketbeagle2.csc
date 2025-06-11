@@ -1,0 +1,31 @@
+#Texas Instruments AM62 dual core 1GB USB2 DDR4
+
+BOARD_NAME="PocketBeagle 2"
+BOARDFAMILY="k3"
+BOARD_MAINTAINER="Grippy98"
+BOOTCONFIG="am6232_pocketbeagle2_a53_defconfig"
+BOOTFS_TYPE="fat"
+TIBOOT3_BOOTCONFIG="am6232_pocketbeagle2_r5_defconfig"
+TIBOOT3_FILE="tiboot3-am62x-hs-fs-evm.bin"
+DEFAULT_CONSOLE="serial"
+KERNEL_TARGET="edge"
+KERNEL_TEST_TARGET="edge"
+SERIALCON="ttyS2"
+ATF_BOARD="lite"
+SRC_EXTLINUX="yes"
+SRC_CMDLINE="root=/dev/mmcblk1p2 rootwait console=ttyS2,115200n8"
+BOOT_FDT_FILE="ti/k3-am6232-pocketbeagle2.dtb"
+OPTEE_PLATFORM="k3-am62x"
+
+#Until PB2 goes upstream, use this branch
+function post_family_config_branch_edge__pocketbeagle2_use_beagle_kernel_uboot() {
+	display_alert "$BOARD" " beagleboard (next branch) u-boot and kernel overrides for $BOARD / $BRANCH" "info"
+
+	declare -g KERNELSOURCE="https://github.com/beagleboard/linux" # BeagleBoard kernel
+	declare -g KERNEL_MAJOR_MINOR="6.12"
+	declare -g KERNELBRANCH="branch:v6.12.24-ti-arm64-r41"
+	declare -g LINUXFAMILY="k3-beagle" # Separate kernel package from the regular `k3` family
+
+	declare -g BOOTSOURCE="https://github.com/beagleboard/u-boot" # BeagleBoard u-boot
+	declare -g BOOTBRANCH="branch:v2025.04-pocketbeagle2"
+}
