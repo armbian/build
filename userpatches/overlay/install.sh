@@ -308,5 +308,47 @@ if [ "$(get_install_stage)" -eq 1 ]; then
   set_install_stage 2
 fi
 
+# MAIN install.sh part
+if [ "$(get_install_stage)" -eq 2 ]; then
+
+  set_status "[install.sh] - Main installation part"
+
+  ## STORAGE SETUP ##########################################################################
+  # Prepare drive to mount /mnt/storage
+  set_status "[install.sh] - Looking for a valid drive for Blockchain copy"
+  get_best_disk
+  echolog "W3P_DRIVE=$W3P_DRIVE"
+
+  # Check if /boot/firmware is mounted
+  mount_point=$(mount | grep ' /boot/firmware ' | awk '{print $1}')
+
+  # Check if the mount point starts with $DEV_NVME or $DEV_USB
+  if [[ $mount_point == $DEV_NVME* ]]; then
+      set_status "[install.sh] - /boot/firmware is mounted on an NVMe device: $mount_point"
+  elif [[ $mount_point == $DEV_USB* ]]; then
+      set_status "[install.sh] - /boot/firmware is mounted on a USB device: $mount_point"
+  else
+      set_status "[install.sh] - /boot/firmware is mounted on device: $mount_point"
+      set_status "[install.sh] - Preparing $W3P_DRIVE for installation"
+      prepare_disk $W3P_DRIVE
+  fi
+
+  set_status "[install.sh] - Change the stage to 100"
+  set_install_stage 100
+
+  set_status "[install.sh] - Write rc.local logs to ${RC_LOG}"
+  grep "rc.local" /var/log/syslog >> $RC_LOG
+  
+  set_status "[install.sh] - Rebooting..."
+  sleep 3
+  reboot
+fi
+
+# Print the IP address
+_IP=$(hostname -I) || true
+if [ "$_IP" ]; then
+  printf "\n\n\nRaspberry Pi IP address is %s\n\n\n" "$_IP"
+fi
+
 echo "[install.sh] - exit 0 at $(date '+%Y-%m-%d %H:%M:%S')"
 exit 0
