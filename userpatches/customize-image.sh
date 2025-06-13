@@ -59,7 +59,7 @@ cp /tmp/overlay/install.sh /opt/web3pi/.install.sh     # Copy the install script
 chmod +x /opt/web3pi/.install.sh
 #--------------------------------------------------------------------------------------------
 
-## install APT packets ######################################################################
+## Install APT packets ######################################################################
 # ToDo: cleanup unnecessary packages
 apt update
 apt install -y neofetch software-properties-common apt-utils chrony avahi-daemon git-extras python3-pip python3-netifaces flashrom iw python3-dev libpython3.12-dev python3.12-venv 
@@ -107,4 +107,17 @@ dpkg -i /opt/web3pi/influxdb/influxdb_1.8.10_arm64.deb
 sed -i "s|# flux-enabled =.*|flux-enabled = true|" /etc/influxdb/influxdb.conf
 # note: configuration is in rc.local
 systemctl enable influxdb
+#--------------------------------------------------------------------------------------------
+
+## Install Grafana ##########################################################################
+apt-get -y install grafana
+# Copy datasources.yaml for grafana
+cp /tmp/overlay/grafana/yaml/datasources.yaml /etc/grafana/provisioning/datasources/datasources.yaml
+# Copy dashboards.yaml for grafana
+cp /tmp/overlay/grafana/yaml/dashboards.yaml /etc/grafana/provisioning/dashboards/dashboards.yaml
+# Copy images for grafana
+cp /tmp/overlay/grafana/img/*.png /usr/share/grafana/public/img/
+# Copy custom dashboards
+cp /tmp/overlay/grafana/dashboards/* /opt/web3pi/grafana/dashboards/
+systemctl enable grafana-server
 #--------------------------------------------------------------------------------------------
