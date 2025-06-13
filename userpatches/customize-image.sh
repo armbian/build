@@ -43,12 +43,18 @@ fi
 # hostname -b "w3p-staking-1"   # Set the hostname to w3p-staking-1
 rm /root/.not_logged_in_yet     # Remove any first-login instructions
 chmod +x /etc/update-motd.d/*   # Enable motd
+mkdir -p /opt/web3pi            # Create the web3pi directory
 #--------------------------------------------------------------------------------------------
 
-## rc.local ############################################################################################################
+## rc.local #################################################################################
 # Add rc.local file and rc-local.service
-cp "/tmp/overlay/rc.local" /etc/rc.local
+cp /tmp/overlay/rc.local /etc/rc.local
 chmod +x /etc/rc.local
-cp "/tmp/overlay/rc-local.service" /etc/systemd/system/rc-local.service
+cp /tmp/overlay/rc-local.service /etc/systemd/system/rc-local.service
 systemctl enable rc-local.service
-#----------------------------------------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------
+
+## Add install.sh ###########################################################################
+cp /tmp/overlay/install.sh /opt/web3pi/.install.sh     # Copy the install script to /opt/web3pi
+chmod +x /opt/web3pi/.install.sh
+#--------------------------------------------------------------------------------------------
