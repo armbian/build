@@ -49,7 +49,14 @@ echo "ethereum:ethereum" | chpasswd
 # hostname -b "w3p-staking-1"   # Set the hostname to w3p-staking-1
 rm /root/.not_logged_in_yet     # Remove any first-login instructions
 chmod +x /etc/update-motd.d/*   # Enable motd
-mkdir -p /opt/web3pi            # Create the web3pi directory
+#--------------------------------------------------------------------------------------------
+
+## Directories structure ####################################################################
+mkdir -p /opt/web3pi                                    # Create a directory for Web3 Pi
+mkdir -p /opt/web3pi/logs                               # Create a directory for Web3 Pi logs
+chown -R ethereum:ethereum /opt/web3pi 					# Set ownership to 'ethereum' user
+mkdir -p /mnt/storage                                   # Create a directory for the storage mount point
+chown ethereum:ethereum /mnt/storage/					# Set ownership to 'ethereum' user
 #--------------------------------------------------------------------------------------------
 
 ## rc.local #################################################################################
@@ -124,7 +131,9 @@ cp /tmp/overlay/grafana/yaml/dashboards.yaml /etc/grafana/provisioning/dashboard
 # Copy images for grafana
 cp /tmp/overlay/grafana/img/*.png /usr/share/grafana/public/img/
 # Copy custom dashboards
+mkdir -p /opt/web3pi/grafana/dashboards
 cp /tmp/overlay/grafana/dashboards/* /opt/web3pi/grafana/dashboards/
+chown -R ethereum:ethereum /opt/web3pi/grafana/
 systemctl enable grafana-server
 #--------------------------------------------------------------------------------------------
 
