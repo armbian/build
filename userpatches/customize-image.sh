@@ -126,7 +126,11 @@ systemctl enable grafana-server
 apt-get install -y cockpit cockpit-pcp cockpit-packagekit
 #--------------------------------------------------------------------------------------------
 
-## Clone rpi-eeprom ######################################################################################################
+## Clone rpi-eeprom #########################################################################
 # Ubuntu 24.04 have old rpi-eeprom app
 git-force-clone -b master https://github.com/raspberrypi/rpi-eeprom /opt/web3pi/rpi-eeprom
 # This is later used in install.sh to update the firmware
+#--------------------------------------------------------------------------------------------
+
+echo "Creating a flag to prevent customize-image.sh from running again"
+touch "$INIT_FLAG_CUSTOMIZE_IMAGE_SH"
