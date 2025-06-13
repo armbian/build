@@ -409,6 +409,13 @@ function docker_cli_prepare_launch() {
 		"--env" "GITHUB_SHA=${GITHUB_SHA}"
 		"--env" "GITHUB_WORKFLOW=${GITHUB_WORKFLOW}"
 		"--env" "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
+
+		# Pass proxy args
+ 		"--env" "http_proxy=${http_proxy:-${HTTP_PROXY}}"
+ 		"--env" "https_proxy=${https_proxy:-${HTTPS_PROXY}}"
+ 		"--env" "HTTP_PROXY=${HTTP_PROXY}"
+		"--env" "HTTPS_PROXY=${HTTPS_PROXY}"
+		"--env" "APT_PROXY_ADDR=${APT_PROXY_ADDR}"
 	)
 
 	# This env var is used super early (in entrypoint.sh), so set it as an env to current value.

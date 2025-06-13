@@ -196,7 +196,7 @@ function create_sources_list_and_deploy_repo_key() {
 	fi
 	cat <<- EOF > "${basedir}"/etc/apt/sources.list.d/armbian.sources
 	Types: deb
-	URIs: https://${armbian_mirror}
+	URIs: http://${armbian_mirror}
 	Suites: $RELEASE
 	Components: ${components[*]}
 	Signed-By: ${APT_SIGNING_KEY_FILE}

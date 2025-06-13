@@ -5,7 +5,7 @@
 function custom_apt_repo__add_armbian-github-repo() {
 	cat <<- EOF > "${SDCARD}"/etc/apt/sources.list.d/armbian-config.sources
 	Types: deb
-	URIs: https://github.armbian.com/configng
+	URIs: http://github.armbian.com/configng
 	Suites: stable
 	Components: main
 	Signed-By: ${APT_SIGNING_KEY_FILE}
