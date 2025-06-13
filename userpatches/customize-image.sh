@@ -141,6 +141,10 @@ systemctl enable grafana-server
 apt-get install -y cockpit cockpit-pcp cockpit-packagekit
 #--------------------------------------------------------------------------------------------
 
+## Install Web3 Pi packets ##################################################################
+apt-get install -y w3p-network-firewall w3p-two-factor-auth w3p-system-monitor w3p-link w3p-geth-sync-stages-monitoring w3p-script-runner
+#--------------------------------------------------------------------------------------------
+
 ## Clone rpi-eeprom #########################################################################
 # Ubuntu 24.04 have old rpi-eeprom app
 git-force-clone -b master https://github.com/raspberrypi/rpi-eeprom /opt/web3pi/rpi-eeprom
