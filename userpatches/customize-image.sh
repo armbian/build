@@ -125,3 +125,8 @@ systemctl enable grafana-server
 ## Install Cockpit ##########################################################################
 apt-get install -y cockpit cockpit-pcp cockpit-packagekit
 #--------------------------------------------------------------------------------------------
+
+## Clone rpi-eeprom ######################################################################################################
+# Ubuntu 24.04 have old rpi-eeprom app
+git-force-clone -b master https://github.com/raspberrypi/rpi-eeprom /opt/web3pi/rpi-eeprom
+# This is later used in install.sh to update the firmware
