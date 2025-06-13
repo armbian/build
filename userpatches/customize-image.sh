@@ -84,9 +84,10 @@ apt install -y gcc libraspberrypi-bin iotop screen bpytop ccze iw flashrom figle
 ## UFW (firewall) ###########################################################################
 apt install -y ufw
 # ToDo: set up firewall rules
-
-# ufw allow 22/tcp comment "SSH"
-# ufw --force enable
+ufw allow 22/tcp comment "SSH"
+ufw allow 9090/tcp comment "Cockpit Web Panel"
+ufw allow 3000/tcp comment "Grafana: web interface"
+ufw --force enable
 #--------------------------------------------------------------------------------------------
 
 ## Add APT repository #######################################################################
