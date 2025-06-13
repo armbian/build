@@ -247,6 +247,66 @@ prepare_disk() {
   set_status "[install.sh] - Storage is ready"
 }
 
+# Firmware updates
+if [ "$(get_install_stage)" -eq 1 ]; then
+  
+  /opt/web3pi/rpi-eeprom/test/install -b
+
+  output_reu=""
+  # Detect SoC version
+  if [ -f /proc/device-tree/compatible ]; then
+      SOC_COMPATIBLE=$(tr -d '\0' < /proc/device-tree/compatible)
+
+      if echo "$SOC_COMPATIBLE" | grep -q "brcm,bcm2711"; then
+          set_status "[install.sh] - Detected SoC: BCM2711 (e.g., Raspberry Pi 4/400/CM4)"
+          set_status "[install.sh] - Check for firmware updates for the Raspberry Pi SBC"
+          output_reu=$(rpi-eeprom-update -a)
+          echolog "cmd: rpi-eeprom-update -a \n${output_reu}"
+      elif echo "$SOC_COMPATIBLE" | grep -q "brcm,bcm2712"; then
+          set_status "[install.sh] - Detected SoC: BCM2712 (e.g., Raspberry Pi 5/500/CM5)"
+          set_status "[install.sh] - Check for firmware updates for the Raspberry Pi SBC"
+          # Run the firmware update command
+          output_reu=$(rpi-eeprom-update -a)
+          echolog "${output_reu}"
+      else
+          set_error "[install.sh] - Detected another model (not BCM2711 or BCM2712)."
+          terminateScript
+      fi
+  else
+      set_error "[install.sh] - No /proc/device-tree/compatible file found — cannot detect SoC this way."
+      terminateScript
+  fi
+
+  rebootReq=false
+  # Check if the output contains the message indicating a reboot is needed
+  if echo "$output_reu" | grep -q "EEPROM updates pending. Please reboot to apply the update."; then
+      rebootReq=true
+      set_status "[install.sh] - Firmware will be updated after reboot. rebootReq=true"
+      set_status "[install.sh] - Change the stage to 2"
+      set_install_stage 2
+  elif echo "$output_reu" | grep -q "UPDATE SUCCESSFUL"; then
+      rebootReq=true
+      set_status "[install.sh] - Firmware updated with flashrom. rebootReq=true"
+      set_status "[install.sh] - Change the stage to 2"
+      set_install_stage 2
+  fi
+
+  # Check the value of rebootReq
+  if [ "$rebootReq" = true ]; then
+      echo "[install.sh] - EEPROM update requires a reboot. Restarting the device..."
+      set_status "[install.sh] - Rebooting after rpi-eeprom-update"
+      sleep 5
+      reboot
+      exit 1
+  else
+      echo "[install.sh] - No firmware update required"
+      set_status "[install.sh] - No firmware update required"
+      sleep 3
+  fi
+
+  set_status "[install.sh] - Change the stage to 2"
+  set_install_stage 2
+fi
 
 echo "[install.sh] - exit 0 at $(date '+%Y-%m-%d %H:%M:%S')"
 exit 0
