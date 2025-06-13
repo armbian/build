@@ -121,3 +121,7 @@ cp /tmp/overlay/grafana/img/*.png /usr/share/grafana/public/img/
 cp /tmp/overlay/grafana/dashboards/* /opt/web3pi/grafana/dashboards/
 systemctl enable grafana-server
 #--------------------------------------------------------------------------------------------
+
+## Install Cockpit ##########################################################################
+apt-get install -y cockpit cockpit-pcp cockpit-packagekit
+#--------------------------------------------------------------------------------------------
