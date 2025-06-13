@@ -73,4 +73,25 @@ apt install -y ufw
 
 # ufw allow 22/tcp comment "SSH"
 # ufw --force enable
-#----------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------
+
+## Add APT repository #######################################################################
+# Nimbus repository
+echo 'deb https://apt.status.im/nimbus all main' | sudo tee /etc/apt/sources.list.d/nimbus.list
+# Import the GPG key
+sudo curl https://apt.status.im/pubkey.asc -o /etc/apt/trusted.gpg.d/apt-status-im.asc
+
+# Ethereum PPA for Geth
+sudo add-apt-repository -y ppa:ethereum/ethereum 
+
+# Web3 Pi repository
+# ToDo: separete repository for Web3 Pi Solo Staking?
+wget -O - https://apt.web3pi.io/public-key.gpg | gpg --dearmor -o /etc/apt/keyrings/web3-pi-apt-repo.gpg
+echo "deb [signed-by=/etc/apt/keyrings/web3-pi-apt-repo.gpg] https://apt.web3pi.io noble main restricted universe multiverse" | tee /etc/apt/sources.list.d/web3-pi.list
+
+# Grafana repository
+wget -q -O /usr/share/keyrings/grafana.key https://apt.grafana.com/gpg.key
+echo "deb [signed-by=/usr/share/keyrings/grafana.key] https://apt.grafana.com stable main" | tee -a /etc/apt/sources.list.d/grafana.list
+
+sudo apt-get update     # Update the package list to include the new repositories
+#--------------------------------------------------------------------------------------------
