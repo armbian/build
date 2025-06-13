@@ -38,6 +38,12 @@ else
 fi
 #--------------------------------------------------------------------------------------------
 
+## Pre-create 'ethereum' user ###############################################################
+# Pre-create 'ethereum' user without home directory
+useradd -M -s /bin/bash ethereum
+echo "ethereum:ethereum" | chpasswd
+#--------------------------------------------------------------------------------------------
+
 ## Misc #####################################################################################
 # ToDo: Setting hostname here doesn't work, probably overwritten later.
 # hostname -b "w3p-staking-1"   # Set the hostname to w3p-staking-1
