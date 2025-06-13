@@ -66,3 +66,11 @@ apt install -y neofetch software-properties-common apt-utils chrony avahi-daemon
 apt install -y bpytop iotop screen bpytop ccze nvme-cli jq git speedtest-cli file vim net-tools telnet apt-transport-https figlet
 apt install -y gcc jq git libraspberrypi-bin iotop screen bpytop ccze nvme-cli speedtest-cli ufw
 #--------------------------------------------------------------------------------------------
+
+## UFW (firewall) ###########################################################################
+apt install -y ufw
+# ToDo: set up firewall rules
+
+# ufw allow 22/tcp comment "SSH"
+# ufw --force enable
+#----------------------------------------------------------------------------------------
