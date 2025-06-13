@@ -58,3 +58,11 @@ systemctl enable rc-local.service
 cp /tmp/overlay/install.sh /opt/web3pi/.install.sh     # Copy the install script to /opt/web3pi
 chmod +x /opt/web3pi/.install.sh
 #--------------------------------------------------------------------------------------------
+
+## install APT packets ######################################################################
+# ToDo: cleanup unnecessary packages
+apt update
+apt install -y neofetch software-properties-common apt-utils chrony avahi-daemon git-extras python3-pip python3-netifaces flashrom iw python3-dev libpython3.12-dev python3.12-venv 
+apt install -y bpytop iotop screen bpytop ccze nvme-cli jq git speedtest-cli file vim net-tools telnet apt-transport-https figlet
+apt install -y gcc jq git libraspberrypi-bin iotop screen bpytop ccze nvme-cli speedtest-cli ufw
+#--------------------------------------------------------------------------------------------
