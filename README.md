@@ -23,7 +23,19 @@ This project is currently in its early development phase and **not yet ready for
 - Lightweight and optimized for low-resource environments
 - Secure-by-default configuration
 
-Stay tuned for updates!
+---
+
+### 🛠 Build Instructions
+
+> 🐳 **Docker is required** to build the image.
+
+Clone the repository and start the build:
+
+```sh
+git clone --branch=w3p-staking-os https://github.com/Web3-Pi/web3-pi-staking-os.git
+cd build
+./compile.sh w3p
+```
 
 ---
 
