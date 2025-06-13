@@ -62,9 +62,10 @@ chmod +x /opt/web3pi/.install.sh
 ## Install APT packets ######################################################################
 # ToDo: cleanup unnecessary packages
 apt update
-apt install -y neofetch software-properties-common apt-utils chrony avahi-daemon git-extras python3-pip python3-netifaces flashrom iw python3-dev libpython3.12-dev python3.12-venv 
-apt install -y bpytop iotop screen bpytop ccze nvme-cli jq git speedtest-cli file vim net-tools telnet apt-transport-https figlet
-apt install -y gcc jq git libraspberrypi-bin iotop screen bpytop ccze nvme-cli speedtest-cli ufw
+apt install -y software-properties-common apt-utils chrony avahi-daemon git git-extras 
+apt install -y python3-pip python3-netifaces python3-dev libpython3-dev python3-venv 
+apt install -y nvme-cli jq speedtest-cli file vim net-tools telnet apt-transport-https 
+apt install -y gcc libraspberrypi-bin iotop screen bpytop ccze iw flashrom figlet neofetch
 #--------------------------------------------------------------------------------------------
 
 ## UFW (firewall) ###########################################################################
@@ -85,9 +86,8 @@ curl https://apt.status.im/pubkey.asc -o /etc/apt/trusted.gpg.d/apt-status-im.as
 add-apt-repository -y ppa:ethereum/ethereum 
 
 # Web3 Pi repository
-# ToDo: separete repository for Web3 Pi Solo Staking?
 wget -O - https://apt.web3pi.io/public-key.gpg | gpg --dearmor -o /etc/apt/keyrings/web3-pi-apt-repo.gpg
-echo "deb [signed-by=/etc/apt/keyrings/web3-pi-apt-repo.gpg] https://apt.web3pi.io noble main restricted universe multiverse" | tee /etc/apt/sources.list.d/web3-pi.list
+echo "deb [signed-by=/etc/apt/keyrings/web3-pi-apt-repo.gpg] https://apt.web3pi.io/ noble-staking main beta" | tee /etc/apt/sources.list.d/web3-pi-staking.list
 
 # Grafana repository
 wget -q -O /usr/share/keyrings/grafana.key https://apt.grafana.com/gpg.key
