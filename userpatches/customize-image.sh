@@ -99,3 +99,12 @@ apt-get update     # Update the package list to include the new repositories
 ## Install Ethereum clients #################################################################
 apt-get install -y nimbus-beacon-node nimbus-validator-client ethereum
 #--------------------------------------------------------------------------------------------
+
+## Install InfluxDB #########################################################################
+mkdir -p /opt/web3pi/influxdb
+wget https://dl.influxdata.com/influxdb/releases/influxdb_1.8.10_arm64.deb -P /opt/web3pi/influxdb
+dpkg -i /opt/web3pi/influxdb/influxdb_1.8.10_arm64.deb
+sed -i "s|# flux-enabled =.*|flux-enabled = true|" /etc/influxdb/influxdb.conf
+# note: configuration is in rc.local
+systemctl enable influxdb
+#--------------------------------------------------------------------------------------------
