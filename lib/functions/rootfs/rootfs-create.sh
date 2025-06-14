@@ -152,13 +152,6 @@ function create_new_rootfs_cache_via_debootstrap() {
 	chroot_sdcard LC_ALL=C LANG=C locale-gen "${DEST_LANG}"
 	chroot_sdcard LC_ALL=C LANG=C update-locale "LANG=${DEST_LANG}" "LANGUAGE=${DEST_LANG}" "LC_MESSAGES=${DEST_LANG}"
 
-	if [[ -f $SDCARD/etc/default/console-setup ]]; then
-		# @TODO: Should be configurable.
-		sed -e 's/CHARMAP=.*/CHARMAP="UTF-8"/' -e 's/FONTSIZE=.*/FONTSIZE="8x16"/' \
-			-e 's/CODESET=.*/CODESET="guess"/' -i "$SDCARD/etc/default/console-setup"
-		chroot_sdcard LC_ALL=C LANG=C setupcon --save --force
-	fi
-
 	# stage: create apt-get sources list (basic Debian/Ubuntu apt sources, no external nor PPAS).
 	# for the Armbian repo, only the components which are _not_ produced by armbian/build are included (-desktop and -utils)
 	create_sources_list_and_deploy_repo_key "root" "$RELEASE" "$SDCARD/"
