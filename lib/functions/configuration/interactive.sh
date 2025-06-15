@@ -233,14 +233,17 @@ function interactive_config_ask_branch() {
                     description="Recommended. Usually an LTS kernel"
                     ;;
                 legacy)
-                    description="Old stable / Legacy / Vendor kernel"
+                    description="Old stable / Legacy kernel"
                     ;;
                 edge)
                     description="Bleeding edge / latest possible"
                     ;;
                 cloud)
-                    description="Cloud optimised minimal LTS kernel"
+                    description="Cloud optimized minimal LTS kernel"
                     ;;
+                vendor)
+                    description="Vendor BSP kernel"
+					;;
                 *)
                     description="Experimental ${one_kernel_target} kernel / for Developers"
                     ;;
