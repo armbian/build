@@ -7,7 +7,7 @@ setenv load_addr "0x9000000"
 setenv overlay_error "false"
 # default values
 setenv rootdev "/dev/mmcblk0p1"
-setenv verbosity "7"
+setenv verbosity "1"
 setenv console "both"
 setenv bootlogo "false"
 setenv rootfstype "ext4"
@@ -21,8 +21,6 @@ echo "Boot script loaded from ${devtype} ${devnum}:${distro_bootpart}"
 if test -e ${devtype} ${devnum}:${distro_bootpart} ${prefix}armbianEnv.txt; then
 	load ${devtype} ${devnum}:${distro_bootpart} ${load_addr} ${prefix}armbianEnv.txt
 	env import -t ${load_addr} ${filesize}
-	echo "Imported ${prefix}/armbianEnv"
-	setenv verbosity "7"
 fi
 
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
