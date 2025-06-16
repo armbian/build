@@ -152,5 +152,15 @@ git-force-clone -b master https://github.com/raspberrypi/rpi-eeprom /opt/web3pi/
 # This is later used in install.sh to update the firmware
 #--------------------------------------------------------------------------------------------
 
+## Security hardening #######################################################################
+# Lock the root account
+passwd --lock root
+# Disable root login via SSH
+sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+## Disable password authentication via SSH
+#sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+#--------------------------------------------------------------------------------------------
+
+
 echo "Creating a flag to prevent customize-image.sh from running again"
 touch "$INIT_FLAG_CUSTOMIZE_IMAGE_SH"
