@@ -146,6 +146,14 @@ apt-get install -y cockpit cockpit-pcp cockpit-packagekit
 apt-get install -y w3p-network-firewall w3p-two-factor-auth w3p-system-monitor w3p-link w3p-geth-sync-stages-monitoring w3p-script-runner w3p-nimbus-monitoring
 #--------------------------------------------------------------------------------------------
 
+## Add LCD display support ##############################################################
+## ToDo: temporary solution
+echo "hereojoalks"
+git clone -b GpioZeroChipFix https://github.com/Web3-Pi/rpi-lcd-dashboard.git /opt/web3pi/rpi-lcd-dashboard
+cd /opt/web3pi/rpi-lcd-dashboard
+chmod +x *.sh
+./create_service.sh
+
 ## Clone rpi-eeprom #########################################################################
 # Ubuntu 24.04 have old rpi-eeprom app
 git-force-clone -b master https://github.com/raspberrypi/rpi-eeprom /opt/web3pi/rpi-eeprom
