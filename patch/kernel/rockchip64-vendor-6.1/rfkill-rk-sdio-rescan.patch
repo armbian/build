@@ -1,0 +1,190 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nikvoid <nikvoid@users.noreply.github.com>
+Date: Tue, 10 Jun 2025 20:56:18 +0300
+Subject: Force RFKILL to do SDIO rescan to detect WIFI chip properly
+---
+ drivers/mmc/core/host.c   | 53 ++++++++++
+ drivers/mmc/host/dw_mmc.c | 20 ++++
+ include/linux/mmc/host.h  |  2 +
+ net/rfkill/rfkill-wlan.c  |  2 +-
+ 4 files changed, 76 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/core/host.c b/drivers/mmc/core/host.c
+index 21ae8634291f..f5ee2fbfafc2 100644
+--- a/drivers/mmc/core/host.c
++++ b/drivers/mmc/core/host.c
+@@ -606,10 +606,12 @@ static int mmc_validate_host_caps(struct mmc_host *host)
+ 	}
+ 
+ 	return 0;
+ }
+ 
++struct mmc_host *primary_sdio_host;
++
+ /**
+  *	mmc_add_host - initialise host hardware
+  *	@host: mmc host
+  *
+  *	Register the host with the driver model. The host must be
+@@ -633,10 +635,16 @@ int mmc_add_host(struct mmc_host *host)
+ #ifdef CONFIG_DEBUG_FS
+ 	mmc_add_host_debugfs(host);
+ #endif
+ 
+ 	mmc_start_host(host);
++	
++	if (host->caps2 & MMC_CAP2_NO_SD && host->caps2 & MMC_CAP2_NO_MMC) {
++		pr_info("mmc_add_host: get sdio host!\n");
++		primary_sdio_host = host;
++	}
++	
+ 	return 0;
+ }
+ 
+ EXPORT_SYMBOL(mmc_add_host);
+ 
+@@ -675,5 +683,50 @@ void mmc_free_host(struct mmc_host *host)
+ 	mmc_pwrseq_free(host);
+ 	put_device(&host->class_dev);
+ }
+ 
+ EXPORT_SYMBOL(mmc_free_host);
++
++
++/**
++ * mmc_host_rescan - triger software rescan flow
++ * @host: mmc host
++ *
++ * rescan slot attach in the assigned host.
++ * If @host is NULL, default rescan primary_sdio_host
++ * saved by mmc_add_host().
++ * OR, rescan host from argument.
++ *
++ */
++int mmc_host_rescan(struct mmc_host *host, int val, int is_cap_sdio_irq)
++{
++	if (NULL != primary_sdio_host) {
++		if (!host)
++			  host = primary_sdio_host;
++		else
++			pr_info("%s: mmc_host_rescan pass in host from argument!\n",
++				mmc_hostname(host));
++	} else {
++		pr_err("sdio: host isn't  initialization successfully.\n");
++		return -ENOMEDIUM;
++	}
++
++	pr_info("%s:mmc host rescan start!\n", mmc_hostname(host));
++
++	/*  0: oob  1:cap-sdio-irq */
++	if (is_cap_sdio_irq == 1) {
++		host->caps |= MMC_CAP_SDIO_IRQ;
++	} else if (is_cap_sdio_irq == 0) {
++		host->caps &= ~MMC_CAP_SDIO_IRQ;
++	} else {
++		dev_err(&host->class_dev, "sdio: host doesn't identify oob or sdio_irq mode!\n");
++		return -ENOMEDIUM;
++	}
++
++	if (!(host->caps & MMC_CAP_NONREMOVABLE) && host->ops->set_sdio_status)
++		host->ops->set_sdio_status(host, val);
++	else
++		pr_info("%s: set_sdio_status is NULL!\n", mmc_hostname(host));
++
++	return 0;
++}
++EXPORT_SYMBOL(mmc_host_rescan);
+diff --git a/drivers/mmc/host/dw_mmc.c b/drivers/mmc/host/dw_mmc.c
+index ab567987060e..1e04c332fcb1 100644
+--- a/drivers/mmc/host/dw_mmc.c
++++ b/drivers/mmc/host/dw_mmc.c
+@@ -989,10 +989,29 @@ static void dw_mci_post_req(struct mmc_host *mmc,
+ 			     data->sg_len,
+ 			     mmc_get_dma_dir(data));
+ 	data->host_cookie = COOKIE_UNMAPPED;
+ }
+ 
++static int dw_mci_set_sdio_status(struct mmc_host *mmc, int val)
++{
++	struct dw_mci_slot *slot = mmc_priv(mmc);
++	struct dw_mci *host = slot->host;
++
++	spin_lock_bh(&host->lock);
++
++	if (val)
++		set_bit(DW_MMC_CARD_PRESENT, &slot->flags);
++	else
++		clear_bit(DW_MMC_CARD_PRESENT, &slot->flags);
++
++	spin_unlock_bh(&host->lock);
++
++	mmc_detect_change(slot->mmc, 20);
++
++	return 0;
++}
++
+ static int dw_mci_get_cd(struct mmc_host *mmc)
+ {
+ 	int present;
+ 	struct dw_mci_slot *slot = mmc_priv(mmc);
+ 	struct dw_mci *host = slot->host;
+@@ -1881,10 +1900,11 @@ static const struct mmc_host_ops dw_mci_ops = {
+ 	.pre_req		= dw_mci_pre_req,
+ 	.post_req		= dw_mci_post_req,
+ 	.set_ios		= dw_mci_set_ios,
+ 	.get_ro			= dw_mci_get_ro,
+ 	.get_cd			= dw_mci_get_cd,
++	.set_sdio_status = dw_mci_set_sdio_status,
+ 	.card_hw_reset          = dw_mci_hw_reset,
+ 	.enable_sdio_irq	= dw_mci_enable_sdio_irq,
+ 	.ack_sdio_irq		= dw_mci_ack_sdio_irq,
+ 	.execute_tuning		= dw_mci_execute_tuning,
+ 	.card_busy		= dw_mci_card_busy,
+diff --git a/include/linux/mmc/host.h b/include/linux/mmc/host.h
+index 8f918f9a1228..b9a2361f77dd 100644
+--- a/include/linux/mmc/host.h
++++ b/include/linux/mmc/host.h
+@@ -207,10 +207,11 @@ struct mmc_host_ops {
+ 	 * Optional callback to support controllers with HW issues for multiple
+ 	 * I/O. Returns the number of supported blocks for the request.
+ 	 */
+ 	int	(*multi_io_quirk)(struct mmc_card *card,
+ 				  unsigned int direction, int blk_size);
++	int     (*set_sdio_status)(struct mmc_host *host, int val);
+ 
+ 	/* Initialize an SD express card, mandatory for MMC_CAP2_SD_EXP. */
+ 	int	(*init_sd_express)(struct mmc_host *host, struct mmc_ios *ios);
+ };
+ 
+@@ -529,10 +530,11 @@ struct device_node;
+ 
+ struct mmc_host *mmc_alloc_host(int extra, struct device *);
+ int mmc_add_host(struct mmc_host *);
+ void mmc_remove_host(struct mmc_host *);
+ void mmc_free_host(struct mmc_host *);
++int mmc_host_rescan(struct mmc_host *host, int val, int is_cap_sdio_irq);
+ void mmc_of_parse_clk_phase(struct mmc_host *host,
+ 			    struct mmc_clk_phase_map *map);
+ int mmc_of_parse(struct mmc_host *host);
+ int mmc_of_parse_voltage(struct mmc_host *host, u32 *mask);
+ 
+diff --git a/net/rfkill/rfkill-wlan.c b/net/rfkill/rfkill-wlan.c
+index 6e0f162712e1..e9c8b0ea4940 100644
+--- a/net/rfkill/rfkill-wlan.c
++++ b/net/rfkill/rfkill-wlan.c
+@@ -345,11 +345,11 @@ EXPORT_SYMBOL(rockchip_wifi_power);
+  * Wifi Sdio Detect Func
+  *
+  *************************************************************************/
+ int rockchip_wifi_set_carddetect(int val)
+ {
+-	return 0;
++	return mmc_host_rescan(NULL, val, 1);
+ }
+ EXPORT_SYMBOL(rockchip_wifi_set_carddetect);
+ 
+ /**************************************************************************
+  *
+-- 
+Created with Armbian build tools https://github.com/armbian/build
+
