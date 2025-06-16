@@ -78,7 +78,7 @@ apt update
 apt install -y software-properties-common apt-utils chrony avahi-daemon git git-extras build-essential
 apt install -y python3-pip python3-netifaces python3-dev libpython3-dev python3-venv
 apt install -y nvme-cli jq speedtest-cli file vim net-tools telnet apt-transport-https gdisk
-apt install -y gcc libraspberrypi-bin iotop screen bpytop ccze iw flashrom figlet neofetch
+apt install -y gcc libraspberrypi-bin iotop screen bpytop ccze iw flashrom figlet neofetch dphys-swapfile
 #--------------------------------------------------------------------------------------------
 
 ## UFW (firewall) ###########################################################################

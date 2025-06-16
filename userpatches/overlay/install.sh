@@ -4,6 +4,7 @@
 #
 echo "[install.sh] - start at $(date '+%Y-%m-%d %H:%M:%S')"
 
+SWAPFILE_SIZE=16384
 DEV_NVME="/dev/nvme0n1"
 DEV_USB="/dev/sda"
 W3P_DRIVE="NA"
@@ -311,37 +312,82 @@ fi
 # MAIN install.sh part
 if [ "$(get_install_stage)" -eq 2 ]; then
 
-  set_status "[install.sh] - Main installation part"
+set_status "[install.sh] - Main installation part"
 
-  ## STORAGE SETUP ##########################################################################
-  # Prepare drive to mount /mnt/storage
-  set_status "[install.sh] - Looking for a valid drive for Blockchain copy"
-  get_best_disk
-  echolog "W3P_DRIVE=$W3P_DRIVE"
+## STORAGE SETUP ##########################################################################
+# Prepare drive to mount /mnt/storage
+set_status "[install.sh] - Looking for a valid drive for Blockchain copy"
+get_best_disk
+echolog "W3P_DRIVE=$W3P_DRIVE"
 
-  # Check if /boot/firmware is mounted
-  mount_point=$(mount | grep ' /boot/firmware ' | awk '{print $1}')
+# Check if /boot/firmware is mounted
+mount_point=$(mount | grep ' /boot/firmware ' | awk '{print $1}')
 
-  # Check if the mount point starts with $DEV_NVME or $DEV_USB
-  if [[ $mount_point == $DEV_NVME* ]]; then
-      set_status "[install.sh] - /boot/firmware is mounted on an NVMe device: $mount_point"
-  elif [[ $mount_point == $DEV_USB* ]]; then
-      set_status "[install.sh] - /boot/firmware is mounted on a USB device: $mount_point"
-  else
-      set_status "[install.sh] - /boot/firmware is mounted on device: $mount_point"
-      set_status "[install.sh] - Preparing $W3P_DRIVE for installation"
-      prepare_disk $W3P_DRIVE
-  fi
+# Check if the mount point starts with $DEV_NVME or $DEV_USB
+if [[ $mount_point == $DEV_NVME* ]]; then
+    set_status "[install.sh] - /boot/firmware is mounted on an NVMe device: $mount_point"
+elif [[ $mount_point == $DEV_USB* ]]; then
+    set_status "[install.sh] - /boot/firmware is mounted on a USB device: $mount_point"
+else
+    set_status "[install.sh] - /boot/firmware is mounted on device: $mount_point"
+    set_status "[install.sh] - Preparing $W3P_DRIVE for installation"
+    prepare_disk $W3P_DRIVE
+fi
+#--------------------------------------------------------------------------------------------
 
-  set_status "[install.sh] - Change the stage to 100"
-  set_install_stage 100
+## SWAP SPACE CONFIGURATION ###################################################################
+set_status "[install.sh] - SWAP configuration"
 
-  set_status "[install.sh] - Write rc.local logs to ${RC_LOG}"
-  grep "rc.local" /var/log/syslog >> $RC_LOG
-  
-  set_status "[install.sh] - Rebooting..."
-  sleep 3
-  reboot
+# Configure swap file location and size
+sed -i "s|#CONF_SWAPFILE=.*|CONF_SWAPFILE=/mnt/storage/swapfile|" /etc/dphys-swapfile
+sed -i "s|#CONF_SWAPSIZE=.*|CONF_SWAPSIZE=$SWAPFILE_SIZE|" /etc/dphys-swapfile
+sed -i "s|#CONF_MAXSWAP=.*|CONF_MAXSWAP=$SWAPFILE_SIZE|" /etc/dphys-swapfile
+
+# Check total RAM in kB
+total_ram=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+set_status "[install.sh] - Detected RAM: ${total_ram} kB"
+
+# Conditions
+if [ "$total_ram" -lt 7000000 ]; then
+    set_error "[install.sh] - Not enough RAM for Web3 Pi. Minimum required is 8 GB"
+elif [ "$total_ram" -ge 15000000 ]; then
+    set_status "[install.sh] - Setting vm.swappiness to 10"
+    # Enable dphys-swapfile service
+    systemctl enable dphys-swapfile
+    {
+    echo "vm.min_free_kbytes=65536"
+    echo "vm.swappiness=10"
+    echo "vm.vfs_cache_pressure=100"
+    echo "vm.dirty_background_ratio=10"
+    echo "vm.dirty_ratio=20"
+    } >> /etc/sysctl.conf
+    sysctl -p
+elif [ "$total_ram" -ge 7000000 ]; then
+    set_status "[install.sh] - Setting vm.swappiness to 80"
+    # Enable dphys-swapfile service
+    systemctl enable dphys-swapfile
+    {
+    echo "vm.min_free_kbytes=65536"
+    echo "vm.swappiness=80"
+    echo "vm.vfs_cache_pressure=500"
+    echo "vm.dirty_background_ratio=1"
+    echo "vm.dirty_ratio=50"
+    } >> /etc/sysctl.conf
+    sysctl -p
+else
+    set_error "[install.sh] - RAM does not match expected specifications."
+fi
+#--------------------------------------------------------------------------------------------
+
+set_status "[install.sh] - Change the stage to 100"
+set_install_stage 100
+
+set_status "[install.sh] - Write rc.local logs to ${RC_LOG}"
+grep "rc.local" /var/log/syslog >> $RC_LOG
+
+set_status "[install.sh] - Rebooting..."
+sleep 3
+reboot
 fi
 
 # Print the IP address
