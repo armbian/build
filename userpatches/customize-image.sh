@@ -75,7 +75,7 @@ chmod +x /opt/web3pi/.install.sh
 ## Install APT packets ######################################################################
 # ToDo: cleanup unnecessary packages
 apt update
-apt install -y software-properties-common apt-utils chrony avahi-daemon git git-extras 
+apt install -y software-properties-common apt-utils chrony avahi-daemon git git-extras build-essential
 apt install -y python3-pip python3-netifaces python3-dev libpython3-dev python3-venv 
 apt install -y nvme-cli jq speedtest-cli file vim net-tools telnet apt-transport-https 
 apt install -y gcc libraspberrypi-bin iotop screen bpytop ccze iw flashrom figlet neofetch
@@ -143,7 +143,7 @@ apt-get install -y cockpit cockpit-pcp cockpit-packagekit
 #--------------------------------------------------------------------------------------------
 
 ## Install Web3 Pi packets ##################################################################
-apt-get install -y w3p-network-firewall w3p-two-factor-auth w3p-system-monitor w3p-link w3p-geth-sync-stages-monitoring w3p-script-runner
+apt-get install -y w3p-network-firewall w3p-two-factor-auth w3p-system-monitor w3p-link w3p-geth-sync-stages-monitoring w3p-script-runner w3p-nimbus-monitoring
 #--------------------------------------------------------------------------------------------
 
 ## Clone rpi-eeprom #########################################################################
