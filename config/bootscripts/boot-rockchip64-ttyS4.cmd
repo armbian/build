@@ -13,6 +13,7 @@ setenv bootlogo "false"
 setenv rootfstype "ext4"
 setenv docker_optimizations "off"
 setenv earlycon "on"
+setenv usbstoragequirks ""
 
 test -n "${distro_bootpart}" || distro_bootpart=1
 
@@ -25,7 +26,7 @@ fi
 
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
-if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=ttyS4,1500000"; fi
+if test "${console}" = "display" || test "${console}" = "both"; then setenv consoleargs "console=tty0"; fi
 if test "${console}" = "serial" || test "${console}" = "both"; then setenv consoleargs "console=ttyS4,1500000 ${consoleargs}"; fi
 if test "${earlycon}" = "on"; then setenv consoleargs "earlycon ${consoleargs}"; fi
 if test "${bootlogo}" = "true"; then
