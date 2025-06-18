@@ -86,7 +86,7 @@ apt install -y ufw
 # ToDo: set up firewall rules
 ufw allow 22/tcp comment "SSH"
 ufw allow 9090/tcp comment "Cockpit Web Panel"
-ufw allow 3000/tcp comment "Grafana: web interface"
+ufw allow 3000/tcp comment "Grafana: Web interface"
 ufw --force enable
 #--------------------------------------------------------------------------------------------
 
@@ -148,7 +148,6 @@ apt-get install -y w3p-network-firewall w3p-two-factor-auth w3p-system-monitor w
 
 ## Add LCD display support ##############################################################
 ## ToDo: temporary solution
-echo "hereojoalks"
 git clone -b GpioZeroChipFix https://github.com/Web3-Pi/rpi-lcd-dashboard.git /opt/web3pi/rpi-lcd-dashboard
 cd /opt/web3pi/rpi-lcd-dashboard
 chmod +x *.sh
@@ -172,3 +171,4 @@ sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
 
 echo "Creating a flag to prevent customize-image.sh from running again"
 touch "$INIT_FLAG_CUSTOMIZE_IMAGE_SH"
+exit 0
