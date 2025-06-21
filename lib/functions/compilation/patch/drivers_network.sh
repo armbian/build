@@ -77,6 +77,9 @@ driver_rtl8189ES() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-5.4.251-kernel.patch" "applying"
+
+		# fix compilation for kernels >= 6.16
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-v6.16.patch" "applying"
 	fi
 }
 
@@ -165,6 +168,9 @@ driver_rtl8192EU() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-5.4.251-kernel.patch" "applying"
+
+		# fix compilation for kernels >= 6.16
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-v6.16.patch" "applying"
 	fi
 }
 
@@ -533,6 +539,10 @@ driver_uwe5622() {
 				process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.15-timer-api-changes.patch" "applying"
 			fi
 		fi
+
+		if linux-version compare "${version}" ge 6.15; then
+			process_patch_file "${SRC}/patch/misc/wireless-uwe5622/uwe5622-v6.16.patch" "applying"
+		fi
 	fi
 }
 
@@ -667,6 +677,9 @@ driver_rtl8723DS() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-VFS-import.patch" "applying"
+
+		# fix compilation for kernels >= 6.16
+		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-v6.16.patch" "applying"
 	fi
 }
 
