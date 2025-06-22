@@ -186,7 +186,7 @@ function adaptative_prepare_host_dependencies() {
 		device-tree-compiler dialog dirmngr dosfstools
 		dwarves # dwarves has been replaced by "pahole" and is now a transitional package
 		flex
-		gawk gnupg gpg
+		gawk gettext gnupg gpg
 		imagemagick # required for plymouth: converting images / spinners
 		jq          # required for parsing JSON, specially rootfs-caching related.
 		kmod        # this causes initramfs rebuild, but is usually pre-installed, so no harm done unless it's an upgrade
