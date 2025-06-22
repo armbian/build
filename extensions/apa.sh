@@ -1,9 +1,11 @@
-# Install armbian-common etc. from APA
+# extension_prepare_config__apa displays an informational alert and marks the Armbian Package Archive (APA) as enabled for the target image.
 
 function extension_prepare_config__apa() {
 	display_alert "Target image will have Armbian Package Archive (APA) enabled by default" "${EXTENSION}" "info"
+	export APA_IS_ACTIVE="true"
 }
 
+# custom_apt_repo__add_apa adds the Armbian Package Archive (APA) repository to the APT sources list on the target SD card.
 function custom_apt_repo__add_apa() {
 	run_host_command_logged echo "deb [signed-by=${APT_SIGNING_KEY_FILE}] http://github.armbian.com/apa current main" "|" tee "${SDCARD}"/etc/apt/sources.list.d/armbian-apa.list
 }

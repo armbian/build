@@ -71,7 +71,9 @@ function install_distribution_specific() {
 # <when>: rootfs|image
 # <release>: bullseye|bookworm|sid|focal|jammy|noble|oracular|plucky
 # <basedir>: path to root directory
+# create_sources_list_and_deploy_repo_key configures APT sources and deploys repository keys for a specified release and root filesystem.
 #
+# Sets up upstream Debian or Ubuntu APT sources, adds the Armbian repository with appropriate components, and deploys the Armbian signing key unless APA is active. Handles special cases for different releases, architectures, and build stages, and invokes a customizable extension hook for further repository or key modifications. Exits with an error if the base directory is not provided.
 function create_sources_list_and_deploy_repo_key() {
 	declare when="${1}"
 	declare release="${2}"
@@ -79,6 +81,8 @@ function create_sources_list_and_deploy_repo_key() {
 	[[ -z $basedir ]] && exit_with_error "No basedir passed to create_sources_list_and_deploy_repo_key"
 
 	declare distro=""
+
+	APT_SIGNING_KEY_FILE="/usr/share/keyrings/armbian-archive-keyring.gpg"
 
 	# Drop deboostrap sources leftovers
 	rm -f "${basedir}/etc/apt/sources.list"
@@ -157,21 +161,23 @@ function create_sources_list_and_deploy_repo_key() {
 			;;
 	esac
 
-	# add armbian key
-	display_alert "Adding Armbian repository and authentication key" "${when} :: /etc/apt/sources.list.d/armbian.sources" "info"
-	mkdir -p "${basedir}"/usr/share/keyrings
-	# change to binary form
-	APT_SIGNING_KEY_FILE="/usr/share/keyrings/armbian-archive-keyring.gpg"
-	gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}${APT_SIGNING_KEY_FILE}"
+	# code to be made obsolete by making APA part of Armbian Core. #XXX
+	if [ ! $APA_IS_ACTIVE = "true" ]; then
+		# add armbian key
+		display_alert "Adding Armbian repository and authentication key" "${when} :: /etc/apt/sources.list.d/armbian.sources" "info"
+		mkdir -p "${basedir}"/usr/share/keyrings
+		# change to binary form
+		gpg --dearmor < "${SRC}"/config/armbian.key > "${basedir}${APT_SIGNING_KEY_FILE}"
 
-	# lets link to the old file as armbian-config uses it and we can't set there to new file
-	# we user force linking as some old caches still exists
-	chroot "${basedir}" /bin/bash -c "ln -fs armbian-archive-keyring.gpg /usr/share/keyrings/armbian.gpg"
+		# lets link to the old file as armbian-config uses it and we can't set there to new file
+		# we user force linking as some old caches still exists
+		chroot "${basedir}" /bin/bash -c "ln -fs armbian-archive-keyring.gpg /usr/share/keyrings/armbian.gpg"
 
-	# lets keep old way for old distributions
-	if [[ "${RELEASE}" =~ (focal|bullseye) ]]; then
-		cp "${SRC}"/config/armbian.key "${basedir}"
-		chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
+		# lets keep old way for old distributions
+		if [[ "${RELEASE}" =~ (focal|bullseye) ]]; then
+			cp "${SRC}"/config/armbian.key "${basedir}"
+			chroot "${basedir}" /bin/bash -c "cat armbian.key | apt-key add - > /dev/null 2>&1"
+		fi
 	fi
 
 	# Add Armbian APT repository
