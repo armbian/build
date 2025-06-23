@@ -381,10 +381,10 @@ fi
 
 ln -s /opt/web3pi/scripts/ /home/ethereum/scripts   # Create a symlink to the scripts directory in the home of the 'ethereum' user
 
-./opt/web3pi/scripts/check-install.sh -f            # Run the check-install.sh script to verify the installation
-
 set_status "[install.sh] - Change the stage to 100"
 set_install_stage 100
+
+./opt/web3pi/scripts/check-install.sh -f            # Run the check-install.sh script to verify the installation
 
 set_status "[install.sh] - Write rc.local logs to ${RC_LOG}"
 grep "rc.local" /var/log/syslog >> $RC_LOG
