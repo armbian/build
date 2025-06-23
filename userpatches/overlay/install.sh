@@ -379,6 +379,8 @@ else
 fi
 #--------------------------------------------------------------------------------------------
 
+ln -s /opt/web3pi/scripts/ /home/ethereum/scripts   # Create a symlink to the scripts directory in the home of the 'ethereum' user
+
 set_status "[install.sh] - Change the stage to 100"
 set_install_stage 100
 

@@ -175,6 +175,10 @@ sed -i 's/^PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
 #sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 #--------------------------------------------------------------------------------------------
 
+## Add scripts ##############################################################################
+cp /tmp/overlay/scripts/* /opt/web3pi/scripts/
+chmod +x /opt/web3pi/scripts/*.sh
+#--------------------------------------------------------------------------------------------
 
 echo "Creating a flag to prevent customize-image.sh from running again"
 touch "$INIT_FLAG_CUSTOMIZE_IMAGE_SH"
