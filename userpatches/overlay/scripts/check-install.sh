@@ -14,6 +14,31 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Default: run all checks
+FAST_MODE=0
+
+# Parse arguments
+for arg in "$@"; do
+    case "$arg" in
+        -f|-fast)
+            FAST_MODE=1
+            ;;
+        -h|-help)
+            echo "Usage: $0 [-f|-fast] [-h|-help]"
+            echo
+            echo "Options:"
+            echo "  -f, -fast     Skip internet-related checks to speed up execution"
+            echo "  -h, -help     Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg"
+            echo "Use -h for help."
+            exit 1
+            ;;
+    esac
+done
+
 # Log file
 LOGI="/opt/web3pi/logs/web3pi.log"
 
@@ -376,8 +401,12 @@ echolog "INFO" "Performing Additional Checks..." " "  # Section header
 check_grafana_installed
 check_disk_usage
 check_swap_usage
-check_network
-check_packet_loss
+if [ "$FAST_MODE" -eq 0 ]; then
+    check_network
+    check_packet_loss
+else
+    echolog "INFO" "Network Checks" "Skipped due to fast mode."
+fi
 check_wifi_power_save
 
 # --- Section: Disk Partition Check ---
@@ -469,30 +498,31 @@ fi
 echolog " " " " " "  # Blank line
 echolog "INFO" "Checking Internet Speed..." " "  # Section header
 
-# Run speed test and parse results
-if command -v speedtest-cli &>/dev/null; then
-    speedtest_result=$(speedtest-cli --csv 2>/dev/null)
-    if [ -n "$speedtest_result" ]; then
-        IFS=',' read -r timestamp ping download upload <<< "$(echo "$speedtest_result" | awk -F ',' '{print $3","$6","$7","$8}')"
-        download_mbps=$(printf "%.2f" "$(echo "$download" | awk '{print $1 / 1000000}')")
-        upload_mbps=$(printf "%.2f" "$(echo "$upload" | awk '{print $1 / 1000000}')")
-        ping_ms=$(printf "%.2f" "$ping")
-        
-        # Log results
-        echolog "INFO" "Internet Speed Test" "Download: ${download_mbps} Mbps, Upload: ${upload_mbps} Mbps, Ping: ${ping_ms} ms"
-        
-        # Check thresholds
-        if (( $(echo "$download_mbps < 20" | bc -l) )); then
-            echolog "ERROR" "Internet Speed Test" "Download speed too low: ${download_mbps} Mbps"
-        fi
-        if (( $(echo "$ping_ms > 50" | bc -l) )); then
-            echolog "WARN" "Internet Speed Test" "High ping: ${ping_ms} ms"
+if [ "$FAST_MODE" -eq 0 ]; then
+    if command -v speedtest-cli &>/dev/null; then
+        speedtest_result=$(speedtest-cli --csv 2>/dev/null)
+        if [ -n "$speedtest_result" ]; then
+            IFS=',' read -r timestamp ping download upload <<< "$(echo "$speedtest_result" | awk -F ',' '{print $3","$6","$7","$8}')"
+            download_mbps=$(printf "%.2f" "$(echo "$download" | awk '{print $1 / 1000000}')")
+            upload_mbps=$(printf "%.2f" "$(echo "$upload" | awk '{print $1 / 1000000}')")
+            ping_ms=$(printf "%.2f" "$ping")
+            
+            echolog "INFO" "Internet Speed Test" "Download: ${download_mbps} Mbps, Upload: ${upload_mbps} Mbps, Ping: ${ping_ms} ms"
+            
+            if (( $(echo "$download_mbps < 20" | bc -l) )); then
+                echolog "ERROR" "Internet Speed Test" "Download speed too low: ${download_mbps} Mbps"
+            fi
+            if (( $(echo "$ping_ms > 50" | bc -l) )); then
+                echolog "WARN" "Internet Speed Test" "High ping: ${ping_ms} ms"
+            fi
+        else
+            echolog "ERROR" "Internet Speed Test" "Failed to retrieve speed test results."
         fi
     else
-        echolog "ERROR" "Internet Speed Test" "Failed to retrieve speed test results."
+        echolog "ERROR" "Internet Speed Test" "speedtest-cli not found. Please install it."
     fi
 else
-    echolog "ERROR" "Internet Speed Test" "speedtest-cli not found. Please install it."
+    echolog "INFO" "Internet Speed Test" "Skipped due to fast mode."
 fi
 
 # --- Section: Conclusion ---
