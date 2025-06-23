@@ -55,6 +55,8 @@ chmod +x /etc/update-motd.d/*   # Enable motd
 mkdir -p /opt/web3pi                                    # Create a directory for Web3 Pi
 mkdir -p /opt/web3pi/logs                               # Create a directory for Web3 Pi logs
 chown -R ethereum:ethereum /opt/web3pi 					# Set ownership to 'ethereum' user
+mkdir -p /opt/web3pi/scripts                            # Create a directory for Web3 Pi scripts   
+chown -R ethereum:ethereum /opt/web3pi/scripts			# Set ownership to 'ethereum' user
 mkdir -p /mnt/storage                                   # Create a directory for the storage mount point
 chown ethereum:ethereum /mnt/storage/					# Set ownership to 'ethereum' user
 #--------------------------------------------------------------------------------------------
@@ -112,6 +114,11 @@ apt-get update     # Update the package list to include the new repositories
 
 ## Install Ethereum clients #################################################################
 apt-get install -y nimbus-beacon-node nimbus-validator-client ethereum
+
+# Install Lighthouse from official binary
+cp /tmp/overlay/scripts/install-lighthouse.sh /opt/web3pi/scripts/install-lighthouse.sh # Copy Lighthouse installation script 
+chmod +x /opt/web3pi/scripts/install-lighthouse.sh
+./opt/web3pi/scripts/install-lighthouse.sh # Run the script to install Lighthouse from the official binary
 #--------------------------------------------------------------------------------------------
 
 ## Install InfluxDB #########################################################################
