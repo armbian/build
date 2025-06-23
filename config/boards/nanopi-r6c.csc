@@ -22,12 +22,12 @@ function post_family_tweaks__nanopi_r6c_naming_audios() {
 }
 
 function post_family_tweaks__nanopi_r6c_naming_udev_network_interfaces() {
-	display_alert "$BOARD" "Renaming NanoPi R6C network interfaces to 'wan' and 'lan'" "info"
+	display_alert "$BOARD" "Renaming NanoPi R6C network interfaces to 'wan1' and 'lan1'" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
 	cat <<- EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
-		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe1c0000.ethernet", NAME:="wan"
-		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0003:31:00.0", NAME:="lan"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe1c0000.ethernet", NAME:="wan1"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0003:31:00.0", NAME:="lan1"
 	EOF
 }
 

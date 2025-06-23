@@ -26,11 +26,11 @@ function post_family_config__uboot_config() {
 }
 
 function post_family_tweaks__nanopir5s_udev_network_interfaces() {
-	display_alert "$BOARD" "Renaming interfaces WAN LAN1 LAN2" "info"
+	display_alert "$BOARD" "Renaming interfaces WAN1 LAN1 LAN2" "info"
 
 	mkdir -p $SDCARD/etc/udev/rules.d/
 	cat <<- EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
-		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="wan"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="wan1"
 		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0000:01:00.0", NAME:="lan1"
 		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:01:00.0", NAME:="lan2"
 	EOF
