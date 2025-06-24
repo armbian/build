@@ -10,9 +10,7 @@ FULL_DESKTOP="yes"
 SERIALCON="ttyAML0"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="amlogic/meson-g12b-a311d-cainiao-cniot-core.dtb"
-# playback via HDMI: aplay -D plughw:CNIoTCORE,0 /usr/share/sounds/alsa/Front_Center.wav
-# playback via internal speaker: aplay -D plughw:CNIoTCORE,1 /usr/share/sounds/alsa/Front_Center.wav
-ASOUND_STATE="asound.state.cainiao-cniot-core"
+PACKAGE_LIST_BOARD="alsa-ucm-conf" # Contain ALSA UCM top-level configuration file
 
 BOOTBRANCH_BOARD="tag:v2025.04"
 BOOTPATCHDIR="v2025.04" # This has a patch that adds support for CAINIAO CNIoT-CORE.
@@ -87,4 +85,23 @@ function post_uboot_custom_postprocess__repack_vendor_fip_with_mainline_uboot() 
 		display_alert "${BOARD}" "FIP repack produced empty u-boot.bin" "err"
 		exit 1
 	fi
+}
+
+function post_family_tweaks_bsp__cainiao-cniot-core() {
+	display_alert "${BOARD}" "Installing ALSA UCM configuration files" "info"
+
+	# Use ALSA UCM via GUI: Install a desktop environment such as GNOME, PipeWire, and WirePlumber.
+
+	# Use ALSA UCM via CLI: alsactl init && alsaucm set _verb "HiFi" set _enadev "HDMI" set _enadev "Speaker"
+	# playback via HDMI: aplay -D plughw:cainiaocniotcor,0 /usr/share/sounds/alsa/Front_Center.wav
+	# playback via internal speaker: aplay -D plughw:cainiaocniotcor,1 /usr/share/sounds/alsa/Front_Center.wav
+
+	install -Dm644 "${SRC}/packages/bsp/cainiao-cniot-core/cainiao-cniot-core-HiFi.conf" "${destination}/usr/share/alsa/ucm2/Amlogic/axg-sound-card/cainiao-cniot-core-HiFi.conf"
+	install -Dm644 "${SRC}/packages/bsp/cainiao-cniot-core/cainiao-cniot-core.conf" "${destination}/usr/share/alsa/ucm2/Amlogic/axg-sound-card/cainiao-cniot-core.conf"
+
+	if [ ! -d "${destination}/usr/share/alsa/ucm2/conf.d/axg-sound-card" ]; then
+		mkdir -p "${destination}/usr/share/alsa/ucm2/conf.d/axg-sound-card"
+	fi
+	ln -sfv /usr/share/alsa/ucm2/Amlogic/axg-sound-card/cainiao-cniot-core.conf \
+		"${destination}/usr/share/alsa/ucm2/conf.d/axg-sound-card/cainiao-cniot-core.conf"
 }
