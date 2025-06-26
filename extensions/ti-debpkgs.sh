@@ -35,3 +35,26 @@ function custom_apt_repo__install_ti_packages() {
 		display_alert "Valid Options Would Have Been: ${valid_suites[@]}"
 	fi
 }
+
+function pre_customize_image__enable_services() {
+	chroot_sdcard "groupadd nopasswdlogin"
+	chroot_sdcard "useradd -m -s /bin/bash weston"
+	chroot_sdcard "usermod -aG video,render,input,nopasswdlogin weston"
+
+	run_host_command_logged "mkdir -p $SDCARD/etc/xdg/weston/"
+	run_host_command_logged "cp -v $SRC/packages/bsp/ti/emptty/weston.ini $SDCARD/etc/xdg/weston/"
+	run_host_command_logged "mkdir -p $SDCARD/etc/pam.d/"
+	run_host_command_logged "cp -v $SRC/packages/bsp/ti/emptty/pamconf $SDCARD/etc/pam.d/emptty"
+	run_host_command_logged "mkdir -p $SDCARD/etc/emptty/"
+	run_host_command_logged "cp -v $SRC/packages/bsp/ti/emptty/emptty.conf $SDCARD/etc/emptty/conf"
+
+	chroot_sdcard "systemctl enable emptty@tty7.service" || display_alert "systemctl enable failed for emptty@tty7.service"
+}
+
+function post_install_kernel_debs__activate_dkms() {
+    if [[ ${GPU_SUPPORT} == "yes" ]] ; then
+        kernel_version=$(grab_version "${SRC}/cache/sources/${LINUXSOURCEDIR}")
+        kernel_version_family="${kernel_version}-${BRANCH}-${LINUXFAMILY}"
+        chroot_sdcard "dkms autoinstall --verbose --kernelver ${kernel_version_family}"
+    fi
+}
