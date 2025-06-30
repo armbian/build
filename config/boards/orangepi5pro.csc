@@ -58,6 +58,7 @@ function post_family_config_branch_edge__orangepi5pro_use_mainline_uboot() {
 	declare -g BOOTPATCHDIR="v2024.04"
 	declare -g BOOTDIR="u-boot-${BOARD}"
 	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
+	declare -g INSTALL_HEADERS="yes"
 	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
 
 	function write_uboot_platform() {
@@ -67,6 +68,80 @@ function post_family_config_branch_edge__orangepi5pro_use_mainline_uboot() {
 	function write_uboot_platform_mtd() {
 		flashcp -v -p "$1/u-boot-rockchip-spi.bin" /dev/mtd0
 	}
+}
+
+# Install Ethernet Driver during first boot
+function pre_customize_image__orangepi5pro_add_phy_driver() {
+    local deb_file="tuxedo-yt6801_1.0.28-1_all.deb"
+    local service_name="eth-driver-firstboot.service"
+    
+    display_alert "Setting up Ethernet driver build for first boot" "$BOARD" "info"
+    
+    # Pre-install dependencies
+    chroot_sdcard apt-get update
+    chroot_sdcard apt-get install -y dkms build-essential
+    
+    # Create directory and download .deb (Not installing due to chroot issue with dkms and kernel headers)
+    chroot_sdcard mkdir -p /usr/local/share/eth-driver
+    chroot_sdcard wget "https://github.com/dante1613/Motorcomm-YT6801/raw/main/tuxedo-yt6801/${deb_file}" -O "/usr/local/share/eth-driver/${deb_file}"
+    
+    # Make script to Auto-Install Ethernet Driver Only on first boot
+    cat << 'EOF' > "${SDCARD}/usr/local/bin/install-eth-driver.sh"
+#!/bin/bash
+set -e
+
+DEB_FILE="/usr/local/share/eth-driver/tuxedo-yt6801_1.0.28-1_all.deb"
+LOG_FILE="/var/log/eth-driver-install.log"
+
+# Install driver package without internet
+install_driver() {
+    echo "Starting driver install" >> $LOG_FILE
+    
+    # Install package directly from dpkg
+    dpkg -i $DEB_FILE >> $LOG_FILE 2>&1 || {
+        # If FAIL, install local dependencies with APT
+        echo "Installing local dependencies..." >> $LOG_FILE
+        apt-get -f install --no-download -y >> $LOG_FILE 2>&1
+        # Retry install
+        dpkg -i $DEB_FILE >> $LOG_FILE 2>&1
+    }
+    
+    echo "Ethernet driver installed correctly." >> $LOG_FILE
+    
+    # Clean up files
+    rm -f $DEB_FILE
+    
+    # Disable Ethernet Driver Installer Service
+    systemctl disable eth-driver-firstboot.service
+}
+
+# Execute installation
+install_driver
+EOF
+    
+    # Make executable script
+    chmod +x "${SDCARD}/usr/local/bin/install-eth-driver.sh"
+    
+    # Creating the service
+    cat << EOF > "${SDCARD}/etc/systemd/system/${service_name}"
+[Unit]
+Description=Install YT6801 Ethernet driver on first boot
+After=systemd-modules-load.service
+Before=network.target network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/install-eth-driver.sh
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    
+    # Enable service for First Boot
+    chroot_sdcard systemctl enable "${service_name}"
+    
+    display_alert "Ethernet driver setup complete" "Will be installed on first boot (offline)" "info"
 }
 
 # Override family config for this board; let's avoid conditionals in family config.
