@@ -5,7 +5,7 @@ BOARD_MAINTAINER=""
 BOOTCONFIG="orangepi_5_pro_defconfig" # vendor name, not standard, see hook below, set BOOT_SOC below to compensate
 BOOTCONFIG_SATA="orangepi_5_pro_sata_defconfig"
 BOOT_SOC="rk3588"
-KERNEL_TARGET="vendor"
+KERNEL_TARGET="vendor,edge"
 FULL_DESKTOP="yes"
 BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3588s-orangepi-5-pro.dtb"
@@ -47,6 +47,26 @@ function post_uboot_custom_postprocess__create_sata_spi_image() {
 	/sbin/parted -s rkspi_loader_sata.img unit s mkpart uboot 16384 32734
 	dd if=idbloader.img of=rkspi_loader_sata.img seek=64 conv=notrunc
 	dd if=u-boot.itb of=rkspi_loader_sata.img seek=16384 conv=notrunc
+}
+
+function post_family_config_branch_edge__orangepi5pro_use_mainline_uboot() {
+	display_alert "$BOARD" "Mainline U-Boot overrides for $BOARD - $BRANCH" "info"
+	declare -g BOOTCONFIG="orangepi-5-pro-rk3588s_defconfig"
+	declare -g BOOTDELAY=1
+	declare -g BOOTSOURCE="https://github.com/u-boot/u-boot.git"
+	declare -g BOOTBRANCH="tag:v2024.04"
+	declare -g BOOTPATCHDIR="v2024.04"
+	declare -g BOOTDIR="u-boot-${BOARD}"
+	declare -g UBOOT_TARGET_MAP="BL31=${RKBIN_DIR}/${BL31_BLOB} ROCKCHIP_TPL=${RKBIN_DIR}/${DDR_BLOB};;u-boot-rockchip.bin u-boot-rockchip-spi.bin"
+	unset uboot_custom_postprocess write_uboot_platform write_uboot_platform_mtd
+
+	function write_uboot_platform() {
+		dd "if=$1/u-boot-rockchip.bin" "of=$2" bs=32k seek=1 conv=notrunc status=none
+	}
+
+	function write_uboot_platform_mtd() {
+		flashcp -v -p "$1/u-boot-rockchip-spi.bin" /dev/mtd0
+	}
 }
 
 # Override family config for this board; let's avoid conditionals in family config.
