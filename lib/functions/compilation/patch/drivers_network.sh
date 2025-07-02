@@ -41,7 +41,7 @@ driver_rtl8189ES() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8189esver='commit:7b43c5c7971eabea263dc2b6cc0928b84323f310' # Commit date: 2025-04-30 (please update when updating commit ref)
+		local rtl8189esver='commit:07f03cf721f5e0317012ece4159834327680ba8b' # Commit date: 2025-06-21 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189ES chipsets ${rtl8189esver}" "info"
 
@@ -77,9 +77,6 @@ driver_rtl8189ES() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-building-on-5.4.251-kernel.patch" "applying"
-
-		# fix compilation for kernels >= 6.16
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8189es-Fix-v6.16.patch" "applying"
 	fi
 }
 
@@ -90,7 +87,7 @@ driver_rtl8189FS() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:rtl8189fs")
-		local rtl8189fsver='commit:06e89edce6817616d963414825dccf87094a7e54' # Commit date: 2025-05-04 (please update when updating commit ref)
+		local rtl8189fsver='commit:d0f15f392570499f3e48f6d157c89cadf393a739' # Commit date: 2025-06-21 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8189FS chipsets ${rtl8189fsver}" "info"
 
@@ -136,7 +133,7 @@ driver_rtl8192EU() {
 	if linux-version compare "${version}" ge 3.14; then
 
 		# Attach to specific commit (was "branch:realtek-4.4.x")
-		local rtl8192euver='commit:27aa922c298f2be240eec6c2e8636fe865ece195' # Commit date: 2025-05-04 (please update when updating commit ref)
+		local rtl8192euver='commit:c2f491f0e42c438a29b207e96429b4d76c581a03' # Commit date: 2025-06-23 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8192EU chipsets ${rtl8192euver}" "info"
 
@@ -168,9 +165,6 @@ driver_rtl8192EU() {
 
 		# fix compilation for kernels >= 5.4.251
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-building-on-5.4.251-kernel.patch" "applying"
-
-		# fix compilation for kernels >= 6.16
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8192eu-Fix-v6.16.patch" "applying"
 	fi
 }
 
@@ -644,7 +638,7 @@ driver_rtl8723DS() {
 	if linux-version compare "${version}" ge 5.0; then
 
 		# Attach to specific commit (was "branch:master")
-		local rtl8723dsver='commit:86e3c4d2203b7f977d36a17c24efe0549afc6e31' # Commit date: 2025-05-14 (please update when updating commit ref)
+		local rtl8723dsver='commit:09a2b3e94d14cc2a0012d5b74101c6acf1ef0872' # Commit date: 2025-06-28 (please update when updating commit ref)
 
 		display_alert "Adding" "Wireless drivers for Realtek 8723DS chipsets ${rtl8723dsver}" "info"
 
@@ -677,9 +671,6 @@ driver_rtl8723DS() {
 
 		# fix compilation for kernels >= 5.4
 		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-VFS-import.patch" "applying"
-
-		# fix compilation for kernels >= 6.16
-		process_patch_file "${SRC}/patch/misc/wireless-rtl8723ds-Fix-v6.16.patch" "applying"
 	fi
 }
 
