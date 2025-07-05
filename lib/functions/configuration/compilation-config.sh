@@ -24,10 +24,15 @@ function prepare_compilation_vars() {
 	# moved from config: this does not belong in configuration. it's a compilation thing.
 	# optimize build time with 100% CPU usage
 	CPUS=$(grep -c 'processor' /proc/cpuinfo)
-	if [[ $USEALLCORES != no ]]; then
-		CTHREADS="-j$((CPUS + CPUS / 2))"
-	else
-		CTHREADS="-j1"
+
+	# Default to 150% of CPUs to maximize compilation speed
+	CTHREADS="-j$((CPUS + CPUS / 2))"
+
+	# If CPUTHREADS is defined and a valid positive integer allow user to override CTHREADS
+	# This is useful for limiting Armbian build to a specific number of threads, e.g. for build servers
+	if [[ "$CPUTHREADS" =~ ^[1-9][0-9]*$ ]]; then
+    	CTHREADS="-j$CPUTHREADS"
+		echo "Using user-defined thread count: $CTHREADS"
 	fi
 
 	call_extension_method "post_determine_cthreads" "config_post_determine_cthreads" <<- 'POST_DETERMINE_CTHREADS'
